@@ -30,7 +30,7 @@ export const DEFAULT_STATE = {
 	environment: 'aristea_wreck_puresky',
 	aspectRatioPreset: '1:1',
 	orientation: 'landscape',
-	finalRenderResolution: 4096,
+	finalRenderResolution: 2048,
 	originalPixelRatio: window.devicePixelRatio / 2,
 	zoomToCursor: true,
 };
