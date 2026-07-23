@@ -86,13 +86,12 @@ export const ENGINE_DEFAULTS = {
 
 	// Adaptive sampling (Blender-style): stop the frame once enough pixels drop below the noise threshold.
 	useAdaptiveSampling: true,
-	noiseThreshold: 0.02, // per-pixel noise below which a pixel is converged
-	darkNoiseFloor: 0.003, // extra absolute-noise floor so dark pixels can converge too
+	noiseThreshold: 0.02, // √-luminance-normalized per-pixel noise below which a pixel is converged
 	adaptiveMinSamples: 8, // min samples before adaptive sampling can trigger
 	adaptiveStopFraction: 0.95, // retire the frame once this fraction of pixels has converged
 	// Per-pixel freeze: skip tracing pixels that individually converged (noise threshold only — no dark floor,
 	// which would bake dim regions too dark). Naturally engages only on static/idle views.
-	usePixelFreeze: false,
+	usePixelFreeze: true,
 	pixelFreezeThreshold: 0.02, // per-pixel noise below which a pixel becomes a freeze candidate
 	pixelFreezeStability: 8, // consecutive candidate frames before a pixel freezes
 
@@ -590,11 +589,11 @@ export const PRODUCTION_RENDER_CONFIG = {
 	renderMode: 1, enableAlphaShadows: true,
 	enableOIDN: true, oidnQuality: 'balance',
 	interactionModeEnabled: false,
-	// Looser thresholds + stop at 90%, leaning on OIDN to clean the residual tail.
+	// √-norm convergence reaches a true ~all-converged gate, so stop at 0.98 — Cycles-faithful, leaving
+	// the unbiased residual for OIDN.
 	useAdaptiveSampling: true,
 	noiseThreshold: 0.1,
-	darkNoiseFloor: 0.01,
-	adaptiveStopFraction: 0.9,
+	adaptiveStopFraction: 0.98,
 	usePixelFreeze: true,
 };
 

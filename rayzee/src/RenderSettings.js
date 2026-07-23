@@ -43,7 +43,6 @@ const SETTING_ROUTES = {
 	// Adaptive sampling — whole-frame early-stop (useAdaptiveSampling) + per-pixel freeze (usePixelFreeze)
 	useAdaptiveSampling: { uniform: 'useAdaptiveSampling', reset: true },
 	noiseThreshold: { uniform: 'noiseThreshold', reset: true },
-	darkNoiseFloor: { uniform: 'darkNoiseFloor', reset: true },
 	adaptiveMinSamples: { uniform: 'adaptiveMinSamples', reset: true },
 	adaptiveStopFraction: { uniform: 'adaptiveStopFraction', reset: true },
 	usePixelFreeze: { uniform: 'usePixelFreeze', reset: true },

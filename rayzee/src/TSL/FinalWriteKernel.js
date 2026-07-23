@@ -50,7 +50,8 @@ export function buildFinalWriteKernel( params ) {
 		// OIDN models (calb_cnrm/high, alb_nrm/balanced); off for fast/ASVGF which want the bump normal.
 		cleanAuxNormalEnabled,
 		// Tier-1 convergence early-stop: per-pixel Welford luminance second moment + converged-pixel counter.
-		counters, m2BufferRW, useAdaptiveSampling, noiseThreshold, darkNoiseFloor, adaptiveMinSamples,
+		counters, m2BufferRW, useAdaptiveSampling, noiseThreshold, adaptiveMinSamples,
+
 		// Tier-2 per-pixel freeze: streakBufferRW = per-pixel freeze-candidate streak (stamped here);
 		// frozenMaskRO = dilated frozen mask from buildActivePixels (pass-through gates on it, not streak).
 		usePixelFreeze, pixelFreezeThreshold, pixelFreezeStability, streakBufferRW, frozenMaskRO,
@@ -141,7 +142,7 @@ export function buildFinalWriteKernel( params ) {
 			// Tier-1 convergence: per-pixel running second moment of LUMINANCE (Welford). luminance() is linear,
 			// so luminance(running-mean color) == running-mean luminance == E[L]; m2 tracks E[L²] under the SAME
 			// global 1/(frame+1) alpha (NO per-pixel alpha). sampleVar = E[L²]-E[L]²; varOfMean = sampleVar/(N);
-			// relErr = SE(mean)/mean. A pixel counts as converged once frame>=minSamples AND relErr<threshold.
+			// absSE = SE(mean); a pixel converges once frame>=minSamples AND the √-normalized error < threshold.
 			// The m2 write runs every frame (incl. frame 0, where alpha==1 self-inits it → no explicit clear).
 			// Sits AFTER the accumulation mix (finalColor is the mean) and BEFORE the visMode-11 mutation.
 			If( convOn, () => {
@@ -158,11 +159,15 @@ export function buildFinalWriteKernel( params ) {
 				// Combined criterion: bright pixels converge on relErr<threshold; dark/dim pixels (where relErr
 				// stays high forever) converge on absSE<absFloor, since their absolute noise is imperceptible.
 				const absSE = varOfMean.sqrt().toVar();
-				const relErr = absSE.div( meanLum.add( float( 1e-4 ) ) );
+				const relErr = absSE.div( meanLum.add( float( 1e-4 ) ) ); // Tier-2 freeze predicate reads this
 
-				If( frame.greaterThanEqual( uint( adaptiveMinSamples ) ).and(
-					relErr.lessThan( noiseThreshold ).or( absSE.lessThan( darkNoiseFloor ) )
-				), () => {
+				// Cycles-style convergence: normalize the standard error by √luminance for dim pixels (lum<1),
+				// by luminance for bright ones. The √ loosens the relative bar in shadows so dark pixels converge
+				// on their small absolute noise instead of stalling forever on a pure relative bar.
+				const convNorm = select( meanLum.lessThan( float( 1.0 ) ), meanLum.sqrt(), meanLum );
+				const converged = absSE.div( convNorm.add( float( 1e-4 ) ) ).lessThan( noiseThreshold );
+
+				If( frame.greaterThanEqual( uint( adaptiveMinSamples ) ).and( converged ), () => {
 
 					atomicAdd( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 1 ) );
 

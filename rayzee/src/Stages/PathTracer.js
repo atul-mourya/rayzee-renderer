@@ -1309,7 +1309,6 @@ export class PathTracer extends PathTracerStage {
 			m2BufferRW: m2RW,
 			useAdaptiveSampling: this.useAdaptiveSampling,
 			noiseThreshold: this.noiseThreshold,
-			darkNoiseFloor: this.darkNoiseFloor,
 			adaptiveMinSamples: this.adaptiveMinSamples,
 			// Tier-2 freeze (stamp + pass-through)
 			usePixelFreeze: this.usePixelFreeze,

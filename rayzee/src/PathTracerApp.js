@@ -1361,7 +1361,6 @@ export class PathTracerApp extends EventDispatcher {
 		// engine defaults when a config doesn't override them.
 		this.stages.pathTracer?.setUniform( 'useAdaptiveSampling', config.useAdaptiveSampling ?? false );
 		this.stages.pathTracer?.setUniform( 'noiseThreshold', config.noiseThreshold ?? DEFAULT_STATE.noiseThreshold );
-		this.stages.pathTracer?.setUniform( 'darkNoiseFloor', config.darkNoiseFloor ?? DEFAULT_STATE.darkNoiseFloor );
 		this.stages.pathTracer?.setUniform( 'adaptiveStopFraction', config.adaptiveStopFraction ?? DEFAULT_STATE.adaptiveStopFraction );
 		this.stages.pathTracer?.setUniform( 'adaptiveMinSamples', config.adaptiveMinSamples ?? DEFAULT_STATE.adaptiveMinSamples );
 

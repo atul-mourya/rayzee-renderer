@@ -131,7 +131,6 @@ const PathTracerTab = () => {
 		usePixelFreeze,
 		useAdaptiveSampling,
 		noiseThreshold,
-		darkNoiseFloor,
 		adaptiveMinSamples,
 		adaptiveStopFraction,
 		pixelFreezeThreshold,
@@ -165,7 +164,6 @@ const PathTracerTab = () => {
 		handleUsePixelFreezeChange,
 		handleUseAdaptiveSamplingChange,
 		handleNoiseThresholdChange,
-		handleDarkNoiseFloorChange,
 		handleAdaptiveMinSamplesChange,
 		handleAdaptiveStopFractionChange,
 		handlePixelFreezeThresholdChange,
@@ -638,9 +636,6 @@ const PathTracerTab = () => {
 							<div className="text-[10px] uppercase tracking-wide opacity-40">Frame Early-Stop</div>
 							<Row>
 								<Slider label={"Noise Threshold"} min={0.005} max={0.2} step={0.005} precision={3} value={[ noiseThreshold ]} onValueChange={handleNoiseThresholdChange} />
-							</Row>
-							<Row>
-								<Slider label={"Dark Noise Floor"} min={0} max={0.05} step={0.001} precision={3} value={[ darkNoiseFloor ]} onValueChange={handleDarkNoiseFloorChange} />
 							</Row>
 							<Row>
 								<Slider label={"Min Samples"} min={1} max={64} step={1} value={[ adaptiveMinSamples ]} onValueChange={handleAdaptiveMinSamplesChange} />

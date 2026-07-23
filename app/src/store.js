@@ -668,14 +668,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	handleDarkNoiseFloorChange: val => {
-
-		const v = Array.isArray( val ) ? val[ 0 ] : val;
-		set( { darkNoiseFloor: v } );
-		getApp()?.settings.set( 'darkNoiseFloor', v );
-
-	},
-
 	handleAdaptiveMinSamplesChange: val => {
 
 		const v = Array.isArray( val ) ? val[ 0 ] : val;

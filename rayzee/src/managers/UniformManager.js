@@ -170,7 +170,6 @@ export class UniformManager {
 		// Tier-1 convergence early-stop (FinalWrite reads these; live-toggled, no shader rebuild)
 		ub( 'useAdaptiveSampling', DEFAULT_STATE.useAdaptiveSampling );
 		u( 'noiseThreshold', DEFAULT_STATE.noiseThreshold, 'float' );
-		u( 'darkNoiseFloor', DEFAULT_STATE.darkNoiseFloor, 'float' );
 		u( 'adaptiveMinSamples', DEFAULT_STATE.adaptiveMinSamples, 'int' );
 		// CPU-only (read in PathTracer._isConvergedComplete, not bound to any kernel); registered here for
 		// the settings/configureForMode plumbing + the _defineUniformGetters accessor.
