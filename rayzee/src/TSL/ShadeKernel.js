@@ -53,6 +53,7 @@ import {
 	readRayOrigin, readRayDirection, readRayBounceFlags, readRayThroughput, readRayPdf,
 	readMediumStack, writeMediumStack, readMediumSigmaA, writeMediumSigmaA,
 	readPathBounces, readSssSteps, readSSSMedium, writeSSSMedium,
+	readTransparentCount,
 	readHitDistance, readHitBarycentrics, readHitNormal,
 	readHitMaterialIndex, readHitTriangleIndex,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
@@ -88,6 +89,7 @@ export function buildShadeKernel( params ) {
 		pointLightsBuffer, numPointLights,
 		spotLightsBuffer, numSpotLights,
 		maxBounceCount, maxSubsurfaceSteps,
+		maxTransparentBounces, // guard on alpha-skip depth; counter in ORIGIN_META.w
 		currentBounce, // loop iteration = path length (advances on free bounces); drives RR/firefly/giScale
 		transparentBackground, backgroundIntensity, backgroundColor, backgroundBlurriness, backgroundBlurSamples, showBackground,
 		globalIlluminationIntensity,
@@ -204,6 +206,7 @@ export function buildShadeKernel( params ) {
 		// path length = loop iteration (advances every bounce incl. transmissive/SSS); drives RR/firefly/giScale/MIS. Megakernel: loop counter i.
 		const bounceIndex = int( currentBounce ).toVar();
 		const sssSteps = readSssSteps( rayBufferRW, rayID ).toVar();
+		const transparentCount = readTransparentCount( rayBufferRW, rayID ).toVar();
 
 		// ── Analytic ground-plane shadow catcher (primary ray only, no geometry) ──
 		// A horizontal plane at y = groundCatcherHeight. For a bounce-0 ray that crosses it
@@ -546,7 +549,7 @@ export function buildShadeKernel( params ) {
 					// free-bounce continuation: ray stays in the same medium, so medium stack + coeffs persist
 					// SSS scatter changes direction → no longer the direct backdrop view.
 					flags.assign( flags.bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
-					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth, sssSteps );
+					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth, sssSteps, transparentCount );
 					writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
 					// Free bounce: preserve prevBouncePdf (megakernel leaves it untouched across SSS scatter,
 					// PathTracerCore.js:1272 sets it only after an opaque scatter). Writing 1.0 here spuriously
@@ -665,6 +668,29 @@ export function buildShadeKernel( params ) {
 			0.0, 1.0,
 		).greaterThanEqual( float( 0.25 ) ).toVar();
 		const featPrefix = featCarry.toVar();
+
+		// DDFA terminal fallback: a ray dying while still deferring (e.g. a mirror maze) commits its last
+		// surface instead of leaving a black guide OIDN would demod-amplify.
+		// Plain JS inliner, not an Fn — it closes over albedo/featPrefix/flags .toVar()s.
+		const commitDeferredAux = ( normal ) => {
+
+			If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+
+				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
+				writeGBuffer( gBufferRW, pixelIndex, normal, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
+
+			} );
+
+		};
+
+		// Deactivate the ray, keeping the radiance already gathered at this vertex.
+		const terminatePath = () => {
+
+			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
+			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+			rngBufferRW.element( rayID ).assign( rngState );
+
+		};
 
 		// first-hit MRT data (bounce 0 only): write the primary DEPTH now with the default normal/albedo.
 		// The real normal/albedo are committed by the DDFA decision blocks below (which re-pack this depth);
@@ -874,8 +900,21 @@ export function buildShadeKernel( params ) {
 
 				flags.assign( flags.bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
 
+			} ).Else( () => {
+
+				// Alpha passthrough: charge the guard. N is faceforwarded for the aux commit (a ray
+				// exiting a back-facing skip would otherwise write an inverted normal).
+				transparentCount.addAssign( 1 );
+				If( transparentCount.greaterThan( maxTransparentBounces ), () => {
+
+					commitDeferredAux( select( dot( N, direction.negate() ).lessThan( 0.0 ), N.negate(), N ) );
+					terminatePath();
+					Return();
+
+				} );
+
 			} );
-			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps );
+			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps, transparentCount );
 			writeRayDirFlags( rayBufferRW, rayID, interaction.direction, flags );
 			// Free bounce: preserve prevBouncePdf (megakernel keeps the last opaque-scatter pdf across
 			// transmission/alpha-skip/SSS-boundary). Writing 1.0 corrupts the next bounce's env/emissive MIS,
@@ -1230,17 +1269,8 @@ export function buildShadeKernel( params ) {
 		).toVar();
 		If( rrSurvival.lessThanEqual( 0.0 ), () => {
 
-			// DDFA terminal fallback: a ray dying while still deferring (e.g. a mirror maze) commits its last
-			// surface instead of leaving a black guide OIDN would demod-amplify. N is viewer-facing here.
-			If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
-
-				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
-				writeGBuffer( gBufferRW, pixelIndex, N, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
-
-			} );
-			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-			rngBufferRW.element( rayID ).assign( rngState );
+			commitDeferredAux( N );
+			terminatePath();
 			Return();
 
 		} );
@@ -1249,16 +1279,8 @@ export function buildShadeKernel( params ) {
 		// Terminate on CAMERA depth (opaque scatter count), not path length — glass/SSS free bounces no longer burn the maxBounces budget (gap #4).
 		If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
 
-			// DDFA terminal fallback (see RR-kill above): commit the last surface if still deferring.
-			If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
-
-				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
-				writeGBuffer( gBufferRW, pixelIndex, N, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
-
-			} );
-			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-			rngBufferRW.element( rayID ).assign( rngState );
+			commitDeferredAux( N );
+			terminatePath();
 			Return();
 
 		} );
@@ -1266,7 +1288,7 @@ export function buildShadeKernel( params ) {
 		const newOrigin = hitPoint.add( N.mul( 0.001 ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
-		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps );
+		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );
 		writeRayDirFlags( rayBufferRW, rayID, bounceDir, flags );
 		writeRayThroughputPdf( rayBufferRW, rayID, throughput, bouncePdf );
 		writeRayRadiance( rayBufferRW, rayID, currentRadiance );

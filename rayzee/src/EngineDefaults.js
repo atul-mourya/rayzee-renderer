@@ -84,6 +84,8 @@ export const ENGINE_DEFAULTS = {
 	transmissiveBounces: 5,
 	maxSubsurfaceSteps: 8, // interactive default: low cap (bounded random-walk SSS)
 
+	maxTransparentBounces: 32, // guard: alpha skips are free bounces, else cutout foliage eats the loop budget
+
 	// Adaptive sampling (Blender-style): stop the frame once enough pixels drop below the noise threshold.
 	useAdaptiveSampling: true,
 	noiseThreshold: 0.02, // √-luminance-normalized per-pixel noise below which a pixel is converged

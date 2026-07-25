@@ -491,6 +491,14 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
+	handleMaxTransparentBouncesChange: val => {
+
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { maxTransparentBounces: v } );
+		getApp()?.settings.set( 'maxTransparentBounces', v );
+
+	},
+
 	setMaxTextureSize: val => set( { maxTextureSize: parseInt( val, 10 ) } ),
 	handleMaxTextureSizeChange: async val => {
 

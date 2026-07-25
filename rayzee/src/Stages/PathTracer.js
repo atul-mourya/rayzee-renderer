@@ -1196,8 +1196,6 @@ export class PathTracer extends PathTracerStage {
 			numSpotLights: this.numSpotLights,
 			maxBounceCount: this.maxBounces,
 			maxSubsurfaceSteps: this.maxSubsurfaceSteps,
-			maxDiffuseBounces: this.maxDiffuseBounces,
-			maxGlossyBounces: this.maxGlossyBounces,
 			maxTransparentBounces: this.maxTransparentBounces,
 			transparentBackground: this.transparentBackground,
 			backgroundIntensity: this.backgroundIntensity,

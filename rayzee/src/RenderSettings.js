@@ -18,6 +18,7 @@ const SETTING_ROUTES = {
 	maxBounces: { uniform: 'maxBounces', reset: true },
 	transmissiveBounces: { uniform: 'transmissiveBounces', reset: true },
 	maxSubsurfaceSteps: { uniform: 'maxSubsurfaceSteps', reset: true },
+	maxTransparentBounces: { uniform: 'maxTransparentBounces', reset: true },
 	environmentIntensity: { uniform: 'environmentIntensity', reset: true },
 	backgroundIntensity: { uniform: 'backgroundIntensity', reset: true },
 	backgroundBlurriness: { uniform: 'backgroundBlurriness', reset: true },

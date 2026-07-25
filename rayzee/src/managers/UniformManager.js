@@ -164,6 +164,7 @@ export class UniformManager {
 		u( 'maxSamples', DEFAULT_STATE.maxSamples, 'int' );
 		u( 'transmissiveBounces', DEFAULT_STATE.transmissiveBounces, 'int' );
 		u( 'maxSubsurfaceSteps', DEFAULT_STATE.maxSubsurfaceSteps, 'int' );
+		u( 'maxTransparentBounces', DEFAULT_STATE.maxTransparentBounces, 'int' );
 		u( 'visMode', DEFAULT_STATE.debugMode, 'int' );
 		u( 'debugVisScale', DEFAULT_STATE.debugVisScale, 'float' );
 

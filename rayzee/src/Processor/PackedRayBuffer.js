@@ -183,14 +183,15 @@ export const gbDecodeNormalDepth = ( packed ) => {
 export const gbDecodeAlbedo = ( packed ) =>
 	vec3( unpackUnorm2x16( packed.z ), unpackUnorm2x16( packed.w ).x );
 
-// .w packs per-ray bounce state: perRayBounces (bits 0-7) | sssSteps (bits 8-15) | lobeCounts (bits 16-31,
-// pre-packed by packLobeCounts). pixelIndex is NOT stored — it equals rayID (one ray per pixel).
-export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps, lobeCounts = uint( 0 ) ) =>
+// .w packs per-ray bounce state: perRayBounces (bits 0-7) | sssSteps (bits 8-15) | transparentCount
+// (bits 16-21), each masked so an overrun can't bleed into its neighbour. pixelIndex is NOT stored —
+// it equals rayID (one ray per pixel).
+export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps, transparentCount = uint( 0 ) ) =>
 	buf.element( soa( id, RAY.ORIGIN_META ) )
 		.assign( vec4( origin, uintBitsToFloat(
 			uint( bounces ).bitAnd( uint( 0xFF ) )
 				.bitOr( uint( sssSteps ).bitAnd( uint( 0xFF ) ).shiftLeft( 8 ) )
-				.bitOr( uint( lobeCounts ).shiftLeft( 16 ) )
+				.bitOr( uint( transparentCount ).bitAnd( uint( 0x3F ) ).shiftLeft( 16 ) )
 		) ) );
 
 export const writeRayDirFlags = ( buf, id, direction, bounceFlags ) =>
@@ -296,32 +297,14 @@ export const writeFeatureThroughput = ( buf, id, tp ) => {
 // Per-ray bounce state packed into ORIGIN_META.w (written by writeRayOriginMeta alongside the origin):
 //   perRayBounces = bits 0-7 (camera-bounce depth; the loop index can't track it once free bounces decouple it)
 //   sssSteps      = bits 8-15 (SSS random-walk step counter)
-//   lobeCounts    = bits 16-31 (per-lobe bounce counters, Cycles-style caps — see packLobeCounts)
+//   transparentCount = bits 16-21 (alpha-passthrough counter, max 63; see maxTransparentBounces)
 export const readPathBounces = ( buf, id ) =>
 	int( floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).bitAnd( 0xFF ) );
 export const readSssSteps = ( buf, id ) =>
 	int( floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 8 ).bitAnd( 0xFF ) );
 
-// Per-lobe bounce counters, in the previously-dead top 16 bits of ORIGIN_META.w (zero VRAM cost):
-//   diffuse bits 16-20 (0-31) · glossy bits 21-25 (0-31) · transparent bits 26-31 (0-63)
-// Each field is masked on pack so a counter that overruns its cap can never bleed into its neighbour.
-export const LOBE_COUNT_MAX = { diffuse: 31, glossy: 31, transparent: 63 };
-
-export const packLobeCounts = ( diffuse, glossy, transparent ) =>
-	uint( diffuse ).bitAnd( uint( 0x1F ) )
-		.bitOr( uint( glossy ).bitAnd( uint( 0x1F ) ).shiftLeft( 5 ) )
-		.bitOr( uint( transparent ).bitAnd( uint( 0x3F ) ).shiftLeft( 10 ) );
-
-export const readLobeCounts = ( buf, id ) => {
-
-	const packed = floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 16 );
-	return {
-		diffuse: int( packed.bitAnd( uint( 0x1F ) ) ),
-		glossy: int( packed.shiftRight( 5 ).bitAnd( uint( 0x1F ) ) ),
-		transparent: int( packed.shiftRight( 10 ).bitAnd( uint( 0x3F ) ) ),
-	};
-
-};
+export const readTransparentCount = ( buf, id ) =>
+	int( floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 16 ).bitAnd( uint( 0x3F ) ) );
 
 // Region 9: SSS sigmaS + Henyey-Greenstein g. sigmaS==0 marks glass (Beer-Lambert path, not random walk).
 export const readSSSMedium = ( buf, id ) => {

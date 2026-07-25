@@ -85,6 +85,7 @@ const PathTracerTab = () => {
 		bounces,
 		transmissiveBounces,
 		maxSubsurfaceSteps,
+		maxTransparentBounces,
 		maxTextureSize,
 		fireflyThreshold,
 		debugMode,
@@ -158,6 +159,7 @@ const PathTracerTab = () => {
 		handleBouncesChange,
 		handleTransmissiveBouncesChange,
 		handleMaxSubsurfaceStepsChange,
+		handleMaxTransparentBouncesChange,
 		handleMaxTextureSizeChange,
 		handleFireflyThresholdChange,
 		handleEnableAlphaShadowsChange,
@@ -243,6 +245,9 @@ const PathTracerTab = () => {
 					<>
 						<Row>
 							<Slider label={"Transmissive Bounces"} min={0} max={10} step={1} value={[ transmissiveBounces ]} onValueChange={handleTransmissiveBouncesChange} />
+						</Row>
+						<Row>
+							<Slider label={"Transparent Bounces"} min={0} max={32} step={1} value={[ maxTransparentBounces ]} onValueChange={handleMaxTransparentBouncesChange} />
 						</Row>
 						<Row>
 							<Slider label={"Subsurface Steps"} min={1} max={256} step={1} value={[ maxSubsurfaceSteps ]} onValueChange={handleMaxSubsurfaceStepsChange} />
