@@ -12,6 +12,9 @@ import {
 } from "@/components/ui/resizable";
 import { useStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
+import { createLogger } from 'rayzee';
+
+const log = createLogger( 'app' );
 
 const App = () => {
 
@@ -40,11 +43,11 @@ const App = () => {
 		  try {
 
 				await initDatabase();
-				console.log( 'Database initialized successfully' );
+				log.debug( 'database initialized' );
 
 			} catch ( error ) {
 
-				console.error( 'Failed to initialize database:', error );
+				log.error( 'database initialization failed:', error );
 
 			}
 

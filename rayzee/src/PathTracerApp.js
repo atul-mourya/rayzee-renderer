@@ -19,6 +19,7 @@ import { CompletionTracker } from './Pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
+import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
@@ -57,6 +58,9 @@ const _appsByCanvas = new WeakMap();
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
+
+const log = createLogger( 'engine' );
+
 export class PathTracerApp extends EventDispatcher {
 
 	/**
@@ -79,7 +83,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		} catch ( err ) {
 
-			console.warn( 'PathTracerApp: prior canvas owner dispose failed', err );
+			log.warn( 'prior canvas owner dispose failed', err );
 
 		}
 
@@ -188,7 +192,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			} catch ( err ) {
 
-				console.warn( 'PathTracerApp: failed to remove listener', type, err );
+				log.warn( 'failed to remove listener', type, err );
 
 			}
 
@@ -222,7 +226,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.stages.pathTracer.setupMaterial();
 
 		this.isInitialized = true;
-		console.log( 'WebGPU Path Tracer App initialized' );
+		log.debug( 'WebGPU path tracer app initialized' );
 
 		return this;
 
@@ -256,7 +260,7 @@ export class PathTracerApp extends EventDispatcher {
 
 				this._animRefitInFlight = true;
 				this.refitBVH( positions )
-					.catch( err => console.error( 'Animation refit error:', err ) )
+					.catch( err => log.error( 'animation refit error:', err ) )
 					.finally( () => {
 
 						this._animRefitInFlight = false;
@@ -384,7 +388,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( this._deviceLost ) return;
 		this._deviceLost = true;
-		console.error( `WebGPU device lost (${info?.reason || 'unknown'}): ${info?.message || ''}` );
+		log.error( `WebGPU device lost (${info?.reason || 'unknown'}): ${info?.message || ''}` );
 		this.stopAnimation();
 		this.dispatchEvent( { type: EngineEvents.DEVICE_LOST, reason: info?.reason, message: info?.message } );
 
@@ -545,7 +549,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		} catch ( err ) {
 
-			console.warn( 'PathTracerApp: failed to clear TSL texture singleton listeners', err );
+			log.warn( 'failed to clear TSL texture singleton listeners', err );
 
 		}
 
@@ -803,7 +807,7 @@ export class PathTracerApp extends EventDispatcher {
 		// Tag the primary (replace-loaded) model so it appears in the scene-object list.
 		this._tagPrimarySceneObject();
 
-		const timer = new BuildTimer( 'loadSceneData' );
+		const timer = new BuildTimer( '', { namespace: 'scene', level: 'info' } );
 		const environmentTexture = this.meshScene.environment;
 
 		// Environment CDF build in parallel with BVH
@@ -856,7 +860,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		} catch ( err ) {
 
-			console.warn( 'PathTracerApp: raster fallback precompile failed', err );
+			log.warn( 'raster fallback precompile failed', err );
 
 		}
 
@@ -896,13 +900,30 @@ export class PathTracerApp extends EventDispatcher {
 		this.stages.compositor.setTransparentBackground( this.settings.get( 'transparentBackground' ) );
 		timer.end( 'Apply settings' );
 
-		timer.print();
+		timer.print( this._sceneSummaryParts() );
 		resetLoading();
 
 		this._initAnimationAndTransforms();
 
 		this.dispatchEvent( { type: 'SceneRebuild' } );
 		return true;
+
+	}
+
+	/** Counts for the single `[scene]` summary line emitted after a scene build. */
+	_sceneSummaryParts() {
+
+		const pt = this.stages.pathTracer;
+		const meshes = this._sdf?.instanceTable?.entries?.filter( Boolean ).length ?? 0;
+		const maps = this._sdf?.geometryExtractor?.maps?.length ?? 0;
+
+		return [
+			fmt.count( pt.triangleCount, 'tri' ),
+			meshes ? fmt.count( meshes, 'mesh', 'meshes' ) : null,
+			fmt.count( pt.materialData.materialCount, 'material' ),
+			maps ? fmt.count( maps, 'map' ) : null,
+			fmt.count( pt.bvhNodeCount, 'BVH node' ),
+		];
 
 	}
 
@@ -1262,7 +1283,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( width > MAX_STORAGE_TEXTURE_SIZE || height > MAX_STORAGE_TEXTURE_SIZE ) {
 
-			console.warn( `[Rayzee] Render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px limit (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
+			log.warn( `render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px limit (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
 			return false;
 
 		}
@@ -1818,7 +1839,7 @@ export class PathTracerApp extends EventDispatcher {
 				this._handleDeviceLost( info );
 
 			} );
-			gpuDevice.onuncapturederror = ( event ) => console.error( 'WebGPU uncaptured error:', event.error );
+			gpuDevice.onuncapturederror = ( event ) => log.error( 'WebGPU uncaptured error:', event.error );
 
 		}
 

@@ -10,6 +10,9 @@
 import { fetchAsWorker } from './Workers/fetchAsWorker.js';
 import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
 import BVH_SUBTREE_WORKER_URL from './Workers/BVHSubtreeWorker.js?worker&url';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'bvh' );
 
 const FPT = 32; // FLOATS_PER_TRIANGLE
 const PARALLEL_THRESHOLD = 50000;
@@ -34,7 +37,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 	const numWorkers = Math.min( navigator.hardwareConcurrency || 4, MAX_PARALLEL_WORKERS );
 	const parallelDepth = Math.ceil( Math.log2( numWorkers * 2.5 + 1 ) );
 
-	console.log( `[ParallelBVH] Parallel build: ${triangleCount.toLocaleString()} triangles, ${numWorkers} workers, parallelDepth=${parallelDepth}` );
+	log.debug( `parallel build ${fmt.n( triangleCount )} triangles · ${numWorkers} workers · parallelDepth ${parallelDepth}` );
 
 	return new Promise( ( resolve, reject ) => {
 
@@ -98,7 +101,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 				if ( settled ) return;
 				settled = true;
-				console.warn( `[ParallelBVH] Parallel build failed (${reason}), falling back to single worker` );
+				log.warn( `parallel build failed (${reason}), falling back to single worker` );
 				cleanup();
 				// Copy from SharedArrayBuffer to regular ArrayBuffer for transfer
 				const restoredBuffer = new ArrayBuffer( sharedTriangleData.byteLength );
@@ -182,7 +185,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 		} )().catch( ( error ) => {
 
-			console.warn( '[ParallelBVH] Parallel build setup failed:', error );
+			log.warn( 'parallel build setup failed:', error );
 			reject( error );
 
 		} );
@@ -209,7 +212,7 @@ async function handlePhase2(
 
 		// No frontier tasks — top-level tree is the complete BVH
 		// Still need to reorder triangles via coordinator
-		console.log( '[ParallelBVH] No frontier tasks, assembling with top-level tree only' );
+		log.debug( 'no frontier tasks, assembling with top-level tree only' );
 		coordinatorWorker.postMessage( {
 			type: 'assemble',
 			topFlatData,
@@ -225,7 +228,7 @@ async function handlePhase2(
 
 	}
 
-	console.log( `[ParallelBVH] Phase 2: distributing ${frontierTasks.length} tasks across ${numWorkers} workers` );
+	log.debug( `phase 2 distributing ${frontierTasks.length} tasks across ${numWorkers} workers` );
 
 	// Distribute tasks using greedy least-loaded assignment
 	const sortedTasks = [ ...frontierTasks ].sort( ( a, b ) => ( b.end - b.start ) - ( a.end - a.start ) );
@@ -493,7 +496,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 
 		} )().catch( ( error ) => {
 
-			console.warn( '[ParallelBVH] Single worker fallback failed:', error );
+			log.warn( 'single worker fallback failed:', error );
 			reject( error );
 
 		} );

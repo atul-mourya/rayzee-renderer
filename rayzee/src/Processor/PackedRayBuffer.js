@@ -8,6 +8,9 @@ import {
 	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16,
 } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'gpu' );
 
 export const RAY_STRIDE = 7;
 export const HIT_STRIDE = 2;
@@ -19,7 +22,7 @@ export const HIT_STRIDE = 2;
 export const GBUFFER_STRIDE = 1;
 
 export const RAY = {
-	ORIGIN_META: 0, // vec4(origin.xyz, uintBitsToFloat(perRayBounces | sssSteps<<8)); pixelIndex == rayID
+	ORIGIN_META: 0, // vec4(origin.xyz, uintBitsToFloat(perRayBounces | sssSteps<<8 | lobeCounts<<16)); pixelIndex == rayID
 	DIR_FLAGS: 1, // vec4(direction.xyz, uintBitsToFloat(bounceFlags))
 	THROUGHPUT_PDF: 2, // vec4(throughput.xyz, pdf)
 	RADIANCE_ALPHA: 3, // vec4(radiance.xyz, alpha)
@@ -100,14 +103,12 @@ export class PackedRayBuffer {
 			ro: storage( hitAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const totalMB = (
-			rayCount * 16 + capacity * 4 + hitCount * 16
-		) / ( 1024 * 1024 );
+		// Kept for the [gpu] startup summary in PathTracer._buildWavefrontKernels.
+		this.rayBytes = rayCount * 16 + capacity * 4;
+		this.hitBytes = hitCount * 16;
+		this.totalBytes = this.rayBytes + this.hitBytes;
 
-		console.log(
-			`PackedRayBuffer: capacity=${capacity}, total=${totalMB.toFixed( 1 )} MB ` +
-			`(ray=${( rayCount * 16 / 1048576 ).toFixed( 0 )}MB hit=${( hitCount * 16 / 1048576 ).toFixed( 0 )}MB) [SoA ray/hit]`
-		);
+		log.debug( `ray pool capacity ${fmt.n( capacity )} · ${fmt.mb( this.totalBytes )} (rays ${fmt.mb( this.rayBytes )} · hits ${fmt.mb( this.hitBytes )})` );
 
 	}
 
@@ -182,12 +183,14 @@ export const gbDecodeNormalDepth = ( packed ) => {
 export const gbDecodeAlbedo = ( packed ) =>
 	vec3( unpackUnorm2x16( packed.z ), unpackUnorm2x16( packed.w ).x );
 
-// .w packs per-ray bounce state: perRayBounces (bits 0-7) | sssSteps (bits 8-15). pixelIndex is
-// NOT stored — it equals rayID (one ray per pixel).
-export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps ) =>
+// .w packs per-ray bounce state: perRayBounces (bits 0-7) | sssSteps (bits 8-15) | lobeCounts (bits 16-31,
+// pre-packed by packLobeCounts). pixelIndex is NOT stored — it equals rayID (one ray per pixel).
+export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps, lobeCounts = uint( 0 ) ) =>
 	buf.element( soa( id, RAY.ORIGIN_META ) )
 		.assign( vec4( origin, uintBitsToFloat(
-			uint( bounces ).bitOr( uint( sssSteps ).shiftLeft( 8 ) )
+			uint( bounces ).bitAnd( uint( 0xFF ) )
+				.bitOr( uint( sssSteps ).bitAnd( uint( 0xFF ) ).shiftLeft( 8 ) )
+				.bitOr( uint( lobeCounts ).shiftLeft( 16 ) )
 		) ) );
 
 export const writeRayDirFlags = ( buf, id, direction, bounceFlags ) =>
@@ -293,10 +296,32 @@ export const writeFeatureThroughput = ( buf, id, tp ) => {
 // Per-ray bounce state packed into ORIGIN_META.w (written by writeRayOriginMeta alongside the origin):
 //   perRayBounces = bits 0-7 (camera-bounce depth; the loop index can't track it once free bounces decouple it)
 //   sssSteps      = bits 8-15 (SSS random-walk step counter)
+//   lobeCounts    = bits 16-31 (per-lobe bounce counters, Cycles-style caps — see packLobeCounts)
 export const readPathBounces = ( buf, id ) =>
 	int( floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).bitAnd( 0xFF ) );
 export const readSssSteps = ( buf, id ) =>
 	int( floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 8 ).bitAnd( 0xFF ) );
+
+// Per-lobe bounce counters, in the previously-dead top 16 bits of ORIGIN_META.w (zero VRAM cost):
+//   diffuse bits 16-20 (0-31) · glossy bits 21-25 (0-31) · transparent bits 26-31 (0-63)
+// Each field is masked on pack so a counter that overruns its cap can never bleed into its neighbour.
+export const LOBE_COUNT_MAX = { diffuse: 31, glossy: 31, transparent: 63 };
+
+export const packLobeCounts = ( diffuse, glossy, transparent ) =>
+	uint( diffuse ).bitAnd( uint( 0x1F ) )
+		.bitOr( uint( glossy ).bitAnd( uint( 0x1F ) ).shiftLeft( 5 ) )
+		.bitOr( uint( transparent ).bitAnd( uint( 0x3F ) ).shiftLeft( 10 ) );
+
+export const readLobeCounts = ( buf, id ) => {
+
+	const packed = floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 16 );
+	return {
+		diffuse: int( packed.bitAnd( uint( 0x1F ) ) ),
+		glossy: int( packed.shiftRight( 5 ).bitAnd( uint( 0x1F ) ) ),
+		transparent: int( packed.shiftRight( 10 ).bitAnd( uint( 0x3F ) ) ),
+	};
+
+};
 
 // Region 9: SSS sigmaS + Henyey-Greenstein g. sigmaS==0 marks glass (Beer-Lambert path, not random walk).
 export const readSSSMedium = ( buf, id ) => {

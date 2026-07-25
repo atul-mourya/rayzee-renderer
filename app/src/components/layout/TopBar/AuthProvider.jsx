@@ -4,6 +4,9 @@ import { createClient } from '@supabase/supabase-js';
 import { Auth } from '@supabase/auth-ui-react';
 import { ThemeSupa } from '@supabase/auth-ui-shared';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { createLogger } from 'rayzee';
+
+const log = createLogger( 'auth' );
 
 const supabase = createClient(
 	import.meta.env.VITE_SUPABASE_URL,
@@ -20,7 +23,8 @@ const AuthProvider = ( { children } ) => {
 		const { data: authListener } = supabase.auth.onAuthStateChange( ( event, session ) => {
 
 			setUser( session?.user ?? null );
-			console.log( 'session', session );
+			// Never log the session itself — it carries access/refresh tokens.
+			log.debug( `auth ${event} · ${session?.user ? 'signed in' : 'no session'}` );
 
 		} );
 

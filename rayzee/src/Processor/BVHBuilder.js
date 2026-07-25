@@ -2,6 +2,10 @@ import { TreeletOptimizer } from './TreeletOptimizer.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 import { fetchAsWorker } from './Workers/fetchAsWorker.js';
 import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
+// Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'bvh' );
 
 // Inline copy of TRIANGLE_DATA_LAYOUT (mirrors Constants.js).
 // Cannot import Constants.js because BVHBuilder runs inside BVHWorker
@@ -403,7 +407,7 @@ export class BVHBuilder {
 
 					const triangleCount = this.totalTriangles;
 					const useShared = typeof SharedArrayBuffer !== 'undefined';
-					console.log( `[BVHBuilder] SharedArrayBuffer: ${useShared ? 'enabled' : 'unavailable (using transfer fallback)'}` );
+					log.debug( `SharedArrayBuffer ${useShared ? 'enabled' : 'unavailable (using transfer fallback)'}` );
 
 					// Pre-allocate SharedArrayBuffer for reordered output so worker
 					// writes directly to shared memory (no transfer needed on return).
@@ -491,14 +495,14 @@ export class BVHBuilder {
 
 						fetchAsWorker( BVH_WORKER_URL ).then( setupWorker ).catch( () => {
 
-							console.warn( 'Worker fetch fallback failed, using synchronous build' );
+							log.warn( 'worker fetch fallback failed, using synchronous build' );
 							resolve( this._buildSyncAndFlatten( triangles, depth, progressCallback ) );
 
 						} );
 
 					} else {
 
-						console.warn( 'Worker creation failed, falling back to synchronous build:', error );
+						log.warn( 'worker creation failed, falling back to synchronous build:', error );
 						resolve( this._buildSyncAndFlatten( triangles, depth, progressCallback ) );
 
 					}
@@ -619,7 +623,7 @@ export class BVHBuilder {
 
 				} catch ( error ) {
 
-					console.error( `TreeletOptimizer: Error in pass ${pass + 1}:`, error );
+					log.error( `treelet optimizer failed in pass ${pass + 1}:`, error );
 					break;
 
 				}
@@ -663,7 +667,7 @@ export class BVHBuilder {
 
 			} catch ( error ) {
 
-				console.error( 'ReinsertionOptimizer: Error:', error );
+				log.error( 'reinsertion optimizer failed:', error );
 
 			}
 
@@ -710,8 +714,8 @@ export class BVHBuilder {
 
 		const total = this.splitStats.totalBuildTime;
 		const s = this.splitStats;
-		console.log(
-			`[BVH] ${n.toLocaleString()} tris → ${this.totalNodes} nodes in ${Math.round( total )}ms` +
+		log.debug(
+			`${fmt.n( n )} tris → ${fmt.n( this.totalNodes )} nodes in ${fmt.ms( total )}` +
 			` | SAH ${s.sahSplits} objMed ${s.objectMedianSplits} spatMed ${s.spatialMedianSplits} failed ${s.failedSplits}` +
 			( s.treeletsProcessed ? ` | treelets ${s.treeletsImproved}/${s.treeletsProcessed} improved` : '' ) +
 			( s.reinsertionsApplied ? ` | reinsertions ${s.reinsertionsApplied}` : '' )

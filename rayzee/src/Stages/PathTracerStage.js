@@ -25,6 +25,9 @@ import { LightSerializer } from '../Processor/LightSerializer';
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { getAssetConfig } from '../AssetConfig.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'pathtracer' );
 
 /**
  * Data layout constants
@@ -377,7 +380,7 @@ export class PathTracerStage extends RenderStage {
 
 			this.stbnScalarTexture = configure( tex );
 			stbnScalarTextureNode.value = tex;
-			console.log( `PathTracer: STBN scalar atlas loaded ${tex.image.width}x${tex.image.height}` );
+			log.debug( `STBN scalar atlas ${fmt.px( tex.image.width, tex.image.height )}` );
 
 		} );
 
@@ -385,7 +388,7 @@ export class PathTracerStage extends RenderStage {
 
 			this.stbnVec2Texture = configure( tex );
 			stbnVec2TextureNode.value = tex;
-			console.log( `PathTracer: STBN vec2 atlas loaded ${tex.image.width}x${tex.image.height}` );
+			log.debug( `STBN vec2 atlas ${fmt.px( tex.image.width, tex.image.height )}` );
 
 		} );
 
@@ -548,7 +551,7 @@ export class PathTracerStage extends RenderStage {
 
 			this.directionalLightsData = mockMaterial.uniforms.directionalLights.value;
 
-			console.log( `Sun added as directional light (intensity: ${scaledSunIntensity.toFixed( 2 )})` );
+			log.debug( `sun added as directional light · intensity ${scaledSunIntensity.toFixed( 2 )}` );
 
 		}
 
@@ -716,7 +719,7 @@ export class PathTracerStage extends RenderStage {
 
 		this.triangleCount = triangleCount;
 
-		console.log( `PathTracer: ${this.triangleCount} triangles (storage buffer)` );
+		log.debug( `${fmt.n( this.triangleCount )} triangles (storage buffer)` );
 
 	}
 
@@ -744,7 +747,7 @@ export class PathTracerStage extends RenderStage {
 		}
 
 		this.bvhNodeCount = Math.floor( vec4Count / BVH_VEC4_PER_NODE );
-		console.log( `PathTracer: ${this.bvhNodeCount} BVH nodes (storage buffer)` );
+		log.debug( `${fmt.n( this.bvhNodeCount )} BVH nodes (storage buffer)` );
 
 	}
 
@@ -983,14 +986,14 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! this.triangleStorageNode ) {
 
-			console.error( 'PathTracer: Triangle data required' );
+			log.error( 'triangle data required' );
 			return;
 
 		}
 
 		if ( ! this.bvhStorageNode ) {
 
-			console.error( 'PathTracer: BVH data required' );
+			log.error( 'BVH data required' );
 			return;
 
 		}
@@ -1348,7 +1351,7 @@ export class PathTracerStage extends RenderStage {
 		this.emissiveTriangleCount.value = count;
 		this.emissiveTotalPower.value = totalPower;
 		this._rebuildLightBuffer();
-		console.log( `PathTracer: ${count} emissive triangles, totalPower=${totalPower.toFixed( 4 )} (storage buffer)` );
+		log.debug( `${fmt.n( count )} emissive triangles · totalPower ${totalPower.toFixed( 4 )} (storage buffer)` );
 
 	}
 
@@ -1359,7 +1362,7 @@ export class PathTracerStage extends RenderStage {
 		this._lbvhDataCache = nodeData;
 		this.lightBVHNodeCount.value = nodeCount;
 		this._rebuildLightBuffer();
-		console.log( `PathTracer: Light BVH ${nodeCount} nodes` );
+		log.debug( `light BVH ${fmt.n( nodeCount )} nodes` );
 
 	}
 
@@ -1402,7 +1405,7 @@ export class PathTracerStage extends RenderStage {
 
 		try {
 
-			console.log( 'PathTracer: Starting material rebuild...' );
+			log.debug( 'material rebuild started' );
 
 			await this.sdfs.rebuildMaterials( scene );
 			this.updateSceneUniforms();
@@ -1410,20 +1413,20 @@ export class PathTracerStage extends RenderStage {
 			this.updateLights();
 			this.reset();
 
-			console.log( 'PathTracer materials rebuilt successfully' );
+			log.debug( 'material rebuild complete' );
 
 		} catch ( error ) {
 
-			console.error( 'Error rebuilding PathTracer materials:', error );
+			log.error( 'material rebuild failed:', error );
 
 			try {
 
-				console.warn( 'Attempting recovery by resetting path tracer...' );
+				log.warn( 'attempting recovery by resetting the path tracer' );
 				this.reset();
 
 			} catch ( recoveryError ) {
 
-				console.error( 'Recovery failed:', recoveryError );
+				log.error( 'recovery failed:', recoveryError );
 
 			}
 

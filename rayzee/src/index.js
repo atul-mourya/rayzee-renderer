@@ -17,6 +17,9 @@ export { EngineEvents } from './EngineEvents.js';
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 
+// Logging — leveled/namespaced console output shared with the workers
+export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
+
 // Configuration defaults and presets
 export {
 	ENGINE_DEFAULTS,

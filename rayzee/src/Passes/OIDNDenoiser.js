@@ -1,4 +1,7 @@
 import { EventDispatcher, ACESFilmicToneMapping } from 'three';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'oidn' );
 
 let _initUNetFromURL = null;
 let _tfEngine = null;
@@ -36,7 +39,7 @@ function removeOidnTfjsBackend() {
 
 	} catch ( e ) {
 
-		console.warn( 'OIDNDenoiser: failed to clear cached TFJS backend', e );
+		log.warn( 'failed to clear cached TFJS backend', e );
 
 	}
 
@@ -149,7 +152,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Initialize asynchronously
 		this._initialize().catch( error => {
 
-			console.error( 'Failed to initialize OIDNDenoiser:', error );
+			log.error( 'init failed:', error );
 			this.dispatchEvent( { type: 'error', error } );
 
 		} );
@@ -249,11 +252,11 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			this.currentTZAUrl = tzaUrl;
 			this.dispatchEvent( { type: 'loaded' } );
-			console.log( 'UNet denoiser loaded successfully:', tzaUrl );
+			log.debug( 'UNet weights loaded:', tzaUrl );
 
 		} catch ( error ) {
 
-			console.error( 'Failed to load UNet denoiser:', error );
+			log.error( 'UNet weights failed to load:', error );
 			this.dispatchEvent( { type: 'error', error: new Error( `Denoiser loading failed: ${error.message}` ) } );
 
 		} finally {
@@ -340,7 +343,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			this.input.style.opacity = '0';
 
 			const duration = performance.now() - startTime;
-			console.log( `Denoising completed in ${duration.toFixed( 1 )}ms (quality: ${this.quality})` );
+			log.debug( `denoise complete in ${fmt.ms( duration )} · quality ${this.quality}` );
 
 		}
 
@@ -367,11 +370,11 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			if ( error.name === 'AbortError' ) {
 
-				console.log( 'Denoising was aborted' );
+				log.debug( 'denoise aborted' );
 
 			} else {
 
-				console.error( 'Denoising error:', error );
+				log.error( 'denoise error:', error );
 
 			}
 
@@ -408,7 +411,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		if ( ! this.getGPUTextures ) {
 
-			console.warn( 'OIDNDenoiser: GPU mode enabled but getGPUTextures not provided' );
+			log.warn( 'GPU mode enabled but getGPUTextures not provided' );
 			return false;
 
 		}
@@ -416,7 +419,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		const textures = this.getGPUTextures();
 		if ( ! textures?.color ) {
 
-			console.warn( 'OIDNDenoiser: GPU textures not ready yet' );
+			log.warn( 'GPU textures not ready yet' );
 			return false;
 
 		}
@@ -424,7 +427,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		const device = this.gpuDevice;
 		if ( ! device ) {
 
-			console.warn( 'OIDNDenoiser: gpuDevice not available' );
+			log.warn( 'gpuDevice not available' );
 			return false;
 
 		}
@@ -828,7 +831,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		const device = this.gpuDevice;
 		if ( ! device ) {
 
-			console.error( 'OIDNDenoiser: gpuDevice not available for output readback' );
+			log.error( 'gpuDevice not available for output readback' );
 			return;
 
 		}
@@ -909,7 +912,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.state.isDenoising = false;
 		this.dispatchEvent( { type: 'end' } );
 
-		console.log( 'Denoising aborted' );
+		log.debug( 'denoise aborted' );
 
 	}
 
@@ -927,7 +930,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Reinitialize denoiser if tile size changes relative to image size
 		this._setupUNetDenoiser().catch( error => {
 
-			console.error( 'Failed to reinitialize denoiser after size change:', error );
+			log.error( 'reinitialize after size change failed:', error );
 
 		} );
 
@@ -975,7 +978,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Remove all event listeners
 		this.removeAllListeners?.();
 
-		console.log( 'OIDNDenoiser disposed' );
+		log.debug( 'disposed' );
 
 	}
 

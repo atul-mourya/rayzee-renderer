@@ -1,4 +1,7 @@
 import { BVHBuilder } from '../BVHBuilder.js';
+import { createLogger, fmt, applyWorkerLogLevel } from '../../utils/Logger.js';
+
+const log = createLogger( 'bvh' );
 
 const FPT = 32; // FLOATS_PER_TRIANGLE
 
@@ -8,6 +11,9 @@ self.onmessage = function ( e ) {
 
 	const data = e.data;
 	const type = data.type;
+
+	// Workers get their own globals, so the main thread forwards its level per message.
+	applyWorkerLogLevel( data.logLevel );
 
 	if ( type === 'buildPhase1' ) {
 
@@ -100,7 +106,7 @@ function handlePhase1( data ) {
 		const flattenTime = performance.now() - flattenStart;
 
 		const totalTime = performance.now() - startTime;
-		console.log( `[BVHWorker] Phase 1: ${Math.round( totalTime )}ms (init: ${Math.round( builder.splitStats.initTime )}ms, morton: ${Math.round( builder.splitStats.mortonSortTime )}ms, SAH: ${Math.round( builder.splitStats.sahBuildTime )}ms, flatten: ${Math.round( flattenTime )}ms), ${builder.frontierTasks.length} frontier tasks` );
+		log.debug( `phase 1 ${fmt.ms( totalTime )} (init ${fmt.ms( builder.splitStats.initTime )} · morton ${fmt.ms( builder.splitStats.mortonSortTime )} · SAH ${fmt.ms( builder.splitStats.sahBuildTime )} · flatten ${fmt.ms( flattenTime )}) · ${builder.frontierTasks.length} frontier tasks` );
 
 		self.postMessage( {
 			type: 'phase1Result',
@@ -113,7 +119,7 @@ function handlePhase1( data ) {
 
 	} catch ( error ) {
 
-		console.error( '[BVHWorker] Phase 1 error:', error );
+		log.error( 'phase 1 failed:', error );
 		self.postMessage( { type: 'error', error: error.message } );
 
 	}
@@ -162,7 +168,7 @@ function handleAssemble( data ) {
 		}
 
 		const totalTime = performance.now() - startTime;
-		console.log( `[BVHWorker] Phase 3 (assemble + reorder): ${Math.round( totalTime )}ms (${( bvhData.byteLength / 1024 / 1024 ).toFixed( 1 )}MB BVH)` );
+		log.debug( `phase 3 assemble + reorder ${fmt.ms( totalTime )} (${fmt.mb( bvhData.byteLength )} BVH)` );
 
 		self.postMessage( {
 			type: 'assembleResult',
@@ -173,7 +179,7 @@ function handleAssemble( data ) {
 
 	} catch ( error ) {
 
-		console.error( '[BVHWorker] Assembly error:', error );
+		log.error( 'assembly failed:', error );
 		self.postMessage( { type: 'error', error: error.message } );
 
 	}
@@ -225,7 +231,7 @@ function handleFullBuild( data ) {
 		const flattenStart = performance.now();
 		const bvhData = builder.flattenBVH( bvhRoot );
 		const flattenTime = performance.now() - flattenStart;
-		console.log( `[BVHWorker] Flatten BVH: ${Math.round( flattenTime )}ms (${( bvhData.byteLength / 1024 / 1024 ).toFixed( 1 )}MB)` );
+		log.debug( `flatten ${fmt.ms( flattenTime )} (${fmt.mb( bvhData.byteLength )})` );
 
 		const originalToBvh = builder.originalToBvhMap || null;
 
@@ -261,7 +267,7 @@ function handleFullBuild( data ) {
 
 	} catch ( error ) {
 
-		console.error( '[BVHWorker] Error:', error );
+		log.error( 'build failed:', error );
 		self.postMessage( { error: error.message } );
 
 	}

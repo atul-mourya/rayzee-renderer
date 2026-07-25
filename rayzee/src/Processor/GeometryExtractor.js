@@ -1,5 +1,8 @@
 import { Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
 import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
+
+const log = createLogger( 'geometry' );
 
 const MAX_TEXTURES_LIMIT = 128;
 
@@ -169,7 +172,8 @@ export class GeometryExtractor {
 			if ( material.depthWrite === false ) {
 
 				material.depthWrite = true;
-				console.warn( "Depth write is disabled in material, enabling it for rastered rendering" );
+				// Fires per offending material; the fix is identical every time, so warn once.
+				warnOnce( log, 'depthWrite', 'material had depthWrite disabled — enabled for rastered rendering' );
 
 			}
 
@@ -758,10 +762,12 @@ export class GeometryExtractor {
 	logStats() {
 
 		const usedBytes = this.currentTriangleIndex * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4;
-		console.log( "materials:", this.materials.length );
-		console.log( "triangles:", this.currentTriangleIndex );
-		console.log( "triangle data size (MB):", ( usedBytes / ( 1024 * 1024 ) ).toFixed( 2 ) );
-		console.log( "maps:", this.maps.length );
+
+		log.debug( fmt.list( [
+			`${fmt.count( this.currentTriangleIndex, 'tri' )} (${fmt.mb( usedBytes )})`,
+			fmt.count( this.materials.length, 'material' ),
+			fmt.count( this.maps.length, 'map' ),
+		] ) );
 
 	}
 

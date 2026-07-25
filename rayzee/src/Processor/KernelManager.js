@@ -8,6 +8,10 @@
  * dispatch interface that wraps `renderer.compute(node)`.
  */
 
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'wavefront' );
+
 /** Default workgroup sizes per kernel type */
 const WORKGROUP_SIZES = {
 	generate: [ 16, 16, 1 ], // 2D screen-space
@@ -62,12 +66,52 @@ export class KernelManager {
 		 */
 		this.profile = new Map();
 
+		/**
+		 * First-dispatch (shader compilation) timings, buffered so a build reports
+		 * one line instead of one per kernel. See _recordFirstDispatch.
+		 * @type {Array<{name: string, ms: number}>}
+		 */
+		this._firstDispatches = [];
+		this._firstDispatchFlush = null;
+
 		// Initialize workgroup sizes from defaults
 		for ( const [ name, wgSize ] of Object.entries( WORKGROUP_SIZES ) ) {
 
 			this.workgroupSizes.set( name, wgSize );
 
 		}
+
+	}
+
+	/**
+	 * Buffers a kernel's first-dispatch cost and flushes the batch on the next macrotask,
+	 * so the kernels compiled during one frame collapse into a single summary line.
+	 */
+	_recordFirstDispatch( name, ms ) {
+
+		this._firstDispatches.push( { name, ms } );
+
+		clearTimeout( this._firstDispatchFlush );
+		this._firstDispatchFlush = setTimeout( () => this._flushFirstDispatches(), 0 );
+
+	}
+
+	_flushFirstDispatches() {
+
+		const batch = this._firstDispatches;
+		this._firstDispatches = [];
+		this._firstDispatchFlush = null;
+		if ( batch.length === 0 ) return;
+
+		const total = batch.reduce( ( sum, k ) => sum + k.ms, 0 );
+		const slowest = [ ...batch ].sort( ( a, b ) => b.ms - a.ms );
+
+		log.info( fmt.list( [
+			`${batch.length} kernel${batch.length === 1 ? '' : 's'} compiled in ${fmt.ms( total )}`,
+			`slowest ${slowest.slice( 0, 2 ).map( k => `${k.name} ${fmt.ms( k.ms )}` ).join( ', ' )}`,
+		] ) );
+
+		batch.forEach( k => log.debug( `kernel '${k.name}' first dispatch (incl. compilation) ${fmt.ms( k.ms )}` ) );
 
 	}
 
@@ -106,7 +150,7 @@ export class KernelManager {
 			const t1 = performance.now();
 			timingEntry.compiledOnce = true;
 			timingEntry.lastDispatchMs = t1 - t0;
-			console.log( `[Wavefront] Kernel '${name}' first dispatch (includes compilation): ${( t1 - t0 ).toFixed( 1 )}ms` );
+			this._recordFirstDispatch( name, t1 - t0 );
 
 		} else if ( this.profiling ) {
 
@@ -266,6 +310,9 @@ export class KernelManager {
 
 	dispose() {
 
+		clearTimeout( this._firstDispatchFlush );
+		this._firstDispatchFlush = null;
+		this._firstDispatches = [];
 		this.kernels.clear();
 		this.timing.clear();
 		this.profile.clear();

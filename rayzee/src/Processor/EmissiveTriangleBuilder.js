@@ -9,6 +9,9 @@
 import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
 import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'emissive' );
 
 export class EmissiveTriangleBuilder {
 
@@ -40,8 +43,6 @@ export class EmissiveTriangleBuilder {
 	 * @param {number} triangleCount - Total number of triangles
 	 */
 	extractEmissiveTriangles( triangleData, materials, triangleCount ) {
-
-		console.log( '[EmissiveTriangleBuilder] Extracting emissive triangles...' );
 
 		this.emissiveTriangles = [];
 		this.totalEmissivePower = 0;
@@ -135,8 +136,11 @@ export class EmissiveTriangleBuilder {
 
 		this.emissiveCount = this.emissiveTriangles.length;
 
-		console.log( `[EmissiveTriangleBuilder] Found ${this.emissiveCount} emissive triangles (${( this.emissiveCount / triangleCount * 100 ).toFixed( 2 )}%)` );
-		console.log( `[EmissiveTriangleBuilder] Total emissive power: ${this.totalEmissivePower.toFixed( 2 )}` );
+		if ( this.emissiveCount > 0 ) {
+
+			log.debug( `${fmt.n( this.emissiveCount )} emissive tris (${( this.emissiveCount / triangleCount * 100 ).toFixed( 2 )}%) · total power ${this.totalEmissivePower.toFixed( 2 )}` );
+
+		}
 
 		// Build data arrays
 		this._buildDataArrays();
@@ -333,7 +337,7 @@ export class EmissiveTriangleBuilder {
 		texture.minFilter = NearestFilter;
 		texture.magFilter = NearestFilter;
 
-		console.log( `[EmissiveTriangleBuilder] Created ${width}x${height} emissive texture (${this.emissiveCount} emissives)` );
+		log.debug( `emissive texture ${fmt.px( width, height )} · ${fmt.n( this.emissiveCount )} entries` );
 
 		return texture;
 
@@ -375,7 +379,7 @@ export class EmissiveTriangleBuilder {
 
 		}
 
-		console.log( `[EmissiveTriangleBuilder] Created emissive raw data: ${this.emissiveCount} entries (${data.byteLength} bytes)` );
+		log.debug( `emissive raw data ${fmt.n( this.emissiveCount )} entries (${fmt.mb( data.byteLength )})` );
 
 		return data;
 
@@ -611,7 +615,7 @@ export class EmissiveTriangleBuilder {
 		}
 
 		this.emissiveTriangleData = data;
-		console.log( `[EmissiveTriangleBuilder] Rebuilt sorted emissive data: ${n} entries` );
+		log.debug( `rebuilt sorted emissive data · ${fmt.n( n )} entries` );
 
 	}
 

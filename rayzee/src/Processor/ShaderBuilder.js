@@ -11,6 +11,9 @@ import { texture } from 'three/tsl';
 import { LinearFilter, DataArrayTexture } from 'three';
 import { setAlphaShadowsUniform } from '../TSL/LightsDirect.js';
 import { setGoboMapsTexture, setIESProfilesTexture } from '../TSL/LightsCore.js';
+import { createLogger } from '../utils/Logger.js';
+
+const log = createLogger( 'shader' );
 
 export class ShaderBuilder {
 
@@ -43,7 +46,7 @@ export class ShaderBuilder {
 		if ( stage.goboMaps && nodes.goboMapsTex ) nodes.goboMapsTex.value = stage.goboMaps;
 		if ( stage.iesProfiles && nodes.iesProfilesTex ) nodes.iesProfilesTex.value = stage.iesProfiles;
 
-		console.log( 'ShaderBuilder: Scene textures updated in-place' );
+		log.debug( 'scene textures updated in-place' );
 
 	}
 

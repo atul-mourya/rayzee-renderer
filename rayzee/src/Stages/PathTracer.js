@@ -24,9 +24,12 @@ import {
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
 } from '../TSL/SortGlobalKernels.js';
 import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { createLogger, fmt } from '../utils/Logger.js';
 import {
 	Fn, uint, int, atomicStore, atomicLoad, atomicAdd, instanceIndex, If, Return,
 } from 'three/tsl';
+
+const log = createLogger( 'wavefront' );
 
 export class PathTracer extends PathTracerStage {
 
@@ -117,7 +120,7 @@ export class PathTracer extends PathTracerStage {
 		this.vramTracker = new VRAMTracker( this.renderer );
 		this._registerVRAMProviders();
 
-		console.log( 'PathTracer: initialized (wavefront)' );
+		log.debug( 'initialized (wavefront)' );
 
 	}
 
@@ -596,7 +599,7 @@ export class PathTracer extends PathTracerStage {
 
 		} ).catch( ( e ) => {
 
-			console.warn( 'Wavefront bounceCounts readback failed:', e );
+			log.warn( 'bounceCounts readback failed:', e );
 			this._readbackPending = false;
 
 		} );
@@ -1193,6 +1196,9 @@ export class PathTracer extends PathTracerStage {
 			numSpotLights: this.numSpotLights,
 			maxBounceCount: this.maxBounces,
 			maxSubsurfaceSteps: this.maxSubsurfaceSteps,
+			maxDiffuseBounces: this.maxDiffuseBounces,
+			maxGlossyBounces: this.maxGlossyBounces,
+			maxTransparentBounces: this.maxTransparentBounces,
 			transparentBackground: this.transparentBackground,
 			backgroundIntensity: this.backgroundIntensity,
 			backgroundColor: this.backgroundColor,
@@ -1366,7 +1372,15 @@ export class PathTracer extends PathTracerStage {
 		);
 
 		this._wavefrontReady = true;
-		console.log( `PathTracer: wavefront kernels built — budget B=${B} paths, ${w}×${h} in ${this._numChunks} chunk(s) of ≤${this._chunkRows} rows` );
+
+		const bufferBytes = ( this._packedBuffers?.totalBytes ?? 0 ) + ( this._queueManager?.totalBytes ?? 0 );
+
+		log.info( fmt.list( [
+			fmt.px( w, h ),
+			`${fmt.mb( bufferBytes )} wavefront buffers`,
+			`budget ${fmt.n( B )} paths`,
+			this._numChunks > 1 ? `${this._numChunks} chunks of ≤${this._chunkRows} rows` : null,
+		] ) );
 
 	}
 

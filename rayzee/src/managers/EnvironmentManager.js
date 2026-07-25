@@ -13,6 +13,9 @@ import {
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
 import { ProceduralSky } from '../Processor/ProceduralSky.js';
 import { SimpleSky } from '../Processor/SimpleSky.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'env' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 
 export class EnvironmentManager {
@@ -231,8 +234,6 @@ export class EnvironmentManager {
 		this.environmentTexture = envTex;
 		this.envTexSize.set( envTex.image.width, envTex.image.height );
 
-		console.log( `EnvironmentManager: Environment map ${envTex.image.width}x${envTex.image.height}` );
-
 	}
 
 	/**
@@ -317,11 +318,14 @@ export class EnvironmentManager {
 
 			}
 
-			console.log( `Environment CDF built in ${this.cdfBuildTime.toFixed( 2 )}ms (worker: ${useWorker})` );
+			log.info( fmt.list( [
+				fmt.px( this.envTexSize.x, this.envTexSize.y ),
+				`CDF ${fmt.ms( this.cdfBuildTime )}${useWorker ? '' : ' (main thread)'}`,
+			] ) );
 
 		} catch ( error ) {
 
-			console.error( 'Error building environment CDF:', error );
+			log.error( 'CDF build failed:', error );
 			this.uniforms.set( 'useEnvMapIS', 0 );
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
@@ -437,7 +441,7 @@ export class EnvironmentManager {
 
 		} catch ( error ) {
 
-			console.error( 'Error generating gradient sky:', error );
+			log.error( 'gradient sky generation failed:', error );
 
 		}
 
@@ -467,7 +471,7 @@ export class EnvironmentManager {
 
 		} catch ( error ) {
 
-			console.error( 'Error generating solid color sky:', error );
+			log.error( 'solid color sky generation failed:', error );
 
 		}
 
@@ -503,11 +507,11 @@ export class EnvironmentManager {
 			this.uniforms.set( 'sunAngularSize', 0.0087 );
 			this.uniforms.set( 'hasSun', 1 );
 
-			console.log( `Sun parameters synced: dir=${this.envParams.skySunDirection.toArray().map( v => v.toFixed( 2 ) ).join( ',' )}` );
+			log.debug( `sun synced · dir ${this.envParams.skySunDirection.toArray().map( v => v.toFixed( 2 ) ).join( ',' )}` );
 
 		} catch ( error ) {
 
-			console.error( 'Error generating procedural sky:', error );
+			log.error( 'procedural sky generation failed:', error );
 
 		}
 

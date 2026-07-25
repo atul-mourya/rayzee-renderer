@@ -9,11 +9,14 @@ import { GeometryExtractor } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
 import { updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
+import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex } from '../EngineDefaults.js';
 import { fetchAsWorker } from './Workers/fetchAsWorker.js';
 import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
 import BVH_REFIT_WORKER_URL from './Workers/BVHRefitWorker.js?worker&url';
+
+const log = createLogger( 'scene' );
 
 /**
  * SceneProcessor - Processes scene geometry into GPU-ready data:
@@ -170,11 +173,9 @@ export class SceneProcessor {
      */
 	_log( message, data ) {
 
-		if ( this.config.verbose ) {
-
-			console.log( `[SceneProcessor] ${message}`, data || '' );
-
-		}
+		// Visibility is the log level's job now; config.verbose no longer gates this.
+		if ( data !== undefined ) log.debug( message, data );
+		else log.debug( message );
 
 	}
 
@@ -194,7 +195,7 @@ export class SceneProcessor {
 		this.isProcessing = true;
 		this.processingStage = 'init';
 
-		const timer = new BuildTimer( `SceneProcessor (${object.name || 'scene'})` );
+		const timer = new BuildTimer( object.name ?? '', { namespace: 'scene' } );
 
 		try {
 
@@ -273,7 +274,7 @@ export class SceneProcessor {
 		} catch ( error ) {
 
 			this.processingStage = 'error';
-			console.error( '[SceneProcessor] Processing error:', error );
+			log.error( 'processing failed:', error );
 			updateLoading( {
 				status: `Error: ${error.message}`,
 				progress: 100
@@ -357,7 +358,7 @@ export class SceneProcessor {
 
 		} catch ( error ) {
 
-			console.error( '[SceneProcessor] Geometry extraction error:', error );
+			log.error( 'geometry extraction failed:', error );
 			updateLoading( {
 				status: `Extraction error: ${error.message}`,
 				progress: 25
@@ -449,6 +450,7 @@ export class SceneProcessor {
 				numBins: this.bvhBuilder.numBins,
 				maxBins: this.bvhBuilder.maxBins,
 				minBins: this.bvhBuilder.minBins,
+				logLevel: workerLogLevel(),
 			};
 
 			const totalTasks = poolTasks.length + parallelTasks.length;
@@ -487,12 +489,26 @@ export class SceneProcessor {
 				Promise.all( parallelPromises )
 			] );
 
-			// Store all results
+			// Store all results, summing per-mesh split stats for one aggregate BVH line
+			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0, treeletsImproved: 0, treeletsProcessed: 0 };
+
 			for ( const { m, range, result } of [ ...poolResults, ...parallelResults ] ) {
 
 				if ( result.reorderedTriangles ) {
 
 					this.triangleData.set( result.reorderedTriangles, range.start * FPT );
+
+				}
+
+				const st = result.splitStats;
+				if ( st ) {
+
+					blasStats.sah += st.sahSplits ?? 0;
+					blasStats.objMed += st.objectMedianSplits ?? 0;
+					blasStats.spatMed += st.spatialMedianSplits ?? 0;
+					blasStats.failed += st.failedSplits ?? 0;
+					blasStats.treeletsImproved += st.treeletsImproved ?? 0;
+					blasStats.treeletsProcessed += st.treeletsProcessed ?? 0;
 
 				}
 
@@ -552,7 +568,15 @@ export class SceneProcessor {
 			this._disposeRefitWorker();
 
 			const duration = performance.now() - startTime;
-			this._log( `BVH complete: ${validEntries.length} mesh(es), ${this.bvhData.length / 16} nodes (${duration.toFixed( 2 )}ms)` );
+			// One aggregate line for the whole two-level build; the workers' per-mesh
+			// detail sits a level below at `debug`.
+			log.debug( fmt.list( [
+				`${fmt.n( validEntries.length )} BLASes + TLAS`,
+				`${fmt.n( this.bvhData.length / 16 )} nodes`,
+				`SAH ${fmt.n( blasStats.sah )} · objMed ${blasStats.objMed} · spatMed ${blasStats.spatMed} · failed ${blasStats.failed}`,
+				blasStats.treeletsProcessed ? `treelets ${blasStats.treeletsImproved}/${blasStats.treeletsProcessed} improved` : null,
+				fmt.ms( duration ),
+			] ) );
 
 			updateLoading( {
 				status: "BVH construction complete",
@@ -561,7 +585,7 @@ export class SceneProcessor {
 
 		} catch ( error ) {
 
-			console.error( '[SceneProcessor] BVH building error:', error );
+			log.error( 'BVH build failed:', error );
 			updateLoading( {
 				status: `BVH error: ${error.message}`,
 				progress: 75
@@ -660,6 +684,7 @@ export class SceneProcessor {
 					numBins: opts.numBins,
 					maxBins: opts.maxBins,
 					minBins: opts.minBins,
+					logLevel: opts.logLevel,
 				}, [ meshTriData.buffer ] );
 
 			};
@@ -686,6 +711,7 @@ export class SceneProcessor {
 						bvhData: data.bvhData,
 						reorderedTriangles: data.triangles || null,
 						originalToBvh: data.originalToBvh || null,
+						splitStats: data.treeletStats || null,
 					}
 				} );
 
@@ -835,7 +861,7 @@ export class SceneProcessor {
 
 		} catch ( error ) {
 
-			console.error( '[SceneProcessor] Texture creation error:', error );
+			log.error( 'texture creation failed:', error );
 			throw error;
 
 		}
@@ -877,7 +903,7 @@ export class SceneProcessor {
 			if ( seen !== undefined ) return packTextureIndex( bucket, seen );
 			if ( lists[ bucket ].length >= STRIDE ) {
 
-				console.warn( `[SceneProcessor] Texture bucket ${bucket} full (${STRIDE}); dropping a map.` );
+				log.warn( `texture bucket ${bucket} full (${STRIDE}); dropping a map` );
 				return - 1;
 
 			}
@@ -1089,7 +1115,7 @@ export class SceneProcessor {
 
 					} catch ( error ) {
 
-						console.warn( `[SceneProcessor] Error disposing ${prop}:`, error );
+						log.warn( `error disposing ${prop}:`, error );
 
 					}
 
@@ -1157,7 +1183,7 @@ export class SceneProcessor {
 
 		} catch ( error ) {
 
-			console.error( '[SceneProcessor] Material rebuild error:', error );
+			log.error( 'material rebuild failed:', error );
 			throw error;
 
 		} finally {
@@ -1492,7 +1518,7 @@ export class SceneProcessor {
 
 		if ( ! this.triangleData ) {
 
-			console.error( 'SceneProcessor: Failed to get triangle data' );
+			log.error( 'failed to get triangle data' );
 			return false;
 
 		}
@@ -1501,7 +1527,7 @@ export class SceneProcessor {
 
 		if ( ! this.bvhData ) {
 
-			console.error( 'SceneProcessor: Failed to get BVH data' );
+			log.error( 'failed to get BVH data' );
 			return false;
 
 		}
@@ -1515,7 +1541,7 @@ export class SceneProcessor {
 
 		} else {
 
-			console.warn( 'SceneProcessor: No material data, using defaults' );
+			log.warn( 'no material data, using defaults' );
 
 		}
 
@@ -1862,7 +1888,7 @@ export class SceneProcessor {
 
 				if ( data.error ) {
 
-					console.error( `Background BLAS rebuild error (mesh ${meshIdx}):`, data.error );
+					log.error( `background BLAS rebuild failed (mesh ${meshIdx}):`, data.error );
 					return;
 
 				}
@@ -1876,7 +1902,7 @@ export class SceneProcessor {
 
 			worker.onerror = ( err ) => {
 
-				console.error( `Background BLAS rebuild worker error (mesh ${meshIdx}):`, err );
+				log.error( `background BLAS rebuild worker failed (mesh ${meshIdx}):`, err );
 				worker.terminate();
 				this._pendingRebuilds.delete( meshIdx );
 
@@ -1948,7 +1974,7 @@ export class SceneProcessor {
 		// for the same triangle set. If it differs, the buffer layout is invalid.
 		if ( newNodeCount !== entry.blasNodeCount ) {
 
-			console.warn( `Background rebuild: node count mismatch for mesh ${meshIdx} (${newNodeCount} vs ${entry.blasNodeCount}), skipping swap` );
+			log.warn( `background rebuild node count mismatch for mesh ${meshIdx} (${newNodeCount} vs ${entry.blasNodeCount}), skipping swap` );
 			return;
 
 		}

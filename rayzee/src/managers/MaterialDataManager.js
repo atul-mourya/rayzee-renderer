@@ -10,6 +10,9 @@
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
 import { MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T } from '../EngineDefaults.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'material' );
 
 const PIXELS_PER_MATERIAL = M.SLOTS_PER_MATERIAL;
 // Per-triangle float offsets used by _patchTriangleSideForMaterial / _patchTriangleBlockerForMaterial.
@@ -84,7 +87,7 @@ export class MaterialDataManager {
 		}
 
 		this.materialCount = Math.floor( vec4Count / PIXELS_PER_MATERIAL );
-		console.log( `MaterialDataManager: ${this.materialCount} materials (storage buffer)` );
+		log.debug( `${fmt.n( this.materialCount )} materials (storage buffer)` );
 
 	}
 
@@ -186,7 +189,7 @@ export class MaterialDataManager {
 
 		if ( ! this.materialStorageAttr ) {
 
-			console.warn( 'Material storage buffer not available' );
+			log.warn( 'material storage buffer not available' );
 			return;
 
 		}
@@ -364,7 +367,7 @@ export class MaterialDataManager {
 
 				break;
 			default:
-				console.warn( `Unknown material property: ${property}` );
+				log.warn( `unknown material property: ${property}` );
 				return;
 
 		}
@@ -403,7 +406,7 @@ export class MaterialDataManager {
 
 		if ( ! this.materialStorageAttr ) {
 
-			console.warn( 'Material storage buffer not available' );
+			log.warn( 'material storage buffer not available' );
 			return;
 
 		}
@@ -630,7 +633,7 @@ export class MaterialDataManager {
 
 		if ( ! this.materialStorageAttr ) {
 
-			console.warn( 'Material storage buffer not available' );
+			log.warn( 'material storage buffer not available' );
 			return;
 
 		}
@@ -651,7 +654,7 @@ export class MaterialDataManager {
 		const offset = transformOffsets[ textureName ];
 		if ( offset === undefined ) {
 
-			console.warn( `Unknown texture name for transform update: ${textureName}` );
+			log.warn( `unknown texture name for transform update: ${textureName}` );
 			return;
 
 		}
@@ -683,7 +686,7 @@ export class MaterialDataManager {
 
 		if ( ! this.materialStorageAttr?.array ) {
 
-			console.warn( '[MaterialDataManager] Material storage buffer not available for feature scanning' );
+			log.warn( 'material storage buffer not available for feature scanning' );
 			return false;
 
 		}
@@ -763,7 +766,7 @@ export class MaterialDataManager {
 
 		if ( ! features ) {
 
-			console.warn( '[MaterialDataManager] No sceneFeatures detected, skipping define injection' );
+			log.warn( 'no sceneFeatures detected, skipping define injection' );
 			return;
 
 		}
@@ -780,7 +783,7 @@ export class MaterialDataManager {
 		// For TSL, we can't inject defines into the shader at runtime
 		// Instead, we would need to conditionally generate the shader
 		// For now, log the features for debugging
-		console.log( '[MaterialDataManager] Material features:', features );
+		log.debug( 'material features:', features );
 
 		this.compiledFeatures = featuresJSON;
 

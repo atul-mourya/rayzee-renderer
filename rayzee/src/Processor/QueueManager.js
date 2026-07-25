@@ -5,6 +5,9 @@
 import { storage } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { freeStorageAttribute } from './PackedRayBuffer.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'gpu' );
 
 /** Counter indices — must match ResetCounters kernel */
 export const COUNTER = {
@@ -109,15 +112,10 @@ export class QueueManager {
 
 		this.pingPong = 0;
 
-		const totalBytes = (
-			COUNTER.COUNT * 4 +
-			capacity * 4 * 3
-		);
+		// Kept for the [gpu] startup summary in PathTracer._buildWavefrontKernels.
+		this.totalBytes = COUNTER.COUNT * 4 + capacity * 4 * 3;
 
-		console.log(
-			`QueueManager: Allocated capacity=${capacity}, ` +
-			`total=${( totalBytes / ( 1024 * 1024 ) ).toFixed( 1 )} MB`
-		);
+		log.debug( `queues capacity ${fmt.n( capacity )} · ${fmt.mb( this.totalBytes )}` );
 
 	}
 

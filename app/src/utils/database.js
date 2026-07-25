@@ -1,4 +1,8 @@
 // database.js
+import { createLogger } from 'rayzee';
+
+const log = createLogger( 'db' );
+
 const DB_NAME = 'RenderResultsDB';
 const DB_VERSION = 2; // Incremented to support AI image variants
 const STORE_NAME = 'renders';
@@ -20,7 +24,7 @@ export const initDatabase = () => {
 			// Check if IndexedDB is supported
 			if ( ! window.indexedDB ) {
 
-				console.error( "Your browser doesn't support IndexedDB" );
+				log.error( "Your browser doesn't support IndexedDB" );
 				reject( "IndexedDB not supported" );
 				return;
 
@@ -30,7 +34,7 @@ export const initDatabase = () => {
 
 			openRequest.onupgradeneeded = ( event ) => {
 
-				console.log( "Database upgrade needed, creating schema" );
+				log.debug( "Database upgrade needed, creating schema" );
 				const db = event.target.result;
 
 				// Create object store if it doesn't exist
@@ -43,7 +47,7 @@ export const initDatabase = () => {
 
 					// Create indices
 					objectStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
-					console.log( "Created object store and indices" );
+					log.debug( "Created object store and indices" );
 
 				}
 
@@ -51,24 +55,24 @@ export const initDatabase = () => {
 
 			openRequest.onsuccess = ( event ) => {
 
-				console.log( "Database opened successfully" );
+				log.debug( "Database opened successfully" );
 				dbInstance = event.target.result;
 
 				// Check if the expected store exists
 				if ( ! dbInstance.objectStoreNames.contains( STORE_NAME ) ) {
 
-					console.warn( "Database opened but the renders store is missing. Recreating the database..." );
+					log.warn( "Database opened but the renders store is missing. Recreating the database..." );
 					dbInstance.close();
 
 					// Recreate the database with a new version to force schema update
 					const newVersion = DB_VERSION + 1;
-					console.log( `Reopening database with new version ${newVersion}` );
+					log.debug( `Reopening database with new version ${newVersion}` );
 
 					const reopenRequest = indexedDB.open( DB_NAME, newVersion );
 
 					reopenRequest.onupgradeneeded = ( event ) => {
 
-						console.log( "Recreating database schema" );
+						log.debug( "Recreating database schema" );
 						const db = event.target.result;
 
 						// Create the store
@@ -79,13 +83,13 @@ export const initDatabase = () => {
 
 						// Create indices
 						objectStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
-						console.log( "Recreated object store and indices" );
+						log.debug( "Recreated object store and indices" );
 
 					};
 
 					reopenRequest.onsuccess = ( event ) => {
 
-						console.log( "Database reopened successfully" );
+						log.debug( "Database reopened successfully" );
 						dbInstance = event.target.result;
 						resolve( dbInstance );
 
@@ -93,7 +97,7 @@ export const initDatabase = () => {
 
 					reopenRequest.onerror = ( event ) => {
 
-						console.error( "Error reopening database:", event.target.error );
+						log.error( "Error reopening database:", event.target.error );
 						reject( event.target.error );
 
 					};
@@ -108,7 +112,7 @@ export const initDatabase = () => {
 
 			openRequest.onerror = ( event ) => {
 
-				console.error( "Error opening database:", event.target.error );
+				log.error( "Error opening database:", event.target.error );
 				reject( event.target.error );
 
 			};
@@ -173,27 +177,27 @@ export const saveRender = async ( data ) => {
 
 			request.onsuccess = () => {
 
-				console.log( "Render saved with ID:", request.result );
+				log.debug( "Render saved with ID:", request.result );
 				resolve( request.result );
 
 			};
 
 			request.onerror = ( event ) => {
 
-				console.error( "Error saving render:", event.target.error );
+				log.error( "Error saving render:", event.target.error );
 				reject( event.target.error );
 
 			};
 
 			transaction.oncomplete = () => {
 
-				console.log( 'Transaction completed successfully' );
+				log.debug( 'Transaction completed successfully' );
 
 			};
 
 			transaction.onerror = ( event ) => {
 
-				console.error( 'Transaction error:', event.target.error );
+				log.error( 'Transaction error:', event.target.error );
 				reject( event.target.error );
 
 			};
@@ -202,7 +206,7 @@ export const saveRender = async ( data ) => {
 
 	} catch ( error ) {
 
-		console.error( 'Error in saveRender:', error );
+		log.error( 'Error in saveRender:', error );
 		throw error;
 
 	}
@@ -229,7 +233,7 @@ export const getAllRenders = async () => {
 			request.onsuccess = () => {
 
 				const results = request.result;
-				console.log( `Retrieved ${results.length} renders from database` );
+				log.debug( `Retrieved ${results.length} renders from database` );
 
 				// Check for data integrity and sort by timestamp (newest first)
 				if ( results && results.length > 0 ) {
@@ -237,7 +241,7 @@ export const getAllRenders = async () => {
 					// Log the first result for debugging
 					if ( results[ 0 ] ) {
 
-						console.log( 'Sample render data:', {
+						log.debug( 'Sample render data:', {
 							hasImage: Boolean( results[ 0 ].image ),
 							imageType: typeof results[ 0 ].image,
 							imageLength: typeof results[ 0 ].image === 'string' ? results[ 0 ].image.length : 'N/A',
@@ -252,12 +256,12 @@ export const getAllRenders = async () => {
 						.filter( item => item && item.image && item.timestamp )
 						.sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) );
 
-					console.log( `After filtering and sorting: ${sortedResults.length} renders` );
+					log.debug( `After filtering and sorting: ${sortedResults.length} renders` );
 					resolve( sortedResults );
 
 				} else {
 
-					console.log( 'No renders found in database' );
+					log.debug( 'No renders found in database' );
 					resolve( [] );
 
 				}
@@ -266,14 +270,14 @@ export const getAllRenders = async () => {
 
 			request.onerror = ( event ) => {
 
-				console.error( "Error getting renders:", event.target.error );
+				log.error( "Error getting renders:", event.target.error );
 				reject( event.target.error );
 
 			};
 
 			transaction.onerror = ( event ) => {
 
-				console.error( "Transaction error in getAllRenders:", event.target.error );
+				log.error( "Transaction error in getAllRenders:", event.target.error );
 				reject( event.target.error );
 
 			};
@@ -282,7 +286,7 @@ export const getAllRenders = async () => {
 
 	} catch ( error ) {
 
-		console.error( 'Error in getAllRenders:', error );
+		log.error( 'Error in getAllRenders:', error );
 		return [];
 
 	}
@@ -309,27 +313,27 @@ export const deleteRender = async ( id ) => {
 
 			request.onsuccess = () => {
 
-		  console.log( `Render with ID ${id} deleted successfully` );
+		  log.debug( `Render with ID ${id} deleted successfully` );
 		  resolve( true );
 
 			};
 
 			request.onerror = ( event ) => {
 
-		  console.error( `Error deleting render with ID ${id}:`, event.target.error );
+		  log.error( `Error deleting render with ID ${id}:`, event.target.error );
 		  reject( event.target.error );
 
 			};
 
 			transaction.oncomplete = () => {
 
-		  console.log( 'Delete transaction completed successfully' );
+		  log.debug( 'Delete transaction completed successfully' );
 
 			};
 
 			transaction.onerror = ( event ) => {
 
-		  console.error( 'Delete transaction error:', event.target.error );
+		  log.error( 'Delete transaction error:', event.target.error );
 		  reject( event.target.error );
 
 			};
@@ -338,7 +342,7 @@ export const deleteRender = async ( id ) => {
 
 	} catch ( error ) {
 
-	  console.error( 'Error in deleteRender:', error );
+	  log.error( 'Error in deleteRender:', error );
 	  throw error;
 
 	}
@@ -364,14 +368,14 @@ export const getRenderById = async ( id ) => {
 
 			request.onsuccess = () => {
 
-				console.log( `Render with ID ${id} retrieved successfully` );
+				log.debug( `Render with ID ${id} retrieved successfully` );
 				resolve( request.result );
 
 			};
 
 			request.onerror = ( event ) => {
 
-				console.error( `Error retrieving render with ID ${id}:`, event.target.error );
+				log.error( `Error retrieving render with ID ${id}:`, event.target.error );
 				reject( event.target.error );
 
 			};
@@ -380,7 +384,7 @@ export const getRenderById = async ( id ) => {
 
 	} catch ( error ) {
 
-		console.error( 'Error in getRenderById:', error );
+		log.error( 'Error in getRenderById:', error );
 		throw error;
 
 	}
@@ -424,14 +428,14 @@ export const updateRenderWithAI = async ( id, aiPrompt, aiGeneratedImage ) => {
 
 				putRequest.onsuccess = () => {
 
-					console.log( `Render with ID ${id} updated with AI variant` );
+					log.debug( `Render with ID ${id} updated with AI variant` );
 					resolve( true );
 
 				};
 
 				putRequest.onerror = ( event ) => {
 
-					console.error( `Error updating render with ID ${id}:`, event.target.error );
+					log.error( `Error updating render with ID ${id}:`, event.target.error );
 					reject( event.target.error );
 
 				};
@@ -440,20 +444,20 @@ export const updateRenderWithAI = async ( id, aiPrompt, aiGeneratedImage ) => {
 
 			getRequest.onerror = ( event ) => {
 
-				console.error( `Error retrieving render with ID ${id}:`, event.target.error );
+				log.error( `Error retrieving render with ID ${id}:`, event.target.error );
 				reject( event.target.error );
 
 			};
 
 			transaction.oncomplete = () => {
 
-				console.log( 'Update transaction completed successfully' );
+				log.debug( 'Update transaction completed successfully' );
 
 			};
 
 			transaction.onerror = ( event ) => {
 
-				console.error( 'Update transaction error:', event.target.error );
+				log.error( 'Update transaction error:', event.target.error );
 				reject( event.target.error );
 
 			};
@@ -462,7 +466,7 @@ export const updateRenderWithAI = async ( id, aiPrompt, aiGeneratedImage ) => {
 
 	} catch ( error ) {
 
-		console.error( 'Error in updateRenderWithAI:', error );
+		log.error( 'Error in updateRenderWithAI:', error );
 		throw error;
 
 	}

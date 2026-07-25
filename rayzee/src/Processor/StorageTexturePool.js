@@ -15,6 +15,9 @@
 import { StorageTexture, RenderTarget } from 'three/webgpu';
 import { RGBAFormat, FloatType, LinearFilter, NearestFilter, Box2, Vector2 } from 'three';
 import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { createLogger, fmt } from '../utils/Logger.js';
+
+const log = createLogger( 'gpu' );
 
 function createWriteStorageTex() {
 
@@ -83,7 +86,7 @@ export class StorageTexturePool {
 		this.readTarget.textures[ 1 ].name = 'gNormalDepth';
 		this.readTarget.textures[ 2 ].name = 'gAlbedo';
 
-		console.log( `StorageTexturePool: Created ${width}x${height} (3 write StorageTextures + 1 MRT RenderTarget)` );
+		log.debug( `storage texture pool ${fmt.px( width, height )} — 3 write StorageTextures + 1 MRT RenderTarget` );
 
 	}
 
