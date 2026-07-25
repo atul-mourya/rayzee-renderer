@@ -96,7 +96,7 @@ Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`EdgeFilter.js`**: Temporal filtering with edge preservation
-- **`OverlayManager.js`** + **`helpers/TileHelper.js`** (in `managers/`): 2D canvas overlay — draws OIDN-denoise / AI-upscale progress borders (never baked into saved images). Path-trace tiling was removed; rendering is full-frame.
+- **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer allocates nothing until a helper first becomes visible, and parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
 - **`PathTracerApp.js`**: Main application class managing the WebGPU renderer, scene, camera, and pipeline lifecycle

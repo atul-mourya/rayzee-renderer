@@ -1,21 +1,34 @@
 import { TileHelper } from './helpers/TileHelper.js';
 import { OutlineHelper } from './helpers/OutlineHelper.js';
+import { ViewOverlayRenderer } from './helpers/ViewOverlayRenderer.js';
+import { createOverlayCanvas, viewPixelSize } from './helpers/overlaySurface.js';
+import { createLogger } from '../utils/Logger.js';
+
+const log = createLogger( 'overlay' );
+
+/** Whether a helper wants to draw into the given layer this frame. */
+const drawsOn = ( helper, layer ) => helper.visible && helper.layer === layer && helper.render;
 
 /**
  * OverlayManager — Unified overlay system for visual helpers.
  *
- * Two rendering layers:
- *   1. **HelperScene** — A Three.js Scene rendered on top of the WebGPU backbuffer
- *      (light gizmos, bounding boxes, outlines). Renders at display resolution.
+ * Two rendering layers, both sized to the **view** (what the user sees on
+ * screen) rather than to the path tracer's render resolution:
+ *   1. **Scene layer** — Three.js content (light gizmos, transform gizmo,
+ *      selection outline) drawn by {@link ViewOverlayRenderer} into its own
+ *      transparent canvas stacked over the main one.
  *   2. **HUDCanvas** — A 2D `<canvas>` element overlaid via CSS for screen-space
- *      elements (AF points, debug labels). Completely separate
- *      from the WebGPU canvas, so it is never captured in saved images.
+ *      elements (denoise/upscale tile progress).
+ *
+ * Neither layer touches the main canvas, so helpers can never be captured in a
+ * saved image.
  *
  * Helpers are registered by name and implement a simple interface:
  *   { update?(), render?(ctx, w, h), show(), hide(), dispose(), visible, layer }
  *
  * @example
- *   const overlay = new OverlayManager( renderer, camera );
+ *   const overlay = new OverlayManager( camera );
+ *   await overlay.initViewRenderer( { device, sizeSource: canvas } );
  *   overlay.register( 'outline', new OutlineHelper() );
  *   overlay.show( 'outline' );
  *   // in animate():
@@ -24,24 +37,50 @@ import { OutlineHelper } from './helpers/OutlineHelper.js';
 export class OverlayManager {
 
 	/**
-	 * @param {import('three/webgpu').WebGPURenderer} renderer
 	 * @param {import('three').PerspectiveCamera} camera
 	 */
-	constructor( renderer, camera ) {
+	constructor( camera ) {
 
-		this.renderer = renderer;
 		this.camera = camera;
 
 		/** @type {Map<string, Object>} */
 		this._helpers = new Map();
 
 		// ── HUD Canvas (2D overlay) ──
-		this._hudCanvas = document.createElement( 'canvas' );
-		this._hudCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;';
+		this._hudCanvas = createOverlayCanvas();
 		this._hudCtx = this._hudCanvas.getContext( '2d' );
 
 		// ── HelperScene reference (set via setHelperScene) ──
 		this._helperScene = null;
+
+		/** @type {ViewOverlayRenderer|null} */
+		this._viewOverlay = null;
+
+	}
+
+	/**
+	 * Creates the view-resolution surface the scene layer draws into. On failure
+	 * the scene layer stays off rather than degrading onto the main backbuffer —
+	 * drawing there would bake helpers into saved images.
+	 *
+	 * @param {Object} config
+	 * @param {GPUDevice} config.device - Shared with the main renderer
+	 * @param {HTMLElement} config.sizeSource - Element whose on-screen box defines the size
+	 */
+	async initViewRenderer( { device, sizeSource } ) {
+
+		if ( ! device || ! sizeSource ) return;
+
+		try {
+
+			this._viewOverlay = await new ViewOverlayRenderer().init( { device, sizeSource } );
+
+		} catch ( err ) {
+
+			log.error( 'overlay surface unavailable — light gizmos, transform gizmo and outlines are disabled', err );
+			this._viewOverlay = null;
+
+		}
 
 	}
 
@@ -67,14 +106,19 @@ export class OverlayManager {
 	}
 
 	/**
-	 * Mounts the HUD canvas into the given container. Idempotent — safe to call
-	 * multiple times; re-mounts only when the parent differs.
+	 * Mounts the overlay canvases into the given container. Idempotent — safe to
+	 * call multiple times; re-mounts only when the parent differs. The 3D surface
+	 * goes in first so the HUD stacks above it.
 	 * @param {HTMLElement} container
 	 */
 	mount( container ) {
 
-		if ( ! container || this._hudCanvas.parentElement === container ) return;
-		container.appendChild( this._hudCanvas );
+		if ( ! container ) return;
+
+		const viewCanvas = this._viewOverlay?.canvas;
+		if ( viewCanvas && viewCanvas.parentElement !== container ) container.appendChild( viewCanvas );
+
+		if ( this._hudCanvas.parentElement !== container ) container.appendChild( this._hudCanvas );
 
 	}
 
@@ -116,7 +160,7 @@ export class OverlayManager {
 		this._wireDenoiserTileEvents( tileHelper, denoisingManager );
 
 		// ── Outline helper ──
-		const outlineHelper = new OutlineHelper( this.renderer, meshScene, this.camera );
+		const outlineHelper = new OutlineHelper( meshScene, this.camera );
 		this.register( 'outline', outlineHelper );
 
 	}
@@ -170,7 +214,7 @@ export class OverlayManager {
 
 		if ( this._helpers.has( name ) ) {
 
-			console.warn( `OverlayManager: helper "${name}" already registered — replacing.` );
+			log.warn( `helper "${name}" already registered — replacing.` );
 			this._helpers.get( name ).dispose?.();
 
 		}
@@ -259,41 +303,53 @@ export class OverlayManager {
 	 */
 	render() {
 
-		// 1. Render 3D HelperScene overlay (light gizmos, etc.)
-		if ( this._helperScene ) {
+		const overlay = this._viewOverlay;
 
-			this._helperScene.render( this.renderer, this.camera );
+		if ( overlay ) {
 
-		}
+			const hasSceneOverlay = this._hasVisibleSceneOverlay();
 
-		// 2. Render scene-layer helpers (outline, etc.)
-		for ( const helper of this._helpers.values() ) {
+			if ( hasSceneOverlay || overlay.isVisible ) {
 
-			if ( helper.visible && helper.layer === 'scene' && helper.render ) {
-
-				helper.render( this.renderer, this.camera );
+				overlay.syncSize();
+				// Doubles as the wipe of last frame's content when parking.
+				overlay.begin();
+				if ( hasSceneOverlay ) this._renderSceneLayer( overlay.renderer );
+				overlay.setVisible( hasSceneOverlay );
 
 			}
 
 		}
 
-		// 3. Draw HUD canvas (2D helpers)
 		this.refreshHUD();
 
 	}
 
-	/**
-	 * Forwards display dimensions to helpers that need resize.
-	 * @param {number} width - Display width in pixels
-	 * @param {number} height - Display height in pixels
-	 */
-	setSize( width, height ) {
+	/** Draws the helper scene + every visible scene-layer helper. */
+	_renderSceneLayer( renderer ) {
+
+		this._helperScene?.render( renderer, this.camera );
 
 		for ( const helper of this._helpers.values() ) {
 
-			helper.setSize?.( width, height );
+			if ( drawsOn( helper, 'scene' ) ) helper.render( renderer, this.camera );
 
 		}
+
+	}
+
+	/** Whether anything at all wants to draw into the scene layer this frame. */
+	_hasVisibleSceneOverlay() {
+
+		if ( this._helperScene?.isDrawing ) return true;
+
+		for ( const helper of this._helpers.values() ) {
+
+			if ( drawsOn( helper, 'scene' ) ) return true;
+
+		}
+
+		return false;
 
 	}
 
@@ -310,7 +366,7 @@ export class OverlayManager {
 		let hasVisibleHUD = false;
 		for ( const helper of this._helpers.values() ) {
 
-			if ( helper.visible && helper.layer === 'hud' && helper.render ) {
+			if ( drawsOn( helper, 'hud' ) ) {
 
 				hasVisibleHUD = true;
 				break;
@@ -326,30 +382,28 @@ export class OverlayManager {
 
 		}
 
-		const dpr = window.devicePixelRatio || 1;
+		// Helpers draw in CSS-pixel coordinates of the unscaled layout box; the
+		// backing store is sized off the on-screen box, so nothing is drawn below
+		// view resolution.
 		const displayW = canvas.clientWidth;
 		const displayH = canvas.clientHeight;
-		const pixelW = Math.round( displayW * dpr );
-		const pixelH = Math.round( displayH * dpr );
+		const size = displayW > 0 && displayH > 0 ? viewPixelSize( canvas ) : null;
+		if ( ! size ) return;
 
-		if ( canvas.width !== pixelW || canvas.height !== pixelH ) {
+		if ( canvas.width !== size.width || canvas.height !== size.height ) {
 
-			canvas.width = pixelW;
-			canvas.height = pixelH;
+			canvas.width = size.width;
+			canvas.height = size.height;
 
 		}
 
-		ctx.clearRect( 0, 0, pixelW, pixelH );
+		ctx.clearRect( 0, 0, size.width, size.height );
 		ctx.save();
-		ctx.scale( dpr, dpr );
+		ctx.scale( size.width / displayW, size.height / displayH );
 
 		for ( const helper of this._helpers.values() ) {
 
-			if ( helper.visible && helper.layer === 'hud' && helper.render ) {
-
-				helper.render( ctx, displayW, displayH );
-
-			}
+			if ( drawsOn( helper, 'hud' ) ) helper.render( ctx, displayW, displayH );
 
 		}
 
@@ -371,6 +425,9 @@ export class OverlayManager {
 		}
 
 		this._helpers.clear();
+
+		this._viewOverlay?.dispose();
+		this._viewOverlay = null;
 
 		if ( this._hudCanvas.parentElement ) {
 

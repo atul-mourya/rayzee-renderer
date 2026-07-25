@@ -66,6 +66,16 @@ export class SceneHelpers {
 	}
 
 	/**
+	 * Whether a render() would actually put anything on screen. `visible` alone
+	 * is the enable flag and can be true with no lights in the scene.
+	 */
+	get isDrawing() {
+
+		return this.visible && this._helpers.size > 0;
+
+	}
+
+	/**
 	 * Syncs all helpers with their source objects.
 	 */
 	update() {
@@ -132,7 +142,7 @@ export class SceneHelpers {
 	 */
 	render( renderer, camera ) {
 
-		if ( ! this.visible || this._helpers.size === 0 ) return;
+		if ( ! this.isDrawing ) return;
 
 		const prevAutoClear = renderer.autoClear;
 		renderer.autoClear = false;

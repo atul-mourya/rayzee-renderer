@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { OverlayManager } from '@/core/managers/OverlayManager.js';
 
-// Minimal mocks — OverlayManager only needs renderer/camera refs and a DOM canvas
-const createMockRenderer = () => ( { autoClear: true } );
+// Minimal mocks — OverlayManager only needs a camera ref and a DOM canvas
 const createMockCamera = () => ( {} );
 
 // Stub document.createElement for the HUD canvas
@@ -15,6 +14,7 @@ const mockCtx = {
 const mockCanvas = {
 	style: { cssText: '', display: '' },
 	getContext: () => mockCtx,
+	getBoundingClientRect: () => ( { width: 800, height: 600 } ),
 	clientWidth: 800,
 	clientHeight: 600,
 	width: 0,
@@ -33,7 +33,7 @@ describe( 'OverlayManager', () => {
 
 	beforeEach( () => {
 
-		manager = new OverlayManager( createMockRenderer(), createMockCamera() );
+		manager = new OverlayManager( createMockCamera() );
 
 	} );
 
@@ -118,24 +118,6 @@ describe( 'OverlayManager', () => {
 		it( 'isVisible returns false for unknown', () => {
 
 			expect( manager.isVisible( 'nope' ) ).toBe( false );
-
-		} );
-
-	} );
-
-	// ── setSize ──
-
-	describe( 'setSize', () => {
-
-		it( 'forwards to all helpers that have setSize', () => {
-
-			const a = { show: vi.fn(), hide: vi.fn(), dispose: vi.fn(), setSize: vi.fn(), visible: false };
-			const b = { show: vi.fn(), hide: vi.fn(), dispose: vi.fn(), visible: false };
-			manager.register( 'a', a );
-			manager.register( 'b', b );
-			manager.setSize( 1920, 1080 );
-			expect( a.setSize ).toHaveBeenCalledWith( 1920, 1080 );
-			// b has no setSize — should not throw
 
 		} );
 

@@ -17,7 +17,7 @@ import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './EngineDefaults.js';
-import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory } from './Processor/utils.js';
+import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
@@ -35,6 +35,7 @@ import { DenoisingManager } from './managers/DenoisingManager.js';
 import { OverlayManager } from './managers/OverlayManager.js';
 import { AnimationManager } from './managers/AnimationManager.js';
 import { TransformManager } from './managers/TransformManager.js';
+import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
 
 // One app per canvas — auto-dispose a prior owner if the caller double-
 // instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
@@ -216,7 +217,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._initScenes();
 		this._initAssetPipeline();
 		this._initPipeline();
-		this._initManagers();
+		await this._initManagers();
 		this._wireEvents();
 
 		// Seed path tracer with minimal empty scene data
@@ -511,35 +512,19 @@ export class PathTracerApp extends EventDispatcher {
 		this.scene?.clear();
 		this.scene = null;
 
-		// Three.js 0.184 leaks (confirmed via heap-snapshot retainer analysis):
+		// Three.js 0.184 leak (confirmed via heap-snapshot retainer analysis): the
+		// Textures manager (one per renderer) registers a per-texture 'dispose'
+		// listener that closes over `this = Textures` — which transitively captures
+		// backend → renderer. These listeners are removed only when the texture
+		// itself is destroyed. For module-level singletons like EmptyTexture (new
+		// Texture in TextureNode.js) and its CubeTexture counterpart, the texture is
+		// never destroyed, so every renderer ever created leaks through the
+		// singleton's listener array.
 		//
-		//   1) Renderer.dispose() does not remove the 'resize' listener it installs on
-		//      _canvasTarget. The bound handler closes over the renderer, pinning the
-		//      entire WebGPU graph (Backend, Nodes, Bindings, Pipelines, GPUDevice,
-		//      every TSL node) alive indefinitely.
-		//      See three/src/renderers/common/Renderer.js:292 (attach) and
-		//      :2503 (dispose — missing removal).
-		//
-		//   2) Textures manager (one per renderer) registers a per-texture 'dispose'
-		//      listener that closes over `this = Textures` — which transitively
-		//      captures backend → renderer. These listeners are removed only when
-		//      the texture itself is destroyed. For module-level singletons like
-		//      EmptyTexture (new Texture in TextureNode.js) and its CubeTexture
-		//      counterpart, the texture is never destroyed, so every renderer ever
-		//      created leaks through the singleton's listener array.
-		//
-		// Both workarounds are safe when only a single PathTracerApp is active at a
-		// time. If you run multiple in parallel, reset listeners only on the renderer
-		// being disposed (not the shared singletons).
-		if ( this.renderer?._canvasTarget && this.renderer._onCanvasTargetResize ) {
-
-			this.renderer._canvasTarget.removeEventListener(
-				'resize',
-				this.renderer._onCanvasTargetResize
-			);
-
-		}
-
+		// Safe when only a single PathTracerApp is active at a time. If you run
+		// multiple in parallel, reset listeners only on the renderer being disposed
+		// (not the shared singletons). The sibling _canvasTarget leak is handled by
+		// disposeRenderer().
 		try {
 
 			const emptyTex = _tslTexture().value;
@@ -553,8 +538,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		this.renderer?.dispose();
-		if ( this.renderer ) this.renderer._canvasTarget = null;
+		disposeRenderer( this.renderer );
 		this.renderer = null;
 
 		this.stages = {};
@@ -1304,13 +1288,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.cameraManager.camera.aspect = width / height;
 		this.cameraManager.camera.updateProjectionMatrix();
 
-		// Overlay helpers always render at display resolution
-		const dpr = window.devicePixelRatio || 1;
-		this.overlayManager?.setSize(
-			Math.round( width * dpr ),
-			Math.round( height * dpr )
-		);
-
 		const lastW = this.denoisingManager?._lastRenderWidth ?? 0;
 		const lastH = this.denoisingManager?._lastRenderHeight ?? 0;
 		if ( width === lastW && height === lastH ) return;
@@ -1905,7 +1882,7 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	_initManagers() {
+	async _initManagers() {
 
 		this.interactionManager = new InteractionManager( {
 			scene: this.meshScene,
@@ -1929,7 +1906,7 @@ export class PathTracerApp extends EventDispatcher {
 			onReset: () => this.reset(),
 		} );
 		this._setupDenoisingManager();
-		this._setupOverlayManager();
+		await this._setupOverlayManager();
 
 		this.transformManager = new TransformManager( {
 			camera: this.cameraManager.camera,
@@ -1937,6 +1914,10 @@ export class PathTracerApp extends EventDispatcher {
 			orbitControls: this.cameraManager.controls,
 			app: this,
 		} );
+
+		// The gizmo is part of the scene overlay layer, so it draws on the same
+		// view-resolution surface as the light helpers and the outline.
+		this.overlayManager.register( 'transform', new TransformGizmoHelper( this.transformManager ) );
 
 		// Wire cross-manager dependencies
 		this.interactionManager.setDependencies( {
@@ -2209,13 +2190,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.scene.updateMatrixWorld();
 		this.overlayManager?.render();
-		this.transformManager?.render( this.renderer );
 
 	}
 
-	_setupOverlayManager() {
+	async _setupOverlayManager() {
 
-		this.overlayManager = new OverlayManager( this.renderer, this.cameraManager.camera );
+		this.overlayManager = new OverlayManager( this.cameraManager.camera );
 		this.overlayManager.setupDefaultHelpers( {
 			helperScene: this._sceneHelpers,
 			meshScene: this.meshScene,
@@ -2224,6 +2204,13 @@ export class PathTracerApp extends EventDispatcher {
 			app: this,
 			renderWidth: this.denoisingManager?._lastRenderWidth || this.canvas.clientWidth || 1,
 			renderHeight: this.denoisingManager?._lastRenderHeight || this.canvas.clientHeight || 1,
+		} );
+
+		// Helpers draw at the size the canvas is displayed at, not the size it is
+		// rendered at. Shares the main device, so this is a swapchain, not a context.
+		await this.overlayManager.initViewRenderer( {
+			device: this.renderer.backend?.device,
+			sizeSource: this.canvas,
 		} );
 
 		this._container = this._container || this.canvas.parentNode || null;

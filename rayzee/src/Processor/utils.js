@@ -102,6 +102,36 @@ export function distroyBuffers( { material, geometry, children } ) {
 
 }
 
+/**
+ * Disposes a renderer without leaking it.
+ *
+ * Three.js 0.184–0.185: `Renderer.dispose()` does not remove the 'resize' listener
+ * it installs on `_canvasTarget`. The bound handler closes over the renderer,
+ * pinning the entire WebGPU graph (Backend, Nodes, Bindings, Pipelines, GPUDevice,
+ * every TSL node) alive indefinitely — confirmed via heap-snapshot retainer
+ * analysis. See three/src/renderers/common/Renderer.js:292 (attach) and :2503
+ * (dispose — missing removal).
+ *
+ * Renderers constructed with an external `device` do not destroy it here; three
+ * only destroys a device it created itself.
+ *
+ * @param {import('three/webgpu').WebGPURenderer} renderer
+ */
+export function disposeRenderer( renderer ) {
+
+	if ( ! renderer ) return;
+
+	if ( renderer._canvasTarget && renderer._onCanvasTargetResize ) {
+
+		renderer._canvasTarget.removeEventListener( 'resize', renderer._onCanvasTargetResize );
+
+	}
+
+	renderer.dispose();
+	renderer._canvasTarget = null;
+
+}
+
 export function disposeObjectFromMemory( object, exeptions = [] ) {
 
 	if ( ! object ) return;
