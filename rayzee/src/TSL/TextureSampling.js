@@ -47,10 +47,20 @@ const withBucket = ( buckets, packedIndex, fn ) => {
 
 	const bucket = packedIndex.div( int( _STRIDE ) ).toVar();
 	const layer = packedIndex.sub( bucket.mul( int( _STRIDE ) ) ).toVar();
-	let chain = If( bucket.equal( int( 0 ) ), () => fn( buckets[ 0 ], layer ) );
+	// Block bodies, not concise arrows: an If() callback that yields a value makes TSL emit a
+	// `return` inside an inline Fn(), which it comments out and warns about on every arm.
+	let chain = If( bucket.equal( int( 0 ) ), () => {
+
+		fn( buckets[ 0 ], layer );
+
+	} );
 	for ( let i = 1; i < buckets.length; i ++ ) {
 
-		chain = chain.ElseIf( bucket.equal( int( i ) ), () => fn( buckets[ i ], layer ) );
+		chain = chain.ElseIf( bucket.equal( int( i ) ), () => {
+
+			fn( buckets[ i ], layer );
+
+		} );
 
 	}
 
