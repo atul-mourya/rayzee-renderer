@@ -1,0 +1,86 @@
+{
+	"spheres-gradient": {
+		"truth": {
+			"meanR": 0.1987975199816674,
+			"meanG": 0.47327637588256266,
+			"meanB": 0.5932086886476486,
+			"meanLuminance": 0.42358128409966805,
+			"maxLuminance": 0.5513097924381494,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.1988506628560458,
+			"meanG": 0.47337743198085036,
+			"meanB": 0.5932221948091299,
+			"meanLuminance": 0.4236658327411192,
+			"maxLuminance": 0.5977861571609973,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.007152816596125839
+	},
+	"cornell-emissive": {
+		"truth": {
+			"meanR": 0.2590226059220606,
+			"meanG": 0.2978043178694989,
+			"meanB": 0.28927196104151054,
+			"meanLuminance": 0.2889432897465248,
+			"maxLuminance": 12,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.25903566360771985,
+			"meanG": 0.2978076846051293,
+			"meanB": 0.2893084751532232,
+			"meanLuminance": 0.28895111001868906,
+			"maxLuminance": 12,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.010073590636509606
+	},
+	"glass-transmission": {
+		"truth": {
+			"meanR": 0.10518783126619269,
+			"meanG": 0.2763586538411573,
+			"meanB": 0.46955561353479425,
+			"meanLuminance": 0.25391655745160235,
+			"maxLuminance": 0.5342833176940679,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.10518851121896944,
+			"meanG": 0.2763543353710247,
+			"meanB": 0.46953645638177477,
+			"meanLuminance": 0.25391223029327176,
+			"maxLuminance": 0.5517666820585727,
+			"nonFinite": 0,
+			"samples": 96
+		},
+		"rmseVsTruth": 0.008195102116074415
+	},
+	"spheres-procedural-sky": {
+		"truth": {
+			"meanR": 1.0237105905033559,
+			"meanG": 1.208738532574671,
+			"meanB": 1.3121356082792097,
+			"meanLuminance": 1.1768668609561659,
+			"maxLuminance": 16.16570000128746,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 1.0240983684468574,
+			"meanG": 1.2089361965599892,
+			"meanB": 1.31214076498294,
+			"meanLuminance": 1.1770910441432691,
+			"maxLuminance": 16.537291059269013,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.008724314312329827
+	}
+}

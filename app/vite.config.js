@@ -21,6 +21,12 @@ export default defineConfig( {
 			'Cross-Origin-Opener-Policy': 'same-origin',
 			'Cross-Origin-Embedder-Policy': 'credentialless',
 		},
+		fs: {
+			// The regression bench harness lives outside this Vite root, in the repo's
+			// `bench/` directory. Serving it needs the monorepo root allow-listed.
+			// See bench/README.md.
+			allow: [ path.resolve( __dirname, '..' ) ],
+		},
 		// port: 5174
 	},
 	assetsInclude: [ "**/*.hdr" ],

@@ -1,0 +1,9 @@
+{
+	"vendor": "apple",
+	"architecture": "metal-3",
+	"maxStorageBuffersPerShaderStage": 10,
+	"maxStorageTexturesPerShaderStage": 8,
+	"maxBufferSize": 4294967292,
+	"deviceMemory": 16,
+	"renderSize": "256x256"
+}
