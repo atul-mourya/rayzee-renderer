@@ -375,6 +375,12 @@ export class RenderPipeline {
 	}
 
 	// ===== PERFORMANCE TRACKING =====
+	//
+	// NOTE: these timings wrap stage.render() in performance.now(), which measures
+	// command *encoding* on the CPU — not GPU execution. On a compute-heavy pipeline
+	// they stay flat while GPU cost doubles, so they are useful for spotting CPU-side
+	// stalls only. For real GPU milliseconds use PathTracerApp.enableGPUTiming() +
+	// getGPUTimings(), which read WebGPU timestamp queries.
 
 	/**
 	 * Enable performance tracking

@@ -195,6 +195,14 @@ export class PathTracerStage extends RenderStage {
 		this.stbnScalarTexture = null;
 		this.stbnVec2Texture = null;
 
+		/**
+		 * Resolves once both STBN atlases have loaded. Await before any render whose
+		 * output must be reproducible — see PathTracerApp.setDeterministicMode().
+		 * Replaced by the real promise in setupBlueNoise(), which runs after this.
+		 * @type {Promise<void>}
+		 */
+		this.blueNoiseReady = Promise.resolve();
+
 		// Packed light buffer — [lightBVH nodes (4 vec4s each) | emissive triangles (2 vec4s each)]
 		// emissiveVec4Offset uniform tracks the vec4-count offset where emissive data starts.
 		// Initialized with dummy data so TSL compilation never sees null.
@@ -376,7 +384,7 @@ export class PathTracerStage extends RenderStage {
 
 		const { stbnScalarAtlas, stbnVec2Atlas } = getAssetConfig();
 
-		loader.load( stbnScalarAtlas, ( tex ) => {
+		const scalarLoad = loader.loadAsync( stbnScalarAtlas ).then( ( tex ) => {
 
 			this.stbnScalarTexture = configure( tex );
 			stbnScalarTextureNode.value = tex;
@@ -384,11 +392,24 @@ export class PathTracerStage extends RenderStage {
 
 		} );
 
-		loader.load( stbnVec2Atlas, ( tex ) => {
+		const vec2Load = loader.loadAsync( stbnVec2Atlas ).then( ( tex ) => {
 
 			this.stbnVec2Texture = configure( tex );
 			stbnVec2TextureNode.value = tex;
 			log.debug( `STBN vec2 atlas ${fmt.px( tex.image.width, tex.image.height )}` );
+
+		} );
+
+		// Until the atlases land the STBN sampler reads a constant-0.5 placeholder and bakes
+		// that degenerate "noise" permanently into the accumulation buffer. The cut-over frame
+		// is disk/network dependent, so reproducible renders must await this. Never rejects.
+		this.blueNoiseReady = Promise.allSettled( [ scalarLoad, vec2Load ] ).then( ( results ) => {
+
+			for ( const result of results ) {
+
+				if ( result.status === 'rejected' ) log.warn( 'STBN atlas failed to load', result.reason );
+
+			}
 
 		} );
 

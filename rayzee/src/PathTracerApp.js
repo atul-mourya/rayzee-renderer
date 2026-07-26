@@ -166,6 +166,10 @@ export class PathTracerApp extends EventDispatcher {
 		this._disposed = false;
 		this._deviceLost = false;
 
+		// Deterministic-render mode — see setDeterministicMode()
+		this._deterministic = false;
+		this._deterministicRestore = null;
+
 	}
 
 	/**
@@ -1443,6 +1447,226 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._needsDisplayRefresh = true;
 		this.wake();
+
+	}
+
+	// ═══════════════════════════════════════════════════════════════
+	// Deterministic / headless control
+	// ═══════════════════════════════════════════════════════════════
+
+	/**
+	 * Pins every wall-clock- and readback-dependent input so that N samples from a
+	 * fresh `reset()` reproduce bit-for-bit.
+	 *
+	 * The image is always a pure function of (pixel, frame, uniforms) — no shader reads
+	 * a clock and there is no `Math.random()` in the render path. What varies run to run
+	 * is *which* uniforms and dispatch grids are live on frame k:
+	 *
+	 * - `useAdaptiveSampling` retires the whole frame off an async CONVERGED_COUNT
+	 *   readback, so two runs accumulate different sample totals for one `maxSamples`.
+	 * - `usePixelFreeze` sizes the bounce-0 grid from a stale active-pixel readback.
+	 * - `_bounceEarlyExitThreshold` / `_useDynamicDispatch` both consume the async
+	 *   survivor curve. Kernels bind on ENTERING_COUNT, so an under-sized grid silently
+	 *   drops rays, and the frame a readback lands on is GPU-scheduled.
+	 * - `interactionModeEnabled` is a 100 ms timer that clamps bounces to 1, disables
+	 *   accumulation and freezes frameCount; it engages on the very first frame.
+	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
+	 *
+	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
+	 * Idempotent; pass `false` to restore the previous configuration.
+	 *
+	 * @param {boolean} [enabled=true]
+	 * @returns {boolean} whether deterministic mode is now active
+	 */
+	setDeterministicMode( enabled = true ) {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) return false;
+
+		if ( enabled ) {
+
+			if ( ! this._deterministicRestore ) {
+
+				this._deterministicRestore = {
+					settings: {
+						useAdaptiveSampling: this.settings.get( 'useAdaptiveSampling' ),
+						usePixelFreeze: this.settings.get( 'usePixelFreeze' ),
+						interactionModeEnabled: this.settings.get( 'interactionModeEnabled' ),
+						renderLimitMode: this.settings.get( 'renderLimitMode' ),
+						renderTimeLimit: this.settings.get( 'renderTimeLimit' ),
+					},
+					bounceEarlyExit: stage._bounceEarlyExitThreshold,
+					dynamicDispatch: stage._useDynamicDispatch,
+					autoFocusMode: this.cameraManager?.autoFocusMode,
+					autoExposure: this.stages.autoExposure?.enabled,
+				};
+
+			}
+
+			// Cleared together on purpose: the freeze streak is stamped inside the
+			// convergence block, so freeze-on/adaptive-off would run the freeze path
+			// against a streak buffer nothing writes or clears.
+			this.settings.setMany( {
+				useAdaptiveSampling: false,
+				usePixelFreeze: false,
+				interactionModeEnabled: false,
+				renderLimitMode: 'frames',
+				renderTimeLimit: 0,
+			}, { silent: true } );
+
+			// -1 is unreachable by a uint survivor count, and both _buildWavefrontKernels()
+			// and _resizeWavefrontInPlace() preserve the sentinel across rebuilds.
+			stage._bounceEarlyExitThreshold = - 1;
+			stage._useDynamicDispatch = false;
+
+			this.cameraManager?.setAutoFocusMode( 'manual' );
+			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+
+			this._deterministic = true;
+
+		} else if ( this._deterministicRestore ) {
+
+			const prev = this._deterministicRestore;
+
+			this.settings.setMany( prev.settings, { silent: true } );
+			stage._bounceEarlyExitThreshold = prev.bounceEarlyExit;
+			stage._useDynamicDispatch = prev.dynamicDispatch;
+
+			if ( prev.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( prev.autoFocusMode );
+			if ( this.stages.autoExposure && prev.autoExposure !== undefined ) {
+
+				this.stages.autoExposure.enabled = prev.autoExposure;
+
+			}
+
+			this._deterministicRestore = null;
+			this._deterministic = false;
+
+		}
+
+		this.reset();
+		this.stopAnimation(); // reset() calls wake(); a manual render loop must not race rAF
+
+		return this._deterministic;
+
+	}
+
+	/** Whether deterministic mode is currently active. */
+	get isDeterministic() {
+
+		return this._deterministic;
+
+	}
+
+	/**
+	 * Accumulates exactly `count` samples synchronously, bypassing the rAF loop.
+	 *
+	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
+	 * placeholder that gets baked permanently into the accumulation buffer.
+	 *
+	 * @param {number} count - samples to accumulate
+	 * @param {Object} [options]
+	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
+	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
+	 * @param {function(number): void} [options.onProgress] - called with the running sample count
+	 * @returns {Promise<number>} the final accumulated sample count
+	 */
+	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress } = {} ) {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
+		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
+
+		await stage.blueNoiseReady;
+
+		const target = ( reset ? 0 : stage.frameCount ) + count;
+
+		// completionThreshold is a cached JS number derived from maxSamples, so this must
+		// go through the settings handler — writing the uniform alone would not move it.
+		if ( this.settings.get( 'maxSamples' ) < target ) {
+
+			this.settings.set( 'maxSamples', target, { silent: true, reset: false } );
+
+		}
+
+		if ( reset ) this.reset();
+		this.stopAnimation();
+
+		const maxPasses = count + 64;
+		let passes = 0;
+
+		while ( stage.frameCount < target && passes < maxPasses ) {
+
+			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
+			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
+
+			this.pipeline.render();
+			passes ++;
+
+			onProgress?.( stage.frameCount );
+
+			if ( yieldEvery > 0 && passes % yieldEvery === 0 ) {
+
+				await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+
+			}
+
+		}
+
+		if ( stage.frameCount < target ) {
+
+			throw new Error(
+				`renderFrames: stalled at ${stage.frameCount}/${target} samples after ${passes} passes — ` +
+				'something retired the render (maxSamples, a stray reset, or a canvas resize)'
+			);
+
+		}
+
+		return stage.frameCount;
+
+	}
+
+	/**
+	 * Enables WebGPU timestamp queries so {@link PathTracerApp#getGPUTimings} reports real
+	 * GPU time. Off by default because the queries themselves cost time. No-ops when the
+	 * device lacks the `timestamp-query` feature.
+	 *
+	 * @param {boolean} [enabled=true]
+	 * @returns {boolean} whether timestamp tracking is now active
+	 */
+	enableGPUTiming( enabled = true ) {
+
+		const backend = this.renderer?.backend;
+		if ( ! backend ) return false;
+		if ( enabled && backend.hasFeature?.( 'timestamp-query' ) !== true ) return false;
+
+		backend.trackTimestamp = enabled;
+		return backend.trackTimestamp === enabled;
+
+	}
+
+	/**
+	 * Real GPU milliseconds for the last resolved frame, from WebGPU timestamp queries.
+	 * Returns null unless {@link PathTracerApp#enableGPUTiming} was called.
+	 *
+	 * This is the only true GPU metric available: `pipeline.getStats()` times
+	 * `performance.now()` around each stage's render(), which is command *encoding*
+	 * time and stays flat while GPU cost doubles.
+	 *
+	 * @returns {Promise<{ compute: number, render: number, total: number }|null>}
+	 */
+	async getGPUTimings() {
+
+		const renderer = this.renderer;
+		if ( ! renderer?.backend?.trackTimestamp ) return null;
+
+		await renderer.resolveTimestampsAsync( 'compute' );
+		await renderer.resolveTimestampsAsync( 'render' );
+
+		const compute = renderer.info.compute.timestamp || 0;
+		const render = renderer.info.render.timestamp || 0;
+
+		return { compute, render, total: compute + render };
 
 	}
 
