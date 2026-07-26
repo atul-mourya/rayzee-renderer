@@ -7,8 +7,17 @@
  * wanted in a regression run.
  */
 
-import { PathTracerApp } from 'rayzee';
+import { configureAssets, PathTracerApp } from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
+
+import stbnScalarAtlas from '../assets/noise/stbn_scalar_atlas.png?url';
+import stbnVec2Atlas from '../assets/noise/stbn_vec2_atlas.png?url';
+
+// The engine defaults these to assets.rayzee.atulmourya.com. Point them at the byte-identical
+// copies committed under bench/assets/ instead: a reproducibility gate whose reference inputs
+// live on a mutable CDN is not reproducible — a re-encode there would silently invalidate every
+// golden in the repo, and an outage or an offline machine would stop the suite entirely.
+configureAssets( { stbnScalarAtlas, stbnVec2Atlas } );
 
 const canvas = document.getElementById( 'bench-canvas' );
 
@@ -60,17 +69,16 @@ async function boot() {
 	app.setDeterministicMode( true );
 	app.enableGPUTiming( true );
 
-	// The STBN atlases are remote (assets.rayzee.atulmourya.com). If they fail to load the
-	// sampler silently falls back to a constant-0.5 placeholder and renders converge to a
-	// different image — which would look like a regression, or worse, get blessed as one.
-	// Fail loudly instead. First run needs network; the browser caches thereafter.
+	// Vendored locally (see configureAssets above), but still asserted: if an atlas fails to
+	// load the sampler silently falls back to a constant-0.5 placeholder and renders converge
+	// to a different image — which would look like a regression, or worse, get blessed as one.
 	const stage = app.stages.pathTracer;
 	await stage.blueNoiseReady;
 	if ( ! stage.stbnScalarTexture || ! stage.stbnVec2Texture ) {
 
 		throw new Error(
 			'bench: STBN atlases failed to load — renders would use the 0.5 placeholder and ' +
-			'baselines would be meaningless. Check network access to the asset host.'
+			'baselines would be meaningless. Check bench/assets/noise/ is present.'
 		);
 
 	}

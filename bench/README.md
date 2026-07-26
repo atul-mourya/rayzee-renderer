@@ -23,7 +23,7 @@ npm run bench:ab -- main    # gate perf against another git ref
 
 Useful flags: `--only scene-a,scene-b`, `--verbose`, `--truth` (regenerate ground truth), `--scene <id>` and `--cycles <n>` for the memory suite.
 
-**Requirements:** Google Chrome installed (override with `CHROME_PATH`), and network access on the first run — the STBN blue-noise atlases are fetched from the asset host. The harness fails loudly rather than silently rendering with the placeholder.
+**Requirements:** Google Chrome installed (override with `CHROME_PATH`). No network access needed — every scene is procedural and the STBN atlases are vendored (see below).
 
 ## How it works
 
@@ -34,8 +34,22 @@ bench/
   harness/    boot.js, scenes.js, index.html   # runs in the browser
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
   runner/     cli.js + one module per suite    # runs in Node
+  assets/     noise/stbn_*_atlas.png           # vendored engine assets
   baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl
 ```
+
+### Reference inputs are vendored, not fetched
+
+The engine defaults its STBN blue-noise atlases to `assets.rayzee.atulmourya.com`. The harness
+overrides that with `configureAssets()` and loads byte-identical copies from `bench/assets/noise/`
+instead. A reproducibility gate whose reference inputs live on a mutable host is not reproducible:
+a re-encode there would silently invalidate every golden in the repo, and an outage would stop the
+suite entirely. The copies are byte-for-byte upstream, verified by all four pre-existing goldens
+still rendering bit-identically after the switch.
+
+The load is still asserted after `blueNoiseReady`, because a missing atlas does not throw — the
+sampler falls back to a constant-0.5 placeholder and bakes degenerate "noise" permanently into the
+accumulation buffer, which looks like a regression or, worse, gets blessed as one.
 
 ## Determinism
 
@@ -92,16 +106,66 @@ Absolute numbers are not gated because `VRAMTracker` is approximate by construct
 
 Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device memory) and the suite refuses to compare across a mismatch. This is not paranoia: the wavefront's path budget is derived from device limits and `navigator.deviceMemory`, and single-chunk vs multi-chunk are materially different code paths. Re-bless when you change machines.
 
+## The scene corpus
+
+Nine scenes, one failure axis each. `npm run bench:list` prints them with what they cover.
+
+| scene | pins |
+|---|---|
+| `spheres-gradient` | diffuse GI, GGX metal/rough response, gradient env importance sampling |
+| `cornell-emissive` | emissive-triangle NEE, MIS weighting, colour bleeding |
+| `glass-transmission` | transmission, TIR, IOR sweep, transmissive bounce cap, rough refraction |
+| `spheres-procedural-sky` | procedural sky evaluation, environment CDF |
+| `subsurface-marble` | random-walk SSS — chromatic collision sampling, HG phase, medium stack, step cap |
+| `anisotropy-brushed` | anisotropic GGX sampler/eval/PDF across tangent rotations, plus the isotropic path |
+| `shadow-catcher-ground` | analytic ground-plane catcher — NEE dual-sum ratio, coverage gate, occlusion |
+| `textured-normalmap` | texture arrays — albedo/normal/roughness, size buckets, UV transform, normalScale |
+| `refit-deform` | BVH refit — BLAS bounds after vertex deformation, TLAS after a rigid move |
+
+Everything is built from three.js primitives, procedural `DataTexture`s and a procedural
+environment, so the corpus needs no network and cannot change when the asset host does. Texture
+sizes deliberately differ (128 / 64 / 256) so three different size buckets in the packed texture
+arrays are exercised, and UV repeat/offset are non-identity so a texture-matrix regression shows as
+shifted detail rather than passing unnoticed.
+
+`refit-deform` is the odd one: it builds at pose A, deforms, and then calls `app.refitBVH()` rather
+than loading pose B directly, because building at pose B would exercise a fresh SAH build — the one
+path it exists not to test. Its positions come from `app.sceneMeshes`, **not** from the rig, and that
+distinction is load-bearing: the engine also owns a hidden ground-projection disk that lands first in
+the triangle buffer, so a rig-only walk is 32 triangles short and offset by 32 for everything after
+it. Building this scene surfaced two real engine gaps — no public accessor for that ordering, and
+`refitBVH()` silently writing NaN through the whole BVH on a short buffer instead of throwing.
+
 ## Adding a scene
 
-Append to `SCENES` in `harness/scenes.js`. Scenes are built from three.js primitives and a procedural environment so the corpus needs no network and cannot change when the asset host does. Pin the camera explicitly — `setCamera()` runs after loading because `loadObject3D()` rebuilds the scene and may reframe. Then `npm run bench:bless -- --only your-scene`.
+Append to `SCENES` in `harness/scenes.js`, then `npm run bench:bless -- --truth --only your-scene`.
+
+Two rules that are easy to get wrong:
+
+- **Pin the camera explicitly**, via `setCamera()` *after* loading — `loadObject3D()` rebuilds the
+  scene and may reframe.
+- **Every engine setting the scene touches must be listed in its `settings` object**, even one the
+  engine then overwrites itself (`groundCatcherHeight` is auto-seeded to the scene's min-Y on load).
+  `sceneSettingsFloor()` builds the per-load reset from the union of those keys, so a setting mutated
+  outside them leaks into whichever scene loads next and makes results depend on scene order.
+
+Then check the render actually contains what you meant. A scene that renders bare environment still
+blesses cleanly, and its low noise makes the numbers look *better* than the rest of the corpus — a
+suspiciously small `rmseVsTruth` is the tell.
 
 ## Cost
 
-The first scene load in a session compiles the whole wavefront to WGSL (~20 s on Apple M-series) and each subsequent scene load recompiles. Steady-state rendering is ~15 ms/sample at 256². A full `npm run bench` is a couple of minutes; `bench:bless` with ground truth is several more.
+The first scene load in a session compiles the whole wavefront to WGSL (~20 s on Apple M-series) and each subsequent scene load recompiles. Steady-state rendering is ~15 ms/sample at 256². A full `npm run bench` over the nine-scene corpus is several minutes; `bench:bless --truth` is considerably more, because each scene renders a 1-2 k-sample reference.
 
 ## Known gaps
 
 **Ground truth can only be generated by `bench:bless --truth`.** Regenerating it from the build under test would make both truth gates self-comparisons — a systematic energy error appears at both sample counts and cancels — so the runner refuses `--truth` outside bless.
 
+**`bench:ab` has not been exercised end to end on real hardware.** It is the only path in the suite
+without a verified run behind it. Use a base ref at or after the perf-measurement fixes — earlier
+refs measured a different dispatch configuration and will report a real delta rather than ~0 %.
+
 Not yet built: a PR CI workflow (there is currently no PR gate at all, and CI never lints), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. Denoisers are deliberately excluded from the corpus — OIDN adds an async completion dependency and deserves its own suite.
+
+Corpus gaps: skeletal/morph animation (needs a committed `.glb` — `refit-deform` covers the refit
+machinery but not `AnimationManager`), dispersion, iridescence, sheen, clearcoat, alpha cutout.
