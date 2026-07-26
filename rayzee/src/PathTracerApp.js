@@ -56,6 +56,7 @@ const _appsByCanvas = new WeakMap();
  * - `app.environmentManager` — EnvironmentManager (HDRI, procedural sky, mode switching)
  * - `app.settings`           — {@link RenderSettings} (all render parameters)
  * - `app.stages`             — Named pipeline stages for advanced control
+ * - `app.sceneMeshes`        — meshes backing the BVH, in buffer order (see {@link refitBVH})
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
@@ -1155,13 +1156,31 @@ export class PathTracerApp extends EventDispatcher {
 	// ═══════════════════════════════════════════════════════════════
 
 	/**
+	 * The meshes backing the current acceleration structure, in the order their triangles
+	 * occupy the shared buffers — which is what "original mesh order" means in
+	 * {@link refitBVH} and {@link refitBLASes}, and what `meshIndex` indexes.
+	 *
+	 * Walking your own model instead is not equivalent: the list is a depth-first pre-order
+	 * traversal of the whole mesh scene, so it also contains engine-owned meshes (the hidden
+	 * ground-projection disk) and any mesh a multi-material split produced. A positions
+	 * buffer built from a different set is silently misaligned.
+	 *
+	 * @returns {import('three').Mesh[]} Live reference — do not mutate.
+	 */
+	get sceneMeshes() {
+
+		return this._sdf?.meshes ?? [];
+
+	}
+
+	/**
 	 * Update vertex positions for animation without full BVH rebuild.
 	 * O(N) bottom-up AABB refit instead of O(N log N) SAH rebuild.
 	 *
 	 * Topology must stay the same (same triangle count and connectivity).
 	 * Call this per-frame for skeletal/morph-target animation.
 	 *
-	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) in original mesh order
+	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) for every triangle in the scene, meshes in {@link sceneMeshes} order and triangles in index order
 	 * @param {Float32Array} [newNormals] - Optional 9 floats per triangle smooth normals. If omitted, face normals are computed from positions.
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */

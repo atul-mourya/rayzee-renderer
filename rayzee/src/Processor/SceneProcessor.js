@@ -1303,6 +1303,31 @@ export class SceneProcessor {
 
 		}
 
+		// The worker reads triCount * 9 floats unconditionally, and the shared position buffer
+		// is sized from the FIRST call's argument — so a short array reads past its end and
+		// writes NaN into triangleData and every AABB above it, with no error anywhere. A
+		// caller that misses a mesh (the hidden ground disk is easy to miss) sees the scene
+		// silently vanish instead of a thrown exception, so check the length up front.
+		const expectedFloats = this.triangleCount * 9;
+
+		if ( newPositions?.length !== expectedFloats ) {
+
+			throw new Error(
+				`SceneProcessor.refitBVH: expected ${expectedFloats} position floats ` +
+				`(${this.triangleCount} triangles × 9), got ${newPositions?.length ?? 'none'}. ` +
+				'Positions must cover every triangle in the scene, meshes in this.meshes order.'
+			);
+
+		}
+
+		if ( newNormals && newNormals.length !== expectedFloats ) {
+
+			throw new Error(
+				`SceneProcessor.refitBVH: expected ${expectedFloats} normal floats, got ${newNormals.length}.`
+			);
+
+		}
+
 		// Lazy-create worker
 		if ( ! this._refitWorker ) {
 
@@ -1425,6 +1450,27 @@ export class SceneProcessor {
 		if ( ! this.instanceTable || ! this.bvhData || ! this.triangleData ) {
 
 			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
+
+		}
+
+		// Indexed by absolute triangle, so a short buffer reads undefined → NaN bounds for the
+		// affected meshes with no error. Same silent-corruption trap as refitBVH.
+		const expectedFloats = this.triangleCount * 9;
+
+		if ( newPositions?.length !== expectedFloats ) {
+
+			throw new Error(
+				`SceneProcessor.refitBLASes: expected ${expectedFloats} position floats ` +
+				`(${this.triangleCount} triangles × 9, full scene), got ${newPositions?.length ?? 'none'}.`
+			);
+
+		}
+
+		if ( newNormals && newNormals.length !== expectedFloats ) {
+
+			throw new Error(
+				`SceneProcessor.refitBLASes: expected ${expectedFloats} normal floats, got ${newNormals.length}.`
+			);
 
 		}
 
