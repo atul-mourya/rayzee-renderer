@@ -168,6 +168,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Deterministic-render mode — see setDeterministicMode()
 		this._deterministic = false;
+		this._dispatchPinned = false;
 		this._deterministicRestore = null;
 
 	}
@@ -1475,10 +1476,19 @@ export class PathTracerApp extends EventDispatcher {
 	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
 	 * Idempotent; pass `false` to restore the previous configuration.
 	 *
+	 * `pinDispatch: false` keeps the two readback-driven dispatch heuristics
+	 * (`_useDynamicDispatch` and the per-bounce early exit) ACTIVE while still pinning the
+	 * render loop, sample count and timers. Output is then no longer bit-reproducible, so
+	 * this is only for performance measurement — it exists because those heuristics are
+	 * real shipping behaviour, and benchmarking with them disabled measures a configuration
+	 * production never runs.
+	 *
 	 * @param {boolean} [enabled=true]
+	 * @param {Object} [options]
+	 * @param {boolean} [options.pinDispatch=true] - false to keep production dispatch heuristics
 	 * @returns {boolean} whether deterministic mode is now active
 	 */
-	setDeterministicMode( enabled = true ) {
+	setDeterministicMode( enabled = true, { pinDispatch = true } = {} ) {
 
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) return false;
@@ -1514,15 +1524,27 @@ export class PathTracerApp extends EventDispatcher {
 				renderTimeLimit: 0,
 			}, { silent: true } );
 
-			// -1 is unreachable by a uint survivor count, and both _buildWavefrontKernels()
-			// and _resizeWavefrontInPlace() preserve the sentinel across rebuilds.
-			stage._bounceEarlyExitThreshold = - 1;
-			stage._useDynamicDispatch = false;
+			if ( pinDispatch ) {
+
+				// -1 is unreachable by a uint survivor count, and both _buildWavefrontKernels()
+				// and _resizeWavefrontInPlace() preserve the sentinel across rebuilds.
+				stage._bounceEarlyExitThreshold = - 1;
+				stage._useDynamicDispatch = false;
+
+			} else {
+
+				// Restore the values captured on first enable, so a perf pass measures the
+				// same dispatch behaviour a real render uses.
+				stage._bounceEarlyExitThreshold = this._deterministicRestore.bounceEarlyExit;
+				stage._useDynamicDispatch = this._deterministicRestore.dynamicDispatch;
+
+			}
 
 			this.cameraManager?.setAutoFocusMode( 'manual' );
 			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
 
 			this._deterministic = true;
+			this._dispatchPinned = pinDispatch;
 
 		} else if ( this._deterministicRestore ) {
 
@@ -1541,6 +1563,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			this._deterministicRestore = null;
 			this._deterministic = false;
+			this._dispatchPinned = false;
 
 		}
 
@@ -1551,10 +1574,13 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	/** Whether deterministic mode is currently active. */
+	/**
+	 * Whether output is currently bit-reproducible. False when the dispatch heuristics
+	 * were left active via `pinDispatch: false`, since those consume async readbacks.
+	 */
 	get isDeterministic() {
 
-		return this._deterministic;
+		return this._deterministic && this._dispatchPinned;
 
 	}
 

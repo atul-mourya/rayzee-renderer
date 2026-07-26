@@ -253,6 +253,25 @@ function resetPeakMemory() {
 
 }
 
+/**
+ * Switches between reproducible mode (image comparison) and production-dispatch mode
+ * (performance measurement).
+ *
+ * Perf must NOT run with the dispatch heuristics pinned: `_useDynamicDispatch` and the
+ * per-bounce early exit are real shipping behaviour, and measuring with them disabled
+ * hides any regression confined to them. Image comparison must run with them pinned,
+ * because they consume async readbacks and destroy reproducibility.
+ *
+ * @param {boolean} enabled - true for perf measurement, false for image comparison
+ * @returns {boolean} whether output is currently bit-reproducible
+ */
+function setPerfMode( enabled ) {
+
+	app.setDeterministicMode( true, { pinDispatch: ! enabled } );
+	return app.isDeterministic;
+
+}
+
 async function unload() {
 
 	app.unloadScene();
@@ -270,6 +289,8 @@ globalThis.__bench = {
 	loadScene,
 	render,
 	measureGPUPerSample,
+	setPerfMode,
+	isDeterministic: () => app.isDeterministic,
 	capturePNG,
 	probes,
 	memory,

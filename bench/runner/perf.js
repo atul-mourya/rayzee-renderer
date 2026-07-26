@@ -8,12 +8,12 @@
  *    doubles. The numbers below come from WebGPU timestamp queries via
  *    app.getGPUTimings(), which are real GPU milliseconds.
  *
- * KNOWN LIMITATION: the harness holds the engine in deterministic mode, which disables
- * `_useDynamicDispatch` and the per-bounce early exit. Both are real shipping performance
- * features, so these numbers measure a configuration production never runs, and a
- * regression confined to those two mechanisms is invisible here. Everything else — BVH
- * traversal, shading, material sort, kernel cost — is measured faithfully. Fixing this
- * needs a partial-restore mode that keeps the dispatch heuristics while pinning the RNG.
+ *    Measurement runs with `setPerfMode( true )`, which keeps `_useDynamicDispatch` and
+ *    the per-bounce early exit ACTIVE. Those are real shipping behaviour; benchmarking
+ *    with them pinned off (as image comparison requires) would measure a configuration
+ *    production never runs and hide any regression confined to them. The trade is that
+ *    output is no longer bit-reproducible during a perf pass, which does not matter here
+ *    because nothing compares pixels.
  *
  * 2. Gate on same-session A/B, never on a stored number. A laptop's absolute timings
  *    move with thermal state, so a baseline from last week produces false alarms and
@@ -45,6 +45,9 @@ export async function runPerf( bench, { only, log = () => {} } = {} ) {
 	const allScenes = await bench.scenes();
 	const scenes = only?.length ? allScenes.filter( ( s ) => only.includes( s.id ) ) : allScenes;
 	const results = [];
+
+	// Measure the dispatch configuration production actually uses (see header).
+	await bench.setPerfMode( true );
 
 	for ( const scene of scenes ) {
 
@@ -81,6 +84,9 @@ export async function runPerf( bench, { only, log = () => {} } = {} ) {
 		);
 
 	}
+
+	// Restore reproducibility so a later image comparison in the same session is valid.
+	await bench.setPerfMode( false );
 
 	return { results };
 

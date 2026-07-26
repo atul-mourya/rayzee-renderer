@@ -87,6 +87,10 @@ export async function openHarness( baseURL, { verbose = false, harnessPath } = {
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),
+		setPerfMode: ( enabled ) => page.evaluate(
+			( on ) => globalThis.__bench.setPerfMode( on ), enabled
+		),
+		isDeterministic: () => page.evaluate( () => globalThis.__bench.isDeterministic() ),
 		capturePNG: () => page.evaluate( () => globalThis.__bench.capturePNG() ),
 		probes: () => page.evaluate( () => globalThis.__bench.probes() ),
 		memory: () => page.evaluate( () => globalThis.__bench.memory() ),

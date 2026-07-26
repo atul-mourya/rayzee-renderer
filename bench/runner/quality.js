@@ -83,6 +83,17 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 
 	}
 
+	// Image comparison is meaningless unless output is reproducible. A perf pass leaves the
+	// dispatch heuristics active, so assert rather than trust ordering.
+	if ( await bench.isDeterministic() !== true ) {
+
+		throw new Error(
+			'engine is not in reproducible mode — image comparison would produce spurious ' +
+			'diffs. A perf pass may have left dispatch heuristics active.'
+		);
+
+	}
+
 	const fingerprint = await bench.fingerprint();
 	const storedFingerprint = await readJSON( PATHS.fingerprint, null );
 	const mismatch = fingerprintMismatch( storedFingerprint, fingerprint );
