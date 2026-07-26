@@ -564,10 +564,24 @@ describe( 'bench/lib/stats', () => {
 
 		} );
 
-		it( 'refuses a verdict when the delta sits inside the noise floor', () => {
+		it( 'calls a delta inside the noise floor unchanged, not inconclusive', () => {
 
+			// A delta smaller than the measurement can resolve is a real finding — no
+			// detectable change — and must pass. 'inconclusive' is reserved for a BROKEN
+			// measurement; conflating the two failed every clean run for finding nothing.
 			const base = [ 100, 108, 92, 104, 96 ];
 			const head = [ 103, 111, 95, 107, 99 ];
+
+			expect( compareRuns( base, head ).verdict ).toBe( 'unchanged' );
+
+		} );
+
+		it( 'refuses a verdict when the median itself is poorly determined', () => {
+
+			// Same median either side, but the sample is so wide that the median's own
+			// standard error exceeds the trust cap.
+			const base = [ 1, 90, 2, 88, 3, 95, 1, 92 ];
+			const head = [ 1, 90, 2, 88, 3, 95, 1, 92 ];
 
 			expect( compareRuns( base, head ).verdict ).toBe( 'inconclusive' );
 

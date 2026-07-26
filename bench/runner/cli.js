@@ -70,17 +70,22 @@ function parseArgs( argv ) {
 const log = ( message ) => process.stdout.write( `${message}\n` );
 
 /** Boots dev server + harness, runs `body`, and always tears both down. */
-async function withHarness( { cwd, verbose }, body ) {
+async function withHarness( { cwd = PATHS.repoRoot, verbose }, body ) {
 
 	log( `${DIM}starting dev server…${RESET}` );
 	const server = await startDevServer( { cwd, verbose } );
 	log( `${DIM}dev server at ${server.url}${RESET}` );
 
+	// The harness must come from the SAME tree the dev server runs in. Vite's
+	// `server.fs.allow` resolves to that tree's root, so serving the main repo's harness
+	// to an A/B worktree's server returns 403 and the boot silently times out.
+	const harnessPath = path.join( cwd, 'bench', 'harness', 'index.html' );
+
 	let harness;
 	try {
 
 		log( `${DIM}booting harness (first boot compiles shaders, ~20 s)…${RESET}` );
-		harness = await openHarness( server.url, { verbose } );
+		harness = await openHarness( server.url, { verbose, harnessPath } );
 		return await body( harness );
 
 	} finally {

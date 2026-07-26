@@ -105,10 +105,13 @@ export const PERF = {
 	// Each measurement renders exactly ONE sample then resolves timestamp queries.
 	// Resolving once after an N-sample render would report whichever frame landed last,
 	// not the average — that produced cv > 100 % before this was fixed.
-	measureSamples: 40,
+	// Production dispatch sizing is readback-driven, so per-frame cost is legitimately
+	// bimodal (cv 30-40 %) even when throughput is stable. Resolving a ~10 % regression
+	// through that needs roughly (2*sqrt(2)*cv/0.10)^2 samples; at 3-5 ms of GPU each,
+	// 150 costs under a second per scene. Fewer samples do not make the gate quieter —
+	// they make every verdict 'inconclusive', which is a gate that never fires.
+	measureSamples: 150,
 	// Fraction of the slowest readings discarded as driver/OS scheduling hiccups rather
-	// than renderer cost. Without this, p95 runs 2-4x the median and cv exceeds the trust
-	// threshold, making every A/B verdict 'inconclusive'.
+	// than renderer cost.
 	trimFraction: 0.2,
-	maxCvForVerdict: 0.15,
 };

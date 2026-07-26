@@ -38,8 +38,24 @@ export function formatBytes( bytes ) {
  */
 export async function runMemory( bench, { sceneId, cycles = MEMORY_GATES.leakCycles, log = () => {} } = {} ) {
 
+	// Below 3, both gates are structurally inert: peak growth needs a before and an after
+	// past the lazy-allocation cycle, and the monotonic test discards cycle 1 and then
+	// needs at least two more to see a trend. Reporting "no leak detected" from 1 or 2
+	// cycles would be a guarantee the run never actually made.
+	if ( cycles < 3 ) {
+
+		throw new Error( `memory: needs at least 3 cycles to detect growth, got ${cycles}` );
+
+	}
+
 	const scenes = await bench.scenes();
 	const target = sceneId ?? scenes[ 0 ].id;
+
+	if ( sceneId && ! scenes.some( ( s ) => s.id === target ) ) {
+
+		throw new Error( `memory: unknown scene "${sceneId}"` );
+
+	}
 
 	const failures = [];
 	const snapshots = [];

@@ -4,8 +4,15 @@
  * Pure functions, zero dependencies, no input mutation.
  */
 
-/** Runs noisier than this are not trustworthy enough to judge a regression. */
-const MAX_TRUSTED_CV = 0.15;
+/**
+ * Absolute sanity cap on the median's relative standard error: beyond this the
+ * measurement is broken rather than merely wide, and no delta should be believed.
+ *
+ * It is deliberately loose, because the real per-scene gating is done by the noise floor
+ * in verdictFor() — a scene measured to ±0.4 % resolves a 2 % change, one measured to
+ * ±6 % only resolves ~17 %. Measured range on Apple M-series at n=120 is 0.4-6.6 %.
+ */
+const MAX_TRUSTED_REL_SE = 0.08;
 
 /** Median deltas smaller than this (percent) are treated as no change. */
 const UNCHANGED_PCT = 2;
@@ -113,7 +120,7 @@ export function stdev( values ) {
  *
  * @param {number[]} values Sample. Not mutated.
  * @return {{n: number, min: number, max: number, mean: number, median: number,
- *   p95: number, stdev: number, cv: number}} Summary statistics.
+ *   p95: number, stdev: number, cv: number, medianSe: number, relSe: number}} Summary.
  */
 export function summarise( values ) {
 
@@ -121,19 +128,30 @@ export function summarise( values ) {
 	const n = sorted.length;
 	const avg = n === 0 ? NaN : mean( sorted );
 	const sd = stdev( sorted );
+	const med = quantileOfSorted( sorted, 0.5 );
 
 	// abs() keeps cv non-negative: a signed cv would sail past the noise gate.
 	const cv = Number.isFinite( avg ) && avg !== 0 ? sd / Math.abs( avg ) : 0;
+
+	// Standard error OF THE MEDIAN, ~1.2533 * sd / sqrt(n). This — not per-sample cv — is
+	// the right noise floor for comparing two medians. Production dispatch sizing is
+	// readback-driven, so per-frame cost is legitimately bimodal and cv runs 30-40 % even
+	// when the median is rock stable; judging on cv would make every verdict inconclusive
+	// and the perf gate would never fire.
+	const medianSe = n > 1 ? 1.2533 * sd / Math.sqrt( n ) : 0;
+	const relSe = Number.isFinite( med ) && med !== 0 ? medianSe / Math.abs( med ) : 0;
 
 	return {
 		n,
 		min: n === 0 ? NaN : sorted[ 0 ],
 		max: n === 0 ? NaN : sorted[ n - 1 ],
 		mean: avg,
-		median: quantileOfSorted( sorted, 0.5 ),
+		median: med,
 		p95: quantileOfSorted( sorted, 0.95 ),
 		stdev: sd,
 		cv,
+		medianSe,
+		relSe,
 	};
 
 }
@@ -185,16 +203,24 @@ export function trimOutliers( values, fraction = 0.1 ) {
 function verdictFor( base, head, deltaPct ) {
 
 	const magnitude = Math.abs( deltaPct );
-	const noiseFloorPct = Math.max( base.cv, head.cv ) * 100;
 
+	// Combined 2-sigma sampling error of the two medians. Judging on per-sample spread
+	// instead would reject stable measurements whose underlying distribution is merely
+	// wide — which is the normal shape for readback-driven dispatch.
+	const noiseFloorPct = 2 * Math.hypot( base.relSe, head.relSe ) * 100;
+
+	// 'inconclusive' means the MEASUREMENT is broken, not that the delta is small. A delta
+	// inside the noise floor is a real finding — no detectable change — and must pass,
+	// otherwise every clean run fails for having found nothing.
 	const untrustworthy = ! Number.isFinite( deltaPct )
-		|| base.cv > MAX_TRUSTED_CV
-		|| head.cv > MAX_TRUSTED_CV
-		|| magnitude < noiseFloorPct;
+		|| base.n < 3
+		|| head.n < 3
+		|| base.relSe > MAX_TRUSTED_REL_SE
+		|| head.relSe > MAX_TRUSTED_REL_SE;
 
 	if ( untrustworthy ) return 'inconclusive';
 
-	if ( magnitude < UNCHANGED_PCT ) return 'unchanged';
+	if ( magnitude < Math.max( UNCHANGED_PCT, noiseFloorPct ) ) return 'unchanged';
 
 	return deltaPct > 0 ? 'slower' : 'faster';
 

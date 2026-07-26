@@ -44,49 +44,76 @@ export async function runPerf( bench, { only, log = () => {} } = {} ) {
 
 	const allScenes = await bench.scenes();
 	const scenes = only?.length ? allScenes.filter( ( s ) => only.includes( s.id ) ) : allScenes;
+
+	// A typo'd --only would otherwise measure nothing and exit 0, reading as a clean run.
+	if ( ! scenes.length ) throw new Error( `perf: no matching scenes (asked for: ${only?.join( ', ' )})` );
+
 	const results = [];
 
-	// Measure the dispatch configuration production actually uses (see header).
+	// Measure the dispatch configuration production actually uses (see header). Restored in
+	// the finally below: a throw here would otherwise leave the heuristics active, and a
+	// later image comparison in the same session would trip runQuality's reproducibility
+	// assertion with a confusing error far from the real cause.
 	await bench.setPerfMode( true );
 
-	for ( const scene of scenes ) {
+	try {
 
-		log( `  ${scene.id}` );
-		const load = await bench.loadScene( scene.id );
+		for ( const scene of scenes ) {
 
-		// Warmup: pays the WGSL compile so it does not land inside a measured sample.
-		await bench.render( PERF.warmupSamples );
+			log( `  ${scene.id}` );
+			const load = await bench.loadScene( scene.id );
 
-		const perSample = await bench.measureGPUPerSample( PERF.measureSamples );
+			// Asserted per scene, after the load: loadScene re-asserts deterministic mode,
+			// and a regression there would silently put us back in the pinned configuration
+			// this function exists to avoid measuring. isDeterministic true means pinned.
+			if ( await bench.isDeterministic() === true ) {
 
-		if ( ! perSample.length ) {
+				throw new Error(
+					`perf: dispatch heuristics are pinned while measuring ${scene.id} — ` +
+					'this measures a configuration production never runs'
+				);
 
-			throw new Error( 'perf: no GPU timings returned (timestamp-query unavailable?)' );
+			}
+
+			// Warmup: pays the WGSL compile so it does not land inside a measured sample.
+			await bench.render( PERF.warmupSamples );
+
+			const perSample = await bench.measureGPUPerSample( PERF.measureSamples );
+
+			if ( ! perSample.length ) {
+
+				throw new Error( 'perf: no GPU timings returned (timestamp-query unavailable?)' );
+
+			}
+
+			// Drop the first reading (the transition out of warmup still shows in it on some
+			// drivers), then trim the slow tail of scheduling hiccups.
+			const measured = trimOutliers( discardWarmup( perSample, 1 ), PERF.trimFraction );
+			const summary = summarise( measured );
+
+			results.push( {
+				scene: scene.id,
+				loadMs: load.loadMs,
+				gpuMsPerSample: summary,
+				raw: measured,
+			} );
+
+			// relSe is what decides whether an A/B verdict is possible; cv is only
+			// descriptive. Printing both makes an 'inconclusive' verdict diagnosable.
+			log(
+				`    ${summary.median.toFixed( 2 )} ms/sample GPU ` +
+				`(±${( summary.relSe * 100 ).toFixed( 1 )} % median SE, cv ${( summary.cv * 100 ).toFixed( 1 )} %, ` +
+				`n ${summary.n}), load ${( load.loadMs / 1000 ).toFixed( 1 )} s`
+			);
 
 		}
 
-		// Drop the first reading (the transition out of warmup still shows in it on some
-		// drivers), then trim the slow tail of scheduling hiccups.
-		const measured = trimOutliers( discardWarmup( perSample, 1 ), PERF.trimFraction );
-		const summary = summarise( measured );
+	} finally {
 
-		results.push( {
-			scene: scene.id,
-			loadMs: load.loadMs,
-			gpuMsPerSample: summary,
-			raw: measured,
-		} );
-
-		log(
-			`    ${summary.median.toFixed( 2 )} ms/sample GPU ` +
-			`(p95 ${summary.p95.toFixed( 2 )}, cv ${( summary.cv * 100 ).toFixed( 1 )} %), ` +
-			`load ${( load.loadMs / 1000 ).toFixed( 1 )} s`
-		);
+		// Restore reproducibility so a later image comparison in the same session is valid.
+		await bench.setPerfMode( false );
 
 	}
-
-	// Restore reproducibility so a later image comparison in the same session is valid.
-	await bench.setPerfMode( false );
 
 	return { results };
 

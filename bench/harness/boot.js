@@ -27,6 +27,11 @@ let app = null;
 let currentScene = null;
 let pristineSettings = null;
 
+// Sticky across scene loads. loadScene() re-asserts deterministic mode, and without
+// remembering the requested mode it would default back to pinDispatch:true and silently
+// undo setPerfMode( true ) on the very first scene of a perf run.
+let perfModeEnabled = false;
+
 /** Union of every settings key any scene overrides, at its pristine boot value. */
 function sceneSettingsFloor() {
 
@@ -121,8 +126,9 @@ async function loadScene( id ) {
 	const loadMs = performance.now() - startedAt;
 
 	// build() → loadObject3D() → reset() → wake(). Re-assert determinism and park rAF so
-	// nothing races the manual render loop.
-	app.setDeterministicMode( true );
+	// nothing races the manual render loop — preserving the current dispatch mode, since a
+	// hard-coded default here would cancel setPerfMode() for every scene in a perf run.
+	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
 
 	currentScene = spec;
 	return { id: spec.id, spp: spec.spp, truthSpp: spec.truthSpp, loadMs };
@@ -267,7 +273,8 @@ function resetPeakMemory() {
  */
 function setPerfMode( enabled ) {
 
-	app.setDeterministicMode( true, { pinDispatch: ! enabled } );
+	perfModeEnabled = !! enabled;
+	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
 	return app.isDeterministic;
 
 }
