@@ -382,6 +382,10 @@ export class OverlayManager {
 
 		}
 
+		// Un-park BEFORE measuring: a display:none canvas reports clientWidth 0, which returns early below and
+		// skips the un-park at the end — so once parked the HUD could never come back.
+		if ( canvas.style.display !== '' ) canvas.style.display = '';
+
 		// Helpers draw in CSS-pixel coordinates of the unscaled layout box; the
 		// backing store is sized off the on-screen box, so nothing is drawn below
 		// view resolution.

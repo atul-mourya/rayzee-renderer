@@ -1215,10 +1215,12 @@ export class PathTracerApp extends EventDispatcher {
 	 *
 	 * MUST be called before the pipeline/stages are constructed (they pre-allocate at this value and cannot
 	 * resize). Calling it after init only takes effect on the next full pipeline (re)build.
-	 * @param {number} requestedPx desired reserved size (longest edge)
+	 * @param {number}  requestedPx desired reserved size (longest edge)
+	 * @param {Object}  [opts]
+	 * @param {boolean} [opts.allowLower=false] permit lowering, paying a rebuild, to reclaim VRAM
 	 * @returns {number} the applied reserved size
 	 */
-	setReservedRenderResolution( requestedPx ) {
+	setReservedRenderResolution( requestedPx, { allowLower = false } = {} ) {
 
 		const limits = this.renderer?.backend?.device?.limits;
 		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
@@ -1227,7 +1229,11 @@ export class PathTracerApp extends EventDispatcher {
 		const deviceSafeMax = ( deviceMemGB >= 8 && maxBinding >= 1024 * 1024 * 1024 )
 			? MAX_RESERVABLE_RENDER_SIZE : 2048;
 		const prev = MAX_STORAGE_TEXTURE_SIZE;
-		const applied = setReservedRenderSize( Math.min( requestedPx, deviceSafeMax ) );
+
+		// Monotonic up: UI-driven callers request whatever the current view needs, so honouring decreases made
+		// the reserve oscillate on every preview↔render switch and paid a full kernel rebuild each time.
+		const target = allowLower ? requestedPx : Math.max( requestedPx, prev );
+		const applied = setReservedRenderSize( Math.min( target, deviceSafeMax ) );
 
 		// If the pipeline is already built and the reserved size changed, re-init the reserved GPU storage in
 		// place: each stage recreates its pre-allocated StorageTextures at the new size + rebuilds its compute
@@ -1239,6 +1245,17 @@ export class PathTracerApp extends EventDispatcher {
 			const wasPaused = this.pauseRendering;
 			this.pauseRendering = true;
 			try {
+
+				// Lowering below the live backing store makes copyToReadTargets read past the end of the
+				// (now smaller) write textures — a GPUValidationError. Shrink the backing store first.
+				// renderer.setSize, not setCanvasSize/onResize: those also rewrite camera.aspect.
+				const backing = this.renderer.domElement;
+				if ( backing.width > applied || backing.height > applied ) {
+
+					this.renderer.setSize(
+						Math.min( backing.width, applied ), Math.min( backing.height, applied ), false );
+
+				}
 
 				for ( const stage of Object.values( this.stages ) ) stage?.reallocateReservedStorage?.();
 
@@ -1254,6 +1271,16 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		return applied;
+
+	}
+
+	/**
+	 * The current reserved (pre-allocated) square render size in px.
+	 * @returns {number}
+	 */
+	getReservedRenderResolution() {
+
+		return MAX_STORAGE_TEXTURE_SIZE;
 
 	}
 
@@ -1344,28 +1371,27 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.cameraManager.controls.enabled = ! isProduction;
 
-		// Batch uniform updates via settings
+		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
+		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
 		this.settings.setMany( {
 			maxSamples: config.maxSamples,
 			maxBounces: config.bounces,
 			transmissiveBounces: config.transmissiveBounces,
 			maxSubsurfaceSteps: config.maxSubsurfaceSteps,
+			enableAlphaShadows: config.enableAlphaShadows ?? false,
+			// Tier-1 convergence early-stop
+			useAdaptiveSampling: config.useAdaptiveSampling ?? false,
+			noiseThreshold: config.noiseThreshold ?? DEFAULT_STATE.noiseThreshold,
+			adaptiveStopFraction: config.adaptiveStopFraction ?? DEFAULT_STATE.adaptiveStopFraction,
+			adaptiveMinSamples: config.adaptiveMinSamples ?? DEFAULT_STATE.adaptiveMinSamples,
+			// Tier-2 per-pixel freeze
+			usePixelFreeze: config.usePixelFreeze ?? false,
+			pixelFreezeThreshold: config.pixelFreezeThreshold ?? DEFAULT_STATE.pixelFreezeThreshold,
+			pixelFreezeStability: config.pixelFreezeStability ?? DEFAULT_STATE.pixelFreezeStability,
 		}, { silent: true } );
 
+		// renderMode has no SETTING_ROUTES entry
 		this.stages.pathTracer?.setUniform( 'renderMode', parseInt( config.renderMode ) );
-		this.stages.pathTracer?.setUniform( 'enableAlphaShadows', config.enableAlphaShadows ?? false );
-
-		// Tier-1 convergence early-stop (live uniforms, no kernel rebuild). Threshold/min-samples fall back to
-		// engine defaults when a config doesn't override them.
-		this.stages.pathTracer?.setUniform( 'useAdaptiveSampling', config.useAdaptiveSampling ?? false );
-		this.stages.pathTracer?.setUniform( 'noiseThreshold', config.noiseThreshold ?? DEFAULT_STATE.noiseThreshold );
-		this.stages.pathTracer?.setUniform( 'adaptiveStopFraction', config.adaptiveStopFraction ?? DEFAULT_STATE.adaptiveStopFraction );
-		this.stages.pathTracer?.setUniform( 'adaptiveMinSamples', config.adaptiveMinSamples ?? DEFAULT_STATE.adaptiveMinSamples );
-
-		// Tier-2 per-pixel freeze (per-mode; falls back off when a config doesn't set it).
-		this.stages.pathTracer?.setUniform( 'usePixelFreeze', config.usePixelFreeze ?? false );
-		this.stages.pathTracer?.setUniform( 'pixelFreezeThreshold', config.pixelFreezeThreshold ?? DEFAULT_STATE.pixelFreezeThreshold );
-		this.stages.pathTracer?.setUniform( 'pixelFreezeStability', config.pixelFreezeStability ?? DEFAULT_STATE.pixelFreezeStability );
 
 		this.stages.pathTracer?.updateCompletionThreshold?.();
 

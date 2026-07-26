@@ -769,8 +769,11 @@ export class PathTracer extends PathTracerStage {
 
 		if ( ! this._packedBuffers || ! ( this.materialData?.materialCount > 0 ) ) return;
 
-		const w = this.storageTextures.renderWidth || 1;
-		const h = this.storageTextures.renderHeight || 1;
+		// Clamp into the (possibly just-lowered) reserve: create() sizes the write StorageTextures at
+		// MAX_STORAGE_TEXTURE_SIZE but the readTarget at what's passed here, and the tracked render size still
+		// holds the pre-change value — unclamped, copyToReadTargets reads past the write textures.
+		const w = Math.min( this.storageTextures.renderWidth || 1, MAX_STORAGE_TEXTURE_SIZE );
+		const h = Math.min( this.storageTextures.renderHeight || 1, MAX_STORAGE_TEXTURE_SIZE );
 
 		// Recreate the MRT pool at the new reserved size (create() reallocates the write StorageTextures at the
 		// live MAX_STORAGE_TEXTURE_SIZE; the read RenderTarget follows the current render size).
