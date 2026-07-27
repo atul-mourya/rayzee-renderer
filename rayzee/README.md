@@ -1,9 +1,9 @@
 # Rayzee Engine
 
-[![npm](https://img.shields.io/npm/v/rayzee?label=npm)](https://www.npmjs.com/package/rayzee)
-[![minzipped size](https://img.shields.io/badge/minzipped-176%20KB-blue)](https://www.npmjs.com/package/rayzee)
-[![downloads](https://img.shields.io/npm/dw/rayzee?label=downloads)](https://www.npmjs.com/package/rayzee)
-[![jsDelivr](https://img.shields.io/jsdelivr/npm/hm/rayzee?label=jsDelivr)](https://www.jsdelivr.com/package/npm/rayzee)
+[![NPM Package][npm]][npm-url]
+[![Build Size][build-size]][build-size-url]
+[![NPM Downloads][npm-downloads]][npmtrends-url]
+[![jsDelivr Downloads][jsdelivr-downloads]][jsdelivr-url]
 
 A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic — use it with React, Vue, vanilla JS, or any other setup.
 
@@ -805,3 +805,12 @@ If serving locally, place files in your `public/` folder and reference them with
 ## License
 
 MIT
+
+[npm]: https://img.shields.io/npm/v/rayzee
+[npm-url]: https://www.npmjs.com/package/rayzee
+[build-size]: https://img.shields.io/badge/minzipped-176%20KB-blue
+[build-size-url]: https://bundlephobia.com/result?p=rayzee
+[npm-downloads]: https://img.shields.io/npm/dw/rayzee
+[npmtrends-url]: https://www.npmtrends.com/rayzee
+[jsdelivr-downloads]: https://img.shields.io/jsdelivr/npm/hm/rayzee
+[jsdelivr-url]: https://www.jsdelivr.com/package/npm/rayzee

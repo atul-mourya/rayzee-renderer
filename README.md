@@ -1,9 +1,9 @@
 # Rayzee - Real-Time Path Tracer
 
-[![npm](https://img.shields.io/npm/v/rayzee?label=npm)](https://www.npmjs.com/package/rayzee)
-[![minzipped size](https://img.shields.io/badge/minzipped-176%20KB-blue)](https://www.npmjs.com/package/rayzee)
-[![downloads](https://img.shields.io/npm/dw/rayzee?label=downloads)](https://www.npmjs.com/package/rayzee)
-[![jsDelivr](https://img.shields.io/jsdelivr/npm/hm/rayzee?label=jsDelivr)](https://www.jsdelivr.com/package/npm/rayzee)
+[![NPM Package][npm]][npm-url]
+[![Build Size][build-size]][build-size-url]
+[![NPM Downloads][npm-downloads]][npmtrends-url]
+[![jsDelivr Downloads][jsdelivr-downloads]][jsdelivr-url]
 
 A real-time path tracer that runs entirely in the browser. Rayzee combines a WebGPU wavefront Monte Carlo core, a two-level BVH, and TSL shaders compiled to WGSL to deliver physically based global illumination with interactive frame rates.
 
@@ -93,3 +93,12 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 ---
 
 **Built with ❤️ by [Atul Mourya](https://github.com/atul-mourya)**
+
+[npm]: https://img.shields.io/npm/v/rayzee
+[npm-url]: https://www.npmjs.com/package/rayzee
+[build-size]: https://img.shields.io/badge/minzipped-176%20KB-blue
+[build-size-url]: https://bundlephobia.com/result?p=rayzee
+[npm-downloads]: https://img.shields.io/npm/dw/rayzee
+[npmtrends-url]: https://www.npmtrends.com/rayzee
+[jsdelivr-downloads]: https://img.shields.io/jsdelivr/npm/hm/rayzee
+[jsdelivr-url]: https://www.jsdelivr.com/package/npm/rayzee
