@@ -59,6 +59,8 @@ export default defineConfig( {
 				},
 			],
 		},
-		sourcemap: true,
+		// 'hidden': maps are excluded from the tarball, so a sourceMappingURL comment
+		// would only produce "map not found" warnings downstream.
+		sourcemap: 'hidden',
 	},
 } );

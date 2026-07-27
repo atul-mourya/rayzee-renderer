@@ -9,7 +9,10 @@
 
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHSubtreeWorker from './Workers/BVHSubtreeWorker.js?worker&inline';
+import { setBVHWorkerFactory } from './BVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+
+setBVHWorkerFactory( () => new BVHWorker() );
 
 const log = createLogger( 'bvh' );
 

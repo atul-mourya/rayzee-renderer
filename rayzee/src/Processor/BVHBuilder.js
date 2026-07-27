@@ -1,10 +1,19 @@
 import { TreeletOptimizer } from './TreeletOptimizer.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
-import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 // Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'bvh' );
+
+// Injected, not imported: this module also runs inside the worker, and `?worker&inline`
+// would embed a second copy of BVHWorker's source there.
+let createBVHWorker = null;
+
+export function setBVHWorkerFactory( factory ) {
+
+	createBVHWorker = factory;
+
+}
 
 // Inline copy of TRIANGLE_DATA_LAYOUT (mirrors Constants.js).
 // Cannot import Constants.js because BVHBuilder runs inside BVHWorker
@@ -398,7 +407,7 @@ export class BVHBuilder {
 		this.processedTriangles = 0;
 		this.lastProgressUpdate = performance.now();
 
-		if ( this.useWorker && typeof Worker !== 'undefined' ) {
+		if ( this.useWorker && createBVHWorker && typeof Worker !== 'undefined' ) {
 
 			return new Promise( ( resolve, reject ) => {
 
@@ -486,7 +495,7 @@ export class BVHBuilder {
 
 				try {
 
-					setupWorker( new BVHWorker() );
+					setupWorker( createBVHWorker() );
 
 				} catch ( error ) {
 
