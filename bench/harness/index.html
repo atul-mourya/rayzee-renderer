@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Rayzee bench harness</title>
+		<style>
+			html, body { margin: 0; padding: 0; background: #111; overflow: hidden; }
+			/* Fixed pixel size, no CSS scaling: setCanvasSize() writes the backing store and
+			   any layout reflow would zero frameCount mid-run. */
+			#bench-canvas { display: block; }
+		</style>
+	</head>
+	<body>
+		<canvas id="bench-canvas" width="256" height="256"></canvas>
+		<script type="module" src="./boot.js"></script>
+	</body>
+</html>

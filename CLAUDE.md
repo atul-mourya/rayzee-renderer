@@ -34,6 +34,18 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 ### Testing
 - `npm test` - Run Vitest from root
 
+### Regression Bench (`bench/`)
+Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
+- `npm run bench` - quality + memory + perf against the working tree
+- `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
+- `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
+- `npm run bench:list` - show the scene corpus
+
+Baselines are **machine-specific** (the wavefront path budget derives from device limits, and
+single- vs multi-chunk are different code paths); the suite refuses to compare across a
+mismatched GPU fingerprint. Perf absolutes are a monitored trend, never a gate — only the A/B
+comparison gates.
+
 ### Release
 - `npm run release` - Create semantic release (requires environment variables)
 
@@ -155,6 +167,7 @@ GLTF skeletal/morph animation playback and interactive object transforms with BV
 **BVH refit data flow (two-level)**:
 - **Full refit** (animation): `SceneProcessor.refitBVH()` → worker updates all triangle positions + refits entire combined BVH buffer (TLAS + all BLASes) via SharedArrayBuffer
 - **Per-mesh refit** (transform): `SceneProcessor.refitBLASes(meshIndices)` → main thread updates only affected meshes' triangles, refits their BLAS ranges, rebuilds TLAS from updated AABBs
+- **Positions buffer ordering**: both take 9 floats per triangle for **every triangle in the scene** — meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. Walking your own model instead silently misaligns the buffer. Both methods now length-check and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
 
 **Video render data flow**:
 1. `VideoRenderManager.renderAnimation()` saves engine state, stops rAF, configures final-render mode
@@ -233,6 +246,25 @@ Engine quality tiers — the engine API takes `'interactive' | 'production'`:
 The app maps its UI tab labels (`appMode: 'preview' | 'final-render' | 'results'`) onto these engine tiers. The `'results'` tab is purely UI — when active, the app sets `app.pauseRendering = true` and disables controls directly; the engine has no `'results'` mode of its own.
 
 Mode switching lives in app-store handlers `handleConfigureForPreview` / `handleConfigureForFinalRender` / `handleConfigureForResults` (in `app/src/store.js`), which delegate to the engine method `app.configureForMode( mode, { canvasWidth, canvasHeight } )` — `mode` is `'interactive' | 'production'`. `configureForMode()` batch-updates uniforms via `settings.setMany({...}, { silent: true })`, toggles OIDN/controls, and calls `reset()`.
+
+### Deterministic / Headless Rendering API
+Public `PathTracerApp` methods for offline rendering and reproducible output:
+- **`app.setDeterministicMode( enabled = true )`** — pins every wall-clock- and readback-dependent
+  input so N samples reproduce bit-for-bit. The RNG is already pure (`hash(pixel, rayIndex, frame)`,
+  no clock, no `Math.random()` in any shader); what varies is *which uniforms and dispatch grids are
+  live on frame k*. Disables adaptive sampling, pixel freeze, the readback-driven per-bounce early
+  exit and dynamic dispatch sizing (kernels bind on `ENTERING_COUNT`, so an under-sized grid silently
+  drops rays), interaction mode, auto-focus and auto-exposure. Reversible; leaves rAF stopped.
+- **`await app.renderFrames( n, { reset, yieldEvery, onProgress } )`** — accumulates exactly `n`
+  samples synchronously. Awaits the STBN atlases (until they land the sampler reads a constant-0.5
+  placeholder that bakes into accumulation), raises `maxSamples` through the settings handler
+  (`completionThreshold` is a cached JS number — writing the uniform alone does nothing), and calls
+  `stopAnimation()` after `reset()` because `reset()` re-wakes rAF.
+- **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
+  timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
+  CPU and stays flat while GPU cost doubles.
+
+`app.stages.pathTracer.blueNoiseReady` resolves when both STBN atlases have loaded.
 
 ### State-Engine Synchronization Pattern
 **Critical**: All UI state changes must sync with the app via `getApp()`:
@@ -329,7 +361,7 @@ Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro wit
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)
 9. **BVH Leaf Markers**: `-1` = triangle leaf, `-2` = BLAS-pointer leaf. Traversal uses threshold `-1.5` to distinguish. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
-11. **Transform vs Animation Refit**: Transforms use `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout.
+11. **Transform vs Animation Refit**: Transforms use `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag (`normalCData.w`).
 
 ## Testing & Validation

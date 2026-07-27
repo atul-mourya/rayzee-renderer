@@ -4,7 +4,6 @@
 - when rendering done due to convergence, we need to indicate that. For example. 540 / 600, convergence completed in 540 frame before reaching 600 maxsamples
 
 ### MVP
-- [x] render helpers at canvas view dimension not canvas resolution.
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
@@ -26,12 +25,31 @@
 ### Chores
 - [ ] minimize unwanted dependencies - <https://github.com/atul-mourya/RayTracing/network/dependencies>
 - [ ] lint fix
-- [ ] enhance test coverage of the engine, use headless chrome if needed
-- [ ] needs WebGPU, can't unit-test
+- [x] benchmark tooling specification and implementation — `bench/`, headless-GPU quality/perf/memory regression suite. See `bench/README.md`
+- [x] enhance test coverage of the engine, use headless chrome if needed — the GPU files that unit tests exclude are now covered by `bench/` against a real Metal-3 adapter
+- [x] Create e2e test — `bench/` boots the engine in headless Chrome and drives it over CDP; nothing covers the React UI yet
 - [ ] open issues by threejs <https://github.com/mrdoob/three.js/issues/32969> and 33061
-- [ ] Create e2e test
-- [ ] benckmark tooling specification and implementation
-- [ ] Readme with screenshots
+- [x] Readme with screenshots
+
+### Regression bench (`bench/`)
+
+- [x] quality (dual golden + 2048-spp ground-truth reference), memory (leak cycles), perf (same-session A/B) suites
+- [x] deterministic render mode + headless control API on `PathTracerApp` (public engine contract)
+- [x] perf measured with the production dispatch heuristics live, verdicts on standard error of the median
+- [x] STBN atlases vendored under `bench/assets/` — a reproducibility gate cannot depend on a mutable CDN
+- [x] scene corpus, 14 scenes: diffuse GI, emissive NEE, transmission, procedural sky, subsurface, anisotropy, shadow catcher, textures/normal maps, BVH refit, dispersion, iridescence, sheen, clearcoat, alpha MASK/BLEND
+- [x] every scene mutation-tested — disable the feature it covers, confirm the gate FAILS (10/10 caught)
+- [x] verify `bench:ab` end to end — was broken (403 from the symlinked macOS tmpdir); now verified in both directions on real hardware
+- [x] perf A/B rebuilt on paired replicate rounds in one browser — the old within-run standard error understated uncertainty ~8× and produced false `slower` verdicts on unchanged code
+- [x] memory leak loop covers a textured scene — all three historical VRAM leaks were in the texture path and the loop only ran an untextured scene
+- [ ] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
+- [ ] the two sub-1 ms scenes are too cheap to measure reliably; either exclude them from perf or raise their sample count
+- [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
+- [ ] HTML report with diff heatmaps (`bench/lib/metrics.js` already has `diffHeatmap()`, unused)
+- [ ] CPU-side vitest guards: shader-recompile contract, BVH structural invariants, feature-combo compile smoke
+- [ ] trend dashboard over `bench/baselines/perf.jsonl`
+- [ ] denoiser suite — OIDN/ASVGF need an async completion dependency, deliberately out of the main corpus
+- [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 
 
 ### General
@@ -47,6 +65,7 @@
 
 ### Rendering
 
+- [ ] Introduce Sequenced HRDIs - https://mattepaint.com/gallery/hdri/skies/
 - [ ] God Rays
 - [ ] Fog
 - [ ] Lens flare

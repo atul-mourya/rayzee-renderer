@@ -56,6 +56,7 @@ const _appsByCanvas = new WeakMap();
  * - `app.environmentManager` — EnvironmentManager (HDRI, procedural sky, mode switching)
  * - `app.settings`           — {@link RenderSettings} (all render parameters)
  * - `app.stages`             — Named pipeline stages for advanced control
+ * - `app.sceneMeshes`        — meshes backing the BVH, in buffer order (see {@link refitBVH})
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
@@ -165,6 +166,11 @@ export class PathTracerApp extends EventDispatcher {
 		this._trackedListeners = [];
 		this._disposed = false;
 		this._deviceLost = false;
+
+		// Deterministic-render mode — see setDeterministicMode()
+		this._deterministic = false;
+		this._dispatchPinned = false;
+		this._deterministicRestore = null;
 
 	}
 
@@ -1150,13 +1156,31 @@ export class PathTracerApp extends EventDispatcher {
 	// ═══════════════════════════════════════════════════════════════
 
 	/**
+	 * The meshes backing the current acceleration structure, in the order their triangles
+	 * occupy the shared buffers — which is what "original mesh order" means in
+	 * {@link refitBVH} and {@link refitBLASes}, and what `meshIndex` indexes.
+	 *
+	 * Walking your own model instead is not equivalent: the list is a depth-first pre-order
+	 * traversal of the whole mesh scene, so it also contains engine-owned meshes (the hidden
+	 * ground-projection disk) and any mesh a multi-material split produced. A positions
+	 * buffer built from a different set is silently misaligned.
+	 *
+	 * @returns {import('three').Mesh[]} Live reference — do not mutate.
+	 */
+	get sceneMeshes() {
+
+		return this._sdf?.meshes ?? [];
+
+	}
+
+	/**
 	 * Update vertex positions for animation without full BVH rebuild.
 	 * O(N) bottom-up AABB refit instead of O(N log N) SAH rebuild.
 	 *
 	 * Topology must stay the same (same triangle count and connectivity).
 	 * Call this per-frame for skeletal/morph-target animation.
 	 *
-	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) in original mesh order
+	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) for every triangle in the scene, meshes in {@link sceneMeshes} order and triangles in index order
 	 * @param {Float32Array} [newNormals] - Optional 9 floats per triangle smooth normals. If omitted, face normals are computed from positions.
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
@@ -1443,6 +1467,251 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._needsDisplayRefresh = true;
 		this.wake();
+
+	}
+
+	// ═══════════════════════════════════════════════════════════════
+	// Deterministic / headless control
+	// ═══════════════════════════════════════════════════════════════
+
+	/**
+	 * Pins every wall-clock- and readback-dependent input so that N samples from a
+	 * fresh `reset()` reproduce bit-for-bit.
+	 *
+	 * The image is always a pure function of (pixel, frame, uniforms) — no shader reads
+	 * a clock and there is no `Math.random()` in the render path. What varies run to run
+	 * is *which* uniforms and dispatch grids are live on frame k:
+	 *
+	 * - `useAdaptiveSampling` retires the whole frame off an async CONVERGED_COUNT
+	 *   readback, so two runs accumulate different sample totals for one `maxSamples`.
+	 * - `usePixelFreeze` sizes the bounce-0 grid from a stale active-pixel readback.
+	 * - `_bounceEarlyExitThreshold` / `_useDynamicDispatch` both consume the async
+	 *   survivor curve. Kernels bind on ENTERING_COUNT, so an under-sized grid silently
+	 *   drops rays, and the frame a readback lands on is GPU-scheduled.
+	 * - `interactionModeEnabled` is a 100 ms timer that clamps bounces to 1, disables
+	 *   accumulation and freezes frameCount; it engages on the very first frame.
+	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
+	 *
+	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
+	 * Idempotent; pass `false` to restore the previous configuration.
+	 *
+	 * `pinDispatch: false` keeps the two readback-driven dispatch heuristics
+	 * (`_useDynamicDispatch` and the per-bounce early exit) ACTIVE while still pinning the
+	 * render loop, sample count and timers. Output is then no longer bit-reproducible, so
+	 * this is only for performance measurement — it exists because those heuristics are
+	 * real shipping behaviour, and benchmarking with them disabled measures a configuration
+	 * production never runs.
+	 *
+	 * @param {boolean} [enabled=true]
+	 * @param {Object} [options]
+	 * @param {boolean} [options.pinDispatch=true] - false to keep production dispatch heuristics
+	 * @returns {boolean} whether deterministic mode is now active
+	 */
+	setDeterministicMode( enabled = true, { pinDispatch = true } = {} ) {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) return false;
+
+		if ( enabled ) {
+
+			if ( ! this._deterministicRestore ) {
+
+				this._deterministicRestore = {
+					settings: {
+						useAdaptiveSampling: this.settings.get( 'useAdaptiveSampling' ),
+						usePixelFreeze: this.settings.get( 'usePixelFreeze' ),
+						interactionModeEnabled: this.settings.get( 'interactionModeEnabled' ),
+						renderLimitMode: this.settings.get( 'renderLimitMode' ),
+						renderTimeLimit: this.settings.get( 'renderTimeLimit' ),
+					},
+					bounceEarlyExit: stage._bounceEarlyExitThreshold,
+					dynamicDispatch: stage._useDynamicDispatch,
+					autoFocusMode: this.cameraManager?.autoFocusMode,
+					autoExposure: this.stages.autoExposure?.enabled,
+				};
+
+			}
+
+			// Cleared together on purpose: the freeze streak is stamped inside the
+			// convergence block, so freeze-on/adaptive-off would run the freeze path
+			// against a streak buffer nothing writes or clears.
+			this.settings.setMany( {
+				useAdaptiveSampling: false,
+				usePixelFreeze: false,
+				interactionModeEnabled: false,
+				renderLimitMode: 'frames',
+				renderTimeLimit: 0,
+			}, { silent: true } );
+
+			if ( pinDispatch ) {
+
+				// -1 is unreachable by a uint survivor count, and both _buildWavefrontKernels()
+				// and _resizeWavefrontInPlace() preserve the sentinel across rebuilds.
+				stage._bounceEarlyExitThreshold = - 1;
+				stage._useDynamicDispatch = false;
+
+			} else {
+
+				// Restore the values captured on first enable, so a perf pass measures the
+				// same dispatch behaviour a real render uses.
+				stage._bounceEarlyExitThreshold = this._deterministicRestore.bounceEarlyExit;
+				stage._useDynamicDispatch = this._deterministicRestore.dynamicDispatch;
+
+			}
+
+			this.cameraManager?.setAutoFocusMode( 'manual' );
+			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+
+			this._deterministic = true;
+			this._dispatchPinned = pinDispatch;
+
+		} else if ( this._deterministicRestore ) {
+
+			const prev = this._deterministicRestore;
+
+			this.settings.setMany( prev.settings, { silent: true } );
+			stage._bounceEarlyExitThreshold = prev.bounceEarlyExit;
+			stage._useDynamicDispatch = prev.dynamicDispatch;
+
+			if ( prev.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( prev.autoFocusMode );
+			if ( this.stages.autoExposure && prev.autoExposure !== undefined ) {
+
+				this.stages.autoExposure.enabled = prev.autoExposure;
+
+			}
+
+			this._deterministicRestore = null;
+			this._deterministic = false;
+			this._dispatchPinned = false;
+
+		}
+
+		this.reset();
+		this.stopAnimation(); // reset() calls wake(); a manual render loop must not race rAF
+
+		return this._deterministic;
+
+	}
+
+	/**
+	 * Whether output is currently bit-reproducible. False when the dispatch heuristics
+	 * were left active via `pinDispatch: false`, since those consume async readbacks.
+	 */
+	get isDeterministic() {
+
+		return this._deterministic && this._dispatchPinned;
+
+	}
+
+	/**
+	 * Accumulates exactly `count` samples synchronously, bypassing the rAF loop.
+	 *
+	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
+	 * placeholder that gets baked permanently into the accumulation buffer.
+	 *
+	 * @param {number} count - samples to accumulate
+	 * @param {Object} [options]
+	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
+	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
+	 * @param {function(number): void} [options.onProgress] - called with the running sample count
+	 * @returns {Promise<number>} the final accumulated sample count
+	 */
+	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress } = {} ) {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
+		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
+
+		await stage.blueNoiseReady;
+
+		const target = ( reset ? 0 : stage.frameCount ) + count;
+
+		// completionThreshold is a cached JS number derived from maxSamples, so this must
+		// go through the settings handler — writing the uniform alone would not move it.
+		if ( this.settings.get( 'maxSamples' ) < target ) {
+
+			this.settings.set( 'maxSamples', target, { silent: true, reset: false } );
+
+		}
+
+		if ( reset ) this.reset();
+		this.stopAnimation();
+
+		const maxPasses = count + 64;
+		let passes = 0;
+
+		while ( stage.frameCount < target && passes < maxPasses ) {
+
+			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
+			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
+
+			this.pipeline.render();
+			passes ++;
+
+			onProgress?.( stage.frameCount );
+
+			if ( yieldEvery > 0 && passes % yieldEvery === 0 ) {
+
+				await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+
+			}
+
+		}
+
+		if ( stage.frameCount < target ) {
+
+			throw new Error(
+				`renderFrames: stalled at ${stage.frameCount}/${target} samples after ${passes} passes — ` +
+				'something retired the render (maxSamples, a stray reset, or a canvas resize)'
+			);
+
+		}
+
+		return stage.frameCount;
+
+	}
+
+	/**
+	 * Enables WebGPU timestamp queries so {@link PathTracerApp#getGPUTimings} reports real
+	 * GPU time. Off by default because the queries themselves cost time. No-ops when the
+	 * device lacks the `timestamp-query` feature.
+	 *
+	 * @param {boolean} [enabled=true]
+	 * @returns {boolean} whether timestamp tracking is now active
+	 */
+	enableGPUTiming( enabled = true ) {
+
+		const backend = this.renderer?.backend;
+		if ( ! backend ) return false;
+		if ( enabled && backend.hasFeature?.( 'timestamp-query' ) !== true ) return false;
+
+		backend.trackTimestamp = enabled;
+		return backend.trackTimestamp === enabled;
+
+	}
+
+	/**
+	 * Real GPU milliseconds for the last resolved frame, from WebGPU timestamp queries.
+	 * Returns null unless {@link PathTracerApp#enableGPUTiming} was called.
+	 *
+	 * This is the only true GPU metric available: `pipeline.getStats()` times
+	 * `performance.now()` around each stage's render(), which is command *encoding*
+	 * time and stays flat while GPU cost doubles.
+	 *
+	 * @returns {Promise<{ compute: number, render: number, total: number }|null>}
+	 */
+	async getGPUTimings() {
+
+		const renderer = this.renderer;
+		if ( ! renderer?.backend?.trackTimestamp ) return null;
+
+		await renderer.resolveTimestampsAsync( 'compute' );
+		await renderer.resolveTimestampsAsync( 'render' );
+
+		const compute = renderer.info.compute.timestamp || 0;
+		const render = renderer.info.render.timestamp || 0;
+
+		return { compute, render, total: compute + render };
 
 	}
 

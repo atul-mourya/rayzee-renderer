@@ -44,4 +44,13 @@ export default [
 			'react-compiler/react-compiler': 'error',
 		},
 	},
+	{
+		// Node-side regression tooling: the runner and its pure libraries execute under
+		// Node, not the browser, so they need Node globals rather than `globals.browser`.
+		// bench/harness/** is deliberately excluded — that code runs in the page.
+		files: [ 'bench/runner/**/*.js', 'bench/lib/**/*.js' ],
+		languageOptions: {
+			globals: { ...globals.node },
+		},
+	},
 ];

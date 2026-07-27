@@ -20,6 +20,13 @@
     "preview": "npm -w @rayzee/app run preview",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "bench": "node bench/runner/cli.js run",
+    "bench:quality": "node bench/runner/cli.js quality",
+    "bench:memory": "node bench/runner/cli.js memory",
+    "bench:perf": "node bench/runner/cli.js perf",
+    "bench:bless": "node bench/runner/cli.js bless",
+    "bench:ab": "node bench/runner/cli.js ab",
+    "bench:list": "node bench/runner/cli.js list",
     "release": "cross-env $(cat .env | xargs) semantic-release --no-ci"
   },
   "devDependencies": {
@@ -39,6 +46,8 @@
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.18",
     "globals": "^15.9.0",
+    "pngjs": "^7.0.0",
+    "puppeteer-core": "^25.3.0",
     "semantic-release": "^24.2.1",
     "semantic-release-export-data": "^1.2.0",
     "tailwindcss": "^4.2.2",
