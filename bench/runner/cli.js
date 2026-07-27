@@ -16,10 +16,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { openHarness } from './browser.js';
+import { launchBrowser, openHarness } from './browser.js';
 import { startDevServer } from './devserver.js';
 import { PATHS } from './config.js';
-import { appendTrend, comparePerf, runPerf } from './perf.js';
+import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
 
@@ -155,12 +155,26 @@ function reportQuality( report ) {
 async function commandAB( baseRef, flags ) {
 
 	const only = flags.only ? String( flags.only ).split( ',' ) : undefined;
+	const verbose = !! flags.verbose;
 
-	// A worktree gives the base ref its own checkout, so both sides can be measured in
-	// one session without stashing the working tree.
-	const worktree = await fs.mkdtemp( path.join( os.tmpdir(), 'rayzee-bench-ab-' ) );
+	// A worktree gives the base ref its own checkout, so both sides can be measured
+	// without stashing the working tree.
+	//
+	// realpath is load-bearing on macOS: os.tmpdir() is /var/folders/… , a symlink to
+	// /private/var/folders/… . Vite builds `server.fs.allow` from process.cwd(), which Node
+	// reports resolved, so a /@fs URL carrying the symlinked path lands outside the allow
+	// list and returns 403 — the harness module then never executes, so it sets neither
+	// __bench nor __benchBootError and the runner just times out after 180 s.
+	const worktree = await fs.realpath(
+		await fs.mkdtemp( path.join( os.tmpdir(), 'rayzee-bench-ab-' ) )
+	);
 	log( `${DIM}creating worktree for ${baseRef} at ${worktree}${RESET}` );
 	await exec( 'git', [ 'worktree', 'add', '--detach', worktree, baseRef ], { cwd: PATHS.repoRoot } );
+
+	const servers = [];
+	let browser;
+	let baseHarness;
+	let headHarness;
 
 	try {
 
@@ -172,19 +186,50 @@ async function commandAB( baseRef, flags ) {
 			'dir'
 		);
 
-		log( `\n${YELLOW}base${RESET} (${baseRef})` );
-		const baseRun = await withHarness(
-			{ cwd: worktree, verbose: !! flags.verbose },
-			( h ) => runPerf( h.bench, { only, log } )
+		log( `${DIM}starting a dev server for each tree…${RESET}` );
+
+		// Each tree serves its own harness: Vite's `server.fs.allow` resolves to the tree the
+		// server runs in, so serving one tree's harness from the other's server returns 403.
+		const baseServer = await startDevServer( { cwd: worktree, verbose } );
+		servers.push( baseServer );
+		const headServer = await startDevServer( { cwd: PATHS.repoRoot, verbose } );
+		servers.push( headServer );
+		log( `${DIM}base ${baseServer.url} · head ${headServer.url}${RESET}` );
+
+		// ONE browser for both harnesses — see runPerfInterleaved for why this is not
+		// incidental. Two browsers means two GPU sessions, and the between-session offset is
+		// larger than the regressions this gate exists to find.
+		browser = await launchBrowser();
+
+		log( `${DIM}booting both harnesses (first boot compiles shaders, ~20 s each)…${RESET}` );
+		baseHarness = await openHarness( baseServer.url, {
+			verbose, browser, harnessPath: path.join( worktree, 'bench', 'harness', 'index.html' ),
+		} );
+		headHarness = await openHarness( headServer.url, { verbose, browser, harnessPath: PATHS.harness } );
+
+		// Same GPU by construction, so a mismatch means the two refs disagree about something
+		// that changes what a "sample" costs — render size is in the fingerprint, and
+		// comparing ms/sample across resolutions is meaningless.
+		const baseFingerprint = await baseHarness.bench.fingerprint();
+		const headFingerprint = await headHarness.bench.fingerprint();
+		const differing = Object.keys( headFingerprint )
+			.filter( ( key ) => baseFingerprint[ key ] !== headFingerprint[ key ] );
+
+		if ( differing.length ) {
+
+			throw new Error(
+				`A/B fingerprints differ between ${baseRef} and the working tree, so ms/sample ` +
+				'is not comparable:\n  ' +
+				differing.map( ( k ) => `${k}: ${baseFingerprint[ k ]} vs ${headFingerprint[ k ]}` ).join( '\n  ' )
+			);
+
+		}
+
+		const { measurements, absentFromBase } = await runPerfInterleaved(
+			baseHarness.bench, headHarness.bench, { only, log }
 		);
 
-		log( `\n${YELLOW}head${RESET} (working tree)` );
-		const headRun = await withHarness(
-			{ cwd: PATHS.repoRoot, verbose: !! flags.verbose },
-			( h ) => runPerf( h.bench, { only, log } )
-		);
-
-		const comparison = comparePerf( baseRun, headRun );
+		const comparison = comparePerf( measurements );
 
 		log( '\nA/B result' );
 		for ( const entry of comparison.comparisons ) {
@@ -197,6 +242,23 @@ async function commandAB( baseRef, flags ) {
 				`${entry.baseMedian.toFixed( 2 )} → ${entry.headMedian.toFixed( 2 )} ms ` +
 				`(${entry.deltaPct >= 0 ? '+' : ''}${entry.deltaPct.toFixed( 1 )} %)`
 			);
+			// The floor is what makes a verdict readable: "+3 %, floor 7 %" is a clean pass,
+			// "+3 %, floor 1 %" is a real finding, and the number alone cannot tell them apart.
+			// Absolute spread is shown separately because a wide spread with a stable ratio is
+			// machine drift the paired comparison already cancelled, not a bad measurement.
+			log(
+				`${DIM}               floor ±${entry.noiseFloorPct.toFixed( 1 )} %, ` +
+				`per-round delta ${entry.roundDeltasPct.map( ( d ) => `${d >= 0 ? '+' : ''}${d.toFixed( 1 )}` ).join( ' / ' )} %, ` +
+				`absolute spread base ${entry.baseSpreadPct.toFixed( 1 )} % / head ${entry.headSpreadPct.toFixed( 1 )} %${RESET}`
+			);
+
+		}
+
+		// Printed unconditionally, including on an otherwise-clean pass: a run that compared
+		// 4 of 9 scenes and said nothing about the other 5 reads as full coverage.
+		if ( absentFromBase.length ) {
+
+			log( `  ${YELLOW}not compared${RESET} (absent from ${baseRef}): ${absentFromBase.join( ', ' )}` );
 
 		}
 
@@ -209,6 +271,34 @@ async function commandAB( baseRef, flags ) {
 		return comparison.passed ? 0 : 1;
 
 	} finally {
+
+		// Each teardown is independently guarded: a throwing page close must not strand a
+		// dev server on its port or leave the worktree registered in git.
+		for ( const harness of [ baseHarness, headHarness ] ) {
+
+			try {
+
+				await harness?.close();
+
+			} catch ( error ) {
+
+				log( `${YELLOW}harness close failed: ${error.message}${RESET}` );
+
+			}
+
+		}
+
+		try {
+
+			await browser?.close();
+
+		} catch ( error ) {
+
+			log( `${YELLOW}browser close failed: ${error.message}${RESET}` );
+
+		}
+
+		for ( const server of servers ) await server.stop();
 
 		await exec( 'git', [ 'worktree', 'remove', '--force', worktree ], { cwd: PATHS.repoRoot } )
 			.catch( ( error ) => log( `${YELLOW}worktree cleanup failed: ${error.message}${RESET}` ) );

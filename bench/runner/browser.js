@@ -24,17 +24,16 @@ export function harnessURL( baseURL, harnessPath = PATHS.harness ) {
 }
 
 /**
- * Launches Chrome, opens the harness and waits for the engine to finish booting.
+ * Launches headless Chrome. Exported so an A/B run can host both harnesses in ONE browser:
+ * per-session GPU state (clock/power state, readback scheduling) shifts measured cost by
+ * several percent, which is larger than the regressions the perf gate is trying to resolve,
+ * so the two sides have to share a process.
  *
- * @param {string} baseURL
- * @param {Object} [options]
- * @param {boolean} [options.verbose] - forward page console output
- * @param {string} [options.harnessPath]
- * @returns {Promise<{ page: Object, browser: Object, bench: Object, close: function }>}
+ * @returns {Promise<Object>} puppeteer Browser
  */
-export async function openHarness( baseURL, { verbose = false, harnessPath } = {} ) {
+export function launchBrowser() {
 
-	const browser = await puppeteer.launch( {
+	return puppeteer.launch( {
 		executablePath: CHROME.executablePath,
 		headless: true,
 		args: CHROME.args,
@@ -43,7 +42,28 @@ export async function openHarness( baseURL, { verbose = false, harnessPath } = {
 		protocolTimeout: TIMEOUTS.render,
 	} );
 
+}
+
+/**
+ * Opens the harness and waits for the engine to finish booting.
+ *
+ * @param {string} baseURL
+ * @param {Object} [options]
+ * @param {boolean} [options.verbose] - forward page console output
+ * @param {string} [options.harnessPath]
+ * @param {Object} [options.browser] - existing browser to open a tab in. When given, close()
+ *   closes only this page, leaving the browser to the caller.
+ * @returns {Promise<{ page: Object, browser: Object, bench: Object, close: function }>}
+ */
+export async function openHarness( baseURL, { verbose = false, harnessPath, browser: shared } = {} ) {
+
+	const browser = shared ?? await launchBrowser();
 	const page = await browser.newPage();
+
+	// A shared browser belongs to the caller: tearing it down here would kill the other
+	// harness in an interleaved A/B.
+	const teardown = () => ( shared ? page.close() : browser.close() );
+
 	const consoleErrors = [];
 
 	page.on( 'console', ( message ) => {
@@ -66,17 +86,51 @@ export async function openHarness( baseURL, { verbose = false, harnessPath } = {
 
 	// WebGPU is unavailable on about:blank — it is not a secure context and
 	// requestAdapter() returns null there. Navigate to the real origin first.
-	await page.goto( harnessURL( baseURL, harnessPath ), { waitUntil: 'load', timeout: TIMEOUTS.boot } );
+	const url = harnessURL( baseURL, harnessPath );
+	const response = await page.goto( url, { waitUntil: 'load', timeout: TIMEOUTS.boot } );
 
-	await page.waitForFunction(
-		'window.__bench !== undefined || window.__benchBootError !== undefined',
-		{ timeout: TIMEOUTS.boot }
-	);
+	// A Vite 403 (harness outside `server.fs.allow`) still loads — as an HTML error page.
+	// The harness module never runs, so it sets neither __bench nor __benchBootError, and
+	// without this the only symptom is a bare 180 s TimeoutError with no cause. Check the
+	// status before committing to that wait.
+	if ( response && ! response.ok() ) {
+
+		await teardown();
+		throw new Error(
+			`bench harness returned HTTP ${response.status()} for ${url}\n` +
+			'403 means the path is outside Vite\'s server.fs.allow — check that the harness ' +
+			'and the dev server come from the same tree, with symlinks resolved.'
+		);
+
+	}
+
+	try {
+
+		await page.waitForFunction(
+			'window.__bench !== undefined || window.__benchBootError !== undefined',
+			{ timeout: TIMEOUTS.boot }
+		);
+
+	} catch ( error ) {
+
+		// Neither global set means the module never finished evaluating — a failed import,
+		// most often. The page's own errors are the only evidence, so surface them rather
+		// than letting the timeout stand alone.
+		await teardown();
+		throw new Error(
+			`bench harness never initialised within ${TIMEOUTS.boot} ms (${error.message}).\n` +
+			( consoleErrors.length
+				? `page errors:\n  ${consoleErrors.slice( 0, 10 ).join( '\n  ' )}`
+				: 'the page logged no errors — window.__bench was never assigned, so the ' +
+					'harness module probably failed to load.' )
+		);
+
+	}
 
 	const bootError = await page.evaluate( () => globalThis.__benchBootError ?? null );
 	if ( bootError ) {
 
-		await browser.close();
+		await teardown();
 		throw new Error( `bench harness failed to boot:\n${bootError}` );
 
 	}
@@ -114,7 +168,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath } = {
 		page,
 		browser,
 		bench,
-		close: () => browser.close(),
+		close: teardown,
 	};
 
 }

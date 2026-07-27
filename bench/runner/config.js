@@ -93,6 +93,12 @@ export const QUALITY_GATES = {
 
 export const MEMORY_GATES = {
 	leakCycles: 5,
+	// Cycled unless --scene overrides. A textured scene is not optional here: every VRAM leak
+	// in this repo's history was in the texture path (disabled-stage GPUTexture retention, the
+	// TextureCache use-after-free, the per-textured-swap GPUTexture leak), and the untextured
+	// scene that used to be the sole default allocates no texture arrays at all — so the suite
+	// was watching the one code path with no leak history in it.
+	leakScenes: [ 'spheres-gradient', 'textured-normalmap' ],
 	// Peak VRAM growth across N identical load/unload cycles. Nonzero tolerance because
 	// lazy allocations legitimately land on cycle 2 (e.g. a stage's first dispatch).
 	maxPeakGrowthBytes: 8 * 1024 * 1024,
@@ -114,4 +120,26 @@ export const PERF = {
 	// Fraction of the slowest readings discarded as driver/OS scheduling hiccups rather
 	// than renderer cost.
 	trimFraction: 0.2,
+
+	// A/B only. The verdict's noise floor comes from the spread BETWEEN these rounds, not
+	// from within-run sampling error — see compareReplicates in lib/stats.js for the measured
+	// reason. Two rounds is the minimum that can estimate anything; three is the useful floor.
+	abRepeats: 3,
+	// Per round, so total samples per side stay comparable to a single 150-sample pass and an
+	// A/B costs roughly what it did before replication was added. The per-round standard error
+	// is correspondingly wider, which no longer matters because it is not what gates.
+	abMeasureSamples: 60,
+	// Absolute band below which an A/B delta is called unchanged, whatever the rounds say.
+	//
+	// MACHINE-SPECIFIC, and calibrated by measurement rather than chosen: a self-A/B of HEAD
+	// against itself on an idle M-series produced per-scene deltas up to 6.2 %, because the two
+	// harnesses are separate WebGPU devices in one browser and the second page created is
+	// systematically a little slower. No amount of replication removes that — it is a bias, not
+	// variance — so the band has to sit above it. 8 % leaves a thin margin over the worst
+	// observed case, which means this gate resolves roughly a 10 % regression and nothing
+	// finer. Re-derive it with `bench:ab -- HEAD` on a clean tree before trusting it elsewhere.
+	//
+	// The excursions concentrate in the two cheapest scenes (< 1 ms/sample), where fixed
+	// per-dispatch overhead is a large fraction of the measurement.
+	abUnchangedPct: 8,
 };

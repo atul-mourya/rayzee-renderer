@@ -8,6 +8,7 @@ import {
 	summarise,
 	discardWarmup,
 	compareRuns,
+	compareReplicates,
 } from '../../../bench/lib/stats.js';
 
 /**
@@ -590,6 +591,100 @@ describe( 'bench/lib/stats', () => {
 		it( 'refuses a verdict for empty samples', () => {
 
 			expect( compareRuns( [], [] ).verdict ).toBe( 'inconclusive' );
+
+		} );
+
+	} );
+
+	// This is what decides whether the perf gate fires, so the cases below are the observed
+	// failure modes from real A/B runs, not invented ones.
+	describe( 'compareReplicates', () => {
+
+		it( 'cancels common-mode drift that moves both sides together', () => {
+
+			// Taken from a real self-A/B round: one round measured ~3.0 ms on both sides where
+			// its neighbours measured ~4.3 on both. Independent medians put the noise floor at
+			// ±27 % here; the paired ratio is stable, so the delta must read as ~0.
+			const base = [ 3.01, 4.32, 4.33 ];
+			const head = [ 3.13, 4.31, 4.32 ];
+			const result = compareReplicates( base, head, { unchangedPct: 8 } );
+
+			expect( Math.abs( result.deltaPct ) ).toBeLessThan( 1 );
+			expect( result.noiseFloorPct ).toBeLessThan( 10 );
+			expect( result.base.spreadPct ).toBeGreaterThan( 40 ); // still reported, not gated
+			expect( result.verdict ).toBe( 'unchanged' );
+
+		} );
+
+		it( 'calls a consistent large regression slower', () => {
+
+			const base = [ 2.00, 2.02, 1.98 ];
+			const head = [ 2.60, 2.63, 2.57 ];
+			const result = compareReplicates( base, head, { unchangedPct: 8 } );
+
+			expect( result.deltaPct ).toBeGreaterThan( 25 );
+			expect( result.verdict ).toBe( 'slower' );
+
+		} );
+
+		it( 'calls a consistent large improvement faster', () => {
+
+			const result = compareReplicates( [ 2.00, 2.02, 1.98 ], [ 1.40, 1.41, 1.39 ], { unchangedPct: 8 } );
+
+			expect( result.deltaPct ).toBeLessThan( - 25 );
+			expect( result.verdict ).toBe( 'faster' );
+
+		} );
+
+		it( 'holds a delta inside the absolute band at unchanged however tight the rounds are', () => {
+
+			// The band exists for a bias replication cannot shrink: two WebGPU devices in one
+			// browser differ by a few percent on identical code. Three perfectly consistent
+			// rounds of +5 % must therefore still pass under an 8 % band — otherwise the gate
+			// fails every clean run.
+			const result = compareReplicates( [ 2.00, 2.00, 2.00 ], [ 2.10, 2.10, 2.10 ], { unchangedPct: 8 } );
+
+			expect( result.deltaPct ).toBeCloseTo( 5, 6 );
+			expect( result.noiseFloorPct ).toBe( 0 );
+			expect( result.verdict ).toBe( 'unchanged' );
+
+		} );
+
+		it( 'refuses a verdict when the per-round ratio itself is erratic', () => {
+
+			const result = compareReplicates( [ 2.0, 2.0, 2.0 ], [ 1.0, 3.0, 2.0 ], { unchangedPct: 8 } );
+
+			expect( result.verdict ).toBe( 'inconclusive' );
+
+		} );
+
+		it( 'refuses a verdict from a single round, which cannot estimate its own error', () => {
+
+			expect( compareReplicates( [ 2.0 ], [ 2.6 ], { unchangedPct: 8 } ).verdict ).toBe( 'inconclusive' );
+
+		} );
+
+		it( 'refuses a verdict for empty input', () => {
+
+			expect( compareReplicates( [], [] ).verdict ).toBe( 'inconclusive' );
+
+		} );
+
+		it( 'pairs by index and ignores an unmatched trailing round', () => {
+
+			const result = compareReplicates( [ 2.0, 2.0 ], [ 2.2, 2.2, 9.9 ], { unchangedPct: 8 } );
+
+			expect( result.ratios ).toHaveLength( 2 );
+			expect( result.deltaPct ).toBeCloseTo( 10, 6 );
+
+		} );
+
+		it( 'skips rounds with a non-positive base rather than dividing by zero', () => {
+
+			const result = compareReplicates( [ 0, 2.0, 2.0 ], [ 1.0, 2.2, 2.2 ], { unchangedPct: 8 } );
+
+			expect( result.ratios ).toHaveLength( 2 );
+			expect( Number.isFinite( result.deltaPct ) ).toBe( true );
 
 		} );
 

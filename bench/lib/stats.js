@@ -200,35 +200,46 @@ export function trimOutliers( values, fraction = 0.1 ) {
 
 }
 
-function verdictFor( base, head, deltaPct ) {
+/**
+ * The single verdict policy, shared by every comparator here so they cannot drift apart.
+ *
+ * 'inconclusive' means the MEASUREMENT is broken, not that the delta is small. A delta
+ * inside the noise floor is a real finding — no detectable change — and must pass, otherwise
+ * every clean run fails for having found nothing.
+ */
+function classifyDelta( deltaPct, noiseFloorPct, untrustworthy ) {
 
-	const magnitude = Math.abs( deltaPct );
+	if ( untrustworthy || ! Number.isFinite( deltaPct ) ) return 'inconclusive';
+
+	if ( Math.abs( deltaPct ) < Math.max( UNCHANGED_PCT, noiseFloorPct ) ) return 'unchanged';
+
+	return deltaPct > 0 ? 'slower' : 'faster';
+
+}
+
+function verdictFor( base, head, deltaPct ) {
 
 	// Combined 2-sigma sampling error of the two medians. Judging on per-sample spread
 	// instead would reject stable measurements whose underlying distribution is merely
 	// wide — which is the normal shape for readback-driven dispatch.
 	const noiseFloorPct = 2 * Math.hypot( base.relSe, head.relSe ) * 100;
 
-	// 'inconclusive' means the MEASUREMENT is broken, not that the delta is small. A delta
-	// inside the noise floor is a real finding — no detectable change — and must pass,
-	// otherwise every clean run fails for having found nothing.
-	const untrustworthy = ! Number.isFinite( deltaPct )
-		|| base.n < 3
+	const untrustworthy = base.n < 3
 		|| head.n < 3
 		|| base.relSe > MAX_TRUSTED_REL_SE
 		|| head.relSe > MAX_TRUSTED_REL_SE;
 
-	if ( untrustworthy ) return 'inconclusive';
-
-	if ( magnitude < Math.max( UNCHANGED_PCT, noiseFloorPct ) ) return 'unchanged';
-
-	return deltaPct > 0 ? 'slower' : 'faster';
+	return classifyDelta( deltaPct, noiseFloorPct, untrustworthy );
 
 }
 
 /**
  * Compare two runs on their medians, refusing a confident verdict when either
  * run is noisy or the delta sits inside the combined noise floor.
+ *
+ * Only valid when the two samples come from the SAME measurement conditions. For an A/B
+ * across two GPU devices or two sessions, use compareReplicates — the parametric standard
+ * error here is blind to the between-measurement term, which dominates there.
  *
  * @param {number[]} baseValues Baseline sample. Not mutated.
  * @param {number[]} headValues Candidate sample. Not mutated.
@@ -242,5 +253,90 @@ export function compareRuns( baseValues, headValues ) {
 	const deltaPct = base.median === 0 ? 0 : ( head.median - base.median ) / base.median * 100;
 
 	return { base, head, deltaPct, verdict: verdictFor( base, head, deltaPct ) };
+
+}
+
+/**
+ * Compare two sides from PAIRED replicate measurements: `baseMedians[i]` and `headMedians[i]`
+ * must be the two sides of round i, measured adjacently.
+ *
+ * Two things drove this shape, both measured rather than assumed.
+ *
+ * The within-run standard error is not an honest uncertainty for an A/B. Repeat measurements
+ * of one scene on ONE harness agreed to 0.6-1.2 %, matching the ±1 % SE those runs reported —
+ * but the same scene measured across two browser sessions differed by 10 %, and across two
+ * coexisting WebGPU devices by 12 %. Judged against a ±1 % floor that produced three false
+ * `slower` verdicts out of nine on code that had not changed at all.
+ *
+ * The dominant noise is COMMON-MODE. One observed round measured 3.0 ms on both sides where
+ * the neighbouring rounds measured 4.3 on both — a 43 % swing in the absolute numbers with the
+ * ratio between them untouched. Comparing two independent medians throws that structure away
+ * and inflates the floor to ±27 %, which is a gate that never fires; comparing the per-round
+ * RATIO cancels it, because whatever the machine was doing that round it was doing to both.
+ *
+ * @param {number[]} baseMedians One median per round, base side. Not mutated.
+ * @param {number[]} headMedians One median per round, head side, same ordering. Not mutated.
+ * @param {{unchangedPct?: number}} [options] `unchangedPct` is the absolute band below which a
+ *   delta is called unchanged regardless of how tight the rounds were — the floor the machine
+ *   itself imposes, which replication cannot shrink. Calibrate it with a self-A/B.
+ * @return {{base: object, head: object, deltaPct: number, noiseFloorPct: number,
+ *   ratios: number[], verdict: 'faster'|'slower'|'unchanged'|'inconclusive'}} Comparison.
+ */
+export function compareReplicates( baseMedians, headMedians, { unchangedPct = UNCHANGED_PCT } = {} ) {
+
+	const describe = ( medians ) => {
+
+		const values = Array.from( medians ?? [] );
+		const point = median( values );
+
+		return {
+			n: values.length,
+			median: point,
+			replicates: values,
+			// Reported, not gated on: a wide absolute spread with a stable ratio is the
+			// signature of machine-wide drift, and seeing that in the log is what stops
+			// someone "fixing" it by adding rounds.
+			spreadPct: values.length > 1 && point !== 0
+				? ( Math.max( ...values ) / Math.min( ...values ) - 1 ) * 100
+				: 0,
+		};
+
+	};
+
+	const base = describe( baseMedians );
+	const head = describe( headMedians );
+
+	const rounds = Math.min( base.n, head.n );
+	const ratios = [];
+
+	for ( let i = 0; i < rounds; i ++ ) {
+
+		if ( baseMedians[ i ] > 0 ) ratios.push( headMedians[ i ] / baseMedians[ i ] );
+
+	}
+
+	const ratio = median( ratios );
+	const deltaPct = Number.isFinite( ratio ) ? ( ratio - 1 ) * 100 : NaN;
+
+	// Standard error of the paired ratio. Already dimensionless, so it is a relative error
+	// directly. Crude at three rounds, but measured.
+	const relSe = ratios.length > 1 && Number.isFinite( ratio ) && ratio !== 0
+		? ( stdev( ratios ) / Math.sqrt( ratios.length ) ) / Math.abs( ratio )
+		: 0;
+
+	const noiseFloorPct = 2 * relSe * 100;
+
+	// One round cannot estimate its own uncertainty, which makes it a broken measurement
+	// rather than a narrow one.
+	const untrustworthy = ratios.length < 2 || relSe > MAX_TRUSTED_REL_SE;
+
+	return {
+		base,
+		head,
+		ratios,
+		deltaPct,
+		noiseFloorPct,
+		verdict: classifyDelta( deltaPct, Math.max( unchangedPct, noiseFloorPct ), untrustworthy ),
+	};
 
 }
