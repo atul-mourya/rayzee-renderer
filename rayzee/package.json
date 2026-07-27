@@ -30,7 +30,7 @@
   "author": "Atul Mourya",
   "license": "MIT",
   "scripts": {
-    "build": "vite build && node scripts/update-size-badge.mjs",
+    "build": "vite build",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

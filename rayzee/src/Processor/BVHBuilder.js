@@ -1,7 +1,6 @@
 import { TreeletOptimizer } from './TreeletOptimizer.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
-import { fetchAsWorker } from './Workers/fetchAsWorker.js';
-import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
+import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 // Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
 import { createLogger, fmt } from '../utils/Logger.js';
 
@@ -487,25 +486,12 @@ export class BVHBuilder {
 
 				try {
 
-					setupWorker( new Worker( BVH_WORKER_URL, { type: 'module' } ) );
+					setupWorker( new BVHWorker() );
 
 				} catch ( error ) {
 
-					if ( error.name === 'SecurityError' ) {
-
-						fetchAsWorker( BVH_WORKER_URL ).then( setupWorker ).catch( () => {
-
-							log.warn( 'worker fetch fallback failed, using synchronous build' );
-							resolve( this._buildSyncAndFlatten( triangles, depth, progressCallback ) );
-
-						} );
-
-					} else {
-
-						log.warn( 'worker creation failed, falling back to synchronous build:', error );
-						resolve( this._buildSyncAndFlatten( triangles, depth, progressCallback ) );
-
-					}
+					log.warn( 'worker creation failed, falling back to synchronous build:', error );
+					resolve( this._buildSyncAndFlatten( triangles, depth, progressCallback ) );
 
 				}
 

@@ -802,13 +802,22 @@ Your browser may not support WebGPU. Use Chrome 113+, Edge 113+, Safari 18+, or 
 **Models not loading**
 If serving locally, place files in your `public/` folder and reference them with absolute paths (e.g., `/scene.glb`). For remote files, ensure the server allows CORS.
 
+**Workers blocked by Content-Security-Policy**
+Rayzee's Web Workers are embedded in the bundle and spawned from a `blob:` URL, so a strict `worker-src` policy will block them — the symptom is BVH building, texture processing, or HDRI CDF generation silently failing. Allow `blob:`:
+
+```
+Content-Security-Policy: worker-src 'self' blob:
+```
+
+Only needed if you set an explicit `worker-src` (or fall back to a restrictive `default-src`). Pages without a CSP are unaffected.
+
 ## License
 
 MIT
 
 [npm]: https://img.shields.io/npm/v/rayzee
 [npm-url]: https://www.npmjs.com/package/rayzee
-[build-size]: https://img.shields.io/badge/minzipped-176%20KB-blue
+[build-size]: https://badgen.net/bundlephobia/minzip/rayzee
 [build-size-url]: https://bundlephobia.com/result?p=rayzee
 [npm-downloads]: https://img.shields.io/npm/dw/rayzee
 [npmtrends-url]: https://www.npmtrends.com/rayzee

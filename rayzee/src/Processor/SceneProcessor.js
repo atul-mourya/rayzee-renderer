@@ -12,9 +12,8 @@ import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex } from '../EngineDefaults.js';
-import { fetchAsWorker } from './Workers/fetchAsWorker.js';
-import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
-import BVH_REFIT_WORKER_URL from './Workers/BVHRefitWorker.js?worker&url';
+import BVHWorker from './Workers/BVHWorker.js?worker&inline';
+import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
 
 const log = createLogger( 'scene' );
 
@@ -730,18 +729,12 @@ export class SceneProcessor {
 					let worker;
 					try {
 
-						worker = new Worker( BVH_WORKER_URL, { type: 'module' } );
+						worker = new BVHWorker();
 
 					} catch ( e ) {
 
-						if ( e.name !== 'SecurityError' ) {
-
-							reject( e );
-							return;
-
-						}
-
-						worker = await fetchAsWorker( BVH_WORKER_URL );
+						reject( e );
+						return;
 
 					}
 
@@ -1331,16 +1324,7 @@ export class SceneProcessor {
 		// Lazy-create worker
 		if ( ! this._refitWorker ) {
 
-			try {
-
-				this._refitWorker = new Worker( BVH_REFIT_WORKER_URL, { type: 'module' } );
-
-			} catch ( e ) {
-
-				if ( e.name !== 'SecurityError' ) throw e;
-				this._refitWorker = await fetchAsWorker( BVH_REFIT_WORKER_URL );
-
-			}
+			this._refitWorker = new BVHRefitWorker();
 
 		}
 
@@ -1989,18 +1973,7 @@ export class SceneProcessor {
 			const existing = this._pendingRebuilds.get( meshIdx );
 			if ( existing ) existing.terminate();
 
-			let worker;
-			try {
-
-				worker = new Worker( BVH_WORKER_URL, { type: 'module' } );
-				dispatchRebuild( meshIdx, entry, worker );
-
-			} catch ( e ) {
-
-				if ( e.name !== 'SecurityError' ) throw e;
-				fetchAsWorker( BVH_WORKER_URL ).then( w => dispatchRebuild( meshIdx, entry, w ) );
-
-			}
+			dispatchRebuild( meshIdx, entry, new BVHWorker() );
 
 		}
 

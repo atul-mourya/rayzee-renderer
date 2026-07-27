@@ -1,6 +1,5 @@
 import { DataUtils, HalfFloatType, FloatType, SRGBColorSpace } from 'three';
-import { fetchAsWorker } from './Workers/fetchAsWorker.js';
-import CDF_WORKER_URL from './Workers/CDFWorker.js?worker&url';
+import CDFWorker from './Workers/CDFWorker.js?worker&inline';
 
 /**
  * Binary search to find the closest index
@@ -223,16 +222,7 @@ export class EquirectHDRInfo {
 		const { floatData, width, height } = extractFloatData( hdr );
 
 		// Fresh worker per call — terminated in finally to avoid ~30 MB residency.
-		try {
-
-			this._worker = new Worker( CDF_WORKER_URL, { type: 'module' } );
-
-		} catch ( e ) {
-
-			if ( e.name !== 'SecurityError' ) throw e;
-			this._worker = await fetchAsWorker( CDF_WORKER_URL );
-
-		}
+		this._worker = new CDFWorker();
 
 		try {
 

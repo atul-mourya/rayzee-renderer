@@ -11,6 +11,12 @@ export default defineConfig( {
 	define: {
 		'process.env.NODE_ENV': JSON.stringify( process.env.NODE_ENV )
 	},
+	// Workers are imported `?worker&inline`, so they are embedded in the bundle
+	// rather than emitted as side-chunks. ESM keeps them module workers, matching
+	// how they were spawned when they were separate assets.
+	worker: {
+		format: 'es',
+	},
 	build: {
 		lib: {
 			entry: path.resolve( __dirname, "src/index.js" ),

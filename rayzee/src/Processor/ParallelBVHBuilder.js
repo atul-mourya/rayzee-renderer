@@ -7,9 +7,8 @@
  * a cycle that Vite cannot resolve.
  */
 
-import { fetchAsWorker } from './Workers/fetchAsWorker.js';
-import BVH_WORKER_URL from './Workers/BVHWorker.js?worker&url';
-import BVH_SUBTREE_WORKER_URL from './Workers/BVHSubtreeWorker.js?worker&url';
+import BVHWorker from './Workers/BVHWorker.js?worker&inline';
+import BVHSubtreeWorker from './Workers/BVHSubtreeWorker.js?worker&inline';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'bvh' );
@@ -55,17 +54,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 			const sharedReorderBuffer = new SharedArrayBuffer( triangleCount * FPT * 4 );
 
 			// Phase 1: Coordinator worker
-			let coordinatorWorker;
-			try {
-
-				coordinatorWorker = new Worker( BVH_WORKER_URL, { type: 'module' } );
-
-			} catch ( e ) {
-
-				if ( e.name !== 'SecurityError' ) throw e;
-				coordinatorWorker = await fetchAsWorker( BVH_WORKER_URL );
-
-			}
+			const coordinatorWorker = new BVHWorker();
 
 			let phase1Stats = null;
 			const allWorkers = [ coordinatorWorker ];
@@ -313,17 +302,7 @@ async function handlePhase2(
 		const bucket = workerTaskBuckets[ w ];
 		if ( bucket.length === 0 ) continue;
 
-		let subtreeWorker;
-		try {
-
-			subtreeWorker = new Worker( BVH_SUBTREE_WORKER_URL, { type: 'module' } );
-
-		} catch ( e ) {
-
-			if ( e.name !== 'SecurityError' ) throw e;
-			subtreeWorker = await fetchAsWorker( BVH_SUBTREE_WORKER_URL );
-
-		}
+		const subtreeWorker = new BVHSubtreeWorker();
 
 		allWorkers.push( subtreeWorker );
 
@@ -428,17 +407,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 
 		( async () => {
 
-			let worker;
-			try {
-
-				worker = new Worker( BVH_WORKER_URL, { type: 'module' } );
-
-			} catch ( e ) {
-
-				if ( e.name !== 'SecurityError' ) throw e;
-				worker = await fetchAsWorker( BVH_WORKER_URL );
-
-			}
+			const worker = new BVHWorker();
 
 			const triangleCount = triangles.byteLength / ( FPT * 4 );
 			const useShared = typeof SharedArrayBuffer !== 'undefined';
