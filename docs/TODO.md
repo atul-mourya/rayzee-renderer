@@ -37,14 +37,19 @@
 - [x] deterministic render mode + headless control API on `PathTracerApp` (public engine contract)
 - [x] perf measured with the production dispatch heuristics live, verdicts on standard error of the median
 - [x] STBN atlases vendored under `bench/assets/` — a reproducibility gate cannot depend on a mutable CDN
-- [x] scene corpus: diffuse GI, emissive NEE, transmission, procedural sky, subsurface, anisotropy, shadow catcher, textures/normal maps, BVH refit
-- [ ] verify `bench:ab` end to end — the only path never exercised on real hardware
+- [x] scene corpus, 14 scenes: diffuse GI, emissive NEE, transmission, procedural sky, subsurface, anisotropy, shadow catcher, textures/normal maps, BVH refit, dispersion, iridescence, sheen, clearcoat, alpha MASK/BLEND
+- [x] every scene mutation-tested — disable the feature it covers, confirm the gate FAILS (10/10 caught)
+- [x] verify `bench:ab` end to end — was broken (403 from the symlinked macOS tmpdir); now verified in both directions on real hardware
+- [x] perf A/B rebuilt on paired replicate rounds in one browser — the old within-run standard error understated uncertainty ~8× and produced false `slower` verdicts on unchanged code
+- [x] memory leak loop covers a textured scene — all three historical VRAM leaks were in the texture path and the loop only ran an untextured scene
+- [ ] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
+- [ ] the two sub-1 ms scenes are too cheap to measure reliably; either exclude them from perf or raise their sample count
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
 - [ ] HTML report with diff heatmaps (`bench/lib/metrics.js` already has `diffHeatmap()`, unused)
 - [ ] CPU-side vitest guards: shader-recompile contract, BVH structural invariants, feature-combo compile smoke
 - [ ] trend dashboard over `bench/baselines/perf.jsonl`
 - [ ] denoiser suite — OIDN/ASVGF need an async completion dependency, deliberately out of the main corpus
-- [ ] corpus gaps: skeletal/morph animation (needs a committed .glb), dispersion, iridescence, sheen, clearcoat, alpha-cutout
+- [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 
 
 ### General

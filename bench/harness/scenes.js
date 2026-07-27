@@ -17,6 +17,7 @@ import {
 	CylinderGeometry,
 	DataTexture,
 	DirectionalLight,
+	DoubleSide,
 	Group,
 	Matrix3,
 	Mesh,
@@ -259,6 +260,196 @@ function makeCatcherRig() {
 
 }
 
+/**
+ * Chromatic transmission. Dispersion enters the sampler by two different doors: at roughness
+ * <= 0.05 it takes the perfect-refraction path with a spectral IOR, and above that it forces
+ * the microfacet path — which a smooth surface would otherwise skip. The first sphere keeps
+ * dispersion at 0, so the achromatic branch is covered by the same image.
+ */
+function makeDispersionRow() {
+
+	const group = new Group();
+	const geometry = new SphereGeometry( 0.8, 48, 48 );
+
+	const specs = [
+		{ dispersion: 0.0, roughness: 0.0 },
+		{ dispersion: 0.4, roughness: 0.0 },
+		{ dispersion: 1.0, roughness: 0.0 },
+		{ dispersion: 1.0, roughness: 0.12 },
+	];
+
+	specs.forEach( ( spec, index ) => {
+
+		// IOR well above 1.5: the Cauchy term is 0.03 * dispersion / λ², so a low base IOR
+		// separates the wavelengths too little to survive tone mapping at 8 bits.
+		const mesh = new Mesh( geometry, new MeshPhysicalMaterial( {
+			color: 0xffffff,
+			transmission: 1,
+			thickness: 1.2,
+			ior: 1.62,
+			dispersion: spec.dispersion,
+			roughness: spec.roughness,
+			metalness: 0,
+		} ) );
+		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0.15, 0 );
+		group.add( mesh );
+
+	} );
+
+	// A high-contrast checkerboard directly behind the spheres. Dispersion is a wavelength-
+	// dependent refraction ANGLE, so it shows as colour fringing wherever a sharp edge is seen
+	// through the glass — the checker supplies those edges everywhere in the disk.
+	//
+	// Deliberately MONOCHROME: with a grey backdrop and a grey-blue gradient sky, any saturated
+	// hue inside a sphere can only have come from wavelength separation. A coloured backdrop
+	// makes the same fringing impossible to distinguish from refracted backdrop colour.
+	//
+	// The obvious alternative, a chromatic caustic thrown onto a floor by a bright sun, was
+	// tried first and abandoned: it is an SDS path, and its variance left the 96-sample render
+	// 1.4 % off its own 1024-sample reference in mean luminance, tripping the energy-bias gate
+	// on a scene with nothing wrong with it. Direct refraction converges fine.
+	const backdrop = new Mesh(
+		new PlaneGeometry( 18, 12 ),
+		new MeshPhysicalMaterial( {
+			map: makeCheckerAlbedo( 128, 6, [ 236, 236, 236 ], [ 26, 26, 26 ] ),
+			roughness: 0.85,
+			metalness: 0,
+		} )
+	);
+	backdrop.position.set( 0, 0, - 2.6 );
+	group.add( backdrop );
+
+	return group;
+
+}
+
+/**
+ * Thin-film iridescence. With no thickness map the shader reads the RANGE'S MAX, so the sweep
+ * is over `iridescenceThicknessRange[ 1 ]` — varying the min would change nothing. The first
+ * sphere sits at iridescence 0 because `iridescence === 0` selects a separate fast path in the
+ * material response, and covering only the enabled side would leave that one untested.
+ */
+function makeIridescenceRow() {
+
+	const group = new Group();
+	const geometry = new SphereGeometry( 0.8, 48, 48 );
+
+	const specs = [
+		{ iridescence: 0.0, thickness: 400, ior: 1.3, metalness: 0 },
+		{ iridescence: 1.0, thickness: 220, ior: 1.3, metalness: 0 },
+		{ iridescence: 1.0, thickness: 620, ior: 1.9, metalness: 0 },
+		{ iridescence: 0.6, thickness: 900, ior: 2.3, metalness: 1 },
+	];
+
+	specs.forEach( ( spec, index ) => {
+
+		// Near-black and smooth: iridescence only modulates F0, so over a bright diffuse base
+		// the hue shift is swamped by the base colour.
+		const mesh = new Mesh( geometry, new MeshPhysicalMaterial( {
+			color: 0x14141a,
+			roughness: 0.1,
+			metalness: spec.metalness,
+			iridescence: spec.iridescence,
+			iridescenceIOR: spec.ior,
+			iridescenceThicknessRange: [ 100, spec.thickness ],
+		} ) );
+		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
+		group.add( mesh );
+
+	} );
+
+	group.add( makeBackdrop( { color: 0x1a1a20, roughness: 0.45 } ) );
+
+	return group;
+
+}
+
+/**
+ * Sheen — the retroreflective fabric lobe, plus the energy-conserving attenuation it applies
+ * to the base layer underneath.
+ *
+ * Two things are easy to get wrong. `sheenColor` defaults to BLACK, so `sheen > 0` with the
+ * default colour renders identically to no sheen at all; and the shader clamps `sheenRoughness`
+ * up to 0.05 (below that the sampler and PDF disagree), so 0 is not a distinct case and 0.05
+ * is the real low end.
+ */
+function makeSheenRow() {
+
+	const group = new Group();
+	const geometry = new SphereGeometry( 0.8, 48, 48 );
+
+	const specs = [
+		{ sheen: 0.0, sheenRoughness: 0.3, sheenColor: 0xffd0a0 },
+		{ sheen: 1.0, sheenRoughness: 0.06, sheenColor: 0xffd0a0 },
+		{ sheen: 1.0, sheenRoughness: 0.5, sheenColor: 0xa0c8ff },
+		{ sheen: 0.6, sheenRoughness: 0.95, sheenColor: 0xffffff },
+	];
+
+	specs.forEach( ( spec, index ) => {
+
+		// Dark, rough base — velvet. The sheen lobe is then most of the outgoing radiance, so
+		// a regression in it cannot hide behind the diffuse term.
+		const material = new MeshPhysicalMaterial( {
+			color: 0x141018,
+			roughness: 0.85,
+			metalness: 0,
+			sheen: spec.sheen,
+			sheenRoughness: spec.sheenRoughness,
+		} );
+		material.sheenColor = new Color( spec.sheenColor );
+
+		const mesh = new Mesh( geometry, material );
+		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
+		group.add( mesh );
+
+	} );
+
+	group.add( makeBackdrop( { color: 0x24282e, roughness: 0.7 } ) );
+
+	return group;
+
+}
+
+/**
+ * Clearcoat over a rough coloured base — car paint. The coat reflects sharply where the base
+ * does not, so a broken coat shows as a missing highlight rather than a slightly different one.
+ *
+ * The weights straddle 0.5 deliberately: `classifyMaterial` sets its `hasClearcoat` flag at
+ * `clearcoat > 0.5`, which selects a different lobe-importance multiplier. Both sides of that
+ * threshold are present, so a change to the classification cannot pass unnoticed.
+ */
+function makeClearcoatRow() {
+
+	const group = new Group();
+	const geometry = new SphereGeometry( 0.8, 48, 48 );
+
+	const specs = [
+		{ clearcoat: 0.0, clearcoatRoughness: 0.0 },
+		{ clearcoat: 0.4, clearcoatRoughness: 0.05 },
+		{ clearcoat: 1.0, clearcoatRoughness: 0.0 },
+		{ clearcoat: 1.0, clearcoatRoughness: 0.4 },
+	];
+
+	specs.forEach( ( spec, index ) => {
+
+		const mesh = new Mesh( geometry, new MeshPhysicalMaterial( {
+			color: 0x8c1f22,
+			roughness: 0.65,
+			metalness: 0.15,
+			clearcoat: spec.clearcoat,
+			clearcoatRoughness: spec.clearcoatRoughness,
+		} ) );
+		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
+		group.add( mesh );
+
+	} );
+
+	group.add( makeBackdrop( { color: 0x3a4048, roughness: 0.5 } ) );
+
+	return group;
+
+}
+
 // ── Procedural textures ─────────────────────────────────────────
 //
 // Integer/trig arithmetic only — never Math.random. A texture whose bytes changed between
@@ -267,7 +458,7 @@ function makeCatcherRig() {
 // Sizes differ deliberately: material maps are packed into size-bucketed texture arrays,
 // so three distinct dimensions exercise three buckets and the per-bucket index remap.
 
-function makeCheckerAlbedo( size = 128, cells = 8 ) {
+function makeCheckerAlbedo( size = 128, cells = 8, light = [ 222, 96, 48 ], dark = [ 34, 142, 204 ] ) {
 
 	const data = new Uint8Array( size * size * 4 );
 	const cell = size / cells;
@@ -276,11 +467,11 @@ function makeCheckerAlbedo( size = 128, cells = 8 ) {
 
 		for ( let x = 0; x < size; x ++ ) {
 
-			const on = ( Math.floor( x / cell ) + Math.floor( y / cell ) ) % 2 === 0;
+			const rgb = ( Math.floor( x / cell ) + Math.floor( y / cell ) ) % 2 === 0 ? light : dark;
 			const i = ( y * size + x ) * 4;
-			data[ i ] = on ? 222 : 34;
-			data[ i + 1 ] = on ? 96 : 142;
-			data[ i + 2 ] = on ? 48 : 204;
+			data[ i ] = rgb[ 0 ];
+			data[ i + 1 ] = rgb[ 1 ];
+			data[ i + 2 ] = rgb[ 2 ];
 			data[ i + 3 ] = 255;
 
 		}
@@ -358,6 +549,44 @@ function makeStripeRoughness( size = 256, stripes = 12 ) {
 }
 
 /**
+ * Alpha in the ALPHA channel only — RGB is constant across the whole texture. A regression
+ * that samples the wrong channel therefore renders a solid quad, not a subtly wrong one.
+ *
+ * The ramp is radial per cell rather than binary, so two meshes sharing this one texture at
+ * different `alphaTest` cutoffs cut holes of different sizes. A cutoff that is read but then
+ * ignored looks identical on both, and that is exactly what has to be distinguishable.
+ */
+function makeAlphaRampAlbedo( size = 128, cells = 4 ) {
+
+	const data = new Uint8Array( size * size * 4 );
+	const cell = size / cells;
+
+	for ( let y = 0; y < size; y ++ ) {
+
+		for ( let x = 0; x < size; x ++ ) {
+
+			const cx = ( Math.floor( x / cell ) + 0.5 ) * cell;
+			const cy = ( Math.floor( y / cell ) + 0.5 ) * cell;
+			const d = Math.hypot( x - cx, y - cy ) / ( cell * 0.5 );
+
+			const i = ( y * size + x ) * 4;
+			data[ i ] = 214;
+			data[ i + 1 ] = 176;
+			data[ i + 2 ] = 74;
+			data[ i + 3 ] = Math.round( Math.min( 1, d ) * 255 );
+
+		}
+
+	}
+
+	const texture = new DataTexture( data, size, size, RGBAFormat );
+	texture.colorSpace = SRGBColorSpace;
+	texture.needsUpdate = true;
+	return texture;
+
+}
+
+/**
  * Textured geometry across three UV shapes. A non-identity repeat/offset is applied so a
  * texture-matrix regression (the offset.y flip is a bug this repo has already had) shows up
  * as shifted detail rather than passing unnoticed at repeat 1 / offset 0.
@@ -401,6 +630,74 @@ function makeTexturedRig() {
 	floor.position.set( 0, - 1.3, 0 );
 	floor.rotation.set( - Math.PI / 2, 0, 0 );
 	group.add( floor );
+
+	return group;
+
+}
+
+/**
+ * Both alpha modes the extractor can produce, lit so each is evaluated twice: once on the
+ * camera ray and once on a shadow ray, which is a separate implementation with its own cutoff
+ * comparison.
+ *
+ * MASK (`alphaTest > 0`) at two cutoffs over one shared texture, and BLEND (`transparent` with
+ * `opacity < 1`), which attenuates transmittance rather than cutting it. The quads are
+ * DoubleSide on purpose — whether a single-sided surface blocks shadow rays is a separate open
+ * question in this repo, and mixing it in would make a failure here ambiguous.
+ *
+ * The sun is deliberately much brighter than the scene needs, and the environment is dimmed to
+ * 0.3 in the scene settings. At equal weight the ambient fills the cutout shadows almost
+ * completely: turning `enableAlphaShadows` off then moved only 0.8 % of pixels, under the 1 %
+ * gate, so the shadow-ray half of this scene was barely tested at all.
+ */
+function makeAlphaCutoutRig() {
+
+	const group = new Group();
+	const map = makeAlphaRampAlbedo();
+
+	[ 0.3, 0.75 ].forEach( ( alphaTest, index ) => {
+
+		const quad = new Mesh(
+			new PlaneGeometry( 2.6, 2.6 ),
+			new MeshPhysicalMaterial( {
+				map,
+				alphaTest,
+				side: DoubleSide,
+				roughness: 0.6,
+				metalness: 0,
+			} )
+		);
+		quad.position.set( index === 0 ? - 1.8 : 1.8, 0.5, 0 );
+		group.add( quad );
+
+	} );
+
+	const blend = new Mesh(
+		new PlaneGeometry( 2.2, 2.2 ),
+		new MeshPhysicalMaterial( {
+			color: 0x66ccff,
+			transparent: true,
+			opacity: 0.45,
+			side: DoubleSide,
+			roughness: 0.25,
+			metalness: 0,
+		} )
+	);
+	blend.position.set( 0, 0.3, 1.6 );
+	blend.rotation.set( 0, 0.25, 0 );
+	group.add( blend );
+
+	const floor = new Mesh(
+		new PlaneGeometry( 16, 16 ),
+		new MeshPhysicalMaterial( { color: 0xbfbfbf, roughness: 0.9, metalness: 0 } )
+	);
+	floor.position.set( 0, - 1, 0 );
+	floor.rotation.set( - Math.PI / 2, 0, 0 );
+	group.add( floor );
+
+	const sun = new DirectionalLight( 0xffffff, 10 );
+	sun.position.set( 3, 6, 4 );
+	group.add( sun );
 
 	return group;
 
@@ -720,6 +1017,86 @@ export const SCENES = [
 			await app.refitBVH( positions, normals );
 
 			setCamera( app, [ 0, 1.2, 8 ], [ 0, - 0.2, 0 ] );
+
+		},
+	},
+	{
+		id: 'dispersion-glass',
+		covers: 'chromatic dispersion — Cauchy spectral IOR, per-path wavelength locking, spectral vs microfacet refraction entry, achromatic branch',
+		spp: 96,
+		// Halved like subsurface-marble: every dispersive path re-samples a wavelength and
+		// refracts through several transmissive bounces, so a sample costs multiples of a
+		// diffuse one. 1024 still leaves the reference far ahead of the 96-sample render.
+		truthSpp: 1024,
+		settings: { maxBounces: 6, transmissiveBounces: 8 },
+		async build( app ) {
+
+			// Gradient, not the procedural sky: the sky's sun is what turned this scene into a
+			// caustic-variance problem. The contrast dispersion needs comes from the checkered
+			// backdrop instead, which costs no variance at all.
+			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await app.loadObject3D( makeDispersionRow(), 'dispersion' );
+			setCamera( app, [ 0, 0.7, 6.8 ], [ 0, - 0.1, 0 ] );
+
+		},
+	},
+	{
+		id: 'iridescence-thinfilm',
+		covers: 'thin-film iridescence — Airy-term F0 modulation across film thickness and film IOR, over dielectric and metal bases',
+		spp: 64,
+		truthSpp: 2048,
+		settings: { maxBounces: 4 },
+		async build( app ) {
+
+			await app.stages.pathTracer.environment.setMode( 'procedural' );
+			await app.loadObject3D( makeIridescenceRow(), 'iridescence' );
+			setCamera( app, [ 0, 0.4, 7 ], [ 0, 0, 0 ] );
+
+		},
+	},
+	{
+		id: 'sheen-velvet',
+		covers: 'sheen lobe — sheen distribution across roughness, coloured sheen, energy-conserving base-layer attenuation',
+		spp: 64,
+		truthSpp: 2048,
+		settings: { maxBounces: 4 },
+		async build( app ) {
+
+			await app.stages.pathTracer.environment.setMode( 'procedural' );
+			await app.loadObject3D( makeSheenRow(), 'sheen' );
+			setCamera( app, [ 0, 0.4, 7 ], [ 0, 0, 0 ] );
+
+		},
+	},
+	{
+		id: 'clearcoat-carpaint',
+		covers: 'clearcoat layer — coat Fresnel and coat roughness over a rough base, plus the clearcoat > 0.5 lobe-importance threshold',
+		spp: 64,
+		truthSpp: 2048,
+		settings: { maxBounces: 4 },
+		async build( app ) {
+
+			await app.stages.pathTracer.environment.setMode( 'procedural' );
+			await app.loadObject3D( makeClearcoatRow(), 'clearcoat' );
+			setCamera( app, [ 0, 0.4, 7 ], [ 0, 0, 0 ] );
+
+		},
+	},
+	{
+		id: 'alpha-cutout',
+		covers: 'alpha MASK and BLEND — texture-alpha cutoff on camera and shadow rays, transmittance attenuation, opaque-blocker fast path',
+		spp: 64,
+		truthSpp: 2048,
+		// enableAlphaShadows defaults OFF and only the production config turns it on, so
+		// without it here the shadow-ray half of this scene silently does not run. The dimmed
+		// environment is what makes that half a strong signal rather than a marginal one — see
+		// makeAlphaCutoutRig.
+		settings: { maxBounces: 4, enableAlphaShadows: true, environmentIntensity: 0.3 },
+		async build( app ) {
+
+			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await app.loadObject3D( makeAlphaCutoutRig(), 'alpha-cutout' );
+			setCamera( app, [ 0, 1.6, 7.5 ], [ 0, 0.1, 0 ] );
 
 		},
 	},

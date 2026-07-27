@@ -88,17 +88,44 @@ Each measurement renders **exactly one sample** and resolves the timestamp queri
 
 Perf runs with the **production dispatch heuristics active** (`setPerfMode`), unlike image comparison which needs them pinned off for reproducibility. Benchmarking with them off measures a configuration production never runs. The cost is that per-frame time becomes legitimately bimodal — dispatch sizing is readback-driven — so `cv` sits at 30–40 % even when throughput is rock stable.
 
-**What the gate can actually resolve.** Verdicts are judged on the *standard error of the median*, not per-sample spread, with a per-scene noise floor of 2σ. Measured on Apple M-series at n=120: 0.4 % to 6.6 % median SE depending on scene, which resolves regressions of roughly **2 % to 17 %** respectively. Smaller changes report `inconclusive` rather than guessing. If a scene you care about sits at the wrong end of that, raise `PERF.measureSamples` — the error shrinks as 1/√n and each sample is only a few ms of GPU.
-
-To actually gate, use `npm run bench:ab -- <ref>`: it checks the base ref out into a git worktree and runs both sides interleaved in one session, so thermal state and driver are identical. The comparison returns `inconclusive` rather than a confident verdict when either run is too noisy.
+To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side.
 
 > **`bench:ab` requires `bench/` to exist in the base ref.** Each side boots the harness from its *own* tree — Vite's `server.fs.allow` resolves to the tree the dev server runs in, so serving one tree's harness to the other's server returns 403. A ref predating this tooling therefore has no harness to boot and cannot be used as a base.
+
+#### What the gate can actually resolve — and how that was established
+
+Roughly **a 10 % regression, and nothing finer.** That is a measured limit, not a design target, and the path to it is worth recording because every intermediate answer looked fine and was wrong.
+
+A harness's *within-run* standard error is 0.4–2 % at these sample counts, and the first version of the gate used it as the noise floor. Three experiments showed that number is not an honest uncertainty for an A/B:
+
+| comparison | reproducibility on **identical code** |
+|---|---|
+| repeat measurements, one harness, one session | 0.6–1.2 % — matches the reported SE |
+| two sequential browser sessions | up to **9.9 %** |
+| two coexisting WebGPU devices in one browser | up to **12.4 %** |
+
+Judged against a ±1 % floor, a self-A/B of `HEAD` against itself returned two to three false `slower` verdicts out of nine scenes and a failing exit code. A perf gate that fails on unchanged code gets disabled within a week, so the floor had to come from somewhere real.
+
+Two changes fixed it. Both sides now run in one browser (removing the session boundary), and each scene is measured in several **paired rounds** whose per-round *ratio* is the statistic. The pairing matters more than the replication: the dominant noise is common-mode, and one observed round measured 3.0 ms/sample on *both* sides where its neighbours measured 4.3 on both. Independent medians turn that into a ±27 % noise floor — a gate that never fires. The ratio is untouched by it.
+
+What replication cannot remove is a **bias**: the two harnesses are separate WebGPU devices, and the second page created is consistently a little slower, worth up to 6.2 % on the cheapest scenes. `PERF.abUnchangedPct` (8 %) is set above that measured worst case, which is what costs the gate its fine resolution. It is **machine-specific** — re-derive it with `bench:ab -- HEAD` on a clean tree before trusting the numbers on other hardware.
+
+Every verdict prints its own floor, its per-round deltas, and the absolute spread of each side, so a marginal call is visibly marginal:
+
+```
+unchanged    shadow-catcher-ground      0.85 → 0.90 ms (+5.2 %)
+             floor ±11.2 %, per-round delta +18.8 / +0.0 / +3.5 %, absolute spread base 2.0 % / head 18.7 %
+```
+
+A wide *absolute* spread beside a tight per-round delta is machine drift the pairing already cancelled — adding rounds will not narrow it and does not need to.
 
 Note `pipeline.getStats()` is **not** a GPU metric — it times command encoding on the CPU and stays flat while GPU cost doubles.
 
 ### Memory — gate on growth, never absolutes
 
 The headline test loads and unloads the same scene five times and asserts peak VRAM does not climb. That alone would have caught at least three bugs already in this repo's history.
+
+It runs over **two** scenes (`MEMORY_GATES.leakScenes`), one untextured and one textured, and the textured one is not optional: all three of those historical leaks were in the texture path, and the untextured scene that was once the sole default allocates no texture arrays at all. The suite was watching the one code path with no leak history in it.
 
 Absolute numbers are not gated because `VRAMTracker` is approximate by construction: texture bytes are JS-dimension estimates (no mips, no row-pitch padding), buffers are never residency-probed so freeing one produces no drop, and the denoiser, upscaler, overlay renderer and swapchain are not registered at all. Growth across identical cycles is still meaningful even when the total is not.
 
@@ -108,7 +135,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Nine scenes, one failure axis each. `npm run bench:list` prints them with what they cover.
+Fourteen scenes, one failure axis each. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
 |---|---|
@@ -121,12 +148,37 @@ Nine scenes, one failure axis each. `npm run bench:list` prints them with what t
 | `shadow-catcher-ground` | analytic ground-plane catcher — NEE dual-sum ratio, coverage gate, occlusion |
 | `textured-normalmap` | texture arrays — albedo/normal/roughness, size buckets, UV transform, normalScale |
 | `refit-deform` | BVH refit — BLAS bounds after vertex deformation, TLAS after a rigid move |
+| `dispersion-glass` | Cauchy spectral IOR, per-path wavelength locking, spectral vs microfacet entry |
+| `iridescence-thinfilm` | thin-film F0 modulation across film thickness and IOR, dielectric and metal bases |
+| `sheen-velvet` | sheen distribution across roughness, coloured sheen, base-layer attenuation |
+| `clearcoat-carpaint` | coat Fresnel and coat roughness over a rough base, the `clearcoat > 0.5` threshold |
+| `alpha-cutout` | alpha MASK and BLEND on camera *and* shadow rays, transmittance attenuation |
 
 Everything is built from three.js primitives, procedural `DataTexture`s and a procedural
 environment, so the corpus needs no network and cannot change when the asset host does. Texture
 sizes deliberately differ (128 / 64 / 256) so three different size buckets in the packed texture
 arrays are exercised, and UV repeat/offset are non-identity so a texture-matrix regression shows as
 shifted detail rather than passing unnoticed.
+
+Several scenes include one element with the feature switched **off** — `anisotropy: 0`,
+`iridescence: 0`, `dispersion: 0`, `sheen: 0`, `clearcoat: 0` — because each of those selects a
+separate branch that the enabled path must not disturb. Covering only the enabled side leaves the
+guard's other half untested.
+
+### Every scene has been mutation-tested
+
+A scene that renders the right picture for the wrong reason still blesses cleanly. So for each
+scene, the feature it claims to cover was disabled and the suite re-run: **8 of 8 mutations were
+caught**, with 1.8–15 % energy-bias deltas and 21–1164 % RMSE increases. The margins matter as much
+as the pass — a scene detected only at the threshold is one refactor away from being decorative.
+
+That pass also demonstrated why both gates exist. Flattening `textured-normalmap`'s UV transform to
+identity moved **45 % of pixels** while shifting mean luminance by **−0.025 %**: the golden check
+caught it outright and the energy gate never fired. An energy bug is the mirror image.
+
+This is not a one-off. `refit-deform` was originally committed rendering nothing but sky — the geometry
+had silently vanished — and blessed green, because a featureless image is quiet and therefore scored
+*better* than the rest of the corpus. A suspiciously small `rmseVsTruth` is the tell.
 
 `refit-deform` is the odd one: it builds at pose A, deforms, and then calls `app.refitBVH()` rather
 than loading pose B directly, because building at pose B would exercise a fresh SAH build — the one
@@ -149,23 +201,50 @@ Two rules that are easy to get wrong:
   `sceneSettingsFloor()` builds the per-load reset from the union of those keys, so a setting mutated
   outside them leaks into whichever scene loads next and makes results depend on scene order.
 
-Then check the render actually contains what you meant. A scene that renders bare environment still
-blesses cleanly, and its low noise makes the numbers look *better* than the rest of the corpus — a
-suspiciously small `rmseVsTruth` is the tell.
+Then do two things that are not optional:
+
+1. **Look at the golden PNG.** A scene that renders bare environment still blesses cleanly, and its
+   low noise makes the numbers look *better* than the rest of the corpus — a suspiciously small
+   `rmseVsTruth` is the tell. Compare yours against the others in `baselines/probes.json`.
+2. **Mutation-test it.** Disable the feature the scene claims to cover, re-run `bench:quality`, and
+   confirm it FAILS — then revert. If it passes, the scene is decorative. Watch the *margin* too: a
+   blown-out or washed-out scene can be detected only by the bit-exact golden check while the energy
+   and convergence gates sit silent, which means it will stop detecting anything the moment the
+   golden is legitimately re-blessed for an unrelated reason. Both scenes here that showed that
+   pattern were fixed by dimming `environmentIntensity` so highlights stopped clipping.
+
+> If you re-bless after changing a scene's geometry, materials or lighting, pass `--truth` as well.
+> Without it the existing ground-truth PNG is kept, and every future run measures the new scene
+> against a reference rendered from the old one.
 
 ## Cost
 
-The first scene load in a session compiles the whole wavefront to WGSL (~20 s on Apple M-series) and each subsequent scene load recompiles. Steady-state rendering is ~15 ms/sample at 256². A full `npm run bench` over the nine-scene corpus is several minutes; `bench:bless --truth` is considerably more, because each scene renders a 1-2 k-sample reference.
+The first scene load in a session compiles the whole wavefront to WGSL (~20 s on Apple M-series) and each subsequent scene load recompiles. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. A full `npm run bench` over the fourteen-scene corpus is several minutes; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
 
 ## Known gaps
 
 **Ground truth can only be generated by `bench:bless --truth`.** Regenerating it from the build under test would make both truth gates self-comparisons — a systematic energy error appears at both sample counts and cancels — so the runner refuses `--truth` outside bless.
 
-**`bench:ab` has not been exercised end to end on real hardware.** It is the only path in the suite
-without a verified run behind it. Use a base ref at or after the perf-measurement fixes — earlier
-refs measured a different dispatch configuration and will report a real delta rather than ~0 %.
+**A third of the corpus can report `inconclusive` on any given A/B run.** One wildly-off round out
+of three inflates the standard deviation enough to cross the trust cap, even when the other two
+rounds agree closely. A robust dispersion estimate (MAD rather than sd) would rescue that case while
+still refusing a verdict on genuinely erratic scenes — measured by hand on the run above, it would
+have turned one of three `inconclusive` results into a clean `unchanged` and left the other two
+alone. The two scenes that are erratic every time are the two cheapest (`spheres-procedural-sky` and
+`shadow-catcher-ground`, both under 1 ms/sample), where fixed per-dispatch overhead is a large share
+of the measurement; they carry little perf signal and are best read as quality scenes.
+
+**Perf absolutes in `perf.jsonl` come from a single un-replicated pass** (`bench:perf`), so they
+inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
+purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
 Not yet built: a PR CI workflow (there is currently no PR gate at all, and CI never lints), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. Denoisers are deliberately excluded from the corpus — OIDN adds an async completion dependency and deserves its own suite.
 
-Corpus gaps: skeletal/morph animation (needs a committed `.glb` — `refit-deform` covers the refit
-machinery but not `AnimationManager`), dispersion, iridescence, sheen, clearcoat, alpha cutout.
+**`alpha-cutout`'s shadow-ray half is detected by three gates but not the per-pixel one.** Turning
+`enableAlphaShadows` off trips energy bias, convergence and golden RMSE, but moves only 0.86 % of
+pixels — under the 1 % per-pixel limit — because a shadow occupies a small fraction of the frame. It
+is well covered; just not by that particular gate.
+
+Corpus gap: skeletal/morph animation. `refit-deform` covers the refit machinery but not
+`AnimationManager` — an actual animated clip needs a committed `.glb`, which is the one thing the
+"everything is procedural" rule cannot supply.
