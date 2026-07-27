@@ -32,7 +32,7 @@ export function formatBytes( bytes ) {
  *
  * @param {Object} bench
  * @param {Object} [options]
- * @param {string} [options.sceneId] - defaults to the first scene in the corpus
+ * @param {string} [options.sceneId] - one scene instead of MEMORY_GATES.leakScenes
  * @param {number} [options.cycles]
  * @param {function(string): void} [options.log]
  */
@@ -48,12 +48,22 @@ export async function runMemory( bench, { sceneId, cycles = MEMORY_GATES.leakCyc
 
 	}
 
-	const scenes = await bench.scenes();
-	const target = sceneId ?? scenes[ 0 ].id;
+	const corpus = await bench.scenes();
+	const known = new Set( corpus.map( ( s ) => s.id ) );
 
-	if ( sceneId && ! scenes.some( ( s ) => s.id === target ) ) {
+	if ( sceneId && ! known.has( sceneId ) ) throw new Error( `memory: unknown scene "${sceneId}"` );
 
-		throw new Error( `memory: unknown scene "${sceneId}"` );
+	const targets = sceneId ? [ sceneId ] : MEMORY_GATES.leakScenes;
+
+	// A renamed scene must not silently reduce coverage: dropping it here would leave the
+	// texture path untested while the run still reported "no leak detected".
+	const missing = targets.filter( ( id ) => ! known.has( id ) );
+
+	if ( missing.length ) {
+
+		throw new Error(
+			`memory: MEMORY_GATES.leakScenes references scenes not in the corpus: ${missing.join( ', ' )}`
+		);
 
 	}
 
@@ -64,81 +74,88 @@ export async function runMemory( bench, { sceneId, cycles = MEMORY_GATES.leakCyc
 	snapshots.push( { phase: 'boot', ...boot } );
 	log( `  boot: ${formatBytes( boot.current )}` );
 
-	const cycleResults = [];
+	const perScene = [];
 
-	for ( let cycle = 0; cycle < cycles; cycle ++ ) {
+	for ( const target of targets ) {
 
-		// VRAMTracker.peak is a session-wide monotonic max, so without this every cycle
-		// reports the same saturated number and the peak-growth gate is inert — which is
-		// exactly what happened before: `npm run bench` runs quality first, saturating the
-		// peak, and all five cycles then read identical values.
-		await bench.resetPeakMemory();
+		log( `  ${target}` );
+		const cycleResults = [];
 
-		await bench.loadScene( target );
+		for ( let cycle = 0; cycle < cycles; cycle ++ ) {
 
-		// A few samples so lazily-allocated per-stage resources actually exist; several
-		// categories report zero until their first dispatch.
-		await bench.render( 2 );
+			// VRAMTracker.peak is a session-wide monotonic max, so without this every cycle
+			// reports the same saturated number and the peak-growth gate is inert — which is
+			// exactly what happened before: `npm run bench` runs quality first, saturating the
+			// peak, and all five cycles then read identical values.
+			await bench.resetPeakMemory();
 
-		const loaded = await bench.memory();
-		await bench.unload();
-		const unloaded = await bench.memory();
+			await bench.loadScene( target );
 
-		cycleResults.push( {
-			cycle: cycle + 1,
-			loaded: loaded.current,
-			unloaded: unloaded.current,
-			peak: loaded.peak,
-		} );
+			// A few samples so lazily-allocated per-stage resources actually exist; several
+			// categories report zero until their first dispatch.
+			await bench.render( 2 );
 
-		log(
-			`  cycle ${cycle + 1}: loaded ${formatBytes( loaded.current )}, ` +
-			`unloaded ${formatBytes( unloaded.current )}, peak ${formatBytes( loaded.peak )}`
-		);
+			const loaded = await bench.memory();
+			await bench.unload();
+			const unloaded = await bench.memory();
 
-	}
+			cycleResults.push( {
+				cycle: cycle + 1,
+				loaded: loaded.current,
+				unloaded: unloaded.current,
+				peak: loaded.peak,
+			} );
 
-	// ── Gate 1: absolute peak growth across the run ──
-	const firstPeak = cycleResults[ 0 ].peak;
-	const lastPeak = cycleResults[ cycleResults.length - 1 ].peak;
-	const peakGrowth = lastPeak - firstPeak;
-
-	if ( peakGrowth > MEMORY_GATES.maxPeakGrowthBytes ) {
-
-		failures.push(
-			`LEAK: peak VRAM grew ${formatBytes( peakGrowth )} over ${cycles} identical cycles ` +
-			`(limit ${formatBytes( MEMORY_GATES.maxPeakGrowthBytes )})`
-		);
-
-	}
-
-	// ── Gate 2: monotonic climb, however small ──
-	// A steady per-cycle increase is a leak even when each step is under the byte budget;
-	// lazy allocation, the benign explanation, plateaus instead.
-	if ( MEMORY_GATES.forbidMonotonicGrowth && cycleResults.length >= 3 ) {
-
-		const steadyState = cycleResults.slice( 1 ); // cycle 1 legitimately allocates
-		const alwaysGrew = steadyState.every(
-			( entry, index ) => index === 0 || entry.unloaded > steadyState[ index - 1 ].unloaded
-		);
-
-		if ( alwaysGrew && steadyState.length >= 2 ) {
-
-			const climb = steadyState[ steadyState.length - 1 ].unloaded - steadyState[ 0 ].unloaded;
-			failures.push(
-				`LEAK: post-unload VRAM grew on every cycle (+${formatBytes( climb )} total) — ` +
-				'monotonic growth across identical cycles is a leak, not lazy allocation'
+			log(
+				`    cycle ${cycle + 1}: loaded ${formatBytes( loaded.current )}, ` +
+				`unloaded ${formatBytes( unloaded.current )}, peak ${formatBytes( loaded.peak )}`
 			);
 
 		}
 
+		// ── Gate 1: absolute peak growth across the run ──
+		const firstPeak = cycleResults[ 0 ].peak;
+		const lastPeak = cycleResults[ cycleResults.length - 1 ].peak;
+		const peakGrowth = lastPeak - firstPeak;
+
+		if ( peakGrowth > MEMORY_GATES.maxPeakGrowthBytes ) {
+
+			failures.push(
+				`LEAK [${target}]: peak VRAM grew ${formatBytes( peakGrowth )} over ${cycles} ` +
+				`identical cycles (limit ${formatBytes( MEMORY_GATES.maxPeakGrowthBytes )})`
+			);
+
+		}
+
+		// ── Gate 2: monotonic climb, however small ──
+		// A steady per-cycle increase is a leak even when each step is under the byte budget;
+		// lazy allocation, the benign explanation, plateaus instead.
+		if ( MEMORY_GATES.forbidMonotonicGrowth && cycleResults.length >= 3 ) {
+
+			const steadyState = cycleResults.slice( 1 ); // cycle 1 legitimately allocates
+			const alwaysGrew = steadyState.every(
+				( entry, index ) => index === 0 || entry.unloaded > steadyState[ index - 1 ].unloaded
+			);
+
+			if ( alwaysGrew && steadyState.length >= 2 ) {
+
+				const climb = steadyState[ steadyState.length - 1 ].unloaded - steadyState[ 0 ].unloaded;
+				failures.push(
+					`LEAK [${target}]: post-unload VRAM grew on every cycle (+${formatBytes( climb )} ` +
+					'total) — monotonic growth across identical cycles is a leak, not lazy allocation'
+				);
+
+			}
+
+		}
+
+		perScene.push( { scene: target, cycles: cycleResults, peakGrowth } );
+
 	}
 
 	return {
-		scene: target,
-		cycles: cycleResults,
+		scenes: perScene,
 		snapshots,
-		peakGrowth,
 		failures,
 		passed: failures.length === 0,
 	};

@@ -135,8 +135,16 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 		await bench.loadScene( scene.id );
 
 		// ── Ground truth (one-time, expensive) ──
+		//
+		// Generated ONLY on bless. A comparison run that made its own reference would be
+		// checking the build under test against itself: a systematic energy error appears at
+		// both sample counts and cancels, so the bias ratio reads ~1.0 and the gate passes —
+		// permanently, because the poisoned reference is then written to disk. That is the
+		// same trap the `--truth` guard above blocks, reached through a different door (a
+		// deleted file, or a scene added to the corpus and never blessed).
 		const truthPath = path.join( PATHS.truth, `${scene.id}.png` );
-		if ( truth || ! await exists( truthPath ) ) {
+
+		if ( bless && ( truth || ! await exists( truthPath ) ) ) {
 
 			log( `    ground truth @ ${scene.truthSpp} spp…` );
 			await bench.render( scene.truthSpp );
@@ -173,75 +181,90 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 		const entry = { scene: scene.id, pass: true, failures: [], probes };
 
 		// ── vs ground truth: bias + noise ──
-		const truthImage = await readPNG( truthPath );
-		const vsTruth = compare( rendered, truthImage, {
-			threshold: QUALITY_GATES.golden.pixelThreshold,
-		} );
-		entry.vsTruth = {
-			rmse: vsTruth.rmse,
-			ssim: ssim( rendered, truthImage ),
-			meanLuminanceRatio: vsTruth.meanLuminanceRatio,
-		};
+		if ( ! await exists( truthPath ) ) {
 
-		const truthProbes = nextProbes[ scene.id ]?.truth ?? storedProbes[ scene.id ]?.truth;
-
-		if ( ! truthProbes?.meanLuminance ) {
-
-			// Skipping the check here would silently disable the primary energy gate for
-			// this scene while still reporting a pass. Fail instead.
+			// Both truth gates are structurally inert without a reference. Reporting a pass
+			// on the strength of the golden check alone would claim energy and convergence
+			// coverage this scene does not have.
 			entry.pass = false;
 			entry.failures.push(
-				'no ground-truth luminance probe — the ENERGY BIAS gate cannot run. ' +
-				'Re-bless this scene with --truth.'
+				'no ground-truth reference on disk — the ENERGY BIAS and CONVERGENCE gates ' +
+				'cannot run. Run `npm run bench:bless` to generate one.'
 			);
 
 		} else {
 
-			// The bias signal, measured in LINEAR space from the HDR buffer — the PNG is
-			// tone-mapped and 8-bit, so a few-percent energy error is compressed away
-			// before it reaches the pixels.
-			const ratio = probes.meanLuminance / truthProbes.meanLuminance;
-			entry.biasRatio = ratio;
+			const truthImage = await readPNG( truthPath );
+			const vsTruth = compare( rendered, truthImage, {
+				threshold: QUALITY_GATES.golden.pixelThreshold,
+			} );
+			entry.vsTruth = {
+				rmse: vsTruth.rmse,
+				ssim: ssim( rendered, truthImage ),
+				meanLuminanceRatio: vsTruth.meanLuminanceRatio,
+			};
 
-			if ( Math.abs( ratio - 1 ) > QUALITY_GATES.truth.maxBiasRatioDelta ) {
+			const truthProbes = nextProbes[ scene.id ]?.truth ?? storedProbes[ scene.id ]?.truth;
 
+			if ( ! truthProbes?.meanLuminance ) {
+
+				// Skipping the check here would silently disable the primary energy gate for
+				// this scene while still reporting a pass. Fail instead.
 				entry.pass = false;
 				entry.failures.push(
-					`ENERGY BIAS: mean luminance is ${( ( ratio - 1 ) * 100 ).toFixed( 2 )} % off ground truth ` +
-					`(limit ±${( QUALITY_GATES.truth.maxBiasRatioDelta * 100 ).toFixed( 2 )} %)`
+					'no ground-truth luminance probe — the ENERGY BIAS gate cannot run. ' +
+					'Re-bless this scene with --truth.'
 				);
+
+			} else {
+
+				// The bias signal, measured in LINEAR space from the HDR buffer — the PNG is
+				// tone-mapped and 8-bit, so a few-percent energy error is compressed away
+				// before it reaches the pixels.
+				const ratio = probes.meanLuminance / truthProbes.meanLuminance;
+				entry.biasRatio = ratio;
+
+				if ( Math.abs( ratio - 1 ) > QUALITY_GATES.truth.maxBiasRatioDelta ) {
+
+					entry.pass = false;
+					entry.failures.push(
+						`ENERGY BIAS: mean luminance is ${( ( ratio - 1 ) * 100 ).toFixed( 2 )} % off ground truth ` +
+						`(limit ±${( QUALITY_GATES.truth.maxBiasRatioDelta * 100 ).toFixed( 2 )} %)`
+					);
+
+				}
 
 			}
 
-		}
+			const baselineRmse = storedProbes[ scene.id ]?.rmseVsTruth;
+			if ( typeof baselineRmse === 'number' && baselineRmse > 0 ) {
 
-		const baselineRmse = storedProbes[ scene.id ]?.rmseVsTruth;
-		if ( typeof baselineRmse === 'number' && baselineRmse > 0 ) {
+				const increase = ( vsTruth.rmse - baselineRmse ) / baselineRmse;
+				entry.rmseIncrease = increase;
 
-			const increase = ( vsTruth.rmse - baselineRmse ) / baselineRmse;
-			entry.rmseIncrease = increase;
+				if ( increase > QUALITY_GATES.truth.maxRmseIncrease ) {
 
-			if ( increase > QUALITY_GATES.truth.maxRmseIncrease ) {
+					entry.pass = false;
+					entry.failures.push(
+						`CONVERGENCE: RMSE vs ground truth worsened ${( increase * 100 ).toFixed( 2 )} % ` +
+						`(${baselineRmse.toFixed( 5 )} → ${vsTruth.rmse.toFixed( 5 )}); same spp, noisier image`
+					);
 
-				entry.pass = false;
-				entry.failures.push(
-					`CONVERGENCE: RMSE vs ground truth worsened ${( increase * 100 ).toFixed( 2 )} % ` +
-					`(${baselineRmse.toFixed( 5 )} → ${vsTruth.rmse.toFixed( 5 )}); same spp, noisier image`
-				);
+				}
 
 			}
 
-		}
+			// Bootstrap only. Overwriting these on every run is exactly the drift this suite
+			// exists to prevent: the convergence baseline would silently track each
+			// regression and never fail. They move only when explicitly blessed.
+			const existing = nextProbes[ scene.id ] ?? {};
+			nextProbes[ scene.id ] = {
+				...existing,
+				golden: existing.golden ?? probes,
+				rmseVsTruth: existing.rmseVsTruth ?? vsTruth.rmse,
+			};
 
-		// Bootstrap only. Overwriting these on every run is exactly the drift this suite
-		// exists to prevent: the convergence baseline would silently track each
-		// regression and never fail. They move only when explicitly blessed.
-		const existing = nextProbes[ scene.id ] ?? {};
-		nextProbes[ scene.id ] = {
-			...existing,
-			golden: existing.golden ?? probes,
-			rmseVsTruth: existing.rmseVsTruth ?? vsTruth.rmse,
-		};
+		}
 
 		// ── vs golden: did anything move at all ──
 		if ( await exists( goldenPath ) ) {
