@@ -4,10 +4,16 @@ const config = {
 		[ '@semantic-release/commit-analyzer', {
 			preset: 'angular',
 			releaseRules: [
-				{ type: 'docs', scope: 'README', release: 'patch' },
+				// Scope matching is case-sensitive and every docs commit in this repo writes
+				// it lowercase, so 'README' never matched anything.
+				{ type: 'docs', scope: 'readme', release: 'patch' },
 				{ type: 'feat', release: 'minor' },
 				{ type: 'fix', release: 'patch' },
 				{ type: 'perf', release: 'patch' },
+				// build/ changes the published artifact, so it has to be able to ship one.
+				// 7.20.0 went out with worker side-chunks that broke the package on
+				// bundlephobia; the fix was typed build(engine) and silently never released.
+				{ type: 'build', release: 'patch' },
 			],
 			parserOpts: {
 				noteKeywords: [ 'BREAKING CHANGE', 'BREAKING CHANGES' ]
