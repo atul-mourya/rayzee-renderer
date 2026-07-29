@@ -66,12 +66,13 @@ These are public engine API, not bench-only helpers — any host doing offline r
 
 ## What each suite gates on
 
-### Quality — two comparisons, both required
+### Quality — three comparisons, all required
 
 | vs. | Reference | Answers |
 |---|---|---|
 | **golden** | last blessed render at the same spp | "did anything move?" |
 | **ground truth** | one-time 2048-spp render | "did anything get *worse*?" |
+| **white furnace** | analytic — a constant in `scenes.js` | "is the BSDF conserving energy?" |
 
 The golden check alone is not enough, because goldens drift: regress 3 %, re-bless, regress 3 %, re-bless — twenty PRs later the renderer is materially worse and every run was green. RMSE against ground truth cannot drift, because the reference never moves. Baselines are bootstrapped on first run and thereafter change **only** via `bench:bless`.
 
@@ -79,6 +80,100 @@ The golden check alone is not enough, because goldens drift: regress 3 %, re-ble
 
 - **Bias** — mean linear luminance vs ground truth. Catches energy bugs: a missing `4π`, a clamp eating light, a broken MIS weight. Measured from the FloatType HDR buffer, not the PNG, because tone mapping compresses a few-percent energy error away before it reaches the pixels.
 - **Noise** — RMSE vs ground truth at fixed spp. Catches sampling-efficiency loss: same mean, more variance.
+
+#### The white furnace gate, and why bias is not enough
+
+The bias gate has one structural blind spot: its reference is a high-spp render of *the build under
+test*. A systematic energy error appears in both the reference and the render, cancels, and the ratio
+reads ~1.0 — so a BSDF that has always created 12 % of its energy passes forever, and re-blessing can
+only entrench it.
+
+The `furnace-*` scenes close that hole. An albedo-1 sphere in a uniform environment of radiance `L`
+must render *exactly* `L` — the object becomes invisible. The reference is a constant declared in
+`scenes.js`, so no amount of blessing can move it.
+
+**It is a ratchet, not an absolute gate.** Several BSDFs violate energy conservation today (see
+below), and gating on `|ratio − 1|` would leave the suite permanently red — which is how a gate stops
+being read. Each scene's current deviation is blessed and may only **shrink**; the absolute deviation
+is always printed, so the outstanding bugs stay visible without blocking unrelated work. Fix one and
+`bench:bless` tightens the ratchet behind you.
+
+Standing state as of the last bless. Every axis is now at the measurement floor — the diffuse
+control, which is analytically exact, reads 0.121 pp. The worst axis was 51 pp.
+
+| scene | ratio | off by |
+|---|---|---|
+| `furnace-metal-mid` | 1.00105 | 0.11 pp |
+| `furnace-diffuse` | 0.99879 | 0.12 pp — control, Lambert is exact |
+| `furnace-clearcoat` | 0.99858 | 0.14 pp |
+| `furnace-dielectric-glossy` | 0.99775 | 0.23 pp |
+| `furnace-sheen` | 0.99762 | 0.24 pp |
+| `furnace-metal-rough` | 0.99730 | 0.27 pp |
+| `furnace-iridescence` | 0.99514 | 0.49 pp |
+
+#### What the furnace found, and what fixed it
+
+Every one of these was invisible to the bias gate, and several were invisible to each other —
+partially cancelling, so fixing any single one in isolation made scenes *worse*.
+
+**Four lobe-weight schemes, and MIS that did not partition unity.** A one-sample lobe mixture is
+only unbiased if every MIS site divides by the density the sampler actually drew from. Four
+independent schemes had grown up instead — lobe selection in `calculateBRDFWeights`, the indirect
+`combinedPdf` from `getImportanceSamplingInfo`, env-NEE's own inline pair, and a fourth inside
+`sampleClearcoat`. The inline pair's `specularWeight = 1 - diffuseWeight * (1 - metalness)`
+collapses to **zero for every non-metal**, so MIS believed a glossy dielectric sampled purely
+cosine while the sampler picked specular about half the time. Worse,
+`calculateIndirectLighting` re-selected a strategy on top of `generateSampledDirection`, and its
+specular and clearcoat strategies both just returned `brdfSampleDirection` — a sample that may
+have come from the diffuse or sheen lobe — so `combinedPdf`, which becomes `prevBouncePdf`, was
+the density of a distribution nothing sampled from. Now one function, `calculateBSDFSamplingPDF`.
+
+**Two BRDFs for one material.** `evaluateLayeredBRDF` carried the clearcoat layer and was called
+only by `sampleClearcoat`; every NEE site called `evaluateMaterialResponseFromDots`, which had no
+coat term. MIS combining two different integrands is biased however good the weights are. The coat
+is now folded into the single BRDF and `evaluateLayeredBRDF` is gone.
+
+**A borrowed DFG fit.** `evaluateDFG` used Karis's analytic split-sum polynomial, which fits a
+*different integral* — off by up to 0.31 absolute against this BSDF. It is now a LUT integrated
+from the renderer's own lobes (`bench/tools/gen-dfg-lut.mjs`), storing E at F0 = 1 and at F0 = 0;
+Schlick is linear in F0, so `E(F0) = F0·(R - B) + B` is exact and no fitted shape survives
+anywhere in the chain. That also unblocked replacing `GeometrySchlickGGX`'s analytic-light remap
+with exact Smith, and the isotropic BRDF's separable Smith with the height-correlated form the
+anisotropic path always used.
+
+**Energy splits that were guesses.** Both layered lobes attenuated the base by an invented factor
+instead of the lobe's actual albedo: sheen used `(1 - sheenRoughness) * 0.5 + 0.25`, claiming 0.55
+where the truth is ~0.01 head-on; clearcoat used `1 - clearcoat·F·(2 - F)` off the per-sample
+half-vector Fresnel. Both now read their own directional albedo from the LUT.
+
+**Sheen was a BRDF in name only.** `sheenColor · sheen · D · NoL` — no visibility term, and a
+cosine the caller already applies. The lobe was sampled with `ImportanceSampleGGX( sheenRoughness )`
+while its density came from `SheenDistribution`, which is GGX with A² = 1/roughness⁴ — the
+reciprocal, so sampler and pdf described different distributions. And the pure-diffuse fast path
+in `evaluateMaterialResponseFromDots` did not test `material.sheen`, so any sheen material above
+roughness 0.98 silently lost its sheen lobe entirely.
+
+**A fallback that made a density unrepresentable.** A below-surface sheen reflection used to fall
+back to a cosine direction, so the lobe also emitted cosine-distributed directions: the true
+density is `w_sheen·p_sheen + P(reject)·w_sheen·cos`, and `calculateBSDFSamplingPDF` cannot know
+`P(reject)`. Dividing by the smaller modelled density inflated the lobe 23 % — measured 0.308
+against an exact analytic 0.25. The sample is now simply lost, which keeps the density exact.
+
+**A diffuse lobe on glass.** Neither `calculateBRDFWeights` nor `kD` carried a
+`(1 - transmission)` factor, so a fully transmissive dielectric kept a full diffuse term it should
+not have — `KHR_materials_transmission` defines transmission as *replacing* the diffuse component.
+The sampler duly spent ~23 % of glass samples proposing cosine directions whose BRDF value is ~0
+while refraction went under-sampled at 42 %. This was masked on main by an ad-hoc override in the
+old outer selection (`transmissionImportance = max( ..., 0.8 )`, `diffuseImportance *= 0.2`) that
+the unified path removed, which is how it surfaced. Fixing the factor rather than restoring the
+override cut glass-transmission noise 62 % and dispersion-glass 12 %.
+
+Energy aside, correct densities cut noise sharply. RMSE vs ground truth fell on all 14 image
+scenes — clearcoat-carpaint −74 %, glass-transmission −55 %, refit-deform −54 %, spheres-gradient
+−47 %, iridescence −39 %, down to −11 % on sheen-velvet.
+
+The LUT is only valid for the BRDF/sampler pair it was integrated from. Change a lobe without
+regenerating and the compensation drifts back out of calibration — which the ratchet will catch.
 
 ### Performance — same-session A/B only
 
@@ -135,7 +230,8 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Fourteen scenes, one failure axis each. `npm run bench:list` prints them with what they cover.
+Twenty-one scenes, one failure axis each — fourteen image scenes plus seven `furnace-*` energy
+probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
 |---|---|
@@ -153,6 +249,13 @@ Fourteen scenes, one failure axis each. `npm run bench:list` prints them with wh
 | `sheen-velvet` | sheen distribution across roughness, coloured sheen, base-layer attenuation |
 | `clearcoat-carpaint` | coat Fresnel and coat roughness over a rough base, the `clearcoat > 0.5` threshold |
 | `alpha-cutout` | alpha MASK and BLEND on camera *and* shadow rays, transmittance attenuation |
+| `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
+| `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
+| `furnace-metal-mid` | metal multiscatter compensation overshoot at mid roughness |
+| `furnace-metal-rough` | single-scattering GGX deficit at r = 1 — the opposite failure to `metal-mid` |
+| `furnace-clearcoat` | clearcoat layer energy on top of the base |
+| `furnace-sheen` | sheen lobe energy and base-layer attenuation |
+| `furnace-iridescence` | thin-film energy across the film-thickness range |
 
 Everything is built from three.js primitives, procedural `DataTexture`s and a procedural
 environment, so the corpus needs no network and cannot change when the asset host does. Texture
@@ -191,6 +294,11 @@ it. Building this scene surfaced two real engine gaps — no public accessor for
 ## Adding a scene
 
 Append to `SCENES` in `harness/scenes.js`, then `npm run bench:bless -- --truth --only your-scene`.
+
+If the scene needs a field the runner gates on, add it to the `scenes()` projection in
+`harness/boot.js` as well. `build` is a function and cannot cross the CDP boundary, so the whole
+spec is never returned — the field list is explicit, and a field missing from it arrives
+`undefined` in the runner and the gate silently does not run.
 
 Two rules that are easy to get wrong:
 

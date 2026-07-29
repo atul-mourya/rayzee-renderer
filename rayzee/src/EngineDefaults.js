@@ -97,7 +97,7 @@ export const ENGINE_DEFAULTS = {
 	pixelFreezeThreshold: 0.02, // per-pixel noise below which a pixel becomes a freeze candidate
 	pixelFreezeStability: 8, // consecutive candidate frames before a pixel freezes
 
-	samplingTechnique: 3,
+	samplingTechnique: 2,
 	enableEmissiveTriangleSampling: false,
 	emissiveBoost: 1.0,
 

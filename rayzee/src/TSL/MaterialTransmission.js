@@ -1,32 +1,14 @@
 // Material Transmission & Refraction - Ported from material_transmission.fs
 // Handles both volumetric transmission AND opacity-based transparency
 
-import {
-	Fn,
-	wgslFn,
-	vec2,
-	vec3,
-	float,
-	int,
-	bool as tslBool,
-	If,
-	select,
-	abs,
-	dot,
-	reflect,
-	refract,
-	max,
-	mix,
-	clamp,
-	exp,
-} from 'three/tsl';
+import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp } from 'three/tsl';
 
 import { struct } from './patches.js';
 import { EPSILON, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { iorToFresnel0, fresnelSchlickFloat } from './Fresnel.js';
 import { DistributionGGX } from './MaterialProperties.js';
 import { ImportanceSampleGGX } from './MaterialSampling.js';
-import { RandomValue, pcgHash } from './Random.js';
+import { getRandomSample1D, getRandomSample2D, pcgHash } from './Random.js';
 import { handleSubsurfaceEntry, SubsurfaceEntryResult } from './Subsurface.js';
 
 // ================================================================================
@@ -215,7 +197,8 @@ export const calculateShadowTransmittance = Fn( ( [ rayDir, normal, material, en
 // ================================================================================
 
 export const sampleMicrofacetTransmission = Fn( ( [
-	V, N, ior, roughness, entering, dispersion, xi, rngState, pathWavelength
+	V, N, ior, roughness, entering, dispersion, xi, rngState, pathWavelength,
+	pixelCoord, resolution, frame, dimBase,
 ] ) => {
 
 	const result = MicrofacetTransmissionResult( {
@@ -244,7 +227,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 
 		} ).Else( () => {
 
-			const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, RandomValue( rngState ) ) );
+			const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
 			etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
 			result.colorWeight.assign( spectralSample.colorWeight );
 			result.pathWavelength.assign( spectralSample.wavelength );
@@ -290,7 +273,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 
 			} ).Else( () => {
 
-				const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, RandomValue( rngState ) ) );
+				const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
 				etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
 				result.colorWeight.assign( spectralSample.colorWeight );
 				result.pathWavelength.assign( spectralSample.wavelength );
@@ -348,6 +331,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 
 export const handleTransmission = Fn( ( [
 	rayDir, normal, material, entering, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	currentMediumIOR, previousMediumIOR, pathWavelength,
 ] ) => {
 
@@ -400,20 +384,18 @@ export const handleTransmission = Fn( ( [
 	reflectProb.assign( clamp( reflectProb, 0.05, 0.95 ) );
 
 	// Force reflection if TIR, otherwise probabilistically choose
-	const doReflect = totalInternalReflection.or( RandomValue( rngState ).lessThan( reflectProb ) ).toVar();
+	const doReflect = totalInternalReflection.or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ).lessThan( reflectProb ) ).toVar();
 	result.didReflect.assign( doReflect );
 
 	// Choose random sample for microfacet sampling
-	const xi_r1 = RandomValue( rngState ).toVar();
-	const xi_r2 = RandomValue( rngState ).toVar();
-	const xi = vec2( xi_r1, xi_r2 );
+	const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ).toVar();
 
 	If( doReflect, () => {
 
 		// Reflection at a transmissive surface — no wavelength locking
 		If( material.roughness.greaterThan( 0.05 ), () => {
 
-			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, float( 0.0 ), xi, rngState, float( 0.0 ) ) );
+			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, float( 0.0 ), xi, rngState, float( 0.0 ), pixelCoord, resolution, frame, dimBase ) );
 			result.direction.assign( mtResult.direction );
 
 		} ).Else( () => {
@@ -430,7 +412,7 @@ export const handleTransmission = Fn( ( [
 		// Transmission/refraction path
 		If( material.roughness.greaterThan( 0.05 ).or( material.dispersion.greaterThan( 0.0 ) ), () => {
 
-			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, material.dispersion, xi, rngState, pathWavelength ) );
+			const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission( V, N, material.ior, material.roughness, entering, material.dispersion, xi, rngState, pathWavelength, pixelCoord, resolution, frame, dimBase ) );
 			result.pathWavelength.assign( mtResult.pathWavelength );
 
 			If( mtResult.didReflect, () => {
@@ -486,6 +468,7 @@ export const handleTransmission = Fn( ( [
 
 export const handleMaterialTransparency = Fn( ( [
 	ray, normal, material, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	transmissiveTraversals,
 	currentMediumIOR, previousMediumIOR,
 	pathWavelength,
@@ -512,8 +495,8 @@ export const handleMaterialTransparency = Fn( ( [
 
 	} ).Else( () => {
 
-		const alphaRand = RandomValue( rngState );
-		const transmissionRand = RandomValue( rngState );
+		const alphaRand = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 6 ) ), rngState, resolution, frame );
+		const transmissionRand = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 7 ) ), rngState, resolution, frame );
 		const transmissionSeed = pcgHash( { state: rngState } );
 
 		const handled = tslBool( false ).toVar();
@@ -574,6 +557,7 @@ export const handleMaterialTransparency = Fn( ( [
 
 				const transResult = TransmissionResult.wrap( handleTransmission(
 					ray.direction, normal, material, entering, transmissionSeed,
+					pixelCoord, resolution, frame, dimBase,
 					currentMediumIOR, previousMediumIOR, pathWavelength,
 				) );
 
@@ -595,12 +579,13 @@ export const handleMaterialTransparency = Fn( ( [
 		If( handled.not().and( material.subsurface.greaterThan( 0.0 ) ), () => {
 
 			const entering = dot( ray.direction, normal ).lessThan( 0.0 );
-			const doEnter = entering.not().or( RandomValue( rngState ).lessThan( material.subsurface ) );
+			const doEnter = entering.not().or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 8 ) ), rngState, resolution, frame ).lessThan( material.subsurface ) );
 
 			If( doEnter, () => {
 
 				const ssResult = SubsurfaceEntryResult.wrap( handleSubsurfaceEntry(
 					ray.direction, normal, material, entering, rngState,
+					pixelCoord, resolution, frame, dimBase,
 					currentMediumIOR, previousMediumIOR,
 				) ).toVar();
 

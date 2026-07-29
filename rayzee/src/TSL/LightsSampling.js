@@ -72,8 +72,8 @@ import {
 
 import { traverseBVHShadow } from './BVHTraversal.js';
 import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
-import { calculateVNDFPDF, calculateVNDFPDFAniso, computeAnisoAlphas } from './MaterialProperties.js';
-import { RandomValue } from './Random.js';
+import { calculateBSDFSamplingPDFFromMaterial } from './MaterialProperties.js';
+import { getRandomSample1D, getRandomSample2D, SAMPLER_DIM_AUX_BASE } from './Random.js';
 import {
 	selectOptimalMISStrategy,
 	PI,
@@ -340,6 +340,7 @@ export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSe
 // unbiased; PDF = winnerImportance / totalWeight, identical to the CDF form.
 export const sampleLightWithImportance = Fn( ( [
 	rayOrigin, normal, material, randomSeed, bounceIndex, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	// Light buffers + counts
 	directionalLightsBuffer, numDirectionalLights,
 	areaLightsBuffer, numAreaLights,
@@ -380,7 +381,9 @@ export const sampleLightWithImportance = Fn( ( [
 					const importance = calculateDirectionalLightImportance( light, normal, material, bounceIndex ).toVar();
 					totalWeight.addAssign( importance );
 					If( importance.greaterThan( 0.0 ).and(
-						RandomValue( rngState ).mul( totalWeight ).lessThan( importance )
+						getRandomSample1D( pixelCoord, int( 0 ),
+							int( SAMPLER_DIM_AUX_BASE + 64 + 0 * 16 ).add( i ), rngState, resolution, frame
+						).mul( totalWeight ).lessThan( importance )
 					), () => {
 
 						selectedType.assign( 0 );
@@ -405,7 +408,9 @@ export const sampleLightWithImportance = Fn( ( [
 					const importance = select( light.intensity.greaterThan( 0.0 ), estimateLightImportance( light, rayOrigin, normal, material ), float( 0.0 ) ).toVar();
 					totalWeight.addAssign( importance );
 					If( importance.greaterThan( 0.0 ).and(
-						RandomValue( rngState ).mul( totalWeight ).lessThan( importance )
+						getRandomSample1D( pixelCoord, int( 0 ),
+							int( SAMPLER_DIM_AUX_BASE + 64 + 1 * 16 ).add( i ), rngState, resolution, frame
+						).mul( totalWeight ).lessThan( importance )
 					), () => {
 
 						selectedType.assign( 1 );
@@ -430,7 +435,9 @@ export const sampleLightWithImportance = Fn( ( [
 					const importance = calculatePointLightImportance( light, rayOrigin, normal, material ).toVar();
 					totalWeight.addAssign( importance );
 					If( importance.greaterThan( 0.0 ).and(
-						RandomValue( rngState ).mul( totalWeight ).lessThan( importance )
+						getRandomSample1D( pixelCoord, int( 0 ),
+							int( SAMPLER_DIM_AUX_BASE + 64 + 2 * 16 ).add( i ), rngState, resolution, frame
+						).mul( totalWeight ).lessThan( importance )
 					), () => {
 
 						selectedType.assign( 2 );
@@ -455,7 +462,9 @@ export const sampleLightWithImportance = Fn( ( [
 					const importance = calculateSpotLightImportance( light, rayOrigin, normal, material ).toVar();
 					totalWeight.addAssign( importance );
 					If( importance.greaterThan( 0.0 ).and(
-						RandomValue( rngState ).mul( totalWeight ).lessThan( importance )
+						getRandomSample1D( pixelCoord, int( 0 ),
+							int( SAMPLER_DIM_AUX_BASE + 64 + 3 * 16 ).add( i ), rngState, resolution, frame
+						).mul( totalWeight ).lessThan( importance )
 					), () => {
 
 						selectedType.assign( 3 );
@@ -518,7 +527,7 @@ export const sampleLightWithImportance = Fn( ( [
 
 					If( light.intensity.greaterThan( 0.0 ), () => {
 
-						const uv = vec2( randomSeed.y, RandomValue( rngState ) ).toVar();
+						const uv = vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ).toVar();
 						const areaSample = LightSample.wrap( sampleRectAreaLight( light, rayOrigin, uv, lightSelectionPdf ) );
 						r_valid.assign( areaSample.valid );
 						r_direction.assign( areaSample.direction );
@@ -607,7 +616,7 @@ export const sampleLightWithImportance = Fn( ( [
 					const cosHalfAngle = cos( light.angle.mul( 0.5 ) ).toVar();
 					const cosTheta = mix( cosHalfAngle, float( 1.0 ), randomSeed.y ).toVar();
 					const sinTheta = sqrt( max( float( 0.0 ), float( 1.0 ).sub( cosTheta.mul( cosTheta ) ) ) ).toVar();
-					const phi = float( TWO_PI ).mul( RandomValue( rngState ) ).toVar();
+					const phi = float( TWO_PI ).mul( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame ) ).toVar();
 
 					const w = normalize( light.direction ).toVar();
 					const u = normalize( cross(
@@ -639,7 +648,7 @@ export const sampleLightWithImportance = Fn( ( [
 			If( selectedType.equal( int( 1 ) ).and( selectedIdx.greaterThanEqual( int( 0 ) ) ), () => {
 
 				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, selectedIdx ) );
-				const uv = vec2( randomSeed.y, RandomValue( rngState ) ).toVar();
+				const uv = vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ).toVar();
 				const areaSample = LightSample.wrap( sampleRectAreaLight( light, rayOrigin, uv, pdf ) );
 				r_valid.assign( areaSample.valid );
 				r_direction.assign( areaSample.direction );
@@ -700,66 +709,14 @@ export const sampleLightWithImportance = Fn( ( [
 // PDF computation given precomputed dot products. Use this when the caller
 // already has dots from a paired evaluateMaterialResponseFromDots invocation
 // to avoid recomputing H + dots.
+// BSDF-sampling density for MIS — must be the exact function the sampler draws from, or the two
+// strategies' weights stop summing to 1.
 export const calculateMaterialPDFFromDots = Fn( ( [ material, dots ] ) => {
 
-	const NoV = dots.NoV;
-	const NoL = dots.NoL.toVar();
-	const NoH = dots.NoH;
-
-	// Calculate lobe weights
-	const diffuseWeight = float( 1.0 ).sub( material.metalness ).mul(
-		float( 1.0 ).sub( material.transmission )
-	).toVar();
-
-	const specularWeight = float( 1.0 ).sub(
-		diffuseWeight.mul( float( 1.0 ).sub( material.metalness ) )
-	).toVar();
-
-	const totalWeight = diffuseWeight.add( specularWeight ).toVar();
-
-	const pdf = float( 0.0 ).toVar();
-
-	If( totalWeight.greaterThan( 0.0 ), () => {
-
-		// Guard division
-		const invTotalWeight = float( 1.0 ).div( max( totalWeight, 1e-10 ) ).toVar();
-		diffuseWeight.mulAssign( invTotalWeight );
-		specularWeight.mulAssign( invTotalWeight );
-
-		// Diffuse PDF (cosine-weighted hemisphere)
-		If( diffuseWeight.greaterThan( 0.0 ).and( NoL.greaterThan( 0.0 ) ), () => {
-
-			pdf.addAssign( diffuseWeight.mul( NoL ).mul( PI_INV ) );
-
-		} );
-
-		// Specular PDF (VNDF sampling used in path tracer)
-		If( specularWeight.greaterThan( 0.0 ).and( NoL.greaterThan( 0.0 ) ), () => {
-
-			const roughness = max( material.roughness, 0.02 );
-			const specPdf = float( 0.0 ).toVar();
-			If( material.anisotropy.greaterThan( 0.0 ), () => {
-
-				const a = computeAnisoAlphas( material.roughness, material.anisotropy );
-				specPdf.assign( calculateVNDFPDFAniso( a.x, a.y, dots.NoH, dots.ToH, dots.BoH, dots.NoV, dots.ToV, dots.BoV ) );
-
-			} ).Else( () => {
-
-				specPdf.assign( calculateVNDFPDF( NoH, NoV, roughness ) );
-
-			} );
-			pdf.addAssign( specularWeight.mul( specPdf ) );
-
-		} );
-
-	} );
-
-	return max( pdf, 1e-8 );
+	return max( calculateBSDFSamplingPDFFromMaterial( material, dots ), 1e-8 );
 
 } );
 
-// Wrapper that computes dots internally. Use this when the caller doesn't
-// already have dots; otherwise prefer calculateMaterialPDFFromDots.
 export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material ] ) => {
 
 	const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, lightDir, material ) );
@@ -861,6 +818,9 @@ export const calculateDirectLightingUnified = Fn( ( [
 	brdfSampleDirection, brdfSamplePdf, brdfSampleValue,
 	// Tracing context
 	bounceIndex, rngState,
+	// Sampler context — NEE's continuous variates come off the sampler keyed on
+	// (pixel, dimension, frame). dimBase is this bounce's block; see Random.js budget.
+	pixelCoord, resolution, frame, dimBase,
 	// Light data
 	directionalLightsBuffer, numDirectionalLights,
 	areaLightsBuffer, numAreaLights,
@@ -937,11 +897,8 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 		} );
 
-		const stratRand1 = RandomValue( rngState ).toVar();
-		const stratRand2 = RandomValue( rngState ).toVar();
-
 		// Determine sampling technique: stochastic {lights, BRDF}
-		const rand = stratRand1;
+		const rand = getRandomSample1D( pixelCoord, int( 0 ), dimBase, rngState, resolution, frame ).toVar();
 		const sampleLights = tslBool( false ).toVar();
 		const sampleBRDF = tslBool( false ).toVar();
 
@@ -973,9 +930,10 @@ export const calculateDirectLightingUnified = Fn( ( [
 		If( sampleLights, () => {
 
 			// Importance-weighted light sampling
-			const lightRandom = vec2( stratRand2, RandomValue( rngState ) ).toVar();
+			const lightRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 2 ) ), rngState, resolution, frame ).toVar();
 			const lightSample = LightSample.wrap( sampleLightWithImportance(
 				rayOrigin, hitNormal, material, lightRandom, bounceIndex, rngState,
+				pixelCoord, resolution, frame, dimBase,
 				directionalLightsBuffer, numDirectionalLights,
 				areaLightsBuffer, numAreaLights,
 				pointLightsBuffer, numPointLights,
@@ -1172,9 +1130,7 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 		If( enableEnvironmentLight, () => {
 
-			const env_r1 = RandomValue( rngState ).toVar();
-			const env_r2 = RandomValue( rngState ).toVar();
-			const envRandom = vec2( env_r1, env_r2 ).toVar();
+			const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
 			const envColor = vec3( 0.0 ).toVar();
 
 			// Sample direction + PDF + color from importance-sampled environment

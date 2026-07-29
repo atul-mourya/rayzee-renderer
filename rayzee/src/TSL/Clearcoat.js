@@ -1,7 +1,7 @@
 import {
 	Fn,
 	vec3,
-	float,
+	int,
 	dot,
 	normalize,
 	reflect,
@@ -11,12 +11,14 @@ import {
 
 import { struct } from './patches.js';
 
-import { AnisoFrame, DotProducts } from './Struct.js';
-import { PI, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame } from './Common.js';
-import { DistributionGGX, computeAnisoAlphas, calculateVNDFPDFAniso } from './MaterialProperties.js';
-import { ImportanceSampleGGX, ImportanceSampleCosine, sampleGGXVNDFAniso } from './MaterialSampling.js';
-import { evaluateLayeredBRDF } from './MaterialEvaluation.js';
-import { RandomValue } from './Random.js';
+import { AnisoFrame, DotProducts,
+	BRDFWeights,
+} from './Struct.js';
+import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN } from './Common.js';
+import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF } from './MaterialProperties.js';
+import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';
+import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
+import { getRandomSample1D } from './Random.js';
 
 export const ClearcoatResult = struct( {
 	brdf: 'vec3',
@@ -29,6 +31,7 @@ export const ClearcoatResult = struct( {
 // L (light direction) is returned via the out pattern as a separate return
 export const sampleClearcoat = Fn( ( [
 	ray, hitInfo, material, randomSample, rngState,
+	pixelCoord, resolution, frame, dimBase,
 ] ) => {
 
 	const N = hitInfo.normal;
@@ -38,27 +41,26 @@ export const sampleClearcoat = Fn( ( [
 	const clearcoatRoughness = max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS );
 	const baseRoughness = max( material.roughness, MIN_CLEARCOAT_ROUGHNESS );
 
-	// Calculate sampling weights based on material properties
-	const specularWeight = float( 1.0 ).sub( baseRoughness ).mul( float( 0.5 ).add( float( 0.5 ).mul( material.metalness ) ) ).toVar();
-	const clearcoatWeight = material.clearcoat.mul( float( 1.0 ).sub( clearcoatRoughness ) ).toVar();
-	const diffuseWeight = float( 1.0 ).sub( specularWeight ).mul( float( 1.0 ).sub( material.metalness ) ).toVar();
-
-	// Normalize weights
-	const total = specularWeight.add( clearcoatWeight ).add( diffuseWeight );
-	specularWeight.divAssign( total );
-	clearcoatWeight.divAssign( total );
-	diffuseWeight.divAssign( total );
+	// The shared selection probabilities, NOT a fourth private scheme. This function used to
+	// derive its own specular/clearcoat/diffuse split, so a clearcoat material was sampled with
+	// one set of probabilities while every MIS site evaluated the density of another — the white
+	// furnace read the resulting mismatch as an energy error that flipped sign once the other
+	// sites were unified.
+	const weights = BRDFWeights.wrap( calculateBRDFWeightsFromMaterial( material ) ).toVar();
+	const clearcoatWeight = weights.clearcoat.toVar();
+	const specularWeight = weights.specular.toVar();
 
 	// Choose which layer to sample
-	const rand = RandomValue( rngState );
+	const rand = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 13 ) ), rngState, resolution, frame );
 
 	const L = vec3( 0.0 ).toVar();
 	const H = vec3( 0.0 ).toVar();
 
 	If( rand.lessThan( clearcoatWeight ), () => {
 
-		// Sample clearcoat layer
-		H.assign( ImportanceSampleGGX( { N, roughness: clearcoatRoughness, Xi: randomSample } ) );
+		// Sample clearcoat layer (VNDF — see the base-specular note below)
+		const ccTBN = constructTBN( { N } );
+		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: randomSample } ) ) );
 		L.assign( reflect( V.negate(), H ) );
 
 	} ).ElseIf( rand.lessThan( clearcoatWeight.add( specularWeight ) ), () => {
@@ -74,7 +76,9 @@ export const sampleClearcoat = Fn( ( [
 
 		} ).Else( () => {
 
-			H.assign( ImportanceSampleGGX( { N, roughness: baseRoughness, Xi: randomSample } ) );
+			// VNDF to match the density the MIS sites evaluate for this lobe.
+			const tbn = constructTBN( { N } );
+			H.assign( tbn.mul( sampleGGXVNDF( { V: tbn.transpose().mul( V ), roughness: baseRoughness, Xi: randomSample } ) ) );
 
 		} );
 		L.assign( reflect( V.negate(), H ) );
@@ -90,27 +94,12 @@ export const sampleClearcoat = Fn( ( [
 	// Calculate dot products (aniso-aware: also projects onto the anisotropy frame)
 	const dots = DotProducts.wrap( computeDotProductsAniso( N, V, L, material ) );
 
-	// Calculate individual PDFs. Clearcoat layer is always isotropic; the base specular
-	// matches its sampler — VNDF-aniso when anisotropy>0, else the half-vector GGX pdf.
-	const clearcoatPDF = DistributionGGX( dots.NoH, clearcoatRoughness ).mul( dots.NoH ).div( float( 4.0 ).mul( dots.VoH ) ).mul( clearcoatWeight );
-	const specularPDF = float( 0.0 ).toVar();
-	If( material.anisotropy.greaterThan( 0.0 ), () => {
-
-		const a = computeAnisoAlphas( material.roughness, material.anisotropy );
-		specularPDF.assign( calculateVNDFPDFAniso( a.x, a.y, dots.NoH, dots.ToH, dots.BoH, dots.NoV, dots.ToV, dots.BoV ).mul( specularWeight ) );
-
-	} ).Else( () => {
-
-		specularPDF.assign( DistributionGGX( dots.NoH, baseRoughness ).mul( dots.NoH ).div( float( 4.0 ).mul( dots.VoH ) ).mul( specularWeight ) );
-
-	} );
-	const diffusePDF = dots.NoL.div( PI ).mul( diffuseWeight );
-
-	// Combined PDF using MIS
-	const pdf = max( clearcoatPDF.add( specularPDF ).add( diffusePDF ), 0.001 );
+	// One density for every MIS site — see calculateBSDFSamplingPDF.
+	const pdf = max( calculateBSDFSamplingPDF( material, weights, dots ), 0.001 );
 
 	// Evaluate complete BRDF
-	const brdf = evaluateLayeredBRDF( dots, material );
+	// The same BRDF every other site evaluates — see the clearcoat note in MaterialEvaluation.
+	const brdf = evaluateMaterialResponseFromDots( material, dots );
 
 	// Return brdf, L direction, and pdf packed together
 	// Caller needs L and pdf - return as struct-like output

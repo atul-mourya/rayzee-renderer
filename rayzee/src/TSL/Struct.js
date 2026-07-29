@@ -151,6 +151,11 @@ export const DirectionSample = struct( {
 	direction: 'vec3',
 	value: 'vec3',
 	pdf: 'float',
+	// Refraction went below the surface, so `value` (a reflection-only BRDF eval) is not usable
+	// and the consumer must take the transmission throughput path instead.
+	isTransmission: 'bool',
+	// Spectral tint from the transmission sampler; vec3(1) for every reflection lobe.
+	colorWeight: 'vec3',
 } );
 
 export const BRDFWeights = struct( {
@@ -162,12 +167,6 @@ export const BRDFWeights = struct( {
 	iridescence: 'float',
 } );
 
-export const ImportanceSamplingInfo = struct( {
-	diffuseImportance: 'float',
-	specularImportance: 'float',
-	transmissionImportance: 'float',
-	clearcoatImportance: 'float',
-} );
 
 // Anisotropy tangent frame in world space (rotated ONB). Shared by the sampler and
 // the eval/PDF so both derive the identical frame — see anisoTangentFrame().
@@ -234,35 +233,14 @@ export const UVCache = struct( {
 // Fields are split into two groups:
 //   1. BRDF evaluation: F0, NoV, diffuseColor, isPurelyDiffuse, alpha, k, alpha2
 //   2. BRDF weight calc: invRoughness, metalFactor, iorFactor, maxSheenColor
+// Shared inputs to calculateBRDFWeights, which is the only reader.
 export const MaterialCache = struct( {
-	F0: 'vec3', // Base reflectance
-	NoV: 'float', // Normal dot View
-	diffuseColor: 'vec3', // Precomputed diffuse color (only for isPurelyDiffuse fast path)
-	isPurelyDiffuse: 'bool', // Optimized path flag
-	alpha: 'float', // roughness squared
-	k: 'float', // Geometry term constant
-	alpha2: 'float', // roughness to the fourth power
-	// BRDF weight calculation: precomputed shared values
 	invRoughness: 'float', // 1.0 - roughness
 	metalFactor: 'float', // 0.5 + 0.5 * metalness
 	iorFactor: 'float', // min(2.0 / ior, 1.0)
 	maxSheenColor: 'float', // max component of sheen color
 } );
 
-export const SamplingStrategyWeights = struct( {
-	envWeight: 'float',
-	specularWeight: 'float',
-	diffuseWeight: 'float',
-	transmissionWeight: 'float',
-	clearcoatWeight: 'float',
-	totalWeight: 'float',
-
-	useEnv: 'bool',
-	useSpecular: 'bool',
-	useDiffuse: 'bool',
-	useTransmission: 'bool',
-	useClearcoat: 'bool',
-} );
 
 // IMPROVEMENT: Dynamic MIS strategy based on material properties
 export const MISStrategy = struct( {

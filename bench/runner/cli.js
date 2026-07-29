@@ -116,7 +116,10 @@ function reportQuality( report ) {
 
 		if ( entry.blessed ) {
 
-			log( `  ${GREEN}blessed${RESET} ${entry.scene}` );
+			const furnace = entry.furnaceRatio !== undefined
+				? `${DIM} furnace ${entry.furnaceRatio.toFixed( 5 )}${RESET}`
+				: '';
+			log( `  ${GREEN}blessed${RESET} ${entry.scene}${furnace}` );
 			continue;
 
 		}
@@ -141,6 +144,16 @@ function reportQuality( report ) {
 			log( `${DIM}       vs golden rmse ${entry.vsGolden.rmse.toFixed( 5 )}  ` +
 				`differing ${( entry.vsGolden.fractionOverThreshold * 100 ).toFixed( 3 )} %  ` +
 				`${entry.vsGolden.identical ? 'bit-identical' : ''}${RESET}` );
+
+		}
+
+		if ( entry.furnace ) {
+
+			// Deviation from 1.0 is an outstanding bug, not a regression — coloured, never fatal.
+			const pp = ( entry.furnace.deviation * 100 ).toFixed( 3 );
+			const tint = entry.furnace.deviation > 0.01 ? YELLOW : DIM;
+			log( `${DIM}       furnace   ratio ${entry.furnace.ratio.toFixed( 5 )}  ` +
+				`${tint}${pp} pp from energy conserving${RESET}` );
 
 		}
 

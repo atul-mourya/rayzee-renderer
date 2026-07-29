@@ -10,7 +10,7 @@ import { DataTexture, FloatType } from 'three';
 export const samplingTechniqueUniform = uniform( 0, 'int' );
 const samplingTechnique = samplingTechniqueUniform;
 
-// 0: PCG, 1: Halton, 2: Sobol, 3: Blue Noise
+// 0: PCG, 1: Halton, 2: Owen-scrambled Sobol (default; anything higher falls back to it)
 
 // 1x1 placeholder — real texture assigned later via .value = ...
 const _placeholderData = new Float32Array( [ 0.5, 0.5, 0.5, 1.0 ] );
@@ -36,50 +36,6 @@ stbnVec2TextureNode.setUpdateMatrix( false );
 // R2 quasi-random sequence constants (Roberts 2018) — optimal 2D additive offsets
 const R2_A1 = float( 0.7548776662466927 );
 const R2_A2 = float( 0.5698402909980532 );
-
-// Sobol sequence direction vectors using function lookup for compatibility
-
-// Sobol direction vectors for first dimension — exact port of GLSL
-export const getSobolDirectionVector = /*@__PURE__*/ wgslFn( `
-	fn getSobolDirectionVector( index: i32 ) -> u32 {
-
-		switch ( index ) {
-			case 0:  { return 2147483648u; }
-			case 1:  { return 1073741824u; }
-			case 2:  { return  536870912u; }
-			case 3:  { return  268435456u; }
-			case 4:  { return  134217728u; }
-			case 5:  { return   67108864u; }
-			case 6:  { return   33554432u; }
-			case 7:  { return   16777216u; }
-			case 8:  { return    8388608u; }
-			case 9:  { return    4194304u; }
-			case 10: { return    2097152u; }
-			case 11: { return    1048576u; }
-			case 12: { return     524288u; }
-			case 13: { return     262144u; }
-			case 14: { return     131072u; }
-			case 15: { return      65536u; }
-			case 16: { return      32768u; }
-			case 17: { return      16384u; }
-			case 18: { return       8192u; }
-			case 19: { return       4096u; }
-			case 20: { return       2048u; }
-			case 21: { return       1024u; }
-			case 22: { return        512u; }
-			case 23: { return        256u; }
-			case 24: { return        128u; }
-			case 25: { return         64u; }
-			case 26: { return         32u; }
-			case 27: { return         16u; }
-			case 28: { return          8u; }
-			case 29: { return          4u; }
-			case 30: { return          2u; }
-			default: { return          1u; }
-		}
-
-	}
-` );
 
 // -----------------------------------------------------------------------------
 // Basic random number generation
@@ -155,7 +111,56 @@ export const RandomPointInCircle = ( rngState ) => {
 };
 
 // -----------------------------------------------------------------------------
-// STBN atlas sampling — proper spatiotemporal blue noise
+// Sampler dimension allocation
+// -----------------------------------------------------------------------------
+// DIMENSION BUDGET — bounce b owns [b*DIMS_PER_BOUNCE, b*DIMS_PER_BOUNCE + 15]. The index keys
+// the Owen scramble seed, so two draws sharing one index at the same bounce get the SAME variate:
+// perfectly correlated decisions, not independent ones. The 1D and 2D allocations are separate
+// namespaces (different seed derivations), so a collision only matters within one.
+//
+// Every stochastic decision on the shading path draws from here rather than the per-pixel PCG
+// stream. A low-discrepancy sequence only stratifies the dimensions it actually covers; a draw
+// left on PCG contributes white-noise error that the rest of the path cannot compensate for.
+//
+//   2D  +0  BSDF direction xi            (ShadeKernel)
+//       +1  environment NEE              (LightsSampling)
+//       +2  discrete light position      (LightsSampling)
+//       +3  emissive-triangle NEE        (EmissiveSampling / LightBVHSampling — the two are
+//           mutually exclusive at runtime, so they share the index)
+//       +4  microfacet transmission dir  (MaterialTransmission)
+//       +5  subsurface reflect/refract   (Subsurface)
+//       +6  subsurface HG scatter dir    (ShadeKernel)
+//       +7  ground-catcher cosine BSDF   (ShadeKernel)
+//       +8  indirect-strategy direction  (LightsIndirect)
+//   1D  +0  {lights,BRDF} strategy       (LightsSampling)
+//       +1  emissive-triangle pick       (EmissiveSampling / LightBVHSampling)
+//       +2  BSDF lobe selection          (ShadeKernel)
+//       +3  Russian roulette             (PathTracerCore)
+//       +4  transmission reflect/refract (MaterialTransmission)
+//       +5  dispersion wavelength        (MaterialTransmission)
+//       +6  alpha cutout test            (MaterialTransmission)
+//       +7  stochastic transmission test (MaterialTransmission)
+//       +8  subsurface entry lottery     (MaterialTransmission)
+//       +9  subsurface collision dist    (Subsurface)
+//      +10  subsurface channel pick      (Subsurface)
+//      +11  subsurface reflect/refract   (Subsurface)
+//      +12  subsurface walk RR           (ShadeKernel)
+//      +13  clearcoat lobe               (Clearcoat)
+//      +14  area/spot light phi          (LightsSampling)
+//      +15  light uv second component    (LightsSampling)
+//
+// Stride is 32 rather than the ~16 in use so a new call site does not force a renumbering.
+// The index only keys a scramble seed, so spare slots cost nothing.
+//
+// Draws whose COUNT varies per pixel cannot sit in a per-bounce block without overflowing into
+// the next bounce's dimensions, so they live above AUX_BASE:
+//   AUX_BASE +  0..63   env-backdrop blur taps      (ShadeKernel)
+//   AUX_BASE + 64..127  light reservoir, 4 types×16 (LightsSampling)
+export const SAMPLER_DIMS_PER_BOUNCE = 32;
+export const SAMPLER_DIM_AUX_BASE = 4096;
+
+// -----------------------------------------------------------------------------
+// STBN atlas sampling — spatiotemporal blue noise
 // -----------------------------------------------------------------------------
 // Atlas layout: 8×8 grid of 128×128 tiles = 1024×1024 texture.
 // Temporal axis: frame % 64 selects tile (true STBN temporal decorrelation).
@@ -237,61 +242,86 @@ export const haltonScrambled = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-// Owen scrambling for Sobol sequence
-
+// Owen scrambling — Burley 2020 "Practical Hash-based Owen Scrambling".
+//
+// The reverseBits sandwich is required, not decoration: Owen scrambling permutes a digit from the
+// digits ABOVE it, so the permutation must run on the bit-reversed value. A plain hash randomises
+// the point but destroys the stratification Sobol' exists to provide.
 export const owen_scramble = /*@__PURE__*/ wgslFn( `
 	fn owen_scramble( x: u32, seed: u32 ) -> u32 {
 
-		var v = x;
-		v ^= v * 0x3d20adeau;
+		var v = reverseBits( x );
 		v += seed;
-		v *= ( seed >> 16u ) | 1u;
-		v ^= v >> 15u;
-		v *= 0x5851f42du;
-		v ^= v >> 12u;
-		v *= 0x4c957f2du;
-		v ^= v >> 18u;
-		return v;
+		v ^= v * 0x6c50b47cu;
+		v ^= v * 0xb82f1e52u;
+		v ^= v * 0xc7afe638u;
+		v ^= v * 0x8d22f6e6u;
+		return reverseBits( v );
 
 	}
 ` );
 
-// Owen-scrambled Sobol sequence
+// Sobol' direction vectors for the first two dimensions, advanced together so a 2D point costs
+// one pass. dim 0 is van der Corput (a bit reversal); dim 1 is the primitive polynomial x+1,
+// whose matrix rows are Pascal's triangle mod 2 — by Lucas' theorem row k selects the submasks of
+// k, making the transform a 5-step subset-XOR butterfly rather than a loop over set bits.
+// Together they form a (0,2)-sequence.
+export const sobol2D = /*@__PURE__*/ wgslFn( `
+	fn sobol2D( index: u32 ) -> vec2u {
 
+		let r0 = reverseBits( index );
+
+		var x = r0;
+		x ^= ( x << 1u ) & 0xaaaaaaaau;
+		x ^= ( x << 2u ) & 0xccccccccu;
+		x ^= ( x << 4u ) & 0xf0f0f0f0u;
+		x ^= ( x << 8u ) & 0xff00ff00u;
+		x ^= ( x << 16u ) & 0xffff0000u;
+
+		return vec2u( r0, x );
+
+	}
+` );
+
+// Padded Owen-scrambled Sobol for a STANDALONE 1D dimension.
+//
+// The index shuffle is what actually decorrelates dimensions. A scramble seed does not: Owen
+// scrambling either preserves or flips each digit, so two dimensions built from the same
+// direction vectors come out ~±1 correlated whatever seed they are given (measured cross-
+// dimension mean |corr| 0.74, max 0.99). Along a multi-bounce path that turns "independent"
+// per-bounce decisions into effectively one repeated variate — which showed up as a persistent
+// 1% energy error on dispersion-glass, where it biased the reflect/refract choice at every
+// interface the same way. Shuffling the index instead permutes WHICH sample each dimension
+// takes, dropping cross-dimension |corr| to 0.05 while leaving each dimension's own
+// stratification intact (a permutation of 0..2^k-1 is the same point set).
 export const owen_scrambled_sobol = /*@__PURE__*/ wgslFn( `
 	fn owen_scrambled_sobol( index: u32, dimension: u32, seed: u32 ) -> f32 {
 
-		var result = 0u;
-		for ( var i = 0; i < 32; i++ ) {
-
-			if ( ( index & ( 1u << u32( i ) ) ) != 0u ) {
-
-				result ^= getSobolDirectionVector( i );
-
-			}
-
-		}
-
-		// Mix dimension into seed for inter-dimensional decorrelation
-		// (Van der Corput base is shared; Owen scrambling with distinct seeds
-		// produces decorrelated sequences across dimensions)
 		let dimSeed = seed ^ ( dimension * 0x9e3779b9u + 0x6a09e667u );
-		result = owen_scramble( result, dimSeed );
-		return f32( result ) / 4294967296.0f;
+		let shuffled = owen_scramble( index, dimSeed ^ 0xa511e9b3u );
+		let pair = sobol2D( shuffled );
+		let raw = select( pair.x, pair.y, ( dimension & 1u ) != 0u );
+		return f32( owen_scramble( raw, dimSeed ) ) / 4294967296.0f;
 
 	}
-`, [ getSobolDirectionVector, owen_scramble ] );
+`, [ sobol2D, owen_scramble ] );
 
+// A 2D pair must shuffle the index ONCE and take both Sobol' components from that single
+// shuffled index — that is what keeps the pair a (0,2)-net. Shuffling each component
+// independently (i.e. calling the 1D routine twice) destroys it: measured 982/2304 elementary
+// intervals wrong at 256 points, versus 0/2304 with the shared shuffle.
 export const owen_scrambled_sobol2D = /*@__PURE__*/ wgslFn( `
 	fn owen_scrambled_sobol2D( index: u32, seed: u32 ) -> vec2f {
 
+		let shuffled = owen_scramble( index, seed ^ 0xa511e9b3u );
+		let pair = sobol2D( shuffled );
 		return vec2f(
-			owen_scrambled_sobol( index, 0u, seed ),
-			owen_scrambled_sobol( index, 1u, seed )
+			f32( owen_scramble( pair.x, seed ^ 0x68bc21ebu ) ) / 4294967296.0f,
+			f32( owen_scramble( pair.y, seed ^ 0x02e5be93u ) ) / 4294967296.0f
 		);
 
 	}
-`, [ owen_scrambled_sobol ] );
+`, [ sobol2D, owen_scramble ] );
 
 // -----------------------------------------------------------------------------
 // Multi-dimensional sampling interface
@@ -358,73 +388,60 @@ export const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngStat
 
 	} ).ElseIf( technique.equal( int( 1 ) ), () => {
 
-		// Halton — mix frame + bounceIndex into scramble for temporal and per-bounce decorrelation
+		// Halton — the accumulation frame is the sequence INDEX, not part of the scramble. Folding
+		// frame into the scramble (as this did) re-randomises point 0 every frame and never walks the
+		// sequence, which is a hash, not low-discrepancy sampling. The scramble is what separates pixels.
 		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
-		const scramble = pcgHash( { state: pixelHash.bitXor( frame.mul( uint( 0x9e3779b9 ) ) ).bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ) } ).toVar();
+		const scramble = pcgHash( { state: pixelHash.bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 
-		result.x.assign( haltonScrambled( { index: sampleIndex, base: int( 2 ), scramble } ) );
+		result.x.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
 
 		If( dimensions.greaterThan( int( 1 ) ), () => {
 
-			result.y.assign( haltonScrambled( { index: sampleIndex, base: int( 3 ), scramble } ) );
+			result.y.assign( haltonScrambled( { index: int( frame ), base: int( 3 ), scramble } ) );
 
 		} );
 
 		If( dimensions.greaterThan( int( 2 ) ), () => {
 
-			result.z.assign( haltonScrambled( { index: sampleIndex, base: int( 5 ), scramble } ) );
+			result.z.assign( haltonScrambled( { index: int( frame ), base: int( 5 ), scramble } ) );
 
 		} );
 
 		If( dimensions.greaterThan( int( 3 ) ), () => {
 
-			result.w.assign( haltonScrambled( { index: sampleIndex, base: int( 7 ), scramble } ) );
-
-		} );
-
-	} ).ElseIf( technique.equal( int( 2 ) ), () => {
-
-		// Sobol — mix frame + bounceIndex into seed for temporal and per-bounce decorrelation
-		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
-		const seed = pcgHash( { state: pixelHash.bitXor( frame.mul( uint( 0x9e3779b9 ) ) ).bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ) } ).toVar();
-
-		result.x.assign( owen_scrambled_sobol( { index: uint( sampleIndex ), dimension: uint( 0 ), seed } ) );
-
-		If( dimensions.greaterThan( int( 1 ) ), () => {
-
-			result.y.assign( owen_scrambled_sobol( { index: uint( sampleIndex ), dimension: uint( 1 ), seed } ) );
-
-		} );
-
-		If( dimensions.greaterThan( int( 2 ) ), () => {
-
-			result.z.assign( owen_scrambled_sobol( { index: uint( sampleIndex ), dimension: uint( 2 ), seed } ) );
-
-		} );
-
-		If( dimensions.greaterThan( int( 3 ) ), () => {
-
-			result.w.assign( owen_scrambled_sobol( { index: uint( sampleIndex ), dimension: uint( 3 ), seed } ) );
+			result.w.assign( haltonScrambled( { index: int( frame ), base: int( 7 ), scramble } ) );
 
 		} );
 
 	} ).Else( () => {
 
-		// STBN — Spatiotemporal Blue Noise (technique 3)
-		// Each bounce uses a block of 4 dimension indices for decorrelation
-		const dimBase = bounceIndex.mul( int( 4 ) );
+		// Sobol — frame is the sequence INDEX; the per-pixel Owen seed must stay frame-independent
+		// or the sequence never advances. See the Halton note above.
+		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const seed = pcgHash( { state: pixelHash.bitXor( uint( bounceIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
 
-		If( dimensions.lessThanEqual( int( 2 ) ), () => {
+		// Drawn as PAIRS, not four padded 1D dimensions — only a shared index shuffle keeps
+		// (x,y) and (z,w) proper 2D nets. See owen_scrambled_sobol2D.
+		const xy = owen_scrambled_sobol2D( { index: uint( frame ), seed } ).toVar();
+		result.x.assign( xy.x );
 
-			const _sample = sampleSTBN2D( pixelCoord, sampleIndex, dimBase, frame );
-			result.x.assign( _sample.x );
-			result.y.assign( _sample.y );
+		If( dimensions.greaterThan( int( 1 ) ), () => {
 
-		} ).Else( () => {
+			result.y.assign( xy.y );
 
-			const _sample1 = sampleSTBN2D( pixelCoord, sampleIndex, dimBase, frame );
-			const _sample2 = sampleSTBN2D( pixelCoord, sampleIndex, dimBase.add( int( 1 ) ), frame );
-			result.assign( vec4( _sample1, _sample2 ) );
+		} );
+
+		If( dimensions.greaterThan( int( 2 ) ), () => {
+
+			const zw = owen_scrambled_sobol2D( { index: uint( frame ), seed: seed.bitXor( uint( 0x734f6b19 ) ) } ).toVar();
+			result.z.assign( zw.x );
+
+			If( dimensions.greaterThan( int( 3 ) ), () => {
+
+				result.w.assign( zw.y );
+
+			} );
 
 		} );
 
@@ -447,7 +464,74 @@ export const getRandomSample = ( pixelCoord, sampleIndex, bounceIndex, rngState,
 
 };
 
-// Get stratified sample with proper blue noise support
+// 2D pair on an explicitly chosen dimension. getRandomSample derives its dimension from
+// bounceIndex, which is fine for the one BSDF sample per bounce but cannot express the several
+// independent 2D draws NEE needs at the same bounce.
+
+export const getRandomSample2D = ( pixelCoord, sampleIndex, dimensionIndex, rngState, resolution, frame ) => {
+
+	const result = vec2( 0.0 ).toVar();
+
+	If( samplingTechnique.equal( int( 0 ) ), () => {
+
+		// per-component .toVar(): vec2( RandomValue, RandomValue ) collapses to u==v
+		const u1 = RandomValue( rngState ).toVar();
+		const u2 = RandomValue( rngState ).toVar();
+		result.assign( vec2( u1, u2 ) );
+
+	} ).ElseIf( samplingTechnique.equal( int( 1 ) ), () => {
+
+		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
+		result.assign( vec2(
+			haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ),
+			haltonScrambled( { index: int( frame ), base: int( 3 ), scramble } ),
+		) );
+
+	} ).Else( () => {
+
+		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const seed = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
+		result.assign( owen_scrambled_sobol2D( { index: uint( frame ), seed } ) );
+
+	} );
+
+	return result;
+
+};
+
+// Single scalar variate on its own dimension — for discrete choices that must stay independent
+// of the 2D pair driving direction sampling. `dimensionIndex` keys the scramble seed, so callers
+// must keep it distinct from the other 1D dimensions in use at the same bounce.
+
+export const getRandomSample1D = ( pixelCoord, sampleIndex, dimensionIndex, rngState, resolution, frame ) => {
+
+	const result = float( 0.0 ).toVar();
+
+	If( samplingTechnique.equal( int( 0 ) ), () => {
+
+		result.assign( RandomValue( rngState ) );
+
+	} ).ElseIf( samplingTechnique.equal( int( 1 ) ), () => {
+
+		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const scramble = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
+		result.assign( haltonScrambled( { index: int( frame ), base: int( 2 ), scramble } ) );
+
+	} ).Else( () => {
+
+		const pixelHash = uint( pixelCoord.x ).add( uint( pixelCoord.y ).mul( uint( resolution.x ) ) );
+		const seed = pcgHash( { state: pixelHash.bitXor( uint( dimensionIndex ).mul( uint( 0x517cc1b7 ) ) ).bitXor( uint( sampleIndex ).mul( uint( 0x2545f491 ) ) ) } ).toVar();
+		result.assign( owen_scrambled_sobol( { index: uint( frame ), dimension: uint( 0 ), seed } ) );
+
+	} );
+
+	return result;
+
+};
+
+// Stratified sample. Both call sites pass totalRays = 1, so only the first branch is live;
+// the strata path below is kept for the multi-ray-per-pixel mode that was removed.
 
 export const getStratifiedSample = ( pixelCoord, rayIndex, totalRays, rngState, resolution, frame ) => {
 
@@ -472,28 +556,14 @@ export const getStratifiedSample = ( pixelCoord, rayIndex, totalRays, rngState, 
 
 		const strataPos = vec2( float( sx ), float( sy ) ).div( vec2( float( strataX ), float( strataY ) ) );
 
-		// Jitter via STBN or fast RNG fallback
+		const j1 = RandomValueFast( rngState ).toVar();
+		const j2 = RandomValueFast( rngState ).toVar();
+		const jitter = vec2( j1, j2 ).toVar();
 
-		const jitter = vec2( 0.0 ).toVar();
+		If( totalRays.greaterThan( int( 4 ) ), () => {
 
-		If( samplingTechnique.greaterThanEqual( int( 3 ) ), () => {
-
-			// STBN — true spatiotemporal blue noise jitter
-			jitter.assign( sampleSTBN2D( pixelCoord, rayIndex, int( 0 ), frame ) );
-
-		} ).Else( () => {
-
-			// Fast RNG with subtle STBN influence for better convergence
-			const j1 = RandomValueFast( rngState ).toVar();
-			const j2 = RandomValueFast( rngState ).toVar();
-			jitter.assign( vec2( j1, j2 ) );
-
-			If( totalRays.greaterThan( int( 4 ) ), () => {
-
-				const stbnInfluence = sampleSTBN2D( pixelCoord, rayIndex, int( 0 ), frame ).mul( 0.1 );
-				jitter.assign( mix( jitter, stbnInfluence, 0.2 ) );
-
-			} );
+			const stbnInfluence = sampleSTBN2D( pixelCoord, rayIndex, int( 0 ), frame ).mul( 0.1 );
+			jitter.assign( mix( jitter, stbnInfluence, 0.2 ) );
 
 		} );
 

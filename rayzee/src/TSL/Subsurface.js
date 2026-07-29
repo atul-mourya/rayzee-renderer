@@ -9,7 +9,7 @@
 import {
 	Fn,
 	float,
-	vec2,
+	int,
 	vec3,
 	If,
 	select,
@@ -29,7 +29,7 @@ import {
 
 import { struct } from './patches.js';
 import { TWO_PI, EPSILON, constructTBN } from './Common.js';
-import { RandomValue } from './Random.js';
+import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { iorToFresnel0, fresnelSchlickFloat } from './Fresnel.js';
 import { ImportanceSampleGGX } from './MaterialSampling.js';
 
@@ -95,13 +95,16 @@ export const sampleHenyeyGreenstein = Fn( ( [ wi, g, xi ] ) => {
 // Per-channel sigma_t can't be represented by one scalar distance. Pick a channel
 // ∝ throughput, sample t against it, and weight by the balance-heuristic combined pdf
 // p̄ = Σ pmf_c·p_c — the shared scalar p̄ is what suppresses color fireflies.
-export const sampleChromaticCollision = Fn( ( [ sigmaT, sigmaS, beta, surfaceDist, rngState ] ) => {
+export const sampleChromaticCollision = Fn( ( [
+	sigmaT, sigmaS, beta, surfaceDist, rngState,
+	pixelCoord, resolution, frame, dimBase,
+] ) => {
 
 	const w = max( beta, vec3( 1e-4 ) ); // floor so no channel goes unsampled
 	const pmf = w.div( w.x.add( w.y ).add( w.z ) ).toVar();
 
 	// .toVar() pins the single RNG draw (else it re-executes per comparison → state drift).
-	const u = RandomValue( rngState ).toVar();
+	const u = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 10 ) ), rngState, resolution, frame ).toVar();
 	const cSigmaT = float( 0.0 ).toVar();
 	If( u.lessThan( pmf.x ), () => {
 
@@ -117,7 +120,7 @@ export const sampleChromaticCollision = Fn( ( [ sigmaT, sigmaS, beta, surfaceDis
 
 	} );
 
-	const xi = RandomValue( rngState ).toVar();
+	const xi = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 9 ) ), rngState, resolution, frame ).toVar();
 	const t = log( max( float( 1.0 ).sub( xi ), 1e-6 ) ).negate().div( max( cSigmaT, 1e-6 ) ).toVar();
 
 	const didScatter = t.lessThan( surfaceDist ).toVar();
@@ -167,7 +170,9 @@ export const subsurfaceCoefficients = Fn( ( [ subsurfaceColor, subsurfaceRadius,
 // Dielectric interface driven by material.ior: reflect (Fresnel/TIR) or refract across
 // the boundary. No color tint — the scattering color lives in sigma_s.
 export const handleSubsurfaceEntry = Fn( ( [
-	rayDir, normal, material, entering, rngState, currentMediumIOR, previousMediumIOR,
+	rayDir, normal, material, entering, rngState,
+	pixelCoord, resolution, frame, dimBase,
+	currentMediumIOR, previousMediumIOR,
 ] ) => {
 
 	const result = SubsurfaceEntryResult( {
@@ -188,13 +193,13 @@ export const handleSubsurfaceEntry = Fn( ( [
 	const Fr = select( tir, float( 1.0 ), fresnelSchlickFloat( cosThetaI, F0 ) ).toVar();
 	const reflectProb = clamp( Fr, 0.02, 0.98 ).toVar();
 
-	const doReflect = tir.or( RandomValue( rngState ).lessThan( reflectProb ) ).toVar();
+	const doReflect = tir.or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 11 ) ), rngState, resolution, frame ).lessThan( reflectProb ) ).toVar();
 	result.didReflect.assign( doReflect );
 
 	If( doReflect, () => {
 
 		// GGX-sampled reflection: a perfect mirror here makes SSS surfaces read as polished ceramic.
-		const xiR = vec2( RandomValue( rngState ), RandomValue( rngState ) );
+		const xiR = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame );
 		const H = ImportanceSampleGGX( { N, roughness: material.roughness, Xi: xiR } );
 		const reflDir = reflect( rayDir, H ).toVar();
 		If( dot( reflDir, N ).lessThanEqual( 0.0 ), () => {

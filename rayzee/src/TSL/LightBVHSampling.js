@@ -3,7 +3,6 @@
 
 import {
 	Fn,
-	vec2,
 	vec3,
 	float,
 	int,
@@ -21,7 +20,7 @@ import {
 	length,
 } from 'three/tsl';
 import { MIN_PDF } from './Common.js';
-import { RandomValue } from './Random.js';
+import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
 	EmissiveSample,
 	sampleTriangle,
@@ -107,6 +106,7 @@ export const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO
 export const sampleLightBVHTriangle = Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
+	pixelCoord, resolution, frame, dimBase,
 	lbvhBuffer,
 	emissiveTriangleBuffer,
 	emissiveVec4Offset,
@@ -129,6 +129,13 @@ export const sampleLightBVHTriangle = Fn( ( [
 	const selectionPdf = float( 1.0 ).toVar();
 	const nodeIndex = int( 0 ).toVar();
 	const foundLeaf = tslBool( false ).toVar();
+
+	// Hierarchical sample warping: ONE variate recycled down the descent and into the leaf scan,
+	// rescaled to [0,1) after each choice. A per-level draw has no fixed dimension to key on
+	// (depth varies per pixel), so the descent — which dominates emissive-NEE variance — would
+	// otherwise stay white-noise however well the point-on-triangle pair is sampled. Unbiased:
+	// the rescaled value is uniform conditional on the branch taken; selectionPdf is unchanged.
+	const u = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
 
 	// Tree descent: at most MAX_LBVH_DEPTH iterations
 	Loop( MAX_LBVH_DEPTH, () => {
@@ -179,19 +186,19 @@ export const sampleLightBVHTriangle = Fn( ( [
 			// Probability of choosing left child
 			const pLeft = lImportance.div( totalImportance );
 
-			// Sample random value to pick child
-			const rand = RandomValue( rngState );
-
-			If( rand.lessThan( pLeft ), () => {
+			If( u.lessThan( pLeft ), () => {
 
 				// Choose left child
+				u.assign( clamp( u.div( max( pLeft, float( 1e-6 ) ) ), 0.0, 0.999999 ) );
 				selectionPdf.mulAssign( pLeft );
 				nodeIndex.assign( leftChildIdx );
 
 			} ).Else( () => {
 
 				// Choose right child
-				selectionPdf.mulAssign( float( 1.0 ).sub( pLeft ) );
+				const pRight = float( 1.0 ).sub( pLeft ).toVar();
+				u.assign( clamp( u.sub( pLeft ).div( max( pRight, float( 1e-6 ) ) ), 0.0, 0.999999 ) );
+				selectionPdf.mulAssign( pRight );
 				nodeIndex.assign( rightChildIdx );
 
 			} );
@@ -213,7 +220,7 @@ export const sampleLightBVHTriangle = Fn( ( [
 
 		// Sample one triangle proportional to power within the leaf
 		// Linear scan: pick random threshold against cumulative power sum
-		const randLeaf = RandomValue( rngState ).mul( leafTotalPower );
+		const randLeaf = u.mul( leafTotalPower );
 		const cumPower = float( 0.0 ).toVar();
 
 		// Default to last entry as fallback
@@ -253,10 +260,7 @@ export const sampleLightBVHTriangle = Fn( ( [
 		// Fetch triangle geometry
 		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer ) );
 
-		// Generate random numbers for point sampling
-		const xi_r1 = RandomValue( rngState ).toVar();
-		const xi_r2 = RandomValue( rngState ).toVar();
-		const xi = vec2( xi_r1, xi_r2 );
+		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
 

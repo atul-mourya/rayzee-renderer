@@ -88,8 +88,6 @@ export const LightSample = struct( {
 export const IndirectLightingResult = struct( {
 	direction: 'vec3', // Sampled direction for next bounce
 	throughput: 'vec3', // Light throughput along this path
-	misWeight: 'float', // MIS weight for this sample
-	pdf: 'float', // PDF of the selected strategy
 	combinedPdf: 'float', // Weighted sum of all strategy PDFs (for NEE↔implicit MIS pairing)
 } );
 

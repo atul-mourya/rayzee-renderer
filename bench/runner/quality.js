@@ -172,8 +172,12 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 			const blessedTruth = await readPNG( path.join( PATHS.truth, `${scene.id}.png` ) );
 			const rmseVsTruth = compare( decodeDataURL( renderedDataURL ), blessedTruth ).rmse;
 
-			nextProbes[ scene.id ] = { ...nextProbes[ scene.id ], golden: probes, rmseVsTruth };
-			results.push( { scene: scene.id, blessed: true, probes, rmseVsTruth } );
+			const furnaceRatio = scene.furnaceRadiance
+				? probes.meanLuminance / scene.furnaceRadiance
+				: undefined;
+
+			nextProbes[ scene.id ] = { ...nextProbes[ scene.id ], golden: probes, rmseVsTruth, furnaceRatio };
+			results.push( { scene: scene.id, blessed: true, probes, rmseVsTruth, furnaceRatio } );
 			continue;
 
 		}
@@ -304,6 +308,52 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 
 			entry.failures.push( 'no golden on disk — run `npm run bench:bless`' );
 			entry.pass = false;
+
+		}
+
+		// ── white furnace: energy conservation against an analytic reference ──
+		if ( scene.furnaceRadiance ) {
+
+			const ratio = probes.meanLuminance / scene.furnaceRadiance;
+			const deviation = Math.abs( ratio - 1 );
+			entry.furnace = { ratio, deviation };
+
+			const blessed = storedProbes[ scene.id ]?.furnaceRatio;
+
+			if ( typeof blessed !== 'number' ) {
+
+				// No ratchet to compare against means this scene currently gates on nothing.
+				// Reporting a pass would claim energy coverage it does not have.
+				entry.pass = false;
+				entry.failures.push(
+					'no blessed furnace ratio — the ENERGY CONSERVATION ratchet cannot run. ' +
+					'Run `npm run bench:bless`.'
+				);
+
+			} else {
+
+				const blessedDeviation = Math.abs( blessed - 1 );
+
+				if ( deviation > blessedDeviation + QUALITY_GATES.furnace.maxDeviationIncrease ) {
+
+					entry.pass = false;
+					entry.failures.push(
+						`ENERGY CONSERVATION: furnace ratio moved further from 1.0 ` +
+						`(${blessed.toFixed( 5 )} → ${ratio.toFixed( 5 )}; deviation ` +
+						`${( blessedDeviation * 100 ).toFixed( 3 )} → ${( deviation * 100 ).toFixed( 3 )} pp). ` +
+						'An albedo-1 surface in a uniform environment must return exactly the ' +
+						'environment radiance, so this is energy created or destroyed.'
+					);
+
+				}
+
+			}
+
+			const existingFurnace = nextProbes[ scene.id ] ?? {};
+			nextProbes[ scene.id ] = {
+				...existingFurnace,
+				furnaceRatio: existingFurnace.furnaceRatio ?? ratio,
+			};
 
 		}
 

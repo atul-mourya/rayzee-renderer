@@ -27,7 +27,7 @@ import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficient
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import { IndirectLightingResult, sampleCone } from './LightsCore.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
-import { getImportanceSamplingInfo, evaluateDFG } from './MaterialProperties.js';
+import { evaluateDFG } from './MaterialProperties.js';
 import { dielectricF0 } from './Fresnel.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
@@ -40,14 +40,13 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 	DirectionSample,
-	ImportanceSamplingInfo,
 	MaterialClassification,
 	BRDFWeights,
 	MaterialCache,
 	DirectLightingDual,
 	DFGResult,
 } from './Struct.js';
-import { RandomValue, getRandomSample } from './Random.js';
+import { getRandomSample, getRandomSample1D, getRandomSample2D, SAMPLER_DIMS_PER_BOUNCE, SAMPLER_DIM_AUX_BASE } from './Random.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
 	readRayOrigin, readRayDirection, readRayBounceFlags, readRayThroughput, readRayPdf,
@@ -114,17 +113,17 @@ export function buildShadeKernel( params ) {
 	// miss branch and the shadow catcher so their blur stays in lockstep (no horizon seam). normalize() the
 	// center direction — ground projection can return a non-unit vector, which would skew sampleCone's basis.
 	// Clamp the tap count to ≥1 so a 0 forced via the engine API can't produce a 0/0 NaN backdrop.
-	const sampleEnvBlurred = ( centerDir, halfAngle, samples, rng ) => {
+	const sampleEnvBlurred = ( centerDir, halfAngle, samples, rng, pixelCoord ) => {
 
 		const axis = normalize( centerDir ).toVar();
 		const n = max( samples, int( 1 ) ).toVar();
 		const acc = vec3( 0.0 ).toVar();
-		Loop( { start: int( 0 ), end: n, type: 'int', condition: '<' }, () => {
+		Loop( { start: int( 0 ), end: n, type: 'int', condition: '<' }, ( { i } ) => {
 
-			// per-component .toVar(): vec2(RandomValue, RandomValue) would collapse to u==v (TSL pitfall)
-			const u1 = RandomValue( rng ).toVar();
-			const u2 = RandomValue( rng ).toVar();
-			const jDir = sampleCone( axis, halfAngle, vec2( u1, u2 ) ).toVar();
+			// Tap count varies per pixel, so these cannot sit in a per-bounce block without
+			// running over into the next bounce's dimensions — they get the AUX range instead.
+			const jXi = getRandomSample2D( pixelCoord, int( 0 ), int( SAMPLER_DIM_AUX_BASE ).add( i ), rng, resolution, frame ).toVar();
+			const jDir = sampleCone( axis, halfAngle, jXi ).toVar();
 			acc.addAssign( sampleEnvironment( {
 				tex: envTexture,
 				samp: sampler( envTexture ),
@@ -189,6 +188,19 @@ export function buildShadeKernel( params ) {
 		const pixelIndex = rayID;
 		const rngState = rngBufferRW.element( rayID ).toVar();
 
+		// STBN keyed on (GLOBAL pixel, dimension, frame). pixelIndex is the LOCAL path slot; the global pixel
+		// = chunkRowBase·W + localSlot, so the blue-noise pattern stays spatially aligned across row-band chunks
+		// (and matches Generate's per-pixel RNG seed). chunkRowBase is 0 in the single-chunk case.
+		// Hoisted here rather than at the BSDF draw because the ground catcher runs NEE far earlier.
+		const _resX = int( resolution.x ).toVar();
+		const _globalPixel = int( pixelIndex ).add( chunkRowBase.mul( _resX ) );
+		const _pixelCoord = vec2(
+			float( _globalPixel.mod( _resX ) ).add( 0.5 ),
+			float( _globalPixel.div( _resX ) ).add( 0.5 ),
+		);
+		// This bounce's block of sampler dimensions — see the budget table in Random.js.
+		const dimBase = int( currentBounce ).mul( int( SAMPLER_DIMS_PER_BOUNCE ) );
+
 		// DDFA see-through aux tint carried across smooth glass/mirror; committed into the OIDN/ASVGF
 		// albedo guide at the first diffuse-enough surface (or env). Mutated locally, persisted on every
 		// deferring continue (a missed persist = stale tint). 1 = untinted (direct hit → today's albedo).
@@ -229,11 +241,9 @@ export function buildShadeKernel( params ) {
 					const planeMat = RayTracingMaterial.wrap( diffuseGroundMaterial() ).toVar();
 
 					// Cosine-weighted hemisphere BRDF sample about the plane normal (0,1,0); the helper
-					// puts cosθ along N, so bDir.y == cosθ. Per-component .toVar() on the two randoms
-					// (vec2(RandomValue,RandomValue) would collapse to u==v — TSL pitfall).
-					const u1 = RandomValue( rngState ).toVar();
-					const u2 = RandomValue( rngState ).toVar();
-					const bDir = cosineWeightedSample( planeN, vec2( u1, u2 ) ).toVar();
+					// puts cosθ along N, so bDir.y == cosθ.
+					const bXi = getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 7 ) ), rngState, resolution, frame ).toVar();
+					const bDir = cosineWeightedSample( planeN, bXi ).toVar();
 					const bPdf = bDir.y.mul( PI_INV ).toVar(); // cosθ / π
 					const bVal = vec3( PI_INV ); // albedo(1) / π
 
@@ -243,6 +253,7 @@ export function buildShadeKernel( params ) {
 						planePoint, planeN, planeMat, planeV,
 						bDir, bPdf, bVal,
 						bounceIndex, rngState,
+						_pixelCoord, resolution, frame, dimBase,
 						directionalLightsBuffer, numDirectionalLights,
 						areaLightsBuffer, numAreaLights,
 						pointLightsBuffer, numPointLights,
@@ -289,7 +300,7 @@ export function buildShadeKernel( params ) {
 
 						If( backgroundBlurriness.greaterThan( 0.0 ), () => {
 
-							envBehind.assign( sampleEnvBlurred( catcherEnvDir, backgroundBlurriness.mul( 1.3 ), backgroundBlurSamples, rngState ) );
+							envBehind.assign( sampleEnvBlurred( catcherEnvDir, backgroundBlurriness.mul( 1.3 ), backgroundBlurSamples, rngState, _pixelCoord ) );
 
 						} ).Else( () => {
 
@@ -373,7 +384,7 @@ export function buildShadeKernel( params ) {
 				const envColor = vec3( 0.0 ).toVar();
 				If( isBackdropView.and( backgroundBlurriness.greaterThan( 0.0 ) ), () => {
 
-					envColor.assign( sampleEnvBlurred( envDir, backgroundBlurriness.mul( 1.3 ), backgroundBlurSamples, rngState ) );
+					envColor.assign( sampleEnvBlurred( envDir, backgroundBlurriness.mul( 1.3 ), backgroundBlurSamples, rngState, _pixelCoord ) );
 
 				} ).Else( () => {
 
@@ -519,13 +530,14 @@ export function buildShadeKernel( params ) {
 				const mSigmaT = mSigmaA.add( mSigmaS );
 				const coll = CollisionSample.wrap( sampleChromaticCollision(
 					mSigmaT, mSigmaS, throughput, hitDist, rngState,
+					_pixelCoord, resolution, frame, dimBase,
 				) ).toVar();
 				throughput.mulAssign( coll.weight );
 
 				If( coll.didScatter, () => {
 
 					// scatter via Henyey-Greenstein, continue as a free bounce off the sssSteps budget
-					const xi2 = vec2( RandomValue( rngState ), RandomValue( rngState ) );
+					const xi2 = getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 6 ) ), rngState, resolution, frame );
 					const scatterPoint = origin.add( direction.mul( coll.t ) );
 					const newDir = sampleHenyeyGreenstein( direction, mG, xi2 ).toVar();
 					sssSteps.addAssign( 1 );
@@ -533,7 +545,7 @@ export function buildShadeKernel( params ) {
 					// terminate walk: step cap or Russian roulette
 					const rrP = clamp( max( max( throughput.x, throughput.y ), throughput.z ), 0.02, 1.0 ).toVar();
 					const terminate = sssSteps.greaterThanEqual( maxSubsurfaceSteps )
-						.or( RandomValue( rngState ).greaterThan( rrP ) ).toVar();
+						.or( getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( 12 ) ), rngState, resolution, frame ).greaterThan( rrP ) ).toVar();
 
 					If( terminate, () => {
 
@@ -728,6 +740,7 @@ export function buildShadeKernel( params ) {
 		const currentRay = Ray( { origin, direction } );
 		const interaction = MaterialInteractionResult.wrap( handleMaterialTransparency(
 			currentRay, N, material, rngState,
+			_pixelCoord, resolution, frame, dimBase,
 			int( transTraversals ),
 			currentMediumIOR, previousMediumIOR,
 			pathWavelength,
@@ -1047,32 +1060,24 @@ export function buildShadeKernel( params ) {
 			material.clearcoat, material.emissive, material.subsurface,
 		) ).toVar();
 
-		// STBN keyed on (GLOBAL pixel, bounceIndex, frame). pixelIndex is the LOCAL path slot; the global pixel
-		// = chunkRowBase·W + localSlot, so the blue-noise pattern stays spatially aligned across row-band chunks
-		// (and matches Generate's per-pixel RNG seed). chunkRowBase is 0 in the single-chunk case.
-		const _resX = int( resolution.x ).toVar();
-		const _globalPixel = int( pixelIndex ).add( chunkRowBase.mul( _resX ) );
-		const _pixelCoord = vec2(
-			float( _globalPixel.mod( _resX ) ).add( 0.5 ),
-			float( _globalPixel.div( _resX ) ).add( 0.5 ),
-		);
 		const xi = getRandomSample( _pixelCoord, int( 0 ), bounceIndex, rngState, int( - 1 ), resolution, frame ).toVar();
+		const lobeXi = getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( 2 ) ), rngState, resolution, frame ).toVar();
 		const emptyWeights = BRDFWeights( {
 			specular: float( 0.0 ), diffuse: float( 0.0 ), sheen: float( 0.0 ),
 			clearcoat: float( 0.0 ), transmission: float( 0.0 ), iridescence: float( 0.0 ),
 		} );
-		// unused (materialCacheCached=false), but must match the 11-field struct shape to construct
+
+		// Unused (weightsComputed / materialCacheCached are false) but must satisfy the signature.
 		const emptyCache = MaterialCache( {
-			F0: vec3( 0.04 ), NoV: float( 1.0 ),
-			diffuseColor: vec3( 0.0 ), isPurelyDiffuse: false,
-			alpha: float( 0.0 ), k: float( 0.0 ), alpha2: float( 0.0 ),
-			invRoughness: float( 0.5 ), metalFactor: float( 0.5 ),
+			invRoughness: float( 0.0 ), metalFactor: float( 0.5 ),
 			iorFactor: float( 0.67 ), maxSheenColor: float( 0.0 ),
 		} );
 
 		const brdfDir = vec3( 0.0 ).toVar();
 		const brdfValue = vec3( 0.0 ).toVar();
 		const brdfPdf = float( 0.0 ).toVar();
+		const brdfIsTransmission = tslBool( false ).toVar();
+		const brdfColorWeight = vec3( 1.0 ).toVar();
 
 		If( material.clearcoat.greaterThan( 0.0 ), () => {
 
@@ -1084,6 +1089,7 @@ export function buildShadeKernel( params ) {
 			} );
 			const ccResult = ClearcoatResult.wrap( sampleClearcoat(
 				ccRay, ccHit, material, xi, rngState,
+				_pixelCoord, resolution, frame, dimBase,
 			) );
 			brdfDir.assign( ccResult.L );
 			brdfValue.assign( ccResult.brdf );
@@ -1092,7 +1098,8 @@ export function buildShadeKernel( params ) {
 		} ).Else( () => {
 
 			const bs = DirectionSample.wrap( generateSampledDirection(
-				V, N, material, xi, rngState,
+				V, N, material, xi, lobeXi, rngState,
+				_pixelCoord, resolution, frame, dimBase,
 				mc,
 				false, emptyWeights,
 				false, emptyCache,
@@ -1100,6 +1107,8 @@ export function buildShadeKernel( params ) {
 			brdfDir.assign( bs.direction );
 			brdfValue.assign( bs.value );
 			brdfPdf.assign( bs.pdf );
+			brdfIsTransmission.assign( bs.isTransmission );
+			brdfColorWeight.assign( bs.colorWeight );
 
 		} );
 
@@ -1107,6 +1116,7 @@ export function buildShadeKernel( params ) {
 			hitPoint, N, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
+			_pixelCoord, resolution, frame, dimBase,
 			directionalLightsBuffer, numDirectionalLights,
 			areaLightsBuffer, numAreaLights,
 			pointLightsBuffer, numPointLights,
@@ -1156,6 +1166,7 @@ export function buildShadeKernel( params ) {
 						const emissiveSample = EmissiveSample.wrap( sampleLightBVHTriangle(
 							hitPoint, N,
 							rngState,
+							_pixelCoord, resolution, frame, dimBase,
 							lightBuffer,
 							lightBuffer,
 							emissiveVec4Offset,
@@ -1216,6 +1227,7 @@ export function buildShadeKernel( params ) {
 						const emissiveLight = calculateEmissiveTriangleContribution(
 							hitPoint, N, V, material,
 							bounceIndex, rngState,
+							_pixelCoord, resolution, frame, dimBase,
 							emissiveBoost,
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 							triangleBuffer,
@@ -1244,14 +1256,12 @@ export function buildShadeKernel( params ) {
 		// per-term (env / emissive-hit / direct-light / emissive-NEE), matching the megakernel which never
 		// re-suppresses the running radiance.
 
-		const samplingInfo = ImportanceSamplingInfo.wrap( getImportanceSamplingInfo(
-			material, bounceIndex, mc,
-		) ).toVar();
-
 		const indirectResult = IndirectLightingResult.wrap( calculateIndirectLighting(
-			V, N, material,
+			N, material,
 			brdfDir, brdfPdf, brdfValue,
-			rngState, samplingInfo,
+			brdfIsTransmission, brdfColorWeight,
+			rngState,
+			_pixelCoord, resolution, frame, dimBase,
 		) ).toVar();
 
 		const bounceDir = indirectResult.direction.toVar();
@@ -1265,6 +1275,7 @@ export function buildShadeKernel( params ) {
 		// terminate. Subsumes the old compensated low-throughput kill (#12). Unbiased; just terminates smarter.
 		const rrSurvival = handleRussianRoulette(
 			bounceIndex, throughput, mc, bounceDir, rngState,
+			_pixelCoord, resolution, frame, dimBase,
 			enableEnvironmentLight, useEnvMapIS,
 		).toVar();
 		If( rrSurvival.lessThanEqual( 0.0 ), () => {

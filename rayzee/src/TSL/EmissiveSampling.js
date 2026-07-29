@@ -3,7 +3,6 @@
 
 import {
 	Fn,
-	vec2,
 	vec3,
 	float,
 	int,
@@ -27,7 +26,7 @@ import {
 
 import { struct } from './patches.js';
 import { MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT, computeDotProductsAniso } from './Common.js';
-import { RandomValue } from './Random.js';
+import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
 import { DotProducts } from './Struct.js';
@@ -390,6 +389,7 @@ const binarySearchCDF = Fn( ( [ emissiveTriangleBuffer, emissiveOffset, emissive
 export const sampleEmissiveTriangle = Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
+	pixelCoord, resolution, frame, dimBase,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 	triangleBuffer,
 ] ) => {
@@ -410,7 +410,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 	If( emissiveTriangleCount.greaterThan( int( 0 ) ), () => {
 
 		// CDF importance-weighted triangle selection (brighter triangles sampled more)
-		const randEmissive = RandomValue( rngState );
+		const randEmissive = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame );
 		const emissiveIndex = binarySearchCDF( emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, randEmissive ).toVar();
 
 		// Fetch emissive triangle data from packed light buffer (2 vec4s per entry)
@@ -427,10 +427,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 		// Fetch triangle geometry
 		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer ) );
 
-		// Generate random numbers for sampling
-		const xi_r1 = RandomValue( rngState ).toVar();
-		const xi_r2 = RandomValue( rngState ).toVar();
-		const xi = vec2( xi_r1, xi_r2 );
+		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
 
@@ -532,6 +529,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 	hitPoint, normal, viewDir, material,
 	bounceIndex, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 	triangleBuffer,
@@ -555,6 +553,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		// Sample emissive triangle (CDF importance-weighted)
 		const emissiveSample = EmissiveSample.wrap( sampleEmissiveTriangle(
 			hitPoint, normal, rngState,
+			pixelCoord, resolution, frame, dimBase,
 			emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 			triangleBuffer,
 		) );
@@ -616,6 +615,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 export const calculateEmissiveTriangleContribution = Fn( ( [
 	hitPoint, normal, viewDir, material,
 	bounceIndex, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 	triangleBuffer,
@@ -626,6 +626,7 @@ export const calculateEmissiveTriangleContribution = Fn( ( [
 	const result = EmissiveContributionResult.wrap( calculateEmissiveTriangleContributionDebug(
 		hitPoint, normal, viewDir, material,
 		bounceIndex, rngState,
+		pixelCoord, resolution, frame, dimBase,
 		emissiveBoost,
 		emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 		triangleBuffer,

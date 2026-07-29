@@ -4,13 +4,11 @@ import {
 } from 'three/tsl';
 
 import { DotProducts, DFGResult } from './Struct.js';
-import {
-	PI, PI_INV, EPSILON, MIN_CLEARCOAT_ROUGHNESS,
-	computeDotProductsAniso,
-} from './Common.js';
+import { PI_INV, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso } from './Common.js';
 import { fresnelSchlick, fresnelSchlickFloat, dielectricF0 } from './Fresnel.js';
 import {
-	DistributionGGX, SheenDistribution, GeometrySmith, evaluateDFG,
+	DistributionGGX, SheenDistribution, VisibilitySheen, VisibilityGGXSmithCorrelated,
+	sheenDirectionalAlbedo, evaluateDFG,
 	computeAnisoAlphas, DistributionGGXAniso, VisibilityGGXAniso,
 } from './MaterialProperties.js';
 import { evalIridescence } from './MaterialProperties.js';
@@ -31,10 +29,14 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 	const result = vec3( 0.0 ).toVar();
 
 	// Early exit for purely diffuse materials (skip if iridescent)
+	// `sheen` is in the guard because this fast path returns a bare Lambert term: without it a
+	// rough sheen material lost its sheen lobe entirely — silently, since the fast path is only
+	// taken above roughness 0.98.
 	If( material.roughness.greaterThan( 0.98 )
 		.and( material.metalness.lessThan( 0.02 ) )
 		.and( material.transmission.equal( 0.0 ) )
 		.and( material.clearcoat.equal( 0.0 ) )
+		.and( material.sheen.equal( 0.0 ) )
 		.and( material.iridescence.equal( 0.0 ) ), () => {
 
 		result.assign( material.color.rgb.mul( float( 1.0 ).sub( material.metalness ) ).mul( PI_INV ) );
@@ -91,8 +93,8 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		} ).Else( () => {
 
 			const D = DistributionGGX( dots.NoH, material.roughness );
-			const G = GeometrySmith( dots.NoV, dots.NoL, material.roughness );
-			specularSS.assign( D.mul( G ).mul( F ).div( max( float( 4.0 ).mul( dots.NoV ).mul( dots.NoL ), EPSILON ) ) );
+			const Vis = VisibilityGGXSmithCorrelated( dots.NoV, dots.NoL, material.roughness );
+			specularSS.assign( D.mul( Vis ).mul( F ) );
 
 		} );
 
@@ -102,7 +104,11 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		const specular = specularSS.mul( dfg.compensation );
 
 		// Diffuse energy budget from hemisphere-integrated specular albedo (includes multiscatter)
-		const kD = vec3( 1.0 ).sub( dfg.E_total ).mul( float( 1.0 ).sub( material.metalness ) );
+		// Transmission removes energy from diffuse just as metalness does — KHR_materials_transmission
+		// defines transmission as replacing the diffuse component.
+		const kD = vec3( 1.0 ).sub( dfg.E_total )
+			.mul( float( 1.0 ).sub( material.metalness ) )
+			.mul( float( 1.0 ).sub( material.transmission ) );
 		const diffuse = kD.mul( materialColor ).mul( PI_INV );
 
 		const baseLayer = diffuse.add( specular ).toVar();
@@ -110,13 +116,15 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		// Optimize sheen calculation
 		If( material.sheen.greaterThan( 0.0 ), () => {
 
+			// D · V, not · NoL — callers apply the cosine when they integrate.
 			const sheenDist = SheenDistribution( dots.NoH, material.sheenRoughness );
-			const sheenTerm = material.sheenColor.mul( material.sheen ).mul( sheenDist ).mul( dots.NoL );
+			const sheenVis = VisibilitySheen( dots.NoV, dots.NoL );
+			const sheenTerm = material.sheenColor.mul( material.sheen ).mul( sheenDist ).mul( sheenVis );
 
-			// Hemisphere-averaged sheen reflectance for energy-conserving base layer attenuation
-			// Uses roughness-dependent average rather than per-sample distribution to avoid directional bias
-			const avgSheenFactor = float( 1.0 ).sub( material.sheenRoughness ).mul( 0.5 ).add( 0.25 );
-			const sheenReflectance = clamp( material.sheenColor.mul( material.sheen ).mul( avgSheenFactor ), vec3( 0.0 ), vec3( 1.0 ) );
+			// Attenuate the base by the lobe's actual directional albedo, so what the base loses is
+			// what the coat returns. See gen-dfg-lut.mjs for the integral.
+			const sheenE = sheenDirectionalAlbedo( dots.NoV, material.sheenRoughness );
+			const sheenReflectance = clamp( material.sheenColor.mul( material.sheen ).mul( sheenE ), vec3( 0.0 ), vec3( 1.0 ) );
 			const sheenAttenuation = vec3( 1.0 ).sub( sheenReflectance );
 
 			result.assign( baseLayer.mul( sheenAttenuation ).add( sheenTerm ) );
@@ -124,6 +132,29 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		} ).Else( () => {
 
 			result.assign( baseLayer );
+
+		} );
+
+		// The coat lives here, not in a separate layered-BRDF function: every strategy has to
+		// evaluate the same integrand or MIS is biased however good the weights are.
+		If( material.clearcoat.greaterThan( 0.0 ), () => {
+
+			const ccRoughness = max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS );
+			const ccF0 = vec3( 0.04 );
+
+			// A GGX lobe like any other, so same multiscatter treatment; its albedo is what the
+			// base underneath loses.
+			const ccDfg = DFGResult.wrap( evaluateDFG( ccF0, dots.NoV, ccRoughness ) );
+
+			const ccD = DistributionGGX( dots.NoH, ccRoughness );
+			const ccVis = VisibilityGGXSmithCorrelated( dots.NoV, dots.NoL, ccRoughness );
+			const ccF = fresnelSchlickFloat( dots.VoH, float( 0.04 ) );
+			const ccLobe = vec3( ccD.mul( ccVis ).mul( ccF ) ).mul( ccDfg.compensation );
+
+
+			const ccAttenuation = vec3( 1.0 ).sub( ccDfg.E_total.mul( material.clearcoat ) );
+
+			result.assign( result.mul( ccAttenuation ).add( ccLobe.mul( material.clearcoat ) ) );
 
 		} );
 
@@ -142,61 +173,3 @@ export const evaluateMaterialResponse = Fn( ( [ V, L, N, material ] ) => {
 
 } );
 
-// -----------------------------------------------------------------------------
-// Layered BRDF Evaluation (for clearcoat)
-// -----------------------------------------------------------------------------
-
-// Evaluate both clearcoat and base layer BRDFs
-export const evaluateLayeredBRDF = Fn( ( [ dots, material ] ) => {
-
-	// Base F0 calculation with specular parameters, clamped to physically valid range
-	const baseF0 = dielectricF0( material.ior );
-	const F0 = clamp(
-		mix( baseF0.mul( material.specularColor ), material.color.rgb, material.metalness )
-			.mul( material.specularIntensity ),
-		vec3( 0.0 ), vec3( 1.0 )
-	).toVar();
-
-	const F = fresnelSchlick( dots.VoH, F0 );
-
-	// Base specular (anisotropic when anisotropy > 0; aniso V term carries 1/(4·NoV·NoL))
-	const baseBRDFSS = vec3( 0.0 ).toVar();
-	If( material.anisotropy.greaterThan( 0.0 ), () => {
-
-		const a = computeAnisoAlphas( material.roughness, material.anisotropy );
-		const Da = DistributionGGXAniso( a.x, a.y, dots.NoH, dots.ToH, dots.BoH );
-		const Va = VisibilityGGXAniso( a.x, a.y, dots.ToV, dots.BoV, dots.ToL, dots.BoL, dots.NoV, dots.NoL );
-		baseBRDFSS.assign( F.mul( Da.mul( Va ) ) );
-
-	} ).Else( () => {
-
-		const D = DistributionGGX( dots.NoH, material.roughness );
-		const G = GeometrySmith( dots.NoV, dots.NoL, material.roughness );
-		baseBRDFSS.assign( D.mul( G ).mul( F ).div( max( float( 4.0 ).mul( dots.NoV ).mul( dots.NoL ), EPSILON ) ) );
-
-	} );
-
-	// Shared DFG evaluation — compensation factor and total directional albedo
-	// come from the same polynomial.
-	const dfg = DFGResult.wrap( evaluateDFG( F0, dots.NoV, material.roughness ) );
-	const baseBRDF = baseBRDFSS.mul( dfg.compensation );
-
-	// Diffuse energy budget from hemisphere-integrated specular albedo (includes multiscatter)
-	const kD = vec3( 1.0 ).sub( dfg.E_total ).mul( float( 1.0 ).sub( material.metalness ) );
-	const diffuse = kD.mul( material.color.rgb ).div( PI );
-	const baseLayer = diffuse.add( baseBRDF );
-
-	// Clearcoat layer
-	const clearcoatRoughness = max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS );
-	const clearcoatD = DistributionGGX( dots.NoH, clearcoatRoughness );
-	const clearcoatG = GeometrySmith( dots.NoV, dots.NoL, clearcoatRoughness );
-	const clearcoatF = fresnelSchlickFloat( dots.VoH, float( 0.04 ) );
-	const clearcoatBRDF = clearcoatD.mul( clearcoatG ).mul( clearcoatF )
-		.div( max( float( 4.0 ).mul( dots.NoV ).mul( dots.NoL ), EPSILON ) );
-
-	// Energy conservation for clearcoat: two-interface model (1-F)² per clearcoat strength
-	const clearcoatAttenuation = float( 1.0 ).sub( material.clearcoat.mul( clearcoatF ).mul( float( 2.0 ).sub( clearcoatF ) ) );
-
-	return baseLayer.mul( clearcoatAttenuation ).add( vec3( clearcoatBRDF ).mul( material.clearcoat ) );
-
-} );

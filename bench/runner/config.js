@@ -89,6 +89,18 @@ export const QUALITY_GATES = {
 		maxFractionOverThreshold: 0.01, // 1 % of pixels may differ perceptibly
 		pixelThreshold: 0.01,
 	},
+	// White furnace — a RATCHET, not an absolute gate. Several BSDFs are known to violate
+	// energy conservation today (see bench/README.md), so gating on |ratio - 1| would leave the
+	// suite permanently red, which is how a gate stops being read. Instead each scene's current
+	// deviation is blessed and may only shrink. The absolute deviation is always reported, so
+	// the outstanding bugs stay visible without blocking unrelated work.
+	//
+	// The tolerance only needs headroom for last-bit drift from a three.js/driver/Chrome bump:
+	// deterministic mode makes an unchanged render bit-identical, so the ratio is exactly
+	// reproducible run to run.
+	furnace: {
+		maxDeviationIncrease: 0.001, // 0.1 percentage points
+	},
 };
 
 export const MEMORY_GATES = {

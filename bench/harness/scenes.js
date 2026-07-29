@@ -856,6 +856,8 @@ function extractWorldTriangles( app ) {
  * @property {number} truthSpp      - samples for the one-time ground-truth render
  * @property {Object} settings      - engine settings applied before rendering
  * @property {function} build       - async (app) => void; loads geometry + env, sets camera
+ * @property {number} [furnaceRadiance] - marks a white-furnace scene and gives the environment
+ *      radiance the render must reproduce exactly. See FURNACE_MATERIALS.
  */
 
 /** @type {SceneSpec[]} */
@@ -1101,6 +1103,90 @@ export const SCENES = [
 		},
 	},
 ];
+
+// -----------------------------------------------------------------------------
+// White furnace scenes
+// -----------------------------------------------------------------------------
+// An albedo-1 sphere in a uniform environment of radiance L must render EXACTLY L — the
+// object becomes invisible. Any deviation is energy the BSDF created or destroyed.
+//
+// These exist because the ENERGY BIAS gate structurally cannot catch this class of bug.
+// That gate compares mean luminance against a blessed high-spp render of the same build, so
+// a systematic energy error appears in both the reference and the render and cancels: the
+// ratio reads ~1.0 and the gate passes forever. The furnace reference is analytic — a
+// constant this file declares — so no amount of blessing can move it.
+//
+// The sphere is convex and fills the frame, which makes the measurement clean in two ways:
+// every pixel is object (no background diluting the mean toward 1.0), and a scattered ray
+// always escapes to the environment rather than re-hitting the sphere, so the result is the
+// BSDF's own directional albedo and not a multi-bounce sum. 4 bounces is ample.
+//
+// NOTE: solidSkyColor is NOT a routed setting, so it does not participate in
+// sceneSettingsFloor() and stays white for any scene loaded afterwards. These scenes are
+// last in the corpus for that reason. The only other 'color'-mode scene is cornell-emissive,
+// which renders with enableEnvironment: false, so the leak cannot reach its output.
+
+const FURNACE_RADIANCE = 1.0;
+
+/** Each entry pins one energy-conservation axis. */
+const FURNACE_MATERIALS = {
+	// Control. Lambert is exactly energy conserving, so this must stay at 1.0 — it fails only
+	// if the harness itself breaks (environment not uniform, albedo not 1, camera clipping).
+	'furnace-diffuse': { roughness: 1.0, metalness: 0 },
+
+	// Dielectric specular. Any mismatch between the sampler's density and the density MIS
+	// evaluates shows up here and scales inversely with roughness, so a low roughness is the
+	// sensitive probe.
+	'furnace-dielectric-glossy': { roughness: 0.15, metalness: 0 },
+
+	// Metal, two points that fail in opposite directions when the multiscatter compensation is
+	// miscalibrated: it overshoots around mid roughness while r = 1 shows the single-scattering
+	// GGX deficit. One point alone would let a bad refit trade one for the other.
+	'furnace-metal-mid': { roughness: 0.5, metalness: 1 },
+	'furnace-metal-rough': { roughness: 1.0, metalness: 1 },
+
+	// Layered lobes, each with its own energy term on top of the base.
+	'furnace-clearcoat': { roughness: 0.5, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.3 },
+	'furnace-sheen': { roughness: 0.6, metalness: 0, sheen: 1, sheenRoughness: 0.4, sheenColor: 0xffffff },
+	'furnace-iridescence': {
+		roughness: 0.3, metalness: 0,
+		iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessRange: [ 100, 400 ],
+	},
+};
+
+for ( const [ id, params ] of Object.entries( FURNACE_MATERIALS ) ) {
+
+	SCENES.push( {
+		id,
+		covers: `white furnace — energy conservation of ${id.slice( 8 )}`,
+		// The gated quantity is a mean over 65k pixels of a flat image, which converges far
+		// faster than the image itself; the reference is analytic, so truthSpp only feeds the
+		// (redundant here) golden and bias gates.
+		spp: 128,
+		truthSpp: 512,
+		// environmentIntensity is pinned because the analytic reference below assumes it.
+		settings: { maxBounces: 4, enableEnvironment: true, environmentIntensity: 1 },
+		furnaceRadiance: FURNACE_RADIANCE,
+		async build( app ) {
+
+			const env = app.stages.pathTracer.environment;
+			env.envParams.solidSkyColor = new Color( 0xffffff );
+			await env.setMode( 'color' );
+
+			const group = new Group();
+			group.add( new Mesh(
+				new SphereGeometry( 2, 96, 96 ),
+				new MeshPhysicalMaterial( { color: 0xffffff, ...params } )
+			) );
+			await app.loadObject3D( group, id );
+
+			// Close enough that the sphere covers the full frame — see the note above.
+			setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+		},
+	} );
+
+}
 
 /**
  * Pins the camera explicitly. Must run AFTER loadObject3D, which rebuilds the scene and

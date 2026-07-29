@@ -299,7 +299,13 @@ const ready = boot();
 
 globalThis.__bench = {
 	ready,
-	scenes: () => SCENES.map( ( s ) => ( { id: s.id, covers: s.covers, spp: s.spp, truthSpp: s.truthSpp } ) ),
+	// Explicit field list — `build` is a function and cannot cross the CDP boundary, so the
+	// whole spec cannot be returned. Any new field a runner gates on must be added here or it
+	// arrives undefined and the gate silently does not run.
+	scenes: () => SCENES.map( ( s ) => ( {
+		id: s.id, covers: s.covers, spp: s.spp, truthSpp: s.truthSpp,
+		furnaceRadiance: s.furnaceRadiance,
+	} ) ),
 	fingerprint,
 	loadScene,
 	render,

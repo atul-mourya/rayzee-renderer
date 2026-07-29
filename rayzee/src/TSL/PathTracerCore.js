@@ -11,8 +11,8 @@
 import {
 	Fn,
 	wgslFn,
+	bool as tslBool,
 	float,
-	vec2,
 	vec3,
 	int,
 	max,
@@ -28,7 +28,6 @@ import {
 } from 'three/tsl';
 
 import {
-	PI_INV,
 	MAX_ROUGHNESS,
 	MIN_CLEARCOAT_ROUGHNESS,
 	MIN_PDF,
@@ -36,19 +35,19 @@ import {
 	anisoTangentFrame,
 	calculateFireflyThreshold,
 	applySoftSuppressionRGB,
+	computeDotProductsAniso,
 } from './Common.js';
-import { AnisoFrame, DirectionSample, MaterialCache } from './Struct.js';
-import { RandomValue } from './Random.js';
+import { AnisoFrame, DirectionSample, DotProducts, MaterialCache } from './Struct.js';
+import { getRandomSample1D } from './Random.js';
 import { sampleMicrofacetTransmission, MicrofacetTransmissionResult } from './MaterialTransmission.js';
 import {
-	SheenDistribution,
-	calculateVNDFPDF,
-	calculateVNDFPDFAniso,
+	calculateBSDFSamplingPDF,
 	computeAnisoAlphas,
 	calculateBRDFWeights,
+	sheenSamplingRoughness,
 } from './MaterialProperties.js';
-import { evaluateMaterialResponse } from './MaterialEvaluation.js';
-import { dielectricF0 } from './Fresnel.js';
+import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
+
 import {
 	ImportanceSampleCosine,
 	ImportanceSampleGGX,
@@ -61,7 +60,8 @@ import {
 // =============================================================================
 
 export const generateSampledDirection = Fn( ( [
-	V, N, material, xi, rngState,
+	V, N, material, xi, lobeXi, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	// Caller-resolved material classification (avoids redundant classifyMaterial —
 	// TSL Fn can't write back to caller variables, so the caller is responsible
 	// for keeping psCachedClassification current and passes it in here).
@@ -73,6 +73,8 @@ export const generateSampledDirection = Fn( ( [
 	const resultDirection = vec3( 0.0 ).toVar();
 	const resultValue = vec3( 0.0 ).toVar();
 	const resultPdf = float( 0.0 ).toVar();
+	const resultIsTransmission = tslBool( false ).toVar();
+	const resultColorWeight = vec3( 1.0 ).toVar();
 
 	// Compute BRDF weights
 	const weights = cachedBrdfWeights.toVar();
@@ -87,13 +89,6 @@ export const generateSampledDirection = Fn( ( [
 
 			// Create minimal temporary cache
 			const tempCache = MaterialCache( {
-				F0: dielectricF0( material.ior ),
-				NoV: float( 1.0 ),
-				diffuseColor: vec3( 0.0 ),
-				isPurelyDiffuse: false,
-				alpha: float( 0.0 ),
-				k: float( 0.0 ),
-				alpha2: float( 0.0 ),
 				invRoughness: float( 1.0 ).sub( material.roughness ),
 				metalFactor: float( 0.5 ).add( float( 0.5 ).mul( material.metalness ) ),
 				iorFactor: min( float( 2.0 ).div( material.ior ), 1.0 ),
@@ -105,8 +100,10 @@ export const generateSampledDirection = Fn( ( [
 
 	} );
 
-	const rand = xi.x.toVar();
-	const directionSample = vec2( xi.y, RandomValue( rngState ) ).toVar();
+	// Own dimension, NOT xi.x — the lobe samplers below consume the full pair, so reusing xi.x
+	// would leave it conditioned on the branch taken and confine VNDF's r=sqrt(Xi.x) to
+	// [sqrt(lo),1), making the specular peak unreachable whenever a diffuse lobe competes.
+	const rand = lobeXi.toVar();
 	const H = vec3( 0.0 ).toVar();
 
 	// Cumulative probability approach for sampling selection
@@ -115,17 +112,11 @@ export const generateSampledDirection = Fn( ( [
 	const cumulativeSheen = cumulativeSpecular.add( weights.sheen ).toVar();
 	const cumulativeClearcoat = cumulativeSheen.add( weights.clearcoat );
 
-	// Hoisted out of the lobe chain: used by both Specular and Clearcoat branches
-	const NoV = clamp( dot( N, V ), 0.001, 1.0 ).toVar();
-
 	// Chained If/ElseIf so emitted WGSL becomes a single mutually-exclusive branch
 	// (replaces five separate If blocks gated on a `sampled` flag — divergence hotspot)
 	If( rand.lessThan( cumulativeDiffuse ), () => {
 
-		resultDirection.assign( ImportanceSampleCosine( { N, xi: directionSample } ) );
-		const NoL = clamp( dot( N, resultDirection ), 0.0, 1.0 );
-		resultPdf.assign( NoL.mul( PI_INV ) );
-		resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
+		resultDirection.assign( ImportanceSampleCosine( { N, xi } ) );
 
 	} ).ElseIf( rand.lessThan( cumulativeSpecular ), () => {
 
@@ -141,10 +132,7 @@ export const generateSampledDirection = Fn( ( [
 			const localH = sampleGGXVNDFAniso( { V: localV, alphaX: a.x, alphaY: a.y, Xi: xi } );
 			H.assign( Ta.mul( localH.x ).add( Ba.mul( localH.y ) ).add( N.mul( localH.z ) ) );
 
-			const NoH = clamp( dot( N, H ), 0.001, 1.0 );
 			resultDirection.assign( reflect( V.negate(), H ) );
-			resultPdf.assign( calculateVNDFPDFAniso( a.x, a.y, NoH, dot( Ta, H ), dot( Ba, H ), NoV, dot( Ta, V ), dot( Ba, V ) ) );
-			resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
 
 		} ).Else( () => {
 
@@ -155,69 +143,65 @@ export const generateSampledDirection = Fn( ( [
 			const localH = sampleGGXVNDF( { V: localV, roughness: material.roughness, Xi: xi } );
 			H.assign( TBN.mul( localH ) );
 
-			const NoH = clamp( dot( N, H ), 0.001, 1.0 );
-
 			resultDirection.assign( reflect( V.negate(), H ) );
-			resultPdf.assign( calculateVNDFPDF( NoH, NoV, material.roughness ) );
-			resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
 
 		} );
 
 	} ).ElseIf( rand.lessThan( cumulativeSheen ), () => {
 
-		H.assign( ImportanceSampleGGX( { N, roughness: material.sheenRoughness, Xi: xi } ) );
-		const NoH = clamp( dot( N, H ), 0.001, 1.0 );
-		const VoH = clamp( dot( V, H ), 0.001, 1.0 );
+		H.assign( ImportanceSampleGGX( { N, roughness: sheenSamplingRoughness( material.sheenRoughness ), Xi: xi } ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
-		const NoL = dot( N, resultDirection ).toVar();
 
-		// Reject directions below the surface - fall back to diffuse
-		If( NoL.lessThanEqual( 0.0 ), () => {
-
-			resultDirection.assign( ImportanceSampleCosine( { N, xi } ) );
-			NoL.assign( clamp( dot( N, resultDirection ), 0.0, 1.0 ) );
-			resultPdf.assign( NoL.mul( PI_INV ) );
-			resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
-
-		} ).Else( () => {
-
-			resultPdf.assign( SheenDistribution( NoH, material.sheenRoughness ).mul( NoH ).div( float( 4.0 ).mul( VoH ) ) );
-			resultPdf.assign( max( resultPdf, MIN_PDF ) );
-			resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
-
-		} );
+		// Below-surface sheen draws are dropped, not redirected to a cosine direction: a fallback
+		// would add a P(reject)·cos term to the true density that calculateBSDFSamplingPDF cannot
+		// model, and dividing by the smaller modelled density inflated the lobe 23 %.
 
 	} ).ElseIf( rand.lessThan( cumulativeClearcoat ), () => {
 
+		// VNDF, not ImportanceSampleGGX: the mixture density reports this lobe with
+		// calculateVNDFPDF, and sampling the half-vector GGX distribution instead would make the
+		// reported density one this lobe never drew from.
 		const clearcoatRoughness = clamp( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS );
-		H.assign( ImportanceSampleGGX( { N, roughness: clearcoatRoughness, Xi: xi } ) );
-		const NoH = clamp( dot( N, H ), 0.0, 1.0 );
+		const ccTBN = constructTBN( { N } );
+		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: xi } ) ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
-		resultPdf.assign( calculateVNDFPDF( NoH, NoV, clearcoatRoughness ) );
-		resultPdf.assign( max( resultPdf, MIN_PDF ) );
-		resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
 
 	} ).Else( () => {
 
-		// Transmission sampling (fallback)
 		const entering = dot( V, N ).greaterThan( 0.0 );
-		// pathWavelength=0 — only direction/PDF are consumed here, throughput goes via handleTransmission
+		// pathWavelength=0 — the spectral lock happens downstream; colorWeight is carried out on
+		// the DirectionSample so the consumer can build the transmission throughput.
 		const mtResult = MicrofacetTransmissionResult.wrap( sampleMicrofacetTransmission(
 			V, N, material.ior, material.roughness, entering, material.dispersion, xi, rngState, float( 0.0 ),
+			pixelCoord, resolution, frame, dimBase,
 		) );
 		resultDirection.assign( mtResult.direction );
-		resultPdf.assign( max( mtResult.pdf, MIN_PDF ) );
-		resultValue.assign( evaluateMaterialResponse( V, resultDirection, N, material ) );
+		// Selection probability included: this lobe is the only one that reaches its hemisphere,
+		// so its density is w_transmission · pdf rather than pdf alone.
+		resultPdf.assign( max( weights.transmission.mul( mtResult.pdf ), MIN_PDF ) );
+		resultColorWeight.assign( mtResult.colorWeight );
+		resultIsTransmission.assign( true );
 
 	} );
 
-	// Ensure PDF is valid
+	// One mixture density for every reflection lobe: any of them could have produced this
+	// direction, so the chosen lobe's own pdf is not the density we sampled from.
+	If( resultIsTransmission.not(), () => {
+
+		const dotsOut = DotProducts.wrap( computeDotProductsAniso( N, V, resultDirection, material ) );
+		resultValue.assign( evaluateMaterialResponseFromDots( material, dotsOut ) );
+		resultPdf.assign( calculateBSDFSamplingPDF( material, weights, dotsOut ) );
+
+	} );
+
 	resultPdf.assign( max( resultPdf, MIN_PDF ) );
 
 	return DirectionSample( {
 		direction: resultDirection,
 		value: resultValue,
 		pdf: resultPdf,
+		isTransmission: resultIsTransmission,
+		colorWeight: resultColorWeight,
 	} );
 
 } );
@@ -258,6 +242,7 @@ export const computeNDCDepth = /*@__PURE__*/ wgslFn( `
 // Takes the already-computed MaterialClassification `mc` directly (the wavefront classifies once per shade).
 export const handleRussianRoulette = Fn( ( [
 	depth, throughput, mc, rayDirection, rngState,
+	pixelCoord, resolution, frame, dimBase,
 	enableEnvironmentLight, useEnvMapIS,
 ] ) => {
 
@@ -271,7 +256,7 @@ export const handleRussianRoulette = Fn( ( [
 		If( throughputStrength.lessThan( 0.0008 ).and( depth.greaterThan( int( 4 ) ) ), () => {
 
 			const lowThroughputProb = max( throughputStrength.mul( 125.0 ), 0.01 );
-			const rrSample = RandomValue( rngState );
+			const rrSample = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame );
 			result.assign( select( rrSample.lessThan( lowThroughputProb ), lowThroughputProb, float( 0.0 ) ) );
 
 		} ).Else( () => {
@@ -373,7 +358,7 @@ export const handleRussianRoulette = Fn( ( [
 				const minProb = select( mc.isEmissive, float( 0.04 ), float( 0.02 ) );
 				rrProb.assign( max( rrProb, minProb ) );
 
-				const rrSample = RandomValue( rngState );
+				const rrSample = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame );
 				result.assign( select( rrSample.lessThan( rrProb ), rrProb, float( 0.0 ) ) );
 
 			} );
