@@ -274,7 +274,6 @@ export class EnvironmentManager {
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
-			this.uniforms.set( 'useEnvMapIS', 0 );
 			return;
 
 		}
@@ -289,7 +288,6 @@ export class EnvironmentManager {
 				this._updateCDFTexture();
 				this.uniforms.set( 'envTotalSum', 0.0 );
 				this.uniforms.set( 'envCompensationDelta', 0.0 );
-				this.uniforms.set( 'useEnvMapIS', 0 );
 				return;
 
 			}
@@ -309,7 +307,6 @@ export class EnvironmentManager {
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', this.equirectHdrInfo.totalSum );
 			this.uniforms.set( 'envCompensationDelta', this.equirectHdrInfo.compensationDelta );
-			this.uniforms.set( 'useEnvMapIS', 1 );
 
 			const { width, height } = this.equirectHdrInfo;
 			if ( width && height ) {
@@ -326,7 +323,6 @@ export class EnvironmentManager {
 		} catch ( error ) {
 
 			log.error( 'CDF build failed:', error );
-			this.uniforms.set( 'useEnvMapIS', 0 );
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
 
@@ -387,7 +383,6 @@ export class EnvironmentManager {
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
-			this.uniforms.set( 'useEnvMapIS', 0 );
 
 		}
 

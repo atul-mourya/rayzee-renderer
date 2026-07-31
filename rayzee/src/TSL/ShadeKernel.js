@@ -79,7 +79,7 @@ export function buildShadeKernel( params ) {
 		counters,
 		activeIndicesRO,
 		envTexture, environmentIntensity, envMatrix,
-		enableEnvironmentLight, useEnvMapIS,
+		enableEnvironmentLight,
 		groundProjectionEnabled, groundProjectionRadius, groundProjectionHeight, groundProjectionLevel,
 		enableGroundCatcher, groundCatcherHeight,
 		envTotalSum, envCompensationDelta, envResolution,
@@ -405,7 +405,7 @@ export function buildShadeKernel( params ) {
 
 				// MIS weight for implicit env hit — prevents double-counting with NEE
 				const envMisWeight = float( 1.0 ).toVar();
-				If( isBackdropView.not().and( useEnvMapIS ), () => {
+				If( isBackdropView.not(), () => {
 
 					const prevBouncePdf = readRayPdf( rayBufferRW, rayID );
 					If( prevBouncePdf.greaterThan( 0.0 ), () => {
@@ -1276,7 +1276,7 @@ export function buildShadeKernel( params ) {
 		const rrSurvival = handleRussianRoulette(
 			bounceIndex, throughput, mc, bounceDir, rngState,
 			_pixelCoord, resolution, frame, dimBase,
-			enableEnvironmentLight, useEnvMapIS,
+			enableEnvironmentLight,
 		).toVar();
 		If( rrSurvival.lessThanEqual( 0.0 ), () => {
 

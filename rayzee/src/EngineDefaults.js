@@ -21,7 +21,6 @@ export const ENGINE_DEFAULTS = {
 	enableEnvironment: true,
 	showBackground: true,
 	transparentBackground: false,
-	useImportanceSampledEnvironment: true,
 	environmentIntensity: 1,
 	backgroundIntensity: 1,
 	// Solid backdrop color shown on camera-ray misses in 'color' background mode

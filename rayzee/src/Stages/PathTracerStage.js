@@ -293,18 +293,6 @@ export class PathTracerStage extends RenderStage {
 
 					}
 				},
-				useEnvMapIS: {
-					get value() {
-
-						return self.useEnvMapIS.value;
-
-					},
-					set value( v ) {
-
-						self.useEnvMapIS.value = v;
-
-					}
-				},
 				enableAccumulation: {
 					get value() {
 
@@ -348,7 +336,6 @@ export class PathTracerStage extends RenderStage {
 			enabled: DEFAULT_STATE.interactionModeEnabled,
 			qualitySettings: {
 				maxBounceCount: 1,
-				useEnvMapIS: false,
 				enableAccumulation: false,
 				enableEmissiveTriangleSampling: false,
 			},

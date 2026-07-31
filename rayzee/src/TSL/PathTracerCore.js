@@ -243,7 +243,7 @@ export const computeNDCDepth = /*@__PURE__*/ wgslFn( `
 export const handleRussianRoulette = Fn( ( [
 	depth, throughput, mc, rayDirection, rngState,
 	pixelCoord, resolution, frame, dimBase,
-	enableEnvironmentLight, useEnvMapIS,
+	enableEnvironmentLight,
 ] ) => {
 
 	const result = float( 1.0 ).toVar();
@@ -317,7 +317,7 @@ export const handleRussianRoulette = Fn( ( [
 				estMaterialImportance.assign( clamp( estMaterialImportance, 0.0, 1.0 ) );
 
 				const directionImportance = float( 0.5 ).toVar();
-				If( enableEnvironmentLight.and( useEnvMapIS ).and( throughputStrength.greaterThan( 0.01 ) ), () => {
+				If( enableEnvironmentLight.and( throughputStrength.greaterThan( 0.01 ) ), () => {
 
 					const cosTheta = clamp( rayDirection.y, 0.0, 1.0 );
 					directionImportance.assign( mix( float( 0.3 ), float( 0.8 ), cosTheta.mul( cosTheta ) ) );

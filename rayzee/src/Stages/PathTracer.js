@@ -1180,7 +1180,6 @@ export class PathTracer extends PathTracerStage {
 			environmentIntensity: this.environmentIntensity,
 			envMatrix: this.environmentMatrix,
 			enableEnvironmentLight: this.enableEnvironment,
-			useEnvMapIS: this.useEnvMapIS,
 			groundProjectionEnabled: this.groundProjectionEnabled,
 			groundProjectionRadius: this.groundProjectionRadius,
 			groundProjectionHeight: this.groundProjectionHeight,
