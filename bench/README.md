@@ -9,13 +9,14 @@ The engine's unit tests cover CPU logic well, but every GPU file — all of `TSL
 ```bash
 npm run bench:list      # show the scene corpus
 npm run bench:bless     # generate ground truth + goldens (first run, slow)
-npm run bench           # quality + memory + perf
+npm run bench           # quality + denoise + memory + perf
 ```
 
 Individual suites:
 
 ```bash
 npm run bench:quality
+npm run bench:denoise
 npm run bench:memory
 npm run bench:perf
 npm run bench:ab -- main    # gate perf against another git ref
@@ -216,6 +217,110 @@ A wide *absolute* spread beside a tight per-round delta is machine drift the pai
 
 Note `pipeline.getStats()` is **not** a GPU metric — it times command encoding on the CPU and stays flat while GPU cost doubles.
 
+### Denoisers — a ratio, so there is nothing to bless away
+
+Every other suite measures the path tracer's own accumulation buffer. Nothing measured what the
+**denoisers** did to it, so the entire ASVGF / EdgeAware chain was ungated — and it shipped making
+a converged image ~4.7× further from ground truth than not denoising at all, with every suite green.
+
+The statistic is a ratio, not an image:
+
+```
+ratio = RMSE( denoised, ground truth ) / RMSE( undenoised, ground truth )
+```
+
+Both renders happen in the same session, on the same build, at the same sample count, so the
+comparison is self-normalising: a genuine path-tracer improvement moves numerator and denominator
+together. There is no golden to re-bless into looking fine.
+
+**Two rungs, because the failure is a crossover.** The ASVGF regression *helped* at low sample
+counts and *hurt* at high ones — any single sample count would have missed it in one direction or
+the other. `DENOISE_GATES.sppLadder` is `[1, 64]`: the real-time regime the denoiser exists for, and
+a converged one.
+
+| gate | kind | what it catches |
+|---|---|---|
+| `mustHelpAtLowSpp` | absolute, 1 spp | denoiser disconnected, mis-wired, or reading the wrong texture |
+| `maxRatioIncrease` | ratchet, every rung | any drift away from ground truth, even while still net-positive |
+
+The ratchet follows the white-furnace precedent. Both filters are still **above 1.0 at 64 spp**, so
+gating absolutely there would leave the suite permanently red — which is how a gate stops being read.
+Blessed ratios may only shrink, and the absolute ratio is printed on every line, pass or fail, so a
+scene sitting at 2.4× never reads as clean.
+
+Standing state as of the last bless (`baselines/denoise.json`):
+
+| scene | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 |
+|---|---|---|---|---|
+| `spheres-gradient` | 0.957 | 2.046 | 0.524 | 2.359 |
+| `glass-transmission` | 0.704 | 0.912 | 0.426 | 2.245 |
+| `textured-normalmap` | 0.982 | 1.182 | 0.806 | 2.996 |
+
+EdgeAware is still the worse offender at convergence and the better one at 1 spp (0.43–0.81).
+
+Both filters now carry a filtered variance between à-trous passes, so σ_l tightens as the signal
+smooths (measured on `BilateralFilter`: 0.636 → 0.261 → 0.115 → 0.056 over four passes, with
+weightSum falling 0.75 → 0.33). Before that, each pass recomputed σ_l from the same unfiltered
+`variance:output` and damage grew in a straight line with pass count — 1.39 / 2.27 / 3.30 / 4.34 /
+5.74 for 1–6 passes. It now saturates instead: EdgeAware reads 1.75 / 2.17 / 2.29 / 2.33 / 2.36 over
+the same sweep.
+
+Which isolates what is left. Per-pass **compounding** is fixed; per-pass **cost** is not — a single
+pass already sits at 1.75×, and that single-pass figure is now the whole story at convergence. σ_l is
+therefore not the dominant term in the residual, so the next investigation belongs on the
+normal/depth/colour gates and on the intrinsic cost of blending an already-converged image.
+
+`bench denoise --bless` records the ratchet **without** touching the quality goldens, so a denoiser
+change does not force a re-bless of the path tracer's baselines.
+
+Scene choice is about what the edge-stops key on, not coverage breadth: diffuse GI (the baseline
+case), high-variance transmission (the noisiest input the denoiser sees), and textures (albedo
+demodulation plus mapped normals — the two G-buffer signals the spatial filter weights on).
+
+**`cornell-emissive` is deliberately absent, and why is worth reading.** It is the best firefly scene
+in the corpus and the natural fourth entry. Its render is not load-order stable: mean luminance flips
+from 0.28864 to 0.33667 (**+16.6 %**) once enough scenes have been loaded in a session, and stays
+flipped — a one-way transition on cumulative loads, not on any particular predecessor. The ratio then
+depends on whether `bench denoise` ran standalone or after `bench quality`, which no ratchet can
+survive. It reproduces with the harness's own denoiser reset removed, so it is an **engine** bug:
+the scene runs with `enableEnvironment: false`, so the extra energy can only be emissive, and it
+appears after some buffer-growth threshold. The same fragility sits under the quality suite's cornell
+golden, which is only correct because cornell happens to load second in `SCENES`. Put the scene back
+once that is fixed.
+
+Output is read through `capturePNG`, i.e. composited and tone-mapped — what a user sees. That costs
+sensitivity to pure energy shifts, which is fine: energy is the bias gate's job in `quality.js`. What
+survives tone mapping is structure, and structure is what a denoiser is accused of destroying. A
+separate `denoisedNonFinite()` probe reads the denoiser's own output target for NaN/Inf, because
+`probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in the bilateral weight put NaN on
+~12 % of pixels with nothing in the suite reacting.
+
+OIDN is still excluded: it adds an async completion dependency and deserves its own suite.
+
+### Texture binding audit — a structural guard, not a metric
+
+`setBindingAudit(true)` (on in the harness, off in production) reports stages whose `TextureNode`s
+are bound too late to be safe. Two nodes still holding the default `EmptyTexture` when a stage first
+dispatches can end up sharing one GPU binding, which then resolves to whichever is assigned last.
+Nothing throws; the stage still produces a plausible image, because the aliased node reads a real
+texture — just not its own.
+
+That is how the ASVGF regression happened. `BilateralFilter._varianceTexNode` aliased onto
+`_readTexNode`, so the luminance edge-stop read `asvgf:demodulated.w` — ASVGF's history counter — as
+its variance. σ_l came out 5–6 orders of magnitude too wide and the à-trous degenerated into a
+near-unconditional blur. It was invisible from outside the shader: inputs and outputs both looked
+reasonable, and only dumping the kernel's own σ_l exposed it.
+
+The snapshot is taken at the first `renderer.compute` call, not before or after `render()` — the
+binding assignments and the compile are interleaved inside that one call, and by the time it returns
+everything is bound. The first version of this guard sampled after `render()` and silently caught
+nothing. StorageTexture-typed nodes are exempt: `textureLoad` codegen only emits the required `level`
+parameter while the node still holds `EmptyTexture`, so binding those post-compile is deliberate
+(see `ASVGF.render`).
+
+Mutation-tested both ways — reverting the `BilateralFilter` fix makes it name the exact node;
+with the fix in place it is silent across all nine stages.
+
 ### Memory — gate on growth, never absolutes
 
 The headline test loads and unloads the same scene five times and asserts peak VRAM does not climb. That alone would have caught at least three bugs already in this repo's history.
@@ -346,7 +451,29 @@ of the measurement; they carry little perf signal and are best read as quality s
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
 purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
-Not yet built: a PR CI workflow (there is currently no PR gate at all, and CI never lints), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. Denoisers are deliberately excluded from the corpus — OIDN adds an async completion dependency and deserves its own suite.
+Not yet built: a PR CI workflow (there is currently no PR gate at all, and CI never lints), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. OIDN is still outside the corpus — it adds an async completion dependency and deserves its own suite.
+
+Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
+had to work around by hand:
+
+- **`__bench.readTexture(name)` over `PipelineContext`,** with automatic HalfFloat decode. Every
+  finding in that investigation came from reading intermediate targets, which no suite can do. The
+  decode is not optional: a HalfFloat target reads back as raw `Uint16` bit patterns, which is how a
+  gradient value clamped to `[0,1]` first showed up as `1320`.
+- **A convergence-monotonicity invariant.** The bug's signature was denoised error *plateauing*
+  while raw kept falling. "Does error still improve as spp rises" is cheap and catches every
+  stuck-filter bug.
+- **Per-frame trace hooks** (`render(n, { onFrame })`). The temporal defects were all trajectory
+  bugs — history going 2→1→2→3, a reset firing 50 ms late, motion vectors valid-but-zero. End-state
+  metrics are blind to them.
+- **Golden the debug heatmaps.** ASVGF ships six modes rendering to `heatmapTarget`, plus the
+  `visMode` views; they are UI-only today. Capturing them gives cheap structural coverage of the
+  history, motion and gradient fields.
+
+One caveat on the existing tooling: `getGPUTimings().total` is **not** usable for stage-level A/B. It
+reported the ASVGF chain as 9 % *faster* across five paired rounds where synced wall clock says
++4–6 %; it does not survive a change in pass count. The perf suite's use of it is fine (pass mix is
+constant there), but do not reach for it to price a stage.
 
 **`alpha-cutout`'s shadow-ray half is detected by three gates but not the per-pixel one.** Turning
 `enableAlphaShadows` off trips energy bias, convergence and golden RMSE, but moves only 0.86 % of

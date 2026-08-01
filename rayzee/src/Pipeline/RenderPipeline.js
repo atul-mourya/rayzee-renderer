@@ -1,5 +1,6 @@
 import { PipelineContext } from './PipelineContext.js';
 import { EventDispatcher } from './EventDispatcher.js';
+import { auditStageRender } from './BindingAudit.js';
 
 /**
  * RenderPipeline - Orchestrates execution of pipeline stages
@@ -183,8 +184,10 @@ export class RenderPipeline {
 
 				const stageStartTime = this.stats.enabled ? performance.now() : 0;
 
-				// Execute stage
-				stage.render( this.context, writeBuffer );
+				// Pass-through unless setBindingAudit(true) — see BindingAudit.js.
+				auditStageRender(
+					stage, this.renderer, () => stage.render( this.context, writeBuffer )
+				);
 
 				// Track timing
 				if ( this.stats.enabled ) {

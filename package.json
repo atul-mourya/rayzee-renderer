@@ -22,6 +22,7 @@
     "test:watch": "vitest",
     "bench": "node bench/runner/cli.js run",
     "bench:quality": "node bench/runner/cli.js quality",
+    "bench:denoise": "node bench/runner/cli.js denoise",
     "bench:memory": "node bench/runner/cli.js memory",
     "bench:perf": "node bench/runner/cli.js perf",
     "bench:bless": "node bench/runner/cli.js bless",

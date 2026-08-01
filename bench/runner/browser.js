@@ -153,6 +153,12 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setPerfMode: ( enabled ) => page.evaluate(
 			( on ) => globalThis.__bench.setPerfMode( on ), enabled
 		),
+		setDenoiser: ( strategy, preset ) => page.evaluate(
+			( s, p ) => globalThis.__bench.setDenoiser( s, p ), strategy, preset ?? null
+		),
+		denoisedNonFinite: () => page.evaluate( () => globalThis.__bench.denoisedNonFinite() ),
+		bindingFindings: () => page.evaluate( () => globalThis.__bench.bindingFindings() ),
+		clearBindingFindings: () => page.evaluate( () => globalThis.__bench.clearBindingFindings() ),
 		isDeterministic: () => page.evaluate( () => globalThis.__bench.isDeterministic() ),
 		capturePNG: () => page.evaluate( () => globalThis.__bench.capturePNG() ),
 		probes: () => page.evaluate( () => globalThis.__bench.probes() ),

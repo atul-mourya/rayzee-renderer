@@ -54,6 +54,11 @@ export { VRAMTracker, bufferBytes, textureBytes } from './Processor/VRAMTracker.
 export { RenderPipeline } from './Pipeline/RenderPipeline.js';
 export { RenderStage, StageExecutionMode } from './Pipeline/RenderStage.js';
 export { PipelineContext } from './Pipeline/PipelineContext.js';
+export {
+	setBindingAudit,
+	getBindingAuditFindings,
+	clearBindingAuditFindings,
+} from './Pipeline/BindingAudit.js';
 
 // Animation (for advanced consumers)
 export { AnimationManager } from './managers/AnimationManager.js';

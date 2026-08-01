@@ -16,6 +16,7 @@ export const PATHS = {
 	probes: path.resolve( here, '..', 'baselines', 'probes.json' ),
 	fingerprint: path.resolve( here, '..', 'baselines', 'fingerprint.json' ),
 	perfLog: path.resolve( here, '..', 'baselines', 'perf.jsonl' ),
+	denoise: path.resolve( here, '..', 'baselines', 'denoise.json' ),
 	harness: path.resolve( here, '..', 'harness', 'index.html' ),
 };
 
@@ -116,6 +117,57 @@ export const MEMORY_GATES = {
 	maxPeakGrowthBytes: 8 * 1024 * 1024,
 	// A monotonic climb across every cycle is a leak even when each step is small.
 	forbidMonotonicGrowth: true,
+};
+
+/**
+ * Real-time denoiser gates.
+ *
+ * The metric is a RATIO: RMSE(denoised, ground truth) / RMSE(undenoised, ground truth) at the
+ * same sample count. Below 1 the denoiser earned its place; above 1 it is making the image
+ * worse than not running it at all. A ratio needs no golden and cannot be re-blessed into
+ * looking fine, which is the point — the ASVGF chain shipped at 4.7x on a converged image and
+ * every existing gate stayed green, because they all compare the path tracer's own
+ * accumulation buffer and never look at what the denoiser did to it.
+ *
+ * Two gates, because a denoiser fails in two directions:
+ *
+ *  - `mustHelpAtLowSpp` — an ABSOLUTE floor at the bottom rung. That is the regime a real-time
+ *    denoiser exists for; failing it means the denoiser is disconnected, mis-wired, or reading
+ *    the wrong texture.
+ *
+ *  - `maxRatioIncrease` — a RATCHET on every rung, following the white-furnace precedent. Both
+ *    filters are still above 1.0 at high sample counts, so gating absolutely there would leave
+ *    the suite permanently red — which is how a gate stops being read. Blessed ratios may only
+ *    shrink, and the absolute ratio is printed on every line so the gap stays visible.
+ */
+export const DENOISE_GATES = {
+	// A ladder, not a single point: the ASVGF regression was a CROSSOVER — it helped at low
+	// sample counts and hurt at high ones, so either rung alone would have missed it. Two rungs
+	// keeps the suite affordable.
+	sppLadder: [ 1, 64 ],
+	strategies: [
+		{ id: 'asvgf', preset: 'medium' },
+		{ id: 'edgeaware' },
+	],
+	// Chosen for what the edge-stops key on rather than for coverage breadth: diffuse GI (the
+	// baseline case), high-variance transmission (the noisiest input the denoiser sees), and
+	// textures (albedo demodulation plus mapped normals — the two G-buffer signals the spatial
+	// filter weights on).
+	//
+	// `cornell-emissive` is the obvious fourth and is DELIBERATELY ABSENT: its render is not
+	// load-order stable (mean luminance flips +16.6 % once enough scenes load in a session and
+	// stays flipped), so the ratio would depend on whether this ran standalone or after
+	// `bench quality`. Engine bug, not a suite one — see bench/README.md. Put it back once fixed.
+	scenes: [ 'spheres-gradient', 'glass-transmission', 'textured-normalmap' ],
+	// Denoised RMSE must be below raw at the cheapest rung. Absolute, not blessed — but the
+	// margin is thinner than it looks: the tightest observed combination is
+	// textured-normalmap/asvgf at 0.982. That is deliberate rather than lucky. Deterministic
+	// mode makes both renders bit-identical run to run, so the ratio has no measurement noise
+	// and a thin margin costs nothing in flakiness — it only moves when code moves.
+	mustHelpAtLowSpp: 1.0,
+	// Ratchet headroom. Deterministic mode makes an unchanged render bit-identical, so this
+	// only needs room for last-bit drift from a three.js / driver / Chrome bump.
+	maxRatioIncrease: 0.02,
 };
 
 export const PERF = {

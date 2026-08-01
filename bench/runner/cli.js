@@ -1,8 +1,9 @@
 /**
  * Bench CLI.
  *
- *   node bench/runner/cli.js run [--only a,b] [--verbose]   quality + memory + perf
+ *   node bench/runner/cli.js run [--only a,b] [--verbose]   quality + denoise + memory + perf
  *   node bench/runner/cli.js quality [--only a,b] [--truth]
+ *   node bench/runner/cli.js denoise [--only a,b] [--bless]
  *   node bench/runner/cli.js memory  [--scene id] [--cycles n]
  *   node bench/runner/cli.js perf    [--only a,b]
  *   node bench/runner/cli.js bless   [--only a,b] [--truth]
@@ -20,6 +21,7 @@ import { launchBrowser, openHarness } from './browser.js';
 import { startDevServer } from './devserver.js';
 import { PATHS } from './config.js';
 import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
+import { runDenoise } from './denoise.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
 
@@ -162,6 +164,54 @@ function reportQuality( report ) {
 	}
 
 	return failed;
+
+}
+
+function reportDenoise( report ) {
+
+	let failed = 0;
+
+	for ( const entry of report.results ) {
+
+		const label = `${entry.scene} ${entry.strategy ?? ''} @${entry.spp ?? '?'} spp`.trim();
+
+		if ( entry.blessed ) {
+
+			log( `  ${GREEN}blessed${RESET} ${label.padEnd( 44 )}${DIM} ratio ${entry.ratio.toFixed( 3 )}${RESET}` );
+			continue;
+
+		}
+
+		const ok = entry.pass !== false;
+		if ( ! ok ) failed ++;
+
+		// The absolute ratio is printed on every line, pass or fail. The ratchet only says
+		// "no worse than last time"; without the number a scene sitting at 2.3x reads as clean.
+		const ratio = entry.ratio !== undefined
+			? `${entry.ratio < 1 ? GREEN : YELLOW}ratio ${entry.ratio.toFixed( 3 )}${RESET}` +
+				`${DIM} (rmse ${entry.rawRmse.toFixed( 5 )} → ${entry.denoisedRmse.toFixed( 5 )})${RESET}`
+			: '';
+
+		log( `  ${ok ? `${GREEN}pass${RESET}` : `${RED}FAIL${RESET}`} ${label.padEnd( 44 )}${ratio}` );
+
+		for ( const failure of entry.failures ?? [] ) log( `       ${RED}${failure}${RESET}` );
+
+	}
+
+	return failed;
+
+}
+
+/** Structural guard, not a metric — see rayzee/src/Pipeline/BindingAudit.js. */
+async function reportBindingAudit( bench ) {
+
+	const findings = await bench.bindingFindings();
+	if ( ! findings.length ) return 0;
+
+	log( `\n${RED}texture binding audit${RESET}` );
+	for ( const finding of findings ) log( `  ${RED}${finding.message}${RESET}` );
+
+	return findings.length;
 
 }
 
@@ -320,7 +370,7 @@ async function commandAB( baseRef, flags ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'memory', 'perf', 'bless', 'ab', 'list' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'memory', 'perf', 'bless', 'ab', 'list' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -393,6 +443,12 @@ async function main() {
 				bless: true, truth: !! flags.truth, only, log,
 			} );
 			reportQuality( report );
+
+			// After quality, so the ground truth it depends on is guaranteed to exist on a
+			// first bless of a fresh machine.
+			log( '\ndenoise' );
+			reportDenoise( await runDenoise( bench, { bless: true, only, log } ) );
+
 			log( `\n${GREEN}baselines written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.baselines )}` );
 			return 0;
 
@@ -403,6 +459,23 @@ async function main() {
 			log( 'quality' );
 			const report = await runQuality( bench, { truth: !! flags.truth, only, log } );
 			if ( reportQuality( report ) > 0 ) exitCode = 1;
+
+		}
+
+		if ( command === 'run' || command === 'denoise' ) {
+
+			// `bench denoise --bless` records the ratchet without touching the quality goldens,
+			// so a denoiser change does not force a re-bless of the path tracer's baselines.
+			const blessDenoise = command === 'denoise' && !! flags.bless;
+
+			log( `\ndenoise (RMSE vs ground truth, denoised ÷ raw — below 1.0 is a win)${blessDenoise ? ' — blessing' : ''}` );
+			const report = await runDenoise( bench, { bless: blessDenoise, only, log } );
+			if ( reportDenoise( report ) > 0 && ! blessDenoise ) exitCode = 1;
+			if ( blessDenoise ) {
+
+				log( `${GREEN}denoise ratchet written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.denoise )}` );
+
+			}
 
 		}
 
@@ -440,6 +513,9 @@ async function main() {
 			log( `${DIM}  gate on regressions with: npm run bench:ab -- main${RESET}` );
 
 		}
+
+		// Only meaningful once stages have actually rendered, so it runs after every suite.
+		if ( await reportBindingAudit( bench ) > 0 ) exitCode = 1;
 
 		const errors = bench.consoleErrors().filter( ( e ) => ! e.includes( 'favicon' ) );
 		if ( errors.length ) {

@@ -7,7 +7,10 @@
  * wanted in a regression run.
  */
 
-import { configureAssets, PathTracerApp } from 'rayzee';
+import {
+	clearBindingAuditFindings, configureAssets, getBindingAuditFindings,
+	PathTracerApp, setBindingAudit,
+} from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
 
 import stbnScalarAtlas from '../assets/noise/stbn_scalar_atlas.png?url';
@@ -68,6 +71,11 @@ async function boot() {
 	app.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
 	app.setDeterministicMode( true );
 	app.enableGPUTiming( true );
+
+	// Structural guard, not a metric: reports stages whose TextureNodes are bound too late to
+	// be safe from binding aliasing. Costs one boolean test per stage per frame. See
+	// rayzee/src/Pipeline/BindingAudit.js.
+	setBindingAudit( true );
 
 	// Vendored locally (see configureAssets above), but still asserted: if an atlas fails to
 	// load the sampler silently falls back to a constant-0.5 placeholder and renders converge
@@ -132,6 +140,12 @@ async function loadScene( id ) {
 	const startedAt = performance.now();
 	await spec.build( app );
 	const loadMs = performance.now() - startedAt;
+
+	// Denoiser strategy is sticky across loads and is NOT a settings key, so it cannot ride
+	// the sceneSettingsFloor reset above. Without this a denoise run would leave ASVGF on for
+	// every scene the quality suite loaded afterwards, and its goldens would silently be
+	// denoised images.
+	app.denoisingManager.setStrategy( 'none' );
 
 	// build() → loadObject3D() → reset() → wake(). Re-assert determinism and park rAF so
 	// nothing races the manual render loop — preserving the current dispatch mode, since a
@@ -249,6 +263,75 @@ async function probes() {
 
 }
 
+/**
+ * Switches the real-time denoiser. 'none' | 'asvgf' | 'edgeaware'.
+ *
+ * Returns the resulting stage enable-state so a suite can assert the strategy actually took
+ * effect rather than trusting the call — a typo'd name hits the switch's default branch and
+ * silently leaves every denoiser off, which would make the whole suite compare raw against
+ * raw and pass forever.
+ */
+function setDenoiser( strategy, preset ) {
+
+	app.denoisingManager.setStrategy( strategy, preset );
+
+	const s = app.stages;
+	return {
+		strategy,
+		asvgf: !! s.asvgf?.enabled,
+		variance: !! s.variance?.enabled,
+		bilateral: !! s.bilateralFilter?.enabled,
+		edgeFilter: !! s.edgeFilter?.enabled,
+		normalDepth: !! s.normalDepth?.enabled,
+		motionVector: !! s.motionVector?.enabled,
+	};
+
+}
+
+/**
+ * Non-finite pixel count in whatever the compositor is about to display.
+ *
+ * `probes()` only sees the path tracer's accumulation buffer, so a denoiser emitting NaN is
+ * invisible to it — a `pow(0.0, 0.0)` in the bilateral weight produced NaN on ~12 % of pixels
+ * with nothing in the suite reacting. HalfFloat targets read back as raw Uint16 bit patterns,
+ * so the exponent is tested directly rather than decoding to Number first.
+ */
+async function denoisedNonFinite() {
+
+	const s = app.stages;
+	const target = ( s.bilateralFilter?.enabled && s.bilateralFilter._outputTarget )
+		|| ( s.edgeFilter?.enabled && s.edgeFilter._outputTarget )
+		|| ( s.asvgf?.enabled && s.asvgf._outputRT )
+		|| app.stages.pathTracer.storageTextures.readTarget;
+
+	const { width, height } = RENDER_SIZE;
+	const pixels = await app.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+
+	let nonFinite = 0;
+
+	if ( pixels instanceof Uint16Array ) {
+
+		// Half-float: exponent all-ones is Inf (mantissa 0) or NaN (mantissa nonzero).
+		for ( let i = 0; i < pixels.length; i ++ ) {
+
+			if ( ( pixels[ i ] & 0x7C00 ) === 0x7C00 ) nonFinite ++;
+
+		}
+
+	} else {
+
+		for ( let i = 0; i < pixels.length; i ++ ) {
+
+			if ( ! Number.isFinite( pixels[ i ] ) ) nonFinite ++;
+
+		}
+
+	}
+
+	return nonFinite;
+
+}
+
 function memory() {
 
 	const info = app.getMemoryInfo();
@@ -311,6 +394,10 @@ globalThis.__bench = {
 	render,
 	measureGPUPerSample,
 	setPerfMode,
+	setDenoiser,
+	denoisedNonFinite,
+	bindingFindings: () => getBindingAuditFindings(),
+	clearBindingFindings: () => clearBindingAuditFindings(),
 	isDeterministic: () => app.isDeterministic,
 	capturePNG,
 	probes,
