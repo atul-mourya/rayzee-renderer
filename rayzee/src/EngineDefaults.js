@@ -163,7 +163,9 @@ export const ENGINE_DEFAULTS = {
 	asvgfPhiDepth: 1.0,
 	asvgfVarianceBoost: 1.0,
 	asvgfMaxAccumFrames: 32,
-	asvgfGradientStrength: 0.0,
+	// Must be > 0: the gradient also rejects fireflies before the EMA smears them across
+	// ~1/alpha frames. At 0 the denoiser measures ~3x worse than no denoiser at 1 spp.
+	asvgfGradientStrength: 1.0,
 	asvgfGradientSigmaScale: 2.0,
 	asvgfGradientNoiseFloor: 0.0,
 	asvgfDebugMode: 0,

@@ -272,6 +272,7 @@ export class PathTracer extends PathTracerStage {
 
 		this._updateAccumulationUniforms( frameValue, renderMode );
 		this.frame.value = frameValue;
+		this.seedFrame.value = this._seedTick ++;
 
 		this._setWfDispatch();
 
@@ -942,7 +943,9 @@ export class PathTracer extends PathTracerStage {
 			rngBufferRW: pb.rngBuffer.rw,
 			gBufferRW,
 			resolution: this.resolution,
-			frame: this.frame,
+			// RNG axis only (baseSeed + stratified jitter) — takes the seed counter, not the
+			// accumulation index. FinalWrite keeps `frame`.
+			frame: this.seedFrame,
 			cameraWorldMatrix: this.cameraWorldMatrix,
 			cameraProjectionMatrixInverse: this.cameraProjectionMatrixInverse,
 			enableDOF: this.enableDOF,
@@ -1209,7 +1212,8 @@ export class PathTracer extends PathTracerStage {
 			cameraProjectionMatrix: this.cameraProjectionMatrix,
 			cameraViewMatrix: this.cameraViewMatrix,
 			fireflyThreshold: this.fireflyThreshold,
-			frame: this.frame,
+			// RNG axis only (keys STBN via frame & 63).
+			frame: this.seedFrame,
 			resolution: this.resolution,
 			emissiveTriangleCount: this.emissiveTriangleCount,
 			emissiveVec4Offset: this.emissiveVec4Offset,

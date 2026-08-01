@@ -122,8 +122,11 @@ export class NormalDepth extends RenderStage {
 
 		this.on( 'pipeline:reset', () => {
 
+			// _hasHistory is deliberately NOT cleared, mirroring MotionVector.reset(): the
+			// prev-frame G-buffer tracks camera motion, not accumulation, and a camera move
+			// resets accumulation every frame of a drag. Clearing it made render() overwrite
+			// prevRT with the current frame, so ASVGF's temporal gate could never reject.
 			this._dirty = true;
-			this._hasHistory = false;
 
 		} );
 
@@ -149,6 +152,8 @@ export class NormalDepth extends RenderStage {
 			this._bvhStorageNode = null;
 			this._matStorageNode = null;
 			this._dirty = true;
+			// New geometry — the previous frame describes a scene that is no longer there.
+			this._hasHistory = false;
 
 		}
 
@@ -367,13 +372,16 @@ export class NormalDepth extends RenderStage {
 		this._outputStorageTex?.dispose();
 		this._shadingStorageTex?.dispose();
 		this.reset();
+		// The textures backing the ping-pong are gone, so the prev-frame G-buffer is too.
+		this._hasHistory = false;
 
 	}
 
+	// Accumulation reset only — _hasHistory survives on purpose (see the pipeline:reset
+	// listener). It is invalidated by setSize(), a geometry swap, and releaseGPUMemory().
 	reset() {
 
 		this._dirty = true;
-		this._hasHistory = false;
 
 	}
 

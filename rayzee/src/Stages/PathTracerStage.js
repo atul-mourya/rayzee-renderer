@@ -51,7 +51,6 @@ const BVH_VEC4_PER_NODE = 4;
  * - camera:moved - When camera position/orientation changes
  * - asvgf:reset - Request ASVGF to reset temporal data
  * - asvgf:updateParameters - Update ASVGF parameters
- * - asvgf:setTemporal - Enable/disable ASVGF temporal accumulation
  *
  * Textures published to context:
  * - pathtracer:color - Main color output
@@ -142,6 +141,11 @@ export class PathTracerStage extends RenderStage {
 		this.tempVector2 = new Vector2();
 		this.lastCameraMatrix = new Matrix4();
 		this.lastProjectionMatrix = new Matrix4();
+
+		// Sampler seed axis — advances per rendered frame, survives accumulation resets.
+		// Pinned back to the accumulation index in deterministic mode.
+		this._seedTick = 0;
+		this._pinSeedToFrame = false;
 
 		// Denoising management state
 		this.lastRenderMode = - 1;
@@ -638,9 +642,13 @@ export class PathTracerStage extends RenderStage {
 		this.isComplete = false;
 		this.performanceMonitor?.reset();
 
-		this.lastRenderMode = - 1;
-
+		// lastRenderMode is deliberately NOT invalidated here — clearing it made
+		// manageASVGFForRenderMode see a phantom mode change 50 ms after every reset, wiping
+		// ASVGF's history. A real mode change is still caught by the renderMode comparison.
 		this.lastInteractionModeState = false;
+
+		// Only deterministic mode rewinds the seed axis; see _pinSeedToFrame.
+		if ( this._pinSeedToFrame ) this._seedTick = 0;
 
 	}
 
@@ -1225,7 +1233,10 @@ export class PathTracerStage extends RenderStage {
 				if ( this.pendingRenderMode !== null && this.pendingRenderMode !== this.lastRenderMode ) {
 
 					this.lastRenderMode = this.pendingRenderMode;
-					this._onRenderModeChanged( this.pendingRenderMode );
+					// History from the previous mode is not comparable. temporalAlpha is NOT
+					// touched here — it is owned by ASVGF_QUALITY_PRESETS, and overwriting it
+					// with a hardcoded value meant `medium` and `high` never took effect.
+					this.emit( 'asvgf:reset' );
 
 				}
 
@@ -1235,35 +1246,6 @@ export class PathTracerStage extends RenderStage {
 			}, this.renderModeChangeDelay );
 
 		}
-
-		this._handleFullQuadASVGF();
-
-	}
-
-	_onRenderModeChanged( newMode ) {
-
-		if ( newMode === 1 ) {
-
-			this.emit( 'asvgf:updateParameters', {
-				enableDebug: false,
-				temporalAlpha: 0.15
-			} );
-
-		} else {
-
-			this.emit( 'asvgf:updateParameters', {
-				temporalAlpha: 0.1,
-			} );
-
-		}
-
-		this.emit( 'asvgf:reset' );
-
-	}
-
-	_handleFullQuadASVGF() {
-
-		this.emit( 'asvgf:setTemporal', { enabled: true } );
 
 	}
 

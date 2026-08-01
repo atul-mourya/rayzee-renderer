@@ -160,6 +160,10 @@ export class UniformManager {
 
 		// Frame and sampling
 		u( 'frame', 0, 'uint' );
+		// Sampler seed axis, separate from the accumulation index: `frame` is zeroed by every
+		// reset, and a camera move resets each frame of a drag, so the RNG redrew the identical
+		// sequence and temporal denoising had nothing to average.
+		u( 'seedFrame', 0, 'uint' );
 		u( 'maxBounces', DEFAULT_STATE.bounces, 'int' );
 		u( 'maxSamples', DEFAULT_STATE.maxSamples, 'int' );
 		u( 'transmissiveBounces', DEFAULT_STATE.transmissiveBounces, 'int' );

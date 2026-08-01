@@ -40,7 +40,8 @@ export class ASVGF extends RenderStage {
 		this.renderer = renderer;
 
 		this.temporalAlpha = uniform( options.temporalAlpha ?? 0.0 );
-		this.gradientStrength = uniform( options.gradientStrength ?? 0.0 );
+		// > 0 is required for firefly rejection, not just anti-lag — see ENGINE_DEFAULTS.
+		this.gradientStrength = uniform( options.gradientStrength ?? 1.0 );
 		// σ multiplier for the per-pixel noise floor (NRD luminanceSigmaScale ≈ 2).
 		this.gradientSigmaScale = uniform( options.gradientSigmaScale ?? 2.0 );
 		// Secondary relative floor on the normalised gradient (0 = rely on σ alone).
@@ -380,7 +381,12 @@ export class ASVGF extends RenderStage {
 			If( gx.lessThan( int( resW ) ).and( gy.lessThan( int( resH ) ) ), () => {
 
 				const coord = ivec2( gx, gy );
-				const currentColor = textureLoad( colorTex, coord ).xyz;
+				const currentSample = textureLoad( colorTex, coord );
+				const currentColor = currentSample.xyz;
+				// Coverage from the path tracer — 0 on background rays when
+				// transparentBackground is on. Forcing 1.0 here made the whole frame opaque,
+				// so a transparent render composited as black.
+				const currentAlpha = currentSample.w;
 				const currentAlbedo = textureLoad( albedoTex, coord ).xyz;
 
 				// Same safeAlbedo on both demod and re-mod sides → exact
@@ -390,7 +396,7 @@ export class ASVGF extends RenderStage {
 
 				// Defaults = fresh sample (no temporal blend).
 				const demodResult = vec4( currentLighting, 1.0 ).toVar();
-				const modulatedResult = vec4( currentColor, 1.0 ).toVar();
+				const modulatedResult = vec4( currentColor, currentAlpha ).toVar();
 
 				// forceResetU skips the blend for one frame after asvgf:reset → re-anchors
 				// history to the current (post-reset) scene instead of the stale ping-pong.
@@ -491,7 +497,7 @@ export class ASVGF extends RenderStage {
 							const newHistory = min( prevHistory.add( 1.0 ), maxAccumFrames );
 
 							demodResult.assign( vec4( blendedLighting, newHistory ) );
-							modulatedResult.assign( vec4( blendedLighting.mul( safeAlbedo ), 1.0 ) );
+							modulatedResult.assign( vec4( blendedLighting.mul( safeAlbedo ), currentAlpha ) );
 
 						} );
 
@@ -642,12 +648,6 @@ export class ASVGF extends RenderStage {
 	setupEventListeners() {
 
 		this.on( 'asvgf:reset', () => this.resetTemporalData() );
-
-		this.on( 'asvgf:setTemporal', ( data ) => {
-
-			if ( data && data.enabled !== undefined ) this.setTemporalEnabled( data.enabled );
-
-		} );
 
 		this.on( 'asvgf:updateParameters', ( data ) => this.updateParameters( data ) );
 

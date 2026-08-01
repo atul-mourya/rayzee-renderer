@@ -73,6 +73,8 @@ export class EdgeFilter extends RenderStage {
 
 		this.stepSizeU = uniform( 1, 'int' );
 		this.isLastIterationU = uniform( 0, 'int' );
+		// 1 on pass 0 → seed variance from variance:output; later passes read the carried value.
+		this.isFirstIterationU = uniform( 1, 'int' );
 		this.resW = uniform( options.width || 1 );
 		this.resH = uniform( options.height || 1 );
 
@@ -202,6 +204,7 @@ export class EdgeFilter extends RenderStage {
 		const phiDepth = this.phiDepth;
 		const stepSize = this.stepSizeU;
 		const isLastIterationU = this.isLastIterationU;
+		const isFirstIterationU = this.isFirstIterationU;
 		const resW = this.resW;
 		const resH = this.resH;
 
@@ -216,7 +219,8 @@ export class EdgeFilter extends RenderStage {
 
 				const coord = ivec2( gx, gy );
 
-				const centerLighting = textureLoad( readTex, coord ).xyz;
+				const centerSample = textureLoad( readTex, coord );
+				const centerLighting = centerSample.xyz;
 				const centerLum = luminance( centerLighting );
 				const centerND = textureLoad( ndTex, coord );
 				const centerDepth = centerND.w;
@@ -233,13 +237,30 @@ export class EdgeFilter extends RenderStage {
 				// max() falls back to the spatial estimate as temporal collapses on a
 				// converging accumulation buffer. Dividing by albedoLum rescales the
 				// modulated-space variance into demodulated space (std ∝ 1/albedo).
-				const vSample = textureLoad( varTex, coord );
-				const variance = max( vSample.z, vSample.w );
-				const sigmaL = phiLuminance.mul( sqrt( max( variance, float( 0.0 ) ) ) )
+				//
+				// Filtered alongside colour and carried between passes as √variance in the
+				// ping-pong's spare alpha, so sigma_l tightens as the signal smooths. Stored as
+				// the root because converged variance (~1e-6) is a half-float subnormal.
+				const isFirst = isFirstIterationU.equal( int( 1 ) );
+				const seedVariance = ( at ) => {
+
+					const v = textureLoad( varTex, at );
+					return max( v.z, v.w );
+
+				};
+
+				const centerVariance = isFirst.select(
+					seedVariance( coord ),
+					centerSample.w.mul( centerSample.w )
+				).toVar();
+
+				const sigmaL = phiLuminance.mul( sqrt( max( centerVariance, float( 0.0 ) ) ) )
 					.div( centerAlbedoLum ).add( float( 0.0001 ) );
 
 				const colorSum = vec3( 0.0 ).toVar();
 				const weightSum = float( 0.0 ).toVar();
+				// Squared weights, normalised by weightSum² — the variance of a weighted mean.
+				const varianceSum = float( 0.0 ).toVar();
 
 				for ( let iy = 0; iy < 5; iy ++ ) {
 
@@ -253,7 +274,8 @@ export class EdgeFilter extends RenderStage {
 						const sy = gy.add( stepSize.mul( dy ) ).clamp( int( 0 ), int( resH ).sub( 1 ) );
 						const sCoord = ivec2( sx, sy );
 
-						const sLighting = textureLoad( readTex, sCoord ).xyz;
+						const sSample = textureLoad( readTex, sCoord );
+						const sLighting = sSample.xyz;
 						const sLum = luminance( sLighting );
 						const sND = textureLoad( ndTex, sCoord );
 						const sDepth = sND.w;
@@ -276,14 +298,22 @@ export class EdgeFilter extends RenderStage {
 						const geomW = mix( float( 1.0 ), normW.mul( depW ), bothHit );
 						const w = float( kw ).mul( lumW ).mul( geomW ).mul( sameKind );
 
+						const sVariance = isFirst.select(
+							seedVariance( sCoord ),
+							sSample.w.mul( sSample.w )
+						);
+
 						colorSum.addAssign( sLighting.mul( w ) );
 						weightSum.addAssign( w );
+						varianceSum.addAssign( w.mul( w ).mul( max( sVariance, float( 0.0 ) ) ) );
 
 					}
 
 				}
 
 				const filtered = colorSum.div( max( weightSum, float( 0.0001 ) ) );
+				const filteredVariance = varianceSum
+					.div( max( weightSum.mul( weightSum ), float( 1e-8 ) ) );
 
 				// Final pass: remodulate by albedo and blend against the raw color by
 				// filterStrength. Inner passes stay in demodulated space.
@@ -293,7 +323,14 @@ export class EdgeFilter extends RenderStage {
 				const finalModulated = mix( rawColor, remodded, filterStrength );
 				const output = isLast.select( finalModulated, filtered );
 
-				textureStore( writeStorageTex, uvec2( uint( gx ), uint( gy ) ), vec4( output, 1.0 ) ).toWriteOnly();
+				// The last pass restores the path tracer's coverage — Compositor reads .w as
+				// image alpha when transparentBackground is on.
+				const carriedAlpha = isLast.select(
+					textureLoad( colorTex, coord ).w,
+					sqrt( max( filteredVariance, float( 0.0 ) ) )
+				);
+
+				textureStore( writeStorageTex, uvec2( uint( gx ), uint( gy ) ), vec4( output, carriedAlpha ) ).toWriteOnly();
 
 			} );
 
@@ -378,6 +415,7 @@ export class EdgeFilter extends RenderStage {
 
 			this.stepSizeU.value = 1 << i;
 			this.isLastIterationU.value = ( i === this.iterations - 1 ) ? 1 : 0;
+			this.isFirstIterationU.value = i === 0 ? 1 : 0;
 			this._readTexNode.value = readTex;
 
 			this.renderer.compute( writeNode );

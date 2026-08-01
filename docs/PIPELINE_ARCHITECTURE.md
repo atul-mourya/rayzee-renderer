@@ -168,7 +168,6 @@ Event-driven communication between stages.
 'pathtracer:viewpointChanged' // PathTracerStage — camera optimizer reset
 'asvgf:reset'                 // PathTracerStage / PathTracerApp — reset ASVGF history
 'asvgf:updateParameters'      // PathTracerStage — push ASVGF params
-'asvgf:setTemporal'           // PathTracerStage — toggle ASVGF temporal accumulation
 'autoexposure:resetHistory'   // PathTracerApp / EnvironmentManager — reset exposure history
 'autoexposure:updated'        // AutoExposure
 'motionvector:computed'       // MotionVector

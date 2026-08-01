@@ -1562,6 +1562,11 @@ export class PathTracerApp extends EventDispatcher {
 			this.cameraManager?.setAutoFocusMode( 'manual' );
 			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
 
+			// The seed axis free-runs across accumulation resets so a camera drag gets fresh
+			// sequences; offline rendering needs the opposite. Pinning it makes seedFrame track
+			// frameCount, so N samples reproduce bit-for-bit. reset() below zeroes the tick.
+			stage._pinSeedToFrame = true;
+
 			this._deterministic = true;
 			this._dispatchPinned = pinDispatch;
 
@@ -1579,6 +1584,8 @@ export class PathTracerApp extends EventDispatcher {
 				this.stages.autoExposure.enabled = prev.autoExposure;
 
 			}
+
+			stage._pinSeedToFrame = false;
 
 			this._deterministicRestore = null;
 			this._deterministic = false;
