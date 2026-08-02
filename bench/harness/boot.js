@@ -38,6 +38,7 @@ const BASE_SETTINGS = {
 let app = null;
 let currentScene = null;
 let pristineSettings = null;
+let pristineEnvParams = null;
 
 // Sticky across scene loads. loadScene() re-asserts deterministic mode, and without
 // remembering the requested mode it would default back to pinDispatch:true and silently
@@ -60,6 +61,40 @@ function sceneSettingsFloor() {
 	}
 
 	return floor;
+
+}
+
+/**
+ * Environment parameters are NOT settings keys — scenes mutate `envParams` directly (the
+ * furnace scenes write `solidSkyColor = white`), so `sceneSettingsFloor()` cannot restore
+ * them and the mutation leaks into every later scene that calls `setMode( 'color' )`.
+ * cornell-emissive's backdrop swung +16 % depending on how many scenes had loaded first.
+ * Same argument as the settings floor: restore the union, not just this scene's own keys.
+ */
+function restoreEnvParams() {
+
+	const env = app.stages.pathTracer.environment;
+
+	for ( const [ key, value ] of Object.entries( pristineEnvParams ) ) {
+
+		if ( value && typeof value.copy === 'function' ) env.envParams[ key ].copy( value );
+		else env.envParams[ key ] = value;
+
+	}
+
+}
+
+function snapshotEnvParams() {
+
+	const snapshot = {};
+
+	for ( const [ key, value ] of Object.entries( app.stages.pathTracer.environment.envParams ) ) {
+
+		snapshot[ key ] = value && typeof value.clone === 'function' ? value.clone() : value;
+
+	}
+
+	return snapshot;
 
 }
 
@@ -94,6 +129,7 @@ async function boot() {
 	// Snapshot before any scene touches settings, so each load can restore the keys it
 	// does not itself specify.
 	pristineSettings = app.settings.getAll();
+	pristineEnvParams = snapshotEnvParams();
 
 	globalThis.app = app; // parity with the real app's dev-console handle
 	return app;
@@ -136,6 +172,7 @@ async function loadScene( id ) {
 	// would silently inherit that), making results depend on scene order — so `--only X`
 	// would disagree with a full run and fail against its own golden.
 	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings }, { silent: true } );
+	restoreEnvParams();
 
 	const startedAt = performance.now();
 	await spec.build( app );
