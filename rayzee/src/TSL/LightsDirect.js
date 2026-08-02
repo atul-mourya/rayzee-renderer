@@ -74,7 +74,7 @@ export const traceShadowRay = Fn( ( [
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
 
-	const MAX_SHADOW_TRANSMISSIONS = 8;
+	const MAX_SHADOW_TRANSMISSIONS = 16;
 
 	Loop( { start: int( 0 ), end: int( MAX_SHADOW_TRANSMISSIONS ) }, () => {
 
@@ -160,7 +160,7 @@ export const traceShadowRay = Fn( ( [
 				const blendAlpha = clamp( shadowMaterial.color.a.mul( shadowMaterial.opacity ).mul( texAlpha ), 0.0, 1.0 );
 				transmittance.mulAssign( float( 1.0 ).sub( blendAlpha ) );
 
-				If( transmittance.lessThan( 0.005 ), () => {
+				If( transmittance.lessThan( 1e-4 ), () => {
 
 					transmittance.assign( 0.0 );
 					Break();
@@ -221,7 +221,7 @@ export const traceShadowRay = Fn( ( [
 			transmittance.mulAssign( matTransmittance );
 
 			// Early exit if almost no light passes through
-			If( transmittance.lessThan( 0.005 ), () => {
+			If( transmittance.lessThan( 1e-4 ), () => {
 
 				transmittance.assign( 0.0 );
 				Break();
@@ -237,7 +237,7 @@ export const traceShadowRay = Fn( ( [
 			// Handle transparent materials
 			transmittance.mulAssign( float( 1.0 ).sub( shadowMaterial.opacity ) );
 
-			If( transmittance.lessThan( 0.005 ), () => {
+			If( transmittance.lessThan( 1e-4 ), () => {
 
 				transmittance.assign( 0.0 );
 				Break();

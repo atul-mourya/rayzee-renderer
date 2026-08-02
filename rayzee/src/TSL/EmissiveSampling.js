@@ -545,61 +545,57 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		distance: float( 0.0 ),
 	} ).toVar();
 
-	// Skip for very rough diffuse surfaces on secondary bounces
-	const skip = bounceIndex.greaterThan( int( 1 ) ).and( material.roughness.greaterThan( 0.9 ) ).and( material.metalness.lessThan( 0.1 ) );
+	// No rough-diffuse secondary-bounce skip: dropping NEE while the emissive-hit MIS still
+	// down-weights BSDF hits deletes emitter energy from deep GI.
 
-	If( skip.not(), () => {
+	// Sample emissive triangle (CDF importance-weighted)
+	const emissiveSample = EmissiveSample.wrap( sampleEmissiveTriangle(
+		hitPoint, normal, rngState,
+		pixelCoord, resolution, frame, dimBase,
+		emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
+		triangleBuffer,
+	) );
 
-		// Sample emissive triangle (CDF importance-weighted)
-		const emissiveSample = EmissiveSample.wrap( sampleEmissiveTriangle(
-			hitPoint, normal, rngState,
-			pixelCoord, resolution, frame, dimBase,
-			emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-			triangleBuffer,
-		) );
+	If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
 
-		If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
+		result.hasEmissive.assign( true );
+		result.emissionOnly.assign( emissiveSample.emission );
+		result.distance.assign( emissiveSample.distance );
 
-			result.hasEmissive.assign( true );
-			result.emissionOnly.assign( emissiveSample.emission );
-			result.distance.assign( emissiveSample.distance );
+		// Check geometric validity
+		const NoL = max( float( 0.0 ), dot( normal, emissiveSample.direction ) );
 
-			// Check geometric validity
-			const NoL = max( float( 0.0 ), dot( normal, emissiveSample.direction ) );
+		If( NoL.greaterThan( 0.0 ), () => {
 
-			If( NoL.greaterThan( 0.0 ), () => {
+			// Calculate ray offset for shadow ray
+			const rayOffset = calculateRayOffsetFn( hitPoint, normal, material );
+			const rayOrigin = hitPoint.add( rayOffset );
 
-				// Calculate ray offset for shadow ray
-				const rayOffset = calculateRayOffsetFn( hitPoint, normal, material );
-				const rayOrigin = hitPoint.add( rayOffset );
+			// Trace shadow ray
+			const shadowDist = emissiveSample.distance.sub( 0.001 );
+			const visibility = traceShadowRayFn( rayOrigin, emissiveSample.direction, shadowDist );
 
-				// Trace shadow ray
-				const shadowDist = emissiveSample.distance.sub( 0.001 );
-				const visibility = traceShadowRayFn( rayOrigin, emissiveSample.direction, shadowDist );
+			If( visibility.greaterThan( 0.0 ), () => {
 
-				If( visibility.greaterThan( 0.0 ), () => {
+				// Share H + dot products between BRDF eval and PDF (computeDotProducts
+				// would otherwise run twice with identical inputs).
+				const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, emissiveSample.direction, material ) );
+				const brdfValue = evaluateMaterialResponseFromDots( material, dots );
+				const brdfPdf = calculateMaterialPDFFromDots( material, dots );
 
-					// Share H + dot products between BRDF eval and PDF (computeDotProducts
-					// would otherwise run twice with identical inputs).
-					const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, emissiveSample.direction, material ) );
-					const brdfValue = evaluateMaterialResponseFromDots( material, dots );
-					const brdfPdf = calculateMaterialPDFFromDots( material, dots );
+				// MIS weight: balance light sampling vs BRDF sampling
+				const misWeight = select(
+					brdfPdf.greaterThan( 0.0 ),
+					powerHeuristic( { pdf1: emissiveSample.pdf, pdf2: brdfPdf } ),
+					float( 1.0 )
+				);
 
-					// MIS weight: balance light sampling vs BRDF sampling
-					const misWeight = select(
-						brdfPdf.greaterThan( 0.0 ),
-						powerHeuristic( { pdf1: emissiveSample.pdf, pdf2: brdfPdf } ),
-						float( 1.0 )
-					);
-
-					// MC estimator: Le * brdf * cos_surface / pdf_solidAngle
-					// emissiveBoost is an additional user-controlled intensity multiplier
-					result.contribution.assign(
-						emissiveSample.emission.mul( brdfValue ).mul( NoL )
-							.div( emissiveSample.pdf ).mul( visibility ).mul( emissiveBoost ).mul( misWeight )
-					);
-
-				} );
+				// MC estimator: Le * brdf * cos_surface / pdf_solidAngle
+				// emissiveBoost is an additional user-controlled intensity multiplier
+				result.contribution.assign(
+					emissiveSample.emission.mul( brdfValue ).mul( NoL )
+						.div( emissiveSample.pdf ).mul( visibility ).mul( emissiveBoost ).mul( misWeight )
+				);
 
 			} );
 

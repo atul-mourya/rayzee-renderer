@@ -1177,12 +1177,9 @@ export function buildShadeKernel( params ) {
 							triangleBuffer,
 						) );
 
-						// skip rough diffuse surfaces on secondary bounces
-						const skip = bounceIndex.greaterThan( int( 1 ) )
-							.and( material.roughness.greaterThan( 0.9 ) )
-							.and( material.metalness.lessThan( 0.1 ) );
-
-						If( skip.not().and( emissiveSample.valid ).and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
+						// No rough-diffuse secondary-bounce skip here: dropping NEE while the emissive-hit
+						// MIS still down-weights BSDF hits deletes emitter energy from deep GI.
+						If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
 
 							const NoL = max( float( 0.0 ), dot( N, emissiveSample.direction ) );
 
