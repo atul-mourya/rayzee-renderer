@@ -53,6 +53,7 @@ import {
 	readMediumStack, writeMediumStack, readMediumSigmaA, writeMediumSigmaA,
 	readPathBounces, readSssSteps, readSSSMedium, writeSSSMedium,
 	readTransparentCount,
+	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
 	readHitMaterialIndex, readHitTriangleIndex,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
@@ -931,7 +932,10 @@ export function buildShadeKernel( params ) {
 				} );
 
 			} );
-			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps, transparentCount );
+			// Alpha skip keeps the direction, so the MIS origin is recoverable: accumulate the segment.
+			// Any redirection (refraction/reflection/SSS) breaks the line — reset.
+			const misRayT = select( interaction.isAlphaSkip, readMisRayT( rayBufferRW, rayID ).add( hitDist ), float( 0.0 ) );
+			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps, transparentCount, misRayT );
 			writeRayDirFlags( rayBufferRW, rayID, interaction.direction, flags );
 			// Free bounce: preserve prevBouncePdf (megakernel keeps the last opaque-scatter pdf across
 			// transmission/alpha-skip/SSS-boundary). Writing 1.0 corrupts the next bounce's env/emissive MIS,
@@ -984,18 +988,24 @@ export function buildShadeKernel( params ) {
 						// MIS partner pdf MUST match the actual NEE sampler: re-walk the Light BVH descent
 						// when it is active, else use the flat-CDF pdf. Mismatching them breaks MIS
 						// partition-of-unity → a real bias (see calculateLightBVHPdf).
+						// Evaluate it at the scatter point that produced prevBouncePdf — alpha skips moved
+						// the ray origin, and the skip-point pdf under-counts dist² so full-Le BSDF hits
+						// pass nearly unweighted (fireflies on emitters inside alpha-blend shades).
+						const misT = readMisRayT( rayBufferRW, rayID ).toVar();
+						const misOrigin = origin.sub( direction.mul( misT ) ).toVar();
+						const misDist = hitDist.add( misT ).toVar();
 						const lightPdf = float( 0.0 ).toVar();
 						If( lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
 
 							lightPdf.assign( calculateLightBVHPdf(
-								int( hitTriIdx ), hitDist, direction, origin,
+								int( hitTriIdx ), misDist, direction, misOrigin,
 								lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer,
 							) );
 
 						} ).Else( () => {
 
 							lightPdf.assign( calculateEmissiveLightPdf(
-								int( hitTriIdx ), hitDist, direction, origin,
+								int( hitTriIdx ), misDist, direction, misOrigin,
 								triangleBuffer, materialBuffer, emissiveTotalPower,
 							) );
 

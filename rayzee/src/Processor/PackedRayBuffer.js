@@ -5,7 +5,7 @@
 
 import {
 	storage, uintBitsToFloat, floatBitsToUint, vec2, vec3, vec4, uvec4, uint, int, float, clamp,
-	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16,
+	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max,
 } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { createLogger, fmt } from '../utils/Logger.js';
@@ -186,13 +186,38 @@ export const gbDecodeAlbedo = ( packed ) =>
 // .w packs per-ray bounce state: perRayBounces (bits 0-7) | sssSteps (bits 8-15) | transparentCount
 // (bits 16-21), each masked so an overrun can't bleed into its neighbour. pixelIndex is NOT stored —
 // it equals rayID (one ray per pixel).
-export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps, transparentCount = uint( 0 ) ) =>
-	buf.element( soa( id, RAY.ORIGIN_META ) )
-		.assign( vec4( origin, uintBitsToFloat(
-			uint( bounces ).bitAnd( uint( 0xFF ) )
-				.bitOr( uint( sssSteps ).bitAnd( uint( 0xFF ) ).shiftLeft( 8 ) )
-				.bitOr( uint( transparentCount ).bitAnd( uint( 0x3F ) ).shiftLeft( 16 ) )
-		) ) );
+// Bits 22-31 of ORIGIN_META.w: alpha-passthrough distance since the last real scatter (Cycles'
+// mis_ray_t), as a 10-bit float (4e6m, bias 8, ~0.004-500 range, ≤1.6% rel err). The emissive-hit
+// MIS partner pdf must be evaluated at the scatter point that produced prevBouncePdf, not at the
+// last skip surface — feeding it the skip origin collapses dist² and lets full-Le BSDF hits
+// through nearly unweighted (fireflies on emitters inside alpha-blend shades).
+const encodeMisRayT = ( t ) => {
+
+	const e = clamp( floor( log2( max( t, 1e-6 ) ) ), - 8.0, 7.0 );
+	const m = clamp( float( t ).mul( exp2( e.negate() ) ).sub( 1.0 ).mul( 64.0 ), 0.0, 63.0 );
+	return select( float( t ).lessThan( 0.004 ), uint( 0 ), uint( e.add( 8.0 ) ).shiftLeft( 6 ).bitOr( uint( m ) ) );
+
+};
+
+export const readMisRayT = ( buf, id ) => {
+
+	const bits = floatBitsToUint( buf.element( soa( id, RAY.ORIGIN_META ) ).w ).shiftRight( 22 );
+	const e = float( bits.shiftRight( 6 ).bitAnd( uint( 15 ) ) ).sub( 8.0 );
+	const m = float( bits.bitAnd( uint( 63 ) ) ).div( 64.0 ).add( 1.0 );
+	return select( bits.equal( uint( 0 ) ), float( 0.0 ), m.mul( exp2( e ) ) );
+
+};
+
+export const writeRayOriginMeta = ( buf, id, origin, bounces, sssSteps, transparentCount = uint( 0 ), misRayT = null ) => {
+
+	let packed = uint( bounces ).bitAnd( uint( 0xFF ) )
+		.bitOr( uint( sssSteps ).bitAnd( uint( 0xFF ) ).shiftLeft( 8 ) )
+		.bitOr( uint( transparentCount ).bitAnd( uint( 0x3F ) ).shiftLeft( 16 ) );
+	if ( misRayT !== null ) packed = packed.bitOr( encodeMisRayT( misRayT ).shiftLeft( 22 ) );
+	return buf.element( soa( id, RAY.ORIGIN_META ) )
+		.assign( vec4( origin, uintBitsToFloat( packed ) ) );
+
+};
 
 export const writeRayDirFlags = ( buf, id, direction, bounceFlags ) =>
 	buf.element( soa( id, RAY.DIR_FLAGS ) )
