@@ -132,7 +132,7 @@ export const RandomPointInCircle = ( rngState ) => {
 //       +6  subsurface HG scatter dir    (ShadeKernel)
 //       +7  ground-catcher cosine BSDF   (ShadeKernel)
 //       +8  indirect-strategy direction  (LightsIndirect)
-//   1D  +0  {lights,BRDF} strategy       (LightsSampling)
+//   1D  +0  (free — was the {lights,BRDF} stochastic strategy pick)
 //       +1  emissive-triangle pick       (EmissiveSampling / LightBVHSampling)
 //       +2  BSDF lobe selection          (ShadeKernel)
 //       +3  Russian roulette             (PathTracerCore)
@@ -155,7 +155,7 @@ export const RandomPointInCircle = ( rngState ) => {
 // Draws whose COUNT varies per pixel cannot sit in a per-bounce block without overflowing into
 // the next bounce's dimensions, so they live above AUX_BASE:
 //   AUX_BASE +  0..63   env-backdrop blur taps      (ShadeKernel)
-//   AUX_BASE + 64..127  light reservoir, 4 types×16 (LightsSampling)
+//   AUX_BASE + 64..    light reservoir, one dimension per scene light (LightsSampling)
 export const SAMPLER_DIMS_PER_BOUNCE = 32;
 export const SAMPLER_DIM_AUX_BASE = 4096;
 

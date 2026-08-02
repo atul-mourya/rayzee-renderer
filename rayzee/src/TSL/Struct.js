@@ -242,16 +242,6 @@ export const MaterialCache = struct( {
 } );
 
 
-// IMPROVEMENT: Dynamic MIS strategy based on material properties
-export const MISStrategy = struct( {
-	brdfWeight: 'float',
-	lightWeight: 'float',
-	envWeight: 'float',
-	useBRDFSampling: 'bool',
-	useLightSampling: 'bool',
-	useEnvSampling: 'bool',
-} );
-
 // General rendering state (used across all rendering paths)
 export const RenderState = struct( {
 	traversals: 'int', // Remaining general bounces

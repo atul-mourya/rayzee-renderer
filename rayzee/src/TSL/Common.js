@@ -1,10 +1,9 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp, bool as tslBool } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp } from 'three/tsl';
 
 import {
 	AnisoFrame,
 	DotProducts,
 	MaterialClassification,
-	MISStrategy,
 	RayTracingMaterial,
 	ShadowMaterial,
 } from './Struct.js';
@@ -296,51 +295,6 @@ export const classifyMaterial = Fn( ( [ metalness, roughness, transmission, clea
 	const complexityScore = clamp( baseComplexity.add( interactionComplexity ), 0.0, 1.0 );
 
 	return MaterialClassification( { isMetallic, isRough, isSmooth, isTransmissive, hasClearcoat, isEmissive, complexityScore } );
-
-} );
-
-// Dynamic MIS strategy based on material properties
-export const selectOptimalMISStrategy = Fn( ( [ roughness, metalness, bounceIndex, throughput ] ) => {
-
-	const throughputStrength = maxComponent( { v: throughput } ).toVar();
-
-	// Environment is now handled via deterministic NEE — not part of stochastic selection.
-	// Only lights and BRDF are stochastically selected.
-	const brdfWeight = float( 0.5 ).toVar();
-	const lightWeight = float( 0.5 ).toVar();
-	const useBRDFSampling = tslBool( true );
-	const useLightSampling = throughputStrength.greaterThan( 0.01 );
-
-	If( roughness.lessThan( 0.1 ).and( metalness.greaterThan( 0.8 ) ), () => {
-
-		// Highly specular materials — favor BRDF
-		brdfWeight.assign( 0.7 );
-		lightWeight.assign( 0.3 );
-
-	} ).ElseIf( roughness.greaterThan( 0.7 ), () => {
-
-		// Diffuse materials — favor light sampling
-		brdfWeight.assign( 0.4 );
-		lightWeight.assign( 0.6 );
-
-	} );
-
-	// Gentle adjustment for very deep bounces — shift toward BRDF
-	If( bounceIndex.greaterThan( int( 5 ) ), () => {
-
-		brdfWeight.assign( 0.6 );
-		lightWeight.assign( 0.4 );
-
-	} );
-
-	return MISStrategy( {
-		brdfWeight,
-		lightWeight,
-		envWeight: float( 0.0 ),
-		useBRDFSampling,
-		useLightSampling,
-		useEnvSampling: tslBool( false ),
-	} );
 
 } );
 

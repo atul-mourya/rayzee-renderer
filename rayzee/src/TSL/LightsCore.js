@@ -83,6 +83,9 @@ export const LightSample = struct( {
 	distance: 'float',
 	lightType: 'int',
 	valid: 'bool',
+	// Reservoir denominator, carried out so the BSDF-hit MIS partner can rebuild the
+	// selection pdf without walking every light buffer a second time.
+	selectionTotalWeight: 'float',
 } );
 
 export const IndirectLightingResult = struct( {
