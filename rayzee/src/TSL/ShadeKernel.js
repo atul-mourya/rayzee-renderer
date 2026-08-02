@@ -1276,6 +1276,17 @@ export function buildShadeKernel( params ) {
 		) ).toVar();
 
 		const bounceDir = indirectResult.direction.toVar();
+
+		// Shading-normal leak guard: a normal-mapped lobe can sample below the geometric surface;
+		// tracing that ray tunnels through single-sided shells onto whatever sits behind them.
+		const NgeoFF = select( dot( hitNormal, V ).lessThan( 0.0 ), hitNormal.negate(), hitNormal );
+		If( brdfIsTransmission.not().and( dot( bounceDir, NgeoFF ).lessThanEqual( 0.0 ) ), () => {
+
+			commitDeferredAux( N );
+			terminatePath();
+			Return();
+
+		} );
 		// combinedPdf is stored as next bounce's prevBouncePdf for NEE↔implicit-env MIS
 		const bouncePdf = max( indirectResult.combinedPdf, 0.001 ).toVar();
 		throughput.mulAssign( indirectResult.throughput );
