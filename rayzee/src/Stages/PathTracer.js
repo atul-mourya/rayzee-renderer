@@ -1214,6 +1214,7 @@ export class PathTracer extends PathTracerStage {
 			fireflyThreshold: this.fireflyThreshold,
 			// RNG axis only (keys STBN via frame & 63).
 			frame: this.seedFrame,
+			accumFrame: this.frame,
 			resolution: this.resolution,
 			emissiveTriangleCount: this.emissiveTriangleCount,
 			emissiveVec4Offset: this.emissiveVec4Offset,

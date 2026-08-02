@@ -94,6 +94,10 @@ export function buildShadeKernel( params ) {
 		globalIlluminationIntensity,
 		cameraProjectionMatrix, cameraViewMatrix,
 		fireflyThreshold, frame, resolution,
+		// Accumulation index, NOT the free-running seed counter `frame` rides. The firefly clamp
+		// relaxes as sqrt(frame+1) so its bias decays as a render converges; keying that off the
+		// seed axis let it grow for the whole session and disabled suppression outright.
+		accumFrame,
 		chunkRowBase, // chunked path pool: global pixel = chunkRowBase·W + localSlot (rayID). See spec.
 		emissiveTriangleCount, emissiveVec4Offset, emissiveTotalPower,
 		emissiveBoost, totalTriangleCount, enableEmissiveTriangleSampling,
@@ -440,7 +444,7 @@ export function buildShadeKernel( params ) {
 					currentRadiance.xyz.add(
 						regularizePathContribution(
 							throughput.mul( envColor ).mul( envScale ),
-							fireflyPathLen, fireflyThreshold, int( frame ),
+							fireflyPathLen, fireflyThreshold, int( accumFrame ),
 						),
 					),
 					currentRadiance.w
@@ -1008,7 +1012,7 @@ export function buildShadeKernel( params ) {
 				currentRadiance.xyz.add(
 					regularizePathContribution(
 						emissive.mul( throughput ).mul( emissiveGiScale ).mul( emissiveMISWeight ),
-						float( bounceIndex ), fireflyThreshold, int( frame ),
+						float( bounceIndex ), fireflyThreshold, int( accumFrame ),
 					),
 				),
 				currentRadiance.w
@@ -1137,7 +1141,7 @@ export function buildShadeKernel( params ) {
 			currentRadiance.xyz.add(
 				regularizePathContribution(
 					throughput.mul( directLight ).mul( giScale ),
-					float( bounceIndex ), fireflyThreshold, int( frame ),
+					float( bounceIndex ), fireflyThreshold, int( accumFrame ),
 				),
 			),
 			currentRadiance.w
@@ -1210,7 +1214,7 @@ export function buildShadeKernel( params ) {
 										currentRadiance.xyz.add(
 											regularizePathContribution(
 												emissiveLight.mul( throughput ).mul( giScale ),
-												float( bounceIndex ), fireflyThreshold, int( frame ),
+												float( bounceIndex ), fireflyThreshold, int( accumFrame ),
 											),
 										),
 										currentRadiance.w,
@@ -1239,7 +1243,7 @@ export function buildShadeKernel( params ) {
 							currentRadiance.xyz.add(
 								regularizePathContribution(
 									emissiveLight.mul( throughput ).mul( giScale ),
-									float( bounceIndex ), fireflyThreshold, int( frame ),
+									float( bounceIndex ), fireflyThreshold, int( accumFrame ),
 								),
 							),
 							currentRadiance.w,
