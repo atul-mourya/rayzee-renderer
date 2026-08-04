@@ -31,6 +31,13 @@ import {
 
 const log = createLogger( 'wavefront' );
 
+// Shared by the 1D index-list kernels built inline below.
+const LIST_WG_SIZE = 256;
+
+// Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
+// (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
+const BOUNCE_KERNELS = [ 'extend', 'shade', 'globalHist', 'globalScatter', 'compact', 'compactCopyback' ];
+
 export class PathTracer extends PathTracerStage {
 
 	constructor( renderer, scene, camera, options = {} ) {
@@ -350,7 +357,7 @@ export class PathTracer extends PathTracerStage {
 
 				// reset counters → compact non-frozen pixel IDs → publish count → list-driven 1D generate.
 				const genSized = Math.min( maxRays, Math.ceil( activeBounce0 * 1.5 ) + 1024 );
-				km.setDispatchCount( 'generateList', [ Math.ceil( genSized / 256 ), 1, 1 ] );
+				km.setDispatchForCount( 'generateList', genSized );
 				km.dispatch( 'resetFrameCounters' );
 				km.dispatch( 'buildActivePixels' );
 				km.dispatch( 'seedEnter' );
@@ -402,23 +409,12 @@ export class PathTracer extends PathTracerStage {
 					}
 
 					const sized = Math.min( maxRays, Math.ceil( entering * 1.5 ) + 1024 );
-					const wg = [ Math.ceil( sized / 256 ), 1, 1 ];
-					km.setDispatchCount( 'extend', wg );
-					km.setDispatchCount( 'shade', wg );
-					km.setDispatchCount( 'globalHist', wg );
-					km.setDispatchCount( 'globalScatter', wg );
-					km.setDispatchCount( 'compact', wg );
-					km.setDispatchCount( 'compactCopyback', wg );
+					for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, sized );
 
 				} else {
 
 					km.dispatch( 'enterFull' );
-					const full = [ Math.ceil( maxRays / 256 ), 1, 1 ];
-					km.setDispatchCount( 'extend', full );
-					km.setDispatchCount( 'shade', full );
-					km.setDispatchCount( 'compact', full );
-					km.setDispatchCount( 'globalHist', full );
-					km.setDispatchCount( 'globalScatter', full );
+					for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, maxRays );
 
 				}
 
@@ -935,7 +931,7 @@ export class PathTracer extends PathTracerStage {
 
 		} );
 		this._kernelManager.register( 'initActiveIndices',
-			initFn().compute( [ Math.ceil( ( this._chunkRows * w ) / 256 ), 1, 1 ], [ 256, 1, 1 ] )
+			initFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const genParams = {
@@ -977,13 +973,12 @@ export class PathTracer extends PathTracerStage {
 		const freezeK = this.pixelFreezeStability;
 		const resetFrameFn = Fn( () => {
 
-			// ACTIVE is per-chunk (zeroed before every chunk's scatter). CONVERGED/FROZEN are per-FRAME counters
-			// summed across chunks in FinalWrite → zero them only on the first chunk of the frame.
+			// ACTIVE is per-chunk (zeroed before every chunk's scatter). CONVERGED is a per-FRAME counter
+			// summed across chunks in FinalWrite → zero it only on the first chunk of the frame.
 			atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
 			If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
 
 				atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
-				atomicStore( counters.element( uint( COUNTER.FROZEN_COUNT ) ), uint( 0 ) );
 
 			} );
 
@@ -1050,7 +1045,7 @@ export class PathTracer extends PathTracerStage {
 
 		} );
 		this._kernelManager.register( 'buildActivePixels',
-			buildActiveFn().compute( [ Math.ceil( ( this._chunkRows * w ) / 256 ), 1, 1 ], [ 256, 1, 1 ] )
+			buildActiveFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const seedEnterFn = Fn( () => {
@@ -1073,7 +1068,7 @@ export class PathTracer extends PathTracerStage {
 			counters,
 		} );
 		this._kernelManager.register( 'generateList',
-			genListFn().compute( [ Math.ceil( maxRays / 256 ), 1, 1 ], [ 256, 1, 1 ] )
+			genListFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const freshBvh = this.bvhStorageNode;
@@ -1108,7 +1103,6 @@ export class PathTracer extends PathTracerStage {
 		const extFn = buildExtendKernel( {
 			bvhBuffer: freshBvh,
 			triangleBuffer: freshTri,
-			materialBuffer: freshMat,
 			rayBufferRO: pb.rayBuffer.ro,
 			hitBufferRW: pb.hitBuffer.rw,
 			activeIndicesRO: qm.getActiveReadRO(),
@@ -1292,7 +1286,7 @@ export class PathTracer extends PathTracerStage {
 
 		} );
 		this._kernelManager.register( 'compactCopyback',
-			copyFn().compute( [ Math.ceil( maxRays / 256 ), 1, 1 ], [ 256, 1, 1 ] )
+			copyFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const fwFn = buildFinalWriteKernel( {
@@ -1324,7 +1318,6 @@ export class PathTracer extends PathTracerStage {
 			// Tier-2 freeze (stamp + pass-through)
 			usePixelFreeze: this.usePixelFreeze,
 			pixelFreezeThreshold: this.pixelFreezeThreshold,
-			pixelFreezeStability: this.pixelFreezeStability,
 			streakBufferRW: streakRW,
 			frozenMaskRO, // dilated frozen mask (read-only; matches the active-list decision)
 			chunkRowBase: this._wfChunkRowBase,
@@ -1396,10 +1389,7 @@ export class PathTracer extends PathTracerStage {
 		const w = this._wfRenderWidth.value;
 		const h = this._wfRenderHeight.value;
 
-		this._kernelManager.setDispatchCount( 'debug', [
-			Math.ceil( w / DEBUG_WG_SIZE ),
-			Math.ceil( h / DEBUG_WG_SIZE ), 1
-		] );
+		this._kernelManager.setDispatchForGrid( 'debug', w, h );
 
 	}
 
@@ -1416,10 +1406,10 @@ export class PathTracer extends PathTracerStage {
 		this._wfMaxRayCount.value = chunkPixels;
 
 		const km = this._kernelManager;
-		km.setDispatchCount( 'generate', [ Math.ceil( w / GENERATE_WG_SIZE ), Math.ceil( rows / GENERATE_WG_SIZE ), 1 ] );
-		km.setDispatchCount( 'finalWrite', [ Math.ceil( w / FINALWRITE_WG_SIZE ), Math.ceil( rows / FINALWRITE_WG_SIZE ), 1 ] );
-		km.setDispatchCount( 'initActiveIndices', [ Math.ceil( chunkPixels / 256 ), 1, 1 ] );
-		km.setDispatchCount( 'buildActivePixels', [ Math.ceil( chunkPixels / 256 ), 1, 1 ] );
+		km.setDispatchForGrid( 'generate', w, rows );
+		km.setDispatchForGrid( 'finalWrite', w, rows );
+		km.setDispatchForCount( 'initActiveIndices', chunkPixels );
+		km.setDispatchForCount( 'buildActivePixels', chunkPixels );
 
 		return chunkPixels;
 

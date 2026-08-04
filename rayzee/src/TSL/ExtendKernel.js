@@ -13,17 +13,17 @@ import {
 import { traverseBVH } from './BVHTraversal.js';
 import { Ray, HitInfo } from './Struct.js';
 import {
-	readRayOrigin, readRayDirection, readMediumStack,
+	readRayOrigin, readRayDirection, readRayBounceFlags, readMediumStack,
 	writeHitPacked,
 } from '../Processor/PackedRayBuffer.js';
-import { COUNTER } from '../Processor/QueueManager.js';
+import { COUNTER, RAY_FLAG } from '../Processor/QueueManager.js';
 
 const WG_SIZE = 256;
 
 export function buildExtendKernel( params ) {
 
 	const {
-		bvhBuffer, triangleBuffer, materialBuffer,
+		bvhBuffer, triangleBuffer,
 		rayBufferRO,
 		hitBufferRW,
 		activeIndicesRO,
@@ -44,6 +44,14 @@ export function buildExtendKernel( params ) {
 		} );
 
 		const rayID = activeIndicesRO.element( threadIdx );
+
+		// Parity with Shade's guard. Free — the flags share DIR_FLAGS.w with the direction read below.
+		// Only culls work on the pinned-dispatch path, whose identity list still holds dead rays.
+		If( readRayBounceFlags( rayBufferRO, rayID ).bitAnd( uint( RAY_FLAG.ACTIVE ) ).equal( uint( 0 ) ), () => {
+
+			Return();
+
+		} );
 
 		const origin = readRayOrigin( rayBufferRO, rayID ).toVar();
 		const direction = readRayDirection( rayBufferRO, rayID ).toVar();

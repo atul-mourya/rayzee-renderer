@@ -4,24 +4,13 @@
  * Builds, caches, and dispatches individual compute nodes for the wavefront
  * path tracing pipeline. Each kernel is a separate `Fn().compute()` node.
  *
- * Manages workgroup sizes, dispatch dimensions, and provides a unified
- * dispatch interface that wraps `renderer.compute(node)`.
+ * Dispatch grids are derived from each node's own `workgroupSize`, so the divisor can never
+ * drift from the size the kernel was compiled with — see `setDispatchForCount`.
  */
 
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'wavefront' );
-
-/** Default workgroup sizes per kernel type */
-const WORKGROUP_SIZES = {
-	generate: [ 16, 16, 1 ], // 2D screen-space
-	extend: [ 256, 1, 1 ], // 1D ray-parallel
-	shade: [ 256, 1, 1 ], // 1D ray-parallel (material-sorted when sort enabled)
-	connect: [ 256, 1, 1 ], // 1D shadow-ray-parallel
-	accumulate: [ 256, 1, 1 ], // 1D shadow-ray-parallel
-	compact: [ 256, 1, 1 ], // 1D ray-parallel
-	finalWrite: [ 16, 16, 1 ], // 2D screen-space
-};
 
 export class KernelManager {
 
@@ -40,12 +29,6 @@ export class KernelManager {
 		 * @type {Map<string, ComputeNode>}
 		 */
 		this.kernels = new Map();
-
-		/**
-		 * Map of kernel name → workgroup size [x, y, z].
-		 * @type {Map<string, number[]>}
-		 */
-		this.workgroupSizes = new Map();
 
 		/**
 		 * Timing data for performance profiling.
@@ -73,13 +56,6 @@ export class KernelManager {
 		 */
 		this._firstDispatches = [];
 		this._firstDispatchFlush = null;
-
-		// Initialize workgroup sizes from defaults
-		for ( const [ name, wgSize ] of Object.entries( WORKGROUP_SIZES ) ) {
-
-			this.workgroupSizes.set( name, wgSize );
-
-		}
 
 	}
 
@@ -177,61 +153,32 @@ export class KernelManager {
 	}
 
 	/**
-	 * Update dispatch dimensions for a kernel.
+	 * Size a 1D kernel's grid to cover `count` items, deriving the divisor from the workgroup size the
+	 * kernel was actually registered with. Extend/Shade bound on ENTERING_COUNT rather than on the grid,
+	 * so an under-sized grid silently drops the tail of the active list — never hardcode the divisor.
 	 * @param {string} name - Kernel name
-	 * @param {number[]} count - Dispatch dimensions [x, y, z]
+	 * @param {number} count - Number of items to cover
 	 */
-	setDispatchCount( name, count ) {
+	setDispatchForCount( name, count ) {
 
 		const node = this.kernels.get( name );
 		if ( ! node ) return;
-		node.dispatchSize = count;
+		node.dispatchSize = [ Math.ceil( count / node.workgroupSize[ 0 ] ), 1, 1 ];
 
 	}
 
 	/**
-	 * Calculate 2D dispatch dimensions for a screen-space kernel.
-	 * @param {number} width - Render width in pixels
-	 * @param {number} height - Render height in pixels
-	 * @param {string} kernelName - Kernel name for WG size lookup
-	 * @returns {number[]} [dispatchX, dispatchY, 1]
+	 * Size a 2D screen-space kernel's grid, deriving both divisors from the registered workgroup size.
+	 * @param {string} name - Kernel name
+	 * @param {number} width - Width in pixels
+	 * @param {number} height - Height in pixels
 	 */
-	calcScreenDispatch( width, height, kernelName ) {
+	setDispatchForGrid( name, width, height ) {
 
-		const wg = this.workgroupSizes.get( kernelName ) || [ 16, 16, 1 ];
-		return [
-			Math.ceil( width / wg[ 0 ] ),
-			Math.ceil( height / wg[ 1 ] ),
-			1
-		];
-
-	}
-
-	/**
-	 * Calculate 1D dispatch dimensions for a ray-parallel kernel.
-	 * @param {number} rayCount - Number of rays to process
-	 * @param {string} kernelName - Kernel name for WG size lookup
-	 * @returns {number[]} [dispatchX, 1, 1]
-	 */
-	calcRayDispatch( rayCount, kernelName ) {
-
-		const wg = this.workgroupSizes.get( kernelName ) || [ 256, 1, 1 ];
-		return [
-			Math.ceil( rayCount / wg[ 0 ] ),
-			1,
-			1
-		];
-
-	}
-
-	/**
-	 * Get the workgroup size for a kernel.
-	 * @param {string} name
-	 * @returns {number[]}
-	 */
-	getWorkgroupSize( name ) {
-
-		return this.workgroupSizes.get( name ) || [ 256, 1, 1 ];
+		const node = this.kernels.get( name );
+		if ( ! node ) return;
+		const wg = node.workgroupSize;
+		node.dispatchSize = [ Math.ceil( width / wg[ 0 ] ), Math.ceil( height / wg[ 1 ] ), 1 ];
 
 	}
 

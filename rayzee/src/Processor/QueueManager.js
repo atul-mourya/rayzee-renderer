@@ -17,9 +17,10 @@ export const COUNTER = {
 	// per-frame count of pixels whose Tier-1 relative-error dropped below threshold; zeroed at frame start by
 	// initActiveIndices, incremented in FinalWrite, read back async to drive the whole-frame convergence early-stop.
 	CONVERGED_COUNT: 2,
-	// Tier-2 per-pixel freeze: FROZEN_COUNT = pixels skipped this frame; ACTIVE_PIXEL_COUNT = bounce-0 active
-	// count (maxRays − frozen), read back to size next frame's grid.
-	FROZEN_COUNT: 3,
+	// Reserved hole — was FROZEN_COUNT, a write-only counter no reader ever consumed. Kept as a hole so
+	// slot indices stay stable across the JS enum and every kernel that stores by index.
+	RESERVED_3: 3,
+	// Tier-2 per-pixel freeze: bounce-0 active count (maxRays − frozen), read back to size next frame's grid.
 	ACTIVE_PIXEL_COUNT: 4,
 	COUNT: 5,
 };

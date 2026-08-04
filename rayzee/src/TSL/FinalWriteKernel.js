@@ -54,7 +54,7 @@ export function buildFinalWriteKernel( params ) {
 
 		// Tier-2 per-pixel freeze: streakBufferRW = per-pixel freeze-candidate streak (stamped here);
 		// frozenMaskRO = dilated frozen mask from buildActivePixels (pass-through gates on it, not streak).
-		usePixelFreeze, pixelFreezeThreshold, pixelFreezeStability, streakBufferRW, frozenMaskRO,
+		usePixelFreeze, pixelFreezeThreshold, streakBufferRW, frozenMaskRO,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -184,25 +184,12 @@ export function buildFinalWriteKernel( params ) {
 
 					} );
 
-					If( wasFrozen, () => {
-
-						// Already frozen (passed through above) — count it.
-						atomicAdd( counters.element( uint( COUNTER.FROZEN_COUNT ) ), uint( 1 ) );
-
-					} );
-
 					If( wasFrozen.not().and( frame.greaterThan( uint( 0 ) ) ), () => {
 
 						const freezeCandidate = frame.greaterThanEqual( uint( adaptiveMinSamples ) )
 							.and( relErr.lessThan( pixelFreezeThreshold ) );
 						const newStreak = select( freezeCandidate, streakBufferRW.element( pixelId ).add( uint( 1 ) ), uint( 0 ) ).toVar();
 						streakBufferRW.element( pixelId ).assign( newStreak );
-						// Just reached K → frozen next frame; count it now so the frozen population is current.
-						If( newStreak.greaterThanEqual( uint( pixelFreezeStability ) ), () => {
-
-							atomicAdd( counters.element( uint( COUNTER.FROZEN_COUNT ) ), uint( 1 ) );
-
-						} );
 
 					} );
 
