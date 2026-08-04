@@ -207,3 +207,38 @@ export const PERF = {
 	// per-dispatch overhead is a large fraction of the measurement.
 	abUnchangedPct: 8,
 };
+
+/**
+ * Per-kernel GPU profiling (`bench kernels`).
+ *
+ * Exists because `perf`/`ab` cannot resolve the work that actually dominates this renderer. Two
+ * reasons, both measured: the corpus renders at 256², where the wavefront's fixed per-bounce cost is
+ * ~24 % of the frame and traversal is nearly invisible; and ms/sample for the whole frame buries a
+ * change to one kernel under every other pass. This mode fixes both — it renders where the frame is
+ * compute-bound and attributes GPU time per kernel, so a change to `extend` is judged against
+ * `extend`'s own noise floor rather than the frame's.
+ *
+ * Single-tree profiling only. It does not gate; `ab` remains the gate.
+ */
+export const KERNELS = {
+	// Where traversal is actually visible. At 256² the per-bounce floor dominates; prior profiling
+	// put the marginal cost at ~30.6 ns/px with a ~2.4 ms floor, so the floor is ~3 % of a 1536²
+	// frame versus ~24 % of a 512² one. 1024² is comfortably compute-bound and still quick.
+	renderSize: { width: 1024, height: 1024 },
+
+	// Scenes worth profiling by default: geometry-heavy enough that traversal dominates. Kept short
+	// because every sample here costs ~16x a 256² one. Override with --only.
+	defaultScenes: [ 'spheres-gradient', 'cornell-emissive', 'glass-transmission' ],
+
+	warmupSamples: 8, // pays the WGSL recompile the render-size change forces
+	// Per round. Deliberately smaller than PERF.measureSamples: the per-kernel signal is far
+	// cleaner than frame total (no cross-kernel interference), and 1024² samples are expensive.
+	measureSamples: 40,
+	// The noise floor comes from the spread BETWEEN rounds, not from within-round SE — the same
+	// reason compareReplicates exists for the A/B gate. Three rounds is the useful minimum.
+	rounds: 3,
+	trimFraction: 0.2,
+	// Kernels below this share of frame GPU time are folded into an "other" row, so the table shows
+	// where time goes rather than 20 rows of noise.
+	reportThresholdPct: 0.5,
+};

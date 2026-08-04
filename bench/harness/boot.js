@@ -235,6 +235,57 @@ async function measureGPUPerSample( count ) {
 
 }
 
+/**
+ * Per-kernel GPU ms, one reading per rendered sample.
+ *
+ * Same one-sample-then-resolve discipline as measureGPUPerSample: timestamps report the last
+ * resolved frame, so anything larger makes the reading ambiguous.
+ *
+ * @param {number} count - number of single-sample measurements
+ * @returns {Promise<Array<{kernels: Object<string, number>, total: number, unattributed: number}>>}
+ */
+async function measureKernelGPU( count ) {
+
+	const readings = [];
+
+	for ( let i = 0; i < count; i ++ ) {
+
+		await app.renderFrames( 1, { reset: false, yieldEvery: 0 } );
+		const timings = await app.getKernelGPUTimings();
+		if ( timings ) readings.push( timings );
+
+	}
+
+	return readings;
+
+}
+
+/**
+ * Override the path tracer's render size for timing runs.
+ *
+ * The corpus renders at RENDER_SIZE (256²) so goldens stay cheap, but at that size the wavefront's
+ * fixed per-bounce cost dominates and traversal work is nearly invisible — a kernel profile has to
+ * run where the frame is actually compute-bound. Timing-only: nothing in this mode captures pixels,
+ * and probes()/capturePNG() still assume RENDER_SIZE, so do not mix this with the image suites.
+ *
+ * @param {number} width
+ * @param {number} height
+ * @returns {{width: number, height: number}} the size actually applied after engine clamping
+ */
+function setRenderSize( width, height ) {
+
+	app.setCanvasSize( width, height );
+	app.reset();
+	app.stopAnimation();
+
+	const stage = app.stages.pathTracer;
+	return {
+		width: stage._wfRenderWidth?.value ?? width,
+		height: stage._wfRenderHeight?.value ?? height,
+	};
+
+}
+
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
 function capturePNG() {
 
@@ -430,6 +481,8 @@ globalThis.__bench = {
 	loadScene,
 	render,
 	measureGPUPerSample,
+	measureKernelGPU,
+	setRenderSize,
 	setPerfMode,
 	setDenoiser,
 	denoisedNonFinite,

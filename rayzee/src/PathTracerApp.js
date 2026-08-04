@@ -1722,6 +1722,80 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Per-kernel GPU milliseconds for the last resolved frame.
+	 *
+	 * {@link PathTracerApp#getGPUTimings} only reports the frame aggregate, which buries a change to
+	 * one kernel under everything else. The backend's timestamp query pool already retains one
+	 * duration per compute pass, keyed `c:<frameCalls>:<nodeId>:f<frame>` (three.js
+	 * `WebGPUTimestampQueryPool.resolveQueriesAsync` → `timestamps`); this attributes those back to
+	 * kernel names through `KernelManager`'s registry.
+	 *
+	 * Durations are SUMMED per kernel across the frame, so `extend` reports its whole per-frame cost
+	 * over every bounce iteration rather than one bounce. `unattributed` collects passes belonging to
+	 * no registered kernel (other stages, denoisers) so `sum(kernels) + unattributed` reconciles with
+	 * `total` — a gap there means a pass was missed, not that a kernel is free.
+	 *
+	 * The pool's map accumulates across frames and is never pruned, hence the newest-frame filter.
+	 *
+	 * Requires {@link PathTracerApp#enableGPUTiming}. Returns null when timestamps are unavailable.
+	 *
+	 * @returns {Promise<{kernels: Object<string, number>, total: number, unattributed: number, frame: number}|null>}
+	 */
+	async getKernelGPUTimings() {
+
+		const renderer = this.renderer;
+		if ( ! renderer?.backend?.trackTimestamp ) return null;
+
+		await renderer.resolveTimestampsAsync( 'compute' );
+
+		const timestamps = renderer.backend.timestampQueryPool?.compute?.timestamps;
+		if ( ! timestamps || timestamps.size === 0 ) return null;
+
+		const nameByNodeId = new Map();
+		const kernelMap = this.stages?.pathTracer?._kernelManager?.kernels;
+		if ( kernelMap ) {
+
+			for ( const [ name, node ] of kernelMap ) nameByNodeId.set( node.id, name );
+
+		}
+
+		const parsed = [];
+		let frame = - 1;
+
+		for ( const [ uid, ms ] of timestamps ) {
+
+			// 'c:<frameCalls>:<nodeId>:f<frame>'
+			const parts = uid.split( ':' );
+			if ( parts.length !== 4 ) continue;
+
+			const f = Number( parts[ 3 ].slice( 1 ) );
+			if ( ! Number.isFinite( f ) ) continue;
+
+			parsed.push( { nodeId: Number( parts[ 2 ] ), f, ms } );
+			if ( f > frame ) frame = f;
+
+		}
+
+		const kernels = {};
+		let total = 0;
+		let unattributed = 0;
+
+		for ( const entry of parsed ) {
+
+			if ( entry.f !== frame ) continue;
+
+			total += entry.ms;
+			const name = nameByNodeId.get( entry.nodeId );
+			if ( name === undefined ) unattributed += entry.ms;
+			else kernels[ name ] = ( kernels[ name ] ?? 0 ) + entry.ms;
+
+		}
+
+		return { kernels, total, unattributed, frame };
+
+	}
+
 	// ═══════════════════════════════════════════════════════════════
 	// Output (absorbed from OutputAPI)
 	// ═══════════════════════════════════════════════════════════════

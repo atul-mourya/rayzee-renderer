@@ -24,6 +24,7 @@ import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js
 import { runDenoise } from './denoise.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
+import { formatProfile, runKernelProfile } from './kernels.js';
 
 const exec = promisify( execFile );
 
@@ -370,7 +371,7 @@ async function commandAB( baseRef, flags ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'memory', 'perf', 'bless', 'ab', 'list' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -511,6 +512,28 @@ async function main() {
 			} );
 			log( `${DIM}  appended to ${path.relative( PATHS.repoRoot, PATHS.perfLog )}${RESET}` );
 			log( `${DIM}  gate on regressions with: npm run bench:ab -- main${RESET}` );
+
+		}
+
+		if ( command === 'kernels' ) {
+
+			// Deliberately NOT part of `run`: setRenderSize overrides the corpus render size, which
+			// probes()/capturePNG() still assume, so this must not share a harness with the image suites.
+			log( `\nper-kernel GPU profile (measurement, not a gate)` );
+			await bench.setPerfMode( true );
+
+			try {
+
+				const report = await runKernelProfile( bench, { only, log } );
+				for ( const result of report.results ) log( formatProfile( result ) );
+				log( `${DIM}  a change smaller than a kernel's between-round spread is not observable here${RESET}` );
+				log( `${DIM}  gate regressions with: npm run bench:ab -- main${RESET}` );
+
+			} finally {
+
+				await bench.setPerfMode( false );
+
+			}
 
 		}
 

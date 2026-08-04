@@ -25,6 +25,7 @@
     "bench:denoise": "node bench/runner/cli.js denoise",
     "bench:memory": "node bench/runner/cli.js memory",
     "bench:perf": "node bench/runner/cli.js perf",
+    "bench:kernels": "node bench/runner/cli.js kernels",
     "bench:bless": "node bench/runner/cli.js bless",
     "bench:ab": "node bench/runner/cli.js ab",
     "bench:list": "node bench/runner/cli.js list",

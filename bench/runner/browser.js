@@ -147,6 +147,12 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		render: ( spp, options = {} ) => page.evaluate(
 			( n, opts ) => globalThis.__bench.render( n, opts ), spp, options
 		),
+		measureKernelGPU: ( count ) => page.evaluate(
+			( n ) => globalThis.__bench.measureKernelGPU( n ), count
+		),
+		setRenderSize: ( width, height ) => page.evaluate(
+			( w, h ) => globalThis.__bench.setRenderSize( w, h ), width, height
+		),
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),
