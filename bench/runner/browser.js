@@ -159,6 +159,16 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		loadModelScene: ( url, cameraIndex ) => page.evaluate(
 			( u, c ) => globalThis.__bench.loadModelScene( u, c ), url, cameraIndex ?? 1
 		),
+		setSettings: ( values ) => page.evaluate(
+			( v ) => globalThis.__bench.setSettings( v ), values
+		),
+		setSortMaterials: ( enabled ) => page.evaluate(
+			( on ) => globalThis.__bench.setSortMaterials( on ), enabled
+		),
+		setSceneConfig: ( config ) => page.evaluate(
+			( c ) => globalThis.__bench.setSceneConfig( c ), config
+		),
+		meshStats: () => page.evaluate( () => globalThis.__bench.meshStats() ),
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),

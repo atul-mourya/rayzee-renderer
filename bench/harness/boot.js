@@ -8,7 +8,7 @@
  */
 
 import {
-	clearBindingAuditFindings, configureAssets, getBindingAuditFindings,
+	clearBindingAuditFindings, configureAssets, ENGINE_DEFAULTS, getBindingAuditFindings,
 	PathTracerApp, setBindingAudit,
 } from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
@@ -362,6 +362,60 @@ function setShippingHeuristics( enabled ) {
 
 }
 
+/** Apply arbitrary settings for an ablation, then re-arm accumulation. */
+function setSettings( values ) {
+
+	app.settings.setMany( values, { silent: true } );
+	app.reset();
+	app.stopAnimation();
+
+}
+
+/** Read at kernel-build time, so this only takes effect on the NEXT model load. */
+function setSortMaterials( enabled ) {
+
+	ENGINE_DEFAULTS.wavefrontSortMaterials = enabled;
+
+}
+
+/** BVH builder config; takes effect on the next load, when the BLASes are rebuilt. */
+function setSceneConfig( config ) {
+
+	app.stages.pathTracer.sdfs?.updateConfig( config );
+
+}
+
+/**
+ * Per-mesh triangle counts, bucketed against the treelet thresholds: skipped below 1000 triangles,
+ * dropped to size 3 above `treeletComplexityThreshold`. Coverage follows the mesh-size
+ * distribution, not the scene total.
+ */
+function meshStats() {
+
+	const counts = ( app.sceneMeshes ?? [] ).map( ( mesh ) => {
+
+		const geom = mesh.geometry;
+		return ( geom?.index ? geom.index.count : geom?.attributes?.position?.count ?? 0 ) / 3;
+
+	} );
+
+	const bucket = ( lo, hi ) => {
+
+		const inRange = counts.filter( ( c ) => c >= lo && c < hi );
+		return { meshes: inRange.length, tris: inRange.reduce( ( s, c ) => s + c, 0 ) };
+
+	};
+
+	return {
+		total: { meshes: counts.length, tris: counts.reduce( ( s, c ) => s + c, 0 ) },
+		belowTreeletMin: bucket( 0, 1000 ),
+		optimized: bucket( 1000, 50000 ),
+		degraded: bucket( 50000, Infinity ),
+		largest: counts.slice().sort( ( a, b ) => b - a ).slice( 0, 5 ),
+	};
+
+}
+
 /**
  * Load an arbitrary GLB for timing only — no golden exists, so no image suite can reach it. Corpus
  * scenes are procedural primitives with few materials; their kernel shares do not transfer to real
@@ -605,6 +659,10 @@ globalThis.__bench = {
 	setRenderSize,
 	setShippingHeuristics,
 	loadModelScene,
+	setSettings,
+	setSortMaterials,
+	setSceneConfig,
+	meshStats,
 	setPerfMode,
 	setDenoiser,
 	denoisedNonFinite,

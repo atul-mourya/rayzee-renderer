@@ -44,8 +44,10 @@ export async function profileScene( bench, sceneId, options = {} ) {
 	const shipping = options.shipping ?? false;
 	const log = options.log ?? ( () => {} );
 
-	const modelInfo = options.model ? await bench.loadModelScene( sceneId ) : null;
-	if ( ! options.model ) await bench.loadScene( sceneId );
+	// skipLoad re-profiles whatever is already loaded — a load would overwrite the settings an
+	// ablation just applied.
+	const modelInfo = options.model && ! options.skipLoad ? await bench.loadModelScene( sceneId ) : null;
+	if ( ! options.model && ! options.skipLoad ) await bench.loadScene( sceneId );
 
 	// loadScene forces useAdaptiveSampling/usePixelFreeze OFF (setDeterministicMode does it
 	// unconditionally — pinDispatch:false does not bring them back). Both are ON in every shipping

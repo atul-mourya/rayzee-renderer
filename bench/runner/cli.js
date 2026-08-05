@@ -216,6 +216,26 @@ async function reportBindingAudit( bench ) {
 
 }
 
+async function reportShaderErrors( bench, label = '' ) {
+
+	const { entries } = await bench.shaderDiagnostics();
+	if ( ! entries.length ) return 0;
+
+	// A kernel that fails to compile is absent from the dispatch, so every timing-based suite
+	// reports it as free. That reads as a large performance WIN, not as a failure.
+	log( `\n${RED}shader compilation errors${label ? ` (${label})` : ''}${RESET}` );
+	for ( const d of entries.slice( 0, 8 ) ) {
+
+		const at = d.lineNum > 0 ? ` at line ${d.lineNum}${d.linePos > 0 ? `:${d.linePos}` : ''}` : '';
+		log( `  ${RED}[${d.label}]${at} ${d.message}${RESET}` );
+		if ( d.source ) log( `${DIM}    ${d.source}${RESET}` );
+
+	}
+
+	return entries.length;
+
+}
+
 async function commandAB( baseRef, flags ) {
 
 	const only = flags.only ? String( flags.only ).split( ',' ) : undefined;
@@ -332,7 +352,11 @@ async function commandAB( baseRef, flags ) {
 
 		}
 
-		return comparison.passed ? 0 : 1;
+		// Both sides, because a compile failure on one side only is exactly what fakes a win.
+		const shaderErrors = await reportShaderErrors( baseHarness.bench, baseRef )
+			+ await reportShaderErrors( headHarness.bench, 'HEAD' );
+
+		return comparison.passed && shaderErrors === 0 ? 0 : 1;
 
 	} finally {
 
@@ -539,6 +563,7 @@ async function main() {
 
 		// Only meaningful once stages have actually rendered, so it runs after every suite.
 		if ( await reportBindingAudit( bench ) > 0 ) exitCode = 1;
+		if ( await reportShaderErrors( bench ) > 0 ) exitCode = 1;
 
 		const errors = bench.consoleErrors().filter( ( e ) => ! e.includes( 'favicon' ) );
 		if ( errors.length ) {
