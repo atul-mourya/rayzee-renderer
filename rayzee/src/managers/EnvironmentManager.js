@@ -8,7 +8,7 @@
  */
 
 import {
-	RGBAFormat, RedFormat, FloatType, Vector2, Vector3, Color, Matrix4, DataTexture,
+	RGBAFormat, RedFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
 } from 'three';
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
 import { ProceduralSky } from '../Processor/ProceduralSky.js';
@@ -36,9 +36,12 @@ export class EnvironmentManager {
 		this.proceduralSkyRenderer = null;
 		this.simpleSkyRenderer = null;
 
-		// Environment texture — 1×1 black placeholder for shader compilation
+		// Environment texture — 1×1 black placeholder for shader compilation. Filters must be
+		// Linear: DataTexture defaults to Nearest, which is unfilterable, and WGSLNodeBuilder then
+		// omits the `_sampler` binding that sampleEnvironment() takes as an explicit wgslFn arg.
 		this._envPlaceholder = new DataTexture(
-			new Float32Array( [ 0, 0, 0, 1 ] ), 1, 1, RGBAFormat, FloatType
+			new Float32Array( [ 0, 0, 0, 1 ] ), 1, 1, RGBAFormat, FloatType,
+			undefined, undefined, undefined, LinearFilter, LinearFilter
 		);
 		this._envPlaceholder.needsUpdate = true;
 		this.environmentTexture = this._envPlaceholder;
