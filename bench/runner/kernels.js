@@ -41,9 +41,17 @@ export async function profileScene( bench, sceneId, options = {} ) {
 
 	const rounds = options.rounds ?? KERNELS.rounds;
 	const samples = options.samples ?? KERNELS.measureSamples;
+	const shipping = options.shipping ?? false;
 	const log = options.log ?? ( () => {} );
 
 	await bench.loadScene( sceneId );
+
+	// loadScene forces useAdaptiveSampling/usePixelFreeze OFF (setDeterministicMode does it
+	// unconditionally — pinDispatch:false does not bring them back). Both are ON in every shipping
+	// render config and they select a DIFFERENT kernel set: with freeze on, buildActivePixels +
+	// generateList run and initActiveIndices does not run at all. Without this flag the profile
+	// attributes cost to a kernel production never dispatches.
+	if ( shipping ) await bench.setShippingHeuristics( true );
 
 	// Order matters: the size change recompiles the wavefront to WGSL, so it has to happen before
 	// the warmup that exists to pay for that compile.
@@ -56,6 +64,11 @@ export async function profileScene( bench, sceneId, options = {} ) {
 	const unattributed = [];
 
 	for ( let round = 0; round < rounds; round ++ ) {
+
+		// Re-arm before each round: with freeze on, frozen pixels accumulate and per-sample cost
+		// falls through a run, so without a reset the between-round spread would measure that drift
+		// rather than noise. Each round therefore reports cost with a full active set.
+		if ( shipping ) await bench.setShippingHeuristics( true );
 
 		const readings = await bench.measureKernelGPU( samples );
 
@@ -115,6 +128,7 @@ export async function profileScene( bench, sceneId, options = {} ) {
 	return {
 		scene: sceneId,
 		renderSize: size,
+		shipping,
 		rounds,
 		samples,
 		frameMs,
@@ -134,7 +148,8 @@ export function formatProfile( result ) {
 	lines.push(
 		`  ${result.scene}  ${width}x${height}  ` +
 		`frame ${result.frameMs.toFixed( 2 )} ms  ` +
-		`(${result.rounds} rounds x ${result.samples} samples)`
+		`(${result.rounds} rounds x ${result.samples} samples` +
+		`${result.shipping ? ', shipping heuristics ON' : ''})`
 	);
 	lines.push( '    kernel                   ms     share    between-round     detectable' );
 
@@ -220,7 +235,7 @@ export async function runKernelProfile( bench, options = {} ) {
 	for ( const id of selected ) {
 
 		log( `  ${id}` );
-		const result = await profileScene( bench, id, { log } );
+		const result = await profileScene( bench, id, { log, shipping: options.shipping } );
 		results.push( result );
 
 	}

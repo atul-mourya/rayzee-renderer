@@ -286,6 +286,34 @@ function setRenderSize( width, height ) {
 
 }
 
+/**
+ * Re-enable the two readback-driven heuristics that deterministic mode turns off, and re-arm
+ * accumulation. Also usable as a between-rounds reset.
+ *
+ * loadScene calls setDeterministicMode( true ), which forces useAdaptiveSampling and usePixelFreeze
+ * OFF unconditionally — `pinDispatch: false` does not bring them back. Both are ON in every shipping
+ * render config, and they select a DIFFERENT set of kernels: the freeze path dispatches
+ * resetFrameCounters + buildActivePixels + seedEnter + generateList, while initActiveIndices never
+ * runs at all. Profiling without them measures kernels production never dispatches and hides ones it
+ * does — so a profile taken this way is the only one that speaks to shipping cost.
+ *
+ * Non-stationary by construction: frozen pixels accumulate, so per-sample cost falls through a run.
+ * Read the numbers as "cost with a full active set", and reset between rounds.
+ *
+ * @param {boolean} enabled
+ */
+function setShippingHeuristics( enabled ) {
+
+	app.settings.setMany(
+		{ useAdaptiveSampling: enabled, usePixelFreeze: enabled },
+		{ silent: true }
+	);
+	// reset() re-wakes rAF, which would race the manual render loop.
+	app.reset();
+	app.stopAnimation();
+
+}
+
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
 function capturePNG() {
 
@@ -483,6 +511,7 @@ globalThis.__bench = {
 	measureGPUPerSample,
 	measureKernelGPU,
 	setRenderSize,
+	setShippingHeuristics,
 	setPerfMode,
 	setDenoiser,
 	denoisedNonFinite,

@@ -153,6 +153,9 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setRenderSize: ( width, height ) => page.evaluate(
 			( w, h ) => globalThis.__bench.setRenderSize( w, h ), width, height
 		),
+		setShippingHeuristics: ( enabled ) => page.evaluate(
+			( on ) => globalThis.__bench.setShippingHeuristics( on ), enabled
+		),
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),
