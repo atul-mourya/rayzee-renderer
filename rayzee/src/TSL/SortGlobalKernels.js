@@ -111,20 +111,65 @@ export function buildGlobalPrefixKernel( { sortGlobalHistogram, bins = SORT_GLOB
 
 }
 
-// Pass 4 — scatter: atomicAdd on the prefix-summed histogram gives each ray its global slot
-// within its material's contiguous region.
+// Pass 4 — scatter: each ray lands in a unique slot inside its material's contiguous region.
+//
+// Global atomics are reduced from O(rays) to O(workgroups × bins touched) by reserving one block
+// per bin per workgroup, the same aggregation Pass 2 already applies to the histogram. `local`
+// changes meaning across the barriers: first a per-workgroup count, then the workgroup's global
+// base cursor for that bin, which the lanes then bump to claim their own slot.
+//
+// Slot order WITHIN a bin changes versus the per-ray version, but it was never deterministic —
+// the old path raced on the same global atomicAdd. The output is still an exact permutation of the
+// entering set, and Shade reads each ray independently.
 export function buildGlobalScatterKernel( { hitBufferRO, activeIndicesReadRO, sortedIndicesRW, sortGlobalHistogram, counters, bins = SORT_GLOBAL_MAX_BINS } ) {
 
 	return Fn( () => {
 
 		const tid = instanceIndex;
-		const entering = atomicLoad( counters.element( uint( COUNTER.ENTERING_COUNT ) ) );
-		If( tid.lessThan( entering ), () => {
+		const lid = localId.x;
+		const local = workgroupAtomicArray( 'uint', bins );
 
-			const rayID = activeIndicesReadRO.element( tid );
-			const bin = uint( readHitMaterialIndex( hitBufferRO, rayID ) ).clamp( uint( 0 ), uint( bins - 1 ) );
-			const pos = atomicAdd( sortGlobalHistogram.element( bin ), uint( 1 ) );
-			sortedIndicesRW.element( pos ).assign( rayID );
+		If( lid.lessThan( uint( bins ) ), () => {
+
+			atomicStore( local.element( lid ), uint( 0 ) );
+
+		} );
+		workgroupBarrier();
+
+		// Read once and reuse: recomputing the bin after the barriers would re-fetch the hit buffer.
+		const entering = atomicLoad( counters.element( uint( COUNTER.ENTERING_COUNT ) ) );
+		const inRange = tid.lessThan( entering );
+		const rayID = uint( 0 ).toVar();
+		const bin = uint( 0 ).toVar();
+
+		If( inRange, () => {
+
+			rayID.assign( activeIndicesReadRO.element( tid ) );
+			bin.assign( uint( readHitMaterialIndex( hitBufferRO, rayID ) ).clamp( uint( 0 ), uint( bins - 1 ) ) );
+			atomicAdd( local.element( bin ), uint( 1 ) );
+
+		} );
+		workgroupBarrier();
+
+		// One global atomic per bin per workgroup reserves that block; the returned base replaces the
+		// count in place. Bins this workgroup never touched are skipped — no lane will read them.
+		If( lid.lessThan( uint( bins ) ), () => {
+
+			const slot = local.element( lid );
+			const c = atomicLoad( slot );
+			If( c.greaterThan( uint( 0 ) ), () => {
+
+				atomicStore( slot, atomicAdd( sortGlobalHistogram.element( lid ), c ) );
+
+			} );
+
+		} );
+		workgroupBarrier();
+
+		If( inRange, () => {
+
+			// Workgroup-local atomic: gives this lane its rank inside the block reserved above.
+			sortedIndicesRW.element( atomicAdd( local.element( bin ), uint( 1 ) ) ).assign( rayID );
 
 		} );
 
