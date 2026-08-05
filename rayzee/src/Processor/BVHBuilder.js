@@ -101,8 +101,6 @@ export class BVHBuilder {
 		this.treeletSize = 5;
 		this.treeletOptimizationPasses = 1;
 		this.treeletMinImprovement = 0.02;
-		this.maxTreeletDepth = 3;
-		this.maxTreeletsPerScene = 20;
 		this.treeletComplexityThreshold = 50000;
 
 		// Reinsertion optimization configuration
@@ -191,6 +189,7 @@ export class BVHBuilder {
 		if ( config.size !== undefined ) this.treeletSize = Math.max( 3, Math.min( 12, config.size ) );
 		if ( config.passes !== undefined ) this.treeletOptimizationPasses = Math.max( 1, Math.min( 3, config.passes ) );
 		if ( config.minImprovement !== undefined ) this.treeletMinImprovement = Math.max( 0.001, config.minImprovement );
+		if ( config.complexityThreshold !== undefined ) this.treeletComplexityThreshold = config.complexityThreshold;
 
 	}
 
@@ -595,12 +594,10 @@ export class BVHBuilder {
 
 			const isLargeScene = this.totalTriangles > this.treeletComplexityThreshold;
 			const adaptiveTreeletSize = isLargeScene ? 3 : this.treeletSize;
-			const adaptiveMaxTreelets = isLargeScene ? 10 : this.maxTreeletsPerScene;
 
 			const optimizer = new TreeletOptimizer( this.traversalCost, this.intersectionCost );
 			optimizer.setTreeletSize( adaptiveTreeletSize );
 			optimizer.setMinImprovement( this.treeletMinImprovement );
-			optimizer.setMaxTreelets( adaptiveMaxTreelets );
 
 			const optimizationStartTime = performance.now();
 

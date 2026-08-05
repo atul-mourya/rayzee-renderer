@@ -545,13 +545,6 @@ export class TreeletOptimizer {
 
 	}
 
-	setMaxTreelets() {
-
-		// No-op — we process all valid treelets now.
-		// Kept for API compatibility with BVHBuilder.
-
-	}
-
 	getStatistics() {
 
 		return { ...this.stats };

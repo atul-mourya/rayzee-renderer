@@ -51,6 +51,8 @@ export class SceneProcessor {
 			treeletSize: 7, // 7 nodes gives 315 topologies for optimal enumeration
 			treeletOptimizationPasses: 1,
 			treeletMinImprovement: 0.01, // Minimum SAH improvement threshold
+			// Above this triangle count the builder drops treelets to size 3.
+			treeletComplexityThreshold: 50000,
 			...options
 		};
 
@@ -151,7 +153,8 @@ export class SceneProcessor {
 			enabled: this.config.enableTreeletOptimization,
 			size: this.config.treeletSize,
 			passes: this.config.treeletOptimizationPasses,
-			minImprovement: this.config.treeletMinImprovement
+			minImprovement: this.config.treeletMinImprovement,
+			complexityThreshold: this.config.treeletComplexityThreshold
 		} );
 
 		// Create and configure texture creator
@@ -436,7 +439,8 @@ export class SceneProcessor {
 					enabled: originalTreeletEnabled !== false,
 					size: this.config.treeletSize,
 					passes: this.config.treeletOptimizationPasses,
-					minImprovement: this.config.treeletMinImprovement
+					minImprovement: this.config.treeletMinImprovement,
+					complexityThreshold: this.config.treeletComplexityThreshold
 				},
 				reinsertionOptimization: {
 					enabled: this.bvhBuilder.enableReinsertionOptimization,
@@ -1267,7 +1271,8 @@ export class SceneProcessor {
 				enabled: this.config.enableTreeletOptimization,
 				size: this.config.treeletSize,
 				passes: this.config.treeletOptimizationPasses,
-				minImprovement: this.config.treeletMinImprovement
+				minImprovement: this.config.treeletMinImprovement,
+				complexityThreshold: this.config.treeletComplexityThreshold
 			} );
 
 		}
@@ -1953,7 +1958,8 @@ export class SceneProcessor {
 					enabled: treeletEnabled,
 					size: this.config.treeletSize,
 					passes: this.config.treeletOptimizationPasses,
-					minImprovement: this.config.treeletMinImprovement
+					minImprovement: this.config.treeletMinImprovement,
+					complexityThreshold: this.config.treeletComplexityThreshold
 				},
 				reinsertionOptimization: {
 					enabled: this.bvhBuilder.enableReinsertionOptimization,
