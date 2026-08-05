@@ -120,3 +120,6 @@ CLAUDE.md
 .github/copilot-instructions.md
 .claude/skills/cf-crawl/SKILL.md
 .claude/scheduled_tasks.lock
+
+# Local test models — 800 MB of GLBs used by bench --model, never redistributed
+app/public/models/
