@@ -156,6 +156,9 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setShippingHeuristics: ( enabled ) => page.evaluate(
 			( on ) => globalThis.__bench.setShippingHeuristics( on ), enabled
 		),
+		loadModelScene: ( url, cameraIndex ) => page.evaluate(
+			( u, c ) => globalThis.__bench.loadModelScene( u, c ), url, cameraIndex ?? 1
+		),
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),
@@ -166,6 +169,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 			( s, p ) => globalThis.__bench.setDenoiser( s, p ), strategy, preset ?? null
 		),
 		denoisedNonFinite: () => page.evaluate( () => globalThis.__bench.denoisedNonFinite() ),
+		shaderDiagnostics: () => page.evaluate( () => globalThis.__bench.shaderDiagnostics() ),
 		bindingFindings: () => page.evaluate( () => globalThis.__bench.bindingFindings() ),
 		clearBindingFindings: () => page.evaluate( () => globalThis.__bench.clearBindingFindings() ),
 		isDeterministic: () => page.evaluate( () => globalThis.__bench.isDeterministic() ),

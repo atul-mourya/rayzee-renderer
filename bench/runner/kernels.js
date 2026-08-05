@@ -44,7 +44,8 @@ export async function profileScene( bench, sceneId, options = {} ) {
 	const shipping = options.shipping ?? false;
 	const log = options.log ?? ( () => {} );
 
-	await bench.loadScene( sceneId );
+	const modelInfo = options.model ? await bench.loadModelScene( sceneId ) : null;
+	if ( ! options.model ) await bench.loadScene( sceneId );
 
 	// loadScene forces useAdaptiveSampling/usePixelFreeze OFF (setDeterministicMode does it
 	// unconditionally — pinDispatch:false does not bring them back). Both are ON in every shipping
@@ -57,6 +58,27 @@ export async function profileScene( bench, sceneId, options = {} ) {
 	// the warmup that exists to pay for that compile.
 	const size = await bench.setRenderSize( KERNELS.renderSize.width, KERNELS.renderSize.height );
 	await bench.render( KERNELS.warmupSamples );
+
+	// A kernel that fails to compile is absent from the timing map, so the profile still prints and
+	// still reconciles to a clean residual while being fictional. Fail loudly instead.
+	const { modules, entries } = await bench.shaderDiagnostics();
+	log( `    ${modules.length} shader module(s) compiled, ${entries.length} error(s)` );
+
+	if ( entries.length ) {
+
+		const detail = entries.slice( 0, 8 ).map( ( d ) => {
+
+			const at = d.lineNum > 0 ? ` at line ${d.lineNum}${d.linePos > 0 ? `:${d.linePos}` : ''}` : '';
+			return `    [${d.label}]${at} ${d.message}` + ( d.source ? `\n      ${d.source}` : '' );
+
+		} ).join( '\n' );
+
+		throw new Error(
+			`kernels: ${entries.length} shader error(s) on ${sceneId} — every timing below would ` +
+			`omit the failed kernel and read as valid.\n${detail}`
+		);
+
+	}
 
 	// roundMedians[kernel] = one median per round. The between-round spread is the noise floor.
 	const roundMedians = new Map();
@@ -127,6 +149,7 @@ export async function profileScene( bench, sceneId, options = {} ) {
 
 	return {
 		scene: sceneId,
+		modelInfo,
 		renderSize: size,
 		shipping,
 		rounds,
@@ -151,6 +174,17 @@ export function formatProfile( result ) {
 		`(${result.rounds} rounds x ${result.samples} samples` +
 		`${result.shipping ? ', shipping heuristics ON' : ''})`
 	);
+
+	if ( result.modelInfo ) {
+
+		const m = result.modelInfo;
+		lines.push(
+			`    ${m.triangles ?? '?'} tris  ${m.meshes ?? '?'} meshes  ${m.materials ?? '?'} materials  ` +
+			`camera ${m.camera}/${m.cameraCount - 1}  load ${( m.loadMs / 1000 ).toFixed( 1 )} s`
+		);
+
+	}
+
 	lines.push( '    kernel                   ms     share    between-round     detectable' );
 
 	let folded = 0;
@@ -210,6 +244,15 @@ export function formatProfile( result ) {
 export async function runKernelProfile( bench, options = {} ) {
 
 	const log = options.log ?? ( () => {} );
+
+	// --model profiles one arbitrary GLB and bypasses the corpus entirely.
+	if ( options.model ) {
+
+		log( `  ${options.model}` );
+		return { results: [ await profileScene( bench, options.model, { log, shipping: options.shipping, model: true } ) ] };
+
+	}
+
 	const all = await bench.scenes();
 	const ids = all.map( ( s ) => s.id );
 

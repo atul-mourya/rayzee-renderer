@@ -22,6 +22,54 @@ import stbnVec2Atlas from '../assets/noise/stbn_vec2_atlas.png?url';
 // golden in the repo, and an outage or an offline machine would stop the suite entirely.
 configureAssets( { stbnScalarAtlas, stbnVec2Atlas } );
 
+// three.js creates shader modules with no error scope, so WGSL failures reach the console only as
+// `[object GPUValidationError]`. Wrap at the device to keep the source for line-accurate reporting.
+const shaderModules = [];
+
+if ( typeof GPUDevice !== 'undefined' ) {
+
+	const create = GPUDevice.prototype.createShaderModule;
+
+	GPUDevice.prototype.createShaderModule = function ( descriptor ) {
+
+		const record = { label: descriptor.label ?? '(unlabelled)', code: descriptor.code ?? '', module: null };
+		record.module = create.call( this, descriptor );
+		shaderModules.push( record );
+		return record.module;
+
+	};
+
+}
+
+/** Queried lazily: Dawn returns no messages if called in the same tick as `createShaderModule`. */
+async function shaderDiagnostics() {
+
+	const entries = [];
+
+	for ( const { label, code, module } of shaderModules ) {
+
+		const info = await module.getCompilationInfo().catch( () => null );
+		if ( ! info ) continue;
+
+		const lines = code.split( '\n' );
+
+		for ( const m of info.messages ) {
+
+			if ( m.type !== 'error' ) continue;
+
+			entries.push( {
+				label, message: m.message, lineNum: m.lineNum, linePos: m.linePos,
+				source: m.lineNum > 0 && m.lineNum <= lines.length ? lines[ m.lineNum - 1 ].trim().slice( 0, 300 ) : '',
+			} );
+
+		}
+
+	}
+
+	return { modules: shaderModules.map( ( r ) => r.label ), entries };
+
+}
+
 const canvas = document.getElementById( 'bench-canvas' );
 
 /** Scene settings applied on top of the deterministic baseline, restored on the next load. */
@@ -314,6 +362,50 @@ function setShippingHeuristics( enabled ) {
 
 }
 
+/**
+ * Load an arbitrary GLB for timing only — no golden exists, so no image suite can reach it. Corpus
+ * scenes are procedural primitives with few materials; their kernel shares do not transfer to real
+ * content, so conclusions drawn only from the corpus need checking against a model.
+ *
+ * setCameras() selects index 0, the engine default camera, which for an interior is usually outside
+ * the geometry — prefer an authored one.
+ *
+ * @param {string} url - served path, e.g. /models/foo.glb
+ * @param {number} [cameraIndex=1] - index into cameraManager.cameras; falls back to 0 if absent
+ */
+async function loadModelScene( url, cameraIndex = 1 ) {
+
+	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS }, { silent: true } );
+	restoreEnvParams();
+
+	const startedAt = performance.now();
+	await app.loadModel( url );
+	const loadMs = performance.now() - startedAt;
+
+	app.denoisingManager.setStrategy( 'none' );
+
+	const cameras = app.cameraManager?.cameras ?? [];
+	const picked = cameraIndex > 0 && cameraIndex < cameras.length ? cameraIndex : 0;
+	if ( picked > 0 ) app.cameraManager.switchCamera( picked );
+
+	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
+
+	// render() gates on currentScene; a minimal stand-in is enough for a timing-only run.
+	currentScene = { id: `model:${url}`, spp: 1, truthSpp: 1, settings: {} };
+
+	const stage = app.stages.pathTracer;
+	return {
+		id: currentScene.id,
+		loadMs,
+		cameraCount: cameras.length,
+		camera: picked,
+		meshes: app.sceneMeshes?.length ?? null,
+		materials: stage?.materialData?.materialCount ?? null,
+		triangles: stage?.triangleCount ?? null,
+	};
+
+}
+
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
 function capturePNG() {
 
@@ -512,9 +604,11 @@ globalThis.__bench = {
 	measureKernelGPU,
 	setRenderSize,
 	setShippingHeuristics,
+	loadModelScene,
 	setPerfMode,
 	setDenoiser,
 	denoisedNonFinite,
+	shaderDiagnostics,
 	bindingFindings: () => getBindingAuditFindings(),
 	clearBindingFindings: () => clearBindingAuditFindings(),
 	isDeterministic: () => app.isDeterministic,
