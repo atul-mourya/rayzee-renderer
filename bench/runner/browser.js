@@ -187,6 +187,8 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		isDeterministic: () => page.evaluate( () => globalThis.__bench.isDeterministic() ),
 		capturePNG: () => page.evaluate( () => globalThis.__bench.capturePNG() ),
 		probes: () => page.evaluate( () => globalThis.__bench.probes() ),
+		snapshotReference: () => page.evaluate( () => globalThis.__bench.snapshotReference() ),
+		rmseVsReference: () => page.evaluate( () => globalThis.__bench.rmseVsReference() ),
 		memory: () => page.evaluate( () => globalThis.__bench.memory() ),
 		resetPeakMemory: () => page.evaluate( () => globalThis.__bench.resetPeakMemory() ),
 		gpuTimings: () => page.evaluate( () => globalThis.__bench.gpuTimings() ),

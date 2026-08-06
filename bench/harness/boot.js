@@ -496,6 +496,55 @@ function capturePNG() {
 
 }
 
+/** Reference stays in-page — a full RGBA-float frame is far too big to move over CDP. */
+let _referenceBuffer = null;
+
+async function readLinear() {
+
+	const pool = app.stages.pathTracer.storageTextures;
+	const { width, height } = RENDER_SIZE;
+	return app.renderer.readRenderTargetPixelsAsync( pool.readTarget, 0, 0, width, height, 0 );
+
+}
+
+/** Store the current buffer as ground truth for rmseVsReference(). */
+async function snapshotReference() {
+
+	_referenceBuffer = Float32Array.from( await readLinear() );
+	return _referenceBuffer.length / 4;
+
+}
+
+/**
+ * RMSE of the current buffer against the snapshot, over linear RGB. Also returns relative RMSE
+ * (normalised by the reference mean) so scenes at different exposures stay comparable.
+ */
+async function rmseVsReference() {
+
+	if ( ! _referenceBuffer ) throw new Error( 'bench: snapshotReference() was never called' );
+
+	const pixels = await readLinear();
+	let se = 0, refSum = 0, n = 0;
+
+	for ( let i = 0; i < _referenceBuffer.length; i += 4 ) {
+
+		for ( let c = 0; c < 3; c ++ ) {
+
+			const a = pixels[ i + c ], b = _referenceBuffer[ i + c ];
+			if ( ! Number.isFinite( a ) || ! Number.isFinite( b ) ) continue;
+			se += ( a - b ) * ( a - b );
+			refSum += b;
+			n ++;
+
+		}
+
+	}
+
+	const rmse = Math.sqrt( se / n );
+	return { rmse, relRmse: rmse / ( refSum / n ), samples: app.getFrameCount() };
+
+}
+
 /**
  * Scalar probes read from the LINEAR HDR accumulation buffer, not the canvas.
  *
@@ -700,6 +749,8 @@ globalThis.__bench = {
 	isDeterministic: () => app.isDeterministic,
 	capturePNG,
 	probes,
+	snapshotReference,
+	rmseVsReference,
 	memory,
 	resetPeakMemory,
 	unload,
