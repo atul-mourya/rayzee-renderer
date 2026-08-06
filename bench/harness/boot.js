@@ -441,10 +441,15 @@ function meshStats() {
  * setCameras() selects index 0, the engine default camera, which for an interior is usually outside
  * the geometry — prefer an authored one.
  *
+ * A GLB carries no environment, and the black placeholder is not a neutral default: env NEE is
+ * deterministic (a shadow ray every bounce), but a black env gives envTotalSum 0 ⇒ envPdf 0, so the
+ * ray never fires and a profile silently omits the whole site.
+ *
  * @param {string} url - served path, e.g. /models/foo.glb
  * @param {number} [cameraIndex=1] - index into cameraManager.cameras; falls back to 0 if absent
+ * @param {'procedural'|'gradient'|'color'|'hdri'|'none'} [env='procedural'] - 'none' keeps the placeholder
  */
-async function loadModelScene( url, cameraIndex = 1 ) {
+async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
 	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS }, { silent: true } );
 	restoreEnvParams();
@@ -452,6 +457,9 @@ async function loadModelScene( url, cameraIndex = 1 ) {
 	const startedAt = performance.now();
 	await app.loadModel( url );
 	const loadMs = performance.now() - startedAt;
+
+	// After the model: setMode builds the sky and its importance-sampling CDF.
+	if ( env && env !== 'none' ) await app.stages.pathTracer.environment.setMode( env );
 
 	app.denoisingManager.setStrategy( 'none' );
 
@@ -470,6 +478,8 @@ async function loadModelScene( url, cameraIndex = 1 ) {
 		loadMs,
 		cameraCount: cameras.length,
 		camera: picked,
+		env: env ?? 'none',
+		envTotalSum: stage.uniforms.get( 'envTotalSum' )?.value ?? null,
 		meshes: app.sceneMeshes?.length ?? null,
 		materials: stage?.materialData?.materialCount ?? null,
 		triangles: stage?.triangleCount ?? null,

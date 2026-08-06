@@ -46,7 +46,9 @@ export async function profileScene( bench, sceneId, options = {} ) {
 
 	// skipLoad re-profiles whatever is already loaded — a load would overwrite the settings an
 	// ablation just applied.
-	const modelInfo = options.model && ! options.skipLoad ? await bench.loadModelScene( sceneId ) : null;
+	const modelInfo = options.model && ! options.skipLoad
+		? await bench.loadModelScene( sceneId, options.cameraIndex, options.env )
+		: null;
 	if ( ! options.model && ! options.skipLoad ) await bench.loadScene( sceneId );
 
 	// loadScene forces useAdaptiveSampling/usePixelFreeze OFF (setDeterministicMode does it
@@ -182,7 +184,9 @@ export function formatProfile( result ) {
 		const m = result.modelInfo;
 		lines.push(
 			`    ${m.triangles ?? '?'} tris  ${m.meshes ?? '?'} meshes  ${m.materials ?? '?'} materials  ` +
-			`camera ${m.camera}/${m.cameraCount - 1}  load ${( m.loadMs / 1000 ).toFixed( 1 )} s`
+			`camera ${m.camera}/${m.cameraCount - 1}  env ${m.env}` +
+			`${m.envTotalSum === 0 ? ' (BLACK — env NEE will not fire)' : ''}  ` +
+			`load ${( m.loadMs / 1000 ).toFixed( 1 )} s`
 		);
 
 	}
@@ -251,7 +255,9 @@ export async function runKernelProfile( bench, options = {} ) {
 	if ( options.model ) {
 
 		log( `  ${options.model}` );
-		return { results: [ await profileScene( bench, options.model, { log, shipping: options.shipping, model: true } ) ] };
+		return { results: [ await profileScene( bench, options.model, {
+			log, shipping: options.shipping, model: true, env: options.env,
+		} ) ] };
 
 	}
 

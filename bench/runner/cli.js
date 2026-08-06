@@ -548,7 +548,7 @@ async function main() {
 
 			try {
 
-				const report = await runKernelProfile( bench, { only, log, shipping: !! flags.shipping, model: flags.model ? String( flags.model ) : undefined } );
+				const report = await runKernelProfile( bench, { only, log, shipping: !! flags.shipping, model: flags.model ? String( flags.model ) : undefined, env: flags.env ? String( flags.env ) : undefined } );
 				for ( const result of report.results ) log( formatProfile( result ) );
 				log( `${DIM}  a change smaller than a kernel's between-round spread is not observable here${RESET}` );
 				log( `${DIM}  gate regressions with: npm run bench:ab -- main${RESET}` );

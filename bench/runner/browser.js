@@ -156,8 +156,9 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setShippingHeuristics: ( enabled ) => page.evaluate(
 			( on ) => globalThis.__bench.setShippingHeuristics( on ), enabled
 		),
-		loadModelScene: ( url, cameraIndex ) => page.evaluate(
-			( u, c ) => globalThis.__bench.loadModelScene( u, c ), url, cameraIndex ?? 1
+		loadModelScene: ( url, cameraIndex, env ) => page.evaluate(
+			( u, c, e ) => globalThis.__bench.loadModelScene( u, c, e ),
+			url, cameraIndex ?? 1, env ?? 'procedural'
 		),
 		setSettings: ( values ) => page.evaluate(
 			( v ) => globalThis.__bench.setSettings( v ), values
