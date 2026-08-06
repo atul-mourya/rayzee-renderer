@@ -378,6 +378,23 @@ function setSortMaterials( enabled ) {
 
 }
 
+/**
+ * Recompile the wavefront kernels without reloading the model. TSL module-scope state is read at
+ * kernel-build time, and reaching it via loadModelScene would rebuild the BVH too — orders of
+ * magnitude slower per ablation config.
+ */
+function rebuildKernels() {
+
+	const stage = app.stages.pathTracer;
+	stage._kernelManager?.dispose();
+	stage._wavefrontReady = false;
+	stage._buildWavefrontKernels();
+	app.reset();
+	app.stopAnimation();
+	return stage._wavefrontReady === true;
+
+}
+
 /** BVH builder config; takes effect on the next load, when the BLASes are rebuilt. */
 function setSceneConfig( config ) {
 
@@ -662,6 +679,7 @@ globalThis.__bench = {
 	setSettings,
 	setSortMaterials,
 	setSceneConfig,
+	rebuildKernels,
 	meshStats,
 	setPerfMode,
 	setDenoiser,
