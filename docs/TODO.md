@@ -4,12 +4,12 @@
 - when rendering done due to convergence, we need to indicate that. For example. 540 / 600, convergence completed in 540 frame before reaching 600 maxsamples
 
 ### MVP
+- [] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 ### Known
 
-- [ ] some pixels show black in the first rendered frame even if it hits the environment map - monte carlo noise
 - [ ] Soft shadows for directional lights not working when enabled from UI
 
 
@@ -124,7 +124,7 @@
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
 - [ ] Full Disney BSDF
-- [ ] Efficient Panorama Rendering
+- [x] Efficient Panorama Rendering
 - [ ] RCAS (Robust Contrast Adaptive Sharpening)
 - [ ] Sparse Radiance Cascades
 - [x] Screen-space radiance caching

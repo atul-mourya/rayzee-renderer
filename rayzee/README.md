@@ -22,6 +22,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [Configuring Assets (CDN URLs & cache namespace)](#configuring-assets-cdn-urls--cache-namespace)
   - [PathTracerApp](#pathtracerapp)
   - [engine.cameraManager](#enginecameramanager)
+  - [Camera Projection (360° Panorama)](#camera-projection-360-panorama)
   - [engine.lightManager](#enginelightmanager)
   - [engine.animationManager](#engineanimationmanager)
   - [Materials](#materials)
@@ -31,6 +32,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [engine.transformManager](#enginetransformmanager)
   - [Output Methods](#output-methods)
   - [Memory Monitoring](#memory-monitoring)
+  - [Deterministic & Headless Rendering](#deterministic--headless-rendering)
   - [Events](#events)
   - [Advanced: Custom Pipeline Stages](#advanced-custom-pipeline-stages)
   - [All Exports](#all-exports)
@@ -367,7 +369,7 @@ Key settings:
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
 | `environmentRotation` | `number` | 270 | Environment Y-rotation (degrees) |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
-| `samplingTechnique` | `number` | 3 | Light-sampling / MIS technique selector |
+| `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
 | `fireflyThreshold` | `number` | 3.0 | Firefly clamping threshold |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
@@ -381,12 +383,15 @@ Key settings:
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'gradient'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
+| `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'equirectangular'` — see [Camera Projection](#camera-projection-360-panorama) |
+| `panoramaLonRange` | `[number, number]` | `[-180, 180]` | Panorama longitude sweep, degrees, left→right |
+| `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
+| `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis, so orbit pitch/roll can't tilt the horizon |
 | `useAdaptiveSampling` | `boolean` | true | Whole-frame early-stop once convergence reaches `adaptiveStopFraction` |
-| `noiseThreshold` | `number` | 0.02 | Relative-error threshold below which a pixel is considered converged |
-| `darkNoiseFloor` | `number` | 0.003 | Absolute-error floor so dim pixels don't stall convergence |
+| `noiseThreshold` | `number` | 0.02 | √-luminance-normalized per-pixel noise below which a pixel counts as converged |
 | `adaptiveMinSamples` | `number` | 8 | Minimum samples before adaptive sampling can trigger |
 | `adaptiveStopFraction` | `number` | 0.95 | Fraction of pixels that must converge before the frame retires |
-| `usePixelFreeze` | `boolean` | false | Per-pixel freeze (Tier-2): skip individually-converged pixels via active-list compaction |
+| `usePixelFreeze` | `boolean` | true | Per-pixel freeze (Tier-2): skip individually-converged pixels via active-list compaction |
 | `pixelFreezeThreshold` | `number` | 0.02 | Relative-error threshold for a pixel to become a freeze candidate |
 | `pixelFreezeStability` | `number` | 8 | Consecutive candidate frames required before a pixel freezes |
 
@@ -416,6 +421,30 @@ engine.cameraManager.focusOn(center)         // Focus orbit camera on a world-sp
 engine.cameraManager.setAutoFocusMode(mode)  // 'auto' | 'manual'
 engine.cameraManager.setAFScreenPoint(x, y)  // Set normalized AF screen point (0-1)
 ```
+
+### Camera Projection (360° Panorama)
+
+Two camera models live behind the `cameraProjection` setting. Both branches are compiled into the same kernel, so switching writes a uniform and resets accumulation — it never recompiles WGSL.
+
+```js
+engine.settings.set('cameraProjection', 'equirectangular');  // 'perspective' (default) | 'equirectangular'
+
+// Optional: crop the sweep. Degrees, [min, max].
+engine.settings.set('panoramaLonRange', [-90, 90]);   // VR180
+engine.settings.set('panoramaLatRange', [0, 90]);     // upper hemisphere only
+engine.settings.set('panoramaLevelHorizon', true);    // default — orbit pitch won't tilt the panorama
+```
+
+The mapping puts camera-forward at the image centre, the zenith at the top row, and yaw-right at increasing u. Full-sphere output is 2:1 — **size the canvas accordingly** (`engine.setCanvasSize(w, w / 2)`); the engine renders whatever aspect you give it and will stretch the sphere otherwise. A cropped range changes the natural aspect to match `lonRange / latRange`.
+
+Depth of field still works: the lens plane is built from each ray's own frame, not the camera's, so bokeh stays round across the whole sweep.
+
+Two features are incompatible with a non-frustum camera and the engine switches them off for you when panorama is enabled:
+
+- **ASVGF** falls back to the `edgeaware` denoiser — ASVGF's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction.
+- **Auto-focus** switches to `'manual'` — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum.
+
+Read the outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`, `engine.cameraManager.autoFocusMode`). Neither is restored automatically when you switch back to `'perspective'`.
 
 ### engine.lightManager
 
@@ -496,6 +525,7 @@ Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure.
 ```js
 // Strategy
 engine.denoisingManager.setStrategy('asvgf', 'medium')  // 'none' | 'asvgf' | 'edgeaware'
+engine.denoisingManager.denoiserStrategy                 // read back the active strategy (derived from stage state)
 engine.denoisingManager.setASVGFEnabled(true, 'medium')
 engine.denoisingManager.applyASVGFPreset('high')         // 'low' | 'medium' | 'high'
 engine.denoisingManager.setAutoExposure(true)
@@ -579,6 +609,41 @@ engine.vram.getReport();   // formatted one-line summary string
 `peak` is a high-water mark, reset when a final render begins (`configureForMode('production')`). The engine's VRAM is largely monotonic — the ray pool only grows and the per-stage storage textures are fixed-size — so `peak` equals `current` during a steady render and only exceeds it after memory is released (lower resolution, a smaller scene, or removing the HDRI). The `stages` + `accum` categories (fixed 2048² storage textures) dominate the baseline.
 
 The React app surfaces this as a `Memory: … | Peak: …` readout in the on-canvas stats overlay.
+
+---
+
+### Deterministic & Headless Rendering
+
+For offline rendering, regression testing, and benchmarking — drive accumulation yourself instead of the rAF loop, and get bit-reproducible output.
+
+```js
+engine.setDeterministicMode(true);          // pin everything wall-clock- or readback-dependent
+const samples = await engine.renderFrames(256, {
+  reset: true,                              // restart accumulation from sample 0
+  yieldEvery: 8,                            // yield to the event loop every N passes (0 disables)
+  onProgress: n => console.log(n),
+});
+const blob = await engine.screenshot();
+engine.setDeterministicMode(false);         // restore the previous configuration
+```
+
+The RNG is already pure — `hash(pixel, rayIndex, frame)`, no clock, no `Math.random()` in any shader. What varies run to run is *which* uniforms and dispatch grids are live on frame k, so `setDeterministicMode` disables adaptive sampling, per-pixel freeze, the readback-driven per-bounce early exit and dynamic dispatch sizing, interaction mode, auto-focus, and auto-exposure, and pins the sampler's seed axis to the accumulation frame. It also forces `renderLimitMode` to `'frames'` — a wall-clock render limit retires at a run-dependent sample count. It leaves the rAF loop stopped; `renderFrames` is the drive.
+
+- `engine.isDeterministic` — whether output is currently bit-reproducible.
+- `setDeterministicMode(true, { pinDispatch: false })` keeps the two readback-driven dispatch heuristics active. Output is then *not* reproducible; this exists so performance measurements reflect shipping behaviour rather than a configuration production never runs.
+- `renderFrames` awaits `engine.stages.pathTracer.blueNoiseReady` first — until the STBN atlases land the sampler reads a constant-0.5 placeholder that bakes permanently into the accumulation buffer. It raises `maxSamples` if needed, and throws if something retires the render early.
+
+#### GPU timing
+
+```js
+engine.enableGPUTiming(true);                       // off by default — the queries themselves cost time
+const { compute, render, total } = await engine.getGPUTimings();
+const { kernels, unattributed, frame } = await engine.getKernelGPUTimings();
+```
+
+WebGPU timestamp queries are the only true GPU metric here — `pipeline.getStats()` times command *encoding* on the CPU and stays flat while GPU cost doubles. Both methods return `null` when the device lacks `timestamp-query` or timing was never enabled.
+
+`getKernelGPUTimings()` attributes each compute pass of the last resolved frame back to a wavefront kernel name. Durations are **summed per kernel across the frame**, so `extend` reports its whole per-frame cost over every bounce iteration, not one bounce. `unattributed` collects passes belonging to no registered kernel (other stages, denoisers), so `sum(kernels) + unattributed` reconciles with `total`.
 
 ---
 
@@ -685,6 +750,12 @@ import {
 
 // VRAM accounting (VRAMTracker is also reachable as engine.vram)
 import { VRAMTracker, bufferBytes, textureBytes } from 'rayzee';
+
+// Dev-only: texture-binding aliasing guard. Two TextureNodes still holding the default
+// EmptyTexture when a kernel is first compiled can share one GPU binding — nothing throws,
+// the aliased node just reads someone else's texture. Off by default; costs a per-stage
+// snapshot when on. Intended for test harnesses, not production.
+import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } from 'rayzee';
 ```
 
 ## Browser Requirements
