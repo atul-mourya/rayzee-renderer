@@ -2372,6 +2372,8 @@ export class PathTracerApp extends EventDispatcher {
 			renderer: this.renderer,
 			resetCallback: () => this.reset(),
 			reconcileCompletion: () => this._reconcileCompletion(),
+			denoisingManager: this.denoisingManager,
+			cameraManager: this.cameraManager,
 		} );
 
 		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;

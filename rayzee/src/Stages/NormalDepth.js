@@ -1,4 +1,4 @@
-import { Fn, vec3, vec4, float, int, uint, uvec2, uniform, normalize, mat3, min, storage, If,
+import { Fn, vec2, vec3, vec4, float, int, uint, uvec2, uniform, min, storage, If,
 	textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
@@ -6,6 +6,7 @@ import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
+import { cameraRayDirection } from '../TSL/CameraRay.js';
 import { getMaterial } from '../TSL/Common.js';
 import { computeUVCache, processNormal, processBump, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
 
@@ -48,6 +49,12 @@ export class NormalDepth extends RenderStage {
 
 		this.cameraWorldMatrix = uniform( new Matrix4(), 'mat4' );
 		this.cameraProjectionMatrixInverse = uniform( new Matrix4(), 'mat4' );
+		// Mirrored from the path tracer each frame — these rays must use the same camera model
+		// as the colour buffer or the denoiser's normal/depth edge-stops fight the image.
+		this.cameraProjection = uniform( 0, 'int' );
+		this.panoLonRange = uniform( new Vector2(), 'vec2' );
+		this.panoLatRange = uniform( new Vector2(), 'vec2' );
+		this.panoLevelHorizon = uniform( 1, 'int' );
 		this.resolutionWidth = uniform( options.width || 1 );
 		this.resolutionHeight = uniform( options.height || 1 );
 
@@ -218,20 +225,12 @@ export class NormalDepth extends RenderStage {
 
 			If( gx.lessThan( int( resW ) ).and( gy.lessThan( int( resH ) ) ), () => {
 
-				// Pixel center → NDC, Y negated for Three.js WebGPU.
-				const ndcX = float( gx ).add( 0.5 ).div( resW ).mul( 2.0 ).sub( 1.0 );
-				const ndcY = float( gy ).add( 0.5 ).div( resH ).mul( 2.0 ).sub( 1.0 ).negate();
-				const ndcPos = vec3( ndcX, ndcY, 1.0 );
-
 				// No jitter — deterministic per-pixel ray so the temporal gate
 				// sees stable per-pixel normals across frames.
-				const rayDirCS = camProjInvMat.mul( vec4( ndcPos, 1.0 ) );
-				const rayDirWorld = normalize(
-					mat3(
-						camWorldMat[ 0 ].xyz,
-						camWorldMat[ 1 ].xyz,
-						camWorldMat[ 2 ].xyz
-					).mul( rayDirCS.xyz.div( rayDirCS.w ) )
+				const uv = vec2( float( gx ).add( 0.5 ).div( resW ), float( gy ).add( 0.5 ).div( resH ) );
+				const rayDirWorld = cameraRayDirection(
+					uv, camWorldMat, camProjInvMat,
+					this.cameraProjection, this.panoLonRange, this.panoLatRange, this.panoLevelHorizon
 				);
 				const rayOrigin = vec3( camWorldMat[ 3 ] );
 
@@ -307,6 +306,10 @@ export class NormalDepth extends RenderStage {
 
 			this.cameraWorldMatrix.value.copy( pt.uniforms.get( 'cameraWorldMatrix' ).value );
 			this.cameraProjectionMatrixInverse.value.copy( pt.uniforms.get( 'cameraProjectionMatrixInverse' ).value );
+			this.cameraProjection.value = pt.uniforms.get( 'cameraProjection' ).value;
+			this.panoLonRange.value.copy( pt.uniforms.get( 'panoLonRange' ).value );
+			this.panoLatRange.value.copy( pt.uniforms.get( 'panoLatRange' ).value );
+			this.panoLevelHorizon.value = pt.uniforms.get( 'panoLevelHorizon' ).value;
 
 		}
 

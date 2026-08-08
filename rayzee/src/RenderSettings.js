@@ -1,4 +1,4 @@
-import { EventDispatcher, Color } from 'three';
+import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
 import { ENGINE_DEFAULTS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
 
@@ -32,6 +32,7 @@ const SETTING_ROUTES = {
 	enableGroundCatcher: { uniform: 'enableGroundCatcher', reset: true },
 	groundCatcherHeight: { uniform: 'groundCatcherHeight', reset: true },
 	globalIlluminationIntensity: { uniform: 'globalIlluminationIntensity', reset: true },
+	panoramaLevelHorizon: { uniform: 'panoLevelHorizon', reset: true },
 	enableDOF: { uniform: 'enableDOF', reset: true },
 	focusDistance: { uniform: 'focusDistance', reset: false },
 	focalLength: { uniform: 'focalLength', reset: true },
@@ -56,6 +57,9 @@ const SETTING_ROUTES = {
 
 	// ── Multi-stage / special handling ────────────────────────────
 
+	cameraProjection: { handler: 'handleCameraProjection', reset: true },
+	panoramaLonRange: { handler: 'handlePanoramaLonRange', reset: true },
+	panoramaLatRange: { handler: 'handlePanoramaLatRange', reset: true },
 	interactionModeEnabled: { handler: 'handleInteractionModeEnabled', reset: false },
 	maxSamples: { handler: 'handleMaxSamples', reset: false },
 	transparentBackground: { handler: 'handleTransparentBackground' },
@@ -122,13 +126,15 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Object} params.stages           - Pipeline stages { pathTracer, compositor, autoExposure, ... }
 	 * @param {Function} params.resetCallback   - Called to reset accumulation
 	 * @param {Function} [params.reconcileCompletion] - Called when completion limits change
+	 * @param {Object} [params.denoisingManager] - Needed to force ASVGF off under panorama
+	 * @param {Object} [params.cameraManager]    - Needed to force auto-focus manual under panorama
 	 */
-	bind( { stages, renderer, resetCallback, reconcileCompletion } ) {
+	bind( params ) {
 
-		this._pathTracer = stages.pathTracer;
-		this._resetCallback = resetCallback;
+		this._pathTracer = params.stages.pathTracer;
+		this._resetCallback = params.resetCallback;
 		this._delegates = {};
-		this._handlers = this._buildHandlers( stages, renderer, reconcileCompletion );
+		this._handlers = this._buildHandlers( params );
 
 	}
 
@@ -136,9 +142,38 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( stages, renderer, reconcileCompletion ) {
+	_buildHandlers( { stages, renderer, reconcileCompletion, denoisingManager, cameraManager } ) {
+
+		// UniformManager copies into the existing node, so one scratch vector serves every write.
+		const panoScratch = new Vector2();
+		const setPanoRange = ( uniform, value ) => {
+
+			panoScratch.set( value?.[ 0 ] ?? 0, value?.[ 1 ] ?? 0 ).multiplyScalar( MathUtils.DEG2RAD );
+			stages.pathTracer?.setUniform( uniform, panoScratch );
+
+		};
 
 		return {
+
+			handleCameraProjection: ( value ) => {
+
+				const isPanorama = value === 'equirectangular';
+				stages.pathTracer?.setUniform( 'cameraProjection', isPanorama ? 1 : 0 );
+
+				if ( ! isPanorama ) return;
+
+				// ASVGF is driven entirely by MotionVector, which unprojects through
+				// projectionMatrixInverse — meaningless once every pixel is its own direction.
+				// Fall back to the spatial-only denoiser rather than leaving no strategy.
+				if ( denoisingManager?.denoiserStrategy === 'asvgf' ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
+				// Auto-focus raycasts via Raycaster.setFromCamera, which only knows the frustum.
+				cameraManager?.setAutoFocusMode( 'manual' );
+
+			},
+
+			handlePanoramaLonRange: ( value ) => setPanoRange( 'panoLonRange', value ),
+
+			handlePanoramaLatRange: ( value ) => setPanoRange( 'panoLatRange', value ),
 
 			handleTransparentBackground: ( value ) => {
 

@@ -1,4 +1,4 @@
-import { Ruler, Telescope, Aperture, Camera, Target, Crosshair, RotateCcw, Ellipsis, Plus, Trash2 } from 'lucide-react';
+import { Ruler, Telescope, Aperture, Camera, Target, Crosshair, RotateCcw, Ellipsis, Plus, Trash2, Globe } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Row } from "@/components/ui/row";
 import { Slider } from "@/components/ui/slider";
@@ -6,14 +6,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Trackpad } from "@/components/ui/trackpad";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CAMERA_RANGES, CAMERA_PRESETS } from '@/Constants';
-import { useCameraStore } from '@/store';
+import { CAMERA_RANGES, CAMERA_PRESETS, isPanorama } from '@/Constants';
+import { useCameraStore, usePathTracerStore } from '@/store';
 import { useEffect } from 'react';
 import { getApp } from '@/lib/appProxy';
 import { useBackendEvent } from '@/hooks/useBackendEvent';
 import { useActiveApp } from '@/hooks/useActiveApp';
 import { FieldOfView } from "@/assets/icons";
 import { Separator } from "@/components/ui/separator";
+
+/** Min/Max pair for a symmetric ±limit range — the Slider is single-thumb, so it takes two rows. */
+const RangeRows = ( { label, limit, value, onChange } ) => [ 0, 1 ].map( i => (
+	<Row key={i}>
+		<Slider
+			label={`${label} ${i ? 'Max' : 'Min'}`}
+			min={- limit}
+			max={limit}
+			step={1}
+			value={[ value[ i ] ]}
+			onValueChange={( [ v ] ) => onChange( i ? [ value[ 0 ], v ] : [ v, value[ 1 ] ] )}
+		/>
+	</Row>
+) );
 
 const CameraTab = () => {
 
@@ -63,6 +77,20 @@ const CameraTab = () => {
 		handleToggleAFPointPlacement,
 		handleAFResetToCenter,
 	} = useCameraStore();
+
+	// Projection lives in usePathTracerStore — switching it re-derives the output dimensions.
+	// Narrow selectors: that store takes a per-frame auto-exposure write, so a bare
+	// usePathTracerStore() here would re-render this whole panel every frame.
+	const cameraProjection = usePathTracerStore( s => s.cameraProjection );
+	const panoramaLonRange = usePathTracerStore( s => s.panoramaLonRange );
+	const panoramaLatRange = usePathTracerStore( s => s.panoramaLatRange );
+	const panoramaLevelHorizon = usePathTracerStore( s => s.panoramaLevelHorizon );
+	const handleCameraProjectionChange = usePathTracerStore( s => s.handleCameraProjectionChange );
+	const handlePanoramaLonRangeChange = usePathTracerStore( s => s.handlePanoramaLonRangeChange );
+	const handlePanoramaLatRangeChange = usePathTracerStore( s => s.handlePanoramaLatRangeChange );
+	const handlePanoramaLevelHorizonChange = usePathTracerStore( s => s.handlePanoramaLevelHorizonChange );
+
+	const panorama = isPanorama( cameraProjection );
 
 	const activeApp = useActiveApp();
 
@@ -147,6 +175,37 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
+					<span className="opacity-50 text-xs truncate">Projection</span>
+					<Select value={cameraProjection} onValueChange={handleCameraProjectionChange}>
+						<SelectTrigger className="max-w-32 h-5 rounded-full">
+							<div className="h-full pr-1 inline-flex justify-start items-center">
+								<Globe size={12} className="z-10" />
+							</div>
+							<SelectValue placeholder="Select projection" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="perspective">Perspective</SelectItem>
+							<SelectItem value="equirectangular">360° Panorama</SelectItem>
+						</SelectContent>
+					</Select>
+				</Row>
+
+				{panorama && (
+					<>
+						<Row>
+							<Switch
+								checked={panoramaLevelHorizon}
+								label="Level Horizon"
+								onCheckedChange={handlePanoramaLevelHorizonChange}
+							/>
+						</Row>
+
+						<RangeRows label="Longitude" limit={180} value={panoramaLonRange} onChange={handlePanoramaLonRangeChange} />
+						<RangeRows label="Latitude" limit={90} value={panoramaLatRange} onChange={handlePanoramaLatRangeChange} />
+					</>
+				)}
+
+				<Row>
 					<Slider
 						label={"FOV"}
 						icon={FieldOfView}
@@ -155,6 +214,7 @@ const CameraTab = () => {
 						step={1}
 						value={[ fov ]}
 						onValueChange={handleFovChange}
+						disabled={panorama}
 					/>
 				</Row>
 
@@ -212,7 +272,12 @@ const CameraTab = () => {
 								<ToggleGroupItem value="manual" className="text-xs px-3 h-5">
 									Manual
 								</ToggleGroupItem>
-								<ToggleGroupItem value="auto" className="text-xs px-3 h-5">
+								<ToggleGroupItem
+									value="auto"
+									className="text-xs px-3 h-5"
+									disabled={panorama}
+									title={panorama ? "Auto-focus needs a perspective frustum" : undefined}
+								>
 									Auto
 								</ToggleGroupItem>
 							</ToggleGroup>

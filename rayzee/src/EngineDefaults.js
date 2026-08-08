@@ -62,6 +62,12 @@ export const ENGINE_DEFAULTS = {
 	skyMieAnisotropy: 0.76,
 	skyPreset: 'clearMorning',
 
+	// Camera projection — 'perspective' | 'equirectangular'. Panorama ranges are UI-facing degrees.
+	cameraProjection: 'perspective',
+	panoramaLonRange: [ - 180, 180 ],
+	panoramaLatRange: [ - 90, 90 ],
+	panoramaLevelHorizon: true,
+
 	enableDOF: false,
 	fov: 55,
 	focusDistance: 0.8,

@@ -22,7 +22,7 @@ import {
 	getStratifiedSample,
 } from './Random.js';
 
-import { generateRayFromCamera } from './BVHTraversal.js';
+import { generateRayFromCamera } from './CameraRay.js';
 import { Ray } from './Struct.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
@@ -39,6 +39,7 @@ export function buildGenerateKernel( params ) {
 		rayBufferRW, rngBufferRW, gBufferRW,
 		resolution, frame,
 		cameraWorldMatrix, cameraProjectionMatrixInverse,
+		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 		enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
@@ -56,9 +57,6 @@ export function buildGenerateKernel( params ) {
 
 		const pixelCoord = vec2( float( gx ).add( 0.5 ), float( gy ).add( 0.5 ) );
 
-		const screenPosition = pixelCoord.div( resolution ).mul( 2.0 ).sub( 1.0 ).toVar();
-		screenPosition.y.assign( screenPosition.y.negate() );
-
 		const baseSeed = getDecorrelatedSeed( { pixelCoord, rayIndex: int( 0 ), frame } ).toVar();
 		const seed = pcgHash( { state: baseSeed } ).toVar();
 
@@ -68,13 +66,18 @@ export function buildGenerateKernel( params ) {
 		// position from the first scatter direction (they were reading the identical cell).
 		const stratifiedJitter = getStratifiedSample( pixelCoord, int( 1 ), int( 1 ), seed, resolution, frame ).toVar();
 
-		const jitterScale = vec2( 2.0 ).div( resolution );
-		const jitter = stratifiedJitter.sub( 0.5 ).mul( jitterScale );
-		const jitteredScreenPosition = screenPosition.add( jitter );
+		// Y is subtracted because uv.y grows downward while the NDC this used to build grew upward —
+		// keeps the sub-pixel sample sequence bit-identical to the pre-panorama ray gen.
+		const jitterOffset = stratifiedJitter.sub( 0.5 );
+		const jitteredUV = vec2(
+			pixelCoord.x.add( jitterOffset.x ),
+			pixelCoord.y.sub( jitterOffset.y )
+		).div( resolution );
 
 		const ray = Ray.wrap( generateRayFromCamera(
-			jitteredScreenPosition, seed,
+			jitteredUV, seed,
 			cameraWorldMatrix, cameraProjectionMatrixInverse,
+			cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 			enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
 		) );
 

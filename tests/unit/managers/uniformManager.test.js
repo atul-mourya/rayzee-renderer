@@ -31,6 +31,10 @@ vi.mock( 'three', () => ( {
 
 			this.x = v.x; this.y = v.y; return this;
 
+		} multiplyScalar( s ) {
+
+			this.x *= s; this.y *= s; return this;
+
 		}
 
 	},
@@ -73,6 +77,7 @@ vi.mock( 'three', () => ( {
 		}
 
 	},
+	MathUtils: { DEG2RAD: Math.PI / 180 },
 } ) );
 
 import { UniformManager } from '@/core/managers/UniformManager.js';

@@ -225,6 +225,19 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {string} strategy   - 'none' | 'asvgf' | 'edgeaware'
 	 * @param {string} [asvgfPreset] - ASVGF quality preset when strategy is 'asvgf'
 	 */
+	/**
+	 * Active real-time denoiser, derived from stage state so it can't drift from
+	 * setDenoiserStrategy / setASVGFEnabled.
+	 * @returns {'asvgf'|'edgeaware'|'none'}
+	 */
+	get denoiserStrategy() {
+
+		if ( this._stages.asvgf?.enabled ) return 'asvgf';
+		if ( this._stages.edgeFilter?.enabled ) return 'edgeaware';
+		return 'none';
+
+	}
+
 	setDenoiserStrategy( strategy, asvgfPreset ) {
 
 		const s = this._stages;

@@ -218,6 +218,24 @@ export function computeCanvasDimensions( resolution, aspectPreset, orientation )
 
 }
 
+export const isPanorama = projection => projection === 'equirectangular';
+
+/**
+ * Output dimensions for a render. Equirectangular panoramas are locked to 2:1 with the
+ * resolution as the width; everything else follows the aspect-ratio + orientation presets.
+ */
+export function computeOutputDimensions( state, resolution ) {
+
+	if ( isPanorama( state?.cameraProjection ) ) {
+
+		return { width: resolution, height: Math.round( resolution / 2 ) };
+
+	}
+
+	return computeCanvasDimensions( resolution, state?.aspectRatioPreset, state?.orientation );
+
+}
+
 
 
 /*

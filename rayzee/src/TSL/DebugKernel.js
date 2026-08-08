@@ -13,7 +13,7 @@ import {
 	localId, workgroupId,
 } from 'three/tsl';
 
-import { generateRayFromCamera } from './BVHTraversal.js';
+import { generateRayFromCamera } from './CameraRay.js';
 import { Ray } from './Struct.js';
 import { TraceDebugMode } from './Debugger.js';
 import { pcgHash, getStratifiedSample } from './Random.js';
@@ -26,6 +26,7 @@ export function buildDebugKernel( params ) {
 		writeColorTex, writeNDTex, writeAlbedoTex,
 		resolution, renderWidth, renderHeight,
 		cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjectionMatrix, cameraViewMatrix,
+		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 		enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
 		bvhBuffer, triangleBuffer, materialBuffer,
 		envTexture, environmentMatrix, environmentIntensity, enableEnvironmentLight,
@@ -45,12 +46,10 @@ export function buildDebugKernel( params ) {
 			const seed = pcgHash( { state: uint( pixelIndex ).add( uint( 1 ) ) } ).toVar();
 
 			// Center-pixel primary ray (no AA jitter — debug viz wants a stable, sharp image).
-			const screenPosition = pixelCoord.div( resolution ).mul( 2.0 ).sub( 1.0 ).toVar();
-			screenPosition.y.assign( screenPosition.y.negate() );
-
 			const ray = Ray.wrap( generateRayFromCamera(
-				screenPosition, seed,
+				pixelCoord.div( resolution ), seed,
 				cameraWorldMatrix, cameraProjectionMatrixInverse,
+				cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 				enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
 			) );
 

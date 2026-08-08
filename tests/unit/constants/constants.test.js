@@ -4,6 +4,7 @@ import { TRIANGLE_DATA_LAYOUT } from '@/core/EngineDefaults.js';
 // Constants.js uses window.devicePixelRatio at module scope, so we must
 // provide a global `window` object before dynamic import.
 let computeCanvasDimensions;
+let computeOutputDimensions;
 let ASPECT_RATIO_PRESETS;
 
 beforeAll( async () => {
@@ -11,6 +12,7 @@ beforeAll( async () => {
 	globalThis.window = { devicePixelRatio: 2 };
 	const mod = await import( '@/Constants.js' );
 	computeCanvasDimensions = mod.computeCanvasDimensions;
+	computeOutputDimensions = mod.computeOutputDimensions;
 	ASPECT_RATIO_PRESETS = mod.ASPECT_RATIO_PRESETS;
 
 } );
@@ -63,6 +65,38 @@ describe( 'computeCanvasDimensions', () => {
 		const { width, height } = computeCanvasDimensions( 512, '1:1', 'portrait' );
 		expect( width ).toBe( 512 );
 		expect( height ).toBe( 512 );
+
+	} );
+
+} );
+
+describe( 'computeOutputDimensions', () => {
+
+	it( 'equirectangular locks 2:1 with resolution as the width', () => {
+
+		const state = { cameraProjection: 'equirectangular', aspectRatioPreset: '16:9', orientation: 'portrait' };
+		expect( computeOutputDimensions( state, 4096 ) ).toEqual( { width: 4096, height: 2048 } );
+
+	} );
+
+	it( 'equirectangular ignores aspect preset and orientation', () => {
+
+		const a = computeOutputDimensions( { cameraProjection: 'equirectangular', aspectRatioPreset: '1:1' }, 1024 );
+		const b = computeOutputDimensions( { cameraProjection: 'equirectangular', aspectRatioPreset: '21:9', orientation: 'portrait' }, 1024 );
+		expect( a ).toEqual( b );
+
+	} );
+
+	it( 'equirectangular rounds an odd resolution', () => {
+
+		expect( computeOutputDimensions( { cameraProjection: 'equirectangular' }, 513 ) ).toEqual( { width: 513, height: 257 } );
+
+	} );
+
+	it( 'perspective passes through to computeCanvasDimensions', () => {
+
+		const state = { cameraProjection: 'perspective', aspectRatioPreset: '16:9', orientation: 'landscape' };
+		expect( computeOutputDimensions( state, 1920 ) ).toEqual( computeCanvasDimensions( 1920, '16:9', 'landscape' ) );
 
 	} );
 

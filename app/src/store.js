@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeCanvasDimensions } from '@/Constants';
+import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
@@ -547,7 +547,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 		const state = { ...get(), ...overrides };
 		const res = state.appMode === 'final-render' ? state.finalRenderResolution : state.resolution;
-		const { width, height } = computeCanvasDimensions( res, state.aspectRatioPreset, state.orientation );
+		const { width, height } = computeOutputDimensions( state, res );
 
 		set( { ...overrides, canvasWidth: width, canvasHeight: height } );
 
@@ -587,19 +587,53 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	handleFinalRenderResolutionChange: ( val ) => {
 
-		const finalRes = parseInt( val, 10 );
-		const state = get();
-		const { width, height } = computeCanvasDimensions( finalRes, state.aspectRatioPreset, state.orientation );
+		get()._applyCanvasDimensions( { finalRenderResolution: parseInt( val, 10 ) } );
 
-		set( { finalRenderResolution: finalRes, canvasWidth: width, canvasHeight: height } );
+	},
+
+	// --- Camera projection (perspective / 360 panorama) ---
+
+	handleCameraProjectionChange: ( val ) => {
 
 		const app = getApp();
+
 		if ( app ) {
 
-			app.setCanvasSize( width, height );
-			app.reset();
+			app.settings.set( 'cameraProjection', val );
+
+			// The engine owns which features panorama is incompatible with — mirror the
+			// outcome rather than restating the rule here.
+			set( {
+				denoiserStrategy: app.denoisingManager.denoiserStrategy,
+				enableASVGF: !! app.stages.asvgf?.enabled,
+			} );
+			useCameraStore.setState( { autoFocusMode: app.cameraManager.autoFocusMode } );
 
 		}
+
+		// Panorama locks the output to 2:1, so the canvas has to be re-derived.
+		get()._applyCanvasDimensions( { cameraProjection: val } );
+
+	},
+
+	handlePanoramaLonRangeChange: ( val ) => {
+
+		set( { panoramaLonRange: val } );
+		getApp()?.settings.set( 'panoramaLonRange', val );
+
+	},
+
+	handlePanoramaLatRangeChange: ( val ) => {
+
+		set( { panoramaLatRange: val } );
+		getApp()?.settings.set( 'panoramaLatRange', val );
+
+	},
+
+	handlePanoramaLevelHorizonChange: ( val ) => {
+
+		set( { panoramaLevelHorizon: val } );
+		getApp()?.settings.set( 'panoramaLevelHorizon', val );
 
 	},
 
@@ -1308,7 +1342,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		if ( ! app ) return;
 
 		const state = get();
-		const { width, height } = computeCanvasDimensions( state.resolution, state.aspectRatioPreset, state.orientation );
+		const { width, height } = computeOutputDimensions( state, state.resolution );
 		set( { canvasWidth: width, canvasHeight: height } );
 
 		app.configureForMode( 'interactive', { canvasWidth: width, canvasHeight: height } );
@@ -1323,7 +1357,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		if ( ! app ) return;
 
 		const state = get();
-		const { width, height } = computeCanvasDimensions( state.finalRenderResolution, state.aspectRatioPreset, state.orientation );
+		const { width, height } = computeOutputDimensions( state, state.finalRenderResolution );
 		set( { canvasWidth: width, canvasHeight: height } );
 
 		app.configureForMode( 'production', { canvasWidth: width, canvasHeight: height } );

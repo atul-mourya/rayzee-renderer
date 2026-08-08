@@ -6,7 +6,7 @@
  */
 
 import { uniform, uniformArray } from 'three/tsl';
-import { Vector2, Matrix4, Vector3, Color } from 'three';
+import { Vector2, Matrix4, Vector3, Color, MathUtils } from 'three';
 import { samplingTechniqueUniform } from '../TSL/Random.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 
@@ -240,6 +240,13 @@ export class UniformManager {
 		u( 'cameraProjectionMatrixInverse', new Matrix4(), 'mat4' );
 		u( 'cameraViewMatrix', new Matrix4(), 'mat4' );
 		u( 'cameraProjectionMatrix', new Matrix4(), 'mat4' );
+
+		// Projection: 0 = pinhole, 1 = equirectangular panorama. Ranges are radians (UI carries degrees).
+		const radRange = ( [ min, max ] ) => new Vector2( min, max ).multiplyScalar( MathUtils.DEG2RAD );
+		u( 'cameraProjection', DEFAULT_STATE.cameraProjection === 'equirectangular' ? 1 : 0, 'int' );
+		u( 'panoLonRange', radRange( DEFAULT_STATE.panoramaLonRange ), 'vec2' );
+		u( 'panoLatRange', radRange( DEFAULT_STATE.panoramaLatRange ), 'vec2' );
+		ub( 'panoLevelHorizon', DEFAULT_STATE.panoramaLevelHorizon );
 
 		// DOF
 		ub( 'enableDOF', DEFAULT_STATE.enableDOF );

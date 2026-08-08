@@ -14,17 +14,14 @@ import {
 	min,
 	normalize,
 	mix,
-	vec4,
 	notEqual,
 	lessThan,
-	mat3,
 	array,
 	bool as tslBool,
 } from 'three/tsl';
 
-import { Ray, HitInfo } from './Struct.js';
+import { HitInfo } from './Struct.js';
 import { getDatafromStorageBuffer } from './Common.js';
-import { RandomPointInCircle } from './Random.js';
 
 const MAX_STACK_DEPTH = 32;
 const MAX_BVH_ITERATIONS = 512;
@@ -557,68 +554,5 @@ export const traverseBVHShadow = Fn( ( [
 	} );
 
 	return closestHit;
-
-} );
-
-// ================================================================================
-// CAMERA RAY GENERATION
-// ================================================================================
-
-export const generateRayFromCamera = Fn( ( [
-	screenPosition, rngState,
-	cameraWorldMatrix, cameraProjectionMatrixInverse,
-	enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio
-] ) => {
-
-	// Convert screen position to NDC
-	const ndcPos = vec3( screenPosition.xy, 1.0 );
-
-	// Convert NDC to camera space
-	const rayDirCS = cameraProjectionMatrixInverse.mul( vec4( ndcPos, 1.0 ) );
-
-	// Convert to world space
-	const rayDirectionWorld = normalize( mat3(
-		cameraWorldMatrix[ 0 ].xyz,
-		cameraWorldMatrix[ 1 ].xyz,
-		cameraWorldMatrix[ 2 ].xyz
-	).mul( rayDirCS.xyz.div( rayDirCS.w ) ) ).toVar();
-
-	const rayOriginWorld = vec3( cameraWorldMatrix[ 3 ] ).toVar();
-
-	const resultOrigin = rayOriginWorld.toVar();
-	const resultDirection = rayDirectionWorld.toVar();
-
-	// Check if DOF is disabled or conditions make it ineffective
-	If( enableDOF.and( focalLength.greaterThan( 0.0 ) ).and( aperture.lessThan( 64.0 ) ).and( focusDistance.greaterThan( 0.001 ) ), () => {
-
-		// Physical aperture calculation
-		const effectiveAperture = focalLength.div( aperture );
-		// Apply scene scale to maintain correct physical aperture size
-		const apertureRadius = effectiveAperture.mul( 0.001 ).mul( sceneScale ).mul( apertureScale );
-
-		// Generate random point on aperture disk
-		const randomPoint = RandomPointInCircle( rngState );
-
-		// Apply anamorphic squeeze — stretch horizontally for oval bokeh
-		const lensX = randomPoint.x.mul( anamorphicRatio.max( 0.01 ) );
-		const lensY = randomPoint.y;
-
-		// Extract camera coordinate system directly from camera matrix
-		const cameraRight = normalize( vec3( cameraWorldMatrix[ 0 ] ) );
-		const cameraUp = normalize( vec3( cameraWorldMatrix[ 1 ] ) );
-
-		// Apply aperture offset using camera's actual coordinate system
-		const offset = cameraRight.mul( lensX ).add( cameraUp.mul( lensY ) ).mul( apertureRadius );
-
-		// Calculate new ray from offset origin to focal point
-		resultOrigin.assign( rayOriginWorld.add( offset ) );
-		resultDirection.assign( normalize( rayOriginWorld.add( rayDirectionWorld.mul( focusDistance ) ).sub( resultOrigin ) ) );
-
-	} );
-
-	return Ray( {
-		origin: resultOrigin,
-		direction: resultDirection,
-	} );
 
 } );
