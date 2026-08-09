@@ -146,7 +146,8 @@ export class PathTracerApp extends EventDispatcher {
 		// ── State ──
 		this.isInitialized = false;
 		this.pauseRendering = false;
-		this.pathTracerEnabled = true;
+		this._pathTracerEnabled = true;
+		this._rasterPrecompile = null;
 		this.animationManagerId = null;
 		this.needsReset = false;
 		this._loadingInProgress = false;
@@ -841,20 +842,15 @@ export class PathTracerApp extends EventDispatcher {
 		this.stages.pathTracer.setupMaterial();
 		timer.end( 'Material setup (TSL compile)' );
 
-		// Front-load raster pipeline creation (compileAsync yields to main thread, r184+) so the first
-		// animate frame is snappy. Wavefront compute kernels compile lazily on their first dispatch.
-		timer.start( 'Pipeline precompile' );
-		try {
+		this._rasterPrecompile = null;
 
-			await this.renderer.compileAsync( this.meshScene, this.cameraManager.camera );
+		if ( ! this._pathTracerEnabled ) {
 
-		} catch ( err ) {
-
-			log.warn( 'raster fallback precompile failed', err );
+			timer.start( 'Pipeline precompile' );
+			await this.precompileRaster();
+			timer.end( 'Pipeline precompile' );
 
 		}
-
-		timer.end( 'Pipeline precompile' );
 
 		// Wait for CDF
 		if ( cdfPromise ) {
@@ -1861,6 +1857,42 @@ export class PathTracerApp extends EventDispatcher {
 			return null;
 
 		}
+
+	}
+
+	/**
+	 * When false, `animate()` rasters `meshScene` instead of path tracing. Those raster pipelines
+	 * are compiled on the switch rather than at load — `compileAsync` costs seconds on a
+	 * many-material model, and path tracing, the default, never uses them.
+	 * @returns {boolean}
+	 */
+	get pathTracerEnabled() {
+
+		return this._pathTracerEnabled;
+
+	}
+
+	set pathTracerEnabled( value ) {
+
+		this._pathTracerEnabled = value;
+		if ( ! value ) this.precompileRaster();
+
+	}
+
+	/**
+	 * Warms the raster fallback's pipelines. Once per loaded model; concurrent callers await the
+	 * same compile rather than racing past a flag set before it finishes.
+	 * @returns {Promise<void>}
+	 */
+	precompileRaster() {
+
+		if ( ! this.renderer || ! this.meshScene ) return Promise.resolve();
+
+		this._rasterPrecompile ??= this.renderer
+			.compileAsync( this.meshScene, this.cameraManager.camera )
+			.catch( err => log.warn( 'raster fallback precompile failed', err ) );
+
+		return this._rasterPrecompile;
 
 	}
 
