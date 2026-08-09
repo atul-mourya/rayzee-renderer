@@ -48,6 +48,8 @@ export class SceneProcessor {
 			enableTextureCache: true,
 			maxConcurrentTextureTasks: Math.min( navigator.hardwareConcurrency || 4, 6 ),
 			// Treelet optimization configuration
+			// Keep: `_buildBVH` sends `enabled: value !== false`, so undefined re-enables treelets.
+			enableTreeletOptimization: false,
 			treeletSize: 7, // 7 nodes gives 315 topologies for optimal enumeration
 			treeletOptimizationPasses: 1,
 			treeletMinImprovement: 0.01, // Minimum SAH improvement threshold

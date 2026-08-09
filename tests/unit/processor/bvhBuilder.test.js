@@ -386,7 +386,7 @@ describe( 'BVHBuilder', () => {
 			it( 'sets enableTreeletOptimization to false', () => {
 
 				const b = new BVHBuilder();
-				expect( b.enableTreeletOptimization ).toBe( true );
+				b.enableTreeletOptimization = true; // default is false
 				b.disableTreeletOptimization();
 				expect( b.enableTreeletOptimization ).toBe( false );
 

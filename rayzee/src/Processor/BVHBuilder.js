@@ -96,8 +96,9 @@ export class BVHBuilder {
 			reinsertionIterations: 0
 		};
 
-		// Treelet optimization configuration
-		this.enableTreeletOptimization = true;
+		// Off: repairs LBVH trees, so on this binned-SAH build it buys 0.005% tree SAH for 72%
+		// of build time.
+		this.enableTreeletOptimization = false;
 		this.treeletSize = 5;
 		this.treeletOptimizationPasses = 1;
 		this.treeletMinImprovement = 0.02;
