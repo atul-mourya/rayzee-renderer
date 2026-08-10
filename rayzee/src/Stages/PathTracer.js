@@ -761,10 +761,10 @@ export class PathTracer extends PathTracerStage {
 	// MAX_STORAGE_TEXTURE_SIZE and can't be resized, so recreate the pool at the (new) live reserved size and
 	// rebuild the wavefront kernels in place. The stage OBJECT is unchanged, so manager/event refs stay valid;
 	// only GPU textures + compute pipelines are rebuilt. Scene buffers (BVH/tri/material) are resolution-
-	// independent and untouched. Caller must have rendering paused. No-op before the first build.
+	// independent and untouched. Caller must have rendering paused.
 	reallocateReservedStorage() {
 
-		if ( ! this._packedBuffers || ! ( this.materialData?.materialCount > 0 ) ) return;
+		if ( ! this.storageTextures.writeColor ) return;
 
 		// Clamp into the (possibly just-lowered) reserve: create() sizes the write StorageTextures at
 		// MAX_STORAGE_TEXTURE_SIZE but the readTarget at what's passed here, and the tracked render size still
@@ -776,6 +776,11 @@ export class PathTracer extends PathTracerStage {
 		// live MAX_STORAGE_TEXTURE_SIZE; the read RenderTarget follows the current render size).
 		this.storageTextures.create( w, h );
 		this.resolution.value.set( w, h );
+
+		// No kernels before the first scene with materials — nothing to rebuild, and a build here would compile
+		// against 0 materials. The pool above is recreated regardless: it is allocated at construction, so a
+		// reserve raised before the first model load must still reach it or every later copy overflows it.
+		if ( ! this._packedBuffers || ! ( this.materialData?.materialCount > 0 ) ) return;
 
 		// Rebuild kernels: re-references the fresh write textures + recreates the per-pixel aux buffers
 		// (m2/streak/frozenMask) at the new maxPixels. Prev-frame nodes are repointed per-frame in render().

@@ -36,6 +36,7 @@ export {
 	MEMORY_CONSTANTS,
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
+	MAX_RESERVABLE_RENDER_SIZE,
 } from './EngineDefaults.js';
 
 // Settings & managers (for advanced consumers)

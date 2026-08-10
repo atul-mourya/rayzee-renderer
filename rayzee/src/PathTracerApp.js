@@ -114,6 +114,8 @@ export class PathTracerApp extends EventDispatcher {
 		// ── Pipeline & stages ──
 		this.pipeline = null;
 
+		this._pendingReservedRenderSize = null;
+
 		/**
 		 * Named access to all pipeline stages.
 		 * Advanced consumers can reach into stages for fine-grained control.
@@ -220,6 +222,7 @@ export class PathTracerApp extends EventDispatcher {
 	async init() {
 
 		await this._initRenderer();
+		this._applyPendingReservedRenderSize();
 		this._initCameraManager();
 		this._initScenes();
 		this._initAssetPipeline();
@@ -1233,34 +1236,53 @@ export class PathTracerApp extends EventDispatcher {
 	 * is device-capped: 4K reservation (~1.5 GB of MRT textures) is only granted on GPUs with ample VRAM +
 	 * a large storage-buffer binding limit; weaker devices clamp to 2048.
 	 *
-	 * MUST be called before the pipeline/stages are constructed (they pre-allocate at this value and cannot
-	 * resize). Calling it after init only takes effect on the next full pipeline (re)build.
+	 * Callable at any point in the lifecycle:
+	 *  - before init(): recorded, then applied during init() before the stages are constructed, so they
+	 *    pre-allocate at the raised size directly. The device gate cannot run until the device exists, so
+	 *    the value returned here is the request, not the verdict — read getReservedRenderResolution() after
+	 *    init(), or listen for `reserved_render_size_changed`.
+	 *  - after init(): applied immediately, re-initialising the reserved GPU storage in place.
 	 * @param {number}  requestedPx desired reserved size (longest edge)
 	 * @param {Object}  [opts]
 	 * @param {boolean} [opts.allowLower=false] permit lowering, paying a rebuild, to reclaim VRAM
-	 * @returns {number} the applied reserved size
+	 * @returns {number} the applied reserved size (the pending request when called before init)
 	 */
 	setReservedRenderResolution( requestedPx, { allowLower = false } = {} ) {
 
-		const limits = this.renderer?.backend?.device?.limits;
-		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
-		const deviceMemGB = ( typeof navigator !== 'undefined' && navigator.deviceMemory ) || 4;
-		// 4K reserve pins the accum MRT (~1.5 GB) + aux; only grant it on clearly-capable GPUs.
-		const deviceSafeMax = ( deviceMemGB >= 8 && maxBinding >= 1024 * 1024 * 1024 )
-			? MAX_RESERVABLE_RENDER_SIZE : 2048;
 		const prev = MAX_STORAGE_TEXTURE_SIZE;
 
 		// Monotonic up: UI-driven callers request whatever the current view needs, so honouring decreases made
 		// the reserve oscillate on every preview↔render switch and paid a full kernel rebuild each time.
 		const target = allowLower ? requestedPx : Math.max( requestedPx, prev );
+
+		// No device yet: the gate below has nothing to interrogate and would clamp a 4K-capable GPU to 2048.
+		// init() replays the request once the device exists, still before the stages allocate.
+		if ( ! this.renderer ) {
+
+			this._pendingReservedRenderSize = { requestedPx, allowLower };
+			return Math.max( 256, Math.min( MAX_RESERVABLE_RENDER_SIZE, Math.floor( target ) || 256 ) );
+
+		}
+
+		const limits = this.renderer.backend?.device?.limits;
+		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
+		const deviceMemGB = ( typeof navigator !== 'undefined' && navigator.deviceMemory ) || 4;
+		// 4K reserve pins the accum MRT (~1.5 GB) + aux; only grant it on clearly-capable GPUs.
+		const deviceSafeMax = ( deviceMemGB >= 8 && maxBinding >= 1024 * 1024 * 1024 )
+			? MAX_RESERVABLE_RENDER_SIZE : 2048;
 		const applied = setReservedRenderSize( Math.min( target, deviceSafeMax ) );
 
-		// If the pipeline is already built and the reserved size changed, re-init the reserved GPU storage in
-		// place: each stage recreates its pre-allocated StorageTextures at the new size + rebuilds its compute
-		// pipelines. Stage OBJECTS, manager refs and event wiring are preserved (so no re-subscription needed);
-		// scene geometry buffers are resolution-independent and reused. Rendering is paused across the swap so
-		// no in-flight dispatch references a disposed texture.
-		if ( applied !== prev && this.stages?.pathTracer?._packedBuffers ) {
+		// Gate the realloc on the textures that EXIST, not on how the binding moved: a raise applied while
+		// nothing was allocated leaves `applied === prev` for every later call, so keying off that let the
+		// first ineffective call poison every effective one after it (issue #9). The path tracer's write MRT
+		// witnesses the reserve the stages were last built at.
+		const allocated = this.stages?.pathTracer?.storageTextures?.writeColor?.image?.width ?? applied;
+
+		// Re-init the reserved GPU storage in place: each stage recreates its pre-allocated StorageTextures at
+		// the new size + rebuilds its compute pipelines. Stage OBJECTS, manager refs and event wiring are
+		// preserved (so no re-subscription needed); scene geometry buffers are resolution-independent and
+		// reused. Rendering is paused across the swap so no in-flight dispatch references a disposed texture.
+		if ( allocated !== applied ) {
 
 			const wasPaused = this.pauseRendering;
 			this.pauseRendering = true;
@@ -1295,6 +1317,31 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Replay a setReservedRenderResolution() call made before init(): after the device exists, so the gate is
+	 * evaluated against the real GPU, and before _initPipeline() constructs the stages, which read the reserve
+	 * in their constructors. The event carries the device's verdict — the only authoritative answer a pre-init
+	 * caller can get.
+	 */
+	_applyPendingReservedRenderSize() {
+
+		const pending = this._pendingReservedRenderSize;
+		if ( ! pending ) return;
+
+		this._pendingReservedRenderSize = null;
+
+		const applied = this.setReservedRenderResolution( pending.requestedPx, { allowLower: pending.allowLower } );
+
+		if ( applied < pending.requestedPx ) {
+
+			log.warn( `reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — renders above ${fmt.n( applied )}px will be declined.` );
+
+		}
+
+		this.dispatchEvent( { type: 'reserved_render_size_changed', size: applied } );
+
+	}
+
+	/**
 	 * The current reserved (pre-allocated) square render size in px.
 	 * @returns {number}
 	 */
@@ -1314,7 +1361,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( width > MAX_STORAGE_TEXTURE_SIZE || height > MAX_STORAGE_TEXTURE_SIZE ) {
 
-			log.warn( `render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px limit (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
+			log.warn( `render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px reserve (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — raise the reserve with setReservedRenderResolution( ${Math.max( width, height )} ) first, or use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
 			return false;
 
 		}
@@ -1360,10 +1407,19 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Set the render resolution in pixels, applied immediately (unlike the debounced onResize()).
+	 * @param {number} width
+	 * @param {number} height
+	 * @returns {{width: number, height: number}|null} the size now in effect, or null if the request was
+	 *   declined — zero, or above the reserved render size (raise it with setReservedRenderResolution).
+	 *   A declined request leaves the previous size in place, so ignoring this return renders at the
+	 *   wrong resolution with nothing but a warning to show for it.
+	 */
 	setCanvasSize( width, height ) {
 
-		if ( width === 0 || height === 0 ) return;
-		if ( ! this._isRenderSizeSupported( width, height ) ) return;
+		if ( width === 0 || height === 0 ) return null;
+		if ( ! this._isRenderSizeSupported( width, height ) ) return null;
 
 		this.renderer.setPixelRatio( 1.0 );
 		this.renderer.setSize( width, height, false );
@@ -1372,6 +1428,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		clearTimeout( this._resizeDebounceTimer );
 		this._applyRenderResize( width, height );
+
+		return { width, height };
 
 	}
 

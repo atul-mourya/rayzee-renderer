@@ -199,9 +199,10 @@ export const MAX_RESERVABLE_RENDER_SIZE = 4096;
 // Reserved render size: every per-resolution compute StorageTexture + aux buffer is pre-allocated at
 // this SQUARE size and never resized at runtime (works around three.js StorageTexture-resize bugs —
 // see TSL/patches history). Render resolution must not exceed it; the engine warns + ignores larger.
-// It is a LIVE binding (mutable) so the host can raise it (e.g. for 4K) BEFORE the pipeline/stages are
-// constructed via setReservedRenderSize(); consumers read it inside their constructors. Default 2048
-// (zero VRAM regression). See docs/internal/specs/wavefront-chunked-pool.md.
+// It is a LIVE binding (mutable) so it can be raised (e.g. for 4K) via setReservedRenderSize(); consumers
+// read it inside their constructors, and stages already built at a lower value are re-initialised in place
+// by PathTracerApp.setReservedRenderResolution() — which is the device-gated API hosts should call, at any
+// point in the lifecycle. Default 2048 (zero VRAM regression). See docs/internal/specs/wavefront-chunked-pool.md.
 export let MAX_STORAGE_TEXTURE_SIZE = 2048;
 
 // Set the reserved render size. MUST be called before pipeline construction (stages pre-allocate at
