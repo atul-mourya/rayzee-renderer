@@ -277,7 +277,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	...DEFAULT_STATE,
 	GIIntensity: DEFAULT_STATE.globalIlluminationIntensity,
 	backgroundIntensity: DEFAULT_STATE.backgroundIntensity,
-	performanceModeAdaptive: 'medium',
 
 	showInspector: false,
 
@@ -292,7 +291,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setBounces: val => set( { bounces: val } ),
 	setEnableEmissiveTriangleSampling: val => set( { enableEmissiveTriangleSampling: val } ),
 	setEmissiveBoost: val => set( { emissiveBoost: val } ),
-	setPerformanceModeAdaptive: val => set( { performanceModeAdaptive: val } ),
 	setShowInspector: val => set( { showInspector: val } ),
 	setFireflyThreshold: val => set( { fireflyThreshold: val } ),
 	setTilesHelper: val => set( { tilesHelper: val } ),
@@ -686,19 +684,11 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	// Tier-2 per-pixel freeze. configureForMode re-syncs it per mode; this toggle overrides for the session.
-	handleUsePixelFreezeChange: val => {
-
-		set( { usePixelFreeze: val } );
-		getApp()?.settings.set( 'usePixelFreeze', val );
-
-	},
-
-	// Adaptive-sampling advanced knobs (three-dots menu). Slider values arrive as [v]; unwrap.
+	// One switch, both tiers — the whole-frame early-stop and the per-pixel freeze are halves of one feature.
 	handleUseAdaptiveSamplingChange: val => {
 
-		set( { useAdaptiveSampling: val } );
-		getApp()?.settings.set( 'useAdaptiveSampling', val );
+		set( { useAdaptiveSampling: val, usePixelFreeze: val } );
+		getApp()?.settings.setMany( { useAdaptiveSampling: val, usePixelFreeze: val } );
 
 	},
 
@@ -718,27 +708,10 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	handleAdaptiveStopFractionChange: val => {
+	handleConvergenceOverlayChange: val => {
 
-		const v = Array.isArray( val ) ? val[ 0 ] : val;
-		set( { adaptiveStopFraction: v } );
-		getApp()?.settings.set( 'adaptiveStopFraction', v );
-
-	},
-
-	handlePixelFreezeThresholdChange: val => {
-
-		const v = Array.isArray( val ) ? val[ 0 ] : val;
-		set( { pixelFreezeThreshold: v } );
-		getApp()?.settings.set( 'pixelFreezeThreshold', v );
-
-	},
-
-	handlePixelFreezeStabilityChange: val => {
-
-		const v = Array.isArray( val ) ? val[ 0 ] : val;
-		set( { pixelFreezeStability: v } );
-		getApp()?.settings.set( 'pixelFreezeStability', v );
+		set( { convergenceOverlay: val } );
+		getApp()?.settings.set( 'convergenceOverlay', val );
 
 	},
 

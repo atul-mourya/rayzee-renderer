@@ -206,7 +206,7 @@ describe( 'RenderSettings', () => {
 		it( 'pushes all values to stages', () => {
 
 			const mockStage = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
-			const mockCompositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn() };
+			const mockCompositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
 			const mockRenderer = { toneMappingExposure: 1.0 };
 			settings.bind( { stages: { pathTracer: mockStage, compositor: mockCompositor }, renderer: mockRenderer, resetCallback: vi.fn(), reconcileCompletion: vi.fn() } );
 			settings.applyAll();

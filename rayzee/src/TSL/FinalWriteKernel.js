@@ -9,7 +9,7 @@
 
 import {
 	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2,
-	If, mix, select, texture, textureStore, length, atomicAdd,
+	If, mix, select, texture, textureStore, length,
 	localId, workgroupId,
 } from 'three/tsl';
 
@@ -17,7 +17,6 @@ import {
 	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo,
 } from '../Processor/PackedRayBuffer.js';
 import { luminance } from './Common.js';
-import { COUNTER } from '../Processor/QueueManager.js';
 
 const WG_SIZE = 16;
 
@@ -49,12 +48,17 @@ export function buildFinalWriteKernel( params ) {
 		// Clean-aux normal (1 = temporally accumulate + renormalize the aux normal). On only for clean-aux
 		// OIDN models (calb_cnrm/high, alb_nrm/balanced); off for fast/ASVGF which want the bump normal.
 		cleanAuxNormalEnabled,
-		// Tier-1 convergence early-stop: per-pixel Welford luminance second moment + converged-pixel counter.
-		counters, m2BufferRW, useAdaptiveSampling, noiseThreshold, adaptiveMinSamples,
+		// Tier-1 convergence early-stop: per-pixel Welford luminance second moment + converged bit (stamped
+		// into streak bit 31; counted with 3×3 erosion by countConvergedDilated at the next frame start).
+		m2BufferRW, useAdaptiveSampling, noiseThreshold, adaptiveMinSamples,
 
-		// Tier-2 per-pixel freeze: streakBufferRW = per-pixel freeze-candidate streak (stamped here);
-		// frozenMaskRO = dilated frozen mask from buildActivePixels (pass-through gates on it, not streak).
+		// Tier-2 per-pixel freeze: streakBufferRW = per-pixel freeze-candidate streak in bits 0-30 (stamped
+		// here); frozenMaskRO = dilated frozen mask from buildActivePixels (pass-through gates on it, not streak).
 		usePixelFreeze, pixelFreezeThreshold, streakBufferRW, frozenMaskRO,
+
+		// Display-only convergence overlay (Compositor). Only keeps m2 updated so the overlay has a live
+		// error field with adaptive sampling off — the counter and the freeze streak stay under convOn.
+		convergenceOverlay,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -62,6 +66,9 @@ export function buildFinalWriteKernel( params ) {
 	// useAdaptiveSampling is registered via UniformManager.ub() → an int 0/1 uniform, so compare against int(0).
 	const convOn = useAdaptiveSampling.greaterThan( int( 0 ) );
 	const adaptiveOn = usePixelFreeze.greaterThan( int( 0 ) );
+	// The m2/relErr block feeds three consumers: the frame early-stop, the per-pixel freeze, and the debug
+	// overlay. Any one of them being on has to keep it live.
+	const statsOn = convOn.or( adaptiveOn ).or( convergenceOverlay.greaterThan( int( 0 ) ) );
 
 	const computeFn = Fn( () => {
 
@@ -139,13 +146,10 @@ export function buildFinalWriteKernel( params ) {
 
 			} );
 
-			// Tier-1 convergence: per-pixel running second moment of LUMINANCE (Welford). luminance() is linear,
-			// so luminance(running-mean color) == running-mean luminance == E[L]; m2 tracks E[L²] under the SAME
-			// global 1/(frame+1) alpha (NO per-pixel alpha). sampleVar = E[L²]-E[L]²; varOfMean = sampleVar/(N);
-			// absSE = SE(mean); a pixel converges once frame>=minSamples AND the √-normalized error < threshold.
-			// The m2 write runs every frame (incl. frame 0, where alpha==1 self-inits it → no explicit clear).
-			// Sits AFTER the accumulation mix (finalColor is the mean) and BEFORE the visMode-11 mutation.
-			If( convOn, () => {
+			// Per-pixel running second moment of luminance under the SAME global 1/(frame+1) alpha as the
+			// colour, so sampleVar = E[L²]-E[L]². Must sit after the accumulation mix (finalColor is the mean)
+			// and before the visMode-11 mutation. Frame 0 self-inits m2 via alpha==1 — no explicit clear.
+			If( statsOn, () => {
 
 				const sampleLum = luminance( sampleColor.xyz );
 				const prevM2 = m2BufferRW.element( pixelId ).toVar();
@@ -155,43 +159,66 @@ export function buildFinalWriteKernel( params ) {
 				const meanLum = luminance( finalColor ).toVar();
 				const sampleVar = m2.sub( meanLum.mul( meanLum ) ).max( float( 0 ) );
 				const varOfMean = sampleVar.div( float( frame ).add( 1.0 ) );
-				// absSE = absolute standard error of the mean luminance; relErr = its ratio to the mean.
-				// Combined criterion: bright pixels converge on relErr<threshold; dark/dim pixels (where relErr
-				// stays high forever) converge on absSE<absFloor, since their absolute noise is imperceptible.
 				const absSE = varOfMean.sqrt().toVar();
 				const relErr = absSE.div( meanLum.add( float( 1e-4 ) ) ); // Tier-2 freeze predicate reads this
 
-				// Cycles-style convergence: normalize the standard error by √luminance for dim pixels (lum<1),
-				// by luminance for bright ones. The √ loosens the relative bar in shadows so dark pixels converge
-				// on their small absolute noise instead of stalling forever on a pure relative bar.
+				// √luminance normalization below 1 loosens the bar in shadows, so dark pixels converge on their
+				// small absolute noise instead of stalling forever on a pure relative one.
 				const convNorm = select( meanLum.lessThan( float( 1.0 ) ), meanLum.sqrt(), meanLum );
 				const converged = absSE.div( convNorm.add( float( 1e-4 ) ) ).lessThan( noiseThreshold );
 
-				If( frame.greaterThanEqual( uint( adaptiveMinSamples ) ).and( converged ), () => {
+				// Must cover adaptiveOn: nested under convOn alone, freeze neither updated its streak nor ran
+				// its frame-0 clear, so buildActivePixels kept applying the last run's mask across resets.
+				If( convOn.or( adaptiveOn ), () => {
 
-					atomicAdd( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 1 ) );
+					// Streak word: bit 31 = converged, bit 30 = hit geometry, bits 0-29 = freeze streak. Both flags
+					// are read by countConvergedDilated, which erodes them 3×3 before counting — a pointwise count is
+					// blind to undiscovered energy, which has zero variance and so passes any threshold.
+					const eligible = convOn.and( frame.greaterThanEqual( uint( adaptiveMinSamples ) ) ).and( converged );
+					const prevWord = streakBufferRW.element( pixelId ).toVar();
+					const oldStreak = prevWord.bitAnd( uint( 0x3FFFFFFF ) ).toVar();
+					const newStreak = oldStreak.toVar();
 
-				} );
+					// Sticky within a run, else silhouette pixels flicker in and out of the subject denominator under
+					// AA jitter. Alpha is the only hit/miss signal valid here: the aux G-buffer is denoiser-gated and
+					// the ray flags do not survive to FinalWrite.
+					const hitGeometry = sampleColor.w.greaterThan( float( 0.5 ) );
+					const wasGeometry = prevWord.bitAnd( uint( 0x40000000 ) ).notEqual( uint( 0 ) );
+					const geometryBit = select(
+						frame.equal( uint( 0 ) ),
+						select( hitGeometry, uint( 0x40000000 ), uint( 0 ) ),
+						select( hitGeometry.or( wasGeometry ), uint( 0x40000000 ), uint( 0 ) )
+					).toVar();
 
-				// Maintain the freeze streak on the relErr-only predicate (NO absFloor — it bakes dim regions dark
-				// when it permanently freezes a pixel). Monotonic: streak>=K freezes for the run, so global alpha stays exact.
-				If( adaptiveOn, () => {
+					// relErr-only, no absolute floor — a floor bakes dim regions dark once it freezes them.
+					// Monotonic: streak>=K freezes for the run, so the global alpha stays exact.
+					If( adaptiveOn, () => {
 
-					If( frame.equal( uint( 0 ) ), () => {
+						If( frame.equal( uint( 0 ) ), () => {
 
-						// Frame 0 (post-reset/camera-move) clears the frozen state so each run re-freezes fresh.
-						streakBufferRW.element( pixelId ).assign( uint( 0 ) );
+							newStreak.assign( uint( 0 ) );
+
+						} );
+
+						If( wasFrozen.not().and( frame.greaterThan( uint( 0 ) ) ), () => {
+
+							// meanLum>0: an all-zero pixel has zero variance and passes any bar, but freezing skips its
+							// rays so it could never then discover its energy (−39% mean luminance on Veach bidir). The
+							// whole-frame count deliberately has no such guard — true black must count as converged there.
+							const freezeCandidate = frame.greaterThanEqual( uint( adaptiveMinSamples ) )
+								.and( relErr.lessThan( pixelFreezeThreshold ) )
+								.and( meanLum.greaterThan( float( 0 ) ) );
+							newStreak.assign( select( freezeCandidate, oldStreak.add( uint( 1 ) ), uint( 0 ) ) );
+
+						} );
 
 					} );
 
-					If( wasFrozen.not().and( frame.greaterThan( uint( 0 ) ) ), () => {
-
-						const freezeCandidate = frame.greaterThanEqual( uint( adaptiveMinSamples ) )
-							.and( relErr.lessThan( pixelFreezeThreshold ) );
-						const newStreak = select( freezeCandidate, streakBufferRW.element( pixelId ).add( uint( 1 ) ), uint( 0 ) ).toVar();
-						streakBufferRW.element( pixelId ).assign( newStreak );
-
-					} );
+					streakBufferRW.element( pixelId ).assign(
+						newStreak
+							.bitOr( select( eligible, uint( 0x80000000 ), uint( 0 ) ) )
+							.bitOr( geometryBit )
+					);
 
 				} );
 

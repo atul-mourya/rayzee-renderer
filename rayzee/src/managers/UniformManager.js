@@ -186,6 +186,10 @@ export class UniformManager {
 		u( 'pixelFreezeThreshold', DEFAULT_STATE.pixelFreezeThreshold, 'float' );
 		u( 'pixelFreezeStability', DEFAULT_STATE.pixelFreezeStability, 'int' );
 
+		// Convergence debug overlay: keeps FinalWrite's m2 estimate alive when adaptive sampling is off,
+		// so the Compositor overlay reads a live error field instead of a stale buffer.
+		ub( 'convergenceOverlay', DEFAULT_STATE.convergenceOverlay );
+
 		// Accumulation
 		ub( 'enableAccumulation', true );
 		u( 'accumulationAlpha', 0.0, 'float' );

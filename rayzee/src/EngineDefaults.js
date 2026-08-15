@@ -93,23 +93,30 @@ export const ENGINE_DEFAULTS = {
 
 	// Adaptive sampling (Blender-style): stop the frame once enough pixels drop below the noise threshold.
 	useAdaptiveSampling: true,
-	noiseThreshold: 0.02, // √-luminance-normalized per-pixel noise below which a pixel is converged
+	// √-luminance-normalized per-pixel noise below which a pixel counts as converged. Base tracks the
+	// interactive tier — that is what a freshly booted engine renders before configureForMode runs.
+	noiseThreshold: 0.1,
 	adaptiveMinSamples: 8, // min samples before adaptive sampling can trigger
-	adaptiveStopFraction: 0.95, // retire the frame once this fraction of pixels has converged
+	// Fraction of pixels that must pass the 3×3-eroded convergence count before the frame retires; the
+	// geometry-only fraction has to clear the same bar (PathTracer._isConvergedComplete).
+	// ENGINE-INTERNAL: a calibration constant rather than a quality dial — it only means anything against
+	// those two counts. configureForMode supplies the per-tier value.
+	adaptiveStopFraction: 0.90,
 	// Per-pixel freeze: skip tracing pixels that individually converged (noise threshold only — no dark floor,
 	// which would bake dim regions too dark). Naturally engages only on static/idle views.
+	// Set together with useAdaptiveSampling by the single UI switch — two tiers of one feature.
 	usePixelFreeze: true,
-	pixelFreezeThreshold: 0.02, // per-pixel noise below which a pixel becomes a freeze candidate
-	pixelFreezeStability: 8, // consecutive candidate frames before a pixel freezes
+	// ENGINE-INTERNAL, and not the sibling of noiseThreshold it looks like: freeze bars on plain relErr where
+	// the frame test uses the √-normalized error, so the same number is 2-5× stricter here. Deriving it from
+	// noiseThreshold was measured and rejected — a pixel frozen before it satisfies the frame test can never
+	// satisfy it afterwards, so a looser bar delays the early stop rather than hastening it.
+	pixelFreezeThreshold: 0.02,
+	pixelFreezeStability: 8, // ENGINE-INTERNAL: consecutive candidate frames before a pixel freezes
+	convergenceOverlay: false, // display-only Compositor overlay; never alters the render
 
 	samplingTechnique: 2,
 	enableEmissiveTriangleSampling: false,
 	emissiveBoost: 1.0,
-
-	temporalVarianceWeight: 0.6,
-	enableEarlyTermination: true,
-	earlyTerminationThreshold: 0.002,
-	performanceModeAdaptive: 'medium',
 
 	fireflyThreshold: 3.0,
 	// Wavefront material-coherence sort: global counting-sort of entering rays by material before
@@ -599,11 +606,10 @@ export const PRODUCTION_RENDER_CONFIG = {
 	renderMode: 1, enableAlphaShadows: true,
 	enableOIDN: true, oidnQuality: 'balance',
 	interactionModeEnabled: false,
-	// √-norm convergence reaches a true ~all-converged gate, so stop at 0.98 — Cycles-faithful, leaving
-	// the unbiased residual for OIDN.
+	// 0.94 against the eroded count ≈ the old raw-count 0.98; erosion holds the fraction a few points lower.
 	useAdaptiveSampling: true,
-	noiseThreshold: 0.1,
-	adaptiveStopFraction: 0.98,
+	noiseThreshold: 0.02,
+	adaptiveStopFraction: 0.94,
 	usePixelFreeze: true,
 };
 
@@ -615,6 +621,7 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	enableOIDN: false, oidnQuality: 'fast',
 	interactionModeEnabled: true,
 	useAdaptiveSampling: true, // idle refine stops early when converged; frozen during motion
+	noiseThreshold: 0.1, // loose: preview wants a fast settle, not a clean one
 	usePixelFreeze: true, // speeds up idle refinement on heavy/high-res views; inert while moving (freeze resets)
 };
 

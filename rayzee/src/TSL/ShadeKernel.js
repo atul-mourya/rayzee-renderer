@@ -469,7 +469,10 @@ export function buildShadeKernel( params ) {
 			// geometry (megakernel parity: PathTracerCore.js:784). A secondary bounce off an opaque
 			// surface that escapes to env keeps alpha 1 (HAS_HIT_OPAQUE set), so glass-in-front-of-an-
 			// object stays opaque while glass-in-front-of-sky exports see-through.
-			If( transparentBackground.and( flags.bitAnd( uint( RAY_FLAG.HAS_HIT_OPAQUE ) ).equal( uint( 0 ) ) ), () => {
+			// Ungated (was transparentBackground-only) so the alpha lane always carries coverage: it is the
+			// only hit/miss signal valid at FinalWrite. The image is unchanged — FinalWrite forces alpha 1
+			// when transparent-bg is off.
+			If( flags.bitAnd( uint( RAY_FLAG.HAS_HIT_OPAQUE ) ).equal( uint( 0 ) ), () => {
 
 				currentRadiance.w.assign( 0.0 );
 

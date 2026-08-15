@@ -22,7 +22,12 @@ export const COUNTER = {
 	RESERVED_3: 3,
 	// Tier-2 per-pixel freeze: bounce-0 active count (maxRays − frozen), read back to size next frame's grid.
 	ACTIVE_PIXEL_COUNT: 4,
-	COUNT: 5,
+	// Geometry-only convergence gate. CONVERGED_COUNT counts every pixel, so a mostly-sky frame inherits the
+	// sky's free convergence and can retire while the subject is still noisy. These count the same eroded
+	// bits restricted to pixels that hit geometry, so the stop can require both fractions.
+	GEOMETRY_COUNT: 5,
+	CONVERGED_GEOMETRY_COUNT: 6,
+	COUNT: 7,
 };
 
 /** Ray flag bits packed into rayBounceFlags (uint) */

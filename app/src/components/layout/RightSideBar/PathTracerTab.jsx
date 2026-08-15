@@ -11,9 +11,10 @@ import { Row } from '@/components/ui/row';
 import { SliderToggle } from '@/components/ui/slider-toggle';
 import { Exposure } from '@/assets/icons';
 import { Separator } from '@/components/ui/separator';
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import CanvasDimensionControls from './CanvasDimensionControls';
 import { MAX_TEXTURE_SIZE_PRESETS } from '@/Constants';
+import { getApp } from '@/lib/appProxy';
 
 /**
  * Optimized component for displaying computed auto-exposure value
@@ -60,6 +61,44 @@ const renderDebugModeControls = ( debugMode, props ) => {
 			return null;
 
 	}
+
+};
+
+const OVERLAY_LEGEND = [
+	[ 'bg-red-500', 'noisy' ],
+	[ 'bg-yellow-400', 'near threshold' ],
+	[ 'bg-neutral-400', 'converged' ],
+	[ 'bg-blue-500', 'frozen' ],
+];
+
+// Counters come from a settled-view readback, so they lag a little and read zero while orbiting.
+// Each figure is only shown while the feature that maintains it is on, else it reports a stale count.
+const ConvergenceReadout = ( { showConverged, showTracing } ) => {
+
+	const [ stats, setStats ] = useState( null );
+
+	useEffect( () => {
+
+		const id = setInterval( () => setStats( getApp()?.getConvergenceStats?.() ?? null ), 250 );
+		return () => clearInterval( id );
+
+	}, [] );
+
+	if ( ! stats?.totalPixels ) return null;
+
+	// "early-stop", not "converged": this counts the √luminance-normalized frame predicate, which is far
+	// more permissive on dim pixels than the plain relative error the overlay paints. Labelling it
+	// "converged" next to the colours read as a contradiction (95% converged, 30% of the frame hot).
+	// Floor/ceil so neither figure overstates progress — rounding printed "100%" at 99.6%.
+	const parts = [ `sample ${stats.frame}` ];
+	// Both must clear the bar to retire the frame, so show both — frame first, then subject-only, which is
+	// the one that keeps a mostly-background shot from stopping early. Subject is omitted when there is no
+	// geometry in view (pure environment), where the frame fraction decides alone.
+	if ( showConverged ) parts.push( `frame ${Math.floor( stats.converged * 100 )}%` );
+	if ( showConverged && stats.geometryPixels > 0 ) parts.push( `subject ${Math.floor( stats.convergedGeometry * 100 )}%` );
+	if ( showTracing && stats.activePixels ) parts.push( `tracing ${Math.ceil( 100 * stats.activePixels / stats.totalPixels )}%` );
+
+	return <div className="px-1 text-[10px] leading-4 opacity-50">{parts.join( ' · ' )}</div>;
 
 };
 
@@ -129,13 +168,10 @@ const PathTracerTab = () => {
 		skyMieAnisotropy,
 		skyPreset,
 		enableAlphaShadows,
-		usePixelFreeze,
 		useAdaptiveSampling,
 		noiseThreshold,
 		adaptiveMinSamples,
-		adaptiveStopFraction,
-		pixelFreezeThreshold,
-		pixelFreezeStability,
+		convergenceOverlay,
 		interactionModeEnabled,
 		asvgfQualityPreset,
 		asvgfDebugMode,
@@ -163,13 +199,10 @@ const PathTracerTab = () => {
 		handleMaxTextureSizeChange,
 		handleFireflyThresholdChange,
 		handleEnableAlphaShadowsChange,
-		handleUsePixelFreezeChange,
 		handleUseAdaptiveSamplingChange,
 		handleNoiseThresholdChange,
 		handleAdaptiveMinSamplesChange,
-		handleAdaptiveStopFractionChange,
-		handlePixelFreezeThresholdChange,
-		handlePixelFreezeStabilityChange,
+		handleConvergenceOverlayChange,
 		handleOidnQualityChange,
 		handleEnableOIDNChange,
 		handleEnableUpscalerChange,
@@ -635,34 +668,16 @@ const PathTracerTab = () => {
 				<Row>
 					<Switch label={"Alpha Shadows"} checked={enableAlphaShadows} onCheckedChange={handleEnableAlphaShadowsChange} />
 				</Row>
-				<Row more={(
+				<Row more={useAdaptiveSampling ? (
 					<>
-						{useAdaptiveSampling && ( <>
-							<div className="text-[10px] uppercase tracking-wide opacity-40">Frame Early-Stop</div>
-							<Row>
-								<Slider label={"Noise Threshold"} min={0.005} max={0.2} step={0.005} precision={3} value={[ noiseThreshold ]} onValueChange={handleNoiseThresholdChange} />
-							</Row>
-							<Row>
-								<Slider label={"Min Samples"} min={1} max={64} step={1} value={[ adaptiveMinSamples ]} onValueChange={handleAdaptiveMinSamplesChange} />
-							</Row>
-							<Row>
-								<Slider label={"Stop Fraction"} min={0.5} max={1} step={0.01} value={[ adaptiveStopFraction ]} onValueChange={handleAdaptiveStopFractionChange} />
-							</Row>
-							<Separator className="my-1 opacity-30" />
-						</> )}
 						<Row>
-							<Switch label={"Freeze Converged Pixels"} checked={usePixelFreeze} onCheckedChange={handleUsePixelFreezeChange} />
+							<Slider label={"Noise Threshold"} min={0.005} max={0.2} step={0.005} precision={3} value={[ noiseThreshold ]} onValueChange={handleNoiseThresholdChange} />
 						</Row>
-						{usePixelFreeze && ( <>
-							<Row>
-								<Slider label={"Freeze Threshold"} min={0.005} max={0.2} step={0.005} precision={3} value={[ pixelFreezeThreshold ]} onValueChange={handlePixelFreezeThresholdChange} />
-							</Row>
-							<Row>
-								<Slider label={"Freeze Stability"} min={1} max={32} step={1} value={[ pixelFreezeStability ]} onValueChange={handlePixelFreezeStabilityChange} />
-							</Row>
-						</> )}
+						<Row>
+							<Slider label={"Min Samples"} min={1} max={64} step={1} value={[ adaptiveMinSamples ]} onValueChange={handleAdaptiveMinSamplesChange} />
+						</Row>
 					</>
-				)}>
+				) : null}>
 					<Switch label={"Adaptive Sampling"} checked={useAdaptiveSampling} onCheckedChange={handleUseAdaptiveSamplingChange} />
 				</Row>
 				{enablePathTracer && ( <>
@@ -690,6 +705,19 @@ const PathTracerTab = () => {
 						</Select>
 					</Row>
 					{renderDebugModeControls( debugMode.toString(), { debugThreshold, handleDebugThresholdChange } )}
+					<Row>
+						<Switch label={"Convergence Overlay"} checked={convergenceOverlay} onCheckedChange={handleConvergenceOverlayChange} />
+					</Row>
+					{convergenceOverlay && ( <>
+						<div className="flex flex-wrap gap-x-2 gap-y-0.5 px-1 text-[10px] opacity-60">
+							{OVERLAY_LEGEND.map( ( [ dot, label ] ) => (
+								<span key={label} className="flex items-center gap-1">
+									<i className={`inline-block size-2 rounded-full ${dot}`} />{label}
+								</span>
+							) )}
+						</div>
+						<ConvergenceReadout showConverged={useAdaptiveSampling} showTracing={useAdaptiveSampling} />
+					</> )}
 					{import.meta.env.DEV && (
 						<Row>
 							<Switch label={"Inspector"} checked={showInspector} onCheckedChange={handleInspectorToggle} />

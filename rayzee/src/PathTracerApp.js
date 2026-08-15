@@ -1984,6 +1984,18 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Adaptive-sampling telemetry: `{ converged, activePixels, totalPixels, frame }`.
+	 * Counts come from an async readback taken on settled views only, so they lag a few frames
+	 * and read zero while the camera moves.
+	 * @returns {?Object}
+	 */
+	getConvergenceStats() {
+
+		return this.stages.pathTracer?.getConvergenceStats?.() ?? null;
+
+	}
+
 	/** The path tracer's VRAM tracker, or null before stages are built. */
 	get vram() {
 
@@ -2567,6 +2579,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.stages.compositor = new Compositor( this.renderer, {
 			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,
+			pathTracer: this.stages.pathTracer,
 		} );
 
 	}

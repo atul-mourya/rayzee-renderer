@@ -50,6 +50,7 @@ const SETTING_ROUTES = {
 	usePixelFreeze: { uniform: 'usePixelFreeze', reset: true },
 	pixelFreezeThreshold: { uniform: 'pixelFreezeThreshold', reset: true },
 	pixelFreezeStability: { uniform: 'pixelFreezeStability', reset: true },
+	convergenceOverlay: { handler: 'handleConvergenceOverlay', reset: false },
 	enableEmissiveTriangleSampling: { uniform: 'enableEmissiveTriangleSampling', reset: true },
 	emissiveBoost: { uniform: 'emissiveBoost', reset: true },
 	visMode: { uniform: 'visMode', reset: true },
@@ -142,7 +143,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, renderer, reconcileCompletion, denoisingManager, cameraManager } ) {
+	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, cameraManager } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -206,6 +207,17 @@ export class RenderSettings extends EventDispatcher {
 			handleSaturation: ( value ) => {
 
 				stages.compositor?.setSaturation( value );
+
+			},
+
+			handleConvergenceOverlay: ( value ) => {
+
+				stages.pathTracer?.setUniform( 'convergenceOverlay', value );
+				stages.compositor?.setConvergenceOverlay( value );
+
+				// With adaptive sampling off nothing kept m2 current, so the estimate has no history to
+				// read — restart accumulation so it self-inits at frame 0 instead of painting stale error.
+				if ( value && ! this.get( 'useAdaptiveSampling' ) ) resetCallback?.();
 
 			},
 

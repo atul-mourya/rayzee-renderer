@@ -54,6 +54,7 @@ export class PathTracer extends PathTracerStage {
 		// Tier-2 dilation: per-pixel frozen mask (1=skip), written race-free in buildActivePixels; a frozen pixel
 		// stays active if any 8-neighbour is still active (Cycles box-filter) to avoid hard frozen/active seams.
 		this._frozenMaskAttr = null;
+		this._convDebugSource = null; // memoized handle set for the Compositor's convergence overlay
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
 		this._wavefrontReady = false;
 
@@ -99,6 +100,9 @@ export class PathTracer extends PathTracerStage {
 		// single-flight guard for its async counter read. Zeroed on reset/camera-move/resize; never refreshed
 		// mid-motion (the readback early-return + frozen frameCount keep the stop from firing while moving).
 		this._convergedFraction = 0;
+		// Subject-only convergence, from the same eroded bits. Starts at 0 so the stop cannot fire unmeasured.
+		this._convergedGeometryFraction = 0;
+		this._geometryPixelCount = 0;
 		this._convergedReadbackPending = false;
 
 		// Tier-2: last settled active-pixel count (maxRays − frozen), sizes next frame's bounce-0 grid.
@@ -272,6 +276,7 @@ export class PathTracer extends PathTracerStage {
 			this._readbackGeneration ++;
 			// Drop the stale converged fraction so the early-stop can't fire on the pose we're leaving.
 			this._convergedFraction = 0;
+			this._convergedGeometryFraction = 0;
 			// Tier-2: drop the stale active-pixel count so bounce 0 full-sizes until the new pose re-measures.
 			this._lastActivePixelCount = 0;
 
@@ -369,6 +374,14 @@ export class PathTracer extends PathTracerStage {
 				// Generate traces every pixel in the band; initActiveIndices seeds the identity active list + counts
 				// (it overwrites ACTIVE + ENTERING, so no separate frame-start reset is needed).
 				km.dispatch( 'initActiveIndices' );
+
+			}
+
+			// Full-frame kernel, so first chunk only, after the zeroing above. Frame 0 skips it — those bits
+			// still belong to the pre-reset view. Only on frames whose counters are actually read back.
+			if ( chunkIndex === 0 && frameValue > 0 && this.useAdaptiveSampling.value > 0 && this._willReadCountersThisFrame() ) {
+
+				km.dispatch( 'countConvergedDilated' );
 
 			}
 
@@ -487,9 +500,15 @@ export class PathTracer extends PathTracerStage {
 	// _convergedFraction is zeroed on camera-move and never refreshed mid-motion (readback early-returns).
 	_isConvergedComplete() {
 
+		// BOTH fractions must clear the bar. The whole-frame one counts every pixel, so it is diluted by
+		// however much easy background is in shot — the bar effectively becomes (bar−bgShare)/(1−bgShare) on
+		// the subject, which makes it framing-dependent. The geometry-only fraction gates that. Neither
+		// replaces the other: background can be genuinely noisy (DOF, sharp env under AA jitter), and then
+		// the whole-frame fraction is the binding one.
 		return this.useAdaptiveSampling.value > 0
 			&& this.frameCount >= this.adaptiveMinSamples.value
-			&& this._convergedFraction >= this.adaptiveStopFraction.value;
+			&& this._convergedFraction >= this.adaptiveStopFraction.value
+			&& this._convergedGeometryFraction >= this.adaptiveStopFraction.value;
 
 	}
 
@@ -497,7 +516,59 @@ export class PathTracer extends PathTracerStage {
 
 		super.reset();
 		this._convergedFraction = 0;
+		this._convergedGeometryFraction = 0;
 		this._lastActivePixelCount = 0;
+
+	}
+
+	/**
+	 * Per-pixel convergence state for the Compositor's debug overlay: the buffers FinalWrite maintains
+	 * plus the uniforms needed to re-derive its predicate. Read-only — the overlay never writes back.
+	 * Null until the wavefront kernels exist.
+	 */
+	getConvergenceDebugSource() {
+
+		if ( ! this._m2Attr || ! this._frozenMaskAttr ) return null;
+		// Polled every frame while the overlay is on — rebuild only when the buffers actually change.
+		if ( this._convDebugSource?.m2 === this._m2Attr && this._convDebugSource.frozenMask === this._frozenMaskAttr ) {
+
+			return this._convDebugSource;
+
+		}
+
+		this._convDebugSource = {
+			m2: this._m2Attr,
+			frozenMask: this._frozenMaskAttr,
+			frame: this.frame,
+			renderWidth: this._wfRenderWidth,
+			renderHeight: this._wfRenderHeight,
+			noiseThreshold: this.noiseThreshold,
+			pixelFreezeThreshold: this.pixelFreezeThreshold,
+			usePixelFreeze: this.usePixelFreeze,
+			adaptiveMinSamples: this.adaptiveMinSamples,
+		};
+
+		return this._convDebugSource;
+
+	}
+
+	/**
+	 * Whole-frame adaptive-sampling telemetry, from the counters readback (settled views only).
+	 * `converged` is the fraction that met the noise threshold; `activePixels` is the count the
+	 * frozen-compaction path actually traced last settled frame.
+	 */
+	getConvergenceStats() {
+
+		const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
+
+		return {
+			converged: this._convergedFraction,
+			convergedGeometry: this._convergedGeometryFraction,
+			geometryPixels: this._geometryPixelCount,
+			activePixels: this._lastActivePixelCount,
+			totalPixels: total,
+			frame: this.frameCount,
+		};
 
 	}
 
@@ -548,6 +619,22 @@ export class PathTracer extends PathTracerStage {
 		super.setSize( width, height );
 
 		this._rebuildKernelsIfResized( oldW, oldH );
+
+	}
+
+	/**
+	 * Whether THIS frame's counters will actually be read back, evaluated before the dispatches that fill
+	 * them. Mirrors _maybeReadbackCounters' guards exactly; both run inside the same synchronous render()
+	 * call, so no async continuation can flip a flag between them.
+	 *
+	 * countConvergedDilated is a full-frame pass whose only consumer is that readback, and the readback is
+	 * on a 4-frame cadence — counting every frame threw ~75% of the work away.
+	 */
+	_willReadCountersThisFrame() {
+
+		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) return false;
+		if ( this._readbackPending || this._convergedReadbackPending ) return false;
+		return this._readbackFrameCounter + 1 >= this._readbackEveryNFrames;
 
 	}
 
@@ -620,6 +707,11 @@ export class PathTracer extends PathTracerStage {
 
 						const c = new Uint32Array( buf );
 						this._convergedFraction = c[ COUNTER.CONVERGED_COUNT ] / total;
+						// No geometry at all (pure environment) leaves nothing to gate on — 1 lets the
+						// whole-frame fraction decide alone.
+						const geo = c[ COUNTER.GEOMETRY_COUNT ];
+						this._geometryPixelCount = geo;
+						this._convergedGeometryFraction = geo > 0 ? c[ COUNTER.CONVERGED_GEOMETRY_COUNT ] / geo : 1;
 						// Tier-2: bounce-0 active-pixel count measured this settled frame → sizes next frame's grid.
 						this._lastActivePixelCount = c[ COUNTER.ACTIVE_PIXEL_COUNT ];
 
@@ -673,6 +765,7 @@ export class PathTracer extends PathTracerStage {
 		this._readbackFrameCounter = 0;
 		this._readbackGeneration ++;
 		this._convergedFraction = 0;
+		this._convergedGeometryFraction = 0;
 		this._lastActivePixelCount = 0;
 
 		// Chunked path pool: the wavefront buffers are sized to the fixed device budget B (not the
@@ -843,20 +936,28 @@ export class PathTracer extends PathTracerStage {
 		// max resolution (small — 12 B/pixel) and NEVER realloc on a resize.
 		const maxPixels = MAX_STORAGE_TEXTURE_SIZE * MAX_STORAGE_TEXTURE_SIZE;
 
-		// Tier-1 convergence: per-pixel running mean of luminance² (Welford second moment), read+written by FinalWrite.
-		freeStorageAttribute( this.renderer, this._m2Attr );
-		this._m2Attr = new StorageInstancedBufferAttribute( new Float32Array( maxPixels ), 1 );
-		const m2RW = storage( this._m2Attr, 'float' );
+		// Only reallocated on growth, never on a plain rebuild: the Compositor's overlay binds m2/frozenMask
+		// read-only and a fresh attribute would strand its bind group. Surviving contents are safe — every
+		// consumer re-seeds at frame 0.
+		if ( ! this._m2Attr || this._m2Attr.count < maxPixels ) {
 
-		// Tier-2: per-pixel freeze-candidate streak. FinalWrite writes (RW), buildActivePixels reads (RO).
-		freeStorageAttribute( this.renderer, this._streakAttr );
-		this._streakAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
+			// Tier-1 convergence: per-pixel running mean of luminance² (Welford second moment), read+written by FinalWrite.
+			freeStorageAttribute( this.renderer, this._m2Attr );
+			this._m2Attr = new StorageInstancedBufferAttribute( new Float32Array( maxPixels ), 1 );
+
+			// Tier-2: per-pixel freeze-candidate streak. FinalWrite writes (RW), buildActivePixels reads (RO).
+			freeStorageAttribute( this.renderer, this._streakAttr );
+			this._streakAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
+
+			// Tier-2: dilated frozen mask (1 = skip). buildActivePixels writes; active-list + FinalWrite read → race-free.
+			freeStorageAttribute( this.renderer, this._frozenMaskAttr );
+			this._frozenMaskAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
+
+		}
+
+		const m2RW = storage( this._m2Attr, 'float' );
 		const streakRW = storage( this._streakAttr, 'uint' );
 		const streakRO = storage( this._streakAttr, 'uint' ).toReadOnly();
-
-		// Tier-2: dilated frozen mask (1 = skip). buildActivePixels writes; active-list + FinalWrite read → race-free.
-		freeStorageAttribute( this.renderer, this._frozenMaskAttr );
-		this._frozenMaskAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
 		const frozenMaskRW = storage( this._frozenMaskAttr, 'uint' );
 		const frozenMaskRO = storage( this._frozenMaskAttr, 'uint' ).toReadOnly();
 
@@ -929,6 +1030,8 @@ export class PathTracer extends PathTracerStage {
 				If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
 
 					atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
+					atomicStore( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 0 ) );
+					atomicStore( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 0 ) );
 
 				} );
 
@@ -988,6 +1091,8 @@ export class PathTracer extends PathTracerStage {
 			If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
 
 				atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
+				atomicStore( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 0 ) );
+				atomicStore( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 0 ) );
 
 			} );
 
@@ -1010,7 +1115,8 @@ export class PathTracer extends PathTracerStage {
 				// (streak<K), softening the boundary. Mask is read by FinalWrite too → race-free.
 				const frozen = uint( 0 ).toVar();
 
-				If( this.frame.greaterThan( uint( 0 ) ).and( streakRO.element( p ).greaterThanEqual( uint( freezeK ) ) ), () => {
+				// Bits 31/30 of the streak word are the converged + geometry flags — mask them off wherever the streak is read.
+				If( this.frame.greaterThan( uint( 0 ) ).and( streakRO.element( p ).bitAnd( uint( 0x3FFFFFFF ) ).greaterThanEqual( uint( freezeK ) ) ), () => {
 
 					frozen.assign( uint( 1 ) );
 
@@ -1026,7 +1132,7 @@ export class PathTracer extends PathTracerStage {
 							If( nx.greaterThanEqual( int( 0 ) ).and( nx.lessThan( this._wfRenderWidth ) )
 								.and( ny.greaterThanEqual( int( 0 ) ) ).and( ny.lessThan( this._wfRenderHeight ) ), () => {
 
-								If( streakRO.element( uint( ny.mul( this._wfRenderWidth ).add( nx ) ) ).lessThan( uint( freezeK ) ), () => {
+								If( streakRO.element( uint( ny.mul( this._wfRenderWidth ).add( nx ) ) ).bitAnd( uint( 0x3FFFFFFF ) ).lessThan( uint( freezeK ) ), () => {
 
 									frozen.assign( uint( 0 ) ); // a still-active neighbour keeps this pixel active
 
@@ -1055,6 +1161,74 @@ export class PathTracer extends PathTracerStage {
 		} );
 		this._kernelManager.register( 'buildActivePixels',
 			buildActiveFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+		);
+
+		// Whole-frame converged count, eroded 3×3 (Cycles film_adaptive_sampling_filter_x/y parity): a pixel
+		// counts only if it AND its 8 in-bounds neighbours carry last frame's converged bit. A pointwise count
+		// is blind to undiscovered energy — all-zero pixels have zero variance and pass any threshold, so on
+		// indirect-dominant scenes it peaks on a black image and retires the frame at ~10 spp. Erosion lets
+		// each discovered speckle poison its neighbourhood while energy is still being found.
+		// Reads the PREVIOUS frame's bits, which costs nothing: the stop already lags by the readback cadence.
+		const countConvergedFn = Fn( () => {
+
+			const tid = instanceIndex;
+			const W = this._wfRenderWidth;
+			const H = this._wfRenderHeight;
+			If( tid.lessThan( uint( W.mul( H ) ) ), () => {
+
+				const px = int( tid ).mod( W );
+				const py = int( tid ).div( W );
+				const CONV_BIT = uint( 0x80000000 );
+				const GEOM_BIT = uint( 0x40000000 );
+
+				const word = streakRO.element( tid ).toVar();
+				const isGeometry = word.bitAnd( GEOM_BIT ).notEqual( uint( 0 ) );
+				const allConverged = word.bitAnd( CONV_BIT ).notEqual( uint( 0 ) ).toVar();
+
+				If( allConverged, () => {
+
+					for ( const [ dx, dy ] of [[ - 1, - 1 ], [ 0, - 1 ], [ 1, - 1 ], [ - 1, 0 ], [ 1, 0 ], [ - 1, 1 ], [ 0, 1 ], [ 1, 1 ]] ) {
+
+						const nx = px.add( int( dx ) );
+						const ny = py.add( int( dy ) );
+						If( nx.greaterThanEqual( int( 0 ) ).and( nx.lessThan( W ) )
+							.and( ny.greaterThanEqual( int( 0 ) ) ).and( ny.lessThan( H ) ), () => {
+
+							If( streakRO.element( uint( ny.mul( W ).add( nx ) ) ).bitAnd( CONV_BIT ).equal( uint( 0 ) ), () => {
+
+								allConverged.assign( false );
+
+							} );
+
+						} );
+
+					}
+
+				} );
+
+				If( allConverged, () => {
+
+					atomicAdd( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 1 ) );
+
+				} );
+
+				// Same eroded verdict, restricted to subject pixels — the framing-independent view.
+				If( isGeometry, () => {
+
+					atomicAdd( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 1 ) );
+					If( allConverged, () => {
+
+						atomicAdd( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 1 ) );
+
+					} );
+
+				} );
+
+			} );
+
+		} );
+		this._kernelManager.register( 'countConvergedDilated',
+			countConvergedFn().compute( [ Math.ceil( ( w * h ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const seedEnterFn = Fn( () => {
@@ -1319,7 +1493,6 @@ export class PathTracer extends PathTracerStage {
 			visMode: this.visMode,
 			auxGBufferEnabled: this._auxGBufferUniform,
 			cleanAuxNormalEnabled: this._cleanAuxNormalUniform,
-			counters,
 			m2BufferRW: m2RW,
 			useAdaptiveSampling: this.useAdaptiveSampling,
 			noiseThreshold: this.noiseThreshold,
@@ -1329,6 +1502,7 @@ export class PathTracer extends PathTracerStage {
 			pixelFreezeThreshold: this.pixelFreezeThreshold,
 			streakBufferRW: streakRW,
 			frozenMaskRO, // dilated frozen mask (read-only; matches the active-list decision)
+			convergenceOverlay: this.convergenceOverlay,
 			chunkRowBase: this._wfChunkRowBase,
 			chunkRows: this._wfChunkRows,
 		} );
@@ -1403,6 +1577,8 @@ export class PathTracer extends PathTracerStage {
 		const h = this._wfRenderHeight.value;
 
 		this._kernelManager.setDispatchForGrid( 'debug', w, h );
+		// Full-frame (not per-chunk); sized from live values so an in-place resize can't strand its grid.
+		this._kernelManager.setDispatchForCount( 'countConvergedDilated', w * h );
 
 	}
 
@@ -1445,6 +1621,7 @@ export class PathTracer extends PathTracerStage {
 		this._m2Attr = null;
 		this._streakAttr = null;
 		this._frozenMaskAttr = null;
+		this._convDebugSource = null;
 		this._wavefrontReady = false;
 
 	}
