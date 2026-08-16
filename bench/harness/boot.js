@@ -757,6 +757,13 @@ globalThis.__bench = {
 	gpuTimings: () => app.getGPUTimings(),
 	frameCount: () => app.getFrameCount(),
 	statistics: () => app.getStatistics(),
+	// Adaptive-sampling telemetry: how many pixels the sparse tiers actually traced. Sourced from an
+	// async counter readback, so it lags a frame or two and reads 0 until one lands — for anything
+	// per-frame, read the counters buffer through __app instead.
+	convergenceStats: () => app.getConvergenceStats(),
+	// Escape hatch for ad-hoc diagnostics that need engine internals the typed API does not expose.
+	// Suites should use the methods above; this is deliberately not part of the runner wrapper.
+	__app: () => app,
 };
 
 ready.catch( ( error ) => {
