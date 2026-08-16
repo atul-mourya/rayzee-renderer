@@ -11,6 +11,8 @@
 ### Known
 
 - [ ] Soft shadows for directional lights not working when enabled from UI
+- [ ] Tier-2 frozen pixels keep folding stale `rayBuffer` samples into their own m2/variance every frame — `FinalWriteKernel`'s stats block has no `wasFrozen` guard
+- [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 
 
 ### Unconfirmed
@@ -36,6 +38,7 @@
 - [ ] trend dashboard over `bench/baselines/perf.jsonl`
 - [ ] denoiser suite — OIDN/ASVGF need an async completion dependency, deliberately out of the main corpus
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
+- [ ] coverage gap: the Tier-2 list-driven generate path is never exercised — `setDeterministicMode` disables `usePixelFreeze`, so a bug rendering at RMSE 4.49 instead of 0.03 passed all 21 scenes
 
 
 ### General
@@ -143,6 +146,7 @@
 - [ ] Mega Geometries - Compressed Clusters as input to BLAS
 - [ ] Mega Geometries - PTLAS - Partitioned TLAS
 - [ ] SHaRC - Spatial Hash Radiance Cache - observed issues: transparent objects blocky, glowing reflictive materials, color bleeding, baised
+- [ ] ORCA Tier-3 budgeted sampling (SIGGRAPH '26 Greenberg) — built, measured, parked on branch `experiment/orca-tier3-budgeted-sampling`. Neutral quality + 23% slower on 24155522.glb; won −8..−12% at half the rays on glass-transmission only. Resume by restoring survivor-curve dispatch sizing under `budgetOn` — that is the entire 23%
 - [ ] Rerservoir sampling ( only per pixel, not neighboring )
 - [ ] emissive triangles as trianle lights -  do research
 - [ ] Chromatic adaptation transform (CAT)
