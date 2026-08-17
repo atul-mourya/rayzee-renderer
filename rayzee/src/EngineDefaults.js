@@ -604,7 +604,8 @@ export const PRODUCTION_RENDER_CONFIG = {
 	// so easy scenes finish well under it while hard GI scenes use the full budget.
 	maxSamples: 150, bounces: 20, transmissiveBounces: 8, maxSubsurfaceSteps: 64,
 	renderMode: 1, enableAlphaShadows: true,
-	enableOIDN: true, oidnQuality: 'balance',
+	// 'high' is the only tier that reaches OIDN's _large weights (calb_cnrm); ~2x denoise cost.
+	enableOIDN: true, oidnQuality: 'high',
 	interactionModeEnabled: false,
 	// 0.94 against the eroded count ≈ the old raw-count 0.98; erosion holds the fraction a few points lower.
 	useAdaptiveSampling: true,

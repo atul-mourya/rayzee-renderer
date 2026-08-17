@@ -52,19 +52,64 @@ import { getAssetConfig } from '../AssetConfig.js';
 const _tmOut = new Float32Array( 3 );
 
 const MODEL_CONFIG = {
-	// clean-aux models — first-hit albedo/normal are deterministic per pixel
+	// No cleanAux flag in oidn-web, so the blob is it — and must match what setCleanAuxNormal
+	// feeds: `fast` point-samples the normal (noisy aux), balance/high accumulate it. calb_cnrm
+	// is also the only model with a `_large` blob.
 	QUALITY_MODELS: {
 		fast: 'rt_hdr_alb_nrm_small',
-		balance: 'rt_hdr_alb_nrm',
+		balance: 'rt_hdr_calb_cnrm',
 		high: 'rt_hdr_calb_cnrm_large'
 	},
 	DEFAULT_OPTIONS: {
 		enableOIDN: true,
 		oidnQuality: 'fast',
 		debugGbufferMaps: true,
-		tileSize: 256
+		// Tiles run at tileSize + 2*overlap (96px, 112 for _large), so small tiles pay that padding
+		// every tile: 256 puts 3.06x the pixels through the UNet at 512². Measured 3.64x faster.
+		tileSize: 512
 	}
 };
+
+// Stands in for OIDN's inputScale, which oidn-web only applies on its CPU path — the GPUBuffer
+// path leaves the uniform at 1.0. Equivalent because oidn-web does PUForward(col*inputScale) in
+// and PUInverse(..)/inputScale out, so pre-multiplying here and dividing it back out of the
+// output exposure round-trips. Alpha is preserved for _cacheInputAlpha.
+const COLOR_SCALE_WGSL = /* wgsl */`
+@group(0) @binding(0) var<storage, read_write> col: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> scale: f32;
+
+@compute @workgroup_size(64)
+fn main( @builtin(global_invocation_id) gid: vec3<u32>,
+		 @builtin(num_workgroups) nwg: vec3<u32> ) {
+	let i = gid.y * nwg.x * 64u + gid.x;
+	if ( i >= arrayLength( &col ) ) { return; }
+	let c = col[ i ];
+	col[ i ] = vec4<f32>( c.xyz * scale, c.w );
+}
+`;
+
+const SCALE_WG_SIZE = 64;
+// 1D would exceed maxComputeWorkgroupsPerDimension (65535) past ~2048², so the dispatch is 2D.
+const SCALE_MAX_WG_X = 32768;
+
+// OIDN's autoexposure, mirroring oidn-web's avgLogLum. Whole-frame, so it cannot seam per tile.
+const OIDN_AUTOEXPOSURE_KEY = 0.18;
+
+function oidnInputScale( f32, pixelCount ) {
+
+	let logSum = 0;
+	for ( let i = 0; i < pixelCount; i ++ ) {
+
+		const o = i * 4;
+		const lum = 0.212671 * f32[ o ] + 0.71516 * f32[ o + 1 ] + 0.072169 * f32[ o + 2 ];
+		logSum += Math.log2( Math.max( lum, 0 ) + 0.0001 );
+
+	}
+
+	const scale = OIDN_AUTOEXPOSURE_KEY / Math.pow( 2, logSum / pixelCount );
+	return Number.isFinite( scale ) && scale > 0 ? scale : 1.0;
+
+}
 
 export class OIDNDenoiser extends EventDispatcher {
 
@@ -110,6 +155,11 @@ export class OIDNDenoiser extends EventDispatcher {
 		// order guarantees the overwrites are serialized).
 		this._gpuInputPadBuffer = null;
 		this._gpuInputPaddedRowBytes = 0;
+		// 1.0 until the first readback.
+		this._colorScalePipeline = null;
+		this._colorScaleBindGroup = null;
+		this._colorScaleUniform = null;
+		this._oidnInputScale = 1.0;
 		// Pooled MAP_READ staging buffer for _cacheInputAlpha. Only allocated
 		// when transparent-background readback is used, destroyed on resolution
 		// change or dispose. Same spirit as r184's ReadbackBuffer — we can't use
@@ -130,6 +180,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.quality = this.config.oidnQuality;
 		this.debugGbufferMaps = this.config.debugGbufferMaps;
 		this.tileSize = this.config.tileSize;
+		// tileSize actually baked into the live UNet, so a runtime change forces a rebuild.
+		this._activeTileSize = 0;
 
 		// State management
 		this.state = {
@@ -212,8 +264,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.state.isLoading = true;
 		const tzaUrl = this._generateTzaUrl();
 
-		// Skip setup if URL hasn't changed
-		if ( this.currentTZAUrl === tzaUrl && this.unet ) {
+		// maxTileSize is a constructor arg, so comparing the URL alone left tileSize changes inert.
+		if ( this.currentTZAUrl === tzaUrl && this._activeTileSize === this.tileSize && this.unet ) {
 
 			this.state.isLoading = false;
 			return;
@@ -251,6 +303,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			} );
 
 			this.currentTZAUrl = tzaUrl;
+			this._activeTileSize = this.tileSize;
 			this.dispatchEvent( { type: 'loaded' } );
 			log.debug( 'UNet weights loaded:', tzaUrl );
 
@@ -477,21 +530,18 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		copyTex( textures.color, this._gpuInputBuffers.color );
 		copyTex( textures.albedo, this._gpuInputBuffers.albedo );
+		// The normal stays [0,1]-encoded. This contradicts OIDN's API ("must be in the [-1,1]
+		// range") but is right for this port: OIDN's own getNormal (cpu_input_process.isph) does
+		// `value*0.5+0.5` before the network, and oidn-web omits that remap. Decoding to [-1,1]
+		// measured 0.878 -> 2.439 denoise ratio at 64 spp. Do not "fix" it.
 		copyTex( textures.normal, this._gpuInputBuffers.normal );
 
 		device.queue.submit( [ encoder.finish() ] );
 
-		// Cache alpha channel from input color buffer when transparent background is enabled.
-		// OIDN only processes RGB — the alpha channel is lost, so we read it before denoising.
-		if ( this.getTransparentBackground() ) {
-
-			await this._cacheInputAlpha( device, width, height );
-
-		} else {
-
-			this._cachedAlpha = null;
-
-		}
+		// One readback serves the autoexposure scale and the alpha OIDN discards. Must precede the scale.
+		await this._readbackColor( device, width, height );
+		if ( globalThis.__OIDN_NO_INPUT_SCALE ) this._oidnInputScale = 1.0;
+		this._applyColorScale( device, width * height );
 
 		// Draw the current noisy frame as the base — denoised tiles paint on top progressively
 		this.ctx.drawImage( this.input, 0, 0, width, height );
@@ -571,6 +621,10 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._alphaReadbackBuffer?.destroy();
 		this._alphaReadbackMapped = false;
+		// Bind group holds the destroyed buffer; the pipeline is device-scoped and survives.
+		this._colorScaleBindGroup = null;
+		this._colorScaleUniform?.destroy();
+		this._colorScaleUniform = null;
 		this._gpuInputBuffers = { color: null, albedo: null, normal: null };
 		this._gpuInputPadBuffer = null;
 		this._gpuInputPaddedRowBytes = 0;
@@ -580,10 +634,10 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
-	 * Reads the alpha channel from the input color GPU buffer and caches it as a Uint8Array.
-	 * Called before OIDN denoising when transparent background is enabled.
+	 * Reads back the colour buffer for the autoexposure scale, plus alpha when transparent
+	 * background is on (OIDN discards alpha).
 	 */
-	async _cacheInputAlpha( device, width, height ) {
+	async _readbackColor( device, width, height ) {
 
 		const byteSize = width * height * 16; // rgba32float, tightly packed
 
@@ -620,13 +674,20 @@ export class OIDNDenoiser extends EventDispatcher {
 		}
 
 		const f32 = new Float32Array( staging.getMappedRange() );
-
-		// Extract alpha channel as uint8 (pre-multiplied is not needed — alpha is 0 or 1)
 		const pixelCount = width * height;
-		const alpha = new Uint8Array( pixelCount );
-		for ( let i = 0; i < pixelCount; i ++ ) {
 
-			alpha[ i ] = Math.min( Math.max( f32[ i * 4 + 3 ] * 255, 0 ), 255 ) | 0;
+		this._oidnInputScale = oidnInputScale( f32, pixelCount );
+
+		let alpha = null;
+		if ( this.getTransparentBackground() ) {
+
+			// Alpha as uint8; pre-multiplication is not needed — alpha is 0 or 1
+			alpha = new Uint8Array( pixelCount );
+			for ( let i = 0; i < pixelCount; i ++ ) {
+
+				alpha[ i ] = Math.min( Math.max( f32[ i * 4 + 3 ] * 255, 0 ), 255 ) | 0;
+
+			}
 
 		}
 
@@ -635,6 +696,81 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._cachedAlpha = alpha;
 		this._cachedAlphaWidth = width;
+
+	}
+
+	/** Display exposure with the input scale divided back out — output arrives pre-multiplied. */
+	_outputExposure() {
+
+		return this.getExposure() / this._oidnInputScale;
+
+	}
+
+	/** Pre-multiplies the colour buffer by the autoexposure scale. */
+	_applyColorScale( device, pixelCount ) {
+
+		const scale = this._oidnInputScale;
+		if ( ! this._ensureColorScalePipeline( device ) ) return;
+
+		device.queue.writeBuffer( this._colorScaleUniform, 0, new Float32Array( [ scale ] ) );
+
+		const wgTotal = Math.ceil( pixelCount / SCALE_WG_SIZE );
+		const wgX = Math.min( wgTotal, SCALE_MAX_WG_X );
+		const wgY = Math.ceil( wgTotal / wgX );
+
+		const encoder = device.createCommandEncoder( { label: 'oidn-color-scale' } );
+		const pass = encoder.beginComputePass( { label: 'oidn-color-scale' } );
+		pass.setPipeline( this._colorScalePipeline );
+		pass.setBindGroup( 0, this._colorScaleBindGroup );
+		pass.dispatchWorkgroups( wgX, wgY, 1 );
+		pass.end();
+		device.queue.submit( [ encoder.finish() ] );
+
+	}
+
+	/** @returns {GPUComputePipeline|null} */
+	_ensureColorScalePipeline( device ) {
+
+		const buffer = this._gpuInputBuffers.color;
+		if ( ! device || ! buffer ) return null;
+
+		if ( ! this._colorScalePipeline ) {
+
+			this._colorScalePipeline = device.createComputePipeline( {
+				label: 'oidn-color-scale',
+				layout: 'auto',
+				compute: {
+					module: device.createShaderModule( { label: 'oidn-color-scale', code: COLOR_SCALE_WGSL } ),
+					entryPoint: 'main'
+				}
+			} );
+
+		}
+
+		if ( ! this._colorScaleUniform ) {
+
+			this._colorScaleUniform = device.createBuffer( {
+				label: 'oidn-color-scale-uniform',
+				size: 16, // min uniform binding size
+				usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+			} );
+
+		}
+
+		if ( ! this._colorScaleBindGroup ) {
+
+			this._colorScaleBindGroup = device.createBindGroup( {
+				label: 'oidn-color-scale',
+				layout: this._colorScalePipeline.getBindGroupLayout( 0 ),
+				entries: [
+					{ binding: 0, resource: { buffer } },
+					{ binding: 1, resource: { buffer: this._colorScaleUniform } }
+				]
+			} );
+
+		}
+
+		return this._colorScalePipeline;
 
 	}
 
@@ -754,7 +890,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 						const f32 = new Float32Array( staging.getMappedRange() );
 						const tileImageData = new ImageData( clampedW, clampedH );
-						const exposure = this.getExposure();
+						const exposure = this._outputExposure();
 						const saturation = this.getSaturation();
 						const tmFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
 						const alpha = this._cachedAlpha;
@@ -856,7 +992,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			const float32 = new Float32Array( stagingBuffer.getMappedRange() );
 
 			const imageData = new ImageData( width, height );
-			const exposure = this.getExposure();
+			const exposure = this._outputExposure();
 			const saturation = this.getSaturation();
 			const tmFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
 			const alpha = this._cachedAlpha;
@@ -962,6 +1098,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// TFJS tears down the cached backend's buffers/textures.
 		removeOidnTfjsBackend();
 		this._destroyGPUInputBuffers();
+		this._colorScalePipeline = null;
 
 		// Clean up DOM
 		if ( this.output?.parentNode ) {
