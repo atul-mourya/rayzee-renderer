@@ -611,7 +611,24 @@ async function probes() {
  */
 function setDenoiser( strategy, preset ) {
 
-	app.denoisingManager.setStrategy( strategy, preset );
+	const dm = app.denoisingManager;
+
+	// setDenoiserStrategy has no 'oidn' case and does not clear it, so an earlier 'oidn' rung
+	// would stay on underneath asvgf/edgeaware — both denoisers at once, which never ships.
+	dm.setOIDNEnabled( false );
+
+	if ( strategy === 'oidn' ) {
+
+		// No in-pipeline denoiser: OIDN is a post-process on the finished accumulation buffer.
+		dm.setStrategy( 'none' );
+		dm.setOIDNQuality( preset || 'high' );
+		dm.setOIDNEnabled( true );
+
+	} else {
+
+		dm.setStrategy( strategy, preset );
+
+	}
 
 	const s = app.stages;
 	return {
@@ -622,7 +639,69 @@ function setDenoiser( strategy, preset ) {
 		edgeFilter: !! s.edgeFilter?.enabled,
 		normalDepth: !! s.normalDepth?.enabled,
 		motionVector: !! s.motionVector?.enabled,
+		oidn: !! dm.denoiser?.enabled,
 	};
+
+}
+
+/**
+ * Drives the OIDN denoise to completion. No-ops when OIDN is off, so the runner can call it
+ * unconditionally. Started explicitly rather than waited for: the denoise normally fires off the
+ * rAF completion chain, which renderFrames() has stopped.
+ *
+ * @param {number} [timeoutMs]
+ */
+async function awaitDenoise( timeoutMs = 120000 ) {
+
+	const dn = app.denoisingManager?.denoiser;
+	if ( ! dn?.enabled ) return { ran: false };
+
+	const sleep = ( ms ) => new Promise( ( r ) => setTimeout( r, ms ) );
+	const deadline = performance.now() + timeoutMs;
+
+	// Weights are fetched lazily on first enable (the _large blob is ~7.7 MB).
+	while ( ! dn.unet && performance.now() < deadline ) await sleep( 50 );
+	if ( ! dn.unet ) throw new Error( '__bench.awaitDenoise: UNet weights never loaded' );
+
+	const started = await dn.start();
+	while ( dn.state.isDenoising && performance.now() < deadline ) await sleep( 10 );
+
+	if ( dn.state.isDenoising ) throw new Error( '__bench.awaitDenoise: denoise did not finish' );
+
+	if ( started === false ) throw new Error( '__bench.awaitDenoise: denoiser refused to start' );
+
+	return { ran: true };
+
+}
+
+/**
+ * The denoiser's own output canvas as a PNG data URL. Deliberately NOT app.getCanvas(): that
+ * returns the denoiser canvas only while the path tracer reports complete, and renderFrames()
+ * leaves isComplete false — so it falls back to the un-denoised compositor and the suite compares
+ * raw against raw for a flat ratio of 1.000.
+ */
+function captureDenoisedPNG() {
+
+	const out = app.denoisingManager?.denoiser?.output;
+	if ( ! out ) throw new Error( '__bench.captureDenoisedPNG: no denoiser output canvas' );
+
+	if ( out.width !== RENDER_SIZE.width || out.height !== RENDER_SIZE.height ) {
+
+		throw new Error(
+			`__bench.captureDenoisedPNG: canvas is ${out.width}x${out.height}, ` +
+			`expected ${RENDER_SIZE.width}x${RENDER_SIZE.height}`
+		);
+
+	}
+
+	// A never-painted canvas is transparent and reads as black, scoring a plausible RMSE
+	// against a dark reference instead of failing.
+	const px = out.getContext( '2d' ).getImageData( 0, 0, out.width, out.height ).data;
+	let opaque = 0;
+	for ( let i = 3; i < px.length; i += 4 ) if ( px[ i ] > 0 ) opaque ++;
+	if ( opaque === 0 ) throw new Error( '__bench.captureDenoisedPNG: canvas is blank' );
+
+	return out.toDataURL( 'image/png' );
 
 }
 
@@ -742,6 +821,8 @@ globalThis.__bench = {
 	meshStats,
 	setPerfMode,
 	setDenoiser,
+	awaitDenoise,
+	captureDenoisedPNG,
 	denoisedNonFinite,
 	shaderDiagnostics,
 	bindingFindings: () => getBindingAuditFindings(),

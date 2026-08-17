@@ -180,6 +180,10 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setDenoiser: ( strategy, preset ) => page.evaluate(
 			( s, p ) => globalThis.__bench.setDenoiser( s, p ), strategy, preset ?? null
 		),
+		awaitDenoise: ( timeoutMs ) => page.evaluate(
+			( t ) => globalThis.__bench.awaitDenoise( t ?? undefined ), timeoutMs ?? null
+		),
+		captureDenoisedPNG: () => page.evaluate( () => globalThis.__bench.captureDenoisedPNG() ),
 		denoisedNonFinite: () => page.evaluate( () => globalThis.__bench.denoisedNonFinite() ),
 		shaderDiagnostics: () => page.evaluate( () => globalThis.__bench.shaderDiagnostics() ),
 		bindingFindings: () => page.evaluate( () => globalThis.__bench.bindingFindings() ),

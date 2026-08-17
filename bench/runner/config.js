@@ -148,6 +148,9 @@ export const DENOISE_GATES = {
 	strategies: [
 		{ id: 'asvgf', preset: 'medium' },
 		{ id: 'edgeaware' },
+		// OIDN was ungated, which left every change to the DDFA aux albedo/normal guide
+		// unmeasurable. 'high' is the clean-aux tier production uses.
+		{ id: 'oidn', preset: 'high' },
 	],
 	// Chosen for what the edge-stops key on rather than for coverage breadth: diffuse GI (the
 	// baseline case), high-variance transmission (the noisiest input the denoiser sees), and
