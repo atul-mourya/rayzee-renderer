@@ -356,7 +356,11 @@ export const handleRussianRoulette = Fn( ( [
 				rrProb.mulAssign( depthFactor );
 
 				const minProb = select( mc.isEmissive, float( 0.04 ), float( 0.02 ) );
-				rrProb.assign( max( rrProb, minProb ) );
+				// Upper clamp is load-bearing, not cosmetic: pathContribution scales with throughput,
+				// which prior RR compensation inflates well past 1, so rrProb could exceed 1. The path
+				// then always survives while throughput is still divided by rrProb — a plain energy
+				// sink that compounds with depth (albedo-1 concave furnace read 0.955 instead of 1.0).
+				rrProb.assign( clamp( rrProb, minProb, 1.0 ) );
 
 				const rrSample = getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame );
 				result.assign( select( rrSample.lessThan( rrProb ), rrProb, float( 0.0 ) ) );
