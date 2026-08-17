@@ -4,15 +4,20 @@
 - when rendering done due to convergence, we need to indicate that. For example. 540 / 600, convergence completed in 540 frame before reaching 600 maxsamples
 
 ### MVP
-- [] dynamic max stack in bvhtraversal
+- [ ] if a mesh is selected, the outliner menus should scroll to the selected object so user can quickly see what's selected.
+- [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
+
+
 ### Known
 
 - [ ] Soft shadows for directional lights not working when enabled from UI
 - [ ] Tier-2 frozen pixels keep folding stale `rayBuffer` samples into their own m2/variance every frame — `FinalWriteKernel`'s stats block has no `wasFrozen` guard
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
+- [ ] indirect lights looks too weak
+- [ ] **Fluted glass behind LED-lit cabinets converges far too slowly** — 24233846.glb, wardrobe with two glass shutters. Reads as an OIDN failure (mottled ribs, detail gone in the lower half) but **measured on the raw buffer it is variance, not the denoiser**: at 64 spp the panel interior has noise σ=37.6 on a mean of 69.3 (54 % relative), against a flute amplitude of only 4.0/255 — **contrast-to-noise 0.107, i.e. the signal sits ~9× below the noise floor**. OIDN is doing well to keep 68 % of the flute amplitude at 64 spp and 81 % at 600 spp; the ribs are absent from the raw 64 spp image entirely and only resolve by ~600 spp. Against Blender at matched resolution the flute *contrast* already agrees (10.0 % vs 10.44 %, 23 vs 25 ribs across the panel — same geometry, no fidelity gap); what differs is flute-vs-broadband, 18.2 vs 36.5, i.e. **~2× more residual noise competing with the detail, so ~4× more samples to match**. Root cause is the light path: camera → refract through fluted glass → small LED strip inside a closed cabinet. Refraction is a delta event so NEE cannot reach the emitter through the glass; the only route is a BSDF sample happening to hit it. Fixes worth trying, in order — (a) reduce variance on refractive→emitter paths (manifold/refractive shadow connections, or treating thin smooth glass as see-through for NEE), (b) firefly/outlier handling on the LED hits, (c) the aux guide is flat here: over the glass the aux albedo modulates only 1.3 % at the flute frequency where the colour modulates 5.8 %, so OIDN has no evidence the ribs are signal — the DDFA commit rule (`nonspec >= 0.25`) defers smooth glass to the shelf behind it. (c) is second-order next to (a). Do not chase this as a denoiser bug.
 
 
 ### Unconfirmed
@@ -145,7 +150,8 @@
 - [ ] Shader Execution Reordering
 - [ ] Mega Geometries - Compressed Clusters as input to BLAS
 - [ ] Mega Geometries - PTLAS - Partitioned TLAS
-- [ ] SHaRC - Spatial Hash Radiance Cache - observed issues: transparent objects blocky, glowing reflictive materials, color bleeding, baised
+- [ ] SHaRC - Spatial Hash Radiance Cache - observed issues: transparent objects blocky, glowing reflictive materials, color bleeding, baised. **Root cause measured**: single-scale hashing only covers 59% of first indirect hits from a 1/16 seed — see the ORCA probe below, where 6 levels take the same scene to 99.7%
+- [ ] ORCA multi-scale radiance cache (SIGGRAPH '26 Greenberg) — probed on both axes with `node bench/tools/orca-probe.mjs`. **Coverage GO**: 99.7% hit rate on 24155522.glb at the talk's 1/16 sparse rate (they report 98-99%); hierarchy depth is the whole effect, 1 level 59% → 6 levels 99.7%. **Quality: the price is a permanent +5-6% brightening of the indirect term (+4.7% of the frame) and ~23% median per-pixel error, bought against a 2.3x variance reduction.** Three things make that price fixed rather than tunable: 4x more seed paths does not move it (1/4 sparse +6.1% vs 1/64 +6.0%, so it is spatial aggregation error, not sampling error); voxel size barely moves it (2px +5.4% → 32px +6.7%, the hierarchy self-normalises onto a similar sample population whatever the base scale); and the one lever that does — fewer levels — trades it straight back for coverage (1 level = +4.1% bias but only 66% hit rate, and the perf case needs >98%). Unweighted indirect bias is ~0%, so the error is structured and correlates with throughput rather than being random. Verdict unchanged: preview-only, off past frame N, never in final render. Not yet tried from the talk and would soften the per-pixel error: dithered lookup (Binder2018), probability-weighted downrez, radiance clamp before store
 - [ ] ORCA Tier-3 budgeted sampling (SIGGRAPH '26 Greenberg) — built, measured, parked on branch `experiment/orca-tier3-budgeted-sampling`. Neutral quality + 23% slower on 24155522.glb; won −8..−12% at half the rays on glass-transmission only. Resume by restoring survivor-curve dispatch sizing under `budgetOn` — that is the entire 23%
 - [ ] Rerservoir sampling ( only per pixel, not neighboring )
 - [ ] emissive triangles as trianle lights -  do research
