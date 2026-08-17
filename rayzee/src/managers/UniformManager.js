@@ -196,6 +196,10 @@ export class UniformManager {
 		ub( 'cameraIsMoving', false );
 		ub( 'hasPreviousAccumulated', false );
 
+		// Aux MRT epoch, separate from the colour's so the denoiser can be enabled mid-render.
+		u( 'auxAccumulationAlpha', 1.0, 'float' );
+		ub( 'hasPreviousAux', false );
+
 		// Environment
 		u( 'environmentIntensity', DEFAULT_STATE.environmentIntensity, 'float' );
 		u( 'backgroundIntensity', DEFAULT_STATE.backgroundIntensity, 'float' );

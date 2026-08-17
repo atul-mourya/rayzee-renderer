@@ -442,16 +442,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		// Abort post-processing and restore denoiser canvas resolution
-		this.denoisingManager?.abort( this.canvas );
-
-		if ( this.denoisingManager?.restoreBaseResolution() ) {
-
-			const w = this.denoisingManager._lastRenderWidth;
-			const h = this.denoisingManager._lastRenderHeight;
-			this.dispatchEvent( { type: 'resolution_changed', width: w, height: h } );
-
-		}
+		this._abortPostProcess();
 
 		this.completion.reset();
 		this.wake();
@@ -1524,6 +1515,37 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	// Aborts any in-flight denoise/upscale and puts the denoiser canvas back at base resolution (the
+	// upscaler leaves it enlarged), so the live canvas is what's on screen again.
+	_abortPostProcess() {
+
+		this.denoisingManager?.abort( this.canvas );
+
+		if ( this.denoisingManager?.restoreBaseResolution() ) {
+
+			const w = this.denoisingManager._lastRenderWidth;
+			const h = this.denoisingManager._lastRenderHeight;
+			this.dispatchEvent( { type: 'resolution_changed', width: w, height: h } );
+
+		}
+
+	}
+
+	/**
+	 * Re-runs the post-process chain (OIDN → upscaler) against the accumulated image. The chain fires once,
+	 * on the frame the render completes, so a denoiser switched on afterwards would otherwise never run.
+	 */
+	requestPostProcessRefresh() {
+
+		if ( ! this.stages.pathTracer?.isReady || this._deviceLost ) return;
+
+		this._abortPostProcess();
+
+		this.completion.renderCompleteDispatched = false;
+		this.wake();
+
+	}
+
 	// ═══════════════════════════════════════════════════════════════
 	// Deterministic / headless control
 	// ═══════════════════════════════════════════════════════════════
@@ -2408,6 +2430,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.denoisingManager.setOverlayManager( this.overlayManager );
 		this.denoisingManager.setResetCallback( () => this.reset() );
+		this.denoisingManager.setPostProcessRefreshCallback( () => this.requestPostProcessRefresh() );
 		this.denoisingManager.setSettings( this.settings );
 
 		// Expose environment manager (lives on pathTracer stage)

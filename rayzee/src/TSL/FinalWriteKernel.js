@@ -37,6 +37,8 @@ export function buildFinalWriteKernel( params ) {
 		writeColorTex, writeNDTex, writeAlbedoTex,
 		resolution, frame,
 		enableAccumulation, hasPreviousAccumulated, accumulationAlpha, cameraIsMoving,
+		// Aux MRT accumulates on its own epoch; hasPreviousAux=0 → write it verbatim instead of mixing.
+		hasPreviousAux, auxAccumulationAlpha,
 		transparentBackground,
 		prevAccumTexture, prevAlbedoTexture, prevNormalDepthTexture,
 		renderWidth,
@@ -113,10 +115,10 @@ export function buildFinalWriteKernel( params ) {
 
 				// Frozen pixels pass prev colour through unchanged (stale sample); active pixels accumulate.
 				finalColor.assign( select( wasFrozen, prevAccumSample.xyz, mix( prevAccumSample.xyz, sampleColor.xyz, accumulationAlpha ) ) );
-				If( auxOn, () => {
+				If( auxOn.and( hasPreviousAux ), () => {
 
 					// Albedo averages cleanly (it's a colour).
-					finalAlbedo.assign( mix( texture( prevAlbedoTexture, prevUV, 0 ).xyz, finalAlbedo, accumulationAlpha ) );
+					finalAlbedo.assign( mix( texture( prevAlbedoTexture, prevUV, 0 ).xyz, finalAlbedo, auxAccumulationAlpha ) );
 
 					// NORMAL: by default keep this frame's POINT-SAMPLED normal — it varies with the bump,
 					// which fast/ASVGF want to preserve edge detail. But a CLEAN-AUX OIDN model (calb_cnrm/high,
@@ -129,7 +131,7 @@ export function buildFinalWriteKernel( params ) {
 
 						const prevN = texture( prevNormalDepthTexture, prevUV, 0 ).xyz.mul( 2.0 ).sub( 1.0 );
 						const curN = finalNormalDepth.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
-						const mixedN = mix( prevN, curN, accumulationAlpha ).toVar();
+						const mixedN = mix( prevN, curN, auxAccumulationAlpha ).toVar();
 						const len = length( mixedN );
 						const avgN = select( len.greaterThan( 1e-4 ), mixedN.div( len ), curN );
 						finalNormalDepth.assign( vec4( avgN.mul( 0.5 ).add( 0.5 ), finalNormalDepth.w ) );

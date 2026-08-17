@@ -50,6 +50,9 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser = null;
 		this.upscaler = null;
 
+		this._onReset = null;
+		this._onPostProcessRefresh = null;
+
 		// Resolution tracking — used for canvas restoration on reset
 		this._lastRenderWidth = 0;
 		this._lastRenderHeight = 0;
@@ -547,6 +550,13 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/** @param {Function} fn - () => void, re-runs the completion chain on the accumulated image */
+	setPostProcessRefreshCallback( fn ) {
+
+		this._onPostProcessRefresh = fn;
+
+	}
+
 	/** @param {import('../RenderSettings.js').RenderSettings} settings */
 	setSettings( settings ) {
 
@@ -620,6 +630,7 @@ export class DenoisingManager extends EventDispatcher {
 		if ( this.denoiser ) this.denoiser.enabled = enabled;
 		// OIDN reads the PathTracer aux MRT; re-sync so the wavefront produces it while OIDN is on.
 		this._syncGBufferStages();
+		this._onPostProcessRefresh?.();
 
 	}
 
@@ -629,6 +640,7 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser?.updateQuality( quality );
 		// Clean-aux normal follows the model: balanced/high (clean-aux models) → accumulate; fast → keep bump.
 		this._stages.pathTracer?.setCleanAuxNormal?.( !! this.denoiser?.enabled && quality !== 'fast' );
+		this._onPostProcessRefresh?.();
 
 	}
 

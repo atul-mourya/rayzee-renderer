@@ -68,6 +68,10 @@ export class PathTracer extends PathTracerStage {
 		// of the point-sampled per-frame value that leaks noise. Off for fast/ASVGF (they want the bump normal).
 		this._cleanAuxNormalEnabled = false;
 		this._cleanAuxNormalUniform = uniform( 0, 'uint' );
+		// Aux MRT accumulates on an epoch of its own: enabling the denoiser at colour frame N must not leave
+		// the stale aux pinned by the colour's 1/(N+1) alpha.
+		this._auxSamples = 0;
+		this._auxSeedPending = false;
 
 		// CPU sizes per-bounce kernels from last frame's survivor curve; kernels bound on ENTERING_COUNT so over-sizing is safe. (indirect dispatch not viable — three.js doesn't sync compute-written indirect buffers across submissions)
 		this._useDynamicDispatch = true;
@@ -238,8 +242,17 @@ export class PathTracer extends PathTracerStage {
 
 		if ( this.isComplete || this.frameCount >= this.completionThreshold || this._isConvergedComplete() ) {
 
-			if ( ! this.isComplete ) this.isComplete = true;
-			return;
+			// Denoiser switched on after the render finished — spend one more frame to fill the aux MRT.
+			if ( this._auxSeedPending ) {
+
+				this.isComplete = false;
+
+			} else {
+
+				if ( ! this.isComplete ) this.isComplete = true;
+				return;
+
+			}
 
 		}
 
@@ -283,6 +296,7 @@ export class PathTracer extends PathTracerStage {
 		}
 
 		this._updateAccumulationUniforms( frameValue, renderMode );
+		const auxMixes = this._updateAuxAccumulationUniforms( frameValue );
 		this.frame.value = frameValue;
 		this.seedFrame.value = this._seedTick ++;
 
@@ -354,7 +368,8 @@ export class PathTracer extends PathTracerStage {
 
 			// Tier-2 bounce-0 grid size from the stale settled active-pixel count (single-chunk only; else full).
 			// Monotonic freeze ⇒ a stale count is a safe over-estimate; reset/camera-move → _curveSizingValid=false.
-			const adaptiveFreeze = this.usePixelFreeze.value > 0;
+			// An aux seed frame must trace every pixel: Generate/Shade skip the G-buffer for frozen ones.
+			const adaptiveFreeze = this.usePixelFreeze.value > 0 && ! this._auxSeedPending;
 			const activeBounce0 = ( singleChunk && adaptiveFreeze && this._curveSizingValid && this._lastActivePixelCount > 0 )
 				? this._lastActivePixelCount : maxRays;
 
@@ -488,6 +503,9 @@ export class PathTracer extends PathTracerStage {
 		// Don't count interaction-mode (1-SPP feedback) frames toward completion (megakernel parity Stages/PathTracer.js:1240) — else a continuous orbit "completes" on noise.
 		if ( ! this.cameraOptimizer?.isInInteractionMode() ) this.frameCount ++;
 
+		if ( this._auxGBufferEnabled ) this._auxSamples = auxMixes ? this._auxSamples + 1 : 1;
+		this._auxSeedPending = false;
+
 		if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
 		this.performanceMonitor?.end();
@@ -518,6 +536,8 @@ export class PathTracer extends PathTracerStage {
 		this._convergedFraction = 0;
 		this._convergedGeometryFraction = 0;
 		this._lastActivePixelCount = 0;
+		this._auxSamples = 0;
+		this._auxSeedPending = false;
 
 	}
 
@@ -585,28 +605,62 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	// Aux MRT (normalDepth/albedo) is needed only by the denoiser/OIDN; DenoisingManager calls this to
-	// turn the wavefront's aux writes on/off. It's a live uniform, so toggling is just a value flip +
-	// accumulation reset — no kernel rebuild, no UI freeze.
+	// turn the wavefront's aux writes on/off. It's a live uniform, so toggling is just a value flip —
+	// no kernel rebuild, no UI freeze.
 	setAuxGBufferEnabled( enabled ) {
 
 		enabled = !! enabled;
 		if ( this._auxGBufferEnabled === enabled ) return;
 		this._auxGBufferEnabled = enabled;
 		this._auxGBufferUniform.value = enabled ? 1 : 0;
-		this.reset();
+		this.restartAuxAccumulation();
 
 	}
 
 	// Clean-aux normal: when a clean-aux OIDN model is active (calb_cnrm/high, alb_nrm/balanced), FinalWrite
 	// temporally accumulates + renormalizes the aux normal so the model isn't fed per-frame point-sampled
-	// noise. DenoisingManager calls this on OIDN enable + quality change. Live uniform → value flip + reset.
+	// noise. DenoisingManager calls this on OIDN enable + quality change. The two modes write the normal in
+	// incompatible ways, so the aux buffer has to refill.
 	setCleanAuxNormal( enabled ) {
 
 		enabled = !! enabled;
 		if ( this._cleanAuxNormalEnabled === enabled ) return;
 		this._cleanAuxNormalEnabled = enabled;
 		this._cleanAuxNormalUniform.value = enabled ? 1 : 0;
-		this.reset();
+		this.restartAuxAccumulation();
+
+	}
+
+	/** Drops the aux MRT's history, leaving the colour's accumulation intact. */
+	restartAuxAccumulation() {
+
+		this._auxSamples = 0;
+		this._auxSeedPending = this._auxGBufferEnabled;
+
+	}
+
+	/**
+	 * @returns {boolean} whether FinalWrite will MIX the aux this frame rather than seed it.
+	 *
+	 * colorAccumulates mirrors FinalWrite's outer gate: when that gate is false the aux is written verbatim
+	 * regardless, which restarts the epoch. A mismatch costs aux quality only — the shader also reads
+	 * hasPreviousAux, so it can never mix against textures this epoch has not written.
+	 */
+	_updateAuxAccumulationUniforms( frameValue ) {
+
+		const colorAccumulates = this.accumulationEnabled
+			&& ! this.cameraIsMoving.value
+			&& frameValue > 0
+			&& this.hasPreviousAccumulated.value > 0
+			&& this.visMode.value !== 11;
+
+		const mixes = this._auxGBufferEnabled && colorAccumulates
+			&& ! this._auxSeedPending && this._auxSamples > 0;
+
+		this.hasPreviousAux.value = mixes ? 1 : 0;
+		this.auxAccumulationAlpha.value = mixes ? 1 / ( this._auxSamples + 1 ) : 1.0;
+
+		return mixes;
 
 	}
 
@@ -1483,6 +1537,8 @@ export class PathTracer extends PathTracerStage {
 			enableAccumulation: this.enableAccumulation,
 			hasPreviousAccumulated: this.hasPreviousAccumulated,
 			accumulationAlpha: this.accumulationAlpha,
+			hasPreviousAux: this.hasPreviousAux,
+			auxAccumulationAlpha: this.auxAccumulationAlpha,
 			cameraIsMoving: this.cameraIsMoving,
 			transparentBackground: this.transparentBackground,
 			prevAccumTexture: prevColor,
