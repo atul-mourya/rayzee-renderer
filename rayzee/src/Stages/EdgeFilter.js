@@ -18,6 +18,9 @@ const MISS_THRESHOLD = 6e4;
 const sanitize1 = ( x ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, 1e7 );
 const sanitizeRGB = ( c ) => vec3( sanitize1( c.x ), sanitize1( c.y ), sanitize1( c.z ) );
 
+// Frames before the temporal EMA variance is trusted on its own (Schied 2017 §4.2).
+const VARIANCE_HISTORY_MIN = 4;
+
 // 5×5 à-trous kernel weights (B3-spline / Gaussian approx, Σ = 1.0).
 const ATROUS_KERNEL = [
 	1.0 / 256.0, 4.0 / 256.0, 6.0 / 256.0, 4.0 / 256.0, 1.0 / 256.0,
@@ -66,7 +69,9 @@ export class EdgeFilter extends RenderStage {
 		// phiNormal:    normal cone exponent (bigger = tighter, preserves more edges).
 		// phiDepth:     RELATIVE depth tolerance (fraction of ray distance, scale-invariant).
 		this.filterStrength = uniform( options.filterStrength ?? 1.0 );
-		this.phiLuminance = uniform( options.phiLuminance ?? 4.0 );
+		// 1.0, not the old 4.0, which was tuned against the non-converging variance seed below
+		// and now over-blurs enough to lose to no denoising at all from ~16spp up.
+		this.phiLuminance = uniform( options.phiLuminance ?? 1.0 );
 		this.phiNormal = uniform( options.phiNormal ?? 64.0 );
 		this.phiDepth = uniform( options.phiDepth ?? 0.1 );
 		this.iterations = options.atrousIterations ?? options.edgeAtrousIterations ?? 5;
@@ -75,6 +80,7 @@ export class EdgeFilter extends RenderStage {
 		this.isLastIterationU = uniform( 0, 'int' );
 		// 1 on pass 0 → seed variance from variance:output; later passes read the carried value.
 		this.isFirstIterationU = uniform( 1, 'int' );
+		this.varianceHistoryU = uniform( 0, 'int' );
 		this.resW = uniform( options.width || 1 );
 		this.resH = uniform( options.height || 1 );
 
@@ -205,6 +211,7 @@ export class EdgeFilter extends RenderStage {
 		const stepSize = this.stepSizeU;
 		const isLastIterationU = this.isLastIterationU;
 		const isFirstIterationU = this.isFirstIterationU;
+		const varianceHistoryU = this.varianceHistoryU;
 		const resW = this.resW;
 		const resH = this.resH;
 
@@ -233,19 +240,23 @@ export class EdgeFilter extends RenderStage {
 				const demodAlbedo = select( centerIsHitBool, max( centerAlbedo, vec3( ALBEDO_EPS ) ), vec3( 1.0 ) );
 				const centerAlbedoLum = max( luminance( demodAlbedo ), float( ALBEDO_EPS ) );
 
-				// Variance-guided luminance σ (SVGF). .z = temporal, .w = spatial variance;
-				// max() falls back to the spatial estimate as temporal collapses on a
-				// converging accumulation buffer. Dividing by albedoLum rescales the
-				// modulated-space variance into demodulated space (std ∝ 1/albedo).
+				// Variance-guided luminance σ (SVGF). .z = temporal, .w = spatial variance.
+				// Temporal only, once the EMA is warm: .w is the 3×3 contrast of the
+				// *accumulated* image, so it plateaus at scene detail instead of decaying with
+				// sample count. max()-ing it in pinned sigma_l wide forever, which left the
+				// geometric gates — binary reads off the jitter-free G-buffer — to snap every
+				// antialiased silhouette pixel to one side, destroying sub-pixel AA.
 				//
-				// Filtered alongside colour and carried between passes as √variance in the
-				// ping-pong's spare alpha, so sigma_l tightens as the signal smooths. Stored as
-				// the root because converged variance (~1e-6) is a half-float subnormal.
+				// Dividing by albedoLum rescales the modulated-space variance into demodulated
+				// space (std ∝ 1/albedo). Filtered alongside colour and carried between passes
+				// as √variance in the ping-pong's spare alpha, so sigma_l tightens as the signal
+				// smooths. Stored as the root because converged variance is a half-float subnormal.
 				const isFirst = isFirstIterationU.equal( int( 1 ) );
+				const historyShort = varianceHistoryU.lessThan( int( VARIANCE_HISTORY_MIN ) );
 				const seedVariance = ( at ) => {
 
 					const v = textureLoad( varTex, at );
-					return max( v.z, v.w );
+					return select( historyShort, max( v.z, v.w ), v.z );
 
 				};
 
@@ -382,6 +393,8 @@ export class EdgeFilter extends RenderStage {
 			}
 
 		}
+
+		this.varianceHistoryU.value = context.getState( 'accumulatedFrames' ) ?? 0;
 
 		this._colorTexNode.value = colorTex;
 		this._ndTexNode.value = ndTex;
