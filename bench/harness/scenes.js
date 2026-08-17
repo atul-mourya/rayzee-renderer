@@ -1188,6 +1188,87 @@ for ( const [ id, params ] of Object.entries( FURNACE_MATERIALS ) ) {
 
 }
 
+// Every furnace scene above is a CONVEX sphere: a scattered ray escapes to the environment
+// immediately, so those gates only ever measure single-scatter directional albedo. This one is
+// concave, so radiance has to survive many inter-reflections — equilibrium radiance in a uniform
+// env of radiance L over albedo-1 surfaces is exactly L for ANY geometry. It is the only scene in
+// the corpus that can see a multi-bounce transport leak (Russian-roulette compensation, NEE/MIS
+// under occlusion); shipping RR read 0.955 here while every convex furnace read 0.998+.
+SCENES.push( {
+	id: 'furnace-multibounce',
+	covers: 'white furnace — multi-bounce transport (RR compensation, NEE/MIS under occlusion)',
+	spp: 128,
+	truthSpp: 512,
+	// High enough that truncation of the albedo-1 Neumann series is below the gate's resolution:
+	// the deficit is flat from 32 bounces on, so anything left is transport error.
+	settings: { maxBounces: 32, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const size = 6, half = size / 2;
+		const room = new Group();
+		const walls = [
+			{ pos: [ 0, - half, 0 ], rot: [ - Math.PI / 2, 0, 0 ] },
+			{ pos: [ 0, half, 0 ], rot: [ Math.PI / 2, 0, 0 ] },
+			{ pos: [ 0, 0, - half ], rot: [ 0, 0, 0 ] },
+			{ pos: [ - half, 0, 0 ], rot: [ 0, Math.PI / 2, 0 ] },
+			{ pos: [ half, 0, 0 ], rot: [ 0, - Math.PI / 2, 0 ] },
+		];
+
+		for ( const wall of walls ) {
+
+			const mesh = new Mesh(
+				new PlaneGeometry( size, size ),
+				new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1, metalness: 0 } )
+			);
+			mesh.position.set( ...wall.pos );
+			mesh.rotation.set( ...wall.rot );
+			room.add( mesh );
+
+		}
+
+		await app.loadObject3D( room, 'furnace-multibounce' );
+		setCamera( app, [ 0, 0, 2.4 ], [ 0, 0, - 1 ] );
+
+	},
+} );
+
+// Same analytic reference, coarse tessellation: the interpolated shading normal disagrees with the
+// triangle's geometric normal by up to the facet angle, so this bounds what the shading-normal leak
+// guard costs in energy. A convex body has nothing to leak through, so any deficit that grows as the
+// mesh coarsens is energy the shading-normal handling destroys rather than a leak it prevents.
+for ( const [ id, seg ] of Object.entries( { 'furnace-lowpoly-16': 16, 'furnace-lowpoly-32': 32 } ) ) {
+
+	SCENES.push( {
+		id,
+		covers: `white furnace — shading-normal energy loss at ${seg}-segment tessellation`,
+		spp: 128,
+		truthSpp: 512,
+		settings: { maxBounces: 4, enableEnvironment: true, environmentIntensity: 1 },
+		furnaceRadiance: 1.0,
+		async build( app ) {
+
+			const env = app.stages.pathTracer.environment;
+			env.envParams.solidSkyColor = new Color( 0xffffff );
+			await env.setMode( 'color' );
+
+			const group = new Group();
+			group.add( new Mesh(
+				new SphereGeometry( 2, seg, Math.round( seg * 0.75 ) ),
+				new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1.0, metalness: 0 } )
+			) );
+			await app.loadObject3D( group, id );
+			setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+		},
+	} );
+
+}
+
 /**
  * Pins the camera explicitly. Must run AFTER loadObject3D, which rebuilds the scene and
  * selects camera index 0 (potentially reframing).
