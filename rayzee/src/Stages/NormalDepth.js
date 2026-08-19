@@ -8,7 +8,7 @@ import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
 import { cameraRayDirection } from '../TSL/CameraRay.js';
 import { getMaterial } from '../TSL/Common.js';
-import { computeUVCache, processNormal, processBump, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
+import { computeUVCache, processNormal, processBump, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
 
 /**
  * NormalDepth — primary-ray G-buffer for SVGF gates.
@@ -263,7 +263,16 @@ export class NormalDepth extends RenderStage {
 						getMaterial( hit.materialIndex, matStorage )
 					).toVar();
 					const uvCache = UVCache.wrap( computeUVCache( hit.uv, material ) ).toVar();
-					const mapped = processNormal( hit.normal, material, uvCache ).toVar();
+					// Same UV tangent frame the Shade kernel uses, or the aux normal disagrees
+					// with the shading normal it is supposed to guide the denoiser with.
+					const uvTangent = vec4( 0.0 ).toVar();
+					If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+						uvTangent.assign( triangleUVTangent( triStorage, hit.triangleIndex, hit.normal, material.normalTransform ) );
+
+					} );
+
+					const mapped = processNormal( hit.normal, material, uvCache, uvTangent ).toVar();
 					shadingNormal.assign( processBump( mapped, material, uvCache ) );
 
 				} );

@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, abs, atan, mix, clamp, texture, textureSize } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
 import {
@@ -6,6 +6,7 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 } from './Struct.js';
+import { getDatafromStorageBuffer } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 
 // ================================================================================
@@ -382,7 +383,80 @@ export const processMetalnessRoughness = Fn( ( [ material, uvCache ] ) => {
 
 } );
 
-export const processNormal = Fn( ( [ geometryNormal, material, uvCache ] ) => {
+// (t[1][1], t[0][1]) — the row of the inverse 2x2 linear part that maps dP/du onto dP/du',
+// up to the determinant, which drops out under the normalize that follows.
+const uvTransformJacobian = /*@__PURE__*/ wgslFn( `
+	fn uvTransformJacobian( t: mat3x3f ) -> vec2f {
+		return vec2f( t[1][1], t[0][1] );
+	}
+` );
+
+/**
+ * Build the UV tangent for one triangle, as vec4( T.xyz, handedness ).
+ *
+ * Returned in the *transformed* UV space of `transform`, since that is the space the normal
+ * map is sampled in — the inverse of the transform's 2x2 linear part maps dP/du back onto
+ * dP/du'. A pure repeat/scale leaves the direction alone; a rotated transform does not.
+ * w == 0 signals a degenerate parameterisation, which processNormal treats as "no frame".
+ *
+ * @param {Node} triangleBuffer packed triangle storage (8 vec4 stride)
+ * @param {Node} triIndex       absolute triangle index
+ * @param {Node} geometryNormal shading-space normal, for the handedness test
+ * @param {Node} transform      the normal map's mat3 UV transform
+ */
+export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform ] ) => {
+
+	const S = int( 8 );
+	const pA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), S ).xyz;
+	const e1 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), S ).xyz.sub( pA );
+	const e2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), S ).xyz.sub( pA );
+
+	const uvAB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 6 ), S );
+	const uvC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 7 ), S ).xy;
+	const d1 = uvAB.zw.sub( uvAB.xy );
+	const d2 = uvC.sub( uvAB.xy );
+
+	const det = d1.x.mul( d2.y ).sub( d1.y.mul( d2.x ) );
+	const result = vec4( 0.0 ).toVar();
+
+	If( abs( det ).greaterThan( 1e-12 ), () => {
+
+		const r = float( 1.0 ).div( det );
+		const T = e1.mul( d2.y ).sub( e2.mul( d1.y ) ).mul( r ).toVar();
+		const B = e2.mul( d1.x ).sub( e1.mul( d2.x ) ).mul( r ).toVar();
+
+		// Re-express in the map's transformed UV space (inverse of the 2x2 linear part).
+		const uvJ = uvTransformJacobian( { t: transform } );
+		const Tt = T.mul( uvJ.x ).sub( B.mul( uvJ.y ) ).toVar();
+
+		If( length( Tt ).greaterThan( 1e-12 ), () => {
+
+			T.assign( Tt );
+
+		} );
+
+		If( length( T ).greaterThan( 1e-12 ), () => {
+
+			result.assign( vec4( normalize( T ), sign( dot( cross( geometryNormal, T ), B ) ) ) );
+
+		} );
+
+	} );
+
+	return result;
+
+} );
+
+/**
+ * Per-triangle tangent frame from the UV parameterisation.
+ *
+ * `uvTangent` is vec4( T.xyz, handedness ); w == 0 means "no usable frame" (degenerate or
+ * missing UVs) and falls back to the arbitrary cross(up, N) frame. A frame unrelated to the
+ * texture's U axis rotates the whole perturbation: on a vertical fluted-glass panel the
+ * arbitrary frame comes out 90 deg off, so the rib normals tilt up/down instead of across
+ * the ribs.
+ */
+export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ] ) => {
 
 	const result = geometryNormal.toVar();
 
@@ -393,10 +467,25 @@ export const processNormal = Fn( ( [ geometryNormal, material, uvCache ] ) => {
 		normalMap.x.mulAssign( material.normalScale.x );
 		normalMap.y.assign( normalMap.y.negate().mul( material.normalScale.x ) );
 
-		// Fast TBN construction
-		const up = abs( geometryNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
-		const tangent = normalize( cross( up, geometryNormal ) );
-		const bitangent = cross( geometryNormal, tangent );
+		const tangent = vec3( 0.0 ).toVar();
+		const handedness = float( 1.0 ).toVar();
+
+		// Gram-Schmidt against the interpolated normal, which is not exactly triangle-planar.
+		const perp = uvTangent.xyz.sub( geometryNormal.mul( dot( geometryNormal, uvTangent.xyz ) ) ).toVar();
+
+		If( abs( uvTangent.w ).greaterThan( 0.5 ).and( length( perp ).greaterThan( 1e-6 ) ), () => {
+
+			tangent.assign( normalize( perp ) );
+			handedness.assign( uvTangent.w );
+
+		} ).Else( () => {
+
+			const up = abs( geometryNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
+			tangent.assign( normalize( cross( up, geometryNormal ) ) );
+
+		} );
+
+		const bitangent = cross( geometryNormal, tangent ).mul( handedness );
 
 		result.assign( normalize(
 			tangent.mul( normalMap.x ).add( bitangent.mul( normalMap.y ) ).add( geometryNormal.mul( normalMap.z ) )
@@ -563,7 +652,7 @@ export const processEmissive = Fn( ( [ material, uvCache ] ) => {
 // MAIN BATCHED SAMPLING FUNCTION
 // ================================================================================
 
-export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal ] ) => {
+export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, uvTangent ] ) => {
 
 	const albedo = vec4( 0.0 ).toVar();
 	const emissive = vec3( 0.0 ).toVar();
@@ -591,7 +680,7 @@ export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal ] 
 		metalness.assign( metalRough.x );
 		roughness.assign( metalRough.y );
 
-		const currentNormal = processNormal( geometryNormal, material, uvCache ).toVar();
+		const currentNormal = processNormal( geometryNormal, material, uvCache, uvTangent ).toVar();
 		normal.assign( processBump( currentNormal, material, uvCache ) );
 
 		emissive.assign( processEmissive( material, uvCache ) );

@@ -202,7 +202,7 @@ export const TraceDebugMode = Fn( ( [
 
 			// Sample all textures to get emissive
 			const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-				material, hitInfo.uv, hitInfo.normal,
+				material, hitInfo.uv, hitInfo.normal, vec4( 0.0 ),
 			) ).toVar();
 
 			const emissiveColor = matSamples.emissive.toVar();
@@ -246,7 +246,7 @@ export const TraceDebugMode = Fn( ( [
 
 			// Get material-mapped normal (same as what's used in main shader)
 			const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-				material, hitInfo.uv, hitInfo.normal,
+				material, hitInfo.uv, hitInfo.normal, vec4( 0.0 ),
 			) ).toVar();
 
 			const worldNormal = normalize( matSamples.normal );
@@ -292,7 +292,7 @@ export const TraceDebugMode = Fn( ( [
 			const material = RayTracingMaterial.wrap( getMaterial( hitInfo.materialIndex, materialBuffer ) ).toVar();
 
 			const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-				material, hitInfo.uv, hitInfo.normal,
+				material, hitInfo.uv, hitInfo.normal, vec4( 0.0 ),
 			) ).toVar();
 
 			const objectColor = matSamples.albedo.rgb;
@@ -318,7 +318,7 @@ export const TraceDebugMode = Fn( ( [
 			// Get primary surface material
 			const material = RayTracingMaterial.wrap( getMaterial( hitInfo.materialIndex, materialBuffer ) ).toVar();
 			const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-				material, hitInfo.uv, hitInfo.normal,
+				material, hitInfo.uv, hitInfo.normal, vec4( 0.0 ),
 			) ).toVar();
 
 			const albedoA = matSamples.albedo.rgb;
@@ -364,7 +364,7 @@ export const TraceDebugMode = Fn( ( [
 				// Bounce hit surface B — evaluate its contribution
 				const materialB = RayTracingMaterial.wrap( getMaterial( bounceHit.materialIndex, materialBuffer ) ).toVar();
 				const matSamplesB = MaterialSamples.wrap( sampleAllMaterialTextures(
-					materialB, bounceHit.uv, bounceHit.normal,
+					materialB, bounceHit.uv, bounceHit.normal, vec4( 0.0 ),
 				) ).toVar();
 
 				// Emissive contribution from surface B

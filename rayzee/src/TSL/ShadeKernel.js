@@ -17,7 +17,7 @@ import {
 import { sampleEnvironment, sampleEquirectProbability, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
-import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV } from './TextureSampling.js';
+import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
 import { traceShadowRay, calculateRayOffset } from './LightsDirect.js';
@@ -616,8 +616,17 @@ export function buildShadeKernel( params ) {
 			}
 		);
 
+		// Normal-map tangent frame. Only paid for when there is a normal map: the arbitrary
+		// cross(up, N) fallback inside processNormal is what runs otherwise.
+		const uvTangent = vec4( 0.0 ).toVar();
+		If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+			uvTangent.assign( triangleUVTangent( triangleBuffer, int( hitTriIdx ), N, material.normalTransform ) );
+
+		} );
+
 		const matSamples = MaterialSamples.wrap( sampleAllMaterialTextures(
-			material, samplingUV, N,
+			material, samplingUV, N, uvTangent,
 		) ).toVar();
 
 		// DDFA: snapshot the UNCLAMPED roughness (before the min-0.05 clamp below) for the specular↔diffuse
