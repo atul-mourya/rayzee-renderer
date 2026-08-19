@@ -40,24 +40,24 @@
 		"denoisedRmse": 0.01008000686034021
 	},
 	"textured-normalmap/asvgf/1": {
-		"ratio": 0.9932006933207875,
-		"rawRmse": 0.08397147760399173,
-		"denoisedRmse": 0.08340052977545558
+		"ratio": 0.9933487197121487,
+		"rawRmse": 0.08406696077739778,
+		"denoisedRmse": 0.0835078078583195
 	},
 	"textured-normalmap/edgeaware/1": {
-		"ratio": 0.6728810769524732,
-		"rawRmse": 0.08397147760399173,
-		"denoisedRmse": 0.05650281828346444
+		"ratio": 0.885052186931141,
+		"rawRmse": 0.08406696077739778,
+		"denoisedRmse": 0.07440364748469036
 	},
 	"textured-normalmap/asvgf/64": {
-		"ratio": 1.307621009890374,
-		"rawRmse": 0.00772082083150204,
-		"denoisedRmse": 0.010095907532871335
+		"ratio": 1.3037480101474361,
+		"rawRmse": 0.007763066184249425,
+		"denoisedRmse": 0.010121082090358037
 	},
 	"textured-normalmap/edgeaware/64": {
-		"ratio": 1.5203780158983877,
-		"rawRmse": 0.00772082083150204,
-		"denoisedRmse": 0.011738566256906011
+		"ratio": 0.9838957181961918,
+		"rawRmse": 0.007763066184249425,
+		"denoisedRmse": 0.007638047578756658
 	},
 	"subsurface-marble/asvgf/1": {
 		"ratio": 0.9733867582687815,
@@ -120,14 +120,14 @@
 		"denoisedRmse": 0.005913270664661359
 	},
 	"textured-normalmap/oidn/1": {
-		"ratio": 0.5260350252970442,
-		"rawRmse": 0.08397566867508845,
-		"denoisedRmse": 0.04417414299583635
+		"ratio": 0.5184572313468795,
+		"rawRmse": 0.08406696077739778,
+		"denoisedRmse": 0.04358512373239637
 	},
 	"textured-normalmap/oidn/64": {
-		"ratio": 0.8862568761349836,
-		"rawRmse": 0.007719311428816736,
-		"denoisedRmse": 0.006841292832816198
+		"ratio": 0.8820446065873961,
+		"rawRmse": 0.007763066184249425,
+		"denoisedRmse": 0.0068473706583982025
 	},
 	"glass-transmission/oidn/1": {
 		"ratio": 0.5182575616392097,
@@ -168,5 +168,15 @@
 		"ratio": 0.8804801912099433,
 		"rawRmse": 0.005688674675486984,
 		"denoisedRmse": 0.005008765366003942
+	},
+	"spheres-gradient/oidn/1": {
+		"ratio": 0.6209320935785722,
+		"rawRmse": 0.05602128608423628,
+		"denoisedRmse": 0.03478541445324897
+	},
+	"spheres-gradient/oidn/64": {
+		"ratio": 1.3466032200476585,
+		"rawRmse": 0.0037730544233015514,
+		"denoisedRmse": 0.00508080723583293
 	}
 }
