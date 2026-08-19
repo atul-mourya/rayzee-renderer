@@ -4,7 +4,7 @@
 - when rendering done due to convergence, we need to indicate that. For example. 540 / 600, convergence completed in 540 frame before reaching 600 maxsamples
 
 ### MVP
-- [ ] if a mesh is selected, the outliner menus should scroll to the selected object so user can quickly see what's selected.
+- [x] if a mesh is selected, the outliner menus should scroll to the selected object so user can quickly see what's selected.
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created

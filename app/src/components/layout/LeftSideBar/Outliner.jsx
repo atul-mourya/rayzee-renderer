@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo, useMemo } from 'react';
+import { useState, useEffect, useCallback, memo, useMemo, useRef } from 'react';
 import {
 	Search, Box, Circle, Cylinder, Camera, ChevronRight, ChevronDown,
 	Sun, Flashlight, Boxes, Folder, Shapes, Triangle, LampDesk,
@@ -162,6 +162,7 @@ ChevronToggle.displayName = 'ChevronToggle';
 const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 	const [ isOpen, setIsOpen ] = useState( true );
+	const rowRef = useRef( null );
 	const selectedObject = useStore( ( state ) => state.selectedObject );
 	const setSelectedObject = useStore( ( state ) => state.setSelectedObject );
 
@@ -198,6 +199,21 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 		window.addEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
 		return () => window.removeEventListener( 'meshVisibilityChanged', handleMeshVisibilityChanged );
+
+	}, [ item.uuid ] );
+
+	// Only the topmost collapsed ancestor is mounted to hear this — everything
+	// below it remounts with isOpen defaulted true, so one pass opens the path.
+	useEffect( () => {
+
+		const handleReveal = ( event ) => {
+
+			if ( event.detail.ancestors.has( item.uuid ) ) setIsOpen( true );
+
+		};
+
+		window.addEventListener( 'outliner:reveal', handleReveal );
+		return () => window.removeEventListener( 'outliner:reveal', handleReveal );
 
 	}, [ item.uuid ] );
 
@@ -272,9 +288,23 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 	const isSelected = selectedObject && selectedObject.uuid === item.uuid;
 	const paddingLeft = depth * 12 + 8;
 
+	// Runs on mount too, which is what reveals a row that an ancestor just expanded.
+	useEffect( () => {
+
+		if ( ! isSelected ) return;
+		const id = requestAnimationFrame( () => {
+
+			rowRef.current?.scrollIntoView( { block: 'nearest', inline: 'nearest' } );
+
+		} );
+		return () => cancelAnimationFrame( id );
+
+	}, [ isSelected ] );
+
 	return (
 		<div className="flex flex-col select-none min-w-full w-fit">
 			<div
+				ref={rowRef}
 				className={cn(
 					"group flex items-center h-7 pr-1 cursor-pointer transition-colors border-none outline-none min-w-full w-fit",
 					isSelected ? STYLES.itemActive : "hover:bg-accent/50 text-muted-foreground hover:text-foreground",
@@ -433,6 +463,7 @@ const Outliner = () => {
 	} );
 	const layers = useStore( ( state ) => state.layers );
 	const setLayers = useStore( ( state ) => state.setLayers );
+	const selectedObject = useStore( ( state ) => state.selectedObject );
 
 	const createLayerItem = useCallback( ( object ) => {
 
@@ -484,6 +515,34 @@ const Outliner = () => {
 		};
 
 	}, [ updateLayers ] );
+
+	// Selection often arrives from the viewport, where the row may be scrolled out
+	// of view or buried under a collapsed group.
+	useEffect( () => {
+
+		if ( ! selectedObject ) return;
+
+		const ancestors = new Set();
+		const findPath = ( nodes, trail ) => nodes.some( node => {
+
+			if ( node.uuid === selectedObject.uuid ) {
+
+				trail.forEach( uuid => ancestors.add( uuid ) );
+				return true;
+
+			}
+
+			return findPath( node.children, [ ...trail, node.uuid ] );
+
+		} );
+
+		if ( findPath( layers, [] ) && ancestors.size > 0 ) {
+
+			window.dispatchEvent( new CustomEvent( 'outliner:reveal', { detail: { ancestors } } ) );
+
+		}
+
+	}, [ selectedObject, layers ] );
 
 	const renderFilteredLayers = useCallback( ( layers, term, filters ) => {
 
