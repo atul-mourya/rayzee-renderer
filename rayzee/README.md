@@ -31,7 +31,9 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [engine.interactionManager](#engineinteractionmanager)
   - [engine.transformManager](#enginetransformmanager)
   - [Output Methods](#output-methods)
+  - [Render Resolution Reserve](#render-resolution-reserve)
   - [Memory Monitoring](#memory-monitoring)
+  - [Logging](#logging)
   - [Deterministic & Headless Rendering](#deterministic--headless-rendering)
   - [Events](#events)
   - [Advanced: Custom Pipeline Stages](#advanced-custom-pipeline-stages)
@@ -594,6 +596,36 @@ URL.revokeObjectURL(url);
 
 ---
 
+### Render Resolution Reserve
+
+Every compute `StorageTexture` and aux buffer is pre-allocated at one square dimension — the *reserve* — and `setCanvasSize()` refuses anything larger. The default is 2048, so 4K output needs the reserve raised first.
+
+```js
+engine.setReservedRenderResolution(4096)          // raise to 4K (longest edge)
+engine.setReservedRenderResolution(2048, { allowLower: true })   // lower, paying a rebuild, to reclaim VRAM
+engine.getReservedRenderResolution()              // the reserve actually in force
+```
+
+The request is **device-capped**: a 4096 reserve pins roughly 1.5 GB of MRT textures, so it is only granted on GPUs reporting ≥ 8 GB and a ≥ 1 GB `maxStorageBufferBindingSize`; weaker devices clamp to 2048. `MAX_RESERVABLE_RENDER_SIZE` (4096) is the ceiling on any request.
+
+Raises are monotonic unless you pass `allowLower` — UI-driven callers ask for whatever the current view needs, and honouring every decrease made the reserve oscillate across preview↔render switches, paying a full kernel rebuild each time.
+
+Callable at any point in the lifecycle:
+
+- **Before `init()`** — recorded and applied during `init()`, after the device exists but before the stages are constructed, so they allocate at the raised size directly. The device gate cannot run without a device, so the return value here is the *request*, not the verdict.
+- **After `init()`** — applied immediately, re-initialising the reserved GPU storage in place.
+
+Either way the verdict arrives as a `reserved_render_size_changed` event (a plain string type, not an `EngineEvents` constant):
+
+```js
+engine.addEventListener('reserved_render_size_changed', e => console.log('reserve:', e.size));
+engine.setReservedRenderResolution(4096);
+await engine.init();
+console.log(engine.getReservedRenderResolution());   // 4096, or 2048 if the device declined
+```
+
+---
+
 ### Memory Monitoring
 
 Track GPU (VRAM) usage across the whole pipeline. Sizes are measured from live GPU resources (buffer `byteLength` + texture dimensions × format), so they are exact, not estimated.
@@ -609,6 +641,27 @@ engine.vram.getReport();   // formatted one-line summary string
 `peak` is a high-water mark, reset when a final render begins (`configureForMode('production')`). The engine's VRAM is largely monotonic — the ray pool only grows and the per-stage storage textures are fixed-size — so `peak` equals `current` during a steady render and only exceeds it after memory is released (lower resolution, a smaller scene, or removing the HDRI). The `stages` + `accum` categories (fixed 2048² storage textures) dominate the baseline.
 
 The React app surfaces this as a `Memory: … | Peak: …` readout in the on-canvas stats overlay.
+
+---
+
+### Logging
+
+Leveled, namespaced console output, shared with the engine's Web Workers. The default level is `info`, which hides per-mesh and per-texture detail; drop to `debug` to see it.
+
+```js
+import { Logger, createLogger, fmt, LOG_LEVELS } from 'rayzee';
+
+Logger.setLevel('debug');       // 'silent' | 'error' | 'warn' | 'info' | 'debug'
+Logger.getLevel();
+Logger.isEnabled('debug');      // gate expensive message construction
+Logger.only('bvh', 'gpu');      // restrict debug to these namespaces (implies setLevel('debug'))
+Logger.only();                  // clear the namespace filter
+Logger.refresh();               // re-read the level from globals/localStorage
+```
+
+The chosen level persists in `localStorage` under `rayzeeLogLevel` (namespace filter: `rayzeeLogNamespaces`), so it survives a reload. The engine does not install a global itself — expose one from your host if you want console access without an import; the demo app does `globalThis.rayzee = { log: Logger, ... }`, which is what makes `rayzee.log.setLevel('debug')` work there.
+
+`createLogger(namespace)` returns a channel with `error` / `warn` / `info` / `debug` plus `summary(headline, details)`, which prints one `info` line with the detail lines folded into a collapsed group. `fmt` holds the formatting helpers those summaries use — `n`, `ms`, `mb`, `px`, `count`, `list`. `LOG_LEVELS` is the name→severity map.
 
 ---
 
@@ -724,7 +777,11 @@ import {
   MEMORY_CONSTANTS,
   PRODUCTION_RENDER_CONFIG,
   INTERACTIVE_RENDER_CONFIG,
+  MAX_RESERVABLE_RENDER_SIZE,
 } from 'rayzee';
+
+// Leveled/namespaced logging, shared with the workers
+import { Logger, createLogger, fmt, LOG_LEVELS } from 'rayzee';
 
 // Asset URL / cache namespace overrides
 import { configureAssets, getAssetConfig } from 'rayzee';
