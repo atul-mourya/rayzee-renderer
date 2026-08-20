@@ -8,7 +8,7 @@
 A real-time path tracer that runs entirely in the browser. Rayzee combines a WebGPU wavefront Monte Carlo core, a two-level BVH, and TSL shaders compiled to WGSL to deliver physically based global illumination with interactive frame rates.
 
 <p align="center">
-  <img src="docs/images/hero-placeholder.png" alt="Rayzee real-time path tracing screenshot" width="800" />
+  <img src="docs/images/hero.png" alt="Rayzee real-time path tracing screenshot" width="800" />
 </p>
 
 🌐 **[Launch App](https://atul-mourya.github.io/RayTracing/)**
@@ -19,14 +19,17 @@ The project is a monorepo with two packages: **`rayzee/`** — the standalone re
 import { PathTracerApp } from 'rayzee';
 ```
 
+See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference — installation, framework integration, managers, events, and custom pipeline stages.
+
 ## Highlights
 
 - **Wavefront path tracer** — decomposed `generate → extend → shade → compact` compute kernels with stream compaction, driving a Monte Carlo core with configurable multi-bounce transport and progressive accumulation
-- **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure with treelet optimization, constructed off the main thread via Web Workers so scene loads don't block rendering
-- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, Intel Open Image Denoise (OIDN) for clean final renders, and an edge-preserving bilateral filter in between
+- **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
+- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
+- **360° equirectangular panorama** camera projection, with longitude/latitude range cropping and a level-horizon option
 - **Interaction Mode** — automatically drops quality during camera movement and restores full fidelity the moment you stop, keeping navigation responsive
 - **Broad asset support** — GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, and USDZ models; HDR/EXR environments; ZIP archives with automatic model detection
 - **Multiple tone-mapping operators** (ACES, AgX, Reinhard, and more) with automatic exposure adjustment
@@ -45,7 +48,7 @@ import { PathTracerApp } from 'rayzee';
 
 ## Quick Start
 
-**Prerequisites**: Node.js >= 20.19.0 and a browser with WebGPU support (Chrome 113+, Edge 113+, or Firefox Nightly).
+**Prerequisites**: Node.js >= 20.19.0 and a browser with WebGPU support (Chrome 113+, Edge 113+, Safari 18+, or Firefox 141+).
 
 ```bash
 git clone https://github.com/atul-mourya/RayTracing.git
@@ -60,6 +63,14 @@ npm run build:engine   # rayzee engine only (ESM + UMD)
 npm run build:app      # React app only
 npm run preview        # preview the production build
 ```
+
+```bash
+npm test               # Vitest unit tests
+npm run bench          # headless-GPU quality, memory, and perf regression suite
+npm run bench:bless    # regenerate goldens — required once on a new machine
+```
+
+Bench baselines are machine-specific and the suite refuses to compare across a mismatched GPU fingerprint. See [bench/README.md](bench/README.md) for the scene corpus and the individual suites.
 
 ## Keyboard Shortcuts
 
