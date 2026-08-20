@@ -1,5 +1,9 @@
 import { SphereGeometry, Mesh, MeshPhysicalMaterial, Group, Object3D, Color, Vector3, ShaderMaterial, Vector2, Matrix4, GLSL3 } from 'three';
+import { QuadMesh } from 'three/webgpu';
 import { EngineEvents } from '../EngineEvents.js';
+
+/** Every QuadMesh in the realm shares this one geometry (module-level in three). */
+const _sharedQuadGeometry = /*@__PURE__*/ new QuadMesh( null ).geometry;
 
 let _statusCallback = null;
 
@@ -129,6 +133,18 @@ export function disposeRenderer( renderer ) {
 
 	renderer.dispose();
 	renderer._canvasTarget = null;
+
+	// Three.js 0.185: `RenderObjects.dispose()` drops its chain maps without disposing the
+	// render objects, so each one leaves behind the 'dispose' listener it registered on its
+	// geometry. Full-screen passes render a QuadMesh, and every QuadMesh in the realm shares
+	// one module-level geometry — so that listener list grows by one entry per renderer and
+	// keeps RenderObject → RenderObjects → Bindings → Backend → GPUDevice reachable for the
+	// page's lifetime. The chain maps are WeakMaps, so this list is the only handle on them.
+	//
+	// Clearing it also drops entries belonging to live renderers, which is safe: the
+	// singleton geometry is never disposed, so none of these listeners can ever fire.
+	const quadDisposeListeners = _sharedQuadGeometry._listeners?.dispose;
+	if ( quadDisposeListeners ) quadDisposeListeners.length = 0;
 
 }
 

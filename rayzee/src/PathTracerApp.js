@@ -63,6 +63,21 @@ const _appsByCanvas = new WeakMap();
 
 const log = createLogger( 'engine' );
 
+/**
+ * Attaches the device-lost handler at module scope so the reaction closure captures only
+ * `holder` — an arrow written inside a method would share that method's context and pin
+ * the app through `this`. See _initRenderer().
+ */
+function attachDeviceLostHandler( device, holder ) {
+
+	device.lost.then( ( info ) => {
+
+		if ( holder.app ) holder.app._handleDeviceLost( info );
+
+	} );
+
+}
+
 export class PathTracerApp extends EventDispatcher {
 
 	/**
@@ -169,6 +184,8 @@ export class PathTracerApp extends EventDispatcher {
 		this._trackedListeners = [];
 		this._disposed = false;
 		this._deviceLost = false;
+		this._gpuDevice = null;
+		this._deviceLostHolder = null;
 
 		// Deterministic-render mode — see setDeterministicMode()
 		this._deterministic = false;
@@ -536,6 +553,24 @@ export class PathTracerApp extends EventDispatcher {
 		} catch ( err ) {
 
 			log.warn( 'failed to clear TSL texture singleton listeners', err );
+
+		}
+
+		// Value of a WeakMap keyed by a canvas that outlives us: without this the whole
+		// disposed graph stays reachable until another app claims the same canvas.
+		if ( this.canvas && _appsByCanvas.get( this.canvas ) === this ) _appsByCanvas.delete( this.canvas );
+
+		if ( this._gpuDevice ) {
+
+			this._gpuDevice.onuncapturederror = null;
+			this._gpuDevice = null;
+
+		}
+
+		if ( this._deviceLostHolder ) {
+
+			this._deviceLostHolder.app = null;
+			this._deviceLostHolder = null;
 
 		}
 
@@ -2319,15 +2354,21 @@ export class PathTracerApp extends EventDispatcher {
 		// Detect GPU device loss (dGPU/iGPU switch, driver reset, TDR watchdog on heavy
 		// compute). Without this the rAF loop keeps calling render() on a dead device,
 		// spewing errors forever. reason 'destroyed' during dispose() is intentional teardown.
+		//
+		// Neither handler may outlive dispose() still holding this app. The device itself does
+		// outlive it: three's RenderObjects.dispose() drops its chain maps without disposing
+		// the render objects, and its Textures manager leaves a listener on every module-level
+		// texture singleton, so backend and device stay reachable for the page's lifetime. A
+		// handler capturing `this` therefore pinned the whole app graph — ~120 MiB of triangle,
+		// BVH and CPU-side texture data per create/dispose cycle. `lost` is a pending promise
+		// whose reaction cannot be unregistered, so it reads the app out of a holder that
+		// dispose() empties; `onuncapturederror` is cleared there directly.
 		const gpuDevice = this.renderer.backend?.device;
 		if ( gpuDevice?.lost ) {
 
-			gpuDevice.lost.then( ( info ) => {
-
-				if ( this._disposed ) return;
-				this._handleDeviceLost( info );
-
-			} );
+			this._gpuDevice = gpuDevice;
+			this._deviceLostHolder = { app: this };
+			attachDeviceLostHandler( gpuDevice, this._deviceLostHolder );
 			gpuDevice.onuncapturederror = ( event ) => log.error( 'WebGPU uncaptured error:', event.error );
 
 		}
