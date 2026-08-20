@@ -329,6 +329,37 @@ It runs over **two** scenes (`MEMORY_GATES.leakScenes`), one untextured and one 
 
 Absolute numbers are not gated because `VRAMTracker` is approximate by construction: texture bytes are JS-dimension estimates (no mips, no row-pitch padding), buffers are never residency-probed so freeing one produces no drop, and the denoiser, upscaler, overlay renderer and swapchain are not registered at all. Growth across identical cycles is still meaningful even when the total is not.
 
+#### App create/dispose — a second axis the load/unload loop cannot see
+
+The loop above reuses one app for every cycle, so it says nothing about whether disposing an app
+releases it. That gap shipped a leak: a handler assigned to the `GPUDevice` captured `this`, and the
+device outlives `dispose()` (three's `Textures` leaves listeners on module-level texture singletons,
+and `RenderObjects.dispose()` drops its chain maps without disposing the render objects), so every
+app ever constructed stayed reachable — about 107 MiB of triangle, BVH and texture arrays each,
+linear and unbounded. Reported as issue #11.
+
+So a second loop creates, loads, renders and disposes a throwaway app four times on its own canvas,
+and gates two ways:
+
+- **`live`** — disposed apps still strongly reachable, via a `WeakRef` per instance read after a
+  forced collection over CDP. Zero tolerance, and machine-independent in a way no byte count is.
+- **`reachable`** — post-GC bytes for the realm from `performance.measureUserAgentSpecificMemory()`.
+
+The second metric exists because the obvious one lies. `Runtime.getHeapUsage` and every V8 heap
+counter **exclude ArrayBuffer backing stores**, and what a retained app holds is almost entirely
+typed arrays — which is why the original report measured the object heap growing 4 % while RSS grew
+40 % and concluded the leak was outside the object graph. It was not. RSS itself is unusable as a
+gate: the Metal allocator moves it by ±500 MiB run to run. `measureUserAgentSpecificMemory()` sees
+external bytes, is taken post-GC, and reproduces to 0.1 MiB.
+
+Its floor is not zero — ~2.4 MiB/cycle still leaks inside three.js, keeping each renderer's backend,
+device and WGSL source strings alive — so the limit sits at 4 MiB/cycle, above that floor and below
+what a real regression produces. Raising it to accommodate a failure is the wrong move; the floor is
+itself a known bug.
+
+Both gates were verified against the unfixed engine: `live` reports 4 of 4 and `reachable` 6.6
+MiB/cycle, and the suite exits 1. A gate that has never been shown to fail is not a gate.
+
 ## Baselines are machine-specific
 
 Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device memory) and the suite refuses to compare across a mismatch. This is not paranoia: the wavefront's path budget is derived from device limits and `navigator.deviceMemory`, and single-chunk vs multi-chunk are materially different code paths. Re-bless when you change machines.

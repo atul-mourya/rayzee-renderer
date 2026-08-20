@@ -117,6 +117,32 @@ export const MEMORY_GATES = {
 	maxPeakGrowthBytes: 8 * 1024 * 1024,
 	// A monotonic climb across every cycle is a leak even when each step is small.
 	forbidMonotonicGrowth: true,
+
+	// ── App create/dispose retention ──
+	//
+	// A separate axis from the load/unload loop above: that one reuses a single app and reads
+	// VRAMTracker's JS-side estimates, so it is structurally blind to a disposed app whose whole
+	// object graph stays reachable. Which is what shipped — a handler on the GPUDevice captured
+	// `this`, and the device outlives dispose() through three's module-level listener singletons,
+	// so every app ever created stayed alive at ~107 MiB of typed arrays each.
+	lifecycleCycles: 4,
+	// The texture path, deliberately: the retained bytes are overwhelmingly material texture
+	// arrays, and an untextured scene shrinks the signal to the point of hiding it.
+	lifecycleScene: 'textured-normalmap',
+	// Zero tolerance. A disposed app still reachable after a forced collection is a leak with no
+	// benign reading, and the check is machine-independent — unlike any byte count.
+	maxLiveDisposedApps: 0,
+	// Backstop for retention that survives the app object itself — a freed app whose texture
+	// arrays are still held by some cache would pass the WeakRef check and fail here.
+	//
+	// The floor is not zero: ~2.4 MiB/cycle currently leaks inside three.js, where `Textures`
+	// leaves a listener on module-level texture singletons and the node system's property cache
+	// pins materials, keeping each renderer's backend, device and WGSL source strings reachable
+	// for the page's lifetime. Reproducible to 0.1 MiB across runs and scenes — post-GC reachable
+	// bytes is a deterministic measurement, so the limit can sit close to the floor. 4 MiB is
+	// 1.7x the floor and 1.7x under the 6.7 MiB/cycle the original leak produced at this scene
+	// size. Do not raise it to accommodate a regression; the floor itself is a known bug.
+	maxReachableGrowthBytesPerCycle: 4 * 1024 * 1024,
 };
 
 /**

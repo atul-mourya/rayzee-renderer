@@ -137,6 +137,10 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 
 	await page.evaluate( () => globalThis.__bench.ready );
 
+	// Memoised as a promise, not a value: two concurrent callers would otherwise each see null
+	// and open a second session.
+	let cdpSession = null;
+
 	/** Thin typed wrapper so suites never write raw page.evaluate strings. */
 	const bench = {
 		fingerprint: () => page.evaluate( () => globalThis.__bench.fingerprint() ),
@@ -198,6 +202,25 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		gpuTimings: () => page.evaluate( () => globalThis.__bench.gpuTimings() ),
 		frameCount: () => page.evaluate( () => globalThis.__bench.frameCount() ),
 		unload: () => page.evaluate( () => globalThis.__bench.unload() ),
+		appLifecycleCycle: ( sceneId, spp ) => page.evaluate(
+			( id, n ) => globalThis.__bench.appLifecycleCycle( id, n ), sceneId, spp ?? 1
+		),
+		appLifecycleLive: () => page.evaluate( () => globalThis.__bench.appLifecycleLive() ),
+		measureRealmMemory: () => page.evaluate( () => globalThis.__bench.measureRealmMemory() ),
+		// The page cannot collect on demand, and both create/dispose metrics are only meaningful
+		// after a collection: WeakRefs stay populated and freed backing stores stay counted.
+		collectGarbage: async () => {
+
+			cdpSession ??= page.createCDPSession().then( async ( session ) => {
+
+				await session.send( 'HeapProfiler.enable' );
+				return session;
+
+			} );
+
+			await ( await cdpSession ).send( 'HeapProfiler.collectGarbage' );
+
+		},
 		consoleErrors: () => consoleErrors.slice(),
 	};
 

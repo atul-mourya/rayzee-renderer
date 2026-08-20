@@ -13,7 +13,9 @@ export default [
 	{
 		files: [ '**/*.{js,jsx}' ],
 		languageOptions: {
-			ecmaVersion: 2020,
+			// 2021 for WeakRef / FinalizationRegistry. Widens the known-globals set only —
+			// parsing is already on 'latest' via parserOptions below.
+			ecmaVersion: 2021,
 			globals: globals.browser,
 			parserOptions: {
 				ecmaVersion: 'latest',

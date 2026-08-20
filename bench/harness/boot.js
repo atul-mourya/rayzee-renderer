@@ -795,6 +795,90 @@ async function unload() {
 
 }
 
+// ── App lifecycle (create/dispose retention) ──────────────────────
+
+/**
+ * One throwaway PathTracerApp per cycle, on its own canvas, kept only as a WeakRef.
+ *
+ * Deliberately NOT the booted app's canvas: the constructor disposes whatever app already owns
+ * the canvas it is handed, so reusing it would tear down the harness on the first cycle.
+ */
+const lifecycleRefs = [];
+let lifecycleCanvas = null;
+
+/**
+ * Creates an app, builds a scene in it, renders, disposes it. The instance is retained only
+ * through a WeakRef, so anything still holding it after a forced GC is a leak.
+ *
+ * @param {string} sceneId
+ * @param {number} [spp] - samples per cycle; enough to force lazily-allocated stage resources
+ * @returns {Promise<{totalMs: number}>}
+ */
+async function appLifecycleCycle( sceneId, spp = 1 ) {
+
+	const spec = getScene( sceneId );
+
+	if ( ! lifecycleCanvas ) {
+
+		lifecycleCanvas = document.createElement( 'canvas' );
+		lifecycleCanvas.style.position = 'absolute';
+		lifecycleCanvas.style.left = '-9999px';
+		document.body.appendChild( lifecycleCanvas );
+
+	}
+
+	const startedAt = performance.now();
+	const throwaway = new PathTracerApp( lifecycleCanvas, { autoResize: false } );
+	await throwaway.init();
+	throwaway.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
+	throwaway.setDeterministicMode( true );
+
+	// Same settings floor as loadScene(), so the cycle exercises the same code as a real render.
+	throwaway.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings }, { silent: true } );
+
+	await spec.build( throwaway );
+	throwaway.setDeterministicMode( true );
+	await throwaway.renderFrames( spp );
+
+	lifecycleRefs.push( new WeakRef( throwaway ) );
+	throwaway.dispose();
+
+	return { totalMs: performance.now() - startedAt };
+
+}
+
+/**
+ * How many disposed apps are still strongly reachable. Read AFTER the runner forces a
+ * collection over CDP — the page cannot trigger one itself.
+ */
+function appLifecycleLive() {
+
+	return {
+		total: lifecycleRefs.length,
+		alive: lifecycleRefs.filter( ( ref ) => ref.deref() !== undefined ).length,
+	};
+
+}
+
+/**
+ * Post-GC reachable bytes for this realm, INCLUDING ArrayBuffer backing stores.
+ *
+ * The metric the create/dispose gate needs: `Runtime.getHeapUsage` excludes backing stores, and
+ * the bytes a retained app holds are almost entirely typed arrays (material texture arrays,
+ * triangle and BVH buffers) — so heap counters read flat while hundreds of MiB accumulate.
+ * Requires cross-origin isolation, which the dev server's COOP/COEP headers provide.
+ *
+ * @returns {Promise<?{bytes: number}>} null if unavailable
+ */
+async function measureRealmMemory() {
+
+	if ( ! globalThis.crossOriginIsolated || ! performance.measureUserAgentSpecificMemory ) return null;
+
+	const { bytes } = await performance.measureUserAgentSpecificMemory();
+	return { bytes };
+
+}
+
 const ready = boot();
 
 globalThis.__bench = {
@@ -835,6 +919,9 @@ globalThis.__bench = {
 	memory,
 	resetPeakMemory,
 	unload,
+	appLifecycleCycle,
+	appLifecycleLive,
+	measureRealmMemory,
 	gpuTimings: () => app.getGPUTimings(),
 	frameCount: () => app.getFrameCount(),
 	statistics: () => app.getStatistics(),
