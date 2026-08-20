@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Box3, Vector3 } from 'three';
 import { Slider } from "@/components/ui/slider";
 import { Row } from "@/components/ui/row";
 import { ColorInput } from "@/components/ui/colorinput";
@@ -6,12 +7,17 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectTrigger, SelectContent, SelectValue, SelectItem } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStore, useMaterialStore } from '@/store';
+import { getApp } from '@/lib/appProxy';
 import { SSS_PRESETS, scaleToTranslucency } from '@/Constants';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { TexturePreview } from '@/components/ui/texture-preview';
 import { LinkableVector2 } from '@/components/ui/linkable-vector2';
 import { RefreshCw, Trash2, Plus } from 'lucide-react';
+
+// Shown in both the Transmission and Subsurface groups — one object so the flatten below
+// cannot pick a different default depending on group order.
+const IOR_CONFIG = { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'IOR' };
 
 // Configuration for all material properties - pregrouped by section
 const MATERIAL_PROPERTIES = {
@@ -46,11 +52,11 @@ const MATERIAL_PROPERTIES = {
 		[ 'iridescenceIOR', { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'Iridescence IOR' } ],
 	],
 	volumetric: [
-		[ 'ior', { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'IOR' } ],
+		[ 'ior', IOR_CONFIG ],
 		[ 'transmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Transmission' } ],
 		[ 'attenuationColor', { type: 'color', default: '#ffffff', label: 'Attenuation Color' } ],
-		[ 'attenuationDistance', { type: 'number', default: 0, min: 0, max: 1000, step: 1, label: 'Attenuation Distance' } ],
-		[ 'thickness', { type: 'slider', default: 0.1, min: 0, max: 1, step: 0.01, label: 'Thickness' } ],
+		// min/max/step are replaced per-object with a world-scale range (resolvePropertyConfig).
+		[ 'attenuationDistance', { type: 'number', default: 0, min: 0, max: 1000, step: 1, label: 'Attenuation Distance (0 = off)', scaleWithObject: true } ],
 	],
 	// Simple (artist-facing) subsurface controls — always visible.
 	subsurface: [
@@ -62,7 +68,7 @@ const MATERIAL_PROPERTIES = {
 	subsurfaceAdvanced: [
 		[ 'subsurfaceRadius', { type: 'vector3', default: { x: 1, y: 0.2, z: 0.1 }, min: 0, max: 100000, step: 0.01, label: 'Scatter Radius (world units)' } ],
 		[ 'subsurfaceAnisotropy', { type: 'slider', default: 0, min: - 1, max: 1, step: 0.01, label: 'Anisotropy (g)' } ],
-		[ 'ior', { type: 'slider', default: 1.45, min: 1, max: 2.5, step: 0.01, label: 'IOR' } ],
+		[ 'ior', IOR_CONFIG ],
 	],
 	transparency: [
 		[ 'transparent', { type: 'switch', default: false, label: 'Transparent' } ],
@@ -184,6 +190,35 @@ const MaterialTab = () => {
 
 	}, [] );
 
+	// Beer-Lambert absorption is measured in world units, so a fixed 0..1000 range is meaningless
+	// across scenes (this app loads assets authored in metres and in millimetres alike). Scale the
+	// range off the object's own diagonal, which is the order of a path length through its volume.
+	const objectDiagonal = useMemo( () => {
+
+		if ( ! selectedObject?.isMesh ) return 0;
+		selectedObject.updateWorldMatrix( true, false );
+		const size = new Box3().setFromObject( selectedObject ).getSize( new Vector3() );
+		return Number.isFinite( size.length() ) ? size.length() : 0;
+
+	}, [ selectedObject ] );
+
+	const resolvePropertyConfig = useCallback( ( config ) => {
+
+		if ( ! config.scaleWithObject || objectDiagonal <= 0 ) return config;
+
+		// Round step to a power of ten near 1/100th of the range, so the field reads in whole
+		// units on a millimetre-scale asset and in fractions on a metre-scale one.
+		const rawMax = objectDiagonal * 4;
+		const step = 10 ** Math.max( Math.floor( Math.log10( rawMax / 100 ) ), - 3 );
+		return {
+			...config,
+			max: Math.ceil( rawMax / step ) * step,
+			step,
+			precision: step >= 1 ? 0 : 3,
+		};
+
+	}, [ objectDiagonal ] );
+
 	// Helper function to safely get hex string
 	const getHexString = useCallback( ( colorObj ) => {
 
@@ -222,9 +257,19 @@ const MaterialTab = () => {
 					// Material stores radians; the slider is in degrees.
 					newState[ key ] = ( selectedObject.material.anisotropyRotation ?? 0 ) * 180 / Math.PI;
 
+				} else if ( key === 'attenuationDistance' ) {
+
+					// glTF/three.js spell "off" as Infinity; the control spells it 0.
+					const d = selectedObject.material.attenuationDistance;
+					newState[ key ] = Number.isFinite( d ) && d > 0 ? d : 0;
+
 				} else {
 
-					newState[ key ] = selectedObject.material[ key ] ?? config.default;
+					// The engine resolves defaults the three.js material never carries (IOR on a
+					// MeshStandardMaterial, say), so read what the shader uses before falling back.
+					newState[ key ] = selectedObject.material[ key ]
+						?? getApp()?.getMaterialProperty( selectedObject.userData?.materialIndex ?? 0, key )
+						?? config.default;
 
 				}
 
@@ -424,15 +469,16 @@ const MaterialTab = () => {
 	}, [ materialStore ] );
 
 	// Optimized render function with memoized components
-	const renderPropertyComponent = useCallback( ( property, config ) => {
+	const renderPropertyComponent = useCallback( ( property, rawConfig ) => {
 
+		const config = resolvePropertyConfig( rawConfig );
 		const value = materialState[ property ];
 		const onChange = ( newValue ) => handlePropertyChange( property, newValue );
 
 		const components = {
 			color: () => <ColorInput label={config.label} value={value} onChange={onChange} />,
 			slider: () => <Slider label={config.label} min={config.min} max={config.max} step={config.step} value={[ value ]} onValueChange={onChange} />,
-			number: () => <NumberInput label={config.label} min={config.min} max={config.max} step={config.step} value={value} onValueChange={onChange} />,
+			number: () => <NumberInput label={config.label} min={config.min} max={config.max} step={config.step} precision={config.precision} value={value} onValueChange={onChange} />,
 			vector3: () => {
 
 				const v3 = Array.isArray( value ) ? { x: value[ 0 ], y: value[ 1 ], z: value[ 2 ] } : ( value ?? { x: 0, y: 0, z: 0 } );
@@ -475,7 +521,7 @@ const MaterialTab = () => {
 			</Row>
 		) : null;
 
-	}, [ materialState, handlePropertyChange ] );
+	}, [ materialState, handlePropertyChange, resolvePropertyConfig ] );
 
 	// Simplified texture property renderer
 	const renderTexturePropertyComponent = useCallback( ( textureName, property, config ) => {

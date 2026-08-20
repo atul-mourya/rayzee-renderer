@@ -9,7 +9,7 @@
 
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
-import { MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T } from '../EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance } from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'material' );
@@ -22,6 +22,32 @@ const TRI_BLOCKER_OFFSET = T.NORMAL_A_OFFSET + 3; // nA.w in shader (opaque-bloc
 
 // Material properties that affect the shadow-ray opaque-blocker flag.
 const BLOCKER_PROPS = new Set( [ 'transmission', 'transparent', 'opacity', 'alphaMode' ] );
+
+// Scalar slots readable via getMaterialProperty().
+const SCALAR_PROPERTY_OFFSETS = {
+	ior: M.IOR,
+	transmission: M.TRANSMISSION,
+	thickness: M.THICKNESS,
+	emissiveIntensity: M.EMISSIVE_INTENSITY,
+	attenuationDistance: M.ATTENUATION_DISTANCE,
+	opacity: M.OPACITY,
+	alphaTest: M.ALPHA_TEST,
+	metalness: M.METALNESS,
+	roughness: M.ROUGHNESS,
+	clearcoat: M.CLEARCOAT,
+	clearcoatRoughness: M.CLEARCOAT_ROUGHNESS,
+	dispersion: M.DISPERSION,
+	sheen: M.SHEEN,
+	sheenRoughness: M.SHEEN_ROUGHNESS,
+	specularIntensity: M.SPECULAR_INTENSITY,
+	iridescence: M.IRIDESCENCE,
+	iridescenceIOR: M.IRIDESCENCE_IOR,
+	subsurface: M.SUBSURFACE,
+	subsurfaceRadiusScale: M.SUBSURFACE_RADIUS_SCALE,
+	subsurfaceAnisotropy: M.SUBSURFACE_ANISOTROPY,
+	anisotropy: M.ANISOTROPY,
+	anisotropyRotation: M.ANISOTROPY_ROTATION, // radians, unlike the degrees hosts usually show
+};
 
 export class MaterialDataManager {
 
@@ -180,6 +206,28 @@ export class MaterialDataManager {
 	// ===== MATERIAL PROPERTY UPDATES =====
 
 	/**
+	 * Read back a scalar material property from the storage buffer — the value the shader
+	 * actually uses. Hosts need this because the engine resolves defaults the three.js
+	 * material never carries (e.g. IOR on a MeshStandardMaterial), so a UI that falls back
+	 * to its own default displays a number the renderer is not using.
+	 * @param {number} materialIndex
+	 * @param {string} property
+	 * @returns {number|undefined} undefined if unavailable or not a scalar slot
+	 */
+	getMaterialProperty( materialIndex, property ) {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return undefined;
+
+		const offset = SCALAR_PROPERTY_OFFSETS[ property ];
+		if ( offset === undefined ) return undefined;
+
+		const index = materialIndex * M.FLOATS_PER_MATERIAL + offset;
+		return index < data.length ? data[ index ] : undefined;
+
+	}
+
+	/**
 	 * Update a single material property in the storage buffer.
 	 * @param {number} materialIndex
 	 * @param {string} property
@@ -253,7 +301,7 @@ export class MaterialDataManager {
 				}
 
 				break;
-			case 'attenuationDistance': data[ stride + M.ATTENUATION_DISTANCE ] = value; break;
+			case 'attenuationDistance': data[ stride + M.ATTENUATION_DISTANCE ] = normalizeAttenuationDistance( value ); break;
 			case 'dispersion': data[ stride + M.DISPERSION ] = value; break;
 			case 'sheen': data[ stride + M.SHEEN ] = value; break;
 			case 'sheenRoughness': data[ stride + M.SHEEN_ROUGHNESS ] = value; break;
@@ -446,7 +494,7 @@ export class MaterialDataManager {
 
 		}
 
-		data[ stride + M.ATTENUATION_DISTANCE ] = materialData.attenuationDistance ?? Infinity;
+		data[ stride + M.ATTENUATION_DISTANCE ] = normalizeAttenuationDistance( materialData.attenuationDistance );
 		data[ stride + M.DISPERSION ] = materialData.dispersion ?? 0;
 		data[ stride + M.VISIBLE ] = 1; // Reserved slot (per-mesh visibility handled at BLAS-pointer level)
 		data[ stride + M.SHEEN ] = materialData.sheen ?? 0;

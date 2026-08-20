@@ -141,56 +141,15 @@ export const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength
 // ABSORPTION
 // ================================================================================
 
-// Apply Beer's law absorption
+// Beer-Lambert transmittance over pathLength. attenuationDistance <= 0 (or non-finite,
+// normalized to 0 by MaterialDataManager) means "no absorption".
 export const calculateBeerLawAbsorption = /*@__PURE__*/ wgslFn( `
-	fn calculateBeerLawAbsorption( attenuationColor: vec3f, attenuationDistance: f32, thickness: f32 ) -> vec3f {
+	fn calculateBeerLawAbsorption( attenuationColor: vec3f, attenuationDistance: f32, pathLength: f32 ) -> vec3f {
 		if ( attenuationDistance <= 0.0f ) { return vec3f( 1.0f ); }
-		// Convert RGB attenuation color to absorption coefficients
 		let absorption = -log( max( attenuationColor, vec3f( 0.001f ) ) ) / attenuationDistance;
-		// Apply Beer's law
-		return exp( -absorption * thickness );
+		return exp( -absorption * pathLength );
 	}
 ` );
-
-// ================================================================================
-// SHADOW TRANSMITTANCE
-// ================================================================================
-
-export const calculateShadowTransmittance = Fn( ( [ rayDir, normal, material, entering ] ) => {
-
-	const n1 = select( entering, float( 1.0 ), material.ior ).toVar();
-	const n2 = select( entering, material.ior, float( 1.0 ) ).toVar();
-
-	const cosThetaI = abs( dot( normal, rayDir ) );
-	const sinThetaT2 = n1.mul( n1 ).div( n2.mul( n2 ) ).mul( float( 1.0 ).sub( cosThetaI.mul( cosThetaI ) ) );
-
-	// Handle total internal reflection
-	const result = float( 0.0 ).toVar();
-
-	If( sinThetaT2.lessThanEqual( 1.0 ), () => {
-
-		// Calculate Fresnel reflectance
-		const F0 = iorToFresnel0( n2, n1 );
-		const Fr = fresnelSchlickFloat( cosThetaI, F0 );
-
-		// Base transmission: what gets through after Fresnel reflection
-		const baseTransmission = float( 1.0 ).sub( Fr ).mul( material.transmission ).toVar();
-
-		// Apply Beer's law absorption for exiting rays
-		If( entering.not().and( material.attenuationDistance.greaterThan( 0.0 ) ), () => {
-
-			const absorption = calculateBeerLawAbsorption( { attenuationColor: material.attenuationColor, attenuationDistance: material.attenuationDistance, thickness: material.thickness } );
-			baseTransmission.assign( baseTransmission.mul( absorption.x.add( absorption.y ).add( absorption.z ).div( 3.0 ) ) );
-
-		} );
-
-		result.assign( clamp( baseTransmission, 0.0, 1.0 ) );
-
-	} );
-
-	return result;
-
-} );
 
 // ================================================================================
 // MICROFACET TRANSMISSION

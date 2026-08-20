@@ -2104,6 +2104,18 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Read back the scalar material property the shader is actually using.
+	 * @param {number} materialIndex
+	 * @param {string} property
+	 * @returns {number|undefined}
+	 */
+	getMaterialProperty( materialIndex, property ) {
+
+		return this.stages.pathTracer?.materialData.getMaterialProperty( materialIndex, property );
+
+	}
+
 	setMaterialProperty( materialIndex, property, value ) {
 
 		this.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );

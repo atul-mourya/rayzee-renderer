@@ -524,6 +524,11 @@ export const MATERIAL_DATA_LAYOUT = {
 
 };
 
+// glTF/three.js spell "no volume absorption" as attenuationDistance = Infinity, while the GPU
+// contract is `> 0 = on` (calculateBeerLawAbsorption). Every writer into ATTENUATION_DISTANCE
+// collapses both spellings to 0 so no shader divides by Inf.
+export const normalizeAttenuationDistance = d => ( Number.isFinite( d ) && d > 0 ? d : 0 );
+
 // BVH node leaf markers
 export const BVH_LEAF_MARKERS = {
 	TRIANGLE_LEAF: - 1, // Leaf containing triangle references

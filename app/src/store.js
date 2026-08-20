@@ -2172,19 +2172,23 @@ const useMaterialStore = create( ( set, get ) => ( {
 	handleMetalnessChange: val => get().updateMaterialProperty( 'metalness', val[ 0 ] ),
 	handleIorChange: val => get().updateMaterialProperty( 'ior', val[ 0 ] ),
 	handleTransmissionChange: val => get().updateMaterialProperty( 'transmission', val[ 0 ] ),
-	handleThicknessChange: val => get().updateMaterialProperty( 'thickness', val[ 0 ] ),
 	handleAttenuationColorChange: val => {
 
 		const obj = useStore.getState().selectedObject;
-		if ( obj?.material?.attenuationColor ) {
-
-			obj.material.attenuationColor.set( val );
-			get().updateMaterialProperty( 'attenuationColor', obj.material.attenuationColor );
-
-		}
+		if ( ! obj?.isMesh || ! obj.material ) return;
+		if ( ! obj.material.attenuationColor?.isColor ) obj.material.attenuationColor = new THREE.Color();
+		obj.material.attenuationColor.set( val );
+		get().updateMaterialProperty( 'attenuationColor', obj.material.attenuationColor );
 
 	},
-	handleAttenuationDistanceChange: val => get().updateMaterialProperty( 'attenuationDistance', val ),
+	// The control spells "off" as 0 (and can hand back a string or NaN mid-edit); the material
+	// stores glTF/three.js's Infinity. The engine normalizes both to its `0 = off` buffer contract.
+	handleAttenuationDistanceChange: val => {
+
+		const d = Number( val );
+		get().updateMaterialProperty( 'attenuationDistance', Number.isFinite( d ) && d > 0 ? d : Infinity );
+
+	},
 	handleDispersionChange: val => get().updateMaterialProperty( 'dispersion', val[ 0 ] ),
 	handleSubsurfaceChange: val => get().updateMaterialProperty( 'subsurface', val[ 0 ] ),
 	handleSubsurfaceAnisotropyChange: val => get().updateMaterialProperty( 'subsurfaceAnisotropy', val[ 0 ] ),
@@ -2436,11 +2440,11 @@ const useMaterialStore = create( ( set, get ) => ( {
 	 * @example
 	 * // Enable transmission with smart defaults
 	 * handleToggleFeature('volumetric', true);
-	 * // Sets: transmission=1.0, ior=1.5 (if currently 0), thickness=0.1 (if currently 0)
+	 * // Sets: transmission=1.0, ior=1.5 (if unset)
 	 *
 	 * // Disable transmission
 	 * handleToggleFeature('volumetric', false);
-	 * // Sets: transmission=0, preserves ior and thickness values
+	 * // Sets: transmission=0, preserves ior and attenuation values
 	 */
 
 	/**
@@ -2580,12 +2584,13 @@ const useMaterialStore = create( ( set, get ) => ( {
 				volumetric: {
 					properties: {
 						transmission: enabled ? 1.0 : 0
-						// Preserve ior, thickness, attenuationDistance - only set main property
+						// Preserve ior, attenuationDistance - only set main property
 					},
 					// Set sensible defaults for supporting properties when enabling (only if currently 0)
 					smartDefaults: enabled ? {
-						ior: { value: 1.5, condition: () => obj.material.ior === 1.0 || obj.material.ior === 0 },
-						thickness: { value: 0.1, condition: () => obj.material.thickness === 0 }
+						// A MeshStandardMaterial carries no `ior` at all, so an undefined value has to
+						// count as unset — otherwise the engine's load-time metal default (2.5) sticks.
+						ior: { value: 1.5, condition: () => ! ( obj.material.ior > 1.0 ) }
 					} : {},
 					colorDefaults: enabled ? {
 						attenuationColor: { value: '#ffffff', condition: () => true }

@@ -373,20 +373,12 @@ export class GeometryExtractor {
 		const materialType = this.getMaterialType( material );
 		const legacyMapping = this.mapLegacyMaterialToPhysical( material, materialType );
 
-		// Determine if material should be treated as dielectric or metallic
+		// A transmissive surface is a dielectric interface whose IOR drives refraction, so it wins
+		// over the metal Fresnel hack: glTF defaults metallicFactor to 1, which otherwise stamps
+		// 2.5 onto water/glass authored as MeshStandardMaterial.
+		const isTransmissive = ( material.transmission ?? 0.0 ) > 0.0;
 		const isMetallic = ( material.metalness ?? legacyMapping.metalness ?? 0.0 ) > 0.1;
-
-		// Set appropriate IOR based on material type
-		let defaultIOR = defaults.ior;
-		if ( isMetallic ) {
-
-			defaultIOR = 2.5; // Typical metallic IOR
-
-		} else if ( material.transmission > 0.0 ) {
-
-			defaultIOR = 1.5; // Glass-like for transmissive materials
-
-		}
+		const defaultIOR = ( isMetallic && ! isTransmissive ) ? 2.5 : defaults.ior;
 
 		// Handle color conversion for different material types
 		let baseColor = material.color || new Color( 0xffffff );

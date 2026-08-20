@@ -1,5 +1,5 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, RepeatWrapping } from "three";
-import { TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 
 // Canvas pooling for efficient reuse of canvas elements
@@ -948,7 +948,7 @@ export class TextureCreator {
 				// Slot 0: shadow core (ior, transmission, thickness, emissiveIntensity)
 				mat.ior, 					mat.transmission, 			mat.thickness, 				mat.emissiveIntensity,
 				// Slot 1: shadow (attenuationColor, attenuationDistance)
-				mat.attenuationColor.r, 	mat.attenuationColor.g, 	mat.attenuationColor.b, 	mat.attenuationDistance,
+				mat.attenuationColor.r, 	mat.attenuationColor.g, 	mat.attenuationColor.b, 	normalizeAttenuationDistance( mat.attenuationDistance ),
 				// Slot 2: shadow + culling (opacity, side, transparent, alphaTest)
 				mat.opacity, 				mat.side, 					mat.transparent, 			mat.alphaTest,
 				// Slot 3: shadow (alphaMode, depthWrite, normalScale)
