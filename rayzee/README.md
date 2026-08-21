@@ -137,7 +137,7 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
       "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js",
       "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/",
-      "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.3.5/dist/oidn.js",
+      "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js",
       "rayzee": "https://cdn.jsdelivr.net/npm/rayzee/dist/rayzee.es.js"
     }
   }
@@ -908,21 +908,14 @@ Then load it via a script tag or import map instead:
 <script type="importmap">
 {
   "imports": {
-    "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.3.5/dist/oidn.js"
+    "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js"
   }
 }
 </script>
 ```
 
-**OIDN: `TypeError: t.alea is not a function` or `Argument 'x' passed to 'conv2d' must be a Tensor ... got 'L'`**
-You're loading `oidn-web` via `jsdelivr.net/npm/oidn-web/+esm` or `esm.sh/oidn-web`. Don't — use the **self-bundled** `/dist/oidn.js` path instead:
-
-```diff
-- "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.3.5/+esm"
-+ "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.3.5/dist/oidn.js"
-```
-
-Why: `oidn-web` transitively depends on `@tensorflow/tfjs-core`, which does `import * as t from "seedrandom"` and calls `t.alea(...)`. jsDelivr's `/+esm` CJS→ESM shim of `seedrandom` emits only `export default` (no named exports), so `t.alea` is undefined. Swapping to `esm.sh` trades that for a different issue: deep-path imports produce multiple tfjs-core instances, so a Tensor made in one module fails `instanceof` checks in another (`got 'L'`). The `/dist/oidn.js` file in the npm package is a single pre-bundled ESM with all of tfjs inlined — no external imports, one tfjs instance, same exports. Use it.
+**OIDN from a CDN**
+Load the self-bundled `/dist/oidn.js` path rather than `/+esm` or `esm.sh` — it is a single pre-bundled ESM with no external imports, and it is the path this engine is tested against.
 
 **Black screen / "WebGPU not supported"**
 Your browser may not support WebGPU. Use Chrome 113+, Edge 113+, Safari 18+, or Firefox 141+. Ensure you're on HTTPS or localhost.

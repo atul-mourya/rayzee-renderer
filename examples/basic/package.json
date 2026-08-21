@@ -8,7 +8,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "oidn-web": ">=0.3.0",
+    "oidn-web": ">=0.4.0",
     "rayzee": "^4.8.12",
     "stats-gl": "^4.0.2",
     "three": "^0.183.2"

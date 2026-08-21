@@ -4,44 +4,15 @@ import { createLogger, fmt } from '../utils/Logger.js';
 const log = createLogger( 'oidn' );
 
 let _initUNetFromURL = null;
-let _tfEngine = null;
 async function getInitUNetFromURL() {
 
 	if ( ! _initUNetFromURL ) {
 
-		const [ oidnMod, tfMod ] = await Promise.all( [
-			import( 'oidn-web' ),
-			import( '@tensorflow/tfjs-core' )
-		] );
-		_initUNetFromURL = oidnMod.initUNetFromURL;
-		_tfEngine = tfMod.engine;
+		_initUNetFromURL = ( await import( 'oidn-web' ) ).initUNetFromURL;
 
 	}
 
 	return _initUNetFromURL;
-
-}
-
-// oidn-web caches its WebGPUBackend in TFJS's global ENGINE under 'webgpu-oidn'.
-// On dispose, drop it so the next instance binds to the new GPUDevice instead of
-// reusing the destroyed one (which would produce black tiles).
-function removeOidnTfjsBackend() {
-
-	if ( ! _tfEngine ) return;
-	try {
-
-		const eng = _tfEngine();
-		if ( eng?.registryFactory && 'webgpu-oidn' in eng.registryFactory ) {
-
-			eng.removeBackend( 'webgpu-oidn' );
-
-		}
-
-	} catch ( e ) {
-
-		log.warn( 'failed to clear cached TFJS backend', e );
-
-	}
 
 }
 
@@ -299,7 +270,10 @@ export class OIDNDenoiser extends EventDispatcher {
 			this.unet = await initFn( tzaUrl, backendParams, {
 				aux: true,
 				hdr: true,
-				maxTileSize: this.tileSize
+				maxTileSize: this.tileSize,
+				// Adaptive tiling ignores maxTileSize, starts at 384, and cannot see that overlap
+				// padding only vanishes once a tile covers the image — so it settles smaller.
+				dynamicTile: false
 			} );
 
 			this.currentTZAUrl = tzaUrl;
@@ -1094,9 +1068,6 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		// Dispose resources
 		this.unet?.dispose();
-		// Must precede renderer.dispose() so the GPUDevice is still alive when
-		// TFJS tears down the cached backend's buffers/textures.
-		removeOidnTfjsBackend();
 		this._destroyGPUInputBuffers();
 		this._colorScalePipeline = null;
 

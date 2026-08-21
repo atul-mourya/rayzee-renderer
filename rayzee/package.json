@@ -38,7 +38,7 @@
     "three": ">=0.185.0"
   },
   "optionalDependencies": {
-    "oidn-web": ">=0.3.0",
+    "oidn-web": ">=0.4.0",
     "onnxruntime-web": ">=1.0.0"
   }
 }

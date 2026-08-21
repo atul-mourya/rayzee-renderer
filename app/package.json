@@ -37,7 +37,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.541.0",
-    "oidn-web": "^0.3.4",
+    "oidn-web": "^0.4.0",
     "onnxruntime-web": "^1.24.3",
     "rayzee": "*",
     "react": "19.0.0",
