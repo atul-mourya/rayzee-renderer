@@ -254,16 +254,20 @@ export class AIUpscaler extends EventDispatcher {
 
 	}
 
+	// See OIDNDenoiser._revealOutput. Here the resize below also clears the bitmap.
+	_revealOutput() {
+
+		this.output.style.display = 'block';
+		this.input.style.opacity = '0';
+
+	}
+
 	async execute() {
 
 		if ( ! this.enabled ) return false;
 
 		this.state.abortController = new AbortController();
 		this.state.isUpscaling = true;
-
-		// Show output canvas and hide input (matching OIDN lifecycle)
-		this.input.style.opacity = '0';
-		this.output.style.display = 'block';
 
 		// Capture source image SYNCHRONOUSLY before any async work.
 		// WebGPU canvas textures expire after each compositor frame,
@@ -292,6 +296,7 @@ export class AIUpscaler extends EventDispatcher {
 		ctx.imageSmoothingEnabled = true;
 		ctx.imageSmoothingQuality = 'high';
 		ctx.drawImage( this._backupCanvas, 0, 0, outW, outH );
+		this._revealOutput();
 
 		try {
 

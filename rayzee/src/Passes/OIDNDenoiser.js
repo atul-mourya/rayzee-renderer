@@ -111,6 +111,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		// getToneMapping: () => number (Three.js ToneMapping constant)
 		this.backendParamsGetter = options.backendParams || null;
 		this.getGPUTextures = options.getGPUTextures || null;
+		// refreshInput: () => void — re-renders the compositor so the WebGPU canvas is readable
+		this.refreshInput = options.refreshInput || null;
 		this.getExposure = options.getExposure || ( () => 1.0 );
 		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
 		this.getSaturation = options.getSaturation || ( () => 1.0 );
@@ -378,6 +380,15 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
+	// Revealing before the first paint shows the output's transparent bitmap — and its
+	// checker CSS background — over the now-hidden render canvas.
+	_revealOutput() {
+
+		this.output.style.display = 'block';
+		this.input.style.opacity = '0';
+
+	}
+
 	async execute() {
 
 		if ( ! this.enabled || ! this.unet ) return false;
@@ -385,8 +396,6 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Create abort controller for this execution
 		this.state.abortController = new AbortController();
 		this.state.isDenoising = true;
-		this.input.style.opacity = '0';
-		this.output.style.display = 'block';
 
 		try {
 
@@ -459,6 +468,12 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
+		// Capture the base now: the readback below awaits, and a presented WebGPU canvas only
+		// reads back non-empty straight after a compositor pass — hence the refresh.
+		this.refreshInput?.();
+		this.ctx.drawImage( this.input, 0, 0, width, height );
+		this._revealOutput();
+
 		// Ensure storage buffers are sized correctly (recreate on resolution change)
 		this._ensureGPUInputBuffers( width, height );
 
@@ -517,8 +532,6 @@ export class OIDNDenoiser extends EventDispatcher {
 		if ( globalThis.__OIDN_NO_INPUT_SCALE ) this._oidnInputScale = 1.0;
 		this._applyColorScale( device, width * height );
 
-		// Draw the current noisy frame as the base — denoised tiles paint on top progressively
-		this.ctx.drawImage( this.input, 0, 0, width, height );
 		// Pass GPU storage buffers to oidn-web (GPUBuffer path, well-tested)
 		const config = {
 			color: { data: this._gpuInputBuffers.color, width, height },

@@ -138,6 +138,13 @@ export class DenoisingManager extends EventDispatcher {
 				adapterInfo: null
 			} ),
 
+			refreshInput: () => {
+
+				const ctx = this.pipeline?.context;
+				if ( this._stages.compositor && ctx ) this._stages.compositor.render( ctx );
+
+			},
+
 			getGPUTextures: () => {
 
 				if ( ! pt?.storageTextures?.readTarget ) return null;
@@ -427,13 +434,6 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Remove any stale completion-chain listener from a previous render cycle
 		this._cleanupCompletionListener();
-
-		// Show post-process canvas if any post-process is enabled
-		if ( ( this.denoiser?.enabled || this.upscaler?.enabled ) && this.denoiserCanvas ) {
-
-			this.denoiserCanvas.style.display = 'block';
-
-		}
 
 		// Chain: denoise first (if enabled), then upscale (if enabled)
 		const startUpscaler = () => {
