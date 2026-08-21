@@ -1809,6 +1809,39 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Arms per-layer GPU timestamping inside the OIDN denoiser for the next denoise only.
+	 * Read the result with {@link PathTracerApp#getDenoiseProfile}.
+	 *
+	 * `getGPUTimings()` cannot see the denoise: oidn-web submits on its own command encoders,
+	 * outside the stages three.js times.
+	 *
+	 * @returns {boolean} whether the capture was armed
+	 */
+	profileNextDenoise() {
+
+		return this.denoisingManager?.denoiser?.profileNextDenoise() ?? false;
+
+	}
+
+	/**
+	 * Per-layer GPU timings from the denoise armed by {@link PathTracerApp#profileNextDenoise},
+	 * plus the live engine/precision/model/tile diagnostics.
+	 *
+	 * @returns {Promise<{ profile: Object|null, runtime: Object|null }|null>}
+	 */
+	async getDenoiseProfile() {
+
+		const denoiser = this.denoisingManager?.denoiser;
+		if ( ! denoiser ) return null;
+
+		return {
+			profile: await denoiser.getLastDenoiseProfile(),
+			runtime: denoiser.getRuntimeInfo(),
+		};
+
+	}
+
+	/**
 	 * Real GPU milliseconds for the last resolved frame, from WebGPU timestamp queries.
 	 * Returns null unless {@link PathTracerApp#enableGPUTiming} was called.
 	 *

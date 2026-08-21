@@ -234,6 +234,37 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
+	 * Engine, precision, model, kernel, tile state and resource counts from the live UNet.
+	 * @returns {Object|null} null before the weights load
+	 */
+	getRuntimeInfo() {
+
+		return this.unet?.getRuntimeInfo?.() ?? null;
+
+	}
+
+	/**
+	 * Arms per-layer GPU timestamping for the next denoise. Needs `timestamp-query` on the
+	 * device; one denoise only, so call it again for each capture.
+	 * @returns {boolean} whether the capture was armed
+	 */
+	profileNextDenoise() {
+
+		return this.unet?.profileNextExecution?.() ?? false;
+
+	}
+
+	/**
+	 * Per-layer GPU timings from the last denoise armed by {@link profileNextDenoise}.
+	 * @returns {Promise<Object|null>}
+	 */
+	async getLastDenoiseProfile() {
+
+		return ( await this.unet?.getLastExecutionProfile?.() ) ?? null;
+
+	}
+
+	/**
 	 * Largest tile that still covers the frame, bounded by the configured cap. One tile means
 	 * zero overlap, which is the cheapest configuration oidn-web has.
 	 * @returns {number}
