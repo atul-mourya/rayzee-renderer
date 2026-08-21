@@ -4,6 +4,9 @@ name: Release and Deploy
 on:
   push:
     branches: ['main']
+  # Push was the only trigger, so a run that died on a transient credential failure could
+  # only be retried by a repo admin or by landing a throwaway commit.
+  workflow_dispatch:
 
 jobs:
   release:
