@@ -243,32 +243,59 @@ a converged one.
 | `mustHelpAtLowSpp` | absolute, 1 spp | denoiser disconnected, mis-wired, or reading the wrong texture |
 | `maxRatioIncrease` | ratchet, every rung | any drift away from ground truth, even while still net-positive |
 
-The ratchet follows the white-furnace precedent. Both filters are still **above 1.0 at 64 spp**, so
-gating absolutely there would leave the suite permanently red — which is how a gate stops being read.
-Blessed ratios may only shrink, and the absolute ratio is printed on every line, pass or fail, so a
-scene sitting at 2.4× never reads as clean.
+The ratchet follows the white-furnace precedent. ASVGF is still **above 1.0 at 64 spp** on two of
+three scenes, so gating absolutely there would leave the suite permanently red — which is how a gate
+stops being read. Blessed ratios may only shrink, and the absolute ratio is printed on every line,
+pass or fail, so a scene sitting at 2.0× never reads as clean.
 
 Standing state as of the last bless (`baselines/denoise.json`):
 
-| scene | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 |
-|---|---|---|---|---|
-| `spheres-gradient` | 0.957 | 2.046 | 0.524 | 2.359 |
-| `glass-transmission` | 0.704 | 0.912 | 0.426 | 2.245 |
-| `textured-normalmap` | 0.982 | 1.182 | 0.806 | 2.996 |
+| scene | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
+|---|---|---|---|---|---|---|---|---|
+| `spheres-gradient` | 0.957 | 2.041 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
+| `glass-transmission` | 0.704 | 0.912 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
+| `textured-normalmap` | 0.993 | 1.304 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
 
-EdgeAware is still the worse offender at convergence and the better one at 1 spp (0.43–0.81).
+**EdgeAware is no longer the offender at convergence — ASVGF is.** EdgeAware now sits at 0.71–0.98
+at 64 spp, below 1.0 on every scene, while ASVGF ranges 0.91–2.04. That inverted with
+`1728a985 fix(edge-filter): …`, which dropped `phiLuminance` from 4.0 to 1.0 and stopped seeding
+σ_l from `max(temporal, spatial)` once the EMA is warm.
 
-Both filters now carry a filtered variance between à-trous passes, so σ_l tightens as the signal
-smooths (measured on `BilateralFilter`: 0.636 → 0.261 → 0.115 → 0.056 over four passes, with
-weightSum falling 0.75 → 0.33). Before that, each pass recomputed σ_l from the same unfiltered
-`variance:output` and damage grew in a straight line with pass count — 1.39 / 2.27 / 3.30 / 4.34 /
-5.74 for 1–6 passes. It now saturates instead: EdgeAware reads 1.75 / 2.17 / 2.29 / 2.33 / 2.36 over
-the same sweep.
+It is a **crossover**, and this suite's two-rung ladder is what makes it legible: the same change
+moved EdgeAware @64 from 2.359/2.245/2.996 down to 0.906/0.711/0.984 while pushing @1 *up* from
+0.524/0.426/0.806 to 0.751/0.616/0.885. Less blur always scores worse on RMSE at 1 spp, so read
+alone the cheap rung reads as a regression and the expensive one as a large win. The @1 rungs still
+clear the absolute floor.
 
-Which isolates what is left. Per-pass **compounding** is fixed; per-pass **cost** is not — a single
-pass already sits at 1.75×, and that single-pass figure is now the whole story at convergence. σ_l is
-therefore not the dominant term in the residual, so the next investigation belongs on the
-normal/depth/colour gates and on the intrinsic cost of blending an already-converged image.
+That was blessed late: the ratios above stood unchanged from Aug 1 while the fix landed Aug 17, so
+the suite ran red on `edgeaware @1` for weeks. When triaging a denoiser failure, check whether
+`rawRmse` moved first — if it did not, no path-tracer commit can be responsible and the cause is in
+the denoiser or in the baseline itself.
+
+The remaining ASVGF residual is the older story: both filters carry a filtered variance between
+à-trous passes, so σ_l tightens as the signal smooths (measured on `BilateralFilter`: 0.636 → 0.261
+→ 0.115 → 0.056 over four passes, with weightSum falling 0.75 → 0.33). Before that, each pass
+recomputed σ_l from the same unfiltered `variance:output` and damage grew linearly with pass count —
+1.39 / 2.27 / 3.30 / 4.34 / 5.74 for 1–6 passes. Per-pass **compounding** is fixed; per-pass
+**cost** is not, so the next investigation belongs on the normal/depth/colour gates and on the
+intrinsic cost of blending an already-converged image.
+
+### The tiled OIDN rung
+
+The suite renders at 256×256, which fits inside a single OIDN tile — so overlap is zero and the
+tiled path never runs. `oidn-tiled` caps the tile at 128 to force 2×2 tiles at the same render size,
+which is why its ratios differ slightly from `oidn`. Two traps are worth knowing if you add a rung
+that varies a *config* rather than a strategy:
+
+- `setOIDNQuality` does not await `updateQuality`, and `_setupUNetDenoiser` early-returns while a
+  load is in flight, so a config change applied straight after a quality switch is silently dropped.
+- Nothing resets the tile cap, so a tiled rung leaks its cap into every rung after it, across
+  scenes. The first version of this gate reported the tiled and untiled rungs as bit-identical for
+  exactly that reason — which reads convincingly as "tiling is seam-free, as designed".
+
+`setDenoiser` therefore settles the load, always reapplies the cap (restoring the engine's own
+default when none is asked for), and returns the tile edge baked into the live UNet so the runner
+can assert it. Reset whatever config a rung varies, for every other rung, and assert the live value.
 
 `bench denoise --bless` records the ratchet **without** touching the quality goldens, so a denoiser
 change does not force a re-bless of the path tracer's baselines.

@@ -698,6 +698,19 @@ WebGPU timestamp queries are the only true GPU metric here — `pipeline.getStat
 
 `getKernelGPUTimings()` attributes each compute pass of the last resolved frame back to a wavefront kernel name. Durations are **summed per kernel across the frame**, so `extend` reports its whole per-frame cost over every bounce iteration, not one bounce. `unattributed` collects passes belonging to no registered kernel (other stages, denoisers), so `sum(kernels) + unattributed` reconciles with `total`.
 
+Neither method can see the OIDN denoise — `oidn-web` submits on its own command encoders, outside
+the stages three.js times. It carries its own profiler instead:
+
+```js
+engine.profileNextDenoise();                          // arms one capture; per-denoise, not sticky
+const { profile, runtime } = await engine.getDenoiseProfile();
+```
+
+`profile` is the per-layer GPU timing of that denoise; `runtime` reports the selected engine and
+precision, the model, kernel capabilities, tile state and resource counts — which is the way to
+confirm FP16 actually engaged on a given GPU rather than inferring it from the device's feature
+list. Both need `timestamp-query`, and `getDenoiseProfile()` returns `null` when OIDN is not set up.
+
 ---
 
 ### Events
@@ -824,7 +837,7 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 
 | Package | Purpose | Install needed? |
 |---|---|---|
-| `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` |
+| `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` (**>=0.4.0**) |
 | `onnxruntime-web` | AI-powered upscaling | No — loaded from CDN at runtime |
 
 > **Note:** `onnxruntime-web` is also listed in `package.json` under `optionalDependencies` for bundler compatibility, but the engine's own runtime path always fetches it from a CDN (see `ortRuntimeUrl` / `ortWasmPaths` in [Configuring Assets](#configuring-assets-cdn-urls--cache-namespace)) rather than importing the installed package — installing it locally has no effect unless you also override those URLs to point at your own copy.
@@ -844,7 +857,7 @@ OIDN provides high-quality AI denoising for final renders. It runs automatically
    ```js
    // After engine.init() completes
    engine.denoisingManager.setOIDNEnabled(true);
-   engine.denoisingManager.setOIDNQuality('balance'); // 'fast' | 'balance' | 'high'
+   engine.denoisingManager.setOIDNQuality('balance'); // 'fast' | 'fast-clean' | 'balance' | 'high'
    ```
 
 3. **Listen for progress** (optional)
@@ -858,11 +871,27 @@ OIDN provides high-quality AI denoising for final renders. It runs automatically
    });
    ```
 
-| Quality | Model size | Speed | Best for |
+| Quality | Weights | Aux guide | Best for |
 |---|---|---|---|
-| `'fast'` | ~20 MB | Fastest | Quick previews |
-| `'balance'` | ~50 MB | Moderate | General use (default) |
-| `'high'` | ~100 MB | Slowest | Final quality renders |
+| `'fast'` | 0.6 MB | point-sampled | Low sample counts — the default |
+| `'fast-clean'` | 0.6 MB | accumulated | Converged frames, at `'fast'`'s cost |
+| `'balance'` | 1.8 MB | accumulated | General use |
+| `'high'` | 7.3 MB | accumulated | Final renders — used by `configureForMode('production')` |
+
+`'fast'` and `'fast-clean'` are the same network size and cost the same to run; they differ only in
+which auxiliary guide their weights expect. That makes the ordering **not** a simple quality ladder:
+at 1 spp the accumulated guide has one sample, so `'fast-clean'` is fed something it was not trained
+for and measures materially worse than `'fast'` (on a transmission-heavy scene, more than double the
+RMSE). Once the guide converges it wins by a few percent — but `'high'` beats it there anyway. Pick
+`'fast'` for previews and `'high'` for output; `'fast-clean'` is for the narrow case of denoising a
+converged frame on a budget.
+
+Denoise cost scales with frame area, and the tile tracks the frame so that a frame fitting inside one
+tile pays no overlap padding — at 1024x1024 that is roughly 1.8x faster than tiling it. A cap
+(default 1024) bounds the one-time activation allocation, so larger frames tile and stay
+memory-bounded. Raise or lower it with
+`engine.denoisingManager.denoiser.updateConfiguration({ tileSize: 2048 })`; the effective tile is
+`min( max( width, height ), tileSize )`.
 
 > **Note:** The neural network model is downloaded on first use. Subsequent runs use the browser cache. OIDN also works with `configureForMode('production')`, which enables it automatically alongside high-quality render settings.
 

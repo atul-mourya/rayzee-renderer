@@ -25,7 +25,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 
 - **Wavefront path tracer** — decomposed `generate → extend → shade → compact` compute kernels with stream compaction, driving a Monte Carlo core with configurable multi-bounce transport and progressive accumulation
 - **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
-- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders
+- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders, running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
