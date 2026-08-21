@@ -35,9 +35,12 @@ const MODEL_CONFIG = {
 		enableOIDN: true,
 		oidnQuality: 'fast',
 		debugGbufferMaps: true,
-		// Tiles run at tileSize + 2*overlap (96px, 112 for _large), so small tiles pay that padding
-		// every tile: 256 puts 3.06x the pixels through the UNet at 512². Measured 3.64x faster.
-		tileSize: 512
+		// A cap, not a fixed size — the effective tile is min( max( w, h ), this ), so a frame
+		// that fits in one tile pays no overlap padding at all. Every tile otherwise runs at
+		// tileSize + 2*overlap (96px, 112 for _large): at 1024²/high, 4x512 tiles measured
+		// 422ms against 229ms for one 1024 tile. 1024 caps the one-time activation
+		// allocation at ~430MB; beyond it larger frames tile and stay bounded.
+		tileSize: 1024
 	}
 };
 
@@ -152,8 +155,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.enabled = this.config.enableOIDN;
 		this.quality = this.config.oidnQuality;
 		this.debugGbufferMaps = this.config.debugGbufferMaps;
-		this.tileSize = this.config.tileSize;
-		// tileSize actually baked into the live UNet, so a runtime change forces a rebuild.
+		this.maxTileSize = this.config.tileSize;
+		// The size actually baked into the live UNet, so a change forces a rebuild.
 		this._activeTileSize = 0;
 
 		// State management
@@ -230,6 +233,19 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
+	/**
+	 * Largest tile that still covers the frame, bounded by the configured cap. One tile means
+	 * zero overlap, which is the cheapest configuration oidn-web has.
+	 * @returns {number}
+	 */
+	_resolveTileSize() {
+
+		const longest = Math.max( this.output?.width || 0, this.output?.height || 0 );
+		if ( ! longest ) return this.maxTileSize;
+		return Math.min( longest, this.maxTileSize );
+
+	}
+
 	async _setupUNetDenoiser() {
 
 		if ( this.state.isLoading ) return;
@@ -237,8 +253,10 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.state.isLoading = true;
 		const tzaUrl = this._generateTzaUrl();
 
+		const tileSize = this._resolveTileSize();
+
 		// maxTileSize is a constructor arg, so comparing the URL alone left tileSize changes inert.
-		if ( this.currentTZAUrl === tzaUrl && this._activeTileSize === this.tileSize && this.unet ) {
+		if ( this.currentTZAUrl === tzaUrl && this._activeTileSize === tileSize && this.unet ) {
 
 			this.state.isLoading = false;
 			return;
@@ -272,14 +290,14 @@ export class OIDNDenoiser extends EventDispatcher {
 			this.unet = await initFn( tzaUrl, backendParams, {
 				aux: true,
 				hdr: true,
-				maxTileSize: this.tileSize,
+				maxTileSize: tileSize,
 				// Adaptive tiling ignores maxTileSize, starts at 384, and cannot see that overlap
 				// padding only vanishes once a tile covers the image — so it settles smaller.
 				dynamicTile: false
 			} );
 
 			this.currentTZAUrl = tzaUrl;
-			this._activeTileSize = this.tileSize;
+			this._activeTileSize = tileSize;
 			this.dispatchEvent( { type: 'loaded' } );
 			log.debug( 'UNet weights loaded:', tzaUrl );
 
@@ -325,7 +343,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		Object.assign( this.config, newConfig );
 		this.quality = this.config.oidnQuality;
 		this.debugGbufferMaps = this.config.debugGbufferMaps;
-		this.tileSize = this.config.tileSize;
+		this.maxTileSize = this.config.tileSize;
 
 		// Reload denoiser if necessary
 		await this._setupUNetDenoiser();
@@ -349,6 +367,14 @@ export class OIDNDenoiser extends EventDispatcher {
 		if ( ! this.enabled || this.state.isDenoising ) {
 
 			return false;
+
+		}
+
+		// The tile tracks the frame size, so a resolution change since the last build has to be
+		// rebuilt into the UNet before denoising — otherwise the frame tiles when it need not.
+		if ( this.unet && ! this.state.isLoading && this._activeTileSize !== this._resolveTileSize() ) {
+
+			await this._setupUNetDenoiser();
 
 		}
 
