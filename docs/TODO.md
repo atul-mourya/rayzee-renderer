@@ -9,6 +9,11 @@
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
+### Deferred
+- Reconsider continuous viewport denoising. 512²/fast is now 20 ms of library time; the old feasibility audit set the bar at ≤15 ms when TFJS made it 3–4× slower. Close enough to reopen, but it's a project, not a task — the blockers that audit found were in our cadence code (frozen frameCount during interaction, reset() aborting to tile 0), not the library.
+
+Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is fastest on Apple; Spatial is 0.57×), engine: 'webnn' (no WebGPU interop in Chrome), modelSpec (our blobs validate against the built-ins), dynamicTile (correctly pinned off).
+
 
 ### Known
 
