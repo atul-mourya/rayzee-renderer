@@ -197,6 +197,13 @@ export class DenoisingManager extends EventDispatcher {
 
 			},
 
+			refreshInput: () => {
+
+				const ctx = this.pipeline?.context;
+				if ( this._stages.compositor && ctx ) this._stages.compositor.render( ctx );
+
+			},
+
 			getGPUTextures: () => {
 
 				if ( ! pt?.storageTextures?.readTarget ) return null;
@@ -457,13 +464,6 @@ export class DenoisingManager extends EventDispatcher {
 			this.denoiser.start();
 
 		} else {
-
-			// Re-render compositor stage so WebGPU canvas has valid content
-			if ( this.upscaler?.enabled && this._stages.compositor && context ) {
-
-				this._stages.compositor.render( context );
-
-			}
 
 			startUpscaler();
 

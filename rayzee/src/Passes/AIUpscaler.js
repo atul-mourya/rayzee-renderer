@@ -107,6 +107,8 @@ export class AIUpscaler extends EventDispatcher {
 		this.hdr = false;
 		this.scaleFactor = options.scaleFactor || 2;
 		this.quality = options.quality || 'fast';
+		// refreshInput: () => void — re-renders the compositor so the WebGPU canvas is readable
+		this.refreshInput = options.refreshInput || null;
 		this.tileSize = options.tileSize || MODEL_CONFIG.TILE_SIZE;
 		this._tileSizeOverride = !! options.tileSize;
 
@@ -472,10 +474,11 @@ export class AIUpscaler extends EventDispatcher {
 
 		if ( sourceCanvas && sourceCanvas !== this.output ) {
 
-			// Source is the WebGPU canvas — must copy to 2D canvas first.
-			// WebGPU canvases expire their texture after each compositor frame,
-			// so the caller (PathTracerApp) should re-render the display stage
-			// before triggering the upscaler when OIDN is not used.
+			// Source is the WebGPU canvas — must copy to a 2D canvas first, and it only reads
+			// back non-empty straight after a compositor pass. Enforced here rather than left to
+			// the caller: any awaited GPU work in between silently yields a fully transparent
+			// capture, and the upscaler would then upscale nothing at all.
+			this.refreshInput?.();
 			const offscreen = document.createElement( 'canvas' );
 			offscreen.width = sourceCanvas.width;
 			offscreen.height = sourceCanvas.height;
