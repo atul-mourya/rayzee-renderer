@@ -609,7 +609,7 @@ async function probes() {
  * silently leaves every denoiser off, which would make the whole suite compare raw against
  * raw and pass forever.
  */
-function setDenoiser( strategy, preset ) {
+async function setDenoiser( strategy, preset, options = {} ) {
 
 	const dm = app.denoisingManager;
 
@@ -623,6 +623,18 @@ function setDenoiser( strategy, preset ) {
 		dm.setStrategy( 'none' );
 		dm.setOIDNQuality( preset || 'high' );
 		dm.setOIDNEnabled( true );
+
+		// setOIDNQuality does not await updateQuality, and _setupUNetDenoiser early-returns
+		// while a load is in flight — so a tile-cap change applied straight away is dropped and
+		// the rung silently measures the previous configuration.
+		await settleDenoiser();
+
+		// Applied unconditionally: nothing else resets it, so an earlier tiled rung would leak
+		// its cap into every rung after it — including into other scenes — and the untiled and
+		// tiled rungs would report identical ratios under two different names. Restoring the
+		// shipped default rather than a constant keeps the untiled rung measuring what ships.
+		await dm.denoiser.updateConfiguration( { tileSize: options.tileCap ?? defaultOIDNTileCap() } );
+		await settleDenoiser();
 
 	} else {
 
@@ -640,7 +652,41 @@ function setDenoiser( strategy, preset ) {
 		normalDepth: !! s.normalDepth?.enabled,
 		motionVector: !! s.motionVector?.enabled,
 		oidn: !! dm.denoiser?.enabled,
+		// The tile edge actually baked into the live UNet, so a rung can assert it rather than
+		// trust that the cap took effect.
+		oidnTile: dm.denoiser?._activeTileSize ?? null,
 	};
+
+}
+
+// The engine's own default cap, snapshotted before any rung overrides it. Not imported: it
+// lives in OIDNDenoiser's private MODEL_CONFIG, and hardcoding it here would silently drift.
+let _defaultOIDNTileCap = null;
+
+function defaultOIDNTileCap() {
+
+	if ( _defaultOIDNTileCap === null ) {
+
+		_defaultOIDNTileCap = app.denoisingManager?.denoiser?.maxTileSize ?? 1024;
+
+	}
+
+	return _defaultOIDNTileCap;
+
+}
+
+/** Resolves once no UNet load is in flight, so a following config change is not dropped. */
+async function settleDenoiser( timeoutMs = 180000 ) {
+
+	const dn = app.denoisingManager?.denoiser;
+	if ( ! dn ) return;
+
+	const deadline = performance.now() + timeoutMs;
+	while ( ( dn.state.isLoading || ! dn.unet ) && performance.now() < deadline ) {
+
+		await new Promise( ( r ) => setTimeout( r, 30 ) );
+
+	}
 
 }
 

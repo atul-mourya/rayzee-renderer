@@ -181,8 +181,8 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setPerfMode: ( enabled ) => page.evaluate(
 			( on ) => globalThis.__bench.setPerfMode( on ), enabled
 		),
-		setDenoiser: ( strategy, preset ) => page.evaluate(
-			( s, p ) => globalThis.__bench.setDenoiser( s, p ), strategy, preset ?? null
+		setDenoiser: ( strategy, preset, options ) => page.evaluate(
+			( s, p, o ) => globalThis.__bench.setDenoiser( s, p, o ), strategy, preset ?? null, options ?? {}
 		),
 		awaitDenoise: ( timeoutMs ) => page.evaluate(
 			( t ) => globalThis.__bench.awaitDenoise( t ?? undefined ), timeoutMs ?? null

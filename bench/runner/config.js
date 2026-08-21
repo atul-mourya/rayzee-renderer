@@ -177,6 +177,13 @@ export const DENOISE_GATES = {
 		// OIDN was ungated, which left every change to the DDFA aux albedo/normal guide
 		// unmeasurable. 'high' is the clean-aux tier production uses.
 		{ id: 'oidn', preset: 'high' },
+		// The rung above renders inside one tile, so overlap is zero and the tiled path — tile
+		// seams, per-tile progressive paint, the overlap-padded inference — is never executed.
+		// Both the tile-size waste and the blank-output-canvas bug lived there and neither was
+		// visible to this suite. A 128 cap forces 2x2 tiles at the 256 render size. Its ratio is
+		// legitimately worse than the single-tile rung (small tiles are below OIDN's own
+		// minTileDim), so it carries its own blessed entry.
+		{ id: 'oidn', preset: 'high', tileCap: 128, label: 'oidn-tiled' },
 	],
 	// Chosen for what the edge-stops key on rather than for coverage breadth: diffuse GI (the
 	// baseline case), high-variance transmission (the noisiest input the denoiser sees), and

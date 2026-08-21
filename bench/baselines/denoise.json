@@ -178,5 +178,35 @@
 		"ratio": 1.3466032200476585,
 		"rawRmse": 0.0037730544233015514,
 		"denoisedRmse": 0.00508080723583293
+	},
+	"spheres-gradient/oidn-tiled/1": {
+		"ratio": 0.6208444137483905,
+		"rawRmse": 0.05602128608423628,
+		"denoisedRmse": 0.03478050251639854
+	},
+	"spheres-gradient/oidn-tiled/64": {
+		"ratio": 1.342943421607919,
+		"rawRmse": 0.0037730544233015514,
+		"denoisedRmse": 0.005066998617141479
+	},
+	"glass-transmission/oidn-tiled/1": {
+		"ratio": 0.5183095302508918,
+		"rawRmse": 0.07057794053859279,
+		"denoisedRmse": 0.036581219206633396
+	},
+	"glass-transmission/oidn-tiled/64": {
+		"ratio": 0.9137762998400849,
+		"rawRmse": 0.004488705181654905,
+		"denoisedRmse": 0.004101672411965635
+	},
+	"textured-normalmap/oidn-tiled/1": {
+		"ratio": 0.5172413608757028,
+		"rawRmse": 0.08406696077739778,
+		"denoisedRmse": 0.04348290919718556
+	},
+	"textured-normalmap/oidn-tiled/64": {
+		"ratio": 0.8886670622350723,
+		"rawRmse": 0.007763066184249425,
+		"denoisedRmse": 0.006898781219893369
 	}
 }

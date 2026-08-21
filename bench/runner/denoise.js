@@ -122,7 +122,10 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 
 			for ( const strategy of DENOISE_GATES.strategies ) {
 
-				const state = await bench.setDenoiser( strategy.id, strategy.preset );
+				const name = strategy.label ?? strategy.id;
+				const state = await bench.setDenoiser( strategy.id, strategy.preset, {
+					tileCap: strategy.tileCap,
+				} );
 
 				// A typo'd strategy name hits the switch's default branch and silently leaves
 				// every denoiser off — the suite would then compare raw against raw, report a
@@ -137,6 +140,17 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 
 				}
 
+				// A dropped tile cap would quietly re-run the single-tile rung under a second
+				// name, and the two would ratchet against each other forever.
+				if ( strategy.tileCap && state.oidnTile !== strategy.tileCap ) {
+
+					throw new Error(
+						`${name}: tile cap ${strategy.tileCap} did not take effect — the live UNet ` +
+						`is built for ${state.oidnTile}. The rung would measure the untiled path.`
+					);
+
+				}
+
 				await bench.render( spp );
 				// No-op unless the strategy is OIDN, which runs as a post-process and lands on its
 				// own canvas rather than in the pipeline, so it is captured from there.
@@ -145,9 +159,9 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 				const denoisedRmse = compare( decodeDataURL( shot ), truth ).rmse;
 				const nonFinite = await bench.denoisedNonFinite();
 
-				const id = key( scene.id, strategy.id, spp );
+				const id = key( scene.id, name, spp );
 				const entry = {
-					scene: scene.id, strategy: strategy.id, spp,
+					scene: scene.id, strategy: name, spp,
 					rawRmse, denoisedRmse, nonFinite,
 					pass: true, failures: [],
 				};
