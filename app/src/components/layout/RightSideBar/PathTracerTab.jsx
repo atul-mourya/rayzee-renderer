@@ -600,6 +600,7 @@ const PathTracerTab = () => {
 							</SelectTrigger>
 							<SelectContent>
 								<SelectItem value="fast">Fast</SelectItem>
+								<SelectItem value="fast-clean">Fast (clean aux)</SelectItem>
 								<SelectItem value="balance">Balance</SelectItem>
 								<SelectItem value="high">High</SelectItem>
 							</SelectContent>

@@ -638,8 +638,10 @@ export class DenoisingManager extends EventDispatcher {
 	setOIDNQuality( quality ) {
 
 		this.denoiser?.updateQuality( quality );
-		// Clean-aux normal follows the model: balanced/high (clean-aux models) → accumulate; fast → keep bump.
-		this._stages.pathTracer?.setCleanAuxNormal?.( !! this.denoiser?.enabled && quality !== 'fast' );
+		// Clean-aux normal follows the model, not the tier name — see OIDNDenoiser.QUALITY_MODELS.
+		this._stages.pathTracer?.setCleanAuxNormal?.(
+			!! this.denoiser?.enabled && !! this.denoiser?.expectsCleanAux( quality )
+		);
 		this._onPostProcessRefresh?.();
 
 	}

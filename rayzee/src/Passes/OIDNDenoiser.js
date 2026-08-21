@@ -23,13 +23,18 @@ import { getAssetConfig } from '../AssetConfig.js';
 const _tmOut = new Float32Array( 3 );
 
 const MODEL_CONFIG = {
-	// No cleanAux flag in oidn-web, so the blob is it — and must match what setCleanAuxNormal
-	// feeds: `fast` point-samples the normal (noisy aux), balance/high accumulate it. calb_cnrm
-	// is also the only model with a `_large` blob.
+	// No cleanAux flag in oidn-web, so the blob is it — and it must match what setCleanAuxNormal
+	// feeds the aux MRT: an `alb_nrm` model wants the point-sampled normal, a `calb_cnrm` model
+	// wants the accumulated one. `cleanAux` is carried here rather than inferred from the tier
+	// name, which stopped being possible once a tier other than `fast` used a noisy-aux model.
+	//
+	// `fast-clean` is the same topology and channel width as `fast` (both 641 KB, widest conv 64)
+	// so it costs the same to run, and only differs in being trained for a clean guide.
 	QUALITY_MODELS: {
-		fast: 'rt_hdr_alb_nrm_small',
-		balance: 'rt_hdr_calb_cnrm',
-		high: 'rt_hdr_calb_cnrm_large'
+		fast: { model: 'rt_hdr_alb_nrm_small', cleanAux: false },
+		'fast-clean': { model: 'rt_hdr_calb_cnrm_small', cleanAux: true },
+		balance: { model: 'rt_hdr_calb_cnrm', cleanAux: true },
+		high: { model: 'rt_hdr_calb_cnrm_large', cleanAux: true }
 	},
 	DEFAULT_OPTIONS: {
 		enableOIDN: true,
@@ -234,6 +239,19 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
+	 * Whether the tier's model expects a clean (accumulated) auxiliary guide rather than a
+	 * point-sampled one. The aux MRT has to be fed to match, or the guide fights the weights.
+	 * @param {string} [quality] defaults to the active tier
+	 * @returns {boolean}
+	 */
+	expectsCleanAux( quality = this.quality ) {
+
+		const { QUALITY_MODELS } = MODEL_CONFIG;
+		return ( QUALITY_MODELS[ quality ] || QUALITY_MODELS.balance ).cleanAux;
+
+	}
+
+	/**
 	 * Engine, precision, model, kernel, tile state and resource counts from the live UNet.
 	 * @returns {Object|null} null before the weights load
 	 */
@@ -358,8 +376,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		const { oidnWeightsBaseUrl } = getAssetConfig();
 		const { QUALITY_MODELS } = MODEL_CONFIG;
-		const modelName = QUALITY_MODELS[ this.quality ] || QUALITY_MODELS.balance;
-		return `${oidnWeightsBaseUrl}${modelName}.tza`;
+		const tier = QUALITY_MODELS[ this.quality ] || QUALITY_MODELS.balance;
+		return `${oidnWeightsBaseUrl}${tier.model}.tza`;
 
 	}
 
