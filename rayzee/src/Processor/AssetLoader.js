@@ -9,7 +9,7 @@ import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { unzipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
 import { disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
@@ -21,13 +21,20 @@ const SUPPORTED_FORMATS = {
 	'fbx': { type: 'model', name: 'FBX' }, 'obj': { type: 'model', name: 'OBJ' },
 	'stl': { type: 'model', name: 'STL' }, 'ply': { type: 'model', name: 'PLY (Polygon File Format)' },
 	'dae': { type: 'model', name: 'Collada' }, '3mf': { type: 'model', name: '3D Manufacturing Format' },
-	'usdz': { type: 'model', name: 'Universal Scene Description' },
+	'usd': { type: 'model', name: 'USD (Universal Scene Description)' },
+	'usda': { type: 'model', name: 'USDA (USD ASCII)' },
+	'usdc': { type: 'model', name: 'USDC (USD Crate)' },
+	'usdz': { type: 'model', name: 'USDZ (USD Archive)' },
 	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' }, 'exr': { type: 'environment', name: 'EXR (OpenEXR)' },
 	'png': { type: 'image', name: 'PNG' }, 'jpg': { type: 'image', name: 'JPEG' },
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
 	'zip': { type: 'archive', name: 'ZIP Archive' }
 };
 
+// Loose USD layers inside a ZIP compose into one scene; these pick out the
+// layers and the image assets they reference.
+const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
+const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
 /**
  * AssetLoader class - handles loading of 3D models, environment maps, and archives
  */
@@ -234,7 +241,10 @@ export class AssetLoader extends EventDispatcher {
 			case 'ply': return await this.loadPLYFromArrayBuffer( arrayBuffer, filename );
 			case 'dae': return await this.loadColladaFromFile( file, filename );
 			case '3mf': return await this.load3MFFromArrayBuffer( arrayBuffer, filename );
-			case 'usdz': return await this.loadUSDZFromArrayBuffer( arrayBuffer, filename );
+			case 'usd':
+			case 'usda':
+			case 'usdc':
+			case 'usdz': return await this.loadUSDFromArrayBuffer( arrayBuffer, filename );
 			default: throw new Error( `Support for ${extension} files is not yet implemented` );
 
 		}
@@ -647,6 +657,10 @@ export class AssetLoader extends EventDispatcher {
 			const extension = path.split( '.' ).pop().toLowerCase();
 			if ( SUPPORTED_FORMATS[ extension ] && SUPPORTED_FORMATS[ extension ].type === 'model' ) {
 
+				// A loose layer is only one slice of a USD scene — hand the whole
+				// archive over so its references and payloads can resolve.
+				if ( USD_LAYER_RE.test( path ) ) return await this.loadUSDHierarchyFromZip( zip );
+
 				console.log( `Loading model file from ZIP: ${path}` );
 				return await this.loadModelFromZipEntry( zip[ path ], path, extension, zip );
 
@@ -655,6 +669,48 @@ export class AssetLoader extends EventDispatcher {
 		}
 
 		throw new Error( 'No supported model files found in the ZIP archive' );
+
+	}
+
+	// USDLoader only builds a cross-layer asset map on its USDZ branch, so repack
+	// the archive as USDZ — root layer first, per AOUSD core spec 16.4.1.2 — and
+	// let the loader resolve the references/payloads itself.
+	async loadUSDHierarchyFromZip( zip ) {
+
+		const layers = Object.keys( zip ).filter( name => USD_LAYER_RE.test( name ) );
+		if ( layers.length === 0 ) throw new Error( 'No USD layers found in the ZIP archive' );
+
+		const root = AssetLoader._pickUSDRootLayer( layers );
+		console.log( `Loading USD scene from ZIP: ${root} (${layers.length} layers)` );
+
+		const packed = { [ root ]: [ zip[ root ], { level: 0 } ] };
+		for ( const name of Object.keys( zip ) ) {
+
+			if ( name === root ) continue;
+			if ( USD_LAYER_RE.test( name ) || USD_IMAGE_RE.test( name ) ) packed[ name ] = [ zip[ name ], { level: 0 } ];
+
+		}
+
+		return await this.loadUSDFromArrayBuffer( zipSync( packed ), root );
+
+	}
+
+	// Shallowest layer wins; among ties prefer the <dir>/<dir>.usd convention so a
+	// set's entry point beats its sibling variants.
+	static _pickUSDRootLayer( layers ) {
+
+		const depth = name => name.split( '/' ).length;
+		const minDepth = Math.min( ...layers.map( depth ) );
+		const candidates = layers.filter( name => depth( name ) === minDepth );
+
+		const conventional = candidates.find( name => {
+
+			const parts = name.split( '/' );
+			return parts.length > 1 && parts[ parts.length - 1 ].replace( USD_LAYER_RE, '' ) === parts[ parts.length - 2 ];
+
+		} );
+
+		return conventional || candidates[ 0 ];
 
 	}
 
@@ -698,8 +754,11 @@ export class AssetLoader extends EventDispatcher {
 				case '3mf':
 					result = await this.load3MFFromArrayBuffer( fileContent.buffer, filePath );
 					break;
+				case 'usd':
+				case 'usda':
+				case 'usdc':
 				case 'usdz':
-					result = await this.loadUSDZFromArrayBuffer( fileContent.buffer, filePath );
+					result = await this.loadUSDFromArrayBuffer( fileContent, filePath );
 					break;
 				default:
 					throw new Error( `Support for ${extension} files is not yet implemented` );
@@ -1396,21 +1455,28 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	async loadUSDZFromArrayBuffer( arrayBuffer, filename = 'model.usdz' ) {
+	async loadUSDFromArrayBuffer( data, filename = 'model.usd' ) {
 
 		try {
 
-			updateLoading( { isLoading: true, status: "Processing USDZ Data...", progress: 5 } );
+			updateLoading( { isLoading: true, status: "Processing USD Data...", progress: 5 } );
 			await new Promise( r => setTimeout( r, 0 ) );
 
-			if ( ! this.loaderCache.usdz ) {
+			if ( ! this.loaderCache.usd ) {
 
-				const { USDZLoader } = await import( 'three/examples/jsm/loaders/USDZLoader.js' );
-				this.loaderCache.usdz = new USDZLoader();
+				const { USDLoader } = await import( 'three/examples/jsm/loaders/USDLoader.js' );
+				this.loaderCache.usd = new USDLoader();
 
 			}
 
-			const object = this.loaderCache.usdz.parse( arrayBuffer );
+			// parse() returns the group synchronously but resolves textures async;
+			// setupPathTracing snapshots materials, so maps must land before it runs.
+			const object = await new Promise( ( resolve, reject ) => {
+
+				this.loaderCache.usd.parse( data, '', resolve, reject );
+
+			} );
+
 			object.name = filename;
 
 			this.releaseTargetModel();
@@ -1424,7 +1490,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.error( 'Error loading USDZ:', error );
+			console.error( 'Error loading USD:', error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename } );
 			throw error;
 

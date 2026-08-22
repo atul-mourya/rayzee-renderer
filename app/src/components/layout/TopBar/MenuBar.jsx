@@ -27,7 +27,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 		if ( ! file ) return;
 
 		// Validate file type
-		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usdz', '.zip' ];
+		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usd', '.usda', '.usdc', '.usdz', '.zip' ];
 		const fileName = file.name.toLowerCase();
 		const isSupported = supportedFormats.some( format => fileName.endsWith( format ) );
 
@@ -35,7 +35,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 			toast( {
 				title: "Invalid File Type",
-				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usdz) or a .zip (incl. pbrt scenes)",
+				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or a .zip (incl. pbrt scenes)",
 				variant: "destructive",
 			} );
 			return;
@@ -85,7 +85,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usdz,.zip"
+				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip"
 				onChange={handleFileSelect}
 				style={{ display: 'none' }}
 			/>
