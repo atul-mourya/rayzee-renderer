@@ -10,7 +10,9 @@
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
 ### Deferred
-- Reconsider continuous viewport denoising. 512²/fast is now 20 ms of library time; the old feasibility audit set the bar at ≤15 ms when TFJS made it 3–4× slower. Close enough to reopen, but it's a project, not a task — the blockers that audit found were in our cadence code (frozen frameCount during interaction, reset() aborting to tile 0), not the library.
+- ~~Reconsider continuous viewport denoising.~~ **Done.** The ≤15 ms bar was the wrong test — it is resolution-dependent and assumes per-frame denoising. Measured: a `fast` denoise costs a *resolution-invariant* **4.4 path-traced samples** (256²/512²/1024² = 8/23/89 ms against samples of 1.9/5.1/18.1 ms), so the gate is `4.4 / (samples between denoises)`. Shipped as a clock + sample-growth cadence, on for `'interactive'`, off for `'production'`, pinned off in deterministic mode.
+- Still on the CPU: the denoised output is read back through a staging `mapAsync` into `ImageData` and `putImageData` onto a 2D canvas. Only 2-6 ms in isolation, but it is a full GPU sync that drains the render queue every cadence tick. A GPU blit is the remaining perf item — it needs the output canvas to become a WebGPU context, which touches the "helpers can never be baked into saved images" layering.
+- No app-side toggle for the cadence. The engine switch is `app.setContinuousDenoise()`; the app reaches it only by turning OIDN off entirely.
 
 Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is fastest on Apple; Spatial is 0.57×), engine: 'webnn' (no WebGPU interop in Chrome), modelSpec (our blobs validate against the built-ins), dynamicTile (correctly pinned off).
 

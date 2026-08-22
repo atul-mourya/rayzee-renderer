@@ -176,11 +176,19 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Per-run tile-blit promises; done() awaits these so capture waits for every tile to paint.
 		this._pendingTileBlits = [];
 
+		// Identifies the live run. A run superseded by abort() must not clear the state its
+		// successor already owns.
+		this._runId = 0;
+		// The output canvas holds a valid denoised frame, so the next run must not repaint the
+		// noisy base over it.
+		this._hasLatchedFrame = false;
+
 		this.currentTZAUrl = null;
 		this.unet = null;
 		// A start() requested while the UNet is still loading is deferred here and fired
 		// once loading finishes, instead of being silently dropped.
 		this._pendingStart = false;
+		this._pendingStartContinuous = false;
 
 		// Initialize asynchronously
 		this._initialize().catch( error => {
@@ -363,8 +371,10 @@ export class OIDNDenoiser extends EventDispatcher {
 			// or a disable during loading doesn't kick off a denoise.
 			if ( this._pendingStart && this.unet && this.enabled ) {
 
+				const continuous = this._pendingStartContinuous;
 				this._pendingStart = false;
-				this.start();
+				this._pendingStartContinuous = false;
+				this.start( { continuous } );
 
 			}
 
@@ -411,7 +421,13 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	async start() {
+	/**
+	 * @param {Object}  [options]
+	 * @param {boolean} [options.continuous=false] - A cadence run rather than the final denoise.
+	 *   Tagged onto the start/end events so consumers can tell a background refresh from the
+	 *   one-shot denoise that ends a render.
+	 */
+	async start( { continuous = false } = {} ) {
 
 		if ( ! this.enabled || this.state.isDenoising ) {
 
@@ -431,18 +447,25 @@ export class OIDNDenoiser extends EventDispatcher {
 		// finally) rather than silently dropping this frame's denoise request.
 		if ( this.state.isLoading ) {
 
+			// A deferred cadence run must stay a cadence run, or it surfaces as the final
+			// denoise: tile border, status badge, upscaler chain. A non-cadence start joining
+			// the same deferral wins.
+			this._pendingStartContinuous = this._pendingStart
+				? this._pendingStartContinuous && continuous
+				: continuous;
 			this._pendingStart = true;
 			return false;
 
 		}
 
-		this.dispatchEvent( { type: 'start' } );
+		this.dispatchEvent( { type: 'start', continuous } );
 
 		const startTime = performance.now();
-		const success = await this.execute();
+		const success = await this.execute( continuous );
 
 		if ( success ) {
 
+			this._hasLatchedFrame = true;
 			this.renderer?.resetState?.();
 			this.input.style.opacity = '0';
 
@@ -464,17 +487,18 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	async execute() {
+	async execute( continuous = false ) {
 
 		if ( ! this.enabled || ! this.unet ) return false;
 
 		// Create abort controller for this execution
+		const runId = ++ this._runId;
 		this.state.abortController = new AbortController();
 		this.state.isDenoising = true;
 
 		try {
 
-			await this._executeUNet();
+			await this._executeUNet( continuous );
 			return true;
 
 		} catch ( error ) {
@@ -489,23 +513,30 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			}
 
-			// Restore original rendering on error
-			this.input.style.opacity = '1';
+			// Restore original rendering on error, unless a previous denoise is still on screen.
+			if ( ! this._hasLatchedFrame ) this.input.style.opacity = '1';
 			return false;
 
 		} finally {
 
-			this.state.isDenoising = false;
-			this.state.abortController = null;
-			this.dispatchEvent( { type: 'end' } );
+			// An aborted run resolves after its replacement has already started; clearing the
+			// shared state then would strand the live run without an abort controller.
+			if ( this._runId === runId ) {
+
+				this.state.isDenoising = false;
+				this.state.abortController = null;
+
+			}
+
+			this.dispatchEvent( { type: 'end', continuous } );
 
 		}
 
 	}
 
-	async _executeUNet() {
+	async _executeUNet( continuous = false ) {
 
-		return this._executeUNetGPU();
+		return this._executeUNetGPU( continuous );
 
 	}
 
@@ -516,7 +547,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	 *
 	 * Note: oidn-web's GPUTexture input path produces NaN outputs — using GPUBuffer instead.
 	 */
-	async _executeUNetGPU() {
+	async _executeUNetGPU( continuous = false ) {
 
 		const { width, height } = this.output;
 
@@ -544,9 +575,16 @@ export class OIDNDenoiser extends EventDispatcher {
 		}
 
 		// Capture the base now: the readback below awaits, and a presented WebGPU canvas only
-		// reads back non-empty straight after a compositor pass — hence the refresh.
-		this.refreshInput?.();
-		this.ctx.drawImage( this.input, 0, 0, width, height );
+		// reads back non-empty straight after a compositor pass — hence the refresh. Skipped
+		// once a denoised frame is latched: repainting it on every cadence tick would flash
+		// the noisy image back over an already-clean one.
+		if ( ! this._hasLatchedFrame ) {
+
+			this.refreshInput?.();
+			this.ctx.drawImage( this.input, 0, 0, width, height );
+
+		}
+
 		this._revealOutput();
 
 		// Ensure storage buffers are sized correctly (recreate on resolution change)
@@ -614,7 +652,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			normal: { data: this._gpuInputBuffers.normal, width, height }
 		};
 
-		return this._executeWithAbortGPU( config );
+		return this._executeWithAbortGPU( config, continuous );
 
 	}
 
@@ -840,7 +878,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	 * Promise wrapper around tileExecute for the GPU path.
 	 * Outputs a GPUBuffer — copied to a staging buffer then converted to ImageData for the 2D canvas.
 	 */
-	_executeWithAbortGPU( config ) {
+	_executeWithAbortGPU( config, continuous = false ) {
 
 		return new Promise( ( resolve, reject ) => {
 
@@ -999,7 +1037,8 @@ export class OIDNDenoiser extends EventDispatcher {
 							type: 'tileProgress',
 							tile: { x: tile.x, y: tile.y, width: clampedW, height: clampedH },
 							imageWidth: fullWidth,
-							imageHeight: fullHeight
+							imageHeight: fullHeight,
+							continuous
 						} );
 
 					} ).catch( () => {
@@ -1094,6 +1133,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		// Cancel any start deferred during loading so a reset supersedes it.
 		this._pendingStart = false;
+		this._pendingStartContinuous = false;
 
 		if ( ! this.enabled || ! this.state.isDenoising ) return;
 
@@ -1106,11 +1146,19 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Restore input visibility
 		this.input.style.opacity = '1';
 
-		// Reset denoising state and dispatch end event
+		// No 'end' here: the aborted execute()'s finally always runs and dispatches one, tagged
+		// with that run's `continuous`. Dispatching here too emitted a second, untagged end —
+		// a cancelled cadence run announcing itself as the denoise that finishes a render.
 		this.state.isDenoising = false;
-		this.dispatchEvent( { type: 'end' } );
 
 		log.debug( 'denoise aborted' );
+
+	}
+
+	// Call whenever the output canvas stops holding a valid frame — hidden on reset, or resized.
+	invalidateLatch() {
+
+		this._hasLatchedFrame = false;
 
 	}
 
@@ -1124,6 +1172,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this.output.width = width;
 		this.output.height = height;
+		this._hasLatchedFrame = false;
 
 		// Reinitialize denoiser if tile size changes relative to image size
 		this._setupUNetDenoiser().catch( error => {

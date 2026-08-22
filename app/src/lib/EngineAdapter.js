@@ -40,8 +40,18 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// ── Denoiser ─────────────────────────────────────────────
-	on( EngineEvents.DENOISING_START, () => useStore.getState().setIsDenoising( true ) );
-	on( EngineEvents.DENOISING_END, () => useStore.getState().setIsDenoising( false ) );
+	// `continuous` marks a cadence denoise of the still-accumulating preview. Surfacing those
+	// would flash the "Denoising" badge every few hundred ms; only the final denoise is status.
+	on( EngineEvents.DENOISING_START, e => {
+
+		if ( ! e?.continuous ) useStore.getState().setIsDenoising( true );
+
+	} );
+	on( EngineEvents.DENOISING_END, e => {
+
+		if ( ! e?.continuous ) useStore.getState().setIsDenoising( false );
+
+	} );
 
 	// ── Upscaler ─────────────────────────────────────────────
 	on( EngineEvents.UPSCALING_START, () => {

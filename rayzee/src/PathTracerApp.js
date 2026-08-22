@@ -346,6 +346,7 @@ export class PathTracerApp extends EventDispatcher {
 			if ( ! this.stages.pathTracer.isComplete ) {
 
 				this.completion.updateTime();
+				this.denoisingManager?.tickContinuousDenoise( this.stages.pathTracer.frameCount );
 
 			}
 
@@ -1475,6 +1476,14 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.cameraManager.controls.enabled = ! isProduction;
 
+		// Before anything below can wake the render loop: a tick that lands while the previous
+		// tier's flag is still live fires a cadence denoise into the new tier.
+		if ( config.continuousDenoise !== undefined ) {
+
+			this.denoisingManager?.setContinuousDenoise( config.continuousDenoise );
+
+		}
+
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
 		this.settings.setMany( {
@@ -1639,6 +1648,7 @@ export class PathTracerApp extends EventDispatcher {
 					dynamicDispatch: stage._useDynamicDispatch,
 					autoFocusMode: this.cameraManager?.autoFocusMode,
 					autoExposure: this.stages.autoExposure?.enabled,
+					continuousDenoise: this.denoisingManager?.continuousDenoise,
 				};
 
 			}
@@ -1672,6 +1682,8 @@ export class PathTracerApp extends EventDispatcher {
 
 			this.cameraManager?.setAutoFocusMode( 'manual' );
 			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+			// Cadence denoising is wall-clock driven, so which frame it lands on is not reproducible.
+			this.denoisingManager?.setContinuousDenoise( false );
 
 			// The seed axis free-runs across accumulation resets so a camera drag gets fresh
 			// sequences; offline rendering needs the opposite. Pinning it makes seedFrame track
@@ -1693,6 +1705,12 @@ export class PathTracerApp extends EventDispatcher {
 			if ( this.stages.autoExposure && prev.autoExposure !== undefined ) {
 
 				this.stages.autoExposure.enabled = prev.autoExposure;
+
+			}
+
+			if ( prev.continuousDenoise !== undefined ) {
+
+				this.denoisingManager?.setContinuousDenoise( prev.continuousDenoise );
 
 			}
 
@@ -1805,6 +1823,29 @@ export class PathTracerApp extends EventDispatcher {
 
 		backend.trackTimestamp = enabled;
 		return backend.trackTimestamp === enabled;
+
+	}
+
+	/**
+	 * Denoises the accumulating mean on a cadence rather than only once, when the render
+	 * completes — a preview that shows a clean image while it refines. Costs throughput: a
+	 * `fast` denoise is a fixed ~4.4 path-traced samples at any resolution, so the tax is
+	 * roughly `4.4 / (samples between denoises)`.
+	 *
+	 * On by default for `'interactive'`, off for `'production'` (a final render must not pay
+	 * it) and pinned off in deterministic mode. `configureForMode()` restores the tier default.
+	 *
+	 * @param {boolean} [enabled=true]
+	 * @param {number}  [intervalMs] - minimum wall ms between denoises; the throughput dial
+	 */
+	setContinuousDenoise( enabled = true, intervalMs ) {
+
+		const dm = this.denoisingManager;
+		if ( ! dm ) return false;
+
+		if ( intervalMs !== undefined ) dm.continuousDenoiseInterval = Math.max( 0, intervalMs );
+		dm.setContinuousDenoise( enabled );
+		return dm.continuousDenoise;
 
 	}
 

@@ -147,6 +147,11 @@ export const ENGINE_DEFAULTS = {
 
 	enableOIDN: false,
 	oidnQuality: 'fast',
+	// Denoise the accumulating mean on a cadence instead of only once, at completion.
+	continuousDenoise: true,
+	// Minimum wall ms between cadence denoises. A `fast` denoise costs ~4.4 path-traced
+	// samples at any resolution, so this is the throughput dial: shorter = more tax.
+	continuousDenoiseInterval: 250,
 	debugGbufferMaps: false,
 
 	enableUpscaler: false,
@@ -611,6 +616,8 @@ export const PRODUCTION_RENDER_CONFIG = {
 	renderMode: 1, enableAlphaShadows: true,
 	// 'high' is the only tier that reaches OIDN's _large weights (calb_cnrm); ~2x denoise cost.
 	enableOIDN: true, oidnQuality: 'high',
+	// A final render must not pay the cadence tax; it denoises once, at the end.
+	continuousDenoise: false,
 	interactionModeEnabled: false,
 	// 0.94 against the eroded count ≈ the old raw-count 0.98; erosion holds the fraction a few points lower.
 	useAdaptiveSampling: true,
@@ -625,6 +632,7 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
 	enableOIDN: false, oidnQuality: 'fast',
+	continuousDenoise: true,
 	interactionModeEnabled: true,
 	useAdaptiveSampling: true, // idle refine stops early when converged; frozen during motion
 	noiseThreshold: 0.1, // loose: preview wants a fast settle, not a clean one

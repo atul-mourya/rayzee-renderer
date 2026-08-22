@@ -156,6 +156,21 @@ describe( 'connectEngineToStore', () => {
 
 	} );
 
+	it( 'should ignore cadence denoises so the status badge does not flicker', () => {
+
+		connectEngineToStore( engine, stores );
+
+		engine._emit( 'DENOISING_START', { continuous: true } );
+		engine._emit( 'DENOISING_END', { continuous: true } );
+
+		expect( stores._state.setIsDenoising ).not.toHaveBeenCalled();
+
+		engine._emit( 'DENOISING_START', { continuous: false } );
+
+		expect( stores._state.setIsDenoising ).toHaveBeenCalledWith( true );
+
+	} );
+
 	it( 'should update animation clips on SceneRebuild', () => {
 
 		// SceneRebuild handler also dispatches a window CustomEvent

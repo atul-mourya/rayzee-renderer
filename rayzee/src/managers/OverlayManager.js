@@ -179,6 +179,10 @@ export class OverlayManager {
 
 			source.addEventListener( 'tileProgress', ( e ) => {
 
+				// A cadence denoise of the still-accumulating preview runs every few hundred ms
+				// and is a single tile — showing the border for those just strobes it.
+				if ( e.continuous ) return;
+
 				if ( e.tile ) {
 
 					tileHelper.setRenderSize( e.imageWidth, e.imageHeight );

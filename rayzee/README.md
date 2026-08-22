@@ -540,6 +540,8 @@ engine.denoisingManager.setAutoExposureParams({ keyValue: 0.18 })
 // OIDN & Upscaler
 engine.denoisingManager.setOIDNEnabled(true)
 engine.denoisingManager.setOIDNQuality('high')
+engine.denoisingManager.setContinuousDenoise(false)      // see engine.setContinuousDenoise()
+engine.denoisingManager.continuousDenoiseInterval = 250   // min wall ms between cadence denoises
 engine.denoisingManager.setUpscalerEnabled(true)
 engine.denoisingManager.setUpscalerScaleFactor(2)
 engine.denoisingManager.setUpscalerQuality('high')
@@ -730,7 +732,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `RENDER_COMPLETE` | Rendering has converged |
 | `RENDER_RESET` | Accumulation buffer is reset |
 | `FRAME` | Fires once per `animate()` tick — hook external instrumentation (stats panels, telemetry) here |
-| `DENOISING_START` / `DENOISING_END` | Denoiser runs |
+| `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render |
 | `UPSCALING_START` / `UPSCALING_PROGRESS` / `UPSCALING_END` | AI upscaler runs |
 | `LOADING_UPDATE` / `LOADING_RESET` | Asset loading progress |
 | `STATS_UPDATE` | Performance stats updated |
@@ -844,7 +846,10 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 
 ### Enabling OIDN (Intel Open Image Denoise)
 
-OIDN provides high-quality AI denoising for final renders. It runs automatically after the render converges (reaches `maxSamples`).
+OIDN provides high-quality AI denoising. It runs automatically once the render converges (reaches
+`maxSamples`), and — in `'interactive'` mode — also on a cadence while the image is still
+accumulating, so a preview shows a clean picture as it refines instead of only at the end. See
+[Continuous denoising](#continuous-denoising).
 
 1. **Install the package**
 
@@ -877,6 +882,33 @@ OIDN provides high-quality AI denoising for final renders. It runs automatically
 | `'fast-clean'` | 0.6 MB | accumulated | Converged frames, at `'fast'`'s cost |
 | `'balance'` | 1.8 MB | accumulated | General use |
 | `'high'` | 7.3 MB | accumulated | Final renders — used by `configureForMode('production')` |
+
+#### Continuous denoising
+
+With OIDN on, `'interactive'` mode denoises the accumulating mean on a cadence rather than only
+once at the end. `'production'` does not — a final render should not pay for intermediate denoises —
+and deterministic mode pins it off, since which frame a wall-clock cadence lands on is not
+reproducible.
+
+```js
+engine.setContinuousDenoise(true, 250);   // enabled, min 250 ms between denoises
+engine.setContinuousDenoise(false);       // denoise only at completion
+```
+
+The cost is predictable: **a `fast` denoise is a fixed ~4.4 path-traced samples at any resolution**,
+because inference and path tracing both scale linearly in pixels. Two gates keep that affordable:
+a wall clock (`continuousDenoiseInterval`) and a sample-growth factor, so denoises are frequent
+while noise is worst and rare once the mean has converged — where OIDN can lose to the raw image
+anyway. Nothing runs while the camera is moving; the raw frame shows during navigation.
+
+Cadence runs are tagged so a host can tell them apart from the denoise that ends a render:
+
+```js
+engine.addEventListener(EngineEvents.DENOISING_END, e => {
+  if (e.continuous) return;   // a background refresh, not the final image
+  saveResult();
+});
+```
 
 `'fast'` and `'fast-clean'` are the same network size and cost the same to run; they differ only in
 which auxiliary guide their weights expect. That makes the ordering **not** a simple quality ladder:

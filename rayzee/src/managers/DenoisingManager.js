@@ -4,6 +4,9 @@ import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS } from '../EngineDefaults.js';
 
+// Sample-count growth required between cadence denoises: 1 -> 2 -> 3 -> 5 -> 7 -> 10 -> 14 ...
+const CADENCE_SAMPLE_GROWTH = 1.4;
+
 /**
  * Orchestrates all denoising, post-processing, and AI upscaling:
  *   - Real-time denoiser strategy switching (ASVGF / EdgeAware / None)
@@ -50,6 +53,13 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser = null;
 		this.upscaler = null;
 
+		this.continuousDenoise = DEFAULT_STATE.continuousDenoise;
+		this.continuousDenoiseInterval = DEFAULT_STATE.continuousDenoiseInterval;
+		// -Infinity, not 0: 0 reads as "denoised at time zero", which blocks the first cadence
+		// denoise while performance.now() is still below the interval.
+		this._lastCadenceAt = - Infinity;
+		this._lastCadenceSamples = 0;
+
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 
@@ -57,8 +67,9 @@ export class DenoisingManager extends EventDispatcher {
 		this._lastRenderWidth = 0;
 		this._lastRenderHeight = 0;
 
-		// Track the current completion-chain listener so it can be removed on re-trigger
+		// Track the current completion-chain listeners so they can be removed on re-trigger
 		this._pendingStartUpscaler = null;
+		this._pendingFinalDenoise = null;
 
 		// Bound event forwarding handlers (stored for removal on re-setup / dispose)
 		this._denoiserStartHandler = null;
@@ -168,10 +179,10 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser.enabled = DEFAULT_STATE.enableOIDN;
 
 		// Forward lifecycle events (store refs for removal on re-setup / dispose)
-		this._denoiserStartHandler = () =>
-			this.dispatchEvent( { type: EngineEvents.DENOISING_START } );
-		this._denoiserEndHandler = () =>
-			this.dispatchEvent( { type: EngineEvents.DENOISING_END } );
+		this._denoiserStartHandler = e =>
+			this.dispatchEvent( { type: EngineEvents.DENOISING_START, continuous: !! e.continuous } );
+		this._denoiserEndHandler = e =>
+			this.dispatchEvent( { type: EngineEvents.DENOISING_END, continuous: !! e.continuous } );
 		this.denoiser.addEventListener( 'start', this._denoiserStartHandler );
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
 
@@ -427,13 +438,65 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	_cleanupCompletionListener() {
 
-		if ( this._pendingStartUpscaler && this.denoiser ) {
+		if ( this.denoiser ) {
 
-			this.denoiser.removeEventListener( 'end', this._pendingStartUpscaler );
+			if ( this._pendingStartUpscaler ) this.denoiser.removeEventListener( 'end', this._pendingStartUpscaler );
+			if ( this._pendingFinalDenoise ) this.denoiser.removeEventListener( 'end', this._pendingFinalDenoise );
 
 		}
 
 		this._pendingStartUpscaler = null;
+		this._pendingFinalDenoise = null;
+
+	}
+
+	/**
+	 * Denoises the accumulating mean on a cadence, so a preview shows a clean image while it
+	 * refines instead of only once it finishes. Driven from the render loop; call every frame.
+	 *
+	 * @param {number} sampleCount - accumulated samples (PathTracer.frameCount)
+	 * @returns {boolean} whether a denoise was started this call
+	 */
+	tickContinuousDenoise( sampleCount ) {
+
+		const dn = this.denoiser;
+		if ( ! this.continuousDenoise || ! dn?.enabled ) return false;
+		if ( dn.state.isDenoising || dn.state.isLoading ) return false;
+
+		// While the camera moves, reset() hides the output every frame and a denoise would paint
+		// a view that is already stale. Denoise once the motion stops.
+		if ( this._stages.pathTracer?.interactionMode ) return false;
+
+		const now = performance.now();
+		if ( now - this._lastCadenceAt < this.continuousDenoiseInterval ) return false;
+
+		// A denoise costs a fixed ~4.4 samples but buys less the more are already averaged in —
+		// past ~64 it can lose to the raw mean. Gating on growth spends the budget where it
+		// pays: often at first, then rarely. Skipped while the count is static.
+		if ( sampleCount > this._lastCadenceSamples
+			&& sampleCount < this._lastCadenceSamples * CADENCE_SAMPLE_GROWTH ) return false;
+
+		this._lastCadenceAt = now;
+		this._lastCadenceSamples = sampleCount;
+		dn.start( { continuous: true } );
+		return true;
+
+	}
+
+	setContinuousDenoise( enabled ) {
+
+		this.continuousDenoise = !! enabled;
+		this._lastCadenceAt = - Infinity;
+		this._resetCadence();
+
+	}
+
+	// Only the sample gate resets, so a fresh accumulation denoises promptly. The clock is
+	// deliberately kept: reset() runs every frame of a camera drag, and rearming it there
+	// would spend a denoise per frame on views that are already stale.
+	_resetCadence() {
+
+		this._lastCadenceSamples = 0;
 
 	}
 
@@ -443,8 +506,12 @@ export class DenoisingManager extends EventDispatcher {
 		this._cleanupCompletionListener();
 
 		// Chain: denoise first (if enabled), then upscale (if enabled)
-		const startUpscaler = () => {
+		const startUpscaler = e => {
 
+			// A cadence run finishing is not the final denoise — keep waiting for that one.
+			if ( e?.continuous ) return;
+
+			this.denoiser?.removeEventListener( 'end', startUpscaler );
 			this._pendingStartUpscaler = null;
 
 			if ( ! isStillComplete() ) return;
@@ -460,8 +527,32 @@ export class DenoisingManager extends EventDispatcher {
 		if ( this.denoiser?.enabled ) {
 
 			this._pendingStartUpscaler = startUpscaler;
-			this.denoiser.addEventListener( 'end', startUpscaler, { once: true } );
-			this.denoiser.start();
+			this.denoiser.addEventListener( 'end', startUpscaler );
+			this._resetCadence();
+
+			if ( this.denoiser.state.isDenoising ) {
+
+				// A cadence run is mid-flight against a lower sample count. Let it finish, then
+				// denoise the final image — start() would be refused right now.
+				// three.js EventDispatcher.addEventListener takes (type, listener) and silently
+				// ignores an options object, so a listener that restarts the denoiser MUST remove
+				// itself: `{ once: true }` here re-fired on its own end, forever.
+				const onCadenceEnd = () => {
+
+					this.denoiser?.removeEventListener( 'end', onCadenceEnd );
+					if ( this._pendingFinalDenoise === onCadenceEnd ) this._pendingFinalDenoise = null;
+					if ( isStillComplete() ) this.denoiser?.start();
+
+				};
+
+				this._pendingFinalDenoise = onCadenceEnd;
+				this.denoiser.addEventListener( 'end', onCadenceEnd );
+
+			} else {
+
+				this.denoiser.start();
+
+			}
 
 		} else {
 
@@ -488,8 +579,11 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( this.denoiser.enabled ) this.denoiser.abort();
 			if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
+			this.denoiser.invalidateLatch();
 
 		}
+
+		this._resetCadence();
 
 	}
 
