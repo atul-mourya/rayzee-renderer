@@ -7,7 +7,7 @@
 
 A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic — use it with React, Vue, vanilla JS, or any other setup.
 
-🌐 **[Live Demo](https://atul-mourya.github.io/RayTracing/)** — the same demo app linked from the root monorepo README, built on this engine.
+🌐 **[Live Demo](https://atul-mourya.github.io/rayzee-renderer/)** — the same demo app linked from the root monorepo README, built on this engine.
 
 ## Table of Contents
 

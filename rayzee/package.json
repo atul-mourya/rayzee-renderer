@@ -18,7 +18,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/atul-mourya/RayTracing.git",
+    "url": "git+https://github.com/atul-mourya/rayzee-renderer.git",
     "directory": "rayzee"
   },
   "keywords": [
