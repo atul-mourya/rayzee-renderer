@@ -224,6 +224,7 @@ export class RenderSettings extends EventDispatcher {
 			handleRenderLimitMode: ( value ) => {
 
 				stages.pathTracer?.setRenderLimitMode?.( value );
+				reconcileCompletion?.();
 
 			},
 

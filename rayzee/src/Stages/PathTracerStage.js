@@ -1185,25 +1185,15 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * Update completion threshold based on render mode
+	 * Update completion threshold based on render mode. The ceiling holds in every limit mode —
+	 * uncapping it under a time budget lets a generous deadline silently slow every render.
 	 */
 	updateCompletionThreshold() {
 
-		const renderMode = this.renderMode.value;
-		const maxFrames = this.maxSamples.value;
-
-		if ( this.renderLimitMode === 'time' ) {
-
-			this.completionThreshold = Infinity;
-
-		} else {
-
-			this.completionThreshold = updateCompletionThreshold(
-				renderMode,
-				maxFrames
-			);
-
-		}
+		this.completionThreshold = updateCompletionThreshold(
+			this.renderMode.value,
+			this.maxSamples.value
+		);
 
 	}
 

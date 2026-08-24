@@ -1,3 +1,7 @@
+import { createLogger } from '../utils/Logger.js';
+
+const log = createLogger( 'engine' );
+
 /**
  * Tracks render completion state, time limits, and sample limits.
  *
@@ -12,6 +16,10 @@ export class CompletionTracker {
 		this.lastResetTime = performance.now();
 		this.renderCompleteDispatched = false;
 
+		/** Whether the deadline — rather than the ceiling or convergence — retired the frame. */
+		this.budgetOverrun = false;
+		this._budgetHeldWarned = false;
+
 	}
 
 	/**
@@ -24,19 +32,48 @@ export class CompletionTracker {
 	}
 
 	/**
-	 * Checks whether the time-based render limit has been reached.
-	 * @param {string} renderLimitMode - 'time' or 'samples'
+	 * Checks whether the wall-clock render budget has expired. An additional stop condition,
+	 * never a replacement — the sample ceiling and convergence still bind when they come first.
+	 *
+	 * Floored at one sample: frameCount does not advance while the stage compiles kernels or
+	 * while the camera is in interaction mode, and retiring in that window denoises an empty
+	 * buffer and captures a blank canvas.
+	 *
+	 * @param {Object} pathTracer - The PathTracer stage
+	 * @param {string} renderLimitMode - 'time' or 'frames'
 	 * @param {number} renderTimeLimit - Time limit in seconds
 	 * @returns {boolean}
 	 */
-	isTimeLimitReached( renderLimitMode, renderTimeLimit ) {
+	isTimeLimitReached( pathTracer, renderLimitMode, renderTimeLimit ) {
 
-		return renderLimitMode === 'time' && renderTimeLimit > 0 && this.timeElapsed >= renderTimeLimit;
+		if ( renderLimitMode !== 'time' || ! ( renderTimeLimit > 0 ) ) return false;
+		if ( this.timeElapsed < renderTimeLimit ) return false;
+
+		if ( ! ( pathTracer?.frameCount > 0 ) ) {
+
+			if ( ! this._budgetHeldWarned ) {
+
+				this._budgetHeldWarned = true;
+				log.warn(
+					`render time limit (${renderTimeLimit}s) expired before the first sample landed — ` +
+					'holding the deadline open to avoid capturing an empty frame'
+				);
+
+			}
+
+			return false;
+
+		}
+
+		this.budgetOverrun = true;
+		return true;
 
 	}
 
 	/**
-	 * Checks whether ANY render limit (time or samples) is reached.
+	 * Checks whether ANY render limit is reached: sample ceiling, convergence, or time budget,
+	 * whichever arrives first.
+	 *
 	 * @param {Object} pathTracer - The PathTracer stage
 	 * @param {string} renderLimitMode
 	 * @param {number} renderTimeLimit
@@ -46,7 +83,7 @@ export class CompletionTracker {
 
 		if ( ! pathTracer ) return false;
 
-		if ( this.isTimeLimitReached( renderLimitMode, renderTimeLimit ) ) return true;
+		if ( this.isTimeLimitReached( pathTracer, renderLimitMode, renderTimeLimit ) ) return true;
 
 		// Tier-1 convergence early-stop must agree with PathTracer.render()'s own check, else the app-level
 		// reconcile would flip isComplete back off and keep dispatching after the frame converged.
@@ -75,6 +112,8 @@ export class CompletionTracker {
 		this.timeElapsed = 0;
 		this.lastResetTime = performance.now();
 		this.renderCompleteDispatched = false;
+		this.budgetOverrun = false;
+		this._budgetHeldWarned = false;
 
 	}
 

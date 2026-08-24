@@ -366,8 +366,11 @@ export class PathTracerApp extends EventDispatcher {
 				memoryPeak: tracker?.peak ?? 0,
 			} );
 
-			// Check time limit
-			if ( this.completion.isTimeLimitReached( this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' ) ) ) {
+			// Only the wall-clock stop — PathTracer.render() retires the ceiling and convergence
+			// itself, so whichever of the three arrives first wins.
+			if ( this.completion.isTimeLimitReached(
+				this.stages.pathTracer, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' )
+			) ) {
 
 				this.stages.pathTracer.isComplete = true;
 
@@ -381,8 +384,14 @@ export class PathTracerApp extends EventDispatcher {
 					context: this.pipeline?.context,
 				} );
 
-				this.dispatchEvent( { type: 'RenderComplete' } );
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE } );
+				const completionInfo = {
+					samples: this.stages.pathTracer.frameCount,
+					timeElapsed: this.completion.timeElapsed,
+					budgetOverrun: this.completion.budgetOverrun,
+				};
+
+				this.dispatchEvent( { type: 'RenderComplete', ...completionInfo } );
+				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...completionInfo } );
 
 			}
 
