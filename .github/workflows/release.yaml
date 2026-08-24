@@ -10,7 +10,14 @@ on:
 
 jobs:
   release:
-    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    # PAUSED — manual dispatch only. semantic-release commits the version bump and pushes the
+    # tag during `prepare`, i.e. BEFORE `publish`, so a failing npm publish still burns a
+    # version: v7.25.0 and v7.25.1 were both tagged with nothing published behind them. Until
+    # the trusted publisher is configured on npmjs.com, keep pushes from ratcheting further.
+    # To restore: drop the `github.event_name` clause.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && !startsWith(github.event.head_commit.message, 'chore(release):')
     permissions:
       contents: write
       issues: write
@@ -33,19 +40,28 @@ jobs:
           
       - run: npm ci
 
+      # @semantic-release/npm only pre-flights the OIDC exchange; the publish itself shells out
+      # to `npm publish`, which needs npm's own trusted-publishing support (>= 11.5.1). Node 22
+      # ships npm 10.x, so without this the exchange verifies and the publish still fails.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
       - name: Build Engine
         run: npm run build:engine
 
       - name: Run Tests
         run: npm test
 
-      # Run semantic-release first to update version
+      # Run semantic-release first to update version.
+      # No NPM_TOKEN: auth is OIDC trusted publishing, configured per-package on npmjs.com
+      # against this repo + workflow file + the `github-pages` environment below. Passing a
+      # token as well would let a broken credential silently take over and fail at publish
+      # time — after the tag has already been pushed.
       - name: Semantic Release
         id: semantic
         run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           
       # Only proceed with deployment if a new release was created
       - name: Build
