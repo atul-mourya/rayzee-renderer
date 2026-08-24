@@ -10,14 +10,7 @@ on:
 
 jobs:
   release:
-    # PAUSED — manual dispatch only. semantic-release commits the version bump and pushes the
-    # tag during `prepare`, i.e. BEFORE `publish`, so a failing npm publish still burns a
-    # version: v7.25.0 and v7.25.1 were both tagged with nothing published behind them. Until
-    # the trusted publisher is configured on npmjs.com, keep pushes from ratcheting further.
-    # To restore: drop the `github.event_name` clause.
-    if: >-
-      github.event_name == 'workflow_dispatch'
-      && !startsWith(github.event.head_commit.message, 'chore(release):')
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     permissions:
       contents: write
       issues: write
