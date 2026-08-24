@@ -140,15 +140,26 @@ function neutralToneMap( r, g, b, exposure, out ) {
 
 }
 
+/**
+ * Three.js clamps the fragment output with `.max( 0 )` *before* tone mapping
+ * (NodeMaterial.js, "force unsigned floats"), so the GPU curves never see a negative
+ * channel. Compositor's saturation grade (default 1.2) drives complementary channels
+ * below zero on a third of a typical frame, and AgX/Neutral mix those negatives across
+ * channels instead of clipping them — measured 7-10 levels of shadow error against the
+ * viewport until the readback clamps the same way.
+ */
+const clampNegative = fn => ( r, g, b, exposure, out ) =>
+	fn( r > 0 ? r : 0, g > 0 ? g : 0, b > 0 ? b : 0, exposure, out );
+
 /** Look-up table mapping Three.js ToneMapping constants to CPU functions. */
 export const TONE_MAP_FNS = new Map( [
-	[ NoToneMapping, noToneMap ],
-	[ LinearToneMapping, linearToneMap ],
-	[ ReinhardToneMapping, reinhardToneMap ],
-	[ CineonToneMapping, cineonToneMap ],
-	[ ACESFilmicToneMapping, acesFilmicToneMap ],
-	[ AgXToneMapping, agxToneMap ],
-	[ NeutralToneMapping, neutralToneMap ]
+	[ NoToneMapping, clampNegative( noToneMap ) ],
+	[ LinearToneMapping, clampNegative( linearToneMap ) ],
+	[ ReinhardToneMapping, clampNegative( reinhardToneMap ) ],
+	[ CineonToneMapping, clampNegative( cineonToneMap ) ],
+	[ ACESFilmicToneMapping, clampNegative( acesFilmicToneMap ) ],
+	[ AgXToneMapping, clampNegative( agxToneMap ) ],
+	[ NeutralToneMapping, clampNegative( neutralToneMap ) ]
 ] );
 
 /** sRGB gamma (1/2.2) — fast pow approximation. Prefer `linearToSRGB` when matching Three.js's output. */
@@ -162,6 +173,25 @@ export const SRGB_GAMMA = 1 / 2.2;
 export function linearToSRGB( c ) {
 
 	return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow( c, 1 / 2.4 ) - 0.055;
+
+}
+
+/**
+ * Exposure as the WebGPU output pass applies it.
+ *
+ * Three.js applies `toneMappingExposure` *inside* ToneMappingNode's tone-mapping branch, and
+ * that branch returns the colour untouched for NoToneMapping (ToneMappingNode.js: `if
+ * ( toneMapping === NoToneMapping ) return colorNode`). So exposure is a no-op on screen there,
+ * and a CPU readback that applies it anyway paints brighter than the viewport it replaces
+ * (measured +33.6 % at exposure 2).
+ *
+ * @param {number} exposure - renderer.toneMappingExposure
+ * @param {number} toneMapping - Three.js ToneMapping constant
+ * @returns {number}
+ */
+export function effectiveExposure( exposure, toneMapping ) {
+
+	return toneMapping === NoToneMapping ? 1.0 : exposure;
 
 }
 

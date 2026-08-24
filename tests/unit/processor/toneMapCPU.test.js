@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation } from '@/core/Processor/ToneMapCPU.js';
+import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure } from '@/core/Processor/ToneMapCPU.js';
 
 // Three.js tone mapping constants (same values as Three.js exports)
 const NoToneMapping = 0;
@@ -363,6 +363,82 @@ describe( 'applySaturation', () => {
 		expect( out[ 0 ] ).toBeCloseTo( 0.5 );
 		expect( out[ 1 ] ).toBeCloseTo( 0.5 );
 		expect( out[ 2 ] ).toBeCloseTo( 0.5 );
+
+	} );
+
+} );
+
+// ── effectiveExposure ───────────────────────────────────────────
+
+describe( 'effectiveExposure', () => {
+
+	it( 'drops exposure under NoToneMapping', () => {
+
+		// ToneMappingNode returns the colour untouched for NoToneMapping, so the GPU never
+		// applies toneMappingExposure there. A readback that does paints brighter than the
+		// viewport it replaces.
+		expect( effectiveExposure( 2.0, NoToneMapping ) ).toBe( 1.0 );
+
+	} );
+
+	it( 'passes exposure through for every tone-mapped configuration', () => {
+
+		for ( const tm of [ LinearToneMapping, ReinhardToneMapping, CineonToneMapping,
+			ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping ] ) {
+
+			expect( effectiveExposure( 2.0, tm ) ).toBe( 2.0 );
+
+		}
+
+	} );
+
+} );
+
+// ── negative-input clamp ────────────────────────────────────────
+
+describe( 'negative channel clamping', () => {
+
+	// Three.js clamps the fragment output with `.max( 0 )` before tone mapping, and the
+	// Compositor's saturation grade routinely drives complementary channels negative.
+	// AgX and Neutral mix negatives across channels rather than clipping them, so an
+	// unclamped readback diverges from the viewport by several levels in shadow.
+	const NEGATIVE = [ - 0.4, 0.3, - 0.05 ];
+	const CLAMPED = [ 0, 0.3, 0 ];
+
+	for ( const [ name, tm ] of [
+		[ 'NoToneMapping', NoToneMapping ],
+		[ 'Linear', LinearToneMapping ],
+		[ 'Reinhard', ReinhardToneMapping ],
+		[ 'Cineon', CineonToneMapping ],
+		[ 'ACESFilmic', ACESFilmicToneMapping ],
+		[ 'AgX', AgXToneMapping ],
+		[ 'Neutral', NeutralToneMapping ],
+	] ) {
+
+		it( `${name} treats a negative channel as zero`, () => {
+
+			const fn = TONE_MAP_FNS.get( tm );
+			const withNeg = new Float32Array( 3 );
+			const preClamped = new Float32Array( 3 );
+
+			fn( ...NEGATIVE, 1.0, withNeg );
+			fn( ...CLAMPED, 1.0, preClamped );
+
+			for ( let c = 0; c < 3; c ++ ) expect( withNeg[ c ] ).toBeCloseTo( preClamped[ c ], 6 );
+
+		} );
+
+	}
+
+	it( 'never emits a negative channel', () => {
+
+		for ( const fn of TONE_MAP_FNS.values() ) {
+
+			const out = new Float32Array( 3 );
+			fn( - 1.5, - 0.2, - 0.001, 1.0, out );
+			for ( let c = 0; c < 3; c ++ ) expect( out[ c ] ).toBeGreaterThanOrEqual( 0 );
+
+		}
 
 	} );
 

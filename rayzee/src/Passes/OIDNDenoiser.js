@@ -16,7 +16,7 @@ async function getInitUNetFromURL() {
 
 }
 
-import { TONE_MAP_FNS, linearToSRGB, applySaturation } from '../Processor/ToneMapCPU.js';
+import { TONE_MAP_FNS, linearToSRGB, applySaturation, effectiveExposure } from '../Processor/ToneMapCPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 /** Reusable RGB output buffer (avoids per-pixel allocation). */
@@ -764,7 +764,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	/** Display exposure with the input scale divided back out — output arrives pre-multiplied. */
 	_outputExposure() {
 
-		return this.getExposure() / this._oidnInputScale;
+		return effectiveExposure( this.getExposure(), this.getToneMapping() ) / this._oidnInputScale;
 
 	}
 
