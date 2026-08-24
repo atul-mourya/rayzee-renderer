@@ -24,7 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          # semantic-release needs every commit and tag to work out the next version, but only
+          # their messages — never historical file contents, which here are ~1 GB of long-since
+          # replaced binary assets against 13 MB of blobs at HEAD. Measured: 1.67 MiB / 2.0 s to
+          # clone blobless, 11.9 MiB / 6.0 s once the tree is materialized, versus multi-minute
+          # full clones. Blobs are fetched on demand, so the build still sees every file.
           fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-node@v5
         with:
