@@ -166,6 +166,19 @@ const MainViewport = ( { mode = "preview" } ) => {
 
 		}
 
+		// Refuse up front rather than letting the engine reject mid-load. AssetLoader disposes
+		// the outgoing model before the engine decides whether to rebuild, so a drop landing
+		// during another load used to leave the path tracer rendering freed geometry.
+		if ( app.isLoading ) {
+
+			toast( {
+				title: "Still Loading",
+				description: "Wait for the current load to finish, then drop the file again.",
+			} );
+			return;
+
+		}
+
 		// Check if the file format is supported
 		const format = app.assetLoader.getFileFormat( file.name );
 		if ( ! format ) {
@@ -204,12 +217,30 @@ const MainViewport = ( { mode = "preview" } ) => {
 		// Set pause state before loading
 		app.pauseRendering = true;
 
-		// Use the enhanced AssetLoader to load the file
-		app.assetLoader.loadAssetFromFile( file )
+		// loadFile() routes through the same guarded seam as URL loads, so a drop gets the
+		// full replace-load sequence (appended models cleared, cameras reset, authored
+		// environment applied) instead of the AssetLoader's bare rebuild.
+		app.loadFile( file )
 			.catch( error => {
 
-				console.error( "Error in asset loading:", error );
-				// Error handling is done through the event listeners
+				if ( error?.code === 'LOAD_IN_PROGRESS' ) {
+
+					toast( { title: "Still Loading", description: "Wait for the current load to finish, then drop the file again." } );
+
+				} else {
+
+					console.error( "Error in asset loading:", error );
+					// Other error reporting is done through the AssetLoader event listeners.
+
+				}
+
+			} )
+			.finally( () => {
+
+				// The engine's `load` handler used to clear these, but it now defers to
+				// loadFile() and bails while a load is in progress.
+				app.pauseRendering = false;
+				useStore.getState().resetLoading();
 
 			} );
 

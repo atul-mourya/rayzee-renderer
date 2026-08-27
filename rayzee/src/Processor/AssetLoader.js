@@ -14,6 +14,7 @@ import { disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
+import { extractSceneMetadata } from './SceneMetadata.js';
 
 // Define supported file formats
 const SUPPORTED_FORMATS = {
@@ -54,6 +55,10 @@ export class AssetLoader extends EventDispatcher {
 		this.uploadedFileInfo = null;
 		this.animations = [];
 		this.renderer = null;
+
+		// Scene-level authoring metadata from the current model (glTF `extras`), or null.
+		// See SceneMetadata.js. Cleared by releaseTargetModel() on every replace-load.
+		this.sceneMetadata = null;
 
 		// Shared across every loader so cancelActiveLoad() can abort whichever
 		// fetch is in flight (three r185 FileLoader wires the manager's abort
@@ -133,6 +138,8 @@ export class AssetLoader extends EventDispatcher {
 	 * free geometry/material/texture GPU resources.
 	 */
 	releaseTargetModel() {
+
+		this.sceneMetadata = null;
 
 		if ( ! this.targetModel ) return;
 
@@ -298,7 +305,7 @@ export class AssetLoader extends EventDispatcher {
 			texture.generateMipmaps = true;
 
 			this.applyEnvironmentToScene( texture );
-			this.dispatchEvent( { type: 'load', texture } );
+			this.dispatchEvent( { type: 'load', texture, url: envUrl, filename: envUrl.split( /[?#]/ )[ 0 ].split( '/' ).pop() } );
 			return texture;
 
 		} catch ( error ) {
@@ -804,6 +811,7 @@ export class AssetLoader extends EventDispatcher {
 
 							this.releaseTargetModel();
 							this.targetModel = gltf.scene;
+							this.sceneMetadata = extractSceneMetadata( gltf );
 							this.onModelLoad( this.targetModel ).then( () => resolve( gltf ) );
 
 						},
@@ -1104,6 +1112,7 @@ export class AssetLoader extends EventDispatcher {
 
 			this.targetModel = data.scene;
 			this.animations = data.animations || [];
+			this.sceneMetadata = extractSceneMetadata( data );
 			await this.onModelLoad( this.targetModel );
 			this.dispatchEvent( { type: 'load', model: data.scene, filename: modelUrl.split( '/' ).pop() } );
 			return data;
@@ -1204,6 +1213,7 @@ export class AssetLoader extends EventDispatcher {
 
 			this.targetModel = data.scene;
 			this.animations = data.animations || [];
+			this.sceneMetadata = extractSceneMetadata( data );
 			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
 			await this.onModelLoad( this.targetModel );
 

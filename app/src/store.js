@@ -1008,6 +1008,44 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
+	// Mirrors an environment the engine installed by itself — today that is the HDRI authored
+	// into a model file's metadata, reported via the SceneMetadataApplied event. The engine has
+	// already applied its own settings; this only pulls the UI back in sync with them.
+	syncSceneEnvironment: env => {
+
+		if ( ! env?.sourceFile ) return;
+
+		const patch = {
+			environmentMode: 'hdri',
+			enableEnvironment: true,
+			showBackground: true,
+			transparentBackground: false,
+		};
+
+		if ( env.intensity !== undefined ) {
+
+			patch.environmentIntensity = env.intensity;
+			patch.backgroundIntensity = env.intensity;
+
+		}
+
+		if ( env.rotation !== undefined ) patch.environmentRotation = env.rotation;
+
+		set( patch );
+
+		// Prefer the catalog entry when the authored URL is one we already know, so the
+		// Environments tab highlights the matching thumbnail instead of nothing.
+		const known = ( useEnvironmentStore.getState().environments || [] ).find( e => e.url === env.sourceFile );
+		useAssetsStore.getState().setEnvironment( known || {
+			id: env.sourceFile,
+			name: decodeURIComponent( env.sourceFile.split( /[?#]/ )[ 0 ].split( '/' ).pop() || '' ) || 'Scene Environment',
+			preview: null,
+			url: env.sourceFile,
+			source: 'scene',
+		} );
+
+	},
+
 	handleGroundProjectionEnabledChange: val => {
 
 		set( { groundProjectionEnabled: val } );

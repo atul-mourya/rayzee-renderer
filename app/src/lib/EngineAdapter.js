@@ -227,6 +227,13 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
+	// The loaded model file carried an authored environment and the engine installed it.
+	on( 'SceneMetadataApplied', ( e ) => {
+
+		usePathTracerStore?.getState().syncSceneEnvironment?.( e.environment );
+
+	} );
+
 	on( 'SceneRebuild', () => {
 
 		// Update animation clips list when a new scene is loaded

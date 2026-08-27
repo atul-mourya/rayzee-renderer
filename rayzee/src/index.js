@@ -17,6 +17,9 @@ export { EngineEvents } from './EngineEvents.js';
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 
+// Scene-level authoring metadata embedded in model files (glTF `extras`)
+export { extractSceneMetadata, parseSceneMetadata } from './Processor/SceneMetadata.js';
+
 // Logging — leveled/namespaced console output shared with the workers
 export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
 

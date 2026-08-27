@@ -44,13 +44,13 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 		try {
 
-			// loadAssetFromFile dispatches by format (model / archive / environment),
-			// so the UI doesn't branch on extension — .zip (OBJ/MTL, pbrt) and direct
-			// models all route from one entry point.
+			// loadFile dispatches by format (model / archive / environment), so the UI
+			// doesn't branch on extension — .zip (OBJ/MTL, pbrt) and direct models all
+			// route from one entry point, guarded against a concurrent load.
 			const app = getApp();
-			if ( app?.assetLoader ) {
+			if ( app ) {
 
-				await app.assetLoader.loadAssetFromFile( file );
+				await app.loadFile( file );
 
 				toast( {
 					title: "Model Loaded",
@@ -65,11 +65,16 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 		} catch ( error ) {
 
-			toast( {
-				title: "Error Loading Model",
-				description: error.message || "Failed to load model",
-				variant: "destructive",
-			} );
+			toast( error?.code === 'LOAD_IN_PROGRESS'
+				? {
+					title: "Still Loading",
+					description: "Wait for the current load to finish, then open the file again.",
+				}
+				: {
+					title: "Error Loading Model",
+					description: error.message || "Failed to load model",
+					variant: "destructive",
+				} );
 
 		} finally {
 

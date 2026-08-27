@@ -360,8 +360,11 @@ export class EnvironmentManager {
 	/**
 	 * Set environment map, build CDF, and update shader texture nodes.
 	 * @param {import('three').Texture|null} envMap
+	 * @param {Object}  [options]
+	 * @param {boolean} [options.buildCDF=true] - Skip when the caller builds the CDF itself
+	 *   (PathTracerApp.loadSceneData builds it in parallel with the BVH, then calls applyCDFResults).
 	 */
-	async setEnvironmentMap( envMap ) {
+	async setEnvironmentMap( envMap, { buildCDF = true } = {} ) {
 
 		// Free the outgoing env texture's GPU memory before it is orphaned. Skip: the
 		// reusable placeholder, an idempotent re-set of the same texture, and the HDRI
@@ -379,7 +382,7 @@ export class EnvironmentManager {
 
 		if ( envMap ) {
 
-			await this.buildEnvironmentCDF();
+			if ( buildCDF ) await this.buildEnvironmentCDF();
 
 		} else {
 
@@ -408,6 +411,35 @@ export class EnvironmentManager {
 		}
 
 		this._notifyReset();
+
+	}
+
+	/**
+	 * Enter 'hdri' mode ahead of an async HDRI install, and drop the texture stashed by a
+	 * previous setMode( 'gradient' | 'color' | 'procedural' ): a new HDRI makes it
+	 * unreachable, so leaving it in place both leaks it and lets a setMode( 'hdri' )
+	 * arriving mid-download restore it over the map we are about to install.
+	 * @param {import('three').Texture} [incoming] - Never disposed, even if it is the stash.
+	 */
+	beginHDRI( incoming = null ) {
+
+		if ( this._previousHDRI && this._previousHDRI !== incoming ) this._previousHDRI.dispose?.();
+
+		this._previousHDRI = null;
+		this.envParams.mode = 'hdri';
+
+	}
+
+	/**
+	 * Install an HDRI as the active environment, switching the mode state machine to 'hdri'.
+	 * @param {import('three').Texture} envMap
+	 * @param {Object}  [options]
+	 * @param {boolean} [options.buildCDF=true]
+	 */
+	async applyHDRI( envMap, { buildCDF = true } = {} ) {
+
+		this.beginHDRI( envMap );
+		await this.setEnvironmentMap( envMap, { buildCDF } );
 
 	}
 

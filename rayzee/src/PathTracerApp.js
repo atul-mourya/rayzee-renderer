@@ -109,6 +109,9 @@ export class PathTracerApp extends EventDispatcher {
 		this.canvas = canvas;
 		this._autoResize = options.autoResize !== false;
 		this._container = options.container || null;
+		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
+		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
+		this._applyingSceneMetadata = false;
 
 		// ── Settings (single source of truth for all render parameters) ──
 		this.settings = new RenderSettings( DEFAULT_STATE );
@@ -675,16 +678,25 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * A load is already running. Typed so hosts can tell "you clicked too fast" apart from
+	 * a genuine load failure and say so, instead of dropping the request on the floor.
+	 * @private
+	 */
+	_busyError( where ) {
+
+		const error = new Error( `${where}: another load is already in progress` );
+		error.code = 'LOAD_IN_PROGRESS';
+		return error;
+
+	}
+
+	/**
 	 * Loads an environment map and rebuilds CDF.
 	 * @param {string} url - Environment URL
 	 */
 	async loadEnvironment( url ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.loadEnvironment: another load is already in progress' );
-
-		}
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadEnvironment' );
 
 		this._loadingInProgress = true;
 
@@ -702,6 +714,63 @@ export class PathTracerApp extends EventDispatcher {
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
 			this.dispatchEvent( { type: 'EnvironmentLoaded', url } );
+
+		} finally {
+
+			this._loadingInProgress = false;
+
+		}
+
+	}
+
+	/**
+	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
+	 * map, dispatched by extension.
+	 *
+	 * Prefer this over driving `assetLoader.loadAssetFromFile()` directly. That bypasses the
+	 * in-progress guard, and AssetLoader disposes the outgoing model before it knows whether
+	 * the engine will rebuild: a file dropped mid-load would tear down the live scene, add the
+	 * new one to the graph, and then be discarded by the `load` handler — leaving the path
+	 * tracer rendering buffers whose geometry has been freed. Here a concurrent call throws
+	 * LOAD_IN_PROGRESS before anything is touched.
+	 *
+	 * @param {File} file
+	 * @returns {Promise<void>}
+	 */
+	async loadFile( file ) {
+
+		const format = this.assetLoader?.getFileFormat( file?.name || '' );
+		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
+
+		if ( format.type !== 'environment' && format.type !== 'image' ) {
+
+			await this._loadWithSceneRebuild(
+				() => this.assetLoader.loadAssetFromFile( file ),
+				{ type: 'ModelLoaded', filename: file.name }
+			);
+			return;
+
+		}
+
+		// Environment drop: install it, no scene rebuild.
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadFile' );
+
+		this._loadingInProgress = true;
+
+		try {
+
+			await this.assetLoader.loadAssetFromFile( file );
+
+			const texture = this.meshScene.environment;
+			if ( texture && this.stages.pathTracer ) {
+
+				await this.stages.pathTracer.environment.applyHDRI( texture );
+
+			}
+
+			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			this.reset();
+			this.dispatchEvent( { type: 'EnvironmentLoaded', filename: file.name } );
 
 		} finally {
 
@@ -784,11 +853,7 @@ export class PathTracerApp extends EventDispatcher {
 	/** Shared pipeline: load asset → sync controls → build BVH → reset → dispatch events */
 	async _loadWithSceneRebuild( loadFn, eventPayload ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp: another load is already in progress' );
-
-		}
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
 
 		this._loadingInProgress = true;
 
@@ -803,7 +868,7 @@ export class PathTracerApp extends EventDispatcher {
 			// (The old primary was already released by releaseTargetModel() in loadFn.)
 			this._clearAppendedModels();
 			this._syncControlsAfterLoad();
-			await this.loadSceneData();
+			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
 			this.cameraManager.currentCameraIndex = 0;
@@ -819,10 +884,98 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
+	 * or null when the file has none. See {@link module:Processor/SceneMetadata}.
+	 * @type {{ environment?: { sourceFile: string, rotation?: number, intensity?: number } }|null}
+	 */
+	get sceneMetadata() {
+
+		return this.assetLoader?.sceneMetadata ?? null;
+
+	}
+
+	/**
+	 * Starts fetching the environment authored into the just-loaded model's metadata and
+	 * returns a promise for the texture — deliberately NOT awaited here. The fetch is the
+	 * longest single step of such a load (measured 1448 ms for a 1k HDRI against 325 ms to
+	 * build and upload a 112k-triangle scene), so the promise is handed to loadSceneData(),
+	 * which installs it and builds its CDF while the BVH builds.
+	 *
+	 * Called from both replace-load seams: the URL/catalog path (_loadWithSceneRebuild) and
+	 * the drag-drop / File-open path, which drives the AssetLoader directly and rebuilds via
+	 * the 'load' event (_onAssetLoaded). Appending a model never applies it — an appended
+	 * model must not hijack the scene's environment.
+	 *
+	 * Resolves to null and never rejects: a failed fetch leaves the model on the current
+	 * environment. Returns null outright when there is nothing to apply.
+	 * Opt out per app with `new PathTracerApp( canvas, { applySceneMetadata: false } )`.
+	 *
+	 * @returns {Promise<import('three').Texture|null>|null}
+	 */
+	_beginSceneMetadataEnvironment() {
+
+		const env = this.sceneMetadata?.environment;
+		if ( ! this._applySceneMetadataEnabled || ! env?.sourceFile || ! this.stages.pathTracer ) return null;
+
+		// Claim 'hdri' mode up front: loadEnvironment() fires beforeEnvironmentLoad, and a
+		// host that answers it with setMode( 'hdri' ) would otherwise restore the HDRI
+		// stashed by the current sky mode on top of the download now in flight.
+		this.stages.pathTracer.environment.beginHDRI();
+		this._applyingSceneMetadata = true;
+
+		return this.assetLoader.loadEnvironment( env.sourceFile )
+			.catch( error => {
+
+				log.warn( `scene metadata: environment "${env.sourceFile}" failed to load`, error );
+				return null;
+
+			} )
+			.finally( () => {
+
+				this._applyingSceneMetadata = false;
+
+			} );
+
+	}
+
+	/**
+	 * Mirrors the authored environment onto the settings once its texture is installed.
+	 * The authored env is both the light and the backdrop, so the backdrop axis
+	 * (showBackground / transparentBackground) is forced to the image.
+	 * @private
+	 */
+	_applySceneMetadataSettings( texture ) {
+
+		const metadata = this.sceneMetadata;
+		const env = metadata?.environment;
+		if ( ! env ) return;
+
+		const updates = { enableEnvironment: true, showBackground: true, transparentBackground: false };
+		if ( env.intensity !== undefined ) {
+
+			updates.environmentIntensity = env.intensity;
+			updates.backgroundIntensity = env.intensity;
+
+		}
+
+		if ( env.rotation !== undefined ) updates.environmentRotation = env.rotation;
+
+		this.settings.setMany( updates, { reset: false } );
+		if ( this.scene ) this.scene.background = texture;
+
+		this.dispatchEvent( { type: 'SceneMetadataApplied', metadata, environment: { ...env } } );
+
+	}
+
+	/**
 	 * Builds BVH from meshScene and uploads all scene data to the path tracer.
+	 * @param {Object} [options]
+	 * @param {Promise<import('three').Texture|null>} [options.pendingEnvironment] - An
+	 *   environment still being fetched (see _beginSceneMetadataEnvironment). Installed and
+	 *   CDF'd concurrently with the BVH build rather than before it.
 	 * @returns {boolean}
 	 */
-	async loadSceneData() {
+	async loadSceneData( { pendingEnvironment = null } = {} ) {
 
 		// Clear selection before rebuilding — the old object leaves the scene graph.
 		// Skipped on the append path (addModel): the selected object persists, so its
@@ -841,7 +994,23 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Environment CDF build in parallel with BVH
 		let cdfPromise = null;
-		if ( environmentTexture?.image?.data ) {
+		if ( pendingEnvironment ) {
+
+			// The authored environment is still downloading. Install + CDF it off to the side so
+			// the fetch overlaps the BVH build below instead of gating it.
+			timer.start( 'Environment fetch + CDF (concurrent)' );
+			cdfPromise = pendingEnvironment
+				.then( async texture => {
+
+					if ( ! texture ) return;
+					await this.stages.pathTracer.environment.applyHDRI( texture );
+					this._applySceneMetadataSettings( texture );
+
+				} )
+				.catch( error => log.warn( 'scene metadata: environment install failed', error ) )
+				.finally( () => timer.end( 'Environment fetch + CDF (concurrent)' ) );
+
+		} else if ( environmentTexture?.image?.data ) {
 
 			timer.start( 'Environment CDF build (worker)' );
 			this.stages.pathTracer.scene.environment = environmentTexture;
@@ -861,7 +1030,9 @@ export class PathTracerApp extends EventDispatcher {
 		await new Promise( r => setTimeout( r, 0 ) );
 		timer.start( 'GPU data transfer' );
 
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, environmentTexture ) ) return false;
+		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
+		// during the BVH build, and the snapshot is then a disposed texture.
+		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, this.meshScene.environment ) ) return false;
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -2612,11 +2783,18 @@ export class PathTracerApp extends EventDispatcher {
 
 			if ( this._loadingInProgress ) return;
 
+			// The authored-environment fetch runs through this same AssetLoader, so its 'load'
+			// event lands right back here. We install that texture ourselves — without the
+			// guard the texture branch below would rebuild the CDF a second time and
+			// resetLoading() would tear down the overlay mid-upload. Model events still pass:
+			// a user can drop another file while the environment is in flight.
+			if ( this._applyingSceneMetadata && event.texture ) return;
+
 			if ( event.model ) {
 
 				// Drag-drop / file load is a replace: clear any appended models first.
 				this._clearAppendedModels();
-				await this.loadSceneData();
+				await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 
 			} else if ( event.texture ) {
 
