@@ -1,6 +1,6 @@
 {
   "name": "rayzee",
-  "version": "7.26.1",
+  "version": "7.26.2",
   "type": "module",
   "description": "Real-time WebGPU path tracing engine built on Three.js",
   "main": "dist/rayzee.umd.js",
