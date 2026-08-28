@@ -1,4 +1,4 @@
-import { Box3, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
+import { Box3, BufferGeometry, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
 	TextureLoader, Texture, SRGBColorSpace, RepeatWrapping, Mesh, MeshStandardMaterial, MeshPhysicalMaterial,
 	CircleGeometry, Points, PointsMaterial, LoadingManager, EventDispatcher
 } from 'three';
@@ -8,9 +8,10 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils.js';
+import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
-import { disposeObjectFromMemory, updateLoading } from './utils';
+import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
@@ -36,6 +37,18 @@ const SUPPORTED_FORMATS = {
 // layers and the image assets they reference.
 const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
 const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
+// A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
+// reorders and disposes what it is given, but never writes the attributes.
+function standInForSplit( source ) {
+
+	const geometry = new BufferGeometry();
+	for ( const name in source.attributes ) geometry.setAttribute( name, source.attributes[ name ] );
+	if ( source.index ) geometry.setIndex( source.index );
+	for ( const group of source.groups ) geometry.addGroup( group.start, group.count, group.materialIndex );
+	return geometry;
+
+}
+
 /**
  * AssetLoader class - handles loading of 3D models, environment maps, and archives
  */
@@ -48,7 +61,6 @@ export class AssetLoader extends EventDispatcher {
 		this.camera = camera;
 		this.controls = controls;
 		this.targetModel = null;
-		this._externalModel = null;
 		this.floorPlane = null;
 		this.sceneScale = 1.0;
 		this.loaderCache = {};
@@ -132,29 +144,58 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	/**
-	 * Releases the current targetModel. If it was supplied by the caller via
-	 * loadObject3D(), we only detach it from its parent — the caller still owns
-	 * that Object3D and may reuse it. Otherwise we disposeObjectFromMemory() to
-	 * free geometry/material/texture GPU resources.
+	 * Deep-clones a caller-owned Object3D so the engine never mutates the host's tree.
+	 * Geometry/material/texture ride along by reference, so release frees only what the engine
+	 * allocated — see removeModelRoot().
+	 *
+	 * @param {import('three').Object3D} object3d - the caller's object; left untouched.
+	 * @returns {import('three').Object3D} the engine-owned copy.
 	 */
+	_adoptExternalObject( object3d ) {
+
+		// Not Object3D.clone(): that leaves SkinnedMeshes bound to the source's bones.
+		let model;
+		try {
+
+			model = cloneWithSkeletons( object3d );
+
+		} catch ( error ) {
+
+			// Object3D.copy() round-trips userData through JSON, so a back-reference throws.
+			throw new Error(
+				`Cannot render "${object3d.name || object3d.type}": its userData must be JSON-serializable.`,
+				{ cause: error }
+			);
+
+		}
+
+		model.userData.__rayzeeExternal = true;
+
+		// Carried through as the scene-object id, unless a second copy already took it.
+		if ( ! this.scene?.children.some( c => c.uuid === object3d.uuid ) ) model.uuid = object3d.uuid;
+
+		// The copy sits under the engine's identity root, which keeps only a local transform.
+		if ( object3d.parent ) {
+
+			object3d.parent.updateWorldMatrix( true, false );
+			model.applyMatrix4( object3d.parent.matrixWorld );
+
+		}
+
+		return model;
+
+	}
+
+	/** Releases the current targetModel. See removeModelRoot() for what gets freed. */
 	releaseTargetModel() {
 
 		this.sceneMetadata = null;
 
 		if ( ! this.targetModel ) return;
 
-		if ( this.targetModel === this._externalModel ) {
-
-			this.targetModel.parent?.remove( this.targetModel );
-
-		} else {
-
-			disposeObjectFromMemory( this.targetModel );
-
-		}
+		this.removeModelRoot( this.targetModel );
 
 		this.targetModel = null;
-		this._externalModel = null;
 		// Drop the released model's animation clips so a later rebuild doesn't rebind
 		// a mixer to disposed nodes. Every load path re-populates this.animations after.
 		this.animations = [];
@@ -1180,21 +1221,32 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	// Append a caller-owned Object3D without releasing prior models or reframing.
+	// Append a copy of a caller-owned Object3D without releasing prior models or reframing.
 	appendObject3D( object3d, name = 'object3d' ) {
 
-		object3d.name = object3d.name || name;
-		this._processAndParent( object3d );
-		return { root: object3d };
+		const root = this._adoptExternalObject( object3d );
+		root.name = object3d.name || name;
+		this._processAndParent( root );
+		return { root };
 
 	}
 
-	// Detach + dispose an appended root. External (caller-owned) roots are only detached.
-	removeModelRoot( root, { external = false } = {} ) {
+	// Detach + dispose a model root. An adopted root's geometry/materials belong to the
+	// caller, so only the engine's own allocations go.
+	removeModelRoot( root ) {
 
 		if ( ! root ) return;
-		if ( external ) root.parent?.remove( root );
-		else disposeObjectFromMemory( root );
+
+		if ( root.userData.__rayzeeExternal ) {
+
+			disposeEngineOwnedResources( root );
+			root.parent?.remove( root );
+
+		} else {
+
+			disposeObjectFromMemory( root );
+
+		}
 
 	}
 
@@ -1510,17 +1562,18 @@ export class AssetLoader extends EventDispatcher {
 
 	async loadObject3D( object3d, name = 'object3d' ) {
 
-		object3d.name = object3d.name || name;
-
 		this.releaseTargetModel();
-		this.targetModel = object3d;
-		this._externalModel = object3d;
+
+		const model = this._adoptExternalObject( object3d );
+		model.name = object3d.name || name;
+
+		this.targetModel = model;
 
 		updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
 		await this.onModelLoad( this.targetModel );
 
-		this.dispatchEvent( { type: 'load', model: object3d, filename: name } );
-		return object3d;
+		this.dispatchEvent( { type: 'load', model, filename: name } );
+		return model;
 
 	}
 
@@ -1656,6 +1709,9 @@ export class AssetLoader extends EventDispatcher {
 	processModelObjects( model ) {
 
 		let visitedAreaLights = [];
+		// Split after the walk: traverse() caches children.length, so splitting in place
+		// shifts later siblings down a slot and skips one.
+		const multiMaterialMeshes = [];
 		model.traverse( ( object ) => {
 
 			const userData = object.userData;
@@ -1709,19 +1765,29 @@ export class AssetLoader extends EventDispatcher {
 			// Handle multi-material meshes
 			if ( object.isMesh && Array.isArray( object.material ) ) {
 
-				console.log( 'Found multi-material mesh:', object.name );
-				const group = createMeshesFromMultiMaterialMesh( object );
-
-				if ( object.parent ) {
-
-					object.parent.add( group );
-					object.parent.remove( object );
-
-				}
+				multiMaterialMeshes.push( object );
 
 			}
 
 		} );
+
+		const shared = model.userData.__rayzeeExternal === true;
+
+		for ( const object of multiMaterialMeshes ) {
+
+			if ( ! object.parent ) continue;
+
+			console.log( 'Found multi-material mesh:', object.name );
+			if ( shared ) object.geometry = standInForSplit( object.geometry );
+
+			const group = createMeshesFromMultiMaterialMesh( object );
+			// Fresh geometry per group; tag it so an adopted model's release can free it.
+			for ( const child of group.children ) child.geometry.userData.__rayzeeOwned = true;
+
+			object.parent.add( group );
+			object.parent.remove( object );
+
+		}
 
 	}
 

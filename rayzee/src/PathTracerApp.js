@@ -57,6 +57,8 @@ const _appsByCanvas = new WeakMap();
  * - `app.settings`           — {@link RenderSettings} (all render parameters)
  * - `app.stages`             — Named pipeline stages for advanced control
  * - `app.sceneMeshes`        — meshes backing the BVH, in buffer order (see {@link refitBVH})
+ * - `app.sceneModel`         — root of the rendered model (a copy, for {@link loadObject3D})
+ * - `app.getSceneObject(id)` — the rendered root for an appended object's id
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
@@ -626,8 +628,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.interactionManager?.deselect();
 		this.transformManager?.detach?.();
 
-		// Release the loaded model. If loaded via loadObject3D(), the caller owns it —
-		// we only detach it from the scene. Otherwise dispose geometries/materials/textures.
 		this.assetLoader?.releaseTargetModel();
 
 		// Clear lights in the WebGPU light scene
@@ -665,7 +665,13 @@ export class PathTracerApp extends EventDispatcher {
 	/**
 	 * Loads a Three.js Object3D directly into the path tracer scene.
 	 * Builds BVH from the object's meshes and uploads scene data.
-	 * @param {import('three').Object3D} object3d - The Object3D to render
+	 *
+	 * Renders a copy: `object3d` is never reparented, rewritten or disposed, so passing a
+	 * subtree of a scene the host still renders is safe. Geometry/material/texture are shared
+	 * by reference, and any ancestor transform is baked in. Later edits to `object3d` do not
+	 * reach the render — mutate {@link sceneModel}, then {@link refitBVH}/{@link refitBLASes}.
+	 *
+	 * @param {import('three').Object3D} object3d - The Object3D to render; left untouched.
 	 * @param {string} [name='object3d'] - Display name for the object
 	 */
 	async loadObject3D( object3d, name = 'object3d' ) {
@@ -1134,10 +1140,9 @@ export class PathTracerApp extends EventDispatcher {
 	/** Tag the primary (replace-loaded) model as a removable scene object (read by the Outliner + removeSceneObject). Idempotent. */
 	_tagPrimarySceneObject() {
 
-		const m = this.assetLoader?.targetModel;
+		const m = this.sceneModel;
 		if ( ! m ) return;
 		m.userData.__rayzeeSceneObject = true;
-		m.userData.__rayzeeExternal = ( m === this.assetLoader._externalModel );
 
 	}
 
@@ -1147,12 +1152,12 @@ export class PathTracerApp extends EventDispatcher {
 		const scene = this.meshScene;
 		if ( ! scene ) return;
 		const floor = this.assetLoader?.floorPlane;
-		const primary = this.assetLoader?.targetModel;
+		const primary = this.sceneModel;
 		for ( const child of [ ...scene.children ] ) {
 
 			if ( child === floor || child === primary ) continue;
 			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			this.assetLoader.removeModelRoot( child, { external: !! child.userData.__rayzeeExternal } );
+			this.assetLoader.removeModelRoot( child );
 
 		}
 
@@ -1191,7 +1196,6 @@ export class PathTracerApp extends EventDispatcher {
 
 			const { root } = await this.assetLoader.appendModel( url );
 			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeExternal = false;
 			if ( name ) root.userData.__rayzeeName = name;
 			await this._finishRebuildNoReframe( { type: 'ModelAdded', url, id: root.uuid } );
 			return root.uuid;
@@ -1207,7 +1211,7 @@ export class PathTracerApp extends EventDispatcher {
 
 	/**
 	 * Append a caller-owned Object3D to the current scene, then rebuild (no reframe).
-	 * The caller retains ownership — removal only detaches it.
+	 * Appends a copy; the object passed in is never mutated. Same rules as {@link loadObject3D}.
 	 * @param {import('three').Object3D} object3d
 	 * @param {Object} [opts]
 	 * @param {string} [opts.name]
@@ -1227,7 +1231,6 @@ export class PathTracerApp extends EventDispatcher {
 
 			const { root } = this.assetLoader.appendObject3D( object3d, name || 'object3d' );
 			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeExternal = true;
 			if ( name ) root.userData.__rayzeeName = name;
 			await this._finishRebuildNoReframe( { type: 'ModelAdded', id: root.uuid } );
 			return root.uuid;
@@ -1254,7 +1257,7 @@ export class PathTracerApp extends EventDispatcher {
 		const floor = this.assetLoader?.floorPlane;
 		if ( floor && floor.uuid === id ) return false; // Ground is not deletable
 
-		const root = scene.children.find( c => c.uuid === id && c.userData?.__rayzeeSceneObject );
+		const root = this.getSceneObject( id );
 		if ( ! root ) return false;
 
 		if ( this._loadingInProgress ) {
@@ -1269,13 +1272,13 @@ export class PathTracerApp extends EventDispatcher {
 			this.interactionManager?.deselect();
 			this.transformManager?.detach?.();
 
-			if ( root === this.assetLoader.targetModel ) {
+			if ( root === this.sceneModel ) {
 
 				this.assetLoader.releaseTargetModel();
 
 			} else {
 
-				this.assetLoader.removeModelRoot( root, { external: !! root.userData.__rayzeeExternal } );
+				this.assetLoader.removeModelRoot( root );
 
 			}
 
@@ -1375,6 +1378,32 @@ export class PathTracerApp extends EventDispatcher {
 	get sceneMeshes() {
 
 		return this._sdf?.meshes ?? [];
+
+	}
+
+	/**
+	 * Root of the model actually being rendered. For {@link loadObject3D} this is the engine's
+	 * copy, not the object you passed — mutate this one, then {@link refitBVH}/{@link refitBLASes}.
+	 *
+	 * @returns {import('three').Object3D|null} Live reference, or null when nothing is loaded.
+	 */
+	get sceneModel() {
+
+		return this.assetLoader?.targetModel ?? null;
+
+	}
+
+	/**
+	 * Resolve an id from {@link addModel}/{@link addModelFromObject3D} to the root being
+	 * rendered for it — for an appended Object3D, the engine's copy.
+	 *
+	 * @param {string} id
+	 * @returns {import('three').Object3D|null} Live reference, or null if no such object.
+	 */
+	getSceneObject( id ) {
+
+		const root = this.meshScene?.children.find( c => c.uuid === id );
+		return root?.userData?.__rayzeeSceneObject ? root : null;
 
 	}
 
@@ -2839,7 +2868,7 @@ export class PathTracerApp extends EventDispatcher {
 		const animations = this.assetLoader?.animations || [];
 		if ( animations.length > 0 ) {
 
-			const mixerRoot = this.assetLoader?.targetModel || this.meshScene;
+			const mixerRoot = this.sceneModel || this.meshScene;
 			this.animationManager.init( this.meshScene, mixerRoot, this._sdf.meshes, animations );
 			this.animationManager.onFinished = () => {
 

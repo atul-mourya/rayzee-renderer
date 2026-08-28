@@ -1009,12 +1009,12 @@ export const SCENES = [
 
 			await app.stages.pathTracer.environment.setMode( 'gradient' );
 
-			const rig = makeRefitRig();
-			await app.loadObject3D( rig, 'refit' );
+			await app.loadObject3D( makeRefitRig(), 'refit' );
 
 			// Move to pose B and refit, rather than building at pose B. Building there would
 			// exercise a fresh SAH build — the one path this scene exists NOT to test.
-			deformToPoseB( rig );
+			// Poses `app.sceneModel`, not the rig: loadObject3D() renders a copy of what it is given.
+			deformToPoseB( app.sceneModel );
 			const { positions, normals } = extractWorldTriangles( app );
 			await app.refitBVH( positions, normals );
 
