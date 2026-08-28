@@ -469,23 +469,29 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => app.stages.pathTracer?.setAccumulationEnabled( val )
 	),
 
+	// These three are summed into the wavefront loop bound, so an un-unwrapped [n] from a
+	// Slider turns `a + b + c` into string concatenation ([20] + 5 + 8 === '2058') and the
+	// bounce loop runs to 2058 whenever the survivor curve can't early-exit it.
 	handleBouncesChange: val => {
 
-		set( { bounces: val } );
-		getApp()?.settings.set( 'maxBounces', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { bounces: v } );
+		getApp()?.settings.set( 'maxBounces', v );
 
 	},
 
 	handleTransmissiveBouncesChange: val => {
 
-		set( { transmissiveBounces: val } );
-		getApp()?.settings.set( 'transmissiveBounces', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { transmissiveBounces: v } );
+		getApp()?.settings.set( 'transmissiveBounces', v );
 
 	},
 	handleMaxSubsurfaceStepsChange: val => {
 
-		set( { maxSubsurfaceSteps: val } );
-		getApp()?.settings.set( 'maxSubsurfaceSteps', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { maxSubsurfaceSteps: v } );
+		getApp()?.settings.set( 'maxSubsurfaceSteps', v );
 
 	},
 
