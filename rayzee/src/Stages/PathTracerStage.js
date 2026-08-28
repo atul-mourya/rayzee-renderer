@@ -453,9 +453,6 @@ export class PathTracerStage extends RenderStage {
 		await this.sdfs.buildBVH( scene );
 		this.cameras = this.sdfs.cameras;
 
-		// Inject shader defines based on detected material features
-		this.materialData.injectMaterialFeatureDefines();
-
 		// Update uniforms with scene data
 		this.updateSceneUniforms();
 		this.updateLights();

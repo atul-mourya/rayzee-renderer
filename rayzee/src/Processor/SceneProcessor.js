@@ -324,7 +324,6 @@ export class SceneProcessor {
 
 			// Store other extracted data
 			this.materials = extractedData.materials;
-			this.materialCount = this.materials.length; // Store material count for feature scanning
 			this.materialTriangleCounts = extractedData.materialTriangleCounts; // Per-material tri count for sort-bin remap
 			this.meshes = extractedData.meshes;
 			this.meshTriangleRanges = extractedData.meshTriangleRanges; // Per-mesh { start, count } for TLAS/BLAS
@@ -347,7 +346,6 @@ export class SceneProcessor {
 			this.specularColorMaps = extractedData.specularColorMaps;
 			this.directionalLights = extractedData.directionalLights;
 			this.cameras = extractedData.cameras;
-			this.sceneFeatures = extractedData.sceneFeatures; // Store material feature flags for shader optimization
 
 			const duration = performance.now() - startTime;
 			this._log( `Geometry extraction complete (${duration.toFixed( 2 )}ms)`, {
@@ -1157,7 +1155,6 @@ export class SceneProcessor {
 
 			// Update material arrays (but keep existing triangle data)
 			this.materials = extractedData.materials;
-			this.materialCount = this.materials.length; // Update material count
 			this.meshes = extractedData.meshes; // Update mesh data
 			this.maps = extractedData.maps;
 			this.normalMaps = extractedData.normalMaps;
@@ -1166,7 +1163,6 @@ export class SceneProcessor {
 			this.metalnessMaps = extractedData.metalnessMaps;
 			this.emissiveMaps = extractedData.emissiveMaps;
 			this.displacementMaps = extractedData.displacementMaps;
-			this.sceneFeatures = extractedData.sceneFeatures; // Update material feature flags
 
 			// Bucket textures, remap material indices, regenerate raw material data, and
 			// build the consolidated bucket arrays — same path as the initial build.
