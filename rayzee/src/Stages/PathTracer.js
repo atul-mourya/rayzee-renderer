@@ -710,6 +710,18 @@ export class PathTracer extends PathTracerStage {
 
 		if ( this._readbackPending ) return;
 
+		// A curve measured at a different budget has an untrusted tail, so curveReliableUpto collapses
+		// to the old budget: the per-bounce early exit is off past that point and every remaining
+		// iteration full-sizes off curve[curveReliableUpto - 1]. Measured on a 1024² interior, raising
+		// the budget 3 -> 20 doubles the frame's dispatch work (13 -> 26 bounce iterations, 109 -> 214
+		// compute passes) for as long as that lasts. Waiting out the N-frame cadence just extends it, so
+		// re-measure on the next frame instead — same idiom as the mid-motion priming above.
+		if ( this.maxBounces.value !== this._lastBounceCountsBudget ) {
+
+			this._readbackFrameCounter = this._readbackEveryNFrames;
+
+		}
+
 		this._readbackFrameCounter ++;
 		if ( this._readbackFrameCounter < this._readbackEveryNFrames ) return;
 		this._readbackFrameCounter = 0;
