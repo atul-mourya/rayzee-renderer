@@ -123,3 +123,4 @@ CLAUDE.md
 
 # Local test models — 800 MB of GLBs used by bench --model, never redistributed
 app/public/models/
+app/public/24155522.glb
