@@ -210,6 +210,78 @@ describe( 'CompletionTracker', () => {
 
 	} );
 
+	// ── stopCondition ──────────────────────────────────────────
+
+	describe( 'stopCondition', () => {
+
+		it( 'reports the deadline when the budget retired the frame', () => {
+
+			const stage = makeStage( { frameCount: 4, completionThreshold: 30 } );
+			advance( 5000 );
+			tracker.isTimeLimitReached( stage, 'time', 5 );
+			expect( tracker.stopCondition( stage ) ).toBe( 'timeLimit' );
+
+		} );
+
+		it( 'reports the ceiling at the sample limit', () => {
+
+			const stage = makeStage( { frameCount: 30, completionThreshold: 30 } );
+			expect( tracker.stopCondition( stage ) ).toBe( 'samples' );
+
+		} );
+
+		it( 'reports convergence when it stopped below the ceiling', () => {
+
+			const stage = makeStage( { frameCount: 11, completionThreshold: 30, converged: true } );
+			expect( tracker.stopCondition( stage ) ).toBe( 'converged' );
+
+		} );
+
+		// The three race and can all be true on the last sample. A render that spent its whole
+		// budget must not claim it retired early, or the tick lands on the wrong condition.
+		it( 'prefers the ceiling over convergence on the same sample', () => {
+
+			const stage = makeStage( { frameCount: 30, completionThreshold: 30, converged: true } );
+			expect( tracker.stopCondition( stage ) ).toBe( 'samples' );
+
+		} );
+
+		it( 'prefers the deadline over both', () => {
+
+			const stage = makeStage( { frameCount: 30, completionThreshold: 30, converged: true } );
+			advance( 5000 );
+			tracker.isTimeLimitReached( stage, 'time', 5 );
+			expect( tracker.stopCondition( stage ) ).toBe( 'timeLimit' );
+
+		} );
+
+		// null, not a reason: nothing has fired yet, so isLimitReached must keep rendering.
+		it( 'returns null while no condition is satisfied', () => {
+
+			const stage = makeStage( { frameCount: 5, completionThreshold: 30 } );
+			expect( tracker.stopCondition( stage ) ).toBeNull();
+
+		} );
+
+		it( 'tolerates a missing stage', () => {
+
+			expect( tracker.stopCondition( undefined ) ).toBeNull();
+
+		} );
+
+		it( 'rearms after reset', () => {
+
+			const stage = makeStage( { frameCount: 4, completionThreshold: 30, converged: true } );
+			advance( 5000 );
+			tracker.isTimeLimitReached( stage, 'time', 5 );
+			expect( tracker.stopCondition( stage ) ).toBe( 'timeLimit' );
+			tracker.reset();
+			expect( tracker.stopCondition( stage ) ).toBe( 'converged' );
+
+		} );
+
+	} );
+
 	// ── markComplete / resumeFromPause ─────────────────────────
 
 	describe( 'markComplete', () => {

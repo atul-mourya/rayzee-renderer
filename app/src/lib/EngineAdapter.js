@@ -25,10 +25,11 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	}
 
 	// ── Render lifecycle ─────────────────────────────────────
-	on( EngineEvents.RENDER_COMPLETE, () => {
+	on( EngineEvents.RENDER_COMPLETE, ( e ) => {
 
 		useStore.getState().setIsRenderComplete( true );
 		useStore.getState().setIsRendering( false );
+		useStore.getState().setCompletionReason( e?.reason ?? null );
 
 	} );
 
@@ -36,6 +37,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 		useStore.getState().setIsRenderComplete( false );
 		useStore.getState().setIsRendering( true );
+		useStore.getState().setCompletionReason( null );
 
 	} );
 

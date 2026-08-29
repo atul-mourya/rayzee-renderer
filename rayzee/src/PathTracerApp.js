@@ -393,6 +393,9 @@ export class PathTracerApp extends EventDispatcher {
 					samples: this.stages.pathTracer.frameCount,
 					timeElapsed: this.completion.timeElapsed,
 					budgetOverrun: this.completion.budgetOverrun,
+					// null means isComplete was forced rather than earned (the reconcile below);
+					// a forced stop is closer to the ceiling than to convergence.
+					reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
 				};
 
 				this.dispatchEvent( { type: 'RenderComplete', ...completionInfo } );

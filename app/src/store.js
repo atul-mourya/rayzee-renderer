@@ -81,6 +81,11 @@ const useStore = create( set => ( {
 	setUpscalingProgress: val => set( { upscalingProgress: val } ),
 	isRenderComplete: false,
 	setIsRenderComplete: val => set( { isRenderComplete: val } ),
+	// Which of the three racing stop conditions retired the frame: 'timeLimit' | 'samples' |
+	// 'converged', null while rendering. The three are not mutually exclusive, so without this
+	// a render that stops at 540 of 600 looks indistinguishable from one that stalled.
+	completionReason: null,
+	setCompletionReason: val => set( { completionReason: val } ),
 	isRendering: true,
 	setIsRendering: val => set( { isRendering: val } ),
 	resetLoading: () => set( { loading: { isLoading: false, progress: 0, title: '', status: '', loadedBytes: null, totalBytes: null, canCancel: false } } ),

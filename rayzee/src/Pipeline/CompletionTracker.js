@@ -83,12 +83,33 @@ export class CompletionTracker {
 
 		if ( ! pathTracer ) return false;
 
+		// Arms budgetOverrun, which stopCondition reads.
 		if ( this.isTimeLimitReached( pathTracer, renderLimitMode, renderTimeLimit ) ) return true;
 
-		// Tier-1 convergence early-stop must agree with PathTracer.render()'s own check, else the app-level
-		// reconcile would flip isComplete back off and keep dispatching after the frame converged.
-		return pathTracer.frameCount >= pathTracer.completionThreshold
-			|| ( pathTracer._isConvergedComplete?.() ?? false );
+		return this.stopCondition( pathTracer ) !== null;
+
+	}
+
+	/**
+	 * Which stop condition is satisfied, or null to keep rendering — the one place the condition
+	 * set lives, so "should we stop" and "why did we stop" cannot drift apart. The Tier-1
+	 * convergence check must agree with PathTracer.render()'s own, else the app-level reconcile
+	 * flips isComplete back off and keeps dispatching after the frame converged.
+	 *
+	 * Ceiling before convergence: a render that spent its whole budget reports the ceiling even
+	 * when it also converged on that sample.
+	 *
+	 * @param {Object} pathTracer - The PathTracer stage
+	 * @returns {'timeLimit'|'samples'|'converged'|null}
+	 */
+	stopCondition( pathTracer ) {
+
+		if ( this.budgetOverrun ) return 'timeLimit';
+		if ( ! pathTracer ) return null;
+		if ( pathTracer.frameCount >= pathTracer.completionThreshold ) return 'samples';
+		if ( pathTracer._isConvergedComplete?.() ) return 'converged';
+
+		return null;
 
 	}
 

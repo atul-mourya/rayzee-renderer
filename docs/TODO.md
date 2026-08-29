@@ -1,7 +1,7 @@
 # Rayzee Path Tracer - TODO List
 
 ## Bugs
-- when rendering done due to convergence, we need to indicate that. For example. 540 / 600, convergence completed in 540 frame before reaching 600 maxsamples
+- [x] ~~when rendering done due to convergence, we need to indicate that~~ — the HUD presented Time and Frames as a two-way toggle, but the engine races all three stop conditions and takes whichever fires first: the sample ceiling ALWAYS binds, convergence binds whenever adaptive sampling is on (regardless of the toggle), and only the time deadline is actually gated by the mode. Adaptive was also invisible — its switch lives in the Path Tracer tab and its `ConvergenceReadout` only renders when the *debug* Convergence Overlay is on. Fixed by `CompletionTracker.stopCondition()` — nullable, and now the single place the condition set lives (`isLimitReached` delegates to it, so "should we stop" and "why" cannot drift): `timeLimit` > `samples` > `converged`, so a render that spends its whole budget reports the ceiling even when it also converged on that sample. Carried on the completion event into `useStore.completionReason` and shown as an "Auto" chip beside Time/Frames with a green tick on whichever condition retired the frame. The chip toggles adaptive in preview but is **read-only in final render** — unlike the Time/Frames chips, `useAdaptiveSampling` carries `reset: true`, so a stray click there would discard minutes of accumulation. Verified against the real animate loop: cap 8 → `samples`/8, adaptive → `converged`/48 of 4000, 0.3s budget → `timeLimit`/305.
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
