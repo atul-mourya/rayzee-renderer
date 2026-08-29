@@ -29,6 +29,9 @@ export class UniformManager {
 		/** @type {Set<string>} Uniforms that store boolean values as int 0/1 */
 		this._booleans = new Set();
 
+		/** @type {Set<string>} Uniforms already warned about an array value (warn once each) */
+		this._arrayWarned = new Set();
+
 		/** @type {Object} Light buffer uniformArray nodes */
 		this._lightBuffers = {};
 
@@ -61,6 +64,32 @@ export class UniformManager {
 
 			console.warn( `UniformManager: Unknown uniform "${name}"` );
 			return;
+
+		}
+
+		// Hosts wire UI controls straight to these, and slider components commonly emit [n]
+		// rather than n. A scalar uniform has no meaningful array value, and nothing downstream
+		// rejects one: the array lands in .value verbatim and poisons every later read. That is
+		// not hypothetical — maxBounces received [20], and PathTracer's `maxBounces +
+		// transmissiveBounces + maxSubsurfaceSteps` then evaluated to the STRING '2058', so the
+		// bounce loop ran to 2058 on any frame the survivor curve could not early-exit and hung
+		// the tab. Unwrap and warn once per uniform, so the caller is named rather than the
+		// symptom surfacing somewhere unrelated.
+		if ( Array.isArray( value ) && value.length === 1
+			&& ( this._booleans.has( name ) || typeof node.value === 'number' ) ) {
+
+			if ( ! this._arrayWarned.has( name ) ) {
+
+				this._arrayWarned.add( name );
+				console.warn(
+					`UniformManager: "${name}" was set to [${value[ 0 ]}] but expects a scalar — ` +
+					'unwrapping. Fix the caller; a slider handler is probably forwarding its ' +
+					'array value unchanged.'
+				);
+
+			}
+
+			value = value[ 0 ];
 
 		}
 
@@ -324,6 +353,7 @@ export class UniformManager {
 
 		this._uniforms.clear();
 		this._booleans.clear();
+		this._arrayWarned.clear();
 		this._lightBuffers = {};
 
 	}
