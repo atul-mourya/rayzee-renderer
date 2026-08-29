@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
-import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager } from 'rayzee';
+import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
 
@@ -2322,28 +2322,7 @@ const useMaterialStore = create( ( set, get ) => ( {
 		obj.material.opacity = opacity;
 		get().updateMaterialProperty( 'opacity', opacity );
 
-		// Recalculate alphaMode if transparent is enabled
-		if ( obj.material.transparent ) {
-
-			let alphaMode = 0; // OPAQUE
-			if ( obj.material.alphaTest > 0.0 ) {
-
-				alphaMode = 1; // MASK
-
-			} else if ( opacity < 1.0 ) {
-
-				alphaMode = 2; // BLEND
-
-			} else if ( obj.material.map && obj.material.map.format === 1023 ) { // 1023 = RGBAFormat
-
-				alphaMode = 2; // BLEND
-
-			}
-
-			// Update alphaMode
-			get().updateMaterialProperty( 'alphaMode', alphaMode );
-
-		}
+		get().syncAlphaMode();
 
 	},
 	handleSideChange: val => get().updateMaterialProperty( 'side', val ),
@@ -2367,27 +2346,33 @@ const useMaterialStore = create( ( set, get ) => ( {
 		obj.material.transparent = val;
 		get().updateMaterialProperty( 'transparent', val ? 1 : 0 );
 
-		// Recalculate alphaMode based on new transparent state
-		let alphaMode = 0; // OPAQUE
-		if ( obj.material.alphaTest > 0.0 ) {
-
-			alphaMode = 1; // MASK
-
-		} else if ( val && obj.material.opacity < 1.0 ) {
-
-			alphaMode = 2; // BLEND
-
-		} else if ( obj.material.map && obj.material.map.format === 1023 && val ) { // 1023 = RGBAFormat
-
-			alphaMode = 2; // BLEND
-
-		}
-
-		// Update alphaMode
-		get().updateMaterialProperty( 'alphaMode', alphaMode );
+		get().syncAlphaMode();
 
 	},
-	handleAlphaTestChange: val => get().updateMaterialProperty( 'alphaTest', val[ 0 ] ),
+	handleAlphaTestChange: val => {
+
+		const obj = useStore.getState().selectedObject;
+		if ( ! obj?.isMesh || ! obj.material ) return;
+
+		obj.material.alphaTest = val[ 0 ];
+		get().updateMaterialProperty( 'alphaTest', val[ 0 ] );
+		get().syncAlphaMode();
+
+	},
+
+	/**
+	 * Re-derive alphaMode from the material's current alpha inputs. Every control that touches
+	 * transparency has to call this: alphaMode is the only alpha field the shader reads, so a
+	 * control that moves alphaTest/transparent/opacity without it is inert.
+	 */
+	syncAlphaMode: () => {
+
+		const obj = useStore.getState().selectedObject;
+		if ( ! obj?.isMesh || ! obj.material ) return;
+
+		get().updateMaterialProperty( 'alphaMode', deriveAlphaMode( obj.material ) );
+
+	},
 	handleSheenChange: val => get().updateMaterialProperty( 'sheen', val[ 0 ] ),
 	handleSheenRoughnessChange: val => get().updateMaterialProperty( 'sheenRoughness', val[ 0 ] ),
 	handleAnisotropyChange: val => get().updateMaterialProperty( 'anisotropy', val[ 0 ] ),

@@ -17,6 +17,9 @@ export { EngineEvents } from './EngineEvents.js';
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 
+// glTF alphaMode derivation — the one definition, shared with hosts that edit materials
+export { deriveAlphaMode } from './Processor/GeometryExtractor.js';
+
 // Scene-level authoring metadata embedded in model files (glTF `extras`)
 export { extractSceneMetadata, parseSceneMetadata } from './Processor/SceneMetadata.js';
 

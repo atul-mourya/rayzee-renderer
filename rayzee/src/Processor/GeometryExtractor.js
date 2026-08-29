@@ -6,6 +6,53 @@ const log = createLogger( 'geometry' );
 
 const MAX_TEXTURES_LIMIT = 128;
 
+/**
+ * glTF 2.0 alphaMode for a three.js material: 0 OPAQUE, 1 MASK, 2 BLEND.
+ *
+ * The single definition of this rule. alphaMode is the only alpha field the shader reads
+ * (MaterialTransmission takes the opaque fast path on 0 and gates its MASK branch on 1), so
+ * any control that changes alpha behaviour has to route through here or it does nothing.
+ *
+ * @param {import('three').Material} material
+ * @returns {0|1|2}
+ */
+export function deriveAlphaMode( material ) {
+
+	// Follow glTF 2.0 specification for alphaMode
+	// Check if material explicitly sets alphaMode (from glTF loader)
+	if ( material.userData?.gltfExtensions?.KHR_materials_unlit?.alphaMode ) {
+
+		const mode = material.userData.gltfExtensions.KHR_materials_unlit.alphaMode;
+		if ( mode === 'BLEND' ) return 2;
+		if ( mode === 'MASK' ) return 1;
+		return 0; // OPAQUE
+
+	}
+
+	// Fallback logic based on material properties
+	if ( material.alphaTest > 0.0 ) {
+
+		return 1; // MASK - alphaTest takes priority
+
+	}
+
+	if ( material.transparent && material.opacity < 1.0 ) {
+
+		return 2; // BLEND - transparent with opacity < 1
+
+	}
+
+	// Check for alpha in diffuse texture
+	if ( material.map && material.map.format === RGBAFormat && material.transparent ) {
+
+		return 2; // BLEND - has alpha texture and transparent flag
+
+	}
+
+	return 0; // OPAQUE
+
+}
+
 export class GeometryExtractor {
 
 	constructor() {
@@ -189,42 +236,6 @@ export class GeometryExtractor {
 
 	}
 
-	getMaterialAlphaMode( material ) {
-
-		// Follow glTF 2.0 specification for alphaMode
-		// Check if material explicitly sets alphaMode (from glTF loader)
-		if ( material.userData?.gltfExtensions?.KHR_materials_unlit?.alphaMode ) {
-
-			const mode = material.userData.gltfExtensions.KHR_materials_unlit.alphaMode;
-			if ( mode === 'BLEND' ) return 2;
-			if ( mode === 'MASK' ) return 1;
-			return 0; // OPAQUE
-
-		}
-
-		// Fallback logic based on material properties
-		if ( material.alphaTest > 0.0 ) {
-
-			return 1; // MASK - alphaTest takes priority
-
-		}
-
-		if ( material.transparent && material.opacity < 1.0 ) {
-
-			return 2; // BLEND - transparent with opacity < 1
-
-		}
-
-		// Check for alpha in diffuse texture
-		if ( material.map && material.map.format === RGBAFormat && material.transparent ) {
-
-			return 2; // BLEND - has alpha texture and transparent flag
-
-		}
-
-		return 0; // OPAQUE
-
-	}
 
 	getMaterialType( material ) {
 
@@ -424,7 +435,7 @@ export class GeometryExtractor {
 			// Transparency and alpha
 			transparent: material.transparent ? 1 : 0,
 			alphaTest: material.alphaTest ?? defaults.alphaTest,
-			alphaMode: this.getMaterialAlphaMode( material ),
+			alphaMode: deriveAlphaMode( material ),
 
 			// Rendering properties
 			side: this.getMaterialSide( material ),
