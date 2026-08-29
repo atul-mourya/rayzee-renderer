@@ -324,6 +324,13 @@ export class LightManager extends EventDispatcher {
 
 			angle = MathUtils.radToDeg( light.angle );
 
+		} else if ( light.type === 'DirectionalLight' ) {
+
+			// Sun angular diameter. Lives on userData because three.js gives DirectionalLight no
+			// angle property, and an ad-hoc one would not survive the light.clone() in
+			// transferSceneLights. Reported here or the panel reads back 0 and the slider snaps home.
+			angle = MathUtils.radToDeg( light.userData?.angle ?? 0 );
+
 		}
 
 		const descriptor = {

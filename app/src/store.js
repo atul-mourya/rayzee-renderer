@@ -1464,10 +1464,16 @@ const useLightStore = create( set => ( {
 
 				} else if ( prop === 'angle' ) {
 
-					if ( light.type === 'DirectionalLight' || light.type === 'SpotLight' ) {
+					// UI is degrees, engine is radians. Spot cone half-angle is a real three.js
+					// property; the sun's angular diameter is ours, so it goes on userData —
+					// see the matching read in LightManager._buildDescriptor.
+					if ( light.type === 'SpotLight' ) {
 
-						// Convert degrees to radians for Three.js
 						light.angle = value * ( Math.PI / 180 );
+
+					} else if ( light.type === 'DirectionalLight' ) {
+
+						light.userData.angle = value * ( Math.PI / 180 );
 
 					}
 
@@ -1609,20 +1615,6 @@ const useLightStore = create( set => ( {
 				app.reset();
 
 			}
-
-		}
-
-		return { lights };
-
-	} ),
-
-	// Add angle support for directional lights
-	updateDirectionalLightAngle: ( idx, angle ) => set( s => {
-
-		const lights = [ ...s.lights ];
-		if ( lights[ idx ] && lights[ idx ].type === 'DirectionalLight' ) {
-
-			lights[ idx ].angle = angle;
 
 		}
 

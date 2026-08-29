@@ -472,7 +472,21 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 
 			{/* DirectionalLight-specific controls */}
 			{light.type === 'DirectionalLight' && (
-				<GoboControls light={light} index={index} onLightChange={onLightChange} showScale />
+				<>
+					<Row>
+						<Slider
+							label={<>Softness<InfoTip text="Angular diameter of the light's disc, in degrees. 0 gives razor-sharp shadows; the real sun is 0.53°. Larger values soften shadow edges and broaden highlights, without changing brightness." /></>}
+							icon={CircleDashed}
+							min={0}
+							max={10}
+							step={0.05}
+							snapPoints={[ 0, 0.526 ]}
+							value={[ light.angle ?? 0 ]}
+							onValueChange={value => onLightChange( index, 'angle', value )}
+						/>
+					</Row>
+					<GoboControls light={light} index={index} onLightChange={onLightChange} showScale />
+				</>
 			)}
 
 			{/* PointLight-specific controls */}

@@ -330,6 +330,67 @@ export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSe
 
 } );
 
+// Sun sampling. `angle` is angular diameter: 0 is a hard shadow, >0 cone-samples the disc.
+//
+// intensity is IRRADIANCE (Blender Sun "Strength"), already integrated over the disc, so it has
+// to become radiance before NEE divides by the 1/solidAngle cone pdf. Passing it through raw
+// scaled the sun BY its own solid angle — a real 0.53° sun measured ~15000x too dark.
+export const sampleDirectionalLight = Fn( ( [ light, rayOrigin, lightSelectionPdf, uCos, uPhi ] ) => {
+
+	const ls_valid = tslBool( false ).toVar();
+	const ls_direction = vec3( 0.0, 1.0, 0.0 ).toVar();
+	const ls_emission = vec3( 0.0 ).toVar();
+	const ls_pdf = float( 0.0 ).toVar();
+
+	If( light.intensity.greaterThan( 0.0 ), () => {
+
+		const w = normalize( light.direction ).toVar();
+		const emission = light.color.mul( light.intensity ).mul( sampleDirectionalGoboMask( light, rayOrigin ) ).toVar();
+
+		ls_direction.assign( w );
+		ls_pdf.assign( lightSelectionPdf );
+
+		If( light.angle.greaterThan( 0.0 ), () => {
+
+			const cosHalfAngle = cos( light.angle.mul( 0.5 ) ).toVar();
+			const cosTheta = mix( cosHalfAngle, float( 1.0 ), uCos ).toVar();
+			const sinTheta = sqrt( max( float( 0.0 ), float( 1.0 ).sub( cosTheta.mul( cosTheta ) ) ) ).toVar();
+			const phi = float( TWO_PI ).mul( uPhi ).toVar();
+
+			const u = normalize( cross(
+				select( abs( w.x ).greaterThan( 0.9 ), vec3( 0.0, 1.0, 0.0 ), vec3( 1.0, 0.0, 0.0 ) ),
+				w
+			) ).toVar();
+			const v = cross( w, u ).toVar();
+
+			ls_direction.assign( normalize(
+				w.mul( cosTheta ).add( u.mul( cos( phi ) ).add( v.mul( sin( phi ) ) ).mul( sinTheta ) )
+			) );
+
+			// Guard the division: (1 - cosHalfAngle) underflows to zero at tiny angles.
+			const solidAngle = float( TWO_PI ).mul( max( float( 1.0 ).sub( cosHalfAngle ), 1e-10 ) ).toVar();
+			emission.assign( emission.div( solidAngle ) );
+			ls_pdf.assign( lightSelectionPdf.div( solidAngle ) );
+
+		} );
+
+		ls_emission.assign( emission );
+		ls_valid.assign( tslBool( true ) );
+
+	} );
+
+	return LightSample( {
+		valid: ls_valid,
+		direction: ls_direction,
+		emission: ls_emission,
+		distance: float( 1e6 ),
+		pdf: ls_pdf,
+		lightType: int( LIGHT_TYPE_DIRECTIONAL ),
+		selectionTotalWeight: float( 0.0 ),
+	} );
+
+} );
+
 // =============================================================================
 // Importance-Weighted Light Sampling
 // =============================================================================
@@ -496,12 +557,16 @@ export const sampleLightWithImportance = Fn( ( [
 
 					If( light.intensity.greaterThan( 0.0 ), () => {
 
-						const dirGoboMask = sampleDirectionalGoboMask( light, rayOrigin );
-						r_direction.assign( normalize( light.direction ) );
-						r_emission.assign( light.color.mul( light.intensity ).mul( dirGoboMask ) );
-						r_distance.assign( 1e6 );
-						r_lightType.assign( int( LIGHT_TYPE_DIRECTIONAL ) );
-						r_valid.assign( tslBool( true ) );
+						const dirSample = LightSample.wrap( sampleDirectionalLight(
+							light, rayOrigin, lightSelectionPdf, randomSeed.y,
+							getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame )
+						) );
+						r_valid.assign( dirSample.valid );
+						r_direction.assign( dirSample.direction );
+						r_emission.assign( dirSample.emission );
+						r_distance.assign( dirSample.distance );
+						r_pdf.assign( dirSample.pdf );
+						r_lightType.assign( dirSample.lightType );
 						sampled.assign( tslBool( true ) );
 
 					} );
@@ -601,39 +666,17 @@ export const sampleLightWithImportance = Fn( ( [
 
 				const light = DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, selectedIdx ) );
 
-				const direction = normalize( light.direction ).toVar();
-				const dirPdf = float( 1.0 ).toVar();
+				const dirSample = LightSample.wrap( sampleDirectionalLight(
+					light, rayOrigin, pdf, randomSeed.y,
+					getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame )
+				) );
 
-				If( light.angle.greaterThan( 0.0 ), () => {
-
-					const cosHalfAngle = cos( light.angle.mul( 0.5 ) ).toVar();
-					const cosTheta = mix( cosHalfAngle, float( 1.0 ), randomSeed.y ).toVar();
-					const sinTheta = sqrt( max( float( 0.0 ), float( 1.0 ).sub( cosTheta.mul( cosTheta ) ) ) ).toVar();
-					const phi = float( TWO_PI ).mul( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame ) ).toVar();
-
-					const w = normalize( light.direction ).toVar();
-					const u = normalize( cross(
-						select( abs( w.x ).greaterThan( 0.9 ), vec3( 0.0, 1.0, 0.0 ), vec3( 1.0, 0.0, 0.0 ) ),
-						w
-					) ).toVar();
-					const v = cross( w, u ).toVar();
-
-					direction.assign( normalize(
-						w.mul( cosTheta ).add( u.mul( cos( phi ) ).add( v.mul( sin( phi ) ) ).mul( sinTheta ) )
-					) );
-					// Guard division: (1.0 - cosHalfAngle) could be zero if angle is 0
-					const solidAngle = float( TWO_PI ).mul( max( float( 1.0 ).sub( cosHalfAngle ), 1e-10 ) );
-					dirPdf.assign( float( 1.0 ).div( solidAngle ) );
-
-				} );
-
-				const dirGoboMask = sampleDirectionalGoboMask( light, rayOrigin );
-				r_direction.assign( direction );
-				r_emission.assign( light.color.mul( light.intensity ).mul( dirGoboMask ) );
-				r_distance.assign( 1e6 );
-				r_pdf.assign( dirPdf.mul( pdf ) );
-				r_lightType.assign( int( LIGHT_TYPE_DIRECTIONAL ) );
-				r_valid.assign( tslBool( true ) );
+				r_direction.assign( dirSample.direction );
+				r_emission.assign( dirSample.emission );
+				r_distance.assign( dirSample.distance );
+				r_pdf.assign( dirSample.pdf );
+				r_lightType.assign( dirSample.lightType );
+				r_valid.assign( dirSample.valid );
 
 			} );
 
