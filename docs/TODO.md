@@ -1,7 +1,7 @@
 # Rayzee Path Tracer - TODO List
 
 ## Bugs
-- [x] ~~when rendering done due to convergence, we need to indicate that~~ — the HUD presented Time and Frames as a two-way toggle, but the engine races all three stop conditions and takes whichever fires first: the sample ceiling ALWAYS binds, convergence binds whenever adaptive sampling is on (regardless of the toggle), and only the time deadline is actually gated by the mode. Adaptive was also invisible — its switch lives in the Path Tracer tab and its `ConvergenceReadout` only renders when the *debug* Convergence Overlay is on. Fixed by `CompletionTracker.stopCondition()` — nullable, and now the single place the condition set lives (`isLimitReached` delegates to it, so "should we stop" and "why" cannot drift): `timeLimit` > `samples` > `converged`, so a render that spends its whole budget reports the ceiling even when it also converged on that sample. Carried on the completion event into `useStore.completionReason` and shown as an "Auto" chip beside Time/Frames with a green tick on whichever condition retired the frame. The chip toggles adaptive in preview but is **read-only in final render** — unlike the Time/Frames chips, `useAdaptiveSampling` carries `reset: true`, so a stray click there would discard minutes of accumulation. Verified against the real animate loop: cap 8 → `samples`/8, adaptive → `converged`/48 of 4000, 0.3s budget → `timeLimit`/305.
+
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
@@ -17,7 +17,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Known
 
-- [x] ~~Soft shadows for directional lights not working when enabled from UI~~ — the engine could always do it; three separate gaps kept it unreachable. (1) `LightsTab` never rendered an angle slider for a sun, so there was nothing to move. (2) `LightManager._buildDescriptor` hardcoded `angle = 0` for everything but a spot, so the panel read back 0 anyway. (3) The real bug: a sun's `intensity` is IRRADIANCE, already integrated over the disc, but NEE handed that straight to `emission` against a `1/solidAngle` cone pdf — so the sun was scaled BY its solid angle the moment the angle left zero. Measured sun-only on `shadow-catcher-ground`, mean luminance vs angle 0: **0.0001x at 0.526 deg** (a real sun), 0.0060x at 5 deg, 0.0950x at 20 deg — matching the solid angle to three digits. Fixed by converting emission to radiance in one shared `sampleDirectionalLight`, which also replaced the two divergent inline copies (the uniform-selection fallback never cone-sampled at all). After: 1.0000 / 0.9999 / 0.9996 / 0.9958, and `shadow-catcher-ground` stays bit-identical to its golden at angle 0. **Uncovered by the bench** — no corpus scene sets a non-zero sun angle, so nothing would catch this regressing again.
 - [ ] Tier-2 frozen pixels keep folding stale `rayBuffer` samples into their own m2/variance every frame — `FinalWriteKernel`'s stats block has no `wasFrozen` guard
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] indirect lights looks too weak
