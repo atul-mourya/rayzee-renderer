@@ -10,15 +10,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.1995042509574887,
-			"meanG": 0.4748404136343538,
-			"meanB": 0.5948592199498222,
-			"meanLuminance": 0.4249693032652291,
+			"meanR": 0.1995061716997384,
+			"meanG": 0.4748413859195466,
+			"meanB": 0.5948591604720097,
+			"meanLuminance": 0.42497040269910263,
 			"maxLuminance": 0.5513083600223063,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.003763633690733863
+		"rmseVsTruth": 0.0037730544233015514
 	},
 	"cornell-emissive": {
 		"truth": {
@@ -31,15 +31,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.272648259493391,
-			"meanG": 0.309969779292693,
-			"meanB": 0.2932305281490777,
-			"meanLuminance": 0.30082665025082306,
+			"meanR": 0.27264841623176483,
+			"meanG": 0.3099699378070271,
+			"meanB": 0.29323068600575397,
+			"meanLuminance": 0.300826808340108,
 			"maxLuminance": 12,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.00967569195169878
+		"rmseVsTruth": 0.009674846684194268
 	},
 	"glass-transmission": {
 		"truth": {
@@ -52,15 +52,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.10520990021126408,
-			"meanG": 0.2761108775197272,
-			"meanB": 0.4681285182882675,
-			"meanLuminance": 0.2536410034074369,
+			"meanR": 0.10520990797316188,
+			"meanG": 0.27611095235937455,
+			"meanB": 0.4681286858844942,
+			"meanLuminance": 0.25364107068337916,
 			"maxLuminance": 0.5431955338954925,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.0036802977049733773
+		"rmseVsTruth": 0.003680389563859847
 	},
 	"spheres-procedural-sky": {
 		"truth": {
@@ -73,15 +73,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 1.027365517139799,
-			"meanG": 1.2119006910668304,
-			"meanB": 1.3146323535121947,
-			"meanLuminance": 1.1800857391185056,
-			"maxLuminance": 17.9778256436944,
+			"meanR": 1.0273698306351093,
+			"meanG": 1.2119024859421188,
+			"meanB": 1.3146323546966414,
+			"meanLuminance": 1.1800879399479312,
+			"maxLuminance": 17.977818710619207,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.006670121188102287
+		"rmseVsTruth": 0.00667272344104627
 	},
 	"subsurface-marble": {
 		"truth": {
@@ -94,15 +94,15 @@
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.07302317269160596,
-			"meanG": 0.16479465249906866,
-			"meanB": 0.22945638533809642,
-			"meanLuminance": 0.14995261300298213,
+			"meanR": 0.0730245547360866,
+			"meanG": 0.16479500448622275,
+			"meanB": 0.22945639387211259,
+			"meanLuminance": 0.14995315918300572,
 			"maxLuminance": 0.47288331663310523,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.009110584251790614
+		"rmseVsTruth": 0.009111072782107623
 	},
 	"anisotropy-brushed": {
 		"truth": {
@@ -115,15 +115,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.47655309607677054,
-			"meanG": 0.5380429914091565,
-			"meanB": 0.6231039237302411,
-			"meanLuminance": 0.5311116389750693,
-			"maxLuminance": 37.247269799804684,
+			"meanR": 0.4765529134996598,
+			"meanG": 0.5380427785733559,
+			"meanB": 0.6231036730512187,
+			"meanLuminance": 0.5311114298399852,
+			"maxLuminance": 37.24720920829773,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.014752498473910771
+		"rmseVsTruth": 0.01475250911274524
 	},
 	"shadow-catcher-ground": {
 		"truth": {
@@ -136,10 +136,10 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.22036516997326316,
-			"meanG": 0.4920051163724821,
-			"meanB": 0.6656470381471848,
-			"meanLuminance": 0.4467914105201396,
+			"meanR": 0.22036517836812664,
+			"meanG": 0.492005135088462,
+			"meanB": 0.6656470627988114,
+			"meanLuminance": 0.4467914274704033,
 			"maxLuminance": 0.8668679928421974,
 			"nonFinite": 0,
 			"samples": 64
@@ -178,15 +178,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.12165303018805673,
-			"meanG": 0.32066631910493015,
-			"meanB": 0.46197748620244283,
-			"meanLuminance": 0.2885587601456442,
+			"meanR": 0.12165304530067544,
+			"meanG": 0.3206663324393162,
+			"meanB": 0.46197749129143517,
+			"meanLuminance": 0.2885587732627677,
 			"maxLuminance": 0.551319850552082,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.004219581628693119
+		"rmseVsTruth": 0.004219611720335955
 	},
 	"dispersion-glass": {
 		"truth": {
@@ -199,15 +199,15 @@
 			"samples": 1024
 		},
 		"golden": {
-			"meanR": 0.08637013739580368,
-			"meanG": 0.21140724857419002,
-			"meanB": 0.29754529441350996,
-			"meanLuminance": 0.19104352564726312,
-			"maxLuminance": 0.5270535919904709,
+			"meanR": 0.08637036360356731,
+			"meanG": 0.21140757460254633,
+			"meanB": 0.2975464300376842,
+			"meanLuminance": 0.19104388890657978,
+			"maxLuminance": 0.5270535951584577,
 			"nonFinite": 0,
 			"samples": 96
 		},
-		"rmseVsTruth": 0.012356728330874537
+		"rmseVsTruth": 0.012357618878246148
 	},
 	"iridescence-thinfilm": {
 		"truth": {
@@ -220,11 +220,11 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.3259848348864808,
-			"meanG": 0.39062895140049325,
-			"meanB": 0.4942739025892777,
-			"meanLuminance": 0.38436877770544164,
-			"maxLuminance": 46.17930091323852,
+			"meanR": 0.3259848307892764,
+			"meanG": 0.3906289356253465,
+			"meanB": 0.4942738962447688,
+			"meanLuminance": 0.38436876509391676,
+			"maxLuminance": 46.17926633605956,
 			"nonFinite": 0,
 			"samples": 64
 		},
@@ -241,15 +241,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.3223821109490643,
-			"meanG": 0.3938691670962129,
-			"meanB": 0.5017211994131401,
-			"meanLuminance": 0.386457935692607,
-			"maxLuminance": 2.1354276377916332,
+			"meanR": 0.32238211143875617,
+			"meanG": 0.3938691672635457,
+			"meanB": 0.501721199542942,
+			"meanLuminance": 0.3864579359257635,
+			"maxLuminance": 2.135424944138527,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.006990949406856628
+		"rmseVsTruth": 0.0069907953366500014
 	},
 	"clearcoat-carpaint": {
 		"truth": {
@@ -262,15 +262,15 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.38233077311417674,
-			"meanG": 0.4169029818482244,
-			"meanB": 0.5316642012680575,
-			"meanLuminance": 0.4178386903134742,
-			"maxLuminance": 6.22628793091774,
+			"meanR": 0.3823307776282263,
+			"meanG": 0.41690298210595245,
+			"meanB": 0.5316642020201101,
+			"meanLuminance": 0.4178386915117859,
+			"maxLuminance": 6.2262390583992,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007468482724864406
+		"rmseVsTruth": 0.007468607896688347
 	},
 	"alpha-cutout": {
 		"truth": {
@@ -283,10 +283,10 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.7974477250520806,
-			"meanG": 0.8549179779718656,
-			"meanB": 0.8485556991621479,
-			"meanLuminance": 0.8422404456710624,
+			"meanR": 0.7974478249943502,
+			"meanG": 0.8549180295840415,
+			"meanB": 0.8485557058855875,
+			"meanLuminance": 0.8422405043172486,
 			"maxLuminance": 1.7089094756126402,
 			"nonFinite": 0,
 			"samples": 64
@@ -304,16 +304,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9987885321170324,
-			"meanG": 0.9987885321170324,
-			"meanB": 0.9987885321170324,
-			"meanLuminance": 0.9987885321170324,
+			"meanR": 0.9987885325263051,
+			"meanG": 0.9987885325263051,
+			"meanB": 0.9987885325263051,
+			"meanLuminance": 0.9987885325263051,
 			"maxLuminance": 1.0112887620925903,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.001975026229809338,
-		"furnaceRatio": 0.9987885321170324
+		"furnaceRatio": 0.9987885325263051
 	},
 	"furnace-dielectric-glossy": {
 		"truth": {
@@ -326,16 +326,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9977472428581677,
-			"meanG": 0.9977472428581677,
-			"meanB": 0.9977472428581677,
-			"meanLuminance": 0.9977472428581677,
-			"maxLuminance": 1.0973923206329346,
+			"meanR": 0.9977472429227419,
+			"meanG": 0.9977472429227419,
+			"meanB": 0.9977472429227419,
+			"meanLuminance": 0.9977472429227419,
+			"maxLuminance": 1.097392201423645,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.005981210096981756,
-		"furnaceRatio": 0.9977472428581677
+		"furnaceRatio": 0.9977472429227419
 	},
 	"furnace-metal-mid": {
 		"truth": {
@@ -348,16 +348,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 1.0010528443372095,
-			"meanG": 1.0010528443372095,
-			"meanB": 1.0010528443372095,
-			"meanLuminance": 1.0010528443372095,
+			"meanR": 1.001052844273545,
+			"meanG": 1.001052844273545,
+			"meanB": 1.001052844273545,
+			"meanLuminance": 1.001052844273545,
 			"maxLuminance": 1.0228526592254639,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.0024169761616131195,
-		"furnaceRatio": 1.0010528443372095
+		"furnaceRatio": 1.001052844273545
 	},
 	"furnace-metal-rough": {
 		"truth": {
@@ -370,16 +370,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.997297063343467,
-			"meanG": 0.997297063343467,
-			"meanB": 0.997297063343467,
-			"meanLuminance": 0.997297063343467,
-			"maxLuminance": 1.0365869998931885,
+			"meanR": 0.9972970634271405,
+			"meanG": 0.9972970634271405,
+			"meanB": 0.9972970634271405,
+			"meanLuminance": 0.9972970634271405,
+			"maxLuminance": 1.036587119102478,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.0044973677680627995,
-		"furnaceRatio": 0.997297063343467
+		"furnaceRatio": 0.9972970634271405
 	},
 	"furnace-clearcoat": {
 		"truth": {
@@ -392,16 +392,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9985821652107916,
-			"meanG": 0.9985821652107916,
-			"meanB": 0.9985821652107916,
-			"meanLuminance": 0.9985821652107916,
-			"maxLuminance": 1.0643497705459595,
+			"meanR": 0.9985821657819542,
+			"meanG": 0.9985821657819542,
+			"meanB": 0.9985821657819542,
+			"meanLuminance": 0.9985821657819542,
+			"maxLuminance": 1.06434965133667,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.004551008527229751,
-		"furnaceRatio": 0.9985821652107916
+		"furnaceRatio": 0.9985821657819542
 	},
 	"furnace-sheen": {
 		"truth": {
@@ -414,16 +414,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9976185368795996,
-			"meanG": 0.9976185368795996,
-			"meanB": 0.9976185368795996,
-			"meanLuminance": 0.9976185368795996,
+			"meanR": 0.9976185372361215,
+			"meanG": 0.9976185372361215,
+			"meanB": 0.9976185372361215,
+			"meanLuminance": 0.9976185372361215,
 			"maxLuminance": 1.120306134223938,
 			"nonFinite": 0,
 			"samples": 128
 		},
 		"rmseVsTruth": 0.006164495262312256,
-		"furnaceRatio": 0.9976185368795996
+		"furnaceRatio": 0.9976185372361215
 	},
 	"furnace-iridescence": {
 		"truth": {
@@ -436,16 +436,16 @@
 			"samples": 512
 		},
 		"golden": {
-			"meanR": 0.9969707876398388,
-			"meanG": 0.9939318704527977,
-			"meanB": 1.0017155288496724,
-			"meanLuminance": 0.9951399243830169,
-			"maxLuminance": 1.1161085815429685,
+			"meanR": 0.9969707866093813,
+			"meanG": 0.9939318707502025,
+			"meanB": 1.0017155289679067,
+			"meanLuminance": 0.9951399243851924,
+			"maxLuminance": 1.1161083942890166,
 			"nonFinite": 0,
 			"samples": 128
 		},
-		"rmseVsTruth": 0.006444642610489227,
-		"furnaceRatio": 0.9951399243830169
+		"rmseVsTruth": 0.006444619923791426,
+		"furnaceRatio": 0.9951399243851924
 	},
 	"furnace-multibounce": {
 		"truth": {

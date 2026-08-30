@@ -252,6 +252,10 @@ five identical runs, because which pixels the frozen set catches on a cutout edg
 to readback timing. No ratchet loose enough to be stable there detects anything. The two kept scenes
 spread 3.7 % and 0.9 %, which is what sizes the 25 % ratchet.
 
+That instability is still unexplained. The obvious suspect — frozen pixels folding stale samples
+into their own variance, which drives the freeze decision — was fixed and **ruled out**: it halved
+the spread on both kept scenes but left `alpha-cutout` chaotic (36.7 % → 51.9 % across five runs).
+
 ### Denoisers — a ratio, so there is nothing to bless away
 
 Every other suite measures the path tracer's own accumulation buffer. Nothing measured what the

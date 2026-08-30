@@ -153,9 +153,22 @@ export function buildFinalWriteKernel( params ) {
 			// and before the visMode-11 mutation. Frame 0 self-inits m2 via alpha==1 — no explicit clear.
 			If( statsOn, () => {
 
+				// Frozen pixels hold m2, for the same reason they hold finalColor above: Generate skipped
+				// them, so rayBuffer still holds whatever they last traced. Folding that in every frame drove
+				// m2 toward the stale sample while meanLum stayed put, so sampleVar decayed to an artefact
+				// of one old sample. The `converged` flag below is built from it and counted into
+				// CONVERGED_COUNT, so the corruption reached the whole-frame early stop, not just this pixel.
+				//
+				// Editing this kernel at all costs 11 quality goldens their bit-identical status at
+				// rmse ~1e-4 — measured identical for select() and for an If() branch, so it is compiler
+				// scheduling, not the extra arm. Goldens re-blessed with the change.
 				const sampleLum = luminance( sampleColor.xyz );
 				const prevM2 = m2BufferRW.element( pixelId ).toVar();
-				const m2 = mix( prevM2, sampleLum.mul( sampleLum ), accumulationAlpha ).toVar();
+				const m2 = select(
+					wasFrozen,
+					prevM2,
+					mix( prevM2, sampleLum.mul( sampleLum ), accumulationAlpha )
+				).toVar();
 				m2BufferRW.element( pixelId ).assign( m2 );
 
 				const meanLum = luminance( finalColor ).toVar();
