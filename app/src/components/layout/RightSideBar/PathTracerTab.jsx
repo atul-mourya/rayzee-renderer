@@ -64,11 +64,15 @@ const renderDebugModeControls = ( debugMode, props ) => {
 
 };
 
-const OVERLAY_LEGEND = [
+// The overlay bars on the per-pixel FREEZE test whenever freeze is on, and on the frame RETIRE test
+// otherwise (Compositor's overlayColor). Only the second is what "converged" means, so calling the
+// grey swatch that while the colours are answering the freeze question is simply wrong.
+const overlayLegend = ( freezeOn ) => [
 	[ 'bg-red-500', 'noisy' ],
 	[ 'bg-yellow-400', 'near threshold' ],
-	[ 'bg-neutral-400', 'converged' ],
-	[ 'bg-blue-500', 'frozen' ],
+	[ 'bg-neutral-400', freezeOn ? 'below freeze bar' : 'converged' ],
+	// The overlay's frozen branch is gated on freezeOn, so this colour cannot appear otherwise.
+	...( freezeOn ? [[ 'bg-blue-500', 'frozen' ]] : [] ),
 ];
 
 // Counters come from a settled-view readback, so they lag a little and read zero while orbiting.
@@ -76,10 +80,24 @@ const OVERLAY_LEGEND = [
 const ConvergenceReadout = ( { showConverged, showTracing } ) => {
 
 	const [ stats, setStats ] = useState( null );
+	const [ bars, setBars ] = useState( null );
 
 	useEffect( () => {
 
-		const id = setInterval( () => setStats( getApp()?.getConvergenceStats?.() ?? null ), 250 );
+		const id = setInterval( () => {
+
+			const app = getApp();
+			setStats( app?.getConvergenceStats?.() ?? null );
+
+			// Read live rather than from the store: pixelFreezeThreshold is engine-internal and
+			// configureForMode gives each tier its own value, so a hardcoded number would lie.
+			setBars( app?.settings ? {
+				freezeOn: !! app.settings.get( 'usePixelFreeze' ),
+				freeze: app.settings.get( 'pixelFreezeThreshold' ),
+				frame: app.settings.get( 'noiseThreshold' ),
+			} : null );
+
+		}, 250 );
 		return () => clearInterval( id );
 
 	}, [] );
@@ -98,7 +116,19 @@ const ConvergenceReadout = ( { showConverged, showTracing } ) => {
 	if ( showConverged && stats.geometryPixels > 0 ) parts.push( `subject ${Math.floor( stats.convergedGeometry * 100 )}%` );
 	if ( showTracing && stats.activePixels ) parts.push( `tracing ${Math.ceil( 100 * stats.activePixels / stats.totalPixels )}%` );
 
-	return <div className="px-1 text-[10px] leading-4 opacity-50">{parts.join( ' · ' )}</div>;
+	// Without this the two most prominent convergence signals answer different questions in silence:
+	// a near-solid red frame reading "frame 90%" is not a contradiction, it is two different bars.
+	const barNote = bars && ( bars.freezeOn
+		? `colours: freeze bar (rel err < ${bars.freeze}) · percentages: retire bar `
+			+ `(√-normalised < ${bars.frame}), looser on dim pixels`
+		: `colours and percentages: retire bar (√-normalised < ${bars.frame})` );
+
+	return (
+		<>
+			{barNote && <div className="px-1 text-[10px] leading-4 opacity-40">{barNote}</div>}
+			<div className="px-1 text-[10px] leading-4 opacity-50">{parts.join( ' · ' )}</div>
+		</>
+	);
 
 };
 
@@ -711,7 +741,7 @@ const PathTracerTab = () => {
 					</Row>
 					{convergenceOverlay && ( <>
 						<div className="flex flex-wrap gap-x-2 gap-y-0.5 px-1 text-[10px] opacity-60">
-							{OVERLAY_LEGEND.map( ( [ dot, label ] ) => (
+							{overlayLegend( useAdaptiveSampling ).map( ( [ dot, label ] ) => (
 								<span key={label} className="flex items-center gap-1">
 									<i className={`inline-block size-2 rounded-full ${dot}`} />{label}
 								</span>
