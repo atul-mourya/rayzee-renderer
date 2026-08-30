@@ -17,6 +17,7 @@ export const PATHS = {
 	fingerprint: path.resolve( here, '..', 'baselines', 'fingerprint.json' ),
 	perfLog: path.resolve( here, '..', 'baselines', 'perf.jsonl' ),
 	denoise: path.resolve( here, '..', 'baselines', 'denoise.json' ),
+	freeze: path.resolve( here, '..', 'baselines', 'freeze.json' ),
 	harness: path.resolve( here, '..', 'harness', 'index.html' ),
 };
 
@@ -102,6 +103,50 @@ export const QUALITY_GATES = {
 	furnace: {
 		maxDeviationIncrease: 0.001, // 0.1 percentage points
 	},
+};
+
+/**
+ * Tier-2 per-pixel freeze — the one shipping path no other suite reaches, because `loadScene`
+ * pins deterministic mode and that clears `usePixelFreeze`. A bug here rendered at RMSE 4.49
+ * instead of 0.03 and passed all 21 quality scenes.
+ *
+ * Scenes chosen for two different shapes of generate-path work rather than for coverage breadth:
+ * smooth diffuse GI where most pixels go quiet early, and emissive NEE where they do not.
+ */
+export const FREEZE_GATES = {
+	// alpha-cutout was measured and REMOVED, not overlooked: its freeze ratio swings 69.6 % across
+	// five identical runs (1.765-2.993), because which pixels the frozen set catches on a cutout
+	// edge is highly sensitive to readback timing. No ratchet loose enough to be stable there
+	// retains any power to detect a regression. The two kept scenes span 3.7 % and 0.9 %.
+	scenes: [ 'spheres-gradient', 'cornell-emissive' ],
+
+	// At the SHIPPING threshold (0.02 / stability 8) freeze is measurably inert: 0.00 % of pixels
+	// move on every corpus scene at 64 spp, which matches the two standing notes that it does
+	// nothing on real interiors either. A rung run there would be hollow by construction — it
+	// would compare a render against itself and pass forever. These loosened values are the
+	// mildest measured setting that actually freezes pixels (0.77 % of the frame), so the code
+	// path executes. This tests the PATH, not the shipping thresholds.
+	testThreshold: 0.10,
+	testStability: 4,
+
+	// Minimum fraction of perceptibly-differing pixels for the run to count as having exercised
+	// freeze at all. Not mere non-identity: both arms are non-deterministic, so readback jitter
+	// alone can separate two images. Measured 0.77 % when freeze engages, ~0 when it does not.
+	minEngagedFraction: 0.002,
+
+	// Sized from measurement, not taste: five repeat runs spread 3.7 % (spheres-gradient) and
+	// 0.9 % (cornell-emissive). 25 % is ~7x the worst of those, and the seeded over-eager freeze
+	// that this rung must catch produced +60.7 % and +129.4 % on the same two scenes.
+	maxRatioIncrease: 0.25,
+
+	// Backstop against a bad first bless. The ratchet above is relative, so blessing a broken
+	// build would make the breakage the permanent floor — which is exactly how
+	// spheres-gradient/oidn/64 got blessed at a ratio where the denoiser actively hurts.
+	//
+	// Legitimate cost at the test threshold is 1.5-2.2x: freezing a pixel at 10 % relative error
+	// stops refining it while it is still visibly noisy, which is why shipping uses 0.02 — 5x
+	// stricter. 4x leaves room for that while staying far under the 150x the known bug produced.
+	maxAbsoluteRatio: 4.0,
 };
 
 export const MEMORY_GATES = {

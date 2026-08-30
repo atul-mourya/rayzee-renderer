@@ -24,6 +24,7 @@ import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js
 import { runDenoise } from './denoise.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
+import { runFreeze } from './freeze.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
 
 const exec = promisify( execFile );
@@ -108,6 +109,41 @@ async function withHarness( { cwd = PATHS.repoRoot, verbose }, body ) {
 		await server.stop();
 
 	}
+
+}
+
+function reportFreeze( report ) {
+
+	let failed = 0;
+
+	for ( const entry of report.results ) {
+
+		if ( entry.blessed ) {
+
+			log( `  ${GREEN}blessed${RESET} ${entry.scene}${DIM} ratio ${entry.ratio.toFixed( 4 )} @ ${entry.samples} spp, moved ${( entry.engagedFraction * 100 ).toFixed( 2 )} %${RESET}` );
+			continue;
+
+		}
+
+		const ok = entry.pass !== false;
+		if ( ! ok ) failed ++;
+
+		log( `  ${ok ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${entry.scene}` );
+
+		if ( typeof entry.ratio === 'number' ) {
+
+			const drift = typeof entry.increase === 'number'
+				? `  ${entry.increase >= 0 ? '+' : ''}${( entry.increase * 100 ).toFixed( 2 ) } % vs blessed`
+				: '';
+			log( `${DIM}       ratio ${entry.ratio.toFixed( 4 )}x  moved ${( entry.engagedFraction * 100 ).toFixed( 2 )} % of pixels${drift}${RESET}` );
+
+		}
+
+		for ( const failure of entry.failures ?? [] ) log( `       ${RED}${failure}${RESET}` );
+
+	}
+
+	return failed;
 
 }
 
@@ -395,7 +431,7 @@ async function commandAB( baseRef, flags ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -471,6 +507,9 @@ async function main() {
 
 			// After quality, so the ground truth it depends on is guaranteed to exist on a
 			// first bless of a fresh machine.
+			log( '\nfreeze (Tier-2 per-pixel freeze — the path deterministic mode hides)' );
+			reportFreeze( await runFreeze( bench, { bless: true, only, log } ) );
+
 			log( '\ndenoise' );
 			reportDenoise( await runDenoise( bench, { bless: true, only, log } ) );
 
@@ -484,6 +523,23 @@ async function main() {
 			log( 'quality' );
 			const report = await runQuality( bench, { truth: !! flags.truth, only, log } );
 			if ( reportQuality( report ) > 0 ) exitCode = 1;
+
+		}
+
+		if ( command === 'run' || command === 'freeze' ) {
+
+			// As with denoise: `bench freeze --bless` records this ratchet alone, so a change to
+			// the freeze path does not force a re-bless of the path tracer's goldens.
+			const blessFreeze = command === 'freeze' && !! flags.bless;
+
+			log( `\nfreeze (Tier-2 per-pixel freeze — RMSE vs truth, frozen ÷ unfrozen)${blessFreeze ? ' — blessing' : ''}` );
+			const report = await runFreeze( bench, { bless: blessFreeze, only, log } );
+			if ( reportFreeze( report ) > 0 && ! blessFreeze ) exitCode = 1;
+			if ( blessFreeze ) {
+
+				log( `${GREEN}freeze ratchet written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.freeze )}` );
+
+			}
 
 		}
 

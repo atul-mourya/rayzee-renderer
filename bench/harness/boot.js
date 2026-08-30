@@ -362,6 +362,51 @@ function setShippingHeuristics( enabled ) {
 
 }
 
+/**
+ * Renders one arm of the Tier-2 freeze comparison: identical in every respect except whether
+ * `usePixelFreeze` is on. The freeze path is otherwise unreachable from here — loadScene pins
+ * deterministic mode, and that clears usePixelFreeze.
+ *
+ * Both arms leave deterministic mode, because the readback-driven dispatch heuristics come back
+ * with it and they change the image on their own. Comparing a frozen render against a
+ * DETERMINISTIC one therefore measures those heuristics, not freeze: a seeded fault that disabled
+ * freeze entirely still "differed" from the deterministic render and passed. Freeze has to be the
+ * only variable between the two arms, so both arms run non-deterministic.
+ *
+ * The frame-level early stop is pinned unreachable rather than left live: it retires the frame at
+ * a sample count that varies run to run, which would confound "freeze broke" with "this run
+ * stopped sooner".
+ *
+ * `threshold`/`stability` default to the SHIPPING values, at which freeze is measurably inert on
+ * every corpus scene (0.00 % of pixels move). The suite deliberately loosens them — see
+ * FREEZE_GATES.testThreshold. This is a code-path test, not a production-fidelity one, in the
+ * same spirit as BASE_SETTINGS pinning fireflyThreshold to 1e9.
+ *
+ * Leaves freeze settings applied — reload a scene to restore the deterministic baseline.
+ */
+async function renderFreezeArm( spp, { freeze, threshold, stability } = {} ) {
+
+	if ( ! currentScene ) throw new Error( '__bench.renderFreezeArm: no scene loaded' );
+
+	// Deterministic mode STAYS ON. It pins the readback-driven dispatch heuristics, and leaving
+	// those live moves the image by up to 12 % of pixels between two identical runs — which
+	// drowns freeze's own signal completely (measured: a seeded fault that disabled freeze
+	// entirely still "moved" 4-13 % of pixels and passed). It clears usePixelFreeze as a side
+	// effect; re-arm it below. The dispatch pins are stage fields, not settings, so they survive.
+	app.setDeterministicMode( true );
+	app.settings.setMany( {
+		useAdaptiveSampling: !! freeze, // the freeze streak is stamped inside the convergence block
+		usePixelFreeze: !! freeze,
+		pixelFreezeThreshold: threshold ?? ENGINE_DEFAULTS.pixelFreezeThreshold,
+		pixelFreezeStability: stability ?? ENGINE_DEFAULTS.pixelFreezeStability,
+		adaptiveStopFraction: 1.1, // > 1: no converged fraction can reach it
+	}, { silent: true } );
+
+	const samples = await app.renderFrames( spp ?? currentScene.spp );
+	return { samples };
+
+}
+
 /** Apply arbitrary settings for an ablation, then re-arm accumulation. */
 function setSettings( values ) {
 
@@ -943,6 +988,7 @@ globalThis.__bench = {
 	measureKernelGPU,
 	setRenderSize,
 	setShippingHeuristics,
+	renderFreezeArm,
 	loadModelScene,
 	setSettings,
 	setSortMaterials,

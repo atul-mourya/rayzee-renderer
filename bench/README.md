@@ -217,6 +217,41 @@ A wide *absolute* spread beside a tight per-round delta is machine drift the pai
 
 Note `pipeline.getStats()` is **not** a GPU metric — it times command encoding on the CPU and stays flat while GPU cost doubles.
 
+### Per-pixel freeze — the path determinism hides
+
+`setDeterministicMode` clears `usePixelFreeze`, and every quality scene loads through it. So the
+Tier-2 freeze path shipped to every user with no gate having rendered a single pixel through it —
+a bug there rendered at RMSE 4.49 instead of 0.03 and passed all 21 scenes.
+
+`bench freeze` renders each scene twice, identical except for `usePixelFreeze`, and reports
+`RMSE vs truth, frozen ÷ unfrozen`. Three things about it are not obvious, and each one was a
+wrong first attempt:
+
+**Both arms keep deterministic mode on.** The intuitive design — frozen render vs the deterministic
+golden — measures the *dispatch heuristics*, not freeze, because leaving deterministic mode restores
+them and they move up to 12 % of pixels between two identical runs. A seeded fault that disabled
+freeze entirely passed that version. Deterministic mode is left on and `usePixelFreeze` re-armed
+afterwards; the dispatch pins are stage fields, not settings, so they survive.
+
+**The thresholds are deliberately loosened** (`0.10` / stability `4`, against a shipping `0.02` / `8`).
+At shipping values freeze is measurably *inert*: 0.00 % of pixels move on every corpus scene, which
+matches the standing note that it does nothing on real interiors either. A rung run there would
+compare a render against itself and pass forever. This gates the code path, not the shipping
+thresholds — the same bargain `BASE_SETTINGS` makes by pinning `fireflyThreshold` to `1e9`.
+
+**It asserts it did something.** The frozen arm must differ from the unfrozen one by at least 0.2 %
+of pixels. Freeze barely moves a correct image, so "barely moved" and "never ran" are
+indistinguishable unless measured — without this the rung reproduces, one level up, exactly the
+blind spot it exists to remove. `--bless` refuses to record a scene that fails it.
+
+Both gates are mutation-tested: a freeze that silently no-ops trips the engagement check on every
+scene, and one that freezes still-noisy pixels trips the ratchet by +26 % and +94 %.
+
+`alpha-cutout` was measured and dropped rather than overlooked — its ratio swings **69.6 %** across
+five identical runs, because which pixels the frozen set catches on a cutout edge is very sensitive
+to readback timing. No ratchet loose enough to be stable there detects anything. The two kept scenes
+spread 3.7 % and 0.9 %, which is what sizes the 25 % ratchet.
+
 ### Denoisers — a ratio, so there is nothing to bless away
 
 Every other suite measures the path tracer's own accumulation buffer. Nothing measured what the

@@ -23,6 +23,7 @@
     "bench": "node bench/runner/cli.js run",
     "bench:quality": "node bench/runner/cli.js quality",
     "bench:denoise": "node bench/runner/cli.js denoise",
+    "bench:freeze": "node bench/runner/cli.js freeze",
     "bench:memory": "node bench/runner/cli.js memory",
     "bench:perf": "node bench/runner/cli.js perf",
     "bench:kernels": "node bench/runner/cli.js kernels",
