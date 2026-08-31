@@ -482,11 +482,7 @@ export class TextureCreator {
 
 	}
 
-	/**
-	 * A failed map array leaves every surface using it untextured — a complete-looking image
-	 * that is wrong. Recorded so a batch host can refuse to publish it.
-	 * @private
-	 */
+	/** A failed map array leaves those surfaces untextured — complete-looking and wrong. @private */
 	_reportTextureFailure( map, error ) {
 
 		this._issues?.record(
@@ -1136,105 +1132,25 @@ export class TextureCreator {
 			// Create texture arrays
 			const texturePromises = [];
 
-			if ( maps && maps.length > 0 ) {
+			for ( const [ type, list ] of [
+				[ 'albedo', maps ],
+				[ 'normal', normalMaps ],
+				[ 'bump', bumpMaps ],
+				[ 'roughness', roughnessMaps ],
+				[ 'metalness', metalnessMaps ],
+				[ 'emissive', emissiveMaps ],
+				[ 'displacement', displacementMaps ],
+			] ) {
+
+				if ( ! list || list.length === 0 ) continue;
 
 				texturePromises.push(
-					this.createTexturesToDataTexture( maps )
-						.then( tex => ( { type: 'albedo', texture: tex } ) )
+					this.createTexturesToDataTexture( list )
+						.then( texture => ( { type, texture } ) )
 						.catch( error => {
 
-							this._reportTextureFailure( 'albedo', error );
-							return { type: 'albedo', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( normalMaps && normalMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( normalMaps )
-						.then( tex => ( { type: 'normal', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'normal', error );
-							return { type: 'normal', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( bumpMaps && bumpMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( bumpMaps )
-						.then( tex => ( { type: 'bump', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'bump', error );
-							return { type: 'bump', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( roughnessMaps && roughnessMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( roughnessMaps )
-						.then( tex => ( { type: 'roughness', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'roughness', error );
-							return { type: 'roughness', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( metalnessMaps && metalnessMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( metalnessMaps )
-						.then( tex => ( { type: 'metalness', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'metalness', error );
-							return { type: 'metalness', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( emissiveMaps && emissiveMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( emissiveMaps )
-						.then( tex => ( { type: 'emissive', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'emissive', error );
-							return { type: 'emissive', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( displacementMaps && displacementMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( displacementMaps )
-						.then( tex => ( { type: 'displacement', texture: tex } ) )
-						.catch( error => {
-
-							this._reportTextureFailure( 'displacement', error );
-							return { type: 'displacement', texture: null };
+							this._reportTextureFailure( type, error );
+							return { type, texture: null };
 
 						} )
 				);
@@ -1244,8 +1160,7 @@ export class TextureCreator {
 			// Wait for all texture arrays to complete
 			const textureResults = await Promise.allSettled( texturePromises );
 
-			// allSettled swallows rejections by design, which would silently absorb a strict
-			// host's EngineIssueError and let the load finish with missing maps anyway.
+			// allSettled would otherwise swallow a strict host's EngineIssueError.
 			const refused = textureResults.find( ( r ) => r.status === 'rejected' );
 			if ( refused ) throw refused.reason;
 

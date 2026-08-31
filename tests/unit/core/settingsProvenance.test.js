@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
-import { RENDER_PROFILES, getRenderProfile, DEFAULT_RENDER_PROFILE, ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
+import { RENDER_PROFILES, getRenderProfile, ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
 import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping } from 'three';
 
@@ -20,8 +20,7 @@ describe( 'settings provenance', () => {
 		const settings = new RenderSettings( { maxBounces: 4 } );
 		settings.set( 'maxBounces', 12 );
 
-		expect( settings.sourceOf( 'maxBounces' ) ).toBe( SETTING_SOURCE.HOST );
-		expect( settings.getEffective().maxBounces.value ).toBe( 12 );
+		expect( settings.getEffective().maxBounces ).toMatchObject( { value: 12, source: SETTING_SOURCE.HOST } );
 
 	} );
 
@@ -42,12 +41,11 @@ describe( 'settings provenance', () => {
 		const settings = new RenderSettings( { maxBounces: 4 } );
 		settings.setMany( { maxBounces: 20 }, { source: SETTING_SOURCE.MODE_PRESET } );
 
-		expect( settings.sourceOf( 'maxBounces' ) ).toBe( 'mode-preset' );
+		expect( settings.getEffective().maxBounces.source ).toBe( 'mode-preset' );
 
 	} );
 
-	// A stored-but-unrouted key reads back like any other. `routed` is how a caller tells
-	// "this is in force" from "this was accepted and does nothing".
+	// `routed` separates "in force" from "accepted and does nothing".
 	it( 'marks a stored value that reaches no stage', () => {
 
 		const settings = new RenderSettings( { maxBounces: 4 } );
@@ -59,24 +57,17 @@ describe( 'settings provenance', () => {
 
 	} );
 
-	it( 'reports no source for a key that was never set', () => {
-
-		expect( new RenderSettings( {} ).sourceOf( 'nothing' ) ).toBeNull();
-
-	} );
-
 } );
 
 describe( 'render profiles', () => {
 
 	it( 'keeps the viewer profile as the default', () => {
 
-		expect( DEFAULT_RENDER_PROFILE ).toBe( 'viewer' );
 		expect( getRenderProfile() ).toBe( RENDER_PROFILES.viewer );
+		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( RENDER_PROFILES.viewer.environmentRotation );
 
 	} );
 
-	// Both are the constants that silently moved output against Cycles.
 	it( 'states the viewer tuning the engine ships', () => {
 
 		expect( RENDER_PROFILES.viewer.areaLightIntensityScale ).toBe( 0.1 );
@@ -91,11 +82,22 @@ describe( 'render profiles', () => {
 
 	} );
 
-	// The viewer profile has to keep matching the shipped default, or the app and the profile
-	// disagree about what "no profile chosen" means.
-	it( 'agrees with ENGINE_DEFAULTS', () => {
+	// The grade is the half the first cut missed: saturation 1.2 and ACES are viewer choices.
+	it( 'drops the viewer grade under the physical profile', () => {
 
-		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( RENDER_PROFILES.viewer.environmentRotation );
+		expect( RENDER_PROFILES.viewer.saturation ).toBe( 1.2 );
+		expect( RENDER_PROFILES.physical.saturation ).toBe( 1.0 );
+		expect( RENDER_PROFILES.physical.toneMapping ).not.toBe( RENDER_PROFILES.viewer.toneMapping );
+
+	} );
+
+	it( 'keeps every ENGINE_DEFAULTS grade equal to the viewer profile', () => {
+
+		for ( const key of [ 'environmentRotation', 'saturation', 'toneMapping' ] ) {
+
+			expect( ENGINE_DEFAULTS[ key ] ).toBe( RENDER_PROFILES.viewer[ key ] );
+
+		}
 
 	} );
 
@@ -128,8 +130,7 @@ describe( 'toneMapToRGBA8', () => {
 
 	} );
 
-	// Three.js returns the colour untouched for NoToneMapping, so applying exposure here would
-	// paint brighter than the viewport this readback replaces.
+	// three.js returns the colour untouched for NoToneMapping; applying exposure paints bright.
 	it( 'ignores exposure under NoToneMapping, matching the output pass', () => {
 
 		const dim = toneMapToRGBA8( px( 0.5, 0.5, 0.5 ), { exposure: 1, toneMapping: NoToneMapping } );

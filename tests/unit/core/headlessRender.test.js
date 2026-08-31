@@ -3,10 +3,7 @@ import { PathTracerApp } from '@/core/PathTracerApp.js';
 import { captureHeadless, openHeadless } from '@/core/Headless.js';
 import { NoToneMapping } from 'three';
 
-/**
- * renderToBuffer() touches the stage, the renderer and the settings. Drive it against a bare
- * receiver: a real app needs a GPU, and everything under test here is orchestration.
- */
+/** Bare receiver: a real app needs a GPU, and everything here is orchestration. */
 function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], target = {} } = {} ) {
 
 	const pixels = new Float32Array( width * height * 4 );
@@ -50,8 +47,6 @@ describe( 'renderToBuffer', () => {
 
 	} );
 
-	// The pool over-allocates to the reserved size, so reading the texture's own extent would
-	// return a mostly-empty buffer around a small frame.
 	it( 'reads the stage size, not the texture size', async () => {
 
 		const app = makeApp( { width: 2, height: 1 } );
@@ -84,9 +79,7 @@ describe( 'captureHeadless', () => {
 	function fakeApp( { samples = 64, issues = [] } = {} ) {
 
 		return {
-			renderFrames: vi.fn( async ( n, opts ) => (
-				opts.allowEarlyRetire ? { samples, target: n, retiredBy: 'converged' } : samples
-			) ),
+			renderFrames: vi.fn( async () => samples ),
 			renderToBuffer: vi.fn( async () => ( {
 				data: new Uint8ClampedArray( 4 ), width: 1, height: 1, colorSpace: 'srgb',
 			} ) ),
@@ -104,18 +97,14 @@ describe( 'captureHeadless', () => {
 
 	} );
 
-	// renderFrames changes its return type with allowEarlyRetire; unwrapping the wrong shape
-	// would silently report `undefined` samples for every adaptive render.
-	it( 'unwraps the early-retire shape', async () => {
+	it( 'derives retiredBy from a short count', async () => {
 
 		const out = await captureHeadless( fakeApp( { samples: 9 } ), { samples: 64, allowEarlyRetire: true } );
 
-		expect( out.samples ).toBe( 9 );
-		expect( out.retiredBy ).toBe( 'converged' );
+		expect( out ).toMatchObject( { samples: 9, retiredBy: 'converged' } );
 
 	} );
 
-	// A lenient caller's whole workflow: render, then decide whether it is publishable.
 	it( 'hands back what the engine survived', async () => {
 
 		const issues = [ { code: 'texture.build_failed', severity: 'error' } ];
@@ -139,7 +128,6 @@ describe( 'captureHeadless', () => {
 
 describe( 'openHeadless', () => {
 
-	// The batch renderer's defaults, not the viewer's — and the reason this module exists.
 	it( 'requires a canvas rather than failing later inside init', async () => {
 
 		await expect( openHeadless( {} ) ).rejects.toThrow( /canvas is required/ );

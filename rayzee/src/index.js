@@ -17,7 +17,7 @@ export { EngineEvents } from './EngineEvents.js';
 // Headless rendering — the supported entry point for a caller with no screen
 export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';
 
-// Degradation contract — what the engine chose to survive instead of failing on
+// Degradation contract — what the engine survived instead of failing on
 export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
 
 // Settings provenance + viewer-vs-physical tuning
@@ -53,7 +53,6 @@ export {
 	INTERACTIVE_RENDER_CONFIG,
 	MAX_RESERVABLE_RENDER_SIZE,
 	RENDER_PROFILES,
-	DEFAULT_RENDER_PROFILE,
 	getRenderProfile,
 } from './EngineDefaults.js';
 

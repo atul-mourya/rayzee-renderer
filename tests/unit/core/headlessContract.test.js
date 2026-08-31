@@ -43,11 +43,7 @@ describe( 'describeAdapter', () => {
 
 } );
 
-/**
- * renderFrames() only touches the stage, the pipeline and the settings, so drive it against
- * a bare receiver. `advanceBy` is how many samples a render() call lands before the stage
- * retires itself — 0 models adaptive convergence, which stops frameCount dead.
- */
+/** Bare receiver. `advanceBy: 0` models a stall; `retireAfter` models adaptive convergence. */
 function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 
 	const stage = {
@@ -100,8 +96,7 @@ describe( 'renderFrames', () => {
 
 	} );
 
-	// The bug the render farm hit: adaptive sampling retires the frame, render() stops
-	// advancing frameCount, and the fixed-count loop can never reach its target.
+	// The bug the farm hit: a retired frame stops advancing frameCount.
 	it( 'throws when adaptive convergence retires the frame early', async () => {
 
 		const { app } = makeApp( { retireAfter: 3 } );
@@ -116,24 +111,14 @@ describe( 'renderFrames', () => {
 
 	} );
 
-	it( 'reports the retirement instead of throwing when allowed', async () => {
+	it( 'returns the short count instead of throwing when allowed', async () => {
 
 		const { app } = makeApp( { retireAfter: 3 } );
-		await expect( app.renderFrames( 10, { yieldEvery: 0, allowEarlyRetire: true } ) )
-			.resolves.toEqual( { samples: 3, target: 10, retiredBy: 'converged' } );
+		await expect( app.renderFrames( 10, { yieldEvery: 0, allowEarlyRetire: true } ) ).resolves.toBe( 3 );
 
 	} );
 
-	it( 'reports retiredBy count when it reaches the target', async () => {
-
-		const { app } = makeApp();
-		await expect( app.renderFrames( 4, { yieldEvery: 0, allowEarlyRetire: true } ) )
-			.resolves.toEqual( { samples: 4, target: 4, retiredBy: 'count' } );
-
-	} );
-
-	// Without the break, a retired frame burns every remaining pass to land on the same
-	// frameCount — count + 64 no-op dispatches before the throw.
+	// Without the break: count + 64 no-op dispatches before the throw.
 	it( 'stops dispatching as soon as the frame retires', async () => {
 
 		const { app, stage } = makeApp( { retireAfter: 2 } );

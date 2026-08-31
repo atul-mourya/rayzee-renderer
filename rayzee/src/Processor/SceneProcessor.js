@@ -33,8 +33,7 @@ export class SceneProcessor {
      * @param {boolean} [options.useFloat32Array=true] - Use Float32Array for triangle data
      * @param {string} [options.textureQuality='adaptive'] - Texture quality mode
      * @param {boolean} [options.enableTextureCache=true] - Enable texture caching
-     * @param {import('../EngineIssues.js').IssueLog} [options.issues] - degradation log,
-     *   forwarded to TextureCreator so a failed map array is recorded, not just warned about
+     * @param {import('../EngineIssues.js').IssueLog} [options.issues] - forwarded to TextureCreator
      */
 	constructor( options = {} ) {
 

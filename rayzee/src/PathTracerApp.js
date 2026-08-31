@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	ACESFilmicToneMapping, Scene, EventDispatcher, Box3
+	Scene, EventDispatcher, Box3
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -16,7 +16,7 @@ import { AutoExposure } from './Stages/AutoExposure.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, DEFAULT_RENDER_PROFILE } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
@@ -83,16 +83,11 @@ function attachDeviceLostHandler( device, holder ) {
 
 }
 
-/** Matches the software rasterizers a headless or driverless host silently falls back to. */
 const SOFTWARE_ADAPTER = /swiftshader|llvmpipe|lavapipe|basic render|microsoft basic|warp/i;
 
 /**
- * Normalises GPUAdapterInfo across implementations and flags software rasterizers, which
- * render correctly and ~100x slower — indistinguishable from hardware in the output image.
- * `isFallbackAdapter` only covers adapters we explicitly asked to be fallbacks, so the
- * identity strings are the load-bearing check.
- *
- * Exported so a host can vet an adapter before paying for app construction.
+ * Flags software rasterizers: correct output, ~100x slower, invisible in the image.
+ * `isFallbackAdapter` only covers adapters we asked to be fallbacks, so the strings matter.
  *
  * @param {GPUAdapter} adapter
  * @returns {{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}}
@@ -153,12 +148,10 @@ export class PathTracerApp extends EventDispatcher {
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
 		this._applyingSceneMetadata = false;
 
-		// Selected before the settings exist: the profile supplies some of their defaults.
-		this._profileName = options.profile ?? DEFAULT_RENDER_PROFILE;
-		this._profile = getRenderProfile( this._profileName );
+		// Before the settings: the profile supplies some of their defaults.
+		this._profile = getRenderProfile( options.profile );
 
-		// ── Degradation log (see EngineIssues.js) ──
-		// Constructed before everything else so no subsystem can degrade unrecorded.
+		// First, so no subsystem can degrade unrecorded.
 		this._issues = new IssueLog( {
 			strict: options.strict === true,
 			onIssue: ( issue ) => this.dispatchEvent( { type: EngineEvents.ISSUE, issue } ),
@@ -166,7 +159,11 @@ export class PathTracerApp extends EventDispatcher {
 
 		// ── Settings (single source of truth for all render parameters) ──
 		this.settings = new RenderSettings(
-			{ ...DEFAULT_STATE, environmentRotation: this._profile.environmentRotation },
+			{
+				...DEFAULT_STATE,
+				environmentRotation: this._profile.environmentRotation,
+				saturation: this._profile.saturation,
+			},
 			{ issues: this._issues }
 		);
 
@@ -555,6 +552,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._removeTrackedListeners();
 		setStatusCallback( null );
+
+		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
 
 		this.interactionManager?.deselect?.();
 		this.transformManager?.detach?.();
@@ -1997,48 +1996,21 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	/** The active tuning profile's values — what `physical` vs `viewer` actually changed. */
-	get profile() {
-
-		return { name: this._profileName, ...this._profile };
-
-	}
-
-	/**
-	 * Everything the engine chose to survive rather than fail on, oldest first. A host that
-	 * ships images should treat a non-empty `errors` as "do not publish this frame".
-	 * @returns {Object[]} copies — mutating them cannot corrupt the log
-	 */
+	/** What the engine survived rather than failed on, oldest first. @returns {Object[]} copies */
 	get issues() {
 
 		return this._issues.list;
 
 	}
 
-	/** Error-severity issues only. Warnings (e.g. a software adapter) are excluded. */
+	/** Non-empty means: do not publish this frame. */
 	get issueErrors() {
 
 		return this._issues.errors;
 
 	}
 
-	/**
-	 * Whether degradations throw at the point they happen. Settable, so a host can load
-	 * leniently and then render strictly.
-	 */
-	get strict() {
-
-		return this._issues.strict;
-
-	}
-
-	set strict( value ) {
-
-		this._issues.strict = value === true;
-
-	}
-
-	/** Drops the recorded issues. Use it to scope the log to one render on a reused app. */
+	/** Scopes the log to one render on a reused app. */
 	clearIssues() {
 
 		this._issues.clear();
@@ -2061,20 +2033,16 @@ export class PathTracerApp extends EventDispatcher {
 	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
 	 * placeholder that gets baked permanently into the accumulation buffer.
 	 *
-	 * Adaptive sampling retires the whole frame once ~all pixels clear the relative-error
-	 * floor, and a retired frame stops advancing `frameCount` — so a fixed-count loop can
-	 * never reach `count`. Pass `allowEarlyRetire` to treat that as an outcome rather than a
-	 * failure; without it the call throws, which is what a bit-exact regression run wants.
+	 * A frame retired by adaptive sampling stops advancing `frameCount`, so a fixed-count loop
+	 * can never reach `count`. `allowEarlyRetire` makes that an outcome instead of a throw.
 	 *
 	 * @param {number} count - samples to accumulate
 	 * @param {Object} [options]
 	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
 	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
 	 * @param {function(number): void} [options.onProgress] - called with the running sample count
-	 * @param {boolean} [options.allowEarlyRetire=false] - return instead of throwing when
-	 *   adaptive convergence retires the frame below `count`. Changes the return type.
-	 * @returns {Promise<number|{samples:number, target:number, retiredBy:'count'|'converged'}>}
-	 *   the accumulated sample count, or the full outcome when `allowEarlyRetire` is set
+	 * @param {boolean} [options.allowEarlyRetire=false]
+	 * @returns {Promise<number>} samples accumulated; below `count` only when retired early
 	 */
 	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false } = {} ) {
 
@@ -2110,8 +2078,7 @@ export class PathTracerApp extends EventDispatcher {
 			this.pipeline.render();
 			passes ++;
 
-			// render() no-ops once the stage marks itself complete, so spinning the remaining
-			// passes would burn the whole budget to land on the same frameCount.
+			// render() no-ops once complete; spinning would burn the budget for nothing.
 			if ( stage.isComplete && stage.frameCount < target ) {
 
 				retiredEarly = true;
@@ -2142,28 +2109,22 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		return allowEarlyRetire
-			? { samples: stage.frameCount, target, retiredBy: retiredEarly ? 'converged' : 'count' }
-			: stage.frameCount;
+		return stage.frameCount;
 
 	}
 
 	/**
-	 * The current accumulation as pixels, without going through the canvas.
+	 * The path tracer's accumulation as pixels, read from its storage target rather than the
+	 * canvas — so it works headless, works while the page is hidden, and cannot pick up a
+	 * helper overlay.
 	 *
-	 * Everything painful about capture — transparent canvases, compositor state, the browser
-	 * refusing a readback after an awaited GPU op — comes from the output living in a DOM
-	 * element. This reads the storage target directly, so it works headless, works while the
-	 * page is hidden, and cannot pick up a helper overlay.
-	 *
-	 * `linear` is the raw accumulation, which is what a comparison or a further processing
-	 * step wants. `srgb` applies exposure, saturation and the tone curve in the same order as
-	 * the output pass, so it matches what the viewport shows.
+	 * This is `pathtracer:color`, NOT the Compositor's resolved output: denoising, bloom and
+	 * edge filtering are downstream and are absent here. Use getCanvas() when you want what
+	 * the viewport shows.
 	 *
 	 * @param {Object} [options]
 	 * @param {'linear'|'srgb'} [options.colorSpace='srgb']
-	 * @param {boolean} [options.preserveAlpha=false] - srgb only; keeps the accumulated alpha
-	 *   instead of forcing opaque, for compositing against another background
+	 * @param {boolean} [options.preserveAlpha=false] - srgb only
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string}>}
 	 */
 	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false } = {} ) {
@@ -2178,9 +2139,7 @@ export class PathTracerApp extends EventDispatcher {
 		const target = stage?.storageTextures?.readTarget;
 		if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
 
-		// The pool over-allocates to the reserved size, so readTarget is usually larger than the
-		// frame. Reading its full extent would return a mostly-empty buffer, so take the live
-		// render size from the stage rather than the texture.
+		// The pool over-allocates to the reserve, so the texture is larger than the frame.
 		const { width, height } = stage;
 
 		const linear = await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
@@ -2783,7 +2742,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.adapterInfo = describeAdapter( adapter );
 		if ( this.adapterInfo.isSoftware ) {
 
-			// Warning, not an error: the image is correct, only the cost is wrong.
+			// Warning: the image is correct, only the cost is wrong.
 			this._issues.warn(
 				ISSUE_CODES.ADAPTER_SOFTWARE,
 				`software GPU adapter "${this.adapterInfo.description || this.adapterInfo.vendor}" — ` +
@@ -2810,9 +2769,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this.renderer.init();
 
-		// WebGPURenderer silently substitutes a WebGL2 backend when WebGPU init fails, and only
-		// prints a warning. The wavefront path is compute-only, so every frame would fail with
-		// an empty canvas and no error.
+		// WebGPURenderer swaps in WebGL2 on failure with only a warn(). The wavefront path is
+		// compute-only, so every frame would fail against an empty canvas.
 		if ( ! this.renderer.backend?.isWebGPUBackend ) {
 
 			throw new Error(
@@ -2847,7 +2805,7 @@ export class PathTracerApp extends EventDispatcher {
 		RectAreaLightNode.setLTC( RectAreaLightTexturesLib.init() );
 
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.toneMapping = ACESFilmicToneMapping;
+		this.renderer.toneMapping = this._profile.toneMapping;
 		this.renderer.toneMappingExposure = 1.0;
 		this.renderer.setPixelRatio( 1.0 );
 
@@ -2891,7 +2849,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._createStages();
 
 		const { clientWidth: w, clientHeight: h } = this.canvas;
-		this.pipeline = new RenderPipeline( this.renderer, w || 1, h || 1 );
+		this.pipeline = new RenderPipeline( this.renderer, w || 1, h || 1, { issues: this._issues } );
 
 		this.pipeline.addStage( this.stages.pathTracer );
 		this.pipeline.addStage( this.stages.normalDepth );

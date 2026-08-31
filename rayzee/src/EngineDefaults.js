@@ -4,6 +4,45 @@
  * and should not depend on any UI framework or external modules.
  */
 
+/**
+ * Product decisions for a real-time viewer, not physical constants. Both are invisible from
+ * outside and both move output away from a reference renderer. `viewer` is the default.
+ */
+export const RENDER_PROFILES = Object.freeze( {
+	viewer: Object.freeze( {
+		areaLightIntensityScale: 0.1, // authored RectAreaLight watts from glTF placeholders
+		environmentRotation: 270.0, // degrees
+		toneMapping: 4, // ACESFilmicToneMapping
+		saturation: 1.2, // compensates for ACES desaturation — see Compositor
+	} ),
+	physical: Object.freeze( {
+		areaLightIntensityScale: 1.0,
+		environmentRotation: 0.0,
+		// AgX, matching Blender/Cycles' default view transform. ACES crushes shadows on this
+		// engine's own corpus (shade 1.48 vs AgX 3.01 from identical radiance).
+		toneMapping: 6,
+		saturation: 1.0, // no grade
+	} ),
+} );
+
+/**
+ * @param {string} [name] - a RENDER_PROFILES key
+ * @returns {{areaLightIntensityScale: number, environmentRotation: number}}
+ * @throws {Error} on an unknown name — a typo must not silently select viewer tuning
+ */
+export function getRenderProfile( name = 'viewer' ) {
+
+	const profile = RENDER_PROFILES[ name ];
+	if ( ! profile ) {
+
+		throw new Error( `unknown render profile "${name}" — expected one of ${Object.keys( RENDER_PROFILES ).join( ', ' )}` );
+
+	}
+
+	return profile;
+
+}
+
 export const ENGINE_DEFAULTS = {
 	// Canvas output
 	resolution: 512,
@@ -15,9 +54,9 @@ export const ENGINE_DEFAULTS = {
 	// to TEXTURE_CONSTANTS.MAX_TEXTURE_SIZE (hardware ceiling). Applied at scene load.
 	maxTextureSize: 4096,
 
-	toneMapping: 4,
+	toneMapping: RENDER_PROFILES.viewer.toneMapping,
 	exposure: 1,
-	saturation: 1.2,
+	saturation: RENDER_PROFILES.viewer.saturation,
 	enableEnvironment: true,
 	showBackground: true,
 	transparentBackground: false,
@@ -30,7 +69,7 @@ export const ENGINE_DEFAULTS = {
 	// primary-ray env lookup; lighting/reflections stay sharp. Samples = taps/frame (noise vs cost).
 	backgroundBlurriness: 0,
 	backgroundBlurSamples: 8,
-	environmentRotation: 270.0, // RENDER_PROFILES.viewer — see getRenderProfile()
+	environmentRotation: RENDER_PROFILES.viewer.environmentRotation,
 	groundProjectionEnabled: false,
 	groundProjectionRadius: 100,
 	groundProjectionHeight: 15,
@@ -197,51 +236,6 @@ export const ENGINE_DEFAULTS = {
 // Albedo demodulation safety floor. ASVGF and BilateralFilter MUST use the
 // same value — demod (`color / safeAlbedo`) and remod (`lighting * safeAlbedo`)
 // only round-trip exactly when both sides agree.
-/**
- * Tuning that is a product decision for a real-time viewer, not a physical constant.
- *
- * Both values below are invisible from outside and both silently move output away from a
- * reference renderer: environmentRotation defaults to 270 rather than 0, and glTF area-light
- * placeholders are damped to a tenth of their authored watts because the viewer's exposure
- * curve was built around that. Neither is wrong for a viewer; both are wrong for a farm
- * comparing against Cycles. Collected here so choosing between them is one named flag rather
- * than a hunt through two unrelated files.
- *
- * `viewer` is the default — selecting `physical` is an explicit opt-in, never implicit.
- */
-export const RENDER_PROFILES = Object.freeze( {
-	viewer: Object.freeze( {
-		/** Multiplier on authored RectAreaLight watts from glTF placeholders. */
-		areaLightIntensityScale: 0.1,
-		/** Degrees. Frames a default HDRI the way the viewer's stock camera expects. */
-		environmentRotation: 270.0,
-	} ),
-	physical: Object.freeze( {
-		areaLightIntensityScale: 1.0,
-		environmentRotation: 0.0,
-	} ),
-} );
-
-export const DEFAULT_RENDER_PROFILE = 'viewer';
-
-/**
- * @param {string} [name] - a RENDER_PROFILES key
- * @returns {{areaLightIntensityScale: number, environmentRotation: number}}
- * @throws {Error} on an unknown name — a typo must not silently select viewer tuning
- */
-export function getRenderProfile( name = DEFAULT_RENDER_PROFILE ) {
-
-	const profile = RENDER_PROFILES[ name ];
-	if ( ! profile ) {
-
-		throw new Error( `unknown render profile "${name}" — expected one of ${Object.keys( RENDER_PROFILES ).join( ', ' )}` );
-
-	}
-
-	return profile;
-
-}
-
 export const ALBEDO_EPS = 0.01;
 
 // Hard ceiling the engine supports for the reserved (pre-allocated) render size. 4K (3840×2160)

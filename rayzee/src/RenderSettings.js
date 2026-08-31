@@ -79,17 +79,11 @@ const SETTING_ROUTES = {
  * Default keys to extract from ENGINE_DEFAULTS for initializing the values map.
  * Maps ENGINE_DEFAULTS key → RenderSettings key when they differ.
  */
-/**
- * Provenance tags for getEffective(). Add-only, like ISSUE_CODES — hosts branch on them.
- */
+/** Provenance tags for getEffective(). Add-only — hosts branch on them. */
 export const SETTING_SOURCE = Object.freeze( {
-	/** ENGINE_DEFAULTS, never touched since. */
 	DEFAULT: 'default',
-	/** Set by the embedding application. */
 	HOST: 'host',
-	/** Read out of the model file's authored metadata (glTF `extras`). */
 	SCENE_METADATA: 'scene-metadata',
-	/** Applied by configureForMode() — the interactive/production quality tiers. */
 	MODE_PRESET: 'mode-preset',
 } );
 
@@ -125,12 +119,7 @@ export class RenderSettings extends EventDispatcher {
 		/** @type {Map<string, *>} */
 		this._values = new Map();
 
-		/**
-		 * Where each value came from. A number that "looks wrong" is usually a value someone
-		 * else set — the authored scene, a mode preset — and without this the only way to find
-		 * out is to bisect the engine. See getEffective().
-		 * @type {Map<string, string>}
-		 */
+		/** @type {Map<string, string>} - see getEffective() */
 		this._sources = new Map();
 
 		/** @type {import('./Stages/PathTracer.js').PathTracer|null} */
@@ -304,28 +293,15 @@ export class RenderSettings extends EventDispatcher {
 	 */
 	set( key, value, { reset, silent, source = SETTING_SOURCE.HOST } = {} ) {
 
-		const prev = this._values.get( key );
-		if ( prev === value ) return;
+		const applied = this._applyOne( key, value, source );
+		if ( ! applied?.route ) return;
 
-		this._values.set( key, value );
-		this._sources.set( key, source );
-
-		const route = SETTING_ROUTES[ key ];
-		if ( ! route ) {
-
-			this._reportUnknownKey( key );
-			return;
-
-		}
-
-		this._applyRoute( route, value, prev );
-
-		const shouldReset = reset !== undefined ? reset : ( route.reset ?? true );
+		const shouldReset = reset !== undefined ? reset : ( applied.route.reset ?? true );
 		if ( shouldReset ) this._resetCallback?.();
 
 		if ( ! silent ) {
 
-			this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev } );
+			this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev: applied.prev } );
 
 		}
 
@@ -337,6 +313,7 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Object} [options]
 	 * @param {boolean} [options.silent] - Suppress settingChanged events
 	 * @param {boolean} [options.reset]  - Override the routes' default reset behavior
+	 * @param {string}  [options.source] - Provenance tag; see SETTING_SOURCE
 	 */
 	setMany( updates, { silent, reset, source = SETTING_SOURCE.HOST } = {} ) {
 
@@ -344,27 +321,14 @@ export class RenderSettings extends EventDispatcher {
 
 		for ( const [ key, value ] of Object.entries( updates ) ) {
 
-			const prev = this._values.get( key );
-			if ( prev === value ) continue;
+			const applied = this._applyOne( key, value, source );
+			if ( ! applied?.route ) continue;
 
-			this._values.set( key, value );
-			this._sources.set( key, source );
-
-			const route = SETTING_ROUTES[ key ];
-			if ( ! route ) {
-
-				this._reportUnknownKey( key );
-				continue;
-
-			}
-
-			this._applyRoute( route, value, prev );
-
-			if ( route.reset ?? true ) needsReset = true;
+			if ( applied.route.reset ?? true ) needsReset = true;
 
 			if ( ! silent ) {
 
-				this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev } );
+				this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev: applied.prev } );
 
 			}
 
@@ -376,10 +340,32 @@ export class RenderSettings extends EventDispatcher {
 	}
 
 	/**
-	 * A key with no route is stored and never applied — the caller believes it took effect and
-	 * the render silently ignores it, which is how a typo becomes a wrong image.
+	 * Stores one value, tags its provenance and pushes it to its stage.
+	 * @returns {?{route: ?Object, prev: *}} null when the value did not change
 	 * @private
 	 */
+	_applyOne( key, value, source ) {
+
+		const prev = this._values.get( key );
+		if ( prev === value ) return null;
+
+		this._values.set( key, value );
+		this._sources.set( key, source );
+
+		const route = SETTING_ROUTES[ key ];
+		if ( ! route ) {
+
+			this._reportUnknownKey( key );
+			return { route: null, prev };
+
+		}
+
+		this._applyRoute( route, value, prev );
+		return { route, prev };
+
+	}
+
+	/** Stored but never applied: a typo becoming a wrong image. @private */
 	_reportUnknownKey( key ) {
 
 		this._issues?.record(
@@ -397,12 +383,8 @@ export class RenderSettings extends EventDispatcher {
 	}
 
 	/**
-	 * Every live setting with the value in force and who put it there.
-	 *
-	 * The engine ships defaults a caller cannot guess — environmentRotation is 270, not 0 —
-	 * and then a model's authored metadata or a mode preset overwrites some of them silently.
-	 * Comparing a render against another renderer without this means bisecting to find which
-	 * layer moved a number.
+	 * Every live setting with the value in force and who put it there. `routed: false` means
+	 * stored but reaching no stage — see _reportUnknownKey.
 	 *
 	 * @returns {Object<string, {value: *, source: string, routed: boolean}>}
 	 */
@@ -415,20 +397,12 @@ export class RenderSettings extends EventDispatcher {
 			out[ key ] = {
 				value,
 				source: this._sources.get( key ) ?? SETTING_SOURCE.DEFAULT,
-				// False means the value is stored but reaches no stage — see _reportUnknownKey.
 				routed: SETTING_ROUTES[ key ] !== undefined,
 			};
 
 		}
 
 		return out;
-
-	}
-
-	/** Where one setting's current value came from. */
-	sourceOf( key ) {
-
-		return this._sources.get( key ) ?? null;
 
 	}
 

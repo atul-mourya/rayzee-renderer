@@ -83,9 +83,8 @@ export class AssetLoader extends EventDispatcher {
 		this._issues = issues;
 		this._profile = profile ?? getRenderProfile();
 
-		// A glTF whose external texture 404s still loads: the mesh renders untextured and
-		// nothing rejects. This is the only place the engine sees that URL. Note the ZIP
-		// paths build their own managers and are not covered.
+		// A glTF whose external texture 404s still loads. Only place the engine sees the URL.
+		// ZIP paths build their own managers and are not covered.
 		this._loadingManager.onError = ( url ) => {
 
 			if ( this._loadCancelled ) return;
@@ -1763,8 +1762,7 @@ export class AssetLoader extends EventDispatcher {
 					// Intensity is authored in Watts (Blender-style); emitted radiance
 					// is computed at render time as power/(π·area). Blender emission
 					// defaults: power-normalized, full Lambertian spread (π), rectangle.
-					// Viewer tuning, not physics — RENDER_PROFILES.viewer damps authored watts to
-					// suit the viewer's exposure curve; `physical` leaves them alone.
+					// Viewer tuning, not physics — see RENDER_PROFILES.
 					const light = new RectAreaLight(
 						new Color( ...userData.color ),
 						userData.intensity * this._profile.areaLightIntensityScale,
@@ -1899,6 +1897,10 @@ export class AssetLoader extends EventDispatcher {
 		// Three.js EventDispatcher exposes no dispose()/removeAllEventListeners().
 		// Clear the internal listener map directly so handlers don't retain references.
 		this._listeners = undefined;
+
+		// onError captures `this`, and a manager outlives the loader via an in-flight fetch.
+		this._loadingManager.onError = undefined;
+		this._issues = null;
 
 		this.releaseTargetModel();
 
