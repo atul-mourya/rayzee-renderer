@@ -5,11 +5,15 @@
  * Why this exists instead of driving the real app: `app/index.html` boots the whole React
  * UI and immediately downloads a ~3.6 MB default model from a remote host. Neither is
  * wanted in a regression run.
+ *
+ * Setup and readback go through `openHeadless()` / `renderToBuffer()` — the same entry point
+ * a render farm uses, so a bug in either is visible to both. Everything else here is
+ * bench-only measurement.
  */
 
 import {
 	clearBindingAuditFindings, configureAssets, ENGINE_DEFAULTS, getBindingAuditFindings,
-	PathTracerApp, setBindingAudit,
+	openHeadless, setBindingAudit,
 } from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
 
@@ -148,11 +152,18 @@ function snapshotEnvParams() {
 
 async function boot() {
 
-	app = new PathTracerApp( canvas, { autoResize: false } );
-	await app.init();
+	// Both options are load-bearing: openHeadless prefers 'physical', which would change every
+	// golden; and strict would abort the run before the runner reports. loadScene() asserts
+	// app.issueErrors instead.
+	app = await openHeadless( {
+		canvas,
+		width: RENDER_SIZE.width,
+		height: RENDER_SIZE.height,
+		strict: false,
+		profile: 'viewer',
+		deterministic: true,
+	} );
 
-	app.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
-	app.setDeterministicMode( true );
 	app.enableGPUTiming( true );
 
 	// Structural guard, not a metric: reports stages whose TextureNodes are bound too late to
@@ -195,9 +206,12 @@ async function fingerprint() {
 	const adapter = await navigator.gpu.requestAdapter( { powerPreference: 'high-performance' } );
 	const limits = adapter?.limits ?? {};
 
+	// Identity from the adapter that actually rendered; limits from here (adapterInfo lacks
+	// them). Do NOT add keys: fingerprintMismatch() diffs every key, so one mismatches all
+	// stored baselines until re-blessed.
 	return {
-		vendor: adapter?.info?.vendor ?? 'unknown',
-		architecture: adapter?.info?.architecture ?? 'unknown',
+		vendor: app?.adapterInfo?.vendor || adapter?.info?.vendor || 'unknown',
+		architecture: app?.adapterInfo?.architecture || adapter?.info?.architecture || 'unknown',
 		maxStorageBuffersPerShaderStage: limits.maxStorageBuffersPerShaderStage ?? 0,
 		maxStorageTexturesPerShaderStage: limits.maxStorageTexturesPerShaderStage ?? 0,
 		maxBufferSize: limits.maxBufferSize ?? 0,
@@ -207,9 +221,24 @@ async function fingerprint() {
 
 }
 
+/** Fails a half-load: a scene missing its textures still renders, and the suite would bless it. */
+function assertLoadedCleanly( what ) {
+
+	const errors = app.issueErrors;
+	if ( errors.length === 0 ) return;
+
+	throw new Error(
+		`bench: ${what} degraded — ${errors.length} issue(s): ` +
+		errors.map( ( e ) => `${e.code} (${e.message})` ).join( '; ' )
+	);
+
+}
+
 async function loadScene( id ) {
 
 	const spec = getScene( id );
+
+	app.clearIssues(); // else the first scene's issues fail every scene after it
 
 	// Deterministic baseline first, then the scene's own overrides. Batched so the
 	// accumulation reset happens once rather than per key.
@@ -236,6 +265,8 @@ async function loadScene( id ) {
 	// nothing races the manual render loop — preserving the current dispatch mode, since a
 	// hard-coded default here would cancel setPerfMode() for every scene in a perf run.
 	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
+
+	assertLoadedCleanly( `scene "${spec.id}"` );
 
 	currentScene = spec;
 	return { id: spec.id, spp: spec.spp, truthSpp: spec.truthSpp, loadMs };
@@ -496,6 +527,7 @@ function meshStats() {
  */
 async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
+	app.clearIssues();
 	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS }, { silent: true } );
 	restoreEnvParams();
 
@@ -513,6 +545,8 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 	if ( picked > 0 ) app.cameraManager.switchCamera( picked );
 
 	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
+
+	assertLoadedCleanly( `model "${url}"` );
 
 	// render() gates on currentScene; a minimal stand-in is enough for a timing-only run.
 	currentScene = { id: `model:${url}`, spp: 1, truthSpp: 1, settings: {} };
@@ -546,16 +580,16 @@ let _referenceBuffer = null;
 
 async function readLinear() {
 
-	const pool = app.stages.pathTracer.storageTextures;
-	const { width, height } = RENDER_SIZE;
-	return app.renderer.readRenderTargetPixelsAsync( pool.readTarget, 0, 0, width, height, 0 );
+	// Live stage size, so this is safe under setRenderSize() — unlike capturePNG().
+	const { data } = await app.renderToBuffer( { colorSpace: 'linear' } );
+	return data;
 
 }
 
 /** Store the current buffer as ground truth for rmseVsReference(). */
 async function snapshotReference() {
 
-	_referenceBuffer = Float32Array.from( await readLinear() );
+	_referenceBuffer = await readLinear();
 	return _referenceBuffer.length / 4;
 
 }
@@ -600,15 +634,10 @@ async function rmseVsReference() {
  */
 async function probes() {
 
-	const pool = app.stages.pathTracer.storageTextures;
-	const { width, height } = RENDER_SIZE;
-
-	const pixels = await app.renderer.readRenderTargetPixelsAsync(
-		pool.readTarget, 0, 0, width, height, 0
-	);
+	const pixels = await readLinear();
 
 	let sumR = 0, sumG = 0, sumB = 0, sumLum = 0, maxLum = 0, nonFinite = 0;
-	const count = width * height;
+	const count = pixels.length / 4;
 
 	for ( let i = 0; i < count; i ++ ) {
 
@@ -919,13 +948,17 @@ async function appLifecycleCycle( sceneId, spp = 1 ) {
 	}
 
 	const startedAt = performance.now();
-	const throwaway = new PathTracerApp( lifecycleCanvas, { autoResize: false } );
-	await throwaway.init();
-	throwaway.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
-	throwaway.setDeterministicMode( true );
 
-	// Same settings floor as loadScene(), so the cycle exercises the same code as a real render.
-	throwaway.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings }, { silent: true } );
+	// Same construction path as boot(), so the leak gate covers what a farm actually runs.
+	const throwaway = await openHeadless( {
+		canvas: lifecycleCanvas,
+		width: RENDER_SIZE.width,
+		height: RENDER_SIZE.height,
+		strict: false,
+		profile: 'viewer',
+		deterministic: true,
+		settings: { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings },
+	} );
 
 	await spec.build( throwaway );
 	throwaway.setDeterministicMode( true );
@@ -1010,6 +1043,8 @@ globalThis.__bench = {
 	rmseVsReference,
 	memory,
 	resetPeakMemory,
+	issues: () => app.issues,
+	adapter: () => app.adapterInfo,
 	unload,
 	appLifecycleCycle,
 	appLifecycleLive,
