@@ -63,6 +63,8 @@ Image comparison is only meaningful if the renderer is reproducible, and by defa
 
 `app.setDeterministicMode( true )` pins all of it, and `app.renderFrames( n )` accumulates exactly `n` samples with the rAF loop parked. With those, two runs of the same scene produce **byte-identical** PNGs.
 
+The harness reaches them through `openHeadless()` / `renderToBuffer()` — the same entry point a render farm uses — so a bug in the shipped headless path cannot hide from the suite that exists to catch bugs. It passes `profile: 'viewer'` and `strict: false` explicitly: `physical` would change every golden, and `strict` would abort a run before the runner reported anything (`assertLoadedCleanly()` gives the same guarantee per load instead).
+
 These are public engine API, not bench-only helpers — any host doing offline rendering wants them.
 
 ## What each suite gates on

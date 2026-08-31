@@ -233,16 +233,65 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   live on frame k*. Disables adaptive sampling, pixel freeze, the readback-driven per-bounce early
   exit and dynamic dispatch sizing (kernels bind on `ENTERING_COUNT`, so an under-sized grid silently
   drops rays), interaction mode, auto-focus and auto-exposure. Reversible; leaves rAF stopped.
-- **`await app.renderFrames( n, { reset, yieldEvery, onProgress } )`** — accumulates exactly `n`
-  samples synchronously. Awaits the STBN atlases (until they land the sampler reads a constant-0.5
-  placeholder that bakes into accumulation), raises `maxSamples` through the settings handler
-  (`completionThreshold` is a cached JS number — writing the uniform alone does nothing), and calls
-  `stopAnimation()` after `reset()` because `reset()` re-wakes rAF.
+- **`await app.renderFrames( n, { reset, yieldEvery, onProgress, allowEarlyRetire } )`** —
+  accumulates `n` samples synchronously, returning the count reached. Awaits the STBN atlases (until
+  they land the sampler reads a constant-0.5 placeholder that bakes into accumulation), raises
+  `maxSamples` through the settings handler (`completionThreshold` is a cached JS number — writing
+  the uniform alone does nothing), and calls `stopAnimation()` after `reset()` because `reset()`
+  re-wakes rAF.
+  ⚠️ **`renderFrames` and adaptive sampling are mutually exclusive.** A frame retired by
+  `_isConvergedComplete()` stops advancing `frameCount` (`PathTracer.render()` early-returns at the
+  top), so a fixed-count loop can never reach `n`. `setDeterministicMode` clears
+  `useAdaptiveSampling`, which is why the bench never hits it; anything running the shipping
+  adaptive path must pass `allowEarlyRetire: true` and compare the returned count against `n`.
+- **`await app.renderToBuffer( { colorSpace, preserveAlpha } )`** — pixels without the canvas, so it
+  works headless, works while the page is hidden, and cannot pick up a helper overlay. `'linear'`
+  is the raw accumulation, `'srgb'` applies exposure/saturation/tone curve in the output pass's
+  order. ⚠️ Reads `pathtracer:color`, **upstream of the Compositor** — denoising and bloom are
+  absent. Use `getCanvas()` for what the viewport shows.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
   CPU and stays flat while GPU cost doubles.
 
 `app.stages.pathTracer.blueNoiseReady` resolves when both STBN atlases have loaded.
+
+`rayzee/src/Headless.js` wraps the above as the supported entry point — `renderHeadless()` for one
+frame, `openHeadless()` to keep a live app across several, `captureHeadless()` to accumulate and read
+back. Defaults are the batch renderer's (`strict`, `profile: 'physical'`, `deterministic`).
+`bench/harness/boot.js` boots through it, so the suite and production share one driver; the bench
+passes `profile: 'viewer'` and `strict: false` explicitly, and both are load-bearing — `physical`
+would change every golden, and `strict` would abort a run before the runner reported.
+
+### Degradation Contract (`EngineIssues.js`)
+The engine degrades rather than fails — right for a viewer, backwards for a batch renderer. Every
+degrade-and-continue site records a structured issue instead of only warning, and one policy decides
+what that means: `new PathTracerApp( canvas, { strict: true } )` throws an `EngineIssueError` at the
+point of degradation; otherwise read `app.issues` / `app.issueErrors`, or listen for
+`EngineEvents.ISSUE`. `ISSUE_CODES` is **add-only API surface** — hosts pin a version and branch on
+the strings, so never rename or repurpose one.
+- Adding a site is one `this._issues?.record( code, message, detail )` call. The log is built first
+  in the app constructor and injected into `RenderSettings`, `AssetLoader`, `SceneProcessor` →
+  `TextureCreator`, and `RenderPipeline` (which records `stage.render_failed` once per stage+phase —
+  a broken stage throws every frame).
+- ⚠️ Any callback handed to a collaborator must be cleared in `dispose()`. `IssueLog.detach()` exists
+  because `onIssue` captured the app and the most recently disposed app stayed reachable. Only
+  `npm run bench:memory` catches this class — unit tests cannot.
+- `Promise.allSettled` swallows a strict host's throw; `TextureCreator` rethrows the first rejected
+  result for that reason. Any new allSettled aggregation needs the same.
+
+### Settings Provenance & Render Profiles
+- **`settings.getEffective()`** — every live setting as `{ value, source, routed }`. `source` is one
+  of `SETTING_SOURCE` (default / host / scene-metadata / mode-preset); `routed: false` means stored
+  but reaching no stage, which is how a typo becomes a wrong image.
+- **`RENDER_PROFILES`** (`EngineDefaults.js`) — product decisions for a real-time viewer that are not
+  physical constants, collected so choosing between them is one flag rather than a hunt:
+  `areaLightIntensityScale` (glTF placeholder watts), `environmentRotation`, `toneMapping`,
+  `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; `physical` selects
+  AgX and drops the grade. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
+  throws rather than silently selecting viewer tuning.
+- **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
+  lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
+  the wavefront path is compute-only and every frame would fail against an empty canvas.
 
 ### State-Engine Synchronization Pattern
 **Critical**: All UI state changes must sync with the app via `getApp()`:
