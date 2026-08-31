@@ -17,6 +17,7 @@ import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { getRenderProfile } from '../EngineDefaults.js';
 
 // Define supported file formats
 const SUPPORTED_FORMATS = {
@@ -55,7 +56,7 @@ function standInForSplit( source ) {
  */
 export class AssetLoader extends EventDispatcher {
 
-	constructor( scene, camera, controls, { issues = null } = {} ) {
+	constructor( scene, camera, controls, { issues = null, profile = null } = {} ) {
 
 		super();
 		this.scene = scene;
@@ -80,6 +81,7 @@ export class AssetLoader extends EventDispatcher {
 		this._loadCancelled = false;
 
 		this._issues = issues;
+		this._profile = profile ?? getRenderProfile();
 
 		// A glTF whose external texture 404s still loads: the mesh renders untextured and
 		// nothing rejects. This is the only place the engine sees that URL. Note the ZIP
@@ -1761,9 +1763,11 @@ export class AssetLoader extends EventDispatcher {
 					// Intensity is authored in Watts (Blender-style); emitted radiance
 					// is computed at render time as power/(π·area). Blender emission
 					// defaults: power-normalized, full Lambertian spread (π), rectangle.
+					// Viewer tuning, not physics — RENDER_PROFILES.viewer damps authored watts to
+					// suit the viewer's exposure curve; `physical` leaves them alone.
 					const light = new RectAreaLight(
 						new Color( ...userData.color ),
-						userData.intensity * 0.1,
+						userData.intensity * this._profile.areaLightIntensityScale,
 						userData.width,
 						userData.height
 					);

@@ -16,13 +16,15 @@ import { AutoExposure } from './Stages/AutoExposure.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, DEFAULT_RENDER_PROFILE } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
+import { SETTING_SOURCE } from './RenderSettings.js';
+import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
@@ -122,6 +124,8 @@ export class PathTracerApp extends EventDispatcher {
 	 *   elements into (HUD overlay, denoiser canvas). Defaults to `canvas.parentNode`.
 	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
 	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
+	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
+	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -149,6 +153,10 @@ export class PathTracerApp extends EventDispatcher {
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
 		this._applyingSceneMetadata = false;
 
+		// Selected before the settings exist: the profile supplies some of their defaults.
+		this._profileName = options.profile ?? DEFAULT_RENDER_PROFILE;
+		this._profile = getRenderProfile( this._profileName );
+
 		// ── Degradation log (see EngineIssues.js) ──
 		// Constructed before everything else so no subsystem can degrade unrecorded.
 		this._issues = new IssueLog( {
@@ -157,7 +165,10 @@ export class PathTracerApp extends EventDispatcher {
 		} );
 
 		// ── Settings (single source of truth for all render parameters) ──
-		this.settings = new RenderSettings( DEFAULT_STATE, { issues: this._issues } );
+		this.settings = new RenderSettings(
+			{ ...DEFAULT_STATE, environmentRotation: this._profile.environmentRotation },
+			{ issues: this._issues }
+		);
 
 		// ── Core objects (populated in init) ──
 		this.renderer = null;
@@ -1018,7 +1029,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( env.rotation !== undefined ) updates.environmentRotation = env.rotation;
 
-		this.settings.setMany( updates, { reset: false } );
+		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
 		if ( this.scene ) this.scene.background = texture;
 
 		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
@@ -1767,7 +1778,7 @@ export class PathTracerApp extends EventDispatcher {
 			usePixelFreeze: config.usePixelFreeze ?? false,
 			pixelFreezeThreshold: config.pixelFreezeThreshold ?? DEFAULT_STATE.pixelFreezeThreshold,
 			pixelFreezeStability: config.pixelFreezeStability ?? DEFAULT_STATE.pixelFreezeStability,
-		}, { silent: true } );
+		}, { silent: true, source: SETTING_SOURCE.MODE_PRESET } );
 
 		// renderMode has no SETTING_ROUTES entry
 		this.stages.pathTracer?.setUniform( 'renderMode', parseInt( config.renderMode ) );
@@ -1986,6 +1997,13 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/** The active tuning profile's values — what `physical` vs `viewer` actually changed. */
+	get profile() {
+
+		return { name: this._profileName, ...this._profile };
+
+	}
+
 	/**
 	 * Everything the engine chose to survive rather than fail on, oldest first. A host that
 	 * ships images should treat a non-empty `errors` as "do not publish this frame".
@@ -2127,6 +2145,59 @@ export class PathTracerApp extends EventDispatcher {
 		return allowEarlyRetire
 			? { samples: stage.frameCount, target, retiredBy: retiredEarly ? 'converged' : 'count' }
 			: stage.frameCount;
+
+	}
+
+	/**
+	 * The current accumulation as pixels, without going through the canvas.
+	 *
+	 * Everything painful about capture — transparent canvases, compositor state, the browser
+	 * refusing a readback after an awaited GPU op — comes from the output living in a DOM
+	 * element. This reads the storage target directly, so it works headless, works while the
+	 * page is hidden, and cannot pick up a helper overlay.
+	 *
+	 * `linear` is the raw accumulation, which is what a comparison or a further processing
+	 * step wants. `srgb` applies exposure, saturation and the tone curve in the same order as
+	 * the output pass, so it matches what the viewport shows.
+	 *
+	 * @param {Object} [options]
+	 * @param {'linear'|'srgb'} [options.colorSpace='srgb']
+	 * @param {boolean} [options.preserveAlpha=false] - srgb only; keeps the accumulated alpha
+	 *   instead of forcing opaque, for compositing against another background
+	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string}>}
+	 */
+	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false } = {} ) {
+
+		if ( colorSpace !== 'linear' && colorSpace !== 'srgb' ) {
+
+			throw new Error( `renderToBuffer: colorSpace must be 'linear' or 'srgb', got "${colorSpace}"` );
+
+		}
+
+		const stage = this.stages?.pathTracer;
+		const target = stage?.storageTextures?.readTarget;
+		if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
+
+		// The pool over-allocates to the reserved size, so readTarget is usually larger than the
+		// frame. Reading its full extent would return a mostly-empty buffer, so take the live
+		// render size from the stage rather than the texture.
+		const { width, height } = stage;
+
+		const linear = await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+
+		if ( colorSpace === 'linear' ) return { data: linear, width, height, colorSpace };
+
+		return {
+			data: toneMapToRGBA8( linear, {
+				exposure: this.renderer.toneMappingExposure,
+				toneMapping: this.renderer.toneMapping,
+				saturation: this.settings.get( 'saturation' ) ?? 1,
+				preserveAlpha,
+			} ),
+			width,
+			height,
+			colorSpace,
+		};
 
 	}
 
@@ -2800,7 +2871,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._sdf = new SceneProcessor( { issues: this._issues } );
 		this.assetLoader = new AssetLoader(
-			this.meshScene, this.cameraManager.camera, this.cameraManager.controls, { issues: this._issues }
+			this.meshScene, this.cameraManager.camera, this.cameraManager.controls,
+			{ issues: this._issues, profile: this._profile }
 		);
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();

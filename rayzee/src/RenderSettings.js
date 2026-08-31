@@ -79,6 +79,20 @@ const SETTING_ROUTES = {
  * Default keys to extract from ENGINE_DEFAULTS for initializing the values map.
  * Maps ENGINE_DEFAULTS key → RenderSettings key when they differ.
  */
+/**
+ * Provenance tags for getEffective(). Add-only, like ISSUE_CODES — hosts branch on them.
+ */
+export const SETTING_SOURCE = Object.freeze( {
+	/** ENGINE_DEFAULTS, never touched since. */
+	DEFAULT: 'default',
+	/** Set by the embedding application. */
+	HOST: 'host',
+	/** Read out of the model file's authored metadata (glTF `extras`). */
+	SCENE_METADATA: 'scene-metadata',
+	/** Applied by configureForMode() — the interactive/production quality tiers. */
+	MODE_PRESET: 'mode-preset',
+} );
+
 const DEFAULTS_KEY_MAP = {
 	bounces: 'maxBounces',
 	debugMode: 'visMode',
@@ -110,6 +124,14 @@ export class RenderSettings extends EventDispatcher {
 
 		/** @type {Map<string, *>} */
 		this._values = new Map();
+
+		/**
+		 * Where each value came from. A number that "looks wrong" is usually a value someone
+		 * else set — the authored scene, a mode preset — and without this the only way to find
+		 * out is to bisect the engine. See getEffective().
+		 * @type {Map<string, string>}
+		 */
+		this._sources = new Map();
 
 		/** @type {import('./Stages/PathTracer.js').PathTracer|null} */
 		this._pathTracer = null;
@@ -280,12 +302,13 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {boolean} [options.reset]  - Override the route's default reset behavior
 	 * @param {boolean} [options.silent] - Suppress the settingChanged event
 	 */
-	set( key, value, { reset, silent } = {} ) {
+	set( key, value, { reset, silent, source = SETTING_SOURCE.HOST } = {} ) {
 
 		const prev = this._values.get( key );
 		if ( prev === value ) return;
 
 		this._values.set( key, value );
+		this._sources.set( key, source );
 
 		const route = SETTING_ROUTES[ key ];
 		if ( ! route ) {
@@ -315,7 +338,7 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {boolean} [options.silent] - Suppress settingChanged events
 	 * @param {boolean} [options.reset]  - Override the routes' default reset behavior
 	 */
-	setMany( updates, { silent, reset } = {} ) {
+	setMany( updates, { silent, reset, source = SETTING_SOURCE.HOST } = {} ) {
 
 		let needsReset = false;
 
@@ -325,6 +348,7 @@ export class RenderSettings extends EventDispatcher {
 			if ( prev === value ) continue;
 
 			this._values.set( key, value );
+			this._sources.set( key, source );
 
 			const route = SETTING_ROUTES[ key ];
 			if ( ! route ) {
@@ -369,6 +393,42 @@ export class RenderSettings extends EventDispatcher {
 	get( key ) {
 
 		return this._values.get( key );
+
+	}
+
+	/**
+	 * Every live setting with the value in force and who put it there.
+	 *
+	 * The engine ships defaults a caller cannot guess — environmentRotation is 270, not 0 —
+	 * and then a model's authored metadata or a mode preset overwrites some of them silently.
+	 * Comparing a render against another renderer without this means bisecting to find which
+	 * layer moved a number.
+	 *
+	 * @returns {Object<string, {value: *, source: string, routed: boolean}>}
+	 */
+	getEffective() {
+
+		const out = {};
+
+		for ( const [ key, value ] of this._values ) {
+
+			out[ key ] = {
+				value,
+				source: this._sources.get( key ) ?? SETTING_SOURCE.DEFAULT,
+				// False means the value is stored but reaches no stage — see _reportUnknownKey.
+				routed: SETTING_ROUTES[ key ] !== undefined,
+			};
+
+		}
+
+		return out;
+
+	}
+
+	/** Where one setting's current value came from. */
+	sourceOf( key ) {
+
+		return this._sources.get( key ) ?? null;
 
 	}
 
@@ -429,6 +489,7 @@ export class RenderSettings extends EventDispatcher {
 			if ( key in defaults ) {
 
 				this._values.set( key, defaults[ key ] );
+				this._sources.set( key, SETTING_SOURCE.DEFAULT );
 
 			}
 
@@ -440,6 +501,7 @@ export class RenderSettings extends EventDispatcher {
 			if ( defaultsKey in defaults ) {
 
 				this._values.set( settingsKey, defaults[ defaultsKey ] );
+				this._sources.set( settingsKey, SETTING_SOURCE.DEFAULT );
 
 			}
 

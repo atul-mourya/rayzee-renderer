@@ -214,3 +214,45 @@ export function applySaturation( out, saturation ) {
 	out[ 2 ] = luma + ( out[ 2 ] - luma ) * saturation;
 
 }
+
+/**
+ * Linear float RGBA → display-ready sRGB bytes, in the order the WebGPU output pass uses:
+ * exposure, then saturation, then the tone curve, then the sRGB transfer function.
+ *
+ * The order is not interchangeable — saturation is defined against exposed linear values and
+ * the curve is not linear, so moving either step shifts every mid-tone.
+ *
+ * @param {Float32Array} linear - RGBA, 4 floats per pixel
+ * @param {Object} options
+ * @param {number} options.exposure - renderer.toneMappingExposure (pass it raw)
+ * @param {number} options.toneMapping - Three.js ToneMapping constant
+ * @param {number} [options.saturation=1]
+ * @param {boolean} [options.preserveAlpha=false] - keep the source alpha instead of forcing 255
+ * @returns {Uint8ClampedArray} RGBA bytes
+ */
+export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false } ) {
+
+	const curve = TONE_MAP_FNS.get( toneMapping ) ?? TONE_MAP_FNS.get( NoToneMapping );
+	const gain = effectiveExposure( exposure, toneMapping );
+	const out = new Uint8ClampedArray( linear.length );
+	const scratch = [ 0, 0, 0 ];
+
+	for ( let i = 0; i < linear.length; i += 4 ) {
+
+		scratch[ 0 ] = linear[ i ] * gain;
+		scratch[ 1 ] = linear[ i + 1 ] * gain;
+		scratch[ 2 ] = linear[ i + 2 ] * gain;
+
+		applySaturation( scratch, saturation );
+		curve( scratch[ 0 ], scratch[ 1 ], scratch[ 2 ], 1.0, scratch );
+
+		out[ i ] = linearToSRGB( scratch[ 0 ] ) * 255 + 0.5;
+		out[ i + 1 ] = linearToSRGB( scratch[ 1 ] ) * 255 + 0.5;
+		out[ i + 2 ] = linearToSRGB( scratch[ 2 ] ) * 255 + 0.5;
+		out[ i + 3 ] = preserveAlpha ? linear[ i + 3 ] * 255 + 0.5 : 255;
+
+	}
+
+	return out;
+
+}

@@ -14,8 +14,14 @@ export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
 // Event types
 export { EngineEvents } from './EngineEvents.js';
 
+// Headless rendering — the supported entry point for a caller with no screen
+export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';
+
 // Degradation contract — what the engine chose to survive instead of failing on
 export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
+
+// Settings provenance + viewer-vs-physical tuning
+export { SETTING_SOURCE } from './RenderSettings.js';
 
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
@@ -46,6 +52,9 @@ export {
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
 	MAX_RESERVABLE_RENDER_SIZE,
+	RENDER_PROFILES,
+	DEFAULT_RENDER_PROFILE,
+	getRenderProfile,
 } from './EngineDefaults.js';
 
 // Settings & managers (for advanced consumers)
