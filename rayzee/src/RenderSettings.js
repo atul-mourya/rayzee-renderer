@@ -1,6 +1,7 @@
 import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
 import { ENGINE_DEFAULTS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
+import { ISSUE_CODES } from './EngineIssues.js';
 
 /**
  * Routing table: maps each setting key to its target stage/handler.
@@ -96,9 +97,16 @@ const DEFAULTS_KEY_MAP = {
  */
 export class RenderSettings extends EventDispatcher {
 
-	constructor( defaults = ENGINE_DEFAULTS ) {
+	/**
+	 * @param {Object} [defaults]
+	 * @param {Object} [options]
+	 * @param {import('./EngineIssues.js').IssueLog} [options.issues] - records unroutable keys
+	 */
+	constructor( defaults = ENGINE_DEFAULTS, { issues = null } = {} ) {
 
 		super();
+
+		this._issues = issues;
 
 		/** @type {Map<string, *>} */
 		this._values = new Map();
@@ -280,7 +288,12 @@ export class RenderSettings extends EventDispatcher {
 		this._values.set( key, value );
 
 		const route = SETTING_ROUTES[ key ];
-		if ( ! route ) return;
+		if ( ! route ) {
+
+			this._reportUnknownKey( key );
+			return;
+
+		}
 
 		this._applyRoute( route, value, prev );
 
@@ -314,7 +327,12 @@ export class RenderSettings extends EventDispatcher {
 			this._values.set( key, value );
 
 			const route = SETTING_ROUTES[ key ];
-			if ( ! route ) continue;
+			if ( ! route ) {
+
+				this._reportUnknownKey( key );
+				continue;
+
+			}
 
 			this._applyRoute( route, value, prev );
 
@@ -330,6 +348,21 @@ export class RenderSettings extends EventDispatcher {
 
 		const shouldReset = reset !== undefined ? reset : needsReset;
 		if ( shouldReset ) this._resetCallback?.();
+
+	}
+
+	/**
+	 * A key with no route is stored and never applied — the caller believes it took effect and
+	 * the render silently ignores it, which is how a typo becomes a wrong image.
+	 * @private
+	 */
+	_reportUnknownKey( key ) {
+
+		this._issues?.record(
+			ISSUE_CODES.SETTING_UNKNOWN_KEY,
+			`unknown setting "${key}" — stored but never applied to any stage`,
+			{ key }
+		);
 
 	}
 

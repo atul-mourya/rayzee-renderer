@@ -9,10 +9,13 @@
 import './TSL/patches.js';
 
 // Main application
-export { PathTracerApp } from './PathTracerApp.js';
+export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
 
 // Event types
 export { EngineEvents } from './EngineEvents.js';
+
+// Degradation contract — what the engine chose to survive instead of failing on
+export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
 
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';

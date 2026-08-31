@@ -22,6 +22,7 @@ import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
+import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
@@ -80,6 +81,37 @@ function attachDeviceLostHandler( device, holder ) {
 
 }
 
+/** Matches the software rasterizers a headless or driverless host silently falls back to. */
+const SOFTWARE_ADAPTER = /swiftshader|llvmpipe|lavapipe|basic render|microsoft basic|warp/i;
+
+/**
+ * Normalises GPUAdapterInfo across implementations and flags software rasterizers, which
+ * render correctly and ~100x slower — indistinguishable from hardware in the output image.
+ * `isFallbackAdapter` only covers adapters we explicitly asked to be fallbacks, so the
+ * identity strings are the load-bearing check.
+ *
+ * Exported so a host can vet an adapter before paying for app construction.
+ *
+ * @param {GPUAdapter} adapter
+ * @returns {{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}}
+ */
+export function describeAdapter( adapter ) {
+
+	const info = adapter.info ?? {};
+	const identity = `${info.vendor ?? ''} ${info.architecture ?? ''} ${info.device ?? ''} ${info.description ?? ''}`;
+
+	return {
+		vendor: info.vendor ?? '',
+		architecture: info.architecture ?? '',
+		device: info.device ?? '',
+		description: info.description ?? '',
+		isSoftware: info.isFallbackAdapter === true
+			|| adapter.isFallbackAdapter === true
+			|| SOFTWARE_ADAPTER.test( identity ),
+	};
+
+}
+
 export class PathTracerApp extends EventDispatcher {
 
 	/**
@@ -88,6 +120,8 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {boolean} [options.autoResize=true] - Automatically listen for window resize events
 	 * @param {HTMLElement} [options.container] - Single DOM parent the engine mounts all auxiliary
 	 *   elements into (HUD overlay, denoiser canvas). Defaults to `canvas.parentNode`.
+	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
+	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -115,8 +149,15 @@ export class PathTracerApp extends EventDispatcher {
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
 		this._applyingSceneMetadata = false;
 
+		// ── Degradation log (see EngineIssues.js) ──
+		// Constructed before everything else so no subsystem can degrade unrecorded.
+		this._issues = new IssueLog( {
+			strict: options.strict === true,
+			onIssue: ( issue ) => this.dispatchEvent( { type: EngineEvents.ISSUE, issue } ),
+		} );
+
 		// ── Settings (single source of truth for all render parameters) ──
-		this.settings = new RenderSettings( DEFAULT_STATE );
+		this.settings = new RenderSettings( DEFAULT_STATE, { issues: this._issues } );
 
 		// ── Core objects (populated in init) ──
 		this.renderer = null;
@@ -196,6 +237,9 @@ export class PathTracerApp extends EventDispatcher {
 		this._deterministic = false;
 		this._dispatchPinned = false;
 		this._deterministicRestore = null;
+
+		/** @type {?{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}} */
+		this.adapterInfo = null;
 
 	}
 
@@ -915,8 +959,9 @@ export class PathTracerApp extends EventDispatcher {
 	 * the 'load' event (_onAssetLoaded). Appending a model never applies it — an appended
 	 * model must not hijack the scene's environment.
 	 *
-	 * Resolves to null and never rejects: a failed fetch leaves the model on the current
-	 * environment. Returns null outright when there is nothing to apply.
+	 * Resolves to null rather than rejecting: a failed fetch leaves the model on the current
+	 * environment. Returns null outright when there is nothing to apply. Under `strict` the
+	 * recorded issue throws instead, and the rejection surfaces where loadSceneData awaits it.
 	 * Opt out per app with `new PathTracerApp( canvas, { applySceneMetadata: false } )`.
 	 *
 	 * @returns {Promise<import('three').Texture|null>|null}
@@ -935,7 +980,11 @@ export class PathTracerApp extends EventDispatcher {
 		return this.assetLoader.loadEnvironment( env.sourceFile )
 			.catch( error => {
 
-				log.warn( `scene metadata: environment "${env.sourceFile}" failed to load`, error );
+				this._issues.record(
+					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
+					`authored environment "${env.sourceFile}" failed to load — lighting falls back to the previous environment`,
+					{ sourceFile: env.sourceFile, cause: String( error?.message ?? error ) }
+				);
 				return null;
 
 			} )
@@ -972,7 +1021,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.settings.setMany( updates, { reset: false } );
 		if ( this.scene ) this.scene.background = texture;
 
-		this.dispatchEvent( { type: 'SceneMetadataApplied', metadata, environment: { ...env } } );
+		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
 
 	}
 
@@ -1016,7 +1065,11 @@ export class PathTracerApp extends EventDispatcher {
 					this._applySceneMetadataSettings( texture );
 
 				} )
-				.catch( error => log.warn( 'scene metadata: environment install failed', error ) )
+				.catch( error => this._issues.record(
+					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
+					'authored environment failed to install — the scene is lit by whatever was already loaded',
+					{ cause: String( error?.message ?? error ) }
+				) )
 				.finally( () => timer.end( 'Environment fetch + CDF (concurrent)' ) );
 
 		} else if ( environmentTexture?.image?.data ) {
@@ -1571,7 +1624,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( applied < pending.requestedPx ) {
 
-			log.warn( `reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — renders above ${fmt.n( applied )}px will be declined.` );
+			this._issues.warn(
+				ISSUE_CODES.RENDER_RESERVE_CAPPED,
+				`reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — ` +
+				`renders above ${fmt.n( applied )}px will be declined`,
+				{ requested: pending.requestedPx, applied }
+			);
 
 		}
 
@@ -1599,7 +1657,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( width > MAX_STORAGE_TEXTURE_SIZE || height > MAX_STORAGE_TEXTURE_SIZE ) {
 
-			log.warn( `render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px reserve (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — raise the reserve with setReservedRenderResolution( ${Math.max( width, height )} ) first, or use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
+			this._issues.record(
+				ISSUE_CODES.RENDER_SIZE_DECLINED,
+				`render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px storage reserve — resize ignored, ` +
+				`so output stays at the previous size. Raise it with setReservedRenderResolution( ${Math.max( width, height )} ) before init().`,
+				{ width, height, reserve: MAX_STORAGE_TEXTURE_SIZE }
+			);
 			return false;
 
 		}
@@ -1924,6 +1987,47 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Everything the engine chose to survive rather than fail on, oldest first. A host that
+	 * ships images should treat a non-empty `errors` as "do not publish this frame".
+	 * @returns {Object[]} copies — mutating them cannot corrupt the log
+	 */
+	get issues() {
+
+		return this._issues.list;
+
+	}
+
+	/** Error-severity issues only. Warnings (e.g. a software adapter) are excluded. */
+	get issueErrors() {
+
+		return this._issues.errors;
+
+	}
+
+	/**
+	 * Whether degradations throw at the point they happen. Settable, so a host can load
+	 * leniently and then render strictly.
+	 */
+	get strict() {
+
+		return this._issues.strict;
+
+	}
+
+	set strict( value ) {
+
+		this._issues.strict = value === true;
+
+	}
+
+	/** Drops the recorded issues. Use it to scope the log to one render on a reused app. */
+	clearIssues() {
+
+		this._issues.clear();
+
+	}
+
+	/**
 	 * Whether output is currently bit-reproducible. False when the dispatch heuristics
 	 * were left active via `pinDispatch: false`, since those consume async readbacks.
 	 */
@@ -1939,14 +2043,22 @@ export class PathTracerApp extends EventDispatcher {
 	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
 	 * placeholder that gets baked permanently into the accumulation buffer.
 	 *
+	 * Adaptive sampling retires the whole frame once ~all pixels clear the relative-error
+	 * floor, and a retired frame stops advancing `frameCount` — so a fixed-count loop can
+	 * never reach `count`. Pass `allowEarlyRetire` to treat that as an outcome rather than a
+	 * failure; without it the call throws, which is what a bit-exact regression run wants.
+	 *
 	 * @param {number} count - samples to accumulate
 	 * @param {Object} [options]
 	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
 	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
 	 * @param {function(number): void} [options.onProgress] - called with the running sample count
-	 * @returns {Promise<number>} the final accumulated sample count
+	 * @param {boolean} [options.allowEarlyRetire=false] - return instead of throwing when
+	 *   adaptive convergence retires the frame below `count`. Changes the return type.
+	 * @returns {Promise<number|{samples:number, target:number, retiredBy:'count'|'converged'}>}
+	 *   the accumulated sample count, or the full outcome when `allowEarlyRetire` is set
 	 */
-	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress } = {} ) {
+	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false } = {} ) {
 
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
@@ -1970,6 +2082,8 @@ export class PathTracerApp extends EventDispatcher {
 		const maxPasses = count + 64;
 		let passes = 0;
 
+		let retiredEarly = false;
+
 		while ( stage.frameCount < target && passes < maxPasses ) {
 
 			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
@@ -1977,6 +2091,15 @@ export class PathTracerApp extends EventDispatcher {
 
 			this.pipeline.render();
 			passes ++;
+
+			// render() no-ops once the stage marks itself complete, so spinning the remaining
+			// passes would burn the whole budget to land on the same frameCount.
+			if ( stage.isComplete && stage.frameCount < target ) {
+
+				retiredEarly = true;
+				break;
+
+			}
 
 			onProgress?.( stage.frameCount );
 
@@ -1988,16 +2111,22 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		if ( stage.frameCount < target ) {
+		if ( stage.frameCount < target && ! ( retiredEarly && allowEarlyRetire ) ) {
+
+			const cause = retiredEarly
+				? 'adaptive sampling retired the frame at the convergence threshold — pass ' +
+					'`allowEarlyRetire: true`, or disable it with setDeterministicMode()'
+				: 'something retired the render (maxSamples, a stray reset, or a canvas resize)';
 
 			throw new Error(
-				`renderFrames: stalled at ${stage.frameCount}/${target} samples after ${passes} passes — ` +
-				'something retired the render (maxSamples, a stray reset, or a canvas resize)'
+				`renderFrames: stopped at ${stage.frameCount}/${target} samples after ${passes} passes — ${cause}`
 			);
 
 		}
 
-		return stage.frameCount;
+		return allowEarlyRetire
+			? { samples: stage.frameCount, target, retiredBy: retiredEarly ? 'converged' : 'count' }
+			: stage.frameCount;
 
 	}
 
@@ -2580,6 +2709,20 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
+		this.adapterInfo = describeAdapter( adapter );
+		if ( this.adapterInfo.isSoftware ) {
+
+			// Warning, not an error: the image is correct, only the cost is wrong.
+			this._issues.warn(
+				ISSUE_CODES.ADAPTER_SOFTWARE,
+				`software GPU adapter "${this.adapterInfo.description || this.adapterInfo.vendor}" — ` +
+				'renders are correct but orders of magnitude slower than hardware',
+				{ ...this.adapterInfo }
+			);
+			log.warn( `software GPU adapter — check app.adapterInfo.isSoftware. ${this.adapterInfo.description}` );
+
+		}
+
 		const adapterLimits = adapter.limits;
 
 		this.renderer = new WebGPURenderer( {
@@ -2595,6 +2738,18 @@ export class PathTracerApp extends EventDispatcher {
 		} );
 
 		await this.renderer.init();
+
+		// WebGPURenderer silently substitutes a WebGL2 backend when WebGPU init fails, and only
+		// prints a warning. The wavefront path is compute-only, so every frame would fail with
+		// an empty canvas and no error.
+		if ( ! this.renderer.backend?.isWebGPUBackend ) {
+
+			throw new Error(
+				'WebGPU backend unavailable — three.js fell back to WebGL2, which cannot run the ' +
+				'path tracer\'s compute kernels. Check GPU process flags and driver support.'
+			);
+
+		}
 
 		// Detect GPU device loss (dGPU/iGPU switch, driver reset, TDR watchdog on heavy
 		// compute). Without this the rAF loop keeps calling render() on a dead device,
@@ -2643,8 +2798,10 @@ export class PathTracerApp extends EventDispatcher {
 
 	_initAssetPipeline() {
 
-		this._sdf = new SceneProcessor();
-		this.assetLoader = new AssetLoader( this.meshScene, this.cameraManager.camera, this.cameraManager.controls );
+		this._sdf = new SceneProcessor( { issues: this._issues } );
+		this.assetLoader = new AssetLoader(
+			this.meshScene, this.cameraManager.camera, this.cameraManager.controls, { issues: this._issues }
+		);
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
 

@@ -33,6 +33,8 @@ export class SceneProcessor {
      * @param {boolean} [options.useFloat32Array=true] - Use Float32Array for triangle data
      * @param {string} [options.textureQuality='adaptive'] - Texture quality mode
      * @param {boolean} [options.enableTextureCache=true] - Enable texture caching
+     * @param {import('../EngineIssues.js').IssueLog} [options.issues] - degradation log,
+     *   forwarded to TextureCreator so a failed map array is recorded, not just warned about
      */
 	constructor( options = {} ) {
 
@@ -160,7 +162,7 @@ export class SceneProcessor {
 		} );
 
 		// Create and configure texture creator
-		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize } );
+		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize, issues: this.config.issues } );
 		// The optimized TextureCreator will auto-detect capabilities and select optimal methods
 
 		// Create emissive triangle builder for direct lighting

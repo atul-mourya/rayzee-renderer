@@ -1,6 +1,7 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, RepeatWrapping } from "three";
 import { TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 // Canvas pooling for efficient reuse of canvas elements
 class CanvasPool {
@@ -460,6 +461,8 @@ export class TextureCreator {
 		this.maxConcurrentWorkers = TEXTURE_CONSTANTS.MAX_CONCURRENT_WORKERS;
 		this.activeWorkers = 0;
 
+		this._issues = options.issues ?? null;
+
 		// Longest-edge cap for material-texture arrays. Clamped to the hardware ceiling.
 		this.maxTextureSize = this._clampTextureSize(
 			options.maxTextureSize ?? TEXTURE_CONSTANTS.DEFAULT_MAX_TEXTURE_SIZE
@@ -476,6 +479,21 @@ export class TextureCreator {
 		// Method selection based on capabilities
 		this.capabilities = this.detectCapabilities();
 		this.optimalMethod = this.selectOptimalMethod();
+
+	}
+
+	/**
+	 * A failed map array leaves every surface using it untextured — a complete-looking image
+	 * that is wrong. Recorded so a batch host can refuse to publish it.
+	 * @private
+	 */
+	_reportTextureFailure( map, error ) {
+
+		this._issues?.record(
+			ISSUE_CODES.TEXTURE_BUILD_FAILED,
+			`${map} texture array failed to build — those surfaces render untextured`,
+			{ map, cause: String( error?.message ?? error ) }
+		);
 
 	}
 
@@ -573,7 +591,11 @@ export class TextureCreator {
 
 		} catch ( error ) {
 
-			console.warn( 'Texture processing failed, trying fallback:', error );
+			this._issues?.warn(
+				ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
+				'worker texture processing failed — retrying on the main thread',
+				{ cause: String( error?.message ?? error ) }
+			);
 			return await this.processOnMainThreadSync( normalized );
 
 		} finally {
@@ -1121,7 +1143,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'albedo', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create albedo textures:', error );
+							this._reportTextureFailure( 'albedo', error );
 							return { type: 'albedo', texture: null };
 
 						} )
@@ -1136,7 +1158,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'normal', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create normal textures:', error );
+							this._reportTextureFailure( 'normal', error );
 							return { type: 'normal', texture: null };
 
 						} )
@@ -1151,7 +1173,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'bump', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create bump textures:', error );
+							this._reportTextureFailure( 'bump', error );
 							return { type: 'bump', texture: null };
 
 						} )
@@ -1166,7 +1188,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'roughness', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create roughness textures:', error );
+							this._reportTextureFailure( 'roughness', error );
 							return { type: 'roughness', texture: null };
 
 						} )
@@ -1181,7 +1203,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'metalness', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create metalness textures:', error );
+							this._reportTextureFailure( 'metalness', error );
 							return { type: 'metalness', texture: null };
 
 						} )
@@ -1196,7 +1218,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'emissive', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create emissive textures:', error );
+							this._reportTextureFailure( 'emissive', error );
 							return { type: 'emissive', texture: null };
 
 						} )
@@ -1211,7 +1233,7 @@ export class TextureCreator {
 						.then( tex => ( { type: 'displacement', texture: tex } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create displacement textures:', error );
+							this._reportTextureFailure( 'displacement', error );
 							return { type: 'displacement', texture: null };
 
 						} )
@@ -1221,6 +1243,11 @@ export class TextureCreator {
 
 			// Wait for all texture arrays to complete
 			const textureResults = await Promise.allSettled( texturePromises );
+
+			// allSettled swallows rejections by design, which would silently absorb a strict
+			// host's EngineIssueError and let the load finish with missing maps anyway.
+			const refused = textureResults.find( ( r ) => r.status === 'rejected' );
+			if ( refused ) throw refused.reason;
 
 			// Organize results
 			const textures = {};

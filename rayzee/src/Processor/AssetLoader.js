@@ -16,6 +16,7 @@ import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 // Define supported file formats
 const SUPPORTED_FORMATS = {
@@ -54,7 +55,7 @@ function standInForSplit( source ) {
  */
 export class AssetLoader extends EventDispatcher {
 
-	constructor( scene, camera, controls ) {
+	constructor( scene, camera, controls, { issues = null } = {} ) {
 
 		super();
 		this.scene = scene;
@@ -77,6 +78,22 @@ export class AssetLoader extends EventDispatcher {
 		// signal into its fetch). One load runs at a time (guarded upstream).
 		this._loadingManager = new LoadingManager();
 		this._loadCancelled = false;
+
+		this._issues = issues;
+
+		// A glTF whose external texture 404s still loads: the mesh renders untextured and
+		// nothing rejects. This is the only place the engine sees that URL. Note the ZIP
+		// paths build their own managers and are not covered.
+		this._loadingManager.onError = ( url ) => {
+
+			if ( this._loadCancelled ) return;
+			this._issues?.record(
+				ISSUE_CODES.ASSET_UNREACHABLE,
+				`asset "${url}" could not be fetched — anything depending on it renders without it`,
+				{ url }
+			);
+
+		};
 
 	}
 

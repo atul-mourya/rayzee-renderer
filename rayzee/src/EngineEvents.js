@@ -55,4 +55,10 @@ export const EngineEvents = {
 	// Lifecycle
 	DISPOSE: 'engine:dispose',
 	DEVICE_LOST: 'engine:deviceLost',
+
+	// Degradation — something rendered anyway that a batch host may not want to ship
+	ISSUE: 'engine:issue',
+
+	// Authored scene metadata (glTF `extras`) was applied to the settings
+	SCENE_METADATA_APPLIED: 'engine:sceneMetadataApplied',
 };

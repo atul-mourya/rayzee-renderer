@@ -230,7 +230,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// The loaded model file carried an authored environment and the engine installed it.
-	on( 'SceneMetadataApplied', ( e ) => {
+	on( EngineEvents.SCENE_METADATA_APPLIED, ( e ) => {
 
 		usePathTracerStore?.getState().syncSceneEnvironment?.( e.environment );
 
