@@ -341,8 +341,10 @@ export const estimateLightImportance = Fn( ( [ light, hitPoint, normal, material
 
 		If( lightFacing.greaterThan( 0.0 ), () => {
 
-			const solidAngle = light.area.div( max( distSq, 0.1 ) );
-			const power = light.intensity.mul( dot( light.color, REC709_LUMINANCE_COEFFICIENTS ) ).mul( light.area );
+			// Diffuse irradiance ∝ L·Ω·cosθ·cosθ′, Ω bounded by the hemisphere. Unit-free.
+			const solidAngle = min( light.area.div( max( distSq, 1e-12 ) ), float( 2.0 * Math.PI ) );
+			const invArea = select( light.normalize.greaterThan( 0.5 ), float( 1.0 ).div( max( light.area, 1e-10 ) ), float( 1.0 ) );
+			const radiance = light.intensity.mul( dot( light.color, REC709_LUMINANCE_COEFFICIENTS ) ).mul( invArea );
 
 			// Material-aware weighting
 			const materialFactor = float( 1.0 ).toVar();
@@ -358,20 +360,13 @@ export const estimateLightImportance = Fn( ( [ light, hitPoint, normal, material
 
 			} );
 
-			If( material.roughness.greaterThan( 0.6 ).and( material.metalness.lessThan( 0.3 ) ), () => {
-
-				const sizeBoost = min( light.area.mul( 2.0 ), float( 2.0 ) );
-				materialFactor.mulAssign( sizeBoost );
-
-			} );
-
 			If( material.transmission.greaterThan( 0.5 ), () => {
 
 				materialFactor.mulAssign( float( 1.0 ).add( material.transmission.mul( 0.3 ) ) );
 
 			} );
 
-			result.assign( power.mul( solidAngle ).mul( NoL ).mul( lightFacing ).mul( materialFactor ) );
+			result.assign( radiance.mul( solidAngle ).mul( NoL ).mul( lightFacing ).mul( materialFactor ) );
 
 		} );
 

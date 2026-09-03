@@ -285,7 +285,7 @@ the strings, so never rename or repurpose one.
   but reaching no stage, which is how a typo becomes a wrong image.
 - **`RENDER_PROFILES`** (`EngineDefaults.js`) — product decisions for a real-time viewer that are not
   physical constants, collected so choosing between them is one flag rather than a hunt:
-  `areaLightIntensityScale` (glTF placeholder watts), `environmentRotation`, `toneMapping`,
+  `areaLightIntensityScale` (glTF placeholder area-light power), `environmentRotation`, `toneMapping`,
   `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; `physical` selects
   AgX and drops the grade. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
   throws rather than silently selecting viewer tuning.

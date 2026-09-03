@@ -23,6 +23,7 @@ import {
 	Mesh,
 	MeshPhysicalMaterial,
 	PlaneGeometry,
+	RectAreaLight,
 	RepeatWrapping,
 	RGBAFormat,
 	SphereGeometry,
@@ -1268,6 +1269,184 @@ for ( const [ id, seg ] of Object.entries( { 'furnace-lowpoly-16': 16, 'furnace-
 	} );
 
 }
+
+// ── Analytic area light ──────────────────────────────────────────
+// Irradiance on a plane from a parallel Lambertian rectangle of uniform radiance L is E = π·L·F,
+// F the configuration factor. rectCornerFactor is the textbook differential-element-under-a-corner
+// form; rectConfigFactor assembles it with signed sub-rectangles so the point may sit anywhere.
+function rectCornerFactor( a, b, h ) {
+
+	const A = a / h, B = b / h;
+	const ra = Math.sqrt( 1 + A * A ), rb = Math.sqrt( 1 + B * B );
+	return ( A / ra * Math.atan( B / ra ) + B / rb * Math.atan( A / rb ) ) / ( 2 * Math.PI );
+
+}
+
+function rectConfigFactor( px, py, x0, x1, y0, y1, h ) {
+
+	const f = ( dx, dy ) => Math.sign( dx ) * Math.sign( dy ) * rectCornerFactor( Math.abs( dx ), Math.abs( dy ), h );
+	return f( x1 - px, y1 - py ) - f( x0 - px, y1 - py ) - f( x1 - px, y0 - py ) + f( x0 - px, y0 - py );
+
+}
+
+const AREALIGHT = {
+	size: 1.0, // m, square emitter
+	height: 1.0, // m above the plane
+	power: 8.0, // W; Normalize on → L = P / (π·size²)
+	albedo: 0.8,
+	camDist: 0.03, // m; frames ±camDist·tan(fov/2) of the plane, over which E moves < 1e-4
+	fov: 60, // CameraManager's construction default — asserted in build()
+};
+
+// Mean outgoing radiance over the framed patch = albedo·L·mean(F), averaged over the frame so the
+// constant is exact for the pixels actually measured rather than for the centre pixel alone.
+function areaLightPatchRadiance( { size, height, power, albedo, camDist, fov }, n = 64 ) {
+
+	const L = power / ( Math.PI * size * size );
+	const half = camDist * Math.tan( fov * Math.PI / 360 ); // RENDER_SIZE is square
+	let sum = 0;
+	for ( let i = 0; i < n; i ++ ) {
+
+		for ( let j = 0; j < n; j ++ ) {
+
+			const px = - half + ( i + 0.5 ) / n * 2 * half;
+			const py = - half + ( j + 0.5 ) / n * 2 * half;
+			sum += rectConfigFactor( px, py, - size / 2, size / 2, - size / 2, size / 2, height );
+
+		}
+
+	}
+
+	return albedo * L * ( sum / ( n * n ) );
+
+}
+
+// No furnace can see the analytic-light path (a furnace has no lights), so this is its analytic
+// gate: it pins the power→radiance convention, spherical-rectangle NEE, the NEE/BSDF-hit MIS
+// weights and the shadow-ray origin together. Environment off, so the light is the only source.
+// Its first catch: sampling the light from the lifted shadow-ray origin instead of the hit point read
+// 1.00152 — exactly F(h = 0.999)/F(h = 1) = 1.00151. Sampling from the hit point reads 1.00001.
+SCENES.push( {
+	id: 'arealight-analytic',
+	covers: 'analytic area light — Lambertian plane under a square emitter vs closed-form irradiance: power→radiance convention, spherical-rectangle NEE, NEE/BSDF-hit MIS, shadow-ray origin',
+	spp: 64,
+	truthSpp: 512,
+	settings: { maxBounces: 4, enableEnvironment: false },
+	furnaceRadiance: areaLightPatchRadiance( AREALIGHT ),
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+
+		const { size, height, power, albedo, camDist, fov } = AREALIGHT;
+		const group = new Group();
+		group.add( new Mesh(
+			new PlaneGeometry( 40, 40 ),
+			new MeshPhysicalMaterial( { color: new Color( albedo, albedo, albedo ), roughness: 1, metalness: 0 } )
+		) );
+		const light = new RectAreaLight( 0xffffff, power, size, size );
+		light.position.set( 0, 0, height ); // emits along −z onto the +z-facing plane at z = 0
+		light.userData.normalize = true;
+		light.userData.spread = Math.PI;
+		light.userData.shape = 'rectangle';
+		group.add( light );
+		await app.loadObject3D( group, 'arealight-analytic' );
+
+		const camera = app.cameraManager.camera;
+		if ( Math.abs( camera.fov - fov ) > 1e-6 ) {
+
+			throw new Error( `arealight-analytic: reference assumes fov ${fov}, camera has ${camera.fov}` );
+
+		}
+
+		setCamera( app, [ 0, 0, camDist ], [ 0, 0, 0 ] );
+
+	},
+} );
+
+// Two lights of unequal size, power, shape and spread: the light-selection heuristic only has a
+// measurable effect when there is a choice to make. Noise vs truth is the gate; the mirror ball
+// exercises the BSDF-hit strategy against a small emitter, the floor the NEE strategy against a
+// large one.
+function makeTwoLightRig() {
+
+	const group = new Group();
+
+	const floor = new Mesh(
+		new PlaneGeometry( 14, 14 ),
+		new MeshPhysicalMaterial( { color: 0xb8b0a4, roughness: 1, metalness: 0 } )
+	);
+	floor.rotation.x = - Math.PI / 2;
+	group.add( floor );
+
+	const wall = new Mesh(
+		new PlaneGeometry( 14, 6 ),
+		new MeshPhysicalMaterial( { color: 0xd8d2c8, roughness: 0.9, metalness: 0 } )
+	);
+	wall.position.set( 0, 3, - 3 );
+	group.add( wall );
+
+	// Coplanar with the panel: authored fixtures sit ON their ceiling, so a shadow ray that reaches
+	// the emitter's plane blacks the light out. Nothing lifts the light off it any more.
+	const ceiling = new Mesh(
+		new PlaneGeometry( 14, 8 ),
+		new MeshPhysicalMaterial( { color: 0xd8d2c8, roughness: 0.9, metalness: 0 } )
+	);
+	ceiling.position.set( 0, 3.2, 0.5 );
+	ceiling.rotation.x = Math.PI / 2;
+	group.add( ceiling );
+
+	const box = new Mesh(
+		new BoxGeometry( 1.6, 1.6, 1.6 ),
+		new MeshPhysicalMaterial( { color: 0xc44a3a, roughness: 0.7, metalness: 0 } )
+	);
+	box.position.set( - 1.6, 0.8, 0.2 );
+	box.rotation.y = 0.5;
+	group.add( box );
+
+	// Glossy, not mirror: a near-mirror ball reflects the small light onto the floor as a caustic
+	// whose rare bright samples swing a 128-spp mean by ~1 % on their own, hiding the selection
+	// heuristic this scene exists to measure.
+	const ball = new Mesh(
+		new SphereGeometry( 0.8, 64, 48 ),
+		new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0.35, metalness: 1 } )
+	);
+	ball.position.set( 1.5, 0.8, 0.6 );
+	group.add( ball );
+
+	const panel = new RectAreaLight( 0xfff1dc, 40, 2.0, 2.0 );
+	panel.position.set( - 1.0, 3.2, 0.5 );
+	panel.lookAt( - 1.0, 0, 0.5 );
+	panel.userData.normalize = true;
+	panel.userData.spread = Math.PI;
+	panel.userData.shape = 'rectangle';
+	group.add( panel );
+
+	const spot = new RectAreaLight( 0xd8e4ff, 40, 0.4, 0.4 );
+	spot.position.set( 2.4, 2.4, 2.2 );
+	spot.lookAt( 1.5, 0.8, 0.6 );
+	spot.userData.normalize = true;
+	spot.userData.spread = 1.6;
+	spot.userData.shape = 'disk';
+	group.add( spot );
+
+	return group;
+
+}
+
+SCENES.push( {
+	id: 'arealights-two',
+	covers: 'two area lights of unequal size, power, shape and spread — reservoir light selection, per-light MIS, disk sampling, spread attenuation; noise gate for the selection heuristic',
+	spp: 128,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEnvironment: false },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+		await app.loadObject3D( makeTwoLightRig(), 'arealights-two' );
+		setCamera( app, [ 0, 2.6, 7 ], [ 0, 0.8, 0 ] );
+
+	},
+} );
 
 /**
  * Pins the camera explicitly. Must run AFTER loadObject3D, which rebuilds the scene and

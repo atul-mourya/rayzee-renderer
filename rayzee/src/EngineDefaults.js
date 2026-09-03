@@ -10,7 +10,7 @@
  */
 export const RENDER_PROFILES = Object.freeze( {
 	viewer: Object.freeze( {
-		areaLightIntensityScale: 0.1, // authored RectAreaLight watts from glTF placeholders
+		areaLightIntensityScale: 0.1, // scales glTF placeholder area-light power (viewer tuning)
 		environmentRotation: 270.0, // degrees
 		toneMapping: 4, // ACESFilmicToneMapping
 		saturation: 1.2, // compensates for ACES desaturation — see Compositor

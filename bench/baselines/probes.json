@@ -148,24 +148,24 @@
 	},
 	"textured-normalmap": {
 		"truth": {
-			"meanR": 0.10698671398683512,
-			"meanG": 0.26411078047889625,
-			"meanB": 0.3919832611859766,
-			"meanLuminance": 0.23993859704973386,
+			"meanR": 0.10670868164154079,
+			"meanG": 0.2650527359212269,
+			"meanB": 0.39466757546778286,
+			"meanLuminance": 0.24074698139662473,
 			"maxLuminance": 0.551354011914134,
 			"nonFinite": 0,
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.10697008710070272,
-			"meanG": 0.2641041948158396,
-			"meanB": 0.39198549866986854,
-			"meanLuminance": 0.23993051365386076,
+			"meanR": 0.1066946497503165,
+			"meanG": 0.2650433031475936,
+			"meanB": 0.3946682441317728,
+			"meanLuminance": 0.24073730017438652,
 			"maxLuminance": 0.5513530531108379,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007763066184249425
+		"rmseVsTruth": 0.007157301451089229
 	},
 	"refit-deform": {
 		"truth": {
@@ -512,5 +512,48 @@
 		},
 		"rmseVsTruth": 0.0021768243582770473,
 		"furnaceRatio": 0.9985376457161692
+	},
+	"arealight-analytic": {
+		"truth": {
+			"meanR": 0.487703695791879,
+			"meanG": 0.4877125117814103,
+			"meanB": 0.48771753351547886,
+			"meanLuminance": 0.4877110000712355,
+			"maxLuminance": 0.49054589342474936,
+			"nonFinite": 0,
+			"samples": 512
+		},
+		"golden": {
+			"meanR": 0.4877021217789661,
+			"meanG": 0.48771454688585436,
+			"meanB": 0.4877216244067313,
+			"meanLuminance": 0.48771241630513723,
+			"maxLuminance": 0.49870273960828776,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.0017155162880646434,
+		"furnaceRatio": 1.0000144391681964
+	},
+	"arealights-two": {
+		"truth": {
+			"meanR": 0.12054620302378538,
+			"meanG": 0.10048677877860257,
+			"meanB": 0.09908668413040278,
+			"meanLuminance": 0.10465032553952848,
+			"maxLuminance": 58.08287553863525,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.12055251297782021,
+			"meanG": 0.1004784940386445,
+			"meanB": 0.09908221422513774,
+			"meanLuminance": 0.10464541906257772,
+			"maxLuminance": 58.69100255432129,
+			"nonFinite": 0,
+			"samples": 128
+		},
+		"rmseVsTruth": 0.04655727567029018
 	}
 }

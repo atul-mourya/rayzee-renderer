@@ -464,6 +464,8 @@ engine.lightManager.sync()                  // Re-upload light data to GPU
 engine.lightManager.showHelpers(true)       // Toggle visual helpers
 ```
 
+Light `intensity` follows Blender: radiant power in watts for point, spot and area lights, irradiance in W/m² for directional. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance (their `power` field is `intensity · width · height · π`); the importer converts it to power through the light's world area so the authored radiance is reproduced exactly, then applies the profile's `areaLightIntensityScale`.
+
 ### engine.animationManager
 
 GLTF animation playback controls.

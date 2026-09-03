@@ -255,7 +255,7 @@ export function buildShadeKernel( params ) {
 					// Reuse the full NEE estimator; the diffuse BRDF is constant and cancels in the
 					// ratio, so this yields an irradiance-weighted shadow density across all lights + env.
 					const dual = DirectLightingDual.wrap( calculateDirectLightingUnified(
-						planePoint, planeN, planeMat, planeV,
+						planePoint, planeN, planeN, planeMat, planeV,
 						bDir, bPdf, bVal,
 						bounceIndex, rngState,
 						_pixelCoord, resolution, frame, dimBase,
@@ -1044,15 +1044,23 @@ export function buildShadeKernel( params ) {
 
 		// BRDF sample (needed by both direct + indirect)
 		const V = direction.negate().toVar();
+		// face-forwarded geometric normal: horizon guard for NEE and the bounce continuation
+		const Ngeo = normalize( hitNormal );
+		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
 
-		// Two-sided shading: opaque path only (transmissive/SSS already continued), so this never disturbs
-		// dielectric enter/exit. Flip N toward the viewer when back-facing — rescues double-sided / inward-
-		// normal imported meshes (GLB/PBRT) that otherwise shade black (NoL collapses). Megakernel: PathTracerCore.js:1054.
-		If( dot( N, V ).lessThan( 0.0 ), () => {
+		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
+		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
+		// normal-map overshoot is not mistaken for a back face and folded into the surface.
+		If( dot( Ngeo, V ).lessThan( 0.0 ), () => {
 
 			N.assign( N.negate() );
 
 		} );
+
+		// A normal-mapped N may still face away from the viewer at grazing angles. Like Cycles' diffuse
+		// closure it is used as is: NEE and the bounce continuation already reject directions below the
+		// geometric horizon. (Cycles raises N for glossy closures only — ensure_valid_specular_reflection;
+		// with one shared N that would lift the diffuse term on every away-facing flank, measured +17.6 %.)
 
 		// ─── DDFA opaque aux decision: commit at the first diffuse-enough surface, defer through smooth
 		// mirror/metal so the guide describes what the mirror reflects, not the mirror itself. N is already
@@ -1139,7 +1147,7 @@ export function buildShadeKernel( params ) {
 		} );
 
 		const directLight = DirectLightingDual.wrap( calculateDirectLightingUnified(
-			hitPoint, N, material, V,
+			hitPoint, N, NgeoFF, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
 			_pixelCoord, resolution, frame, dimBase,
@@ -1205,9 +1213,9 @@ export function buildShadeKernel( params ) {
 
 							const NoL = max( float( 0.0 ), dot( N, emissiveSample.direction ) );
 
-							If( NoL.greaterThan( 0.0 ), () => {
+							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
-								const rayOffset = calculateRayOffset( hitPoint, N, material );
+								const rayOffset = calculateRayOffset( hitPoint, NgeoFF, material );
 								const rayOrigin = hitPoint.add( rayOffset );
 								const shadowDist = emissiveSample.distance.sub( 0.001 );
 								const visibility = traceShadowRayWrapped(
@@ -1248,7 +1256,7 @@ export function buildShadeKernel( params ) {
 					} ).Else( () => {
 
 						const emissiveLight = calculateEmissiveTriangleContribution(
-							hitPoint, N, V, material,
+							hitPoint, N, NgeoFF, V, material,
 							bounceIndex, rngState,
 							_pixelCoord, resolution, frame, dimBase,
 							emissiveBoost,
@@ -1291,7 +1299,6 @@ export function buildShadeKernel( params ) {
 
 		// Shading-normal leak guard: a normal-mapped lobe can sample below the geometric surface;
 		// tracing that ray tunnels through single-sided shells onto whatever sits behind them.
-		const NgeoFF = select( dot( hitNormal, V ).lessThan( 0.0 ), hitNormal.negate(), hitNormal );
 		If( brdfIsTransmission.not().and( dot( bounceDir, NgeoFF ).lessThanEqual( 0.0 ) ), () => {
 
 			commitDeferredAux( N );

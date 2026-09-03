@@ -24,7 +24,6 @@ import {
 	int,
 	bool as tslBool,
 	max,
-	min,
 	abs,
 	sqrt,
 	cos,
@@ -33,6 +32,7 @@ import {
 	dot,
 	cross,
 	normalize,
+	length,
 	mix,
 	select,
 	If,
@@ -87,6 +87,9 @@ import {
 } from './Environment.js';
 
 const TWO_PI = 2.0 * PI;
+// Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
+// error, so an emitter coplanar with its fixture is never occluded by it.
+const SHADOW_END = 1.0 - 1e-4;
 
 // =============================================================================
 // Light Sampling Functions
@@ -768,7 +771,7 @@ export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material 
 // Optimized direct lighting function with importance-based sampling and better MIS
 export const calculateDirectLightingUnified = Fn( ( [
 	// Surface hit data
-	hitPoint, hitNormal, material,
+	hitPoint, hitNormal, geomNormal, material,
 	// View direction
 	viewDir,
 	// BRDF sample (DirectionSample fields)
@@ -800,81 +803,80 @@ export const calculateDirectLightingUnified = Fn( ( [
 	const totalContribution = vec3( 0.0 ).toVar();
 	// Unoccluded reference (visibility forced to 1) — only filled when wantUnoccluded.
 	const unoccludedContribution = vec3( 0.0 ).toVar();
-	const rayOrigin = hitPoint.add( hitNormal.mul( 0.001 ) ).toVar();
+	const rayOrigin = hitPoint.add( geomNormal.mul( 0.001 ) ).toVar();
 
 	// Binds BVH params so shadow-ray sites at varying call depths use a 3-arg call
 	const shadow = Fn( ( [ origin, dir, maxDist ] ) =>
 		traceShadowRay( origin, dir, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer )
 	);
 
-	// Early exit for highly emissive surfaces
-	If( material.emissiveIntensity.lessThanEqual( 10.0 ), () => {
 
-		// NEE and BSDF-hit both run at every vertex, one sample each, so the MIS weights are the
-		// plain power heuristic over the raw densities. Picking one strategy stochastically and
-		// dividing by the selection probability was unbiased but cost 3× RMSE on an area light.
-		const totalLights = numDirectionalLights.add( numAreaLights ).add( numPointLights ).add( numSpotLights ).toVar();
-		const hasDiscreteLights = totalLights.greaterThan( int( 0 ) ).toVar();
+	// NEE and BSDF-hit both run at every vertex, one sample each, so the MIS weights are the
+	// plain power heuristic over the raw densities. Picking one strategy stochastically and
+	// dividing by the selection probability was unbiased but cost 3× RMSE on an area light.
+	const totalLights = numDirectionalLights.add( numAreaLights ).add( numPointLights ).add( numSpotLights ).toVar();
+	const hasDiscreteLights = totalLights.greaterThan( int( 0 ) ).toVar();
 
-		// Reservoir denominator from the NEE walk above; the BSDF-hit branch below reuses it
-		// rather than re-walking every light buffer to rebuild the same sum.
-		const neeTotalWeight = float( 0.0 ).toVar();
+	// Reservoir denominator from the NEE walk above; the BSDF-hit branch below reuses it
+	// rather than re-walking every light buffer to rebuild the same sum.
+	const neeTotalWeight = float( 0.0 ).toVar();
 
-		// =====================================================================
-		// LIGHT SAMPLING PATH
-		// =====================================================================
+	// =====================================================================
+	// LIGHT SAMPLING PATH
+	// =====================================================================
 
-		If( hasDiscreteLights, () => {
+	If( hasDiscreteLights, () => {
 
-			// Importance-weighted light sampling
-			const lightRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 2 ) ), rngState, resolution, frame ).toVar();
-			const lightSample = LightSample.wrap( sampleLightWithImportance(
-				rayOrigin, hitNormal, material, lightRandom, bounceIndex, rngState,
-				pixelCoord, resolution, frame, dimBase,
-				directionalLightsBuffer, numDirectionalLights,
-				areaLightsBuffer, numAreaLights,
-				pointLightsBuffer, numPointLights,
-				spotLightsBuffer, numSpotLights,
-			) );
+		// Importance-weighted light sampling
+		const lightRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 2 ) ), rngState, resolution, frame ).toVar();
+		const lightSample = LightSample.wrap( sampleLightWithImportance(
+			hitPoint, hitNormal, material, lightRandom, bounceIndex, rngState,
+			pixelCoord, resolution, frame, dimBase,
+			directionalLightsBuffer, numDirectionalLights,
+			areaLightsBuffer, numAreaLights,
+			pointLightsBuffer, numPointLights,
+			spotLightsBuffer, numSpotLights,
+		) );
 
-			neeTotalWeight.assign( lightSample.selectionTotalWeight );
+		neeTotalWeight.assign( lightSample.selectionTotalWeight );
 
-			If( lightSample.valid.and( lightSample.pdf.greaterThan( 0.0 ) ), () => {
+		If( lightSample.valid.and( lightSample.pdf.greaterThan( 0.0 ) ), () => {
 
-				const NoL = max( float( 0.0 ), dot( hitNormal, lightSample.direction ) ).toVar();
+			const NoL = max( float( 0.0 ), dot( hitNormal, lightSample.direction ) ).toVar();
 
-				If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: lightSample.direction, surfaceNormal: hitNormal } ) ), () => {
+			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: lightSample.direction, surfaceNormal: geomNormal } ) ), () => {
 
-					const shadowDistance = min( lightSample.distance.sub( 0.001 ), float( 1000.0 ) );
-					const visibility = shadow( rayOrigin, lightSample.direction, shadowDistance );
+				// Light geometry is measured from the hit point; only the visibility ray starts on the lifted
+				// origin, aimed at the sampled point and stopped a relative hair short of it.
+				const toSample = hitPoint.add( lightSample.direction.mul( lightSample.distance ) ).sub( rayOrigin ).toVar();
+				const shadowDistance = length( toSample ).toVar();
+				const visibility = shadow( rayOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
-						// Share H + dot products between BRDF eval and PDF — otherwise each
-						// would recompute normalize(V+L) + 5 dot products independently.
-						const sharedDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, lightSample.direction, material ) );
-						const brdfValue = evaluateMaterialResponseFromDots( material, sharedDots );
-						const bPdf = calculateMaterialPDFFromDots( material, sharedDots ).toVar();
+					// Share H + dot products between BRDF eval and PDF — otherwise each
+					// would recompute normalize(V+L) + 5 dot products independently.
+					const sharedDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, lightSample.direction, material ) );
+					const brdfValue = evaluateMaterialResponseFromDots( material, sharedDots );
+					const bPdf = calculateMaterialPDFFromDots( material, sharedDots ).toVar();
 
-						// Power heuristic only for area lights — they are the only type the BRDF
-						// path can intersect, so elsewhere MIS would just delete energy.
-						const misW = float( 1.0 ).toVar();
+					// Power heuristic only for area lights — they are the only type the BRDF
+					// path can intersect, so elsewhere MIS would just delete energy.
+					const misW = float( 1.0 ).toVar();
 
-						If( bPdf.greaterThan( 0.0 ).and( lightSample.lightType.equal( int( LIGHT_TYPE_AREA ) ) ), () => {
+					If( bPdf.greaterThan( 0.0 ).and( lightSample.lightType.equal( int( LIGHT_TYPE_AREA ) ) ), () => {
 
-							misW.assign( powerHeuristic( { pdf1: lightSample.pdf, pdf2: bPdf } ) );
+						misW.assign( powerHeuristic( { pdf1: lightSample.pdf, pdf2: bPdf } ) );
 
-						} );
+					} );
 
-						// Base contribution WITHOUT visibility; shadowed = base × visibility (identical to the
-						// pre-dual-sum math), unoccluded = base × 1 (shadow-catcher reference only).
-						const baseContribution = lightSample.emission.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightSample.pdf, 1e-10 ) );
-						totalContribution.addAssign( baseContribution.mul( visibility ) );
-						If( wantUnoccluded, () => {
+					// Base contribution WITHOUT visibility; shadowed = base × visibility (identical to the
+					// pre-dual-sum math), unoccluded = base × 1 (shadow-catcher reference only).
+					const baseContribution = lightSample.emission.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightSample.pdf, 1e-10 ) );
+					totalContribution.addAssign( baseContribution.mul( visibility ) );
+					If( wantUnoccluded, () => {
 
-							unoccludedContribution.addAssign( baseContribution );
-
-						} );
+						unoccludedContribution.addAssign( baseContribution );
 
 					} );
 
@@ -884,90 +886,38 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 		} );
 
-		// =====================================================================
-		// BRDF SAMPLING PATH
-		// =====================================================================
+	} );
 
-		If( brdfSamplePdf.greaterThan( 0.0 ).and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
+	// =====================================================================
+	// BRDF SAMPLING PATH
+	// =====================================================================
 
-			const NoL = max( float( 0.0 ), dot( hitNormal, brdfSampleDirection ) ).toVar();
+	If( brdfSamplePdf.greaterThan( 0.0 ).and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
 
-			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: brdfSampleDirection, surfaceNormal: hitNormal } ) ), () => {
+		const NoL = max( float( 0.0 ), dot( hitNormal, brdfSampleDirection ) ).toVar();
 
-				// Nearest hit — the ray stops at the first emitter, so a brighter one behind it is
-				// the wrong emitter and the wrong pdf. No importance gate: skipping a light drops
-				// energy the NEE partner's MIS weight already counted on, and estimateLightImportance
-				// reads zero across the terminator band of a large light (its CENTRE is below the
-				// horizon while half of it is still visible).
-				const nearestT = float( 1e30 ).toVar();
-				const nearestLight = int( - 1 ).toVar();
+		If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: brdfSampleDirection, surfaceNormal: geomNormal } ) ), () => {
 
-				Loop( { start: int( 0 ), end: numAreaLights, type: 'int', condition: '<' }, ( { i } ) => {
+			// Nearest hit — the ray stops at the first emitter, so a brighter one behind it is
+			// the wrong emitter and the wrong pdf. No importance gate: skipping a light drops
+			// energy the NEE partner's MIS weight already counted on, and estimateLightImportance
+			// reads zero across the terminator band of a large light (its CENTRE is below the
+			// horizon while half of it is still visible).
+			const nearestT = float( 1e30 ).toVar();
+			const nearestLight = int( - 1 ).toVar();
 
-					const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, i ) );
+			Loop( { start: int( 0 ), end: numAreaLights, type: 'int', condition: '<' }, ( { i } ) => {
 
-					If( light.intensity.greaterThan( 0.0 ), () => {
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, i ) );
 
-						const hitDistance = intersectAreaLight( light, rayOrigin, brdfSampleDirection ).toVar();
+				If( light.intensity.greaterThan( 0.0 ), () => {
 
-						If( hitDistance.greaterThan( 0.0 ).and( hitDistance.lessThan( nearestT ) ), () => {
+					const hitDistance = intersectAreaLight( light, hitPoint, brdfSampleDirection ).toVar();
 
-							nearestT.assign( hitDistance );
-							nearestLight.assign( i );
+					If( hitDistance.greaterThan( 0.0 ).and( hitDistance.lessThan( nearestT ) ), () => {
 
-						} );
-
-					} );
-
-				} );
-
-				If( nearestLight.greaterThanEqual( int( 0 ) ), () => {
-
-					const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, nearestLight ) );
-					const shadowDistance = min( nearestT.sub( 0.001 ), float( 1000.0 ) );
-					const visibility = shadow( rayOrigin, brdfSampleDirection, shadowDistance );
-
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
-
-						const lightFacing = max( float( 0.0 ), dot( brdfSampleDirection, light.normal ).negate() ).toVar();
-
-						If( lightFacing.greaterThan( 0.0 ), () => {
-
-							// Directional pdf must match the NEE sampler: 1/S (spherical-rect) for
-							// rectangles, dist²/(area·cos) for disk/ellipse + degenerate rects.
-							const corner = light.position.sub( light.u ).sub( light.v );
-							const sAngle = sphQuadSolidAngle( rayOrigin, corner, light.u.mul( 2.0 ), light.v.mul( 2.0 ) ).toVar();
-							const areaPdf = nearestT.mul( nearestT ).div( max( light.area.mul( lightFacing ), EPSILON ) );
-							const dirPdf = select(
-								light.shape.lessThan( 0.5 ).and( sAngle.greaterThan( 1e-5 ) ),
-								float( 1.0 ).div( max( sAngle, 1e-10 ) ),
-								areaPdf,
-							).toVar();
-
-							// The NEE partner's selection pdf, rebuilt from the reservoir denominator it
-							// already accumulated. Uniform 1/N only when total importance is zero, matching
-							// the reservoir's own fallback; 0 for a light NEE can never pick, which hands
-							// this strategy the full MIS weight — as it must.
-							const selImp = estimateLightImportance( light, rayOrigin, hitNormal, material );
-							const selPdf = select(
-								neeTotalWeight.greaterThan( 0.0 ),
-								selImp.div( max( neeTotalWeight, 1e-10 ) ),
-								float( 1.0 ).div( max( float( totalLights ), 1.0 ) ),
-							);
-							const lightPdf = dirPdf.mul( selPdf ).toVar();
-							const misW = powerHeuristic( { pdf1: brdfSamplePdf, pdf2: lightPdf } ).toVar();
-
-							const lightEmission = areaLightRadiance( light ).mul( areaLightSpreadAttenuation( lightFacing, light.spread ) );
-							// Base contribution WITHOUT visibility (see discrete-light site).
-							const baseContribution = lightEmission.mul( brdfSampleValue ).mul( NoL ).mul( misW ).div( max( brdfSamplePdf, 1e-10 ) );
-							totalContribution.addAssign( baseContribution.mul( visibility ) );
-							If( wantUnoccluded, () => {
-
-								unoccludedContribution.addAssign( baseContribution );
-
-							} );
-
-						} );
+						nearestT.assign( hitDistance );
+						nearestLight.assign( i );
 
 					} );
 
@@ -975,53 +925,46 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 			} );
 
-		} );
-		// =====================================================================
-		// DETERMINISTIC ENVIRONMENT NEE
-		// Always runs (not stochastic) — forms a two-strategy Veach MIS
-		// estimator together with the implicit miss check in the main loop.
-		// =====================================================================
+			If( nearestLight.greaterThanEqual( int( 0 ) ), () => {
 
-		If( enableEnvironmentLight, () => {
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, nearestLight ) );
+				const toLight = hitPoint.add( brdfSampleDirection.mul( nearestT ) ).sub( rayOrigin ).toVar();
+				const shadowDistance = length( toLight ).toVar();
+				const visibility = shadow( rayOrigin, toLight.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
-			const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
-			const envColor = vec3( 0.0 ).toVar();
+				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
-			// Sample direction + PDF + color from importance-sampled environment
-			const envSampleResult = sampleEquirectProbability(
-				envTexture, envCDFTexture,
-				envMatrix, environmentIntensity, envTotalSum, envCompensationDelta, envResolution, envRandom, envColor
-			).toVar();
+					const lightFacing = max( float( 0.0 ), dot( brdfSampleDirection, light.normal ).negate() ).toVar();
 
-			const envDirection = envSampleResult.xyz.toVar();
-			const envPdf = envSampleResult.w.toVar();
+					If( lightFacing.greaterThan( 0.0 ), () => {
 
-			If( envPdf.greaterThan( 0.0 ), () => {
-
-				const NoL = max( float( 0.0 ), dot( hitNormal, envDirection ) ).toVar();
-
-				If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: envDirection, surfaceNormal: hitNormal } ) ), () => {
-
-					const visibility = shadow( rayOrigin, envDirection, float( 1000.0 ) );
-
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
-
-						// Share H + dots between env BRDF/PDF — same redundancy fix as the
-						// discrete-light path above.
-						const envDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, envDirection, material ) );
-						const brdfValue = evaluateMaterialResponseFromDots( material, envDots );
-						const bPdf = calculateMaterialPDFFromDots( material, envDots ).toVar();
-
-						// Balance heuristic for env MIS — optimal for MIS-compensated PDFs (Karlík et al. 2019).
-						// The implicit path uses material combinedPdf as prevBouncePdf at the miss check.
-						const misW = select(
-							bPdf.greaterThan( 0.0 ),
-							balanceHeuristic( { pdf1: envPdf, pdf2: bPdf } ),
-							float( 1.0 )
+						// Directional pdf must match the NEE sampler: 1/S (spherical-rect) for
+						// rectangles, dist²/(area·cos) for disk/ellipse + degenerate rects.
+						const corner = light.position.sub( light.u ).sub( light.v );
+						const sAngle = sphQuadSolidAngle( hitPoint, corner, light.u.mul( 2.0 ), light.v.mul( 2.0 ) ).toVar();
+						const areaPdf = nearestT.mul( nearestT ).div( max( light.area.mul( lightFacing ), EPSILON ) );
+						const dirPdf = select(
+							light.shape.lessThan( 0.5 ).and( sAngle.greaterThan( 1e-5 ) ),
+							float( 1.0 ).div( max( sAngle, 1e-10 ) ),
+							areaPdf,
 						).toVar();
 
-						// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
-						const baseContribution = envColor.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( envPdf, 1e-10 ) );
+						// The NEE partner's selection pdf, rebuilt from the reservoir denominator it
+						// already accumulated. Uniform 1/N only when total importance is zero, matching
+						// the reservoir's own fallback; 0 for a light NEE can never pick, which hands
+						// this strategy the full MIS weight — as it must.
+						const selImp = estimateLightImportance( light, hitPoint, hitNormal, material );
+						const selPdf = select(
+							neeTotalWeight.greaterThan( 0.0 ),
+							selImp.div( max( neeTotalWeight, 1e-10 ) ),
+							float( 1.0 ).div( max( float( totalLights ), 1.0 ) ),
+						);
+						const lightPdf = dirPdf.mul( selPdf ).toVar();
+						const misW = powerHeuristic( { pdf1: brdfSamplePdf, pdf2: lightPdf } ).toVar();
+
+						const lightEmission = areaLightRadiance( light ).mul( areaLightSpreadAttenuation( lightFacing, light.spread ) );
+						// Base contribution WITHOUT visibility (see discrete-light site).
+						const baseContribution = lightEmission.mul( brdfSampleValue ).mul( NoL ).mul( misW ).div( max( brdfSamplePdf, 1e-10 ) );
 						totalContribution.addAssign( baseContribution.mul( visibility ) );
 						If( wantUnoccluded, () => {
 
@@ -1037,7 +980,68 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 		} );
 
-	} ); // End emissiveIntensity check
+	} );
+	// =====================================================================
+	// DETERMINISTIC ENVIRONMENT NEE
+	// Always runs (not stochastic) — forms a two-strategy Veach MIS
+	// estimator together with the implicit miss check in the main loop.
+	// =====================================================================
+
+	If( enableEnvironmentLight, () => {
+
+		const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
+		const envColor = vec3( 0.0 ).toVar();
+
+		// Sample direction + PDF + color from importance-sampled environment
+		const envSampleResult = sampleEquirectProbability(
+			envTexture, envCDFTexture,
+			envMatrix, environmentIntensity, envTotalSum, envCompensationDelta, envResolution, envRandom, envColor
+		).toVar();
+
+		const envDirection = envSampleResult.xyz.toVar();
+		const envPdf = envSampleResult.w.toVar();
+
+		If( envPdf.greaterThan( 0.0 ), () => {
+
+			const NoL = max( float( 0.0 ), dot( hitNormal, envDirection ) ).toVar();
+
+			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: envDirection, surfaceNormal: geomNormal } ) ), () => {
+
+				const visibility = shadow( rayOrigin, envDirection, float( 1e20 ) );
+
+				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+
+					// Share H + dots between env BRDF/PDF — same redundancy fix as the
+					// discrete-light path above.
+					const envDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, envDirection, material ) );
+					const brdfValue = evaluateMaterialResponseFromDots( material, envDots );
+					const bPdf = calculateMaterialPDFFromDots( material, envDots ).toVar();
+
+					// Balance heuristic for env MIS — optimal for MIS-compensated PDFs (Karlík et al. 2019).
+					// The implicit path uses material combinedPdf as prevBouncePdf at the miss check.
+					const misW = select(
+						bPdf.greaterThan( 0.0 ),
+						balanceHeuristic( { pdf1: envPdf, pdf2: bPdf } ),
+						float( 1.0 )
+					).toVar();
+
+					// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
+					const baseContribution = envColor.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( envPdf, 1e-10 ) );
+					totalContribution.addAssign( baseContribution.mul( visibility ) );
+					If( wantUnoccluded, () => {
+
+						unoccludedContribution.addAssign( baseContribution );
+
+					} );
+
+				} );
+
+			} );
+
+		} );
+
+	} );
+
 
 	// EMISSIVE TRIANGLE DIRECT LIGHTING
 	// NOTE: Emissive triangle sampling is handled separately in pathtracer_core.fs

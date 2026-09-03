@@ -95,6 +95,13 @@ The `furnace-*` scenes close that hole. An albedo-1 sphere in a uniform environm
 must render *exactly* `L` — the object becomes invisible. The reference is a constant declared in
 `scenes.js`, so no amount of blessing can move it.
 
+`arealight-analytic` does the same for the analytic-light path, which no furnace can see (a furnace
+has no lights). A Lambertian plane under a square area light, with the camera framing a small patch
+beneath it, must render the closed-form irradiance of a rectangle over a parallel plane times
+albedo/π. It gates the light's radiance convention, the spherical-rectangle sampler, the NEE/BSDF-hit
+weighting and the shadow-ray origin together; `arealights-two` sits beside it with two lights of
+different size and power so the light-selection heuristic has a noise gate.
+
 **It is a ratchet, not an absolute gate.** Several BSDFs violate energy conservation today (see
 below), and gating on `|ratio − 1|` would leave the suite permanently red — which is how a gate stops
 being read. Each scene's current deviation is blessed and may only **shrink**; the absolute deviation
