@@ -836,7 +836,7 @@ export class SceneProcessor {
 			// (the prior model-load path omitted this, leaving albedo un-decoded / too bright).
 			const buildBucket = ( list, srgb ) => list.length === 0
 				? Promise.resolve( null )
-				: this.textureCreator.createTexturesToDataTexture( list ).then( tex => {
+				: this.textureCreator.createTexturesToDataTexture( list, { srgbPool: srgb } ).then( tex => {
 
 					if ( tex && srgb ) tex.colorSpace = SRGBColorSpace;
 					return tex;
