@@ -155,6 +155,7 @@ export function buildShadeKernel( params ) {
 			If( threadIdx.equal( uint( 0 ) ), () => {
 
 				atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
+				atomicStore( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ), uint( 0 ) );
 
 			} );
 

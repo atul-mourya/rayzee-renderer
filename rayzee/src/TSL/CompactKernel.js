@@ -3,7 +3,7 @@
  */
 
 import {
-	Fn, uint, select,
+	Fn, uint, select, max, min,
 	If,
 	instanceIndex,
 	atomicAdd, atomicLoad,
@@ -11,10 +11,19 @@ import {
 	Return,
 } from 'three/tsl';
 
-import { readRayBounceFlags } from '../Processor/PackedRayBuffer.js';
-import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
+import { readRayBounceFlags, readRayThroughput } from '../Processor/PackedRayBuffer.js';
+import { RAY_FLAG, COUNTER, ENERGY_SCALE, ENERGY_RAY_CLAMP } from '../Processor/QueueManager.js';
 
 const WG_SIZE = 256;
+
+// Survivor's remaining throughput as fixed-point u32; clamped so a frame's sum cannot wrap.
+const rayEnergy = ( rayBufferRO, rayID ) => {
+
+	const t = readRayThroughput( rayBufferRO, rayID );
+	const m = max( max( t.x, t.y ), t.z ).max( 0.0 );
+	return min( uint( m.mul( ENERGY_SCALE ).add( 0.5 ) ), uint( ENERGY_RAY_CLAMP ) );
+
+};
 
 export function buildCompactKernel( params ) {
 
@@ -46,6 +55,7 @@ export function buildCompactKernel( params ) {
 
 			const writeIdx = atomicAdd( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 1 ) );
 			activeIndicesWriteRW.element( writeIdx ).assign( rayID );
+			atomicAdd( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ), rayEnergy( rayBufferRO, rayID ) );
 
 		} );
 
@@ -80,10 +90,12 @@ export function buildCompactSubgroupKernel( params ) {
 		const flags = readRayBounceFlags( rayBufferRO, rayID );
 		const isActive = inRange.and( flags.bitAnd( uint( RAY_FLAG.ACTIVE ) ).notEqual( uint( 0 ) ) );
 		const activeU = select( isActive, uint( 1 ), uint( 0 ) );
+		const energyU = select( isActive, rayEnergy( rayBufferRO, rayID ), uint( 0 ) );
 
 		// .toVar() materializes the subgroup ops at uniform control flow; inlining into the divergent If(isActive) write is rejected by WGSL.
 		const localOffset = subgroupExclusiveAdd( activeU ).toVar();
 		const sgCount = subgroupAdd( activeU ).toVar();
+		const sgEnergy = subgroupAdd( energyU ).toVar();
 
 		// laneId via exclusiveAdd(1) since TSL lacks subgroup_invocation_id; lane 0 does the single per-subgroup atomicAdd.
 		const laneId = subgroupExclusiveAdd( uint( 1 ) ).toVar();
@@ -91,6 +103,7 @@ export function buildCompactSubgroupKernel( params ) {
 		If( laneId.equal( uint( 0 ) ), () => {
 
 			base.assign( atomicAdd( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), sgCount ) );
+			atomicAdd( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ), sgEnergy );
 
 		} );
 		const sgBase = subgroupBroadcast( base, uint( 0 ) ).toVar();

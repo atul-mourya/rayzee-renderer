@@ -8,7 +8,7 @@ import { uniform, texture, storage } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { PathTracerStage } from './PathTracerStage.js';
 import { PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute } from '../Processor/PackedRayBuffer.js';
-import { QueueManager, COUNTER } from '../Processor/QueueManager.js';
+import { QueueManager, COUNTER, ENERGY_SCALE } from '../Processor/QueueManager.js';
 import { VRAMTracker } from '../Processor/VRAMTracker.js';
 import { KernelManager } from '../Processor/KernelManager.js';
 import { buildGenerateKernel, GENERATE_WG_SIZE } from '../TSL/GenerateKernel.js';
@@ -85,6 +85,7 @@ export class PathTracer extends PathTracerStage {
 		this._useSubgroupCompact = false;
 
 		this._lastBounceCounts = null;
+		this._lastBounceEnergy = null;
 		// maxBounces the curve was measured at; the curve is ignored once this no longer matches (-1 = none).
 		this._lastBounceCountsBudget = - 1;
 		this._readbackPending = false;
@@ -95,10 +96,11 @@ export class PathTracer extends PathTracerStage {
 		// Whether the survivor curve may be trusted to SIZE the dispatch. False during/after camera motion
 		// (or resize) until a readback measured at the settled view re-validates it — full-size until then so
 		// a stale/mid-motion curve can't under-size the row-major list and drop the bottom rows. The curve is
-		// still used for the per-bounce early-exit regardless (a stale early-exit only trims empty deep bounces).
+		// still used for the per-bounce early-exit regardless (it only trims bounces holding negligible energy).
 		this._curveSizingValid = false;
-		// 0.1% of primary ray count, floored at 100; -1 to disable. Updated per-scene in _buildWavefrontKernels.
-		this._bounceEarlyExitThreshold = 100;
+		// Early exit once the survivors' summed throughput is below this fraction of a full frame's; -1
+		// disables. Never a ray count: after Russian roulette a handful of survivors carry real weight.
+		this._bounceEarlyExitThreshold = 1e-4;
 
 		// Tier-1 convergence early-stop: fraction of pixels converged in the last settled-view readback, and a
 		// single-flight guard for its async counter read. Zeroed on reset/camera-move/resize; never refreshed
@@ -400,6 +402,9 @@ export class PathTracer extends PathTracerStage {
 
 			}
 
+			const energyCurve = this._lastBounceEnergy;
+			const exitEnergy = this._bounceEarlyExitThreshold >= 0 ? this._bounceEarlyExitThreshold * maxRays * ENERGY_SCALE : - 1;
+
 			for ( let bounce = 0; bounce <= loopBound; bounce ++ ) {
 
 				this._wfCurrentBounce.value = bounce;
@@ -474,10 +479,11 @@ export class PathTracer extends PathTracerStage {
 
 				// Early-exit on last frame's per-bounce snapshot (single-chunk only; curveReliableUpto=0 disables it for multi-chunk).
 				if (
-					bounce < curveReliableUpto
+					exitEnergy >= 0
+					&& bounce < curveReliableUpto
 					&& bounce < loopBound
-					&& curve[ bounce ] !== undefined
-					&& curve[ bounce ] <= this._bounceEarlyExitThreshold
+					&& energyCurve?.[ bounce ] !== undefined
+					&& energyCurve[ bounce ] <= exitEnergy
 				) {
 
 					break;
@@ -732,6 +738,7 @@ export class PathTracer extends PathTracerStage {
 		this._readbackPending = true;
 		const gen = this._readbackGeneration;
 		const budget = this.maxBounces.value;
+		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
 		this.renderer.getArrayBufferAsync( attr ).then( ( buf ) => {
 
 			// Drop counts measured at a now-stale generation (a resize or camera move happened mid-flight).
@@ -739,7 +746,9 @@ export class PathTracer extends PathTracerStage {
 			// happened before it resolved, so its counts match the current view — safe to size from.
 			if ( gen === this._readbackGeneration ) {
 
-				this._lastBounceCounts = new Uint32Array( buf.slice( 0 ) );
+				const all = new Uint32Array( buf.slice( 0 ) );
+				this._lastBounceCounts = all.subarray( 0, n );
+				this._lastBounceEnergy = all.subarray( n, 2 * n );
 				this._lastBounceCountsBudget = budget;
 				this._curveSizingValid = true;
 
@@ -826,6 +835,7 @@ export class PathTracer extends PathTracerStage {
 		// until the readback re-measures at the new size; bump the generation so any readback already
 		// in flight (carrying the old-resolution counts) is discarded when it resolves.
 		this._lastBounceCounts = null;
+		this._lastBounceEnergy = null;
 		this._lastBounceCountsBudget = - 1;
 		this._curveSizingValid = false;
 		this._readbackFrameCounter = 0;
@@ -861,11 +871,6 @@ export class PathTracer extends PathTracerStage {
 		this._wfRenderWidth.value = w;
 		this._wfRenderHeight.value = h;
 		this._updateChunkLayout();
-		if ( this._bounceEarlyExitThreshold !== - 1 ) {
-
-			this._bounceEarlyExitThreshold = Math.max( 100, Math.floor( ( w * h ) / 1000 ) );
-
-		}
 
 	}
 
@@ -969,11 +974,6 @@ export class PathTracer extends PathTracerStage {
 		// every per-ray kernel's dispatch per chunk; this is just a valid starting grid (always ≤ B).
 		const maxRays = this._chunkRows * w;
 
-		if ( this._bounceEarlyExitThreshold !== - 1 ) {
-
-			this._bounceEarlyExitThreshold = Math.max( 100, Math.floor( ( w * h ) / 1000 ) );
-
-		}
 
 		// Per-path buffers (RAY/HIT/rng) sized to the budget B and indexed by LOCAL slot r ∈ [0,B). _cap = B is
 		// baked into the SoA stride but never changes with resolution, so this build happens once (model load).
@@ -1068,6 +1068,7 @@ export class PathTracer extends PathTracerStage {
 			const cnt = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
 			const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( qm.MAX_BOUNCE_SNAPSHOTS - 1 ) );
 			bounceCountsBuf.element( slot ).assign( cnt );
+			bounceCountsBuf.element( slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
 			// Also set ENTERING_COUNT for the next bounce; the full-dispatch path's enterFull overrides it.
 			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), cnt );
 
@@ -1522,6 +1523,7 @@ export class PathTracer extends PathTracerStage {
 
 				const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( qm.MAX_BOUNCE_SNAPSHOTS - 1 ) );
 				bounceCountsBuf.element( slot ).assign( active );
+				bounceCountsBuf.element( slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
 				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
 
 			} );
