@@ -51,6 +51,19 @@ function standInForSplit( source ) {
 
 }
 
+// three.js nits → the engine's radiant power, inverting areaLightRadiance.
+function areaLightPowerFactor( node, width, height, userData ) {
+
+	if ( ! ( userData.normalize ?? true ) ) return Math.PI;
+
+	const shapeFactor = userData.shape === 'ellipse' || userData.shape === 'disk' ? Math.PI / 4 : 1;
+	const scale = node.getWorldScale( new Vector3() );
+	// abs: a mirrored ancestor decomposes negative; the serializer takes the area as |u × v|.
+	const factor = Math.PI * shapeFactor * Math.abs( width * scale.x * height * scale.y );
+	return Number.isFinite( factor ) ? factor : Math.PI;
+
+}
+
 /**
  * AssetLoader class - handles loading of 3D models, environment maps, and archives
  */
@@ -1726,7 +1739,6 @@ export class AssetLoader extends EventDispatcher {
 
 	processModelObjects( model ) {
 
-		let visitedAreaLights = [];
 		// Split after the walk: traverse() caches children.length, so splitting in place
 		// shifts later siblings down a slot and skips one.
 		const multiMaterialMeshes = [];
@@ -1734,9 +1746,11 @@ export class AssetLoader extends EventDispatcher {
 
 			const userData = object.userData;
 
-			if ( object.isRectAreaLight && ! visitedAreaLights.includes( object.uuid ) ) {
+			// An adopted light carries three.js units; convert as point/spot are below.
+			if ( object.isRectAreaLight && ! userData.__radianceConverted ) {
 
-				visitedAreaLights.push( object.uuid );
+				object.intensity *= areaLightPowerFactor( object, object.width, object.height, userData );
+				userData.__radianceConverted = true;
 
 			}
 
@@ -1759,14 +1773,9 @@ export class AssetLoader extends EventDispatcher {
 
 				if ( userData.type === 'RectAreaLight' ) {
 
-					// Authored intensity is three.js radiance (these files also carry power = intensity·w·h·π);
-					// convert to the engine's radiant power through the world area so Normalize reproduces it.
-					const worldScale = object.getWorldScale( new Vector3() );
 					const normalize = userData.normalize ?? true;
 					const shape = userData.shape ?? 'rectangle';
-					const shapeFactor = shape === 'ellipse' || shape === 'disk' ? Math.PI / 4 : 1;
-					const worldArea = shapeFactor * userData.width * worldScale.x * userData.height * worldScale.y;
-					const power = userData.intensity * Math.PI * ( normalize ? worldArea : 1 );
+					const power = userData.intensity * areaLightPowerFactor( object, userData.width, userData.height, userData );
 					const light = new RectAreaLight(
 						new Color( ...userData.color ),
 						power * this._profile.areaLightIntensityScale,
@@ -1776,9 +1785,9 @@ export class AssetLoader extends EventDispatcher {
 					light.userData.normalize = normalize;
 					light.userData.spread = Number.isFinite( userData.spread ) ? userData.spread : Math.PI;
 					light.userData.shape = shape;
+					light.userData.__radianceConverted = true; // already power, and traverse() reaches it
 					light.name = userData.name;
 					object.add( light );
-					visitedAreaLights.push( light.uuid );
 
 				}
 

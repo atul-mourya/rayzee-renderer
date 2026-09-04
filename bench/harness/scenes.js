@@ -1289,6 +1289,14 @@ function rectConfigFactor( px, py, x0, x1, y0, y1, h ) {
 
 }
 
+// Rigs are authored in radiant power; an adopted light carries three.js nits. Call after shape is set.
+function setAreaLightPower( light, watts ) {
+
+	const shapeFactor = light.userData.shape === 'ellipse' || light.userData.shape === 'disk' ? Math.PI / 4 : 1;
+	light.intensity = watts / ( Math.PI * shapeFactor * light.width * light.height );
+
+}
+
 const AREALIGHT = {
 	size: 1.0, // m, square emitter
 	height: 1.0, // m above the plane
@@ -1343,11 +1351,12 @@ SCENES.push( {
 			new PlaneGeometry( 40, 40 ),
 			new MeshPhysicalMaterial( { color: new Color( albedo, albedo, albedo ), roughness: 1, metalness: 0 } )
 		) );
-		const light = new RectAreaLight( 0xffffff, power, size, size );
+		const light = new RectAreaLight( 0xffffff, 1, size, size );
 		light.position.set( 0, 0, height ); // emits along −z onto the +z-facing plane at z = 0
 		light.userData.normalize = true;
 		light.userData.spread = Math.PI;
 		light.userData.shape = 'rectangle';
+		setAreaLightPower( light, power );
 		group.add( light );
 		await app.loadObject3D( group, 'arealight-analytic' );
 
@@ -1413,20 +1422,22 @@ function makeTwoLightRig() {
 	ball.position.set( 1.5, 0.8, 0.6 );
 	group.add( ball );
 
-	const panel = new RectAreaLight( 0xfff1dc, 40, 2.0, 2.0 );
+	const panel = new RectAreaLight( 0xfff1dc, 1, 2.0, 2.0 );
 	panel.position.set( - 1.0, 3.2, 0.5 );
 	panel.lookAt( - 1.0, 0, 0.5 );
 	panel.userData.normalize = true;
 	panel.userData.spread = Math.PI;
 	panel.userData.shape = 'rectangle';
+	setAreaLightPower( panel, 40 );
 	group.add( panel );
 
-	const spot = new RectAreaLight( 0xd8e4ff, 40, 0.4, 0.4 );
+	const spot = new RectAreaLight( 0xd8e4ff, 1, 0.4, 0.4 );
 	spot.position.set( 2.4, 2.4, 2.2 );
 	spot.lookAt( 1.5, 0.8, 0.6 );
 	spot.userData.normalize = true;
 	spot.userData.spread = 1.6;
 	spot.userData.shape = 'disk';
+	setAreaLightPower( spot, 40 );
 	group.add( spot );
 
 	return group;
