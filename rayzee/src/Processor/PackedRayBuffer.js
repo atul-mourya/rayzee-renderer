@@ -16,9 +16,10 @@ export const RAY_STRIDE = 7;
 export const HIT_STRIDE = 2;
 // Per-pixel G-buffer (first-hit MRT staging): 1 uvec4/pixel — half-packed normal/depth/albedo
 // (pack2x16, no f32 bitcast); read by FinalWrite:
-//   .x=packSnorm2x16(normal.xy)  .y=packSnorm2x16(normal.z, depth)  .z=packUnorm2x16(albedo.rg)  .w=packUnorm2x16(albedo.b, 0)
+//   .x=packSnorm2x16(normal.xy)  .y=packSnorm2x16(normal.z, depth)  .z=packUnorm2x16(albedo.rg)
+//   .w=packUnorm2x16(albedo.b, normHitDist)
+// normHitDist is written by Shade; writeGBuffer preserves it so the DDFA albedo commits can't zero it.
 // Separate buffer from RAY (per-pixel, not per-ray×S) — written by Generate/Shade bounce-0.
-// (A second lane reserved for an A-SVGF Tier-1 surface ID was removed — write-only, never read.)
 export const GBUFFER_STRIDE = 1;
 
 export const RAY = {
@@ -162,14 +163,34 @@ export const readRayRadiance = ( buf, id ) =>
 // One uvec4 per pixel (stride 1); AoS base = pixelIndex * GBUFFER_STRIDE.
 const gbLane = ( pixelIndex ) => uint( pixelIndex ).mul( GBUFFER_STRIDE );
 
-export const writeGBuffer = ( buf, pixelIndex, normal, depth, albedo ) =>
-	buf.element( gbLane( pixelIndex ) ).assign( uvec4(
+// hitDist = null keeps the lane's current normHitDist.
+export const writeGBuffer = ( buf, pixelIndex, normal, depth, albedo, hitDist = null ) => {
+
+	const lane = gbLane( pixelIndex );
+	const h = hitDist === null ? unpackUnorm2x16( buf.element( lane ).w ).y : float( hitDist );
+	return buf.element( lane ).assign( uvec4(
 		packSnorm2x16( vec2( normal.x, normal.y ) ),
 		packSnorm2x16( vec2( normal.z, depth ) ),
 		packUnorm2x16( vec2( albedo.x, albedo.y ) ),
-		packUnorm2x16( vec2( albedo.z, 0.0 ) ),
+		packUnorm2x16( vec2( albedo.z, h ) ),
 	) );
+
+};
+
+export const writeGBufferHitDist = ( buf, pixelIndex, normHitDist ) => {
+
+	const lane = gbLane( pixelIndex );
+	const cur = buf.element( lane ).toVar();
+	return buf.element( lane ).assign( uvec4(
+		cur.x, cur.y, cur.z,
+		packUnorm2x16( vec2( unpackUnorm2x16( cur.w ).x, normHitDist ) ),
+	) );
+
+};
+
 export const readGBuffer = ( buf, pixelIndex ) => buf.element( gbLane( pixelIndex ) );
+
+export const gbDecodeHitDist = ( packed ) => unpackUnorm2x16( packed.w ).y;
 
 // Decode for FinalWrite. normalDepth.xyz matches the prior path (normal*0.5+0.5), .w = raw depth.
 export const gbDecodeNormalDepth = ( packed ) => {

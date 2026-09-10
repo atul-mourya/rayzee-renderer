@@ -55,4 +55,10 @@ export const EngineEvents = {
 	// Lifecycle
 	DISPOSE: 'engine:dispose',
 	DEVICE_LOST: 'engine:deviceLost',
+
+	// Degradation
+	ISSUE: 'engine:issue',
+
+	// Scene metadata
+	SCENE_METADATA_APPLIED: 'engine:sceneMetadataApplied',
 };

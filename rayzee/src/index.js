@@ -9,13 +9,28 @@
 import './TSL/patches.js';
 
 // Main application
-export { PathTracerApp } from './PathTracerApp.js';
+export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
 
 // Event types
 export { EngineEvents } from './EngineEvents.js';
 
+// Headless rendering — the supported entry point for a caller with no screen
+export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';
+
+// Degradation contract — what the engine survived instead of failing on
+export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
+
+// Settings provenance + viewer-vs-physical tuning
+export { SETTING_SOURCE } from './RenderSettings.js';
+
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
+
+// glTF alphaMode derivation — the one definition, shared with hosts that edit materials
+export { deriveAlphaMode } from './Processor/GeometryExtractor.js';
+
+// Scene-level authoring metadata embedded in model files (glTF `extras`)
+export { extractSceneMetadata, parseSceneMetadata } from './Processor/SceneMetadata.js';
 
 // Logging — leveled/namespaced console output shared with the workers
 export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
@@ -24,6 +39,11 @@ export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
 export {
 	ENGINE_DEFAULTS,
 	ASVGF_QUALITY_PRESETS,
+	NRD_DEFAULTS,
+	NRD_QUALITY_PRESETS,
+	NRD_PRESET_KEYS,
+	NRD_HIT_DIST_A,
+	NRD_HIT_DIST_B,
 	CAMERA_PRESETS,
 	CAMERA_RANGES,
 	SKY_PRESETS,
@@ -37,6 +57,8 @@ export {
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
 	MAX_RESERVABLE_RENDER_SIZE,
+	RENDER_PROFILES,
+	getRenderProfile,
 } from './EngineDefaults.js';
 
 // Settings & managers (for advanced consumers)

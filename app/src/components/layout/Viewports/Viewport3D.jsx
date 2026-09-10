@@ -219,20 +219,17 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
 
-				// Load default environment and model
 				const { EnvironmentService } = await import( '@/services/EnvironmentService' );
 				const { DEFAULT_STATE } = await import( '@/Constants' );
-				const defaultEnv = EnvironmentService.getEnvironmentById( DEFAULT_STATE.environment );
-				if ( defaultEnv?.url ) {
 
-					await app.loadEnvironment( defaultEnv.url );
-
-				}
-
-				// Load model — from URL param or default example
+				// Model first, environment second. A model can carry its own environment in its
+				// metadata; loading the default first would fetch a ~1.6 MB HDRI, build its CDF,
+				// upload it, and then throw all of it away — and make the engine build a second
+				// CDF for the same texture during the scene rebuild. Nothing renders until
+				// app.animate() below, so the scene is never visible without an environment.
 				const urlParams = new URLSearchParams( window.location.search );
 				const modelUrl = urlParams.get( 'model' );
-				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 70 } );
+				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
 				if ( modelUrl ) {
 
 					await app.loadModel( modelUrl );
@@ -241,6 +238,20 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 					const { MODEL_FILES } = await import( '@/Constants' );
 					await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+
+				}
+
+				// Gate on what actually got installed, not on the metadata: an authored
+				// environment that failed to fetch must still fall back to the default.
+				if ( ! app.scene?.environment ) {
+
+					const defaultEnv = EnvironmentService.getEnvironmentById( DEFAULT_STATE.environment );
+					if ( defaultEnv?.url ) {
+
+						setLoading( { isLoading: true, title: "Starting", status: "Loading Environment...", progress: 90 } );
+						await app.loadEnvironment( defaultEnv.url );
+
+					}
 
 				}
 

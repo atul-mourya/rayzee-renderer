@@ -33,7 +33,7 @@ const FinalRenderPanel = () => {
 		<div className="">
 			<ControlGroup name="Path Tracer" defaultOpen={true}>
 				<Row>
-					<Slider label={"Bounces"} min={0} max={20} step={1} value={[ bounces ]} onValueChange={handleBouncesChange} />
+					<Slider label={"Bounces"} min={0} max={20} step={1} value={[ bounces ]} onFinishChange={handleBouncesChange} />
 				</Row>
 				<CanvasDimensionControls resolutionKey="finalRenderResolution" />
 			</ControlGroup>

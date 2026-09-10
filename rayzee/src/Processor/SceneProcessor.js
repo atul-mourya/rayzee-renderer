@@ -33,6 +33,7 @@ export class SceneProcessor {
      * @param {boolean} [options.useFloat32Array=true] - Use Float32Array for triangle data
      * @param {string} [options.textureQuality='adaptive'] - Texture quality mode
      * @param {boolean} [options.enableTextureCache=true] - Enable texture caching
+     * @param {import('../EngineIssues.js').IssueLog} [options.issues] - forwarded to TextureCreator
      */
 	constructor( options = {} ) {
 
@@ -160,7 +161,7 @@ export class SceneProcessor {
 		} );
 
 		// Create and configure texture creator
-		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize } );
+		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize, issues: this.config.issues } );
 		// The optimized TextureCreator will auto-detect capabilities and select optimal methods
 
 		// Create emissive triangle builder for direct lighting
@@ -324,7 +325,6 @@ export class SceneProcessor {
 
 			// Store other extracted data
 			this.materials = extractedData.materials;
-			this.materialCount = this.materials.length; // Store material count for feature scanning
 			this.materialTriangleCounts = extractedData.materialTriangleCounts; // Per-material tri count for sort-bin remap
 			this.meshes = extractedData.meshes;
 			this.meshTriangleRanges = extractedData.meshTriangleRanges; // Per-mesh { start, count } for TLAS/BLAS
@@ -347,7 +347,6 @@ export class SceneProcessor {
 			this.specularColorMaps = extractedData.specularColorMaps;
 			this.directionalLights = extractedData.directionalLights;
 			this.cameras = extractedData.cameras;
-			this.sceneFeatures = extractedData.sceneFeatures; // Store material feature flags for shader optimization
 
 			const duration = performance.now() - startTime;
 			this._log( `Geometry extraction complete (${duration.toFixed( 2 )}ms)`, {
@@ -837,7 +836,7 @@ export class SceneProcessor {
 			// (the prior model-load path omitted this, leaving albedo un-decoded / too bright).
 			const buildBucket = ( list, srgb ) => list.length === 0
 				? Promise.resolve( null )
-				: this.textureCreator.createTexturesToDataTexture( list ).then( tex => {
+				: this.textureCreator.createTexturesToDataTexture( list, { srgbPool: srgb } ).then( tex => {
 
 					if ( tex && srgb ) tex.colorSpace = SRGBColorSpace;
 					return tex;
@@ -1157,7 +1156,6 @@ export class SceneProcessor {
 
 			// Update material arrays (but keep existing triangle data)
 			this.materials = extractedData.materials;
-			this.materialCount = this.materials.length; // Update material count
 			this.meshes = extractedData.meshes; // Update mesh data
 			this.maps = extractedData.maps;
 			this.normalMaps = extractedData.normalMaps;
@@ -1166,7 +1164,6 @@ export class SceneProcessor {
 			this.metalnessMaps = extractedData.metalnessMaps;
 			this.emissiveMaps = extractedData.emissiveMaps;
 			this.displacementMaps = extractedData.displacementMaps;
-			this.sceneFeatures = extractedData.sceneFeatures; // Update material feature flags
 
 			// Bucket textures, remap material indices, regenerate raw material data, and
 			// build the consolidated bucket arrays — same path as the initial build.

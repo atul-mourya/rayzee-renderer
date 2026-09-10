@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	ACESFilmicToneMapping, Scene, EventDispatcher, Box3
+	Scene, EventDispatcher, Box3
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -9,6 +9,7 @@ import { PathTracer } from './Stages/PathTracer.js';
 import { NormalDepth } from './Stages/NormalDepth.js';
 import { MotionVector } from './Stages/MotionVector.js';
 import { ASVGF } from './Stages/ASVGF.js';
+import { NRD } from './Stages/NRD.js';
 import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
@@ -16,12 +17,15 @@ import { AutoExposure } from './Stages/AutoExposure.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
+import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
+import { SETTING_SOURCE } from './RenderSettings.js';
+import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
@@ -57,6 +61,8 @@ const _appsByCanvas = new WeakMap();
  * - `app.settings`           — {@link RenderSettings} (all render parameters)
  * - `app.stages`             — Named pipeline stages for advanced control
  * - `app.sceneMeshes`        — meshes backing the BVH, in buffer order (see {@link refitBVH})
+ * - `app.sceneModel`         — root of the rendered model (a copy, for {@link loadObject3D})
+ * - `app.getSceneObject(id)` — the rendered root for an appended object's id
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
@@ -78,6 +84,32 @@ function attachDeviceLostHandler( device, holder ) {
 
 }
 
+const SOFTWARE_ADAPTER = /swiftshader|llvmpipe|lavapipe|basic render|microsoft basic|warp/i;
+
+/**
+ * Flags software rasterizers: correct output, ~100x slower, invisible in the image.
+ * `isFallbackAdapter` only covers adapters we asked to be fallbacks, so the strings matter.
+ *
+ * @param {GPUAdapter} adapter
+ * @returns {{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}}
+ */
+export function describeAdapter( adapter ) {
+
+	const info = adapter.info ?? {};
+	const identity = `${info.vendor ?? ''} ${info.architecture ?? ''} ${info.device ?? ''} ${info.description ?? ''}`;
+
+	return {
+		vendor: info.vendor ?? '',
+		architecture: info.architecture ?? '',
+		device: info.device ?? '',
+		description: info.description ?? '',
+		isSoftware: info.isFallbackAdapter === true
+			|| adapter.isFallbackAdapter === true
+			|| SOFTWARE_ADAPTER.test( identity ),
+	};
+
+}
+
 export class PathTracerApp extends EventDispatcher {
 
 	/**
@@ -86,6 +118,10 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {boolean} [options.autoResize=true] - Automatically listen for window resize events
 	 * @param {HTMLElement} [options.container] - Single DOM parent the engine mounts all auxiliary
 	 *   elements into (HUD overlay, denoiser canvas). Defaults to `canvas.parentNode`.
+	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
+	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
+	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
+	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -109,9 +145,28 @@ export class PathTracerApp extends EventDispatcher {
 		this.canvas = canvas;
 		this._autoResize = options.autoResize !== false;
 		this._container = options.container || null;
+		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
+		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
+		this._applyingSceneMetadata = false;
+
+		// Before the settings: the profile supplies some of their defaults.
+		this._profile = getRenderProfile( options.profile );
+
+		// First, so no subsystem can degrade unrecorded.
+		this._issues = new IssueLog( {
+			strict: options.strict === true,
+			onIssue: ( issue ) => this.dispatchEvent( { type: EngineEvents.ISSUE, issue } ),
+		} );
 
 		// ── Settings (single source of truth for all render parameters) ──
-		this.settings = new RenderSettings( DEFAULT_STATE );
+		this.settings = new RenderSettings(
+			{
+				...DEFAULT_STATE,
+				environmentRotation: this._profile.environmentRotation,
+				saturation: this._profile.saturation,
+			},
+			{ issues: this._issues }
+		);
 
 		// ── Core objects (populated in init) ──
 		this.renderer = null;
@@ -191,6 +246,9 @@ export class PathTracerApp extends EventDispatcher {
 		this._deterministic = false;
 		this._dispatchPinned = false;
 		this._deterministicRestore = null;
+
+		/** @type {?{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}} */
+		this.adapterInfo = null;
 
 	}
 
@@ -367,8 +425,11 @@ export class PathTracerApp extends EventDispatcher {
 				memoryPeak: tracker?.peak ?? 0,
 			} );
 
-			// Check time limit
-			if ( this.completion.isTimeLimitReached( this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' ) ) ) {
+			// Only the wall-clock stop — PathTracer.render() retires the ceiling and convergence
+			// itself, so whichever of the three arrives first wins.
+			if ( this.completion.isTimeLimitReached(
+				this.stages.pathTracer, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' )
+			) ) {
 
 				this.stages.pathTracer.isComplete = true;
 
@@ -382,8 +443,17 @@ export class PathTracerApp extends EventDispatcher {
 					context: this.pipeline?.context,
 				} );
 
-				this.dispatchEvent( { type: 'RenderComplete' } );
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE } );
+				const completionInfo = {
+					samples: this.stages.pathTracer.frameCount,
+					timeElapsed: this.completion.timeElapsed,
+					budgetOverrun: this.completion.budgetOverrun,
+					// null means isComplete was forced rather than earned (the reconcile below);
+					// a forced stop is closer to the ceiling than to convergence.
+					reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
+				};
+
+				this.dispatchEvent( { type: 'RenderComplete', ...completionInfo } );
+				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...completionInfo } );
 
 			}
 
@@ -456,7 +526,12 @@ export class PathTracerApp extends EventDispatcher {
 		if ( this.pipeline ) {
 
 			this.pipeline.reset();
-			if ( ! soft ) this.pipeline.eventBus.emit( 'asvgf:reset' );
+			if ( ! soft ) {
+
+				this.pipeline.eventBus.emit( 'asvgf:reset' );
+				this.pipeline.eventBus.emit( 'denoiser:reset' );
+
+			}
 
 		}
 
@@ -484,6 +559,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._removeTrackedListeners();
 		setStatusCallback( null );
+
+		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
 
 		this.interactionManager?.deselect?.();
 		this.transformManager?.detach?.();
@@ -615,8 +692,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.interactionManager?.deselect();
 		this.transformManager?.detach?.();
 
-		// Release the loaded model. If loaded via loadObject3D(), the caller owns it —
-		// we only detach it from the scene. Otherwise dispose geometries/materials/textures.
 		this.assetLoader?.releaseTargetModel();
 
 		// Clear lights in the WebGPU light scene
@@ -654,7 +729,16 @@ export class PathTracerApp extends EventDispatcher {
 	/**
 	 * Loads a Three.js Object3D directly into the path tracer scene.
 	 * Builds BVH from the object's meshes and uploads scene data.
-	 * @param {import('three').Object3D} object3d - The Object3D to render
+	 *
+	 * Renders a copy: `object3d` is never reparented, rewritten or disposed, so passing a
+	 * subtree of a scene the host still renders is safe. Geometry/material/texture are shared
+	 * by reference, and any ancestor transform is baked in. Later edits to `object3d` do not
+	 * reach the render — mutate {@link sceneModel}, then {@link refitBVH}/{@link refitBLASes}.
+	 *
+	 * Lights keep three.js units — `RectAreaLight.intensity` in nits, point/spot in candela — and are
+	 * converted to radiant power on the copy. `areaLightIntensityScale` does not apply here.
+	 *
+	 * @param {import('three').Object3D} object3d - The Object3D to render; left untouched.
 	 * @param {string} [name='object3d'] - Display name for the object
 	 */
 	async loadObject3D( object3d, name = 'object3d' ) {
@@ -667,16 +751,25 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * A load is already running. Typed so hosts can tell "you clicked too fast" apart from
+	 * a genuine load failure and say so, instead of dropping the request on the floor.
+	 * @private
+	 */
+	_busyError( where ) {
+
+		const error = new Error( `${where}: another load is already in progress` );
+		error.code = 'LOAD_IN_PROGRESS';
+		return error;
+
+	}
+
+	/**
 	 * Loads an environment map and rebuilds CDF.
 	 * @param {string} url - Environment URL
 	 */
 	async loadEnvironment( url ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.loadEnvironment: another load is already in progress' );
-
-		}
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadEnvironment' );
 
 		this._loadingInProgress = true;
 
@@ -694,6 +787,63 @@ export class PathTracerApp extends EventDispatcher {
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
 			this.dispatchEvent( { type: 'EnvironmentLoaded', url } );
+
+		} finally {
+
+			this._loadingInProgress = false;
+
+		}
+
+	}
+
+	/**
+	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
+	 * map, dispatched by extension.
+	 *
+	 * Prefer this over driving `assetLoader.loadAssetFromFile()` directly. That bypasses the
+	 * in-progress guard, and AssetLoader disposes the outgoing model before it knows whether
+	 * the engine will rebuild: a file dropped mid-load would tear down the live scene, add the
+	 * new one to the graph, and then be discarded by the `load` handler — leaving the path
+	 * tracer rendering buffers whose geometry has been freed. Here a concurrent call throws
+	 * LOAD_IN_PROGRESS before anything is touched.
+	 *
+	 * @param {File} file
+	 * @returns {Promise<void>}
+	 */
+	async loadFile( file ) {
+
+		const format = this.assetLoader?.getFileFormat( file?.name || '' );
+		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
+
+		if ( format.type !== 'environment' && format.type !== 'image' ) {
+
+			await this._loadWithSceneRebuild(
+				() => this.assetLoader.loadAssetFromFile( file ),
+				{ type: 'ModelLoaded', filename: file.name }
+			);
+			return;
+
+		}
+
+		// Environment drop: install it, no scene rebuild.
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadFile' );
+
+		this._loadingInProgress = true;
+
+		try {
+
+			await this.assetLoader.loadAssetFromFile( file );
+
+			const texture = this.meshScene.environment;
+			if ( texture && this.stages.pathTracer ) {
+
+				await this.stages.pathTracer.environment.applyHDRI( texture );
+
+			}
+
+			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			this.reset();
+			this.dispatchEvent( { type: 'EnvironmentLoaded', filename: file.name } );
 
 		} finally {
 
@@ -776,11 +926,7 @@ export class PathTracerApp extends EventDispatcher {
 	/** Shared pipeline: load asset → sync controls → build BVH → reset → dispatch events */
 	async _loadWithSceneRebuild( loadFn, eventPayload ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp: another load is already in progress' );
-
-		}
+		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
 
 		this._loadingInProgress = true;
 
@@ -795,7 +941,7 @@ export class PathTracerApp extends EventDispatcher {
 			// (The old primary was already released by releaseTargetModel() in loadFn.)
 			this._clearAppendedModels();
 			this._syncControlsAfterLoad();
-			await this.loadSceneData();
+			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
 			this.cameraManager.currentCameraIndex = 0;
@@ -811,10 +957,103 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
+	 * or null when the file has none. See {@link module:Processor/SceneMetadata}.
+	 * @type {{ environment?: { sourceFile: string, rotation?: number, intensity?: number } }|null}
+	 */
+	get sceneMetadata() {
+
+		return this.assetLoader?.sceneMetadata ?? null;
+
+	}
+
+	/**
+	 * Starts fetching the environment authored into the just-loaded model's metadata and
+	 * returns a promise for the texture — deliberately NOT awaited here. The fetch is the
+	 * longest single step of such a load (measured 1448 ms for a 1k HDRI against 325 ms to
+	 * build and upload a 112k-triangle scene), so the promise is handed to loadSceneData(),
+	 * which installs it and builds its CDF while the BVH builds.
+	 *
+	 * Called from both replace-load seams: the URL/catalog path (_loadWithSceneRebuild) and
+	 * the drag-drop / File-open path, which drives the AssetLoader directly and rebuilds via
+	 * the 'load' event (_onAssetLoaded). Appending a model never applies it — an appended
+	 * model must not hijack the scene's environment.
+	 *
+	 * Resolves to null rather than rejecting: a failed fetch leaves the model on the current
+	 * environment. Returns null outright when there is nothing to apply. Under `strict` the
+	 * recorded issue throws instead, and the rejection surfaces where loadSceneData awaits it.
+	 * Opt out per app with `new PathTracerApp( canvas, { applySceneMetadata: false } )`.
+	 *
+	 * @returns {Promise<import('three').Texture|null>|null}
+	 */
+	_beginSceneMetadataEnvironment() {
+
+		const env = this.sceneMetadata?.environment;
+		if ( ! this._applySceneMetadataEnabled || ! env?.sourceFile || ! this.stages.pathTracer ) return null;
+
+		// Claim 'hdri' mode up front: loadEnvironment() fires beforeEnvironmentLoad, and a
+		// host that answers it with setMode( 'hdri' ) would otherwise restore the HDRI
+		// stashed by the current sky mode on top of the download now in flight.
+		this.stages.pathTracer.environment.beginHDRI();
+		this._applyingSceneMetadata = true;
+
+		return this.assetLoader.loadEnvironment( env.sourceFile )
+			.catch( error => {
+
+				this._issues.record(
+					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
+					`authored environment "${env.sourceFile}" failed to load — lighting falls back to the previous environment`,
+					{ sourceFile: env.sourceFile, cause: String( error?.message ?? error ) }
+				);
+				return null;
+
+			} )
+			.finally( () => {
+
+				this._applyingSceneMetadata = false;
+
+			} );
+
+	}
+
+	/**
+	 * Mirrors the authored environment onto the settings once its texture is installed.
+	 * The authored env is both the light and the backdrop, so the backdrop axis
+	 * (showBackground / transparentBackground) is forced to the image.
+	 * @private
+	 */
+	_applySceneMetadataSettings( texture ) {
+
+		const metadata = this.sceneMetadata;
+		const env = metadata?.environment;
+		if ( ! env ) return;
+
+		const updates = { enableEnvironment: true, showBackground: true, transparentBackground: false };
+		if ( env.intensity !== undefined ) {
+
+			updates.environmentIntensity = env.intensity;
+			updates.backgroundIntensity = env.intensity;
+
+		}
+
+		if ( env.rotation !== undefined ) updates.environmentRotation = env.rotation;
+
+		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
+		if ( this.scene ) this.scene.background = texture;
+
+		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
+
+	}
+
+	/**
 	 * Builds BVH from meshScene and uploads all scene data to the path tracer.
+	 * @param {Object} [options]
+	 * @param {Promise<import('three').Texture|null>} [options.pendingEnvironment] - An
+	 *   environment still being fetched (see _beginSceneMetadataEnvironment). Installed and
+	 *   CDF'd concurrently with the BVH build rather than before it.
 	 * @returns {boolean}
 	 */
-	async loadSceneData() {
+	async loadSceneData( { pendingEnvironment = null } = {} ) {
 
 		// Clear selection before rebuilding — the old object leaves the scene graph.
 		// Skipped on the append path (addModel): the selected object persists, so its
@@ -833,7 +1072,27 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Environment CDF build in parallel with BVH
 		let cdfPromise = null;
-		if ( environmentTexture?.image?.data ) {
+		if ( pendingEnvironment ) {
+
+			// The authored environment is still downloading. Install + CDF it off to the side so
+			// the fetch overlaps the BVH build below instead of gating it.
+			timer.start( 'Environment fetch + CDF (concurrent)' );
+			cdfPromise = pendingEnvironment
+				.then( async texture => {
+
+					if ( ! texture ) return;
+					await this.stages.pathTracer.environment.applyHDRI( texture );
+					this._applySceneMetadataSettings( texture );
+
+				} )
+				.catch( error => this._issues.record(
+					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
+					'authored environment failed to install — the scene is lit by whatever was already loaded',
+					{ cause: String( error?.message ?? error ) }
+				) )
+				.finally( () => timer.end( 'Environment fetch + CDF (concurrent)' ) );
+
+		} else if ( environmentTexture?.image?.data ) {
 
 			timer.start( 'Environment CDF build (worker)' );
 			this.stages.pathTracer.scene.environment = environmentTexture;
@@ -853,7 +1112,9 @@ export class PathTracerApp extends EventDispatcher {
 		await new Promise( r => setTimeout( r, 0 ) );
 		timer.start( 'GPU data transfer' );
 
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, environmentTexture ) ) return false;
+		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
+		// during the BVH build, and the snapshot is then a disposed texture.
+		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, this.meshScene.environment ) ) return false;
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -955,10 +1216,9 @@ export class PathTracerApp extends EventDispatcher {
 	/** Tag the primary (replace-loaded) model as a removable scene object (read by the Outliner + removeSceneObject). Idempotent. */
 	_tagPrimarySceneObject() {
 
-		const m = this.assetLoader?.targetModel;
+		const m = this.sceneModel;
 		if ( ! m ) return;
 		m.userData.__rayzeeSceneObject = true;
-		m.userData.__rayzeeExternal = ( m === this.assetLoader._externalModel );
 
 	}
 
@@ -968,12 +1228,12 @@ export class PathTracerApp extends EventDispatcher {
 		const scene = this.meshScene;
 		if ( ! scene ) return;
 		const floor = this.assetLoader?.floorPlane;
-		const primary = this.assetLoader?.targetModel;
+		const primary = this.sceneModel;
 		for ( const child of [ ...scene.children ] ) {
 
 			if ( child === floor || child === primary ) continue;
 			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			this.assetLoader.removeModelRoot( child, { external: !! child.userData.__rayzeeExternal } );
+			this.assetLoader.removeModelRoot( child );
 
 		}
 
@@ -1012,7 +1272,6 @@ export class PathTracerApp extends EventDispatcher {
 
 			const { root } = await this.assetLoader.appendModel( url );
 			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeExternal = false;
 			if ( name ) root.userData.__rayzeeName = name;
 			await this._finishRebuildNoReframe( { type: 'ModelAdded', url, id: root.uuid } );
 			return root.uuid;
@@ -1028,7 +1287,7 @@ export class PathTracerApp extends EventDispatcher {
 
 	/**
 	 * Append a caller-owned Object3D to the current scene, then rebuild (no reframe).
-	 * The caller retains ownership — removal only detaches it.
+	 * Appends a copy; the object passed in is never mutated. Same rules as {@link loadObject3D}.
 	 * @param {import('three').Object3D} object3d
 	 * @param {Object} [opts]
 	 * @param {string} [opts.name]
@@ -1048,7 +1307,6 @@ export class PathTracerApp extends EventDispatcher {
 
 			const { root } = this.assetLoader.appendObject3D( object3d, name || 'object3d' );
 			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeExternal = true;
 			if ( name ) root.userData.__rayzeeName = name;
 			await this._finishRebuildNoReframe( { type: 'ModelAdded', id: root.uuid } );
 			return root.uuid;
@@ -1075,7 +1333,7 @@ export class PathTracerApp extends EventDispatcher {
 		const floor = this.assetLoader?.floorPlane;
 		if ( floor && floor.uuid === id ) return false; // Ground is not deletable
 
-		const root = scene.children.find( c => c.uuid === id && c.userData?.__rayzeeSceneObject );
+		const root = this.getSceneObject( id );
 		if ( ! root ) return false;
 
 		if ( this._loadingInProgress ) {
@@ -1090,13 +1348,13 @@ export class PathTracerApp extends EventDispatcher {
 			this.interactionManager?.deselect();
 			this.transformManager?.detach?.();
 
-			if ( root === this.assetLoader.targetModel ) {
+			if ( root === this.sceneModel ) {
 
 				this.assetLoader.releaseTargetModel();
 
 			} else {
 
-				this.assetLoader.removeModelRoot( root, { external: !! root.userData.__rayzeeExternal } );
+				this.assetLoader.removeModelRoot( root );
 
 			}
 
@@ -1196,6 +1454,32 @@ export class PathTracerApp extends EventDispatcher {
 	get sceneMeshes() {
 
 		return this._sdf?.meshes ?? [];
+
+	}
+
+	/**
+	 * Root of the model actually being rendered. For {@link loadObject3D} this is the engine's
+	 * copy, not the object you passed — mutate this one, then {@link refitBVH}/{@link refitBLASes}.
+	 *
+	 * @returns {import('three').Object3D|null} Live reference, or null when nothing is loaded.
+	 */
+	get sceneModel() {
+
+		return this.assetLoader?.targetModel ?? null;
+
+	}
+
+	/**
+	 * Resolve an id from {@link addModel}/{@link addModelFromObject3D} to the root being
+	 * rendered for it — for an appended Object3D, the engine's copy.
+	 *
+	 * @param {string} id
+	 * @returns {import('three').Object3D|null} Live reference, or null if no such object.
+	 */
+	getSceneObject( id ) {
+
+		const root = this.meshScene?.children.find( c => c.uuid === id );
+		return root?.userData?.__rayzeeSceneObject ? root : null;
 
 	}
 
@@ -1360,7 +1644,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( applied < pending.requestedPx ) {
 
-			log.warn( `reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — renders above ${fmt.n( applied )}px will be declined.` );
+			this._issues.warn(
+				ISSUE_CODES.RENDER_RESERVE_CAPPED,
+				`reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — ` +
+				`renders above ${fmt.n( applied )}px will be declined`,
+				{ requested: pending.requestedPx, applied }
+			);
 
 		}
 
@@ -1388,7 +1677,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( width > MAX_STORAGE_TEXTURE_SIZE || height > MAX_STORAGE_TEXTURE_SIZE ) {
 
-			log.warn( `render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px reserve (compute storage textures are pre-allocated at ${MAX_STORAGE_TEXTURE_SIZE}px). Ignoring resize — raise the reserve with setReservedRenderResolution( ${Math.max( width, height )} ) first, or use a resolution ≤ ${MAX_STORAGE_TEXTURE_SIZE}.` );
+			this._issues.record(
+				ISSUE_CODES.RENDER_SIZE_DECLINED,
+				`render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px storage reserve — resize ignored, ` +
+				`so output stays at the previous size. Raise it with setReservedRenderResolution( ${Math.max( width, height )} ) before init().`,
+				{ width, height, reserve: MAX_STORAGE_TEXTURE_SIZE }
+			);
 			return false;
 
 		}
@@ -1501,7 +1795,7 @@ export class PathTracerApp extends EventDispatcher {
 			usePixelFreeze: config.usePixelFreeze ?? false,
 			pixelFreezeThreshold: config.pixelFreezeThreshold ?? DEFAULT_STATE.pixelFreezeThreshold,
 			pixelFreezeStability: config.pixelFreezeStability ?? DEFAULT_STATE.pixelFreezeStability,
-		}, { silent: true } );
+		}, { silent: true, source: SETTING_SOURCE.MODE_PRESET } );
 
 		// renderMode has no SETTING_ROUTES entry
 		this.stages.pathTracer?.setUniform( 'renderMode', parseInt( config.renderMode ) );
@@ -1729,6 +2023,27 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/** What the engine survived rather than failed on, oldest first. @returns {Object[]} copies */
+	get issues() {
+
+		return this._issues.list;
+
+	}
+
+	/** Non-empty means: do not publish this frame. */
+	get issueErrors() {
+
+		return this._issues.errors;
+
+	}
+
+	/** Scopes the log to one render on a reused app. */
+	clearIssues() {
+
+		this._issues.clear();
+
+	}
+
 	/**
 	 * Whether output is currently bit-reproducible. False when the dispatch heuristics
 	 * were left active via `pinDispatch: false`, since those consume async readbacks.
@@ -1745,14 +2060,18 @@ export class PathTracerApp extends EventDispatcher {
 	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
 	 * placeholder that gets baked permanently into the accumulation buffer.
 	 *
+	 * A frame retired by adaptive sampling stops advancing `frameCount`, so a fixed-count loop
+	 * can never reach `count`. `allowEarlyRetire` makes that an outcome instead of a throw.
+	 *
 	 * @param {number} count - samples to accumulate
 	 * @param {Object} [options]
 	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
 	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
 	 * @param {function(number): void} [options.onProgress] - called with the running sample count
-	 * @returns {Promise<number>} the final accumulated sample count
+	 * @param {boolean} [options.allowEarlyRetire=false]
+	 * @returns {Promise<number>} samples accumulated; below `count` only when retired early
 	 */
-	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress } = {} ) {
+	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false } = {} ) {
 
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
@@ -1776,6 +2095,8 @@ export class PathTracerApp extends EventDispatcher {
 		const maxPasses = count + 64;
 		let passes = 0;
 
+		let retiredEarly = false;
+
 		while ( stage.frameCount < target && passes < maxPasses ) {
 
 			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
@@ -1783,6 +2104,14 @@ export class PathTracerApp extends EventDispatcher {
 
 			this.pipeline.render();
 			passes ++;
+
+			// render() no-ops once complete; spinning would burn the budget for nothing.
+			if ( stage.isComplete && stage.frameCount < target ) {
+
+				retiredEarly = true;
+				break;
+
+			}
 
 			onProgress?.( stage.frameCount );
 
@@ -1794,16 +2123,67 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		if ( stage.frameCount < target ) {
+		if ( stage.frameCount < target && ! ( retiredEarly && allowEarlyRetire ) ) {
+
+			const cause = retiredEarly
+				? 'adaptive sampling retired the frame at the convergence threshold — pass ' +
+					'`allowEarlyRetire: true`, or disable it with setDeterministicMode()'
+				: 'something retired the render (maxSamples, a stray reset, or a canvas resize)';
 
 			throw new Error(
-				`renderFrames: stalled at ${stage.frameCount}/${target} samples after ${passes} passes — ` +
-				'something retired the render (maxSamples, a stray reset, or a canvas resize)'
+				`renderFrames: stopped at ${stage.frameCount}/${target} samples after ${passes} passes — ${cause}`
 			);
 
 		}
 
 		return stage.frameCount;
+
+	}
+
+	/**
+	 * The path tracer's accumulation as pixels, read from its storage target rather than the
+	 * canvas — so it works headless, works while the page is hidden, and cannot pick up a
+	 * helper overlay.
+	 *
+	 * This is `pathtracer:color`, NOT the Compositor's resolved output: denoising, bloom and
+	 * edge filtering are downstream and are absent here. Use getCanvas() when you want what
+	 * the viewport shows.
+	 *
+	 * @param {Object} [options]
+	 * @param {'linear'|'srgb'} [options.colorSpace='srgb']
+	 * @param {boolean} [options.preserveAlpha=false] - srgb only
+	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string}>}
+	 */
+	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false } = {} ) {
+
+		if ( colorSpace !== 'linear' && colorSpace !== 'srgb' ) {
+
+			throw new Error( `renderToBuffer: colorSpace must be 'linear' or 'srgb', got "${colorSpace}"` );
+
+		}
+
+		const stage = this.stages?.pathTracer;
+		const target = stage?.storageTextures?.readTarget;
+		if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
+
+		// The pool over-allocates to the reserve, so the texture is larger than the frame.
+		const { width, height } = stage;
+
+		const linear = await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+
+		if ( colorSpace === 'linear' ) return { data: linear, width, height, colorSpace };
+
+		return {
+			data: toneMapToRGBA8( linear, {
+				exposure: this.renderer.toneMappingExposure,
+				toneMapping: this.renderer.toneMapping,
+				saturation: this.settings.get( 'saturation' ) ?? 1,
+				preserveAlpha,
+			} ),
+			width,
+			height,
+			colorSpace,
+		};
 
 	}
 
@@ -2409,6 +2789,20 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
+		this.adapterInfo = describeAdapter( adapter );
+		if ( this.adapterInfo.isSoftware ) {
+
+			// Warning: the image is correct, only the cost is wrong.
+			this._issues.warn(
+				ISSUE_CODES.ADAPTER_SOFTWARE,
+				`software GPU adapter "${this.adapterInfo.description || this.adapterInfo.vendor}" — ` +
+				'renders are correct but orders of magnitude slower than hardware',
+				{ ...this.adapterInfo }
+			);
+			log.warn( `software GPU adapter — check app.adapterInfo.isSoftware. ${this.adapterInfo.description}` );
+
+		}
+
 		const adapterLimits = adapter.limits;
 
 		this.renderer = new WebGPURenderer( {
@@ -2424,6 +2818,17 @@ export class PathTracerApp extends EventDispatcher {
 		} );
 
 		await this.renderer.init();
+
+		// WebGPURenderer swaps in WebGL2 on failure with only a warn(). The wavefront path is
+		// compute-only, so every frame would fail against an empty canvas.
+		if ( ! this.renderer.backend?.isWebGPUBackend ) {
+
+			throw new Error(
+				'WebGPU backend unavailable — three.js fell back to WebGL2, which cannot run the ' +
+				'path tracer\'s compute kernels. Check GPU process flags and driver support.'
+			);
+
+		}
 
 		// Detect GPU device loss (dGPU/iGPU switch, driver reset, TDR watchdog on heavy
 		// compute). Without this the rAF loop keeps calling render() on a dead device,
@@ -2450,7 +2855,7 @@ export class PathTracerApp extends EventDispatcher {
 		RectAreaLightNode.setLTC( RectAreaLightTexturesLib.init() );
 
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.toneMapping = ACESFilmicToneMapping;
+		this.renderer.toneMapping = this._profile.toneMapping;
 		this.renderer.toneMappingExposure = 1.0;
 		this.renderer.setPixelRatio( 1.0 );
 
@@ -2472,8 +2877,11 @@ export class PathTracerApp extends EventDispatcher {
 
 	_initAssetPipeline() {
 
-		this._sdf = new SceneProcessor();
-		this.assetLoader = new AssetLoader( this.meshScene, this.cameraManager.camera, this.cameraManager.controls );
+		this._sdf = new SceneProcessor( { issues: this._issues } );
+		this.assetLoader = new AssetLoader(
+			this.meshScene, this.cameraManager.camera, this.cameraManager.controls,
+			{ issues: this._issues, profile: this._profile }
+		);
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
 
@@ -2491,11 +2899,12 @@ export class PathTracerApp extends EventDispatcher {
 		this._createStages();
 
 		const { clientWidth: w, clientHeight: h } = this.canvas;
-		this.pipeline = new RenderPipeline( this.renderer, w || 1, h || 1 );
+		this.pipeline = new RenderPipeline( this.renderer, w || 1, h || 1, { issues: this._issues } );
 
 		this.pipeline.addStage( this.stages.pathTracer );
 		this.pipeline.addStage( this.stages.normalDepth );
 		this.pipeline.addStage( this.stages.motionVector );
+		this.pipeline.addStage( this.stages.nrd );
 		this.pipeline.addStage( this.stages.asvgf );
 		this.pipeline.addStage( this.stages.variance );
 		this.pipeline.addStage( this.stages.bilateralFilter );
@@ -2644,11 +3053,18 @@ export class PathTracerApp extends EventDispatcher {
 
 			if ( this._loadingInProgress ) return;
 
+			// The authored-environment fetch runs through this same AssetLoader, so its 'load'
+			// event lands right back here. We install that texture ourselves — without the
+			// guard the texture branch below would rebuild the CDF a second time and
+			// resetLoading() would tear down the overlay mid-upload. Model events still pass:
+			// a user can drop another file while the environment is in flight.
+			if ( this._applyingSceneMetadata && event.texture ) return;
+
 			if ( event.model ) {
 
 				// Drag-drop / file load is a replace: clear any appended models first.
 				this._clearAppendedModels();
-				await this.loadSceneData();
+				await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 
 			} else if ( event.texture ) {
 
@@ -2693,7 +3109,7 @@ export class PathTracerApp extends EventDispatcher {
 		const animations = this.assetLoader?.animations || [];
 		if ( animations.length > 0 ) {
 
-			const mixerRoot = this.assetLoader?.targetModel || this.meshScene;
+			const mixerRoot = this.sceneModel || this.meshScene;
 			this.animationManager.init( this.meshScene, mixerRoot, this._sdf.meshes, animations );
 			this.animationManager.onFinished = () => {
 
@@ -2722,6 +3138,7 @@ export class PathTracerApp extends EventDispatcher {
 			pathTracer: this.stages.pathTracer
 		} );
 		this.stages.asvgf = new ASVGF( this.renderer, { enabled: false } );
+		this.stages.nrd = new NRD( this.renderer, { enabled: false, pathTracer: this.stages.pathTracer } );
 		this.stages.variance = new Variance( this.renderer, { enabled: false } );
 		this.stages.bilateralFilter = new BilateralFilter( this.renderer, { enabled: false } );
 		this.stages.edgeFilter = new EdgeFilter( this.renderer, { enabled: false } );
@@ -2746,6 +3163,7 @@ export class PathTracerApp extends EventDispatcher {
 				normalDepth: this.stages.normalDepth,
 				motionVector: this.stages.motionVector,
 				asvgf: this.stages.asvgf,
+				nrd: this.stages.nrd,
 				variance: this.stages.variance,
 				bilateralFilter: this.stages.bilateralFilter,
 				edgeFilter: this.stages.edgeFilter,

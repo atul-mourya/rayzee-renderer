@@ -24,7 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          # semantic-release needs every commit and tag to work out the next version, but only
+          # their messages — never historical file contents, which here are ~1 GB of long-since
+          # replaced binary assets against 13 MB of blobs at HEAD. Measured: 1.67 MiB / 2.0 s to
+          # clone blobless, 11.9 MiB / 6.0 s once the tree is materialized, versus multi-minute
+          # full clones. Blobs are fetched on demand, so the build still sees every file.
           fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-node@v5
         with:
@@ -33,19 +39,28 @@ jobs:
           
       - run: npm ci
 
+      # @semantic-release/npm only pre-flights the OIDC exchange; the publish itself shells out
+      # to `npm publish`, which needs npm's own trusted-publishing support (>= 11.5.1). Node 22
+      # ships npm 10.x, so without this the exchange verifies and the publish still fails.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
       - name: Build Engine
         run: npm run build:engine
 
       - name: Run Tests
         run: npm test
 
-      # Run semantic-release first to update version
+      # Run semantic-release first to update version.
+      # No NPM_TOKEN: auth is OIDC trusted publishing, configured per-package on npmjs.com
+      # against this repo + workflow file + the `github-pages` environment below. Passing a
+      # token as well would let a broken credential silently take over and fail at publish
+      # time — after the tag has already been pushed.
       - name: Semantic Release
         id: semantic
         run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           
       # Only proceed with deployment if a new release was created
       - name: Build

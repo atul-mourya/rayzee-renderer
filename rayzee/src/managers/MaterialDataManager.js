@@ -52,7 +52,7 @@ const SCALAR_PROPERTY_OFFSETS = {
 export class MaterialDataManager {
 
 	/**
-	 * @param {Object} sdfs - SceneProcessor instance (for geometryExtractor & sceneFeatures)
+	 * @param {Object} sdfs - SceneProcessor instance
 	 */
 	constructor( sdfs ) {
 
@@ -76,12 +76,9 @@ export class MaterialDataManager {
 		this._srgbTexPacked = null;
 		this._linearTexPacked = null;
 
-		// Compiled features cache (for change detection)
-		this.compiledFeatures = null;
-
 		/**
 		 * Optional callbacks set by the owning stage.
-		 * @type {{ onReset?: Function, onFeaturesChanged?: Function, getTriangleData?: Function, onTriangleDataChanged?: Function }}
+		 * @type {{ onReset?: Function, getTriangleData?: Function, onTriangleDataChanged?: Function }}
 		 */
 		this.callbacks = {};
 
@@ -429,18 +426,6 @@ export class MaterialDataManager {
 
 		}
 
-		const featureProperties = [ 'transmission', 'clearcoat', 'sheen', 'iridescence', 'dispersion', 'transparent', 'opacity', 'alphaTest', 'subsurface' ];
-		if ( featureProperties.includes( property ) ) {
-
-			const featuresChanged = this.rescanMaterialFeatures();
-			if ( featuresChanged ) {
-
-				this._notifyFeaturesChanged();
-
-			}
-
-		}
-
 		this._notifyReset();
 
 	}
@@ -621,13 +606,6 @@ export class MaterialDataManager {
 
 		this.materialStorageAttr.needsUpdate = true;
 
-		const featuresChanged = this.rescanMaterialFeatures();
-		if ( featuresChanged ) {
-
-			this._notifyFeaturesChanged();
-
-		}
-
 		this._notifyReset();
 
 	}
@@ -724,119 +702,6 @@ export class MaterialDataManager {
 
 	}
 
-	// ===== FEATURE SCANNING =====
-
-	/**
-	 * Scan all materials to detect which advanced features are in use.
-	 * @returns {boolean} True if features changed
-	 */
-	rescanMaterialFeatures() {
-
-		if ( ! this.materialStorageAttr?.array ) {
-
-			log.warn( 'material storage buffer not available for feature scanning' );
-			return false;
-
-		}
-
-		const data = this.materialStorageAttr.array;
-		const materialCount = this.sdfs.materialCount || 1;
-
-		const newFeatures = {
-			hasClearcoat: false,
-			hasTransmission: false,
-			hasDispersion: false,
-			hasIridescence: false,
-			hasSheen: false,
-			hasTransparency: false,
-			hasSubsurface: false,
-			hasMultiLobeMaterials: false,
-			hasMRTOutputs: true
-		};
-
-		for ( let i = 0; i < materialCount; i ++ ) {
-
-			const stride = i * M.FLOATS_PER_MATERIAL;
-
-			const transmission = data[ stride + M.TRANSMISSION ];
-			const dispersion = data[ stride + M.DISPERSION ];
-			const sheen = data[ stride + M.SHEEN ];
-			const iridescence = data[ stride + M.IRIDESCENCE ];
-			const clearcoat = data[ stride + M.CLEARCOAT ];
-			const opacity = data[ stride + M.OPACITY ];
-			const transparent = data[ stride + M.TRANSPARENT ];
-			const alphaTest = data[ stride + M.ALPHA_TEST ];
-			const subsurface = data[ stride + M.SUBSURFACE ];
-
-			if ( clearcoat > 0 ) newFeatures.hasClearcoat = true;
-			if ( transmission > 0 ) newFeatures.hasTransmission = true;
-			if ( dispersion > 0 ) newFeatures.hasDispersion = true;
-			if ( iridescence > 0 ) newFeatures.hasIridescence = true;
-			if ( sheen > 0 ) newFeatures.hasSheen = true;
-			if ( transparent > 0 || opacity < 1.0 || alphaTest > 0 ) newFeatures.hasTransparency = true;
-			if ( subsurface > 0 ) newFeatures.hasSubsurface = true;
-
-			const featureCount = [
-				clearcoat > 0,
-				transmission > 0,
-				iridescence > 0,
-				sheen > 0
-			].filter( Boolean ).length;
-
-			if ( featureCount >= 2 ) {
-
-				newFeatures.hasMultiLobeMaterials = true;
-
-			}
-
-		}
-
-		const oldFeaturesJSON = JSON.stringify( this.sdfs.sceneFeatures );
-		const newFeaturesJSON = JSON.stringify( newFeatures );
-		const changed = oldFeaturesJSON !== newFeaturesJSON;
-
-		if ( changed ) {
-
-			this.sdfs.sceneFeatures = newFeatures;
-
-		}
-
-		return changed;
-
-	}
-
-	/**
-	 * Inject shader preprocessor defines based on detected features.
-	 */
-	injectMaterialFeatureDefines() {
-
-		const features = this.sdfs.sceneFeatures;
-
-		if ( ! features ) {
-
-			log.warn( 'no sceneFeatures detected, skipping define injection' );
-			return;
-
-		}
-
-		const featuresJSON = JSON.stringify( features );
-		const featuresChanged = ! this.compiledFeatures || this.compiledFeatures !== featuresJSON;
-
-		if ( ! featuresChanged ) {
-
-			return;
-
-		}
-
-		// For TSL, we can't inject defines into the shader at runtime
-		// Instead, we would need to conditionally generate the shader
-		// For now, log the features for debugging
-		log.debug( 'material features:', features );
-
-		this.compiledFeatures = featuresJSON;
-
-	}
-
 	// ===== PRIVATE CALLBACKS =====
 
 	/** @private */
@@ -847,13 +712,6 @@ export class MaterialDataManager {
 			this.callbacks.onReset();
 
 		}
-
-	}
-
-	/** @private */
-	_notifyFeaturesChanged() {
-
-		this.injectMaterialFeatureDefines();
 
 	}
 
@@ -936,7 +794,6 @@ export class MaterialDataManager {
 		this.linearBuckets = null;
 		this._srgbTexPacked = null;
 		this._linearTexPacked = null;
-		this.compiledFeatures = null;
 
 	}
 

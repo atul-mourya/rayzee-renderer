@@ -87,6 +87,34 @@ Drag and drop a model (GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, USDZ — or a ZI
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full walkthrough and development workflow.
 
+## Headless rendering
+
+The engine renders without a screen — and without a person to notice when something goes wrong. `renderHeadless()` is the supported entry point:
+
+```js
+import { renderHeadless } from 'rayzee';
+
+const shot = await renderHeadless( {
+	canvas,                            // needed for the WebGPU surface, not for output
+	model: 'https://cdn/scene.glb',
+	width: 1920, height: 1080,
+	samples: 256,
+} );
+// shot.data — RGBA bytes straight from the storage target. No canvas, no compositor.
+```
+
+Its defaults are the batch renderer's rather than the viewer's. All three are reversible; none can be turned off by accident:
+
+| option | default | effect |
+| --- | --- | --- |
+| `strict` | `true` | throws at the point of degradation instead of rendering around it |
+| `profile` | `'physical'` | drops viewer tuning — light damping, the 270° environment rotation, the ACES grade |
+| `deterministic` | `true` | pins every clock- and readback-dependent input, so N samples reproduce bit-for-bit |
+
+With `strict: false` the same degradations are recorded instead of thrown: read `app.issues`, or subscribe to `EngineEvents.ISSUE`. A non-empty `app.issueErrors` means *do not publish this frame*. Codes (`ISSUE_CODES`) are add-only API surface.
+
+Three more things a caller with no screen tends to need: `settings.getEffective()` returns every setting in force with its provenance (default, host, scene metadata, or mode preset), `app.adapterInfo.isSoftware` flags a software rasterizer rendering correctly and ~100× slower, and `openHeadless()` returns a live app — which you dispose yourself — when you want several frames from one scene.
+
 ## Architecture
 
 Rayzee runs an event-driven, stage-based render pipeline: a wavefront `PathTracer` core feeds `NormalDepth`, `MotionVector`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter`, `AutoExposure`, and a terminal `Compositor` stage, each communicating through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI — it's consumable standalone via `import { PathTracerApp } from 'rayzee'` — while the React app (`app/`) wires engine events into Zustand stores.

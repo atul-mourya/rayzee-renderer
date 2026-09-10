@@ -27,8 +27,14 @@ export const COUNTER = {
 	// bits restricted to pixels that hit geometry, so the stop can require both fractions.
 	GEOMETRY_COUNT: 5,
 	CONVERGED_GEOMETRY_COUNT: 6,
-	COUNT: 7,
+	// Survivors' summed throughput (max channel, fixed-point ENERGY_SCALE). The early exit gates on this,
+	// not the count: past Russian roulette a few survivors carry the weight of many.
+	ACTIVE_ENERGY: 7,
+	COUNT: 8,
 };
+
+export const ENERGY_SCALE = 64;
+export const ENERGY_RAY_CLAMP = 65535;
 
 /** Ray flag bits packed into rayBounceFlags (uint) */
 export const RAY_FLAG = {
@@ -81,10 +87,10 @@ export class QueueManager {
 		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( COUNTER.COUNT ), 1 );
 		this.counters = storage( this._countersAttr, 'uint' ).toAtomic();
 
-		// per-bounce ACTIVE_RAY_COUNT snapshots; read back async to size/skip late bounces next frame
+		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY
 		this.MAX_BOUNCE_SNAPSHOTS = 32;
 		this._bounceCountsAttr = new StorageInstancedBufferAttribute(
-			new Uint32Array( this.MAX_BOUNCE_SNAPSHOTS ), 1,
+			new Uint32Array( 2 * this.MAX_BOUNCE_SNAPSHOTS ), 1,
 		);
 		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
 

@@ -453,9 +453,6 @@ export class PathTracerStage extends RenderStage {
 		await this.sdfs.buildBVH( scene );
 		this.cameras = this.sdfs.cameras;
 
-		// Inject shader defines based on detected material features
-		this.materialData.injectMaterialFeatureDefines();
-
 		// Update uniforms with scene data
 		this.updateSceneUniforms();
 		this.updateLights();
@@ -1160,6 +1157,9 @@ export class PathTracerStage extends RenderStage {
 		context.setTexture( 'pathtracer:normalDepth', writeTex.normalDepth );
 		context.setTexture( 'pathtracer:albedo', writeTex.albedo );
 
+		// Not the same as the context's own `accumulatedFrames`, which counts pipeline renders — this
+		// freezes when the frame retires or the camera moves, which is what a denoiser needs.
+		context.setState( 'pathtracer:samples', this.frameCount );
 		context.setState( 'interactionMode', this.cameraOptimizer?.isInInteractionMode() ?? false );
 		context.setState( 'renderMode', this.renderMode.value );
 
@@ -1185,25 +1185,15 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * Update completion threshold based on render mode
+	 * Update completion threshold based on render mode. The ceiling holds in every limit mode —
+	 * uncapping it under a time budget lets a generous deadline silently slow every render.
 	 */
 	updateCompletionThreshold() {
 
-		const renderMode = this.renderMode.value;
-		const maxFrames = this.maxSamples.value;
-
-		if ( this.renderLimitMode === 'time' ) {
-
-			this.completionThreshold = Infinity;
-
-		} else {
-
-			this.completionThreshold = updateCompletionThreshold(
-				renderMode,
-				maxFrames
-			);
-
-		}
+		this.completionThreshold = updateCompletionThreshold(
+			this.renderMode.value,
+			this.maxSamples.value
+		);
 
 	}
 
@@ -1237,6 +1227,7 @@ export class PathTracerStage extends RenderStage {
 					// touched here — it is owned by ASVGF_QUALITY_PRESETS, and overwriting it
 					// with a hardcoded value meant `medium` and `high` never took effect.
 					this.emit( 'asvgf:reset' );
+					this.emit( 'denoiser:reset' );
 
 				}
 

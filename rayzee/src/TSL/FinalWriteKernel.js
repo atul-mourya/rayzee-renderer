@@ -14,7 +14,7 @@ import {
 } from 'three/tsl';
 
 import {
-	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo,
+	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist,
 } from '../Processor/PackedRayBuffer.js';
 import { luminance } from './Common.js';
 
@@ -96,11 +96,14 @@ export function buildFinalWriteKernel( params ) {
 			// auxOn gates the decode + stores so a no-denoiser frame does no G-buffer read and no aux writes.
 			const finalNormalDepth = vec4( 0.0 ).toVar();
 			const finalAlbedo = vec4( 0.0 ).xyz.toVar();
+			// Albedo .w carries the hit distance — OIDN reads albedo as 3 channels, so it is free.
+			const finalHitDist = float( 0.0 ).toVar();
 			If( auxOn, () => {
 
 				const gbuf = readGBuffer( gBufferRO, rayID );
 				finalNormalDepth.assign( gbDecodeNormalDepth( gbuf ) );
 				finalAlbedo.assign( vec4( gbDecodeAlbedo( gbuf ), 0.0 ).xyz );
+				finalHitDist.assign( gbDecodeHitDist( gbuf ) );
 
 			} );
 
@@ -117,8 +120,10 @@ export function buildFinalWriteKernel( params ) {
 				finalColor.assign( select( wasFrozen, prevAccumSample.xyz, mix( prevAccumSample.xyz, sampleColor.xyz, accumulationAlpha ) ) );
 				If( auxOn.and( hasPreviousAux ), () => {
 
-					// Albedo averages cleanly (it's a colour).
-					finalAlbedo.assign( mix( texture( prevAlbedoTexture, prevUV, 0 ).xyz, finalAlbedo, auxAccumulationAlpha ) );
+					// Albedo averages cleanly (it's a colour); so does the normalized hit distance in .w.
+					const prevAlbedoSample = texture( prevAlbedoTexture, prevUV, 0 ).toVar();
+					finalAlbedo.assign( mix( prevAlbedoSample.xyz, finalAlbedo, auxAccumulationAlpha ) );
+					finalHitDist.assign( mix( prevAlbedoSample.w, finalHitDist, auxAccumulationAlpha ) );
 
 					// NORMAL: by default keep this frame's POINT-SAMPLED normal — it varies with the bump,
 					// which fast/ASVGF want to preserve edge detail. But a CLEAN-AUX OIDN model (calb_cnrm/high,
@@ -153,9 +158,22 @@ export function buildFinalWriteKernel( params ) {
 			// and before the visMode-11 mutation. Frame 0 self-inits m2 via alpha==1 — no explicit clear.
 			If( statsOn, () => {
 
+				// Frozen pixels hold m2, for the same reason they hold finalColor above: Generate skipped
+				// them, so rayBuffer still holds whatever they last traced. Folding that in every frame drove
+				// m2 toward the stale sample while meanLum stayed put, so sampleVar decayed to an artefact
+				// of one old sample. The `converged` flag below is built from it and counted into
+				// CONVERGED_COUNT, so the corruption reached the whole-frame early stop, not just this pixel.
+				//
+				// Editing this kernel at all costs 11 quality goldens their bit-identical status at
+				// rmse ~1e-4 — measured identical for select() and for an If() branch, so it is compiler
+				// scheduling, not the extra arm. Goldens re-blessed with the change.
 				const sampleLum = luminance( sampleColor.xyz );
 				const prevM2 = m2BufferRW.element( pixelId ).toVar();
-				const m2 = mix( prevM2, sampleLum.mul( sampleLum ), accumulationAlpha ).toVar();
+				const m2 = select(
+					wasFrozen,
+					prevM2,
+					mix( prevM2, sampleLum.mul( sampleLum ), accumulationAlpha )
+				).toVar();
 				m2BufferRW.element( pixelId ).assign( m2 );
 
 				const meanLum = luminance( finalColor ).toVar();
@@ -238,7 +256,7 @@ export function buildFinalWriteKernel( params ) {
 			If( auxOn, () => {
 
 				textureStore( writeNDTex, uintCoord, finalNormalDepth ).toWriteOnly();
-				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, 1.0 ) ).toWriteOnly();
+				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, finalHitDist ) ).toWriteOnly();
 
 			} );
 

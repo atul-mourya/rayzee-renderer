@@ -1,4 +1,4 @@
-import { Box3, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
+import { Box3, BufferGeometry, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
 	TextureLoader, Texture, SRGBColorSpace, RepeatWrapping, Mesh, MeshStandardMaterial, MeshPhysicalMaterial,
 	CircleGeometry, Points, PointsMaterial, LoadingManager, EventDispatcher
 } from 'three';
@@ -8,12 +8,16 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils.js';
+import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { unzipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
-import { disposeObjectFromMemory, updateLoading } from './utils';
+import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
+import { extractSceneMetadata } from './SceneMetadata.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
+import { getRenderProfile } from '../EngineDefaults.js';
 
 // Define supported file formats
 const SUPPORTED_FORMATS = {
@@ -21,26 +25,57 @@ const SUPPORTED_FORMATS = {
 	'fbx': { type: 'model', name: 'FBX' }, 'obj': { type: 'model', name: 'OBJ' },
 	'stl': { type: 'model', name: 'STL' }, 'ply': { type: 'model', name: 'PLY (Polygon File Format)' },
 	'dae': { type: 'model', name: 'Collada' }, '3mf': { type: 'model', name: '3D Manufacturing Format' },
-	'usdz': { type: 'model', name: 'Universal Scene Description' },
+	'usd': { type: 'model', name: 'USD (Universal Scene Description)' },
+	'usda': { type: 'model', name: 'USDA (USD ASCII)' },
+	'usdc': { type: 'model', name: 'USDC (USD Crate)' },
+	'usdz': { type: 'model', name: 'USDZ (USD Archive)' },
 	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' }, 'exr': { type: 'environment', name: 'EXR (OpenEXR)' },
 	'png': { type: 'image', name: 'PNG' }, 'jpg': { type: 'image', name: 'JPEG' },
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
 	'zip': { type: 'archive', name: 'ZIP Archive' }
 };
 
+// Loose USD layers inside a ZIP compose into one scene; these pick out the
+// layers and the image assets they reference.
+const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
+const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
+// A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
+// reorders and disposes what it is given, but never writes the attributes.
+function standInForSplit( source ) {
+
+	const geometry = new BufferGeometry();
+	for ( const name in source.attributes ) geometry.setAttribute( name, source.attributes[ name ] );
+	if ( source.index ) geometry.setIndex( source.index );
+	for ( const group of source.groups ) geometry.addGroup( group.start, group.count, group.materialIndex );
+	return geometry;
+
+}
+
+// three.js nits → the engine's radiant power, inverting areaLightRadiance.
+function areaLightPowerFactor( node, width, height, userData ) {
+
+	if ( ! ( userData.normalize ?? true ) ) return Math.PI;
+
+	const shapeFactor = userData.shape === 'ellipse' || userData.shape === 'disk' ? Math.PI / 4 : 1;
+	const scale = node.getWorldScale( new Vector3() );
+	// abs: a mirrored ancestor decomposes negative; the serializer takes the area as |u × v|.
+	const factor = Math.PI * shapeFactor * Math.abs( width * scale.x * height * scale.y );
+	return Number.isFinite( factor ) ? factor : Math.PI;
+
+}
+
 /**
  * AssetLoader class - handles loading of 3D models, environment maps, and archives
  */
 export class AssetLoader extends EventDispatcher {
 
-	constructor( scene, camera, controls ) {
+	constructor( scene, camera, controls, { issues = null, profile = null } = {} ) {
 
 		super();
 		this.scene = scene;
 		this.camera = camera;
 		this.controls = controls;
 		this.targetModel = null;
-		this._externalModel = null;
 		this.floorPlane = null;
 		this.sceneScale = 1.0;
 		this.loaderCache = {};
@@ -48,11 +83,31 @@ export class AssetLoader extends EventDispatcher {
 		this.animations = [];
 		this.renderer = null;
 
+		// Scene-level authoring metadata from the current model (glTF `extras`), or null.
+		// See SceneMetadata.js. Cleared by releaseTargetModel() on every replace-load.
+		this.sceneMetadata = null;
+
 		// Shared across every loader so cancelActiveLoad() can abort whichever
 		// fetch is in flight (three r185 FileLoader wires the manager's abort
 		// signal into its fetch). One load runs at a time (guarded upstream).
 		this._loadingManager = new LoadingManager();
 		this._loadCancelled = false;
+
+		this._issues = issues;
+		this._profile = profile ?? getRenderProfile();
+
+		// A glTF whose external texture 404s still loads. Only place the engine sees the URL.
+		// ZIP paths build their own managers and are not covered.
+		this._loadingManager.onError = ( url ) => {
+
+			if ( this._loadCancelled ) return;
+			this._issues?.record(
+				ISSUE_CODES.ASSET_UNREACHABLE,
+				`asset "${url}" could not be fetched — anything depending on it renders without it`,
+				{ url }
+			);
+
+		};
 
 	}
 
@@ -120,27 +175,58 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	/**
-	 * Releases the current targetModel. If it was supplied by the caller via
-	 * loadObject3D(), we only detach it from its parent — the caller still owns
-	 * that Object3D and may reuse it. Otherwise we disposeObjectFromMemory() to
-	 * free geometry/material/texture GPU resources.
+	 * Deep-clones a caller-owned Object3D so the engine never mutates the host's tree.
+	 * Geometry/material/texture ride along by reference, so release frees only what the engine
+	 * allocated — see removeModelRoot().
+	 *
+	 * @param {import('three').Object3D} object3d - the caller's object; left untouched.
+	 * @returns {import('three').Object3D} the engine-owned copy.
 	 */
-	releaseTargetModel() {
+	_adoptExternalObject( object3d ) {
 
-		if ( ! this.targetModel ) return;
+		// Not Object3D.clone(): that leaves SkinnedMeshes bound to the source's bones.
+		let model;
+		try {
 
-		if ( this.targetModel === this._externalModel ) {
+			model = cloneWithSkeletons( object3d );
 
-			this.targetModel.parent?.remove( this.targetModel );
+		} catch ( error ) {
 
-		} else {
-
-			disposeObjectFromMemory( this.targetModel );
+			// Object3D.copy() round-trips userData through JSON, so a back-reference throws.
+			throw new Error(
+				`Cannot render "${object3d.name || object3d.type}": its userData must be JSON-serializable.`,
+				{ cause: error }
+			);
 
 		}
 
+		model.userData.__rayzeeExternal = true;
+
+		// Carried through as the scene-object id, unless a second copy already took it.
+		if ( ! this.scene?.children.some( c => c.uuid === object3d.uuid ) ) model.uuid = object3d.uuid;
+
+		// The copy sits under the engine's identity root, which keeps only a local transform.
+		if ( object3d.parent ) {
+
+			object3d.parent.updateWorldMatrix( true, false );
+			model.applyMatrix4( object3d.parent.matrixWorld );
+
+		}
+
+		return model;
+
+	}
+
+	/** Releases the current targetModel. See removeModelRoot() for what gets freed. */
+	releaseTargetModel() {
+
+		this.sceneMetadata = null;
+
+		if ( ! this.targetModel ) return;
+
+		this.removeModelRoot( this.targetModel );
+
 		this.targetModel = null;
-		this._externalModel = null;
 		// Drop the released model's animation clips so a later rebuild doesn't rebind
 		// a mixer to disposed nodes. Every load path re-populates this.animations after.
 		this.animations = [];
@@ -234,7 +320,10 @@ export class AssetLoader extends EventDispatcher {
 			case 'ply': return await this.loadPLYFromArrayBuffer( arrayBuffer, filename );
 			case 'dae': return await this.loadColladaFromFile( file, filename );
 			case '3mf': return await this.load3MFFromArrayBuffer( arrayBuffer, filename );
-			case 'usdz': return await this.loadUSDZFromArrayBuffer( arrayBuffer, filename );
+			case 'usd':
+			case 'usda':
+			case 'usdc':
+			case 'usdz': return await this.loadUSDFromArrayBuffer( arrayBuffer, filename );
 			default: throw new Error( `Support for ${extension} files is not yet implemented` );
 
 		}
@@ -288,7 +377,7 @@ export class AssetLoader extends EventDispatcher {
 			texture.generateMipmaps = true;
 
 			this.applyEnvironmentToScene( texture );
-			this.dispatchEvent( { type: 'load', texture } );
+			this.dispatchEvent( { type: 'load', texture, url: envUrl, filename: envUrl.split( /[?#]/ )[ 0 ].split( '/' ).pop() } );
 			return texture;
 
 		} catch ( error ) {
@@ -647,6 +736,10 @@ export class AssetLoader extends EventDispatcher {
 			const extension = path.split( '.' ).pop().toLowerCase();
 			if ( SUPPORTED_FORMATS[ extension ] && SUPPORTED_FORMATS[ extension ].type === 'model' ) {
 
+				// A loose layer is only one slice of a USD scene — hand the whole
+				// archive over so its references and payloads can resolve.
+				if ( USD_LAYER_RE.test( path ) ) return await this.loadUSDHierarchyFromZip( zip );
+
 				console.log( `Loading model file from ZIP: ${path}` );
 				return await this.loadModelFromZipEntry( zip[ path ], path, extension, zip );
 
@@ -655,6 +748,48 @@ export class AssetLoader extends EventDispatcher {
 		}
 
 		throw new Error( 'No supported model files found in the ZIP archive' );
+
+	}
+
+	// USDLoader only builds a cross-layer asset map on its USDZ branch, so repack
+	// the archive as USDZ — root layer first, per AOUSD core spec 16.4.1.2 — and
+	// let the loader resolve the references/payloads itself.
+	async loadUSDHierarchyFromZip( zip ) {
+
+		const layers = Object.keys( zip ).filter( name => USD_LAYER_RE.test( name ) );
+		if ( layers.length === 0 ) throw new Error( 'No USD layers found in the ZIP archive' );
+
+		const root = AssetLoader._pickUSDRootLayer( layers );
+		console.log( `Loading USD scene from ZIP: ${root} (${layers.length} layers)` );
+
+		const packed = { [ root ]: [ zip[ root ], { level: 0 } ] };
+		for ( const name of Object.keys( zip ) ) {
+
+			if ( name === root ) continue;
+			if ( USD_LAYER_RE.test( name ) || USD_IMAGE_RE.test( name ) ) packed[ name ] = [ zip[ name ], { level: 0 } ];
+
+		}
+
+		return await this.loadUSDFromArrayBuffer( zipSync( packed ), root );
+
+	}
+
+	// Shallowest layer wins; among ties prefer the <dir>/<dir>.usd convention so a
+	// set's entry point beats its sibling variants.
+	static _pickUSDRootLayer( layers ) {
+
+		const depth = name => name.split( '/' ).length;
+		const minDepth = Math.min( ...layers.map( depth ) );
+		const candidates = layers.filter( name => depth( name ) === minDepth );
+
+		const conventional = candidates.find( name => {
+
+			const parts = name.split( '/' );
+			return parts.length > 1 && parts[ parts.length - 1 ].replace( USD_LAYER_RE, '' ) === parts[ parts.length - 2 ];
+
+		} );
+
+		return conventional || candidates[ 0 ];
 
 	}
 
@@ -698,8 +833,11 @@ export class AssetLoader extends EventDispatcher {
 				case '3mf':
 					result = await this.load3MFFromArrayBuffer( fileContent.buffer, filePath );
 					break;
+				case 'usd':
+				case 'usda':
+				case 'usdc':
 				case 'usdz':
-					result = await this.loadUSDZFromArrayBuffer( fileContent.buffer, filePath );
+					result = await this.loadUSDFromArrayBuffer( fileContent, filePath );
 					break;
 				default:
 					throw new Error( `Support for ${extension} files is not yet implemented` );
@@ -745,6 +883,7 @@ export class AssetLoader extends EventDispatcher {
 
 							this.releaseTargetModel();
 							this.targetModel = gltf.scene;
+							this.sceneMetadata = extractSceneMetadata( gltf );
 							this.onModelLoad( this.targetModel ).then( () => resolve( gltf ) );
 
 						},
@@ -1045,6 +1184,7 @@ export class AssetLoader extends EventDispatcher {
 
 			this.targetModel = data.scene;
 			this.animations = data.animations || [];
+			this.sceneMetadata = extractSceneMetadata( data );
 			await this.onModelLoad( this.targetModel );
 			this.dispatchEvent( { type: 'load', model: data.scene, filename: modelUrl.split( '/' ).pop() } );
 			return data;
@@ -1112,21 +1252,32 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	// Append a caller-owned Object3D without releasing prior models or reframing.
+	// Append a copy of a caller-owned Object3D without releasing prior models or reframing.
 	appendObject3D( object3d, name = 'object3d' ) {
 
-		object3d.name = object3d.name || name;
-		this._processAndParent( object3d );
-		return { root: object3d };
+		const root = this._adoptExternalObject( object3d );
+		root.name = object3d.name || name;
+		this._processAndParent( root );
+		return { root };
 
 	}
 
-	// Detach + dispose an appended root. External (caller-owned) roots are only detached.
-	removeModelRoot( root, { external = false } = {} ) {
+	// Detach + dispose a model root. An adopted root's geometry/materials belong to the
+	// caller, so only the engine's own allocations go.
+	removeModelRoot( root ) {
 
 		if ( ! root ) return;
-		if ( external ) root.parent?.remove( root );
-		else disposeObjectFromMemory( root );
+
+		if ( root.userData.__rayzeeExternal ) {
+
+			disposeEngineOwnedResources( root );
+			root.parent?.remove( root );
+
+		} else {
+
+			disposeObjectFromMemory( root );
+
+		}
 
 	}
 
@@ -1145,6 +1296,7 @@ export class AssetLoader extends EventDispatcher {
 
 			this.targetModel = data.scene;
 			this.animations = data.animations || [];
+			this.sceneMetadata = extractSceneMetadata( data );
 			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
 			await this.onModelLoad( this.targetModel );
 
@@ -1396,21 +1548,28 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	async loadUSDZFromArrayBuffer( arrayBuffer, filename = 'model.usdz' ) {
+	async loadUSDFromArrayBuffer( data, filename = 'model.usd' ) {
 
 		try {
 
-			updateLoading( { isLoading: true, status: "Processing USDZ Data...", progress: 5 } );
+			updateLoading( { isLoading: true, status: "Processing USD Data...", progress: 5 } );
 			await new Promise( r => setTimeout( r, 0 ) );
 
-			if ( ! this.loaderCache.usdz ) {
+			if ( ! this.loaderCache.usd ) {
 
-				const { USDZLoader } = await import( 'three/examples/jsm/loaders/USDZLoader.js' );
-				this.loaderCache.usdz = new USDZLoader();
+				const { USDLoader } = await import( 'three/examples/jsm/loaders/USDLoader.js' );
+				this.loaderCache.usd = new USDLoader();
 
 			}
 
-			const object = this.loaderCache.usdz.parse( arrayBuffer );
+			// parse() returns the group synchronously but resolves textures async;
+			// setupPathTracing snapshots materials, so maps must land before it runs.
+			const object = await new Promise( ( resolve, reject ) => {
+
+				this.loaderCache.usd.parse( data, '', resolve, reject );
+
+			} );
+
 			object.name = filename;
 
 			this.releaseTargetModel();
@@ -1424,7 +1583,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.error( 'Error loading USDZ:', error );
+			console.error( 'Error loading USD:', error );
 			this.dispatchEvent( { type: 'error', message: error.message, filename } );
 			throw error;
 
@@ -1434,17 +1593,18 @@ export class AssetLoader extends EventDispatcher {
 
 	async loadObject3D( object3d, name = 'object3d' ) {
 
-		object3d.name = object3d.name || name;
-
 		this.releaseTargetModel();
-		this.targetModel = object3d;
-		this._externalModel = object3d;
+
+		const model = this._adoptExternalObject( object3d );
+		model.name = object3d.name || name;
+
+		this.targetModel = model;
 
 		updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
 		await this.onModelLoad( this.targetModel );
 
-		this.dispatchEvent( { type: 'load', model: object3d, filename: name } );
-		return object3d;
+		this.dispatchEvent( { type: 'load', model, filename: name } );
+		return model;
 
 	}
 
@@ -1579,14 +1739,18 @@ export class AssetLoader extends EventDispatcher {
 
 	processModelObjects( model ) {
 
-		let visitedAreaLights = [];
+		// Split after the walk: traverse() caches children.length, so splitting in place
+		// shifts later siblings down a slot and skips one.
+		const multiMaterialMeshes = [];
 		model.traverse( ( object ) => {
 
 			const userData = object.userData;
 
-			if ( object.isRectAreaLight && ! visitedAreaLights.includes( object.uuid ) ) {
+			// An adopted light carries three.js units; convert as point/spot are below.
+			if ( object.isRectAreaLight && ! userData.__radianceConverted ) {
 
-				visitedAreaLights.push( object.uuid );
+				object.intensity *= areaLightPowerFactor( object, object.width, object.height, userData );
+				userData.__radianceConverted = true;
 
 			}
 
@@ -1609,22 +1773,21 @@ export class AssetLoader extends EventDispatcher {
 
 				if ( userData.type === 'RectAreaLight' ) {
 
-					// Intensity is authored in Watts (Blender-style); emitted radiance
-					// is computed at render time as power/(π·area). Blender emission
-					// defaults: power-normalized, full Lambertian spread (π), rectangle.
+					const normalize = userData.normalize ?? true;
+					const shape = userData.shape ?? 'rectangle';
+					const power = userData.intensity * areaLightPowerFactor( object, userData.width, userData.height, userData );
 					const light = new RectAreaLight(
 						new Color( ...userData.color ),
-						userData.intensity * 0.1,
+						power * this._profile.areaLightIntensityScale,
 						userData.width,
 						userData.height
 					);
-					light.userData.normalize = userData.normalize ?? true;
+					light.userData.normalize = normalize;
 					light.userData.spread = Number.isFinite( userData.spread ) ? userData.spread : Math.PI;
-					light.userData.shape = userData.shape ?? 'rectangle';
-					light.position.z = - 2;
+					light.userData.shape = shape;
+					light.userData.__radianceConverted = true; // already power, and traverse() reaches it
 					light.name = userData.name;
 					object.add( light );
-					visitedAreaLights.push( light.uuid );
 
 				}
 
@@ -1633,19 +1796,29 @@ export class AssetLoader extends EventDispatcher {
 			// Handle multi-material meshes
 			if ( object.isMesh && Array.isArray( object.material ) ) {
 
-				console.log( 'Found multi-material mesh:', object.name );
-				const group = createMeshesFromMultiMaterialMesh( object );
-
-				if ( object.parent ) {
-
-					object.parent.add( group );
-					object.parent.remove( object );
-
-				}
+				multiMaterialMeshes.push( object );
 
 			}
 
 		} );
+
+		const shared = model.userData.__rayzeeExternal === true;
+
+		for ( const object of multiMaterialMeshes ) {
+
+			if ( ! object.parent ) continue;
+
+			console.log( 'Found multi-material mesh:', object.name );
+			if ( shared ) object.geometry = standInForSplit( object.geometry );
+
+			const group = createMeshesFromMultiMaterialMesh( object );
+			// Fresh geometry per group; tag it so an adopted model's release can free it.
+			for ( const child of group.children ) child.geometry.userData.__rayzeeOwned = true;
+
+			object.parent.add( group );
+			object.parent.remove( object );
+
+		}
 
 	}
 
@@ -1736,6 +1909,10 @@ export class AssetLoader extends EventDispatcher {
 		// Three.js EventDispatcher exposes no dispose()/removeAllEventListeners().
 		// Clear the internal listener map directly so handlers don't retain references.
 		this._listeners = undefined;
+
+		// onError captures `this`, and a manager outlives the loader via an in-flight fetch.
+		this._loadingManager.onError = undefined;
+		this._issues = null;
 
 		this.releaseTargetModel();
 

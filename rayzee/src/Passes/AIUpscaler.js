@@ -1,5 +1,5 @@
 import { EventDispatcher, ACESFilmicToneMapping } from 'three';
-import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation } from '../Processor/ToneMapCPU.js';
+import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure } from '../Processor/ToneMapCPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import AIUpscalerWorker from '../Processor/Workers/AIUpscalerWorker.js?worker&inline';
 
@@ -400,7 +400,7 @@ export class AIUpscaler extends EventDispatcher {
 		if ( sourceImageData.isHDR ) {
 
 			this._hdrToneMapFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
-			this._hdrExposure = this.getExposure();
+			this._hdrExposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
 			this._hdrSaturation = this.getSaturation();
 			this._tmOut = new Float32Array( 3 );
 
@@ -793,7 +793,7 @@ export class AIUpscaler extends EventDispatcher {
 			const imageData = ctx.createImageData( width, height );
 			const pixels = imageData.data;
 			const tmFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
-			const exposure = this.getExposure();
+			const exposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
 			const saturation = this.getSaturation();
 			const out = new Float32Array( 3 );
 

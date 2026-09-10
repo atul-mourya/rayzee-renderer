@@ -527,7 +527,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 // products with the PDF call below.
 
 export const calculateEmissiveTriangleContributionDebug = Fn( ( [
-	hitPoint, normal, viewDir, material,
+	hitPoint, normal, geomNormal, viewDir, material,
 	bounceIndex, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
@@ -565,10 +565,10 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		// Check geometric validity
 		const NoL = max( float( 0.0 ), dot( normal, emissiveSample.direction ) );
 
-		If( NoL.greaterThan( 0.0 ), () => {
+		If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ), () => {
 
 			// Calculate ray offset for shadow ray
-			const rayOffset = calculateRayOffsetFn( hitPoint, normal, material );
+			const rayOffset = calculateRayOffsetFn( hitPoint, geomNormal, material );
 			const rayOrigin = hitPoint.add( rayOffset );
 
 			// Trace shadow ray
@@ -609,7 +609,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 
 // Wrapper that returns just the contribution vec3
 export const calculateEmissiveTriangleContribution = Fn( ( [
-	hitPoint, normal, viewDir, material,
+	hitPoint, normal, geomNormal, viewDir, material,
 	bounceIndex, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
@@ -620,7 +620,7 @@ export const calculateEmissiveTriangleContribution = Fn( ( [
 ] ) => {
 
 	const result = EmissiveContributionResult.wrap( calculateEmissiveTriangleContributionDebug(
-		hitPoint, normal, viewDir, material,
+		hitPoint, normal, geomNormal, viewDir, material,
 		bounceIndex, rngState,
 		pixelCoord, resolution, frame, dimBase,
 		emissiveBoost,

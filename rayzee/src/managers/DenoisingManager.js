@@ -2,14 +2,14 @@ import { EventDispatcher } from 'three';
 import { OIDNDenoiser } from '../Passes/OIDNDenoiser.js';
 import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
 
 // Sample-count growth required between cadence denoises: 1 -> 2 -> 3 -> 5 -> 7 -> 10 -> 14 ...
 const CADENCE_SAMPLE_GROWTH = 1.4;
 
 /**
  * Orchestrates all denoising, post-processing, and AI upscaling:
- *   - Real-time denoiser strategy switching (ASVGF / EdgeAware / None)
+ *   - Real-time denoiser strategy switching (ASVGF / NRD / EdgeAware / None)
  *   - OIDN (offline denoise on render completion)
  *   - AI Upscaler
  *   - Auto-exposure coordination
@@ -44,7 +44,7 @@ export class DenoisingManager extends EventDispatcher {
 		this.pipeline = pipeline;
 
 		// Stage references — only used internally for orchestration
-		this._stages = stages; // { pathTracer, asvgf, variance, bilateralFilter, edgeFilter, autoExposure, compositor }
+		this._stages = stages; // { pathTracer, asvgf, nrd, variance, bilateralFilter, edgeFilter, autoExposure, compositor }
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
@@ -249,29 +249,31 @@ export class DenoisingManager extends EventDispatcher {
 	// ── Denoiser Strategy ─────────────────────────────────────────
 
 	/**
-	 * Switches the real-time denoiser strategy.
-	 * @param {string} strategy   - 'none' | 'asvgf' | 'edgeaware'
-	 * @param {string} [asvgfPreset] - ASVGF quality preset when strategy is 'asvgf'
-	 */
-	/**
 	 * Active real-time denoiser, derived from stage state so it can't drift from
 	 * setDenoiserStrategy / setASVGFEnabled.
-	 * @returns {'asvgf'|'edgeaware'|'none'}
+	 * @returns {'asvgf'|'nrd'|'edgeaware'|'none'}
 	 */
 	get denoiserStrategy() {
 
 		if ( this._stages.asvgf?.enabled ) return 'asvgf';
+		if ( this._stages.nrd?.enabled ) return 'nrd';
 		if ( this._stages.edgeFilter?.enabled ) return 'edgeaware';
 		return 'none';
 
 	}
 
-	setDenoiserStrategy( strategy, asvgfPreset ) {
+	/**
+	 * Switches the real-time denoiser strategy.
+	 * @param {string} strategy - 'none' | 'asvgf' | 'nrd' | 'edgeaware'
+	 * @param {string} [preset] - quality preset for 'asvgf' (ASVGF_QUALITY_PRESETS) or 'nrd' (NRD_QUALITY_PRESETS)
+	 */
+	setDenoiserStrategy( strategy, preset ) {
 
 		const s = this._stages;
 
 		// Disable all real-time denoisers first
 		if ( s.asvgf ) s.asvgf.enabled = false;
+		if ( s.nrd ) s.nrd.enabled = false;
 		if ( s.variance ) s.variance.enabled = false;
 		if ( s.bilateralFilter ) s.bilateralFilter.enabled = false;
 		if ( s.edgeFilter ) s.edgeFilter.setFilteringEnabled( false );
@@ -285,7 +287,19 @@ export class DenoisingManager extends EventDispatcher {
 				if ( s.variance ) s.variance.enabled = true;
 				if ( s.bilateralFilter ) s.bilateralFilter.enabled = true;
 				s.asvgf.setTemporalEnabled?.( true );
-				this._applyASVGFPreset( asvgfPreset || 'medium' );
+				this._applyASVGFPreset( preset || 'medium' );
+				break;
+
+			case 'nrd':
+				if ( s.nrd ) {
+
+					s.nrd.enabled = true;
+					// Stale history from the last time it ran describes another view.
+					s.nrd.resetHistory?.();
+					this._applyNRDPreset( preset || 'medium' );
+
+				}
+
 				break;
 
 			case 'edgeaware':
@@ -315,6 +329,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		if ( enabled ) {
 
+			// One real-time denoiser at a time.
+			if ( s.nrd ) s.nrd.enabled = false;
 			s.asvgf?.setTemporalEnabled?.( true );
 			this._applyASVGFPreset( qualityPreset || 'medium' );
 
@@ -364,19 +380,25 @@ export class DenoisingManager extends EventDispatcher {
 	 * navigation and frees their textures. Call after any consumer toggle.
 	 *
 	 * MotionVector requires NormalDepth (reads pathtracer:normalDepth) and its
-	 * consumers (ASVGF) are a subset of NormalDepth's, so NormalDepth is
+	 * consumers (ASVGF, NRD) are a subset of NormalDepth's, so NormalDepth is
 	 * always enabled whenever MotionVector is. Adaptive sampling / Variance / OIDN
 	 * do NOT read these signals, so they don't keep the G-buffer alive.
 	 */
+	/** True while a strategy that reprojects through motion vectors is active. */
+	get requiresMotionVectors() {
+
+		return !! ( this._stages.asvgf?.enabled || this._stages.nrd?.enabled );
+
+	}
+
 	_syncGBufferStages() {
 
 		const s = this._stages;
 		const nd = s.normalDepth;
 		const mv = s.motionVector;
 
-		// motionVector:* consumed by ASVGF
-		const motionNeeded = !! ( s.asvgf?.enabled );
-		// pathtracer:normalDepth consumed by ASVGF, EdgeFilter, BilateralFilter
+		const motionNeeded = this.requiresMotionVectors;
+		// pathtracer:normalDepth consumed by ASVGF, NRD, EdgeFilter, BilateralFilter
 		const normalNeeded = motionNeeded || !! ( s.edgeFilter?.enabled || s.bilateralFilter?.enabled );
 
 		if ( nd ) {
@@ -417,7 +439,7 @@ export class DenoisingManager extends EventDispatcher {
 		// disabled (lazily re-created on the next dispatch after re-enable). Every strategy/denoiser
 		// toggle funnels through here after the enabled flags above are settled, so this is the one
 		// choke point. dispose() is idempotent, so re-running it for an already-released stage is a no-op.
-		for ( const stage of [ s.asvgf, s.variance, s.bilateralFilter, s.edgeFilter, nd, mv ] ) {
+		for ( const stage of [ s.asvgf, s.nrd, s.variance, s.bilateralFilter, s.edgeFilter, nd, mv ] ) {
 
 			if ( stage && ! stage.enabled ) stage.releaseGPUMemory?.();
 
@@ -785,13 +807,39 @@ export class DenoisingManager extends EventDispatcher {
 
 	/**
 	 * Switches strategy with automatic reset (convenience wrapper).
-	 * @param {'none'|'asvgf'|'edgeaware'} strategy
-	 * @param {string} [asvgfPreset]
+	 * @param {'none'|'asvgf'|'nrd'|'edgeaware'} strategy
+	 * @param {string} [preset]
 	 */
-	setStrategy( strategy, asvgfPreset ) {
+	setStrategy( strategy, preset ) {
 
-		this.setDenoiserStrategy( strategy, asvgfPreset );
+		this.setDenoiserStrategy( strategy, preset );
 		this._onReset?.();
+
+	}
+
+	// ── NRD (ReBLUR) ─────────────────────────────────────────────
+
+	/** Updates NRD stage parameters (nrd::ReblurSettings names, see NRD_DEFAULTS). */
+	setNRDParams( params ) {
+
+		this._stages.nrd?.updateParameters( params );
+
+	}
+
+	/**
+	 * Applies an NRD quality preset.
+	 * @param {string} presetName - 'low' | 'medium' | 'high'
+	 */
+	applyNRDPreset( presetName ) {
+
+		this._applyNRDPreset( presetName );
+
+	}
+
+	/** Selects the NRD debug view (0 = beauty; see NRD.js for the others). */
+	setNRDDebugMode( mode ) {
+
+		this._stages.nrd?.updateParameters( { debugMode: mode } );
 
 	}
 
@@ -831,9 +879,20 @@ export class DenoisingManager extends EventDispatcher {
 		const keys = [
 			'asvgf:output', 'asvgf:demodulated', 'asvgf:gradient',
 			'variance:output', 'bilateralFiltering:output',
-			'edgeFiltering:output',
+			'edgeFiltering:output', 'nrd:output',
 		];
 		keys.forEach( k => ctx.removeTexture( k ) );
+
+	}
+
+	_applyNRDPreset( presetName ) {
+
+		const preset = NRD_QUALITY_PRESETS[ presetName ];
+		if ( ! preset ) return;
+
+		const params = {};
+		for ( const key of NRD_PRESET_KEYS ) params[ key ] = NRD_DEFAULTS[ key ];
+		this._stages.nrd?.updateParameters( { ...params, ...preset } );
 
 	}
 

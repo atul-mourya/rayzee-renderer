@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import {
 	ENGINE_DEFAULTS,
 	ASVGF_QUALITY_PRESETS,
+	NRD_DEFAULTS,
+	NRD_QUALITY_PRESETS,
+	NRD_PRESET_KEYS,
+	NRD_HIT_DIST_A,
+	NRD_HIT_DIST_B,
 	CAMERA_PRESETS,
 	SKY_PRESETS,
 	CAMERA_RANGES,
@@ -46,6 +51,33 @@ describe( 'ENGINE_DEFAULTS', () => {
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'enableOIDN' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'enableASVGF' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'denoiserStrategy' );
+		expect( ENGINE_DEFAULTS.nrdQualityPreset ).toBe( 'medium' );
+
+	} );
+
+	it( 'NRD presets only override declared preset keys', () => {
+
+		for ( const name of [ 'low', 'medium', 'high' ] ) {
+
+			expect( NRD_QUALITY_PRESETS ).toHaveProperty( name );
+			// A key outside this list would be applied once and never reset on the next switch.
+			for ( const key of Object.keys( NRD_QUALITY_PRESETS[ name ] ) ) expect( NRD_PRESET_KEYS ).toContain( key );
+
+		}
+
+		// 'medium' is the defaults, so it states no deltas at all.
+		expect( NRD_QUALITY_PRESETS.medium ).toEqual( {} );
+		for ( const key of NRD_PRESET_KEYS ) expect( NRD_DEFAULTS ).toHaveProperty( key );
+
+		// nrd::ReblurSettings ranges.
+		expect( NRD_DEFAULTS.maxAccumulatedFrameNum ).toBeLessThanOrEqual( 63 );
+		expect( NRD_DEFAULTS.maxFastAccumulatedFrameNum ).toBeLessThan( NRD_DEFAULTS.maxAccumulatedFrameNum );
+		expect( NRD_DEFAULTS.historyFixFrameNum ).toBeLessThan( NRD_DEFAULTS.maxFastAccumulatedFrameNum );
+
+		// The Shade front-end and the NRD decode must agree on the hit-distance curve, so it is a
+		// shared constant rather than a per-side setting.
+		expect( NRD_HIT_DIST_A ).toBeGreaterThan( 0 );
+		expect( NRD_HIT_DIST_B ).toBeGreaterThan( 0 );
 
 	} );
 

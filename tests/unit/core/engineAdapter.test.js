@@ -69,6 +69,7 @@ function createMockStores() {
 
 	const state = {
 		setIsRenderComplete: vi.fn(),
+		setCompletionReason: vi.fn(),
 		setIsRendering: vi.fn(),
 		setIsDenoising: vi.fn(),
 		setIsUpscaling: vi.fn(),
@@ -118,10 +119,22 @@ describe( 'connectEngineToStore', () => {
 
 		connectEngineToStore( engine, stores );
 
-		engine._emit( 'RENDER_COMPLETE' );
+		engine._emit( 'RENDER_COMPLETE', { reason: 'converged' } );
 
 		expect( stores._state.setIsRenderComplete ).toHaveBeenCalledWith( true );
 		expect( stores._state.setIsRendering ).toHaveBeenCalledWith( false );
+		expect( stores._state.setCompletionReason ).toHaveBeenCalledWith( 'converged' );
+
+	} );
+
+	// An engine build that predates the reason must not leave the previous render's tick showing.
+	it( 'clears the reason when RENDER_COMPLETE carries none', () => {
+
+		connectEngineToStore( engine, stores );
+
+		engine._emit( 'RENDER_COMPLETE' );
+
+		expect( stores._state.setCompletionReason ).toHaveBeenCalledWith( null );
 
 	} );
 
@@ -133,6 +146,7 @@ describe( 'connectEngineToStore', () => {
 
 		expect( stores._state.setIsRenderComplete ).toHaveBeenCalledWith( false );
 		expect( stores._state.setIsRendering ).toHaveBeenCalledWith( true );
+		expect( stores._state.setCompletionReason ).toHaveBeenCalledWith( null );
 
 	} );
 

@@ -1,6 +1,7 @@
 import { PipelineContext } from './PipelineContext.js';
 import { EventDispatcher } from './EventDispatcher.js';
 import { auditStageRender } from './BindingAudit.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 /**
  * RenderPipeline - Orchestrates execution of pipeline stages
@@ -37,14 +38,41 @@ import { auditStageRender } from './BindingAudit.js';
 export class RenderPipeline {
 
 	/**
+	 * A failed stage leaves a half-composited frame that still reaches the canvas — the exact
+	 * plausible-wrong-image case a batch host must not publish.
+	 * @private
+	 */
+	_reportStageFailure( name, phase, error ) {
+
+		console.error( `[Pipeline] Error in stage '${name}' (${phase}):`, error );
+
+		const key = `${name}:${phase}`;
+		if ( this._reportedStageFailures.has( key ) ) return;
+		this._reportedStageFailures.add( key );
+
+		this._issues?.record(
+			ISSUE_CODES.STAGE_RENDER_FAILED,
+			`stage "${name}" threw during ${phase} — the frame is incomplete`,
+			{ stage: name, phase, cause: String( error?.message ?? error ) }
+		);
+
+	}
+
+	/**
 	 * Create a new pipeline
 	 * @param {THREE.WebGLRenderer} renderer - Three.js renderer
 	 * @param {number} width - Viewport width
 	 * @param {number} height - Viewport height
+	 * @param {Object} [options]
+	 * @param {import('../EngineIssues.js').IssueLog} [options.issues] - records stage failures
 	 */
-	constructor( renderer, width, height ) {
+	constructor( renderer, width, height, { issues = null } = {} ) {
 
 		this.renderer = renderer;
+		this._issues = issues;
+
+		// A stage that throws does so every frame; record the first per stage, not 60/second.
+		this._reportedStageFailures = new Set();
 		this.width = width;
 		this.height = height;
 
@@ -215,8 +243,7 @@ export class RenderPipeline {
 
 			} catch ( error ) {
 
-				console.error( `[Pipeline] Error in stage '${stage.name}':`, error );
-				// Continue pipeline execution despite error
+				this._reportStageFailure( stage.name, 'render', error );
 
 			}
 
@@ -278,7 +305,7 @@ export class RenderPipeline {
 
 				} catch ( error ) {
 
-					console.error( `[Pipeline] Error resetting stage '${stage.name}':`, error );
+					this._reportStageFailure( stage.name, 'reset', error );
 
 				}
 

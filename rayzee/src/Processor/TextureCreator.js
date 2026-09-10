@@ -1,6 +1,38 @@
-import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, RepeatWrapping } from "three";
+import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
 import { TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
+import { ISSUE_CODES } from '../EngineIssues.js';
+import { linearToSRGB } from './ToneMapCPU.js';
+import { createLogger } from '../utils/Logger.js';
+
+const log = createLogger( 'textures' );
+
+// A bucket array carries ONE colorSpace and the shader reads each slot from a fixed pool, so a
+// texture disagreeing with its pool cannot be re-routed — its pixels are re-encoded instead.
+const TRANSFER_LUT = { toSRGB: null, toLinear: null };
+
+function transferLUT( direction ) {
+
+	if ( ! TRANSFER_LUT[ direction ] ) {
+
+		const lut = new Uint8Array( 256 );
+		for ( let i = 0; i < 256; i ++ ) {
+
+			const c = i / 255;
+			const v = direction === 'toSRGB'
+				? linearToSRGB( c )
+				: ( c <= 0.04045 ? c / 12.92 : Math.pow( ( c + 0.055 ) / 1.055, 2.4 ) );
+			lut[ i ] = Math.max( 0, Math.min( 255, Math.round( v * 255 ) ) );
+
+		}
+
+		TRANSFER_LUT[ direction ] = lut;
+
+	}
+
+	return TRANSFER_LUT[ direction ];
+
+}
 
 // Canvas pooling for efficient reuse of canvas elements
 class CanvasPool {
@@ -460,6 +492,8 @@ export class TextureCreator {
 		this.maxConcurrentWorkers = TEXTURE_CONSTANTS.MAX_CONCURRENT_WORKERS;
 		this.activeWorkers = 0;
 
+		this._issues = options.issues ?? null;
+
 		// Longest-edge cap for material-texture arrays. Clamped to the hardware ceiling.
 		this.maxTextureSize = this._clampTextureSize(
 			options.maxTextureSize ?? TEXTURE_CONSTANTS.DEFAULT_MAX_TEXTURE_SIZE
@@ -476,6 +510,17 @@ export class TextureCreator {
 		// Method selection based on capabilities
 		this.capabilities = this.detectCapabilities();
 		this.optimalMethod = this.selectOptimalMethod();
+
+	}
+
+	/** A failed map array leaves those surfaces untextured — complete-looking and wrong. @private */
+	_reportTextureFailure( map, error ) {
+
+		this._issues?.record(
+			ISSUE_CODES.TEXTURE_BUILD_FAILED,
+			`${map} texture array failed to build — those surfaces render untextured`,
+			{ map, cause: String( error?.message ?? error ) }
+		);
 
 	}
 
@@ -527,13 +572,76 @@ export class TextureCreator {
 
 	}
 
+	/**
+	 * Re-encodes any layer whose declared colour space disagrees with its pool, so the GPU's
+	 * decode — or absence of one — lands on the values the author stored. An untagged texture
+	 * keeps its pool's convention, which is what every loader produces for glTF.
+	 *
+	 * @param {import('three').DataArrayTexture} arrayTex
+	 * @param {Array<import('three').Texture>} textures - pre-normalization list, in layer order
+	 * @param {boolean} srgbPool - true when the array is tagged SRGBColorSpace
+	 */
+	_harmonizeTransfer( arrayTex, textures, srgbPool ) {
+
+		const data = arrayTex?.image?.data;
+		if ( ! data ) return;
+
+		// Mirrors _normalizeTexturesForProcessing's skip rule, which is what sets layer order.
+		const kept = textures.filter( t => t?.image );
+		const want = srgbPool ? SRGBColorSpace : LinearSRGBColorSpace;
+		const layerSize = arrayTex.image.width * arrayTex.image.height * 4;
+		const converted = [];
+
+		for ( let layer = 0; layer < kept.length; layer ++ ) {
+
+			const declared = kept[ layer ].colorSpace;
+			// Only an explicit disagreement is acted on; NoColorSpace defers to the pool.
+			if ( declared !== SRGBColorSpace && declared !== LinearSRGBColorSpace ) continue;
+			if ( declared === want ) continue;
+
+			const lut = transferLUT( srgbPool ? 'toSRGB' : 'toLinear' );
+			const start = layer * layerSize;
+			const end = Math.min( start + layerSize, data.length );
+			// RGB only — alpha is never transfer-encoded.
+			for ( let i = start; i < end; i += 4 ) {
+
+				data[ i ] = lut[ data[ i ] ];
+				data[ i + 1 ] = lut[ data[ i + 1 ] ];
+				data[ i + 2 ] = lut[ data[ i + 2 ] ];
+
+			}
+
+			converted.push( kept[ layer ].name || kept[ layer ].source?.uuid?.slice( 0, 8 ) || `layer ${layer}` );
+
+		}
+
+		if ( converted.length === 0 ) return;
+
+		arrayTex.needsUpdate = true;
+		const names = converted.slice( 0, 4 ).join( ', ' ) + ( converted.length > 4 ? `, +${converted.length - 4} more` : '' );
+
+		if ( srgbPool ) {
+
+			log.info( `re-encoded ${converted.length}/${kept.length} linear-declared colour map(s) to sRGB so the GPU decode round-trips: ${names}` );
+
+		} else {
+
+			// Storing a decoded value in an 8-bit linear array is the lossy direction, and a
+			// transfer-encoded data map is almost always an authoring slip rather than intent.
+			log.warn( `decoded ${converted.length}/${kept.length} sRGB-declared data map(s) to linear — precision is lost in the darks, check the asset: ${names}` );
+
+		}
+
+	}
+
 	// Unified texture processing with strategy selection
-	async createTexturesToDataTexture( textures ) {
+	async createTexturesToDataTexture( textures, { srgbPool = false } = {} ) {
 
 		if ( ! textures || textures.length === 0 ) return null;
 
-		// Check cache first
-		const cacheKey = this.textureCache.generateHash( textures );
+		// Pool is part of the identity: the same list packed for the colour pool and the data pool
+		// gets different pixels (see _harmonizeTransfer), so one key must not serve both.
+		const cacheKey = `${srgbPool ? 's' : 'l'}:${this.textureCache.generateHash( textures )}`;
 		const cached = this.textureCache.get( cacheKey );
 		if ( cached ) return cached;
 
@@ -565,6 +673,7 @@ export class TextureCreator {
 			// Cache successful result
 			if ( result ) {
 
+				this._harmonizeTransfer( result, textures, srgbPool );
 				this.textureCache.set( cacheKey, result );
 
 			}
@@ -573,8 +682,14 @@ export class TextureCreator {
 
 		} catch ( error ) {
 
-			console.warn( 'Texture processing failed, trying fallback:', error );
-			return await this.processOnMainThreadSync( normalized );
+			this._issues?.warn(
+				ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
+				'worker texture processing failed — retrying on the main thread',
+				{ cause: String( error?.message ?? error ) }
+			);
+			const fallback = await this.processOnMainThreadSync( normalized );
+			this._harmonizeTransfer( fallback, textures, srgbPool );
+			return fallback;
 
 		} finally {
 
@@ -1114,105 +1229,25 @@ export class TextureCreator {
 			// Create texture arrays
 			const texturePromises = [];
 
-			if ( maps && maps.length > 0 ) {
+			for ( const [ type, list ] of [
+				[ 'albedo', maps ],
+				[ 'normal', normalMaps ],
+				[ 'bump', bumpMaps ],
+				[ 'roughness', roughnessMaps ],
+				[ 'metalness', metalnessMaps ],
+				[ 'emissive', emissiveMaps ],
+				[ 'displacement', displacementMaps ],
+			] ) {
+
+				if ( ! list || list.length === 0 ) continue;
 
 				texturePromises.push(
-					this.createTexturesToDataTexture( maps )
-						.then( tex => ( { type: 'albedo', texture: tex } ) )
+					this.createTexturesToDataTexture( list )
+						.then( texture => ( { type, texture } ) )
 						.catch( error => {
 
-							console.warn( 'Failed to create albedo textures:', error );
-							return { type: 'albedo', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( normalMaps && normalMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( normalMaps )
-						.then( tex => ( { type: 'normal', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create normal textures:', error );
-							return { type: 'normal', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( bumpMaps && bumpMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( bumpMaps )
-						.then( tex => ( { type: 'bump', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create bump textures:', error );
-							return { type: 'bump', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( roughnessMaps && roughnessMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( roughnessMaps )
-						.then( tex => ( { type: 'roughness', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create roughness textures:', error );
-							return { type: 'roughness', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( metalnessMaps && metalnessMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( metalnessMaps )
-						.then( tex => ( { type: 'metalness', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create metalness textures:', error );
-							return { type: 'metalness', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( emissiveMaps && emissiveMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( emissiveMaps )
-						.then( tex => ( { type: 'emissive', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create emissive textures:', error );
-							return { type: 'emissive', texture: null };
-
-						} )
-				);
-
-			}
-
-			if ( displacementMaps && displacementMaps.length > 0 ) {
-
-				texturePromises.push(
-					this.createTexturesToDataTexture( displacementMaps )
-						.then( tex => ( { type: 'displacement', texture: tex } ) )
-						.catch( error => {
-
-							console.warn( 'Failed to create displacement textures:', error );
-							return { type: 'displacement', texture: null };
+							this._reportTextureFailure( type, error );
+							return { type, texture: null };
 
 						} )
 				);
@@ -1221,6 +1256,10 @@ export class TextureCreator {
 
 			// Wait for all texture arrays to complete
 			const textureResults = await Promise.allSettled( texturePromises );
+
+			// allSettled would otherwise swallow a strict host's EngineIssueError.
+			const refused = textureResults.find( ( r ) => r.status === 'rejected' );
+			if ( refused ) throw refused.reason;
 
 			// Organize results
 			const textures = {};

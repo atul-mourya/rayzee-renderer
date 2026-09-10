@@ -19,16 +19,20 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'gpu' );
 
-function createWriteStorageTex() {
+// Compute-output StorageTexture at the reserved size, never resized (see above). LinearFilter is
+// load-bearing: textureLoad codegen requires it on a StorageTexture.
+export function createStorageTexture( type = FloatType, filter = LinearFilter ) {
 
 	const tex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
-	tex.type = FloatType;
+	tex.type = type;
 	tex.format = RGBAFormat;
-	tex.minFilter = LinearFilter;
-	tex.magFilter = LinearFilter;
+	tex.minFilter = filter;
+	tex.magFilter = filter;
 	return tex;
 
 }
+
+const createWriteStorageTex = () => createStorageTexture();
 
 export class StorageTexturePool {
 

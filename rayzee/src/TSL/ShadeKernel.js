@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, exp, log, clamp, dot, length, select, smoothstep, mix,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, mix,
 	instanceIndex,
 	sampler,
 	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
@@ -29,6 +29,7 @@ import { IndirectLightingResult, sampleCone } from './LightsCore.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
 import { evaluateDFG } from './MaterialProperties.js';
 import { dielectricF0 } from './Fresnel.js';
+import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
 import { calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample } from './EmissiveSampling.js';
@@ -57,7 +58,7 @@ import {
 	readHitDistance, readHitBarycentrics, readHitNormal,
 	readHitMaterialIndex, readHitTriangleIndex,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
-	writeGBuffer, readGBuffer, gbDecodeNormalDepth,
+	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
 	readFeatureThroughput, writeFeatureThroughput,
 } from '../Processor/PackedRayBuffer.js';
@@ -155,6 +156,7 @@ export function buildShadeKernel( params ) {
 			If( threadIdx.equal( uint( 0 ) ), () => {
 
 				atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
+				atomicStore( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ), uint( 0 ) );
 
 			} );
 
@@ -225,6 +227,17 @@ export function buildShadeKernel( params ) {
 		const sssSteps = readSssSteps( rayBufferRW, rayID ).toVar();
 		const transparentCount = readTransparentCount( rayBufferRW, rayID ).toVar();
 
+		// NRD guide: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
+		// doesn't shorten it. Unconditional at depth 1, so the post-skip segment wins.
+		If( auxOn.and( cameraDepth.equal( 1 ) ), () => {
+
+			const scatterViewZ = cameraViewMatrix.mul( vec4( origin, 1.0 ) ).z.abs();
+			const norm = scatterViewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A );
+			const total = readMisRayT( rayBufferRW, rayID ).add( min( hitDist, float( 1e6 ) ) );
+			writeGBufferHitDist( gBufferRW, pixelIndex, total.div( max( norm, float( 1e-4 ) ) ).clamp( 0.0, 1.0 ) );
+
+		} );
+
 		// ── Analytic ground-plane shadow catcher (primary ray only, no geometry) ──
 		// A horizontal plane at y = groundCatcherHeight. For a bounce-0 ray that crosses it
 		// closer than any BVH hit (hitDist is MISS_DIST on sky rays, so the plane wins over the
@@ -255,7 +268,7 @@ export function buildShadeKernel( params ) {
 					// Reuse the full NEE estimator; the diffuse BRDF is constant and cancels in the
 					// ratio, so this yields an irradiance-weighted shadow density across all lights + env.
 					const dual = DirectLightingDual.wrap( calculateDirectLightingUnified(
-						planePoint, planeN, planeMat, planeV,
+						planePoint, planeN, planeN, planeMat, planeV,
 						bDir, bPdf, bVal,
 						bounceIndex, rngState,
 						_pixelCoord, resolution, frame, dimBase,
@@ -1044,15 +1057,23 @@ export function buildShadeKernel( params ) {
 
 		// BRDF sample (needed by both direct + indirect)
 		const V = direction.negate().toVar();
+		// face-forwarded geometric normal: horizon guard for NEE and the bounce continuation
+		const Ngeo = normalize( hitNormal );
+		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
 
-		// Two-sided shading: opaque path only (transmissive/SSS already continued), so this never disturbs
-		// dielectric enter/exit. Flip N toward the viewer when back-facing — rescues double-sided / inward-
-		// normal imported meshes (GLB/PBRT) that otherwise shade black (NoL collapses). Megakernel: PathTracerCore.js:1054.
-		If( dot( N, V ).lessThan( 0.0 ), () => {
+		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
+		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
+		// normal-map overshoot is not mistaken for a back face and folded into the surface.
+		If( dot( Ngeo, V ).lessThan( 0.0 ), () => {
 
 			N.assign( N.negate() );
 
 		} );
+
+		// A normal-mapped N may still face away from the viewer at grazing angles. Like Cycles' diffuse
+		// closure it is used as is: NEE and the bounce continuation already reject directions below the
+		// geometric horizon. (Cycles raises N for glossy closures only — ensure_valid_specular_reflection;
+		// with one shared N that would lift the diffuse term on every away-facing flank, measured +17.6 %.)
 
 		// ─── DDFA opaque aux decision: commit at the first diffuse-enough surface, defer through smooth
 		// mirror/metal so the guide describes what the mirror reflects, not the mirror itself. N is already
@@ -1139,7 +1160,7 @@ export function buildShadeKernel( params ) {
 		} );
 
 		const directLight = DirectLightingDual.wrap( calculateDirectLightingUnified(
-			hitPoint, N, material, V,
+			hitPoint, N, NgeoFF, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
 			_pixelCoord, resolution, frame, dimBase,
@@ -1205,9 +1226,9 @@ export function buildShadeKernel( params ) {
 
 							const NoL = max( float( 0.0 ), dot( N, emissiveSample.direction ) );
 
-							If( NoL.greaterThan( 0.0 ), () => {
+							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
-								const rayOffset = calculateRayOffset( hitPoint, N, material );
+								const rayOffset = calculateRayOffset( hitPoint, NgeoFF, material );
 								const rayOrigin = hitPoint.add( rayOffset );
 								const shadowDist = emissiveSample.distance.sub( 0.001 );
 								const visibility = traceShadowRayWrapped(
@@ -1248,7 +1269,7 @@ export function buildShadeKernel( params ) {
 					} ).Else( () => {
 
 						const emissiveLight = calculateEmissiveTriangleContribution(
-							hitPoint, N, V, material,
+							hitPoint, N, NgeoFF, V, material,
 							bounceIndex, rngState,
 							_pixelCoord, resolution, frame, dimBase,
 							emissiveBoost,
@@ -1291,7 +1312,6 @@ export function buildShadeKernel( params ) {
 
 		// Shading-normal leak guard: a normal-mapped lobe can sample below the geometric surface;
 		// tracing that ray tunnels through single-sided shells onto whatever sits behind them.
-		const NgeoFF = select( dot( hitNormal, V ).lessThan( 0.0 ), hitNormal.negate(), hitNormal );
 		If( brdfIsTransmission.not().and( dot( bounceDir, NgeoFF ).lessThanEqual( 0.0 ) ), () => {
 
 			commitDeferredAux( N );

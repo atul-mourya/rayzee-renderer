@@ -142,6 +142,53 @@ describe( 'UniformManager', () => {
 
 		} );
 
+		// A slider component that emits [n] instead of n used to land the array straight in
+		// .value. PathTracer then summed maxBounces + transmissiveBounces + maxSubsurfaceSteps,
+		// which string-concatenated ([20] + 5 + 8 === '2058') and ran the bounce loop to 2058.
+		it( 'should unwrap a single-element array for a scalar uniform', () => {
+
+			manager.set( 'maxBounces', [ 20 ] );
+
+			const value = manager.get( 'maxBounces' ).value;
+			expect( value ).toBe( 20 );
+			expect( typeof value ).toBe( 'number' );
+			// The actual failure mode: a non-number turns the loop-bound sum into a string.
+			expect( typeof ( value + 5 + 8 ) ).toBe( 'number' );
+
+		} );
+
+		it( 'should unwrap a single-element array for a boolean uniform', () => {
+
+			// [0] is truthy, so without unwrapping this stores 1 — the opposite of what was asked.
+			manager.set( 'showBackground', [ 0 ] );
+
+			expect( manager.get( 'showBackground' ).value ).toBe( 0 );
+
+		} );
+
+		it( 'should warn only once per uniform for repeated array values', () => {
+
+			const warnings = [];
+			const original = console.warn;
+			console.warn = msg => warnings.push( msg );
+
+			try {
+
+				manager.set( 'maxBounces', [ 4 ] );
+				manager.set( 'maxBounces', [ 5 ] );
+				manager.set( 'maxBounces', [ 6 ] );
+
+			} finally {
+
+				console.warn = original;
+
+			}
+
+			expect( warnings.length ).toBe( 1 );
+			expect( manager.get( 'maxBounces' ).value ).toBe( 6 );
+
+		} );
+
 		it( 'should warn and skip for unknown uniform names', () => {
 
 			const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );

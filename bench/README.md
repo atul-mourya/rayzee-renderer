@@ -63,6 +63,8 @@ Image comparison is only meaningful if the renderer is reproducible, and by defa
 
 `app.setDeterministicMode( true )` pins all of it, and `app.renderFrames( n )` accumulates exactly `n` samples with the rAF loop parked. With those, two runs of the same scene produce **byte-identical** PNGs.
 
+The harness reaches them through `openHeadless()` / `renderToBuffer()` — the same entry point a render farm uses — so a bug in the shipped headless path cannot hide from the suite that exists to catch bugs. It passes `profile: 'viewer'` and `strict: false` explicitly: `physical` would change every golden, and `strict` would abort a run before the runner reported anything (`assertLoadedCleanly()` gives the same guarantee per load instead).
+
 These are public engine API, not bench-only helpers — any host doing offline rendering wants them.
 
 ## What each suite gates on
@@ -92,6 +94,13 @@ only entrench it.
 The `furnace-*` scenes close that hole. An albedo-1 sphere in a uniform environment of radiance `L`
 must render *exactly* `L` — the object becomes invisible. The reference is a constant declared in
 `scenes.js`, so no amount of blessing can move it.
+
+`arealight-analytic` does the same for the analytic-light path, which no furnace can see (a furnace
+has no lights). A Lambertian plane under a square area light, with the camera framing a small patch
+beneath it, must render the closed-form irradiance of a rectangle over a parallel plane times
+albedo/π. It gates the light's radiance convention, the spherical-rectangle sampler, the NEE/BSDF-hit
+weighting and the shadow-ray origin together; `arealights-two` sits beside it with two lights of
+different size and power so the light-selection heuristic has a noise gate.
 
 **It is a ratchet, not an absolute gate.** Several BSDFs violate energy conservation today (see
 below), and gating on `|ratio − 1|` would leave the suite permanently red — which is how a gate stops
@@ -217,6 +226,45 @@ A wide *absolute* spread beside a tight per-round delta is machine drift the pai
 
 Note `pipeline.getStats()` is **not** a GPU metric — it times command encoding on the CPU and stays flat while GPU cost doubles.
 
+### Per-pixel freeze — the path determinism hides
+
+`setDeterministicMode` clears `usePixelFreeze`, and every quality scene loads through it. So the
+Tier-2 freeze path shipped to every user with no gate having rendered a single pixel through it —
+a bug there rendered at RMSE 4.49 instead of 0.03 and passed all 21 scenes.
+
+`bench freeze` renders each scene twice, identical except for `usePixelFreeze`, and reports
+`RMSE vs truth, frozen ÷ unfrozen`. Three things about it are not obvious, and each one was a
+wrong first attempt:
+
+**Both arms keep deterministic mode on.** The intuitive design — frozen render vs the deterministic
+golden — measures the *dispatch heuristics*, not freeze, because leaving deterministic mode restores
+them and they move up to 12 % of pixels between two identical runs. A seeded fault that disabled
+freeze entirely passed that version. Deterministic mode is left on and `usePixelFreeze` re-armed
+afterwards; the dispatch pins are stage fields, not settings, so they survive.
+
+**The thresholds are deliberately loosened** (`0.10` / stability `4`, against a shipping `0.02` / `8`).
+At shipping values freeze is measurably *inert*: 0.00 % of pixels move on every corpus scene, which
+matches the standing note that it does nothing on real interiors either. A rung run there would
+compare a render against itself and pass forever. This gates the code path, not the shipping
+thresholds — the same bargain `BASE_SETTINGS` makes by pinning `fireflyThreshold` to `1e9`.
+
+**It asserts it did something.** The frozen arm must differ from the unfrozen one by at least 0.2 %
+of pixels. Freeze barely moves a correct image, so "barely moved" and "never ran" are
+indistinguishable unless measured — without this the rung reproduces, one level up, exactly the
+blind spot it exists to remove. `--bless` refuses to record a scene that fails it.
+
+Both gates are mutation-tested: a freeze that silently no-ops trips the engagement check on every
+scene, and one that freezes still-noisy pixels trips the ratchet by +26 % and +94 %.
+
+`alpha-cutout` was measured and dropped rather than overlooked — its ratio swings **69.6 %** across
+five identical runs, because which pixels the frozen set catches on a cutout edge is very sensitive
+to readback timing. No ratchet loose enough to be stable there detects anything. The two kept scenes
+spread 3.7 % and 0.9 %, which is what sizes the 25 % ratchet.
+
+That instability is still unexplained. The obvious suspect — frozen pixels folding stale samples
+into their own variance, which drives the freeze decision — was fixed and **ruled out**: it halved
+the spread on both kept scenes but left `alpha-cutout` chaotic (36.7 % → 51.9 % across five runs).
+
 ### Denoisers — a ratio, so there is nothing to bless away
 
 Every other suite measures the path tracer's own accumulation buffer. Nothing measured what the
@@ -250,11 +298,14 @@ pass or fail, so a scene sitting at 2.0× never reads as clean.
 
 Standing state as of the last bless (`baselines/denoise.json`):
 
-| scene | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
-|---|---|---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.957 | 2.041 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
-| `glass-transmission` | 0.704 | 0.912 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
-| `textured-normalmap` | 0.993 | 1.304 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
+| scene | asvgf @1 | asvgf @64 | nrd @1 | nrd @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `spheres-gradient` | 0.957 | 2.041 | 0.992 | 1.000 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
+| `glass-transmission` | 0.704 | 0.912 | 0.688 | 1.000 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
+| `textured-normalmap` | 0.993 | 1.304 | 0.903 | 1.000 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
+
+`nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
+handover point it republishes the path tracer's own texture, so a converged render is never touched.
 
 **EdgeAware is no longer the offender at convergence — ASVGF is.** EdgeAware now sits at 0.71–0.98
 at 64 spp, below 1.0 on every scene, while ASVGF ranges 0.91–2.04. That inverted with

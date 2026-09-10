@@ -111,7 +111,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 			// is what makes the ratio immune to path-tracer changes: a genuine sampling
 			// improvement moves both numerator and denominator.
 			const off = await bench.setDenoiser( 'none' );
-			if ( off.asvgf || off.bilateral || off.edgeFilter || off.oidn ) {
+			if ( off.asvgf || off.nrd || off.bilateral || off.edgeFilter || off.oidn ) {
 
 				throw new Error( `setDenoiser('none') left stages enabled: ${JSON.stringify( off )}` );
 
@@ -130,7 +130,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 				// A typo'd strategy name hits the switch's default branch and silently leaves
 				// every denoiser off — the suite would then compare raw against raw, report a
 				// ratio of exactly 1.00, and pass forever.
-				const anyEnabled = state.asvgf || state.bilateral || state.edgeFilter || state.oidn;
+				const anyEnabled = state.asvgf || state.nrd || state.bilateral || state.edgeFilter || state.oidn;
 				if ( ! anyEnabled ) {
 
 					throw new Error(

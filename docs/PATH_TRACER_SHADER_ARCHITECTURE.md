@@ -196,7 +196,7 @@ SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RA
    - Optional sort: global radix (`resetSortGlobalHistogram`/`sortGlobalHist`/`sortGlobalPrefix`/`sortGlobalScatter`) or per-workgroup (`resetSortHistogram`/`sort`).
    - `Shade`.
    - `resetActiveCounter` → `Compact` (+ `compactCopyback` on the functional path) → `snapshotBounceCount`.
-   - Early-exit when the (stale, async-readback) survivor count for this bounce ≤ `_bounceEarlyExitThreshold`.
+   - Early-exit when the (stale, async-readback) survivors' summed throughput for this bounce falls below `_bounceEarlyExitThreshold` × a full frame's worth. Energy, not ray count: past Russian roulette a few survivors carry the weight of many.
 8. `FinalWrite` (per-pixel temporal blend + MRT writes).
 9. Async counter readback (`_maybeReadbackCounters`, every N frames) for the survivor curve.
 10. Copy write StorageTextures → readable MRT RenderTarget; publish to context; emit events; `frameCount++`.

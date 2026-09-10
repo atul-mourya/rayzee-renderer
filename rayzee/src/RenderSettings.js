@@ -1,6 +1,7 @@
 import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
 import { ENGINE_DEFAULTS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
+import { ISSUE_CODES } from './EngineIssues.js';
 
 /**
  * Routing table: maps each setting key to its target stage/handler.
@@ -78,6 +79,14 @@ const SETTING_ROUTES = {
  * Default keys to extract from ENGINE_DEFAULTS for initializing the values map.
  * Maps ENGINE_DEFAULTS key → RenderSettings key when they differ.
  */
+/** Provenance tags for getEffective(). Add-only — hosts branch on them. */
+export const SETTING_SOURCE = Object.freeze( {
+	DEFAULT: 'default',
+	HOST: 'host',
+	SCENE_METADATA: 'scene-metadata',
+	MODE_PRESET: 'mode-preset',
+} );
+
 const DEFAULTS_KEY_MAP = {
 	bounces: 'maxBounces',
 	debugMode: 'visMode',
@@ -96,12 +105,22 @@ const DEFAULTS_KEY_MAP = {
  */
 export class RenderSettings extends EventDispatcher {
 
-	constructor( defaults = ENGINE_DEFAULTS ) {
+	/**
+	 * @param {Object} [defaults]
+	 * @param {Object} [options]
+	 * @param {import('./EngineIssues.js').IssueLog} [options.issues] - records unroutable keys
+	 */
+	constructor( defaults = ENGINE_DEFAULTS, { issues = null } = {} ) {
 
 		super();
 
+		this._issues = issues;
+
 		/** @type {Map<string, *>} */
 		this._values = new Map();
+
+		/** @type {Map<string, string>} - see getEffective() */
+		this._sources = new Map();
 
 		/** @type {import('./Stages/PathTracer.js').PathTracer|null} */
 		this._pathTracer = null;
@@ -163,10 +182,10 @@ export class RenderSettings extends EventDispatcher {
 
 				if ( ! isPanorama ) return;
 
-				// ASVGF is driven entirely by MotionVector, which unprojects through
-				// projectionMatrixInverse — meaningless once every pixel is its own direction.
-				// Fall back to the spatial-only denoiser rather than leaving no strategy.
-				if ( denoisingManager?.denoiserStrategy === 'asvgf' ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
+				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once
+				// every pixel is its own direction. Fall back to the spatial-only denoiser rather
+				// than leaving no strategy.
+				if ( denoisingManager?.requiresMotionVectors ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
 				// Auto-focus raycasts via Raycaster.setFromCamera, which only knows the frustum.
 				cameraManager?.setAutoFocusMode( 'manual' );
 
@@ -224,6 +243,7 @@ export class RenderSettings extends EventDispatcher {
 			handleRenderLimitMode: ( value ) => {
 
 				stages.pathTracer?.setRenderLimitMode?.( value );
+				reconcileCompletion?.();
 
 			},
 
@@ -271,24 +291,17 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {boolean} [options.reset]  - Override the route's default reset behavior
 	 * @param {boolean} [options.silent] - Suppress the settingChanged event
 	 */
-	set( key, value, { reset, silent } = {} ) {
+	set( key, value, { reset, silent, source = SETTING_SOURCE.HOST } = {} ) {
 
-		const prev = this._values.get( key );
-		if ( prev === value ) return;
+		const applied = this._applyOne( key, value, source );
+		if ( ! applied?.route ) return;
 
-		this._values.set( key, value );
-
-		const route = SETTING_ROUTES[ key ];
-		if ( ! route ) return;
-
-		this._applyRoute( route, value, prev );
-
-		const shouldReset = reset !== undefined ? reset : ( route.reset ?? true );
+		const shouldReset = reset !== undefined ? reset : ( applied.route.reset ?? true );
 		if ( shouldReset ) this._resetCallback?.();
 
 		if ( ! silent ) {
 
-			this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev } );
+			this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev: applied.prev } );
 
 		}
 
@@ -300,28 +313,22 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Object} [options]
 	 * @param {boolean} [options.silent] - Suppress settingChanged events
 	 * @param {boolean} [options.reset]  - Override the routes' default reset behavior
+	 * @param {string}  [options.source] - Provenance tag; see SETTING_SOURCE
 	 */
-	setMany( updates, { silent, reset } = {} ) {
+	setMany( updates, { silent, reset, source = SETTING_SOURCE.HOST } = {} ) {
 
 		let needsReset = false;
 
 		for ( const [ key, value ] of Object.entries( updates ) ) {
 
-			const prev = this._values.get( key );
-			if ( prev === value ) continue;
+			const applied = this._applyOne( key, value, source );
+			if ( ! applied?.route ) continue;
 
-			this._values.set( key, value );
-
-			const route = SETTING_ROUTES[ key ];
-			if ( ! route ) continue;
-
-			this._applyRoute( route, value, prev );
-
-			if ( route.reset ?? true ) needsReset = true;
+			if ( applied.route.reset ?? true ) needsReset = true;
 
 			if ( ! silent ) {
 
-				this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev } );
+				this.dispatchEvent( { type: EngineEvents.SETTING_CHANGED, key, value, prev: applied.prev } );
 
 			}
 
@@ -332,9 +339,70 @@ export class RenderSettings extends EventDispatcher {
 
 	}
 
+	/**
+	 * Stores one value, tags its provenance and pushes it to its stage.
+	 * @returns {?{route: ?Object, prev: *}} null when the value did not change
+	 * @private
+	 */
+	_applyOne( key, value, source ) {
+
+		const prev = this._values.get( key );
+		if ( prev === value ) return null;
+
+		this._values.set( key, value );
+		this._sources.set( key, source );
+
+		const route = SETTING_ROUTES[ key ];
+		if ( ! route ) {
+
+			this._reportUnknownKey( key );
+			return { route: null, prev };
+
+		}
+
+		this._applyRoute( route, value, prev );
+		return { route, prev };
+
+	}
+
+	/** Stored but never applied: a typo becoming a wrong image. @private */
+	_reportUnknownKey( key ) {
+
+		this._issues?.record(
+			ISSUE_CODES.SETTING_UNKNOWN_KEY,
+			`unknown setting "${key}" — stored but never applied to any stage`,
+			{ key }
+		);
+
+	}
+
 	get( key ) {
 
 		return this._values.get( key );
+
+	}
+
+	/**
+	 * Every live setting with the value in force and who put it there. `routed: false` means
+	 * stored but reaching no stage — see _reportUnknownKey.
+	 *
+	 * @returns {Object<string, {value: *, source: string, routed: boolean}>}
+	 */
+	getEffective() {
+
+		const out = {};
+
+		for ( const [ key, value ] of this._values ) {
+
+			out[ key ] = {
+				value,
+				source: this._sources.get( key ) ?? SETTING_SOURCE.DEFAULT,
+				routed: SETTING_ROUTES[ key ] !== undefined,
+			};
+
+		}
+
+		return out;
 
 	}
 
@@ -395,6 +463,7 @@ export class RenderSettings extends EventDispatcher {
 			if ( key in defaults ) {
 
 				this._values.set( key, defaults[ key ] );
+				this._sources.set( key, SETTING_SOURCE.DEFAULT );
 
 			}
 
@@ -406,6 +475,7 @@ export class RenderSettings extends EventDispatcher {
 			if ( defaultsKey in defaults ) {
 
 				this._values.set( settingsKey, defaults[ defaultsKey ] );
+				this._sources.set( settingsKey, SETTING_SOURCE.DEFAULT );
 
 			}
 

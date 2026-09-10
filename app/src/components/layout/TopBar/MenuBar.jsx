@@ -27,7 +27,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 		if ( ! file ) return;
 
 		// Validate file type
-		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usdz', '.zip' ];
+		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usd', '.usda', '.usdc', '.usdz', '.zip' ];
 		const fileName = file.name.toLowerCase();
 		const isSupported = supportedFormats.some( format => fileName.endsWith( format ) );
 
@@ -35,7 +35,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 			toast( {
 				title: "Invalid File Type",
-				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usdz) or a .zip (incl. pbrt scenes)",
+				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or a .zip (incl. pbrt scenes)",
 				variant: "destructive",
 			} );
 			return;
@@ -44,13 +44,13 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 		try {
 
-			// loadAssetFromFile dispatches by format (model / archive / environment),
-			// so the UI doesn't branch on extension — .zip (OBJ/MTL, pbrt) and direct
-			// models all route from one entry point.
+			// loadFile dispatches by format (model / archive / environment), so the UI
+			// doesn't branch on extension — .zip (OBJ/MTL, pbrt) and direct models all
+			// route from one entry point, guarded against a concurrent load.
 			const app = getApp();
-			if ( app?.assetLoader ) {
+			if ( app ) {
 
-				await app.assetLoader.loadAssetFromFile( file );
+				await app.loadFile( file );
 
 				toast( {
 					title: "Model Loaded",
@@ -65,11 +65,16 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 		} catch ( error ) {
 
-			toast( {
-				title: "Error Loading Model",
-				description: error.message || "Failed to load model",
-				variant: "destructive",
-			} );
+			toast( error?.code === 'LOAD_IN_PROGRESS'
+				? {
+					title: "Still Loading",
+					description: "Wait for the current load to finish, then open the file again.",
+				}
+				: {
+					title: "Error Loading Model",
+					description: error.message || "Failed to load model",
+					variant: "destructive",
+				} );
 
 		} finally {
 
@@ -85,7 +90,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usdz,.zip"
+				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip"
 				onChange={handleFileSelect}
 				style={{ display: 'none' }}
 			/>

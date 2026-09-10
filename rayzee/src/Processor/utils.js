@@ -177,6 +177,17 @@ export function disposeObjectFromMemory( object, exeptions = [] ) {
 
 }
 
+/** Frees only geometry the engine allocated inside an adopted model; the rest is the host's. */
+export function disposeEngineOwnedResources( object ) {
+
+	object?.traverse( ( child ) => {
+
+		if ( child.geometry?.userData?.__rayzeeOwned ) child.geometry.dispose();
+
+	} );
+
+}
+
 
 
 /**

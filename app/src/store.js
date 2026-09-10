@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
-import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager } from 'rayzee';
+import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
+import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
 
@@ -81,6 +81,11 @@ const useStore = create( set => ( {
 	setUpscalingProgress: val => set( { upscalingProgress: val } ),
 	isRenderComplete: false,
 	setIsRenderComplete: val => set( { isRenderComplete: val } ),
+	// Which of the three racing stop conditions retired the frame: 'timeLimit' | 'samples' |
+	// 'converged', null while rendering. The three are not mutually exclusive, so without this
+	// a render that stops at 540 of 600 looks indistinguishable from one that stalled.
+	completionReason: null,
+	setCompletionReason: val => set( { completionReason: val } ),
 	isRendering: true,
 	setIsRendering: val => set( { isRendering: val } ),
 	resetLoading: () => set( { loading: { isLoading: false, progress: 0, title: '', status: '', loadedBytes: null, totalBytes: null, canCancel: false } } ),
@@ -422,6 +427,59 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
+	// NRD (ReBLUR) handlers. Presets rewrite the slider state so the UI shows what the engine runs.
+	handleNrdQualityPresetChange: handleChange(
+		val => set( { nrdQualityPreset: val } ),
+		( val, app ) => {
+
+			if ( ! NRD_QUALITY_PRESETS[ val ] ) return;
+
+			app.denoisingManager.applyNRDPreset( val );
+			// Mirror the values the engine actually resolved, so the sliders can't drift from it.
+			const live = app.stages.nrd?.settings;
+			if ( live ) set( {
+				nrdMaxAccumulatedFrameNum: live.maxAccumulatedFrameNum,
+				nrdMaxBlurRadius: live.maxBlurRadius,
+				nrdPrepassBlurRadius: live.prepassBlurRadius,
+				nrdAntiFirefly: live.enableAntiFirefly,
+			} );
+			// Hard reset drops the denoiser history built under the old settings.
+			app.reset();
+
+		},
+		false
+	),
+
+	handleNrdDebugModeChange: handleChange(
+		val => set( { nrdDebugMode: parseInt( val ) } ),
+		( val, app ) => app.denoisingManager.setNRDDebugMode( parseInt( val ) ),
+		false
+	),
+
+	handleNrdMaxAccumulatedFrameNumChange: handleChange(
+		val => set( { nrdMaxAccumulatedFrameNum: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { maxAccumulatedFrameNum: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdMaxBlurRadiusChange: handleChange(
+		val => set( { nrdMaxBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { maxBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdPrepassBlurRadiusChange: handleChange(
+		val => set( { nrdPrepassBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { prepassBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdAntiFireflyChange: handleChange(
+		val => set( { nrdAntiFirefly: val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { enableAntiFirefly: val } ),
+		false
+	),
+
 	// Smart ASVGF configuration based on render mode
 	handleConfigureASVGFForMode: ( mode ) => {
 
@@ -469,23 +527,29 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => app.stages.pathTracer?.setAccumulationEnabled( val )
 	),
 
+	// These three are summed into the wavefront loop bound, so an un-unwrapped [n] from a
+	// Slider turns `a + b + c` into string concatenation ([20] + 5 + 8 === '2058') and the
+	// bounce loop runs to 2058 whenever the survivor curve can't early-exit it.
 	handleBouncesChange: val => {
 
-		set( { bounces: val } );
-		getApp()?.settings.set( 'maxBounces', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { bounces: v } );
+		getApp()?.settings.set( 'maxBounces', v );
 
 	},
 
 	handleTransmissiveBouncesChange: val => {
 
-		set( { transmissiveBounces: val } );
-		getApp()?.settings.set( 'transmissiveBounces', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { transmissiveBounces: v } );
+		getApp()?.settings.set( 'transmissiveBounces', v );
 
 	},
 	handleMaxSubsurfaceStepsChange: val => {
 
-		set( { maxSubsurfaceSteps: val } );
-		getApp()?.settings.set( 'maxSubsurfaceSteps', val );
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { maxSubsurfaceSteps: v } );
+		getApp()?.settings.set( 'maxSubsurfaceSteps', v );
 
 	},
 
@@ -758,7 +822,9 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Denoiser strategy and EdgeAware filter handlers
 	handleDenoiserStrategyChange: handleChange(
 		val => set( { denoiserStrategy: val, enableASVGF: val === 'asvgf' } ),
-		( val, app ) => app.denoisingManager.setStrategy( val, get().asvgfQualityPreset ),
+		( val, app ) => app.denoisingManager.setStrategy(
+			val, val === 'nrd' ? get().nrdQualityPreset : get().asvgfQualityPreset
+		),
 		false // engine method handles reset internally
 	),
 
@@ -1005,6 +1071,44 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 		set( { environmentRotation: val } );
 		getApp()?.settings.set( 'environmentRotation', val[ 0 ] );
+
+	},
+
+	// Mirrors an environment the engine installed by itself — today that is the HDRI authored
+	// into a model file's metadata, reported via the SceneMetadataApplied event. The engine has
+	// already applied its own settings; this only pulls the UI back in sync with them.
+	syncSceneEnvironment: env => {
+
+		if ( ! env?.sourceFile ) return;
+
+		const patch = {
+			environmentMode: 'hdri',
+			enableEnvironment: true,
+			showBackground: true,
+			transparentBackground: false,
+		};
+
+		if ( env.intensity !== undefined ) {
+
+			patch.environmentIntensity = env.intensity;
+			patch.backgroundIntensity = env.intensity;
+
+		}
+
+		if ( env.rotation !== undefined ) patch.environmentRotation = env.rotation;
+
+		set( patch );
+
+		// Prefer the catalog entry when the authored URL is one we already know, so the
+		// Environments tab highlights the matching thumbnail instead of nothing.
+		const known = ( useEnvironmentStore.getState().environments || [] ).find( e => e.url === env.sourceFile );
+		useAssetsStore.getState().setEnvironment( known || {
+			id: env.sourceFile,
+			name: decodeURIComponent( env.sourceFile.split( /[?#]/ )[ 0 ].split( '/' ).pop() || '' ) || 'Scene Environment',
+			preview: null,
+			url: env.sourceFile,
+			source: 'scene',
+		} );
 
 	},
 
@@ -1420,10 +1524,16 @@ const useLightStore = create( set => ( {
 
 				} else if ( prop === 'angle' ) {
 
-					if ( light.type === 'DirectionalLight' || light.type === 'SpotLight' ) {
+					// UI is degrees, engine is radians. Spot cone half-angle is a real three.js
+					// property; the sun's angular diameter is ours, so it goes on userData —
+					// see the matching read in LightManager._buildDescriptor.
+					if ( light.type === 'SpotLight' ) {
 
-						// Convert degrees to radians for Three.js
 						light.angle = value * ( Math.PI / 180 );
+
+					} else if ( light.type === 'DirectionalLight' ) {
+
+						light.userData.angle = value * ( Math.PI / 180 );
 
 					}
 
@@ -1565,20 +1675,6 @@ const useLightStore = create( set => ( {
 				app.reset();
 
 			}
-
-		}
-
-		return { lights };
-
-	} ),
-
-	// Add angle support for directional lights
-	updateDirectionalLightAngle: ( idx, angle ) => set( s => {
-
-		const lights = [ ...s.lights ];
-		if ( lights[ idx ] && lights[ idx ].type === 'DirectionalLight' ) {
-
-			lights[ idx ].angle = angle;
 
 		}
 
@@ -2278,28 +2374,7 @@ const useMaterialStore = create( ( set, get ) => ( {
 		obj.material.opacity = opacity;
 		get().updateMaterialProperty( 'opacity', opacity );
 
-		// Recalculate alphaMode if transparent is enabled
-		if ( obj.material.transparent ) {
-
-			let alphaMode = 0; // OPAQUE
-			if ( obj.material.alphaTest > 0.0 ) {
-
-				alphaMode = 1; // MASK
-
-			} else if ( opacity < 1.0 ) {
-
-				alphaMode = 2; // BLEND
-
-			} else if ( obj.material.map && obj.material.map.format === 1023 ) { // 1023 = RGBAFormat
-
-				alphaMode = 2; // BLEND
-
-			}
-
-			// Update alphaMode
-			get().updateMaterialProperty( 'alphaMode', alphaMode );
-
-		}
+		get().syncAlphaMode();
 
 	},
 	handleSideChange: val => get().updateMaterialProperty( 'side', val ),
@@ -2323,27 +2398,33 @@ const useMaterialStore = create( ( set, get ) => ( {
 		obj.material.transparent = val;
 		get().updateMaterialProperty( 'transparent', val ? 1 : 0 );
 
-		// Recalculate alphaMode based on new transparent state
-		let alphaMode = 0; // OPAQUE
-		if ( obj.material.alphaTest > 0.0 ) {
-
-			alphaMode = 1; // MASK
-
-		} else if ( val && obj.material.opacity < 1.0 ) {
-
-			alphaMode = 2; // BLEND
-
-		} else if ( obj.material.map && obj.material.map.format === 1023 && val ) { // 1023 = RGBAFormat
-
-			alphaMode = 2; // BLEND
-
-		}
-
-		// Update alphaMode
-		get().updateMaterialProperty( 'alphaMode', alphaMode );
+		get().syncAlphaMode();
 
 	},
-	handleAlphaTestChange: val => get().updateMaterialProperty( 'alphaTest', val[ 0 ] ),
+	handleAlphaTestChange: val => {
+
+		const obj = useStore.getState().selectedObject;
+		if ( ! obj?.isMesh || ! obj.material ) return;
+
+		obj.material.alphaTest = val[ 0 ];
+		get().updateMaterialProperty( 'alphaTest', val[ 0 ] );
+		get().syncAlphaMode();
+
+	},
+
+	/**
+	 * Re-derive alphaMode from the material's current alpha inputs. Every control that touches
+	 * transparency has to call this: alphaMode is the only alpha field the shader reads, so a
+	 * control that moves alphaTest/transparent/opacity without it is inert.
+	 */
+	syncAlphaMode: () => {
+
+		const obj = useStore.getState().selectedObject;
+		if ( ! obj?.isMesh || ! obj.material ) return;
+
+		get().updateMaterialProperty( 'alphaMode', deriveAlphaMode( obj.material ) );
+
+	},
 	handleSheenChange: val => get().updateMaterialProperty( 'sheen', val[ 0 ] ),
 	handleSheenRoughnessChange: val => get().updateMaterialProperty( 'sheenRoughness', val[ 0 ] ),
 	handleAnisotropyChange: val => get().updateMaterialProperty( 'anisotropy', val[ 0 ] ),

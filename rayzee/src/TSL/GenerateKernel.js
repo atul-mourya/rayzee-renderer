@@ -96,7 +96,7 @@ export function buildGenerateKernel( params ) {
 		If( auxOn, () => {
 
 			// default: normal +Z, depth 1 (far), black albedo (background/miss). Per-CHUNK G-buffer → LOCAL slot.
-			writeGBuffer( gBufferRW, rayID, vec3( 0.0, 0.0, 1.0 ), float( 1.0 ), vec3( 0.0 ) );
+			writeGBuffer( gBufferRW, rayID, vec3( 0.0, 0.0, 1.0 ), float( 1.0 ), vec3( 0.0 ), float( 0.0 ) );
 			// DDFA: seed the see-through aux tint to white (no tint yet). RMW preserves slot-5 xyz (sigmaA).
 			writeFeatureThroughput( rayBufferRW, rayID, vec3( 1.0 ) );
 

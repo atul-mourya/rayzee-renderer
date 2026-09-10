@@ -7,7 +7,7 @@
 
 A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic — use it with React, Vue, vanilla JS, or any other setup.
 
-🌐 **[Live Demo](https://atul-mourya.github.io/RayTracing/)** — the same demo app linked from the root monorepo README, built on this engine.
+🌐 **[Live Demo](https://atul-mourya.github.io/rayzee-renderer/)** — the same demo app linked from the root monorepo README, built on this engine.
 
 ## Table of Contents
 
@@ -232,7 +232,7 @@ async function togglePathTrace(on) {
     engine = new PathTracerApp(ptCanvas, { autoResize: false });
     await engine.init();
     await engine.loadEnvironment('/env.hdr');             // required for realistic lighting
-    await engine.loadObject3D(yourScene);                 // rayzee takes ownership — pass a clone if the host still renders it
+    await engine.loadObject3D(yourScene);                 // rayzee renders its own copy — yourScene is left untouched
     engine.animate();
   }
   ptCanvas.style.display = on ? 'block' : 'none';
@@ -243,7 +243,7 @@ async function togglePathTrace(on) {
 
 Key constraints:
 
-- **`loadObject3D` takes ownership** of the passed `Object3D` (sets it as the active model, disposes the previous one). If your host app continues to render the same scene graph, pass `scene.clone(true)` — deep-cloning shares geometry/texture data, so memory cost is small. Clone once on first toggle, not on every switch.
+- **`loadObject3D` copies the passed `Object3D`.** The engine never reparents, rewrites or disposes your tree, so handing it a subtree of a scene your host still renders is safe — no clone needed on your side. The copy shares geometry, material and texture data by reference, so it costs scene-graph nodes, not GPU memory, and any ancestor transform is baked in so the model renders where your host sees it. The flip side: later edits to the object you passed do not reach the render. Mutate `engine.sceneModel` (the copy) and call `refitBVH()`/`refitBLASes()` instead.
 - **Rayzee ignores `onBeforeCompile`.** It reads PBR material properties (albedo, roughness, metalness, …) directly into its own GPU buffers; custom shader injection on the host material has no effect on the path-traced view.
 - **Always load an environment.** Path tracing without an env map produces a black background and no indirect lighting.
 - **`three` is a peer dep on both sides.** Vite/webpack dedupe automatically. For script-tag setups, load one copy of `three` globally.
@@ -339,12 +339,15 @@ engine.cancelLoad()                           // Abort an in-flight download (ne
 
 ```js
 const id = await engine.addModel(url, { name })                  // Append a model, rebuild in place
-const id = await engine.addModelFromObject3D(object3d, { name })  // Append a caller-owned Object3D (caller retains ownership)
+const id = await engine.addModelFromObject3D(object3d, { name })  // Append a copy of a caller-owned Object3D (yours is untouched)
+engine.getSceneObject(id)                                         // Resolve an id to the rendered root (the copy)
 await engine.removeSceneObject(id)                                // Remove by id — returns false if not found
 engine.setSceneObjectVisibility(id, visible)                      // Toggle visibility with an O(1) BVH-leaf patch, no rebuild
 ```
 
-`id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. The built-in ground plane is permanent and can't be removed.
+`engine.sceneModel` is the root of what is actually being rendered — for `loadObject3D` that is the engine's copy, and it is the object to mutate before `refitBVH()`.
+
+`id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. For `addModelFromObject3D` the engine carries your object's uuid onto its copy, so the id matches the object you passed. The built-in ground plane is permanent and can't be removed.
 
 #### Settings
 
@@ -460,6 +463,8 @@ engine.lightManager.getAll()                // Get all light descriptors
 engine.lightManager.sync()                  // Re-upload light data to GPU
 engine.lightManager.showHelpers(true)       // Toggle visual helpers
 ```
+
+Light `intensity` follows Blender: radiant power in watts for point, spot and area lights, irradiance in W/m² for directional. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance (their `power` field is `intensity · width · height · π`); the importer converts it to power through the light's world area so the authored radiance is reproduced exactly, then applies the profile's `areaLightIntensityScale`.
 
 ### engine.animationManager
 
