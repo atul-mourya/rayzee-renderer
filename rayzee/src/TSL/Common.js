@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp, select } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -17,6 +17,13 @@ export const MIN_CLEARCOAT_ROUGHNESS = 0.089;
 export const MAX_ROUGHNESS = 1.0;
 export const MIN_PDF = 0.001;
 export const REC709_LUMINANCE_COEFFICIENTS = vec3( 0.2126, 0.7152, 0.0722 );
+
+export const FP16_MAX = 65504.0;
+
+// NaN/±Inf guard: mix() propagates NaN, so one firefly would poison a temporal history forever.
+export const sanitize1 = ( x, ceiling = 1e7 ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, ceiling );
+export const sanitizeRGB = ( c, ceiling = 1e7 ) =>
+	vec3( sanitize1( c.x, ceiling ), sanitize1( c.y, ceiling ), sanitize1( c.z, ceiling ) );
 import { MATERIAL_DATA_LAYOUT } from '../EngineDefaults.js';
 
 export const MATERIAL_SLOTS = MATERIAL_DATA_LAYOUT.SLOTS_PER_MATERIAL;

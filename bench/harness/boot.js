@@ -676,7 +676,7 @@ async function probes() {
 }
 
 /**
- * Switches the real-time denoiser. 'none' | 'asvgf' | 'edgeaware'.
+ * Switches the real-time denoiser. 'none' | 'asvgf' | 'nrd' | 'edgeaware'.
  *
  * Returns the resulting stage enable-state so a suite can assert the strategy actually took
  * effect rather than trusting the call — a typo'd name hits the switch's default branch and
@@ -720,6 +720,7 @@ async function setDenoiser( strategy, preset, options = {} ) {
 	return {
 		strategy,
 		asvgf: !! s.asvgf?.enabled,
+		nrd: !! s.nrd?.enabled,
 		variance: !! s.variance?.enabled,
 		bilateral: !! s.bilateralFilter?.enabled,
 		edgeFilter: !! s.edgeFilter?.enabled,
@@ -839,6 +840,7 @@ async function denoisedNonFinite() {
 	const target = ( s.bilateralFilter?.enabled && s.bilateralFilter._outputTarget )
 		|| ( s.edgeFilter?.enabled && s.edgeFilter._outputTarget )
 		|| ( s.asvgf?.enabled && s.asvgf._outputRT )
+		|| ( s.nrd?.enabled && s.nrd.outputTarget )
 		|| app.stages.pathTracer.storageTextures.readTarget;
 
 	const { width, height } = RENDER_SIZE;

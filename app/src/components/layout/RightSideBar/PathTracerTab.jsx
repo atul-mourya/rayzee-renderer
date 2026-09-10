@@ -206,6 +206,12 @@ const PathTracerTab = () => {
 		asvgfQualityPreset,
 		asvgfDebugMode,
 		showAsvgfHeatmap,
+		nrdQualityPreset,
+		nrdDebugMode,
+		nrdMaxAccumulatedFrameNum,
+		nrdMaxBlurRadius,
+		nrdPrepassBlurRadius,
+		nrdAntiFirefly,
 		denoiserStrategy,
 		filterStrength,
 		edgeAtrousIterations,
@@ -276,6 +282,12 @@ const PathTracerTab = () => {
 		handleAsvgfQualityPresetChange,
 		handleAsvgfDebugModeChange,
 		handleShowAsvgfHeatmapChange,
+		handleNrdQualityPresetChange,
+		handleNrdDebugModeChange,
+		handleNrdMaxAccumulatedFrameNumChange,
+		handleNrdMaxBlurRadiusChange,
+		handleNrdPrepassBlurRadiusChange,
+		handleNrdAntiFireflyChange,
 		handleDenoiserStrategyChange,
 		handleFilterStrengthChange,
 		handleEdgeAtrousIterationsChange,
@@ -553,9 +565,54 @@ const PathTracerTab = () => {
 							<SelectItem value="none">None</SelectItem>
 							<SelectItem value="edgeaware">EdgeAware</SelectItem>
 							<SelectItem value="asvgf">ASVGF</SelectItem>
+							<SelectItem value="nrd">NRD (ReBLUR)</SelectItem>
 						</SelectContent>
 					</Select>
 				</Row>
+
+				{denoiserStrategy === 'nrd' && ( <>
+					<Row>
+						<Select value={nrdQualityPreset} onValueChange={handleNrdQualityPresetChange}>
+							<span className="opacity-50 text-xs truncate">Quality Preset</span>
+							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+								<SelectValue placeholder="Select preset" />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="low">Low</SelectItem>
+								<SelectItem value="medium">Medium</SelectItem>
+								<SelectItem value="high">High</SelectItem>
+							</SelectContent>
+						</Select>
+					</Row>
+					<Row>
+						<Slider label={"Max History"} min={1} max={63} step={1} value={[ nrdMaxAccumulatedFrameNum ]} onValueChange={handleNrdMaxAccumulatedFrameNumChange} />
+					</Row>
+					<Row>
+						<Slider label={"Blur Radius"} min={0} max={60} step={1} value={[ nrdMaxBlurRadius ]} onValueChange={handleNrdMaxBlurRadiusChange} />
+					</Row>
+					<Row>
+						<Slider label={"Pre-pass Radius"} min={0} max={60} step={1} value={[ nrdPrepassBlurRadius ]} onValueChange={handleNrdPrepassBlurRadiusChange} />
+					</Row>
+					<Row>
+						<Switch label={"Anti-Firefly"} checked={nrdAntiFirefly} onCheckedChange={handleNrdAntiFireflyChange}/>
+					</Row>
+					<Row>
+						<Select value={nrdDebugMode.toString()} onValueChange={handleNrdDebugModeChange}>
+							<span className="opacity-50 text-xs truncate">Debug View</span>
+							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+								<SelectValue placeholder="Select view" />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="0">Beauty</SelectItem>
+								<SelectItem value="1">History Length</SelectItem>
+								<SelectItem value="2">Hit Distance</SelectItem>
+								<SelectItem value="3">Roughness</SelectItem>
+								<SelectItem value="4">Fast History</SelectItem>
+								<SelectItem value="5">Disocclusion</SelectItem>
+							</SelectContent>
+						</Select>
+					</Row>
+				</> )}
 
 				{denoiserStrategy === 'edgeaware' && ( <>
 					<Row>

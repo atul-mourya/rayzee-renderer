@@ -172,7 +172,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] Explore AI-driven denoising techniques beyond OIDN
 - [ ] <https://upscalerjs.com/models/>
 - [ ] <https://enhance.addy.ie/>
-- [ ] NRD - Nvidia Realtime Denoiser
+- [x] NRD - Nvidia Realtime Denoiser (ReBLUR port, `Stages/NRD.js`; diffuse/specular signal split still open — see `docs/NRD_DENOISER.md`)
 
 ## AI Upscaler
 

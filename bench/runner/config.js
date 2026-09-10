@@ -218,6 +218,8 @@ export const DENOISE_GATES = {
 	sppLadder: [ 1, 64 ],
 	strategies: [
 		{ id: 'asvgf', preset: 'medium' },
+		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (Stages/NRD.js).
+		{ id: 'nrd', preset: 'medium' },
 		{ id: 'edgeaware' },
 		// OIDN was ungated, which left every change to the DDFA aux albedo/normal guide
 		// unmeasurable. 'high' is the clean-aux tier production uses.

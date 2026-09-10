@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, exp, log, clamp, dot, length, select, smoothstep, mix,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, mix,
 	instanceIndex,
 	sampler,
 	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
@@ -29,6 +29,7 @@ import { IndirectLightingResult, sampleCone } from './LightsCore.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
 import { evaluateDFG } from './MaterialProperties.js';
 import { dielectricF0 } from './Fresnel.js';
+import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
 import { calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample } from './EmissiveSampling.js';
@@ -57,7 +58,7 @@ import {
 	readHitDistance, readHitBarycentrics, readHitNormal,
 	readHitMaterialIndex, readHitTriangleIndex,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
-	writeGBuffer, readGBuffer, gbDecodeNormalDepth,
+	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
 	readFeatureThroughput, writeFeatureThroughput,
 } from '../Processor/PackedRayBuffer.js';
@@ -225,6 +226,17 @@ export function buildShadeKernel( params ) {
 		const bounceIndex = int( currentBounce ).toVar();
 		const sssSteps = readSssSteps( rayBufferRW, rayID ).toVar();
 		const transparentCount = readTransparentCount( rayBufferRW, rayID ).toVar();
+
+		// NRD guide: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
+		// doesn't shorten it. Unconditional at depth 1, so the post-skip segment wins.
+		If( auxOn.and( cameraDepth.equal( 1 ) ), () => {
+
+			const scatterViewZ = cameraViewMatrix.mul( vec4( origin, 1.0 ) ).z.abs();
+			const norm = scatterViewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A );
+			const total = readMisRayT( rayBufferRW, rayID ).add( min( hitDist, float( 1e6 ) ) );
+			writeGBufferHitDist( gBufferRW, pixelIndex, total.div( max( norm, float( 1e-4 ) ) ).clamp( 0.0, 1.0 ) );
+
+		} );
 
 		// ── Analytic ground-plane shadow catcher (primary ray only, no geometry) ──
 		// A horizontal plane at y = groundCatcherHeight. For a bounce-0 ray that crosses it

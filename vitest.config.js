@@ -30,6 +30,7 @@ export default defineConfig( {
 				'rayzee/src/Stages/EdgeFilter.js',
 				'rayzee/src/Stages/MotionVector.js',
 				'rayzee/src/Stages/NormalDepth.js',
+				'rayzee/src/Stages/NRD.js',
 				'rayzee/src/Stages/PathTracer.js',
 				'rayzee/src/Stages/PathTracerStage.js',
 				'rayzee/src/Stages/Variance.js',

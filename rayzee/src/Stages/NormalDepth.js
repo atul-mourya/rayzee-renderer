@@ -8,7 +8,7 @@ import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
 import { cameraRayDirection } from '../TSL/CameraRay.js';
 import { getMaterial } from '../TSL/Common.js';
-import { computeUVCache, processNormal, processBump, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
+import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
 
 /**
  * NormalDepth — primary-ray G-buffer for SVGF gates.
@@ -29,9 +29,10 @@ import { computeUVCache, processNormal, processBump, triangleUVTangent, buildBuc
  * map, recomputed from the SAME deterministic hit — no extra ray) so the
  * spatial denoiser's edge-stop can see normal-map detail the flat geometric
  * normal hides. Deterministic ⇒ jitter-free, so it's safe for the gates.
+ * Its .w is the sampled material roughness (NRD's normal+roughness guide).
  *
  * Publishes: pathtracer:normalDepth, pathtracer:prevNormalDepth,
- *            pathtracer:shadingNormal
+ *            pathtracer:shadingNormal (rgb = shading normal·0.5+0.5, a = roughness)
  */
 export class NormalDepth extends RenderStage {
 
@@ -257,6 +258,7 @@ export class NormalDepth extends RenderStage {
 				// Shading normal: perturb the geometric normal by the normal/bump map
 				// from the SAME hit (deterministic UV → jitter-free). Miss → geo default.
 				const shadingNormal = hit.normal.toVar();
+				const roughness = float( 1.0 ).toVar();
 				If( hit.didHit, () => {
 
 					const material = RayTracingMaterial.wrap(
@@ -274,12 +276,14 @@ export class NormalDepth extends RenderStage {
 
 					const mapped = processNormal( hit.normal, material, uvCache, uvTangent ).toVar();
 					shadingNormal.assign( processBump( mapped, material, uvCache ) );
+					// Same floor the Shade kernel applies before shading.
+					roughness.assign( processMetalnessRoughness( material, uvCache ).y.clamp( 0.05, 1.0 ) );
 
 				} );
 
 				const shadingResult = hit.didHit.select(
-					vec4( shadingNormal.mul( 0.5 ).add( 0.5 ), depth ),
-					vec4( 0.0, 0.0, 0.0, float( 65504.0 ) )
+					vec4( shadingNormal.mul( 0.5 ).add( 0.5 ), roughness ),
+					vec4( 0.0, 0.0, 0.0, 1.0 )
 				);
 
 				textureStore(

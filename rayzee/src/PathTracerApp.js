@@ -9,6 +9,7 @@ import { PathTracer } from './Stages/PathTracer.js';
 import { NormalDepth } from './Stages/NormalDepth.js';
 import { MotionVector } from './Stages/MotionVector.js';
 import { ASVGF } from './Stages/ASVGF.js';
+import { NRD } from './Stages/NRD.js';
 import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
@@ -524,7 +525,12 @@ export class PathTracerApp extends EventDispatcher {
 		if ( this.pipeline ) {
 
 			this.pipeline.reset();
-			if ( ! soft ) this.pipeline.eventBus.emit( 'asvgf:reset' );
+			if ( ! soft ) {
+
+				this.pipeline.eventBus.emit( 'asvgf:reset' );
+				this.pipeline.eventBus.emit( 'denoiser:reset' );
+
+			}
 
 		}
 
@@ -2857,6 +2863,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.pipeline.addStage( this.stages.pathTracer );
 		this.pipeline.addStage( this.stages.normalDepth );
 		this.pipeline.addStage( this.stages.motionVector );
+		this.pipeline.addStage( this.stages.nrd );
 		this.pipeline.addStage( this.stages.asvgf );
 		this.pipeline.addStage( this.stages.variance );
 		this.pipeline.addStage( this.stages.bilateralFilter );
@@ -3090,6 +3097,7 @@ export class PathTracerApp extends EventDispatcher {
 			pathTracer: this.stages.pathTracer
 		} );
 		this.stages.asvgf = new ASVGF( this.renderer, { enabled: false } );
+		this.stages.nrd = new NRD( this.renderer, { enabled: false, pathTracer: this.stages.pathTracer } );
 		this.stages.variance = new Variance( this.renderer, { enabled: false } );
 		this.stages.bilateralFilter = new BilateralFilter( this.renderer, { enabled: false } );
 		this.stages.edgeFilter = new EdgeFilter( this.renderer, { enabled: false } );
@@ -3114,6 +3122,7 @@ export class PathTracerApp extends EventDispatcher {
 				normalDepth: this.stages.normalDepth,
 				motionVector: this.stages.motionVector,
 				asvgf: this.stages.asvgf,
+				nrd: this.stages.nrd,
 				variance: this.stages.variance,
 				bilateralFilter: this.stages.bilateralFilter,
 				edgeFilter: this.stages.edgeFilter,

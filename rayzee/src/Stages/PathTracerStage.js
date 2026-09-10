@@ -1157,6 +1157,9 @@ export class PathTracerStage extends RenderStage {
 		context.setTexture( 'pathtracer:normalDepth', writeTex.normalDepth );
 		context.setTexture( 'pathtracer:albedo', writeTex.albedo );
 
+		// Not the same as the context's own `accumulatedFrames`, which counts pipeline renders — this
+		// freezes when the frame retires or the camera moves, which is what a denoiser needs.
+		context.setState( 'pathtracer:samples', this.frameCount );
 		context.setState( 'interactionMode', this.cameraOptimizer?.isInInteractionMode() ?? false );
 		context.setState( 'renderMode', this.renderMode.value );
 
@@ -1224,6 +1227,7 @@ export class PathTracerStage extends RenderStage {
 					// touched here — it is owned by ASVGF_QUALITY_PRESETS, and overwriting it
 					// with a hardcoded value meant `medium` and `high` never took effect.
 					this.emit( 'asvgf:reset' );
+					this.emit( 'denoiser:reset' );
 
 				}
 

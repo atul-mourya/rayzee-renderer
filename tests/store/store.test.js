@@ -106,3 +106,98 @@ describe( 'bounce-loop settings unwrap the Slider array', () => {
 	}
 
 } );
+
+describe( 'NRD denoiser handlers', () => {
+
+	// The preset handler reads back what the engine resolved rather than restating the table.
+	const mockApp = ( nrdSettings = {} ) => ( {
+		denoisingManager: {
+			setNRDParams: vi.fn(),
+			setNRDDebugMode: vi.fn(),
+			applyNRDPreset: vi.fn(),
+			setStrategy: vi.fn(),
+		},
+		stages: { nrd: { settings: nrdSettings } },
+		reset: vi.fn(),
+		settings: { set: vi.fn() },
+	} );
+
+	// Slider hands its callbacks a [value]; the engine setters compare and store raw numbers, so an
+	// array reaches the shader as NaN or a string.
+	const SLIDERS = [
+		[ 'handleNrdMaxAccumulatedFrameNumChange', 'maxAccumulatedFrameNum', 'nrdMaxAccumulatedFrameNum', 24 ],
+		[ 'handleNrdMaxBlurRadiusChange', 'maxBlurRadius', 'nrdMaxBlurRadius', 12 ],
+		[ 'handleNrdPrepassBlurRadiusChange', 'prepassBlurRadius', 'nrdPrepassBlurRadius', 40 ],
+	];
+
+	for ( const [ handler, engineKey, stateKey, value ] of SLIDERS ) {
+
+		it( `${handler} forwards a number, not an array`, async () => {
+
+			if ( ! store ) return;
+
+			const app = mockApp();
+			( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+
+			store.usePathTracerStore.getState()[ handler ]( [ value ] );
+
+			expect( app.denoisingManager.setNRDParams ).toHaveBeenCalledWith( { [ engineKey ]: value } );
+			expect( store.usePathTracerStore.getState()[ stateKey ] ).toBe( value );
+
+		} );
+
+	}
+
+	it( 'the quality preset rewrites the slider state so the UI matches the engine', async () => {
+
+		if ( ! store ) return;
+
+		const { NRD_QUALITY_PRESETS, NRD_DEFAULTS } = await import( '@/Constants' );
+		const resolved = { ...NRD_DEFAULTS, ...NRD_QUALITY_PRESETS.high };
+		const app = mockApp( resolved );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+
+		store.usePathTracerStore.getState().handleNrdQualityPresetChange( 'high' );
+
+		expect( app.denoisingManager.applyNRDPreset ).toHaveBeenCalledWith( 'high' );
+		const state = store.usePathTracerStore.getState();
+		expect( state.nrdQualityPreset ).toBe( 'high' );
+		expect( state.nrdMaxBlurRadius ).toBe( resolved.maxBlurRadius );
+		expect( state.nrdMaxAccumulatedFrameNum ).toBe( resolved.maxAccumulatedFrameNum );
+		// 'medium' states no deltas, so this only reads right if the engine resolved the defaults.
+		expect( state.nrdAntiFirefly ).toBe( resolved.enableAntiFirefly );
+
+	} );
+
+	it( 'the strategy switch passes the NRD preset, not the ASVGF one', async () => {
+
+		if ( ! store ) return;
+
+		const app = mockApp();
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+
+		store.usePathTracerStore.setState( { nrdQualityPreset: 'low', asvgfQualityPreset: 'high' } );
+		store.usePathTracerStore.getState().handleDenoiserStrategyChange( 'nrd' );
+
+		expect( app.denoisingManager.setStrategy ).toHaveBeenCalledWith( 'nrd', 'low' );
+
+		store.usePathTracerStore.getState().handleDenoiserStrategyChange( 'asvgf' );
+		expect( app.denoisingManager.setStrategy ).toHaveBeenLastCalledWith( 'asvgf', 'high' );
+
+	} );
+
+	it( 'the debug mode reaches the engine as an int', async () => {
+
+		if ( ! store ) return;
+
+		const app = mockApp();
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+
+		store.usePathTracerStore.getState().handleNrdDebugModeChange( '3' );
+
+		expect( app.denoisingManager.setNRDDebugMode ).toHaveBeenCalledWith( 3 );
+		expect( store.usePathTracerStore.getState().nrdDebugMode ).toBe( 3 );
+
+	} );
+
+} );

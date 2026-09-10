@@ -182,10 +182,10 @@ export class RenderSettings extends EventDispatcher {
 
 				if ( ! isPanorama ) return;
 
-				// ASVGF is driven entirely by MotionVector, which unprojects through
-				// projectionMatrixInverse — meaningless once every pixel is its own direction.
-				// Fall back to the spatial-only denoiser rather than leaving no strategy.
-				if ( denoisingManager?.denoiserStrategy === 'asvgf' ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
+				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once
+				// every pixel is its own direction. Fall back to the spatial-only denoiser rather
+				// than leaving no strategy.
+				if ( denoisingManager?.requiresMotionVectors ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
 				// Auto-focus raycasts via Raycaster.setFromCamera, which only knows the frustum.
 				cameraManager?.setAutoFocusMode( 'manual' );
 

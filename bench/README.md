@@ -298,11 +298,14 @@ pass or fail, so a scene sitting at 2.0× never reads as clean.
 
 Standing state as of the last bless (`baselines/denoise.json`):
 
-| scene | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
-|---|---|---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.957 | 2.041 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
-| `glass-transmission` | 0.704 | 0.912 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
-| `textured-normalmap` | 0.993 | 1.304 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
+| scene | asvgf @1 | asvgf @64 | nrd @1 | nrd @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `spheres-gradient` | 0.957 | 2.041 | 0.992 | 1.000 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
+| `glass-transmission` | 0.704 | 0.912 | 0.688 | 1.000 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
+| `textured-normalmap` | 0.993 | 1.304 | 0.903 | 1.000 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
+
+`nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
+handover point it republishes the path tracer's own texture, so a converged render is never touched.
 
 **EdgeAware is no longer the offender at convergence — ASVGF is.** EdgeAware now sits at 0.71–0.98
 at 64 spp, below 1.0 on every scene, while ASVGF ranges 0.91–2.04. That inverted with

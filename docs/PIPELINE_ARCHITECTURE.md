@@ -39,6 +39,7 @@ Rayzee uses an **event-driven pipeline** of modular rendering stages built on We
                               │ │ └─StorageTexturePool│
                               │ ├─NormalDepth         │
                               │ ├─MotionVector        │
+                              │ ├─NRD                 │
                               │ ├─ASVGF               │
                               │ ├─Variance            │
                               │ ├─BilateralFilter     │
@@ -167,6 +168,7 @@ Event-driven communication between stages.
 'camera:moved'                // PathTracerStage — camera transform changed
 'pathtracer:viewpointChanged' // PathTracerStage — camera optimizer reset
 'asvgf:reset'                 // PathTracerStage / PathTracerApp — reset ASVGF history
+'denoiser:reset'              // PathTracerStage / PathTracerApp — drop any real-time denoiser history (NRD listens)
 'asvgf:updateParameters'      // PathTracerStage — push ASVGF params
 'autoexposure:resetHistory'   // PathTracerApp / EnvironmentManager — reset exposure history
 'autoexposure:updated'        // AutoExposure
@@ -450,6 +452,31 @@ this.environment.callbacks.getSceneTextureNodes = () =>
 
 ---
 
+### NRD
+
+**Purpose:** Port of NVIDIA Real-Time Denoisers' ReBLUR (recurrent blur) — a second real-time
+denoiser strategy next to ASVGF. Full write-up: `docs/NRD_DENOISER.md`.
+**Execution Mode:** `PER_CYCLE`
+
+**Input:**
+- `pathtracer:color`, `pathtracer:albedo` (`.w` = normalized hit distance)
+- `pathtracer:normalDepth`, `pathtracer:shadingNormal` (`.w` = roughness)
+- `motionVector:screenSpace`
+
+**Output:**
+- `nrd:output` - Denoised, remodulated color
+
+**Key Features:**
+- Six compute passes: pre-pass, temporal accumulation, history fix, blur, post-blur, temporal stabilization
+- Hit-distance-driven blur radius, lobe-aware normal weights, plane-distance disocclusion
+- Fast-history clamping, antilag, firefly suppression (NRD formulas)
+- Progressive-aware: fades out as the path tracer's own accumulation converges
+
+**Events Listened:**
+- `denoiser:reset` - Drop history
+
+---
+
 ### EdgeFilter
 
 **Purpose:** Temporal edge-aware filtering (alternative to ASVGF)
@@ -510,7 +537,7 @@ The engine renders full-frame every frame. PathTracer accumulates one sample, ma
 ```
 RenderPipeline.render(writeBuffer)
     ↓ executes stages sequentially
-[PathTracer → NormalDepth → MotionVector → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
+[PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
     ↓
 Compositor → renderer.toneMapping output pass (tone curve + sRGB) → Screen
     ↓
@@ -525,10 +552,13 @@ OverlayManager → outline + scene helpers + HUD (at display resolution)
 
 | Texture Key | Producer | Consumers | Description |
 |-------------|----------|-----------|-------------|
-| `pathtracer:color` | PathTracer | ASVGF, EdgeFilter, Compositor | Accumulated path traced color |
-| `pathtracer:normalDepth` | PathTracer | ASVGF, EdgeFilter, MotionVector | G-buffer: normals + depth |
-| `pathtracer:albedo` | PathTracer | ASVGF, BilateralFilter | Albedo (denoiser guide) |
+| `pathtracer:color` | PathTracer | ASVGF, NRD, EdgeFilter, Compositor | Accumulated path traced color |
+| `pathtracer:normalDepth` | PathTracer / NormalDepth | ASVGF, NRD, EdgeFilter, MotionVector | G-buffer: normals + depth (NormalDepth overrides with its jitter-free version while a denoiser runs) |
+| `pathtracer:shadingNormal` | NormalDepth | EdgeFilter, NRD | Normal-mapped normal; `.w` = material roughness |
+| `pathtracer:albedo` | PathTracer | ASVGF, NRD, BilateralFilter, OIDN | Albedo (denoiser guide); `.w` = NRD-normalized secondary hit distance |
+| `motionVector:screenSpace` | MotionVector | ASVGF, NRD | Screen-space motion (current − previous uv) |
 | `asvgf:output` | ASVGF | Compositor | Denoised color |
+| `nrd:output` | NRD | Compositor | ReBLUR-denoised color (see `docs/NRD_DENOISER.md`) |
 | `variance:output` | Variance | BilateralFilter | Variance map |
 | `asvgf:temporalColor` | ASVGF | - | Temporal accumulation |
 | `edgeFiltering:output` | EdgeFilter | Compositor | Filtered color |

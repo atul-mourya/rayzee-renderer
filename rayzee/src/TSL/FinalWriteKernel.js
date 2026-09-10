@@ -14,7 +14,7 @@ import {
 } from 'three/tsl';
 
 import {
-	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo,
+	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist,
 } from '../Processor/PackedRayBuffer.js';
 import { luminance } from './Common.js';
 
@@ -96,11 +96,14 @@ export function buildFinalWriteKernel( params ) {
 			// auxOn gates the decode + stores so a no-denoiser frame does no G-buffer read and no aux writes.
 			const finalNormalDepth = vec4( 0.0 ).toVar();
 			const finalAlbedo = vec4( 0.0 ).xyz.toVar();
+			// Albedo .w carries the hit distance — OIDN reads albedo as 3 channels, so it is free.
+			const finalHitDist = float( 0.0 ).toVar();
 			If( auxOn, () => {
 
 				const gbuf = readGBuffer( gBufferRO, rayID );
 				finalNormalDepth.assign( gbDecodeNormalDepth( gbuf ) );
 				finalAlbedo.assign( vec4( gbDecodeAlbedo( gbuf ), 0.0 ).xyz );
+				finalHitDist.assign( gbDecodeHitDist( gbuf ) );
 
 			} );
 
@@ -117,8 +120,10 @@ export function buildFinalWriteKernel( params ) {
 				finalColor.assign( select( wasFrozen, prevAccumSample.xyz, mix( prevAccumSample.xyz, sampleColor.xyz, accumulationAlpha ) ) );
 				If( auxOn.and( hasPreviousAux ), () => {
 
-					// Albedo averages cleanly (it's a colour).
-					finalAlbedo.assign( mix( texture( prevAlbedoTexture, prevUV, 0 ).xyz, finalAlbedo, auxAccumulationAlpha ) );
+					// Albedo averages cleanly (it's a colour); so does the normalized hit distance in .w.
+					const prevAlbedoSample = texture( prevAlbedoTexture, prevUV, 0 ).toVar();
+					finalAlbedo.assign( mix( prevAlbedoSample.xyz, finalAlbedo, auxAccumulationAlpha ) );
+					finalHitDist.assign( mix( prevAlbedoSample.w, finalHitDist, auxAccumulationAlpha ) );
 
 					// NORMAL: by default keep this frame's POINT-SAMPLED normal — it varies with the bump,
 					// which fast/ASVGF want to preserve edge detail. But a CLEAN-AUX OIDN model (calb_cnrm/high,
@@ -251,7 +256,7 @@ export function buildFinalWriteKernel( params ) {
 			If( auxOn, () => {
 
 				textureStore( writeNDTex, uintCoord, finalNormalDepth ).toWriteOnly();
-				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, 1.0 ) ).toWriteOnly();
+				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, finalHitDist ) ).toWriteOnly();
 
 			} );
 

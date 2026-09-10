@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
+import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
@@ -427,6 +427,59 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
+	// NRD (ReBLUR) handlers. Presets rewrite the slider state so the UI shows what the engine runs.
+	handleNrdQualityPresetChange: handleChange(
+		val => set( { nrdQualityPreset: val } ),
+		( val, app ) => {
+
+			if ( ! NRD_QUALITY_PRESETS[ val ] ) return;
+
+			app.denoisingManager.applyNRDPreset( val );
+			// Mirror the values the engine actually resolved, so the sliders can't drift from it.
+			const live = app.stages.nrd?.settings;
+			if ( live ) set( {
+				nrdMaxAccumulatedFrameNum: live.maxAccumulatedFrameNum,
+				nrdMaxBlurRadius: live.maxBlurRadius,
+				nrdPrepassBlurRadius: live.prepassBlurRadius,
+				nrdAntiFirefly: live.enableAntiFirefly,
+			} );
+			// Hard reset drops the denoiser history built under the old settings.
+			app.reset();
+
+		},
+		false
+	),
+
+	handleNrdDebugModeChange: handleChange(
+		val => set( { nrdDebugMode: parseInt( val ) } ),
+		( val, app ) => app.denoisingManager.setNRDDebugMode( parseInt( val ) ),
+		false
+	),
+
+	handleNrdMaxAccumulatedFrameNumChange: handleChange(
+		val => set( { nrdMaxAccumulatedFrameNum: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { maxAccumulatedFrameNum: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdMaxBlurRadiusChange: handleChange(
+		val => set( { nrdMaxBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { maxBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdPrepassBlurRadiusChange: handleChange(
+		val => set( { nrdPrepassBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { prepassBlurRadius: Array.isArray( val ) ? val[ 0 ] : val } ),
+		false
+	),
+
+	handleNrdAntiFireflyChange: handleChange(
+		val => set( { nrdAntiFirefly: val } ),
+		( val, app ) => app.denoisingManager.setNRDParams( { enableAntiFirefly: val } ),
+		false
+	),
+
 	// Smart ASVGF configuration based on render mode
 	handleConfigureASVGFForMode: ( mode ) => {
 
@@ -769,7 +822,9 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Denoiser strategy and EdgeAware filter handlers
 	handleDenoiserStrategyChange: handleChange(
 		val => set( { denoiserStrategy: val, enableASVGF: val === 'asvgf' } ),
-		( val, app ) => app.denoisingManager.setStrategy( val, get().asvgfQualityPreset ),
+		( val, app ) => app.denoisingManager.setStrategy(
+			val, val === 'nrd' ? get().nrdQualityPreset : get().asvgfQualityPreset
+		),
 		false // engine method handles reset internally
 	),
 

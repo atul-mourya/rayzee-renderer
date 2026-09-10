@@ -1,9 +1,12 @@
 import debugModelsData from './DebugModels.json';
 
 // Re-export engine constants for backward compatibility
-import { ENGINE_DEFAULTS } from 'rayzee';
+import { ENGINE_DEFAULTS, NRD_DEFAULTS } from 'rayzee';
 export {
 	ASVGF_QUALITY_PRESETS,
+	NRD_QUALITY_PRESETS,
+	NRD_DEFAULTS,
+	NRD_PRESET_KEYS,
 	CAMERA_RANGES,
 	SKY_PRESETS,
 	CAMERA_PRESETS,
@@ -33,6 +36,11 @@ export const DEFAULT_STATE = {
 	finalRenderResolution: 2048,
 	originalPixelRatio: window.devicePixelRatio / 2,
 	zoomToCursor: true,
+	// NRD sliders mirror the engine's ReblurSettings defaults (preset 'medium').
+	nrdMaxAccumulatedFrameNum: NRD_DEFAULTS.maxAccumulatedFrameNum,
+	nrdMaxBlurRadius: NRD_DEFAULTS.maxBlurRadius,
+	nrdPrepassBlurRadius: NRD_DEFAULTS.prepassBlurRadius,
+	nrdAntiFirefly: NRD_DEFAULTS.enableAntiFirefly,
 };
 
 // export const MODEL_BASE_URL = 'https://raw.githubusercontent.com/gkjohnson/3d-demo-data/main/models/';
