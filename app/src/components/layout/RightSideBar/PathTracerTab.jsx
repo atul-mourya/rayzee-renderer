@@ -566,6 +566,7 @@ const PathTracerTab = () => {
 							<SelectItem value="edgeaware">EdgeAware</SelectItem>
 							<SelectItem value="asvgf">ASVGF</SelectItem>
 							<SelectItem value="nrd">NRD (ReBLUR)</SelectItem>
+							<SelectItem value="oidn">OIDN (AI)</SelectItem>
 						</SelectContent>
 					</Select>
 				</Row>

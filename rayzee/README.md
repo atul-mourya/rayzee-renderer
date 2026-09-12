@@ -888,23 +888,74 @@ accumulating, so a preview shows a clean picture as it refines instead of only a
 | `'balance'` | 1.8 MB | accumulated | General use |
 | `'high'` | 7.3 MB | accumulated | Final renders — used by `configureForMode('production')` |
 
-#### Continuous denoising
+#### When the denoiser runs
 
-With OIDN on, `'interactive'` mode denoises the accumulating mean on a cadence rather than only
-once at the end. `'production'` does not — a final render should not pay for intermediate denoises —
-and deterministic mode pins it off, since which frame a wall-clock cadence lands on is not
-reproducible.
+Exactly one thing denoises the live view, so OIDN is an entry in that list rather than a parallel
+switch — two of them would mean paying for a per-frame denoise whose result the OIDN overlay
+immediately covers:
 
 ```js
-engine.setContinuousDenoise(true, 250);   // enabled, min 250 ms between denoises
-engine.setContinuousDenoise(false);       // denoise only at completion
+engine.denoisingManager.setStrategy('oidn');   // 'none' | 'edgeaware' | 'asvgf' | 'nrd' | 'oidn'
+engine.denoisingManager.setOIDNEnabled(true);  // denoise the finished image
 ```
 
-The cost is predictable: **a `fast` denoise is a fixed ~4.4 path-traced samples at any resolution**,
-because inference and path tracing both scale linearly in pixels. Two gates keep that affordable:
-a wall clock (`continuousDenoiseInterval`) and a sample-growth factor, so denoises are frequent
-while noise is worst and rare once the mean has converged — where OIDN can lose to the raw image
-anyway. Nothing runs while the camera is moving; the raw frame shows during navigation.
+- Choosing `'oidn'` switches OIDN on as well — asking for it on the live view and leaving it off
+  would select a denoiser that cannot run — and takes every per-frame denoiser off.
+- Choosing anything else stops the live refreshes. OIDN still denoises the finished image if its own
+  switch is on.
+- `setOIDNEnabled(false)` also drops `'oidn'` from the list, so it can never claim a denoiser that
+  is switched off. Read the outcome back from `denoisingManager.denoiserStrategy` rather than
+  restating these rules in a host.
+
+In the app that is `Real-Time Denoiser` (None / EdgeAware / ASVGF / NRD / **OIDN (AI)**) and the
+`AI Denoising (OIDN)` switch. Deterministic mode pins the live refreshes off, since which frame a
+wall-clock cadence lands on is not reproducible.
+
+Denoising only at the end is not just "off during the render" — it is the only way to see the true
+noise level, which is how you judge whether a render has actually settled.
+
+`setOIDNMode( 'off' | 'final' | 'continuous' )` / `getOIDNMode()` fold both settings into one value
+for hosts that prefer a single control; they route through the same rules.
+
+#### Quality while it runs vs. quality when it finishes
+
+`oidnQuality` is **the quality of the finished image**. The refreshes along the way use the cheapest
+model that reads the same kind of aux buffer, and the chosen model is put back for the last denoise:
+
+| `oidnQuality` | refreshes use | finished image |
+|---|---|---|
+| `fast` | `fast` | `fast` |
+| `fast-clean` / `balance` / `high` | `fast-clean` | as chosen |
+
+Two constraints shape that table, and neither is optional:
+
+- **The aux kind must not change mid-render.** `setCleanAuxNormal()` throws away the accumulated
+  albedo/normal, so a refresh model that disagreed with the final one would leave the final denoise
+  reading an aux buffer one sample deep. That is why the cheap model is `fast-clean` and not `fast`.
+- **Switching models reloads the weights, ~1 s.** So it happens at most once per render, and only
+  once a denoise has actually measured too slow to be a live view (`> 120 ms`). A tier a machine can
+  afford is kept — at 512² that is every tier. The verdict survives a camera move, because the
+  device does not get faster between them; it is re-taken when the tier or the resolution changes.
+
+#### What paces the refreshes
+
+One rule: the gap between refreshes is at least **twice what the last denoise actually cost**, so
+denoising never takes more than about half the wall clock, at any resolution, on any GPU.
+`continuousDenoiseInterval` is a lower bound on that gap — it binds only where a denoise is cheap.
+
+A fixed millisecond interval cannot do this job: the same `fast` model measures 14 ms at 512², 48 ms
+at 1024² and ~800 ms at 2048². Measured where the GPU is saturated (1536²), the multiplier is the
+whole trade — 1x gives 1.6 refreshes/sec at 62 % of the sample rate, 2x gives 0.8/sec at 89 %, 3x
+gives 0.6/sec at 97 %.
+
+This replaced a sample-growth gate (refresh only once the sample count had grown 1.4x), which was
+written when a denoise cost 100-330 ms. Once the output pack moved to the GPU and a denoise got
+cheap, that gate only cost refreshes: removing it took 512² from 2 to 31 refreshes/sec and 1024²
+from 2 to 8.9, both at an unchanged sample rate, while 1536² and 2048² did not move at all because
+the cost floor already bound there. Refreshing faster is also *smoother*, not shimmerier — less
+changes underneath between refreshes.
+
+Nothing runs while the camera is moving; the raw frame shows during navigation.
 
 Cadence runs are tagged so a host can tell them apart from the denoise that ends a render:
 

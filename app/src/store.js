@@ -791,7 +791,14 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	handleEnableOIDNChange: handleChange(
 		val => set( { enableOIDN: val } ),
-		( val, app ) => app.denoisingManager.setOIDNEnabled( val ),
+		( val, app ) => {
+
+			app.denoisingManager.setOIDNEnabled( val );
+			// Turning OIDN off also drops it as the live-view denoiser. Mirror the outcome rather
+			// than restating the rule here.
+			set( { denoiserStrategy: app.denoisingManager.denoiserStrategy } );
+
+		},
 		false
 	),
 
@@ -822,9 +829,15 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Denoiser strategy and EdgeAware filter handlers
 	handleDenoiserStrategyChange: handleChange(
 		val => set( { denoiserStrategy: val, enableASVGF: val === 'asvgf' } ),
-		( val, app ) => app.denoisingManager.setStrategy(
-			val, val === 'nrd' ? get().nrdQualityPreset : get().asvgfQualityPreset
-		),
+		( val, app ) => {
+
+			app.denoisingManager.setStrategy(
+				val, val === 'nrd' ? get().nrdQualityPreset : get().asvgfQualityPreset
+			);
+			// Choosing OIDN for the live view switches OIDN itself on — mirror that.
+			set( { enableOIDN: !! app.denoisingManager.denoiser?.enabled } );
+
+		},
 		false // engine method handles reset internally
 	),
 

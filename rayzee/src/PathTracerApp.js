@@ -1807,7 +1807,9 @@ export class PathTracerApp extends EventDispatcher {
 
 			denoiser.abort();
 			denoiser.enabled = config.enableOIDN;
-			denoiser.updateQuality( config.oidnQuality );
+			// Through the manager, so the tier the finished image uses is recorded — the denoiser's
+			// own `quality` dips to a cheaper model between refreshes and is not that record.
+			this.denoisingManager.applyOIDNQuality( config.oidnQuality );
 
 		}
 
@@ -2218,6 +2220,21 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {boolean} [enabled=true]
 	 * @param {number}  [intervalMs] - minimum wall ms between denoises; the throughput dial
 	 */
+	/**
+	 * When the AI denoiser runs, as one choice:
+	 * - `'off'` — not at all.
+	 * - `'final'` — once, when the render settles. You watch the real noise until then.
+	 * - `'continuous'` — refreshes while the image accumulates, then once more at the end.
+	 *
+	 * @param {'off'|'final'|'continuous'} mode
+	 */
+	setOIDNMode( mode ) {
+
+		this.denoisingManager?.setOIDNMode( mode );
+		return this.denoisingManager?.getOIDNMode() ?? 'off';
+
+	}
+
 	setContinuousDenoise( enabled = true, intervalMs ) {
 
 		const dm = this.denoisingManager;

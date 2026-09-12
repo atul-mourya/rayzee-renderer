@@ -186,12 +186,15 @@ export const ENGINE_DEFAULTS = {
 
 	enableOIDN: false,
 	oidnQuality: 'fast',
-	// Denoise the accumulating mean on a cadence instead of only once, at completion.
-	continuousDenoise: true,
-	// Minimum wall ms between cadence denoises. A `fast` denoise costs ~4.4 path-traced
-	// samples at any resolution, so this is the throughput dial: shorter = more tax.
-	continuousDenoiseInterval: 250,
-	debugGbufferMaps: false,
+	// Denoise the accumulating mean on a cadence instead of only once, at completion. Off by
+	// default: this is the 'oidn' entry in the real-time denoiser list, chosen there so that only
+	// ever one thing denoises the live view. Turning OIDN on by itself denoises the finished image.
+	continuousDenoise: false,
+	// Lower bound on the gap between cadence denoises. DenoisingManager also floors that gap at a
+	// multiple of what the last denoise actually cost, and above ~1024² that is what binds — this
+	// value only governs where a denoise is cheap. 8 ms measured 31 refreshes/sec at 512² at an
+	// unchanged sample rate; 50 ms measured 18/sec for nothing in return.
+	continuousDenoiseInterval: 8,
 
 	enableUpscaler: false,
 	upscalerScale: 2,
@@ -730,7 +733,6 @@ export const PRODUCTION_RENDER_CONFIG = {
 	renderMode: 1, enableAlphaShadows: true,
 	// 'high' is the only tier that reaches OIDN's _large weights (calb_cnrm); ~2x denoise cost.
 	enableOIDN: true, oidnQuality: 'high',
-	// A final render must not pay the cadence tax; it denoises once, at the end.
 	continuousDenoise: false,
 	interactionModeEnabled: false,
 	// 0.94 against the eroded count ≈ the old raw-count 0.98; erosion holds the fraction a few points lower.
@@ -746,7 +748,7 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
 	enableOIDN: false, oidnQuality: 'fast',
-	continuousDenoise: true,
+	continuousDenoise: false,
 	interactionModeEnabled: true,
 	useAdaptiveSampling: true, // idle refine stops early when converged; frozen during motion
 	noiseThreshold: 0.1, // loose: preview wants a fast settle, not a clean one

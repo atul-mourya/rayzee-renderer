@@ -4,8 +4,28 @@ import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
 
-// Sample-count growth required between cadence denoises: 1 -> 2 -> 3 -> 5 -> 7 -> 10 -> 14 ...
-const CADENCE_SAMPLE_GROWTH = 1.4;
+// A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
+// model and puts the chosen one back for the finished image. Resolution-aware by construction:
+// at 512² every tier is under budget, at 1024² only `high` trips it.
+//
+// This replaced a second, time-based trigger ("downgrade once the render passes 2 s"), which
+// measured identically at 1024² for balance and high because the cost rule had already tripped —
+// but which also downgraded tiers that were affordable, on machines fast enough to run them.
+const CADENCE_COST_BUDGET_MS = 120;
+
+// Start-to-start gap as a multiple of what the last denoise actually cost. This is the whole
+// throttle: it spends half the wall clock on denoising at most, at any resolution, on any GPU.
+// A fixed millisecond floor cannot do that — the same tier measures 14 ms at 512², 48 ms at
+// 1024² and 800 ms at 2048².
+//
+// It replaced a sample-growth rule (refresh only once the sample count had grown 1.4x), which
+// was written when a denoise cost 100-330 ms. Measured after the denoise got cheap, that rule
+// only ever cost refreshes: 512² 2/s -> 32/s and 1024² 2/s -> 8.6/s, both at unchanged sample
+// rate, while 1536²/2048² did not move at all because this floor already bound there.
+//
+// 3x measured 97 % of the sample rate at 1536² against 89 % for 2x, but at a quarter of the
+// refreshes — 2x is the better trade while a person is watching the image resolve.
+const CADENCE_DENOISE_PERIODS = 2;
 
 /**
  * Orchestrates all denoising, post-processing, and AI upscaling:
@@ -53,12 +73,19 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser = null;
 		this.upscaler = null;
 
+		// The tier the finished image uses. The loaded tier is not always this one: while the
+		// image is still accumulating we run a cheaper model (see previewQuality).
+		this._finalQuality = DEFAULT_STATE.oidnQuality;
 		this.continuousDenoise = DEFAULT_STATE.continuousDenoise;
 		this.continuousDenoiseInterval = DEFAULT_STATE.continuousDenoiseInterval;
 		// -Infinity, not 0: 0 reads as "denoised at time zero", which blocks the first cadence
 		// denoise while performance.now() is still below the interval.
 		this._lastCadenceAt = - Infinity;
 		this._lastCadenceSamples = 0;
+		// Sticky across resets: the device does not get faster between camera moves, and
+		// re-deciding per accumulation cost one slow denoise every time the camera stopped.
+		// Cleared only when the tier or the resolution changes.
+		this._cadenceDowngraded = false;
 
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
@@ -108,6 +135,9 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._lastRenderWidth = width;
 		this._lastRenderHeight = height;
+		// A denoise costs 14 ms at 512² and 800 ms at 2048², so the affordability verdict does
+		// not survive a resize.
+		this._cadenceDowngraded = false;
 		this.denoiser?.setSize( width, height );
 		this.upscaler?.setBaseSize( width, height );
 
@@ -173,7 +203,6 @@ export class DenoisingManager extends EventDispatcher {
 			getToneMapping: () => this._getToneMapping(),
 			getSaturation: () => this._getSaturation(),
 			getTransparentBackground: () => this._getTransparentBg(),
-			getMRTRenderTarget: () => pt?.storageTextures?.readTarget ?? null,
 		} );
 
 		this.denoiser.enabled = DEFAULT_STATE.enableOIDN;
@@ -255,6 +284,10 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	get denoiserStrategy() {
 
+		// OIDN refreshing the accumulating image is a live-view denoiser like the others, so it
+		// belongs in the same one-of-N choice. Two of these running at once would mean paying for
+		// a per-frame denoise whose result the OIDN overlay then covers.
+		if ( this.continuousDenoise && this.denoiser?.enabled ) return 'oidn';
 		if ( this._stages.asvgf?.enabled ) return 'asvgf';
 		if ( this._stages.nrd?.enabled ) return 'nrd';
 		if ( this._stages.edgeFilter?.enabled ) return 'edgeaware';
@@ -279,6 +312,12 @@ export class DenoisingManager extends EventDispatcher {
 		if ( s.edgeFilter ) s.edgeFilter.setFilteringEnabled( false );
 
 		this._clearDenoiserTextures();
+
+		// Picking any other strategy stops OIDN refreshing the live view; picking OIDN switches it
+		// on, and turns OIDN itself on — asking for it on the live view and leaving it off would
+		// select a denoiser that cannot run.
+		this.setContinuousDenoise( strategy === 'oidn' );
+		if ( strategy === 'oidn' && ! this.denoiser?.enabled ) this.setOIDNEnabled( true );
 
 		switch ( strategy ) {
 
@@ -433,7 +472,11 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Clean-aux normal: temporally accumulate the aux normal only for OIDN clean-aux models
 		// (balanced/high). 'fast' and the real-time denoisers keep the point-sampled bump normal.
-		s.pathTracer?.setCleanAuxNormal?.( !! this.denoiser?.enabled && this.denoiser?.quality !== 'fast' );
+		// Keyed on the chosen tier, not the loaded one — the loaded tier dips to a cheaper model
+		// during refreshes, and following that would restart the aux accumulation mid-render.
+		s.pathTracer?.setCleanAuxNormal?.(
+			!! this.denoiser?.enabled && !! this.denoiser?.expectsCleanAux( this._finalQuality )
+		);
 
 		// Reclaim VRAM: free the big 2048² StorageTextures of any denoiser/G-buffer stage that ended up
 		// disabled (lazily re-created on the next dispatch after re-enable). Every strategy/denoiser
@@ -489,19 +532,65 @@ export class DenoisingManager extends EventDispatcher {
 		// a view that is already stale. Denoise once the motion stops.
 		if ( this._stages.pathTracer?.interactionMode ) return false;
 
-		const now = performance.now();
-		if ( now - this._lastCadenceAt < this.continuousDenoiseInterval ) return false;
+		// Nothing new has landed since the last refresh, so it would repaint the same image.
+		if ( sampleCount <= this._lastCadenceSamples ) return false;
 
-		// A denoise costs a fixed ~4.4 samples but buys less the more are already averaged in —
-		// past ~64 it can lose to the raw mean. Gating on growth spends the budget where it
-		// pays: often at first, then rarely. Skipped while the count is static.
-		if ( sampleCount > this._lastCadenceSamples
-			&& sampleCount < this._lastCadenceSamples * CADENCE_SAMPLE_GROWTH ) return false;
+		const now = performance.now();
+		// `continuousDenoiseInterval` is only the floor's lower bound: on a cheap denoise it is
+		// what binds, and past ~1024² the denoise's own cost is.
+		const minGap = Math.max( this.continuousDenoiseInterval, dn.lastDenoiseMs * CADENCE_DENOISE_PERIODS );
+		if ( now - this._lastCadenceAt < minGap ) return false;
 
 		this._lastCadenceAt = now;
 		this._lastCadenceSamples = sampleCount;
+
+		// A tier too slow to be a live view refreshes with a cheaper model and is put back for the
+		// finished image. One-way: letting it flip back would reload weights on every tick.
+		if ( dn.lastDenoiseMs > CADENCE_COST_BUDGET_MS ) this._cadenceDowngraded = true;
+
+		// updateQuality flags the load synchronously, and start() below defers itself until the
+		// weights land.
+		const want = this._cadenceDowngraded ? this.previewQuality() : this._finalQuality;
+		if ( dn.quality !== want ) dn.updateQuality( want );
+
 		dn.start( { continuous: true } );
 		return true;
+
+	}
+
+	/**
+	 * The tier used for refreshes while the image is still accumulating: the cheapest model that
+	 * reads the same kind of aux buffer as the final one.
+	 *
+	 * Matching the aux kind is not optional. `setCleanAuxNormal()` throws away the accumulated
+	 * albedo/normal, so if the refreshes and the final denoise disagreed about it, the final
+	 * denoise would run against an aux buffer one sample deep.
+	 */
+	previewQuality() {
+
+		return this.denoiser?.expectsCleanAux( this._finalQuality ) ? 'fast-clean' : 'fast';
+
+	}
+
+	/**
+	 * One choice instead of two flags that can contradict each other.
+	 * @param {'off'|'final'|'continuous'} mode
+	 */
+	setOIDNMode( mode ) {
+
+		this.setOIDNEnabled( mode !== 'off' );
+		// Through the strategy setter, so choosing OIDN for the live view turns the per-frame
+		// denoisers off — two of them would mean paying for one whose result the other covers.
+		if ( mode === 'continuous' ) this.setDenoiserStrategy( 'oidn' );
+		else if ( this.denoiserStrategy === 'oidn' ) this.setDenoiserStrategy( 'none' );
+
+	}
+
+	/** @returns {'off'|'final'|'continuous'} */
+	getOIDNMode() {
+
+		if ( ! this.denoiser?.enabled ) return 'off';
+		return this.continuousDenoise ? 'continuous' : 'final';
 
 	}
 
@@ -510,6 +599,15 @@ export class DenoisingManager extends EventDispatcher {
 		this.continuousDenoise = !! enabled;
 		this._lastCadenceAt = - Infinity;
 		this._resetCadence();
+
+	}
+
+	// Puts the finished image back on the tier the user asked for, after the refreshes ran a
+	// cheaper one. A no-op when they match, which is the common case in preview.
+	_useFinalQuality() {
+
+		const dn = this.denoiser;
+		if ( dn && dn.quality !== this._finalQuality ) dn.updateQuality( this._finalQuality );
 
 	}
 
@@ -563,7 +661,9 @@ export class DenoisingManager extends EventDispatcher {
 
 					this.denoiser?.removeEventListener( 'end', onCadenceEnd );
 					if ( this._pendingFinalDenoise === onCadenceEnd ) this._pendingFinalDenoise = null;
-					if ( isStillComplete() ) this.denoiser?.start();
+					if ( ! isStillComplete() ) return;
+					this._useFinalQuality();
+					this.denoiser?.start();
 
 				};
 
@@ -572,6 +672,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			} else {
 
+				this._useFinalQuality();
 				this.denoiser.start();
 
 			}
@@ -744,20 +845,32 @@ export class DenoisingManager extends EventDispatcher {
 	setOIDNEnabled( enabled ) {
 
 		if ( this.denoiser ) this.denoiser.enabled = enabled;
+		// Without this the live-view choice would still read 'oidn' with nothing behind it.
+		if ( ! enabled ) this.continuousDenoise = false;
 		// OIDN reads the PathTracer aux MRT; re-sync so the wavefront produces it while OIDN is on.
 		this._syncGBufferStages();
 		this._onPostProcessRefresh?.();
 
 	}
 
-	/** Sets OIDN denoiser quality. */
+	/**
+	 * Records the tier the finished image should use, and loads it. No host refresh — for callers
+	 * like configureForMode that drive the whole tier change themselves.
+	 */
+	applyOIDNQuality( quality ) {
+
+		this._finalQuality = quality;
+		this._cadenceDowngraded = false;
+		this.denoiser?.updateQuality( quality );
+
+	}
+
 	setOIDNQuality( quality ) {
 
-		this.denoiser?.updateQuality( quality );
-		// Clean-aux normal follows the model, not the tier name — see OIDNDenoiser.QUALITY_MODELS.
-		this._stages.pathTracer?.setCleanAuxNormal?.(
-			!! this.denoiser?.enabled && !! this.denoiser?.expectsCleanAux( quality )
-		);
+		this.applyOIDNQuality( quality );
+		// _syncGBufferStages owns the clean-aux decision (it follows the model, not the tier name —
+		// see OIDNDenoiser.QUALITY_MODELS). Inlining a second copy here let the two disagree.
+		this._syncGBufferStages();
 		this._onPostProcessRefresh?.();
 
 	}
