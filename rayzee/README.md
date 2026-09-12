@@ -546,7 +546,7 @@ engine.denoisingManager.setAutoExposureParams({ keyValue: 0.18 })
 engine.denoisingManager.setOIDNEnabled(true)
 engine.denoisingManager.setOIDNQuality('high')
 engine.denoisingManager.setContinuousDenoise(false)      // see engine.setContinuousDenoise()
-engine.denoisingManager.continuousDenoiseInterval = 250   // min wall ms between cadence denoises
+engine.denoisingManager.continuousDenoiseInterval = 250   // cap refreshes at 4/sec (default 8 = uncapped)
 engine.denoisingManager.setUpscalerEnabled(true)
 engine.denoisingManager.setUpscalerScaleFactor(2)
 engine.denoisingManager.setUpscalerQuality('high')
@@ -939,9 +939,25 @@ Two constraints shape that table, and neither is optional:
 
 #### What paces the refreshes
 
-One rule: the gap between refreshes is at least **twice what the last denoise actually cost**, so
-denoising never takes more than about half the wall clock, at any resolution, on any GPU.
-`continuousDenoiseInterval` is a lower bound on that gap — it binds only where a denoise is cheap.
+Two knobs with two different jobs, and the gap between refreshes is whichever is larger:
+
+- **The cost floor protects the renderer.** The gap is at least twice what the last denoise actually
+  cost, so denoising never takes more than about half the wall clock, at any resolution, on any GPU.
+  This is not configurable, and it is what binds at the default.
+- **`continuousDenoiseInterval` caps the refresh rate in absolute terms**, for a host that wants
+  fewer updates than the renderer could afford — a laptop on battery, or a viewport where 30 updates
+  a second is distracting. The default (8 ms) is below any real denoise cost, so it never binds:
+  refreshes run as often as the cost floor allows. Raising it gives a flat `1000 / interval` cap.
+
+Measured, `fast` model:
+
+| `continuousDenoiseInterval` | 8 | 50 | 100 | 200 | 400 |
+|---|---|---|---|---|---|
+| 512² (denoise 12 ms) | 35/sec | 18/sec | 9.6/sec | 4.9/sec | 2.6/sec |
+| 1024² (denoise 50 ms) | 9/sec | 9/sec | 9/sec | 4.9/sec | 2.6/sec |
+
+The two columns converge once the interval is the larger of the two — below that the cost floor is
+holding 1024² down to 9/sec regardless of what the interval says.
 
 A fixed millisecond interval cannot do this job: the same `fast` model measures 14 ms at 512², 48 ms
 at 1024² and ~800 ms at 2048². Measured where the GPU is saturated (1536²), the multiplier is the
