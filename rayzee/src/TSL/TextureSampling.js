@@ -10,11 +10,12 @@ import { getDatafromStorageBuffer } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 
 // ================================================================================
-// CONSOLIDATED SIZE-BUCKETED MATERIAL TEXTURES
+// CONSOLIDATED SHAPE-BUCKETED MATERIAL TEXTURES
 // ================================================================================
 // Material maps are packed into two colorSpace pools (sRGB: albedo+emissive; linear:
 // normal/bump/roughness/metalness/displacement), each split into MATERIAL_BUCKET_COUNT
-// longest-edge size buckets so a small map no longer pays a large neighbour's footprint.
+// (width, height) buckets so a small or oddly-shaped map no longer pays a large neighbour's
+// footprint. Bucket shapes are planned per scene (planTextureBuckets) — not powers of two.
 // A map's stored index encodes (bucket, layer) as bucket * BUCKET_LAYER_STRIDE + layer.
 //
 // The bucket texture nodes live at module level (same pattern as gobo/IES/shadowAlbedo):

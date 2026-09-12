@@ -619,23 +619,22 @@ function calculateOptimalDimensions( textures, maxTextureSize ) {
 
 	}
 
-	// Round to power of 2 for optimal GPU performance
-	maxWidth = Math.pow( 2, Math.ceil( Math.log2( maxWidth ) ) );
-	maxHeight = Math.pow( 2, Math.ceil( Math.log2( maxHeight ) ) );
+	// Scale down proportionally only when the cap is exceeded; native res is kept below it.
+	const cap = Math.min( maxTextureSize, MEMORY_LIMITS.MAX_TEXTURE_DIMENSION );
+	const longest = Math.max( maxWidth, maxHeight );
+	if ( longest > cap ) {
 
-	// Respect texture size limits
-	maxWidth = Math.min( maxWidth, maxTextureSize, MEMORY_LIMITS.MAX_TEXTURE_DIMENSION );
-	maxHeight = Math.min( maxHeight, maxTextureSize, MEMORY_LIMITS.MAX_TEXTURE_DIMENSION );
-
-	// Halve only while a dimension exceeds the cap (preserves native res up to the cap).
-	while ( maxWidth > maxTextureSize || maxHeight > maxTextureSize ) {
-
-		maxWidth = Math.max( 1, Math.floor( maxWidth / 2 ) );
-		maxHeight = Math.max( 1, Math.floor( maxHeight / 2 ) );
+		const scale = cap / longest;
+		maxWidth = Math.round( maxWidth * scale );
+		maxHeight = Math.round( maxHeight * scale );
 
 	}
 
-	return { maxWidth, maxHeight };
+	// An RGBA8 row upload must be a multiple of 256 bytes, so widths land on 64 texels.
+	// Mirrors alignBucketWidth in EngineDefaults (not importable from worker context).
+	maxWidth = Math.min( cap, Math.max( 4, Math.ceil( Math.max( 1, maxWidth ) / 64 ) * 64 ) );
+
+	return { maxWidth, maxHeight: Math.max( 1, maxHeight ) };
 
 }
 
@@ -645,7 +644,7 @@ function calculateReducedDimensions( textures, maxTextureSize ) {
 	const original = calculateOptimalDimensions( textures, maxTextureSize );
 
 	return {
-		maxWidth: Math.max( 1, Math.floor( original.maxWidth / 2 ) ),
+		maxWidth: Math.max( 64, Math.ceil( original.maxWidth / 128 ) * 64 ),
 		maxHeight: Math.max( 1, Math.floor( original.maxHeight / 2 ) )
 	};
 

@@ -11,7 +11,7 @@ import { updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
-import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
@@ -870,8 +870,9 @@ export class SceneProcessor {
 	/**
 	 * Group the extractor's seven per-type texture arrays into two consolidated colorSpace
 	 * pools (sRGB: albedo+emissive; linear: normal/bump/roughness/metalness/displacement),
-	 * each split into MATERIAL_BUCKET_COUNT longest-edge size buckets. Textures are deduped
-	 * across types within a (pool, bucket) so a shared image (e.g. ORM) costs one layer.
+	 * each split into at most MATERIAL_BUCKET_COUNT buckets whose shapes are planned from the
+	 * pool's own texture dimensions. Textures are deduped across types within a (pool, bucket)
+	 * so a shared image (e.g. ORM) costs one layer.
 	 * @returns {{ srgbLists: Array<Array>, linearLists: Array<Array>, remap: Object }}
 	 *          bucket lists + per-type remap arrays (old per-type layer → packed bucket index).
 	 * @private
@@ -882,6 +883,43 @@ export class SceneProcessor {
 		const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;
 		const STRIDE = TEXTURE_CONSTANTS.BUCKET_LAYER_STRIDE;
 
+		const poolSizes = ( types ) => {
+
+			const seen = new Set();
+			const sizes = [];
+
+			for ( const arr of types ) {
+
+				for ( const tex of arr || [] ) {
+
+					if ( ! tex?.image ) continue;
+					const uuid = tex.source?.uuid ?? tex.uuid;
+					if ( seen.has( uuid ) ) continue;
+					seen.add( uuid );
+					sizes.push( { width: tex.image.width, height: tex.image.height } );
+
+				}
+
+			}
+
+			return sizes;
+
+		};
+
+		const srgbTypes = [ this.maps, this.emissiveMaps, this.sheenColorMaps, this.specularColorMaps ];
+		const linearTypes = [
+			this.normalMaps, this.bumpMaps, this.roughnessMaps, this.metalnessMaps, this.displacementMaps,
+			this.anisotropyMaps, this.transmissionMaps, this.clearcoatMaps, this.clearcoatRoughnessMaps,
+			this.sheenRoughnessMaps, this.iridescenceMaps, this.iridescenceThicknessMaps, this.specularIntensityMaps,
+		];
+
+		const srgbShapes = planTextureBuckets( poolSizes( srgbTypes ), cap, K );
+		const linearShapes = planTextureBuckets( poolSizes( linearTypes ), cap, K );
+		this._srgbBucketShapes = srgbShapes;
+		this._linearBucketShapes = linearShapes;
+
+		// Always K-length even when the plan needs fewer shapes: downstream nodes are built
+		// per MATERIAL_BUCKET_COUNT and a short array would leave stale bindings behind.
 		const srgbLists = Array.from( { length: K }, () => [] );
 		const linearLists = Array.from( { length: K }, () => [] );
 		const srgbDedup = Array.from( { length: K }, () => new Map() );
@@ -895,10 +933,10 @@ export class SceneProcessor {
 		let bucketOverflowReported = false;
 
 		// Assign one texture to its (bucket, layer) within a pool; dedup by source uuid.
-		const assign = ( tex, lists, dedup, flat ) => {
+		const assign = ( tex, lists, dedup, flat, shapes ) => {
 
 			if ( ! tex || ! tex.image ) return - 1;
-			const bucket = getTextureBucketId( tex.image.width, tex.image.height, cap, K );
+			const bucket = getTextureBucketId( tex.image.width, tex.image.height, shapes );
 			const uuid = tex.source?.uuid ?? tex.uuid;
 			const seen = dedup[ bucket ].get( uuid );
 			if ( seen !== undefined ) return packTextureIndex( bucket, seen );
@@ -926,27 +964,27 @@ export class SceneProcessor {
 
 		// Per-type arrays hold unique textures indexed by the layer the extractor assigned
 		// (= array position), so remap[type][oldLayer] = packed index.
-		const remapType = ( arr, lists, dedup, flat ) => ( arr || [] ).map( tex => assign( tex, lists, dedup, flat ) );
+		const remapType = ( arr, lists, dedup, flat, shapes ) => ( arr || [] ).map( tex => assign( tex, lists, dedup, flat, shapes ) );
 
 		const remap = {
-			albedo: remapType( this.maps, srgbLists, srgbDedup, this._srgbTexPacked ),
-			emissive: remapType( this.emissiveMaps, srgbLists, srgbDedup, this._srgbTexPacked ),
-			normal: remapType( this.normalMaps, linearLists, linearDedup, this._linearTexPacked ),
-			bump: remapType( this.bumpMaps, linearLists, linearDedup, this._linearTexPacked ),
-			roughness: remapType( this.roughnessMaps, linearLists, linearDedup, this._linearTexPacked ),
-			metalness: remapType( this.metalnessMaps, linearLists, linearDedup, this._linearTexPacked ),
-			displacement: remapType( this.displacementMaps, linearLists, linearDedup, this._linearTexPacked ),
-			anisotropy: remapType( this.anisotropyMaps, linearLists, linearDedup, this._linearTexPacked ),
+			albedo: remapType( this.maps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
+			emissive: remapType( this.emissiveMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
+			normal: remapType( this.normalMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			bump: remapType( this.bumpMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			roughness: remapType( this.roughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			metalness: remapType( this.metalnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			displacement: remapType( this.displacementMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			anisotropy: remapType( this.anisotropyMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			// Extension maps — data maps → linear pool; color maps (sheenColor, specularColor) → sRGB pool.
-			transmission: remapType( this.transmissionMaps, linearLists, linearDedup, this._linearTexPacked ),
-			clearcoat: remapType( this.clearcoatMaps, linearLists, linearDedup, this._linearTexPacked ),
-			clearcoatRoughness: remapType( this.clearcoatRoughnessMaps, linearLists, linearDedup, this._linearTexPacked ),
-			sheenColor: remapType( this.sheenColorMaps, srgbLists, srgbDedup, this._srgbTexPacked ),
-			sheenRoughness: remapType( this.sheenRoughnessMaps, linearLists, linearDedup, this._linearTexPacked ),
-			iridescence: remapType( this.iridescenceMaps, linearLists, linearDedup, this._linearTexPacked ),
-			iridescenceThickness: remapType( this.iridescenceThicknessMaps, linearLists, linearDedup, this._linearTexPacked ),
-			specularIntensity: remapType( this.specularIntensityMaps, linearLists, linearDedup, this._linearTexPacked ),
-			specularColor: remapType( this.specularColorMaps, srgbLists, srgbDedup, this._srgbTexPacked ),
+			transmission: remapType( this.transmissionMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			clearcoat: remapType( this.clearcoatMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			clearcoatRoughness: remapType( this.clearcoatRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			sheenColor: remapType( this.sheenColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
+			sheenRoughness: remapType( this.sheenRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			iridescence: remapType( this.iridescenceMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			iridescenceThickness: remapType( this.iridescenceThicknessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			specularIntensity: remapType( this.specularIntensityMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			specularColor: remapType( this.specularColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
 		};
 
 		return { srgbLists, linearLists, remap };

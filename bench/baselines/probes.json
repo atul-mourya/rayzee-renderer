@@ -148,24 +148,24 @@
 	},
 	"textured-normalmap": {
 		"truth": {
-			"meanR": 0.10670868164154079,
-			"meanG": 0.2650527359212269,
-			"meanB": 0.39466757546778286,
-			"meanLuminance": 0.24074698139662473,
+			"meanR": 0.10673744937862673,
+			"meanG": 0.2651018173147133,
+			"meanB": 0.3947920210785094,
+			"meanLuminance": 0.24079718540324271,
 			"maxLuminance": 0.551354011914134,
 			"nonFinite": 0,
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.1066946497503165,
-			"meanG": 0.2650433031475936,
-			"meanB": 0.3946682441317728,
-			"meanLuminance": 0.24073730017438652,
+			"meanR": 0.10672955728403355,
+			"meanG": 0.2650955627325775,
+			"meanB": 0.394797188419612,
+			"meanLuminance": 0.24079140734881999,
 			"maxLuminance": 0.5513530531108379,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007157301451089229
+		"rmseVsTruth": 0.007161289839562062
 	},
 	"refit-deform": {
 		"truth": {
