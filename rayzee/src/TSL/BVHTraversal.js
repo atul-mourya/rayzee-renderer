@@ -24,7 +24,9 @@ import { HitInfo } from './Struct.js';
 import { getDatafromStorageBuffer } from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
-const MAX_BVH_ITERATIONS = 512;
+// Hang guard only — tripping it reports a MISS, which the shade kernel pays out as
+// full-intensity environment. San Miguel needs ~1024; cost is flat from 1024 up.
+const MAX_BVH_ITERATIONS = 4096;
 const BVH_STRIDE = 4;
 const TRI_STRIDE = 8;
 const HUGE_VAL = 1e8;
