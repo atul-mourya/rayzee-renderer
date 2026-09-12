@@ -9,6 +9,7 @@ export const ISSUE_CODES = Object.freeze( {
 	ASSET_UNREACHABLE: 'asset.unreachable',
 	TEXTURE_BUILD_FAILED: 'texture.build_failed',
 	TEXTURE_PROCESSING_FALLBACK: 'texture.processing_fallback',
+	TEXTURE_LIMIT_EXCEEDED: 'texture.limit_exceeded',
 	ENVIRONMENT_LOAD_FAILED: 'environment.load_failed',
 	SETTING_UNKNOWN_KEY: 'setting.unknown_key',
 	RENDER_SIZE_DECLINED: 'render.size_declined',

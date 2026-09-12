@@ -666,8 +666,8 @@ export const TEXTURE_CONSTANTS = {
 	MAX_TEXTURE_SIZE: 8192,
 	// Default cap applied when no maxTextureSize is supplied (engine standalone use).
 	DEFAULT_MAX_TEXTURE_SIZE: 4096,
-	// Max layers (textures) per bucket array. Also the packing stride for (bucket, layer).
-	MAX_TEXTURES_LIMIT: 128,
+	// Per-map-type ceiling before bucketing; the real cap is per (pool, bucket) in _bucketTextures.
+	MAX_TEXTURES_LIMIT: 4 * 256,
 	// Size buckets per colorSpace pool. Material maps are grouped into this many
 	// longest-edge size classes so a small map no longer pays a large neighbour's
 	// footprint. 4 → ~8 bound material arrays (4 sRGB + 4 linear).

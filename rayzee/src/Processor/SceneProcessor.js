@@ -12,6 +12,7 @@ import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex } from '../EngineDefaults.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
 
@@ -145,7 +146,7 @@ export class SceneProcessor {
 	_initProcessors() {
 
 		// Create and configure geometry extractor
-		this.geometryExtractor = new GeometryExtractor();
+		this.geometryExtractor = new GeometryExtractor( { issues: this.config.issues } );
 
 		// Create and configure BVH builder
 		this.bvhBuilder = new BVHBuilder();
@@ -891,6 +892,8 @@ export class SceneProcessor {
 		this._srgbTexPacked = new Map();
 		this._linearTexPacked = new Map();
 
+		let bucketOverflowReported = false;
+
 		// Assign one texture to its (bucket, layer) within a pool; dedup by source uuid.
 		const assign = ( tex, lists, dedup, flat ) => {
 
@@ -902,6 +905,12 @@ export class SceneProcessor {
 			if ( lists[ bucket ].length >= STRIDE ) {
 
 				log.warn( `texture bucket ${bucket} full (${STRIDE}); dropping a map` );
+				if ( ! bucketOverflowReported ) this.config.issues?.record(
+					ISSUE_CODES.TEXTURE_LIMIT_EXCEEDED,
+					`texture bucket ${bucket} full (${STRIDE} layers); the rest render untextured`,
+					{ bucket, limit: STRIDE }
+				);
+				bucketOverflowReported = true;
 				return - 1;
 
 			}
