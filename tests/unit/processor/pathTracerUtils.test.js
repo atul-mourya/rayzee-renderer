@@ -3,7 +3,7 @@ import { clamp, lerp, formatDuration, calculateAccumulationAlpha,
 	isRenderComplete, getCurrentSampleCount, updateCompletionThreshold,
 	createLRUCache, createPerformanceMonitor,
 	createDebounceFunction, areValuesEqual, optimizeShaderDefines,
-	getNearestPowerOf2, getDisplaySamples, validateAndUpdateUniforms,
+	getDisplaySamples, validateAndUpdateUniforms,
 	setStatusCallback, resetLoading, updateLoading, updateStats,
 	disposeMaterial, disposeMaterialTextures } from '@/core/Processor/utils.js';
 
@@ -437,28 +437,6 @@ describe( 'optimizeShaderDefines', () => {
 		const defines = { ENABLE_ACCUMULATION: '' };
 		optimizeShaderDefines( defines, { enableAccumulation: false } );
 		expect( defines ).toHaveProperty( 'ENABLE_ACCUMULATION' );
-
-	} );
-
-} );
-
-// ── getNearestPowerOf2 ──────────────────────────────────────
-
-describe( 'getNearestPowerOf2', () => {
-
-	it( 'returns same value for exact power of 2', () => {
-
-		expect( getNearestPowerOf2( 256 ) ).toBe( 256 );
-		expect( getNearestPowerOf2( 1024 ) ).toBe( 1024 );
-
-	} );
-
-	it( 'rounds up to next power of 2', () => {
-
-		expect( getNearestPowerOf2( 100 ) ).toBe( 128 );
-		expect( getNearestPowerOf2( 500 ) ).toBe( 512 );
-		expect( getNearestPowerOf2( 1 ) ).toBe( 1 );
-		expect( getNearestPowerOf2( 3 ) ).toBe( 4 );
 
 	} );
 
