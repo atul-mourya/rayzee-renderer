@@ -136,6 +136,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ## Experiments
 
+- [ ] explore OpenColorIO OCIO color management
 - [ ] Neural-texture-compression <https://syllogi-graphikon.vercel.app/posts/metal-neural-texture-compression/>
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
