@@ -1,10 +1,11 @@
 import { Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
 
 const log = createLogger( 'geometry' );
 
-const MAX_TEXTURES_LIMIT = 128;
+const MAX_TEXTURES_LIMIT = TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT;
 
 /**
  * glTF 2.0 alphaMode for a three.js material: 0 OPAQUE, 1 MASK, 2 BLEND.
@@ -55,7 +56,11 @@ export function deriveAlphaMode( material ) {
 
 export class GeometryExtractor {
 
-	constructor() {
+	/** @param {{issues?: import('../EngineIssues.js').IssueLog}} [options] */
+	constructor( { issues = null } = {} ) {
+
+		this._issues = issues;
+		this._droppedTextures = 0;
 
 		// Object pools for reusing objects
 		this._vectorPool = {
@@ -528,6 +533,17 @@ export class GeometryExtractor {
 
 		}
 
+		this._droppedTextures ++;
+		if ( this._droppedTextures === 1 ) {
+
+			this._issues?.record(
+				ISSUE_CODES.TEXTURE_LIMIT_EXCEEDED,
+				`scene needs more than ${MAX_TEXTURES_LIMIT} distinct textures for one map type; the rest render untextured`,
+				{ limit: MAX_TEXTURES_LIMIT, firstDropped: texture.name || texture.source?.uuid }
+			);
+
+		}
+
 		return - 1;
 
 	}
@@ -799,6 +815,8 @@ export class GeometryExtractor {
 	}
 
 	resetArrays() {
+
+		this._droppedTextures = 0;
 
 		// Reset triangle data
 		this.triangleData = null;

@@ -1,5 +1,5 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
-import { TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
@@ -1318,18 +1318,17 @@ export class TextureCreator {
 
 		}
 
-		maxWidth = Math.pow( 2, Math.ceil( Math.log2( maxWidth ) ) );
-		maxHeight = Math.pow( 2, Math.ceil( Math.log2( maxHeight ) ) );
+		// Scale down proportionally only when the cap is exceeded; native res is kept below it.
+		const longest = Math.max( maxWidth, maxHeight );
+		if ( longest > this.maxTextureSize ) {
 
-		// Halve only while a dimension exceeds the cap (preserves native res up to the cap).
-		while ( maxWidth > this.maxTextureSize || maxHeight > this.maxTextureSize ) {
-
-			maxWidth = Math.max( 1, Math.floor( maxWidth / 2 ) );
-			maxHeight = Math.max( 1, Math.floor( maxHeight / 2 ) );
+			const scale = this.maxTextureSize / longest;
+			maxWidth = Math.round( maxWidth * scale );
+			maxHeight = Math.round( maxHeight * scale );
 
 		}
 
-		return { maxWidth, maxHeight };
+		return { maxWidth: alignBucketWidth( maxWidth, this.maxTextureSize ), maxHeight: Math.max( 1, maxHeight ) };
 
 	}
 
