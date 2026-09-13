@@ -57,6 +57,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### General
 
+- [ ] headless usage to be vsync bound free
 - [ ] deno compile for dedicated destop app
 - [ ] Introduce Project based workflow
 - [ ] Save rendering state in local storage and load on app start
