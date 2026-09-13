@@ -186,9 +186,9 @@ export const ENGINE_DEFAULTS = {
 
 	enableOIDN: false,
 	oidnQuality: 'fast',
-	// Denoise the accumulating mean on a cadence instead of only once, at completion. Off by
-	// default: this is the 'oidn' entry in the real-time denoiser list, chosen there so that only
-	// ever one thing denoises the live view. Turning OIDN on by itself denoises the finished image.
+	// OIDN as the live-view denoiser, refreshing the accumulating image. Set by choosing 'oidn' in
+	// the real-time denoiser list, so that only ever one thing denoises the live view — not by
+	// `enableOIDN`, which is the separate question of whether the finished image gets a pass.
 	continuousDenoise: false,
 	// Lower bound on the gap between cadence denoises. DenoisingManager also floors that gap at a
 	// multiple of what the last denoise actually cost, and above ~1024² that is what binds — this
@@ -911,7 +911,6 @@ export const PRODUCTION_RENDER_CONFIG = {
 	renderMode: 1, enableAlphaShadows: true,
 	// 'high' is the only tier that reaches OIDN's _large weights (calb_cnrm); ~2x denoise cost.
 	enableOIDN: true, oidnQuality: 'high',
-	continuousDenoise: false,
 	interactionModeEnabled: false,
 	// 0.94 against the eroded count ≈ the old raw-count 0.98; erosion holds the fraction a few points lower.
 	useAdaptiveSampling: true,
@@ -926,7 +925,6 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
 	enableOIDN: false, oidnQuality: 'fast',
-	continuousDenoise: false,
 	interactionModeEnabled: true,
 	useAdaptiveSampling: true, // idle refine stops early when converged; frozen during motion
 	noiseThreshold: 0.1, // loose: preview wants a fast settle, not a clean one

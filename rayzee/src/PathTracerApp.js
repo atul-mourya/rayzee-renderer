@@ -1770,14 +1770,6 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.cameraManager.controls.enabled = ! isProduction;
 
-		// Before anything below can wake the render loop: a tick that lands while the previous
-		// tier's flag is still live fires a cadence denoise into the new tier.
-		if ( config.continuousDenoise !== undefined ) {
-
-			this.denoisingManager?.setContinuousDenoise( config.continuousDenoise );
-
-		}
-
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
 		this.settings.setMany( {
@@ -1806,9 +1798,10 @@ export class PathTracerApp extends EventDispatcher {
 		if ( denoiser ) {
 
 			denoiser.abort();
-			denoiser.enabled = config.enableOIDN;
-			// Through the manager, so the tier the finished image uses is recorded — the denoiser's
-			// own `quality` dips to a cheaper model between refreshes and is not that record.
+			// Through the manager both times: `denoiser.enabled` is the union of its two jobs and
+			// `denoiser.quality` dips to a cheaper model between refreshes, so neither is the
+			// record of what the host asked for.
+			this.denoisingManager.applyOIDNEnabled( config.enableOIDN );
 			this.denoisingManager.applyOIDNQuality( config.oidnQuality );
 
 		}
@@ -2205,44 +2198,6 @@ export class PathTracerApp extends EventDispatcher {
 
 		backend.trackTimestamp = enabled;
 		return backend.trackTimestamp === enabled;
-
-	}
-
-	/**
-	 * Denoises the accumulating mean on a cadence rather than only once, when the render
-	 * completes — a preview that shows a clean image while it refines. Costs throughput: a
-	 * `fast` denoise is a fixed ~4.4 path-traced samples at any resolution, so the tax is
-	 * roughly `4.4 / (samples between denoises)`.
-	 *
-	 * On by default for `'interactive'`, off for `'production'` (a final render must not pay
-	 * it) and pinned off in deterministic mode. `configureForMode()` restores the tier default.
-	 *
-	 * @param {boolean} [enabled=true]
-	 * @param {number}  [intervalMs] - minimum wall ms between denoises; the throughput dial
-	 */
-	/**
-	 * When the AI denoiser runs, as one choice:
-	 * - `'off'` — not at all.
-	 * - `'final'` — once, when the render settles. You watch the real noise until then.
-	 * - `'continuous'` — refreshes while the image accumulates, then once more at the end.
-	 *
-	 * @param {'off'|'final'|'continuous'} mode
-	 */
-	setOIDNMode( mode ) {
-
-		this.denoisingManager?.setOIDNMode( mode );
-		return this.denoisingManager?.getOIDNMode() ?? 'off';
-
-	}
-
-	setContinuousDenoise( enabled = true, intervalMs ) {
-
-		const dm = this.denoisingManager;
-		if ( ! dm ) return false;
-
-		if ( intervalMs !== undefined ) dm.continuousDenoiseInterval = Math.max( 0, intervalMs );
-		dm.setContinuousDenoise( enabled );
-		return dm.continuousDenoise;
 
 	}
 

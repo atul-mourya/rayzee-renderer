@@ -77,6 +77,11 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 		},
 		denoisingManager: {
 			denoiser: { enabled: false, quality: 'fast', updateQuality: vi.fn() },
+			// The two decisions the manager owns; `denoiser.enabled` is only their union.
+			finalDenoise: false,
+			oidnQuality: 'fast',
+			applyOIDNEnabled: vi.fn(),
+			applyOIDNQuality: vi.fn(),
 			abort: vi.fn(),
 			upscaler: { abort: vi.fn() },
 		},

@@ -42,8 +42,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// ── Denoiser ─────────────────────────────────────────────
-	// `continuous` marks a cadence denoise of the still-accumulating preview. Surfacing those
-	// would flash the "Denoising" badge every few hundred ms; only the final denoise is status.
+	// `continuous` marks a cadence denoise of the still-accumulating preview. Those run many times
+	// a second and would strobe the "Denoising" badge; only the denoise that closes a render is status.
 	on( EngineEvents.DENOISING_START, e => {
 
 		if ( ! e?.continuous ) useStore.getState().setIsDenoising( true );

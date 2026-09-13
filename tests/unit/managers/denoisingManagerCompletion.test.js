@@ -113,6 +113,37 @@ describe( 'DenoisingManager completion chain', () => {
 
 	} );
 
+	// `denoiser.enabled` is the union of the two, so writing it directly loses one of them —
+	// which is exactly how configureForMode stopped turning the final pass on.
+	it( 'keeps denoiser.enabled as the union of the two decisions', () => {
+
+		manager.applyOIDNEnabled( false );
+		manager.setDenoiserStrategy( 'none' );
+		expect( dn.enabled ).toBe( false );
+
+		manager.setDenoiserStrategy( 'oidn' );
+		expect( dn.enabled ).toBe( true );
+
+		manager.setDenoiserStrategy( 'none' );
+		manager.applyOIDNEnabled( true );
+		expect( dn.enabled ).toBe( true );
+
+		manager.applyOIDNEnabled( false );
+		expect( dn.enabled ).toBe( false );
+
+	} );
+
+	// Same trap on the other field: a host reading `denoiser.quality` mid-render saves the cheap
+	// refresh model as if the user had chosen it.
+	it( 'reports the chosen tier, not the model a refresh left loaded', () => {
+
+		manager.setOIDNQuality( 'high' );
+		dn.quality = 'fast-clean';
+
+		expect( manager.oidnQuality ).toBe( 'high' );
+
+	} );
+
 	// ── what closes the render ───────────────────────────────────────────
 
 	it( 'runs a full pass at the chosen quality when the switch is on', () => {

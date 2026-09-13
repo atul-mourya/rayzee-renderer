@@ -86,11 +86,6 @@ export class DenoisingManager extends EventDispatcher {
 		// denoise while performance.now() is still below the interval.
 		this._lastCadenceAt = - Infinity;
 		this._lastCadenceSamples = 0;
-		// Sticky across resets: the device does not get faster between camera moves, and
-		// re-deciding per accumulation cost one slow denoise every time the camera stopped.
-		// Cleared only when the tier or the resolution changes.
-		this._cadenceDowngraded = false;
-
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 
@@ -100,7 +95,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Track the current completion-chain listeners so they can be removed on re-trigger
 		this._pendingStartUpscaler = null;
-		this._pendingFinalDenoise = null;
+		this._pendingCloseDenoise = null;
 
 		// Bound event forwarding handlers (stored for removal on re-setup / dispose)
 		this._denoiserStartHandler = null;
@@ -139,8 +134,10 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._lastRenderWidth = width;
 		this._lastRenderHeight = height;
-		// A denoise costs 14 ms at 512² and 800 ms at 2048², so the affordability verdict does
-		// not survive a resize.
+		// Sticky across resets: the device does not get faster between camera moves, and
+		// re-deciding per accumulation cost one slow denoise every time the camera stopped.
+		// Cleared only when the tier or the resolution changes — a denoise costs 14 ms at 512²
+		// and 800 ms at 2048², so the affordability verdict does not survive a resize.
 		this._cadenceDowngraded = false;
 		this.denoiser?.setSize( width, height );
 		this.upscaler?.setBaseSize( width, height );
@@ -209,7 +206,7 @@ export class DenoisingManager extends EventDispatcher {
 			getTransparentBackground: () => this._getTransparentBg(),
 		} );
 
-		this.denoiser.enabled = DEFAULT_STATE.enableOIDN;
+		this._syncOIDNInUse();
 
 		// Forward lifecycle events (store refs for removal on re-setup / dispose)
 		this._denoiserStartHandler = e =>
@@ -508,12 +505,12 @@ export class DenoisingManager extends EventDispatcher {
 		if ( this.denoiser ) {
 
 			if ( this._pendingStartUpscaler ) this.denoiser.removeEventListener( 'end', this._pendingStartUpscaler );
-			if ( this._pendingFinalDenoise ) this.denoiser.removeEventListener( 'end', this._pendingFinalDenoise );
+			if ( this._pendingCloseDenoise ) this.denoiser.removeEventListener( 'end', this._pendingCloseDenoise );
 
 		}
 
 		this._pendingStartUpscaler = null;
-		this._pendingFinalDenoise = null;
+		this._pendingCloseDenoise = null;
 
 	}
 
@@ -571,28 +568,6 @@ export class DenoisingManager extends EventDispatcher {
 	previewQuality() {
 
 		return this.denoiser?.expectsCleanAux( this._finalQuality ) ? 'fast-clean' : 'fast';
-
-	}
-
-	/**
-	 * One choice instead of two flags that can contradict each other.
-	 * @param {'off'|'final'|'continuous'} mode
-	 */
-	setOIDNMode( mode ) {
-
-		this.setOIDNEnabled( mode !== 'off' );
-		// Through the strategy setter, so choosing OIDN for the live view turns the per-frame
-		// denoisers off — two of them would mean paying for one whose result the other covers.
-		if ( mode === 'continuous' ) this.setDenoiserStrategy( 'oidn' );
-		else if ( this.denoiserStrategy === 'oidn' ) this.setDenoiserStrategy( 'none' );
-
-	}
-
-	/** @returns {'off'|'final'|'continuous'} */
-	getOIDNMode() {
-
-		if ( ! this.denoiser?.enabled ) return 'off';
-		return this.continuousDenoise ? 'continuous' : 'final';
 
 	}
 
@@ -691,12 +666,12 @@ export class DenoisingManager extends EventDispatcher {
 			const onCadenceEnd = () => {
 
 				this.denoiser?.removeEventListener( 'end', onCadenceEnd );
-				if ( this._pendingFinalDenoise === onCadenceEnd ) this._pendingFinalDenoise = null;
+				if ( this._pendingCloseDenoise === onCadenceEnd ) this._pendingCloseDenoise = null;
 				launchClosing();
 
 			};
 
-			this._pendingFinalDenoise = onCadenceEnd;
+			this._pendingCloseDenoise = onCadenceEnd;
 			this.denoiser.addEventListener( 'end', onCadenceEnd );
 
 		} else {
@@ -864,11 +839,28 @@ export class DenoisingManager extends EventDispatcher {
 	// ── OIDN ─────────────────────────────────────────────────────
 
 	/** Enables or disables Intel OIDN denoiser. */
-	/** Denoise the finished image with OIDN. Independent of which denoiser owns the live view. */
-	setOIDNEnabled( enabled ) {
+	/**
+	 * Records the final-pass decision and syncs `enabled`. No host refresh — for callers like
+	 * configureForMode that drive the whole change themselves.
+	 */
+	applyOIDNEnabled( enabled ) {
 
 		this.finalDenoise = !! enabled;
 		this._syncOIDNInUse();
+
+	}
+
+	/** The tier the finished image uses — not `denoiser.quality`, which dips during refreshes. */
+	get oidnQuality() {
+
+		return this._finalQuality;
+
+	}
+
+	/** Denoise the finished image with OIDN. Independent of which denoiser owns the live view. */
+	setOIDNEnabled( enabled ) {
+
+		this.applyOIDNEnabled( enabled );
 		// OIDN reads the PathTracer aux MRT; re-sync so the wavefront produces it while OIDN is on.
 		this._syncGBufferStages();
 		this._onPostProcessRefresh?.();

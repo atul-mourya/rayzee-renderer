@@ -123,7 +123,7 @@ export class VideoRenderManager {
 				if ( this._cancelled ) break;
 
 				// 4. Denoise if enabled
-				if ( enableOIDN && app.denoisingManager?.denoiser?.enabled ) {
+				if ( enableOIDN && app.denoisingManager?.finalDenoise ) {
 
 					await this._waitForDenoise( app );
 
@@ -280,8 +280,8 @@ export class VideoRenderManager {
 			transmissiveBounces: app.settings.get( 'transmissiveBounces' ),
 			renderMode: app.stages.pathTracer?.renderMode?.value,
 			controlsEnabled: app.cameraManager.controls?.enabled,
-			oidnEnabled: app.denoisingManager?.denoiser?.enabled,
-			oidnQuality: app.denoisingManager?.denoiser?.quality,
+			oidnEnabled: app.denoisingManager?.finalDenoise,
+			oidnQuality: app.denoisingManager?.oidnQuality,
 			wasPlaying: app.animationManager?.isPlaying,
 			pauseRendering: app.pauseRendering,
 		};
@@ -314,8 +314,8 @@ export class VideoRenderManager {
 
 		if ( app.denoisingManager?.denoiser ) {
 
-			app.denoisingManager.denoiser.enabled = state.oidnEnabled ?? false;
-			if ( state.oidnQuality ) app.denoisingManager.denoiser.updateQuality( state.oidnQuality );
+			app.denoisingManager.applyOIDNEnabled( state.oidnEnabled ?? false );
+			if ( state.oidnQuality ) app.denoisingManager.applyOIDNQuality( state.oidnQuality );
 
 		}
 

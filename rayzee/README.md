@@ -545,7 +545,7 @@ engine.denoisingManager.setAutoExposureParams({ keyValue: 0.18 })
 // OIDN & Upscaler
 engine.denoisingManager.setOIDNEnabled(true)
 engine.denoisingManager.setOIDNQuality('high')
-engine.denoisingManager.setContinuousDenoise(false)      // see engine.setContinuousDenoise()
+engine.denoisingManager.setStrategy('oidn')              // OIDN owns the live view; see below
 engine.denoisingManager.continuousDenoiseInterval = 250   // cap refreshes at 4/sec (default 8 = uncapped)
 engine.denoisingManager.setUpscalerEnabled(true)
 engine.denoisingManager.setUpscalerScaleFactor(2)
@@ -917,9 +917,10 @@ wiring needs — so read the two decisions back from `denoisingManager.denoiserS
 `denoisingManager.finalDenoise`, not from it.
 
 With OIDN on the live view and the final pass off, the render still closes with one more refresh: the
-cadence's last tick lands a few samples short of the end (140 of 150, measured), and the picture
-should match the render that finished. It uses whatever model the refreshes were already on — no
-reload for an image the user never asked to be denoised at full quality.
+cadence's last tick lands short of the end, and the picture should match the render that finished. On
+a 150-sample render that gap measured **11 samples at 512²** and **1 at 1024²** — larger where the
+renderer is fast, because more samples land between refreshes. It uses whatever model the refreshes
+were already on: no reload for an image the user never asked to be denoised at full quality.
 
 In the app that is `Real-Time Denoiser` (None / EdgeAware / ASVGF / NRD / **OIDN (AI)**) and the
 `Final Denoise (OIDN)` switch. Deterministic mode pins the live refreshes off, since which frame a
@@ -927,9 +928,6 @@ wall-clock cadence lands on is not reproducible.
 
 Leaving the live view raw is not just "denoising off" — it is the only way to see the true noise
 level, which is how you judge whether a render has actually settled. That is row one and row two.
-
-`setOIDNMode( 'off' | 'final' | 'continuous' )` / `getOIDNMode()` fold both into one value for hosts
-that prefer a single control; they route through the same calls.
 
 #### Quality while it runs vs. quality when it finishes
 
