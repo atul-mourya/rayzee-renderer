@@ -931,11 +931,27 @@ export class SceneProcessor {
 		this._linearTexPacked = new Map();
 
 		let bucketOverflowReported = false;
+		let undecodedReported = false;
 
 		// Assign one texture to its (bucket, layer) within a pool; dedup by source uuid.
 		const assign = ( tex, lists, dedup, flat, shapes ) => {
 
-			if ( ! tex || ! tex.image ) return - 1;
+			if ( ! tex ) return - 1;
+
+			// A map whose image has not landed yet is indistinguishable here from no map at
+			// all, and the material would render untextured with nothing in the log.
+			if ( ! tex.image ) {
+
+				if ( ! undecodedReported ) this.config.issues?.record(
+					ISSUE_CODES.TEXTURE_BUILD_FAILED,
+					'a material map had not finished decoding when the scene was packed; it renders untextured',
+					{ texture: tex.name || tex.source?.uuid || tex.uuid }
+				);
+				undecodedReported = true;
+				return - 1;
+
+			}
+
 			const bucket = getTextureBucketId( tex.image.width, tex.image.height, shapes );
 			const uuid = tex.source?.uuid ?? tex.uuid;
 			const seen = dedup[ bucket ].get( uuid );

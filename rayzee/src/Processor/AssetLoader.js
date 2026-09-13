@@ -39,6 +39,7 @@ const SUPPORTED_FORMATS = {
 // layers and the image assets they reference.
 const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
 const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
+const MTL_TEXTURE_TIMEOUT_MS = 30000;
 // A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
 // reorders and disposes what it is given, but never writes the attributes.
 function standInForSplit( source ) {
@@ -932,6 +933,56 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	// MTLLoader returns Texture objects whose `.image` only lands on a later tick, and
+	// SceneProcessor._bucketTextures drops any texture without one — so handing the model
+	// over before the maps decode renders the whole scene untextured. Replaces preload().
+	async preloadMtlTextures( materials ) {
+
+		const pending = [];
+		const loadTexture = materials.loadTexture.bind( materials );
+
+		materials.loadTexture = ( url, mapping, onLoad, onProgress, onError ) => {
+
+			let settle;
+			pending.push( new Promise( resolve => ( settle = resolve ) ) );
+			return loadTexture( url, mapping,
+				texture => {
+
+					settle();
+					onLoad?.( texture );
+
+				},
+				onProgress,
+				error => {
+
+					settle();
+					onError?.( error );
+
+				}
+			);
+
+		};
+
+		materials.preload();
+		if ( pending.length === 0 ) return materials;
+
+		let timer;
+		const decoded = await Promise.race( [
+			Promise.all( pending ).then( () => true ),
+			new Promise( resolve => ( timer = setTimeout( () => resolve( false ), MTL_TEXTURE_TIMEOUT_MS ) ) )
+		] );
+		clearTimeout( timer );
+
+		if ( ! decoded ) this._issues?.record(
+			ISSUE_CODES.TEXTURE_BUILD_FAILED,
+			`MTL textures did not decode within ${MTL_TEXTURE_TIMEOUT_MS}ms; affected materials render untextured`,
+			{ pending: pending.length }
+		);
+
+		return materials;
+
+	}
+
 	async loadMtlFromZip( mtlFilename, objPath, zipContents ) {
 
 		const objDir = objPath.split( '/' ).slice( 0, - 1 ).join( '/' );
@@ -951,7 +1002,7 @@ export class AssetLoader extends EventDispatcher {
 				manager.setURLModifier( url => this.resolveZipResource( url, objDir, zipContents ) );
 				const mtlLoader = new MTLLoader( manager );
 				const materials = mtlLoader.parse( mtlContent, objDir );
-				materials.preload();
+				await this.preloadMtlTextures( materials );
 				return materials;
 
 			}
@@ -999,7 +1050,7 @@ export class AssetLoader extends EventDispatcher {
 		manager.setURLModifier( url => this.resolveTextureInZip( url, objDir, mtlDir, mtlFile, zip, createdUrls ) );
 		const mtlContent = this.prepareFixedMtlContent( mtlFile );
 		const materials = new MTLLoader( manager ).parse( mtlContent, mtlDir );
-		materials.preload();
+		await this.preloadMtlTextures( materials );
 
 		const objLoader = new OBJLoader( manager );
 		objLoader.setMaterials( materials );

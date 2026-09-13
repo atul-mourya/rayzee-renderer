@@ -77,7 +77,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] Realistic sky rendering (Volumetric atmosphere and clouds)
 - [ ] Volumetric rendering
 - [ ] Caustic support - Photon mapping &/ BDPT
-- [ ] Realtime OIDN denoising with WebGPU compute shader implementation
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
