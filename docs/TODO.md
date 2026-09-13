@@ -1,7 +1,7 @@
 # Rayzee Path Tracer - TODO List
 
 ## Bugs
-
+- final render transmission bounces not sufficient
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
