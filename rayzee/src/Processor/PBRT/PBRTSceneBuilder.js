@@ -15,10 +15,12 @@
 
 import {
 	Group, Mesh, PerspectiveCamera, Matrix4, Vector3,
-	BufferGeometry, Float32BufferAttribute, SphereGeometry,
+	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping
 } from 'three';
 import { buildMaterial, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
+import { loopSubdivide } from './LoopSubdivision.js';
+import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import * as M from './PBRTMath.js';
 
 const FLIP_Z = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, - 1, 0, 0, 0, 0, 1 ];
@@ -187,6 +189,7 @@ export class PBRTSceneBuilder {
 
 			case 'trianglemesh': return this._triangleMesh( shape.params );
 			case 'bilinearmesh': return this._bilinearMesh( shape.params );
+			case 'loopsubdiv': return this._loopSubdiv( shape.params );
 			case 'plymesh': return this._plyMesh( shape.params );
 			case 'sphere': return this._sphere( shape.params );
 			case 'disk': return this._disk( shape.params );
@@ -220,6 +223,33 @@ export class PBRTSceneBuilder {
 		if ( indices && indices.length ) geo.setIndex( indices );
 
 		if ( ! N ) geo.computeVertexNormals();
+		return geo;
+
+	}
+
+	_loopSubdiv( params ) {
+
+		const P = params.P?.value;
+		const indices = params.indices?.value;
+		if ( ! P || P.length < 9 || ! indices || indices.length < 3 ) {
+
+			this.warn( 'loopsubdiv missing P/indices' ); return null;
+
+		}
+
+		// pbrt's default is 3; each level quadruples the face count, so a deep level on
+		// a dense cage is worth refusing rather than stalling the import.
+		const requested = Math.max( 0, Math.min( 6, Math.round( pFloat( params, 'levels', 3 ) ) ) );
+		const { positions, indices: faces, levels } = loopSubdivide( P, indices, requested );
+
+		if ( levels < requested ) this.warn(
+			`loopsubdiv refined ${levels}/${requested} levels — the control mesh is too dense for the triangle budget`
+		);
+
+		const geo = new BufferGeometry();
+		geo.setAttribute( 'position', new Float32BufferAttribute( positions, 3 ) );
+		geo.setIndex( new Uint32BufferAttribute( faces, 1 ) );
+		geo.computeVertexNormals();
 		return geo;
 
 	}
@@ -487,6 +517,16 @@ export class PBRTSceneBuilder {
 		camera.up.copy( up.normalize() );
 		camera.position.copy( eye );
 		camera.lookAt( target );
+
+		// pbrt's camera space is left-handed: image-right is cameraToWorld's first column,
+		// = cross(up, dir). three's lookAt() builds cross(up, -dir) — the opposite — so a
+		// plain pbrt scene imports left-right flipped against pbrt's own render. An
+		// exported scene's `Scale -1 1 1` already negates that column (det < 0), and then
+		// lookAt() happens to agree and no correction is wanted. Hence: mirror exactly when
+		// the scene does NOT. Verified against the reference images for contemporary-bathroom
+		// (has the Scale) and killeroos/killeroo-simple (does not).
+		if ( ( M.determinant3( cam.cameraToWorld ) > 0 ) !== this.convertHandedness ) camera.scale.x = - 1;
+
 		camera.updateMatrixWorld( true );
 		return camera;
 
@@ -506,6 +546,44 @@ export class PBRTSceneBuilder {
 
 	// ── lights / environment ───────────────────────────────────────
 
+	/**
+	 * A square infinite-light image is pbrt's equal-area octahedral layout, not a
+	 * lat-long panorama — resample it, folding in the light's transform and `scale`.
+	 * Returns null when the image is not square (nothing to convert) or its pixels are
+	 * not readable, leaving the caller's equirectangular path in place.
+	 */
+	_equirectFromInfiniteLight( tex, inf, scale, filename ) {
+
+		const image = tex.image;
+		const data = image?.data;
+		if ( ! data || ! image.width || image.width !== image.height ) {
+
+			if ( image?.width !== image?.height ) this.warn(
+				`infinite-light image "${filename}" is ${image?.width}x${image?.height}, not square — ` +
+				'read as equirectangular, but pbrt would read it as equal-area octahedral'
+			);
+			return null;
+
+		}
+
+		const channels = data.length / ( image.width * image.height );
+		if ( ! Number.isInteger( channels ) || channels < 3 ) return null;
+
+		// three's EXR/HDR loaders fill DataTexture rows bottom-up; pbrt reads the square top-down.
+		const { data: pixels, width, height } = octahedralToEquirect(
+			{ data, width: image.width, height: image.height, channels, bottomUp: true },
+			inf.ctm, scale
+		);
+
+		const out = new DataTexture( pixels, width, height, RGBAFormat, FloatType );
+		out.mapping = EquirectangularReflectionMapping;
+		out.minFilter = LinearFilter;
+		out.magFilter = LinearFilter;
+		out.needsUpdate = true;
+		return out;
+
+	}
+
 	async _buildEnvironment( lights ) {
 
 		const inf = lights.find( l => l.type === 'infinite' );
@@ -520,6 +598,9 @@ export class PBRTSceneBuilder {
 
 				const tex = await this.resolveEnvironment( filename );
 				if ( tex ) {
+
+					const converted = this._equirectFromInfiniteLight( tex, inf, scale, filename );
+					if ( converted ) return { texture: converted };
 
 					tex.mapping = EquirectangularReflectionMapping;
 					return { texture: tex };

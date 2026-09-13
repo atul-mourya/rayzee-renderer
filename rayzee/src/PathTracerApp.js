@@ -1097,7 +1097,14 @@ export class PathTracerApp extends EventDispatcher {
 			timer.start( 'Environment CDF build (worker)' );
 			this.stages.pathTracer.scene.environment = environmentTexture;
 			cdfPromise = this.stages.pathTracer.environment.buildEnvironmentCDF()
-				.then( () => timer.end( 'Environment CDF build (worker)' ) );
+				.then( () => {
+
+					timer.end( 'Environment CDF build (worker)' );
+					// A loader can install the environment itself and still author how it should
+					// be read — a pbrt scene bakes the light's transform in and needs rotation 0.
+					if ( this._applySceneMetadataEnabled ) this._applySceneMetadataSettings( environmentTexture );
+
+				} );
 
 		}
 

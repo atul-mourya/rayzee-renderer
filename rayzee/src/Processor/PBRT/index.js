@@ -91,24 +91,78 @@ class VirtualFS {
 
 }
 
-/** Pick the top-level .pbrt entry: shallowest path, preferring scene/main names. */
-export function pickEntryPath( entries ) {
+/** Decoded text of a zip entry, or '' when the value is not decodable bytes. */
+function entryText( bytes ) {
+
+	try {
+
+		return decoder.decode( bytes );
+
+	} catch {
+
+		return '';
+
+	}
+
+}
+
+/**
+ * Rank every .pbrt in the archive that could be a top-level scene, best first.
+ *
+ * Name shape alone is not enough: a scene's `geometry.pbrt` fragment carries a shorter
+ * name than the real entry and would win on sort, loading every shape with an unresolved
+ * NamedMaterial and no camera or lights. Content decides first — a fragment has no
+ * `WorldBegin` and is named by someone else's Include — and the name only breaks ties.
+ *
+ * More than one survivor is a real archive shape, not an error: transparent-machines
+ * ships five independent frames side by side. Callers should say which one they took.
+ */
+export function listEntryPaths( entries ) {
 
 	const pbrts = Object.keys( entries ).filter( k => k.toLowerCase().endsWith( '.pbrt' ) );
-	if ( pbrts.length === 0 ) return null;
+	if ( pbrts.length <= 1 ) return pbrts;
 
-	const preferred = pbrts.filter( k => /(^|\/)(scene|main)\.pbrt$/i.test( k ) );
-	const pool = preferred.length ? preferred : pbrts;
+	const texts = new Map( pbrts.map( k => [ k, entryText( entries[ k ] ) ] ) );
 
-	// Shallowest (fewest path segments), then shortest name.
-	pool.sort( ( a, b ) => {
+	const included = new Set();
+	for ( const text of texts.values() ) {
+
+		for ( const m of text.matchAll( /^[ \t]*(?:Include|Import)[ \t]+"([^"]+)"/gm ) ) {
+
+			included.add( normalizePath( m[ 1 ] ).toLowerCase().split( '/' ).pop() );
+
+		}
+
+	}
+
+	const narrow = ( candidates, keep ) => {
+
+		const kept = candidates.filter( keep );
+		return kept.length ? kept : candidates;
+
+	};
+
+	let pool = narrow( pbrts, k => /^[ \t]*WorldBegin\b/m.test( texts.get( k ) ) );
+	pool = narrow( pool, k => ! included.has( k.toLowerCase().split( '/' ).pop() ) );
+	pool = narrow( pool, k => /(^|\/)(scene|main)\.pbrt$/i.test( k ) );
+
+	// Shallowest, then shortest name, then the path itself — the last key keeps the
+	// order independent of however the zip happened to enumerate its entries.
+	return pool.sort( ( a, b ) => {
 
 		const da = a.split( '/' ).length, db = b.split( '/' ).length;
-		return da !== db ? da - db : a.length - b.length;
+		if ( da !== db ) return da - db;
+		if ( a.length !== b.length ) return a.length - b.length;
+		return a < b ? - 1 : a > b ? 1 : 0;
 
 	} );
 
-	return pool[ 0 ];
+}
+
+/** Best top-level .pbrt entry, or null when the archive has none. */
+export function pickEntryPath( entries ) {
+
+	return listEntryPaths( entries )[ 0 ] || null;
 
 }
 

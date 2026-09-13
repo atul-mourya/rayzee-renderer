@@ -3,6 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
 import { AF_DEFAULTS } from '../EngineDefaults.js';
 
+const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
+
 /**
  * Manages camera creation, switching, auto-focus, and AF point placement.
  *
@@ -83,6 +85,7 @@ export class CameraManager extends EventDispatcher {
 		const cam = new PerspectiveCamera( src.fov, src.aspect, src.near, src.far );
 		cam.position.copy( src.position );
 		cam.quaternion.copy( src.quaternion );
+		cam.scale.copy( src.scale );
 		cam.updateMatrixWorld( true );
 
 		cam.userData.__rayzeeUserCamera = true;
@@ -259,6 +262,7 @@ export class CameraManager extends EventDispatcher {
 			this._defaultCameraState = {
 				position: this.camera.position.clone(),
 				quaternion: this.camera.quaternion.clone(),
+				scale: this.camera.scale.clone(),
 				fov: this.camera.fov,
 				near: this.camera.near,
 				far: this.camera.far,
@@ -275,6 +279,9 @@ export class CameraManager extends EventDispatcher {
 			const s = this._defaultCameraState;
 			this.camera.position.copy( s.position );
 			this.camera.quaternion.copy( s.quaternion );
+			// Clears a mirror picked up from an imported camera; older saved states
+			// predate the field and are unmirrored by definition.
+			this.camera.scale.copy( s.scale ?? DEFAULT_CAMERA_SCALE );
 			this.camera.fov = s.fov;
 			this.camera.near = s.near;
 			this.camera.far = s.far;
@@ -294,6 +301,10 @@ export class CameraManager extends EventDispatcher {
 
 			this.camera.position.copy( sourceCamera.position );
 			this.camera.quaternion.copy( sourceCamera.quaternion );
+			// An imported camera can carry a mirror (a negative axis scale) that no
+			// quaternion can express — a pbrt scene's `Scale -1 1 1`, for one. Copying
+			// pose alone would silently un-mirror the view.
+			this.camera.scale.copy( sourceCamera.scale );
 			this.camera.fov = sourceCamera.fov;
 			this.camera.near = sourceCamera.near;
 			this.camera.far = sourceCamera.far;

@@ -17,6 +17,15 @@ export function identity() {
 
 }
 
+/** Determinant of the upper-left 3x3 basis. Negative means the transform mirrors. */
+export function determinant3( m ) {
+
+	return m[ 0 ] * ( m[ 5 ] * m[ 10 ] - m[ 6 ] * m[ 9 ] )
+		- m[ 4 ] * ( m[ 1 ] * m[ 10 ] - m[ 2 ] * m[ 9 ] )
+		+ m[ 8 ] * ( m[ 1 ] * m[ 6 ] - m[ 2 ] * m[ 5 ] );
+
+}
+
 /** Matrix product a*b (applies b first, then a, to a column vector). */
 export function multiply( a, b ) {
 

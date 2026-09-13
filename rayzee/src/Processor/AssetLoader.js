@@ -14,9 +14,9 @@ import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.j
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
+import { loadPBRTScene, pickEntryPath, listEntryPaths } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
-import { ISSUE_CODES } from '../EngineIssues.js';
+import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
 
 // Define supported file formats
@@ -483,7 +483,13 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	// Archive handling
-	async loadArchiveFromFile( file, filename ) {
+	/**
+	 * @param {File|Blob} file
+	 * @param {string} filename
+	 * @param {{pbrtEntry?: string}} [options] - `pbrtEntry` names which .pbrt to load when the
+	 *   archive holds several independent scenes; the issue log lists what else was available.
+	 */
+	async loadArchiveFromFile( file, filename, { pbrtEntry = null } = {} ) {
 
 		try {
 
@@ -491,7 +497,7 @@ export class AssetLoader extends EventDispatcher {
 			const zip = unzipSync( new Uint8Array( arrayBuffer ) );
 
 			// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
-			if ( pickEntryPath( zip ) ) return await this.loadPBRTFromZip( zip, filename );
+			if ( pickEntryPath( zip ) ) return await this.loadPBRTFromZip( zip, filename, pbrtEntry );
 
 			const result = await this.processObjMtlPairsInZip( zip, filename );
 			if ( result ) return result;
@@ -513,7 +519,7 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes)
 	 * @param {string} filename - original archive name (for display/events)
 	 */
-	async loadPBRTFromZip( zip, filename ) {
+	async loadPBRTFromZip( zip, filename, entryPath = null ) {
 
 		updateLoading( { isLoading: true, status: 'Parsing PBRT scene...', progress: 5 } );
 
@@ -547,14 +553,34 @@ export class AssetLoader extends EventDispatcher {
 
 		};
 
-		const { group, environment, report, warnings, entryPath } = await loadPBRTScene( {
-			vfs: zip, plyParser, imageFromBytes, envFromBytes
+		const requested = entryPath && listEntryPaths( zip ).includes( entryPath ) ? entryPath : null;
+		if ( entryPath && ! requested ) console.warn( `PBRT entry "${entryPath}" is not a scene in this archive — auto-detecting instead` );
+
+		const { group, environment, report, warnings, entryPath: loadedEntry } = await loadPBRTScene( {
+			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes
 		} );
+
+		// An archive can hold several independent scenes (transparent-machines ships five
+		// animation frames). Only one is loaded, so name it and the alternatives rather
+		// than leave the user comparing against a reference of a different scene.
+		const candidates = listEntryPaths( zip );
+		if ( candidates.length > 1 ) {
+
+			const others = candidates.filter( p => p !== loadedEntry );
+			console.warn( `PBRT archive holds ${candidates.length} scenes; loaded "${loadedEntry}". Others: ${others.join( ', ' )}` );
+			this._issues?.record(
+				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
+				`archive holds ${candidates.length} pbrt scenes; loaded "${loadedEntry}"`,
+				{ loaded: loadedEntry, alternatives: others },
+				ISSUE_SEVERITY.WARNING
+			);
+
+		}
 
 		// Diagnostics — surface what each mesh resolved to (helps debug black/wrong materials).
 		if ( report && report.length && typeof console.table === 'function' ) {
 
-			console.groupCollapsed( `PBRT loader: ${report.length} mesh(es) from "${entryPath}"` );
+			console.groupCollapsed( `PBRT loader: ${report.length} mesh(es) from "${loadedEntry}"` );
 			console.table( report );
 			console.groupEnd();
 
@@ -562,7 +588,7 @@ export class AssetLoader extends EventDispatcher {
 
 		if ( warnings && warnings.length ) {
 
-			console.warn( `PBRT loader: ${warnings.length} warning(s) parsing "${entryPath}"` );
+			console.warn( `PBRT loader: ${warnings.length} warning(s) parsing "${loadedEntry}"` );
 			warnings.forEach( w => console.warn( '  •', w ) );
 
 		}
@@ -575,14 +601,19 @@ export class AssetLoader extends EventDispatcher {
 
 		}
 
-		group.name = entryPath || filename;
+		group.name = loadedEntry || filename;
 		this.releaseTargetModel();
 		this.targetModel = group;
+
+		// The light's own orientation and `scale` are already baked into the texture, so the
+		// scene is only correct at rotation 0 / intensity 1. Without this the viewer profile's
+		// default 270° rotation lands on top and the sky sits 90° from where pbrt puts it.
+		if ( environment?.texture ) this.sceneMetadata = { environment: { rotation: 0, intensity: 1 } };
 
 		updateLoading( { isLoading: true, status: 'Processing PBRT geometry...', progress: 10 } );
 		await this.onModelLoad( this.targetModel );
 
-		this.dispatchEvent( { type: 'load', model: group, filename: `${entryPath} (from ZIP)` } );
+		this.dispatchEvent( { type: 'load', model: group, filename: `${loadedEntry} (from ZIP)` } );
 		return group;
 
 	}
@@ -1762,6 +1793,17 @@ export class AssetLoader extends EventDispatcher {
 				// transformed nodes, so local position/quaternion != world.
 				object.getWorldPosition( camera.position );
 				object.getWorldQuaternion( camera.quaternion );
+
+				// Keep only the sign of the world scale. A camera has no meaningful
+				// size, but a negative axis is a mirror — a pbrt scene's `Scale -1 1 1`
+				// lives here — and dropping it silently un-flips the view. decompose()
+				// parks any mirror on x, so this lands as (±1, 1, 1).
+				object.getWorldScale( camera.scale );
+				camera.scale.set(
+					Math.sign( camera.scale.x ) || 1,
+					Math.sign( camera.scale.y ) || 1,
+					Math.sign( camera.scale.z ) || 1
+				);
 
 				// Set a meaningful name
 				if ( ! camera.name || camera.name === '' ) {

@@ -7,6 +7,7 @@
 export const ISSUE_CODES = Object.freeze( {
 	ADAPTER_SOFTWARE: 'adapter.software',
 	ASSET_UNREACHABLE: 'asset.unreachable',
+	ASSET_AMBIGUOUS_ENTRY: 'asset.ambiguous_entry',
 	TEXTURE_BUILD_FAILED: 'texture.build_failed',
 	TEXTURE_PROCESSING_FALLBACK: 'texture.processing_fallback',
 	TEXTURE_LIMIT_EXCEEDED: 'texture.limit_exceeded',

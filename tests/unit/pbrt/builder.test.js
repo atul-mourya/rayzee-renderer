@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Mesh, PerspectiveCamera } from 'three';
+import { Mesh, PerspectiveCamera, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
@@ -39,6 +39,18 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'picks the scene over its shorter-named Include fragments', () => {
+
+		const entries = {
+			'contemporary-bathroom.pbrt': enc.encode( 'WorldBegin\nInclude "materials.pbrt"\nInclude "geometry.pbrt"\n' ),
+			'geometry.pbrt': enc.encode( 'AttributeBegin\n NamedMaterial "wood"\nAttributeEnd\n' ),
+			'materials.pbrt': enc.encode( 'MakeNamedMaterial "wood" "string type" [ "diffuse" ]\n' )
+		};
+
+		expect( pickEntryPath( entries ) ).toBe( 'contemporary-bathroom.pbrt' );
+
+	} );
+
 	it( 'builds meshes, a camera, and an environment', async () => {
 
 		const { group, camera, environment, warnings } = await loadPBRTScene( buildArgs() );
@@ -56,6 +68,34 @@ describe( 'PBRT scene builder', () => {
 		expect( px[ 1 ] ).toBeCloseTo( 0.5, 5 );
 		expect( px[ 2 ] ).toBeCloseTo( 0.6, 5 );
 		expect( warnings ).toEqual( [] );
+
+	} );
+
+	// pbrt's camera space is left-handed, so a bare LookAt already means a left-right
+	// flip against three's lookAt(); `Scale -1 1 1` cancels that rather than adding one.
+	// Both expectations are anchored on the published reference renders.
+	it( 'mirrors a plain LookAt camera to match pbrt (killeroo-simple)', async () => {
+
+		const { camera } = await loadPBRTScene( buildArgs() );
+		expect( camera.scale.x ).toBe( - 1 );
+		expect( camera.matrixWorld.determinant() ).toBeLessThan( 0 );
+
+	} );
+
+	it( 'leaves a "Scale -1 1 1" camera alone (contemporary-bathroom)', async () => {
+
+		const scaled = `Scale -1 1 1\n${SCENE}`;
+		const { camera } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scaled ) } } ) );
+
+		expect( camera.scale.x ).toBe( 1 );
+		expect( camera.matrixWorld.determinant() ).toBeGreaterThan( 0 );
+
+		// Same eye and same view direction either way — only the left/right sense differs.
+		const plain = ( await loadPBRTScene( buildArgs() ) ).camera;
+		expect( camera.position.distanceTo( plain.position ) ).toBeLessThan( 1e-6 );
+
+		const forward = m => new Vector3( 0, 0, - 1 ).applyMatrix4( m ).sub( new Vector3().setFromMatrixPosition( m ) );
+		expect( forward( camera.matrixWorld ).angleTo( forward( plain.matrixWorld ) ) ).toBeLessThan( 1e-6 );
 
 	} );
 
