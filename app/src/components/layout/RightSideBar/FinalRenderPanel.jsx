@@ -14,6 +14,7 @@ const FinalRenderPanel = () => {
 		bounces,
 		tilesHelper,
 		enableOIDN,
+		denoiserStrategy,
 		oidnQuality,
 		enableUpscaler,
 		upscalerScale,
@@ -39,9 +40,9 @@ const FinalRenderPanel = () => {
 			</ControlGroup>
 			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
 			<Row className="py-2 px-2">
-				<Switch label={"Enable AI Denoising"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
+				<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
 			</Row>
-			{enableOIDN && ( <>
+			{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
 				<Row className="py-2 px-2">
 					<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
 						<span className="opacity-50 text-xs truncate">OIDN Quality</span>

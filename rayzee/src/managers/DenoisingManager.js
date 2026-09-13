@@ -76,6 +76,10 @@ export class DenoisingManager extends EventDispatcher {
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
 		this._finalQuality = DEFAULT_STATE.oidnQuality;
+		// Two independent decisions. `finalDenoise` is the OIDN pass on the finished image;
+		// `continuousDenoise` is OIDN as the live-view denoiser. `denoiser.enabled` means only
+		// "OIDN is in use at all", which is what the aux G-buffer wiring needs.
+		this.finalDenoise = DEFAULT_STATE.enableOIDN;
 		this.continuousDenoise = DEFAULT_STATE.continuousDenoise;
 		this.continuousDenoiseInterval = DEFAULT_STATE.continuousDenoiseInterval;
 		// -Infinity, not 0: 0 reads as "denoised at time zero", which blocks the first cadence
@@ -287,7 +291,7 @@ export class DenoisingManager extends EventDispatcher {
 		// OIDN refreshing the accumulating image is a live-view denoiser like the others, so it
 		// belongs in the same one-of-N choice. Two of these running at once would mean paying for
 		// a per-frame denoise whose result the OIDN overlay then covers.
-		if ( this.continuousDenoise && this.denoiser?.enabled ) return 'oidn';
+		if ( this.continuousDenoise ) return 'oidn';
 		if ( this._stages.asvgf?.enabled ) return 'asvgf';
 		if ( this._stages.nrd?.enabled ) return 'nrd';
 		if ( this._stages.edgeFilter?.enabled ) return 'edgeaware';
@@ -313,11 +317,9 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._clearDenoiserTextures();
 
-		// Picking any other strategy stops OIDN refreshing the live view; picking OIDN switches it
-		// on, and turns OIDN itself on — asking for it on the live view and leaving it off would
-		// select a denoiser that cannot run.
+		// Which denoiser owns the live view. Deliberately says nothing about the finished image:
+		// wanting OIDN on the viewport is not the same as opting into a final pass.
 		this.setContinuousDenoise( strategy === 'oidn' );
-		if ( strategy === 'oidn' && ! this.denoiser?.enabled ) this.setOIDNEnabled( true );
 
 		switch ( strategy ) {
 
@@ -525,7 +527,7 @@ export class DenoisingManager extends EventDispatcher {
 	tickContinuousDenoise( sampleCount ) {
 
 		const dn = this.denoiser;
-		if ( ! this.continuousDenoise || ! dn?.enabled ) return false;
+		if ( ! this.continuousDenoise || ! dn ) return false;
 		if ( dn.state.isDenoising || dn.state.isLoading ) return false;
 
 		// While the camera moves, reset() hides the output every frame and a denoise would paint
@@ -597,6 +599,7 @@ export class DenoisingManager extends EventDispatcher {
 	setContinuousDenoise( enabled ) {
 
 		this.continuousDenoise = !! enabled;
+		this._syncOIDNInUse();
 		this._lastCadenceAt = - Infinity;
 		this._resetCadence();
 
@@ -625,11 +628,14 @@ export class DenoisingManager extends EventDispatcher {
 		// Remove any stale completion-chain listener from a previous render cycle
 		this._cleanupCompletionListener();
 
-		// Chain: denoise first (if enabled), then upscale (if enabled)
-		const startUpscaler = e => {
+		// What closes the render, if anything. A full pass at the chosen tier when that switch is
+		// on; otherwise, if OIDN owns the live view, one last cheap refresh — the cadence's last
+		// tick lands a few samples short, and the picture should match the render that finished.
+		const closing = this.finalDenoise ? 'final' : this.continuousDenoise ? 'refresh' : null;
 
-			// A cadence run finishing is not the final denoise — keep waiting for that one.
-			if ( e?.continuous ) return;
+		// Registered only once the closing denoise has been launched, so the next 'end' is
+		// unambiguously that one — a cadence run's end can look identical otherwise.
+		const startUpscaler = () => {
 
 			this.denoiser?.removeEventListener( 'end', startUpscaler );
 			this._pendingStartUpscaler = null;
@@ -644,42 +650,58 @@ export class DenoisingManager extends EventDispatcher {
 
 		};
 
-		if ( this.denoiser?.enabled ) {
+		if ( ! closing ) {
+
+			startUpscaler();
+			return;
+
+		}
+
+		const launchClosing = () => {
+
+			if ( ! isStillComplete() ) return;
 
 			this._pendingStartUpscaler = startUpscaler;
 			this.denoiser.addEventListener( 'end', startUpscaler );
-			this._resetCadence();
 
-			if ( this.denoiser.state.isDenoising ) {
-
-				// A cadence run is mid-flight against a lower sample count. Let it finish, then
-				// denoise the final image — start() would be refused right now.
-				// three.js EventDispatcher.addEventListener takes (type, listener) and silently
-				// ignores an options object, so a listener that restarts the denoiser MUST remove
-				// itself: `{ once: true }` here re-fired on its own end, forever.
-				const onCadenceEnd = () => {
-
-					this.denoiser?.removeEventListener( 'end', onCadenceEnd );
-					if ( this._pendingFinalDenoise === onCadenceEnd ) this._pendingFinalDenoise = null;
-					if ( ! isStillComplete() ) return;
-					this._useFinalQuality();
-					this.denoiser?.start();
-
-				};
-
-				this._pendingFinalDenoise = onCadenceEnd;
-				this.denoiser.addEventListener( 'end', onCadenceEnd );
-
-			} else {
+			if ( closing === 'final' ) {
 
 				this._useFinalQuality();
 				this.denoiser.start();
 
+			} else {
+
+				// Whatever model the refreshes have been using — no reload for a picture the user
+				// never asked to be denoised at full quality.
+				this.denoiser.start( { continuous: true } );
+
 			}
+
+		};
+
+		this._resetCadence();
+
+		if ( this.denoiser.state.isDenoising ) {
+
+			// A cadence run is mid-flight against a lower sample count. Let it finish first —
+			// start() would be refused right now.
+			// three.js EventDispatcher.addEventListener takes (type, listener) and silently
+			// ignores an options object, so a listener that restarts the denoiser MUST remove
+			// itself: `{ once: true }` here re-fired on its own end, forever.
+			const onCadenceEnd = () => {
+
+				this.denoiser?.removeEventListener( 'end', onCadenceEnd );
+				if ( this._pendingFinalDenoise === onCadenceEnd ) this._pendingFinalDenoise = null;
+				launchClosing();
+
+			};
+
+			this._pendingFinalDenoise = onCadenceEnd;
+			this.denoiser.addEventListener( 'end', onCadenceEnd );
 
 		} else {
 
-			startUpscaler();
+			launchClosing();
 
 		}
 
@@ -842,14 +864,22 @@ export class DenoisingManager extends EventDispatcher {
 	// ── OIDN ─────────────────────────────────────────────────────
 
 	/** Enables or disables Intel OIDN denoiser. */
+	/** Denoise the finished image with OIDN. Independent of which denoiser owns the live view. */
 	setOIDNEnabled( enabled ) {
 
-		if ( this.denoiser ) this.denoiser.enabled = enabled;
-		// Without this the live-view choice would still read 'oidn' with nothing behind it.
-		if ( ! enabled ) this.continuousDenoise = false;
+		this.finalDenoise = !! enabled;
+		this._syncOIDNInUse();
 		// OIDN reads the PathTracer aux MRT; re-sync so the wavefront produces it while OIDN is on.
 		this._syncGBufferStages();
 		this._onPostProcessRefresh?.();
+
+	}
+
+	// `enabled` on the denoiser is the union of its two jobs — everything downstream (the aux MRT,
+	// VRAM retention) only needs to know whether OIDN runs at all.
+	_syncOIDNInUse() {
+
+		if ( this.denoiser ) this.denoiser.enabled = this.finalDenoise || this.continuousDenoise;
 
 	}
 

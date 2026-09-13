@@ -890,32 +890,46 @@ accumulating, so a preview shows a clean picture as it refines instead of only a
 
 #### When the denoiser runs
 
-Exactly one thing denoises the live view, so OIDN is an entry in that list rather than a parallel
-switch — two of them would mean paying for a per-frame denoise whose result the OIDN overlay
-immediately covers:
+Two independent decisions, because they answer different questions — *what cleans the view while the
+render works*, and *does the finished image get a proper pass*:
 
 ```js
-engine.denoisingManager.setStrategy('oidn');   // 'none' | 'edgeaware' | 'asvgf' | 'nrd' | 'oidn'
-engine.denoisingManager.setOIDNEnabled(true);  // denoise the finished image
+engine.denoisingManager.setStrategy('oidn');    // 'none' | 'edgeaware' | 'asvgf' | 'nrd' | 'oidn'
+engine.denoisingManager.setOIDNEnabled(false);  // a full OIDN pass on the finished image
 ```
 
-- Choosing `'oidn'` switches OIDN on as well — asking for it on the live view and leaving it off
-  would select a denoiser that cannot run — and takes every per-frame denoiser off.
-- Choosing anything else stops the live refreshes. OIDN still denoises the finished image if its own
-  switch is on.
-- `setOIDNEnabled(false)` also drops `'oidn'` from the list, so it can never claim a denoiser that
-  is switched off. Read the outcome back from `denoisingManager.denoiserStrategy` rather than
-  restating these rules in a host.
+Exactly one denoiser owns the live view, which is why OIDN is an entry in that list rather than a
+parallel switch — two of them would mean paying for a per-frame denoise whose result the OIDN
+overlay immediately covers. But choosing OIDN there says nothing about the finished image, and
+switching the final pass on says nothing about the live view. All six combinations are reachable:
+
+| `setStrategy` | `setOIDNEnabled` | Camera moving | Still, accumulating | Finished |
+|---|---|---|---|---|
+| `'none'` | `false` | raw | raw | raw |
+| `'none'` | `true` | raw | raw | OIDN |
+| `'asvgf'` | `false` | ASVGF | ASVGF | ASVGF's last frame |
+| `'asvgf'` | `true` | ASVGF | ASVGF | OIDN |
+| `'oidn'` | `false` | raw | OIDN, refreshing | one last refresh |
+| `'oidn'` | `true` | raw | OIDN, refreshing | OIDN, full quality |
+
+`denoiser.enabled` is the union of the two — "OIDN is in use at all", which is what the aux G-buffer
+wiring needs — so read the two decisions back from `denoisingManager.denoiserStrategy` and
+`denoisingManager.finalDenoise`, not from it.
+
+With OIDN on the live view and the final pass off, the render still closes with one more refresh: the
+cadence's last tick lands a few samples short of the end (140 of 150, measured), and the picture
+should match the render that finished. It uses whatever model the refreshes were already on — no
+reload for an image the user never asked to be denoised at full quality.
 
 In the app that is `Real-Time Denoiser` (None / EdgeAware / ASVGF / NRD / **OIDN (AI)**) and the
-`AI Denoising (OIDN)` switch. Deterministic mode pins the live refreshes off, since which frame a
+`Final Denoise (OIDN)` switch. Deterministic mode pins the live refreshes off, since which frame a
 wall-clock cadence lands on is not reproducible.
 
-Denoising only at the end is not just "off during the render" — it is the only way to see the true
-noise level, which is how you judge whether a render has actually settled.
+Leaving the live view raw is not just "denoising off" — it is the only way to see the true noise
+level, which is how you judge whether a render has actually settled. That is row one and row two.
 
-`setOIDNMode( 'off' | 'final' | 'continuous' )` / `getOIDNMode()` fold both settings into one value
-for hosts that prefer a single control; they route through the same rules.
+`setOIDNMode( 'off' | 'final' | 'continuous' )` / `getOIDNMode()` fold both into one value for hosts
+that prefer a single control; they route through the same calls.
 
 #### Quality while it runs vs. quality when it finishes
 

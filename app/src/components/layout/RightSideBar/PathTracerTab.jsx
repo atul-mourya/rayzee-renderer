@@ -675,11 +675,12 @@ const PathTracerTab = () => {
 
 				{/* Independent OIDN Control - Placed after real-time denoiser controls */}
 				<Row>
-					<Switch label={"AI Denoising (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange} />
+					<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange} />
 				</Row>
 
-				{/* OIDN Quality Controls - Independent of real-time denoiser selection */}
-				{enableOIDN && ( <>
+				{/* Quality applies to both jobs: the final pass, and which cheap model the live
+				    refreshes use — so it shows whenever OIDN is in use either way. */}
+				{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
 					<Row>
 						<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
 							<span className="opacity-50 text-xs truncate">OIDN Quality</span>
