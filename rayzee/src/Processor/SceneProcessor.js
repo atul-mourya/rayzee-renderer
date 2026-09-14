@@ -11,10 +11,17 @@ import { updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
-import { TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from '../EngineDefaults.js';
+import {
+	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
+	packNormalOct
+} from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
+import TLASWorker from './Workers/TLASWorker.js?worker&inline';
+
+// Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
+const TLAS_WORKER_MIN_ENTRIES = 50_000;
 
 const log = createLogger( 'scene' );
 
@@ -61,7 +68,8 @@ export class SceneProcessor {
 		};
 
 		// Initialize geometry data containers
-		this.triangleData = null; // Efficient format (Float32Array)
+		this.triangleData = null; // uint lanes; this.triangleFloats views the same memory
+		this.triangleFloats = null;
 		this.triangleCount = 0; // Number of triangles
 		this.materials = [];
 		this.maps = [];
@@ -123,6 +131,9 @@ export class SceneProcessor {
 			textureCreationTime: 0,
 			geometryExtractionTime: 0,
 			bvhBuildTime: 0,
+			blasBuildTime: 0,
+			tlasBuildTime: 0,
+			bvhAssembleTime: 0,
 			totalProcessingTime: 0
 		};
 
@@ -170,6 +181,8 @@ export class SceneProcessor {
 
 		// Create TLAS builder for two-level BVH
 		this.tlasBuilder = new TLASBuilder();
+		this._tlasWorker = null;
+		this._tlasWorkerFailed = false;
 
 	}
 
@@ -319,7 +332,7 @@ export class SceneProcessor {
 			// Extract geometry data
 			const extractedData = this.geometryExtractor.extract( object );
 
-			this.triangleData = extractedData.triangleData;
+			this._setTriangleData( extractedData.triangleData );
 			this.triangleCount = extractedData.triangleCount;
 			// Callers build refit buffers by walking meshes, which counts a shared geometry
 			// once per placement; storage counts it once.
@@ -569,45 +582,49 @@ export class SceneProcessor {
 
 			updateLoading( { status: 'Built all BLASes', progress: 70 } );
 
+			this.performanceMetrics.blasBuildTime = performance.now() - startTime;
+
 			// ── Step 2: Assemble BVH buffer ──
 
 			updateLoading( { status: "Building TLAS...", progress: 72 } );
+			const tlasStart = performance.now();
 
-			const validEntries = this.instanceTable.entries.filter( e => e !== null );
+			const table = this.instanceTable;
 
 			// Always build a TLAS — even for a single mesh — so the BLAS-pointer leaf
 			// carries packed per-mesh visibility in its slot [2]. The 1-node TLAS
 			// overhead (one extra leaf fetch per ray) is negligible and eliminates
 			// a dedicated visibility storage buffer binding.
 			this.instanceTable.computeAABBs( this.triangleData );
-			const { root: tlasRoot, nodeCount: tlasNodeCount } = this.tlasBuilder.build( validEntries );
 
-			this.instanceTable.assignOffsets( tlasNodeCount );
+			// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
+			// assigned before the build and the TLAS is written in a single pass.
+			this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( table.count ) );
 			const totalNodes = this.instanceTable.totalNodeCount;
 
-			const tlasData = this.tlasBuilder.flatten( tlasRoot, validEntries );
+			const tlasData = await this._buildTLAS( table );
+			this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
 
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
+			const assembleStart = performance.now();
 			this.bvhData = new Float32Array( totalNodes * 16 );
 			this.bvhData.set( tlasData );
 
-			for ( const entry of validEntries ) {
+			for ( let i = 0; i < table.count; i ++ ) {
 
-				if ( entry.sharedFrom !== null ) continue; // alias — the owner writes the nodes
-				const destOffset = entry.blasOffset * 16;
-				this.bvhData.set( entry.bvhData, destOffset );
-				this._offsetBLASInPlace( destOffset, entry.bvhData.length / 16, entry.blasOffset, entry.triOffset );
+				if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue; // alias — owner writes
+				const blas = table.blasData.get( i );
+				const destOffset = table.blasOffset[ i ] * 16;
+				this.bvhData.set( blas, destOffset );
+				this._offsetBLASInPlace( destOffset, blas.length / 16, table.blasOffset[ i ], table.triOffset[ i ] );
 
 			}
 
 			this._buildGlobalOriginalToBvhMap();
+			this.performanceMetrics.bvhAssembleTime = performance.now() - assembleStart;
 
-			for ( const entry of validEntries ) {
-
-				if ( entry.sharedFrom === null ) entry.originalToBvhMap = null;
-				entry.bvhData = null;
-
-			}
+			table.originalToBvhMap.clear();
+			table.blasData.clear();
 
 			this.bvhRoot = true;
 			this._disposeRefitWorker();
@@ -616,7 +633,7 @@ export class SceneProcessor {
 			// One aggregate line for the whole two-level build; the workers' per-mesh
 			// detail sits a level below at `debug`.
 			log.debug( fmt.list( [
-				`${fmt.n( validEntries.length )} BLASes + TLAS`,
+				`${fmt.n( table.setCount )} BLASes + TLAS`,
 				`${fmt.n( this.bvhData.length / 16 )} nodes`,
 				`SAH ${fmt.n( blasStats.sah )} · objMed ${blasStats.objMed} · spatMed ${blasStats.spatMed} · failed ${blasStats.failed}`,
 				blasStats.treeletsProcessed ? `treelets ${blasStats.treeletsImproved}/${blasStats.treeletsProcessed} improved` : null,
@@ -812,43 +829,40 @@ export class SceneProcessor {
 
 		this.originalToBvhMap = new Uint32Array( this.triangleCount );
 
-		for ( const entry of this.instanceTable.entries ) {
+		const table = this.instanceTable;
+		for ( let m = 0; m < table.count; m ++ ) {
 
-			if ( ! entry ) continue;
+			// Aliases read the owner's map straight out of the table; nothing to store.
+			if ( ! table.isSet[ m ] || table.sharedFrom[ m ] !== - 1 ) continue;
 
-			if ( entry.sharedFrom !== null ) {
-
-				// Same triangles as the owner, so the same ordering.
-				entry.bvhToOriginal = this.instanceTable.entries[ entry.sharedFrom ].bvhToOriginal;
-				continue;
-
-			}
+			const triCount = table.triCount[ m ], triOffset = table.triOffset[ m ];
+			const originalToBvh = table.originalToBvhMap.get( m );
 
 			// Build per-mesh bvhToOriginal (inverse map for sequential writes)
-			const bvhToOrig = new Uint32Array( entry.triCount );
+			const bvhToOrig = new Uint32Array( triCount );
 
-			if ( entry.originalToBvhMap ) {
+			if ( originalToBvh ) {
 
-				for ( let i = 0; i < entry.triCount; i ++ ) {
+				for ( let i = 0; i < triCount; i ++ ) {
 
-					const bvhLocal = entry.originalToBvhMap[ i ];
-					this.originalToBvhMap[ entry.triOffset + i ] = entry.triOffset + bvhLocal;
+					const bvhLocal = originalToBvh[ i ];
+					this.originalToBvhMap[ triOffset + i ] = triOffset + bvhLocal;
 					bvhToOrig[ bvhLocal ] = i;
 
 				}
 
 			} else {
 
-				for ( let i = 0; i < entry.triCount; i ++ ) {
+				for ( let i = 0; i < triCount; i ++ ) {
 
-					this.originalToBvhMap[ entry.triOffset + i ] = entry.triOffset + i;
+					this.originalToBvhMap[ triOffset + i ] = triOffset + i;
 					bvhToOrig[ i ] = i;
 
 				}
 
 			}
 
-			entry.bvhToOriginal = bvhToOrig;
+			table.bvhToOriginal.set( m, bvhToOrig );
 
 		}
 
@@ -1100,7 +1114,7 @@ export class SceneProcessor {
 			this.triangleData,
 			this.materials,
 			this.triangleCount,
-			this.instanceTable?.entries ?? null
+			this.instanceTable ?? null
 		);
 
 		this.emissiveTriangleData = this.emissiveTriangleBuilder.createEmissiveRawData();
@@ -1153,7 +1167,7 @@ export class SceneProcessor {
 
 		// Reset all containers
 		this.triangles = [];
-		this.triangleData = null;
+		this._setTriangleData( null );
 		this.triangleCount = 0;
 		this.materials = [];
 		this.meshTriangleRanges = null;
@@ -1189,6 +1203,9 @@ export class SceneProcessor {
 			textureCreationTime: 0,
 			geometryExtractionTime: 0,
 			bvhBuildTime: 0,
+			blasBuildTime: 0,
+			tlasBuildTime: 0,
+			bvhAssembleTime: 0,
 			totalProcessingTime: 0
 		};
 
@@ -1454,14 +1471,14 @@ export class SceneProcessor {
 			const sharedPosBuf = new SharedArrayBuffer( newPositions.byteLength );
 
 			const sharedBvhData = new Float32Array( sharedBvhBuf );
-			const sharedTriData = new Float32Array( sharedTriBuf );
+			const sharedTriData = new Uint32Array( sharedTriBuf );
 
 			sharedBvhData.set( this.bvhData );
 			sharedTriData.set( this.triangleData );
 
 			// Replace local refs with shared views
 			this.bvhData = sharedBvhData;
-			this.triangleData = sharedTriData;
+			this._setTriangleData( sharedTriData );
 
 			// Build bvhToOriginal map (inverse of originalToBvh) for cache-friendly
 			// sequential writes in the worker's updateTrianglePositions.
@@ -1534,18 +1551,21 @@ export class SceneProcessor {
 	 */
 	_patchSmoothNormals( normals ) {
 
-		const entries = ( this.instanceTable?.entries || [] ).filter( Boolean );
-		if ( entries.length === 0 ) {
+		const table = this.instanceTable;
+		if ( ! table || table.count === 0 ) {
 
 			this._patchNormalsRange( normals, 0, this.originalToBvhMap.length, null, null );
 			return;
 
 		}
 
-		for ( const entry of entries ) {
+		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( entry.sharedFrom !== null ) continue;
-			this._patchNormalsRange( normals, entry.triOffset, entry.triCount, entry.matrixWorld, entry.expandedStart );
+			if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue;
+			this._patchNormalsRange(
+				normals, table.triOffset[ i ], table.triCount[ i ],
+				table.matrixWorldOf( i ), table.expandedStart[ i ]
+			);
 
 		}
 
@@ -1555,7 +1575,7 @@ export class SceneProcessor {
 	 * Refit specific BLASes and rebuild TLAS after object transform or per-mesh animation.
 	 * Runs on the main thread (fast for per-mesh updates).
 	 *
-	 * @param {number[]} affectedMeshIndices - Indices into meshTriangleRanges / instanceTable.entries
+	 * @param {number[]} affectedMeshIndices - Indices into meshTriangleRanges / the instance table
 	 * @param {Float32Array} newPositions - 9 floats per triangle in original mesh order (full scene)
 	 * @param {Float32Array} [newNormals] - Optional smooth normals (9 floats per tri)
 	 * @returns {{ refitTimeMs: number }}
@@ -1601,7 +1621,7 @@ export class SceneProcessor {
 		// Step 1: Update triangle positions and refit each affected BLAS
 		for ( const meshIdx of affectedMeshIndices ) {
 
-			const entry = this.instanceTable.entries[ meshIdx ];
+			const entry = this.instanceTable.entryAt( meshIdx );
 			if ( ! entry ) continue;
 
 			// Update triangle positions within this mesh's range
@@ -1650,11 +1670,11 @@ export class SceneProcessor {
 
 		for ( const meshIdx of affectedMeshIndices ) {
 
-			const entry = this.instanceTable.entries[ meshIdx ];
-			if ( ! entry ) continue;
+			const table = this.instanceTable;
+			if ( ! table.isSet[ meshIdx ] ) continue;
 
-			triRanges.push( { offset: entry.triOffset * FPT, count: entry.triCount * FPT } );
-			bvhRanges.push( { offset: entry.blasOffset * FPN, count: entry.blasNodeCount * FPN } );
+			triRanges.push( { offset: table.triOffset[ meshIdx ] * FPT, count: table.triCount[ meshIdx ] * FPT } );
+			bvhRanges.push( { offset: table.blasOffset[ meshIdx ] * FPN, count: table.blasNodeCount[ meshIdx ] * FPN } );
 
 		}
 
@@ -1823,22 +1843,104 @@ export class SceneProcessor {
 	 * Copy world-space positions into `dst`, each mesh's range carried into its own space.
 	 * @private
 	 */
+	/**
+	 * Build the TLAS, off the main thread when a worker is available.
+	 *
+	 * The worker returns structure only; leaf payloads are filled here. On any failure the
+	 * synchronous path runs instead, so a blocked or unavailable worker costs responsiveness,
+	 * never a scene.
+	 * @private
+	 */
+	async _buildTLAS( table ) {
+
+		const n = table.count;
+
+		// Below this the build is a few ms and the round trip costs more than it saves.
+		if ( n >= TLAS_WORKER_MIN_ENTRIES && ! this._tlasWorkerFailed ) {
+
+			try {
+
+				// The worker needs a copy it can own; the column stays with the table.
+				const aabbs = Float64Array.from( table.worldAABB );
+				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n );
+				TLASBuilder.fillLeaves( tlasData, nodeCount, table );
+				return tlasData;
+
+			} catch ( error ) {
+
+				this._tlasWorkerFailed = true;
+				log.warn( `TLAS worker unavailable (${error.message}); building on the main thread` );
+
+			}
+
+		}
+
+		return this.tlasBuilder.build( table ).data;
+
+	}
+
+	/** @private */
+	_runTLASWorker( aabbs, count ) {
+
+		if ( ! this._tlasWorker ) this._tlasWorker = new TLASWorker();
+		const worker = this._tlasWorker;
+
+		return new Promise( ( resolve, reject ) => {
+
+			const done = ( event ) => {
+
+				worker.removeEventListener( 'message', done );
+				worker.removeEventListener( 'error', failed );
+				if ( event.data?.error ) reject( new Error( event.data.error ) );
+				else resolve( event.data );
+
+			};
+
+			const failed = ( event ) => {
+
+				worker.removeEventListener( 'message', done );
+				worker.removeEventListener( 'error', failed );
+				reject( new Error( event.message || 'worker error' ) );
+
+			};
+
+			worker.addEventListener( 'message', done );
+			worker.addEventListener( 'error', failed );
+			worker.postMessage(
+				{ aabbs: aabbs.buffer, count, logLevel: workerLogLevel() },
+				[ aabbs.buffer ]
+			);
+
+		} );
+
+	}
+
+	/** Keep the f32 view in step with the uint record buffer. @private */
+	_setTriangleData( data ) {
+
+		this.triangleData = data;
+		this.triangleFloats = data ? new Float32Array( data.buffer, data.byteOffset, data.length ) : null;
+
+	}
+
 	_writeObjectSpacePositions( src, dst ) {
 
-		const entries = this.instanceTable?.entries || [];
+		const table = this.instanceTable;
 		let covered = 0;
 
-		for ( const entry of entries ) {
+		for ( let i = 0; i < ( table?.count || 0 ); i ++ ) {
 
 			// Aliases point at the owner's triangles; deforming them once is the whole story.
-			if ( ! entry || entry.sharedFrom !== null ) continue;
+			if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue;
 
-			const from = entry.expandedStart * 9;
-			const to = entry.triOffset * 9;
-			const len = entry.triCount * 9;
+			const from = table.expandedStart[ i ] * 9;
+			const to = table.triOffset[ i ] * 9;
+			const len = table.triCount[ i ] * 9;
 			covered = Math.max( covered, to + len );
 
-			const m = entry.matrixInverse;
+			// Callers hand over world-space positions; triangles are stored per instance, so
+			// they come back through the inverse.
+			const m = table.matrixInverseOf( i );
 			if ( isIdentity( m ) ) {
 
 				dst.set( src.subarray( from, from + len ), to );
@@ -1872,9 +1974,10 @@ export class SceneProcessor {
 		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
 		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
-		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET;
-		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET;
-		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET;
+		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
+		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
+		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
+		const f = this.triangleFloats;
 
 		const bvhToOrig = entry.bvhToOriginal;
 
@@ -1913,31 +2016,27 @@ export class SceneProcessor {
 
 			}
 
-			this.triangleData[ dst + PA ] = ax;
-			this.triangleData[ dst + PA + 1 ] = ay;
-			this.triangleData[ dst + PA + 2 ] = az;
-			this.triangleData[ dst + PB ] = bx;
-			this.triangleData[ dst + PB + 1 ] = by;
-			this.triangleData[ dst + PB + 2 ] = bz;
-			this.triangleData[ dst + PC ] = cx;
-			this.triangleData[ dst + PC + 1 ] = cy;
-			this.triangleData[ dst + PC + 2 ] = cz;
+			f[ dst + PA ] = ax;
+			f[ dst + PA + 1 ] = ay;
+			f[ dst + PA + 2 ] = az;
+			f[ dst + PB ] = bx;
+			f[ dst + PB + 1 ] = by;
+			f[ dst + PB + 2 ] = bz;
+			f[ dst + PC ] = cx;
+			f[ dst + PC + 1 ] = cy;
+			f[ dst + PC + 2 ] = cz;
 
 			const abx = bx - ax, aby = by - ay, abz = bz - az;
 			const acx = cx - ax, acy = cy - ay, acz = cz - az;
-			const nx = aby * acz - abz * acy;
-			const ny = abz * acx - abx * acz;
-			const nz = abx * acy - aby * acx;
+			const packed = packNormalOct(
+				aby * acz - abz * acy,
+				abz * acx - abx * acz,
+				abx * acy - aby * acx
+			);
 
-			this.triangleData[ dst + NA ] = nx;
-			this.triangleData[ dst + NA + 1 ] = ny;
-			this.triangleData[ dst + NA + 2 ] = nz;
-			this.triangleData[ dst + NB ] = nx;
-			this.triangleData[ dst + NB + 1 ] = ny;
-			this.triangleData[ dst + NB + 2 ] = nz;
-			this.triangleData[ dst + NC ] = nx;
-			this.triangleData[ dst + NC + 1 ] = ny;
-			this.triangleData[ dst + NC + 2 ] = nz;
+			this.triangleData[ dst + NA ] = packed;
+			this.triangleData[ dst + NB ] = packed;
+			this.triangleData[ dst + NC ] = packed;
 
 		}
 
@@ -1960,9 +2059,9 @@ export class SceneProcessor {
 	_patchNormalsRange( normals, startOrig, count, matrixWorld, srcStart = null ) {
 
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET;
-		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET;
-		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET;
+		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
+		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
+		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
 
 		// Callers supply world-space normals. Traversal takes object normals out through the
 		// transpose of world-to-object, so coming the other way is the transpose of
@@ -1994,10 +2093,7 @@ export class SceneProcessor {
 
 				}
 
-				const o = dst + slots[ v ];
-				this.triangleData[ o ] = ox;
-				this.triangleData[ o + 1 ] = oy;
-				this.triangleData[ o + 2 ] = oz;
+				this.triangleData[ dst + slots[ v ] ] = packNormalOct( ox, oy, oz );
 
 			}
 
@@ -2030,10 +2126,10 @@ export class SceneProcessor {
 		}
 
 		this._blasOffsetMap.clear();
-		for ( const entry of this.instanceTable.entries ) {
+		const table = this.instanceTable;
+		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( ! entry ) continue;
-			this._blasOffsetMap.set( entry.blasOffset, entry );
+			if ( table.isSet[ i ] ) this._blasOffsetMap.set( table.blasOffset[ i ], i );
 
 		}
 
@@ -2047,16 +2143,17 @@ export class SceneProcessor {
 
 				// BLAS-pointer leaf: read AABB from instance table
 				const blasRoot = this.bvhData[ o ];
-				const entry = this._blasOffsetMap.get( blasRoot );
-				if ( entry && entry.worldAABB ) {
+				const entryIndex = this._blasOffsetMap.get( blasRoot );
+				if ( entryIndex !== undefined ) {
 
 					const b = i * 6;
-					this._tlasBounds[ b ] = entry.worldAABB.minX;
-					this._tlasBounds[ b + 1 ] = entry.worldAABB.minY;
-					this._tlasBounds[ b + 2 ] = entry.worldAABB.minZ;
-					this._tlasBounds[ b + 3 ] = entry.worldAABB.maxX;
-					this._tlasBounds[ b + 4 ] = entry.worldAABB.maxY;
-					this._tlasBounds[ b + 5 ] = entry.worldAABB.maxZ;
+					const a = entryIndex * 6;
+					this._tlasBounds[ b ] = table.worldAABB[ a ];
+					this._tlasBounds[ b + 1 ] = table.worldAABB[ a + 1 ];
+					this._tlasBounds[ b + 2 ] = table.worldAABB[ a + 2 ];
+					this._tlasBounds[ b + 3 ] = table.worldAABB[ a + 3 ];
+					this._tlasBounds[ b + 4 ] = table.worldAABB[ a + 4 ];
+					this._tlasBounds[ b + 5 ] = table.worldAABB[ a + 5 ];
 
 				}
 
@@ -2179,7 +2276,7 @@ export class SceneProcessor {
 
 		for ( const meshIdx of meshIndices ) {
 
-			const entry = this.instanceTable.entries[ meshIdx ];
+			const entry = this.instanceTable.entryAt( meshIdx );
 			if ( ! entry ) continue;
 
 			// Cancel any in-flight rebuild for this mesh
@@ -2291,6 +2388,18 @@ export class SceneProcessor {
 
 	}
 
+	/** @private */
+	_disposeTLASWorker() {
+
+		if ( this._tlasWorker ) {
+
+			this._tlasWorker.terminate();
+			this._tlasWorker = null;
+
+		}
+
+	}
+
 	/**
      * Completely dispose of all resources
      * Call this when the instance is no longer needed
@@ -2299,8 +2408,9 @@ export class SceneProcessor {
 
 		this._log( 'Disposing resources' );
 
-		// Dispose refit worker
+		// Dispose workers
 		this._disposeRefitWorker();
+		this._disposeTLASWorker();
 
 		// Dispose textures
 		this._disposeTextures();

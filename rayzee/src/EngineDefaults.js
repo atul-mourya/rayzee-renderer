@@ -533,24 +533,111 @@ export const AF_DEFAULTS = {
 	SNAP_THRESHOLD: 0.5,
 };
 
-// Triangle data layout constants - shared between GeometryExtractor and TextureCreator
+/**
+ * Triangle record: 5 uvec4 lanes (80 bytes). The buffer is declared `uvec4` so packed lanes
+ * keep their exact bit pattern — a packSnorm2x16 result can land in the f32 NaN range, and an
+ * f32 lane may canonicalise it (the same reason the G-buffer is uvec4). Positions and UVs are
+ * written as f32 through a Float32Array view of the same memory and read back with
+ * `uintBitsToFloat`, so they carry full precision; only normals are compressed.
+ *
+ * Was 32 floats (128 B) with 4 dead padding lanes. At 128 B the 2 GB V8 ArrayBuffer cap put a
+ * hard ceiling of 16.7M triangles on the scene — 80 B lifts that to 26.8M and cuts geometry
+ * VRAM by the same 37.5%. Each normal now rides in its position's spare .w lane, so the three
+ * vec4 loads the intersection test already does carry the normals with them.
+ */
 export const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 32,
+	FLOATS_PER_TRIANGLE: 20,
 
-	// Positions (3 vec4s = 12 floats)
-	POSITION_A_OFFSET: 0,
+	POSITION_A_OFFSET: 0, // f32 xyz + packed normal A
 	POSITION_B_OFFSET: 4,
 	POSITION_C_OFFSET: 8,
 
-	// Normals (3 vec4s = 12 floats)
-	NORMAL_A_OFFSET: 12,
-	NORMAL_B_OFFSET: 16,
-	NORMAL_C_OFFSET: 20,
+	NORMAL_A_PACKED_OFFSET: 3, // oct16 in each position's .w lane
+	NORMAL_B_PACKED_OFFSET: 7,
+	NORMAL_C_PACKED_OFFSET: 11,
 
-	// UVs and Material (2 vec4s = 8 floats)
-	UV_AB_OFFSET: 24,
-	UV_C_MAT_OFFSET: 28
+	UV_AB_OFFSET: 12, // f32 uvA.xy, uvB.xy
+	UV_C_OFFSET: 16, // f32 uvC.xy
+	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | opaqueBlocker << 26
+	MESH_INDEX_OFFSET: 19
 };
+
+export const TRI_MATERIAL_MASK = 0xffffff;
+export const TRI_SIDE_SHIFT = 24; // 0 front, 1 back, 2 double
+export const TRI_BLOCKER_SHIFT = 26; // 1 = fully opaque, shadow rays skip the material fetch
+
+/**
+ * Material index plus the two per-triangle flags the shader reads without touching the
+ * material buffer: `side` for inline culling, and an opaque-blocker bit that lets a shadow
+ * ray skip the material fetch entirely.
+ */
+export function packTriangleFlags( materialIndex, material ) {
+
+	const opaqueBlocker = material
+		&& ( material.alphaMode | 0 ) === 0
+		&& ( material.transparent | 0 ) === 0
+		&& ( material.transmission || 0 ) === 0
+		&& ( material.opacity ?? 1 ) >= 1 ? 1 : 0;
+
+	return ( ( materialIndex & TRI_MATERIAL_MASK )
+		| ( ( material?.side ?? 0 ) << TRI_SIDE_SHIFT )
+		| ( opaqueBlocker << TRI_BLOCKER_SHIFT ) ) >>> 0;
+
+}
+
+/**
+ * Octahedral-encode a unit normal into one u32 (two snorm16). Worst-case error is ~0.03°,
+ * well under what normal maps and barycentric interpolation already contribute.
+ * A degenerate (zero-length) normal encodes as +Z rather than NaN.
+ */
+export function packNormalOct( x, y, z ) {
+
+	const len = Math.sqrt( x * x + y * y + z * z );
+	if ( len > 0 ) {
+
+		x /= len; y /= len; z /= len;
+
+	} else {
+
+		x = 0; y = 0; z = 1;
+
+	}
+
+	const sum = Math.abs( x ) + Math.abs( y ) + Math.abs( z );
+	let u = x / sum, v = y / sum;
+	if ( z < 0 ) {
+
+		const au = u, av = v;
+		u = ( 1 - Math.abs( av ) ) * ( au >= 0 ? 1 : - 1 );
+		v = ( 1 - Math.abs( au ) ) * ( av >= 0 ? 1 : - 1 );
+
+	}
+
+	const qu = Math.round( Math.min( 1, Math.max( - 1, u ) ) * 32767 ) & 0xffff;
+	const qv = Math.round( Math.min( 1, Math.max( - 1, v ) ) * 32767 ) & 0xffff;
+	return ( ( qv << 16 ) | qu ) >>> 0;
+
+}
+
+/** Inverse of packNormalOct; writes into `out` (length >= 3) and returns it. */
+export function unpackNormalOct( packed, out ) {
+
+	const u = ( ( packed << 16 ) >> 16 ) / 32767;
+	const v = ( packed >> 16 ) / 32767;
+	let x = u, y = v, z = 1 - Math.abs( u ) - Math.abs( v );
+	if ( z < 0 ) {
+
+		const ax = x, ay = y;
+		x = ( 1 - Math.abs( ay ) ) * ( ax >= 0 ? 1 : - 1 );
+		y = ( 1 - Math.abs( ax ) ) * ( ay >= 0 ? 1 : - 1 );
+
+	}
+
+	const len = Math.sqrt( x * x + y * y + z * z ) || 1;
+	out[ 0 ] = x / len; out[ 1 ] = y / len; out[ 2 ] = z / len;
+	return out;
+
+}
 
 // Material data layout constants — single source of truth for material buffer offsets.
 // Shared between CPU writers (TextureCreator, MaterialDataManager) and GPU readers (Common.js getMaterial).

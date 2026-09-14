@@ -291,8 +291,12 @@ describe( 'PBRT scene builder', () => {
 		).join( '\n' );
 		const bytes = enc.encode( `WorldBegin\nMaterial "diffuse" "rgb reflectance" [ 1 1 1 ]\n${body}\n` );
 
-		const { group } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': bytes } } ) );
-		expect( group.children.filter( c => c instanceof Mesh ) ).toHaveLength( 4000 );
+		const { group, triangleCount } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': bytes } } ) );
+		// 4000 small shapes merge into one mesh; what has to survive is every triangle.
+		expect( triangleCount ).toBe( 4000 );
+		const merged = group.children.filter( c => c instanceof Mesh );
+		expect( merged ).toHaveLength( 1 );
+		expect( merged[ 0 ].geometry.index.count / 3 ).toBe( 4000 );
 
 	} );
 
@@ -320,7 +324,8 @@ describe( 'PBRT scene builder', () => {
 		expect( batches ).toHaveLength( 1 );
 		expect( group.children.filter( c => c instanceof Mesh && ! c.isInstancedMesh ) ).toHaveLength( 0 );
 		expect( batches[ 0 ].count ).toBe( 3 );
-		expect( triangleCount ).toBe( 3 ); // one triangle, placed three times
+		// Storage counts the geometry once however many placements use it.
+		expect( triangleCount ).toBe( 1 );
 
 		const m = new Matrix4();
 		const placed = [ 0, 1, 2 ].map( i => {
@@ -360,7 +365,7 @@ describe( 'PBRT scene builder', () => {
 	} );
 
 
-	it( 'stops expanding instances at the triangle budget and says how many it dropped', async () => {
+	it( 'stops expanding instances at the placement budget and says how many it dropped', async () => {
 
 		const scene = `
 			WorldBegin
@@ -374,7 +379,7 @@ describe( 'PBRT scene builder', () => {
 
 		const { group, warnings } = await loadPBRTScene( buildArgs( {
 			vfs: { 'scene.pbrt': enc.encode( scene ) },
-			maxTriangles: 10
+			maxPlacements: 5
 		} ) );
 
 		const batches = group.children.filter( c => c.isInstancedMesh );
@@ -402,6 +407,169 @@ describe( 'PBRT scene builder', () => {
 		expect( geometry.index.isBufferAttribute ).toBe( true );
 		expect( geometry.index.count ).toBe( 6 );
 		expect( triangleCount ).toBe( 2 );
+
+	} );
+
+
+	it( 'charges storage once for a shared geometry, and placements separately', async () => {
+
+		// The two budgets measure different things: a million placements of one leaf cost a
+		// million TLAS leaves but only one leaf's worth of triangles.
+		const scene = `
+			WorldBegin
+			AttributeBegin
+				ObjectBegin "leaf"
+					Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0  1 1 0 ] "integer indices" [ 0 1 2  1 3 2 ]
+				ObjectEnd
+			AttributeEnd
+			${Array.from( { length: 50 }, ( _, i ) => `AttributeBegin Translate ${i} 0 0 ObjectInstance "leaf" AttributeEnd` ).join( '\n' )}
+		`;
+
+		const { triangleCount, placementCount, skippedForBudget } = await loadPBRTScene(
+			buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) }, maxTriangles: 10 } )
+		);
+
+		expect( triangleCount ).toBe( 2 ); // the quad, stored once
+		expect( placementCount ).toBe( 50 ); // well under the triangle budget of 10
+		expect( skippedForBudget ).toBe( 0 );
+
+	} );
+
+	it( 'merges small non-instanced shapes into one mesh, in world space', async () => {
+
+		const body = Array.from( { length: 300 }, ( _, i ) =>
+			`AttributeBegin Translate ${i} 0 0 Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ] AttributeEnd`
+		).join( '\n' );
+
+		const { group, triangleCount, mergedShapes } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode( `WorldBegin\nMaterial "diffuse" "rgb reflectance" [ 1 1 1 ]\n${body}\n` ) }
+		} ) );
+
+		const meshes = group.children.filter( c => c instanceof Mesh );
+		expect( meshes ).toHaveLength( 1 );
+		expect( mergedShapes ).toBe( 300 );
+		expect( triangleCount ).toBe( 300 );
+
+		const mesh = meshes[ 0 ];
+		expect( mesh.position.x ).toBe( 0 ); // the transform lives in the vertices now
+		const position = mesh.geometry.getAttribute( 'position' );
+		expect( position.count ).toBe( 900 );
+		expect( position.getX( 299 * 3 ) ).toBeCloseTo( 299, 4 );
+		expect( position.getX( 299 * 3 + 1 ) ).toBeCloseTo( 300, 4 );
+
+	} );
+
+	it( 'bakes merged normals through the inverse transpose', async () => {
+
+		const n = ( 1 / Math.SQRT2 ).toFixed( 6 );
+		const body = Array.from( { length: 300 }, () =>
+			'AttributeBegin Scale 2 1 1 Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 0 1 ] ' +
+			`"normal N" [ ${n} ${n} 0  ${n} ${n} 0  ${n} ${n} 0 ] "integer indices" [ 0 1 2 ] AttributeEnd`
+		).join( '\n' );
+
+		const { group } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode( `WorldBegin\n${body}\n` ) }
+		} ) );
+
+		const normal = group.children.find( c => c instanceof Mesh ).geometry.getAttribute( 'normal' );
+		// Scaling x by 2 tilts the normal AWAY from x: (0.447, 0.894, 0), not (0.894, 0.447, 0).
+		expect( normal.getX( 0 ) ).toBeCloseTo( 0.4472, 3 );
+		expect( normal.getY( 0 ) ).toBeCloseTo( 0.8944, 3 );
+
+	} );
+
+	it( 'keeps merged batches apart per material, and leaves big shapes standalone', async () => {
+
+		const big = [];
+		for ( let i = 0; i < 5000; i ++ ) big.push( i, 0, 0, i, 1, 0, i, 0, 1 );
+
+		const body = Array.from( { length: 300 }, ( _, i ) =>
+			`AttributeBegin Material "diffuse" "rgb reflectance" [ ${i % 2} 0 0 ] ` +
+			'Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ] AttributeEnd'
+		).join( '\n' );
+
+		const { group } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode(
+				`WorldBegin\n${body}\nShape "trianglemesh" "point3 P" [ ${big.join( ' ' )} ]\n`
+			) }
+		} ) );
+
+		const meshes = group.children.filter( c => c instanceof Mesh );
+		expect( meshes.filter( m => m.name.startsWith( 'merged_' ) ) ).toHaveLength( 2 );
+		const standalone = meshes.find( m => ! m.name.startsWith( 'merged_' ) );
+		expect( standalone.geometry.getAttribute( 'position' ).count ).toBe( 15000 );
+
+	} );
+
+	it( 'leaves shapes alone below the merge threshold', async () => {
+
+		const body = Array.from( { length: 300 }, ( _, i ) =>
+			`AttributeBegin Translate ${i} 0 0 Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ] AttributeEnd`
+		).join( '\n' );
+
+		const { group, mergedShapes } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode( `WorldBegin\n${body}\n` ) },
+			mergeShapesAbove: Infinity
+		} ) );
+
+		expect( group.children.filter( c => c instanceof Mesh ) ).toHaveLength( 300 );
+		expect( mergedShapes ).toBe( 0 );
+
+	} );
+
+
+	it( 'empties the archive as it consumes it', async () => {
+
+		// Nulling only the loader's own copy frees nothing while the caller still holds the
+		// entries object — and that object is every byte of the scene.
+		const vfs = {
+			'scene.pbrt': enc.encode( 'WorldBegin\nInclude "geo.pbrt"\n' ),
+			'geo.pbrt': enc.encode( 'Shape "plymesh" "string filename" "mesh.ply"\n' ),
+			'mesh.ply': enc.encode( 'ply' )
+		};
+
+		const geometry = new BufferGeometry();
+		geometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], 3 ) );
+
+		const { group } = await loadPBRTScene( { ...buildArgs(), vfs, plyParser: () => geometry } );
+
+		expect( group.children.filter( c => c instanceof Mesh ) ).toHaveLength( 1 );
+		expect( Object.keys( vfs ) ).toEqual( [] );
+
+	} );
+
+
+	it( 'never resolves an ambiguous basename to the wrong file', async () => {
+
+		// Every Moana element ships its own objects.pbrt, and an element's own Include joined
+		// against its directory makes a doubled path that matches no suffix. Guessing the first
+		// entry handed each element the FIRST one's templates, so its placements vanished.
+		const shape = 'Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]';
+		const vfs = {
+			'scene.pbrt': enc.encode( 'WorldBegin\nInclude "a/a.pbrt"\nInclude "b/b.pbrt"\n' ),
+			'a/a.pbrt': enc.encode( 'Include "a/objects.pbrt"\nObjectInstance "shapeA"\n' ),
+			'b/b.pbrt': enc.encode( 'Include "b/objects.pbrt"\nObjectInstance "shapeB"\n' ),
+			'a/objects.pbrt': enc.encode( `ObjectBegin "shapeA"\n${shape}\nObjectEnd\n` ),
+			'b/objects.pbrt': enc.encode( `ObjectBegin "shapeB"\n${shape}\nObjectEnd\n` )
+		};
+
+		const { placementCount, droppedNoTemplate } = await loadPBRTScene( buildArgs( { vfs } ) );
+
+		expect( droppedNoTemplate ).toBe( 0 );
+		expect( placementCount ).toBe( 2 );
+
+	} );
+
+	it( 'counts placements dropped for a missing template', async () => {
+
+		const vfs = { 'scene.pbrt': enc.encode(
+			'WorldBegin\nAttributeBegin ObjectInstance "ghost" AttributeEnd\nAttributeBegin ObjectInstance "ghost" AttributeEnd\n'
+		) };
+
+		const { droppedNoTemplate, warnings } = await loadPBRTScene( buildArgs( { vfs } ) );
+
+		expect( droppedNoTemplate ).toBe( 2 );
+		expect( warnings.some( w => /has no template/.test( w ) ) ).toBe( true );
 
 	} );
 

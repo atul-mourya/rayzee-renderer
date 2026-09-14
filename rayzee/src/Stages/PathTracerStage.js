@@ -704,7 +704,7 @@ export class PathTracerStage extends RenderStage {
 	 * On first call, creates the storage buffer and node.
 	 * On subsequent calls, creates a new attribute with the correct size
 	 * and updates the storage node's value to preserve shader graph references.
-	 * @param {Float32Array} triangleData - Raw triangle data
+	 * @param {Uint32Array} triangleData - Packed triangle records (uvec4 lanes)
 	 * @param {number} triangleCount - Number of triangles
 	 */
 	setTriangleData( triangleData, triangleCount ) {
@@ -726,7 +726,7 @@ export class PathTracerStage extends RenderStage {
 
 			// First time: create storage buffer and node
 			this.triangleStorageAttr = new StorageInstancedBufferAttribute( triangleData, 4 );
-			this.triangleStorageNode = storage( this.triangleStorageAttr, 'vec4', vec4Count ).toReadOnly();
+			this.triangleStorageNode = storage( this.triangleStorageAttr, 'uvec4', vec4Count ).toReadOnly();
 
 		}
 
@@ -796,15 +796,14 @@ export class PathTracerStage extends RenderStage {
 	 */
 	_patchVisibilityFromMeshes( meshes ) {
 
-		const entries = this._instanceTable.entries;
+		const table = this._instanceTable;
 		const cache = new Map();
 
-		for ( let i = 0; i < entries.length; i ++ ) {
+		for ( let i = 0; i < table.count; i ++ ) {
 
-			const entry = entries[ i ];
-			if ( ! entry ) continue;
+			if ( ! table.isSet[ i ] ) continue;
 
-			const src = entry.sourceMesh ?? i;
+			const src = table.sourceMesh[ i ];
 			let visible = cache.get( src );
 			if ( visible === undefined ) cache.set( src, visible = this._isWorldVisible( meshes[ src ] ) );
 			this._patchTLASLeafVisibility( i, visible );
@@ -846,11 +845,14 @@ export class PathTracerStage extends RenderStage {
 	 */
 	_patchTLASLeafVisibility( meshIndex, visible ) {
 
-		const entry = this._instanceTable?.entries?.[ meshIndex ];
-		if ( ! entry || entry.tlasLeafIndex < 0 || ! this.bvhStorageAttr ) return false;
+		const table = this._instanceTable;
+		if ( ! table || ! table.isSet?.[ meshIndex ] || ! this.bvhStorageAttr ) return false;
 
-		entry.visible = visible;
-		this.bvhStorageAttr.array[ entry.tlasLeafIndex * 16 + 2 ] = visible ? 1.0 : 0.0;
+		const leaf = table.tlasLeafIndex[ meshIndex ];
+		if ( leaf < 0 ) return false;
+
+		table.visible[ meshIndex ] = visible ? 1 : 0;
+		this.bvhStorageAttr.array[ leaf * 16 + 2 ] = visible ? 1.0 : 0.0;
 		return true;
 
 	}

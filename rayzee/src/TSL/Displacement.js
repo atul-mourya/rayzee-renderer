@@ -1,14 +1,13 @@
-import { Fn, float, vec2, int, If, Loop, abs, normalize, dot, max } from 'three/tsl';
+import { Fn, float, vec2, int, If, Loop, abs, normalize, dot, max, uintBitsToFloat } from 'three/tsl';
 
 import { struct } from './patches.js';
-import { getDatafromStorageBuffer } from './Common.js';
+import { getDatafromStorageBuffer, TRI_STRIDE } from './Common.js';
 import { sampleDisplacementMap, bucketTexelSize, getLinearBucketTextures } from './TextureSampling.js';
 
 // Ray-displacement intersection configuration
 const MAX_MARCH_STEPS = 32;
 const MIN_MARCH_STEPS = 16;
 const BINARY_STEPS = 5;
-const TRI_STRIDE = 8;
 
 export const DisplacementResult = struct( {
 	hitPoint: 'vec3',
@@ -43,16 +42,16 @@ export const refineDisplacedIntersection = Fn( ( [
 	// Fetch triangle vertex data
 	const triIdx = hitInfo.triangleIndex;
 
-	const pA = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 0 ), int( TRI_STRIDE ) ).xyz.toVar();
-	const pB = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 1 ), int( TRI_STRIDE ) ).xyz;
-	const pC = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 2 ), int( TRI_STRIDE ) ).xyz;
+	const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 0 ), int( TRI_STRIDE ) ).xyz ).toVar();
+	const pB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 1 ), int( TRI_STRIDE ) ).xyz );
+	const pC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 2 ), int( TRI_STRIDE ) ).xyz );
 
-	const uvData1 = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 6 ), int( TRI_STRIDE ) ).toVar();
-	const uvData2 = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 7 ), int( TRI_STRIDE ) );
+	const uvData1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 3 ), int( TRI_STRIDE ) ) ).toVar();
+	const uvData2 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 4 ), int( TRI_STRIDE ) ).xy );
 
 	const uvA = uvData1.xy.toVar();
 	const uvB = uvData1.zw;
-	const uvC = uvData2.xy;
+	const uvC = uvData2;
 
 	// Compute tangent vectors from triangle edges + UV differences
 	const edge1 = pB.sub( pA ).toVar();

@@ -49,19 +49,19 @@ import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
  * Helper: create a Float32Array of triangle data (32 floats per triangle).
  * Each triangle is [ax, ay, az, bx, by, bz, cx, cy, cz].
  */
+const FPT = 20; // lanes per triangle record
+
 function makeTriData( triangles ) {
 
-	const data = new Float32Array( triangles.length * 32 );
+	const data = new Uint32Array( triangles.length * FPT );
+	const f = new Float32Array( data.buffer );
 	for ( let i = 0; i < triangles.length; i ++ ) {
 
 		const t = triangles[ i ];
-		const b = i * 32;
-		// posA at offset 0
-		data[ b ] = t[ 0 ]; data[ b + 1 ] = t[ 1 ]; data[ b + 2 ] = t[ 2 ];
-		// posB at offset 4
-		data[ b + 4 ] = t[ 3 ]; data[ b + 5 ] = t[ 4 ]; data[ b + 6 ] = t[ 5 ];
-		// posC at offset 8
-		data[ b + 8 ] = t[ 6 ]; data[ b + 9 ] = t[ 7 ]; data[ b + 10 ] = t[ 8 ];
+		const b = i * FPT;
+		f[ b ] = t[ 0 ]; f[ b + 1 ] = t[ 1 ]; f[ b + 2 ] = t[ 2 ];
+		f[ b + 4 ] = t[ 3 ]; f[ b + 5 ] = t[ 4 ]; f[ b + 6 ] = t[ 5 ];
+		f[ b + 8 ] = t[ 6 ]; f[ b + 9 ] = t[ 7 ]; f[ b + 10 ] = t[ 8 ];
 
 	}
 
@@ -631,7 +631,7 @@ describe( 'BVHBuilder', () => {
 			] );
 
 			builder.buildSync( data );
-			expect( builder.reorderedTriangleData ).toBeInstanceOf( Float32Array );
+			expect( builder.reorderedTriangleData ).toBeInstanceOf( Uint32Array );
 			expect( builder.reorderedTriangleData.length ).toBe( data.length );
 
 		} );
@@ -651,7 +651,7 @@ describe( 'BVHBuilder', () => {
 			const posAx = new Set();
 			for ( let i = 0; i < 2; i ++ ) {
 
-				posAx.add( reordered[ i * 32 ] );
+				posAx.add( new Float32Array( reordered.buffer )[ i * FPT ] );
 
 			}
 
@@ -722,8 +722,8 @@ describe( 'BVHBuilder', () => {
 			// For each original triangle i, reordered[ map[i] ] should match original
 			for ( let i = 0; i < 2; i ++ ) {
 
-				const origBase = i * 32;
-				const bvhBase = map[ i ] * 32;
+				const origBase = i * FPT;
+				const bvhBase = map[ i ] * FPT;
 				expect( reordered[ bvhBase ] ).toBe( data[ origBase ] );
 				expect( reordered[ bvhBase + 1 ] ).toBe( data[ origBase + 1 ] );
 				expect( reordered[ bvhBase + 2 ] ).toBe( data[ origBase + 2 ] );

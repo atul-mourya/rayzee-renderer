@@ -18,18 +18,22 @@ import {
 	notEqual,
 	lessThan,
 	array,
+	uint,
+	uintBitsToFloat,
 	bool as tslBool,
 } from 'three/tsl';
 
+import { TRI_MATERIAL_MASK, TRI_SIDE_SHIFT } from '../EngineDefaults.js';
 import { HitInfo } from './Struct.js';
-import { getDatafromStorageBuffer, instanceRows, instanceNormalToWorld } from './Common.js';
+import {
+	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE
+} from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
 // Hang guard only — tripping it reports a MISS, which the shade kernel pays out as
 // full-intensity environment. San Miguel needs ~1024; cost is flat from 1024 up.
 const MAX_BVH_ITERATIONS = 4096;
 const BVH_STRIDE = 4;
-const TRI_STRIDE = 8;
 const HUGE_VAL = 1e8;
 
 // Per-mesh visibility is now packed into the TLAS BLAS-pointer leaf's slot [2]
@@ -298,10 +302,13 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 					if ( trackStats ) closestHit.triTests.addAssign( 1 );
 					const triIndex = triStart.add( i ).toVar();
 
-					// Fetch geometry first (3 fetches from storage buffer)
-					const pA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).xyz;
-					const pB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).xyz;
-					const pC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).xyz;
+					// Three fetches carry positions AND the packed normals in their .w lanes.
+					const recA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).toVar();
+					const recB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).toVar();
+					const recC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).toVar();
+					const pA = uintBitsToFloat( recA.xyz );
+					const pB = uintBitsToFloat( recB.xyz );
+					const pC = uintBitsToFloat( recC.xyz );
 
 					const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
@@ -312,15 +319,13 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 						const u = triResult.y;
 						const v = triResult.z;
 
-						// Fetch normals for side-culling (3 reads). Slot 7 (uvData2,
-						// carries matIdx + meshIndex) is deferred to post-traversal —
-						// it's only needed for the one winning triangle, not per candidate.
-						// normalCData.w carries the per-triangle side flag (0/1/2).
-						const nA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 3 ), int( TRI_STRIDE ) ).xyz;
-						const nB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).xyz;
-						const normalCData = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 5 ), int( TRI_STRIDE ) );
-						const nC = normalCData.xyz;
-						const side = int( normalCData.w ).toVar();
+						// Normals came with the positions; only the side flag needs a fetch, and
+						// slot 4 also carries matIdx/meshIndex, deferred to post-traversal.
+						const nA = unpackTriangleNormal( recA.w );
+						const nB = unpackTriangleNormal( recB.w );
+						const nC = unpackTriangleNormal( recC.w );
+						const flags = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).z;
+						const side = int( flags.shiftRight( uint( TRI_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) ).toVar();
 
 						// Interpolate normal for the side-culling dot product (kept local,
 						// not stored on closestHit — re-derived post-loop from closestTriIdx).
@@ -434,9 +439,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		// Re-fetch the winning triangle's normals — trading 3 storage reads (once)
 		// for ~3 regs freed across every BVH iteration.
-		const nA = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 3 ), int( TRI_STRIDE ) ).xyz;
-		const nB = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 4 ), int( TRI_STRIDE ) ).xyz;
-		const nC = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 5 ), int( TRI_STRIDE ) ).xyz;
+		const nA = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 0 ), int( TRI_STRIDE ) ).w );
+		const nB = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 1 ), int( TRI_STRIDE ) ).w );
+		const nC = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 2 ), int( TRI_STRIDE ) ).w );
 		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
 		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
 
@@ -446,12 +451,12 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		closestHit.normal.assign( objectNormal );
 
-		const uvData1 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 6 ), int( TRI_STRIDE ) );
-		const uvData2 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 7 ), int( TRI_STRIDE ) );
+		const uvData1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 3 ), int( TRI_STRIDE ) ) );
+		const uvData2 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 4 ), int( TRI_STRIDE ) ).toVar();
 		closestHit.uv.assign(
-			uvData1.xy.mul( w ).add( uvData1.zw.mul( closestU ) ).add( uvData2.xy.mul( closestV ) )
+			uvData1.xy.mul( w ).add( uvData1.zw.mul( closestU ) ).add( uintBitsToFloat( uvData2.xy ).mul( closestV ) )
 		);
-		closestHit.materialIndex.assign( int( uvData2.z ) );
+		closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
 		closestHit.meshIndex.assign( int( uvData2.w ) );
 		closestHit.instanceLeaf.assign( hitInstLeaf );
 		closestHit.triangleIndex.assign( closestTriIdx );
@@ -541,20 +546,20 @@ export const traverseBVHShadow = Fn( ( [
 
 					const triIndex = triStart.add( i ).toVar();
 
-					const pA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).xyz;
-					const pB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).xyz;
-					const pC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).xyz;
+					const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).xyz );
+					const pB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).xyz );
+					const pC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).xyz );
 
 					const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
 					If( triResult.w.greaterThan( 0.5 ), () => {
 
 						// Per-mesh visibility handled at BLAS-pointer level — accept any hit
-						const uvData2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 7 ), int( TRI_STRIDE ) );
+						const uvData2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).toVar();
 
 						closestHit.didHit.assign( true );
 						closestHit.dst.assign( triResult.x );
-						closestHit.materialIndex.assign( int( uvData2.z ) );
+						closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
 						closestHit.meshIndex.assign( int( uvData2.w ) );
 						closestHit.instanceLeaf.assign( instLeaf );
 

@@ -130,56 +130,56 @@ describe( 'ASPECT_RATIO_PRESETS', () => {
 
 describe( 'TRIANGLE_DATA_LAYOUT', () => {
 
-	it( 'has 32 floats per triangle', () => {
+	it( 'is 5 uvec4 lanes per triangle', () => {
 
-		expect( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ).toBe( 32 );
-
-	} );
-
-	it( 'position offsets are vec4-aligned and non-overlapping', () => {
-
-		const { POSITION_A_OFFSET, POSITION_B_OFFSET, POSITION_C_OFFSET } = TRIANGLE_DATA_LAYOUT;
-		expect( POSITION_A_OFFSET ).toBe( 0 );
-		expect( POSITION_B_OFFSET ).toBe( 4 );
-		expect( POSITION_C_OFFSET ).toBe( 8 );
+		expect( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ).toBe( 20 );
 
 	} );
 
-	it( 'normal offsets follow positions', () => {
+	it( 'positions are vec4-aligned with a packed normal in each spare lane', () => {
 
-		const { NORMAL_A_OFFSET, NORMAL_B_OFFSET, NORMAL_C_OFFSET } = TRIANGLE_DATA_LAYOUT;
-		expect( NORMAL_A_OFFSET ).toBe( 12 );
-		expect( NORMAL_B_OFFSET ).toBe( 16 );
-		expect( NORMAL_C_OFFSET ).toBe( 20 );
-
-	} );
-
-	it( 'UV offsets are in the last 8 floats', () => {
-
-		const { UV_AB_OFFSET, UV_C_MAT_OFFSET } = TRIANGLE_DATA_LAYOUT;
-		expect( UV_AB_OFFSET ).toBe( 24 );
-		expect( UV_C_MAT_OFFSET ).toBe( 28 );
+		const L = TRIANGLE_DATA_LAYOUT;
+		expect( L.POSITION_A_OFFSET ).toBe( 0 );
+		expect( L.POSITION_B_OFFSET ).toBe( 4 );
+		expect( L.POSITION_C_OFFSET ).toBe( 8 );
+		expect( L.NORMAL_A_PACKED_OFFSET ).toBe( L.POSITION_A_OFFSET + 3 );
+		expect( L.NORMAL_B_PACKED_OFFSET ).toBe( L.POSITION_B_OFFSET + 3 );
+		expect( L.NORMAL_C_PACKED_OFFSET ).toBe( L.POSITION_C_OFFSET + 3 );
 
 	} );
 
-	it( 'all offsets fit within FLOATS_PER_TRIANGLE', () => {
+	it( 'UVs, material flags and mesh index fill the last two lanes', () => {
 
-		const offsets = [
-			TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET,
-			TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET,
-			TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET,
-			TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET,
-			TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET,
-			TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET,
-			TRIANGLE_DATA_LAYOUT.UV_AB_OFFSET,
-			TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET,
-		];
+		const L = TRIANGLE_DATA_LAYOUT;
+		expect( L.UV_AB_OFFSET ).toBe( 12 );
+		expect( L.UV_C_OFFSET ).toBe( 16 );
+		expect( L.MATERIAL_FLAGS_OFFSET ).toBe( 18 );
+		expect( L.MESH_INDEX_OFFSET ).toBe( 19 );
 
-		for ( const offset of offsets ) {
+	} );
 
-			expect( offset + 4 ).toBeLessThanOrEqual( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
+	it( 'leaves no lane unused or double-booked', () => {
+
+		const L = TRIANGLE_DATA_LAYOUT;
+		const lanes = new Set();
+		for ( const base of [ L.POSITION_A_OFFSET, L.POSITION_B_OFFSET, L.POSITION_C_OFFSET ] ) {
+
+			for ( let i = 0; i < 3; i ++ ) lanes.add( base + i );
 
 		}
+
+		for ( const lane of [
+			L.NORMAL_A_PACKED_OFFSET, L.NORMAL_B_PACKED_OFFSET, L.NORMAL_C_PACKED_OFFSET,
+			L.UV_AB_OFFSET, L.UV_AB_OFFSET + 1, L.UV_AB_OFFSET + 2, L.UV_AB_OFFSET + 3,
+			L.UV_C_OFFSET, L.UV_C_OFFSET + 1, L.MATERIAL_FLAGS_OFFSET, L.MESH_INDEX_OFFSET
+		] ) {
+
+			expect( lanes.has( lane ) ).toBe( false );
+			lanes.add( lane );
+
+		}
+
+		expect( lanes.size ).toBe( L.FLOATS_PER_TRIANGLE );
 
 	} );
 

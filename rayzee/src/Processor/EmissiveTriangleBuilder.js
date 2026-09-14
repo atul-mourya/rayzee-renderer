@@ -7,7 +7,7 @@
  */
 
 import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
@@ -38,28 +38,29 @@ export class EmissiveTriangleBuilder {
 
 	/**
 	 * Extract emissive triangles from processed geometry
-	 * @param {Array} triangleData - Flat array of triangle data
+	 * @param {Uint32Array} triangleData - Packed triangle records
 	 * @param {Array} materials - Array of material objects
 	 * @param {number} triangleCount - Total number of triangles
-	 * @param {Array<{matrixWorld:ArrayLike<number>, tlasLeafIndex:number}>} [instances] - per mesh;
-	 *        triangles are stored in object space, so power, bounds and the emission cone all
-	 *        have to be measured after the instance transform.
+	 * @param {import('./InstanceTable.js').InstanceTable} [table] - per placement; triangles are
+	 *        stored in object space, so power, bounds and the emission cone all have to be
+	 *        measured after the instance transform.
 	 */
-	extractEmissiveTriangles( triangleData, materials, triangleCount, instances = null ) {
+	extractEmissiveTriangles( triangleData, materials, triangleCount, table = null ) {
 
 		this.emissiveTriangles = [];
 		this.totalEmissivePower = 0;
 		this._totalTriangleCount = triangleCount;
 
 		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const MATERIAL_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 2; // materialIndex within vec4
-		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 3; // meshIndex within vec4
+		const MATERIAL_FLAGS_OFFSET = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
+		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.MESH_INDEX_OFFSET;
+		const triFloats = new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
 			const baseOffset = i * FLOATS_PER_TRIANGLE;
-			const materialIndex = Math.floor( triangleData[ baseOffset + MATERIAL_INDEX_OFFSET ] );
-			const meshIndex = Math.floor( triangleData[ baseOffset + MESH_INDEX_OFFSET ] );
+			const materialIndex = triangleData[ baseOffset + MATERIAL_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
+			const meshIndex = triangleData[ baseOffset + MESH_INDEX_OFFSET ];
 
 			// Get material
 			const material = materials[ materialIndex ];
@@ -77,15 +78,16 @@ export class EmissiveTriangleBuilder {
 
 				// Calculate triangle area for power weighting
 				// Positions are at offsets 0-11, in the instance's own space
-				const inst = instances?.[ meshIndex ] || null;
-				const m = inst?.matrixWorld || null;
-				const px = ( x, y, z ) => ( m ? m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ] : x );
-				const py = ( x, y, z ) => ( m ? m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ] : y );
-				const pz = ( x, y, z ) => ( m ? m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ] : z );
+				const hasInstance = table && meshIndex < table.count && table.isSet[ meshIndex ];
+				const m = hasInstance ? table.world : null;
+				const mo = hasInstance ? meshIndex * 16 : 0;
+				const px = ( x, y, z ) => ( m ? m[ mo ] * x + m[ mo + 4 ] * y + m[ mo + 8 ] * z + m[ mo + 12 ] : x );
+				const py = ( x, y, z ) => ( m ? m[ mo + 1 ] * x + m[ mo + 5 ] * y + m[ mo + 9 ] * z + m[ mo + 13 ] : y );
+				const pz = ( x, y, z ) => ( m ? m[ mo + 2 ] * x + m[ mo + 6 ] * y + m[ mo + 10 ] * z + m[ mo + 14 ] : z );
 
-				const o0x = triangleData[ baseOffset + 0 ], o0y = triangleData[ baseOffset + 1 ], o0z = triangleData[ baseOffset + 2 ];
-				const o1x = triangleData[ baseOffset + 4 ], o1y = triangleData[ baseOffset + 5 ], o1z = triangleData[ baseOffset + 6 ];
-				const o2x = triangleData[ baseOffset + 8 ], o2y = triangleData[ baseOffset + 9 ], o2z = triangleData[ baseOffset + 10 ];
+				const o0x = triFloats[ baseOffset + 0 ], o0y = triFloats[ baseOffset + 1 ], o0z = triFloats[ baseOffset + 2 ];
+				const o1x = triFloats[ baseOffset + 4 ], o1y = triFloats[ baseOffset + 5 ], o1z = triFloats[ baseOffset + 6 ];
+				const o2x = triFloats[ baseOffset + 8 ], o2y = triFloats[ baseOffset + 9 ], o2z = triFloats[ baseOffset + 10 ];
 
 				const v0x = px( o0x, o0y, o0z ), v0y = py( o0x, o0y, o0z ), v0z = pz( o0x, o0y, o0z );
 				const v1x = px( o1x, o1y, o1z ), v1y = py( o1x, o1y, o1z ), v1z = pz( o1x, o1y, o1z );
@@ -126,7 +128,7 @@ export class EmissiveTriangleBuilder {
 					triangleIndex: i,
 					materialIndex: materialIndex,
 					meshIndex: meshIndex,
-					instanceLeaf: inst?.tlasLeafIndex ?? - 1,
+					instanceLeaf: hasInstance ? table.tlasLeafIndex[ meshIndex ] : - 1,
 					power: power,
 					area: area,
 					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },

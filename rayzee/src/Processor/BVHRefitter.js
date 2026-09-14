@@ -11,16 +11,53 @@
 // Inline copy of layout constants (source of truth: EngineDefaults.js).
 // Cannot import because this runs inside Web Workers where window is not defined.
 const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 32,
+	FLOATS_PER_TRIANGLE: 20,
 	POSITION_A_OFFSET: 0,
 	POSITION_B_OFFSET: 4,
 	POSITION_C_OFFSET: 8,
-	NORMAL_A_OFFSET: 12,
-	NORMAL_B_OFFSET: 16,
-	NORMAL_C_OFFSET: 20,
+	NORMAL_A_PACKED_OFFSET: 3,
+	NORMAL_B_PACKED_OFFSET: 7,
+	NORMAL_C_PACKED_OFFSET: 11,
 };
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+
+// The record buffer is uint; positions are f32 in it. Views share the memory, no copy.
+const floatView = ( data ) => data instanceof Float32Array
+	? data : new Float32Array( data.buffer, data.byteOffset, data.length );
+const uintView = ( data ) => data instanceof Uint32Array
+	? data : new Uint32Array( data.buffer, data.byteOffset, data.length );
+
+// Octahedral snorm16 pair, matching packNormalOct in EngineDefaults (not importable here).
+function packNormalOct( x, y, z ) {
+
+	const len = Math.sqrt( x * x + y * y + z * z );
+	if ( len > 0 ) {
+
+		x /= len; y /= len; z /= len;
+
+	} else {
+
+		x = 0; y = 0; z = 1;
+
+	}
+
+	const sum = Math.abs( x ) + Math.abs( y ) + Math.abs( z );
+	let u = x / sum, v = y / sum;
+	if ( z < 0 ) {
+
+		const au = u, av = v;
+		u = ( 1 - Math.abs( av ) ) * ( au >= 0 ? 1 : - 1 );
+		v = ( 1 - Math.abs( au ) ) * ( av >= 0 ? 1 : - 1 );
+
+	}
+
+	const qu = Math.round( Math.min( 1, Math.max( - 1, u ) ) * 32767 ) & 0xffff;
+	const qv = Math.round( Math.min( 1, Math.max( - 1, v ) ) * 32767 ) & 0xffff;
+	return ( ( qv << 16 ) | qu ) >>> 0;
+
+}
+
 const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
 const LEAF_MARKER = - 1;
 const BLAS_POINTER_MARKER = - 2;
@@ -98,13 +135,15 @@ export class BVHRefitter {
 	 * Update triangle positions in the BVH-reordered triangle array.
 	 * Iterates in BVH order (sequential writes, random reads) for cache efficiency.
 	 *
-	 * @param {Float32Array} triangleData - BVH-reordered triangle array (mutated in place)
+	 * @param {Uint32Array} triangleData - BVH-reordered triangle records (mutated in place)
 	 * @param {Float32Array} newPositions - 9 floats per triangle in ORIGINAL mesh order
 	 * @param {Uint32Array} bvhToOriginal - Map from BVH-order index to original tri index
 	 */
 	updateTrianglePositions( triangleData, newPositions, bvhToOriginal ) {
 
 		const triCount = bvhToOriginal.length;
+		const f = floatView( triangleData );
+		const u = uintView( triangleData );
 
 		for ( let bvhIdx = 0; bvhIdx < triCount; bvhIdx ++ ) {
 
@@ -122,37 +161,30 @@ export class BVHRefitter {
 			const cy = newPositions[ srcOff + 7 ];
 			const cz = newPositions[ srcOff + 8 ];
 
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ] = ax;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ] = ay;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ] = az;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ] = ax;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ] = ay;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ] = az;
 
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ] = bx;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ] = by;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ] = bz;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ] = bx;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ] = by;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ] = bz;
 
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ] = cx;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ] = cy;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ] = cz;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ] = cx;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ] = cy;
+			f[ dstOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ] = cz;
 
-			// Compute unnormalized face normal from cross product.
-			// Skip sqrt normalization — the path tracer shader normalizes during shading.
+			// Face normal from the cross product; packNormalOct normalizes it.
 			const abx = bx - ax, aby = by - ay, abz = bz - az;
 			const acx = cx - ax, acy = cy - ay, acz = cz - az;
-			const nx = aby * acz - abz * acy;
-			const ny = abz * acx - abx * acz;
-			const nz = abx * acy - aby * acx;
+			const packed = packNormalOct(
+				aby * acz - abz * acy,
+				abz * acx - abx * acz,
+				abx * acy - aby * acx
+			);
 
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET ] = nx;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 1 ] = ny;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 2 ] = nz;
-
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET ] = nx;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 1 ] = ny;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 2 ] = nz;
-
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET ] = nx;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 1 ] = ny;
-			triangleData[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 2 ] = nz;
+			u[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET ] = packed;
+			u[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET ] = packed;
+			u[ dstOff + TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET ] = packed;
 
 		}
 
@@ -163,11 +195,13 @@ export class BVHRefitter {
 	 * Same algorithm as refit() but scoped to nodes [startNode, startNode + count).
 	 *
 	 * @param {Float32Array} bvhData - Combined BVH array (TLAS + all BLASes)
-	 * @param {Float32Array} triangleData - Global triangle data
+	 * @param {Uint32Array} triangleData - Global triangle records
 	 * @param {number} startNode - First node index of this BLAS in bvhData
 	 * @param {number} nodeCount - Number of nodes in this BLAS
 	 */
 	refitRange( bvhData, triangleData, startNode, nodeCount ) {
+
+		const triFloats = floatView( triangleData );
 
 		// Grow-only bounds buffer to avoid reallocation on mixed-size BLASes
 		if ( nodeCount > this._boundsNodeCount ) {
@@ -196,15 +230,15 @@ export class BVHRefitter {
 				for ( let t = 0; t < triCount; t ++ ) {
 
 					const tOff = ( triOffset + t ) * FPT;
-					const ax = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
-					const ay = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
-					const az = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
-					const bx = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
-					const by = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
-					const bz = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
-					const cx = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
-					const cy = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
-					const cz = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
+					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
+					const ay = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
+					const az = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
+					const bx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
+					const by = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
+					const bz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
+					const cx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
+					const cy = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
+					const cz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
 
 					minX = Math.min( minX, ax, bx, cx );
 					minY = Math.min( minY, ay, by, cy );
@@ -277,10 +311,12 @@ export class BVHRefitter {
 	 * indices than parents in pre-order, so reversing processes children first).
 	 *
 	 * @param {Float32Array} bvhData - Flat BVH array (mutated in place)
-	 * @param {Float32Array} triangleData - Updated triangle data
+	 * @param {Uint32Array} triangleData - Updated triangle records
 	 * @param {number} nodeCount - Total number of BVH nodes
 	 */
 	refit( bvhData, triangleData, nodeCount ) {
+
+		const triFloats = floatView( triangleData );
 
 		// Reuse bounds buffer across frames (reallocate only on scene change)
 		if ( nodeCount !== this._boundsNodeCount ) {
@@ -314,17 +350,17 @@ export class BVHRefitter {
 					const tOff = ( triOffset + t ) * FPT;
 
 					// Position A
-					const ax = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
-					const ay = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
-					const az = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
+					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
+					const ay = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
+					const az = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
 					// Position B
-					const bx = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
-					const by = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
-					const bz = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
+					const bx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
+					const by = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
+					const bz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
 					// Position C
-					const cx = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
-					const cy = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
-					const cz = triangleData[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
+					const cx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
+					const cy = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
+					const cz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
 
 					minX = Math.min( minX, ax, bx, cx );
 					minY = Math.min( minY, ay, by, cy );

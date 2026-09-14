@@ -314,6 +314,32 @@ export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dat
 
 } );
 
+/** uvec4 lanes per triangle record — see TRIANGLE_DATA_LAYOUT. */
+export const TRI_STRIDE = 5;
+
+// Octahedral snorm16 pair back to a unit normal; mirrors packNormalOct on the CPU.
+export const unpackTriangleNormal = /*@__PURE__*/ wgslFn( `
+	fn unpackTriangleNormal( packed: u32 ) -> vec3f {
+
+		let e = unpack2x16snorm( packed );
+		var nx = e.x;
+		var ny = e.y;
+		let nz = 1.0 - abs( e.x ) - abs( e.y );
+
+		if ( nz < 0.0 ) {
+
+			let tx = ( 1.0 - abs( ny ) ) * select( -1.0, 1.0, nx >= 0.0 );
+			let ty = ( 1.0 - abs( nx ) ) * select( -1.0, 1.0, ny >= 0.0 );
+			nx = tx;
+			ny = ty;
+
+		}
+
+		return normalize( vec3f( nx, ny, nz ) );
+
+	}
+` );
+
 // Reconstruct mat3 from two vec4s — exact port of GLSL
 export const arrayToMat3 = wgslFn( `
 	fn arrayToMat3( data1: vec4f, data2: vec4f ) -> mat3x3f {

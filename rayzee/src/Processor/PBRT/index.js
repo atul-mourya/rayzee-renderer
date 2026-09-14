@@ -57,13 +57,18 @@ class VirtualFS {
 
 	constructor( entries ) {
 
-		// entries: { path: Uint8Array }
-		this.byPath = new Map(); // normalized lowercase -> { norm, bytes }
-		this.byBase = new Map(); // basename lowercase -> [ { norm, bytes } ] (insertion order)
+		// entries: { path: Uint8Array }. Held so a release can drop the caller's reference
+		// too — nulling only our own copy frees nothing while the archive object is alive,
+		// and that object is every byte of a 30 GB scene.
+		this.entries = entries;
+		this.records = [];
+		this.byPath = new Map(); // normalized lowercase -> { key, norm, bytes }
+		this.byBase = new Map(); // basename lowercase -> [ { key, norm, bytes } ] (insertion order)
 		for ( const key in entries ) {
 
 			const norm = normalizePath( key ).toLowerCase();
-			const rec = { norm, bytes: entries[ key ] };
+			const rec = { key, norm, bytes: entries[ key ] };
+			this.records.push( rec );
 			this.byPath.set( norm, rec );
 			const base = norm.split( '/' ).pop();
 			const bucket = this.byBase.get( base );
@@ -74,25 +79,41 @@ class VirtualFS {
 
 	}
 
+	release( rec ) {
+
+		rec.bytes = null;
+		delete this.entries[ rec.key ];
+
+	}
+
 	/** Drop every .pbrt entry's bytes. Safe only once parsing is complete. */
 	releaseScenes() {
 
-		for ( const rec of this.byPath.values() ) if ( rec.norm.endsWith( '.pbrt' ) ) rec.bytes = null;
+		for ( const rec of this.records ) if ( rec.norm.endsWith( '.pbrt' ) ) this.release( rec );
+
+	}
+
+	findRecord( path ) {
+
+		const norm = normalizePath( path ).toLowerCase();
+		if ( this.byPath.has( norm ) ) return this.byPath.get( norm );
+
+		// Resolve by basename (O(1)); among collisions only a path-suffix match will do.
+		// The blind first-entry fallback is safe only when the name is unique: every Moana
+		// element ships its own `objects.pbrt`, and `Include "isPalmRig/objects.pbrt"` joined
+		// against isPalmRig/ makes a doubled path that matches no suffix — so loading several
+		// elements together silently handed each one the FIRST element's instance templates,
+		// and every placement that referenced a real template was then dropped.
+		const bucket = this.byBase.get( norm.split( '/' ).pop() );
+		if ( ! bucket ) return null;
+		const suffixHit = bucket.find( rec => rec.norm.endsWith( '/' + norm ) );
+		return suffixHit || ( bucket.length === 1 ? bucket[ 0 ] : null );
 
 	}
 
 	find( path ) {
 
-		const norm = normalizePath( path ).toLowerCase();
-		if ( this.byPath.has( norm ) ) return this.byPath.get( norm ).bytes;
-
-		// Resolve by basename (O(1)); among collisions prefer a path-suffix match,
-		// else fall back to the first entry with that name. pbrt scenes are
-		// inconsistent about path roots, so this tolerates relative/absolute drift.
-		const bucket = this.byBase.get( norm.split( '/' ).pop() );
-		if ( ! bucket ) return null;
-		const suffixHit = bucket.find( rec => rec.norm.endsWith( '/' + norm ) );
-		return ( suffixHit || bucket[ 0 ] ).bytes;
+		return this.findRecord( path )?.bytes ?? null;
 
 	}
 
@@ -253,10 +274,13 @@ export async function loadPBRTScene( args ) {
 	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
 	// be larger than the longest string JavaScript will build.
 	const parser = new PBRTParser( {
-		resolveInclude: ( path, currentDir ) => vfs.find( joinPath( currentDir, path ) ) || vfs.find( path )
+		resolveInclude: ( path, currentDir ) => vfs.find( joinPath( currentDir, path ) ) || vfs.find( path ),
+		maxPlacements: args.maxPlacements
 	} );
 
+	const parseStart = performance.now();
 	const ir = parser.parse( entryBytes, baseDir );
+	const parseMs = performance.now() - parseStart;
 
 	// Scene text is dead once parsed, and it is the bulk of a big element — isIronwoodA1 is
 	// 6.9 GB of it. Freeing before the builder runs halves peak while geometry is allocated.
@@ -265,17 +289,37 @@ export async function loadPBRTScene( args ) {
 	vfs.releaseScenes();
 
 	// Build scene graph
-	const sliceBuf = ( bytes ) => bytes.buffer.slice( bytes.byteOffset, bytes.byteOffset + bytes.byteLength );
+	const sliceBuf = ( bytes ) => (
+		bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+			? bytes.buffer
+			: bytes.buffer.slice( bytes.byteOffset, bytes.byteOffset + bytes.byteLength )
+	);
+
+	// Cached against the RESOLVED entry, not the spelling used, so a file is decoded once and
+	// its source bytes can go — isCoral's 8,596 .ply files are 2.3 GB of the load.
+	const plyCache = new Map();
+	const decodePly = ( rec ) => {
+
+		const bytes = rec.bytes;
+		if ( ! bytes ) return null;
+		vfs.release( rec );
+		return plyParser( sliceBuf( bytes ) );
+
+	};
+
 	const builder = new PBRTSceneBuilder( {
 		convertHandedness,
 		maxTriangles: args.maxTriangles,
+		maxPlacements: args.maxPlacements,
+		mergeShapesAbove: args.mergeShapesAbove,
 		curveSteps: args.curveSteps,
 		curveSides: args.curveSides,
 		resolvePLY: async ( filename ) => {
 
-			const bytes = vfs.find( filename );
-			if ( ! bytes ) return null;
-			return plyParser( sliceBuf( bytes ) );
+			const rec = vfs.findRecord( filename );
+			if ( ! rec ) return null;
+			if ( ! plyCache.has( rec.norm ) ) plyCache.set( rec.norm, decodePly( rec ) );
+			return plyCache.get( rec.norm );
 
 		},
 		resolveImage: async ( filename ) => {
@@ -294,7 +338,8 @@ export async function loadPBRTScene( args ) {
 		}
 	} );
 
+	const buildStart = performance.now();
 	const result = await builder.build( ir );
-	return { ...result, entryPath };
+	return { ...result, entryPath, parseMs, buildMs: performance.now() - buildStart };
 
 }

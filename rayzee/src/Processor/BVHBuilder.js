@@ -19,18 +19,17 @@ export function setBVHWorkerFactory( factory ) {
 // Cannot import Constants.js because BVHBuilder runs inside BVHWorker
 // where `window` (used elsewhere in Constants.js) is not defined.
 const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 32,
+	FLOATS_PER_TRIANGLE: 20,
 	POSITION_A_OFFSET: 0,
 	POSITION_B_OFFSET: 4,
-	POSITION_C_OFFSET: 8,
-	NORMAL_A_OFFSET: 12,
-	NORMAL_B_OFFSET: 16,
-	NORMAL_C_OFFSET: 20,
-	UV_AB_OFFSET: 24,
-	UV_C_MAT_OFFSET: 28 // vec4: uvC.x, uvC.y, materialIndex, meshIndex
+	POSITION_C_OFFSET: 8
 };
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+
+// The record buffer is uint; positions are f32 in it. Views share the memory, no copy.
+const floatView = ( data ) => data instanceof Float32Array
+	? data : new Float32Array( data.buffer, data.byteOffset, data.length );
 
 class BVHNode {
 
@@ -215,7 +214,7 @@ export class BVHBuilder {
 	initializeTriangleArrays() {
 
 		const n = this.totalTriangles;
-		const src = this.triangles;
+		const src = floatView( this.triangles );
 		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
 		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
@@ -679,7 +678,7 @@ export class BVHBuilder {
 		// Phase 6: Create reordered triangle data from final index order
 		const reorderStart = performance.now();
 		const triSrc = this.triangles;
-		const reordered = reorderTarget || new Float32Array( n * FPT );
+		const reordered = reorderTarget || new triSrc.constructor( n * FPT );
 		for ( let i = 0; i < n; i ++ ) {
 
 			const srcOff = this.indices[ i ] * FPT;

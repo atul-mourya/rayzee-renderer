@@ -1,14 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 
-// Triangle data: 32 floats per triangle
-// Positions at offsets 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
+// Triangle record: 20 uint lanes; positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
+const FPT = 20;
+
 function makeTriangle( ax, ay, az, bx, by, bz, cx, cy, cz ) {
 
-	const data = new Float32Array( 32 );
-	data[ 0 ] = ax; data[ 1 ] = ay; data[ 2 ] = az;
-	data[ 4 ] = bx; data[ 5 ] = by; data[ 6 ] = bz;
-	data[ 8 ] = cx; data[ 9 ] = cy; data[ 10 ] = cz;
+	const data = new Uint32Array( FPT );
+	const f = new Float32Array( data.buffer );
+	f[ 0 ] = ax; f[ 1 ] = ay; f[ 2 ] = az;
+	f[ 4 ] = bx; f[ 5 ] = by; f[ 6 ] = bz;
+	f[ 8 ] = cx; f[ 9 ] = cy; f[ 10 ] = cz;
 	return data;
 
 }
@@ -40,10 +42,9 @@ describe( 'InstanceTable', () => {
 
 			const table = new InstanceTable();
 			table.allocate( 3 );
-			expect( table.entries ).toHaveLength( 3 );
-			expect( table.entries[ 0 ] ).toBeNull();
-			expect( table.entries[ 1 ] ).toBeNull();
-			expect( table.entries[ 2 ] ).toBeNull();
+			expect( table.count ).toBe( 3 );
+			expect( table.setCount ).toBe( 0 );
+			expect( Array.from( table.isSet ) ).toEqual( [ 0, 0, 0 ] );
 
 		} );
 
@@ -57,12 +58,8 @@ describe( 'InstanceTable', () => {
 			table.setEntry( { meshIndex: 0, blasNodeCount: 3, triOffset: 0, triCount: 5, originalToBvhMap: null, bvhData: new Float32Array( 48 ) } );
 			table.setEntry( { meshIndex: 1, blasNodeCount: 7, triOffset: 5, triCount: 15, originalToBvhMap: null, bvhData: new Float32Array( 112 ) } );
 
-			expect( table.entries[ 0 ].meshIndex ).toBe( 0 );
-			expect( table.entries[ 0 ].triOffset ).toBe( 0 );
-			expect( table.entries[ 1 ].meshIndex ).toBe( 1 );
-			expect( table.entries[ 1 ].triOffset ).toBe( 5 );
-			expect( table.entries[ 2 ].meshIndex ).toBe( 2 );
-			expect( table.entries[ 2 ].triOffset ).toBe( 20 );
+			expect( table.setCount ).toBe( 3 );
+			expect( Array.from( table.triOffset ) ).toEqual( [ 0, 5, 20 ] );
 
 		} );
 
@@ -81,9 +78,7 @@ describe( 'InstanceTable', () => {
 			table.assignOffsets( 7 ); // 7 TLAS nodes
 
 			expect( table.tlasNodeCount ).toBe( 7 );
-			expect( table.entries[ 0 ].blasOffset ).toBe( 7 ); // 7
-			expect( table.entries[ 1 ].blasOffset ).toBe( 17 ); // 7 + 10
-			expect( table.entries[ 2 ].blasOffset ).toBe( 37 ); // 7 + 10 + 20
+			expect( Array.from( table.blasOffset ) ).toEqual( [ 7, 17, 37 ] ); // 7, +10, +20
 			expect( table.totalBLASNodes ).toBe( 35 ); // 10 + 20 + 5
 			expect( table.totalNodeCount ).toBe( 42 ); // 7 + 35
 
@@ -104,13 +99,7 @@ describe( 'InstanceTable', () => {
 
 			table.computeAABBs( new Float32Array( 64 ) );
 
-			const aabb = table.entries[ 0 ].worldAABB;
-			expect( aabb.minX ).toBe( 0 );
-			expect( aabb.minY ).toBe( 0 );
-			expect( aabb.minZ ).toBe( 0 );
-			expect( aabb.maxX ).toBe( 10 );
-			expect( aabb.maxY ).toBe( 10 );
-			expect( aabb.maxZ ).toBe( 10 );
+			expect( Array.from( table.worldAABB.slice( 0, 6 ) ) ).toEqual( [ 0, 0, 0, 10, 10, 10 ] );
 
 		} );
 
@@ -123,19 +112,13 @@ describe( 'InstanceTable', () => {
 			const bvhData = makeLeaf( 0, 2 );
 			table.setEntry( { meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 2, originalToBvhMap: null, bvhData } );
 
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( makeTriangle( 1, 2, 3, 4, 5, 6, 7, 8, 9 ), 0 );
-			triangleData.set( makeTriangle( - 1, - 2, - 3, 10, 11, 12, 0, 0, 0 ), 32 );
+			triangleData.set( makeTriangle( - 1, - 2, - 3, 10, 11, 12, 0, 0, 0 ), FPT );
 
 			table.computeAABBs( triangleData );
 
-			const aabb = table.entries[ 0 ].worldAABB;
-			expect( aabb.minX ).toBe( - 1 );
-			expect( aabb.minY ).toBe( - 2 );
-			expect( aabb.minZ ).toBe( - 3 );
-			expect( aabb.maxX ).toBe( 10 );
-			expect( aabb.maxY ).toBe( 11 );
-			expect( aabb.maxZ ).toBe( 12 );
+			expect( Array.from( table.worldAABB.slice( 0, 6 ) ) ).toEqual( [ - 1, - 2, - 3, 10, 11, 12 ] );
 
 		} );
 
@@ -159,9 +142,8 @@ describe( 'InstanceTable', () => {
 
 			table.recomputeAABB( 0, combinedBvh, new Float32Array( 64 ) );
 
-			const aabb = table.entries[ 0 ].worldAABB;
-			expect( aabb.minX ).toBe( - 5 );
-			expect( aabb.maxX ).toBe( 15 );
+			expect( table.worldAABB[ 0 ] ).toBe( - 5 );
+			expect( table.worldAABB[ 3 ] ).toBe( 15 );
 
 		} );
 
@@ -179,7 +161,7 @@ describe( 'InstanceTable', () => {
 
 			table.clear();
 
-			expect( table.entries ).toEqual( [] );
+			expect( table.count ).toBe( 0 );
 			expect( table.totalBLASNodes ).toBe( 0 );
 			expect( table.tlasNodeCount ).toBe( 0 );
 

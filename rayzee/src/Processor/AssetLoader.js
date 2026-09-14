@@ -551,7 +551,9 @@ export class AssetLoader extends EventDispatcher {
 	 *   reported by `inspectArchive()`. Everything above it (scene file, materials, textures)
 	 *   comes along; sibling subtrees are skipped without ever being held in memory.
 	 * @param {number} [options.byteBudget] - cap on retained bytes when no element is chosen.
-	 * @param {number} [options.maxTriangles] - stop expanding shapes past this many triangles.
+	 * @param {number} [options.maxTriangles] - stop past this many STORED triangles.
+	 * @param {number} [options.maxPlacements] - stop past this many instance placements.
+	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
 	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
 	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
 	 */
@@ -632,7 +634,7 @@ export class AssetLoader extends EventDispatcher {
 	 * Loads a pbrt-v4 scene from an unzipped archive. Parses the entry .pbrt
 	 * (following Include/Import), builds a THREE.Group, sets the infinite light
 	 * as the scene environment, and runs the standard onModelLoad pipeline.
-	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes)
+	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes); consumed, entry by entry
 	 * @param {string} filename - original archive name (for display/events)
 	 */
 	async loadPBRTFromZip( zip, filename, entryPath = null, options = {} ) {
@@ -669,20 +671,33 @@ export class AssetLoader extends EventDispatcher {
 
 		};
 
-		const requested = entryPath && listEntryPaths( zip ).includes( entryPath ) ? entryPath : null;
+		// Listed up front: the loader empties `zip` as it consumes entries.
+		const candidates = listEntryPaths( zip );
+		const requested = entryPath && candidates.includes( entryPath ) ? entryPath : null;
 		if ( entryPath && ! requested ) console.warn( `PBRT entry "${entryPath}" is not a scene in this archive — auto-detecting instead` );
 
-		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry } = await loadPBRTScene( {
+		const pbrtStart = performance.now();
+		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry,
+			parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
+			droppedNoTemplate } = await loadPBRTScene( {
 			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes,
 			maxTriangles: options.maxTriangles,
+			maxPlacements: options.maxPlacements,
+			mergeShapesAbove: options.mergeShapesAbove,
 			curveSteps: options.curveSteps,
 			curveSides: options.curveSides
 		} );
 
+		// Phase breakdown for scaling work; the engine's own build timings live in
+		// SceneProcessor.performanceMetrics.
+		this.lastPBRTStats = {
+			parseMs, buildMs, loaderMs: performance.now() - pbrtStart,
+			triangleCount, placementCount, mergedShapes, skippedForBudget, droppedNoTemplate, meshCount
+		};
+
 		// An archive can hold several independent scenes (transparent-machines ships five
 		// animation frames). Only one is loaded, so name it and the alternatives rather
 		// than leave the user comparing against a reference of a different scene.
-		const candidates = listEntryPaths( zip );
 		if ( candidates.length > 1 ) {
 
 			const others = candidates.filter( p => p !== loadedEntry );

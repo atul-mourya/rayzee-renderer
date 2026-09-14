@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize, uintBitsToFloat } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
 import {
@@ -6,7 +6,7 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 } from './Struct.js';
-import { getDatafromStorageBuffer, instanceRows, instanceDirToWorld } from './Common.js';
+import { getDatafromStorageBuffer, instanceRows, instanceDirToWorld, TRI_STRIDE } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 
 // ================================================================================
@@ -414,13 +414,13 @@ const uvTransformJacobian = /*@__PURE__*/ wgslFn( `
  */
 export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
 
-	const S = int( 8 );
-	const pA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), S ).xyz;
-	const e1 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), S ).xyz.sub( pA );
-	const e2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), S ).xyz.sub( pA );
+	const S = int( TRI_STRIDE );
+	const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), S ).xyz );
+	const e1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), S ).xyz ).sub( pA );
+	const e2 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), S ).xyz ).sub( pA );
 
-	const uvAB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 6 ), S );
-	const uvC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 7 ), S ).xy;
+	const uvAB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 3 ), S ) );
+	const uvC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), S ).xy );
 	const d1 = uvAB.zw.sub( uvAB.xy );
 	const d2 = uvC.sub( uvAB.xy );
 

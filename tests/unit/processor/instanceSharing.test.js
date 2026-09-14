@@ -45,7 +45,7 @@ describe( 'instance transforms', () => {
 		const m = [ 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 0, 7, - 3, 1, 1 ];
 		table.setEntry( { meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 1, originalToBvhMap: null, bvhData: null, matrixWorld: m } );
 
-		const inv = table.entries[ 0 ].matrixInverse;
+		const inv = table.matrixInverseOf( 0 );
 		const world = [ 5, 2, - 1 ];
 		const obj = [
 			inv[ 0 ] * world[ 0 ] + inv[ 4 ] * world[ 1 ] + inv[ 8 ] * world[ 2 ] + inv[ 12 ],
@@ -71,7 +71,7 @@ describe( 'instance transforms', () => {
 		// Flattened to a plane — not invertible.
 		const m = [ 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 		table.setEntry( { meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 1, originalToBvhMap: null, bvhData: null, matrixWorld: m } );
-		expect( isIdentity( table.entries[ 0 ].matrixInverse ) ).toBe( true );
+		expect( isIdentity( table.matrixInverseOf( 0 ) ) ).toBe( true );
 
 	} );
 
@@ -90,17 +90,18 @@ describe( 'shared BLAS placements', () => {
 		} );
 		table.setAlias( 1, 0, [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1 ], 12 );
 
-		const [ owner, alias ] = table.entries;
-		expect( alias.sharedFrom ).toBe( 0 );
-		expect( alias.triOffset ).toBe( owner.triOffset );
-		expect( alias.triCount ).toBe( owner.triCount );
+		expect( table.sharedFrom[ 1 ] ).toBe( 0 );
+		expect( table.triOffset[ 1 ] ).toBe( table.triOffset[ 0 ] );
+		expect( table.triCount[ 1 ] ).toBe( table.triCount[ 0 ] );
 		// Its own slot in a per-mesh walk, which is what refit callers build.
-		expect( alias.expandedStart ).toBe( 12 );
+		expect( table.expandedStart[ 1 ] ).toBe( 12 );
 
 		table.computeAABBs( new Float32Array( 0 ) );
-		expect( alias.objectAABB ).toBe( owner.objectAABB );
-		expect( alias.worldAABB.minX ).toBeCloseTo( 9, 5 );
-		expect( owner.worldAABB.minX ).toBeCloseTo( - 1, 5 );
+		// Same object-space bounds, copied not shared — columns hold values, not references.
+		expect( Array.from( table.objectAABB.slice( 6, 12 ) ) )
+			.toEqual( Array.from( table.objectAABB.slice( 0, 6 ) ) );
+		expect( table.worldAABB[ 6 ] ).toBeCloseTo( 9, 5 ); // alias minX
+		expect( table.worldAABB[ 0 ] ).toBeCloseTo( - 1, 5 ); // owner minX
 
 	} );
 
@@ -114,9 +115,9 @@ describe( 'shared BLAS placements', () => {
 
 		table.assignOffsets( 3 ); // 3 TLAS nodes
 
-		expect( table.entries[ 0 ].blasOffset ).toBe( 3 );
-		expect( table.entries[ 1 ].blasOffset ).toBe( 3 ); // shares the owner's nodes
-		expect( table.entries[ 2 ].blasOffset ).toBe( 8 );
+		expect( table.blasOffset[ 0 ] ).toBe( 3 );
+		expect( table.blasOffset[ 1 ] ).toBe( 3 ); // shares the owner's nodes
+		expect( table.blasOffset[ 2 ] ).toBe( 8 );
 		// Only the two distinct BLASes are counted.
 		expect( table.totalBLASNodes ).toBe( 14 );
 		expect( table.totalNodeCount ).toBe( 17 );

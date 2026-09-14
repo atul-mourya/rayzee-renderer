@@ -161,9 +161,12 @@ describe( 'PBRT parser', () => {
 		` );
 
 		expect( ir.objects.get( 'leaf' ) ).toHaveLength( 1 );
-		expect( ir.instances ).toHaveLength( 1 );
-		expect( ir.instances[ 0 ].name ).toBe( 'leaf' );
-		expect( ir.instances[ 0 ].ctm.slice( 12, 15 ) ).toEqual( [ 10, 0, 0 ] );
+		// Placements are packed per template: a name, a count, and the transforms end to end.
+		expect( ir.instanceCount ).toBe( 1 );
+		const leaf = ir.instances.get( 'leaf' );
+		expect( leaf.count ).toBe( 1 );
+		expect( leaf.matrices ).toBeInstanceOf( Float32Array );
+		expect( Array.from( leaf.matrices.slice( 12, 15 ) ) ).toEqual( [ 10, 0, 0 ] );
 
 	} );
 
@@ -212,6 +215,35 @@ describe( 'PBRT parser', () => {
 		expect( ir.shapes[ 1 ].ctm ).toBe( ir.shapes[ 0 ].ctm );
 		expect( ir.shapes[ 2 ].ctm ).not.toBe( ir.shapes[ 0 ].ctm );
 		expect( ir.shapes[ 2 ].ctm[ 12 ] ).toBe( 2 );
+
+	} );
+
+
+	it( 'drops placements past the limit while parsing, and counts them', () => {
+
+		const body = Array.from( { length: 40 }, ( _, i ) => `AttributeBegin Translate ${i} 0 0 ObjectInstance "leaf" AttributeEnd` ).join( '\n' );
+		const ir = new PBRTParser( { maxPlacements: 12 } ).parse( `WorldBegin
+			AttributeBegin ObjectBegin "leaf" Shape "sphere" "float radius" 1 ObjectEnd AttributeEnd
+			${body}` );
+
+		// The peak cost is the parse itself, so the limit has to bite here rather than later.
+		expect( ir.instanceCount ).toBe( 12 );
+		expect( ir.skippedInstances ).toBe( 28 );
+		expect( ir.instances.get( 'leaf' ).count ).toBe( 12 );
+
+	} );
+
+	it( 'packs one template\'s placements contiguously', () => {
+
+		const ir = new PBRTParser( {} ).parse( `WorldBegin
+			AttributeBegin ObjectBegin "a" Shape "sphere" "float radius" 1 ObjectEnd AttributeEnd
+			AttributeBegin Translate 1 0 0 ObjectInstance "a" AttributeEnd
+			AttributeBegin Translate 2 0 0 ObjectInstance "a" AttributeEnd
+			AttributeBegin Translate 3 0 0 ObjectInstance "a" AttributeEnd` );
+
+		const a = ir.instances.get( 'a' );
+		expect( a.count ).toBe( 3 );
+		expect( [ 0, 1, 2 ].map( i => a.matrices[ i * 16 + 12 ] ) ).toEqual( [ 1, 2, 3 ] );
 
 	} );
 

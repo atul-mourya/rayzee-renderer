@@ -1212,7 +1212,7 @@ export class PathTracerApp extends EventDispatcher {
 	_sceneSummaryParts() {
 
 		const pt = this.stages.pathTracer;
-		const meshes = this._sdf?.instanceTable?.entries?.filter( Boolean ).length ?? 0;
+		const meshes = this._sdf?.instanceTable?.setCount ?? 0;
 		const maps = this._sdf?.geometryExtractor?.maps?.length ?? 0;
 
 		return [
@@ -2645,13 +2645,13 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	_refreshEmissiveForVisibility() {
 
-		const entries = this._sdf?.instanceTable?.entries;
-		if ( ! entries ) return;
+		const table = this._sdf?.instanceTable;
+		if ( ! table ) return;
 
 		const hidden = new Set();
-		for ( const entry of entries ) {
+		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( entry && entry.visible === false ) hidden.add( entry.meshIndex );
+			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( i );
 
 		}
 

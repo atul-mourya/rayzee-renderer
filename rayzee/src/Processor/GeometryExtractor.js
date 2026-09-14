@@ -1,5 +1,7 @@
 import { Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
-import { TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import {
+	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags
+} from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
 
@@ -109,7 +111,7 @@ export class GeometryExtractor {
 		// which overflowed the browser's ArrayBuffer allocator. Exact avoids both.
 		const totalTriangles = this._countTriangles( object );
 		this._triangleCapacity = Math.max( 1024, totalTriangles );
-		this.triangleData = new Float32Array( this._triangleCapacity * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
+		this._allocateTriangles( this._triangleCapacity );
 		this.currentTriangleIndex = 0;
 
 		// Single traversal: extract geometry, materials, lights, and cameras
@@ -151,10 +153,22 @@ export class GeometryExtractor {
 
 		if ( needed <= this._triangleCapacity ) return;
 
-		const newData = new Float32Array( needed * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
-		newData.set( this.triangleData );
-		this.triangleData = newData;
+		const previous = this.triangleData;
+		this._allocateTriangles( needed );
+		this.triangleData.set( previous );
 		this._triangleCapacity = needed;
+
+	}
+
+	/**
+	 * The record is a uint buffer; positions and UVs are written as f32 through a view of the
+	 * same memory, so a packed lane's bit pattern is never round-tripped through an f32.
+	 * @private
+	 */
+	_allocateTriangles( capacity ) {
+
+		this.triangleData = new Uint32Array( capacity * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
+		this.triangleFloats = new Float32Array( this.triangleData.buffer );
 
 	}
 
@@ -730,72 +744,39 @@ export class GeometryExtractor {
 
 	}
 
-	// Pack triangle data directly in texture format (32 floats with vec4 alignment)
+	// Pack one triangle into its 5 uvec4 lanes (see TRIANGLE_DATA_LAYOUT).
 	packTriangleDataTextureFormat( triangleIndex, posA, posB, posC, normalA, normalB, normalC, uvA, uvB, uvC, materialIndex, meshIndex ) {
 
-		const offset = triangleIndex * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const L = TRIANGLE_DATA_LAYOUT;
+		const offset = triangleIndex * L.FLOATS_PER_TRIANGLE;
+		const f = this.triangleFloats;
+		const u = this.triangleData;
 
-		// Positions as vec4s (3 vec4s = 12 floats)
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 0 ] = posA.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ] = posA.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ] = posA.z;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 3 ] = 0; // vec4 padding
+		f[ offset + L.POSITION_A_OFFSET + 0 ] = posA.x;
+		f[ offset + L.POSITION_A_OFFSET + 1 ] = posA.y;
+		f[ offset + L.POSITION_A_OFFSET + 2 ] = posA.z;
+		u[ offset + L.NORMAL_A_PACKED_OFFSET ] = packNormalOct( normalA.x, normalA.y, normalA.z );
 
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 0 ] = posB.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ] = posB.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ] = posB.z;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 3 ] = 0; // vec4 padding
+		f[ offset + L.POSITION_B_OFFSET + 0 ] = posB.x;
+		f[ offset + L.POSITION_B_OFFSET + 1 ] = posB.y;
+		f[ offset + L.POSITION_B_OFFSET + 2 ] = posB.z;
+		u[ offset + L.NORMAL_B_PACKED_OFFSET ] = packNormalOct( normalB.x, normalB.y, normalB.z );
 
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 0 ] = posC.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ] = posC.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ] = posC.z;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 3 ] = 0; // vec4 padding
+		f[ offset + L.POSITION_C_OFFSET + 0 ] = posC.x;
+		f[ offset + L.POSITION_C_OFFSET + 1 ] = posC.y;
+		f[ offset + L.POSITION_C_OFFSET + 2 ] = posC.z;
+		u[ offset + L.NORMAL_C_PACKED_OFFSET ] = packNormalOct( normalC.x, normalC.y, normalC.z );
 
-		// Normals as vec4s (3 vec4s = 12 floats)
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 0 ] = normalA.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 1 ] = normalA.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 2 ] = normalA.z;
-		// Repurposed padding: opaque-blocker fast-path flag for shadow rays.
-		// 1.0 = surface fully blocks light (no alpha, transmission, or transparency) →
-		//       traceShadowRay can skip the 7-slot getShadowMaterial fetch.
-		// 0.0 = requires full material evaluation.
-		{
+		f[ offset + L.UV_AB_OFFSET + 0 ] = uvA.x;
+		f[ offset + L.UV_AB_OFFSET + 1 ] = uvA.y;
+		f[ offset + L.UV_AB_OFFSET + 2 ] = uvB.x;
+		f[ offset + L.UV_AB_OFFSET + 3 ] = uvB.y;
 
-			const mat = this.materials[ materialIndex ];
-			const isOpaqueBlocker = mat
-				&& ( mat.alphaMode | 0 ) === 0
-				&& ( mat.transparent | 0 ) === 0
-				&& ( mat.transmission || 0 ) === 0
-				&& ( mat.opacity ?? 1 ) >= 1
-				? 1.0 : 0.0;
-			this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET + 3 ] = isOpaqueBlocker;
+		f[ offset + L.UV_C_OFFSET + 0 ] = uvC.x;
+		f[ offset + L.UV_C_OFFSET + 1 ] = uvC.y;
 
-		}
-
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 0 ] = normalB.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 1 ] = normalB.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 2 ] = normalB.z;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET + 3 ] = 0; // vec4 padding
-
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 0 ] = normalC.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 1 ] = normalC.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 2 ] = normalC.z;
-		// Repurposed padding: per-triangle side flag (0=front, 1=back, 2=double).
-		// Lets BVH traversal do side culling without a material-buffer read per hit.
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET + 3 ] = this.materials[ materialIndex ]?.side ?? 0;
-
-		// UVs and material index (2 vec4s = 8 floats)
-		// First vec4: uvA.x, uvA.y, uvB.x, uvB.y
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_AB_OFFSET + 0 ] = uvA.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_AB_OFFSET + 1 ] = uvA.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_AB_OFFSET + 2 ] = uvB.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_AB_OFFSET + 3 ] = uvB.y;
-
-		// Second vec4: uvC.x, uvC.y, materialIndex, meshIndex
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 0 ] = uvC.x;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 1 ] = uvC.y;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 2 ] = materialIndex;
-		this.triangleData[ offset + TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 3 ] = meshIndex; // Store mesh index
+		u[ offset + L.MATERIAL_FLAGS_OFFSET ] = packTriangleFlags( materialIndex, this.materials[ materialIndex ] );
+		u[ offset + L.MESH_INDEX_OFFSET ] = meshIndex;
 
 	}
 

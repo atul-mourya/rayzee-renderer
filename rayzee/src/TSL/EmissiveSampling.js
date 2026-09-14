@@ -22,10 +22,17 @@ import {
 	cos,
 	acos,
 	atan,
+	uint,
+	uintBitsToFloat,
 } from 'three/tsl';
 
 import { struct } from './patches.js';
-import { MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT, computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld } from './Common.js';
+import {
+	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
+	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
+	unpackTriangleNormal, TRI_STRIDE
+} from './Common.js';
+import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
@@ -272,7 +279,6 @@ export const isEmissive = Fn( ( [ material ] ) => {
 // TRIANGLE DATA ACCESS
 // ================================================================================
 
-const TRI_STRIDE = 8;
 const EMISSIVE_STRIDE = 2; // 2 vec4s per emissive entry
 
 export const TriangleData = struct( {
@@ -291,21 +297,15 @@ export const TriangleData = struct( {
  */
 export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffer, instanceLeaf ] ) => {
 
-	// Positions
-	const pos0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 0 ), int( TRI_STRIDE ) );
-	const pos1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 1 ), int( TRI_STRIDE ) );
-	const pos2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 2 ), int( TRI_STRIDE ) );
+	// Positions carry their packed normal in .w
+	const pos0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 0 ), int( TRI_STRIDE ) ).toVar();
+	const pos1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 1 ), int( TRI_STRIDE ) ).toVar();
+	const pos2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 2 ), int( TRI_STRIDE ) ).toVar();
 
-	// Normals
-	const norm0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 3 ), int( TRI_STRIDE ) );
-	const norm1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 4 ), int( TRI_STRIDE ) );
-	const norm2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 5 ), int( TRI_STRIDE ) );
+	const uvMat = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 4 ), int( TRI_STRIDE ) );
 
-	// Material index (stored in last vec4)
-	const uvMat = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 7 ), int( TRI_STRIDE ) );
-
-	const v0 = pos0.xyz.toVar(), v1 = pos1.xyz.toVar(), v2 = pos2.xyz.toVar();
-	const n0 = norm0.xyz.toVar(), n1 = norm1.xyz.toVar(), n2 = norm2.xyz.toVar();
+	const v0 = uintBitsToFloat( pos0.xyz ).toVar(), v1 = uintBitsToFloat( pos1.xyz ).toVar(), v2 = uintBitsToFloat( pos2.xyz ).toVar();
+	const n0 = unpackTriangleNormal( pos0.w ).toVar(), n1 = unpackTriangleNormal( pos1.w ).toVar(), n2 = unpackTriangleNormal( pos2.w ).toVar();
 
 	If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
 
@@ -322,7 +322,7 @@ export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffe
 	// Return all data as a struct
 	return TriangleData( {
 		v0, v1, v2, n0, n1, n2,
-		materialIndex: int( uvMat.z ),
+		materialIndex: int( uvMat.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ),
 	} );
 
 } );

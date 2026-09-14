@@ -58,6 +58,10 @@ export class PBRTParser {
 
 		} );
 
+		// Placements past this are counted and dropped as they are read, not after: the peak
+		// is the parse itself, so a limit applied later saves nothing.
+		this.maxPlacements = opts.maxPlacements ?? Infinity;
+
 
 		// IR accumulators
 		this.ir = {
@@ -67,7 +71,12 @@ export class PBRTParser {
 			namedTextures: new Map(),
 			shapes: [],
 			lights: [],
-			instances: [],
+			// name -> { name, count, matrices } with the transforms packed end to end. One object
+			// and one 4x4 per placement measured 3.7 GB on isCoastline's 2.5M; this is 64 bytes
+			// each and allocates nothing per placement.
+			instances: new Map(),
+			instanceCount: 0,
+			skippedInstances: 0,
 			objects: new Map(),
 			warnings: []
 		};
@@ -111,6 +120,36 @@ export class PBRTParser {
 	}
 
 	// ── token helpers ──────────────────────────────────────────────
+
+	/** Record one placement, copying the CTM straight into the template's matrix buffer. */
+	_addInstance( name ) {
+
+		if ( this.ir.instanceCount >= this.maxPlacements ) {
+
+			this.ir.skippedInstances ++;
+			return;
+
+		}
+
+		let list = this.ir.instances.get( name );
+		if ( ! list ) this.ir.instances.set( name, list = { name, count: 0, matrices: new Float32Array( 16 * 32 ) } );
+
+		const need = ( list.count + 1 ) * 16;
+		if ( need > list.matrices.length ) {
+
+			const grown = new Float32Array( Math.max( need, list.matrices.length * 2 ) );
+			grown.set( list.matrices );
+			list.matrices = grown;
+
+		}
+
+		const o = list.count * 16;
+		const m = this.ctm;
+		for ( let i = 0; i < 16; i ++ ) list.matrices[ o + i ] = m[ i ];
+		list.count ++;
+		this.ir.instanceCount ++;
+
+	}
 
 	/**
 	 * The CTM as the IR should hold it. Consumers treat it as read-only, so consecutive
@@ -619,7 +658,7 @@ export class PBRTParser {
 			case 'ObjectInstance': {
 
 				const objName = this._expectString( 'ObjectInstance name' );
-				this.ir.instances.push( { name: objName, ctm: this._ctmSnapshot() } );
+				this._addInstance( objName );
 				break;
 
 			}
