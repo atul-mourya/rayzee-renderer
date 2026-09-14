@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, Float32BufferAttribute, Mesh, PerspectiveCamera, Vector3 } from 'three';
+import { BufferGeometry, Float32BufferAttribute, Matrix4, Mesh, PerspectiveCamera, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
@@ -313,14 +313,23 @@ describe( 'PBRT scene builder', () => {
 			AttributeBegin Translate 3 0 0  ObjectInstance "leaf" AttributeEnd
 		`;
 
-		const { group } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
-		const meshes = group.children.filter( c => c instanceof Mesh );
+		const { group, triangleCount } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const batches = group.children.filter( c => c.isInstancedMesh );
 
-		expect( meshes ).toHaveLength( 3 );
-		expect( meshes[ 1 ].geometry ).toBe( meshes[ 0 ].geometry );
-		expect( meshes[ 2 ].geometry ).toBe( meshes[ 0 ].geometry );
-		// Placement still differs — only the geometry is shared.
-		expect( meshes.map( m => m.position.x ) ).toEqual( [ 1, 2, 3 ] );
+		// One object carrying three transforms, not three objects.
+		expect( batches ).toHaveLength( 1 );
+		expect( group.children.filter( c => c instanceof Mesh && ! c.isInstancedMesh ) ).toHaveLength( 0 );
+		expect( batches[ 0 ].count ).toBe( 3 );
+		expect( triangleCount ).toBe( 3 ); // one triangle, placed three times
+
+		const m = new Matrix4();
+		const placed = [ 0, 1, 2 ].map( i => {
+
+			batches[ 0 ].getMatrixAt( i, m );
+			return m.elements[ 12 ];
+
+		} );
+		expect( placed ).toEqual( [ 1, 2, 3 ] );
 
 	} );
 
@@ -368,9 +377,10 @@ describe( 'PBRT scene builder', () => {
 			maxTriangles: 10
 		} ) );
 
-		const meshes = group.children.filter( c => c instanceof Mesh );
-		expect( meshes.length ).toBeGreaterThan( 0 );
-		expect( meshes.length ).toBeLessThan( 20 );
+		const batches = group.children.filter( c => c.isInstancedMesh );
+		const placed = batches.reduce( ( n, b ) => n + b.count, 0 );
+		expect( placed ).toBeGreaterThan( 0 );
+		expect( placed ).toBeLessThan( 20 );
 		expect( warnings.some( w => /placement\(s\) skipped/.test( w ) ) ).toBe( true );
 
 	} );

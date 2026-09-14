@@ -122,6 +122,9 @@ export const HitInfo = struct( {
 	uv: 'vec2',
 	materialIndex: 'int',
 	meshIndex: 'int',
+	// TLAS leaf that owns the hit: triangles are stored per instance in object space, so
+	// anything that needs them in world space reads the transform back off this node.
+	instanceLeaf: 'int',
 	triangleIndex: 'int',
 	boxTests: 'int',
 	triTests: 'int',

@@ -110,7 +110,7 @@ export const sampleLightBVHTriangle = Fn( ( [
 	lbvhBuffer,
 	emissiveTriangleBuffer,
 	emissiveVec4Offset,
-	triangleBuffer,
+	triangleBuffer, bvhBuffer,
 ] ) => {
 
 	const result = EmissiveSample( {
@@ -256,9 +256,10 @@ export const sampleLightBVHTriangle = Fn( ( [
 		const triangleIndex = int( emissiveData0.r );
 		const emission = emissiveData1.xyz;
 		const area = emissiveData1.w;
+		const emissiveInstance = int( emissiveData0.a );
 
 		// Fetch triangle geometry
-		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer ) );
+		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer, bvhBuffer, emissiveInstance ) );
 
 		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
@@ -361,7 +362,7 @@ export const sampleLightBVHTriangle = Fn( ( [
 // float per absolute triangleIndex (4 packed per vec4): the root→leaf left(0)/right(1) choices.
 export const calculateLightBVHPdf = Fn( ( [
 	triangleIndex, hitDistance, rayDir, shadingPoint,
-	lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer,
+	lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer, bvhBuffer,
 ] ) => {
 
 	const result = float( 0.0 ).toVar();
@@ -462,6 +463,7 @@ export const calculateLightBVHPdf = Fn( ( [
 			const leafTotalPower = max( d0.w, float( 1e-10 ) );
 
 			const targetPower = float( 0.0 ).toVar();
+			const targetInstance = int( - 1 ).toVar();
 			Loop( { start: int( 0 ), end: emissiveCount }, ( { i } ) => {
 
 				const entryIdx = emissiveStart.add( i );
@@ -469,6 +471,7 @@ export const calculateLightBVHPdf = Fn( ( [
 				If( int( emData0.r ).equal( triIdx ), () => {
 
 					targetPower.assign( max( emData0.g, float( 0.0 ) ) );
+					targetInstance.assign( int( emData0.a ) );
 					Break();
 
 				} );
@@ -478,7 +481,7 @@ export const calculateLightBVHPdf = Fn( ( [
 			selectionPdf.mulAssign( targetPower.div( leafTotalPower ) );
 
 			// Convert selection pdf → solid-angle measure using the SAME heuristic as the sampler.
-			const triData = TriangleData.wrap( fetchTriangleData( triIdx, triangleBuffer ) );
+			const triData = TriangleData.wrap( fetchTriangleData( triIdx, triangleBuffer, bvhBuffer, targetInstance ) );
 			If( useSphericalSampling( triData.v0, triData.v1, triData.v2, shadingPoint ), () => {
 
 				const solidAngle = sphericalTriangleSolidAngle( triData.v0, triData.v1, triData.v2, shadingPoint );

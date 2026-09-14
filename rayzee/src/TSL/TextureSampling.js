@@ -6,7 +6,7 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 } from './Struct.js';
-import { getDatafromStorageBuffer } from './Common.js';
+import { getDatafromStorageBuffer, instanceRows, instanceDirToWorld } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 
 // ================================================================================
@@ -405,7 +405,14 @@ const uvTransformJacobian = /*@__PURE__*/ wgslFn( `
  * @param {Node} geometryNormal shading-space normal, for the handedness test
  * @param {Node} transform      the normal map's mat3 UV transform
  */
-export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform ] ) => {
+/**
+ * Tangent frame for a triangle, in world space.
+ *
+ * Positions are stored per instance in object space, so T and B come out in that space
+ * and are carried across before they meet the world-space geometric normal — otherwise
+ * the handedness test mixes two frames and normal maps light from the wrong side.
+ */
+export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
 
 	const S = int( 8 );
 	const pA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), S ).xyz;
@@ -433,6 +440,14 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
 		If( length( Tt ).greaterThan( 1e-12 ), () => {
 
 			T.assign( Tt );
+
+		} );
+
+		If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+			const rows = instanceRows( bvhBuffer, instanceLeaf );
+			T.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: T } ) );
+			B.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: B } ) );
 
 		} );
 

@@ -68,6 +68,9 @@ export class GeometryExtractor {
 			vec2: Array( 6 ).fill().map( () => new Vector2() )
 		};
 
+		this._geometryRanges = new Map();
+		this.expandedTriangleCount = 0;
+		this.instances = [];
 		this._matrixPool = {
 			mat3: new Matrix3(),
 			mat4: new Matrix4()
@@ -203,14 +206,98 @@ export class GeometryExtractor {
 		this.meshes.push( mesh );
 		mesh.userData.meshIndex = meshIndex;
 
-		// Record triangle range start for this mesh (for TLAS/BLAS per-mesh BVH)
+		// Triangles are stored in object space, so two placements of the same geometry can
+		// point at one copy — and later at one BLAS. The material is part of the key because
+		// the material index is baked per triangle.
+		// Emissive geometry opts out: each placement is a separate light, and the light BVH
+		// keys its entries by triangle index, which sharing would make ambiguous.
+		const key = `${mesh.geometry.uuid}|${materialIndex}`;
+		const shared = this._emissiveMaterial( materialIndex ) ? null : this._geometryRanges.get( key );
+
+		// `expandedStart` is where this mesh's triangles sit in a per-mesh walk of the scene,
+		// which is the shape refit callers can build. `start` is where they are actually
+		// stored, which is the owner's copy when the geometry is shared.
+		if ( shared ) {
+
+			const range = {
+				start: shared.start, count: shared.count,
+				expandedStart: this.expandedTriangleCount, sharedFrom: shared.meshIndex
+			};
+			this.expandedTriangleCount += shared.count;
+			this.meshTriangleRanges.push( range );
+			this._recordPlacements( mesh, meshIndex );
+			return;
+
+		}
+
 		const rangeStart = this.currentTriangleIndex;
 
 		// Extract geometry with both material and mesh indices
 		this.extractGeometry( mesh, materialIndex, meshIndex );
 
-		// Record per-mesh triangle range
-		this.meshTriangleRanges.push( { start: rangeStart, count: this.currentTriangleIndex - rangeStart } );
+		const range = {
+			start: rangeStart, count: this.currentTriangleIndex - rangeStart,
+			expandedStart: this.expandedTriangleCount
+		};
+		this.expandedTriangleCount += range.count;
+		this.meshTriangleRanges.push( range );
+		if ( range.count > 0 ) this._geometryRanges.set( key, { ...range, meshIndex } );
+		this._recordPlacements( mesh, meshIndex );
+
+	}
+
+	/**
+	 * One placement per object, or one per instance for an InstancedMesh. The scene graph
+	 * holds a single object either way — only this list grows, so a million placements cost
+	 * a matrix each rather than a million Object3Ds.
+	 * @private
+	 */
+	_recordPlacements( mesh, meshIndex ) {
+
+		const world = mesh.matrixWorld.elements;
+
+		if ( ! mesh.isInstancedMesh || ! mesh.instanceMatrix ) {
+
+			this.instances.push( { sourceMesh: meshIndex, matrixWorld: Float64Array.from( world ) } );
+			return;
+
+		}
+
+		const arr = mesh.instanceMatrix.array;
+		const count = mesh.count ?? ( arr.length / 16 );
+
+		for ( let i = 0; i < count; i ++ ) {
+
+			const o = i * 16;
+			const m = new Float64Array( 16 );
+
+			// world = mesh.matrixWorld * instanceMatrix, both column-major.
+			for ( let c = 0; c < 4; c ++ ) {
+
+				for ( let r = 0; r < 4; r ++ ) {
+
+					m[ c * 4 + r ] = world[ r ] * arr[ o + c * 4 ]
+						+ world[ 4 + r ] * arr[ o + c * 4 + 1 ]
+						+ world[ 8 + r ] * arr[ o + c * 4 + 2 ]
+						+ world[ 12 + r ] * arr[ o + c * 4 + 3 ];
+
+				}
+
+			}
+
+			this.instances.push( { sourceMesh: meshIndex, matrixWorld: m } );
+
+		}
+
+	}
+
+	/** True when this material emits — those meshes keep their own triangles. */
+	_emissiveMaterial( materialIndex ) {
+
+		const m = this.materials[ materialIndex ];
+		if ( ! m || ! ( m.emissiveIntensity > 0 ) ) return false;
+		const e = m.emissive;
+		return !! e && ( e.r > 0 || e.g > 0 || e.b > 0 );
 
 	}
 
@@ -560,10 +647,6 @@ export class GeometryExtractor {
 		const uvs = geometry.attributes.uv;
 		const indices = geometry.index ? geometry.index.array : null;
 
-		// Compute matrices
-		this._matrixPool.mat4.copy( mesh.matrixWorld );
-		this._matrixPool.mat3.getNormalMatrix( this._matrixPool.mat4 );
-
 		const triangleCount = indices ? indices.length / 3 : positions.count / 3;
 
 		// Extract triangles with both material and mesh indices
@@ -624,14 +707,12 @@ export class GeometryExtractor {
 
 			}
 
-			// Apply world transformation
-			posA.applyMatrix4( this._matrixPool.mat4 );
-			posB.applyMatrix4( this._matrixPool.mat4 );
-			posC.applyMatrix4( this._matrixPool.mat4 );
-
-			normalA.applyMatrix3( this._matrixPool.mat3 ).normalize();
-			normalB.applyMatrix3( this._matrixPool.mat3 ).normalize();
-			normalC.applyMatrix3( this._matrixPool.mat3 ).normalize();
+			// Object space: the instance's transform lives on its TLAS leaf, and the ray is
+			// moved into this space on the way down. Baking it here instead would mean one
+			// copy of the triangles per placement.
+			normalA.normalize();
+			normalB.normalize();
+			normalC.normalize();
 
 			// Pack triangle datas
 			this.packTriangleDataTextureFormat(
@@ -828,6 +909,9 @@ export class GeometryExtractor {
 		this.materialTriangleCounts = []; // Per-material triangle count (for sort-bin remap, item 41)
 		this.meshes = [];
 		this.meshTriangleRanges = []; // Per-mesh { start, count } for TLAS/BLAS
+		this._geometryRanges = new Map(); // geometry+material -> the range that already holds it
+		this.expandedTriangleCount = 0; // triangles as a per-mesh walk would count them
+		this.instances = []; // one per placement: { sourceMesh, matrixWorld }
 		this.maps = [];
 		this.normalMaps = [];
 		this.bumpMaps = [];
@@ -863,6 +947,8 @@ export class GeometryExtractor {
 			materialTriangleCounts: this.materialTriangleCounts,
 			meshes: this.meshes,
 			meshTriangleRanges: this.meshTriangleRanges, // Per-mesh { start, count } for TLAS/BLAS
+			expandedTriangleCount: this.expandedTriangleCount,
+			instances: this.instances,
 			maps: this.maps,
 			normalMaps: this.normalMaps,
 			bumpMaps: this.bumpMaps,

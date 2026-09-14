@@ -531,3 +531,51 @@ export const getShadowMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 	} );
 
 } );
+
+// ================================================================================
+// INSTANCE TRANSFORMS
+// ================================================================================
+
+/**
+ * The three rows of an instance's world-to-object matrix, read off its TLAS leaf.
+ * A BVH node is 16 floats and the BLAS pointer needs four, so the affine inverse
+ * rides along in the rest — no second binding, which matters on a backend that
+ * allows ten storage buffers per stage.
+ */
+export const instanceRows = ( bvhBuffer, leafIndex ) => [
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 3 ), int( 4 ) )
+];
+
+/** Object-space normal to world: transpose of the world-to-object basis. */
+export const instanceNormalToWorld = ( rows, n ) => vec3(
+	vec3( rows[ 0 ].x, rows[ 1 ].x, rows[ 2 ].x ).dot( n ),
+	vec3( rows[ 0 ].y, rows[ 1 ].y, rows[ 2 ].y ).dot( n ),
+	vec3( rows[ 0 ].z, rows[ 1 ].z, rows[ 2 ].z ).dot( n )
+);
+
+/**
+ * Object-space direction to world. Tangents transform by the forward matrix, not the
+ * inverse-transpose that normals use, so the 3x3 is inverted here — once per shaded
+ * hit, which is far cheaper than carrying a second matrix through every BVH node.
+ */
+export const instanceDirToWorld = /*@__PURE__*/ wgslFn( `
+	fn instanceDirToWorld( r0: vec3f, r1: vec3f, r2: vec3f, v: vec3f ) -> vec3f {
+
+		// Rows of world-to-object; its inverse has columns cross(r1,r2), cross(r2,r0), cross(r0,r1).
+		let c0 = cross( r1, r2 );
+		let det = dot( r0, c0 );
+		if ( abs( det ) < 1e-20f ) { return v; }
+
+		let inv = 1.0f / det;
+		return ( c0 * v.x + cross( r2, r0 ) * v.y + cross( r0, r1 ) * v.z ) * inv;
+
+	}
+` );
+
+/** Object-space point to world: undo the inverse translation, then the inverse basis. */
+export const instancePointToWorld = ( rows, p ) => instanceDirToWorld( {
+	r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz,
+	v: p.sub( vec3( rows[ 0 ].w, rows[ 1 ].w, rows[ 2 ].w ) )
+} );

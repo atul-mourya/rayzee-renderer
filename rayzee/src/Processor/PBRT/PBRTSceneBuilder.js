@@ -14,7 +14,7 @@
  */
 
 import {
-	Group, Mesh, PerspectiveCamera, Matrix4, Vector3,
+	Group, Mesh, InstancedMesh, PerspectiveCamera, Matrix4, Vector3,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace
@@ -225,37 +225,85 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/**
+	 * Placements become InstancedMesh batches: one object per template shape, carrying a
+	 * matrix per placement. Moana's beach ground cover alone is 21 million placements, and a
+	 * Three.js object each would be the whole budget before a triangle is traced.
+	 */
 	async _buildInstances( ir, group ) {
 
+		const byTemplate = new Map();
+		for ( const inst of ir.instances ) {
+
+			let list = byTemplate.get( inst.name );
+			if ( ! list ) byTemplate.set( inst.name, list = [] );
+			list.push( inst.ctm );
+
+		}
+
 		let n = 0;
-		for ( let i = 0; i < ir.instances.length; i ++ ) {
 
-			if ( this._overBudget() ) {
+		for ( const [ name, ctms ] of byTemplate ) {
 
-				for ( let j = i; j < ir.instances.length; j ++ ) {
-
-					this.skippedForBudget += ( ir.objects.get( ir.instances[ j ].name ) || [] ).length;
-
-				}
-
-				return;
-
-			}
-
-			const inst = ir.instances[ i ];
-			const template = ir.objects.get( inst.name );
+			const template = ir.objects.get( name );
 			if ( ! template ) {
 
-				this.warn( `ObjectInstance "${inst.name}" has no template` ); continue;
+				this.warn( `ObjectInstance "${name}" has no template` );
+				continue;
 
 			}
 
 			for ( const shape of template ) {
 
-				// instance placement: instanceCTM * (shape relative to its ObjectBegin frame)
-				const worldCTM = M.multiply( inst.ctm, shape.relativeCTM || shape.ctm );
-				const mesh = await this._buildShapeMesh( shape, worldCTM, `instance_${n ++}` );
-				if ( mesh ) group.add( mesh );
+				if ( this._overBudget() ) {
+
+					this.skippedForBudget += ctms.length;
+					continue;
+
+				}
+
+				const [ geometry, sharedMaterial ] = await Promise.all( [
+					this._buildGeometry( shape ),
+					this._getMaterial( shape )
+				] );
+				if ( ! geometry ) continue;
+
+				const tris = geometry.index ? geometry.index.count / 3 : geometry.getAttribute( 'position' ).count / 3;
+				const affordable = Math.max( 0, Math.floor( ( this.maxTriangles - this.triangleCount ) / Math.max( 1, tris ) ) );
+				const count = Math.min( ctms.length, affordable );
+				if ( count < ctms.length ) this.skippedForBudget += ctms.length - count;
+				if ( count === 0 ) continue;
+
+				const material = this._materialForGeometry( shape, geometry, sharedMaterial, `instances_${name}` );
+				const mesh = new InstancedMesh( geometry, material, count );
+				mesh.name = `instance_${n ++}`;
+				mesh.frustumCulled = false;
+
+				const m = new Matrix4();
+				for ( let i = 0; i < count; i ++ ) {
+
+					const world = M.multiply( ctms[ i ], shape.relativeCTM || shape.ctm );
+					mesh.setMatrixAt( i, m.fromArray( this.convertHandedness ? M.multiply( FLIP_Z, world ) : world ) );
+
+				}
+
+				mesh.instanceMatrix.needsUpdate = true;
+				group.add( mesh );
+
+				this.triangleCount += tris * count;
+				this.reportedMeshes += count;
+				if ( this.report.length < MAX_REPORT_ROWS ) this.report.push( {
+					mesh: `${mesh.name} ×${count}`,
+					shape: shape.type,
+					material: shape.material?.type || 'diffuse',
+					color: '#' + material.color.getHexString(),
+					map: material.map ? 'yes' : '-',
+					uv: geometry.getAttribute( 'uv' ) ? 'yes' : 'NO',
+					normals: geometry.getAttribute( 'normal' ) ? 'yes' : 'NO',
+					emissive: material.emissiveIntensity > 0 ? `#${material.emissive.getHexString()}×${material.emissiveIntensity}` : '-',
+					size: `instanced`,
+					tris,
+				} );
 
 			}
 
@@ -272,20 +320,8 @@ export class PBRTSceneBuilder {
 		] );
 		if ( ! geometry ) return null;
 
-		// A textured material on geometry with no UVs samples a single texel — the
-		// usual cause of "black"/wrong meshes on import. Drop the map, but on a CLONE:
-		// _getMaterial caches and shares one instance across every shape using the
-		// same NamedMaterial, so mutating it would strip the texture from sibling
-		// meshes that DO have UVs.
 		const hasUV = !! geometry.getAttribute( 'uv' );
-		let material = sharedMaterial;
-		if ( sharedMaterial.map && ! hasUV ) {
-
-			this.warn( `${name} (${shape.type}, "${shape.material?.type || 'diffuse'}") has a texture map but no UVs — dropping map, using base color` );
-			material = sharedMaterial.clone();
-			material.map = null;
-
-		}
+		const material = this._materialForGeometry( shape, geometry, sharedMaterial, name );
 
 		const mesh = new Mesh( geometry, material );
 		mesh.name = name;
@@ -323,6 +359,24 @@ export class PBRTSceneBuilder {
 		} );
 
 		return mesh;
+
+	}
+
+	/**
+	 * A textured material on geometry with no UVs samples a single texel — the usual cause of
+	 * "black"/wrong meshes on import. Drop the map, but on a CLONE: _getMaterial shares one
+	 * instance across every shape using the same NamedMaterial, so mutating it would strip
+	 * the texture from siblings that DO have UVs.
+	 * @private
+	 */
+	_materialForGeometry( shape, geometry, sharedMaterial, name ) {
+
+		if ( ! sharedMaterial.map || geometry.getAttribute( 'uv' ) ) return sharedMaterial;
+
+		this.warn( `${name} (${shape.type}, "${shape.material?.type || 'diffuse'}") has a texture map but no UVs — dropping map, using base color` );
+		const material = sharedMaterial.clone();
+		material.map = null;
+		return material;
 
 	}
 

@@ -784,13 +784,32 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! meshes || meshes.length === 0 || ! this._instanceTable ) return;
 
-		for ( let i = 0; i < meshes.length; i ++ ) {
+		this._patchVisibilityFromMeshes( meshes );
+		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
 
-			this._patchTLASLeafVisibility( i, this._isWorldVisible( meshes[ i ] ) );
+	}
+
+	/**
+	 * Resolve each placement's visibility from the object it came from. Entries are per
+	 * instance, so an InstancedMesh covers a whole run of them with one authored flag.
+	 * @private
+	 */
+	_patchVisibilityFromMeshes( meshes ) {
+
+		const entries = this._instanceTable.entries;
+		const cache = new Map();
+
+		for ( let i = 0; i < entries.length; i ++ ) {
+
+			const entry = entries[ i ];
+			if ( ! entry ) continue;
+
+			const src = entry.sourceMesh ?? i;
+			let visible = cache.get( src );
+			if ( visible === undefined ) cache.set( src, visible = this._isWorldVisible( meshes[ src ] ) );
+			this._patchTLASLeafVisibility( i, visible );
 
 		}
-
-		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
 
 	}
 
@@ -814,11 +833,7 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! this._meshRefs || ! this._instanceTable ) return;
 
-		for ( let i = 0; i < this._meshRefs.length; i ++ ) {
-
-			this._patchTLASLeafVisibility( i, this._isWorldVisible( this._meshRefs[ i ] ) );
-
-		}
+		this._patchVisibilityFromMeshes( this._meshRefs );
 
 		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
 

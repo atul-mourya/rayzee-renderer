@@ -380,17 +380,38 @@ describe( 'EmissiveTriangleBuilder', () => {
 
 		} );
 
-		it( 'stores triangle index, power, cdf, pdf in vec4[0]', () => {
+		it( 'stores triangle index, power, cdf and the owning instance in vec4[0]', () => {
 
 			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 } ] );
 			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1 } ];
-			builder.extractEmissiveTriangles( triangleData, materials, 1 );
+			builder.extractEmissiveTriangles( triangleData, materials, 1, [ { matrixWorld: null, tlasLeafIndex: 4 } ] );
 
 			const data = builder.createEmissiveRawData();
 			expect( data[ 0 ] ).toBe( 0 ); // triangleIndex
 			expect( data[ 1 ] ).toBeGreaterThan( 0 ); // power
 			expect( data[ 2 ] ).toBeCloseTo( 1.0 ); // CDF (single entry = 1.0)
-			expect( data[ 3 ] ).toBeCloseTo( 1.0 ); // PDF (single entry = power/totalPower = 1.0)
+			// Slot 3 was a repeat of power/total, which the shader recomputes; it now names the
+			// TLAS leaf so sampling can put the triangle back into world space.
+			expect( data[ 3 ] ).toBe( 4 );
+
+		} );
+
+		it( 'measures power and bounds after the instance transform', () => {
+
+			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 } ] );
+			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1 } ];
+
+			builder.extractEmissiveTriangles( triangleData, materials, 1 );
+			const plainArea = builder.emissiveTriangles[ 0 ].area;
+
+			const scaled = new ( builder.constructor )();
+			// Uniform scale of 3 — area grows by 9, and the centroid moves with the translation.
+			const m = [ 3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 5, 0, 1 ];
+			scaled.extractEmissiveTriangles( triangleData, materials, 1, [ { matrixWorld: m, tlasLeafIndex: 0 } ] );
+			const t = scaled.emissiveTriangles[ 0 ];
+
+			expect( t.area ).toBeCloseTo( plainArea * 9, 5 );
+			expect( t.cy ).toBeCloseTo( builder.emissiveTriangles[ 0 ].cy * 3 + 5, 5 );
 
 		} );
 

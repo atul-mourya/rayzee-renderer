@@ -41,8 +41,11 @@ export class EmissiveTriangleBuilder {
 	 * @param {Array} triangleData - Flat array of triangle data
 	 * @param {Array} materials - Array of material objects
 	 * @param {number} triangleCount - Total number of triangles
+	 * @param {Array<{matrixWorld:ArrayLike<number>, tlasLeafIndex:number}>} [instances] - per mesh;
+	 *        triangles are stored in object space, so power, bounds and the emission cone all
+	 *        have to be measured after the instance transform.
 	 */
-	extractEmissiveTriangles( triangleData, materials, triangleCount ) {
+	extractEmissiveTriangles( triangleData, materials, triangleCount, instances = null ) {
 
 		this.emissiveTriangles = [];
 		this.totalEmissivePower = 0;
@@ -73,16 +76,20 @@ export class EmissiveTriangleBuilder {
 			if ( isEmissive ) {
 
 				// Calculate triangle area for power weighting
-				// Positions are at offsets 0-11
-				const v0x = triangleData[ baseOffset + 0 ];
-				const v0y = triangleData[ baseOffset + 1 ];
-				const v0z = triangleData[ baseOffset + 2 ];
-				const v1x = triangleData[ baseOffset + 4 ];
-				const v1y = triangleData[ baseOffset + 5 ];
-				const v1z = triangleData[ baseOffset + 6 ];
-				const v2x = triangleData[ baseOffset + 8 ];
-				const v2y = triangleData[ baseOffset + 9 ];
-				const v2z = triangleData[ baseOffset + 10 ];
+				// Positions are at offsets 0-11, in the instance's own space
+				const inst = instances?.[ meshIndex ] || null;
+				const m = inst?.matrixWorld || null;
+				const px = ( x, y, z ) => ( m ? m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ] : x );
+				const py = ( x, y, z ) => ( m ? m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ] : y );
+				const pz = ( x, y, z ) => ( m ? m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ] : z );
+
+				const o0x = triangleData[ baseOffset + 0 ], o0y = triangleData[ baseOffset + 1 ], o0z = triangleData[ baseOffset + 2 ];
+				const o1x = triangleData[ baseOffset + 4 ], o1y = triangleData[ baseOffset + 5 ], o1z = triangleData[ baseOffset + 6 ];
+				const o2x = triangleData[ baseOffset + 8 ], o2y = triangleData[ baseOffset + 9 ], o2z = triangleData[ baseOffset + 10 ];
+
+				const v0x = px( o0x, o0y, o0z ), v0y = py( o0x, o0y, o0z ), v0z = pz( o0x, o0y, o0z );
+				const v1x = px( o1x, o1y, o1z ), v1y = py( o1x, o1y, o1z ), v1z = pz( o1x, o1y, o1z );
+				const v2x = px( o2x, o2y, o2z ), v2y = py( o2x, o2y, o2z ), v2z = pz( o2x, o2y, o2z );
 
 				const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
 
@@ -119,6 +126,7 @@ export class EmissiveTriangleBuilder {
 					triangleIndex: i,
 					materialIndex: materialIndex,
 					meshIndex: meshIndex,
+					instanceLeaf: inst?.tlasLeafIndex ?? - 1,
 					power: power,
 					area: area,
 					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },
@@ -369,7 +377,10 @@ export class EmissiveTriangleBuilder {
 			data[ offset + 0 ] = tri.triangleIndex;
 			data[ offset + 1 ] = tri.power;
 			data[ offset + 2 ] = this.cdfArray[ i ];
-			data[ offset + 3 ] = this.totalEmissivePower > 0 ? tri.power / this.totalEmissivePower : 0;
+			// Slot 3 used to repeat power/total, which the shader recomputes anyway. It now
+			// names the TLAS leaf that owns this emitter, so sampling can put the triangle
+			// back into world space.
+			data[ offset + 3 ] = tri.instanceLeaf;
 
 			// vec4[1]: pre-multiplied emission (emissive * intensity), area
 			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;
@@ -600,11 +611,13 @@ export class EmissiveTriangleBuilder {
 			const tri = tris[ origIdx ];
 			const offset = i * 8;
 
-			// vec4[0]: triangleIndex, power, cdf, selectionPdf
+			// vec4[0]: triangleIndex, power, cdf, instance. This is the authoritative writer —
+			// buildLightBVH re-sorts the entries and replaces emissiveTriangleData, so the
+			// instance has to be carried here too, not only in createEmissiveRawData.
 			data[ offset + 0 ] = tri.triangleIndex;
 			data[ offset + 1 ] = tri.power;
 			data[ offset + 2 ] = this.cdfArray[ i ];
-			data[ offset + 3 ] = this.totalEmissivePower > 0 ? tri.power / this.totalEmissivePower : 0;
+			data[ offset + 3 ] = tri.instanceLeaf;
 
 			// vec4[1]: pre-multiplied emission (emissive * intensity), area
 			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;

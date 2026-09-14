@@ -25,6 +25,64 @@ const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
 const LEAF_MARKER = - 1;
 const BLAS_POINTER_MARKER = - 2;
 
+const IDENTITY_EPS = 1e-12;
+
+/**
+ * Object-space bounds at `srcOff` through the instance transform stored on TLAS leaf `nodeOff`,
+ * written to `dstOff`. Inlined rather than imported: this file also runs inside a worker.
+ */
+function transformBoundsToWorld( bvhData, nodeOff, src, srcOff, dst, dstOff ) {
+
+	const a0 = bvhData[ nodeOff + 4 ], a1 = bvhData[ nodeOff + 5 ], a2 = bvhData[ nodeOff + 6 ], tx = bvhData[ nodeOff + 7 ];
+	const a3 = bvhData[ nodeOff + 8 ], a4 = bvhData[ nodeOff + 9 ], a5 = bvhData[ nodeOff + 10 ], ty = bvhData[ nodeOff + 11 ];
+	const a6 = bvhData[ nodeOff + 12 ], a7 = bvhData[ nodeOff + 13 ], a8 = bvhData[ nodeOff + 14 ], tz = bvhData[ nodeOff + 15 ];
+
+	// Inverse of the 3x3 whose rows are (a0..a2), (a3..a5), (a6..a8).
+	const c0x = a4 * a8 - a5 * a7, c0y = a5 * a6 - a3 * a8, c0z = a3 * a7 - a4 * a6;
+	const det = a0 * c0x + a1 * c0y + a2 * c0z;
+
+	const identity = a0 === 1 && a4 === 1 && a8 === 1
+		&& a1 === 0 && a2 === 0 && a3 === 0 && a5 === 0 && a6 === 0 && a7 === 0
+		&& tx === 0 && ty === 0 && tz === 0;
+
+	if ( identity || ! Number.isFinite( det ) || Math.abs( det ) < IDENTITY_EPS ) {
+
+		for ( let i = 0; i < 6; i ++ ) dst[ dstOff + i ] = src[ srcOff + i ];
+		return;
+
+	}
+
+	const inv = 1 / det;
+	// Columns of the inverse: cross(r1,r2), cross(r2,r0), cross(r0,r1).
+	const k0x = c0x * inv, k0y = c0y * inv, k0z = c0z * inv;
+	const k1x = ( a2 * a7 - a1 * a8 ) * inv, k1y = ( a0 * a8 - a2 * a6 ) * inv, k1z = ( a1 * a6 - a0 * a7 ) * inv;
+	const k2x = ( a1 * a5 - a2 * a4 ) * inv, k2y = ( a2 * a3 - a0 * a5 ) * inv, k2z = ( a0 * a4 - a1 * a3 ) * inv;
+
+	let minX = Infinity, minY = Infinity, minZ = Infinity;
+	let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
+
+	for ( let c = 0; c < 8; c ++ ) {
+
+		const px = ( c & 1 ? src[ srcOff + 3 ] : src[ srcOff ] ) - tx;
+		const py = ( c & 2 ? src[ srcOff + 4 ] : src[ srcOff + 1 ] ) - ty;
+		const pz = ( c & 4 ? src[ srcOff + 5 ] : src[ srcOff + 2 ] ) - tz;
+
+		const wx = k0x * px + k1x * py + k2x * pz;
+		const wy = k0y * px + k1y * py + k2y * pz;
+		const wz = k0z * px + k1z * py + k2z * pz;
+
+		if ( wx < minX ) minX = wx; if ( wx > maxX ) maxX = wx;
+		if ( wy < minY ) minY = wy; if ( wy > maxY ) maxY = wy;
+		if ( wz < minZ ) minZ = wz; if ( wz > maxZ ) maxZ = wz;
+
+	}
+
+	dst[ dstOff ] = minX; dst[ dstOff + 1 ] = minY; dst[ dstOff + 2 ] = minZ;
+	dst[ dstOff + 3 ] = maxX; dst[ dstOff + 4 ] = maxY; dst[ dstOff + 5 ] = maxZ;
+
+}
+
+
 export class BVHRefitter {
 
 	constructor() {
@@ -286,15 +344,13 @@ export class BVHRefitter {
 
 			} else if ( marker === BLAS_POINTER_MARKER ) {
 
-				// BLAS-pointer leaf (TLAS): read BLAS root node's bounds (already computed)
+				// BLAS-pointer leaf (TLAS): the BLAS root's bounds are in the instance's own
+				// space, and the TLAS sorts on world bounds — so carry the box out through the
+				// leaf's transform. Slots 4..15 are the rows of world-to-object; the eight
+				// corners go back the other way through its inverse.
 				const blasRoot = bvhData[ o ];
 				const br = blasRoot * 6;
-				bounds[ b ] = bounds[ br ];
-				bounds[ b + 1 ] = bounds[ br + 1 ];
-				bounds[ b + 2 ] = bounds[ br + 2 ];
-				bounds[ b + 3 ] = bounds[ br + 3 ];
-				bounds[ b + 4 ] = bounds[ br + 4 ];
-				bounds[ b + 5 ] = bounds[ br + 5 ];
+				transformBoundsToWorld( bvhData, o, bounds, br, bounds, b );
 
 			} else {
 

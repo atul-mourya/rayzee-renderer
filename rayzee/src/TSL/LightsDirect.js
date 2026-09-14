@@ -25,7 +25,7 @@ import {
 } from 'three/tsl';
 
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
-import { REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer } from './Common.js';
+import { REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows, instanceNormalToWorld } from './Common.js';
 import { fresnelSchlickFloat, iorToFresnel0 } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
@@ -192,7 +192,16 @@ export const traceShadowRay = Fn( ( [
 			const pA = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 0 ), TRI_STRIDE_N ).xyz;
 			const pB = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 1 ), TRI_STRIDE_N ).xyz;
 			const pC = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 2 ), TRI_STRIDE_N ).xyz;
-			const geomNormal = normalize( cross( pB.sub( pA ), pC.sub( pA ) ) );
+			// Positions are in the blocker's object space; the cross product is a normal, so
+			// it rides the inverse-transpose back out rather than the forward matrix.
+			const objNormal = normalize( cross( pB.sub( pA ), pC.sub( pA ) ) ).toVar();
+			If( shadowHit.instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+				objNormal.assign( normalize( instanceNormalToWorld( instanceRows( bvhBuffer, shadowHit.instanceLeaf ), objNormal ) ) );
+
+			} );
+
+			const geomNormal = objNormal;
 			shadowHit.normal.assign( geomNormal );
 
 			const entering = dot( dir, geomNormal ).lessThan( 0.0 );

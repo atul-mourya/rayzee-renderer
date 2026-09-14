@@ -3,7 +3,7 @@ import { BVHBuilder } from './BVHBuilder.js';
 import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
-import { InstanceTable } from './InstanceTable.js';
+import { InstanceTable, isIdentity } from './InstanceTable.js';
 import { TextureCreator } from './TextureCreator.js';
 import { GeometryExtractor } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
@@ -321,6 +321,10 @@ export class SceneProcessor {
 
 			this.triangleData = extractedData.triangleData;
 			this.triangleCount = extractedData.triangleCount;
+			// Callers build refit buffers by walking meshes, which counts a shared geometry
+			// once per placement; storage counts it once.
+			this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
+			this.instances = extractedData.instances || null;
 
 			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangleData.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
 
@@ -406,9 +410,15 @@ export class SceneProcessor {
 
 			// ── Step 1: Build per-mesh BLASes ──
 
+			// One entry per PLACEMENT, not per object: an InstancedMesh contributes a matrix per
+			// instance while the scene graph still holds one object.
+			const placements = this.instances?.length
+				? this.instances
+				: ranges.map( ( _, i ) => ( { sourceMesh: i, matrixWorld: this.meshes?.[ i ]?.matrixWorld?.elements ?? null } ) );
+
 			this.instanceTable = new InstanceTable();
-			this.instanceTable.allocate( ranges.length );
-			const meshCount = ranges.length;
+			this.instanceTable.allocate( placements.length );
+			const meshCount = placements.length;
 
 			const originalTreeletEnabled = this.config.enableTreeletOptimization;
 			const LARGE_MESH_THRESHOLD = 200000;
@@ -417,10 +427,25 @@ export class SceneProcessor {
 			const poolTasks = [];
 			const parallelTasks = [];
 
+			// Placements that reuse another's triangles reuse its BLAS too — the whole point of
+			// storing geometry in object space. Only the first placement of a range is built.
+			const aliasOf = new Map();
+			const ownerOfRange = new Map();
+
 			for ( let m = 0; m < meshCount; m ++ ) {
 
-				const range = ranges[ m ];
-				if ( range.count === 0 ) continue;
+				const range = ranges[ placements[ m ].sourceMesh ];
+				if ( ! range || range.count === 0 ) continue;
+
+				const owner = ownerOfRange.get( range.start );
+				if ( owner !== undefined ) {
+
+					aliasOf.set( m, owner );
+					continue;
+
+				}
+
+				ownerOfRange.set( range.start, m );
 
 				if ( range.count >= LARGE_MESH_THRESHOLD && shouldUseParallelBuild( range.count ) ) {
 
@@ -524,7 +549,21 @@ export class SceneProcessor {
 					triCount: range.count,
 					originalToBvhMap: result.originalToBvh || null,
 					bvhData: result.bvhData,
+					matrixWorld: placements[ m ].matrixWorld,
+					expandedStart: range.expandedStart,
+					sourceMesh: placements[ m ].sourceMesh,
 				} );
+
+			}
+
+			for ( const [ m, owner ] of aliasOf ) {
+
+				this.instanceTable.setAlias(
+					m, owner,
+					placements[ m ].matrixWorld,
+					ranges[ placements[ m ].sourceMesh ].expandedStart,
+					placements[ m ].sourceMesh
+				);
 
 			}
 
@@ -554,6 +593,7 @@ export class SceneProcessor {
 
 			for ( const entry of validEntries ) {
 
+				if ( entry.sharedFrom !== null ) continue; // alias — the owner writes the nodes
 				const destOffset = entry.blasOffset * 16;
 				this.bvhData.set( entry.bvhData, destOffset );
 				this._offsetBLASInPlace( destOffset, entry.bvhData.length / 16, entry.blasOffset, entry.triOffset );
@@ -564,7 +604,7 @@ export class SceneProcessor {
 
 			for ( const entry of validEntries ) {
 
-				entry.originalToBvhMap = null;
+				if ( entry.sharedFrom === null ) entry.originalToBvhMap = null;
 				entry.bvhData = null;
 
 			}
@@ -775,6 +815,14 @@ export class SceneProcessor {
 		for ( const entry of this.instanceTable.entries ) {
 
 			if ( ! entry ) continue;
+
+			if ( entry.sharedFrom !== null ) {
+
+				// Same triangles as the owner, so the same ordering.
+				entry.bvhToOriginal = this.instanceTable.entries[ entry.sharedFrom ].bvhToOriginal;
+				continue;
+
+			}
 
 			// Build per-mesh bvhToOriginal (inverse map for sequential writes)
 			const bvhToOrig = new Uint32Array( entry.triCount );
@@ -1051,7 +1099,8 @@ export class SceneProcessor {
 		this.emissiveTriangleCount = this.emissiveTriangleBuilder.extractEmissiveTriangles(
 			this.triangleData,
 			this.materials,
-			this.triangleCount
+			this.triangleCount,
+			this.instanceTable?.entries ?? null
 		);
 
 		this.emissiveTriangleData = this.emissiveTriangleBuilder.createEmissiveRawData();
@@ -1368,13 +1417,13 @@ export class SceneProcessor {
 		// writes NaN into triangleData and every AABB above it, with no error anywhere. A
 		// caller that misses a mesh (the hidden ground disk is easy to miss) sees the scene
 		// silently vanish instead of a thrown exception, so check the length up front.
-		const expectedFloats = this.triangleCount * 9;
+		const expectedFloats = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
 
 		if ( newPositions?.length !== expectedFloats ) {
 
 			throw new Error(
 				`SceneProcessor.refitBVH: expected ${expectedFloats} position floats ` +
-				`(${this.triangleCount} triangles × 9), got ${newPositions?.length ?? 'none'}. ` +
+				`(${this.expandedTriangleCount ?? this.triangleCount} triangles × 9), got ${newPositions?.length ?? 'none'}. ` +
 				'Positions must cover every triangle in the scene, meshes in this.meshes order.'
 			);
 
@@ -1442,8 +1491,10 @@ export class SceneProcessor {
 
 		}
 
-		// Write new positions into shared buffer (main thread → worker, zero-copy)
-		this._refitSharedBuffers.posView.set( newPositions );
+		// Write new positions into shared buffer (main thread → worker, zero-copy). The
+		// worker writes triangles verbatim, so the world-to-object step happens here rather
+		// than shipping every instance matrix across.
+		this._writeObjectSpacePositions( newPositions, this._refitSharedBuffers.posView );
 
 		return new Promise( ( resolve, reject ) => {
 
@@ -1483,7 +1534,20 @@ export class SceneProcessor {
 	 */
 	_patchSmoothNormals( normals ) {
 
-		this._patchNormalsRange( normals, 0, this.originalToBvhMap.length );
+		const entries = ( this.instanceTable?.entries || [] ).filter( Boolean );
+		if ( entries.length === 0 ) {
+
+			this._patchNormalsRange( normals, 0, this.originalToBvhMap.length, null, null );
+			return;
+
+		}
+
+		for ( const entry of entries ) {
+
+			if ( entry.sharedFrom !== null ) continue;
+			this._patchNormalsRange( normals, entry.triOffset, entry.triCount, entry.matrixWorld, entry.expandedStart );
+
+		}
 
 	}
 
@@ -1506,13 +1570,13 @@ export class SceneProcessor {
 
 		// Indexed by absolute triangle, so a short buffer reads undefined → NaN bounds for the
 		// affected meshes with no error. Same silent-corruption trap as refitBVH.
-		const expectedFloats = this.triangleCount * 9;
+		const expectedFloats = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
 
 		if ( newPositions?.length !== expectedFloats ) {
 
 			throw new Error(
 				`SceneProcessor.refitBLASes: expected ${expectedFloats} position floats ` +
-				`(${this.triangleCount} triangles × 9, full scene), got ${newPositions?.length ?? 'none'}.`
+				`(${this.expandedTriangleCount ?? this.triangleCount} triangles × 9, full scene), got ${newPositions?.length ?? 'none'}.`
 			);
 
 		}
@@ -1756,6 +1820,48 @@ export class SceneProcessor {
 	}
 
 	/**
+	 * Copy world-space positions into `dst`, each mesh's range carried into its own space.
+	 * @private
+	 */
+	_writeObjectSpacePositions( src, dst ) {
+
+		const entries = this.instanceTable?.entries || [];
+		let covered = 0;
+
+		for ( const entry of entries ) {
+
+			// Aliases point at the owner's triangles; deforming them once is the whole story.
+			if ( ! entry || entry.sharedFrom !== null ) continue;
+
+			const from = entry.expandedStart * 9;
+			const to = entry.triOffset * 9;
+			const len = entry.triCount * 9;
+			covered = Math.max( covered, to + len );
+
+			const m = entry.matrixInverse;
+			if ( isIdentity( m ) ) {
+
+				dst.set( src.subarray( from, from + len ), to );
+				continue;
+
+			}
+
+			for ( let i = 0; i < len; i += 3 ) {
+
+				const x = src[ from + i ], y = src[ from + i + 1 ], z = src[ from + i + 2 ];
+				dst[ to + i ] = m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ];
+				dst[ to + i + 1 ] = m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ];
+				dst[ to + i + 2 ] = m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ];
+
+			}
+
+		}
+
+		void covered;
+
+	}
+
+	/**
 	 * Update triangle positions for a single mesh entry.
 	 * Iterates in BVH order for sequential writes (cache-friendly), random reads from newPositions.
 	 * @private
@@ -1772,21 +1878,40 @@ export class SceneProcessor {
 
 		const bvhToOrig = entry.bvhToOriginal;
 
+		// Callers hand over world-space positions, which is the only space they can build
+		// one in; triangles are stored per instance, so they come back through the inverse.
+		const m = entry.matrixInverse;
+		const identity = isIdentity( m );
+
 		for ( let bvhLocal = 0; bvhLocal < entry.triCount; bvhLocal ++ ) {
 
 			const origLocal = bvhToOrig[ bvhLocal ];
 			const dst = ( entry.triOffset + bvhLocal ) * FPT;
-			const src = ( entry.triOffset + origLocal ) * 9;
+			const src = ( entry.expandedStart + origLocal ) * 9;
 
-			const ax = newPositions[ src ];
-			const ay = newPositions[ src + 1 ];
-			const az = newPositions[ src + 2 ];
-			const bx = newPositions[ src + 3 ];
-			const by = newPositions[ src + 4 ];
-			const bz = newPositions[ src + 5 ];
-			const cx = newPositions[ src + 6 ];
-			const cy = newPositions[ src + 7 ];
-			const cz = newPositions[ src + 8 ];
+			let ax = newPositions[ src ];
+			let ay = newPositions[ src + 1 ];
+			let az = newPositions[ src + 2 ];
+			let bx = newPositions[ src + 3 ];
+			let by = newPositions[ src + 4 ];
+			let bz = newPositions[ src + 5 ];
+			let cx = newPositions[ src + 6 ];
+			let cy = newPositions[ src + 7 ];
+			let cz = newPositions[ src + 8 ];
+
+			if ( ! identity ) {
+
+				const px = ( x, y, z ) => m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ];
+				const py = ( x, y, z ) => m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ];
+				const pz = ( x, y, z ) => m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ];
+				const a = [ px( ax, ay, az ), py( ax, ay, az ), pz( ax, ay, az ) ];
+				const b = [ px( bx, by, bz ), py( bx, by, bz ), pz( bx, by, bz ) ];
+				const c = [ px( cx, cy, cz ), py( cx, cy, cz ), pz( cx, cy, cz ) ];
+				ax = a[ 0 ]; ay = a[ 1 ]; az = a[ 2 ];
+				bx = b[ 0 ]; by = b[ 1 ]; bz = b[ 2 ];
+				cx = c[ 0 ]; cy = c[ 1 ]; cz = c[ 2 ];
+
+			}
 
 			this.triangleData[ dst + PA ] = ax;
 			this.triangleData[ dst + PA + 1 ] = ay;
@@ -1824,7 +1949,7 @@ export class SceneProcessor {
 	 */
 	_patchMeshSmoothNormals( entry, normals ) {
 
-		this._patchNormalsRange( normals, entry.triOffset, entry.triCount );
+		this._patchNormalsRange( normals, entry.triOffset, entry.triCount, entry.matrixWorld, entry.expandedStart );
 
 	}
 
@@ -1832,29 +1957,49 @@ export class SceneProcessor {
 	 * Shared normal-patching loop for a range of triangles.
 	 * @private
 	 */
-	_patchNormalsRange( normals, startOrig, count ) {
+	_patchNormalsRange( normals, startOrig, count, matrixWorld, srcStart = null ) {
 
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_OFFSET;
 		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_OFFSET;
 		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_OFFSET;
 
+		// Callers supply world-space normals. Traversal takes object normals out through the
+		// transpose of world-to-object, so coming the other way is the transpose of
+		// object-to-world — not its inverse, which is what a position would use.
+		const m = matrixWorld;
+		const plain = ! m || isIdentity( m );
+		const slots = [ NA, NB, NC ];
+
 		for ( let i = 0; i < count; i ++ ) {
 
 			const orig = startOrig + i;
 			const bvhIdx = this.originalToBvhMap[ orig ];
 			const dst = bvhIdx * FPT;
-			const src = orig * 9;
+			const src = ( ( srcStart ?? startOrig ) + i ) * 9;
 
-			this.triangleData[ dst + NA ] = normals[ src ];
-			this.triangleData[ dst + NA + 1 ] = normals[ src + 1 ];
-			this.triangleData[ dst + NA + 2 ] = normals[ src + 2 ];
-			this.triangleData[ dst + NB ] = normals[ src + 3 ];
-			this.triangleData[ dst + NB + 1 ] = normals[ src + 4 ];
-			this.triangleData[ dst + NB + 2 ] = normals[ src + 5 ];
-			this.triangleData[ dst + NC ] = normals[ src + 6 ];
-			this.triangleData[ dst + NC + 1 ] = normals[ src + 7 ];
-			this.triangleData[ dst + NC + 2 ] = normals[ src + 8 ];
+			for ( let v = 0; v < 3; v ++ ) {
+
+				const s = src + v * 3;
+				const nx = normals[ s ], ny = normals[ s + 1 ], nz = normals[ s + 2 ];
+				let ox = nx, oy = ny, oz = nz;
+
+				if ( ! plain ) {
+
+					ox = m[ 0 ] * nx + m[ 1 ] * ny + m[ 2 ] * nz;
+					oy = m[ 4 ] * nx + m[ 5 ] * ny + m[ 6 ] * nz;
+					oz = m[ 8 ] * nx + m[ 9 ] * ny + m[ 10 ] * nz;
+					const len = Math.hypot( ox, oy, oz ) || 1;
+					ox /= len; oy /= len; oz /= len;
+
+				}
+
+				const o = dst + slots[ v ];
+				this.triangleData[ o ] = ox;
+				this.triangleData[ o + 1 ] = oy;
+				this.triangleData[ o + 2 ] = oz;
+
+			}
 
 		}
 

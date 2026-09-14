@@ -2,6 +2,7 @@ import {
 	Fn,
 	wgslFn,
 	vec3,
+	vec4,
 	vec2,
 	float,
 	int,
@@ -21,7 +22,7 @@ import {
 } from 'three/tsl';
 
 import { HitInfo } from './Struct.js';
-import { getDatafromStorageBuffer } from './Common.js';
+import { getDatafromStorageBuffer, instanceRows, instanceNormalToWorld } from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
 // Hang guard only — tripping it reports a MISS, which the shade kernel pays out as
@@ -39,6 +40,30 @@ const HUGE_VAL = 1e8;
 // ================================================================================
 
 const createStack = () => array( 'int', MAX_STACK_DEPTH ).toVar();
+
+// Reciprocal ray direction with the axis-aligned cases pinned to a large signed value.
+const buildInvDir = ( d ) => {
+
+	const dirSign = mix( vec3( 1.0 ), sign( d ), notEqual( d, vec3( 0.0 ) ) );
+	return mix( vec3( 1.0 ).div( d ), vec3( HUGE_VAL ).mul( dirSign ), lessThan( abs( d ), vec3( 1e-8 ) ) );
+
+};
+
+// The ray direction is deliberately left unnormalised through the transform: t then means
+// the same thing either side of it, so closest-hit comparisons and the world-space hit
+// point both survive without rescaling.
+const toObjectPoint = ( rows, p ) => vec3(
+	rows[ 0 ].xyz.dot( p ).add( rows[ 0 ].w ),
+	rows[ 1 ].xyz.dot( p ).add( rows[ 1 ].w ),
+	rows[ 2 ].xyz.dot( p ).add( rows[ 2 ].w )
+);
+
+const toObjectDir = ( rows, d ) => vec3(
+	rows[ 0 ].xyz.dot( d ),
+	rows[ 1 ].xyz.dot( d ),
+	rows[ 2 ].xyz.dot( d )
+);
+
 
 // ================================================================================
 // RAY INTERSECTION HELPERS (inlined for BVH traversal performance)
@@ -196,6 +221,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		uv: vec2( 0.0 ),
 		materialIndex: int( - 1 ),
 		meshIndex: int( - 1 ),
+		instanceLeaf: int( - 1 ),
 		boxTests: int( 0 ),
 		triTests: int( 0 ),
 	} ).toVar();
@@ -211,19 +237,24 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) ); // Root node
 
-	// Compact axis-aligned ray handling with correct sign preservation
-	const dirSign = mix( vec3( 1.0 ), sign( ray.direction ), notEqual( ray.direction, vec3( 0.0 ) ) );
-	const invDir = mix(
-		vec3( 1.0 ).div( ray.direction ),
-		vec3( HUGE_VAL ).mul( dirSign ),
-		lessThan( abs( ray.direction ), vec3( 1e-8 ) )
-	).toVar();
+	// Triangles are stored in each instance's own space, so the ray is the thing that
+	// moves. `world*` stays put; `ray*`/`invDir`/`woopParams` track whichever space the
+	// traversal is currently in and are restored on the way back out of a BLAS.
+	const worldOrigin = vec3( ray.origin ).toVar();
+	const worldDirection = vec3( ray.direction ).toVar();
+	const worldInvDir = buildInvDir( worldDirection ).toVar();
+	const worldWoop = computeWoopRayParams( { rayDir: worldDirection } ).toVar();
 
-	const rayOrigin = ray.origin;
-	const rayDirection = ray.direction;
+	const rayOrigin = vec3( worldOrigin ).toVar();
+	const rayDirection = vec3( worldDirection ).toVar();
+	const invDir = vec3( worldInvDir ).toVar();
+	const woopParams = vec4( worldWoop ).toVar();
 
-	// Woop watertight intersection: precompute per-ray shears + axis permutation.
-	const woopParams = computeWoopRayParams( { rayDir: rayDirection } ).toVar();
+	// Active instance: the TLAS leaf we descended through, and the stack depth that
+	// returning below means we are back in world space.
+	const instLeaf = int( - 1 ).toVar();
+	const instExit = int( 0 ).toVar();
+	const hitInstLeaf = int( - 1 ).toVar();
 
 	const iterCount = int( 0 ).toVar();
 
@@ -232,6 +263,18 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		iterCount.addAssign( 1 );
 		stackPtr.subAssign( 1 );
 		const nodeIndex = stack.element( stackPtr ).toVar();
+
+		// Everything a BLAS pushed sits above the depth we entered at, so dropping below
+		// it is exactly the moment the ray belongs back in world space.
+		If( instLeaf.greaterThanEqual( int( 0 ) ).and( stackPtr.lessThan( instExit ) ), () => {
+
+			rayOrigin.assign( worldOrigin );
+			rayDirection.assign( worldDirection );
+			invDir.assign( worldInvDir );
+			woopParams.assign( worldWoop );
+			instLeaf.assign( int( - 1 ) );
+
+		} );
 
 		// New layout: 4 vec4 per node
 		// Leaf: vec4(0) = [triOffset, triCount, 0, -1]
@@ -301,6 +344,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 							closestTriIdx.assign( triIndex );
 							closestU.assign( u );
 							closestV.assign( v );
+							hitInstLeaf.assign( instLeaf );
 
 						} );
 
@@ -317,10 +361,20 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 			} ).Else( () => {
 
-				// BLAS-pointer leaf (marker -2) — push BLAS root onto stack if mesh is visible
-				// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]
-				// Visibility is free-fetched with the leaf — no extra storage read.
+				// BLAS-pointer leaf (marker -2) — enter the instance if the mesh is visible.
+				// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]; slots 4..15 hold
+				// the world-to-object matrix. Visibility is free-fetched with the leaf.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+
+					const rows = instanceRows( bvhBuffer, nodeIndex );
+					const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+					rayDirection.assign( localDir );
+					invDir.assign( buildInvDir( localDir ) );
+					woopParams.assign( computeWoopRayParams( { rayDir: localDir } ) );
+					instLeaf.assign( nodeIndex );
+					instExit.assign( stackPtr );
 
 					stack.element( stackPtr ).assign( int( nodeData0.x ) );
 					stackPtr.addAssign( 1 );
@@ -383,7 +437,14 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		const nA = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 3 ), int( TRI_STRIDE ) ).xyz;
 		const nB = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 4 ), int( TRI_STRIDE ) ).xyz;
 		const nC = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 5 ), int( TRI_STRIDE ) ).xyz;
-		closestHit.normal.assign( normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ) );
+		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
+		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+			objectNormal.assign( normalize( instanceNormalToWorld( instanceRows( bvhBuffer, hitInstLeaf ), objectNormal ) ) );
+
+		} );
+
+		closestHit.normal.assign( objectNormal );
 
 		const uvData1 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 6 ), int( TRI_STRIDE ) );
 		const uvData2 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 7 ), int( TRI_STRIDE ) );
@@ -392,6 +453,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		);
 		closestHit.materialIndex.assign( int( uvData2.z ) );
 		closestHit.meshIndex.assign( int( uvData2.w ) );
+		closestHit.instanceLeaf.assign( hitInstLeaf );
 		closestHit.triangleIndex.assign( closestTriIdx );
 
 	} );
@@ -423,6 +485,7 @@ export const traverseBVHShadow = Fn( ( [
 		uv: vec2( 0.0 ),
 		materialIndex: int( - 1 ),
 		meshIndex: int( - 1 ),
+		instanceLeaf: int( - 1 ),
 		boxTests: int( 0 ),
 		triTests: int( 0 ),
 	} ).toVar();
@@ -431,15 +494,19 @@ export const traverseBVHShadow = Fn( ( [
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) );
 
-	const dirSign = mix( vec3( 1.0 ), sign( ray.direction ), notEqual( ray.direction, vec3( 0.0 ) ) );
-	const invDir = mix(
-		vec3( 1.0 ).div( ray.direction ),
-		vec3( HUGE_VAL ).mul( dirSign ),
-		lessThan( abs( ray.direction ), vec3( 1e-8 ) )
-	).toVar();
+	// Same instance-space scheme as traverseBVH: the ray moves, the triangles do not.
+	const worldOrigin = vec3( ray.origin ).toVar();
+	const worldDirection = vec3( ray.direction ).toVar();
+	const worldInvDir = buildInvDir( worldDirection ).toVar();
+	const worldWoop = computeWoopRayParams( { rayDir: worldDirection } ).toVar();
 
-	// Woop watertight intersection: precompute per-ray shears + axis permutation.
-	const woopParams = computeWoopRayParams( { rayDir: ray.direction } ).toVar();
+	const rayOrigin = vec3( worldOrigin ).toVar();
+	const rayDirection = vec3( worldDirection ).toVar();
+	const invDir = vec3( worldInvDir ).toVar();
+	const woopParams = vec4( worldWoop ).toVar();
+
+	const instLeaf = int( - 1 ).toVar();
+	const instExit = int( 0 ).toVar();
 
 	const sIterCount = int( 0 ).toVar();
 
@@ -448,6 +515,16 @@ export const traverseBVHShadow = Fn( ( [
 		sIterCount.addAssign( 1 );
 		stackPtr.subAssign( 1 );
 		const nodeIndex = stack.element( stackPtr ).toVar();
+
+		If( instLeaf.greaterThanEqual( int( 0 ) ).and( stackPtr.lessThan( instExit ) ), () => {
+
+			rayOrigin.assign( worldOrigin );
+			rayDirection.assign( worldDirection );
+			invDir.assign( worldInvDir );
+			woopParams.assign( worldWoop );
+			instLeaf.assign( int( - 1 ) );
+
+		} );
 
 		const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
 
@@ -468,7 +545,7 @@ export const traverseBVHShadow = Fn( ( [
 					const pB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).xyz;
 					const pC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).xyz;
 
-					const triResult = RayTriangleGeometry( { rayOrigin: ray.origin, rayDir: ray.direction, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
+					const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
 					If( triResult.w.greaterThan( 0.5 ), () => {
 
@@ -479,12 +556,13 @@ export const traverseBVHShadow = Fn( ( [
 						closestHit.dst.assign( triResult.x );
 						closestHit.materialIndex.assign( int( uvData2.z ) );
 						closestHit.meshIndex.assign( int( uvData2.w ) );
+						closestHit.instanceLeaf.assign( instLeaf );
 
 						// Hit point is cheap (origin + dir*t). Geometric normal is deferred
 						// to traceShadowRay — only the transmission branch needs it, so we
 						// skip the cross+normalize for the (much more common) opaque-blocker
 						// and alpha-cutout paths. Normal stays vec3(0) from struct init.
-						closestHit.hitPoint.assign( ray.origin.add( ray.direction.mul( triResult.x ) ) );
+						closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
 
 						// Store barycentrics + triangle index for deferred UV computation.
 						// Actual UV interpolation happens in traceShadowRay only when
@@ -501,9 +579,18 @@ export const traverseBVHShadow = Fn( ( [
 
 			} ).Else( () => {
 
-				// BLAS-pointer leaf (marker -2) — push BLAS root onto stack if mesh is visible
-				// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]
+				// BLAS-pointer leaf (marker -2) — enter the instance if the mesh is visible.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+
+					const rows = instanceRows( bvhBuffer, nodeIndex );
+					const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+					rayDirection.assign( localDir );
+					invDir.assign( buildInvDir( localDir ) );
+					woopParams.assign( computeWoopRayParams( { rayDir: localDir } ) );
+					instLeaf.assign( nodeIndex );
+					instExit.assign( stackPtr );
 
 					stack.element( stackPtr ).assign( int( nodeData0.x ) );
 					stackPtr.addAssign( 1 );
@@ -522,8 +609,8 @@ export const traverseBVHShadow = Fn( ( [
 			const leftChild = int( nodeData0.w ).toVar();
 			const rightChild = int( nodeData1.w ).toVar();
 
-			const dstA = fastRayAABBDst( { rayOrigin: ray.origin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
-			const dstB = fastRayAABBDst( { rayOrigin: ray.origin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
+			const dstA = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
+			const dstB = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
 
 			// Distance-ordered traversal — nearer child first for faster any-hit
 			// termination. SA build ordering improves cache locality (larger-SA

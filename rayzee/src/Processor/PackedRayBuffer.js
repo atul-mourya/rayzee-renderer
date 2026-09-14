@@ -13,7 +13,7 @@ import { createLogger, fmt } from '../utils/Logger.js';
 const log = createLogger( 'gpu' );
 
 export const RAY_STRIDE = 7;
-export const HIT_STRIDE = 2;
+export const HIT_STRIDE = 3;
 // Per-pixel G-buffer (first-hit MRT staging): 1 uvec4/pixel — half-packed normal/depth/albedo
 // (pack2x16, no f32 bitcast); read by FinalWrite:
 //   .x=packSnorm2x16(normal.xy)  .y=packSnorm2x16(normal.z, depth)  .z=packUnorm2x16(albedo.rg)
@@ -34,7 +34,10 @@ export const RAY = {
 
 export const HIT = {
 	DIST_TRI_BARY: 0, // vec4(distance, uintBitsToFloat(triIndex), bary.u, bary.v)
-	NORMAL_MAT: 1, // vec4(geoNormal.xyz, uintBitsToFloat(matIndex | meshIndex<<16))
+	NORMAL_MAT: 1, // vec4(geoNormal.xyz, uintBitsToFloat(matIndex))
+	// vec4(uintBitsToFloat(instanceLeaf + 1), _, _, _). Its own slot rather than sharing the
+	// material word: an instanced scene reaches millions of TLAS nodes, and 16 bits caps at 65k.
+	INSTANCE: 2,
 };
 
 // SoA region stride, baked into the shader graph at build time; single instance, rebuilt on resize.
@@ -265,17 +268,23 @@ export const readHitNormal = ( buf, id ) =>
 	buf.element( soa( id, HIT.NORMAL_MAT ) ).xyz;
 
 export const readHitMaterialIndex = ( buf, id ) =>
-	uint( floatBitsToUint( buf.element( soa( id, HIT.NORMAL_MAT ) ).w ).bitAnd( 0xFFFF ) );
+	uint( floatBitsToUint( buf.element( soa( id, HIT.NORMAL_MAT ) ).w ) );
 
-export const readHitMeshIndex = ( buf, id ) =>
-	floatBitsToUint( buf.element( soa( id, HIT.NORMAL_MAT ) ).w ).shiftRight( 16 );
+/**
+ * TLAS leaf that owns the hit, biased by one so 0 reads as "no instance" — leaf 0 is a real
+ * node when the scene has a single mesh.
+ */
+export const readHitInstanceLeaf = ( buf, id ) =>
+	int( floatBitsToUint( buf.element( soa( id, HIT.INSTANCE ) ).x ) ).sub( int( 1 ) );
 
-export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, meshIndex ) => {
+export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf ) => {
 
 	buf.element( soa( id, HIT.DIST_TRI_BARY ) )
 		.assign( vec4( distance, uintBitsToFloat( triIndex ), baryU, baryV ) );
 	buf.element( soa( id, HIT.NORMAL_MAT ) )
-		.assign( vec4( normal, uintBitsToFloat( matIndex.bitOr( meshIndex.shiftLeft( 16 ) ) ) ) );
+		.assign( vec4( normal, uintBitsToFloat( matIndex ) ) );
+	buf.element( soa( id, HIT.INSTANCE ) )
+		.assign( vec4( uintBitsToFloat( instanceLeaf ), 0.0, 0.0, 0.0 ) );
 
 };
 

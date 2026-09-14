@@ -12,6 +12,7 @@ function makeEntry( meshIndex, aabb, blasOffset = 0 ) {
 		worldAABB: aabb,
 		originalToBvhMap: null,
 		bvhData: null,
+		matrixInverse: null, // flatten falls back to identity
 	};
 
 }
@@ -193,6 +194,38 @@ describe( 'TLASBuilder', () => {
 
 			builder.flatten( root, entries );
 			expect( builder._flatBuffer ).toBe( firstBuffer ); // same buffer reused
+
+		} );
+
+	} );
+
+
+	describe( 'instance transform', () => {
+
+		it( 'writes the world-to-object matrix into the leaf, rows of four', () => {
+
+			// A leaf needs four floats for the BLAS pointer; the affine inverse rides in the
+			// other twelve so traversal can move the ray without a second storage binding.
+			const entry = makeEntry( 0, makeAABB( 0, 0, 0, 1, 1, 1 ) );
+			// Column-major: scale 2, translated by (5,6,7).
+			entry.matrixInverse = [ 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 5, 6, 7, 1 ];
+
+			const { root } = builder.build( [ entry ] );
+			const data = builder.flatten( root, [ entry ] );
+
+			expect( Array.from( data.slice( 4, 8 ) ) ).toEqual( [ 2, 0, 0, 5 ] );
+			expect( Array.from( data.slice( 8, 12 ) ) ).toEqual( [ 0, 2, 0, 6 ] );
+			expect( Array.from( data.slice( 12, 16 ) ) ).toEqual( [ 0, 0, 2, 7 ] );
+
+		} );
+
+		it( 'falls back to identity when an entry carries no matrix', () => {
+
+			const entry = makeEntry( 0, makeAABB( 0, 0, 0, 1, 1, 1 ) );
+			const { root } = builder.build( [ entry ] );
+			const data = builder.flatten( root, [ entry ] );
+
+			expect( Array.from( data.slice( 4, 16 ) ) ).toEqual( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 ] );
 
 		} );
 
