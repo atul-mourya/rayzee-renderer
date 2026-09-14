@@ -161,4 +161,52 @@ describe( 'equal-area octahedral mapping', () => {
 
 	} );
 
+
+	it( 'decodes an 8-bit sRGB source to linear', () => {
+
+		// A canvas readback of a PNG sky arrives as 8-bit sRGB RGBA, top-down.
+		const n = 8;
+		const value = 188; // mid-tone, well inside the curve's non-linear part
+		const data = new Uint8ClampedArray( n * n * 4 ).fill( value );
+		for ( let i = 3; i < data.length; i += 4 ) data[ i ] = 255;
+
+		const { data: out } = octahedralToEquirect(
+			{ data, width: n, height: n, channels: 4, srgb: true }, null, 1, 8
+		);
+
+		const c = value / 255;
+		const expected = Math.pow( ( c + 0.055 ) / 1.055, 2.4 );
+		expect( out[ 0 ] ).toBeCloseTo( expected, 5 );
+		expect( out[ 0 ] ).toBeLessThan( c ); // decoded, not passed through
+
+	} );
+
+	it( 'reads an 8-bit source top-down, matching an equivalent float one', () => {
+
+		// Same hemisphere tag both ways: a canvas gives top-down rows, so the two must agree
+		// only when the float source is also read top-down.
+		const n = 32;
+		const bytes = new Uint8ClampedArray( n * n * 4 );
+		const floats = new Float32Array( n * n * 3 );
+		for ( let j = 0; j < n; j ++ ) for ( let i = 0; i < n; i ++ ) {
+
+			const [ , dy ] = equalAreaSquareToSphere( ( i + 0.5 ) / n, ( j + 0.5 ) / n );
+			const on = dy > 0;
+			const o4 = ( j * n + i ) * 4;
+			bytes[ o4 ] = bytes[ o4 + 1 ] = bytes[ o4 + 2 ] = on ? 255 : 0;
+			bytes[ o4 + 3 ] = 255;
+			const o3 = ( j * n + i ) * 3;
+			floats[ o3 ] = floats[ o3 + 1 ] = floats[ o3 + 2 ] = on ? 1 : 0;
+
+		}
+
+		const a = octahedralToEquirect( { data: bytes, width: n, height: n, channels: 4, srgb: true }, null, 1, 32 );
+		const b = octahedralToEquirect( { data: floats, width: n, height: n, channels: 3 }, null, 1, 32 );
+
+		let worst = 0;
+		for ( let i = 0; i < a.data.length; i += 4 ) worst = Math.max( worst, Math.abs( a.data[ i ] - b.data[ i ] ) );
+		expect( worst ).toBeLessThan( 1e-5 );
+
+	} );
+
 } );

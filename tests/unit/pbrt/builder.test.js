@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Mesh, PerspectiveCamera, Vector3 } from 'three';
+import { BufferGeometry, Float32BufferAttribute, Mesh, PerspectiveCamera, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
@@ -227,6 +227,171 @@ describe( 'PBRT scene builder', () => {
 		expect( t[ 0 ] ).toBeCloseTo( 0, 5 );
 		expect( t[ 1 ] ).toBeCloseTo( - 1, 5 );
 		expect( t[ 2 ] ).toBeCloseTo( 0, 5 );
+
+	} );
+
+
+	it( 'recovers a colour for an unreadable ptex texture from the like-named material', async () => {
+
+		// The Moana conversion binds colour through ptex and leaves the matching
+		// MakeNamedMaterial behind; the .ptx files ship separately, so without this the
+		// whole scene renders the default grey.
+		const scene = `
+			WorldBegin
+			MakeNamedMaterial "el:bark" "rgb reflectance" [ 0.24 0.2 0.17 ] "string type" [ "diffuse" ]
+			MakeNamedMaterial "el:leaf" "rgb reflectance" [ 0.3 0.38 0.16 ] "string type" [ "diffuse" ]
+			AttributeBegin
+				Texture "el:bark_Color" "spectrum" "ptex" "string filename" [ "../textures/bark.ptx" ]
+				Material "diffuse" "texture reflectance" "el:bark_Color"
+				Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]
+			AttributeEnd
+			AttributeBegin
+				Texture "el:leaf0001_Color-renamed-3" "spectrum" "ptex" "string filename" [ "../textures/leaf.ptx" ]
+				Material "diffuse" "texture reflectance" "el:leaf0001_Color-renamed-3"
+				Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ]
+			AttributeEnd
+		`;
+
+		const { group, warnings } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const meshes = group.children.filter( c => c instanceof Mesh );
+
+		expect( meshes[ 0 ].material.color.r ).toBeCloseTo( 0.24, 5 );
+		expect( meshes[ 0 ].material.color.g ).toBeCloseTo( 0.2, 5 );
+		expect( meshes[ 1 ].material.color.r ).toBeCloseTo( 0.3, 5 );
+		expect( meshes[ 1 ].material.color.b ).toBeCloseTo( 0.16, 5 );
+
+		// One summary line, not one warning per texture.
+		expect( warnings.filter( w => /not supported/.test( w ) ) ).toEqual( [] );
+		expect( warnings.some( w => /fell back to the like-named material/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'still warns when an unsupported texture has no material to fall back on', async () => {
+
+		const scene = `
+			WorldBegin
+			AttributeBegin
+				Texture "orphan_Color" "spectrum" "ptex" "string filename" [ "x.ptx" ]
+				Material "diffuse" "texture reflectance" "orphan_Color"
+				Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]
+			AttributeEnd
+		`;
+
+		const { warnings } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		expect( warnings.some( w => /texture class "ptex" not supported/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'parses a scene handed over as bytes, never as one string', async () => {
+
+		// Ironwood scene files run to 800 MB — past the longest string V8 will build — so the
+		// loader must hand the lexer bytes and never decode the file whole.
+		const body = Array.from( { length: 4000 }, ( _, i ) =>
+			`Shape "trianglemesh" "point3 P" [ ${i} 0 0  ${i + 1} 0 0  ${i} 1 0 ] "integer indices" [ 0 1 2 ]`
+		).join( '\n' );
+		const bytes = enc.encode( `WorldBegin\nMaterial "diffuse" "rgb reflectance" [ 1 1 1 ]\n${body}\n` );
+
+		const { group } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': bytes } } ) );
+		expect( group.children.filter( c => c instanceof Mesh ) ).toHaveLength( 4000 );
+
+	} );
+
+
+	it( 'shares one geometry across every placement of an instanced object', async () => {
+
+		// Moana places a single 208-triangle leaf 2.25 million times; rebuilding it per
+		// placement is the difference between seconds and minutes, and between MB and GB.
+		const scene = `
+			WorldBegin
+			AttributeBegin
+				ObjectBegin "leaf"
+					Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]
+				ObjectEnd
+			AttributeEnd
+			AttributeBegin Translate 1 0 0  ObjectInstance "leaf" AttributeEnd
+			AttributeBegin Translate 2 0 0  ObjectInstance "leaf" AttributeEnd
+			AttributeBegin Translate 3 0 0  ObjectInstance "leaf" AttributeEnd
+		`;
+
+		const { group } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const meshes = group.children.filter( c => c instanceof Mesh );
+
+		expect( meshes ).toHaveLength( 3 );
+		expect( meshes[ 1 ].geometry ).toBe( meshes[ 0 ].geometry );
+		expect( meshes[ 2 ].geometry ).toBe( meshes[ 0 ].geometry );
+		// Placement still differs — only the geometry is shared.
+		expect( meshes.map( m => m.position.x ) ).toEqual( [ 1, 2, 3 ] );
+
+	} );
+
+	it( 'decodes a .ply once when two shapes name it', async () => {
+
+		let decodes = 0;
+		const scene = `
+			WorldBegin
+			Shape "plymesh" "string filename" "m.ply"
+			Shape "plymesh" "string filename" "m.ply"
+		`;
+
+		const { group } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode( scene ), 'm.ply': enc.encode( 'ply' ) },
+			plyParser: () => {
+
+				decodes ++;
+				const g = new BufferGeometry();
+				g.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], 3 ) );
+				return g;
+
+			}
+		} ) );
+
+		expect( decodes ).toBe( 1 );
+		expect( group.children.filter( c => c instanceof Mesh ) ).toHaveLength( 2 );
+
+	} );
+
+
+	it( 'stops expanding instances at the triangle budget and says how many it dropped', async () => {
+
+		const scene = `
+			WorldBegin
+			AttributeBegin
+				ObjectBegin "quad"
+					Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0  1 1 0 ] "integer indices" [ 0 1 2  1 3 2 ]
+				ObjectEnd
+			AttributeEnd
+			${Array.from( { length: 20 }, ( _, i ) => `AttributeBegin Translate ${i} 0 0 ObjectInstance "quad" AttributeEnd` ).join( '\n' )}
+		`;
+
+		const { group, warnings } = await loadPBRTScene( buildArgs( {
+			vfs: { 'scene.pbrt': enc.encode( scene ) },
+			maxTriangles: 10
+		} ) );
+
+		const meshes = group.children.filter( c => c instanceof Mesh );
+		expect( meshes.length ).toBeGreaterThan( 0 );
+		expect( meshes.length ).toBeLessThan( 20 );
+		expect( warnings.some( w => /placement\(s\) skipped/.test( w ) ) ).toBe( true );
+
+	} );
+
+
+	it( 'gives a trianglemesh a real index attribute, not a bare typed array', async () => {
+
+		// setIndex() only wraps a plain Array. Handing it the parser's Int32Array put a raw
+		// buffer on geometry.index, where .count reads undefined and every triangle count
+		// downstream became NaN — with nothing thrown.
+		const scene = `
+			WorldBegin
+			Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0  1 1 0 ] "integer indices" [ 0 1 2  1 3 2 ]
+		`;
+
+		const { group, triangleCount } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const geometry = group.children.find( c => c instanceof Mesh ).geometry;
+
+		expect( geometry.index.isBufferAttribute ).toBe( true );
+		expect( geometry.index.count ).toBe( 6 );
+		expect( triangleCount ).toBe( 2 );
 
 	} );
 

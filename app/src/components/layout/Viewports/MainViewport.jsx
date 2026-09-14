@@ -2,6 +2,7 @@ import { memo, useCallback, useState, useEffect, useRef } from 'react';
 import Viewport3D from './Viewport3D';
 import DropzoneOverlay from './DropzoneOverlay';
 import LoadingOverlay from './LoadingOverlay';
+import ArchiveElementDialog from './ArchiveElementDialog';
 import { useToast } from '@/hooks/use-toast';
 import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
@@ -227,6 +228,12 @@ const MainViewport = ( { mode = "preview" } ) => {
 
 					toast( { title: "Still Loading", description: "Wait for the current load to finish, then drop the file again." } );
 
+				} else if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) {
+
+					useStore.getState().setArchivePrompt( {
+						file, elements: error.elements, totalBytes: error.totalBytes
+					} );
+
 				} else {
 
 					console.error( "Error in asset loading:", error );
@@ -256,6 +263,7 @@ const MainViewport = ( { mode = "preview" } ) => {
 			<Viewport3D viewportMode={mode} />
 			<Toaster />
 			<LoadingOverlay />
+			<ArchiveElementDialog />
 			<DropzoneOverlay isActive={isDragging} />
 		</div>
 	);

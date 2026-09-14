@@ -797,6 +797,18 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Lists the independently loadable parts of an archive without unpacking it, so a host
+	 * can offer a choice for a scene too large to load whole.
+	 * @param {File} file
+	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
+	 */
+	async inspectArchive( file ) {
+
+		return await this.assetLoader.inspectArchive( file );
+
+	}
+
+	/**
 	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
 	 * map, dispatched by extension.
 	 *
@@ -808,9 +820,11 @@ export class PathTracerApp extends EventDispatcher {
 	 * LOAD_IN_PROGRESS before anything is touched.
 	 *
 	 * @param {File} file
+	 * @param {object} [options] - forwarded to the archive loader: `element` to load one
+	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes.
 	 * @returns {Promise<void>}
 	 */
-	async loadFile( file ) {
+	async loadFile( file, options = {} ) {
 
 		const format = this.assetLoader?.getFileFormat( file?.name || '' );
 		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
@@ -818,7 +832,7 @@ export class PathTracerApp extends EventDispatcher {
 		if ( format.type !== 'environment' && format.type !== 'image' ) {
 
 			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromFile( file ),
+				() => this.assetLoader.loadAssetFromFile( file, options ),
 				{ type: 'ModelLoaded', filename: file.name }
 			);
 			return;

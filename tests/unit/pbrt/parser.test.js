@@ -95,8 +95,12 @@ describe( 'PBRT parser', () => {
 		const shape = ir.shapes[ 0 ];
 		expect( shape.material.type ).toBe( 'dielectric' );
 		expect( shape.material.params.eta.value[ 0 ] ).toBe( 1.5 );
-		expect( shape.params.P.value ).toEqual( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
-		expect( shape.params.indices.value ).toEqual( [ 0, 1, 2 ] );
+		// A long list comes back typed, at the width the consumer needs; a short one stays a
+		// plain array, where an ArrayBuffer plus its view would cost more than the numbers.
+		expect( shape.params.P.value ).toBeInstanceOf( Float32Array );
+		expect( Array.isArray( shape.params.indices.value ) ).toBe( true );
+		expect( Array.from( shape.params.P.value ) ).toEqual( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
+		expect( Array.from( shape.params.indices.value ) ).toEqual( [ 0, 1, 2 ] );
 
 	} );
 
@@ -111,7 +115,7 @@ describe( 'PBRT parser', () => {
 			Shape "sphere" "float radius" 1
 		` );
 
-		expect( ir.shapes[ 0 ].areaLight.params.L.value ).toEqual( [ 4, 4, 4 ] );
+		expect( Array.from( ir.shapes[ 0 ].areaLight.params.L.value ) ).toEqual( [ 4, 4, 4 ] );
 		expect( ir.shapes[ 1 ].areaLight ).toBeNull();
 
 	} );
@@ -172,6 +176,42 @@ describe( 'PBRT parser', () => {
 			Shape "sphere" "float radius" 1
 		` );
 		expect( ir.shapes ).toHaveLength( 1 );
+
+	} );
+
+
+	it( 'switches a long numeric list to a typed array and keeps a short one plain', () => {
+
+		const n = 40;
+		const P = [], idx = [];
+		for ( let i = 0; i < n; i ++ ) P.push( i, 0, 0 );
+		for ( let i = 0; i + 2 < n; i ++ ) idx.push( i, i + 1, i + 2 );
+
+		const ir = new PBRTParser( {} ).parse( `WorldBegin
+			Shape "trianglemesh" "point3 P" [ ${P.join( ' ' )} ] "integer indices" [ ${idx.join( ' ' )} ]
+			  "float alpha" [ 0.5 ] "rgb tint" [ 1 0 0 ]` );
+
+		const params = ir.shapes[ 0 ].params;
+		expect( params.P.value ).toBeInstanceOf( Float32Array );
+		expect( params.P.value.length ).toBe( n * 3 );
+		expect( params.indices.value ).toBeInstanceOf( Int32Array );
+		expect( Array.isArray( params.alpha.value ) ).toBe( true );
+		expect( Array.isArray( params.tint.value ) ).toBe( true );
+
+	} );
+
+	it( 'shares one CTM array across shapes emitted under the same transform', () => {
+
+		const ir = new PBRTParser( {} ).parse( `WorldBegin
+			Translate 1 2 3
+			Shape "sphere" "float radius" 1
+			Shape "sphere" "float radius" 2
+			Translate 1 0 0
+			Shape "sphere" "float radius" 3` );
+
+		expect( ir.shapes[ 1 ].ctm ).toBe( ir.shapes[ 0 ].ctm );
+		expect( ir.shapes[ 2 ].ctm ).not.toBe( ir.shapes[ 0 ].ctm );
+		expect( ir.shapes[ 2 ].ctm[ 12 ] ).toBe( 2 );
 
 	} );
 

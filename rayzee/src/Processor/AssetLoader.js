@@ -11,6 +11,9 @@ import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils
 import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import {
+	detectArchiveKind, readTarGz, readTar, elementFilter, listArchiveElements
+} from './ArchiveReader.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
@@ -32,7 +35,10 @@ const SUPPORTED_FORMATS = {
 	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' }, 'exr': { type: 'environment', name: 'EXR (OpenEXR)' },
 	'png': { type: 'image', name: 'PNG' }, 'jpg': { type: 'image', name: 'JPEG' },
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
-	'zip': { type: 'archive', name: 'ZIP Archive' }
+	'zip': { type: 'archive', name: 'ZIP Archive' },
+	'gz': { type: 'archive', name: 'Gzipped TAR Archive' },
+	'tgz': { type: 'archive', name: 'Gzipped TAR Archive' },
+	'tar': { type: 'archive', name: 'TAR Archive' }
 };
 
 // Loose USD layers inside a ZIP compose into one scene; these pick out the
@@ -275,7 +281,7 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	// Asset loading methods
-	async loadAssetFromFile( file ) {
+	async loadAssetFromFile( file, options = {} ) {
 
 		const filename = file.name;
 		const format = this.getFileFormat( filename );
@@ -290,7 +296,7 @@ export class AssetLoader extends EventDispatcher {
 				case 'model': result = await this.loadModelFromFile( file, filename ); break;
 				case 'environment':
 				case 'image': result = await this.loadEnvironmentFromFile( file, filename ); break;
-				case 'archive': result = await this.loadArchiveFromFile( file, filename ); break;
+				case 'archive': result = await this.loadArchiveFromFile( file, filename, options ); break;
 				default: throw new Error( `Unknown asset type: ${format.type}` );
 
 			}
@@ -483,32 +489,142 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	// Archive handling
+	/** First bytes of a file, without pulling the whole thing into memory. */
+	async _readHead( file, bytes = 512 ) {
+
+		if ( file instanceof Uint8Array ) return file.subarray( 0, bytes );
+		if ( typeof file.slice === 'function' && typeof file.arrayBuffer === 'function' ) {
+
+			return new Uint8Array( await file.slice( 0, bytes ).arrayBuffer() );
+
+		}
+
+		return new Uint8Array( ( await this.readFileAsArrayBuffer( file ) ).slice( 0, bytes ) );
+
+	}
+
+	/**
+	 * Enumerates a TAR/TAR.GZ archive without keeping any of it, so a caller can offer a
+	 * choice before committing memory. ZIP archives are random-access and report directly.
+	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
+	 */
+	async inspectArchive( file ) {
+
+		const kind = detectArchiveKind( await this._readHead( file ) );
+
+		if ( kind === 'gzip' || kind === 'tar' ) {
+
+			const read = kind === 'gzip' ? readTarGz : readTar;
+			const { listing } = await read( file, {
+				filter: () => false,
+				onProgress: p => updateLoading( {
+					isLoading: true, status: `Scanning archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
+				} )
+			} );
+			const { root, elements } = listArchiveElements( listing );
+			return {
+				kind, root, elements,
+				entryCount: listing.length,
+				totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
+			};
+
+		}
+
+		const zip = unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
+		const listing = Object.keys( zip ).map( path => ( { path, size: zip[ path ].length } ) );
+		const { root, elements } = listArchiveElements( listing );
+		return {
+			kind: 'zip', root, elements,
+			entryCount: listing.length,
+			totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
+		};
+
+	}
+
 	/**
 	 * @param {File|Blob} file
 	 * @param {string} filename
-	 * @param {{pbrtEntry?: string}} [options] - `pbrtEntry` names which .pbrt to load when the
-	 *   archive holds several independent scenes; the issue log lists what else was available.
+	 * @param {object} [options]
+	 * @param {string} [options.pbrtEntry] - which .pbrt to load when the archive holds several
+	 *   independent scenes; the issue log lists what else was available.
+	 * @param {string} [options.element] - path prefix of one subtree to load on its own, as
+	 *   reported by `inspectArchive()`. Everything above it (scene file, materials, textures)
+	 *   comes along; sibling subtrees are skipped without ever being held in memory.
+	 * @param {number} [options.byteBudget] - cap on retained bytes when no element is chosen.
+	 * @param {number} [options.maxTriangles] - stop expanding shapes past this many triangles.
+	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
+	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
 	 */
-	async loadArchiveFromFile( file, filename, { pbrtEntry = null } = {} ) {
+	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, ...pbrt } = {} ) {
 
 		try {
 
-			const arrayBuffer = await this.readFileAsArrayBuffer( file );
-			const zip = unzipSync( new Uint8Array( arrayBuffer ) );
+			const kind = detectArchiveKind( await this._readHead( file ) );
+			const entries = kind === 'gzip' || kind === 'tar'
+				? await this._readStreamedArchive( file, filename, kind, element, byteBudget )
+				: unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
 
 			// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
-			if ( pickEntryPath( zip ) ) return await this.loadPBRTFromZip( zip, filename, pbrtEntry );
+			if ( pickEntryPath( entries ) ) return await this.loadPBRTFromZip( entries, filename, pbrtEntry, pbrt );
 
-			const result = await this.processObjMtlPairsInZip( zip, filename );
+			const result = await this.processObjMtlPairsInZip( entries, filename );
 			if ( result ) return result;
-			return await this.findAndLoadModelFromZip( zip, filename );
+			return await this.findAndLoadModelFromZip( entries, filename );
 
 		} catch ( error ) {
 
-			console.error( 'Error loading ZIP archive:', error );
+			if ( error?.code !== 'ARCHIVE_NEEDS_ELEMENT' ) console.error( 'Error loading archive:', error );
 			throw error;
 
 		}
+
+	}
+
+	async _readStreamedArchive( file, filename, kind, element, byteBudget ) {
+
+		const read = kind === 'gzip' ? readTarGz : readTar;
+		const { entries, listing, retainedBytes, truncated } = await read( file, {
+			filter: element ? elementFilter( element ) : null,
+			...( byteBudget === undefined ? {} : { byteBudget } ),
+			onProgress: p => updateLoading( {
+				isLoading: true,
+				status: `Reading archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`,
+				progress: 4
+			} )
+		} );
+
+		if ( truncated ) {
+
+			const { root, elements } = listArchiveElements( listing );
+			const total = listing.reduce( ( n, e ) => n + e.size, 0 );
+			const error = new Error(
+				`"${filename}" unpacks to ${( total / 1e9 ).toFixed( 1 )} GB, past the load budget. ` +
+				`Load one of its ${elements.length} parts instead.`
+			);
+			error.code = 'ARCHIVE_NEEDS_ELEMENT';
+			error.root = root;
+			error.elements = elements;
+			error.totalBytes = total;
+			this._issues?.record(
+				ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+				`archive unpacks to ${( total / 1e9 ).toFixed( 1 )} GB; choose one of ${elements.length} parts`,
+				{ root, elements: elements.map( e => e.prefix ), totalBytes: total },
+				ISSUE_SEVERITY.ERROR
+			);
+			throw error;
+
+		}
+
+		if ( element ) {
+
+			console.info(
+				`Archive "${filename}": loaded "${element}" — ` +
+				`${Object.keys( entries ).length} of ${listing.length} files, ${( retainedBytes / 1048576 ).toFixed( 1 )} MB.`
+			);
+
+		}
+
+		return entries;
 
 	}
 
@@ -519,7 +635,7 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes)
 	 * @param {string} filename - original archive name (for display/events)
 	 */
-	async loadPBRTFromZip( zip, filename, entryPath = null ) {
+	async loadPBRTFromZip( zip, filename, entryPath = null, options = {} ) {
 
 		updateLoading( { isLoading: true, status: 'Parsing PBRT scene...', progress: 5 } );
 
@@ -556,8 +672,11 @@ export class AssetLoader extends EventDispatcher {
 		const requested = entryPath && listEntryPaths( zip ).includes( entryPath ) ? entryPath : null;
 		if ( entryPath && ! requested ) console.warn( `PBRT entry "${entryPath}" is not a scene in this archive — auto-detecting instead` );
 
-		const { group, environment, report, warnings, entryPath: loadedEntry } = await loadPBRTScene( {
-			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes
+		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry } = await loadPBRTScene( {
+			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes,
+			maxTriangles: options.maxTriangles,
+			curveSteps: options.curveSteps,
+			curveSides: options.curveSides
 		} );
 
 		// An archive can hold several independent scenes (transparent-machines ships five
@@ -580,7 +699,8 @@ export class AssetLoader extends EventDispatcher {
 		// Diagnostics — surface what each mesh resolved to (helps debug black/wrong materials).
 		if ( report && report.length && typeof console.table === 'function' ) {
 
-			console.groupCollapsed( `PBRT loader: ${report.length} mesh(es) from "${loadedEntry}"` );
+			const shown = report.length < meshCount ? ` (first ${report.length} of ${meshCount})` : '';
+			console.groupCollapsed( `PBRT loader: ${meshCount} mesh(es) from "${loadedEntry}"${shown}` );
 			console.table( report );
 			console.groupEnd();
 

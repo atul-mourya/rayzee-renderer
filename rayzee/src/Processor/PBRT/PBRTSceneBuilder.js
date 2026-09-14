@@ -16,14 +16,107 @@
 import {
 	Group, Mesh, PerspectiveCamera, Matrix4, Vector3,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
-	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping
+	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
+	SRGBColorSpace
 } from 'three';
 import { buildMaterial, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
+import { tessellateCurve } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
 
 const FLIP_Z = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, - 1, 0, 0, 0, 0, 1 ];
+const MAX_SKY_READBACK = 4096;
+
+// setIndex() only wraps a plain Array; hand it a typed one and it lands on the geometry
+// raw, with no .count, and every consumer downstream reads NaN.
+function indexAttribute( indices ) {
+
+	if ( indices instanceof Uint32Array ) return new Uint32BufferAttribute( indices, 1 );
+	if ( ArrayBuffer.isView( indices ) && indices.BYTES_PER_ELEMENT === 4 ) {
+
+		return new Uint32BufferAttribute( new Uint32Array( indices.buffer, indices.byteOffset, indices.length ), 1 );
+
+	}
+
+	return new Uint32BufferAttribute( Uint32Array.from( indices ), 1 );
+
+}
+
+/** Reuse a Float32Array parameter as-is; the IR is discarded once the scene is built. */
+function float32( values ) {
+
+	return values instanceof Float32Array ? values : Float32Array.from( values );
+
+}
+
+// The per-mesh table is a debug aid; an instanced scene reaches tens of millions of rows.
+const MAX_REPORT_ROWS = 1000;
+// A 4 GB storage buffer holds 33.5M triangles at 32 floats each, and the BVH wants as much
+// again — so stop well short rather than expand instances until the tab dies.
+const DEFAULT_TRIANGLE_BUDGET = 20_000_000;
+// Curve tessellation defaults. pbrt sweeps a spline analytically; a triangle tracer has to
+// pick a resolution, and isMountainB alone declares 5.18M curves — two samples per span and
+// a crossed pair of ribbons is 16 triangles a curve.
+const DEFAULT_CURVE_STEPS = 2;
+const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
+
+/** Pixels out of an HTMLImageElement / ImageBitmap, which expose none of their own. */
+function pixelsFromDrawable( image, srgb ) {
+
+	const size = Math.min( image.width, MAX_SKY_READBACK );
+	let canvas = null;
+
+	if ( typeof OffscreenCanvas !== 'undefined' ) canvas = new OffscreenCanvas( size, size );
+	else if ( typeof document !== 'undefined' ) {
+
+		canvas = document.createElement( 'canvas' );
+		canvas.width = canvas.height = size;
+
+	} else return null;
+
+	try {
+
+		const ctx = canvas.getContext( '2d', { willReadFrequently: true } );
+		if ( ! ctx ) return null;
+		ctx.drawImage( image, 0, 0, size, size );
+		const { data } = ctx.getImageData( 0, 0, size, size );
+		return { data, width: size, height: size, channels: 4, bottomUp: false, srgb };
+
+	} catch {
+
+		return null;
+
+	}
+
+}
+
+/**
+ * Names an unreadable texture may have been derived from. Moana binds colour as
+ * `"texture reflectance" "el:part_Color"` and leaves `MakeNamedMaterial "el:part"` in the
+ * shared library, so the colour survives the .ptx files being a separate download.
+ */
+function materialNameCandidates( texName ) {
+
+	const out = [ texName ];
+	let n = texName;
+	const strips = [
+		v => v.replace( /-renamed-\d+$/, '' ),
+		v => v.replace( /\d+$/, '' ),
+		v => v.replace( /_Color$/i, '' ),
+		v => v.replace( /\d+$/, '' )
+	];
+
+	for ( const strip of strips ) {
+
+		const next = strip( n );
+		if ( next !== n && next ) out.push( n = next );
+
+	}
+
+	return out;
+
+}
 
 export class PBRTSceneBuilder {
 
@@ -36,6 +129,9 @@ export class PBRTSceneBuilder {
 	 */
 	constructor( resolvers = {} ) {
 
+		this.maxTriangles = resolvers.maxTriangles ?? DEFAULT_TRIANGLE_BUDGET;
+		this.curveSteps = resolvers.curveSteps ?? DEFAULT_CURVE_STEPS;
+		this.curveSides = resolvers.curveSides ?? null;
 		this.resolvePLY = resolvers.resolvePLY || ( async () => null );
 		this.resolveImage = resolvers.resolveImage || ( async () => null );
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
@@ -45,6 +141,8 @@ export class PBRTSceneBuilder {
 		this.report = []; // per-mesh diagnostics for debugging imports
 		this._materialCache = new Map(); // material obj -> Map(areaLight obj -> MeshPhysicalMaterial)
 		this._textureCache = new Map(); // texName -> { texture } | { constant }
+		this._geometryCache = new Map(); // shape object -> Promise<BufferGeometry|null>
+		this._plyCache = new Map(); // filename -> Promise<BufferGeometry|null>
 
 	}
 
@@ -61,11 +159,22 @@ export class PBRTSceneBuilder {
 	async build( ir ) {
 
 		this.ir = ir;
+		this._recoveredColors = 0;
+		this.reportedMeshes = 0;
+		this.triangleCount = 0;
+		this.skippedForBudget = 0;
 		const group = new Group();
 		group.name = 'PBRTScene';
 
 		// Shapes (direct + instanced)
 		for ( let i = 0; i < ir.shapes.length; i ++ ) {
+
+			if ( this._overBudget() ) {
+
+				this.skippedForBudget += ir.shapes.length - i;
+				break;
+
+			}
 
 			const mesh = await this._buildShapeMesh( ir.shapes[ i ], ir.shapes[ i ].ctm, `shape_${i}` );
 			if ( mesh ) group.add( mesh );
@@ -73,6 +182,11 @@ export class PBRTSceneBuilder {
 		}
 
 		await this._buildInstances( ir, group );
+
+		if ( this.skippedForBudget > 0 ) this.warn(
+			`stopped at ${this.triangleCount.toLocaleString()} triangles (budget ${this.maxTriangles.toLocaleString()}); ` +
+			`${this.skippedForBudget.toLocaleString()} shape placement(s) skipped`
+		);
 
 		// Camera
 		let camera = null;
@@ -88,9 +202,16 @@ export class PBRTSceneBuilder {
 
 		this._reportUnsupportedLights( ir.lights );
 
+		if ( this._recoveredColors > 0 ) this.warn(
+			`${this._recoveredColors} unreadable texture(s) fell back to the like-named material's colour`
+		);
+
 		return {
 			group, camera, environment,
 			report: this.report,
+			meshCount: this.reportedMeshes,
+			triangleCount: this.triangleCount,
+			skippedForBudget: this.skippedForBudget,
 			warnings: this.warnings.concat( ir.warnings || [] )
 		};
 
@@ -98,11 +219,30 @@ export class PBRTSceneBuilder {
 
 	// ── shapes ─────────────────────────────────────────────────────
 
+	_overBudget() {
+
+		return this.triangleCount >= this.maxTriangles;
+
+	}
+
 	async _buildInstances( ir, group ) {
 
 		let n = 0;
-		for ( const inst of ir.instances ) {
+		for ( let i = 0; i < ir.instances.length; i ++ ) {
 
+			if ( this._overBudget() ) {
+
+				for ( let j = i; j < ir.instances.length; j ++ ) {
+
+					this.skippedForBudget += ( ir.objects.get( ir.instances[ j ].name ) || [] ).length;
+
+				}
+
+				return;
+
+			}
+
+			const inst = ir.instances[ i ];
 			const template = ir.objects.get( inst.name );
 			if ( ! template ) {
 
@@ -161,12 +301,15 @@ export class PBRTSceneBuilder {
 
 		// World-space dimensions (object bbox transformed by the baked matrix) —
 		// surfaces an oversized/under-scaled mesh at a glance.
-		geometry.computeBoundingBox();
+		if ( ! geometry.boundingBox ) geometry.computeBoundingBox();
 		const worldSize = geometry.boundingBox
 			? geometry.boundingBox.clone().applyMatrix4( mesh.matrix ).getSize( new Vector3() )
 			: new Vector3();
 
-		this.report.push( {
+		const tris = geometry.index ? geometry.index.count / 3 : geometry.getAttribute( 'position' ).count / 3;
+		this.triangleCount += tris;
+		this.reportedMeshes ++;
+		if ( this.report.length < MAX_REPORT_ROWS ) this.report.push( {
 			mesh: name,
 			shape: shape.type,
 			material: shape.material?.type || 'diffuse',
@@ -176,20 +319,32 @@ export class PBRTSceneBuilder {
 			normals: geometry.getAttribute( 'normal' ) ? 'yes' : 'NO',
 			emissive: material.emissiveIntensity > 0 ? `#${material.emissive.getHexString()}×${material.emissiveIntensity}` : '-',
 			size: `${worldSize.x.toFixed( 2 )}×${worldSize.y.toFixed( 2 )}×${worldSize.z.toFixed( 2 )}`,
-			tris: geometry.index ? geometry.index.count / 3 : geometry.getAttribute( 'position' ).count / 3
+			tris
 		} );
 
 		return mesh;
 
 	}
 
-	async _buildGeometry( shape ) {
+	_buildGeometry( shape ) {
+
+		// An ObjectInstance template is built once per placement, and the Moana palm debris
+		// alone places one 208-triangle leaf 2.25 million times. three.js is happy to share
+		// one BufferGeometry across meshes; only the per-mesh matrix differs.
+		let pending = this._geometryCache.get( shape );
+		if ( ! pending ) this._geometryCache.set( shape, pending = this._createGeometry( shape ) );
+		return pending;
+
+	}
+
+	async _createGeometry( shape ) {
 
 		switch ( shape.type ) {
 
 			case 'trianglemesh': return this._triangleMesh( shape.params );
 			case 'bilinearmesh': return this._bilinearMesh( shape.params );
 			case 'loopsubdiv': return this._loopSubdiv( shape.params );
+			case 'curve': return this._curve( shape.params );
 			case 'plymesh': return this._plyMesh( shape.params );
 			case 'sphere': return this._sphere( shape.params );
 			case 'disk': return this._disk( shape.params );
@@ -211,18 +366,60 @@ export class PBRTSceneBuilder {
 		}
 
 		const geo = new BufferGeometry();
-		geo.setAttribute( 'position', new Float32BufferAttribute( Float32Array.from( P ), 3 ) );
+		geo.setAttribute( 'position', new Float32BufferAttribute( float32( P ), 3 ) );
 
 		const N = params.N?.value;
-		if ( N && N.length === P.length ) geo.setAttribute( 'normal', new Float32BufferAttribute( Float32Array.from( N ), 3 ) );
+		if ( N && N.length === P.length ) geo.setAttribute( 'normal', new Float32BufferAttribute( float32( N ), 3 ) );
 
 		const uv = ( params.uv || params.st )?.value;
-		if ( uv && uv.length === ( P.length / 3 ) * 2 ) geo.setAttribute( 'uv', new Float32BufferAttribute( Float32Array.from( uv ), 2 ) );
+		if ( uv && uv.length === ( P.length / 3 ) * 2 ) geo.setAttribute( 'uv', new Float32BufferAttribute( float32( uv ), 2 ) );
 
 		const indices = params.indices?.value;
-		if ( indices && indices.length ) geo.setIndex( indices );
+		if ( indices && indices.length ) geo.setIndex( indexAttribute( indices ) );
 
 		if ( ! N ) geo.computeVertexNormals();
+		return geo;
+
+	}
+
+	_curve( params ) {
+
+		const P = params.P?.value;
+		if ( ! P || P.length < 12 ) {
+
+			this.warn( 'curve needs at least 4 control points' ); return null;
+
+		}
+
+		const degree = Math.round( pFloat( params, 'degree', 3 ) );
+		if ( degree !== 3 ) {
+
+			this.warn( `curve degree ${degree} not supported — only cubic` ); return null;
+
+		}
+
+		const type = pString( params, 'type', 'flat' );
+		const width = pFloat( params, 'width', 1 );
+		const built = tessellateCurve( {
+			P,
+			basis: pString( params, 'basis', 'bezier' ),
+			width0: pFloat( params, 'width0', width ),
+			width1: pFloat( params, 'width1', width ),
+			N: params.N?.value || null,
+			steps: this.curveSteps,
+			sides: this.curveSides ?? DEFAULT_CURVE_SIDES[ type ] ?? 1
+		} );
+
+		if ( ! built ) {
+
+			this.warn( 'curve could not be tessellated' ); return null;
+
+		}
+
+		const geo = new BufferGeometry();
+		geo.setAttribute( 'position', new Float32BufferAttribute( built.positions, 3 ) );
+		geo.setIndex( new Uint32BufferAttribute( built.indices, 1 ) );
+		geo.computeVertexNormals();
 		return geo;
 
 	}
@@ -281,7 +478,7 @@ export class PBRTSceneBuilder {
 
 	}
 
-	async _plyMesh( params ) {
+	_plyMesh( params ) {
 
 		const filename = pString( params, 'filename', null );
 		if ( ! filename ) {
@@ -289,6 +486,15 @@ export class PBRTSceneBuilder {
 			this.warn( 'plymesh missing filename' ); return null;
 
 		}
+
+		// Two shapes can name the same .ply, and decoding it twice costs the full parse.
+		let pending = this._plyCache.get( filename );
+		if ( ! pending ) this._plyCache.set( filename, pending = this._decodePly( filename ) );
+		return pending;
+
+	}
+
+	async _decodePly( filename ) {
 
 		try {
 
@@ -435,12 +641,40 @@ export class PBRTSceneBuilder {
 
 		} else {
 
-			this.warn( `texture class "${def.class}" not supported (texture "${name}")` );
+			const recovered = this._colorFromLikeNamedMaterial( name );
+			if ( recovered ) {
+
+				result = { constant: recovered.rgb };
+				this._recoveredColors ++;
+
+			} else {
+
+				this.warn( `texture class "${def.class}" not supported (texture "${name}")` );
+
+			}
 
 		}
 
 		this._textureCache.set( name, result );
 		return result;
+
+	}
+
+	_colorFromLikeNamedMaterial( texName ) {
+
+		for ( const candidate of materialNameCandidates( texName ) ) {
+
+			const mat = this.ir?.namedMaterials?.get( candidate );
+			const p = mat?.params?.reflectance;
+			if ( p && ( p.type === 'rgb' || p.type === 'color' ) ) {
+
+				return { name: candidate, rgb: [ p.value[ 0 ], p.value[ 1 ], p.value[ 2 ] ] };
+
+			}
+
+		}
+
+		return null;
 
 	}
 
@@ -555,8 +789,7 @@ export class PBRTSceneBuilder {
 	_equirectFromInfiniteLight( tex, inf, scale, filename ) {
 
 		const image = tex.image;
-		const data = image?.data;
-		if ( ! data || ! image.width || image.width !== image.height ) {
+		if ( ! image?.width || image.width !== image.height ) {
 
 			if ( image?.width !== image?.height ) this.warn(
 				`infinite-light image "${filename}" is ${image?.width}x${image?.height}, not square — ` +
@@ -566,14 +799,30 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const channels = data.length / ( image.width * image.height );
-		if ( ! Number.isInteger( channels ) || channels < 3 ) return null;
+		let src = null;
 
-		// three's EXR/HDR loaders fill DataTexture rows bottom-up; pbrt reads the square top-down.
-		const { data: pixels, width, height } = octahedralToEquirect(
-			{ data, width: image.width, height: image.height, channels, bottomUp: true },
-			inf.ctm, scale
-		);
+		if ( image.data ) {
+
+			const channels = image.data.length / ( image.width * image.height );
+			if ( ! Number.isInteger( channels ) || channels < 3 ) return null;
+			// three's EXR/HDR loaders fill DataTexture rows bottom-up; pbrt reads the square top-down.
+			src = { data: image.data, width: image.width, height: image.height, channels, bottomUp: true };
+
+		} else {
+
+			// A PNG sky has no readable pixels of its own; without these the octahedral map
+			// used to fall through and be sampled as a lat-long panorama.
+			src = pixelsFromDrawable( image, tex.colorSpace === SRGBColorSpace );
+			if ( ! src ) {
+
+				this.warn( `infinite-light image "${filename}" could not be read back for octahedral conversion` );
+				return null;
+
+			}
+
+		}
+
+		const { data: pixels, width, height } = octahedralToEquirect( src, inf.ctm, scale );
 
 		const out = new DataTexture( pixels, width, height, RGBAFormat, FloatType );
 		out.mapping = EquirectangularReflectionMapping;

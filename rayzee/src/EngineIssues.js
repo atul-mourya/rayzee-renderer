@@ -8,6 +8,8 @@ export const ISSUE_CODES = Object.freeze( {
 	ADAPTER_SOFTWARE: 'adapter.software',
 	ASSET_UNREACHABLE: 'asset.unreachable',
 	ASSET_AMBIGUOUS_ENTRY: 'asset.ambiguous_entry',
+	ASSET_ARCHIVE_TOO_LARGE: 'asset.archive_too_large',
+	ASSET_ENTRY_TOO_LARGE: 'asset.entry_too_large',
 	TEXTURE_BUILD_FAILED: 'texture.build_failed',
 	TEXTURE_PROCESSING_FALLBACK: 'texture.processing_fallback',
 	TEXTURE_LIMIT_EXCEEDED: 'texture.limit_exceeded',

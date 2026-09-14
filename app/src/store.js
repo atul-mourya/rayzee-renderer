@@ -53,6 +53,10 @@ const useStore = create( set => ( {
 	selectedObject: null,
 	setSelectedObject: obj => set( { selectedObject: obj } ),
 
+	// Set when an archive is too large to load whole and the user must pick one part of it.
+	archivePrompt: null,
+	setArchivePrompt: prompt => set( { archivePrompt: prompt } ),
+
 	// Transform controls
 	transformMode: 'translate',
 	transformSpace: 'world',

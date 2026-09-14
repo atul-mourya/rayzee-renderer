@@ -52,8 +52,26 @@ export function equalAreaSphereToSquare( dx, dy, dz ) {
 
 }
 
-/** Bilinear fetch from a tightly packed float image, clamped at the edges. */
-function sampleBilinear( data, width, height, channels, u, v, out ) {
+/** 8-bit sRGB → linear, tabulated so a per-tap decode costs a lookup rather than a pow(). */
+const SRGB_TO_LINEAR = ( () => {
+
+	const t = new Float32Array( 256 );
+	for ( let i = 0; i < 256; i ++ ) {
+
+		const c = i / 255;
+		t[ i ] = c <= 0.04045 ? c / 12.92 : Math.pow( ( c + 0.055 ) / 1.055, 2.4 );
+
+	}
+
+	return t;
+
+} )();
+
+/**
+ * Bilinear fetch from a tightly packed image, clamped at the edges.
+ * `table` maps stored values to linear before filtering; null reads them as-is.
+ */
+function sampleBilinear( data, width, height, channels, u, v, out, table ) {
 
 	const fx = Math.min( Math.max( u * width - 0.5, 0 ), width - 1 );
 	const fy = Math.min( Math.max( v * height - 0.5, 0 ), height - 1 );
@@ -68,8 +86,12 @@ function sampleBilinear( data, width, height, channels, u, v, out ) {
 
 	for ( let c = 0; c < 3; c ++ ) {
 
-		const top = data[ i00 + c ] * ( 1 - tx ) + data[ i10 + c ] * tx;
-		const bottom = data[ i01 + c ] * ( 1 - tx ) + data[ i11 + c ] * tx;
+		const a = table ? table[ data[ i00 + c ] ] : data[ i00 + c ];
+		const b = table ? table[ data[ i10 + c ] ] : data[ i10 + c ];
+		const d = table ? table[ data[ i01 + c ] ] : data[ i01 + c ];
+		const e = table ? table[ data[ i11 + c ] ] : data[ i11 + c ];
+		const top = a * ( 1 - tx ) + b * tx;
+		const bottom = d * ( 1 - tx ) + e * tx;
 		out[ c ] = top * ( 1 - ty ) + bottom * ty;
 
 	}
@@ -83,9 +105,10 @@ function sampleBilinear( data, width, height, channels, u, v, out ) {
  * v = 1 - acos(y)/pi, with row 0 at v = 1 so "up" lands at the top like any other HDRI.
  *
  * @param {{data: ArrayLike<number>, width: number, height: number, channels: number,
- *   bottomUp?: boolean}} src - `bottomUp` when row 0 holds the BOTTOM of the image, which is
- *   what three's EXR/HDR loaders produce; pbrt indexes the square top-down, and reading it
- *   the wrong way round turns out to rotate the sky 180° about the light's z axis.
+ *   bottomUp?: boolean, srgb?: boolean}} src - `bottomUp` when row 0 holds the BOTTOM of the
+ *   image, which is what three's EXR/HDR loaders produce; pbrt indexes the square top-down, and
+ *   reading it the wrong way round turns out to rotate the sky 180° about the light's z axis.
+ *   `srgb` when the samples are 8-bit sRGB, as a PNG read back through a canvas is.
  * @param {number[]} lightToWorld - the light's pbrt CTM (column-major 16), or null
  * @param {number} scale - the light's `scale` parameter, baked into the output
  * @param {number} [outWidth] - defaults to the source width, capped at 4096
@@ -100,6 +123,7 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 	// Directions go world → light, the opposite of the CTM, matching pbrt's
 	// renderFromLight.ApplyInverse(ray.d) before the square lookup.
 	const worldToLight = lightToWorld ? M.invert( lightToWorld ) : null;
+	const table = src.srgb ? SRGB_TO_LINEAR : null;
 	const rgb = [ 0, 0, 0 ];
 
 	for ( let j = 0; j < height; j ++ ) {
@@ -132,7 +156,7 @@ export function octahedralToEquirect( src, lightToWorld, scale = 1, outWidth = 0
 			}
 
 			const [ su, sv ] = equalAreaSphereToSquare( dx, dy, dz );
-			sampleBilinear( src.data, src.width, src.height, src.channels, su, src.bottomUp ? 1 - sv : sv, rgb );
+			sampleBilinear( src.data, src.width, src.height, src.channels, su, src.bottomUp ? 1 - sv : sv, rgb, table );
 
 			const o = ( j * width + i ) * 4;
 			out[ o ] = rgb[ 0 ] * scale;

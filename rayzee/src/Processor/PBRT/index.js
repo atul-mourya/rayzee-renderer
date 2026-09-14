@@ -74,6 +74,13 @@ class VirtualFS {
 
 	}
 
+	/** Drop every .pbrt entry's bytes. Safe only once parsing is complete. */
+	releaseScenes() {
+
+		for ( const rec of this.byPath.values() ) if ( rec.norm.endsWith( '.pbrt' ) ) rec.bytes = null;
+
+	}
+
 	find( path ) {
 
 		const norm = normalizePath( path ).toLowerCase();
@@ -91,16 +98,72 @@ class VirtualFS {
 
 }
 
-/** Decoded text of a zip entry, or '' when the value is not decodable bytes. */
-function entryText( bytes ) {
+/** Byte offset of `needle` in `bytes` at or after `from`, or -1. */
+function findBytes( bytes, needle, from = 0 ) {
 
-	try {
+	const first = needle[ 0 ];
+	const last = bytes.length - needle.length;
+	outer: for ( let i = from; i <= last; i ++ ) {
 
-		return decoder.decode( bytes );
+		if ( bytes[ i ] !== first ) continue;
+		for ( let j = 1; j < needle.length; j ++ ) if ( bytes[ i + j ] !== needle[ j ] ) continue outer;
+		return i;
 
-	} catch {
+	}
 
-		return '';
+	return - 1;
+
+}
+
+const ASCII = s => Uint8Array.from( s, c => c.charCodeAt( 0 ) );
+const WORLD_BEGIN = ASCII( 'WorldBegin' );
+const INCLUDE_WORDS = [ ASCII( 'Include' ), ASCII( 'Import' ) ];
+
+function startsLine( bytes, at ) {
+
+	for ( let i = at - 1; i >= 0; i -- ) {
+
+		const b = bytes[ i ];
+		if ( b === 10 ) return true;
+		if ( b !== 32 && b !== 9 ) return false;
+
+	}
+
+	return true;
+
+}
+
+/** True when the entry declares a world block, i.e. it is a scene and not a fragment. */
+function hasWorldBegin( bytes ) {
+
+	for ( let at = findBytes( bytes, WORLD_BEGIN ); at >= 0; at = findBytes( bytes, WORLD_BEGIN, at + 1 ) ) {
+
+		if ( startsLine( bytes, at ) ) return true;
+
+	}
+
+	return false;
+
+}
+
+/** Basenames this entry pulls in via Include/Import, lowercased. */
+function includedBasenames( bytes, out ) {
+
+	for ( const word of INCLUDE_WORDS ) {
+
+		for ( let at = findBytes( bytes, word ); at >= 0; at = findBytes( bytes, word, at + 1 ) ) {
+
+			if ( ! startsLine( bytes, at ) ) continue;
+			let i = at + word.length;
+			while ( i < bytes.length && ( bytes[ i ] === 32 || bytes[ i ] === 9 ) ) i ++;
+			if ( bytes[ i ] !== 34 ) continue;
+			const start = ++ i;
+			while ( i < bytes.length && bytes[ i ] !== 34 && bytes[ i ] !== 10 ) i ++;
+			if ( bytes[ i ] !== 34 ) continue;
+			const path = decoder.decode( bytes.subarray( start, i ) );
+			out.add( normalizePath( path ).toLowerCase().split( '/' ).pop() );
+
+		}
 
 	}
 
@@ -122,16 +185,14 @@ export function listEntryPaths( entries ) {
 	const pbrts = Object.keys( entries ).filter( k => k.toLowerCase().endsWith( '.pbrt' ) );
 	if ( pbrts.length <= 1 ) return pbrts;
 
-	const texts = new Map( pbrts.map( k => [ k, entryText( entries[ k ] ) ] ) );
-
+	// Scanned over bytes: a fragment can be gigabytes, past what a string would hold.
 	const included = new Set();
-	for ( const text of texts.values() ) {
+	const worlds = new Map();
+	for ( const k of pbrts ) {
 
-		for ( const m of text.matchAll( /^[ \t]*(?:Include|Import)[ \t]+"([^"]+)"/gm ) ) {
-
-			included.add( normalizePath( m[ 1 ] ).toLowerCase().split( '/' ).pop() );
-
-		}
+		const bytes = entries[ k ];
+		worlds.set( k, hasWorldBegin( bytes ) );
+		includedBasenames( bytes, included );
 
 	}
 
@@ -142,7 +203,7 @@ export function listEntryPaths( entries ) {
 
 	};
 
-	let pool = narrow( pbrts, k => /^[ \t]*WorldBegin\b/m.test( texts.get( k ) ) );
+	let pool = narrow( pbrts, k => worlds.get( k ) );
 	pool = narrow( pool, k => ! included.has( k.toLowerCase().split( '/' ).pop() ) );
 	pool = narrow( pool, k => /(^|\/)(scene|main)\.pbrt$/i.test( k ) );
 
@@ -189,21 +250,27 @@ export async function loadPBRTScene( args ) {
 
 	const baseDir = entryPath.includes( '/' ) ? entryPath.slice( 0, entryPath.lastIndexOf( '/' ) ) : '';
 
-	// Parse (with Include resolution)
+	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
+	// be larger than the longest string JavaScript will build.
 	const parser = new PBRTParser( {
-		resolveInclude: ( path, currentDir ) => {
-
-			const bytes = vfs.find( joinPath( currentDir, path ) ) || vfs.find( path );
-			return bytes ? decoder.decode( bytes ) : null;
-
-		}
+		resolveInclude: ( path, currentDir ) => vfs.find( joinPath( currentDir, path ) ) || vfs.find( path )
 	} );
-	const ir = parser.parse( decoder.decode( entryBytes ), baseDir );
+
+	const ir = parser.parse( entryBytes, baseDir );
+
+	// Scene text is dead once parsed, and it is the bulk of a big element — isIronwoodA1 is
+	// 6.9 GB of it. Freeing before the builder runs halves peak while geometry is allocated.
+	// Only after the whole parse: a file can be Included more than once (isHibiscusYoung
+	// pulls its xgBonsai scatter in six times, once per placement of the plant).
+	vfs.releaseScenes();
 
 	// Build scene graph
 	const sliceBuf = ( bytes ) => bytes.buffer.slice( bytes.byteOffset, bytes.byteOffset + bytes.byteLength );
 	const builder = new PBRTSceneBuilder( {
 		convertHandedness,
+		maxTriangles: args.maxTriangles,
+		curveSteps: args.curveSteps,
+		curveSides: args.curveSides,
 		resolvePLY: async ( filename ) => {
 
 			const bytes = vfs.find( filename );
