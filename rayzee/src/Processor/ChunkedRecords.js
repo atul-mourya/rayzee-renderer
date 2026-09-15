@@ -25,11 +25,29 @@ export const DEFAULT_CHUNK_BYTES = 64 * 1024 * 1024;
 /** Whether a worker can be handed these arrays without copying them first. */
 export const SHARED_MEMORY_AVAILABLE = typeof SharedArrayBuffer !== 'undefined';
 
+/**
+ * Notified of every chunk allocated, so a build can attribute memory to the phase that spent it.
+ * At most one watcher, and it must not throw — this sits on the allocation path.
+ * @type {?function(number, boolean): void}
+ */
+let chunkObserver = null;
+
+/** Watch chunk allocations. Pass null to stop. @param {?function(number, boolean): void} fn */
+export function setChunkObserver( fn ) {
+
+	chunkObserver = fn;
+
+}
+
 /** One chunk's storage, shared with workers when the page is cross-origin isolated. */
 function allocChunk( LaneType, lanes, shared ) {
 
-	if ( ! shared ) return new LaneType( lanes );
-	return new LaneType( new SharedArrayBuffer( lanes * LaneType.BYTES_PER_ELEMENT ) );
+	const chunk = shared
+		? new LaneType( new SharedArrayBuffer( lanes * LaneType.BYTES_PER_ELEMENT ) )
+		: new LaneType( lanes );
+
+	if ( chunkObserver && chunk.byteLength > 0 ) chunkObserver( chunk.byteLength, shared );
+	return chunk;
 
 }
 

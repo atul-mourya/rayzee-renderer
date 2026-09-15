@@ -4,9 +4,13 @@ import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
 import { InstanceTable, isIdentity } from './InstanceTable.js';
-import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver } from './ChunkedRecords.js';
+import {
+	MemoryLedger, estimateSceneBytes, probeAddressSpace,
+	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES,
+} from './HostMemory.js';
 import { TextureCreator } from './TextureCreator.js';
-import { GeometryExtractor } from './GeometryExtractor.js';
+import { GeometryExtractor, geometryBytesOf } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
 import { updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
@@ -128,6 +132,10 @@ export class SceneProcessor {
 		this.isProcessing = false;
 		this.processingStage = null;
 
+		// What the build spent, by phase, and what the preflight expected it to spend.
+		this.memory = new MemoryLedger();
+		this.memoryPreflight = null;
+
 		// Performance tracking
 		this.performanceMetrics = {
 			textureCreationTime: 0,
@@ -201,6 +209,141 @@ export class SceneProcessor {
 	}
 
 	/**
+	 * Price the scene before the build starts spending, and say so if it is over what a healthy
+	 * session can place.
+	 *
+	 * Estimate only — no allocation. Probing the whole scene up front was measurably worse than
+	 * not checking: the probe's peak lands on top of the parse's, and a 9 GB probe taken while
+	 * the parser still held 3.6 GB doubled a 40M load from 135 s to 268 s. The allocation test
+	 * belongs at the step that actually runs out, which is
+	 * {@link SceneProcessor#_checkAssemblyHeadroom}.
+	 *
+	 * The geometry figure reads before `_compressAttributes` halves normals and colours, so it
+	 * runs ~7% high on a typical scene. That direction is the safe one.
+	 * @private
+	 */
+	_preflightMemory( object ) {
+
+		const survey = this.geometryExtractor.surveyScene( object );
+		const estimate = estimateSceneBytes( survey );
+		const report = { ...survey, estimate, safeBytes: SAFE_SCENE_BYTES, fits: estimate.total <= SAFE_SCENE_BYTES };
+		this.memoryPreflight = report;
+
+		if ( estimate.total < PREFLIGHT_MIN_BYTES ) return report;
+
+		log.debug( fmt.list( [
+			`memory preflight: ${fmt.mb( estimate.total )} estimated`,
+			`triangles ${fmt.mb( estimate.triangles )} · bvh ${fmt.mb( estimate.bvh )} · geometry ${fmt.mb( estimate.geometry )}`,
+			`${fmt.n( survey.triangles )} tris · ${fmt.n( survey.placements )} placements`,
+		] ) );
+
+		if ( ! report.fits ) {
+
+			this.config.issues?.warn(
+				ISSUE_CODES.SCENE_MEMORY_BUDGET,
+				`Scene needs about ${fmt.mb( estimate.total )} of CPU memory, above the ${fmt.mb( SAFE_SCENE_BYTES )} a fresh browser `
+					+ 'session can usually place. It may still load, but a long-running session will probably fail during BVH assembly; '
+					+ 'restarting the browser recovers the address space.',
+				{ ...survey, estimate, safeBytes: SAFE_SCENE_BYTES }
+			);
+
+		}
+
+		return report;
+
+	}
+
+	/**
+	 * Test the one allocation that has failed every time: the combined BVH.
+	 *
+	 * By this point the archive and the parser's scratch are gone and the BLASes are about to be
+	 * handed over chunk by chunk, so the probe is small (the BVH's own size plus headroom, ~2 GB
+	 * at 40M rather than the whole scene's 9 GB) and it is asking the question at the moment the
+	 * answer matters. A failure here is still only a warning — the build is allowed to try.
+	 * @private
+	 */
+	_checkAssemblyHeadroom( totalNodes ) {
+
+		const need = totalNodes * 64;
+		if ( need < PREFLIGHT_MIN_BYTES ) return true;
+
+		// Same flavour the store uses: shared and non-shared buffers need not come from one pool.
+		const probe = probeAddressSpace( Math.ceil( need * PREFLIGHT_SAFETY ), { shared: SHARED_MEMORY_AVAILABLE } );
+		if ( this.memoryPreflight ) this.memoryPreflight.assemblyProbed = probe.placed;
+
+		if ( probe.exhausted ) {
+
+			this.config.issues?.warn(
+				ISSUE_CODES.SCENE_MEMORY_BUDGET,
+				`BVH assembly needs ${fmt.mb( need )} but only ${fmt.mb( probe.placed )} could be allocated. `
+					+ 'Restarting the browser usually recovers the address space.',
+				{ totalNodes, need, placeable: probe.placed }
+			);
+
+		}
+
+		return ! probe.exhausted;
+
+	}
+
+	/**
+	 * Byte sizes of the CPU structures alive right now. Anything already released is absent,
+	 * which is the point: this is what the peak is made of, not what was ever allocated.
+	 * @private
+	 */
+	_liveMemoryParts() {
+
+		const table = this.instanceTable;
+		const parts = {
+			triangles: this.triangles?.byteLength ?? 0,
+			bvh: this.bvh?.byteLength ?? 0,
+			geometry: this._geometryBytes ?? this.memoryPreflight?.geometryBytes ?? 0,
+			placements: table?.world?.byteLength ?? 0,
+			blasScratch: 0,
+			orderMaps: 0,
+		};
+
+		if ( table ) {
+
+			for ( const blas of table.blasData.values() ) parts.blasScratch += blas?.byteLength ?? 0;
+			for ( const m of table.bvhToOriginal.values() ) parts.orderMaps += m?.byteLength ?? 0;
+			for ( const m of table.originalToBvhMap.values() ) parts.orderMaps += m?.byteLength ?? 0;
+
+		}
+
+		return parts;
+
+	}
+
+	/** @private */
+	_sampleMemory( label ) {
+
+		this.memory.sample( label, this._liveMemoryParts() );
+
+	}
+
+	/** One line on what the build actually cost, and whether the preflight called it right. @private */
+	_logMemoryReport() {
+
+		const { allocatedBytes, peakLiveBytes, byPhase } = this.memory;
+		if ( allocatedBytes === 0 ) return;
+
+		const phases = Object.keys( byPhase )
+			.filter( name => byPhase[ name ].allocated > 0 )
+			.map( name => `${name} ${fmt.mb( byPhase[ name ].allocated )}` );
+
+		const predicted = this.memoryPreflight?.estimate?.total;
+
+		log.debug( fmt.list( [
+			`memory: peak live ${fmt.mb( peakLiveBytes )}`,
+			`allocated ${fmt.mb( allocatedBytes )}`,
+			predicted ? `predicted ${fmt.mb( predicted )}` : null,
+			phases.join( ' · ' ),
+		] ) );
+
+	}
+
+	/**
      * Build the BVH from a 3D object/scene
      * @param {Object3D} object - Three.js object to process
      * @returns {Promise<SceneProcessor>} - This instance (for chaining)
@@ -215,6 +358,10 @@ export class SceneProcessor {
 
 		this.isProcessing = true;
 		this.processingStage = 'init';
+		this.memory.reset();
+		this._geometryBytes = 0;
+		// Module-global by design: one build at a time, and `isProcessing` above enforces it.
+		setChunkObserver( bytes => this.memory.alloc( bytes ) );
 
 		const timer = new BuildTimer( object.name ?? '', { namespace: 'scene' } );
 
@@ -224,12 +371,21 @@ export class SceneProcessor {
 			this._reset();
 			this._log( 'Starting scene processing' );
 
+			// Step 0: will this scene fit in the address space this process has left?
+			this.memory.mark( 'preflight' );
+			this._preflightMemory( object );
+
 			// Step 1: Extract geometry (0-20%)
 			this.processingStage = 'extraction';
+			this.memory.mark( 'extraction' );
 			timer.start( 'Geometry extraction' );
 			await this._extractGeometry( object );
 			timer.end( 'Geometry extraction' );
 			this.performanceMetrics.geometryExtractionTime = timer.getDuration( 'Geometry extraction' );
+			// The preflight figure was taken before `_compressAttributes` halved normals and
+			// colours; every sample from here on should use what the mirror actually holds.
+			this._geometryBytes = geometryBytesOf( object );
+			this._sampleMemory( 'after extraction' );
 
 			// Step 2: BVH + textures in parallel (20-95%)
 			// Texture creation only needs GeometryExtractor output (materials + texture maps)
@@ -304,6 +460,9 @@ export class SceneProcessor {
 
 		} finally {
 
+			setChunkObserver( null );
+			this._sampleMemory( `at ${this.processingStage}` );
+			this._logMemoryReport();
 			this.isProcessing = false;
 
 		}
@@ -412,6 +571,7 @@ export class SceneProcessor {
 		}
 
 		this._log( 'Building two-level BVH (TLAS/BLAS)' );
+		this.memory.mark( 'blas' );
 		const startTime = performance.now();
 
 		try {
@@ -600,6 +760,8 @@ export class SceneProcessor {
 			// ── Step 2: Assemble BVH buffer ──
 
 			updateLoading( { status: "Building TLAS...", progress: 72 } );
+			this._sampleMemory( 'BLASes built' );
+			this.memory.mark( 'tlas' );
 			const tlasStart = performance.now();
 
 			const table = this.instanceTable;
@@ -619,17 +781,24 @@ export class SceneProcessor {
 			this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
 
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
+			this.memory.mark( 'assemble' );
 			const assembleStart = performance.now();
 			// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
 			// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
 			// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
 			// reaches them and each BLAS is released as it lands, never both fully resident.
+			this._checkAssemblyHeadroom( totalNodes );
 			this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
 			this.bvh.setRecords( 0, tlasData );
 			// Hundreds of megabytes at millions of placements, and the chunks below need the room
 			// more than a later refit needs the cache.
 			tlasData = null;
 			this.tlasBuilder.releaseFlattenBuffer();
+
+			// Sample ~32 times across the fill rather than per template: this is where every
+			// allocation failure so far has landed, and the live total moves in both directions
+			// as chunks are taken and BLASes released.
+			const sampleEvery = Math.max( 1, Math.ceil( table.templateCount / 32 ) );
 
 			for ( let t = 0; t < table.templateCount; t ++ ) {
 
@@ -640,6 +809,8 @@ export class SceneProcessor {
 				this.bvh.setRecords( blasOffset, blas );
 				this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
 				table.blasData.delete( t );
+
+				if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
 
 			}
 

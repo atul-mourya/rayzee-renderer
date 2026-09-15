@@ -66,6 +66,41 @@ export function deriveAlphaMode( material ) {
 
 }
 
+/**
+ * Bytes the three.js geometry behind `object` holds, counting each `BufferGeometry` once.
+ *
+ * Instanced meshes share one geometry, so counting per placement would over-report by orders of
+ * magnitude on a scene with millions of placements. Worth re-reading after extraction:
+ * `_compressAttributes` halves normals and colours, which is ~370 MB on a 40M-triangle scene.
+ *
+ * @param {Object3D} object
+ * @returns {number}
+ */
+export function geometryBytesOf( object ) {
+
+	let bytes = 0;
+	const counted = new Set();
+
+	const walk = node => {
+
+		const g = node.isMesh && node.material ? node.geometry : null;
+		if ( g && ! counted.has( g.uuid ) ) {
+
+			counted.add( g.uuid );
+			for ( const name in g.attributes ) bytes += g.attributes[ name ].array?.byteLength ?? 0;
+			bytes += g.index?.array?.byteLength ?? 0;
+
+		}
+
+		if ( node.children ) for ( const child of node.children ) walk( child );
+
+	};
+
+	walk( object );
+	return bytes;
+
+}
+
 export class GeometryExtractor {
 
 	/** @param {{issues?: import('../EngineIssues.js').IssueLog}} [options] */
@@ -134,6 +169,37 @@ export class GeometryExtractor {
 
 		this.logStats();
 		return this.getExtractedData();
+
+	}
+
+	/**
+	 * The sizes a memory preflight needs, without doing any of the work: what `extract()` would
+	 * store, plus the three.js geometry already resident behind it.
+	 *
+	 * Geometry is counted once per unique `BufferGeometry` — instanced meshes share one, so
+	 * counting per placement would over-report by orders of magnitude on a scene like Moana.
+	 *
+	 * @param {Object3D} object
+	 * @returns {{triangles: number, placements: number, meshes: number, geometryBytes: number}}
+	 */
+	surveyScene( object ) {
+
+		let meshes = 0;
+		const walk = node => {
+
+			if ( node.isMesh && node.geometry && node.material ) meshes ++;
+			if ( node.children ) for ( const child of node.children ) walk( child );
+
+		};
+
+		walk( object );
+
+		return {
+			triangles: this._countTriangles( object ),
+			placements: this._countPlacements( object ),
+			meshes,
+			geometryBytes: geometryBytesOf( object ),
+		};
 
 	}
 

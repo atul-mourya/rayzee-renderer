@@ -72,6 +72,7 @@ export { OverlayManager } from './managers/OverlayManager.js';
 
 // VRAM accounting
 export { VRAMTracker, bufferBytes, textureBytes } from './Processor/VRAMTracker.js';
+export { MemoryLedger, estimateSceneBytes, probeAddressSpace } from './Processor/HostMemory.js';
 
 // Pipeline infrastructure (for advanced consumers building custom stages)
 export { RenderPipeline } from './Pipeline/RenderPipeline.js';

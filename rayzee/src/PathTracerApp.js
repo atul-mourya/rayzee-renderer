@@ -2524,6 +2524,25 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * CPU-side memory for the last scene build: what the preflight predicted, what each phase
+	 * allocated, and what was live at each phase boundary.
+	 *
+	 * Note that `performance.memory.usedJSHeapSize` does NOT count SharedArrayBuffer, and the
+	 * triangle and BVH stores are SAB-backed — so the browser's own heap reading under-reports
+	 * a large scene by several gigabytes and this is the figure to trust.
+	 *
+	 * @returns {?{preflight: ?Object, allocatedBytes: number, peakLiveBytes: number,
+	 *   byPhase: Object, samples: Object[]}} null before a scene is built
+	 */
+	getHostMemoryInfo() {
+
+		const sp = this._sdf;
+		if ( ! sp?.memory ) return null;
+		return { preflight: sp.memoryPreflight, ...sp.memory.report };
+
+	}
+
 	// Idempotent: registers the cross-stage texture provider and re-measures on
 	// allocation events (scene/env load, resize) so peak is caught even while idle.
 	_ensureVRAMWiring() {
