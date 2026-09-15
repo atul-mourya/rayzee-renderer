@@ -148,6 +148,43 @@ export function uploadStorageChunks( renderer, attr, chunks ) {
 
 }
 
+/**
+ * Re-upload one lane range of a chunked storage attribute, spanning chunks as needed.
+ *
+ * The partial-update path three.js offers (`addUpdateRange` + a version bump) cannot work here:
+ * a GPU-only attribute owns no CPU array and its `updateAttribute` is a no-op, so a dirty range
+ * would silently never reach the GPU.
+ *
+ * @param {Object} renderer - WebGPURenderer
+ * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
+ * @param {Object} records - the ChunkedRecords backing it
+ * @param {number} startLane - first lane to write
+ * @param {number} laneCount - how many lanes
+ */
+export function uploadStorageChunkRange( renderer, attr, records, startLane, laneCount ) {
+
+	const backend = renderer.backend;
+	backend.createStorageAttribute( attr );
+
+	const buffer = backend.get( attr ).buffer;
+	const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
+	const bytesPerLane = records.chunks[ 0 ].BYTES_PER_ELEMENT;
+	const end = startLane + laneCount;
+
+	let lane = startLane;
+	while ( lane < end ) {
+
+		const ci = Math.floor( lane / lanesPerChunk );
+		const chunk = records.chunks[ ci ];
+		const local = lane - ci * lanesPerChunk;
+		const n = Math.min( chunk.length - local, end - lane );
+		backend.device.queue.writeBuffer( buffer, lane * bytesPerLane, chunk, local, n );
+		lane += n;
+
+	}
+
+}
+
 const _origUpdateAttribute = WebGPUBackend.prototype.updateAttribute;
 
 WebGPUBackend.prototype.updateAttribute = function ( attribute ) {

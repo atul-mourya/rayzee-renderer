@@ -1,5 +1,5 @@
 import { storage } from 'three/tsl';
-import { gpuOnlyStorageAttribute, uploadStorageChunks } from '../TSL/patches.js';
+import { gpuOnlyStorageAttribute, uploadStorageChunkRange, uploadStorageChunks } from '../TSL/patches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import {
 	NearestFilter, Vector2, Matrix4,
@@ -110,10 +110,10 @@ export class PathTracerStage extends RenderStage {
 		// Initialize material data manager
 		this.materialData = new MaterialDataManager( this.sdfs );
 		this.materialData.callbacks.onReset = () => this.reset();
-		// Triangle data carries the per-triangle `side` flag (NORMAL_C.w). The
-		// authoritative CPU array is triangleStorageAttr.array (not sdfs.triangleData,
-		// which isn't populated on the PathTracerApp build path). The patch mutates
-		// the array in place — only a dirty flag is needed for GPU re-upload.
+		// Triangle data carries the per-triangle `side` flag (NORMAL_C.w). The authoritative
+		// CPU copy is `_triangleRecords` when the scene is chunked and triangleStorageAttr.array
+		// otherwise (not sdfs.triangleData, which isn't populated on the PathTracerApp build
+		// path). The patch mutates it in place, then the GPU copy is refreshed.
 		this.materialData.callbacks.getTriangleData = () => ( {
 			array: this.triangleStorageAttr?.array,
 			records: this._triangleRecords,
@@ -967,15 +967,29 @@ export class PathTracerStage extends RenderStage {
 
 		if ( this.triangleStorageAttr && triRanges.length > 0 ) {
 
-			this.triangleStorageAttr.clearUpdateRanges();
+			if ( this._triangleRecords ) {
 
-			for ( const r of triRanges ) {
+				// Chunked: three.js cannot re-upload an attribute with no CPU array, so write
+				// the dirty lanes straight into the GPU buffer.
+				for ( const r of triRanges ) {
 
-				this.triangleStorageAttr.addUpdateRange( r.offset, r.count );
+					uploadStorageChunkRange( this.renderer, this.triangleStorageAttr, this._triangleRecords, r.offset, r.count );
+
+				}
+
+			} else {
+
+				this.triangleStorageAttr.clearUpdateRanges();
+
+				for ( const r of triRanges ) {
+
+					this.triangleStorageAttr.addUpdateRange( r.offset, r.count );
+
+				}
+
+				this.triangleStorageAttr.version ++;
 
 			}
-
-			this.triangleStorageAttr.version ++;
 
 		}
 
