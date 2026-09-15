@@ -164,6 +164,13 @@ export class ChunkedRecords {
 
 	}
 
+	/** A fresh copy of records [start, start+count). Always a copy, so it is safe to transfer. */
+	copyOf( start, count ) {
+
+		return this.readRecords( start, count, new this.LaneType( count * this.lanesPerRecord ) );
+
+	}
+
 	/**
 	 * The same storage narrowed to the first `recordCount` records: whole unused chunks are
 	 * dropped and the last one is trimmed, so the upload writes exactly what was filled.

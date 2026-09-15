@@ -54,13 +54,19 @@ export class EmissiveTriangleBuilder {
 		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const MATERIAL_FLAGS_OFFSET = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
 		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.MESH_INDEX_OFFSET;
-		const triFloats = new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
+		// Flat array or ChunkedRecords; the chunk is resolved once per triangle.
+		const chunked = triangleData && triangleData.chunks ? triangleData : null;
+		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
+		const flatU = chunked ? null : triangleData;
+		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
-			const baseOffset = i * FLOATS_PER_TRIANGLE;
-			const materialIndex = triangleData[ baseOffset + MATERIAL_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
-			const meshIndex = triangleData[ baseOffset + MESH_INDEX_OFFSET ];
+			const triU = chunked ? chunked.chunkFor( i ) : flatU;
+			const triFloats = chunked ? chunkedF.chunkFor( i ) : flatF;
+			const baseOffset = chunked ? chunked.baseOf( i ) : i * FLOATS_PER_TRIANGLE;
+			const materialIndex = triU[ baseOffset + MATERIAL_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
+			const meshIndex = triU[ baseOffset + MESH_INDEX_OFFSET ];
 
 			// Get material
 			const material = materials[ materialIndex ];

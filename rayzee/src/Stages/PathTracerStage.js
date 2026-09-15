@@ -1,4 +1,5 @@
 import { storage } from 'three/tsl';
+import { gpuOnlyStorageAttribute, uploadStorageChunks } from '../TSL/patches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import {
 	NearestFilter, Vector2, Matrix4,
@@ -115,11 +116,15 @@ export class PathTracerStage extends RenderStage {
 		// the array in place — only a dirty flag is needed for GPU re-upload.
 		this.materialData.callbacks.getTriangleData = () => ( {
 			array: this.triangleStorageAttr?.array,
+			records: this._triangleRecords,
 			count: this.triangleCount,
 		} );
 		this.materialData.callbacks.onTriangleDataChanged = () => {
 
-			if ( this.triangleStorageAttr ) this.triangleStorageAttr.needsUpdate = true;
+			if ( ! this.triangleStorageAttr ) return;
+			// A chunked attribute owns no CPU array for three.js to re-upload.
+			if ( this._triangleRecords ) uploadStorageChunks( this.renderer, this.triangleStorageAttr, this._triangleRecords.chunks );
+			else this.triangleStorageAttr.needsUpdate = true;
 
 		};
 
@@ -171,6 +176,7 @@ export class PathTracerStage extends RenderStage {
 
 		// Triangle data (storage buffer for WebGPU)
 		this.triangleStorageAttr = null;
+		this._triangleRecords = null;
 		this.triangleStorageNode = null;
 		this.triangleCount = 0;
 
@@ -711,12 +717,21 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! triangleData ) return;
 
-		const vec4Count = triangleData.length / 4;
+		// Past the ~2 GB array cap the records arrive as several chunks; they still become one
+		// GPU buffer, written at their running byte offsets, so no binding or shader changes.
+		const chunked = triangleData.chunks && triangleData.chunks.length > 1 ? triangleData : null;
+		const flat = chunked ? null : ( triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData );
+		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
+		const vec4Count = lanes / 4;
+
+		const makeAttr = () => chunked
+			? gpuOnlyStorageAttribute( vec4Count, 4, Uint32Array )
+			: new StorageInstancedBufferAttribute( flat, 4 );
 
 		if ( this.triangleStorageNode ) {
 
 			// Create new attribute with correct size (old one is GC'd, backend WeakMap cleans up GPU buffer)
-			this.triangleStorageAttr = new StorageInstancedBufferAttribute( triangleData, 4 );
+			this.triangleStorageAttr = makeAttr();
 
 			// Update storage node references (preserves compiled shader graph)
 			this.triangleStorageNode.value = this.triangleStorageAttr;
@@ -725,10 +740,13 @@ export class PathTracerStage extends RenderStage {
 		} else {
 
 			// First time: create storage buffer and node
-			this.triangleStorageAttr = new StorageInstancedBufferAttribute( triangleData, 4 );
+			this.triangleStorageAttr = makeAttr();
 			this.triangleStorageNode = storage( this.triangleStorageAttr, 'uvec4', vec4Count ).toReadOnly();
 
 		}
+
+		this._triangleRecords = chunked;
+		if ( chunked ) uploadStorageChunks( this.renderer, this.triangleStorageAttr, chunked.chunks );
 
 		this.triangleCount = triangleCount;
 
@@ -920,7 +938,14 @@ export class PathTracerStage extends RenderStage {
 	/** Update triangle positions in the existing GPU buffer (full). */
 	updateTriangleData( triangleData ) {
 
-		this._updateStorageBuffer( this.triangleStorageAttr, triangleData );
+		if ( this._triangleRecords ) {
+
+			uploadStorageChunks( this.renderer, this.triangleStorageAttr, this._triangleRecords.chunks );
+			return;
+
+		}
+
+		this._updateStorageBuffer( this.triangleStorageAttr, triangleData?.chunks ? triangleData.chunks[ 0 ] : triangleData );
 
 	}
 
@@ -1466,6 +1491,7 @@ export class PathTracerStage extends RenderStage {
 
 		// Clear data references
 		this.triangleStorageAttr = null;
+		this._triangleRecords = null;
 		this.triangleStorageNode = null;
 		this.bvhStorageAttr = null;
 		this.bvhStorageNode = null;

@@ -512,16 +512,20 @@ export class InstanceTable {
 	_computeAABBFromTriangles( template, triangleData, out, off ) {
 
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const tri = triangleData instanceof Float32Array
+		// Flat array or ChunkedRecords: resolve the chunk once per triangle either way.
+		const chunked = triangleData && triangleData.chunks ? triangleData.viewAs( Float32Array ) : null;
+		const flat = chunked ? null : ( triangleData instanceof Float32Array
 			? triangleData
-			: new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
+			: new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length ) );
 		let minX = Infinity, minY = Infinity, minZ = Infinity;
 		let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
 
 		const triOffset = this.tplTriOffset[ template ], triCount = this.tplTriCount[ template ];
 		for ( let t = 0; t < triCount; t ++ ) {
 
-			const base = ( triOffset + t ) * FPT;
+			const gi = triOffset + t;
+			const tri = chunked ? chunked.chunkFor( gi ) : flat;
+			const base = chunked ? chunked.baseOf( gi ) : gi * FPT;
 
 			// Positions A (offset 0), B (offset 4), C (offset 8)
 			for ( let o = 0; o <= 8; o += 4 ) {

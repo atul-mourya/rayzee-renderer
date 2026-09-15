@@ -918,7 +918,7 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		// Reprocess the loaded scene so the new cap takes effect immediately.
-		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangleData && ! this._loadingInProgress ) {
+		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
 
 			this._loadingInProgress = true;
 			try {
@@ -1519,7 +1519,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		const result = await this._sdf.refitBVH( newPositions, newNormals );
 
-		this.stages.pathTracer.updateTriangleData( this._sdf.triangleData );
+		this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
 		this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
 		this.reset();
 
@@ -1548,7 +1548,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, () => {
 
 			// Swap complete — upload updated buffers and restart accumulation
-			this.stages.pathTracer.updateTriangleData( this._sdf.triangleData );
+			this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
 			this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
 			this.reset();
 

@@ -7,6 +7,7 @@
  */
 
 import { BVHRefitter } from '../BVHRefitter.js';
+import { ChunkedRecords } from '../ChunkedRecords.js';
 
 const FLOATS_PER_NODE = 16;
 const refitter = new BVHRefitter();
@@ -25,7 +26,11 @@ self.onmessage = function ( e ) {
 	if ( type === 'init' ) {
 
 		bvhData = new Float32Array( e.data.sharedBvhBuf );
-		triData = new Float32Array( e.data.sharedTriBuf );
+		// Triangles arrive as one shared buffer per chunk; a single-chunk scene is the usual case.
+		triData = ChunkedRecords.adopt(
+			e.data.sharedTriBufs.map( buf => new Uint32Array( buf ) ),
+			e.data.triRecordCount, e.data.triLanesPerRecord, e.data.triRecordsPerChunk
+		);
 		posData = new Float32Array( e.data.sharedPosBuf );
 		bvhToOriginal = e.data.bvhToOriginal; // transferred Uint32Array
 		nodeCount = bvhData.length / FLOATS_PER_NODE;

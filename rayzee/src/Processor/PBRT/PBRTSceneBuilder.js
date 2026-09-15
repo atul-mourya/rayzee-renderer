@@ -63,9 +63,10 @@ function float32( values ) {
 
 // The per-mesh table is a debug aid; an instanced scene reaches tens of millions of rows.
 const MAX_REPORT_ROWS = 1000;
-// GeometryExtractor keeps every triangle in ONE array at 80 B each, and V8 caps a single
-// ArrayBuffer at 2 GB — a hard 26.8M triangles. Past it nothing loads at all.
-const DEFAULT_TRIANGLE_BUDGET = 26_000_000;
+// Triangles are chunked across several arrays now, so the 2 GB V8 cap no longer bounds them at
+// 26.8M. The remaining ceiling is the GPU side: one storage buffer of 4,096 MB at 80 B a
+// triangle is 53.7M. Untested above 26M — raise `maxTriangles` per load to go further.
+const DEFAULT_TRIANGLE_BUDGET = 50_000_000;
 // Placements are their own budget: geometry is shared, but each costs a TLAS leaf and an
 // instance record. isCoastline's 5.09M loaded and rendered at 23 fps.
 const DEFAULT_PLACEMENT_BUDGET = 6_000_000;

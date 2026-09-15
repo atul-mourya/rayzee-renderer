@@ -752,9 +752,11 @@ export class MaterialDataManager {
 	_patchTriangleFlagForMaterial( materialIndex, shift, width, value ) {
 
 		const triInfo = this.callbacks.getTriangleData?.();
-		const triData = triInfo?.array;
+		// Chunked past the ~2 GB array cap; a flat array is the single-chunk case.
+		const records = triInfo?.records;
+		const flat = records ? null : triInfo?.array;
 		const triCount = triInfo?.count | 0;
-		if ( ! triData || triCount === 0 ) return;
+		if ( ( ! flat && ! records ) || triCount === 0 ) return;
 
 		const stride = T.FLOATS_PER_TRIANGLE;
 		const mask = ( ( ( 1 << width ) - 1 ) << shift ) >>> 0;
@@ -762,7 +764,8 @@ export class MaterialDataManager {
 		let patched = 0;
 		for ( let i = 0; i < triCount; i ++ ) {
 
-			const base = i * stride;
+			const triData = records ? records.chunkFor( i ) : flat;
+			const base = records ? records.baseOf( i ) : i * stride;
 			if ( ( triData[ base + TRI_FLAGS_OFFSET ] & TRI_MATERIAL_MASK ) === materialIndex ) {
 
 				triData[ base + TRI_FLAGS_OFFSET ] = ( ( triData[ base + TRI_FLAGS_OFFSET ] & ~ mask ) | bits ) >>> 0;

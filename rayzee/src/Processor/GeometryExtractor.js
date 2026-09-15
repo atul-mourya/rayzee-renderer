@@ -3,6 +3,7 @@ import {
 	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags
 } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { ChunkedRecords } from './ChunkedRecords.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
 
 const log = createLogger( 'geometry' );
@@ -277,9 +278,18 @@ export class GeometryExtractor {
 
 		if ( needed <= this._triangleCapacity ) return;
 
-		const previous = this.triangleData;
+		const previous = this.triangles;
+		const used = this.currentTriangleIndex;
 		this._allocateTriangles( needed );
-		this.triangleData.set( previous );
+		for ( let t = 0; t < used; t ++ ) {
+
+			this.triangles.chunkFor( t ).set(
+				previous.chunkFor( t ).subarray( previous.baseOf( t ), previous.baseOf( t ) + previous.lanesPerRecord ),
+				this.triangles.baseOf( t )
+			);
+
+		}
+
 		this._triangleCapacity = needed;
 
 	}
@@ -287,12 +297,17 @@ export class GeometryExtractor {
 	/**
 	 * The record is a uint buffer; positions and UVs are written as f32 through a view of the
 	 * same memory, so a packed lane's bit pattern is never round-tripped through an f32.
+	 *
+	 * Chunked, because one array cannot hold more than ~26M triangles at 80 bytes each — the
+	 * V8 ArrayBuffer cap, well below what the GPU buffer can take.
 	 * @private
 	 */
 	_allocateTriangles( capacity ) {
 
-		this.triangleData = new Uint32Array( capacity * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
-		this.triangleFloats = new Float32Array( this.triangleData.buffer );
+		this.triangles = new ChunkedRecords( capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array );
+		this.triangleFloatChunks = this.triangles.viewAs( Float32Array );
+		this.triangleData = this.triangles.single;
+		this.triangleFloats = this.triangleFloatChunks.single;
 
 	}
 
@@ -910,9 +925,10 @@ export class GeometryExtractor {
 	packTriangleDataTextureFormat( triangleIndex, posA, posB, posC, normalA, normalB, normalC, uvA, uvB, uvC, materialIndex, meshIndex ) {
 
 		const L = TRIANGLE_DATA_LAYOUT;
-		const offset = triangleIndex * L.FLOATS_PER_TRIANGLE;
-		const f = this.triangleFloats;
-		const u = this.triangleData;
+		// One chunk resolve per triangle; its 20 lanes are contiguous inside that chunk.
+		const offset = this.triangles.baseOf( triangleIndex );
+		const f = this.triangleFloatChunks.chunkFor( triangleIndex );
+		const u = this.triangles.chunkFor( triangleIndex );
 
 		f[ offset + L.POSITION_A_OFFSET + 0 ] = posA.x;
 		f[ offset + L.POSITION_A_OFFSET + 1 ] = posA.y;
@@ -942,13 +958,11 @@ export class GeometryExtractor {
 
 	}
 
-	// Get the raw Float32Array (optimal for worker transfer and zero-copy textures)
+	/** The filled triangle records, as one chunk when they fit and several when they do not. */
 	getTriangleData() {
 
-		if ( ! this.triangleData ) return null;
-
-		// Return only the used portion of the array
-		return this.triangleData.subarray( 0, this.currentTriangleIndex * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
+		if ( ! this.triangles ) return null;
+		return this.triangles.trimTo( this.currentTriangleIndex );
 
 	}
 
@@ -1043,7 +1057,10 @@ export class GeometryExtractor {
 		this._droppedTextures = 0;
 
 		// Reset triangle data
+		this.triangles = null;
 		this.triangleData = null;
+		this.triangleFloatChunks = null;
+		this.triangleFloats = null;
 		this.triangleCount = 0;
 		this.currentTriangleIndex = 0;
 

@@ -28,6 +28,20 @@ const floatView = ( data ) => data instanceof Float32Array
 const uintView = ( data ) => data instanceof Uint32Array
 	? data : new Uint32Array( data.buffer, data.byteOffset, data.length );
 
+// Triangles arrive either as one flat record array or, past the ~2 GB array cap, as a
+// ChunkedRecords. Both are handled by resolving the chunk once per triangle; the flat case
+// keeps a constant chunk and plain `index * FPT` arithmetic.
+const triAccess = ( triangleData ) => {
+
+	const chunked = triangleData && triangleData.chunks ? triangleData : null;
+	return {
+		chunked,
+		f: chunked ? chunked.viewAs( Float32Array ) : floatView( triangleData ),
+		u: chunked ? triangleData : uintView( triangleData ),
+	};
+
+};
+
 // Octahedral snorm16 pair, matching packNormalOct in EngineDefaults (not importable here).
 function packNormalOct( x, y, z ) {
 
@@ -145,13 +159,15 @@ export class BVHRefitter {
 	updateTrianglePositions( triangleData, newPositions, bvhToOriginal ) {
 
 		const triCount = bvhToOriginal.length;
-		const f = floatView( triangleData );
-		const u = uintView( triangleData );
+		const acc = triAccess( triangleData );
 
 		for ( let bvhIdx = 0; bvhIdx < triCount; bvhIdx ++ ) {
 
 			const orig = bvhToOriginal[ bvhIdx ];
-			const dstOff = bvhIdx * FPT; // sequential writes
+			// sequential writes
+			const f = acc.chunked ? acc.f.chunkFor( bvhIdx ) : acc.f;
+			const u = acc.chunked ? acc.u.chunkFor( bvhIdx ) : acc.u;
+			const dstOff = acc.chunked ? acc.chunked.baseOf( bvhIdx ) : bvhIdx * FPT;
 			const srcOff = orig * 9;
 
 			const ax = newPositions[ srcOff ];
@@ -204,7 +220,7 @@ export class BVHRefitter {
 	 */
 	refitRange( bvhData, triangleData, startNode, nodeCount ) {
 
-		const triFloats = floatView( triangleData );
+		const acc = triAccess( triangleData );
 
 		// Grow-only bounds buffer to avoid reallocation on mixed-size BLASes
 		if ( nodeCount > this._boundsNodeCount ) {
@@ -233,7 +249,9 @@ export class BVHRefitter {
 
 				for ( let t = 0; t < triCount; t ++ ) {
 
-					const tOff = ( triOffset + t ) * FPT;
+					const gi = triOffset + t;
+					const triFloats = acc.chunked ? acc.f.chunkFor( gi ) : acc.f;
+					const tOff = acc.chunked ? acc.chunked.baseOf( gi ) : gi * FPT;
 					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
 					const ay = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
 					const az = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
@@ -320,7 +338,7 @@ export class BVHRefitter {
 	 */
 	refit( bvhData, triangleData, nodeCount ) {
 
-		const triFloats = floatView( triangleData );
+		const acc = triAccess( triangleData );
 
 		// Reuse bounds buffer across frames (reallocate only on scene change)
 		if ( nodeCount !== this._boundsNodeCount ) {
@@ -352,7 +370,9 @@ export class BVHRefitter {
 
 				for ( let t = 0; t < triCount; t ++ ) {
 
-					const tOff = ( triOffset + t ) * FPT;
+					const gi = triOffset + t;
+					const triFloats = acc.chunked ? acc.f.chunkFor( gi ) : acc.f;
+					const tOff = acc.chunked ? acc.chunked.baseOf( gi ) : gi * FPT;
 
 					// Position A
 					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];

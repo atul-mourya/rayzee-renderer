@@ -4,6 +4,7 @@ import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
 import { InstanceTable, isIdentity } from './InstanceTable.js';
+import { ChunkedRecords } from './ChunkedRecords.js';
 import { TextureCreator } from './TextureCreator.js';
 import { GeometryExtractor } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
@@ -342,7 +343,7 @@ export class SceneProcessor {
 			this.instanceMatrices = extractedData.instanceMatrices || null;
 			this.instanceCount = extractedData.instanceCount || 0;
 
-			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangleData.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
+			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
 
 			// Store other extracted data
 			this.materials = extractedData.materials;
@@ -415,7 +416,6 @@ export class SceneProcessor {
 
 		try {
 
-			const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 			const ranges = this.meshTriangleRanges;
 
 			if ( ! ranges || ranges.length === 0 ) {
@@ -516,10 +516,7 @@ export class SceneProcessor {
 			// Very large meshes use multi-worker parallel builder concurrently
 			const parallelPromises = parallelTasks.map( ( { m, range } ) => {
 
-				const meshTriData = this.triangleData.slice(
-					range.start * FPT,
-					( range.start + range.count ) * FPT
-				);
+				const meshTriData = this.triangles.copyOf( range.start, range.count );
 
 				return buildBVHParallel( meshTriData, this.config.bvhDepth, null, {
 					maxLeafSize: this.bvhBuilder.maxLeafSize,
@@ -544,7 +541,7 @@ export class SceneProcessor {
 
 				if ( result.reorderedTriangles ) {
 
-					this.triangleData.set( result.reorderedTriangles, range.start * FPT );
+					this.triangles.setRecords( range.start, result.reorderedTriangles );
 
 				}
 
@@ -602,7 +599,7 @@ export class SceneProcessor {
 			// carries packed per-mesh visibility in its slot [2]. The 1-node TLAS
 			// overhead (one extra leaf fetch per ray) is negligible and eliminates
 			// a dedicated visibility storage buffer binding.
-			this.instanceTable.computeAABBs( this.triangleData );
+			this.instanceTable.computeAABBs( this.triangles );
 
 			// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
 			// assigned before the build and the TLAS is written in a single pass.
@@ -708,7 +705,6 @@ export class SceneProcessor {
 
 		if ( tasks.length === 0 ) return Promise.resolve( [] );
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const poolSize = Math.min( tasks.length, this.config.maxConcurrentTextureTasks || 4 );
 		const results = [];
 		let nextTask = 0;
@@ -731,10 +727,7 @@ export class SceneProcessor {
 				}
 
 				const { m, range } = tasks[ nextTask ++ ];
-				const meshTriData = this.triangleData.slice(
-					range.start * FPT,
-					( range.start + range.count ) * FPT
-				);
+				const meshTriData = this.triangles.copyOf( range.start, range.count );
 
 				// Disable treelet for tiny meshes
 				const triCount = range.count;
@@ -1123,7 +1116,7 @@ export class SceneProcessor {
 	_buildEmissiveData() {
 
 		this.emissiveTriangleCount = this.emissiveTriangleBuilder.extractEmissiveTriangles(
-			this.triangleData,
+			this.triangles,
 			this.materials,
 			this.triangleCount,
 			this.instanceTable ?? null
@@ -1367,7 +1360,7 @@ export class SceneProcessor {
 			hasBVH: !! this.bvhRoot,
 			hasTextures: !! this.materialData && !! this.bvhData,
 			useFloat32Array: this.config.useFloat32Array,
-			triangleDataSize: this.triangleData ? ( this.triangleData.byteLength / ( 1024 * 1024 ) ).toFixed( 2 ) + 'MB' : '0MB'
+			triangleDataSize: this.triangles ? ( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 ) + 'MB' : '0MB'
 		};
 
 		// Add performance metrics
@@ -1436,7 +1429,7 @@ export class SceneProcessor {
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
-		if ( ! this.bvhData || ! this.triangleData || ! this.originalToBvhMap ) {
+		if ( ! this.bvhData || ! this.triangles || ! this.originalToBvhMap ) {
 
 			throw new Error( 'No BVH data available for refit. Run buildBVH() first.' );
 
@@ -1480,19 +1473,28 @@ export class SceneProcessor {
 		if ( ! this._refitSharedBuffers ) {
 
 			const sharedBvhBuf = new SharedArrayBuffer( this.bvhData.byteLength );
-			const sharedTriBuf = new SharedArrayBuffer( this.triangleData.byteLength );
 			const sharedPosBuf = new SharedArrayBuffer( newPositions.byteLength );
 
 			const sharedBvhData = new Float32Array( sharedBvhBuf );
-			const sharedTriData = new Uint32Array( sharedTriBuf );
-
 			sharedBvhData.set( this.bvhData );
-			sharedTriData.set( this.triangleData );
+
+			// One shared buffer per triangle chunk — a SharedArrayBuffer carries the same ~2 GB
+			// cap, so a chunked scene has to stay chunked across the worker boundary too.
+			const sharedTriBufs = this.triangles.chunks.map( c => new SharedArrayBuffer( c.byteLength ) );
+			const sharedTriChunks = sharedTriBufs.map( ( buf, i ) => {
+
+				const view = new Uint32Array( buf );
+				view.set( this.triangles.chunks[ i ] );
+				return view;
+
+			} );
 
 			// Replace local refs with shared views
 			this.bvhData = sharedBvhData;
 			this.bvhIndex = bvhIndexView( this.bvhData );
-			this._setTriangleData( sharedTriData );
+			this._setTriangleData( ChunkedRecords.adopt(
+				sharedTriChunks, this.triangles.recordCount, this.triangles.lanesPerRecord, this.triangles.recordsPerChunk
+			) );
 
 			// Build bvhToOriginal map (inverse of originalToBvh) for cache-friendly
 			// sequential writes in the worker's updateTrianglePositions.
@@ -1506,7 +1508,7 @@ export class SceneProcessor {
 
 			this._refitSharedBuffers = {
 				bvhBuf: sharedBvhBuf,
-				triBuf: sharedTriBuf,
+				triBufs: sharedTriBufs,
 				posBuf: sharedPosBuf,
 				posView: new Float32Array( sharedPosBuf ),
 			};
@@ -1515,8 +1517,11 @@ export class SceneProcessor {
 			this._refitWorker.postMessage( {
 				type: 'init',
 				sharedBvhBuf,
-				sharedTriBuf,
+				sharedTriBufs,
 				sharedPosBuf,
+				triRecordCount: this.triangles.recordCount,
+				triLanesPerRecord: this.triangles.lanesPerRecord,
+				triRecordsPerChunk: this.triangles.recordsPerChunk,
 				bvhToOriginal,
 			}, [ bvhToOriginal.buffer ] );
 
@@ -1596,7 +1601,7 @@ export class SceneProcessor {
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
-		if ( ! this.instanceTable || ! this.bvhData || ! this.triangleData ) {
+		if ( ! this.instanceTable || ! this.bvhData || ! this.triangles ) {
 
 			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
 
@@ -1657,7 +1662,7 @@ export class SceneProcessor {
 			);
 
 			// Recompute this mesh's AABB for TLAS rebuild
-			this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangleData );
+			this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangles );
 
 		}
 
@@ -1711,14 +1716,14 @@ export class SceneProcessor {
 	 */
 	uploadToPathTracer( pathTracer, lightManager, meshScene, environmentTexture ) {
 
-		if ( ! this.triangleData ) {
+		if ( ! this.triangles ) {
 
 			log.error( 'failed to get triangle data' );
 			return false;
 
 		}
 
-		pathTracer.setTriangleData( this.triangleData, this.triangleCount );
+		pathTracer.setTriangleData( this.triangles, this.triangleCount );
 
 		if ( ! this.bvhData ) {
 
@@ -1800,7 +1805,7 @@ export class SceneProcessor {
 
 		const changed = this.emissiveTriangleBuilder.updateMaterialEmissive(
 			materialIndex, mat,
-			this.triangleData, this.materials, this.triangleCount,
+			this.triangles, this.materials, this.triangleCount,
 		);
 
 		if ( ! changed ) return null;
@@ -1933,8 +1938,18 @@ export class SceneProcessor {
 	/** Keep the f32 view in step with the uint record buffer. @private */
 	_setTriangleData( data ) {
 
-		this.triangleData = data;
-		this.triangleFloats = data ? new Float32Array( data.buffer, data.byteOffset, data.length ) : null;
+		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const records = ! data ? null
+			: ( data instanceof ChunkedRecords
+				? data
+				: ChunkedRecords.adopt( [ data ], data.length / FPT, FPT, data.length / FPT ) );
+
+		this.triangles = records;
+		this.triangleFloatChunks = records ? records.viewAs( Float32Array ) : null;
+		// Null once the scene needs more than one chunk; everything hot goes through
+		// `triangles` / `triangleFloatChunks` instead.
+		this.triangleData = records ? records.single : null;
+		this.triangleFloats = this.triangleFloatChunks ? this.triangleFloatChunks.single : null;
 
 	}
 
@@ -1985,14 +2000,13 @@ export class SceneProcessor {
 	 */
 	_updateMeshTrianglePositions( entry, newPositions ) {
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
 		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
 		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
 		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
 		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
-		const f = this.triangleFloats;
+		const tri = this.triangles, triF = this.triangleFloatChunks;
 
 		const bvhToOrig = entry.bvhToOriginal;
 
@@ -2004,7 +2018,9 @@ export class SceneProcessor {
 		for ( let bvhLocal = 0; bvhLocal < entry.triCount; bvhLocal ++ ) {
 
 			const origLocal = bvhToOrig[ bvhLocal ];
-			const dst = ( entry.triOffset + bvhLocal ) * FPT;
+			const t = entry.triOffset + bvhLocal;
+			const f = triF.chunkFor( t ), u = tri.chunkFor( t );
+			const dst = tri.baseOf( t );
 			const src = ( entry.expandedStart + origLocal ) * 9;
 
 			let ax = newPositions[ src ];
@@ -2049,9 +2065,9 @@ export class SceneProcessor {
 				abx * acy - aby * acx
 			);
 
-			this.triangleData[ dst + NA ] = packed;
-			this.triangleData[ dst + NB ] = packed;
-			this.triangleData[ dst + NC ] = packed;
+			u[ dst + NA ] = packed;
+			u[ dst + NB ] = packed;
+			u[ dst + NC ] = packed;
 
 		}
 
@@ -2073,7 +2089,6 @@ export class SceneProcessor {
 	 */
 	_patchNormalsRange( normals, startOrig, count, matrixWorld, srcStart = null ) {
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
 		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
 		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
@@ -2089,7 +2104,8 @@ export class SceneProcessor {
 
 			const orig = startOrig + i;
 			const bvhIdx = this.originalToBvhMap[ orig ];
-			const dst = bvhIdx * FPT;
+			const u = this.triangles.chunkFor( bvhIdx );
+			const dst = this.triangles.baseOf( bvhIdx );
 			const src = ( ( srcStart ?? startOrig ) + i ) * 9;
 
 			for ( let v = 0; v < 3; v ++ ) {
@@ -2108,7 +2124,7 @@ export class SceneProcessor {
 
 				}
 
-				this.triangleData[ dst + slots[ v ] ] = packNormalOct( ox, oy, oz );
+				u[ dst + slots[ v ] ] = packNormalOct( ox, oy, oz );
 
 			}
 
@@ -2212,18 +2228,14 @@ export class SceneProcessor {
 	 */
 	scheduleBackgroundRebuild( meshIndices, onSwap ) {
 
-		if ( ! this.instanceTable || ! this.triangleData ) return;
+		if ( ! this.instanceTable || ! this.triangles ) return;
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		this._rebuildGeneration ++;
 		const generation = this._rebuildGeneration;
 
 		const dispatchRebuild = ( meshIdx, entry, worker ) => {
 
-			const meshTriData = this.triangleData.slice(
-				entry.triOffset * FPT,
-				( entry.triOffset + entry.triCount ) * FPT
-			);
+			const meshTriData = this.triangles.copyOf( entry.triOffset, entry.triCount );
 
 			this._pendingRebuilds.set( meshIdx, worker );
 
@@ -2322,11 +2334,10 @@ export class SceneProcessor {
 		this._offsetBLASInPlace( destOffset, newNodeCount, entry.blasOffset, entry.triOffset );
 
 		// Write reordered triangles back into global array
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const reorderedTris = workerData.triangles;
 		if ( reorderedTris ) {
 
-			this.triangleData.set( reorderedTris, entry.triOffset * FPT );
+			this.triangles.setRecords( entry.triOffset, reorderedTris );
 
 		}
 
@@ -2354,7 +2365,7 @@ export class SceneProcessor {
 		}
 
 		// Recompute AABB and refit TLAS
-		this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangleData );
+		this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangles );
 		this._refitTLAS();
 
 		this._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );
