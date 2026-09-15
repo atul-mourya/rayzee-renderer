@@ -14,8 +14,9 @@ function makeTable( bounds ) {
 			meshIndex: i, blasNodeCount: 3, triOffset: i * 10, triCount: 10,
 			originalToBvhMap: null, bvhData: null
 		} );
-		table.blasOffset[ i ] = i * 100;
-		table.worldAABB.set( bounds[ i ], i * 6 );
+		table.tplBlasOffset[ i ] = i * 100;
+		// Transforms are identity here, so object bounds are the world bounds the build reads.
+		table.tplObjectAABB.set( bounds[ i ], i * 6 );
 
 	}
 
@@ -117,7 +118,7 @@ describe( 'TLASBuilder', () => {
 		it( 'writes a single entry as a lone BLAS-pointer leaf', () => {
 
 			const table = makeTable( [[ 0, 0, 0, 1, 1, 1 ]] );
-			table.blasOffset[ 0 ] = 10;
+			table.tplBlasOffset[ 0 ] = 10;
 			const { data, nodeCount } = builder.build( table );
 
 			expect( nodeCount ).toBe( 1 );
@@ -158,13 +159,15 @@ describe( 'TLASBuilder', () => {
 
 			const table = spread( 40 );
 			const { data, nodeCount } = builder.build( table );
+			const bounds = new Float64Array( table.count * 6 );
+			table.writeWorldAABBs( bounds );
 
 			const subtreeBounds = node => {
 
 				if ( isLeaf( data, node ) ) {
 
 					const a = data[ node * 16 + 1 ] * 6;
-					return Array.from( table.worldAABB.slice( a, a + 6 ) );
+					return Array.from( bounds.slice( a, a + 6 ) );
 
 				}
 
@@ -207,10 +210,11 @@ describe( 'TLASBuilder', () => {
 
 		it( 'carries visibility and the world-to-object matrix into the leaf', () => {
 
-			const inv = [ 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 5, 6, 7, 1 ];
+			// Exactly representable in f32 both ways, since the leaf carries the derived inverse.
+			const world = [ 0.5, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 0.125, 0, - 2.5, - 1.5, - 0.875, 1 ];
 			const table = spread( 2 );
 			table.visible[ 0 ] = 0;
-			table.inverse.set( inv, 16 );
+			table.world.set( world, 16 );
 
 			const { data } = builder.build( table );
 			const leafOf = i => table.tlasLeafIndex[ i ] * 16;
@@ -221,7 +225,7 @@ describe( 'TLASBuilder', () => {
 			// Three rows of four, read out of the column-major inverse.
 			const o = leafOf( 1 );
 			expect( Array.from( data.slice( o + 4, o + 16 ) ) )
-				.toEqual( [ 2, 0, 0, 5, 0, 3, 0, 6, 0, 0, 4, 7 ] );
+				.toEqual( [ 2, 0, 0, 5, 0, 4, 0, 6, 0, 0, 8, 7 ] );
 
 		} );
 

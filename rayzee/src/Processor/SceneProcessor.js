@@ -13,8 +13,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct
-} from '../EngineDefaults.js';
+	packNormalOct } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
@@ -337,7 +336,9 @@ export class SceneProcessor {
 			// Callers build refit buffers by walking meshes, which counts a shared geometry
 			// once per placement; storage counts it once.
 			this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
-			this.instances = extractedData.instances || null;
+			this.instanceSource = extractedData.instanceSource || null;
+			this.instanceMatrices = extractedData.instanceMatrices || null;
+			this.instanceCount = extractedData.instanceCount || 0;
 
 			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangleData.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
 
@@ -424,14 +425,16 @@ export class SceneProcessor {
 			// ── Step 1: Build per-mesh BLASes ──
 
 			// One entry per PLACEMENT, not per object: an InstancedMesh contributes a matrix per
-			// instance while the scene graph still holds one object.
-			const placements = this.instances?.length
-				? this.instances
-				: ranges.map( ( _, i ) => ( { sourceMesh: i, matrixWorld: this.meshes?.[ i ]?.matrixWorld?.elements ?? null } ) );
+			// instance while the scene graph still holds one object. The extractor hands over the
+			// transforms as one contiguous pool, which the table adopts rather than copying.
+			const pooled = this.instanceCount > 0;
+			const meshCount = pooled ? this.instanceCount : ranges.length;
+			const instSource = this.instanceSource;
+			const worldPool = pooled ? this.instanceMatrices : null;
+			const sourceOf = m => ( pooled ? instSource[ m ] : m );
 
 			this.instanceTable = new InstanceTable();
-			this.instanceTable.allocate( placements.length );
-			const meshCount = placements.length;
+			this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
 
 			const originalTreeletEnabled = this.config.enableTreeletOptimization;
 			const LARGE_MESH_THRESHOLD = 200000;
@@ -447,7 +450,7 @@ export class SceneProcessor {
 
 			for ( let m = 0; m < meshCount; m ++ ) {
 
-				const range = ranges[ placements[ m ].sourceMesh ];
+				const range = ranges[ sourceOf( m ) ];
 				if ( ! range || range.count === 0 ) continue;
 
 				const owner = ownerOfRange.get( range.start );
@@ -562,9 +565,10 @@ export class SceneProcessor {
 					triCount: range.count,
 					originalToBvhMap: result.originalToBvh || null,
 					bvhData: result.bvhData,
-					matrixWorld: placements[ m ].matrixWorld,
+					matrixWorld: pooled ? worldPool : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
+					matrixOffset: pooled ? m * 16 : 0,
 					expandedStart: range.expandedStart,
-					sourceMesh: placements[ m ].sourceMesh,
+					sourceMesh: sourceOf( m ),
 				} );
 
 			}
@@ -573,9 +577,10 @@ export class SceneProcessor {
 
 				this.instanceTable.setAlias(
 					m, owner,
-					placements[ m ].matrixWorld,
-					ranges[ placements[ m ].sourceMesh ].expandedStart,
-					placements[ m ].sourceMesh
+					pooled ? worldPool : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
+					ranges[ sourceOf( m ) ].expandedStart,
+					sourceOf( m ),
+					pooled ? m * 16 : 0
 				);
 
 			}
@@ -612,11 +617,12 @@ export class SceneProcessor {
 
 			for ( let i = 0; i < table.count; i ++ ) {
 
-				if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue; // alias — owner writes
-				const blas = table.blasData.get( i );
-				const destOffset = table.blasOffset[ i ] * 16;
+				if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue; // alias — owner writes
+				const blas = table.blasData.get( table.sourceMesh[ i ] );
+				const blasOffset = table.blasOffsetOf( i );
+				const destOffset = blasOffset * 16;
 				this.bvhData.set( blas, destOffset );
-				this._offsetBLASInPlace( destOffset, blas.length / 16, table.blasOffset[ i ], table.triOffset[ i ] );
+				this._offsetBLASInPlace( destOffset, blas.length / 16, blasOffset, table.triOffsetOf( i ) );
 
 			}
 
@@ -833,10 +839,11 @@ export class SceneProcessor {
 		for ( let m = 0; m < table.count; m ++ ) {
 
 			// Aliases read the owner's map straight out of the table; nothing to store.
-			if ( ! table.isSet[ m ] || table.sharedFrom[ m ] !== - 1 ) continue;
+			if ( ! table.isSet[ m ] || ! table.isOwner( m ) ) continue;
 
-			const triCount = table.triCount[ m ], triOffset = table.triOffset[ m ];
-			const originalToBvh = table.originalToBvhMap.get( m );
+			const t = table.sourceMesh[ m ];
+			const triCount = table.tplTriCount[ t ], triOffset = table.tplTriOffset[ t ];
+			const originalToBvh = table.originalToBvhMap.get( t );
 
 			// Build per-mesh bvhToOriginal (inverse map for sequential writes)
 			const bvhToOrig = new Uint32Array( triCount );
@@ -862,7 +869,7 @@ export class SceneProcessor {
 
 			}
 
-			table.bvhToOriginal.set( m, bvhToOrig );
+			table.bvhToOriginal.set( t, bvhToOrig );
 
 		}
 
@@ -1561,10 +1568,10 @@ export class SceneProcessor {
 
 		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue;
+			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
 			this._patchNormalsRange(
-				normals, table.triOffset[ i ], table.triCount[ i ],
-				table.matrixWorldOf( i ), table.expandedStart[ i ]
+				normals, table.triOffsetOf( i ), table.triCountOf( i ),
+				table.matrixWorldOf( i ), table.expandedStartOf( i )
 			);
 
 		}
@@ -1673,8 +1680,8 @@ export class SceneProcessor {
 			const table = this.instanceTable;
 			if ( ! table.isSet[ meshIdx ] ) continue;
 
-			triRanges.push( { offset: table.triOffset[ meshIdx ] * FPT, count: table.triCount[ meshIdx ] * FPT } );
-			bvhRanges.push( { offset: table.blasOffset[ meshIdx ] * FPN, count: table.blasNodeCount[ meshIdx ] * FPN } );
+			triRanges.push( { offset: table.triOffsetOf( meshIdx ) * FPT, count: table.triCountOf( meshIdx ) * FPT } );
+			bvhRanges.push( { offset: table.blasOffsetOf( meshIdx ) * FPN, count: table.blasNodeCountOf( meshIdx ) * FPN } );
 
 		}
 
@@ -1860,8 +1867,9 @@ export class SceneProcessor {
 
 			try {
 
-				// The worker needs a copy it can own; the column stays with the table.
-				const aabbs = Float64Array.from( table.worldAABB );
+				// The worker needs a buffer it can own, and world bounds are derived anyway.
+				const aabbs = new Float64Array( n * 6 );
+				table.writeWorldAABBs( aabbs );
 				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n );
 				TLASBuilder.fillLeaves( tlasData, nodeCount, table );
 				return tlasData;
@@ -1931,11 +1939,11 @@ export class SceneProcessor {
 		for ( let i = 0; i < ( table?.count || 0 ); i ++ ) {
 
 			// Aliases point at the owner's triangles; deforming them once is the whole story.
-			if ( ! table.isSet[ i ] || table.sharedFrom[ i ] !== - 1 ) continue;
+			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
 
-			const from = table.expandedStart[ i ] * 9;
-			const to = table.triOffset[ i ] * 9;
-			const len = table.triCount[ i ] * 9;
+			const from = table.expandedStartOf( i ) * 9;
+			const to = table.triOffsetOf( i ) * 9;
+			const len = table.triCountOf( i ) * 9;
 			covered = Math.max( covered, to + len );
 
 			// Callers hand over world-space positions; triangles are stored per instance, so
@@ -2129,7 +2137,7 @@ export class SceneProcessor {
 		const table = this.instanceTable;
 		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( table.isSet[ i ] ) this._blasOffsetMap.set( table.blasOffset[ i ], i );
+			if ( table.isSet[ i ] ) this._blasOffsetMap.set( table.blasOffsetOf( i ), i );
 
 		}
 
@@ -2146,14 +2154,7 @@ export class SceneProcessor {
 				const entryIndex = this._blasOffsetMap.get( blasRoot );
 				if ( entryIndex !== undefined ) {
 
-					const b = i * 6;
-					const a = entryIndex * 6;
-					this._tlasBounds[ b ] = table.worldAABB[ a ];
-					this._tlasBounds[ b + 1 ] = table.worldAABB[ a + 1 ];
-					this._tlasBounds[ b + 2 ] = table.worldAABB[ a + 2 ];
-					this._tlasBounds[ b + 3 ] = table.worldAABB[ a + 3 ];
-					this._tlasBounds[ b + 4 ] = table.worldAABB[ a + 4 ];
-					this._tlasBounds[ b + 5 ] = table.worldAABB[ a + 5 ];
+					table.writeWorldAABB( entryIndex, this._tlasBounds, i * 6 );
 
 				}
 

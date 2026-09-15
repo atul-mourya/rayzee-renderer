@@ -1,4 +1,4 @@
-import { Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
+import { BufferAttribute, Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
 import {
 	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags
 } from '../EngineDefaults.js';
@@ -8,6 +8,15 @@ import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
 const log = createLogger( 'geometry' );
 
 const MAX_TEXTURES_LIMIT = TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT;
+
+const IDENTITY_ELEMENTS = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
+
+function isIdentityElements( e ) {
+
+	for ( let i = 0; i < 16; i ++ ) if ( e[ i ] !== IDENTITY_ELEMENTS[ i ] ) return false;
+	return true;
+
+}
 
 /**
  * glTF 2.0 alphaMode for a three.js material: 0 OPAQUE, 1 MASK, 2 BLEND.
@@ -72,7 +81,7 @@ export class GeometryExtractor {
 
 		this._geometryRanges = new Map();
 		this.expandedTriangleCount = 0;
-		this.instances = [];
+		this._allocatePlacements( 0 );
 		this._matrixPool = {
 			mat3: new Matrix3(),
 			mat4: new Matrix4()
@@ -114,11 +123,126 @@ export class GeometryExtractor {
 		this._allocateTriangles( this._triangleCapacity );
 		this.currentTriangleIndex = 0;
 
+		// One `{ sourceMesh, matrixWorld }` object per placement cost 1.6 GB at 6M of them.
+		this._allocatePlacements( this._countPlacements( object ) );
+
 		// Single traversal: extract geometry, materials, lights, and cameras
 		this.traverseObject( object );
+		this._shareInstanceMatrices();
+		this._compressAttributes( object );
 
 		this.logStats();
 		return this.getExtractedData();
+
+	}
+
+	// Placements extract() will record: one per mesh, or one per instance of an InstancedMesh.
+	_countPlacements( object ) {
+
+		let count = 0;
+
+		if ( object.isMesh && object.geometry && object.material ) {
+
+			count += object.isInstancedMesh && object.instanceMatrix
+				? ( object.count ?? object.instanceMatrix.array.length / 16 )
+				: 1;
+
+		}
+
+		if ( object.children ) {
+
+			for ( const child of object.children ) count += this._countPlacements( child );
+
+		}
+
+		return count;
+
+	}
+
+	_allocatePlacements( count ) {
+
+		this.instanceCount = 0;
+		this.instanceCapacity = count;
+		this.instanceSource = new Int32Array( count );
+		this.instanceMatrices = new Float32Array( count * 16 );
+		this._shareable = [];
+		this._compressed = new Set();
+
+	}
+
+	/**
+	 * Halve the scene graph's normal/tangent/colour attributes as normalized 16-bit integers.
+	 *
+	 * three.js denormalizes on read and uploads them as `snorm16`, so every CPU-side consumer
+	 * keeps working; the triangle buffer already stores normals as a coarser oct16 pair.
+	 * Positions and UVs keep the full float range.
+	 * @private
+	 */
+	_compressAttributes( object ) {
+
+		const done = this._compressed;
+
+		object.traverse( o => {
+
+			const g = o.geometry;
+			if ( ! o.isMesh || ! g || done.has( g.uuid ) ) return;
+			done.add( g.uuid );
+
+			for ( const name of [ 'normal', 'tangent', 'color' ] ) {
+
+				const attr = g.getAttribute( name );
+				if ( ! attr || attr.normalized || ! ( attr.array instanceof Float32Array ) ) continue;
+				if ( g.morphAttributes?.[ name ]?.length ) continue;
+
+				const src = attr.array;
+				let ok = true;
+				for ( let i = 0; i < src.length; i ++ ) {
+
+					const v = src[ i ];
+					if ( ! ( v >= - 1.0001 && v <= 1.0001 ) ) {
+
+						ok = false; break;
+
+					}
+
+				}
+
+				// Out of snorm range (or NaN) — leave it as floats rather than silently clamp.
+				if ( ! ok ) continue;
+
+				const packed = new Int16Array( src.length );
+				for ( let i = 0; i < src.length; i ++ ) {
+
+					packed[ i ] = Math.round( Math.max( - 1, Math.min( 1, src[ i ] ) ) * 32767 );
+
+				}
+
+				g.setAttribute( name, new BufferAttribute( packed, attr.itemSize, true ) );
+
+			}
+
+		} );
+
+	}
+
+	/**
+	 * Point each InstancedMesh's matrix attribute at the placement pool that duplicates it.
+	 *
+	 * With the host at the origin the two hold identical bytes — 366 MB apart at 6M instances.
+	 * Runs after the traversal, since growth reallocates the pool.
+	 * @private
+	 */
+	_shareInstanceMatrices() {
+
+		for ( const { mesh, start, count } of this._shareable ) {
+
+			const attr = mesh.instanceMatrix;
+			if ( ! attr || attr.array.length !== count * 16 ) continue;
+			attr.array = this.instanceMatrices.subarray( start * 16, ( start + count ) * 16 );
+
+		}
+
+		this._shareable = [];
 
 	}
 
@@ -269,28 +393,48 @@ export class GeometryExtractor {
 	_recordPlacements( mesh, meshIndex ) {
 
 		const world = mesh.matrixWorld.elements;
+		const dst = this.instanceMatrices;
+		const src = this.instanceSource;
 
 		if ( ! mesh.isInstancedMesh || ! mesh.instanceMatrix ) {
 
-			this.instances.push( { sourceMesh: meshIndex, matrixWorld: Float64Array.from( world ) } );
+			const p = this._nextPlacement();
+			src[ p ] = meshIndex;
+			for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = world[ k ];
 			return;
 
 		}
 
 		const arr = mesh.instanceMatrix.array;
 		const count = mesh.count ?? ( arr.length / 16 );
+		// A pbrt archive bakes the CTM into every instance, so the host needs no multiply.
+		const identityHost = isIdentityElements( world );
+		if ( identityHost && arr.length === count * 16 ) {
+
+			this._shareable.push( { mesh, start: this.instanceCount, count } );
+
+		}
 
 		for ( let i = 0; i < count; i ++ ) {
 
 			const o = i * 16;
-			const m = new Float64Array( 16 );
+			const p = this._nextPlacement();
+			const d = p * 16;
+			src[ p ] = meshIndex;
+
+			if ( identityHost ) {
+
+				for ( let k = 0; k < 16; k ++ ) dst[ d + k ] = arr[ o + k ];
+				continue;
+
+			}
 
 			// world = mesh.matrixWorld * instanceMatrix, both column-major.
 			for ( let c = 0; c < 4; c ++ ) {
 
 				for ( let r = 0; r < 4; r ++ ) {
 
-					m[ c * 4 + r ] = world[ r ] * arr[ o + c * 4 ]
+					dst[ d + c * 4 + r ] = world[ r ] * arr[ o + c * 4 ]
 						+ world[ 4 + r ] * arr[ o + c * 4 + 1 ]
 						+ world[ 8 + r ] * arr[ o + c * 4 + 2 ]
 						+ world[ 12 + r ] * arr[ o + c * 4 + 3 ];
@@ -299,9 +443,27 @@ export class GeometryExtractor {
 
 			}
 
-			this.instances.push( { sourceMesh: meshIndex, matrixWorld: m } );
+		}
+
+	}
+
+	/** Next free placement slot, growing only if the pre-count was short. @private */
+	_nextPlacement() {
+
+		if ( this.instanceCount >= this.instanceCapacity ) {
+
+			const grown = Math.max( 16, this.instanceCapacity * 2 );
+			const srcCol = new Int32Array( grown );
+			const matCol = new Float32Array( grown * 16 );
+			srcCol.set( this.instanceSource );
+			matCol.set( this.instanceMatrices );
+			this.instanceSource = srcCol;
+			this.instanceMatrices = matCol;
+			this.instanceCapacity = grown;
 
 		}
+
+		return this.instanceCount ++;
 
 	}
 
@@ -892,7 +1054,7 @@ export class GeometryExtractor {
 		this.meshTriangleRanges = []; // Per-mesh { start, count } for TLAS/BLAS
 		this._geometryRanges = new Map(); // geometry+material -> the range that already holds it
 		this.expandedTriangleCount = 0; // triangles as a per-mesh walk would count them
-		this.instances = []; // one per placement: { sourceMesh, matrixWorld }
+		this._allocatePlacements( 0 ); // SoA placements: sourceMesh column + 16 floats each
 		this.maps = [];
 		this.normalMaps = [];
 		this.bumpMaps = [];
@@ -929,7 +1091,9 @@ export class GeometryExtractor {
 			meshes: this.meshes,
 			meshTriangleRanges: this.meshTriangleRanges, // Per-mesh { start, count } for TLAS/BLAS
 			expandedTriangleCount: this.expandedTriangleCount,
-			instances: this.instances,
+			instanceSource: this.instanceSource.subarray( 0, this.instanceCount ),
+			instanceMatrices: this.instanceMatrices.subarray( 0, this.instanceCount * 16 ),
+			instanceCount: this.instanceCount,
 			maps: this.maps,
 			normalMaps: this.normalMaps,
 			bumpMaps: this.bumpMaps,

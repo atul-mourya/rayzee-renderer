@@ -16,6 +16,7 @@
  */
 
 import { BVH_LEAF_MARKERS } from '../EngineDefaults.js';
+import { invertAffineInto } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;
 const SAH_BINS = 16;
@@ -28,6 +29,8 @@ const SMALL_NODE = 8;
 // Recursing into the smaller half and looping on the larger keeps depth at O(log n), so a
 // pathological split chain cannot grow the stack to n frames.
 const INITIAL_STACK_FRAMES = 64;
+// One affine inverse is live at a time while leaves are filled.
+const _inverseScratch = new Float64Array( 16 );
 
 export class TLASBuilder {
 
@@ -81,7 +84,9 @@ export class TLASBuilder {
 	 */
 	build( table ) {
 
-		const built = this.buildStructure( table.worldAABB, table.count );
+		const aabbs = new Float64Array( table.count * 6 );
+		table.writeWorldAABBs( aabbs );
+		const built = this.buildStructure( aabbs, table.count );
 		TLASBuilder.fillLeaves( built.data, built.nodeCount, table );
 		return built;
 
@@ -213,11 +218,14 @@ export class TLASBuilder {
 	 *
 	 * A node is 16 floats and the BLAS pointer needs 4, so the affine inverse fits in the
 	 * remaining 12: the ray moves into object space with no second binding, which matters
-	 * because Shade is already at the 10 storage buffers Metal allows.
+	 * because Shade is already at the 10 storage buffers Metal allows. The inverse is derived
+	 * here rather than stored: a column of it costs 64 bytes a placement.
 	 */
 	static fillLeaves( data, nodeCount, table ) {
 
-		const inv = table.inverse;
+		const world = table.world, src = table.sourceMesh;
+		const blasOffset = table.tplBlasOffset, visible = table.visible, leafOf = table.tlasLeafIndex;
+		const inv = _inverseScratch;
 
 		for ( let node = 0; node < nodeCount; node ++ ) {
 
@@ -225,15 +233,15 @@ export class TLASBuilder {
 			if ( data[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 
 			const i = data[ o + 1 ];
-			data[ o ] = table.blasOffset[ i ];
-			data[ o + 2 ] = table.visible[ i ] ? 1.0 : 0.0;
+			data[ o ] = blasOffset[ src[ i ] ];
+			data[ o + 2 ] = visible[ i ] ? 1.0 : 0.0;
 
-			const m = i * 16;
-			data[ o + 4 ] = inv[ m ]; data[ o + 5 ] = inv[ m + 4 ]; data[ o + 6 ] = inv[ m + 8 ]; data[ o + 7 ] = inv[ m + 12 ];
-			data[ o + 8 ] = inv[ m + 1 ]; data[ o + 9 ] = inv[ m + 5 ]; data[ o + 10 ] = inv[ m + 9 ]; data[ o + 11 ] = inv[ m + 13 ];
-			data[ o + 12 ] = inv[ m + 2 ]; data[ o + 13 ] = inv[ m + 6 ]; data[ o + 14 ] = inv[ m + 10 ]; data[ o + 15 ] = inv[ m + 14 ];
+			invertAffineInto( world, i * 16, inv );
+			data[ o + 4 ] = inv[ 0 ]; data[ o + 5 ] = inv[ 4 ]; data[ o + 6 ] = inv[ 8 ]; data[ o + 7 ] = inv[ 12 ];
+			data[ o + 8 ] = inv[ 1 ]; data[ o + 9 ] = inv[ 5 ]; data[ o + 10 ] = inv[ 9 ]; data[ o + 11 ] = inv[ 13 ];
+			data[ o + 12 ] = inv[ 2 ]; data[ o + 13 ] = inv[ 6 ]; data[ o + 14 ] = inv[ 10 ]; data[ o + 15 ] = inv[ 14 ];
 
-			table.tlasLeafIndex[ i ] = node;
+			leafOf[ i ] = node;
 
 		}
 

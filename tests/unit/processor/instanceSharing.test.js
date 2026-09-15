@@ -90,18 +90,22 @@ describe( 'shared BLAS placements', () => {
 		} );
 		table.setAlias( 1, 0, [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1 ], 12 );
 
-		expect( table.sharedFrom[ 1 ] ).toBe( 0 );
-		expect( table.triOffset[ 1 ] ).toBe( table.triOffset[ 0 ] );
-		expect( table.triCount[ 1 ] ).toBe( table.triCount[ 0 ] );
+		expect( table.isOwner( 1 ) ).toBe( false );
+		expect( table.tplOwner[ table.sourceMesh[ 1 ] ] ).toBe( 0 );
+		expect( table.triOffsetOf( 1 ) ).toBe( table.triOffsetOf( 0 ) );
+		expect( table.triCountOf( 1 ) ).toBe( table.triCountOf( 0 ) );
 		// Its own slot in a per-mesh walk, which is what refit callers build.
-		expect( table.expandedStart[ 1 ] ).toBe( 12 );
+		expect( table.expandedStartOf( 1 ) ).toBe( 12 );
 
 		table.computeAABBs( new Float32Array( 0 ) );
 		// Same object-space bounds, copied not shared — columns hold values, not references.
-		expect( Array.from( table.objectAABB.slice( 6, 12 ) ) )
-			.toEqual( Array.from( table.objectAABB.slice( 0, 6 ) ) );
-		expect( table.worldAABB[ 6 ] ).toBeCloseTo( 9, 5 ); // alias minX
-		expect( table.worldAABB[ 0 ] ).toBeCloseTo( - 1, 5 ); // owner minX
+		expect( Array.from( table.tplObjectAABB.slice( 6, 12 ) ) )
+			.toEqual( Array.from( table.tplObjectAABB.slice( 0, 6 ) ) );
+
+		const bounds = new Float64Array( 12 );
+		table.writeWorldAABBs( bounds );
+		expect( bounds[ 6 ] ).toBeCloseTo( 9, 5 ); // alias minX
+		expect( bounds[ 0 ] ).toBeCloseTo( - 1, 5 ); // owner minX
 
 	} );
 
@@ -115,9 +119,9 @@ describe( 'shared BLAS placements', () => {
 
 		table.assignOffsets( 3 ); // 3 TLAS nodes
 
-		expect( table.blasOffset[ 0 ] ).toBe( 3 );
-		expect( table.blasOffset[ 1 ] ).toBe( 3 ); // shares the owner's nodes
-		expect( table.blasOffset[ 2 ] ).toBe( 8 );
+		expect( table.blasOffsetOf( 0 ) ).toBe( 3 );
+		expect( table.blasOffsetOf( 1 ) ).toBe( 3 ); // shares the owner's nodes
+		expect( table.blasOffsetOf( 2 ) ).toBe( 8 );
 		// Only the two distinct BLASes are counted.
 		expect( table.totalBLASNodes ).toBe( 14 );
 		expect( table.totalNodeCount ).toBe( 17 );
