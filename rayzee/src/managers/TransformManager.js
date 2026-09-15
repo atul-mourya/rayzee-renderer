@@ -32,10 +32,10 @@ export class TransformManager {
 		this._isDragging = false;
 		this._meshes = null;
 		this._meshTriRanges = null;
-		this._posBuffer = null;
-		this._normalBuffer = null;
 		this._skinnedCache = null;
 		this._normalCache = null;
+		this._meshPositions = null;
+		this._meshNormals = null;
 		this._tempVec = new Vector3();
 		this._normalMatrix = new Matrix3();
 		this._refitInFlight = false;
@@ -64,8 +64,14 @@ export class TransformManager {
 
 		this._meshes = meshes;
 		this._meshTriRanges = [];
+		// Scratch is allocated per mesh the first time that mesh is actually dragged. A scene can
+		// hold tens of millions of triangles nothing will ever move, and reserving vertex caches
+		// plus scene-wide position and normal buffers for all of them runs to gigabytes — at 30M
+		// triangles the scene-wide pair alone is 2,060 MB and simply fails to allocate.
 		this._skinnedCache = [];
 		this._normalCache = [];
+		this._meshPositions = [];
+		this._meshNormals = [];
 		let offset = 0;
 
 		for ( const mesh of meshes ) {
@@ -77,18 +83,17 @@ export class TransformManager {
 			const uniqueVerts = positions.count;
 
 			this._meshTriRanges.push( { start: offset, count, uniqueVerts, indices } );
-			this._skinnedCache.push( new Float32Array( uniqueVerts * 3 ) );
-			this._normalCache.push( new Float32Array( uniqueVerts * 3 ) );
 			offset += count;
 
 		}
 
-		this._posBuffer = new Float32Array( offset * 9 );
-		this._normalBuffer = new Float32Array( offset * 9 );
+	}
 
-		// Mesh indices/buffers were just reallocated (e.g. after a scene rebuild) —
-		// force the next drag to recompute the transform baseline.
-		this._baselineComputed = false;
+	/** A reusable per-mesh buffer, grown only when that mesh first needs it. @private */
+	_scratch( cache, index, length ) {
+
+		const have = cache[ index ];
+		return have && have.length === length ? have : ( cache[ index ] = new Float32Array( length ) );
 
 	}
 
@@ -330,7 +335,7 @@ export class TransformManager {
 	 */
 	_recomputeAndRefit() {
 
-		if ( ! this._meshes || ! this._posBuffer || this._refitInFlight ) return;
+		if ( ! this._meshes || ! this._meshTriRanges || this._refitInFlight ) return;
 		if ( ! this._attached ) return;
 
 		// Update world matrices for the moved object subtree
@@ -341,29 +346,20 @@ export class TransformManager {
 
 		if ( affectedIndices.length === 0 ) return;
 
-		// On first transform or after scene reload, compute ALL positions as baseline
-		if ( ! this._baselineComputed ) {
-
-			this._computeAllPositions();
-			this._baselineComputed = true;
-
-		} else {
-
-			// Recompute only affected meshes
-			for ( const idx of affectedIndices ) {
-
-				this._computeMeshPositions( idx );
-
-			}
-
-		}
+		// Only the dragged meshes are read back, so only they are computed. The old code seeded
+		// every mesh on the first drag because refit indexed into one scene-wide array.
+		for ( const idx of affectedIndices ) this._computeMeshPositions( idx );
 
 		this._refitInFlight = true;
 
 		try {
 
 			// Use per-BLAS refit for affected meshes only (faster than full BVH refit)
-			this._app.refitBLASes( affectedIndices, this._posBuffer, this._normalBuffer );
+			this._app.refitBLASes(
+				affectedIndices,
+				i => this._meshPositions[ i ] ?? null,
+				i => this._meshNormals[ i ] ?? null
+			);
 
 		} catch ( err ) {
 
@@ -414,32 +410,17 @@ export class TransformManager {
 	}
 
 	/**
-	 * Compute world-space positions for ALL meshes (baseline).
-	 * Mirrors AnimationManager._computePositions().
-	 */
-	_computeAllPositions() {
-
-		for ( let i = 0; i < this._meshes.length; i ++ ) {
-
-			this._computeMeshPositions( i );
-
-		}
-
-	}
-
-	/**
-	 * Compute world-space positions and normals for a single mesh.
-	 * Writes into _posBuffer and _normalBuffer at the mesh's triangle range.
+	 * Compute world-space positions and normals for a single mesh, into that mesh's own buffers.
 	 */
 	_computeMeshPositions( meshIndex ) {
 
 		const mesh = this._meshes[ meshIndex ];
-		const { start, count, uniqueVerts, indices } = this._meshTriRanges[ meshIndex ];
-		const skinned = this._skinnedCache[ meshIndex ];
-		const nrmCache = this._normalCache[ meshIndex ];
+		const { count, uniqueVerts, indices } = this._meshTriRanges[ meshIndex ];
+		const skinned = this._scratch( this._skinnedCache, meshIndex, uniqueVerts * 3 );
+		const nrmCache = this._scratch( this._normalCache, meshIndex, uniqueVerts * 3 );
 		const tempVec = this._tempVec;
-		const output = this._posBuffer;
-		const nrmOut = this._normalBuffer;
+		const output = this._scratch( this._meshPositions, meshIndex, count * 9 );
+		const nrmOut = this._scratch( this._meshNormals, meshIndex, count * 9 );
 
 		mesh.updateMatrixWorld( true );
 		const worldMatrix = mesh.matrixWorld;
@@ -484,7 +465,7 @@ export class TransformManager {
 				const i0 = indices[ t3 ] * 3;
 				const i1 = indices[ t3 + 1 ] * 3;
 				const i2 = indices[ t3 + 2 ] * 3;
-				const o = ( start + t ) * 9;
+				const o = t * 9;
 
 				output[ o ] = skinned[ i0 ];
 				output[ o + 1 ] = skinned[ i0 + 1 ];
@@ -516,7 +497,7 @@ export class TransformManager {
 				const v0 = ( t * 3 ) * 3;
 				const v1 = ( t * 3 + 1 ) * 3;
 				const v2 = ( t * 3 + 2 ) * 3;
-				const o = ( start + t ) * 9;
+				const o = t * 9;
 
 				output[ o ] = skinned[ v0 ];
 				output[ o + 1 ] = skinned[ v0 + 1 ];
@@ -554,10 +535,10 @@ export class TransformManager {
 
 		this._meshes = null;
 		this._meshTriRanges = null;
-		this._posBuffer = null;
-		this._normalBuffer = null;
 		this._skinnedCache = null;
 		this._normalCache = null;
+		this._meshPositions = null;
+		this._meshNormals = null;
 		this._baselineComputed = false;
 		this._tempForward = null;
 		this._lightTargetDistance = null;

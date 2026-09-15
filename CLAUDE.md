@@ -144,9 +144,9 @@ GLTF skeletal/morph animation playback and interactive object transforms with BV
 4. Per-BLAS refit + TLAS rebuild → GPU upload → accumulation restart
 
 **BVH refit data flow (two-level)**:
-- **Full refit** (animation): `SceneProcessor.refitBVH()` → worker updates all triangle positions + refits entire combined BVH buffer (TLAS + all BLASes) via SharedArrayBuffer
+- **Full refit** (animation): `SceneProcessor.refitBVH()` → the main thread scatters each mesh's positions into the shared triangle records as it reads them, then the worker refits the whole combined BVH (TLAS + all BLASes) in SharedArrayBuffer. Positions never cross the worker boundary.
 - **Per-mesh refit** (transform): `SceneProcessor.refitBLASes(meshIndices)` → main thread updates only affected meshes' triangles, refits their BLAS ranges, rebuilds TLAS from updated AABBs
-- **Positions buffer ordering**: both take 9 floats per triangle for **every triangle in the scene** — meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. Walking your own model instead silently misaligns the buffer. Both methods now length-check and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
+- **Positions**: both accept either a per-mesh callback `(meshIndex, triCount) => Float32Array` — asked for one mesh at a time, and free to hand back the same scratch buffer each call — or a scene-wide Float32Array of 9 floats per triangle for **every triangle in the scene**, meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. **Prefer the callback**: the scene-wide array is 1,030 MB at 30M triangles and will not allocate at that size. Walking your own model instead of `sceneMeshes` silently misaligns either shape. Both are length-checked and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
 
 **Video render data flow**:
 1. `VideoRenderManager.renderAnimation()` saves engine state, stops rAF, configures final-render mode

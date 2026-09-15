@@ -65,6 +65,15 @@ export class TLASBuilder {
 
 	}
 
+	/** Drop the cached flatten buffer. Worth it when the scene is large enough that holding a
+	 *  spare copy of the TLAS costs more than rebuilding it does. */
+	releaseFlattenBuffer() {
+
+		this._flatBuffer = null;
+		this._flatBufferCapacity = 0;
+
+	}
+
 	/**
 	 * Build and flatten the TLAS in one pass.
 	 *

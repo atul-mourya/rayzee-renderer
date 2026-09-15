@@ -1511,8 +1511,14 @@ export class PathTracerApp extends EventDispatcher {
 	 * Topology must stay the same (same triangle count and connectivity).
 	 * Call this per-frame for skeletal/morph-target animation.
 	 *
-	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) for every triangle in the scene, meshes in {@link sceneMeshes} order and triangles in index order
-	 * @param {Float32Array} [newNormals] - Optional 9 floats per triangle smooth normals. If omitted, face normals are computed from positions.
+	 * Positions come in one of two shapes. A **callback** `(meshIndex, triCount) => Float32Array`
+	 * is asked for one mesh at a time and may return the same scratch buffer each call — prefer it,
+	 * since it never holds more than one mesh. A **scene-wide Float32Array** of 9 floats per
+	 * triangle for every triangle (meshes in {@link sceneMeshes} order, triangles in index order)
+	 * still works, but is 1,030 MB at 30M triangles and will not allocate at that size.
+	 *
+	 * @param {Float32Array|function(number, number): Float32Array} newPositions - (ax,ay,az, bx,by,bz, cx,cy,cz) per triangle, world space
+	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals, same two shapes. If omitted, face normals are computed from positions.
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
 	async refitBVH( newPositions, newNormals ) {
@@ -1532,8 +1538,9 @@ export class PathTracerApp extends EventDispatcher {
 	 * Faster than refitBVH for single-object transforms in multi-mesh scenes.
 	 *
 	 * @param {number[]} affectedMeshIndices - Mesh indices to refit
-	 * @param {Float32Array} newPositions - 9 floats per triangle in original mesh order
-	 * @param {Float32Array} [newNormals] - Optional smooth normals
+	 * @param {Float32Array|function(number, number): Float32Array} newPositions - the same two shapes
+	 *   {@link refitBVH} takes; only the affected meshes are asked for
+	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals
 	 * @returns {{ refitTimeMs: number }}
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {

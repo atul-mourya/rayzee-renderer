@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from '@/core/Processor/ChunkedRecords.js';
 
 // 4 lanes per record, 16 bytes, so 64 bytes per chunk = 4 records per chunk.
 const LANES = 4;
@@ -138,6 +138,108 @@ describe( 'ChunkedRecords', () => {
 		expect( t.byteLength ).toBe( 6 * LANES * 4 );
 		expect( t.chunks[ 0 ] ).toBe( c.chunks[ 0 ] ); // untouched, still a view of the same memory
 		expect( t.chunks[ 1 ] ).toHaveLength( 2 * LANES );
+
+	} );
+
+	it( 'allocates a lazy chunk only when it is first touched', () => {
+
+		const c = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES );
+		expect( c.chunks.filter( Boolean ) ).toHaveLength( 0 );
+
+		c.chunkFor( 5 )[ c.baseOf( 5 ) ] = 42;
+		expect( c.chunks.filter( Boolean ) ).toHaveLength( 1 );
+		expect( c.chunks[ 1 ] ).toHaveLength( 4 * LANES );
+		expect( c.chunkFor( 5 )[ c.baseOf( 5 ) ] ).toBe( 42 );
+
+	} );
+
+	it( 'fills a lazy store record for record and matches an eager one', () => {
+
+		const eager = filled( 10 );
+		const lazy = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES );
+		for ( let r = 0; r < 10; r ++ ) {
+
+			const chunk = lazy.chunkFor( r ), base = lazy.baseOf( r );
+			for ( let k = 0; k < LANES; k ++ ) chunk[ base + k ] = r * 100 + k;
+
+		}
+
+		expect( lazy.chunkCount ).toBe( eager.chunkCount );
+		expect( lazy.byteLength ).toBe( eager.byteLength );
+		expect( Array.from( lazy.slice( 0, 10 ) ) ).toEqual( Array.from( eager.slice( 0, 10 ) ) );
+
+	} );
+
+	it( 'materializes the last chunk at its short length', () => {
+
+		const c = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES ).materializeAll();
+		expect( c.chunks.map( x => x.length / LANES ) ).toEqual( [ 4, 4, 2 ] );
+		expect( c.byteLength ).toBe( 10 * LANES * 4 );
+
+	} );
+
+	it( 'gives a view taken before the fill the same memory as the chunks that follow', () => {
+
+		const c = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES );
+		const asFloat = c.viewAs( Float32Array );
+
+		// written through the view, read back through the owner
+		asFloat.chunkFor( 6 )[ asFloat.baseOf( 6 ) ] = 1.5;
+		expect( c.chunkFor( 6 )[ c.baseOf( 6 ) ] ).toBe( 0x3FC00000 );
+
+		// and the other way round, on a chunk the owner allocates first
+		c.chunkFor( 0 )[ c.baseOf( 0 ) ] = 0x3FC00000;
+		expect( asFloat.chunkFor( 0 )[ asFloat.baseOf( 0 ) ] ).toBe( 1.5 );
+
+		expect( asFloat.chunks[ 2 ] ).toBeUndefined(); // untouched, still unallocated
+		c.materializeAll();
+		expect( asFloat.chunks[ 2 ] ).toBeInstanceOf( Float32Array );
+
+	} );
+
+	it( 'writes a straddling run into a lazy store, allocating both chunks', () => {
+
+		const c = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES );
+		const src = new Uint32Array( 5 * LANES );
+		src.fill( 7 );
+		c.setRecords( 3, src ); // records 3..7 span chunk 0 and 1
+
+		expect( c.chunks[ 0 ] ).toBeInstanceOf( Uint32Array );
+		expect( c.chunks[ 1 ] ).toBeInstanceOf( Uint32Array );
+		expect( c.chunks[ 2 ] ).toBeUndefined();
+		expect( Array.from( c.slice( 3, 5 ) ) ).toEqual( Array( 5 * LANES ).fill( 7 ) );
+
+	} );
+
+	it( 'backs its chunks with shared memory when asked', () => {
+
+		if ( ! SHARED_MEMORY_AVAILABLE ) return;
+
+		const c = new ChunkedRecords( 10, LANES, Uint32Array, CHUNK_BYTES, true );
+		expect( c.shared ).toBe( true );
+		expect( c.chunks.every( x => x.buffer instanceof SharedArrayBuffer ) ).toBe( true );
+
+		// and a view over it shares the same memory, so a worker writing one is seen by the other
+		const asFloat = c.viewAs( Float32Array );
+		expect( asFloat.chunks[ 1 ].buffer ).toBe( c.chunks[ 1 ].buffer );
+
+	} );
+
+	it( 'materializes lazy chunks into shared memory too', () => {
+
+		if ( ! SHARED_MEMORY_AVAILABLE ) return;
+
+		const c = ChunkedRecords.lazy( 10, LANES, Uint32Array, CHUNK_BYTES, true );
+		c.chunkFor( 9 )[ c.baseOf( 9 ) ] = 5;
+		expect( c.chunks[ 2 ].buffer ).toBeInstanceOf( SharedArrayBuffer );
+
+	} );
+
+	it( 'stays unshared by default, and reports what it adopted', () => {
+
+		const plain = new ChunkedRecords( 10, LANES, Uint32Array, CHUNK_BYTES );
+		expect( plain.shared ).toBe( false );
+		expect( ChunkedRecords.adopt( plain.chunks, 10, LANES, 4 ).shared ).toBe( false );
 
 	} );
 

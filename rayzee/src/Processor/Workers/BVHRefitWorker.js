@@ -2,21 +2,21 @@
  * BVHRefitWorker — Off-main-thread BVH refit using SharedArrayBuffer.
  *
  * Protocol:
- *   'init'  → receives SharedArrayBuffers + index map (once per scene)
- *   'refit' → reads shared positions, writes shared bvh/tri data (per frame)
+ *   'init'  → receives the shared triangle and node buffers (once per scene)
+ *   'refit' → recomputes every node's AABB from the triangles already written there
+ *
+ * Positions never reach here: the main thread scatters each mesh into the shared triangle
+ * records as it reads it, so no buffer the size of the scene exists on either side.
  */
 
 import { BVHRefitter } from '../BVHRefitter.js';
 import { ChunkedRecords } from '../ChunkedRecords.js';
 
-const FLOATS_PER_NODE = 16;
 const refitter = new BVHRefitter();
 
 // Cached shared memory views (set once on 'init', reused every frame)
 let bvhData = null;
 let triData = null;
-let posData = null;
-let bvhToOriginal = null;
 let nodeCount = 0;
 
 self.onmessage = function ( e ) {
@@ -34,8 +34,6 @@ self.onmessage = function ( e ) {
 			e.data.sharedTriBufs.map( buf => new Uint32Array( buf ) ),
 			e.data.triRecordCount, e.data.triLanesPerRecord, e.data.triRecordsPerChunk
 		);
-		posData = new Float32Array( e.data.sharedPosBuf );
-		bvhToOriginal = e.data.bvhToOriginal; // transferred Uint32Array
 		nodeCount = bvhData.recordCount;
 		return;
 
@@ -47,7 +45,6 @@ self.onmessage = function ( e ) {
 
 			const startTime = performance.now();
 
-			refitter.updateTrianglePositions( triData, posData, bvhToOriginal );
 			refitter.refit( bvhData, triData, nodeCount );
 
 			self.postMessage( {

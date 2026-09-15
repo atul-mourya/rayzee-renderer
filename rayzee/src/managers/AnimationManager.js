@@ -3,7 +3,7 @@
  *
  * Owns the Three.js AnimationMixer, advances clips each frame,
  * extracts deformed vertex positions via CPU skinning, and returns
- * them in the format expected by PathTracerApp.refitBVH().
+ * a per-mesh reader in the shape PathTracerApp.refitBVH() accepts.
  */
 
 import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce } from 'three';
@@ -24,7 +24,7 @@ export class AnimationManager extends EventDispatcher {
 		this._mixerRoot = null; // mixer target (GLTF model root for track resolution)
 		this._meshes = null;
 		this._meshTriRanges = null; // { start, count, uniqueVerts, indices }[]
-		this._posBuffer = null; // Float32Array(triCount * 9) — reused each frame
+		this._meshPositions = null; // per-mesh Float32Array(triCount * 9), allocated on first use
 		this._tempVec = new Vector3();
 		this._skinnedCache = null; // per-mesh Float32Array for skinned vertex positions
 		this._clipsCache = null;
@@ -111,14 +111,14 @@ export class AnimationManager extends EventDispatcher {
 			const uniqueVerts = positions.count;
 
 			this._meshTriRanges.push( { start: offset, count, uniqueVerts, indices } );
-			// Pre-allocate per-mesh skinned position cache (3 floats per unique vertex)
-			this._skinnedCache.push( new Float32Array( uniqueVerts * 3 ) );
 			offset += count;
 
 		}
 
-		// Allocate reusable output buffer
-		this._posBuffer = new Float32Array( offset * 9 );
+		// Scratch is per mesh and allocated on first use. One scene-wide output buffer would be
+		// 9 floats × every triangle — 1,030 MB at 30M, past what a renderer can allocate.
+		this._skinnedCache = [];
+		this._meshPositions = [];
 
 		const skinnedCount = meshes.filter( m => m.isSkinnedMesh ).length;
 		console.debug( `[AnimationManager] Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles` );
@@ -224,12 +224,12 @@ export class AnimationManager extends EventDispatcher {
 	}
 
 	/**
-	 * Seek to an absolute time and extract deformed vertex positions.
+	 * Seek to an absolute time and prepare deformed vertex positions.
 	 * Does not require playback — works from any state (stopped, paused, playing).
 	 *
 	 * @param {number} time - Absolute time in seconds
 	 * @param {number} [clipIndex=0] - Clip to evaluate, or -1 for all active
-	 * @returns {Float32Array|null} Position buffer (9 floats/tri) or null if no mixer
+	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if no mixer
 	 */
 	seekTo( time, clipIndex = 0 ) {
 
@@ -261,8 +261,7 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
-		this._computePositions();
-		return this._posBuffer;
+		return this._poseReader();
 
 	}
 
@@ -277,10 +276,10 @@ export class AnimationManager extends EventDispatcher {
 	}
 
 	/**
-	 * Advance animation and extract deformed positions.
+	 * Advance animation and prepare deformed positions.
 	 * Call once per frame from the animate loop.
 	 *
-	 * @returns {Float32Array|null} Position buffer (9 floats/tri, original mesh order) or null if not playing
+	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if not playing
 	 */
 	update() {
 
@@ -290,99 +289,110 @@ export class AnimationManager extends EventDispatcher {
 		const delta = this.timer.getDelta();
 		this.mixer.update( delta );
 
-		this._computePositions();
+		return this._poseReader();
 
-		return this._posBuffer;
+	}
+
+	/** A reusable per-mesh buffer, grown only when that mesh is first skinned. @private */
+	_scratch( cache, index, length ) {
+
+		const have = cache[ index ];
+		return have && have.length === length ? have : ( cache[ index ] = new Float32Array( length ) );
 
 	}
 
 	/**
-	 * Extract deformed vertex positions from all meshes.
-	 * Uses two-phase approach for indexed geometry:
-	 *   Phase 1: Skin all unique vertices per mesh
-	 *   Phase 2: Assemble triangles from index buffer
+	 * Settle the pose, then hand back a reader that skins one mesh at a time. The refit pulls each
+	 * mesh as it needs it, so only one mesh's worth of deformed positions exists at any moment.
 	 * @private
 	 */
-	_computePositions() {
+	_poseReader() {
 
-		const tempVec = this._tempVec;
-		const output = this._posBuffer;
-
-		// Update mixer root subtree — bones live outside mesh subtrees so
-		// per-mesh updateMatrixWorld() misses them. Using mixerRoot (not full
-		// scene) avoids recomputing matrices for unrelated static objects.
+		// Bones live outside mesh subtrees so per-mesh updateMatrixWorld() misses them. Doing it
+		// once here, on mixerRoot rather than the scene, keeps unrelated static objects out of it.
 		this._mixerRoot.updateMatrixWorld( true );
 
-		for ( let m = 0; m < this._meshes.length; m ++ ) {
+		return m => this._computeMeshPositions( m );
 
-			const mesh = this._meshes[ m ];
-			const { start, count, uniqueVerts, indices } = this._meshTriRanges[ m ];
-			const skinned = this._skinnedCache[ m ];
+	}
 
-			const worldMatrix = mesh.matrixWorld;
+	/**
+	 * Skin one mesh into its own buffer. Two phases for indexed geometry: skin the unique
+	 * vertices, then assemble triangles from the index buffer.
+	 * @private
+	 */
+	_computeMeshPositions( m ) {
 
-			// Phase 1: Compute world-space positions for all unique vertices
-			for ( let v = 0; v < uniqueVerts; v ++ ) {
+		const tempVec = this._tempVec;
+		const mesh = this._meshes[ m ];
+		const { count, uniqueVerts, indices } = this._meshTriRanges[ m ];
+		const skinned = this._scratch( this._skinnedCache, m, uniqueVerts * 3 );
+		const output = this._scratch( this._meshPositions, m, count * 9 );
 
-				// getVertexPosition handles morph targets + bone transforms (local space)
-				mesh.getVertexPosition( v, tempVec );
-				// Transform to world space (matches GeometryExtractor behavior)
-				tempVec.applyMatrix4( worldMatrix );
+		const worldMatrix = mesh.matrixWorld;
 
-				skinned[ v * 3 ] = tempVec.x;
-				skinned[ v * 3 + 1 ] = tempVec.y;
-				skinned[ v * 3 + 2 ] = tempVec.z;
+		// Phase 1: Compute world-space positions for all unique vertices
+		for ( let v = 0; v < uniqueVerts; v ++ ) {
+
+			// getVertexPosition handles morph targets + bone transforms (local space)
+			mesh.getVertexPosition( v, tempVec );
+			// Transform to world space (matches GeometryExtractor behavior)
+			tempVec.applyMatrix4( worldMatrix );
+
+			skinned[ v * 3 ] = tempVec.x;
+			skinned[ v * 3 + 1 ] = tempVec.y;
+			skinned[ v * 3 + 2 ] = tempVec.z;
+
+		}
+
+		// Phase 2: Assemble triangles
+		if ( indices ) {
+
+			for ( let t = 0; t < count; t ++ ) {
+
+				const t3 = t * 3;
+				const i0 = indices[ t3 ] * 3;
+				const i1 = indices[ t3 + 1 ] * 3;
+				const i2 = indices[ t3 + 2 ] * 3;
+				const o = t * 9;
+
+				output[ o ] = skinned[ i0 ];
+				output[ o + 1 ] = skinned[ i0 + 1 ];
+				output[ o + 2 ] = skinned[ i0 + 2 ];
+				output[ o + 3 ] = skinned[ i1 ];
+				output[ o + 4 ] = skinned[ i1 + 1 ];
+				output[ o + 5 ] = skinned[ i1 + 2 ];
+				output[ o + 6 ] = skinned[ i2 ];
+				output[ o + 7 ] = skinned[ i2 + 1 ];
+				output[ o + 8 ] = skinned[ i2 + 2 ];
 
 			}
 
-			// Phase 2: Assemble triangles
-			if ( indices ) {
+		} else {
 
-				for ( let t = 0; t < count; t ++ ) {
+			// Non-indexed: vertices are sequential triplets
+			for ( let t = 0; t < count; t ++ ) {
 
-					const t3 = t * 3;
-					const i0 = indices[ t3 ] * 3;
-					const i1 = indices[ t3 + 1 ] * 3;
-					const i2 = indices[ t3 + 2 ] * 3;
-					const o = ( start + t ) * 9;
+				const v0 = ( t * 3 ) * 3;
+				const v1 = ( t * 3 + 1 ) * 3;
+				const v2 = ( t * 3 + 2 ) * 3;
+				const o = t * 9;
 
-					output[ o ] = skinned[ i0 ];
-					output[ o + 1 ] = skinned[ i0 + 1 ];
-					output[ o + 2 ] = skinned[ i0 + 2 ];
-					output[ o + 3 ] = skinned[ i1 ];
-					output[ o + 4 ] = skinned[ i1 + 1 ];
-					output[ o + 5 ] = skinned[ i1 + 2 ];
-					output[ o + 6 ] = skinned[ i2 ];
-					output[ o + 7 ] = skinned[ i2 + 1 ];
-					output[ o + 8 ] = skinned[ i2 + 2 ];
-
-				}
-
-			} else {
-
-				// Non-indexed: vertices are sequential triplets
-				for ( let t = 0; t < count; t ++ ) {
-
-					const v0 = ( t * 3 ) * 3;
-					const v1 = ( t * 3 + 1 ) * 3;
-					const v2 = ( t * 3 + 2 ) * 3;
-					const o = ( start + t ) * 9;
-
-					output[ o ] = skinned[ v0 ];
-					output[ o + 1 ] = skinned[ v0 + 1 ];
-					output[ o + 2 ] = skinned[ v0 + 2 ];
-					output[ o + 3 ] = skinned[ v1 ];
-					output[ o + 4 ] = skinned[ v1 + 1 ];
-					output[ o + 5 ] = skinned[ v1 + 2 ];
-					output[ o + 6 ] = skinned[ v2 ];
-					output[ o + 7 ] = skinned[ v2 + 1 ];
-					output[ o + 8 ] = skinned[ v2 + 2 ];
-
-				}
+				output[ o ] = skinned[ v0 ];
+				output[ o + 1 ] = skinned[ v0 + 1 ];
+				output[ o + 2 ] = skinned[ v0 + 2 ];
+				output[ o + 3 ] = skinned[ v1 ];
+				output[ o + 4 ] = skinned[ v1 + 1 ];
+				output[ o + 5 ] = skinned[ v1 + 2 ];
+				output[ o + 6 ] = skinned[ v2 ];
+				output[ o + 7 ] = skinned[ v2 + 1 ];
+				output[ o + 8 ] = skinned[ v2 + 2 ];
 
 			}
 
 		}
+
+		return output;
 
 	}
 
@@ -433,7 +443,7 @@ export class AnimationManager extends EventDispatcher {
 		this._mixerRoot = null;
 		this._meshes = null;
 		this._meshTriRanges = null;
-		this._posBuffer = null;
+		this._meshPositions = null;
 		this._skinnedCache = null;
 		this._clipsCache = null;
 

@@ -3,7 +3,7 @@ import {
 	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags
 } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { ChunkedRecords } from './ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
 
 const log = createLogger( 'geometry' );
@@ -304,7 +304,12 @@ export class GeometryExtractor {
 	 */
 	_allocateTriangles( capacity ) {
 
-		this.triangles = new ChunkedRecords( capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array );
+		// Shared-backed so a refit reads and writes them in place; copying them into shared memory
+		// on first refit would be a second copy of the largest thing in the scene.
+		this.triangles = new ChunkedRecords(
+			capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array,
+			undefined, SHARED_MEMORY_AVAILABLE
+		);
 		this.triangleFloatChunks = this.triangles.viewAs( Float32Array );
 		this.triangleData = this.triangles.single;
 		this.triangleFloats = this.triangleFloatChunks.single;

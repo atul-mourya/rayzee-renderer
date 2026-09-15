@@ -14,8 +14,24 @@
  * the whole array, and callers that only work on flat data can keep using it.
  */
 
-/** Below this a scene stays single-chunk. Leaves headroom under the measured 2,040 MB V8 cap. */
-export const DEFAULT_CHUNK_BYTES = 1_536 * 1024 * 1024;
+/**
+ * Below this a scene stays single-chunk. Far under the 2,040 MB V8 cap on purpose: a big
+ * ArrayBuffer needs that much *contiguous* address space, so chunk size sets the usable total.
+ * Placed before the allocator gave up, fresh renderer: 256 MB chunks 5,120 MB · 64 MB 7,040 MB ·
+ * 32 MB 7,744 MB.
+ */
+export const DEFAULT_CHUNK_BYTES = 64 * 1024 * 1024;
+
+/** Whether a worker can be handed these arrays without copying them first. */
+export const SHARED_MEMORY_AVAILABLE = typeof SharedArrayBuffer !== 'undefined';
+
+/** One chunk's storage, shared with workers when the page is cross-origin isolated. */
+function allocChunk( LaneType, lanes, shared ) {
+
+	if ( ! shared ) return new LaneType( lanes );
+	return new LaneType( new SharedArrayBuffer( lanes * LaneType.BYTES_PER_ELEMENT ) );
+
+}
 
 export class ChunkedRecords {
 
@@ -24,8 +40,11 @@ export class ChunkedRecords {
 	 * @param {number} lanesPerRecord - elements per record (20 for a triangle, 16 for a BVH node)
 	 * @param {Function} LaneType - typed array constructor for one lane
 	 * @param {number} [maxBytesPerChunk]
+	 * @param {boolean} [shared] - back the chunks with SharedArrayBuffer so a worker can read and
+	 *   write them in place. Without it a refit has to copy the whole store into shared memory,
+	 *   which is a second copy of the largest thing in the scene.
 	 */
-	constructor( recordCount, lanesPerRecord, LaneType, maxBytesPerChunk = DEFAULT_CHUNK_BYTES ) {
+	constructor( recordCount, lanesPerRecord, LaneType, maxBytesPerChunk = DEFAULT_CHUNK_BYTES, shared = false ) {
 
 		const recordBytes = lanesPerRecord * LaneType.BYTES_PER_ELEMENT;
 		const perChunk = Math.max( 1, Math.floor( maxBytesPerChunk / recordBytes ) );
@@ -34,18 +53,19 @@ export class ChunkedRecords {
 		this.lanesPerRecord = lanesPerRecord;
 		this.LaneType = LaneType;
 		this.recordsPerChunk = recordCount <= perChunk ? Math.max( recordCount, 1 ) : perChunk;
+		this.shared = shared;
 
 		this.chunks = [];
 		let remaining = recordCount;
 		while ( remaining > 0 ) {
 
 			const n = Math.min( remaining, this.recordsPerChunk );
-			this.chunks.push( new LaneType( n * lanesPerRecord ) );
+			this.chunks.push( allocChunk( LaneType, n * lanesPerRecord, shared ) );
 			remaining -= n;
 
 		}
 
-		if ( this.chunks.length === 0 ) this.chunks.push( new LaneType( 0 ) );
+		if ( this.chunks.length === 0 ) this.chunks.push( allocChunk( LaneType, 0, shared ) );
 
 	}
 
@@ -55,10 +75,62 @@ export class ChunkedRecords {
 		const c = Object.create( ChunkedRecords.prototype );
 		c.recordCount = recordCount;
 		c.lanesPerRecord = lanesPerRecord;
-		c.LaneType = chunks[ 0 ].constructor;
+		c.LaneType = chunks[ 0 ]?.constructor ?? null;
 		c.recordsPerChunk = recordsPerChunk;
 		c.chunks = chunks;
+		c.shared = typeof SharedArrayBuffer !== 'undefined' && chunks[ 0 ]?.buffer instanceof SharedArrayBuffer;
 		return c;
+
+	}
+
+	/**
+	 * Like the constructor, but a chunk is allocated the first time it is touched, so a fill that
+	 * releases each source as it writes it never holds the whole source and destination at once.
+	 */
+	static lazy( recordCount, lanesPerRecord, LaneType, maxBytesPerChunk = DEFAULT_CHUNK_BYTES, shared = false ) {
+
+		const perChunk = Math.max( 1, Math.floor( maxBytesPerChunk / ( lanesPerRecord * LaneType.BYTES_PER_ELEMENT ) ) );
+		const c = Object.create( ChunkedRecords.prototype );
+		c.recordCount = recordCount;
+		c.lanesPerRecord = lanesPerRecord;
+		c.LaneType = LaneType;
+		c.recordsPerChunk = recordCount <= perChunk ? Math.max( recordCount, 1 ) : perChunk;
+		c.shared = shared;
+		c.chunks = new Array( Math.max( 1, Math.ceil( recordCount / c.recordsPerChunk ) ) );
+		c._views = [];
+		return c;
+
+	}
+
+	/** Allocate chunk `k`, plus the matching chunk of every view taken over this storage. @private */
+	_materialize( k ) {
+
+		if ( this._owner ) {
+
+			this._owner._materialize( k );
+			return this.chunks[ k ];
+
+		}
+
+		const from = k * this.recordsPerChunk;
+		const lanes = Math.min( this.recordsPerChunk, this.recordCount - from ) * this.lanesPerRecord;
+		const chunk = this.chunks[ k ] = allocChunk( this.LaneType, lanes, this.shared );
+
+		for ( const v of this._views ) {
+
+			v.chunks[ k ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
+
+		}
+
+		return chunk;
+
+	}
+
+	/** Allocate whatever a lazy fill never touched, so the result behaves like an eager one. */
+	materializeAll() {
+
+		for ( let k = 0; k < this.chunks.length; k ++ ) if ( ! this.chunks[ k ] ) this._materialize( k );
+		return this;
 
 	}
 
@@ -78,7 +150,7 @@ export class ChunkedRecords {
 	get byteLength() {
 
 		let n = 0;
-		for ( const c of this.chunks ) n += c.byteLength;
+		for ( const c of this.chunks ) if ( c ) n += c.byteLength;
 		return n;
 
 	}
@@ -86,7 +158,8 @@ export class ChunkedRecords {
 	/** The array holding `record`. */
 	chunkFor( record ) {
 
-		return this.chunks[ ( record / this.recordsPerChunk ) | 0 ];
+		const k = ( record / this.recordsPerChunk ) | 0;
+		return this.chunks[ k ] ?? this._materialize( k );
 
 	}
 
@@ -190,10 +263,21 @@ export class ChunkedRecords {
 	/** A parallel set of views of another lane type over the same memory (u32 records read as f32). */
 	viewAs( LaneType ) {
 
-		return ChunkedRecords.adopt(
-			this.chunks.map( c => new LaneType( c.buffer, c.byteOffset, c.byteLength / LaneType.BYTES_PER_ELEMENT ) ),
+		const wrap = c => new LaneType( c.buffer, c.byteOffset, c.byteLength / LaneType.BYTES_PER_ELEMENT );
+		const v = ChunkedRecords.adopt(
+			this.chunks.map( c => ( c ? wrap( c ) : undefined ) ),
 			this.recordCount, this.lanesPerRecord, this.recordsPerChunk
 		);
+		v.LaneType = LaneType;
+
+		if ( this._views ) {
+
+			v._owner = this;
+			this._views.push( v );
+
+		}
+
+		return v;
 
 	}
 

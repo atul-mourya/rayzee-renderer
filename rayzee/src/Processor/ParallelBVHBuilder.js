@@ -48,6 +48,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 			// Allocate SharedArrayBuffers
 			const sharedTriangleData = new SharedArrayBuffer( triangles.byteLength );
 			new Uint32Array( sharedTriangleData ).set( triangles );
+			triangles = null; // shared copy is the only one needed; the fallback rebuilds from it
 
 			const sharedCentroids = new SharedArrayBuffer( triangleCount * 3 * 4 );
 			const sharedBMin = new SharedArrayBuffer( triangleCount * 3 * 4 );

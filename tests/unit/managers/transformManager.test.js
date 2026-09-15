@@ -332,8 +332,9 @@ describe( 'TransformManager', () => {
 			expect( tm._meshTriRanges[ 0 ] ).toEqual(
 				expect.objectContaining( { start: 0, count: 1, uniqueVerts: 3 } )
 			);
-			expect( tm._posBuffer ).toHaveLength( 9 ); // 1 tri * 9 floats
-			expect( tm._normalBuffer ).toHaveLength( 9 );
+			// Nothing is allocated until a mesh is actually dragged.
+			expect( tm._meshPositions ).toEqual( [] );
+			expect( tm._skinnedCache ).toEqual( [] );
 
 		} );
 
@@ -348,7 +349,34 @@ describe( 'TransformManager', () => {
 			expect( tm._meshTriRanges[ 0 ].count ).toBe( 1 );
 			expect( tm._meshTriRanges[ 1 ].start ).toBe( 1 );
 			expect( tm._meshTriRanges[ 1 ].count ).toBe( 2 );
-			expect( tm._posBuffer ).toHaveLength( 27 ); // 3 tris * 9
+
+		} );
+
+		it( 'allocates a mesh its own buffers only when that mesh is computed', () => {
+
+			const mesh0 = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
+			const mesh1 = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2, 3, 3, 3 ], [ 0, 1, 2, 1, 2, 3 ] );
+
+			tm.setMeshData( [ mesh0, mesh1 ], 3 );
+			tm._computeMeshPositions( 1 );
+
+			expect( tm._meshPositions[ 0 ] ).toBeUndefined();
+			expect( tm._meshPositions[ 1 ] ).toHaveLength( 2 * 9 ); // that mesh alone
+			expect( tm._meshNormals[ 1 ] ).toHaveLength( 2 * 9 );
+			expect( tm._skinnedCache[ 0 ] ).toBeUndefined();
+
+		} );
+
+		it( 'writes a mesh at its own offset, not the scene offset', () => {
+
+			const mesh0 = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
+			const mesh1 = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2 ], [ 0, 1, 2 ] );
+
+			tm.setMeshData( [ mesh0, mesh1 ], 2 );
+			tm._computeMeshPositions( 1 ); // starts at scene triangle 1
+
+			// mesh 1's first vertex lands at index 0 of its own buffer
+			expect( Array.from( tm._meshPositions[ 1 ].slice( 0, 3 ) ) ).toEqual( [ 2, 2, 2 ] );
 
 		} );
 
@@ -420,9 +448,9 @@ describe( 'TransformManager', () => {
 
 			expect( tm.attachedObject ).toBeNull();
 			expect( tm._meshes ).toBeNull();
-			expect( tm._posBuffer ).toBeNull();
-			expect( tm._normalBuffer ).toBeNull();
-			expect( tm._baselineComputed ).toBe( false );
+			expect( tm._meshPositions ).toBeNull();
+			expect( tm._meshNormals ).toBeNull();
+			expect( tm._skinnedCache ).toBeNull();
 
 		} );
 

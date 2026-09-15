@@ -4,7 +4,7 @@ import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
 import { InstanceTable, isIdentity } from './InstanceTable.js';
-import { ChunkedRecords } from './ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
 import { TextureCreator } from './TextureCreator.js';
 import { GeometryExtractor } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
@@ -103,7 +103,6 @@ export class SceneProcessor {
 
 		// Two-level BVH (TLAS/BLAS) support
 		this.instanceTable = null; // Per-mesh BLAS metadata
-		this.originalToBvhMap = null; // Uint32Array: original tri index → BVH-order index (global, for legacy compat)
 		this._refitWorker = null;
 		this._refitSharedBuffers = null; // SharedArrayBuffer refs for zero-copy refit
 		this._rebuildGeneration = 0; // Monotonic counter to discard stale background rebuilds
@@ -503,48 +502,57 @@ export class SceneProcessor {
 			};
 
 			const totalTasks = poolTasks.length + parallelTasks.length;
+			let doneTasks = 0;
+			const reportBLASProgress = () => {
 
-			// Build all meshes via bounded worker pool (main thread stays free)
-			const poolPromise = this._buildBLASesWithPool( poolTasks, workerOpts, ( done ) => {
-
+				doneTasks ++;
 				updateLoading( {
-					status: `Building BLAS ${done + parallelTasks.length}/${totalTasks}...`,
-					progress: 25 + Math.floor( ( done / totalTasks ) * 45 )
+					status: `Building BLAS ${doneTasks}/${totalTasks}...`,
+					progress: 25 + Math.floor( ( doneTasks / totalTasks ) * 45 )
 				} );
 
-			} );
+			};
 
-			// Very large meshes use multi-worker parallel builder concurrently
-			const parallelPromises = parallelTasks.map( ( { m, range } ) => {
+			// Build all meshes via bounded worker pool (main thread stays free)
+			const poolPromise = this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress );
 
-				const meshTriData = this.triangles.copyOf( range.start, range.count );
+			// One at a time: each build already spreads over every core and pins ~200 bytes per
+			// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
+			const parallelResults = [];
+			const parallelPromise = ( async () => {
 
-				return buildBVHParallel( meshTriData, this.config.bvhDepth, null, {
-					maxLeafSize: this.bvhBuilder.maxLeafSize,
-					numBins: this.bvhBuilder.numBins,
-					maxBins: this.bvhBuilder.maxBins,
-					minBins: this.bvhBuilder.minBins,
-					...workerOpts
-				} ).then( result => ( { m, range, result } ) );
+				for ( const { m, range } of parallelTasks ) {
 
-			} );
+					const meshTriData = this.triangles.copyOf( range.start, range.count );
 
-			// Await both paths concurrently
-			const [ poolResults, parallelResults ] = await Promise.all( [
-				poolPromise,
-				Promise.all( parallelPromises )
-			] );
+					const result = await buildBVHParallel( meshTriData, this.config.bvhDepth, null, {
+						maxLeafSize: this.bvhBuilder.maxLeafSize,
+						numBins: this.bvhBuilder.numBins,
+						maxBins: this.bvhBuilder.maxBins,
+						minBins: this.bvhBuilder.minBins,
+						...workerOpts
+					} );
+
+					if ( result.reorderedTriangles ) {
+
+						this.triangles.setRecords( range.start, result.reorderedTriangles );
+						delete result.reorderedTriangles;
+
+					}
+
+					parallelResults.push( { m, range, result } );
+					reportBLASProgress();
+
+				}
+
+			} )();
+
+			const [ poolResults ] = await Promise.all( [ poolPromise, parallelPromise ] );
 
 			// Store all results, summing per-mesh split stats for one aggregate BVH line
 			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0, treeletsImproved: 0, treeletsProcessed: 0 };
 
 			for ( const { m, range, result } of [ ...poolResults, ...parallelResults ] ) {
-
-				if ( result.reorderedTriangles ) {
-
-					this.triangles.setRecords( range.start, result.reorderedTriangles );
-
-				}
 
 				const st = result.splitStats;
 				if ( st ) {
@@ -607,27 +615,37 @@ export class SceneProcessor {
 			this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( table.count ) );
 			const totalNodes = this.instanceTable.totalNodeCount;
 
-			const tlasData = await this._buildTLAS( table );
+			let tlasData = await this._buildTLAS( table );
 			this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
 
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
 			const assembleStart = performance.now();
 			// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
 			// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
-			this._setBVHData( new ChunkedRecords( totalNodes, 16, Float32Array ) );
+			// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
+			// reaches them and each BLAS is released as it lands, never both fully resident.
+			this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
 			this.bvh.setRecords( 0, tlasData );
+			// Hundreds of megabytes at millions of placements, and the chunks below need the room
+			// more than a later refit needs the cache.
+			tlasData = null;
+			this.tlasBuilder.releaseFlattenBuffer();
 
-			for ( let i = 0; i < table.count; i ++ ) {
+			for ( let t = 0; t < table.templateCount; t ++ ) {
 
-				if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue; // alias — owner writes
-				const blas = table.blasData.get( table.sourceMesh[ i ] );
-				const blasOffset = table.blasOffsetOf( i );
+				const blas = table.blasData.get( t ); // only owning templates hold one
+				if ( ! blas ) continue;
+
+				const blasOffset = table.tplBlasOffset[ t ];
 				this.bvh.setRecords( blasOffset, blas );
-				this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.triOffsetOf( i ) );
+				this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
+				table.blasData.delete( t );
 
 			}
 
-			this._buildGlobalOriginalToBvhMap();
+			this._setBVHData( this.bvh.materializeAll() );
+
+			this._buildBvhToOriginalMaps();
 			this.performanceMetrics.bvhAssembleTime = performance.now() - assembleStart;
 
 			table.originalToBvhMap.clear();
@@ -773,12 +791,16 @@ export class SceneProcessor {
 				if ( data.progress !== undefined ) return; // Ignore progress messages
 
 				const { m, range } = worker._currentTask;
+
+				// Write back now: holding one copy per mesh until the pool drains is the whole
+				// triangle buffer over again, ~3 GB at 40M.
+				if ( data.triangles ) this.triangles.setRecords( range.start, data.triangles );
+
 				results.push( {
 					m,
 					range,
 					result: {
 						bvhData: data.bvhData,
-						reorderedTriangles: data.triangles || null,
 						originalToBvh: data.originalToBvh || null,
 						splitStats: data.treeletStats || null,
 					}
@@ -828,13 +850,12 @@ export class SceneProcessor {
 	}
 
 	/**
-	 * Build global originalToBvhMap and per-mesh bvhToOriginal maps.
-	 * The inverse map enables cache-friendly sequential writes during position updates.
+	 * Build the per-template bvhToOriginal maps: stored-order index → the caller's triangle index.
+	 * Only this direction is kept — every reader walks stored order, so the forward map was a
+	 * second copy of the same permutation (114 MB at 30M triangles) that nothing needed.
 	 * @private
 	 */
-	_buildGlobalOriginalToBvhMap() {
-
-		this.originalToBvhMap = new Uint32Array( this.triangleCount );
+	_buildBvhToOriginalMaps() {
 
 		const table = this.instanceTable;
 		for ( let m = 0; m < table.count; m ++ ) {
@@ -843,7 +864,7 @@ export class SceneProcessor {
 			if ( ! table.isSet[ m ] || ! table.isOwner( m ) ) continue;
 
 			const t = table.sourceMesh[ m ];
-			const triCount = table.tplTriCount[ t ], triOffset = table.tplTriOffset[ t ];
+			const triCount = table.tplTriCount[ t ];
 			const originalToBvh = table.originalToBvhMap.get( t );
 
 			// Build per-mesh bvhToOriginal (inverse map for sequential writes)
@@ -851,26 +872,16 @@ export class SceneProcessor {
 
 			if ( originalToBvh ) {
 
-				for ( let i = 0; i < triCount; i ++ ) {
-
-					const bvhLocal = originalToBvh[ i ];
-					this.originalToBvhMap[ triOffset + i ] = triOffset + bvhLocal;
-					bvhToOrig[ bvhLocal ] = i;
-
-				}
+				for ( let i = 0; i < triCount; i ++ ) bvhToOrig[ originalToBvh[ i ] ] = i;
 
 			} else {
 
-				for ( let i = 0; i < triCount; i ++ ) {
-
-					this.originalToBvhMap[ triOffset + i ] = triOffset + i;
-					bvhToOrig[ i ] = i;
-
-				}
+				for ( let i = 0; i < triCount; i ++ ) bvhToOrig[ i ] = i;
 
 			}
 
 			table.bvhToOriginal.set( t, bvhToOrig );
+			table.originalToBvhMap.delete( t ); // consumed; the caller clears the rest anyway
 
 		}
 
@@ -1426,44 +1437,111 @@ export class SceneProcessor {
 	// ===== BVH REFIT (Animation Support) =====
 
 	/**
+	 * Make sure a store's chunks live in shared memory. Already-shared chunks are left alone; a
+	 * page without cross-origin isolation falls back to copying, which is the old cost.
+	 * @private
+	 */
+	_adoptSharedChunks( field, LaneType ) {
+
+		const records = this[ field ];
+		if ( records.shared ) return;
+
+		const chunks = records.chunks.map( c => {
+
+			const view = new LaneType( new SharedArrayBuffer( c.byteLength ) );
+			view.set( c );
+			return view;
+
+		} );
+
+		const adopted = ChunkedRecords.adopt(
+			chunks, records.recordCount, records.lanesPerRecord, records.recordsPerChunk
+		);
+
+		if ( field === 'bvh' ) this._setBVHData( adopted );
+		else this._setTriangleData( adopted );
+
+	}
+
+	/**
+	 * Normalize a caller's positions or normals into a per-mesh reader. A full-scene array is
+	 * handed back as views into itself, so the old contract costs nothing extra; a callback lets a
+	 * caller build one mesh at a time and never hold 9 floats × every triangle at once — 1,030 MB
+	 * at 30M triangles, which is past what a renderer can allocate.
+	 * @private
+	 */
+	_meshSource( source, what ) {
+
+		if ( source == null ) return null;
+
+		const table = this.instanceTable;
+
+		if ( typeof source === 'function' ) {
+
+			return i => {
+
+				const got = source( i, table.triCountOf( i ) );
+				const want = table.triCountOf( i ) * 9;
+				if ( got && got.length !== want ) {
+
+					throw new Error(
+						`SceneProcessor: ${what}s for mesh ${i} must be ${want} floats ` +
+						`(${table.triCountOf( i )} triangles × 9), got ${got.length}.`
+					);
+
+				}
+
+				return got ?? null;
+
+			};
+
+		}
+
+		// A short array reads past its end and writes NaN through every AABB above it with no
+		// error anywhere, so the scene just vanishes. Check once here instead.
+		const expected = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
+		if ( source.length !== expected ) {
+
+			throw new Error(
+				`SceneProcessor: expected ${expected} ${what} floats (${expected / 9} triangles × 9, ` +
+				`full scene), got ${source.length}. Pass a per-mesh callback instead to avoid ` +
+				'building one array for the whole scene.'
+			);
+
+		}
+
+		return i => {
+
+			const from = table.expandedStartOf( i ) * 9;
+			return source.subarray( from, from + table.triCountOf( i ) * 9 );
+
+		};
+
+	}
+
+	/**
 	 * Refit BVH with updated vertex positions (same topology — no triangle add/remove).
 	 * O(N) bottom-up AABB update instead of full O(N log N) SAH rebuild.
 	 *
-	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) in original mesh order
+	 * @param {Float32Array|function(number, number): Float32Array} newPositions - either 9 floats
+	 *   per triangle for the whole scene (meshes in `this.meshes` order), or a callback given a
+	 *   mesh index and its triangle count that returns just that mesh's 9-floats-per-triangle
+	 *   slice. Prefer the callback: the scene-wide form is 1,030 MB at 30M triangles.
+	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - same two shapes
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
-		if ( ! this.bvh || ! this.triangles || ! this.originalToBvhMap ) {
+		if ( ! this.bvh || ! this.triangles || ! this.instanceTable ) {
 
 			throw new Error( 'No BVH data available for refit. Run buildBVH() first.' );
 
 		}
 
-		// The worker reads triCount * 9 floats unconditionally, and the shared position buffer
-		// is sized from the FIRST call's argument — so a short array reads past its end and
-		// writes NaN into triangleData and every AABB above it, with no error anywhere. A
-		// caller that misses a mesh (the hidden ground disk is easy to miss) sees the scene
-		// silently vanish instead of a thrown exception, so check the length up front.
-		const expectedFloats = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
+		const positionsFor = this._meshSource( newPositions, 'position' );
+		const normalsFor = this._meshSource( newNormals, 'normal' );
 
-		if ( newPositions?.length !== expectedFloats ) {
-
-			throw new Error(
-				`SceneProcessor.refitBVH: expected ${expectedFloats} position floats ` +
-				`(${this.expandedTriangleCount ?? this.triangleCount} triangles × 9), got ${newPositions?.length ?? 'none'}. ` +
-				'Positions must cover every triangle in the scene, meshes in this.meshes order.'
-			);
-
-		}
-
-		if ( newNormals && newNormals.length !== expectedFloats ) {
-
-			throw new Error(
-				`SceneProcessor.refitBVH: expected ${expectedFloats} normal floats, got ${newNormals.length}.`
-			);
-
-		}
+		if ( ! positionsFor ) throw new Error( 'SceneProcessor.refitBVH: positions are required.' );
 
 		// Lazy-create worker
 		if ( ! this._refitWorker ) {
@@ -1472,79 +1550,55 @@ export class SceneProcessor {
 
 		}
 
-		// First call: set up SharedArrayBuffers for zero-copy communication.
-		// Worker writes into shared bvh/tri data; main thread reads them for GPU upload.
-		// Race-free because _animRefitInFlight guard prevents overlapping calls.
+		// First call: move triangles and nodes into shared memory so the worker refits them in
+		// place. Positions never cross the boundary — they are scattered into the triangle records
+		// below, one mesh at a time, so nothing scene-sized is allocated on either side.
 		if ( ! this._refitSharedBuffers ) {
 
-			const sharedPosBuf = new SharedArrayBuffer( newPositions.byteLength );
+			// Both stores are built on SharedArrayBuffer when the page allows it, so the worker
+			// takes them as they are. Copying instead would duplicate the two largest structures
+			// in the scene — 3,968 MB at 30M triangles, which is where this used to fail.
+			this._adoptSharedChunks( 'bvh', Float32Array );
+			this._adoptSharedChunks( 'triangles', Uint32Array );
 
-			// One shared buffer per BVH chunk, same as the triangles below.
-			const sharedBvhBufs = this.bvh.chunks.map( c => new SharedArrayBuffer( c.byteLength ) );
-			const sharedBvhChunks = sharedBvhBufs.map( ( buf, i ) => {
+			const sharedBvhBufs = this.bvh.chunks.map( c => c.buffer );
+			const sharedTriBufs = this.triangles.chunks.map( c => c.buffer );
+			this._refitSharedBuffers = { bvhBufs: sharedBvhBufs, triBufs: sharedTriBufs };
 
-				const view = new Float32Array( buf );
-				view.set( this.bvh.chunks[ i ] );
-				return view;
-
-			} );
-
-			// One shared buffer per triangle chunk — a SharedArrayBuffer carries the same ~2 GB
-			// cap, so a chunked scene has to stay chunked across the worker boundary too.
-			const sharedTriBufs = this.triangles.chunks.map( c => new SharedArrayBuffer( c.byteLength ) );
-			const sharedTriChunks = sharedTriBufs.map( ( buf, i ) => {
-
-				const view = new Uint32Array( buf );
-				view.set( this.triangles.chunks[ i ] );
-				return view;
-
-			} );
-
-			// Replace local refs with shared views
-			this._setBVHData( ChunkedRecords.adopt(
-				sharedBvhChunks, this.bvh.recordCount, this.bvh.lanesPerRecord, this.bvh.recordsPerChunk
-			) );
-			this._setTriangleData( ChunkedRecords.adopt(
-				sharedTriChunks, this.triangles.recordCount, this.triangles.lanesPerRecord, this.triangles.recordsPerChunk
-			) );
-
-			// Build bvhToOriginal map (inverse of originalToBvh) for cache-friendly
-			// sequential writes in the worker's updateTrianglePositions.
-			const triCount = this.originalToBvhMap.length;
-			const bvhToOriginal = new Uint32Array( triCount );
-			for ( let i = 0; i < triCount; i ++ ) {
-
-				bvhToOriginal[ this.originalToBvhMap[ i ] ] = i;
-
-			}
-
-			this._refitSharedBuffers = {
-				bvhBufs: sharedBvhBufs,
-				triBufs: sharedTriBufs,
-				posBuf: sharedPosBuf,
-				posView: new Float32Array( sharedPosBuf ),
-			};
-
-			// Send shared buffers + immutable index map to worker (cached there)
 			this._refitWorker.postMessage( {
 				type: 'init',
 				sharedBvhBufs,
 				bvhRecordCount: this.bvh.recordCount,
 				bvhRecordsPerChunk: this.bvh.recordsPerChunk,
 				sharedTriBufs,
-				sharedPosBuf,
 				triRecordCount: this.triangles.recordCount,
 				triLanesPerRecord: this.triangles.lanesPerRecord,
 				triRecordsPerChunk: this.triangles.recordsPerChunk,
-				bvhToOriginal,
-			}, [ bvhToOriginal.buffer ] );
+			} );
 
 		}
 
-		// Write new positions into shared buffer (main thread → worker, zero-copy). The
-		// worker writes triangles verbatim, so the world-to-object step happens here rather
-		// than shipping every instance matrix across.
-		this._writeObjectSpacePositions( newPositions, this._refitSharedBuffers.posView );
+		// Scatter straight into the shared triangle records, mesh by mesh, so the caller's slice
+		// can be released as soon as it is read. Callers hand over world space; triangles are
+		// stored per instance, so each mesh comes back through its own inverse.
+		const table = this.instanceTable;
+		for ( let i = 0; i < table.count; i ++ ) {
+
+			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
+
+			const p = positionsFor( i );
+			if ( ! p ) continue;
+			this._updateMeshTrianglePositions( i, p );
+
+			// Smooth normals overwrite the face normals just computed, so they follow per mesh.
+			if ( normalsFor ) {
+
+				const n = normalsFor( i );
+				if ( n ) this._patchMeshSmoothNormals( i, n );
+
+			}
+
+		}
 
 		return new Promise( ( resolve, reject ) => {
 
@@ -1552,14 +1606,6 @@ export class SceneProcessor {
 
 				const msg = e.data;
 				if ( msg.type === 'refitComplete' ) {
-
-					// bvhData/triangleData already updated via shared memory.
-					// If smooth normals provided, overwrite the face normals the worker computed.
-					if ( newNormals ) {
-
-						this._patchSmoothNormals( newNormals );
-
-					}
 
 					resolve( { refitTimeMs: msg.refitTimeMs } );
 
@@ -1582,23 +1628,16 @@ export class SceneProcessor {
 	 * Overwrite face normals in triangleData with smooth vertex normals (full scene).
 	 * @private
 	 */
-	_patchSmoothNormals( normals ) {
+	_patchSmoothNormals( normalsFor ) {
 
 		const table = this.instanceTable;
-		if ( ! table || table.count === 0 ) {
-
-			this._patchNormalsRange( normals, 0, this.originalToBvhMap.length, null, null );
-			return;
-
-		}
+		if ( ! table ) return;
 
 		for ( let i = 0; i < table.count; i ++ ) {
 
 			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
-			this._patchNormalsRange(
-				normals, table.triOffsetOf( i ), table.triCountOf( i ),
-				table.matrixWorldOf( i ), table.expandedStartOf( i )
-			);
+			const n = normalsFor( i );
+			if ( n ) this._patchMeshSmoothNormals( i, n );
 
 		}
 
@@ -1621,26 +1660,10 @@ export class SceneProcessor {
 
 		}
 
-		// Indexed by absolute triangle, so a short buffer reads undefined → NaN bounds for the
-		// affected meshes with no error. Same silent-corruption trap as refitBVH.
-		const expectedFloats = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
+		const positionsFor = this._meshSource( newPositions, 'position' );
+		const normalsFor = this._meshSource( newNormals, 'normal' );
 
-		if ( newPositions?.length !== expectedFloats ) {
-
-			throw new Error(
-				`SceneProcessor.refitBLASes: expected ${expectedFloats} position floats ` +
-				`(${this.expandedTriangleCount ?? this.triangleCount} triangles × 9, full scene), got ${newPositions?.length ?? 'none'}.`
-			);
-
-		}
-
-		if ( newNormals && newNormals.length !== expectedFloats ) {
-
-			throw new Error(
-				`SceneProcessor.refitBLASes: expected ${expectedFloats} normal floats, got ${newNormals.length}.`
-			);
-
-		}
+		if ( ! positionsFor ) throw new Error( 'SceneProcessor.refitBLASes: positions are required.' );
 
 		const start = performance.now();
 
@@ -1652,18 +1675,20 @@ export class SceneProcessor {
 		}
 
 		// Step 1: Update triangle positions and refit each affected BLAS
+		const table = this.instanceTable;
+
 		for ( const meshIdx of affectedMeshIndices ) {
 
-			const entry = this.instanceTable.entryAt( meshIdx );
-			if ( ! entry ) continue;
+			if ( ! table.isSet[ meshIdx ] ) continue;
 
-			// Update triangle positions within this mesh's range
-			this._updateMeshTrianglePositions( entry, newPositions );
+			const p = positionsFor( meshIdx );
+			if ( ! p ) continue;
+			this._updateMeshTrianglePositions( meshIdx, p );
 
-			// Patch smooth normals for this mesh if provided
-			if ( newNormals ) {
+			if ( normalsFor ) {
 
-				this._patchMeshSmoothNormals( entry, newNormals );
+				const n = normalsFor( meshIdx );
+				if ( n ) this._patchMeshSmoothNormals( meshIdx, n );
 
 			}
 
@@ -1671,8 +1696,8 @@ export class SceneProcessor {
 			this._blasRefitter.refitRange(
 				this.bvh,
 				this.triangles,
-				entry.blasOffset,
-				entry.blasNodeCount
+				table.blasOffsetOf( meshIdx ),
+				table.blasNodeCountOf( meshIdx )
 			);
 
 			// Recompute this mesh's AABB for TLAS rebuild
@@ -1983,52 +2008,12 @@ export class SceneProcessor {
 
 	}
 
-	_writeObjectSpacePositions( src, dst ) {
-
-		const table = this.instanceTable;
-		let covered = 0;
-
-		for ( let i = 0; i < ( table?.count || 0 ); i ++ ) {
-
-			// Aliases point at the owner's triangles; deforming them once is the whole story.
-			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
-
-			const from = table.expandedStartOf( i ) * 9;
-			const to = table.triOffsetOf( i ) * 9;
-			const len = table.triCountOf( i ) * 9;
-			covered = Math.max( covered, to + len );
-
-			// Callers hand over world-space positions; triangles are stored per instance, so
-			// they come back through the inverse.
-			const m = table.matrixInverseOf( i );
-			if ( isIdentity( m ) ) {
-
-				dst.set( src.subarray( from, from + len ), to );
-				continue;
-
-			}
-
-			for ( let i = 0; i < len; i += 3 ) {
-
-				const x = src[ from + i ], y = src[ from + i + 1 ], z = src[ from + i + 2 ];
-				dst[ to + i ] = m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ];
-				dst[ to + i + 1 ] = m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ];
-				dst[ to + i + 2 ] = m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ];
-
-			}
-
-		}
-
-		void covered;
-
-	}
-
 	/**
 	 * Update triangle positions for a single mesh entry.
 	 * Iterates in BVH order for sequential writes (cache-friendly), random reads from newPositions.
 	 * @private
 	 */
-	_updateMeshTrianglePositions( entry, newPositions ) {
+	_updateMeshTrianglePositions( i, meshPositions ) {
 
 		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
@@ -2037,31 +2022,33 @@ export class SceneProcessor {
 		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
 		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
 		const tri = this.triangles, triF = this.triangleFloatChunks;
+		const table = this.instanceTable;
 
-		const bvhToOrig = entry.bvhToOriginal;
+		const bvhToOrig = table.bvhToOriginalOf( i );
+		const triOffset = table.triOffsetOf( i ), triCount = table.triCountOf( i );
 
 		// Callers hand over world-space positions, which is the only space they can build
 		// one in; triangles are stored per instance, so they come back through the inverse.
-		const m = entry.matrixInverse;
+		const m = table.matrixInverseOf( i );
 		const identity = isIdentity( m );
 
-		for ( let bvhLocal = 0; bvhLocal < entry.triCount; bvhLocal ++ ) {
+		for ( let bvhLocal = 0; bvhLocal < triCount; bvhLocal ++ ) {
 
-			const origLocal = bvhToOrig[ bvhLocal ];
-			const t = entry.triOffset + bvhLocal;
+			const origLocal = bvhToOrig ? bvhToOrig[ bvhLocal ] : bvhLocal;
+			const t = triOffset + bvhLocal;
 			const f = triF.chunkFor( t ), u = tri.chunkFor( t );
 			const dst = tri.baseOf( t );
-			const src = ( entry.expandedStart + origLocal ) * 9;
+			const src = origLocal * 9;
 
-			let ax = newPositions[ src ];
-			let ay = newPositions[ src + 1 ];
-			let az = newPositions[ src + 2 ];
-			let bx = newPositions[ src + 3 ];
-			let by = newPositions[ src + 4 ];
-			let bz = newPositions[ src + 5 ];
-			let cx = newPositions[ src + 6 ];
-			let cy = newPositions[ src + 7 ];
-			let cz = newPositions[ src + 8 ];
+			let ax = meshPositions[ src ];
+			let ay = meshPositions[ src + 1 ];
+			let az = meshPositions[ src + 2 ];
+			let bx = meshPositions[ src + 3 ];
+			let by = meshPositions[ src + 4 ];
+			let bz = meshPositions[ src + 5 ];
+			let cx = meshPositions[ src + 6 ];
+			let cy = meshPositions[ src + 7 ];
+			let cz = meshPositions[ src + 8 ];
 
 			if ( ! identity ) {
 
@@ -2107,9 +2094,13 @@ export class SceneProcessor {
 	 * Patch smooth normals for a single mesh's triangles.
 	 * @private
 	 */
-	_patchMeshSmoothNormals( entry, normals ) {
+	_patchMeshSmoothNormals( i, meshNormals ) {
 
-		this._patchNormalsRange( normals, entry.triOffset, entry.triCount, entry.matrixWorld, entry.expandedStart );
+		const table = this.instanceTable;
+		this._patchNormalsRange(
+			meshNormals, table.triOffsetOf( i ), table.triCountOf( i ),
+			table.matrixWorldOf( i ), table.bvhToOriginalOf( i )
+		);
 
 	}
 
@@ -2117,7 +2108,7 @@ export class SceneProcessor {
 	 * Shared normal-patching loop for a range of triangles.
 	 * @private
 	 */
-	_patchNormalsRange( normals, startOrig, count, matrixWorld, srcStart = null ) {
+	_patchNormalsRange( normals, triOffset, count, matrixWorld, bvhToOrig ) {
 
 		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
 		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
@@ -2130,13 +2121,14 @@ export class SceneProcessor {
 		const plain = ! m || isIdentity( m );
 		const slots = [ NA, NB, NC ];
 
-		for ( let i = 0; i < count; i ++ ) {
+		// Walked in stored order so the writes stay sequential; the inverse map is the only
+		// permutation kept, so the read is the scattered side.
+		for ( let k = 0; k < count; k ++ ) {
 
-			const orig = startOrig + i;
-			const bvhIdx = this.originalToBvhMap[ orig ];
+			const bvhIdx = triOffset + k;
 			const u = this.triangles.chunkFor( bvhIdx );
 			const dst = this.triangles.baseOf( bvhIdx );
-			const src = ( ( srcStart ?? startOrig ) + i ) * 9;
+			const src = ( bvhToOrig ? bvhToOrig[ k ] : k ) * 9;
 
 			for ( let v = 0; v < 3; v ++ ) {
 
@@ -2376,14 +2368,6 @@ export class SceneProcessor {
 		const newOrigToBvh = workerData.originalToBvh;
 		if ( newOrigToBvh ) {
 
-			// Update global originalToBvhMap for this mesh's range
-			for ( let i = 0; i < entry.triCount; i ++ ) {
-
-				this.originalToBvhMap[ entry.triOffset + i ] = entry.triOffset + newOrigToBvh[ i ];
-
-			}
-
-			// Update per-mesh bvhToOriginal
 			const bvhToOrig = new Uint32Array( entry.triCount );
 			for ( let i = 0; i < entry.triCount; i ++ ) {
 
