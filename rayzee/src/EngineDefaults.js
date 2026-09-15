@@ -739,10 +739,32 @@ export const MATERIAL_DATA_LAYOUT = {
 export const normalizeAttenuationDistance = d => ( Number.isFinite( d ) && d > 0 ? d : 0 );
 
 // BVH node leaf markers
+/**
+ * Node tags, written into slot [3] of a BVH node as a raw u32 bit pattern.
+ *
+ * Node indices, triangle offsets and counts are integers living inside a Float32Array. Written as
+ * float *values* they round silently past 2^24 (16,777,216): in a 24M-node scene half of every
+ * BLAS pointer landed on a neighbouring node and that geometry vanished from the render with no
+ * error at all. Every one of those fields is written as a u32 bit pattern instead, exact to 2^30.
+ *
+ * Tags sit above {@link BVH_MAX_INDEX} so a single unsigned compare separates a leaf from an inner
+ * node's left-child index. All three are ordinary finite floats — nothing lands in the NaN range,
+ * which an f32 storage buffer is free to canonicalise.
+ */
+export const BVH_MAX_INDEX = 0x40000000; // 2^30
+
 export const BVH_LEAF_MARKERS = {
-	TRIANGLE_LEAF: - 1, // Leaf containing triangle references
-	BLAS_POINTER_LEAF: - 2, // TLAS leaf pointing to a BLAS root node
+	TRIANGLE_LEAF: 0x40000000, // leaf containing triangle references
+	BLAS_POINTER_LEAF: 0x40000001, // TLAS leaf pointing to a BLAS root node
+	FRONTIER: 0x40000002, // parallel-build placeholder, overwritten during assembly
 };
+
+/** A u32 view over a float buffer, for writing index fields as exact bit patterns. */
+export function bvhIndexView( f32 ) {
+
+	return new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
+
+}
 
 // Texture processing constants
 export const TEXTURE_CONSTANTS = {

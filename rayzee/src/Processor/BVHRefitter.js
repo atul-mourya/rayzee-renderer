@@ -59,8 +59,11 @@ function packNormalOct( x, y, z ) {
 }
 
 const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
-const LEAF_MARKER = - 1;
-const BLAS_POINTER_MARKER = - 2;
+// Inline copies of EngineDefaults.BVH_LEAF_MARKERS — this module also runs inside a worker.
+// Index fields are u32 BIT PATTERNS (exact past 2^24), read through `indexView`.
+const LEAF_MARKER = 0x40000000;
+const BLAS_POINTER_MARKER = 0x40000001;
+const indexView = f32 => new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
 
 const IDENTITY_EPS = 1e-12;
 
@@ -213,16 +216,17 @@ export class BVHRefitter {
 
 		const bounds = this._bounds;
 		const endNode = startNode + nodeCount;
+		const idx = indexView( bvhData );
 
 		for ( let i = endNode - 1; i >= startNode; i -- ) {
 
 			const o = i * FLOATS_PER_NODE;
 			const b = ( i - startNode ) * 6; // bounds indexed relative to BLAS start
 
-			if ( bvhData[ o + 3 ] === LEAF_MARKER ) {
+			if ( idx[ o + 3 ] === LEAF_MARKER ) {
 
-				const triOffset = bvhData[ o ];
-				const triCount = bvhData[ o + 1 ];
+				const triOffset = idx[ o ];
+				const triCount = idx[ o + 1 ];
 
 				let minX = Infinity, minY = Infinity, minZ = Infinity;
 				let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
@@ -259,8 +263,8 @@ export class BVHRefitter {
 			} else {
 
 				// Inner node — child indices are absolute, but bounds index relative to startNode
-				const leftIdx = bvhData[ o + 3 ];
-				const rightIdx = bvhData[ o + 7 ];
+				const leftIdx = idx[ o + 3 ];
+				const rightIdx = idx[ o + 7 ];
 				const lb = ( leftIdx - startNode ) * 6;
 				const rb = ( rightIdx - startNode ) * 6;
 
@@ -327,6 +331,7 @@ export class BVHRefitter {
 		}
 
 		const bounds = this._bounds;
+		const idx = indexView( bvhData );
 
 		// Reverse iteration: bottom-up in pre-order layout
 		for ( let i = nodeCount - 1; i >= 0; i -- ) {
@@ -334,13 +339,13 @@ export class BVHRefitter {
 			const o = i * FLOATS_PER_NODE;
 			const b = i * 6;
 
-			const marker = bvhData[ o + 3 ];
+			const marker = idx[ o + 3 ];
 
 			if ( marker === LEAF_MARKER ) {
 
 				// Triangle leaf: compute AABB from triangles
-				const triOffset = bvhData[ o ];
-				const triCount = bvhData[ o + 1 ];
+				const triOffset = idx[ o ];
+				const triCount = idx[ o + 1 ];
 
 				let minX = Infinity, minY = Infinity, minZ = Infinity;
 				let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
@@ -384,15 +389,15 @@ export class BVHRefitter {
 				// space, and the TLAS sorts on world bounds — so carry the box out through the
 				// leaf's transform. Slots 4..15 are the rows of world-to-object; the eight
 				// corners go back the other way through its inverse.
-				const blasRoot = bvhData[ o ];
+				const blasRoot = idx[ o ];
 				const br = blasRoot * 6;
 				transformBoundsToWorld( bvhData, o, bounds, br, bounds, b );
 
 			} else {
 
 				// Inner node: union children bounds (already computed since we iterate in reverse)
-				const leftIdx = bvhData[ o + 3 ];
-				const rightIdx = bvhData[ o + 7 ];
+				const leftIdx = idx[ o + 3 ];
+				const rightIdx = idx[ o + 7 ];
 				const lb = leftIdx * 6;
 				const rb = rightIdx * 6;
 

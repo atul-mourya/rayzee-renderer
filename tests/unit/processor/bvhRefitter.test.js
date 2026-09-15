@@ -1,21 +1,31 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
+import { BVH_LEAF_MARKERS } from '@/core/EngineDefaults.js';
 
-// BVH flat layout: 16 floats per node
+// Index fields are u32 bit patterns inside the float buffer.
+const _u = new Uint32Array( 1 ), _f = new Float32Array( _u.buffer );
+function bits( u ) {
+
+	_u[ 0 ] = u;
+	return _f[ 0 ];
+
+}
+
+// BVH flat layout: 16 floats per node. Bounds are floats; index fields are u32 bit patterns.
 // Inner: [leftMin.xyz, leftChildIdx, leftMax.xyz, rightChildIdx, rightMin.xyz, 0, rightMax.xyz, 0]
-// Leaf:  [triOffset, triCount, 0, -1, 0,0,0,0, 0,0,0,0, 0,0,0,0]
+// Leaf:  [triOffset, triCount, 0, TRIANGLE_LEAF, 0,0,0,0, 0,0,0,0, 0,0,0,0]
 
 function makeLeaf( triOffset, triCount ) {
 
-	return [ triOffset, triCount, 0, - 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
+	return [ bits( triOffset ), bits( triCount ), 0, bits( BVH_LEAF_MARKERS.TRIANGLE_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
 
 }
 
 function makeInner( lMin, lMax, leftIdx, rMin, rMax, rightIdx ) {
 
 	return [
-		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], leftIdx,
-		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], rightIdx,
+		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], bits( leftIdx ),
+		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], bits( rightIdx ),
 		rMin[ 0 ], rMin[ 1 ], rMin[ 2 ], 0,
 		rMax[ 0 ], rMax[ 1 ], rMax[ 2 ], 0,
 	];
@@ -300,9 +310,9 @@ describe( 'BVHRefitter', () => {
 				// Node 0: TLAS root inner (AABBs will be overwritten by refit)
 				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 2 ),
 				// Node 1: TLAS BLAS-pointer leaf → blasRoot=3
-				3, 0, 0, - 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				bits( 3 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 				// Node 2: TLAS BLAS-pointer leaf → blasRoot=5
-				5, 0, 0, - 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				bits( 5 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 				// Node 3: BLAS0 root (inner) → leaf at 4
 				...makeInner( [ 0, 0, 0 ], [ 3, 3, 3 ], 4, [ 0, 0, 0 ], [ 3, 3, 3 ], 4 ),
 				// Node 4: BLAS0 leaf (tri 0)

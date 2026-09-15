@@ -20,10 +20,11 @@ import {
 	array,
 	uint,
 	uintBitsToFloat,
+	floatBitsToUint,
 	bool as tslBool,
 } from 'three/tsl';
 
-import { TRI_MATERIAL_MASK, TRI_SIDE_SHIFT } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT } from '../EngineDefaults.js';
 import { HitInfo } from './Struct.js';
 import {
 	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE
@@ -287,14 +288,18 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
 		if ( trackStats ) closestHit.boxTests.addAssign( 1 );
 
-		If( nodeData0.w.lessThan( 0.0 ), () => {
+		// Slot [3] carries a u32 bit pattern: an inner node's left-child index, or a leaf tag
+		// above every valid index. Stored as float VALUES these rounded past 2^24 and sent the
+		// ray to a neighbouring node, which silently erased geometry from large scenes.
+		const nodeTag = floatBitsToUint( nodeData0.w ).toVar();
 
-			// Leaf node — distinguish triangle leaf (-1) from BLAS-pointer leaf (-2)
-			If( nodeData0.w.greaterThan( float( - 1.5 ) ), () => {
+		If( nodeTag.greaterThanEqual( uint( BVH_MAX_INDEX ) ), () => {
 
-				// Triangle leaf (marker -1) — triOffset and triCount packed in vec4(0).xy
-				const triStart = int( nodeData0.x ).toVar();
-				const triCount = int( nodeData0.y ).toVar();
+			If( nodeTag.equal( uint( BVH_LEAF_MARKERS.TRIANGLE_LEAF ) ), () => {
+
+				// Triangle leaf — triOffset and triCount packed in vec4(0).xy
+				const triStart = int( floatBitsToUint( nodeData0.x ) ).toVar();
+				const triCount = int( floatBitsToUint( nodeData0.y ) ).toVar();
 
 				// Process triangles in leaf
 				Loop( { start: int( 0 ), end: triCount }, ( { i } ) => {
@@ -366,7 +371,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 			} ).Else( () => {
 
-				// BLAS-pointer leaf (marker -2) — enter the instance if the mesh is visible.
+				// BLAS-pointer leaf — enter the instance if the mesh is visible.
 				// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]; slots 4..15 hold
 				// the world-to-object matrix. Visibility is free-fetched with the leaf.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
@@ -381,7 +386,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 					instLeaf.assign( nodeIndex );
 					instExit.assign( stackPtr );
 
-					stack.element( stackPtr ).assign( int( nodeData0.x ) );
+					stack.element( stackPtr ).assign( int( floatBitsToUint( nodeData0.x ) ) );
 					stackPtr.addAssign( 1 );
 
 				} );
@@ -395,8 +400,8 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 			const nodeData2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
 			const nodeData3 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 3 ), int( BVH_STRIDE ) );
 
-			const leftChild = int( nodeData0.w ).toVar();
-			const rightChild = int( nodeData1.w ).toVar();
+			const leftChild = int( nodeTag ).toVar();
+			const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
 			const dstA = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
 			const dstB = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
@@ -533,14 +538,18 @@ export const traverseBVHShadow = Fn( ( [
 
 		const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
 
-		If( nodeData0.w.lessThan( 0.0 ), () => {
+		// Slot [3] carries a u32 bit pattern: an inner node's left-child index, or a leaf tag
+		// above every valid index. Stored as float VALUES these rounded past 2^24 and sent the
+		// ray to a neighbouring node, which silently erased geometry from large scenes.
+		const nodeTag = floatBitsToUint( nodeData0.w ).toVar();
 
-			// Leaf node — distinguish triangle leaf (-1) from BLAS-pointer leaf (-2)
-			If( nodeData0.w.greaterThan( float( - 1.5 ) ), () => {
+		If( nodeTag.greaterThanEqual( uint( BVH_MAX_INDEX ) ), () => {
 
-				// Triangle leaf (marker -1) — triOffset and triCount packed in vec4(0).xy
-				const triStart = int( nodeData0.x ).toVar();
-				const triCount = int( nodeData0.y ).toVar();
+			If( nodeTag.equal( uint( BVH_LEAF_MARKERS.TRIANGLE_LEAF ) ), () => {
+
+				// Triangle leaf — triOffset and triCount packed in vec4(0).xy
+				const triStart = int( floatBitsToUint( nodeData0.x ) ).toVar();
+				const triCount = int( floatBitsToUint( nodeData0.y ) ).toVar();
 
 				Loop( { start: int( 0 ), end: triCount }, ( { i } ) => {
 
@@ -584,7 +593,7 @@ export const traverseBVHShadow = Fn( ( [
 
 			} ).Else( () => {
 
-				// BLAS-pointer leaf (marker -2) — enter the instance if the mesh is visible.
+				// BLAS-pointer leaf — enter the instance if the mesh is visible.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
 
 					const rows = instanceRows( bvhBuffer, nodeIndex );
@@ -597,7 +606,7 @@ export const traverseBVHShadow = Fn( ( [
 					instLeaf.assign( nodeIndex );
 					instExit.assign( stackPtr );
 
-					stack.element( stackPtr ).assign( int( nodeData0.x ) );
+					stack.element( stackPtr ).assign( int( floatBitsToUint( nodeData0.x ) ) );
 					stackPtr.addAssign( 1 );
 
 				} );
@@ -611,8 +620,8 @@ export const traverseBVHShadow = Fn( ( [
 			const nodeData2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
 			const nodeData3 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 3 ), int( BVH_STRIDE ) );
 
-			const leftChild = int( nodeData0.w ).toVar();
-			const rightChild = int( nodeData1.w ).toVar();
+			const leftChild = int( nodeTag ).toVar();
+			const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
 			const dstA = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
 			const dstB = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();

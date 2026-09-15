@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
 
 // Triangle record: 20 uint lanes; positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
 const FPT = 20;
@@ -18,12 +19,15 @@ function makeTriangle( ax, ay, az, bx, by, bz, cx, cy, cz ) {
 // BVH inner node: [leftMin.xyz, leftChild, leftMax.xyz, rightChild, rightMin.xyz, 0, rightMax.xyz, 0]
 function makeInner( lMin, lMax, leftIdx, rMin, rMax, rightIdx ) {
 
-	return new Float32Array( [
-		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], leftIdx,
-		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], rightIdx,
+	const n = new Float32Array( [
+		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], 0,
+		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], 0,
 		rMin[ 0 ], rMin[ 1 ], rMin[ 2 ], 0,
 		rMax[ 0 ], rMax[ 1 ], rMax[ 2 ], 0,
 	] );
+	const idx = bvhIndexView( n );
+	idx[ 3 ] = leftIdx; idx[ 7 ] = rightIdx;
+	return n;
 
 }
 
@@ -39,7 +43,10 @@ function worldBounds( table ) {
 // BVH leaf node: [triOffset, triCount, 0, -1, ...]
 function makeLeaf( triOffset, triCount ) {
 
-	return new Float32Array( [ triOffset, triCount, 0, - 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ] );
+	const n = new Float32Array( 16 );
+	const idx = bvhIndexView( n );
+	idx[ 0 ] = triOffset; idx[ 1 ] = triCount; idx[ 3 ] = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+	return n;
 
 }
 

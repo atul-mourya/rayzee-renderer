@@ -9,7 +9,7 @@
  * denormalised one. World bounds and the inverse transform are derived on demand.
  */
 
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, TRIANGLE_DATA_LAYOUT, bvhIndexView } from '../EngineDefaults.js';
 
 const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] );
 
@@ -487,7 +487,7 @@ export class InstanceTable {
 	 */
 	_readRootAABB( bvhData, template, triangleData, out, off ) {
 
-		if ( ! bvhData || bvhData[ 3 ] === - 1 ) {
+		if ( ! bvhData || bvhIndexView( bvhData )[ 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 			// Root is a leaf — very small mesh. Scan its triangles.
 			this._computeAABBFromTriangles( template, triangleData, out, off );

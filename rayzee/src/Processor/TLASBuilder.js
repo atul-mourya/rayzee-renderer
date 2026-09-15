@@ -15,7 +15,7 @@
  * known before its subtree is built, which is what lets the write be single-pass.
  */
 
-import { BVH_LEAF_MARKERS } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
 import { invertAffineInto } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;
@@ -115,6 +115,7 @@ export class TLASBuilder {
 		}
 
 		const data = this._flatBuffer;
+		const idx = bvhIndexView( data ); // index fields are u32 bit patterns, never float values
 
 		if ( ! this._order || this._order.length < n ) this._order = new Int32Array( n );
 		const order = this._order;
@@ -136,10 +137,10 @@ export class TLASBuilder {
 			if ( count === 1 ) {
 
 				const o = nodeIndex * FLOATS_PER_NODE;
-				data[ o ] = 0;
-				data[ o + 1 ] = order[ start ];
+				idx[ o ] = 0;
+				idx[ o + 1 ] = order[ start ];
 				data[ o + 2 ] = 0;
-				data[ o + 3 ] = BVH_LEAF_MARKERS.BLAS_POINTER_LEAF;
+				idx[ o + 3 ] = BVH_LEAF_MARKERS.BLAS_POINTER_LEAF;
 
 			} else {
 
@@ -149,8 +150,8 @@ export class TLASBuilder {
 				const rightIndex = leftIndex + ( leftCount * 2 - 1 );
 
 				const o = nodeIndex * FLOATS_PER_NODE;
-				data[ o ] = bb[ 0 ]; data[ o + 1 ] = bb[ 1 ]; data[ o + 2 ] = bb[ 2 ]; data[ o + 3 ] = leftIndex;
-				data[ o + 4 ] = bb[ 3 ]; data[ o + 5 ] = bb[ 4 ]; data[ o + 6 ] = bb[ 5 ]; data[ o + 7 ] = rightIndex;
+				data[ o ] = bb[ 0 ]; data[ o + 1 ] = bb[ 1 ]; data[ o + 2 ] = bb[ 2 ]; idx[ o + 3 ] = leftIndex;
+				data[ o + 4 ] = bb[ 3 ]; data[ o + 5 ] = bb[ 4 ]; data[ o + 6 ] = bb[ 5 ]; idx[ o + 7 ] = rightIndex;
 				data[ o + 8 ] = bb[ 6 ]; data[ o + 9 ] = bb[ 7 ]; data[ o + 10 ] = bb[ 8 ]; data[ o + 11 ] = 0;
 				data[ o + 12 ] = bb[ 9 ]; data[ o + 13 ] = bb[ 10 ]; data[ o + 14 ] = bb[ 11 ]; data[ o + 15 ] = 0;
 
@@ -226,14 +227,15 @@ export class TLASBuilder {
 		const world = table.world, src = table.sourceMesh;
 		const blasOffset = table.tplBlasOffset, visible = table.visible, leafOf = table.tlasLeafIndex;
 		const inv = _inverseScratch;
+		const idx = bvhIndexView( data );
 
 		for ( let node = 0; node < nodeCount; node ++ ) {
 
 			const o = node * FLOATS_PER_NODE;
-			if ( data[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
+			if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 
-			const i = data[ o + 1 ];
-			data[ o ] = blasOffset[ src[ i ] ];
+			const i = idx[ o + 1 ];
+			idx[ o ] = blasOffset[ src[ i ] ];
 			data[ o + 2 ] = visible[ i ] ? 1.0 : 0.0;
 
 			invertAffineInto( world, i * 16, inv );

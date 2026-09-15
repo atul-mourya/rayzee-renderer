@@ -13,7 +13,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
@@ -95,6 +95,7 @@ export class SceneProcessor {
 
 		// Raw data for storage buffers
 		this.bvhData = null;
+		this.bvhIndex = null;
 		this.materialData = null;
 
 		// Two-level BVH (TLAS/BLAS) support
@@ -272,6 +273,7 @@ export class SceneProcessor {
 			if ( this.bvhRoot && ! this.bvhData ) {
 
 				this.bvhData = this.textureCreator.createBVHRawData( this.bvhRoot );
+				this.bvhIndex = bvhIndexView( this.bvhData );
 
 			}
 
@@ -613,6 +615,7 @@ export class SceneProcessor {
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
 			const assembleStart = performance.now();
 			this.bvhData = new Float32Array( totalNodes * 16 );
+			this.bvhIndex = bvhIndexView( this.bvhData );
 			this.bvhData.set( tlasData );
 
 			for ( let i = 0; i < table.count; i ++ ) {
@@ -670,18 +673,20 @@ export class SceneProcessor {
 	 */
 	_offsetBLASInPlace( destFloat, nodeCount, nodeOffset, triOffset ) {
 
+		const idx = this.bvhIndex;
+
 		for ( let i = 0; i < nodeCount; i ++ ) {
 
 			const o = destFloat + i * 16;
 
-			if ( this.bvhData[ o + 3 ] === - 1 ) {
+			if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
-				this.bvhData[ o ] += triOffset;
+				idx[ o ] += triOffset;
 
 			} else {
 
-				this.bvhData[ o + 3 ] += nodeOffset;
-				this.bvhData[ o + 7 ] += nodeOffset;
+				idx[ o + 3 ] += nodeOffset;
+				idx[ o + 7 ] += nodeOffset;
 
 			}
 
@@ -1200,6 +1205,7 @@ export class SceneProcessor {
 		this.spheres = [];
 		this.bvhRoot = null;
 		this.bvhData = null;
+		this.bvhIndex = null;
 		this.instanceTable = null;
 		this.lightBVHNodeData = null;
 		this.lightBVHNodeCount = 0;
@@ -1485,6 +1491,7 @@ export class SceneProcessor {
 
 			// Replace local refs with shared views
 			this.bvhData = sharedBvhData;
+			this.bvhIndex = bvhIndexView( this.bvhData );
 			this._setTriangleData( sharedTriData );
 
 			// Build bvhToOriginal map (inverse of originalToBvh) for cache-friendly
@@ -2145,12 +2152,12 @@ export class SceneProcessor {
 		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
 
 			const o = i * FPN;
-			const marker = this.bvhData[ o + 3 ];
+			const marker = this.bvhIndex[ o + 3 ];
 
-			if ( marker === - 2 ) {
+			if ( marker === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) {
 
 				// BLAS-pointer leaf: read AABB from instance table
-				const blasRoot = this.bvhData[ o ];
+				const blasRoot = this.bvhIndex[ o ];
 				const entryIndex = this._blasOffsetMap.get( blasRoot );
 				if ( entryIndex !== undefined ) {
 
@@ -2158,11 +2165,11 @@ export class SceneProcessor {
 
 				}
 
-			} else if ( marker >= 0 ) {
+			} else if ( marker < BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 				// Inner node: union of children bounds, update bvhData in-place
-				const leftIdx = this.bvhData[ o + 3 ];
-				const rightIdx = this.bvhData[ o + 7 ];
+				const leftIdx = marker;
+				const rightIdx = this.bvhIndex[ o + 7 ];
 				const lb = leftIdx * 6;
 				const rb = rightIdx * 6;
 				const bounds = this._tlasBounds;

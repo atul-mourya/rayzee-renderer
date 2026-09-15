@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
 
 vi.mock( '@/core/Processor/TreeletOptimizer.js', () => ( {
 	TreeletOptimizer: class {
@@ -427,7 +428,7 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
-		it( 'leaf nodes have marker -1 in the .w position', () => {
+		it( 'leaf nodes carry the triangle-leaf tag in the .w position', () => {
 
 			const data = makeTriData( [
 				[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ],
@@ -436,19 +437,18 @@ describe( 'BVHBuilder', () => {
 
 			const root = builder.buildSync( data );
 			const flat = builder.flattenBVH( root );
+			const idx = bvhIndexView( flat );
 
 			// Walk nodes and check leaf markers
 			let foundLeaf = false;
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 					foundLeaf = true;
-					// triOffset should be non-negative
-					expect( flat[ o ] ).toBeGreaterThanOrEqual( 0 );
-					// triCount should be positive
-					expect( flat[ o + 1 ] ).toBeGreaterThan( 0 );
+					expect( idx[ o ] ).toBeGreaterThanOrEqual( 0 );
+					expect( idx[ o + 1 ] ).toBeGreaterThan( 0 );
 
 				}
 
@@ -521,7 +521,7 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
-		it( 'flattenBVH of single leaf has marker -1', () => {
+		it( 'flattenBVH of single leaf carries the triangle-leaf tag', () => {
 
 			const data = makeTriData( [
 				[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ],
@@ -531,7 +531,7 @@ describe( 'BVHBuilder', () => {
 			const flat = builder.flattenBVH( root );
 
 			expect( flat.length ).toBe( 16 );
-			expect( flat[ 3 ] ).toBe( - 1 );
+			expect( bvhIndexView( flat )[ 3 ] ).toBe( BVH_LEAF_MARKERS.TRIANGLE_LEAF );
 
 		} );
 
@@ -566,10 +566,11 @@ describe( 'BVHBuilder', () => {
 			// Must have both inner and leaf nodes
 			let innerCount = 0;
 			let leafCount = 0;
+			const idx = bvhIndexView( flat );
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 					leafCount ++;
 
@@ -601,12 +602,13 @@ describe( 'BVHBuilder', () => {
 			const flat = builder.flattenBVH( root );
 
 			let totalLeafTris = 0;
+			const idx = bvhIndexView( flat );
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
-					totalLeafTris += flat[ o + 1 ];
+					totalLeafTris += idx[ o + 1 ];
 
 				}
 

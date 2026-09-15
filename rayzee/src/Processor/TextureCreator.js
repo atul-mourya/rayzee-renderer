@@ -1,5 +1,5 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
-import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance } from '../EngineDefaults.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance, BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
@@ -1148,12 +1148,14 @@ export class TextureCreator {
 
 		flattenBVH( bvhRoot );
 
-		// Layout: 4 vec4 per node (16 floats)
+		// Layout: 4 vec4 per node (16 floats). Bounds are floats; every index field is a u32
+		// bit pattern (see EngineDefaults.BVH_LEAF_MARKERS).
 		// Inner: [leftMin.xyz, leftChild] [leftMax.xyz, rightChild] [rightMin.xyz, 0] [rightMax.xyz, 0]
-		// Leaf:  [triOffset, triCount, 0, -1] [0,0,0,0] [0,0,0,0] [0,0,0,0]
+		// Leaf:  [triOffset, triCount, 0, TRIANGLE_LEAF] [0,0,0,0] [0,0,0,0] [0,0,0,0]
 		const floatsPerNode = TEXTURE_CONSTANTS.VEC4_PER_BVH_NODE * TEXTURE_CONSTANTS.FLOATS_PER_VEC4;
 		const size = nodes.length * floatsPerNode;
 		const data = new Float32Array( size );
+		const idx = bvhIndexView( data ); // index fields are u32 bit patterns
 
 		for ( let i = 0; i < nodes.length; i ++ ) {
 
@@ -1171,12 +1173,12 @@ export class TextureCreator {
 				data[ stride ] = left.boundsMin.x;
 				data[ stride + 1 ] = left.boundsMin.y;
 				data[ stride + 2 ] = left.boundsMin.z;
-				data[ stride + 3 ] = leftIdx;
+				idx[ stride + 3 ] = leftIdx;
 
 				data[ stride + 4 ] = left.boundsMax.x;
 				data[ stride + 5 ] = left.boundsMax.y;
 				data[ stride + 6 ] = left.boundsMax.z;
-				data[ stride + 7 ] = rightIdx;
+				idx[ stride + 7 ] = rightIdx;
 
 				data[ stride + 8 ] = right.boundsMin.x;
 				data[ stride + 9 ] = right.boundsMin.y;
@@ -1188,10 +1190,9 @@ export class TextureCreator {
 
 			} else {
 
-				// Leaf node
-				data[ stride ] = node.triangleOffset;
-				data[ stride + 1 ] = node.triangleCount;
-				data[ stride + 3 ] = - 1; // Leaf marker
+				idx[ stride ] = node.triangleOffset;
+				idx[ stride + 1 ] = node.triangleCount;
+				idx[ stride + 3 ] = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
 
 			}
 

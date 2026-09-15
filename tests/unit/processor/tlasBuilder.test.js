@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
 
 /** A table of `n` placements with the given world AABBs (6 floats each). */
 function makeTable( bounds ) {
@@ -31,7 +32,7 @@ function spread( n ) {
 
 }
 
-const isLeaf = ( data, node ) => data[ node * 16 + 3 ] === - 2;
+const isLeaf = ( data, node ) => bvhIndexView( data )[ node * 16 + 3 ] === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF;
 
 /**
  * Walk the flat tree from the root, checking structure: every node reachable exactly once,
@@ -39,6 +40,7 @@ const isLeaf = ( data, node ) => data[ node * 16 + 3 ] === - 2;
  */
 function walk( data, nodeCount ) {
 
+	const idx = bvhIndexView( data );
 	const seen = new Uint8Array( nodeCount );
 	const leaves = [];
 	const stack = [ 0 ];
@@ -60,7 +62,7 @@ function walk( data, nodeCount ) {
 		}
 
 		inner ++;
-		stack.push( data[ node * 16 + 3 ], data[ node * 16 + 7 ] );
+		stack.push( idx[ node * 16 + 3 ], idx[ node * 16 + 7 ] );
 
 	}
 
@@ -123,10 +125,11 @@ describe( 'TLASBuilder', () => {
 
 			expect( nodeCount ).toBe( 1 );
 			expect( data ).toHaveLength( 16 );
-			expect( data[ 0 ] ).toBe( 10 ); // blasOffset
-			expect( data[ 1 ] ).toBe( 0 ); // entryIndex
+			const idx = bvhIndexView( data );
+			expect( idx[ 0 ] ).toBe( 10 ); // blasOffset
+			expect( idx[ 1 ] ).toBe( 0 ); // entryIndex
 			expect( data[ 2 ] ).toBe( 1 ); // visible
-			expect( data[ 3 ] ).toBe( - 2 ); // BLAS-pointer marker
+			expect( idx[ 3 ] ).toBe( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF );
 			expect( table.tlasLeafIndex[ 0 ] ).toBe( 0 );
 
 		} );
@@ -143,11 +146,11 @@ describe( 'TLASBuilder', () => {
 				expect( inner ).toBe( n - 1 );
 
 				// Every entry appears exactly once, and knows where its leaf landed.
-				const ids = leaves.map( node => data[ node * 16 + 1 ] ).sort( ( a, b ) => a - b );
+				const ids = leaves.map( node => bvhIndexView( data )[ node * 16 + 1 ] ).sort( ( a, b ) => a - b );
 				expect( ids ).toEqual( Array.from( { length: n }, ( _, i ) => i ) );
 				for ( let i = 0; i < n; i ++ ) {
 
-					expect( data[ table.tlasLeafIndex[ i ] * 16 + 1 ] ).toBe( i );
+					expect( bvhIndexView( data )[ table.tlasLeafIndex[ i ] * 16 + 1 ] ).toBe( i );
 
 				}
 
@@ -166,13 +169,13 @@ describe( 'TLASBuilder', () => {
 
 				if ( isLeaf( data, node ) ) {
 
-					const a = data[ node * 16 + 1 ] * 6;
+					const a = bvhIndexView( data )[ node * 16 + 1 ] * 6;
 					return Array.from( bounds.slice( a, a + 6 ) );
 
 				}
 
-				const l = subtreeBounds( data[ node * 16 + 3 ] );
-				const r = subtreeBounds( data[ node * 16 + 7 ] );
+				const l = subtreeBounds( bvhIndexView( data )[ node * 16 + 3 ] );
+				const r = subtreeBounds( bvhIndexView( data )[ node * 16 + 7 ] );
 				return [
 					Math.min( l[ 0 ], r[ 0 ] ), Math.min( l[ 1 ], r[ 1 ] ), Math.min( l[ 2 ], r[ 2 ] ),
 					Math.max( l[ 3 ], r[ 3 ] ), Math.max( l[ 4 ], r[ 4 ] ), Math.max( l[ 5 ], r[ 5 ] )
@@ -184,8 +187,8 @@ describe( 'TLASBuilder', () => {
 
 				if ( isLeaf( data, node ) ) continue;
 				const o = node * 16;
-				const l = subtreeBounds( data[ o + 3 ] );
-				const r = subtreeBounds( data[ o + 7 ] );
+				const l = subtreeBounds( bvhIndexView( data )[ o + 3 ] );
+				const r = subtreeBounds( bvhIndexView( data )[ o + 7 ] );
 				expect( [ data[ o ], data[ o + 1 ], data[ o + 2 ], data[ o + 4 ], data[ o + 5 ], data[ o + 6 ] ] )
 					.toEqual( l );
 				expect( [ data[ o + 8 ], data[ o + 9 ], data[ o + 10 ], data[ o + 12 ], data[ o + 13 ], data[ o + 14 ] ] )
