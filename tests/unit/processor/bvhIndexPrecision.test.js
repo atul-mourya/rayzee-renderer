@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView } from '@/core/EngineDefaults.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
@@ -176,6 +176,40 @@ describe( 'BVHRefitter past 2^24', () => {
 		expect( data[ 4 ] ).toBe( 2 );
 		expect( data[ 8 ] ).toBe( 10 );
 		expect( data[ 12 ] ).toBe( 12 );
+
+	} );
+
+} );
+
+describe( 'runtime guard', () => {
+
+	it( 'passes counts below the limit through unchanged', () => {
+
+		expect( assertBVHIndexFits( 0, 'x' ) ).toBe( 0 );
+		expect( assertBVHIndexFits( 23957363, 'x' ) ).toBe( 23957363 );
+		expect( assertBVHIndexFits( BVH_MAX_INDEX - 1, 'x' ) ).toBe( BVH_MAX_INDEX - 1 );
+
+	} );
+
+	it( 'throws rather than letting an index collide with the leaf tags', () => {
+
+		expect( () => assertBVHIndexFits( BVH_MAX_INDEX, 'node count' ) ).toThrow( RangeError );
+		expect( () => assertBVHIndexFits( BVH_MAX_INDEX + 1, 'node count' ) ).toThrow( /node count/ );
+		expect( () => assertBVHIndexFits( BVH_LEAF_MARKERS.TRIANGLE_LEAF, 'node count' ) ).toThrow( RangeError );
+
+	} );
+
+	it( 'guards the TLAS node total, not just individual writes', () => {
+
+		const table = new InstanceTable();
+		table.allocate( 1 );
+		table.setEntry( {
+			meshIndex: 0, blasNodeCount: 3, triOffset: 0, triCount: 1,
+			originalToBvhMap: null, bvhData: null
+		} );
+		// A BLAS large enough to push the combined total past the limit must not build silently.
+		table.tplNodeCount[ 0 ] = BVH_MAX_INDEX;
+		expect( () => table.assignOffsets( 1 ) ).toThrow( RangeError );
 
 	} );
 

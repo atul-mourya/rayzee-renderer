@@ -9,7 +9,7 @@
  * denormalised one. World bounds and the inverse transform are derived on demand.
  */
 
-import { BVH_LEAF_MARKERS, TRIANGLE_DATA_LAYOUT, bvhIndexView } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, TRIANGLE_DATA_LAYOUT, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 
 const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] );
 
@@ -571,6 +571,7 @@ export class InstanceTable {
 		}
 
 		this.totalBLASNodes = offset - tlasNodeCount;
+		assertBVHIndexFits( offset, 'combined TLAS + BLAS node count' );
 
 	}
 

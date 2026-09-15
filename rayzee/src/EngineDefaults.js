@@ -766,6 +766,33 @@ export function bvhIndexView( f32 ) {
 
 }
 
+/**
+ * Refuse to build a BVH whose indices would collide with the leaf tags.
+ *
+ * Throws rather than degrades: the failure this replaces was a scene that rendered with half its
+ * geometry silently missing, which is far worse than a scene that refuses to load. Guarding the
+ * totals covers every individual write, since no index can exceed the count it indexes into.
+ *
+ * @param {number} count - node or triangle total about to be indexed
+ * @param {string} what - what the count is, for the message
+ * @throws {RangeError}
+ */
+export function assertBVHIndexFits( count, what ) {
+
+	if ( count >= BVH_MAX_INDEX ) {
+
+		throw new RangeError(
+			`${what} is ${count.toLocaleString()}, at or past the BVH index limit of ` +
+			`${BVH_MAX_INDEX.toLocaleString()}. Node indices are stored as u32 bit patterns and the ` +
+			'leaf tags occupy everything above that.'
+		);
+
+	}
+
+	return count;
+
+}
+
 // Texture processing constants
 export const TEXTURE_CONSTANTS = {
 	PIXELS_PER_MATERIAL: 30,

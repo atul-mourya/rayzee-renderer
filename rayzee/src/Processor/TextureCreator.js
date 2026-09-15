@@ -1,5 +1,5 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
-import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance, BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
@@ -1153,6 +1153,7 @@ export class TextureCreator {
 		// Inner: [leftMin.xyz, leftChild] [leftMax.xyz, rightChild] [rightMin.xyz, 0] [rightMax.xyz, 0]
 		// Leaf:  [triOffset, triCount, 0, TRIANGLE_LEAF] [0,0,0,0] [0,0,0,0] [0,0,0,0]
 		const floatsPerNode = TEXTURE_CONSTANTS.VEC4_PER_BVH_NODE * TEXTURE_CONSTANTS.FLOATS_PER_VEC4;
+		assertBVHIndexFits( nodes.length, 'BVH node count' );
 		const size = nodes.length * floatsPerNode;
 		const data = new Float32Array( size );
 		const idx = bvhIndexView( data ); // index fields are u32 bit patterns

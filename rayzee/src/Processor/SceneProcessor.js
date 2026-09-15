@@ -13,7 +13,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
@@ -334,7 +334,7 @@ export class SceneProcessor {
 			const extractedData = this.geometryExtractor.extract( object );
 
 			this._setTriangleData( extractedData.triangleData );
-			this.triangleCount = extractedData.triangleCount;
+			this.triangleCount = assertBVHIndexFits( extractedData.triangleCount, 'triangle count' );
 			// Callers build refit buffers by walking meshes, which counts a shared geometry
 			// once per placement; storage counts it once.
 			this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;

@@ -11,6 +11,14 @@ const log = createLogger( 'bvh' );
 const TRIANGLE_LEAF = 0x40000000;
 const FRONTIER_LEAF = 0x40000002;
 const indexView = f32 => new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
+const BVH_MAX_INDEX = 0x40000000;
+
+function assertFits( count, what ) {
+
+	if ( count >= BVH_MAX_INDEX ) throw new RangeError( `${what} is ${count}, at or past the BVH index limit of ${BVH_MAX_INDEX}` );
+	return count;
+
+}
 
 // Injected, not imported: this module also runs inside the worker, and `?worker&inline`
 // would embed a second copy of BVHWorker's source there.
@@ -1586,6 +1594,7 @@ export class BVHBuilder {
 		// Inner: [leftMin.xyz, leftChild] [leftMax.xyz, rightChild] [rightMin.xyz, 0] [rightMax.xyz, 0]
 		// Leaf:  [triOffset, triCount, 0, -1] [0,0,0,0] [0,0,0,0] [0,0,0,0]
 		const FLOATS_PER_NODE = 16;
+		assertFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
 		const idx = indexView( data );
 
@@ -1659,6 +1668,7 @@ export class BVHBuilder {
 		}
 
 		// Second pass: write flat data
+		assertFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
 		const frontierMap = [];
 		const idx = indexView( data );
@@ -1740,6 +1750,7 @@ export class BVHBuilder {
 		}
 
 		// Allocate final array
+		assertFits( totalNodes, 'assembled BLAS node count' );
 		const finalData = new Float32Array( totalNodes * FLOATS_PER_NODE );
 		const finalIdx = indexView( finalData );
 

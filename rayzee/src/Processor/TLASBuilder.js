@@ -15,7 +15,7 @@
  * known before its subtree is built, which is what lets the write be single-pass.
  */
 
-import { BVH_LEAF_MARKERS, bvhIndexView } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import { invertAffineInto } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;
@@ -105,6 +105,7 @@ export class TLASBuilder {
 
 		const nodeCount = TLASBuilder.nodeCountFor( n );
 		if ( n === 0 ) return { data: new Float32Array( 0 ), nodeCount: 0 };
+		assertBVHIndexFits( nodeCount, 'TLAS node count' );
 
 		const required = nodeCount * FLOATS_PER_NODE;
 		if ( required > this._flatBufferCapacity ) {
