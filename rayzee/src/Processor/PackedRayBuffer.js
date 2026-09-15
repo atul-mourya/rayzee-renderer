@@ -1,13 +1,16 @@
 /**
  * Packed buffer manager for wavefront path tracing — one storage buffer per data category.
  * RAY/HIT are SoA-within-a-buffer (field `slot` of element `id` lives at `id + slot*_cap`).
+ *
+ * All three are GPU-only: every lane is written by a kernel before anything reads it and none
+ * is ever read back, so they carry no CPU array (see gpuOnlyStorageAttribute).
  */
 
 import {
 	storage, uintBitsToFloat, floatBitsToUint, vec2, vec3, vec4, uvec4, uint, int, float, clamp,
 	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max,
 } from 'three/tsl';
-import { StorageInstancedBufferAttribute } from 'three/webgpu';
+import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'gpu' );
@@ -85,14 +88,14 @@ export class PackedRayBuffer {
 
 		// count=0 so StorageBufferNode.getHash() shares the buffer → RW and RO nodes bind the same GPU data.
 		const rayCount = capacity * RAY_STRIDE;
-		const rayAttr = new StorageInstancedBufferAttribute( new Float32Array( rayCount * 4 ), 4 );
+		const rayAttr = gpuOnlyStorageAttribute( rayCount, 4 );
 		this._attrs.ray = rayAttr;
 		this.rayBuffer = {
 			rw: storage( rayAttr, 'vec4' ),
 			ro: storage( rayAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const rngAttr = new StorageInstancedBufferAttribute( new Uint32Array( capacity ), 1 );
+		const rngAttr = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
 		this._attrs.rng = rngAttr;
 		this.rngBuffer = {
 			rw: storage( rngAttr, 'uint' ),
@@ -100,7 +103,7 @@ export class PackedRayBuffer {
 		};
 
 		const hitCount = capacity * HIT_STRIDE;
-		const hitAttr = new StorageInstancedBufferAttribute( new Float32Array( hitCount * 4 ), 4 );
+		const hitAttr = gpuOnlyStorageAttribute( hitCount, 4 );
 		this._attrs.hit = hitAttr;
 		this.hitBuffer = {
 			rw: storage( hitAttr, 'vec4' ),

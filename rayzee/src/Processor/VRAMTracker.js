@@ -32,10 +32,10 @@ function texelBytes( tex ) {
 
 }
 
-/** Exact byte size of a storage/buffer attribute's backing typed array. */
+/** Exact GPU byte size of a buffer attribute. GPU-only ones carry no backing array. */
 export function bufferBytes( attr ) {
 
-	return attr?.array?.byteLength || 0;
+	return attr?.gpuByteLength ?? attr?.array?.byteLength ?? 0;
 
 }
 
@@ -141,7 +141,16 @@ export class VRAMTracker {
 		// synthetic { bytes } (e.g. attributeArray-backed histograms)
 		if ( typeof r.bytes === 'number' && ! r.isTexture && ! r.isRenderTarget ) return r.bytes;
 
-		// buffer attribute — dedupe by backing array (rw/ro nodes share one buffer)
+		// buffer attribute — dedupe by backing array, or by the attribute itself when it is
+		// GPU-only and has none (rw/ro nodes share one buffer either way)
+		if ( r.gpuByteLength != null ) {
+
+			if ( seen.has( r ) ) return 0;
+			seen.add( r );
+			return r.gpuByteLength;
+
+		}
+
 		if ( r.array && r.array.byteLength != null ) {
 
 			if ( seen.has( r.array ) ) return 0;

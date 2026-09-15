@@ -7,11 +7,12 @@
  * loop) and `initTimestampQuery` (enlarges the stats-gl timestamp query pool so
  * the wavefront tracer's high per-frame compute-pass count doesn't overflow it).
  *
- * Export: `struct()` — drop-in replacement for TSL's `struct()` returning
- * a proxy factory that supports GLSL-style dot-notation field access.
+ * Exports: `struct()` — drop-in replacement for TSL's `struct()` returning
+ * a proxy factory that supports GLSL-style dot-notation field access — and
+ * `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
  */
 
-import { WebGPUBackend } from 'three/webgpu';
+import { StorageInstancedBufferAttribute, WebGPUBackend } from 'three/webgpu';
 import { struct as _struct } from 'three/tsl';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +67,59 @@ WebGPUBackend.prototype.createNodeBuilder = function ( object, renderer ) {
 	_installScopedArrayAtomicPatch( builder );
 
 	return builder;
+
+};
+
+// ---------------------------------------------------------------------------
+// 1b. GPU-only storage attributes
+// ---------------------------------------------------------------------------
+// `StorageBufferAttribute( count, ... )` always allocates a CPU TypedArray, even
+// for a buffer only compute shaders ever touch — three.js has no GPU-only path
+// (upstream request open). The wavefront ray/hit/rng state and the per-pixel
+// G-buffer are exactly that: every lane is written by a kernel before anything
+// reads it, nothing is ever read back, and WebGPU zero-initialises a new buffer,
+// so the CPU copy is pure overhead — 704 MB at a 4M path budget.
+//
+// `gpuOnlyStorageAttribute()` builds the attribute over a zero-length array and
+// records the size the GPU buffer needs; `createStorageAttribute` below allocates
+// that size unmapped, and `updateAttribute` becomes a no-op since there is
+// nothing to upload. Everything else (binding, dispose, readback plumbing) is
+// untouched — a storage binding takes the whole buffer with no size argument.
+
+export function gpuOnlyStorageAttribute( count, itemSize, typeClass = Float32Array ) {
+
+	const attr = new StorageInstancedBufferAttribute( new typeClass( 0 ), itemSize );
+	attr.count = count;
+	attr.gpuByteLength = count * itemSize * typeClass.BYTES_PER_ELEMENT;
+	attr.isGPUOnly = true;
+	return attr;
+
+}
+
+const _origCreateStorageAttribute = WebGPUBackend.prototype.createStorageAttribute;
+
+WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
+
+	const bufferAttribute = this.attributeUtils._getBufferAttribute( attribute );
+	if ( ! bufferAttribute.isGPUOnly ) return _origCreateStorageAttribute.call( this, attribute );
+
+	const data = this.get( bufferAttribute );
+	if ( data.buffer !== undefined ) return;
+
+	data.buffer = this.device.createBuffer( {
+		label: bufferAttribute.name,
+		size: bufferAttribute.gpuByteLength,
+		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+	} );
+
+};
+
+const _origUpdateAttribute = WebGPUBackend.prototype.updateAttribute;
+
+WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
+
+	if ( this.attributeUtils._getBufferAttribute( attribute ).isGPUOnly ) return;
+	return _origUpdateAttribute.call( this, attribute );
 
 };
 

@@ -5,7 +5,7 @@
  */
 
 import { uniform, texture, storage } from 'three/tsl';
-import { StorageInstancedBufferAttribute } from 'three/webgpu';
+import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
 import { PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute } from '../Processor/PackedRayBuffer.js';
 import { QueueManager, COUNTER, ENERGY_SCALE } from '../Processor/QueueManager.js';
@@ -993,7 +993,7 @@ export class PathTracer extends PathTracerStage {
 		// canonicalize; u32 stores the bits verbatim.
 		const gBufferVec4s = B * GBUFFER_STRIDE;
 		freeStorageAttribute( this.renderer, this._gBufferAttr );
-		this._gBufferAttr = new StorageInstancedBufferAttribute( new Uint32Array( gBufferVec4s * 4 ), 4 );
+		this._gBufferAttr = gpuOnlyStorageAttribute( gBufferVec4s, 4, Uint32Array );
 		const gBufferRW = storage( this._gBufferAttr, 'uvec4' );
 		const gBufferRO = storage( this._gBufferAttr, 'uvec4' ).toReadOnly();
 
@@ -1009,15 +1009,15 @@ export class PathTracer extends PathTracerStage {
 
 			// Tier-1 convergence: per-pixel running mean of luminance² (Welford second moment), read+written by FinalWrite.
 			freeStorageAttribute( this.renderer, this._m2Attr );
-			this._m2Attr = new StorageInstancedBufferAttribute( new Float32Array( maxPixels ), 1 );
+			this._m2Attr = gpuOnlyStorageAttribute( maxPixels, 1 );
 
 			// Tier-2: per-pixel freeze-candidate streak. FinalWrite writes (RW), buildActivePixels reads (RO).
 			freeStorageAttribute( this.renderer, this._streakAttr );
-			this._streakAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
+			this._streakAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
 
 			// Tier-2: dilated frozen mask (1 = skip). buildActivePixels writes; active-list + FinalWrite read → race-free.
 			freeStorageAttribute( this.renderer, this._frozenMaskAttr );
-			this._frozenMaskAttr = new StorageInstancedBufferAttribute( new Uint32Array( maxPixels ), 1 );
+			this._frozenMaskAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
 
 		}
 

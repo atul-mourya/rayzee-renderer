@@ -4,6 +4,7 @@
 
 import { storage } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
+import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { freeStorageAttribute } from './PackedRayBuffer.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
@@ -94,8 +95,9 @@ export class QueueManager {
 		);
 		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
 
-		const attrA = new StorageInstancedBufferAttribute( new Uint32Array( capacity ), 1 );
-		const attrB = new StorageInstancedBufferAttribute( new Uint32Array( capacity ), 1 );
+		// Index lists, not data: written wholesale by compaction before any read, never read back.
+		const attrA = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
+		const attrB = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
 		this._attrA = attrA;
 		this._attrB = attrB;
 
@@ -112,7 +114,7 @@ export class QueueManager {
 
 		// Material-sort output: a material-reordered permutation of the active index
 		// list, written by the global material sort and read by Shade in place of activeIndices.
-		const sortAttr = new StorageInstancedBufferAttribute( new Uint32Array( capacity ), 1 );
+		const sortAttr = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
 		this._sortAttr = sortAttr;
 		this.sortedIndices = storage( sortAttr, 'uint' );
 		this.sortedIndicesRO = storage( sortAttr, 'uint' ).toReadOnly();
