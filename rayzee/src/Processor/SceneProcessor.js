@@ -2598,6 +2598,13 @@ export class SceneProcessor {
 				triangleByteLength: meshTriData.byteLength,
 				triangleCount: entry.triCount,
 				depth: this.config.bvhDepth,
+				// Without these the worker builds at its own defaults (leaf size 8 against the
+				// scene's 4), producing a tree of a different size that the swap below rejects —
+				// so every rebuild was thrown away.
+				maxLeafSize: this.bvhBuilder.maxLeafSize,
+				numBins: this.bvhBuilder.numBins,
+				maxBins: this.bvhBuilder.maxBins,
+				minBins: this.bvhBuilder.minBins,
 				reportProgress: false,
 				sharedReorderBuffer: null,
 				treeletOptimization: {
@@ -2619,7 +2626,9 @@ export class SceneProcessor {
 		for ( const meshIdx of meshIndices ) {
 
 			const entry = this.instanceTable.entryAt( meshIdx );
-			if ( ! entry ) continue;
+			// A placement that borrows another's BLAS must not rebuild it: the work is the
+			// owner's, and two placements would dispatch the same rebuild twice.
+			if ( ! entry || ! this.instanceTable.isOwner( meshIdx ) ) continue;
 
 			// Cancel any in-flight rebuild for this mesh
 			const existing = this._pendingRebuilds.get( meshIdx );
@@ -2641,11 +2650,12 @@ export class SceneProcessor {
 		const newBvhData = workerData.bvhData;
 		const newNodeCount = newBvhData.length / FPN;
 
-		// Node count must match — refit doesn't change topology, rebuild shouldn't either
-		// for the same triangle set. If it differs, the buffer layout is invalid.
-		if ( newNodeCount !== entry.blasNodeCount ) {
+		// The rebuilt tree only has to fit the range the build reserved. Demanding an exact match
+		// was too strict: the triangles have moved, so the splits land differently and the count
+		// legitimately drifts. Anything past the reserved range would overwrite the next BLAS.
+		if ( newNodeCount > entry.blasNodeCount ) {
 
-			log.warn( `background rebuild node count mismatch for mesh ${meshIdx} (${newNodeCount} vs ${entry.blasNodeCount}), skipping swap` );
+			log.warn( `background rebuild does not fit for mesh ${meshIdx} (${newNodeCount} nodes vs ${entry.blasNodeCount} reserved), skipping swap` );
 			return;
 
 		}
@@ -2662,18 +2672,29 @@ export class SceneProcessor {
 
 		}
 
-		// Update per-mesh maps
+		// The live tree is whatever the rebuild produced; any reserved nodes past it are dead and
+		// nothing reaches them, but a later refit would walk them as garbage.
+		this.instanceTable.setBlasNodeCount( meshIdx, newNodeCount );
+
+		// The rebuild reordered the triangles, so the map from stored order back to the caller's
+		// order has to follow. `entryAt()` hands back a snapshot, so writing it there was lost and
+		// the next refit scattered every position through the previous permutation.
+		//
+		// The worker was handed the triangles already in stored order, so its permutation is
+		// relative to that, not to the caller's order. Overwriting rather than composing would
+		// discard how the original build shuffled them.
 		const newOrigToBvh = workerData.originalToBvh;
 		if ( newOrigToBvh ) {
 
+			const prev = this.instanceTable.bvhToOriginalOf( meshIdx );
 			const bvhToOrig = new Uint32Array( entry.triCount );
 			for ( let i = 0; i < entry.triCount; i ++ ) {
 
-				bvhToOrig[ newOrigToBvh[ i ] ] = i;
+				bvhToOrig[ newOrigToBvh[ i ] ] = prev ? prev[ i ] : i;
 
 			}
 
-			entry.bvhToOriginal = bvhToOrig;
+			this.instanceTable.setBvhToOriginal( meshIdx, bvhToOrig );
 
 		}
 
@@ -2683,7 +2704,7 @@ export class SceneProcessor {
 
 		this._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );
 
-		onSwap?.();
+		onSwap?.( meshIdx );
 
 	}
 

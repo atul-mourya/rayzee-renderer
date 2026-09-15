@@ -1552,11 +1552,12 @@ export class PathTracerApp extends EventDispatcher {
 		this.reset();
 
 		// Kick off background rebuild for optimal SAH quality
-		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, () => {
+		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, ( meshIndex ) => {
 
-			// Swap complete — upload updated buffers and restart accumulation
-			this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
-			this.stages.pathTracer.updateBVHData( this._sdf.bvh );
+			// Swap complete — upload just that mesh's triangles and nodes, plus the TLAS. A whole
+			// re-upload here is gigabytes on a large scene, for one mesh's worth of change.
+			const dirty = this._sdf.computeBLASDirtyRanges( [ meshIndex ] );
+			this.stages.pathTracer.updateBufferRanges( dirty.triRanges, dirty.bvhRanges );
 			this.reset();
 
 		} );

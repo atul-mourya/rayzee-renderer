@@ -381,10 +381,32 @@ export class InstanceTable {
 
 	}
 
-	/** The per-BLAS triangle reorder map this placement traverses through. */
+	/** Record a rebuilt BLAS's node count. May shrink; never past what the build allocated. */
+	setBlasNodeCount( index, nodeCount ) {
+
+		this.tplNodeCount[ this.sourceMesh[ index ] ] = nodeCount;
+
+	}
+
+	/** Record the stored-order to caller-order map for a rebuilt BLAS. */
+	setBvhToOriginal( index, map ) {
+
+		this.bvhToOriginal.set( this.sourceMesh[ index ], map );
+
+	}
+
+	/**
+	 * The per-BLAS triangle reorder map this placement traverses through. A placement that
+	 * borrows another's BLAS borrows its map too — only the owner's template carries one.
+	 */
 	bvhToOriginalOf( index ) {
 
-		return this.bvhToOriginal.get( this.sourceMesh[ index ] ) || null;
+		const t = this.sourceMesh[ index ];
+		const own = this.bvhToOriginal.get( t );
+		if ( own ) return own;
+
+		const owner = this.tplOwner[ t ];
+		return ( owner >= 0 ? this.bvhToOriginal.get( this.sourceMesh[ owner ] ) : null ) || null;
 
 	}
 
