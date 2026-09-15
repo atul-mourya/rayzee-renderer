@@ -180,6 +180,7 @@ function makeMockApp() {
 		needsReset: false,
 		wake: vi.fn(),
 		refitBLASes: vi.fn(),
+		updateMeshTransforms: vi.fn(),
 		dispatchEvent: vi.fn(),
 		refreshFrame: vi.fn(),
 	};
@@ -318,80 +319,65 @@ describe( 'TransformManager', () => {
 
 	describe( 'setMeshData', () => {
 
-		it( 'computes triangle ranges from mesh geometry', () => {
+		it( 'keeps the mesh list and nothing per-vertex', () => {
 
-			// Mesh with 3 vertices, 1 triangle (indexed)
-			const mesh = makeMockMesh(
-				[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ],
-				[ 0, 1, 2 ]
-			);
+			const mesh = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
 
-			tm.setMeshData( [ mesh ], 1 );
+			tm.setMeshData( [ mesh ] );
 
-			expect( tm._meshTriRanges ).toHaveLength( 1 );
-			expect( tm._meshTriRanges[ 0 ] ).toEqual(
-				expect.objectContaining( { start: 0, count: 1, uniqueVerts: 3 } )
-			);
-			// Nothing is allocated until a mesh is actually dragged.
-			expect( tm._meshPositions ).toEqual( [] );
-			expect( tm._skinnedCache ).toEqual( [] );
+			// A move never reads vertices, so a scene of any size costs one array reference.
+			expect( tm._meshes ).toEqual( [ mesh ] );
+			expect( tm._meshPositions ).toBeUndefined();
+			expect( tm._skinnedCache ).toBeUndefined();
 
 		} );
 
-		it( 'handles multiple meshes with correct offsets', () => {
+	} );
 
-			const mesh0 = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
-			const mesh1 = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2, 3, 3, 3 ], [ 0, 1, 2, 1, 2, 3 ] );
+	describe( 'moving an object', () => {
 
-			tm.setMeshData( [ mesh0, mesh1 ], 3 ); // 1 + 2 triangles
+		it( 'updates transforms instead of rewriting geometry', () => {
 
-			expect( tm._meshTriRanges[ 0 ].start ).toBe( 0 );
-			expect( tm._meshTriRanges[ 0 ].count ).toBe( 1 );
-			expect( tm._meshTriRanges[ 1 ].start ).toBe( 1 );
-			expect( tm._meshTriRanges[ 1 ].count ).toBe( 2 );
+			const mesh = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
+			tm.setMeshData( [ mesh ] );
+			mesh.updateMatrixWorld = vi.fn();
+			tm.attach( mesh );
 
-		} );
+			tm.controls._fire( 'dragging-changed', { value: true } );
+			tm.controls._fire( 'dragging-changed', { value: false } );
 
-		it( 'allocates a mesh its own buffers only when that mesh is computed', () => {
-
-			const mesh0 = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
-			const mesh1 = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2, 3, 3, 3 ], [ 0, 1, 2, 1, 2, 3 ] );
-
-			tm.setMeshData( [ mesh0, mesh1 ], 3 );
-			tm._computeMeshPositions( 1 );
-
-			expect( tm._meshPositions[ 0 ] ).toBeUndefined();
-			expect( tm._meshPositions[ 1 ] ).toHaveLength( 2 * 9 ); // that mesh alone
-			expect( tm._meshNormals[ 1 ] ).toHaveLength( 2 * 9 );
-			expect( tm._skinnedCache[ 0 ] ).toBeUndefined();
+			expect( app.updateMeshTransforms ).toHaveBeenCalledWith( [ 0 ] );
+			// The geometry path would drag every other object sharing this mesh's triangles.
+			expect( app.refitBLASes ).not.toHaveBeenCalled();
 
 		} );
 
-		it( 'writes a mesh at its own offset, not the scene offset', () => {
+		it( 'moves every mesh under the attached group', () => {
 
-			const mesh0 = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
-			const mesh1 = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2 ], [ 0, 1, 2 ] );
+			const parent = { name: 'group', parent: null, updateMatrixWorld: vi.fn() };
+			const meshA = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ], parent );
+			const meshB = makeMockMesh( [ 2, 2, 2, 3, 2, 2, 2, 3, 2 ], [ 0, 1, 2 ], parent );
+			const meshC = makeMockMesh( [ 4, 4, 4, 5, 4, 4, 4, 5, 4 ], [ 0, 1, 2 ], null );
+			tm.setMeshData( [ meshA, meshB, meshC ] );
+			tm.attach( parent );
 
-			tm.setMeshData( [ mesh0, mesh1 ], 2 );
-			tm._computeMeshPositions( 1 ); // starts at scene triangle 1
+			tm.controls._fire( 'dragging-changed', { value: true } );
+			tm.controls._fire( 'dragging-changed', { value: false } );
 
-			// mesh 1's first vertex lands at index 0 of its own buffer
-			expect( Array.from( tm._meshPositions[ 1 ].slice( 0, 3 ) ) ).toEqual( [ 2, 2, 2 ] );
+			expect( app.updateMeshTransforms ).toHaveBeenCalledWith( [ 0, 1 ] );
 
 		} );
 
-		it( 'handles non-indexed geometry', () => {
+		it( 'does nothing when the attached object owns no mesh', () => {
 
-			// 6 vertices, no index buffer → 2 triangles
-			const mesh = makeMockMesh( [
-				0, 0, 0, 1, 0, 0, 0, 1, 0,
-				2, 2, 2, 3, 2, 2, 2, 3, 2,
-			] );
+			const mesh = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
+			tm.setMeshData( [ mesh ] );
+			tm.attach( { name: 'unrelated', updateMatrixWorld: vi.fn() } );
 
-			tm.setMeshData( [ mesh ], 2 );
+			tm.controls._fire( 'dragging-changed', { value: true } );
+			tm.controls._fire( 'dragging-changed', { value: false } );
 
-			expect( tm._meshTriRanges[ 0 ].count ).toBe( 2 );
-			expect( tm._meshTriRanges[ 0 ].indices ).toBeNull();
+			expect( app.updateMeshTransforms ).not.toHaveBeenCalled();
 
 		} );
 
@@ -442,15 +428,12 @@ describe( 'TransformManager', () => {
 			tm.attach( obj );
 
 			const mesh = makeMockMesh( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], [ 0, 1, 2 ] );
-			tm.setMeshData( [ mesh ], 1 );
+			tm.setMeshData( [ mesh ] );
 
 			tm.dispose();
 
 			expect( tm.attachedObject ).toBeNull();
 			expect( tm._meshes ).toBeNull();
-			expect( tm._meshPositions ).toBeNull();
-			expect( tm._meshNormals ).toBeNull();
-			expect( tm._skinnedCache ).toBeNull();
 
 		} );
 

@@ -56,6 +56,27 @@ export function invertAffineInto( m, off, out ) {
 
 }
 
+/** `out = a * b`, column-major affine 4x4s; `b` is read at `bOff`. Matches how the extractor
+ *  composes an InstancedMesh's host matrix with each instance matrix. */
+export function multiplyAffine( a, b, bOff, out ) {
+
+	for ( let c = 0; c < 4; c ++ ) {
+
+		const o = bOff + c * 4;
+		const b0 = b[ o ], b1 = b[ o + 1 ], b2 = b[ o + 2 ], b3 = b[ o + 3 ];
+
+		for ( let r = 0; r < 4; r ++ ) {
+
+			out[ c * 4 + r ] = a[ r ] * b0 + a[ 4 + r ] * b1 + a[ 8 + r ] * b2 + a[ 12 + r ] * b3;
+
+		}
+
+	}
+
+	return out;
+
+}
+
 /** True when the matrix leaves points untouched — lets refit skip the transform entirely. */
 export function isIdentity( m ) {
 
@@ -182,6 +203,8 @@ export class InstanceTable {
 		this.tplOwner = new Int32Array( templateCount ).fill( - 1 ); // placement that built the BLAS
 		this.tplObjectAABB = new Float32Array( templateCount * 6 );
 
+		this._placementRuns = null;
+
 		// Keyed by template, and only templates that own a BLAS carry them.
 		this.originalToBvhMap = new Map();
 		this.bvhToOriginal = new Map();
@@ -280,6 +303,44 @@ export class InstanceTable {
 		let n = 0;
 		for ( let i = 0; i < this.count; i ++ ) n += this.isSet[ i ];
 		return n;
+
+	}
+
+	/**
+	 * Replace one placement's object-to-world transform. Its geometry is untouched, which is the
+	 * whole point: a rigid move is a matrix change, and rewriting shared triangles instead would
+	 * drag every other placement of the same geometry along with it.
+	 */
+	setPlacementMatrix( index, matrixWorld, matrixOffset = 0 ) {
+
+		this._place( index, this.sourceMesh[ index ], matrixWorld, matrixOffset );
+
+	}
+
+	/**
+	 * The contiguous run of placements recorded for `meshIndex`, or null. One object contributes
+	 * one placement, or one per instance for an InstancedMesh, and the extractor emits them in
+	 * mesh order — so the run is contiguous and worth indexing once rather than scanning per move.
+	 *
+	 * @returns {{start: number, count: number}|null}
+	 */
+	placementRunOf( meshIndex ) {
+
+		if ( ! this._placementRuns ) {
+
+			const runs = this._placementRuns = new Map();
+			for ( let i = 0; i < this.count; i ++ ) {
+
+				const m = this.sourceMesh[ i ];
+				const run = runs.get( m );
+				if ( run ) run.count ++;
+				else runs.set( m, { start: i, count: 1 } );
+
+			}
+
+		}
+
+		return this._placementRuns.get( meshIndex ) ?? null;
 
 	}
 

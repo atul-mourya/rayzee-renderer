@@ -1565,6 +1565,28 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Apply new transforms for objects that moved, without touching their geometry.
+	 *
+	 * This is the right call for a gizmo drag or any other rigid move: triangles are stored in
+	 * each object's own space, so only the placement matrix changes. {@link refitBLASes} is for
+	 * geometry that actually deformed — on a rigid move it rewrites vertices needlessly, and
+	 * drags along any other object sharing the same geometry.
+	 *
+	 * @param {number[]} meshIndices - indices into {@link sceneMeshes}
+	 * @returns {{ refitTimeMs: number, placements: number }}
+	 */
+	updateMeshTransforms( meshIndices ) {
+
+		const result = this._sdf.updateMeshTransforms( meshIndices );
+
+		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
+		this.reset();
+
+		return result;
+
+	}
+
 	// ═══════════════════════════════════════════════════════════════
 	// Resize
 	// ═══════════════════════════════════════════════════════════════

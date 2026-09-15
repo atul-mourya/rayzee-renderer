@@ -236,7 +236,6 @@ export class TLASBuilder {
 
 		const world = table.world, src = table.sourceMesh;
 		const blasOffset = table.tplBlasOffset, visible = table.visible, leafOf = table.tlasLeafIndex;
-		const inv = _inverseScratch;
 		const idx = bvhIndexView( data );
 
 		for ( let node = 0; node < nodeCount; node ++ ) {
@@ -248,14 +247,32 @@ export class TLASBuilder {
 			idx[ o ] = blasOffset[ src[ i ] ];
 			data[ o + 2 ] = visible[ i ] ? 1.0 : 0.0;
 
-			invertAffineInto( world, i * 16, inv );
-			data[ o + 4 ] = inv[ 0 ]; data[ o + 5 ] = inv[ 4 ]; data[ o + 6 ] = inv[ 8 ]; data[ o + 7 ] = inv[ 12 ];
-			data[ o + 8 ] = inv[ 1 ]; data[ o + 9 ] = inv[ 5 ]; data[ o + 10 ] = inv[ 9 ]; data[ o + 11 ] = inv[ 13 ];
-			data[ o + 12 ] = inv[ 2 ]; data[ o + 13 ] = inv[ 6 ]; data[ o + 14 ] = inv[ 10 ]; data[ o + 15 ] = inv[ 14 ];
+			TLASBuilder.writeLeafMatrix( data, o, world, i );
 
 			leafOf[ i ] = node;
 
 		}
+
+	}
+
+	/**
+	 * Write one leaf's world-to-object rows, the twelve floats after its payload. Called again on
+	 * its own whenever a placement moves, so a rigid transform costs a matrix rather than a
+	 * rewrite of the geometry the placement may be sharing.
+	 *
+	 * @param {Float32Array} data - the node buffer, or one chunk of it
+	 * @param {number} off - float offset of the leaf within `data`
+	 * @param {Float32Array} world - the instance table's object-to-world column
+	 * @param {number} placement
+	 */
+	static writeLeafMatrix( data, off, world, placement ) {
+
+		const inv = _inverseScratch;
+		invertAffineInto( world, placement * 16, inv );
+
+		data[ off + 4 ] = inv[ 0 ]; data[ off + 5 ] = inv[ 4 ]; data[ off + 6 ] = inv[ 8 ]; data[ off + 7 ] = inv[ 12 ];
+		data[ off + 8 ] = inv[ 1 ]; data[ off + 9 ] = inv[ 5 ]; data[ off + 10 ] = inv[ 9 ]; data[ off + 11 ] = inv[ 13 ];
+		data[ off + 12 ] = inv[ 2 ]; data[ off + 13 ] = inv[ 6 ]; data[ off + 14 ] = inv[ 10 ]; data[ off + 15 ] = inv[ 14 ];
 
 	}
 

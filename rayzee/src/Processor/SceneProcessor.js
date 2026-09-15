@@ -3,7 +3,7 @@ import { BVHBuilder } from './BVHBuilder.js';
 import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
-import { InstanceTable, isIdentity } from './InstanceTable.js';
+import { InstanceTable, isIdentity, multiplyAffine } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver } from './ChunkedRecords.js';
 import {
 	MemoryLedger, estimateSceneBytes, probeAddressSpace,
@@ -1937,6 +1937,88 @@ export class SceneProcessor {
 		this._refitTLAS();
 
 		return { refitTimeMs: performance.now() - start };
+
+	}
+
+	/**
+	 * Move objects without touching their geometry: the placements a mesh contributed get new
+	 * transforms, the TLAS leaves get the matching world-to-object matrices, and the TLAS boxes
+	 * are refit. Triangles, BLASes and the GPU triangle buffer are all left alone.
+	 *
+	 * This is what a gizmo drag wants. {@link refitBLASes} exists for geometry that actually
+	 * deformed; used for a rigid move it would bake the new world positions into triangles that
+	 * a second placement of the same geometry may be sharing, and drag that one along too.
+	 *
+	 * @param {number[]} meshIndices - indices into `this.meshes`
+	 * @returns {{ refitTimeMs: number, placements: number }}
+	 */
+	updateMeshTransforms( meshIndices ) {
+
+		if ( ! this.instanceTable || ! this.bvh ) {
+
+			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
+
+		}
+
+		const start = performance.now();
+		const table = this.instanceTable;
+		const composed = this._transformScratch ??= new Float32Array( 16 );
+		let moved = 0;
+
+		for ( const meshIndex of meshIndices ) {
+
+			const mesh = this.meshes?.[ meshIndex ];
+			const run = table.placementRunOf( meshIndex );
+			if ( ! mesh || ! run ) continue;
+
+			mesh.updateMatrixWorld( true );
+			const world = mesh.matrixWorld.elements;
+			const instances = mesh.isInstancedMesh ? mesh.instanceMatrix?.array : null;
+
+			for ( let k = 0; k < run.count; k ++ ) {
+
+				const p = run.start + k;
+				if ( ! table.isSet[ p ] ) continue;
+
+				if ( instances ) {
+
+					multiplyAffine( world, instances, k * 16, composed );
+					table.setPlacementMatrix( p, composed );
+
+				} else {
+
+					table.setPlacementMatrix( p, world );
+
+				}
+
+				this._writeLeafMatrix( p );
+				moved ++;
+
+			}
+
+		}
+
+		this._refitTLAS();
+
+		return { refitTimeMs: performance.now() - start, placements: moved };
+
+	}
+
+	/** Refresh one TLAS leaf's world-to-object matrix from the table. @private */
+	_writeLeafMatrix( placement ) {
+
+		const node = this.instanceTable.tlasLeafIndex[ placement ];
+		if ( node < 0 ) return;
+
+		const chunk = this.bvh.chunkFor( node );
+		TLASBuilder.writeLeafMatrix( chunk, this.bvh.baseOf( node ), this.instanceTable.world, placement );
+
+	}
+
+	/** The TLAS occupies the front of the BVH buffer and is the only part a move rewrites. */
+	computeTLASDirtyRange() {
+
+		return { offset: 0, count: this.instanceTable.tlasNodeCount * 16 };
 
 	}
 

@@ -5,7 +5,7 @@
  * disables OrbitControls during drag, and triggers BVH refit on release.
  */
 
-import { Matrix3, Scene, Vector3 } from 'three';
+import { Scene, Vector3 } from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { EngineEvents } from '../EngineEvents.js';
 
@@ -31,13 +31,6 @@ export class TransformManager {
 		this._attached = null;
 		this._isDragging = false;
 		this._meshes = null;
-		this._meshTriRanges = null;
-		this._skinnedCache = null;
-		this._normalCache = null;
-		this._meshPositions = null;
-		this._meshNormals = null;
-		this._tempVec = new Vector3();
-		this._normalMatrix = new Matrix3();
 		this._refitInFlight = false;
 		this._baselineComputed = false;
 
@@ -57,43 +50,12 @@ export class TransformManager {
 	}
 
 	/**
-	 * Provide mesh data from SceneProcessor after scene load.
-	 * Required for position extraction during BVH refit.
+	 * Provide the scene's mesh list from SceneProcessor after load. A drag is resolved against it
+	 * to find which objects moved; nothing per-vertex is kept, because a move never reads vertices.
 	 */
 	setMeshData( meshes ) {
 
 		this._meshes = meshes;
-		this._meshTriRanges = [];
-		// Scratch is allocated per mesh the first time that mesh is actually dragged. A scene can
-		// hold tens of millions of triangles nothing will ever move, and reserving vertex caches
-		// plus scene-wide position and normal buffers for all of them runs to gigabytes — at 30M
-		// triangles the scene-wide pair alone is 2,060 MB and simply fails to allocate.
-		this._skinnedCache = [];
-		this._normalCache = [];
-		this._meshPositions = [];
-		this._meshNormals = [];
-		let offset = 0;
-
-		for ( const mesh of meshes ) {
-
-			const geometry = mesh.geometry;
-			const positions = geometry.attributes.position;
-			const indices = geometry.index ? geometry.index.array : null;
-			const count = indices ? indices.length / 3 : positions.count / 3;
-			const uniqueVerts = positions.count;
-
-			this._meshTriRanges.push( { start: offset, count, uniqueVerts, indices } );
-			offset += count;
-
-		}
-
-	}
-
-	/** A reusable per-mesh buffer, grown only when that mesh first needs it. @private */
-	_scratch( cache, index, length ) {
-
-		const have = cache[ index ];
-		return have && have.length === length ? have : ( cache[ index ] = new Float32Array( length ) );
 
 	}
 
@@ -335,7 +297,7 @@ export class TransformManager {
 	 */
 	_recomputeAndRefit() {
 
-		if ( ! this._meshes || ! this._meshTriRanges || this._refitInFlight ) return;
+		if ( ! this._meshes || this._refitInFlight ) return;
 		if ( ! this._attached ) return;
 
 		// Update world matrices for the moved object subtree
@@ -346,20 +308,15 @@ export class TransformManager {
 
 		if ( affectedIndices.length === 0 ) return;
 
-		// Only the dragged meshes are read back, so only they are computed. The old code seeded
-		// every mesh on the first drag because refit indexed into one scene-wide array.
-		for ( const idx of affectedIndices ) this._computeMeshPositions( idx );
-
 		this._refitInFlight = true;
 
 		try {
 
-			// Use per-BLAS refit for affected meshes only (faster than full BVH refit)
-			this._app.refitBLASes(
-				affectedIndices,
-				i => this._meshPositions[ i ] ?? null,
-				i => this._meshNormals[ i ] ?? null
-			);
+			// A gizmo only changes an object's transform, so the triangles never move in their
+			// own space — only the matrix that places them does. Rewriting world-space vertices
+			// instead costs a pass over every vertex, and corrupts any other object sharing
+			// this geometry.
+			this._app.updateMeshTransforms( affectedIndices );
 
 		} catch ( err ) {
 
@@ -409,122 +366,6 @@ export class TransformManager {
 
 	}
 
-	/**
-	 * Compute world-space positions and normals for a single mesh, into that mesh's own buffers.
-	 */
-	_computeMeshPositions( meshIndex ) {
-
-		const mesh = this._meshes[ meshIndex ];
-		const { count, uniqueVerts, indices } = this._meshTriRanges[ meshIndex ];
-		const skinned = this._scratch( this._skinnedCache, meshIndex, uniqueVerts * 3 );
-		const nrmCache = this._scratch( this._normalCache, meshIndex, uniqueVerts * 3 );
-		const tempVec = this._tempVec;
-		const output = this._scratch( this._meshPositions, meshIndex, count * 9 );
-		const nrmOut = this._scratch( this._meshNormals, meshIndex, count * 9 );
-
-		mesh.updateMatrixWorld( true );
-		const worldMatrix = mesh.matrixWorld;
-
-		// Normal matrix = inverse transpose of upper 3x3 of worldMatrix
-		this._normalMatrix.getNormalMatrix( worldMatrix );
-		const ne = this._normalMatrix.elements;
-
-		const normalAttr = mesh.geometry.attributes.normal;
-
-		// Phase 1: Compute world-space positions and normals for all unique vertices
-		for ( let v = 0; v < uniqueVerts; v ++ ) {
-
-			mesh.getVertexPosition( v, tempVec );
-			tempVec.applyMatrix4( worldMatrix );
-
-			skinned[ v * 3 ] = tempVec.x;
-			skinned[ v * 3 + 1 ] = tempVec.y;
-			skinned[ v * 3 + 2 ] = tempVec.z;
-
-			// Transform normal by normal matrix (handles non-uniform scale)
-			if ( normalAttr ) {
-
-				const nx = normalAttr.getX( v );
-				const ny = normalAttr.getY( v );
-				const nz = normalAttr.getZ( v );
-
-				nrmCache[ v * 3 ] = ne[ 0 ] * nx + ne[ 3 ] * ny + ne[ 6 ] * nz;
-				nrmCache[ v * 3 + 1 ] = ne[ 1 ] * nx + ne[ 4 ] * ny + ne[ 7 ] * nz;
-				nrmCache[ v * 3 + 2 ] = ne[ 2 ] * nx + ne[ 5 ] * ny + ne[ 8 ] * nz;
-
-			}
-
-		}
-
-		// Phase 2: Assemble triangles (positions + normals)
-		if ( indices ) {
-
-			for ( let t = 0; t < count; t ++ ) {
-
-				const t3 = t * 3;
-				const i0 = indices[ t3 ] * 3;
-				const i1 = indices[ t3 + 1 ] * 3;
-				const i2 = indices[ t3 + 2 ] * 3;
-				const o = t * 9;
-
-				output[ o ] = skinned[ i0 ];
-				output[ o + 1 ] = skinned[ i0 + 1 ];
-				output[ o + 2 ] = skinned[ i0 + 2 ];
-				output[ o + 3 ] = skinned[ i1 ];
-				output[ o + 4 ] = skinned[ i1 + 1 ];
-				output[ o + 5 ] = skinned[ i1 + 2 ];
-				output[ o + 6 ] = skinned[ i2 ];
-				output[ o + 7 ] = skinned[ i2 + 1 ];
-				output[ o + 8 ] = skinned[ i2 + 2 ];
-
-				nrmOut[ o ] = nrmCache[ i0 ];
-				nrmOut[ o + 1 ] = nrmCache[ i0 + 1 ];
-				nrmOut[ o + 2 ] = nrmCache[ i0 + 2 ];
-				nrmOut[ o + 3 ] = nrmCache[ i1 ];
-				nrmOut[ o + 4 ] = nrmCache[ i1 + 1 ];
-				nrmOut[ o + 5 ] = nrmCache[ i1 + 2 ];
-				nrmOut[ o + 6 ] = nrmCache[ i2 ];
-				nrmOut[ o + 7 ] = nrmCache[ i2 + 1 ];
-				nrmOut[ o + 8 ] = nrmCache[ i2 + 2 ];
-
-			}
-
-		} else {
-
-			// Non-indexed: vertices are sequential triplets
-			for ( let t = 0; t < count; t ++ ) {
-
-				const v0 = ( t * 3 ) * 3;
-				const v1 = ( t * 3 + 1 ) * 3;
-				const v2 = ( t * 3 + 2 ) * 3;
-				const o = t * 9;
-
-				output[ o ] = skinned[ v0 ];
-				output[ o + 1 ] = skinned[ v0 + 1 ];
-				output[ o + 2 ] = skinned[ v0 + 2 ];
-				output[ o + 3 ] = skinned[ v1 ];
-				output[ o + 4 ] = skinned[ v1 + 1 ];
-				output[ o + 5 ] = skinned[ v1 + 2 ];
-				output[ o + 6 ] = skinned[ v2 ];
-				output[ o + 7 ] = skinned[ v2 + 1 ];
-				output[ o + 8 ] = skinned[ v2 + 2 ];
-
-				nrmOut[ o ] = nrmCache[ v0 ];
-				nrmOut[ o + 1 ] = nrmCache[ v0 + 1 ];
-				nrmOut[ o + 2 ] = nrmCache[ v0 + 2 ];
-				nrmOut[ o + 3 ] = nrmCache[ v1 ];
-				nrmOut[ o + 4 ] = nrmCache[ v1 + 1 ];
-				nrmOut[ o + 5 ] = nrmCache[ v1 + 2 ];
-				nrmOut[ o + 6 ] = nrmCache[ v2 ];
-				nrmOut[ o + 7 ] = nrmCache[ v2 + 1 ];
-				nrmOut[ o + 8 ] = nrmCache[ v2 + 2 ];
-
-			}
-
-		}
-
-	}
-
 	dispose() {
 
 		this._controls.removeEventListener( 'dragging-changed', this._onDraggingChanged );
@@ -534,11 +375,6 @@ export class TransformManager {
 		this._controls.dispose();
 
 		this._meshes = null;
-		this._meshTriRanges = null;
-		this._skinnedCache = null;
-		this._normalCache = null;
-		this._meshPositions = null;
-		this._meshNormals = null;
 		this._baselineComputed = false;
 		this._tempForward = null;
 		this._lightTargetDistance = null;

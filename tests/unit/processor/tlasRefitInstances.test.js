@@ -105,3 +105,95 @@ describe( 'TLAS refit with shared BLASes', () => {
 	} );
 
 } );
+
+/** A three.js-shaped stand-in: only matrixWorld and the instancing fields are read. */
+function fakeMesh( x, instanceMatrices = null ) {
+
+	return {
+		matrixWorld: { elements: new Float32Array( translation( x ) ) },
+		updateMatrixWorld() {},
+		isInstancedMesh: instanceMatrices !== null,
+		instanceMatrix: instanceMatrices ? { array: new Float32Array( instanceMatrices ) } : null,
+	};
+
+}
+
+describe( 'moving an object', () => {
+
+	it( 'moves only the placement that moved, leaving its shared copies alone', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100, - 40 ] );
+		sp.meshes = [ fakeMesh( 0 ), fakeMesh( 100 ), fakeMesh( - 40 ) ];
+
+		// Drag the middle copy from x=100 to x=250.
+		sp.meshes[ 1 ].matrixWorld.elements.set( translation( 250 ) );
+		sp.updateMeshTransforms( [ 1 ] );
+
+		expect( leafBoxes( sp ) ).toEqual( [
+			{ placement: 0, min: - 1, max: 1 },
+			{ placement: 1, min: 249, max: 251 },
+			{ placement: 2, min: - 41, max: - 39 },
+		] );
+
+	} );
+
+	it( 'leaves the shared geometry untouched', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100 ] );
+		sp.meshes = [ fakeMesh( 0 ), fakeMesh( 100 ) ];
+		const before = sp.instanceTable.tplObjectAABB.slice();
+
+		sp.meshes[ 1 ].matrixWorld.elements.set( translation( 250 ) );
+		sp.updateMeshTransforms( [ 1 ] );
+
+		expect( Array.from( sp.instanceTable.tplObjectAABB ) ).toEqual( Array.from( before ) );
+
+	} );
+
+	it( 'rewrites the leaf matrix so the ray reaches object space correctly', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100 ] );
+		sp.meshes = [ fakeMesh( 0 ), fakeMesh( 100 ) ];
+
+		sp.meshes[ 1 ].matrixWorld.elements.set( translation( 250 ) );
+		sp.updateMeshTransforms( [ 1 ] );
+
+		const leaf = sp.instanceTable.tlasLeafIndex[ 1 ];
+		const o = leaf * 16;
+		// Row 0 of world-to-object: identity rotation, translation -250.
+		expect( sp.bvhData[ o + 4 ] ).toBe( 1 );
+		expect( sp.bvhData[ o + 7 ] ).toBe( - 250 );
+
+	} );
+
+	it( 'follows every instance of an InstancedMesh when its host moves', () => {
+
+		// Every instance of one InstancedMesh comes from the same object, so they share a template.
+		const table = new InstanceTable();
+		table.allocate( 2, 1 );
+		table.setEntry( {
+			meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 1,
+			originalToBvhMap: null, bvhData: null, matrixWorld: translation( 0 ), sourceMesh: 0,
+		} );
+		table.setAlias( 1, 0, translation( 10 ), null, 0 );
+		table.tplObjectAABB.set( [ - 1, - 1, - 1, 1, 1, 1 ], 0 );
+		table.assignOffsets( TLASBuilder.nodeCountFor( 2 ) );
+
+		const built = new TLASBuilder().build( table );
+
+		const sp = new SceneProcessor();
+		sp.instanceTable = table;
+		sp._setBVHData( built.data.slice( 0, built.nodeCount * 16 ) );
+		// One object, two instances at x=0 and x=10; the host itself then moves to x=5.
+		sp.meshes = [ fakeMesh( 5, [ ...translation( 0 ), ...translation( 10 ) ] ) ];
+
+		sp.updateMeshTransforms( [ 0 ] );
+
+		expect( leafBoxes( sp ) ).toEqual( [
+			{ placement: 0, min: 4, max: 6 },
+			{ placement: 1, min: 14, max: 16 },
+		] );
+
+	} );
+
+} );
