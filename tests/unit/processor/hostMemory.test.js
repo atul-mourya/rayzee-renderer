@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import {
 	MemoryLedger, estimateSceneBytes, probeAddressSpace,
-	PREFLIGHT_SAFETY, PREFLIGHT_MIN_BYTES, SAFE_SCENE_BYTES,
+	PREFLIGHT_SAFETY, PREFLIGHT_MIN_BYTES, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from '@/core/Processor/HostMemory.js';
 import { ChunkedRecords, setChunkObserver } from '@/core/Processor/ChunkedRecords.js';
 
@@ -233,6 +233,23 @@ describe( 'preflight thresholds', () => {
 		// 30,006,828 triangles measured at 6.05 GB peak — it should not be warned about.
 		const e = estimateSceneBytes( { triangles: 30e6, placements: 2.8e6, geometryBytes: 1400 * MB } );
 		expect( e.total ).toBeLessThan( SAFE_SCENE_BYTES );
+
+	} );
+
+	it( 'puts the rungs that load below the refusal line and the one that crashes above it', () => {
+
+		// Measured: 40M and 45M both load and render; 50M killed the renderer at 9.4 GB.
+		const at = ( t, p, g ) => estimateSceneBytes( { triangles: t, placements: p, geometryBytes: g * MB } ).total;
+
+		expect( at( 40e6, 3.7e6, 1832 ) ).toBeLessThan( MAX_SCENE_BYTES );
+		expect( at( 45e6, 4.1e6, 2000 ) ).toBeLessThan( MAX_SCENE_BYTES );
+		expect( at( 50e6, 4.6e6, 2200 ) ).toBeGreaterThan( MAX_SCENE_BYTES );
+
+	} );
+
+	it( 'refuses higher than it warns, so a warned scene is still allowed to try', () => {
+
+		expect( MAX_SCENE_BYTES ).toBeGreaterThan( SAFE_SCENE_BYTES );
 
 	} );
 

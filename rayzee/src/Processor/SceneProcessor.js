@@ -7,7 +7,7 @@ import { InstanceTable, isIdentity } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver } from './ChunkedRecords.js';
 import {
 	MemoryLedger, estimateSceneBytes, probeAddressSpace,
-	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES,
+	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from './HostMemory.js';
 import { TextureCreator } from './TextureCreator.js';
 import { GeometryExtractor, geometryBytesOf } from './GeometryExtractor.js';
@@ -46,6 +46,9 @@ export class SceneProcessor {
      * @param {string} [options.textureQuality='adaptive'] - Texture quality mode
      * @param {boolean} [options.enableTextureCache=true] - Enable texture caching
      * @param {import('../EngineIssues.js').IssueLog} [options.issues] - forwarded to TextureCreator
+     * @param {number} [options.maxSceneBytes] - refuse a scene estimated above this many CPU
+     *   bytes. Defaults to {@link MAX_SCENE_BYTES}; past it the renderer process dies rather
+     *   than throwing, so there is nothing to catch. Raise it to try a bigger scene anyway.
      */
 	constructor( options = {} ) {
 
@@ -60,6 +63,7 @@ export class SceneProcessor {
 			maxTextureSize: TEXTURE_CONSTANTS.DEFAULT_MAX_TEXTURE_SIZE, // longest-edge cap for material textures
 			enableTextureCache: true,
 			maxConcurrentTextureTasks: Math.min( navigator.hardwareConcurrency || 4, 6 ),
+			maxSceneBytes: MAX_SCENE_BYTES,
 			// Treelet optimization configuration
 			// Keep: `_buildBVH` sends `enabled: value !== false`, so undefined re-enables treelets.
 			enableTreeletOptimization: false,
@@ -224,9 +228,14 @@ export class SceneProcessor {
 	 */
 	_preflightMemory( object ) {
 
+		const maxBytes = this.config.maxSceneBytes ?? MAX_SCENE_BYTES;
 		const survey = this.geometryExtractor.surveyScene( object );
 		const estimate = estimateSceneBytes( survey );
-		const report = { ...survey, estimate, safeBytes: SAFE_SCENE_BYTES, fits: estimate.total <= SAFE_SCENE_BYTES };
+		const report = {
+			...survey, estimate,
+			safeBytes: SAFE_SCENE_BYTES, maxBytes,
+			fits: estimate.total <= SAFE_SCENE_BYTES,
+		};
 		this.memoryPreflight = report;
 
 		if ( estimate.total < PREFLIGHT_MIN_BYTES ) return report;
@@ -236,6 +245,21 @@ export class SceneProcessor {
 			`triangles ${fmt.mb( estimate.triangles )} · bvh ${fmt.mb( estimate.bvh )} · geometry ${fmt.mb( estimate.geometry )}`,
 			`${fmt.n( survey.triangles )} tris · ${fmt.n( survey.placements )} placements`,
 		] ) );
+
+		// Past the hard line the renderer process dies rather than throwing, so there is nothing
+		// to catch and nothing to degrade to. Refusing with a reason is the only useful answer.
+		if ( estimate.total > maxBytes ) {
+
+			const message = `Scene needs about ${fmt.mb( estimate.total )} of CPU memory, past the ${fmt.mb( maxBytes )} `
+				+ 'a browser tab can hold — loading it would crash the tab rather than fail. '
+				+ `Reduce the scene (it has ${fmt.n( survey.triangles )} triangles), or raise maxSceneBytes to try anyway.`;
+
+			this.config.issues?.record(
+				ISSUE_CODES.SCENE_MEMORY_BUDGET, message, { ...survey, estimate, maxBytes }
+			);
+			throw new Error( message );
+
+		}
 
 		if ( ! report.fits ) {
 
@@ -312,6 +336,36 @@ export class SceneProcessor {
 		}
 
 		return parts;
+
+	}
+
+	/**
+	 * World-space bounds of everything in the BVH, as `{ min: [x,y,z], max: [x,y,z] }`.
+	 *
+	 * ⚠️ Node 0 is not "the root's box". A BVH inner node stores its two CHILDREN's boxes —
+	 * `[Amin, Aidx, Amax, _, Bmin, Bidx, Bmax, _]` — so the first six floats are one subtree,
+	 * not the scene. Reading them as the scene box is wrong and looks plausible: the two halves
+	 * legitimately rebalance between a build and a refit, so the number moves while the actual
+	 * bounds are unchanged. Verified against the union of all 3.7M placement AABBs at 40M.
+	 *
+	 * @returns {?{min: number[], max: number[]}} null before a BVH is built
+	 */
+	sceneBounds() {
+
+		if ( ! this.bvh || this.bvh.recordCount === 0 ) return null;
+
+		const chunk = this.bvh.chunkFor( 0 );
+		const base = this.bvh.baseOf( 0 );
+		const min = [], max = [];
+
+		for ( let k = 0; k < 3; k ++ ) {
+
+			min.push( Math.min( chunk[ base + k ], chunk[ base + 8 + k ] ) );
+			max.push( Math.max( chunk[ base + 4 + k ], chunk[ base + 12 + k ] ) );
+
+		}
+
+		return { min, max };
 
 	}
 
@@ -454,6 +508,7 @@ export class SceneProcessor {
 			log.error( 'processing failed:', error );
 			updateLoading( {
 				status: `Error: ${error.message}`,
+				failed: true,
 				progress: 100
 			} );
 			throw error;
@@ -545,6 +600,7 @@ export class SceneProcessor {
 			log.error( 'geometry extraction failed:', error );
 			updateLoading( {
 				status: `Extraction error: ${error.message}`,
+				failed: true,
 				progress: 25
 			} );
 			throw error;
@@ -846,6 +902,7 @@ export class SceneProcessor {
 			log.error( 'BVH build failed:', error );
 			updateLoading( {
 				status: `BVH error: ${error.message}`,
+				failed: true,
 				progress: 75
 			} );
 			throw error;

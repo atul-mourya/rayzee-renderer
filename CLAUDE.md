@@ -355,6 +355,30 @@ const MEMORY_LIMITS = {
 }
 ```
 
+**CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
+contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host
+stays up. A 40M-triangle Moana needs ~7.3 GB and a fresh renderer places 7.0–9.5 GB, so the same
+build loads after a reboot and fails after a long session.
+- `estimateSceneBytes({ triangles, placements, geometryBytes })` prices a scene before extraction.
+  `SceneProcessor._preflightMemory()` runs it and applies two lines, both recording
+  `ISSUE_CODES.SCENE_MEMORY_BUDGET`: above `SAFE_SCENE_BYTES` (7,040 MB) it **warns** and builds
+  anyway; above `MAX_SCENE_BYTES` (9,216 MB, override with `config.maxSceneBytes`) it **throws**.
+  The hard line exists because past it the renderer process is killed rather than throwing —
+  measured on Moana, 40M (7.3 GB) and 45M (8.5 GB) load and render, 50M dies at 9.4 GB resident
+  with nothing caught and nothing logged. There is no degrading past that, only refusing early.
+- `probeAddressSpace( bytes )` measures what can still be placed. ⚠️ **Only cheap when small.**
+  8.6 GB of 64 MB buffers costs 102 ms on an idle page and never shows as resident; the same probe
+  taken while the parser holds 3.6 GB pushes the renderer to 9.2 GB and doubles a 40M load
+  (135 s → 268 s). Probe one build step, at the moment that step runs — see
+  `_checkAssemblyHeadroom()`, which tests only the combined BVH right before it is allocated.
+- `app.getHostMemoryInfo()` returns the preflight, per-phase allocations and live samples for the
+  last build. ⚠️ `performance.memory.usedJSHeapSize` does **not** count SharedArrayBuffer, and the
+  triangle and BVH stores are SAB-backed, so the browser's own heap reading under-reports a large
+  scene by gigabytes. Use this instead.
+- Measured at 40M: peak live 7,350 MB against a 7,289 MB final resident set. The BLAS→BVH handoff
+  already releases as it fills, so there is no build transient left worth attacking — the only
+  remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
+
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:
 ```js

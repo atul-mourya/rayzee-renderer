@@ -48,6 +48,17 @@ export const PREFLIGHT_MIN_BYTES = 1536 * 1024 * 1024;
  */
 export const SAFE_SCENE_BYTES = 7040 * 1024 * 1024;
 
+/**
+ * The line past which the build refuses rather than tries.
+ *
+ * Above this the failure stops being a catchable `Array buffer allocation failed` and becomes a
+ * dead renderer process — measured on Moana: 40M (7.3 GB) and 45M (8.5 GB) both load, 50M
+ * (~9.7 GB) takes the tab down at 9.4 GB resident with nothing thrown and nothing logged. There
+ * is no degrading gracefully past that point, so the only useful behaviour is to say why in
+ * advance. Raise it with `new SceneProcessor( { maxSceneBytes } )` to test a bigger rung.
+ */
+export const MAX_SCENE_BYTES = 9216 * 1024 * 1024;
+
 /** Headroom a single build step wants over its own size before it is called safe. */
 export const PREFLIGHT_SAFETY = 1.15;
 

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
 import { BVH_LEAF_MARKERS } from '@/core/EngineDefaults.js';
+import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 
 // Index fields are u32 bit patterns inside the float buffer.
 const _u = new Uint32Array( 1 ), _f = new Float32Array( _u.buffer );
@@ -404,6 +406,33 @@ describe( 'BVHRefitter', () => {
 			expect( bvhData[ 4 ] ).toBe( 1 );
 
 		} );
+
+	} );
+
+} );
+
+describe( 'SceneProcessor.sceneBounds', () => {
+
+	it( 'unions both child boxes, because node 0 holds two subtrees and not the scene', () => {
+
+		// The trap: the first six floats are child A alone. A reader that takes them as the
+		// scene box gets a number that moves whenever the tree rebalances, while the real
+		// bounds never changed.
+		const sp = Object.create( SceneProcessor.prototype );
+		sp.bvh = ChunkedRecords.adopt( [ Float32Array.from( [
+			- 5, 0, 0, 0, /* A max */ 1, 1, 1, 0,
+			0, - 7, 0, 0, /* B max */ 2, 2, 9, 0,
+		] ) ], 1, 16, 1 );
+
+		expect( sp.sceneBounds() ).toEqual( { min: [ - 5, - 7, 0 ], max: [ 2, 2, 9 ] } );
+
+	} );
+
+	it( 'returns null before a BVH exists rather than decoding an empty buffer', () => {
+
+		const sp = Object.create( SceneProcessor.prototype );
+		sp.bvh = null;
+		expect( sp.sceneBounds() ).toBeNull();
 
 	} );
 
