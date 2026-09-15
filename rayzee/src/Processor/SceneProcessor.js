@@ -2399,20 +2399,7 @@ export class SceneProcessor {
 
 		}
 
-		// Build blasOffset → entry lookup (avoids O(M) .find() per leaf)
-		if ( ! this._blasOffsetMap ) {
-
-			this._blasOffsetMap = new Map();
-
-		}
-
-		this._blasOffsetMap.clear();
 		const table = this.instanceTable;
-		for ( let i = 0; i < table.count; i ++ ) {
-
-			if ( table.isSet[ i ] ) this._blasOffsetMap.set( table.blasOffsetOf( i ), i );
-
-		}
 
 		// Bottom-up pass: reverse iteration over TLAS nodes
 		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
@@ -2424,10 +2411,11 @@ export class SceneProcessor {
 
 			if ( marker === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) {
 
-				// BLAS-pointer leaf: read AABB from instance table
-				const blasRoot = idxChunk[ o ];
-				const entryIndex = this._blasOffsetMap.get( blasRoot );
-				if ( entryIndex !== undefined ) {
+				// Slot [1] is this leaf's own placement. Keying off slot [0] instead collapsed
+				// every placement of a shared geometry onto one box, so all but one copy sat
+				// outside its own bounds and rays walked straight past it.
+				const entryIndex = idxChunk[ o + 1 ];
+				if ( entryIndex < table.count ) {
 
 					table.writeWorldAABB( entryIndex, this._tlasBounds, i * 6 );
 
