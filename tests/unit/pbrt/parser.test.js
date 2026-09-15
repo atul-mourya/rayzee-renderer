@@ -4,7 +4,7 @@ import { PBRTParser, parsePBRT } from '@/core/Processor/PBRT/PBRTParser.js';
 
 describe( 'PBRT tokenizer', () => {
 
-	it( 'tokenizes numbers, strings, brackets and skips comments', () => {
+	it( 'tokenizes numbers, strings, brackets and skips comments', async () => {
 
 		const toks = tokenize( `# a comment
 			Shape "trianglemesh" "float v" [ -1 .5 1e-3 -2.5e2 ] true` );
@@ -19,13 +19,13 @@ describe( 'PBRT tokenizer', () => {
 
 	} );
 
-	it( 'throws on an unterminated string', () => {
+	it( 'throws on an unterminated string', async () => {
 
 		expect( () => tokenize( 'Shape "oops' ) ).toThrow( /unterminated/ );
 
 	} );
 
-	it( 'tokenizes signed + leading-dot numbers (-.55, +.5, .25)', () => {
+	it( 'tokenizes signed + leading-dot numbers (-.55, +.5, .25)', async () => {
 
 		const toks = tokenize( 'Transform [ -.55 +.5 .25 -0.5 +0.5 ]' );
 		expect( toks.slice( 2, 7 ).map( t => t.value ) ).toEqual( [ - 0.55, 0.5, 0.25, - 0.5, 0.5 ] );
@@ -36,9 +36,9 @@ describe( 'PBRT tokenizer', () => {
 
 describe( 'PBRT parser', () => {
 
-	it( 'derives camera-to-world from LookAt (inverse-of-inverse round trip)', () => {
+	it( 'derives camera-to-world from LookAt (inverse-of-inverse round trip)', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			LookAt 0 0 5   0 0 0   0 1 0
 			Camera "perspective" "float fov" 45
 			Film "rgb" "integer xresolution" 800 "integer yresolution" 600
@@ -62,9 +62,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'accumulates the CTM and captures it per-shape', () => {
+	it( 'accumulates the CTM and captures it per-shape', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			WorldBegin
 			AttributeBegin
 				Translate 1 2 3
@@ -82,9 +82,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'resolves named materials and attaches them to shapes', () => {
+	it( 'resolves named materials and attaches them to shapes', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			WorldBegin
 			MakeNamedMaterial "glass" "string type" "dielectric" "float eta" 1.5
 			NamedMaterial "glass"
@@ -104,9 +104,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'attaches area-light emission to shapes within the attribute block', () => {
+	it( 'attaches area-light emission to shapes within the attribute block', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			WorldBegin
 			AttributeBegin
 				AreaLightSource "diffuse" "rgb L" [ 4 4 4 ]
@@ -120,13 +120,13 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'follows Include directives via the resolver', () => {
+	it( 'follows Include directives via the resolver', async () => {
 
 		const files = {
 			'geometry/tri.pbrt': `Shape "trianglemesh" "point3 P" [ 0 0 0 1 0 0 0 1 0 ] "integer indices" [ 0 1 2 ]`
 		};
 		const parser = new PBRTParser( { resolveInclude: ( p ) => files[ p ] ?? null } );
-		const ir = parser.parse( `
+		const ir = await parser.parse( `
 			WorldBegin
 			Include "geometry/tri.pbrt"
 			Shape "sphere" "float radius" 1
@@ -138,9 +138,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'parses Transform matrices column-major', () => {
+	it( 'parses Transform matrices column-major', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			WorldBegin
 			Transform [ 1 0 0 0  0 1 0 0  0 0 1 0  5 6 7 1 ]
 			Shape "sphere" "float radius" 1
@@ -149,9 +149,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'records instances and object templates', () => {
+	it( 'records instances and object templates', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			WorldBegin
 			ObjectBegin "leaf"
 				Shape "sphere" "float radius" 1
@@ -170,9 +170,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'warns on unknown directives without desyncing', () => {
+	it( 'warns on unknown directives without desyncing', async () => {
 
-		const ir = parsePBRT( `
+		const ir = await parsePBRT( `
 			Integrator "volpath" "integer maxdepth" 64
 			Sampler "halton" "integer pixelsamples" 16
 			WorldBegin
@@ -183,14 +183,14 @@ describe( 'PBRT parser', () => {
 	} );
 
 
-	it( 'switches a long numeric list to a typed array and keeps a short one plain', () => {
+	it( 'switches a long numeric list to a typed array and keeps a short one plain', async () => {
 
 		const n = 40;
 		const P = [], idx = [];
 		for ( let i = 0; i < n; i ++ ) P.push( i, 0, 0 );
 		for ( let i = 0; i + 2 < n; i ++ ) idx.push( i, i + 1, i + 2 );
 
-		const ir = new PBRTParser( {} ).parse( `WorldBegin
+		const ir = await new PBRTParser( {} ).parse( `WorldBegin
 			Shape "trianglemesh" "point3 P" [ ${P.join( ' ' )} ] "integer indices" [ ${idx.join( ' ' )} ]
 			  "float alpha" [ 0.5 ] "rgb tint" [ 1 0 0 ]` );
 
@@ -203,9 +203,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'shares one CTM array across shapes emitted under the same transform', () => {
+	it( 'shares one CTM array across shapes emitted under the same transform', async () => {
 
-		const ir = new PBRTParser( {} ).parse( `WorldBegin
+		const ir = await new PBRTParser( {} ).parse( `WorldBegin
 			Translate 1 2 3
 			Shape "sphere" "float radius" 1
 			Shape "sphere" "float radius" 2
@@ -219,10 +219,10 @@ describe( 'PBRT parser', () => {
 	} );
 
 
-	it( 'drops placements past the limit while parsing, and counts them', () => {
+	it( 'drops placements past the limit while parsing, and counts them', async () => {
 
 		const body = Array.from( { length: 40 }, ( _, i ) => `AttributeBegin Translate ${i} 0 0 ObjectInstance "leaf" AttributeEnd` ).join( '\n' );
-		const ir = new PBRTParser( { maxPlacements: 12 } ).parse( `WorldBegin
+		const ir = await new PBRTParser( { maxPlacements: 12 } ).parse( `WorldBegin
 			AttributeBegin ObjectBegin "leaf" Shape "sphere" "float radius" 1 ObjectEnd AttributeEnd
 			${body}` );
 
@@ -233,9 +233,9 @@ describe( 'PBRT parser', () => {
 
 	} );
 
-	it( 'packs one template\'s placements contiguously', () => {
+	it( 'packs one template\'s placements contiguously', async () => {
 
-		const ir = new PBRTParser( {} ).parse( `WorldBegin
+		const ir = await new PBRTParser( {} ).parse( `WorldBegin
 			AttributeBegin ObjectBegin "a" Shape "sphere" "float radius" 1 ObjectEnd AttributeEnd
 			AttributeBegin Translate 1 0 0 ObjectInstance "a" AttributeEnd
 			AttributeBegin Translate 2 0 0 ObjectInstance "a" AttributeEnd

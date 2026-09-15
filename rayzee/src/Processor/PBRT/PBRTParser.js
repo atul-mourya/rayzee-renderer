@@ -52,6 +52,7 @@ export class PBRTParser {
 	 */
 	constructor( opts = {} ) {
 
+		this.releaseInclude = opts.releaseInclude || null;
 		this.resolveInclude = opts.resolveInclude || ( () => {
 
 			throw new Error( 'PBRTParser: Include used but no resolveInclude provided' );
@@ -111,10 +112,10 @@ export class PBRTParser {
 	 * @param {string} [baseDir] - directory of the source file, for Include paths
 	 * @returns {object} IR
 	 */
-	parse( src, baseDir = '' ) {
+	async parse( src, baseDir = '' ) {
 
 		this.dirStack = [ baseDir ];
-		this._run( new TokenStream( src ) );
+		await this._run( new TokenStream( src ) );
 		return this.ir;
 
 	}
@@ -367,7 +368,7 @@ export class PBRTParser {
 
 	// ── main directive loop ────────────────────────────────────────
 
-	_run( stream ) {
+	async _run( stream ) {
 
 		// Save/restore so Include can recurse on a fresh stream.
 		const saved = this.stream;
@@ -381,7 +382,10 @@ export class PBRTParser {
 
 			}
 
-			this._directive( t.value );
+			// Only Include suspends; every other directive returns undefined and the loop
+			// stays synchronous, so an await per token is not paid.
+			const pending = this._directive( t.value );
+			if ( pending !== undefined ) await pending;
 
 		}
 
@@ -668,8 +672,7 @@ export class PBRTParser {
 			case 'Import': {
 
 				const path = this._expectString( name );
-				this._include( path );
-				break;
+				return this._include( path );
 
 			}
 
@@ -701,9 +704,10 @@ export class PBRTParser {
 
 	}
 
-	_include( path ) {
+	async _include( path ) {
 
-		const source = this.resolveInclude( path, this.dirStack[ this.dirStack.length - 1 ] );
+		const dir = this.dirStack[ this.dirStack.length - 1 ];
+		const source = await this.resolveInclude( path, dir );
 		if ( source == null ) {
 
 			this._warn( `Include target not found: ${path}` );
@@ -711,10 +715,21 @@ export class PBRTParser {
 
 		}
 
-		const dir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
-		this.dirStack.push( dir );
-		this._run( new TokenStream( source ) );
-		this.dirStack.pop();
+		const childDir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
+		this.dirStack.push( childDir );
+		try {
+
+			await this._run( new TokenStream( source ) );
+
+		} finally {
+
+			this.dirStack.pop();
+			// Depth-first, so only the open chain is live. Releasing here is what keeps a
+			// multi-gigabyte scene's text from all being resident at once; a file included
+			// again is simply resolved again.
+			this.releaseInclude?.( path, dir );
+
+		}
 
 	}
 

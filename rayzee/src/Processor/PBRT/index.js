@@ -53,21 +53,29 @@ function joinPath( dir, rel ) {
  * Wraps the zip contents with tolerant, case-insensitive lookup that falls back
  * to a basename match — pbrt scenes are inconsistent about path roots.
  */
-class VirtualFS {
+export class VirtualFS {
 
-	constructor( entries ) {
+	/**
+	 * @param {Object<string,Uint8Array>} entries - materialised bytes, possibly empty
+	 * @param {object} [source] - seekable archive: `{ listing, read(path) }`. When present the
+	 *   records it lists are read on demand and never held, so a multi-gigabyte archive is
+	 *   indexed rather than resident.
+	 */
+	constructor( entries, source = null ) {
 
 		// entries: { path: Uint8Array }. Held so a release can drop the caller's reference
 		// too — nulling only our own copy frees nothing while the archive object is alive,
 		// and that object is every byte of a 30 GB scene.
 		this.entries = entries;
+		this.source = source;
 		this.records = [];
 		this.byPath = new Map(); // normalized lowercase -> { key, norm, bytes }
 		this.byBase = new Map(); // basename lowercase -> [ { key, norm, bytes } ] (insertion order)
-		for ( const key in entries ) {
+		const add = ( key, bytes, lazy ) => {
 
 			const norm = normalizePath( key ).toLowerCase();
-			const rec = { key, norm, bytes: entries[ key ] };
+			if ( this.byPath.has( norm ) ) return;
+			const rec = { key, norm, bytes, lazy };
 			this.records.push( rec );
 			this.byPath.set( norm, rec );
 			const base = norm.split( '/' ).pop();
@@ -75,7 +83,28 @@ class VirtualFS {
 			if ( bucket ) bucket.push( rec );
 			else this.byBase.set( base, [ rec ] );
 
-		}
+		};
+
+		for ( const key in entries ) add( key, entries[ key ], false );
+		for ( const e of source?.listing ?? [] ) if ( e.offset !== undefined ) add( e.path, null, true );
+
+	}
+
+	/** Bytes for a record: already held, or read from the source on demand. */
+	async read( rec ) {
+
+		if ( ! rec ) return null;
+		if ( rec.bytes ) return rec.bytes;
+		if ( ! rec.lazy || ! this.source ) return null;
+		return this.source.read( rec.key );
+
+	}
+
+	/** Resolve and read in one step; `dir` is joined first, as Include does. */
+	async readPath( path, dir = null ) {
+
+		const rec = ( dir !== null && this.findRecord( joinPath( dir, path ) ) ) || this.findRecord( path );
+		return this.read( rec );
 
 	}
 
@@ -83,6 +112,15 @@ class VirtualFS {
 
 		rec.bytes = null;
 		delete this.entries[ rec.key ];
+
+	}
+
+	releasePath( path, dir = null ) {
+
+		const rec = ( dir !== null && this.findRecord( joinPath( dir, path ) ) ) || this.findRecord( path );
+		// Only a lazy record, which can be read again. Releasing a resident one would drop a
+		// fragment that a later Include still needs — isHibiscusYoung pulls one in six times.
+		if ( rec?.lazy ) this.release( rec );
 
 	}
 
@@ -217,6 +255,13 @@ export function listEntryPaths( entries ) {
 
 	}
 
+	return rankEntryPaths( pbrts, worlds, included );
+
+}
+
+/** Shared ranking for the eager and lazy entry pickers. */
+function rankEntryPaths( pbrts, worlds, included ) {
+
 	const narrow = ( candidates, keep ) => {
 
 		const kept = candidates.filter( keep );
@@ -249,6 +294,42 @@ export function pickEntryPath( entries ) {
 }
 
 /**
+ * Entry .pbrt for a VirtualFS, reading each candidate in turn and dropping it again so a
+ * lazily-indexed archive is never materialised just to pick a starting file.
+ */
+export async function pickEntryPathFrom( vfs ) {
+
+	return ( await listEntryPathsFrom( vfs ) )[ 0 ] || null;
+
+}
+
+/**
+ * Candidate scene files for a VirtualFS, best first. Each candidate is read to test it and
+ * dropped again, so a lazily-indexed archive is never materialised just to rank its entries.
+ */
+export async function listEntryPathsFrom( vfs ) {
+
+	const pbrts = vfs.records.filter( r => r.norm.endsWith( '.pbrt' ) );
+	if ( pbrts.length === 0 ) return [];
+	if ( pbrts.length === 1 ) return [ pbrts[ 0 ].key ];
+
+	const included = new Set();
+	const worlds = new Map();
+	for ( const rec of pbrts ) {
+
+		const bytes = await vfs.read( rec );
+		if ( ! bytes ) continue;
+		worlds.set( rec.key, hasWorldBegin( bytes ) );
+		includedBasenames( bytes, included );
+		if ( rec.lazy ) vfs.release( rec ); // read again later if it is actually used
+
+	}
+
+	return rankEntryPaths( pbrts.map( r => r.key ), worlds, included );
+
+}
+
+/**
  * @param {object} args
  * @param {Object<string,Uint8Array>} args.vfs - zip entries (path → bytes)
  * @param {string} [args.entryPath] - top .pbrt; auto-detected if omitted
@@ -260,13 +341,24 @@ export function pickEntryPath( entries ) {
  */
 export async function loadPBRTScene( args ) {
 
-	const { vfs: rawEntries, plyParser, imageFromBytes, envFromBytes, convertHandedness } = args;
-	const vfs = new VirtualFS( rawEntries );
+	const { vfs: rawEntries, source, plyParser, imageFromBytes, envFromBytes, convertHandedness } = args;
+	const vfs = new VirtualFS( rawEntries, source );
+	const warnings = [];
 
-	const entryPath = args.entryPath || pickEntryPath( rawEntries );
-	if ( ! entryPath ) throw new Error( 'PBRT loader: no .pbrt file found in archive' );
+	// Ranked once here so a caller does not have to read every .pbrt a second time to learn
+	// what else was in the archive.
+	const candidates = await listEntryPathsFrom( vfs );
+	if ( candidates.length === 0 ) throw new Error( 'PBRT loader: no .pbrt file found in archive' );
 
-	const entryBytes = vfs.find( entryPath );
+	const requested = args.entryPath && candidates.includes( args.entryPath ) ? args.entryPath : null;
+	if ( args.entryPath && ! requested ) {
+
+		warnings.push( `PBRT entry "${args.entryPath}" is not a scene in this archive — auto-detecting instead` );
+
+	}
+
+	const entryPath = requested || candidates[ 0 ];
+	const entryBytes = await vfs.readPath( entryPath );
 	if ( ! entryBytes ) throw new Error( `PBRT loader: entry "${entryPath}" not readable` );
 
 	const baseDir = entryPath.includes( '/' ) ? entryPath.slice( 0, entryPath.lastIndexOf( '/' ) ) : '';
@@ -274,12 +366,15 @@ export async function loadPBRTScene( args ) {
 	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
 	// be larger than the longest string JavaScript will build.
 	const parser = new PBRTParser( {
-		resolveInclude: ( path, currentDir ) => vfs.find( joinPath( currentDir, path ) ) || vfs.find( path ),
+		resolveInclude: ( path, currentDir ) => vfs.readPath( path, currentDir ),
+		// Depth-first, so this keeps only the open include chain live rather than every
+		// scene file at once — the difference between 5.7 GB resident and a few MB.
+		releaseInclude: ( path, currentDir ) => vfs.releasePath( path, currentDir ),
 		maxPlacements: args.maxPlacements
 	} );
 
 	const parseStart = performance.now();
-	const ir = parser.parse( entryBytes, baseDir );
+	const ir = await parser.parse( entryBytes, baseDir );
 	const parseMs = performance.now() - parseStart;
 
 	// Scene text is dead once parsed, and it is the bulk of a big element — isIronwoodA1 is
@@ -298,9 +393,9 @@ export async function loadPBRTScene( args ) {
 	// Cached against the RESOLVED entry, not the spelling used, so a file is decoded once and
 	// its source bytes can go — isCoral's 8,596 .ply files are 2.3 GB of the load.
 	const plyCache = new Map();
-	const decodePly = ( rec ) => {
+	const decodePly = async ( rec ) => {
 
-		const bytes = rec.bytes;
+		const bytes = await vfs.read( rec );
 		if ( ! bytes ) return null;
 		vfs.release( rec );
 		return plyParser( sliceBuf( bytes ) );
@@ -318,20 +413,20 @@ export async function loadPBRTScene( args ) {
 
 			const rec = vfs.findRecord( filename );
 			if ( ! rec ) return null;
-			if ( ! plyCache.has( rec.norm ) ) plyCache.set( rec.norm, decodePly( rec ) );
+			if ( ! plyCache.has( rec.norm ) ) plyCache.set( rec.norm, await decodePly( rec ) );
 			return plyCache.get( rec.norm );
 
 		},
 		resolveImage: async ( filename ) => {
 
-			const bytes = vfs.find( filename );
+			const bytes = await vfs.readPath( filename );
 			if ( ! bytes ) return null;
 			return imageFromBytes( bytes, filename );
 
 		},
 		resolveEnvironment: async ( filename ) => {
 
-			const bytes = vfs.find( filename );
+			const bytes = await vfs.readPath( filename );
 			if ( ! bytes ) return null;
 			return ( envFromBytes || imageFromBytes )( bytes, filename );
 
@@ -340,6 +435,6 @@ export async function loadPBRTScene( args ) {
 
 	const buildStart = performance.now();
 	const result = await builder.build( ir );
-	return { ...result, entryPath, parseMs, buildMs: performance.now() - buildStart };
+	return { ...result, entryPath, candidates, warnings: [ ...warnings, ...( result.warnings ?? [] ) ], parseMs, buildMs: performance.now() - buildStart };
 
 }

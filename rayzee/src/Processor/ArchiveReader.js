@@ -103,9 +103,14 @@ function paxPath( bytes ) {
  */
 class TarStream {
 
-	constructor( { filter = null, byteBudget = DEFAULT_BYTE_BUDGET, onEntry = null } = {} ) {
+	constructor( { filter = null, retain = null, byteBudget = DEFAULT_BYTE_BUDGET, onEntry = null } = {} ) {
 
 		this.filter = filter;
+		// Entries that pass `filter` but fail `retain` are indexed, not copied: the listing
+		// records where their bytes live so a caller with a seekable source can read them later.
+		// An uncompressed tar over a File is seekable, which is how a 7 GB archive loads without
+		// ever holding itself in memory.
+		this.retain = retain;
 		this.byteBudget = byteBudget;
 		this.onEntry = onEntry;
 
@@ -124,10 +129,14 @@ class TarStream {
 		this._dst = null;
 		this._special = null;
 		this._pendingName = null;
+		this._abs = 0; // absolute byte offset of the next byte `push` will consume
 
 	}
 
 	push( chunk ) {
+
+		const base = this._abs;
+		this._abs += chunk.length;
 
 		let i = 0;
 		while ( i < chunk.length && ! this.finished ) {
@@ -142,6 +151,7 @@ class TarStream {
 
 					this._headerLen = 0;
 					this._readHeader();
+					this._bodyStart = base + i; // body begins right after the header block
 
 				}
 
@@ -233,6 +243,10 @@ class TarStream {
 		const wanted = this.filter ? this.filter( path, size ) : true;
 		if ( ! wanted ) return;
 
+		this._indexed = true;
+
+		if ( this.retain && ! this.retain( path, size ) ) return;
+
 		if ( this.retainedBytes + size > this.byteBudget ) {
 
 			this.truncated = true;
@@ -266,9 +280,17 @@ class TarStream {
 
 		}
 
+		const entry = this.listing[ this.listing.length - 1 ];
+
+		if ( this._indexed && entry ) {
+
+			entry.offset = this._bodyStart;
+			this._indexed = false;
+
+		}
+
 		if ( this._dst ) {
 
-			const entry = this.listing[ this.listing.length - 1 ];
 			this.entries[ entry.path ] = this._dst;
 			this.onEntry?.( entry.path, this._dst );
 			this._dst = null;
@@ -374,6 +396,40 @@ export async function readTarGz( source, options = {} ) {
 	await streamGunzip( source, consume );
 	tar.end();
 	return tar.result();
+
+}
+
+/**
+ * A seekable view over an uncompressed .tar: entries are indexed on one streaming pass and read
+ * back on demand from the source, so the archive is never resident.
+ *
+ * Only for `.tar` over a Blob/File — a gzip stream cannot be seeked, and a zip is already read
+ * whole by fflate.
+ *
+ * @param {Blob|File} source
+ * @param {object} [options] - `filter` and `retain` as in readTar
+ * @returns {Promise<{entries, listing, read: (path:string)=>Promise<Uint8Array|null>, truncated}>}
+ */
+export async function openTar( source, options = {} ) {
+
+	const tar = new TarStream( { ...options } );
+	await forEachSlice( source, slice => tar.push( slice ) );
+	tar.end();
+	const { entries, listing, retainedBytes, truncated } = tar.result();
+
+	const byPath = new Map();
+	for ( const e of listing ) if ( e.offset !== undefined ) byPath.set( e.path, e );
+
+	const read = async ( path ) => {
+
+		if ( entries[ path ] ) return entries[ path ];
+		const e = byPath.get( path );
+		if ( ! e ) return null;
+		return new Uint8Array( await source.slice( e.offset, e.offset + e.size ).arrayBuffer() );
+
+	};
+
+	return { entries, listing, read, retainedBytes, truncated, indexed: byPath.size };
 
 }
 

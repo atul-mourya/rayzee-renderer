@@ -12,12 +12,11 @@ import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
-	detectArchiveKind, readTarGz, readTar, elementFilter, listArchiveElements
-} from './ArchiveReader.js';
+	detectArchiveKind, readTarGz, readTar, elementFilter, listArchiveElements, openTar } from './ArchiveReader.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { loadPBRTScene, pickEntryPath, listEntryPaths } from './PBRT/index.js';
+import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -562,16 +561,33 @@ export class AssetLoader extends EventDispatcher {
 		try {
 
 			const kind = detectArchiveKind( await this._readHead( file ) );
-			const entries = kind === 'gzip' || kind === 'tar'
+
+			// An uncompressed tar over a File is seekable, so it is indexed rather than read:
+			// entries are pulled out as the scene asks for them and never all held at once.
+			// That is the difference between a 7 GB archive being refused and loading.
+			if ( kind === 'tar' ) {
+
+				const source = await this._openSeekableArchive( file, filename, element );
+				if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
+
+					return await this.loadPBRTFromZip( {}, filename, pbrtEntry, pbrt, source );
+
+				}
+
+				// Not a pbrt scene: fall back to materialising it, which those paths still expect.
+				for ( const e of source.listing ) source.entries[ e.path ] ??= await source.read( e.path );
+				return await this._loadNonPBRTArchive( source.entries, filename );
+
+			}
+
+			const entries = kind === 'gzip'
 				? await this._readStreamedArchive( file, filename, kind, element, byteBudget )
 				: unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
 
 			// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
 			if ( pickEntryPath( entries ) ) return await this.loadPBRTFromZip( entries, filename, pbrtEntry, pbrt );
 
-			const result = await this.processObjMtlPairsInZip( entries, filename );
-			if ( result ) return result;
-			return await this.findAndLoadModelFromZip( entries, filename );
+			return await this._loadNonPBRTArchive( entries, filename );
 
 		} catch ( error ) {
 
@@ -579,6 +595,35 @@ export class AssetLoader extends EventDispatcher {
 			throw error;
 
 		}
+
+	}
+
+	async _loadNonPBRTArchive( entries, filename ) {
+
+		const result = await this.processObjMtlPairsInZip( entries, filename );
+		if ( result ) return result;
+		return await this.findAndLoadModelFromZip( entries, filename );
+
+	}
+
+	/**
+	 * Index an uncompressed tar without retaining it. Entries are read back from the File on
+	 * demand, so residency is the open include chain rather than the whole archive.
+	 * @private
+	 */
+	async _openSeekableArchive( file, filename, element ) {
+
+		const source = await openTar( file, {
+			filter: element ? elementFilter( element ) : null,
+			retain: () => false,
+		} );
+
+		console.info(
+			`Archive "${filename}": indexed ${source.indexed} entries, ` +
+			`${( source.listing.reduce( ( n, e ) => n + e.size, 0 ) / 1e9 ).toFixed( 1 )} GB, none resident.`
+		);
+
+		return source;
 
 	}
 
@@ -637,7 +682,7 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes); consumed, entry by entry
 	 * @param {string} filename - original archive name (for display/events)
 	 */
-	async loadPBRTFromZip( zip, filename, entryPath = null, options = {} ) {
+	async loadPBRTFromZip( zip, filename, entryPath = null, options = {}, source = null ) {
 
 		updateLoading( { isLoading: true, status: 'Parsing PBRT scene...', progress: 5 } );
 
@@ -671,16 +716,11 @@ export class AssetLoader extends EventDispatcher {
 
 		};
 
-		// Listed up front: the loader empties `zip` as it consumes entries.
-		const candidates = listEntryPaths( zip );
-		const requested = entryPath && candidates.includes( entryPath ) ? entryPath : null;
-		if ( entryPath && ! requested ) console.warn( `PBRT entry "${entryPath}" is not a scene in this archive — auto-detecting instead` );
-
 		const pbrtStart = performance.now();
-		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry,
+		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
 			droppedNoTemplate } = await loadPBRTScene( {
-			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes,
+			vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes,
 			maxTriangles: options.maxTriangles,
 			maxPlacements: options.maxPlacements,
 			mergeShapesAbove: options.mergeShapesAbove,
