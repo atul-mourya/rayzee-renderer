@@ -471,11 +471,12 @@ export class InstanceTable {
 	recomputeAABB( entryIndex, combinedBvhData, triangleData ) {
 
 		const t = this.sourceMesh[ entryIndex ];
-		const root = this.tplBlasOffset[ t ] * 16;
-		this._readRootAABB(
-			combinedBvhData.subarray( root, root + 16 ), t, triangleData,
-			this.tplObjectAABB, t * 6
-		);
+		const n = this.tplBlasOffset[ t ];
+		// Flat buffer or ChunkedRecords: either way, take that one node's 16 floats.
+		const node = combinedBvhData.chunks
+			? combinedBvhData.chunkFor( n ).subarray( combinedBvhData.baseOf( n ), combinedBvhData.baseOf( n ) + 16 )
+			: combinedBvhData.subarray( n * 16, n * 16 + 16 );
+		this._readRootAABB( node, t, triangleData, this.tplObjectAABB, t * 6 );
 
 	}
 

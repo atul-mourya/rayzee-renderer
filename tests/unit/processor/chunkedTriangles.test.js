@@ -178,4 +178,118 @@ describe( 'chunked triangle storage behaves identically to a flat array', () => 
 
 	} );
 
+
+} );
+
+describe( 'chunked BVH storage behaves identically to a flat array', () => {
+
+	// A node is 16 floats = 64 bytes, so 128 bytes per chunk holds exactly 2 nodes.
+	const NODE_LANES = 16;
+	const TWO_NODES = NODE_LANES * 4 * 2;
+
+	/** A 5-node tree: root -> (inner -> 2 leaves), leaf. Spans 3 chunks when split. */
+	function buildTree( maxBytes ) {
+
+		const bvh = new ChunkedRecords( 5, NODE_LANES, Float32Array, maxBytes );
+		const idx = bvh.viewAs( Uint32Array );
+		const inner = ( n, left, right ) => {
+
+			const u = idx.chunkFor( n ), o = idx.baseOf( n );
+			u[ o + 3 ] = left;
+			u[ o + 7 ] = right;
+
+		};
+
+		const leaf = ( n, triOffset, triCount ) => {
+
+			const u = idx.chunkFor( n ), o = idx.baseOf( n );
+			u[ o ] = triOffset;
+			u[ o + 1 ] = triCount;
+			u[ o + 3 ] = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+
+		};
+
+		inner( 0, 1, 4 );
+		inner( 1, 2, 3 );
+		leaf( 2, 0, 1 );
+		leaf( 3, 1, 1 );
+		leaf( 4, 2, 3 );
+
+		return bvh;
+
+	}
+
+	const flatten = bvh => {
+
+		const out = [];
+		for ( let n = 0; n < bvh.recordCount; n ++ ) {
+
+			const c = bvh.chunkFor( n ), b = bvh.baseOf( n );
+			out.push( ...Array.from( c.subarray( b, b + NODE_LANES ) ) );
+
+		}
+
+		return out;
+
+	};
+
+	it( 'splits a node tree across chunks on node boundaries', () => {
+
+		const bvh = buildTree( TWO_NODES );
+		expect( bvh.chunkCount ).toBe( 3 );
+		expect( bvh.chunks.map( c => c.length / NODE_LANES ) ).toEqual( [ 2, 2, 1 ] );
+
+	} );
+
+	it( 'refits to the same node bounds flat and chunked', () => {
+
+		const { flat: triFlat, chunked: triChunked } = bothForms( TRIS );
+		const a = buildTree( 1 << 30 ); // one chunk
+		const b = buildTree( TWO_NODES ); // three chunks
+		expect( a.chunkCount ).toBe( 1 );
+		expect( b.chunkCount ).toBe( 3 );
+
+		new BVHRefitter().refit( a, triFlat, 5 );
+		new BVHRefitter().refit( b, triChunked, 5 );
+
+		expect( flatten( b ) ).toEqual( flatten( a ) );
+		// root's left child bounds came from the subtree over triangles 0 and 1
+		expect( flatten( a )[ 0 ] ).toBe( 0 );
+
+	} );
+
+	it( 'refits a node range identically when the range crosses a chunk boundary', () => {
+
+		const { flat: triFlat, chunked: triChunked } = bothForms( TRIS );
+		const a = buildTree( 1 << 30 );
+		const b = buildTree( TWO_NODES );
+
+		// nodes 1..3 straddle chunks 0 and 1
+		new BVHRefitter().refitRange( a, triFlat, 1, 3 );
+		new BVHRefitter().refitRange( b, triChunked, 1, 3 );
+
+		expect( flatten( b ) ).toEqual( flatten( a ) );
+
+	} );
+
+	it( 'reads a root node for recomputeAABB from the right chunk', () => {
+
+		const bvh = buildTree( TWO_NODES );
+		const table = new InstanceTable();
+		table.allocate( 1 );
+		table.setEntry( {
+			meshIndex: 0, blasNodeCount: 1, triOffset: 2, triCount: 3,
+			originalToBvhMap: null, bvhData: null
+		} );
+		table.tplBlasOffset[ 0 ] = 4; // node 4 lives alone in the third chunk
+
+		const { chunked } = bothForms( TRIS );
+		table.recomputeAABB( 0, bvh, chunked );
+
+		// node 4 is a triangle leaf over triangles 2..4, so the scan path runs
+		const got = Array.from( table.tplObjectAABB.slice( 0, 6 ) );
+		expect( got ).toEqual( [ - 5, - 2, 3, 21, 21, 20 ] );
+
+	} );
+
 } );

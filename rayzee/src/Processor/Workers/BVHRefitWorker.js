@@ -25,7 +25,10 @@ self.onmessage = function ( e ) {
 
 	if ( type === 'init' ) {
 
-		bvhData = new Float32Array( e.data.sharedBvhBuf );
+		bvhData = ChunkedRecords.adopt(
+			e.data.sharedBvhBufs.map( buf => new Float32Array( buf ) ),
+			e.data.bvhRecordCount, 16, e.data.bvhRecordsPerChunk
+		);
 		// Triangles arrive as one shared buffer per chunk; a single-chunk scene is the usual case.
 		triData = ChunkedRecords.adopt(
 			e.data.sharedTriBufs.map( buf => new Uint32Array( buf ) ),
@@ -33,7 +36,7 @@ self.onmessage = function ( e ) {
 		);
 		posData = new Float32Array( e.data.sharedPosBuf );
 		bvhToOriginal = e.data.bvhToOriginal; // transferred Uint32Array
-		nodeCount = bvhData.length / FLOATS_PER_NODE;
+		nodeCount = bvhData.recordCount;
 		return;
 
 	}

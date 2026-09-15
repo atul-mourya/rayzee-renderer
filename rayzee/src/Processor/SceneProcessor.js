@@ -95,7 +95,9 @@ export class SceneProcessor {
 		this.bvhRoot = null;
 
 		// Raw data for storage buffers
+		this.bvh = null;
 		this.bvhData = null;
+		this.bvhIndexChunks = null;
 		this.bvhIndex = null;
 		this.materialData = null;
 
@@ -271,10 +273,9 @@ export class SceneProcessor {
 			// Only fall back to main-thread flattening if bvhData wasn't produced.
 			this.processingStage = 'finalize';
 			timer.start( 'BVH data packing' );
-			if ( this.bvhRoot && ! this.bvhData ) {
+			if ( this.bvhRoot && ! this.bvh ) {
 
-				this.bvhData = this.textureCreator.createBVHRawData( this.bvhRoot );
-				this.bvhIndex = bvhIndexView( this.bvhData );
+				this._setBVHData( this.textureCreator.createBVHRawData( this.bvhRoot ) );
 
 			}
 
@@ -611,18 +612,18 @@ export class SceneProcessor {
 
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
 			const assembleStart = performance.now();
-			this.bvhData = new Float32Array( totalNodes * 16 );
-			this.bvhIndex = bvhIndexView( this.bvhData );
-			this.bvhData.set( tlasData );
+			// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
+			// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
+			this._setBVHData( new ChunkedRecords( totalNodes, 16, Float32Array ) );
+			this.bvh.setRecords( 0, tlasData );
 
 			for ( let i = 0; i < table.count; i ++ ) {
 
 				if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue; // alias — owner writes
 				const blas = table.blasData.get( table.sourceMesh[ i ] );
 				const blasOffset = table.blasOffsetOf( i );
-				const destOffset = blasOffset * 16;
-				this.bvhData.set( blas, destOffset );
-				this._offsetBLASInPlace( destOffset, blas.length / 16, blasOffset, table.triOffsetOf( i ) );
+				this.bvh.setRecords( blasOffset, blas );
+				this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.triOffsetOf( i ) );
 
 			}
 
@@ -640,7 +641,7 @@ export class SceneProcessor {
 			// detail sits a level below at `debug`.
 			log.debug( fmt.list( [
 				`${fmt.n( table.setCount )} BLASes + TLAS`,
-				`${fmt.n( this.bvhData.length / 16 )} nodes`,
+				`${fmt.n( this.bvh.recordCount )} nodes`,
 				`SAH ${fmt.n( blasStats.sah )} · objMed ${blasStats.objMed} · spatMed ${blasStats.spatMed} · failed ${blasStats.failed}`,
 				blasStats.treeletsProcessed ? `treelets ${blasStats.treeletsImproved}/${blasStats.treeletsProcessed} improved` : null,
 				fmt.ms( duration ),
@@ -668,22 +669,24 @@ export class SceneProcessor {
 	 * Adjust BLAS node indices in-place within the combined bvhData buffer.
 	 * @private
 	 */
-	_offsetBLASInPlace( destFloat, nodeCount, nodeOffset, triOffset ) {
+	_offsetBLASInPlace( startNode, nodeCount, nodeOffset, triOffset ) {
 
-		const idx = this.bvhIndex;
+		const idx = this.bvhIndexChunks;
 
 		for ( let i = 0; i < nodeCount; i ++ ) {
 
-			const o = destFloat + i * 16;
+			const n = startNode + i;
+			const chunk = idx.chunkFor( n );
+			const o = idx.baseOf( n );
 
-			if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
+			if ( chunk[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
-				idx[ o ] += triOffset;
+				chunk[ o ] += triOffset;
 
 			} else {
 
-				idx[ o + 3 ] += nodeOffset;
-				idx[ o + 7 ] += nodeOffset;
+				chunk[ o + 3 ] += nodeOffset;
+				chunk[ o + 7 ] += nodeOffset;
 
 			}
 
@@ -1197,7 +1200,9 @@ export class SceneProcessor {
 		this.cameras = [];
 		this.spheres = [];
 		this.bvhRoot = null;
+		this.bvh = null;
 		this.bvhData = null;
+		this.bvhIndexChunks = null;
 		this.bvhIndex = null;
 		this.instanceTable = null;
 		this.lightBVHNodeData = null;
@@ -1358,7 +1363,7 @@ export class SceneProcessor {
 			cameraCount: this.cameras.length,
 			processingComplete: this.processingStage === 'complete',
 			hasBVH: !! this.bvhRoot,
-			hasTextures: !! this.materialData && !! this.bvhData,
+			hasTextures: !! this.materialData && !! this.bvh,
 			useFloat32Array: this.config.useFloat32Array,
 			triangleDataSize: this.triangles ? ( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 ) + 'MB' : '0MB'
 		};
@@ -1429,7 +1434,7 @@ export class SceneProcessor {
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
-		if ( ! this.bvhData || ! this.triangles || ! this.originalToBvhMap ) {
+		if ( ! this.bvh || ! this.triangles || ! this.originalToBvhMap ) {
 
 			throw new Error( 'No BVH data available for refit. Run buildBVH() first.' );
 
@@ -1472,11 +1477,17 @@ export class SceneProcessor {
 		// Race-free because _animRefitInFlight guard prevents overlapping calls.
 		if ( ! this._refitSharedBuffers ) {
 
-			const sharedBvhBuf = new SharedArrayBuffer( this.bvhData.byteLength );
 			const sharedPosBuf = new SharedArrayBuffer( newPositions.byteLength );
 
-			const sharedBvhData = new Float32Array( sharedBvhBuf );
-			sharedBvhData.set( this.bvhData );
+			// One shared buffer per BVH chunk, same as the triangles below.
+			const sharedBvhBufs = this.bvh.chunks.map( c => new SharedArrayBuffer( c.byteLength ) );
+			const sharedBvhChunks = sharedBvhBufs.map( ( buf, i ) => {
+
+				const view = new Float32Array( buf );
+				view.set( this.bvh.chunks[ i ] );
+				return view;
+
+			} );
 
 			// One shared buffer per triangle chunk — a SharedArrayBuffer carries the same ~2 GB
 			// cap, so a chunked scene has to stay chunked across the worker boundary too.
@@ -1490,8 +1501,9 @@ export class SceneProcessor {
 			} );
 
 			// Replace local refs with shared views
-			this.bvhData = sharedBvhData;
-			this.bvhIndex = bvhIndexView( this.bvhData );
+			this._setBVHData( ChunkedRecords.adopt(
+				sharedBvhChunks, this.bvh.recordCount, this.bvh.lanesPerRecord, this.bvh.recordsPerChunk
+			) );
 			this._setTriangleData( ChunkedRecords.adopt(
 				sharedTriChunks, this.triangles.recordCount, this.triangles.lanesPerRecord, this.triangles.recordsPerChunk
 			) );
@@ -1507,7 +1519,7 @@ export class SceneProcessor {
 			}
 
 			this._refitSharedBuffers = {
-				bvhBuf: sharedBvhBuf,
+				bvhBufs: sharedBvhBufs,
 				triBufs: sharedTriBufs,
 				posBuf: sharedPosBuf,
 				posView: new Float32Array( sharedPosBuf ),
@@ -1516,7 +1528,9 @@ export class SceneProcessor {
 			// Send shared buffers + immutable index map to worker (cached there)
 			this._refitWorker.postMessage( {
 				type: 'init',
-				sharedBvhBuf,
+				sharedBvhBufs,
+				bvhRecordCount: this.bvh.recordCount,
+				bvhRecordsPerChunk: this.bvh.recordsPerChunk,
 				sharedTriBufs,
 				sharedPosBuf,
 				triRecordCount: this.triangles.recordCount,
@@ -1601,7 +1615,7 @@ export class SceneProcessor {
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
-		if ( ! this.instanceTable || ! this.bvhData || ! this.triangles ) {
+		if ( ! this.instanceTable || ! this.bvh || ! this.triangles ) {
 
 			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
 
@@ -1655,14 +1669,14 @@ export class SceneProcessor {
 
 			// Refit this BLAS's nodes
 			this._blasRefitter.refitRange(
-				this.bvhData,
-				this.triangleData,
+				this.bvh,
+				this.triangles,
 				entry.blasOffset,
 				entry.blasNodeCount
 			);
 
 			// Recompute this mesh's AABB for TLAS rebuild
-			this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangles );
+			this.instanceTable.recomputeAABB( meshIdx, this.bvh, this.triangles );
 
 		}
 
@@ -1725,14 +1739,14 @@ export class SceneProcessor {
 
 		pathTracer.setTriangleData( this.triangles, this.triangleCount );
 
-		if ( ! this.bvhData ) {
+		if ( ! this.bvh ) {
 
 			log.error( 'failed to get BVH data' );
 			return false;
 
 		}
 
-		pathTracer.setBVHData( this.bvhData );
+		pathTracer.setBVHData( this.bvh );
 		pathTracer.setInstanceTable( this.instanceTable );
 
 		if ( this.materialData ) {
@@ -1936,6 +1950,22 @@ export class SceneProcessor {
 	}
 
 	/** Keep the f32 view in step with the uint record buffer. @private */
+	/** Keep the chunked BVH and its u32 index view in step. @private */
+	_setBVHData( data ) {
+
+		const records = ! data ? null
+			: ( data instanceof ChunkedRecords
+				? data
+				: ChunkedRecords.adopt( [ data ], data.length / 16, 16, data.length / 16 ) );
+
+		this.bvh = records;
+		this.bvhIndexChunks = records ? records.viewAs( Uint32Array ) : null;
+		// Null once the BVH needs more than one chunk; hot paths use `bvh` / `bvhIndexChunks`.
+		this.bvhData = records ? records.single : null;
+		this.bvhIndex = this.bvhIndexChunks ? this.bvhIndexChunks.single : null;
+
+	}
+
 	_setTriangleData( data ) {
 
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
@@ -2167,13 +2197,15 @@ export class SceneProcessor {
 		// Bottom-up pass: reverse iteration over TLAS nodes
 		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
 
-			const o = i * FPN;
-			const marker = this.bvhIndex[ o + 3 ];
+			const idxChunk = this.bvhIndexChunks.chunkFor( i );
+			const fChunk = this.bvh.chunkFor( i );
+			const o = this.bvh.baseOf( i );
+			const marker = idxChunk[ o + 3 ];
 
 			if ( marker === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) {
 
 				// BLAS-pointer leaf: read AABB from instance table
-				const blasRoot = this.bvhIndex[ o ];
+				const blasRoot = idxChunk[ o ];
 				const entryIndex = this._blasOffsetMap.get( blasRoot );
 				if ( entryIndex !== undefined ) {
 
@@ -2185,24 +2217,24 @@ export class SceneProcessor {
 
 				// Inner node: union of children bounds, update bvhData in-place
 				const leftIdx = marker;
-				const rightIdx = this.bvhIndex[ o + 7 ];
+				const rightIdx = idxChunk[ o + 7 ];
 				const lb = leftIdx * 6;
 				const rb = rightIdx * 6;
 				const bounds = this._tlasBounds;
 
-				this.bvhData[ o ] = bounds[ lb ];
-				this.bvhData[ o + 1 ] = bounds[ lb + 1 ];
-				this.bvhData[ o + 2 ] = bounds[ lb + 2 ];
-				this.bvhData[ o + 4 ] = bounds[ lb + 3 ];
-				this.bvhData[ o + 5 ] = bounds[ lb + 4 ];
-				this.bvhData[ o + 6 ] = bounds[ lb + 5 ];
+				fChunk[ o ] = bounds[ lb ];
+				fChunk[ o + 1 ] = bounds[ lb + 1 ];
+				fChunk[ o + 2 ] = bounds[ lb + 2 ];
+				fChunk[ o + 4 ] = bounds[ lb + 3 ];
+				fChunk[ o + 5 ] = bounds[ lb + 4 ];
+				fChunk[ o + 6 ] = bounds[ lb + 5 ];
 
-				this.bvhData[ o + 8 ] = bounds[ rb ];
-				this.bvhData[ o + 9 ] = bounds[ rb + 1 ];
-				this.bvhData[ o + 10 ] = bounds[ rb + 2 ];
-				this.bvhData[ o + 12 ] = bounds[ rb + 3 ];
-				this.bvhData[ o + 13 ] = bounds[ rb + 4 ];
-				this.bvhData[ o + 14 ] = bounds[ rb + 5 ];
+				fChunk[ o + 8 ] = bounds[ rb ];
+				fChunk[ o + 9 ] = bounds[ rb + 1 ];
+				fChunk[ o + 10 ] = bounds[ rb + 2 ];
+				fChunk[ o + 12 ] = bounds[ rb + 3 ];
+				fChunk[ o + 13 ] = bounds[ rb + 4 ];
+				fChunk[ o + 14 ] = bounds[ rb + 5 ];
 
 				const b = i * 6;
 				bounds[ b ] = Math.min( bounds[ lb ], bounds[ rb ] );
@@ -2329,9 +2361,8 @@ export class SceneProcessor {
 		}
 
 		// Write rebuilt BLAS nodes into the combined buffer at the entry's offset
-		const destOffset = entry.blasOffset * FPN;
-		this.bvhData.set( newBvhData, destOffset );
-		this._offsetBLASInPlace( destOffset, newNodeCount, entry.blasOffset, entry.triOffset );
+		this.bvh.setRecords( entry.blasOffset, newBvhData );
+		this._offsetBLASInPlace( entry.blasOffset, newNodeCount, entry.blasOffset, entry.triOffset );
 
 		// Write reordered triangles back into global array
 		const reorderedTris = workerData.triangles;
@@ -2365,7 +2396,7 @@ export class SceneProcessor {
 		}
 
 		// Recompute AABB and refit TLAS
-		this.instanceTable.recomputeAABB( meshIdx, this.bvhData, this.triangles );
+		this.instanceTable.recomputeAABB( meshIdx, this.bvh, this.triangles );
 		this._refitTLAS();
 
 		this._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );

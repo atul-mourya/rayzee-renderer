@@ -1520,7 +1520,7 @@ export class PathTracerApp extends EventDispatcher {
 		const result = await this._sdf.refitBVH( newPositions, newNormals );
 
 		this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
-		this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
+		this.stages.pathTracer.updateBVHData( this._sdf.bvh );
 		this.reset();
 
 		return result;
@@ -1549,7 +1549,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			// Swap complete — upload updated buffers and restart accumulation
 			this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
-			this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
+			this.stages.pathTracer.updateBVHData( this._sdf.bvh );
 			this.reset();
 
 		} );

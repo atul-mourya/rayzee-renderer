@@ -31,6 +31,23 @@ const uintView = ( data ) => data instanceof Uint32Array
 // Triangles arrive either as one flat record array or, past the ~2 GB array cap, as a
 // ChunkedRecords. Both are handled by resolving the chunk once per triangle; the flat case
 // keeps a constant chunk and plain `index * FPT` arithmetic.
+// BVH nodes get the same treatment: one flat Float32Array, or a ChunkedRecords past the cap.
+const nodeAccess = ( bvhData ) => {
+
+	const chunked = bvhData && bvhData.chunks ? bvhData : null;
+	return {
+		chunked,
+		f: chunked ? bvhData : bvhData,
+		idx: chunked ? bvhData.viewAs( Uint32Array ) : uintView( bvhData ),
+	};
+
+};
+
+// Resolve one node: returns nothing, callers use nodeF/nodeIdx/nodeBase below.
+const nodeF = ( acc, n ) => ( acc.chunked ? acc.f.chunkFor( n ) : acc.f );
+const nodeIdx = ( acc, n ) => ( acc.chunked ? acc.idx.chunkFor( n ) : acc.idx );
+const nodeBase = ( acc, n ) => ( acc.chunked ? acc.chunked.baseOf( n ) : n * FLOATS_PER_NODE );
+
 const triAccess = ( triangleData ) => {
 
 	const chunked = triangleData && triangleData.chunks ? triangleData : null;
@@ -77,7 +94,6 @@ const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
 // Index fields are u32 BIT PATTERNS (exact past 2^24), read through `indexView`.
 const LEAF_MARKER = 0x40000000;
 const BLAS_POINTER_MARKER = 0x40000001;
-const indexView = f32 => new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
 
 const IDENTITY_EPS = 1e-12;
 
@@ -232,11 +248,13 @@ export class BVHRefitter {
 
 		const bounds = this._bounds;
 		const endNode = startNode + nodeCount;
-		const idx = indexView( bvhData );
+		const nodes = nodeAccess( bvhData );
 
 		for ( let i = endNode - 1; i >= startNode; i -- ) {
 
-			const o = i * FLOATS_PER_NODE;
+			const bvhF = nodeF( nodes, i );
+			const idx = nodeIdx( nodes, i );
+			const o = nodeBase( nodes, i );
 			const b = ( i - startNode ) * 6; // bounds indexed relative to BLAS start
 
 			if ( idx[ o + 3 ] === LEAF_MARKER ) {
@@ -300,19 +318,19 @@ export class BVHRefitter {
 				const rMaxY = bounds[ rb + 4 ];
 				const rMaxZ = bounds[ rb + 5 ];
 
-				bvhData[ o ] = lMinX;
-				bvhData[ o + 1 ] = lMinY;
-				bvhData[ o + 2 ] = lMinZ;
-				bvhData[ o + 4 ] = lMaxX;
-				bvhData[ o + 5 ] = lMaxY;
-				bvhData[ o + 6 ] = lMaxZ;
+				bvhF[ o ] = lMinX;
+				bvhF[ o + 1 ] = lMinY;
+				bvhF[ o + 2 ] = lMinZ;
+				bvhF[ o + 4 ] = lMaxX;
+				bvhF[ o + 5 ] = lMaxY;
+				bvhF[ o + 6 ] = lMaxZ;
 
-				bvhData[ o + 8 ] = rMinX;
-				bvhData[ o + 9 ] = rMinY;
-				bvhData[ o + 10 ] = rMinZ;
-				bvhData[ o + 12 ] = rMaxX;
-				bvhData[ o + 13 ] = rMaxY;
-				bvhData[ o + 14 ] = rMaxZ;
+				bvhF[ o + 8 ] = rMinX;
+				bvhF[ o + 9 ] = rMinY;
+				bvhF[ o + 10 ] = rMinZ;
+				bvhF[ o + 12 ] = rMaxX;
+				bvhF[ o + 13 ] = rMaxY;
+				bvhF[ o + 14 ] = rMaxZ;
 
 				bounds[ b ] = Math.min( lMinX, rMinX );
 				bounds[ b + 1 ] = Math.min( lMinY, rMinY );
@@ -349,12 +367,14 @@ export class BVHRefitter {
 		}
 
 		const bounds = this._bounds;
-		const idx = indexView( bvhData );
+		const nodes = nodeAccess( bvhData );
 
 		// Reverse iteration: bottom-up in pre-order layout
 		for ( let i = nodeCount - 1; i >= 0; i -- ) {
 
-			const o = i * FLOATS_PER_NODE;
+			const bvhF = nodeF( nodes, i );
+			const idx = nodeIdx( nodes, i );
+			const o = nodeBase( nodes, i );
 			const b = i * 6;
 
 			const marker = idx[ o + 3 ];
@@ -411,7 +431,7 @@ export class BVHRefitter {
 				// corners go back the other way through its inverse.
 				const blasRoot = idx[ o ];
 				const br = blasRoot * 6;
-				transformBoundsToWorld( bvhData, o, bounds, br, bounds, b );
+				transformBoundsToWorld( bvhF, o, bounds, br, bounds, b );
 
 			} else {
 
@@ -436,23 +456,23 @@ export class BVHRefitter {
 				const rMaxZ = bounds[ rb + 5 ];
 
 				// Write left child AABB into bvhData
-				bvhData[ o ] = lMinX;
-				bvhData[ o + 1 ] = lMinY;
-				bvhData[ o + 2 ] = lMinZ;
+				bvhF[ o ] = lMinX;
+				bvhF[ o + 1 ] = lMinY;
+				bvhF[ o + 2 ] = lMinZ;
 				// o+3 = leftChildIdx (preserved)
-				bvhData[ o + 4 ] = lMaxX;
-				bvhData[ o + 5 ] = lMaxY;
-				bvhData[ o + 6 ] = lMaxZ;
+				bvhF[ o + 4 ] = lMaxX;
+				bvhF[ o + 5 ] = lMaxY;
+				bvhF[ o + 6 ] = lMaxZ;
 				// o+7 = rightChildIdx (preserved)
 
 				// Write right child AABB into bvhData
-				bvhData[ o + 8 ] = rMinX;
-				bvhData[ o + 9 ] = rMinY;
-				bvhData[ o + 10 ] = rMinZ;
+				bvhF[ o + 8 ] = rMinX;
+				bvhF[ o + 9 ] = rMinY;
+				bvhF[ o + 10 ] = rMinZ;
 				// o+11 = 0 padding
-				bvhData[ o + 12 ] = rMaxX;
-				bvhData[ o + 13 ] = rMaxY;
-				bvhData[ o + 14 ] = rMaxZ;
+				bvhF[ o + 12 ] = rMaxX;
+				bvhF[ o + 13 ] = rMaxY;
+				bvhF[ o + 14 ] = rMaxZ;
 				// o+15 = 0 padding
 
 				// Store this node's bounds as union of children

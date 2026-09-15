@@ -182,6 +182,7 @@ export class PathTracerStage extends RenderStage {
 
 		// BVH data (storage buffer for WebGPU)
 		this.bvhStorageAttr = null;
+		this._bvhRecords = null;
 		this.bvhStorageNode = null;
 		this.bvhNodeCount = 0;
 
@@ -762,20 +763,32 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! bvhImageData ) return;
 
-		const vec4Count = bvhImageData.length / 4;
+		// Same story as the triangles: past the ~2 GB array cap the nodes arrive as several
+		// chunks and still become one GPU buffer.
+		const chunked = bvhImageData.chunks && bvhImageData.chunks.length > 1 ? bvhImageData : null;
+		const flat = chunked ? null : ( bvhImageData.chunks ? bvhImageData.chunks[ 0 ] : bvhImageData );
+		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
+		const vec4Count = lanes / 4;
+
+		const makeAttr = () => chunked
+			? gpuOnlyStorageAttribute( vec4Count, 4, Float32Array )
+			: new StorageInstancedBufferAttribute( flat, 4 );
 
 		if ( this.bvhStorageNode ) {
 
-			this.bvhStorageAttr = new StorageInstancedBufferAttribute( bvhImageData, 4 );
+			this.bvhStorageAttr = makeAttr();
 			this.bvhStorageNode.value = this.bvhStorageAttr;
 			this.bvhStorageNode.bufferCount = vec4Count;
 
 		} else {
 
-			this.bvhStorageAttr = new StorageInstancedBufferAttribute( bvhImageData, 4 );
+			this.bvhStorageAttr = makeAttr();
 			this.bvhStorageNode = storage( this.bvhStorageAttr, 'vec4', vec4Count ).toReadOnly();
 
 		}
+
+		this._bvhRecords = chunked;
+		if ( chunked ) uploadStorageChunks( this.renderer, this.bvhStorageAttr, chunked.chunks );
 
 		this.bvhNodeCount = Math.floor( vec4Count / BVH_VEC4_PER_NODE );
 		log.debug( `${fmt.n( this.bvhNodeCount )} BVH nodes (storage buffer)` );
@@ -803,7 +816,7 @@ export class PathTracerStage extends RenderStage {
 		if ( ! meshes || meshes.length === 0 || ! this._instanceTable ) return;
 
 		this._patchVisibilityFromMeshes( meshes );
-		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
+		this._flushBVHEdits();
 
 	}
 
@@ -838,7 +851,7 @@ export class PathTracerStage extends RenderStage {
 	updateMeshVisibility( meshIndex, visible ) {
 
 		if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
-		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
+		this._flushBVHEdits();
 
 	}
 
@@ -851,8 +864,7 @@ export class PathTracerStage extends RenderStage {
 		if ( ! this._meshRefs || ! this._instanceTable ) return;
 
 		this._patchVisibilityFromMeshes( this._meshRefs );
-
-		if ( this.bvhStorageAttr ) this.bvhStorageAttr.needsUpdate = true;
+		this._flushBVHEdits();
 
 	}
 
@@ -870,8 +882,41 @@ export class PathTracerStage extends RenderStage {
 		if ( leaf < 0 ) return false;
 
 		table.visible[ meshIndex ] = visible ? 1 : 0;
-		this.bvhStorageAttr.array[ leaf * 16 + 2 ] = visible ? 1.0 : 0.0;
+
+		// A chunked attribute owns no CPU array; write into the chunk that holds this leaf.
+		if ( this._bvhRecords ) this._bvhRecords.chunkFor( leaf )[ this._bvhRecords.baseOf( leaf ) + 2 ] = visible ? 1.0 : 0.0;
+		else this.bvhStorageAttr.array[ leaf * 16 + 2 ] = visible ? 1.0 : 0.0;
+
+		this._dirtyBVHLeaves ??= new Set();
+		this._dirtyBVHLeaves.add( leaf );
 		return true;
+
+	}
+
+	/**
+	 * Push BVH edits to the GPU. A chunked attribute cannot go through three.js's dirty flag,
+	 * so the touched leaves are written straight into the buffer.
+	 * @private
+	 */
+	_flushBVHEdits() {
+
+		if ( ! this.bvhStorageAttr ) return;
+
+		if ( ! this._bvhRecords ) {
+
+			this.bvhStorageAttr.needsUpdate = true;
+			this._dirtyBVHLeaves?.clear();
+			return;
+
+		}
+
+		for ( const leaf of this._dirtyBVHLeaves ?? [] ) {
+
+			uploadStorageChunkRange( this.renderer, this.bvhStorageAttr, this._bvhRecords, leaf * 16, 16 );
+
+		}
+
+		this._dirtyBVHLeaves?.clear();
 
 	}
 
@@ -952,7 +997,14 @@ export class PathTracerStage extends RenderStage {
 	/** Update BVH node data in the existing GPU buffer (full). */
 	updateBVHData( bvhData ) {
 
-		this._updateStorageBuffer( this.bvhStorageAttr, bvhData );
+		if ( this._bvhRecords ) {
+
+			uploadStorageChunks( this.renderer, this.bvhStorageAttr, this._bvhRecords.chunks );
+			return;
+
+		}
+
+		this._updateStorageBuffer( this.bvhStorageAttr, bvhData?.chunks ? bvhData.chunks[ 0 ] : bvhData );
 
 	}
 
@@ -995,15 +1047,27 @@ export class PathTracerStage extends RenderStage {
 
 		if ( this.bvhStorageAttr && bvhRanges.length > 0 ) {
 
-			this.bvhStorageAttr.clearUpdateRanges();
+			if ( this._bvhRecords ) {
 
-			for ( const r of bvhRanges ) {
+				for ( const r of bvhRanges ) {
 
-				this.bvhStorageAttr.addUpdateRange( r.offset, r.count );
+					uploadStorageChunkRange( this.renderer, this.bvhStorageAttr, this._bvhRecords, r.offset, r.count );
+
+				}
+
+			} else {
+
+				this.bvhStorageAttr.clearUpdateRanges();
+
+				for ( const r of bvhRanges ) {
+
+					this.bvhStorageAttr.addUpdateRange( r.offset, r.count );
+
+				}
+
+				this.bvhStorageAttr.version ++;
 
 			}
-
-			this.bvhStorageAttr.version ++;
 
 		}
 
@@ -1508,6 +1572,7 @@ export class PathTracerStage extends RenderStage {
 		this._triangleRecords = null;
 		this.triangleStorageNode = null;
 		this.bvhStorageAttr = null;
+		this._bvhRecords = null;
 		this.bvhStorageNode = null;
 		this.placeholderTexture = null;
 
