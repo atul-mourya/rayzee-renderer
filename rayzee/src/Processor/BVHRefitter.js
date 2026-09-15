@@ -95,7 +95,8 @@ const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
 const LEAF_MARKER = 0x40000000;
 const BLAS_POINTER_MARKER = 0x40000001;
 
-const IDENTITY_EPS = 1e-12;
+// Relative to the matrix's own magnitude, never an absolute floor — see transformBoundsToWorld.
+const SINGULAR_REL_EPS = 1e-12;
 
 /**
  * Object-space bounds at `srcOff` through the instance transform stored on TLAS leaf `nodeOff`,
@@ -115,7 +116,14 @@ function transformBoundsToWorld( bvhData, nodeOff, src, srcOff, dst, dstOff ) {
 		&& a1 === 0 && a2 === 0 && a3 === 0 && a5 === 0 && a6 === 0 && a7 === 0
 		&& tx === 0 && ty === 0 && tz === 0;
 
-	if ( identity || ! Number.isFinite( det ) || Math.abs( det ) < IDENTITY_EPS ) {
+	// Moana's ocean is a unit quad scaled to ±1,089,735, so its world-to-object determinant is
+	// 7.7e-19 — an absolute floor called that singular and copied the unit quad's bounds straight
+	// through as world bounds, collapsing the root AABB on every refit.
+	const magnitude = ( Math.abs( a0 ) + Math.abs( a1 ) + Math.abs( a2 ) )
+		* ( Math.abs( a3 ) + Math.abs( a4 ) + Math.abs( a5 ) )
+		* ( Math.abs( a6 ) + Math.abs( a7 ) + Math.abs( a8 ) );
+
+	if ( identity || ! Number.isFinite( det ) || Math.abs( det ) <= SINGULAR_REL_EPS * magnitude ) {
 
 		for ( let i = 0; i < 6; i ++ ) dst[ dstOff + i ] = src[ srcOff + i ];
 		return;

@@ -592,7 +592,10 @@ export const instanceDirToWorld = /*@__PURE__*/ wgslFn( `
 		// Rows of world-to-object; its inverse has columns cross(r1,r2), cross(r2,r0), cross(r0,r1).
 		let c0 = cross( r1, r2 );
 		let det = dot( r0, c0 );
-		if ( abs( det ) < 1e-20f ) { return v; }
+		// Relative: for a uniform scale s this determinant is s⁻³, so a fixed floor would call a
+		// heavily scaled-up instance singular and leave the direction untransformed.
+		let magnitude = length( r0 ) * length( r1 ) * length( r2 );
+		if ( abs( det ) <= 1e-12f * magnitude ) { return v; }
 
 		let inv = 1.0f / det;
 		return ( c0 * v.x + cross( r2, r0 ) * v.y + cross( r0, r1 ) * v.z ) * inv;

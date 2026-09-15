@@ -346,6 +346,65 @@ describe( 'BVHRefitter', () => {
 
 		} );
 
+		// Moana's ocean: a unit quad scaled to ±1,089,735, so the world-to-object matrix on the
+		// leaf has a determinant of 7.7e-19. An absolute singular-matrix floor called that
+		// degenerate and copied the unit quad's bounds through as world bounds, so the TLAS root
+		// collapsed from ±1,089,735 to ±1 on every refit — with the render still looking fine.
+		it.each( [ 1, 1e3, 1e6, 1e-3 ] )( 'carries BLAS bounds out through a %f× instance scale', scale => {
+
+			const inv = 1 / scale;
+			// Leaf slots 4..15 are the rows of world-to-object: a uniform 1/scale with no offset.
+			const leaf = [
+				bits( 2 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ),
+				inv, 0, 0, 0,
+				0, inv, 0, 0,
+				0, 0, inv, 0,
+			];
+
+			const bvhData = new Float32Array( [
+				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 1 ),
+				...leaf,
+				...makeInner( [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3, [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3 ),
+				...makeLeaf( 0, 1 ),
+			] );
+
+			const triangleData = new Uint32Array( FPT );
+			triangleData.set( makeTriangle( - 1, - 1, - 1, 1, - 1, - 1, - 1, 1, 1 ), 0 );
+
+			new BVHRefitter().refit( bvhData, triangleData, 4 );
+
+			// The unit-ish BLAS box must come back out at instance scale, not object scale.
+			expect( bvhData[ 0 ] ).toBeCloseTo( - scale, Math.max( 0, 6 - Math.log10( scale ) ) );
+			expect( bvhData[ 4 ] ).toBeCloseTo( scale, Math.max( 0, 6 - Math.log10( scale ) ) );
+
+		} );
+
+		it( 'still treats a genuinely singular instance matrix as untransformed', () => {
+
+			const leaf = [
+				bits( 2 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ),
+				1, 0, 0, 0,
+				2, 0, 0, 0, // second row is a multiple of the first — rank 2, not invertible
+				0, 0, 1, 0,
+			];
+
+			const bvhData = new Float32Array( [
+				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 1 ),
+				...leaf,
+				...makeInner( [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3, [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3 ),
+				...makeLeaf( 0, 1 ),
+			] );
+
+			const triangleData = new Uint32Array( FPT );
+			triangleData.set( makeTriangle( - 1, - 1, - 1, 1, - 1, - 1, - 1, 1, 1 ), 0 );
+
+			new BVHRefitter().refit( bvhData, triangleData, 4 );
+
+			expect( bvhData[ 0 ] ).toBe( - 1 );
+			expect( bvhData[ 4 ] ).toBe( 1 );
+
+		} );
+
 	} );
 
 } );
