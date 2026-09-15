@@ -114,6 +114,40 @@ WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
 
 };
 
+/**
+ * Upload a storage attribute's contents from several CPU chunks.
+ *
+ * A GPU buffer may be up to `maxBufferSize` (4 GB here) while V8 caps a single ArrayBuffer at
+ * ~2 GB, so anything larger has to be staged in pieces. The attribute must be GPU-only: it owns
+ * no CPU array, and these writes are the only thing that fills it.
+ *
+ * @param {Object} renderer - WebGPURenderer
+ * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
+ * @param {Array<TypedArray>} chunks - in order; total byte length must match the attribute
+ */
+export function uploadStorageChunks( renderer, attr, chunks ) {
+
+	const backend = renderer.backend;
+	backend.createStorageAttribute( attr );
+
+	const buffer = backend.get( attr ).buffer;
+	let byteOffset = 0;
+
+	for ( const chunk of chunks ) {
+
+		backend.device.queue.writeBuffer( buffer, byteOffset, chunk, 0, chunk.length );
+		byteOffset += chunk.byteLength;
+
+	}
+
+	if ( byteOffset !== attr.gpuByteLength ) {
+
+		throw new RangeError( `uploadStorageChunks wrote ${byteOffset} bytes into a ${attr.gpuByteLength}-byte buffer` );
+
+	}
+
+}
+
 const _origUpdateAttribute = WebGPUBackend.prototype.updateAttribute;
 
 WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
