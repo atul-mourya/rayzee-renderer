@@ -337,6 +337,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   into a multi-select dialog. ⚠️ This applies to the **seekable .tar** path too, where indexing
   is free but *parsing* everything is what runs the tab out of memory. Selecting every element
   is a valid answer and loads the whole scene; `promptBytes` overrides the line.
+- `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
+  and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
+  killed the renderer outright — so raising it is a deliberate act on a fresh browser.
 
 ## Development Commands
 

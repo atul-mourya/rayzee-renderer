@@ -64,9 +64,13 @@ function float32( values ) {
 // The per-mesh table is a debug aid; an instanced scene reaches tens of millions of rows.
 const MAX_REPORT_ROWS = 1000;
 // Triangles are chunked across several arrays now, so the 2 GB V8 cap no longer bounds them at
-// 26.8M. The remaining ceiling is the GPU side: one storage buffer of 4,096 MB at 80 B a
-// triangle is 53.7M. Untested above 26M — raise `maxTriangles` per load to go further.
-const DEFAULT_TRIANGLE_BUDGET = 50_000_000;
+// 26.8M, and the GPU ceiling is higher still: one storage buffer of 4,096 MB at 80 B a triangle
+// is 53.7M. What actually binds is CPU address space, measured on Moana: 40M (7.3 GB) and 45M
+// (8.5 GB) load and render, 50M dies at 9.4 GB resident with nothing thrown and nothing logged.
+// So the budget sits on the highest rung that survived — past it placements are skipped and the
+// scene is reported as truncated, which beats taking the tab down. Raise `maxTriangles` per load
+// to go further, on a freshly started browser.
+const DEFAULT_TRIANGLE_BUDGET = 45_000_000;
 // Placements are their own budget: geometry is shared, but each costs a TLAS leaf and an
 // instance record. isCoastline's 5.09M loaded and rendered at 23 fps.
 const DEFAULT_PLACEMENT_BUDGET = 6_000_000;
