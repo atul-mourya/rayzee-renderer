@@ -194,6 +194,37 @@ describe( 'selective retention', () => {
 
 	} );
 
+	it( 'element filter keeps several elements at once', async () => {
+
+		const { entries } = await readTar( tarBlocks( ARCHIVE ), {
+			filter: elementFilter( [ 'root/elemA', 'root/elemB' ] )
+		} );
+
+		expect( Object.keys( entries ).sort() ).toEqual( [
+			'root/elemA/elemA.pbrt', 'root/elemA/geo.ply',
+			'root/elemB/big.ply', 'root/elemB/elemB.pbrt',
+			'root/materials.pbrt', 'root/scene.pbrt', 'root/textures/sky.png'
+		] );
+
+	} );
+
+	it( 'element filter given one prefix in an array matches the bare string', async () => {
+
+		const asArray = await readTar( tarBlocks( ARCHIVE ), { filter: elementFilter( [ 'root/elemA' ] ) } );
+		const asString = await readTar( tarBlocks( ARCHIVE ), { filter: elementFilter( 'root/elemA' ) } );
+
+		expect( Object.keys( asArray.entries ).sort() ).toEqual( Object.keys( asString.entries ).sort() );
+
+	} );
+
+	it( 'element filter with nothing chosen keeps the whole archive', async () => {
+
+		const { entries } = await readTar( tarBlocks( ARCHIVE ), { filter: elementFilter( [] ) } );
+
+		expect( Object.keys( entries ) ).toHaveLength( ARCHIVE.length );
+
+	} );
+
 	it( 'stops retaining at the byte budget and says so', async () => {
 
 		const { entries, listing, truncated } = await readTar( tarBlocks( ARCHIVE ), { byteBudget: 12 } );

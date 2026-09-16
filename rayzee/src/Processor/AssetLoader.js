@@ -45,6 +45,16 @@ const SUPPORTED_FORMATS = {
 const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
 const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
+/**
+ * Unpacked size past which a multi-part scene archive asks which parts to load rather than
+ * taking all of them. Not a hard limit — picking every part is a valid answer.
+ *
+ * Measured on Moana: a 7.5 GB archive of 15 parts parses to 40M triangles and ~7.3 GB of CPU
+ * memory, which loads on a freshly started browser and fails on one that has been up a while.
+ * Anything near that is worth a question, because the failure past it kills the tab rather than
+ * throwing. Override per load with `promptBytes`.
+ */
+export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 // A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
 // reorders and disposes what it is given, but never writes the attributes.
 function standInForSplit( source ) {
@@ -546,17 +556,20 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {object} [options]
 	 * @param {string} [options.pbrtEntry] - which .pbrt to load when the archive holds several
 	 *   independent scenes; the issue log lists what else was available.
-	 * @param {string} [options.element] - path prefix of one subtree to load on its own, as
-	 *   reported by `inspectArchive()`. Everything above it (scene file, materials, textures)
-	 *   comes along; sibling subtrees are skipped without ever being held in memory.
+	 * @param {string|string[]} [options.element] - path prefix of one subtree to load on its own,
+	 *   or several to load together, as reported by `inspectArchive()`. Everything above them
+	 *   (scene file, materials, textures) comes along; subtrees left out are skipped without ever
+	 *   being held in memory, and the Includes that point at them only warn.
 	 * @param {number} [options.byteBudget] - cap on retained bytes when no element is chosen.
+	 * @param {number} [options.promptBytes] - size past which a multi-part archive asks which
+	 *   parts to load instead of taking all of them.
 	 * @param {number} [options.maxTriangles] - stop past this many STORED triangles.
 	 * @param {number} [options.maxPlacements] - stop past this many instance placements.
 	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
 	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
 	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
 	 */
-	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, ...pbrt } = {} ) {
+	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
 
 		try {
 
@@ -567,7 +580,7 @@ export class AssetLoader extends EventDispatcher {
 			// That is the difference between a 7 GB archive being refused and loading.
 			if ( kind === 'tar' ) {
 
-				const source = await this._openSeekableArchive( file, filename, element );
+				const source = await this._openSeekableArchive( file, filename, element, promptBytes );
 				if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
 
 					return await this.loadPBRTFromZip( {}, filename, pbrtEntry, pbrt, source );
@@ -609,29 +622,75 @@ export class AssetLoader extends EventDispatcher {
 	/**
 	 * Index an uncompressed tar without retaining it. Entries are read back from the File on
 	 * demand, so residency is the open include chain rather than the whole archive.
+	 *
+	 * Indexing is cheap and the whole archive is never held, but *parsing* all of it is not:
+	 * the scene that comes out is what runs the tab out of memory. So a large multi-part archive
+	 * stops here and asks which parts to load, the same as the streamed path does. The index is
+	 * already built at that point, so the question costs nothing.
 	 * @private
 	 */
-	async _openSeekableArchive( file, filename, element ) {
+	async _openSeekableArchive( file, filename, element, promptBytes ) {
+
+		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
 
 		const source = await openTar( file, {
-			filter: element ? elementFilter( element ) : null,
+			filter: chosen.length ? elementFilter( chosen ) : null,
 			retain: () => false,
 		} );
 
+		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
+
+		if ( chosen.length === 0 ) this._requireElementChoice( filename, source.listing, totalBytes, promptBytes );
+
 		console.info(
 			`Archive "${filename}": indexed ${source.indexed} entries, ` +
-			`${( source.listing.reduce( ( n, e ) => n + e.size, 0 ) / 1e9 ).toFixed( 1 )} GB, none resident.`
+			`${( totalBytes / 1e9 ).toFixed( 1 )} GB, none resident` +
+			( chosen.length ? `, ${chosen.length} part${chosen.length > 1 ? 's' : ''} selected.` : '.' )
 		);
 
 		return source;
 
 	}
 
+	/**
+	 * Stop and ask which parts to load, when the archive is big enough that the answer matters
+	 * and it actually has parts to choose between. Not a capability limit — selecting every part
+	 * is a valid answer and loads the whole scene.
+	 * @private
+	 */
+	_requireElementChoice( filename, listing, totalBytes, promptBytes = ARCHIVE_ELEMENT_PROMPT_BYTES ) {
+
+		if ( totalBytes < promptBytes ) return;
+
+		const { root, elements } = listArchiveElements( listing );
+		if ( elements.length < 2 ) return;
+
+		const error = new Error(
+			`"${filename}" holds ${( totalBytes / 1e9 ).toFixed( 1 )} GB across ${elements.length} parts. ` +
+			'Choose which to load — loading all of them at once may exhaust memory.'
+		);
+		error.code = 'ARCHIVE_NEEDS_ELEMENT';
+		error.root = root;
+		error.elements = elements;
+		error.totalBytes = totalBytes;
+
+		this._issues?.record(
+			ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+			`archive holds ${( totalBytes / 1e9 ).toFixed( 1 )} GB across ${elements.length} parts; choose which to load`,
+			{ root, elements: elements.map( e => e.prefix ), totalBytes },
+			ISSUE_SEVERITY.ERROR
+		);
+
+		throw error;
+
+	}
+
 	async _readStreamedArchive( file, filename, kind, element, byteBudget ) {
 
+		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
 		const read = kind === 'gzip' ? readTarGz : readTar;
 		const { entries, listing, retainedBytes, truncated } = await read( file, {
-			filter: element ? elementFilter( element ) : null,
+			filter: chosen.length ? elementFilter( chosen ) : null,
 			...( byteBudget === undefined ? {} : { byteBudget } ),
 			onProgress: p => updateLoading( {
 				isLoading: true,
@@ -662,10 +721,10 @@ export class AssetLoader extends EventDispatcher {
 
 		}
 
-		if ( element ) {
+		if ( chosen.length ) {
 
 			console.info(
-				`Archive "${filename}": loaded "${element}" — ` +
+				`Archive "${filename}": loaded ${chosen.map( c => `"${c}"` ).join( ', ' )} — ` +
 				`${Object.keys( entries ).length} of ${listing.length} files, ${( retainedBytes / 1048576 ).toFixed( 1 )} MB.`
 			);
 

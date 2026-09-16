@@ -446,27 +446,46 @@ export async function readTar( source, options = {} ) {
 }
 
 /**
- * Retain-predicate for one subtree of a scene archive.
+ * Retain-predicate for one or several subtrees of a scene archive.
  *
- * Keeps the element itself plus everything above it — the top-level scene file, the shared
+ * Keeps each chosen element plus everything above it — the top-level scene file, the shared
  * material library, and any `textures` folder hanging off an ancestor — so the entry .pbrt
- * still parses with its siblings absent.
+ * still parses with its siblings absent. An Include pointing at a subtree that was left out
+ * only warns, which is what makes a partial load work at all.
+ *
+ * @param {string|string[]} prefixes - one element path, or several to load together
  */
-export function elementFilter( prefix ) {
+export function elementFilter( prefixes ) {
 
-	const p = normalizeTarPath( prefix );
-	const inside = p + '/';
+	const wanted = ( Array.isArray( prefixes ) ? prefixes : [ prefixes ] )
+		.filter( Boolean )
+		.map( prefix => {
+
+			const p = normalizeTarPath( prefix );
+			return { p, inside: p + '/' };
+
+		} );
+
+	if ( wanted.length === 0 ) return () => true;
 
 	return path => {
 
-		if ( path.startsWith( inside ) || path === p ) return true;
-
 		const cut = path.lastIndexOf( '/' );
 		const dir = cut < 0 ? '' : path.slice( 0, cut );
-		if ( dir === '' || inside.startsWith( dir + '/' ) ) return true;
+		if ( dir === '' ) return true;
 
 		const tex = dir.lastIndexOf( '/textures' );
-		return tex >= 0 && tex === dir.length - 9 && inside.startsWith( dir.slice( 0, tex ) + '/' );
+		const texRoot = tex >= 0 && tex === dir.length - 9 ? dir.slice( 0, tex ) + '/' : null;
+
+		for ( const { p, inside } of wanted ) {
+
+			if ( path === p || path.startsWith( inside ) ) return true;
+			if ( inside.startsWith( dir + '/' ) ) return true;
+			if ( texRoot !== null && inside.startsWith( texRoot ) ) return true;
+
+		}
+
+		return false;
 
 	};
 

@@ -324,6 +324,20 @@ Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never us
 3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
 
+### Loading part of a scene archive
+A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
+subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
+- `assetLoader.inspectArchive( file )` lists the elements without retaining any of them.
+- `loadFile( file, { element } )` takes one element path or **an array of them** to load
+  together. Everything above them — the root scene file, the material library, an ancestor's
+  `textures` folder — comes along, and an `Include` pointing at an element that was left out
+  only warns, which is what makes a partial load work.
+- Past `ARCHIVE_ELEMENT_PROMPT_BYTES` (4 GB unpacked) a multi-element archive throws
+  `ARCHIVE_NEEDS_ELEMENT` carrying `elements`, rather than taking all of it. The app turns that
+  into a multi-select dialog. ⚠️ This applies to the **seekable .tar** path too, where indexing
+  is free but *parsing* everything is what runs the tab out of memory. Selecting every element
+  is a valid answer and loads the whole scene; `promptBytes` overrides the line.
+
 ## Development Commands
 
 ### Debug Visualizations (visMode uniform)

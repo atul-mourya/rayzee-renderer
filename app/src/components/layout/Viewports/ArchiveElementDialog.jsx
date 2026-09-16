@@ -3,10 +3,12 @@ import { useStore } from "@/store";
 import { getApp } from "@/lib/appProxy";
 import { useToast } from "@/hooks/use-toast";
 import {
-	Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle
+	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AlertTriangle } from "lucide-react";
 
 const formatBytes = bytes => {
 
@@ -17,38 +19,68 @@ const formatBytes = bytes => {
 };
 
 /**
- * Offered when an archive unpacks to more than the engine will hold. The parts come from
- * the streaming pass that already ran, so choosing one costs a second read of the archive
- * and nothing more.
+ * Archive bytes past which a selection is likely to run the tab out of memory. Measured on
+ * Moana: 7.5 GB of archive parses to 40M triangles and ~7.3 GB of CPU memory, which loads on a
+ * freshly started browser and fails on one that has been open a while. The warning is honest
+ * about that rather than pretending there is a fixed limit.
+ */
+const RISKY_BYTES = 6e9;
+
+/**
+ * Offered when a scene archive holds several parts and is big enough that loading all of them
+ * may not fit. The sizes come from the pass that already indexed the archive, so choosing costs
+ * a second read and nothing more.
  */
 const ArchiveElementDialog = () => {
 
 	const archivePrompt = useStore( state => state.archivePrompt );
 	const setArchivePrompt = useStore( state => state.setArchivePrompt );
-	const [ loading, setLoading ] = useState( null );
+	const [ picked, setPicked ] = useState( () => new Set() );
+	const [ loading, setLoading ] = useState( false );
 	const { toast } = useToast();
 
 	if ( ! archivePrompt ) return null;
 
 	const { file, elements, totalBytes } = archivePrompt;
+	const selectedBytes = elements.reduce( ( n, e ) => n + ( picked.has( e.prefix ) ? e.bytes : 0 ), 0 );
+	const risky = selectedBytes >= RISKY_BYTES;
 
-	const load = async element => {
+	const toggle = prefix => setPicked( prev => {
+
+		const next = new Set( prev );
+		if ( next.has( prefix ) ) next.delete( prefix );
+		else next.add( prefix );
+		return next;
+
+	} );
+
+	const close = () => {
+
+		setPicked( new Set() );
+		setArchivePrompt( null );
+
+	};
+
+	const load = async prefixes => {
 
 		const app = getApp();
-		if ( ! app ) return;
+		if ( ! app || prefixes.length === 0 ) return;
 
-		setLoading( element.prefix );
+		setLoading( true );
 		try {
 
 			app.pauseRendering = true;
-			await app.loadFile( file, { element: element.prefix } );
-			setArchivePrompt( null );
-			toast( { title: "Loaded", description: `${element.name} from ${file.name}` } );
+			await app.loadFile( file, { element: prefixes } );
+			close();
+			toast( {
+				title: "Loaded",
+				description: `${prefixes.length} of ${elements.length} parts from ${file.name}`
+			} );
 
 		} catch ( error ) {
 
 			toast( {
-				title: "Could not load that part",
+				title: "Could not load that selection",
 				description: error?.message || String( error ),
 				variant: "destructive"
 			} );
@@ -57,41 +89,82 @@ const ArchiveElementDialog = () => {
 
 			app.pauseRendering = false;
 			useStore.getState().resetLoading();
-			setLoading( null );
+			setLoading( false );
 
 		}
 
 	};
 
 	return (
-		<Dialog open onOpenChange={open => ! open && setArchivePrompt( null )}>
+		<Dialog open onOpenChange={open => ! open && ! loading && close()}>
 			<DialogContent className="max-w-xl">
 				<DialogHeader>
-					<DialogTitle>Choose a part to load</DialogTitle>
+					<DialogTitle>Choose what to load</DialogTitle>
 					<DialogDescription>
-						{file.name} unpacks to {formatBytes( totalBytes )}, more than fits in memory.
-						Pick one of its {elements.length} parts — the scene file, materials and textures come with it.
+						{file.name} holds {formatBytes( totalBytes )} across {elements.length} parts.
+						Pick as many as you want — the scene file, materials and textures come with them,
+						and references to the parts you leave out are skipped.
 					</DialogDescription>
 				</DialogHeader>
 
+				<div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+					<button
+						type="button"
+						className="underline underline-offset-2 hover:text-foreground"
+						onClick={() => setPicked( new Set( elements.map( e => e.prefix ) ) )}
+					>
+						Select all
+					</button>
+					<button
+						type="button"
+						className="underline underline-offset-2 hover:text-foreground"
+						onClick={() => setPicked( new Set() )}
+					>
+						Clear
+					</button>
+				</div>
+
 				<ScrollArea className="h-80 pr-3">
-					<div className="flex flex-col gap-1">
+					<div className="flex flex-col">
 						{elements.map( element => (
-							<Button
+							<label
 								key={element.prefix}
-								variant="ghost"
-								disabled={loading !== null}
-								onClick={() => load( element )}
-								className="justify-between font-normal h-auto py-2"
+								className="flex items-center gap-3 py-2 px-1 rounded hover:bg-accent cursor-pointer"
 							>
-								<span className="truncate text-left">{element.name}</span>
-								<span className="text-xs text-muted-foreground shrink-0 ml-3">
-									{loading === element.prefix ? "Reading…" : `${formatBytes( element.bytes )} · ${element.files} files`}
+								<Checkbox
+									checked={picked.has( element.prefix )}
+									onCheckedChange={() => toggle( element.prefix )}
+									disabled={loading}
+								/>
+								<span className="truncate text-left text-sm flex-1">{element.name}</span>
+								<span className="text-xs text-muted-foreground shrink-0">
+									{formatBytes( element.bytes )} · {element.files} files
 								</span>
-							</Button>
+							</label>
 						) )}
 					</div>
 				</ScrollArea>
+
+				{risky && (
+					<div className="flex items-start gap-2 text-xs text-amber-500 px-1">
+						<AlertTriangle className="h-4 w-4 shrink-0 mt-px" />
+						<span>
+							This much at once may run the tab out of memory. It is most likely to fit
+							in a browser that was started recently.
+						</span>
+					</div>
+				)}
+
+				<DialogFooter className="sm:justify-between items-center gap-2">
+					<span className="text-xs text-muted-foreground">
+						{picked.size === 0
+							? "Nothing selected"
+							: `${picked.size} of ${elements.length} selected · ${formatBytes( selectedBytes )}`}
+					</span>
+					<Button onClick={() => load( [ ...picked ] )} disabled={loading || picked.size === 0}>
+						{loading ? "Loading…" : "Load selection"}
+					</Button>
+				</DialogFooter>
 			</DialogContent>
 		</Dialog>
 	);
