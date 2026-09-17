@@ -76,7 +76,7 @@ const toObjectDir = ( rows, d ) => vec3(
 
 // Woop watertight intersection (Woop/Benthin/Wald 2013). Eliminates edge leakage
 // at shared triangle edges that Möller-Trumbore exhibits under FP32. Per-ray shears
-// are precomputed once via computeWoopRayParams; per-triangle test is FMA-friendly
+// are precomputed once via computeWoopFromInvDir; per-triangle test is FMA-friendly
 // and uses sign-aware depth comparison so it works for any det orientation.
 const RayTriangleGeometry = wgslFn( `
 	fn RayTriangleGeometry( rayOrigin: vec3f, rayDir: vec3f, pA: vec3f, pB: vec3f, pC: vec3f, closestHitDst: f32, woopParams: vec4f ) -> vec4f {
@@ -149,8 +149,10 @@ const RayTriangleGeometry = wgslFn( `
 // Compute Woop ray-space transform (Woop 2013, §3.1) — runs once per ray and
 // amortizes across hundreds of triangle tests. Returns Sx/Sy/Sz shears plus the
 // permuted axis indices packed via bitcast into the .w slot.
-const computeWoopRayParams = wgslFn( `
-	fn computeWoopRayParams( rayDir: vec3f ) -> vec4f {
+// The reciprocal direction is always built first, and its dominant-axis lane IS Sz; the two
+// shears are the other components times it. Three fewer divides per call than dividing afresh.
+const computeWoopFromInvDir = wgslFn( `
+	fn computeWoopFromInvDir( rayDir: vec3f, invDir: vec3f ) -> vec4f {
 
 		let absDir = abs( rayDir );
 
@@ -169,10 +171,9 @@ const computeWoopRayParams = wgslFn( `
 			ky = tmp;
 		}
 
-		let dz = rayDir[ u32( kz ) ];
-		let Sx = rayDir[ u32( kx ) ] / dz;
-		let Sy = rayDir[ u32( ky ) ] / dz;
-		let Sz = 1.0f / dz;
+		let Sz = invDir[ u32( kz ) ];
+		let Sx = rayDir[ u32( kx ) ] * Sz;
+		let Sy = rayDir[ u32( ky ) ] * Sz;
 
 		let packed = kx | ( ky << 2 ) | ( kz << 4 );
 		return vec4f( Sx, Sy, Sz, f32( packed ) );
@@ -248,7 +249,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const worldOrigin = vec3( ray.origin ).toVar();
 	const worldDirection = vec3( ray.direction ).toVar();
 	const worldInvDir = buildInvDir( worldDirection ).toVar();
-	const worldWoop = computeWoopRayParams( { rayDir: worldDirection } ).toVar();
+	const worldWoop = computeWoopFromInvDir( { rayDir: worldDirection, invDir: worldInvDir } ).toVar();
 
 	const rayOrigin = vec3( worldOrigin ).toVar();
 	const rayDirection = vec3( worldDirection ).toVar();
@@ -381,8 +382,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
 					rayDirection.assign( localDir );
-					invDir.assign( buildInvDir( localDir ) );
-					woopParams.assign( computeWoopRayParams( { rayDir: localDir } ) );
+					const localInv = buildInvDir( localDir ).toVar();
+					invDir.assign( localInv );
+					woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
 					instLeaf.assign( nodeIndex );
 					instExit.assign( stackPtr );
 
@@ -508,7 +510,7 @@ export const traverseBVHShadow = Fn( ( [
 	const worldOrigin = vec3( ray.origin ).toVar();
 	const worldDirection = vec3( ray.direction ).toVar();
 	const worldInvDir = buildInvDir( worldDirection ).toVar();
-	const worldWoop = computeWoopRayParams( { rayDir: worldDirection } ).toVar();
+	const worldWoop = computeWoopFromInvDir( { rayDir: worldDirection, invDir: worldInvDir } ).toVar();
 
 	const rayOrigin = vec3( worldOrigin ).toVar();
 	const rayDirection = vec3( worldDirection ).toVar();
@@ -601,8 +603,9 @@ export const traverseBVHShadow = Fn( ( [
 
 					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
 					rayDirection.assign( localDir );
-					invDir.assign( buildInvDir( localDir ) );
-					woopParams.assign( computeWoopRayParams( { rayDir: localDir } ) );
+					const localInv = buildInvDir( localDir ).toVar();
+					invDir.assign( localInv );
+					woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
 					instLeaf.assign( nodeIndex );
 					instExit.assign( stackPtr );
 
