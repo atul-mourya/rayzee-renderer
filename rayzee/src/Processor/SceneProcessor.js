@@ -1973,7 +1973,7 @@ export class SceneProcessor {
 
 			mesh.updateMatrixWorld( true );
 			const world = mesh.matrixWorld.elements;
-			const instances = mesh.isInstancedMesh ? mesh.instanceMatrix?.array : null;
+			const instances = mesh.isInstancedMesh ? this._ownInstanceMatrices( mesh ) : null;
 
 			for ( let k = 0; k < run.count; k ++ ) {
 
@@ -2001,6 +2001,30 @@ export class SceneProcessor {
 		this._refitTLAS();
 
 		return { refitTimeMs: performance.now() - start, placements: moved };
+
+	}
+
+	/**
+	 * An InstancedMesh's own instance matrices, split off the placement pool if they still alias it.
+	 *
+	 * The extractor points a host-at-origin InstancedMesh straight at the pool, since world and
+	 * instance matrices hold identical bytes there. Composing a moved host back into the pool would
+	 * overwrite the matrices it just read, so the next move would compose onto its own result.
+	 * @private
+	 */
+	_ownInstanceMatrices( mesh ) {
+
+		const attr = mesh.instanceMatrix;
+		if ( ! attr?.array ) return null;
+
+		if ( attr.array.buffer === this.instanceTable.world.buffer ) {
+
+			attr.array = attr.array.slice();
+			attr.needsUpdate = true;
+
+		}
+
+		return attr.array;
 
 	}
 

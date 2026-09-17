@@ -196,4 +196,50 @@ describe( 'moving an object', () => {
 
 	} );
 
+	it( 'moves an InstancedMesh the same way twice when its matrices alias the placement pool', () => {
+
+		// What the extractor actually hands over for a host at the origin: the mesh's instance
+		// matrices ARE the placement pool. Composing the host into the pool then overwrites the
+		// matrices being read, so a second move used to compose onto the first one's result.
+		const pool = new Float32Array( [ ...translation( 0 ), ...translation( 10 ) ] );
+
+		const table = new InstanceTable();
+		table.allocate( 2, 1, pool, new Int32Array( [ 0, 0 ] ) );
+		table.setEntry( {
+			meshIndex: 0, blasNodeCount: 1, triOffset: 0, triCount: 1,
+			originalToBvhMap: null, bvhData: null,
+			matrixWorld: pool, matrixOffset: 0, sourceMesh: 0,
+		} );
+		table.setAlias( 1, 0, pool, null, 0, 16 );
+		table.tplObjectAABB.set( [ - 1, - 1, - 1, 1, 1, 1 ], 0 );
+		table.assignOffsets( TLASBuilder.nodeCountFor( 2 ) );
+
+		const built = new TLASBuilder().build( table );
+
+		const sp = new SceneProcessor();
+		sp.instanceTable = table;
+		sp._setBVHData( built.data.slice( 0, built.nodeCount * 16 ) );
+		sp.meshes = [ {
+			matrixWorld: { elements: new Float32Array( translation( 5 ) ) },
+			updateMatrixWorld() {},
+			isInstancedMesh: true,
+			instanceMatrix: { array: pool.subarray( 0, 32 ) },
+		} ];
+
+		sp.updateMeshTransforms( [ 0 ] );
+		const afterFirst = leafBoxes( sp );
+		sp.updateMeshTransforms( [ 0 ] );
+
+		expect( afterFirst ).toEqual( [
+			{ placement: 0, min: 4, max: 6 },
+			{ placement: 1, min: 14, max: 16 },
+		] );
+		expect( leafBoxes( sp ) ).toEqual( afterFirst );
+
+		// The host's own instance matrices are its data, not the engine's to rewrite.
+		expect( Array.from( sp.meshes[ 0 ].instanceMatrix.array ) )
+			.toEqual( [ ...translation( 0 ), ...translation( 10 ) ] );
+
+	} );
+
 } );
