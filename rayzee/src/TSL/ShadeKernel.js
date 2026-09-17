@@ -621,7 +621,7 @@ export function buildShadeKernel( params ) {
 					boxTests: int( 0 ), triTests: int( 0 ),
 				} );
 				const dispResult = DisplacementResult.wrap( refineDisplacedIntersection(
-					dispRay, dispHit, triangleBuffer, material, bounceIndex,
+					dispRay, dispHit, triangleBuffer, material, bounceIndex, bvhBuffer, hitInstance,
 				) ).toVar();
 				samplingUV.assign( dispResult.uv );
 				displacedNormal.assign( dispResult.normal );
