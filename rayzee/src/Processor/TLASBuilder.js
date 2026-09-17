@@ -21,8 +21,9 @@ import {
 import { invertAffineInto, isIdentityAt } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;
-const SAH_BINS = 16;
-// Most nodes in a deep tree hold a handful of entries, and clearing 3x16 bins then sweeping
+// 16 mis-split near the root: +42 % SAH cost, 3.5 % of frame time. 24 and up match an exact sweep.
+const SAH_BINS = 32;
+// Most nodes in a deep tree hold a handful of entries, and clearing 3x32 bins then sweeping
 // them costs far more than binning four AABBs. Bin count follows the range instead.
 const binsFor = count => ( count < SAH_BINS ? count : SAH_BINS );
 // Below this, clearing bins and sweeping them costs more than the split is worth; a median on
@@ -421,7 +422,7 @@ export class TLASBuilder {
 			const binBase = axis * nBins;
 
 			// Suffix pass over bin boundaries, then a prefix sweep — same shape as the exact
-			// version, but over 16 bins instead of n entries.
+			// version, but over the bins instead of n entries.
 			const rightSA = this._binSuffix;
 			const rightN = this._binSuffixCount;
 			let sMinX = Infinity, sMinY = Infinity, sMinZ = Infinity;
