@@ -122,6 +122,9 @@ export class PathTracerApp extends EventDispatcher {
 	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
 	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
 	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
+	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
+	 *   above this. The default refuses where the renderer process would be killed instead of
+	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -144,6 +147,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.canvas = canvas;
 		this._autoResize = options.autoResize !== false;
+		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
+		this._maxSceneBytes = options.maxSceneBytes;
 		this._container = options.container || null;
 		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
@@ -962,9 +967,38 @@ export class PathTracerApp extends EventDispatcher {
 			this.dispatchEvent( eventPayload );
 			this._dispatchCamerasUpdated();
 
+		} catch ( error ) {
+
+			// loadFn released the previous model before this one was known to be loadable, so
+			// there is nothing to fall back to. Leaving it half-built would keep the last
+			// frame's buffers on screen under a scene that no longer exists.
+			if ( ! error || error.code !== 'LOAD_IN_PROGRESS' ) this._discardFailedLoad();
+			throw error;
+
 		} finally {
 
 			this._loadingInProgress = false;
+
+		}
+
+	}
+
+	/**
+	 * Put the engine back to an empty scene after a load failed part-way. The failure itself is
+	 * rethrown for the host to report; this only makes sure what is on screen matches it.
+	 * @private
+	 */
+	_discardFailedLoad() {
+
+		try {
+
+			this._clearAppendedModels();
+			this.assetLoader?.releaseTargetModel();
+			this.reset();
+
+		} catch ( cleanupError ) {
+
+			console.warn( 'PathTracerApp: could not clear the scene after a failed load', cleanupError );
 
 		}
 
@@ -2919,7 +2953,11 @@ export class PathTracerApp extends EventDispatcher {
 
 	_initAssetPipeline() {
 
-		this._sdf = new SceneProcessor( { issues: this._issues } );
+		this._sdf = new SceneProcessor( {
+			issues: this._issues,
+			// Spread into defaults, so only pass it when the host actually set one.
+			...( this._maxSceneBytes === undefined ? {} : { maxSceneBytes: this._maxSceneBytes } ),
+		} );
 		this.assetLoader = new AssetLoader(
 			this.meshScene, this.cameraManager.camera, this.cameraManager.controls,
 			{ issues: this._issues, profile: this._profile }

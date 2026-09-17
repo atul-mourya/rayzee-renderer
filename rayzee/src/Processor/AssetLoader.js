@@ -674,11 +674,14 @@ export class AssetLoader extends EventDispatcher {
 		error.elements = elements;
 		error.totalBytes = totalBytes;
 
+		// Logged as a warning on purpose: recording an ERROR makes a strict host throw an
+		// EngineIssueError from inside record(), and the caller never learns which parts it
+		// could have chosen. The typed throw below is the refusal, and it carries the list.
 		this._issues?.record(
 			ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
 			`archive holds ${( totalBytes / 1e9 ).toFixed( 1 )} GB across ${elements.length} parts; choose which to load`,
 			{ root, elements: elements.map( e => e.prefix ), totalBytes },
-			ISSUE_SEVERITY.ERROR
+			ISSUE_SEVERITY.WARNING
 		);
 
 		throw error;
@@ -699,7 +702,10 @@ export class AssetLoader extends EventDispatcher {
 			} )
 		} );
 
-		if ( truncated ) {
+		// Choosing every part is a valid answer, so a selection is not refused again for being
+		// large: the read budget exists to stop an unasked-for whole-archive load. Past this
+		// point the scene's own memory preflight is what refuses, with a figure to act on.
+		if ( truncated && chosen.length === 0 ) {
 
 			const { root, elements } = listArchiveElements( listing );
 			const total = listing.reduce( ( n, e ) => n + e.size, 0 );
@@ -711,11 +717,13 @@ export class AssetLoader extends EventDispatcher {
 			error.root = root;
 			error.elements = elements;
 			error.totalBytes = total;
+			// Warning, not error: a strict host's throw from record() would replace the typed
+			// error below and take the part list with it.
 			this._issues?.record(
 				ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
 				`archive unpacks to ${( total / 1e9 ).toFixed( 1 )} GB; choose one of ${elements.length} parts`,
 				{ root, elements: elements.map( e => e.prefix ), totalBytes: total },
-				ISSUE_SEVERITY.ERROR
+				ISSUE_SEVERITY.WARNING
 			);
 			throw error;
 
