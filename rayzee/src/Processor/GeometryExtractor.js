@@ -101,6 +101,26 @@ export function geometryBytesOf( object ) {
 
 }
 
+// Affine point and linear direction transforms straight off the matrix elements: no perspective
+// divide, no method dispatch, on the hottest per-vertex path of a baked mesh.
+function affinePoint( v, e ) {
+
+	const x = v.x, y = v.y, z = v.z;
+	v.x = e[ 0 ] * x + e[ 4 ] * y + e[ 8 ] * z + e[ 12 ];
+	v.y = e[ 1 ] * x + e[ 5 ] * y + e[ 9 ] * z + e[ 13 ];
+	v.z = e[ 2 ] * x + e[ 6 ] * y + e[ 10 ] * z + e[ 14 ];
+
+}
+
+function linearDir( v, e ) {
+
+	const x = v.x, y = v.y, z = v.z;
+	v.x = e[ 0 ] * x + e[ 3 ] * y + e[ 6 ] * z;
+	v.y = e[ 1 ] * x + e[ 4 ] * y + e[ 7 ] * z;
+	v.z = e[ 2 ] * x + e[ 5 ] * y + e[ 8 ] * z;
+
+}
+
 export class GeometryExtractor {
 
 	/** @param {{issues?: import('../EngineIssues.js').IssueLog}} [options] */
@@ -161,6 +181,8 @@ export class GeometryExtractor {
 
 		// One `{ sourceMesh, matrixWorld }` object per placement cost 1.6 GB at 6M of them.
 		this._allocatePlacements( this._countPlacements( object ) );
+		this._geometryUses = this._countGeometryUses( object );
+		this.bakeInverse = new Map();
 
 		// Single traversal: extract geometry, materials, lights, and cameras
 		this.traverseObject( object );
@@ -200,6 +222,28 @@ export class GeometryExtractor {
 			meshes,
 			geometryBytes: geometryBytesOf( object ),
 		};
+
+	}
+
+	/**
+	 * How many meshes use each geometry+material pair. A pair used once has nothing to share, so
+	 * it is baked to world space and its ray is never transformed. Walks everything, so a mesh
+	 * the extraction later skips only ever over-counts — towards object space, never a bad bake.
+	 * @private
+	 */
+	_countGeometryUses( object ) {
+
+		const uses = new Map();
+
+		object.traverse( ( o ) => {
+
+			if ( ! o.isMesh || ! o.geometry || ! o.material ) return;
+			const key = `${o.geometry.uuid}|${o.material.uuid}`;
+			uses.set( key, ( uses.get( key ) ?? 0 ) + 1 );
+
+		} );
+
+		return uses;
 
 	}
 
@@ -456,8 +500,15 @@ export class GeometryExtractor {
 
 		const rangeStart = this.currentTriangleIndex;
 
-		// Extract geometry with both material and mesh indices
-		this.extractGeometry( mesh, materialIndex, meshIndex );
+		// Object space only pays when a second placement can reuse the copy. A geometry used
+		// once — or an emissive one, which never shares — is baked to world space instead, so
+		// a ray reaching it skips the per-instance transform entirely.
+		const bake = ! mesh.isInstancedMesh && (
+			this._geometryUses.get( `${mesh.geometry.uuid}|${mesh.material?.uuid}` ) === 1
+			|| this._emissiveMaterial( materialIndex )
+		);
+
+		this.extractGeometry( mesh, materialIndex, meshIndex, bake );
 
 		const range = {
 			start: rangeStart, count: this.currentTriangleIndex - rangeStart,
@@ -465,8 +516,8 @@ export class GeometryExtractor {
 		};
 		this.expandedTriangleCount += range.count;
 		this.meshTriangleRanges.push( range );
-		if ( range.count > 0 ) this._geometryRanges.set( key, { ...range, meshIndex } );
-		this._recordPlacements( mesh, meshIndex );
+		if ( range.count > 0 && ! bake ) this._geometryRanges.set( key, { ...range, meshIndex } );
+		this._recordPlacements( mesh, meshIndex, bake );
 
 	}
 
@@ -476,7 +527,7 @@ export class GeometryExtractor {
 	 * a matrix each rather than a million Object3Ds.
 	 * @private
 	 */
-	_recordPlacements( mesh, meshIndex ) {
+	_recordPlacements( mesh, meshIndex, baked = false ) {
 
 		const world = mesh.matrixWorld.elements;
 		const dst = this.instanceMatrices;
@@ -486,7 +537,20 @@ export class GeometryExtractor {
 
 			const p = this._nextPlacement();
 			src[ p ] = meshIndex;
-			for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = world[ k ];
+
+			if ( baked ) {
+
+				// The triangles already carry this pose, so the placement starts at identity. A
+				// later move composes against the inverse of what was baked in.
+				for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = k % 5 === 0 ? 1 : 0;
+				this.bakeInverse.set( meshIndex, Float32Array.from( this._matrixPool.mat4.copy( mesh.matrixWorld ).invert().elements ) );
+
+			} else {
+
+				for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = world[ k ];
+
+			}
+
 			return;
 
 		}
@@ -897,7 +961,7 @@ export class GeometryExtractor {
 
 	}
 
-	extractGeometry( mesh, materialIndex, meshIndex ) {
+	extractGeometry( mesh, materialIndex, meshIndex, bake = false ) {
 
 		mesh.updateMatrix();
 		mesh.updateMatrixWorld();
@@ -911,13 +975,15 @@ export class GeometryExtractor {
 
 		const triangleCount = indices ? indices.length / 3 : positions.count / 3;
 
-		// Extract triangles with both material and mesh indices
-		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex );
+		const bakeMatrix = bake ? this._matrixPool.mat4.copy( mesh.matrixWorld ) : null;
+		const bakeNormal = bake ? this._matrixPool.mat3.getNormalMatrix( mesh.matrixWorld ) : null;
+
+		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix, bakeNormal );
 
 	}
 
 	// triangle extraction that stores directly in texture format
-	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex ) {
+	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix = null, bakeNormal = null ) {
 
 		// Track per-material triangle count for sort-bin remap (item 41)
 		while ( this.materialTriangleCounts.length <= materialIndex ) this.materialTriangleCounts.push( 0 );
@@ -938,6 +1004,8 @@ export class GeometryExtractor {
 
 		// Ensure capacity for this batch up front (single grow check per mesh)
 		this._ensureCapacity( this.currentTriangleIndex + triangleCount );
+
+		const bm = bakeMatrix?.elements, bn = bakeNormal?.elements;
 
 		// Batch process triangles to avoid excessive function calls
 		for ( let i = 0; i < triangleCount; i ++ ) {
@@ -969,9 +1037,15 @@ export class GeometryExtractor {
 
 			}
 
-			// Object space: the instance's transform lives on its TLAS leaf, and the ray is
-			// moved into this space on the way down. Baking it here instead would mean one
-			// copy of the triangles per placement.
+			// Shared geometry stays in object space, its transform on the TLAS leaf, so every
+			// placement reads one copy. Single-use geometry is baked to world here instead.
+			if ( bakeMatrix ) {
+
+				affinePoint( posA, bm ); affinePoint( posB, bm ); affinePoint( posC, bm );
+				linearDir( normalA, bn ); linearDir( normalB, bn ); linearDir( normalC, bn );
+
+			}
+
 			normalA.normalize();
 			normalB.normalize();
 			normalC.normalize();
@@ -1182,6 +1256,8 @@ export class GeometryExtractor {
 			instanceSource: this.instanceSource.subarray( 0, this.instanceCount ),
 			instanceMatrices: this.instanceMatrices.subarray( 0, this.instanceCount * 16 ),
 			instanceCount: this.instanceCount,
+			// meshIndex -> inverse of the pose baked into its triangles; only baked meshes appear.
+			bakeInverse: this.bakeInverse,
 			maps: this.maps,
 			normalMaps: this.normalMaps,
 			bumpMaps: this.bumpMaps,

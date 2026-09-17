@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
@@ -108,7 +108,7 @@ describe( 'TLASBuilder leaf payloads past 2^24', () => {
 			const leaf = table.tlasLeafIndex[ i ];
 			expect( leaf ).toBeGreaterThanOrEqual( 0 );
 			expect( idx[ leaf * 16 ] ).toBe( BOUNDARY[ i ] );
-			expect( idx[ leaf * 16 + 1 ] ).toBe( i );
+			expect( idx[ leaf * 16 + 1 ] & TLAS_PLACEMENT_MASK ).toBe( i );
 			expect( idx[ leaf * 16 + 3 ] ).toBe( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF );
 
 		}

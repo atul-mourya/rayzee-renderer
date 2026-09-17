@@ -15,8 +15,10 @@
  * known before its subtree is built, which is what lets the write be single-pass.
  */
 
-import { BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
-import { invertAffineInto } from './InstanceTable.js';
+import {
+	BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK
+} from '../EngineDefaults.js';
+import { invertAffineInto, isIdentityAt } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;
 const SAH_BINS = 16;
@@ -243,11 +245,11 @@ export class TLASBuilder {
 			const o = node * FLOATS_PER_NODE;
 			if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 
-			const i = idx[ o + 1 ];
+			const i = idx[ o + 1 ] & TLAS_PLACEMENT_MASK;
 			idx[ o ] = blasOffset[ src[ i ] ];
 			data[ o + 2 ] = visible[ i ] ? 1.0 : 0.0;
 
-			TLASBuilder.writeLeafMatrix( data, o, world, i );
+			TLASBuilder.writeLeafMatrix( data, idx, o, world, i );
 
 			leafOf[ i ] = node;
 
@@ -260,12 +262,16 @@ export class TLASBuilder {
 	 * its own whenever a placement moves, so a rigid transform costs a matrix rather than a
 	 * rewrite of the geometry the placement may be sharing.
 	 *
+	 * Slot [1] is rewritten too: the placement index, with {@link TLAS_LEAF_IDENTITY} set when
+	 * the matrix is identity so traversal can skip the ray transform for that leaf.
+	 *
 	 * @param {Float32Array} data - the node buffer, or one chunk of it
+	 * @param {Uint32Array} idx - u32 view over the same memory as `data`
 	 * @param {number} off - float offset of the leaf within `data`
 	 * @param {Float32Array} world - the instance table's object-to-world column
 	 * @param {number} placement
 	 */
-	static writeLeafMatrix( data, off, world, placement ) {
+	static writeLeafMatrix( data, idx, off, world, placement ) {
 
 		const inv = _inverseScratch;
 		invertAffineInto( world, placement * 16, inv );
@@ -273,6 +279,8 @@ export class TLASBuilder {
 		data[ off + 4 ] = inv[ 0 ]; data[ off + 5 ] = inv[ 4 ]; data[ off + 6 ] = inv[ 8 ]; data[ off + 7 ] = inv[ 12 ];
 		data[ off + 8 ] = inv[ 1 ]; data[ off + 9 ] = inv[ 5 ]; data[ off + 10 ] = inv[ 9 ]; data[ off + 11 ] = inv[ 13 ];
 		data[ off + 12 ] = inv[ 2 ]; data[ off + 13 ] = inv[ 6 ]; data[ off + 14 ] = inv[ 10 ]; data[ off + 15 ] = inv[ 14 ];
+
+		idx[ off + 1 ] = ( placement | ( isIdentityAt( world, placement * 16 ) ? TLAS_LEAF_IDENTITY : 0 ) ) >>> 0;
 
 	}
 

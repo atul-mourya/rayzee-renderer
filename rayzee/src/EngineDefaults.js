@@ -753,6 +753,15 @@ export const normalizeAttenuationDistance = d => ( Number.isFinite( d ) && d > 0
  */
 export const BVH_MAX_INDEX = 0x40000000; // 2^30
 
+/**
+ * Slot [1] of a BLAS-pointer leaf holds its placement index, which {@link BVH_MAX_INDEX} keeps
+ * below 2^30. Bit 30 is therefore free to say the leaf's matrix is identity: geometry no other
+ * placement shares is baked to world space at extraction, and a ray reaching it needs no
+ * transform at all. Mask the bit off before using the slot as an index.
+ */
+export const TLAS_LEAF_IDENTITY = 0x40000000;
+export const TLAS_PLACEMENT_MASK = 0x3fffffff;
+
 export const BVH_LEAF_MARKERS = {
 	TRIANGLE_LEAF: 0x40000000, // leaf containing triangle references
 	BLAS_POINTER_LEAF: 0x40000001, // TLAS leaf pointing to a BLAS root node

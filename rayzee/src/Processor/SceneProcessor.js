@@ -18,7 +18,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
@@ -556,6 +556,7 @@ export class SceneProcessor {
 			this.instanceSource = extractedData.instanceSource || null;
 			this.instanceMatrices = extractedData.instanceMatrices || null;
 			this.instanceCount = extractedData.instanceCount || 0;
+			this.bakeInverse = extractedData.bakeInverse || null;
 
 			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
 
@@ -653,6 +654,7 @@ export class SceneProcessor {
 
 			this.instanceTable = new InstanceTable();
 			this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
+			this.instanceTable.tplBakeInverse = this.bakeInverse;
 
 			const originalTreeletEnabled = this.config.enableTreeletOptimization;
 			const LARGE_MESH_THRESHOLD = 200000;
@@ -1974,6 +1976,8 @@ export class SceneProcessor {
 			mesh.updateMatrixWorld( true );
 			const world = mesh.matrixWorld.elements;
 			const instances = mesh.isInstancedMesh ? this._ownInstanceMatrices( mesh ) : null;
+			// Baked triangles hold the pose they were extracted at; the leaf only carries the delta.
+			const bakeInverse = table.tplBakeInverse?.get( table.sourceMesh[ run.start ] ) ?? null;
 
 			for ( let k = 0; k < run.count; k ++ ) {
 
@@ -1983,6 +1987,11 @@ export class SceneProcessor {
 				if ( instances ) {
 
 					multiplyAffine( world, instances, k * 16, composed );
+					table.setPlacementMatrix( p, composed );
+
+				} else if ( bakeInverse ) {
+
+					multiplyAffine( world, bakeInverse, 0, composed );
 					table.setPlacementMatrix( p, composed );
 
 				} else {
@@ -2034,8 +2043,10 @@ export class SceneProcessor {
 		const node = this.instanceTable.tlasLeafIndex[ placement ];
 		if ( node < 0 ) return;
 
-		const chunk = this.bvh.chunkFor( node );
-		TLASBuilder.writeLeafMatrix( chunk, this.bvh.baseOf( node ), this.instanceTable.world, placement );
+		TLASBuilder.writeLeafMatrix(
+			this.bvh.chunkFor( node ), this.bvhIndexChunks.chunkFor( node ), this.bvh.baseOf( node ),
+			this.instanceTable.world, placement
+		);
 
 	}
 
@@ -2520,7 +2531,7 @@ export class SceneProcessor {
 				// Slot [1] is this leaf's own placement. Keying off slot [0] instead collapsed
 				// every placement of a shared geometry onto one box, so all but one copy sat
 				// outside its own bounds and rays walked straight past it.
-				const entryIndex = idxChunk[ o + 1 ];
+				const entryIndex = idxChunk[ o + 1 ] & TLAS_PLACEMENT_MASK;
 				if ( entryIndex < table.count ) {
 
 					table.writeWorldAABB( entryIndex, this._tlasBounds, i * 6 );

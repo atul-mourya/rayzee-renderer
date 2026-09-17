@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
 
 const translation = ( x ) => [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1 ];
 
@@ -57,7 +57,7 @@ function leafBoxes( sp ) {
 		if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 		// A leaf's own box lives in its parent, so read it back off the table the refit wrote.
 		const b = sp._tlasBounds;
-		out.push( { placement: idx[ o + 1 ], min: b[ node * 6 ], max: b[ node * 6 + 3 ] } );
+		out.push( { placement: idx[ o + 1 ] & TLAS_PLACEMENT_MASK, min: b[ node * 6 ], max: b[ node * 6 + 3 ] } );
 
 	}
 
@@ -239,6 +239,38 @@ describe( 'moving an object', () => {
 		// The host's own instance matrices are its data, not the engine's to rewrite.
 		expect( Array.from( sp.meshes[ 0 ].instanceMatrix.array ) )
 			.toEqual( [ ...translation( 0 ), ...translation( 10 ) ] );
+
+	} );
+
+	it( 'flags a leaf whose matrix is identity and clears it once the placement moves', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100 ] );
+		const idx = bvhIndexView( sp.bvhData );
+		const slot1 = ( p ) => idx[ sp.instanceTable.tlasLeafIndex[ p ] * 16 + 1 ];
+
+		expect( slot1( 0 ) & TLAS_LEAF_IDENTITY ).toBe( TLAS_LEAF_IDENTITY );
+		expect( slot1( 1 ) & TLAS_LEAF_IDENTITY ).toBe( 0 );
+
+		sp.meshes = [ fakeMesh( 7 ), fakeMesh( 100 ) ];
+		sp.updateMeshTransforms( [ 0 ] );
+
+		expect( slot1( 0 ) & TLAS_LEAF_IDENTITY ).toBe( 0 );
+		expect( slot1( 0 ) & TLAS_PLACEMENT_MASK ).toBe( 0 );
+		expect( leafBoxes( sp )[ 0 ] ).toEqual( { placement: 0, min: 6, max: 8 } );
+
+	} );
+
+	it( 'moves a baked placement by the delta from the pose baked into its triangles', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100 ] );
+		// Placement 0 was baked at x=10: its triangles hold that pose and its leaf is identity.
+		sp.instanceTable.tplBakeInverse = new Map( [[ 0, new Float32Array( translation( - 10 ) ) ]] );
+		sp.meshes = [ fakeMesh( 15 ), fakeMesh( 100 ) ];
+
+		sp.updateMeshTransforms( [ 0 ] );
+
+		// A world pose of 15 against a baked pose of 10 leaves a delta of 5 on the leaf.
+		expect( leafBoxes( sp )[ 0 ] ).toEqual( { placement: 0, min: 4, max: 6 } );
 
 	} );
 

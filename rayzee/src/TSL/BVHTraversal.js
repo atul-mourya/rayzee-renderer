@@ -24,7 +24,7 @@ import {
 	bool as tslBool,
 } from 'three/tsl';
 
-import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT } from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TLAS_LEAF_IDENTITY } from '../EngineDefaults.js';
 import { HitInfo } from './Struct.js';
 import {
 	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE
@@ -377,16 +377,22 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 				// the world-to-object matrix. Visibility is free-fetched with the leaf.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
 
-					const rows = instanceRows( bvhBuffer, nodeIndex );
-					const localDir = toObjectDir( rows, worldDirection ).toVar();
+					// A baked placement already sits in world space; only a transformed one
+					// moves the ray, and only then does leaving it need to be tracked.
+					If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
-					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
-					rayDirection.assign( localDir );
-					const localInv = buildInvDir( localDir ).toVar();
-					invDir.assign( localInv );
-					woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
-					instLeaf.assign( nodeIndex );
-					instExit.assign( stackPtr );
+						const rows = instanceRows( bvhBuffer, nodeIndex );
+						const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+						rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+						rayDirection.assign( localDir );
+						const localInv = buildInvDir( localDir ).toVar();
+						invDir.assign( localInv );
+						woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
+						instLeaf.assign( nodeIndex );
+						instExit.assign( stackPtr );
+
+					} );
 
 					stack.element( stackPtr ).assign( int( floatBitsToUint( nodeData0.x ) ) );
 					stackPtr.addAssign( 1 );
@@ -598,16 +604,22 @@ export const traverseBVHShadow = Fn( ( [
 				// BLAS-pointer leaf — enter the instance if the mesh is visible.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
 
-					const rows = instanceRows( bvhBuffer, nodeIndex );
-					const localDir = toObjectDir( rows, worldDirection ).toVar();
+					// A baked placement already sits in world space; only a transformed one
+					// moves the ray, and only then does leaving it need to be tracked.
+					If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
-					rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
-					rayDirection.assign( localDir );
-					const localInv = buildInvDir( localDir ).toVar();
-					invDir.assign( localInv );
-					woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
-					instLeaf.assign( nodeIndex );
-					instExit.assign( stackPtr );
+						const rows = instanceRows( bvhBuffer, nodeIndex );
+						const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+						rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+						rayDirection.assign( localDir );
+						const localInv = buildInvDir( localDir ).toVar();
+						invDir.assign( localInv );
+						woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
+						instLeaf.assign( nodeIndex );
+						instExit.assign( stackPtr );
+
+					} );
 
 					stack.element( stackPtr ).assign( int( floatBitsToUint( nodeData0.x ) ) );
 					stackPtr.addAssign( 1 );

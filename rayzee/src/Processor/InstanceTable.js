@@ -182,6 +182,9 @@ export class InstanceTable {
 		// A mirroring transform reverses triangle winding, so front and back swap in object
 		// space. Traversal needs telling, or single-sided faces cull inside out.
 		this.flipWinding = new Uint8Array( count );
+		// template -> inverse of the pose baked into its triangles, for templates stored in
+		// world space. A move composes the new world matrix against this.
+		this.tplBakeInverse = null;
 
 		if ( worldPool && worldPool.length >= count * 16 ) {
 

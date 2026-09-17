@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
 
 /** A table of `n` placements with the given world AABBs (6 floats each). */
 function makeTable( bounds ) {
@@ -127,7 +127,7 @@ describe( 'TLASBuilder', () => {
 			expect( data ).toHaveLength( 16 );
 			const idx = bvhIndexView( data );
 			expect( idx[ 0 ] ).toBe( 10 ); // blasOffset
-			expect( idx[ 1 ] ).toBe( 0 ); // entryIndex
+			expect( idx[ 1 ] & TLAS_PLACEMENT_MASK ).toBe( 0 ); // entryIndex
 			expect( data[ 2 ] ).toBe( 1 ); // visible
 			expect( idx[ 3 ] ).toBe( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF );
 			expect( table.tlasLeafIndex[ 0 ] ).toBe( 0 );
@@ -146,11 +146,11 @@ describe( 'TLASBuilder', () => {
 				expect( inner ).toBe( n - 1 );
 
 				// Every entry appears exactly once, and knows where its leaf landed.
-				const ids = leaves.map( node => bvhIndexView( data )[ node * 16 + 1 ] ).sort( ( a, b ) => a - b );
+				const ids = leaves.map( node => bvhIndexView( data )[ node * 16 + 1 ] & TLAS_PLACEMENT_MASK ).sort( ( a, b ) => a - b );
 				expect( ids ).toEqual( Array.from( { length: n }, ( _, i ) => i ) );
 				for ( let i = 0; i < n; i ++ ) {
 
-					expect( bvhIndexView( data )[ table.tlasLeafIndex[ i ] * 16 + 1 ] ).toBe( i );
+					expect( bvhIndexView( data )[ table.tlasLeafIndex[ i ] * 16 + 1 ] & TLAS_PLACEMENT_MASK ).toBe( i );
 
 				}
 
@@ -169,7 +169,7 @@ describe( 'TLASBuilder', () => {
 
 				if ( isLeaf( data, node ) ) {
 
-					const a = bvhIndexView( data )[ node * 16 + 1 ] * 6;
+					const a = ( bvhIndexView( data )[ node * 16 + 1 ] & TLAS_PLACEMENT_MASK ) * 6;
 					return Array.from( bounds.slice( a, a + 6 ) );
 
 				}
