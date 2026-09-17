@@ -317,6 +317,26 @@ export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dat
 /** uvec4 lanes per triangle record — see TRIANGLE_DATA_LAYOUT. */
 export const TRI_STRIDE = 5;
 
+// Unit normal to an octahedral snorm16 pair; GPU twin of packNormalOct in EngineDefaults.
+export const packNormalOct = /*@__PURE__*/ wgslFn( `
+	fn packNormalOct( n: vec3f ) -> u32 {
+
+		let s = abs( n.x ) + abs( n.y ) + abs( n.z );
+		var p = n.xy / max( s, 1e-20 );
+
+		if ( n.z < 0.0 ) {
+
+			let px = ( 1.0 - abs( p.y ) ) * select( -1.0, 1.0, p.x >= 0.0 );
+			let py = ( 1.0 - abs( p.x ) ) * select( -1.0, 1.0, p.y >= 0.0 );
+			p = vec2f( px, py );
+
+		}
+
+		return pack2x16snorm( p );
+
+	}
+` );
+
 // Octahedral snorm16 pair back to a unit normal; mirrors packNormalOct on the CPU.
 export const unpackTriangleNormal = /*@__PURE__*/ wgslFn( `
 	fn unpackTriangleNormal( packed: u32 ) -> vec3f {
