@@ -43,7 +43,9 @@ export class EmissiveTriangleBuilder {
 	 * @param {number} triangleCount - Total number of triangles
 	 * @param {import('./InstanceTable.js').InstanceTable} [table] - per placement; triangles are
 	 *        stored in object space, so power, bounds and the emission cone all have to be
-	 *        measured after the instance transform.
+	 *        measured after the instance transform. One record per triangle, so a template
+	 *        placed more than once is lit by its first placement — the extractor expands an
+	 *        emissive instanced mesh into per-instance triangles to avoid exactly that.
 	 */
 	extractEmissiveTriangles( triangleData, materials, triangleCount, table = null ) {
 
@@ -84,9 +86,13 @@ export class EmissiveTriangleBuilder {
 
 				// Calculate triangle area for power weighting
 				// Positions are at offsets 0-11, in the instance's own space
-				const hasInstance = table && meshIndex < table.count && table.isSet[ meshIndex ];
+				// `meshIndex` names the template the triangle belongs to, never a row of the
+				// per-placement table: indexing the table with it put one object's matrix on
+				// another object's light as soon as any instanced mesh came earlier.
+				const placement = table?.placementRunOf?.( meshIndex )?.start ?? - 1;
+				const hasInstance = placement >= 0 && table.isSet[ placement ];
 				const m = hasInstance ? table.world : null;
-				const mo = hasInstance ? meshIndex * 16 : 0;
+				const mo = hasInstance ? placement * 16 : 0;
 				const px = ( x, y, z ) => ( m ? m[ mo ] * x + m[ mo + 4 ] * y + m[ mo + 8 ] * z + m[ mo + 12 ] : x );
 				const py = ( x, y, z ) => ( m ? m[ mo + 1 ] * x + m[ mo + 5 ] * y + m[ mo + 9 ] * z + m[ mo + 13 ] : y );
 				const pz = ( x, y, z ) => ( m ? m[ mo + 2 ] * x + m[ mo + 6 ] * y + m[ mo + 10 ] * z + m[ mo + 14 ] : z );
@@ -134,7 +140,7 @@ export class EmissiveTriangleBuilder {
 					triangleIndex: i,
 					materialIndex: materialIndex,
 					meshIndex: meshIndex,
-					instanceLeaf: hasInstance ? table.tlasLeafIndex[ meshIndex ] : - 1,
+					instanceLeaf: hasInstance ? table.tlasLeafIndex[ placement ] : - 1,
 					power: power,
 					area: area,
 					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },

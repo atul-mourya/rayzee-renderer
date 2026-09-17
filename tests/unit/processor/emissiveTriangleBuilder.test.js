@@ -65,21 +65,38 @@ function makeTriangleData( triangles ) {
 
 // Unit triangle in XY plane: A=(0,0,0), B=(1,0,0), C=(0,1,0) → area = 0.5
 const UNIT_TRI = { posA: [ 0, 0, 0 ], posB: [ 1, 0, 0 ], posC: [ 0, 1, 0 ] };
+const UNIT_TRI_CY = 1 / 3; // centroid y of UNIT_TRI
 
 const IDENT = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 
 /** The columns extractEmissiveTriangles reads off an InstanceTable. */
+/**
+ * Stands in for InstanceTable. Rows are placements; `template` says which mesh each one
+ * belongs to, and defaults to one placement per mesh in order. Anything instanced pushes
+ * later meshes' placements past their own index, which is the point of `placementRunOf`.
+ */
 function makeTable( placements ) {
 
 	const n = placements.length;
 	const table = {
 		count: n, isSet: new Uint8Array( n ).fill( 1 ),
-		world: new Float32Array( n * 16 ), tlasLeafIndex: new Int32Array( n )
+		world: new Float32Array( n * 16 ), tlasLeafIndex: new Int32Array( n ),
+		sourceMesh: new Int32Array( n ),
+		placementRunOf( mesh ) {
+
+			const start = this.sourceMesh.indexOf( mesh );
+			if ( start < 0 ) return null;
+			let count = 0;
+			while ( start + count < this.count && this.sourceMesh[ start + count ] === mesh ) count ++;
+			return { start, count };
+
+		},
 	};
 	placements.forEach( ( p, i ) => {
 
 		table.world.set( p.matrixWorld || IDENT, i * 16 );
 		table.tlasLeafIndex[ i ] = p.tlasLeafIndex;
+		table.sourceMesh[ i ] = p.template ?? i;
 
 	} );
 	return table;
@@ -433,6 +450,31 @@ describe( 'EmissiveTriangleBuilder', () => {
 
 			expect( t.area ).toBeCloseTo( plainArea * 9, 5 );
 			expect( t.cy ).toBeCloseTo( builder.emissiveTriangles[ 0 ].cy * 3 + 5, 5 );
+
+		} );
+
+		it( 'reads the placement of its own mesh, not the row that shares its index', () => {
+
+			// Mesh 0 is instanced four times, so mesh 1's only placement is row 4. Indexing the
+			// table by mesh index put row 1's matrix and leaf on mesh 1's light.
+			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0, meshIndex: 1 } ] );
+			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1 } ];
+			const wrong = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 99, 0, 1 ];
+			const right = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 7, 0, 1 ];
+
+			const table = makeTable( [
+				{ matrixWorld: null, tlasLeafIndex: 10, template: 0 },
+				{ matrixWorld: wrong, tlasLeafIndex: 11, template: 0 },
+				{ matrixWorld: wrong, tlasLeafIndex: 12, template: 0 },
+				{ matrixWorld: wrong, tlasLeafIndex: 13, template: 0 },
+				{ matrixWorld: right, tlasLeafIndex: 14, template: 1 },
+			] );
+
+			const b = new ( builder.constructor )();
+			b.extractEmissiveTriangles( triangleData, materials, 1, table );
+
+			expect( b.emissiveTriangles[ 0 ].instanceLeaf ).toBe( 14 );
+			expect( b.emissiveTriangles[ 0 ].cy ).toBeCloseTo( 7 + UNIT_TRI_CY, 5 );
 
 		} );
 
