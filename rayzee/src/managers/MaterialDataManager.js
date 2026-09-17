@@ -11,7 +11,7 @@ import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
 import {
 	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
-	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT
+	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
 } from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
@@ -723,9 +723,8 @@ export class MaterialDataManager {
 	 * @private
 	 */
 	/**
-	 * Re-derive the shadow-ray opaque-blocker flag for a material from its
-	 * current buffer values and patch it on every matching triangle.
-	 * Kept in sync with the blocker definition in GeometryExtractor.
+	 * Re-derive the two shadow-blocker bits for a material from its current buffer
+	 * values and patch them on every matching triangle.
 	 * @private
 	 */
 	_recomputeOpaqueBlockerForMaterial( materialIndex ) {
@@ -734,13 +733,14 @@ export class MaterialDataManager {
 		if ( ! matBuf ) return;
 
 		const matStride = materialIndex * M.FLOATS_PER_MATERIAL;
-		const alphaMode = matBuf[ matStride + M.ALPHA_MODE ] | 0;
-		const transparent = matBuf[ matStride + M.TRANSPARENT ] | 0;
-		const transmission = matBuf[ matStride + M.TRANSMISSION ] || 0;
-		const opacity = matBuf[ matStride + M.OPACITY ] ?? 1;
-		const isOpaqueBlocker = ( alphaMode === 0 && transparent === 0 && transmission === 0 && opacity >= 1 ) ? 1 : 0;
+		const bits = shadowBlockerBits( {
+			alphaMode: matBuf[ matStride + M.ALPHA_MODE ],
+			transparent: matBuf[ matStride + M.TRANSPARENT ],
+			transmission: matBuf[ matStride + M.TRANSMISSION ],
+			opacity: matBuf[ matStride + M.OPACITY ],
+		} );
 
-		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_SHIFT, 1, isOpaqueBlocker );
+		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_SHIFT, 2, bits );
 
 	}
 

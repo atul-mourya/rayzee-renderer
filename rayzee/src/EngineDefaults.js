@@ -558,30 +558,40 @@ export const TRIANGLE_DATA_LAYOUT = {
 
 	UV_AB_OFFSET: 12, // f32 uvA.xy, uvB.xy
 	UV_C_OFFSET: 16, // f32 uvC.xy
-	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | opaqueBlocker << 26
+	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | shadowBlockerBits << 26 (two bits)
 	MESH_INDEX_OFFSET: 19
 };
 
 export const TRI_MATERIAL_MASK = 0xffffff;
 export const TRI_SIDE_SHIFT = 24; // 0 front, 1 back, 2 double
-export const TRI_BLOCKER_SHIFT = 26; // 1 = fully opaque, shadow rays skip the material fetch
+export const TRI_BLOCKER_SHIFT = 26; // 1 = blocks shadow rays whatever the settings
+export const TRI_BLOCKER_ALPHA_SHIFT = 27; // 1 = blocks them unless alpha-cutout shadows are on
 
 /**
- * Material index plus the two per-triangle flags the shader reads without touching the
- * material buffer: `side` for inline culling, and an opaque-blocker bit that lets a shadow
- * ray skip the material fetch entirely.
+ * How a shadow ray settles on this material without fetching it, mirroring traceShadowRay:
+ * bit 0 set = always a blocker; bit 1 set = a blocker while alpha-cutout shadows are off
+ * (MASK/BLEND with nothing else letting light through); 0 = light may pass, so the shadow
+ * traversal has to find the nearest such surface.
+ */
+export function shadowBlockerBits( material ) {
+
+	if ( ! material ) return 0;
+	const solid = ( material.transmission || 0 ) === 0
+		&& ( ( material.transparent | 0 ) === 0 || ( material.opacity ?? 1 ) >= 1 );
+	if ( ! solid ) return 0;
+	return ( material.alphaMode | 0 ) === 0 ? 1 : 2;
+
+}
+
+/**
+ * Material index plus the per-triangle flags the shader reads without touching the
+ * material buffer: `side` for inline culling and the two shadow-blocker bits.
  */
 export function packTriangleFlags( materialIndex, material ) {
 
-	const opaqueBlocker = material
-		&& ( material.alphaMode | 0 ) === 0
-		&& ( material.transparent | 0 ) === 0
-		&& ( material.transmission || 0 ) === 0
-		&& ( material.opacity ?? 1 ) >= 1 ? 1 : 0;
-
 	return ( ( materialIndex & TRI_MATERIAL_MASK )
 		| ( ( material?.side ?? 0 ) << TRI_SIDE_SHIFT )
-		| ( opaqueBlocker << TRI_BLOCKER_SHIFT ) ) >>> 0;
+		| ( shadowBlockerBits( material ) << TRI_BLOCKER_SHIFT ) ) >>> 0;
 
 }
 

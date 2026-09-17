@@ -22,16 +22,14 @@ import {
 	clamp,
 	smoothstep,
 	select,
-	uint,
 	uintBitsToFloat,
 } from 'three/tsl';
 
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows,
-	instanceNormalToWorld, TRI_STRIDE
+	instanceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle
 } from './Common.js';
-import { TRI_BLOCKER_SHIFT } from '../EngineDefaults.js';
 import { fresnelSchlickFloat, iorToFresnel0 } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
@@ -39,7 +37,8 @@ import { getTransformedUV, sampleBucket } from './TextureSampling.js';
 // Module-level state for alpha-cutout shadow testing.
 // Set by PathTracer before shade-graph construction.
 let _shadowAlbedoMaps = null;
-let _enableAlphaShadows = null;
+
+export { setAlphaShadowsUniform } from './Common.js';
 
 /**
  * Set the sRGB bucket texture node array for alpha-aware shadow rays (albedo alpha).
@@ -49,16 +48,6 @@ let _enableAlphaShadows = null;
 export function setShadowAlbedoMaps( buckets ) {
 
 	_shadowAlbedoMaps = buckets;
-
-}
-
-/**
- * Set the runtime uniform node that toggles alpha-cutout shadows.
- * @param {UniformNode} node - TSL int uniform (0 = disabled, 1 = enabled)
- */
-export function setAlphaShadowsUniform( node ) {
-
-	_enableAlphaShadows = node;
 
 }
 
@@ -103,9 +92,8 @@ export const traceShadowRay = Fn( ( [
 		// Opaque fast-path: check the per-triangle blocker bit, set at extraction time when
 		// alphaMode/transparent/transmission/opacity all indicate a fully opaque surface.
 		// Short-circuits the 7-slot getShadowMaterial fetch and the whole alpha decision tree.
-		const blocker = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 4 ), int( TRI_STRIDE ) )
-			.z.shiftRight( uint( TRI_BLOCKER_SHIFT ) ).bitAnd( uint( 1 ) );
-		If( blocker.equal( uint( 1 ) ), () => {
+		const flags = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 4 ), int( TRI_STRIDE ) ).z;
+		If( shadowFlagsSettle( flags ), () => {
 
 			transmittance.assign( 0.0 );
 			Break();
@@ -123,7 +111,8 @@ export const traceShadowRay = Fn( ( [
 		// ---------------------------------------------------------------
 		const alphaCutout = tslBool( false ).toVar();
 
-		if ( _enableAlphaShadows ) If( _enableAlphaShadows.equal( int( 1 ) ), () => {
+		const alphaShadows = getAlphaShadowsUniform();
+		if ( alphaShadows ) If( alphaShadows.equal( int( 1 ) ), () => {
 
 			// Sample texture alpha once (shared by MASK and BLEND paths).
 			// Deferred UV: barycentrics in shadowHit.uv, triangle index in shadowHit.triangleIndex.

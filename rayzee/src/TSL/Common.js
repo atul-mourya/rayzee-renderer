@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp, select } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, uint, mat3, If, max, dot, clamp, select, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -24,7 +24,7 @@ export const FP16_MAX = 65504.0;
 export const sanitize1 = ( x, ceiling = 1e7 ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, ceiling );
 export const sanitizeRGB = ( c, ceiling = 1e7 ) =>
 	vec3( sanitize1( c.x, ceiling ), sanitize1( c.y, ceiling ), sanitize1( c.z, ceiling ) );
-import { MATERIAL_DATA_LAYOUT } from '../EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT, TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT } from '../EngineDefaults.js';
 
 export const MATERIAL_SLOTS = MATERIAL_DATA_LAYOUT.SLOTS_PER_MATERIAL;
 export const MATERIAL_SLOT = MATERIAL_DATA_LAYOUT.SLOT;
@@ -588,6 +588,26 @@ export const getShadowMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
  * rides along in the rest — no second binding, which matters on a backend that
  * allows ten storage buffers per stage.
  */
+// Runtime uniform that toggles alpha-cutout shadows; set by ShaderBuilder before the kernels build.
+let _enableAlphaShadows = null;
+
+export function setAlphaShadowsUniform( node ) {
+
+	_enableAlphaShadows = node;
+
+}
+
+export const getAlphaShadowsUniform = () => _enableAlphaShadows;
+
+// Does a hit on a triangle with these flags settle the shadow ray without a material fetch?
+export const shadowFlagsSettle = ( flags ) => {
+
+	const bit = ( shift ) => flags.shiftRight( uint( shift ) ).bitAnd( uint( 1 ) ).equal( uint( 1 ) );
+	const alphaOff = _enableAlphaShadows ? _enableAlphaShadows.equal( int( 0 ) ) : tslBool( true );
+	return bit( TRI_BLOCKER_SHIFT ).or( bit( TRI_BLOCKER_ALPHA_SHIFT ).and( alphaOff ) );
+
+};
+
 export const instanceRows = ( bvhBuffer, leafIndex ) => [
 	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
 	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),

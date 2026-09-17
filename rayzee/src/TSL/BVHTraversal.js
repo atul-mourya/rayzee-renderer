@@ -27,7 +27,7 @@ import {
 import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TLAS_LEAF_IDENTITY } from '../EngineDefaults.js';
 import { HitInfo } from './Struct.js';
 import {
-	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE
+	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE, shadowFlagsSettle
 } from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
@@ -525,10 +525,11 @@ export const traverseBVHShadow = Fn( ( [
 
 	const instLeaf = int( - 1 ).toVar();
 	const instExit = int( 0 ).toVar();
+	const blocked = tslBool( false ).toVar();
 
 	const sIterCount = int( 0 ).toVar();
 
-	Loop( stackPtr.greaterThan( int( 0 ) ).and( closestHit.didHit.not() ).and( sIterCount.lessThan( int( MAX_BVH_ITERATIONS ) ) ), () => {
+	Loop( stackPtr.greaterThan( int( 0 ) ).and( blocked.not() ).and( sIterCount.lessThan( int( MAX_BVH_ITERATIONS ) ) ), () => {
 
 		sIterCount.addAssign( 1 );
 		stackPtr.subAssign( 1 );
@@ -586,14 +587,17 @@ export const traverseBVHShadow = Fn( ( [
 						// and alpha-cutout paths. Normal stays vec3(0) from struct init.
 						closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
 
-						// Store barycentrics + triangle index for deferred UV computation.
-						// Actual UV interpolation happens in traceShadowRay only when
-						// the material needs alpha testing — zero overhead for opaque hits.
 						closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
 						closestHit.triangleIndex.assign( triIndex );
 
-						// Shadow ray only needs any hit — skip remaining triangles in leaf
-						Break();
+						// An opaque blocker settles the ray. A surface light passes through has to be
+						// the nearest one, or the layers behind the first find are never counted.
+						If( shadowFlagsSettle( uvData2.z ), () => {
+
+							blocked.assign( true );
+							Break();
+
+						} );
 
 					} );
 
