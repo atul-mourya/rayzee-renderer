@@ -1911,6 +1911,20 @@ export class SceneProcessor {
 
 			if ( ! table.isSet[ meshIdx ] ) continue;
 
+			// Triangles are shared between placements of one geometry, so writing this mesh's
+			// vertices would move every other copy with them. Anything that deforms is extracted
+			// with triangles of its own, so reaching here means the wrong mesh was handed over.
+			if ( ! table.isOwner( meshIdx ) ) {
+
+				this.config.issues?.record(
+					ISSUE_CODES.REFIT_SHARED_GEOMETRY,
+					`mesh ${meshIdx} shares its triangles with another placement; deforming it would move every copy, so it was skipped`,
+					{ meshIndex: meshIdx, owner: table.tplOwner[ table.sourceMesh[ meshIdx ] ] }
+				);
+				continue;
+
+			}
+
 			const p = positionsFor( meshIdx );
 			if ( ! p ) continue;
 			this._updateMeshTrianglePositions( meshIdx, p );

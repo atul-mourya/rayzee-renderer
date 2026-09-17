@@ -20,6 +20,7 @@ export const ISSUE_CODES = Object.freeze( {
 	RENDER_RESERVE_CAPPED: 'render.reserve_capped',
 	SCENE_MEMORY_BUDGET: 'scene.memory_budget',
 	EMISSIVE_INSTANCES_COLLAPSED: 'emissive.instances_collapsed',
+	REFIT_SHARED_GEOMETRY: 'refit.shared_geometry',
 } );
 
 /** Strict throws on ERROR only. */
