@@ -121,6 +121,25 @@ function linearDir( v, e ) {
 
 }
 
+// Emissive instances become real triangles, so the expansion is capped.
+const MAX_EXPANDED_EMISSIVE_TRIANGLES = 1 << 21;
+
+// A skinned or morphed mesh is posed per copy, so it cannot share one set of triangles.
+function isDeformable( mesh ) {
+
+	return !! ( mesh.isSkinnedMesh || Object.keys( mesh.geometry?.morphAttributes ?? {} ).length );
+
+}
+
+// Determinant of a column-major matrix's 3x3 basis; negative means the transform mirrors.
+function determinant3( e ) {
+
+	return e[ 0 ] * ( e[ 5 ] * e[ 10 ] - e[ 9 ] * e[ 6 ] )
+		- e[ 4 ] * ( e[ 1 ] * e[ 10 ] - e[ 9 ] * e[ 2 ] )
+		+ e[ 8 ] * ( e[ 1 ] * e[ 6 ] - e[ 5 ] * e[ 2 ] );
+
+}
+
 export class GeometryExtractor {
 
 	/** @param {{issues?: import('../EngineIssues.js').IssueLog}} [options] */
@@ -293,7 +312,18 @@ export class GeometryExtractor {
 
 		const done = this._compressed;
 
-		object.traverse( o => {
+		// A host's own Object3D is rendered as a copy, but the copy shares its geometry by
+		// reference, so rewriting an attribute there would rewrite the host's data. Its whole
+		// subtree is skipped rather than the root alone.
+		const walk = ( o, visit ) => {
+
+			if ( o.userData?.__rayzeeExternal ) return;
+			visit( o );
+			for ( const child of o.children ) walk( child, visit );
+
+		};
+
+		walk( object, o => {
 
 			const g = o.geometry;
 			if ( ! o.isMesh || ! g || done.has( g.uuid ) ) return;
@@ -478,9 +508,13 @@ export class GeometryExtractor {
 		// point at one copy — and later at one BLAS. The material is part of the key because
 		// the material index is baked per triangle.
 		// Emissive geometry opts out: each placement is a separate light, and the light BVH
-		// keys its entries by triangle index, which sharing would make ambiguous.
+		// keys its entries by triangle index, which sharing would make ambiguous. So does
+		// anything that deforms: a skinned or morphed copy needs triangles of its own, or an
+		// animation refit writes one copy's pose into every other.
 		const key = `${mesh.geometry.uuid}|${materialIndex}`;
-		const shared = this._emissiveMaterial( materialIndex ) ? null : this._geometryRanges.get( key );
+		const deformable = isDeformable( mesh );
+		const shareable = ! this._emissiveMaterial( materialIndex ) && ! deformable;
+		const shared = shareable ? this._geometryRanges.get( key ) : null;
 
 		// `expandedStart` is where this mesh's triangles sit in a per-mesh walk of the scene,
 		// which is the shape refit callers can build. `start` is where they are actually
@@ -500,15 +534,21 @@ export class GeometryExtractor {
 
 		const rangeStart = this.currentTriangleIndex;
 
+		// Emission is measured per triangle, so instances of an emissive geometry have to be
+		// real triangles rather than one copy placed many times — otherwise the scene is lit by
+		// the first instance alone. Their triangles are baked, so this mesh keeps one placement.
+		const expand = mesh.isInstancedMesh && ! deformable
+			&& this._emissiveMaterial( materialIndex ) && this._canExpand( mesh );
+
 		// Object space only pays when a second placement can reuse the copy. A geometry used
 		// once — or an emissive one, which never shares — is baked to world space instead, so
 		// a ray reaching it skips the per-instance transform entirely.
-		const bake = ! mesh.isInstancedMesh && (
+		const bake = expand || ( ! mesh.isInstancedMesh && ! deformable && (
 			this._geometryUses.get( `${mesh.geometry.uuid}|${mesh.material?.uuid}` ) === 1
 			|| this._emissiveMaterial( materialIndex )
-		);
+		) );
 
-		this.extractGeometry( mesh, materialIndex, meshIndex, bake );
+		this.extractGeometry( mesh, materialIndex, meshIndex, bake, expand );
 
 		const range = {
 			start: rangeStart, count: this.currentTriangleIndex - rangeStart,
@@ -516,8 +556,8 @@ export class GeometryExtractor {
 		};
 		this.expandedTriangleCount += range.count;
 		this.meshTriangleRanges.push( range );
-		if ( range.count > 0 && ! bake ) this._geometryRanges.set( key, { ...range, meshIndex } );
-		this._recordPlacements( mesh, meshIndex, bake );
+		if ( range.count > 0 && ! bake && shareable ) this._geometryRanges.set( key, { ...range, meshIndex } );
+		this._recordPlacements( mesh, meshIndex, bake, expand );
 
 	}
 
@@ -527,13 +567,16 @@ export class GeometryExtractor {
 	 * a matrix each rather than a million Object3Ds.
 	 * @private
 	 */
-	_recordPlacements( mesh, meshIndex, baked = false ) {
+	_recordPlacements( mesh, meshIndex, baked = false, expanded = false ) {
 
 		const world = mesh.matrixWorld.elements;
 		const dst = this.instanceMatrices;
 		const src = this.instanceSource;
 
-		if ( ! mesh.isInstancedMesh || ! mesh.instanceMatrix ) {
+		// Expanded instances live in the triangles, so the mesh keeps a single placement. The
+		// recorded inverse is the host's alone: moving the host is a delta that applies to
+		// every instance equally, which is exactly what composing against it produces.
+		if ( ! mesh.isInstancedMesh || ! mesh.instanceMatrix || expanded ) {
 
 			const p = this._nextPlacement();
 			src[ p ] = meshIndex;
@@ -618,6 +661,27 @@ export class GeometryExtractor {
 	}
 
 	/** True when this material emits — those meshes keep their own triangles. */
+	/**
+	 * Is expanding this instanced mesh into real triangles within budget? Past it the scene is
+	 * lit by the first instance, which is wrong but bounded.
+	 * @private
+	 */
+	_canExpand( mesh ) {
+
+		const g = mesh.geometry;
+		const tris = ( g.index ? g.index.count : g.attributes.position.count ) / 3;
+		const count = mesh.count ?? ( mesh.instanceMatrix?.array.length ?? 0 ) / 16;
+		if ( tris * count <= MAX_EXPANDED_EMISSIVE_TRIANGLES ) return true;
+
+		this._issues?.record(
+			ISSUE_CODES.EMISSIVE_INSTANCES_COLLAPSED,
+			`"${mesh.name || 'instanced mesh'}" would need ${Math.round( tris * count ).toLocaleString()} triangles to light every instance; lighting the first one only`,
+			{ instances: count, trianglesPerInstance: tris, limit: MAX_EXPANDED_EMISSIVE_TRIANGLES }
+		);
+		return false;
+
+	}
+
 	_emissiveMaterial( materialIndex ) {
 
 		const m = this.materials[ materialIndex ];
@@ -961,7 +1025,7 @@ export class GeometryExtractor {
 
 	}
 
-	extractGeometry( mesh, materialIndex, meshIndex, bake = false ) {
+	extractGeometry( mesh, materialIndex, meshIndex, bake = false, expandInstances = false ) {
 
 		mesh.updateMatrix();
 		mesh.updateMatrixWorld();
@@ -975,15 +1039,40 @@ export class GeometryExtractor {
 
 		const triangleCount = indices ? indices.length / 3 : positions.count / 3;
 
+		if ( expandInstances ) {
+
+			const count = mesh.count ?? ( mesh.instanceMatrix.array.length / 16 );
+			const inst = this._matrixPool.mat4;
+			const world = new Matrix4();
+
+			for ( let i = 0; i < count; i ++ ) {
+
+				inst.fromArray( mesh.instanceMatrix.array, i * 16 );
+				world.multiplyMatrices( mesh.matrixWorld, inst );
+				const normalMatrix = new Matrix3().getNormalMatrix( world );
+				this.extractTrianglesInBatch(
+					positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex,
+					world, normalMatrix, determinant3( world.elements ) < 0
+				);
+
+			}
+
+			return;
+
+		}
+
 		const bakeMatrix = bake ? this._matrixPool.mat4.copy( mesh.matrixWorld ) : null;
 		const bakeNormal = bake ? this._matrixPool.mat3.getNormalMatrix( mesh.matrixWorld ) : null;
+		// A mirroring transform reverses which way the vertices wind, so the face normal the
+		// cross product yields would point into the surface. Swap two corners and it points out.
+		const flip = bake && determinant3( bakeMatrix.elements ) < 0;
 
-		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix, bakeNormal );
+		this.extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix, bakeNormal, flip );
 
 	}
 
 	// triangle extraction that stores directly in texture format
-	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix = null, bakeNormal = null ) {
+	extractTrianglesInBatch( positions, normals, uvs, indices, triangleCount, materialIndex, meshIndex, bakeMatrix = null, bakeNormal = null, flipWinding = false ) {
 
 		// Track per-material triangle count for sort-bin remap (item 41)
 		while ( this.materialTriangleCounts.length <= materialIndex ) this.materialTriangleCounts.push( 0 );
@@ -1012,8 +1101,9 @@ export class GeometryExtractor {
 
 			const i3 = i * 3;
 			const idxA = indices ? indices[ i3 + 0 ] : i3 + 0;
-			const idxB = indices ? indices[ i3 + 1 ] : i3 + 1;
-			const idxC = indices ? indices[ i3 + 2 ] : i3 + 2;
+			const b = flipWinding ? 2 : 1, c = flipWinding ? 1 : 2;
+			const idxB = indices ? indices[ i3 + b ] : i3 + b;
+			const idxC = indices ? indices[ i3 + c ] : i3 + c;
 
 			this.getVertex( positions, idxA, posA );
 			this.getVertex( positions, idxB, posB );

@@ -622,6 +622,22 @@ export const instanceNormalToWorld = ( rows, n ) => vec3(
 );
 
 /**
+ * A face normal, built from an object-space cross product, put into world space. It takes the
+ * same inverse-transpose as a shading normal, but a mirroring placement reverses which way the
+ * triangle winds, so the sign of the placement's determinant has to come with it or the face
+ * points into the surface instead of out of it.
+ *
+ * Inline nodes rather than a wgslFn: a WGSL function here is a real call in the shade kernel and
+ * measured 0.6 ms per sample on a scene that never even reaches this branch.
+ */
+export const instanceFaceNormalToWorld = ( rows, n ) => {
+
+	const det = rows[ 0 ].xyz.dot( rows[ 1 ].xyz.cross( rows[ 2 ].xyz ) );
+	return instanceNormalToWorld( rows, n ).mul( det.sign() );
+
+};
+
+/**
  * Object-space direction to world. Tangents transform by the forward matrix, not the
  * inverse-transpose that normals use, so the 3x3 is inverted here — once per shaded
  * hit, which is far cheaper than carrying a second matrix through every BVH node.

@@ -28,7 +28,7 @@ import {
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows,
-	instanceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle
+	instanceFaceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle
 } from './Common.js';
 import { fresnelSchlickFloat, iorToFresnel0 } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
@@ -189,7 +189,7 @@ export const traceShadowRay = Fn( ( [
 			const objNormal = normalize( cross( pB.sub( pA ), pC.sub( pA ) ) ).toVar();
 			If( shadowHit.instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
 
-				objNormal.assign( normalize( instanceNormalToWorld( instanceRows( bvhBuffer, shadowHit.instanceLeaf ), objNormal ) ) );
+				objNormal.assign( normalize( instanceFaceNormalToWorld( instanceRows( bvhBuffer, shadowHit.instanceLeaf ), objNormal ) ) );
 
 			} );
 

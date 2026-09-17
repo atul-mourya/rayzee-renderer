@@ -19,6 +19,7 @@ export const ISSUE_CODES = Object.freeze( {
 	STAGE_RENDER_FAILED: 'stage.render_failed',
 	RENDER_RESERVE_CAPPED: 'render.reserve_capped',
 	SCENE_MEMORY_BUDGET: 'scene.memory_budget',
+	EMISSIVE_INSTANCES_COLLAPSED: 'emissive.instances_collapsed',
 } );
 
 /** Strict throws on ERROR only. */
