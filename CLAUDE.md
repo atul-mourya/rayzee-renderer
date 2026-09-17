@@ -108,7 +108,7 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
 - **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit/rng buffers + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
-- **`TLASBuilder.js`**: Builds SAH BVH over mesh-level AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (marker `-2`, slot [1] `meshIndex`, slot [2] per-mesh visibility flag). Caches flatten buffer across rebuilds.
+- **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
@@ -171,25 +171,42 @@ Zustand-based stores with **automatic 3D engine synchronization**:
 - **`useActiveApp()`**: Returns the current app instance, re-renders on app changes (uses `subscribeApp()` internally)
 
 ### Data Layout & GPU Optimization
-**Triangle Data Layout** (32 floats per triangle, vec4-aligned):
+**Triangle Data Layout** (20 u32 lanes per triangle = 80 B, 5 vec4s). The buffer is bound as
+`uvec4`, so a reader binds `'uvec4'` and floats come back through `uintBitsToFloat`:
 ```js
 // EngineDefaults.js - TRIANGLE_DATA_LAYOUT
-FLOATS_PER_TRIANGLE: 32  // 8 vec4s for GPU efficiency
-POSITION_A_OFFSET: 0     // 3 vec4s for positions (A,B,C)
-NORMAL_A_OFFSET: 12      // 3 vec4s for normals (A,B,C)
-UV_AB_OFFSET: 24         // 2 vec4s for UVs + material index
+FLOATS_PER_TRIANGLE: 20         // 5 vec4s; positions carry their own normal
+POSITION_A/B/C_OFFSET: 0/4/8    // f32 xyz, normal packed in the spare .w lane
+NORMAL_A/B/C_PACKED_OFFSET: 3/7/11  // oct16 (packNormalOct), ~0.03° worst case
+UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
+MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
+MESH_INDEX_OFFSET: 19
 ```
+⚠️ Any new reader of `triangleStorageAttr` must bind `uvec4` **and** pass the hit's
+`instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
 **Two-Level BVH Layout** (packed in single GPU storage buffer):
 ```
 Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M nodes ]
 ```
 - **16 floats per node** (4 × vec4). Inner nodes store children's AABBs + child indices.
-- **Triangle leaf** (marker `-1`): `[triOffset, triCount, 0, -1]` — absolute index into triangleData
-- **BLAS-pointer leaf** (marker `-2`): `[blasRootNodeIndex, meshIndex, visibility, -2]` — TLAS leaf pointing to a BLAS root; slot [2] is the per-mesh visibility flag (1=visible, 0=hidden), read for free during traversal
-- Traversal distinguishes leaf types via threshold: `nodeData0.w > -1.5` → triangle leaf, else → BLAS pointer (check per-mesh visibility, push onto stack if visible)
-- **`InstanceTable`**: CPU-side per-mesh metadata (blasOffset, blasNodeCount, triOffset, triCount, worldAABB)
-- **`TLASBuilder`**: SAH BVH over mesh AABBs with cached flatten buffer
+- Indices and leaf tags in slot `[3]` are **u32 bit patterns**, read with `floatBitsToUint`.
+  Stored as float *values* they rounded past 2^24 and sent rays to a neighbouring node, which
+  silently erased geometry from large scenes. Every valid index is below `BVH_MAX_INDEX` (2^30)
+  and the tags sit above it, so `nodeTag >= BVH_MAX_INDEX` means leaf.
+- **Triangle leaf** (`BVH_LEAF_MARKERS.TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, 0, tag]`
+- **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`,
+  and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **placement** index
+  masked by `TLAS_PLACEMENT_MASK`; its bit 30 (`TLAS_LEAF_IDENTITY`) says the matrix is identity,
+  which is how a baked placement tells traversal to skip the ray transform.
+- **Geometry storage is hybrid.** A geometry used by exactly one placement — or one that emits
+  light — is **baked to world space** behind an identity leaf. A geometry shared by several
+  placements stays in **object space** and the ray is moved into it on entry. Emissive instanced
+  meshes are expanded to per-instance triangles so every copy lights the scene.
+- **`InstanceTable`**: per-**placement** metadata (a million instances cost a matrix each, not a
+  million Object3Ds). `sourceMesh[placement]` names the template; `placementRunOf(template)`
+  gives that template's contiguous run. ⚠️ Never index it with a mesh/template index.
+- **`TLASBuilder`**: SAH BVH over placement AABBs with cached flatten buffer
 
 ## Key Development Patterns
 
@@ -320,7 +337,7 @@ Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never us
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
-2. **GeometryExtractor** converts meshes to optimized triangle data (32-float layout), records per-mesh `meshTriangleRanges`
+2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.
 3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
 
@@ -418,7 +435,7 @@ Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro wit
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)
-9. **BVH Leaf Markers**: `-1` = triangle leaf, `-2` = BLAS-pointer leaf. Traversal uses threshold `-1.5` to distinguish. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
+9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag (`normalCData.w`).
