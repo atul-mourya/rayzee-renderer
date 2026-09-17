@@ -243,9 +243,8 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const stackPtr = int( 1 ).toVar();
 	stack.element( int( 0 ) ).assign( int( 0 ) ); // Root node
 
-	// Triangles are stored in each instance's own space, so the ray is the thing that
-	// moves. `world*` stays put; `ray*`/`invDir`/`woopParams` track whichever space the
-	// traversal is currently in and are restored on the way back out of a BLAS.
+	// Triangles sit in each instance's own space, so the ray is what moves: `world*` stays
+	// put, `ray*`/`invDir`/`woopParams` are rewritten on entering a BLAS and never restored.
 	const worldOrigin = vec3( ray.origin ).toVar();
 	const worldDirection = vec3( ray.direction ).toVar();
 	const worldInvDir = buildInvDir( worldDirection ).toVar();
@@ -256,8 +255,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const invDir = vec3( worldInvDir ).toVar();
 	const woopParams = vec4( worldWoop ).toVar();
 
-	// Active instance: the TLAS leaf we descended through, and the stack depth that
-	// returning below means we are back in world space.
+	// The TLAS leaf the ray is inside, or -1; dropping below `instExit` on the stack clears it.
 	const instLeaf = int( - 1 ).toVar();
 	const instExit = int( 0 ).toVar();
 	const hitInstLeaf = int( - 1 ).toVar();
@@ -269,18 +267,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		iterCount.addAssign( 1 );
 		stackPtr.subAssign( 1 );
 		const nodeIndex = stack.element( stackPtr ).toVar();
-
-		// Everything a BLAS pushed sits above the depth we entered at, so dropping below
-		// it is exactly the moment the ray belongs back in world space.
-		If( instLeaf.greaterThanEqual( int( 0 ) ).and( stackPtr.lessThan( instExit ) ), () => {
-
-			rayOrigin.assign( worldOrigin );
-			rayDirection.assign( worldDirection );
-			invDir.assign( worldInvDir );
-			woopParams.assign( worldWoop );
-			instLeaf.assign( int( - 1 ) );
-
-		} );
+		instLeaf.assign( select( stackPtr.lessThan( instExit ), int( - 1 ), instLeaf ) );
 
 		// New layout: 4 vec4 per node
 		// Leaf: vec4(0) = [triOffset, triCount, 0, -1]
@@ -377,8 +364,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 				// the world-to-object matrix. Visibility is free-fetched with the leaf.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
 
-					// A baked placement already sits in world space; only a transformed one
-					// moves the ray, and only then does leaving it need to be tracked.
+					// A baked placement already sits in world space; only a transformed one moves the ray.
 					If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
 						const rows = instanceRows( bvhBuffer, nodeIndex );
@@ -391,6 +377,14 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 						woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
 						instLeaf.assign( nodeIndex );
 						instExit.assign( stackPtr );
+
+					} ).Else( () => {
+
+						rayOrigin.assign( worldOrigin );
+						rayDirection.assign( worldDirection );
+						invDir.assign( worldInvDir );
+						woopParams.assign( worldWoop );
+						instLeaf.assign( int( - 1 ) );
 
 					} );
 
@@ -411,8 +405,11 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 			const leftChild = int( nodeTag ).toVar();
 			const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
-			const dstA = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
-			const dstB = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
+			const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+			const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
+			const boxInv = select( inInst, invDir, worldInvDir ).toVar();
+			const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
+			const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
 
 			// Optimized early rejection
 			const minDst = min( dstA, dstB );
@@ -534,16 +531,7 @@ export const traverseBVHShadow = Fn( ( [
 		sIterCount.addAssign( 1 );
 		stackPtr.subAssign( 1 );
 		const nodeIndex = stack.element( stackPtr ).toVar();
-
-		If( instLeaf.greaterThanEqual( int( 0 ) ).and( stackPtr.lessThan( instExit ) ), () => {
-
-			rayOrigin.assign( worldOrigin );
-			rayDirection.assign( worldDirection );
-			invDir.assign( worldInvDir );
-			woopParams.assign( worldWoop );
-			instLeaf.assign( int( - 1 ) );
-
-		} );
+		instLeaf.assign( select( stackPtr.lessThan( instExit ), int( - 1 ), instLeaf ) );
 
 		const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
 
@@ -572,7 +560,7 @@ export const traverseBVHShadow = Fn( ( [
 
 					If( triResult.w.greaterThan( 0.5 ), () => {
 
-						// Per-mesh visibility handled at BLAS-pointer level — accept any hit
+						// Per-mesh visibility is handled at the BLAS-pointer level.
 						const uvData2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).toVar();
 
 						closestHit.didHit.assign( true );
@@ -608,8 +596,7 @@ export const traverseBVHShadow = Fn( ( [
 				// BLAS-pointer leaf — enter the instance if the mesh is visible.
 				If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
 
-					// A baked placement already sits in world space; only a transformed one
-					// moves the ray, and only then does leaving it need to be tracked.
+					// A baked placement already sits in world space; only a transformed one moves the ray.
 					If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
 						const rows = instanceRows( bvhBuffer, nodeIndex );
@@ -622,6 +609,14 @@ export const traverseBVHShadow = Fn( ( [
 						woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
 						instLeaf.assign( nodeIndex );
 						instExit.assign( stackPtr );
+
+					} ).Else( () => {
+
+						rayOrigin.assign( worldOrigin );
+						rayDirection.assign( worldDirection );
+						invDir.assign( worldInvDir );
+						woopParams.assign( worldWoop );
+						instLeaf.assign( int( - 1 ) );
 
 					} );
 
@@ -642,8 +637,11 @@ export const traverseBVHShadow = Fn( ( [
 			const leftChild = int( nodeTag ).toVar();
 			const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
 
-			const dstA = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
-			const dstB = fastRayAABBDst( { rayOrigin, invDir, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
+			const inInst = instLeaf.greaterThanEqual( int( 0 ) );
+			const boxOrigin = select( inInst, rayOrigin, worldOrigin ).toVar();
+			const boxInv = select( inInst, invDir, worldInvDir ).toVar();
+			const dstA = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData0.xyz, boxMax: nodeData1.xyz } ).toVar();
+			const dstB = fastRayAABBDst( { rayOrigin: boxOrigin, invDir: boxInv, boxMin: nodeData2.xyz, boxMax: nodeData3.xyz } ).toVar();
 
 			// Distance-ordered traversal — nearer child first for faster any-hit
 			// termination. SA build ordering improves cache locality (larger-SA
