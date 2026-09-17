@@ -555,5 +555,26 @@
 			"samples": 128
 		},
 		"rmseVsTruth": 0.04655727567029018
+	},
+	"instanced-storage": {
+		"truth": {
+			"meanR": 0.25169102192975795,
+			"meanG": 0.23677030444360941,
+			"meanB": 0.1621512131193661,
+			"meanLuminance": 0.23455495058757292,
+			"maxLuminance": 15.864163310050964,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.2517146950605525,
+			"meanG": 0.23680420182386971,
+			"meanB": 0.16217579587513153,
+			"meanLuminance": 0.23458600177651098,
+			"maxLuminance": 15.864163310050964,
+			"nonFinite": 0,
+			"samples": 96
+		},
+		"rmseVsTruth": 0.011886281370677518
 	}
 }

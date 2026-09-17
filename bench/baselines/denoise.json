@@ -318,5 +318,55 @@
 		"ratio": 1,
 		"rawRmse": 0.007161289839562062,
 		"denoisedRmse": 0.007161289839562062
+	},
+	"instanced-storage/asvgf/1": {
+		"ratio": 0.8204215758290944,
+		"rawRmse": 0.1487378877933641,
+		"denoisedRmse": 0.1220277722889228
+	},
+	"instanced-storage/nrd/1": {
+		"ratio": 1.1826239041310478,
+		"rawRmse": 0.1487378877933641,
+		"denoisedRmse": 0.175900981554394
+	},
+	"instanced-storage/edgeaware/1": {
+		"ratio": 0.6439486082980099,
+		"rawRmse": 0.1487378877933641,
+		"denoisedRmse": 0.09577955584572238
+	},
+	"instanced-storage/oidn/1": {
+		"ratio": 0.1603144647807701,
+		"rawRmse": 0.1487378877933641,
+		"denoisedRmse": 0.023844834874215407
+	},
+	"instanced-storage/oidn-tiled/1": {
+		"ratio": 0.15569889957550137,
+		"rawRmse": 0.1487378877933641,
+		"denoisedRmse": 0.02315832545461119
+	},
+	"instanced-storage/asvgf/64": {
+		"ratio": 0.3825625857943738,
+		"rawRmse": 0.014714756990535401,
+		"denoisedRmse": 0.005629315483635061
+	},
+	"instanced-storage/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.014714756990535401,
+		"denoisedRmse": 0.014714756990535401
+	},
+	"instanced-storage/edgeaware/64": {
+		"ratio": 0.7271819683070706,
+		"rawRmse": 0.014714756990535401,
+		"denoisedRmse": 0.01070030595153776
+	},
+	"instanced-storage/oidn/64": {
+		"ratio": 0.33268071360639556,
+		"rawRmse": 0.014714756990535401,
+		"denoisedRmse": 0.004895315856156015
+	},
+	"instanced-storage/oidn-tiled/64": {
+		"ratio": 0.3299553027024508,
+		"rawRmse": 0.014714756990535401,
+		"denoisedRmse": 0.0048552120970051125
 	}
 }

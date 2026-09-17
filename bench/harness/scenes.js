@@ -14,15 +14,20 @@
 import {
 	BoxGeometry,
 	Color,
+	ConeGeometry,
 	CylinderGeometry,
 	DataTexture,
 	DirectionalLight,
 	DoubleSide,
+	FrontSide,
 	Group,
+	InstancedMesh,
 	Matrix3,
+	Matrix4,
 	Mesh,
 	MeshPhysicalMaterial,
 	PlaneGeometry,
+	Quaternion,
 	RectAreaLight,
 	RepeatWrapping,
 	RGBAFormat,
@@ -1455,6 +1460,91 @@ SCENES.push( {
 		await app.stages.pathTracer.environment.setMode( 'color' );
 		await app.loadObject3D( makeTwoLightRig(), 'arealights-two' );
 		setCamera( app, [ 0, 2.6, 7 ], [ 0, 0.8, 0 ] );
+
+	},
+} );
+
+/**
+ * Every way the engine can store one geometry, in one frame.
+ *
+ * The rest of the corpus is single-object scenes, where a mesh is used once and baked to world
+ * space. That leaves the branch's own storage paths untested: geometry shared by several
+ * placements and traced in object space, an InstancedMesh, a mirrored placement whose winding
+ * reverses, and an emissive geometry placed more than once. Each of those has had a bug that no
+ * existing scene could have caught.
+ */
+function makeStorageRig() {
+
+	const rig = makeRoom( { size: 6 } );
+
+	// Shared: one geometry and material on three placements, so the extractor stores one copy
+	// and the ray is transformed into its space on entry.
+	const sharedGeometry = new BoxGeometry( 0.9, 0.9, 0.9 );
+	const sharedMaterial = new MeshPhysicalMaterial( { color: 0xd8c39a, roughness: 0.35, metalness: 0 } );
+	for ( const [ x, y, ry ] of [[ - 1.9, - 2.1, 0 ], [ 0, - 2.1, 0.6 ], [ 1.9, - 2.1, 1.2 ]] ) {
+
+		const copy = new Mesh( sharedGeometry, sharedMaterial );
+		copy.position.set( x, y, 0.6 );
+		copy.rotation.y = ry;
+		rig.add( copy );
+
+	}
+
+	// Instanced: four placements behind one InstancedMesh, each rotated differently so a
+	// transform dropped on entry shows up as a misplaced copy rather than a tint.
+	const pillars = new InstancedMesh(
+		new CylinderGeometry( 0.22, 0.22, 1.6, 16 ),
+		new MeshPhysicalMaterial( { color: 0x8fa9c4, roughness: 0.18, metalness: 1 } ),
+		4
+	);
+	for ( let i = 0; i < 4; i ++ ) {
+
+		const angle = i * Math.PI / 2 + 0.4;
+		pillars.setMatrixAt( i, new Matrix4().compose(
+			new Vector3( Math.cos( angle ) * 1.8, - 1.7, Math.sin( angle ) * 1.2 - 0.9 ),
+			new Quaternion().setFromAxisAngle( new Vector3( 0, 0, 1 ), i * 0.12 ),
+			new Vector3( 1, 1, 1 )
+		) );
+
+	}
+
+	rig.add( pillars );
+
+	// Mirrored: a negative scale reverses which way the triangles wind. The material is
+	// single-sided, so getting the winding wrong turns the wedge inside out.
+	const wedge = new Mesh(
+		new ConeGeometry( 0.5, 1.2, 3 ),
+		new MeshPhysicalMaterial( { color: 0xc4744a, roughness: 0.5, metalness: 0, side: FrontSide } )
+	);
+	wedge.position.set( - 1.2, - 1.8, - 1.4 );
+	wedge.scale.set( - 1, 1, 1 );
+	rig.add( wedge );
+
+	// Emissive and placed twice: each copy has to light the room on its own.
+	const bulbs = new InstancedMesh(
+		new SphereGeometry( 0.28, 24, 24 ),
+		new MeshPhysicalMaterial( { color: 0x000000, emissive: new Color( 0xfff0d0 ), emissiveIntensity: 18 } ),
+		2
+	);
+	bulbs.setMatrixAt( 0, new Matrix4().makeTranslation( - 1.6, 1.9, - 0.5 ) );
+	bulbs.setMatrixAt( 1, new Matrix4().makeTranslation( 1.6, 1.9, - 0.5 ) );
+	rig.add( bulbs );
+
+	return rig;
+
+}
+
+SCENES.push( {
+	id: 'instanced-storage',
+	covers: 'object-space shared geometry, InstancedMesh placements, a mirrored placement\'s winding, and an emissive geometry placed twice — the storage paths every other scene skips',
+	spp: 96,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEnvironment: false, enableEmissiveTriangleSampling: true },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+		await app.loadObject3D( makeStorageRig(), 'instanced-storage' );
+		setCamera( app, [ 0, 0.4, 7.4 ], [ 0, - 0.9, 0 ] );
 
 	},
 } );
