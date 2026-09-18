@@ -362,8 +362,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
+		const cameraMoved = this.needsReset;
 		if ( this.needsReset ) {
 
+			// Before the reset, so the denoising manager's abort sees this frame as part of a move
+			// rather than deciding to hold on the first frame and dropping it on the second.
+			this.stages.pathTracer?.noteViewChanged();
 			this.reset( true );
 			this.needsReset = false;
 
@@ -400,6 +404,23 @@ export class PathTracerApp extends EventDispatcher {
 
 				// Stop the loop to avoid constant CPU usage while idle
 				this.stopAnimation();
+				return;
+
+			}
+
+			// A frame traced while a denoise is in flight is never seen: only denoised frames reach
+			// the canvas during a camera move, and the next denoise reads the newest frame anyway.
+			// Tracing it only takes the GPU away from the denoise the viewport is waiting on —
+			// inside a room that turned a 10 ms denoise into 185 ms of wall clock.
+			if ( this.denoisingManager?.skipsTrace() ) {
+
+				// The camera is still being dragged; without this the interaction timeout can
+				// expire inside a long denoise and drop the view out of interaction mode.
+				if ( cameraMoved ) this.stages.pathTracer.enterInteractionMode();
+				// Gizmos and outlines are drawn against the live camera, not the traced frame, so
+				// they would visibly lag the view if they only redrew on the frames that traced.
+				this._renderHelperOverlay();
+				this.dispatchEvent( { type: EngineEvents.FRAME } );
 				return;
 
 			}
@@ -540,7 +561,9 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		this._abortPostProcess();
+		// Whatever is on screen stays until its replacement is ready, including while the camera
+		// moves: the denoising manager decides, since only it knows something is coming.
+		this._abortPostProcess( { keepDisplay: true } );
 
 		this.completion.reset();
 		this.wake();
@@ -713,6 +736,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
+		this.denoisingManager?.dropDisplay();
 		this.reset();
 		this.dispatchEvent( { type: 'SceneUnloaded' } );
 
@@ -962,6 +986,9 @@ export class PathTracerApp extends EventDispatcher {
 			this._syncControlsAfterLoad();
 			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
+			// shader compilation come first), and a second of the previous model reads as a bug.
+			this.denoisingManager?.dropDisplay();
 			this.reset();
 			this.cameraManager.currentCameraIndex = 0;
 			this.dispatchEvent( eventPayload );
@@ -994,6 +1021,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			this._clearAppendedModels();
 			this.assetLoader?.releaseTargetModel();
+			this.denoisingManager?.dropDisplay();
 			this.reset();
 
 		} catch ( cleanupError ) {
@@ -1935,9 +1963,9 @@ export class PathTracerApp extends EventDispatcher {
 
 	// Aborts any in-flight denoise/upscale and puts the denoiser canvas back at base resolution (the
 	// upscaler leaves it enlarged), so the live canvas is what's on screen again.
-	_abortPostProcess() {
+	_abortPostProcess( { keepDisplay = false } = {} ) {
 
-		this.denoisingManager?.abort( this.canvas );
+		this.denoisingManager?.abort( this.canvas, { keepDisplay } );
 
 		if ( this.denoisingManager?.restoreBaseResolution() ) {
 

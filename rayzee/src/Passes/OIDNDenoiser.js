@@ -602,8 +602,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		try {
 
-			await this._executeUNet( continuous );
-			return true;
+			// The GPU path bails out early — no textures yet, no device — by returning false, and
+			// a caller that read that as success latched an output canvas nothing ever painted.
+			return await this._executeUNet( continuous ) !== false;
 
 		} catch ( error ) {
 
@@ -1252,6 +1253,23 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
+	// Throws away the pixels as well as hiding them. Hiding alone is not enough when the frame is
+	// of a scene that no longer exists: the next run reveals the canvas before it paints, and the
+	// old image would come back for the length of a denoise.
+	clearOutput() {
+
+		this.ctx?.clearRect( 0, 0, this.output.width, this.output.height );
+		this.invalidateLatch();
+
+	}
+
+	// Whether the output canvas holds a denoised frame that can stay on screen.
+	get hasLatchedFrame() {
+
+		return this._hasLatchedFrame;
+
+	}
+
 	// Call whenever the output canvas stops holding a valid frame — hidden on reset, or resized.
 	invalidateLatch() {
 
@@ -1270,6 +1288,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.output.width = width;
 		this.output.height = height;
 		this._hasLatchedFrame = false;
+		// The old measurement describes the old size, and callers size their policy on it.
+		this.lastDenoiseMs = 0;
 
 		// Reinitialize denoiser if tile size changes relative to image size
 		this._setupUNetDenoiser().catch( error => {

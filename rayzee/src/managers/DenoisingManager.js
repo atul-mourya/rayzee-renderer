@@ -27,6 +27,47 @@ const CADENCE_COST_BUDGET_MS = 120;
 // refreshes — 2x is the better trade while a person is watching the image resolve.
 const CADENCE_DENOISE_PERIODS = 2;
 
+// The first refresh of a fresh accumulation is the one replacing a held frame that is now stale, so
+// it waits one denoise rather than two. Measured over a 2 s reset storm (a slider being dragged):
+// 8.4 -> 12.5-15.3 refreshes/sec for 75.5 -> 70-73 fps.
+const CADENCE_FIRST_REFRESH_PERIODS = 1;
+
+// While the camera moves, the denoised frames ARE the picture — the raw render is never shown — so
+// the refresh rate is the frame rate a person sees, and back to back is the right cadence. Path
+// tracing costs little there (1 bounce, no accumulation), and `isDenoising` serialises the runs.
+const CADENCE_INTERACTION_PERIODS = 0;
+
+// A denoise slower than this cannot follow a camera: holding the last one would turn navigation
+// into a slideshow, so it goes back to the raw render instead. Measured on a 1.9M-triangle scene
+// at `fast`: 512² 59 ms (35 refreshes/sec while moving, 121 fps), 1024² 135 ms (7/sec, 47 fps),
+// 1536² 1.46 s. Set to keep 1024² on the clean side of the line and reject 1536².
+const INTERACTION_HOLD_BUDGET_MS = 300;
+
+// How many refresh timings the navigation decision is taken over. A single denoise is easily twice
+// its own typical cost — a GC pause, a texture upload, another tab — and deciding on one of those
+// left the next camera move entirely raw. The median of a few is stable and still cheap.
+//
+// Only refreshes taken WHILE MOVING count: that is a different regime, because the render loop
+// stops tracing frames nobody will see (skipsTrace) and hands the GPU to the denoise. Measured
+// inside a room at 1024², the same denoise is 596 ms with the loop tracing over it and ~95 ms
+// without, so a still-camera timing would rule out navigation that in fact works.
+//
+// Taken as the MINIMUM, not the median, and reset for each move. The first refresh of a move is
+// always slow — the GPU is still finishing the frame before it — and the estimate has to survive
+// that, because a demoted move stops refreshing and so stops measuring: one unlucky reading used
+// to pin navigation to the raw render for the rest of the session.
+const DENOISE_COST_SAMPLES = 5;
+
+// A refresh this far past the budget is not a warm-up reading, it is the wrong resolution for
+// denoised navigation. Remembered until the size changes, so only the first move pays for finding
+// out; anything short of it gets a second reading before navigation is given back to the raw render.
+const INTERACTION_HOPELESS_FACTOR = 3;
+
+// Consecutive refreshes that deliver nothing before the held frame is given up and the raw render
+// comes back. Counted in runs, not milliseconds: the loop stops while a finished render sits on
+// screen, so any clock would read a perfectly good frame as abandoned the moment it woke.
+const HELD_FRAME_MAX_FAILURES = 3;
+
 /**
  * Orchestrates all denoising, post-processing, and AI upscaling:
  *   - Real-time denoiser strategy switching (ASVGF / NRD / EdgeAware / None)
@@ -86,6 +127,14 @@ export class DenoisingManager extends EventDispatcher {
 		// denoise while performance.now() is still below the interval.
 		this._lastCadenceAt = - Infinity;
 		this._lastCadenceSamples = 0;
+		// Consecutive refreshes that delivered nothing, for the held-frame health check.
+		this._failedRefreshes = 0;
+		// Refresh timings from the current camera move, and whether this resolution has already
+		// proved far too slow to navigate denoised.
+		this._movingDenoiseMs = [];
+		this._movingHopeless = false;
+		// Whether this camera move is being shown denoised. Decided once per move; null between.
+		this._holdWhileMoving = null;
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 
@@ -139,6 +188,12 @@ export class DenoisingManager extends EventDispatcher {
 		// Cleared only when the tier or the resolution changes — a denoise costs 14 ms at 512²
 		// and 800 ms at 2048², so the affordability verdict does not survive a resize.
 		this._cadenceDowngraded = false;
+		this._holdWhileMoving = null;
+		this._movingDenoiseMs.length = 0;
+		this._movingHopeless = false;
+		// A run in flight was sized for the old resolution and setSize rebuilds the network under
+		// it. Resets no longer cancel a run while its frame is on screen, so this has to.
+		this.denoiser?.abort();
 		this.denoiser?.setSize( width, height );
 		this.upscaler?.setBaseSize( width, height );
 
@@ -156,10 +211,15 @@ export class DenoisingManager extends EventDispatcher {
 		const wasResized = this.denoiserCanvas.width !== this._lastRenderWidth
 			|| this.denoiserCanvas.height !== this._lastRenderHeight;
 
+		// Assigning width/height clears the bitmap even when the value does not change, which
+		// would throw away the frame abort() is trying to keep on screen.
+		if ( ! wasResized ) return false;
+
 		this.denoiserCanvas.width = this._lastRenderWidth;
 		this.denoiserCanvas.height = this._lastRenderHeight;
+		this.denoiser?.invalidateLatch();
 
-		return wasResized;
+		return true;
 
 	}
 
@@ -515,6 +575,67 @@ export class DenoisingManager extends EventDispatcher {
 	}
 
 	/**
+	 * Whether the view is moving and the denoiser is quick enough to be that view — in which case the
+	 * raw render is never shown and every reset keeps the last denoised frame up.
+	 *
+	 * Decided once per move rather than per frame, which would flip the viewport between clean and
+	 * noisy mid-drag. Nothing is known at the first move of a size, so it tries once and then knows.
+	 * Demotion is the exception: a move that turns out to be a slideshow gives the view back rather
+	 * than finishing at 1.5 refreshes a second.
+	 */
+	get holdsWhileMoving() {
+
+		if ( ! this._stages.pathTracer?.viewIsChanging ) return false;
+		if ( ! this.continuousDenoise || ! this.denoiser?.enabled ) return false;
+		if ( this._movingHopeless ) return false;
+
+		const best = this.movingCostMs;
+		const seen = this._movingDenoiseMs.length;
+
+		if ( best > INTERACTION_HOLD_BUDGET_MS * INTERACTION_HOPELESS_FACTOR ) this._movingHopeless = true;
+
+		// One reading is a warm-up; two that are both over budget are the answer.
+		const affordable = ! this._movingHopeless && ( seen < 2 || best <= INTERACTION_HOLD_BUDGET_MS );
+		this._holdWhileMoving = this._holdWhileMoving === null ? affordable : this._holdWhileMoving && affordable;
+
+		return this._holdWhileMoving;
+
+	}
+
+	/**
+	 * Whether the render loop should leave this frame untraced. True only while the denoised frame
+	 * is the live view and a denoise is running — the one case where a traced frame reaches nobody:
+	 * accumulation is off while the camera moves, the canvas is hidden, and the next denoise reads
+	 * whatever the newest frame is. Measured inside a room at 512²: 19 -> 32 refreshes/sec.
+	 */
+	skipsTrace() {
+
+		return this.holdsWhileMoving && !! this.denoiser?.state.isDenoising;
+
+	}
+
+	// The best a refresh has managed during this camera move. Zero until one has been timed, which
+	// reads as free and buys a first attempt rather than a verdict from the wrong regime.
+	get movingCostMs() {
+
+		return this._movingDenoiseMs.length ? Math.min( ...this._movingDenoiseMs ) : 0;
+
+	}
+
+	// A held frame the denoiser has stopped replacing describes a view that is long gone, so the
+	// raw render takes the viewport back until a refresh delivers again.
+	_checkHeldFrameHealthy() {
+
+		const dn = this.denoiser;
+		if ( ! dn?.hasLatchedFrame || this._failedRefreshes < HELD_FRAME_MAX_FAILURES ) return;
+
+		if ( dn.output ) dn.output.style.display = 'none';
+		dn.invalidateLatch();
+		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
+
+	}
+
+	/**
 	 * Denoises the accumulating mean on a cadence, so a preview shows a clean image while it
 	 * refines instead of only once it finishes. Driven from the render loop; call every frame.
 	 *
@@ -525,19 +646,31 @@ export class DenoisingManager extends EventDispatcher {
 
 		const dn = this.denoiser;
 		if ( ! this.continuousDenoise || ! dn ) return false;
+
+		this._checkHeldFrameHealthy();
+
+		// Moving with a denoise too slow to follow: the raw render owns the view, and a refresh
+		// would only paint a stale clean frame over a moving one.
+		const interacting = !! this._stages.pathTracer?.viewIsChanging;
+		if ( ! interacting ) {
+
+			this._holdWhileMoving = null;
+			this._movingDenoiseMs.length = 0;
+
+		} else if ( ! this.holdsWhileMoving ) return false;
+
 		if ( dn.state.isDenoising || dn.state.isLoading ) return false;
 
-		// While the camera moves, reset() hides the output every frame and a denoise would paint
-		// a view that is already stale. Denoise once the motion stops.
-		if ( this._stages.pathTracer?.interactionMode ) return false;
-
-		// Nothing new has landed since the last refresh, so it would repaint the same image.
-		if ( sampleCount <= this._lastCadenceSamples ) return false;
+		// frameCount is frozen while the camera moves — those frames are 1-SPP feedback and do not
+		// count toward completion — so this gate would refuse every tick. The clock governs there.
+		if ( ! interacting && sampleCount <= this._lastCadenceSamples ) return false;
 
 		const now = performance.now();
 		// `continuousDenoiseInterval` is only the floor's lower bound: on a cheap denoise it is
 		// what binds, and past ~1024² the denoise's own cost is.
-		const minGap = Math.max( this.continuousDenoiseInterval, dn.lastDenoiseMs * CADENCE_DENOISE_PERIODS );
+		const periods = interacting ? CADENCE_INTERACTION_PERIODS
+			: this._lastCadenceSamples === 0 ? CADENCE_FIRST_REFRESH_PERIODS : CADENCE_DENOISE_PERIODS;
+		const minGap = Math.max( this.continuousDenoiseInterval, dn.lastDenoiseMs * periods );
 		if ( now - this._lastCadenceAt < minGap ) return false;
 
 		this._lastCadenceAt = now;
@@ -552,7 +685,16 @@ export class DenoisingManager extends EventDispatcher {
 		const want = this._cadenceDowngraded ? this.previewQuality() : this._finalQuality;
 		if ( dn.quality !== want ) dn.updateQuality( want );
 
-		dn.start( { continuous: true } );
+		dn.start( { continuous: true } ).then( ok => {
+
+			this._failedRefreshes = ok ? 0 : this._failedRefreshes + 1;
+			if ( ! ok || ! interacting ) return;
+
+			this._movingDenoiseMs.push( dn.lastDenoiseMs );
+			if ( this._movingDenoiseMs.length > DENOISE_COST_SAMPLES ) this._movingDenoiseMs.shift();
+
+		} );
+
 		return true;
 
 	}
@@ -684,26 +826,62 @@ export class DenoisingManager extends EventDispatcher {
 
 	/**
 	 * Aborts any in-progress denoising/upscaling (called on reset).
-	 * @param {HTMLCanvasElement} canvas
+	 *
+	 * @param {HTMLCanvasElement} mainCanvas
+	 * @param {Object}  [options]
+	 * @param {boolean} [options.keepDisplay] - The viewpoint did not move, so the frame already on
+	 *   screen still describes this view. It stays up until the next denoise replaces it, instead
+	 *   of dropping back to the raw render for one denoise. Ignored unless OIDN owns the live view:
+	 *   nothing else would ever replace the held frame.
 	 */
-	abort( mainCanvas ) {
+	abort( mainCanvas, { keepDisplay = false } = {} ) {
 
 		// Remove stale completion-chain listener before aborting
 		this._cleanupCompletionListener();
 
-		if ( mainCanvas ) mainCanvas.style.opacity = '1';
+		const moving = !! this._stages.pathTracer?.viewIsChanging;
+		const hold = keepDisplay && this.continuousDenoise && !! this.denoiser?.hasLatchedFrame
+			&& ( ! moving || this.holdsWhileMoving );
+
+		if ( mainCanvas && ! hold ) mainCanvas.style.opacity = '1';
 
 		if ( this.upscaler ) this.upscaler.abort();
 
 		if ( this.denoiser ) {
 
-			if ( this.denoiser.enabled ) this.denoiser.abort();
-			if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
-			this.denoiser.invalidateLatch();
+			// A held display means the run in flight is the frame that replaces what is on screen.
+			// Cancelling it every time reset() runs — which is every frame of a camera drag — means
+			// none of them ever lands.
+			if ( this.denoiser.enabled && ! hold ) this.denoiser.abort();
+
+			if ( ! hold ) {
+
+				if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
+				this.denoiser.invalidateLatch();
+
+			}
 
 		}
 
 		this._resetCadence();
+
+	}
+
+	/**
+	 * Takes the denoised frame off screen and throws it away. For a change that makes the frame
+	 * wrong rather than stale — the scene it describes is gone — where holding it would leave the
+	 * previous model on screen over an empty or half-built one.
+	 */
+	dropDisplay() {
+
+		if ( this.denoiser ) {
+
+			if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
+			this.denoiser.clearOutput();
+
+		}
+
+		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
 
 	}
 
