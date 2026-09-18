@@ -2881,16 +2881,41 @@ export class PathTracerApp extends EventDispatcher {
 
 		const adapterLimits = adapter.limits;
 
+		// A limit that is NOT requested is granted at WebGPU's portable default, never at the
+		// adapter's maximum — on Apple Metal-3 that is 16 sampled textures of 48, 4 storage
+		// textures of 8, 256 workgroup invocations of 1024 and 256 array layers of 2048.
+		// Requesting exactly what the adapter reports can never fail, so a weaker GPU simply
+		// gets less and every consumer has to stay adaptive.
+		const requiredLimits = { maxColorAttachmentBytesPerSample: 128 };
+
+		for ( const key of [
+			'maxBufferSize',
+			'maxStorageBufferBindingSize',
+			'maxSampledTexturesPerShaderStage',
+			'maxStorageTexturesPerShaderStage',
+			'maxTextureArrayLayers',
+			'maxTextureDimension2D',
+			'maxComputeInvocationsPerWorkgroup',
+			'maxComputeWorkgroupStorageSize',
+			'maxComputeWorkgroupSizeX',
+			'maxComputeWorkgroupSizeY',
+			'maxComputeWorkgroupSizeZ',
+		] ) {
+
+			const value = adapterLimits[ key ];
+			if ( value !== undefined ) requiredLimits[ key ] = value;
+
+		}
+
+		// Shade binds exactly 10 and the kernels are written to that budget; asking for more
+		// buys nothing, and 10 is already this adapter's ceiling.
+		requiredLimits.maxStorageBuffersPerShaderStage = Math.min( adapterLimits.maxStorageBuffersPerShaderStage, 10 );
+
 		this.renderer = new WebGPURenderer( {
 			canvas: this.canvas,
 			alpha: true,
 			powerPreference: 'high-performance',
-			requiredLimits: {
-				maxBufferSize: adapterLimits.maxBufferSize,
-				maxStorageBufferBindingSize: adapterLimits.maxStorageBufferBindingSize,
-				maxColorAttachmentBytesPerSample: 128,
-				maxStorageBuffersPerShaderStage: Math.min( adapterLimits.maxStorageBuffersPerShaderStage, 10 ),
-			}
+			requiredLimits,
 		} );
 
 		await this.renderer.init();
