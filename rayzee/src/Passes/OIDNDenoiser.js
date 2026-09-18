@@ -1,8 +1,11 @@
-import { EventDispatcher, FloatType, RGBAFormat, NearestFilter, NoColorSpace, ClampToEdgeWrapping } from 'three';
+import { EventDispatcher, HalfFloatType, RGBAFormat, NearestFilter, NoColorSpace, ClampToEdgeWrapping } from 'three';
 import { ExternalTexture } from 'three/webgpu';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'oidn' );
+
+// The tile alignment oidn-web's own fitTileDimension uses (its tileScheduler.js).
+const OIDN_TILE_ALIGNMENT = 16;
 
 let _initUNetFromURL = null;
 async function getInitUNetFromURL() {
@@ -158,7 +161,7 @@ struct UnpackParams {
 @group(0) @binding(1) var<uniform> P: UnpackParams;
 @group(0) @binding(2) var<storage, read> scaleBuf: array<f32>;
 @group(0) @binding(3) var<storage, read> inColor: array<vec4<f32>>;
-@group(0) @binding(4) var dst: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(4) var dst: texture_storage_2d<rgba16float, write>;
 
 @compute @workgroup_size(${UNPACK_WG_SIZE}, ${UNPACK_WG_SIZE})
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
@@ -353,7 +356,18 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		const longest = Math.max( this._renderWidth, this._renderHeight );
 		if ( ! longest ) return this.maxTileSize;
-		return Math.min( longest, this.maxTileSize );
+
+		// Rounded up to the model's 16-pixel alignment, not clamped to the exact frame. The
+		// library's own fitTileDimension aligns the size up and then clamps it back to whatever
+		// cap it is handed, so handing it the raw frame size hands it an unaligned tile — and an
+		// unaligned tile measured 4x the cost of the whole denoise: 336 ms at 900x900 against
+		// 86 ms once aligned, with 896x896 unaffected either way.
+		const aligned = Math.ceil( longest / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT;
+		if ( aligned <= this.maxTileSize ) return aligned;
+
+		// The cap has to be aligned too, or a cap somebody picked by hand lands on the same slow
+		// path. Rounded down, so it never rises above what the caller asked for.
+		return Math.max( OIDN_TILE_ALIGNMENT, Math.floor( this.maxTileSize / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT );
 
 	}
 
@@ -955,17 +969,21 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._releaseOutputTexture();
 
+		// Half float, like NRD's output: this picture is read once, by the display. Full float
+		// would double both the memory it holds and the bandwidth of writing and sampling it, to
+		// carry precision the tone curve and an 8-bit canvas immediately throw away. Measured
+		// identical to within 0.02/255 of the mean.
 		this._outGPUTexture = device.createTexture( {
 			label: 'oidn-output',
 			size: { width, height, depthOrArrayLayers: 1 },
-			format: 'rgba32float',
+			format: 'rgba16float',
 			usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
 		} );
 
 		const tex = new ExternalTexture( this._outGPUTexture );
 		tex.name = 'oidn:output';
 		tex.image = { width, height, depth: 1 };
-		tex.type = FloatType;
+		tex.type = HalfFloatType;
 		tex.format = RGBAFormat;
 		tex.colorSpace = NoColorSpace;
 		tex.minFilter = NearestFilter;
