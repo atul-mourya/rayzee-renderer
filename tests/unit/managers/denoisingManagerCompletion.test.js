@@ -13,6 +13,8 @@ class StubDenoiser extends EventDispatcher {
 		this.state = { isDenoising: false, isLoading: false };
 		this.lastDenoiseMs = 0;
 		this.setSize = vi.fn();
+		this.abort = vi.fn();
+		this.invalidateOutput = vi.fn();
 		this.updateQuality = vi.fn( q => {
 
 			this.quality = q;
@@ -274,15 +276,54 @@ describe( 'DenoisingManager completion chain', () => {
 
 	} );
 
-	it( 'skips the cadence while the camera is moving', () => {
+	// The denoised frames are the whole picture while the camera moves — the raw render is never
+	// shown — so refusing here would freeze the viewport, not save work.
+	it( 'keeps refreshing while the camera is moving', () => {
 
 		manager.setDenoiserStrategy( 'oidn' );
-		manager._stages.pathTracer.interactionMode = true;
-		expect( manager.tickContinuousDenoise( 1 ) ).toBe( false );
+		manager._stages.pathTracer.viewIsChanging = true;
+		manager.continuousDenoiseInterval = 0;
+		dn.lastDenoiseMs = 20;
 
-		manager._stages.pathTracer.interactionMode = false;
+		// frameCount does not advance while moving, so the same count must still refresh.
+		expect( manager.tickContinuousDenoise( 1 ) ).toBe( true );
+		dn.state.isDenoising = false;
 		expect( manager.tickContinuousDenoise( 1 ) ).toBe( true );
 		expect( dn.start.mock.calls.at( - 1 )[ 0 ] ).toEqual( { continuous: true } );
+
+	} );
+
+	// The first refresh of a move is always slow — the GPU is still finishing the frame before it —
+	// and a move that gives up on that reading stops refreshing, so it never measures again.
+	it( 'lets one slow refresh pass as warm-up and gives up on the second', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		manager._stages.pathTracer.viewIsChanging = true;
+
+		manager._movingDenoiseMs.push( 400 );
+		expect( manager.holdsWhileMoving ).toBe( true );
+
+		manager._movingDenoiseMs.push( 400 );
+		expect( manager.holdsWhileMoving ).toBe( false );
+		expect( manager.tickContinuousDenoise( 1 ) ).toBe( false );
+
+	} );
+
+	it( 'writes off a resolution far past the budget on the first reading, until it changes', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		manager._stages.pathTracer.viewIsChanging = true;
+
+		manager._movingDenoiseMs.push( 2000 );
+		expect( manager.holdsWhileMoving ).toBe( false );
+
+		// A new move starts clean, but the verdict on this resolution stands.
+		manager._movingDenoiseMs.length = 0;
+		manager._holdWhileMoving = null;
+		expect( manager.holdsWhileMoving ).toBe( false );
+
+		manager.setRenderSize( 256, 256 );
+		expect( manager.holdsWhileMoving ).toBe( true );
 
 	} );
 

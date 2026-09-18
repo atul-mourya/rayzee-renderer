@@ -14,6 +14,15 @@
 - ~~Still on the CPU: the denoised output is read back ... A GPU blit is the remaining perf item.~~ **Done**, without moving the canvas to WebGPU — the canvas stays 2D (`getCanvas()` hands it to capture, and `AIUpscaler` draws into the same element); what moved is the *conversion*. Exposure/saturation/tone map/sRGB now run in WGSL (`ToneMapWGSL.js`, a transcription of `ToneMapCPU.js` — keep the two in step) and the readback carries 4 bytes/px instead of 16. OIDN's autoexposure is a GPU reduction whose scale never leaves the GPU, removing the 16 MB input download and the `await` that drained the queue. Measured at 1024²: 42-51 ms of main-thread freeze per denoise → none above 12 ms; whole denoise 70 → 48 ms (`high` 330 → 193). Pixel parity with the JS it replaced: max 1/255 across 3.1M channels.
 - ~~No app-side toggle for the cadence.~~ **Done.** OIDN is an entry in the `Real-Time Denoiser` list (None / EdgeAware / ASVGF / NRD / OIDN) — only one thing denoises the live view, since two would mean paying for a per-frame denoise the OIDN overlay then covers (measured waste: +2% NRD, +4% ASVGF, +35% EdgeAware). The switch, relabelled `Final Denoise (OIDN)`, independently controls the pass on the finished image; all six combinations are reachable and distinct. Three earlier shapes were tried and rejected: a three-way OIDN dropdown (read as a second real-time denoiser), a nested `Update While Rendering` switch (still allowed both at once), and the same list but with the two controls wired to each other (picking OIDN flipped the switch, so you could never have OIDN live without the final pass).
 
+- ~~Two canvases: the path tracer's WebGPU canvas with a 2D one stacked over it for OIDN.~~ **Done.**
+  OIDN now hands its result to the pipeline as a picture (`oidn:output`) exactly as ASVGF, NRD and
+  EdgeAware do, and the Compositor draws it on the single canvas. That deleted the readback, the
+  second copy of the tone curve (`ToneMapWGSL.js`, gone — the note above it is history), the
+  reveal/hide/opacity/latch rules, and the mid-render screenshot mismatch (`getCanvas()` returned
+  the raw render while the viewport showed a clean one). Colour parity with the two-canvas build:
+  mean within 0.3/255. The 2D canvas stays for the AI upscaler alone, which works in ordinary
+  pixels and shows a picture larger than the render.
+
 Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is fastest on Apple; Spatial is 0.57×), engine: 'webnn' (no WebGPU interop in Chrome), modelSpec (our blobs validate against the built-ins), dynamicTile (correctly pinned off).
 
 

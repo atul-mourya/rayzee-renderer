@@ -30,6 +30,10 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'pathtracer' );
 
+// How long after the last move the view still counts as moving. Matches CameraOptimizer's own
+// settle delay, so the answer does not change when interaction mode is switched off.
+const VIEW_SETTLE_MS = 100;
+
 /**
  * Data layout constants
  */
@@ -163,6 +167,8 @@ export class PathTracerStage extends RenderStage {
 
 		// Track changes for event emission
 		this.cameraChanged = false;
+		// When the view was last moved, for viewIsChanging.
+		this._lastViewChangeAt = - Infinity;
 
 		// Update completion threshold
 		this.updateCompletionThreshold();
@@ -701,6 +707,25 @@ export class PathTracerStage extends RenderStage {
 	get interactionMode() {
 
 		return this.cameraOptimizer?.isInInteractionMode() ?? false;
+
+	}
+
+	/**
+	 * Whether the view is being moved right now — the camera or a gizmo — whether or not interaction
+	 * mode is on. Interaction mode answers a narrower question (may quality be reduced) and is a
+	 * switch a host can turn off; what a denoiser needs to know is only whether this frame is about
+	 * to be thrown away by the next move.
+	 */
+	get viewIsChanging() {
+
+		return this.interactionMode || performance.now() - this._lastViewChangeAt < VIEW_SETTLE_MS;
+
+	}
+
+	// Called by the host loop on a frame whose reset came from the view moving.
+	noteViewChanged() {
+
+		this._lastViewChangeAt = performance.now();
 
 	}
 
