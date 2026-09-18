@@ -127,6 +127,8 @@ export class DenoisingManager extends EventDispatcher {
 		this._lastCadenceSamples = 0;
 		// Consecutive refreshes that delivered nothing, for the held-frame health check.
 		this._failedRefreshes = 0;
+		// A final render suspends the live-view refresh without forgetting that the host chose it.
+		this._cadenceSuspended = false;
 		// Refresh timings from the current camera move, and whether this resolution has already
 		// proved far too slow to navigate denoised.
 		this._movingDenoiseMs = [];
@@ -595,7 +597,7 @@ export class DenoisingManager extends EventDispatcher {
 	get holdsWhileMoving() {
 
 		if ( ! this._stages.pathTracer?.viewIsChanging ) return false;
-		if ( ! this.continuousDenoise || ! this.denoiser?.enabled ) return false;
+		if ( ! this.continuousDenoise || this._cadenceSuspended || ! this.denoiser?.enabled ) return false;
 		if ( this._movingHopeless ) return false;
 
 		const best = this.movingCostMs;
@@ -672,7 +674,7 @@ export class DenoisingManager extends EventDispatcher {
 	tickContinuousDenoise( sampleCount ) {
 
 		const dn = this.denoiser;
-		if ( ! this.continuousDenoise || ! dn ) return false;
+		if ( ! this.continuousDenoise || this._cadenceSuspended || ! dn ) return false;
 
 		this._checkHeldFrameHealthy();
 
@@ -737,6 +739,27 @@ export class DenoisingManager extends EventDispatcher {
 	previewQuality() {
 
 		return this.denoiser?.expectsCleanAux( this._finalQuality ) ? 'fast-clean' : 'fast';
+
+	}
+
+	/**
+	 * Stops the live-view refresh for the duration of a final render, without changing what the
+	 * host picked in the denoiser list. A final render shows the accumulation and denoises once at
+	 * the end, so refreshing through it spends samples on frames nobody keeps — and a refresh
+	 * landing while the renderer resizes itself on the way in raced its output pass, which the
+	 * device reported as a write to a destroyed buffer.
+	 *
+	 * @param {boolean} suspended
+	 */
+	setCadenceSuspended( suspended ) {
+
+		this._cadenceSuspended = !! suspended;
+		if ( ! this._cadenceSuspended ) return;
+
+		// The accumulation is what a final render shows; a held preview frame would otherwise sit
+		// over it until the render finished.
+		this.denoiser?.abort();
+		this._unpublishOutput();
 
 	}
 
@@ -873,7 +896,7 @@ export class DenoisingManager extends EventDispatcher {
 		if ( this.upscaler ) this.upscaler.abort();
 
 		const moving = !! this._stages.pathTracer?.viewIsChanging;
-		const hold = keepDisplay && this.continuousDenoise && !! this.denoiser?.hasOutput
+		const hold = keepDisplay && this.continuousDenoise && ! this._cadenceSuspended && !! this.denoiser?.hasOutput
 			&& ( ! moving || this.holdsWhileMoving );
 
 		if ( this.denoiser && ! hold ) {

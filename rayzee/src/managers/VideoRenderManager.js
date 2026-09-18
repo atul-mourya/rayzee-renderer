@@ -321,6 +321,10 @@ export class VideoRenderManager {
 
 		app.pauseRendering = state.pauseRendering ?? false;
 
+		// configureForMode( 'production' ) suspended the live-view refresh and nothing here switches
+		// back, so the viewport would stay un-denoised until the host changed tab.
+		app.denoisingManager?.setCadenceSuspended( false );
+
 		// Stop animation playback that seekTo may have started
 		app.animationManager?.stop();
 

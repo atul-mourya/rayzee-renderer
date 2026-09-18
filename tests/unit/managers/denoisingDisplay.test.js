@@ -155,6 +155,23 @@ describe( 'DenoisingManager — what the compositor is told to show', () => {
 
 	} );
 
+	// A final render shows the accumulation and denoises once at the end.
+	it( 'takes it away when a final render suspends the live refresh', () => {
+
+		const { manager, shown } = makeManager();
+
+		manager.setCadenceSuspended( true );
+
+		expect( shown() ).toBe( 'raw' );
+		expect( manager.tickContinuousDenoise( 1 ) ).toBe( false );
+
+		// And the host's own choice is untouched, so leaving the final render restores it.
+		expect( manager.continuousDenoise ).toBe( true );
+		manager.setCadenceSuspended( false );
+		expect( manager.tickContinuousDenoise( 1 ) ).toBe( true );
+
+	} );
+
 	it( 'hides the upscaler canvas on any reset — its enlarged result is stale too', () => {
 
 		const { manager, mainCanvas } = makeManager();

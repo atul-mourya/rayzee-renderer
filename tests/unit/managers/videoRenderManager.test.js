@@ -82,6 +82,7 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 			oidnQuality: 'fast',
 			applyOIDNEnabled: vi.fn(),
 			applyOIDNQuality: vi.fn(),
+			setCadenceSuspended: vi.fn(),
 			abort: vi.fn(),
 			upscaler: { abort: vi.fn() },
 		},

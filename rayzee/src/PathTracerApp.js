@@ -1881,6 +1881,10 @@ export class PathTracerApp extends EventDispatcher {
 		const isProduction = mode === 'production';
 		const config = isProduction ? PRODUCTION_RENDER_CONFIG : INTERACTIVE_RENDER_CONFIG;
 
+		// First, before anything below can wake the loop or resize the renderer: a live-view
+		// refresh landing in the middle of that raced the renderer's own output pass.
+		this.denoisingManager?.setCadenceSuspended( isProduction );
+
 		this.cameraManager.controls.enabled = ! isProduction;
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
