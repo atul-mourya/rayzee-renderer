@@ -30,6 +30,8 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [engine.denoisingManager](#enginedenoisingmanager)
   - [engine.interactionManager](#engineinteractionmanager)
   - [engine.transformManager](#enginetransformmanager)
+  - [Moving and Deforming Objects](#moving-and-deforming-objects)
+  - [Degradation contract](#degradation-contract)
   - [Output Methods](#output-methods)
   - [Render Resolution Reserve](#render-resolution-reserve)
   - [Memory Monitoring](#memory-monitoring)
@@ -309,6 +311,9 @@ const engine = new PathTracerApp(canvas, options?)
 | `canvas` | `HTMLCanvasElement` | Rendering target |
 | `options.autoResize` | `boolean` | Auto-resize on window resize (default: `true`) |
 | `options.container` | `HTMLElement` | Single DOM parent the engine mounts auxiliary elements into — HUD overlay (tile borders, helpers) and denoiser canvas. Defaults to `canvas.parentNode`. |
+| `options.strict` | `boolean` | Throw an `EngineIssueError` where the engine would otherwise degrade and carry on (default: `false`). See [Degradation contract](#degradation-contract). |
+| `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
+| `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
 
 The engine creates and mounts everything it needs (denoiser canvas, tile/HUD overlay) into a single parent on `init()`. Performance HUDs (e.g. `stats-gl`) are not bundled — listen to `EngineEvents.FRAME` and tick your own panel.
 
@@ -348,6 +353,41 @@ engine.setSceneObjectVisibility(id, visible)                      // Toggle visi
 `engine.sceneModel` is the root of what is actually being rendered — for `loadObject3D` that is the engine's copy, and it is the object to mutate before `refitBVH()`.
 
 `id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. For `addModelFromObject3D` the engine carries your object's uuid onto its copy, so the id matches the object you passed. The built-in ground plane is permanent and can't be removed.
+
+##### Loading part of a scene archive
+
+A pbrt-v4 scene archive (`.tar`, `.tar.gz`, `.zip`) is usually a root `.pbrt` file that includes one
+subtree per element, and the whole thing rarely fits in a browser tab — Moana is 29 GB unpacked.
+The archive can be inspected without retaining any of it, then loaded one element at a time:
+
+```js
+const { kind, root, elements, entryCount, totalBytes } = await engine.inspectArchive(file);
+
+await engine.loadFile(file, { element: elements[0].path });   // one element
+await engine.loadFile(file, { element: [ a.path, b.path ] }); // several together
+```
+
+Everything above a chosen element comes along — the root scene file, the material library, an
+ancestor's `textures` folder — and an `Include` pointing at an element you left out only warns,
+which is what makes a partial load work. Selecting every element is a valid answer and loads the
+whole scene.
+
+Past 4 GB unpacked, a multi-element archive **throws** `ARCHIVE_NEEDS_ELEMENT` rather than taking
+all of it. The error carries the element list, so a host can turn it into a picker:
+
+```js
+try {
+  await engine.loadFile(file);
+} catch (err) {
+  if (err.code === 'ARCHIVE_NEEDS_ELEMENT') showPicker(err.elements, err.root, err.totalBytes);
+  else throw err;
+}
+```
+
+Per-load options for pbrt archives: `promptBytes` moves that 4 GB line, `maxTriangles` (default
+45M) and `maxPlacements` (default 6M) cap the build — past either, placements are skipped and the
+build reports itself truncated. 45M is the highest rung measured to survive; raising it is a
+deliberate act on a fresh browser tab.
 
 #### Settings
 
@@ -575,6 +615,88 @@ engine.transformManager.setSpace('world')    // 'world' | 'local'
 engine.transformManager.controls             // Access the underlying TransformControls
 ```
 
+### Moving and Deforming Objects
+
+Three calls update a loaded scene without rebuilding it. They differ in how much work they do, and
+picking the wrong one is the usual source of trouble.
+
+```js
+engine.updateMeshTransforms(meshIndices)            // an object moved, rotated or scaled
+engine.refitBLASes(meshIndices, positions)          // specific objects' vertices changed
+await engine.refitBVH(positions)                    // the whole scene is posed anew, e.g. animation
+```
+
+**`updateMeshTransforms` is the one a gizmo drag wants.** Triangles are stored in each object's own
+space, so a rigid move only rewrites a matrix — no vertex pass, no geometry upload. Using
+`refitBLASes` for a move instead rewrites vertices needlessly, and drags along any other object
+sharing the same geometry.
+
+All three take **indices into `engine.sceneMeshes`**, which is a depth-first walk of the rendered
+scene and includes the engine's own hidden ground disk. Build your index list from that array, never
+from your own model root, or the two orders silently disagree.
+
+Positions are **world space**, 9 floats per triangle (`ax,ay,az, bx,by,bz, cx,cy,cz`), triangles in
+index order. Two shapes are accepted:
+
+```js
+// Preferred: a per-mesh callback, asked for one mesh at a time. You may hand back the same
+// scratch buffer on every call.
+await engine.refitBVH((meshIndex, triCount) => myPositionsFor(meshIndex));
+
+// Also works: one array for every triangle in the scene, meshes in sceneMeshes order.
+// 1,030 MB at 30M triangles, and will not allocate at that size — prefer the callback.
+await engine.refitBVH(sceneWideFloat32Array);
+```
+
+Both shapes are length-checked and throw on a mismatch. Before that check existed, a short buffer
+wrote NaN through every bounding box with no error and the scene simply vanished.
+
+An object that shares its geometry with another cannot be deformed — writing its vertices would
+move every copy. `refitBLASes` skips such a mesh and records a `refit.shared_geometry` issue.
+Anything skinned or morphed is given triangles of its own at load, so this only fires when the
+wrong mesh was handed over.
+
+---
+
+### Degradation contract
+
+The engine degrades rather than fails, which is right for a viewer and backwards for a batch
+renderer, so one option decides which you get:
+
+```js
+const engine = new PathTracerApp(canvas, { strict: true });  // throw at the point of degradation
+```
+
+Lenient hosts read the log instead:
+
+```js
+engine.issues        // every recorded issue, newest last
+engine.issueErrors   // just the ones a strict host would have thrown on
+engine.addEventListener(EngineEvents.ISSUE, ({ issue }) => report(issue));
+```
+
+Each issue carries `{ code, message, detail, severity, at }`. `ISSUE_CODES` is **add-only API
+surface** — pin a version and branch on the strings; they are never renamed or repurposed.
+
+| Code | Raised when |
+|---|---|
+| `adapter.software` | the GPU is a software rasteriser (SwiftShader, llvmpipe, lavapipe, WARP) |
+| `asset.unreachable` / `asset.ambiguous_entry` | the asset could not be fetched, or an archive held several candidate models |
+| `asset.archive_too_large` / `asset.entry_too_large` | an archive or one of its entries exceeded the byte budget |
+| `texture.build_failed` / `texture.processing_fallback` / `texture.limit_exceeded` | a texture could not be built, fell back to a slower path, or exceeded the per-map-type cap |
+| `environment.load_failed` | the environment map failed to load |
+| `setting.unknown_key` | a setting name reached no stage — how a typo becomes a wrong image |
+| `render.size_declined` / `render.reserve_capped` | the requested render size or reserve exceeded device limits |
+| `stage.render_failed` | a pipeline stage threw (recorded once per stage and phase) |
+| `scene.memory_budget` | the scene needs more CPU memory than is safe, or more than is possible |
+| `emissive.instances_collapsed` | an emissive instanced mesh was too large to expand, so its copies light the scene as one |
+| `refit.shared_geometry` | a deform was asked for on a mesh that shares its triangles, and was skipped |
+
+`settings.getEffective()` is the companion for the `setting.unknown_key` case: it returns every live
+setting as `{ value, source, routed }`, and `routed: false` means stored but reaching no stage.
+
+---
+
 ### Output Methods
 
 Canvas output, screenshots, and scene statistics — accessed as direct methods on the engine.
@@ -648,6 +770,33 @@ engine.vram.getReport();   // formatted one-line summary string
 `peak` is a high-water mark, reset when a final render begins (`configureForMode('production')`). The engine's VRAM is largely monotonic — the ray pool only grows and the per-stage storage textures are fixed-size — so `peak` equals `current` during a steady render and only exceeds it after memory is released (lower resolution, a smaller scene, or removing the HDRI). The `stages` + `accum` categories (fixed 2048² storage textures) dominate the baseline.
 
 The React app surfaces this as a `Memory: … | Peak: …` readout in the on-canvas stats overlay.
+
+#### CPU memory
+
+The wall a large scene hits is not VRAM, it is contiguous `ArrayBuffer` address space on the CPU —
+and how much of it a browser can still hand out falls as the tab stays up, so the same scene can
+load after a restart and fail after a long session.
+
+```js
+const { preflight, allocatedBytes, peakLiveBytes, byPhase, samples } = engine.getHostMemoryInfo();
+// null until a scene has been built
+```
+
+⚠️ Do not use `performance.memory.usedJSHeapSize` for this. It does not count `SharedArrayBuffer`,
+and the triangle and node stores are SAB-backed, so the browser's own reading under-reports a large
+scene by gigabytes.
+
+Before extraction the engine prices the scene and applies two lines, both recording
+`scene.memory_budget`:
+
+| Estimate | What happens |
+|---|---|
+| above ~7,040 MB | warns, and builds anyway |
+| above ~9,216 MB | **throws** — past this the renderer process is killed rather than throwing an error you could catch, so refusing early is the only useful answer |
+
+Raise or lower the hard line with `new PathTracerApp(canvas, { maxSceneBytes })`. The estimate runs
+low at the very top of its range, so the per-load `maxTriangles` cap (45M) is the more reliable
+guard on a scene of that size.
 
 ---
 
@@ -827,6 +976,21 @@ import {
 
 // VRAM accounting (VRAMTracker is also reachable as engine.vram)
 import { VRAMTracker, bufferBytes, textureBytes } from 'rayzee';
+
+// Degradation contract — see above. ISSUE_CODES is add-only; pin a version and branch on it.
+import { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from 'rayzee';
+
+// CPU memory: price a scene before loading it, or measure what can still be placed
+import {
+  MemoryLedger,
+  estimateSceneBytes,
+  probeAddressSpace,
+  SAFE_SCENE_BYTES,
+  MAX_SCENE_BYTES,
+} from 'rayzee';
+
+// Adapter description — flags software rasterisers (SwiftShader, llvmpipe, lavapipe, WARP)
+import { describeAdapter } from 'rayzee';
 
 // Dev-only: texture-binding aliasing guard. Two TextureNodes still holding the default
 // EmptyTexture when a kernel is first compiled can share one GPU binding — nothing throws,

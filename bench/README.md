@@ -444,7 +444,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Twenty-one scenes, one failure axis each — fourteen image scenes plus seven `furnace-*` energy
+Twenty-seven scenes, one failure axis each — seventeen image scenes plus ten `furnace-*` energy
 probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
@@ -463,6 +463,9 @@ probes. `npm run bench:list` prints them with what they cover.
 | `sheen-velvet` | sheen distribution across roughness, coloured sheen, base-layer attenuation |
 | `clearcoat-carpaint` | coat Fresnel and coat roughness over a rough base, the `clearcoat > 0.5` threshold |
 | `alpha-cutout` | alpha MASK and BLEND on camera *and* shadow rays, transmittance attenuation |
+| `arealight-analytic` | analytic area light against closed-form irradiance — power→radiance convention, spherical-rectangle NEE, NEE/BSDF MIS, shadow-ray origin |
+| `arealights-two` | two area lights of unequal size, power, shape and spread — reservoir selection, per-light MIS, disk sampling, spread attenuation |
+| `instanced-storage` | object-space shared geometry, InstancedMesh placements, a mirrored placement's winding, an emissive geometry placed twice — the storage paths every other scene skips |
 | `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
 | `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
 | `furnace-metal-mid` | metal multiscatter compensation overshoot at mid roughness |
@@ -470,6 +473,9 @@ probes. `npm run bench:list` prints them with what they cover.
 | `furnace-clearcoat` | clearcoat layer energy on top of the base |
 | `furnace-sheen` | sheen lobe energy and base-layer attenuation |
 | `furnace-iridescence` | thin-film energy across the film-thickness range |
+| `furnace-multibounce` | multi-bounce transport — Russian-roulette compensation, NEE/MIS under occlusion |
+| `furnace-lowpoly-16` | shading-normal energy loss at 16-segment tessellation |
+| `furnace-lowpoly-32` | the same at 32 segments — the pair separates tessellation from the shading model |
 
 Everything is built from three.js primitives, procedural `DataTexture`s and a procedural
 environment, so the corpus needs no network and cannot change when the asset host does. Texture

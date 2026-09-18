@@ -107,6 +107,8 @@
   - [x] BVH with SAH splitting and treelet optimization
   - [x] Two-level BVH (TLAS/BLAS) with per-mesh refit for transforms
   - [x] O(N) bottom-up BVH refit for animated geometry (worker + SharedArrayBuffer)
+  - [x] Object-space shared geometry placed by matrix, with single-use and emissive geometry baked to world space
+  - [x] Scene storage past the ~2 GB array ceiling (chunked triangle and node records)
   - [ ] GPU-accelerated BVH construction (compute shader)
   - [x] Dynamic BVH updates for animated scenes
   - [ ] Ray frustum culling
@@ -233,6 +235,7 @@
 - **Q4 2025:** ~~Compute shaders & denoiser~~ ✅ ASVGF/OIDN GPU-native denoising, compute bilateral filtering, MIS pipeline
 - **Q1 2026:** ~~Wavefront rewrite~~ ✅ Wavefront compute path tracer, subsurface scattering, two-level BVH (TLAS/BLAS), size-bucketed texture arrays, VRAM tracking
 - **Q2 2026:** ~~Content & assets~~ ✅ Sketchfab/PolyHaven asset browsers, dynamic scene add/remove, AI super-resolution upscaling, PBRT-v4 loader, screen-space radiance cache, GPU device-loss recovery
+- **Q3 2026:** ~~Large scenes~~ ✅ Instanced object-space geometry, chunked storage past the 2 GB array ceiling, partial loading of multi-gigabyte scene archives, CPU memory preflight
 - **Q3 2026:** Mobile optimization (pending)
 
 ---

@@ -25,6 +25,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 
 - **Wavefront path tracer** — decomposed `generate → extend → shade → compact` compute kernels with stream compaction, driving a Monte Carlo core with configurable multi-bounce transport and progressive accumulation
 - **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
+- **Instanced geometry** — a geometry used by several objects is stored once in its own space and placed by matrix, so a scene of repeated furniture costs one copy rather than one per placement; geometry used once, or geometry that emits light, is baked to world space instead so rays skip the transform entirely
 - **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders, running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
@@ -32,6 +33,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **360° equirectangular panorama** camera projection, with longitude/latitude range cropping and a level-horizon option
 - **Interaction Mode** — automatically drops quality during camera movement and restores full fidelity the moment you stop, keeping navigation responsive
 - **Broad asset support** — GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, and USDZ models; HDR/EXR environments; ZIP archives with automatic model detection
+- **Scenes larger than memory** — a pbrt-v4 archive of tens of gigabytes can be inspected without unpacking it and loaded one element at a time; triangle and node storage is chunked past the browser's ~2 GB single-array ceiling, and a CPU memory preflight refuses a scene that would kill the tab rather than letting it die mid-build
 - **Multiple tone-mapping operators** (ACES, AgX, Reinhard, and more) with automatic exposure adjustment
 
 ## Tech Stack
