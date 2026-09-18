@@ -183,23 +183,15 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * @param {import('three/webgpu').WebGPURenderer} renderer
-	 * @param {import('three').Scene} scene
-	 * @param {import('three').Camera} camera
 	 * @param {Object} [options]
 	 */
-	constructor( renderer, scene, camera, options = {} ) {
+	constructor( renderer, options = {} ) {
 
 		super();
 
-		if ( ! renderer || ! scene || ! camera ) {
-
-			throw new Error( 'OIDNDenoiser requires renderer, scene, and camera' );
-
-		}
+		if ( ! renderer ) throw new Error( 'OIDNDenoiser requires a renderer' );
 
 		this.renderer = renderer;
-		this.scene = scene;
-		this.camera = camera;
 		// The size everything is measured in. The denoiser paints no canvas: its result is a
 		// picture handed to the pipeline, so this is the only size it knows.
 		this._renderWidth = renderer.domElement.width;
@@ -210,7 +202,6 @@ export class OIDNDenoiser extends EventDispatcher {
 		// getGPUTextures: () => { color: GPUTexture, albedo: GPUTexture, normal: GPUTexture }
 		this.backendParamsGetter = options.backendParams || null;
 		this.getGPUTextures = options.getGPUTextures || null;
-		this.isGPUMode = !! this.backendParamsGetter;
 		this.gpuDevice = null;
 
 		// Cached GPU storage buffers for texture→buffer copies (reused across denoise calls)
@@ -440,7 +431,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// GPU-native path: share the existing GPUDevice so oidn-web uses the
 		// same device as the renderer — no second device, no CPU roundtrip for inputs.
 		let backendParams;
-		if ( this.isGPUMode && this.backendParamsGetter ) {
+		if ( this.backendParamsGetter ) {
 
 			const params = this.backendParamsGetter();
 			this.gpuDevice = params?.device ?? null;
@@ -570,8 +561,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		try {
 
 			// The GPU path bails out early — no textures yet, no device — by returning false, and
-			// a caller that read that as success latched an output canvas nothing ever painted.
-			return await this._executeUNet( continuous ) !== false;
+			// a caller that read that as success published a picture nothing had written to.
+			return await this._executeUNetGPU( continuous ) !== false;
 
 		} catch ( error ) {
 
@@ -601,12 +592,6 @@ export class OIDNDenoiser extends EventDispatcher {
 			this.dispatchEvent( { type: 'end', continuous } );
 
 		}
-
-	}
-
-	async _executeUNet( continuous = false ) {
-
-		return this._executeUNetGPU( continuous );
 
 	}
 
@@ -1122,8 +1107,8 @@ export class OIDNDenoiser extends EventDispatcher {
 						// tile straight into the output picture, and tiles cover the image exactly.
 						if ( this._tilesWritten === 0 ) this._displayGPUOutput( output );
 
-						// DENOISING_END (which gates screenshot/video capture) fires only after this resolves,
-						// so the captured canvas is always complete.
+						// DENOISING_END (which gates screenshot/video capture) fires only after this
+						// resolves, so what a capture reads is always a complete picture.
 						resolve();
 
 					} catch ( err ) {

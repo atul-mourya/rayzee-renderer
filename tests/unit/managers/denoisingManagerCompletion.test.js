@@ -51,7 +51,7 @@ const makeManager = () => {
 
 	const canvas = { parentNode: null, width: 8, height: 8, style: {} };
 	const manager = new DenoisingManager( {
-		renderer: {}, mainCanvas: canvas, scene: {}, camera: {}, stages: {}, pipeline: {},
+		renderer: {}, mainCanvas: canvas, stages: {}, pipeline: {},
 		getExposure: () => 1, getSaturation: () => 1, getTransparentBg: () => false,
 	} );
 	manager.denoiser = new StubDenoiser();

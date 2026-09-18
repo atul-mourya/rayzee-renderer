@@ -330,8 +330,26 @@ const handleChange = (setter, appUpdater, needsReset = true) => val => {
 Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never use store setters directly for render parameters — always use provided handlers like `handleBouncesChange`, `handleSamplesChange`.
 
 ### Denoising Pipeline Coordination
-**Temporal filtering coordination**:
-- ASVGF (real-time) vs OIDN (final quality) - never both simultaneously
+- **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (None / EdgeAware /
+  ASVGF / NRD / **OIDN**), and `Final Denoise (OIDN)` is the separate question of whether the
+  finished image gets a pass. Two live denoisers would mean paying for one whose result the other
+  covers.
+- **Every denoiser publishes a texture; the Compositor picks the newest.** `asvgf:output`,
+  `nrd:output`, `edgeFiltering:output`, `oidn:output` — `Compositor._resolveSourceTexture()` is the
+  priority chain and `DenoisingManager._clearDenoiserTextures()` is the list that wipes them. There
+  is one canvas: OIDN writes its result into a picture on the card (`ExternalTexture` wrapping a raw
+  `GPUTexture`) rather than painting a second canvas. The only other canvas belongs to the **AI
+  upscaler**, which works in ordinary pixels and shows a picture larger than the render.
+- ⚠️ **"Hold the last clean frame" is not a rule, it is the absence of one**: while `oidn:output` is
+  published the Compositor keeps drawing it, so a reset shows the previous denoised frame instead of
+  dropping to noise. `abort( canvas, { keepDisplay } )` decides whether it stays.
+- ⚠️ **`animate()` does not always trace.** While the view is moving and a denoise is in flight, the
+  frame is skipped (`DenoisingManager.skipsTrace()`): accumulation is off, the canvas shows the
+  denoised picture, and the next denoise reads the newest frame — so tracing it only starves the
+  denoise. Measured inside a room at 512²: 19 → 42 refreshes/sec.
+- A **final render suspends the live refresh** (`setCadenceSuspended`, first statement of
+  `configureForMode`): it shows its own accumulation and denoises once at the end. Leaving it running
+  denoised the image twice and raced the renderer's output-pass rebuild.
 - EdgeAware filtering disabled when ASVGF enabled
 - Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
 

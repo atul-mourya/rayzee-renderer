@@ -3293,8 +3293,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.denoisingManager = new DenoisingManager( {
 			renderer: this.renderer,
 			mainCanvas: this.canvas,
-			scene: this.scene,
-			camera: this.cameraManager.camera,
 			stages: {
 				pathTracer: this.stages.pathTracer,
 				normalDepth: this.stages.normalDepth,

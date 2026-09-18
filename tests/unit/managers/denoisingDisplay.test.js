@@ -38,8 +38,6 @@ function makeManager( denoiserOpts ) {
 	const manager = new DenoisingManager( {
 		renderer: {},
 		mainCanvas,
-		scene: {},
-		camera: {},
 		stages: { pathTracer: { setAuxGBufferEnabled: vi.fn(), setCleanAuxNormal: vi.fn() } },
 		pipeline: { context: {
 			setTexture: ( k, v ) => textures.set( k, v ),

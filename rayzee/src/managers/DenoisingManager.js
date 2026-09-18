@@ -85,22 +85,18 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {Object} params
 	 * @param {import('three/webgpu').WebGPURenderer} params.renderer
 	 * @param {HTMLCanvasElement}                      params.mainCanvas  - The primary rendering canvas
-	 * @param {import('three').Scene}                  params.scene
-	 * @param {import('three').PerspectiveCamera}      params.camera
 	 * @param {Object}                                 params.stages     - Named references to pipeline stages
 	 * @param {import('../Pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
 	 */
-	constructor( { renderer, mainCanvas, scene, camera, stages, pipeline, getExposure, getSaturation } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation } ) {
 
 		super();
 
 		this.renderer = renderer;
 		this.mainCanvas = mainCanvas;
 		this.upscalerCanvas = this._createUpscalerCanvas( mainCanvas );
-		this.scene = scene;
-		this.camera = camera;
 		this.pipeline = pipeline;
 
 		// Stage references — only used internally for orchestration
@@ -251,7 +247,7 @@ export class DenoisingManager extends EventDispatcher {
 		// No canvas: the denoiser hands its result to the pipeline as a picture, and the
 		// Compositor decides what the single canvas shows. The exposure, grade and tone curve
 		// come from the renderer's own output pass, so it is not told about them either.
-		this.denoiser = new OIDNDenoiser( this.renderer, this.scene, this.camera, {
+		this.denoiser = new OIDNDenoiser( this.renderer, {
 			...DEFAULT_STATE,
 
 			backendParams: () => ( {
