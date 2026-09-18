@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Loader2 } from "lucide-react";
+import { Loader2, AlertTriangle } from "lucide-react";
 import { useStore } from '@/store';
 import { Progress } from "@/components/ui/progress";
 import { getApp } from '@/lib/appProxy';
@@ -118,18 +118,28 @@ const LoadingOverlay = ( {
 			: formatBytes( loading.loadedBytes ) )
 		: `${progressAnimation}%`;
 
+	// A build that gave up should not keep spinning at 100%: the scene-memory preflight refuses
+	// large scenes on purpose, and a refusal that looks like a hang reads as a bug.
+	const failed = loading.failed === true;
+
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center">
 			<div className="absolute inset-0 bg-background/80 backdrop-blur-xs" />
 			<div className="relative flex flex-col items-center space-y-6 p-6 rounded-lg bg-card shadow-lg">
 				<div className="relative">
-					<div className="absolute -inset-1 bg-linear-to-r from-primary to-primary-foreground opacity-75 blur-lg" />
-					<Loader2 className="relative h-12 w-12 animate-spin text-primary" />
+					{failed ? (
+						<AlertTriangle className="relative h-12 w-12 text-destructive" />
+					) : (
+						<>
+							<div className="absolute -inset-1 bg-linear-to-r from-primary to-primary-foreground opacity-75 blur-lg" />
+							<Loader2 className="relative h-12 w-12 animate-spin text-primary" />
+						</>
+					)}
 				</div>
 
 				<div className="flex flex-col items-center gap-4">
-					<p className="text-xl font-semibold text-foreground animate-pulse">
-						{loading.title || 'Loading'}
+					<p className={`text-xl font-semibold ${failed ? 'text-destructive' : 'text-foreground animate-pulse'}`}>
+						{failed ? ( loading.failedTitle || "Couldn't load" ) : ( loading.title || 'Loading' )}
 					</p>
 
 					{showStatus && loading.status && (
@@ -138,7 +148,17 @@ const LoadingOverlay = ( {
 						</p>
 					)}
 
-					{showProgress && loading.progress > 0 && (
+					{failed && (
+						<button
+							type="button"
+							onClick={() => useStore.getState().setLoading( { isLoading: false } )}
+							className="text-xs text-muted-foreground transition-colors hover:text-foreground underline-offset-4 hover:underline"
+						>
+							Dismiss
+						</button>
+					)}
+
+					{! failed && showProgress && loading.progress > 0 && (
 						<div className="w-64">
 							<Progress value={progressAnimation} className="h-2" />
 							<div className="flex justify-between text-xs text-muted-foreground mt-2 w-full tabular-nums">
@@ -149,7 +169,7 @@ const LoadingOverlay = ( {
 					)}
 
 					{/* Show hint during heavy processing phases */}
-					{loading.status && ( loading.status.includes( 'Building BVH' ) || loading.status.includes( 'Processing Textures' ) ) && (
+					{! failed && loading.status && ( loading.status.includes( 'Building BVH' ) || loading.status.includes( 'Processing Textures' ) ) && (
 						<p className="text-xs text-muted-foreground -mt-1">
 							{loading.progress < 100
 								? "This may take a while for large models..."
@@ -157,7 +177,7 @@ const LoadingOverlay = ( {
 						</p>
 					)}
 
-					{loading.canCancel && (
+					{! failed && loading.canCancel && (
 						<button
 							type="button"
 							onClick={handleCancel}

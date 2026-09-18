@@ -258,11 +258,15 @@ describe( 'AnimationManager', () => {
 
 		} );
 
-		it( 'allocates position buffer', () => {
+		it( 'allocates no position storage until a mesh is skinned', () => {
 
 			manager.init( mockScene, mockMixerRoot, mockMeshes, mockAnimations );
-			expect( manager._posBuffer ).toBeInstanceOf( Float32Array );
-			expect( manager._posBuffer.length ).toBe( 9 );
+			expect( manager._meshPositions ).toEqual( [] );
+			expect( manager._skinnedCache ).toEqual( [] );
+
+			manager._computeMeshPositions( 0 );
+			expect( manager._meshPositions[ 0 ] ).toBeInstanceOf( Float32Array );
+			expect( manager._meshPositions[ 0 ].length ).toBe( 9 ); // that mesh alone
 
 		} );
 
@@ -395,8 +399,10 @@ describe( 'AnimationManager', () => {
 			manager.init( mockScene, mockMixerRoot, mockMeshes, mockAnimations );
 			manager.play( 0 );
 			const result = manager.update();
-			expect( result ).toBeInstanceOf( Float32Array );
-			expect( result.length ).toBe( 9 );
+			// A per-mesh reader, not one buffer for the scene.
+			expect( typeof result ).toBe( 'function' );
+			expect( result( 0 ) ).toBeInstanceOf( Float32Array );
+			expect( result( 0 ).length ).toBe( 9 );
 
 		} );
 
@@ -423,8 +429,8 @@ describe( 'AnimationManager', () => {
 
 			manager.init( mockScene, mockMixerRoot, mockMeshes, mockAnimations );
 			const result = manager.seekTo( 1.0, 0 );
-			expect( result ).toBeInstanceOf( Float32Array );
-			expect( result.length ).toBe( 9 );
+			expect( typeof result ).toBe( 'function' );
+			expect( result( 0 ) ).toHaveLength( 9 );
 			expect( manager.mixer.time ).toBe( 1.0 );
 
 		} );
@@ -459,7 +465,7 @@ describe( 'AnimationManager', () => {
 			manager.init( mockScene, mockMixerRoot, mockMeshes, mockAnimations );
 			manager.stop();
 			const result = manager.seekTo( 0.5 );
-			expect( result ).toBeInstanceOf( Float32Array );
+			expect( typeof result ).toBe( 'function' );
 
 		} );
 
@@ -474,7 +480,7 @@ describe( 'AnimationManager', () => {
 			expect( manager.mixer ).toBeNull();
 			expect( manager.actions ).toHaveLength( 0 );
 			expect( manager.isPlaying ).toBe( false );
-			expect( manager._posBuffer ).toBeNull();
+			expect( manager._meshPositions ).toBeNull();
 
 		} );
 

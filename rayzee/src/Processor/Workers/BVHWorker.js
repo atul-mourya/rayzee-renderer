@@ -3,7 +3,7 @@ import { createLogger, fmt, applyWorkerLogLevel } from '../../utils/Logger.js';
 
 const log = createLogger( 'bvh' );
 
-const FPT = 32; // FLOATS_PER_TRIANGLE
+const FPT = 20; // FLOATS_PER_TRIANGLE — the record is uint lanes, not floats
 
 // --- Message dispatcher ---
 
@@ -60,7 +60,7 @@ function handlePhase1( data ) {
 		} : null;
 
 		// Attach shared buffer views
-		builder.triangles = new Float32Array( sharedTriangleData );
+		builder.triangles = new Uint32Array( sharedTriangleData );
 		builder.centroids = new Float32Array( sharedCentroids );
 		builder.bMin = new Float32Array( sharedBMin );
 		builder.bMax = new Float32Array( sharedBMax );
@@ -148,8 +148,8 @@ function handleAssemble( data ) {
 
 		// Reorder triangles using final indices from SharedArrayBuffer
 		const indices = new Uint32Array( sharedIndices );
-		const src = new Float32Array( sharedTriangleData );
-		const dst = new Float32Array( sharedReorderBuffer );
+		const src = new Uint32Array( sharedTriangleData );
+		const dst = new Uint32Array( sharedReorderBuffer );
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
@@ -219,11 +219,11 @@ function handleFullBuild( data ) {
 		} : null;
 
 		const inputTriangles = triangleByteOffset !== undefined
-			? new Float32Array( triangleData, triangleByteOffset, triangleByteLength / 4 )
-			: new Float32Array( triangleData );
+			? new Uint32Array( triangleData, triangleByteOffset, triangleByteLength / 4 )
+			: new Uint32Array( triangleData );
 
 		const reorderTarget = sharedReorderBuffer
-			? new Float32Array( sharedReorderBuffer )
+			? new Uint32Array( sharedReorderBuffer )
 			: null;
 
 		const bvhRoot = builder.buildSync( inputTriangles, depth, progressCallback, reorderTarget );
@@ -243,21 +243,21 @@ function handleFullBuild( data ) {
 			self.postMessage( {
 				bvhData,
 				originalToBvh,
-				triangleCount: inputTriangles.length / 32,
+				triangleCount: inputTriangles.length / FPT,
 				treeletStats: builder.splitStats
 			}, transferables );
 
 		} else {
 
-			const reorderedFloat32Array = builder.reorderedTriangleData;
-			const triangleCount = reorderedFloat32Array.byteLength / ( 32 * 4 );
+			const reordered = builder.reorderedTriangleData;
+			const triangleCount = reordered.byteLength / ( FPT * 4 );
 
-			const transferables = [ bvhData.buffer, reorderedFloat32Array.buffer ];
+			const transferables = [ bvhData.buffer, reordered.buffer ];
 			if ( originalToBvh ) transferables.push( originalToBvh.buffer );
 
 			self.postMessage( {
 				bvhData,
-				triangles: reorderedFloat32Array,
+				triangles: reordered,
 				originalToBvh,
 				triangleCount,
 				treeletStats: builder.splitStats

@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, mat3, If, max, dot, clamp, select } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, uint, mat3, If, max, dot, clamp, select, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -24,7 +24,7 @@ export const FP16_MAX = 65504.0;
 export const sanitize1 = ( x, ceiling = 1e7 ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, ceiling );
 export const sanitizeRGB = ( c, ceiling = 1e7 ) =>
 	vec3( sanitize1( c.x, ceiling ), sanitize1( c.y, ceiling ), sanitize1( c.z, ceiling ) );
-import { MATERIAL_DATA_LAYOUT } from '../EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT, TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT } from '../EngineDefaults.js';
 
 export const MATERIAL_SLOTS = MATERIAL_DATA_LAYOUT.SLOTS_PER_MATERIAL;
 export const MATERIAL_SLOT = MATERIAL_DATA_LAYOUT.SLOT;
@@ -314,6 +314,52 @@ export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dat
 
 } );
 
+/** uvec4 lanes per triangle record — see TRIANGLE_DATA_LAYOUT. */
+export const TRI_STRIDE = 5;
+
+// Unit normal to an octahedral snorm16 pair; GPU twin of packNormalOct in EngineDefaults.
+export const packNormalOct = /*@__PURE__*/ wgslFn( `
+	fn packNormalOct( n: vec3f ) -> u32 {
+
+		let s = abs( n.x ) + abs( n.y ) + abs( n.z );
+		var p = n.xy / max( s, 1e-20 );
+
+		if ( n.z < 0.0 ) {
+
+			let px = ( 1.0 - abs( p.y ) ) * select( -1.0, 1.0, p.x >= 0.0 );
+			let py = ( 1.0 - abs( p.x ) ) * select( -1.0, 1.0, p.y >= 0.0 );
+			p = vec2f( px, py );
+
+		}
+
+		return pack2x16snorm( p );
+
+	}
+` );
+
+// Octahedral snorm16 pair back to a unit normal; mirrors packNormalOct on the CPU.
+export const unpackTriangleNormal = /*@__PURE__*/ wgslFn( `
+	fn unpackTriangleNormal( packed: u32 ) -> vec3f {
+
+		let e = unpack2x16snorm( packed );
+		var nx = e.x;
+		var ny = e.y;
+		let nz = 1.0 - abs( e.x ) - abs( e.y );
+
+		if ( nz < 0.0 ) {
+
+			let tx = ( 1.0 - abs( ny ) ) * select( -1.0, 1.0, nx >= 0.0 );
+			let ty = ( 1.0 - abs( nx ) ) * select( -1.0, 1.0, ny >= 0.0 );
+			nx = tx;
+			ny = ty;
+
+		}
+
+		return normalize( vec3f( nx, ny, nz ) );
+
+	}
+` );
+
 // Reconstruct mat3 from two vec4s — exact port of GLSL
 export const arrayToMat3 = wgslFn( `
 	fn arrayToMat3( data1: vec4f, data2: vec4f ) -> mat3x3f {
@@ -530,4 +576,91 @@ export const getShadowMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 		albedoTransform: arrayToMat3( { data1: data13, data2: data14 } ),
 	} );
 
+} );
+
+// ================================================================================
+// INSTANCE TRANSFORMS
+// ================================================================================
+
+/**
+ * The three rows of an instance's world-to-object matrix, read off its TLAS leaf.
+ * A BVH node is 16 floats and the BLAS pointer needs four, so the affine inverse
+ * rides along in the rest — no second binding, which matters on a backend that
+ * allows ten storage buffers per stage.
+ */
+// Runtime uniform that toggles alpha-cutout shadows; set by ShaderBuilder before the kernels build.
+let _enableAlphaShadows = null;
+
+export function setAlphaShadowsUniform( node ) {
+
+	_enableAlphaShadows = node;
+
+}
+
+export const getAlphaShadowsUniform = () => _enableAlphaShadows;
+
+// Does a hit on a triangle with these flags settle the shadow ray without a material fetch?
+export const shadowFlagsSettle = ( flags ) => {
+
+	const bit = ( shift ) => flags.shiftRight( uint( shift ) ).bitAnd( uint( 1 ) ).equal( uint( 1 ) );
+	const alphaOff = _enableAlphaShadows ? _enableAlphaShadows.equal( int( 0 ) ) : tslBool( true );
+	return bit( TRI_BLOCKER_SHIFT ).or( bit( TRI_BLOCKER_ALPHA_SHIFT ).and( alphaOff ) );
+
+};
+
+export const instanceRows = ( bvhBuffer, leafIndex ) => [
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),
+	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 3 ), int( 4 ) )
+];
+
+/** Object-space normal to world: transpose of the world-to-object basis. */
+export const instanceNormalToWorld = ( rows, n ) => vec3(
+	vec3( rows[ 0 ].x, rows[ 1 ].x, rows[ 2 ].x ).dot( n ),
+	vec3( rows[ 0 ].y, rows[ 1 ].y, rows[ 2 ].y ).dot( n ),
+	vec3( rows[ 0 ].z, rows[ 1 ].z, rows[ 2 ].z ).dot( n )
+);
+
+/**
+ * A face normal, built from an object-space cross product, put into world space. It takes the
+ * same inverse-transpose as a shading normal, but a mirroring placement reverses which way the
+ * triangle winds, so the sign of the placement's determinant has to come with it or the face
+ * points into the surface instead of out of it.
+ *
+ * Inline nodes rather than a wgslFn: a WGSL function here is a real call in the shade kernel and
+ * measured 0.6 ms per sample on a scene that never even reaches this branch.
+ */
+export const instanceFaceNormalToWorld = ( rows, n ) => {
+
+	const det = rows[ 0 ].xyz.dot( rows[ 1 ].xyz.cross( rows[ 2 ].xyz ) );
+	return instanceNormalToWorld( rows, n ).mul( det.sign() );
+
+};
+
+/**
+ * Object-space direction to world. Tangents transform by the forward matrix, not the
+ * inverse-transpose that normals use, so the 3x3 is inverted here — once per shaded
+ * hit, which is far cheaper than carrying a second matrix through every BVH node.
+ */
+export const instanceDirToWorld = /*@__PURE__*/ wgslFn( `
+	fn instanceDirToWorld( r0: vec3f, r1: vec3f, r2: vec3f, v: vec3f ) -> vec3f {
+
+		// Rows of world-to-object; its inverse has columns cross(r1,r2), cross(r2,r0), cross(r0,r1).
+		let c0 = cross( r1, r2 );
+		let det = dot( r0, c0 );
+		// Relative: for a uniform scale s this determinant is s⁻³, so a fixed floor would call a
+		// heavily scaled-up instance singular and leave the direction untransformed.
+		let magnitude = length( r0 ) * length( r1 ) * length( r2 );
+		if ( abs( det ) <= 1e-12f * magnitude ) { return v; }
+
+		let inv = 1.0f / det;
+		return ( c0 * v.x + cross( r2, r0 ) * v.y + cross( r0, r1 ) * v.z ) * inv;
+
+	}
+` );
+
+/** Object-space point to world: undo the inverse translation, then the inverse basis. */
+export const instancePointToWorld = ( rows, p ) => instanceDirToWorld( {
+	r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz,
+	v: p.sub( vec3( rows[ 0 ].w, rows[ 1 ].w, rows[ 2 ].w ) )
 } );

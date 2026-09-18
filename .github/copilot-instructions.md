@@ -14,16 +14,19 @@
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
 **Execution order matters** - stages run sequentially:
-- **`PathTracingStage.js`**: Core Monte Carlo path tracing with MRT outputs (replaces PathTracerPass)
-- **`ASVGFStage.js`**: Real-time spatiotemporal denoising
-- **`AdaptiveSamplingStage.js`**: Variance-guided sample distribution
-- **`EdgeAwareFilteringStage.js`**: Temporal filtering with edge preservation
+- **`PathTracer.js`** + **`PathTracerStage.js`**: Monte Carlo wavefront path tracing with MRT outputs. `PathTracer` owns the per-frame kernel dispatch; `PathTracerStage` is the shared base holding uniforms, scene buffers and lifecycle.
+- **`ASVGF.js`**: Real-time spatiotemporal denoising
+- **`NRD.js`**: Port of NVIDIA's ReBLUR recurrent-blur denoiser
+- **`EdgeFilter.js`**: Spatial-only edge-aware à-trous filter
+- **`Variance.js`** / **`MotionVector.js`** / **`NormalDepth.js`**: G-buffer and reprojection inputs the denoisers read
+- **`AutoExposure.js`** / **`Compositor.js`**: Exposure, tone mapping and the final composite
 - **`OverlayManager.js`** + **`helpers/TileHelper.js`** (in `managers/`): Unified overlay system — tile borders rendered on a 2D canvas overlay, never baked into saved images
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
-23 TSL files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
-- `pathTracerMain.js`, `bvhTraverse.js`, `materialSampling.js`, `environmentSampling.js`
-- `disney.js`, `transmission.js`, `directLighting.js`, `fog.js`, etc.
+31 TSL files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
+- Wavefront kernels: `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`
+- Traversal and shading: `BVHTraversal.js`, `MaterialSampling.js`, `MaterialTransmission.js`, `Environment.js`
+- Lighting: `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `LightBVHSampling.js`, etc.
 
 ### Multi-Threading Architecture (`rayzee/src/Processor/Workers/`)
 Critical for maintaining 60fps during heavy computations:
@@ -40,21 +43,28 @@ Zustand-based stores with **automatic 3D engine synchronization**:
 - Pattern: `handleChange()` utility creates handlers that update both store state and 3D engine, triggering `app.reset()` for immediate visual feedback
 
 ### Data Layout & GPU Optimization
-**Triangle Data Layout** (32 floats per triangle, vec4-aligned):
+**Triangle Data Layout** (20 u32 lanes per triangle = 80 B, 5 vec4s). The buffer is bound as
+`uvec4`, so a reader binds `'uvec4'` and floats come back through `uintBitsToFloat`:
 ```js
-// app/src/Constants.js - TRIANGLE_DATA_LAYOUT
-FLOATS_PER_TRIANGLE: 32  // 8 vec4s for GPU efficiency
-POSITION_A_OFFSET: 0     // 3 vec4s for positions (A,B,C)
-NORMAL_A_OFFSET: 12      // 3 vec4s for normals (A,B,C) 
-UV_AB_OFFSET: 24         // 2 vec4s for UVs + material index
+// rayzee/src/EngineDefaults.js - TRIANGLE_DATA_LAYOUT
+FLOATS_PER_TRIANGLE: 20         // 5 vec4s; each position carries its own normal
+POSITION_A/B/C_OFFSET: 0/4/8    // f32 xyz, normal packed in the spare .w lane
+NORMAL_A/B/C_PACKED_OFFSET: 3/7/11  // octahedral snorm16, ~0.005° worst case
+UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
+MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
+MESH_INDEX_OFFSET: 19
 ```
+⚠️ Geometry storage is hybrid. A geometry used by several objects stays in **object space** and
+the ray is moved into it on entry; a geometry used once — or one that emits light — is **baked to
+world space**. Any new reader of the triangle buffer must bind `uvec4` **and** take the hit's
+`instanceLeaf`, or it will read object-space positions as though they were world space.
 
 ## Key Development Patterns
 
 ### Event-Driven Stage Communication
 **Critical**: Stages communicate via events, not direct coupling:
 ```js
-// PathTracingStage emitting events
+// PathTracer emitting events
 this.eventBus.emit('pathtracer:frameComplete', { frame, samples });
 this.eventBus.emit('asvgf:reset');
 this.eventBus.emit('tile:changed', { tileX, tileY });

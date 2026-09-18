@@ -1,36 +1,76 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
+import { BVH_LEAF_MARKERS } from '@/core/EngineDefaults.js';
+import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 
-// BVH flat layout: 16 floats per node
+// Index fields are u32 bit patterns inside the float buffer.
+const _u = new Uint32Array( 1 ), _f = new Float32Array( _u.buffer );
+function bits( u ) {
+
+	_u[ 0 ] = u;
+	return _f[ 0 ];
+
+}
+
+// BVH flat layout: 16 floats per node. Bounds are floats; index fields are u32 bit patterns.
 // Inner: [leftMin.xyz, leftChildIdx, leftMax.xyz, rightChildIdx, rightMin.xyz, 0, rightMax.xyz, 0]
-// Leaf:  [triOffset, triCount, 0, -1, 0,0,0,0, 0,0,0,0, 0,0,0,0]
+// Leaf:  [triOffset, triCount, 0, TRIANGLE_LEAF, 0,0,0,0, 0,0,0,0, 0,0,0,0]
 
 function makeLeaf( triOffset, triCount ) {
 
-	return [ triOffset, triCount, 0, - 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
+	return [ bits( triOffset ), bits( triCount ), 0, bits( BVH_LEAF_MARKERS.TRIANGLE_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 ];
 
 }
 
 function makeInner( lMin, lMax, leftIdx, rMin, rMax, rightIdx ) {
 
 	return [
-		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], leftIdx,
-		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], rightIdx,
+		lMin[ 0 ], lMin[ 1 ], lMin[ 2 ], bits( leftIdx ),
+		lMax[ 0 ], lMax[ 1 ], lMax[ 2 ], bits( rightIdx ),
 		rMin[ 0 ], rMin[ 1 ], rMin[ 2 ], 0,
 		rMax[ 0 ], rMax[ 1 ], rMax[ 2 ], 0,
 	];
 
 }
 
-// Triangle data: 32 floats per triangle
-// Positions at offsets 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
+// Triangle record: 20 uint lanes, positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
+const FPT = 20;
+
+function makeRecords( count ) {
+
+	const data = new Uint32Array( count * FPT );
+	return { data, f: new Float32Array( data.buffer ) };
+
+}
+
 function makeTriangle( ax, ay, az, bx, by, bz, cx, cy, cz ) {
 
-	const data = new Float32Array( 32 );
-	data[ 0 ] = ax; data[ 1 ] = ay; data[ 2 ] = az; // posA
-	data[ 4 ] = bx; data[ 5 ] = by; data[ 6 ] = bz; // posB
-	data[ 8 ] = cx; data[ 9 ] = cy; data[ 10 ] = cz; // posC
+	const { data, f } = makeRecords( 1 );
+	f[ 0 ] = ax; f[ 1 ] = ay; f[ 2 ] = az; // posA
+	f[ 4 ] = bx; f[ 5 ] = by; f[ 6 ] = bz; // posB
+	f[ 8 ] = cx; f[ 9 ] = cy; f[ 10 ] = cz; // posC
 	return data;
+
+}
+
+// Octahedral decode, mirroring unpackNormalOct in EngineDefaults.
+function unpackOct( packed ) {
+
+	const u = ( ( packed << 16 ) >> 16 ) / 32767;
+	const v = ( packed >> 16 ) / 32767;
+	let x = u, y = v;
+	const z = 1 - Math.abs( u ) - Math.abs( v );
+	if ( z < 0 ) {
+
+		const ax = x, ay = y;
+		x = ( 1 - Math.abs( ay ) ) * ( ax >= 0 ? 1 : - 1 );
+		y = ( 1 - Math.abs( ax ) ) * ( ay >= 0 ? 1 : - 1 );
+
+	}
+
+	const len = Math.hypot( x, y, z ) || 1;
+	return [ x / len, y / len, z / len ];
 
 }
 
@@ -49,7 +89,7 @@ describe( 'BVHRefitter', () => {
 		it( 'patches positions using bvhToOriginal map', () => {
 
 			// 2 triangles, BVH order: bvh[0]=orig[1], bvh[1]=orig[0]
-			const triangleData = new Float32Array( 64 ); // 2 * 32
+			const { data: triangleData, f } = makeRecords( 2 );
 			const newPositions = new Float32Array( [
 				1, 2, 3, 4, 5, 6, 7, 8, 9, // original tri 0
 				10, 20, 30, 40, 50, 60, 70, 80, 90 // original tri 1
@@ -60,38 +100,37 @@ describe( 'BVHRefitter', () => {
 			refitter.updateTrianglePositions( triangleData, newPositions, bvhToOriginal );
 
 			// bvh index 0 should have original tri 1 positions
-			expect( triangleData[ 0 ] ).toBe( 10 ); // posA.x
-			expect( triangleData[ 1 ] ).toBe( 20 ); // posA.y
-			expect( triangleData[ 2 ] ).toBe( 30 ); // posA.z
-			expect( triangleData[ 4 ] ).toBe( 40 ); // posB.x
-			expect( triangleData[ 8 ] ).toBe( 70 ); // posC.x
+			expect( f[ 0 ] ).toBe( 10 ); // posA.x
+			expect( f[ 1 ] ).toBe( 20 ); // posA.y
+			expect( f[ 2 ] ).toBe( 30 ); // posA.z
+			expect( f[ 4 ] ).toBe( 40 ); // posB.x
+			expect( f[ 8 ] ).toBe( 70 ); // posC.x
 
 			// bvh index 1 should have original tri 0 positions
-			expect( triangleData[ 32 ] ).toBe( 1 ); // posA.x
-			expect( triangleData[ 36 ] ).toBe( 4 ); // posB.x
-			expect( triangleData[ 40 ] ).toBe( 7 ); // posC.x
+			expect( f[ FPT ] ).toBe( 1 ); // posA.x
+			expect( f[ FPT + 4 ] ).toBe( 4 ); // posB.x
+			expect( f[ FPT + 8 ] ).toBe( 7 ); // posC.x
 
 		} );
 
 		it( 'computes face normals', () => {
 
-			const triangleData = new Float32Array( 32 );
-			// Triangle in XY plane: A=(0,0,0), B=(1,0,0), C=(0,1,0)
-			// Cross product AB x AC = (0,0,1) (unnormalized)
+			const { data: triangleData } = makeRecords( 1 );
+			// Triangle in XY plane: A=(0,0,0), B=(1,0,0), C=(0,1,0) → normal (0,0,1)
 			const newPositions = new Float32Array( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
 			const bvhToOriginal = new Uint32Array( [ 0 ] );
 
 			refitter.updateTrianglePositions( triangleData, newPositions, bvhToOriginal );
 
-			// Normal offsets: A=12, B=16, C=20 — unnormalized cross product
-			expect( triangleData[ 12 ] ).toBeCloseTo( 0 ); // nA.x
-			expect( triangleData[ 13 ] ).toBeCloseTo( 0 ); // nA.y
-			expect( triangleData[ 14 ] ).toBeCloseTo( 1 ); // nA.z (AB x AC = (0,0,1))
+			// Packed normals ride in each position's spare lane (3, 7, 11).
+			for ( const lane of [ 3, 7, 11 ] ) {
 
-			// All vertices get the same face normal
-			expect( triangleData[ 16 ] ).toBeCloseTo( 0 ); // nB.x
-			expect( triangleData[ 17 ] ).toBeCloseTo( 0 ); // nB.y
-			expect( triangleData[ 18 ] ).toBeCloseTo( 1 ); // nB.z
+				const n = unpackOct( triangleData[ lane ] );
+				expect( n[ 0 ] ).toBeCloseTo( 0, 4 );
+				expect( n[ 1 ] ).toBeCloseTo( 0, 4 );
+				expect( n[ 2 ] ).toBeCloseTo( 1, 4 );
+
+			}
 
 		} );
 
@@ -115,9 +154,9 @@ describe( 'BVHRefitter', () => {
 			// Two triangles
 			const tri0 = makeTriangle( 0, 0, 0, 1, 0, 0, 0, 1, 0 );
 			const tri1 = makeTriangle( 5, 5, 5, 6, 5, 5, 5, 6, 5 );
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( tri0, 0 );
-			triangleData.set( tri1, 32 );
+			triangleData.set( tri1, FPT );
 
 			refitter.refit( bvhData, triangleData, 3 );
 
@@ -145,9 +184,9 @@ describe( 'BVHRefitter', () => {
 				...makeLeaf( 1, 1 ),
 			] );
 
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( makeTriangle( 0, 0, 0, 1, 0, 0, 0, 1, 0 ), 0 );
-			triangleData.set( makeTriangle( 2, 2, 2, 3, 2, 2, 2, 3, 2 ), 32 );
+			triangleData.set( makeTriangle( 2, 2, 2, 3, 2, 2, 2, 3, 2 ), FPT );
 
 			refitter.refit( bvhData, triangleData, 3 );
 			const firstBounds = refitter._bounds;
@@ -171,10 +210,10 @@ describe( 'BVHRefitter', () => {
 				...makeLeaf( 1, 1 ), // 4: left-right leaf (tri 1)
 			] );
 
-			const triangleData = new Float32Array( 96 ); // 3 triangles
+			const triangleData = new Uint32Array( 3 * FPT );
 			triangleData.set( makeTriangle( - 1, - 1, - 1, 0, - 1, - 1, - 1, 0, - 1 ), 0 );
-			triangleData.set( makeTriangle( 1, 1, 1, 2, 1, 1, 1, 2, 1 ), 32 );
-			triangleData.set( makeTriangle( 10, 10, 10, 11, 10, 10, 10, 11, 10 ), 64 );
+			triangleData.set( makeTriangle( 1, 1, 1, 2, 1, 1, 1, 2, 1 ), FPT );
+			triangleData.set( makeTriangle( 10, 10, 10, 11, 10, 10, 10, 11, 10 ), 2 * FPT );
 
 			refitter.refit( bvhData, triangleData, 5 );
 
@@ -209,9 +248,9 @@ describe( 'BVHRefitter', () => {
 
 			const tri0 = makeTriangle( 0, 0, 0, 2, 0, 0, 0, 2, 0 );
 			const tri1 = makeTriangle( 10, 10, 10, 12, 10, 10, 10, 12, 10 );
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( tri0, 0 );
-			triangleData.set( tri1, 32 );
+			triangleData.set( tri1, FPT );
 
 			refitter.refitRange( bvhData, triangleData, 2, 3 ); // startNode=2, nodeCount=3
 
@@ -236,9 +275,9 @@ describe( 'BVHRefitter', () => {
 				...makeLeaf( 0, 1 ),
 				...makeLeaf( 1, 1 ),
 			] );
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( makeTriangle( 0, 0, 0, 1, 0, 0, 0, 1, 0 ), 0 );
-			triangleData.set( makeTriangle( 2, 2, 2, 3, 2, 2, 2, 3, 2 ), 32 );
+			triangleData.set( makeTriangle( 2, 2, 2, 3, 2, 2, 2, 3, 2 ), FPT );
 
 			// First call with 3 nodes
 			refitter.refitRange( bvhData, triangleData, 0, 3 );
@@ -273,9 +312,9 @@ describe( 'BVHRefitter', () => {
 				// Node 0: TLAS root inner (AABBs will be overwritten by refit)
 				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 2 ),
 				// Node 1: TLAS BLAS-pointer leaf → blasRoot=3
-				3, 0, 0, - 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				bits( 3 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 				// Node 2: TLAS BLAS-pointer leaf → blasRoot=5
-				5, 0, 0, - 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+				bits( 5 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 				// Node 3: BLAS0 root (inner) → leaf at 4
 				...makeInner( [ 0, 0, 0 ], [ 3, 3, 3 ], 4, [ 0, 0, 0 ], [ 3, 3, 3 ], 4 ),
 				// Node 4: BLAS0 leaf (tri 0)
@@ -288,9 +327,9 @@ describe( 'BVHRefitter', () => {
 
 			const tri0 = makeTriangle( 0, 0, 0, 3, 0, 0, 0, 3, 3 );
 			const tri1 = makeTriangle( 10, 10, 10, 13, 10, 10, 10, 13, 13 );
-			const triangleData = new Float32Array( 64 );
+			const triangleData = new Uint32Array( 2 * FPT );
 			triangleData.set( tri0, 0 );
-			triangleData.set( tri1, 32 );
+			triangleData.set( tri1, FPT );
 
 			refitter.refit( bvhData, triangleData, 7 );
 
@@ -308,6 +347,92 @@ describe( 'BVHRefitter', () => {
 			expect( bvhData[ 13 ] ).toBe( 13 ); // rightMax.y
 
 		} );
+
+		// Moana's ocean: a unit quad scaled to ±1,089,735, so the world-to-object matrix on the
+		// leaf has a determinant of 7.7e-19. An absolute singular-matrix floor called that
+		// degenerate and copied the unit quad's bounds through as world bounds, so the TLAS root
+		// collapsed from ±1,089,735 to ±1 on every refit — with the render still looking fine.
+		it.each( [ 1, 1e3, 1e6, 1e-3 ] )( 'carries BLAS bounds out through a %f× instance scale', scale => {
+
+			const inv = 1 / scale;
+			// Leaf slots 4..15 are the rows of world-to-object: a uniform 1/scale with no offset.
+			const leaf = [
+				bits( 2 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ),
+				inv, 0, 0, 0,
+				0, inv, 0, 0,
+				0, 0, inv, 0,
+			];
+
+			const bvhData = new Float32Array( [
+				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 1 ),
+				...leaf,
+				...makeInner( [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3, [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3 ),
+				...makeLeaf( 0, 1 ),
+			] );
+
+			const triangleData = new Uint32Array( FPT );
+			triangleData.set( makeTriangle( - 1, - 1, - 1, 1, - 1, - 1, - 1, 1, 1 ), 0 );
+
+			new BVHRefitter().refit( bvhData, triangleData, 4 );
+
+			// The unit-ish BLAS box must come back out at instance scale, not object scale.
+			expect( bvhData[ 0 ] ).toBeCloseTo( - scale, Math.max( 0, 6 - Math.log10( scale ) ) );
+			expect( bvhData[ 4 ] ).toBeCloseTo( scale, Math.max( 0, 6 - Math.log10( scale ) ) );
+
+		} );
+
+		it( 'still treats a genuinely singular instance matrix as untransformed', () => {
+
+			const leaf = [
+				bits( 2 ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ),
+				1, 0, 0, 0,
+				2, 0, 0, 0, // second row is a multiple of the first — rank 2, not invertible
+				0, 0, 1, 0,
+			];
+
+			const bvhData = new Float32Array( [
+				...makeInner( [ 0, 0, 0 ], [ 1, 1, 1 ], 1, [ 0, 0, 0 ], [ 1, 1, 1 ], 1 ),
+				...leaf,
+				...makeInner( [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3, [ - 1, - 1, - 1 ], [ 1, 1, 1 ], 3 ),
+				...makeLeaf( 0, 1 ),
+			] );
+
+			const triangleData = new Uint32Array( FPT );
+			triangleData.set( makeTriangle( - 1, - 1, - 1, 1, - 1, - 1, - 1, 1, 1 ), 0 );
+
+			new BVHRefitter().refit( bvhData, triangleData, 4 );
+
+			expect( bvhData[ 0 ] ).toBe( - 1 );
+			expect( bvhData[ 4 ] ).toBe( 1 );
+
+		} );
+
+	} );
+
+} );
+
+describe( 'SceneProcessor.sceneBounds', () => {
+
+	it( 'unions both child boxes, because node 0 holds two subtrees and not the scene', () => {
+
+		// The trap: the first six floats are child A alone. A reader that takes them as the
+		// scene box gets a number that moves whenever the tree rebalances, while the real
+		// bounds never changed.
+		const sp = Object.create( SceneProcessor.prototype );
+		sp.bvh = ChunkedRecords.adopt( [ Float32Array.from( [
+			- 5, 0, 0, 0, /* A max */ 1, 1, 1, 0,
+			0, - 7, 0, 0, /* B max */ 2, 2, 9, 0,
+		] ) ], 1, 16, 1 );
+
+		expect( sp.sceneBounds() ).toEqual( { min: [ - 5, - 7, 0 ], max: [ 2, 2, 9 ] } );
+
+	} );
+
+	it( 'returns null before a BVH exists rather than decoding an empty buffer', () => {
+
+		const sp = Object.create( SceneProcessor.prototype );
+		sp.bvh = null;
+		expect( sp.sceneBounds() ).toBeNull();
 
 	} );
 

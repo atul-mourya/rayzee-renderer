@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
 
 vi.mock( '@/core/Processor/TreeletOptimizer.js', () => ( {
 	TreeletOptimizer: class {
@@ -49,19 +50,19 @@ import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
  * Helper: create a Float32Array of triangle data (32 floats per triangle).
  * Each triangle is [ax, ay, az, bx, by, bz, cx, cy, cz].
  */
+const FPT = 20; // lanes per triangle record
+
 function makeTriData( triangles ) {
 
-	const data = new Float32Array( triangles.length * 32 );
+	const data = new Uint32Array( triangles.length * FPT );
+	const f = new Float32Array( data.buffer );
 	for ( let i = 0; i < triangles.length; i ++ ) {
 
 		const t = triangles[ i ];
-		const b = i * 32;
-		// posA at offset 0
-		data[ b ] = t[ 0 ]; data[ b + 1 ] = t[ 1 ]; data[ b + 2 ] = t[ 2 ];
-		// posB at offset 4
-		data[ b + 4 ] = t[ 3 ]; data[ b + 5 ] = t[ 4 ]; data[ b + 6 ] = t[ 5 ];
-		// posC at offset 8
-		data[ b + 8 ] = t[ 6 ]; data[ b + 9 ] = t[ 7 ]; data[ b + 10 ] = t[ 8 ];
+		const b = i * FPT;
+		f[ b ] = t[ 0 ]; f[ b + 1 ] = t[ 1 ]; f[ b + 2 ] = t[ 2 ];
+		f[ b + 4 ] = t[ 3 ]; f[ b + 5 ] = t[ 4 ]; f[ b + 6 ] = t[ 5 ];
+		f[ b + 8 ] = t[ 6 ]; f[ b + 9 ] = t[ 7 ]; f[ b + 10 ] = t[ 8 ];
 
 	}
 
@@ -427,7 +428,7 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
-		it( 'leaf nodes have marker -1 in the .w position', () => {
+		it( 'leaf nodes carry the triangle-leaf tag in the .w position', () => {
 
 			const data = makeTriData( [
 				[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ],
@@ -436,19 +437,18 @@ describe( 'BVHBuilder', () => {
 
 			const root = builder.buildSync( data );
 			const flat = builder.flattenBVH( root );
+			const idx = bvhIndexView( flat );
 
 			// Walk nodes and check leaf markers
 			let foundLeaf = false;
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 					foundLeaf = true;
-					// triOffset should be non-negative
-					expect( flat[ o ] ).toBeGreaterThanOrEqual( 0 );
-					// triCount should be positive
-					expect( flat[ o + 1 ] ).toBeGreaterThan( 0 );
+					expect( idx[ o ] ).toBeGreaterThanOrEqual( 0 );
+					expect( idx[ o + 1 ] ).toBeGreaterThan( 0 );
 
 				}
 
@@ -521,7 +521,7 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
-		it( 'flattenBVH of single leaf has marker -1', () => {
+		it( 'flattenBVH of single leaf carries the triangle-leaf tag', () => {
 
 			const data = makeTriData( [
 				[ 0, 0, 0, 1, 0, 0, 0, 1, 0 ],
@@ -531,7 +531,7 @@ describe( 'BVHBuilder', () => {
 			const flat = builder.flattenBVH( root );
 
 			expect( flat.length ).toBe( 16 );
-			expect( flat[ 3 ] ).toBe( - 1 );
+			expect( bvhIndexView( flat )[ 3 ] ).toBe( BVH_LEAF_MARKERS.TRIANGLE_LEAF );
 
 		} );
 
@@ -566,10 +566,11 @@ describe( 'BVHBuilder', () => {
 			// Must have both inner and leaf nodes
 			let innerCount = 0;
 			let leafCount = 0;
+			const idx = bvhIndexView( flat );
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 					leafCount ++;
 
@@ -601,12 +602,13 @@ describe( 'BVHBuilder', () => {
 			const flat = builder.flattenBVH( root );
 
 			let totalLeafTris = 0;
+			const idx = bvhIndexView( flat );
 			for ( let i = 0; i < builder.totalNodes; i ++ ) {
 
 				const o = i * 16;
-				if ( flat[ o + 3 ] === - 1 ) {
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
-					totalLeafTris += flat[ o + 1 ];
+					totalLeafTris += idx[ o + 1 ];
 
 				}
 
@@ -631,7 +633,7 @@ describe( 'BVHBuilder', () => {
 			] );
 
 			builder.buildSync( data );
-			expect( builder.reorderedTriangleData ).toBeInstanceOf( Float32Array );
+			expect( builder.reorderedTriangleData ).toBeInstanceOf( Uint32Array );
 			expect( builder.reorderedTriangleData.length ).toBe( data.length );
 
 		} );
@@ -651,7 +653,7 @@ describe( 'BVHBuilder', () => {
 			const posAx = new Set();
 			for ( let i = 0; i < 2; i ++ ) {
 
-				posAx.add( reordered[ i * 32 ] );
+				posAx.add( new Float32Array( reordered.buffer )[ i * FPT ] );
 
 			}
 
@@ -722,8 +724,8 @@ describe( 'BVHBuilder', () => {
 			// For each original triangle i, reordered[ map[i] ] should match original
 			for ( let i = 0; i < 2; i ++ ) {
 
-				const origBase = i * 32;
-				const bvhBase = map[ i ] * 32;
+				const origBase = i * FPT;
+				const bvhBase = map[ i ] * FPT;
 				expect( reordered[ bvhBase ] ).toBe( data[ origBase ] );
 				expect( reordered[ bvhBase + 1 ] ).toBe( data[ origBase + 1 ] );
 				expect( reordered[ bvhBase + 2 ] ).toBe( data[ origBase + 2 ] );

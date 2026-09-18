@@ -7,7 +7,7 @@
  */
 
 import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
@@ -38,25 +38,37 @@ export class EmissiveTriangleBuilder {
 
 	/**
 	 * Extract emissive triangles from processed geometry
-	 * @param {Array} triangleData - Flat array of triangle data
+	 * @param {Uint32Array} triangleData - Packed triangle records
 	 * @param {Array} materials - Array of material objects
 	 * @param {number} triangleCount - Total number of triangles
+	 * @param {import('./InstanceTable.js').InstanceTable} [table] - per placement; triangles are
+	 *        stored in object space, so power, bounds and the emission cone all have to be
+	 *        measured after the instance transform. One record per triangle, so a template
+	 *        placed more than once is lit by its first placement — the extractor expands an
+	 *        emissive instanced mesh into per-instance triangles to avoid exactly that.
 	 */
-	extractEmissiveTriangles( triangleData, materials, triangleCount ) {
+	extractEmissiveTriangles( triangleData, materials, triangleCount, table = null ) {
 
 		this.emissiveTriangles = [];
 		this.totalEmissivePower = 0;
 		this._totalTriangleCount = triangleCount;
 
 		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const MATERIAL_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 2; // materialIndex within vec4
-		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.UV_C_MAT_OFFSET + 3; // meshIndex within vec4
+		const MATERIAL_FLAGS_OFFSET = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
+		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.MESH_INDEX_OFFSET;
+		// Flat array or ChunkedRecords; the chunk is resolved once per triangle.
+		const chunked = triangleData && triangleData.chunks ? triangleData : null;
+		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
+		const flatU = chunked ? null : triangleData;
+		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
-			const baseOffset = i * FLOATS_PER_TRIANGLE;
-			const materialIndex = Math.floor( triangleData[ baseOffset + MATERIAL_INDEX_OFFSET ] );
-			const meshIndex = Math.floor( triangleData[ baseOffset + MESH_INDEX_OFFSET ] );
+			const triU = chunked ? chunked.chunkFor( i ) : flatU;
+			const triFloats = chunked ? chunkedF.chunkFor( i ) : flatF;
+			const baseOffset = chunked ? chunked.baseOf( i ) : i * FLOATS_PER_TRIANGLE;
+			const materialIndex = triU[ baseOffset + MATERIAL_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
+			const meshIndex = triU[ baseOffset + MESH_INDEX_OFFSET ];
 
 			// Get material
 			const material = materials[ materialIndex ];
@@ -73,16 +85,25 @@ export class EmissiveTriangleBuilder {
 			if ( isEmissive ) {
 
 				// Calculate triangle area for power weighting
-				// Positions are at offsets 0-11
-				const v0x = triangleData[ baseOffset + 0 ];
-				const v0y = triangleData[ baseOffset + 1 ];
-				const v0z = triangleData[ baseOffset + 2 ];
-				const v1x = triangleData[ baseOffset + 4 ];
-				const v1y = triangleData[ baseOffset + 5 ];
-				const v1z = triangleData[ baseOffset + 6 ];
-				const v2x = triangleData[ baseOffset + 8 ];
-				const v2y = triangleData[ baseOffset + 9 ];
-				const v2z = triangleData[ baseOffset + 10 ];
+				// Positions are at offsets 0-11, in the instance's own space
+				// `meshIndex` names the template the triangle belongs to, never a row of the
+				// per-placement table: indexing the table with it put one object's matrix on
+				// another object's light as soon as any instanced mesh came earlier.
+				const placement = table?.placementRunOf?.( meshIndex )?.start ?? - 1;
+				const hasInstance = placement >= 0 && table.isSet[ placement ];
+				const m = hasInstance ? table.world : null;
+				const mo = hasInstance ? placement * 16 : 0;
+				const px = ( x, y, z ) => ( m ? m[ mo ] * x + m[ mo + 4 ] * y + m[ mo + 8 ] * z + m[ mo + 12 ] : x );
+				const py = ( x, y, z ) => ( m ? m[ mo + 1 ] * x + m[ mo + 5 ] * y + m[ mo + 9 ] * z + m[ mo + 13 ] : y );
+				const pz = ( x, y, z ) => ( m ? m[ mo + 2 ] * x + m[ mo + 6 ] * y + m[ mo + 10 ] * z + m[ mo + 14 ] : z );
+
+				const o0x = triFloats[ baseOffset + 0 ], o0y = triFloats[ baseOffset + 1 ], o0z = triFloats[ baseOffset + 2 ];
+				const o1x = triFloats[ baseOffset + 4 ], o1y = triFloats[ baseOffset + 5 ], o1z = triFloats[ baseOffset + 6 ];
+				const o2x = triFloats[ baseOffset + 8 ], o2y = triFloats[ baseOffset + 9 ], o2z = triFloats[ baseOffset + 10 ];
+
+				const v0x = px( o0x, o0y, o0z ), v0y = py( o0x, o0y, o0z ), v0z = pz( o0x, o0y, o0z );
+				const v1x = px( o1x, o1y, o1z ), v1y = py( o1x, o1y, o1z ), v1z = pz( o1x, o1y, o1z );
+				const v2x = px( o2x, o2y, o2z ), v2y = py( o2x, o2y, o2z ), v2z = pz( o2x, o2y, o2z );
 
 				const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
 
@@ -119,6 +140,7 @@ export class EmissiveTriangleBuilder {
 					triangleIndex: i,
 					materialIndex: materialIndex,
 					meshIndex: meshIndex,
+					instanceLeaf: hasInstance ? table.tlasLeafIndex[ placement ] : - 1,
 					power: power,
 					area: area,
 					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },
@@ -369,7 +391,10 @@ export class EmissiveTriangleBuilder {
 			data[ offset + 0 ] = tri.triangleIndex;
 			data[ offset + 1 ] = tri.power;
 			data[ offset + 2 ] = this.cdfArray[ i ];
-			data[ offset + 3 ] = this.totalEmissivePower > 0 ? tri.power / this.totalEmissivePower : 0;
+			// Slot 3 used to repeat power/total, which the shader recomputes anyway. It now
+			// names the TLAS leaf that owns this emitter, so sampling can put the triangle
+			// back into world space.
+			data[ offset + 3 ] = tri.instanceLeaf;
 
 			// vec4[1]: pre-multiplied emission (emissive * intensity), area
 			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;
@@ -600,11 +625,13 @@ export class EmissiveTriangleBuilder {
 			const tri = tris[ origIdx ];
 			const offset = i * 8;
 
-			// vec4[0]: triangleIndex, power, cdf, selectionPdf
+			// vec4[0]: triangleIndex, power, cdf, instance. This is the authoritative writer —
+			// buildLightBVH re-sorts the entries and replaces emissiveTriangleData, so the
+			// instance has to be carried here too, not only in createEmissiveRawData.
 			data[ offset + 0 ] = tri.triangleIndex;
 			data[ offset + 1 ] = tri.power;
 			data[ offset + 2 ] = this.cdfArray[ i ];
-			data[ offset + 3 ] = this.totalEmissivePower > 0 ? tri.power / this.totalEmissivePower : 0;
+			data[ offset + 3 ] = tri.instanceLeaf;
 
 			// vec4[1]: pre-multiplied emission (emissive * intensity), area
 			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;

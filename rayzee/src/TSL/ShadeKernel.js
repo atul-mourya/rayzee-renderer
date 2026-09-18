@@ -56,7 +56,7 @@ import {
 	readTransparentCount,
 	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
-	readHitMaterialIndex, readHitTriangleIndex,
+	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
@@ -219,6 +219,7 @@ export function buildShadeKernel( params ) {
 		const hitUV = readHitBarycentrics( hitBufferRO, rayID ).toVar();
 		const hitMatIdx = readHitMaterialIndex( hitBufferRO, rayID ).toVar();
 		const hitTriIdx = readHitTriangleIndex( hitBufferRO, rayID ).toVar();
+		const hitInstance = readHitInstanceLeaf( hitBufferRO, rayID ).toVar();
 
 		// per-ray camera-bounce depth — advances ONLY on opaque scatter (free bounces don't); drives termination (maxBounces). Megakernel: effectiveBounces.
 		const cameraDepth = readPathBounces( rayBufferRW, rayID ).toVar();
@@ -620,7 +621,7 @@ export function buildShadeKernel( params ) {
 					boxTests: int( 0 ), triTests: int( 0 ),
 				} );
 				const dispResult = DisplacementResult.wrap( refineDisplacedIntersection(
-					dispRay, dispHit, triangleBuffer, material, bounceIndex,
+					dispRay, dispHit, triangleBuffer, material, bounceIndex, bvhBuffer, hitInstance,
 				) ).toVar();
 				samplingUV.assign( dispResult.uv );
 				displacedNormal.assign( dispResult.normal );
@@ -634,7 +635,7 @@ export function buildShadeKernel( params ) {
 		const uvTangent = vec4( 0.0 ).toVar();
 		If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-			uvTangent.assign( triangleUVTangent( triangleBuffer, int( hitTriIdx ), N, material.normalTransform ) );
+			uvTangent.assign( triangleUVTangent( triangleBuffer, int( hitTriIdx ), N, material.normalTransform, bvhBuffer, hitInstance ) );
 
 		} );
 
@@ -1024,7 +1025,7 @@ export function buildShadeKernel( params ) {
 
 							lightPdf.assign( calculateLightBVHPdf(
 								int( hitTriIdx ), misDist, direction, misOrigin,
-								lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer,
+								lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer, bvhBuffer,
 							) );
 
 						} ).Else( () => {
@@ -1032,6 +1033,7 @@ export function buildShadeKernel( params ) {
 							lightPdf.assign( calculateEmissiveLightPdf(
 								int( hitTriIdx ), misDist, direction, misOrigin,
 								triangleBuffer, materialBuffer, emissiveTotalPower,
+								bvhBuffer, hitInstance,
 							) );
 
 						} );
@@ -1217,7 +1219,7 @@ export function buildShadeKernel( params ) {
 							lightBuffer,
 							lightBuffer,
 							emissiveVec4Offset,
-							triangleBuffer,
+							triangleBuffer, bvhBuffer,
 						) );
 
 						// No rough-diffuse secondary-bounce skip here: dropping NEE while the emissive-hit
@@ -1274,7 +1276,7 @@ export function buildShadeKernel( params ) {
 							_pixelCoord, resolution, frame, dimBase,
 							emissiveBoost,
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-							triangleBuffer,
+							triangleBuffer, bvhBuffer,
 							traceShadowRayWrapped,
 							calculateRayOffset,
 						);

@@ -11,10 +11,12 @@ import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils
 import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import {
+	detectArchiveKind, readTarGz, readTar, elementFilter, listArchiveElements, openTar } from './ArchiveReader.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { loadPBRTScene, pickEntryPath, listEntryPaths } from './PBRT/index.js';
+import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -32,7 +34,10 @@ const SUPPORTED_FORMATS = {
 	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' }, 'exr': { type: 'environment', name: 'EXR (OpenEXR)' },
 	'png': { type: 'image', name: 'PNG' }, 'jpg': { type: 'image', name: 'JPEG' },
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
-	'zip': { type: 'archive', name: 'ZIP Archive' }
+	'zip': { type: 'archive', name: 'ZIP Archive' },
+	'gz': { type: 'archive', name: 'Gzipped TAR Archive' },
+	'tgz': { type: 'archive', name: 'Gzipped TAR Archive' },
+	'tar': { type: 'archive', name: 'TAR Archive' }
 };
 
 // Loose USD layers inside a ZIP compose into one scene; these pick out the
@@ -40,6 +45,16 @@ const SUPPORTED_FORMATS = {
 const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
 const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
+/**
+ * Unpacked size past which a multi-part scene archive asks which parts to load rather than
+ * taking all of them. Not a hard limit — picking every part is a valid answer.
+ *
+ * Measured on Moana: a 7.5 GB archive of 15 parts parses to 40M triangles and ~7.3 GB of CPU
+ * memory, which loads on a freshly started browser and fails on one that has been up a while.
+ * Anything near that is worth a question, because the failure past it kills the tab rather than
+ * throwing. Override per load with `promptBytes`.
+ */
+export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 // A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
 // reorders and disposes what it is given, but never writes the attributes.
 function standInForSplit( source ) {
@@ -275,7 +290,7 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	// Asset loading methods
-	async loadAssetFromFile( file ) {
+	async loadAssetFromFile( file, options = {} ) {
 
 		const filename = file.name;
 		const format = this.getFileFormat( filename );
@@ -290,7 +305,7 @@ export class AssetLoader extends EventDispatcher {
 				case 'model': result = await this.loadModelFromFile( file, filename ); break;
 				case 'environment':
 				case 'image': result = await this.loadEnvironmentFromFile( file, filename ); break;
-				case 'archive': result = await this.loadArchiveFromFile( file, filename ); break;
+				case 'archive': result = await this.loadArchiveFromFile( file, filename, options ); break;
 				default: throw new Error( `Unknown asset type: ${format.type}` );
 
 			}
@@ -483,32 +498,247 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	// Archive handling
+	/** First bytes of a file, without pulling the whole thing into memory. */
+	async _readHead( file, bytes = 512 ) {
+
+		if ( file instanceof Uint8Array ) return file.subarray( 0, bytes );
+		if ( typeof file.slice === 'function' && typeof file.arrayBuffer === 'function' ) {
+
+			return new Uint8Array( await file.slice( 0, bytes ).arrayBuffer() );
+
+		}
+
+		return new Uint8Array( ( await this.readFileAsArrayBuffer( file ) ).slice( 0, bytes ) );
+
+	}
+
+	/**
+	 * Enumerates a TAR/TAR.GZ archive without keeping any of it, so a caller can offer a
+	 * choice before committing memory. ZIP archives are random-access and report directly.
+	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
+	 */
+	async inspectArchive( file ) {
+
+		const kind = detectArchiveKind( await this._readHead( file ) );
+
+		if ( kind === 'gzip' || kind === 'tar' ) {
+
+			const read = kind === 'gzip' ? readTarGz : readTar;
+			const { listing } = await read( file, {
+				filter: () => false,
+				onProgress: p => updateLoading( {
+					isLoading: true, status: `Scanning archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
+				} )
+			} );
+			const { root, elements } = listArchiveElements( listing );
+			return {
+				kind, root, elements,
+				entryCount: listing.length,
+				totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
+			};
+
+		}
+
+		const zip = unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
+		const listing = Object.keys( zip ).map( path => ( { path, size: zip[ path ].length } ) );
+		const { root, elements } = listArchiveElements( listing );
+		return {
+			kind: 'zip', root, elements,
+			entryCount: listing.length,
+			totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
+		};
+
+	}
+
 	/**
 	 * @param {File|Blob} file
 	 * @param {string} filename
-	 * @param {{pbrtEntry?: string}} [options] - `pbrtEntry` names which .pbrt to load when the
-	 *   archive holds several independent scenes; the issue log lists what else was available.
+	 * @param {object} [options]
+	 * @param {string} [options.pbrtEntry] - which .pbrt to load when the archive holds several
+	 *   independent scenes; the issue log lists what else was available.
+	 * @param {string|string[]} [options.element] - path prefix of one subtree to load on its own,
+	 *   or several to load together, as reported by `inspectArchive()`. Everything above them
+	 *   (scene file, materials, textures) comes along; subtrees left out are skipped without ever
+	 *   being held in memory, and the Includes that point at them only warn.
+	 * @param {number} [options.byteBudget] - cap on retained bytes when no element is chosen.
+	 * @param {number} [options.promptBytes] - size past which a multi-part archive asks which
+	 *   parts to load instead of taking all of them.
+	 * @param {number} [options.maxTriangles] - stop past this many STORED triangles.
+	 * @param {number} [options.maxPlacements] - stop past this many instance placements.
+	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
+	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
+	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
 	 */
-	async loadArchiveFromFile( file, filename, { pbrtEntry = null } = {} ) {
+	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
 
 		try {
 
-			const arrayBuffer = await this.readFileAsArrayBuffer( file );
-			const zip = unzipSync( new Uint8Array( arrayBuffer ) );
+			const kind = detectArchiveKind( await this._readHead( file ) );
+
+			// An uncompressed tar over a File is seekable, so it is indexed rather than read:
+			// entries are pulled out as the scene asks for them and never all held at once.
+			// That is the difference between a 7 GB archive being refused and loading.
+			if ( kind === 'tar' ) {
+
+				const source = await this._openSeekableArchive( file, filename, element, promptBytes );
+				if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
+
+					return await this.loadPBRTFromZip( {}, filename, pbrtEntry, pbrt, source );
+
+				}
+
+				// Not a pbrt scene: fall back to materialising it, which those paths still expect.
+				for ( const e of source.listing ) source.entries[ e.path ] ??= await source.read( e.path );
+				return await this._loadNonPBRTArchive( source.entries, filename );
+
+			}
+
+			const entries = kind === 'gzip'
+				? await this._readStreamedArchive( file, filename, kind, element, byteBudget )
+				: unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
 
 			// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
-			if ( pickEntryPath( zip ) ) return await this.loadPBRTFromZip( zip, filename, pbrtEntry );
+			if ( pickEntryPath( entries ) ) return await this.loadPBRTFromZip( entries, filename, pbrtEntry, pbrt );
 
-			const result = await this.processObjMtlPairsInZip( zip, filename );
-			if ( result ) return result;
-			return await this.findAndLoadModelFromZip( zip, filename );
+			return await this._loadNonPBRTArchive( entries, filename );
 
 		} catch ( error ) {
 
-			console.error( 'Error loading ZIP archive:', error );
+			if ( error?.code !== 'ARCHIVE_NEEDS_ELEMENT' ) console.error( 'Error loading archive:', error );
 			throw error;
 
 		}
+
+	}
+
+	async _loadNonPBRTArchive( entries, filename ) {
+
+		const result = await this.processObjMtlPairsInZip( entries, filename );
+		if ( result ) return result;
+		return await this.findAndLoadModelFromZip( entries, filename );
+
+	}
+
+	/**
+	 * Index an uncompressed tar without retaining it. Entries are read back from the File on
+	 * demand, so residency is the open include chain rather than the whole archive.
+	 *
+	 * Indexing is cheap and the whole archive is never held, but *parsing* all of it is not:
+	 * the scene that comes out is what runs the tab out of memory. So a large multi-part archive
+	 * stops here and asks which parts to load, the same as the streamed path does. The index is
+	 * already built at that point, so the question costs nothing.
+	 * @private
+	 */
+	async _openSeekableArchive( file, filename, element, promptBytes ) {
+
+		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
+
+		const source = await openTar( file, {
+			filter: chosen.length ? elementFilter( chosen ) : null,
+			retain: () => false,
+		} );
+
+		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
+
+		if ( chosen.length === 0 ) this._requireElementChoice( filename, source.listing, totalBytes, promptBytes );
+
+		console.info(
+			`Archive "${filename}": indexed ${source.indexed} entries, ` +
+			`${( totalBytes / 1e9 ).toFixed( 1 )} GB, none resident` +
+			( chosen.length ? `, ${chosen.length} part${chosen.length > 1 ? 's' : ''} selected.` : '.' )
+		);
+
+		return source;
+
+	}
+
+	/**
+	 * Stop and ask which parts to load, when the archive is big enough that the answer matters
+	 * and it actually has parts to choose between. Not a capability limit — selecting every part
+	 * is a valid answer and loads the whole scene.
+	 * @private
+	 */
+	_requireElementChoice( filename, listing, totalBytes, promptBytes = ARCHIVE_ELEMENT_PROMPT_BYTES ) {
+
+		if ( totalBytes < promptBytes ) return;
+
+		const { root, elements } = listArchiveElements( listing );
+		if ( elements.length < 2 ) return;
+
+		const error = new Error(
+			`"${filename}" holds ${( totalBytes / 1e9 ).toFixed( 1 )} GB across ${elements.length} parts. ` +
+			'Choose which to load — loading all of them at once may exhaust memory.'
+		);
+		error.code = 'ARCHIVE_NEEDS_ELEMENT';
+		error.root = root;
+		error.elements = elements;
+		error.totalBytes = totalBytes;
+
+		// Logged as a warning on purpose: recording an ERROR makes a strict host throw an
+		// EngineIssueError from inside record(), and the caller never learns which parts it
+		// could have chosen. The typed throw below is the refusal, and it carries the list.
+		this._issues?.record(
+			ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+			`archive holds ${( totalBytes / 1e9 ).toFixed( 1 )} GB across ${elements.length} parts; choose which to load`,
+			{ root, elements: elements.map( e => e.prefix ), totalBytes },
+			ISSUE_SEVERITY.WARNING
+		);
+
+		throw error;
+
+	}
+
+	async _readStreamedArchive( file, filename, kind, element, byteBudget ) {
+
+		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
+		const read = kind === 'gzip' ? readTarGz : readTar;
+		const { entries, listing, retainedBytes, truncated } = await read( file, {
+			filter: chosen.length ? elementFilter( chosen ) : null,
+			...( byteBudget === undefined ? {} : { byteBudget } ),
+			onProgress: p => updateLoading( {
+				isLoading: true,
+				status: `Reading archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`,
+				progress: 4
+			} )
+		} );
+
+		// Choosing every part is a valid answer, so a selection is not refused again for being
+		// large: the read budget exists to stop an unasked-for whole-archive load. Past this
+		// point the scene's own memory preflight is what refuses, with a figure to act on.
+		if ( truncated && chosen.length === 0 ) {
+
+			const { root, elements } = listArchiveElements( listing );
+			const total = listing.reduce( ( n, e ) => n + e.size, 0 );
+			const error = new Error(
+				`"${filename}" unpacks to ${( total / 1e9 ).toFixed( 1 )} GB, past the load budget. ` +
+				`Load one of its ${elements.length} parts instead.`
+			);
+			error.code = 'ARCHIVE_NEEDS_ELEMENT';
+			error.root = root;
+			error.elements = elements;
+			error.totalBytes = total;
+			// Warning, not error: a strict host's throw from record() would replace the typed
+			// error below and take the part list with it.
+			this._issues?.record(
+				ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+				`archive unpacks to ${( total / 1e9 ).toFixed( 1 )} GB; choose one of ${elements.length} parts`,
+				{ root, elements: elements.map( e => e.prefix ), totalBytes: total },
+				ISSUE_SEVERITY.WARNING
+			);
+			throw error;
+
+		}
+
+		if ( chosen.length ) {
+
+			console.info(
+				`Archive "${filename}": loaded ${chosen.map( c => `"${c}"` ).join( ', ' )} — ` +
+				`${Object.keys( entries ).length} of ${listing.length} files, ${( retainedBytes / 1048576 ).toFixed( 1 )} MB.`
+			);
+
+		}
+
+		return entries;
 
 	}
 
@@ -516,10 +746,10 @@ export class AssetLoader extends EventDispatcher {
 	 * Loads a pbrt-v4 scene from an unzipped archive. Parses the entry .pbrt
 	 * (following Include/Import), builds a THREE.Group, sets the infinite light
 	 * as the scene environment, and runs the standard onModelLoad pipeline.
-	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes)
+	 * @param {Object<string, Uint8Array>} zip - unzipped entries (path → bytes); consumed, entry by entry
 	 * @param {string} filename - original archive name (for display/events)
 	 */
-	async loadPBRTFromZip( zip, filename, entryPath = null ) {
+	async loadPBRTFromZip( zip, filename, entryPath = null, options = {}, source = null ) {
 
 		updateLoading( { isLoading: true, status: 'Parsing PBRT scene...', progress: 5 } );
 
@@ -553,17 +783,28 @@ export class AssetLoader extends EventDispatcher {
 
 		};
 
-		const requested = entryPath && listEntryPaths( zip ).includes( entryPath ) ? entryPath : null;
-		if ( entryPath && ! requested ) console.warn( `PBRT entry "${entryPath}" is not a scene in this archive — auto-detecting instead` );
-
-		const { group, environment, report, warnings, entryPath: loadedEntry } = await loadPBRTScene( {
-			vfs: zip, entryPath: requested, plyParser, imageFromBytes, envFromBytes
+		const pbrtStart = performance.now();
+		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry, candidates,
+			parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
+			droppedNoTemplate } = await loadPBRTScene( {
+			vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes,
+			maxTriangles: options.maxTriangles,
+			maxPlacements: options.maxPlacements,
+			mergeShapesAbove: options.mergeShapesAbove,
+			curveSteps: options.curveSteps,
+			curveSides: options.curveSides
 		} );
+
+		// Phase breakdown for scaling work; the engine's own build timings live in
+		// SceneProcessor.performanceMetrics.
+		this.lastPBRTStats = {
+			parseMs, buildMs, loaderMs: performance.now() - pbrtStart,
+			triangleCount, placementCount, mergedShapes, skippedForBudget, droppedNoTemplate, meshCount
+		};
 
 		// An archive can hold several independent scenes (transparent-machines ships five
 		// animation frames). Only one is loaded, so name it and the alternatives rather
 		// than leave the user comparing against a reference of a different scene.
-		const candidates = listEntryPaths( zip );
 		if ( candidates.length > 1 ) {
 
 			const others = candidates.filter( p => p !== loadedEntry );
@@ -580,7 +821,8 @@ export class AssetLoader extends EventDispatcher {
 		// Diagnostics — surface what each mesh resolved to (helps debug black/wrong materials).
 		if ( report && report.length && typeof console.table === 'function' ) {
 
-			console.groupCollapsed( `PBRT loader: ${report.length} mesh(es) from "${loadedEntry}"` );
+			const shown = report.length < meshCount ? ` (first ${report.length} of ${meshCount})` : '';
+			console.groupCollapsed( `PBRT loader: ${meshCount} mesh(es) from "${loadedEntry}"${shown}` );
 			console.table( report );
 			console.groupEnd();
 

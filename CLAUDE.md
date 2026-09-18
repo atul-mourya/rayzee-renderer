@@ -108,7 +108,7 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
 - **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit/rng buffers + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
-- **`TLASBuilder.js`**: Builds SAH BVH over mesh-level AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (marker `-2`, slot [1] `meshIndex`, slot [2] per-mesh visibility flag). Caches flatten buffer across rebuilds.
+- **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
@@ -127,7 +127,7 @@ Critical for maintaining 60fps during heavy computations:
 ### Animation & Transform System (`rayzee/src/managers/`)
 GLTF skeletal/morph animation playback and interactive object transforms with BVH refit:
 - **`AnimationManager.js`**: Owns Three.js `AnimationMixer`, CPU skinning via `mesh.getVertexPosition()`, and position extraction. Key methods: `play()`, `stop()`, `seekTo(time)`, `setSpeed()`, `setLoop()`. Uses two-phase extraction: skin unique vertices first, then assemble triangles from index buffer.
-- **`TransformManager.js`**: Interactive translate/rotate/scale gizmo via Three.js `TransformControls`. Creates its own `Scene` for gizmo rendering (not SceneHelpers — its `visible` guard blocks gizmo). On drag end, extracts world-space positions + smooth normals (via normal matrix) for affected meshes only, then calls `refitBLASes()` for per-mesh BVH refit. Keyboard shortcuts: W=translate, E=rotate, R=scale (consolidated in `App.jsx`).
+- **`TransformManager.js`**: Interactive translate/rotate/scale gizmo via Three.js `TransformControls`. Creates its own `Scene` for gizmo rendering (not SceneHelpers — its `visible` guard blocks gizmo). On drag end, calls `app.updateMeshTransforms( affectedIndices )` — a gizmo only changes a placement's matrix, and triangles are stored in object space, so nothing per-vertex is read or written. Keyboard shortcuts: W=translate, E=rotate, R=scale (consolidated in `App.jsx`).
 - **`VideoRenderManager.js`**: Offline frame-by-frame animation video export. Drives seek → BVH refit → SPP accumulation → OIDN denoise → canvas capture cycle per frame. Saves/restores engine state, stops rAF loop during render, delivers `ImageBitmap` frames via callback for encoding.
 - **`BVHRefitter.js`** (in `Processor/`): O(N) refit algorithm — reverse pre-order traversal for bottom-up AABB recomputation. Supports both full-buffer `refit()` and per-BLAS `refitRange(startNode, nodeCount)`. Handles BLAS-pointer nodes in TLAS (reads BLAS root bounds).
 
@@ -140,13 +140,14 @@ GLTF skeletal/morph animation playback and interactive object transforms with BV
 **Transform data flow**:
 1. User selects object → `TransformManager.attach(object)` + `OutlineHelper` shows outline
 2. Drag gizmo → `OrbitControls` disabled, `app.needsReset = true` per frame (real-time outline updates)
-3. Drag end → `_recomputeAndRefit()`: compute positions + smooth normals for affected meshes → `refitBLASes(affectedIndices, positions, normals)`
-4. Per-BLAS refit + TLAS rebuild → GPU upload → accumulation restart
+3. Drag end → `_recomputeAndRefit()` → `app.updateMeshTransforms(affectedIndices)`
+4. Per-placement matrix write + TLAS leaf inverse rewrite + TLAS AABB refit → upload the TLAS range only → accumulation restart
 
 **BVH refit data flow (two-level)**:
-- **Full refit** (animation): `SceneProcessor.refitBVH()` → worker updates all triangle positions + refits entire combined BVH buffer (TLAS + all BLASes) via SharedArrayBuffer
-- **Per-mesh refit** (transform): `SceneProcessor.refitBLASes(meshIndices)` → main thread updates only affected meshes' triangles, refits their BLAS ranges, rebuilds TLAS from updated AABBs
-- **Positions buffer ordering**: both take 9 floats per triangle for **every triangle in the scene** — meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. Walking your own model instead silently misaligns the buffer. Both methods now length-check and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
+- **Full refit** (animation): `SceneProcessor.refitBVH()` → the main thread scatters each mesh's positions into the shared triangle records as it reads them, then the worker refits the whole combined BVH (TLAS + all BLASes) in SharedArrayBuffer. Positions never cross the worker boundary.
+- **Per-mesh refit** (deformation): `SceneProcessor.refitBLASes(meshIndices)` → main thread updates only affected meshes' triangles, refits their BLAS ranges, rebuilds TLAS from updated AABBs
+- **Rigid move** (transform gizmo): `SceneProcessor.updateMeshTransforms(meshIndices)` → no geometry at all. Writes each placement's world matrix, rewrites its TLAS leaf's world-to-object rows, refits the TLAS. ⚠️ Use this, not `refitBLASes`, for anything that only changed a transform: triangles are shared between placements of the same geometry, so baking world positions into them moves every copy.
+- **Positions**: both accept either a per-mesh callback `(meshIndex, triCount) => Float32Array` — asked for one mesh at a time, and free to hand back the same scratch buffer each call — or a scene-wide Float32Array of 9 floats per triangle for **every triangle in the scene**, meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. **Prefer the callback**: the scene-wide array is 1,030 MB at 30M triangles and will not allocate at that size. Walking your own model instead of `sceneMeshes` silently misaligns either shape. Both are length-checked and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
 
 **Video render data flow**:
 1. `VideoRenderManager.renderAnimation()` saves engine state, stops rAF, configures final-render mode
@@ -170,25 +171,42 @@ Zustand-based stores with **automatic 3D engine synchronization**:
 - **`useActiveApp()`**: Returns the current app instance, re-renders on app changes (uses `subscribeApp()` internally)
 
 ### Data Layout & GPU Optimization
-**Triangle Data Layout** (32 floats per triangle, vec4-aligned):
+**Triangle Data Layout** (20 u32 lanes per triangle = 80 B, 5 vec4s). The buffer is bound as
+`uvec4`, so a reader binds `'uvec4'` and floats come back through `uintBitsToFloat`:
 ```js
 // EngineDefaults.js - TRIANGLE_DATA_LAYOUT
-FLOATS_PER_TRIANGLE: 32  // 8 vec4s for GPU efficiency
-POSITION_A_OFFSET: 0     // 3 vec4s for positions (A,B,C)
-NORMAL_A_OFFSET: 12      // 3 vec4s for normals (A,B,C)
-UV_AB_OFFSET: 24         // 2 vec4s for UVs + material index
+FLOATS_PER_TRIANGLE: 20         // 5 vec4s; positions carry their own normal
+POSITION_A/B/C_OFFSET: 0/4/8    // f32 xyz, normal packed in the spare .w lane
+NORMAL_A/B/C_PACKED_OFFSET: 3/7/11  // oct16 (packNormalOct), ~0.03° worst case
+UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
+MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
+MESH_INDEX_OFFSET: 19
 ```
+⚠️ Any new reader of `triangleStorageAttr` must bind `uvec4` **and** pass the hit's
+`instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
 **Two-Level BVH Layout** (packed in single GPU storage buffer):
 ```
 Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M nodes ]
 ```
 - **16 floats per node** (4 × vec4). Inner nodes store children's AABBs + child indices.
-- **Triangle leaf** (marker `-1`): `[triOffset, triCount, 0, -1]` — absolute index into triangleData
-- **BLAS-pointer leaf** (marker `-2`): `[blasRootNodeIndex, meshIndex, visibility, -2]` — TLAS leaf pointing to a BLAS root; slot [2] is the per-mesh visibility flag (1=visible, 0=hidden), read for free during traversal
-- Traversal distinguishes leaf types via threshold: `nodeData0.w > -1.5` → triangle leaf, else → BLAS pointer (check per-mesh visibility, push onto stack if visible)
-- **`InstanceTable`**: CPU-side per-mesh metadata (blasOffset, blasNodeCount, triOffset, triCount, worldAABB)
-- **`TLASBuilder`**: SAH BVH over mesh AABBs with cached flatten buffer
+- Indices and leaf tags in slot `[3]` are **u32 bit patterns**, read with `floatBitsToUint`.
+  Stored as float *values* they rounded past 2^24 and sent rays to a neighbouring node, which
+  silently erased geometry from large scenes. Every valid index is below `BVH_MAX_INDEX` (2^30)
+  and the tags sit above it, so `nodeTag >= BVH_MAX_INDEX` means leaf.
+- **Triangle leaf** (`BVH_LEAF_MARKERS.TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, 0, tag]`
+- **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`,
+  and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **placement** index
+  masked by `TLAS_PLACEMENT_MASK`; its bit 30 (`TLAS_LEAF_IDENTITY`) says the matrix is identity,
+  which is how a baked placement tells traversal to skip the ray transform.
+- **Geometry storage is hybrid.** A geometry used by exactly one placement — or one that emits
+  light — is **baked to world space** behind an identity leaf. A geometry shared by several
+  placements stays in **object space** and the ray is moved into it on entry. Emissive instanced
+  meshes are expanded to per-instance triangles so every copy lights the scene.
+- **`InstanceTable`**: per-**placement** metadata (a million instances cost a matrix each, not a
+  million Object3Ds). `sourceMesh[placement]` names the template; `placementRunOf(template)`
+  gives that template's contiguous run. ⚠️ Never index it with a mesh/template index.
+- **`TLASBuilder`**: SAH BVH over placement AABBs with cached flatten buffer
 
 ## Key Development Patterns
 
@@ -319,9 +337,26 @@ Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never us
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
-2. **GeometryExtractor** converts meshes to optimized triangle data (32-float layout), records per-mesh `meshTriangleRanges`
+2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.
 3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
+
+### Loading part of a scene archive
+A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
+subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
+- `assetLoader.inspectArchive( file )` lists the elements without retaining any of them.
+- `loadFile( file, { element } )` takes one element path or **an array of them** to load
+  together. Everything above them — the root scene file, the material library, an ancestor's
+  `textures` folder — comes along, and an `Include` pointing at an element that was left out
+  only warns, which is what makes a partial load work.
+- Past `ARCHIVE_ELEMENT_PROMPT_BYTES` (4 GB unpacked) a multi-element archive throws
+  `ARCHIVE_NEEDS_ELEMENT` carrying `elements`, rather than taking all of it. The app turns that
+  into a multi-select dialog. ⚠️ This applies to the **seekable .tar** path too, where indexing
+  is free but *parsing* everything is what runs the tab out of memory. Selecting every element
+  is a valid answer and loads the whole scene; `promptBytes` overrides the line.
+- `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
+  and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
+  killed the renderer outright — so raising it is a deliberate act on a fresh browser.
 
 ## Development Commands
 
@@ -355,6 +390,30 @@ const MEMORY_LIMITS = {
 }
 ```
 
+**CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
+contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host
+stays up. A 40M-triangle Moana needs ~7.3 GB and a fresh renderer places 7.0–9.5 GB, so the same
+build loads after a reboot and fails after a long session.
+- `estimateSceneBytes({ triangles, placements, geometryBytes })` prices a scene before extraction.
+  `SceneProcessor._preflightMemory()` runs it and applies two lines, both recording
+  `ISSUE_CODES.SCENE_MEMORY_BUDGET`: above `SAFE_SCENE_BYTES` (7,040 MB) it **warns** and builds
+  anyway; above `MAX_SCENE_BYTES` (9,216 MB, override with `config.maxSceneBytes`) it **throws**.
+  The hard line exists because past it the renderer process is killed rather than throwing —
+  measured on Moana, 40M (7.3 GB) and 45M (8.5 GB) load and render, 50M dies at 9.4 GB resident
+  with nothing caught and nothing logged. There is no degrading past that, only refusing early.
+- `probeAddressSpace( bytes )` measures what can still be placed. ⚠️ **Only cheap when small.**
+  8.6 GB of 64 MB buffers costs 102 ms on an idle page and never shows as resident; the same probe
+  taken while the parser holds 3.6 GB pushes the renderer to 9.2 GB and doubles a 40M load
+  (135 s → 268 s). Probe one build step, at the moment that step runs — see
+  `_checkAssemblyHeadroom()`, which tests only the combined BVH right before it is allocated.
+- `app.getHostMemoryInfo()` returns the preflight, per-phase allocations and live samples for the
+  last build. ⚠️ `performance.memory.usedJSHeapSize` does **not** count SharedArrayBuffer, and the
+  triangle and BVH stores are SAB-backed, so the browser's own heap reading under-reports a large
+  scene by gigabytes. Use this instead.
+- Measured at 40M: peak live 7,350 MB against a 7,289 MB final resident set. The BLAS→BVH handoff
+  already releases as it fills, so there is no build transient left worth attacking — the only
+  remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
+
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:
 ```js
@@ -376,7 +435,7 @@ Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro wit
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)
-9. **BVH Leaf Markers**: `-1` = triangle leaf, `-2` = BLAS-pointer leaf. Traversal uses threshold `-1.5` to distinguish. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
+9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
-11. **Transform vs Animation Refit**: Transforms use `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
+11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag (`normalCData.w`).

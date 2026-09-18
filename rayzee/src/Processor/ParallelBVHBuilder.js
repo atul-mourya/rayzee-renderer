@@ -16,7 +16,7 @@ setBVHWorkerFactory( () => new BVHWorker() );
 
 const log = createLogger( 'bvh' );
 
-const FPT = 32; // FLOATS_PER_TRIANGLE
+const FPT = 20; // FLOATS_PER_TRIANGLE — the record is uint lanes, not floats
 const PARALLEL_THRESHOLD = 50000;
 const MAX_PARALLEL_WORKERS = 8;
 
@@ -27,11 +27,11 @@ const MAX_PARALLEL_WORKERS = 8;
  * Phase 2: Subtree workers build independent subtrees in parallel.
  * Phase 3: Coordinator assembles final BVH and reorders triangles.
  *
- * @param {Float32Array} triangles - Triangle data (32 floats per triangle)
+ * @param {Uint32Array} triangles - Triangle records (20 lanes each)
  * @param {number} depth - Maximum BVH depth
  * @param {Function|null} progressCallback - Optional progress callback (0-100)
  * @param {Object} config - Builder config (maxLeafSize, numBins, treelet settings, etc.)
- * @returns {Promise<{bvhData: Float32Array, bvhRoot: true, reorderedTriangles: Float32Array, splitStats: Object}>}
+ * @returns {Promise<{bvhData: Float32Array, bvhRoot: true, reorderedTriangles: Uint32Array, splitStats: Object}>}
  */
 export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
@@ -47,7 +47,8 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 			// Allocate SharedArrayBuffers
 			const sharedTriangleData = new SharedArrayBuffer( triangles.byteLength );
-			new Float32Array( sharedTriangleData ).set( triangles );
+			new Uint32Array( sharedTriangleData ).set( triangles );
+			triangles = null; // shared copy is the only one needed; the fallback rebuilds from it
 
 			const sharedCentroids = new SharedArrayBuffer( triangleCount * 3 * 4 );
 			const sharedBMin = new SharedArrayBuffer( triangleCount * 3 * 4 );
@@ -97,8 +98,8 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 				cleanup();
 				// Copy from SharedArrayBuffer to regular ArrayBuffer for transfer
 				const restoredBuffer = new ArrayBuffer( sharedTriangleData.byteLength );
-				new Float32Array( restoredBuffer ).set( new Float32Array( sharedTriangleData ) );
-				const restoredTriangles = new Float32Array( restoredBuffer );
+				new Uint32Array( restoredBuffer ).set( new Uint32Array( sharedTriangleData ) );
+				const restoredTriangles = new Uint32Array( restoredBuffer );
 				resolve( buildSingleWorker( restoredTriangles, depth, progressCallback, config ) );
 
 			};
@@ -149,7 +150,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 					settled = true;
 					cleanup();
-					const reorderedTriangles = new Float32Array( sharedReorderBuffer );
+					const reorderedTriangles = new Uint32Array( sharedReorderBuffer );
 					resolve( { bvhData: msg.bvhData, bvhRoot: true, reorderedTriangles, originalToBvh: msg.originalToBvh || null, splitStats: phase1Stats || {} } );
 					return;
 
@@ -439,7 +440,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 
 				worker.terminate();
 				const reorderedTriangles = sharedReorderBuffer
-					? new Float32Array( sharedReorderBuffer )
+					? new Uint32Array( sharedReorderBuffer )
 					: transferredTriangles;
 
 				resolve( { bvhData, bvhRoot: true, reorderedTriangles, originalToBvh: originalToBvh || null, splitStats: treeletStats || {} } );

@@ -1,13 +1,17 @@
 /**
  * Packed buffer manager for wavefront path tracing — one storage buffer per data category.
  * RAY/HIT are SoA-within-a-buffer (field `slot` of element `id` lives at `id + slot*_cap`).
+ *
+ * All three are GPU-only: every lane is written by a kernel before anything reads it and none
+ * is ever read back, so they carry no CPU array (see gpuOnlyStorageAttribute).
  */
 
 import {
 	storage, uintBitsToFloat, floatBitsToUint, vec2, vec3, vec4, uvec4, uint, int, float, clamp,
 	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max,
 } from 'three/tsl';
-import { StorageInstancedBufferAttribute } from 'three/webgpu';
+import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
+import { packNormalOct, unpackTriangleNormal } from '../TSL/Common.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'gpu' );
@@ -32,9 +36,12 @@ export const RAY = {
 	SSS_SIGMA_S: 6, // vec4(sigmaS.xyz, g) — SSS scattering coeff + Henyey-Greenstein anisotropy (sigmaS==0 ⇒ glass)
 };
 
+// uvec4 so packed lanes keep their exact bits — an f32 lane may canonicalise a NaN pattern.
 export const HIT = {
-	DIST_TRI_BARY: 0, // vec4(distance, uintBitsToFloat(triIndex), bary.u, bary.v)
-	NORMAL_MAT: 1, // vec4(geoNormal.xyz, uintBitsToFloat(matIndex | meshIndex<<16))
+	DIST_TRI_BARY: 0, // uvec4(bits(distance), triIndex, bits(bary.u), bits(bary.v))
+	// The geometric normal rides as one oct16 word (it was interpolated from oct16 triangle
+	// normals to begin with), which leaves the instance leaf a full 32-bit lane of its own.
+	NORMAL_MAT: 1, // uvec4(octNormal, matIndex, instanceLeaf + 1, 0)
 };
 
 // SoA region stride, baked into the shader graph at build time; single instance, rebuilt on resize.
@@ -82,14 +89,14 @@ export class PackedRayBuffer {
 
 		// count=0 so StorageBufferNode.getHash() shares the buffer → RW and RO nodes bind the same GPU data.
 		const rayCount = capacity * RAY_STRIDE;
-		const rayAttr = new StorageInstancedBufferAttribute( new Float32Array( rayCount * 4 ), 4 );
+		const rayAttr = gpuOnlyStorageAttribute( rayCount, 4 );
 		this._attrs.ray = rayAttr;
 		this.rayBuffer = {
 			rw: storage( rayAttr, 'vec4' ),
 			ro: storage( rayAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const rngAttr = new StorageInstancedBufferAttribute( new Uint32Array( capacity ), 1 );
+		const rngAttr = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
 		this._attrs.rng = rngAttr;
 		this.rngBuffer = {
 			rw: storage( rngAttr, 'uint' ),
@@ -97,11 +104,11 @@ export class PackedRayBuffer {
 		};
 
 		const hitCount = capacity * HIT_STRIDE;
-		const hitAttr = new StorageInstancedBufferAttribute( new Float32Array( hitCount * 4 ), 4 );
+		const hitAttr = gpuOnlyStorageAttribute( hitCount, 4, Uint32Array );
 		this._attrs.hit = hitAttr;
 		this.hitBuffer = {
-			rw: storage( hitAttr, 'vec4' ),
-			ro: storage( hitAttr, 'vec4' ).toReadOnly(),
+			rw: storage( hitAttr, 'uvec4' ),
+			ro: storage( hitAttr, 'uvec4' ).toReadOnly(),
 		};
 
 		// Kept for the [gpu] startup summary in PathTracer._buildWavefrontKernels.
@@ -253,29 +260,33 @@ export const writeRayRadiance = ( buf, id, radiance ) =>
 		.assign( radiance );
 
 export const readHitDistance = ( buf, id ) =>
-	buf.element( soa( id, HIT.DIST_TRI_BARY ) ).x;
+	uintBitsToFloat( buf.element( soa( id, HIT.DIST_TRI_BARY ) ).x );
 
 export const readHitTriangleIndex = ( buf, id ) =>
-	floatBitsToUint( buf.element( soa( id, HIT.DIST_TRI_BARY ) ).y );
+	buf.element( soa( id, HIT.DIST_TRI_BARY ) ).y;
 
 export const readHitBarycentrics = ( buf, id ) =>
-	buf.element( soa( id, HIT.DIST_TRI_BARY ) ).zw;
+	uintBitsToFloat( buf.element( soa( id, HIT.DIST_TRI_BARY ) ).zw );
 
 export const readHitNormal = ( buf, id ) =>
-	buf.element( soa( id, HIT.NORMAL_MAT ) ).xyz;
+	unpackTriangleNormal( buf.element( soa( id, HIT.NORMAL_MAT ) ).x );
 
 export const readHitMaterialIndex = ( buf, id ) =>
-	uint( floatBitsToUint( buf.element( soa( id, HIT.NORMAL_MAT ) ).w ).bitAnd( 0xFFFF ) );
+	uint( buf.element( soa( id, HIT.NORMAL_MAT ) ).y );
 
-export const readHitMeshIndex = ( buf, id ) =>
-	floatBitsToUint( buf.element( soa( id, HIT.NORMAL_MAT ) ).w ).shiftRight( 16 );
+/**
+ * TLAS leaf that owns the hit, biased by one so 0 reads as "no instance" — leaf 0 is a real
+ * node when the scene has a single mesh.
+ */
+export const readHitInstanceLeaf = ( buf, id ) =>
+	int( buf.element( soa( id, HIT.NORMAL_MAT ) ).z ).sub( int( 1 ) );
 
-export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, meshIndex ) => {
+export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf ) => {
 
 	buf.element( soa( id, HIT.DIST_TRI_BARY ) )
-		.assign( vec4( distance, uintBitsToFloat( triIndex ), baryU, baryV ) );
+		.assign( uvec4( floatBitsToUint( distance ), triIndex, floatBitsToUint( baryU ), floatBitsToUint( baryV ) ) );
 	buf.element( soa( id, HIT.NORMAL_MAT ) )
-		.assign( vec4( normal, uintBitsToFloat( matIndex.bitOr( meshIndex.shiftLeft( 16 ) ) ) ) );
+		.assign( uvec4( packNormalOct( normal ), matIndex, instanceLeaf, uint( 0 ) ) );
 
 };
 

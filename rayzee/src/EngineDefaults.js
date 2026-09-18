@@ -533,24 +533,121 @@ export const AF_DEFAULTS = {
 	SNAP_THRESHOLD: 0.5,
 };
 
-// Triangle data layout constants - shared between GeometryExtractor and TextureCreator
+/**
+ * Triangle record: 5 uvec4 lanes (80 bytes). The buffer is declared `uvec4` so packed lanes
+ * keep their exact bit pattern — a packSnorm2x16 result can land in the f32 NaN range, and an
+ * f32 lane may canonicalise it (the same reason the G-buffer is uvec4). Positions and UVs are
+ * written as f32 through a Float32Array view of the same memory and read back with
+ * `uintBitsToFloat`, so they carry full precision; only normals are compressed.
+ *
+ * Was 32 floats (128 B) with 4 dead padding lanes. At 128 B the 2 GB V8 ArrayBuffer cap put a
+ * hard ceiling of 16.7M triangles on the scene — 80 B lifts that to 26.8M and cuts geometry
+ * VRAM by the same 37.5%. Each normal now rides in its position's spare .w lane, so the three
+ * vec4 loads the intersection test already does carry the normals with them.
+ */
 export const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 32,
+	FLOATS_PER_TRIANGLE: 20,
 
-	// Positions (3 vec4s = 12 floats)
-	POSITION_A_OFFSET: 0,
+	POSITION_A_OFFSET: 0, // f32 xyz + packed normal A
 	POSITION_B_OFFSET: 4,
 	POSITION_C_OFFSET: 8,
 
-	// Normals (3 vec4s = 12 floats)
-	NORMAL_A_OFFSET: 12,
-	NORMAL_B_OFFSET: 16,
-	NORMAL_C_OFFSET: 20,
+	NORMAL_A_PACKED_OFFSET: 3, // oct16 in each position's .w lane
+	NORMAL_B_PACKED_OFFSET: 7,
+	NORMAL_C_PACKED_OFFSET: 11,
 
-	// UVs and Material (2 vec4s = 8 floats)
-	UV_AB_OFFSET: 24,
-	UV_C_MAT_OFFSET: 28
+	UV_AB_OFFSET: 12, // f32 uvA.xy, uvB.xy
+	UV_C_OFFSET: 16, // f32 uvC.xy
+	MATERIAL_FLAGS_OFFSET: 18, // materialIndex | side << 24 | shadowBlockerBits << 26 (two bits)
+	MESH_INDEX_OFFSET: 19
 };
+
+export const TRI_MATERIAL_MASK = 0xffffff;
+export const TRI_SIDE_SHIFT = 24; // 0 front, 1 back, 2 double
+export const TRI_BLOCKER_SHIFT = 26; // 1 = blocks shadow rays whatever the settings
+export const TRI_BLOCKER_ALPHA_SHIFT = 27; // 1 = blocks them unless alpha-cutout shadows are on
+
+/**
+ * How a shadow ray settles on this material without fetching it, mirroring traceShadowRay:
+ * bit 0 set = always a blocker; bit 1 set = a blocker while alpha-cutout shadows are off
+ * (MASK/BLEND with nothing else letting light through); 0 = light may pass, so the shadow
+ * traversal has to find the nearest such surface.
+ */
+export function shadowBlockerBits( material ) {
+
+	if ( ! material ) return 0;
+	const solid = ( material.transmission || 0 ) === 0
+		&& ( ( material.transparent | 0 ) === 0 || ( material.opacity ?? 1 ) >= 1 );
+	if ( ! solid ) return 0;
+	return ( material.alphaMode | 0 ) === 0 ? 1 : 2;
+
+}
+
+/**
+ * Material index plus the per-triangle flags the shader reads without touching the
+ * material buffer: `side` for inline culling and the two shadow-blocker bits.
+ */
+export function packTriangleFlags( materialIndex, material ) {
+
+	return ( ( materialIndex & TRI_MATERIAL_MASK )
+		| ( ( material?.side ?? 0 ) << TRI_SIDE_SHIFT )
+		| ( shadowBlockerBits( material ) << TRI_BLOCKER_SHIFT ) ) >>> 0;
+
+}
+
+/**
+ * Octahedral-encode a unit normal into one u32 (two snorm16). Worst-case error is ~0.03°,
+ * well under what normal maps and barycentric interpolation already contribute.
+ * A degenerate (zero-length) normal encodes as +Z rather than NaN.
+ */
+export function packNormalOct( x, y, z ) {
+
+	const len = Math.sqrt( x * x + y * y + z * z );
+	if ( len > 0 ) {
+
+		x /= len; y /= len; z /= len;
+
+	} else {
+
+		x = 0; y = 0; z = 1;
+
+	}
+
+	const sum = Math.abs( x ) + Math.abs( y ) + Math.abs( z );
+	let u = x / sum, v = y / sum;
+	if ( z < 0 ) {
+
+		const au = u, av = v;
+		u = ( 1 - Math.abs( av ) ) * ( au >= 0 ? 1 : - 1 );
+		v = ( 1 - Math.abs( au ) ) * ( av >= 0 ? 1 : - 1 );
+
+	}
+
+	const qu = Math.round( Math.min( 1, Math.max( - 1, u ) ) * 32767 ) & 0xffff;
+	const qv = Math.round( Math.min( 1, Math.max( - 1, v ) ) * 32767 ) & 0xffff;
+	return ( ( qv << 16 ) | qu ) >>> 0;
+
+}
+
+/** Inverse of packNormalOct; writes into `out` (length >= 3) and returns it. */
+export function unpackNormalOct( packed, out ) {
+
+	const u = ( ( packed << 16 ) >> 16 ) / 32767;
+	const v = ( packed >> 16 ) / 32767;
+	let x = u, y = v, z = 1 - Math.abs( u ) - Math.abs( v );
+	if ( z < 0 ) {
+
+		const ax = x, ay = y;
+		x = ( 1 - Math.abs( ay ) ) * ( ax >= 0 ? 1 : - 1 );
+		y = ( 1 - Math.abs( ax ) ) * ( ay >= 0 ? 1 : - 1 );
+
+	}
+
+	const len = Math.sqrt( x * x + y * y + z * z ) || 1;
+	out[ 0 ] = x / len; out[ 1 ] = y / len; out[ 2 ] = z / len;
+	return out;
+
+}
 
 // Material data layout constants — single source of truth for material buffer offsets.
 // Shared between CPU writers (TextureCreator, MaterialDataManager) and GPU readers (Common.js getMaterial).
@@ -652,10 +749,68 @@ export const MATERIAL_DATA_LAYOUT = {
 export const normalizeAttenuationDistance = d => ( Number.isFinite( d ) && d > 0 ? d : 0 );
 
 // BVH node leaf markers
+/**
+ * Node tags, written into slot [3] of a BVH node as a raw u32 bit pattern.
+ *
+ * Node indices, triangle offsets and counts are integers living inside a Float32Array. Written as
+ * float *values* they round silently past 2^24 (16,777,216): in a 24M-node scene half of every
+ * BLAS pointer landed on a neighbouring node and that geometry vanished from the render with no
+ * error at all. Every one of those fields is written as a u32 bit pattern instead, exact to 2^30.
+ *
+ * Tags sit above {@link BVH_MAX_INDEX} so a single unsigned compare separates a leaf from an inner
+ * node's left-child index. All three are ordinary finite floats — nothing lands in the NaN range,
+ * which an f32 storage buffer is free to canonicalise.
+ */
+export const BVH_MAX_INDEX = 0x40000000; // 2^30
+
+/**
+ * Slot [1] of a BLAS-pointer leaf holds its placement index, which {@link BVH_MAX_INDEX} keeps
+ * below 2^30. Bit 30 is therefore free to say the leaf's matrix is identity: geometry no other
+ * placement shares is baked to world space at extraction, and a ray reaching it needs no
+ * transform at all. Mask the bit off before using the slot as an index.
+ */
+export const TLAS_LEAF_IDENTITY = 0x40000000;
+export const TLAS_PLACEMENT_MASK = 0x3fffffff;
+
 export const BVH_LEAF_MARKERS = {
-	TRIANGLE_LEAF: - 1, // Leaf containing triangle references
-	BLAS_POINTER_LEAF: - 2, // TLAS leaf pointing to a BLAS root node
+	TRIANGLE_LEAF: 0x40000000, // leaf containing triangle references
+	BLAS_POINTER_LEAF: 0x40000001, // TLAS leaf pointing to a BLAS root node
+	FRONTIER: 0x40000002, // parallel-build placeholder, overwritten during assembly
 };
+
+/** A u32 view over a float buffer, for writing index fields as exact bit patterns. */
+export function bvhIndexView( f32 ) {
+
+	return new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
+
+}
+
+/**
+ * Refuse to build a BVH whose indices would collide with the leaf tags.
+ *
+ * Throws rather than degrades: the failure this replaces was a scene that rendered with half its
+ * geometry silently missing, which is far worse than a scene that refuses to load. Guarding the
+ * totals covers every individual write, since no index can exceed the count it indexes into.
+ *
+ * @param {number} count - node or triangle total about to be indexed
+ * @param {string} what - what the count is, for the message
+ * @throws {RangeError}
+ */
+export function assertBVHIndexFits( count, what ) {
+
+	if ( count >= BVH_MAX_INDEX ) {
+
+		throw new RangeError(
+			`${what} is ${count.toLocaleString()}, at or past the BVH index limit of ` +
+			`${BVH_MAX_INDEX.toLocaleString()}. Node indices are stored as u32 bit patterns and the ` +
+			'leaf tags occupy everything above that.'
+		);
+
+	}
+
+	return count;
+
+}
 
 // Texture processing constants
 export const TEXTURE_CONSTANTS = {

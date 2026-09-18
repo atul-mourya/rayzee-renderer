@@ -22,10 +22,17 @@ import {
 	cos,
 	acos,
 	atan,
+	uint,
+	uintBitsToFloat,
 } from 'three/tsl';
 
 import { struct } from './patches.js';
-import { MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT, computeDotProductsAniso } from './Common.js';
+import {
+	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
+	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
+	unpackTriangleNormal, TRI_STRIDE
+} from './Common.js';
+import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
@@ -272,7 +279,6 @@ export const isEmissive = Fn( ( [ material ] ) => {
 // TRIANGLE DATA ACCESS
 // ================================================================================
 
-const TRI_STRIDE = 8;
 const EMISSIVE_STRIDE = 2; // 2 vec4s per emissive entry
 
 export const TriangleData = struct( {
@@ -283,26 +289,40 @@ export const TriangleData = struct( {
 
 // Fetch triangle vertices from storage buffer
 // Returns data packed in a struct-like way
-export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer ] ) => {
+/**
+ * A triangle's vertices and normals in WORLD space.
+ *
+ * Storage is per instance in object space, so `instanceLeaf` names the TLAS leaf whose
+ * transform brings it back out; pass -1 for geometry that is already in world space.
+ */
+export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffer, instanceLeaf ] ) => {
 
-	// Positions
-	const pos0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 0 ), int( TRI_STRIDE ) );
-	const pos1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 1 ), int( TRI_STRIDE ) );
-	const pos2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 2 ), int( TRI_STRIDE ) );
+	// Positions carry their packed normal in .w
+	const pos0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 0 ), int( TRI_STRIDE ) ).toVar();
+	const pos1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 1 ), int( TRI_STRIDE ) ).toVar();
+	const pos2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 2 ), int( TRI_STRIDE ) ).toVar();
 
-	// Normals
-	const norm0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 3 ), int( TRI_STRIDE ) );
-	const norm1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 4 ), int( TRI_STRIDE ) );
-	const norm2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 5 ), int( TRI_STRIDE ) );
+	const uvMat = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 4 ), int( TRI_STRIDE ) );
 
-	// Material index (stored in last vec4)
-	const uvMat = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 7 ), int( TRI_STRIDE ) );
+	const v0 = uintBitsToFloat( pos0.xyz ).toVar(), v1 = uintBitsToFloat( pos1.xyz ).toVar(), v2 = uintBitsToFloat( pos2.xyz ).toVar();
+	const n0 = unpackTriangleNormal( pos0.w ).toVar(), n1 = unpackTriangleNormal( pos1.w ).toVar(), n2 = unpackTriangleNormal( pos2.w ).toVar();
+
+	If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+		const rows = instanceRows( bvhBuffer, instanceLeaf );
+		v0.assign( instancePointToWorld( rows, v0 ) );
+		v1.assign( instancePointToWorld( rows, v1 ) );
+		v2.assign( instancePointToWorld( rows, v2 ) );
+		n0.assign( normalize( instanceNormalToWorld( rows, n0 ) ) );
+		n1.assign( normalize( instanceNormalToWorld( rows, n1 ) ) );
+		n2.assign( normalize( instanceNormalToWorld( rows, n2 ) ) );
+
+	} );
 
 	// Return all data as a struct
 	return TriangleData( {
-		v0: pos0.xyz, v1: pos1.xyz, v2: pos2.xyz,
-		n0: norm0.xyz, n1: norm1.xyz, n2: norm2.xyz,
-		materialIndex: int( uvMat.z ),
+		v0, v1, v2, n0, n1, n2,
+		materialIndex: int( uvMat.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ),
 	} );
 
 } );
@@ -312,9 +332,10 @@ export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer ] ) => {
 // Uses same heuristic as sampleEmissiveTriangle for MIS consistency
 export const calculateEmissiveLightPdf = Fn( ( [
 	triangleIndex, hitDistance, rayDir, shadingPoint, triangleBuffer, materialBuffer, emissiveTotalPower,
+	bvhBuffer, instanceLeaf,
 ] ) => {
 
-	const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer ) );
+	const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer, bvhBuffer, instanceLeaf ) );
 	const area = triangleArea( triData.v0, triData.v1, triData.v2 );
 
 	// Targeted material read: only fetch emissive data (2 vec4s instead of full 27)
@@ -391,7 +412,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-	triangleBuffer,
+	triangleBuffer, bvhBuffer,
 ] ) => {
 
 	const result = EmissiveSample( {
@@ -423,9 +444,12 @@ export const sampleEmissiveTriangle = Fn( ( [
 		const samplePower = max( emissiveData0.g, float( 1e-10 ) );
 		const emission = emissiveData1.xyz;
 		const area = emissiveData1.w;
+		// Slot 3 carries the emitter's TLAS leaf; the selection pdf it used to hold is
+		// recomputed from power and the total, so the word was free.
+		const emissiveInstance = int( emissiveData0.a );
 
 		// Fetch triangle geometry
-		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer ) );
+		const triData = TriangleData.wrap( fetchTriangleData( triangleIndex, triangleBuffer, bvhBuffer, emissiveInstance ) );
 
 		const xi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 3 ) ), rngState, resolution, frame ).toVar();
 
@@ -532,7 +556,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-	triangleBuffer,
+	triangleBuffer, bvhBuffer,
 	// Callback functions to avoid circular deps
 	traceShadowRayFn,
 	calculateRayOffsetFn,
@@ -553,7 +577,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		hitPoint, normal, rngState,
 		pixelCoord, resolution, frame, dimBase,
 		emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-		triangleBuffer,
+		triangleBuffer, bvhBuffer,
 	) );
 
 	If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
@@ -614,7 +638,7 @@ export const calculateEmissiveTriangleContribution = Fn( ( [
 	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-	triangleBuffer,
+	triangleBuffer, bvhBuffer,
 	traceShadowRayFn,
 	calculateRayOffsetFn,
 ] ) => {
@@ -625,7 +649,7 @@ export const calculateEmissiveTriangleContribution = Fn( ( [
 		pixelCoord, resolution, frame, dimBase,
 		emissiveBoost,
 		emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-		triangleBuffer,
+		triangleBuffer, bvhBuffer,
 		traceShadowRayFn,
 		calculateRayOffsetFn,
 	) );

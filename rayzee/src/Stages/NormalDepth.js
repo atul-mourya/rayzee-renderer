@@ -167,8 +167,9 @@ export class NormalDepth extends RenderStage {
 
 		if ( pt.triangleStorageAttr && ! this._triStorageNode ) {
 
+			// uvec4, matching PathTracerStage: packed lanes must keep their exact bit pattern.
 			this._triStorageNode = storage(
-				pt.triangleStorageAttr, 'vec4', pt.triangleStorageAttr.count
+				pt.triangleStorageAttr, 'uvec4', pt.triangleStorageAttr.count
 			).toReadOnly();
 
 		}
@@ -270,7 +271,10 @@ export class NormalDepth extends RenderStage {
 					const uvTangent = vec4( 0.0 ).toVar();
 					If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-						uvTangent.assign( triangleUVTangent( triStorage, hit.triangleIndex, hit.normal, material.normalTransform ) );
+						uvTangent.assign( triangleUVTangent(
+							triStorage, hit.triangleIndex, hit.normal, material.normalTransform,
+							bvhStorage, hit.instanceLeaf
+						) );
 
 					} );
 

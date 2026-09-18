@@ -5,6 +5,21 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'bvh' );
 
+// Inline copies of EngineDefaults.BVH_LEAF_MARKERS / bvhIndexView — this module also runs inside
+// a worker, where importing Constants is not safe. Keep in step with EngineDefaults.js.
+// Index fields are u32 BIT PATTERNS, never float values: as floats they round past 2^24.
+const TRIANGLE_LEAF = 0x40000000;
+const FRONTIER_LEAF = 0x40000002;
+const indexView = f32 => new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
+const BVH_MAX_INDEX = 0x40000000;
+
+function assertFits( count, what ) {
+
+	if ( count >= BVH_MAX_INDEX ) throw new RangeError( `${what} is ${count}, at or past the BVH index limit of ${BVH_MAX_INDEX}` );
+	return count;
+
+}
+
 // Injected, not imported: this module also runs inside the worker, and `?worker&inline`
 // would embed a second copy of BVHWorker's source there.
 let createBVHWorker = null;
@@ -19,18 +34,17 @@ export function setBVHWorkerFactory( factory ) {
 // Cannot import Constants.js because BVHBuilder runs inside BVHWorker
 // where `window` (used elsewhere in Constants.js) is not defined.
 const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 32,
+	FLOATS_PER_TRIANGLE: 20,
 	POSITION_A_OFFSET: 0,
 	POSITION_B_OFFSET: 4,
-	POSITION_C_OFFSET: 8,
-	NORMAL_A_OFFSET: 12,
-	NORMAL_B_OFFSET: 16,
-	NORMAL_C_OFFSET: 20,
-	UV_AB_OFFSET: 24,
-	UV_C_MAT_OFFSET: 28 // vec4: uvC.x, uvC.y, materialIndex, meshIndex
+	POSITION_C_OFFSET: 8
 };
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+
+// The record buffer is uint; positions are f32 in it. Views share the memory, no copy.
+const floatView = ( data ) => data instanceof Float32Array
+	? data : new Float32Array( data.buffer, data.byteOffset, data.length );
 
 class BVHNode {
 
@@ -215,7 +229,7 @@ export class BVHBuilder {
 	initializeTriangleArrays() {
 
 		const n = this.totalTriangles;
-		const src = this.triangles;
+		const src = floatView( this.triangles );
 		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
 		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
@@ -679,7 +693,7 @@ export class BVHBuilder {
 		// Phase 6: Create reordered triangle data from final index order
 		const reorderStart = performance.now();
 		const triSrc = this.triangles;
-		const reordered = reorderTarget || new Float32Array( n * FPT );
+		const reordered = reorderTarget || new triSrc.constructor( n * FPT );
 		for ( let i = 0; i < n; i ++ ) {
 
 			const srcOff = this.indices[ i ] * FPT;
@@ -1580,7 +1594,9 @@ export class BVHBuilder {
 		// Inner: [leftMin.xyz, leftChild] [leftMax.xyz, rightChild] [rightMin.xyz, 0] [rightMax.xyz, 0]
 		// Leaf:  [triOffset, triCount, 0, -1] [0,0,0,0] [0,0,0,0] [0,0,0,0]
 		const FLOATS_PER_NODE = 16;
+		assertFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
+		const idx = indexView( data );
 
 		for ( let i = 0; i < nodes.length; i ++ ) {
 
@@ -1596,12 +1612,12 @@ export class BVHBuilder {
 				data[ o ] = left.minX;
 				data[ o + 1 ] = left.minY;
 				data[ o + 2 ] = left.minZ;
-				data[ o + 3 ] = left._flatIndex;
+				idx[ o + 3 ] = left._flatIndex;
 
 				data[ o + 4 ] = left.maxX;
 				data[ o + 5 ] = left.maxY;
 				data[ o + 6 ] = left.maxZ;
-				data[ o + 7 ] = right._flatIndex;
+				idx[ o + 7 ] = right._flatIndex;
 
 				data[ o + 8 ] = right.minX;
 				data[ o + 9 ] = right.minY;
@@ -1615,11 +1631,10 @@ export class BVHBuilder {
 
 			} else {
 
-				// Leaf node: triOffset, triCount in vec4(0), marked by leftChild = -1
-				data[ o ] = node.triangleOffset;
-				data[ o + 1 ] = node.triangleCount;
+				idx[ o ] = node.triangleOffset;
+				idx[ o + 1 ] = node.triangleCount;
 				// data[o+2] = 0 (padding)
-				data[ o + 3 ] = - 1; // Leaf marker
+				idx[ o + 3 ] = TRIANGLE_LEAF;
 
 			}
 
@@ -1630,7 +1645,7 @@ export class BVHBuilder {
 	}
 
 	/**
-	 * Flatten BVH tree marking frontier leaves with -2 sentinel.
+	 * Flatten BVH tree marking frontier leaves with the frontier tag.
 	 * Returns the flat data and a frontier map for assembly.
 	 * @param {BVHNode} root
 	 * @returns {{ flatData: Float32Array, frontierMap: Array<{taskId: number, flatIndex: number}> }}
@@ -1653,8 +1668,10 @@ export class BVHBuilder {
 		}
 
 		// Second pass: write flat data
+		assertFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
 		const frontierMap = [];
+		const idx = indexView( data );
 
 		for ( let i = 0; i < nodes.length; i ++ ) {
 
@@ -1670,12 +1687,12 @@ export class BVHBuilder {
 				data[ o ] = left.minX;
 				data[ o + 1 ] = left.minY;
 				data[ o + 2 ] = left.minZ;
-				data[ o + 3 ] = left._flatIndex;
+				idx[ o + 3 ] = left._flatIndex;
 
 				data[ o + 4 ] = left.maxX;
 				data[ o + 5 ] = left.maxY;
 				data[ o + 6 ] = left.maxZ;
-				data[ o + 7 ] = right._flatIndex;
+				idx[ o + 7 ] = right._flatIndex;
 
 				data[ o + 8 ] = right.minX;
 				data[ o + 9 ] = right.minY;
@@ -1687,21 +1704,19 @@ export class BVHBuilder {
 
 			} else if ( node.isFrontier ) {
 
-				// Frontier leaf: mark with -2 sentinel, use the taskId stored on the node
 				const taskId = node.frontierTaskId;
-				data[ o ] = node.triangleOffset;
-				data[ o + 1 ] = node.triangleCount;
-				data[ o + 2 ] = taskId;
-				data[ o + 3 ] = - 2; // Frontier sentinel
+				idx[ o ] = node.triangleOffset;
+				idx[ o + 1 ] = node.triangleCount;
+				idx[ o + 2 ] = taskId;
+				idx[ o + 3 ] = FRONTIER_LEAF;
 
 				frontierMap.push( { taskId, flatIndex: i } );
 
 			} else {
 
-				// Regular leaf
-				data[ o ] = node.triangleOffset;
-				data[ o + 1 ] = node.triangleCount;
-				data[ o + 3 ] = - 1; // Leaf marker
+				idx[ o ] = node.triangleOffset;
+				idx[ o + 1 ] = node.triangleCount;
+				idx[ o + 3 ] = TRIANGLE_LEAF;
 
 			}
 
@@ -1735,7 +1750,9 @@ export class BVHBuilder {
 		}
 
 		// Allocate final array
+		assertFits( totalNodes, 'assembled BLAS node count' );
 		const finalData = new Float32Array( totalNodes * FLOATS_PER_NODE );
+		const finalIdx = indexView( finalData );
 
 		// Copy top-level data
 		finalData.set( topFlatData );
@@ -1766,12 +1783,11 @@ export class BVHBuilder {
 
 				const o = destOffset + j * FLOATS_PER_NODE;
 
-				// Check if inner node (not a leaf: leaf has -1 at o+3)
-				if ( finalData[ o + 3 ] !== - 1 ) {
+				// Leaf tags sit above every valid index, so one unsigned compare separates them.
+				if ( finalIdx[ o + 3 ] < TRIANGLE_LEAF ) {
 
-					// Adjust leftChildIndex and rightChildIndex
-					finalData[ o + 3 ] += globalOffset;
-					finalData[ o + 7 ] += globalOffset;
+					finalIdx[ o + 3 ] += globalOffset;
+					finalIdx[ o + 7 ] += globalOffset;
 
 				}
 

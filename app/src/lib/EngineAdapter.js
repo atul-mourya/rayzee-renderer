@@ -83,6 +83,9 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 		const { type: _type, target: _target, ...loadingState } = e;
 		const state = useStore.getState();
+		// Updates merge, so a previous load's failure would otherwise stick to the next one and
+		// show the error overlay over a load that is going fine.
+		if ( loadingState.isLoading === true && loadingState.failed === undefined ) loadingState.failed = false;
 		state.setLoading( { ...state.loading, ...loadingState } );
 
 	} );

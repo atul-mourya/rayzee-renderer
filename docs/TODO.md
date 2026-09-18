@@ -125,7 +125,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### BVH
 
-- [ ] Object-space triangles + instance transform buffer for true instancing
+- [x] Object-space triangles + instance transform buffer for true instancing
 - [ ] GPU compute refit via compute shader (level-by-level dispatch with barriers; replaces worker + SharedArrayBuffer path)
 - [ ] Background BLAS rebuild after refit when SAH quality degrades
 - [ ] Compact Wide BVH (CWBVH) — 4/8-way branching for GPU traversal

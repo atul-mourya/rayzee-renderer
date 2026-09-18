@@ -23,8 +23,25 @@
  * }
  */
 
-import { tokenize, TokenType } from './PBRTTokenizer.js';
+import { TokenStream, TokenType } from './PBRTTokenizer.js';
 import * as M from './PBRTMath.js';
+
+// Vertex streams reach tens of millions of entries and every consumer narrows them to
+// float32 / uint32 anyway, so hold them at that width instead of 8 bytes a number.
+// Below this a typed array costs more than it saves: an ArrayBuffer plus its view runs to
+// ~100 bytes of overhead, and most parameters are one number or three.
+const TYPED_ARRAY_THRESHOLD = 8;
+
+const NUMERIC_STORAGE = {
+	integer: Int32Array,
+	point3: Float32Array,
+	point2: Float32Array,
+	vector3: Float32Array,
+	vector2: Float32Array,
+	vector: Float32Array,
+	normal: Float32Array,
+	rgb: Float32Array
+};
 
 export class PBRTParser {
 
@@ -35,11 +52,17 @@ export class PBRTParser {
 	 */
 	constructor( opts = {} ) {
 
+		this.releaseInclude = opts.releaseInclude || null;
 		this.resolveInclude = opts.resolveInclude || ( () => {
 
 			throw new Error( 'PBRTParser: Include used but no resolveInclude provided' );
 
 		} );
+
+		// Placements past this are counted and dropped as they are read, not after: the peak
+		// is the parse itself, so a limit applied later saves nothing.
+		this.maxPlacements = opts.maxPlacements ?? Infinity;
+
 
 		// IR accumulators
 		this.ir = {
@@ -49,13 +72,20 @@ export class PBRTParser {
 			namedTextures: new Map(),
 			shapes: [],
 			lights: [],
-			instances: [],
+			// name -> { name, count, matrices } with the transforms packed end to end. One object
+			// and one 4x4 per placement measured 3.7 GB on isCoastline's 2.5M; this is 64 bytes
+			// each and allocates nothing per placement.
+			instances: new Map(),
+			instanceCount: 0,
+			skippedInstances: 0,
 			objects: new Map(),
 			warnings: []
 		};
 
 		// Graphics state
 		this.ctm = M.identity();
+		this._ctmSource = null;
+		this._ctmValue = null;
 		this.state = { material: null, areaLight: null, reverseOrientation: false };
 		this.attributeStack = [];
 		this.transformStack = [];
@@ -69,38 +99,86 @@ export class PBRTParser {
 		this.dirStack = [ '' ];
 
 		// Token cursor (swapped during Include recursion)
-		this.tokens = [];
-		this.pos = 0;
+		this.stream = null;
 
 		this._warnedUnknown = new Set();
 
 	}
 
 	/**
-	 * Parse a top-level pbrt source string.
-	 * @param {string} src
+	 * Parse a top-level pbrt source.
+	 * @param {string|Uint8Array} src - bytes are preferred; a scene file can be larger
+	 *        than the longest string JavaScript will build.
 	 * @param {string} [baseDir] - directory of the source file, for Include paths
 	 * @returns {object} IR
 	 */
-	parse( src, baseDir = '' ) {
+	async parse( src, baseDir = '' ) {
 
 		this.dirStack = [ baseDir ];
-		this._run( tokenize( src ) );
+		await this._run( new TokenStream( src ) );
 		return this.ir;
 
 	}
 
 	// ── token helpers ──────────────────────────────────────────────
 
+	/** Record one placement, copying the CTM straight into the template's matrix buffer. */
+	_addInstance( name ) {
+
+		if ( this.ir.instanceCount >= this.maxPlacements ) {
+
+			this.ir.skippedInstances ++;
+			return;
+
+		}
+
+		let list = this.ir.instances.get( name );
+		if ( ! list ) this.ir.instances.set( name, list = { name, count: 0, matrices: new Float32Array( 16 * 32 ) } );
+
+		const need = ( list.count + 1 ) * 16;
+		if ( need > list.matrices.length ) {
+
+			const grown = new Float32Array( Math.max( need, list.matrices.length * 2 ) );
+			grown.set( list.matrices );
+			list.matrices = grown;
+
+		}
+
+		const o = list.count * 16;
+		const m = this.ctm;
+		for ( let i = 0; i < 16; i ++ ) list.matrices[ o + i ] = m[ i ];
+		list.count ++;
+		this.ir.instanceCount ++;
+
+	}
+
+	/**
+	 * The CTM as the IR should hold it. Consumers treat it as read-only, so consecutive
+	 * shapes under one transform share a single copy — Moana's ground cover emits five
+	 * million shapes without touching the CTM between them.
+	 */
+	_ctmSnapshot() {
+
+		if ( this._ctmSource !== this.ctm ) {
+
+			this._ctmSource = this.ctm;
+			this._ctmValue = this.ctm.slice();
+
+		}
+
+		return this._ctmValue;
+
+	}
+
 	_peek() {
 
-		return this.tokens[ this.pos ];
+		return this.stream.peek();
 
 	}
 
 	_next() {
 
-		return this.tokens[ this.pos ++ ];
+		return this.stream.next();
 
 	}
 
@@ -178,7 +256,7 @@ export class PBRTParser {
 			const type = decl[ 0 ];
 			const name = decl[ 1 ] !== undefined ? decl[ 1 ] : decl[ 0 ];
 
-			const value = this._parseParamValue();
+			const value = this._parseParamValue( type );
 			params[ name ] = { type, value };
 
 		}
@@ -188,27 +266,85 @@ export class PBRTParser {
 	}
 
 	/** Read a single parameter value: a bracketed array or one bare token. */
-	_parseParamValue() {
+	_parseParamValue( declaredType ) {
 
-		const out = [];
+		const bracketed = this._peek() && this._peek().type === TokenType.LBRACKET;
+		if ( bracketed ) this._next();
 
-		if ( this._peek() && this._peek().type === TokenType.LBRACKET ) {
+		const more = () => {
 
-			this._next(); // [
-			while ( this._peek() && this._peek().type !== TokenType.RBRACKET ) {
+			const t = this._peek();
+			return bracketed ? t && t.type !== TokenType.RBRACKET : false;
 
-				out.push( this._coerceValueToken( this._next() ) );
+		};
+
+		if ( ! bracketed ) return [ this._coerceValueToken( this._next() ) ];
+
+		// A long all-number list goes typed; a short one does not. See TYPED_ARRAY_THRESHOLD.
+		if ( this._peek() && this._peek().type === TokenType.NUMBER ) {
+
+			const small = [];
+			while ( more() && small.length < TYPED_ARRAY_THRESHOLD ) {
+
+				const t = this._next();
+				if ( t.type !== TokenType.NUMBER ) return this._finishMixedValue( small, small.length, t );
+				small.push( t.value );
+
+			}
+
+			if ( ! more() ) {
+
+				this._next(); // ]
+				return small;
+
+			}
+
+			const Storage = NUMERIC_STORAGE[ declaredType ] || Float64Array;
+			let buf = new Storage( TYPED_ARRAY_THRESHOLD * 4 );
+			buf.set( small );
+			let n = small.length;
+
+			while ( more() ) {
+
+				const t = this._next();
+				if ( t.type !== TokenType.NUMBER ) return this._finishMixedValue( buf, n, t );
+				if ( n === buf.length ) {
+
+					const grown = new Storage( buf.length * 2 );
+					grown.set( buf );
+					buf = grown;
+
+				}
+
+				buf[ n ++ ] = t.value;
 
 			}
 
 			this._next(); // ]
+			return n === buf.length ? buf : buf.slice( 0, n );
 
-		} else {
+		}
+
+		const out = [];
+		while ( more() ) out.push( this._coerceValueToken( this._next() ) );
+		this._next(); // ]
+		return out;
+
+	}
+
+	/** A list that started numeric but turned out to be mixed — finish it as a plain array. */
+	_finishMixedValue( buf, n, pending ) {
+
+		const out = [];
+		for ( let i = 0; i < n; i ++ ) out.push( buf[ i ] );
+		out.push( this._coerceValueToken( pending ) );
+		while ( this._peek() && this._peek().type !== TokenType.RBRACKET ) {
 
 			out.push( this._coerceValueToken( this._next() ) );
 
 		}
 
+		this._next(); // ]
 		return out;
 
 	}
@@ -232,29 +368,28 @@ export class PBRTParser {
 
 	// ── main directive loop ────────────────────────────────────────
 
-	_run( tokens ) {
+	async _run( stream ) {
 
-		// Save/restore cursor so Include can recurse on a fresh token array.
-		const savedTokens = this.tokens;
-		const savedPos = this.pos;
-		this.tokens = tokens;
-		this.pos = 0;
+		// Save/restore so Include can recurse on a fresh stream.
+		const saved = this.stream;
+		this.stream = stream;
 
-		while ( this.pos < this.tokens.length ) {
+		for ( let t = this._next(); t !== null; t = this._next() ) {
 
-			const t = this._next();
 			if ( t.type !== TokenType.WORD ) {
 
 				throw new Error( `PBRT parser: expected directive, got ${t.type} ${t.value ?? ''}` );
 
 			}
 
-			this._directive( t.value );
+			// Only Include suspends; every other directive returns undefined and the loop
+			// stays synchronous, so an await per token is not paid.
+			const pending = this._directive( t.value );
+			if ( pending !== undefined ) await pending;
 
 		}
 
-		this.tokens = savedTokens;
-		this.pos = savedPos;
+		this.stream = saved;
 
 	}
 
@@ -467,7 +602,7 @@ export class PBRTParser {
 
 				const type = this._expectString( 'LightSource type' );
 				const params = this._parseParams();
-				this.ir.lights.push( { type, params, ctm: this.ctm.slice() } );
+				this.ir.lights.push( { type, params, ctm: this._ctmSnapshot() } );
 				break;
 
 			}
@@ -480,7 +615,7 @@ export class PBRTParser {
 				const shape = {
 					type,
 					params,
-					ctm: this.ctm.slice(),
+					ctm: this._ctmSnapshot(),
 					material: this.state.material,
 					areaLight: this.state.areaLight,
 					reverseOrientation: this.state.reverseOrientation
@@ -527,7 +662,7 @@ export class PBRTParser {
 			case 'ObjectInstance': {
 
 				const objName = this._expectString( 'ObjectInstance name' );
-				this.ir.instances.push( { name: objName, ctm: this.ctm.slice() } );
+				this._addInstance( objName );
 				break;
 
 			}
@@ -537,8 +672,7 @@ export class PBRTParser {
 			case 'Import': {
 
 				const path = this._expectString( name );
-				this._include( path );
-				break;
+				return this._include( path );
 
 			}
 
@@ -570,20 +704,32 @@ export class PBRTParser {
 
 	}
 
-	_include( path ) {
+	async _include( path ) {
 
-		const text = this.resolveInclude( path, this.dirStack[ this.dirStack.length - 1 ] );
-		if ( text == null ) {
+		const dir = this.dirStack[ this.dirStack.length - 1 ];
+		const source = await this.resolveInclude( path, dir );
+		if ( source == null ) {
 
 			this._warn( `Include target not found: ${path}` );
 			return;
 
 		}
 
-		const dir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
-		this.dirStack.push( dir );
-		this._run( tokenize( text ) );
-		this.dirStack.pop();
+		const childDir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
+		this.dirStack.push( childDir );
+		try {
+
+			await this._run( new TokenStream( source ) );
+
+		} finally {
+
+			this.dirStack.pop();
+			// Depth-first, so only the open chain is live. Releasing here is what keeps a
+			// multi-gigabyte scene's text from all being resident at once; a file included
+			// again is simply resolved again.
+			this.releaseInclude?.( path, dir );
+
+		}
 
 	}
 

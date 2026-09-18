@@ -124,3 +124,26 @@ CLAUDE.md
 # Local test models — 800 MB of GLBs used by bench --model, never redistributed
 app/public/models/
 app/public/24155522.glb
+.agents/skills/cf-crawl/SKILL.md
+.agents/skills/check-tsl/SKILL.md
+.agents/skills/debug-pipeline/SKILL.md
+.agents/skills/excalidraw-diagram/README.md
+.agents/skills/excalidraw-diagram/SKILL.md
+.agents/skills/excalidraw-diagram/references/color-palette.md
+.agents/skills/excalidraw-diagram/references/element-templates.md
+.agents/skills/excalidraw-diagram/references/json-schema.md
+.agents/skills/excalidraw-diagram/references/pyproject.toml
+.agents/skills/excalidraw-diagram/references/render_excalidraw.py
+.agents/skills/excalidraw-diagram/references/render_template.html
+.agents/skills/react-expert/SKILL.md
+.agents/skills/review-stage/SKILL.md
+.gitignore
+.codex/config.toml
+.codex/hooks.json
+.codex/agents/perf-profiler.toml
+.codex/agents/pipeline-architect.toml
+.codex/agents/tsl-reviewer.toml
+.codex/hooks/build-check.sh
+.codex/hooks/lint-on-edit.sh
+.gitignore
+AGENTS.md

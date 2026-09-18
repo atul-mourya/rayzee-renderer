@@ -150,23 +150,32 @@ Uniform updates that influence sampling or accumulation trigger a pipeline reset
 ## Data Layouts (GPU storage buffers)
 
 ### Triangle data (`triangleStorageNode`)
-Compact, vec4-aligned 8-slot layout (32 floats per triangle, from `EngineDefaults.js`):
-1. posA.xyz (pad)
-2. posB.xyz (pad)
-3. posC.xyz (pad)
-4. normalA.xyz (pad)
-5. normalB.xyz (pad)
-6. normalC.xyz (pad)
-7. uvA.xy, uvB.xy
-8. uvC.xy, materialIndex, meshIndex
+Compact, vec4-aligned 5-slot layout (20 u32 lanes = 80 B per triangle, from `EngineDefaults.js`).
+The store is bound as `uvec4`; positions and UVs are float bit patterns read with
+`uintBitsToFloat`, and each vertex normal is an oct16 pair in its position's spare `.w` lane:
+1. posA.xyz, normalA (oct16)
+2. posB.xyz, normalB (oct16)
+3. posC.xyz, normalC (oct16)
+4. uvA.xy, uvB.xy
+5. uvC.xy, flags, meshIndex
+
+`flags` packs `materialIndex | side << 24 | shadowBlockerBits << 26`. The two blocker bits say
+whether a shadow ray settles on this triangle without fetching its material: bit 26 always, bit
+27 only while alpha-cutout shadows are off.
 
 ### Two-level BVH (`bvhStorageNode`)
 Combined buffer `[ TLAS | BLAS_0 | BLAS_1 | ... ]`, 16 floats (4 × vec4) per node:
 - Inner node: child AABBs + child indices in slots 0–3 (4 reads, no child fetches).
-- Triangle leaf (marker `-1` in `nodeData0.w`): `[triOffset, triCount, _, -1]`.
-- BLAS-pointer leaf (marker `-2`): `[blasRootNodeIndex, meshIndex, visibility, -2]` — visibility flag in slot `[2]`, free-fetched with the leaf.
+- Leaf tags live in `nodeData0.w` as u32 bit patterns (`floatBitsToUint`), above `BVH_MAX_INDEX`.
+- Triangle leaf (`TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, _, tag]`.
+- BLAS-pointer leaf (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`
+  with the world-to-object rows in slots 4–15. Visibility is free-fetched with the leaf; bit 30 of
+  slot `[1]` (`TLAS_LEAF_IDENTITY`) marks a baked placement whose ray transform is skipped.
 
-Leaf type is distinguished by `nodeData0.w` (`> -1.5` → triangle leaf, else BLAS pointer).
+⚠️ Triangles of a geometry shared by several placements are in **object space**: the ray is
+transformed into that space on entering the leaf and the hit's `instanceLeaf` names the leaf to
+transform back through. Single-use and emissive geometry is baked to world space behind an
+identity leaf instead, so it needs no transform either way.
 
 ### Material data (`materialStorageNode`)
 Packed per-material properties: base color/metalness/emissive/roughness/ior/transmission/thickness; volumetric attenuation + dispersion; sheen; specular + iridescence; clearcoat; alpha/side flags; normal/bump/displacement scaling; subsurface.

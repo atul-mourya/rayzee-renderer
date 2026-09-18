@@ -3,7 +3,7 @@
  */
 
 import {
-	Fn, uint,
+	Fn, uint, int,
 	If,
 	instanceIndex,
 	atomicLoad,
@@ -71,7 +71,8 @@ export function buildExtendKernel( params ) {
 			hitInfo.uv.x, hitInfo.uv.y,
 			hitInfo.normal,
 			uint( hitInfo.materialIndex ),
-			uint( hitInfo.meshIndex ),
+			// Biased by one: leaf 0 is real, so 0 has to mean "no instance".
+			uint( hitInfo.instanceLeaf.add( int( 1 ) ) ),
 		);
 
 	} );

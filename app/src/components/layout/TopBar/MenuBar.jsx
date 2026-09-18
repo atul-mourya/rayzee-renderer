@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { getApp } from '@/lib/appProxy';
+import { useStore } from '@/store';
 import {
 	Menubar,
 	MenubarContent,
@@ -27,7 +28,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 		if ( ! file ) return;
 
 		// Validate file type
-		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usd', '.usda', '.usdc', '.usdz', '.zip' ];
+		const supportedFormats = [ '.glb', '.gltf', '.fbx', '.obj', '.stl', '.ply', '.dae', '.3mf', '.usd', '.usda', '.usdc', '.usdz', '.zip', '.tar', '.tgz', '.tar.gz', '.gz' ];
 		const fileName = file.name.toLowerCase();
 		const isSupported = supportedFormats.some( format => fileName.endsWith( format ) );
 
@@ -35,7 +36,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 			toast( {
 				title: "Invalid File Type",
-				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or a .zip (incl. pbrt scenes)",
+				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or an archive: .zip, .tar, .tar.gz, .tgz (incl. pbrt scenes)",
 				variant: "destructive",
 			} );
 			return;
@@ -65,7 +66,13 @@ const MenuBar = ( { onOpenImportModal } ) => {
 
 		} catch ( error ) {
 
-			toast( error?.code === 'LOAD_IN_PROGRESS'
+			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) {
+
+				useStore.getState().setArchivePrompt( {
+					file, elements: error.elements, totalBytes: error.totalBytes
+				} );
+
+			} else toast( error?.code === 'LOAD_IN_PROGRESS'
 				? {
 					title: "Still Loading",
 					description: "Wait for the current load to finish, then open the file again.",
@@ -90,7 +97,7 @@ const MenuBar = ( { onOpenImportModal } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip"
+				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip,.tar,.tgz,.gz"
 				onChange={handleFileSelect}
 				style={{ display: 'none' }}
 			/>

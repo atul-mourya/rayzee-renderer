@@ -122,6 +122,9 @@ export class PathTracerApp extends EventDispatcher {
 	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
 	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
 	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
+	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
+	 *   above this. The default refuses where the renderer process would be killed instead of
+	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -144,6 +147,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.canvas = canvas;
 		this._autoResize = options.autoResize !== false;
+		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
+		this._maxSceneBytes = options.maxSceneBytes;
 		this._container = options.container || null;
 		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
@@ -797,6 +802,18 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * Lists the independently loadable parts of an archive without unpacking it, so a host
+	 * can offer a choice for a scene too large to load whole.
+	 * @param {File} file
+	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
+	 */
+	async inspectArchive( file ) {
+
+		return await this.assetLoader.inspectArchive( file );
+
+	}
+
+	/**
 	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
 	 * map, dispatched by extension.
 	 *
@@ -808,9 +825,11 @@ export class PathTracerApp extends EventDispatcher {
 	 * LOAD_IN_PROGRESS before anything is touched.
 	 *
 	 * @param {File} file
+	 * @param {object} [options] - forwarded to the archive loader: `element` to load one
+	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes.
 	 * @returns {Promise<void>}
 	 */
-	async loadFile( file ) {
+	async loadFile( file, options = {} ) {
 
 		const format = this.assetLoader?.getFileFormat( file?.name || '' );
 		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
@@ -818,7 +837,7 @@ export class PathTracerApp extends EventDispatcher {
 		if ( format.type !== 'environment' && format.type !== 'image' ) {
 
 			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromFile( file ),
+				() => this.assetLoader.loadAssetFromFile( file, options ),
 				{ type: 'ModelLoaded', filename: file.name }
 			);
 			return;
@@ -904,7 +923,7 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		// Reprocess the loaded scene so the new cap takes effect immediately.
-		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangleData && ! this._loadingInProgress ) {
+		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
 
 			this._loadingInProgress = true;
 			try {
@@ -948,9 +967,38 @@ export class PathTracerApp extends EventDispatcher {
 			this.dispatchEvent( eventPayload );
 			this._dispatchCamerasUpdated();
 
+		} catch ( error ) {
+
+			// loadFn released the previous model before this one was known to be loadable, so
+			// there is nothing to fall back to. Leaving it half-built would keep the last
+			// frame's buffers on screen under a scene that no longer exists.
+			if ( ! error || error.code !== 'LOAD_IN_PROGRESS' ) this._discardFailedLoad();
+			throw error;
+
 		} finally {
 
 			this._loadingInProgress = false;
+
+		}
+
+	}
+
+	/**
+	 * Put the engine back to an empty scene after a load failed part-way. The failure itself is
+	 * rethrown for the host to report; this only makes sure what is on screen matches it.
+	 * @private
+	 */
+	_discardFailedLoad() {
+
+		try {
+
+			this._clearAppendedModels();
+			this.assetLoader?.releaseTargetModel();
+			this.reset();
+
+		} catch ( cleanupError ) {
+
+			console.warn( 'PathTracerApp: could not clear the scene after a failed load', cleanupError );
 
 		}
 
@@ -1198,7 +1246,7 @@ export class PathTracerApp extends EventDispatcher {
 	_sceneSummaryParts() {
 
 		const pt = this.stages.pathTracer;
-		const meshes = this._sdf?.instanceTable?.entries?.filter( Boolean ).length ?? 0;
+		const meshes = this._sdf?.instanceTable?.setCount ?? 0;
 		const maps = this._sdf?.geometryExtractor?.maps?.length ?? 0;
 
 		return [
@@ -1497,16 +1545,22 @@ export class PathTracerApp extends EventDispatcher {
 	 * Topology must stay the same (same triangle count and connectivity).
 	 * Call this per-frame for skeletal/morph-target animation.
 	 *
-	 * @param {Float32Array} newPositions - 9 floats per triangle (ax,ay,az, bx,by,bz, cx,cy,cz) for every triangle in the scene, meshes in {@link sceneMeshes} order and triangles in index order
-	 * @param {Float32Array} [newNormals] - Optional 9 floats per triangle smooth normals. If omitted, face normals are computed from positions.
+	 * Positions come in one of two shapes. A **callback** `(meshIndex, triCount) => Float32Array`
+	 * is asked for one mesh at a time and may return the same scratch buffer each call — prefer it,
+	 * since it never holds more than one mesh. A **scene-wide Float32Array** of 9 floats per
+	 * triangle for every triangle (meshes in {@link sceneMeshes} order, triangles in index order)
+	 * still works, but is 1,030 MB at 30M triangles and will not allocate at that size.
+	 *
+	 * @param {Float32Array|function(number, number): Float32Array} newPositions - (ax,ay,az, bx,by,bz, cx,cy,cz) per triangle, world space
+	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals, same two shapes. If omitted, face normals are computed from positions.
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
 		const result = await this._sdf.refitBVH( newPositions, newNormals );
 
-		this.stages.pathTracer.updateTriangleData( this._sdf.triangleData );
-		this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
+		this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
+		this.stages.pathTracer.updateBVHData( this._sdf.bvh );
 		this.reset();
 
 		return result;
@@ -1518,8 +1572,9 @@ export class PathTracerApp extends EventDispatcher {
 	 * Faster than refitBVH for single-object transforms in multi-mesh scenes.
 	 *
 	 * @param {number[]} affectedMeshIndices - Mesh indices to refit
-	 * @param {Float32Array} newPositions - 9 floats per triangle in original mesh order
-	 * @param {Float32Array} [newNormals] - Optional smooth normals
+	 * @param {Float32Array|function(number, number): Float32Array} newPositions - the same two shapes
+	 *   {@link refitBVH} takes; only the affected meshes are asked for
+	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals
 	 * @returns {{ refitTimeMs: number }}
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
@@ -1531,14 +1586,37 @@ export class PathTracerApp extends EventDispatcher {
 		this.reset();
 
 		// Kick off background rebuild for optimal SAH quality
-		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, () => {
+		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, ( meshIndex ) => {
 
-			// Swap complete — upload updated buffers and restart accumulation
-			this.stages.pathTracer.updateTriangleData( this._sdf.triangleData );
-			this.stages.pathTracer.updateBVHData( this._sdf.bvhData );
+			// Swap complete — upload just that mesh's triangles and nodes, plus the TLAS. A whole
+			// re-upload here is gigabytes on a large scene, for one mesh's worth of change.
+			const dirty = this._sdf.computeBLASDirtyRanges( [ meshIndex ] );
+			this.stages.pathTracer.updateBufferRanges( dirty.triRanges, dirty.bvhRanges );
 			this.reset();
 
 		} );
+
+		return result;
+
+	}
+
+	/**
+	 * Apply new transforms for objects that moved, without touching their geometry.
+	 *
+	 * This is the right call for a gizmo drag or any other rigid move: triangles are stored in
+	 * each object's own space, so only the placement matrix changes. {@link refitBLASes} is for
+	 * geometry that actually deformed — on a rigid move it rewrites vertices needlessly, and
+	 * drags along any other object sharing the same geometry.
+	 *
+	 * @param {number[]} meshIndices - indices into {@link sceneMeshes}
+	 * @returns {{ refitTimeMs: number, placements: number }}
+	 */
+	updateMeshTransforms( meshIndices ) {
+
+		const result = this._sdf.updateMeshTransforms( meshIndices );
+
+		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
+		this.reset();
 
 		return result;
 
@@ -2503,6 +2581,25 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * CPU-side memory for the last scene build: what the preflight predicted, what each phase
+	 * allocated, and what was live at each phase boundary.
+	 *
+	 * Note that `performance.memory.usedJSHeapSize` does NOT count SharedArrayBuffer, and the
+	 * triangle and BVH stores are SAB-backed — so the browser's own heap reading under-reports
+	 * a large scene by several gigabytes and this is the figure to trust.
+	 *
+	 * @returns {?{preflight: ?Object, allocatedBytes: number, peakLiveBytes: number,
+	 *   byPhase: Object, samples: Object[]}} null before a scene is built
+	 */
+	getHostMemoryInfo() {
+
+		const sp = this._sdf;
+		if ( ! sp?.memory ) return null;
+		return { preflight: sp.memoryPreflight, ...sp.memory.report };
+
+	}
+
 	// Idempotent: registers the cross-stage texture provider and re-measures on
 	// allocation events (scene/env load, resize) so peak is caught even while idle.
 	_ensureVRAMWiring() {
@@ -2631,13 +2728,13 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	_refreshEmissiveForVisibility() {
 
-		const entries = this._sdf?.instanceTable?.entries;
-		if ( ! entries ) return;
+		const table = this._sdf?.instanceTable;
+		if ( ! table ) return;
 
 		const hidden = new Set();
-		for ( const entry of entries ) {
+		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( entry && entry.visible === false ) hidden.add( entry.meshIndex );
+			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( i );
 
 		}
 
@@ -2856,7 +2953,11 @@ export class PathTracerApp extends EventDispatcher {
 
 	_initAssetPipeline() {
 
-		this._sdf = new SceneProcessor( { issues: this._issues } );
+		this._sdf = new SceneProcessor( {
+			issues: this._issues,
+			// Spread into defaults, so only pass it when the host actually set one.
+			...( this._maxSceneBytes === undefined ? {} : { maxSceneBytes: this._maxSceneBytes } ),
+		} );
 		this.assetLoader = new AssetLoader(
 			this.meshScene, this.cameraManager.camera, this.cameraManager.controls,
 			{ issues: this._issues, profile: this._profile }

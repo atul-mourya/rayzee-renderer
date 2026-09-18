@@ -9,16 +9,17 @@
 
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
-import { MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance } from '../EngineDefaults.js';
+import {
+	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
+	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
+} from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'material' );
 
 const PIXELS_PER_MATERIAL = M.SLOTS_PER_MATERIAL;
-// Per-triangle float offsets used by _patchTriangleSideForMaterial / _patchTriangleBlockerForMaterial.
-const TRI_MAT_IDX_OFFSET = T.UV_C_MAT_OFFSET + 2; // uvData2.z in shader
-const TRI_SIDE_OFFSET = T.NORMAL_C_OFFSET + 3; // normalCData.w in shader
-const TRI_BLOCKER_OFFSET = T.NORMAL_A_OFFSET + 3; // nA.w in shader (opaque-blocker fast path)
+// Side and the opaque-blocker bit share the material lane, so a patch is a masked write.
+const TRI_FLAGS_OFFSET = T.MATERIAL_FLAGS_OFFSET;
 
 // Material properties that affect the shadow-ray opaque-blocker flag.
 const BLOCKER_PROPS = new Set( [ 'transmission', 'transparent', 'opacity', 'alphaMode' ] );
@@ -722,9 +723,8 @@ export class MaterialDataManager {
 	 * @private
 	 */
 	/**
-	 * Re-derive the shadow-ray opaque-blocker flag for a material from its
-	 * current buffer values and patch NORMAL_A.w on every matching triangle.
-	 * Kept in sync with the blocker definition in GeometryExtractor.
+	 * Re-derive the two shadow-blocker bits for a material from its current buffer
+	 * values and patch them on every matching triangle.
 	 * @private
 	 */
 	_recomputeOpaqueBlockerForMaterial( materialIndex ) {
@@ -733,36 +733,42 @@ export class MaterialDataManager {
 		if ( ! matBuf ) return;
 
 		const matStride = materialIndex * M.FLOATS_PER_MATERIAL;
-		const alphaMode = matBuf[ matStride + M.ALPHA_MODE ] | 0;
-		const transparent = matBuf[ matStride + M.TRANSPARENT ] | 0;
-		const transmission = matBuf[ matStride + M.TRANSMISSION ] || 0;
-		const opacity = matBuf[ matStride + M.OPACITY ] ?? 1;
-		const isOpaqueBlocker = ( alphaMode === 0 && transparent === 0 && transmission === 0 && opacity >= 1 ) ? 1.0 : 0.0;
+		const bits = shadowBlockerBits( {
+			alphaMode: matBuf[ matStride + M.ALPHA_MODE ],
+			transparent: matBuf[ matStride + M.TRANSPARENT ],
+			transmission: matBuf[ matStride + M.TRANSMISSION ],
+			opacity: matBuf[ matStride + M.OPACITY ],
+		} );
 
-		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_OFFSET, isOpaqueBlocker );
+		this._patchTriangleFlagForMaterial( materialIndex, TRI_BLOCKER_SHIFT, 2, bits );
 
 	}
 
 	/**
-	 * Generic helper: patch a single per-triangle float at `triOffset` for every
-	 * triangle whose materialIndex matches, then fire onTriangleDataChanged.
+	 * Generic helper: rewrite `width` bits at `shift` in the flags lane of every triangle
+	 * whose materialIndex matches, then fire onTriangleDataChanged.
 	 * @private
 	 */
-	_patchTriangleFlagForMaterial( materialIndex, triOffset, value ) {
+	_patchTriangleFlagForMaterial( materialIndex, shift, width, value ) {
 
 		const triInfo = this.callbacks.getTriangleData?.();
-		const triData = triInfo?.array;
+		// Chunked past the ~2 GB array cap; a flat array is the single-chunk case.
+		const records = triInfo?.records;
+		const flat = records ? null : triInfo?.array;
 		const triCount = triInfo?.count | 0;
-		if ( ! triData || triCount === 0 ) return;
+		if ( ( ! flat && ! records ) || triCount === 0 ) return;
 
 		const stride = T.FLOATS_PER_TRIANGLE;
+		const mask = ( ( ( 1 << width ) - 1 ) << shift ) >>> 0;
+		const bits = ( ( value << shift ) & mask ) >>> 0;
 		let patched = 0;
 		for ( let i = 0; i < triCount; i ++ ) {
 
-			const base = i * stride;
-			if ( triData[ base + TRI_MAT_IDX_OFFSET ] === materialIndex ) {
+			const triData = records ? records.chunkFor( i ) : flat;
+			const base = records ? records.baseOf( i ) : i * stride;
+			if ( ( triData[ base + TRI_FLAGS_OFFSET ] & TRI_MATERIAL_MASK ) === materialIndex ) {
 
-				triData[ base + triOffset ] = value;
+				triData[ base + TRI_FLAGS_OFFSET ] = ( ( triData[ base + TRI_FLAGS_OFFSET ] & ~ mask ) | bits ) >>> 0;
 				patched ++;
 
 			}
@@ -779,7 +785,7 @@ export class MaterialDataManager {
 
 	_patchTriangleSideForMaterial( materialIndex, sideValue ) {
 
-		this._patchTriangleFlagForMaterial( materialIndex, TRI_SIDE_OFFSET, sideValue );
+		this._patchTriangleFlagForMaterial( materialIndex, TRI_SIDE_SHIFT, 2, sideValue );
 
 	}
 
