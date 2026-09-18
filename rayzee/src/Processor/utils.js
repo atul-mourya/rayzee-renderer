@@ -1,9 +1,5 @@
 import { SphereGeometry, Mesh, MeshPhysicalMaterial, Group, Object3D, Color, Vector3, ShaderMaterial, Vector2, Matrix4, GLSL3 } from 'three';
-import { QuadMesh } from 'three/webgpu';
 import { EngineEvents } from '../EngineEvents.js';
-
-/** Every QuadMesh in the realm shares this one geometry (module-level in three). */
-const _sharedQuadGeometry = /*@__PURE__*/ new QuadMesh( null ).geometry;
 
 let _statusCallback = null;
 
@@ -103,17 +99,18 @@ export function distroyBuffers( { material, geometry, children } ) {
 /**
  * Disposes a renderer without leaking it.
  *
- * Three.js 0.184–0.185: `Renderer.dispose()` does not remove the 'resize' listener
+ * Three.js 0.184–0.186: `Renderer.dispose()` does not remove the 'resize' listener
  * it installs on `_canvasTarget`. The bound handler closes over the renderer,
  * pinning the entire WebGPU graph (Backend, Nodes, Bindings, Pipelines, GPUDevice,
  * every TSL node) alive indefinitely — confirmed via heap-snapshot retainer
- * analysis. See three/src/renderers/common/Renderer.js:292 (attach) and :2503
- * (dispose — missing removal).
+ * analysis. See `Renderer.js` (attach in the constructor, still absent from
+ * `dispose()` in r186). Re-check on every upgrade; drop this when upstream fixes it.
  *
  * Renderers constructed with an external `device` do not destroy it here; three
  * only destroys a device it created itself.
  *
  * @param {import('three/webgpu').WebGPURenderer} renderer
+ * @returns {?Promise<void>} Settles once the backend is torn down.
  */
 export function disposeRenderer( renderer ) {
 
@@ -125,20 +122,11 @@ export function disposeRenderer( renderer ) {
 
 	}
 
-	renderer.dispose();
+	// r186+ `dispose()` is async and settles once the backend is torn down; anything that
+	// measures memory straight afterwards has to await the returned promise.
+	const disposed = renderer.dispose();
 	renderer._canvasTarget = null;
-
-	// Three.js 0.185: `RenderObjects.dispose()` drops its chain maps without disposing the
-	// render objects, so each one leaves behind the 'dispose' listener it registered on its
-	// geometry. Full-screen passes render a QuadMesh, and every QuadMesh in the realm shares
-	// one module-level geometry — so that listener list grows by one entry per renderer and
-	// keeps RenderObject → RenderObjects → Bindings → Backend → GPUDevice reachable for the
-	// page's lifetime. The chain maps are WeakMaps, so this list is the only handle on them.
-	//
-	// Clearing it also drops entries belonging to live renderers, which is safe: the
-	// singleton geometry is never disposed, so none of these listeners can ever fire.
-	const quadDisposeListeners = _sharedQuadGeometry._listeners?.dispose;
-	if ( quadDisposeListeners ) quadDisposeListeners.length = 0;
+	return disposed;
 
 }
 

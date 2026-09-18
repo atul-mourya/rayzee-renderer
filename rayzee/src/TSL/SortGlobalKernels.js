@@ -21,11 +21,10 @@ import {
 	Fn, uint,
 	If, Loop,
 	instanceIndex, localId,
-	workgroupBarrier,
+	workgroupBarrier, workgroupArray,
 	atomicAdd, atomicLoad, atomicStore,
 } from 'three/tsl';
 
-import { workgroupAtomicArray } from './patches.js';
 import { readHitMaterialIndex } from '../Processor/PackedRayBuffer.js';
 import { COUNTER } from '../Processor/QueueManager.js';
 
@@ -54,7 +53,7 @@ export function buildGlobalHistKernel( { hitBufferRO, activeIndicesReadRO, sortG
 
 		const tid = instanceIndex;
 		const lid = localId.x;
-		const local = workgroupAtomicArray( 'uint', bins );
+		const local = workgroupArray( 'uint', bins ).toAtomic();
 
 		If( lid.lessThan( uint( bins ) ), () => {
 
@@ -127,7 +126,7 @@ export function buildGlobalScatterKernel( { hitBufferRO, activeIndicesReadRO, so
 
 		const tid = instanceIndex;
 		const lid = localId.x;
-		const local = workgroupAtomicArray( 'uint', bins );
+		const local = workgroupArray( 'uint', bins ).toAtomic();
 
 		If( lid.lessThan( uint( bins ) ), () => {
 
