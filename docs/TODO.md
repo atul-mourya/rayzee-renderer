@@ -2,6 +2,7 @@
 
 ## Bugs
 - final render transmission bounces not sufficient
+- remove all hacks on rectarealight parsing and treat all the incoming serailized data
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
@@ -10,25 +11,12 @@
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
 ### Deferred
-- ~~Reconsider continuous viewport denoising.~~ **Done.** The ≤15 ms bar was the wrong test — it is resolution-dependent and assumes per-frame denoising. The right gate is the ratio of a denoise to a path-traced sample. ⚠️ The original 4.4-samples figure (256²/512²/1024² = 8/23/89 ms) was measured **before** the tone map moved to WGSL; a `fast` denoise now measures 14 ms at 512² and 48 ms at 1024², so re-measure before quoting a ratio. Shipped as a cadence floored at 2x the last denoise's own cost, which bounds denoising at about half the wall clock on any GPU at any resolution.
-- ~~Still on the CPU: the denoised output is read back ... A GPU blit is the remaining perf item.~~ **Done**, without moving the canvas to WebGPU — the canvas stays 2D (`getCanvas()` hands it to capture, and `AIUpscaler` draws into the same element); what moved is the *conversion*. Exposure/saturation/tone map/sRGB now run in WGSL (`ToneMapWGSL.js`, a transcription of `ToneMapCPU.js` — keep the two in step) and the readback carries 4 bytes/px instead of 16. OIDN's autoexposure is a GPU reduction whose scale never leaves the GPU, removing the 16 MB input download and the `await` that drained the queue. Measured at 1024²: 42-51 ms of main-thread freeze per denoise → none above 12 ms; whole denoise 70 → 48 ms (`high` 330 → 193). Pixel parity with the JS it replaced: max 1/255 across 3.1M channels.
-- ~~No app-side toggle for the cadence.~~ **Done.** OIDN is an entry in the `Real-Time Denoiser` list (None / EdgeAware / ASVGF / NRD / OIDN) — only one thing denoises the live view, since two would mean paying for a per-frame denoise the OIDN overlay then covers (measured waste: +2% NRD, +4% ASVGF, +35% EdgeAware). The switch, relabelled `Final Denoise (OIDN)`, independently controls the pass on the finished image; all six combinations are reachable and distinct. Three earlier shapes were tried and rejected: a three-way OIDN dropdown (read as a second real-time denoiser), a nested `Update While Rendering` switch (still allowed both at once), and the same list but with the two controls wired to each other (picking OIDN flipped the switch, so you could never have OIDN live without the final pass).
-
-- ~~Two canvases: the path tracer's WebGPU canvas with a 2D one stacked over it for OIDN.~~ **Done.**
-  OIDN now hands its result to the pipeline as a picture (`oidn:output`) exactly as ASVGF, NRD and
-  EdgeAware do, and the Compositor draws it on the single canvas. That deleted the readback, the
-  second copy of the tone curve (`ToneMapWGSL.js`, gone — the note above it is history), the
-  reveal/hide/opacity/latch rules, and the mid-render screenshot mismatch (`getCanvas()` returned
-  the raw render while the viewport showed a clean one). Colour parity with the two-canvas build:
-  mean within 0.3/255. The 2D canvas stays for the AI upscaler alone, which works in ordinary
-  pixels and shows a picture larger than the render.
 
 Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is fastest on Apple; Spatial is 0.57×), engine: 'webnn' (no WebGPU interop in Chrome), modelSpec (our blobs validate against the built-ins), dynamicTile (correctly pinned off).
 
 
 ### Known
 
-- [x] ~~Tier-2 frozen pixels keep folding stale `rayBuffer` samples into their own m2/variance every frame~~ — fixed with a `wasFrozen` guard on the m2 mix, mirroring how `finalColor` is already handled two lines above. **Worse than recorded**: the `converged` bit built from that variance is counted into `CONVERGED_COUNT`, so the corruption reached the whole-frame early stop, not just the pixel's own estimate. Measured via `bench freeze`: run-to-run spread of the freeze ratio roughly halved on both gated scenes (spheres-gradient 6.5 % → 3.6 %, cornell-emissive 2.8 % → 1.5 %) with ratios marginally better too. ⚠️ **The hypothesis that this explained `alpha-cutout`'s instability is DISPROVEN** — it went 36.7 % → 51.9 % across five runs, i.e. still chaotic; that scene's freeze behaviour remains unexplained. Editing this kernel at all costs 11 quality goldens their bit-identical status at rmse ~1e-4 (measured identical for `select()` and for an `If()` branch, so it is compiler scheduling rather than the extra arm) — all baselines re-blessed, back to 24/24 bit-identical.
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] indirect lights looks too weak
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
