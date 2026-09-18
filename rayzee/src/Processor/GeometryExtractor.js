@@ -965,7 +965,9 @@ export class GeometryExtractor {
 	getTextureMatrix( texture ) {
 
 		if ( ! texture ) return new Matrix3().elements;
-		texture.updateMatrix();
+		// GLTFLoader writes `matrix` itself for a rotated KHR_texture_transform (glTF is
+		// T·R·S, three is T·S·R) and clears the flag; updateMatrix() ignores the flag.
+		if ( texture.matrixAutoUpdate ) texture.updateMatrix();
 		return texture.matrix.elements;
 
 	}
