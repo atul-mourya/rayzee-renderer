@@ -67,6 +67,7 @@ export class Compositor extends RenderStage {
 	_resolveSourceTexture( context ) {
 
 		return context.getTexture( 'bloom:output' )
+			|| context.getTexture( 'oidn:output' )
 			|| context.getTexture( 'edgeFiltering:output' )
 			|| context.getTexture( 'bilateralFiltering:output' )
 			|| context.getTexture( 'asvgf:output' )

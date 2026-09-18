@@ -796,15 +796,23 @@ async function awaitDenoise( timeoutMs = 120000 ) {
 }
 
 /**
- * The denoiser's own output canvas as a PNG data URL. Deliberately NOT app.getCanvas(): that
- * returns the denoiser canvas only while the path tracer reports complete, and renderFrames()
- * leaves isComplete false — so it falls back to the un-denoised compositor and the suite compares
- * raw against raw for a flat ratio of 1.000.
+ * The denoised image as a PNG data URL. The denoiser hands its result to the pipeline and the
+ * Compositor prefers it over the raw render, so the canvas holds the denoised picture — but only
+ * once `oidn:output` is actually published, which is asserted rather than assumed: without it this
+ * would compare raw against raw for a flat ratio of 1.000 and call it a pass.
  */
 function captureDenoisedPNG() {
 
-	const out = app.denoisingManager?.denoiser?.output;
-	if ( ! out ) throw new Error( '__bench.captureDenoisedPNG: no denoiser output canvas' );
+	if ( ! app.pipeline?.context?.getTexture( 'oidn:output' ) ) {
+
+		throw new Error( '__bench.captureDenoisedPNG: no denoised picture published' );
+
+	}
+
+	// getCanvas() re-renders the compositor, which is also what makes a presented WebGPU canvas
+	// readable: the copy below has to happen with nothing awaited in between.
+	const out = app.getCanvas();
+	if ( ! out ) throw new Error( '__bench.captureDenoisedPNG: no canvas' );
 
 	if ( out.width !== RENDER_SIZE.width || out.height !== RENDER_SIZE.height ) {
 
@@ -815,14 +823,20 @@ function captureDenoisedPNG() {
 
 	}
 
-	// A never-painted canvas is transparent and reads as black, scoring a plausible RMSE
-	// against a dark reference instead of failing.
-	const px = out.getContext( '2d' ).getImageData( 0, 0, out.width, out.height ).data;
+	const scratch = document.createElement( 'canvas' );
+	scratch.width = out.width;
+	scratch.height = out.height;
+	const ctx = scratch.getContext( '2d', { willReadFrequently: true } );
+	ctx.drawImage( out, 0, 0 );
+
+	// A canvas that read back empty is transparent and scores a plausible RMSE against a dark
+	// reference instead of failing.
+	const px = ctx.getImageData( 0, 0, scratch.width, scratch.height ).data;
 	let opaque = 0;
 	for ( let i = 3; i < px.length; i += 4 ) if ( px[ i ] > 0 ) opaque ++;
 	if ( opaque === 0 ) throw new Error( '__bench.captureDenoisedPNG: canvas is blank' );
 
-	return out.toDataURL( 'image/png' );
+	return scratch.toDataURL( 'image/png' );
 
 }
 

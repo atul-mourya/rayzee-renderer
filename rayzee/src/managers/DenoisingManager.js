@@ -91,15 +91,14 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {import('../Pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
-	 * @param {Function}                               params.getTransparentBg  - () => boolean
 	 */
-	constructor( { renderer, mainCanvas, scene, camera, stages, pipeline, getExposure, getSaturation, getTransparentBg } ) {
+	constructor( { renderer, mainCanvas, scene, camera, stages, pipeline, getExposure, getSaturation } ) {
 
 		super();
 
 		this.renderer = renderer;
 		this.mainCanvas = mainCanvas;
-		this.denoiserCanvas = this._createDenoiserCanvas( mainCanvas );
+		this.upscalerCanvas = this._createUpscalerCanvas( mainCanvas );
 		this.scene = scene;
 		this.camera = camera;
 		this.pipeline = pipeline;
@@ -109,7 +108,6 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
-		this._getTransparentBg = getTransparentBg;
 
 		this.denoiser = null;
 		this.upscaler = null;
@@ -156,7 +154,12 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
-	_createDenoiserCanvas( mainCanvas ) {
+	/**
+	 * The one canvas the engine keeps besides the renderer's own, for the AI upscaler: it works in
+	 * ordinary pixels and shows a picture larger than the render, neither of which the renderer's
+	 * canvas can do. Hidden until the upscaler has something to show.
+	 */
+	_createUpscalerCanvas( mainCanvas ) {
 
 		const parent = mainCanvas.parentNode;
 		if ( ! parent ) return null;
@@ -168,6 +171,7 @@ export class DenoisingManager extends EventDispatcher {
 		dc.style.inset = '0';
 		dc.style.width = '100%';
 		dc.style.height = '100%';
+		dc.style.display = 'none';
 
 		parent.insertBefore( dc, mainCanvas );
 		return dc;
@@ -194,30 +198,40 @@ export class DenoisingManager extends EventDispatcher {
 		// A run in flight was sized for the old resolution and setSize rebuilds the network under
 		// it. Resets no longer cancel a run while its frame is on screen, so this has to.
 		this.denoiser?.abort();
+		// The picture on screen is the old size, and the Compositor would stretch it over the new
+		// frame until a denoise lands. Back to the raw render until then.
+		this._unpublishOutput();
 		this.denoiser?.setSize( width, height );
+
+		// The 2D canvas exists for the upscaler alone, and sizing it here keeps that ownership in
+		// one place. Assigning width or height clears it, so only do it when it actually changed.
+		if ( this.upscalerCanvas && ( this.upscalerCanvas.width !== width || this.upscalerCanvas.height !== height ) ) {
+
+			this.upscalerCanvas.width = width;
+			this.upscalerCanvas.height = height;
+
+		}
+
 		this.upscaler?.setBaseSize( width, height );
 
 	}
 
 
 	/**
-	 * Restores the denoiser canvas to base render resolution after upscaling.
+	 * Puts the upscaler's canvas back to the render size — it leaves it two or four times larger.
 	 * @returns {boolean} true if the canvas was resized
 	 */
 	restoreBaseResolution() {
 
-		if ( ! this.denoiserCanvas || ! this._lastRenderWidth || ! this._lastRenderHeight ) return false;
+		if ( ! this.upscalerCanvas || ! this._lastRenderWidth || ! this._lastRenderHeight ) return false;
 
-		const wasResized = this.denoiserCanvas.width !== this._lastRenderWidth
-			|| this.denoiserCanvas.height !== this._lastRenderHeight;
+		const wasResized = this.upscalerCanvas.width !== this._lastRenderWidth
+			|| this.upscalerCanvas.height !== this._lastRenderHeight;
 
-		// Assigning width/height clears the bitmap even when the value does not change, which
-		// would throw away the frame abort() is trying to keep on screen.
 		if ( ! wasResized ) return false;
 
-		this.denoiserCanvas.width = this._lastRenderWidth;
-		this.denoiserCanvas.height = this._lastRenderHeight;
-		this.denoiser?.invalidateLatch();
+		this.upscalerCanvas.width = this._lastRenderWidth;
+		this.upscalerCanvas.height = this._lastRenderHeight;
 
 		return true;
 
@@ -228,24 +242,20 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	setupDenoiser() {
 
-		if ( ! this.denoiserCanvas ) return;
+		if ( ! this.upscalerCanvas ) return;
 
 		const pt = this._stages.pathTracer;
 
-		this.denoiser = new OIDNDenoiser( this.denoiserCanvas, this.renderer, this.scene, this.camera, {
+		// No canvas: the denoiser hands its result to the pipeline as a picture, and the
+		// Compositor decides what the single canvas shows. The exposure, grade and tone curve
+		// come from the renderer's own output pass, so it is not told about them either.
+		this.denoiser = new OIDNDenoiser( this.renderer, this.scene, this.camera, {
 			...DEFAULT_STATE,
 
 			backendParams: () => ( {
 				device: this.renderer.backend.device,
 				adapterInfo: null
 			} ),
-
-			refreshInput: () => {
-
-				const ctx = this.pipeline?.context;
-				if ( this._stages.compositor && ctx ) this._stages.compositor.render( ctx );
-
-			},
 
 			getGPUTextures: () => {
 
@@ -259,11 +269,6 @@ export class DenoisingManager extends EventDispatcher {
 				};
 
 			},
-
-			getExposure: () => this._getEffectiveExposure(),
-			getToneMapping: () => this._getToneMapping(),
-			getSaturation: () => this._getSaturation(),
-			getTransparentBackground: () => this._getTransparentBg(),
 		} );
 
 		this._syncOIDNInUse();
@@ -271,8 +276,13 @@ export class DenoisingManager extends EventDispatcher {
 		// Forward lifecycle events (store refs for removal on re-setup / dispose)
 		this._denoiserStartHandler = e =>
 			this.dispatchEvent( { type: EngineEvents.DENOISING_START, continuous: !! e.continuous } );
-		this._denoiserEndHandler = e =>
+		this._denoiserEndHandler = e => {
+
+			if ( this.denoiser?.hasOutput ) this._publishOutput();
 			this.dispatchEvent( { type: EngineEvents.DENOISING_END, continuous: !! e.continuous } );
+
+		};
+
 		this.denoiser.addEventListener( 'start', this._denoiserStartHandler );
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
 
@@ -283,20 +293,19 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	setupUpscaler() {
 
-		if ( ! this.denoiserCanvas ) return;
+		if ( ! this.upscalerCanvas ) return;
 
 		const pt = this._stages.pathTracer;
 
-		this.upscaler = new AIUpscaler( this.denoiserCanvas, this.renderer, {
+		this.upscaler = new AIUpscaler( this.upscalerCanvas, this.renderer, {
 			scaleFactor: DEFAULT_STATE.upscalerScale || 2,
 			quality: DEFAULT_STATE.upscalerQuality || 'fast',
 
-			getSourceCanvas: () => {
-
-				if ( this.denoiser?.enabled ) return null;
-				return this.renderer.domElement;
-
-			},
+			// One source: the render canvas shows whatever the Compositor picked — the denoised
+			// picture when OIDN is on, the raw render otherwise — so the upscaler always enlarges
+			// what the viewer is actually looking at. It used to read its own canvas when the
+			// denoiser was on, which only worked while the denoiser painted there.
+			getSourceCanvas: () => this.renderer.domElement,
 
 			refreshInput: () => {
 
@@ -622,16 +631,34 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
-	// A held frame the denoiser has stopped replacing describes a view that is long gone, so the
-	// raw render takes the viewport back until a refresh delivers again.
+	/**
+	 * Hands the denoised picture to the pipeline. The Compositor prefers it over the raw render
+	 * from the next frame on, and keeps drawing it until it is taken away again — which is what
+	 * makes "hold the last clean frame" free rather than a rule.
+	 */
+	_publishOutput() {
+
+		const ctx = this.pipeline?.context;
+		const tex = this.denoiser?.outputTexture;
+		if ( ctx && tex ) ctx.setTexture( 'oidn:output', tex );
+
+	}
+
+	// Gives the viewport back to the raw render.
+	_unpublishOutput() {
+
+		this.pipeline?.context?.removeTexture( 'oidn:output' );
+		this.denoiser?.invalidateOutput();
+
+	}
+
+	// A picture the denoiser has stopped replacing describes a view that is long gone, so the raw
+	// render takes the viewport back until a refresh delivers again.
 	_checkHeldFrameHealthy() {
 
-		const dn = this.denoiser;
-		if ( ! dn?.hasLatchedFrame || this._failedRefreshes < HELD_FRAME_MAX_FAILURES ) return;
+		if ( ! this.denoiser?.hasOutput || this._failedRefreshes < HELD_FRAME_MAX_FAILURES ) return;
 
-		if ( dn.output ) dn.output.style.display = 'none';
-		dn.invalidateLatch();
-		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
+		this._unpublishOutput();
 
 	}
 
@@ -839,27 +866,23 @@ export class DenoisingManager extends EventDispatcher {
 		// Remove stale completion-chain listener before aborting
 		this._cleanupCompletionListener();
 
-		const moving = !! this._stages.pathTracer?.viewIsChanging;
-		const hold = keepDisplay && this.continuousDenoise && !! this.denoiser?.hasLatchedFrame
-			&& ( ! moving || this.holdsWhileMoving );
-
-		if ( mainCanvas && ! hold ) mainCanvas.style.opacity = '1';
-
+		// The 2D canvas is the upscaler's alone: a reset means its enlarged result no longer
+		// describes anything, so the render canvas comes back.
+		if ( mainCanvas ) mainCanvas.style.opacity = '1';
+		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
 		if ( this.upscaler ) this.upscaler.abort();
 
-		if ( this.denoiser ) {
+		const moving = !! this._stages.pathTracer?.viewIsChanging;
+		const hold = keepDisplay && this.continuousDenoise && !! this.denoiser?.hasOutput
+			&& ( ! moving || this.holdsWhileMoving );
 
-			// A held display means the run in flight is the frame that replaces what is on screen.
+		if ( this.denoiser && ! hold ) {
+
+			// A held picture means the run in flight is the frame that replaces what is on screen.
 			// Cancelling it every time reset() runs — which is every frame of a camera drag — means
 			// none of them ever lands.
-			if ( this.denoiser.enabled && ! hold ) this.denoiser.abort();
-
-			if ( ! hold ) {
-
-				if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
-				this.denoiser.invalidateLatch();
-
-			}
+			if ( this.denoiser.enabled ) this.denoiser.abort();
+			this._unpublishOutput();
 
 		}
 
@@ -874,13 +897,9 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	dropDisplay() {
 
-		if ( this.denoiser ) {
+		this._unpublishOutput();
 
-			if ( this.denoiser.output ) this.denoiser.output.style.display = 'none';
-			this.denoiser.clearOutput();
-
-		}
-
+		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
 		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
 
 	}
@@ -889,6 +908,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Remove pending completion-chain listener
 		this._cleanupCompletionListener();
+		// Before the denoiser destroys the picture the Compositor would otherwise still sample.
+		this._unpublishOutput();
 
 		if ( this.denoiser ) {
 
@@ -917,10 +938,10 @@ export class DenoisingManager extends EventDispatcher {
 		this._upscalerProgressHandler = null;
 		this._upscalerEndHandler = null;
 
-		if ( this.denoiserCanvas?.parentNode ) {
+		if ( this.upscalerCanvas?.parentNode ) {
 
-			this.denoiserCanvas.parentNode.removeChild( this.denoiserCanvas );
-			this.denoiserCanvas = null;
+			this.upscalerCanvas.parentNode.removeChild( this.upscalerCanvas );
+			this.upscalerCanvas = null;
 
 		}
 
@@ -1192,7 +1213,7 @@ export class DenoisingManager extends EventDispatcher {
 		const keys = [
 			'asvgf:output', 'asvgf:demodulated', 'asvgf:gradient',
 			'variance:output', 'bilateralFiltering:output',
-			'edgeFiltering:output', 'nrd:output',
+			'edgeFiltering:output', 'nrd:output', 'oidn:output',
 		];
 		keys.forEach( k => ctx.removeTexture( k ) );
 

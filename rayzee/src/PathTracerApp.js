@@ -2451,8 +2451,8 @@ export class PathTracerApp extends EventDispatcher {
 	// ═══════════════════════════════════════════════════════════════
 
 	/**
-	 * Returns the canvas element with the final rendered image.
-	 * Chooses the post-processing canvas when denoiser/upscaler are active.
+	 * Returns the canvas element holding the image on screen — denoised, graded and tone-mapped,
+	 * whatever is currently showing. The upscaler is the one thing that paints elsewhere.
 	 * @returns {HTMLCanvasElement|null}
 	 */
 	getCanvas() {
@@ -2460,13 +2460,13 @@ export class PathTracerApp extends EventDispatcher {
 		if ( ! this.renderer?.domElement ) return null;
 
 		const dm = this.denoisingManager;
-		const usePostProcess = ( dm?.denoiser?.enabled || dm?.upscaler?.enabled )
-			&& dm?.denoiserCanvas
-			&& this.stages.pathTracer?.isComplete;
+		const upscaled = dm?.upscaler?.enabled && dm?.upscalerCanvas
+			&& dm.upscalerCanvas.style.display !== 'none';
 
-		if ( usePostProcess ) return dm.denoiserCanvas;
+		if ( upscaled ) return dm.upscalerCanvas;
 
-		// Re-render compositor stage so the WebGPU canvas has valid content
+		// A presented WebGPU canvas only reads back what was drawn immediately before, so draw.
+		// This also puts the denoised picture on it: the Compositor prefers it over the raw render.
 		if ( this.stages.compositor && this.pipeline?.context ) {
 
 			this.stages.compositor.render( this.pipeline.context );
@@ -3306,7 +3306,6 @@ export class PathTracerApp extends EventDispatcher {
 			pipeline: this.pipeline,
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
-			getTransparentBg: () => this.settings.get( 'transparentBackground' ) ?? false,
 		} );
 
 		this.denoisingManager.setupDenoiser();

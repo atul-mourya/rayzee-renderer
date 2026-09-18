@@ -1,4 +1,5 @@
-import { EventDispatcher, ACESFilmicToneMapping } from 'three';
+import { EventDispatcher, FloatType, RGBAFormat, NearestFilter, NoColorSpace, ClampToEdgeWrapping } from 'three';
+import { ExternalTexture } from 'three/webgpu';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'oidn' );
@@ -16,8 +17,6 @@ async function getInitUNetFromURL() {
 
 }
 
-import { effectiveExposure } from '../Processor/ToneMapCPU.js';
-import { TONE_MAP_WGSL, toneMapMode } from '../Processor/ToneMapWGSL.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 const MODEL_CONFIG = {
@@ -137,84 +136,77 @@ const SCALE_WG_SIZE = 64;
 // 1D would exceed maxComputeWorkgroupsPerDimension (65535) past ~2048², so the dispatch is 2D.
 const SCALE_MAX_WG_X = 32768;
 
-// Denoised linear float -> sRGB bytes, on the GPU. The JS equivalent was a per-pixel loop with
-// three pow() calls, and it froze the main thread for 42-51 ms per denoise at 1024².
-const PACK_WG_SIZE = 16;
-const PACK_PARAMS_BYTES = 48;
+// Denoised linear float -> a picture the pipeline can sample, on the card. The result keeps the
+// renderer's own units: no exposure, no grade, no tone curve. Compositor and the renderer's output
+// pass apply those to this picture exactly as they do to the raw one.
+const UNPACK_WG_SIZE = 16;
+const UNPACK_PARAMS_BYTES = 32;
 
-const PACK_WGSL = /* wgsl */`
-${TONE_MAP_WGSL}
-
-struct PackParams {
+const UNPACK_WGSL = /* wgsl */`
+struct UnpackParams {
 	srcWidth: u32,
 	tileX: u32,
 	tileY: u32,
 	tileW: u32,
 	tileH: u32,
-	mode: u32,
-	useAlpha: u32,
 	pad0: u32,
-	exposure: f32,
-	saturation: f32,
-	pad1: vec2<f32>,
+	pad1: u32,
+	pad2: u32,
 };
 
 @group(0) @binding(0) var<storage, read> src: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
-@group(0) @binding(2) var<uniform> P: PackParams;
-@group(0) @binding(3) var<storage, read> scaleBuf: array<f32>;
-@group(0) @binding(4) var<storage, read> inColor: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> P: UnpackParams;
+@group(0) @binding(2) var<storage, read> scaleBuf: array<f32>;
+@group(0) @binding(3) var<storage, read> inColor: array<vec4<f32>>;
+@group(0) @binding(4) var dst: texture_storage_2d<rgba32float, write>;
 
-@compute @workgroup_size(${PACK_WG_SIZE}, ${PACK_WG_SIZE})
+@compute @workgroup_size(${UNPACK_WG_SIZE}, ${UNPACK_WG_SIZE})
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 	if ( gid.x >= P.tileW || gid.y >= P.tileH ) { return; }
 
-	let si = ( P.tileY + gid.y ) * P.srcWidth + ( P.tileX + gid.x );
-	let di = gid.y * P.tileW + gid.x;
+	let px = P.tileX + gid.x;
+	let py = P.tileY + gid.y;
+	let si = py * P.srcWidth + px;
 
-	let rgb = toneMapPixel( src[ si ].xyz, P.exposure / scaleBuf[ 0 ], P.saturation, P.mode );
-
-	var a: u32 = 255u;
-	if ( P.useAlpha == 1u ) { a = u32( clamp( inColor[ si ].w, 0.0, 1.0 ) * 255.0 + 0.5 ); }
-
-	let q = vec3<u32>( clamp( rgb, vec3f( 0.0 ), vec3f( 1.0 ) ) * 255.0 + vec3f( 0.5 ) );
-	dst[ di ] = q.x | ( q.y << 8u ) | ( q.z << 16u ) | ( a << 24u );
+	// scaleBuf is the autoexposure factor the input was multiplied by; dividing it out returns
+	// the renderer's units. Alpha rides through from the path tracer so a transparent background
+	// survives the denoise.
+	textureStore( dst, vec2<u32>( px, py ), vec4<f32>( src[ si ].xyz / scaleBuf[ 0 ], inColor[ si ].w ) );
 }
 `;
 
 export class OIDNDenoiser extends EventDispatcher {
 
-	constructor( output, renderer, scene, camera, options = {} ) {
+	/**
+	 * @param {import('three/webgpu').WebGPURenderer} renderer
+	 * @param {import('three').Scene} scene
+	 * @param {import('three').Camera} camera
+	 * @param {Object} [options]
+	 */
+	constructor( renderer, scene, camera, options = {} ) {
 
 		super();
 
-		// Validate required parameters
-		if ( ! output || ! renderer || ! scene || ! camera ) {
+		if ( ! renderer || ! scene || ! camera ) {
 
-			throw new Error( 'OIDNDenoiser requires output canvas, renderer, scene, and camera' );
+			throw new Error( 'OIDNDenoiser requires renderer, scene, and camera' );
 
 		}
 
 		this.renderer = renderer;
 		this.scene = scene;
 		this.camera = camera;
-		this.input = renderer.domElement;
-		this.output = output;
+		// The size everything is measured in. The denoiser paints no canvas: its result is a
+		// picture handed to the pipeline, so this is the only size it knows.
+		this._renderWidth = renderer.domElement.width;
+		this._renderHeight = renderer.domElement.height;
 
 		// WebGPU GPU-native path (no CPU readback for inputs)
 		// backendParams: () => { device: GPUDevice, adapterInfo: GPUAdapterInfo|null }
 		// getGPUTextures: () => { color: GPUTexture, albedo: GPUTexture, normal: GPUTexture }
-		// getExposure: () => number  (effective exposure multiplier, pre-computed)
-		// getToneMapping: () => number (Three.js ToneMapping constant)
 		this.backendParamsGetter = options.backendParams || null;
 		this.getGPUTextures = options.getGPUTextures || null;
-		// refreshInput: () => void — re-renders the compositor so the WebGPU canvas is readable
-		this.refreshInput = options.refreshInput || null;
-		this.getExposure = options.getExposure || ( () => 1.0 );
-		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
-		this.getSaturation = options.getSaturation || ( () => 1.0 );
-		this.getTransparentBackground = options.getTransparentBackground || ( () => false );
 		this.isGPUMode = !! this.backendParamsGetter;
 		this.gpuDevice = null;
 
@@ -238,7 +230,13 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		this._colorScalePipeline = null;
 		this._colorScaleBindGroup = null;
-		this._packPipeline = null;
+
+		// The denoised picture, written on the card and handed to the pipeline like any other
+		// stage's output. `_outTexture` wraps `_outGPUTexture` so three.js can sample it.
+		this._unpackPipeline = null;
+		this._outGPUTexture = null;
+		this._outTexture = null;
+		this._outTexSize = { width: 0, height: 0 };
 
 		// Merge options with defaults
 		this.config = { ...MODEL_CONFIG.DEFAULT_OPTIONS, ...options };
@@ -257,17 +255,15 @@ export class OIDNDenoiser extends EventDispatcher {
 			abortController: null
 		};
 
-		// Track in-flight per-tile GPU buffers so they can be destroyed on abort
-		this._pendingStagingBuffers = new Set();
-		// Per-run tile-blit promises; done() awaits these so capture waits for every tile to paint.
-		this._pendingTileBlits = [];
+		// Tiles written into the output picture by the run in flight; zero means the library gave
+		// no per-tile progress and the whole image has to be written at the end.
+		this._tilesWritten = 0;
 
 		// Identifies the live run. A run superseded by abort() must not clear the state its
 		// successor already owns.
 		this._runId = 0;
-		// The output canvas holds a valid denoised frame, so the next run must not repaint the
-		// noisy base over it.
-		this._hasLatchedFrame = false;
+		// The output picture holds a denoised frame the pipeline can show.
+		this._hasOutput = false;
 		// Wall time of the last completed denoise, for cadence policy. 0 until one finishes.
 		this.lastDenoiseMs = 0;
 
@@ -294,7 +290,6 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		try {
 
-			this._setupCanvas();
 			await this._setupUNetDenoiser();
 
 		} catch ( error ) {
@@ -302,37 +297,6 @@ export class OIDNDenoiser extends EventDispatcher {
 			throw new Error( `Initialization failed: ${error.message}` );
 
 		}
-
-	}
-
-	_setupCanvas() {
-
-		if ( ! this.output.getContext ) {
-
-			throw new Error( 'Output must be a valid Canvas element' );
-
-		}
-
-		// Configure canvas for optimal performance
-		this.output.willReadFrequently = true;
-		this.output.width = this.input.width;
-		this.output.height = this.input.height;
-
-		// Apply styling efficiently
-		Object.assign( this.output.style, {
-			position: 'absolute',
-			top: '0',
-			left: '0',
-			width: '100%',
-			height: '100%',
-			borderRadius: '5px',
-			background: "repeating-conic-gradient(#808080 0% 25%, transparent 0% 50%) 50% / 20px 20px"
-		} );
-
-		this.ctx = this.output.getContext( '2d', {
-			willReadFrequently: true,
-			alpha: true
-		} );
 
 	}
 
@@ -387,7 +351,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	 */
 	_resolveTileSize() {
 
-		const longest = Math.max( this.output?.width || 0, this.output?.height || 0 );
+		const longest = Math.max( this._renderWidth, this._renderHeight );
 		if ( ! longest ) return this.maxTileSize;
 		return Math.min( longest, this.maxTileSize );
 
@@ -569,9 +533,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		if ( success ) {
 
-			this._hasLatchedFrame = true;
 			this.renderer?.resetState?.();
-			this.input.style.opacity = '0';
 
 			this.lastDenoiseMs = performance.now() - startTime;
 			log.debug( `denoise complete in ${fmt.ms( this.lastDenoiseMs )} · quality ${this.quality}` );
@@ -579,15 +541,6 @@ export class OIDNDenoiser extends EventDispatcher {
 		}
 
 		return success;
-
-	}
-
-	// Revealing before the first paint shows the output's transparent bitmap — and its
-	// checker CSS background — over the now-hidden render canvas.
-	_revealOutput() {
-
-		this.output.style.display = 'block';
-		this.input.style.opacity = '0';
 
 	}
 
@@ -618,8 +571,6 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			}
 
-			// Restore original rendering on error, unless a previous denoise is still on screen.
-			if ( ! this._hasLatchedFrame ) this.input.style.opacity = '1';
 			return false;
 
 		} finally {
@@ -654,7 +605,8 @@ export class OIDNDenoiser extends EventDispatcher {
 	 */
 	async _executeUNetGPU( continuous = false ) {
 
-		const { width, height } = this.output;
+		const width = this._renderWidth;
+		const height = this._renderHeight;
 
 		if ( ! this.getGPUTextures ) {
 
@@ -678,19 +630,6 @@ export class OIDNDenoiser extends EventDispatcher {
 			return false;
 
 		}
-
-		// Capture the base now: the readback below awaits, and a presented WebGPU canvas only
-		// reads back non-empty straight after a compositor pass — hence the refresh. Skipped
-		// once a denoised frame is latched: repainting it on every cadence tick would flash
-		// the noisy image back over an already-clean one.
-		if ( ! this._hasLatchedFrame ) {
-
-			this.refreshInput?.();
-			this.ctx.drawImage( this.input, 0, 0, width, height );
-
-		}
-
-		this._revealOutput();
 
 		// Ensure storage buffers are sized correctly (recreate on resolution change)
 		this._ensureGPUInputBuffers( width, height );
@@ -875,13 +814,13 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		if ( ! this._packPipeline ) {
+		if ( ! this._unpackPipeline ) {
 
-			this._packPipeline = device.createComputePipeline( {
-				label: 'oidn-output-pack',
+			this._unpackPipeline = device.createComputePipeline( {
+				label: 'oidn-output-unpack',
 				layout: 'auto',
 				compute: {
-					module: device.createShaderModule( { label: 'oidn-output-pack', code: PACK_WGSL } ),
+					module: device.createShaderModule( { label: 'oidn-output-unpack', code: UNPACK_WGSL } ),
 					entryPoint: 'main'
 				}
 			} );
@@ -995,115 +934,131 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/**
-	 * Tone-maps a rectangle of a denoised linear buffer to sRGB bytes on the GPU and paints it
-	 * onto the 2D output canvas.
-	 *
-	 * The canvas stays 2D on purpose — `getCanvas()` hands it to screenshot and video capture,
-	 * and AIUpscaler draws into the same element. What moved to the GPU is the conversion, so
-	 * the readback carries 4 bytes per pixel instead of 16 and the main thread only memcpys.
+	 * The picture the pipeline samples, or null until a denoise has produced one. Owned here and
+	 * replaced on a resize, so callers re-read it rather than holding on to it.
+	 * @returns {?import('three').Texture}
+	 */
+	get outputTexture() {
+
+		return this._outTexture;
+
+	}
+
+	/**
+	 * Makes sure the output picture exists at the render size. A resize makes a new one rather than
+	 * resizing in place: three.js caches the card-side handle against the wrapper, so the wrapper
+	 * has to be new too.
+	 */
+	_ensureOutputTexture( device, width, height ) {
+
+		if ( this._outGPUTexture && this._outTexSize.width === width && this._outTexSize.height === height ) return;
+
+		this._releaseOutputTexture();
+
+		this._outGPUTexture = device.createTexture( {
+			label: 'oidn-output',
+			size: { width, height, depthOrArrayLayers: 1 },
+			format: 'rgba32float',
+			usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
+		} );
+
+		const tex = new ExternalTexture( this._outGPUTexture );
+		tex.name = 'oidn:output';
+		tex.image = { width, height, depth: 1 };
+		tex.type = FloatType;
+		tex.format = RGBAFormat;
+		tex.colorSpace = NoColorSpace;
+		tex.minFilter = NearestFilter;
+		tex.magFilter = NearestFilter;
+		tex.wrapS = ClampToEdgeWrapping;
+		tex.wrapT = ClampToEdgeWrapping;
+		tex.generateMipmaps = false;
+		tex.flipY = false;
+
+		this._outTexture = tex;
+		this._outTexSize = { width, height };
+
+	}
+
+	_releaseOutputTexture() {
+
+		this._outTexture?.dispose();
+		this._outGPUTexture?.destroy();
+		this._outTexture = null;
+		this._outGPUTexture = null;
+		this._outTexSize = { width: 0, height: 0 };
+
+	}
+
+	/**
+	 * Writes a rectangle of the denoised buffer into the output picture, on the card.
 	 *
 	 * @param {GPUBuffer} src - denoised rgba32float, full image
 	 * @param {number} srcWidth
 	 * @param {{x: number, y: number, width: number, height: number}} rect
-	 * @returns {Promise<void>}
 	 */
-	async _packAndBlit( src, srcWidth, rect ) {
+	_unpackToTexture( src, srcWidth, rect ) {
 
 		const device = this.gpuDevice;
 		if ( ! device || ! this._ensureScalePipelines( device ) ) return;
 
 		const { x, y, width, height } = rect;
-		const byteSize = width * height * 4;
 
-		const dst = device.createBuffer( {
-			label: 'oidn-pack-out',
-			size: byteSize,
-			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-		} );
-		const staging = device.createBuffer( {
-			label: 'oidn-pack-staging',
-			size: byteSize,
-			usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-		} );
+		this._ensureOutputTexture( device, this._renderWidth, this._renderHeight );
+		if ( ! this._outGPUTexture ) return;
+
 		const params = device.createBuffer( {
-			label: 'oidn-pack-params',
-			size: PACK_PARAMS_BYTES,
+			label: 'oidn-unpack-params',
+			size: UNPACK_PARAMS_BYTES,
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
 		} );
 
-		this._pendingStagingBuffers.add( dst );
-		this._pendingStagingBuffers.add( staging );
-		this._pendingStagingBuffers.add( params );
-
-		const release = () => {
-
-			for ( const b of [ dst, staging, params ] ) {
-
-				b.destroy();
-				this._pendingStagingBuffers.delete( b );
-
-			}
-
-		};
-
 		try {
 
-			const words = new ArrayBuffer( PACK_PARAMS_BYTES );
-			new Uint32Array( words, 0, 8 ).set( [
-				srcWidth, x, y, width, height,
-				toneMapMode( this.getToneMapping() ),
-				this.getTransparentBackground() ? 1 : 0,
-				0
-			] );
-			new Float32Array( words, 32, 2 ).set( [
-				effectiveExposure( this.getExposure(), this.getToneMapping() ),
-				this.getSaturation()
-			] );
-			device.queue.writeBuffer( params, 0, words );
+			device.queue.writeBuffer( params, 0, new Uint32Array( [ srcWidth, x, y, width, height, 0, 0, 0 ] ) );
 
 			const bindGroup = device.createBindGroup( {
-				label: 'oidn-output-pack',
-				layout: this._packPipeline.getBindGroupLayout( 0 ),
+				label: 'oidn-output-unpack',
+				layout: this._unpackPipeline.getBindGroupLayout( 0 ),
 				entries: [
 					{ binding: 0, resource: { buffer: src } },
-					{ binding: 1, resource: { buffer: dst } },
-					{ binding: 2, resource: { buffer: params } },
-					{ binding: 3, resource: { buffer: this._inputScaleBuffer } },
-					{ binding: 4, resource: { buffer: this._gpuInputBuffers.color } }
+					{ binding: 1, resource: { buffer: params } },
+					{ binding: 2, resource: { buffer: this._inputScaleBuffer } },
+					{ binding: 3, resource: { buffer: this._gpuInputBuffers.color } },
+					{ binding: 4, resource: this._outGPUTexture.createView() }
 				]
 			} );
 
-			const encoder = device.createCommandEncoder( { label: 'oidn-output-pack' } );
-			const pass = encoder.beginComputePass( { label: 'oidn-output-pack' } );
-			pass.setPipeline( this._packPipeline );
+			const encoder = device.createCommandEncoder( { label: 'oidn-output-unpack' } );
+			const pass = encoder.beginComputePass( { label: 'oidn-output-unpack' } );
+			pass.setPipeline( this._unpackPipeline );
 			pass.setBindGroup( 0, bindGroup );
 			pass.dispatchWorkgroups(
-				Math.ceil( width / PACK_WG_SIZE ),
-				Math.ceil( height / PACK_WG_SIZE ),
+				Math.ceil( width / UNPACK_WG_SIZE ),
+				Math.ceil( height / UNPACK_WG_SIZE ),
 				1
 			);
 			pass.end();
-			encoder.copyBufferToBuffer( dst, 0, staging, 0, byteSize );
 			device.queue.submit( [ encoder.finish() ] );
 
-			await staging.mapAsync( GPUMapMode.READ );
-			// Copied, not viewed: unmap() detaches the mapped range and ImageData outlives it.
-			const bytes = new Uint8ClampedArray( staging.getMappedRange().slice( 0 ) );
-			staging.unmap();
-
-			this.ctx.putImageData( new ImageData( bytes, width, height ), x, y );
+			// Set here rather than when the run resolves: 'end' is dispatched from execute()'s
+			// finally, which runs first, so a listener that waits for the run would see the very
+			// first denoise as having produced nothing.
+			this._hasOutput = true;
 
 		} finally {
 
-			release();
+			params.destroy();
 
 		}
 
 	}
 
+
 	/**
-	 * Promise wrapper around tileExecute for the GPU path.
-	 * Outputs a GPUBuffer — copied to a staging buffer then converted to ImageData for the 2D canvas.
+	 * Promise wrapper around tileExecute for the GPU path. Each tile is written straight into the
+	 * output picture on the card, so there is nothing to await between a tile finishing and it
+	 * being visible.
 	 */
 	_executeWithAbortGPU( config, continuous = false ) {
 
@@ -1119,7 +1074,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			let abortDenoise = null;
 
 			// Fresh per-run list of tile-blit promises (the progress callback appends to it).
-			this._pendingTileBlits = [];
+			this._tilesWritten = 0;
 
 			const abortHandler = () => {
 
@@ -1145,20 +1100,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 					try {
 
-						if ( this._pendingTileBlits.length > 0 ) {
-
-							// Normal path: the progress callback already painted every tile progressively, with
-							// the same exposure/saturation/tonemap/sRGB math the full-frame readback uses (verified:
-							// tiles tile the image exactly, no overlap). Just wait for those blits — no redundant
-							// full-frame re-read + re-tonemap.
-							await Promise.allSettled( this._pendingTileBlits );
-
-						} else {
-
-							// Degenerate fallback (no per-tile progress was emitted): one authoritative full paint.
-							await this._displayGPUOutput( output );
-
-						}
+						// Nothing to wait for on the normal path: the progress callback wrote every
+						// tile straight into the output picture, and tiles cover the image exactly.
+						if ( this._tilesWritten === 0 ) this._displayGPUOutput( output );
 
 						// DENOISING_END (which gates screenshot/video capture) fires only after this resolves,
 						// so the captured canvas is always complete.
@@ -1188,20 +1132,16 @@ export class OIDNDenoiser extends EventDispatcher {
 
 					const rect = { x: tile.x, y: tile.y, width, height };
 
-					// Track the whole chain so done() can await every tile paint before resolving.
-					const tileBlit = this._packAndBlit( outputData.data, fullWidth, rect ).then( () => {
+					this._unpackToTexture( outputData.data, fullWidth, rect );
+					this._tilesWritten ++;
 
-						this.dispatchEvent( {
-							type: 'tileProgress',
-							tile: rect,
-							imageWidth: fullWidth,
-							imageHeight: fullHeight,
-							continuous
-						} );
-
-					} ).catch( () => { /* aborted or GPU lost — _packAndBlit already released */ } );
-
-					this._pendingTileBlits.push( tileBlit );
+					this.dispatchEvent( {
+						type: 'tileProgress',
+						tile: rect,
+						imageWidth: fullWidth,
+						imageHeight: fullHeight,
+						continuous
+					} );
 
 				}
 			} );
@@ -1214,16 +1154,16 @@ export class OIDNDenoiser extends EventDispatcher {
 	 * Degenerate fallback when no per-tile progress was emitted: one authoritative full paint.
 	 * @param {{ data: GPUBuffer, width: number, height: number }} output
 	 */
-	async _displayGPUOutput( { data: gpuBuffer, width, height } ) {
+	_displayGPUOutput( { data: gpuBuffer, width, height } ) {
 
 		if ( ! this.gpuDevice ) {
 
-			log.error( 'gpuDevice not available for output readback' );
+			log.error( 'gpuDevice not available for the output picture' );
 			return;
 
 		}
 
-		await this._packAndBlit( gpuBuffer, width, { x: 0, y: 0, width, height } );
+		this._unpackToTexture( gpuBuffer, width, { x: 0, y: 0, width, height } );
 
 	}
 
@@ -1238,12 +1178,6 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Signal abort to current operation
 		this.state.abortController?.abort();
 
-		// Destroy any in-flight tile staging buffers that mapAsync won't resolve
-		this._destroyPendingStagingBuffers();
-
-		// Restore input visibility
-		this.input.style.opacity = '1';
-
 		// No 'end' here: the aborted execute()'s finally always runs and dispatches one, tagged
 		// with that run's `continuous`. Dispatching here too emitted a second, untagged end —
 		// a cancelled cadence run announcing itself as the denoise that finishes a render.
@@ -1253,27 +1187,18 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	// Throws away the pixels as well as hiding them. Hiding alone is not enough when the frame is
-	// of a scene that no longer exists: the next run reveals the canvas before it paints, and the
-	// old image would come back for the length of a denoise.
-	clearOutput() {
+	// Whether the output picture holds a denoised frame the pipeline can show.
+	get hasOutput() {
 
-		this.ctx?.clearRect( 0, 0, this.output.width, this.output.height );
-		this.invalidateLatch();
+		return this._hasOutput;
 
 	}
 
-	// Whether the output canvas holds a denoised frame that can stay on screen.
-	get hasLatchedFrame() {
+	// Call when the picture stops describing anything the viewer should see — a scene change, or a
+	// resize. The picture itself is kept and overwritten by the next denoise.
+	invalidateOutput() {
 
-		return this._hasLatchedFrame;
-
-	}
-
-	// Call whenever the output canvas stops holding a valid frame — hidden on reset, or resized.
-	invalidateLatch() {
-
-		this._hasLatchedFrame = false;
+		this._hasOutput = false;
 
 	}
 
@@ -1285,9 +1210,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		this.output.width = width;
-		this.output.height = height;
-		this._hasLatchedFrame = false;
+		this._renderWidth = width;
+		this._renderHeight = height;
+		this._hasOutput = false;
 		// The old measurement describes the old size, and callers size their policy on it.
 		this.lastDenoiseMs = 0;
 
@@ -1300,45 +1225,23 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	_destroyPendingStagingBuffers() {
-
-		for ( const buf of this._pendingStagingBuffers ) {
-
-			buf.destroy();
-
-		}
-
-		this._pendingStagingBuffers.clear();
-
-	}
-
 	dispose() {
 
 		// Abort any ongoing operations
 		this.abort();
 
-		// Destroy any remaining staging buffers
-		this._destroyPendingStagingBuffers();
-
 		// Dispose resources
 		this.unet?.dispose();
 		this._destroyGPUInputBuffers();
+		this._releaseOutputTexture();
 		this._colorScalePipeline = null;
 		this._lumReducePipeline = null;
 		this._lumFinalizePipeline = null;
 		this._lumLayout = null;
-		this._packPipeline = null;
-
-		// Clean up DOM
-		if ( this.output?.parentNode ) {
-
-			this.output.remove();
-
-		}
+		this._unpackPipeline = null;
 
 		// Clear references
 		this.unet = null;
-		this.ctx = null;
 		this.state.abortController = null;
 
 		// Remove all event listeners

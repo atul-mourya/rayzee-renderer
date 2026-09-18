@@ -14,6 +14,7 @@ class StubDenoiser extends EventDispatcher {
 		this.lastDenoiseMs = 0;
 		this.setSize = vi.fn();
 		this.abort = vi.fn();
+		this.invalidateOutput = vi.fn();
 		this.updateQuality = vi.fn( q => {
 
 			this.quality = q;
