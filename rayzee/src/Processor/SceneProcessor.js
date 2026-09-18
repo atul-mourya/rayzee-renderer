@@ -1708,14 +1708,17 @@ export class SceneProcessor {
 
 		if ( typeof source === 'function' ) {
 
+			// The table is keyed by placement and one instanced mesh holds several, so a raw
+			// placement index is not something the caller can look up. Hand back the mesh.
 			return i => {
 
-				const got = source( i, table.triCountOf( i ) );
+				const mesh = table.sourceMesh[ i ];
+				const got = source( mesh, table.triCountOf( i ) );
 				const want = table.triCountOf( i ) * 9;
 				if ( got && got.length !== want ) {
 
 					throw new Error(
-						`SceneProcessor: ${what}s for mesh ${i} must be ${want} floats ` +
+						`SceneProcessor: ${what}s for mesh ${mesh} must be ${want} floats ` +
 						`(${table.triCountOf( i )} triangles × 9), got ${got.length}.`
 					);
 
@@ -1877,11 +1880,26 @@ export class SceneProcessor {
 	 * Refit specific BLASes and rebuild TLAS after object transform or per-mesh animation.
 	 * Runs on the main thread (fast for per-mesh updates).
 	 *
-	 * @param {number[]} affectedMeshIndices - Indices into meshTriangleRanges / the instance table
+	 * @param {number[]} affectedMeshIndices - Indices into `this.meshes`, the same space
+	 *   {@link updateMeshTransforms} takes
 	 * @param {Float32Array} newPositions - 9 floats per triangle in original mesh order (full scene)
 	 * @param {Float32Array} [newNormals] - Optional smooth normals (9 floats per tri)
 	 * @returns {{ refitTimeMs: number }}
 	 */
+	/**
+	 * The placement holding a mesh's triangles. The instance table is keyed by placement and one
+	 * instanced mesh contributes several, so every entry point taking mesh indices converts here.
+	 *
+	 * @param {number} meshIndex
+	 * @returns {number} placement index, or -1 when the mesh placed nothing
+	 * @private
+	 */
+	_placementOf( meshIndex ) {
+
+		return this.instanceTable?.placementRunOf( meshIndex )?.start ?? - 1;
+
+	}
+
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
 		if ( ! this.instanceTable || ! this.bvh || ! this.triangles ) {
@@ -1907,32 +1925,34 @@ export class SceneProcessor {
 		// Step 1: Update triangle positions and refit each affected BLAS
 		const table = this.instanceTable;
 
-		for ( const meshIdx of affectedMeshIndices ) {
+		for ( const meshIndex of affectedMeshIndices ) {
 
-			if ( ! table.isSet[ meshIdx ] ) continue;
+			const placement = this._placementOf( meshIndex );
+			if ( placement < 0 || ! table.isSet[ placement ] ) continue;
 
 			// Triangles are shared between placements of one geometry, so writing this mesh's
 			// vertices would move every other copy with them. Anything that deforms is extracted
 			// with triangles of its own, so reaching here means the wrong mesh was handed over.
-			if ( ! table.isOwner( meshIdx ) ) {
+			if ( ! table.isOwner( placement ) ) {
 
+				const owner = table.tplOwner[ table.sourceMesh[ placement ] ];
 				this.config.issues?.record(
 					ISSUE_CODES.REFIT_SHARED_GEOMETRY,
-					`mesh ${meshIdx} shares its triangles with another placement; deforming it would move every copy, so it was skipped`,
-					{ meshIndex: meshIdx, owner: table.tplOwner[ table.sourceMesh[ meshIdx ] ] }
+					`mesh ${meshIndex} shares its triangles with another placement; deforming it would move every copy, so it was skipped`,
+					{ meshIndex, owner: table.sourceMesh[ owner ] ?? owner }
 				);
 				continue;
 
 			}
 
-			const p = positionsFor( meshIdx );
+			const p = positionsFor( placement );
 			if ( ! p ) continue;
-			this._updateMeshTrianglePositions( meshIdx, p );
+			this._updateMeshTrianglePositions( placement, p );
 
 			if ( normalsFor ) {
 
-				const n = normalsFor( meshIdx );
-				if ( n ) this._patchMeshSmoothNormals( meshIdx, n );
+				const n = normalsFor( placement );
+				if ( n ) this._patchMeshSmoothNormals( placement, n );
 
 			}
 
@@ -1940,12 +1960,12 @@ export class SceneProcessor {
 			this._blasRefitter.refitRange(
 				this.bvh,
 				this.triangles,
-				table.blasOffsetOf( meshIdx ),
-				table.blasNodeCountOf( meshIdx )
+				table.blasOffsetOf( placement ),
+				table.blasNodeCountOf( placement )
 			);
 
 			// Recompute this mesh's AABB for TLAS rebuild
-			this.instanceTable.recomputeAABB( meshIdx, this.bvh, this.triangles );
+			this.instanceTable.recomputeAABB( placement, this.bvh, this.triangles );
 
 		}
 
@@ -2085,13 +2105,14 @@ export class SceneProcessor {
 		const triRanges = [];
 		const bvhRanges = [];
 
-		for ( const meshIdx of affectedMeshIndices ) {
+		for ( const meshIndex of affectedMeshIndices ) {
 
 			const table = this.instanceTable;
-			if ( ! table.isSet[ meshIdx ] ) continue;
+			const placement = this._placementOf( meshIndex );
+			if ( placement < 0 || ! table.isSet[ placement ] ) continue;
 
-			triRanges.push( { offset: table.triOffsetOf( meshIdx ) * FPT, count: table.triCountOf( meshIdx ) * FPT } );
-			bvhRanges.push( { offset: table.blasOffsetOf( meshIdx ) * FPN, count: table.blasNodeCountOf( meshIdx ) * FPN } );
+			triRanges.push( { offset: table.triOffsetOf( placement ) * FPT, count: table.triCountOf( placement ) * FPT } );
+			bvhRanges.push( { offset: table.blasOffsetOf( placement ) * FPN, count: table.blasNodeCountOf( placement ) * FPN } );
 
 		}
 
@@ -2672,18 +2693,20 @@ export class SceneProcessor {
 
 		};
 
-		for ( const meshIdx of meshIndices ) {
+		for ( const meshIndex of meshIndices ) {
 
-			const entry = this.instanceTable.entryAt( meshIdx );
+			const placement = this._placementOf( meshIndex );
+			if ( placement < 0 ) continue;
+			const entry = this.instanceTable.entryAt( placement );
 			// A placement that borrows another's BLAS must not rebuild it: the work is the
 			// owner's, and two placements would dispatch the same rebuild twice.
-			if ( ! entry || ! this.instanceTable.isOwner( meshIdx ) ) continue;
+			if ( ! entry || ! this.instanceTable.isOwner( placement ) ) continue;
 
 			// Cancel any in-flight rebuild for this mesh
-			const existing = this._pendingRebuilds.get( meshIdx );
+			const existing = this._pendingRebuilds.get( placement );
 			if ( existing ) existing.terminate();
 
-			dispatchRebuild( meshIdx, entry, new BVHWorker() );
+			dispatchRebuild( placement, entry, new BVHWorker() );
 
 		}
 
@@ -2753,7 +2776,8 @@ export class SceneProcessor {
 
 		this._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );
 
-		onSwap?.( meshIdx );
+		// The caller asked in mesh indices and gets one back, not the placement used here.
+		onSwap?.( this.instanceTable.sourceMesh[ meshIdx ] ?? meshIdx );
 
 	}
 
