@@ -28,6 +28,7 @@
     "bench:perf": "node bench/runner/cli.js perf",
     "bench:kernels": "node bench/runner/cli.js kernels",
     "bench:bless": "node bench/runner/cli.js bless",
+    "bench:calibrate": "node bench/runner/cli.js calibrate",
     "bench:ab": "node bench/runner/cli.js ab",
     "bench:list": "node bench/runner/cli.js list",
     "release": "cross-env $(cat .env | xargs) semantic-release --no-ci",

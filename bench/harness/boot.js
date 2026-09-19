@@ -566,6 +566,57 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
 }
 
+/**
+ * One model load, timed the way the app loads: rendering paused first (MainViewport does this
+ * before it calls loadModel), so the harness measures the same thing the app's `[scene]` line
+ * reports. Used by `bench calibrate` to check this browser against the real app — see
+ * bench/README.md, "What the harness can and cannot measure".
+ *
+ * `blasWorkerTime / blasBuildTime` is how many workers were busy on average. It is the number the
+ * CPU distortion shows up in: a browser the bench launches inflates per-task cost, not per-triangle
+ * cost, so this ratio and the phase times move together with it.
+ *
+ * @param {string} url - model URL, served by the dev server (e.g. `/models/foo.glb`)
+ * @returns {Promise<Object>} phase times in ms, scene counts, and the worker-busy ratio
+ */
+async function profileModelLoad( url ) {
+
+	app.pauseRendering = true;
+	app.stopAnimation();
+
+	const startedAt = performance.now();
+	await app.loadModel( url );
+	const totalMs = performance.now() - startedAt;
+
+	const sdf = app._sdf;
+	const m = sdf.performanceMetrics;
+	const stage = app.stages.pathTracer;
+
+	app.pauseRendering = false;
+
+	return {
+		url,
+		totalMs,
+		phases: {
+			extraction: m.geometryExtractionTime,
+			blas: m.blasBuildTime,
+			tlas: m.tlasBuildTime,
+			assemble: m.bvhAssembleTime,
+			textures: m.textureCreationTime,
+			scene: m.totalProcessingTime,
+		},
+		workersBusy: m.blasBuildTime > 0 ? m.blasWorkerTime / m.blasBuildTime : 0,
+		blasWorkerTime: m.blasWorkerTime,
+		counts: {
+			triangles: stage?.triangleCount ?? null,
+			meshes: app.sceneMeshes?.length ?? null,
+			materials: stage?.materialData?.materialCount ?? null,
+			bvhNodes: sdf.bvh?.recordCount ?? null,
+		},
+	};
+
+}
+
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
 function capturePNG() {
 
@@ -1039,6 +1090,7 @@ globalThis.__bench = {
 	setShippingHeuristics,
 	renderFreezeArm,
 	loadModelScene,
+	profileModelLoad,
 	setSettings,
 	setSortMaterials,
 	setSceneConfig,

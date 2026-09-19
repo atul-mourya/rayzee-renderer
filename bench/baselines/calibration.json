@@ -1,0 +1,48 @@
+{
+	"model": "/models/24155522.glb",
+	"recordedAt": "2026-09-19T18:30:17.804Z",
+	"fingerprint": {
+		"vendor": "apple",
+		"architecture": "metal-3",
+		"maxStorageBuffersPerShaderStage": 10,
+		"maxStorageTexturesPerShaderStage": 8,
+		"maxBufferSize": 4294967292,
+		"deviceMemory": 16,
+		"renderSize": "256x256"
+	},
+	"counts": {
+		"triangles": 1886098,
+		"meshes": 990,
+		"materials": 731,
+		"bvhNodes": 1204169
+	},
+	"harness": {
+		"totalMs": 32543.80000001192,
+		"phases": {
+			"extraction": 2081.780000001192,
+			"blas": 23064.090000003576,
+			"tlas": 391.8900000154972,
+			"assemble": 215.94999998807907,
+			"textures": 10638.905000001192,
+			"scene": 26767.344999998808
+		},
+		"workersBusy": 4.033973375954713
+	},
+	"app": {
+		"totalMs": 3173.0900000035763,
+		"phases": {
+			"extraction": 429.83500000834465,
+			"blas": 1221.280000001192,
+			"tlas": 1.729999989271164,
+			"assemble": 17.194999992847443,
+			"textures": 687.8550000190735,
+			"scene": 1702.5699999928474
+		},
+		"workersBusy": 2.5066201032241664,
+		"counts": {
+			"triangles": 1886098,
+			"meshes": 990
+		},
+		"capturedBy": "bench-calibrate-snippet"
+	}
+}

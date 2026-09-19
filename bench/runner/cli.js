@@ -19,7 +19,10 @@ import { promisify } from 'node:util';
 
 import { launchBrowser, openHarness } from './browser.js';
 import { startDevServer } from './devserver.js';
-import { PATHS } from './config.js';
+import { CALIBRATION, PATHS } from './config.js';
+import {
+	appSnippet, calibrationStale, formatBanner, formatReport, measureHarness, readCalibration, writeCalibration,
+} from './calibrate.js';
 import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
 import { runDenoise } from './denoise.js';
 import { runMemory } from './memory.js';
@@ -90,7 +93,7 @@ async function withHarness( { cwd = PATHS.repoRoot, verbose }, body ) {
 
 		log( `${DIM}booting harness (first boot compiles shaders, ~20 s)…${RESET}` );
 		harness = await openHarness( server.url, { verbose, harnessPath } );
-		return await body( harness );
+		return await body( { ...harness, serverURL: server.url } );
 
 	} finally {
 
@@ -345,6 +348,17 @@ async function commandAB( baseRef, flags ) {
 
 		}
 
+		// The same line every other command prints. A/B compares GPU time, which the harness does
+		// measure honestly — but this is the command whose output reads most like a verdict, so the
+		// scope of that verdict should be on screen with it.
+		{
+
+			const stored = await readCalibration();
+			const fresh = stored && ! calibrationStale( stored, headFingerprint, stored.model );
+			log( `${formatBanner( fresh ? stored : null, { DIM, GREEN, YELLOW, RESET } )}\n` );
+
+		}
+
 		const { measurements, absentFromBase } = await runPerfInterleaved(
 			baseHarness.bench, headHarness.bench, { only, log }
 		);
@@ -431,7 +445,38 @@ async function commandAB( baseRef, flags ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list' ];
+/**
+ * Confirms the dev server actually serves a model at `url`. Vite answers an unknown path with
+ * index.html rather than a 404, so the content type matters as much as the status.
+ */
+async function assertModelServed( serverURL, url ) {
+
+	const full = new URL( url, serverURL ).href;
+	let response;
+
+	try {
+
+		response = await fetch( full, { method: 'HEAD' } );
+
+	} catch ( error ) {
+
+		throw new Error( `cannot reach the dev server at ${full}: ${error.message}` );
+
+	}
+
+	const type = response.headers.get( 'content-type' ) ?? '';
+	if ( response.ok && ! type.includes( 'text/html' ) ) return;
+
+	throw new Error(
+		`no model served at ${url} (HTTP ${response.status}${type ? `, ${type}` : ''}).\n` +
+		'  Calibration needs a real model with many meshes — corpus scenes have too few tasks to\n' +
+		'  show per-task overhead. Models are gitignored, so put one under app/public/models/ and\n' +
+		'  pass it explicitly:  npm run bench:calibrate -- --model /models/your-model.glb'
+	);
+
+}
+
+const COMMANDS = [ 'run', 'quality', 'denoise', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -485,6 +530,15 @@ async function main() {
 
 	}
 
+	// Printing the snippet needs no browser, and a stored-but-unverified reference otherwise hides
+	// the instructions for replacing it.
+	if ( command === 'calibrate' && flags.snippet ) {
+
+		log( appSnippet( flags.model ? String( flags.model ) : CALIBRATION.defaultModel ) );
+		return 0;
+
+	}
+
 	if ( command === 'ab' ) {
 
 		const baseRef = positional[ 0 ];
@@ -493,9 +547,51 @@ async function main() {
 
 	}
 
-	return withHarness( { verbose }, async ( { bench } ) => {
+	return withHarness( { verbose }, async ( { bench, serverURL } ) => {
 
 		let exitCode = 0;
+
+		if ( command === 'calibrate' ) {
+
+			const model = flags.model ? String( flags.model ) : CALIBRATION.defaultModel;
+
+			// Models are gitignored, so the default is only present on the machine that put it
+			// there. Without this the failure surfaces from inside GLTFLoader, on Vite's HTML
+			// fallback, as a parse error that says nothing about the real problem.
+			await assertModelServed( serverURL, model );
+			const stored = await readCalibration();
+			const app = flags.app
+				? JSON.parse( await fs.readFile( String( flags.app ), 'utf8' ) )
+				: ( stored?.model === model ? stored.app : null );
+
+			log( `calibrating CPU timing against the app, on ${model}` );
+			const harness = await measureHarness( bench, { model, log } );
+
+			const record = {
+				model,
+				recordedAt: new Date().toISOString(),
+				fingerprint: await bench.fingerprint(),
+				counts: harness.counts,
+				harness: { totalMs: harness.totalMs, phases: harness.phases, workersBusy: harness.workersBusy },
+				app: app ?? null,
+			};
+			await writeCalibration( record );
+
+			log( `\n${formatReport( record, { DIM, GREEN, YELLOW, RESET } )}` );
+			if ( ! app ) log( `\n${DIM}No app reference yet — the harness half is stored. To finish:${RESET}\n${appSnippet( model )}` );
+			return 0;
+
+		}
+
+		// Printed before any suite: a reader should never have to wonder whether this browser's
+		// CPU numbers are comparable to the app's. See bench/README.md.
+		if ( command !== 'bless' ) {
+
+			const stored = await readCalibration();
+			const fresh = stored && ! calibrationStale( stored, await bench.fingerprint(), stored.model );
+			log( `${formatBanner( fresh ? stored : null, { DIM, GREEN, YELLOW, RESET } )}\n` );
+
+		}
 
 		if ( command === 'bless' ) {
 

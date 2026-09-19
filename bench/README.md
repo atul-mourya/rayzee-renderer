@@ -10,6 +10,7 @@ The engine's unit tests cover CPU logic well, but every GPU file — all of `TSL
 npm run bench:list      # show the scene corpus
 npm run bench:bless     # generate ground truth + goldens (first run, slow)
 npm run bench           # quality + denoise + memory + perf
+npm run bench:calibrate # check this browser's CPU timing against the app (see below)
 ```
 
 Individual suites:
@@ -24,6 +25,84 @@ npm run bench:ab -- main    # gate perf against another git ref
 
 Useful flags: `--only scene-a,scene-b`, `--verbose`, `--truth` (regenerate ground truth), `--scene <id>` and `--cycles <n>` for the memory suite.
 
+## What the harness can and cannot measure
+
+The harness renders on a real GPU, but it runs the engine's **CPU** work several times slower than
+the same code in the app in a normally-used browser — and not by a constant factor. Measured on one
+machine, same code, same model, same dev server:
+
+| | app | harness |
+|---|---|---|
+| scene processing | 1.76 s | 25–38 s |
+| BLAS build | 1.15 s | 15–28 s |
+| one 146,670-tri mesh, in a worker | 361 ms | 1,237 ms |
+| summed worker build time, 818 tasks | ~3.4 s | 95–118 s |
+
+The big meshes run ~3.5× slow and the hundreds of small ones far worse, so what inflates is the
+**per-task** cost, not the per-triangle cost. It is not headless (headed is identical), not the
+Chrome flags (a browser with none is just as slow), not the DevTools connection (a plain `spawn`ed
+Chrome matches), not thread priority (a synthetic worker load runs at full speed and scales
+normally), not machine load, not the engine's config, and not the algorithm (plain Node builds that
+same mesh in 296 ms, matching the app).
+
+**Trusted here**
+
+- image quality against goldens and ground truth, and the denoise/freeze ratchets
+- GPU kernel A/B of the same code shape within one browser session (`bench:ab`, `bench:kernels`)
+- VRAM and leak detection
+
+**Not trusted here — measure these in the app**
+
+- absolute CPU time for any build phase
+- per-task cost, worker counts, pool sizes, anything about concurrency
+- shader compile time (~360 ms in the app; 9–23 s here)
+
+A non-uniform error inverts rankings. This is not hypothetical: a harness run showed the BLAS worker
+pool getting *slower* with more workers, the pool was capped at 2 on that evidence, and in the app
+six workers beat two by 86 % — the "fix" made scene processing 55 % slower.
+
+### Calibration
+
+```bash
+npm run bench:calibrate                       # measure this browser
+npm run bench:calibrate -- --snippet          # print the snippet to run in the app
+npm run bench:calibrate -- --app profile.json # add the app half, get a verdict
+```
+
+Capturing the app half, on macOS:
+
+```bash
+npm run dev                                   # then open the app in your normal browser
+npm run bench:calibrate -- --snippet          # paste the snippet into the DevTools console
+pbpaste > /tmp/app-profile.json               # it copies its result to the clipboard
+npm run bench:calibrate -- --app /tmp/app-profile.json
+```
+
+Use an ordinary browser window, not a private one and not a fresh profile — the point of the
+reference is the environment the app actually runs in. The snippet stamps its output so a
+hand-written reference cannot be mistaken for a measured one.
+
+The first form times three model loads in the harness (the first is discarded — V8 tiers up across
+repeats) and stores the result in `baselines/calibration.json`. It then prints a console snippet to
+run in the app, which captures the same measurement there; save it to a file and pass it back with
+`--app`.
+
+From then on every bench run prints one line saying whether this browser's CPU numbers are within
+`CALIBRATION.tolerance` (1.5×) of the app's, and marks them untrustworthy when they are not. The
+comparison deliberately **refuses** rather than correcting: the error is not a scale factor, so
+scaling it out would be worse than saying nothing.
+
+Calibration is per machine and per model (the record stores the GPU fingerprint), and models are
+gitignored, so `--model` points at whatever local model you calibrate with. A corpus scene will not
+do — procedural primitives have too few meshes to show per-task overhead.
+
+### The worker-busy number
+
+`SceneProcessor.performanceMetrics.blasWorkerTime ÷ blasBuildTime` is how many BLAS workers were
+busy on average. The app reports ~1.6–1.8 of 6; a harness run reports 4–5 "busy" while doing 28× the
+total work. It is the cheapest single signal that a CPU measurement is being distorted, and the
+calibration report prints it for both sides.
+
 **Requirements:** Google Chrome installed (override with `CHROME_PATH`). No network access needed — every scene is procedural and the STBN atlases are vendored (see below).
 
 ## How it works
@@ -36,7 +115,7 @@ bench/
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
   runner/     cli.js + one module per suite    # runs in Node
   assets/     noise/stbn_*_atlas.png           # vendored engine assets
-  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl
+  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json
 ```
 
 ### Reference inputs are vendored, not fetched

@@ -19,6 +19,7 @@ export const PATHS = {
 	denoise: path.resolve( here, '..', 'baselines', 'denoise.json' ),
 	freeze: path.resolve( here, '..', 'baselines', 'freeze.json' ),
 	harness: path.resolve( here, '..', 'harness', 'index.html' ),
+	calibration: path.resolve( here, '..', 'baselines', 'calibration.json' ),
 };
 
 export const DEV_SERVER = {
@@ -251,6 +252,25 @@ export const DENOISE_GATES = {
 	// Ratchet headroom. Deterministic mode makes an unchanged render bit-identical, so this
 	// only needs room for last-bit drift from a three.js / driver / Chrome bump.
 	maxRatioIncrease: 0.02,
+};
+
+/**
+ * CPU-timing calibration. A browser the bench launches runs the engine's CPU build several times
+ * slower than the app in a normally-used browser, and NOT by a constant factor — per-task overhead
+ * inflates far more than per-triangle work, which is enough to invert a worker-count ranking.
+ * `bench calibrate` measures one real model load here and compares it against a reference captured
+ * from the app, so a run can say whether its CPU numbers mean anything. See bench/README.md.
+ */
+export const CALIBRATION = {
+	// Models are gitignored, so this is a local path on whoever calibrates. Anything with many
+	// meshes works; procedural corpus scenes do not — they have too few tasks to show the effect.
+	defaultModel: '/models/24155522.glb',
+	// Above this ratio on any phase the harness is not measuring the same machine the app is.
+	// 1.5x is well inside the run-to-run spread of a real load and far below the 10-20x seen.
+	tolerance: 1.5,
+	// Loads per calibration: the first pays V8 tiering (measured 3037 -> 1049 -> 340 ms for the
+	// same build), so only the later ones are recorded.
+	loads: 3,
 };
 
 export const PERF = {

@@ -167,6 +167,9 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 			( u, c, e ) => globalThis.__bench.loadModelScene( u, c, e ),
 			url, cameraIndex ?? 1, env ?? 'procedural'
 		),
+		profileModelLoad: ( url ) => page.evaluate(
+			( u ) => globalThis.__bench.profileModelLoad( u ), url
+		),
 		setSettings: ( values ) => page.evaluate(
 			( v ) => globalThis.__bench.setSettings( v ), values
 		),
