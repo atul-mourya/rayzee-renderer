@@ -146,6 +146,9 @@ export class SceneProcessor {
 			geometryExtractionTime: 0,
 			bvhBuildTime: 0,
 			blasBuildTime: 0,
+			// Summed per-mesh build time reported by the workers. Divided by blasBuildTime it
+			// gives how many workers were actually busy — a health signal, not a cost.
+			blasWorkerTime: 0,
 			tlasBuildTime: 0,
 			bvhAssembleTime: 0,
 			totalProcessingTime: 0
@@ -781,6 +784,7 @@ export class SceneProcessor {
 					blasStats.failed += st.failedSplits ?? 0;
 					blasStats.treeletsImproved += st.treeletsImproved ?? 0;
 					blasStats.treeletsProcessed += st.treeletsProcessed ?? 0;
+					this.performanceMetrics.blasWorkerTime += st.totalBuildTime ?? 0;
 
 				}
 
@@ -1456,6 +1460,9 @@ export class SceneProcessor {
 			geometryExtractionTime: 0,
 			bvhBuildTime: 0,
 			blasBuildTime: 0,
+			// Summed per-mesh build time reported by the workers. Divided by blasBuildTime it
+			// gives how many workers were actually busy — a health signal, not a cost.
+			blasWorkerTime: 0,
 			tlasBuildTime: 0,
 			bvhAssembleTime: 0,
 			totalProcessingTime: 0
