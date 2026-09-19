@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { appSnippet, calibrationStale, compare, formatBanner, SNIPPET_MARKER } from '../../../bench/runner/calibrate.js';
+import { appSnippet, calibrationStale, compare, formatBanner, formatComparison, SNIPPET_MARKER } from '../../../bench/runner/calibrate.js';
 import { CALIBRATION } from '../../../bench/runner/config.js';
 
 const PLAIN = { DIM: '', GREEN: '', YELLOW: '', RESET: '' };
@@ -68,6 +68,45 @@ describe( 'bench calibration', () => {
 		it( 'rejects another model — per-task overhead scales with task count', () => {
 
 			expect( calibrationStale( stored, fingerprint, '/models/b.glb' ) ).toBe( true );
+
+		} );
+
+	} );
+
+	describe( 'formatComparison', () => {
+
+		const captured = ( scene, blas ) => ( {
+			...profile( scene, blas ), capturedBy: SNIPPET_MARKER, counts: { triangles: 100 },
+		} );
+
+		it( 'calls a change inside the run-to-run spread noise, not a win', () => {
+
+			const out = formatComparison( captured( 1700, 1200 ), captured( 1690, 1180 ), PLAIN );
+			expect( out ).toMatch( /noise/ );
+			expect( out ).not.toMatch( /faster/ );
+
+		} );
+
+		it( 'names a real improvement', () => {
+
+			const out = formatComparison( captured( 1700, 1200 ), captured( 1400, 900 ), PLAIN );
+			expect( out ).toMatch( /faster/ );
+
+		} );
+
+		it( 'warns when the two arms are not the same scene', () => {
+
+			const before = captured( 1700, 1200 );
+			const after = { ...captured( 1400, 900 ), counts: { triangles: 999 } };
+			expect( formatComparison( before, after, PLAIN ) ).toMatch( /not the same scene/ );
+
+		} );
+
+		it( 'warns when an arm was not captured by the snippet', () => {
+
+			const after = { ...captured( 1400, 900 ) };
+			delete after.capturedBy;
+			expect( formatComparison( captured( 1700, 1200 ), after, PLAIN ) ).toMatch( /not captured by the snippet/ );
 
 		} );
 

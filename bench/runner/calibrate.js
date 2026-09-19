@@ -186,6 +186,70 @@ export function formatReport( record, { DIM, GREEN, YELLOW, RESET } ) {
 }
 
 /**
+ * Before/after for a CPU change, both arms measured in the app. The stored calibration's app half
+ * is the "before"; `after` is a fresh capture from the same snippet on the changed tree.
+ *
+ * This exists because the harness cannot answer this question — it distorts per-task cost — so the
+ * only honest way to judge a build-time change is two app captures, and that should be one command
+ * rather than an afternoon.
+ *
+ * @param {Object} before - app profile from the stored calibration
+ * @param {Object} after - app profile captured on the changed tree
+ * @param {Object} colors - { DIM, GREEN, YELLOW, RESET }
+ */
+export function formatComparison( before, after, { DIM, GREEN, YELLOW, RESET } ) {
+
+	const lines = [];
+
+	if ( before.counts?.triangles && after.counts?.triangles && before.counts.triangles !== after.counts.triangles ) {
+
+		lines.push( `${YELLOW}  the two captures are not the same scene ` +
+			`(${before.counts.triangles.toLocaleString()} vs ${after.counts.triangles.toLocaleString()} triangles)${RESET}` );
+
+	}
+
+	for ( const profile of [ before, after ] ) {
+
+		if ( profile.capturedBy !== SNIPPET_MARKER ) {
+
+			lines.push( `${YELLOW}  one arm was not captured by the snippet — the comparison is only as good as it${RESET}` );
+			break;
+
+		}
+
+	}
+
+	lines.push( `  ${''.padEnd( 12 )} ${'before'.padStart( 9 )} ${'after'.padStart( 9 )} ${'change'.padStart( 10 )}` );
+
+	for ( const phase of PHASES ) {
+
+		const b = before.phases?.[ phase ];
+		const a = after.phases?.[ phase ];
+		if ( ! b || a === undefined ) continue;
+
+		const delta = ( a / b - 1 ) * 100;
+		// A change smaller than the spread between repeated loads is not a result. Measured
+		// run-to-run on one machine: about 5 % on the whole scene, more on the smaller phases.
+		const mark = Math.abs( delta ) < 5 ? `${DIM}(noise)${RESET}` : delta < 0 ? `${GREEN}faster${RESET}` : `${YELLOW}slower${RESET}`;
+		lines.push(
+			`  ${phase.padEnd( 12 )} ${`${( b / 1000 ).toFixed( 2 )}s`.padStart( 9 )} ${`${( a / 1000 ).toFixed( 2 )}s`.padStart( 9 )} ` +
+			`${`${delta >= 0 ? '+' : ''}${delta.toFixed( 1 )}%`.padStart( 10 )}  ${mark}`
+		);
+
+	}
+
+	if ( before.workersBusy && after.workersBusy ) {
+
+		lines.push( `  ${'workers busy'.padEnd( 12 )} ${before.workersBusy.toFixed( 2 ).padStart( 9 )} ${after.workersBusy.toFixed( 2 ).padStart( 9 )}` );
+
+	}
+
+	lines.push( `${DIM}  Both arms are app captures, so this is the comparison the harness cannot make.${RESET}` );
+	return lines.join( '\n' );
+
+}
+
+/**
  * The snippet to paste into the app's console to capture the other half of the calibration.
  * It is the same measurement `profileModelLoad` makes, so the two are comparable.
  */

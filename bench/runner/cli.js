@@ -21,7 +21,8 @@ import { launchBrowser, openHarness } from './browser.js';
 import { startDevServer } from './devserver.js';
 import { CALIBRATION, PATHS } from './config.js';
 import {
-	appSnippet, calibrationStale, formatBanner, formatReport, measureHarness, readCalibration, writeCalibration,
+	appSnippet, calibrationStale, formatBanner, formatComparison, formatReport, measureHarness, readCalibration,
+	writeCalibration,
 } from './calibrate.js';
 import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
 import { runDenoise } from './denoise.js';
@@ -527,6 +528,20 @@ async function main() {
 			return 0;
 
 		} );
+
+	}
+
+	// Before/after for a CPU change, both arms captured in the app. No browser needed: the "before"
+	// is the app half already stored by a previous calibration.
+	if ( command === 'calibrate' && flags.compare ) {
+
+		const stored = await readCalibration();
+		if ( ! stored?.app ) throw new Error( 'no stored app reference to compare against — run `npm run bench:calibrate` first' );
+
+		const after = JSON.parse( await fs.readFile( String( flags.compare ), 'utf8' ) );
+		log( `app before/after on ${stored.model}` );
+		log( formatComparison( stored.app, after, { DIM, GREEN, YELLOW, RESET } ) );
+		return 0;
 
 	}
 
