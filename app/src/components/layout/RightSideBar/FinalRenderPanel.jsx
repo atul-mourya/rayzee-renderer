@@ -17,17 +17,11 @@ const FinalRenderPanel = () => {
 		enableOIDN,
 		denoiserStrategy,
 		oidnQuality,
-		enableUpscaler,
-		upscalerScale,
-		upscalerQuality,
 
 		handleBouncesChange,
 		handleTileHelperToggle,
 		handleEnableOIDNChange,
 		handleOidnQualityChange,
-		handleEnableUpscalerChange,
-		handleUpscalerScaleChange,
-		handleUpscalerQualityChange,
 	} = useStore();
 
 
@@ -39,32 +33,37 @@ const FinalRenderPanel = () => {
 				</Row>
 				<CanvasDimensionControls resolutionKey="finalRenderResolution" />
 			</ControlGroup>
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
-			<Row className="py-2 px-2">
-				<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
-			</Row>
-			{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
-				<Row className="py-2 px-2">
-					<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
-						<span className="opacity-50 text-xs truncate">OIDN Quality</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select quality" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="fast">Fast</SelectItem>
-							<SelectItem value="fast-clean">Fast (clean aux)</SelectItem>
-							<SelectItem value="balance">Balance</SelectItem>
-							<SelectItem value="high">High</SelectItem>
-						</SelectContent>
-					</Select>
+			{/* Same ControlGroup the Preview panel uses. Its open body supplies the padding and the
+			    vertical rhythm every Row here relies on — without it the sliders ran under the panel
+			    edge and the switches were clipped. */}
+			<ControlGroup name="Denoising" defaultOpen={true}>
+				<Row>
+					<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
 				</Row>
-				<Row className="py-2 px-2">
-					<Switch label={"Tile Helper"} checked={tilesHelper} onCheckedChange={handleTileHelperToggle} />
-				</Row>
-			</> )}
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
-			<NeuralPostControls />
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
+				{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
+					<Row>
+						<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
+							<span className="opacity-50 text-xs truncate">OIDN Quality</span>
+							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+								<SelectValue placeholder="Select quality" />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="fast">Fast</SelectItem>
+								<SelectItem value="fast-clean">Fast (clean aux)</SelectItem>
+								<SelectItem value="balance">Balance</SelectItem>
+								<SelectItem value="high">High</SelectItem>
+							</SelectContent>
+						</Select>
+					</Row>
+					<Row>
+						<Switch label={"Tile Helper"} checked={tilesHelper} onCheckedChange={handleTileHelperToggle} />
+					</Row>
+				</> )}
+
+				<Separator />
+
+				<NeuralPostControls />
+			</ControlGroup>
 		</div>
 	);
 
