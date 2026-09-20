@@ -8,6 +8,18 @@
  * ⚠️ It is always LAST in the neural chain, and that is forced by the model rather than chosen: its
  * output texture is `rgba8unorm` with no `COPY_SRC`, so the result cannot be read back and nothing
  * can consume it. It ends at its own presentation, in its own display space.
+ *
+ * ⚠️ **It desaturates, and there is no lever for it.** Driven at `intensity: 0`, where the network
+ * returns its input untouched, the result still differs from the engine's own render: luminance is
+ * nearly exact (94.4 vs 94.0) but chroma is ~10 % low (saturation 0.313 vs 0.348). So the pass
+ * reproduces brightness faithfully and loses colour, inside its own preprocessing — its presentation
+ * shader is a plain `textureSample` blit with no display controls, and the `override ACES /
+ * SATURATION` block in the bundle belongs to the SUPER-RESOLUTION presenter, not this one.
+ *
+ * Pre-tone-mapping the input to compensate was tried and measured WORSE — passthrough error doubled
+ * (RMSE 5.1 -> 10.8) and the image came out over-saturated, because the network then applies its own
+ * handling on top. Feeding it scene-referred linear, as here, is both the model's intended domain and
+ * the more faithful of the two. A real fix would have to reach inside the vendored runtime.
  */
 
 import { getAssetConfig } from '../AssetConfig.js';
