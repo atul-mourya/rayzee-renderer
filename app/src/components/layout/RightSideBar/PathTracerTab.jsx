@@ -165,6 +165,11 @@ const PathTracerTab = () => {
 		enableUpscaler,
 		upscalerScale,
 		upscalerQuality,
+		upscalerBackend,
+		neuralRendering,
+		nrIntensity,
+		nrLocalTone,
+		nrLocalStructure,
 		exposure,
 		saturation,
 		enableEnvironment,
@@ -244,6 +249,9 @@ const PathTracerTab = () => {
 		handleEnableUpscalerChange,
 		handleUpscalerScaleChange,
 		handleUpscalerQualityChange,
+		handleUpscalerBackendChange,
+		handleNeuralRenderingChange,
+		handleNRSettingChange,
 		handleDebugThresholdChange,
 		handleDebugModeChange,
 		handleInspectorToggle,
@@ -706,30 +714,92 @@ const PathTracerTab = () => {
 
 				{enableUpscaler && ( <>
 					<Row>
-						<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-							<span className="opacity-50 text-xs truncate">Scale Factor</span>
-							<SelectTrigger className="max-w-24 h-5 rounded-full" >
-								<SelectValue placeholder="Select scale" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="2">2x</SelectItem>
-								<SelectItem value="4">4x</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-					<Row>
-						<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-							<span className="opacity-50 text-xs truncate">Quality</span>
+						<Select value={upscalerBackend} onValueChange={handleUpscalerBackendChange}>
+							<span className="opacity-50 text-xs truncate">Model</span>
 							<SelectTrigger className="max-w-32 h-5 rounded-full" >
-								<SelectValue placeholder="Select quality" />
+								<SelectValue placeholder="Select model" />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="fast">Fast</SelectItem>
-								<SelectItem value="balanced">Balanced</SelectItem>
-								<SelectItem value="quality">Quality</SelectItem>
+								<SelectItem value="esrgan">Real-ESRGAN</SelectItem>
+								<SelectItem value="dlss">DLSS</SelectItem>
 							</SelectContent>
 						</Select>
 					</Row>
+
+					{/* DLSS is a fixed 2x and takes no quality tiers, so its own controls are just
+					    the requirement it cannot work without. */}
+					{upscalerBackend === 'dlss' ? (
+						<Row>
+							<span className="opacity-50 text-[10px] leading-snug">
+								{enableOIDN || denoiserStrategy === 'oidn'
+									? 'Fixed 2x. Runs once, on the denoised image, when the render finishes.'
+									: 'Needs a denoiser — turn on Final Denoise (OIDN). On a noisy image it is worse than a plain resize.'}
+							</span>
+						</Row>
+					) : ( <>
+						<Row>
+							<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
+								<span className="opacity-50 text-xs truncate">Scale Factor</span>
+								<SelectTrigger className="max-w-24 h-5 rounded-full" >
+									<SelectValue placeholder="Select scale" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="2">2x</SelectItem>
+									<SelectItem value="4">4x</SelectItem>
+								</SelectContent>
+							</Select>
+						</Row>
+						<Row>
+							<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
+								<span className="opacity-50 text-xs truncate">Quality</span>
+								<SelectTrigger className="max-w-32 h-5 rounded-full" >
+									<SelectValue placeholder="Select quality" />
+								</SelectTrigger>
+								<SelectContent>
+									<SelectItem value="fast">Fast</SelectItem>
+									<SelectItem value="balanced">Balanced</SelectItem>
+									<SelectItem value="quality">Quality</SelectItem>
+								</SelectContent>
+							</Select>
+						</Row>
+					</> )}
+				</> )}
+
+				<Separator />
+
+				{/* Neural rendering: appearance, not resolution — so it is its own control rather
+				    than an upscaler model, and it always runs last. */}
+				<Row>
+					<Switch label={"Neural Rendering (DLSS-NR)"} checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
+				</Row>
+
+				{neuralRendering && ( <>
+					{( enableOIDN || denoiserStrategy === 'oidn' ) ? ( <>
+						<Row>
+							<Slider label={"Intensity"} min={0} max={1} step={0.01} value={[ nrIntensity ]}
+								onFinishChange={handleNRSettingChange( 'intensity', 'nrIntensity' )} />
+						</Row>
+						<Row>
+							<Slider label={"Local Tone"} min={0} max={2} step={0.01} value={[ nrLocalTone ]}
+								onFinishChange={handleNRSettingChange( 'localTone', 'nrLocalTone' )} />
+						</Row>
+						<Row>
+							<Slider label={"Local Structure"} min={0} max={2} step={0.01} value={[ nrLocalStructure ]}
+								onFinishChange={handleNRSettingChange( 'localStructure', 'nrLocalStructure' )} />
+						</Row>
+						<Row>
+							<span className="opacity-50 text-[10px] leading-snug">
+								Runs last, after any upscale. Downloads a 141 MB model on first use, and
+								presents in its own tone curve rather than the viewport&apos;s.
+							</span>
+						</Row>
+					</> ) : (
+						<Row>
+							<span className="opacity-50 text-[10px] leading-snug">
+								Needs a denoiser — turn on Final Denoise (OIDN).
+							</span>
+						</Row>
+					)}
 				</> )}
 			</ControlGroup>
 

@@ -32,6 +32,13 @@ const config = {
 	// AI upscaler ONNX model base URL. Quality presets resolve relative paths against this.
 	upscalerModelBaseUrl: 'https://huggingface.co/notaneimu/onnx-image-models/resolve/main/',
 
+	// DLSS runtime bundle. A plain script the host serves, not a module: it installs
+	// `globalThis.DLSSRuntime`, so it cannot be imported and the host must publish it somewhere.
+	dlssRuntimeUrl: '/dlss/dlss-runtime.js',
+
+	// Base for the DLSS weight manifests the runtime fetches (`generated/...` beneath this).
+	dlssAssetBaseUrl: 'https://pub-6e048ff014374f11bef33d76b6c2b5ef.r2.dev/v1',
+
 	// Prefix used when the engine writes to client-side stores (IndexedDB, etc).
 	// Set to a unique value to avoid collisions when multiple apps embed the engine on the same origin.
 	cacheNamespace: 'rayzee',

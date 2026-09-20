@@ -287,6 +287,15 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	GIIntensity: DEFAULT_STATE.globalIlluminationIntensity,
 	backgroundIntensity: DEFAULT_STATE.backgroundIntensity,
 
+	// Which model the AI upscaler runs. App-local: 'dlss' is fixed 2x and needs a denoised source.
+	upscalerBackend: 'esrgan',
+
+	// Neural rendering (DLSS-NR): a detail pass at the same resolution, after any upscale.
+	neuralRendering: false,
+	nrIntensity: 1,
+	nrLocalTone: 1,
+	nrLocalStructure: 1,
+
 	showInspector: false,
 
 	// Auto-exposure computed values (updated in real-time by AutoExposure)
@@ -315,6 +324,8 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setEnableUpscaler: val => set( { enableUpscaler: val } ),
 	setUpscalerScale: val => set( { upscalerScale: val } ),
 	setUpscalerQuality: val => set( { upscalerQuality: val } ),
+	setUpscalerBackend: val => set( { upscalerBackend: val } ),
+	setNeuralRendering: val => set( { neuralRendering: val } ),
 	setUpscalerHdr: val => set( { upscalerHdr: val } ),
 	setExposure: val => set( { exposure: val } ),
 	setSaturation: val => set( { saturation: val } ),
@@ -814,6 +825,28 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	handleUpscalerScaleChange: handleChange(
 		val => set( { upscalerScale: Number( val ) } ),
 		( val, app ) => app.denoisingManager.setUpscalerScaleFactor( Number( val ) ),
+		false
+	),
+
+	handleNeuralRenderingChange: handleChange(
+		val => set( { neuralRendering: val } ),
+		( val, app ) => app.denoisingManager.setNeuralRendering( val, {
+			intensity: get().nrIntensity,
+			localTone: get().nrLocalTone,
+			localStructure: get().nrLocalStructure,
+		} ),
+		false
+	),
+
+	handleNRSettingChange: ( key, storeKey ) => handleChange(
+		val => set( { [ storeKey ]: val } ),
+		( val, app ) => app.denoisingManager.setNeuralRendering( get().neuralRendering, { [ key ]: val } ),
+		false
+	),
+
+	handleUpscalerBackendChange: handleChange(
+		val => set( { upscalerBackend: val } ),
+		( val, app ) => app.denoisingManager.setUpscalerBackend( val ),
 		false
 	),
 
