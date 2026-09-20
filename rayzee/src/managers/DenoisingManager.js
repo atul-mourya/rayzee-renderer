@@ -981,7 +981,10 @@ export class DenoisingManager extends EventDispatcher {
 
 			}
 
-			const exposure = this._getExposure?.() ?? this.renderer.toneMappingExposure ?? 1;
+			// Must be the effective value, not the settings one: AutoExposure overwrites
+			// `renderer.toneMappingExposure` every frame and never touches settings, so reading
+			// settings — as this did — silently ignores auto-exposure. Same helper OIDN uses.
+			const exposure = this._getEffectiveExposure();
 
 			if ( wantNR ) {
 
@@ -1001,7 +1004,7 @@ export class DenoisingManager extends EventDispatcher {
 
 				sr.presentLinear( this.upscalerCanvas, image, {
 					exposure,
-					toneMapping: this.renderer.toneMapping,
+					toneMapping: this._getToneMapping(),
 					saturation: this._getSaturation?.() ?? 1,
 				} );
 				if ( this._neuralCanvas ) this._neuralCanvas.style.display = 'none';
