@@ -41,6 +41,27 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] minimize unwanted dependencies - <https://github.com/atul-mourya/RayTracing/network/dependencies>
 - [ ] open issues by threejs <https://github.com/mrdoob/three.js/issues/32969> and 33061
 
+### DLSS super resolution
+
+- [ ] **Try a non-2x scale ratio.** The 2x is a limit of the *port*, not of DLSS: NVIDIA's quality
+  levels are render-scale percentages (Quality 67 %, Balanced 58 %, Performance 50 %, Ultra 33 %) and
+  the preset "will not vary even if scaling ratio varies" — OptiScaler runs the same DLL from 1.01 to
+  3.00. But this WebGPU port implements only the 2x path: its kernels are `upsample2x`,
+  `upsample2x_padded`, `upsample_2x_crop`, `downsample_2x`, with ~90 hardcoded `*2u` / `/4u` ratio
+  assumptions, and `output = input * 2` fixed in the geometry function. The WGSL *is* templated on
+  `INPUT_SIZE` / `OUTPUT_SIZE` / `NETWORK_SIZE`, so patching the geometry to e.g. 1.5x will at least
+  build — the question is whether the fixed-2x upsample kernels then produce a correct image or
+  garbage. ~15 min to settle empirically instead of by inference. Expect it to break.
+- [ ] **The upscale pass is CPU-bound, not GPU-bound.** Measured on M5 Pro: 512² → 1024² is 319 ms
+  end to end of which only ~70 ms is the network; 1024² → 2048² is 682 ms of which ~272 ms is the
+  network. The remainder is `DLSSSuperRes` doing four full-image passes in JS — half→float on read,
+  float→half on upload, half→float on the result, then the tone map — plus their allocations. Fix:
+  tone-map on the GPU and read back RGBA8 rather than linear halves (a quarter of the bytes, none of
+  the float loops). Blocked on not duplicating `toneMapToRGBA8`, which is the shared CPU curve.
+- [ ] Preset **K** weights (newer transformer preset, reportedly cleaner in motion than the hosted
+  **J**). Not a setting — a separate extraction from a newer `nvngx_dlss.dll`, which needs the demo
+  author's tooling, so this is blocked unless they publish it.
+
 ### Regression bench (`bench/`)
 
 - [ ] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
