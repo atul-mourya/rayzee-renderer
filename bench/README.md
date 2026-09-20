@@ -483,6 +483,16 @@ non-minimum path is invisible from one rung.
 OIDN is forced on for the rung. On raw Monte-Carlo noise this upscaler measurably loses to plain
 bilinear, so gating it on an undenoised source would gate the wrong thing entirely.
 
+A **tone-map parity check runs first**, before any image is measured. The upscale reads back display
+bytes through `Processor/ToneMapGPU.js`, a WGSL copy of `ToneMapCPU.js` that exists because
+converting half floats in JavaScript cost more than the network itself. Two implementations of one
+curve drift, and vitest cannot catch it — there is no GPU there. So the rung compares them on the
+real device across all seven curves and four exposure/saturation combinations, over 84 designed
+colours (0 to 1000, negatives, single-channel), and fails above `maxToneMapDelta` (1 level of 255,
+which is what f32-against-f64 rounding produces on a value sitting on a byte boundary). A drift here
+would move every RMSE below it and read as a model regression, which is why it is checked first
+rather than alongside.
+
 ### Texture binding audit — a structural guard, not a metric
 
 `setBindingAudit(true)` (on in the harness, off in production) reports stages whose `TextureNode`s

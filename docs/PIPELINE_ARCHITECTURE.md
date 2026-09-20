@@ -52,7 +52,9 @@ Rayzee uses an **event-driven pipeline** of modular rendering stages built on We
                               │  ├─LightManager       │
                               │  ├─DenoisingManager   │
                               │  │  ├─OIDNDenoiser    │
-                              │  │  └─AIUpscaler      │
+                              │  │  ├─AIUpscaler      │
+                              │  │  ├─DLSSSuperRes    │
+                              │  │  └─DLSSNeural      │
                               │  └─OverlayManager     │
                               │     └─TileHelper      │
                               └───────────────────────┘
