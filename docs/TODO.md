@@ -52,12 +52,14 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
   `INPUT_SIZE` / `OUTPUT_SIZE` / `NETWORK_SIZE`, so patching the geometry to e.g. 1.5x will at least
   build — the question is whether the fixed-2x upsample kernels then produce a correct image or
   garbage. ~15 min to settle empirically instead of by inference. Expect it to break.
-- [ ] **The upscale pass is CPU-bound, not GPU-bound.** Measured on M5 Pro: 512² → 1024² is 319 ms
-  end to end of which only ~70 ms is the network; 1024² → 2048² is 682 ms of which ~272 ms is the
-  network. The remainder is `DLSSSuperRes` doing four full-image passes in JS — half→float on read,
-  float→half on upload, half→float on the result, then the tone map — plus their allocations. Fix:
-  tone-map on the GPU and read back RGBA8 rather than linear halves (a quarter of the bytes, none of
-  the float loops). Blocked on not duplicating `toneMapToRGBA8`, which is the shared CPU curve.
+- [ ] **About half the upscale pass is CPU plumbing, not the network.** Warm on M5 Pro: 512² → 1024²
+  is 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
+  (An earlier note said 319/682 ms — that was measuring the *cold* pass, which includes building the
+  graph. The first pass after any resolution change really does cost that: 266 ms vs 136 warm.) The
+  remainder is `DLSSSuperRes` doing four full-image passes in JS — half→float on read, float→half on
+  upload, half→float on the result, then the tone map. Fix: tone-map on the GPU and read back RGBA8.
+  Blocked on the engine having no reusable GPU curve — only the Compositor's output pass — so it
+  would mean a second implementation of `toneMapToRGBA8`.
 - [ ] Preset **K** weights (newer transformer preset, reportedly cleaner in motion than the hosted
   **J**). Not a setting — a separate extraction from a newer `nvngx_dlss.dll`, which needs the demo
   author's tooling, so this is blocked unless they publish it.

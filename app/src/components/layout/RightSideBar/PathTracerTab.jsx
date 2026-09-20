@@ -726,13 +726,16 @@ const PathTracerTab = () => {
 						</Select>
 					</Row>
 
-					{/* DLSS is a fixed 2x and takes no quality tiers, so its own controls are just
-					    the requirement it cannot work without. */}
+					{/* DLSS is a fixed 2x and takes no quality tiers, so its own controls are just the
+					    requirement it cannot work without, plus how it differs from the other model.
+					    Measured 512->1024 on a 1.9M-tri interior: DLSS 136 ms, Real-ESRGAN 436 ms;
+					    RMSE against a native 1024 render 3.84 vs 3.28, detail 1.355 vs 1.096 where
+					    native is 1.089 — so DLSS adds structure rather than reproducing it. */}
 					{upscalerBackend === 'dlss' ? (
 						<Row>
 							<span className="opacity-50 text-[10px] leading-snug">
 								{enableOIDN || denoiserStrategy === 'oidn'
-									? 'Fixed 2x. Runs once, on the denoised image, when the render finishes.'
+									? 'Fixed 2x, no quality tiers. Runs once on the denoised image when the render finishes. About 3x faster than Real-ESRGAN, and sharper than a native render — it adds detail rather than reproducing it.'
 									: 'Needs a denoiser — turn on Final Denoise (OIDN). On a noisy image it is worse than a plain resize.'}
 							</span>
 						</Row>
@@ -761,6 +764,11 @@ const PathTracerTab = () => {
 									<SelectItem value="quality">Quality</SelectItem>
 								</SelectContent>
 							</Select>
+						</Row>
+						<Row>
+							<span className="opacity-50 text-[10px] leading-snug">
+								Closer to a native render than DLSS, and offers 4x — but about 3x slower.
+							</span>
 						</Row>
 					</> )}
 				</> )}

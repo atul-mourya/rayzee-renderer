@@ -9,13 +9,16 @@
  * Deliberately *not* wired into the live pipeline: the network costs ~132 ms of GPU
  * at 1920x1080, which is free against a final render and ruinous against a frame.
  *
- * ⚠️ **The pass is CPU-bound, not GPU-bound.** Measured end to end on an M5 Pro: 512² → 1024² costs
- * 319 ms of which ~70 ms is the network; 1024² → 2048² costs 682 ms of which ~272 ms is the network.
- * The rest is this file — four full-image passes in JS (half→float on read, float→half on upload,
- * half→float on the result, then the tone map) plus their allocations. The fix is to tone-map on the
- * GPU and read back RGBA8 instead of linear halves: a quarter of the bytes and none of the float
- * loops. Not done, because `toneMapToRGBA8` is the shared CPU curve and a second implementation
- * would drift from it — see the note on ToneMapWGSL.
+ * ⚠️ **Roughly half the cost is this file, not the network.** Warm, on an M5 Pro: 512² → 1024² is
+ * 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
+ * The remainder is four full-image passes in JS (half→float on read, float→half on upload,
+ * half→float on the result, then the tone map) plus their allocations. Reading back RGBA8 from a
+ * GPU-side tone map would remove most of it — a quarter of the bytes and none of the float loops —
+ * but the engine has no reusable GPU curve (only the Compositor's output pass), so it would mean a
+ * second implementation of `toneMapToRGBA8` and the drift that invites.
+ *
+ * ⚠️ The FIRST pass after a resolution change rebuilds the graph: 266 ms vs 136 ms warm at 1024²
+ * output, 762 ms vs 531 ms at 2048².
  *
  * ⚠️ Each neural model brings **its own GPUDevice**, built by the runtime and not shareable. With
  * super resolution and the detail pass both on, the page holds three: the renderer's, and one each.
