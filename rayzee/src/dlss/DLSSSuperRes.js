@@ -28,9 +28,28 @@ import { EngineEvents } from '../EngineEvents.js';
 import { toneMapToRGBA8 } from '../Processor/ToneMapCPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
-/** The network is a fixed 2x per axis, and its input side is capped at 4096. */
+/** The network is a fixed 2x per axis. */
 export const SR_SCALE = 2;
-export const SR_MAX_INPUT = 4096;
+
+/**
+ * Largest input side the runtime actually survives — 2048, i.e. 4096 output.
+ *
+ * The runtime advertises 4096 and validates against it, but two walls sit lower and both were hit
+ * by measurement rather than reading:
+ *
+ *  - It allocates a "retained history" plane at **4x the input dimension** and requests no raised
+ *    limit, so 2049+ input exceeds the default `maxTextureDimension2D` of 8192. The failure surfaces
+ *    much later and unhelpfully, as an invalid bind group in an unrelated pass. The adapter here
+ *    supports 16384, so patching the runtime's `requestDevice` would lift this one.
+ *  - Its "arbitrary exposure" pass dispatches `ceil(w * h / 256)` workgroups in X, so an input area
+ *    of 16,777,216 px — exactly 4096² — asks for 65,536 against WebGPU's 65,535 limit. One over.
+ *    That wall does not move without changing the dispatch, so square 8192 output is unreachable
+ *    even with the texture limit raised.
+ *
+ * 2048 also happens to be `MAX_STORAGE_TEXTURE_SIZE`, the engine's own default render reserve, so
+ * nothing is lost in practice today.
+ */
+export const SR_MAX_INPUT = 2048;
 
 let _runtimePromise = null;
 
@@ -220,7 +239,11 @@ export class DLSSSuperRes {
 
 		if ( width > SR_MAX_INPUT || height > SR_MAX_INPUT ) {
 
-			throw new Error( `DLSSSuperRes.create: input capped at ${SR_MAX_INPUT}px, got ${width}x${height}` );
+			throw new Error(
+				`DLSSSuperRes.create: input capped at ${SR_MAX_INPUT}px per side (${SR_MAX_INPUT * SR_SCALE}px output), ` +
+				`got ${width}x${height}. Above that the runtime's history plane exceeds maxTextureDimension2D ` +
+				'and it fails later with an unrelated bind-group error.'
+			);
 
 		}
 

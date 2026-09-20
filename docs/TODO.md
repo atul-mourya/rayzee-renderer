@@ -55,8 +55,15 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] **The CPU plumbing is what makes production resolutions slow.** Warm, whole pass: 512 -> 1024
   136 ms, 1024 -> 2048 552 ms, **2048 -> 4096 2.08 s**. The network's share falls the higher you go —
   the JS passes scale with OUTPUT pixels (16.7M at 4096²), so at production sizes they dominate. Still
-  acceptable against a multi-minute render, but this is the lever if 4K/8K output ever feels slow, and
-  8192 output is untested.
+  acceptable against a multi-minute render, but this is the lever if 4K output ever feels slow.
+- [ ] **8192 output is not reachable, measured.** Two independent walls, both above 4096 output:
+  the runtime allocates a "retained history" plane at **4x the input dimension** and requests no
+  raised limit, so >2048 input exceeds the default `maxTextureDimension2D` of 8192 (the adapter
+  supports 16384 — patching its `requestDevice` would lift this); and its "arbitrary exposure" pass
+  dispatches `ceil(w*h/256)` workgroups in X, so 4096² input asks for 65,536 against WebGPU's 65,535
+  — **one over**, which no limit raise fixes. So square 8192 is unreachable, and a non-square 8192
+  (e.g. 4096x2160 in) would need the texture-limit patch. `SR_MAX_INPUT` is now 2048 with an early,
+  explanatory throw, because past it the runtime failed late as an unrelated invalid bind group.
 - [ ] **About half the upscale pass is CPU plumbing, not the network.** Warm on M5 Pro: 512² → 1024²
   is 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
   (An earlier note said 319/682 ms — that was measuring the *cold* pass, which includes building the
