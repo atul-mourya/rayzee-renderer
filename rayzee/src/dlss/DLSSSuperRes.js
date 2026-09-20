@@ -580,3 +580,41 @@ export function presentLinear( canvas, image, tone = {} ) {
 	return presentToUpscalerCanvas( canvas, rgba8, image.width, image.height );
 
 }
+
+/**
+ * Tone-maps a linear image with the engine's curve and hands it back as linear [0,1].
+ *
+ * For the detail pass, which presents itself through a plain blit and exposes no display controls
+ * of its own — its shader is `textureSample` straight to the canvas. Feeding it scene-referred
+ * linear therefore drops the engine's tone curve and saturation entirely (measured: saturation
+ * 0.348 -> 0.311, the washed-out look). Baking the look into its input is the only place left to
+ * put it.
+ *
+ * @param {{data: Float32Array, width: number, height: number}} image linear RGB
+ * @returns {{data: Float32Array, width: number, height: number}} tone-mapped, still linear-encoded
+ */
+export function toneMappedLinear( image, tone = {} ) {
+
+	const rgba8 = toneMapToRGBA8( expandToRGBA( image ), {
+		exposure: tone.exposure ?? 1,
+		toneMapping: tone.toneMapping,
+		saturation: tone.saturation ?? 1,
+	} );
+
+	const out = new Float32Array( image.width * image.height * 3 );
+	for ( let i = 0, n = image.width * image.height; i < n; i ++ ) {
+
+		for ( let c = 0; c < 3; c ++ ) {
+
+			// `toneMapToRGBA8` ends in the sRGB OETF, so undo it — the network wants linear values,
+			// it just needs them to already carry the display look.
+			const v = rgba8[ i * 4 + c ] / 255;
+			out[ i * 3 + c ] = v <= 0.04045 ? v / 12.92 : Math.pow( ( v + 0.055 ) / 1.055, 2.4 );
+
+		}
+
+	}
+
+	return { data: out, width: image.width, height: image.height };
+
+}

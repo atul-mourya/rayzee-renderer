@@ -988,13 +988,22 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( wantNR ) {
 
+				// The detail pass presents through a plain blit and has no display controls, so the
+				// engine's curve and saturation have to be baked into what it receives or they are
+				// lost. Exposure is already inside that, hence 1 below.
+				const display = sr.toneMappedLinear( image, {
+					exposure,
+					toneMapping: this._getToneMapping(),
+					saturation: this._getSaturation?.() ?? 1,
+				} );
+
 				const { enhanceLinearFrame } = await import( '../dlss/DLSSNeural.js' );
 				const result = await enhanceLinearFrame( {
-					source: image,
+					source: display,
 					canvas: this._neuralPresentCanvas(),
 					settings: this.neuralRenderingSettings,
 					instance: this._dlssNeural,
-					exposure,
+					exposure: 1,
 				} );
 				this._dlssNeural = result.instance;
 				// Only one overlay may be up, and this pass owns the other one.
