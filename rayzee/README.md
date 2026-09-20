@@ -287,6 +287,11 @@ configureAssets({
   oidnWeightsBaseUrl:    '/oidn-tzas/',
   upscalerModelBaseUrl:  '/upscaler-onnx/',
 
+  // DLSS. The runtime is a plain script the host must serve — it installs
+  // `globalThis.DLSSRuntime` as a side effect and cannot be imported.
+  dlssRuntimeUrl:    '/dlss/dlss-runtime.js',
+  dlssAssetBaseUrl:  '/dlss/',
+
   // Prefix for engine-managed IndexedDB stores. Set to a unique value if multiple
   // apps embed the engine on the same origin to avoid cache collisions.
   cacheNamespace: 'my-app',
@@ -588,8 +593,10 @@ engine.denoisingManager.setOIDNQuality('high')
 engine.denoisingManager.setStrategy('oidn')              // OIDN owns the live view; see below
 engine.denoisingManager.continuousDenoiseInterval = 250   // cap refreshes at 4/sec (default 8 = uncapped)
 engine.denoisingManager.setUpscalerEnabled(true)
-engine.denoisingManager.setUpscalerScaleFactor(2)
-engine.denoisingManager.setUpscalerQuality('high')
+engine.denoisingManager.setUpscalerBackend('dlss')        // 'esrgan' (default) | 'dlss'
+engine.denoisingManager.setUpscalerScaleFactor(2)         // ESRGAN only; DLSS is fixed at 2x
+engine.denoisingManager.setUpscalerQuality('high')        // ESRGAN only
+engine.denoisingManager.setNeuralRendering(true, { intensity: 1, colorStrength: 0 })
 ```
 
 ### engine.interactionManager
@@ -1196,6 +1203,51 @@ engine.addEventListener(EngineEvents.UPSCALING_END,      () => console.log('Upsc
 | `'quality'` | RRDBNet / MoSR | 67 MB | 16.5 MB |
 
 **Chaining with OIDN:** Upscaling and OIDN **can** run together — on render completion, OIDN runs first, then its denoised output is fed into the upscaler. Enable both; no manual coordination required.
+
+### The DLSS passes
+
+Two further neural passes, ported from NVIDIA's DLSS weights. Both run once when a render finishes
+and both need a denoised frame — on raw Monte-Carlo noise they measurably lose to a plain resize, so
+enable OIDN alongside them.
+
+Unlike the ONNX upscaler these are **not fetched from a CDN**: `dlss-runtime.js` installs
+`globalThis.DLSSRuntime` as a side effect and cannot be imported, so the host serves it and points
+`configureAssets` at it (see above). It lives at `app/public/dlss/` in this repo, and the local edits
+it carries are written up in `app/public/dlss/PATCHES.md` — re-vendoring it without re-applying them
+breaks the retouch pass with an explanatory throw.
+
+```js
+// Super resolution, as a second AI Upscaler backend
+engine.denoisingManager.setUpscalerEnabled(true);
+engine.denoisingManager.setUpscalerBackend('dlss');
+
+// The retouch pass — appearance, not resolution. Independent of the upscaler.
+engine.denoisingManager.setNeuralRendering(true, {
+  intensity: 1,        // 0..1   how much of the pass reaches the image
+  localTone: 1,        // 0..2   local light shaping; 1 is neutral
+  localStructure: 1,   // 0..2   fine surface detail; 1 is neutral
+  colorStrength: 0,    // 0..1   0 keeps the render's chroma, 1 takes the model's
+});
+```
+
+The chain is **denoise → retouch (at render size) → super resolution (2x) → tone map**, scene-referred
+throughout. The retouch pass runs *before* the upscale deliberately: it sees a quarter of the pixels
+there, and above `DLSS_NR_MAX_PIXELS` (4.19 MP) it takes minutes and then loses every GPU device in
+the page. `DenoisingManager` skips it above that size rather than letting it run.
+
+| | Super resolution | Retouch |
+|---|---|---|
+| What it changes | Resolution, fixed 2x | Appearance only |
+| Weights | 3.2 MB | 141 MB, fetched on first use |
+| Cost (1.9M-tri interior, warm) | 260 ms at 1024²→2048², 947 ms at 2048²→4096² | ~6 s at 2048² |
+| Against a native render | Ties Real-ESRGAN on accuracy, 3x faster, sharper than native | Close to a no-op on path-traced images |
+
+Exported for building UI against: `SR_SCALE`, `SR_MAX_INPUT`, `DLSS_NR_DEFAULTS`, `DLSS_NR_RANGES`,
+`DLSS_NR_MAX_PIXELS`, and `renderUpscaled( app, { outputWidth, outputHeight, samples } )` — the
+offline entry point that drives a half-size render, denoise and upscale in one call.
+
+⚠️ Each model brings **its own `GPUDevice`**, built by the runtime and not shareable. With both on,
+the page holds three: the renderer's and one each.
 
 ## Troubleshooting
 

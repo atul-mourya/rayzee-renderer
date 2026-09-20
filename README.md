@@ -27,6 +27,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
 - **Instanced geometry** — a geometry used by several objects is stored once in its own space and placed by matrix, so a scene of repeated furniture costs one copy rather than one per placement; geometry used once, or geometry that emits light, is baked to world space instead so rays skip the transform entirely
 - **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders, running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
+- **Neural upscaling and retouch** — a finished render can be enlarged 2x or 4x rather than traced at full size, by either Real-ESRGAN (the more faithful reconstruction, and the only one offering 4x) or a WebGPU port of DLSS super resolution (fixed 2x, about 3x faster, and sharper than a native render — it adds detail rather than reproducing it). A second DLSS pass optionally retouches the image itself, shaping local light and fine surface detail. All of it runs once, when the render completes, on the denoised result
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
@@ -45,6 +46,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 | **UI Components** | Radix UI, Lucide Icons |
 | **State Management** | Zustand |
 | **Denoising** | Intel OIDN Web, Custom ASVGF |
+| **Neural post** | Real-ESRGAN (ONNX Runtime Web), DLSS super resolution + retouch (WebGPU) |
 | **Build Tools** | Vite, ESLint, Semantic Release |
 | **Performance** | Stats.gl |
 
@@ -86,6 +88,8 @@ Bench baselines are machine-specific and the suite refuses to compare across a m
 ## Usage
 
 Drag and drop a model (GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, USDZ — or a ZIP containing one) onto the canvas, or pick from the built-in model and HDRI library. Adjust samples, bounces, and denoising in the Path Tracer panel, edit PBR materials directly on selected objects, and switch between Interactive and Production render modes as you work. Completed renders are saved to a local results gallery for review and export.
+
+The Denoising panel also carries the neural post passes. **AI Upscaler** delivers an image larger than the one traced — pick Real-ESRGAN for the more faithful reconstruction (and 4x), or DLSS for a sharper, faster 2x. **AI Retouch** shapes local light and fine surface detail on the render itself. Both need **Final Denoise (OIDN)** on, which is the default; without it they work on noise and do more harm than good, so their switches stay disabled until it is.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full walkthrough and development workflow.
 
@@ -130,6 +134,8 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for getting sta
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+The DLSS passes run a vendored WebGPU runtime derived from the [DLSS 5 WebGPU](https://dlss5-webgpu.dlss5-webgpu-standalone.workers.dev/) demo, kept at `app/public/dlss/` with local edits recorded in [PATCHES.md](app/public/dlss/PATCHES.md). It carries its own terms, separate from this project's.
 
 ---
 

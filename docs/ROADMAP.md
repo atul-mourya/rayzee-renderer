@@ -95,6 +95,9 @@
   - [x] Temporal denoising (SVGF/A-SVGF improvements)
   - [x] ASVGF quality presets (performance/balanced/quality)
   - [x] AI super-resolution upscaling (ONNX model, tiled with progress overlay)
+  - [x] DLSS super resolution as a second upscaler backend — fixed 2x, ties Real-ESRGAN on accuracy
+        while 3x faster and sharper than a native render
+  - [x] DLSS neural retouch — local light and fine surface detail on the finished render, opt-in
   - [ ] Machine learning denoising models
   - [ ] Custom denoising parameter profiles
 

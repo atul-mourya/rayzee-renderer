@@ -17,6 +17,7 @@ export const PATHS = {
 	fingerprint: path.resolve( here, '..', 'baselines', 'fingerprint.json' ),
 	perfLog: path.resolve( here, '..', 'baselines', 'perf.jsonl' ),
 	denoise: path.resolve( here, '..', 'baselines', 'denoise.json' ),
+	upscale: path.resolve( here, '..', 'baselines', 'upscale.json' ),
 	freeze: path.resolve( here, '..', 'baselines', 'freeze.json' ),
 	harness: path.resolve( here, '..', 'harness', 'index.html' ),
 	calibration: path.resolve( here, '..', 'baselines', 'calibration.json' ),
@@ -344,4 +345,36 @@ export const KERNELS = {
 	// Kernels below this share of frame GPU time are folded into an "other" row, so the table shows
 	// where time goes rather than 20 rows of noise.
 	reportThresholdPct: 0.5,
+};
+
+/**
+ * DLSS super-resolution gates.
+ *
+ * Opt-in (`npm run bench:upscale`), because the model is fetched over the network and the default
+ * suite must stay offline-green.
+ *
+ * Two numbers, because the failure modes point opposite ways. RMSE against the native render
+ * catches the reconstruction drifting off the truth. A detail ratio catches the opposite and more
+ * likely rot: an upscale that quietly turns blurry *improves* its RMSE against a denoised
+ * reference, so accuracy alone would reward the regression.
+ */
+export const UPSCALE_GATES = {
+	// One sample count, not a ladder: the upscaler only runs on a finished render, so the low-spp
+	// regime the denoise ladder exists for does not apply here.
+	samples: 32,
+	// Both sides of the 256-wide network tile floor: at 512 output the network runs its minimum
+	// 256x256 graph, at 1024 it runs a genuinely larger one. A change that only affects the
+	// non-minimum path would otherwise be invisible.
+	sizes: [[ 512, 512 ], [ 1024, 1024 ]],
+	// Textures give the detail metric something to measure; transmission is the noisiest input the
+	// denoiser hands over, which is where a reconstruction is most likely to invent structure.
+	scenes: [ 'textured-normalmap', 'glass-transmission' ],
+	// Deterministic mode makes both renders bit-identical run to run, so these only need room for
+	// last-bit drift from a three.js / driver / Chrome bump.
+	maxRmseIncrease: 0.5,
+	maxDetailLoss: 0.05,
+	// The WGSL tone curve against the CPU one, in 0-255 levels. One level is the most f32-vs-f64
+	// rounding can produce on a value sitting on a byte boundary; two would mean a real difference
+	// in the maths.
+	maxToneMapDelta: 1,
 };

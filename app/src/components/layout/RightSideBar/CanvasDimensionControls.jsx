@@ -2,6 +2,7 @@ import { RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
 import { usePathTracerStore } from '@/store';
+import { SR_SCALE } from 'rayzee';
 import { ASPECT_RATIO_PRESETS, RESOLUTION_PRESETS, isPanorama } from '@/Constants';
 
 
@@ -15,6 +16,9 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 		canvasWidth,
 		canvasHeight,
 		cameraProjection,
+		enableUpscaler,
+		upscalerScale,
+		upscalerBackend,
 
 		handleResolutionChange,
 		handleFinalRenderResolutionChange,
@@ -25,6 +29,12 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 	const currentResolution = resolutionKey === 'finalRenderResolution' ? finalRenderResolution : resolution;
 	const onResolutionChange = resolutionKey === 'finalRenderResolution' ? handleFinalRenderResolutionChange : handleResolutionChange;
 	const panorama = isPanorama( cameraProjection );
+
+	// The delivered image, not the traced one: an upscaler enlarges the result, so reporting the
+	// render size here left the panel disagreeing with the picture on screen. DLSS is a fixed 2x.
+	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'dlss' ? SR_SCALE : upscalerScale ) : 1;
+	const outputWidth = canvasWidth * upscaleFactor;
+	const outputHeight = canvasHeight * upscaleFactor;
 	const showOrientation = aspectRatioPreset !== '1:1';
 
 	return (
@@ -81,9 +91,17 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 			<Row>
 				<span className="opacity-50 text-xs truncate">Output</span>
 				<span className="text-xs text-muted-foreground">
-					{canvasWidth} &times; {canvasHeight}{panorama && ' (2:1, 360°)'}
+					{outputWidth} &times; {outputHeight}{panorama && ' (2:1, 360°)'}
 				</span>
 			</Row>
+
+			{upscaleFactor > 1 && (
+				<Row>
+					<span className="opacity-50 text-[10px] truncate">
+						upscaled {upscaleFactor}&times; from {canvasWidth} &times; {canvasHeight}
+					</span>
+				</Row>
+			)}
 
 		</>
 	);

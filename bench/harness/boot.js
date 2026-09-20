@@ -36,7 +36,15 @@ if ( typeof GPUDevice !== 'undefined' ) {
 
 	GPUDevice.prototype.createShaderModule = function ( descriptor ) {
 
-		const record = { label: descriptor.label ?? '(unlabelled)', code: descriptor.code ?? '', module: null };
+		// `device` is kept so the audit can ignore modules that are not the engine's. The patch is on
+		// the prototype, so it also catches every module built on any OTHER device the page creates —
+		// the DLSS super-resolution runtime brings its own. Asking a foreign (and possibly destroyed)
+		// device's module for compilation info leaves a promise that never settles, which surfaced as
+		// `Runtime.callFunctionOn timed out` at the end of a run where every gate had already passed.
+		const record = {
+			label: descriptor.label ?? '(unlabelled)', code: descriptor.code ?? '',
+			module: null, device: this,
+		};
 		record.module = create.call( this, descriptor );
 		shaderModules.push( record );
 		return record.module;
@@ -49,8 +57,11 @@ if ( typeof GPUDevice !== 'undefined' ) {
 async function shaderDiagnostics() {
 
 	const entries = [];
+	const engineDevice = app?.renderer?.backend?.device ?? null;
 
-	for ( const { label, code, module } of shaderModules ) {
+	for ( const { label, code, module, device } of shaderModules ) {
+
+		if ( engineDevice && device && device !== engineDevice ) continue;
 
 		const info = await module.getCompilationInfo().catch( () => null );
 		if ( ! info ) continue;
@@ -70,7 +81,12 @@ async function shaderDiagnostics() {
 
 	}
 
-	return { modules: shaderModules.map( ( r ) => r.label ), entries };
+	return {
+		modules: shaderModules
+			.filter( ( r ) => ! engineDevice || ! r.device || r.device === engineDevice )
+			.map( ( r ) => r.label ),
+		entries,
+	};
 
 }
 
@@ -618,6 +634,231 @@ async function profileModelLoad( url ) {
 }
 
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
+/**
+ * Renders through the DLSS super-resolution path: traces at half the requested size, denoises, and
+ * reconstructs to full size. Returns a PNG so the runner can reuse the image metrics.
+ *
+ * Fetches a ~3.5 MB model over the network, so this is opt-in and never part of the default suite.
+ *
+ * @param {{outputWidth: number, outputHeight: number, samples: number}} opts
+ * @returns {Promise<{dataURL: string, width: number, height: number, timings: object}>}
+ */
+async function upscaleRender( { outputWidth, outputHeight, samples } ) {
+
+	const { renderUpscaled } = await import( 'rayzee' );
+
+	// The cached upscaler is built for one input size. Reuse it only at that size; otherwise drop
+	// it, or the next rung in the ladder fails instead of rebuilding.
+	const inW = outputWidth / 2, inH = outputHeight / 2;
+	if ( _benchUpscaler && ( _benchUpscaler.inputWidth !== inW || _benchUpscaler.inputHeight !== inH ) ) {
+
+		_benchUpscaler.dispose();
+		_benchUpscaler = null;
+
+	}
+
+	const result = await renderUpscaled( app, {
+		outputWidth, outputHeight, samples,
+		upscaler: _benchUpscaler,
+		present: false,
+	} );
+	_benchUpscaler = result.upscaler;
+
+	const canvas = document.createElement( 'canvas' );
+	canvas.width = result.width;
+	canvas.height = result.height;
+	canvas.getContext( '2d' ).putImageData(
+		new ImageData( new Uint8ClampedArray( result.rgba8.buffer ?? result.rgba8 ), result.width, result.height ),
+		0, 0,
+	);
+
+	return {
+		dataURL: canvas.toDataURL( 'image/png' ),
+		width: result.width,
+		height: result.height,
+		timings: result.timings,
+	};
+
+}
+
+/**
+ * Compares the WGSL tone curve against the CPU one on real hardware.
+ *
+ * `ToneMapGPU.js` exists because converting half floats in JavaScript costs more than the neural
+ * upscale itself. It is a second implementation of `toneMapToRGBA8`, so it needs a check that fails
+ * when the two drift — which nothing in the unit suite can do, since vitest has no GPU.
+ *
+ * Runs on the renderer's own device over a fixed HDR spread (deep shadow, mid grey, clipped
+ * highlight, single-channel, negative) across every curve and a few exposure/saturation
+ * combinations.
+ */
+async function toneMapParity() {
+
+	const [ { PackedToneMapper }, { toneMapToRGBA8 }, three ] = await Promise.all( [
+		import( '@/core/Processor/ToneMapGPU.js' ),
+		import( '@/core/Processor/ToneMapCPU.js' ),
+		import( 'three' ),
+	] );
+
+	const VALUES = [
+		0, 1e-5, 0.0012, 0.0031308, 0.004, 0.01, 0.05, 0.08, 0.18, 0.3, 0.5, 0.76, 0.9,
+		1, 1.5, 2, 4, 8, 16, 64, 1000,
+	];
+
+	// Colours, not just greys: AgX and Neutral mix channels, so a per-channel test would miss a
+	// transposed matrix. The negative entry exercises the max(0) that Three.js applies before the
+	// curve — saturation drives real frames there.
+	const pixels = [];
+	for ( const v of VALUES ) {
+
+		pixels.push( [ v, v, v ] );
+		pixels.push( [ v, v * 0.25, 0 ] );
+		pixels.push( [ 0, v * 0.5, v ] );
+		pixels.push( [ v, - v * 0.1, v * 0.7 ] );
+
+	}
+
+	const width = pixels.length;
+	const height = 1;
+
+	const device = app.renderer.backend.device;
+
+	// Round-trip through fp16 first: the GPU reads half floats, so comparing against the CPU fed
+	// full floats would report the format's own rounding as drift.
+	const halves = new Uint16Array( width * 4 );
+	for ( let i = 0; i < width; i ++ ) {
+
+		for ( let c = 0; c < 3; c ++ ) halves[ i * 4 + c ] = floatToHalfBits( pixels[ i ][ c ] );
+		halves[ i * 4 + 3 ] = 0x3c00;
+
+	}
+
+	const linear = new Float32Array( width * 4 );
+	for ( let i = 0; i < width; i ++ ) {
+
+		for ( let c = 0; c < 3; c ++ ) linear[ i * 4 + c ] = halfBitsToFloat( halves[ i * 4 + c ] );
+		linear[ i * 4 + 3 ] = 1;
+
+	}
+
+	const src = device.createBuffer( {
+		label: 'bench:tonemap-parity-src',
+		size: halves.byteLength,
+		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+	} );
+	device.queue.writeBuffer( src, 0, halves );
+
+	const mapper = new PackedToneMapper( device, 'bench:tonemap-parity' );
+	mapper.ensureSize( width, height );
+
+	const CURVES = [
+		[ 'none', three.NoToneMapping ],
+		[ 'linear', three.LinearToneMapping ],
+		[ 'reinhard', three.ReinhardToneMapping ],
+		[ 'cineon', three.CineonToneMapping ],
+		[ 'aces', three.ACESFilmicToneMapping ],
+		[ 'agx', three.AgXToneMapping ],
+		[ 'neutral', three.NeutralToneMapping ],
+	];
+	const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
+
+	const findings = [];
+
+	try {
+
+		for ( const [ name, toneMapping ] of CURVES ) {
+
+			for ( const [ exposure, saturation ] of GRADES ) {
+
+				const gpu = await mapper.toRGBA8( src, { exposure, toneMapping, saturation } );
+				const cpu = toneMapToRGBA8( linear, { exposure, toneMapping, saturation } );
+
+				let worst = 0;
+				let worstAt = - 1;
+				for ( let i = 0; i < width * 4; i ++ ) {
+
+					const d = Math.abs( gpu[ i ] - cpu[ i ] );
+					if ( d > worst ) {
+
+						worst = d;
+						worstAt = i;
+
+					}
+
+				}
+
+				findings.push( {
+					curve: name, exposure, saturation, maxDelta: worst,
+					pixel: worstAt >= 0 ? pixels[ Math.floor( worstAt / 4 ) ] : null,
+				} );
+
+			}
+
+		}
+
+	} finally {
+
+		mapper.dispose();
+		src.destroy();
+
+	}
+
+	return findings;
+
+}
+
+const _parityF32 = new Float32Array( 1 );
+const _parityU32 = new Uint32Array( _parityF32.buffer );
+
+function floatToHalfBits( v ) {
+
+	_parityF32[ 0 ] = v;
+	const x = _parityU32[ 0 ];
+	const s = ( x >>> 16 ) & 0x8000;
+	const e = ( x >>> 23 ) & 0xff;
+	const m = x & 0x7fffff;
+
+	if ( e === 255 ) return s | ( m ? 0x7e00 : 0x7c00 );
+
+	const ne = e - 112;
+	if ( ne >= 31 ) return s | 0x7c00;
+	if ( ne <= 0 ) {
+
+		if ( ne < - 10 ) return s;
+		return s | ( ( m | 0x800000 ) >>> ( 14 - ne ) );
+
+	}
+
+	return s | ( ne << 10 ) | ( m >>> 13 );
+
+}
+
+function halfBitsToFloat( u ) {
+
+	const s = ( u & 0x8000 ) ? - 1 : 1;
+	const e = ( u >> 10 ) & 0x1f;
+	const m = u & 0x3ff;
+	if ( e === 0 ) return s * m * 2 ** - 24;
+	if ( e === 31 ) return m ? NaN : s * Infinity;
+	return s * ( m + 1024 ) * 2 ** ( e - 25 );
+
+}
+
+let _benchUpscaler = null;
+
+/**
+ * Releases the super-resolution model and, with it, the second GPUDevice it owns.
+ *
+ * Not optional: leaving it alive made the CDP teardown at the end of the run time out
+ * (`Runtime.callFunctionOn timed out`) long after the rung itself had passed.
+ */
+function disposeUpscaler() {
+
+	_benchUpscaler?.dispose();
+	_benchUpscaler = null;
+
+}
+
 function capturePNG() {
 
 	const out = app.getCanvas();
@@ -852,7 +1093,7 @@ async function awaitDenoise( timeoutMs = 120000 ) {
  * once `oidn:output` is actually published, which is asserted rather than assumed: without it this
  * would compare raw against raw for a flat ratio of 1.000 and call it a pass.
  */
-function captureDenoisedPNG() {
+function captureDenoisedPNG( expected = RENDER_SIZE ) {
 
 	if ( ! app.pipeline?.context?.getTexture( 'oidn:output' ) ) {
 
@@ -865,11 +1106,13 @@ function captureDenoisedPNG() {
 	const out = app.getCanvas();
 	if ( ! out ) throw new Error( '__bench.captureDenoisedPNG: no canvas' );
 
-	if ( out.width !== RENDER_SIZE.width || out.height !== RENDER_SIZE.height ) {
+	// Still asserted, just not always against RENDER_SIZE: the upscale rung renders its native
+	// reference at other sizes. A caller that states the wrong size still catches a stale canvas.
+	if ( out.width !== expected.width || out.height !== expected.height ) {
 
 		throw new Error(
 			`__bench.captureDenoisedPNG: canvas is ${out.width}x${out.height}, ` +
-			`expected ${RENDER_SIZE.width}x${RENDER_SIZE.height}`
+			`expected ${expected.width}x${expected.height}`
 		);
 
 	}
@@ -976,6 +1219,7 @@ function setPerfMode( enabled ) {
 
 async function unload() {
 
+	disposeUpscaler();
 	app.unloadScene();
 	app.stopAnimation();
 	currentScene = null;
@@ -1099,6 +1343,9 @@ globalThis.__bench = {
 	setPerfMode,
 	setDenoiser,
 	awaitDenoise,
+	upscaleRender,
+	disposeUpscaler,
+	toneMapParity,
 	captureDenoisedPNG,
 	denoisedNonFinite,
 	shaderDiagnostics,

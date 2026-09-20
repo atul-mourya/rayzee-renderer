@@ -287,6 +287,17 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	GIIntensity: DEFAULT_STATE.globalIlluminationIntensity,
 	backgroundIntensity: DEFAULT_STATE.backgroundIntensity,
 
+	// Which model the AI upscaler runs. App-local: 'dlss' is fixed 2x and needs a denoised source.
+	upscalerBackend: 'esrgan',
+
+	// Neural rendering (DLSS-NR): a detail pass on the traced image, before any upscale.
+	neuralRendering: false,
+	nrIntensity: 1,
+	nrLocalTone: 1,
+	nrLocalStructure: 1,
+	// 0 keeps the renderer's own chroma. See DLSS_NR_COLOR_STRENGTH.
+	nrColorStrength: 0,
+
 	showInspector: false,
 
 	// Auto-exposure computed values (updated in real-time by AutoExposure)
@@ -315,6 +326,8 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setEnableUpscaler: val => set( { enableUpscaler: val } ),
 	setUpscalerScale: val => set( { upscalerScale: val } ),
 	setUpscalerQuality: val => set( { upscalerQuality: val } ),
+	setUpscalerBackend: val => set( { upscalerBackend: val } ),
+	setNeuralRendering: val => set( { neuralRendering: val } ),
 	setUpscalerHdr: val => set( { upscalerHdr: val } ),
 	setExposure: val => set( { exposure: val } ),
 	setSaturation: val => set( { saturation: val } ),
@@ -793,9 +806,22 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
+	// Turning the final denoise off takes the neural passes with it. Both need a denoised frame —
+	// on raw Monte-Carlo noise the upscaler measured worse than a plain resize — so leaving their
+	// switches on while the engine silently skipped them would be a lie on the panel.
 	handleEnableOIDNChange: handleChange(
-		val => set( { enableOIDN: val } ),
-		( val, app ) => app.denoisingManager.setOIDNEnabled( val ),
+		val => set( val ? { enableOIDN: val } : { enableOIDN: val, enableUpscaler: false, neuralRendering: false } ),
+		( val, app ) => {
+
+			app.denoisingManager.setOIDNEnabled( val );
+			if ( ! val ) {
+
+				app.denoisingManager.setUpscalerEnabled( false );
+				app.denoisingManager.setNeuralRendering( false );
+
+			}
+
+		},
 		false
 	),
 
@@ -814,6 +840,29 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	handleUpscalerScaleChange: handleChange(
 		val => set( { upscalerScale: Number( val ) } ),
 		( val, app ) => app.denoisingManager.setUpscalerScaleFactor( Number( val ) ),
+		false
+	),
+
+	handleNeuralRenderingChange: handleChange(
+		val => set( { neuralRendering: val } ),
+		( val, app ) => app.denoisingManager.setNeuralRendering( val, {
+			intensity: get().nrIntensity,
+			localTone: get().nrLocalTone,
+			localStructure: get().nrLocalStructure,
+			colorStrength: get().nrColorStrength,
+		} ),
+		false
+	),
+
+	handleNRSettingChange: ( key, storeKey ) => handleChange(
+		val => set( { [ storeKey ]: val } ),
+		( val, app ) => app.denoisingManager.setNeuralRendering( get().neuralRendering, { [ key ]: val } ),
+		false
+	),
+
+	handleUpscalerBackendChange: handleChange(
+		val => set( { upscalerBackend: val } ),
+		( val, app ) => app.denoisingManager.setUpscalerBackend( val ),
 		false
 	),
 

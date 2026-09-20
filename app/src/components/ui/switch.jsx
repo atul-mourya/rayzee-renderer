@@ -4,7 +4,9 @@ import * as SwitchPrimitives from "@radix-ui/react-switch";
 import { cn } from "@/lib/utils";
 
 const Switch = React.forwardRef( ( { className, label, ...props }, ref ) => (
-	<><span className="opacity-50 text-xs truncate">{label}</span>
+	// The label dims with the control. Without this a disabled switch reads as merely "off",
+	// since the toggle's own `disabled:opacity-50` lands on an already-faint element.
+	<><span className={cn( "text-xs truncate", props.disabled ? "opacity-25" : "opacity-50" )}>{label}</span>
 		<SwitchPrimitives.Root
 			className={cn(
 				"peer inline-flex h-4 w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-xs transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input",

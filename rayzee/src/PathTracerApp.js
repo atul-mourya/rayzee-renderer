@@ -2463,11 +2463,13 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( ! this.renderer?.domElement ) return null;
 
+		// Whatever is on the overlay is what the viewport shows, so it is also what a save must
+		// write. Gating on `upscaler.enabled` instead missed the neural-rendering pass, which puts
+		// a picture there without the ONNX upscaler being on at all — saves silently wrote the
+		// un-enhanced render.
 		const dm = this.denoisingManager;
-		const upscaled = dm?.upscaler?.enabled && dm?.upscalerCanvas
-			&& dm.upscalerCanvas.style.display !== 'none';
-
-		if ( upscaled ) return dm.upscalerCanvas;
+		const overlay = dm?.upscalerCanvas;
+		if ( overlay && overlay.style.display !== 'none' ) return overlay;
 
 		// A presented WebGPU canvas only reads back what was drawn immediately before, so draw.
 		// This also puts the denoised picture on it: the Compositor prefers it over the raw render.

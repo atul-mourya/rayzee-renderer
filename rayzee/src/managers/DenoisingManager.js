@@ -2,6 +2,11 @@ import { EventDispatcher } from 'three';
 import { OIDNDenoiser } from '../Passes/OIDNDenoiser.js';
 import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
+import { createLogger } from '../utils/Logger.js';
+
+// The neural passes live in `../dlss/` but report through the manager that drives them, so they
+// share one namespace: `rayzee.log.only( 'dlss' )` shows the whole chain.
+const dlssLog = createLogger( 'dlss' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
@@ -107,6 +112,17 @@ export class DenoisingManager extends EventDispatcher {
 
 		this.denoiser = null;
 		this.upscaler = null;
+		// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'dlss' is the neural
+		// super-resolution pass, which is fixed at 2x and needs a denoised source.
+		this.upscalerBackend = 'esrgan';
+		this._dlssUpscaler = null;
+		// The neural-rendering (detail) pass is independent of the upscaler: it changes appearance,
+		// not resolution, and runs last because its result cannot be read back.
+		this.neuralRendering = false;
+		this.neuralRenderingSettings = {};
+		this._dlssNeural = null;
+		this._dlssModule = null;
+		this._neuralPostBusy = false;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
@@ -786,6 +802,242 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/**
+	 * Selects the AI upscaler's model. 'dlss' is fixed at 2x and reads the denoised picture, so it
+	 * is a no-op without a denoiser — feeding it raw Monte-Carlo noise measurably loses to bilinear.
+	 *
+	 * @param {'esrgan'|'dlss'} backend
+	 */
+	setUpscalerBackend( backend ) {
+
+		const next = backend === 'dlss' ? 'dlss' : 'esrgan';
+		if ( next === this.upscalerBackend ) return;
+
+		this.upscalerBackend = next;
+		// Whatever is on screen came from the model being switched away from.
+		this._restoreRenderDisplay();
+		if ( next !== 'dlss' ) this._releaseDLSSUpscaler();
+
+	}
+
+	/**
+	 * Puts the render canvas back in front and tells the host the output is the render size again.
+	 *
+	 * Guarded on the overlay actually being visible: `abort()` runs on every reset, which is every
+	 * frame of a camera drag, and an unguarded event there would be a per-frame storm.
+	 *
+	 * @returns {boolean} whether anything was actually restored
+	 */
+	_restoreRenderDisplay() {
+
+		const wasShowing = this.upscalerCanvas && this.upscalerCanvas.style.display !== 'none';
+
+		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
+		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
+
+		if ( wasShowing ) {
+
+			const stage = this._stages?.pathTracer;
+			if ( stage?.width && stage?.height ) {
+
+				this.dispatchEvent( { type: 'resolution_changed', width: stage.width, height: stage.height } );
+
+			}
+
+		}
+
+		return !! wasShowing;
+
+	}
+
+	_releaseDLSSUpscaler() {
+
+		this._dlssUpscaler?.dispose();
+		this._dlssUpscaler = null;
+
+		// The frame packer lives on the module, not on the upscaler, and holds two buffers the size
+		// of the render. Nothing else reaches it, so this is its only release point. Guarded on the
+		// module having been loaded, so a teardown never pulls in 1 MB of runtime to call a no-op.
+		this._dlssModule?.releaseDenoisedReader();
+
+	}
+
+	/** Turns the neural-rendering (detail) pass on or off, and sets its appearance controls. */
+	setNeuralRendering( enabled, settings = null ) {
+
+		this.neuralRendering = !! enabled;
+		if ( settings ) this.neuralRenderingSettings = { ...this.neuralRenderingSettings, ...settings };
+		if ( ! this.neuralRendering ) {
+
+			this._releaseDLSSNeural();
+			this._restoreRenderDisplay();
+
+		}
+
+	}
+
+	_releaseDLSSNeural() {
+
+		this._dlssNeural?.dispose();
+		this._dlssNeural = null;
+
+	}
+
+	/**
+	 * The neural post-chain over the picture the closing denoise just produced: super resolution
+	 * first, then the detail pass, either or both.
+	 *
+	 * Order is forced by the models. Super resolution hands back light that can be fed onward; the
+	 * detail pass writes an `rgba8unorm` texture with no `COPY_SRC`, so nothing can read its result
+	 * and it has to be last — and it presents in its own display space rather than the engine's tone
+	 * curve. Which shape super resolution returns therefore depends on what follows it: packed
+	 * halves when the detail pass is next, display bytes when it is the end of the chain.
+	 *
+	 * Deliberately fire-and-forget: the render is already finished and a failure must not break it.
+	 */
+	async _runNeuralPost( isStillComplete ) {
+
+		const wantSR = this.upscaler?.enabled && this.upscalerBackend === 'dlss';
+		const wantNR = this.neuralRendering;
+		if ( ! wantSR && ! wantNR ) return;
+
+		// A second completion can land while the first pass is still in flight — the models are
+		// created lazily and reused through fields, so two runs would race over the same handles.
+		if ( this._neuralPostBusy ) return;
+
+		if ( ! this.upscalerCanvas ) {
+
+			dlssLog.warn( 'neural pass skipped: the engine has no overlay canvas to present on' );
+			return;
+
+		}
+
+		if ( ! this.pipeline?.context?.getTexture( 'oidn:output' ) ) {
+
+			dlssLog.warn( 'neural pass skipped: no denoised picture — it needs OIDN' );
+			return;
+
+		}
+
+		this._neuralPostBusy = true;
+		this.dispatchEvent( { type: EngineEvents.UPSCALING_START } );
+
+		try {
+
+			const sr = await import( '../dlss/DLSSSuperRes.js' );
+			this._dlssModule = sr;
+
+			// The detail pass has a size ceiling — above it a run takes minutes and then loses every GPU
+			// device in the page. Running it FIRST is what keeps it under: at render size it sees a
+			// quarter of the pixels it would after a 2x upscale, and the render reserve already caps
+			// that at 2048. The check stays as a floor under a raised reserve.
+			const nrModule = wantNR ? await import( '../dlss/DLSSNeural.js' ) : null;
+			const srcSize = this.denoiser?._outTexSize;
+			const nrPixels = ( srcSize?.width ?? 0 ) * ( srcSize?.height ?? 0 );
+			const runNR = wantNR && nrPixels <= nrModule.DLSS_NR_MAX_PIXELS;
+
+			if ( wantNR && ! runNR ) {
+
+				dlssLog.warn(
+					`Neural rendering skipped: the render is ${( nrPixels / 1e6 ).toFixed( 1 )} MP, above the ` +
+					`${( nrModule.DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP the pass survives.` +
+					( wantSR ? ' The upscale still ran.' : '' )
+				);
+				this._releaseDLSSNeural();
+
+			}
+
+			if ( ! wantSR && ! runNR ) return;
+
+			// Must be the effective value, not the settings one: AutoExposure overwrites
+			// `renderer.toneMappingExposure` every frame and never touches settings, so reading
+			// settings — as this did — silently ignores auto-exposure. Same helper OIDN uses.
+			const tone = {
+				exposure: this._getEffectiveExposure(),
+				toneMapping: this._getToneMapping(),
+				saturation: this._getSaturation?.() ?? 1,
+			};
+
+			// Scene-referred throughout. Exposure reaches the detail pass through its own `paper_white`
+			// and comes back out again, so the engine's tone curve is still the only one applied.
+			const source = await sr.readDenoisedHalf( this.denoiser );
+
+			if ( wantSR ) {
+
+				if ( this._dlssUpscaler
+					&& ( this._dlssUpscaler.inputWidth !== source.width || this._dlssUpscaler.inputHeight !== source.height ) ) {
+
+					this._releaseDLSSUpscaler();
+
+				}
+
+				if ( ! this._dlssUpscaler ) {
+
+					this._dlssUpscaler = await sr.DLSSSuperRes.create( { width: source.width, height: source.height } );
+
+				}
+
+			}
+
+			let image = source;
+
+			// Detail first, upscale second. The detail pass hands back scene-referred light (see
+			// `app/public/dlss/PATCHES.md`), so the upscaler still gets the linear HDR it expects —
+			// which is what makes this order possible at all.
+			if ( runNR ) {
+
+				const result = await nrModule.enhanceFrame( {
+					source: image,
+					settings: this.neuralRenderingSettings,
+					instance: this._dlssNeural,
+					exposure: tone.exposure,
+					tone: wantSR ? null : tone,
+				} );
+				this._dlssNeural = result.instance;
+				image = result;
+
+			}
+
+			if ( wantSR ) image = await this._dlssUpscaler.upscaleToRGBA8( image, tone );
+
+			if ( ! isStillComplete() ) {
+
+				this.dropDisplay();
+				return;
+
+			}
+
+			sr.presentRGBA8( this.upscalerCanvas, image.rgba8, image.width, image.height );
+
+			if ( ! isStillComplete() ) {
+
+				this.dropDisplay();
+				return;
+
+			}
+
+			// The 2D canvas sits BEHIND the render canvas in the DOM (`insertBefore`), so making it
+			// `display:block` is not enough — the render canvas has to get out of the way. This is
+			// what `AIUpscaler._revealOutput` does for the other backend, and `abort()` already
+			// restores both sides.
+			if ( this.mainCanvas ) this.mainCanvas.style.opacity = '0';
+
+			// The host shows the output dimensions; without this they keep reading the render size.
+			this.dispatchEvent( { type: 'resolution_changed', width: image.width, height: image.height } );
+
+		} catch ( error ) {
+
+			dlssLog.warn( 'neural pass failed', error );
+
+		} finally {
+
+			this._neuralPostBusy = false;
+			this.dispatchEvent( { type: EngineEvents.UPSCALING_END } );
+
+		}
+
+	}
+
 	onRenderComplete( { isStillComplete, context } ) {
 
 		// Remove any stale completion-chain listener from a previous render cycle
@@ -805,11 +1057,16 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( ! isStillComplete() ) return;
 
-			if ( this.upscaler?.enabled ) {
+			// One owner of the overlay canvas, so the neural chain and the ONNX upscaler are
+			// exclusive. The neural chain also runs on its own when only its detail pass is on.
+			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'dlss' ) ) {
 
-				this.upscaler.start();
+				this._runNeuralPost( isStillComplete );
+				return;
 
 			}
+
+			if ( this.upscaler?.enabled ) this.upscaler.start();
 
 		};
 
@@ -887,8 +1144,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		// The 2D canvas is the upscaler's alone: a reset means its enlarged result no longer
 		// describes anything, so the render canvas comes back.
-		if ( mainCanvas ) mainCanvas.style.opacity = '1';
-		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
+		this._restoreRenderDisplay();
+		if ( mainCanvas && mainCanvas !== this.mainCanvas ) mainCanvas.style.opacity = '1';
 		if ( this.upscaler ) this.upscaler.abort();
 
 		const moving = !! this._stages.pathTracer?.viewIsChanging;
@@ -917,9 +1174,7 @@ export class DenoisingManager extends EventDispatcher {
 	dropDisplay() {
 
 		this._unpublishOutput();
-
-		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
-		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
+		this._restoreRenderDisplay();
 
 	}
 
@@ -927,6 +1182,10 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Remove pending completion-chain listener
 		this._cleanupCompletionListener();
+		// Owns a second GPUDevice plus 3 MB of weights, so it must not outlive the manager.
+		this._releaseDLSSUpscaler();
+		this._releaseDLSSNeural();
+
 		// Before the denoiser destroys the picture the Compositor would otherwise still sample.
 		this._unpublishOutput();
 
@@ -947,6 +1206,10 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this._upscalerEndHandler ) this.upscaler.removeEventListener( 'end', this._upscalerEndHandler );
 			this.upscaler.dispose();
 			this.upscaler = null;
+			// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'dlss' is the neural
+			// super-resolution pass, which is fixed at 2x and needs a denoised source.
+			this.upscalerBackend = 'esrgan';
+			this._dlssUpscaler = null;
 
 		}
 
@@ -1128,6 +1391,8 @@ export class DenoisingManager extends EventDispatcher {
 	setUpscalerEnabled( enabled ) {
 
 		if ( this.upscaler ) this.upscaler.enabled = enabled;
+		// The enlarged picture describes a setting that is no longer on.
+		if ( ! enabled ) this._restoreRenderDisplay();
 
 	}
 

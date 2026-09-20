@@ -27,6 +27,7 @@
     "bench:memory": "node bench/runner/cli.js memory",
     "bench:perf": "node bench/runner/cli.js perf",
     "bench:kernels": "node bench/runner/cli.js kernels",
+    "bench:upscale": "node bench/runner/cli.js upscale",
     "bench:bless": "node bench/runner/cli.js bless",
     "bench:calibrate": "node bench/runner/cli.js calibrate",
     "bench:ab": "node bench/runner/cli.js ab",

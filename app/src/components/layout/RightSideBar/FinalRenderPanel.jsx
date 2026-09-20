@@ -6,6 +6,7 @@ import { usePathTracerStore as useStore } from '@/store';
 import { ControlGroup } from '@/components/ui/control-group';
 import { Separator } from '@/components/ui/separator';
 import CanvasDimensionControls from './CanvasDimensionControls';
+import NeuralPostControls from './NeuralPostControls';
 
 
 const FinalRenderPanel = () => {
@@ -16,17 +17,11 @@ const FinalRenderPanel = () => {
 		enableOIDN,
 		denoiserStrategy,
 		oidnQuality,
-		enableUpscaler,
-		upscalerScale,
-		upscalerQuality,
 
 		handleBouncesChange,
 		handleTileHelperToggle,
 		handleEnableOIDNChange,
 		handleOidnQualityChange,
-		handleEnableUpscalerChange,
-		handleUpscalerScaleChange,
-		handleUpscalerQualityChange,
 	} = useStore();
 
 
@@ -38,61 +33,37 @@ const FinalRenderPanel = () => {
 				</Row>
 				<CanvasDimensionControls resolutionKey="finalRenderResolution" />
 			</ControlGroup>
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
-			<Row className="py-2 px-2">
-				<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
-			</Row>
-			{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
-				<Row className="py-2 px-2">
-					<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
-						<span className="opacity-50 text-xs truncate">OIDN Quality</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select quality" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="fast">Fast</SelectItem>
-							<SelectItem value="fast-clean">Fast (clean aux)</SelectItem>
-							<SelectItem value="balance">Balance</SelectItem>
-							<SelectItem value="high">High</SelectItem>
-						</SelectContent>
-					</Select>
+			{/* Same ControlGroup the Preview panel uses. Its open body supplies the padding and the
+			    vertical rhythm every Row here relies on — without it the sliders ran under the panel
+			    edge and the switches were clipped. */}
+			<ControlGroup name="Denoising" defaultOpen={true}>
+				<Row>
+					<Switch label={"Final Denoise (OIDN)"} checked={enableOIDN} onCheckedChange={handleEnableOIDNChange}/>
 				</Row>
-				<Row className="py-2 px-2">
-					<Switch label={"Tile Helper"} checked={tilesHelper} onCheckedChange={handleTileHelperToggle} />
-				</Row>
-			</> )}
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
-			<Row className="py-2 px-2">
-				<Switch label={"AI Upscaler"} checked={enableUpscaler} onCheckedChange={handleEnableUpscalerChange} />
-			</Row>
-			{enableUpscaler && ( <>
-				<Row className="py-2 px-2">
-					<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-						<span className="opacity-50 text-xs truncate">Scale Factor</span>
-						<SelectTrigger className="max-w-24 h-5 rounded-full" >
-							<SelectValue placeholder="Select scale" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="2">2x</SelectItem>
-							<SelectItem value="4">4x</SelectItem>
-						</SelectContent>
-					</Select>
-				</Row>
-				<Row className="py-2 px-2">
-					<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-						<span className="opacity-50 text-xs truncate">Quality</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select quality" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="fast">Fast</SelectItem>
-							<SelectItem value="balanced">Balanced</SelectItem>
-							<SelectItem value="quality">Quality</SelectItem>
-						</SelectContent>
-					</Select>
-				</Row>
-			</> )}
-			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
+				{( enableOIDN || denoiserStrategy === 'oidn' ) && ( <>
+					<Row>
+						<Select value={oidnQuality} onValueChange={handleOidnQualityChange}>
+							<span className="opacity-50 text-xs truncate">OIDN Quality</span>
+							<SelectTrigger className="max-w-32 h-5 rounded-full" >
+								<SelectValue placeholder="Select quality" />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="fast">Fast</SelectItem>
+								<SelectItem value="fast-clean">Fast (clean aux)</SelectItem>
+								<SelectItem value="balance">Balance</SelectItem>
+								<SelectItem value="high">High</SelectItem>
+							</SelectContent>
+						</Select>
+					</Row>
+					<Row>
+						<Switch label={"Tile Helper"} checked={tilesHelper} onCheckedChange={handleTileHelperToggle} />
+					</Row>
+				</> )}
+
+				<Separator />
+
+				<NeuralPostControls />
+			</ControlGroup>
 		</div>
 	);
 

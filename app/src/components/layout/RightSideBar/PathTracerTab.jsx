@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ColorInput } from "@/components/ui/colorinput";
 import { usePathTracerStore } from '@/store';
 import { ControlGroup } from '@/components/ui/control-group';
+import NeuralPostControls from './NeuralPostControls';
 import { Row } from '@/components/ui/row';
 import { SliderToggle } from '@/components/ui/slider-toggle';
 import { Exposure } from '@/assets/icons';
@@ -162,9 +163,6 @@ const PathTracerTab = () => {
 		showInspector,
 		oidnQuality,
 		enableOIDN,
-		enableUpscaler,
-		upscalerScale,
-		upscalerQuality,
 		exposure,
 		saturation,
 		enableEnvironment,
@@ -241,9 +239,6 @@ const PathTracerTab = () => {
 		handleConvergenceOverlayChange,
 		handleOidnQualityChange,
 		handleEnableOIDNChange,
-		handleEnableUpscalerChange,
-		handleUpscalerScaleChange,
-		handleUpscalerQualityChange,
 		handleDebugThresholdChange,
 		handleDebugModeChange,
 		handleInspectorToggle,
@@ -699,38 +694,7 @@ const PathTracerTab = () => {
 
 				<Separator />
 
-				{/* AI Upscaler Control */}
-				<Row>
-					<Switch label={"AI Upscaler"} checked={enableUpscaler} onCheckedChange={handleEnableUpscalerChange} />
-				</Row>
-
-				{enableUpscaler && ( <>
-					<Row>
-						<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-							<span className="opacity-50 text-xs truncate">Scale Factor</span>
-							<SelectTrigger className="max-w-24 h-5 rounded-full" >
-								<SelectValue placeholder="Select scale" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="2">2x</SelectItem>
-								<SelectItem value="4">4x</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-					<Row>
-						<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-							<span className="opacity-50 text-xs truncate">Quality</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
-								<SelectValue placeholder="Select quality" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="fast">Fast</SelectItem>
-								<SelectItem value="balanced">Balanced</SelectItem>
-								<SelectItem value="quality">Quality</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-				</> )}
+				<NeuralPostControls />
 			</ControlGroup>
 
 			<ControlGroup name="Advanced">
