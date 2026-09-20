@@ -3,6 +3,7 @@
 ## Bugs
 - final render transmission bounces not sufficient
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data
+- directional lights physical accuracy 
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
@@ -52,10 +53,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
   `INPUT_SIZE` / `OUTPUT_SIZE` / `NETWORK_SIZE`, so patching the geometry to e.g. 1.5x will at least
   build — the question is whether the fixed-2x upsample kernels then produce a correct image or
   garbage. ~15 min to settle empirically instead of by inference. Expect it to break.
-- [ ] **The CPU plumbing is what makes production resolutions slow.** Warm, whole pass: 512 -> 1024
-  136 ms, 1024 -> 2048 552 ms, **2048 -> 4096 2.08 s**. The network's share falls the higher you go —
-  the JS passes scale with OUTPUT pixels (16.7M at 4096²), so at production sizes they dominate. Still
-  acceptable against a multi-minute render, but this is the lever if 4K output ever feels slow.
 - [ ] **8192 output is not reachable, measured.** Two independent walls, both above 4096 output:
   the runtime allocates a "retained history" plane at **4x the input dimension** and requests no
   raised limit, so >2048 input exceeds the default `maxTextureDimension2D` of 8192 (the adapter
@@ -64,14 +61,10 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
   — **one over**, which no limit raise fixes. So square 8192 is unreachable, and a non-square 8192
   (e.g. 4096x2160 in) would need the texture-limit patch. `SR_MAX_INPUT` is now 2048 with an early,
   explanatory throw, because past it the runtime failed late as an unrelated invalid bind group.
-- [ ] **About half the upscale pass is CPU plumbing, not the network.** Warm on M5 Pro: 512² → 1024²
-  is 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
-  (An earlier note said 319/682 ms — that was measuring the *cold* pass, which includes building the
-  graph. The first pass after any resolution change really does cost that: 266 ms vs 136 warm.) The
-  remainder is `DLSSSuperRes` doing four full-image passes in JS — half→float on read, float→half on
-  upload, half→float on the result, then the tone map. Fix: tone-map on the GPU and read back RGBA8.
-  Blocked on the engine having no reusable GPU curve — only the Compositor's output pass — so it
-  would mean a second implementation of `toneMapToRGBA8`.
+- [ ] `DLSS_NR_MAX_PIXELS` (4.19 MP) is now unreachable: the pass runs at render size, and
+  `MAX_STORAGE_TEXTURE_SIZE` already caps that at 2048. It stays as a floor under a raised reserve.
+  If the reserve is ever raised, re-measure before trusting it — 4x the pixels cost 10-17x the wall
+  clock, which looks like memory pressure, so a tiled detail pass would be the lever.
 - [ ] Preset **K** weights (newer transformer preset, reportedly cleaner in motion than the hosted
   **J**). Not a setting — a separate extraction from a newer `nvngx_dlss.dll`, which needs the demo
   author's tooling, so this is blocked unless they publish it.

@@ -116,6 +116,7 @@ export class DenoisingManager extends EventDispatcher {
 		this.neuralRendering = false;
 		this.neuralRenderingSettings = {};
 		this._dlssNeural = null;
+		this._dlssModule = null;
 		this._neuralPostBusy = false;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
@@ -849,6 +850,11 @@ export class DenoisingManager extends EventDispatcher {
 		this._dlssUpscaler?.dispose();
 		this._dlssUpscaler = null;
 
+		// The frame packer lives on the module, not on the upscaler, and holds two buffers the size
+		// of the render. Nothing else reaches it, so this is its only release point. Guarded on the
+		// module having been loaded, so a teardown never pulls in 1 MB of runtime to call a no-op.
+		this._dlssModule?.releaseDenoisedReader();
+
 	}
 
 	/** Turns the neural-rendering (detail) pass on or off, and sets its appearance controls. */
@@ -876,10 +882,11 @@ export class DenoisingManager extends EventDispatcher {
 	 * The neural post-chain over the picture the closing denoise just produced: super resolution
 	 * first, then the detail pass, either or both.
 	 *
-	 * Order is forced by the models. Super resolution hands back a linear image that can be fed
-	 * onward; the detail pass writes an `rgba8unorm` texture with no `COPY_SRC`, so nothing can read
-	 * its result and it has to be last — and it presents in its own display space rather than the
-	 * engine's tone curve.
+	 * Order is forced by the models. Super resolution hands back light that can be fed onward; the
+	 * detail pass writes an `rgba8unorm` texture with no `COPY_SRC`, so nothing can read its result
+	 * and it has to be last — and it presents in its own display space rather than the engine's tone
+	 * curve. Which shape super resolution returns therefore depends on what follows it: packed
+	 * halves when the detail pass is next, display bytes when it is the end of the chain.
 	 *
 	 * Deliberately fire-and-forget: the render is already finished and a failure must not break it.
 	 */
@@ -913,12 +920,47 @@ export class DenoisingManager extends EventDispatcher {
 		try {
 
 			const sr = await import( '../dlss/DLSSSuperRes.js' );
-			let image = await sr.readDenoisedLinear( this.denoiser );
+			this._dlssModule = sr;
+
+			// The detail pass has a size ceiling — above it a run takes minutes and then loses every GPU
+			// device in the page. Running it FIRST is what keeps it under: at render size it sees a
+			// quarter of the pixels it would after a 2x upscale, and the render reserve already caps
+			// that at 2048. The check stays as a floor under a raised reserve.
+			const nrModule = wantNR ? await import( '../dlss/DLSSNeural.js' ) : null;
+			const srcSize = this.denoiser?._outTexSize;
+			const nrPixels = ( srcSize?.width ?? 0 ) * ( srcSize?.height ?? 0 );
+			const runNR = wantNR && nrPixels <= nrModule.DLSS_NR_MAX_PIXELS;
+
+			if ( wantNR && ! runNR ) {
+
+				console.warn(
+					`Neural rendering skipped: the render is ${( nrPixels / 1e6 ).toFixed( 1 )} MP, above the ` +
+					`${( nrModule.DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP the pass survives.` +
+					( wantSR ? ' The upscale still ran.' : '' )
+				);
+				this._releaseDLSSNeural();
+
+			}
+
+			if ( ! wantSR && ! runNR ) return;
+
+			// Must be the effective value, not the settings one: AutoExposure overwrites
+			// `renderer.toneMappingExposure` every frame and never touches settings, so reading
+			// settings — as this did — silently ignores auto-exposure. Same helper OIDN uses.
+			const tone = {
+				exposure: this._getEffectiveExposure(),
+				toneMapping: this._getToneMapping(),
+				saturation: this._getSaturation?.() ?? 1,
+			};
+
+			// Scene-referred throughout. Exposure reaches the detail pass through its own `paper_white`
+			// and comes back out again, so the engine's tone curve is still the only one applied.
+			const source = await sr.readDenoisedHalf( this.denoiser );
 
 			if ( wantSR ) {
 
 				if ( this._dlssUpscaler
-					&& ( this._dlssUpscaler.inputWidth !== image.width || this._dlssUpscaler.inputHeight !== image.height ) ) {
+					&& ( this._dlssUpscaler.inputWidth !== source.width || this._dlssUpscaler.inputHeight !== source.height ) ) {
 
 					this._releaseDLSSUpscaler();
 
@@ -926,13 +968,32 @@ export class DenoisingManager extends EventDispatcher {
 
 				if ( ! this._dlssUpscaler ) {
 
-					this._dlssUpscaler = await sr.DLSSSuperRes.create( { width: image.width, height: image.height } );
+					this._dlssUpscaler = await sr.DLSSSuperRes.create( { width: source.width, height: source.height } );
 
 				}
 
-				image = await this._dlssUpscaler.upscale( image );
+			}
+
+			let image = source;
+
+			// Detail first, upscale second. The detail pass hands back scene-referred light (see
+			// `app/public/dlss/PATCHES.md`), so the upscaler still gets the linear HDR it expects —
+			// which is what makes this order possible at all.
+			if ( runNR ) {
+
+				const result = await nrModule.enhanceFrame( {
+					source: image,
+					settings: this.neuralRenderingSettings,
+					instance: this._dlssNeural,
+					exposure: tone.exposure,
+					tone: wantSR ? null : tone,
+				} );
+				this._dlssNeural = result.instance;
+				image = result;
 
 			}
+
+			if ( wantSR ) image = await this._dlssUpscaler.upscaleToRGBA8( image, tone );
 
 			if ( ! isStillComplete() ) {
 
@@ -941,32 +1002,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			}
 
-			// Must be the effective value, not the settings one: AutoExposure overwrites
-			// `renderer.toneMappingExposure` every frame and never touches settings, so reading
-			// settings — as this did — silently ignores auto-exposure. Same helper OIDN uses.
-			const exposure = this._getEffectiveExposure();
-
-			if ( wantNR ) {
-
-				const { enhanceLinearFrame } = await import( '../dlss/DLSSNeural.js' );
-				const result = await enhanceLinearFrame( {
-					source: image,
-					settings: this.neuralRenderingSettings,
-					instance: this._dlssNeural,
-					exposure,
-				} );
-				this._dlssNeural = result.instance;
-				sr.presentRGBA8( this.upscalerCanvas, result.rgba8, result.width, result.height );
-
-			} else {
-
-				sr.presentLinear( this.upscalerCanvas, image, {
-					exposure,
-					toneMapping: this._getToneMapping(),
-					saturation: this._getSaturation?.() ?? 1,
-				} );
-
-			}
+			sr.presentRGBA8( this.upscalerCanvas, image.rgba8, image.width, image.height );
 
 			if ( ! isStillComplete() ) {
 

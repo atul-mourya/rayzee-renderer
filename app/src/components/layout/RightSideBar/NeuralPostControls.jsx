@@ -2,6 +2,7 @@ import { Row } from "@/components/ui/row";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DLSS_NR_MAX_PIXELS } from 'rayzee';
 import { usePathTracerStore as useStore } from '@/store';
 
 /**
@@ -24,6 +25,9 @@ const NeuralPostControls = () => {
 		nrIntensity,
 		nrLocalTone,
 		nrLocalStructure,
+		nrColorStrength,
+		canvasWidth,
+		canvasHeight,
 
 		handleEnableUpscalerChange,
 		handleUpscalerScaleChange,
@@ -34,6 +38,10 @@ const NeuralPostControls = () => {
 	} = useStore();
 
 	const denoised = enableOIDN || denoiserStrategy === 'oidn';
+
+	// The detail pass runs FIRST, on the traced image, so the upscaler's factor does not enter into
+	// it. Reachable only if the host raises the render reserve past 2048.
+	const nrTooBig = canvasWidth * canvasHeight > DLSS_NR_MAX_PIXELS;
 
 	return (
 		<>
@@ -108,7 +116,17 @@ const NeuralPostControls = () => {
 				<Switch label={"Neural Rendering (DLSS-NR)"} checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
 			</Row>
 
-			{neuralRendering && ( denoised ? ( <>
+			{neuralRendering && nrTooBig && (
+				<Row>
+					<span className="opacity-50 text-[10px] leading-snug">
+						Skipped at this size — {canvasWidth} × {canvasHeight} is
+						{' '}{( canvasWidth * canvasHeight / 1e6 ).toFixed( 1 )} MP, above the
+						{' '}{( DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP it survives.
+					</span>
+				</Row>
+			)}
+
+			{neuralRendering && ! nrTooBig && ( denoised ? ( <>
 				<Row>
 					<Slider label={"Intensity"} min={0} max={1} step={0.01} value={[ nrIntensity ]}
 						onFinishChange={handleNRSettingChange( 'intensity', 'nrIntensity' )} />
@@ -121,10 +139,15 @@ const NeuralPostControls = () => {
 					<Slider label={"Local Structure"} min={0} max={2} step={0.01} value={[ nrLocalStructure ]}
 						onFinishChange={handleNRSettingChange( 'localStructure', 'nrLocalStructure' )} />
 				</Row>
+				{/* 0 keeps the renderer's colour exactly; 1 takes the network's, which measured 6 %
+				    less saturated than the render on a 1.9M-tri interior. */}
+				<Row>
+					<Slider label={"Model Color"} min={0} max={1} step={0.01} value={[ nrColorStrength ]}
+						onFinishChange={handleNRSettingChange( 'colorStrength', 'nrColorStrength' )} />
+				</Row>
 				<Row>
 					<span className="opacity-50 text-[10px] leading-snug">
-						Runs last, after any upscale. Downloads a 141 MB model on first use. Measured
-						close to a no-op on path-traced images, and it desaturates slightly.
+						Runs on the traced image, before any upscale. Downloads a 141 MB model on first use.
 					</span>
 				</Row>
 			</> ) : (

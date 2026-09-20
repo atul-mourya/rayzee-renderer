@@ -9,13 +9,16 @@
  * Deliberately *not* wired into the live pipeline: the network costs ~132 ms of GPU
  * at 1920x1080, which is free against a final render and ruinous against a frame.
  *
- * ⚠️ **Roughly half the cost is this file, not the network.** Warm, on an M5 Pro: 512² → 1024² is
- * 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
- * The remainder is four full-image passes in JS (half→float on read, float→half on upload,
- * half→float on the result, then the tone map) plus their allocations. Reading back RGBA8 from a
- * GPU-side tone map would remove most of it — a quarter of the bytes and none of the float loops —
- * but the engine has no reusable GPU curve (only the Compositor's output pass), so it would mean a
- * second implementation of `toneMapToRGBA8` and the drift that invites.
+ * The pass is GPU-bound by design. Every crossing of the CPU boundary is a compute pass: the
+ * denoised frame is packed to rgba16float on the renderer's device (`readDenoisedHalf`), and the
+ * result leaves the model's device either as display bytes (`upscaleToRGBA8`) or as packed halves
+ * for the detail pass (`upscaleToHalf`). Nothing crosses in floats and no per-pixel JavaScript runs,
+ * so the wall clock is the network plus two readbacks.
+ *
+ * Measured on a 1.89M-triangle interior, warm: 1024² → 2048² fell from 540 ms to 260 ms, and
+ * 2048² → 4096² from 2.41 s to 947 ms — of which 922 ms is the network, 9 ms the input read and
+ * 13 ms the tone map and its readback. Plumbing is 2 % of the pass, so the only remaining lever on
+ * output size is the network itself.
  *
  * ⚠️ The FIRST pass after a resolution change rebuilds the graph: 266 ms vs 136 ms warm at 1024²
  * output, 762 ms vs 531 ms at 2048².
@@ -25,7 +28,7 @@
  */
 
 import { EngineEvents } from '../EngineEvents.js';
-import { toneMapToRGBA8 } from '../Processor/ToneMapCPU.js';
+import { PackedToneMapper } from '../Processor/ToneMapGPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 /** The network is a fixed 2x per axis. */
@@ -83,100 +86,115 @@ function loadRuntime() {
 
 }
 
-const _f32 = new Float32Array( 1 );
-const _u32 = new Uint32Array( _f32.buffer );
+const DENOISED_PACK_WGSL = /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
 
-function toHalf( v ) {
+@compute @workgroup_size(8, 8)
+fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
+	let size = textureDimensions( src );
+	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
+	let c = textureLoad( src, vec2<i32>( gid.xy ), 0 ).rgb;
+	let a = ( gid.y * size.x + gid.x ) * 2u;
+	dst[ a ] = pack2x16float( c.rg );
+	dst[ a + 1u ] = pack2x16float( vec2<f32>( c.b, 1.0 ) );
+}
+`;
 
-	_f32[ 0 ] = v;
-	const x = _u32[ 0 ];
-	const s = ( x >>> 16 ) & 0x8000;
-	const e = ( x >>> 23 ) & 0xff;
-	const m = x & 0x7fffff;
+/**
+ * Cached on the module rather than on the denoiser, which is engine-owned and should not grow a
+ * field for this. `releaseDenoisedReader()` is called from `DenoisingManager`'s teardown.
+ */
+let _reader = null;
 
-	if ( e === 255 ) return s | ( m ? 0x7e00 : 0x7c00 );
+function ensureReader( device, width, height ) {
 
-	const ne = e - 112;
-	if ( ne >= 31 ) return s | 0x7c00;
-	if ( ne <= 0 ) {
+	if ( _reader && ( _reader.device !== device || _reader.width !== width || _reader.height !== height ) ) {
 
-		if ( ne < - 10 ) return s;
-		return s | ( ( m | 0x800000 ) >>> ( 14 - ne ) );
+		releaseDenoisedReader();
 
 	}
 
-	return s | ( ne << 10 ) | ( m >>> 13 );
+	if ( _reader ) return _reader;
+
+	const bytes = width * height * 8;
+	_reader = {
+		device,
+		width,
+		height,
+		storage: device.createBuffer( {
+			label: 'rayzee:dlss-sr-pack',
+			size: bytes,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+		} ),
+		map: device.createBuffer( {
+			label: 'rayzee:dlss-sr-pack-map',
+			size: bytes,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		} ),
+		pipeline: device.createComputePipeline( {
+			label: 'rayzee:dlss-sr-pack',
+			layout: 'auto',
+			compute: {
+				module: device.createShaderModule( { label: 'rayzee:dlss-sr-pack', code: DENOISED_PACK_WGSL } ),
+				entryPoint: 'main',
+			},
+		} ),
+	};
+
+	return _reader;
 
 }
 
-function fromHalf( u ) {
+/** Frees the packing buffers — ~26 MB at a 2048² render. */
+export function releaseDenoisedReader() {
 
-	const s = ( u & 0x8000 ) ? - 1 : 1;
-	const e = ( u >> 10 ) & 0x1f;
-	const m = u & 0x3ff;
-	if ( e === 0 ) return s * m * 2 ** - 24;
-	if ( e === 31 ) return m ? NaN : s * Infinity;
-	return s * ( m + 1024 ) * 2 ** ( e - 25 );
+	_reader?.storage.destroy();
+	_reader?.map.destroy();
+	_reader = null;
 
 }
 
 /**
- * Reads the denoised picture as linear RGB.
+ * Reads the denoised picture already packed the way the network wants it: tightly packed
+ * rgba16float, alpha 1, no row padding. Feed it straight to `upscale()` / `upscaleToRGBA8()`.
  *
- * `renderToBuffer()` cannot be used here: it reads `pathtracer:color`, which is upstream of the
- * Compositor and so never contains OIDN's result. Feeding the network raw Monte-Carlo noise
- * measurably loses to plain bilinear, so the denoised image is the whole point.
+ * The half floats never become JavaScript numbers, which is the whole point — reaching the same
+ * bytes through a float array cost two full-image loops and a 50 MB allocation at a 2048² render.
  *
  * @param {import('../Passes/OIDNDenoiser.js').OIDNDenoiser} denoiser
- * @returns {Promise<{data: Float32Array, width: number, height: number}>}
+ * @returns {Promise<{half: Uint16Array, width: number, height: number}>}
  */
-export async function readDenoisedLinear( denoiser ) {
+export async function readDenoisedHalf( denoiser ) {
 
 	const texture = denoiser?._outGPUTexture;
 	if ( ! texture ) throw new Error( 'DLSSSuperRes: no denoised frame — enable OIDN and finish a render first' );
 
 	const device = denoiser.gpuDevice;
 	const { width, height } = denoiser._outTexSize;
-	const bytesPerRow = Math.ceil( width * 8 / 256 ) * 256;
-
-	const readback = device.createBuffer( {
-		label: 'rayzee:dlss-sr-denoised-read',
-		size: bytesPerRow * height,
-		usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+	const reader = ensureReader( device, width, height );
+	const group = device.createBindGroup( {
+		layout: reader.pipeline.getBindGroupLayout( 0 ),
+		entries: [
+			{ binding: 0, resource: texture.createView() },
+			{ binding: 1, resource: { buffer: reader.storage } },
+		],
 	} );
 
-	const encoder = device.createCommandEncoder( { label: 'rayzee:dlss-sr-denoised-read' } );
-	encoder.copyTextureToBuffer(
-		{ texture },
-		{ buffer: readback, bytesPerRow, rowsPerImage: height },
-		[ width, height, 1 ],
-	);
+	const encoder = device.createCommandEncoder( { label: 'rayzee:dlss-sr-pack' } );
+	const pass = encoder.beginComputePass();
+	pass.setPipeline( reader.pipeline );
+	pass.setBindGroup( 0, group );
+	pass.dispatchWorkgroups( Math.ceil( width / 8 ), Math.ceil( height / 8 ) );
+	pass.end();
+	encoder.copyBufferToBuffer( reader.storage, 0, reader.map, 0, width * height * 8 );
 	device.queue.submit( [ encoder.finish() ] );
 
-	await readback.mapAsync( GPUMapMode.READ );
-	const half = new Uint16Array( readback.getMappedRange().slice( 0 ) );
-	readback.unmap();
-	readback.destroy();
+	await reader.map.mapAsync( GPUMapMode.READ );
+	const half = new Uint16Array( reader.map.getMappedRange().slice( 0 ) );
+	reader.map.unmap();
 
-	const strideHalfs = bytesPerRow / 2;
-	const data = new Float32Array( width * height * 3 );
-	for ( let y = 0; y < height; y ++ ) {
-
-		let si = y * strideHalfs;
-		let di = y * width * 3;
-		for ( let x = 0; x < width; x ++ ) {
-
-			data[ di ] = fromHalf( half[ si ] );
-			data[ di + 1 ] = fromHalf( half[ si + 1 ] );
-			data[ di + 2 ] = fromHalf( half[ si + 2 ] );
-			si += 4;
-			di += 3;
-
-		}
-
-	}
-
-	return { data, width, height };
+	return { half, width, height };
 
 }
 
@@ -190,6 +208,7 @@ export class DLSSSuperRes {
 		this._color = null;
 		this._depth = null;
 		this._motion = null;
+		this._toneMapper = null;
 		this.disposed = false;
 
 	}
@@ -281,14 +300,8 @@ export class DLSSSuperRes {
 
 	}
 
-	/**
-	 * Upscales one linear-RGB image. The caller supplies the picture rather than the stage name so
-	 * this stays usable for a frame that was captured earlier.
-	 *
-	 * @param {{data: Float32Array, width: number, height: number}} source linear RGB, 3 floats/px
-	 * @returns {Promise<{data: Float32Array, width: number, height: number, ms: number}>} linear RGB
-	 */
-	async upscale( source ) {
+	/** Runs the network once over a frame already in its own layout, as `readDenoisedHalf` returns. */
+	async _run( source ) {
 
 		if ( this.disposed ) throw new Error( 'DLSSSuperRes: disposed' );
 
@@ -301,14 +314,15 @@ export class DLSSSuperRes {
 		}
 
 		const color = this._color;
-		for ( let i = 0, n = w * h; i < n; i ++ ) {
+		if ( ! source.half || source.half.length !== color.length ) {
 
-			color[ i * 4 ] = toHalf( source.data[ i * 3 ] );
-			color[ i * 4 + 1 ] = toHalf( source.data[ i * 3 + 1 ] );
-			color[ i * 4 + 2 ] = toHalf( source.data[ i * 3 + 2 ] );
-			color[ i * 4 + 3 ] = 0x3c00;
+			throw new Error(
+				`DLSSSuperRes: expected ${color.length} packed halfs from readDenoisedHalf, got ${source.half?.length}`
+			);
 
 		}
+
+		color.set( source.half );
 
 		// Depth and motion are both provably inert on this path, so the constants below cost nothing:
 		// with `reset: true` the output is bit-identical for depth 0.0 / 0.5 / 1.0 and for motion zero
@@ -330,55 +344,36 @@ export class DLSSSuperRes {
 			jitter: [ 0, 0 ],
 		} );
 		await this.sr.device.queue.onSubmittedWorkDone();
-		const ms = performance.now() - started;
 
-		return { ...( await this._readHDR( result ) ), ms };
+		return { result, ms: performance.now() - started };
 
 	}
 
 	/**
-	 * Pulls the network's own linear output rather than the presented canvas, which would have had a
-	 * clamp and an sRGB encode baked in. ⚠️ The network emits its picture vertically flipped.
+	 * Upscales one image and tone-maps it to display bytes without leaving the card.
+	 *
+	 * @param {{half: Uint16Array, width: number, height: number}} source
+	 * @param {{exposure: number, toneMapping: number, saturation: number}} tone engine display state
+	 * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number, ms: number, toneMs: number}>}
 	 */
-	async _readHDR( result ) {
+	async upscaleToRGBA8( source, tone = {} ) {
 
-		const device = this.sr.device;
-		const { hdrBytes, outputWidth, outputHeight } = this.geometry;
+		const { result, ms } = await this._run( source );
+		const { outputWidth, outputHeight } = this.geometry;
 
-		const readback = device.createBuffer( {
-			label: 'rayzee:dlss-sr-out',
-			size: hdrBytes,
-			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		this._toneMapper ??= new PackedToneMapper( this.sr.device, 'rayzee:dlss-sr-tonemap' );
+		this._toneMapper.ensureSize( outputWidth, outputHeight );
+
+		const started = performance.now();
+		const rgba8 = await this._toneMapper.toRGBA8( result.hdr.buffer ?? result.hdr, {
+			exposure: tone.exposure ?? 1,
+			toneMapping: tone.toneMapping ?? 0,
+			saturation: tone.saturation ?? 1,
+			// The network emits its picture vertically flipped.
+			flipY: true,
 		} );
 
-		const encoder = device.createCommandEncoder( { label: 'rayzee:dlss-sr-out' } );
-		encoder.copyBufferToBuffer( result.hdr.buffer ?? result.hdr, 0, readback, 0, hdrBytes );
-		device.queue.submit( [ encoder.finish() ] );
-
-		await readback.mapAsync( GPUMapMode.READ );
-		const half = new Uint16Array( readback.getMappedRange().slice( 0 ) );
-		readback.unmap();
-		readback.destroy();
-
-		const data = new Float32Array( outputWidth * outputHeight * 3 );
-		for ( let y = 0; y < outputHeight; y ++ ) {
-
-			const flipped = outputHeight - 1 - y;
-			let si = flipped * outputWidth * 4;
-			let di = y * outputWidth * 3;
-			for ( let x = 0; x < outputWidth; x ++ ) {
-
-				data[ di ] = fromHalf( half[ si ] );
-				data[ di + 1 ] = fromHalf( half[ si + 1 ] );
-				data[ di + 2 ] = fromHalf( half[ si + 2 ] );
-				si += 4;
-				di += 3;
-
-			}
-
-		}
-
-		return { data, width: outputWidth, height: outputHeight };
+		return { rgba8, width: outputWidth, height: outputHeight, ms, toneMs: performance.now() - started };
 
 	}
 
@@ -386,6 +381,8 @@ export class DLSSSuperRes {
 
 		if ( this.disposed ) return;
 		this.disposed = true;
+		this._toneMapper?.dispose();
+		this._toneMapper = null;
 		this.canvas.remove();
 		try {
 
@@ -455,7 +452,7 @@ function waitForDenoise( app, samples, timeoutMs ) {
  * @param {number}  [opts.samples]     samples to accumulate at half resolution
  * @param {DLSSSuperRes} [opts.upscaler] reuse an upscaler already built for this size
  * @param {boolean} [opts.present]  draw the result over the viewport
- * @returns {Promise<{linear: object, rgba8: Uint8ClampedArray, width: number, height: number, timings: object}>}
+ * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number, timings: object}>}
  */
 export async function renderUpscaled( app, {
 	outputWidth,
@@ -520,22 +517,23 @@ export async function renderUpscaled( app, {
 
 		onProgress( 'Reading the denoised frame' );
 		const tRead = performance.now();
-		const source = await readDenoisedLinear( app.denoisingManager?.denoiser );
+		const source = await readDenoisedHalf( app.denoisingManager?.denoiser );
 		timings.read = performance.now() - tRead;
 
 		onProgress( `Upscaling to ${outputWidth}x${outputHeight}` );
-		const linear = await sr.upscale( source );
-		timings.upscale = linear.ms;
-
-		const rgba8 = toneMapToRGBA8( expandToRGBA( linear ), {
+		const tone = {
 			exposure: app.renderer.toneMappingExposure,
 			toneMapping: app.renderer.toneMapping,
 			saturation: app.settings.get( 'saturation' ) ?? 1,
-		} );
+		};
 
-		if ( present ) presentToUpscalerCanvas( app.denoisingManager?.upscalerCanvas, rgba8, linear.width, linear.height );
+		const { rgba8, width, height, ms, toneMs } = await sr.upscaleToRGBA8( source, tone );
+		timings.upscale = ms;
+		timings.tonemap = toneMs;
 
-		return { linear, rgba8, width: linear.width, height: linear.height, timings, upscaler: sr };
+		if ( present ) presentToUpscalerCanvas( app.denoisingManager?.upscalerCanvas, rgba8, width, height );
+
+		return { rgba8, width, height, timings, upscaler: sr };
 
 	} catch ( e ) {
 
@@ -555,23 +553,6 @@ export async function renderUpscaled( app, {
 
 }
 
-/** `toneMapToRGBA8` consumes 4-channel linear data. */
-function expandToRGBA( { data, width, height } ) {
-
-	const out = new Float32Array( width * height * 4 );
-	for ( let i = 0, n = width * height; i < n; i ++ ) {
-
-		out[ i * 4 ] = data[ i * 3 ];
-		out[ i * 4 + 1 ] = data[ i * 3 + 1 ];
-		out[ i * 4 + 2 ] = data[ i * 3 + 2 ];
-		out[ i * 4 + 3 ] = 1;
-
-	}
-
-	return out;
-
-}
-
 /**
  * Shows the result on the engine's 2D overlay — the same canvas the AI upscaler uses, because this
  * picture is also larger than the render and also in ordinary pixels.
@@ -586,28 +567,6 @@ function presentToUpscalerCanvas( canvas, rgba8, width, height ) {
 	ctx.putImageData( new ImageData( new Uint8ClampedArray( rgba8.buffer ?? rgba8 ), width, height ), 0, 0 );
 	canvas.style.display = 'block';
 	return true;
-
-}
-
-/**
- * Tone-maps a linear image with the engine's own curve and draws it on the overlay.
- *
- * Used when the detail pass is off: that pass presents in its own display space, so this is the
- * only path where the enlarged picture still matches the viewport's look.
- *
- * @param {HTMLCanvasElement} canvas
- * @param {{data: Float32Array, width: number, height: number}} image linear RGB
- * @param {{exposure: number, toneMapping: number, saturation: number}} tone
- */
-export function presentLinear( canvas, image, tone = {} ) {
-
-	const rgba8 = toneMapToRGBA8( expandToRGBA( image ), {
-		exposure: tone.exposure ?? 1,
-		toneMapping: tone.toneMapping,
-		saturation: tone.saturation ?? 1,
-	} );
-
-	return presentToUpscalerCanvas( canvas, rgba8, image.width, image.height );
 
 }
 

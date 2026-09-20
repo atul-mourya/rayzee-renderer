@@ -18704,6 +18704,7 @@ struct Params {
 @group(0) @binding(6) var nr_motion: texture_2d<f32>;
 @group(0) @binding(7) var<storage, read> nr_blend_scale: array<u32>;
 @group(0) @binding(8) var nr_next: texture_storage_2d<rgba16float, write>;
+/* rayzee-patch */ @group(0) @binding(9) var rayzee_hdr: texture_storage_2d<rgba16float, write>;
 ${_0x423695}
 
 fn source_half(index: u32) -> f32 {
@@ -18879,6 +18880,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let ratio = select(clamp(upgraded_y / original_y, 0.0, 4.0), 1.0, original_y == 0.0);
   let luminance_only = original * ratio;
   let result = (luminance_only + (upgraded - luminance_only) * params.color_strength) * paper;
+  /* rayzee-patch */ textureStore(rayzee_hdr, vec2<i32>(id.xy), vec4<f32>(result, 1.0));
   textureStore(output_texture, vec2<i32>(id.xy), vec4<f32>(webgi_display(result), 1.0));
 }
 `;
@@ -19066,6 +19068,12 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
               format: "rgba8unorm",
               usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
             });
+            /* rayzee-patch */ let _rayzeeHdr = this.device.createTexture({
+              label: "DLSS-NR scene-referred output " + _0x46280e,
+              size: [_0x3e0fd1, _0x30485b],
+              format: "rgba16float",
+              usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
+            });
             let _0x2fab49 = this.device.createTexture({
               label: "DLSS-NR motion " + _0x46280e,
               size: this.gpuInputOnly ? [1, 1] : [_0x3e0fd1, _0x30485b],
@@ -19089,6 +19097,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
               features: _0x929fb0,
               params: _0x3d5c2f,
               output: _0x27c86c,
+              /* rayzee-patch */ hdrOutput: _rayzeeHdr,
               motion: _0x2fab49,
               presentGroup: _0x3c8688,
               compositeGroups: new WeakMap()
@@ -19311,6 +19320,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
             }, {
               binding: 8,
               resource: this.historyViews[1 - _0x5b80e7]
+            }, /* rayzee-patch */ {
+              binding: 9,
+              resource: _0x478dbc.hdrOutput.createView()
             }]
           }));
           _0x478dbc.compositeGroups.set(_0x151e61.buffer, _0x3a5e03);

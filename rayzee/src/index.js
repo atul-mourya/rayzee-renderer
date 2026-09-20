@@ -102,4 +102,4 @@ export { InteractionManager } from './managers/InteractionManager.js';
 // the offline entry point (`renderUpscaled`, used by the regression bench) plus the two contracts a
 // host needs to build UI against.
 export { renderUpscaled, SR_SCALE, SR_MAX_INPUT } from './dlss/DLSSSuperRes.js';
-export { DLSS_NR_DEFAULTS, DLSS_NR_RANGES } from './dlss/DLSSNeural.js';
+export { DLSS_NR_DEFAULTS, DLSS_NR_RANGES, DLSS_NR_MAX_PIXELS } from './dlss/DLSSNeural.js';

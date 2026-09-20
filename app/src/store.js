@@ -290,11 +290,13 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Which model the AI upscaler runs. App-local: 'dlss' is fixed 2x and needs a denoised source.
 	upscalerBackend: 'esrgan',
 
-	// Neural rendering (DLSS-NR): a detail pass at the same resolution, after any upscale.
+	// Neural rendering (DLSS-NR): a detail pass on the traced image, before any upscale.
 	neuralRendering: false,
 	nrIntensity: 1,
 	nrLocalTone: 1,
 	nrLocalStructure: 1,
+	// 0 keeps the renderer's own chroma. See DLSS_NR_COLOR_STRENGTH.
+	nrColorStrength: 0,
 
 	showInspector: false,
 
@@ -834,6 +836,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 			intensity: get().nrIntensity,
 			localTone: get().nrLocalTone,
 			localStructure: get().nrLocalStructure,
+			colorStrength: get().nrColorStrength,
 		} ),
 		false
 	),

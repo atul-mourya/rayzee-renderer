@@ -28,6 +28,7 @@
  * the more faithful of the two. A real fix would have to reach inside the vendored runtime.
  */
 
+import { PackedToneMapper } from '../Processor/ToneMapGPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 /**
@@ -45,6 +46,55 @@ export const DLSS_NR_DEFAULTS = Object.freeze( {
 	preset: 0,
 	uiCorrection: false,
 } );
+
+/**
+ * How much of the network's own colour to take, 0..1. Ours, not the runtime's.
+ *
+ * ⚠️ It must be kept OUT of the object handed to the runtime: that one is validated by key and
+ * throws `Unknown DLSS-NR setting: colorStrength`. `splitSettings` does the separating.
+ *
+ * It is `color_strength` in the composition kernel, blending between the original chroma relit to
+ * the network's luminance (`original * ratio`, at 0) and the network's full colour (at 1). At 0 the
+ * chroma is the renderer's own, exactly, so the pass contributes structure and light without
+ * regrading.
+ *
+ * **Defaults to 0**, which is a change: the pass used to desaturate and there was thought to be no
+ * lever. Measured on 24155522.glb at 2048 output, mean saturation against an upscale-only render:
+ * colour 1 gives -6.1 %, 0.5 gives -5.1 %, **0 gives -1.1 %** — while luminance (+0.9 %) and detail
+ * are the same at all three, so nothing the pass is actually for is given up. The renderer's chroma
+ * is ground truth here; the network's is a guess about a photograph.
+ */
+export const DLSS_NR_COLOR_STRENGTH = 0;
+
+/** @returns {{runtime: object, colorStrength: number}} */
+function splitSettings( settings = {} ) {
+
+	const { colorStrength = DLSS_NR_COLOR_STRENGTH, ...rest } = settings;
+	return { runtime: { ...DLSS_NR_DEFAULTS, ...rest }, colorStrength };
+
+}
+
+/**
+ * Largest image the pass survives — 4.19 MP, i.e. 2048x2048.
+ *
+ * Measured on an M5 Pro, 24155522.glb, warm, end to end with super resolution:
+ *
+ * | image | pixels | wall | outcome |
+ * |---|---|---|---|
+ * | 1536² | 2.4 MP | 5.3 s | fine |
+ * | 2048² | 4.2 MP | 6.2 s, repeatable | fine |
+ * | 4096² | 16.8 MP | 65-108 s | **kills Chrome's GPU process** |
+ *
+ * Four times the pixels costs ten to seventeen times the wall clock and then dies: every device in
+ * the page is lost at once with "A valid external Instance reference no longer exists", which takes
+ * the renderer and the finished render with it.
+ *
+ * ⚠️ The pass runs **before** super resolution precisely so this stays out of reach. On the traced
+ * image it sees a quarter of the pixels it would after a 2x upscale, and the engine's own render
+ * reserve (`MAX_STORAGE_TEXTURE_SIZE`, 2048) already caps that at exactly 4.19 MP. The check below
+ * is therefore unreachable today and exists as a floor under a raised reserve.
+ */
+export const DLSS_NR_MAX_PIXELS = 2048 * 2048;
 
 /** Ranges the runtime clamps to. `skinStructure: -1` means "follow localStructure". */
 export const DLSS_NR_RANGES = Object.freeze( {
@@ -92,32 +142,6 @@ function loadRuntime() {
 
 }
 
-const _f32 = new Float32Array( 1 );
-const _u32 = new Uint32Array( _f32.buffer );
-
-function toHalf( v ) {
-
-	_f32[ 0 ] = v;
-	const x = _u32[ 0 ];
-	const s = ( x >>> 16 ) & 0x8000;
-	const e = ( x >>> 23 ) & 0xff;
-	const m = x & 0x7fffff;
-
-	if ( e === 255 ) return s | ( m ? 0x7e00 : 0x7c00 );
-
-	const ne = e - 112;
-	if ( ne >= 31 ) return s | 0x7c00;
-	if ( ne <= 0 ) {
-
-		if ( ne < - 10 ) return s;
-		return s | ( ( m | 0x800000 ) >>> ( 14 - ne ) );
-
-	}
-
-	return s | ( ne << 10 ) | ( m >>> 13 );
-
-}
-
 const READBACK_WGSL = /* wgsl */ `
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
@@ -131,6 +155,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 	let g = u32(clamp(c.g, 0.0, 1.0) * 255.0 + 0.5);
 	let b = u32(clamp(c.b, 0.0, 1.0) * 255.0 + 0.5);
 	dst[gid.y * size.x + gid.x] = r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+`;
+
+/** Same pack, but keeping the light: tight rgba16float, which is what the upscaler consumes. */
+const HDR_READBACK_WGSL = /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+	let size = textureDimensions(src);
+	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
+	let c = textureLoad(src, vec2<i32>(gid.xy), 0);
+	let a = (gid.y * size.x + gid.x) * 2u;
+	dst[a] = pack2x16float(c.rg);
+	dst[a + 1u] = pack2x16float(vec2<f32>(c.b, 1.0));
 }
 `;
 
@@ -152,6 +192,10 @@ export class DLSSNeural {
 		this._readbackPipeline = null;
 		this._readbackStorage = null;
 		this._readbackMap = null;
+		this._hdrPipeline = null;
+		this._hdrStorage = null;
+		this._hdrMap = null;
+		this._toneMapper = null;
 		this.disposed = false;
 
 	}
@@ -189,6 +233,16 @@ export class DLSSNeural {
 
 		}
 
+		if ( width * height > DLSS_NR_MAX_PIXELS ) {
+
+			throw new Error(
+				`DLSSNeural.create: ${width}x${height} is ${( width * height / 1e6 ).toFixed( 1 )} MP, above the ` +
+				`${( DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP this pass survives. Past it the run takes minutes ` +
+				'and then loses every GPU device in the page.'
+			);
+
+		}
+
 		// The runtime insists on a canvas (it sizes it and takes a WebGPU context), but nothing reads
 		// it — so one is made here and kept off screen unless the caller supplies its own.
 		const surface = canvas ?? document.createElement( 'canvas' );
@@ -196,7 +250,7 @@ export class DLSSNeural {
 
 		const SrNrChain = await loadRuntime();
 		const chain = await SrNrChain.create(
-			surface, width, height, onProgress, { ...DLSS_NR_DEFAULTS, ...settings },
+			surface, width, height, onProgress, splitSettings( settings ).runtime,
 		);
 
 		const instance = new DLSSNeural( chain, surface );
@@ -233,6 +287,107 @@ export class DLSSNeural {
 			layout: 'auto',
 			compute: { module: this.device.createShaderModule( { code: READBACK_WGSL } ), entryPoint: 'main' },
 		} );
+
+		const hdrBytes = validWidth * validHeight * 8;
+		this._hdrStorage = this.device.createBuffer( {
+			label: 'rayzee:dlss-nr-hdr',
+			size: hdrBytes,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+		} );
+		this._hdrMap = this.device.createBuffer( {
+			label: 'rayzee:dlss-nr-hdr-map',
+			size: hdrBytes,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		} );
+		this._hdrPipeline = this.device.createComputePipeline( {
+			label: 'rayzee:dlss-nr-hdr',
+			layout: 'auto',
+			compute: { module: this.device.createShaderModule( { code: HDR_READBACK_WGSL } ), entryPoint: 'main' },
+		} );
+
+	}
+
+	/** Runs the scene-referred texture into `_hdrStorage`, optionally copying it out for mapping. */
+	async _packHDR( w, h, forRead = false ) {
+
+		const texture = this.chain.pipeline.slots[ this.slot ]?.hdrOutput;
+		if ( ! texture ) {
+
+			throw new Error(
+				'DLSSNeural: the runtime has no scene-referred output. Either no frame has been produced yet, '
+				+ 'or dlss-runtime.js was re-vendored without the patch described in its PATCHES.md.'
+			);
+
+		}
+
+		const group = this.device.createBindGroup( {
+			layout: this._hdrPipeline.getBindGroupLayout( 0 ),
+			entries: [
+				{ binding: 0, resource: texture.createView() },
+				{ binding: 1, resource: { buffer: this._hdrStorage } },
+			],
+		} );
+
+		const encoder = this.device.createCommandEncoder( { label: 'rayzee:dlss-nr-hdr' } );
+		const pass = encoder.beginComputePass();
+		pass.setPipeline( this._hdrPipeline );
+		pass.setBindGroup( 0, group );
+		pass.dispatchWorkgroups( Math.ceil( w / 8 ), Math.ceil( h / 8 ) );
+		pass.end();
+		if ( forRead ) encoder.copyBufferToBuffer( this._hdrStorage, 0, this._hdrMap, 0, w * h * 8 );
+		this.device.queue.submit( [ encoder.finish() ] );
+
+	}
+
+	/**
+	 * The pass's result as scene-referred light, packed the way the upscaler wants it.
+	 *
+	 * Reads `hdrOutput`, the `rgba16float` texture the vendored runtime gained in
+	 * `app/public/dlss/PATCHES.md` — the value one statement before its own 8-bit store, so nothing
+	 * has been clamped, quantised or pushed through the model's hardcoded ACES curve yet.
+	 *
+	 * This is what lets the pass run FIRST, at render size, where it is ~10x cheaper than on an
+	 * upscaled image and inside the size it survives.
+	 *
+	 * @returns {Promise<{half: Uint16Array, width: number, height: number}>}
+	 */
+	async readOutputHDR() {
+
+		const { validWidth: w, validHeight: h } = this.chain.pipeline.geometry;
+		await this._packHDR( w, h, true );
+
+		await this._hdrMap.mapAsync( GPUMapMode.READ );
+		const half = new Uint16Array( this._hdrMap.getMappedRange().slice( 0 ) );
+		this._hdrMap.unmap();
+		return { half, width: w, height: h };
+
+	}
+
+	/**
+	 * The pass's result as display bytes through the ENGINE's tone curve, for when nothing follows it.
+	 *
+	 * Deliberately not the runtime's own `rgba8unorm` output: that one is forced through a hardcoded
+	 * ACES fit (`webgi_display` in the composition kernel), which is where the pass's ~10 %
+	 * desaturation came from and why it never answered the engine's tone-mapping setting.
+	 *
+	 * @param {{exposure: number, toneMapping: number, saturation: number}} tone
+	 * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number}>}
+	 */
+	async readOutputToned( tone ) {
+
+		const { validWidth: w, validHeight: h } = this.chain.pipeline.geometry;
+		await this._packHDR( w, h );
+
+		this._toneMapper ??= new PackedToneMapper( this.device, 'rayzee:dlss-nr-tonemap' );
+		this._toneMapper.ensureSize( w, h );
+
+		const rgba8 = await this._toneMapper.toRGBA8( this._hdrStorage, {
+			exposure: tone.exposure ?? 1,
+			toneMapping: tone.toneMapping ?? 0,
+			saturation: tone.saturation ?? 1,
+		} );
+
+		return { rgba8, width: w, height: h };
 
 	}
 
@@ -278,6 +433,9 @@ export class DLSSNeural {
 		this.source?.destroy();
 		this._readbackStorage?.destroy();
 		this._readbackMap?.destroy();
+		this._hdrStorage?.destroy();
+		this._hdrMap?.destroy();
+		this._toneMapper?.dispose();
 		try {
 
 			this.chain.destroy();
@@ -293,18 +451,34 @@ export class DLSSNeural {
 }
 
 /**
- * Runs the pass over a finished linear image and lets the network present it.
+ * Smallest `paper_white` the runtime accepts, so the largest exposure it can carry: 1 / 0.05.
+ */
+const MAX_EXPOSURE = 20;
+
+/**
+ * Runs the pass over a finished frame and hands the result back as light.
  *
- * Nothing useful is returned but the instance: see the file header — the result is not readable.
+ * `source.half` is packed rgba16float — what `readDenoisedHalf` produces — carrying **scene-referred**
+ * linear light, not exposed and not tone-mapped.
+ *
+ * Exposure goes through the runtime's own `paper_white`, which is the divisor it uses to bring scene
+ * light into the network's working range (`value = scene / paper_white`) and multiplies back out at
+ * the end. Setting it to `1 / exposure` therefore shows the network an exposed image while returning
+ * the result in scene-referred units — so the engine's own tone curve still applies afterwards, and
+ * the model's hardcoded ACES never runs.
+ *
+ * Pass `tone` when this is the last step and the result should be display bytes; leave it out to get
+ * packed halves for the upscaler.
  *
  * @param {object} opts
- * @param {{data: Float32Array, width: number, height: number}} opts.source linear RGB, 3 floats/px
- * @param {number} [opts.exposure] applied on the way in; the network clamps to [0,1] internally
+ * @param {{half: Uint16Array, width: number, height: number}} opts.source
+ * @param {number} [opts.exposure=1] clamped to `MAX_EXPOSURE`
+ * @param {{exposure: number, toneMapping: number, saturation: number}} [opts.tone] engine display state
  * @param {DLSSNeural} [opts.instance] reuse a network already built for this size
- * @returns {Promise<{instance: DLSSNeural, rgba8: Uint8ClampedArray, width: number, height: number, ms: number}>}
+ * @returns {Promise<object>} `{ instance, width, height, ms }` plus `rgba8` or `half`
  */
-export async function enhanceLinearFrame( {
-	source, settings = {}, instance = null, exposure = 1, onProgress = () => {},
+export async function enhanceFrame( {
+	source, settings = {}, instance = null, exposure = 1, tone = null, onProgress = () => {},
 } ) {
 
 	let nr = instance;
@@ -323,22 +497,23 @@ export async function enhanceLinearFrame( {
 
 	}
 
-	const merged = { ...DLSS_NR_DEFAULTS, ...settings };
-	const { width, height } = nr;
+	const { runtime: merged, colorStrength } = splitSettings( settings );
 	const dst = nr.staging;
 
-	for ( let i = 0, n = width * height; i < n; i ++ ) {
+	if ( ! source.half || source.half.length !== dst.length ) {
 
-		// Exposure has to be applied here rather than after: the network works in display space and
-		// clamps to [0,1], and there is no readable output left to scale.
-		dst[ i * 4 ] = toHalf( source.data[ i * 3 ] * exposure );
-		dst[ i * 4 + 1 ] = toHalf( source.data[ i * 3 + 1 ] * exposure );
-		dst[ i * 4 + 2 ] = toHalf( source.data[ i * 3 + 2 ] * exposure );
-		dst[ i * 4 + 3 ] = 0x3c00;
+		throw new Error( `DLSSNeural: expected ${dst.length} packed halfs, got ${source.half?.length}` );
 
 	}
 
+	dst.set( source.half );
 	nr.device.queue.writeBuffer( nr.source, 0, dst );
+
+	// ⚠️ On `chain.pipeline`, not `chain`. Both objects carry these two fields, but only the
+	// pipeline's copies are read when the composition kernel's params are written each encode —
+	// setting them on the chain is silently inert.
+	nr.chain.pipeline.paperWhite = 1 / Math.min( Math.max( exposure, 1 / MAX_EXPOSURE ), MAX_EXPOSURE );
+	nr.chain.pipeline.colorStrength = colorStrength;
 
 	const started = performance.now();
 	const encoder = nr.device.createCommandEncoder( { label: 'rayzee:dlss-nr' } );
@@ -346,7 +521,7 @@ export async function enhanceLinearFrame( {
 	nr.device.queue.submit( [ encoder.finish() ] );
 	await nr.device.queue.onSubmittedWorkDone();
 
-	const rgba8 = await nr.readOutput();
-	return { instance: nr, rgba8, width, height, ms: performance.now() - started };
+	const result = tone ? await nr.readOutputToned( tone ) : await nr.readOutputHDR();
+	return { instance: nr, ...result, ms: performance.now() - started };
 
 }
