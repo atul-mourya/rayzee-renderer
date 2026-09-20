@@ -6,6 +6,7 @@ import { usePathTracerStore as useStore } from '@/store';
 import { ControlGroup } from '@/components/ui/control-group';
 import { Separator } from '@/components/ui/separator';
 import CanvasDimensionControls from './CanvasDimensionControls';
+import NeuralPostControls from './NeuralPostControls';
 
 
 const FinalRenderPanel = () => {
@@ -62,36 +63,7 @@ const FinalRenderPanel = () => {
 				</Row>
 			</> )}
 			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
-			<Row className="py-2 px-2">
-				<Switch label={"AI Upscaler"} checked={enableUpscaler} onCheckedChange={handleEnableUpscalerChange} />
-			</Row>
-			{enableUpscaler && ( <>
-				<Row className="py-2 px-2">
-					<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-						<span className="opacity-50 text-xs truncate">Scale Factor</span>
-						<SelectTrigger className="max-w-24 h-5 rounded-full" >
-							<SelectValue placeholder="Select scale" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="2">2x</SelectItem>
-							<SelectItem value="4">4x</SelectItem>
-						</SelectContent>
-					</Select>
-				</Row>
-				<Row className="py-2 px-2">
-					<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-						<span className="opacity-50 text-xs truncate">Quality</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select quality" />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="fast">Fast</SelectItem>
-							<SelectItem value="balanced">Balanced</SelectItem>
-							<SelectItem value="quality">Quality</SelectItem>
-						</SelectContent>
-					</Select>
-				</Row>
-			</> )}
+			<NeuralPostControls />
 			<Separator className="bg-primary/20 mt-3.5 mb-3.5" />
 		</div>
 	);

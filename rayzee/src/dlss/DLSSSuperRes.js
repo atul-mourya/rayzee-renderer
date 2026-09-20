@@ -587,3 +587,13 @@ export function presentLinear( canvas, image, tone = {} ) {
 	return presentToUpscalerCanvas( canvas, rgba8, image.width, image.height );
 
 }
+
+/**
+ * Draws ready RGBA bytes onto the overlay. For the detail pass, whose result comes back as bytes
+ * rather than linear floats — it is display-referred by the time we can read it.
+ */
+export function presentRGBA8( canvas, rgba8, width, height ) {
+
+	return presentToUpscalerCanvas( canvas, rgba8, width, height );
+
+}

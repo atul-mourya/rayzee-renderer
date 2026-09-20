@@ -117,9 +117,6 @@ export class DenoisingManager extends EventDispatcher {
 		this.neuralRenderingSettings = {};
 		this._dlssNeural = null;
 		this._neuralPostBusy = false;
-		// The detail pass presents through WebGPU, and a canvas's context type is permanent — it
-		// cannot share the 2D overlay the upscalers draw into. See `_neuralPresentCanvas()`.
-		this._neuralCanvas = null;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
@@ -827,11 +824,9 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	_restoreRenderDisplay() {
 
-		const wasShowing = ( this.upscalerCanvas && this.upscalerCanvas.style.display !== 'none' )
-			|| ( this._neuralCanvas && this._neuralCanvas.style.display !== 'none' );
+		const wasShowing = this.upscalerCanvas && this.upscalerCanvas.style.display !== 'none';
 
 		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
-		if ( this._neuralCanvas ) this._neuralCanvas.style.display = 'none';
 		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
 
 		if ( wasShowing ) {
@@ -878,34 +873,6 @@ export class DenoisingManager extends EventDispatcher {
 	}
 
 	/**
-	 * A second overlay, for the detail pass alone.
-	 *
-	 * `getContext()` binds a canvas to one context type for its lifetime, so a canvas that has ever
-	 * handed out a 2D context can never acquire WebGPU — it returns null and the runtime throws
-	 * "The DLSS-NR output canvas could not acquire WebGPU". The upscalers draw in 2D, this pass
-	 * presents in WebGPU, so they cannot share one.
-	 */
-	_neuralPresentCanvas() {
-
-		if ( this._neuralCanvas ) return this._neuralCanvas;
-
-		const parent = this.mainCanvas?.parentNode;
-		if ( ! parent ) return null;
-
-		const dc = document.createElement( 'canvas' );
-		dc.style.position = 'absolute';
-		dc.style.inset = '0';
-		dc.style.width = '100%';
-		dc.style.height = '100%';
-		dc.style.display = 'none';
-		parent.insertBefore( dc, this.mainCanvas );
-
-		this._neuralCanvas = dc;
-		return dc;
-
-	}
-
-	/**
 	 * The neural post-chain over the picture the closing denoise just produced: super resolution
 	 * first, then the detail pass, either or both.
 	 *
@@ -929,13 +896,6 @@ export class DenoisingManager extends EventDispatcher {
 		if ( ! this.upscalerCanvas ) {
 
 			console.warn( 'DLSS neural pass skipped: the engine has no overlay canvas to present on' );
-			return;
-
-		}
-
-		if ( wantNR && ! this._neuralPresentCanvas() ) {
-
-			console.warn( 'DLSS neural pass skipped: no parent to attach its WebGPU canvas to' );
 			return;
 
 		}
@@ -991,14 +951,12 @@ export class DenoisingManager extends EventDispatcher {
 				const { enhanceLinearFrame } = await import( '../dlss/DLSSNeural.js' );
 				const result = await enhanceLinearFrame( {
 					source: image,
-					canvas: this._neuralPresentCanvas(),
 					settings: this.neuralRenderingSettings,
 					instance: this._dlssNeural,
 					exposure,
 				} );
 				this._dlssNeural = result.instance;
-				// Only one overlay may be up, and this pass owns the other one.
-				this.upscalerCanvas.style.display = 'none';
+				sr.presentRGBA8( this.upscalerCanvas, result.rgba8, result.width, result.height );
 
 			} else {
 
@@ -1007,7 +965,6 @@ export class DenoisingManager extends EventDispatcher {
 					toneMapping: this._getToneMapping(),
 					saturation: this._getSaturation?.() ?? 1,
 				} );
-				if ( this._neuralCanvas ) this._neuralCanvas.style.display = 'none';
 
 			}
 
@@ -1187,8 +1144,6 @@ export class DenoisingManager extends EventDispatcher {
 		// Owns a second GPUDevice plus 3 MB of weights, so it must not outlive the manager.
 		this._releaseDLSSUpscaler();
 		this._releaseDLSSNeural();
-		this._neuralCanvas?.remove();
-		this._neuralCanvas = null;
 
 		// Before the denoiser destroys the picture the Compositor would otherwise still sample.
 		this._unpublishOutput();

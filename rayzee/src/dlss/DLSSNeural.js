@@ -5,9 +5,15 @@
  * skin-specific term. It does not change resolution and it does not denoise. Measured on path-traced
  * input it is close to a no-op after OIDN, so it is off by default and exposed as an explicit choice.
  *
- * ⚠️ It is always LAST in the neural chain, and that is forced by the model rather than chosen: its
- * output texture is `rgba8unorm` with no `COPY_SRC`, so the result cannot be read back and nothing
- * can consume it. It ends at its own presentation, in its own display space.
+ * ⚠️ It is always LAST in the neural chain: its output is `rgba8unorm`, i.e. display-referred 8-bit,
+ * so nothing downstream can work with it in linear light.
+ *
+ * Its result IS recoverable, though not the obvious way. The texture has no `COPY_SRC`, and its own
+ * canvas is a WebGPU surface that reads back empty at every timing tried (immediately, after one
+ * rAF, after two) — so neither `copyTextureToBuffer` nor `drawImage` works. It does carry
+ * `TEXTURE_BINDING`, so a small compute pass of our own samples it into a storage buffer instead.
+ * That is what makes the pass saveable, and lets it share the engine's one 2D overlay rather than
+ * needing a second canvas whose context type conflicts.
  *
  * ⚠️ **It desaturates, and there is no lever for it.** Driven at `intensity: 0`, where the network
  * returns its input untouched, the result still differs from the engine's own render: luminance is
@@ -112,6 +118,22 @@ function toHalf( v ) {
 
 }
 
+const READBACK_WGSL = /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+	let size = textureDimensions(src);
+	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
+	let c = textureLoad(src, vec2<i32>(gid.xy), 0);
+	let r = u32(clamp(c.r, 0.0, 1.0) * 255.0 + 0.5);
+	let g = u32(clamp(c.g, 0.0, 1.0) * 255.0 + 0.5);
+	let b = u32(clamp(c.b, 0.0, 1.0) * 255.0 + 0.5);
+	dst[gid.y * size.x + gid.x] = r | (g << 8u) | (b << 16u) | (255u << 24u);
+}
+`;
+
 /**
  * One loaded network, bound to one image size and one canvas.
  *
@@ -127,6 +149,9 @@ export class DLSSNeural {
 		this.slot = 0;
 		this.source = null;
 		this.staging = null;
+		this._readbackPipeline = null;
+		this._readbackStorage = null;
+		this._readbackMap = null;
 		this.disposed = false;
 
 	}
@@ -153,9 +178,10 @@ export class DLSSNeural {
 	 * @param {object} opts
 	 * @param {number} opts.width
 	 * @param {number} opts.height
-	 * @param {HTMLCanvasElement} opts.canvas the network sizes and presents to this
+	 * @param {HTMLCanvasElement} [opts.canvas] surface the runtime presents to. Offscreen by
+	 *   default: the result is taken with `readOutput()`, not from this canvas, which cannot be read.
 	 */
-	static async create( { width, height, canvas, settings = {}, onProgress = () => {} } ) {
+	static async create( { width, height, canvas = null, settings = {}, onProgress = () => {} } ) {
 
 		if ( ! Number.isInteger( width ) || ! Number.isInteger( height ) || width < 1 || height < 1 ) {
 
@@ -163,14 +189,17 @@ export class DLSSNeural {
 
 		}
 
-		if ( ! canvas ) throw new Error( 'DLSSNeural.create: a canvas is required — the network presents itself' );
+		// The runtime insists on a canvas (it sizes it and takes a WebGPU context), but nothing reads
+		// it — so one is made here and kept off screen unless the caller supplies its own.
+		const surface = canvas ?? document.createElement( 'canvas' );
+		if ( ! canvas ) surface.style.cssText = 'position:fixed;left:-10000px;top:0;pointer-events:none';
 
 		const SrNrChain = await loadRuntime();
 		const chain = await SrNrChain.create(
-			canvas, width, height, onProgress, { ...DLSS_NR_DEFAULTS, ...settings },
+			surface, width, height, onProgress, { ...DLSS_NR_DEFAULTS, ...settings },
 		);
 
-		const instance = new DLSSNeural( chain, canvas );
+		const instance = new DLSSNeural( chain, surface );
 		instance._allocate();
 		return instance;
 
@@ -188,6 +217,58 @@ export class DLSSNeural {
 
 		this.staging = new Uint16Array( validWidth * validHeight * 4 );
 
+		const bytes = validWidth * validHeight * 4;
+		this._readbackStorage = this.device.createBuffer( {
+			label: 'rayzee:dlss-nr-readback',
+			size: bytes,
+			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+		} );
+		this._readbackMap = this.device.createBuffer( {
+			label: 'rayzee:dlss-nr-readback-map',
+			size: bytes,
+			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+		} );
+		this._readbackPipeline = this.device.createComputePipeline( {
+			label: 'rayzee:dlss-nr-readback',
+			layout: 'auto',
+			compute: { module: this.device.createShaderModule( { code: READBACK_WGSL } ), entryPoint: 'main' },
+		} );
+
+	}
+
+	/**
+	 * Samples the pass's own output texture into ordinary RGBA bytes.
+	 *
+	 * @returns {Promise<Uint8ClampedArray>} RGBA, width*height*4
+	 */
+	async readOutput() {
+
+		const { validWidth: w, validHeight: h } = this.chain.pipeline.geometry;
+		const texture = this.chain.pipeline.slots[ this.slot ]?.output;
+		if ( ! texture ) throw new Error( 'DLSSNeural.readOutput: the pass has not produced a frame yet' );
+
+		const group = this.device.createBindGroup( {
+			layout: this._readbackPipeline.getBindGroupLayout( 0 ),
+			entries: [
+				{ binding: 0, resource: texture.createView() },
+				{ binding: 1, resource: { buffer: this._readbackStorage } },
+			],
+		} );
+
+		const encoder = this.device.createCommandEncoder( { label: 'rayzee:dlss-nr-readback' } );
+		const pass = encoder.beginComputePass();
+		pass.setPipeline( this._readbackPipeline );
+		pass.setBindGroup( 0, group );
+		pass.dispatchWorkgroups( Math.ceil( w / 8 ), Math.ceil( h / 8 ) );
+		pass.end();
+		encoder.copyBufferToBuffer( this._readbackStorage, 0, this._readbackMap, 0, w * h * 4 );
+		this.device.queue.submit( [ encoder.finish() ] );
+
+		await this._readbackMap.mapAsync( GPUMapMode.READ );
+		const bytes = new Uint8ClampedArray( this._readbackMap.getMappedRange().slice( 0 ) );
+		this._readbackMap.unmap();
+		return bytes;
+
 	}
 
 	dispose() {
@@ -195,6 +276,8 @@ export class DLSSNeural {
 		if ( this.disposed ) return;
 		this.disposed = true;
 		this.source?.destroy();
+		this._readbackStorage?.destroy();
+		this._readbackMap?.destroy();
 		try {
 
 			this.chain.destroy();
@@ -216,13 +299,12 @@ export class DLSSNeural {
  *
  * @param {object} opts
  * @param {{data: Float32Array, width: number, height: number}} opts.source linear RGB, 3 floats/px
- * @param {HTMLCanvasElement} opts.canvas where the network presents
  * @param {number} [opts.exposure] applied on the way in; the network clamps to [0,1] internally
  * @param {DLSSNeural} [opts.instance] reuse a network already built for this size
- * @returns {Promise<{instance: DLSSNeural, width: number, height: number, ms: number}>}
+ * @returns {Promise<{instance: DLSSNeural, rgba8: Uint8ClampedArray, width: number, height: number, ms: number}>}
  */
 export async function enhanceLinearFrame( {
-	source, canvas, settings = {}, instance = null, exposure = 1, onProgress = () => {},
+	source, settings = {}, instance = null, exposure = 1, onProgress = () => {},
 } ) {
 
 	let nr = instance;
@@ -236,7 +318,7 @@ export async function enhanceLinearFrame( {
 	if ( ! nr ) {
 
 		nr = await DLSSNeural.create( {
-			width: source.width, height: source.height, canvas, settings, onProgress,
+			width: source.width, height: source.height, settings, onProgress,
 		} );
 
 	}
@@ -264,7 +346,7 @@ export async function enhanceLinearFrame( {
 	nr.device.queue.submit( [ encoder.finish() ] );
 	await nr.device.queue.onSubmittedWorkDone();
 
-	canvas.style.display = 'block';
-	return { instance: nr, width, height, ms: performance.now() - started };
+	const rgba8 = await nr.readOutput();
+	return { instance: nr, rgba8, width, height, ms: performance.now() - started };
 
 }

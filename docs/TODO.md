@@ -52,6 +52,11 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
   `INPUT_SIZE` / `OUTPUT_SIZE` / `NETWORK_SIZE`, so patching the geometry to e.g. 1.5x will at least
   build — the question is whether the fixed-2x upsample kernels then produce a correct image or
   garbage. ~15 min to settle empirically instead of by inference. Expect it to break.
+- [ ] **The CPU plumbing is what makes production resolutions slow.** Warm, whole pass: 512 -> 1024
+  136 ms, 1024 -> 2048 552 ms, **2048 -> 4096 2.08 s**. The network's share falls the higher you go —
+  the JS passes scale with OUTPUT pixels (16.7M at 4096²), so at production sizes they dominate. Still
+  acceptable against a multi-minute render, but this is the lever if 4K/8K output ever feels slow, and
+  8192 output is untested.
 - [ ] **About half the upscale pass is CPU plumbing, not the network.** Warm on M5 Pro: 512² → 1024²
   is 136 ms of which ~70 ms is the network; 1024² → 2048² is 531 ms of which ~272 ms is the network.
   (An earlier note said 319/682 ms — that was measuring the *cold* pass, which includes building the
