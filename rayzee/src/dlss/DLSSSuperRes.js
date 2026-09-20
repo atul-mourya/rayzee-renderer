@@ -287,7 +287,14 @@ export class DLSSSuperRes {
 
 		}
 
-		// A still frame has no motion and no disocclusion, so depth only has to be uniform and finite.
+		// Depth and motion are both provably inert on this path, so the constants below cost nothing:
+		// with `reset: true` the output is bit-identical for depth 0.0 / 0.5 / 1.0 and for motion zero
+		// vs 5 % of the frame. That matches the shaders — `raw_motion` is reachable only from a debug
+		// branch, and `raw_depth` only from a history-gated address path. Feeding the engine's real
+		// depth and motion vectors here would change nothing.
+		//
+		// Jitter is the one input that DOES move the result, and [0,0] is right for this use: a
+		// converged accumulation is the average over the pixel, i.e. its centre.
 		this._depth.fill( 0.5 );
 		this._motion.fill( 0 );
 
