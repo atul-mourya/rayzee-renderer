@@ -222,7 +222,8 @@ function reportUpscale( report ) {
 		const detail = entry.detailRatio === undefined ? '' :
 			` detail ${entry.detailRatio.toFixed( 3 )}x`;
 		const rmseText = entry.rmse === undefined ? '' : ` rmse ${entry.rmse.toFixed( 3 )}`;
-		log( `  ${ok ? GREEN + 'ok     ' : RED + 'FAIL   '}${RESET}${label.padEnd( 44 )}${DIM}${rmseText}${detail}${RESET}` );
+		const toneText = entry.toneMapDelta === undefined ? '' : ` worst ${entry.toneMapDelta} level(s)`;
+		log( `  ${ok ? GREEN + 'ok     ' : RED + 'FAIL   '}${RESET}${label.padEnd( 44 )}${DIM}${rmseText}${detail}${toneText}${RESET}` );
 		for ( const f of entry.failures ?? [] ) log( `    ${RED}${f}${RESET}` );
 
 	}

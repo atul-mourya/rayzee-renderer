@@ -373,4 +373,8 @@ export const UPSCALE_GATES = {
 	// last-bit drift from a three.js / driver / Chrome bump.
 	maxRmseIncrease: 0.5,
 	maxDetailLoss: 0.05,
+	// The WGSL tone curve against the CPU one, in 0-255 levels. One level is the most f32-vs-f64
+	// rounding can produce on a value sitting on a byte boundary; two would mean a real difference
+	// in the maths.
+	maxToneMapDelta: 1,
 };

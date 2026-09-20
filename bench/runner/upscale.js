@@ -129,6 +129,32 @@ export async function runUpscale( bench, { bless = false, only, log = () => {} }
 	const next = { ...stored };
 	const results = [];
 
+	// The upscale reads back display bytes from a WGSL copy of the engine's tone curve. Nothing in
+	// the unit suite can check that copy — vitest has no GPU — so it is checked here, before any
+	// image is measured. A drift would move every RMSE below and read as a model regression.
+	{
+
+		const entry = { scene: 'tone-map', size: 'gpu vs cpu', pass: true, failures: [] };
+		const findings = await bench.toneMapParity();
+		const worst = findings.reduce( ( a, b ) => ( b.maxDelta > a.maxDelta ? b : a ) );
+
+		if ( worst.maxDelta > UPSCALE_GATES.maxToneMapDelta ) {
+
+			entry.pass = false;
+			entry.failures.push(
+				`GPU tone curve differs from ToneMapCPU by ${worst.maxDelta} levels on ${worst.curve} ` +
+				`(exposure ${worst.exposure}, saturation ${worst.saturation}) — ` +
+				`allowed ${UPSCALE_GATES.maxToneMapDelta}`
+			);
+
+		}
+
+		entry.toneMapDelta = worst.maxDelta;
+		log( `  tone map  worst ${worst.maxDelta} level(s) on ${worst.curve}  ${entry.pass ? 'ok' : 'FAIL'}` );
+		results.push( entry );
+
+	}
+
 	try {
 
 		for ( const scene of scenes ) {

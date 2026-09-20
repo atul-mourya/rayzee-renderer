@@ -200,6 +200,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 			( o ) => globalThis.__bench.upscaleRender( o ), opts
 		),
 		disposeUpscaler: () => page.evaluate( () => globalThis.__bench.disposeUpscaler() ),
+		toneMapParity: () => page.evaluate( () => globalThis.__bench.toneMapParity() ),
 		denoisedNonFinite: () => page.evaluate( () => globalThis.__bench.denoisedNonFinite() ),
 		shaderDiagnostics: () => page.evaluate( () => globalThis.__bench.shaderDiagnostics() ),
 		bindingFindings: () => page.evaluate( () => globalThis.__bench.bindingFindings() ),
