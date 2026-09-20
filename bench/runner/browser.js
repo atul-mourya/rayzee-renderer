@@ -193,7 +193,13 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		awaitDenoise: ( timeoutMs ) => page.evaluate(
 			( t ) => globalThis.__bench.awaitDenoise( t ?? undefined ), timeoutMs ?? null
 		),
-		captureDenoisedPNG: () => page.evaluate( () => globalThis.__bench.captureDenoisedPNG() ),
+		captureDenoisedPNG: ( expected ) => page.evaluate(
+			( e ) => globalThis.__bench.captureDenoisedPNG( e ?? undefined ), expected ?? null
+		),
+		upscaleRender: ( opts ) => page.evaluate(
+			( o ) => globalThis.__bench.upscaleRender( o ), opts
+		),
+		disposeUpscaler: () => page.evaluate( () => globalThis.__bench.disposeUpscaler() ),
 		denoisedNonFinite: () => page.evaluate( () => globalThis.__bench.denoisedNonFinite() ),
 		shaderDiagnostics: () => page.evaluate( () => globalThis.__bench.shaderDiagnostics() ),
 		bindingFindings: () => page.evaluate( () => globalThis.__bench.bindingFindings() ),

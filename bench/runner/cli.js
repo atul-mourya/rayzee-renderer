@@ -26,6 +26,7 @@ import {
 } from './calibrate.js';
 import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
 import { runDenoise } from './denoise.js';
+import { runUpscale } from './upscale.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
 import { runFreeze } from './freeze.js';
@@ -201,6 +202,28 @@ function reportQuality( report ) {
 		}
 
 		for ( const failure of entry.failures ?? [] ) log( `       ${RED}${failure}${RESET}` );
+
+	}
+
+	return failed;
+
+}
+
+function reportUpscale( report ) {
+
+	let failed = 0;
+
+	for ( const entry of report.results ) {
+
+		const label = `${entry.scene} ${entry.size ?? ''}`.trim();
+		const ok = entry.pass !== false;
+		if ( ! ok ) failed ++;
+
+		const detail = entry.detailRatio === undefined ? '' :
+			` detail ${entry.detailRatio.toFixed( 3 )}x`;
+		const rmseText = entry.rmse === undefined ? '' : ` rmse ${entry.rmse.toFixed( 3 )}`;
+		log( `  ${ok ? GREEN + 'ok     ' : RED + 'FAIL   '}${RESET}${label.padEnd( 44 )}${DIM}${rmseText}${detail}${RESET}` );
+		for ( const f of entry.failures ?? [] ) log( `    ${RED}${f}${RESET}` );
 
 	}
 
@@ -477,7 +500,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -666,6 +689,21 @@ async function main() {
 			if ( blessDenoise ) {
 
 				log( `${GREEN}denoise ratchet written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.denoise )}` );
+
+			}
+
+		}
+
+		// Opt-in only — never part of `run`, because it fetches the model over the network.
+		if ( command === 'upscale' ) {
+
+			const blessUpscale = !! flags.bless;
+			log( `\nupscale (DLSS super resolution vs native full-size render)${blessUpscale ? ' — blessing' : ''}` );
+			const report = await runUpscale( bench, { bless: blessUpscale, only, log } );
+			if ( reportUpscale( report ) > 0 && ! blessUpscale ) exitCode = 1;
+			if ( blessUpscale ) {
+
+				log( `${GREEN}upscale baseline written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.upscale )}` );
 
 			}
 

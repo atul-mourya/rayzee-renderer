@@ -1,0 +1,18 @@
+{
+	"glass-transmission/512x512": {
+		"rmse": 3.831689288545599,
+		"detailRatio": 1.1876315951279
+	},
+	"glass-transmission/1024x1024": {
+		"rmse": 4.1482994885186,
+		"detailRatio": 1.400708258680536
+	},
+	"textured-normalmap/512x512": {
+		"rmse": 9.408682913039517,
+		"detailRatio": 1.162726391779613
+	},
+	"textured-normalmap/1024x1024": {
+		"rmse": 6.352015480320514,
+		"detailRatio": 1.2983248646939258
+	}
+}

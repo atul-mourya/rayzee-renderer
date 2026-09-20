@@ -36,7 +36,15 @@ if ( typeof GPUDevice !== 'undefined' ) {
 
 	GPUDevice.prototype.createShaderModule = function ( descriptor ) {
 
-		const record = { label: descriptor.label ?? '(unlabelled)', code: descriptor.code ?? '', module: null };
+		// `device` is kept so the audit can ignore modules that are not the engine's. The patch is on
+		// the prototype, so it also catches every module built on any OTHER device the page creates —
+		// the DLSS super-resolution runtime brings its own. Asking a foreign (and possibly destroyed)
+		// device's module for compilation info leaves a promise that never settles, which surfaced as
+		// `Runtime.callFunctionOn timed out` at the end of a run where every gate had already passed.
+		const record = {
+			label: descriptor.label ?? '(unlabelled)', code: descriptor.code ?? '',
+			module: null, device: this,
+		};
 		record.module = create.call( this, descriptor );
 		shaderModules.push( record );
 		return record.module;
@@ -49,8 +57,11 @@ if ( typeof GPUDevice !== 'undefined' ) {
 async function shaderDiagnostics() {
 
 	const entries = [];
+	const engineDevice = app?.renderer?.backend?.device ?? null;
 
-	for ( const { label, code, module } of shaderModules ) {
+	for ( const { label, code, module, device } of shaderModules ) {
+
+		if ( engineDevice && device && device !== engineDevice ) continue;
 
 		const info = await module.getCompilationInfo().catch( () => null );
 		if ( ! info ) continue;
@@ -70,7 +81,12 @@ async function shaderDiagnostics() {
 
 	}
 
-	return { modules: shaderModules.map( ( r ) => r.label ), entries };
+	return {
+		modules: shaderModules
+			.filter( ( r ) => ! engineDevice || ! r.device || r.device === engineDevice )
+			.map( ( r ) => r.label ),
+		entries,
+	};
 
 }
 
@@ -618,6 +634,68 @@ async function profileModelLoad( url ) {
 }
 
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
+/**
+ * Renders through the DLSS super-resolution path: traces at half the requested size, denoises, and
+ * reconstructs to full size. Returns a PNG so the runner can reuse the image metrics.
+ *
+ * Fetches a ~3.5 MB model over the network, so this is opt-in and never part of the default suite.
+ *
+ * @param {{outputWidth: number, outputHeight: number, samples: number}} opts
+ * @returns {Promise<{dataURL: string, width: number, height: number, timings: object}>}
+ */
+async function upscaleRender( { outputWidth, outputHeight, samples } ) {
+
+	const { renderUpscaled } = await import( 'rayzee' );
+
+	// The cached upscaler is built for one input size. Reuse it only at that size; otherwise drop
+	// it, or the next rung in the ladder fails instead of rebuilding.
+	const inW = outputWidth / 2, inH = outputHeight / 2;
+	if ( _benchUpscaler && ( _benchUpscaler.inputWidth !== inW || _benchUpscaler.inputHeight !== inH ) ) {
+
+		_benchUpscaler.dispose();
+		_benchUpscaler = null;
+
+	}
+
+	const result = await renderUpscaled( app, {
+		outputWidth, outputHeight, samples,
+		upscaler: _benchUpscaler,
+		present: false,
+	} );
+	_benchUpscaler = result.upscaler;
+
+	const canvas = document.createElement( 'canvas' );
+	canvas.width = result.width;
+	canvas.height = result.height;
+	canvas.getContext( '2d' ).putImageData(
+		new ImageData( new Uint8ClampedArray( result.rgba8.buffer ?? result.rgba8 ), result.width, result.height ),
+		0, 0,
+	);
+
+	return {
+		dataURL: canvas.toDataURL( 'image/png' ),
+		width: result.width,
+		height: result.height,
+		timings: result.timings,
+	};
+
+}
+
+let _benchUpscaler = null;
+
+/**
+ * Releases the super-resolution model and, with it, the second GPUDevice it owns.
+ *
+ * Not optional: leaving it alive made the CDP teardown at the end of the run time out
+ * (`Runtime.callFunctionOn timed out`) long after the rung itself had passed.
+ */
+function disposeUpscaler() {
+
+	_benchUpscaler?.dispose();
+	_benchUpscaler = null;
+
+}
+
 function capturePNG() {
 
 	const out = app.getCanvas();
@@ -852,7 +930,7 @@ async function awaitDenoise( timeoutMs = 120000 ) {
  * once `oidn:output` is actually published, which is asserted rather than assumed: without it this
  * would compare raw against raw for a flat ratio of 1.000 and call it a pass.
  */
-function captureDenoisedPNG() {
+function captureDenoisedPNG( expected = RENDER_SIZE ) {
 
 	if ( ! app.pipeline?.context?.getTexture( 'oidn:output' ) ) {
 
@@ -865,11 +943,13 @@ function captureDenoisedPNG() {
 	const out = app.getCanvas();
 	if ( ! out ) throw new Error( '__bench.captureDenoisedPNG: no canvas' );
 
-	if ( out.width !== RENDER_SIZE.width || out.height !== RENDER_SIZE.height ) {
+	// Still asserted, just not always against RENDER_SIZE: the upscale rung renders its native
+	// reference at other sizes. A caller that states the wrong size still catches a stale canvas.
+	if ( out.width !== expected.width || out.height !== expected.height ) {
 
 		throw new Error(
 			`__bench.captureDenoisedPNG: canvas is ${out.width}x${out.height}, ` +
-			`expected ${RENDER_SIZE.width}x${RENDER_SIZE.height}`
+			`expected ${expected.width}x${expected.height}`
 		);
 
 	}
@@ -976,6 +1056,7 @@ function setPerfMode( enabled ) {
 
 async function unload() {
 
+	disposeUpscaler();
 	app.unloadScene();
 	app.stopAnimation();
 	currentScene = null;
@@ -1099,6 +1180,8 @@ globalThis.__bench = {
 	setPerfMode,
 	setDenoiser,
 	awaitDenoise,
+	upscaleRender,
+	disposeUpscaler,
 	captureDenoisedPNG,
 	denoisedNonFinite,
 	shaderDiagnostics,
