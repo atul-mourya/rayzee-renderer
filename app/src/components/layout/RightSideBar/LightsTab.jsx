@@ -1,4 +1,4 @@
-import { Sunrise, Rainbow, Lightbulb, Grid3X3, ArrowsUpFromLine, CircleDot, Trash2, Spotlight, RectangleHorizontal, RectangleVertical, Plus, FilmIcon, X, Contrast, Ruler, CircleDashed, Activity, Square, Circle, Info, Thermometer, Aperture, Eye, EyeOff } from 'lucide-react';
+import { Sunrise, Rainbow, Lightbulb, Grid3X3, ArrowsUpFromLine, CircleDot, Trash2, Spotlight, RectangleHorizontal, RectangleVertical, Plus, FilmIcon, X, Contrast, Ruler, CircleDashed, Activity, Square, Circle, Thermometer, Aperture, Eye, EyeOff } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Row } from "@/components/ui/row";
 import { SliderToggle } from '@/components/ui/slider-toggle';
@@ -15,7 +15,7 @@ import { GOBO_LIBRARY } from '@/services/GoboLibrary';
 import { IES_LIBRARY } from '@/services/IESLibrary';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { InfoTip } from "@/components/ui/info-tip";
 import { useEffect, useCallback, useState, useRef } from 'react';
 
 const LIGHT_CONFIG = {
@@ -67,17 +67,6 @@ const normalizeAreaShape = shape => {
 	return 'rectangle'; // 'rect', undefined, 0
 
 };
-
-const InfoTip = ( { text } ) => (
-	<TooltipProvider delayDuration={150}>
-		<Tooltip>
-			<TooltipTrigger asChild>
-				<span className="ml-1 inline-flex shrink-0 cursor-help opacity-40 hover:opacity-90"><Info size={11} /></span>
-			</TooltipTrigger>
-			<TooltipContent side="left" className="max-w-56 leading-snug">{text}</TooltipContent>
-		</Tooltip>
-	</TooltipProvider>
-);
 
 const LightListItem = ( { light, index, isSelected, onSelect, onRemove, onToggleVisibility } ) => {
 

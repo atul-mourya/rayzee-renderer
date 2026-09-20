@@ -2,6 +2,7 @@ import { Row } from "@/components/ui/row";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InfoTip } from "@/components/ui/info-tip";
 import { DLSS_NR_MAX_PIXELS } from 'rayzee';
 import { usePathTracerStore as useStore } from '@/store';
 
@@ -74,9 +75,15 @@ const NeuralPostControls = () => {
 			</Row>
 
 			{enableUpscaler && ( <>
+				{/* Measured 512->1024 on a 1.9M-tri interior: DLSS 136 ms, Real-ESRGAN 436 ms; RMSE
+				    against a native 1024 render 3.84 vs 3.28, detail 1.355 vs 1.096 where native is
+				    1.089 — so DLSS adds structure rather than reproducing it. */}
 				<Row>
 					<Select value={upscalerBackend} onValueChange={handleUpscalerBackendChange}>
-						<span className="opacity-50 text-xs truncate">Model</span>
+						<span className="opacity-50 text-xs truncate inline-flex items-center">
+							Model
+							<InfoTip text="Real-ESRGAN reconstructs what a full-size render looks like, and offers 4x. DLSS is sharper than a native render — it invents detail rather than reproducing it — and about 3x faster, but is fixed at 2x and needs a denoised image." />
+						</span>
 						<SelectTrigger className="max-w-32 h-5 rounded-full" >
 							<SelectValue placeholder="Select model" />
 						</SelectTrigger>
@@ -87,20 +94,14 @@ const NeuralPostControls = () => {
 					</Select>
 				</Row>
 
-				{/* DLSS is a fixed 2x and takes no quality tiers, so its own controls are just the
-				    requirement it cannot work without, plus how it differs from the other model.
-				    Measured 512->1024 on a 1.9M-tri interior: DLSS 136 ms, Real-ESRGAN 436 ms;
-				    RMSE against a native 1024 render 3.84 vs 3.28, detail 1.355 vs 1.096 where
-				    native is 1.089 — so DLSS adds structure rather than reproducing it. */}
-				{upscalerBackend === 'dlss' ? (
+				{/* A requirement, not help — it stays on the panel where it cannot be missed. */}
+				{upscalerBackend === 'dlss' ? ( ! denoised && (
 					<Row>
 						<span className="opacity-50 text-[10px] leading-snug">
-							{denoised
-								? 'Fixed 2x, no quality tiers. Runs once on the denoised image when the render finishes. About 3x faster than Real-ESRGAN, and sharper than a native render — it adds detail rather than reproducing it.'
-								: 'Needs a denoiser — turn on Final Denoise (OIDN). On a noisy image it is worse than a plain resize.'}
+							Needs a denoiser — turn on Final Denoise (OIDN). On a noisy image it is worse than a plain resize.
 						</span>
 					</Row>
-				) : ( <>
+				) ) : ( <>
 					<Row>
 						<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
 							<span className="opacity-50 text-xs truncate">Scale Factor</span>
@@ -126,18 +127,15 @@ const NeuralPostControls = () => {
 							</SelectContent>
 						</Select>
 					</Row>
-					<Row>
-						<span className="opacity-50 text-[10px] leading-snug">
-							Closer to a native render than DLSS, and offers 4x — but about 3x slower.
-						</span>
-					</Row>
 				</> )}
 			</> )}
 
 			{/* DLSS-NR. Named for what it does to a picture rather than for the model behind it —
 			    it changes appearance, not resolution, so it is its own control and not an upscaler. */}
 			<Row className="pt-2">
-				<Switch label={"AI Retouch"} checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
+				<Switch
+					label={<>AI Retouch<InfoTip text="A retouch pass over the finished render: adds fine surface detail and shapes light locally, the way a photographer would work on a photograph. Runs once when the render completes, before any upscale. Downloads a 141 MB model the first time." /></>}
+					checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
 			</Row>
 
 			{neuralRendering && nrTooBig && (
@@ -151,37 +149,34 @@ const NeuralPostControls = () => {
 			)}
 
 			{neuralRendering && ! nrTooBig && ( denoised ? ( <>
-				{/* A straight blend between the render and the model's version, so this is the one that
-				    behaves predictably — the two below are handed to the model as inputs, not applied
-				    after it, so their effect is not proportional to the number. */}
+				{/* Amount is a straight blend, so it behaves predictably. Local Light and Fine Details
+				    are handed to the model as inputs rather than applied after it, which is why their
+				    effect is not proportional to the number. */}
 				<Row>
-					<Slider label={"Amount"} unit="%" min={0} max={100} step={1} precision={0}
+					<Slider label={<>Amount<InfoTip text="How much of the retouch reaches the image. 0% is off. The only one of these that blends predictably — reach for it first when the effect is too strong." /></>}
+						unit="%" min={0} max={100} step={1} precision={0}
 						value={[ asPercent( nrIntensity ) ]}
 						onFinishChange={onPercent( 'intensity', 'nrIntensity' )} />
 				</Row>
 				<Row>
-					<Slider label={"Local Light"} unit="%" min={- 100} max={100} step={1} precision={0}
+					<Slider label={<>Local Light<InfoTip text="Shapes light within small areas, like dodge and burn. 0% is what the model would do on its own; negative asks for less, positive for more." /></>}
+						unit="%" min={- 100} max={100} step={1} precision={0}
 						value={[ asOffset( nrLocalTone ) ]}
 						onFinishChange={onOffset( 'localTone', 'nrLocalTone' )} />
 				</Row>
 				<Row>
-					<Slider label={"Fine Details"} unit="%" min={- 100} max={100} step={1} precision={0}
+					<Slider label={<>Fine Details<InfoTip text="Brings out fine surface detail, like clarity or texture. 0% is what the model would do on its own. Pushing it up suits flat materials; on a detailed surface it starts to look crunchy." /></>}
+						unit="%" min={- 100} max={100} step={1} precision={0}
 						value={[ asOffset( nrLocalStructure ) ]}
 						onFinishChange={onOffset( 'localStructure', 'nrLocalStructure' )} />
 				</Row>
 				{/* 0 keeps the render's own chroma; 100 takes the model's, which measured 6 % less
 				    saturated on a 1.9M-tri interior while brightness and detail stayed put. */}
 				<Row>
-					<Slider label={"AI Color"} unit="%" min={0} max={100} step={1} precision={0}
+					<Slider label={<>AI Color<InfoTip text="Whose colour reaches the image. 0% keeps your render's exactly. 100% takes the model's, which measures about 6% less saturated — brightness and detail are the same either way." /></>}
+						unit="%" min={0} max={100} step={1} precision={0}
 						value={[ asPercent( nrColorStrength ) ]}
 						onFinishChange={onPercent( 'colorStrength', 'nrColorStrength' )} />
-				</Row>
-				<Row>
-					<span className="opacity-50 text-[10px] leading-snug">
-						Adds fine detail and shapes local light, like a retoucher. Runs once when the render
-						finishes. Downloads a 141 MB model the first time. AI Color decides whether the
-						colour comes from your render or the model.
-					</span>
 				</Row>
 			</> ) : (
 				<Row>
