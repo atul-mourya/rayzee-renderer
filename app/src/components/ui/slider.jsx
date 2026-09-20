@@ -20,6 +20,7 @@ const Slider = React.forwardRef( ( {
 	precision = 2,
 	disabled = false,
 	label,
+	unit = "",
 	snapPoints,
 	snapThreshold = 3, // Percentage of range to consider snapping
 	...props
@@ -365,7 +366,7 @@ const Slider = React.forwardRef( ( {
 						data-value-display
 						className="text-xs absolute h-full right-2 cursor-text select-none text-foreground inline-flex items-center"
 					>
-						{isNaN( currentValue ) ? "-" : + ( currentValue || 0 ).toFixed( precision )}
+						{isNaN( currentValue ) ? "-" : `${+ ( currentValue || 0 ).toFixed( precision )}${unit}`}
 					</span>
 				)}
 

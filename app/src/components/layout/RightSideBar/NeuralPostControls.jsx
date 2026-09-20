@@ -43,6 +43,30 @@ const NeuralPostControls = () => {
 	// it. Reachable only if the host raises the render reserve past 2048.
 	const nrTooBig = canvasWidth * canvasHeight > DLSS_NR_MAX_PIXELS;
 
+	// The model's settings are engine units; these sliders are what an artist expects to see.
+	//
+	// Amount and AI Color are 0..1, so a plain percentage. Local Light and Fine Details are 0..2 with
+	// **1 as neutral**, which as 0..200 % would park the default at 100 and read as "already turned
+	// up" — so they are shown centred on zero, the way every photo tool spells the same idea.
+	const asPercent = v => Math.round( v * 100 );
+	const fromPercent = v => v / 100;
+	const asOffset = v => Math.round( ( v - 1 ) * 100 );
+	const fromOffset = v => v / 100 + 1;
+
+	const onPercent = ( key, storeKey ) => {
+
+		const apply = handleNRSettingChange( key, storeKey );
+		return v => apply( fromPercent( v ) );
+
+	};
+
+	const onOffset = ( key, storeKey ) => {
+
+		const apply = handleNRSettingChange( key, storeKey );
+		return v => apply( fromOffset( v ) );
+
+	};
+
 	return (
 		<>
 			<Row>
@@ -110,10 +134,10 @@ const NeuralPostControls = () => {
 				</> )}
 			</> )}
 
-			{/* Neural rendering changes appearance, not resolution, so it is its own control rather
-			    than an upscaler model, and it always runs last. */}
+			{/* DLSS-NR. Named for what it does to a picture rather than for the model behind it —
+			    it changes appearance, not resolution, so it is its own control and not an upscaler. */}
 			<Row className="pt-2">
-				<Switch label={"Neural Rendering (DLSS-NR)"} checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
+				<Switch label={"AI Retouch"} checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
 			</Row>
 
 			{neuralRendering && nrTooBig && (
@@ -127,27 +151,36 @@ const NeuralPostControls = () => {
 			)}
 
 			{neuralRendering && ! nrTooBig && ( denoised ? ( <>
+				{/* A straight blend between the render and the model's version, so this is the one that
+				    behaves predictably — the two below are handed to the model as inputs, not applied
+				    after it, so their effect is not proportional to the number. */}
 				<Row>
-					<Slider label={"Intensity"} min={0} max={1} step={0.01} value={[ nrIntensity ]}
-						onFinishChange={handleNRSettingChange( 'intensity', 'nrIntensity' )} />
+					<Slider label={"Amount"} unit="%" min={0} max={100} step={1} precision={0}
+						value={[ asPercent( nrIntensity ) ]}
+						onFinishChange={onPercent( 'intensity', 'nrIntensity' )} />
 				</Row>
 				<Row>
-					<Slider label={"Local Tone"} min={0} max={2} step={0.01} value={[ nrLocalTone ]}
-						onFinishChange={handleNRSettingChange( 'localTone', 'nrLocalTone' )} />
+					<Slider label={"Local Light"} unit="%" min={- 100} max={100} step={1} precision={0}
+						value={[ asOffset( nrLocalTone ) ]}
+						onFinishChange={onOffset( 'localTone', 'nrLocalTone' )} />
 				</Row>
 				<Row>
-					<Slider label={"Local Structure"} min={0} max={2} step={0.01} value={[ nrLocalStructure ]}
-						onFinishChange={handleNRSettingChange( 'localStructure', 'nrLocalStructure' )} />
+					<Slider label={"Fine Details"} unit="%" min={- 100} max={100} step={1} precision={0}
+						value={[ asOffset( nrLocalStructure ) ]}
+						onFinishChange={onOffset( 'localStructure', 'nrLocalStructure' )} />
 				</Row>
-				{/* 0 keeps the renderer's colour exactly; 1 takes the network's, which measured 6 %
-				    less saturated than the render on a 1.9M-tri interior. */}
+				{/* 0 keeps the render's own chroma; 100 takes the model's, which measured 6 % less
+				    saturated on a 1.9M-tri interior while brightness and detail stayed put. */}
 				<Row>
-					<Slider label={"Model Color"} min={0} max={1} step={0.01} value={[ nrColorStrength ]}
-						onFinishChange={handleNRSettingChange( 'colorStrength', 'nrColorStrength' )} />
+					<Slider label={"AI Color"} unit="%" min={0} max={100} step={1} precision={0}
+						value={[ asPercent( nrColorStrength ) ]}
+						onFinishChange={onPercent( 'colorStrength', 'nrColorStrength' )} />
 				</Row>
 				<Row>
 					<span className="opacity-50 text-[10px] leading-snug">
-						Runs on the traced image, before any upscale. Downloads a 141 MB model on first use.
+						Adds fine detail and shapes local light, like a retoucher. Runs once when the render
+						finishes. Downloads a 141 MB model the first time. AI Color decides whether the
+						colour comes from your render or the model.
 					</span>
 				</Row>
 			</> ) : (
