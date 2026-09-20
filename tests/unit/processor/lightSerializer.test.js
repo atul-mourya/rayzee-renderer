@@ -243,18 +243,18 @@ describe( 'LightSerializer', () => {
 
 		} );
 
-		it( 'converts Power (W) to radiant intensity via ÷4π', () => {
+		it( 'passes radiant intensity (W/sr) straight through', () => {
 
 			const serializer = new LightSerializer();
-			serializer.addPointLight( makePointLight( 1000 ) );
+			serializer.addPointLight( makePointLight( 1000 / ( 4 * Math.PI ) ) );
 			expect( serializer.pointLightCache[ 0 ].data[ 6 ] ).toBeCloseTo( 1000 / ( 4 * Math.PI ), 4 );
 
 		} );
 
-		it( 'folds per-light exposure (EV stops) into power', () => {
+		it( 'folds per-light exposure (EV stops) into the emission', () => {
 
 			const serializer = new LightSerializer();
-			const light = makePointLight( 1000 );
+			const light = makePointLight( 1000 / ( 4 * Math.PI ) );
 			light.userData = { exposure: 1 }; // +1 stop → ×2
 			serializer.addPointLight( light );
 			expect( serializer.pointLightCache[ 0 ].data[ 6 ] ).toBeCloseTo( 2000 / ( 4 * Math.PI ), 4 );
@@ -326,10 +326,10 @@ describe( 'LightSerializer', () => {
 
 		} );
 
-		it( 'converts Power (W) to radiant intensity via ÷4π', () => {
+		it( 'passes radiant intensity (W/sr) straight through', () => {
 
 			const serializer = new LightSerializer();
-			serializer.addSpotLight( makeSpotLight( 1000 ) );
+			serializer.addSpotLight( makeSpotLight( 1000 / ( 4 * Math.PI ) ) );
 			expect( serializer.spotLightCache[ 0 ].data[ 9 ] ).toBeCloseTo( 1000 / ( 4 * Math.PI ), 4 );
 
 		} );

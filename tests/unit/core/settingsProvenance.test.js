@@ -70,14 +70,12 @@ describe( 'render profiles', () => {
 
 	it( 'states the viewer tuning the engine ships', () => {
 
-		expect( RENDER_PROFILES.viewer.areaLightIntensityScale ).toBe( 0.1 );
 		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 270 );
 
 	} );
 
 	it( 'leaves authored values alone under the physical profile', () => {
 
-		expect( RENDER_PROFILES.physical.areaLightIntensityScale ).toBe( 1.0 );
 		expect( RENDER_PROFILES.physical.environmentRotation ).toBe( 0 );
 
 	} );

@@ -1,10 +1,11 @@
 import { Vector3, Quaternion } from 'three';
 import { blackbodyToLinearRGB } from './blackbody.js';
+import { lightPower } from '../LightUnits.js';
 
-// Point & spot lights specify Power in Watts; the shader uses radiant intensity
-// (W/sr) as `intensity / dist²`, so convert with I = P / 4π (isotropic emitter),
-// matching Blender. Area lights are already radiant power; the Sun is irradiance.
-const INV_4PI = 1 / ( 4 * Math.PI );
+// Scene lights hold the three.js quantity in radiometric units (see LightUnits.js): point and
+// spot in W/sr, the Sun in W/m², area lights in radiance. The GPU buffer wants radiant intensity
+// for point/spot — already what they hold — and radiant POWER for area lights, which the shader
+// turns back into radiance with its own π·area. This is where that adaptation happens.
 
 // Effective emission colour + intensity after per-light Exposure (EV stops) and
 // optional blackbody Temperature tint (Blender-style). Both fold into the values
@@ -61,9 +62,10 @@ export class LightSerializer {
 
 	calculateLightImportance( light, type = 'directional' ) {
 
-		// Calculate luminance-weighted importance
+		// Ranked on Power, so the ordering does not shift when a light type's stored quantity
+		// differs from what the panel shows.
 		const luminance = 0.2126 * light.color.r + 0.7152 * light.color.g + 0.0722 * light.color.b;
-		let importance = light.intensity * luminance;
+		let importance = lightPower( light ) * luminance;
 
 		// Area lights get additional importance based on size
 		if ( type === 'area' ) {
@@ -172,6 +174,12 @@ export class LightSerializer {
 
 		const em = effectiveEmission( light );
 
+		// The shader recovers radiance as power/(π·area), so hand it the power that inverts to
+		// the radiance the light holds. Area is measured off u/v exactly as the shader does it.
+		const rectArea = 4 * u.clone().cross( v ).length();
+		const emittingArea = shape > 0.5 ? rectArea * Math.PI / 4 : rectArea;
+		const power = em.intensity * Math.PI * ( normalize > 0.5 ? emittingArea : 1 );
+
 		// Store in cache with importance (16 floats, vec4-aligned)
 		this.areaLightCache.push( {
 			data: [
@@ -179,7 +187,7 @@ export class LightSerializer {
 				u.x, u.y, u.z, // u half-vector (3)
 				v.x, v.y, v.z, // v half-vector (3)
 				em.r, em.g, em.b, // color (3) — incl. temperature tint
-				em.intensity, // radiant power in Watts (1) — incl. exposure
+				power, // radiant power in Watts (1) — incl. exposure
 				normalize, // power-normalize flag (1)
 				spread, // emission spread in radians (1)
 				shape, // 0 = rect, 1 = disk/ellipse (1)
@@ -209,7 +217,7 @@ export class LightSerializer {
 			data: [
 				position.x, position.y, position.z, // position (3)
 				em.r, em.g, em.b, // color (3) — incl. temperature tint
-				em.intensity * INV_4PI, // radiant intensity W/sr = power(W)/4π, incl. exposure (1)
+				em.intensity, // radiant intensity W/sr, incl. exposure (1)
 				light.distance || 0.0, // cutoff distance (0 = infinite) (1)
 				light.decay !== undefined ? light.decay : 2.0 // decay exponent (1)
 			],
@@ -252,7 +260,7 @@ export class LightSerializer {
 				position.x, position.y, position.z, // position (3)
 				direction.x, direction.y, direction.z, // direction (3)
 				em.r, em.g, em.b, // color (3) — incl. temperature tint
-				em.intensity * INV_4PI, // radiant intensity W/sr = power(W)/4π, incl. exposure (1)
+				em.intensity, // radiant intensity W/sr, incl. exposure (1)
 				light.angle || Math.PI / 4, // cone half-angle in radians (1)
 				light.penumbra || 0.0, // penumbra [0,1] (1)
 				light.distance || 0.0, // cutoff distance (0 = infinite) (1)

@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { Group, Object3D, PerspectiveCamera, RectAreaLight, Scene, Vector3 } from 'three';
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
+import { ISSUE_CODES, IssueLog } from '@/core/EngineIssues.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
 import { getRenderProfile } from '@/core/EngineDefaults.js';
 
@@ -51,7 +52,7 @@ describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 
 		const light = importPlaceholder();
 		expect( light.userData.normalize ).toBe( true );
-		expect( light.intensity ).toBeCloseTo( 200 * Math.PI * 0.49, 6 );
+		expect( light.intensity ).toBeCloseTo( 200, 6 ); // stored as radiance
 		expect( serializedRadiance( light ) ).toBeCloseTo( 200, 6 );
 
 	} );
@@ -73,10 +74,10 @@ describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 
 	} );
 
-	it( 'applies the profile scale on top, and nothing else', () => {
+	it( 'reproduces the authored radiance under every profile', () => {
 
-		const viewer = importPlaceholder( { profile: 'viewer' } );
-		expect( serializedRadiance( viewer ) ).toBeCloseTo( 200 * getRenderProfile( 'viewer' ).areaLightIntensityScale, 6 );
+		expect( serializedRadiance( importPlaceholder( { profile: 'viewer' } ) ) ).toBeCloseTo( 200, 6 );
+		expect( serializedRadiance( importPlaceholder( { profile: 'physical' } ) ) ).toBeCloseTo( 200, 6 );
 
 	} );
 
@@ -149,9 +150,66 @@ describe( 'AssetLoader — host-provided RectAreaLight', () => {
 
 	it( 'agrees with the placeholder path at equal authored radiance', () => {
 
-		const viewerScale = getRenderProfile( 'viewer' ).areaLightIntensityScale;
-		const host = serializedRadiance( adoptHostLight( { intensity: 200 * viewerScale } ) );
+		const host = serializedRadiance( adoptHostLight( { intensity: 200 } ) );
 		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { profile: 'viewer' } ) ), 6 );
+
+	} );
+
+} );
+
+// The record itself says what it is, so a renamed or unnamed placeholder still lights the scene.
+function importRecord( { nodeName = 'RectAreaLightPlaceholder', issues = null, ...record } = {} ) {
+
+	const root = new Group();
+	const scaled = new Group();
+	scaled.scale.set( 0.01, 0.01, 0.01 );
+	const placeholder = new Object3D();
+	placeholder.name = nodeName;
+	placeholder.userData = {
+		type: 'RectAreaLight', name: 'ceilingLight', color: [ 1, 1, 1 ],
+		intensity: 200, width: 70, height: 70, ...record,
+	};
+	scaled.add( placeholder );
+	root.add( scaled );
+
+	new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), {
+		profile: getRenderProfile( 'physical' ), issues,
+	} ).processModelObjects( root );
+
+	return placeholder.children.find( o => o.isRectAreaLight ) ?? null;
+
+}
+
+describe( 'AssetLoader — placeholder record handling', () => {
+
+	it( 'keys on the record type, not the node name', () => {
+
+		expect( serializedRadiance( importRecord( { nodeName: 'Light_001' } ) ) ).toBeCloseTo( 200, 6 );
+
+	} );
+
+	it( 'imports a record that carries no name', () => {
+
+		const light = importRecord( { name: undefined } );
+		expect( light ).not.toBeNull();
+		expect( light.name ).toBe( 'RectAreaLight' );
+
+	} );
+
+	// The exporter writes `power` from the light's UNSCALED dimensions, so it disagrees with the
+	// world area whenever an ancestor scale is non-uniform. `intensity` is the trustworthy field.
+	it( 'ignores the serialized power', () => {
+
+		expect( serializedRadiance( importRecord( { power: 1 } ) ) ).toBeCloseTo( 200, 6 );
+		expect( serializedRadiance( importRecord( { power: 1e6 } ) ) ).toBeCloseTo( 200, 6 );
+
+	} );
+
+	it( 'records an issue instead of dropping an unusable record silently', () => {
+
+		const issues = new IssueLog();
+		expect( importRecord( { width: 0, issues } ) ).toBeNull();
+		expect( issues.list.map( e => e.code ) ).toEqual( [ ISSUE_CODES.LIGHT_PLACEHOLDER_INVALID ] );
 
 	} );
 

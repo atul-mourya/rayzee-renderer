@@ -304,9 +304,8 @@ the strings, so never rename or repurpose one.
   but reaching no stage, which is how a typo becomes a wrong image.
 - **`RENDER_PROFILES`** (`EngineDefaults.js`) — product decisions for a real-time viewer that are not
   physical constants, collected so choosing between them is one flag rather than a hunt:
-  `areaLightIntensityScale` (glTF placeholder area-light power), `environmentRotation`, `toneMapping`,
-  `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; `physical` selects
-  AgX and drops the grade. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
+  `environmentRotation`, `toneMapping`, `saturation`. `viewer` is the default and `ENGINE_DEFAULTS`
+  mirrors it exactly; `physical` selects AgX and drops the grade. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
   throws rather than silently selecting viewer tuning.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
@@ -377,6 +376,38 @@ their switches unless `Final Denoise (OIDN)` is on.
   `rayzee-patch` and written up in `app/public/dlss/PATCHES.md`; re-vendoring without re-applying
   them breaks the retouch pass. Its URL is `AssetConfig.dlssRuntimeUrl` — a plain script the host
   serves, since it installs `globalThis.DLSSRuntime` and cannot be imported.
+
+### Light units (`LightUnits.js`)
+**Every light in the scene graph is a valid three.js light**, carrying the quantity three.js expects
+for its type in radiometric units: **W/sr** for point/spot, **W/m²** for directional, **radiance**
+for area, with `width`/`height` in world metres at **unit scale**. three.js' shading maths is
+unit-agnostic, so the raster fallback (`pathTracerEnabled = false`), the light helpers and any host
+reading `sceneModel` are correct for free. Blender-style **Power (W)** — what the Lights panel edits
+— is a view, converted by `lightPower()` / `setLightPower()` and nowhere else; `LightSerializer`
+converts the other way when it fills the GPU buffer (area lights become power, which the shader
+turns back into radiance with its own π·area).
+- ⚠️ **three.js' rasteriser ignores a light's inherited scale**: `RectAreaLightNode` builds its basis
+  with `extractRotation`, which normalises scale away, so `width`/`height` are read as WORLD metres.
+  A light authored as 70 units under a 0.01 node scale rasters as a **70 metre** panel — measured
+  58.7x too bright on 24001884.glb. `bakeAreaLightScale()` is what keeps every reader agreeing, and
+  it is idempotent.
+- ⚠️ **Lights exist twice.** `LightManager.transferSceneLights()` clones each light out of
+  `meshScene` (what the raster draws) into `app.scene` = `PathTracerStage.scene` (what the serializer
+  walks), flattening the world transform onto the clone. Mutating one copy does not reach the other.
+- Resizing or reshaping a normalized area light must hold Power constant (Blender's Normalize) —
+  `preserveLightPower()`, used by the app's light-property handlers.
+
+### Area lights arrive as placeholders
+glTF has no area light, so a three.js host's patched `GLTFExporter` writes the `RectAreaLight` into a
+node's `extras` (`type: 'RectAreaLight'`) and leaves the node itself carrying the transform.
+`AssetLoader` keys on that **type**, not the node's name. `intensity` is three.js radiance, which is
+already the stored quantity, so it is used verbatim; only the rectangle is normalised to world
+metres.
+⚠️ The record's `power`, `position`, `rotation` and `direction` are deliberately unused — the node's
+matrix already holds the transform, `direction` is not normalised, and `power` was written from the
+light's *unscaled* dimensions, so it is wrong under a non-uniform ancestor scale (25 % low on
+24155522.glb's window light). A record with no usable size or intensity records
+`ISSUE_CODES.LIGHT_PLACEHOLDER_INVALID` rather than vanishing.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction

@@ -19,6 +19,7 @@ import { getAssetConfig } from '../AssetConfig.js';
 import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
+import { bakeAreaLightScale, LUMENS_PER_WATT } from '../LightUnits.js';
 import { getRenderProfile } from '../EngineDefaults.js';
 
 // Define supported file formats
@@ -67,19 +68,43 @@ function standInForSplit( source ) {
 
 }
 
-// Luminous efficacy glTF, three.js and Blender's exporter all assume (PBR_WATTS_TO_LUMENS).
-const LUMENS_PER_WATT = 683;
+const PLACEHOLDER_SHAPES = new Set( [ 'rectangle', 'square', 'disk', 'ellipse' ] );
 
-// three.js nits → the engine's radiant power, inverting areaLightRadiance.
-function areaLightPowerFactor( node, width, height, userData ) {
+/**
+ * Build the light a placeholder node stands for. glTF has no area light, so a three.js host's
+ * patched GLTFExporter writes the RectAreaLight into the node's `extras` and leaves the node
+ * itself carrying the transform. `intensity` is three.js radiance, which is what the engine
+ * stores, so the number is used as authored; only the rectangle needs normalising to world
+ * metres (see `bakeAreaLightScale`).
+ *
+ * `power`, `position`, `rotation` and `direction` are present in the record and deliberately
+ * unused. The node's matrix already carries the transform, `direction` is not even normalised,
+ * and `power` was written from the light's UNSCALED dimensions — on 24155522.glb's window light,
+ * whose ancestor scale is non-uniform (1.6 × 1.2 m in world, not 1.2 × 1.2), it is 25 % low.
+ *
+ * @returns {RectAreaLight|null} null when the record carries no usable size or intensity.
+ */
+function areaLightFromPlaceholder( node, record ) {
 
-	if ( ! ( userData.normalize ?? true ) ) return Math.PI;
+	const width = Number( record.width );
+	const height = Number( record.height );
+	const intensity = Number( record.intensity );
+	if ( ! ( width > 0 ) || ! ( height > 0 ) || ! Number.isFinite( intensity ) ) return null;
 
-	const shapeFactor = userData.shape === 'ellipse' || userData.shape === 'disk' ? Math.PI / 4 : 1;
-	const scale = node.getWorldScale( new Vector3() );
-	// abs: a mirrored ancestor decomposes negative; the serializer takes the area as |u × v|.
-	const factor = Math.PI * shapeFactor * Math.abs( width * scale.x * height * scale.y );
-	return Number.isFinite( factor ) ? factor : Math.PI;
+	const shape = PLACEHOLDER_SHAPES.has( record.shape ) ? record.shape : 'rectangle';
+	const color = Array.isArray( record.color ) && record.color.length >= 3 ? record.color : [ 1, 1, 1 ];
+
+	const light = new RectAreaLight( new Color( ...color ), intensity, width, height );
+	light.name = record.name || 'RectAreaLight';
+	light.userData.normalize = record.normalize ?? true;
+	light.userData.spread = Number.isFinite( record.spread ) ? record.spread : Math.PI;
+	light.userData.shape = shape;
+
+	// Parented before baking: the bake needs the node's world scale, and on the append path
+	// nothing has refreshed the tree yet.
+	node.add( light );
+	bakeAreaLightScale( light );
+	return light;
 
 }
 
@@ -2084,22 +2109,18 @@ export class AssetLoader extends EventDispatcher {
 
 			const userData = object.userData;
 
-			// An adopted light carries three.js units; convert as point/spot are below.
-			if ( object.isRectAreaLight && ! userData.__radianceConverted ) {
-
-				object.intensity *= areaLightPowerFactor( object, object.width, object.height, userData );
-				userData.__radianceConverted = true;
-
-			}
+			// three.js states RectAreaLight.intensity as radiance, which is what the engine
+			// stores, so only the rectangle needs putting into world metres.
+			if ( object.isRectAreaLight ) bakeAreaLightScale( object );
 
 			// Punctual lights arrive photometric: glTF (and three.js) state point/spot in
-			// candela and directional in lux. The engine is radiometric Blender Watts, which
-			// LightSerializer turns into W/sr with ÷4π, so the luminous efficacy has to be
-			// divided back out — Blender's own glTF importer does exactly this. Skipping it
-			// rendered every Blender lamp 683x too bright.
+			// candela and directional in lux. The engine keeps the same QUANTITY in radiometric
+			// units — W/sr and W/m² — so only the luminous efficacy is divided back out, which
+			// is what Blender's own glTF importer does. Skipping it rendered every Blender lamp
+			// 683x too bright.
 			if ( ( object.isPointLight || object.isSpotLight ) && ! userData.__candelaConverted ) {
 
-				object.intensity *= 4 * Math.PI / LUMENS_PER_WATT;
+				object.intensity /= LUMENS_PER_WATT;
 				userData.__candelaConverted = true;
 
 			}
@@ -2111,31 +2132,17 @@ export class AssetLoader extends EventDispatcher {
 
 			}
 
-			// Process ceiling lights
-			if ( object.name.startsWith( 'RectAreaLightPlaceholder' ) &&
-				userData.name
-				// && userData.name.includes( "ceilingLight" )
-			) {
+			// An area light serialized into a placeholder node. Keyed on the record's own type
+			// rather than the node's name, so a renamed placeholder still lights the scene.
+			if ( userData.type === 'RectAreaLight' ) {
 
-				if ( userData.type === 'RectAreaLight' ) {
-
-					const normalize = userData.normalize ?? true;
-					const shape = userData.shape ?? 'rectangle';
-					const power = userData.intensity * areaLightPowerFactor( object, userData.width, userData.height, userData );
-					const light = new RectAreaLight(
-						new Color( ...userData.color ),
-						power * this._profile.areaLightIntensityScale,
-						userData.width,
-						userData.height
-					);
-					light.userData.normalize = normalize;
-					light.userData.spread = Number.isFinite( userData.spread ) ? userData.spread : Math.PI;
-					light.userData.shape = shape;
-					light.userData.__radianceConverted = true; // already power, and traverse() reaches it
-					light.name = userData.name;
-					object.add( light );
-
-				}
+				const light = areaLightFromPlaceholder( object, userData );
+				if ( ! light ) this._issues?.record(
+					ISSUE_CODES.LIGHT_PLACEHOLDER_INVALID,
+					`area-light placeholder "${object.name}" carries no usable size or intensity`,
+					{ node: object.name, record: userData },
+					ISSUE_SEVERITY.WARNING,
+				);
 
 			}
 
