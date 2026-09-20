@@ -28,6 +28,9 @@ export const GLTF_SAMPLE_ASSETS_BASE = 'https://cdn.jsdelivr.net/gh/KhronosGroup
 // DEFAULT_STATE = engine defaults + UI-only keys
 export const DEFAULT_STATE = {
 	...ENGINE_DEFAULTS,
+	// The app turns the final denoise on out of the box — see INTERACTIVE_RENDER_CONFIG. The engine
+	// default stays off so an embedder is not made to fetch OIDN's weights it never asked for.
+	enableOIDN: true,
 	// UI-only keys (not needed by the engine)
 	model: 9,
 	environment: 'aristea_wreck_puresky',

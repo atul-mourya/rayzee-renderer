@@ -70,8 +70,20 @@ const NeuralPostControls = () => {
 
 	return (
 		<>
+			{/* Both passes are gated on a denoised frame rather than merely warned about: on raw
+			    Monte-Carlo noise the upscaler measured worse than a plain resize, and the detail pass
+			    reads noise as detail. One line says why, once, for both. */}
+			{! denoised && (
+				<Row>
+					<span className="opacity-50 text-[10px] leading-snug">
+						Turn on Final Denoise (OIDN) to use the AI passes — they need a clean image.
+					</span>
+				</Row>
+			)}
+
 			<Row>
-				<Switch label={"AI Upscaler"} checked={enableUpscaler} onCheckedChange={handleEnableUpscalerChange} />
+				<Switch label={"AI Upscaler"} checked={enableUpscaler} disabled={! denoised}
+					onCheckedChange={handleEnableUpscalerChange} />
 			</Row>
 
 			{enableUpscaler && ( <>
@@ -94,14 +106,7 @@ const NeuralPostControls = () => {
 					</Select>
 				</Row>
 
-				{/* A requirement, not help — it stays on the panel where it cannot be missed. */}
-				{upscalerBackend === 'dlss' ? ( ! denoised && (
-					<Row>
-						<span className="opacity-50 text-[10px] leading-snug">
-							Needs a denoiser — turn on Final Denoise (OIDN). On a noisy image it is worse than a plain resize.
-						</span>
-					</Row>
-				) ) : ( <>
+				{upscalerBackend === 'dlss' ? null : ( <>
 					<Row>
 						<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
 							<span className="opacity-50 text-xs truncate">Scale Factor</span>
@@ -135,7 +140,8 @@ const NeuralPostControls = () => {
 			<Row className="pt-2">
 				<Switch
 					label={<>AI Retouch<InfoTip text="A retouch pass over the finished render: adds fine surface detail and shapes light locally, the way a photographer would work on a photograph. Runs once when the render completes, before any upscale. Downloads a 141 MB model the first time." /></>}
-					checked={neuralRendering} onCheckedChange={handleNeuralRenderingChange} />
+					checked={neuralRendering} disabled={! denoised}
+					onCheckedChange={handleNeuralRenderingChange} />
 			</Row>
 
 			{neuralRendering && nrTooBig && (
@@ -148,7 +154,7 @@ const NeuralPostControls = () => {
 				</Row>
 			)}
 
-			{neuralRendering && ! nrTooBig && ( denoised ? ( <>
+			{neuralRendering && ! nrTooBig && ( <>
 				{/* Amount is a straight blend, so it behaves predictably. Local Light and Fine Details
 				    are handed to the model as inputs rather than applied after it, which is why their
 				    effect is not proportional to the number. */}
@@ -178,13 +184,7 @@ const NeuralPostControls = () => {
 						value={[ asPercent( nrColorStrength ) ]}
 						onFinishChange={onPercent( 'colorStrength', 'nrColorStrength' )} />
 				</Row>
-			</> ) : (
-				<Row>
-					<span className="opacity-50 text-[10px] leading-snug">
-						Needs a denoiser — turn on Final Denoise (OIDN).
-					</span>
-				</Row>
-			) )}
+			</> )}
 		</>
 	);
 

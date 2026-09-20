@@ -806,9 +806,22 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
+	// Turning the final denoise off takes the neural passes with it. Both need a denoised frame —
+	// on raw Monte-Carlo noise the upscaler measured worse than a plain resize — so leaving their
+	// switches on while the engine silently skipped them would be a lie on the panel.
 	handleEnableOIDNChange: handleChange(
-		val => set( { enableOIDN: val } ),
-		( val, app ) => app.denoisingManager.setOIDNEnabled( val ),
+		val => set( val ? { enableOIDN: val } : { enableOIDN: val, enableUpscaler: false, neuralRendering: false } ),
+		( val, app ) => {
+
+			app.denoisingManager.setOIDNEnabled( val );
+			if ( ! val ) {
+
+				app.denoisingManager.setUpscalerEnabled( false );
+				app.denoisingManager.setNeuralRendering( false );
+
+			}
+
+		},
 		false
 	),
 

@@ -1079,7 +1079,11 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	renderMode: ENGINE_DEFAULTS.renderMode, enableAlphaShadows: ENGINE_DEFAULTS.enableAlphaShadows,
 	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
-	enableOIDN: false, oidnQuality: 'fast',
+	// On, like production. The final pass costs one cheap denoise when the preview settles, and both
+	// neural passes need a denoised frame to be worth running — on Monte-Carlo noise the upscaler
+	// measured worse than a plain resize. ⚠️ `ENGINE_DEFAULTS.enableOIDN` stays false: the bench
+	// renders against it and every quality golden would move.
+	enableOIDN: true, oidnQuality: 'fast',
 	interactionModeEnabled: true,
 	useAdaptiveSampling: true, // idle refine stops early when converged; frozen during motion
 	noiseThreshold: 0.1, // loose: preview wants a fast settle, not a clean one
