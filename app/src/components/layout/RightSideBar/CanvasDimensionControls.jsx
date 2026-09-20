@@ -2,6 +2,7 @@ import { RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
 import { usePathTracerStore } from '@/store';
+import { SR_SCALE } from 'rayzee';
 import { ASPECT_RATIO_PRESETS, RESOLUTION_PRESETS, isPanorama } from '@/Constants';
 
 
@@ -31,7 +32,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 	// The delivered image, not the traced one: an upscaler enlarges the result, so reporting the
 	// render size here left the panel disagreeing with the picture on screen. DLSS is a fixed 2x.
-	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'dlss' ? 2 : upscalerScale ) : 1;
+	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'dlss' ? SR_SCALE : upscalerScale ) : 1;
 	const outputWidth = canvasWidth * upscaleFactor;
 	const outputHeight = canvasHeight * upscaleFactor;
 	const showOrientation = aspectRatioPreset !== '1:1';

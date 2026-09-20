@@ -28,11 +28,14 @@
  */
 
 import { EngineEvents } from '../EngineEvents.js';
+import { createLogger } from '../utils/Logger.js';
 import { PackedToneMapper } from '../Processor/ToneMapGPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 /** The network is a fixed 2x per axis. */
 export const SR_SCALE = 2;
+
+const log = createLogger( 'dlss' );
 
 /**
  * Largest input side the runtime actually survives — 2048, i.e. 4096 output.
@@ -390,7 +393,7 @@ export class DLSSSuperRes {
 
 		} catch ( e ) {
 
-			console.warn( 'DLSSSuperRes: teardown', e );
+			log.warn( 'super resolution teardown:', e );
 
 		}
 

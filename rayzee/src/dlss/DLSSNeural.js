@@ -29,6 +29,7 @@
  */
 
 import { PackedToneMapper } from '../Processor/ToneMapGPU.js';
+import { createLogger } from '../utils/Logger.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 /**
@@ -94,6 +95,8 @@ function splitSettings( settings = {} ) {
  * reserve (`MAX_STORAGE_TEXTURE_SIZE`, 2048) already caps that at exactly 4.19 MP. The check below
  * is therefore unreachable today and exists as a floor under a raised reserve.
  */
+const log = createLogger( 'dlss' );
+
 export const DLSS_NR_MAX_PIXELS = 2048 * 2048;
 
 /** Ranges the runtime clamps to. `skinStructure: -1` means "follow localStructure". */
@@ -442,7 +445,7 @@ export class DLSSNeural {
 
 		} catch ( e ) {
 
-			console.warn( 'DLSSNeural: teardown', e );
+			log.warn( 'retouch teardown:', e );
 
 		}
 

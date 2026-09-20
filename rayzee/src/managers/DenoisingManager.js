@@ -2,6 +2,11 @@ import { EventDispatcher } from 'three';
 import { OIDNDenoiser } from '../Passes/OIDNDenoiser.js';
 import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
+import { createLogger } from '../utils/Logger.js';
+
+// The neural passes live in `../dlss/` but report through the manager that drives them, so they
+// share one namespace: `rayzee.log.only( 'dlss' )` shows the whole chain.
+const dlssLog = createLogger( 'dlss' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
@@ -902,14 +907,14 @@ export class DenoisingManager extends EventDispatcher {
 
 		if ( ! this.upscalerCanvas ) {
 
-			console.warn( 'DLSS neural pass skipped: the engine has no overlay canvas to present on' );
+			dlssLog.warn( 'neural pass skipped: the engine has no overlay canvas to present on' );
 			return;
 
 		}
 
 		if ( ! this.pipeline?.context?.getTexture( 'oidn:output' ) ) {
 
-			console.warn( 'DLSS neural pass skipped: no denoised picture — it needs OIDN' );
+			dlssLog.warn( 'neural pass skipped: no denoised picture — it needs OIDN' );
 			return;
 
 		}
@@ -933,7 +938,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( wantNR && ! runNR ) {
 
-				console.warn(
+				dlssLog.warn(
 					`Neural rendering skipped: the render is ${( nrPixels / 1e6 ).toFixed( 1 )} MP, above the ` +
 					`${( nrModule.DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP the pass survives.` +
 					( wantSR ? ' The upscale still ran.' : '' )
@@ -1022,7 +1027,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		} catch ( error ) {
 
-			console.warn( 'DLSS neural pass failed', error );
+			dlssLog.warn( 'neural pass failed', error );
 
 		} finally {
 
