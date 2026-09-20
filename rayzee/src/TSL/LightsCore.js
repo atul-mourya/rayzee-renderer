@@ -251,10 +251,15 @@ export const getDistanceAttenuation = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-// Spot light attenuation
+// Spot cone falloff, Blender/Cycles' shape: the soft edge is a smoothstep over a band of
+// COSINE width (1 - cosCone) * blend, not one that ends at the inner cone's angle. The two
+// agree at blend 0 and 1 and diverge in between — three.js' ramp ran twice as wide at 0.5,
+// leaving the penumbra up to 2x dark against a Cycles render of the same lamp.
 export const getSpotAttenuation = /*@__PURE__*/ wgslFn( `
-	fn getSpotAttenuation( coneCosine: f32, penumbraCosine: f32, angleCosine: f32 ) -> f32 {
-		return smoothstep( coneCosine, penumbraCosine, angleCosine );
+	fn getSpotAttenuation( coneCosine: f32, blend: f32, angleCosine: f32 ) -> f32 {
+		let smoothWidth = ( 1.0 - coneCosine ) * blend;
+		if ( smoothWidth <= 0.0 ) { return 1.0; }
+		return smoothstep( 0.0, 1.0, ( angleCosine - coneCosine ) / smoothWidth );
 	}
 ` );
 

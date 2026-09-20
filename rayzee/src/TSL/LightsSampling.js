@@ -261,10 +261,7 @@ export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectio
 
 		If( ls_valid, () => {
 
-			// Penumbra: inner cone angle = outerAngle * (1 - penumbra)
-			// Clamp penumbraCosAngle > coneCosAngle to avoid smoothstep UB when penumbra = 0
-			const penumbraCosAngle = cos( light.angle.mul( float( 1.0 ).sub( light.penumbra ) ) ).max( coneCosAngle.add( 1e-5 ) ).toVar();
-			const coneAttenuation = getSpotAttenuation( { coneCosine: coneCosAngle, penumbraCosine: penumbraCosAngle, angleCosine: spotCosAngle } );
+			const coneAttenuation = getSpotAttenuation( { coneCosine: coneCosAngle, blend: light.penumbra, angleCosine: spotCosAngle } );
 			const distanceAttenuation = getDistanceAttenuation( { lightDistance: lightDist, cutoffDistance: light.distance, decayExponent: light.decay } );
 
 			// Gobo projection mask + IES photometric profile — both 1.0 when not assigned.

@@ -3,7 +3,9 @@
 ## Bugs
 - final render transmission bounces not sufficient
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data
+- though oidn enabled by default, it doesnt show up on convergence
 - directional lights physical accuracy 
+- audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
@@ -17,6 +19,25 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 
 ### Known
+
+- [ ] **What a Blender glTF export cannot carry**, measured against Cycles renders of the same scene
+  (scenes + probes in this session's scratchpad). The engine side is now at parity: point, spot and
+  sun all match Cycles to render noise, and three.js' own glTF exporter writes `intensity` straight
+  through, so it agrees that glTF numbers are photometric (candela / lux). What is still lost is on
+  Blender's side:
+  - **Area lamps are dropped entirely** — `__filter_lights_punctual` rejects `AREA` and `HEMI` with
+    a warning, and glTF has no area light. The node survives as an empty. Biggest visible gap on a
+    real scene; the workaround is an emissive mesh, which does export.
+  - **Sun strength is exported wrong by Blender** — every sun writes 683 lux whatever its energy.
+    In Blender 5.x lights carry a node tree by default and the exporter's SUN branch reads the
+    Emission node's Strength (always 1.0) instead of `light.energy`; point/spot escape it only
+    because their branch falls back to `energy`. Verified on 5.1.1 at energies 1 / 2 / 5.
+  - **Soft shadows are lost** — glTF point/spot are true points, so a lamp's `shadow_soft_size`
+    and a sun's `angle` have nowhere to go. The engine's spot sampler is named "WithRadius" but no
+    radius is plumbed through the serializer.
+  - Blender's COMPAT / RAW export modes write watts rather than candela and are indistinguishable
+    from SPEC in the file. The importer assumes SPEC, which is Blender's default and what its own
+    importer assumes.
 
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] indirect lights looks too weak

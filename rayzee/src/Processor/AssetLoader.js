@@ -67,6 +67,9 @@ function standInForSplit( source ) {
 
 }
 
+// Luminous efficacy glTF, three.js and Blender's exporter all assume (PBR_WATTS_TO_LUMENS).
+const LUMENS_PER_WATT = 683;
+
 // three.js nits → the engine's radiant power, inverting areaLightRadiance.
 function areaLightPowerFactor( node, width, height, userData ) {
 
@@ -2089,14 +2092,22 @@ export class AssetLoader extends EventDispatcher {
 
 			}
 
-			// glTF punctual point/spot intensity is candela (W/sr); the engine's light
-			// model is Blender-style Power (W) that LightSerializer divides by 4π. Convert
-			// glTF candela → Power once at import (×4π) so it nets to the correct I/d².
-			// Directional (lux ≈ irradiance) is used directly and needs no conversion.
+			// Punctual lights arrive photometric: glTF (and three.js) state point/spot in
+			// candela and directional in lux. The engine is radiometric Blender Watts, which
+			// LightSerializer turns into W/sr with ÷4π, so the luminous efficacy has to be
+			// divided back out — Blender's own glTF importer does exactly this. Skipping it
+			// rendered every Blender lamp 683x too bright.
 			if ( ( object.isPointLight || object.isSpotLight ) && ! userData.__candelaConverted ) {
 
-				object.intensity *= 4 * Math.PI;
+				object.intensity *= 4 * Math.PI / LUMENS_PER_WATT;
 				userData.__candelaConverted = true;
+
+			}
+
+			if ( object.isDirectionalLight && ! userData.__luxConverted ) {
+
+				object.intensity /= LUMENS_PER_WATT;
+				userData.__luxConverted = true;
 
 			}
 

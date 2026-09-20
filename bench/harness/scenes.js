@@ -258,7 +258,7 @@ function makeCatcherRig() {
 
 	// A hard light source: the catcher's shadow ratio is an irradiance-weighted NEE dual sum,
 	// and a directional light gives it a crisp edge that env-only lighting would wash out.
-	const sun = new DirectionalLight( 0xffffff, 3.5 );
+	const sun = new DirectionalLight( 0xffffff, sunLux( 3.5 ) );
 	sun.position.set( 4, 6, 3 ); // default target is the origin, so this aims down-and-left
 	group.add( sun );
 
@@ -701,7 +701,7 @@ function makeAlphaCutoutRig() {
 	floor.rotation.set( - Math.PI / 2, 0, 0 );
 	group.add( floor );
 
-	const sun = new DirectionalLight( 0xffffff, 10 );
+	const sun = new DirectionalLight( 0xffffff, sunLux( 10 ) );
 	sun.position.set( 3, 6, 4 );
 	group.add( sun );
 
@@ -1291,6 +1291,16 @@ function rectConfigFactor( px, py, x0, x1, y0, y1, h ) {
 
 	const f = ( dx, dy ) => Math.sign( dx ) * Math.sign( dy ) * rectCornerFactor( Math.abs( dx ), Math.abs( dy ), h );
 	return f( x1 - px, y1 - py ) - f( x0 - px, y1 - py ) - f( x1 - px, y0 - py ) + f( x0 - px, y0 - py );
+
+}
+
+// Rigs are authored in radiometric units; an adopted light carries photometric ones.
+const LUMENS_PER_WATT = 683;
+
+// Sun rigs are authored as irradiance (W/m²); an adopted directional light carries lux.
+function sunLux( wattsPerSqM ) {
+
+	return wattsPerSqM * LUMENS_PER_WATT;
 
 }
 
