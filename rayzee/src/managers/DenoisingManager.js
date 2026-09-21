@@ -149,6 +149,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._holdWhileMoving = null;
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
+		this._onDisplayRefresh = null;
 
 		// Resolution tracking — used for canvas restoration on reset
 		this._lastRenderWidth = 0;
@@ -1057,6 +1058,10 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( ! isStillComplete() ) return;
 
+			// The loop stops one tick after a render completes, so nothing is left to draw the closing
+			// denoise. Ordered after `_denoiserEndHandler`, which publishes the picture.
+			if ( closing ) this._onDisplayRefresh?.();
+
 			// One owner of the overlay canvas, so the neural chain and the ONNX upscaler are
 			// exclusive. The neural chain also runs on its own when only its detail pass is on.
 			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'dlss' ) ) {
@@ -1220,6 +1225,10 @@ export class DenoisingManager extends EventDispatcher {
 		this._upscalerProgressHandler = null;
 		this._upscalerEndHandler = null;
 
+		this._onReset = null;
+		this._onPostProcessRefresh = null;
+		this._onDisplayRefresh = null;
+
 		if ( this.upscalerCanvas?.parentNode ) {
 
 			this.upscalerCanvas.parentNode.removeChild( this.upscalerCanvas );
@@ -1249,6 +1258,13 @@ export class DenoisingManager extends EventDispatcher {
 	setPostProcessRefreshCallback( fn ) {
 
 		this._onPostProcessRefresh = fn;
+
+	}
+
+	/** @param {Function} fn - () => void, redraws the finished frame without re-running the completion chain */
+	setDisplayRefreshCallback( fn ) {
+
+		this._onDisplayRefresh = fn;
 
 	}
 

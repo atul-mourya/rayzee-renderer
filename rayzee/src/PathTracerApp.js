@@ -3107,6 +3107,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.denoisingManager.setOverlayManager( this.overlayManager );
 		this.denoisingManager.setResetCallback( () => this.reset() );
 		this.denoisingManager.setPostProcessRefreshCallback( () => this.requestPostProcessRefresh() );
+		this.denoisingManager.setDisplayRefreshCallback( () => this.refreshFrame() );
 		this.denoisingManager.setSettings( this.settings );
 
 		// Expose environment manager (lives on pathTracer stage)
