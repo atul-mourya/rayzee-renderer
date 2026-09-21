@@ -217,11 +217,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				// Bridge engine events → Zustand stores
 				engineCleanupRef.current = connectEngineToStore( app, { useStore, useCameraStore, usePathTracerStore, useAnimationStore, useLightStore } );
 
-				// The app ships with the final denoise on (DEFAULT_STATE) while the engine's own
-				// default is off, so a fresh instance has to be told. Nothing else pushes the store's
-				// initial values down — the mode presets only run on a tab change, which has not
-				// happened yet.
-				app.denoisingManager?.setOIDNEnabled( usePathTracerStore.getState().enableOIDN );
+				// Startup opens on Preview without a tab change, and only a tab change applies a preset.
+				usePathTracerStore.getState().handleConfigureForPreview();
 
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
 

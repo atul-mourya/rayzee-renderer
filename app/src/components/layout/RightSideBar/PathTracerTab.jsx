@@ -314,7 +314,7 @@ const PathTracerTab = () => {
 				<Row more={(
 					<>
 						<Row>
-							<Slider label={"Transmissive Bounces"} min={0} max={10} step={1} value={[ transmissiveBounces ]} onFinishChange={handleTransmissiveBouncesChange} />
+							<Slider label={"Transmissive Bounces"} min={0} max={64} step={1} value={[ transmissiveBounces ]} onFinishChange={handleTransmissiveBouncesChange} />
 						</Row>
 						<Row>
 							<Slider label={"Transparent Bounces"} min={0} max={32} step={1} value={[ maxTransparentBounces ]} onValueChange={handleMaxTransparentBouncesChange} />

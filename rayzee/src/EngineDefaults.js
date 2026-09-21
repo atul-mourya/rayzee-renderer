@@ -1060,7 +1060,8 @@ export const DEFAULT_TEXTURE_MATRIX = [ 0, 0, 1, 1, 0, 0, 0, 1 ];
 export const PRODUCTION_RENDER_CONFIG = {
 	// maxSamples is a CEILING: adaptive sampling retires the frame once adaptiveStopFraction of pixels converge,
 	// so easy scenes finish well under it while hard GI scenes use the full budget.
-	maxSamples: 150, bounces: 20, transmissiveBounces: 8, maxSubsurfaceSteps: 64,
+	// Below 24 a ray that spends its transmissive budget is shaded opaque — black pixels, not dim glass.
+	maxSamples: 30, bounces: 20, transmissiveBounces: 24, maxSubsurfaceSteps: 64,
 	renderMode: 1, enableAlphaShadows: true,
 	// 'high' is the only tier that reaches OIDN's _large weights (calb_cnrm); ~2x denoise cost.
 	enableOIDN: true, oidnQuality: 'high',
@@ -1075,7 +1076,8 @@ export const PRODUCTION_RENDER_CONFIG = {
 export const INTERACTIVE_RENDER_CONFIG = {
 	maxSamples: ENGINE_DEFAULTS.maxSamples, bounces: ENGINE_DEFAULTS.bounces,
 	renderMode: ENGINE_DEFAULTS.renderMode, enableAlphaShadows: ENGINE_DEFAULTS.enableAlphaShadows,
-	transmissiveBounces: ENGINE_DEFAULTS.transmissiveBounces,
+	// 12, not 5: a spent budget leaves black glass and costs MORE — the ray then bounces diffusely.
+	transmissiveBounces: 12,
 	maxSubsurfaceSteps: ENGINE_DEFAULTS.maxSubsurfaceSteps,
 	// On, like production. The final pass costs one cheap denoise when the preview settles, and both
 	// neural passes need a denoised frame to be worth running — on Monte-Carlo noise the upscaler

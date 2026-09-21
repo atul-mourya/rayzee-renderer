@@ -161,19 +161,6 @@ const StatsMeter = ( { viewportMode } ) => {
 
 	}, [ storeMaxSamples, setStoreMaxSamples ] );
 
-	// Update based on viewport mode
-	useEffect( () => {
-
-		const app = getApp();
-		if ( ! app ) return;
-
-		const newMaxSamples = viewportMode === "preview" ? 60 : 30;
-
-		app.settings.set( 'maxSamples', newMaxSamples );
-		setStoreMaxSamples( newMaxSamples );
-
-	}, [ viewportMode, setStoreMaxSamples ] );
-
 
 	const adaptiveLocked = viewportMode === 'final-render';
 	const autoTitle = ( useAdaptiveSampling
