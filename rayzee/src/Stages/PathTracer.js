@@ -88,6 +88,8 @@ export class PathTracer extends PathTracerStage {
 		this._lastBounceEnergy = null;
 		// maxBounces the curve was measured at; the curve is ignored once this no longer matches (-1 = none).
 		this._lastBounceCountsBudget = - 1;
+		// Loop length the curve covers; maxBounces alone is not it (free bounces extend the loop).
+		this._lastBounceCountsLoopBound = - 1;
 		this._readbackPending = false;
 		this._readbackEveryNFrames = 4;
 		this._readbackFrameCounter = 0;
@@ -341,7 +343,7 @@ export class PathTracer extends PathTracerStage {
 
 		const maxBounces = this.maxBounces.value;
 		// Transmissive/SSS steps consume iterations without advancing camera-bounce depth, so the loop must run far enough for deep glass/subsurface walks (mirror PathTracerCore); the survivor curve + early-exit break it early on non-SSS scenes.
-		const loopBound = maxBounces + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value;
+		const loopBound = this._bounceLoopBound();
 
 		const frameHeight = this._wfRenderHeight.value;
 		const chunkRows = this._chunkRows;
@@ -356,9 +358,17 @@ export class PathTracer extends PathTracerStage {
 		// new camera-bounce caps the counts are cap-independent, so trust it up to that cutoff (whole curve when
 		// same/decreasing budget; only the [0, oldBudget) overlap when increasing). budget=-1 → cutoff 0 → full
 		// dispatch everywhere. This avoids the full-work spike on every bounce-count change.
+		// A curve measured with a smaller free-bounce budget under-counts survivors at EVERY depth, not
+		// just past its tail, so sizing off it drops the deep glass paths the bigger budget bought.
+		if ( loopBound > this._lastBounceCountsLoopBound ) this._curveSizingValid = false;
+
 		const curve = this._lastBounceCounts;
+		const curveMeasuredThisFar = maxBounces <= this._lastBounceCountsBudget
+			&& loopBound <= this._lastBounceCountsLoopBound;
 		const curveReliableUpto = ( singleChunk && curve )
-			? ( maxBounces <= this._lastBounceCountsBudget ? loopBound + 1 : this._lastBounceCountsBudget )
+			? ( curveMeasuredThisFar
+				? loopBound + 1
+				: Math.min( this._lastBounceCountsBudget, this._lastBounceCountsLoopBound ) )
 			: 0;
 
 		// Blender-style row-band streaming: the fixed-budget path pool processes the image in bands of ≤ chunkRows
@@ -698,6 +708,12 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	_bounceLoopBound() {
+
+		return this.maxBounces.value + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value;
+
+	}
+
 	// Async readback of the per-bounce snapshot every N frames; never awaited, so the early-exit uses past-frame data.
 	_maybeReadbackCounters() {
 
@@ -722,7 +738,8 @@ export class PathTracer extends PathTracerStage {
 		// the budget 3 -> 20 doubles the frame's dispatch work (13 -> 26 bounce iterations, 109 -> 214
 		// compute passes) for as long as that lasts. Waiting out the N-frame cadence just extends it, so
 		// re-measure on the next frame instead — same idiom as the mid-motion priming above.
-		if ( this.maxBounces.value !== this._lastBounceCountsBudget ) {
+		if ( this.maxBounces.value !== this._lastBounceCountsBudget
+			|| this._bounceLoopBound() !== this._lastBounceCountsLoopBound ) {
 
 			this._readbackFrameCounter = this._readbackEveryNFrames;
 
@@ -738,6 +755,7 @@ export class PathTracer extends PathTracerStage {
 		this._readbackPending = true;
 		const gen = this._readbackGeneration;
 		const budget = this.maxBounces.value;
+		const measuredLoopBound = this._bounceLoopBound();
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
 		this.renderer.getArrayBufferAsync( attr ).then( ( buf ) => {
 
@@ -750,6 +768,7 @@ export class PathTracer extends PathTracerStage {
 				this._lastBounceCounts = all.subarray( 0, n );
 				this._lastBounceEnergy = all.subarray( n, 2 * n );
 				this._lastBounceCountsBudget = budget;
+				this._lastBounceCountsLoopBound = measuredLoopBound;
 				this._curveSizingValid = true;
 
 			}
@@ -837,6 +856,7 @@ export class PathTracer extends PathTracerStage {
 		this._lastBounceCounts = null;
 		this._lastBounceEnergy = null;
 		this._lastBounceCountsBudget = - 1;
+		this._lastBounceCountsLoopBound = - 1;
 		this._curveSizingValid = false;
 		this._readbackFrameCounter = 0;
 		this._readbackGeneration ++;
