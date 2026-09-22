@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
-import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode, preserveLightPower, setLightPower } from 'rayzee';
+import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
 
@@ -1560,8 +1560,7 @@ const useLightStore = create( set => ( {
 
 				if ( prop === 'intensity' ) {
 
-					// The panel's number is Blender Power in Watts — see LightUnits.js.
-					setLightPower( light, value );
+					light.intensity = value;
 
 				} else if ( prop === 'visible' ) {
 
@@ -1609,23 +1608,20 @@ const useLightStore = create( set => ( {
 
 				} else if ( prop === 'width' || prop === 'height' ) {
 
-					// Power is held across every geometry edit: with Normalize on that is what
-					// keeps a resized light's total output constant, and with it off Power does
-					// not depend on the area, so the same call is still right.
-					if ( light.type === 'RectAreaLight' ) preserveLightPower( light, () => {
+					if ( light.type === 'RectAreaLight' ) {
 
 						light[ prop ] = value;
 
-					} );
+					}
 
 				} else if ( prop === 'size' ) {
 
-					if ( light.type === 'RectAreaLight' ) preserveLightPower( light, () => {
+					if ( light.type === 'RectAreaLight' ) {
 
 						light.width = value;
 						light.height = value;
 
-					} );
+					}
 
 				} else if ( prop === 'normalize' || prop === 'spread' || prop === 'shape' ) {
 
@@ -1638,20 +1634,12 @@ const useLightStore = create( set => ( {
 
 						} else if ( prop === 'normalize' ) {
 
-							preserveLightPower( light, () => {
-
-								light.userData.normalize = !! value;
-
-							} );
+							light.userData.normalize = !! value;
 
 						} else {
 
-							preserveLightPower( light, () => {
-
-								light.userData.shape = value; // 'square' | 'rectangle' | 'disk' | 'ellipse'
-								if ( value === 'square' || value === 'disk' ) light.height = light.width;
-
-							} );
+							light.userData.shape = value; // 'square' | 'rectangle' | 'disk' | 'ellipse'
+							if ( value === 'square' || value === 'disk' ) light.height = light.width;
 
 						}
 

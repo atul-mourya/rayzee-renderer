@@ -19,7 +19,6 @@ export const ISSUE_CODES = Object.freeze( {
 	STAGE_RENDER_FAILED: 'stage.render_failed',
 	RENDER_RESERVE_CAPPED: 'render.reserve_capped',
 	SCENE_MEMORY_BUDGET: 'scene.memory_budget',
-	LIGHT_PLACEHOLDER_INVALID: 'light.placeholder_invalid',
 	EMISSIVE_INSTANCES_COLLAPSED: 'emissive.instances_collapsed',
 	REFIT_SHARED_GEOMETRY: 'refit.shared_geometry',
 } );

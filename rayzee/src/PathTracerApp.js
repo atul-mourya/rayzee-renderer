@@ -764,9 +764,8 @@ export class PathTracerApp extends EventDispatcher {
 	 * by reference, and any ancestor transform is baked in. Later edits to `object3d` do not
 	 * reach the render — mutate {@link sceneModel}, then {@link refitBVH}/{@link refitBLASes}.
 	 *
-	 * Lights are read as three.js lights in RADIOMETRIC units — W/sr for point and spot, W/m² for
-	 * directional, radiance for area — and are left as they are; only an area light's rectangle is
-	 * put into world metres on the copy. See `LightUnits.js`.
+	 * Lights keep three.js units — `RectAreaLight.intensity` in nits, point/spot in candela — and are
+	 * converted to radiant power on the copy. `areaLightIntensityScale` does not apply here.
 	 *
 	 * @param {import('three').Object3D} object3d - The Object3D to render; left untouched.
 	 * @param {string} [name='object3d'] - Display name for the object

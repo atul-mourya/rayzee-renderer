@@ -10,11 +10,13 @@
  */
 export const RENDER_PROFILES = Object.freeze( {
 	viewer: Object.freeze( {
+		areaLightIntensityScale: 0.1, // scales glTF placeholder area-light power (viewer tuning)
 		environmentRotation: 270.0, // degrees
 		toneMapping: 4, // ACESFilmicToneMapping
 		saturation: 1.2, // compensates for ACES desaturation — see Compositor
 	} ),
 	physical: Object.freeze( {
+		areaLightIntensityScale: 1.0,
 		environmentRotation: 0.0,
 		// AgX, matching Blender/Cycles' default view transform. ACES crushes shadows on this
 		// engine's own corpus (shade 1.48 vs AgX 3.01 from identical radiance).
@@ -25,7 +27,7 @@ export const RENDER_PROFILES = Object.freeze( {
 
 /**
  * @param {string} [name] - a RENDER_PROFILES key
- * @returns {{environmentRotation: number, toneMapping: number, saturation: number}}
+ * @returns {{areaLightIntensityScale: number, environmentRotation: number}}
  * @throws {Error} on an unknown name — a typo must not silently select viewer tuning
  */
 export function getRenderProfile( name = 'viewer' ) {

@@ -18,7 +18,6 @@ export { EngineEvents } from './EngineEvents.js';
 export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';
 
 // Degradation contract — what the engine survived instead of failing on
-export { LUMENS_PER_WATT, areaLightArea, bakeAreaLightScale, lightPower, preserveLightPower, setLightPower } from './LightUnits.js';
 export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
 
 // Settings provenance + viewer-vs-physical tuning

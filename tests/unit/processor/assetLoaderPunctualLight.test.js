@@ -1,16 +1,15 @@
 /**
  * glTF punctual light import. glTF states point/spot intensity in candela and directional in
- * lux — photometric units, which three.js also uses for the same properties. The engine keeps the
- * same QUANTITY in radiometric units (W/sr, W/m² — see LightUnits.js), so the importer divides the
- * luminous efficacy back out, exactly as Blender's own glTF importer does. Verified against Cycles:
- * a 100 W point light 3 m above a 0.5-grey plane renders 0.1407 in both.
+ * lux — photometric units, which three.js also uses for the same properties. The engine is
+ * radiometric (Blender Watts), so the importer divides the luminous efficacy back out, exactly
+ * as Blender's own glTF importer does. Verified against Cycles: a 100 W point light 3 m above a
+ * 0.5-grey plane renders 0.1407 in both.
  */
 import { describe, expect, it } from 'vitest';
 import { DirectionalLight, Group, PerspectiveCamera, PointLight, Scene, SpotLight, Vector3 } from 'three';
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
 import { getRenderProfile } from '@/core/EngineDefaults.js';
-import { lightPower } from '@/core/LightUnits.js';
 
 const LUMENS_PER_WATT = 683;
 
@@ -36,8 +35,7 @@ describe( 'AssetLoader — glTF punctual light import', () => {
 	it( 'recovers the authored wattage of a point light', () => {
 
 		const light = importLight( new PointLight( 0xffffff, exportedCandela( 100 ) ) );
-		expect( light.intensity ).toBeCloseTo( 100 / ( 4 * Math.PI ), 6 ); // stored as W/sr
-		expect( lightPower( light ) ).toBeCloseTo( 100, 6 ); // shown as Blender Power
+		expect( light.intensity ).toBeCloseTo( 100, 6 );
 
 		const serializer = new LightSerializer();
 		serializer.addPointLight( light );
@@ -49,7 +47,7 @@ describe( 'AssetLoader — glTF punctual light import', () => {
 	it( 'recovers the authored wattage of a spot light', () => {
 
 		const light = importLight( new SpotLight( 0xffffff, exportedCandela( 50 ) ) );
-		expect( lightPower( light ) ).toBeCloseTo( 50, 6 );
+		expect( light.intensity ).toBeCloseTo( 50, 6 );
 
 	} );
 
@@ -66,7 +64,7 @@ describe( 'AssetLoader — glTF punctual light import', () => {
 
 	it( 'converts once, however many times the tree is processed', () => {
 
-		expect( lightPower( importLight( new PointLight( 0xffffff, exportedCandela( 100 ) ), { times: 3 } ) ) ).toBeCloseTo( 100, 6 );
+		expect( importLight( new PointLight( 0xffffff, exportedCandela( 100 ) ), { times: 3 } ).intensity ).toBeCloseTo( 100, 6 );
 		expect( importLight( new DirectionalLight( 0xffffff, exportedLux( 3.5 ) ), { times: 3 } ).intensity ).toBeCloseTo( 3.5, 6 );
 
 	} );

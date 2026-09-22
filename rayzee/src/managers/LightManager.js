@@ -2,7 +2,6 @@ import {
 	EventDispatcher, DirectionalLight, PointLight, SpotLight, RectAreaLight,
 	Object3D, MathUtils
 } from 'three';
-import { bakeAreaLightScale, lightPower, setLightPower } from '../LightUnits.js';
 
 /**
  * Manages scene lights: add, remove, transfer from mesh scene to WebGPU
@@ -38,13 +37,12 @@ export class LightManager extends EventDispatcher {
 	 */
 	addLight( type ) {
 
-		// Authored as Blender Power in Watts (the Sun as W/m²), converted to the stored
-		// quantity by setLightPower() once the light exists — see LightUnits.js.
 		const defaults = {
-			DirectionalLight: { position: [ 1, 1, 1 ], power: 1.0, color: '#ffffff' },
-			PointLight: { position: [ 0, 2, 0 ], power: 1000, color: '#ffffff' },
-			SpotLight: { position: [ 0, 1, 0 ], power: 1000, color: '#ffffff', angle: 15 },
-			RectAreaLight: { position: [ 0, 2, 0 ], power: 100, color: '#ffffff', width: 2, height: 2 }
+			// Power in Watts (Blender-style) for point/spot/area; Sun is W/m² strength.
+			DirectionalLight: { position: [ 1, 1, 1 ], intensity: 1.0, color: '#ffffff' },
+			PointLight: { position: [ 0, 2, 0 ], intensity: 1000, color: '#ffffff' },
+			SpotLight: { position: [ 0, 1, 0 ], intensity: 1000, color: '#ffffff', angle: 15 },
+			RectAreaLight: { position: [ 0, 2, 0 ], intensity: 100, color: '#ffffff', width: 2, height: 2 }
 		};
 
 		const props = defaults[ type ];
@@ -54,17 +52,17 @@ export class LightManager extends EventDispatcher {
 
 		if ( type === 'DirectionalLight' ) {
 
-			light = new DirectionalLight( props.color, 1 );
+			light = new DirectionalLight( props.color, props.intensity );
 			light.position.fromArray( props.position );
 
 		} else if ( type === 'PointLight' ) {
 
-			light = new PointLight( props.color, 1 );
+			light = new PointLight( props.color, props.intensity );
 			light.position.fromArray( props.position );
 
 		} else if ( type === 'SpotLight' ) {
 
-			light = new SpotLight( props.color, 1 );
+			light = new SpotLight( props.color, props.intensity );
 			light.position.fromArray( props.position );
 			light.angle = MathUtils.degToRad( props.angle );
 			const target = new Object3D();
@@ -73,7 +71,7 @@ export class LightManager extends EventDispatcher {
 
 		} else if ( type === 'RectAreaLight' ) {
 
-			light = new RectAreaLight( props.color, 1, props.width, props.height );
+			light = new RectAreaLight( props.color, props.intensity, props.width, props.height );
 			light.position.fromArray( props.position );
 			light.lookAt( 0, 0, 0 );
 			// Blender-style emission defaults: power-normalized, full Lambertian
@@ -83,8 +81,6 @@ export class LightManager extends EventDispatcher {
 			light.userData.shape = 'rectangle';
 
 		}
-
-		setLightPower( light, props.power );
 
 		// Blender-style emission controls common to every light type.
 		light.userData.temperature = 6500;
@@ -182,7 +178,13 @@ export class LightManager extends EventDispatcher {
 			light.getWorldQuaternion( cloned.quaternion );
 			light.getWorldScale( cloned.scale );
 
-			if ( cloned.isRectAreaLight ) bakeAreaLightScale( cloned );
+			if ( cloned.isRectAreaLight ) {
+
+				cloned.width *= cloned.scale.x;
+				cloned.height *= cloned.scale.y;
+				cloned.scale.set( 1, 1, 1 );
+
+			}
 
 			if ( ( light.isSpotLight || light.isDirectionalLight ) && light.target ) {
 
@@ -336,7 +338,7 @@ export class LightManager extends EventDispatcher {
 			name: light.name,
 			type: light.type,
 			visible: light.visible,
-			intensity: lightPower( light ), // Blender Power (W); the light stores the three.js quantity
+			intensity: light.intensity,
 			color: `#${light.color.getHexString()}`,
 			position: [ light.position.x, light.position.y, light.position.z ],
 			angle,

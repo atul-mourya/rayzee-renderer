@@ -509,11 +509,7 @@ engine.lightManager.sync()                  // Re-upload light data to GPU
 engine.lightManager.showHelpers(true)       // Toggle visual helpers
 ```
 
-Every light in the scene graph is a **valid three.js light**: it carries the quantity three.js expects for its type, in radiometric (watt-based) units — W/sr for point and spot, W/m² for directional, radiance for area, with `width`/`height` in world metres at unit scale. three.js' own shading maths is unit-agnostic, so the raster fallback, the light helpers and any host reading `sceneModel` are all correct without knowing anything about the path tracer. The rule lives in one module, `LightUnits.js`.
-
-The **Lights panel edits Blender-style Power** — watts for point, spot and area, W/m² for the Sun — which is a view of that, converted by `lightPower()`/`setLightPower()` and nowhere else; `LightSerializer` converts the other way when it fills the GPU buffer. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do.
-
-glTF punctual lights are photometric (candela, lux) and are divided by 683 lm/W on import, exactly as Blender's own glTF importer does. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance, which is already the stored quantity, so it is used verbatim. The record's own `power` field is ignored: it is written from the light's unscaled dimensions and disagrees with the world area whenever an ancestor scale is non-uniform.
+Light `intensity` follows Blender: radiant power in watts for point, spot and area lights, irradiance in W/m² for directional. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance (their `power` field is `intensity · width · height · π`); the importer converts it to power through the light's world area so the authored radiance is reproduced exactly, then applies the profile's `areaLightIntensityScale`.
 
 ### engine.animationManager
 
