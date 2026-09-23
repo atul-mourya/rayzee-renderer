@@ -248,6 +248,10 @@ export class ProceduralSky {
 		}
 
 		this._texture.needsUpdate = true;
+		// Fresh linear Rec.709 pixels in a reused texture. Colour management records which space a
+		// texture's pixels hold so it never converts them twice; left in place, that record would
+		// claim these were already converted and they never would be.
+		delete this._texture.userData?.__rayzeeColorSpace;
 		this.lastRenderTime = performance.now() - startTime;
 
 		return this._texture;

@@ -13,7 +13,11 @@ import {
 	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
 	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
 } from '../EngineDefaults.js';
+import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+
+/** Material buffers already moved into the working space, so a re-init cannot convert twice. */
+const convertedBuffers = new WeakSet();
 
 const log = createLogger( 'material' );
 
@@ -88,12 +92,61 @@ export class MaterialDataManager {
 	// ===== STORAGE BUFFER MANAGEMENT =====
 
 	/**
+	 * Every colour slot in the material buffer, in floats from the start of a material.
+	 *
+	 * Tints only — `attenuationColor` and `subsurfaceColor` included, because they multiply
+	 * radiance like any other. Scalars and packed flags are deliberately absent: running a
+	 * primaries matrix over roughness would be silent and ruinous.
+	 */
+	static COLOR_OFFSETS = [
+		M.COLOR, M.EMISSIVE, M.ATTENUATION_COLOR, M.SHEEN_COLOR, M.SPECULAR_COLOR, M.SUBSURFACE_COLOR,
+	].filter( o => Number.isInteger( o ) );
+
+	/**
+	 * Move every material tint into the working space.
+	 *
+	 * glTF authors colours against sRGB primaries. If the render is happening in ACEScg, the same
+	 * numbers describe a different colour, so a base colour left unconverted is not a grade away
+	 * from right — it is a different material. Inert until a working space is adopted.
+	 */
+	_convertColorsToWorkingSpace( data ) {
+
+		// The same array is handed in again whenever the stage re-initialises, and converting it
+		// twice would apply the primaries matrix twice — a colour shift with no error to show for
+		// it. Remembered by identity, so a rebuilt buffer converts normally.
+		if ( convertedBuffers.has( data ) ) return;
+		convertedBuffers.add( data );
+
+		const n = convertLinearTriples( data, M.FLOATS_PER_MATERIAL, MaterialDataManager.COLOR_OFFSETS );
+		if ( n ) log.debug( `converted ${n} material colour(s) into ${getWorkingMatrixSpace()}` );
+
+	}
+
+	/** One tint, converted on its way into the buffer. */
+	_writeColor( data, index, r, g, b ) {
+
+		const rgb = [ r, g, b ];
+		if ( convertLinearTriple( rgb ) ) {
+
+			[ r, g, b ] = rgb;
+
+		}
+
+		data[ index ] = r;
+		data[ index + 1 ] = g;
+		data[ index + 2 ] = b;
+
+	}
+
+	/**
 	 * Sets material data from raw Float32Array via storage buffer.
 	 * @param {Float32Array} matImageData
 	 */
 	setMaterialData( matImageData ) {
 
 		if ( ! matImageData ) return;
+
+		this._convertColorsToWorkingSpace( matImageData );
 
 		const vec4Count = matImageData.length / 4;
 
@@ -248,15 +301,11 @@ export class MaterialDataManager {
 			case 'color':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.COLOR ] = value.r;
-					data[ stride + M.COLOR + 1 ] = value.g;
-					data[ stride + M.COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.COLOR ] = value[ 0 ];
-					data[ stride + M.COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -265,15 +314,11 @@ export class MaterialDataManager {
 			case 'emissive':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.EMISSIVE ] = value.r;
-					data[ stride + M.EMISSIVE + 1 ] = value.g;
-					data[ stride + M.EMISSIVE + 2 ] = value.b;
+					this._writeColor( data, stride + M.EMISSIVE, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.EMISSIVE ] = value[ 0 ];
-					data[ stride + M.EMISSIVE + 1 ] = value[ 1 ];
-					data[ stride + M.EMISSIVE + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.EMISSIVE, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -286,15 +331,11 @@ export class MaterialDataManager {
 			case 'attenuationColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.ATTENUATION_COLOR ] = value.r;
-					data[ stride + M.ATTENUATION_COLOR + 1 ] = value.g;
-					data[ stride + M.ATTENUATION_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.ATTENUATION_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.ATTENUATION_COLOR ] = value[ 0 ];
-					data[ stride + M.ATTENUATION_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.ATTENUATION_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.ATTENUATION_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -306,15 +347,11 @@ export class MaterialDataManager {
 			case 'sheenColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SHEEN_COLOR ] = value.r;
-					data[ stride + M.SHEEN_COLOR + 1 ] = value.g;
-					data[ stride + M.SHEEN_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SHEEN_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SHEEN_COLOR ] = value[ 0 ];
-					data[ stride + M.SHEEN_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SHEEN_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SHEEN_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -323,15 +360,11 @@ export class MaterialDataManager {
 			case 'specularColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SPECULAR_COLOR ] = value.r;
-					data[ stride + M.SPECULAR_COLOR + 1 ] = value.g;
-					data[ stride + M.SPECULAR_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SPECULAR_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SPECULAR_COLOR ] = value[ 0 ];
-					data[ stride + M.SPECULAR_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SPECULAR_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SPECULAR_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -383,15 +416,11 @@ export class MaterialDataManager {
 			case 'subsurfaceColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SUBSURFACE_COLOR ] = value.r;
-					data[ stride + M.SUBSURFACE_COLOR + 1 ] = value.g;
-					data[ stride + M.SUBSURFACE_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SUBSURFACE_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SUBSURFACE_COLOR ] = value[ 0 ];
-					data[ stride + M.SUBSURFACE_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SUBSURFACE_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SUBSURFACE_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -450,9 +479,10 @@ export class MaterialDataManager {
 
 		if ( materialData.color ) {
 
-			data[ stride + M.COLOR ] = materialData.color.r ?? materialData.color[ 0 ] ?? 1;
-			data[ stride + M.COLOR + 1 ] = materialData.color.g ?? materialData.color[ 1 ] ?? 1;
-			data[ stride + M.COLOR + 2 ] = materialData.color.b ?? materialData.color[ 2 ] ?? 1;
+			this._writeColor( data, stride + M.COLOR,
+				materialData.color.r ?? materialData.color[ 0 ] ?? 1,
+				materialData.color.g ?? materialData.color[ 1 ] ?? 1,
+				materialData.color.b ?? materialData.color[ 2 ] ?? 1 );
 
 		}
 
@@ -460,9 +490,10 @@ export class MaterialDataManager {
 
 		if ( materialData.emissive ) {
 
-			data[ stride + M.EMISSIVE ] = materialData.emissive.r ?? materialData.emissive[ 0 ] ?? 0;
-			data[ stride + M.EMISSIVE + 1 ] = materialData.emissive.g ?? materialData.emissive[ 1 ] ?? 0;
-			data[ stride + M.EMISSIVE + 2 ] = materialData.emissive.b ?? materialData.emissive[ 2 ] ?? 0;
+			this._writeColor( data, stride + M.EMISSIVE,
+				materialData.emissive.r ?? materialData.emissive[ 0 ] ?? 0,
+				materialData.emissive.g ?? materialData.emissive[ 1 ] ?? 0,
+				materialData.emissive.b ?? materialData.emissive[ 2 ] ?? 0 );
 
 		}
 
@@ -474,9 +505,10 @@ export class MaterialDataManager {
 
 		if ( materialData.attenuationColor ) {
 
-			data[ stride + M.ATTENUATION_COLOR ] = materialData.attenuationColor.r ?? materialData.attenuationColor[ 0 ] ?? 1;
-			data[ stride + M.ATTENUATION_COLOR + 1 ] = materialData.attenuationColor.g ?? materialData.attenuationColor[ 1 ] ?? 1;
-			data[ stride + M.ATTENUATION_COLOR + 2 ] = materialData.attenuationColor.b ?? materialData.attenuationColor[ 2 ] ?? 1;
+			this._writeColor( data, stride + M.ATTENUATION_COLOR,
+				materialData.attenuationColor.r ?? materialData.attenuationColor[ 0 ] ?? 1,
+				materialData.attenuationColor.g ?? materialData.attenuationColor[ 1 ] ?? 1,
+				materialData.attenuationColor.b ?? materialData.attenuationColor[ 2 ] ?? 1 );
 
 		}
 
@@ -488,9 +520,10 @@ export class MaterialDataManager {
 
 		if ( materialData.sheenColor ) {
 
-			data[ stride + M.SHEEN_COLOR ] = materialData.sheenColor.r ?? materialData.sheenColor[ 0 ] ?? 0;
-			data[ stride + M.SHEEN_COLOR + 1 ] = materialData.sheenColor.g ?? materialData.sheenColor[ 1 ] ?? 0;
-			data[ stride + M.SHEEN_COLOR + 2 ] = materialData.sheenColor.b ?? materialData.sheenColor[ 2 ] ?? 0;
+			this._writeColor( data, stride + M.SHEEN_COLOR,
+				materialData.sheenColor.r ?? materialData.sheenColor[ 0 ] ?? 0,
+				materialData.sheenColor.g ?? materialData.sheenColor[ 1 ] ?? 0,
+				materialData.sheenColor.b ?? materialData.sheenColor[ 2 ] ?? 0 );
 
 		}
 
@@ -498,9 +531,10 @@ export class MaterialDataManager {
 
 		if ( materialData.specularColor ) {
 
-			data[ stride + M.SPECULAR_COLOR ] = materialData.specularColor.r ?? materialData.specularColor[ 0 ] ?? 1;
-			data[ stride + M.SPECULAR_COLOR + 1 ] = materialData.specularColor.g ?? materialData.specularColor[ 1 ] ?? 1;
-			data[ stride + M.SPECULAR_COLOR + 2 ] = materialData.specularColor.b ?? materialData.specularColor[ 2 ] ?? 1;
+			this._writeColor( data, stride + M.SPECULAR_COLOR,
+				materialData.specularColor.r ?? materialData.specularColor[ 0 ] ?? 1,
+				materialData.specularColor.g ?? materialData.specularColor[ 1 ] ?? 1,
+				materialData.specularColor.b ?? materialData.specularColor[ 2 ] ?? 1 );
 
 		}
 
@@ -543,9 +577,10 @@ export class MaterialDataManager {
 		data[ stride + M.SUBSURFACE ] = materialData.subsurface ?? 0;
 		if ( materialData.subsurfaceColor ) {
 
-			data[ stride + M.SUBSURFACE_COLOR ] = materialData.subsurfaceColor.r ?? materialData.subsurfaceColor[ 0 ] ?? 1;
-			data[ stride + M.SUBSURFACE_COLOR + 1 ] = materialData.subsurfaceColor.g ?? materialData.subsurfaceColor[ 1 ] ?? 1;
-			data[ stride + M.SUBSURFACE_COLOR + 2 ] = materialData.subsurfaceColor.b ?? materialData.subsurfaceColor[ 2 ] ?? 1;
+			this._writeColor( data, stride + M.SUBSURFACE_COLOR,
+				materialData.subsurfaceColor.r ?? materialData.subsurfaceColor[ 0 ] ?? 1,
+				materialData.subsurfaceColor.g ?? materialData.subsurfaceColor[ 1 ] ?? 1,
+				materialData.subsurfaceColor.b ?? materialData.subsurfaceColor[ 2 ] ?? 1 );
 
 		}
 

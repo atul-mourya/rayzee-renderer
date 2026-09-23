@@ -1,4 +1,4 @@
-import { Sun, Sunrise, RefreshCcwDot, Target, Image, Blend, Palette, ArrowUp, CloudSun, Wind } from 'lucide-react';
+import { Sun, Sunrise, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun, Wind } from 'lucide-react';
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -8,42 +8,15 @@ import { ColorInput } from "@/components/ui/colorinput";
 import { usePathTracerStore } from '@/store';
 import { ControlGroup } from '@/components/ui/control-group';
 import NeuralPostControls from './NeuralPostControls';
+import ColorManagementSection from './ColorManagementSection';
 import { Row } from '@/components/ui/row';
 import { SliderToggle } from '@/components/ui/slider-toggle';
-import { Exposure } from '@/assets/icons';
 import { Separator } from '@/components/ui/separator';
-import { memo, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import CanvasDimensionControls from './CanvasDimensionControls';
 import { MAX_TEXTURE_SIZE_PRESETS } from '@/Constants';
 import { getApp } from '@/lib/appProxy';
 
-/**
- * Optimized component for displaying computed auto-exposure value
- * Uses Zustand selector to subscribe only to currentAutoExposure state
- * This prevents unnecessary rerenders of the parent PathTracerTab component
- */
-const AutoExposureValue = memo( () => {
-
-	// Use Zustand selector pattern for optimal performance
-	// Only subscribes to currentAutoExposure, avoiding full component rerenders
-	const currentExposure = usePathTracerStore( ( state ) => state.currentAutoExposure );
-
-	// Don't render if no value available yet
-	if ( currentExposure === undefined || currentExposure === null ) {
-
-		return <span className="text-xs opacity-50">Calculating...</span>;
-
-	}
-
-	return (
-		<span className="text-xs opacity-70">
-			{ currentExposure.toFixed( 3 ) }
-		</span>
-	);
-
-} );
-
-AutoExposureValue.displayName = 'AutoExposureValue';
 
 // Per-debug-mode control renderers. Add a new case to expose mode-specific
 // parameters (e.g. thresholds, scales) when introducing a new debug mode.
@@ -133,19 +106,10 @@ const ConvergenceReadout = ( { showConverged, showTracing } ) => {
 
 };
 
-const toneMappingOptions = [
-	{ label: 'None', value: 0 },
-	{ label: 'Linear', value: 1 },
-	{ label: 'Reinhard', value: 2 },
-	{ label: 'Cineon', value: 3 },
-	{ label: 'ACESFilmic', value: 4 },
-	{ label: 'AgXToneMapping', value: 6 },
-	{ label: 'NeutralToneMapping', value: 7 }
-];
-
 const PathTracerTab = () => {
 
 	const pathTracerStore = usePathTracerStore();
+
 
 	// Destructure all state and handlers from the store
 	const {
@@ -163,7 +127,6 @@ const PathTracerTab = () => {
 		showInspector,
 		oidnQuality,
 		enableOIDN,
-		exposure,
 		saturation,
 		enableEnvironment,
 		showBackground,
@@ -180,7 +143,6 @@ const PathTracerTab = () => {
 		enableGroundCatcher,
 		groundCatcherHeight,
 		GIIntensity,
-		toneMapping,
 		// Environment Mode
 		environmentMode,
 		gradientZenithColor,
@@ -217,8 +179,6 @@ const PathTracerTab = () => {
 		edgePhiNormal,
 		edgePhiDepth,
 		// Auto-exposure state
-		autoExposure,
-		autoExposureKeyValue,
 		autoExposureMinExposure,
 		autoExposureMaxExposure,
 		autoExposureAdaptSpeedBright,
@@ -242,7 +202,6 @@ const PathTracerTab = () => {
 		handleDebugThresholdChange,
 		handleDebugModeChange,
 		handleInspectorToggle,
-		handleExposureChange,
 		handleSaturationChange,
 		handleEnableEnvironmentChange,
 		handleBackgroundTypeChange,
@@ -258,7 +217,6 @@ const PathTracerTab = () => {
 		handleEnableGroundCatcherChange,
 		handleGroundCatcherHeightChange,
 		handleGIIntensityChange,
-		handleToneMappingChange,
 		// Environment Mode Handlers
 		handleEnvironmentModeChange,
 		handleGradientZenithColorChange,
@@ -290,8 +248,6 @@ const PathTracerTab = () => {
 		handleEdgePhiNormalChange,
 		handleEdgePhiDepthChange,
 		// Auto-exposure handlers
-		handleAutoExposureChange,
-		handleAutoExposureKeyValueChange,
 		handleAutoExposureMinExposureChange,
 		handleAutoExposureMaxExposureChange,
 		handleAutoExposureAdaptSpeedChange,
@@ -329,47 +285,11 @@ const PathTracerTab = () => {
 				<CanvasDimensionControls />
 			</ControlGroup>
 
+			<ControlGroup name="Color Management">
+				<ColorManagementSection />
+			</ControlGroup>
+
 			<ControlGroup name="Scene">
-				<Row>
-					<Select value={toneMapping.toString()} onValueChange={handleToneMappingChange}>
-						<span className="opacity-50 text-xs truncate">ToneMapping</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select ToneMapping" />
-						</SelectTrigger>
-						<SelectContent>
-							{toneMappingOptions.map( ( { label, value } ) => (
-								<SelectItem key={value} value={value.toString()}>{label}</SelectItem>
-							) )}
-						</SelectContent>
-					</Select>
-				</Row>
-				<Row more={autoExposure ? (
-					<>
-						<Row>
-							<Slider icon={Target} label={"Target Brightness"} min={0.05} max={0.5} step={0.01} value={[ autoExposureKeyValue ]} snapPoints={[ 0.18 ]} onValueChange={handleAutoExposureKeyValueChange} />
-						</Row>
-						{/* <Row>
-							<Slider icon={ArrowDown} label={"Min Exposure"} min={0.01} max={1.0} step={0.01} value={[ autoExposureMinExposure ]} onValueChange={handleAutoExposureMinExposureChange} />
-						</Row>
-						<Row>
-							<Slider icon={ArrowUp} label={"Max Exposure"} min={1.0} max={20.0} step={0.1} value={[ autoExposureMaxExposure ]} onValueChange={handleAutoExposureMaxExposureChange} />
-						</Row>
-						<Row>
-							<Slider icon={Zap} label={"Adaptation Speed"} min={0.5} max={10.0} step={0.1} value={[ autoExposureAdaptSpeedBright ]} snapPoints={[ 3.0 ]} onValueChange={handleAutoExposureAdaptSpeedChange} />
-						</Row> */}
-					</>
-				) : null}>
-					<span className="opacity-50 text-xs truncate">Auto Exposure</span>
-					<div className="flex items-center gap-2">
-						{autoExposure && <AutoExposureValue />}
-						<Switch checked={autoExposure} onCheckedChange={handleAutoExposureChange} />
-					</div>
-				</Row>
-				{! autoExposure && (
-					<Row>
-						<Slider icon={Exposure} label={"Exposure"} min={0} max={10} step={0.01} value={[ exposure ]} snapPoints={[ 1 ]} onValueChange={handleExposureChange} />
-					</Row>
-				)}
 				{/* <Row>
 					<Slider icon={Exposure} label={"Saturation"} min={0} max={2} step={0.01} value={[ saturation ]} snapPoints={[ 1 ]} onValueChange={handleSaturationChange} />
 				</Row> */}

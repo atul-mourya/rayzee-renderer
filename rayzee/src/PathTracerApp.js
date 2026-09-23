@@ -1,4 +1,4 @@
-import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace } from 'three/webgpu';
+import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
 	Scene, EventDispatcher, Box3
@@ -20,12 +20,14 @@ import { CompletionTracker } from './Pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
+import { TextureReadback } from './Processor/TextureReadback.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
+import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
@@ -162,6 +164,15 @@ export class PathTracerApp extends EventDispatcher {
 			strict: options.strict === true,
 			onIssue: ( issue ) => this.dispatchEvent( { type: EngineEvents.ISSUE, issue } ),
 		} );
+
+		/**
+		 * Colour management: what the engine renders in, shows it as, and hands out.
+		 *
+		 * Inert until a host loads an OCIO config — until then the working space is linear
+		 * Rec.709 and the view transforms are three.js's own seven, exactly as before.
+		 */
+		this.color = new ColorManagement( { issues: this._issues } );
+		setActiveColorManagement( this.color );
 
 		// ── Settings (single source of truth for all render parameters) ──
 		this.settings = new RenderSettings(
@@ -589,6 +600,12 @@ export class PathTracerApp extends EventDispatcher {
 		setStatusCallback( null );
 
 		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
+
+		// Holds the renderer and the issue log, both of which outlive it otherwise.
+		this.color?.dispose();
+		this.color = null;
+		this._textureReadback?.dispose();
+		this._textureReadback = null;
 
 		this.interactionManager?.deselect?.();
 		this.transformManager?.detach?.();
@@ -2262,15 +2279,23 @@ export class PathTracerApp extends EventDispatcher {
 	 * the viewport shows.
 	 *
 	 * @param {Object} [options]
-	 * @param {'linear'|'srgb'} [options.colorSpace='srgb']
+	 * @param {string} [options.colorSpace='srgb'] - `'srgb'` for display bytes through the active
+	 *   view transform, `'linear'` for the raw working-space accumulation, or the name of a colour
+	 *   space in the loaded OCIO config for a delivery buffer (float, e.g. `'ACES2065-1'`)
 	 * @param {boolean} [options.preserveAlpha=false] - srgb only
+	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
+	 *   viewport is showing — denoised when a denoiser has run, without bloom — instead of the raw
+	 *   accumulation
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string}>}
 	 */
-	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false } = {} ) {
+	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
 
-		if ( colorSpace !== 'linear' && colorSpace !== 'srgb' ) {
+		const named = colorSpace !== 'linear' && colorSpace !== 'srgb';
+		if ( named && ! this.color?.hasConfig ) {
 
-			throw new Error( `renderToBuffer: colorSpace must be 'linear' or 'srgb', got "${colorSpace}"` );
+			throw new Error(
+				`renderToBuffer: colorSpace must be 'linear' or 'srgb' without a colour config loaded, got "${colorSpace}"`
+			);
 
 		}
 
@@ -2281,9 +2306,27 @@ export class PathTracerApp extends EventDispatcher {
 		// The pool over-allocates to the reserve, so the texture is larger than the frame.
 		const { width, height } = stage;
 
-		const linear = await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+		const linear = source === 'display'
+			? await this._readDisplaySource( target, width, height )
+			: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
 
-		if ( colorSpace === 'linear' ) return { data: linear, width, height, colorSpace };
+		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
+		// answer to "linear in what primaries", which only means something once a config is loaded.
+		if ( colorSpace === 'linear' ) {
+
+			return { data: linear, width, height, colorSpace, workingSpace: this.color?.workingSpace ?? null };
+
+		}
+
+		// A named space is a delivery buffer, not a picture: scene-referred float in whatever the
+		// config calls that space. Saving an EXR for a compositor and grading through an sRGB view
+		// on screen are different questions, and this is the one that answers the first.
+		if ( named ) {
+
+			const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
+			return { data: rgba, width, height, colorSpace: got };
+
+		}
 
 		return {
 			data: toneMapToRGBA8( linear, {
@@ -2868,6 +2911,160 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * What the Compositor is drawing from, as linear float. Falls back to the accumulation when no
+	 * denoiser has published anything, which is also what the viewport shows then.
+	 * @private
+	 */
+	async _readDisplaySource( accumulation, width, height ) {
+
+		const context = this.pipeline?.context;
+		const texture = context && this.stages.compositor?.resolveLightTexture( context );
+		if ( ! texture || texture === accumulation.texture ) {
+
+			return await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 );
+
+		}
+
+		this._textureReadback ??= new TextureReadback( this.renderer );
+		return await this._textureReadback.read( texture, width, height );
+
+	}
+
+	/**
+	 * Set what colour space one texture is in, then rebuild so it takes effect.
+	 *
+	 * The per-image colour space every OCIO application offers. Three kinds of answer:
+	 *   - `null`             — automatic: tag, override, the config's file rules, then three.js
+	 *   - `'srgb'`/`'linear'` — three.js's own two, which work with no config at all
+	 *   - a config space     — anything the loaded config names, including log and camera spaces
+	 *
+	 * A config space is carried as `userData.ocioColorSpace`, and the texture's three.js colour space
+	 * is set to match the colour pool while it is, so harmonization leaves the stored bytes as the
+	 * author wrote them — the named transform has to read them raw. The original is kept and put
+	 * back when the choice is cleared.
+	 *
+	 * @param {import('three').Texture} texture
+	 * @param {?string} choice
+	 */
+	async setTextureColorSpace( texture, choice ) {
+
+		if ( ! texture?.isTexture ) throw new Error( 'setTextureColorSpace wants a three.js texture' );
+
+		const ud = texture.userData ?? ( texture.userData = {} );
+		if ( ud.__rayzeeOriginalColorSpace === undefined ) ud.__rayzeeOriginalColorSpace = texture.colorSpace;
+		const original = ud.__rayzeeOriginalColorSpace;
+
+		delete ud.ocioColorSpace;
+		delete ud.__rayzeeColorSpaceChoice;
+
+		if ( choice === null || choice === undefined ) {
+
+			texture.colorSpace = original;
+			delete ud.__rayzeeOriginalColorSpace;
+
+		} else if ( choice === 'srgb' || choice === 'linear' ) {
+
+			texture.colorSpace = choice === 'srgb' ? SRGBColorSpace : LinearSRGBColorSpace;
+			ud.__rayzeeColorSpaceChoice = choice;
+
+		} else {
+
+			if ( ! this.color?.hasConfig ) throw new Error( `"${choice}" needs a colour config loaded` );
+			ud.ocioColorSpace = choice;
+			texture.colorSpace = SRGBColorSpace;
+
+		}
+
+		texture.needsUpdate = true;
+		if ( this.stages.pathTracer?.sdfs ) await this.rebuildMaterials();
+
+	}
+
+	/**
+	 * Load a colour config, keeping the scene consistent with it.
+	 *
+	 * Prefer this to `app.color.loadConfig()` whenever a scene is loaded. A working space adopted
+	 * under the previous config is undone first, *while that config is still loaded* — the
+	 * environment is converted in place, and only the config that converted it can convert it
+	 * back. With `adoptWorkingSpace` the scene is rebuilt in the new space afterwards.
+	 *
+	 * @param {Object} options - as `ColorManagement.loadConfig`
+	 * @returns {Promise<Object>} the config description
+	 */
+	async loadColorConfig( options = {} ) {
+
+		await this._leaveColorWorkingSpace();
+		const described = await this.color.loadConfig( options );
+		if ( this.color.workingSpaceAdopted ) await this.applyColorWorkingSpace();
+		this.reset();
+		return described;
+
+	}
+
+	/** Unload the colour config, putting the scene back into linear Rec.709 first. */
+	async unloadColorConfig() {
+
+		await this._leaveColorWorkingSpace();
+		this.color.unloadConfig();
+		this.reset();
+
+	}
+
+	/** @private */
+	async _leaveColorWorkingSpace() {
+
+		if ( ! this.color?.workingSpaceAdopted ) return;
+		this.color.setWorkingSpace( null );
+		await this.applyColorWorkingSpace();
+
+	}
+
+	/**
+	 * Rebuild everything the working space touches, after it has been changed.
+	 *
+	 * Changing what the engine renders in is not a display setting — it changes what every texture,
+	 * tint and light colour already loaded *means*. Textures and materials are re-packed from their
+	 * pristine three.js sources, so they convert cleanly; the environment is converted where it
+	 * lies, from whichever space it currently holds, and its importance-sampling table is rebuilt
+	 * because its pixels moved.
+	 *
+	 * Call this after `app.color.setWorkingSpace()`. Doing nothing instead leaves a scene half in
+	 * one space and half in another, which reads as a colour cast with no obvious cause.
+	 */
+	async applyColorWorkingSpace() {
+
+		const env = this.environmentManager?.getEnvironmentTexture?.();
+		let envChanged = false;
+
+		if ( env && this.color?.hasConfig ) {
+
+			try {
+
+				envChanged = this.color.convertTexturePixels( env );
+
+			} catch ( error ) {
+
+				log.warn( `environment colour conversion failed: ${error.message}` );
+
+			}
+
+		}
+
+		// Nothing to rebuild before a scene exists; anything loaded later converts on its way in.
+		if ( this.stages.pathTracer?.sdfs ) {
+
+			await this.rebuildMaterials();
+			this._uploadEmissivePayload( this._sdf?.rebuildEmissiveColors?.() ?? null );
+
+		}
+
+		if ( envChanged ) await this.environmentManager?.buildEnvironmentCDF?.();
+
+		this.reset();
+
+	}
+
+	/**
 	 * Full material rebuild (required after texture changes).
 	 * @param {import('three').Scene} [scene]
 	 */
@@ -2993,6 +3190,11 @@ export class PathTracerApp extends EventDispatcher {
 		this.renderer.toneMapping = this._profile.toneMapping;
 		this.renderer.toneMappingExposure = 1.0;
 		this.renderer.setPixelRatio( 1.0 );
+
+		// Hands every registered view transform to the renderer and keeps `outputColorSpace` in
+		// step with whichever is selected — an OCIO view already encoded for its display must not
+		// be encoded a second time by the output pass.
+		this.color.attachRenderer( this.renderer );
 
 	}
 
