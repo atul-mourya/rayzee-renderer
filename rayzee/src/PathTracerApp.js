@@ -17,7 +17,7 @@ import { AutoExposure } from './Stages/AutoExposure.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { createLogger, fmt } from './utils/Logger.js';
@@ -1954,22 +1954,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
-		this.settings.setMany( {
-			maxSamples: config.maxSamples,
-			maxBounces: config.bounces,
-			transmissiveBounces: config.transmissiveBounces,
-			maxSubsurfaceSteps: config.maxSubsurfaceSteps,
-			enableAlphaShadows: config.enableAlphaShadows ?? false,
-			// Tier-1 convergence early-stop
-			useAdaptiveSampling: config.useAdaptiveSampling ?? false,
-			noiseThreshold: config.noiseThreshold ?? DEFAULT_STATE.noiseThreshold,
-			adaptiveStopFraction: config.adaptiveStopFraction ?? DEFAULT_STATE.adaptiveStopFraction,
-			adaptiveMinSamples: config.adaptiveMinSamples ?? DEFAULT_STATE.adaptiveMinSamples,
-			// Tier-2 per-pixel freeze
-			usePixelFreeze: config.usePixelFreeze ?? false,
-			pixelFreezeThreshold: config.pixelFreezeThreshold ?? DEFAULT_STATE.pixelFreezeThreshold,
-			pixelFreezeStability: config.pixelFreezeStability ?? DEFAULT_STATE.pixelFreezeStability,
-		}, { silent: true, source: SETTING_SOURCE.MODE_PRESET } );
+		this.settings.setMany( modePresetSettings( config ), { silent: true, source: SETTING_SOURCE.MODE_PRESET } );
 
 		// renderMode has no SETTING_ROUTES entry
 		this.stages.pathTracer?.setUniform( 'renderMode', parseInt( config.renderMode ) );

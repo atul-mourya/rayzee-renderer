@@ -1094,6 +1094,30 @@ export const INTERACTIVE_RENDER_CONFIG = {
 	usePixelFreeze: true, // speeds up idle refinement on heavy/high-res views; inert while moving (freeze resets)
 };
 
+// The RenderSettings a mode preset owns. configureForMode applies these, and anything that borrows a
+// mode for a while (the video renderer) restores exactly these keys.
+export function modePresetSettings( config ) {
+
+	return {
+		maxSamples: config.maxSamples,
+		maxBounces: config.bounces,
+		transmissiveBounces: config.transmissiveBounces,
+		maxSubsurfaceSteps: config.maxSubsurfaceSteps,
+		enableAlphaShadows: config.enableAlphaShadows ?? false,
+		// Tier-1 convergence early-stop
+		useAdaptiveSampling: config.useAdaptiveSampling ?? false,
+		noiseThreshold: config.noiseThreshold ?? ENGINE_DEFAULTS.noiseThreshold,
+		adaptiveStopFraction: config.adaptiveStopFraction ?? ENGINE_DEFAULTS.adaptiveStopFraction,
+		adaptiveMinSamples: config.adaptiveMinSamples ?? ENGINE_DEFAULTS.adaptiveMinSamples,
+		// Tier-2 per-pixel freeze
+		usePixelFreeze: config.usePixelFreeze ?? false,
+		pixelFreezeThreshold: config.pixelFreezeThreshold ?? ENGINE_DEFAULTS.pixelFreezeThreshold,
+		pixelFreezeStability: config.pixelFreezeStability ?? ENGINE_DEFAULTS.pixelFreezeStability,
+		interactionModeEnabled: config.interactionModeEnabled ?? ENGINE_DEFAULTS.interactionModeEnabled,
+	};
+
+}
+
 // Memory management constants
 export const MEMORY_CONSTANTS = {
 	MAX_BUFFER_MEMORY: 1024 * 1024 * 1024,

@@ -1448,7 +1448,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	handleInteractionModeEnabledChange: handleChange(
 		val => set( { interactionModeEnabled: val } ),
-		( val, app ) => app.stages.pathTracer?.setInteractionModeEnabled( val ),
+		( val, app ) => app.settings.set( 'interactionModeEnabled', val ),
 		false // Don't reset - exitInteractionMode handles the soft reset internally
 	),
 

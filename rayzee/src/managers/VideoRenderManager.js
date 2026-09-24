@@ -7,7 +7,7 @@
  */
 
 import { EngineEvents } from '../EngineEvents.js';
-import { PRODUCTION_RENDER_CONFIG } from '../EngineDefaults.js';
+import { PRODUCTION_RENDER_CONFIG, modePresetSettings } from '../EngineDefaults.js';
 import { updateStats, getDisplaySamples } from '../Processor/utils.js';
 
 export class VideoRenderManager {
@@ -273,11 +273,11 @@ export class VideoRenderManager {
 	_saveState() {
 
 		const app = this._app;
+		const effective = app.settings.getEffective();
 
 		return {
-			maxSamples: app.settings.get( 'maxSamples' ),
-			maxBounces: app.settings.get( 'maxBounces' ),
-			transmissiveBounces: app.settings.get( 'transmissiveBounces' ),
+			// Everything configureForMode( 'production' ) overwrites, with who set it.
+			settings: Object.keys( modePresetSettings( PRODUCTION_RENDER_CONFIG ) ).map( key => [ key, effective[ key ] ] ),
 			renderMode: app.stages.pathTracer?.renderMode?.value,
 			controlsEnabled: app.cameraManager.controls?.enabled,
 			oidnEnabled: app.denoisingManager?.finalDenoise,
@@ -296,11 +296,11 @@ export class VideoRenderManager {
 
 		const app = this._app;
 
-		app.settings.setMany( {
-			maxSamples: state.maxSamples,
-			maxBounces: state.maxBounces,
-			transmissiveBounces: state.transmissiveBounces,
-		}, { silent: true } );
+		for ( const [ key, saved ] of state.settings ) {
+
+			if ( saved ) app.settings.set( key, saved.value, { silent: true, reset: false, source: saved.source } );
+
+		}
 
 		if ( app.stages.pathTracer && state.renderMode !== undefined ) {
 

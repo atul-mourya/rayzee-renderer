@@ -11,7 +11,8 @@ vi.mock( '@/core/EngineEvents.js', () => ( {
 	},
 } ) );
 
-vi.mock( '@/core/EngineDefaults.js', () => ( {
+vi.mock( '@/core/EngineDefaults.js', async ( importOriginal ) => ( {
+	...( await importOriginal() ),
 	PRODUCTION_RENDER_CONFIG: { maxSamples: 30 },
 } ) );
 
@@ -21,6 +22,12 @@ vi.mock( '@/core/Processor/utils.js', () => ( {
 } ) );
 
 const { VideoRenderManager } = await import( '@/core/managers/VideoRenderManager.js' );
+const { modePresetSettings } = await import( '@/core/EngineDefaults.js' );
+
+// Every setting a mode preset owns, each with a distinct value and alternating provenance.
+const SAVED_SETTINGS = Object.fromEntries( Object.keys( modePresetSettings( {} ) ).map(
+	( key, i ) => [ key, { value: `saved-${key}`, source: i % 2 ? 'host' : 'mode-preset' } ]
+) );
 
 function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 
@@ -67,12 +74,8 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 			reset: vi.fn(),
 		},
 		settings: {
-			get: vi.fn( ( key ) => {
-
-				const defaults = { maxSamples: 60, maxBounces: 3, transmissiveBounces: 8 };
-				return defaults[ key ];
-
-			} ),
+			getEffective: vi.fn( () => ( { ...SAVED_SETTINGS, exposure: { value: 2, source: 'host' } } ) ),
+			set: vi.fn(),
 			setMany: vi.fn(),
 		},
 		denoisingManager: {
@@ -234,7 +237,12 @@ describe( 'VideoRenderManager', () => {
 		it( 'restores engine state after render', async () => {
 
 			await manager.renderAnimation( { fps: 30, totalFrames: 1 } );
-			expect( app.settings.setMany ).toHaveBeenCalled();
+			const calls = app.settings.set.mock.calls;
+			const restored = Object.fromEntries( calls.map( ( [ key, value, { source } ] ) => [ key, { value, source } ] ) );
+			expect( restored ).toEqual( SAVED_SETTINGS );
+			expect( restored ).toHaveProperty( 'useAdaptiveSampling' );
+			expect( restored ).toHaveProperty( 'usePixelFreeze' );
+			expect( calls.every( ( [ , , opts ] ) => opts.silent === true && opts.reset === false ) ).toBe( true );
 			expect( app.wake ).toHaveBeenCalled();
 
 		} );
