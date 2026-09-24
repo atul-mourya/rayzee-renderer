@@ -174,6 +174,16 @@ describe( 'CameraOptimizer', () => {
 
 		} );
 
+		it( 'derives a function-valued setting from the value it replaces', () => {
+
+			const custom = new CameraOptimizer( renderer, material, { qualitySettings: { maxBounceCount: ( v ) => v * 2 } } );
+			custom.enterInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 16 );
+			custom.exitInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 8 );
+
+		} );
+
 		it( 'restores a value nobody else touched', () => {
 
 			const custom = new CameraOptimizer( renderer, material, { qualitySettings: { maxBounceCount: 1 } } );

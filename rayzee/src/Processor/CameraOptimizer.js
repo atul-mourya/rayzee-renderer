@@ -80,7 +80,7 @@ export class CameraOptimizer {
 
 					// Handle material uniforms
 					this.originalValues[ key ] = this.material.uniforms[ key ].value;
-					this.material.uniforms[ key ].value = this.interactionQualitySettings[ key ];
+					this.material.uniforms[ key ].value = this._resolveQualityValue( key, this.interactionQualitySettings[ key ] );
 					this.appliedValues[ key ] = this.material.uniforms[ key ].value;
 
 				}
@@ -220,7 +220,7 @@ export class CameraOptimizer {
 
 				} else if ( this.material.uniforms[ key ] ) {
 
-					this.material.uniforms[ key ].value = settings[ key ];
+					this.material.uniforms[ key ].value = this._resolveQualityValue( key, settings[ key ] );
 					this.appliedValues[ key ] = this.material.uniforms[ key ].value;
 
 				}
@@ -228,6 +228,14 @@ export class CameraOptimizer {
 			} );
 
 		}
+
+	}
+
+	// A function derives the interaction value from the one it replaces.
+	_resolveQualityValue( key, target ) {
+
+		if ( typeof target !== 'function' ) return target;
+		return target( this.originalValues[ key ] ?? this.material.uniforms[ key ].value );
 
 	}
 
