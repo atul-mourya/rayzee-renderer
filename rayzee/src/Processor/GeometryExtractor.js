@@ -1,6 +1,6 @@
 import { BufferAttribute, Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
 import {
-	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags
+	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, MATERIAL_DEFAULTS, packNormalOct, packTriangleFlags
 } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
@@ -10,12 +10,56 @@ const log = createLogger( 'geometry' );
 
 const MAX_TEXTURES_LIMIT = TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT;
 
+const COLOR_DEFAULTS = new Set( [ 'color', 'emissive', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurfaceColor' ] );
+
+/**
+ * Where a packed material value came from: the three.js material carried it, a legacy-type
+ * conversion (Basic/Lambert/Phong/Toon) produced it, the engine filled it from
+ * MATERIAL_DEFAULTS, or a host set it at runtime through setMaterialProperty.
+ */
+export const MATERIAL_VALUE_SOURCE = Object.freeze( {
+	MATERIAL: 'material',
+	MAPPED: 'mapped',
+	DEFAULT: 'default',
+	HOST: 'host',
+} );
+
 const IDENTITY_ELEMENTS = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 
 function isIdentityElements( e ) {
 
 	for ( let i = 0; i < 16; i ++ ) if ( e[ i ] !== IDENTITY_ELEMENTS[ i ] ) return false;
 	return true;
+
+}
+
+/**
+ * The texture that feeds each GPU map slot. Re-packing texture indices without this loses the
+ * unlit routing (a MeshBasicMaterial's map is also its emission map).
+ * @param {import('three').Material} material
+ * @returns {Object<string, import('three').Texture|undefined>}
+ */
+export function resolveMaterialTextures( material ) {
+
+	return {
+		map: material.map,
+		normalMap: material.normalMap,
+		bumpMap: material.bumpMap,
+		roughnessMap: material.roughnessMap,
+		metalnessMap: material.metalnessMap,
+		emissiveMap: material.emissiveMap ?? ( material.isMeshBasicMaterial ? material.map : undefined ),
+		displacementMap: material.displacementMap,
+		anisotropyMap: material.anisotropyMap,
+		clearcoatMap: material.clearcoatMap,
+		clearcoatRoughnessMap: material.clearcoatRoughnessMap,
+		transmissionMap: material.transmissionMap,
+		sheenColorMap: material.sheenColorMap,
+		sheenRoughnessMap: material.sheenRoughnessMap,
+		specularIntensityMap: material.specularIntensityMap,
+		specularColorMap: material.specularColorMap,
+		iridescenceMap: material.iridescenceMap,
+		iridescenceThicknessMap: material.iridescenceThicknessMap,
+	};
 
 }
 
@@ -734,43 +778,15 @@ export class GeometryExtractor {
 
 	getPhysicalDefaults() {
 
-		// Defaults optimized for physically-based path tracing
-		return {
-			emissive: new Color( 0, 0, 0 ),
-			emissiveIntensity: 1.0,
-			roughness: 1.0,
-			metalness: 0.0,
-			ior: 1.5, // Common dielectric IOR (glass, plastic)
-			opacity: 1.0,
-			transmission: 0.0,
-			thickness: 0.1,
-			attenuationColor: new Color( 0xffffff ),
-			attenuationDistance: Infinity, // No attenuation by default
-			dispersion: 0.0,
-			sheen: 0.0,
-			sheenRoughness: 1.0,
-			sheenColor: new Color( 0x000000 ),
-			specularIntensity: 1.0,
-			specularColor: new Color( 0xffffff ),
-			clearcoat: 0.0,
-			clearcoatRoughness: 0.0,
-			iridescence: 0.0,
-			iridescenceIOR: 1.3,
-			iridescenceThicknessRange: [ 100, 400 ],
-			normalScale: { x: 1, y: 1 },
-			bumpScale: 1.0,
-			displacementScale: 1.0,
-			alphaTest: 0.0,
-			// Subsurface scattering (no native MeshPhysicalMaterial equivalent)
-			subsurface: 0.0,
-			subsurfaceColor: new Color( 0xffffff ),
-			subsurfaceRadius: [ 1.0, 0.2, 0.1 ], // skin-like: red travels furthest
-			subsurfaceRadiusScale: 1.0,
-			subsurfaceAnisotropy: 0.0,
-			// Surface specular anisotropy (native MeshPhysicalMaterial / KHR_materials_anisotropy)
-			anisotropy: 0.0,
-			anisotropyRotation: 0.0
-		};
+		const defaults = {};
+		for ( const [ key, value ] of Object.entries( MATERIAL_DEFAULTS ) ) {
+
+			defaults[ key ] = COLOR_DEFAULTS.has( key ) ? new Color().fromArray( value ) : Array.isArray( value ) ? [ ...value ] : value;
+
+		}
+
+		defaults.normalScale = { x: MATERIAL_DEFAULTS.normalScale[ 0 ], y: MATERIAL_DEFAULTS.normalScale[ 1 ] };
+		return defaults;
 
 	}
 
@@ -782,12 +798,13 @@ export class GeometryExtractor {
 		switch ( materialType ) {
 
 			case 'basic':
-				// MeshBasicMaterial -> Unlit/Emissive material
+				// Unlit (GLTFLoader's KHR_materials_unlit): colour and texture are emission, nothing reflects.
 				mapped.emissive = material.color.clone();
 				mapped.emissiveIntensity = 1.0;
-				mapped.color = new Color( 0x000000 ); // No diffuse reflection
+				mapped.color = new Color( 0x000000 );
 				mapped.roughness = 1.0;
 				mapped.metalness = 0.0;
+				mapped.specularIntensity = 0.0;
 				break;
 
 			case 'lambert':
@@ -807,14 +824,14 @@ export class GeometryExtractor {
 
 				}
 
-				// Convert specular color to specular intensity
+				// Strength in specularIntensity, hue alone in specularColor; carrying it in both squared it.
 				if ( material.specular ) {
 
-					const specularLuminance = material.specular.r * 0.299 +
-                                        material.specular.g * 0.587 +
-                                        material.specular.b * 0.114;
+					const s = material.specular;
+					const specularLuminance = s.r * 0.299 + s.g * 0.587 + s.b * 0.114;
+					const peak = Math.max( s.r, s.g, s.b );
 					mapped.specularIntensity = Math.min( specularLuminance * 2.0, 1.0 );
-					mapped.specularColor = material.specular.clone();
+					mapped.specularColor = peak > 0 ? s.clone().multiplyScalar( 1 / peak ) : new Color( 1, 1, 1 );
 
 				}
 
@@ -842,114 +859,117 @@ export class GeometryExtractor {
 		const defaults = this.getPhysicalDefaults();
 		const materialType = this.getMaterialType( material );
 		const legacyMapping = this.mapLegacyMaterialToPhysical( material, materialType );
+		const textures = resolveMaterialTextures( material );
+		const sources = {};
 
-		// Handle color conversion for different material types
-		let baseColor = material.color || new Color( 0xffffff );
-		if ( materialType === 'basic' && ! material.map ) {
+		const pick = ( key ) => {
 
-			// For basic materials without textures, treat color as emissive
-			baseColor = new Color( 0x000000 );
+			if ( legacyMapping[ key ] !== undefined ) {
 
-		}
+				sources[ key ] = MATERIAL_VALUE_SOURCE.MAPPED;
+				return legacyMapping[ key ];
+
+			}
+
+			if ( material[ key ] !== undefined && material[ key ] !== null ) {
+
+				sources[ key ] = MATERIAL_VALUE_SOURCE.MATERIAL;
+				return material[ key ];
+
+			}
+
+			sources[ key ] = MATERIAL_VALUE_SOURCE.DEFAULT;
+			return defaults[ key ];
+
+		};
+
+		for ( const key of [ 'transparent', 'alphaMode', 'side', 'depthWrite' ] ) sources[ key ] = MATERIAL_VALUE_SOURCE.MATERIAL;
 
 		return {
 			uuid: material.uuid,
 
-			// Base material properties
-			color: baseColor,
-			emissive: legacyMapping.emissive ?? material.emissive ?? defaults.emissive,
-			emissiveIntensity: legacyMapping.emissiveIntensity ?? material.emissiveIntensity ?? defaults.emissiveIntensity,
+			color: pick( 'color' ),
+			emissive: pick( 'emissive' ),
+			emissiveIntensity: pick( 'emissiveIntensity' ),
 
-			// Surface properties
 			// Floor at 0.02 (the sampler's own VNDF-PDF clamp, MaterialProperties.js) rather than
 			// 0.05, so near-mirror metals stay sharp without entering a new firefly regime.
-			roughness: Math.max( 0.02, legacyMapping.roughness ?? material.roughness ?? defaults.roughness ),
-			metalness: legacyMapping.metalness ?? material.metalness ?? defaults.metalness,
+			roughness: Math.max( 0.02, pick( 'roughness' ) ),
+			metalness: pick( 'metalness' ),
 
-			// Optical properties
-			ior: material.ior ?? defaults.ior,
-			opacity: material.opacity ?? defaults.opacity,
+			ior: pick( 'ior' ),
+			opacity: pick( 'opacity' ),
 
-			// Transmission properties (MeshPhysicalMaterial only)
-			transmission: material.transmission ?? defaults.transmission,
-			thickness: material.thickness ?? defaults.thickness,
-			attenuationColor: material.attenuationColor ?? defaults.attenuationColor,
-			attenuationDistance: material.attenuationDistance ?? defaults.attenuationDistance,
+			transmission: pick( 'transmission' ),
+			thickness: pick( 'thickness' ),
+			attenuationColor: pick( 'attenuationColor' ),
+			attenuationDistance: pick( 'attenuationDistance' ),
 
-			// Advanced properties (MeshPhysicalMaterial only)
-			dispersion: material.dispersion ?? defaults.dispersion,
-			sheen: material.sheen ?? defaults.sheen,
-			sheenRoughness: material.sheenRoughness ?? defaults.sheenRoughness,
-			sheenColor: material.sheenColor ?? defaults.sheenColor,
-			clearcoat: material.clearcoat ?? defaults.clearcoat,
-			clearcoatRoughness: material.clearcoatRoughness ?? defaults.clearcoatRoughness,
-			iridescence: material.iridescence ?? defaults.iridescence,
-			iridescenceIOR: material.iridescenceIOR ?? defaults.iridescenceIOR,
-			iridescenceThicknessRange: material.iridescenceThicknessRange ?? defaults.iridescenceThicknessRange,
+			dispersion: pick( 'dispersion' ),
+			sheen: pick( 'sheen' ),
+			sheenRoughness: pick( 'sheenRoughness' ),
+			sheenColor: pick( 'sheenColor' ),
+			clearcoat: pick( 'clearcoat' ),
+			clearcoatRoughness: pick( 'clearcoatRoughness' ),
+			iridescence: pick( 'iridescence' ),
+			iridescenceIOR: pick( 'iridescenceIOR' ),
+			iridescenceThicknessRange: pick( 'iridescenceThicknessRange' ),
 
-			// Subsurface scattering (custom props; MeshPhysicalMaterial has none)
-			subsurface: material.subsurface ?? defaults.subsurface,
-			subsurfaceColor: material.subsurfaceColor ?? defaults.subsurfaceColor,
-			subsurfaceRadius: material.subsurfaceRadius ?? defaults.subsurfaceRadius,
-			subsurfaceRadiusScale: material.subsurfaceRadiusScale ?? defaults.subsurfaceRadiusScale,
-			subsurfaceAnisotropy: material.subsurfaceAnisotropy ?? defaults.subsurfaceAnisotropy,
+			subsurface: pick( 'subsurface' ),
+			subsurfaceColor: pick( 'subsurfaceColor' ),
+			subsurfaceRadius: pick( 'subsurfaceRadius' ),
+			subsurfaceRadiusScale: pick( 'subsurfaceRadiusScale' ),
+			subsurfaceAnisotropy: pick( 'subsurfaceAnisotropy' ),
 
-			// Surface specular anisotropy (native MeshPhysicalMaterial / KHR_materials_anisotropy)
-			anisotropy: material.anisotropy ?? defaults.anisotropy,
-			anisotropyRotation: material.anisotropyRotation ?? defaults.anisotropyRotation,
+			anisotropy: pick( 'anisotropy' ),
+			anisotropyRotation: pick( 'anisotropyRotation' ),
 
-			// Specular properties (for compatibility)
-			specularIntensity: legacyMapping.specularIntensity ?? material.specularIntensity ?? defaults.specularIntensity,
-			specularColor: legacyMapping.specularColor ?? material.specularColor ?? defaults.specularColor,
+			specularIntensity: pick( 'specularIntensity' ),
+			specularColor: pick( 'specularColor' ),
 
-			// Surface detail properties
-			normalScale: material.normalScale ?? defaults.normalScale,
-			bumpScale: material.bumpScale ?? defaults.bumpScale,
-			displacementScale: material.displacementScale ?? defaults.displacementScale,
+			normalScale: pick( 'normalScale' ),
+			bumpScale: pick( 'bumpScale' ),
+			displacementScale: pick( 'displacementScale' ),
 
-			// Transparency and alpha
 			transparent: material.transparent ? 1 : 0,
-			alphaTest: material.alphaTest ?? defaults.alphaTest,
+			alphaTest: pick( 'alphaTest' ),
 			alphaMode: deriveAlphaMode( material ),
 
-			// Rendering properties
 			side: this.getMaterialSide( material ),
 			depthWrite: material.depthWrite ?? true ? 1 : 0,
 
-			// Texture processing
-			map: this.processTexture( material.map, this.maps ),
-			normalMap: this.processTexture( material.normalMap, this.normalMaps ),
-			bumpMap: this.processTexture( material.bumpMap, this.bumpMaps ),
-			roughnessMap: this.processTexture( material.roughnessMap, this.roughnessMaps ),
-			metalnessMap: this.processTexture( material.metalnessMap, this.metalnessMaps ),
-			emissiveMap: this.processTexture( material.emissiveMap, this.emissiveMaps ),
-			displacementMap: this.processTexture( material.displacementMap, this.displacementMaps ),
-			anisotropyMap: this.processTexture( material.anisotropyMap, this.anisotropyMaps ),
+			map: this.processTexture( textures.map, this.maps ),
+			normalMap: this.processTexture( textures.normalMap, this.normalMaps ),
+			bumpMap: this.processTexture( textures.bumpMap, this.bumpMaps ),
+			roughnessMap: this.processTexture( textures.roughnessMap, this.roughnessMaps ),
+			metalnessMap: this.processTexture( textures.metalnessMap, this.metalnessMaps ),
+			emissiveMap: this.processTexture( textures.emissiveMap, this.emissiveMaps ),
+			displacementMap: this.processTexture( textures.displacementMap, this.displacementMaps ),
+			anisotropyMap: this.processTexture( textures.anisotropyMap, this.anisotropyMaps ),
 
 			// Advanced texture maps (MeshPhysicalMaterial only). Folded into their scalar factors
 			// in ShadeKernel (applyExtensionMaps). thicknessMap stays dropped — thickness has no
 			// render effect yet (see gap-plan Phase 4.4).
-			clearcoatMap: this.processTexture( material.clearcoatMap, this.clearcoatMaps ),
-			clearcoatRoughnessMap: this.processTexture( material.clearcoatRoughnessMap, this.clearcoatRoughnessMaps ),
-			transmissionMap: this.processTexture( material.transmissionMap, this.transmissionMaps ),
+			clearcoatMap: this.processTexture( textures.clearcoatMap, this.clearcoatMaps ),
+			clearcoatRoughnessMap: this.processTexture( textures.clearcoatRoughnessMap, this.clearcoatRoughnessMaps ),
+			transmissionMap: this.processTexture( textures.transmissionMap, this.transmissionMaps ),
 			thicknessMap: this.processTexture( material.thicknessMap, [] ),
-			sheenColorMap: this.processTexture( material.sheenColorMap, this.sheenColorMaps ),
-			sheenRoughnessMap: this.processTexture( material.sheenRoughnessMap, this.sheenRoughnessMaps ),
-			specularIntensityMap: this.processTexture( material.specularIntensityMap, this.specularIntensityMaps ),
-			specularColorMap: this.processTexture( material.specularColorMap, this.specularColorMaps ),
-			iridescenceMap: this.processTexture( material.iridescenceMap, this.iridescenceMaps ),
-			iridescenceThicknessMap: this.processTexture( material.iridescenceThicknessMap, this.iridescenceThicknessMaps ),
+			sheenColorMap: this.processTexture( textures.sheenColorMap, this.sheenColorMaps ),
+			sheenRoughnessMap: this.processTexture( textures.sheenRoughnessMap, this.sheenRoughnessMaps ),
+			specularIntensityMap: this.processTexture( textures.specularIntensityMap, this.specularIntensityMaps ),
+			specularColorMap: this.processTexture( textures.specularColorMap, this.specularColorMaps ),
+			iridescenceMap: this.processTexture( textures.iridescenceMap, this.iridescenceMaps ),
+			iridescenceThicknessMap: this.processTexture( textures.iridescenceThicknessMap, this.iridescenceThicknessMaps ),
 
-			// Texture transformation matrices
-			mapMatrix: this.getTextureMatrix( material.map ),
-			normalMapMatrices: this.getTextureMatrix( material.normalMap ),
-			bumpMapMatrices: this.getTextureMatrix( material.bumpMap ),
-			roughnessMapMatrices: this.getTextureMatrix( material.roughnessMap ),
-			metalnessMapMatrices: this.getTextureMatrix( material.metalnessMap ),
-			emissiveMapMatrices: this.getTextureMatrix( material.emissiveMap ),
-			displacementMapMatrices: this.getTextureMatrix( material.displacementMap ),
+			mapMatrix: this.getTextureMatrix( textures.map ),
+			normalMapMatrices: this.getTextureMatrix( textures.normalMap ),
+			bumpMapMatrices: this.getTextureMatrix( textures.bumpMap ),
+			roughnessMapMatrices: this.getTextureMatrix( textures.roughnessMap ),
+			metalnessMapMatrices: this.getTextureMatrix( textures.metalnessMap ),
+			emissiveMapMatrices: this.getTextureMatrix( textures.emissiveMap ),
+			displacementMapMatrices: this.getTextureMatrix( textures.displacementMap ),
 
-			// Material type for debugging/optimization
+			sources,
 			originalType: materialType
 		};
 

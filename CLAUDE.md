@@ -310,6 +310,12 @@ the strings, so never rename or repurpose one.
   `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; `physical` selects
   AgX and drops the grade. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
   throws rather than silently selecting viewer tuning.
+- **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
+  property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
+  (`Processor/MaterialPacking.js`) is the only writer of the material block, for the scene upload
+  and runtime edits alike. `app.getMaterialPropertySource( i, prop )` answers
+  `material | mapped | default | host`. ⚠️ Never derive a default from another property: "metalness
+  factor > 0.1 ⇒ IOR 2.5" made every ORM-textured glTF 4.6× too shiny on its non-metal parts.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

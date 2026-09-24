@@ -2765,6 +2765,20 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Where a material property's value came from: `'material'` (the three.js material carried
+	 * it), `'mapped'` (converted from a Basic/Lambert/Phong/Toon material), `'default'` (the model
+	 * never said; filled from MATERIAL_DEFAULTS) or `'host'` (set through setMaterialProperty).
+	 * @param {number} materialIndex
+	 * @param {string} property
+	 * @returns {string|undefined}
+	 */
+	getMaterialPropertySource( materialIndex, property ) {
+
+		return this.stages.pathTracer?.materialData.getMaterialPropertySource( materialIndex, property );
+
+	}
+
 	setMaterialProperty( materialIndex, property, value ) {
 
 		this.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );

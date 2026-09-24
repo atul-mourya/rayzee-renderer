@@ -480,7 +480,7 @@ export class PathTracerStage extends RenderStage {
 		this.setTriangleData( this.sdfs.triangleData, this.sdfs.triangleCount );
 		this.setBVHData( this.sdfs.bvhData );
 		this.setInstanceTable( this.sdfs.instanceTable );
-		this.materialData.setMaterialData( this.sdfs.materialData );
+		this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ) );
 
 		// Material texture arrays
 		this.materialData.loadTexturesFromSdfs();

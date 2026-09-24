@@ -2163,7 +2163,7 @@ export class SceneProcessor {
 
 		if ( this.materialData ) {
 
-			pathTracer.materialData.setMaterialData( this.materialData );
+			pathTracer.materialData.setMaterialData( this.materialData, this.materials.map( m => m.sources ) );
 
 		} else {
 

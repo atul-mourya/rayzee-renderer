@@ -1,4 +1,5 @@
 import { Color } from 'three';
+import { MATERIAL_DEFAULTS } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 
 /**
@@ -13,44 +14,8 @@ export class MaterialService {
 	 */
 	static createCompleteMaterialFromAPI( apiMaterialInfo ) {
 
-		// Default values matching GeometryExtractor's getPhysicalDefaults
-		const defaults = {
-			color: [ 1, 1, 1 ], // white
-			emissive: [ 0, 0, 0 ], // black
-			emissiveIntensity: 1.0,
-			roughness: 1.0,
-			metalness: 0.0,
-			ior: 1.5,
-			opacity: 1.0,
-			transmission: 0.0,
-			thickness: 0.1,
-			attenuationColor: [ 1, 1, 1 ], // white
-			attenuationDistance: Infinity,
-			dispersion: 0.0,
-			sheen: 0.0,
-			sheenRoughness: 1.0,
-			sheenColor: [ 0, 0, 0 ], // black
-			specularIntensity: 1.0,
-			specularColor: [ 1, 1, 1 ], // white
-			clearcoat: 0.0,
-			clearcoatRoughness: 0.0,
-			iridescence: 0.0,
-			iridescenceIOR: 1.3,
-			iridescenceThicknessRange: [ 100, 400 ],
-			transparent: 0,
-			alphaTest: 0.0,
-			side: 0, // FrontSide
-			subsurface: 0.0,
-			subsurfaceColor: [ 1, 1, 1 ], // white scatter albedo
-			subsurfaceRadius: [ 1.0, 0.2, 0.1 ], // skin-like mean free path
-			subsurfaceRadiusScale: 1.0,
-			subsurfaceAnisotropy: 0.0,
-			anisotropy: 0.0,
-			anisotropyRotation: 0.0
-		};
-
 		// Create complete material by merging API data with defaults
-		const completeMaterial = { ...defaults };
+		const completeMaterial = structuredClone( MATERIAL_DEFAULTS );
 
 		// Apply API properties if they exist
 		if ( apiMaterialInfo.color ) completeMaterial.color = apiMaterialInfo.color;

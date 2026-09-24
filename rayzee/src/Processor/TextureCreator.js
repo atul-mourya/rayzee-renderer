@@ -1,5 +1,6 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
-import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, DEFAULT_TEXTURE_MATRIX, MATERIAL_DATA_LAYOUT, normalizeAttenuationDistance, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
+import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
@@ -1036,88 +1037,9 @@ export class TextureCreator {
 	 */
 	createMaterialRawData( materials ) {
 
-		// Layout is defined by MATERIAL_DATA_LAYOUT in EngineDefaults.js.
-		// The inline array below must match that layout exactly (positional order = canonical layout).
-		const dataLengthPerMaterial = MATERIAL_DATA_LAYOUT.FLOATS_PER_MATERIAL;
-		const totalMaterials = materials.length;
-
-		const size = totalMaterials * dataLengthPerMaterial;
-		const data = new Float32Array( size );
-
-		for ( let i = 0; i < totalMaterials; i ++ ) {
-
-			const mat = materials[ i ];
-			const stride = i * dataLengthPerMaterial;
-
-			const mapMatrix = mat.mapMatrix ?? DEFAULT_TEXTURE_MATRIX;
-			const normalMapMatrices = mat.normalMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-			const roughnessMapMatrices = mat.roughnessMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-			const metalnessMapMatrices = mat.metalnessMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-			const emissiveMapMatrices = mat.emissiveMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-			const bumpMapMatrices = mat.bumpMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-			const displacementMapMatrices = mat.displacementMapMatrices ?? DEFAULT_TEXTURE_MATRIX;
-
-			// Slot order: shadow/culling → BxDF core → maps → extended → displacement → transforms
-			// Must match MATERIAL_DATA_LAYOUT in EngineDefaults.js exactly.
-			const materialData = [
-				// Slot 0: shadow core (ior, transmission, thickness, emissiveIntensity)
-				mat.ior, 					mat.transmission, 			mat.thickness, 				mat.emissiveIntensity,
-				// Slot 1: shadow (attenuationColor, attenuationDistance)
-				mat.attenuationColor.r, 	mat.attenuationColor.g, 	mat.attenuationColor.b, 	normalizeAttenuationDistance( mat.attenuationDistance ),
-				// Slot 2: shadow + culling (opacity, side, transparent, alphaTest)
-				mat.opacity, 				mat.side, 					mat.transparent, 			mat.alphaTest,
-				// Slot 3: shadow (alphaMode, depthWrite, normalScale)
-				mat.alphaMode, 				mat.depthWrite, 			mat.normalScale?.x ?? 1, 	mat.normalScale?.y ?? 1,
-				// Slot 4: BxDF core (color, metalness)
-				mat.color.r, 				mat.color.g, 				mat.color.b, 				mat.metalness,
-				// Slot 5: BxDF core (emissive, roughness)
-				mat.emissive.r, 			mat.emissive.g, 			mat.emissive.b, 			mat.roughness,
-				// Slot 6: map indices A (albedo, normal, roughness, metalness)
-				mat.map, 					mat.normalMap, 				mat.roughnessMap, 			mat.metalnessMap,
-				// Slot 7: map indices B (emissive, bump, clearcoat, clearcoatRoughness)
-				mat.emissiveMap, 			mat.bumpMap, 				mat.clearcoat, 				mat.clearcoatRoughness,
-				// Slot 8: extended BxDF (dispersion, visible, sheen, sheenRoughness)
-				mat.dispersion, 			mat.visible, 				mat.sheen, 					mat.sheenRoughness,
-				// Slot 9: extended BxDF (sheenColor, reserved)
-				mat.sheenColor.r, 			mat.sheenColor.g, 			mat.sheenColor.b, 			1,
-				// Slot 10: extended BxDF (specularIntensity, specularColor)
-				mat.specularIntensity, 		mat.specularColor.r, 		mat.specularColor.g, 		mat.specularColor.b,
-				// Slot 11: extended BxDF (iridescence)
-				mat.iridescence, 			mat.iridescenceIOR, 		mat.iridescenceThicknessRange[ 0 ], mat.iridescenceThicknessRange[ 1 ],
-				// Slot 12: displacement
-				mat.bumpScale,				mat.displacementScale,		mat.displacementMap,		0,
-				mapMatrix[ 0 ], 			mapMatrix[ 1 ], 			mapMatrix[ 2 ], 			mapMatrix[ 3 ],
-				mapMatrix[ 4 ], 			mapMatrix[ 5 ], 			mapMatrix[ 6 ], 			mapMatrix[ 7 ],
-				normalMapMatrices[ 0 ], 	normalMapMatrices[ 1 ], 	normalMapMatrices[ 2 ], 	normalMapMatrices[ 3 ],
-				normalMapMatrices[ 4 ], 	normalMapMatrices[ 5 ], 	normalMapMatrices[ 6 ], 	normalMapMatrices[ 7 ],
-				roughnessMapMatrices[ 0 ], 	roughnessMapMatrices[ 1 ], 	roughnessMapMatrices[ 2 ], 	roughnessMapMatrices[ 3 ],
-				roughnessMapMatrices[ 4 ], 	roughnessMapMatrices[ 5 ], 	roughnessMapMatrices[ 6 ], 	roughnessMapMatrices[ 7 ],
-				metalnessMapMatrices[ 0 ], 	metalnessMapMatrices[ 1 ], 	metalnessMapMatrices[ 2 ], 	metalnessMapMatrices[ 3 ],
-				metalnessMapMatrices[ 4 ], 	metalnessMapMatrices[ 5 ], 	metalnessMapMatrices[ 6 ], 	metalnessMapMatrices[ 7 ],
-				emissiveMapMatrices[ 0 ], 	emissiveMapMatrices[ 1 ], 	emissiveMapMatrices[ 2 ], 	emissiveMapMatrices[ 3 ],
-				emissiveMapMatrices[ 4 ], 	emissiveMapMatrices[ 5 ], 	emissiveMapMatrices[ 6 ], 	emissiveMapMatrices[ 7 ],
-				bumpMapMatrices[ 0 ], 		bumpMapMatrices[ 1 ], 		bumpMapMatrices[ 2 ], 		bumpMapMatrices[ 3 ],
-				bumpMapMatrices[ 4 ], 		bumpMapMatrices[ 5 ],	 	bumpMapMatrices[ 6 ], 		bumpMapMatrices[ 7 ],
-				displacementMapMatrices[ 0 ], displacementMapMatrices[ 1 ], displacementMapMatrices[ 2 ], displacementMapMatrices[ 3 ],
-				displacementMapMatrices[ 4 ], displacementMapMatrices[ 5 ], displacementMapMatrices[ 6 ], displacementMapMatrices[ 7 ],
-				// Slot 27: subsurface (subsurfaceColor.rgb, subsurface weight)
-				mat.subsurfaceColor?.r ?? 1,	mat.subsurfaceColor?.g ?? 1,	mat.subsurfaceColor?.b ?? 1,	mat.subsurface ?? 0,
-				// Slot 28: subsurface (subsurfaceRadius.rgb, subsurfaceRadiusScale)
-				mat.subsurfaceRadius?.[ 0 ] ?? 1, mat.subsurfaceRadius?.[ 1 ] ?? 0.2, mat.subsurfaceRadius?.[ 2 ] ?? 0.1, mat.subsurfaceRadiusScale ?? 1,
-				// Slot 29: subsurfaceAnisotropy g + surface anisotropy (strength, rotation, map index)
-				mat.subsurfaceAnisotropy ?? 0,	mat.anisotropy ?? 0,	mat.anisotropyRotation ?? 0,	mat.anisotropyMap ?? - 1,
-				// Slot 30: extension map indices A (transmission, clearcoat, clearcoatRoughness, sheenColor)
-				mat.transmissionMap ?? - 1,	mat.clearcoatMap ?? - 1,	mat.clearcoatRoughnessMap ?? - 1,	mat.sheenColorMap ?? - 1,
-				// Slot 31: extension map indices B (sheenRoughness, iridescence, iridescenceThickness, specularIntensity)
-				mat.sheenRoughnessMap ?? - 1,	mat.iridescenceMap ?? - 1,	mat.iridescenceThicknessMap ?? - 1,	mat.specularIntensityMap ?? - 1,
-				// Slot 32: extension map indices C (specularColor + 3 reserved)
-				mat.specularColorMap ?? - 1,	0,	0,	0,
-			];
-
-			data.set( materialData, stride );
-
-		}
-
+		const stride = MATERIAL_DATA_LAYOUT.FLOATS_PER_MATERIAL;
+		const data = new Float32Array( materials.length * stride );
+		for ( let i = 0; i < materials.length; i ++ ) packMaterial( data, i * stride, materials[ i ] );
 		return data;
 
 	}
