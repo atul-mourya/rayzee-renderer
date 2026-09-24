@@ -390,6 +390,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 | Material Sampling | Caller-resolved classification + cached BRDF weights | Avoid recomputation |
 | Direction Sampling | Single mutually-exclusive lobe branch (cumulative CDF) | Less divergence |
 | Accumulation | Disabled during camera movement | Prevents temporal instability |
+| Resolution | Half resolution during camera movement (`interactionRenderScale`) | A quarter of the rays per frame; bounces kept, so no brightness pop when the camera stops |
 | Data Access | Aligned vec4 SoA packing | Coalesced GPU memory reads |
 
 ---

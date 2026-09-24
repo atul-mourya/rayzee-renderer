@@ -429,7 +429,8 @@ Key settings:
 | `aperture` | `number` | 5.6 | DOF aperture (f-stop) |
 | `focalLength` | `number` | 50 | DOF focal length (mm) |
 | `transparentBackground` | `boolean` | false | Transparent canvas background |
-| `interactionModeEnabled` | `boolean` | true | Lower quality during camera movement for smoother navigation |
+| `interactionModeEnabled` | `boolean` | true | Render at lower resolution while the camera moves, keeping the full bounce budget ("Fast Navigation" in the app) |
+| `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser |
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'gradient'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
