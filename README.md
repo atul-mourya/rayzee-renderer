@@ -32,7 +32,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
 - **360° equirectangular panorama** camera projection, with longitude/latitude range cropping and a level-horizon option
-- **Interaction Mode** — automatically drops quality during camera movement and restores full fidelity the moment you stop, keeping navigation responsive
+- **Fast Navigation** — renders at lower resolution while the camera moves and restores full quality the moment you stop, keeping navigation responsive
 - **Broad asset support** — GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, and USDZ models; HDR/EXR environments; ZIP archives with automatic model detection
 - **Scenes larger than memory** — a pbrt-v4 archive of tens of gigabytes can be inspected without unpacking it and loaded one element at a time; triangle and node storage is chunked past the browser's ~2 GB single-array ceiling, and a CPU memory preflight refuses a scene that would kill the tab rather than letting it die mid-build
 - **Multiple tone-mapping operators** (ACES, AgX, Reinhard, and more) with automatic exposure adjustment

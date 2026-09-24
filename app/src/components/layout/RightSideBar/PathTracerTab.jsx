@@ -2,6 +2,7 @@ import { Sun, Sunrise, RefreshCcwDot, Target, Image, Blend, Palette, ArrowUp, Cl
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { InfoTip } from "@/components/ui/info-tip";
 import { NumberInput } from "@/components/ui/number-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ColorInput } from "@/components/ui/colorinput";
@@ -309,7 +310,7 @@ const PathTracerTab = () => {
 					<Switch label={"Enable"} checked={enablePathTracer} onCheckedChange={handlePathTracerChange} />
 				</Row>
 				<Row>
-					<Switch label={"Interaction Mode"} checked={interactionModeEnabled} onCheckedChange={handleInteractionModeEnabledChange} />
+					<Switch label={<>Fast Navigation<InfoTip text="Renders at lower resolution while the camera moves, for smoother navigation. Full quality returns as soon as it stops." /></>} checked={interactionModeEnabled} onCheckedChange={handleInteractionModeEnabledChange} />
 				</Row>
 				<Row more={(
 					<>
