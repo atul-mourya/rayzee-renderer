@@ -163,6 +163,26 @@ describe( 'CameraOptimizer', () => {
 
 		} );
 
+		it( 'keeps a value written while interacting', () => {
+
+			const custom = new CameraOptimizer( renderer, material, { qualitySettings: { maxBounceCount: 1 } } );
+			custom.enterInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 1 );
+			material.uniforms.maxBounceCount.value = 5;
+			custom.exitInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 5 );
+
+		} );
+
+		it( 'restores a value nobody else touched', () => {
+
+			const custom = new CameraOptimizer( renderer, material, { qualitySettings: { maxBounceCount: 1 } } );
+			custom.enterInteractionMode();
+			custom.exitInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 8 );
+
+		} );
+
 		it( 'is no-op if not in interaction mode', () => {
 
 			const onExit = vi.fn();

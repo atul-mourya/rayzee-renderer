@@ -310,15 +310,15 @@ export class PathTracerStage extends RenderStage {
 
 					}
 				},
-				enableEmissiveTriangleSampling: {
+				fireflyThreshold: {
 					get value() {
 
-						return self.enableEmissiveTriangleSampling.value;
+						return self.fireflyThreshold.value;
 
 					},
 					set value( v ) {
 
-						self.enableEmissiveTriangleSampling.value = v;
+						self.fireflyThreshold.value = v;
 
 					}
 				},
@@ -339,10 +339,12 @@ export class PathTracerStage extends RenderStage {
 
 		this.cameraOptimizer = new CameraOptimizer( this.renderer, materialInterface, {
 			enabled: DEFAULT_STATE.interactionModeEnabled,
-			// No bounce clamp: the app lowers the resolution instead (PathTracerApp._applyRenderScale).
+			// Nothing that costs light: the app lowers the resolution instead (PathTracerApp._applyRenderScale).
+			// The firefly limit tightens to its floor on frame 0, which every moving frame is, and clipped
+			// ~10% of an emissive-lit interior's light; 1e9 is off, as in the bench.
 			qualitySettings: {
 				enableAccumulation: false,
-				enableEmissiveTriangleSampling: false,
+				fireflyThreshold: 1e9,
 			},
 			onEnter: () => this.emit( 'pathtracer:interactionStart' ),
 			onExit: () => this.emit( 'pathtracer:interactionEnd' ),

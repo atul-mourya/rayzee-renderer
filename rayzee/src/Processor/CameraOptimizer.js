@@ -19,6 +19,7 @@ export class CameraOptimizer {
 		this.interactionMode = false;
 		this.interactionTimeout = null;
 		this.originalValues = {};
+		this.appliedValues = {};
 		this.wasAccumulationEnabled = true; // Track original accumulation state
 
 		// Enhanced interaction mode settings for reduced quality during interaction
@@ -52,6 +53,7 @@ export class CameraOptimizer {
 			// Enter interaction mode and save original values
 			this.interactionMode = true;
 			this.originalValues = {}; // Reset stored values
+			this.appliedValues = {};
 
 			// Store original accumulation state before any changes
 			if ( this.material.uniforms.enableAccumulation ) {
@@ -79,6 +81,7 @@ export class CameraOptimizer {
 					// Handle material uniforms
 					this.originalValues[ key ] = this.material.uniforms[ key ].value;
 					this.material.uniforms[ key ].value = this.interactionQualitySettings[ key ];
+					this.appliedValues[ key ] = this.material.uniforms[ key ].value;
 
 				}
 
@@ -134,8 +137,13 @@ export class CameraOptimizer {
 
 			} else if ( this.material.uniforms[ key ] ) {
 
-				// Restore material uniforms
-				this.material.uniforms[ key ].value = this.originalValues[ key ];
+				// A value written while we held it (a settings change) is newer than the one we saved.
+				const applied = this.appliedValues[ key ];
+				if ( applied === undefined || this.material.uniforms[ key ].value === applied ) {
+
+					this.material.uniforms[ key ].value = this.originalValues[ key ];
+
+				}
 
 			}
 
@@ -143,6 +151,7 @@ export class CameraOptimizer {
 
 		this.interactionMode = false;
 		this.originalValues = {}; // Clear stored values
+		this.appliedValues = {};
 
 		// Call exit callback first (this may trigger a reset)
 		if ( this.onExitCallback ) {
@@ -212,6 +221,7 @@ export class CameraOptimizer {
 				} else if ( this.material.uniforms[ key ] ) {
 
 					this.material.uniforms[ key ].value = settings[ key ];
+					this.appliedValues[ key ] = this.material.uniforms[ key ].value;
 
 				}
 
