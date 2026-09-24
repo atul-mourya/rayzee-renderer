@@ -81,19 +81,26 @@ describe( 'CameraOptimizer', () => {
 
 	describe( 'enterInteractionMode', () => {
 
-		it( 'enters interaction mode and reduces quality', () => {
+		it( 'enters interaction mode and disables accumulation', () => {
 
 			optimizer.enterInteractionMode();
 			expect( optimizer.isInInteractionMode() ).toBe( true );
-			expect( material.uniforms.maxBounceCount.value ).toBe( 1 );
 			expect( material.uniforms.enableAccumulation.value ).toBe( false );
+
+		} );
+
+		it( 'leaves the bounce count alone by default', () => {
+
+			optimizer.enterInteractionMode();
+			expect( material.uniforms.maxBounceCount.value ).toBe( 8 );
+			expect( optimizer.originalValues ).not.toHaveProperty( 'maxBounceCount' );
 
 		} );
 
 		it( 'stores original values', () => {
 
 			optimizer.enterInteractionMode();
-			expect( optimizer.originalValues.maxBounceCount ).toBe( 8 );
+			expect( optimizer.originalValues.enableAccumulation ).toBe( true );
 
 		} );
 

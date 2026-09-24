@@ -853,10 +853,25 @@ export class PathTracer extends PathTracerStage {
 		// (row-major active list → under-coverage of the lower rows → GI band). Force full coverage
 		// until the readback re-measures at the new size; bump the generation so any readback already
 		// in flight (carrying the old-resolution counts) is discarded when it resolves.
-		this._lastBounceCounts = null;
-		this._lastBounceEnergy = null;
-		this._lastBounceCountsBudget = - 1;
-		this._lastBounceCountsLoopBound = - 1;
+		// The early exit only compares energy against a per-pixel threshold, so the curve rescaled to the
+		// new pixel count keeps it working — nothing re-measures while the camera moves, and the moving-camera
+		// resolution drop would otherwise run every bounce slot. A multi-chunk curve holds only the last band.
+		if ( this._lastBounceCounts && this._numChunks <= 1 && oldW > 0 && oldH > 0 ) {
+
+			const ratio = ( newW * newH ) / ( oldW * oldH );
+			const rescale = ( v ) => Math.min( 0xFFFFFFFF, Math.round( v * ratio ) );
+			this._lastBounceCounts = this._lastBounceCounts.map( rescale );
+			this._lastBounceEnergy = this._lastBounceEnergy.map( rescale );
+
+		} else {
+
+			this._lastBounceCounts = null;
+			this._lastBounceEnergy = null;
+			this._lastBounceCountsBudget = - 1;
+			this._lastBounceCountsLoopBound = - 1;
+
+		}
+
 		this._curveSizingValid = false;
 		this._readbackFrameCounter = 0;
 		this._readbackGeneration ++;

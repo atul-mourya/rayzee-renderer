@@ -836,14 +836,10 @@ export class DenoisingManager extends EventDispatcher {
 		if ( this.upscalerCanvas ) this.upscalerCanvas.style.display = 'none';
 		if ( this.mainCanvas ) this.mainCanvas.style.opacity = '1';
 
-		if ( wasShowing ) {
+		// The nominal size, not the path tracer's: that one is smaller while the camera moves.
+		if ( wasShowing && this._lastRenderWidth && this._lastRenderHeight ) {
 
-			const stage = this._stages?.pathTracer;
-			if ( stage?.width && stage?.height ) {
-
-				this.dispatchEvent( { type: 'resolution_changed', width: stage.width, height: stage.height } );
-
-			}
+			this.dispatchEvent( { type: 'resolution_changed', width: this._lastRenderWidth, height: this._lastRenderHeight } );
 
 		}
 

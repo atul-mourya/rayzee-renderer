@@ -23,8 +23,6 @@ export class CameraOptimizer {
 
 		// Enhanced interaction mode settings for reduced quality during interaction
 		this.interactionQualitySettings = {
-			maxBounceCount: 1,
-			// pixelRatio: 0.25,
 			enableAccumulation: false,
 			...settings.qualitySettings
 		};

@@ -63,6 +63,7 @@ const SETTING_ROUTES = {
 	panoramaLonRange: { handler: 'handlePanoramaLonRange', reset: true },
 	panoramaLatRange: { handler: 'handlePanoramaLatRange', reset: true },
 	interactionModeEnabled: { handler: 'handleInteractionModeEnabled', reset: false },
+	interactionRenderScale: { handler: 'handleInteractionRenderScale', reset: false },
 	maxSamples: { handler: 'handleMaxSamples', reset: false },
 	transparentBackground: { handler: 'handleTransparentBackground' },
 	backgroundColor: { handler: 'handleBackgroundColor', reset: true },
@@ -148,6 +149,7 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Function} [params.reconcileCompletion] - Called when completion limits change
 	 * @param {Object} [params.denoisingManager] - Needed to force ASVGF off under panorama
 	 * @param {Object} [params.cameraManager]    - Needed to force auto-focus manual under panorama
+	 * @param {Function} [params.onInteractionRenderScale] - Applies a new moving-camera render scale
 	 */
 	bind( params ) {
 
@@ -162,7 +164,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, cameraManager } ) {
+	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, cameraManager, onInteractionRenderScale } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -276,6 +278,12 @@ export class RenderSettings extends EventDispatcher {
 			handleInteractionModeEnabled: ( value ) => {
 
 				stages.pathTracer?.setInteractionModeEnabled( value );
+
+			},
+
+			handleInteractionRenderScale: ( value ) => {
+
+				onInteractionRenderScale?.( value );
 
 			},
 

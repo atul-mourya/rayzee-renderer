@@ -239,6 +239,12 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Resolution state
 		this._resizeDebounceTimer = null;
+		// The size the host asked for. The canvas backing store is this × _renderScale, which drops
+		// below 1 only while the camera moves.
+		this._displayWidth = 0;
+		this._displayHeight = 0;
+		this._renderScale = 1;
+		this._pendingRenderScale = null;
 
 		// Tracked listeners for clean dispose()
 		this._trackedListeners = [];
@@ -341,6 +347,8 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		if ( this.cameraManager.controls ) this.cameraManager.controls.update();
+
+		this._applyPendingRenderScale();
 
 		// Animation playback: compute skinned positions and refit BVH.
 		// Guard prevents overlapping async refits (fire-and-forget with 1-frame latency).
@@ -1812,9 +1820,7 @@ export class PathTracerApp extends EventDispatcher {
 		if ( ! this._isRenderSizeSupported( width, height ) ) return;
 
 		this.renderer.setPixelRatio( 1.0 );
-		this.renderer.setSize( width, height, false );
-		this.cameraManager.camera.aspect = width / height;
-		this.cameraManager.camera.updateProjectionMatrix();
+		this._setDisplaySize( width, height );
 
 		const lastW = this.denoisingManager?._lastRenderWidth ?? 0;
 		const lastH = this.denoisingManager?._lastRenderHeight ?? 0;
@@ -1833,7 +1839,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( ! this._isRenderSizeSupported( renderWidth, renderHeight ) ) return;
 
-		this.pipeline?.setSize( renderWidth, renderHeight );
+		this.pipeline?.setSize( this._scaled( renderWidth ), this._scaled( renderHeight ) );
+		// Full size: the denoiser only runs once the camera has stopped.
 		this.denoisingManager?.setRenderSize( renderWidth, renderHeight );
 		this.needsReset = true;
 
@@ -1856,14 +1863,72 @@ export class PathTracerApp extends EventDispatcher {
 		if ( ! this._isRenderSizeSupported( width, height ) ) return null;
 
 		this.renderer.setPixelRatio( 1.0 );
-		this.renderer.setSize( width, height, false );
-		this.cameraManager.camera.aspect = width / height;
-		this.cameraManager.camera.updateProjectionMatrix();
+		this._setDisplaySize( width, height );
 
 		clearTimeout( this._resizeDebounceTimer );
 		this._applyRenderResize( width, height );
 
 		return { width, height };
+
+	}
+
+	_scaled( size ) {
+
+		return Math.max( 1, Math.round( size * this._renderScale ) );
+
+	}
+
+	// The wavefront takes its resolution from the canvas backing store, so that is what has to shrink.
+	// updateStyle=false keeps the CSS size, and the browser stretches the smaller frame over it.
+	_setDisplaySize( width, height ) {
+
+		this._displayWidth = width;
+		this._displayHeight = height;
+
+		this.renderer.setSize( this._scaled( width ), this._scaled( height ), false );
+		this.cameraManager.camera.aspect = width / height;
+		this.cameraManager.camera.updateProjectionMatrix();
+
+	}
+
+	// OIDN as the live denoiser rebuilds its network on every size change, so it keeps full size.
+	_interactionRenderScale() {
+
+		if ( this.denoisingManager?.continuousDenoise ) return 1;
+		const scale = Number( this.settings.get( 'interactionRenderScale' ) );
+		return scale > 0 ? Math.min( 1, Math.max( 0.125, scale ) ) : 1;
+
+	}
+
+	// Interaction can start inside PathTracer.render(), where resizing would pull textures out from
+	// under the frame, so the change waits for the next frame boundary. No wake(): the move that
+	// started it already woke the loop, and waking from inside render() would re-enter it.
+	_requestRenderScale( scale ) {
+
+		this._pendingRenderScale = scale;
+
+	}
+
+	_applyPendingRenderScale() {
+
+		if ( this._pendingRenderScale !== null ) this._applyRenderScale( this._pendingRenderScale );
+
+	}
+
+	_applyRenderScale( scale ) {
+
+		this._pendingRenderScale = null;
+		if ( this._disposed || scale === this._renderScale ) return;
+
+		this._renderScale = scale;
+		if ( ! this._displayWidth || ! this._displayHeight ) return;
+
+		this._setDisplaySize( this._displayWidth, this._displayHeight );
+		this.pipeline?.setSize( this._scaled( this._displayWidth ), this._scaled( this._displayHeight ) );
+		// History from the other size would reproject garbage.
+		this.pipeline?.eventBus.emit( 'asvgf:reset' );
+		this.pipeline?.eventBus.emit( 'denoiser:reset' );
+		this.needsReset = true;
 
 	}
 
@@ -2014,7 +2079,7 @@ export class PathTracerApp extends EventDispatcher {
 	 * - `_bounceEarlyExitThreshold` / `_useDynamicDispatch` both consume the async
 	 *   survivor curve. Kernels bind on ENTERING_COUNT, so an under-sized grid silently
 	 *   drops rays, and the frame a readback lands on is GPU-scheduled.
-	 * - `interactionModeEnabled` is a 100 ms timer that clamps bounces to 1, disables
+	 * - `interactionModeEnabled` is a 100 ms timer that lowers the render resolution, disables
 	 *   accumulation and freezes frameCount; it engages on the very first frame.
 	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
 	 *
@@ -3027,6 +3092,8 @@ export class PathTracerApp extends EventDispatcher {
 		this._addTrackedListener( this.cameraManager.controls, 'change', () => {
 
 			this.needsReset = true;
+			// Here rather than in render(), so the first frame of the move is already at the lower resolution.
+			this.stages.pathTracer?.enterInteractionMode();
 			this.wake();
 
 		} );
@@ -3053,7 +3120,14 @@ export class PathTracerApp extends EventDispatcher {
 
 		const initRenderW = this.canvas.clientWidth || 1;
 		const initRenderH = this.canvas.clientHeight || 1;
+		this._displayWidth = initRenderW;
+		this._displayHeight = initRenderH;
 		this.pipeline.setSize( initRenderW, initRenderH );
+
+		this.pipeline.eventBus.on( 'pathtracer:interactionStart', () => this._requestRenderScale( this._interactionRenderScale() ) );
+		// Never fires inside a frame (a timer, or interaction mode being switched off), so it applies at once —
+		// renderFrames() and the video renderer drive pipeline.render() without passing through animate().
+		this.pipeline.eventBus.on( 'pathtracer:interactionEnd', () => this._applyRenderScale( 1 ) );
 
 	}
 
@@ -3175,6 +3249,11 @@ export class PathTracerApp extends EventDispatcher {
 			reconcileCompletion: () => this._reconcileCompletion(),
 			denoisingManager: this.denoisingManager,
 			cameraManager: this.cameraManager,
+			onInteractionRenderScale: () => {
+
+				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
+
+			},
 		} );
 
 		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;

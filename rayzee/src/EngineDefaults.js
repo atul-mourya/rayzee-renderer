@@ -210,6 +210,8 @@ export const ENGINE_DEFAULTS = {
 	bloomRadius: 0.15,
 	bloomThreshold: 0.85,
 	interactionModeEnabled: true,
+	// Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); 1 turns it off.
+	interactionRenderScale: 0.5,
 	debugVisScale: 100,
 
 	// Denoising strategy

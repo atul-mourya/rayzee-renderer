@@ -298,18 +298,6 @@ export class PathTracerStage extends RenderStage {
 		const self = this;
 		const materialInterface = {
 			uniforms: {
-				maxBounceCount: {
-					get value() {
-
-						return self.maxBounces.value;
-
-					},
-					set value( v ) {
-
-						self.maxBounces.value = v;
-
-					}
-				},
 				enableAccumulation: {
 					get value() {
 
@@ -351,11 +339,13 @@ export class PathTracerStage extends RenderStage {
 
 		this.cameraOptimizer = new CameraOptimizer( this.renderer, materialInterface, {
 			enabled: DEFAULT_STATE.interactionModeEnabled,
+			// No bounce clamp: the app lowers the resolution instead (PathTracerApp._applyRenderScale).
 			qualitySettings: {
-				maxBounceCount: 1,
 				enableAccumulation: false,
 				enableEmissiveTriangleSampling: false,
 			},
+			onEnter: () => this.emit( 'pathtracer:interactionStart' ),
+			onExit: () => this.emit( 'pathtracer:interactionEnd' ),
 			onReset: () => {
 
 				this.reset();

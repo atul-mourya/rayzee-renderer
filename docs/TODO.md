@@ -10,7 +10,7 @@
 ### MVP
 - [ ] Blender like look feature for tonemapping
 - [ ] portrait/lanscape feature along with aspect ratio ui row
-- [ ] lower resolution when camera moving
+- [x] lower resolution when camera moving
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
