@@ -49,24 +49,25 @@ function sentinel( k ) {
 
 	let next = k * 1000;
 	const v = () => ( next += 1 );
+	const u = () => v() / 10000; // stays inside the [0, 1] the packer clamps weights to
 	const rgb = () => [ v(), v(), v() ];
 	const matrix = () => Array.from( { length: 9 }, v );
 	return {
-		ior: v(), transmission: v(), thickness: v(), emissiveIntensity: v(),
+		ior: v(), transmission: u(), thickness: v(), emissiveIntensity: v(),
 		attenuationColor: rgb(), attenuationDistance: v(),
-		opacity: v(), side: v(), transparent: v(), alphaTest: v(),
+		opacity: u(), side: v(), transparent: v(), alphaTest: v(),
 		alphaMode: v(), depthWrite: v(), normalScale: { x: v(), y: v() },
-		color: rgb(), metalness: v(), emissive: rgb(), roughness: v(),
+		color: rgb(), metalness: u(), emissive: rgb(), roughness: u(),
 		map: v(), normalMap: v(), roughnessMap: v(), metalnessMap: v(), emissiveMap: v(), bumpMap: v(),
-		clearcoat: v(), clearcoatRoughness: v(),
-		dispersion: v(), sheen: v(), sheenRoughness: v(), sheenColor: rgb(),
-		specularIntensity: v(), specularColor: rgb(),
-		iridescence: v(), iridescenceIOR: v(), iridescenceThicknessRange: [ v(), v() ],
+		clearcoat: u(), clearcoatRoughness: u(),
+		dispersion: v(), sheen: u(), sheenRoughness: u(), sheenColor: rgb(),
+		specularIntensity: u(), specularColor: rgb(),
+		iridescence: u(), iridescenceIOR: v(), iridescenceThicknessRange: [ v(), v() ],
 		bumpScale: v(), displacementScale: v(), displacementMap: v(),
 		mapMatrix: matrix(), normalMapMatrices: matrix(), roughnessMapMatrices: matrix(), metalnessMapMatrices: matrix(),
 		emissiveMapMatrices: matrix(), bumpMapMatrices: matrix(), displacementMapMatrices: matrix(),
-		subsurfaceColor: rgb(), subsurface: v(), subsurfaceRadius: rgb(), subsurfaceRadiusScale: v(),
-		subsurfaceAnisotropy: v(), anisotropy: v(), anisotropyRotation: v(), anisotropyMap: v(),
+		subsurfaceColor: rgb(), subsurface: u(), subsurfaceRadius: rgb(), subsurfaceRadiusScale: v(),
+		subsurfaceAnisotropy: v(), anisotropy: u(), anisotropyRotation: v(), anisotropyMap: v(),
 		transmissionMap: v(), clearcoatMap: v(), clearcoatRoughnessMap: v(), sheenColorMap: v(),
 		sheenRoughnessMap: v(), iridescenceMap: v(), iridescenceThicknessMap: v(), specularIntensityMap: v(),
 		specularColorMap: v(),
@@ -139,6 +140,20 @@ describe( 'packMaterial', () => {
 		expect( d[ M.ATTENUATION_DISTANCE ] ).toBe( 0 );
 		expect( d[ M.ALBEDO_MAP_INDEX ] ).toBe( - 1 );
 		expect( [ ...d.subarray( M.ALBEDO_TRANSFORM, M.ALBEDO_TRANSFORM + 8 ) ] ).toEqual( [ 1, 0, 0, 0, 1, 0, 0, 0 ] );
+
+	} );
+
+	it( 'clamps weights and roughnesses to [0, 1]', () => {
+
+		// A glTF chrome with clearcoatFactor 4: 1 − clearcoat·E went negative and lit it with negative light.
+		const d = packed( { clearcoat: 4, metalness: - 0.5, roughness: 1.5, transmission: 2, opacity: 3, ior: 2.4, emissiveIntensity: 5 } );
+		expect( d[ M.CLEARCOAT ] ).toBe( 1 );
+		expect( d[ M.METALNESS ] ).toBe( 0 );
+		expect( d[ M.ROUGHNESS ] ).toBe( 1 );
+		expect( d[ M.TRANSMISSION ] ).toBe( 1 );
+		expect( d[ M.OPACITY ] ).toBe( 1 );
+		expect( d[ M.IOR ] ).toBe( Math.fround( 2.4 ) );
+		expect( d[ M.EMISSIVE_INTENSITY ] ).toBe( 5 );
 
 	} );
 
@@ -292,6 +307,20 @@ describe( 'MaterialDataManager', () => {
 			setWorkingMatrix( null );
 
 		}
+
+	} );
+
+	it( 'clamps a weight edited on its own, as the upload does', () => {
+
+		const manager = managerWith( new GeometryExtractor() );
+		manager.updateMaterialProperty( 0, 'clearcoat', 4 );
+		manager.updateMaterialProperty( 0, 'sheen', - 1 );
+		manager.updateMaterialProperty( 0, 'ior', 3 );
+
+		const data = manager.materialStorageAttr.array;
+		expect( data[ M.CLEARCOAT ] ).toBe( 1 );
+		expect( data[ M.SHEEN ] ).toBe( 0 );
+		expect( data[ M.IOR ] ).toBe( 3 );
 
 	} );
 

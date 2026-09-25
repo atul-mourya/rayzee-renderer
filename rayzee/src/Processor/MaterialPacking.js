@@ -19,6 +19,17 @@ export const MATERIAL_RESERVED_FLOATS = Object.freeze( [
 	M.SPECULAR_COLOR_MAP_INDEX + 1, M.SPECULAR_COLOR_MAP_INDEX + 2, M.SPECULAR_COLOR_MAP_INDEX + 3,
 ] );
 
+/**
+ * Weights and roughnesses, [0, 1] in glTF and three.js. Past 1 an energy split like
+ * 1 − clearcoat·E goes negative: a glTF chrome with clearcoatFactor 4 added negative light.
+ */
+export const UNIT_RANGE_PROPERTIES = Object.freeze( new Set( [
+	'metalness', 'roughness', 'transmission', 'opacity', 'clearcoat', 'clearcoatRoughness',
+	'sheen', 'sheenRoughness', 'specularIntensity', 'iridescence', 'subsurface', 'anisotropy',
+] ) );
+
+export const clampUnit = ( value ) => Math.min( Math.max( value, 0 ), 1 );
+
 function num( value, fallback ) {
 
 	const n = typeof value === 'boolean' ? + value : value;
@@ -58,15 +69,21 @@ export function packMaterial( data, base, mat ) {
 
 	};
 
+	const u = ( offset, value, fallback ) => {
+
+		data[ base + offset ] = clampUnit( num( value, fallback ) );
+
+	};
+
 	s( M.IOR, mat.ior, D.ior );
-	s( M.TRANSMISSION, mat.transmission, D.transmission );
+	u( M.TRANSMISSION, mat.transmission, D.transmission );
 	s( M.THICKNESS, mat.thickness, D.thickness );
 	s( M.EMISSIVE_INTENSITY, mat.emissiveIntensity, D.emissiveIntensity );
 
 	writeTriple( data, base + M.ATTENUATION_COLOR, mat.attenuationColor, D.attenuationColor );
 	data[ base + M.ATTENUATION_DISTANCE ] = normalizeAttenuationDistance( mat.attenuationDistance ?? D.attenuationDistance );
 
-	s( M.OPACITY, mat.opacity, D.opacity );
+	u( M.OPACITY, mat.opacity, D.opacity );
 	s( M.SIDE, mat.side, D.side );
 	s( M.TRANSPARENT, mat.transparent, D.transparent );
 	s( M.ALPHA_TEST, mat.alphaTest, D.alphaTest );
@@ -79,10 +96,10 @@ export function packMaterial( data, base, mat ) {
 	s( M.NORMAL_SCALE + 1, uniformScale ?? normalScale?.y ?? normalScale?.[ 1 ], D.normalScale[ 1 ] );
 
 	writeTriple( data, base + M.COLOR, mat.color, D.color );
-	s( M.METALNESS, mat.metalness, D.metalness );
+	u( M.METALNESS, mat.metalness, D.metalness );
 
 	writeTriple( data, base + M.EMISSIVE, mat.emissive, D.emissive );
-	s( M.ROUGHNESS, mat.roughness, D.roughness );
+	u( M.ROUGHNESS, mat.roughness, D.roughness );
 
 	data[ base + M.ALBEDO_MAP_INDEX ] = mapIndex( mat.map );
 	data[ base + M.NORMAL_MAP_INDEX ] = mapIndex( mat.normalMap );
@@ -91,19 +108,19 @@ export function packMaterial( data, base, mat ) {
 
 	data[ base + M.EMISSIVE_MAP_INDEX ] = mapIndex( mat.emissiveMap );
 	data[ base + M.BUMP_MAP_INDEX ] = mapIndex( mat.bumpMap );
-	s( M.CLEARCOAT, mat.clearcoat, D.clearcoat );
-	s( M.CLEARCOAT_ROUGHNESS, mat.clearcoatRoughness, D.clearcoatRoughness );
+	u( M.CLEARCOAT, mat.clearcoat, D.clearcoat );
+	u( M.CLEARCOAT_ROUGHNESS, mat.clearcoatRoughness, D.clearcoatRoughness );
 
 	s( M.DISPERSION, mat.dispersion, D.dispersion );
-	s( M.SHEEN, mat.sheen, D.sheen );
-	s( M.SHEEN_ROUGHNESS, mat.sheenRoughness, D.sheenRoughness );
+	u( M.SHEEN, mat.sheen, D.sheen );
+	u( M.SHEEN_ROUGHNESS, mat.sheenRoughness, D.sheenRoughness );
 
 	writeTriple( data, base + M.SHEEN_COLOR, mat.sheenColor, D.sheenColor );
 
-	s( M.SPECULAR_INTENSITY, mat.specularIntensity, D.specularIntensity );
+	u( M.SPECULAR_INTENSITY, mat.specularIntensity, D.specularIntensity );
 	writeTriple( data, base + M.SPECULAR_COLOR, mat.specularColor, D.specularColor );
 
-	s( M.IRIDESCENCE, mat.iridescence, D.iridescence );
+	u( M.IRIDESCENCE, mat.iridescence, D.iridescence );
 	s( M.IRIDESCENCE_IOR, mat.iridescenceIOR, D.iridescenceIOR );
 	s( M.IRIDESCENCE_THICKNESS_RANGE, mat.iridescenceThicknessRange?.[ 0 ], D.iridescenceThicknessRange[ 0 ] );
 	s( M.IRIDESCENCE_THICKNESS_RANGE + 1, mat.iridescenceThicknessRange?.[ 1 ], D.iridescenceThicknessRange[ 1 ] );
@@ -120,12 +137,12 @@ export function packMaterial( data, base, mat ) {
 	}
 
 	writeTriple( data, base + M.SUBSURFACE_COLOR, mat.subsurfaceColor, D.subsurfaceColor );
-	s( M.SUBSURFACE, mat.subsurface, D.subsurface );
+	u( M.SUBSURFACE, mat.subsurface, D.subsurface );
 	writeTriple( data, base + M.SUBSURFACE_RADIUS, mat.subsurfaceRadius, D.subsurfaceRadius );
 	s( M.SUBSURFACE_RADIUS_SCALE, mat.subsurfaceRadiusScale, D.subsurfaceRadiusScale );
 
 	s( M.SUBSURFACE_ANISOTROPY, mat.subsurfaceAnisotropy, D.subsurfaceAnisotropy );
-	s( M.ANISOTROPY, mat.anisotropy, D.anisotropy );
+	u( M.ANISOTROPY, mat.anisotropy, D.anisotropy );
 	s( M.ANISOTROPY_ROTATION, mat.anisotropyRotation, D.anisotropyRotation );
 	data[ base + M.ANISOTROPY_MAP_INDEX ] = mapIndex( mat.anisotropyMap );
 

@@ -13,7 +13,7 @@ import {
 	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
 	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
 } from '../EngineDefaults.js';
-import { packMaterial } from '../Processor/MaterialPacking.js';
+import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from '../Processor/MaterialPacking.js';
 import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../Processor/GeometryExtractor.js';
 import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
@@ -327,6 +327,7 @@ export class MaterialDataManager {
 
 		const data = this.materialStorageAttr.array;
 		const stride = materialIndex * M.FLOATS_PER_MATERIAL;
+		if ( UNIT_RANGE_PROPERTIES.has( property ) && typeof value === 'number' ) value = clampUnit( value );
 
 		switch ( property ) {
 

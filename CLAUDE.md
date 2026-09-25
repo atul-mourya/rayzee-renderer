@@ -315,8 +315,11 @@ the strings, so never rename or repurpose one.
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
   (`Processor/MaterialPacking.js`) is the only writer of the material block, for the scene upload
   and runtime edits alike. `app.getMaterialPropertySource( i, prop )` answers
-  `material | mapped | default | host`. ⚠️ Never derive a default from another property: "metalness
-  factor > 0.1 ⇒ IOR 2.5" made every ORM-textured glTF 4.6× too shiny on its non-metal parts.
+  `material | mapped | default | host`. Weights and roughnesses (`UNIT_RANGE_PROPERTIES`) are clamped
+  to [0, 1] there and in `updateMaterialProperty`: the Mercedes glTF ships chrome with
+  `clearcoatFactor: 4`, `1 − clearcoat·E` went negative, and OIDN grew the negative samples into blobs.
+  ⚠️ Never derive a default from another property: "metalness factor > 0.1 ⇒ IOR 2.5" made every
+  ORM-textured glTF 4.6× too shiny on its non-metal parts.
 - **Fresnel** — every dielectric interface (base layer, clear coat, glass, SSS boundary, glass
   shadows) uses the exact unpolarised Fresnel, `fresnelDielectric` in `TSL/Fresnel.js`, as Cycles
   does; metals and iridescence stay Schlick. The base keeps KHR_materials_specular's f0/f90 via
