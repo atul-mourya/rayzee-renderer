@@ -71,7 +71,7 @@ describe( 'render profiles', () => {
 	it( 'states the viewer tuning the engine ships', () => {
 
 		expect( RENDER_PROFILES.viewer.areaLightIntensityScale ).toBe( 0.1 );
-		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 270 );
+		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 0 );
 
 	} );
 

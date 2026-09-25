@@ -308,7 +308,8 @@ the strings, so never rename or repurpose one.
   physical constants, collected so choosing between them is one flag rather than a hunt:
   `areaLightIntensityScale` (glTF placeholder area-light power), `environmentRotation`, `toneMapping`,
   `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; both show AgX at neutral
-  saturation. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
+  saturation and the HDRI unrotated (0°, as Blender's unmapped world shows it), so today they differ only
+  in area-light damping. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
   throws rather than silently selecting viewer tuning.
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`

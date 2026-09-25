@@ -851,8 +851,7 @@ export class AssetLoader extends EventDispatcher {
 		this.targetModel = group;
 
 		// The light's own orientation and `scale` are already baked into the texture, so the
-		// scene is only correct at rotation 0 / intensity 1. Without this the viewer profile's
-		// default 270° rotation lands on top and the sky sits 90° from where pbrt puts it.
+		// scene is only correct at rotation 0 / intensity 1 — pinned, whatever the host's defaults.
 		if ( environment?.texture ) this.sceneMetadata = { environment: { rotation: 0, intensity: 1 } };
 
 		updateLoading( { isLoading: true, status: 'Processing PBRT geometry...', progress: 10 } );

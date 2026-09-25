@@ -11,7 +11,7 @@
 export const RENDER_PROFILES = Object.freeze( {
 	viewer: Object.freeze( {
 		areaLightIntensityScale: 0.1, // scales glTF placeholder area-light power (viewer tuning)
-		environmentRotation: 270.0, // degrees
+		environmentRotation: 0.0, // degrees — the HDRI as authored, as Blender shows it
 		toneMapping: 6, // AgXToneMapping
 		saturation: 1.0, // no grade
 	} ),
