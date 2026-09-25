@@ -1145,6 +1145,10 @@ const FURNACE_MATERIALS = {
 	// sensitive probe.
 	'furnace-dielectric-glossy': { roughness: 0.15, metalness: 0 },
 
+	// At MIN_ROUGHNESS the GGX peak's denominator is ~1e-10. A floor of 1e-6 on it once cut the lobe
+	// 8000× while the sampler still drew the true one — a 22 % reflection loss 0.15 cannot see.
+	'furnace-dielectric-smooth': { roughness: 0.05, metalness: 0 },
+
 	// Metal, two points that fail in opposite directions when the multiscatter compensation is
 	// miscalibrated: it overshoots around mid roughness while r = 1 shows the single-scattering
 	// GGX deficit. One point alone would let a bad refit trade one for the other.

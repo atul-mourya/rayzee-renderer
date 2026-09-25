@@ -11,12 +11,16 @@ import { fresnelSchlickFloat, fresnel0ToIor, iorToFresnel0Vec3, iorToFresnel0, d
 // Microfacet Distribution Functions
 // -----------------------------------------------------------------------------
 
+// Guards a zero denominator only. At MIN_ROUGHNESS the peak's π·denom² is ~1e-10, and flooring it at
+// EPSILON cut D 8000× while the sampler still drew the true lobe: smooth dielectrics lost up to 22 %.
+const D_DENOM_FLOOR = 1e-30;
+
 export const DistributionGGX = Fn( ( [ NoH, roughness ] ) => {
 
 	const alpha = roughness.mul( roughness );
 	const alpha2 = alpha.mul( alpha );
 	const denom = NoH.mul( NoH ).mul( alpha2.sub( 1.0 ) ).add( 1.0 );
-	return alpha2.div( max( float( PI ).mul( denom ).mul( denom ), EPSILON ) );
+	return alpha2.div( max( float( PI ).mul( denom ).mul( denom ), D_DENOM_FLOOR ) );
 
 } );
 
@@ -266,7 +270,7 @@ export const DistributionGGXAniso = Fn( ( [ alphaT, alphaB, NoH, ToH, BoH ] ) =>
 
 	const a2 = alphaT.mul( alphaB );
 	const v = vec3( alphaB.mul( ToH ), alphaT.mul( BoH ), a2.mul( NoH ) );
-	const v2 = max( dot( v, v ), EPSILON );
+	const v2 = max( dot( v, v ), D_DENOM_FLOOR );
 	const w2 = a2.div( v2 );
 	return a2.mul( w2.mul( w2 ) ).div( PI );
 

@@ -322,6 +322,9 @@ the strings, so never rename or repurpose one.
   `mix( f0, f90, dielectricFresnelWeight )` (`baseFresnelParams`), so specularIntensity 0 removes
   the reflection. The DFG LUT holds that weight's albedo in 17 IOR slices beside the Schlick terms —
   one texture, one extra fetch; regenerate with `npm run bench:lut` if a lobe or sampler changes.
+  ⚠️ `DistributionGGX` floors its denominator at 1e-30, not `EPSILON`: at `MIN_ROUGHNESS` the peak
+  is ~1e-10, and a 1e-6 floor cut D 8000× while the sampler drew the true lobe (a smooth white
+  dielectric read 1.10 in the furnace). `furnace-dielectric-smooth` gates it.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.
