@@ -592,7 +592,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ), () => {
 
 			// Calculate ray offset for shadow ray
-			const rayOffset = calculateRayOffsetFn( hitPoint, geomNormal, material );
+			const rayOffset = calculateRayOffsetFn( hitPoint, geomNormal );
 			const rayOrigin = hitPoint.add( rayOffset );
 
 			// Trace shadow ray

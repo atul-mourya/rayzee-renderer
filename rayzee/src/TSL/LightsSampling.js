@@ -81,6 +81,7 @@ import {
 	powerHeuristic,
 	balanceHeuristic,
 	computeDotProductsAniso,
+	offsetRayOrigin,
 } from './Common.js';
 import {
 	sampleEquirectProbability,
@@ -800,7 +801,7 @@ export const calculateDirectLightingUnified = Fn( ( [
 	const totalContribution = vec3( 0.0 ).toVar();
 	// Unoccluded reference (visibility forced to 1) — only filled when wantUnoccluded.
 	const unoccludedContribution = vec3( 0.0 ).toVar();
-	const rayOrigin = hitPoint.add( geomNormal.mul( 0.001 ) ).toVar();
+	const rayOrigin = offsetRayOrigin( hitPoint, geomNormal ).toVar();
 
 	// Binds BVH params so shadow-ray sites at varying call depths use a 3-arg call
 	const shadow = Fn( ( [ origin, dir, maxDist ] ) =>

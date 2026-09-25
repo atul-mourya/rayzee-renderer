@@ -325,6 +325,11 @@ the strings, so never rename or repurpose one.
   ⚠️ `DistributionGGX` floors its denominator at 1e-30, not `EPSILON`: at `MIN_ROUGHNESS` the peak
   is ~1e-10, and a 1e-6 floor cut D 8000× while the sampler drew the true lobe (a smooth white
   dielectric read 1.10 in the furnace). `furnace-dielectric-smooth` gates it.
+- **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
+  (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
+  per axis beyond), with n the geometric normal on the side the new ray leaves. ⚠️ Never a fixed
+  distance: the old 1 mm let rays out of sub-millimetre grooves, and a 14 cm camera read up to 14 %
+  bright in its crevices against Cycles — the same model scaled 100× matched.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

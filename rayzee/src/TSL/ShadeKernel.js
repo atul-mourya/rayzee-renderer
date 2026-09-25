@@ -15,7 +15,7 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, sampleEquirectProbability, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial } from './Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
@@ -930,10 +930,9 @@ export function buildShadeKernel( params ) {
 
 			throughput.mulAssign( interaction.throughput );
 
-			// reflection stays on same side, transmission pushes through
-			const reflectOffsetDir = select( interaction.entering, N, N.negate() );
-			const offsetDir = select( interaction.didReflect, reflectOffsetDir, direction );
-			const newOrigin = hitPoint.add( offsetDir.mul( 0.001 ) );
+			// Off the side the new ray leaves on: reflection stays, transmission and alpha skip cross.
+			const Ng = normalize( hitNormal );
+			const newOrigin = offsetRayOrigin( hitPoint, select( dot( Ng, interaction.direction ).lessThan( 0.0 ), Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
 			// Transmissive / alpha-skip / SSS-boundary are all FREE bounces — they do NOT advance camera depth (megakernel parity, gap #4). cameraDepth advances only on opaque scatter (below).
@@ -1230,8 +1229,7 @@ export function buildShadeKernel( params ) {
 
 							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
-								const rayOffset = calculateRayOffset( hitPoint, NgeoFF, material );
-								const rayOrigin = hitPoint.add( rayOffset );
+								const rayOrigin = offsetRayOrigin( hitPoint, NgeoFF );
 								const shadowDist = emissiveSample.distance.sub( 0.001 );
 								const visibility = traceShadowRayWrapped(
 									rayOrigin, emissiveSample.direction, shadowDist,
@@ -1352,7 +1350,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const newOrigin = hitPoint.add( N.mul( 0.001 ) );
+		const newOrigin = offsetRayOrigin( hitPoint, select( dot( NgeoFF, bounceDir ).lessThan( 0.0 ), NgeoFF.negate(), NgeoFF ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );
