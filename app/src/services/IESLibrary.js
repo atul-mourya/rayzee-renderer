@@ -2,7 +2,7 @@
  * Leomoon's CC0 IES Lights Pack
  * (https://leomoon.com/store/shaders/ies-lights-pack/). Files served from the
  * shared assets CDN under `iesprofiles/` — each entry has a `.ies` photometric
- * file and a matching `.png` polar-plot preview used as the picker thumbnail.
+ * file and a matching polar-plot preview (`webp/<name>.webp`) used as the picker thumbnail.
  */
 
 import { ASSETS_BASE_URL } from '@/Constants';
@@ -13,7 +13,7 @@ const entry = ( name, label ) => ( {
 	name,
 	label,
 	url: `${BASE}${name}.ies`,
-	preview: `${BASE}${name}.png`,
+	preview: `${BASE}webp/${name}.webp`,
 } );
 
 export const IES_LIBRARY = [
