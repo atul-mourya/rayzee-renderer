@@ -1,157 +1,45 @@
 /**
- * The engine's tone curve in WGSL, and a pass that turns a packed rgba16float buffer into RGBA
- * bytes on the card.
+ * The engine's view transform in WGSL, and a pass that turns a packed rgba16float buffer into
+ * display bytes on the card.
  *
- * A mirror of `ToneMapCPU.js` — same curves, same order (exposure, saturation, curve, sRGB
- * transfer), same rounding. It exists because reading half-floats back and converting them in
- * JavaScript costs more than the neural upscale itself at production sizes. `bench:tonemap`
- * compares the two implementations on a real device and fails on any drift.
+ * A mirror of `ToneMapCPU.js` — same curves, same order (exposure, saturation, curve, transfer),
+ * same rounding. It exists because reading half-floats back and converting them in JavaScript
+ * costs more than the neural upscale itself at production sizes. `bench:tonemap` compares the two
+ * implementations on a real device and fails on any drift.
+ *
+ * Both sides are generated from `../Color/ViewTransforms.js`, so a view baked from an OCIO config
+ * reaches this pass without anything here being edited — the shader is rebuilt when the registry
+ * moves, and each table-backed transform gets its own 3D texture binding.
  *
  * ⚠️ Rounding is deliberately bug-compatible. `toneMapToRGBA8` writes `srgb * 255 + 0.5` into a
- * `Uint8ClampedArray`, which rounds again — so the CPU has always been half a level bright. WGSL's
- * `round()` is round-half-to-even like the clamped array, so `round( srgb * 255 + 0.5 )` reproduces
- * it exactly, including black staying at 0. Dropping the extra half would shift every image against
- * the OIDN and Real-ESRGAN readbacks, which still go through the CPU function.
+ * `Uint8ClampedArray`, which rounds again, so the CPU has always been half a level bright. WGSL's
+ * `round()` is round-half-to-even like the clamped array, so `round( srgb * 255 + 0.5 )`
+ * reproduces it exactly, including black staying at 0.
  */
 
-import {
-	NoToneMapping, LinearToneMapping, ReinhardToneMapping,
-	CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping
-} from 'three';
+import { buildToneMapWGSL, getRegistryVersion } from '../Color/ViewTransforms.js';
+
+/** The caller owns bindings 0-2; tables start after them. */
+const TABLE_GROUP = 0;
+const FIRST_TABLE_BINDING = 3;
+
+function currentShader() {
+
+	const { wgsl, bindings } = buildToneMapWGSL( { group: TABLE_GROUP, firstBinding: FIRST_TABLE_BINDING } );
+	return { wgsl, bindings, version: getRegistryVersion() };
+
+}
 
 /**
- * WGSL functions: `rayzee_tone_map( linearRGB, mode, exposure, saturation )` and
- * `rayzee_linear_to_srgb( rgb )`, plus `rayzee_to_u8( channel )`.
+ * `rayzee_tone_map( linearRGB, mode, exposure, saturation )`, `rayzee_encode( mapped, mode )` and
+ * `rayzee_to_u8( c )` for the registry as it stands right now.
  *
- * `mode` is the Three.js ToneMapping constant, interpolated in from the import above so the two
- * sides cannot disagree about which number means which curve.
+ * A snapshot, not a live value: `PackedToneMapper` regenerates its own copy when the registry
+ * changes. Exported for tests and for a host embedding the curve in its own pass.
  */
-export const TONE_MAP_WGSL = /* wgsl */ `
-const TM_NONE: u32 = ${NoToneMapping}u;
-const TM_LINEAR: u32 = ${LinearToneMapping}u;
-const TM_REINHARD: u32 = ${ReinhardToneMapping}u;
-const TM_CINEON: u32 = ${CineonToneMapping}u;
-const TM_ACES: u32 = ${ACESFilmicToneMapping}u;
-const TM_AGX: u32 = ${AgXToneMapping}u;
-const TM_NEUTRAL: u32 = ${NeutralToneMapping}u;
+export const TONE_MAP_WGSL = currentShader().wgsl;
 
-fn tm_reinhard( c: vec3<f32> ) -> vec3<f32> {
-	return clamp( c / ( c + vec3<f32>( 1.0 ) ), vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
-}
-
-fn tm_cineon( c0: vec3<f32> ) -> vec3<f32> {
-	let c = max( c0 - vec3<f32>( 0.004 ), vec3<f32>( 0.0 ) );
-	let v = ( c * ( 6.2 * c + vec3<f32>( 0.5 ) ) ) / ( c * ( 6.2 * c + vec3<f32>( 1.7 ) ) + vec3<f32>( 0.06 ) );
-	return pow( max( v, vec3<f32>( 0.0 ) ), vec3<f32>( 2.2 ) );
-}
-
-fn tm_aces( c0: vec3<f32> ) -> vec3<f32> {
-	let c = c0 / 0.6;
-	let m_in = mat3x3<f32>(
-		vec3<f32>( 0.59719, 0.07600, 0.02840 ),
-		vec3<f32>( 0.35458, 0.90834, 0.13383 ),
-		vec3<f32>( 0.04823, 0.01566, 0.83777 ) );
-	let v = m_in * c;
-	let a = v * ( v + vec3<f32>( 0.0245786 ) ) - vec3<f32>( 0.000090537 );
-	let b = v * ( 0.983729 * v + vec3<f32>( 0.4329510 ) ) + vec3<f32>( 0.238081 );
-	let m_out = mat3x3<f32>(
-		vec3<f32>( 1.60475, -0.10208, -0.00327 ),
-		vec3<f32>( -0.53108, 1.10813, -0.07276 ),
-		vec3<f32>( -0.07367, -0.00605, 1.07602 ) );
-	return clamp( m_out * ( a / b ), vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
-}
-
-fn tm_agx( c0: vec3<f32> ) -> vec3<f32> {
-	let m_in = mat3x3<f32>(
-		vec3<f32>( 0.6274, 0.0691, 0.0164 ),
-		vec3<f32>( 0.3293, 0.9195, 0.0880 ),
-		vec3<f32>( 0.0433, 0.0113, 0.8956 ) );
-	let m_agx = mat3x3<f32>(
-		vec3<f32>( 0.856627153315983, 0.137318972929847, 0.11189821299995 ),
-		vec3<f32>( 0.0951212405381588, 0.761241990602591, 0.0767994186031903 ),
-		vec3<f32>( 0.0482516061458583, 0.101439036467562, 0.811302368396859 ) );
-
-	var v = m_agx * ( m_in * c0 );
-
-	let minEv = -12.47393;
-	let maxEv = 4.026069;
-	v = clamp( ( log2( max( v, vec3<f32>( 1e-10 ) ) ) - vec3<f32>( minEv ) ) / ( maxEv - minEv ),
-		vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
-
-	let x2 = v * v;
-	let x4 = x2 * x2;
-	v = 15.5 * x4 * x2 - 40.14 * x4 * v + 31.96 * x4 - 6.868 * x2 * v + 0.4298 * x2 + 0.1191 * v
-		- vec3<f32>( 0.00232 );
-
-	let m_out = mat3x3<f32>(
-		vec3<f32>( 1.1271005818144368, -0.1413297634984383, -0.14132976349843826 ),
-		vec3<f32>( -0.11060664309660323, 1.157823702216272, -0.11060664309660294 ),
-		vec3<f32>( -0.016493938717834573, -0.016493938717834257, 1.2519364065950405 ) );
-	let o = pow( max( m_out * v, vec3<f32>( 0.0 ) ), vec3<f32>( 2.2 ) );
-
-	let m_srgb = mat3x3<f32>(
-		vec3<f32>( 1.6605, -0.1246, -0.0182 ),
-		vec3<f32>( -0.5876, 1.1329, -0.1006 ),
-		vec3<f32>( -0.0728, -0.0083, 1.1187 ) );
-	return clamp( m_srgb * o, vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
-}
-
-fn tm_neutral( c0: vec3<f32> ) -> vec3<f32> {
-	let startCompression = 0.8 - 0.04;
-	let desaturation = 0.15;
-
-	let x = min( c0.r, min( c0.g, c0.b ) );
-	var offset = 0.04;
-	if ( x < 0.08 ) { offset = x - 6.25 * x * x; }
-	var c = c0 - vec3<f32>( offset );
-
-	let peak = max( c.r, max( c.g, c.b ) );
-	if ( peak < startCompression ) { return c; }
-
-	let d = 1.0 - startCompression;
-	let newPeak = 1.0 - d * d / ( peak + d - startCompression );
-	c = c * ( newPeak / peak );
-	let gFactor = 1.0 - 1.0 / ( desaturation * ( peak - newPeak ) + 1.0 );
-	return mix( c, vec3<f32>( newPeak ), gFactor );
-}
-
-// Three.js clamps the fragment output with max(0) before tone mapping, so the curves never see a
-// negative channel. The saturation grade drives channels below zero on much of a typical frame, and
-// AgX/Neutral mix negatives across channels instead of clipping them.
-fn rayzee_tone_curve( color: vec3<f32>, mode: u32 ) -> vec3<f32> {
-	let c = max( color, vec3<f32>( 0.0 ) );
-	if ( mode == TM_REINHARD ) { return tm_reinhard( c ); }
-	if ( mode == TM_CINEON ) { return tm_cineon( c ); }
-	if ( mode == TM_ACES ) { return tm_aces( c ); }
-	if ( mode == TM_AGX ) { return tm_agx( c ); }
-	if ( mode == TM_NEUTRAL ) { return tm_neutral( c ); }
-	return clamp( c, vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
-}
-
-fn rayzee_tone_map( linearRGB: vec3<f32>, mode: u32, exposure: f32, saturation: f32 ) -> vec3<f32> {
-	// Three.js returns early for NoToneMapping without applying exposure, so a readback that applied
-	// it would paint brighter than the viewport it replaces.
-	var c = linearRGB * select( exposure, 1.0, mode == TM_NONE );
-	if ( saturation != 1.0 ) {
-		let luma = vec3<f32>( dot( c, vec3<f32>( 0.2126, 0.7152, 0.0722 ) ) );
-		c = luma + ( c - luma ) * saturation;
-	}
-	return rayzee_tone_curve( c, mode );
-}
-
-fn rayzee_linear_to_srgb( c: vec3<f32> ) -> vec3<f32> {
-	return select(
-		1.055 * pow( max( c, vec3<f32>( 0.0 ) ), vec3<f32>( 1.0 / 2.4 ) ) - vec3<f32>( 0.055 ),
-		12.92 * c,
-		c <= vec3<f32>( 0.0031308 ) );
-}
-
-fn rayzee_to_u8( srgb: vec3<f32> ) -> vec3<u32> {
-	return vec3<u32>( clamp( round( srgb * 255.0 + vec3<f32>( 0.5 ) ), vec3<f32>( 0.0 ), vec3<f32>( 255.0 ) ) );
-}
-`;
-
-const PACKED_WGSL = /* wgsl */ `
+const packedWGSL = transformWGSL => /* wgsl */ `
 struct Params {
 	width: u32,
 	height: u32,
@@ -165,7 +53,7 @@ struct Params {
 @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
 @group(0) @binding(2) var<uniform> params: Params;
 
-${TONE_MAP_WGSL}
+${transformWGSL}
 
 @compute @workgroup_size(8, 8)
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
@@ -179,7 +67,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	let ba = unpack2x16float( src[ a + 1u ] );
 
 	let mapped = rayzee_tone_map( vec3<f32>( rg.x, rg.y, ba.x ), params.mode, params.exposure, params.saturation );
-	let b8 = rayzee_to_u8( rayzee_linear_to_srgb( mapped ) );
+	let b8 = rayzee_to_u8( rayzee_encode( mapped, params.mode ) );
 	dst[ gid.y * params.width + gid.x ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( 255u << 24u );
 }
 `;
@@ -207,13 +95,91 @@ export class PackedToneMapper {
 		this._paramData = new ArrayBuffer( PARAMS_BYTES );
 		this._paramU32 = new Uint32Array( this._paramData );
 		this._paramF32 = new Float32Array( this._paramData );
+		this._shaderVersion = - 1;
+		this._bindings = [];
+		this._tables = new Map();
 		this.disposed = false;
+
+	}
+
+	/**
+	 * Rebuild the pipeline when the registry has moved.
+	 *
+	 * A config loaded after this pass was first compiled adds curves the compiled shader has never
+	 * heard of. Without this the readback silently falls through to the clamp and a saved image
+	 * comes back untone-mapped.
+	 */
+	_ensurePipeline() {
+
+		const { wgsl, bindings, version } = currentShader();
+		if ( this._pipeline && this._shaderVersion === version ) return;
+
+		this._bindings = bindings;
+		this._shaderVersion = version;
+		this._pipeline = this.device.createComputePipeline( {
+			label: this.label,
+			layout: 'auto',
+			compute: {
+				module: this.device.createShaderModule( { label: this.label, code: packedWGSL( wgsl ) } ),
+				entryPoint: 'main',
+			},
+		} );
+
+	}
+
+	/** One 3D texture per table-backed transform, uploaded once and kept until it is replaced. */
+	_ensureTables() {
+
+		const live = new Set();
+
+		for ( const { index, transform } of this._bindings ) {
+
+			const { data, size } = transform.table;
+			live.add( index );
+
+			const held = this._tables.get( index );
+			if ( held && held.data === data ) continue;
+
+			held?.texture.destroy();
+
+			const texture = this.device.createTexture( {
+				label: `${this.label}-${transform.wgslConst}`,
+				size: [ size, size, size ],
+				dimension: '3d',
+				format: 'rgba16float',
+				usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+			} );
+
+			this.device.queue.writeTexture(
+				{ texture },
+				data,
+				{ bytesPerRow: size * 8, rowsPerImage: size },
+				[ size, size, size ]
+			);
+
+			this._tables.set( index, { texture, data, view: texture.createView() } );
+
+		}
+
+		for ( const [ index, held ] of this._tables ) {
+
+			if ( ! live.has( index ) ) {
+
+				held.texture.destroy();
+				this._tables.delete( index );
+
+			}
+
+		}
 
 	}
 
 	ensureSize( width, height ) {
 
-		if ( this.width === width && this.height === height && this._pipeline ) return;
+		this._ensurePipeline();
+		this._ensureTables();
+
+		if ( this.width === width && this.height === height && this._storage ) return;
 
 		this._releaseBuffers();
 
@@ -234,12 +200,6 @@ export class PackedToneMapper {
 			usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 		} );
 
-		this._pipeline ??= this.device.createComputePipeline( {
-			label: this.label,
-			layout: 'auto',
-			compute: { module: this.device.createShaderModule( { label: this.label, code: PACKED_WGSL } ), entryPoint: 'main' },
-		} );
-
 		this.width = width;
 		this.height = height;
 
@@ -257,7 +217,12 @@ export class PackedToneMapper {
 	async toRGBA8( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
-		if ( ! this._pipeline ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
+		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
+
+		// A config can be loaded between two readbacks, so the registry is re-checked here rather
+		// than only on resize.
+		this._ensurePipeline();
+		this._ensureTables();
 
 		const { width, height } = this;
 
@@ -269,9 +234,13 @@ export class PackedToneMapper {
 		this._paramF32[ 5 ] = saturation;
 		this.device.queue.writeBuffer( this._params, 0, this._paramData );
 
+		const tableEntries = [ ...this._tables.entries() ]
+			.map( ( [ binding, held ] ) => ( { binding, resource: held.view } ) );
+
 		const group = this.device.createBindGroup( {
 			layout: this._pipeline.getBindGroupLayout( 0 ),
 			entries: [
+				...tableEntries,
 				{ binding: 0, resource: { buffer: src, size: width * height * 8 } },
 				{ binding: 1, resource: { buffer: this._storage } },
 				{ binding: 2, resource: { buffer: this._params } },
@@ -310,6 +279,8 @@ export class PackedToneMapper {
 		if ( this.disposed ) return;
 		this.disposed = true;
 		this._releaseBuffers();
+		for ( const held of this._tables.values() ) held.texture.destroy();
+		this._tables.clear();
 		this._pipeline = null;
 
 	}

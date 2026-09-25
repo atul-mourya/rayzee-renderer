@@ -2241,6 +2241,30 @@ export class SceneProcessor {
 	}
 
 	/**
+	 * Re-read every emitter's colour, after the working space changed.
+	 *
+	 * `rebuildMaterials` re-packs the material buffer but leaves this list alone, and next-event
+	 * estimation lights the scene from this list — so without a rebuild, emitters would be seen in
+	 * the new space and cast light in the old one.
+	 *
+	 * @returns {object|null} GPU upload payload
+	 */
+	rebuildEmissiveColors() {
+
+		if ( ! this.emissiveTriangleBuilder || ! this.triangleCount ) return null;
+
+		this.emissiveTriangleBuilder.extractEmissiveTriangles(
+			this.triangles,
+			this.materials,
+			this.triangleCount,
+			this.instanceTable ?? null
+		);
+		this.emissiveTriangleBuilder.createEmissiveRawData();
+		return this._collectEmissivePayload();
+
+	}
+
+	/**
 	 * Re-derive the sampled emissive set from per-mesh visibility.
 	 * @param {Set<number>|Iterable<number>} hiddenMeshIndices - meshIndex values that are world-hidden
 	 * @param {boolean} force - rebuild even if the effective hidden set is unchanged

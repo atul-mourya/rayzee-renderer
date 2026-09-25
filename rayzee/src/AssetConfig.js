@@ -29,6 +29,18 @@ const config = {
 	// OIDN denoiser model weights (oidn-web tza files).
 	oidnWeightsBaseUrl: 'https://cdn.jsdelivr.net/npm/denoiser/tzas/',
 
+	// OpenColorIO WebAssembly runtime (~6 MB), needed only once a colour-managed config is
+	// loaded. The engine never names the package: a bare specifier in engine source would make it
+	// a hard dependency of every host, and @vite-ignore leaves the browser unable to resolve it.
+	//
+	//   configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } )   // bundled
+	//   configureAssets( { ocioRuntimeUrl: '/vendor/ocio/index.js' } )                 // served
+	//
+	ocioRuntimeFactory: null,
+	ocioRuntimeUrl: null,
+	// Only needed when a served runtime cannot find its own .wasm.
+	ocioWasmUrl: null,
+
 	// AI upscaler ONNX model base URL. Quality presets resolve relative paths against this.
 	upscalerModelBaseUrl: 'https://huggingface.co/notaneimu/onnx-image-models/resolve/main/',
 

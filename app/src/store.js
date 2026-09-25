@@ -1426,7 +1426,10 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		val => set( { toneMapping: val } ),
 		( val, app ) => {
 
-			app.renderer.toneMapping = parseInt( val );
+			// Through colour management rather than straight onto the renderer: an OCIO view
+			// returns colour already encoded for its display, and `outputColorSpace` has to follow
+			// it or the output pass encodes it a second time.
+			app.color.setActiveView( parseInt( val ) );
 			app.reset();
 
 		}

@@ -17,6 +17,7 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'env' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
+import { getActiveColorManagement } from '../Color/ColorManagement.js';
 
 export class EnvironmentManager {
 
@@ -233,6 +234,25 @@ export class EnvironmentManager {
 	setEnvironmentTexture( envTex ) {
 
 		if ( ! envTex ) return;
+
+		// Before the CDF is built, so importance sampling sees the same pixels the shader will.
+		// Inert unless a working space has been adopted; the texture's own space is honoured when
+		// the host tagged it, otherwise it is taken as linear Rec.709, which is what every HDRI
+		// loader produces.
+		const cm = getActiveColorManagement();
+		if ( cm?.hasConfig ) {
+
+			try {
+
+				cm.convertTexturePixels( envTex, { space: envTex.userData?.ocioColorSpace ?? null } );
+
+			} catch ( error ) {
+
+				log.warn( `environment colour conversion failed, left in its original space: ${error.message}` );
+
+			}
+
+		}
 
 		this.environmentTexture = envTex;
 		this.envTexSize.set( envTex.image.width, envTex.image.height );

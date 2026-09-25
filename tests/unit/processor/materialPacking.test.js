@@ -32,6 +32,7 @@ import { packMaterial, MATERIAL_RESERVED_FLOATS } from '@/core/Processor/Materia
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/Processor/GeometryExtractor.js';
 import { TextureCreator } from '@/core/Processor/TextureCreator.js';
 import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
+import { setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
 
 const F = M.FLOATS_PER_MATERIAL;
 
@@ -264,6 +265,33 @@ describe( 'MaterialDataManager', () => {
 		manager.updateMaterial( 0, material );
 
 		expect( [ ...manager.materialStorageAttr.array ] ).toEqual( [ ...upload ] );
+
+	} );
+
+	it( 'moves an edited material into the working space exactly once, as an upload does', () => {
+
+		setWorkingMatrix( [ 0.6, 0.3, 0.1, 0.05, 0.9, 0.05, 0.02, 0.1, 0.88 ], 'test' );
+		try {
+
+			const extractor = new GeometryExtractor();
+			const material = new MeshPhysicalMaterial( {
+				color: 0x336699, emissive: 0x112233, sheen: 1, sheenColor: 0x445566,
+				specularColor: 0xaabbcc, attenuationColor: 0x884422,
+			} );
+
+			const loaded = managerWith( extractor );
+			loaded.setMaterialData( new TextureCreator().createMaterialRawData( [ extractor.createMaterialObject( material ) ] ) );
+			const edited = managerWith( extractor );
+			edited.updateMaterial( 0, material );
+
+			expect( [ ...edited.materialStorageAttr.array ] ).toEqual( [ ...loaded.materialStorageAttr.array ] );
+			expect( edited.materialStorageAttr.array[ M.COLOR ] ).not.toBeCloseTo( new Color( 0x336699 ).r, 4 );
+
+		} finally {
+
+			setWorkingMatrix( null );
+
+		}
 
 	} );
 

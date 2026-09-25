@@ -1,9 +1,10 @@
-import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping } from "three";
+import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping, FloatType, HalfFloatType } from "three";
 import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
+import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { createLogger } from '../utils/Logger.js';
 
 const log = createLogger( 'textures' );
@@ -384,7 +385,11 @@ class TextureCache {
 				const height = texture.image.height || 0;
 				const src = texture.image.src || texture.uuid || '';
 				const flipFlag = texture.flipY === false ? 'n' : 'f';
-				hash += `${width}x${height}_${src.slice( - 8 )}_${flipFlag}_`;
+				// What the texture is read *as* is part of its identity: without these, changing a
+				// map's colour space handed back the array packed under the old one, and the change
+				// silently did nothing.
+				const space = `${texture.colorSpace ?? ''}|${texture.userData?.ocioColorSpace ?? ''}`;
+				hash += `${width}x${height}_${src.slice( - 8 )}_${flipFlag}_${space}_`;
 
 			}
 
@@ -574,6 +579,114 @@ export class TextureCreator {
 	}
 
 	/**
+	 * Convert each colour layer into the working space, once a config is loaded.
+	 *
+	 * Runs after `_harmonizeTransfer`, so every layer is stored the way the colour pool expects:
+	 * sRGB-encoded. Two routes from there:
+	 *
+	 *   - **Named** — a tag, an override or one of the config's file rules says what the texture is
+	 *     (ACEScct, a camera log, sRGB). The full OCIO transform runs on the bytes as stored. Runs
+	 *     whether or not a working space is adopted: a log-encoded texture is wrong in linear
+	 *     Rec.709 too.
+	 *   - **Primaries** — nothing explicit, so the texture is what three.js assumed. Only the
+	 *     primaries change, and only once a working space is adopted.
+	 *
+	 * The named route reads the bytes as the author stored them, so it is refused for a layer
+	 * harmonization re-encoded, and for a float source the packer already quantized — in both the
+	 * bytes are no longer in the space the name describes, and converting them would be confidently
+	 * wrong. Those fall back to the primaries route and say so.
+	 *
+	 * @param {import('three').DataArrayTexture} arrayTex
+	 * @param {Array<import('three').Texture>} textures - pre-normalization list, in layer order
+	 * @param {boolean} srgbPool
+	 * @param {Set<number>} [reencoded] - layers `_harmonizeTransfer` changed
+	 */
+	_applyColorManagement( arrayTex, textures, srgbPool, reencoded = new Set() ) {
+
+		const cm = getActiveColorManagement();
+		if ( ! cm?.hasConfig ) return;
+
+		const data = arrayTex?.image?.data;
+		if ( ! data ) return;
+
+		// A data pool carries numbers, not colour — a primaries matrix would corrupt it.
+		if ( ! srgbPool ) return;
+
+		const kept = textures.filter( t => t?.image );
+		const layerSize = arrayTex.image.width * arrayTex.image.height * 4;
+		const encoding = 'srgb';
+		let named = 0, primaries = 0;
+		const refused = [];
+
+		for ( let layer = 0; layer < kept.length; layer ++ ) {
+
+			const start = layer * layerSize;
+			const end = Math.min( start + layerSize, data.length );
+			if ( start >= data.length ) break;
+
+			const texture = kept[ layer ];
+			const view = data.subarray( start, end );
+
+			let resolved = null;
+			try {
+
+				resolved = cm.resolveTexture( texture );
+
+			} catch ( error ) {
+
+				log.warn( `could not resolve the colour space of layer ${layer}: ${error.message}` );
+
+			}
+
+			let space = resolved && resolved.via !== 'three' ? resolved.colorSpace : null;
+			const floatSource = texture.type === FloatType || texture.type === HalfFloatType;
+			if ( space && ( reencoded.has( layer ) || floatSource ) ) {
+
+				refused.push( `${texture.name || `layer ${layer}`} (${space})` );
+				space = null;
+
+			}
+
+			try {
+
+				if ( cm.convertTextureBytes( view, { space, encoding } ) ) {
+
+					if ( space ) named ++;
+					else primaries ++;
+
+				}
+
+			} catch ( error ) {
+
+				this._issues?.warn(
+					ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
+					`colour conversion failed for layer ${layer} — left in its original space`,
+					{ cause: String( error?.message ?? error ), space }
+				);
+
+			}
+
+		}
+
+		if ( refused.length ) {
+
+			this._issues?.warn(
+				ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
+				`${refused.length} colour map(s) name a colour space their stored bytes are no longer in ` +
+				'(re-encoded or quantized on the way in); converted by primaries only',
+				{ textures: refused.slice( 0, 8 ) }
+			);
+
+		}
+
+		if ( named + primaries === 0 ) return;
+
+		arrayTex.needsUpdate = true;
+		log.info( `colour maps into ${cm.workingSpace}: ${named} by named space, ${primaries} by primaries, of ${kept.length}` );
+
+	}
+
+	/**
 	 * Re-encodes any layer whose declared colour space disagrees with its pool, so the GPU's
 	 * decode — or absence of one — lands on the values the author stored. An untagged texture
 	 * keeps its pool's convention, which is what every loader produces for glTF.
@@ -584,8 +697,9 @@ export class TextureCreator {
 	 */
 	_harmonizeTransfer( arrayTex, textures, srgbPool ) {
 
+		const touched = new Set();
 		const data = arrayTex?.image?.data;
-		if ( ! data ) return;
+		if ( ! data ) return touched;
 
 		// Mirrors _normalizeTexturesForProcessing's skip rule, which is what sets layer order.
 		const kept = textures.filter( t => t?.image );
@@ -613,10 +727,11 @@ export class TextureCreator {
 			}
 
 			converted.push( kept[ layer ].name || kept[ layer ].source?.uuid?.slice( 0, 8 ) || `layer ${layer}` );
+			touched.add( layer );
 
 		}
 
-		if ( converted.length === 0 ) return;
+		if ( converted.length === 0 ) return touched;
 
 		arrayTex.needsUpdate = true;
 		const names = converted.slice( 0, 4 ).join( ', ' ) + ( converted.length > 4 ? `, +${converted.length - 4} more` : '' );
@@ -633,6 +748,8 @@ export class TextureCreator {
 
 		}
 
+		return touched;
+
 	}
 
 	// Unified texture processing with strategy selection
@@ -641,8 +758,13 @@ export class TextureCreator {
 		if ( ! textures || textures.length === 0 ) return null;
 
 		// Pool is part of the identity: the same list packed for the colour pool and the data pool
-		// gets different pixels (see _harmonizeTransfer), so one key must not serve both.
-		const cacheKey = `${srgbPool ? 's' : 'l'}:${this.textureCache.generateHash( textures )}`;
+		// gets different pixels (see _harmonizeTransfer), so one key must not serve both. The
+		// working space is part of it for the same reason — adopting one rewrites every colour
+		// map, and a key that ignored it would hand back pixels converted for the previous space.
+		// So is the config and any override, which change what a texture is read *as*.
+		const cm = getActiveColorManagement();
+		const colour = cm?.inputKey ?? '-';
+		const cacheKey = `${srgbPool ? 's' : 'l'}:${colour}:${this.textureCache.generateHash( textures )}`;
 		const cached = this.textureCache.get( cacheKey );
 		if ( cached ) return cached;
 
@@ -674,7 +796,8 @@ export class TextureCreator {
 			// Cache successful result
 			if ( result ) {
 
-				this._harmonizeTransfer( result, textures, srgbPool );
+				const reencoded = this._harmonizeTransfer( result, textures, srgbPool );
+				this._applyColorManagement( result, textures, srgbPool, reencoded );
 				this.textureCache.set( cacheKey, result );
 
 			}
@@ -689,7 +812,8 @@ export class TextureCreator {
 				{ cause: String( error?.message ?? error ) }
 			);
 			const fallback = await this.processOnMainThreadSync( normalized );
-			this._harmonizeTransfer( fallback, textures, srgbPool );
+			const reencoded = this._harmonizeTransfer( fallback, textures, srgbPool );
+			this._applyColorManagement( fallback, textures, srgbPool, reencoded );
 			return fallback;
 
 		} finally {

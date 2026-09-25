@@ -21,6 +21,9 @@ export const ISSUE_CODES = Object.freeze( {
 	SCENE_MEMORY_BUDGET: 'scene.memory_budget',
 	EMISSIVE_INSTANCES_COLLAPSED: 'emissive.instances_collapsed',
 	REFIT_SHARED_GEOMETRY: 'refit.shared_geometry',
+	VIEW_TRANSFORM_DISPLAY_MISMATCH: 'viewTransform.display_mismatch',
+	VIEW_TRANSFORM_BAKE_FAILED: 'viewTransform.bake_failed',
+	COLOR_CONFIG_LOAD_FAILED: 'color.config_load_failed',
 } );
 
 /** Strict throws on ERROR only. */

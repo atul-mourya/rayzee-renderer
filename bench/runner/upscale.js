@@ -150,6 +150,11 @@ export async function runUpscale( bench, { bless = false, only, log = () => {} }
 		}
 
 		entry.toneMapDelta = worst.maxDelta;
+		entry.toneMapCurves = [ ...new Set( findings.map( f => f.curve ) ) ];
+
+		// Named, not counted: the table-backed transforms are the ones with no other hardware check,
+		// and a config that failed to load would quietly drop them from this list rather than fail.
+		log( `  tone map  ${entry.toneMapCurves.length} curve(s): ${entry.toneMapCurves.join( ', ' )}` );
 		log( `  tone map  worst ${worst.maxDelta} level(s) on ${worst.curve}  ${entry.pass ? 'ok' : 'FAIL'}` );
 		results.push( entry );
 

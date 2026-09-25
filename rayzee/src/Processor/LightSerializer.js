@@ -1,5 +1,6 @@
 import { Vector3, Quaternion } from 'three';
 import { blackbodyToLinearRGB } from './blackbody.js';
+import { convertLinearTriple } from '../Color/WorkingMatrix.js';
 
 // Point & spot lights specify Power in Watts; the shader uses radiant intensity
 // (W/sr) as `intensity / dist²`, so convert with I = P / 4π (isotropic emitter),
@@ -15,15 +16,19 @@ function effectiveEmission( light ) {
 	const exposure = Number.isFinite( ud.exposure ) ? ud.exposure : 0;
 	const intensity = light.intensity * Math.pow( 2, exposure );
 
-	let r = light.color.r, g = light.color.g, b = light.color.b;
+	const rgb = [ light.color.r, light.color.g, light.color.b ];
 	if ( ud.useTemperature ) {
 
 		const [ tr, tg, tb ] = blackbodyToLinearRGB( ud.temperature ?? 6500 );
-		r *= tr; g *= tg; b *= tb;
+		rgb[ 0 ] *= tr; rgb[ 1 ] *= tg; rgb[ 2 ] *= tb;
 
 	}
 
-	return { r, g, b, intensity };
+	// A light colour is authored against sRGB primaries, like everything else three.js hands over.
+	// Rendering in a wider working space without converting it tints every surface it touches.
+	convertLinearTriple( rgb );
+
+	return { r: rgb[ 0 ], g: rgb[ 1 ], b: rgb[ 2 ], intensity };
 
 }
 
