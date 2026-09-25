@@ -290,19 +290,18 @@ const PathTracerTab = () => {
 				<ColorManagementSection />
 			</ControlGroup>
 
-			<ControlGroup name="Scene">
+			<ControlGroup name="Environment">
 				{/* <Row>
 					<Slider icon={Exposure} label={"Saturation"} min={0} max={2} step={0.01} value={[ saturation ]} snapPoints={[ 1 ]} onValueChange={handleSaturationChange} />
 				</Row> */}
 				{/* <Row>
 					<Slider label={"Global Illumination Intensity"} icon={Sunrise} min={0} max={5} step={0.01} value={[ GIIntensity ]} snapPoints={[ 1 ]} onValueChange={handleGIIntensityChange} />
 				</Row> */}
-				<Separator className="my-1 opacity-30" />
 
 				{/* Environment Mode Selector */}
 				<Row>
 					<Select value={environmentMode} onValueChange={handleEnvironmentModeChange}>
-						<span className="opacity-50 text-xs truncate">Environment Mode</span>
+						<span className="opacity-50 text-xs truncate">Mode</span>
 						<SelectTrigger className="max-w-32 h-5 rounded-full">
 							<SelectValue />
 						</SelectTrigger>
@@ -403,10 +402,10 @@ const PathTracerTab = () => {
 
 				{/* Common Environment Controls */}
 				<Row>
-					<SliderToggle label={"Environment Intensity"} enabled={enableEnvironment} icon={Sun} min={0} max={2} step={0.01} snapPoints={[ 1 ]} value={[ environmentIntensity ]} onValueChange={handleEnvironmentIntensityChange} onToggleChange={handleEnableEnvironmentChange} />
+					<SliderToggle label={"Intensity"} enabled={enableEnvironment} icon={Sun} min={0} max={2} step={0.01} snapPoints={[ 1 ]} value={[ environmentIntensity ]} onValueChange={handleEnvironmentIntensityChange} onToggleChange={handleEnableEnvironmentChange} />
 				</Row>
 				{/* Background backdrop — a single mutually-exclusive mode (env image / solid color /
-				    transparent). Independent of Environment Intensity above, which controls lighting only. */}
+				    transparent). Independent of Intensity above, which controls lighting only. */}
 				<Row>
 					<span className="opacity-50 text-xs truncate">Background</span>
 					<Select value={backgroundType} onValueChange={handleBackgroundTypeChange}>
@@ -456,7 +455,7 @@ const PathTracerTab = () => {
 				{environmentMode === 'hdri' && (
 					<>
 						<Row>
-							<Slider label={"Environment Rotation"} icon={RefreshCcwDot} min={0} max={360} step={1} value={[ environmentRotation ]} snapPoints={[ 90, 180, 270 ]} onValueChange={handleEnvironmentRotationChange} />
+							<Slider label={"Rotation"} icon={RefreshCcwDot} min={0} max={360} step={1} value={[ environmentRotation ]} snapPoints={[ 90, 180, 270 ]} onValueChange={handleEnvironmentRotationChange} />
 						</Row>
 						<Row>
 							<SliderToggle label={"Ground Projection"} enabled={groundProjectionEnabled} icon={RefreshCcwDot} min={10} max={500} step={1} value={[ groundProjectionRadius ]} onValueChange={handleGroundProjectionRadiusChange} onToggleChange={handleGroundProjectionEnabledChange} />
