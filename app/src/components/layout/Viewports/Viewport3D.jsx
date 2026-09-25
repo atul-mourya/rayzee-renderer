@@ -263,6 +263,13 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				app.animate();
 				app.reset();
 
+				// Not awaited: the config is a CDN download, so the first frames show the built-in
+				// AgX and the view switches over when it lands. A failed fetch keeps the built-in.
+				const { loadDefaultConfig } = await import( '@/lib/colorManagement' );
+				loadDefaultConfig()
+					.then( ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id ) )
+					.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
+
 			};
 
 			initApp()

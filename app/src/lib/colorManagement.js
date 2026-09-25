@@ -11,6 +11,7 @@ import { configureAssets, getActiveColorManagement, onRegistryChange, listViewTr
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getApp } from '@/lib/appProxy';
 import { useActiveApp } from '@/hooks/useActiveApp';
+import { ASSETS_BASE_URL } from '@/Constants';
 
 let configured = false;
 
@@ -46,6 +47,47 @@ export async function loadBuiltinConfig( name, options = {} ) {
 
 	ensureConfigured();
 	return await currentApp().loadColorConfig( { builtin: name, ...options } );
+
+}
+
+/**
+ * The config the app starts in: Blender's own, so the menus read the way artists know them (AgX,
+ * Filmic, Standard; Punchy, High Contrast). Its files are GPL-3.0, so they live on the
+ * asset CDN beside a `manifest.json`, never inside the MIT app or engine. `VITE_COLOR_CONFIG_URL`
+ * points a dev build at another copy.
+ */
+export const DEFAULT_COLOR_CONFIG = Object.freeze( {
+	id: 'blender-5.1',
+	label: 'Blender',
+	description: 'Blender 5.1 — AgX, Filmic and their looks',
+	baseUrl: import.meta.env?.VITE_COLOR_CONFIG_URL ?? `${ASSETS_BASE_URL}/ocio/blender-5.1/`,
+	view: Object.freeze( { display: 'sRGB', view: 'AgX', look: 'AgX - Medium High Contrast' } ),
+} );
+
+async function fetchOk( url ) {
+
+	const response = await fetch( url );
+	if ( ! response.ok ) throw new Error( `${url}: HTTP ${response.status}` );
+	return response;
+
+}
+
+/**
+ * Fetch and load the default config, then select its default view.
+ * @returns {Promise<{ config: Object, view: Object }>} the described config and the active view entry
+ */
+export async function loadDefaultConfig() {
+
+	ensureConfigured();
+	const { baseUrl, id, view } = DEFAULT_COLOR_CONFIG;
+	const manifest = await ( await fetchOk( `${baseUrl}manifest.json` ) ).json();
+	const files = await Promise.all( manifest.files.map( async relativePath => ( {
+		relativePath,
+		data: new Uint8Array( await ( await fetchOk( baseUrl + relativePath ) ).arrayBuffer() ),
+	} ) ) );
+
+	const config = await currentApp().loadColorConfig( { files, configPath: manifest.config, id, registerViews: false } );
+	return { config, view: colorManagement().setView( view ) };
 
 }
 

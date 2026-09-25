@@ -147,3 +147,6 @@ app/public/24155522.glb
 .codex/hooks/lint-on-edit.sh
 .gitignore
 AGENTS.md
+
+# Assets staged for upload to the asset CDN (third-party licences; never committed)
+.cdn-upload/
