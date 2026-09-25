@@ -84,7 +84,9 @@ const SelectLabel = React.forwardRef( ( { className, ...props }, ref ) => (
 ) );
 SelectLabel.displayName = SelectPrimitive.Label.displayName;
 
-const SelectItem = React.forwardRef( ( { className, children, ...props }, ref ) => (
+// `hint` is a second, muted line in the open list; it stays out of ItemText so the closed trigger
+// shows only the name.
+const SelectItem = React.forwardRef( ( { className, children, hint, ...props }, ref ) => (
 	<SelectPrimitive.Item
 		ref={ref}
 		className={cn(
@@ -97,7 +99,14 @@ const SelectItem = React.forwardRef( ( { className, children, ...props }, ref ) 
 				<CheckIcon className="h-4 w-4" />
 			</SelectPrimitive.ItemIndicator>
 		</span>
-		<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+		{hint ? (
+			<span className="flex flex-col">
+				<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+				<span className="text-[10px] leading-3 opacity-50">{hint}</span>
+			</span>
+		) : (
+			<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+		)}
 	</SelectPrimitive.Item>
 ) );
 SelectItem.displayName = SelectPrimitive.Item.displayName;

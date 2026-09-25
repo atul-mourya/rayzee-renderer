@@ -35,10 +35,11 @@ const newer = ( a, b ) => {
 };
 
 /**
- * The runtime's built-in configs as an artist should see them: one entry per ACES version — the
- * newest CG config of it — and everything else kept, but out of the way.
+ * The runtime's built-in configs as an artist should see them: one entry per ACES version, the
+ * newest CG config of it. Older builds render the same ACES and Studio configs only add camera
+ * spaces, so neither is offered; a pipeline pinned to one loads its folder.
  *
- * @returns {{ presets: Array<{ value, label, description }>, others: Array<{ value, label, description }> }}
+ * @returns {{ presets: Array<{ value, label, description, hint }> }}
  */
 export function builtinConfigOptions( builtins ) {
 
@@ -54,14 +55,12 @@ export function builtinConfigOptions( builtins ) {
 
 	const presets = [ ...best.values() ]
 		.sort( ( x, y ) => ( newer( x.p.aces, y.p.aces ) ? - 1 : 1 ) )
-		.map( ( { b, p } ) => ( { value: b.name, label: `ACES ${p.aces}`, description: b.uiName } ) );
+		.map( ( { b, p }, i ) => ( {
+			value: b.name, label: `ACES ${p.aces}`, description: b.uiName,
+			hint: i === 0 ? 'film and VFX standard, latest' : 'film and VFX standard, previous',
+		} ) );
 
-	const chosen = new Set( presets.map( p => p.value ) );
-	const others = builtins
-		.filter( b => ! chosen.has( b.name ) )
-		.map( b => ( { value: b.name, label: builtinConfigLabel( b.name ) ?? b.uiName, description: b.uiName } ) );
-
-	return { presets, others };
+	return { presets };
 
 }
 
@@ -147,7 +146,7 @@ export function looksForView( looks, viewName, allViewNames = [] ) {
 		const bare = own.length ? l.name.slice( viewName.length + 3 ) : l.name;
 		const isTechnical = TECHNICAL_LOOK.test( l.name ) || TECHNICAL_LOOK.test( l.description ?? '' );
 		const label = isTechnical ? bare.replace( /^aces\s+[\d.]+\s+/i, '' ) : bare;
-		( isTechnical ? technical : creative ).push( { value: l.name, label, description: l.description || l.name } );
+		( isTechnical ? technical : creative ).push( { value: l.name, label, description: l.description || l.name, hint: hintFrom( LOOK_HINTS, label ) } );
 
 	}
 
@@ -193,6 +192,7 @@ export function workingSpaceOptions( config, nativeSpace ) {
 				? `${n} — what the engine renders in without colour management. Existing scenes look as they always have.`
 				: `${n}${n === config.sceneLinear ? ' — the space this config names for rendering' : ''}`,
 			native: n === nativeSpace,
+			hint: n === nativeSpace ? 'standard; scenes look as they always have' : hintFrom( WORKING_SPACE_HINTS, n ),
 		} ) );
 
 }
@@ -257,29 +257,114 @@ export function exportSpaceOptions( config ) {
 		value: c.name,
 		label: spaceLabel( c.name ),
 		description: c.name === interchange ? `${c.name} — the ACES interchange space, for delivery and archive` : ( c.description || c.name ),
+		hint: hintFrom( EXPORT_SPACE_HINTS, c.name ),
 	} ) );
 
 }
 
+// One-line hints for artists, first match wins, so the specific names sit above the general ones.
+const SCREEN_HINTS = [
+	[ /hlg/i, 'HDR broadcast' ],
+	[ /st-?2084.*p3|p3.*st-?2084/i, 'HDR mastering monitors' ],
+	[ /pq|st-?2084/i, 'HDR10 TV' ],
+	[ /hdr/i, 'Apple HDR screens' ],
+	[ /display p3/i, 'Apple and wide-colour screens' ],
+	[ /p3-d65|dci/i, 'cinema projectors' ],
+	[ /1886/i, 'TV and video' ],
+	[ /2020/i, 'wide-colour TV' ],
+	[ /gamma 2\.2/i, 'monitors set to gamma 2.2' ],
+	[ /srgb/i, 'most monitors and laptops' ],
+];
+
+const TONE_MAPPING_HINTS = [
+	[ /false colou?r/i, 'exposure check' ],
+	[ /filmic log|\blog\b/i, 'flat log image for grading (technical)' ],
+	[ /^raw$|^none$|un-?tone-?mapped/i, 'no conversion (technical)' ],
+	[ /agx/i, 'natural, film-like (recommended)' ],
+	[ /neutral/i, 'accurate product colours' ],
+	[ /aces/i, 'film and VFX standard' ],
+	[ /filmic/i, "Blender's older film look" ],
+	[ /standard/i, 'no highlight roll-off' ],
+	[ /reinhard/i, 'soft, simple curve' ],
+	[ /cineon/i, 'film-scan curve' ],
+	[ /linear/i, 'no curve; highlights clip' ],
+];
+
+const WORKING_SPACE_HINTS = [
+	[ /acescg/i, 'wide gamut for ACES pipelines' ],
+	[ /2020/i, 'wide gamut for HDR and TV work' ],
+	[ /p3/i, 'wide gamut, as on Apple and cinema screens' ],
+	[ /e-?gamut/i, "FilmLight's very wide gamut" ],
+];
+
+const EXPORT_SPACE_HINTS = [
+	[ /2065/i, 'archive and hand-off to other studios' ],
+	[ /acescg/i, 'compositing in an ACES pipeline' ],
+	[ /709|srgb/i, 'most compositing apps' ],
+	[ /2020|p3/i, 'wide-gamut compositing' ],
+	[ /e-?gamut/i, 'grading in Baselight' ],
+];
+
+// Only where the name leaves the effect unclear: "High Contrast" needs no second line.
+const LOOK_HINTS = [
+	[ /^punchy$/i, 'richer colour, darker overall' ],
+	[ /^gr[ae]yscale$|black and white/i, 'black and white' ],
+	[ /^base contrast$/i, "the tone mapping's own contrast" ],
+	[ /gamut compression/i, 'tames over-saturated camera colours' ],
+];
+
+const hintFrom = ( rules, name ) => rules.find( ( [ re ] ) => re.test( name ) )?.[ 1 ] ?? null;
+
+/** What a Screen option is for, in a few words — "Rec.1886" means nothing to most artists. */
+export const screenHint = name => hintFrom( SCREEN_HINTS, String( name ) );
+
+/** What a Tone Mapping option does, in a few words. Works for OCIO views and the built-in curves alike. */
+export const toneMappingHint = name => hintFrom( TONE_MAPPING_HINTS, String( name ) );
+
+const HDR_ENCODINGS = new Set( [ 'hdr-video', 'edr-video' ] );
+const HDR_DISPLAY_NAME = /(^|[^a-z])(hdr|pq|hlg|st-?2084|2100)([^a-z]|$)/i;
+
 /**
- * Displays split into what this screen can show as intended and the rest.
- *
- * The rest are still worth choosing — a render graded for a TV, a saved file for a cinema — but the
- * screen shows them converted, and an artist should know that before trusting what they see.
- *
- * @param {{ p3: boolean }} screen - what the screen reports
+ * Whether a display is HDR, the way Blender splits its Display menu. A config says so itself: the
+ * colour space a display's views land in carries `encoding: hdr-video`, or `edr-video` for Apple's
+ * extended range. ACES configs call that space `<USE_DISPLAY_NAME>`, meaning the display's own.
+ * The name is the fallback, for configs that leave encoding out.
  */
-export function displayGroups( displays, canvasFit, screen = { p3: false } ) {
+export function isHdrDisplay( config, display ) {
 
-	const here = [], elsewhere = [];
-	for ( const d of displays ) {
+	const encodingOf = new Map();
+	for ( const c of config?.colorSpaces ?? [] ) {
 
-		const fit = canvasFit( d );
-		const shown = fit === 'srgb' || ( fit === 'display-p3' && screen.p3 );
-		( shown ? here : elsewhere ).push( { value: d, label: displayLabel( d ), description: d } );
+		for ( const n of [ c.name, ...( c.aliases ?? [] ) ] ) encodingOf.set( n, c.encoding );
 
 	}
 
-	return { here, elsewhere };
+	const spaceOf = v => ( v.colorSpace === '<USE_DISPLAY_NAME>' ? display : v.colorSpace );
+	const encodings = ( config?.views?.[ display ] ?? [] ).map( v => encodingOf.get( spaceOf( v ) ) ).filter( Boolean );
+	if ( encodings.length ) return encodings.some( e => HDR_ENCODINGS.has( e ) );
+	return HDR_DISPLAY_NAME.test( display );
+
+}
+
+/**
+ * Displays split into SDR and HDR. A display this screen cannot show as intended is still offered
+ * (a render graded for a TV, a file for a cinema), but its tooltip says the screen shows it converted.
+ *
+ * @param {{ p3: boolean }} screen - what the screen reports
+ */
+export function displaySections( config, canvasFit, screen = { p3: false } ) {
+
+	const sdr = [], hdr = [];
+	for ( const d of config?.displays ?? [] ) {
+
+		const fit = canvasFit( d );
+		const native = fit === 'srgb' || ( fit === 'display-p3' && screen.p3 );
+		const label = displayLabel( d );
+		const entry = { value: d, label, native, hint: screenHint( d ), description: native ? d : `${label} — this screen shows it converted` };
+		( isHdrDisplay( config, d ) ? hdr : sdr ).push( entry );
+
+	}
+
+	return { sdr, hdr };
 
 }

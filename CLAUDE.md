@@ -437,27 +437,42 @@ saying the environment was left converted.
 #### The app's section (`ColorManagementSection.jsx`)
 
 Its own group in the Path Tracer tab, modelled on Blender — the OCIO client that does most for
-artists: project settings first (**Color**, **Render In** — set once, rebuild the scene), then view
-settings (Display, View, Look, Exposure), then **Save EXR**. One **View** menu, no separate
-tone-mapping control. Exposure is in stops (`2^EV`); the store still holds the multiplier.
+artists. The view settings come first, with artist names, in the order they are reached for:
+**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure,
+then **Save EXR**. The project settings — **Color System** (the config) and **Render In**, set once,
+rebuild the scene — sit folded under **Advanced**, whose header shows them (`Blender · Rec.709`) and
+whose open state is remembered in localStorage. One Tone Mapping menu, no separate curve control.
+Exposure is in stops (`2^EV`); the store still holds the multiplier.
+
+The app starts in **Blender 5.1's config** (`DEFAULT_COLOR_CONFIG` in `app/src/lib/colorManagement.js`:
+sRGB / AgX / Medium High Contrast), fetched after the first frame from
+`${ASSETS_BASE_URL}/ocio/blender-5.1/` — a `manifest.json` plus Blender's files, unmodified. Until it
+lands, or if the fetch fails, the built-in AgX shows. ⚠️ Those files are GPL-3.0: they live on the CDN
+only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
+elsewhere with `VITE_COLOR_CONFIG_URL`.
 
 Every label and filter lives in `app/src/lib/colorLabels.js`, derived from what the config carries —
 OCIO's guidance is to build menus from UI name, family and description, filtered by category:
-- **Color**: one preset per ACES version (the newest CG config of it), "Load config folder…" as a
-  menu item, other versions grouped below. ⚠️ The runtime's builtin names carry no `ocio://`.
+- **Color System**: Blender (default), None, one preset per ACES version (the newest CG config of it) and
+  "Load config folder…" — nothing else. Older builds render the same ACES and Studio configs only add
+  camera spaces, so they are not offered. ⚠️ The runtime's builtin names carry no `ocio://`.
 - **Render In**: spaces tagged `working-space` *and* linear (ACES: Rec.709, ACEScg, P3-D65); untagged
   configs fall back to the linear family narrowed to the well-known gamuts. Never the interchange space.
-- **Display** drops the ACES " - Display" suffix and lists what this screen can show first
-  (`displayCanvasFit` in `rayzee/src/Color/Displays.js`, the one rule the canvas also uses).
-- **View** labels are the view's own name, with detail added back only where two would collide.
-- **Look** follows the view as Blender's does — measured: with AgX Blender accepts only "AgX - …"
+- **Screen** drops the ACES " - Display" suffix and splits SDR | HDR as Blender does (`isHdrDisplay`:
+  the display space's `encoding` is `hdr-video`/`edr-video`; ACES spells that space `<USE_DISPLAY_NAME>`).
+  A display this screen can't show natively (`displayCanvasFit`) says so in its tooltip.
+- **Tone Mapping** labels are the view's own name, with detail added back only where two would collide.
+- Screen and Tone Mapping items carry a one-line hint (`screenHint` / `toneMappingHint`), first regex match
+  wins — put a specific name above the general one (`ACES Filmic` must not reach the `filmic` rule).
+- **Style** follows the tone mapping as Blender's looks do — measured: with AgX Blender accepts only "AgX - …"
   looks, with Standard only the unprefixed ones. Gamut compression and LMTs are grouped as technical.
 - **Texture colour space**: spaces tagged `texture`, grouped by family.
 - ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
   to name matching — the tests passed by coincidence until that was caught.
 
-Defaults: no config; display and view from the config's defaults; look None; 0 EV; render in
-linear Rec.709 until the artist picks another. The accuracy readout is API-only (`status().bakeError`).
+Engine defaults (no app, or before the Blender config lands): no config; a picked config opens on its
+own default display and view; look None; 0 EV; render in linear Rec.709 until the artist picks another.
+The accuracy readout is API-only (`status().bakeError`).
 
 #### Shaper + table
 

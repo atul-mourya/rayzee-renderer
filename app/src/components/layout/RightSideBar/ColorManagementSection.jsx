@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Download, X, Loader2, Target } from 'lucide-react';
+import { Download, X, Loader2, Target, ChevronDown } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -9,19 +9,25 @@ import { InfoTip } from '@/components/ui/info-tip';
 import { Input } from '@/components/ui/input';
 import { Exposure } from '@/assets/icons';
 import { getApp } from '@/lib/appProxy';
+import { cn } from '@/lib/utils';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { usePathTracerStore } from '@/store';
 import {
-	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, unloadConfig,
-	useColorStatus, useViewTransforms, saveEXR,
+	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
+	useColorStatus, useViewTransforms, saveEXR, DEFAULT_COLOR_CONFIG,
 } from '@/lib/colorManagement';
 import {
 	builtinConfigOptions, configLabel, viewLabels, looksForView, workingSpaceOptions, workingSpaceLabel,
-	exportSpaceOptions, displayGroups,
+	exportSpaceOptions, displaySections, toneMappingHint,
 } from '@/lib/colorLabels';
 import { displayCanvasFit } from 'rayzee';
 
 const NONE = '__none__';
 const LOAD = '__load__';
+const DEFAULT_OPTION = {
+	value: DEFAULT_COLOR_CONFIG.id, label: DEFAULT_COLOR_CONFIG.label, description: DEFAULT_COLOR_CONFIG.description,
+	hint: 'AgX, Filmic and their styles (default)',
+};
 
 /** Exposure is shown in stops, as every OCIO client shows it; the engine stores the multiplier. */
 const EV_MIN = - 6;
@@ -48,8 +54,10 @@ AutoExposureValue.displayName = 'AutoExposureValue';
  *     rebuilds the scene.
  *   - **the view**: display, view, look and exposure. Changed constantly, and free.
  * And none of them has a "tone mapping" control beside a "view" control — the view *is* the tone
- * mapping. So there is one View menu: three.js's curves when no config is loaded, the config's views
- * when one is.
+ * mapping. So there is one menu for it: three.js's curves when no config is loaded, the config's
+ * views when one is. OCIO's words are jargon to an artist, so the controls are labelled Tone Mapping
+ * (view), Style (look) and Screen (display), in the order they are reached for, each item with a hint.
+ * The project settings are folded under Advanced: most scenes never change them.
  */
 const ColorManagementSection = () => {
 
@@ -66,6 +74,8 @@ const ColorManagementSection = () => {
 	// Kept here, not read off the active transform: choosing a built-in curve clears the active OCIO
 	// view, and a Display menu that emptied itself at that moment would be a trap.
 	const [ display, setDisplay ] = useState( null );
+	// Pipeline settings (colour system, render space, config variables) stay folded away unless opened.
+	const [ advancedOpen, setAdvancedOpen ] = useLocalStorage( 'rayzee-color-advanced-open', false );
 	const fileInput = useRef( null );
 
 	const syncToneMapping = useCallback( id => usePathTracerStore.getState().setToneMapping( id ), [] );
@@ -132,6 +142,19 @@ const ColorManagementSection = () => {
 				await unloadConfig();
 				setDisplay( null );
 				syncToneMapping( getApp()?.renderer?.toneMapping ?? 0 );
+
+			} );
+			return;
+
+		}
+
+		if ( value === DEFAULT_OPTION.value ) {
+
+			run( 'Loading config', async () => {
+
+				const { view } = await loadDefaultConfig();
+				setDisplay( DEFAULT_COLOR_CONFIG.view.display );
+				syncToneMapping( view.id );
 
 			} );
 			return;
@@ -277,78 +300,58 @@ const ColorManagementSection = () => {
 
 	const isBusy = busy !== null;
 	const nativeSpace = config ? colorManagement()?.nativeLinearSpace ?? null : null;
-	const { presets, others } = builtinConfigOptions( builtins );
-	const knownConfig = config && [ ...presets, ...others ].some( o => o.value === config.id );
+	const { presets } = builtinConfigOptions( builtins );
+	const configOptions = [ DEFAULT_OPTION, ...presets ];
+	const knownConfig = config && configOptions.some( o => o.value === config.id );
 
 	const displayViews = config && activeDisplay ? config.views?.[ activeDisplay ] ?? [] : [];
 	const labels = viewLabels( displayViews );
 	const views = config
-		? displayViews.map( v => ( { value: v.name, label: labels.get( v.name ), description: v.description || v.name } ) )
-		: transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, description: t.name } ) );
+		? displayViews.map( v => ( { value: v.name, label: labels.get( v.name ), hint: toneMappingHint( v.name ), description: v.description || v.name } ) )
+		: transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, hint: toneMappingHint( t.name ), description: t.name } ) );
 	const viewValue = config ? activeView ?? '' : String( toneMapping );
 
 	const { creative, technical } = config && activeView
 		? looksForView( config.looks, activeView, displayViews.map( v => v.name ) )
 		: { creative: [], technical: [] };
 
-	const { here: nearDisplays, elsewhere: farDisplays } = config
-		? displayGroups( config.displays, displayCanvasFit, { p3: matchMedia?.( '(color-gamut: p3)' )?.matches ?? false } )
-		: { here: [], elsewhere: [] };
+	const { sdr: sdrDisplays, hdr: hdrDisplays } = config
+		? displaySections( config, displayCanvasFit, { p3: matchMedia?.( '(color-gamut: p3)' )?.matches ?? false } )
+		: { sdr: [], hdr: [] };
+	const displayColumns = [ { title: 'SDR', list: sdrDisplays }, { title: 'HDR', list: hdrDisplays } ].filter( c => c.list.length > 0 );
 
 	const workingSpaces = workingSpaceOptions( config, nativeSpace );
 	const exportSpaces = exportSpaceOptions( config );
 
 	const trigger = ( title, placeholder ) => (
-		<SelectTrigger className="max-w-32 h-5 rounded-full" title={title}>
+		<SelectTrigger className="max-w-32 h-5 rounded-full pl-2" title={title}>
 			<SelectValue placeholder={placeholder} />
 		</SelectTrigger>
 	);
-	const item = o => <SelectItem key={o.value} value={o.value} title={o.description}>{o.label}</SelectItem>;
+	const item = o => <SelectItem key={o.value} value={o.value} title={o.description} hint={o.hint}>{o.label}</SelectItem>;
 	const find = ( list, value ) => list.find( o => o.value === value );
+
+	const systemSummary = [
+		config ? ( find( configOptions, config.id )?.label ?? configLabel( config, presets ) ) : 'None',
+		config ? workingSpaceLabel( status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? '' ) : null,
+	].filter( Boolean ).join( ' · ' );
 
 	return (
 		<>
-			<Row>
-				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					Color
-					<InfoTip text="How colour is managed. None keeps the engine's own curves, which is how every scene has always looked. ACES is the film and VFX industry standard, built in with nothing to download. A studio's own OpenColorIO config can be loaded as a folder." />
-				</span>
-				<div className="flex items-center gap-1">
-					{isBusy && <Loader2 size={12} className="animate-spin opacity-60" />}
-					<Select value={config?.id ?? NONE} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
-						{trigger( config ? ( find( [ ...presets, ...others ], config.id )?.description ?? config.id ) : 'No colour management' )}
-						<SelectContent>
-							<SelectItem value={NONE} title="The engine's own curves, in linear Rec.709">None</SelectItem>
-							{presets.map( item )}
-							{config && ! knownConfig && (
-								<SelectItem value={config.id} title={config.id}>{configLabel( config, presets )}</SelectItem>
-							)}
-							<SelectSeparator />
-							<SelectItem value={LOAD} title="An OpenColorIO config folder: the .ocio file and the LUTs beside it">Load config folder…</SelectItem>
-							{others.length > 0 && (
-								<SelectGroup>
-									<SelectLabel className="text-[10px] opacity-50">Other ACES versions</SelectLabel>
-									{others.map( item )}
-								</SelectGroup>
-							)}
-						</SelectContent>
-					</Select>
-					{/* `webkitdirectory` is not a React prop. It makes this a folder picker, which a real
-					    config needs — the .ocio file alone almost never resolves its own LUTs. */}
-					<input
-						ref={node => {
+			{/* `webkitdirectory` is not a React prop. It makes this a folder picker, which a real
+			    config needs — the .ocio file alone almost never resolves its own LUTs. */}
+			<input
+				ref={node => {
 
-							fileInput.current = node;
-							if ( node ) node.setAttribute( 'webkitdirectory', '' );
+					fileInput.current = node;
+					if ( node ) node.setAttribute( 'webkitdirectory', '' );
 
-						}}
-						type="file"
-						className="hidden"
-						multiple
-						onChange={onPickFiles}
-					/>
-				</div>
-			</Row>
+				}}
+				type="file"
+				className="hidden"
+				multiple
+				onChange={onPickFiles}
+			/>
 
 			{error && (
 				<div className="px-1 text-[10px] leading-4 text-red-400 flex items-start gap-1">
@@ -356,63 +359,30 @@ const ColorManagementSection = () => {
 				</div>
 			)}
 
-			{config && workingSpaces.length > 0 && (
-				<Row>
-					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						Render In
-						<InfoTip text="The colour space the render is calculated in. Leave it on Rec.709 unless the project calls for another — ACEScg is the usual choice in an ACES pipeline. Changing it rebuilds the scene and changes how every existing render looks." />
-					</span>
-					<Select value={status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? ''} onValueChange={onWorkingSpace} disabled={isBusy}>
-						{trigger( find( workingSpaces, status.workingSpace )?.description )}
-						<SelectContent>{workingSpaces.map( item )}</SelectContent>
-					</Select>
-				</Row>
-			)}
-
-			<Separator className="my-1 opacity-30" />
-
-			{config && (
-				<Row>
-					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						Display
-						<InfoTip text="The screen or medium the picture is meant for. Choose what you are looking at — sRGB for almost every computer screen." />
-					</span>
-					<Select value={activeDisplay ?? ''} onValueChange={onDisplay} disabled={isBusy}>
-						{trigger( activeDisplay, 'Select display' )}
-						<SelectContent>
-							{nearDisplays.map( item )}
-							{farDisplays.length > 0 && (
-								<SelectGroup>
-									<SelectLabel className="text-[10px] opacity-50">Other displays — shown converted here</SelectLabel>
-									{farDisplays.map( item )}
-								</SelectGroup>
-							)}
-						</SelectContent>
-					</Select>
-				</Row>
-			)}
-
 			<Row>
-				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					View
-					<InfoTip text="How the light in the scene becomes a picture — the tone mapping. It changes how the render looks, never the render itself." />
+				<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
+					Tone Mapping
+					<InfoTip text="How the light in the scene becomes a picture: how bright highlights roll off and how deep shadows hold. It changes how the render looks, never the render itself. (OCIO: view)" />
 				</span>
-				<Select value={viewValue} onValueChange={onView} disabled={isBusy}>
-					{trigger( find( views, viewValue )?.description, 'Select view' )}
-					<SelectContent>{views.map( item )}</SelectContent>
-				</Select>
+				<div className="flex flex-1 items-center justify-end gap-1 min-w-0">
+					{isBusy && <Loader2 size={12} className="animate-spin opacity-60 shrink-0" />}
+					<Select value={viewValue} onValueChange={onView} disabled={isBusy}>
+						{trigger( find( views, viewValue )?.description, 'Select tone mapping' )}
+						<SelectContent>{views.map( item )}</SelectContent>
+					</Select>
+				</div>
 			</Row>
 
 			{config && ( creative.length > 0 || technical.length > 0 ) && (
 				<Row>
 					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						Look
-						<InfoTip text="A creative grade on top of the view, such as more contrast. The looks offered depend on the view." />
+						Style
+						<InfoTip text="A finishing grade on top of the tone mapping, such as more contrast or black and white. The styles offered depend on the tone mapping. (OCIO: look)" />
 					</span>
 					<Select value={status.activeView?.look ?? NONE} onValueChange={onLook} disabled={isBusy}>
-						{trigger( find( [ ...creative, ...technical ], status.activeView?.look )?.description ?? 'No look' )}
+						{trigger( find( [ ...creative, ...technical ], status.activeView?.look )?.description ?? 'Default' )}
 						<SelectContent>
-							<SelectItem value={NONE}>None</SelectItem>
+							<SelectItem value={NONE} title="The tone mapping as it is, with no extra grade" hint="the tone mapping as it is">Default</SelectItem>
 							{creative.map( item )}
 							{technical.length > 0 && (
 								<SelectGroup>
@@ -420,6 +390,28 @@ const ColorManagementSection = () => {
 									{technical.map( item )}
 								</SelectGroup>
 							)}
+						</SelectContent>
+					</Select>
+				</Row>
+			)}
+
+			{config && (
+				<Row>
+					<span className="opacity-50 text-xs truncate flex items-center gap-1">
+						Screen
+						<InfoTip text="What the picture will be seen on. sRGB suits almost every computer screen. HDR screens are for HDR TVs and deliverables; on a regular screen they are shown converted. (OCIO: display)" />
+					</span>
+					<Select value={activeDisplay ?? ''} onValueChange={onDisplay} disabled={isBusy}>
+						{trigger( activeDisplay, 'Select screen' )}
+						<SelectContent className={hdrDisplays.length > 0 ? 'min-w-[20rem]' : undefined}>
+							<div className={hdrDisplays.length > 0 ? 'grid grid-cols-2 gap-x-1' : undefined}>
+								{displayColumns.map( ( { title, list } ) => (
+									<SelectGroup key={title}>
+										<SelectLabel className="text-[10px] opacity-50 border-b border-border/50 mb-1">{title}</SelectLabel>
+										{list.map( item )}
+									</SelectGroup>
+								) )}
+							</div>
 						</SelectContent>
 					</Select>
 				</Row>
@@ -443,28 +435,6 @@ const ColorManagementSection = () => {
 				</Row>
 			)}
 
-			{( config?.contextVariables ?? [] ).map( v => (
-				<Row key={v.name}>
-					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						{`$${v.name}`}
-						<InfoTip text={`A variable the config uses to pick a per-shot grade or LUT. Leave empty for the config's own default${ v.default ? ` (${v.default})` : '' }.`} />
-					</span>
-					<Input
-						key={`${config.id}:${v.name}`}
-						className="max-w-32 h-5 rounded-full text-xs px-2"
-						defaultValue={status.context?.[ v.name ] ?? ''}
-						placeholder={v.default ?? ''}
-						disabled={isBusy}
-						onBlur={e => onContextVar( v.name, e.target.value )}
-						onKeyDown={e => {
-
-							if ( e.key === 'Enter' ) e.currentTarget.blur();
-
-						}}
-					/>
-				</Row>
-			) )}
-
 			<Separator className="my-1 opacity-30" />
 
 			<Row>
@@ -477,7 +447,7 @@ const ColorManagementSection = () => {
 						<Select value={status.exportSpace ?? NONE} onValueChange={onExportSpace} disabled={isBusy}>
 							{trigger( status.exportSpace ?? `${status.workingSpace} — the space the render is in` )}
 							<SelectContent>
-								<SelectItem value={NONE} title={status.workingSpace}>{workingSpaceLabel( status.workingSpace )}</SelectItem>
+								<SelectItem value={NONE} title={status.workingSpace} hint="as rendered, no conversion">{workingSpaceLabel( status.workingSpace )}</SelectItem>
 								{exportSpaces.filter( o => o.value !== status.workingSpace ).map( item )}
 							</SelectContent>
 						</Select>
@@ -495,6 +465,81 @@ const ColorManagementSection = () => {
 					</button>
 				</div>
 			</Row>
+
+			<Separator className="my-1 opacity-30" />
+
+			<button
+				type="button"
+				aria-expanded={advancedOpen}
+				onClick={() => setAdvancedOpen( ! advancedOpen )}
+				className="flex w-full items-center justify-between gap-2 text-xs opacity-50 hover:opacity-80 transition-opacity"
+				title="Colour system, render space and config variables — pipeline settings most scenes never change"
+			>
+				<span>Advanced</span>
+				<span className="flex items-center gap-1 min-w-0">
+					<span className="truncate text-[10px]">{systemSummary}</span>
+					<ChevronDown size={12} className={cn( 'shrink-0 transition-transform duration-200', advancedOpen && 'rotate-180' )} />
+				</span>
+			</button>
+
+			{advancedOpen && (
+				<>
+					<Row>
+						<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
+							Color System
+							<InfoTip text="Which colour system supplies the tone mappings, styles and screens. Blender is the default and covers almost everything; ACES is the film and VFX standard; None uses the engine's own curves. A studio's own OpenColorIO config can be loaded as a folder. Changing it reloads the colour settings and can rebuild the scene." />
+						</span>
+						<Select value={config?.id ?? NONE} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
+							{trigger( config ? ( find( configOptions, config.id )?.description ?? config.id ) : 'No colour management' )}
+							<SelectContent>
+								{item( DEFAULT_OPTION )}
+								<SelectItem value={NONE} title="The engine's own curves, in linear Rec.709" hint="the engine's own curves">None</SelectItem>
+								{presets.map( item )}
+								{config && ! knownConfig && (
+									<SelectItem value={config.id} title={config.id}>{configLabel( config, presets )}</SelectItem>
+								)}
+								<SelectSeparator />
+								<SelectItem value={LOAD} title="An OpenColorIO config folder: the .ocio file and the LUTs beside it" hint="a studio's own OpenColorIO folder">Load config folder…</SelectItem>
+							</SelectContent>
+						</Select>
+					</Row>
+
+					{config && workingSpaces.length > 0 && (
+						<Row>
+							<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
+								Render In
+								<InfoTip text="The colour space the render is calculated in. Leave it on Rec.709 unless the project calls for another — ACEScg is the usual choice in an ACES pipeline. Changing it rebuilds the scene and changes how every existing render looks." />
+							</span>
+							<Select value={status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? ''} onValueChange={onWorkingSpace} disabled={isBusy}>
+								{trigger( find( workingSpaces, status.workingSpace )?.description )}
+								<SelectContent>{workingSpaces.map( item )}</SelectContent>
+							</Select>
+						</Row>
+					)}
+
+					{( config?.contextVariables ?? [] ).map( v => (
+						<Row key={v.name}>
+							<span className="opacity-50 text-xs truncate flex items-center gap-1">
+								{`$${v.name}`}
+								<InfoTip text={`A variable the config uses to pick a per-shot grade or LUT. Leave empty for the config's own default${ v.default ? ` (${v.default})` : '' }.`} />
+							</span>
+							<Input
+								key={`${config.id}:${v.name}`}
+								className="max-w-32 h-5 rounded-full text-xs px-2"
+								defaultValue={status.context?.[ v.name ] ?? ''}
+								placeholder={v.default ?? ''}
+								disabled={isBusy}
+								onBlur={e => onContextVar( v.name, e.target.value )}
+								onKeyDown={e => {
+
+									if ( e.key === 'Enter' ) e.currentTarget.blur();
+
+								}}
+							/>
+						</Row>
+					) )}
+				</>
+			)}
 		</>
 	);
 
