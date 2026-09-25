@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 import { cn } from "@/lib/utils";
-import { proxyImage } from "@/lib/imageProxy";
 
 const DataSelector = ( { className, data, value, onValueChange, ...props } ) => {
 
@@ -59,7 +58,7 @@ const DataSelector = ( { className, data, value, onValueChange, ...props } ) => 
 										</TooltipProvider>
 										}
 										<img
-											src={proxyImage( item.preview )}
+											src={item.preview}
 											alt={item.name}
 											className="w-full aspect-square object-cover rounded-sm mb-2"
 										/>
