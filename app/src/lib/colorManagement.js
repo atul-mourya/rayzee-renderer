@@ -73,21 +73,33 @@ async function fetchOk( url ) {
 }
 
 /**
- * Fetch and load the default config, then select its default view.
- * @returns {Promise<{ config: Object, view: Object }>} the described config and the active view entry
+ * Download the default config's files without loading them, so the download can run alongside
+ * something else and {@link loadDefaultConfig} take the result.
+ * @returns {Promise<{ files: Object[], configPath: string }>}
  */
-export async function loadDefaultConfig() {
+export async function fetchDefaultConfig() {
 
-	ensureConfigured();
-	const { baseUrl, id, view } = DEFAULT_COLOR_CONFIG;
+	const { baseUrl } = DEFAULT_COLOR_CONFIG;
 	const manifest = await ( await fetchOk( `${baseUrl}manifest.json` ) ).json();
 	const files = await Promise.all( manifest.files.map( async relativePath => ( {
 		relativePath,
 		data: new Uint8Array( await ( await fetchOk( baseUrl + relativePath ) ).arrayBuffer() ),
 	} ) ) );
+	return { files, configPath: manifest.config };
 
-	const config = await currentApp().loadColorConfig( { files, configPath: manifest.config, id, registerViews: false } );
-	return { config, view: colorManagement().setView( view ) };
+}
+
+/**
+ * Load the default config, then select its default view.
+ * @param {Promise<{ files: Object[], configPath: string }>} [download] - from {@link fetchDefaultConfig}
+ * @returns {Promise<{ config: Object, view: Object }>} the described config and the active view entry
+ */
+export async function loadDefaultConfig( download = fetchDefaultConfig() ) {
+
+	ensureConfigured();
+	const { files, configPath } = await download;
+	const config = await currentApp().loadColorConfig( { files, configPath, id: DEFAULT_COLOR_CONFIG.id, registerViews: false } );
+	return { config, view: colorManagement().setView( DEFAULT_COLOR_CONFIG.view ) };
 
 }
 

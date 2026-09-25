@@ -460,10 +460,13 @@ whose open state is remembered in localStorage. One Tone Mapping menu, no separa
 Exposure is in stops (`2^EV`); the store still holds the multiplier.
 
 The app starts in **Blender 5.1's config** (`DEFAULT_COLOR_CONFIG` in `app/src/lib/colorManagement.js`:
-sRGB / AgX / Medium High Contrast), fetched after the first frame from
-`${ASSETS_BASE_URL}/ocio/blender-5.1/` — a `manifest.json` plus Blender's files, unmodified. Until it
-lands, or if the fetch fails, the built-in AgX shows. ⚠️ Those files are GPL-3.0: they live on the CDN
-only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
+sRGB / AgX / Medium High Contrast) from `${ASSETS_BASE_URL}/ocio/blender-5.1/` — a `manifest.json`
+plus Blender's files, unmodified. `Viewport3D` downloads it alongside the model and loads it once the
+scene is in, before the first frame, waiting at most `DEFAULT_COLOR_WAIT_MS` (2 s); switching views
+after the first frames read as a colour jump. Past that, or if the fetch fails, the built-in AgX shows
+first. ⚠️ Not loaded mid-scene: `loadColorConfig()` resets, and a reset's `wake()` starts rendering.
+The colour runtime's first use costs ~0.5 s of main thread on that path (0.85 → 1.45 s to first frame).
+⚠️ Those files are GPL-3.0: they live on the CDN only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
 elsewhere with `VITE_COLOR_CONFIG_URL`.
 
 Every label and filter lives in `app/src/lib/colorLabels.js`, derived from what the config carries —

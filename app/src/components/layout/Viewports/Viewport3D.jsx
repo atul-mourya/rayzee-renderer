@@ -17,6 +17,9 @@ import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
 
 
+// How long startup holds the first frame for the CDN colour config before showing the built-in view.
+const DEFAULT_COLOR_WAIT_MS = 2000;
+
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 	const { toast } = useToast();
@@ -233,6 +236,12 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				const urlParams = new URLSearchParams( window.location.search );
 				const modelUrl = urlParams.get( 'model' );
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
+				// The colour config downloads alongside the model and loads once the scene is in,
+				// before the first frame: loading it mid-scene would reset, and a reset starts rendering.
+				const { fetchDefaultConfig, loadDefaultConfig } = await import( '@/lib/colorManagement' );
+				const colorDownload = fetchDefaultConfig();
+				colorDownload.catch( () => {} );
+
 				if ( modelUrl ) {
 
 					await app.loadModel( modelUrl );
@@ -258,17 +267,23 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				}
 
+				// Wait briefly for it: switching views after the first frames reads as a colour jump.
+				// A slow CDN starts on the built-in AgX and switches when the config lands.
+				setLoading( { isLoading: true, title: "Starting", status: "Loading colour config...", progress: 95 } );
+				const defaultColor = loadDefaultConfig( colorDownload );
+				defaultColor.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
+				const applyView = ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id );
+				const early = await Promise.race( [
+					defaultColor.catch( () => null ),
+					new Promise( resolve => setTimeout( resolve, DEFAULT_COLOR_WAIT_MS ) ),
+				] );
+				if ( early ) applyView( early );
+				else if ( early === undefined ) defaultColor.then( applyView, () => {} );
+
 				setLoading( { isLoading: true, title: "Starting", status: "Setup Complete!", progress: 100 } );
 
 				app.animate();
 				app.reset();
-
-				// Not awaited: the config is a CDN download, so the first frames show the built-in
-				// AgX and the view switches over when it lands. A failed fetch keeps the built-in.
-				const { loadDefaultConfig } = await import( '@/lib/colorManagement' );
-				loadDefaultConfig()
-					.then( ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id ) )
-					.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
 
 			};
 
