@@ -5,7 +5,7 @@ import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, re
 
 import { struct } from './patches.js';
 import { EPSILON, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
-import { iorToFresnel0, fresnelSchlickFloat } from './Fresnel.js';
+import { fresnelDielectric } from './Fresnel.js';
 import { DistributionGGX } from './MaterialProperties.js';
 import { ImportanceSampleGGX } from './MaterialSampling.js';
 import { getRandomSample1D, getRandomSample2D, pcgHash } from './Random.js';
@@ -316,8 +316,7 @@ export const handleTransmission = Fn( ( [
 	const sinThetaT2 = n1.mul( n1 ).div( n2.mul( n2 ) ).mul( float( 1.0 ).sub( cosThetaI.mul( cosThetaI ) ) );
 	const totalInternalReflection = sinThetaT2.greaterThan( 1.0 ).toVar();
 
-	const F0 = iorToFresnel0( n2, n1 );
-	const Fr = select( totalInternalReflection, float( 1.0 ), fresnelSchlickFloat( cosThetaI, F0 ) ).toVar();
+	const Fr = fresnelDielectric( cosThetaI, n2.div( n1 ) ).toVar();
 
 	const reflectProb = float( 0.0 ).toVar();
 

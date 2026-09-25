@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, mix,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep,
 	instanceIndex,
 	sampler,
 	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
@@ -27,8 +27,7 @@ import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficient
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import { IndirectLightingResult, sampleCone } from './LightsCore.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
-import { evaluateDFG } from './MaterialProperties.js';
-import { dielectricF0 } from './Fresnel.js';
+import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
 import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
@@ -46,6 +45,7 @@ import {
 	MaterialCache,
 	DirectLightingDual,
 	DFGResult,
+	BaseFresnel,
 } from './Struct.js';
 import { getRandomSample, getRandomSample1D, getRandomSample2D, SAMPLER_DIMS_PER_BOUNCE, SAMPLER_DIM_AUX_BASE } from './Random.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
@@ -1094,11 +1094,11 @@ export function buildShadeKernel( params ) {
 				// smooth mirror / metal: DEFER — tint by the specular directional albedo (metal colour),
 				// matching the opaque throughput (≈ F at the near-delta mirror lobe). Achromatic energy excluded.
 				const NoV = max( dot( N, V ), float( 1e-3 ) );
-				const F0 = clamp(
-					mix( dielectricF0( material.ior ).mul( material.specularColor ), albedo, material.metalness ).mul( material.specularIntensity ),
-					vec3( 0.0 ), vec3( 1.0 ),
-				);
-				featCarry.mulAssign( DFGResult.wrap( evaluateDFG( F0, NoV, max( rawRough, float( 0.02 ) ) ) ).E_total );
+				const bf = BaseFresnel.wrap( baseFresnelParams( material, albedo ) );
+				featCarry.mulAssign( DFGResult.wrap( evaluateSpecularDFG(
+					bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, vec3( 0.0 ), float( 0.0 ), bf.F0,
+					NoV, max( rawRough, float( 0.02 ) ),
+				) ).E_total );
 
 			} );
 

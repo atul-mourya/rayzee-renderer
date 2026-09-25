@@ -3,12 +3,12 @@ import {
 	If, max, min, clamp, mix
 } from 'three/tsl';
 
-import { DotProducts, DFGResult } from './Struct.js';
+import { DotProducts, DFGResult, BaseFresnel } from './Struct.js';
 import { PI_INV, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso } from './Common.js';
-import { fresnelSchlick, fresnelSchlickFloat, dielectricF0 } from './Fresnel.js';
+import { fresnelSchlick, fresnelDielectric, dielectricFresnelWeight } from './Fresnel.js';
 import {
 	DistributionGGX, SheenDistribution, VisibilitySheen, VisibilityGGXSmithCorrelated,
-	sheenDirectionalAlbedo, evaluateDFG,
+	sheenDirectionalAlbedo, evaluateSpecularDFG, baseFresnelParams,
 	computeAnisoAlphas, DistributionGGXAniso, VisibilityGGXAniso,
 } from './MaterialProperties.js';
 import { evalIridescence } from './MaterialProperties.js';
@@ -43,12 +43,9 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 
 	} ).Else( () => {
 
-		// Calculate base F0 with specular parameters, clamped to physically valid range
-		const F0 = clamp(
-			mix( dielectricF0( material.ior ).mul( material.specularColor ), material.color.rgb, material.metalness )
-				.mul( material.specularIntensity ),
-			vec3( 0.0 ), vec3( 1.0 )
-		).toVar();
+		const bf = BaseFresnel.wrap( baseFresnelParams( material, material.color.rgb ) ).toVar();
+		const F0 = bf.F0.toVar();
+		const iridF = vec3( 0.0 ).toVar();
 
 		// Modify material color for dispersive materials to enhance color separation
 		const materialColor = material.color.rgb.toVar();
@@ -72,13 +69,18 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 
 			// Per glTF KHR_materials_iridescence spec: use max thickness when no texture
 			const thickness = material.iridescenceThicknessRange.y;
-			const iridescenceFresnel = evalIridescence( float( 1.0 ), material.iridescenceIOR, dots.VoH, thickness, F0 );
-			F0.assign( mix( F0, iridescenceFresnel, material.iridescence ) );
+			iridF.assign( evalIridescence( float( 1.0 ), material.iridescenceIOR, dots.VoH, thickness, F0 ) );
+			F0.assign( mix( F0, iridF, material.iridescence ) );
 
 		} );
 
-		// Precalculate shared terms
-		const F = fresnelSchlick( dots.VoH, F0 );
+		// Dielectric on the exact Fresnel curve, metal and iridescence on Schlick.
+		const Fd = mix( bf.f0, vec3( bf.f90 ), dielectricFresnelWeight( dots.VoH, bf.eta ) );
+		const F = mix(
+			mix( Fd, fresnelSchlick( dots.VoH, bf.F0m ), material.metalness ),
+			fresnelSchlick( dots.VoH, iridF ),
+			material.iridescence,
+		).toVar();
 
 		// Single-scatter specular BRDF (anisotropic when material.anisotropy > 0; the aniso
 		// visibility term already carries the 1/(4·NoV·NoL) denominator)
@@ -98,9 +100,11 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 
 		} );
 
-		// Shared DFG evaluation — compensation factor and total directional albedo
-		// come from the same polynomial.
-		const dfg = DFGResult.wrap( evaluateDFG( F0, dots.NoV, material.roughness ) );
+		// Compensation factor and total directional albedo from the same table fetch.
+		const dfg = DFGResult.wrap( evaluateSpecularDFG(
+			bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, iridF, material.iridescence, F0,
+			dots.NoV, material.roughness,
+		) );
 		const specular = specularSS.mul( dfg.compensation );
 
 		// Diffuse energy budget from hemisphere-integrated specular albedo (includes multiscatter)
@@ -140,15 +144,18 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		If( material.clearcoat.greaterThan( 0.0 ), () => {
 
 			const ccRoughness = max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS );
-			const ccF0 = vec3( 0.04 );
+			const ccF0 = vec3( 0.04 ); // IOR 1.5
 
 			// A GGX lobe like any other, so same multiscatter treatment; its albedo is what the
 			// base underneath loses.
-			const ccDfg = DFGResult.wrap( evaluateDFG( ccF0, dots.NoV, ccRoughness ) );
+			const ccDfg = DFGResult.wrap( evaluateSpecularDFG(
+				ccF0, float( 1.0 ), float( 1.5 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.0 ), float( 0.0 ), ccF0,
+				dots.NoV, ccRoughness,
+			) );
 
 			const ccD = DistributionGGX( dots.NoH, ccRoughness );
 			const ccVis = VisibilityGGXSmithCorrelated( dots.NoV, dots.NoL, ccRoughness );
-			const ccF = fresnelSchlickFloat( dots.VoH, float( 0.04 ) );
+			const ccF = fresnelDielectric( dots.VoH, float( 1.5 ) );
 			const ccLobe = vec3( ccD.mul( ccVis ).mul( ccF ) ).mul( ccDfg.compensation );
 
 

@@ -1,14 +1,18 @@
 /**
- * Regenerates the two-channel directional-albedo LUT embedded in
- * rayzee/src/TSL/MaterialProperties.js (`_dfgLutData`).
+ * Regenerates the directional-albedo LUT embedded in rayzee/src/TSL/MaterialProperties.js
+ * (`_dfgLutData`). Block 0 (the first 16 columns):
  *
  *   R = specular E(NoV, roughness) at F0 = 1   — the divisor the multiscatter compensation needs
  *   G = sheen    E(NoV, sheenRoughness)         — inverted-GGX lobe, Ashikhmin/Neubelt visibility
- *   B = specular E(NoV, roughness) at F0 = 0   — the Schlick "bias" term
+ *   B = specular E(NoV, roughness) at F0 = 0   — the Schlick "bias" term, for metals
  *
  * Schlick's Fresnel is linear in F0, so E(F0) = F0·(R - B) + B is EXACT for any F0 given R and B.
- * That removes the last borrowed fit: the F0 split used to come from Karis's polynomial shape with
- * only its overall level corrected, which left the F0 = 0.04 dielectrics about 1 pp off.
+ *
+ * Dielectrics use the exact Fresnel curve, written as F = f0 + (f90 - f0)·s(VoH, eta) with
+ * s = (F_exact - F0) / (1 - F0). That is linear in f0 and f90 too, so E = f0·(R - S) + f90·S with
+ * S = E of s — but s depends on eta, so S is tabulated in DIELECTRIC_SLICES slices uniform in
+ * r0 = (eta - 1)/(eta + 1) over [0, R0_MAX]. Blocks 1.. hold neighbouring pairs, R = S(k) and
+ * G = S(k + 1), so one fetch interpolates between slices.
  *
  *   node bench/tools/gen-dfg-lut.mjs
  *
@@ -29,8 +33,37 @@
 
 const N = 16;       // grid, sampled at ENDPOINTS: index i is i/(N-1), so roughness 1.0 is covered
 const SQRT_SAMPLES = 512;
+const DIELECTRIC_SLICES = 17;
+const R0_MAX = 0.5;     // eta = 3
 
-function albedo( NoV, roughness ) {
+const sliceEta = k => {
+
+	const r0 = R0_MAX * k / ( DIELECTRIC_SLICES - 1 );
+	return ( 1 + r0 ) / ( 1 - r0 );
+
+};
+
+// Unpolarised reflectance of a smooth dielectric interface; the shader's fresnelDielectric.
+function fresnelDielectric( c, eta ) {
+
+	const g2 = eta * eta - 1 + c * c;
+	if ( g2 <= 0 ) return 1;
+	const g = Math.sqrt( g2 );
+	const A = ( g - c ) / Math.max( g + c, 1e-12 );
+	const B = ( c * ( g + c ) - 1 ) / ( c * ( g - c ) + 1 );
+	return 0.5 * A * A * ( 1 + B * B );
+
+}
+
+function dielectricWeight( c, eta ) {
+
+	const r = ( eta - 1 ) / ( eta + 1 );
+	const f0 = r * r;
+	return Math.min( Math.max( ( fresnelDielectric( c, eta ) - f0 ) / Math.max( 1 - f0, 1e-6 ), 0 ), 1 );
+
+}
+
+function albedo( NoV, roughness, etas = [] ) {
 
 	const a = roughness * roughness;
 	const a2 = a * a;
@@ -42,6 +75,7 @@ function albedo( NoV, roughness ) {
 	const vhx = a * Vx / vhLen, vhz = Vz / vhLen;
 
 	let full = 0, bias = 0;
+	const dielectric = new Float64Array( etas.length );
 
 	for ( let i = 0; i < SQRT_SAMPLES; i ++ ) {
 
@@ -78,13 +112,14 @@ function albedo( NoV, roughness ) {
 			const fres = Math.pow( 1 - VoH, 5 );
 			full += w;                 // F = 1
 			bias += w * fres;          // F = (1 - VoH)^5, i.e. F0 = 0
+			for ( let k = 0; k < etas.length; k ++ ) dielectric[ k ] += w * dielectricWeight( VoH, etas[ k ] );
 
 		}
 
 	}
 
 	const n = SQRT_SAMPLES * SQRT_SAMPLES;
-	return [ full / n, bias / n ];
+	return [ full / n, bias / n, Array.from( dielectric, v => v / n ) ];
 
 }
 
@@ -130,25 +165,56 @@ function sheenAlbedo( NoV, sheenRoughness ) {
 
 }
 
+const etas = Array.from( { length: DIELECTRIC_SLICES }, ( _, k ) => sliceEta( k ) );
 const rows = [];
 
 for ( let i = 0; i < N; i ++ ) {
 
 	const NoV = Math.max( i / ( N - 1 ), 0.02 );        // NoV = 0 is degenerate
-	const cells = [];
+	const base = [];
+	const slices = [];
 
 	for ( let j = 0; j < N; j ++ ) {
 
 		const roughness = Math.max( j / ( N - 1 ), 0.001 );
-		const [ full, bias ] = albedo( NoV, roughness );
-		cells.push( full.toFixed( 4 ) );
-		cells.push( sheenAlbedo( NoV, j / ( N - 1 ) ).toFixed( 4 ) );
-		cells.push( bias.toFixed( 4 ) );
-		cells.push( '1.0000' );        // unused; RGBA because RGB float textures are not portable
+		const [ full, bias, dielectric ] = albedo( NoV, roughness, etas );
+		base.push( full.toFixed( 4 ), sheenAlbedo( NoV, j / ( N - 1 ) ).toFixed( 4 ), bias.toFixed( 4 ), '1.0000' );
+		slices.push( dielectric );
+
+	}
+
+	const cells = [ ...base ];
+	for ( let k = 0; k < DIELECTRIC_SLICES - 1; k ++ ) {
+
+		for ( let j = 0; j < N; j ++ ) cells.push( slices[ j ][ k ].toFixed( 4 ), slices[ j ][ k + 1 ].toFixed( 4 ), '1.0000', '1.0000' );
 
 	}
 
 	rows.push( `\t${cells.join( ', ' )},` );
+
+}
+
+// Slice interpolation error against a direct integral, at IORs between slices.
+{
+
+	const check = [ 1.33, 1.45, 1.5, 1.6, 1.8, 2.0, 2.42 ];
+	let worst = 0;
+	for ( const eta of check ) {
+
+		const t = Math.min( ( eta - 1 ) / ( eta + 1 ) / R0_MAX, 1 ) * ( DIELECTRIC_SLICES - 1 );
+		const k = Math.min( Math.floor( t ), DIELECTRIC_SLICES - 2 );
+		const f = t - k;
+		for ( const [ NoV, roughness ] of [ [ 0.2, 0.1 ], [ 0.5, 0.4 ], [ 0.8, 0.8 ], [ 1.0, 0.3 ] ] ) {
+
+			const [ , , pair ] = albedo( NoV, roughness, [ etas[ k ], etas[ k + 1 ], eta ] );
+			const interp = pair[ 0 ] + ( pair[ 1 ] - pair[ 0 ] ) * f;
+			worst = Math.max( worst, Math.abs( interp - pair[ 2 ] ) );
+
+		}
+
+	}
+
+	process.stderr.write( `slice interpolation: worst |error| ${worst.toFixed( 5 )} (absolute, in albedo)\n` );
 
 }
 

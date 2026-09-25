@@ -228,7 +228,10 @@ from the renderer's own lobes (`bench/tools/gen-dfg-lut.mjs`), storing E at F0 =
 Schlick is linear in F0, so `E(F0) = F0·(R - B) + B` is exact and no fitted shape survives
 anywhere in the chain. That also unblocked replacing `GeometrySchlickGGX`'s analytic-light remap
 with exact Smith, and the isotropic BRDF's separable Smith with the height-correlated form the
-anisotropic path always used.
+anisotropic path always used. Dielectrics have since moved to the exact Fresnel curve (Schlick ran
+16-23 % low at 45-65°, measured against Cycles); that curve is not linear in F0, so the same table
+now also carries its albedo in 17 IOR slices (`evaluateSpecularDFG`), and the furnace ratios did not
+move.
 
 **Energy splits that were guesses.** Both layered lobes attenuated the base by an invented factor
 instead of the lobe's actual albedo: sheen used `(1 - sheenRoughness) * 0.5 + 0.25`, claiming 0.55

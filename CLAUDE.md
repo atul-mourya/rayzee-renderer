@@ -316,6 +316,12 @@ the strings, so never rename or repurpose one.
   and runtime edits alike. `app.getMaterialPropertySource( i, prop )` answers
   `material | mapped | default | host`. ⚠️ Never derive a default from another property: "metalness
   factor > 0.1 ⇒ IOR 2.5" made every ORM-textured glTF 4.6× too shiny on its non-metal parts.
+- **Fresnel** — every dielectric interface (base layer, clear coat, glass, SSS boundary, glass
+  shadows) uses the exact unpolarised Fresnel, `fresnelDielectric` in `TSL/Fresnel.js`, as Cycles
+  does; metals and iridescence stay Schlick. The base keeps KHR_materials_specular's f0/f90 via
+  `mix( f0, f90, dielectricFresnelWeight )` (`baseFresnelParams`), so specularIntensity 0 removes
+  the reflection. The DFG LUT holds that weight's albedo in 17 IOR slices beside the Schlick terms —
+  one texture, one extra fetch; regenerate with `npm run bench:lut` if a lobe or sampler changes.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

@@ -30,7 +30,7 @@ import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows,
 	instanceFaceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle
 } from './Common.js';
-import { fresnelSchlickFloat, iorToFresnel0 } from './Fresnel.js';
+import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
 
@@ -212,11 +212,8 @@ export const traceShadowRay = Fn( ( [
 
 			} );
 
-			// Compute transmittance based on material properties
-			const fresnel = fresnelSchlickFloat(
-				abs( dot( dir, N ) ),
-				iorToFresnel0( shadowMaterial.ior, float( 1.0 ) ),
-			);
+			// Shadow rays go straight through, so both faces see the outside-in angle and eta.
+			const fresnel = fresnelDielectric( abs( dot( dir, N ) ), max( shadowMaterial.ior, 1.0 ) );
 
 			const matTransmittance = float( 1.0 ).sub( fresnel ).mul( shadowMaterial.transmission );
 			transmittance.mulAssign( matTransmittance );

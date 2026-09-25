@@ -30,7 +30,7 @@ import {
 import { struct } from './patches.js';
 import { TWO_PI, EPSILON, constructTBN } from './Common.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
-import { iorToFresnel0, fresnelSchlickFloat } from './Fresnel.js';
+import { fresnelDielectric } from './Fresnel.js';
 import { ImportanceSampleGGX } from './MaterialSampling.js';
 
 // ================================================================================
@@ -189,8 +189,7 @@ export const handleSubsurfaceEntry = Fn( ( [
 	const sinThetaT2 = n1.mul( n1 ).div( max( n2.mul( n2 ), EPSILON ) ).mul( float( 1.0 ).sub( cosThetaI.mul( cosThetaI ) ) );
 	const tir = sinThetaT2.greaterThan( 1.0 ).toVar();
 
-	const F0 = iorToFresnel0( n2, n1 );
-	const Fr = select( tir, float( 1.0 ), fresnelSchlickFloat( cosThetaI, F0 ) ).toVar();
+	const Fr = fresnelDielectric( cosThetaI, n2.div( max( n1, EPSILON ) ) ).toVar();
 	const reflectProb = clamp( Fr, 0.02, 0.98 ).toVar();
 
 	const doReflect = tir.or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 11 ) ), rngState, resolution, frame ).lessThan( reflectProb ) ).toVar();
