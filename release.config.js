@@ -51,7 +51,8 @@ const config = {
 			pkgRoot: 'rayzee',
 		} ],
 		[ '@semantic-release/git', {
-			assets: [ 'rayzee/package.json', 'rayzee/README.md', 'README.md' ],
+			// The version bump rewrites the engine's entry in the root lockfile too.
+			assets: [ 'rayzee/package.json', 'package-lock.json', 'rayzee/README.md', 'README.md' ],
 			message: 'chore(release): ${nextRelease.version}\n\n${nextRelease.notes}'
 		} ],
 		// successComment/failComment disabled: commit bodies reference internal
