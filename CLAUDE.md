@@ -384,9 +384,14 @@ saying the environment was left converted.
   inactive and OCIO notes it on every load. Warnings and errors still show.
 - **The engine never names the OCIO package.** It is ~6 MB of WebAssembly; a bare specifier in
   engine source would make it a hard dependency of every host, and `@vite-ignore` leaves the browser
-  unable to resolve it. The host supplies `ocioRuntimeFactory` or `ocioRuntimeUrl`. The app does
-  this lazily, on first open of the config menu, so a session that never touches colour pays
-  nothing.
+  unable to resolve it. The host supplies `ocioRuntimeFactory` or `ocioRuntimeUrl`. The app loads
+  it the first time the colour controls are opened; startup shows a baked view instead (below).
+- **Baked views** (`BakedViews.js`): `saveBakedView( id )` writes a view's table to a file (gzip,
+  delta-coded, 157 KB for 65³) and `loadBakedView( bytes, { expect } )` registers it with no runtime
+  and no config, bit-identical to baking it. When its config later loads, `loadConfig` keeps the
+  entry — no rebake, no new id, and `loadColorConfig` skips its reset — if the files hash to the
+  fingerprint it was baked from (SHA-256 per file, `configFingerprint`) under the same OCIO version;
+  otherwise it is released like any other view.
 - **One registry, four consumers.** `ViewTransforms.js` is the single list; the TSL graph that
   paints the canvas, the WGSL readback (`ToneMapGPU`), the JavaScript readback (`ToneMapCPU`) and
   the host's menu are all derived from it. Adding a view at runtime therefore reaches all four —
@@ -462,15 +467,22 @@ rebuild the scene — sit folded under **Advanced**, whose header shows them (`B
 whose open state is remembered in localStorage. One Tone Mapping menu, no separate curve control.
 Exposure is in stops (`2^EV`); the store still holds the multiplier.
 
-The app starts in **Blender 5.1's config** (`DEFAULT_COLOR_CONFIG` in `app/src/lib/colorManagement.js`:
-sRGB / AgX / Medium High Contrast) from `${ASSETS_BASE_URL}/ocio/blender-5.1/` — a `manifest.json`
-plus Blender's files, unmodified. `Viewport3D` downloads it alongside the model and loads it once the
-scene is in, before the first frame, waiting at most `DEFAULT_COLOR_WAIT_MS` (2 s); switching views
-after the first frames read as a colour jump. Past that, or if the fetch fails, the built-in AgX shows
-first. ⚠️ The app is `pause()`d from `init()` until then: every model, sky and config load resets, and
-a reset's `wake()` restarts rendering unless paused — without it 3 of 5 warm reloads drew the built-in look first.
-A failed default model or sky is reported and startup carries on, so the look still loads.
-The colour runtime's first use costs ~0.5 s of main thread on that path (0.85 → 1.45 s to first frame).
+The app starts in **Blender 5.1's config** (`DEFAULT_COLOR_CONFIG` in `app/src/lib/colorManagement.js`,
+identity in `colorDefaults.js`: sRGB / AgX / Medium High Contrast) from `${ASSETS_BASE_URL}/ocio/blender-5.1/`
+— a `manifest.json` plus Blender's files, unmodified, and `default-view.bin`, that view baked by
+`npm run color:bake`. `Viewport3D` downloads only the baked view alongside the model and shows it
+before the first frame (`showStartupColor`), waiting at most `DEFAULT_COLOR_WAIT_MS` (2 s); switching
+views after the first frames read as a colour jump. The config itself loads when the Color Management
+group is first opened, or a texture's colour-space menu (`ensureDefaultConfig`), and keeps the baked
+view. Measured on production builds, warm reload: first frame 1.38 → 0.59 s, main thread blocked before
+it 870 → 220 ms, and a cold visit fetches 157 KB instead of 24 files (4.7 MB compressed) and the
+0.65 MB compressed runtime.
+Without the baked file (not uploaded, or its header does not match the default) startup loads the
+whole config as before. ⚠️ Rerun `npm run color:bake` and upload the file whenever the config or the
+default view changes. ⚠️ The app is `pause()`d from `init()` until then: every model, sky and config
+load resets, and a reset's `wake()` restarts rendering unless paused — without it 3 of 5 warm reloads
+drew the built-in look first. A failed default model or sky is reported and startup carries on, so the
+look still loads.
 ⚠️ Those files are GPL-3.0: they live on the CDN only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
 elsewhere with `VITE_COLOR_CONFIG_URL`.
 

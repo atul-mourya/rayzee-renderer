@@ -14,7 +14,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { usePathTracerStore } from '@/store';
 import {
 	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
-	useColorStatus, useViewTransforms, saveEXR, DEFAULT_COLOR_CONFIG,
+	useColorStatus, useViewTransforms, saveEXR, DEFAULT_COLOR_CONFIG, ensureDefaultConfig, isDefaultConfigPending,
 } from '@/lib/colorManagement';
 import {
 	builtinConfigOptions, configLabel, viewLabels, looksForView, workingSpaceOptions, workingSpaceLabel,
@@ -101,8 +101,16 @@ const ColorManagementSection = () => {
 	}, [] );
 
 	const config = status?.config ?? null;
+	// Startup shows the default view from a baked table; its config loads when this panel first opens.
+	const pending = isDefaultConfigPending( status );
 	const activeDisplay = status?.activeView?.display ?? display ?? config?.defaultDisplay ?? null;
 	const activeView = status?.activeView?.view ?? ( activeDisplay ? config?.defaultViews?.[ activeDisplay ] : null ) ?? null;
+
+	useEffect( () => {
+
+		if ( pending ) run( 'Loading color system', ensureDefaultConfig );
+
+	}, [ pending, run ] );
 
 	// Starting the OCIO runtime is ~6 MB of WebAssembly, so the list is fetched when the menu is
 	// first opened — never because the sidebar rendered.
@@ -221,7 +229,7 @@ const ColorManagementSection = () => {
 		// Without a config the menu lists three.js's curves, which are selected by id.
 		if ( ! config ) {
 
-			handleToneMappingChange( value );
+			if ( ! pending ) handleToneMappingChange( value );
 			return;
 
 		}
@@ -234,7 +242,7 @@ const ColorManagementSection = () => {
 
 		applyView( { display: activeDisplay, view: value, look: kept }, 'Baking view' );
 
-	}, [ config, handleToneMappingChange, applyView, activeDisplay, status ] );
+	}, [ config, pending, handleToneMappingChange, applyView, activeDisplay, status ] );
 
 	const onLook = useCallback( look => {
 
@@ -308,8 +316,10 @@ const ColorManagementSection = () => {
 	const labels = viewLabels( displayViews );
 	const views = config
 		? displayViews.map( v => ( { value: v.name, label: labels.get( v.name ), hint: toneMappingHint( v.name ), description: v.description || v.name } ) )
-		: transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, hint: toneMappingHint( t.name ), description: t.name } ) );
-	const viewValue = config ? activeView ?? '' : String( toneMapping );
+		: pending
+			? [ { value: activeView, label: activeView, hint: toneMappingHint( activeView ), description: status.activeView.name } ]
+			: transforms.filter( t => t.source === 'builtin' ).map( t => ( { value: String( t.id ), label: t.name, hint: toneMappingHint( t.name ), description: t.name } ) );
+	const viewValue = config || pending ? activeView ?? '' : String( toneMapping );
 
 	const { creative, technical } = config && activeView
 		? looksForView( config.looks, activeView, displayViews.map( v => v.name ) )
@@ -332,7 +342,7 @@ const ColorManagementSection = () => {
 	const find = ( list, value ) => list.find( o => o.value === value );
 
 	const systemSummary = [
-		config ? ( find( configOptions, config.id )?.label ?? configLabel( config, presets ) ) : 'None',
+		config ? ( find( configOptions, config.id )?.label ?? configLabel( config, presets ) ) : pending ? DEFAULT_OPTION.label : 'None',
 		config ? workingSpaceLabel( status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? '' ) : null,
 	].filter( Boolean ).join( ' · ' );
 
@@ -489,7 +499,7 @@ const ColorManagementSection = () => {
 							Color System
 							<InfoTip text="Which colour system supplies the tone mappings, styles and screens. Blender is the default and covers almost everything; ACES is the film and VFX standard; None uses the engine's own curves. A studio's own OpenColorIO config can be loaded as a folder. Changing it reloads the colour settings and can rebuild the scene." />
 						</span>
-						<Select value={config?.id ?? NONE} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
+						<Select value={config?.id ?? ( pending ? DEFAULT_OPTION.value : NONE )} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
 							{trigger( config ? ( find( configOptions, config.id )?.description ?? config.id ) : 'No colour management' )}
 							<SelectContent>
 								{item( DEFAULT_OPTION )}

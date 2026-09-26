@@ -28,6 +28,7 @@ import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
+import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
@@ -3058,9 +3059,12 @@ export class PathTracerApp extends EventDispatcher {
 	async loadColorConfig( options = {} ) {
 
 		await this._leaveColorWorkingSpace();
+		const shown = getViewTransform( this.renderer?.toneMapping );
 		const described = await this.color.loadConfig( options );
 		if ( this.color.workingSpaceAdopted ) await this.applyColorWorkingSpace();
-		this.reset();
+		// A baked view the config kept is still what is on screen.
+		const kept = shown?.source === 'ocio' && getViewTransform( this.renderer?.toneMapping ) === shown;
+		if ( ! kept || this.color.workingSpaceAdopted ) this.reset();
 		return described;
 
 	}

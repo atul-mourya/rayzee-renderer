@@ -12,6 +12,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getApp } from '@/lib/appProxy';
 import { useActiveApp } from '@/hooks/useActiveApp';
 import { ASSETS_BASE_URL } from '@/Constants';
+import { DEFAULT_COLOR_IDENTITY } from '@/lib/colorDefaults';
 
 let configured = false;
 
@@ -57,11 +58,8 @@ export async function loadBuiltinConfig( name, options = {} ) {
  * points a dev build at another copy.
  */
 export const DEFAULT_COLOR_CONFIG = Object.freeze( {
-	id: 'blender-5.1',
-	label: 'Blender',
-	description: 'Blender 5.1 — AgX, Filmic and their looks',
-	baseUrl: import.meta.env?.VITE_COLOR_CONFIG_URL ?? `${ASSETS_BASE_URL}/ocio/blender-5.1/`,
-	view: Object.freeze( { display: 'sRGB', view: 'AgX', look: 'AgX - Medium High Contrast' } ),
+	...DEFAULT_COLOR_IDENTITY,
+	baseUrl: import.meta.env?.VITE_COLOR_CONFIG_URL ?? `${ASSETS_BASE_URL}/ocio/${DEFAULT_COLOR_IDENTITY.id}/`,
 } );
 
 async function fetchOk( url ) {
@@ -100,6 +98,66 @@ export async function loadDefaultConfig( download = fetchDefaultConfig() ) {
 	const { files, configPath } = await download;
 	const config = await currentApp().loadColorConfig( { files, configPath, id: DEFAULT_COLOR_CONFIG.id, registerViews: false } );
 	return { config, view: colorManagement().setView( DEFAULT_COLOR_CONFIG.view ) };
+
+}
+
+/**
+ * What startup downloads for the default look: its pre-baked view, and only when that is missing,
+ * the whole config, still alongside the model.
+ */
+export function fetchStartupColor() {
+
+	const { baseUrl, bakedView } = DEFAULT_COLOR_CONFIG;
+	const baked = fetchOk( baseUrl + bakedView ).then( async response => new Uint8Array( await response.arrayBuffer() ) );
+	const config = baked.then( () => null, () => fetchDefaultConfig() );
+	baked.catch( () => {} );
+	config.catch( () => {} );
+	return { baked, config };
+
+}
+
+/**
+ * Show the default look from {@link fetchStartupColor}'s downloads. The baked view needs no colour
+ * runtime; its config loads when the colour controls are first used ({@link ensureDefaultConfig}).
+ * @returns {Promise<{ view: Object }>} the active view entry
+ */
+export async function showStartupColor( { baked, config } ) {
+
+	try {
+
+		const { id: configId, view: { display, view, look } } = DEFAULT_COLOR_CONFIG;
+		const cm = colorManagement();
+		const entry = await cm.loadBakedView( await baked, { expect: { configId, display, view, look } } );
+		return { view: cm.setActiveView( entry.id ) };
+
+	} catch ( err ) {
+
+		console.warn( `No pre-baked default view (${err.message}), loading the colour config` );
+		return await loadDefaultConfig( ( await config ) ?? fetchDefaultConfig() );
+
+	}
+
+}
+
+/** True while the default view shows from its baked table, its config not yet loaded. */
+export function isDefaultConfigPending( status ) {
+
+	return !! status && ! status.config && status.activeView?.configId === DEFAULT_COLOR_CONFIG.id;
+
+}
+
+let pendingDefault = null;
+
+/** Load the config behind the baked default view, once. Resolves to null when there is none to load. */
+export function ensureDefaultConfig() {
+
+	if ( ! isDefaultConfigPending( colorManagement()?.status() ) ) return Promise.resolve( null );
+	pendingDefault ??= loadDefaultConfig().finally( () => {
+
+		pendingDefault = null;
+
+	} );
+	return pendingDefault;
 
 }
 

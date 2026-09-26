@@ -4,7 +4,7 @@ import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
 import { InfoTip } from '@/components/ui/info-tip';
 import { getApp } from '@/lib/appProxy';
-import { useColorStatus } from '@/lib/colorManagement';
+import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
 import { textureSpaceGroups, spaceLabel } from '@/lib/colorLabels';
 
 const AUTO = '__auto__';
@@ -68,7 +68,7 @@ const TextureColorSpaceSelect = ( { texture } ) => {
 				</span>
 				<div className="flex items-center gap-1">
 					{busy && <Loader2 size={12} className="animate-spin opacity-60" />}
-					<Select value={choice ?? AUTO} onValueChange={onChange} disabled={busy}>
+					<Select value={choice ?? AUTO} onValueChange={onChange} onOpenChange={open => open && ensureDefaultConfig()} disabled={busy}>
 						<SelectTrigger className="max-w-36 h-5 rounded-full" title={choice ?? autoTitle}>
 							<SelectValue />
 						</SelectTrigger>

@@ -157,10 +157,10 @@ export function removeViewTransform( id ) {
 
 }
 
-/** Drop every transform that came from a config, leaving the built-ins. */
-export function removeOcioViewTransforms() {
+/** Drop every transform that came from a config, leaving the built-ins and the ids in `keep`. */
+export function removeOcioViewTransforms( keep = null ) {
 
-	const doomed = transforms.filter( t => t.source === 'ocio' ).map( t => t.id );
+	const doomed = transforms.filter( t => t.source === 'ocio' && ! keep?.has( t.id ) ).map( t => t.id );
 	if ( doomed.length === 0 ) return 0;
 
 	for ( const id of doomed ) {

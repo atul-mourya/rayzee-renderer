@@ -239,11 +239,10 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				const urlParams = new URLSearchParams( window.location.search );
 				const modelUrl = urlParams.get( 'model' );
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
-				// The colour config downloads alongside the model and loads once the scene is in,
+				// The default look downloads alongside the model and is applied once the scene is in,
 				// before the first frame.
-				const { fetchDefaultConfig, loadDefaultConfig } = await import( '@/lib/colorManagement' );
-				const colorDownload = fetchDefaultConfig();
-				colorDownload.catch( () => {} );
+				const { fetchStartupColor, showStartupColor } = await import( '@/lib/colorManagement' );
+				const colorDownload = fetchStartupColor();
 
 				// A failed model or sky is reported and startup carries on: the sky and the look
 				// still load, and another model can be opened.
@@ -305,7 +304,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				// Wait briefly for it: switching views after the first frames reads as a colour jump.
 				// A slow CDN starts on the built-in AgX and switches when the config lands.
 				setLoading( { isLoading: true, title: "Starting", status: "Loading colour config...", progress: 95 } );
-				const defaultColor = loadDefaultConfig( colorDownload );
+				const defaultColor = showStartupColor( colorDownload );
 				defaultColor.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
 				const applyView = ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id );
 				const early = await Promise.race( [

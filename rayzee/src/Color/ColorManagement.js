@@ -34,9 +34,10 @@ import {
 import {
 	VIEW_TRANSFORMS, getViewTransform, listViewTransforms, removeOcioViewTransforms,
 	registerWithRenderer, onRegistryChange, getRegistryVersion, resetViewTransforms, FALLBACK_VIEW,
-	countTableTransforms, MAX_TABLE_TRANSFORMS, removeViewTransform,
+	countTableTransforms, MAX_TABLE_TRANSFORMS, removeViewTransform, addViewTransform,
 } from './ViewTransforms.js';
-import { addOcioView, addAllOcioViews, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog } from './OcioViews.js';
+import { addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog } from './OcioViews.js';
+import { encodeBakedView, decodeBakedView, configFingerprint } from './BakedViews.js';
 import {
 	resolveInputSpace, textureInputSpace, resolveTextureSpace, setInputOverride, clearInputOverrides,
 	listFileRules, getInputVersion, bumpInputVersion,
@@ -133,6 +134,7 @@ export class ColorManagement {
 		this._lastUsed = new Map();
 		this._useClock = 0;
 		this._lastBuiltin = FALLBACK_VIEW;
+		this._fingerprint = null;
 
 		setOcioIssueLog( issues );
 
@@ -199,6 +201,9 @@ export class ColorManagement {
 
 		await ensureRuntime();
 
+		const fingerprint = configFingerprint( rest ).catch( () => null );
+		const baked = await this._bakedViewsFrom( rest.builtin ?? rest.id ?? null, fingerprint );
+
 		let described;
 		try {
 
@@ -216,7 +221,9 @@ export class ColorManagement {
 		}
 
 		// Only after the new config is in: releasing first would leave a failed load with no views.
-		this._releaseViews();
+		// A view baked from these same files by this same OCIO stays, so it is not baked twice.
+		this._releaseViews( new Set( baked.filter( t => t.ocio.baked.ocioVersion === described.ocioVersion ).map( t => t.id ) ) );
+		this._fingerprint = fingerprint;
 		bumpInputVersion();
 		resetConfigHandle();
 		this._context = null;
@@ -303,6 +310,7 @@ export class ColorManagement {
 		clearInputOverrides();
 		bumpInputVersion();
 
+		this._fingerprint = null;
 		this._workingSpace = null;
 		this._activeView = null;
 		this._exportSpace = null;
@@ -315,11 +323,11 @@ export class ColorManagement {
 
 	}
 
-	_releaseViews() {
+	_releaseViews( keep = null ) {
 
-		disposeOcioViewTextures();
-		removeOcioViewTransforms();
-		this._lastUsed.clear();
+		disposeOcioViewTextures( keep );
+		removeOcioViewTransforms( keep );
+		for ( const id of this._lastUsed.keys() ) if ( ! keep?.has( id ) ) this._lastUsed.delete( id );
 
 		if ( this._renderer && getViewTransform( this._renderer.toneMapping ) === null ) {
 
@@ -330,6 +338,68 @@ export class ColorManagement {
 			this._applyRendererOutputColorSpace();
 
 		}
+
+	}
+
+	/** Registered baked views of config `id` whose files match `fingerprint`. */
+	async _bakedViewsFrom( id, fingerprint ) {
+
+		const candidates = [ ...VIEW_TRANSFORMS.values() ].filter( t => t.ocio?.baked && id !== null && t.ocio.configId === id );
+		if ( candidates.length === 0 ) return [];
+		const fp = await fingerprint;
+		return fp ? candidates.filter( t => t.ocio.baked.fingerprint === fp ) : [];
+
+	}
+
+	/**
+	 * Register a view saved by {@link saveBakedView}. Needs neither the runtime nor its config, so a
+	 * host can show the view first and load the config when it is needed; loading that config later
+	 * keeps this entry when its files are the ones it was baked from.
+	 *
+	 * @param {ArrayBuffer|Uint8Array} bytes
+	 * @param {Object} [options]
+	 * @param {Object} [options.expect] - header fields that must match, e.g. `{ configId, display, view, look }`
+	 * @returns {Promise<Object>} the registry entry, not yet active
+	 */
+	async loadBakedView( bytes, { expect = null } = {} ) {
+
+		const baked = await decodeBakedView( bytes );
+		for ( const [ key, value ] of Object.entries( expect ?? {} ) ) {
+
+			if ( ( baked[ key ] ?? null ) !== ( value ?? null ) ) throw new Error( `baked view has ${key} "${baked[ key ]}", expected "${value}"` );
+
+		}
+
+		const loaded = describeConfig();
+		if ( loaded && ( loaded.id !== baked.configId || ( await this._fingerprint ) !== baked.fingerprint ) ) {
+
+			throw new Error( `baked view is from "${baked.configId}", not the loaded "${loaded.id}"` );
+
+		}
+
+		const existing = [ ...VIEW_TRANSFORMS.values() ].find( t => t.source === 'ocio' && t.ocio.display === baked.display
+			&& t.ocio.view === baked.view && ( t.ocio.look ?? null ) === ( baked.look ?? null ) );
+		if ( ! existing ) this._makeRoomForTable();
+
+		return addViewTransform( buildBakedView( baked, existing?.id ?? null ) );
+
+	}
+
+	/**
+	 * A registered OCIO view as a file for {@link loadBakedView}.
+	 * @returns {Promise<Uint8Array>}
+	 */
+	async saveBakedView( id ) {
+
+		const t = getViewTransform( id );
+		if ( t?.source !== 'ocio' ) throw new Error( `no OCIO view with id ${id}` );
+
+		const config = describeConfig();
+		return await encodeBakedView( t, {
+			configId: config?.id ?? t.ocio.configId,
+			fingerprint: ( config ? await this._fingerprint : null ) ?? t.ocio.baked?.fingerprint ?? null,
+			ocioVersion: config?.ocioVersion ?? t.ocio.baked?.ocioVersion ?? null,
+		} );
 
 	}
 
@@ -539,7 +609,8 @@ export class ColorManagement {
 	/** Whether an OCIO view was baked under a context or working space that is no longer current. */
 	_isStale( t ) {
 
-		if ( t.source !== 'ocio' ) return false;
+		// Without a config there is nothing to rebake a baked view against.
+		if ( t.source !== 'ocio' || ! hasConfig() ) return false;
 		return t.ocio.source !== this.workingSpace
 			|| JSON.stringify( t.ocio.context ?? null ) !== JSON.stringify( this._context ?? null );
 

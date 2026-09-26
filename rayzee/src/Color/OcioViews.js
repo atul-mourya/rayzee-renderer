@@ -230,12 +230,11 @@ export function buildOcioView( {
 	// bake they came from — otherwise the readback and the viewport differ by the half rounding,
 	// and "one table in four places" would only be nearly true. The error is measured on that
 	// same table, so it reports what actually renders.
-	let half, sampler, error;
+	let half, error;
 	try {
 
 		half = packHalf( bakeLut( { size, minEv, maxEv, apply } ) );
-		sampler = makeCpuSampler( { data: half, size, minEv, maxEv } );
-		error = measureBakeError( { sampler, apply } );
+		error = measureBakeError( { sampler: makeCpuSampler( { data: half, size, minEv, maxEv } ), apply } );
 
 	} finally {
 
@@ -243,6 +242,36 @@ export function buildOcioView( {
 
 	}
 
+	return tableEntry( {
+		id, half, error,
+		name: name ?? ( look ? `${view} + ${look} (${display})` : `${view} (${display})` ),
+		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv },
+	} );
+
+}
+
+/**
+ * A registry entry for a view baked earlier and saved (`BakedViews.js`), without the runtime.
+ * @param {Object} baked - from `decodeBakedView`
+ */
+export function buildBakedView( baked, id = null ) {
+
+	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, fingerprint, ocioVersion } = baked;
+
+	return tableEntry( {
+		id, name, error, half: data,
+		ocio: {
+			display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv,
+			baked: { fingerprint: fingerprint ?? null, ocioVersion: ocioVersion ?? null },
+		},
+	} );
+
+}
+
+function tableEntry( { id, name, half, error, ocio } ) {
+
+	const { size, minEv, maxEv } = ocio;
+	const sampler = makeCpuSampler( { data: half, size, minEv, maxEv } );
 	const entryId = id ?? nextOcioId();
 	const wgslConst = `TM_OCIO_${entryId}`;
 	const fnName = `tm_ocio_${entryId}`;
@@ -278,7 +307,7 @@ export function buildOcioView( {
 
 	return {
 		id: entryId,
-		name: name ?? ( look ? `${view} + ${look} (${display})` : `${view} (${display})` ),
+		name,
 		wgslConst,
 		source: 'ocio',
 		outputEncoded: true,
@@ -292,13 +321,7 @@ export function buildOcioView( {
 
 		table: { data: half, size, texture },
 		error,
-
-		ocio: {
-			display, view, look, context,
-			source: from,
-			configId: info.id,
-			size, minEv, maxEv,
-		},
+		ocio,
 	};
 
 }
@@ -376,16 +399,21 @@ export function forgetOcioView( id ) {
 
 }
 
-/** Free the GPU texture behind every OCIO entry currently registered. */
-export function disposeOcioViewTextures() {
+/** Free the GPU texture behind every OCIO entry currently registered, except the ids in `keep`. */
+export function disposeOcioViewTextures( keep = null ) {
 
 	for ( const t of VIEW_TRANSFORMS.values() ) {
 
-		if ( t.source === 'ocio' ) t.table?.texture?.dispose?.();
+		if ( t.source === 'ocio' && ! keep?.has( t.id ) ) t.table?.texture?.dispose?.();
 
 	}
 
-	for ( const held of liveViews.values() ) held.texture.dispose();
-	liveViews.clear();
+	for ( const [ id, held ] of liveViews ) {
+
+		if ( keep?.has( id ) ) continue;
+		held.texture.dispose();
+		liveViews.delete( id );
+
+	}
 
 }
