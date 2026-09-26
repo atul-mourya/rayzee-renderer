@@ -1,16 +1,14 @@
 # Rayzee Path Tracer - TODO List
 
 ## Bugs
-- final render transmission bounces not sufficient
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data
 - though oidn enabled by default, it doesnt show up on convergence
-- directional lights physical accuracy 
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
+- figure out how to overcome boiling effect with realtime oidn
+- honor pbrt animation
+  
 
 ### MVP
-- [ ] Blender like look feature for tonemapping
-- [ ] portrait/lanscape feature along with aspect ratio ui row
-- [x] lower resolution when camera moving
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
@@ -106,6 +104,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### General
 
+- [ ] introduce OPFS inplace of indexedDB
 - [ ] headless usage to be vsync bound free
 - [ ] deno compile for dedicated destop app
 - [ ] Introduce Project based workflow
@@ -187,7 +186,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ## Experiments
 
-- [ ] explore OpenColorIO OCIO color management
+- [x] explore OpenColorIO OCIO color management
 - [ ] Neural-texture-compression <https://syllogi-graphikon.vercel.app/posts/metal-neural-texture-compression/>
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
