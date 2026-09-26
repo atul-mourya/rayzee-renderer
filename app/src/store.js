@@ -758,6 +758,14 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
+	handleShadowTerminatorOffsetChange: val => {
+
+		const v = Array.isArray( val ) ? val[ 0 ] : val;
+		set( { shadowTerminatorOffset: v } );
+		getApp()?.settings.set( 'shadowTerminatorOffset', v );
+
+	},
+
 	handleEnableAlphaShadowsChange: val => {
 
 		set( { enableAlphaShadows: val } );

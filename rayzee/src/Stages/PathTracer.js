@@ -1393,6 +1393,7 @@ export class PathTracer extends PathTracerStage {
 			activeIndicesRO: qm.getActiveReadRO(),
 			counters,
 			maxRayCount: this._wfMaxRayCount,
+			shadowTerminatorOffset: this.shadowTerminatorOffset,
 		} );
 		this._kernelManager.register( 'extend',
 			extFn().compute(
@@ -1491,6 +1492,7 @@ export class PathTracer extends PathTracerStage {
 			cameraProjectionMatrix: this.cameraProjectionMatrix,
 			cameraViewMatrix: this.cameraViewMatrix,
 			fireflyThreshold: this.fireflyThreshold,
+			shadowTerminatorOffset: this.shadowTerminatorOffset,
 			// RNG axis only (keys STBN via frame & 63).
 			frame: this.seedFrame,
 			accumFrame: this.frame,

@@ -4,23 +4,29 @@
  * The hit record's `normal` is the interpolated vertex normal. Rays spawned from a surface must be
  * offset along the facet itself — Cycles' ray_offset uses Ng — or a vertex normal bent away from its
  * facet (foliage cards whose normals all point up) moves the origin within the card's own plane,
- * and the continued ray hits the same card again.
+ * and the continued ray hits the same card again. The lane also carries the shadow terminator lift.
  *
- * Layout: facet normal as an 11:11 octahedral pair (about 0.1°); the top 10 bits are free.
+ * Layout: facet normal as an 11:11 octahedral pair (about 0.1°), then the lift's half float
+ * truncated to its top 10 bits (sign, exponent, 4 mantissa bits).
  */
 
 import {
 	vec2, vec3, float, int, uint, max, abs, dot, cross, normalize, clamp, round, select, If, uintBitsToFloat,
+	packHalf2x16, unpackHalf2x16,
 } from 'three/tsl';
-import { getDatafromStorageBuffer, TRI_STRIDE, instanceRows, instanceFaceNormalToWorld } from './Common.js';
+import {
+	getDatafromStorageBuffer, unpackTriangleNormal, TRI_STRIDE, instanceRows, instanceFaceNormalToWorld,
+} from './Common.js';
+import { shadowTerminatorLift } from './ShadowTerminator.js';
 
 /**
- * @returns {{ faceN: Node }} the facet normal on the viewer's side (the interpolated one for a
- *   degenerate triangle)
+ * @returns {{ faceN: Node, liftScale: Node }} the facet normal on the viewer's side (the
+ *   interpolated one for a degenerate triangle), and the terminator lift (0 unless `liftEnabled`)
  */
-export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, smoothNormal, viewDir, didHit } ) {
+export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hitPoint, smoothNormal, viewDir, didHit, liftEnabled } ) {
 
 	const faceN = vec3( 0.0, 0.0, 1.0 ).toVar();
+	const liftScale = float( 0.0 ).toVar();
 
 	If( didHit, () => {
 
@@ -44,16 +50,26 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, smo
 		const n = select( dot( face, face ).greaterThan( 0.0 ), normalize( face ), smoothNormal ).toVar();
 		faceN.assign( select( dot( n, viewDir ).lessThan( 0.0 ), n.negate(), n ) );
 
+		If( liftEnabled, () => {
+
+			liftScale.assign( shadowTerminatorLift( {
+				V0, V1, V2,
+				N0: unpackTriangleNormal( recA.w ), N1: unpackTriangleNormal( recB.w ), N2: unpackTriangleNormal( recC.w ),
+				hitPoint, instanced, bvhBuffer, instanceLeaf, faceN,
+			} ) );
+
+		} );
+
 	} );
 
-	return { faceN };
+	return { faceN, liftScale };
 
 }
 
 // Per component: TSL's select() on a bvec is not component-wise.
 const signNotZero = v => vec2( select( v.x.greaterThanEqual( 0.0 ), 1.0, - 1.0 ), select( v.y.greaterThanEqual( 0.0 ), 1.0, - 1.0 ) );
 
-export function packHitFacet( faceN ) {
+export function packHitFacet( faceN, liftScale ) {
 
 	const p = faceN.xy.div( max( abs( faceN.x ).add( abs( faceN.y ) ).add( abs( faceN.z ) ), 1e-20 ) ).toVar();
 	If( faceN.z.lessThan( 0.0 ), () => {
@@ -62,11 +78,12 @@ export function packHitFacet( faceN ) {
 
 	} );
 	const q = round( clamp( p, - 1.0, 1.0 ).mul( 0.5 ).add( 0.5 ).mul( 2047.0 ) );
-	return uint( q.x ).bitOr( uint( q.y ).shiftLeft( uint( 11 ) ) );
+	const h = packHalf2x16( vec2( liftScale, 0.0 ) ).bitAnd( uint( 0xffff ) ).shiftRight( uint( 6 ) );
+	return uint( q.x ).bitOr( uint( q.y ).shiftLeft( uint( 11 ) ) ).bitOr( h.shiftLeft( uint( 22 ) ) );
 
 }
 
-/** @returns {{ faceN: Node }} */
+/** @returns {{ faceN: Node, liftScale: Node }} */
 export function unpackHitFacet( bits ) {
 
 	const e = vec2(
@@ -79,6 +96,7 @@ export function unpackHitFacet( bits ) {
 		e.assign( vec2( 1.0 ).sub( abs( e.yx ) ).mul( signNotZero( e ) ) );
 
 	} );
-	return { faceN: normalize( vec3( e, z ) ) };
+	const liftScale = unpackHalf2x16( bits.shiftRight( uint( 22 ) ).shiftLeft( uint( 6 ) ) ).x;
+	return { faceN: normalize( vec3( e, z ) ), liftScale };
 
 }

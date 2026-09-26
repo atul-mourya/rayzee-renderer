@@ -158,6 +158,9 @@ export const ENGINE_DEFAULTS = {
 	emissiveBoost: 1.0,
 
 	fireflyThreshold: 3.0,
+	// Cycles' Shadow Terminator → Geometry Offset, and its default: light shadow rays leave a
+	// smooth-shaded triangle from the smooth surface near the terminator. 0 disables.
+	shadowTerminatorOffset: 0.1,
 	// Wavefront material-coherence sort: global counting-sort of entering rays by material before
 	// Shade (material-pure workgroups), under dynamic dispatch. Measured −8% at 1024²/8b. Gated on
 	// material count > 8; the histogram bin count is sized per-scene to the material count.

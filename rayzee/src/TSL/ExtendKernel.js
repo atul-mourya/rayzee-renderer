@@ -30,6 +30,7 @@ export function buildExtendKernel( params ) {
 		activeIndicesRO,
 		counters,
 		maxRayCount,
+		shadowTerminatorOffset,
 	} = params;
 
 	const computeFn = Fn( () => {
@@ -67,7 +68,8 @@ export function buildExtendKernel( params ) {
 
 		const facet = hitFacet( {
 			triangleBuffer, bvhBuffer, triIdx: hitInfo.triangleIndex, instanceLeaf: hitInfo.instanceLeaf,
-			smoothNormal: hitInfo.normal, viewDir: direction.negate(), didHit: hitInfo.didHit,
+			hitPoint: hitInfo.hitPoint, smoothNormal: hitInfo.normal, viewDir: direction.negate(),
+			didHit: hitInfo.didHit, liftEnabled: shadowTerminatorOffset.greaterThan( 0.0 ),
 		} );
 
 		writeHitPacked(
@@ -79,7 +81,7 @@ export function buildExtendKernel( params ) {
 			uint( hitInfo.materialIndex ),
 			// Biased by one: leaf 0 is real, so 0 has to mean "no instance".
 			uint( hitInfo.instanceLeaf.add( int( 1 ) ) ),
-			packHitFacet( facet.faceN ),
+			packHitFacet( facet.faceN, facet.liftScale ),
 		);
 
 	} );

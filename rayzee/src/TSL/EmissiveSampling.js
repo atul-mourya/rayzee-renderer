@@ -592,7 +592,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ), () => {
 
 			// Aimed at the sampled point and stopped a relative hair short, as for area lights.
-			const rayOrigin = hitPoint.add( calculateRayOffsetFn( hitPoint, geomNormal ) );
+			const rayOrigin = hitPoint.add( calculateRayOffsetFn( hitPoint, geomNormal, emissiveSample.direction ) );
 			const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
 			const shadowDist = length( toSample ).toVar();
 			const visibility = traceShadowRayFn( rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ) );

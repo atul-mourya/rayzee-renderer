@@ -340,6 +340,17 @@ the strings, so never rename or repurpose one.
   bright in its crevices against Cycles — the same model scaled 100× matched. A shadow ray towards a
   sampled light point (area lights and emissive NEE alike) is re-aimed from that origin and stops
   `SHADOW_END` (1 − 1e-4) of the way, never a fixed distance short.
+- **Shadow terminator** — Cycles' Shadow Terminator → Geometry Offset (`TSL/ShadowTerminator.js`,
+  setting `shadowTerminatorOffset`, 0.1 as in Blender, 0 off), ported from Cycles 5.1's
+  `kernel/light/sample.h`: near the terminator, light and environment shadow rays from a smooth-shaded
+  triangle start on the smooth surface its vertex normals describe. Bounce rays and the BSDF-hit
+  area-light ray are not lifted, as in Cycles. The low-poly white furnaces read 0.99650 → 0.99879
+  (16 segments) and 0.99815 → 0.99879 (32), the same as the smooth sphere. Extend computes the lift
+  and packs it beside the facet normal (11:11 octahedral, then the lift's top 10 half-float bits).
+  Cost on the 1.7M-triangle test interior at 1024²: +1.2 % GPU per sample, 0.26 ms of it the work.
+  ⚠️ `bench:ab` read +7–9 % on identical code for two scenes that day: net any A/B of a self-run.
+  ⚠️ Shade's `Ngeo`/`NgeoFF` are the interpolated normal, not the facet (`facetN` is), and the hit
+  keeps texture UVs, not barycentrics.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

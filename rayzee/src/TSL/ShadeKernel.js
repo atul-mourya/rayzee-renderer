@@ -21,6 +21,7 @@ import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, ge
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
 import { traceShadowRay } from './LightsDirect.js';
+import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { unpackHitFacet } from './HitFacet.js';
 import { traverseBVHShadow } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
@@ -97,6 +98,7 @@ export function buildShadeKernel( params ) {
 		globalIlluminationIntensity,
 		cameraProjectionMatrix, cameraViewMatrix,
 		fireflyThreshold, frame, resolution,
+		shadowTerminatorOffset, // Cycles' Shadow Terminator → Geometry Offset; 0 disables
 		// Accumulation index, NOT the free-running seed counter `frame` rides. The firefly clamp
 		// relaxes as sqrt(frame+1) so its bias decays as a render converges; keying that off the
 		// seed axis let it grow for the whole session and disabled suppression outright.
@@ -284,7 +286,7 @@ export function buildShadeKernel( params ) {
 						envTotalSum, envCompensationDelta, envResolution,
 						enableEnvironmentLight,
 						tslBool( true ), // wantUnoccluded
-						planeN,
+						vec3( 0.0 ), planeN, float( 0.0 ),
 					) ).toVar();
 
 					const lumShad = max( dot( dual.shadowed, REC709_LUMINANCE_COEFFICIENTS ), float( 0.0 ) );
@@ -1064,7 +1066,13 @@ export function buildShadeKernel( params ) {
 		const Ngeo = normalize( hitNormal );
 		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
 		// The facet on the viewer's side: every ray spawned from here is offset off it (HitFacet.js).
-		const facetN = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) ).faceN.toVar();
+		const facet = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) );
+		const facetN = facet.faceN.toVar();
+		const terminatorLift = Ngeo.mul( facet.liftScale );
+		const lightShadowOrigin = L => shadowTerminatorOrigin( {
+			hitPoint, offsetNormal: facetN, lift: terminatorLift, faceN: facetN, smoothN: NgeoFF, L,
+			cutoff: shadowTerminatorOffset,
+		} );
 
 		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
 		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
@@ -1179,7 +1187,7 @@ export function buildShadeKernel( params ) {
 			envTotalSum, envCompensationDelta, envResolution,
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
-			facetN,
+			terminatorLift, facetN, shadowTerminatorOffset,
 		) ).shadowed.toVar();
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
@@ -1235,7 +1243,7 @@ export function buildShadeKernel( params ) {
 							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
 								// Aimed at the sampled point and stopped a relative hair short, as for area lights.
-								const rayOrigin = offsetRayOrigin( hitPoint, facetN );
+								const rayOrigin = lightShadowOrigin( emissiveSample.direction ).toVar();
 								const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
 								const shadowDist = length( toSample ).toVar();
 								const visibility = traceShadowRayWrapped(
@@ -1283,7 +1291,7 @@ export function buildShadeKernel( params ) {
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 							triangleBuffer, bvhBuffer,
 							traceShadowRayWrapped,
-							Fn( ( [ p ] ) => offsetRayOrigin( p, facetN ).sub( p ) ),
+							Fn( ( [ p, , L ] ) => lightShadowOrigin( L ).sub( p ) ),
 						);
 
 						currentRadiance.assign( vec4(

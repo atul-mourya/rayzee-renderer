@@ -123,6 +123,7 @@ const PathTracerTab = () => {
 		maxTransparentBounces,
 		maxTextureSize,
 		fireflyThreshold,
+		shadowTerminatorOffset,
 		debugMode,
 		debugThreshold,
 		showInspector,
@@ -193,6 +194,7 @@ const PathTracerTab = () => {
 		handleMaxTransparentBouncesChange,
 		handleMaxTextureSizeChange,
 		handleFireflyThresholdChange,
+		handleShadowTerminatorOffsetChange,
 		handleEnableAlphaShadowsChange,
 		handleUseAdaptiveSamplingChange,
 		handleNoiseThresholdChange,
@@ -638,6 +640,13 @@ const PathTracerTab = () => {
 				)}
 				<Row>
 					<Slider label={"Firefly Threshold"} min={0} max={10} step={0.1} value={[ fireflyThreshold ]} onValueChange={handleFireflyThresholdChange} />
+				</Row>
+				<Row>
+					<Slider
+						label={<>Shadow Terminator<InfoTip text="Softens the jagged light-to-shadow edge on low-poly curved surfaces by starting light rays from the smooth surface instead of the flat faces. Only affects faces at grazing angles to a light; 0 turns it off. Blender's Shadow Terminator Geometry Offset, with its default of 0.1." /></>}
+						min={0} max={1} step={0.01} value={[ shadowTerminatorOffset ]} snapPoints={[ 0.1 ]}
+						onValueChange={handleShadowTerminatorOffsetChange}
+					/>
 				</Row>
 				<Row>
 					<Switch label={"Alpha Shadows"} checked={enableAlphaShadows} onCheckedChange={handleEnableAlphaShadowsChange} />
