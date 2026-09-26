@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLightStore, usePathTracerStore, useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
+import { lightLibrariesReady } from '@/lib/lightLibraries';
 import { GOBO_LIBRARY } from '@/services/GoboLibrary';
 import { IES_LIBRARY } from '@/services/IESLibrary';
 import { Separator } from '@/components/ui/separator';
@@ -165,10 +166,12 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 
 	}, [ open ] );
 
-	const pick = ( name ) => {
+	const pick = async ( name ) => {
 
-		onChange( name );
 		setOpen( false );
+		// The libraries load after the first frame; the engine cannot assign a mask it has not got.
+		await lightLibrariesReady();
+		onChange( name );
 
 	};
 

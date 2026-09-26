@@ -482,7 +482,8 @@ whole config as before. ⚠️ Rerun `npm run color:bake` and upload the file wh
 default view changes. ⚠️ The app is `pause()`d from `init()` until then: every model, sky and config
 load resets, and a reset's `wake()` restarts rendering unless paused — without it 3 of 5 warm reloads
 drew the built-in look first. A failed default model or sky is reported and startup carries on, so the
-look still loads.
+look still loads. The spot-light gobo and IES libraries (~180 files) load after the first frame
+(`lib/lightLibraries.js`); a pick made before they land waits for them.
 ⚠️ Those files are GPL-3.0: they live on the CDN only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
 elsewhere with `VITE_COLOR_CONFIG_URL`.
 

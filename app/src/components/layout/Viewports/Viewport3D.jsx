@@ -15,6 +15,7 @@ import { generateViewportStyles } from '@/utils/viewport';
 import { PathTracerApp } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
+import { loadLightLibraries } from '@/lib/lightLibraries';
 
 
 // How long startup holds the first frame for the CDN colour config before showing the built-in view.
@@ -198,25 +199,6 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				// before the scene and the colour view are in.
 				app.pause();
 
-				// Pre-load the bundled spot-light gobo + IES profile libraries so
-				// they're ready by the time the user opens the Lights tab.
-				try {
-
-					const [ { GOBO_LIBRARY }, { IES_LIBRARY } ] = await Promise.all( [
-						import( '@/services/GoboLibrary' ),
-						import( '@/services/IESLibrary' ),
-					] );
-					await Promise.all( [
-						app.goboManager?.loadLibrary?.( GOBO_LIBRARY ),
-						app.iesManager?.loadLibrary?.( IES_LIBRARY ),
-					] );
-
-				} catch ( e ) {
-
-					console.warn( 'Light mask / IES library load failed', e );
-
-				}
-
 				// Register with appProxy so getApp() works globally
 				setApp( app );
 
@@ -318,6 +300,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				app.resume();
 				app.reset();
+				loadLightLibraries( app );
 
 			};
 
