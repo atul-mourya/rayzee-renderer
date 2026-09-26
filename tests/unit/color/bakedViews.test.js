@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { Buffer } from 'node:buffer';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { getViewTransform } from '@/core/Color/ViewTransforms.js';
 import { encodeBakedView, decodeBakedView, configFingerprint } from '@/core/Color/BakedViews.js';
@@ -78,7 +79,9 @@ suite( 'baked views', () => {
 	it( 'round-trips the table exactly, in a fraction of its size', async () => {
 
 		const decoded = await decodeBakedView( bytes );
-		expect( decoded.data ).toEqual( original.table.data );
+		// toEqual on the 1.1M-element table took 7 s on CI.
+		const raw = a => Buffer.from( a.buffer, a.byteOffset, a.byteLength );
+		expect( raw( decoded.data ).equals( raw( original.table.data ) ) ).toBe( true );
 		expect( decoded ).toMatchObject( { configId: BUILTIN, fingerprint: `builtin:${BUILTIN}`, ...view, size: original.ocio.size } );
 		expect( bytes.length ).toBeLessThan( original.table.data.byteLength / 5 );
 
