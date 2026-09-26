@@ -787,10 +787,11 @@ export class AssetLoader extends EventDispatcher {
 		};
 
 		const pbrtStart = performance.now();
-		const { group, environment, report, warnings, meshCount, entryPath: loadedEntry, candidates,
-			parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
+		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
+			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
 			droppedNoTemplate } = await loadPBRTScene( {
 			vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes,
+			animation: options.animation,
 			maxTriangles: options.maxTriangles,
 			maxPlacements: options.maxPlacements,
 			mergeShapesAbove: options.mergeShapesAbove,
@@ -802,15 +803,17 @@ export class AssetLoader extends EventDispatcher {
 		// SceneProcessor.performanceMetrics.
 		this.lastPBRTStats = {
 			parseMs, buildMs, loaderMs: performance.now() - pbrtStart,
-			triangleCount, placementCount, mergedShapes, skippedForBudget, droppedNoTemplate, meshCount
+			triangleCount, placementCount, mergedShapes, skippedForBudget, droppedNoTemplate, meshCount,
+			frames: frames?.length ?? 1
 		};
 
-		// An archive can hold several independent scenes (transparent-machines ships five
-		// animation frames). Only one is loaded, so name it and the alternatives rather
-		// than leave the user comparing against a reference of a different scene.
-		if ( candidates.length > 1 ) {
+		// An archive can hold several independent scenes (bistro ships three views). Only one is
+		// loaded, so name it and the alternatives rather than leave the user comparing against a
+		// reference of a different scene. A frame sequence loads whole, as its animation.
+		const loaded = new Set( frames ?? [ loadedEntry ] );
+		const others = candidates.filter( p => ! loaded.has( p ) );
+		if ( others.length > 0 ) {
 
-			const others = candidates.filter( p => p !== loadedEntry );
 			console.warn( `PBRT archive holds ${candidates.length} scenes; loaded "${loadedEntry}". Others: ${others.join( ', ' )}` );
 			this._issues?.record(
 				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
@@ -849,6 +852,7 @@ export class AssetLoader extends EventDispatcher {
 		group.name = loadedEntry || filename;
 		this.releaseTargetModel();
 		this.targetModel = group;
+		this.animations = animations ?? [];
 
 		// The light's own orientation and `scale` are already baked into the texture, so the
 		// scene is only correct at rotation 0 / intensity 1 — pinned, whatever the host's defaults.
@@ -2032,6 +2036,8 @@ export class AssetLoader extends EventDispatcher {
 
 				// Clone the camera to avoid modifying the original
 				const camera = object.clone();
+				// The clip animates the original; this lets the copy follow it.
+				camera.userData.__rayzeeSourceUuid = object.uuid;
 
 				// Apply world transforms — cameras may be children of
 				// transformed nodes, so local position/quaternion != world.

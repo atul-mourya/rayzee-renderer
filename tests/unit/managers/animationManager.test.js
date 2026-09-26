@@ -170,7 +170,16 @@ vi.mock( 'three', () => {
 
 	}
 
-	return { AnimationMixer, Clock, Timer, Vector3, LoopRepeat, LoopOnce, EventDispatcher };
+	const PropertyBinding = {
+		parseTrackName( name ) {
+
+			const dot = name.lastIndexOf( '.' );
+			return { nodeName: name.slice( 0, dot ), propertyName: name.slice( dot + 1 ) };
+
+		}
+	};
+
+	return { AnimationMixer, Clock, Timer, Vector3, LoopRepeat, LoopOnce, EventDispatcher, PropertyBinding };
 
 } );
 
@@ -211,8 +220,9 @@ describe( 'AnimationManager', () => {
 		// Mock mesh with geometry
 		const positions = new Float32Array( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );
 		const indices = new Uint16Array( [ 0, 1, 2 ] );
+		// Skinned, so clips deform and positions come back for a refit.
 		mockMeshes = [ {
-			isSkinnedMesh: false,
+			isSkinnedMesh: true,
 			matrixWorld: { elements: new Float32Array( 16 ) },
 			geometry: {
 				attributes: {
@@ -466,6 +476,142 @@ describe( 'AnimationManager', () => {
 			manager.stop();
 			const result = manager.seekTo( 0.5 );
 			expect( typeof result ).toBe( 'function' );
+
+		} );
+
+	} );
+
+	describe( 'rigid clips', () => {
+
+		// A root with two meshes: `mover` is animated through its parent group, `still` is not.
+		function rigidScene() {
+
+			const node = ( name, extra = {} ) => ( {
+				name, uuid: `uuid-${name}`, visible: true, parent: null, children: [],
+				matrixWorld: { elements: [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] },
+				traverse( fn ) {
+
+					fn( this );
+					this.children.forEach( c => c.traverse( fn ) );
+
+				},
+				getObjectByName( n ) {
+
+					let hit;
+					this.traverse( o => {
+
+						if ( ! hit && o !== this && o.name === n ) hit = o;
+
+					} );
+					return hit;
+
+				},
+				...extra
+			} );
+
+			const geometry = { attributes: { position: { count: 3 } }, index: null };
+			const root = node( 'Root', { updateMatrixWorld: vi.fn() } );
+			const group = node( 'Group' );
+			const mover = node( 'Mover', { geometry } );
+			const still = node( 'Still', { geometry } );
+			const camera = node( 'Cam', { isCamera: true } );
+			const link = ( parent, child ) => {
+
+				child.parent = parent;
+				parent.children.push( child );
+
+			};
+
+			link( root, group );
+			link( group, mover );
+			link( root, still );
+			link( root, camera );
+
+			const clips = [ {
+				name: 'Move', duration: 1,
+				tracks: [ { name: 'Group.position' }, { name: 'Group.visible' }, { name: 'Cam.quaternion' } ]
+			} ];
+
+			return { root, group, mover, still, camera, clips, meshes: [ still, mover ] };
+
+		}
+
+		it( 'returns no positions and hands the moved meshes to applyPoseCallback', () => {
+
+			const { root, mover, clips, meshes, camera } = rigidScene();
+			const poses = [];
+			manager.applyPoseCallback = pose => poses.push( pose );
+			manager.init( root, root, meshes, clips );
+
+			manager.play( 0 );
+			expect( manager.update() ).toBeNull();
+
+			// The first pose sends every animated mesh, whatever the renderer held before.
+			expect( poses ).toHaveLength( 1 );
+			expect( poses[ 0 ].meshIndices ).toEqual( [ 1 ] );
+			expect( poses[ 0 ].visibilityChanged ).toBe( true );
+			expect( poses[ 0 ].cameras ).toEqual( [ camera ] );
+
+			// Unchanged since: nothing to move.
+			manager.update();
+			expect( poses[ 1 ].meshIndices ).toEqual( [] );
+			expect( poses[ 1 ].visibilityChanged ).toBe( false );
+
+			mover.matrixWorld.elements = mover.matrixWorld.elements.map( ( v, i ) => i === 12 ? 5 : v );
+			manager.update();
+			expect( poses[ 2 ].meshIndices ).toEqual( [ 1 ] );
+
+		} );
+
+		it( 'reports a visibility change inherited from an ancestor', () => {
+
+			const { root, group, clips, meshes } = rigidScene();
+			const poses = [];
+			manager.applyPoseCallback = pose => poses.push( pose );
+			manager.init( root, root, meshes, clips );
+			manager.seekTo( 0 );
+
+			group.visible = false;
+			manager.seekTo( 0.5 );
+			expect( poses[ 1 ].visibilityChanged ).toBe( true );
+
+		} );
+
+		it( 'seekTo returns null and applies the pose', () => {
+
+			const { root, clips, meshes } = rigidScene();
+			const poses = [];
+			manager.applyPoseCallback = pose => poses.push( pose );
+			manager.init( root, root, meshes, clips );
+
+			expect( manager.seekTo( 0.5, 0 ) ).toBeNull();
+			expect( poses ).toHaveLength( 1 );
+
+		} );
+
+		it( 're-applies the restored pose on stop', () => {
+
+			const { root, mover, clips, meshes } = rigidScene();
+			const poses = [];
+			manager.applyPoseCallback = pose => poses.push( pose );
+			manager.init( root, root, meshes, clips );
+			manager.play( 0 );
+			manager.update();
+
+			mover.matrixWorld.elements = mover.matrixWorld.elements.map( ( v, i ) => i === 13 ? 2 : v );
+			manager.stop();
+			expect( poses.at( - 1 ).meshIndices ).toEqual( [ 1 ] );
+
+		} );
+
+		it( 'stays deforming when a mesh is skinned', () => {
+
+			const { root, clips, meshes } = rigidScene();
+			meshes[ 0 ].isSkinnedMesh = true;
+			meshes[ 0 ].getVertexPosition = ( i, t ) => t;
+			manager.init( root, root, meshes, clips );
+			manager.play( 0 );
+			expect( typeof manager.update() ).toBe( 'function' );
 
 		} );
 

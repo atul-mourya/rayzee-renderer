@@ -40,7 +40,7 @@ const AnimationTab = () => {
 				<div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
 					<Film size={32} strokeWidth={1.5} />
 					<p className="text-sm">No animations available</p>
-					<p className="text-xs text-center px-6">Load a GLTF model with animation clips to see controls here.</p>
+					<p className="text-xs text-center px-6">Load a glTF model with animation clips, or a pbrt frame sequence, to see controls here.</p>
 				</div>
 			</>
 		);

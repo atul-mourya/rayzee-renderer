@@ -16,10 +16,15 @@
 
 import { PBRTParser } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
+import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 
 export { PBRTParser } from './PBRTParser.js';
 export { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 export { tokenize } from './PBRTTokenizer.js';
+export { findFrameSequence, SEQUENCE_FPS } from './PBRTAnimation.js';
+
+// Each frame is a full parse; past this many shapes + placements in the first, only it loads.
+const MAX_SEQUENCE_PRIMITIVES = 2_000_000;
 
 const decoder = new TextDecoder();
 
@@ -337,7 +342,9 @@ export async function listEntryPathsFrom( vfs ) {
  * @param {(bytes:Uint8Array, filename:string)=>Promise<import('three').Texture>} args.imageFromBytes
  * @param {(bytes:Uint8Array, filename:string)=>Promise<import('three').Texture>} [args.envFromBytes]
  * @param {boolean} [args.convertHandedness=true]
- * @returns {Promise<{group, camera, environment, warnings, entryPath}>}
+ * @param {boolean} [args.animation=true] - load a frame sequence (`frame25.pbrt`, `frame35.pbrt`, …)
+ *   as one animated scene instead of its first frame alone. Ignored when `entryPath` names a file.
+ * @returns {Promise<{group, camera, environment, animations, warnings, entryPath, frames}>}
  */
 export async function loadPBRTScene( args ) {
 
@@ -358,23 +365,57 @@ export async function loadPBRTScene( args ) {
 	}
 
 	const entryPath = requested || candidates[ 0 ];
-	const entryBytes = await vfs.readPath( entryPath );
-	if ( ! entryBytes ) throw new Error( `PBRT loader: entry "${entryPath}" not readable` );
-
-	const baseDir = entryPath.includes( '/' ) ? entryPath.slice( 0, entryPath.lastIndexOf( '/' ) ) : '';
 
 	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
 	// be larger than the longest string JavaScript will build.
-	const parser = new PBRTParser( {
-		resolveInclude: ( path, currentDir ) => vfs.readPath( path, currentDir ),
-		// Depth-first, so this keeps only the open include chain live rather than every
-		// scene file at once — the difference between 5.7 GB resident and a few MB.
-		releaseInclude: ( path, currentDir ) => vfs.releasePath( path, currentDir ),
-		maxPlacements: args.maxPlacements
-	} );
+	const parseScene = async ( path ) => {
+
+		const bytes = await vfs.readPath( path );
+		if ( ! bytes ) throw new Error( `PBRT loader: entry "${path}" not readable` );
+
+		const parser = new PBRTParser( {
+			resolveInclude: ( include, currentDir ) => vfs.readPath( include, currentDir ),
+			// Depth-first, so this keeps only the open include chain live rather than every
+			// scene file at once — the difference between 5.7 GB resident and a few MB.
+			releaseInclude: ( include, currentDir ) => vfs.releasePath( include, currentDir ),
+			maxPlacements: args.maxPlacements
+		} );
+
+		return parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
+
+	};
 
 	const parseStart = performance.now();
-	const ir = await parser.parse( entryBytes, baseDir );
+	let sequence = ! requested && args.animation !== false ? findFrameSequence( candidates ) : null;
+	let ir;
+
+	if ( sequence ) {
+
+		const first = await parseScene( sequence[ 0 ].path );
+		if ( first.shapes.length + first.instanceCount > MAX_SEQUENCE_PRIMITIVES ) {
+
+			warnings.push( `${sequence.length} animation frames found, but the scene is too large to parse once per frame — loaded "${sequence[ 0 ].path}" only` );
+			sequence = null;
+			ir = motionFromShutter( first );
+
+		} else {
+
+			const merger = new FrameSequenceMerger(
+				sequence.map( f => ( f.number - sequence[ 0 ].number ) / SEQUENCE_FPS ),
+				sequenceName( sequence )
+			);
+			merger.addFrame( first );
+			for ( let i = 1; i < sequence.length; i ++ ) merger.addFrame( await parseScene( sequence[ i ].path ) );
+			ir = merger.finish();
+
+		}
+
+	} else {
+
+		ir = motionFromShutter( await parseScene( entryPath ) );
+
+	}
+
 	const parseMs = performance.now() - parseStart;
 
 	// Scene text is dead once parsed, and it is the bulk of a big element — isIronwoodA1 is
@@ -435,6 +476,24 @@ export async function loadPBRTScene( args ) {
 
 	const buildStart = performance.now();
 	const result = await builder.build( ir );
-	return { ...result, entryPath, candidates, warnings: [ ...warnings, ...( result.warnings ?? [] ) ], parseMs, buildMs: performance.now() - buildStart };
+	return {
+		...result,
+		entryPath: sequence ? sequence[ 0 ].path : entryPath,
+		frames: sequence ? sequence.map( f => f.path ) : null,
+		candidates,
+		warnings: [ ...warnings, ...( result.warnings ?? [] ) ],
+		parseMs,
+		buildMs: performance.now() - buildStart
+	};
+
+}
+
+/** "zero-day · frames 25–380": the folder, or failing that the shared file-name prefix. */
+function sequenceName( sequence ) {
+
+	const path = sequence[ 0 ].path;
+	const parts = path.split( '/' );
+	const label = parts.length > 1 ? parts[ parts.length - 2 ] : parts[ 0 ].replace( /\d+\.pbrt$/i, '' ) || 'frames';
+	return `${label} · frames ${sequence[ 0 ].number}–${sequence[ sequence.length - 1 ].number}`;
 
 }

@@ -72,6 +72,7 @@ export class EmissiveTriangleBuilder {
 	extractEmissiveTriangles( triangleData, materials, triangleCount, table = null ) {
 
 		this.emissiveTriangles = [];
+		this._emissiveMeshes = null;
 		this.totalEmissivePower = 0;
 		this._totalTriangleCount = triangleCount;
 
@@ -172,6 +173,7 @@ export class EmissiveTriangleBuilder {
 					triangleIndex: i,
 					materialIndex: materialIndex,
 					meshIndex: meshIndex,
+					sideSign,
 					instanceLeaf: hasInstance ? table.tlasLeafIndex[ placement ] : - 1,
 					power: power,
 					area: area,
@@ -200,6 +202,74 @@ export class EmissiveTriangleBuilder {
 		this._buildDataArrays();
 
 		return this.emissiveCount;
+
+	}
+
+	/** Mesh indices owning at least one emissive triangle. */
+	get emissiveMeshes() {
+
+		return this._emissiveMeshes ??= new Set( this.emissiveTriangles.map( t => t.meshIndex ) );
+
+	}
+
+	/**
+	 * Re-measure every emitter at its placement's current matrix. Call buildLightBVH() after.
+	 * @param {Uint32Array|object} triangleData - packed triangle records, flat or chunked
+	 * @param {import('./InstanceTable.js').InstanceTable} table
+	 */
+	refreshTransforms( triangleData, table ) {
+
+		const chunked = triangleData && triangleData.chunks ? triangleData : null;
+		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
+		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
+		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const m = table.world;
+
+		this.totalEmissivePower = 0;
+
+		for ( const tri of this.emissiveTriangles ) {
+
+			const f = chunked ? chunkedF.chunkFor( tri.triangleIndex ) : flatF;
+			const b = chunked ? chunked.baseOf( tri.triangleIndex ) : tri.triangleIndex * FLOATS_PER_TRIANGLE;
+			const v = [ f[ b ], f[ b + 1 ], f[ b + 2 ], f[ b + 4 ], f[ b + 5 ], f[ b + 6 ], f[ b + 8 ], f[ b + 9 ], f[ b + 10 ] ];
+
+			// As extraction resolves it.
+			const placement = table.placementRunOf?.( tri.meshIndex )?.start ?? - 1;
+			if ( placement >= 0 && table.isSet[ placement ] ) {
+
+				const o = placement * 16;
+				for ( let k = 0; k < 9; k += 3 ) {
+
+					const x = v[ k ], y = v[ k + 1 ], z = v[ k + 2 ];
+					v[ k ] = m[ o ] * x + m[ o + 4 ] * y + m[ o + 8 ] * z + m[ o + 12 ];
+					v[ k + 1 ] = m[ o + 1 ] * x + m[ o + 5 ] * y + m[ o + 9 ] * z + m[ o + 13 ];
+					v[ k + 2 ] = m[ o + 2 ] * x + m[ o + 6 ] * y + m[ o + 10 ] * z + m[ o + 14 ];
+
+				}
+
+			}
+
+			const [ v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z ] = v;
+			const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
+			const e = tri.emissive;
+			tri.power = ( 0.2126 * e.r + 0.7152 * e.g + 0.0722 * e.b ) * tri.emissiveIntensity * area;
+			tri.area = area;
+
+			const nx = ( v1y - v0y ) * ( v2z - v0z ) - ( v1z - v0z ) * ( v2y - v0y );
+			const ny = ( v1z - v0z ) * ( v2x - v0x ) - ( v1x - v0x ) * ( v2z - v0z );
+			const nz = ( v1x - v0x ) * ( v2y - v0y ) - ( v1y - v0y ) * ( v2x - v0x );
+			const nl = ( Math.sqrt( nx * nx + ny * ny + nz * nz ) || 1 ) / tri.sideSign;
+			tri.nx = nx / nl; tri.ny = ny / nl; tri.nz = nz / nl;
+
+			tri.cx = ( v0x + v1x + v2x ) / 3; tri.cy = ( v0y + v1y + v2y ) / 3; tri.cz = ( v0z + v1z + v2z ) / 3;
+			tri.bMinX = Math.min( v0x, v1x, v2x ); tri.bMinY = Math.min( v0y, v1y, v2y ); tri.bMinZ = Math.min( v0z, v1z, v2z );
+			tri.bMaxX = Math.max( v0x, v1x, v2x ); tri.bMaxY = Math.max( v0y, v1y, v2y ); tri.bMaxZ = Math.max( v0z, v1z, v2z );
+
+			this.totalEmissivePower += tri.power;
+
+		}
+
+		this._buildDataArrays();
 
 	}
 

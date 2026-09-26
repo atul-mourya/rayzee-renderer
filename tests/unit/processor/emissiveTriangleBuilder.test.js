@@ -478,6 +478,30 @@ describe( 'EmissiveTriangleBuilder', () => {
 
 		} );
 
+		it( 're-measures an emitter at its placement after it moves', () => {
+
+			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0, meshIndex: 0 } ] );
+			const materials = [ { emissive: { r: 1, g: 1, b: 1 }, emissiveIntensity: 1, side: 1 } ];
+			const table = makeTable( [ { matrixWorld: null, tlasLeafIndex: 3 } ] );
+
+			const b = new ( builder.constructor )();
+			b.extractEmissiveTriangles( triangleData, materials, 1, table );
+			const before = { ...b.emissiveTriangles[ 0 ] };
+			expect( b.emissiveMeshes.has( 0 ) ).toBe( true );
+
+			// Moved up 4 and turned half a turn about y — the emission cone turns with it.
+			table.world.set( [ - 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, - 1, 0, 0, 4, 0, 1 ] );
+			b.refreshTransforms( triangleData, table );
+			const t = b.emissiveTriangles[ 0 ];
+
+			expect( t.cy ).toBeCloseTo( before.cy + 4, 5 );
+			expect( t.bMinY ).toBeCloseTo( 4, 5 );
+			expect( t.area ).toBeCloseTo( before.area, 5 );
+			expect( t.nz ).toBeCloseTo( - before.nz, 5 );
+			expect( b.totalEmissivePower ).toBeCloseTo( t.power, 5 );
+
+		} );
+
 		it( 'stores pre-multiplied emission and area in vec4[1]', () => {
 
 			const triangleData = makeTriangleData( [ { ...UNIT_TRI, materialIndex: 0 } ] );

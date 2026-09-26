@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	Scene, EventDispatcher, Box3
+	Scene, EventDispatcher, Box3, Vector3
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -195,6 +195,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.assetLoader = null;
 		this._sdf = null;
 		this._animRefitInFlight = false;
+		this._emittersMoved = false;
 		// Max material-texture dimension (longest edge); applied on each scene build.
 		this._maxTextureSize = DEFAULT_STATE.maxTextureSize;
 
@@ -1165,6 +1166,7 @@ export class PathTracerApp extends EventDispatcher {
 		// Stop any running animation before rebuilding scene data
 		this.animationManager.dispose();
 		this._animRefitInFlight = false;
+		this._emittersMoved = false;
 
 		// Tag the primary (replace-loaded) model so it appears in the scene-object list.
 		this._tagPrimarySceneObject();
@@ -1651,6 +1653,95 @@ export class PathTracerApp extends EventDispatcher {
 		} );
 
 		return result;
+
+	}
+
+	/** Apply a pose from AnimationManager: placements, visibility, and a followed camera. @private */
+	_applyAnimationPose( { meshIndices, visibilityChanged, cameras } ) {
+
+		if ( ! this._sdf?.instanceTable ) return;
+		let changed = false;
+
+		if ( meshIndices.length > 0 ) {
+
+			this._sdf.updateMeshTransforms( meshIndices );
+			this.stages.pathTracer?.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
+			if ( this._sdf.movesEmitters( meshIndices ) ) {
+
+				this._emittersMoved = true;
+				// Deferred while playing: the rebuild uploads a scene-sized map, and sampling
+				// already reads each emitter through its placement.
+				if ( ! this.animationManager.isPlaying ) this._refreshMovedEmitters();
+
+			}
+
+			changed = true;
+
+		}
+
+		if ( visibilityChanged ) {
+
+			this.stages.pathTracer?.updateAllMeshVisibility();
+			this._refreshEmissiveForVisibility();
+			changed = true;
+
+		}
+
+		if ( cameras.length > 0 && this._followAnimatedCamera( cameras ) ) changed = true;
+
+		if ( changed ) this.reset();
+
+	}
+
+	/** @private */
+	_refreshMovedEmitters() {
+
+		if ( ! this._emittersMoved ) return;
+		this._emittersMoved = false;
+		this._uploadEmissivePayload( this._sdf?.refreshEmissiveTransforms() ?? null );
+
+	}
+
+	/**
+	 * Move the view with the selected camera's animated original — the camera list holds copies.
+	 * @returns {boolean} whether the view moved
+	 * @private
+	 */
+	_followAnimatedCamera( cameras ) {
+
+		const cm = this.cameraManager;
+		const selected = cm.currentCameraIndex > 0 ? cm.cameras[ cm.currentCameraIndex ] : null;
+		const uuid = selected?.userData?.__rayzeeSourceUuid;
+		const source = uuid && cameras.find( c => c.uuid === uuid );
+		if ( ! source ) return false;
+
+		source.updateWorldMatrix( true, false );
+		const worldScale = new Vector3();
+		source.matrixWorld.decompose( selected.position, selected.quaternion, worldScale );
+		// Only the mirror survives.
+		selected.scale.set( Math.sign( worldScale.x ) || 1, Math.sign( worldScale.y ) || 1, Math.sign( worldScale.z ) || 1 );
+		if ( source.isPerspectiveCamera ) selected.fov = source.fov;
+
+		const camera = cm.camera;
+		const controls = cm.controls;
+		const distance = controls ? controls.target.distanceTo( camera.position ) : 0;
+
+		camera.position.copy( selected.position );
+		camera.quaternion.copy( selected.quaternion );
+		camera.scale.copy( selected.scale );
+		if ( camera.isPerspectiveCamera && selected.isPerspectiveCamera ) camera.fov = selected.fov;
+		camera.updateProjectionMatrix();
+		camera.updateMatrixWorld( true );
+
+		// Pivot ahead at the same distance, so controls.update() keeps the pose.
+		if ( controls ) {
+
+			const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( camera.quaternion );
+			controls.target.copy( camera.position ).addScaledVector( forward, distance || 1 );
+
+		}
+
+		return true;
 
 	}
 
@@ -3411,6 +3502,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Animation lifecycle → wake + refit flag
 		this.animationManager.wakeCallback = () => this.wake();
+		this.animationManager.applyPoseCallback = ( pose ) => this._applyAnimationPose( pose );
 		this._forwardEvents( this.animationManager, [
 			EngineEvents.ANIMATION_STARTED,
 			EngineEvents.ANIMATION_PAUSED,
@@ -3419,6 +3511,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_PAUSED, () => {
 
 			this._animRefitInFlight = false;
+			this._refreshMovedEmitters();
 
 		} );
 		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_STOPPED, () => {
@@ -3539,6 +3632,7 @@ export class PathTracerApp extends EventDispatcher {
 			this.animationManager.onFinished = () => {
 
 				this._animRefitInFlight = false;
+				this._refreshMovedEmitters();
 				this.dispatchEvent( { type: EngineEvents.ANIMATION_FINISHED } );
 
 			};

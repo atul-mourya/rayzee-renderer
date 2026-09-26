@@ -15,12 +15,17 @@
  *   camera: { type, params, cameraToWorld:number[16] } | null,
  *   namedMaterials: Map<name, { type, params }>,
  *   namedTextures:  Map<name, { dataType, class, params }>,
- *   shapes: [ { type, params, ctm, material, areaLight, reverseOrientation } ],
+ *   shapes: [ { type, params, ctm, ctmEnd?, material, areaLight, reverseOrientation } ],
  *   lights: [ { type, params, ctm } ],
- *   instances: [ { name, ctm } ],
+ *   instances: Map<name, { name, count, matrices, matricesEnd? }>,
  *   objects: Map<name, shapes[]>,
+ *   transformTimes: { start, end },
+ *   hasMotion: boolean,
  *   warnings: string[]
  * }
+ *
+ * `ctm` is pbrt's start transform. `ActiveTransform` can edit a second, end-of-shutter one,
+ * recorded as `ctmEnd` / `cameraToWorldEnd` / `matricesEnd` only where it differs.
  */
 
 import { TokenStream, TokenType } from './PBRTTokenizer.js';
@@ -32,6 +37,16 @@ import * as M from './PBRTMath.js';
 // ~100 bytes of overhead, and most parameters are one number or three.
 const TYPED_ARRAY_THRESHOLD = 8;
 
+const START = 1, END = 2, BOTH = 3;
+
+function sameMatrix( a, b ) {
+
+	if ( a === b ) return true;
+	for ( let i = 0; i < 16; i ++ ) if ( a[ i ] !== b[ i ] ) return false;
+	return true;
+
+}
+
 const NUMERIC_STORAGE = {
 	integer: Int32Array,
 	point3: Float32Array,
@@ -42,6 +57,14 @@ const NUMERIC_STORAGE = {
 	normal: Float32Array,
 	rgb: Float32Array
 };
+
+function growFloat32( array, length ) {
+
+	const grown = new Float32Array( length );
+	grown.set( array );
+	return grown;
+
+}
 
 export class PBRTParser {
 
@@ -79,11 +102,15 @@ export class PBRTParser {
 			instanceCount: 0,
 			skippedInstances: 0,
 			objects: new Map(),
+			transformTimes: { start: 0, end: 1 },
+			hasMotion: false,
 			warnings: []
 		};
 
-		// Graphics state
+		// Graphics state. `ctmEnd` is null while it equals `ctm`.
 		this.ctm = M.identity();
+		this.ctmEnd = null;
+		this.activeTransform = BOTH;
 		this._ctmSource = null;
 		this._ctmValue = null;
 		this.state = { material: null, areaLight: null, reverseOrientation: false };
@@ -133,20 +160,31 @@ export class PBRTParser {
 		}
 
 		let list = this.ir.instances.get( name );
-		if ( ! list ) this.ir.instances.set( name, list = { name, count: 0, matrices: new Float32Array( 16 * 32 ) } );
+		if ( ! list ) this.ir.instances.set( name, list = { name, count: 0, matrices: new Float32Array( 16 * 32 ), matricesEnd: null } );
 
 		const need = ( list.count + 1 ) * 16;
 		if ( need > list.matrices.length ) {
 
-			const grown = new Float32Array( Math.max( need, list.matrices.length * 2 ) );
-			grown.set( list.matrices );
-			list.matrices = grown;
+			const length = Math.max( need, list.matrices.length * 2 );
+			list.matrices = growFloat32( list.matrices, length );
+			if ( list.matricesEnd ) list.matricesEnd = growFloat32( list.matricesEnd, length );
 
 		}
 
 		const o = list.count * 16;
 		const m = this.ctm;
 		for ( let i = 0; i < 16; i ++ ) list.matrices[ o + i ] = m[ i ];
+
+		// Allocated once a placement of this template moves.
+		const end = this._ctmEndSnapshot();
+		if ( end && ! list.matricesEnd ) list.matricesEnd = list.matrices.slice();
+		if ( list.matricesEnd ) {
+
+			const e = end || m;
+			for ( let i = 0; i < 16; i ++ ) list.matricesEnd[ o + i ] = e[ i ];
+
+		}
+
 		list.count ++;
 		this.ir.instanceCount ++;
 
@@ -167,6 +205,72 @@ export class PBRTParser {
 		}
 
 		return this._ctmValue;
+
+	}
+
+	/** The end-of-shutter CTM when it differs from the start one, else null. */
+	_ctmEndSnapshot() {
+
+		if ( this.ctmEnd === null || sameMatrix( this.ctmEnd, this.ctm ) ) return null;
+		this.ir.hasMotion = true;
+		return this.ctmEnd.slice();
+
+	}
+
+	/** Right-multiply `m` into whichever CTMs ActiveTransform selects. */
+	_concat( m ) {
+
+		if ( this.activeTransform === BOTH && this.ctmEnd === null ) {
+
+			this.ctm = M.multiply( this.ctm, m );
+			return;
+
+		}
+
+		const end = this.ctmEnd ?? this.ctm;
+		this.ctmEnd = this.activeTransform & END ? M.multiply( end, m ) : end;
+		if ( this.activeTransform & START ) this.ctm = M.multiply( this.ctm, m );
+
+	}
+
+	/** Replace whichever CTMs ActiveTransform selects. */
+	_setCTM( m ) {
+
+		if ( this.activeTransform === BOTH ) {
+
+			this.ctm = m;
+			this.ctmEnd = null;
+			return;
+
+		}
+
+		const end = this.ctmEnd ?? this.ctm;
+		this.ctmEnd = this.activeTransform & END ? m : end;
+		if ( this.activeTransform & START ) this.ctm = m;
+
+	}
+
+	_pushGraphicsState() {
+
+		this.attributeStack.push( {
+			ctm: this.ctm,
+			ctmEnd: this.ctmEnd,
+			activeTransform: this.activeTransform,
+			material: this.state.material,
+			areaLight: this.state.areaLight,
+			reverseOrientation: this.state.reverseOrientation
+		} );
+
+	}
+
+	_popGraphicsState() {
+
+		const s = this.attributeStack.pop();
+		if ( ! s ) return;
+		this.ctm = s.ctm;
+		this.ctmEnd = s.ctmEnd;
+		this.activeTransform = s.activeTransform;
+		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation };
 
 	}
 
@@ -398,11 +502,11 @@ export class PBRTParser {
 		switch ( name ) {
 
 			// ── transforms ──
-			case 'Identity': this.ctm = M.identity(); break;
+			case 'Identity': this._setCTM( M.identity() ); break;
 			case 'Translate': {
 
 				const [ x, y, z ] = this._readNumbers( 3 );
-				this.ctm = M.multiply( this.ctm, M.translate( x, y, z ) );
+				this._concat( M.translate( x, y, z ) );
 				break;
 
 			}
@@ -410,7 +514,7 @@ export class PBRTParser {
 			case 'Scale': {
 
 				const [ x, y, z ] = this._readNumbers( 3 );
-				this.ctm = M.multiply( this.ctm, M.scale( x, y, z ) );
+				this._concat( M.scale( x, y, z ) );
 				break;
 
 			}
@@ -418,7 +522,7 @@ export class PBRTParser {
 			case 'Rotate': {
 
 				const [ angle, x, y, z ] = this._readNumbers( 4 );
-				this.ctm = M.multiply( this.ctm, M.rotate( angle, x, y, z ) );
+				this._concat( M.rotate( angle, x, y, z ) );
 				break;
 
 			}
@@ -430,31 +534,37 @@ export class PBRTParser {
 					[ v[ 0 ], v[ 1 ], v[ 2 ] ], [ v[ 3 ], v[ 4 ], v[ 5 ] ], [ v[ 6 ], v[ 7 ], v[ 8 ] ]
 				);
 				// pbrt sets CTM to world-to-camera = inverse(cameraToWorld).
-				this.ctm = M.multiply( this.ctm, M.invert( camToWorld ) );
+				this._concat( M.invert( camToWorld ) );
 				break;
 
 			}
 
 			case 'Transform': {
 
-				this.ctm = this._readBracketedOrBareNumbers( 16 );
+				this._setCTM( this._readBracketedOrBareNumbers( 16 ) );
 				break;
 
 			}
 
 			case 'ConcatTransform': {
 
-				const m = this._readBracketedOrBareNumbers( 16 );
-				this.ctm = M.multiply( this.ctm, m );
+				this._concat( this._readBracketedOrBareNumbers( 16 ) );
 				break;
 
 			}
 
-			case 'CoordinateSystem': this.coordSystems.set( this._expectString( 'CoordinateSystem' ), this.ctm.slice() ); break;
+			// Both ends, whatever ActiveTransform says — as pbrt does.
+			case 'CoordinateSystem': this.coordSystems.set( this._expectString( 'CoordinateSystem' ), { ctm: this.ctm, ctmEnd: this.ctmEnd } ); break;
 			case 'CoordSysTransform': {
 
 				const cs = this.coordSystems.get( this._expectString( 'CoordSysTransform' ) );
-				if ( cs ) this.ctm = cs.slice();
+				if ( cs ) {
+
+					this.ctm = cs.ctm;
+					this.ctmEnd = cs.ctmEnd;
+
+				}
+
 				break;
 
 			}
@@ -466,6 +576,8 @@ export class PBRTParser {
 				const params = this._parseParams();
 				// Camera-to-world is the inverse of the CTM at the Camera directive.
 				this.ir.camera = { type, params, cameraToWorld: M.invert( this.ctm ) };
+				const end = this._ctmEndSnapshot();
+				if ( end ) this.ir.camera.cameraToWorldEnd = M.invert( end );
 				break;
 
 			}
@@ -497,25 +609,24 @@ export class PBRTParser {
 			// ── world block ──
 			case 'WorldBegin':
 				this.ctm = M.identity();
+				this.ctmEnd = null;
+				this.activeTransform = BOTH;
 				this.state = { material: null, areaLight: null, reverseOrientation: false };
 				break;
 			case 'WorldEnd': break; // legacy v3
 
-			case 'AttributeBegin':
-				this.attributeStack.push( {
-					ctm: this.ctm.slice(),
-					material: this.state.material,
-					areaLight: this.state.areaLight,
-					reverseOrientation: this.state.reverseOrientation
-				} );
-				break;
-			case 'AttributeEnd': {
+			case 'AttributeBegin': this._pushGraphicsState(); break;
+			case 'AttributeEnd': this._popGraphicsState(); break;
 
-				const s = this.attributeStack.pop();
-				if ( s ) {
+			case 'TransformBegin': this.transformStack.push( { ctm: this.ctm, ctmEnd: this.ctmEnd, activeTransform: this.activeTransform } ); break;
+			case 'TransformEnd': {
 
-					this.ctm = s.ctm;
-					this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation };
+				const t = this.transformStack.pop();
+				if ( t ) {
+
+					this.ctm = t.ctm;
+					this.ctmEnd = t.ctmEnd;
+					this.activeTransform = t.activeTransform;
 
 				}
 
@@ -523,19 +634,30 @@ export class PBRTParser {
 
 			}
 
-			case 'TransformBegin': this.transformStack.push( this.ctm.slice() ); break;
-			case 'TransformEnd': {
-
-				const m = this.transformStack.pop(); if ( m ) this.ctm = m; break;
-
-			}
-
 			case 'ReverseOrientation': this.state.reverseOrientation = ! this.state.reverseOrientation; break;
 
 			// `Attribute "target" params` — v4 default-setting; ignored for MVP.
 			case 'Attribute': this._expectString( 'Attribute target' ); this._parseParams(); break;
-			case 'ActiveTransform': this._next(); break; // StartTime|EndTime|All
-			case 'TransformTimes': this._readNumbers( 2 ); break;
+			case 'ActiveTransform': {
+
+				const t = this._next();
+				const which = t?.value;
+				if ( which === 'StartTime' ) this.activeTransform = START;
+				else if ( which === 'EndTime' ) this.activeTransform = END;
+				else if ( which === 'All' ) this.activeTransform = BOTH;
+				else this._warn( `ActiveTransform "${which}" not recognised` );
+				break;
+
+			}
+
+			case 'TransformTimes': {
+
+				const [ start, end ] = this._readNumbers( 2 );
+				this.ir.transformTimes = { start, end };
+				break;
+
+			}
+
 			case 'MediumInterface': {
 
 				// up to two strings (inside/outside)
@@ -602,6 +724,7 @@ export class PBRTParser {
 
 				const type = this._expectString( 'LightSource type' );
 				const params = this._parseParams();
+				if ( this.ctmEnd !== null && ! sameMatrix( this.ctmEnd, this.ctm ) ) this._warnOnce( 'animated-light', 'animated LightSource transforms are not supported — using the start transform' );
 				this.ir.lights.push( { type, params, ctm: this._ctmSnapshot() } );
 				break;
 
@@ -620,6 +743,14 @@ export class PBRTParser {
 					areaLight: this.state.areaLight,
 					reverseOrientation: this.state.reverseOrientation
 				};
+				const end = this.currentObject === null ? this._ctmEndSnapshot() : null;
+				if ( end ) shape.ctmEnd = end;
+				else if ( this.currentObject !== null && this.ctmEnd !== null && ! sameMatrix( this.ctmEnd, this.ctm ) ) {
+
+					this._warnOnce( 'animated-template', 'animated transforms inside ObjectBegin are not supported — using the start transform' );
+
+				}
+
 				this._emitShape( shape );
 				break;
 
@@ -630,12 +761,7 @@ export class PBRTParser {
 
 				const objName = this._expectString( 'ObjectBegin name' );
 				// pbrt implicitly pushes graphics state.
-				this.attributeStack.push( {
-					ctm: this.ctm.slice(),
-					material: this.state.material,
-					areaLight: this.state.areaLight,
-					reverseOrientation: this.state.reverseOrientation
-				} );
+				this._pushGraphicsState();
 				this.currentObject = objName;
 				this.objectBeginCTM = this.ctm.slice();
 				if ( ! this.ir.objects.has( objName ) ) this.ir.objects.set( objName, [] );
@@ -647,14 +773,7 @@ export class PBRTParser {
 
 				this.currentObject = null;
 				this.objectBeginCTM = null;
-				const s = this.attributeStack.pop();
-				if ( s ) {
-
-					this.ctm = s.ctm;
-					this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation };
-
-				}
-
+				this._popGraphicsState();
 				break;
 
 			}
@@ -767,6 +886,14 @@ export class PBRTParser {
 	_warn( msg ) {
 
 		this.ir.warnings.push( msg );
+
+	}
+
+	_warnOnce( key, msg ) {
+
+		if ( this._warnedUnknown.has( key ) ) return;
+		this._warnedUnknown.add( key );
+		this._warn( msg );
 
 	}
 

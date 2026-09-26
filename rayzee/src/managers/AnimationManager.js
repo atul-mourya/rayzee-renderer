@@ -1,12 +1,13 @@
 /**
- * AnimationManager — Drives GLTF skeletal/morph animations for BVH refit.
+ * AnimationManager — Drives animation clips for the path tracer.
  *
- * Owns the Three.js AnimationMixer, advances clips each frame,
- * extracts deformed vertex positions via CPU skinning, and returns
- * a per-mesh reader in the shape PathTracerApp.refitBVH() accepts.
+ * Deforming clips (a SkinnedMesh or morph track) return a per-mesh position reader for
+ * PathTracerApp.refitBVH(). Rigid clips return nothing and hand the moved meshes to
+ * `applyPoseCallback`, which updates placements only — a refit would bake world positions into
+ * triangles that other placements share.
  */
 
-import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce } from 'three';
+import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../EngineEvents.js';
 
 export class AnimationManager extends EventDispatcher {
@@ -31,8 +32,19 @@ export class AnimationManager extends EventDispatcher {
 		this._savedTimeScale = 1;
 		this.onFinished = null; // callback when a non-looping clip ends
 
+		this._rigid = false;
+		this._plans = null; // per clip: { meshes: Int32Array, visibility: boolean, cameras: Camera[] }
+		this._allPlan = null;
+		this._activeClip = 0;
+		this._slotOf = null; // meshIndex -> row in the two caches below, or -1
+		this._lastWorld = null; // world matrix last handed to applyPoseCallback, 16 per row
+		this._lastVisible = null; // 0 / 1, or 2 before the first pose
+
 		/** Injected by PathTracerApp — wakes the render loop after play/resume. */
 		this.wakeCallback = null;
+
+		/** Injected by PathTracerApp — receives `{ meshIndices, visibilityChanged, cameras }`. */
+		this.applyPoseCallback = null;
 
 	}
 
@@ -88,6 +100,10 @@ export class AnimationManager extends EventDispatcher {
 
 		this.actions = actions;
 
+		this._rigid = ! meshes.some( m => m?.isSkinnedMesh ) &&
+			! animations.some( clip => clip.tracks.some( t => t.name.includes( 'morphTargetInfluences' ) ) );
+		this._planClips( animations );
+
 		// Listen for non-looping clip completion
 		this.mixer.addEventListener( 'finished', () => {
 
@@ -121,7 +137,154 @@ export class AnimationManager extends EventDispatcher {
 		this._meshPositions = [];
 
 		const skinnedCount = meshes.filter( m => m.isSkinnedMesh ).length;
-		console.debug( `[AnimationManager] Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles` );
+		console.debug( `[AnimationManager] Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles, ${this._rigid ? 'rigid' : 'deforming'}` );
+
+	}
+
+	/** Which meshes and cameras each clip moves, directly or through an ancestor. @private */
+	_planClips( animations ) {
+
+		const root = this._mixerRoot;
+		const byName = new Map();
+		// First name in pre-order wins, as in PropertyBinding.findNode.
+		root.traverse?.( node => {
+
+			if ( ! byName.has( node.name ) ) byName.set( node.name, node );
+			byName.set( node.uuid, node );
+
+		} );
+
+		this._plans = animations.map( clip => {
+
+			const animated = new Set();
+			let visibility = false;
+			for ( const track of clip.tracks ) {
+
+				const { nodeName, propertyName } = PropertyBinding.parseTrackName( track.name );
+				const node = byName.get( nodeName );
+				if ( ! node ) continue;
+				animated.add( node );
+				if ( propertyName === 'visible' ) visibility = true;
+
+			}
+
+			const meshes = [];
+			for ( let m = 0; m < this._meshes.length; m ++ ) {
+
+				for ( let o = this._meshes[ m ]; o; o = o.parent ) {
+
+					if ( animated.has( o ) ) {
+
+						meshes.push( m );
+						break;
+
+					}
+
+				}
+
+			}
+
+			const cameras = new Set();
+			for ( const node of animated ) node.traverse( o => o.isCamera && cameras.add( o ) );
+
+			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ] };
+
+		} );
+
+		this._allPlan = null;
+		if ( ! this._rigid ) return;
+
+		this._slotOf = new Int32Array( this._meshes.length ).fill( - 1 );
+		let rows = 0;
+		for ( const plan of this._plans ) for ( const m of plan.meshes ) if ( this._slotOf[ m ] < 0 ) this._slotOf[ m ] = rows ++;
+
+		// Unknown until the first pose, which therefore sends every animated mesh.
+		this._lastWorld = new Float64Array( rows * 16 ).fill( NaN );
+		this._lastVisible = new Uint8Array( rows ).fill( 2 );
+
+	}
+
+	/** The plan for a clip index, or the union of every clip for -1. @private */
+	_planFor( clipIndex ) {
+
+		if ( ! this._plans ) return null;
+		if ( clipIndex >= 0 ) return this._plans[ clipIndex ] ?? null;
+
+		if ( ! this._allPlan ) {
+
+			const meshes = new Set(), cameras = new Set();
+			let visibility = false;
+			for ( const plan of this._plans ) {
+
+				plan.meshes.forEach( m => meshes.add( m ) );
+				plan.cameras.forEach( c => cameras.add( c ) );
+				visibility ||= plan.visibility;
+
+			}
+
+			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ] };
+
+		}
+
+		return this._allPlan;
+
+	}
+
+	/** Send meshes whose world matrix or visibility changed since the last pose. @private */
+	_applyRigidPose( clipIndex ) {
+
+		const plan = this._planFor( clipIndex );
+		if ( ! plan ) return;
+
+		const moved = [];
+		let visibilityChanged = false;
+		const last = this._lastWorld, lastVisible = this._lastVisible;
+
+		for ( const m of plan.meshes ) {
+
+			const mesh = this._meshes[ m ];
+			const row = this._slotOf[ m ];
+			const e = mesh.matrixWorld.elements;
+			const o = row * 16;
+
+			for ( let i = 0; i < 16; i ++ ) {
+
+				if ( last[ o + i ] !== e[ i ] ) {
+
+					for ( let j = 0; j < 16; j ++ ) last[ o + j ] = e[ j ];
+					moved.push( m );
+					break;
+
+				}
+
+			}
+
+			if ( plan.visibility || lastVisible[ row ] === 2 ) {
+
+				let visible = 1;
+				for ( let n = mesh; n; n = n.parent ) if ( ! n.visible ) {
+
+					visible = 0;
+					break;
+
+				}
+
+				if ( lastVisible[ row ] !== visible ) {
+
+					lastVisible[ row ] = visible;
+					visibilityChanged = true;
+
+				}
+
+			}
+
+		}
+
+		if ( moved.length || visibilityChanged || plan.cameras.length ) {
+
+			this.applyPoseCallback?.( { meshIndices: moved, visibilityChanged, cameras: plan.cameras } );
+
+		}
 
 	}
 
@@ -145,6 +308,7 @@ export class AnimationManager extends EventDispatcher {
 
 		}
 
+		this._activeClip = clipIndex;
 		this.timer.reset();
 		this.isPlaying = true;
 		this.wakeCallback?.();
@@ -188,10 +352,19 @@ export class AnimationManager extends EventDispatcher {
 
 		if ( ! this.mixer ) return;
 
+		// Restores every animated property to its loaded value.
 		this.mixer.stopAllAction();
 		this.mixer.timeScale = this._savedTimeScale || 1;
 		this.timer.reset();
 		this.isPlaying = false;
+
+		if ( this._rigid ) {
+
+			this._mixerRoot.updateMatrixWorld( true );
+			this._applyRigidPose( - 1 );
+
+		}
+
 		this.dispatchEvent( { type: EngineEvents.ANIMATION_STOPPED } );
 
 	}
@@ -229,11 +402,14 @@ export class AnimationManager extends EventDispatcher {
 	 *
 	 * @param {number} time - Absolute time in seconds
 	 * @param {number} [clipIndex=0] - Clip to evaluate, or -1 for all active
-	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if no mixer
+	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if no
+	 *   mixer or the clips are rigid
 	 */
 	seekTo( time, clipIndex = 0 ) {
 
 		if ( ! this.mixer || this.actions.length === 0 ) return null;
+
+		this._activeClip = clipIndex;
 
 		// Ensure the target action(s) are active so setTime evaluates them.
 		// Actions must NOT be paused — setTime() calls update() internally,
@@ -279,7 +455,8 @@ export class AnimationManager extends EventDispatcher {
 	 * Advance animation and prepare deformed positions.
 	 * Call once per frame from the animate loop.
 	 *
-	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if not playing
+	 * @returns {function(number): Float32Array|null} Per-mesh reader for refitBVH, or null if not
+	 *   playing or the clips are rigid
 	 */
 	update() {
 
@@ -311,6 +488,16 @@ export class AnimationManager extends EventDispatcher {
 		// Bones live outside mesh subtrees so per-mesh updateMatrixWorld() misses them. Doing it
 		// once here, on mixerRoot rather than the scene, keeps unrelated static objects out of it.
 		this._mixerRoot.updateMatrixWorld( true );
+
+		if ( this._rigid ) {
+
+			this._applyRigidPose( this._activeClip );
+			return null;
+
+		}
+
+		const cameras = this._planFor( this._activeClip )?.cameras;
+		if ( cameras?.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras } );
 
 		return m => this._computeMeshPositions( m );
 
@@ -446,6 +633,13 @@ export class AnimationManager extends EventDispatcher {
 		this._meshPositions = null;
 		this._skinnedCache = null;
 		this._clipsCache = null;
+		this._rigid = false;
+		this._plans = null;
+		this._allPlan = null;
+		this._activeClip = 0;
+		this._slotOf = null;
+		this._lastWorld = null;
+		this._lastVisible = null;
 
 	}
 

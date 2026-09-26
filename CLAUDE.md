@@ -125,17 +125,18 @@ Critical for maintaining 60fps during heavy computations:
 - **`BVHRefitWorker.js`**: O(N) bottom-up BVH AABB refit for animated geometry (SharedArrayBuffer protocol)
 
 ### Animation & Transform System (`rayzee/src/managers/`)
-GLTF skeletal/morph animation playback and interactive object transforms with BVH refit:
-- **`AnimationManager.js`**: Owns Three.js `AnimationMixer`, CPU skinning via `mesh.getVertexPosition()`, and position extraction. Key methods: `play()`, `stop()`, `seekTo(time)`, `setSpeed()`, `setLoop()`. Uses two-phase extraction: skin unique vertices first, then assemble triangles from index buffer.
+glTF / pbrt animation playback and interactive object transforms:
+- **`AnimationManager.js`**: Owns Three.js `AnimationMixer`. Key methods: `play()`, `stop()`, `seekTo(time)`, `setSpeed()`, `setLoop()`. Two modes, picked at `init()`: **deforming** (any SkinnedMesh or morph track) — CPU skinning via `mesh.getVertexPosition()`, returned as a per-mesh reader for `refitBVH`; **rigid** (everything else) — `update()`/`seekTo()` return null and hand only the meshes whose world matrix or visibility changed to `applyPoseCallback` → `PathTracerApp._applyAnimationPose` (placement matrices + TLAS refit, visibility flags, followed camera). `stop()` re-applies the restored pose. ⚠️ Never refit a rigid clip: triangles are shared between placements of one geometry, so baking a pose moves every copy.
+- **pbrt animation** (`Processor/PBRT/PBRTAnimation.js`): a frame sequence (`frame25.pbrt`, `frame35.pbrt`, … in one directory) loads as ONE clip, keyed at frame number / 30 fps. Each frame's shapes are aligned with the previous frame's (LCS over geometry+material+emission keys), so a moved shape keeps one mesh; shapes that come and go get a visibility track switching halfway between keys (float32 key times made an exact-key seek show the previous frame); moving placements become `placement_N` Groups; a template redefined by a frame becomes a variant `name @frame`. `ActiveTransform`/`TransformTimes` become two keys. Moving shapes are never merged. `loadFile( file, { animation: false } )` or a `pbrtEntry` loads one frame. An animated embedded camera is followed while selected (`userData.__rayzeeSourceUuid` links the switcher's copy to the animated original).
 - **`TransformManager.js`**: Interactive translate/rotate/scale gizmo via Three.js `TransformControls`. Creates its own `Scene` for gizmo rendering (not SceneHelpers — its `visible` guard blocks gizmo). On drag end, calls `app.updateMeshTransforms( affectedIndices )` — a gizmo only changes a placement's matrix, and triangles are stored in object space, so nothing per-vertex is read or written. Keyboard shortcuts: W=translate, E=rotate, R=scale (consolidated in `App.jsx`).
 - **`VideoRenderManager.js`**: Offline frame-by-frame animation video export. Drives seek → BVH refit → SPP accumulation → OIDN denoise → canvas capture cycle per frame. Saves/restores engine state, stops rAF loop during render, delivers `ImageBitmap` frames via callback for encoding.
 - **`BVHRefitter.js`** (in `Processor/`): O(N) refit algorithm — reverse pre-order traversal for bottom-up AABB recomputation. Supports both full-buffer `refit()` and per-BLAS `refitRange(startNode, nodeCount)`. Handles BLAS-pointer nodes in TLAS (reads BLAS root bounds).
 
 **Animation data flow**:
-1. `AssetLoader` preserves `data.animations` from GLTFLoader
-2. `AnimationManager.init()` creates mixer on GLTF model root (with fallback to scene root for track resolution)
-3. Per frame: `mixer.update(delta)` → `scene.updateMatrixWorld(true)` → `getVertexPosition()` per vertex → `refitBVH(positions)` via worker
-4. `PathTracer.updateTriangleData()` / `updateBVHData()` — fast GPU buffer writes (no reallocation)
+1. `AssetLoader` preserves `data.animations` from GLTFLoader (or the pbrt builder's clip)
+2. `AnimationManager.init()` creates mixer on the model root (with fallback to scene root for track resolution)
+3. Per frame: `mixer.update(delta)` → `mixerRoot.updateMatrixWorld(true)` → deforming: `getVertexPosition()` per vertex → `refitBVH(positions)` via worker; rigid: `applyPoseCallback` → `updateMeshTransforms` + TLAS range upload
+4. Deforming: `PathTracer.updateTriangleData()` / `updateBVHData()` — fast GPU buffer writes (no reallocation). Moved emitters' light BVH is rebuilt once motion stops (pause/stop/finish/seek), not per playback frame.
 
 **Transform data flow**:
 1. User selects object → `TransformManager.attach(object)` + `OutlineHelper` shows outline
@@ -151,7 +152,7 @@ GLTF skeletal/morph animation playback and interactive object transforms with BV
 
 **Video render data flow**:
 1. `VideoRenderManager.renderAnimation()` saves engine state, stops rAF, configures final-render mode
-2. Per frame: `AnimationManager.seekTo(time)` → `refitBVH(positions)` → `stopAnimation()` (kill rAF restart from reset)
+2. Per frame: `AnimationManager.seekTo(time)` → `refitBVH(positions)` (deforming; rigid poses are applied inside `seekTo`) → `stopAnimation()` (kill rAF restart from reset)
 3. Tight loop: `pipeline.render()` until `pathTracer.isComplete`, yielding every 4 passes
 4. If OIDN enabled: `_waitForDenoise()` wraps `DENOISING_END` event as promise (30s timeout)
 5. `getCanvas()` → `createImageBitmap()` → `onFrame(bitmap)` callback → `VideoEncoderPipeline.addFrame()`

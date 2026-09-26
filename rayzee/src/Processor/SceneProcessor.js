@@ -2281,6 +2281,28 @@ export class SceneProcessor {
 
 	}
 
+	/** Whether any of these meshes emits light. */
+	movesEmitters( meshIndices ) {
+
+		const emitters = this.emissiveTriangleBuilder?.emissiveMeshes;
+		return !! emitters?.size && meshIndices.some( m => emitters.has( m ) );
+
+	}
+
+	/**
+	 * Re-measure emitters at their current placements and rebuild the light hierarchy.
+	 * @returns {object|null} GPU upload payload, or null when the scene has no emitters
+	 */
+	refreshEmissiveTransforms() {
+
+		const builder = this.emissiveTriangleBuilder;
+		if ( ! builder?.emissiveTriangles.length || ! this.instanceTable || ! this.triangles ) return null;
+
+		builder.refreshTransforms( this.triangles, this.instanceTable );
+		return this._collectEmissivePayload();
+
+	}
+
 	/**
 	 * Rebuild the Light BVH + sorted emissive data + bit-trail map (over the visible
 	 * subset) so the stochastic descent and the bounce-hit MIS re-walk stay consistent,

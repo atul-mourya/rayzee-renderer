@@ -1,11 +1,12 @@
 /**
  * Convert a parsed pbrt IR into a THREE scene graph the engine can ingest.
  *
- * Output: { group, camera, environment, warnings }
+ * Output: { group, camera, environment, animations, warnings }
  *   - group:       THREE.Group of meshes (fed to PathTracerApp.loadObject3D)
  *   - camera:      PerspectiveCamera matching the pbrt Camera/LookAt, parented
  *                  into the group so AssetLoader.extractCamerasFromModel finds it
  *   - environment: { texture } | null — set by the caller as scene.environment
+ *   - animations:  [ AnimationClip ] when the IR carries motion (see PBRTAnimation.js), else []
  *
  * Handedness: pbrt scenes import correctly as-is. A `diag(1,1,-1)` mirror is
  * available behind `convertHandedness` (default OFF) — three's `lookAt` builds
@@ -14,10 +15,11 @@
  */
 
 import {
-	Group, Mesh, InstancedMesh, PerspectiveCamera, Matrix4, Vector3,
+	Group, Mesh, InstancedMesh, PerspectiveCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
-	SRGBColorSpace
+	SRGBColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
+	NumberKeyframeTrack, BooleanKeyframeTrack
 } from 'three';
 import { buildMaterial, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
 import { loopSubdivide } from './LoopSubdivision.js';
@@ -200,6 +202,7 @@ export class PBRTSceneBuilder {
 		this._mergedBatches = 0;
 		this.mergedShapes = 0;
 		this.droppedNoTemplate = 0;
+		this._animated = []; // { node, motion }
 
 		// Shapes (direct + instanced)
 		for ( let i = 0; i < ir.shapes.length; i ++ ) {
@@ -218,7 +221,8 @@ export class PBRTSceneBuilder {
 			] );
 			if ( ! geometry ) continue;
 
-			if ( this._batches && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
+			// A moving shape needs a node of its own to move.
+			if ( this._batches && ! shape.motion && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
 				this._mergeShape( shape, geometry, sharedMaterial, group );
 				ir.shapes[ i ] = null; // its parsed arrays are copied out; let them go
@@ -227,7 +231,9 @@ export class PBRTSceneBuilder {
 			}
 
 			const mesh = this._meshFromGeometry( shape, geometry, sharedMaterial, shape.ctm, `shape_${i}` );
-			if ( mesh ) group.add( mesh );
+			if ( ! mesh ) continue;
+			group.add( mesh );
+			if ( shape.motion ) this._animate( mesh, shape.motion );
 
 		}
 
@@ -245,6 +251,7 @@ export class PBRTSceneBuilder {
 		}
 
 		await this._buildInstances( ir, group );
+		await this._buildAnimatedPlacements( ir, group );
 
 		if ( this.skippedForBudget > 0 ) this.warn(
 			`stopped at ${this.triangleCount.toLocaleString()} stored triangles ` +
@@ -261,6 +268,8 @@ export class PBRTSceneBuilder {
 
 		}
 
+		const animations = ir.animation ? this._buildClip( ir, camera ) : [];
+
 		// Infinite light → environment
 		const environment = await this._buildEnvironment( ir.lights );
 
@@ -271,7 +280,7 @@ export class PBRTSceneBuilder {
 		);
 
 		return {
-			group, camera, environment,
+			group, camera, environment, animations,
 			report: this.report,
 			meshCount: this.reportedMeshes,
 			triangleCount: this.triangleCount,
@@ -395,6 +404,148 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/** Moving placements, one Group each: an InstancedMesh cannot move a single instance. */
+	async _buildAnimatedPlacements( ir, group ) {
+
+		const placements = ir.animatedInstances ?? [];
+		for ( let k = 0; k < placements.length; k ++ ) {
+
+			const { name, motion } = placements[ k ];
+			const template = ir.objects.get( name );
+			if ( ! template ) {
+
+				this.droppedNoTemplate ++;
+				continue;
+
+			}
+
+			if ( this._overBudget() ) {
+
+				this.skippedForBudget += placements.length - k;
+				break;
+
+			}
+
+			const node = new Group();
+			node.name = `placement_${k}`;
+			const start = Array.from( motion.matrices.subarray( 0, 16 ) );
+			new Matrix4().fromArray( this.convertHandedness ? M.multiply( FLIP_Z, start ) : start ).decompose( node.position, node.quaternion, node.scale );
+
+			for ( let s = 0; s < template.length; s ++ ) {
+
+				const shape = template[ s ];
+				const [ geometry, sharedMaterial ] = await Promise.all( [ this._buildGeometry( shape ), this._getMaterial( shape ) ] );
+				if ( ! geometry ) continue;
+				const mesh = this._meshFromGeometry( shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm, `${node.name}_${s}`, true );
+				if ( mesh ) node.add( mesh );
+
+			}
+
+			if ( node.children.length === 0 ) continue;
+			group.add( node );
+			this._animate( node, motion );
+
+		}
+
+	}
+
+	/** Remember a node's keyframes and put it in its first-frame visibility. @private */
+	_animate( node, motion ) {
+
+		if ( motion.visible ) node.visible = motion.visible[ 0 ] === 1;
+		this._animated.push( { node, motion } );
+
+	}
+
+	/** One clip for the scene, with tracks only for what changes. @private */
+	_buildClip( ir, camera ) {
+
+		const tracks = [];
+
+		for ( const { node, motion } of this._animated ) {
+
+			this._transformTracks( tracks, node.name, motion, ( m, o ) => {
+
+				const key = Array.from( m.subarray( o, o + 16 ) );
+				return this.convertHandedness ? M.multiply( FLIP_Z, key ) : key;
+
+			} );
+
+			if ( motion.visible ) {
+
+				// Nearest frame wins: switching on the key itself lost to float32 rounding of the times.
+				const t = motion.times;
+				const times = t.map( ( time, k ) => k === 0 ? 0 : ( t[ k - 1 ] + time ) / 2 );
+				tracks.push( new BooleanKeyframeTrack( `${node.name}.visible`, times, Array.from( motion.visible, v => v === 1 ) ) );
+
+			}
+
+		}
+
+		const camMotion = ir.camera?.motion;
+		if ( camera && camMotion ) {
+
+			const pose = new PerspectiveCamera();
+			this._transformTracks( tracks, camera.name, camMotion, ( m, o ) => {
+
+				this._poseCamera( pose, m.subarray( o, o + 16 ) );
+				pose.updateMatrix();
+				return pose.matrix.elements;
+
+			} );
+
+			if ( camMotion.fov ) {
+
+				const fovs = Array.from( camMotion.fov, f => this._verticalFov( { fov: { type: 'float', value: [ f ] } }, camera.aspect ) );
+				tracks.push( new NumberKeyframeTrack( `${camera.name}.fov`, camMotion.times.slice(), fovs ) );
+
+			}
+
+		}
+
+		// optimize() compacts in place, so no two tracks may share a times array.
+		for ( const track of tracks ) track.optimize();
+		if ( tracks.length === 0 ) return [];
+		return [ new AnimationClip( ir.animation.name, ir.animation.duration, tracks ) ];
+
+	}
+
+	/** Decompose each key and emit tracks for the components that vary. @private */
+	_transformTracks( tracks, name, motion, matrixAt ) {
+
+		const n = motion.times.length;
+		const pos = new Float32Array( n * 3 ), rot = new Float32Array( n * 4 ), scl = new Float32Array( n * 3 );
+		const m = new Matrix4(), p = new Vector3(), q = new Quaternion(), sc = new Vector3();
+
+		for ( let k = 0; k < n; k ++ ) {
+
+			m.fromArray( matrixAt( motion.matrices, k * 16 ) ).decompose( p, q, sc );
+			// Same hemisphere as the previous key, so the blend takes the short way.
+			if ( k > 0 && q.x * rot[ k * 4 - 4 ] + q.y * rot[ k * 4 - 3 ] + q.z * rot[ k * 4 - 2 ] + q.w * rot[ k * 4 - 1 ] < 0 ) {
+
+				q.set( - q.x, - q.y, - q.z, - q.w );
+
+			}
+
+			p.toArray( pos, k * 3 );
+			q.toArray( rot, k * 4 );
+			sc.toArray( scl, k * 3 );
+
+		}
+
+		const varies = ( values, stride ) => {
+
+			for ( let i = stride; i < values.length; i ++ ) if ( values[ i ] !== values[ i % stride ] ) return true;
+			return false;
+
+		};
+
+		if ( varies( pos, 3 ) ) tracks.push( new VectorKeyframeTrack( `${name}.position`, motion.times.slice(), pos ) );
+		if ( varies( rot, 4 ) ) tracks.push( new QuaternionKeyframeTrack( `${name}.quaternion`, motion.times.slice(), rot ) );
+		if ( varies( scl, 3 ) ) tracks.push( new VectorKeyframeTrack( `${name}.scale`, motion.times.slice(), scl ) );
+
+	}
+
 	async _buildShapeMesh( shape, ctm, name ) {
 
 		// Geometry parse and material/texture resolution are independent — overlap them.
@@ -407,7 +558,8 @@ export class PBRTSceneBuilder {
 
 	}
 
-	_meshFromGeometry( shape, geometry, sharedMaterial, ctm, name ) {
+	/** @param {boolean} [local=false] - `ctm` is parent-relative; the parent carries the handedness mirror */
+	_meshFromGeometry( shape, geometry, sharedMaterial, ctm, name, local = false ) {
 
 		const hasUV = !! geometry.getAttribute( 'uv' );
 		const material = this._materialForGeometry( shape, geometry, sharedMaterial, name );
@@ -420,7 +572,7 @@ export class PBRTSceneBuilder {
 		// from position/quaternion/scale. A directly-set matrix gets overwritten
 		// with identity there — silently dropping every per-shape Transform.
 		// decompose() round-trips the handedness mirror (det<0) via a negative scale axis.
-		const world = this.convertHandedness ? M.multiply( FLIP_Z, ctm ) : ctm;
+		const world = this.convertHandedness && ! local ? M.multiply( FLIP_Z, ctm ) : ctm;
 		new Matrix4().fromArray( world ).decompose( mesh.position, mesh.quaternion, mesh.scale );
 		mesh.updateMatrix();
 
@@ -1022,13 +1174,26 @@ export class PBRTSceneBuilder {
 
 	_buildCamera( cam, film ) {
 
-		const m = new Matrix4().fromArray( cam.cameraToWorld );
-		const e = m.elements;
+		const aspect = film && film.yresolution ? film.xresolution / film.yresolution : 16 / 9;
+		const fov = this._verticalFov( cam.params, aspect );
+
+		const camera = new PerspectiveCamera( fov, aspect, 0.01, 10000 );
+		camera.name = 'PBRT Camera';
+		this._poseCamera( camera, cam.cameraToWorld );
+		camera.updateMatrixWorld( true );
+		return camera;
+
+	}
+
+	/** Place a camera at a pbrt camera-to-world transform. @private */
+	_poseCamera( camera, cameraToWorld ) {
+
+		const e = cameraToWorld;
 
 		// Columns of cameraToWorld: right(0), up(1), dir(2), eye(3).
-		let eye = new Vector3( e[ 12 ], e[ 13 ], e[ 14 ] );
-		let dir = new Vector3( e[ 8 ], e[ 9 ], e[ 10 ] );
-		let up = new Vector3( e[ 4 ], e[ 5 ], e[ 6 ] );
+		const eye = new Vector3( e[ 12 ], e[ 13 ], e[ 14 ] );
+		const dir = new Vector3( e[ 8 ], e[ 9 ], e[ 10 ] );
+		const up = new Vector3( e[ 4 ], e[ 5 ], e[ 6 ] );
 
 		if ( this.convertHandedness ) {
 
@@ -1036,16 +1201,10 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const target = eye.clone().add( dir );
-
-		const aspect = film && film.yresolution ? film.xresolution / film.yresolution : 16 / 9;
-		const fov = this._verticalFov( cam.params, aspect );
-
-		const camera = new PerspectiveCamera( fov, aspect, 0.01, 10000 );
-		camera.name = 'PBRT Camera';
 		camera.up.copy( up.normalize() );
 		camera.position.copy( eye );
-		camera.lookAt( target );
+		camera.scale.set( 1, 1, 1 );
+		camera.lookAt( eye.clone().add( dir ) );
 
 		// pbrt's camera space is left-handed: image-right is cameraToWorld's first column,
 		// = cross(up, dir). three's lookAt() builds cross(up, -dir) — the opposite — so a
@@ -1054,10 +1213,7 @@ export class PBRTSceneBuilder {
 		// lookAt() happens to agree and no correction is wanted. Hence: mirror exactly when
 		// the scene does NOT. Verified against the reference images for contemporary-bathroom
 		// (has the Scale) and killeroos/killeroo-simple (does not).
-		if ( ( M.determinant3( cam.cameraToWorld ) > 0 ) !== this.convertHandedness ) camera.scale.x = - 1;
-
-		camera.updateMatrixWorld( true );
-		return camera;
+		if ( ( M.determinant3( cameraToWorld ) > 0 ) !== this.convertHandedness ) camera.scale.x = - 1;
 
 	}
 
