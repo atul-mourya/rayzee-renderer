@@ -19,6 +19,10 @@ export const offsetRayOrigin = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
+// Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
+// error, so an emitter coplanar with its fixture is never occluded by it.
+export const SHADOW_END = 1.0 - 1e-4;
+
 export const PI = 3.14159;
 export const PI_INV = 1.0 / PI;
 export const TWO_PI = 2.0 * PI;

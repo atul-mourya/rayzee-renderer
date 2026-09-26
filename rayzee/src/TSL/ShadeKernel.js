@@ -15,7 +15,7 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, sampleEquirectProbability, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin } from './Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
@@ -1229,10 +1229,12 @@ export function buildShadeKernel( params ) {
 
 							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
+								// Aimed at the sampled point and stopped a relative hair short, as for area lights.
 								const rayOrigin = offsetRayOrigin( hitPoint, NgeoFF );
-								const shadowDist = emissiveSample.distance.sub( 0.001 );
+								const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
+								const shadowDist = length( toSample ).toVar();
 								const visibility = traceShadowRayWrapped(
-									rayOrigin, emissiveSample.direction, shadowDist,
+									rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ),
 								);
 
 								If( visibility.greaterThan( 0.0 ), () => {

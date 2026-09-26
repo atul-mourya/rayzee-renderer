@@ -23,7 +23,7 @@ import {
 import { Ray, HitInfo, RayTracingMaterial, MaterialSamples } from './Struct.js';
 import { traverseBVHDebug as traverseBVH } from './BVHTraversal.js';
 import { sampleEnvironment } from './Environment.js';
-import { REC709_LUMINANCE_COEFFICIENTS, getMaterial } from './Common.js';
+import { REC709_LUMINANCE_COEFFICIENTS, getMaterial, offsetRayOrigin } from './Common.js';
 import { sampleAllMaterialTextures } from './TextureSampling.js';
 import { pcgHash, wang_hash, RandomValue } from './Random.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
@@ -336,8 +336,7 @@ export const TraceDebugMode = Fn( ( [
 			const xi = vec2( xi_r1, xi_r2 );
 			const bounceDir = cosineWeightedSample( { N: normalA, xi } ).toVar();
 
-			// Trace secondary ray from the hit point (offset along normal to avoid self-intersection)
-			const bounceOrigin = hitInfo.hitPoint.add( normalA.mul( 0.001 ) );
+			const bounceOrigin = offsetRayOrigin( hitInfo.hitPoint, normalA );
 			const bounceRay = Ray( { origin: bounceOrigin, direction: bounceDir } );
 
 			const bounceHit = HitInfo.wrap( traverseBVH(

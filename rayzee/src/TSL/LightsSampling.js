@@ -82,15 +82,13 @@ import {
 	balanceHeuristic,
 	computeDotProductsAniso,
 	offsetRayOrigin,
+	SHADOW_END,
 } from './Common.js';
 import {
 	sampleEquirectProbability,
 } from './Environment.js';
 
 const TWO_PI = 2.0 * PI;
-// Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
-// error, so an emitter coplanar with its fixture is never occluded by it.
-const SHADOW_END = 1.0 - 1e-4;
 
 // =============================================================================
 // Light Sampling Functions
