@@ -245,14 +245,38 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				const colorDownload = fetchDefaultConfig();
 				colorDownload.catch( () => {} );
 
-				if ( modelUrl ) {
+				// A failed model or sky is reported and startup carries on: the sky and the look
+				// still load, and another model can be opened.
+				const reportLoadFailure = ( title, err ) => {
 
-					await app.loadModel( modelUrl );
+					if ( err?.code === 'LOAD_CANCELLED' ) {
 
-				} else {
+						toast( { title: "Loading Cancelled", description: "The download was cancelled." } );
+						return;
 
-					const { MODEL_FILES } = await import( '@/Constants' );
-					await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+					}
+
+					console.error( `${title}:`, err );
+					toast( { title, description: err?.message, variant: "destructive" } );
+
+				};
+
+				try {
+
+					if ( modelUrl ) {
+
+						await app.loadModel( modelUrl );
+
+					} else {
+
+						const { MODEL_FILES } = await import( '@/Constants' );
+						await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+
+					}
+
+				} catch ( err ) {
+
+					reportLoadFailure( "Error Loading Model", err );
 
 				}
 
@@ -264,7 +288,15 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 					if ( defaultEnv?.url ) {
 
 						setLoading( { isLoading: true, title: "Starting", status: "Loading Environment...", progress: 90 } );
-						await app.loadEnvironment( defaultEnv.url );
+						try {
+
+							await app.loadEnvironment( defaultEnv.url );
+
+						} catch ( err ) {
+
+							reportLoadFailure( "Error Loading Environment", err );
+
+						}
 
 					}
 

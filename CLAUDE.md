@@ -469,6 +469,7 @@ scene is in, before the first frame, waiting at most `DEFAULT_COLOR_WAIT_MS` (2 
 after the first frames read as a colour jump. Past that, or if the fetch fails, the built-in AgX shows
 first. ⚠️ The app is `pause()`d from `init()` until then: every model, sky and config load resets, and
 a reset's `wake()` restarts rendering unless paused — without it 3 of 5 warm reloads drew the built-in look first.
+A failed default model or sky is reported and startup carries on, so the look still loads.
 The colour runtime's first use costs ~0.5 s of main thread on that path (0.85 → 1.45 s to first frame).
 ⚠️ Those files are GPL-3.0: they live on the CDN only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
 elsewhere with `VITE_COLOR_CONFIG_URL`.
