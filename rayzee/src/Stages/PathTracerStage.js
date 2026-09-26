@@ -922,7 +922,22 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! this._bvhRecords ) {
 
-			this.bvhStorageAttr.needsUpdate = true;
+			// Leaves sit in the TLAS at the front; needsUpdate would re-upload every BLAS too.
+			let lo = Infinity, hi = - 1;
+			for ( const leaf of this._dirtyBVHLeaves ?? [] ) {
+
+				if ( leaf < lo ) lo = leaf;
+				if ( leaf > hi ) hi = leaf;
+
+			}
+
+			if ( hi >= 0 ) {
+
+				this.bvhStorageAttr.addUpdateRange( lo * 16, ( hi - lo + 1 ) * 16 );
+				this.bvhStorageAttr.version ++;
+
+			}
+
 			this._dirtyBVHLeaves?.clear();
 			return;
 
