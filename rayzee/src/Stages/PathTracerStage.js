@@ -1013,6 +1013,8 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! attr ) return;
 		attr.array.set( data );
+		// A pending update range would cut this full upload down to that range.
+		attr.clearUpdateRanges();
 		attr.needsUpdate = true;
 
 	}
