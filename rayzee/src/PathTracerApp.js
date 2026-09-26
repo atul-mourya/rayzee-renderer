@@ -2873,10 +2873,11 @@ export class PathTracerApp extends EventDispatcher {
 		const table = this._sdf?.instanceTable;
 		if ( ! table ) return;
 
+		// The emitter list names meshes, the table placements.
 		const hidden = new Set();
 		for ( let i = 0; i < table.count; i ++ ) {
 
-			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( i );
+			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( table.sourceMesh[ i ] );
 
 		}
 
