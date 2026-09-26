@@ -20,7 +20,8 @@ import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
-import { traceShadowRay, calculateRayOffset } from './LightsDirect.js';
+import { traceShadowRay } from './LightsDirect.js';
+import { unpackHitFacet } from './HitFacet.js';
 import { traverseBVHShadow } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
@@ -56,7 +57,7 @@ import {
 	readTransparentCount,
 	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
-	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf,
+	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
@@ -283,6 +284,7 @@ export function buildShadeKernel( params ) {
 						envTotalSum, envCompensationDelta, envResolution,
 						enableEnvironmentLight,
 						tslBool( true ), // wantUnoccluded
+						planeN,
 					) ).toVar();
 
 					const lumShad = max( dot( dual.shadowed, REC709_LUMINANCE_COEFFICIENTS ), float( 0.0 ) );
@@ -930,8 +932,8 @@ export function buildShadeKernel( params ) {
 
 			throughput.mulAssign( interaction.throughput );
 
-			// Off the side the new ray leaves on: reflection stays, transmission and alpha skip cross.
-			const Ng = normalize( hitNormal );
+			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
+			const Ng = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) ).faceN;
 			const newOrigin = offsetRayOrigin( hitPoint, select( dot( Ng, interaction.direction ).lessThan( 0.0 ), Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
@@ -1061,6 +1063,8 @@ export function buildShadeKernel( params ) {
 		// face-forwarded geometric normal: horizon guard for NEE and the bounce continuation
 		const Ngeo = normalize( hitNormal );
 		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
+		// The facet on the viewer's side: every ray spawned from here is offset off it (HitFacet.js).
+		const facetN = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) ).faceN.toVar();
 
 		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
 		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
@@ -1175,6 +1179,7 @@ export function buildShadeKernel( params ) {
 			envTotalSum, envCompensationDelta, envResolution,
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
+			facetN,
 		) ).shadowed.toVar();
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
@@ -1230,7 +1235,7 @@ export function buildShadeKernel( params ) {
 							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
 								// Aimed at the sampled point and stopped a relative hair short, as for area lights.
-								const rayOrigin = offsetRayOrigin( hitPoint, NgeoFF );
+								const rayOrigin = offsetRayOrigin( hitPoint, facetN );
 								const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
 								const shadowDist = length( toSample ).toVar();
 								const visibility = traceShadowRayWrapped(
@@ -1278,7 +1283,7 @@ export function buildShadeKernel( params ) {
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 							triangleBuffer, bvhBuffer,
 							traceShadowRayWrapped,
-							calculateRayOffset,
+							Fn( ( [ p ] ) => offsetRayOrigin( p, facetN ).sub( p ) ),
 						);
 
 						currentRadiance.assign( vec4(
@@ -1352,7 +1357,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const newOrigin = offsetRayOrigin( hitPoint, select( dot( NgeoFF, bounceDir ).lessThan( 0.0 ), NgeoFF.negate(), NgeoFF ) );
+		const newOrigin = offsetRayOrigin( hitPoint, select( dot( facetN, bounceDir ).lessThan( 0.0 ), facetN.negate(), facetN ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );

@@ -17,6 +17,7 @@ import {
 	writeHitPacked,
 } from '../Processor/PackedRayBuffer.js';
 import { COUNTER, RAY_FLAG } from '../Processor/QueueManager.js';
+import { hitFacet, packHitFacet } from './HitFacet.js';
 
 const WG_SIZE = 256;
 
@@ -64,6 +65,11 @@ export function buildExtendKernel( params ) {
 			ray, bvhBuffer, triangleBuffer, insideMedium,
 		) ).toVar();
 
+		const facet = hitFacet( {
+			triangleBuffer, bvhBuffer, triIdx: hitInfo.triangleIndex, instanceLeaf: hitInfo.instanceLeaf,
+			smoothNormal: hitInfo.normal, viewDir: direction.negate(), didHit: hitInfo.didHit,
+		} );
+
 		writeHitPacked(
 			hitBufferRW, rayID,
 			hitInfo.dst,
@@ -73,6 +79,7 @@ export function buildExtendKernel( params ) {
 			uint( hitInfo.materialIndex ),
 			// Biased by one: leaf 0 is real, so 0 has to mean "no instance".
 			uint( hitInfo.instanceLeaf.add( int( 1 ) ) ),
+			packHitFacet( facet.faceN ),
 		);
 
 	} );

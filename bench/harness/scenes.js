@@ -1279,6 +1279,50 @@ for ( const [ id, seg ] of Object.entries( { 'furnace-lowpoly-16': 16, 'furnace-
 
 }
 
+// Foliage cards: fully transparent, crossed like a grass tuft, with the vertex normals such assets
+// ship — all pointing up, far from the vertical facets. The cards must vanish. Offsetting a
+// pass-through ray along that normal kept it in the card's own plane: it hit the same card again
+// until the transparent-bounce guard ended the path, and the cards drew black.
+SCENES.push( {
+	id: 'furnace-foliage-cards',
+	covers: 'white furnace — alpha pass-through on cards whose vertex normals point away from the facet (ray spawn off the facet, not the interpolated normal)',
+	spp: 64,
+	truthSpp: 512,
+	settings: { maxBounces: 4, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const clear = new DataTexture( new Uint8Array( 4 * 4 * 4 ), 4, 4, RGBAFormat );
+		clear.colorSpace = SRGBColorSpace;
+		clear.needsUpdate = true;
+
+		const group = new Group();
+		for ( let i = 0; i < 6; i ++ ) {
+
+			const geometry = new PlaneGeometry( 3.2, 3.2 );
+			const normals = geometry.attributes.normal;
+			for ( let v = 0; v < normals.count; v ++ ) normals.setXYZ( v, 0, 1, 0 );
+
+			// BLEND like a glTF foliage export, and MASK, alternately.
+			const card = new Mesh( geometry, new MeshPhysicalMaterial( {
+				map: clear, side: DoubleSide, roughness: 1, metalness: 0,
+				...( i % 2 ? { alphaTest: 0.5 } : { transparent: true } ),
+			} ) );
+			card.rotation.y = i * Math.PI / 6;
+			group.add( card );
+
+		}
+
+		await app.loadObject3D( group, 'furnace-foliage-cards' );
+		setCamera( app, [ 0, 0.9, 2.6 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
 // ── Analytic area light ──────────────────────────────────────────
 // Irradiance on a plane from a parallel Lambertian rectangle of uniform radiance L is E = π·L·F,
 // F the configuration factor. rectCornerFactor is the textbook differential-element-under-a-corner

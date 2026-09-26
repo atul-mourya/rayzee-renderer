@@ -794,12 +794,14 @@ export const calculateDirectLightingUnified = Fn( ( [
 	// Shadow catcher: when true, also accumulate the unoccluded (visibility=1) reference
 	// at every light/env site so the caller can form a shadow ratio. Dead path otherwise.
 	wantUnoccluded,
+	// The facet on the viewer's side, which shadow rays are offset off
+	facetNormal,
 ] ) => {
 
 	const totalContribution = vec3( 0.0 ).toVar();
 	// Unoccluded reference (visibility forced to 1) — only filled when wantUnoccluded.
 	const unoccludedContribution = vec3( 0.0 ).toVar();
-	const rayOrigin = offsetRayOrigin( hitPoint, geomNormal ).toVar();
+	const rayOrigin = offsetRayOrigin( hitPoint, facetNormal ).toVar();
 
 	// Binds BVH params so shadow-ray sites at varying call depths use a 3-arg call
 	const shadow = Fn( ( [ origin, dir, maxDist ] ) =>

@@ -281,12 +281,16 @@ export const readHitMaterialIndex = ( buf, id ) =>
 export const readHitInstanceLeaf = ( buf, id ) =>
 	int( buf.element( soa( id, HIT.NORMAL_MAT ) ).z ).sub( int( 1 ) );
 
-export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf ) => {
+/** Facet normal and terminator lift, packed by HitFacet.packHitFacet. */
+export const readHitFacet = ( buf, id ) =>
+	buf.element( soa( id, HIT.NORMAL_MAT ) ).w;
+
+export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf, facet = uint( 0 ) ) => {
 
 	buf.element( soa( id, HIT.DIST_TRI_BARY ) )
 		.assign( uvec4( floatBitsToUint( distance ), triIndex, floatBitsToUint( baryU ), floatBitsToUint( baryV ) ) );
 	buf.element( soa( id, HIT.NORMAL_MAT ) )
-		.assign( uvec4( packNormalOct( normal ), matIndex, instanceLeaf, uint( 0 ) ) );
+		.assign( uvec4( packNormalOct( normal ), matIndex, instanceLeaf, facet ) );
 
 };
 
