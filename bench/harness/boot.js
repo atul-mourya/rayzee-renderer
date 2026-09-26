@@ -686,7 +686,8 @@ async function upscaleRender( { outputWidth, outputHeight, samples } ) {
  *
  * `ToneMapGPU.js` exists because converting half floats in JavaScript costs more than the neural
  * upscale itself. It is a second implementation of `toneMapToRGBA8`, so it needs a check that fails
- * when the two drift — which nothing in the unit suite can do, since vitest has no GPU.
+ * when the two drift. `tests/gpu/toneMapParity.test.js` runs the same check on Dawn in Node; this
+ * one runs it on the browser's.
  *
  * Runs on the renderer's own device over a fixed HDR spread (deep shadow, mid grey, clipped
  * highlight, single-channel, negative) across every curve and a few exposure/saturation
@@ -783,7 +784,7 @@ async function toneMapParity() {
 
 	// Read from the registry rather than listed here, so a view baked from a colour config is
 	// checked too. That matters more than the built-ins: a table-backed transform samples a 3D
-	// texture in WGSL and interpolates it by hand, and vitest has no GPU to catch a mistake there.
+	// texture in WGSL and interpolates it by hand.
 	const CURVES = listViewTransforms().map( t => [ t.name, t.id ] );
 	const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
 

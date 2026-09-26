@@ -1,13 +1,30 @@
 import path from "path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const __dirname = path.resolve();
 
 export default defineConfig( {
 	test: {
 		globals: true,
-		environment: 'node',
-		include: [ 'tests/**/*.test.js' ],
+		projects: [
+			{
+				extends: true,
+				test: {
+					name: 'unit',
+					environment: 'node',
+					include: [ 'tests/**/*.test.js' ],
+					exclude: [ ...configDefaults.exclude, 'tests/gpu/**' ],
+				},
+			},
+			{
+				extends: true,
+				test: {
+					name: 'gpu',
+					environment: './tests/gpu/environment.js',
+					include: [ 'tests/gpu/**/*.test.js' ],
+				},
+			},
+		],
 		coverage: {
 			provider: 'v8',
 			reporter: [

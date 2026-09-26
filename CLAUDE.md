@@ -33,6 +33,12 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 
 ### Testing
 - `npm test` - Run Vitest from root
+- `tests/gpu/` (Vitest project `gpu`) runs on the real GPU in Node through Dawn — the `webgpu`
+  package, the same WebGPU implementation Chrome ships. `evaluate()` in `tests/gpu/gpu.js` runs a TSL
+  function per element and returns the buffer, so a shader function or a CPU/GPU twin is tested in
+  milliseconds. Skipped on CI (no Vulkan driver there); on a workstation a missing adapter fails the
+  run. ⚠️ Dawn segfaults the process if its `create()` result is garbage-collected while a device
+  lives — `tests/gpu/environment.js` holds it for that reason.
 
 ### Regression Bench (`bench/`)
 Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
@@ -603,8 +609,8 @@ guarantees 16 sampled textures per stage.
 - EdgeAware filtering disabled when ASVGF enabled
 - Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
 - ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
-  bug-compatible with it, rounding included. `bench:upscale` checks the two against each other on a
-  real device before anything else, because vitest has no GPU.
+  bug-compatible with it, rounding included. `tests/gpu/toneMapParity.test.js` checks the two on
+  Dawn in Node, and `bench:upscale` again in Chrome before anything else.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
@@ -710,3 +716,4 @@ Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro wit
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag (`normalCData.w`).
+13. **Partial storage uploads**: three.js uploads an attribute whole only when its `updateRanges` is empty — any pending `addUpdateRange` cuts a later `needsUpdate = true` down to that range. Full uploads therefore clear ranges first (`PathTracerStage._updateStorageBuffer`). Without that, the TLAS-leaf range a visibility patch leaves at load swallowed the refit that followed it (`refit-deform` read +16.6 %).
