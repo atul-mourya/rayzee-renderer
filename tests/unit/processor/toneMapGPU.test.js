@@ -54,7 +54,7 @@ describe( 'TONE_MAP_WGSL', () => {
 	it( 'keeps the half-level rounding the CPU readback has always had', () => {
 
 		// `toneMapToRGBA8` writes `srgb * 255 + 0.5` into a Uint8ClampedArray, which rounds again.
-		// Dropping the extra half here would shift every DLSS image against the OIDN and
+		// Dropping the extra half here would shift every neural-pass image against the OIDN and
 		// Real-ESRGAN readbacks, which still go through the CPU function.
 		expect( TONE_MAP_WGSL ).toContain( 'round( srgb * 255.0 + vec3<f32>( 0.5 ) )' );
 

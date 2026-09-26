@@ -4,9 +4,9 @@ import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
 import { createLogger } from '../utils/Logger.js';
 
-// The neural passes live in `../dlss/` but report through the manager that drives them, so they
-// share one namespace: `rayzee.log.only( 'dlss' )` shows the whole chain.
-const dlssLog = createLogger( 'dlss' );
+// The neural passes live in `../neural/` but report through the manager that drives them, so they
+// share one namespace: `rayzee.log.only( 'neural' )` shows the whole chain.
+const neuralLog = createLogger( 'neural' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
@@ -112,16 +112,16 @@ export class DenoisingManager extends EventDispatcher {
 
 		this.denoiser = null;
 		this.upscaler = null;
-		// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'dlss' is the neural
+		// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'neural' is the neural
 		// super-resolution pass, which is fixed at 2x and needs a denoised source.
 		this.upscalerBackend = 'esrgan';
-		this._dlssUpscaler = null;
+		this._neuralUpscaler = null;
 		// The neural-rendering (detail) pass is independent of the upscaler: it changes appearance,
 		// not resolution, and runs last because its result cannot be read back.
 		this.neuralRendering = false;
 		this.neuralRenderingSettings = {};
-		this._dlssNeural = null;
-		this._dlssModule = null;
+		this._retouch = null;
+		this._superResModule = null;
 		this._neuralPostBusy = false;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
@@ -818,20 +818,20 @@ export class DenoisingManager extends EventDispatcher {
 	}
 
 	/**
-	 * Selects the AI upscaler's model. 'dlss' is fixed at 2x and reads the denoised picture, so it
+	 * Selects the AI upscaler's model. 'neural' is fixed at 2x and reads the denoised picture, so it
 	 * is a no-op without a denoiser — feeding it raw Monte-Carlo noise measurably loses to bilinear.
 	 *
-	 * @param {'esrgan'|'dlss'} backend
+	 * @param {'esrgan'|'neural'} backend
 	 */
 	setUpscalerBackend( backend ) {
 
-		const next = backend === 'dlss' ? 'dlss' : 'esrgan';
+		const next = backend === 'neural' ? 'neural' : 'esrgan';
 		if ( next === this.upscalerBackend ) return;
 
 		this.upscalerBackend = next;
 		// Whatever is on screen came from the model being switched away from.
 		this._restoreRenderDisplay();
-		if ( next !== 'dlss' ) this._releaseDLSSUpscaler();
+		if ( next !== 'neural' ) this._releaseNeuralUpscaler();
 
 	}
 
@@ -861,15 +861,15 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
-	_releaseDLSSUpscaler() {
+	_releaseNeuralUpscaler() {
 
-		this._dlssUpscaler?.dispose();
-		this._dlssUpscaler = null;
+		this._neuralUpscaler?.dispose();
+		this._neuralUpscaler = null;
 
 		// The frame packer lives on the module, not on the upscaler, and holds two buffers the size
 		// of the render. Nothing else reaches it, so this is its only release point. Guarded on the
 		// module having been loaded, so a teardown never pulls in 1 MB of runtime to call a no-op.
-		this._dlssModule?.releaseDenoisedReader();
+		this._superResModule?.releaseDenoisedReader();
 
 	}
 
@@ -880,17 +880,17 @@ export class DenoisingManager extends EventDispatcher {
 		if ( settings ) this.neuralRenderingSettings = { ...this.neuralRenderingSettings, ...settings };
 		if ( ! this.neuralRendering ) {
 
-			this._releaseDLSSNeural();
+			this._releaseNeuralRetouch();
 			this._restoreRenderDisplay();
 
 		}
 
 	}
 
-	_releaseDLSSNeural() {
+	_releaseNeuralRetouch() {
 
-		this._dlssNeural?.dispose();
-		this._dlssNeural = null;
+		this._retouch?.dispose();
+		this._retouch = null;
 
 	}
 
@@ -908,7 +908,7 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	async _runNeuralPost( isStillComplete ) {
 
-		const wantSR = this.upscaler?.enabled && this.upscalerBackend === 'dlss';
+		const wantSR = this.upscaler?.enabled && this.upscalerBackend === 'neural';
 		const wantNR = this.neuralRendering;
 		if ( ! wantSR && ! wantNR ) return;
 
@@ -918,14 +918,14 @@ export class DenoisingManager extends EventDispatcher {
 
 		if ( ! this.upscalerCanvas ) {
 
-			dlssLog.warn( 'neural pass skipped: the engine has no overlay canvas to present on' );
+			neuralLog.warn( 'neural pass skipped: the engine has no overlay canvas to present on' );
 			return;
 
 		}
 
 		if ( ! this.pipeline?.context?.getTexture( 'oidn:output' ) ) {
 
-			dlssLog.warn( 'neural pass skipped: no denoised picture — it needs OIDN' );
+			neuralLog.warn( 'neural pass skipped: no denoised picture — it needs OIDN' );
 			return;
 
 		}
@@ -935,26 +935,26 @@ export class DenoisingManager extends EventDispatcher {
 
 		try {
 
-			const sr = await import( '../dlss/DLSSSuperRes.js' );
-			this._dlssModule = sr;
+			const sr = await import( '../neural/NeuralSuperRes.js' );
+			this._superResModule = sr;
 
 			// The detail pass has a size ceiling — above it a run takes minutes and then loses every GPU
 			// device in the page. Running it FIRST is what keeps it under: at render size it sees a
 			// quarter of the pixels it would after a 2x upscale, and the render reserve already caps
 			// that at 2048. The check stays as a floor under a raised reserve.
-			const nrModule = wantNR ? await import( '../dlss/DLSSNeural.js' ) : null;
+			const nrModule = wantNR ? await import( '../neural/NeuralRetouch.js' ) : null;
 			const srcSize = this.denoiser?._outTexSize;
 			const nrPixels = ( srcSize?.width ?? 0 ) * ( srcSize?.height ?? 0 );
-			const runNR = wantNR && nrPixels <= nrModule.DLSS_NR_MAX_PIXELS;
+			const runNR = wantNR && nrPixels <= nrModule.RETOUCH_MAX_PIXELS;
 
 			if ( wantNR && ! runNR ) {
 
-				dlssLog.warn(
+				neuralLog.warn(
 					`Neural rendering skipped: the render is ${( nrPixels / 1e6 ).toFixed( 1 )} MP, above the ` +
-					`${( nrModule.DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP the pass survives.` +
+					`${( nrModule.RETOUCH_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP the pass survives.` +
 					( wantSR ? ' The upscale still ran.' : '' )
 				);
-				this._releaseDLSSNeural();
+				this._releaseNeuralRetouch();
 
 			}
 
@@ -975,16 +975,16 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( wantSR ) {
 
-				if ( this._dlssUpscaler
-					&& ( this._dlssUpscaler.inputWidth !== source.width || this._dlssUpscaler.inputHeight !== source.height ) ) {
+				if ( this._neuralUpscaler
+					&& ( this._neuralUpscaler.inputWidth !== source.width || this._neuralUpscaler.inputHeight !== source.height ) ) {
 
-					this._releaseDLSSUpscaler();
+					this._releaseNeuralUpscaler();
 
 				}
 
-				if ( ! this._dlssUpscaler ) {
+				if ( ! this._neuralUpscaler ) {
 
-					this._dlssUpscaler = await sr.DLSSSuperRes.create( { width: source.width, height: source.height } );
+					this._neuralUpscaler = await sr.NeuralSuperRes.create( { width: source.width, height: source.height } );
 
 				}
 
@@ -993,23 +993,23 @@ export class DenoisingManager extends EventDispatcher {
 			let image = source;
 
 			// Detail first, upscale second. The detail pass hands back scene-referred light (see
-			// `app/public/dlss/PATCHES.md`), so the upscaler still gets the linear HDR it expects —
+			// the runtime's `rayzee-patch` edits), so the upscaler still gets the linear HDR it expects —
 			// which is what makes this order possible at all.
 			if ( runNR ) {
 
 				const result = await nrModule.enhanceFrame( {
 					source: image,
 					settings: this.neuralRenderingSettings,
-					instance: this._dlssNeural,
+					instance: this._retouch,
 					exposure: tone.exposure,
 					tone: wantSR ? null : tone,
 				} );
-				this._dlssNeural = result.instance;
+				this._retouch = result.instance;
 				image = result;
 
 			}
 
-			if ( wantSR ) image = await this._dlssUpscaler.upscaleToRGBA8( image, tone );
+			if ( wantSR ) image = await this._neuralUpscaler.upscaleToRGBA8( image, tone );
 
 			if ( ! isStillComplete() ) {
 
@@ -1038,7 +1038,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		} catch ( error ) {
 
-			dlssLog.warn( 'neural pass failed', error );
+			neuralLog.warn( 'neural pass failed', error );
 
 		} finally {
 
@@ -1074,7 +1074,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			// One owner of the overlay canvas, so the neural chain and the ONNX upscaler are
 			// exclusive. The neural chain also runs on its own when only its detail pass is on.
-			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'dlss' ) ) {
+			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'neural' ) ) {
 
 				this._runNeuralPost( isStillComplete );
 				return;
@@ -1198,8 +1198,8 @@ export class DenoisingManager extends EventDispatcher {
 		// Remove pending completion-chain listener
 		this._cleanupCompletionListener();
 		// Owns a second GPUDevice plus 3 MB of weights, so it must not outlive the manager.
-		this._releaseDLSSUpscaler();
-		this._releaseDLSSNeural();
+		this._releaseNeuralUpscaler();
+		this._releaseNeuralRetouch();
 
 		// Before the denoiser destroys the picture the Compositor would otherwise still sample.
 		this._unpublishOutput();
@@ -1222,10 +1222,10 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this._upscalerEndHandler ) this.upscaler.removeEventListener( 'end', this._upscalerEndHandler );
 			this.upscaler.dispose();
 			this.upscaler = null;
-			// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'dlss' is the neural
+			// Which model the AI upscaler runs. 'esrgan' is the ONNX chain; 'neural' is the neural
 			// super-resolution pass, which is fixed at 2x and needs a denoised source.
 			this.upscalerBackend = 'esrgan';
-			this._dlssUpscaler = null;
+			this._neuralUpscaler = null;
 
 		}
 

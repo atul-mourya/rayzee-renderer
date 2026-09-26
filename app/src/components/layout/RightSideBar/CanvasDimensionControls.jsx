@@ -31,8 +31,8 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 	const panorama = isPanorama( cameraProjection );
 
 	// The delivered image, not the traced one: an upscaler enlarges the result, so reporting the
-	// render size here left the panel disagreeing with the picture on screen. DLSS is a fixed 2x.
-	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'dlss' ? SR_SCALE : upscalerScale ) : 1;
+	// render size here left the panel disagreeing with the picture on screen. Neural super resolution is a fixed 2x.
+	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'neural' ? SR_SCALE : upscalerScale ) : 1;
 	const outputWidth = canvasWidth * upscaleFactor;
 	const outputHeight = canvasHeight * upscaleFactor;
 	const showOrientation = aspectRatioPreset !== '1:1';

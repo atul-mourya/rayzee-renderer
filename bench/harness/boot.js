@@ -38,7 +38,7 @@ if ( typeof GPUDevice !== 'undefined' ) {
 
 		// `device` is kept so the audit can ignore modules that are not the engine's. The patch is on
 		// the prototype, so it also catches every module built on any OTHER device the page creates —
-		// the DLSS super-resolution runtime brings its own. Asking a foreign (and possibly destroyed)
+		// the neural super-resolution runtime brings its own. Asking a foreign (and possibly destroyed)
 		// device's module for compilation info leaves a promise that never settles, which surfaced as
 		// `Runtime.callFunctionOn timed out` at the end of a run where every gate had already passed.
 		const record = {
@@ -635,7 +635,7 @@ async function profileModelLoad( url ) {
 
 /** Composited, tone-mapped output as a PNG data URL — what a human would see. */
 /**
- * Renders through the DLSS super-resolution path: traces at half the requested size, denoises, and
+ * Renders through the neural super-resolution path: traces at half the requested size, denoises, and
  * reconstructs to full size. Returns a PNG so the runner can reuse the image metrics.
  *
  * Fetches a ~3.5 MB model over the network, so this is opt-in and never part of the default suite.

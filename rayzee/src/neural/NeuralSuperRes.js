@@ -1,5 +1,5 @@
 /**
- * DLSS Super Resolution — final-render output scaling.
+ * Neural super resolution — final-render output scaling.
  *
  * Traces at half resolution, denoises, then runs one neural upscale to reach the
  * requested output size. On a 1.89M-triangle interior at 32 spp this matched a
@@ -35,7 +35,7 @@ import { getAssetConfig } from '../AssetConfig.js';
 /** The network is a fixed 2x per axis. */
 export const SR_SCALE = 2;
 
-const log = createLogger( 'dlss' );
+const log = createLogger( 'neural' );
 
 /**
  * Largest input side the runtime actually survives — 2048, i.e. 4096 output.
@@ -63,24 +63,25 @@ function loadRuntime() {
 
 	if ( _runtimePromise ) return _runtimePromise;
 
-	const { dlssRuntimeUrl, dlssAssetBaseUrl } = getAssetConfig();
-	globalThis.__DLSS5_ASSET_BASE__ = dlssAssetBaseUrl;
+	const { neuralRuntimeUrl, neuralAssetBaseUrl } = getAssetConfig();
+	if ( ! neuralAssetBaseUrl ) return Promise.reject( new Error( 'No neural model location: set neuralAssetBaseUrl with configureAssets()' ) );
+	globalThis.__NEURAL_ASSET_BASE__ = neuralAssetBaseUrl;
 
 	_runtimePromise = new Promise( ( resolve, reject ) => {
 
-		if ( globalThis.DLSSRuntime?.getNativeSR ) return resolve( globalThis.DLSSRuntime.getNativeSR() );
+		if ( globalThis.NeuralRuntime?.getNativeSR ) return resolve( globalThis.NeuralRuntime.getNativeSR() );
 
 		const el = document.createElement( 'script' );
-		el.src = dlssRuntimeUrl;
+		el.src = neuralRuntimeUrl;
 		el.onload = () => {
 
-			const factory = globalThis.DLSSRuntime?.getNativeSR;
-			if ( ! factory ) return reject( new Error( 'DLSS runtime loaded but exposed no super-resolution entry' ) );
+			const factory = globalThis.NeuralRuntime?.getNativeSR;
+			if ( ! factory ) return reject( new Error( 'Neural runtime loaded but exposed no super-resolution entry' ) );
 			resolve( factory() );
 
 		};
 
-		el.onerror = () => reject( new Error( `Failed to load the DLSS runtime from ${dlssRuntimeUrl}` ) );
+		el.onerror = () => reject( new Error( `Failed to load the neural runtime from ${neuralRuntimeUrl}` ) );
 		document.head.appendChild( el );
 
 	} );
@@ -126,20 +127,20 @@ function ensureReader( device, width, height ) {
 		width,
 		height,
 		storage: device.createBuffer( {
-			label: 'rayzee:dlss-sr-pack',
+			label: 'rayzee:neural-sr-pack',
 			size: bytes,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
 		} ),
 		map: device.createBuffer( {
-			label: 'rayzee:dlss-sr-pack-map',
+			label: 'rayzee:neural-sr-pack-map',
 			size: bytes,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
 		} ),
 		pipeline: device.createComputePipeline( {
-			label: 'rayzee:dlss-sr-pack',
+			label: 'rayzee:neural-sr-pack',
 			layout: 'auto',
 			compute: {
-				module: device.createShaderModule( { label: 'rayzee:dlss-sr-pack', code: DENOISED_PACK_WGSL } ),
+				module: device.createShaderModule( { label: 'rayzee:neural-sr-pack', code: DENOISED_PACK_WGSL } ),
 				entryPoint: 'main',
 			},
 		} ),
@@ -171,7 +172,7 @@ export function releaseDenoisedReader() {
 export async function readDenoisedHalf( denoiser ) {
 
 	const texture = denoiser?._outGPUTexture;
-	if ( ! texture ) throw new Error( 'DLSSSuperRes: no denoised frame — enable OIDN and finish a render first' );
+	if ( ! texture ) throw new Error( 'NeuralSuperRes: no denoised frame — enable OIDN and finish a render first' );
 
 	const device = denoiser.gpuDevice;
 	const { width, height } = denoiser._outTexSize;
@@ -184,7 +185,7 @@ export async function readDenoisedHalf( denoiser ) {
 		],
 	} );
 
-	const encoder = device.createCommandEncoder( { label: 'rayzee:dlss-sr-pack' } );
+	const encoder = device.createCommandEncoder( { label: 'rayzee:neural-sr-pack' } );
 	const pass = encoder.beginComputePass();
 	pass.setPipeline( reader.pipeline );
 	pass.setBindGroup( 0, group );
@@ -201,7 +202,7 @@ export async function readDenoisedHalf( denoiser ) {
 
 }
 
-export class DLSSSuperRes {
+export class NeuralSuperRes {
 
 	constructor( sr, canvas ) {
 
@@ -255,14 +256,14 @@ export class DLSSSuperRes {
 
 		if ( ! Number.isInteger( width ) || ! Number.isInteger( height ) || width < 1 || height < 1 ) {
 
-			throw new Error( 'DLSSSuperRes.create: width and height must be positive integers' );
+			throw new Error( 'NeuralSuperRes.create: width and height must be positive integers' );
 
 		}
 
 		if ( width > SR_MAX_INPUT || height > SR_MAX_INPUT ) {
 
 			throw new Error(
-				`DLSSSuperRes.create: input capped at ${SR_MAX_INPUT}px per side (${SR_MAX_INPUT * SR_SCALE}px output), ` +
+				`NeuralSuperRes.create: input capped at ${SR_MAX_INPUT}px per side (${SR_MAX_INPUT * SR_SCALE}px output), ` +
 				`got ${width}x${height}. Above that the runtime's history plane exceeds maxTextureDimension2D ` +
 				'and it fails later with an unrelated bind-group error.'
 			);
@@ -287,7 +288,7 @@ export class DLSSSuperRes {
 
 		}
 
-		const instance = new DLSSSuperRes( sr, canvas );
+		const instance = new NeuralSuperRes( sr, canvas );
 		instance._allocate();
 		return instance;
 
@@ -306,13 +307,13 @@ export class DLSSSuperRes {
 	/** Runs the network once over a frame already in its own layout, as `readDenoisedHalf` returns. */
 	async _run( source ) {
 
-		if ( this.disposed ) throw new Error( 'DLSSSuperRes: disposed' );
+		if ( this.disposed ) throw new Error( 'NeuralSuperRes: disposed' );
 
 		const w = this.inputWidth;
 		const h = this.inputHeight;
 		if ( source.width !== w || source.height !== h ) {
 
-			throw new Error( `DLSSSuperRes: expected a ${w}x${h} source, got ${source.width}x${source.height}` );
+			throw new Error( `NeuralSuperRes: expected a ${w}x${h} source, got ${source.width}x${source.height}` );
 
 		}
 
@@ -320,7 +321,7 @@ export class DLSSSuperRes {
 		if ( ! source.half || source.half.length !== color.length ) {
 
 			throw new Error(
-				`DLSSSuperRes: expected ${color.length} packed halfs from readDenoisedHalf, got ${source.half?.length}`
+				`NeuralSuperRes: expected ${color.length} packed halfs from readDenoisedHalf, got ${source.half?.length}`
 			);
 
 		}
@@ -364,7 +365,7 @@ export class DLSSSuperRes {
 		const { result, ms } = await this._run( source );
 		const { outputWidth, outputHeight } = this.geometry;
 
-		this._toneMapper ??= new PackedToneMapper( this.sr.device, 'rayzee:dlss-sr-tonemap' );
+		this._toneMapper ??= new PackedToneMapper( this.sr.device, 'rayzee:neural-sr-tonemap' );
 		this._toneMapper.ensureSize( outputWidth, outputHeight );
 
 		const started = performance.now();
@@ -436,7 +437,7 @@ function waitForDenoise( app, samples, timeoutMs ) {
 		}, 200 );
 
 		const timer = setTimeout(
-			() => finish( false, new Error( 'DLSSSuperRes: timed out waiting for the render to finish' ) ),
+			() => finish( false, new Error( 'NeuralSuperRes: timed out waiting for the render to finish' ) ),
 			timeoutMs,
 		);
 
@@ -453,7 +454,7 @@ function waitForDenoise( app, samples, timeoutMs ) {
  * @param {number}  opts.outputWidth   final width; must be even
  * @param {number}  opts.outputHeight  final height; must be even
  * @param {number}  [opts.samples]     samples to accumulate at half resolution
- * @param {DLSSSuperRes} [opts.upscaler] reuse an upscaler already built for this size
+ * @param {NeuralSuperRes} [opts.upscaler] reuse an upscaler already built for this size
  * @param {boolean} [opts.present]  draw the result over the viewport
  * @returns {Promise<{rgba8: Uint8ClampedArray, width: number, height: number, timings: object}>}
  */
@@ -495,7 +496,7 @@ export async function renderUpscaled( app, {
 
 			const t = performance.now();
 			onProgress( 'Loading the super-resolution model' );
-			sr = await DLSSSuperRes.create( { width: inW, height: inH, onProgress } );
+			sr = await NeuralSuperRes.create( { width: inW, height: inH, onProgress } );
 			timings.load = performance.now() - t;
 
 		} else if ( sr.inputWidth !== inW || sr.inputHeight !== inH ) {

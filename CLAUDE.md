@@ -581,31 +581,9 @@ guarantees 16 sampled textures per stage.
   denoised the image twice and raced the renderer's output-pass rebuild.
 - EdgeAware filtering disabled when ASVGF enabled
 - Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
-
-### Neural post passes (`rayzee/src/dlss/`)
-Two DLSS ports that run **once, when a render completes**, on the hook `DenoisingManager.onRenderComplete`
-already provided for the ONNX upscaler — not on a cadence. Both are off by default and both need a
-denoised frame; on raw Monte-Carlo noise they measurably lose to a plain resize, so the app disables
-their switches unless `Final Denoise (OIDN)` is on.
-- **Super resolution** (`DLSSSuperRes.js`) is a second *backend* of the existing AI Upscaler
-  (`denoisingManager.upscalerBackend`, `'esrgan' | 'dlss'`), fixed at 2x. **Retouch**
-  (`DLSSNeural.js`) changes appearance, not resolution, and is its own switch.
-- Order is **denoise → retouch (at render size) → super resolution (2x) → tone map**, scene-referred
-  throughout. The retouch pass runs *first* deliberately: above `DLSS_NR_MAX_PIXELS` (4.19 MP) it
-  takes minutes and then **loses every GPU device in the page**, and at render size it is a quarter
-  of the pixels it would see after the upscale.
-- ⚠️ Every crossing of the CPU boundary is a compute pass — `readDenoisedHalf` packs the denoised
-  frame on the renderer's device, results leave a model's device as display bytes or packed halves.
-  Converting in JS cost more than the network itself at production sizes. **Do not reintroduce a
-  linear-float path**; `Processor/ToneMapGPU.js` is the GPU tone curve these read back through.
-- ⚠️ `ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay bug-compatible with
-  it, rounding included. `bench:upscale` gates the two against each other on a real device, because
-  vitest has no GPU.
-- ⚠️ Each model brings **its own `GPUDevice`**, not shareable. With both on the page holds three.
-- ⚠️ `app/public/dlss/dlss-runtime.js` is a **vendored, patched** bundle. The edits are marked
-  `rayzee-patch` and written up in `app/public/dlss/PATCHES.md`; re-vendoring without re-applying
-  them breaks the retouch pass. Its URL is `AssetConfig.dlssRuntimeUrl` — a plain script the host
-  serves, since it installs `globalThis.DLSSRuntime` and cannot be imported.
+- ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
+  bug-compatible with it, rounding included. `bench:upscale` checks the two against each other on a
+  real device before anything else, because vitest has no GPU.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction

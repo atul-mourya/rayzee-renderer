@@ -1,5 +1,5 @@
 /**
- * DLSS-NR — the neural-rendering (detail) pass.
+ * Retouch — the neural-rendering (detail) pass.
  *
  * Runs over a finished, denoised image and adjusts its appearance: local tone and structure, and a
  * skin-specific term. It does not change resolution and it does not denoise. Measured on path-traced
@@ -36,7 +36,7 @@ import { getAssetConfig } from '../AssetConfig.js';
  * The model's own settings contract. Every field is numeric and validated hard by the runtime —
  * passing a string throws `"<name> must be finite"`.
  */
-export const DLSS_NR_DEFAULTS = Object.freeze( {
+export const RETOUCH_DEFAULTS = Object.freeze( {
 	enabled: true,
 	intensity: 1,
 	localTone: 1,
@@ -52,7 +52,7 @@ export const DLSS_NR_DEFAULTS = Object.freeze( {
  * How much of the network's own colour to take, 0..1. Ours, not the runtime's.
  *
  * ⚠️ It must be kept OUT of the object handed to the runtime: that one is validated by key and
- * throws `Unknown DLSS-NR setting: colorStrength`. `splitSettings` does the separating.
+ * throws `Unknown Retouch setting: colorStrength`. `splitSettings` does the separating.
  *
  * It is `color_strength` in the composition kernel, blending between the original chroma relit to
  * the network's luminance (`original * ratio`, at 0) and the network's full colour (at 1). At 0 the
@@ -65,13 +65,13 @@ export const DLSS_NR_DEFAULTS = Object.freeze( {
  * are the same at all three, so nothing the pass is actually for is given up. The renderer's chroma
  * is ground truth here; the network's is a guess about a photograph.
  */
-export const DLSS_NR_COLOR_STRENGTH = 0;
+export const RETOUCH_COLOR_STRENGTH = 0;
 
 /** @returns {{runtime: object, colorStrength: number}} */
 function splitSettings( settings = {} ) {
 
-	const { colorStrength = DLSS_NR_COLOR_STRENGTH, ...rest } = settings;
-	return { runtime: { ...DLSS_NR_DEFAULTS, ...rest }, colorStrength };
+	const { colorStrength = RETOUCH_COLOR_STRENGTH, ...rest } = settings;
+	return { runtime: { ...RETOUCH_DEFAULTS, ...rest }, colorStrength };
 
 }
 
@@ -95,12 +95,12 @@ function splitSettings( settings = {} ) {
  * reserve (`MAX_STORAGE_TEXTURE_SIZE`, 2048) already caps that at exactly 4.19 MP. The check below
  * is therefore unreachable today and exists as a floor under a raised reserve.
  */
-const log = createLogger( 'dlss' );
+const log = createLogger( 'neural' );
 
-export const DLSS_NR_MAX_PIXELS = 2048 * 2048;
+export const RETOUCH_MAX_PIXELS = 2048 * 2048;
 
 /** Ranges the runtime clamps to. `skinStructure: -1` means "follow localStructure". */
-export const DLSS_NR_RANGES = Object.freeze( {
+export const RETOUCH_RANGES = Object.freeze( {
 	intensity: [ 0, 1 ],
 	localTone: [ 0, 2 ],
 	localStructure: [ 0, 2 ],
@@ -112,31 +112,32 @@ export const DLSS_NR_RANGES = Object.freeze( {
 let _runtimePromise = null;
 
 /**
- * The runtime is a plain script that installs `globalThis.DLSSRuntime`, not a module, so it has to
+ * The runtime is a plain script that installs `globalThis.NeuralRuntime`, not a module, so it has to
  * be injected rather than imported. Cached: a second tag would re-run a 1 MB bundle.
  */
 function loadRuntime() {
 
 	if ( _runtimePromise ) return _runtimePromise;
 
-	const { dlssRuntimeUrl, dlssAssetBaseUrl } = getAssetConfig();
-	globalThis.__DLSS5_ASSET_BASE__ = dlssAssetBaseUrl;
+	const { neuralRuntimeUrl, neuralAssetBaseUrl } = getAssetConfig();
+	if ( ! neuralAssetBaseUrl ) return Promise.reject( new Error( 'No neural model location: set neuralAssetBaseUrl with configureAssets()' ) );
+	globalThis.__NEURAL_ASSET_BASE__ = neuralAssetBaseUrl;
 
 	_runtimePromise = new Promise( ( resolve, reject ) => {
 
-		if ( globalThis.DLSSRuntime?.getSrNrChain ) return resolve( globalThis.DLSSRuntime.getSrNrChain() );
+		if ( globalThis.NeuralRuntime?.getSrNrChain ) return resolve( globalThis.NeuralRuntime.getSrNrChain() );
 
 		const el = document.createElement( 'script' );
-		el.src = dlssRuntimeUrl;
+		el.src = neuralRuntimeUrl;
 		el.onload = () => {
 
-			const factory = globalThis.DLSSRuntime?.getSrNrChain;
-			if ( ! factory ) return reject( new Error( 'DLSS runtime loaded but exposed no neural-rendering entry' ) );
+			const factory = globalThis.NeuralRuntime?.getSrNrChain;
+			if ( ! factory ) return reject( new Error( 'Neural runtime loaded but exposed no retouch entry' ) );
 			resolve( factory() );
 
 		};
 
-		el.onerror = () => reject( new Error( `Failed to load the DLSS runtime from ${dlssRuntimeUrl}` ) );
+		el.onerror = () => reject( new Error( `Failed to load the neural runtime from ${neuralRuntimeUrl}` ) );
 		document.head.appendChild( el );
 
 	} );
@@ -183,7 +184,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
  * Holds a GPUDevice of its own (the runtime builds it) plus ~140 MB of weights, so it must be
  * disposed rather than dropped.
  */
-export class DLSSNeural {
+export class NeuralRetouch {
 
 	constructor( chain, canvas ) {
 
@@ -232,15 +233,15 @@ export class DLSSNeural {
 
 		if ( ! Number.isInteger( width ) || ! Number.isInteger( height ) || width < 1 || height < 1 ) {
 
-			throw new Error( 'DLSSNeural.create: width and height must be positive integers' );
+			throw new Error( 'NeuralRetouch.create: width and height must be positive integers' );
 
 		}
 
-		if ( width * height > DLSS_NR_MAX_PIXELS ) {
+		if ( width * height > RETOUCH_MAX_PIXELS ) {
 
 			throw new Error(
-				`DLSSNeural.create: ${width}x${height} is ${( width * height / 1e6 ).toFixed( 1 )} MP, above the ` +
-				`${( DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP this pass survives. Past it the run takes minutes ` +
+				`NeuralRetouch.create: ${width}x${height} is ${( width * height / 1e6 ).toFixed( 1 )} MP, above the ` +
+				`${( RETOUCH_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP this pass survives. Past it the run takes minutes ` +
 				'and then loses every GPU device in the page.'
 			);
 
@@ -256,7 +257,7 @@ export class DLSSNeural {
 			surface, width, height, onProgress, splitSettings( settings ).runtime,
 		);
 
-		const instance = new DLSSNeural( chain, surface );
+		const instance = new NeuralRetouch( chain, surface );
 		instance._allocate();
 		return instance;
 
@@ -267,7 +268,7 @@ export class DLSSNeural {
 		const { validWidth, validHeight } = this.chain.pipeline.geometry;
 
 		this.source = this.device.createBuffer( {
-			label: 'rayzee:dlss-nr-source',
+			label: 'rayzee:retouch-source',
 			size: validWidth * validHeight * 8,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 		} );
@@ -276,34 +277,34 @@ export class DLSSNeural {
 
 		const bytes = validWidth * validHeight * 4;
 		this._readbackStorage = this.device.createBuffer( {
-			label: 'rayzee:dlss-nr-readback',
+			label: 'rayzee:retouch-readback',
 			size: bytes,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
 		} );
 		this._readbackMap = this.device.createBuffer( {
-			label: 'rayzee:dlss-nr-readback-map',
+			label: 'rayzee:retouch-readback-map',
 			size: bytes,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
 		} );
 		this._readbackPipeline = this.device.createComputePipeline( {
-			label: 'rayzee:dlss-nr-readback',
+			label: 'rayzee:retouch-readback',
 			layout: 'auto',
 			compute: { module: this.device.createShaderModule( { code: READBACK_WGSL } ), entryPoint: 'main' },
 		} );
 
 		const hdrBytes = validWidth * validHeight * 8;
 		this._hdrStorage = this.device.createBuffer( {
-			label: 'rayzee:dlss-nr-hdr',
+			label: 'rayzee:retouch-hdr',
 			size: hdrBytes,
 			usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
 		} );
 		this._hdrMap = this.device.createBuffer( {
-			label: 'rayzee:dlss-nr-hdr-map',
+			label: 'rayzee:retouch-hdr-map',
 			size: hdrBytes,
 			usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
 		} );
 		this._hdrPipeline = this.device.createComputePipeline( {
-			label: 'rayzee:dlss-nr-hdr',
+			label: 'rayzee:retouch-hdr',
 			layout: 'auto',
 			compute: { module: this.device.createShaderModule( { code: HDR_READBACK_WGSL } ), entryPoint: 'main' },
 		} );
@@ -317,8 +318,8 @@ export class DLSSNeural {
 		if ( ! texture ) {
 
 			throw new Error(
-				'DLSSNeural: the runtime has no scene-referred output. Either no frame has been produced yet, '
-				+ 'or dlss-runtime.js was re-vendored without the patch described in its PATCHES.md.'
+				'NeuralRetouch: the runtime has no scene-referred output. Either no frame has been produced yet, '
+				+ 'or neural-runtime.js was re-vendored without its `rayzee-patch` edits.'
 			);
 
 		}
@@ -331,7 +332,7 @@ export class DLSSNeural {
 			],
 		} );
 
-		const encoder = this.device.createCommandEncoder( { label: 'rayzee:dlss-nr-hdr' } );
+		const encoder = this.device.createCommandEncoder( { label: 'rayzee:retouch-hdr' } );
 		const pass = encoder.beginComputePass();
 		pass.setPipeline( this._hdrPipeline );
 		pass.setBindGroup( 0, group );
@@ -346,7 +347,7 @@ export class DLSSNeural {
 	 * The pass's result as scene-referred light, packed the way the upscaler wants it.
 	 *
 	 * Reads `hdrOutput`, the `rgba16float` texture the vendored runtime gained in
-	 * `app/public/dlss/PATCHES.md` — the value one statement before its own 8-bit store, so nothing
+	 * its `rayzee-patch` edits — the value one statement before its own 8-bit store, so nothing
 	 * has been clamped, quantised or pushed through the model's hardcoded ACES curve yet.
 	 *
 	 * This is what lets the pass run FIRST, at render size, where it is ~10x cheaper than on an
@@ -381,7 +382,7 @@ export class DLSSNeural {
 		const { validWidth: w, validHeight: h } = this.chain.pipeline.geometry;
 		await this._packHDR( w, h );
 
-		this._toneMapper ??= new PackedToneMapper( this.device, 'rayzee:dlss-nr-tonemap' );
+		this._toneMapper ??= new PackedToneMapper( this.device, 'rayzee:retouch-tonemap' );
 		this._toneMapper.ensureSize( w, h );
 
 		const rgba8 = await this._toneMapper.toRGBA8( this._hdrStorage, {
@@ -403,7 +404,7 @@ export class DLSSNeural {
 
 		const { validWidth: w, validHeight: h } = this.chain.pipeline.geometry;
 		const texture = this.chain.pipeline.slots[ this.slot ]?.output;
-		if ( ! texture ) throw new Error( 'DLSSNeural.readOutput: the pass has not produced a frame yet' );
+		if ( ! texture ) throw new Error( 'NeuralRetouch.readOutput: the pass has not produced a frame yet' );
 
 		const group = this.device.createBindGroup( {
 			layout: this._readbackPipeline.getBindGroupLayout( 0 ),
@@ -413,7 +414,7 @@ export class DLSSNeural {
 			],
 		} );
 
-		const encoder = this.device.createCommandEncoder( { label: 'rayzee:dlss-nr-readback' } );
+		const encoder = this.device.createCommandEncoder( { label: 'rayzee:retouch-readback' } );
 		const pass = encoder.beginComputePass();
 		pass.setPipeline( this._readbackPipeline );
 		pass.setBindGroup( 0, group );
@@ -477,7 +478,7 @@ const MAX_EXPOSURE = 20;
  * @param {{half: Uint16Array, width: number, height: number}} opts.source
  * @param {number} [opts.exposure=1] clamped to `MAX_EXPOSURE`
  * @param {{exposure: number, toneMapping: number, saturation: number}} [opts.tone] engine display state
- * @param {DLSSNeural} [opts.instance] reuse a network already built for this size
+ * @param {NeuralRetouch} [opts.instance] reuse a network already built for this size
  * @returns {Promise<object>} `{ instance, width, height, ms }` plus `rgba8` or `half`
  */
 export async function enhanceFrame( {
@@ -494,7 +495,7 @@ export async function enhanceFrame( {
 
 	if ( ! nr ) {
 
-		nr = await DLSSNeural.create( {
+		nr = await NeuralRetouch.create( {
 			width: source.width, height: source.height, settings, onProgress,
 		} );
 
@@ -505,7 +506,7 @@ export async function enhanceFrame( {
 
 	if ( ! source.half || source.half.length !== dst.length ) {
 
-		throw new Error( `DLSSNeural: expected ${dst.length} packed halfs, got ${source.half?.length}` );
+		throw new Error( `NeuralRetouch: expected ${dst.length} packed halfs, got ${source.half?.length}` );
 
 	}
 
@@ -519,7 +520,7 @@ export async function enhanceFrame( {
 	nr.chain.pipeline.colorStrength = colorStrength;
 
 	const started = performance.now();
-	const encoder = nr.device.createCommandEncoder( { label: 'rayzee:dlss-nr' } );
+	const encoder = nr.device.createCommandEncoder( { label: 'rayzee:retouch' } );
 	await nr.chain.encode( encoder, nr.slot, { buffer: nr.source }, merged, () => {}, { reset: true } );
 	nr.device.queue.submit( [ encoder.finish() ] );
 	await nr.device.queue.onSubmittedWorkDone();

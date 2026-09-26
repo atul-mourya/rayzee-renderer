@@ -241,7 +241,7 @@
   }
   var _0x3d8f7a;
   var _0xca9ebb = _0x48bd9f(() => {
-    _0x3d8f7a = "ijewel-dlss-inspector";
+    _0x3d8f7a = "ijewel-neural-inspector";
   });
   var _0x25c745;
   var _0x379cbd = _0x48bd9f(() => {
@@ -2512,10 +2512,10 @@
   function _0x186caa(_0x3f82bc) {
     let _0xdd2a6d = !!_0x3f82bc;
     _0x38ce91.dataset.state = _0xdd2a6d ? "on" : "off";
-    _0x38ce91.querySelector("strong").textContent = "DLSS 5 " + (_0xdd2a6d ? "ON" : "OFF");
-    _0x38ce91.setAttribute("aria-label", "DLSS 5 is " + (_0xdd2a6d ? "" : "not ") + "applied to the presented frame");
+    _0x38ce91.querySelector("strong").textContent = "Neural 5 " + (_0xdd2a6d ? "ON" : "OFF");
+    _0x38ce91.setAttribute("aria-label", "Neural 5 is " + (_0xdd2a6d ? "" : "not ") + "applied to the presented frame");
     _0x38ce91.setAttribute("aria-pressed", String(_0xdd2a6d));
-    document.body.dataset.dlssPresented = String(_0xdd2a6d);
+    document.body.dataset.neuralPresented = String(_0xdd2a6d);
   }
   function _0x34a92d(_0x1c93b0, _0x3414a6) {
     if (_0x1c93b0.getValue() !== _0x3414a6) {
@@ -2571,35 +2571,35 @@
     }
   }
   function _0x2b3690() {
-    let _0x55c165 = !!_0x2d1eac && !_0x1f5178 && globalThis.dlssSceneReady && (_0x413bb9 || _0x2d1eac.settings.enabled);
-    _0x1519e2(_0x50ae2f, !!globalThis.dlssChangeScene && !_0x1f5178 && !globalThis.dlssSceneLoading);
+    let _0x55c165 = !!_0x2d1eac && !_0x1f5178 && globalThis.neuralSceneReady && (_0x413bb9 || _0x2d1eac.settings.enabled);
+    _0x1519e2(_0x50ae2f, !!globalThis.neuralChangeScene && !_0x1f5178 && !globalThis.neuralSceneLoading);
     _0x1519e2(_0xbff3d3, _0x55c165);
     _0x1519e2(_0x55a1e4, _0x55c165 && !!_0x2d1eac?.result);
     _0x1519e2(_0x22af7b, _0x55c165 && !_0x2d1eac?.running);
     _0x34a92d(_0xbff3d3, !!_0x2d1eac?.live);
-    _0x34a92d(_0x55a1e4, _0x55d0dd() ? "source" : "dlss");
+    _0x34a92d(_0x55a1e4, _0x55d0dd() ? "source" : "neural");
     if (_0x42da11) {
-      let _0x1d54bf = globalThis.dlssSceneId === "local-file";
+      let _0x1d54bf = globalThis.neuralSceneId === "local-file";
       (_0x42da11.domElement.closest(".list-item-wrapper") || _0x42da11.domElement).style.setProperty("display", _0x1d54bf ? "" : "none", _0x1d54bf ? "" : "important");
       let _0x5c8292 = _0x42da11.domElement.querySelector("option[value=\"embedded\"]");
       if (_0x5c8292) {
-        _0x5c8292.disabled = !globalThis.dlssEmbeddedEnvironment;
+        _0x5c8292.disabled = !globalThis.neuralEmbeddedEnvironment;
       }
       if (_0x1d54bf) {
-        _0x34a92d(_0x42da11, globalThis.dlssLocalEnvironment || "studio-small-08");
+        _0x34a92d(_0x42da11, globalThis.neuralLocalEnvironment || "studio-small-08");
       }
     }
     let _0x463a14 = performance.now();
     let _0xdbd90d = _0x223337();
-    let _0x141c8f = _0x5709e3[_0xdbd90d ? "dlss" : "source"];
-    let _0x594250 = !document.hidden && !globalThis.dlssSceneLoading && (_0xdbd90d ? _0x2d1eac?.live || _0x2d1eac?.running : _0x2d1eac?.viewer?.renderEnabled);
+    let _0x141c8f = _0x5709e3[_0xdbd90d ? "neural" : "source"];
+    let _0x594250 = !document.hidden && !globalThis.neuralSceneLoading && (_0xdbd90d ? _0x2d1eac?.live || _0x2d1eac?.running : _0x2d1eac?.viewer?.renderEnabled);
     let _0x5cf437 = _0x141c8f.length > 1 ? (_0x141c8f.at(-1) - _0x141c8f[0]) / (_0x141c8f.length - 1) : 0;
     if (!_0xdbd90d && _0x463a14 - _0x141c8f.at(-1) > Math.max(1500, _0x5cf437 * 2)) {
       _0x594250 = false;
     }
     let _0x585b13 = _0x594250 && _0x5cf437 > 0 ? 1000 / Math.max(_0x5cf437, _0x463a14 - _0x141c8f.at(-1)) : 0;
     _0x2acf84.textContent = _0x585b13 > 0 && _0x585b13 < 10 ? _0x585b13.toFixed(1) : _0x585b13.toFixed(0);
-    _0x17a911.toggleButton.title = (_0xdbd90d ? "DLSS completed" : "WebGI rendered") + " frames per second" + (_0x594250 ? "" : " · Paused") + " · Open performance";
+    _0x17a911.toggleButton.title = (_0xdbd90d ? "Neural completed" : "WebGI rendered") + " frames per second" + (_0x594250 ? "" : " · Paused") + " · Open performance";
     if (!_0x594250) {
       _0x141c8f.length = 0;
     }
@@ -2607,7 +2607,7 @@
     _0x17a911.toggleGraph.update();
   }
   function _0x8cdb9b() {
-    let _0x5a560f = globalThis.dlssSceneId || "selection-five";
+    let _0x5a560f = globalThis.neuralSceneId || "selection-five";
     _0x34a92d(_0x50ae2f, _0x5a560f);
     let _0xddbe64 = document.querySelector("#sceneAttribution");
     _0xddbe64.replaceChildren();
@@ -2690,13 +2690,13 @@
     _0x17a911.toggleButton.setAttribute("aria-label", "Open performance");
     _0x555546.builtinButton.setAttribute("aria-label", "Toggle settings");
     _0x2acf84 = _0x17a911.toggleButton.querySelector(".fps-counter");
-    _0x38ce91 = document.querySelector("#dlssPresentedIndicator");
+    _0x38ce91 = document.querySelector("#neuralPresentedIndicator");
     _0x2d1eac = null;
     _0x5732fb = null;
     _0x1f5178 = !1;
     _0x42da11 = null;
     _0x5709e3 = {
-      dlss: [],
+      neural: [],
       source: []
     };
     _0x1dda5a = null;
@@ -2710,7 +2710,7 @@
       scene: "selection-five",
       mode: _0x413bb9 ? _0x138ebb ? "srnr" : "sr" : "nr",
       live: !1,
-      output: "dlss",
+      output: "neural",
       render: () => _0x5732fb?.render()
     };
     _0x715cda = _0x555546.createGroup("Demo");
@@ -2725,22 +2725,22 @@
       "Local file": "local-file"
     };
     _0x50ae2f = _0x5593f0(_0x715cda.add(_0x40819e, "scene", _0x5b381a), "scene", "demoScene").onChange(async _0x486a6b => {
-      if (!_0x1f5178 && !!globalThis.dlssChangeScene) {
+      if (!_0x1f5178 && !!globalThis.neuralChangeScene) {
         if (_0x486a6b === "local-file") {
-          globalThis.dlssPromptForFile?.();
-          _0x34a92d(_0x50ae2f, globalThis.dlssSceneId || "selection-five");
+          globalThis.neuralPromptForFile?.();
+          _0x34a92d(_0x50ae2f, globalThis.neuralSceneId || "selection-five");
           return;
         }
         _0x1f5178 = !0;
         _0x2b3690();
         try {
-          await globalThis.dlssChangeScene(_0x486a6b);
+          await globalThis.neuralChangeScene(_0x486a6b);
         } catch (_0x56da31) {
-          globalThis.dlssLoading?.fail(_0x56da31);
-          let _0x5d9eda = document.querySelector("#dlssWebGpuStatus");
+          globalThis.neuralLoading?.fail(_0x56da31);
+          let _0x5d9eda = document.querySelector("#neuralWebGpuStatus");
           _0x5d9eda.dataset.state = "error";
           _0x5d9eda.textContent = "Scene loading failed: " + _0x56da31.message;
-          _0x34a92d(_0x50ae2f, globalThis.dlssSceneId || "selection-five");
+          _0x34a92d(_0x50ae2f, globalThis.neuralSceneId || "selection-five");
         } finally {
           _0x1f5178 = !1;
           _0x2b3690();
@@ -2751,7 +2751,7 @@
       "Neural rendering": "nr",
       "Super resolution · 2×": "sr",
       "SR + Neural rendering": "srnr"
-    }), "mode", "dlssMode").onChange(_0x4155b3 => {
+    }), "mode", "neuralMode").onChange(_0x4155b3 => {
       let _0xe4c9e3 = new URL(location.href);
       if (_0x4155b3 === "nr") {
         _0xe4c9e3.searchParams.delete("sr");
@@ -2764,7 +2764,7 @@
         _0xe4c9e3.searchParams.delete("srChain");
       }
       try {
-        sessionStorage.setItem("dlss-demo-scene", globalThis.dlssSceneId || "selection-five");
+        sessionStorage.setItem("neural-demo-scene", globalThis.neuralSceneId || "selection-five");
       } catch {}
       location.assign(_0xe4c9e3);
     });
@@ -2776,7 +2776,7 @@
       }
     });
     _0x55a1e4 = _0x5593f0(_0x715cda.add(_0x40819e, "output", {
-      DLSS: "dlss",
+      Neural: "neural",
       Original: "source"
     }), "output · F6", "nrCompare").onChange(_0x542d5e => {
       if (_0x2d1eac && _0x542d5e === "source" !== _0x55d0dd()) {
@@ -2806,7 +2806,7 @@
     }
     _0x4b6332 = document.createElement("p");
     _0x4b6332.className = "demo-status";
-    _0x4b6332.textContent = "FPS counts new frames in the visible output: DLSS completions or WebGI renders. 0 means paused. Timings update after each DLSS render.";
+    _0x4b6332.textContent = "FPS counts new frames in the visible output: Neural completions or WebGI renders. 0 means paused. Timings update after each Neural render.";
     _0x4257bf.content.append(_0x4b6332);
     _0x2b54ff = {
       profiler: _0x17a911,
@@ -2818,15 +2818,15 @@
         let _0x35274a = _0x555546.createGroup("Local 3D model");
         let _0x3d8c75 = {
           open: () => _0x29bed0?.(),
-          environment: globalThis.dlssLocalEnvironment || "studio-small-08"
+          environment: globalThis.neuralLocalEnvironment || "studio-small-08"
         };
         _0x5593f0(_0x35274a.add(_0x3d8c75, "open"), "Load your 3D file", "openLocalModel").info("GLB, GLTF, DRC, OBJ/MTL, FBX, STL, Rhino 3DM and ZIP. Select dependent files together. You can also drag files or a folder onto the viewer.");
-        _0x42da11 = _0x5593f0(_0x35274a.add(_0x3d8c75, "environment", globalThis.dlssLocalEnvironments), "HDR environment", "localEnvironment").onChange(async _0x309475 => {
-          if (_0x309475 !== globalThis.dlssLocalEnvironment) {
+        _0x42da11 = _0x5593f0(_0x35274a.add(_0x3d8c75, "environment", globalThis.neuralLocalEnvironments), "HDR environment", "localEnvironment").onChange(async _0x309475 => {
+          if (_0x309475 !== globalThis.neuralLocalEnvironment) {
             try {
-              await globalThis.dlssSetLocalEnvironment?.(_0x309475);
+              await globalThis.neuralSetLocalEnvironment?.(_0x309475);
             } catch {
-              _0x34a92d(_0x42da11, globalThis.dlssLocalEnvironment || "studio-small-08");
+              _0x34a92d(_0x42da11, globalThis.neuralLocalEnvironment || "studio-small-08");
             }
           }
         });
@@ -2843,8 +2843,8 @@
       async beforeSceneChange() {
         await _0x5732fb?.beforeSceneChange?.();
         _0x186caa(!1);
-        _0x5709e3.dlss.length = _0x5709e3.source.length = 0;
-        delete document.body.dataset.dlssReady;
+        _0x5709e3.neural.length = _0x5709e3.source.length = 0;
+        delete document.body.dataset.neuralReady;
         for (let _0x1c2be8 of _0x10eeba.values()) {
           _0x34a92d(_0x1c2be8, "—");
         }
@@ -2854,10 +2854,10 @@
       },
       sync: _0x2b3690,
       frameComplete(_0x4cdee9, _0x44369d, _0x3d7df9) {
-        document.body.dataset.dlssReady = "true";
-        _0x2bbb80("dlss");
-        if (!globalThis.dlssSceneLoading) {
-          globalThis.dlssLoading?.finish();
+        document.body.dataset.neuralReady = "true";
+        _0x2bbb80("neural");
+        if (!globalThis.neuralSceneLoading) {
+          globalThis.neuralLoading?.finish();
         }
         let _0x203894 = _0x449889 => Number.isFinite(_0x449889) ? _0x449889.toFixed(1) + " ms" : "unavailable";
         Object.assign(_0x1c3ba0, {
@@ -2902,11 +2902,11 @@
         };
       }
     };
-    globalThis.dlssDemoUi = _0x2b54ff;
+    globalThis.neuralDemoUi = _0x2b54ff;
     _0x5978b2 = setInterval(_0x2b3690, 250);
-    addEventListener("dlss-viewer-ready", _0x52f6bc => _0x19a672(_0x52f6bc.detail));
-    if (globalThis.dlssViewer) {
-      _0x19a672(globalThis.dlssViewer);
+    addEventListener("neural-viewer-ready", _0x52f6bc => _0x19a672(_0x52f6bc.detail));
+    if (globalThis.neuralViewer) {
+      _0x19a672(globalThis.neuralViewer);
     }
     addEventListener("pagehide", () => {
       clearInterval(_0x5978b2);
@@ -2924,8 +2924,8 @@
       bistro: ["Amazon Lumberyard Bistro", "https://developer.nvidia.com/orca/amazon-lumberyard-bistro", " · Amazon Lumberyard · CC BY 4.0"],
       "lone-monk": ["Lone Monk", "https://blenderartists.org/t/lone-monk-cc0-scene-and-assets/1287621", " · Carlo Bergonzini / Monorender · CC0"]
     };
-    addEventListener("dlss-scene-ready", _0x8cdb9b);
-    addEventListener("dlss-local-environment-changed", _0x5de924 => {
+    addEventListener("neural-scene-ready", _0x8cdb9b);
+    addEventListener("neural-local-environment-changed", _0x5de924 => {
       if (_0x42da11) {
         _0x34a92d(_0x42da11, _0x5de924.detail.id);
       }
@@ -3074,12 +3074,12 @@
   var _0x431f84;
   var _0x41d10a;
   var _0x386cc8 = _0x48bd9f(() => {
-    _0x46fb6a = globalThis.__dlssModelBinaryCache ??= new Map();
-    _0x431f84 = "dlss5-model-binaries-v1";
+    _0x46fb6a = globalThis.__neuralModelBinaryCache ??= new Map();
+    _0x431f84 = "neural-model-binaries-v1";
   });
   function _0x3dae30(_0x93e5f2) {
     let _0x1c9df7 = String(_0x93e5f2);
-    let _0x190de1 = String(globalThis.__DLSS5_ASSET_BASE__ ?? "").replace(/\/$/, "");
+    let _0x190de1 = String(globalThis.__NEURAL_ASSET_BASE__ ?? "").replace(/\/$/, "");
     if (_0x190de1 && _0x29f928.test(_0x1c9df7)) {
       return "" + _0x190de1 + _0x1c9df7;
     } else {
@@ -3112,13 +3112,13 @@
     _0x5d6f24();
     _0x1bebb2 = class _0x46950e {
       static async create(_0x137e68, {
-        manifestUrl: _0x13d0ec = _0x3dae30("/generated/dlss-sr/model-11c00.json"),
-        weightsUrl: _0x3e37fc = _0x3dae30("/generated/dlss-sr/model-11c00.f16.bin"),
-        exactPositionManifestUrl: _0x243b10 = _0x3dae30("/generated/dlss-sr/model-11c00-exact-position.json"),
-        exactPositionWeightsUrl: _0xdd61ec = _0x3dae30("/generated/dlss-sr/model-11c00-exact-position.f16.bin"),
+        manifestUrl: _0x13d0ec = _0x3dae30("/generated/neural-sr/model-11c00.json"),
+        weightsUrl: _0x3e37fc = _0x3dae30("/generated/neural-sr/model-11c00.f16.bin"),
+        exactPositionManifestUrl: _0x243b10 = _0x3dae30("/generated/neural-sr/model-11c00-exact-position.json"),
+        exactPositionWeightsUrl: _0xdd61ec = _0x3dae30("/generated/neural-sr/model-11c00-exact-position.f16.bin"),
         onProgress: _0x55ecbf = () => {}
       } = {}) {
-        _0x55ecbf("DLSS-SR · loading recovered Performance/J model");
+        _0x55ecbf("NeuralSR · loading recovered Performance/J model");
         let [_0x215273, _0x303525] = await Promise.all([_0x1269aa(_0x13d0ec).then(_0x30a975 => _0x30a975.json()), _0x1269aa(_0x243b10).then(_0x31c84b => _0x31c84b.json())]);
         let _0x46d12f = [0, 0];
         let _0x55e16b = _0x215273.byteLength + _0x303525.byteLength;
@@ -3129,40 +3129,40 @@
             cached: _0x4be7e4
           }) => {
             _0x46d12f[_0x3303c6] = _0xaf7554;
-            _0x55ecbf(_0x4be7e4 ? "Loading cached DLSS-SR" : "Downloading DLSS-SR", !1, {
-              label: "DLSS-SR",
+            _0x55ecbf(_0x4be7e4 ? "Loading cached NeuralSR" : "Downloading NeuralSR", !1, {
+              label: "NeuralSR",
               loaded: _0x46d12f[0] + _0x46d12f[1],
               total: _0x55e16b
             });
           }
         })));
-        _0x55ecbf("DLSS-SR · verifying neural model");
-        if (_0x215273.format !== "dlss-sr-f16-registry-v1") {
-          throw new Error("Unsupported DLSS-SR manifest " + _0x215273.format);
+        _0x55ecbf("NeuralSR · verifying neural model");
+        if (_0x215273.format !== "neural-sr-f16-registry-v1") {
+          throw new Error("Unsupported NeuralSR manifest " + _0x215273.format);
         }
         if (_0x50cff8.byteLength !== _0x215273.byteLength) {
-          throw new Error("DLSS-SR weights have " + _0x50cff8.byteLength + " bytes; expected " + _0x215273.byteLength);
+          throw new Error("NeuralSR weights have " + _0x50cff8.byteLength + " bytes; expected " + _0x215273.byteLength);
         }
         if ((await _0x4505cf(_0x50cff8)) !== _0x215273.weightsSha256.toLowerCase()) {
-          throw new Error("DLSS-SR Performance/J weight hash mismatch");
+          throw new Error("NeuralSR Performance/J weight hash mismatch");
         }
-        if (_0x303525.format !== "dlss-sr-exact-position-f16-v1" || _0x488ea2.byteLength !== _0x303525.byteLength) {
-          throw new Error("DLSS-SR exact position asset contract mismatch");
+        if (_0x303525.format !== "neural-sr-exact-position-f16-v1" || _0x488ea2.byteLength !== _0x303525.byteLength) {
+          throw new Error("NeuralSR exact position asset contract mismatch");
         }
         if ((await _0x4505cf(_0x488ea2)) !== _0x303525.weightsSha256.toLowerCase()) {
-          throw new Error("DLSS-SR exact position weight hash mismatch");
+          throw new Error("NeuralSR exact position weight hash mismatch");
         }
         let _0x4ae3ed = _0x120368(_0x50cff8.byteLength);
         let _0x3cc0ee = new Uint8Array(_0x120368(_0x4ae3ed + _0x488ea2.byteLength));
         _0x3cc0ee.set(new Uint8Array(_0x50cff8));
         _0x3cc0ee.set(new Uint8Array(_0x488ea2), _0x4ae3ed);
         let _0x29e44c = _0x137e68.createBuffer({
-          label: "DLSS-SR Performance/J FP16 weights",
+          label: "NeuralSR Performance/J FP16 weights",
           size: _0x3cc0ee.byteLength,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
         _0x137e68.queue.writeBuffer(_0x29e44c, 0, _0x3cc0ee);
-        _0x55ecbf("DLSS-SR · model ready (" + (_0x50cff8.byteLength / 1048576).toFixed(2) + " MiB)");
+        _0x55ecbf("NeuralSR · model ready (" + (_0x50cff8.byteLength / 1048576).toFixed(2) + " MiB)");
         let _0x3f9b77 = _0x303525.tensors.map(_0xfd8d1 => ({
           ..._0xfd8d1,
           byteOffset: _0x4ae3ed + _0xfd8d1.byteOffset
@@ -3182,7 +3182,7 @@
       tensor(_0x3b48ba) {
         let _0x2d15cf = this.tensors.get(_0x3b48ba);
         if (!_0x2d15cf) {
-          throw new Error("DLSS-SR tensor " + _0x3b48ba + " is missing");
+          throw new Error("NeuralSR tensor " + _0x3b48ba + " is missing");
         }
         return _0x2d15cf;
       }
@@ -3515,7 +3515,7 @@
     _0x564ba2 = 1;
     _0x9f9ad2 = new WeakMap();
     _0x1e235c = class {
-      constructor(_0x2c29bd, _0x4b52d1 = "DLSS-NR production") {
+      constructor(_0x2c29bd, _0x4b52d1 = "Retouch production") {
         this.device = _0x2c29bd;
         this.label = _0x4b52d1;
         this.buffers = new Map();
@@ -3927,7 +3927,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0x366815 = _0xb014b9.features.has("shader-f16");
         let _0x87cb16 = _0xc2fc0f.replace("/*__F16_ENABLE__*/", _0x366815 ? "enable f16;" : "").replace("/*__ROUND_F16__*/", _0x366815 ? "fn round_accumulator(value: f32) -> f32 { return f32(f16(value)); }" : "fn round_accumulator(value: f32) -> f32 { return value; }");
         let _0x1cb6c6 = _0xb014b9.createShaderModule({
-          label: "DLSS-NR packed FP16 matmul",
+          label: "Retouch packed FP16 matmul",
           code: _0x87cb16
         });
         let _0x76f010 = (await _0x1cb6c6.getCompilationInfo()).messages.filter(_0x4c1085 => _0x4c1085.type === "error");
@@ -4037,7 +4037,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x4450e9 = _0x150d1a.beginComputePass({
-          label: "DLSS-NR FP16 " + _0x3724e1 + "x" + _0x2e2b34
+          label: "Retouch FP16 " + _0x3724e1 + "x" + _0x2e2b34
         });
         _0x4450e9.setPipeline(_0x152bfe);
         _0x4450e9.setBindGroup(0, _0x8cee26);
@@ -4079,7 +4079,7 @@ ${Array.from({
     let _0x6180c2 = Math.ceil(_0x17c28f / _0x5b57ba);
     let _0x4d2c4d = Math.ceil(_0x6180c2 / _0x281b6c);
     if (_0x4d2c4d > _0x281b6c) {
-      throw new Error("DLSS-SR dispatch exceeds WebGPU limits (" + _0x6180c2 + " groups)");
+      throw new Error("NeuralSR dispatch exceeds WebGPU limits (" + _0x6180c2 + " groups)");
     }
     _0x59aaaf.dispatchWorkgroups(Math.min(_0x6180c2, _0x281b6c), _0x4d2c4d);
   }
@@ -4221,12 +4221,12 @@ fn half_value(index: u32) -> f32 {
   return select(pair.x, pair.y, (index & 1u) != 0u);
 }
 
-fn dlss_gelu(value: f32) -> f32 {
+fn neural_gelu(value: f32) -> f32 {
   let t = clamp(value, -2.0, 2.0);
   return value * (0.5 + 0.412162 * t - 0.0810811 * t * abs(t));
 }
 
-fn dlss_gelu_f16(value: f16) -> f16 {
+fn neural_gelu_f16(value: f16) -> f16 {
   let t = clamp(value, f16(-2.0), f16(2.0));
   return value * (f16(0.5) + f16(0.412162) * t - f16(0.0810811) * t * abs(t));
 }
@@ -4284,7 +4284,7 @@ fn linear(@builtin(global_invocation_id) id: vec3<u32>) {
       value_half = fma(f16(source[row * input_channels + channel]),
         f16(half_value(weight_row + channel)), value_half);
     }
-    if (params.g == 1u) { value_half = dlss_gelu_f16(value_half); }
+    if (params.g == 1u) { value_half = neural_gelu_f16(value_half); }
     if (params.g == 2u) { value_half = max(value_half, f16(0.0)); }
     destination[index] = f32(value_half);
     return;
@@ -4293,7 +4293,7 @@ fn linear(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var channel = 0u; channel < input_channels; channel += 1u) {
     value += source[row * input_channels + channel] * half_value(weight_row + channel);
   }
-  if (params.g == 1u) { value = dlss_gelu(value); }
+  if (params.g == 1u) { value = neural_gelu(value); }
   if (params.g == 2u) { value = max(value, 0.0); }
   destination[index] = value;
 }
@@ -4981,7 +4981,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0xe45241 = ["source", "destination", "linear_residual", "up_source", "up_skip", "up_destination", "qkv", "scores", "attention_output"];
         let _0x3e6d92 = _0xbdda92 ? _0x209b1f(_0x3deba8, _0xe45241) : _0x3deba8;
         let _0x107bf3 = _0x1d6859.createShaderModule({
-          label: "Recovered DLSS-SR WebGPU graph",
+          label: "Recovered NeuralSR WebGPU graph",
           code: _0x3e6d92
         });
         let _0x78c41 = (await _0x107bf3.getCompilationInfo()).messages.filter(_0x3e13d4 => _0x3e13d4.type === "error");
@@ -4989,7 +4989,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           throw new Error(_0x78c41.map(_0x5dd07e => _0x5dd07e.lineNum + ":" + _0x5dd07e.linePos + " " + _0x5dd07e.message).join("\n"));
         }
         let _0x4f41c8 = _0x569334 => _0x1735cd(_0x1d6859, {
-          label: "DLSS-SR " + _0x569334,
+          label: "NeuralSR " + _0x569334,
           layout: "auto",
           compute: {
             module: _0x107bf3,
@@ -4997,10 +4997,10 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           }
         });
         let _0x11e061 = 0;
-        _0x6759ec("DLSS-SR · preparing super resolution");
+        _0x6759ec("NeuralSR · preparing super resolution");
         let _0x3d1bdc = Object.fromEntries(await Promise.all(["linear", "linear_tiled", "rms_norm", "channel_scale", "add", "pool2x", "upsample2x", "upsample2x_padded", "attention_scores", "attention_softmax", "attention_apply", "position_mixer", "reconstruct", "crop_features"].map(async _0x37ed10 => {
           let _0x268587 = await _0x4f41c8(_0x37ed10);
-          _0x6759ec("DLSS-SR · preparing super resolution · " + ++_0x11e061 + "/14");
+          _0x6759ec("NeuralSR · preparing super resolution · " + ++_0x11e061 + "/14");
           return [_0x37ed10, _0x268587];
         })));
         if (_0xbdda92) {
@@ -5015,7 +5015,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             }
             for (let _0x59609b of ["linear", "linear_tiled"]) {
               _0x3d1bdc[_0x59609b + "_" + _0x3422f6] = await _0x1735cd(_0x1d6859, {
-                label: "DLSS-SR " + _0x59609b + " " + _0x3422f6,
+                label: "NeuralSR " + _0x59609b + " " + _0x3422f6,
                 layout: "auto",
                 compute: {
                   module: _0x240631,
@@ -5025,7 +5025,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             }
           }
         }
-        _0x6759ec("DLSS-SR · WebGPU kernels compiled");
+        _0x6759ec("NeuralSR · WebGPU kernels compiled");
         return new _0x48dd27(_0x4bb88b, _0x3d1bdc, _0x6759ec, _0x1d6859);
       }
       constructor(_0x11c6e9, _0x350dab, _0x56410e, _0x2dcf14 = _0x11c6e9.device) {
@@ -5036,7 +5036,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       params(_0x453361, _0xf9284b) {
         let _0x1c13c7 = _0x22a8dc(this.device, {
-          label: "DLSS-SR dispatch parameters",
+          label: "NeuralSR dispatch parameters",
           size: 64,
           usage: _0x3648ed.UNIFORM | _0x3648ed.COPY_DST
         });
@@ -5132,7 +5132,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             entries: _0x1329e2
           });
           let _0x52ee07 = _0x36a215.beginComputePass({
-            label: "DLSS-SR " + _0x4e7f1b + "→" + _0x500072
+            label: "NeuralSR " + _0x4e7f1b + "→" + _0x500072
           });
           _0x52ee07.setPipeline(_0x47df61);
           _0x52ee07.setBindGroup(0, _0x746412);
@@ -5141,7 +5141,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         } else {
           this.bindAndDispatch(_0x36a215, _0x47df61, {
             values: _0x1329e2
-          }, _0x179cf2 * _0x500072, "DLSS-SR " + _0x4e7f1b + "→" + _0x500072);
+          }, _0x179cf2 * _0x500072, "NeuralSR " + _0x4e7f1b + "→" + _0x500072);
         }
       }
       norm(_0x301253, _0x149e71, _0x3dcf3e, _0x1abdd5, _0x177dfb, _0x574819, _0x55a3f4, _0xc81bde = !1) {
@@ -5171,7 +5171,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x59f40e = _0x301253.beginComputePass({
-          label: "DLSS-SR RMS norm " + _0x574819
+          label: "NeuralSR RMS norm " + _0x574819
         });
         _0x59f40e.setPipeline(this.pipelines.rms_norm);
         _0x59f40e.setBindGroup(0, _0x5df1f9);
@@ -5202,7 +5202,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x1d43d9
             }
           }]
-        }, _0x37ccbd * _0x1e1b62, "DLSS-SR learned channel scale " + _0x1e1b62);
+        }, _0x37ccbd * _0x1e1b62, "NeuralSR learned channel scale " + _0x1e1b62);
       }
       add(_0x439e47, _0x4cbc26, _0x438959, _0x36ed6c, _0x3657a3, _0x180098 = !1) {
         let _0x11596f = this.params([_0x3657a3, _0x180098 ? 1 : 0], _0x4cbc26);
@@ -5223,13 +5223,13 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x11596f
             }
           }]
-        }, _0x3657a3, "DLSS-SR residual add");
+        }, _0x3657a3, "NeuralSR residual add");
       }
       attention(_0x120298, _0x41def7, _0x557a6a, _0x383f97, _0x1f0d59, _0x266932, _0x272cf0, _0x413b21, _0x2de417, _0x191671 = 4, _0x4a47fe = 4, _0x529feb = !1, _0x161e6c = 8, _0x18bd7a = !0, _0x1fbe21 = !0, _0x52e010 = !0, _0x15ed58 = !0, _0x1da27f = 0, _0x2a46a3 = 0, _0x5884e2 = 0) {
         let _0x21dbcc = _0x1f0d59 * _0x266932;
         let _0x5ac28e = _0x272cf0 * 32;
         let _0x2f9cc4 = _0x21dbcc * _0x272cf0 * _0x161e6c * _0x161e6c;
-        let _0x2ad1e6 = _0x3a9441(this.device, "DLSS-SR local attention scores", _0x2f9cc4);
+        let _0x2ad1e6 = _0x3a9441(this.device, "NeuralSR local attention scores", _0x2f9cc4);
         _0x41def7.push(_0x2ad1e6);
         let _0x33ad46 = this.params([_0x1f0d59, _0x266932, _0x272cf0, _0x2de417.halfOffset, _0x413b21, _0x191671, _0x4a47fe, _0x529feb === 2 ? 8 : _0x529feb ? 7 : 0, _0x161e6c, _0x18bd7a ? 1 : 0, _0x1fbe21 ? 1 : 0, _0x52e010 ? 1 : 0, _0x15ed58 ? 1 : 0, _0x1da27f, _0x2a46a3, _0x5884e2], _0x41def7);
         this.bindAndDispatch(_0x120298, this.pipelines.attention_scores, {
@@ -5255,7 +5255,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x33ad46
             }
           }]
-        }, _0x2f9cc4, "DLSS-SR padded-window QK scores");
+        }, _0x2f9cc4, "NeuralSR padded-window QK scores");
         this.bindAndDispatch(_0x120298, this.pipelines.attention_softmax, {
           group: 2,
           values: [{
@@ -5269,7 +5269,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x33ad46
             }
           }]
-        }, _0x21dbcc * _0x272cf0, "DLSS-SR padded-window softmax");
+        }, _0x21dbcc * _0x272cf0, "NeuralSR padded-window softmax");
         let _0x1085f5 = _0x4a70e0(this.device, {
           layout: _0x34c0f8(this.pipelines.attention_apply, 2),
           entries: [{
@@ -5295,7 +5295,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x4d83e5 = _0x120298.beginComputePass({
-          label: "DLSS-SR padded-window attention values"
+          label: "NeuralSR padded-window attention values"
         });
         _0x4d83e5.setPipeline(this.pipelines.attention_apply);
         _0x4d83e5.setBindGroup(2, _0x1085f5);
@@ -5328,7 +5328,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x265e2a
             }
           }]
-        }, _0x44f15d * _0x334767 * 32, "DLSS-SR position-only local mixer");
+        }, _0x44f15d * _0x334767 * 32, "NeuralSR position-only local mixer");
       }
       block(_0xae67a2, _0x409e1a, _0x44a229, _0x7b0664, _0xa47768, _0xc6c9df, _0x3fb777 = !1, _0x370c9f = null, _0x14abd3 = null) {
         let _0x1b0036 = _0x7b0664 * _0xa47768;
@@ -5428,7 +5428,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x11781e
             }
           }]
-        }, _0x1b2c68 * _0xc7424e * _0xcca31f, "DLSS-SR " + _0x356d81);
+        }, _0x1b2c68 * _0xc7424e * _0xcca31f, "NeuralSR " + _0x356d81);
         return {
           buffer: _0x21115c,
           width: _0x1b2c68,
@@ -5469,7 +5469,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x3c546b
             }
           }]
-        }, _0x20ab88 * _0x170aab * _0x5bb512, "DLSS-SR " + _0xae7493 + " + skip");
+        }, _0x20ab88 * _0x170aab * _0x5bb512, "NeuralSR " + _0xae7493 + " + skip");
         return _0x49fdb3;
       }
       upsamplePadded(_0x492760, _0x4d7cf3, _0x8bfccd, _0x3367c8, _0x5aedfb, _0x4486ce, _0xaccf95, _0x3201c4, _0x232d5e, _0x18b09c, _0x95915f, _0x1b67e5, _0x46ee1b, _0x1b5479, _0x2c3b9f, _0x3464f5 = !1, _0x4f5c0c = 0) {
@@ -5508,7 +5508,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x45ac7c
             }
           }]
-        }, _0x8689e3 * _0x39b1af * _0x18b09c, "DLSS-SR " + _0x95915f + " fused padded attention input");
+        }, _0x8689e3 * _0x39b1af * _0x18b09c, "NeuralSR " + _0x95915f + " fused padded attention input");
         return {
           buffer: _0x466746,
           width: _0x8689e3,
@@ -5518,7 +5518,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         };
       }
       cropFeatures(_0x1b1c96, _0x548c67, _0x6f2882, _0x36f59f, _0x549c32, _0xded23f) {
-        let _0x630da1 = _0x3a9441(this.device, "DLSS-SR logical features", _0x36f59f * _0x549c32 * _0xded23f, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
+        let _0x630da1 = _0x3a9441(this.device, "NeuralSR logical features", _0x36f59f * _0x549c32 * _0xded23f, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
         _0x548c67.push(_0x630da1);
         let _0x5b14df = this.params([_0x36f59f, _0x549c32, _0xded23f, _0x6f2882.width, _0x6f2882.xOffset, _0x6f2882.yOffset], _0x548c67);
         this.bindAndDispatch(_0x1b1c96, this.pipelines.crop_features, {
@@ -5538,7 +5538,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               buffer: _0x5b14df
             }
           }]
-        }, _0x36f59f * _0x549c32 * _0xded23f, "DLSS-SR crop logical features");
+        }, _0x36f59f * _0x549c32 * _0xded23f, "NeuralSR crop logical features");
         return _0x630da1;
       }
       async captureFloat32(_0x46f3cb, _0x1706f4, _0x1691ee) {
@@ -5568,14 +5568,14 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
       }) {
         let _0x4c7b7b = _0x2f2349.find(_0x57a36a => _0x57a36a.id === _0x155bac);
         if (!_0x4c7b7b) {
-          throw new Error("Unknown DLSS-SR diagnostic stage " + _0x155bac);
+          throw new Error("Unknown NeuralSR diagnostic stage " + _0x155bac);
         }
         let _0x16efaf = _0x5681f5 * _0x1f9dfe * _0x4c7b7b.channels;
         if (_0x414176.length !== _0x16efaf) {
           throw new Error(_0x155bac + " diagnostic input has " + _0x414176.length + " values, expected " + _0x16efaf);
         }
         let _0xd5aa3 = performance.now();
-        let _0x47b9fc = _0x52fadd(this.device, "DLSS-SR " + _0x155bac + " diagnostic input", _0x414176);
+        let _0x47b9fc = _0x52fadd(this.device, "NeuralSR " + _0x155bac + " diagnostic input", _0x414176);
         let _0x2a27c7 = {
           f32: {
             f16: {}
@@ -5657,7 +5657,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           }
         };
         if (!(_0x3977f6 in _0x2a27c7)) {
-          throw new Error("Unknown DLSS-SR precision variant " + _0x3977f6);
+          throw new Error("Unknown NeuralSR precision variant " + _0x3977f6);
         }
         let _0x167829 = _0x2a27c7[_0x3977f6];
         let _0x2ade36 = {
@@ -5672,14 +5672,14 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         };
         let _0x34142c;
         try {
-          _0x34142c = await this.batch("DLSS-SR " + _0x155bac + " isolated diagnostic", (_0xe670fa, _0x1252c7) => {
+          _0x34142c = await this.batch("NeuralSR " + _0x155bac + " isolated diagnostic", (_0xe670fa, _0x1252c7) => {
             let _0x253804 = this.block(_0xe670fa, _0x1252c7, _0x47b9fc, _0x5681f5, _0x1f9dfe, _0x4c7b7b, !0, _0x2ade36);
             return {
               value: _0x253804,
               keep: [_0x253804, _0x2ade36.qkv, _0x2ade36.attended, _0x2ade36.residual1, _0x2ade36.expanded]
             };
           });
-          let [_0x2bfe5d, _0x309463, _0x205bc3, _0x3aaa48, _0x14134b] = await Promise.all([this.captureFloat32(_0x2ade36.qkv, _0x5681f5 * _0x1f9dfe * _0x4c7b7b.heads * 32 * (_0x4c7b7b.softmaxFree ? 1 : 3), "DLSS-SR " + _0x155bac + " isolated QKV"), this.captureFloat32(_0x2ade36.attended, _0x5681f5 * _0x1f9dfe * _0x4c7b7b.heads * 32, "DLSS-SR " + _0x155bac + " isolated mixed"), this.captureFloat32(_0x2ade36.residual1, _0x16efaf, "DLSS-SR " + _0x155bac + " isolated attention"), this.captureFloat32(_0x2ade36.expanded, _0x16efaf * 4, "DLSS-SR " + _0x155bac + " isolated MLP hidden"), this.captureFloat32(_0x34142c, _0x16efaf, "DLSS-SR " + _0x155bac + " isolated output")]);
+          let [_0x2bfe5d, _0x309463, _0x205bc3, _0x3aaa48, _0x14134b] = await Promise.all([this.captureFloat32(_0x2ade36.qkv, _0x5681f5 * _0x1f9dfe * _0x4c7b7b.heads * 32 * (_0x4c7b7b.softmaxFree ? 1 : 3), "NeuralSR " + _0x155bac + " isolated QKV"), this.captureFloat32(_0x2ade36.attended, _0x5681f5 * _0x1f9dfe * _0x4c7b7b.heads * 32, "NeuralSR " + _0x155bac + " isolated mixed"), this.captureFloat32(_0x2ade36.residual1, _0x16efaf, "NeuralSR " + _0x155bac + " isolated attention"), this.captureFloat32(_0x2ade36.expanded, _0x16efaf * 4, "NeuralSR " + _0x155bac + " isolated MLP hidden"), this.captureFloat32(_0x34142c, _0x16efaf, "NeuralSR " + _0x155bac + " isolated output")]);
           return {
             qkv: _0x2bfe5d,
             mixed: _0x309463,
@@ -5710,7 +5710,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
       }) {
         let _0x5df1da = _0x2f2349.find(_0x2483ac => _0x2483ac.id === _0x37501f);
         if (!_0x5df1da || _0x5df1da.kind !== "decoder") {
-          throw new Error("Unknown DLSS-SR decoder diagnostic stage " + _0x37501f);
+          throw new Error("Unknown NeuralSR decoder diagnostic stage " + _0x37501f);
         }
         let _0x4e1e46 = _0x385acb * _0x49953f * _0x5df1da.previousChannels;
         let _0x3136eb = _0x7b6d3d * _0xab411a * _0x5df1da.channels;
@@ -5801,12 +5801,12 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           }
         };
         if (!(_0x571a72 in _0x45dc95)) {
-          throw new Error("Unknown DLSS-SR decoder precision variant " + _0x571a72);
+          throw new Error("Unknown NeuralSR decoder precision variant " + _0x571a72);
         }
         let _0x5b63fe = _0x45dc95[_0x571a72];
         let _0x1fa0fc = performance.now();
-        let _0x12d248 = _0x52fadd(this.device, "DLSS-SR " + _0x37501f + " exact decoder input", _0x1f3958);
-        let _0x3f431b = _0x52fadd(this.device, "DLSS-SR " + _0x37501f + " exact skip input", _0x802e39);
+        let _0x12d248 = _0x52fadd(this.device, "NeuralSR " + _0x37501f + " exact decoder input", _0x1f3958);
+        let _0x3f431b = _0x52fadd(this.device, "NeuralSR " + _0x37501f + " exact skip input", _0x802e39);
         let _0x5ddecf;
         let _0x547644;
         let _0x451b26;
@@ -5822,7 +5822,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           f16: _0x5b63fe.f16
         };
         try {
-          _0x5ddecf = await this.batch("DLSS-SR " + _0x37501f + " exact-input upsample", (_0x224e5f, _0x515253) => {
+          _0x5ddecf = await this.batch("NeuralSR " + _0x37501f + " exact-input upsample", (_0x224e5f, _0x515253) => {
             let _0x13a61f = this.upsample(_0x224e5f, _0x515253, _0x12d248, _0x385acb, _0x49953f, _0x5df1da.previousChannels, _0x3f431b, _0x7b6d3d, _0xab411a, _0x5df1da.channels, _0x5df1da.transition, _0x199141, _0x5b63fe.upsampleMode ?? 0);
             let _0x50db1a = _0x5df1da.windowOffsetX ?? 4;
             let _0x4ed439 = _0x5df1da.windowOffsetY ?? 4;
@@ -5835,15 +5835,15 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               keep: [_0x13a61f, _0x4e8f4b.buffer]
             };
           });
-          _0x547644 = await this.batch("DLSS-SR " + _0x37501f + " exact-input block", (_0x209260, _0x43338a) => {
+          _0x547644 = await this.batch("NeuralSR " + _0x37501f + " exact-input block", (_0x209260, _0x43338a) => {
             let _0x1ec28a = this.block(_0x209260, _0x43338a, _0x5ddecf.logical, _0x7b6d3d, _0xab411a, _0x5df1da, _0x199141, _0x1b1946, _0x5ddecf.paddedAttention);
             return {
               value: _0x1ec28a,
               keep: [_0x1ec28a, ...(_0x1b1946.normalized ? [_0x1b1946.normalized] : []), ...(_0x1b1946.qkv ? [_0x1b1946.qkv] : []), ...(_0x1b1946.attended ? [_0x1b1946.attended] : []), ...(_0x1b1946.residual1 ? [_0x1b1946.residual1] : []), ...(_0x1b1946.normalized2 ? [_0x1b1946.normalized2] : []), ...(_0x1b1946.expanded ? [_0x1b1946.expanded] : [])]
             };
           });
-          _0x451b26 = await this.batch("DLSS-SR " + _0x37501f + " exact-input head", (_0x58afcf, _0x52fc87) => {
-            let _0x287de3 = _0x3a9441(this.device, "DLSS-SR " + _0x37501f + " exact-input head40", _0x7b6d3d * _0xab411a * 40, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
+          _0x451b26 = await this.batch("NeuralSR " + _0x37501f + " exact-input head", (_0x58afcf, _0x52fc87) => {
+            let _0x287de3 = _0x3a9441(this.device, "NeuralSR " + _0x37501f + " exact-input head40", _0x7b6d3d * _0xab411a * 40, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
             _0x52fc87.push(_0x287de3);
             this.linear(_0x58afcf, _0x52fc87, _0x547644, _0x287de3, _0x7b6d3d * _0xab411a, _0x5df1da.channels, 40, this.model.tensor("pdl_1_weight"), this.model.tensor("pdl_1_bias"), !1, _0x5b63fe.head);
             return {
@@ -5851,10 +5851,10 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
               keep: [_0x287de3]
             };
           });
-          let _0x476727 = await this.captureFloat32(_0x451b26, _0x7b6d3d * _0xab411a * 40, "DLSS-SR " + _0x37501f + " exact-input " + _0x571a72 + " head40");
+          let _0x476727 = await this.captureFloat32(_0x451b26, _0x7b6d3d * _0xab411a * 40, "NeuralSR " + _0x37501f + " exact-input " + _0x571a72 + " head40");
           let _0x3f12a5 = _0x5ddecf.paddedAttention.width * _0x5ddecf.paddedAttention.height;
           let _0x143b49 = _0x5df1da.heads * 32;
-          let [_0x14aabd, _0x38d596, _0x32d12f, _0x1a4743, _0x222932, _0x4e420b, _0x17c264, _0x283e3c, _0x410f2d] = _0x199141 ? await Promise.all([this.captureFloat32(_0x5ddecf.logical, _0x3136eb, "DLSS-SR " + _0x37501f + " exact-input logical upsample"), this.captureFloat32(_0x5ddecf.paddedAttention.buffer, _0x3f12a5 * _0x5df1da.channels, "DLSS-SR " + _0x37501f + " exact-input fused padded upsample"), this.captureFloat32(_0x1b1946.normalized, _0x3f12a5 * _0x5df1da.channels, "DLSS-SR " + _0x37501f + " exact-input normalized"), this.captureFloat32(_0x1b1946.qkv, _0x3f12a5 * _0x143b49, "DLSS-SR " + _0x37501f + " exact-input values"), this.captureFloat32(_0x1b1946.attended, _0x7b6d3d * _0xab411a * _0x143b49, "DLSS-SR " + _0x37501f + " exact-input mixed"), this.captureFloat32(_0x1b1946.residual1, _0x3136eb, "DLSS-SR " + _0x37501f + " exact-input attention residual"), this.captureFloat32(_0x1b1946.normalized2, _0x3136eb, "DLSS-SR " + _0x37501f + " exact-input normalized2"), this.captureFloat32(_0x1b1946.expanded, _0x3136eb * 4, "DLSS-SR " + _0x37501f + " exact-input MLP hidden"), this.captureFloat32(_0x547644, _0x3136eb, "DLSS-SR " + _0x37501f + " exact-input output")]) : Array(9).fill(null);
+          let [_0x14aabd, _0x38d596, _0x32d12f, _0x1a4743, _0x222932, _0x4e420b, _0x17c264, _0x283e3c, _0x410f2d] = _0x199141 ? await Promise.all([this.captureFloat32(_0x5ddecf.logical, _0x3136eb, "NeuralSR " + _0x37501f + " exact-input logical upsample"), this.captureFloat32(_0x5ddecf.paddedAttention.buffer, _0x3f12a5 * _0x5df1da.channels, "NeuralSR " + _0x37501f + " exact-input fused padded upsample"), this.captureFloat32(_0x1b1946.normalized, _0x3f12a5 * _0x5df1da.channels, "NeuralSR " + _0x37501f + " exact-input normalized"), this.captureFloat32(_0x1b1946.qkv, _0x3f12a5 * _0x143b49, "NeuralSR " + _0x37501f + " exact-input values"), this.captureFloat32(_0x1b1946.attended, _0x7b6d3d * _0xab411a * _0x143b49, "NeuralSR " + _0x37501f + " exact-input mixed"), this.captureFloat32(_0x1b1946.residual1, _0x3136eb, "NeuralSR " + _0x37501f + " exact-input attention residual"), this.captureFloat32(_0x1b1946.normalized2, _0x3136eb, "NeuralSR " + _0x37501f + " exact-input normalized2"), this.captureFloat32(_0x1b1946.expanded, _0x3136eb * 4, "NeuralSR " + _0x37501f + " exact-input MLP hidden"), this.captureFloat32(_0x547644, _0x3136eb, "NeuralSR " + _0x37501f + " exact-input output")]) : Array(9).fill(null);
           return {
             upsample: _0x14aabd,
             padded: _0x38d596,
@@ -5901,8 +5901,8 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         windowOffsets: _0x5f12c5 = null
       }) {
         let _0x5a5006 = performance.now();
-        let _0x1ca81f = _0x52fadd(this.device, "DLSS-SR packed 16-lane input", _0xacbe7);
-        let _0xfd38f6 = _0x43a0f1 ? null : _0x52fadd(this.device, "DLSS-SR current HDR color", _0x5624f6);
+        let _0x1ca81f = _0x52fadd(this.device, "NeuralSR packed 16-lane input", _0xacbe7);
+        let _0xfd38f6 = _0x43a0f1 ? null : _0x52fadd(this.device, "NeuralSR current HDR color", _0x5624f6);
         let _0x5bcd5d = _0x1d317d * _0x4a7db2;
         let _0x2211ed = new Set(_0x5da8b2);
         let _0x506172 = {};
@@ -5920,8 +5920,8 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           windowOffsetX: _0x5f12c5[_0x354e29][0],
           windowOffsetY: _0x5f12c5[_0x354e29][1]
         })) : _0x2f2349;
-        let _0x421f7c = await this.batch("DLSS-SR embedding", (_0x548efb, _0x1cf6fc) => {
-          let _0x551571 = _0x3a9441(this.device, "DLSS-SR embedding", _0x5bcd5d * 32, _0x3648ed.STORAGE | (_0x2211ed.has("embedding") ? _0x3648ed.COPY_SRC : 0));
+        let _0x421f7c = await this.batch("NeuralSR embedding", (_0x548efb, _0x1cf6fc) => {
+          let _0x551571 = _0x3a9441(this.device, "NeuralSR embedding", _0x5bcd5d * 32, _0x3648ed.STORAGE | (_0x2211ed.has("embedding") ? _0x3648ed.COPY_SRC : 0));
           _0x1cf6fc.push(_0x551571);
           this.linear(_0x548efb, _0x1cf6fc, _0x1ca81f, _0x551571, _0x5bcd5d, 16, 32, this.model.tensor("embedding_enc_0_weight"), this.model.tensor("embedding_enc_0_bias"), 2, _0x59ee0b ? 2 : !1);
           return {
@@ -5931,7 +5931,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         });
         _0x1ca81f.destroy();
         if (_0x2211ed.has("embedding")) {
-          _0x506172.embedding = await this.captureFloat32(_0x421f7c, _0x5bcd5d * 32, "DLSS-SR embedding");
+          _0x506172.embedding = await this.captureFloat32(_0x421f7c, _0x5bcd5d * 32, "NeuralSR embedding");
         }
         let _0x3b25df = [];
         let _0x49b371 = _0x1d317d;
@@ -5955,9 +5955,9 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             captureExpanded: _0x170e66,
             ..._0x4d699a
           } : null;
-          this.onProgress("DLSS-SR · " + _0x15a1fe.id + " " + _0x49b371 + "×" + _0x42308f + "×" + _0x15a1fe.channels);
+          this.onProgress("NeuralSR · " + _0x15a1fe.id + " " + _0x49b371 + "×" + _0x42308f + "×" + _0x15a1fe.channels);
           let _0x5a847c = _0x421f7c;
-          _0x421f7c = await this.batch("DLSS-SR " + _0x15a1fe.id, (_0x10eb7b, _0x3506f6) => {
+          _0x421f7c = await this.batch("NeuralSR " + _0x15a1fe.id, (_0x10eb7b, _0x3506f6) => {
             let _0x2119bf = this.block(_0x10eb7b, _0x3506f6, _0x5a847c, _0x49b371, _0x42308f, _0x15a1fe, _0x2211ed.has(_0x43d35c), _0x2eacae);
             return {
               value: _0x2119bf,
@@ -5966,23 +5966,23 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           });
           _0x5a847c.destroy();
           if (_0x2eacae?.residual1) {
-            _0x506172[_0x1aa6d9] = await this.captureFloat32(_0x2eacae.residual1, _0x49b371 * _0x42308f * _0x15a1fe.channels, "DLSS-SR " + _0x1aa6d9);
+            _0x506172[_0x1aa6d9] = await this.captureFloat32(_0x2eacae.residual1, _0x49b371 * _0x42308f * _0x15a1fe.channels, "NeuralSR " + _0x1aa6d9);
             _0x2eacae.residual1.destroy();
           }
           if (_0x2eacae?.attended) {
-            _0x506172[_0x239772] = await this.captureFloat32(_0x2eacae.attended, _0x49b371 * _0x42308f * _0x15a1fe.heads * 32, "DLSS-SR " + _0x239772);
+            _0x506172[_0x239772] = await this.captureFloat32(_0x2eacae.attended, _0x49b371 * _0x42308f * _0x15a1fe.heads * 32, "NeuralSR " + _0x239772);
             _0x2eacae.attended.destroy();
           }
           if (_0x2eacae?.qkv) {
-            _0x506172[_0x525b03] = await this.captureFloat32(_0x2eacae.qkv, _0x49b371 * _0x42308f * _0x15a1fe.heads * 32, "DLSS-SR " + _0x525b03);
+            _0x506172[_0x525b03] = await this.captureFloat32(_0x2eacae.qkv, _0x49b371 * _0x42308f * _0x15a1fe.heads * 32, "NeuralSR " + _0x525b03);
             _0x2eacae.qkv.destroy();
           }
           if (_0x2eacae?.expanded) {
-            _0x506172[_0x4f8f1e] = await this.captureFloat32(_0x2eacae.expanded, _0x49b371 * _0x42308f * _0x15a1fe.channels * 4, "DLSS-SR " + _0x4f8f1e);
+            _0x506172[_0x4f8f1e] = await this.captureFloat32(_0x2eacae.expanded, _0x49b371 * _0x42308f * _0x15a1fe.channels * 4, "NeuralSR " + _0x4f8f1e);
             _0x2eacae.expanded.destroy();
           }
           if (_0x2211ed.has(_0x43d35c)) {
-            _0x506172[_0x43d35c] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x15a1fe.channels, "DLSS-SR " + _0x43d35c);
+            _0x506172[_0x43d35c] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x15a1fe.channels, "NeuralSR " + _0x43d35c);
           }
           _0x3b25df.push({
             buffer: _0x421f7c,
@@ -5990,7 +5990,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             height: _0x42308f,
             channels: _0x15a1fe.channels
           });
-          let _0x165859 = await this.batch("DLSS-SR " + _0x15a1fe.transition, (_0x126606, _0x5972b8) => {
+          let _0x165859 = await this.batch("NeuralSR " + _0x15a1fe.transition, (_0x126606, _0x5972b8) => {
             let _0x4e99a8 = this.pool(_0x126606, _0x5972b8, _0x421f7c, _0x49b371, _0x42308f, _0x15a1fe.channels, _0x15a1fe.nextChannels, _0x15a1fe.transition, _0x2211ed.has(_0x486bd8), _0x59ee0b ? 2 : 0);
             return {
               value: _0x4e99a8,
@@ -5998,7 +5998,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             };
           });
           if (_0x2211ed.has(_0x486bd8)) {
-            _0x506172[_0x486bd8] = await this.captureFloat32(_0x165859.buffer, _0x165859.width * _0x165859.height * _0x15a1fe.nextChannels, "DLSS-SR " + _0x486bd8);
+            _0x506172[_0x486bd8] = await this.captureFloat32(_0x165859.buffer, _0x165859.width * _0x165859.height * _0x15a1fe.nextChannels, "NeuralSR " + _0x486bd8);
           }
           _0x421f7c = _0x165859.buffer;
           _0x49b371 = _0x165859.width;
@@ -6015,9 +6015,9 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           captureAttended: _0x2211ed.has(_0x13d97a),
           captureExpanded: _0x2211ed.has(_0x1d1b0b)
         };
-        this.onProgress("DLSS-SR · " + _0x4da329.id + " " + _0x49b371 + "×" + _0x42308f + "×" + _0x4da329.channels);
+        this.onProgress("NeuralSR · " + _0x4da329.id + " " + _0x49b371 + "×" + _0x42308f + "×" + _0x4da329.channels);
         let _0x55d0af = _0x421f7c;
-        _0x421f7c = await this.batch("DLSS-SR " + _0x4da329.id, (_0x428009, _0x150c53) => {
+        _0x421f7c = await this.batch("NeuralSR " + _0x4da329.id, (_0x428009, _0x150c53) => {
           let _0x16ca99 = this.block(_0x428009, _0x150c53, _0x55d0af, _0x49b371, _0x42308f, _0x4da329, _0x2211ed.has("dec5-output"), _0x3c5ef2);
           return {
             value: _0x16ca99,
@@ -6026,26 +6026,26 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
         });
         _0x55d0af.destroy();
         if (_0x3c5ef2.residual1) {
-          _0x506172[_0x31c591] = await this.captureFloat32(_0x3c5ef2.residual1, _0x49b371 * _0x42308f * _0x4da329.channels, "DLSS-SR " + _0x31c591);
+          _0x506172[_0x31c591] = await this.captureFloat32(_0x3c5ef2.residual1, _0x49b371 * _0x42308f * _0x4da329.channels, "NeuralSR " + _0x31c591);
           _0x3c5ef2.residual1.destroy();
         }
         if (_0x3c5ef2.attended) {
-          _0x506172[_0x13d97a] = await this.captureFloat32(_0x3c5ef2.attended, _0x49b371 * _0x42308f * _0x4da329.heads * 32, "DLSS-SR " + _0x13d97a);
+          _0x506172[_0x13d97a] = await this.captureFloat32(_0x3c5ef2.attended, _0x49b371 * _0x42308f * _0x4da329.heads * 32, "NeuralSR " + _0x13d97a);
           _0x3c5ef2.attended.destroy();
         }
         if (_0x3c5ef2.expanded) {
-          _0x506172[_0x1d1b0b] = await this.captureFloat32(_0x3c5ef2.expanded, _0x49b371 * _0x42308f * _0x4da329.channels * 4, "DLSS-SR " + _0x1d1b0b);
+          _0x506172[_0x1d1b0b] = await this.captureFloat32(_0x3c5ef2.expanded, _0x49b371 * _0x42308f * _0x4da329.channels * 4, "NeuralSR " + _0x1d1b0b);
           _0x3c5ef2.expanded.destroy();
         }
         if (_0x2211ed.has("dec5-output")) {
-          _0x506172["dec5-output"] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x4da329.channels, "DLSS-SR dec5-output");
+          _0x506172["dec5-output"] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x4da329.channels, "NeuralSR dec5-output");
         }
         for (let _0x223211 = 0; _0x223211 < 5; _0x223211 += 1) {
           let _0x22adda = _0x701dba[6 + _0x223211];
           let _0x3e08a7 = _0x3b25df[4 - _0x223211];
-          this.onProgress("DLSS-SR · " + _0x22adda.id + " " + _0x3e08a7.width + "×" + _0x3e08a7.height + "×" + _0x22adda.channels);
+          this.onProgress("NeuralSR · " + _0x22adda.id + " " + _0x3e08a7.width + "×" + _0x3e08a7.height + "×" + _0x22adda.channels);
           let _0x357c84 = _0x421f7c;
-          let _0x2b583b = await this.batch("DLSS-SR " + _0x22adda.transition, (_0x427cdf, _0x21c8f1) => {
+          let _0x2b583b = await this.batch("NeuralSR " + _0x22adda.transition, (_0x427cdf, _0x21c8f1) => {
             let _0x5ebb16 = this.upsample(_0x427cdf, _0x21c8f1, _0x357c84, _0x49b371, _0x42308f, _0x22adda.previousChannels, _0x3e08a7.buffer, _0x3e08a7.width, _0x3e08a7.height, _0x22adda.channels, _0x22adda.transition, !1, _0x45b42b);
             let _0x24e0a7 = _0x22adda.windowOffsetX ?? 4;
             let _0x5b1c06 = _0x22adda.windowOffsetY ?? 4;
@@ -6064,7 +6064,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           _0x49b371 = _0x3e08a7.width;
           _0x42308f = _0x3e08a7.height;
           let _0xeb17c0 = _0x421f7c;
-          _0x421f7c = await this.batch("DLSS-SR " + _0x22adda.id, (_0x11a0f3, _0xa195e6) => {
+          _0x421f7c = await this.batch("NeuralSR " + _0x22adda.id, (_0x11a0f3, _0xa195e6) => {
             let _0x2a1644 = _0x22adda.id.replace("_", "") + "-output";
             let _0x6abfb2 = this.block(_0x11a0f3, _0xa195e6, _0xeb17c0, _0x49b371, _0x42308f, _0x22adda, _0x2211ed.has(_0x2a1644), _0x4d699a, _0x2b583b.paddedAttention);
             return {
@@ -6076,31 +6076,31 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           _0x2b583b.paddedAttention?.buffer.destroy();
           let _0x3fe0a4 = _0x22adda.id.replace("_", "") + "-output";
           if (_0x2211ed.has(_0x3fe0a4)) {
-            _0x506172[_0x3fe0a4] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x22adda.channels, "DLSS-SR " + _0x3fe0a4);
+            _0x506172[_0x3fe0a4] = await this.captureFloat32(_0x421f7c, _0x49b371 * _0x42308f * _0x22adda.channels, "NeuralSR " + _0x3fe0a4);
           }
         }
         let _0x2175dc = _0x43a0f1 ? 0 : _0x41ef2d * _0x573fa5 * 4 * 4;
         let _0x5785e2 = _0x43a0f1 ? null : this.device.createBuffer({
-          label: "DLSS-SR output readback",
+          label: "NeuralSR output readback",
           size: _0x2175dc,
           usage: _0x3648ed.COPY_DST | _0x3648ed.MAP_READ
         });
         let _0x3d0944 = _0x5bcd5d * 40 * 4;
         let _0xea341f = _0x30d5ad ? this.device.createBuffer({
-          label: "DLSS-SR head40 diagnostic readback",
+          label: "NeuralSR head40 diagnostic readback",
           size: _0x3d0944,
           usage: _0x3648ed.COPY_DST | _0x3648ed.MAP_READ
         }) : null;
         let _0x1545f8 = _0x421f7c;
-        await this.batch("DLSS-SR learned reconstruction", (_0x67942d, _0x122fd0) => {
-          let _0x3150db = _0x3a9441(this.device, "DLSS-SR 40-lane reconstruction head", _0x5bcd5d * 40, _0x3648ed.STORAGE | (_0x30d5ad ? _0x3648ed.COPY_SRC : 0));
+        await this.batch("NeuralSR learned reconstruction", (_0x67942d, _0x122fd0) => {
+          let _0x3150db = _0x3a9441(this.device, "NeuralSR 40-lane reconstruction head", _0x5bcd5d * 40, _0x3648ed.STORAGE | (_0x30d5ad ? _0x3648ed.COPY_SRC : 0));
           _0x122fd0.push(_0x3150db);
           this.linear(_0x67942d, _0x122fd0, _0x1545f8, _0x3150db, _0x5bcd5d, 32, 40, this.model.tensor("pdl_1_weight"), this.model.tensor("pdl_1_bias"), !1, _0x59ee0b ? 2 : !1);
           if (_0xea341f) {
             _0x67942d.copyBufferToBuffer(_0x3150db, 0, _0xea341f, 0, _0x3d0944);
           }
           if (!_0x43a0f1) {
-            let _0x4a70a2 = _0x3a9441(this.device, "DLSS-SR reconstructed HDR output", _0x41ef2d * _0x573fa5 * 4, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
+            let _0x4a70a2 = _0x3a9441(this.device, "NeuralSR reconstructed HDR output", _0x41ef2d * _0x573fa5 * 4, _0x3648ed.STORAGE | _0x3648ed.COPY_SRC);
             _0x122fd0.push(_0x4a70a2);
             let _0x20367c = this.params([_0x1ad442, _0x417e8c, _0x1d317d, _0x4a7db2, _0x41ef2d, _0x573fa5], _0x122fd0);
             this.bindAndDispatch(_0x67942d, this.pipelines.reconstruct, {
@@ -6126,7 +6126,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
                   buffer: _0x20367c
                 }
               }]
-            }, _0x41ef2d * _0x573fa5 * 4, "DLSS-SR dynamic anisotropic reconstruction");
+            }, _0x41ef2d * _0x573fa5 * 4, "NeuralSR dynamic anisotropic reconstruction");
             _0x67942d.copyBufferToBuffer(_0x4a70a2, 0, _0x5785e2, 0, _0x2175dc);
           }
           return {
@@ -6159,7 +6159,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           networkWidth: _0x1d317d,
           networkHeight: _0x4a7db2,
           milliseconds: performance.now() - _0x5a5006,
-          implementation: "recovered-dlss-sr-performance-j"
+          implementation: "recovered-neural-sr-performance-j"
         };
       }
     };
@@ -6173,7 +6173,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
       constructor(_0x322815) {
         this.inference = _0x322815;
         this.device = _0x322815.device;
-        this.pool = new _0x1e235c(this.device, "DLSS-SR graph");
+        this.pool = new _0x1e235c(this.device, "NeuralSR graph");
         this.plans = new Map();
         this.geometry = "";
       }
@@ -6246,7 +6246,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
           });
           if (!_0x517c82) {
             _0x517c82 = {
-              head: _0x2c6624("DLSS-SR persistent head40 slot " + this.plans.size, _0x3e7598 * _0x203d0d * 40, true),
+              head: _0x2c6624("NeuralSR persistent head40 slot " + this.plans.size, _0x3e7598 * _0x203d0d * 40, true),
               profiles: new Map()
             };
             this.plans.set(_0x28652a, _0x517c82);
@@ -6257,7 +6257,7 @@ fn reconstruct(@builtin(global_invocation_id) id: vec3<u32>) {
             _0xb65388.release(_0x5627b4.filter(_0x180de1 => _0x180de1 !== _0x4957e2));
             return _0x4957e2;
           };
-          let _0x3f3c9d = _0x2c6624("DLSS-SR persistent embedding", _0x3e7598 * _0x203d0d * 32);
+          let _0x3f3c9d = _0x2c6624("NeuralSR persistent embedding", _0x3e7598 * _0x203d0d * 32);
           let _0x3d6bf2 = [];
           _0x289de8.linear(_0x4392e8, _0x3d6bf2, _0x28652a, _0x3f3c9d, _0x3e7598 * _0x203d0d, 16, 32, _0x289de8.model.tensor("embedding_enc_0_weight"), _0x289de8.model.tensor("embedding_enc_0_bias"), 2, _0x75ae87 ? 2 : !1, null, 0, "f32_input");
           let _0x257046 = _0x3f3c9d;
@@ -7859,14 +7859,14 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
             cached: _0x479ec3
           }) => {
             this.downloadedBytes.set(_0x27fade, _0x3daccf);
-            this.onProgress(_0x479ec3 ? "Loading cached DLSS-NR" : "Downloading DLSS-NR", !1, {
-              label: "DLSS-NR",
+            this.onProgress(_0x479ec3 ? "Loading cached Retouch" : "Downloading Retouch", !1, {
+              label: "Retouch",
               total: _0x1fb321,
               loaded: [...this.downloadedBytes.values()].reduce((_0x11a685, _0x18cbce) => _0x11a685 + _0x18cbce, 0)
             });
           }
         });
-        this.onProgress("Verifying DLSS-NR weights");
+        this.onProgress("Verifying Retouch weights");
         if ((await _0x445784(_0x3154f9)) !== _0x54806b.sha256) {
           throw new Error(_0x54806b.id + " SHA-256 mismatch");
         }
@@ -8025,7 +8025,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     };
     for (let [_0x50becb, _0x249611] of Object.entries(_0x3afe21)) {
       if (!Object.hasOwn(_0x68b161, _0x50becb)) {
-        throw new Error("Unknown DLSS-NR setting: " + _0x50becb);
+        throw new Error("Unknown Retouch setting: " + _0x50becb);
       }
       if (typeof _0x68b161[_0x50becb] == "boolean") {
         if (![!0, !1, 0, 1].includes(_0x249611)) {
@@ -9074,7 +9074,7 @@ fn main(
         let _0x5d8287 = _0x10cc50.features.has("shader-f16");
         let _0x5bf13b = _0x1e6fad.replace("/*__F16_ENABLE__*/", _0x5d8287 ? "enable f16;" : "").replace("/*__ROUND_F16__*/", _0x5d8287 ? "fn round_accumulator(value: f32) -> f32 { return f32(f16(value)); }" : "fn round_accumulator(value: f32) -> f32 { return value; }");
         let _0x2b5e7c = _0x23c63a(_0x10cc50, {
-          label: "DLSS-NR packed E4M3 matmul",
+          label: "Retouch packed E4M3 matmul",
           code: _0x5bf13b
         });
         let _0x5e729f = (_0x11d3d6 ? {
@@ -9095,7 +9095,7 @@ fn main(
         let _0x3e461f = new _0x317187(_0x10cc50, _0x5828cc, _0x1b3ddb);
         let _0x588529 = _0x5bf13b.replace(/fn ada_fp8_fdpa\([\s\S]*?\n}/, _0x4e10c5).replace("exp2(f32(i32(exponent) - 7))", "bitcast<f32>((exponent + 120u) << 23u)").replace("exp2(floor(log2(magnitude)) - 3.0)", "bitcast<f32>((((bitcast<u32>(magnitude) >> 23u) & 255u) - 3u) << 23u)").replaceAll("params.flags", "MATMUL_FLAGS").replace("struct MatmulParams", "override MATMUL_FLAGS: u32 = 0u;\nstruct MatmulParams");
         _0x3e461f.productionModule = _0x23c63a(_0x10cc50, {
-          label: "DLSS-NR fixed-point matmul",
+          label: "Retouch fixed-point matmul",
           code: _0x588529
         });
         let _0x38b1f0 = (_0x11d3d6 ? {
@@ -9284,7 +9284,7 @@ fn main(
           throw new Error("Packed E4 matmul requires a production E4 boundary with aligned channel strides");
         }
         let _0xec822a = _0x22a8dc(this.device, {
-          label: "DLSS-NR matmul params",
+          label: "Retouch matmul params",
           size: 48,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
@@ -9313,7 +9313,7 @@ fn main(
           let _0x43c72f = _0x4f3ef7 + ":" + _0x3eebdd + (_0x3fb168 ? ":batch" : "") + (_0x26d264 ? ":" + _0x16e028 + ":" + _0x15454a + ":" + _0x1ed975 : "") + (_0x5ce694 ? ":" + _0x5ce694.inputWidth + ":" + _0x5ce694.outputWidth + ":" + _0x5ce694.outputHeight : "") + (["Layout", "BitQuant", "StaticHalf", "GroupExponent", "SeedExponent", "SiluTable", "WeightTable", "PackedInput", "PackedOutput", "PackedIO", "PackedInputDual"].includes(_0x4ef42f) ? ":layout:" + _0x503b87.slice(3).join(",") : "");
           if (!this.productionPipelines.has(_0x43c72f)) {
             this.productionPipelines.set(_0x43c72f, _0x5b9532(this.device, {
-              label: "DLSS-NR fixed-point matmul flags " + _0x4f3ef7 + " " + _0x3eebdd + (_0x3fb168 ? " batched" : ""),
+              label: "Retouch fixed-point matmul flags " + _0x4f3ef7 + " " + _0x3eebdd + (_0x3fb168 ? " batched" : ""),
               layout: "auto",
               compute: {
                 module: this["production" + _0x3eebdd + (_0x3fb168 ? "Batched" : "") + "Module"],
@@ -9388,7 +9388,7 @@ fn main(
           }] : [])]
         });
         let _0x5e4291 = _0x5e000e.beginComputePass({
-          label: "DLSS-NR " + _0x16e028 + "x" + _0x15454a + " · " + _0x15454a + "x" + _0x1ed975
+          label: "Retouch " + _0x16e028 + "x" + _0x15454a + " · " + _0x15454a + "x" + _0x1ed975
         });
         _0x5e4291.setPipeline(_0x724e35);
         _0x5e4291.setBindGroup(0, _0x28d3b9);
@@ -9401,7 +9401,7 @@ fn main(
         _0x5e4291.end();
         return _0xec822a;
       }
-      createOutput(_0x4721d0, _0x35f3be, _0x857c87 = "DLSS-NR matmul output") {
+      createOutput(_0x4721d0, _0x35f3be, _0x857c87 = "Retouch matmul output") {
         return _0x22a8dc(this.device, {
           label: _0x857c87,
           size: _0x2e6782(this.device, _0x4721d0 * _0x35f3be),
@@ -9722,7 +9722,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
       } = {}) {
         let _0x200a36 = _0x52ef93 ? _0x1af143 : _0x1735cd;
         let _0x2e9414 = _0x4c4a51(_0xe566c7, {
-          label: "DLSS-NR tensor operations",
+          label: "Retouch tensor operations",
           code: _0x466e51
         });
         let _0x5ce988 = (await _0x2e9414.getCompilationInfo()).messages.filter(_0x4c2daa => _0x4c2daa.type === "error");
@@ -9838,7 +9838,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x2a0783 = _0x5031de.beginComputePass({
-          label: "DLSS-NR SwiGLU"
+          label: "Retouch SwiGLU"
         });
         _0x2a0783.setPipeline(this.pipelines.gate);
         _0x2a0783.setBindGroup(0, _0x584a1f);
@@ -9873,7 +9873,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x1c4b42 = _0x3da52d.beginComputePass({
-          label: "DLSS-NR FP16 residual to FP8 branch"
+          label: "Retouch FP16 residual to FP8 branch"
         });
         _0x1c4b42.setPipeline(this.pipelines.quantize);
         _0x1c4b42.setBindGroup(0, _0x3f25aa);
@@ -9918,7 +9918,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x1024d8 = _0x52961c.beginComputePass({
-          label: "DLSS-NR resize " + _0x1884fd + "x" + _0x41aa73 + " to " + _0x35abe4 + "x" + _0x21038c
+          label: "Retouch resize " + _0x1884fd + "x" + _0x41aa73 + " to " + _0x35abe4 + "x" + _0x21038c
         });
         _0x1024d8.setPipeline(this.pipelines.resize);
         _0x1024d8.setBindGroup(1, _0x31dd44);
@@ -9959,7 +9959,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x2f0b51 = _0x21e405.beginComputePass({
-          label: "DLSS-NR native 2x upsample " + _0x25419f + "x" + _0x1484cd + " to " + _0x637cc5 + "x" + _0x537ed8
+          label: "Retouch native 2x upsample " + _0x25419f + "x" + _0x1484cd + " to " + _0x637cc5 + "x" + _0x537ed8
         });
         _0x2f0b51.setPipeline(this.pipelines.upsample2x);
         _0x2f0b51.setBindGroup(1, _0x51b66c);
@@ -9998,7 +9998,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x10b8ea = _0x912935.beginComputePass({
-          label: "DLSS-NR 2x downsample " + _0x142f8d + "x" + _0x218f7d + " to " + _0x3a0e9c + "x" + _0x45fe5c
+          label: "Retouch 2x downsample " + _0x142f8d + "x" + _0x218f7d + " to " + _0x3a0e9c + "x" + _0x45fe5c
         });
         _0x10b8ea.setPipeline(this.pipelines.downsample);
         _0x10b8ea.setBindGroup(1, _0x4409a2);
@@ -10038,7 +10038,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x36962e = _0x227513.beginComputePass({
-          label: "DLSS-NR residual add"
+          label: "Retouch residual add"
         });
         _0x36962e.setPipeline(this.pipelines.add);
         _0x36962e.setBindGroup(2, _0x38543f);
@@ -10089,7 +10089,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x551297 = _0x6b81db.beginComputePass({
-          label: "DLSS-NR learned upsample/skip blend"
+          label: "Retouch learned upsample/skip blend"
         });
         _0x551297.setPipeline(_0x298b35);
         _0x551297.setBindGroup(3, _0x3f7bbc);
@@ -10138,7 +10138,7 @@ fn decoder_transition_blend(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x2182c8 = _0x5d80fe.beginComputePass({
-          label: "DLSS-NR decoder transition/skip blend"
+          label: "Retouch decoder transition/skip blend"
         });
         _0x2182c8.setPipeline(_0x282021);
         _0x2182c8.setBindGroup(3, _0x3c46e3);
@@ -11293,7 +11293,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         let _0x551ffa = (_0x24958f, _0x368b08) => _0x368b08 === 0 ? "" : "\n  let " + _0x24958f + "_bits = i32(pack2x16float(vec2<f32>(f32(" + _0x24958f + "), 0.0)) & 0xffffu);\n  " + _0x24958f + " = /*__NORM_TYPE__*/(unpack2x16float(u32(clamp(" + _0x24958f + "_bits + " + _0x368b08 + ", 1, 31743))).x);";
         let _0xc68330 = _0x3a4757.replace("/*__F16_ENABLE__*/", _0x522b48 ? "enable f16;" : "").replace("/*__FP8_PUBLICATION__*/", _0x3de609.get("nativeFp8Attention") === "1" ? "fp8_from_f16_rne" : "fp8_domain").replace("/*__NORM_PERMUTATION__*/", _0x2ee30f).replace("/*__NORM_PUBLICATION_FUNCTION__*/", _0x27aa05).replace("/*__Q_NORM_PUBLICATION__*/", _0x39eb4a(_0x4151c6)).replace("/*__K_NORM_PUBLICATION__*/", _0x39eb4a(_0x5d2e38)).replace("/*__NORM_RSQRT_FUNCTION__*/", _0x36bed5).replace("/*__NORM_FMA_FUNCTION__*/", _0x522b48 ? _0x12dd71.replace("sr_fma_scalar", "nr_norm_fma") : "fn nr_norm_fma(a:f32,b:f32,c:f32)->f32 { return fma(a,b,c); }").replaceAll("/*__NORM_RSQRT__*/", _0x1f2416).replace("/*__Q_NORM_ADJUST__*/", _0x551ffa("qnorm", _0x4fc2bc)).replace("/*__K_NORM_ADJUST__*/", _0x551ffa("knorm", _0x485933)).replaceAll("/*__NORM_TYPE__*/", _0x39f280);
         let _0x5487a8 = _0x4b24fc(_0x11df4c, {
-          label: "DLSS-NR window cosine attention",
+          label: "Retouch window cosine attention",
           code: _0xc68330
         });
         let _0x5c2f6b = (_0x3a7aa5 ? {
@@ -11698,7 +11698,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
             }]
           });
           _0xc53dbf = _0x346b22.beginComputePass({
-            label: "DLSS-NR normalize window Q/K"
+            label: "Retouch normalize window Q/K"
           });
           _0xc53dbf.setPipeline(this.normalizePipeline);
           _0xc53dbf.setBindGroup(0, _0x5c64f8);
@@ -11753,7 +11753,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
           }]
         });
         _0xc53dbf = _0x346b22.beginComputePass({
-          label: "DLSS-NR 8x8 window attention"
+          label: "Retouch 8x8 window attention"
         });
         _0xc53dbf.setPipeline(_0x3ea27c);
         _0xc53dbf.setBindGroup(1, _0x5c64f8);
@@ -12348,7 +12348,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         return _0x38e42d;
       }
       captureBoundary(_0x362271, _0x9b47a3, _0x353e83, _0x440db7, _0x455fb0, _0x5ad02d) {
-        let _0x3cf7f4 = this.ops.buffer("DLSS-NR native block" + _0x353e83 + " boundary diagnostic", _0x455fb0, _0x5ad02d);
+        let _0x3cf7f4 = this.ops.buffer("Retouch native block" + _0x353e83 + " boundary diagnostic", _0x455fb0, _0x5ad02d);
         _0x362271.copyBufferToBuffer(_0x440db7, 0, _0x3cf7f4, 0, _0x455fb0 * _0x5ad02d * 4);
         _0x9b47a3.set(_0x353e83, _0x3cf7f4);
         return _0x3cf7f4;
@@ -12381,19 +12381,19 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         });
         let _0x586bbb = [];
         let _0x2e51a1 = _0x23a9eb * _0x5c8f5e;
-        let _0x21c5be = this.ops.buffer("DLSS-NR full-resolution FP16 input adapter", _0x2e51a1, 32);
-        let _0x14bc3d = this.ops.buffer("DLSS-NR full-resolution FP8 input adapter", _0x2e51a1, 32);
-        let _0x3f26ee = this.ops.buffer("DLSS-NR retained full-resolution block0", _0x2e51a1, 32);
-        let _0x44b795 = this.ops.buffer("DLSS-NR raw FP16 block0 downsample source", _0x2e51a1, 32);
-        let _0x5137f8 = this.createFusedTemporaries("DLSS-NR pre block0", _0x2e51a1, 32, _0x32b440?.compactScratch);
+        let _0x21c5be = this.ops.buffer("Retouch full-resolution FP16 input adapter", _0x2e51a1, 32);
+        let _0x14bc3d = this.ops.buffer("Retouch full-resolution FP8 input adapter", _0x2e51a1, 32);
+        let _0x3f26ee = this.ops.buffer("Retouch retained full-resolution block0", _0x2e51a1, 32);
+        let _0x44b795 = this.ops.buffer("Retouch raw FP16 block0 downsample source", _0x2e51a1, 32);
+        let _0x5137f8 = this.createFusedTemporaries("Retouch pre block0", _0x2e51a1, 32, _0x32b440?.compactScratch);
         let _0x1f0401 = _0x3504ba ? {
-          expanded: this.ops.buffer("DLSS-NR block0 FFN expanded diagnostic", _0x2e51a1, 128),
-          branch: this.ops.buffer("DLSS-NR block0 FFN branch diagnostic", _0x2e51a1, 32),
-          ffn: this.ops.buffer("DLSS-NR block0 FFN diagnostic", _0x2e51a1, 32),
-          qkv: this.ops.buffer("DLSS-NR block0 QKV diagnostic", _0x2e51a1, 96),
-          attended: this.ops.buffer("DLSS-NR block0 attention diagnostic", _0x2e51a1, 32)
+          expanded: this.ops.buffer("Retouch block0 FFN expanded diagnostic", _0x2e51a1, 128),
+          branch: this.ops.buffer("Retouch block0 FFN branch diagnostic", _0x2e51a1, 32),
+          ffn: this.ops.buffer("Retouch block0 FFN diagnostic", _0x2e51a1, 32),
+          qkv: this.ops.buffer("Retouch block0 QKV diagnostic", _0x2e51a1, 96),
+          attended: this.ops.buffer("Retouch block0 attention diagnostic", _0x2e51a1, 32)
         } : _0x2dce24 ? {
-          attended: this.ops.buffer("DLSS-NR block0 attention score diagnostic", _0x2e51a1, 32)
+          attended: this.ops.buffer("Retouch block0 attention score diagnostic", _0x2e51a1, 32)
         } : null;
         let _0x5f4ada = _0x241ce1 ?? this.tensor(0);
         let _0x31f86b = _0x259148();
@@ -12418,7 +12418,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
           channels: 32
         }));
         let _0x3a371c = _0x5a0f4f ? 256 : 0;
-        let _0x2f51f2 = _0x5a0f4f ? this.ops.buffer("DLSS-NR projected FP16 sample", 8, 32) : null;
+        let _0x2f51f2 = _0x5a0f4f ? this.ops.buffer("Retouch projected FP16 sample", 8, 32) : null;
         if (_0x2f51f2) {
           _0x6148ab.copyBufferToBuffer(_0x21c5be, 0, _0x2f51f2, 0, _0x3a371c * 4);
         }
@@ -12436,15 +12436,15 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
           ffnSkipOverride: _0x21c5be,
           rawOutput: _0x44b795
         });
-        let _0x21110a = _0x5a0f4f ? this.ops.buffer("DLSS-NR block0 FFN FP16 sample", 8, 32) : null;
-        let _0x532f14 = _0x5a0f4f ? this.ops.buffer("DLSS-NR block0 expanded FP16 sample", 8, 128) : null;
+        let _0x21110a = _0x5a0f4f ? this.ops.buffer("Retouch block0 FFN FP16 sample", 8, 32) : null;
+        let _0x532f14 = _0x5a0f4f ? this.ops.buffer("Retouch block0 expanded FP16 sample", 8, 128) : null;
         if (_0x21110a) {
           _0x6148ab.copyBufferToBuffer(_0x5137f8.ffnResidual, 0, _0x21110a, 0, _0x3a371c * 4);
           _0x6148ab.copyBufferToBuffer(_0x5137f8.ffn, 0, _0x532f14, 0, 4096);
         }
         let _0xbf92a5 = _0x4a84a3 * _0x15cc26;
-        let _0x46ac95 = this.ops.buffer("DLSS-NR block0 downsample", _0xbf92a5, 32);
-        let _0x595f5f = _0x3504ba || _0x4c64c0 ? this.ops.buffer("DLSS-NR native pre boundary diagnostic", _0xbf92a5, 32) : null;
+        let _0x46ac95 = this.ops.buffer("Retouch block0 downsample", _0xbf92a5, 32);
+        let _0x595f5f = _0x3504ba || _0x4c64c0 ? this.ops.buffer("Retouch native pre boundary diagnostic", _0xbf92a5, 32) : null;
         _0x586bbb.push(this.ops.dispatchDownsample2x(_0x6148ab, {
           input: _0x44b795,
           output: _0x46ac95,
@@ -12560,15 +12560,15 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         let _0x5518f7 = [...Object.values(_0x349ec2)];
         let _0x450cca = new Map();
         let _0xe38835 = _0x3ff534 && _0x5c71d5[0] === 5 ? {
-          expanded: this.ops.buffer("DLSS-NR block5 FFN expanded diagnostic", _0x460274, _0xc08839.get(_0x3632ba)),
-          ffn: this.ops.buffer("DLSS-NR block5 FFN diagnostic", _0x460274, _0x3632ba),
-          ffnQuantized: this.ops.buffer("DLSS-NR block5 FFN E4 diagnostic", _0x460274, _0x3632ba),
-          qkv: this.ops.buffer("DLSS-NR block5 QKV diagnostic", _0x460274, _0x3632ba * 3),
-          normalized: this.ops.buffer("DLSS-NR block5 normalized QKV diagnostic", _0x460274, _0x3632ba * 3),
-          attended: this.ops.buffer("DLSS-NR block5 attention diagnostic", _0x460274, _0x3632ba)
+          expanded: this.ops.buffer("Retouch block5 FFN expanded diagnostic", _0x460274, _0xc08839.get(_0x3632ba)),
+          ffn: this.ops.buffer("Retouch block5 FFN diagnostic", _0x460274, _0x3632ba),
+          ffnQuantized: this.ops.buffer("Retouch block5 FFN E4 diagnostic", _0x460274, _0x3632ba),
+          qkv: this.ops.buffer("Retouch block5 QKV diagnostic", _0x460274, _0x3632ba * 3),
+          normalized: this.ops.buffer("Retouch block5 normalized QKV diagnostic", _0x460274, _0x3632ba * 3),
+          attended: this.ops.buffer("Retouch block5 attention diagnostic", _0x460274, _0x3632ba)
         } : null;
         if (_0x5a328c) {
-          let _0x59481f = this.ops.buffer("DLSS-NR pre projection", _0x460274, _0x3632ba);
+          let _0x59481f = this.ops.buffer("Retouch pre projection", _0x460274, _0x3632ba);
           _0x398cf1.push(this.f16Matmul.dispatch(_0x250f92, {
             input: _0x5e710a,
             weights: this.tensor(0).packedBuffer,
@@ -12872,16 +12872,16 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         let _0x45ad79 = _0x1426cc(30) ? this.ops.buffer(_0x2743e0 + " raw FP16 block30 transition source", _0x3d6e95, 512) : null;
         let _0x2b9290 = Number.isInteger(_0x2ce9bf) && _0x2ce9bf >= 23 && _0x2ce9bf <= 30 ? _0x2ce9bf : null;
         let _0x3a55f8 = _0x2b9290 == null ? null : {
-          input: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " input diagnostic", _0x3d6e95, 512),
-          branch64: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " FFN branch64 diagnostic", _0x3d6e95, 64),
-          middle256: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " FFN middle256 diagnostic", _0x3d6e95, 256),
-          layer0: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " FFN layer0 diagnostic", _0x3d6e95, 512),
-          ffn: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " FFN residual diagnostic", _0x3d6e95, 512),
-          qkvRaw: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " raw QKV accumulator diagnostic", _0x3d6e95, 1536),
-          qkv: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " QKV diagnostic", _0x3d6e95, 1536),
-          normalized: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " normalized QKV diagnostic", _0x3d6e95, 1536),
-          attended: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " attention diagnostic", _0x3d6e95, 512),
-          output: this.ops.buffer("DLSS-NR block" + _0x2b9290 + " output diagnostic", _0x3d6e95, 512)
+          input: this.ops.buffer("Retouch block" + _0x2b9290 + " input diagnostic", _0x3d6e95, 512),
+          branch64: this.ops.buffer("Retouch block" + _0x2b9290 + " FFN branch64 diagnostic", _0x3d6e95, 64),
+          middle256: this.ops.buffer("Retouch block" + _0x2b9290 + " FFN middle256 diagnostic", _0x3d6e95, 256),
+          layer0: this.ops.buffer("Retouch block" + _0x2b9290 + " FFN layer0 diagnostic", _0x3d6e95, 512),
+          ffn: this.ops.buffer("Retouch block" + _0x2b9290 + " FFN residual diagnostic", _0x3d6e95, 512),
+          qkvRaw: this.ops.buffer("Retouch block" + _0x2b9290 + " raw QKV accumulator diagnostic", _0x3d6e95, 1536),
+          qkv: this.ops.buffer("Retouch block" + _0x2b9290 + " QKV diagnostic", _0x3d6e95, 1536),
+          normalized: this.ops.buffer("Retouch block" + _0x2b9290 + " normalized QKV diagnostic", _0x3d6e95, 1536),
+          attended: this.ops.buffer("Retouch block" + _0x2b9290 + " attention diagnostic", _0x3d6e95, 512),
+          output: this.ops.buffer("Retouch block" + _0x2b9290 + " output diagnostic", _0x3d6e95, 512)
         };
         let _0x3cef22 = new Map();
         for (let _0x5c1536 = 23; _0x5c1536 <= 30; _0x5c1536 += 1) {
@@ -13127,11 +13127,11 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         }
         let _0x4ef0a1 = new Map();
         let _0x1d4ceb = _0x708a10 ? {
-          expanded: this.ops.buffer("DLSS-NR block" + _0x2162ec + " FFN expanded diagnostic", _0x3ecbd3, 128),
-          computedFfn: this.ops.buffer("DLSS-NR block" + _0x2162ec + " computed FFN diagnostic", _0x3ecbd3, _0x30493f),
-          ffn: this.ops.buffer("DLSS-NR block" + _0x2162ec + " FFN diagnostic", _0x3ecbd3, _0x30493f),
-          qkv: this.ops.buffer("DLSS-NR block" + _0x2162ec + " QKV diagnostic", _0x3ecbd3, _0x30493f * 3),
-          attended: this.ops.buffer("DLSS-NR block" + _0x2162ec + " attention diagnostic", _0x3ecbd3, _0x30493f)
+          expanded: this.ops.buffer("Retouch block" + _0x2162ec + " FFN expanded diagnostic", _0x3ecbd3, 128),
+          computedFfn: this.ops.buffer("Retouch block" + _0x2162ec + " computed FFN diagnostic", _0x3ecbd3, _0x30493f),
+          ffn: this.ops.buffer("Retouch block" + _0x2162ec + " FFN diagnostic", _0x3ecbd3, _0x30493f),
+          qkv: this.ops.buffer("Retouch block" + _0x2162ec + " QKV diagnostic", _0x3ecbd3, _0x30493f * 3),
+          attended: this.ops.buffer("Retouch block" + _0x2162ec + " attention diagnostic", _0x3ecbd3, _0x30493f)
         } : null;
         if (_0x708a10) {
           this.captureBoundary(_0x175146, _0x4ef0a1, _0x2162ec + "-projected", _0x2aa00d, _0x3ecbd3, _0x30493f);
@@ -13199,12 +13199,12 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
         if (_0x1192c6.packedByteLength !== _0x3d42b7.endWithoutPadding) {
           throw new Error("Unexpected block70 post layout: " + _0x1192c6.packedByteLength + " bytes");
         }
-        let _0x3705cc = this.ops.buffer("DLSS-NR decoder full-resolution upsample", _0x8f4985, 32);
-        let _0x145a0c = this.ops.buffer("DLSS-NR full-resolution raw FP16 post adapter merge", _0x8f4985, 32);
-        let _0xbb5281 = this.ops.buffer("DLSS-NR full-resolution FP8 post adapter merge", _0x8f4985, 32);
-        let _0x414f48 = this.productionDiscardPostBoundary && _0x24654c && !_0x403121 ? null : this.ops.buffer("DLSS-NR full-resolution block70 output", _0x8f4985, 32);
-        let _0xb48a97 = this.ops.buffer("DLSS-NR full-resolution raw FP16 block70 output", _0x8f4985, 32);
-        let _0x2b8e1c = this.ops.buffer("DLSS-NR RGBA neural head", _0x8f4985, 4, "f32");
+        let _0x3705cc = this.ops.buffer("Retouch decoder full-resolution upsample", _0x8f4985, 32);
+        let _0x145a0c = this.ops.buffer("Retouch full-resolution raw FP16 post adapter merge", _0x8f4985, 32);
+        let _0xbb5281 = this.ops.buffer("Retouch full-resolution FP8 post adapter merge", _0x8f4985, 32);
+        let _0x414f48 = this.productionDiscardPostBoundary && _0x24654c && !_0x403121 ? null : this.ops.buffer("Retouch full-resolution block70 output", _0x8f4985, 32);
+        let _0xb48a97 = this.ops.buffer("Retouch full-resolution raw FP16 block70 output", _0x8f4985, 32);
+        let _0x2b8e1c = this.ops.buffer("Retouch RGBA neural head", _0x8f4985, 4, "f32");
         let _0x52bfff = this.createFusedTemporaries(_0x230ff6, _0x8f4985, 32, _0x24654c?.compactScratch);
         _0x22025e.push(this.ops.dispatchUpsample2x(_0x4cf99b, {
           input: _0x52b900,
@@ -13256,7 +13256,7 @@ fn attend_window(@builtin(local_invocation_id) lid: vec3<u32>, @builtin(workgrou
           swizzleInput: _0x4e67a9
         }));
         let _0x28fad4 = _0x5b45f9 ? this.device.createBuffer({
-          label: "DLSS-NR post-head input diagnostic readback",
+          label: "Retouch post-head input diagnostic readback",
           size: _0x8f4985 * 32 * 4,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         }) : null;
@@ -13631,7 +13631,7 @@ fn attend(
         let _0x2d4c84 = _0xa7470d ? "f16" : "f32";
         let _0x366915 = _0x5f0b76.replace("/*__F16_ENABLE__*/", _0xa7470d ? "enable f16;" : "").replaceAll("/*__ATTENTION_TYPE__*/", _0x2d4c84).replace("/*__SCORE_CAPACITY__*/", String(_0x1685aa));
         let _0x16b92a = _0x4c4a51(_0x2b0142, {
-          label: "DLSS-NR cosine attention",
+          label: "Retouch cosine attention",
           code: _0x366915
         });
         let _0x13559f = (await _0x16b92a.getCompilationInfo()).messages.filter(_0x29b20c => _0x29b20c.type === "error");
@@ -13684,7 +13684,7 @@ fn attend(
       }
       createParams(_0x17c1b7, _0x446e9b, _0x474ea5) {
         let _0x1b081d = _0x22a8dc(this.device, {
-          label: "DLSS-NR attention params",
+          label: "Retouch attention params",
           size: 16,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
@@ -13724,7 +13724,7 @@ fn attend(
           }]
         });
         let _0x4ed6fb = _0x42a778.beginComputePass({
-          label: "DLSS-NR normalize Q/K"
+          label: "Retouch normalize Q/K"
         });
         _0x4ed6fb.setPipeline(this.normalizePipeline);
         _0x4ed6fb.setBindGroup(0, _0x2acdf1);
@@ -13760,7 +13760,7 @@ fn attend(
           }]
         });
         let _0x97fcb8 = _0x300f5e.beginComputePass({
-          label: "DLSS-NR global cosine attention"
+          label: "Retouch global cosine attention"
         });
         _0x97fcb8.setPipeline(_0x338ba1);
         _0x97fcb8.setBindGroup(1, _0xdaf53f);
@@ -13854,7 +13854,7 @@ fn attend(
         this.configureTokens(_0x24b3c4);
         this.device.queue.writeBuffer(this.state, 0, _0x5b6c2f);
         let _0x176dbf = this.device.createCommandEncoder({
-          label: "DLSS-NR ViT 1024 · 8 blocks"
+          label: "Retouch ViT 1024 · 8 blocks"
         });
         let _0x381e32 = this.dispatch(_0x176dbf, this.state, {
           copyInput: !1
@@ -13903,7 +13903,7 @@ fn attend(
           if (!_0xc86be9) {
             return;
           }
-          let _0x37ca31 = _0x24f193(this.device, "DLSS-NR ViT block31 " + _0x361bb3 + " diagnostic", _0x3942d0 * _0x59955f);
+          let _0x37ca31 = _0x24f193(this.device, "Retouch ViT block31 " + _0x361bb3 + " diagnostic", _0x3942d0 * _0x59955f);
           _0x2a4fc3.copyBufferToBuffer(_0x232e44, 0, _0x37ca31, 0, _0x3942d0 * _0x59955f * 4);
           _0xc86be9.set(_0x361bb3, _0x37ca31);
         };
@@ -13997,7 +13997,7 @@ fn attend(
             accumulationMode: "ada-fp8-k256"
           }));
           if (_0x59ece7) {
-            let _0x417f45 = _0x24f193(this.device, "DLSS-NR native block" + _0x45e84d + " boundary diagnostic", _0x3942d0 * _0x559627);
+            let _0x417f45 = _0x24f193(this.device, "Retouch native block" + _0x45e84d + " boundary diagnostic", _0x3942d0 * _0x559627);
             _0x2a4fc3.copyBufferToBuffer(this.state, 0, _0x417f45, 0, _0x2e6782(this.device, _0x3942d0 * _0x559627));
             _0x59ece7.set(_0x45e84d, _0x417f45);
           }
@@ -14209,9 +14209,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             }
           });
         };
-        let [_0x254d40, _0x414304] = await Promise.all([_0x5ec7f1("DLSS-NR native RGBA8 input features", _0x52be39), _0x5ec7f1("DLSS-NR native RGBA16F-proxy input features", _0x2b72e4)]);
+        let [_0x254d40, _0x414304] = await Promise.all([_0x5ec7f1("Retouch native RGBA8 input features", _0x52be39), _0x5ec7f1("Retouch native RGBA16F-proxy input features", _0x2b72e4)]);
         let _0x1c77b9 = _0x14d5fc.createBuffer({
-          label: "DLSS-NR native RGB feature LUT",
+          label: "Retouch native RGB feature LUT",
           size: 1024,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
@@ -14232,21 +14232,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0x2a6222 = _0x3e8a4c.data instanceof Float32Array;
         let _0x5b7c67 = _0x3e8a4c.width * _0x3e8a4c.height * 4;
         if (_0x3e8a4c.data.length !== _0x5b7c67) {
-          throw new Error("DLSS-NR source has " + _0x3e8a4c.data.length + "/" + _0x5b7c67 + " RGBA values");
+          throw new Error("Retouch source has " + _0x3e8a4c.data.length + "/" + _0x5b7c67 + " RGBA values");
         }
         let _0x1a6095 = _0x2a6222 ? _0x3e8a4c.data : new Uint32Array(_0x3e8a4c.data.buffer.slice(_0x3e8a4c.data.byteOffset, _0x3e8a4c.data.byteOffset + _0x3e8a4c.data.byteLength));
         let _0x57c556 = this.device.createBuffer({
-          label: "DLSS-NR RGBA8 source pixels",
+          label: "Retouch RGBA8 source pixels",
           size: _0x1a6095.byteLength,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
         });
         let _0x530818 = this.device.createBuffer({
-          label: "DLSS-NR browser input features",
+          label: "Retouch browser input features",
           size: _0x5f3b03 * _0x40bc88 * 16 * 4,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
         });
         let _0x3eb87c = this.device.createBuffer({
-          label: "DLSS-NR input feature params",
+          label: "Retouch input feature params",
           size: 48,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
@@ -14283,10 +14283,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           entries: _0x3951d2
         });
         let _0x21f23f = this.device.createCommandEncoder({
-          label: "DLSS-NR input feature encoder"
+          label: "Retouch input feature encoder"
         });
         let _0x5e7436 = _0x21f23f.beginComputePass({
-          label: "Generate native DLSS-NR input features"
+          label: "Generate native Retouch input features"
         });
         _0x5e7436.setPipeline(_0x433417);
         _0x5e7436.setBindGroup(0, _0x1b9433);
@@ -14898,7 +14898,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       _0x2c5cd2[_0x486787 * 2 + 1] = _0xc7aa76;
     }
     return {
-      algorithm: "dlssnr-f32-dual-v1",
+      algorithm: "retouch-f32-dual-v1",
       count: _0x5c76eb.length,
       chunkSize: _0x3b1dfe,
       chunkCount: _0x354ee6,
@@ -15161,7 +15161,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         chunkSize: _0x13c895 = _0x28c5e4
       } = {}) {
         let _0x78e78e = _0x16edaf.createShaderModule({
-          label: "DLSS-NR parity hash shader",
+          label: "Retouch parity hash shader",
           code: _0x8f4c54
         });
         let _0xc745c1 = (await _0x78e78e.getCompilationInfo()).messages.filter(({
@@ -15173,7 +15173,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           }) => _0x7ec464).join("; "));
         }
         let _0x475392 = await _0x16edaf.createComputePipelineAsync({
-          label: "DLSS-NR parity boundary hash",
+          label: "Retouch parity boundary hash",
           layout: "auto",
           compute: {
             module: _0x78e78e,
@@ -15194,23 +15194,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0x171db7 = Math.ceil(_0x3312fb / this.chunkSize);
         let _0x43b75e = _0x171db7 * 8;
         let _0x50788d = this.device.createBuffer({
-          label: "DLSS-NR parity hash digests",
+          label: "Retouch parity hash digests",
           size: _0x43b75e,
           usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
         });
         let _0x18f455 = this.device.createBuffer({
-          label: "DLSS-NR parity hash params",
+          label: "Retouch parity hash params",
           size: 16,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
         this.device.queue.writeBuffer(_0x18f455, 0, new Uint32Array([_0x3312fb, this.chunkSize, _0x171db7, 0]));
         let _0x53c4d0 = this.device.createBuffer({
-          label: "DLSS-NR parity hash readback",
+          label: "Retouch parity hash readback",
           size: _0x43b75e,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
         let _0x21325b = this.device.createBindGroup({
-          label: "DLSS-NR parity hash bindings",
+          label: "Retouch parity hash bindings",
           layout: this.pipeline.getBindGroupLayout(0),
           entries: [{
             binding: 0,
@@ -15231,10 +15231,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           }]
         });
         let _0x536057 = this.device.createCommandEncoder({
-          label: "DLSS-NR parity hash commands"
+          label: "Retouch parity hash commands"
         });
         let _0x1dd11d = _0x536057.beginComputePass({
-          label: "DLSS-NR parity hash pass"
+          label: "Retouch parity hash pass"
         });
         _0x1dd11d.setPipeline(this.pipeline);
         _0x1dd11d.setBindGroup(0, _0x21325b);
@@ -15249,7 +15249,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         _0x50788d.destroy();
         _0x18f455.destroy();
         return {
-          algorithm: "dlssnr-f32-dual-v1",
+          algorithm: "retouch-f32-dual-v1",
           count: _0x3312fb,
           chunkSize: this.chunkSize,
           chunkCount: _0x171db7,
@@ -15645,7 +15645,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         this.onProgress = _0x1a26e3;
         this.firstMismatch = null;
         this.report = {
-          schema: "dlssnr-parity-report/v1",
+          schema: "retouch-parity-report/v1",
           runId: _0x912c77,
           configHash: _0x2989c8,
           startedAt: new Date().toISOString(),
@@ -16202,7 +16202,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         production: _0x393480 = !1,
         compactActivations: _0x38a90b = new URLSearchParams(location.search).get("nrActivationHalf") !== "0"
       } = {}) {
-        _0x135c87("Loading all 140.84 MiB of packed DLSS-NR weights");
+        _0x135c87("Loading all 140.84 MiB of packed Retouch weights");
         let _0x310b25 = _0x485f7f.loadAll({
           expandFp16: !1,
           validate: !1
@@ -16818,7 +16818,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           this.onProgress("Input features · native PTX-ordered WebGPU generator · auto mask " + (_0x3f344a ? "on" : "off"));
         } else {
           let _0x409caf = _0x505e76(_0x41d3e0, _0x2556de.width, _0x2556de.height, _0x15dca2, _0x377f59, _0x3f344a, _0x179299);
-          _0x22cefb = this.hierarchy.ops.buffer("DLSS-NR browser input features", _0x2556de.width * _0x2556de.height, 16);
+          _0x22cefb = this.hierarchy.ops.buffer("Retouch browser input features", _0x2556de.width * _0x2556de.height, 16);
           this.device.queue.writeBuffer(_0x22cefb, 0, _0x409caf);
         }
         if (_0x1f637a.get("compareGaussian") === "1") {
@@ -17133,10 +17133,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           this.onProgress("512 retained adapter native compare · corr " + _0x2cb630.correlation.toFixed(6) + " · RMSE " + _0x2cb630.rmse.toFixed(6) + " · exact " + (_0x2cb630.exactFraction * 100).toFixed(3) + "% · RMS " + _0x2cb630.actualRms.toFixed(3) + "/" + _0x2cb630.expectedRms.toFixed(3));
           if (_0x5c0db6) {
             let _0x5cec0d = _0x8aa811(_0x69ed73.browser, _0x69ed73.native, _0x2556de.width, _0x2556de.height, 32, _0x69ed73.map);
-            let _0x71faf5 = document.getElementById("dlssnr-block0-spatial-diagnostic");
+            let _0x71faf5 = document.getElementById("retouch-block0-spatial-diagnostic");
             if (!_0x71faf5) {
               _0x71faf5 = document.createElement("script");
-              _0x71faf5.id = "dlssnr-block0-spatial-diagnostic";
+              _0x71faf5.id = "retouch-block0-spatial-diagnostic";
               _0x71faf5.type = "application/json";
               document.body.append(_0x71faf5);
             }
@@ -17216,11 +17216,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 qkv: Array.from(_0x1ae178),
                 normalizedQkv: Array.from(_0x2f276d)
               };
-              globalThis.__dlssnrAttentionQkDiagnostic = _0x6507c1;
-              let _0x4e4836 = document.getElementById("dlssnr-attention-qk-diagnostic");
+              globalThis.__retouchAttentionQkDiagnostic = _0x6507c1;
+              let _0x4e4836 = document.getElementById("retouch-attention-qk-diagnostic");
               if (!_0x4e4836) {
                 _0x4e4836 = document.createElement("script");
-                _0x4e4836.id = "dlssnr-attention-qk-diagnostic";
+                _0x4e4836.id = "retouch-attention-qk-diagnostic";
                 _0x4e4836.type = "application/json";
                 document.body.append(_0x4e4836);
               }
@@ -17245,19 +17245,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
               blockOutput: Array.from(_0xac0e1d),
               transitionOutput: Array.from(_0x38222f)
             };
-            let _0x58ffea = document.getElementById("dlssnr-block0-qkv-diagnostic");
+            let _0x58ffea = document.getElementById("retouch-block0-qkv-diagnostic");
             if (!_0x58ffea) {
               _0x58ffea = document.createElement("script");
-              _0x58ffea.id = "dlssnr-block0-qkv-diagnostic";
+              _0x58ffea.id = "retouch-block0-qkv-diagnostic";
               _0x58ffea.type = "application/json";
               document.body.append(_0x58ffea);
             }
             _0x58ffea.textContent = JSON.stringify(_0x593957);
             let _0x659459 = _0x24f3de => Array.from(new Uint32Array(_0x24f3de.buffer, _0x24f3de.byteOffset, _0x24f3de.length), _0x3c7198 => _0x3c7198.toString(16).padStart(8, "0")).join("");
-            let _0x32e607 = document.getElementById("dlssnr-block0-qkv-bit-diagnostic");
+            let _0x32e607 = document.getElementById("retouch-block0-qkv-bit-diagnostic");
             if (!_0x32e607) {
               _0x32e607 = document.createElement("script");
-              _0x32e607.id = "dlssnr-block0-qkv-bit-diagnostic";
+              _0x32e607.id = "retouch-block0-qkv-bit-diagnostic";
               _0x32e607.type = "application/json";
               document.body.append(_0x32e607);
             }
@@ -17378,7 +17378,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
               _0x1e9cc8.set(_0x335a33.values.subarray(_0x423a5e, _0x423a5e + 32), _0x1bf38c + 32);
             }
           }
-          let _0x3b5ad = this.hierarchy.ops.buffer("DLSS-NR block5 native normalized QK replay", _0x402f03, 192);
+          let _0x3b5ad = this.hierarchy.ops.buffer("Retouch block5 native normalized QK replay", _0x402f03, 192);
           this.device.queue.writeBuffer(_0x3b5ad, 0, _0x1e9cc8);
           _0x12d30e = {
             buffer: _0x3b5ad
@@ -17438,10 +17438,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             baseMap: _0x5adc69
           } : {});
           let _0x3696a5 = _0x5ce945.metrics;
-          let _0x3bf7f4 = document.getElementById("dlssnr-native-attention-replay-diagnostic");
+          let _0x3bf7f4 = document.getElementById("retouch-native-attention-replay-diagnostic");
           if (!_0x3bf7f4) {
             _0x3bf7f4 = document.createElement("script");
-            _0x3bf7f4.id = "dlssnr-native-attention-replay-diagnostic";
+            _0x3bf7f4.id = "retouch-native-attention-replay-diagnostic";
             _0x3bf7f4.type = "application/json";
             document.body.append(_0x3bf7f4);
           }
@@ -17629,10 +17629,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 });
               }
             }
-            let _0x2e7ba9 = document.querySelector("#dlssnr-block5-weight-bank-diagnostic");
+            let _0x2e7ba9 = document.querySelector("#retouch-block5-weight-bank-diagnostic");
             if (!_0x2e7ba9) {
               _0x2e7ba9 = document.createElement("script");
-              _0x2e7ba9.id = "dlssnr-block5-weight-bank-diagnostic";
+              _0x2e7ba9.id = "retouch-block5-weight-bank-diagnostic";
               _0x2e7ba9.type = "application/json";
               document.body.append(_0x2e7ba9);
             }
@@ -17743,11 +17743,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
                 attendedHex: _0x5d5883(_0xb4f41d),
                 nativeAttendedHex: _0x5d5883(_0x4359fb)
               };
-              globalThis.__dlssnrBlock5QkvDiagnostic = _0x753497;
-              let _0x2e3fa3 = document.getElementById("dlssnr-block5-qkv-bit-diagnostic");
+              globalThis.__retouchBlock5QkvDiagnostic = _0x753497;
+              let _0x2e3fa3 = document.getElementById("retouch-block5-qkv-bit-diagnostic");
               if (!_0x2e3fa3) {
                 _0x2e3fa3 = document.createElement("script");
-                _0x2e3fa3.id = "dlssnr-block5-qkv-bit-diagnostic";
+                _0x2e3fa3.id = "retouch-block5-qkv-bit-diagnostic";
                 _0x2e3fa3.type = "application/json";
                 document.body.append(_0x2e3fa3);
               }
@@ -17926,7 +17926,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
               attendedHex: _0x2bf9d7(_0x2f3b14),
               outputHex: _0x2bf9d7(_0x2ee793)
             };
-            for (let [_0x1514b9, _0x173be0] of [["dlssnr-split-checkpoint-diagnostic", _0x51291d], ["dlssnr-split-checkpoint-bit-diagnostic", _0x3528db]]) {
+            for (let [_0x1514b9, _0x173be0] of [["retouch-split-checkpoint-diagnostic", _0x51291d], ["retouch-split-checkpoint-bit-diagnostic", _0x3528db]]) {
               let _0x449de7 = document.getElementById(_0x1514b9);
               if (!_0x449de7) {
                 _0x449de7 = document.createElement("script");
@@ -18043,7 +18043,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             attendedHex: _0xebb5dd(_0x3bf9df),
             outputHex: _0xebb5dd(_0x49cdd9)
           };
-          for (let [_0x488965, _0x2236da] of [["dlssnr-vit-checkpoint-diagnostic", _0x35bb1b], ["dlssnr-vit-checkpoint-bit-diagnostic", _0x30bc20]]) {
+          for (let [_0x488965, _0x2236da] of [["retouch-vit-checkpoint-diagnostic", _0x35bb1b], ["retouch-vit-checkpoint-bit-diagnostic", _0x30bc20]]) {
             let _0x1c67f4 = document.getElementById(_0x488965);
             if (!_0x1c67f4) {
               _0x1c67f4 = document.createElement("script");
@@ -18078,7 +18078,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           let _0x4d8801 = _0x2bf5eb.metrics;
           this.onProgress("ViT block31 attention native compare · corr " + _0x4d8801.correlation.toFixed(5) + " · RMSE " + _0x4d8801.rmse.toFixed(4) + " · exact " + (_0x4d8801.exactFraction * 100).toFixed(1) + "% · RMS " + _0x4d8801.actualRms.toFixed(3) + "/" + _0x4d8801.expectedRms.toFixed(3));
           let _0x4bc95b = _0x40692d(_0x2bf5eb.browser, _0xf909fb.values);
-          globalThis.__dlssnrVitDiagnostics = {
+          globalThis.__retouchVitDiagnostics = {
             normalizedQkv: _0x339082,
             attended: _0x2bf5eb.browser
           };
@@ -18404,7 +18404,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0x4a8009 = 4;
         let _0x2ad9b2 = _0x2556de.width * _0x2556de.height * _0x4a8009;
         let _0x264dab = this.device.createBuffer({
-          label: "DLSS-NR final readback",
+          label: "Retouch final readback",
           size: _0x2ad9b2 * 4,
           usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
         });
@@ -18441,7 +18441,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let _0x2d3c89 = Math.sqrt(_0x3efb9b / _0x10fce2);
         let _0x6dde62 = Array.from(_0x4af21a, (_0x3a7f6a, _0x53eef6) => Math.sqrt(_0x3a7f6a / Math.max(1, _0x21a5b3[_0x53eef6])));
         let _0x5d73cc = performance.now() - _0x510821;
-        this.onProgress("Full browser DLSS-NR graph complete · " + _0x5d73cc.toFixed(0) + " ms · RGB RMS " + _0x6dde62.slice(0, 3).map(_0x532b86 => _0x532b86.toFixed(3)).join("/"));
+        this.onProgress("Full browser Retouch graph complete · " + _0x5d73cc.toFixed(0) + " ms · RGB RMS " + _0x6dde62.slice(0, 3).map(_0x532b86 => _0x532b86.toFixed(3)).join("/"));
         return {
           features: _0x5f50e4,
           featureChannels: _0x4a8009,
@@ -18912,10 +18912,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x4024af = class _0x261df1 {
       static async create(_0x4d5e93, _0x509dc3, _0x5785f4 = {}) {
         let _0x4f54b5 = _0x4d5e93.device;
-        let [_0x2bb1ad, _0x1bd973, _0x57baae] = await Promise.all([_0x6f1c0d(_0x4f54b5, "DLSS-NR production preprocessing", _0xc6ef52), _0x6f1c0d(_0x4f54b5, "DLSS-NR production composition", _0x3aea8e), _0x6f1c0d(_0x4f54b5, "DLSS-NR production presentation", _0x23a62c)]);
+        let [_0x2bb1ad, _0x1bd973, _0x57baae] = await Promise.all([_0x6f1c0d(_0x4f54b5, "Retouch production preprocessing", _0xc6ef52), _0x6f1c0d(_0x4f54b5, "Retouch production composition", _0x3aea8e), _0x6f1c0d(_0x4f54b5, "Retouch production presentation", _0x23a62c)]);
         let _0x2cfe39 = navigator.gpu.getPreferredCanvasFormat();
         let _0x37d5db = await _0x1735cd(_0x4f54b5, {
-          label: "DLSS-NR production preprocessing pipeline",
+          label: "Retouch production preprocessing pipeline",
           layout: "auto",
           compute: {
             module: _0x2bb1ad,
@@ -18926,7 +18926,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           }
         });
         let _0x2f5b07 = await _0x1735cd(_0x4f54b5, {
-          label: "DLSS-NR production composition pipeline",
+          label: "Retouch production composition pipeline",
           layout: "auto",
           compute: {
             module: _0x1bd973,
@@ -18937,7 +18937,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           }
         });
         let _0x24e704 = await _0x4f54b5.createRenderPipelineAsync({
-          label: "DLSS-NR production presentation pipeline",
+          label: "Retouch production presentation pipeline",
           layout: "auto",
           vertex: {
             module: _0x57baae,
@@ -18977,7 +18977,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         this.canvas = _0x380778;
         this.context = _0x380778.getContext("webgpu");
         if (!this.context) {
-          throw new Error("The DLSS-NR output canvas could not acquire WebGPU");
+          throw new Error("The Retouch output canvas could not acquire WebGPU");
         }
         this.format = _0x5bc305;
         this.preprocessPipeline = _0x490d64;
@@ -19027,7 +19027,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           this.slots = [];
           this.resetHistory();
           this.history = [0, 1].map(_0x513169 => this.device.createTexture({
-            label: "DLSS-NR neural history " + _0x513169,
+            label: "Retouch neural history " + _0x513169,
             size: [_0x3e0fd1, _0x30485b],
             format: "rgba16float",
             usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC
@@ -19043,39 +19043,39 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           });
           for (let _0x46280e = 0; _0x46280e < 2; _0x46280e += 1) {
             let _0x4ab5e0 = this.gpuInputOnly ? null : this.device.createBuffer({
-              label: "DLSS-NR reusable upload " + _0x46280e,
+              label: "Retouch reusable upload " + _0x46280e,
               size: _0x3e0fd1 * _0x30485b * 8,
               usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
             });
             let _0x3060eb = this.device.createBuffer({
-              label: "DLSS-NR production source " + _0x46280e,
+              label: "Retouch production source " + _0x46280e,
               size: this.gpuInputOnly ? 4 : _0x3e0fd1 * _0x30485b * 8,
               usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
             });
             let _0x929fb0 = this.device.createBuffer({
-              label: "DLSS-NR production input features " + _0x46280e,
+              label: "Retouch production input features " + _0x46280e,
               size: _0x2998c9 * _0x5b7245 * 16 * 4,
               usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
             });
             let _0x3d5c2f = this.device.createBuffer({
-              label: "DLSS-NR production params " + _0x46280e,
+              label: "Retouch production params " + _0x46280e,
               size: 80,
               usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             });
             let _0x27c86c = this.device.createTexture({
-              label: "DLSS-NR production output " + _0x46280e,
+              label: "Retouch production output " + _0x46280e,
               size: [_0x3e0fd1, _0x30485b],
               format: "rgba8unorm",
               usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
             });
             /* rayzee-patch */ let _rayzeeHdr = this.device.createTexture({
-              label: "DLSS-NR scene-referred output " + _0x46280e,
+              label: "Retouch scene-referred output " + _0x46280e,
               size: [_0x3e0fd1, _0x30485b],
               format: "rgba16float",
               usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING
             });
             let _0x2fab49 = this.device.createTexture({
-              label: "DLSS-NR motion " + _0x46280e,
+              label: "Retouch motion " + _0x46280e,
               size: this.gpuInputOnly ? [1, 1] : [_0x3e0fd1, _0x30485b],
               format: "rg16float",
               usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST
@@ -19109,12 +19109,12 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
                 count: 4
               });
               _0x30828c.timingResolve = this.device.createBuffer({
-                label: "DLSS-NR timing resolve " + _0x46280e,
+                label: "Retouch timing resolve " + _0x46280e,
                 size: 32,
                 usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC
               });
               _0x30828c.timingReadback = this.device.createBuffer({
-                label: "DLSS-NR timing readback " + _0x46280e,
+                label: "Retouch timing readback " + _0x46280e,
                 size: 32,
                 usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
               });
@@ -19132,7 +19132,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       upload(_0x1a712e, _0x54640a, _0x4c1571 = null) {
         let _0x5f832 = this.slots[_0x1a712e];
         if (!_0x5f832 || _0x54640a.byteLength !== _0x5f832.source.size) {
-          throw new Error("DLSS-NR production upload has " + _0x54640a.byteLength + " bytes, expected " + (_0x5f832?.source.size ?? 0));
+          throw new Error("Retouch production upload has " + _0x54640a.byteLength + " bytes, expected " + (_0x5f832?.source.size ?? 0));
         }
         let _0x5477b3 = performance.now();
         this.device.queue.writeBuffer(_0x5f832.upload, 0, _0x54640a);
@@ -19225,7 +19225,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           return;
         }
         _0x474914.beginComputePass({
-          label: "DLSS-NR timing marker " + _0xd23cc,
+          label: "Retouch timing marker " + _0xd23cc,
           timestampWrites: {
             querySet: _0xcd295a,
             beginningOfPassWriteIndex: _0xd23cc
@@ -19266,7 +19266,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x375da1[18] = _0x14e54e.motionScaleY ?? -1;
         this.device.queue.writeBuffer(_0x870104.params, 0, _0x73fc18);
         let _0x4ebe96 = _0x2cb3e4.beginComputePass({
-          label: "DLSS-NR packed-half preprocessing"
+          label: "Retouch packed-half preprocessing"
         });
         _0x4ebe96.setPipeline(this.preprocessPipeline);
         _0x4ebe96.setBindGroup(0, _0x870104.preprocessGroups[_0x870104.historyIndex]);
@@ -19328,14 +19328,14 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           _0x478dbc.compositeGroups.set(_0x151e61.buffer, _0x3a5e03);
         }
         let _0xfa0717 = _0xe86bfa.beginComputePass({
-          label: "DLSS-NR GPU display composition"
+          label: "Retouch GPU display composition"
         });
         _0xfa0717.setPipeline(this.compositePipeline);
         _0xfa0717.setBindGroup(0, _0x3a5e03[_0x478dbc.historyIndex]);
         _0xfa0717.dispatchWorkgroups(Math.ceil(_0x50548a / 8), Math.ceil(_0x104e13 / 8));
         _0xfa0717.end();
         let _0xd4f8a5 = _0xe86bfa.beginRenderPass({
-          label: "DLSS-NR direct WebGPU presentation",
+          label: "Retouch direct WebGPU presentation",
           colorAttachments: [{
             view: this.context.getCurrentTexture().createView(),
             loadOp: "clear",
@@ -19385,7 +19385,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         this.busy = !0;
         try {
           let _0x55634a = this.device.createCommandEncoder({
-            label: "DLSS-NR production · preprocess + all 71 blocks + present"
+            label: "Retouch production · preprocess + all 71 blocks + present"
           });
           this.writeTimestamp(_0x55634a, _0x547f5c, 0);
           let _0x552925 = this.slots[_0x547f5c];
@@ -19529,7 +19529,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           powerPreference: "high-performance"
         });
         if (!_0x385f2a?.features.has("shader-f16")) {
-          throw new Error("DLSS-SR requires WebGPU shader-f16 support");
+          throw new Error("NeuralSR requires WebGPU shader-f16 support");
         }
         let _0x5326d5 = _0x3ce354 ? await (await Promise.resolve().then(() => {
           _0x11866b();
@@ -19549,7 +19549,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           let _0x5093c3 = await _0x31de99.create(_0x2dd43d, _0x51b419, {
             compact: _0x1598d4
           });
-          _0x51b419("DLSS-SR · preparing temporal input, reconstruction and reusable frame slots");
+          _0x51b419("NeuralSR · preparing temporal input, reconstruction and reusable frame slots");
           let _0x574a13 = await _0x1e023a.create(_0x5093c3, {
             ..._0xdb4aca,
             flipY: !0
@@ -19641,7 +19641,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       }
       async render(_0x5df254, _0x494186, _0x47eda7 = null) {
         if (this.busy) {
-          throw new Error("DLSS-SR frame is already in flight");
+          throw new Error("NeuralSR frame is already in flight");
         }
         if (this.failure) {
           throw this.failure;
@@ -19649,7 +19649,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         let _0x19626f = this.slots[_0x5df254];
         let _0x508e90 = this.geometry;
         if (!_0x19626f || _0x494186.color.byteLength !== _0x508e90.colorBytes || _0x494186.depth.byteLength !== _0x508e90.width * _0x508e90.height * 4 || _0x494186.motion.byteLength !== _0x508e90.width * _0x508e90.height * 4) {
-          throw new Error("DLSS-SR capture geometry mismatch");
+          throw new Error("NeuralSR capture geometry mismatch");
         }
         this.busy = !0;
         try {
@@ -19664,7 +19664,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           }
           let _0x2f7eda = performance.now() - _0x58d704;
           let _0x2e37cd = this.device.createCommandEncoder({
-            label: "Complete production DLSS-SR frame"
+            label: "Complete production NeuralSR frame"
           });
           let _0x4cced2 = this.graph.encode(_0x2e37cd, _0x19626f.color, {
             ..._0x19626f,
@@ -19858,10 +19858,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       _0x2b54ff.sync();
     }
     function _0x1e80e4() {
-      if (!globalThis.dlssSceneReady) {
+      if (!globalThis.neuralSceneReady) {
         return;
       }
-      let _0x280120 = globalThis.dlssSceneId;
+      let _0x280120 = globalThis.neuralSceneId;
       if (!_0x280120 || _0x280120 === _0x37de68) {
         return;
       }
@@ -19878,8 +19878,8 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x4e7f55(_0x24a6b6);
       }
     }
-    addEventListener("dlss-scene-ready", _0x1e80e4);
-    addEventListener("pagehide", () => removeEventListener("dlss-scene-ready", _0x1e80e4), {
+    addEventListener("neural-scene-ready", _0x1e80e4);
+    addEventListener("pagehide", () => removeEventListener("neural-scene-ready", _0x1e80e4), {
       once: !0
     });
     _0x4e7f55(_0x3b0f25);
@@ -19918,12 +19918,12 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x201849.dataset.state = _0x9d970d ? "error" : "active";
     if (_0x9d970d) {
       console.error(_0x148d24);
-      globalThis.dlssLoading?.fail(_0x148d24);
+      globalThis.neuralLoading?.fail(_0x148d24);
     }
   }
   function _0x2a4523(_0x508988, _0x1dd12c = !1, _0x1f5bdc = null) {
     _0x2b50ce(_0x508988, _0x1dd12c);
-    globalThis.dlssLoading?.runtime(_0x508988, _0x1dd12c, _0x1f5bdc);
+    globalThis.neuralLoading?.runtime(_0x508988, _0x1dd12c, _0x1f5bdc);
   }
   function _0x24ab47() {
     _0x1fc133.visible = !!_0x1fc133.result && (_0x1fc133.live || _0x1fc133.resultRevision === _0x1fc133.viewRevision) && !_0x1fc133.compare;
@@ -20034,7 +20034,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         _0x1fc133.displayDirty = !1;
       }
-      globalThis.dlssLoading?.stage("Rendering first DLSS frame", "Neural model ready · preparing your view");
+      globalThis.neuralLoading?.stage("Rendering first Neural frame", "Neural model ready · preparing your view");
       _0x1fc133.result = await _0x1fc133.pipeline.render(_0x18f58e, _0xa3fa6e, _0x100ba7 ? _0x1fc133.settings : null);
       _0x1fc133.resultRevision = _0x201f45;
       _0x1fc133.error = null;
@@ -20050,7 +20050,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       _0x24ab47();
       let _0x4377ef = _0x1fc133.result.timings;
       let _0x159d18 = _0x263ef6 => _0x263ef6 == null ? "unavailable" : _0x263ef6.toFixed(1);
-      _0x2b50ce("DLSS-" + (_0x100ba7 ? "SR + NR" : "SR") + " · " + _0xa3fa6e.width + "×" + _0xa3fa6e.height + " → " + _0xa3fa6e.width * 2 + "×" + _0xa3fa6e.height * 2 + " · read " + _0x159d18(_0x4377ef.readbackMilliseconds) + " · prep " + _0x159d18(_0x4377ef.uploadPreprocessMilliseconds) + " · net " + _0x159d18(_0x4377ef.networkMilliseconds) + " · present " + _0x159d18(_0x4377ef.presentationMilliseconds) + " ms");
+      _0x2b50ce("Neural-" + (_0x100ba7 ? "SR + NR" : "SR") + " · " + _0xa3fa6e.width + "×" + _0xa3fa6e.height + " → " + _0xa3fa6e.width * 2 + "×" + _0xa3fa6e.height * 2 + " · read " + _0x159d18(_0x4377ef.readbackMilliseconds) + " · prep " + _0x159d18(_0x4377ef.uploadPreprocessMilliseconds) + " · net " + _0x159d18(_0x4377ef.networkMilliseconds) + " · present " + _0x159d18(_0x4377ef.presentationMilliseconds) + " ms");
       _0x201849.dataset.state = "ready";
       if (_0x1fc133.onFrame) {
         await _0x1fc133.onFrame(_0xa3fa6e, _0x1fc133.result);
@@ -20072,7 +20072,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0x75d39f(_0x3d6fd6) {
-    if (globalThis.dlssSceneReady) {
+    if (globalThis.neuralSceneReady) {
       _0x1fc133.sequence++;
       if (!document.hidden) {
         if (!!_0x1fc133.live || !!_0x5023a1(_0x1fc133.viewer)) {
@@ -20084,7 +20084,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0x277844(_0x4db7fd = !1) {
-    if (!_0x1fc133.disposed && !!globalThis.dlssSceneReady) {
+    if (!_0x1fc133.disposed && !!globalThis.neuralSceneReady) {
       if (_0x1fc133.error) {
         _0x1fc133.compare = false;
       }
@@ -20096,7 +20096,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0xef29c2() {
-    if (globalThis.dlssSceneReady) {
+    if (globalThis.neuralSceneReady) {
       _0x1fc133.live = !_0x1fc133.live;
       document.querySelector("#nrLive").setAttribute("aria-pressed", String(_0x1fc133.live));
       if (!_0x1fc133.live) {
@@ -20121,9 +20121,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       return;
     }
     _0x1fc133.viewer = _0x36f224;
-    _0x1fc133.bridge = _0x36f224.getPlugin("DlssBridge");
+    _0x1fc133.bridge = _0x36f224.getPlugin("NeuralBridge");
     _0x36f224.addEventListener("update", () => {
-      if (globalThis.dlssSceneReady) {
+      if (globalThis.neuralSceneReady) {
         _0x1fc133.viewRevision++;
         _0x1fc133.displayDirty = true;
         if (!_0x1fc133.live) {
@@ -20135,7 +20135,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let _0xb70881 = document.querySelector("h1");
     let _0x3b7440 = _0xb70881.textContent.split(" /")[0];
     _0xb70881.textContent = _0x3b7440 + " / " + (_0x100ba7 ? "SR + Neural rendering" : "Super resolution");
-    document.title = _0x3b7440 + " · DLSS " + (_0x100ba7 ? "SR + NR" : "Super Resolution");
+    document.title = _0x3b7440 + " · Neural " + (_0x100ba7 ? "SR + NR" : "Super Resolution");
     _0x1fc133.bridge.setFrameConsumer(_0x75d39f);
     _0x277844(!0);
   }
@@ -20143,7 +20143,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (![_0x10aa0c, _0x216b21].every(_0x16190f => Number.isInteger(_0x16190f) && _0x16190f >= 1 && _0x16190f <= 4096)) {
       throw new Error("Input dimensions must be integers in [1,4096]");
     }
-    globalThis.dlssSrInputSize = [_0x10aa0c, _0x216b21];
+    globalThis.neuralSrInputSize = [_0x10aa0c, _0x216b21];
     _0xe0451d.sync(_0x10aa0c, _0x216b21);
     let _0x164b13 = new URL(location.href);
     _0x164b13.searchParams.set("srWidth", _0x10aa0c);
@@ -20167,12 +20167,12 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x5c2bb9();
     _0x36afb7();
     _0x30afc4();
-    _0x363ea9 = document.querySelector("#dlssWebGpuOutput");
-    _0x201849 = document.querySelector("#dlssWebGpuStatus");
+    _0x363ea9 = document.querySelector("#neuralWebGpuOutput");
+    _0x201849 = document.querySelector("#neuralWebGpuStatus");
     _0x1ee5bc = new URLSearchParams(location.search);
     _0x100ba7 = _0x1ee5bc.get("srChain") === "1";
     _0x1c37e2 = ["srWidth", "srHeight"].map((_0x3d97b5, _0x258d80) => Math.max(1, Math.min(4096, Math.round(Number(_0x1ee5bc.get(_0x3d97b5)) || Math.ceil([innerWidth, innerHeight][_0x258d80] / 2)))));
-    _0x363ea9.setAttribute("aria-label", "DLSS Super Resolution result");
+    _0x363ea9.setAttribute("aria-label", "Neural Super Resolution result");
     _0x1fc133 = {
       viewer: null,
       bridge: null,
@@ -20197,7 +20197,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       timingHistory: [],
       settings: _0x3f5d3d()
     };
-    globalThis.__dlssSr = _0x1fc133;
+    globalThis.__neuralSr = _0x1fc133;
     document.querySelector("#nrLive").setAttribute("aria-pressed", String(_0x1fc133.live));
     _0x4cb866 = [];
     _0x2d4db2 = "";
@@ -20245,9 +20245,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x4fc2de();
       }
     }, !0);
-    window.addEventListener("dlss-viewer-ready", _0x13cbb4 => _0x4b8f77(_0x13cbb4.detail));
-    if (globalThis.dlssViewer) {
-      _0x4b8f77(globalThis.dlssViewer);
+    window.addEventListener("neural-viewer-ready", _0x13cbb4 => _0x4b8f77(_0x13cbb4.detail));
+    if (globalThis.neuralViewer) {
+      _0x4b8f77(globalThis.neuralViewer);
     }
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
@@ -20281,12 +20281,12 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x277844();
       });
     }
-    _0x2b50ce("Loading scene · DLSS Super Resolution");
+    _0x2b50ce("Loading scene · Neural Super Resolution");
   });
   var _0x3735ad = {};
   function _0x3c7c62(_0x307702, _0x201e3c = !1) {
     if (_0x201e3c) {
-      globalThis.dlssLoading?.fail(_0x307702);
+      globalThis.neuralLoading?.fail(_0x307702);
     }
     _0x104eab.textContent = _0x307702;
     _0x104eab.dataset.state = _0x201e3c ? "error" : "active";
@@ -20299,9 +20299,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       _0x539272.statusHistory.shift();
     }
     if (_0x201e3c) {
-      console.error("[dlss-webgpu] " + _0x307702);
+      console.error("[neural-webgpu] " + _0x307702);
     } else {
-      console.info("[dlss-webgpu:progress] " + _0x307702);
+      console.info("[neural-webgpu:progress] " + _0x307702);
     }
   }
   async function _0x22cbce() {
@@ -20325,7 +20325,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
         _0x5be201.classList.add("visible");
       } catch (_0x123cea) {
-        console.warn("[dlss-webgpu] unable to retain resize presentation", _0x123cea);
+        console.warn("[neural-webgpu] unable to retain resize presentation", _0x123cea);
       }
     }
   }
@@ -20455,7 +20455,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       renderHeight: _0x45eaa0
     } = _0x474ca0;
     if (_0x4a2cfd !== _0x474ca0.outputWidth || _0x45eaa0 !== _0x474ca0.outputHeight) {
-      throw new Error("DLSS-NR production requires 1:1 input/output; received " + _0x92ae43(_0x474ca0));
+      throw new Error("Retouch production requires 1:1 input/output; received " + _0x92ae43(_0x474ca0));
     }
     _0x509851(_0x4a2cfd, _0x45eaa0);
     let _0x373b60 = _0x161819 ?? _0x539272.nextCaptureSlot;
@@ -20566,7 +20566,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       ..._0x3decd7
     };
     _0x104eab.dataset.diagnostics = JSON.stringify(_0x539272.diagnostics);
-    console.info("[dlss-webgpu] numeric diagnostics", _0x539272.diagnostics);
+    console.info("[neural-webgpu] numeric diagnostics", _0x539272.diagnostics);
   }
   function _0x2dba2d(_0x53c5aa) {
     let _0x326907 = _0x1ff811(_0x53c5aa.color, _0x3f8dbb => _0x308857[_0x3f8dbb]);
@@ -20596,7 +20596,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       outputHeight: _0x196b4f
     } = _0x5518f1;
     if (_0x2c6c1d !== _0x4b4ca0 || _0x2b35a6 !== _0x196b4f) {
-      throw new Error("DLSS-NR-only mode requires a 1:1 WebGI render; received " + _0x2c6c1d + "×" + _0x2b35a6 + " → " + _0x4b4ca0 + "×" + _0x196b4f);
+      throw new Error("Retouch-only mode requires a 1:1 WebGI render; received " + _0x2c6c1d + "×" + _0x2b35a6 + " → " + _0x4b4ca0 + "×" + _0x196b4f);
     }
     let _0x1cc061 = new Float32Array(_0x2c6c1d * _0x2b35a6 * 4);
     for (let _0x3b5e44 = 0; _0x3b5e44 < _0x2b35a6; _0x3b5e44 += 1) {
@@ -20749,9 +20749,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return new ImageData(_0x234286, _0x3e43b9, _0x2964dc);
   }
   function _0x289e25(_0x35e479, _0x35810d = !1, _0x745132 = null) {
-    _0x3c7c62("DLSS-NR WebGPU · " + _0x35e479, _0x35810d);
+    _0x3c7c62("Retouch WebGPU · " + _0x35e479, _0x35810d);
     if (!_0x539272.resizePending || !_0x539272.result) {
-      globalThis.dlssLoading?.runtime(_0x35e479, _0x35810d, _0x745132);
+      globalThis.neuralLoading?.runtime(_0x35e479, _0x35810d, _0x745132);
     }
   }
   async function _0x8d6824(_0x366ef1) {
@@ -20792,7 +20792,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
   }
   async function _0x1c9a78() {
     if (!_0x539272.model) {
-      throw new Error("DLSS-NR WebGPU device must be initialized before DLSS-SR");
+      throw new Error("Retouch WebGPU device must be initialized before NeuralSR");
     }
     if (_0x539272.srModel && _0x539272.srModel.device !== _0x539272.model.device) {
       _0x539272.srModel.destroy();
@@ -20810,7 +20810,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let _0x31214c = _0x2f336d ? "/native-sr-enc0-tap/native-sr-input16.bin" : "/native-sr-contract/native-sr-input16.bin";
     let _0xbb1148 = ["enc2-mixed", "enc2-attn", "enc2-mlp-hidden", "enc2-skip", "enc2-down", "enc3-mixed", "enc3-attn", "enc3-mlp-hidden", "enc3-skip", "enc3-down", "enc4-mixed", "enc4-attn", "enc4-mlp-hidden", "enc4-skip", "enc4-down", "dec5-mixed", "dec5-attn", "dec5-mlp-hidden", "dec5-output", "dec4-output", "dec3-output", "dec2-output", "dec1-output", "dec0-output"];
     let _0x60c007 = _0x2f336d ? ["embedding", "enc0-values", "enc0-mixed", "enc0-attn", "enc0-mlp-hidden", "enc0-skip", "enc0-down", "enc1-mixed", "enc1-attn", "enc1-mlp-hidden", "enc1-skip", "enc1-down", ..._0xbb1148] : ["enc1-mixed", "enc1-attn", "enc1-mlp-hidden", "enc1-skip", "enc1-down", ..._0xbb1148];
-    _0x3c7c62("DLSS-SR diagnostic · loading immutable " + (_0x2f336d ? "enc0 tap" : "head") + " input16");
+    _0x3c7c62("NeuralSR diagnostic · loading immutable " + (_0x2f336d ? "enc0 tap" : "head") + " input16");
     let _0x290ef4 = await fetch(_0x31214c, {
       cache: "no-store"
     });
@@ -20825,7 +20825,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     for (let _0x11273c = 0; _0x11273c < _0x5799fe.length; _0x11273c += 1) {
       _0x365fe4[_0x11273c] = _0x308857[_0x5799fe[_0x11273c]];
     }
-    _0x3c7c62("DLSS-SR diagnostic · evaluating fixed 512 reference through WebGPU");
+    _0x3c7c62("NeuralSR diagnostic · evaluating fixed 512 reference through WebGPU");
     let _0x54999a = await _0x1f74d7.run({
       features: _0x365fe4,
       sceneColor: null,
@@ -20852,7 +20852,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       if (!_0x54999a.head || _0x54999a.head.length !== 2621440) {
         throw new Error("WebGPU SR head capture has " + (_0x54999a.head?.length ?? 0) + " values");
       }
-      _0x3c7c62("DLSS-SR diagnostic · saving 40-lane browser head");
+      _0x3c7c62("NeuralSR diagnostic · saving 40-lane browser head");
       let _0x189d52 = await _0xd1d710("head40", _0x54999a.head);
       if (!_0x189d52.ok) {
         throw new Error("SR head capture upload failed: " + (await _0x189d52.text()));
@@ -20871,10 +20871,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       values: _0x2f336d ? _0x54999a.boundaries["enc0-down"]?.length : _0x54999a.head.length,
       bytes: _0x2f336d ? _0x54999a.boundaries["enc0-down"]?.byteLength : _0x57739e
     });
-    _0x3c7c62("DLSS-SR diagnostic " + (_0x2f336d ? "enc0-down" : "head") + " saved · " + _0x54999a.milliseconds.toFixed(0) + " ms");
+    _0x3c7c62("NeuralSR diagnostic " + (_0x2f336d ? "enc0-down" : "head") + " saved · " + _0x54999a.milliseconds.toFixed(0) + " ms");
   }
   async function _0x39f2c2(_0x5354e8) {
-    _0x3c7c62("DLSS-SR diagnostic · loading exact native encoder-4-down input");
+    _0x3c7c62("NeuralSR diagnostic · loading exact native encoder-4-down input");
     let _0x737768 = await fetch("/native-sr-full-remap/native-sr-enc4-down.bin", {
       cache: "no-store"
     });
@@ -20890,7 +20890,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     for (let _0x1e960e = 0; _0x1e960e < _0x847a; _0x1e960e += 1) {
       _0x1ae1a8[_0x1e960e] = _0x308857[_0x393eb4[_0x1e960e]];
     }
-    _0x3c7c62("DLSS-SR diagnostic · replaying decoder-5 from exact native input");
+    _0x3c7c62("NeuralSR diagnostic · replaying decoder-5 from exact native input");
     let _0x4cc0cc = await _0x5354e8.runBlockDiagnostic({
       stageId: "dec_5",
       input: _0x1ae1a8,
@@ -20917,10 +20917,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       values: _0x4cc0cc.output.length,
       bytes: _0x4cc0cc.output.byteLength
     });
-    _0x3c7c62("DLSS-SR decoder-5 " + _0x4b80ec + " native-input replay saved · " + _0x4cc0cc.milliseconds.toFixed(0) + " ms");
+    _0x3c7c62("NeuralSR decoder-5 " + _0x4b80ec + " native-input replay saved · " + _0x4cc0cc.milliseconds.toFixed(0) + " ms");
   }
   async function _0x1b7850(_0x5a03f0) {
-    _0x3c7c62("DLSS-SR diagnostic · loading exact native decoder-4 block input");
+    _0x3c7c62("NeuralSR diagnostic · loading exact native decoder-4 block input");
     let _0x36b5e0 = await fetch("/native-sr-dec4-up-tap/native-sr-dec4-output.bin", {
       cache: "no-store"
     });
@@ -20936,7 +20936,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     for (let _0x2f6311 = 0; _0x2f6311 < _0x91abc1; _0x2f6311 += 1) {
       _0x1d81b6[_0x2f6311] = _0x308857[_0x4db884[_0x2f6311]];
     }
-    _0x3c7c62("DLSS-SR diagnostic · replaying decoder-4 from exact native input");
+    _0x3c7c62("NeuralSR diagnostic · replaying decoder-4 from exact native input");
     let _0x16b343 = await _0x5a03f0.runBlockDiagnostic({
       stageId: "dec_4",
       input: _0x1d81b6,
@@ -20963,10 +20963,10 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       values: _0x16b343.output.length,
       bytes: _0x16b343.output.byteLength
     });
-    _0x3c7c62("DLSS-SR decoder-4 " + _0x16908c + " native-input replay saved · " + _0x16b343.milliseconds.toFixed(0) + " ms");
+    _0x3c7c62("NeuralSR decoder-4 " + _0x16908c + " native-input replay saved · " + _0x16b343.milliseconds.toFixed(0) + " ms");
   }
   async function _0x442c32(_0x4ec688) {
-    _0x3c7c62("DLSS-SR diagnostic · loading exact native decoder-1 and encoder-0 inputs");
+    _0x3c7c62("NeuralSR diagnostic · loading exact native decoder-1 and encoder-0 inputs");
     let [_0x12ff79, _0x5c10c2] = await Promise.all([fetch("/native-sr-full-remap/native-sr-dec1-output.bin", {
       cache: "no-store"
     }), fetch("/native-sr-full-remap/native-sr-enc0-skip.bin", {
@@ -20997,7 +20997,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let _0x3d81f4 = 0;
     let _0x521eaf = null;
     for (let _0x42d8f5 of _0x1289ff) {
-      _0x3c7c62("DLSS-SR diagnostic · decoder-0 exact-input " + _0x42d8f5);
+      _0x3c7c62("NeuralSR diagnostic · decoder-0 exact-input " + _0x42d8f5);
       let _0x583424 = !_0x1d4461;
       let _0xc4ab55 = await _0x4ec688.runDecoderDiagnostic({
         stageId: "dec_0",
@@ -21033,7 +21033,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       values: _0x521eaf.head.length,
       bytes: _0x521eaf.head.byteLength
     });
-    _0x3c7c62("DLSS-SR decoder-0 " + (_0x1d4461 ? "precision sweep" : "native-input replay") + " saved · " + _0x3d81f4.toFixed(0) + " ms");
+    _0x3c7c62("NeuralSR decoder-0 " + (_0x1d4461 ? "precision sweep" : "native-input replay") + " saved · " + _0x3d81f4.toFixed(0) + " ms");
   }
   function _0x5a6a17(_0x4f9452) {
     _0x539272.neuralVisible = _0x539272.settings.enabled && _0x539272.neuralReady && _0x4f9452;
@@ -21047,7 +21047,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       return;
     }
     let _0x3d49a3 = _0x539272.result?.timings ? " · read " + _0x539272.result.timings.readbackMilliseconds.toFixed(0) + " · prep " + _0x2c826d(_0x539272.result.timings.uploadPreprocessMilliseconds) + " · net " + _0x2c826d(_0x539272.result.timings.networkMilliseconds) + " · present " + _0x2c826d(_0x539272.result.timings.presentationMilliseconds) + " ms" : "";
-    _0x3c7c62(_0x539272.neuralVisible ? "DLSS-NR WebGPU · " + _0x539272.result.outputWidth + "×" + _0x539272.result.outputHeight + _0x3d49a3 + " · F6 source" : "WebGI source · " + _0x92ae43(_0x539272.frame) + " · F6 neural");
+    _0x3c7c62(_0x539272.neuralVisible ? "Retouch WebGPU · " + _0x539272.result.outputWidth + "×" + _0x539272.result.outputHeight + _0x3d49a3 + " · F6 source" : "WebGI source · " + _0x92ae43(_0x539272.frame) + " · F6 neural");
     _0x104eab.dataset.state = "ready";
   }
   async function _0xbf90c9(_0x4824dd, _0x3656ce = null) {
@@ -21070,7 +21070,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       _0x31c3c7.uploaded = true;
     }
     let _0x24c9c9 = _0x31c3c7.reset || _0x31c3c7.sourceFrame !== _0x539272.lastNrSourceFrame + 1;
-    globalThis.dlssLoading?.stage("Rendering first DLSS frame", "Neural model ready · preparing your view");
+    globalThis.neuralLoading?.stage("Rendering first Neural frame", "Neural model ready · preparing your view");
     let {
       neural: _0x2e2e0e,
       timings: _0x22ecfd
@@ -21102,8 +21102,8 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x539272.viewer.renderEnabled = true;
       }
       _0x3c7c62("Cold WebGPU graph warmed · rebuilding stable presentation graph");
-      globalThis.dlssLoading?.stage("Preparing first frame", "WebGPU kernels ready · validating the presentation graph");
-      console.info("[dlss-webgpu] discarded cold startup plan", {
+      globalThis.neuralLoading?.stage("Preparing first frame", "WebGPU kernels ready · validating the presentation graph");
+      console.info("[neural-webgpu] discarded cold startup plan", {
         dimensions: [_0x31c3c7.outputWidth, _0x31c3c7.outputHeight],
         retainedDevice: _0x539272.model.device === _0x5bbfbe,
         retainedModel: _0x539272.model === _0x3df74d,
@@ -21119,7 +21119,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       outputWidth: _0x31c3c7.outputWidth,
       outputHeight: _0x31c3c7.outputHeight,
       runtimeProfile: _0x44d251,
-      pipeline: "dlss-nr-production-gpu",
+      pipeline: "neural-nr-production-gpu",
       maskMode: _0x2bf216.autoMask ? "automatic" : "unmasked",
       settings: _0x2bf216,
       settingsRevision: _0x52c110,
@@ -21133,7 +21133,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (_0x3dd5d1 && _0x539272.neuralReady) {
       _0x2b54ff.frameComplete(_0x51cc4b, _0x31c3c7.outputWidth, _0x31c3c7.outputHeight);
     }
-    globalThis.__dlssWebGpuExact = _0x539272;
+    globalThis.__neuralWebGpuExact = _0x539272;
     if (_0x3dd5d1) {
       _0x5a6a17(!_0x539272.compareSource);
       if (_0x539272.resizePending && _0x539272.neuralReady) {
@@ -21142,7 +21142,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     } else {
       _0x539272.rerunRequested = true;
     }
-    console.info("[dlss-webgpu] production frame complete", {
+    console.info("[neural-webgpu] production frame complete", {
       dimensions: [_0x31c3c7.outputWidth, _0x31c3c7.outputHeight],
       timings: _0x51cc4b,
       resources: _0x2e2e0e.resources,
@@ -21173,7 +21173,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x3c7c62("Reading exact WebGI bridge · " + _0x92ae43(_0x570449) + " · five resources");
         let _0x24ff4d = _0x2c7c37(_0x570449);
         _0x539272.snapshot = _0x24ff4d;
-        console.info("[dlss-webgpu] captured bridge ranges", _0x24ff4d.ranges);
+        console.info("[neural-webgpu] captured bridge ranges", _0x24ff4d.ranges);
         if (_0x539272.viewer) {
           _0x539272.viewer.renderEnabled = false;
         }
@@ -21229,7 +21229,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
             throw new Error("NR proxy capture failed: " + (await _0x483196.text()));
           }
         }
-        _0x3c7c62("DLSS-NR only · automatic mask · " + _0x337581.width + "×" + _0x337581.height);
+        _0x3c7c62("Retouch only · automatic mask · " + _0x337581.width + "×" + _0x337581.height);
         let _0x11c572 = await _0x4e537a.run(_0x47d849, {
           profile: "runtime",
           runtimeProfile: _0x5cba77,
@@ -21254,7 +21254,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           proxyRange: _0x301919,
           neuralRange: _0x5dabad
         });
-        _0x3c7c62("DLSS-NR complete · automatic mask · applying WebGI display transform");
+        _0x3c7c62("Retouch complete · automatic mask · applying WebGI display transform");
         let _0x495267 = _0x2e6710(_0x337581, _0x47d849, _0x11c572, _0x24ff4d.control);
         _0x529421.width = _0x337581.width;
         _0x529421.height = _0x337581.height;
@@ -21277,17 +21277,17 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
           outputWidth: _0x337581.width,
           outputHeight: _0x337581.height,
           runtimeProfile: _0x5cba77,
-          pipeline: "dlss-nr-only",
+          pipeline: "neural-nr-only",
           maskMode: _0x10dd82 ? "external-control" : "automatic",
-          unsupported: ["DLSS-SR intentionally disconnected pending parity closure", "feature-18 depth/motion temporal preprocessing"]
+          unsupported: ["NeuralSR intentionally disconnected pending parity closure", "feature-18 depth/motion temporal preprocessing"]
         };
         _0x539272.neuralReady = !0;
-        globalThis.__dlssWebGpuExact = _0x539272;
+        globalThis.__neuralWebGpuExact = _0x539272;
         _0x5a6a17(!0);
         if (_0x539272.resizePending && _0x24ff4d.resizeRevision === _0x539272.resizeRevision) {
           _0x92ceb6();
         }
-        console.info("[dlss-webgpu] feature-18 frame complete", {
+        console.info("[neural-webgpu] feature-18 frame complete", {
           dimensions: [_0x337581.width, _0x337581.height],
           graphMilliseconds: _0x11c572.milliseconds,
           pipeline: _0x539272.result.pipeline,
@@ -21322,7 +21322,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0xbe432a(_0x440c14) {
-    if (globalThis.dlssSceneReady && (_0x539272.frame = _0x440c14, _0x539272.frameCount += 1, _0x539272.frameCount === 1 && (_0x3c7c62(_0x50be62 ? "WebGPU production connected · " + _0x92ae43(_0x440c14) + " · color and NR motion" : "WebGPU diagnostic connected · " + _0x92ae43(_0x440c14) + " · color/depth/MV/reactive/control"), console.info("[dlss-webgpu] bridge contract", {
+    if (globalThis.neuralSceneReady && (_0x539272.frame = _0x440c14, _0x539272.frameCount += 1, _0x539272.frameCount === 1 && (_0x3c7c62(_0x50be62 ? "WebGPU production connected · " + _0x92ae43(_0x440c14) + " · color and NR motion" : "WebGPU diagnostic connected · " + _0x92ae43(_0x440c14) + " · color/depth/MV/reactive/control"), console.info("[neural-webgpu] bridge contract", {
       render: [_0x440c14.renderWidth, _0x440c14.renderHeight],
       output: [_0x440c14.outputWidth, _0x440c14.outputHeight],
       color: _0x440c14.color.texture.name,
@@ -21356,11 +21356,11 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       } else if (_0x539272.captureRequested && !_0x539272.running) {
         _0x56c0fb(_0x440c14);
       }
-      globalThis.__dlssWebGpuExact = _0x539272;
+      globalThis.__neuralWebGpuExact = _0x539272;
     }
   }
   function _0x19dc05() {
-    if (!!globalThis.dlssSceneReady && !!_0x539272.settings.enabled && !!_0x539272.viewer && !!_0x539272.frame) {
+    if (!!globalThis.neuralSceneReady && !!_0x539272.settings.enabled && !!_0x539272.viewer && !!_0x539272.frame) {
       if (_0x539272.running) {
         _0x539272.rerunRequested = true;
       }
@@ -21370,15 +21370,15 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0x5342ae() {
-    if (!_0x539272.initialRunScheduled && !!globalThis.dlssSceneReady && !!_0x539272.frame) {
+    if (!_0x539272.initialRunScheduled && !!globalThis.neuralSceneReady && !!_0x539272.frame) {
       _0x539272.initialRunScheduled = !0;
       if (!_0x539272.settings.enabled) {
         _0x3c7c62("Neural rendering off · WebGI source");
-        globalThis.dlssLoading?.finish();
+        globalThis.neuralLoading?.finish();
         return;
       }
       _0x3c7c62(_0x5ebd36 + " loaded · resolving WebGI antialiasing");
-      globalThis.dlssLoading?.stage("Preparing first frame", _0x5ebd36 + " loaded · resolving antialiasing");
+      globalThis.neuralLoading?.stage("Preparing first frame", _0x5ebd36 + " loaded · resolving antialiasing");
       _0x19dc05();
     }
   }
@@ -21390,7 +21390,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
   }
   function _0x32c67f() {
-    if (!!globalThis.dlssSceneReady && !!_0x539272.settings.enabled) {
+    if (!!globalThis.neuralSceneReady && !!_0x539272.settings.enabled) {
       _0x539272.live = !_0x539272.live;
       document.querySelector("#nrLive")?.setAttribute("aria-pressed", String(_0x539272.live));
       if (!_0x539272.live) {
@@ -21431,13 +21431,13 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x539272.viewportHeight = window.innerHeight;
     if (_0x7fa0b7) {
       _0x22cbce();
-      if (_0x539272.settings.enabled && _0x539272.result && globalThis.dlssSceneReady) {
-        globalThis.dlssLoading?.begin("Resizing DLSS 5", "Preparing neural rendering for the new window size");
+      if (_0x539272.settings.enabled && _0x539272.result && globalThis.neuralSceneReady) {
+        globalThis.neuralLoading?.begin("Resizing Neural 5", "Preparing neural rendering for the new window size");
       }
     }
     clearTimeout(_0x266005);
     _0x266005 = setTimeout(() => {
-      if (!!globalThis.dlssSceneReady && !!_0x539272.viewer) {
+      if (!!globalThis.neuralSceneReady && !!_0x539272.viewer) {
         _0x539272.resizeSettled = true;
         _0x539272.pendingProductionFrame = null;
         _0x539272.captureRequested = false;
@@ -21450,16 +21450,16 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     if (!_0x4a2a47 || _0x539272.viewer === _0x4a2a47) {
       return;
     }
-    let _0x5a0a46 = _0x4a2a47.getPlugin("DlssBridge");
+    let _0x5a0a46 = _0x4a2a47.getPlugin("NeuralBridge");
     if (!_0x5a0a46 || typeof _0x5a0a46.setFrameConsumer != "function") {
-      _0x3c7c62("Exact WebGI scene loaded, but the rebuilt DLSS bridge consumer API is missing", !0);
+      _0x3c7c62("Exact WebGI scene loaded, but the rebuilt Neural bridge consumer API is missing", !0);
       return;
     }
     _0x539272.viewer = _0x4a2a47;
     _0x539272.bridge = _0x5a0a46;
     _0x5a0a46.setFrameConsumer(_0xbe432a);
     _0x4a2a47.addEventListener("update", () => {
-      if (!!globalThis.dlssSceneReady && !!_0x539272.settings.enabled) {
+      if (!!globalThis.neuralSceneReady && !!_0x539272.settings.enabled) {
         _0x539272.viewRevision++;
         if (window.innerWidth !== _0x539272.viewportWidth || window.innerHeight !== _0x539272.viewportHeight) {
           _0x5cd50d();
@@ -21501,7 +21501,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
       } else {
         clearTimeout(_0x266005);
         _0x92ceb6();
-        globalThis.dlssLoading?.finish();
+        globalThis.neuralLoading?.finish();
         _0x539272.live = false;
         _0x539272.captureRequested = false;
         _0x539272.rerunRequested = false;
@@ -21552,9 +21552,9 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x3962fd();
     _0x2c9856();
     _0x492d2f();
-    _0x529421 = document.querySelector("#dlssWebGpuOutput");
-    _0x5be201 = document.querySelector("#dlssResizeHold");
-    _0x104eab = document.querySelector("#dlssWebGpuStatus");
+    _0x529421 = document.querySelector("#neuralWebGpuOutput");
+    _0x5be201 = document.querySelector("#neuralResizeHold");
+    _0x104eab = document.querySelector("#neuralWebGpuStatus");
     _0x308857 = _0x4795c8();
     _0x509a94 = 1;
     _0x8ffb30 = 1;
@@ -21563,7 +21563,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x5a0833 = 450;
     _0x10dd82 = !1;
     _0x25965a = new URLSearchParams(location.search);
-    _0x5ebd36 = globalThis.dlssSceneLabel || "Bistro";
+    _0x5ebd36 = globalThis.neuralSceneLabel || "Bistro";
     _0x52ca55 = _0x25965a.get("srReferenceHead") === "1";
     _0x231f08 = _0x25965a.get("srReferenceEnc0Down") === "1";
     _0x2eae64 = _0x25965a.get("srReferenceDec5") === "1";
@@ -21621,14 +21621,14 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     _0x3187a8 = new Float32Array(_0x13ead1);
     _0xab066b = new Uint32Array(_0x13ead1);
     window.addEventListener("resize", _0x5cd50d);
-    window.addEventListener("dlss-viewer-ready", _0x2ff96f => _0x89f93c(_0x2ff96f.detail));
-    if (globalThis.dlssViewer) {
-      _0x89f93c(globalThis.dlssViewer);
+    window.addEventListener("neural-viewer-ready", _0x2ff96f => _0x89f93c(_0x2ff96f.detail));
+    if (globalThis.neuralViewer) {
+      _0x89f93c(globalThis.neuralViewer);
     } else {
       let _0x5468c3 = setInterval(() => {
-        if (globalThis.dlssViewer) {
+        if (globalThis.neuralViewer) {
           clearInterval(_0x5468c3);
-          _0x89f93c(globalThis.dlssViewer);
+          _0x89f93c(globalThis.neuralViewer);
         }
       }, 50);
     }
@@ -21647,7 +21647,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
       }
     }, !0);
-    globalThis.__dlssWebGpuExact = _0x539272;
+    globalThis.__neuralWebGpuExact = _0x539272;
     _0x3c7c62(_0x5ebd36 + " scene · waiting for WebGI viewer");
     _0x1a7066 = !1;
     _0x2b54ff.mountRuntime(_0x539272, {
@@ -21681,7 +21681,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
         _0x529421.classList.remove("visible");
       },
       afterSceneChange() {
-        _0x5ebd36 = globalThis.dlssSceneLabel || "Bistro";
+        _0x5ebd36 = globalThis.neuralSceneLabel || "Bistro";
         _0x539272.live = _0x1a7066 && _0x539272.settings.enabled;
         _0x539272.viewer?.setDirty();
       }
@@ -21694,7 +21694,7 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4<f32> {
     }
     _0x539272.setSettings = _0x5b661f;
   });
-  globalThis.DLSSRuntime = {
+  globalThis.NeuralRuntime = {
     getSrNrChain() { _0x11866b(); return _0x16d1e6.SrNrChain; },
     getNativeSR()  { _0x5c1735(); return _0x2901e0; }
   };

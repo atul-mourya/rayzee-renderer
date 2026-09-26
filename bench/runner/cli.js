@@ -699,7 +699,7 @@ async function main() {
 		if ( command === 'upscale' ) {
 
 			const blessUpscale = !! flags.bless;
-			log( `\nupscale (DLSS super resolution vs native full-size render)${blessUpscale ? ' — blessing' : ''}` );
+			log( `\nupscale (neural super resolution vs native full-size render)${blessUpscale ? ' — blessing' : ''}` );
 			const report = await runUpscale( bench, { bless: blessUpscale, only, log } );
 			if ( reportUpscale( report ) > 0 && ! blessUpscale ) exitCode = 1;
 			if ( blessUpscale ) {

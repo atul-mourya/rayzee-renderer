@@ -64,33 +64,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] minimize unwanted dependencies - <https://github.com/atul-mourya/RayTracing/network/dependencies>
 - [ ] open issues by threejs <https://github.com/mrdoob/three.js/issues/32969> and 33061
 
-### DLSS super resolution
-
-- [ ] **Try a non-2x scale ratio.** The 2x is a limit of the *port*, not of DLSS: NVIDIA's quality
-  levels are render-scale percentages (Quality 67 %, Balanced 58 %, Performance 50 %, Ultra 33 %) and
-  the preset "will not vary even if scaling ratio varies" — OptiScaler runs the same DLL from 1.01 to
-  3.00. But this WebGPU port implements only the 2x path: its kernels are `upsample2x`,
-  `upsample2x_padded`, `upsample_2x_crop`, `downsample_2x`, with ~90 hardcoded `*2u` / `/4u` ratio
-  assumptions, and `output = input * 2` fixed in the geometry function. The WGSL *is* templated on
-  `INPUT_SIZE` / `OUTPUT_SIZE` / `NETWORK_SIZE`, so patching the geometry to e.g. 1.5x will at least
-  build — the question is whether the fixed-2x upsample kernels then produce a correct image or
-  garbage. ~15 min to settle empirically instead of by inference. Expect it to break.
-- [ ] **8192 output is not reachable, measured.** Two independent walls, both above 4096 output:
-  the runtime allocates a "retained history" plane at **4x the input dimension** and requests no
-  raised limit, so >2048 input exceeds the default `maxTextureDimension2D` of 8192 (the adapter
-  supports 16384 — patching its `requestDevice` would lift this); and its "arbitrary exposure" pass
-  dispatches `ceil(w*h/256)` workgroups in X, so 4096² input asks for 65,536 against WebGPU's 65,535
-  — **one over**, which no limit raise fixes. So square 8192 is unreachable, and a non-square 8192
-  (e.g. 4096x2160 in) would need the texture-limit patch. `SR_MAX_INPUT` is now 2048 with an early,
-  explanatory throw, because past it the runtime failed late as an unrelated invalid bind group.
-- [ ] `DLSS_NR_MAX_PIXELS` (4.19 MP) is now unreachable: the pass runs at render size, and
-  `MAX_STORAGE_TEXTURE_SIZE` already caps that at 2048. It stays as a floor under a raised reserve.
-  If the reserve is ever raised, re-measure before trusting it — 4x the pixels cost 10-17x the wall
-  clock, which looks like memory pressure, so a tiled detail pass would be the lever.
-- [ ] Preset **K** weights (newer transformer preset, reportedly cleaner in motion than the hosted
-  **J**). Not a setting — a separate extraction from a newer `nvngx_dlss.dll`, which needs the demo
-  author's tooling, so this is blocked unless they publish it.
-
 ### Regression bench (`bench/`)
 
 - [ ] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
@@ -221,7 +194,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ## AI Integration
 
-- [ ] POC DLSS <https://t.co/frqdwHzeDv>
 - [ ] Explore AI-driven denoising techniques beyond OIDN
 - [ ] <https://upscalerjs.com/models/>
 - [ ] <https://enhance.addy.ie/>

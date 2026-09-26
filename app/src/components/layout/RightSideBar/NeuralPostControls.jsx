@@ -3,7 +3,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InfoTip } from "@/components/ui/info-tip";
-import { DLSS_NR_MAX_PIXELS } from 'rayzee';
+import { RETOUCH_MAX_PIXELS } from 'rayzee';
 import { usePathTracerStore as useStore } from '@/store';
 
 /**
@@ -21,7 +21,7 @@ const NeuralPostControls = () => {
 		enableUpscaler,
 		upscalerScale,
 		upscalerQuality,
-		upscalerBackend,
+		retouchVisible,
 		neuralRendering,
 		nrIntensity,
 		nrLocalTone,
@@ -33,7 +33,6 @@ const NeuralPostControls = () => {
 		handleEnableUpscalerChange,
 		handleUpscalerScaleChange,
 		handleUpscalerQualityChange,
-		handleUpscalerBackendChange,
 		handleNeuralRenderingChange,
 		handleNRSettingChange,
 	} = useStore();
@@ -42,7 +41,7 @@ const NeuralPostControls = () => {
 
 	// The detail pass runs FIRST, on the traced image, so the upscaler's factor does not enter into
 	// it. Reachable only if the host raises the render reserve past 2048.
-	const nrTooBig = canvasWidth * canvasHeight > DLSS_NR_MAX_PIXELS;
+	const nrTooBig = canvasWidth * canvasHeight > RETOUCH_MAX_PIXELS;
 
 	// The model's settings are engine units; these sliders are what an artist expects to see.
 	//
@@ -86,70 +85,53 @@ const NeuralPostControls = () => {
 					onCheckedChange={handleEnableUpscalerChange} />
 			</Row>
 
+			{/* No Model menu: the neural super-resolution backend cannot load, which leaves Real-ESRGAN. */}
 			{enableUpscaler && ( <>
-				{/* Measured 512->1024 on a 1.9M-tri interior: DLSS 136 ms, Real-ESRGAN 436 ms; RMSE
-				    against a native 1024 render 3.84 vs 3.28, detail 1.355 vs 1.096 where native is
-				    1.089 — so DLSS adds structure rather than reproducing it. */}
 				<Row>
-					<Select value={upscalerBackend} onValueChange={handleUpscalerBackendChange}>
-						<span className="opacity-50 text-xs truncate inline-flex items-center">
-							Model
-							<InfoTip text="Real-ESRGAN reconstructs what a full-size render looks like, and offers 4x. DLSS is sharper than a native render — it invents detail rather than reproducing it — and about 3x faster, but is fixed at 2x and needs a denoised image." />
-						</span>
-						<SelectTrigger className="max-w-32 h-5 rounded-full" >
-							<SelectValue placeholder="Select model" />
+					<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
+						<span className="opacity-50 text-xs truncate">Scale Factor</span>
+						<SelectTrigger className="max-w-24 h-5 rounded-full" >
+							<SelectValue placeholder="Select scale" />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="esrgan">Real-ESRGAN</SelectItem>
-							<SelectItem value="dlss">DLSS</SelectItem>
+							<SelectItem value="2">2x</SelectItem>
+							<SelectItem value="4">4x</SelectItem>
 						</SelectContent>
 					</Select>
 				</Row>
-
-				{upscalerBackend === 'dlss' ? null : ( <>
-					<Row>
-						<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-							<span className="opacity-50 text-xs truncate">Scale Factor</span>
-							<SelectTrigger className="max-w-24 h-5 rounded-full" >
-								<SelectValue placeholder="Select scale" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="2">2x</SelectItem>
-								<SelectItem value="4">4x</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-					<Row>
-						<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-							<span className="opacity-50 text-xs truncate">Quality</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
-								<SelectValue placeholder="Select quality" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="fast">Fast</SelectItem>
-								<SelectItem value="balanced">Balanced</SelectItem>
-								<SelectItem value="quality">Quality</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-				</> )}
+				<Row>
+					<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
+						<span className="opacity-50 text-xs truncate">Quality</span>
+						<SelectTrigger className="max-w-32 h-5 rounded-full" >
+							<SelectValue placeholder="Select quality" />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="fast">Fast</SelectItem>
+							<SelectItem value="balanced">Balanced</SelectItem>
+							<SelectItem value="quality">Quality</SelectItem>
+						</SelectContent>
+					</Select>
+				</Row>
 			</> )}
 
-			{/* DLSS-NR. Named for what it does to a picture rather than for the model behind it —
-			    it changes appearance, not resolution, so it is its own control and not an upscaler. */}
-			<Row className="pt-2">
-				<Switch
-					label={<>AI Retouch<InfoTip text="A retouch pass over the finished render: adds fine surface detail and shapes light locally, the way a photographer would work on a photograph. Runs once when the render completes, before any upscale. Downloads a 141 MB model the first time." /></>}
-					checked={neuralRendering} disabled={! denoised}
-					onCheckedChange={handleNeuralRenderingChange} />
-			</Row>
+			{/* Retouch. Named for what it does to a picture rather than for the model behind it —
+			    it changes appearance, not resolution, so it is its own control and not an upscaler.
+			    Hidden until `rayzee.showRetouch()`: its model is not distributed. */}
+			{retouchVisible && (
+				<Row className="pt-2">
+					<Switch
+						label={<>AI Retouch<InfoTip text="A retouch pass over the finished render: adds fine surface detail and shapes light locally, the way a photographer would work on a photograph. Runs once when the render completes, before any upscale. Downloads a 141 MB model the first time." /></>}
+						checked={neuralRendering} disabled={! denoised}
+						onCheckedChange={handleNeuralRenderingChange} />
+				</Row>
+			)}
 
 			{neuralRendering && nrTooBig && (
 				<Row>
 					<span className="opacity-50 text-[10px] leading-snug">
 						Skipped at this size — {canvasWidth} × {canvasHeight} is
 						{' '}{( canvasWidth * canvasHeight / 1e6 ).toFixed( 1 )} MP, above the
-						{' '}{( DLSS_NR_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP it survives.
+						{' '}{( RETOUCH_MAX_PIXELS / 1e6 ).toFixed( 1 )} MP it survives.
 					</span>
 				</Row>
 			)}

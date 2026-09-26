@@ -488,45 +488,6 @@ separate `denoisedNonFinite()` probe reads the denoiser's own output target for 
 
 OIDN is still excluded: it adds an async completion dependency and deserves its own suite.
 
-### DLSS super resolution — opt-in, and not part of `npm run bench`
-
-`npm run bench:upscale` gates the final-render upscaler: trace at half the output size, denoise,
-reconstruct. It is deliberately **not** in `run`.
-
-The reason is the rule two sections up. This rung's model is fetched from a third-party bucket at
-run time, so it breaks *Reference inputs are vendored, not fetched* — a suite that needs someone
-else's host to be up is a suite that goes red for reasons no commit caused, and a suite people stop
-reading. Vendoring the ~3.5 MB model into `bench/assets/` is the fix if this should ever join the
-default run; until then it is a thing you ask for.
-
-Two numbers, because the failure modes point in opposite directions:
-
-- **RMSE** against the same scene traced natively at the full size, in the same session on the same
-  build. Reference-free in the golden sense, exactly like the denoiser ratio: a path-tracer change
-  moves both sides, so there is no image to bless a regression into.
-- **Detail ratio** — mean neighbour delta, upscaled ÷ native. This is the one that matters. An
-  upscale that quietly degrades toward blur *improves* its RMSE against a denoised reference, so
-  accuracy alone would score the regression as a win. The blessed ratios sit above 1.0 (the
-  reconstruction is measurably sharper than the native render), and the gate only lets them fall by
-  `maxDetailLoss`.
-
-The ladder is `512x512` and `1024x1024` because the network runs a fixed 256x256 minimum tile: at
-512 output it is at that floor, at 1024 it is genuinely larger. A change touching only the
-non-minimum path is invisible from one rung.
-
-OIDN is forced on for the rung. On raw Monte-Carlo noise this upscaler measurably loses to plain
-bilinear, so gating it on an undenoised source would gate the wrong thing entirely.
-
-A **tone-map parity check runs first**, before any image is measured. The upscale reads back display
-bytes through `Processor/ToneMapGPU.js`, a WGSL copy of `ToneMapCPU.js` that exists because
-converting half floats in JavaScript cost more than the network itself. Two implementations of one
-curve drift, and vitest cannot catch it — there is no GPU there. So the rung compares them on the
-real device across all seven curves and four exposure/saturation combinations, over 84 designed
-colours (0 to 1000, negatives, single-channel), and fails above `maxToneMapDelta` (1 level of 255,
-which is what f32-against-f64 rounding produces on a value sitting on a byte boundary). A drift here
-would move every RMSE below it and read as a model regression, which is why it is checked first
-rather than alongside.
-
 ### Texture binding audit — a structural guard, not a metric
 
 `setBindingAudit(true)` (on in the harness, off in production) reports stages whose `TextureNode`s

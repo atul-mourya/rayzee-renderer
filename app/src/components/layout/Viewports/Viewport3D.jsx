@@ -12,7 +12,7 @@ import { useStore, usePathTracerStore, useCameraStore, useAnimationStore, useLig
 import { saveRender } from '@/utils/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { generateViewportStyles } from '@/utils/viewport';
-import { PathTracerApp } from 'rayzee';
+import { PathTracerApp, configureAssets } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
 import { loadLightLibraries } from '@/lib/lightLibraries';
@@ -188,6 +188,10 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 			setLoading( { isLoading: true, title: "Starting", status: "Setting up Scene...", progress: 0 } );
 
 			const initApp = async () => {
+
+				// The neural model is not on the CDN; a local copy is served only where this is set.
+				const neuralAssetBaseUrl = import.meta.env.VITE_NEURAL_ASSET_BASE_URL;
+				if ( neuralAssetBaseUrl ) configureAssets( { neuralAssetBaseUrl } );
 
 				const app = new PathTracerApp( canvasRef.current, {
 					container: containerRef.current,

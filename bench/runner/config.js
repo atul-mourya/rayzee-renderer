@@ -348,7 +348,7 @@ export const KERNELS = {
 };
 
 /**
- * DLSS super-resolution gates.
+ * Neural super-resolution gates.
  *
  * Opt-in (`npm run bench:upscale`), because the model is fetched over the network and the default
  * suite must stay offline-green.

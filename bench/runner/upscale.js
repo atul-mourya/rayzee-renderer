@@ -1,5 +1,5 @@
 /**
- * DLSS super-resolution regression suite.
+ * Neural super-resolution regression suite.
  *
  * The final-render upscaler trades traced pixels for a neural reconstruction: it renders at half
  * the output size, denoises, and reconstructs. Two things can rot independently, so both are

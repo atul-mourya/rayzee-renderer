@@ -282,20 +282,38 @@ const debouncedGenerateProceduralSkyTexture = debounce( () => {
 
 }, 10 );
 
+const RETOUCH_VISIBLE_KEY = 'rayzee-retouch-visible';
+
+function readRetouchVisible() {
+
+	try {
+
+		return localStorage.getItem( RETOUCH_VISIBLE_KEY ) === '1';
+
+	} catch {
+
+		return false;
+
+	}
+
+}
+
 const usePathTracerStore = create( ( set, get ) => ( {
 	...DEFAULT_STATE,
 	GIIntensity: DEFAULT_STATE.globalIlluminationIntensity,
 	backgroundIntensity: DEFAULT_STATE.backgroundIntensity,
 
-	// Which model the AI upscaler runs. App-local: 'dlss' is fixed 2x and needs a denoised source.
+	// Which model the AI upscaler runs. App-local: 'neural' is fixed 2x and needs a denoised source.
 	upscalerBackend: 'esrgan',
 
-	// Neural rendering (DLSS-NR): a detail pass on the traced image, before any upscale.
+	// Neural rendering (Retouch): a detail pass on the traced image, before any upscale. Hidden
+	// because its model is not distributed; `rayzee.showRetouch()` in the console reveals it.
+	retouchVisible: readRetouchVisible(),
 	neuralRendering: false,
 	nrIntensity: 1,
 	nrLocalTone: 1,
 	nrLocalStructure: 1,
-	// 0 keeps the renderer's own chroma. See DLSS_NR_COLOR_STRENGTH.
+	// 0 keeps the renderer's own chroma. See RETOUCH_COLOR_STRENGTH.
 	nrColorStrength: 0,
 
 	showInspector: false,
@@ -867,6 +885,23 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => app.denoisingManager.setNeuralRendering( get().neuralRendering, { [ key ]: val } ),
 		false
 	),
+
+	setRetouchVisible: visible => {
+
+		try {
+
+			visible ? localStorage.setItem( RETOUCH_VISIBLE_KEY, '1' ) : localStorage.removeItem( RETOUCH_VISIBLE_KEY );
+
+		} catch {
+
+			// Storage blocked: visible for this page only.
+
+		}
+
+		set( { retouchVisible: visible } );
+		if ( ! visible && get().neuralRendering ) get().handleNeuralRenderingChange( false );
+
+	},
 
 	handleUpscalerBackendChange: handleChange(
 		val => set( { upscalerBackend: val } ),
@@ -1527,6 +1562,10 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 } ) );
+
+globalThis.rayzee = Object.assign( globalThis.rayzee ?? {}, {
+	showRetouch: ( visible = true ) => usePathTracerStore.getState().setRetouchVisible( !! visible ),
+} );
 
 // Light store
 const useLightStore = create( set => ( {
