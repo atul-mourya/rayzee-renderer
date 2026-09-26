@@ -528,7 +528,7 @@ The engine renders full-frame every frame. PathTracer accumulates one sample, ma
    ↓ reads 'pathtracer:color', 'pathtracer:normalDepth'
    ↓ writes 'edgeFiltering:output' to context
 
-5. Compositor.render() → renderer's output pass (tone mapping + sRGB) → Screen
+5. Compositor.render() → renderer's output pass (view transform, then sRGB unless the view already encodes) → Screen
    ↓ then OverlayManager renders outline + helpers on top
 ```
 
@@ -541,10 +541,12 @@ RenderPipeline.render(writeBuffer)
     ↓ executes stages sequentially
 [PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
     ↓
-Compositor → renderer.toneMapping output pass (tone curve + sRGB) → Screen
+Compositor → renderer.toneMapping output pass (view transform + sRGB) → Screen
     ↓
 OverlayManager → outline + scene helpers + HUD (at display resolution)
 ```
+
+`renderer.toneMapping` is an id in the view-transform registry (`Color/ViewTransforms.js`): three.js's seven curves, or an OpenColorIO view baked to a table by `engine.color`. An OCIO view returns colour already encoded for its display, so `ColorManagement` sets `renderer.outputColorSpace` to linear while one is active; the readbacks (`ToneMapGPU`, `ToneMapCPU`) read the same registry, so a saved image matches the canvas.
 
 ---
 

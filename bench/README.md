@@ -200,6 +200,12 @@ control, which is analytically exact, reads 0.121 pp. The worst axis was 51 pp.
 | `furnace-metal-rough` | 0.99730 | 0.27 pp |
 | `furnace-dielectric-smooth` | 0.99731 | 0.27 pp — ratchet seeded; no golden or ground truth yet |
 | `furnace-iridescence` | 0.99514 | 0.49 pp |
+| `furnace-lowpoly-16` | 0.99879 | 0.12 pp — with the shadow terminator offset; 0.99650 without |
+| `furnace-lowpoly-32` | 0.99879 | 0.12 pp — 0.99815 without |
+| `furnace-foliage-cards` | 1.00000 | 0.00 pp — 0.51448 with rays offset along the interpolated normal |
+
+The last three were measured when their fixes landed and are not blessed into `baselines/` yet;
+run `npm run bench:bless -- --truth` to seed them.
 
 #### What the furnace found, and what fixed it
 
@@ -258,6 +264,23 @@ back to a cosine direction, so the lobe also emitted cosine-distributed directio
 density is `w_sheen·p_sheen + P(reject)·w_sheen·cos`, and `calculateBSDFSamplingPDF` cannot know
 `P(reject)`. Dividing by the smaller modelled density inflated the lobe 23 % — measured 0.308
 against an exact analytic 0.25. The sample is now simply lost, which keeps the density exact.
+
+**A faceted terminator on low-poly spheres.** Smooth shading promises light up to the smooth
+surface's horizon, but a shadow ray leaving the flat facet near it is blocked by that facet or its
+neighbours, so a 16-segment sphere drew its outline into the shading and read 0.99650 against the smooth sphere's 0.99879. The
+1 mm spawn offset used to hide most of it; scale-aware offsets exposed it. Light and environment
+shadow rays now start on the smooth surface the vertex normals describe (`TSL/ShadowTerminator.js`,
+a port of Cycles 5.1's geometry offset, default 0.1): both low-poly spheres read 0.99879, the same as
+the smooth one, with 46 % and 20 % less noise.
+
+**Pass-through rays that never left the card.** Spawned rays were offset along the hit record's
+normal, which is the *interpolated* one. Foliage cards ship vertex normals that all point up, so on a
+vertical card the offset moved a ray passing through a transparent texel within the card's own
+plane; it hit the same card again until the transparent-bounce guard ended the path, and the cards
+drew black. Rays now step off the facet normal, which Extend packs into the hit record
+(`TSL/HitFacet.js`). `furnace-foliage-cards` — six crossed, fully transparent cards in a white
+furnace — read 0.51448 before and 1.00000 after; no other scene has cards whose normals disagree with
+their facets, which is why nothing else caught it.
 
 **A diffuse lobe on glass.** Neither `calculateBRDFWeights` nor `kD` carried a
 `(1 - transmission)` factor, so a fully transmissive dielectric kept a full diffuse term it should
@@ -573,7 +596,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Twenty-seven scenes, one failure axis each — seventeen image scenes plus ten `furnace-*` energy
+Twenty-nine scenes, one failure axis each — seventeen image scenes plus twelve `furnace-*` energy
 probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
@@ -597,6 +620,7 @@ probes. `npm run bench:list` prints them with what they cover.
 | `instanced-storage` | object-space shared geometry, InstancedMesh placements, a mirrored placement's winding, an emissive geometry placed twice — the storage paths every other scene skips |
 | `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
 | `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
+| `furnace-dielectric-smooth` | the same at `MIN_ROUGHNESS`, where a floored GGX denominator read 1.10 |
 | `furnace-metal-mid` | metal multiscatter compensation overshoot at mid roughness |
 | `furnace-metal-rough` | single-scattering GGX deficit at r = 1 — the opposite failure to `metal-mid` |
 | `furnace-clearcoat` | clearcoat layer energy on top of the base |
@@ -604,7 +628,8 @@ probes. `npm run bench:list` prints them with what they cover.
 | `furnace-iridescence` | thin-film energy across the film-thickness range |
 | `furnace-multibounce` | multi-bounce transport — Russian-roulette compensation, NEE/MIS under occlusion |
 | `furnace-lowpoly-16` | shading-normal energy loss at 16-segment tessellation |
-| `furnace-lowpoly-32` | the same at 32 segments — the pair separates tessellation from the shading model |
+| `furnace-lowpoly-32` | the same at 32 segments — the pair separates tessellation from the shading model; both also gate the shadow terminator offset |
+| `furnace-foliage-cards` | alpha pass-through on crossed cards whose vertex normals point away from the facet — ray spawn off the facet, not the interpolated normal |
 
 Everything is built from three.js primitives, procedural `DataTexture`s and a procedural
 environment, so the corpus needs no network and cannot change when the asset host does. Texture

@@ -47,6 +47,8 @@
   - [x] Thin-film iridescence
   - [x] Nested transmission with medium stack (glass-in-glass)
   - [x] Dispersion (chromatic aberration for dielectrics)
+  - [x] Exact dielectric Fresnel and a true-peak GGX — a glossy black sphere matches Cycles within 1 % at every angle
+  - [x] Cycles' shadow terminator geometry offset for low-poly curved meshes
   - [ ] Disney BSDF 2.0 full implementation
   - [x] Subsurface scattering (random-walk SSS reusing the medium stack)
   - [ ] Procedural material nodes/graph
@@ -212,7 +214,7 @@
 
 ### Industry Integration
 - [ ] **Production Pipeline**
-  - [x] Color management (ACES + AgX tonemapping pipeline)
+  - [x] Color management — OpenColorIO pipeline: Blender 5.1 config by default, ACES and studio configs, working spaces, looks, displays, per-texture colour spaces, EXR export in a delivery space
   - [x] Multi-pass rendering / AOVs (MRT: color, normalDepth, albedo)
   - [x] GPU device-loss detection & recovery (no rendering into a dead device)
   - [ ] Batch rendering automation
@@ -261,7 +263,7 @@
 1. ~~Full WebGPU migration~~ ✅ **Core migration done** — wavefront compute path tracer shipped; GPU BVH build still pending
 2. Mobile optimization — pending
 3. Desktop applications — pending
-4. ~~Production tools~~ ✅ ACES/AgX color management, MRT/AOV output, OIDN GPU denoising, offline video export
+4. ~~Production tools~~ ✅ OpenColorIO color management, MRT/AOV output, OIDN GPU denoising, offline video export
 5. ~~Content ecosystem~~ ✅ Sketchfab/PolyHaven browsers, dynamic scene editing, AI super-resolution upscaling, PBRT-v4 loader
 
 ---

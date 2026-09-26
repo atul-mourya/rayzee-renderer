@@ -26,6 +26,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [engine.lightManager](#enginelightmanager)
   - [engine.animationManager](#engineanimationmanager)
   - [Materials](#materials)
+  - [Colour Management](#colour-management)
   - [engine.environmentManager](#engineenvironmentmanager)
   - [engine.denoisingManager](#enginedenoisingmanager)
   - [engine.interactionManager](#engineinteractionmanager)
@@ -292,6 +293,11 @@ configureAssets({
   dlssRuntimeUrl:    '/dlss/dlss-runtime.js',
   dlssAssetBaseUrl:  '/dlss/',
 
+  // OpenColorIO runtime (~6 MB of WebAssembly) — the engine never names the package, so a host
+  // that loads colour configs supplies it, bundled or served. Unset, colour management stays inert.
+  ocioRuntimeFactory: () => import('@bb-studio/ocio'),   // or: ocioRuntimeUrl: '/vendor/ocio/index.js'
+  ocioWasmUrl: '/vendor/ocio/ocio-wasm.wasm',            // optional override for the .wasm
+
   // Prefix for engine-managed IndexedDB stores. Set to a unique value if multiple
   // apps embed the engine on the same origin to avoid cache collisions.
   cacheNamespace: 'my-app',
@@ -414,13 +420,14 @@ Key settings:
 | `maxBounces` | `number` | 3 | Max ray bounce depth |
 | `maxSamples` | `number` | 60 | Max accumulated samples before stopping |
 | `exposure` | `number` | 1.0 | Exposure value |
-| `saturation` | `number` | 1.2 | Color saturation |
+| `saturation` | `number` | 1.0 | Color saturation (1 = no grade) |
 | `enableEnvironment` | `boolean` | true | Use environment lighting |
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
-| `environmentRotation` | `number` | 270 | Environment Y-rotation (degrees) |
+| `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
 | `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
 | `fireflyThreshold` | `number` | 3.0 | Firefly clamping threshold |
+| `shadowTerminatorOffset` | `number` | 0.1 | Cycles' Shadow Terminator → Geometry Offset: near the light's terminator on a smooth-shaded low-poly mesh, light and environment shadow rays start on the smooth surface the vertex normals describe, not the flat facet. Blender's default; `0` disables |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
@@ -446,7 +453,7 @@ Key settings:
 | `pixelFreezeThreshold` | `number` | 0.02 | Relative-error threshold for a pixel to become a freeze candidate |
 | `pixelFreezeStability` | `number` | 8 | Consecutive candidate frames required before a pixel freezes |
 
-See `ENGINE_DEFAULTS` for the full list with default values.
+See `ENGINE_DEFAULTS` for the full list with default values. The default look is AgX (`toneMapping: 6`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`.
 
 #### Rendering Modes
 
@@ -553,7 +560,42 @@ engine.updateAllMeshVisibility()                  // re-sync after manual object
 
 // Read access to the active scene (returns the mesh-bearing scene)
 engine.getScene()
+
+// Where a packed value came from: 'material' | 'mapped' | 'default' | 'host'
+engine.getMaterialPropertySource(index, 'ior')
 ```
+
+A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported) — MeshPhysicalMaterial's own values, so a glTF metallic material gets IOR 1.5, not a guess derived from its metalness. Weights and roughnesses (metalness, roughness, transmission, opacity, clearcoat, sheen, iridescence, …) are clamped to [0, 1] on upload and on `setMaterialProperty`.
+
+### Colour Management
+
+`engine.color` is an OpenColorIO pipeline: what textures and lights mean, what the render happens in, and what it is shown and saved as. **It is inert until a config is loaded** — the render stays linear Rec.709 and the view transforms are three.js's own seven, so a host that never loads one sees no change. The host supplies the runtime (`ocioRuntimeFactory` or `ocioRuntimeUrl` in [`configureAssets`](#configuring-assets-cdn-urls--cache-namespace)).
+
+```js
+configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
+
+await engine.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' }); // a runtime built-in
+await engine.loadColorConfig({ files, configPath: 'config.ocio', id: 'studio' });  // or a folder: [{ relativePath, data }]
+
+engine.color.setView({ display: 'sRGB - Display', view: 'ACES 2.0 - SDR 100 nits (Rec.709)', look: null });
+engine.color.setLook(look);                  // a look from status().config.looks, on the active view
+engine.color.setActiveView(id);              // any registered view, OCIO or built-in (three.js constant)
+engine.color.setContext({ SHOT: '010' });    // $SHOT in the config resolves to this
+engine.color.status();                       // config, working space, active view, registered views
+
+engine.color.setWorkingSpace('ACEScg');      // render in the config's space…
+await engine.applyColorWorkingSpace();       // …which rebuilds textures, materials and the environment
+
+await engine.setTextureColorSpace(texture, 'srgb');   // null (auto), 'srgb', 'linear' or a config space
+const { data } = await engine.renderToBuffer({ colorSpace: 'ACES2065-1', source: 'display' }); // float delivery buffer
+await engine.unloadColorConfig();
+```
+
+- **Load and unload through `engine.loadColorConfig()` / `unloadColorConfig()`** once a scene exists: they undo an adopted working space while the config that converted the environment is still loaded.
+- A view is baked to a log2 shaper and a 65³ table, interpolated tetrahedrally; the same table drives the canvas, the GPU and CPU readbacks and the menu (`listViewTransforms()`, `onRegistryChange()`). An OCIO view returns display-encoded colour, so the engine switches the output pass to linear while one is active.
+- **Baked views.** `await engine.color.saveBakedView(id)` writes a view's table to a file (157 KB gzip for 65³), and `await engine.color.loadBakedView(bytes, { expect })` registers it with no runtime and no config — show the look on the first frame, load the config later. When that config loads, a baked view whose files match the fingerprint it was baked from is kept as is: no rebake, no new id, no restart.
+- `renderToBuffer({ colorSpace })` takes `'srgb'` (display bytes through the active view), `'linear'` (the working-space accumulation) or a config colour space; `source: 'display'` reads what the viewport shows, denoised, instead of the raw accumulation.
+- Degradations (a view that cannot bake, a display the canvas cannot show) are recorded as warnings in the [degradation contract](#degradation-contract).
 
 ### engine.environmentManager
 
@@ -955,6 +997,18 @@ import {
   PRODUCTION_RENDER_CONFIG,
   INTERACTIVE_RENDER_CONFIG,
   MAX_RESERVABLE_RENDER_SIZE,
+  RENDER_PROFILES,
+  MATERIAL_DEFAULTS,
+} from 'rayzee';
+
+// Colour management — engine.color is the instance a host normally uses; these build UI against
+// it, or reach the view-transform registry without an app
+import {
+  ColorManagement, getActiveColorManagement, isColorManaged, DEFAULT_WORKING_SPACE,
+  listViewTransforms, getViewTransform, addViewTransform, removeViewTransform, onRegistryChange,
+  buildOcioView, addOcioView, addAllOcioViews,
+  convertColor, convertPixelsF32, extractMatrix, hasColorSpace,
+  displayCanvasFit,
 } from 'rayzee';
 
 // Leveled/namespaced logging, shared with the workers
@@ -1018,6 +1072,7 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 |---|---|---|
 | `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` (**>=0.4.0**) |
 | `onnxruntime-web` | AI-powered upscaling | No — loaded from CDN at runtime |
+| `@bb-studio/ocio` | OpenColorIO runtime for [Colour Management](#colour-management) (~6 MB WebAssembly) | Only to load colour configs — `npm install @bb-studio/ocio`, then pass it as `ocioRuntimeFactory` |
 
 > **Note:** `onnxruntime-web` is also listed in `package.json` under `optionalDependencies` for bundler compatibility, but the engine's own runtime path always fetches it from a CDN (see `ortRuntimeUrl` / `ortWasmPaths` in [Configuring Assets](#configuring-assets-cdn-urls--cache-namespace)) rather than importing the installed package — installing it locally has no effect unless you also override those URLs to point at your own copy.
 

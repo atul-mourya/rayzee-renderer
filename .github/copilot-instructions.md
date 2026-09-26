@@ -23,10 +23,20 @@
 - **`OverlayManager.js`** + **`helpers/TileHelper.js`** (in `managers/`): Unified overlay system — tile borders rendered on a 2D canvas overlay, never baked into saved images
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
-31 TSL files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
+33 TSL files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
 - Wavefront kernels: `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`
 - Traversal and shading: `BVHTraversal.js`, `MaterialSampling.js`, `MaterialTransmission.js`, `Environment.js`
-- Lighting: `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `LightBVHSampling.js`, etc.
+- Lighting: `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `LightBVHSampling.js`, `ShadowTerminator.js`, etc.
+- Hit data: `HitFacet.js` — the facet normal (and terminator lift) Extend packs into the hit record
+
+### Colour Management (`rayzee/src/Color/`)
+`app.color` is an OpenColorIO pipeline — input colour spaces, the working space, views/looks/displays,
+and export — inert until a host loads a config. The host supplies the OCIO runtime
+(`configureAssets({ ocioRuntimeFactory })`); the engine never imports it. Load and unload through
+`app.loadColorConfig()` / `app.unloadColorConfig()`. Views are baked to tables in one registry
+(`ViewTransforms.js`) that the canvas, both readbacks and the menu share; an OCIO view returns
+display-encoded colour. The app opens in Blender 5.1's config, shown on the first frame from a
+pre-baked view (`saveBakedView` / `loadBakedView`, `npm run color:bake`).
 
 ### Multi-Threading Architecture (`rayzee/src/Processor/Workers/`)
 Critical for maintaining 60fps during heavy computations:
@@ -58,6 +68,11 @@ MESH_INDEX_OFFSET: 19
 the ray is moved into it on entry; a geometry used once — or one that emits light — is **baked to
 world space**. Any new reader of the triangle buffer must bind `uvec4` **and** take the hit's
 `instanceLeaf`, or it will read object-space positions as though they were world space.
+
+⚠️ The hit record's `normal` is the **interpolated** vertex normal, not the facet's. Spawned rays are
+offset with `offsetRayOrigin( p, n )` along the **facet** normal (packed into the hit record by
+`HitFacet.js`): offsetting along the interpolated one left pass-through rays inside foliage cards
+whose normals point up, and the cards drew black.
 
 ## Key Development Patterns
 

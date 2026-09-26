@@ -35,7 +35,8 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Fast Navigation** — renders at lower resolution while the camera moves and restores full quality the moment you stop, keeping navigation responsive
 - **Broad asset support** — GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, and USDZ models; HDR/EXR environments; ZIP archives with automatic model detection
 - **Scenes larger than memory** — a pbrt-v4 archive of tens of gigabytes can be inspected without unpacking it and loaded one element at a time; triangle and node storage is chunked past the browser's ~2 GB single-array ceiling, and a CPU memory preflight refuses a scene that would kill the tab rather than letting it die mid-build
-- **Multiple tone-mapping operators** (ACES, AgX, Reinhard, and more) with automatic exposure adjustment
+- **OpenColorIO colour management** — opens in Blender 5.1's own config (AgX, Medium High Contrast), with its views, looks and displays, ACES configs, or a studio's own config folder; render in ACEScg or another working space, set per-texture colour spaces, and save EXR in a delivery space. The default look ships pre-built, so the first frame needs neither the colour runtime nor its download. Exposure in stops, with automatic exposure
+- **Blender-accurate shading** — exact Fresnel on glass, paint and plastic, sharp highlights at their true peak, scale-aware ray start points so light does not leak out of small crevices, and Cycles' shadow-terminator offset for low-poly curved meshes; a glossy black sphere matches Cycles within 1 % at every angle
 
 ## Tech Stack
 
@@ -46,6 +47,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 | **UI Components** | Radix UI, Lucide Icons |
 | **State Management** | Zustand |
 | **Denoising** | Intel OIDN Web, Custom ASVGF |
+| **Colour** | OpenColorIO 2.5 (WebAssembly), Blender 5.1 config |
 | **Neural post** | Real-ESRGAN (ONNX Runtime Web), DLSS super resolution + retouch (WebGPU) |
 | **Build Tools** | Vite, ESLint, Semantic Release |
 | **Performance** | Stats.gl |
@@ -87,7 +89,7 @@ Bench baselines are machine-specific and the suite refuses to compare across a m
 
 ## Usage
 
-Drag and drop a model (GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, USDZ — or a ZIP containing one) onto the canvas, or pick from the built-in model and HDRI library. Adjust samples, bounces, and denoising in the Path Tracer panel, edit PBR materials directly on selected objects, and switch between Interactive and Production render modes as you work. Completed renders are saved to a local results gallery for review and export.
+Drag and drop a model (GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, USDZ — or a ZIP containing one) onto the canvas, or pick from the built-in model and HDRI library. Adjust samples, bounces, and denoising in the Path Tracer panel, the look in its Color Management group (Tone Mapping, Style, Screen, Exposure, Save EXR), edit PBR materials directly on selected objects, and switch between Interactive and Production render modes as you work. Completed renders are saved to a local results gallery for review and export.
 
 The Denoising panel also carries the neural post passes. **AI Upscaler** delivers an image larger than the one traced — pick Real-ESRGAN for the more faithful reconstruction (and 4x), or DLSS for a sharper, faster 2x. **AI Retouch** shapes local light and fine surface detail on the render itself. Both need **Final Denoise (OIDN)** on, which is the default; without it they work on noise and do more harm than good, so their switches stay disabled until it is.
 

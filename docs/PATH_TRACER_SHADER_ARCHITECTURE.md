@@ -57,7 +57,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | TSL Module | Key Exports | Role |
 |---|---|---|
 | `GenerateKernel.js` | `buildGenerateKernel()`, `GENERATE_WG_SIZE` | Primary ray generation (camera ray + DOF + jitter), per-ray RNG seed, bounce-0 G-buffer init; optional atomic-append to dense active list |
-| `ExtendKernel.js` | `buildExtendKernel()`, `EXTEND_WG_SIZE` | Closest-hit `traverseBVH` per active ray → packed hit buffer |
+| `ExtendKernel.js` | `buildExtendKernel()`, `EXTEND_WG_SIZE` | Closest-hit `traverseBVH` per active ray → packed hit buffer, including the hit's facet normal and shadow-terminator lift (`HitFacet.js`) |
 | `ShadeKernel.js` | `buildShadeKernel()`, `SHADE_WG_SIZE` | Surface shading: direct lighting (NEE), emissive/light-BVH NEE, transmission/medium stack, indirect bounce sampling, bounce-0 MRT writes |
 | `CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()`, `COMPACT_WG_SIZE` | Stream-compact surviving (still-active) rays into the next-bounce index list |
 | `SortGlobalKernels.js` | `buildResetGlobalHistKernel()`, `buildGlobalHistKernel()`, `buildGlobalPrefixKernel()`, `buildGlobalScatterKernel()`, `SORT_GLOBAL_WG_SIZE`, `SORT_GLOBAL_MAX_BINS` | Global material counting sort (reset → histogram → prefix-sum → scatter) → material-pure workgroups for shading coherence; bins sized per-scene to material count |
@@ -83,13 +83,15 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `LightsDirect.js` | `traceShadowRay()`, `calculateRayOffset()`, importance estimators; `setShadowAlbedoMaps()`, `setAlphaShadowsUniform()` | Shadow rays (with alpha shadows), per-light importance |
 | `LightsIndirect.js` | `calculateIndirectLighting()`, `selectSamplingStrategy()`, `computeSamplingInfo()` | Material-only multi-strategy MIS for the indirect bounce |
 | `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()`, `sampleLightWithImportance()` | Stochastic discrete light/BRDF selection + deterministic environment NEE |
-| `Fresnel.js` | `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Schlick Fresnel, IOR↔F0 |
+| `Fresnel.js` | `fresnelDielectric()`, `dielectricFresnelWeight()`, `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Exact unpolarised Fresnel at every dielectric interface (base layer, clear coat, glass, SSS boundary, glass shadows), as Cycles uses; Schlick for metals and iridescence; IOR↔F0 |
+| `HitFacet.js` | `hitFacet()`, `packHitFacet()`, `unpackHitFacet()` | The hit triangle's facet normal (and the terminator lift), computed in Extend and packed into the hit record's spare lane |
+| `ShadowTerminator.js` | `shadowTerminatorLift()`, `shadowTerminatorOrigin()` | Cycles' Shadow Terminator → Geometry Offset: the smooth-surface lift for light and environment shadow rays |
 | `Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()`, `sampleSTBN2D()`, `pcgHash()` | PCG, Halton, Sobol, STBN blue noise |
 | `TextureSampling.js` | `sampleAllMaterialTextures()`, `computeUVCache()`, `sampleDisplacementMap()` | UV transforms, material texture arrays |
 | `Displacement.js` | `refineDisplacedIntersection()`, `DisplacementResult` | Ray-marched displacement refinement |
 | `Debugger.js` | `TraceDebugMode()` | Debug visualization modes (reused by `DebugKernel`) |
 | `Struct.js` | `Ray`, `HitInfo`, `RayTracingMaterial`, `DirectionSample`, `MaterialCache`, etc. | GPU-side struct definitions |
-| `Common.js` | `getDatafromStorageBuffer()`, `getMaterial()`, constants | Shared constants, storage-buffer data accessors |
+| `Common.js` | `getDatafromStorageBuffer()`, `getMaterial()`, `offsetRayOrigin()`, `SHADOW_END`, constants | Shared constants, storage-buffer data accessors, ray spawn offset |
 
 > `ShaderBuilder.js` (in `Processor/`) builds the shared scene texture nodes (env, material map arrays, prev-frame MRT, gobo/IES) consumed by the kernels. It NO LONGER builds a compute/output node — the kernels own their own compute graphs.
 
@@ -187,7 +189,7 @@ Packed emissive-triangle data + power; light BVH nodes built by `LightBVHBuilder
 Marginal + conditional CDF for importance-sampling inversion in `Environment.js`. Stored as an `(W+1)×H` R32F texture (moved off a storage buffer to free a Shade-stage binding): conditional CDF at texel `(cx, cy)`, marginal CDF at texel `(W, cy)`; sampled via integer `.load()`.
 
 ### Packed ray buffers (`PackedRayBuffer.js`)
-SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RAY_STRIDE = 7`, `HIT_STRIDE = 2`. RAY slots (7): `ORIGIN_META`, `DIR_FLAGS`, `THROUGHPUT_PDF`, `RADIANCE_ALPHA`, `MEDIUM_STACK`, `MEDIUM_SIGMA_A`, `SSS_SIGMA_S`. HIT slots (2): `DIST_TRI_BARY`, `NORMAL_MAT`. First-hit MRT (normal/depth/albedo) is **not** in the ray buffer — it lives in a separate **per-pixel** G-buffer (`GBUFFER_STRIDE = 1`, one half-packed `uvec4`/pixel) written at bounce 0 and read by `FinalWrite`. Capacity uses a 1.25× headroom with no pow2 rounding.
+SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RAY_STRIDE = 7`, `HIT_STRIDE = 2`. RAY slots (7): `ORIGIN_META`, `DIR_FLAGS`, `THROUGHPUT_PDF`, `RADIANCE_ALPHA`, `MEDIUM_STACK`, `MEDIUM_SIGMA_A`, `SSS_SIGMA_S`. HIT slots (2): `DIST_TRI_BARY` (distance, triangle, texture UV — not barycentrics), `NORMAL_MAT` (the **interpolated** normal, material, instance leaf, and in `.w` the facet normal as an 11:11 octahedral pair plus the terminator lift's top 10 half-float bits — `HitFacet.js`). First-hit MRT (normal/depth/albedo) is **not** in the ray buffer — it lives in a separate **per-pixel** G-buffer (`GBUFFER_STRIDE = 1`, one half-packed `uvec4`/pixel) written at bounce 0 and read by `FinalWrite`. Capacity uses a 1.25× headroom with no pow2 rounding.
 
 ---
 
@@ -291,6 +293,9 @@ Returns a `DirectionSample { direction, value, pdf }` with `pdf` clamped to `MIN
 
 ### Evaluation (`evaluateMaterialResponse`)
 Combines diffuse, microfacet specular (GGX D/G/F), transmission, sheen, clearcoat, and iridescence; PDFs stabilized with `MIN_PDF`.
+
+### Where spawned rays start
+Every ray leaving a surface starts at `offsetRayOrigin( p, n )` (`Common.js`, Cycles' ray_offset: 1e-5 along `n` within one unit of the origin, 32 float ULPs per axis beyond), with `n` the **facet** normal on the side the ray leaves — never the interpolated one, which on foliage cards points away from the card and left pass-through rays inside its plane. A shadow ray towards a sampled light point is re-aimed from that origin and stops `SHADOW_END` (1 − 1e-4) of the way. Light and environment shadow rays from a smooth-shaded triangle are first lifted towards the smooth surface near the terminator (`ShadowTerminator.js`, setting `shadowTerminatorOffset`, default 0.1 as in Blender). Horizon checks still use the interpolated normal.
 
 ### Transmission, medium & subsurface
 `MaterialTransmission.js` handles refractive events, the medium stack, Beer–Lambert absorption, and dispersion. `Subsurface.js` implements random-walk SSS reusing the medium stack (`maxSubsurfaceSteps` caps the walk).
