@@ -198,6 +198,15 @@ export const DFGResult = struct( {
 	E_total: 'vec3', // clamp(E_ss * compensation, 0, 1)
 } );
 
+// Base-layer Fresnel inputs (see baseFresnelParams).
+export const BaseFresnel = struct( {
+	f0: 'vec3', // dielectric reflectance head-on: min(F0(ior) * specularColor, 1) * specularIntensity
+	f90: 'float', // dielectric reflectance at grazing: specularIntensity
+	eta: 'float', // max(ior, 1)
+	F0m: 'vec3', // metal F0: color * specularIntensity
+	F0: 'vec3', // the two blended by metalness — the multiscatter tint and the iridescence substrate
+} );
+
 export const MaterialSamples = struct( {
 	albedo: 'vec4',
 	emissive: 'vec3',

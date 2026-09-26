@@ -694,11 +694,41 @@ async function upscaleRender( { outputWidth, outputHeight, samples } ) {
  */
 async function toneMapParity() {
 
-	const [ { PackedToneMapper }, { toneMapToRGBA8 }, three ] = await Promise.all( [
+	const [ { PackedToneMapper }, { toneMapToRGBA8 }, { listViewTransforms } ] = await Promise.all( [
 		import( '@/core/Processor/ToneMapGPU.js' ),
 		import( '@/core/Processor/ToneMapCPU.js' ),
-		import( 'three' ),
+		import( '@/core/Color/ViewTransforms.js' ),
 	] );
+
+	// Bake one colour-managed view first, so the check covers the path that needs it most: a
+	// table-backed transform samples a 3D texture in WGSL and interpolates it by hand, and there is
+	// no other place that compares those two implementations on real hardware. Skipped, not failed,
+	// when the optional OpenColorIO runtime is absent.
+	let benchColor = null;
+	try {
+
+		const [ { configureAssets }, { ColorManagement } ] = await Promise.all( [
+			import( '@/core/AssetConfig.js' ),
+			import( '@/core/Color/ColorManagement.js' ),
+		] );
+
+		configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } );
+
+		const cm = benchColor = new ColorManagement();
+		const config = await cm.loadConfig( {
+			builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5',
+			registerViews: false,
+		} );
+		cm.setView( {
+			display: config.defaultDisplay,
+			view: config.defaultViews[ config.defaultDisplay ],
+		} );
+
+	} catch ( error ) {
+
+		console.warn( `[bench] colour-managed view not checked: ${error.message}` );
+
+	}
 
 	const VALUES = [
 		0, 1e-5, 0.0012, 0.0031308, 0.004, 0.01, 0.05, 0.08, 0.18, 0.3, 0.5, 0.76, 0.9,
@@ -751,15 +781,10 @@ async function toneMapParity() {
 	const mapper = new PackedToneMapper( device, 'bench:tonemap-parity' );
 	mapper.ensureSize( width, height );
 
-	const CURVES = [
-		[ 'none', three.NoToneMapping ],
-		[ 'linear', three.LinearToneMapping ],
-		[ 'reinhard', three.ReinhardToneMapping ],
-		[ 'cineon', three.CineonToneMapping ],
-		[ 'aces', three.ACESFilmicToneMapping ],
-		[ 'agx', three.AgXToneMapping ],
-		[ 'neutral', three.NeutralToneMapping ],
-	];
+	// Read from the registry rather than listed here, so a view baked from a colour config is
+	// checked too. That matters more than the built-ins: a table-backed transform samples a 3D
+	// texture in WGSL and interpolates it by hand, and vitest has no GPU to catch a mistake there.
+	const CURVES = listViewTransforms().map( t => [ t.name, t.id ] );
 	const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
 
 	const findings = [];
@@ -800,6 +825,9 @@ async function toneMapParity() {
 
 		mapper.dispose();
 		src.destroy();
+		// Every later scene would otherwise run with this config loaded and its view registered.
+		benchColor?.unloadConfig();
+		benchColor?.dispose();
 
 	}
 

@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, mix,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep,
 	instanceIndex,
 	sampler,
 	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
@@ -15,20 +15,21 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, sampleEquirectProbability, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial } from './Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
-import { traceShadowRay, calculateRayOffset } from './LightsDirect.js';
+import { traceShadowRay } from './LightsDirect.js';
+import { shadowTerminatorOrigin } from './ShadowTerminator.js';
+import { unpackHitFacet } from './HitFacet.js';
 import { traverseBVHShadow } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import { IndirectLightingResult, sampleCone } from './LightsCore.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
-import { evaluateDFG } from './MaterialProperties.js';
-import { dielectricF0 } from './Fresnel.js';
+import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
 import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
@@ -46,6 +47,7 @@ import {
 	MaterialCache,
 	DirectLightingDual,
 	DFGResult,
+	BaseFresnel,
 } from './Struct.js';
 import { getRandomSample, getRandomSample1D, getRandomSample2D, SAMPLER_DIMS_PER_BOUNCE, SAMPLER_DIM_AUX_BASE } from './Random.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
@@ -56,7 +58,7 @@ import {
 	readTransparentCount,
 	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
-	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf,
+	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
@@ -96,6 +98,7 @@ export function buildShadeKernel( params ) {
 		globalIlluminationIntensity,
 		cameraProjectionMatrix, cameraViewMatrix,
 		fireflyThreshold, frame, resolution,
+		shadowTerminatorOffset, // Cycles' Shadow Terminator → Geometry Offset; 0 disables
 		// Accumulation index, NOT the free-running seed counter `frame` rides. The firefly clamp
 		// relaxes as sqrt(frame+1) so its bias decays as a render converges; keying that off the
 		// seed axis let it grow for the whole session and disabled suppression outright.
@@ -283,6 +286,7 @@ export function buildShadeKernel( params ) {
 						envTotalSum, envCompensationDelta, envResolution,
 						enableEnvironmentLight,
 						tslBool( true ), // wantUnoccluded
+						vec3( 0.0 ), planeN, float( 0.0 ),
 					) ).toVar();
 
 					const lumShad = max( dot( dual.shadowed, REC709_LUMINANCE_COEFFICIENTS ), float( 0.0 ) );
@@ -930,10 +934,9 @@ export function buildShadeKernel( params ) {
 
 			throughput.mulAssign( interaction.throughput );
 
-			// reflection stays on same side, transmission pushes through
-			const reflectOffsetDir = select( interaction.entering, N, N.negate() );
-			const offsetDir = select( interaction.didReflect, reflectOffsetDir, direction );
-			const newOrigin = hitPoint.add( offsetDir.mul( 0.001 ) );
+			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
+			const Ng = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) ).faceN;
+			const newOrigin = offsetRayOrigin( hitPoint, select( dot( Ng, interaction.direction ).lessThan( 0.0 ), Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
 			// Transmissive / alpha-skip / SSS-boundary are all FREE bounces — they do NOT advance camera depth (megakernel parity, gap #4). cameraDepth advances only on opaque scatter (below).
@@ -1062,6 +1065,14 @@ export function buildShadeKernel( params ) {
 		// face-forwarded geometric normal: horizon guard for NEE and the bounce continuation
 		const Ngeo = normalize( hitNormal );
 		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
+		// The facet on the viewer's side: every ray spawned from here is offset off it (HitFacet.js).
+		const facet = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) );
+		const facetN = facet.faceN.toVar();
+		const terminatorLift = Ngeo.mul( facet.liftScale );
+		const lightShadowOrigin = L => shadowTerminatorOrigin( {
+			hitPoint, offsetNormal: facetN, lift: terminatorLift, faceN: facetN, smoothN: NgeoFF, L,
+			cutoff: shadowTerminatorOffset,
+		} );
 
 		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
 		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
@@ -1094,11 +1105,11 @@ export function buildShadeKernel( params ) {
 				// smooth mirror / metal: DEFER — tint by the specular directional albedo (metal colour),
 				// matching the opaque throughput (≈ F at the near-delta mirror lobe). Achromatic energy excluded.
 				const NoV = max( dot( N, V ), float( 1e-3 ) );
-				const F0 = clamp(
-					mix( dielectricF0( material.ior ).mul( material.specularColor ), albedo, material.metalness ).mul( material.specularIntensity ),
-					vec3( 0.0 ), vec3( 1.0 ),
-				);
-				featCarry.mulAssign( DFGResult.wrap( evaluateDFG( F0, NoV, max( rawRough, float( 0.02 ) ) ) ).E_total );
+				const bf = BaseFresnel.wrap( baseFresnelParams( material, albedo ) );
+				featCarry.mulAssign( DFGResult.wrap( evaluateSpecularDFG(
+					bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, vec3( 0.0 ), float( 0.0 ), bf.F0,
+					NoV, max( rawRough, float( 0.02 ) ),
+				) ).E_total );
 
 			} );
 
@@ -1176,6 +1187,7 @@ export function buildShadeKernel( params ) {
 			envTotalSum, envCompensationDelta, envResolution,
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
+			terminatorLift, facetN, shadowTerminatorOffset,
 		) ).shadowed.toVar();
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
@@ -1230,11 +1242,12 @@ export function buildShadeKernel( params ) {
 
 							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
 
-								const rayOffset = calculateRayOffset( hitPoint, NgeoFF, material );
-								const rayOrigin = hitPoint.add( rayOffset );
-								const shadowDist = emissiveSample.distance.sub( 0.001 );
+								// Aimed at the sampled point and stopped a relative hair short, as for area lights.
+								const rayOrigin = lightShadowOrigin( emissiveSample.direction ).toVar();
+								const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
+								const shadowDist = length( toSample ).toVar();
 								const visibility = traceShadowRayWrapped(
-									rayOrigin, emissiveSample.direction, shadowDist,
+									rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ),
 								);
 
 								If( visibility.greaterThan( 0.0 ), () => {
@@ -1278,7 +1291,7 @@ export function buildShadeKernel( params ) {
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 							triangleBuffer, bvhBuffer,
 							traceShadowRayWrapped,
-							calculateRayOffset,
+							Fn( ( [ p, , L ] ) => lightShadowOrigin( L ).sub( p ) ),
 						);
 
 						currentRadiance.assign( vec4(
@@ -1352,7 +1365,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const newOrigin = hitPoint.add( N.mul( 0.001 ) );
+		const newOrigin = offsetRayOrigin( hitPoint, select( dot( facetN, bounceDir ).lessThan( 0.0 ), facetN.negate(), facetN ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );

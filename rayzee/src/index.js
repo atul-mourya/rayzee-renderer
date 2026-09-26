@@ -27,7 +27,7 @@ export { SETTING_SOURCE } from './RenderSettings.js';
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 
 // glTF alphaMode derivation — the one definition, shared with hosts that edit materials
-export { deriveAlphaMode } from './Processor/GeometryExtractor.js';
+export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './Processor/GeometryExtractor.js';
 
 // Scene-level authoring metadata embedded in model files (glTF `extras`)
 export { extractSceneMetadata, parseSceneMetadata } from './Processor/SceneMetadata.js';
@@ -53,6 +53,7 @@ export {
 	BVH_LEAF_MARKERS,
 	TEXTURE_CONSTANTS,
 	DEFAULT_TEXTURE_MATRIX,
+	MATERIAL_DEFAULTS,
 	MEMORY_CONSTANTS,
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
@@ -103,3 +104,30 @@ export { InteractionManager } from './managers/InteractionManager.js';
 // host needs to build UI against.
 export { renderUpscaled, SR_SCALE, SR_MAX_INPUT } from './dlss/DLSSSuperRes.js';
 export { DLSS_NR_DEFAULTS, DLSS_NR_RANGES, DLSS_NR_MAX_PIXELS } from './dlss/DLSSNeural.js';
+
+// ── Colour management ───────────────────────────────────────────────────────────────────────────
+// `app.color` is the instance a host normally uses; these are for building UI against it, and for
+// code that needs the view-transform registry without an app.
+export {
+	ColorManagement, getActiveColorManagement, setActiveColorManagement,
+	isColorManaged, DEFAULT_WORKING_SPACE, findNativeLinearSpace, canvasColorSpaceFor,
+} from './Color/ColorManagement.js';
+export { displayCanvasFit } from './Color/Displays.js';
+export {
+	VIEW_TRANSFORMS, listViewTransforms, getViewTransform, addViewTransform, removeViewTransform,
+	onRegistryChange, getRegistryVersion, buildToneMapWGSL,
+	OCIO_VIEW_BASE, MAX_TABLE_TRANSFORMS,
+} from './Color/ViewTransforms.js';
+export {
+	buildOcioView, addOcioView, addAllOcioViews,
+	DEFAULT_LUT_SIZE, DEFAULT_MIN_EV, DEFAULT_MAX_EV,
+} from './Color/OcioViews.js';
+export {
+	resolveInputSpace, textureInputSpace, setInputOverride, clearInputOverrides,
+	listInputOverrides, listFileRules, isDataTexture,
+} from './Color/InputColorSpaces.js';
+export {
+	convertColor, convertPixelsF32, convertEncodedRGBA8, applyMatrixRGBA8, extractMatrix,
+	hasColorSpace, isDataSpace, srgbToLinear, linearToSrgb,
+} from './Color/ColorSpaces.js';
+export { measureBakeError, bakeLut, makeCpuSampler } from './Color/LutBake.js';

@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useLightStore, usePathTracerStore, useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
-import { proxyImage } from '@/lib/imageProxy';
+import { lightLibrariesReady } from '@/lib/lightLibraries';
 import { GOBO_LIBRARY } from '@/services/GoboLibrary';
 import { IES_LIBRARY } from '@/services/IESLibrary';
 import { Separator } from '@/components/ui/separator';
@@ -146,6 +146,8 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 
 	const [ open, setOpen ] = useState( false );
 	const selected = items.find( g => g.name === value );
+	// A gobo's thumbnail is the mask the engine fetches with CORS. Requested without it, the browser
+	// caches a copy lacking Access-Control-Allow-Origin and hands that to the engine, which is blocked.
 	const thumb = ( it ) => it.preview || it.url;
 	const selectedTileRef = useRef( null );
 
@@ -164,10 +166,12 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 
 	}, [ open ] );
 
-	const pick = ( name ) => {
+	const pick = async ( name ) => {
 
-		onChange( name );
 		setOpen( false );
+		// The libraries load after the first frame; the engine cannot assign a mask it has not got.
+		await lightLibrariesReady();
+		onChange( name );
 
 	};
 
@@ -180,7 +184,7 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 					title={selected ? selected.label : addTooltip}
 				>
 					{selected ? (
-						<img src={proxyImage( thumb( selected ) )} alt={selected.label} className="h-full w-full object-cover" />
+						<img src={thumb( selected )} crossOrigin="anonymous" alt={selected.label} className="h-full w-full object-cover" />
 					) : (
 						<Plus size={14} className="text-muted-foreground" />
 					)}
@@ -222,7 +226,8 @@ const LibraryPicker = ( { value, onChange, items, title, addTooltip = 'Assign' }
 							style={{ width: GOBO_TILE_PX, height: GOBO_TILE_PX }}
 						>
 							<img
-								src={proxyImage( thumb( g ) )}
+								src={thumb( g )}
+								crossOrigin="anonymous"
 								alt={g.label}
 								className="h-full w-full object-cover bg-black"
 								draggable={false}

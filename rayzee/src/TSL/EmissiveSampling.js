@@ -30,7 +30,7 @@ import { struct } from './patches.js';
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, TRI_STRIDE
+	unpackTriangleNormal, TRI_STRIDE, SHADOW_END
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -591,13 +591,11 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 
 		If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ), () => {
 
-			// Calculate ray offset for shadow ray
-			const rayOffset = calculateRayOffsetFn( hitPoint, geomNormal, material );
-			const rayOrigin = hitPoint.add( rayOffset );
-
-			// Trace shadow ray
-			const shadowDist = emissiveSample.distance.sub( 0.001 );
-			const visibility = traceShadowRayFn( rayOrigin, emissiveSample.direction, shadowDist );
+			// Aimed at the sampled point and stopped a relative hair short, as for area lights.
+			const rayOrigin = hitPoint.add( calculateRayOffsetFn( hitPoint, geomNormal, emissiveSample.direction ) );
+			const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
+			const shadowDist = length( toSample ).toVar();
+			const visibility = traceShadowRayFn( rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ) );
 
 			If( visibility.greaterThan( 0.0 ), () => {
 

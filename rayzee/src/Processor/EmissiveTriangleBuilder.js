@@ -10,6 +10,28 @@ import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+import { convertLinearTriple, getWorkingMatrix } from '../Color/WorkingMatrix.js';
+
+const NO_EMISSION = Object.freeze( { r: 0, g: 0, b: 0 } );
+
+/**
+ * A material's emission in the working space.
+ *
+ * The emitter seen directly reads the material buffer, which is already converted, and so does the
+ * shader's pick probability. This buffer is the other copy of the same colour — the one next-event
+ * estimation lights the scene with — so it has to move with them, or a working space adopted from a
+ * config lights everything in the wrong primaries and weights the pick by a colour nothing renders.
+ */
+function workingEmissive( emissive ) {
+
+	if ( ! emissive ) return NO_EMISSION;
+	if ( ! getWorkingMatrix() ) return emissive;
+
+	const rgb = [ emissive.r, emissive.g, emissive.b ];
+	convertLinearTriple( rgb );
+	return { r: rgb[ 0 ], g: rgb[ 1 ], b: rgb[ 2 ] };
+
+}
 
 const log = createLogger( 'emissive' );
 
@@ -62,6 +84,9 @@ export class EmissiveTriangleBuilder {
 		const flatU = chunked ? null : triangleData;
 		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
 
+		// Once per material, not once per triangle: this loop runs over every triangle in the scene.
+		const emissiveOf = new Map();
+
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
 			const triU = chunked ? chunked.chunkFor( i ) : flatU;
@@ -75,7 +100,14 @@ export class EmissiveTriangleBuilder {
 			if ( ! material ) continue;
 
 			// Check if emissive
-			const emissive = material.emissive || { r: 0, g: 0, b: 0 };
+			let emissive = emissiveOf.get( material );
+			if ( emissive === undefined ) {
+
+				emissive = workingEmissive( material.emissive );
+				emissiveOf.set( material, emissive );
+
+			}
+
 			const emissiveIntensity = material.emissiveIntensity || 0;
 
 			const isEmissive = emissiveIntensity > 0 && (
@@ -461,7 +493,7 @@ export class EmissiveTriangleBuilder {
 	 */
 	updateMaterialEmissive( materialIndex, material, triangleData, materials, triangleCount ) {
 
-		const emissive = material.emissive || { r: 0, g: 0, b: 0 };
+		const emissive = workingEmissive( material.emissive );
 		const emissiveIntensity = material.emissiveIntensity || 0;
 		const isNowEmissive = emissiveIntensity > 0 && ( emissive.r > 0 || emissive.g > 0 || emissive.b > 0 );
 

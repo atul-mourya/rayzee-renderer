@@ -11,9 +11,9 @@
 export const RENDER_PROFILES = Object.freeze( {
 	viewer: Object.freeze( {
 		areaLightIntensityScale: 0.1, // scales glTF placeholder area-light power (viewer tuning)
-		environmentRotation: 270.0, // degrees
-		toneMapping: 4, // ACESFilmicToneMapping
-		saturation: 1.2, // compensates for ACES desaturation — see Compositor
+		environmentRotation: 0.0, // degrees — the HDRI as authored, as Blender shows it
+		toneMapping: 6, // AgXToneMapping
+		saturation: 1.0, // no grade
 	} ),
 	physical: Object.freeze( {
 		areaLightIntensityScale: 1.0,
@@ -158,6 +158,9 @@ export const ENGINE_DEFAULTS = {
 	emissiveBoost: 1.0,
 
 	fireflyThreshold: 3.0,
+	// Cycles' Shadow Terminator → Geometry Offset, and its default: light shadow rays leave a
+	// smooth-shaded triangle from the smooth surface near the terminator. 0 disables.
+	shadowTerminatorOffset: 0.1,
 	// Wavefront material-coherence sort: global counting-sort of entering rays by material before
 	// Shade (material-pure workgroups), under dynamic dispatch. Measured −8% at 1024²/8b. Gated on
 	// material count > 8; the histogram bin count is sized per-scene to the material count.
@@ -749,6 +752,55 @@ export const MATERIAL_DATA_LAYOUT = {
 // contract is `> 0 = on` (calculateBeerLawAbsorption). Every writer into ATTENUATION_DISTANCE
 // collapses both spellings to 0 so no shader divides by Inf.
 export const normalizeAttenuationDistance = d => ( Number.isFinite( d ) && d > 0 ? d : 0 );
+
+// The only fallback for a property a three.js material doesn't carry: MeshPhysicalMaterial's own
+// default (glTF with the extension absent), or the value that turns an engine-only feature off.
+export const MATERIAL_DEFAULTS = deepFreeze( {
+	color: [ 1, 1, 1 ],
+	emissive: [ 0, 0, 0 ],
+	emissiveIntensity: 1,
+	roughness: 1,
+	metalness: 0,
+	ior: 1.5,
+	opacity: 1,
+	transmission: 0,
+	thickness: 0,
+	attenuationColor: [ 1, 1, 1 ],
+	attenuationDistance: Infinity,
+	dispersion: 0,
+	sheen: 0,
+	sheenRoughness: 1,
+	sheenColor: [ 0, 0, 0 ],
+	specularIntensity: 1,
+	specularColor: [ 1, 1, 1 ],
+	clearcoat: 0,
+	clearcoatRoughness: 0,
+	iridescence: 0,
+	iridescenceIOR: 1.3,
+	iridescenceThicknessRange: [ 100, 400 ],
+	normalScale: [ 1, 1 ],
+	bumpScale: 1,
+	displacementScale: 1,
+	transparent: 0,
+	alphaTest: 0,
+	alphaMode: 0,
+	side: 0,
+	depthWrite: 1,
+	subsurface: 0,
+	subsurfaceColor: [ 1, 1, 1 ],
+	subsurfaceRadius: [ 1, 0.2, 0.1 ],
+	subsurfaceRadiusScale: 1,
+	subsurfaceAnisotropy: 0,
+	anisotropy: 0,
+	anisotropyRotation: 0,
+} );
+
+function deepFreeze( object ) {
+
+	for ( const value of Object.values( object ) ) if ( typeof value === 'object' ) Object.freeze( value );
+	return Object.freeze( object );
+
+}
 
 // BVH node leaf markers
 /**

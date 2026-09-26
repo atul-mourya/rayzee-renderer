@@ -13,7 +13,13 @@ import {
 	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
 	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
 } from '../EngineDefaults.js';
+import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from '../Processor/MaterialPacking.js';
+import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../Processor/GeometryExtractor.js';
+import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+
+/** Material buffers already moved into the working space, so a re-init cannot convert twice. */
+const convertedBuffers = new WeakSet();
 
 const log = createLogger( 'material' );
 
@@ -23,6 +29,15 @@ const TRI_FLAGS_OFFSET = T.MATERIAL_FLAGS_OFFSET;
 
 // Material properties that affect the shadow-ray opaque-blocker flag.
 const BLOCKER_PROPS = new Set( [ 'transmission', 'transparent', 'opacity', 'alphaMode' ] );
+
+// Map slot → sRGB pool (true) or linear pool.
+const TEXTURE_POOLS = [
+	[ 'map', true ], [ 'emissiveMap', true ], [ 'sheenColorMap', true ], [ 'specularColorMap', true ],
+	[ 'normalMap', false ], [ 'bumpMap', false ], [ 'roughnessMap', false ], [ 'metalnessMap', false ],
+	[ 'displacementMap', false ], [ 'anisotropyMap', false ], [ 'transmissionMap', false ],
+	[ 'clearcoatMap', false ], [ 'clearcoatRoughnessMap', false ], [ 'sheenRoughnessMap', false ],
+	[ 'iridescenceMap', false ], [ 'iridescenceThicknessMap', false ], [ 'specularIntensityMap', false ],
+];
 
 // Scalar slots readable via getMaterialProperty().
 const SCALAR_PROPERTY_OFFSETS = {
@@ -83,17 +98,71 @@ export class MaterialDataManager {
 		 */
 		this.callbacks = {};
 
+		// Per material index: createMaterialObject's sources, and properties a host set since.
+		this._sources = [];
+		this._hostSet = [];
+
 	}
 
 	// ===== STORAGE BUFFER MANAGEMENT =====
 
 	/**
+	 * Every colour slot in the material buffer, in floats from the start of a material.
+	 *
+	 * Tints only — `attenuationColor` and `subsurfaceColor` included, because they multiply
+	 * radiance like any other. Scalars and packed flags are deliberately absent: running a
+	 * primaries matrix over roughness would be silent and ruinous.
+	 */
+	static COLOR_OFFSETS = [
+		M.COLOR, M.EMISSIVE, M.ATTENUATION_COLOR, M.SHEEN_COLOR, M.SPECULAR_COLOR, M.SUBSURFACE_COLOR,
+	].filter( o => Number.isInteger( o ) );
+
+	/**
+	 * Move every material tint into the working space.
+	 *
+	 * glTF authors colours against sRGB primaries. If the render is happening in ACEScg, the same
+	 * numbers describe a different colour, so a base colour left unconverted is not a grade away
+	 * from right — it is a different material. Inert until a working space is adopted.
+	 */
+	_convertColorsToWorkingSpace( data ) {
+
+		// The same array is handed in again whenever the stage re-initialises, and converting it
+		// twice would apply the primaries matrix twice — a colour shift with no error to show for
+		// it. Remembered by identity, so a rebuilt buffer converts normally.
+		if ( convertedBuffers.has( data ) ) return;
+		convertedBuffers.add( data );
+
+		const n = convertLinearTriples( data, M.FLOATS_PER_MATERIAL, MaterialDataManager.COLOR_OFFSETS );
+		if ( n ) log.debug( `converted ${n} material colour(s) into ${getWorkingMatrixSpace()}` );
+
+	}
+
+	/** One tint, converted on its way into the buffer. */
+	_writeColor( data, index, r, g, b ) {
+
+		const rgb = [ r, g, b ];
+		if ( convertLinearTriple( rgb ) ) {
+
+			[ r, g, b ] = rgb;
+
+		}
+
+		data[ index ] = r;
+		data[ index + 1 ] = g;
+		data[ index + 2 ] = b;
+
+	}
+
+	/**
 	 * Sets material data from raw Float32Array via storage buffer.
 	 * @param {Float32Array} matImageData
+	 * @param {Array<Object>} [sources] - createMaterialObject().sources per material index
 	 */
-	setMaterialData( matImageData ) {
+	setMaterialData( matImageData, sources = [] ) {
 
 		if ( ! matImageData ) return;
+
+		this._convertColorsToWorkingSpace( matImageData );
 
 		const vec4Count = matImageData.length / 4;
 
@@ -111,6 +180,8 @@ export class MaterialDataManager {
 		}
 
 		this.materialCount = Math.floor( vec4Count / PIXELS_PER_MATERIAL );
+		this._sources = [ ...sources ];
+		this._hostSet = [];
 		log.debug( `${fmt.n( this.materialCount )} materials (storage buffer)` );
 
 	}
@@ -226,6 +297,20 @@ export class MaterialDataManager {
 	}
 
 	/**
+	 * Where a material property's value came from, as a MATERIAL_VALUE_SOURCE. `default` means the
+	 * model never said and the engine filled it in.
+	 * @param {number} materialIndex
+	 * @param {string} property
+	 * @returns {string|undefined} undefined for an unknown property or material
+	 */
+	getMaterialPropertySource( materialIndex, property ) {
+
+		if ( this._hostSet[ materialIndex ]?.has( property ) ) return MATERIAL_VALUE_SOURCE.HOST;
+		return this._sources[ materialIndex ]?.[ property ];
+
+	}
+
+	/**
 	 * Update a single material property in the storage buffer.
 	 * @param {number} materialIndex
 	 * @param {string} property
@@ -242,21 +327,18 @@ export class MaterialDataManager {
 
 		const data = this.materialStorageAttr.array;
 		const stride = materialIndex * M.FLOATS_PER_MATERIAL;
+		if ( UNIT_RANGE_PROPERTIES.has( property ) && typeof value === 'number' ) value = clampUnit( value );
 
 		switch ( property ) {
 
 			case 'color':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.COLOR ] = value.r;
-					data[ stride + M.COLOR + 1 ] = value.g;
-					data[ stride + M.COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.COLOR ] = value[ 0 ];
-					data[ stride + M.COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -265,15 +347,11 @@ export class MaterialDataManager {
 			case 'emissive':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.EMISSIVE ] = value.r;
-					data[ stride + M.EMISSIVE + 1 ] = value.g;
-					data[ stride + M.EMISSIVE + 2 ] = value.b;
+					this._writeColor( data, stride + M.EMISSIVE, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.EMISSIVE ] = value[ 0 ];
-					data[ stride + M.EMISSIVE + 1 ] = value[ 1 ];
-					data[ stride + M.EMISSIVE + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.EMISSIVE, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -286,15 +364,11 @@ export class MaterialDataManager {
 			case 'attenuationColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.ATTENUATION_COLOR ] = value.r;
-					data[ stride + M.ATTENUATION_COLOR + 1 ] = value.g;
-					data[ stride + M.ATTENUATION_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.ATTENUATION_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.ATTENUATION_COLOR ] = value[ 0 ];
-					data[ stride + M.ATTENUATION_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.ATTENUATION_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.ATTENUATION_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -306,15 +380,11 @@ export class MaterialDataManager {
 			case 'sheenColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SHEEN_COLOR ] = value.r;
-					data[ stride + M.SHEEN_COLOR + 1 ] = value.g;
-					data[ stride + M.SHEEN_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SHEEN_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SHEEN_COLOR ] = value[ 0 ];
-					data[ stride + M.SHEEN_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SHEEN_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SHEEN_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -323,15 +393,11 @@ export class MaterialDataManager {
 			case 'specularColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SPECULAR_COLOR ] = value.r;
-					data[ stride + M.SPECULAR_COLOR + 1 ] = value.g;
-					data[ stride + M.SPECULAR_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SPECULAR_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SPECULAR_COLOR ] = value[ 0 ];
-					data[ stride + M.SPECULAR_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SPECULAR_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SPECULAR_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -383,15 +449,11 @@ export class MaterialDataManager {
 			case 'subsurfaceColor':
 				if ( value.r !== undefined ) {
 
-					data[ stride + M.SUBSURFACE_COLOR ] = value.r;
-					data[ stride + M.SUBSURFACE_COLOR + 1 ] = value.g;
-					data[ stride + M.SUBSURFACE_COLOR + 2 ] = value.b;
+					this._writeColor( data, stride + M.SUBSURFACE_COLOR, value.r, value.g, value.b );
 
 				} else if ( Array.isArray( value ) ) {
 
-					data[ stride + M.SUBSURFACE_COLOR ] = value[ 0 ];
-					data[ stride + M.SUBSURFACE_COLOR + 1 ] = value[ 1 ];
-					data[ stride + M.SUBSURFACE_COLOR + 2 ] = value[ 2 ];
+					this._writeColor( data, stride + M.SUBSURFACE_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
 
 				}
 
@@ -419,6 +481,7 @@ export class MaterialDataManager {
 		}
 
 		this.materialStorageAttr.needsUpdate = true;
+		( this._hostSet[ materialIndex ] ??= new Set() ).add( property );
 
 		// Recompute triangle-data opaque-blocker flag when any input to it changes.
 		if ( BLOCKER_PROPS.has( property ) ) {
@@ -434,7 +497,7 @@ export class MaterialDataManager {
 	/**
 	 * Bulk-load an entire material object's data into the storage buffer.
 	 * @param {number} materialIndex
-	 * @param {Object} materialData
+	 * @param {Object} materialData - a createMaterialObject() result
 	 */
 	updateMaterialDataFromObject( materialIndex, materialData ) {
 
@@ -446,167 +509,24 @@ export class MaterialDataManager {
 		}
 
 		const data = this.materialStorageAttr.array;
-		const stride = materialIndex * M.FLOATS_PER_MATERIAL;
+		const base = materialIndex * M.FLOATS_PER_MATERIAL;
+		packMaterial( data, base, materialData );
 
-		if ( materialData.color ) {
+		// packMaterial writes tints as authored; a whole upload is converted in setMaterialData.
+		for ( const offset of MaterialDataManager.COLOR_OFFSETS ) {
 
-			data[ stride + M.COLOR ] = materialData.color.r ?? materialData.color[ 0 ] ?? 1;
-			data[ stride + M.COLOR + 1 ] = materialData.color.g ?? materialData.color[ 1 ] ?? 1;
-			data[ stride + M.COLOR + 2 ] = materialData.color.b ?? materialData.color[ 2 ] ?? 1;
-
-		}
-
-		data[ stride + M.METALNESS ] = materialData.metalness ?? 0;
-
-		if ( materialData.emissive ) {
-
-			data[ stride + M.EMISSIVE ] = materialData.emissive.r ?? materialData.emissive[ 0 ] ?? 0;
-			data[ stride + M.EMISSIVE + 1 ] = materialData.emissive.g ?? materialData.emissive[ 1 ] ?? 0;
-			data[ stride + M.EMISSIVE + 2 ] = materialData.emissive.b ?? materialData.emissive[ 2 ] ?? 0;
+			this._writeColor( data, base + offset, data[ base + offset ], data[ base + offset + 1 ], data[ base + offset + 2 ] );
 
 		}
 
-		data[ stride + M.ROUGHNESS ] = materialData.roughness ?? 1;
-		data[ stride + M.IOR ] = materialData.ior ?? 1.5;
-		data[ stride + M.TRANSMISSION ] = materialData.transmission ?? 0;
-		data[ stride + M.THICKNESS ] = materialData.thickness ?? 0.1;
-		data[ stride + M.EMISSIVE_INTENSITY ] = materialData.emissiveIntensity ?? 1;
+		this._sources[ materialIndex ] = materialData.sources;
+		this._hostSet[ materialIndex ] = undefined;
 
-		if ( materialData.attenuationColor ) {
-
-			data[ stride + M.ATTENUATION_COLOR ] = materialData.attenuationColor.r ?? materialData.attenuationColor[ 0 ] ?? 1;
-			data[ stride + M.ATTENUATION_COLOR + 1 ] = materialData.attenuationColor.g ?? materialData.attenuationColor[ 1 ] ?? 1;
-			data[ stride + M.ATTENUATION_COLOR + 2 ] = materialData.attenuationColor.b ?? materialData.attenuationColor[ 2 ] ?? 1;
-
-		}
-
-		data[ stride + M.ATTENUATION_DISTANCE ] = normalizeAttenuationDistance( materialData.attenuationDistance );
-		data[ stride + M.DISPERSION ] = materialData.dispersion ?? 0;
-		data[ stride + M.VISIBLE ] = 1; // Reserved slot (per-mesh visibility handled at BLAS-pointer level)
-		data[ stride + M.SHEEN ] = materialData.sheen ?? 0;
-		data[ stride + M.SHEEN_ROUGHNESS ] = materialData.sheenRoughness ?? 1;
-
-		if ( materialData.sheenColor ) {
-
-			data[ stride + M.SHEEN_COLOR ] = materialData.sheenColor.r ?? materialData.sheenColor[ 0 ] ?? 0;
-			data[ stride + M.SHEEN_COLOR + 1 ] = materialData.sheenColor.g ?? materialData.sheenColor[ 1 ] ?? 0;
-			data[ stride + M.SHEEN_COLOR + 2 ] = materialData.sheenColor.b ?? materialData.sheenColor[ 2 ] ?? 0;
-
-		}
-
-		data[ stride + M.SPECULAR_INTENSITY ] = materialData.specularIntensity ?? 1;
-
-		if ( materialData.specularColor ) {
-
-			data[ stride + M.SPECULAR_COLOR ] = materialData.specularColor.r ?? materialData.specularColor[ 0 ] ?? 1;
-			data[ stride + M.SPECULAR_COLOR + 1 ] = materialData.specularColor.g ?? materialData.specularColor[ 1 ] ?? 1;
-			data[ stride + M.SPECULAR_COLOR + 2 ] = materialData.specularColor.b ?? materialData.specularColor[ 2 ] ?? 1;
-
-		}
-
-		data[ stride + M.IRIDESCENCE ] = materialData.iridescence ?? 0;
-		data[ stride + M.IRIDESCENCE_IOR ] = materialData.iridescenceIOR ?? 1.3;
-
-		if ( materialData.iridescenceThicknessRange ) {
-
-			data[ stride + M.IRIDESCENCE_THICKNESS_RANGE ] = materialData.iridescenceThicknessRange[ 0 ] ?? 100;
-			data[ stride + M.IRIDESCENCE_THICKNESS_RANGE + 1 ] = materialData.iridescenceThicknessRange[ 1 ] ?? 400;
-
-		}
-
-		data[ stride + M.ALBEDO_MAP_INDEX ] = materialData.map ?? - 1;
-		data[ stride + M.NORMAL_MAP_INDEX ] = materialData.normalMap ?? - 1;
-		data[ stride + M.ROUGHNESS_MAP_INDEX ] = materialData.roughnessMap ?? - 1;
-		data[ stride + M.METALNESS_MAP_INDEX ] = materialData.metalnessMap ?? - 1;
-		data[ stride + M.EMISSIVE_MAP_INDEX ] = materialData.emissiveMap ?? - 1;
-		data[ stride + M.BUMP_MAP_INDEX ] = materialData.bumpMap ?? - 1;
-
-		data[ stride + M.CLEARCOAT ] = materialData.clearcoat ?? 0;
-		data[ stride + M.CLEARCOAT_ROUGHNESS ] = materialData.clearcoatRoughness ?? 0;
-		data[ stride + M.OPACITY ] = materialData.opacity ?? 1;
-		data[ stride + M.SIDE ] = materialData.side ?? 0;
-		// Mirror side into per-triangle data so BVH traversal avoids a material-buffer read.
-		this._patchTriangleSideForMaterial( materialIndex, materialData.side ?? 0 );
-		// Recompute shadow-ray opaque-blocker flag (reads alphaMode/transparent/transmission/opacity from buffer).
+		// Both read back the block, so they must follow the write.
+		this._patchTriangleSideForMaterial( materialIndex, data[ base + M.SIDE ] );
 		this._recomputeOpaqueBlockerForMaterial( materialIndex );
-		data[ stride + M.TRANSPARENT ] = materialData.transparent ?? 0;
-		data[ stride + M.ALPHA_TEST ] = materialData.alphaTest ?? 0;
-		data[ stride + M.ALPHA_MODE ] = materialData.alphaMode ?? 0;
-		data[ stride + M.DEPTH_WRITE ] = materialData.depthWrite ?? 1;
-		data[ stride + M.NORMAL_SCALE ] = materialData.normalScale?.x ?? ( typeof materialData.normalScale === 'number' ? materialData.normalScale : 1 );
-		data[ stride + M.NORMAL_SCALE + 1 ] = materialData.normalScale?.y ?? ( typeof materialData.normalScale === 'number' ? materialData.normalScale : 1 );
-		data[ stride + M.BUMP_SCALE ] = materialData.bumpScale ?? 1;
-		data[ stride + M.DISPLACEMENT_SCALE ] = materialData.displacementScale ?? 1;
-		data[ stride + M.DISPLACEMENT_MAP_INDEX ] = materialData.displacementMap ?? - 1;
-
-		// Subsurface scattering
-		data[ stride + M.SUBSURFACE ] = materialData.subsurface ?? 0;
-		if ( materialData.subsurfaceColor ) {
-
-			data[ stride + M.SUBSURFACE_COLOR ] = materialData.subsurfaceColor.r ?? materialData.subsurfaceColor[ 0 ] ?? 1;
-			data[ stride + M.SUBSURFACE_COLOR + 1 ] = materialData.subsurfaceColor.g ?? materialData.subsurfaceColor[ 1 ] ?? 1;
-			data[ stride + M.SUBSURFACE_COLOR + 2 ] = materialData.subsurfaceColor.b ?? materialData.subsurfaceColor[ 2 ] ?? 1;
-
-		}
-
-		if ( materialData.subsurfaceRadius ) {
-
-			data[ stride + M.SUBSURFACE_RADIUS ] = materialData.subsurfaceRadius[ 0 ] ?? 1;
-			data[ stride + M.SUBSURFACE_RADIUS + 1 ] = materialData.subsurfaceRadius[ 1 ] ?? 0.2;
-			data[ stride + M.SUBSURFACE_RADIUS + 2 ] = materialData.subsurfaceRadius[ 2 ] ?? 0.1;
-
-		}
-
-		data[ stride + M.SUBSURFACE_RADIUS_SCALE ] = materialData.subsurfaceRadiusScale ?? 1;
-		data[ stride + M.SUBSURFACE_ANISOTROPY ] = materialData.subsurfaceAnisotropy ?? 0;
-
-		// Surface specular anisotropy (map index defaults to -1 = none)
-		data[ stride + M.ANISOTROPY ] = materialData.anisotropy ?? 0;
-		data[ stride + M.ANISOTROPY_ROTATION ] = materialData.anisotropyRotation ?? 0;
-		data[ stride + M.ANISOTROPY_MAP_INDEX ] = materialData.anisotropyMap ?? - 1;
-
-		// Extension-texture map indices (packed bucket index, -1 = none)
-		data[ stride + M.TRANSMISSION_MAP_INDEX ] = materialData.transmissionMap ?? - 1;
-		data[ stride + M.CLEARCOAT_MAP_INDEX ] = materialData.clearcoatMap ?? - 1;
-		data[ stride + M.CLEARCOAT_ROUGHNESS_MAP_INDEX ] = materialData.clearcoatRoughnessMap ?? - 1;
-		data[ stride + M.SHEEN_COLOR_MAP_INDEX ] = materialData.sheenColorMap ?? - 1;
-		data[ stride + M.SHEEN_ROUGHNESS_MAP_INDEX ] = materialData.sheenRoughnessMap ?? - 1;
-		data[ stride + M.IRIDESCENCE_MAP_INDEX ] = materialData.iridescenceMap ?? - 1;
-		data[ stride + M.IRIDESCENCE_THICKNESS_MAP_INDEX ] = materialData.iridescenceThicknessMap ?? - 1;
-		data[ stride + M.SPECULAR_INTENSITY_MAP_INDEX ] = materialData.specularIntensityMap ?? - 1;
-		data[ stride + M.SPECULAR_COLOR_MAP_INDEX ] = materialData.specularColorMap ?? - 1;
-
-		// Texture transformation matrices (8 floats per slot = matrix elements[0..7];
-		// element[8]=1 is reconstructed on the GPU by arrayToMat3, so it is NOT stored —
-		// writing a 9th float here would spill into the next slot / subsurfaceColor).
-		const identity = [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ];
-		const transformEntries = [
-			{ key: 'mapMatrix', offset: M.ALBEDO_TRANSFORM },
-			{ key: 'normalMapMatrices', offset: M.NORMAL_TRANSFORM },
-			{ key: 'roughnessMapMatrices', offset: M.ROUGHNESS_TRANSFORM },
-			{ key: 'metalnessMapMatrices', offset: M.METALNESS_TRANSFORM },
-			{ key: 'emissiveMapMatrices', offset: M.EMISSIVE_TRANSFORM },
-			{ key: 'bumpMapMatrices', offset: M.BUMP_TRANSFORM },
-			{ key: 'displacementMapMatrices', offset: M.DISPLACEMENT_TRANSFORM }
-		];
-
-		for ( const { key, offset } of transformEntries ) {
-
-			const matrix = materialData[ key ] ?? identity;
-			for ( let i = 0; i < 8; i ++ ) {
-
-				if ( stride + offset + i < data.length ) {
-
-					data[ stride + offset + i ] = matrix[ i ];
-
-				}
-
-			}
-
-		}
 
 		this.materialStorageAttr.needsUpdate = true;
-
 		this._notifyReset();
 
 	}
@@ -625,24 +545,12 @@ export class MaterialDataManager {
 		// (a genuinely new map → the caller must rebuildMaterials to add it to a bucket array).
 		if ( this._srgbTexPacked || this._linearTexPacked ) {
 
-			completeMaterialData.map = this.getPackedTextureIndex( material.map, true );
-			completeMaterialData.emissiveMap = this.getPackedTextureIndex( material.emissiveMap, true );
-			completeMaterialData.normalMap = this.getPackedTextureIndex( material.normalMap, false );
-			completeMaterialData.bumpMap = this.getPackedTextureIndex( material.bumpMap, false );
-			completeMaterialData.roughnessMap = this.getPackedTextureIndex( material.roughnessMap, false );
-			completeMaterialData.metalnessMap = this.getPackedTextureIndex( material.metalnessMap, false );
-			completeMaterialData.displacementMap = this.getPackedTextureIndex( material.displacementMap, false );
-			completeMaterialData.anisotropyMap = this.getPackedTextureIndex( material.anisotropyMap, false );
-			// Extension maps — color maps (sheenColor, specularColor) are sRGB; the rest are data (linear)
-			completeMaterialData.transmissionMap = this.getPackedTextureIndex( material.transmissionMap, false );
-			completeMaterialData.clearcoatMap = this.getPackedTextureIndex( material.clearcoatMap, false );
-			completeMaterialData.clearcoatRoughnessMap = this.getPackedTextureIndex( material.clearcoatRoughnessMap, false );
-			completeMaterialData.sheenColorMap = this.getPackedTextureIndex( material.sheenColorMap, true );
-			completeMaterialData.sheenRoughnessMap = this.getPackedTextureIndex( material.sheenRoughnessMap, false );
-			completeMaterialData.iridescenceMap = this.getPackedTextureIndex( material.iridescenceMap, false );
-			completeMaterialData.iridescenceThicknessMap = this.getPackedTextureIndex( material.iridescenceThicknessMap, false );
-			completeMaterialData.specularIntensityMap = this.getPackedTextureIndex( material.specularIntensityMap, false );
-			completeMaterialData.specularColorMap = this.getPackedTextureIndex( material.specularColorMap, true );
+			const textures = resolveMaterialTextures( material );
+			for ( const [ key, isSrgb ] of TEXTURE_POOLS ) {
+
+				completeMaterialData[ key ] = this.getPackedTextureIndex( textures[ key ], isSrgb );
+
+			}
 
 		}
 
@@ -800,6 +708,8 @@ export class MaterialDataManager {
 		this.linearBuckets = null;
 		this._srgbTexPacked = null;
 		this._linearTexPacked = null;
+		this._sources = [];
+		this._hostSet = [];
 
 	}
 

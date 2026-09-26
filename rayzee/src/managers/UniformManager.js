@@ -299,6 +299,7 @@ export class UniformManager {
 		samplingTechniqueUniform.value = DEFAULT_STATE.samplingTechnique;
 
 		u( 'fireflyThreshold', DEFAULT_STATE.fireflyThreshold, 'float' );
+		u( 'shadowTerminatorOffset', DEFAULT_STATE.shadowTerminatorOffset, 'float' );
 
 		// Emissive
 		ub( 'enableEmissiveTriangleSampling', DEFAULT_STATE.enableEmissiveTriangleSampling );

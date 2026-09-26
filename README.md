@@ -114,7 +114,7 @@ Its defaults are the batch renderer's rather than the viewer's. All three are re
 | option | default | effect |
 | --- | --- | --- |
 | `strict` | `true` | throws at the point of degradation instead of rendering around it |
-| `profile` | `'physical'` | drops viewer tuning — light damping, the 270° environment rotation, the ACES grade |
+| `profile` | `'physical'` | drops viewer tuning — the glTF area-light damping |
 | `deterministic` | `true` | pins every clock- and readback-dependent input, so N samples reproduce bit-for-bit |
 
 With `strict: false` the same degradations are recorded instead of thrown: read `app.issues`, or subscribe to `EngineEvents.ISSUE`. A non-empty `app.issueErrors` means *do not publish this frame*. Codes (`ISSUE_CODES`) are add-only API surface.

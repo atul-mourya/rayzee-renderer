@@ -1,8 +1,14 @@
 import { EventDispatcher, ACESFilmicToneMapping } from 'three';
-import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure } from '../Processor/ToneMapCPU.js';
+import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '../Processor/ToneMapCPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import AIUpscalerWorker from '../Processor/Workers/AIUpscalerWorker.js?worker&inline';
 
+
+// An OCIO view already returned colour encoded for its display, so the gamma step below would
+// encode it twice. A built-in curve returns linear and does want it.
+const displayEncoder = toneMapping => isOutputEncoded( toneMapping )
+	? ( c => ( c > 1 ? 1 : c < 0 ? 0 : c ) )
+	: ( c => Math.pow( c, SRGB_GAMMA ) );
 
 // ─── Model Configuration ───────────────────────────────────────────────────────
 // Quality presets reference relative paths against asset-config `upscalerModelBaseUrl`.
@@ -400,6 +406,7 @@ export class AIUpscaler extends EventDispatcher {
 		if ( sourceImageData.isHDR ) {
 
 			this._hdrToneMapFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
+			this._hdrEncode = displayEncoder( this.getToneMapping() );
 			this._hdrExposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
 			this._hdrSaturation = this.getSaturation();
 			this._tmOut = new Float32Array( 3 );
@@ -597,9 +604,10 @@ export class AIUpscaler extends EventDispatcher {
 					}
 
 					tmFn( er, eg, eb, 1.0, this._tmOut );
-					floats[ dstIdx ] = Math.pow( this._tmOut[ 0 ], SRGB_GAMMA );
-					floats[ pixelCount + dstIdx ] = Math.pow( this._tmOut[ 1 ], SRGB_GAMMA );
-					floats[ 2 * pixelCount + dstIdx ] = Math.pow( this._tmOut[ 2 ], SRGB_GAMMA );
+					const encode = this._hdrEncode;
+					floats[ dstIdx ] = encode( this._tmOut[ 0 ] );
+					floats[ pixelCount + dstIdx ] = encode( this._tmOut[ 1 ] );
+					floats[ 2 * pixelCount + dstIdx ] = encode( this._tmOut[ 2 ] );
 
 				} else {
 
@@ -794,6 +802,7 @@ export class AIUpscaler extends EventDispatcher {
 			const pixels = imageData.data;
 			const tmFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
 			const exposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
+			const encode = displayEncoder( this.getToneMapping() );
 			const saturation = this.getSaturation();
 			const out = new Float32Array( 3 );
 
@@ -810,9 +819,9 @@ export class AIUpscaler extends EventDispatcher {
 				}
 
 				tmFn( er, eg, eb, 1.0, out );
-				pixels[ si ] = ( Math.pow( out[ 0 ], SRGB_GAMMA ) * 255 + 0.5 ) | 0;
-				pixels[ si + 1 ] = ( Math.pow( out[ 1 ], SRGB_GAMMA ) * 255 + 0.5 ) | 0;
-				pixels[ si + 2 ] = ( Math.pow( out[ 2 ], SRGB_GAMMA ) * 255 + 0.5 ) | 0;
+				pixels[ si ] = ( encode( out[ 0 ] ) * 255 + 0.5 ) | 0;
+				pixels[ si + 1 ] = ( encode( out[ 1 ] ) * 255 + 0.5 ) | 0;
+				pixels[ si + 2 ] = ( encode( out[ 2 ] ) * 255 + 0.5 ) | 0;
 				pixels[ si + 3 ] = 255;
 
 			}

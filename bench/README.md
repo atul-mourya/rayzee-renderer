@@ -198,6 +198,7 @@ control, which is analytically exact, reads 0.121 pp. The worst axis was 51 pp.
 | `furnace-dielectric-glossy` | 0.99775 | 0.23 pp |
 | `furnace-sheen` | 0.99762 | 0.24 pp |
 | `furnace-metal-rough` | 0.99730 | 0.27 pp |
+| `furnace-dielectric-smooth` | 0.99731 | 0.27 pp — ratchet seeded; no golden or ground truth yet |
 | `furnace-iridescence` | 0.99514 | 0.49 pp |
 
 #### What the furnace found, and what fixed it
@@ -222,13 +223,23 @@ only by `sampleClearcoat`; every NEE site called `evaluateMaterialResponseFromDo
 coat term. MIS combining two different integrands is biased however good the weights are. The coat
 is now folded into the single BRDF and `evaluateLayeredBRDF` is gone.
 
+**A floor that flattened the GGX peak.** `DistributionGGX` floored `π·denom²` at `EPSILON` (1e-6);
+at `MIN_ROUGHNESS` the peak's value is ~1e-10, so D came out up to 8000× low while `sampleGGXVNDF`
+still drew the true lobe. Wherever the mixture pdf held another lobe the error stopped cancelling:
+a smooth white dielectric read **1.10**, and a smooth black one lost 22 % of its reflection
+head-on against Cycles. `furnace-dielectric-glossy` sits at roughness 0.15, just above where it
+bites, hence `furnace-dielectric-smooth`. The floor is now 1e-30, a zero-divide guard only.
+
 **A borrowed DFG fit.** `evaluateDFG` used Karis's analytic split-sum polynomial, which fits a
 *different integral* — off by up to 0.31 absolute against this BSDF. It is now a LUT integrated
 from the renderer's own lobes (`bench/tools/gen-dfg-lut.mjs`), storing E at F0 = 1 and at F0 = 0;
 Schlick is linear in F0, so `E(F0) = F0·(R - B) + B` is exact and no fitted shape survives
 anywhere in the chain. That also unblocked replacing `GeometrySchlickGGX`'s analytic-light remap
 with exact Smith, and the isotropic BRDF's separable Smith with the height-correlated form the
-anisotropic path always used.
+anisotropic path always used. Dielectrics have since moved to the exact Fresnel curve (Schlick ran
+16-23 % low at 45-65°, measured against Cycles); that curve is not linear in F0, so the same table
+now also carries its albedo in 17 IOR slices (`evaluateSpecularDFG`), and the furnace ratios did not
+move.
 
 **Energy splits that were guesses.** Both layered lobes attenuated the base by an invented factor
 instead of the lobe's actual albedo: sheen used `(1 - sheenRoughness) * 0.5 + 0.25`, claiming 0.55

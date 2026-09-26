@@ -8,6 +8,21 @@ import {
 	ShadowMaterial,
 } from './Struct.js';
 
+// Spawn point for a ray leaving a surface, Cycles' classic ray_offset: within 1 unit of the origin,
+// 1e-5 along n; beyond, 32 float ULPs per axis toward n. A fixed 1 mm let rays slip out of
+// sub-millimetre grooves — a 14 cm camera read up to 14 % bright in its crevices against Cycles.
+export const offsetRayOrigin = /*@__PURE__*/ wgslFn( `
+	fn offsetRayOrigin( p: vec3f, n: vec3f ) -> vec3f {
+		let step = select( vec3<i32>( 32 ), vec3<i32>( -32 ), ( p < vec3f( 0.0 ) ) != ( n < vec3f( 0.0 ) ) );
+		let far = bitcast<vec3f>( bitcast<vec3<i32>>( p ) + step );
+		return select( far, p + n * 1e-5, abs( p ) < vec3f( 1.0 ) );
+	}
+` );
+
+// Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
+// error, so an emitter coplanar with its fixture is never occluded by it.
+export const SHADOW_END = 1.0 - 1e-4;
+
 export const PI = 3.14159;
 export const PI_INV = 1.0 / PI;
 export const TWO_PI = 2.0 * PI;

@@ -15,7 +15,11 @@ import { generateViewportStyles } from '@/utils/viewport';
 import { PathTracerApp } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
+import { loadLightLibraries } from '@/lib/lightLibraries';
 
+
+// How long startup holds the first frame for the CDN colour config before showing the built-in view.
+const DEFAULT_COLOR_WAIT_MS = 2000;
 
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
@@ -191,25 +195,9 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				appRef.current = app;
 				setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );
 				await app.init();
-
-				// Pre-load the bundled spot-light gobo + IES profile libraries so
-				// they're ready by the time the user opens the Lights tab.
-				try {
-
-					const [ { GOBO_LIBRARY }, { IES_LIBRARY } ] = await Promise.all( [
-						import( '@/services/GoboLibrary' ),
-						import( '@/services/IESLibrary' ),
-					] );
-					await Promise.all( [
-						app.goboManager?.loadLibrary?.( GOBO_LIBRARY ),
-						app.iesManager?.loadLibrary?.( IES_LIBRARY ),
-					] );
-
-				} catch ( e ) {
-
-					console.warn( 'Light mask / IES library load failed', e );
-
-				}
+				// Loading resets, and a reset restarts rendering unless paused: nothing may draw
+				// before the scene and the colour view are in.
+				app.pause();
 
 				// Register with appProxy so getApp() works globally
 				setApp( app );
@@ -229,18 +217,47 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				// metadata; loading the default first would fetch a ~1.6 MB HDRI, build its CDF,
 				// upload it, and then throw all of it away — and make the engine build a second
 				// CDF for the same texture during the scene rebuild. Nothing renders until
-				// app.animate() below, so the scene is never visible without an environment.
+				// app.resume() below, so the scene is never visible without an environment.
 				const urlParams = new URLSearchParams( window.location.search );
 				const modelUrl = urlParams.get( 'model' );
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
-				if ( modelUrl ) {
+				// The default look downloads alongside the model and is applied once the scene is in,
+				// before the first frame.
+				const { fetchStartupColor, showStartupColor } = await import( '@/lib/colorManagement' );
+				const colorDownload = fetchStartupColor();
 
-					await app.loadModel( modelUrl );
+				// A failed model or sky is reported and startup carries on: the sky and the look
+				// still load, and another model can be opened.
+				const reportLoadFailure = ( title, err ) => {
 
-				} else {
+					if ( err?.code === 'LOAD_CANCELLED' ) {
 
-					const { MODEL_FILES } = await import( '@/Constants' );
-					await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+						toast( { title: "Loading Cancelled", description: "The download was cancelled." } );
+						return;
+
+					}
+
+					console.error( `${title}:`, err );
+					toast( { title, description: err?.message, variant: "destructive" } );
+
+				};
+
+				try {
+
+					if ( modelUrl ) {
+
+						await app.loadModel( modelUrl );
+
+					} else {
+
+						const { MODEL_FILES } = await import( '@/Constants' );
+						await app.loadExampleModels( DEFAULT_STATE.model, MODEL_FILES );
+
+					}
+
+				} catch ( err ) {
+
+					reportLoadFailure( "Error Loading Model", err );
 
 				}
 
@@ -252,16 +269,38 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 					if ( defaultEnv?.url ) {
 
 						setLoading( { isLoading: true, title: "Starting", status: "Loading Environment...", progress: 90 } );
-						await app.loadEnvironment( defaultEnv.url );
+						try {
+
+							await app.loadEnvironment( defaultEnv.url );
+
+						} catch ( err ) {
+
+							reportLoadFailure( "Error Loading Environment", err );
+
+						}
 
 					}
 
 				}
 
+				// Wait briefly for it: switching views after the first frames reads as a colour jump.
+				// A slow CDN starts on the built-in AgX and switches when the config lands.
+				setLoading( { isLoading: true, title: "Starting", status: "Loading colour config...", progress: 95 } );
+				const defaultColor = showStartupColor( colorDownload );
+				defaultColor.catch( err => console.warn( `Default colour config unavailable, keeping the built-in view: ${err.message}` ) );
+				const applyView = ( { view } ) => usePathTracerStore.getState().setToneMapping( view.id );
+				const early = await Promise.race( [
+					defaultColor.catch( () => null ),
+					new Promise( resolve => setTimeout( resolve, DEFAULT_COLOR_WAIT_MS ) ),
+				] );
+				if ( early ) applyView( early );
+				else if ( early === undefined ) defaultColor.then( applyView, () => {} );
+
 				setLoading( { isLoading: true, title: "Starting", status: "Setup Complete!", progress: 100 } );
 
-				app.animate();
+				app.resume();
 				app.reset();
+				loadLightLibraries( app );
 
 			};
 
@@ -277,6 +316,9 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				} )
 				.finally( () => {
+
+					// A failed load must not leave the app paused for the next one.
+					if ( appRef.current?.isInitialized ) appRef.current.resume();
 
 					const resetLoadingFn = useStore.getState().resetLoading;
 					resetLoadingFn();

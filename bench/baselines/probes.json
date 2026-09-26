@@ -576,5 +576,8 @@
 			"samples": 96
 		},
 		"rmseVsTruth": 0.011886281370677518
+	},
+	"furnace-dielectric-smooth": {
+		"furnaceRatio": 0.9973079525907451
 	}
 }

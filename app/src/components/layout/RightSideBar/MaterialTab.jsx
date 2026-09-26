@@ -12,6 +12,7 @@ import { SSS_PRESETS, scaleToTranslucency } from '@/Constants';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { TexturePreview } from '@/components/ui/texture-preview';
+import TextureColorSpaceSelect, { COLOR_MAP_SLOTS } from './TextureColorSpaceSelect';
 import { LinkableVector2 } from '@/components/ui/linkable-vector2';
 import { RefreshCw, Trash2, Plus } from 'lucide-react';
 
@@ -792,6 +793,7 @@ const MaterialTab = () => {
 											</>
 										}
 									/>
+									{COLOR_MAP_SLOTS.has( name ) && <TextureColorSpaceSelect texture={texture} />}
 									{expandedTextures[ name ] && (
 										<div className="mt-1 mb-2 space-y-1">
 											{Object.entries( TEXTURE_PROPERTIES ).map( ( [ property, config ] ) => {

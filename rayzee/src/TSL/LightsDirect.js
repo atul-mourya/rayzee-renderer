@@ -28,9 +28,9 @@ import {
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows,
-	instanceFaceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle
+	instanceFaceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle, offsetRayOrigin,
 } from './Common.js';
-import { fresnelSchlickFloat, iorToFresnel0 } from './Fresnel.js';
+import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
 
@@ -212,11 +212,8 @@ export const traceShadowRay = Fn( ( [
 
 			} );
 
-			// Compute transmittance based on material properties
-			const fresnel = fresnelSchlickFloat(
-				abs( dot( dir, N ) ),
-				iorToFresnel0( shadowMaterial.ior, float( 1.0 ) ),
-			);
+			// Shadow rays go straight through, so both faces see the outside-in angle and eta.
+			const fresnel = fresnelDielectric( abs( dot( dir, N ) ), max( shadowMaterial.ior, 1.0 ) );
 
 			const matTransmittance = float( 1.0 ).sub( fresnel ).mul( shadowMaterial.transmission );
 			transmittance.mulAssign( matTransmittance );
@@ -230,8 +227,9 @@ export const traceShadowRay = Fn( ( [
 			} );
 
 			// Continue ray past transmissive surface
-			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( 0.001 ) ) );
-			remainingDist.subAssign( shadowHit.dst.add( 0.001 ) );
+			const passEps = max( float( 1e-5 ), length( shadowHit.hitPoint ).mul( 1e-6 ) );
+			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( passEps ) ) );
+			remainingDist.subAssign( shadowHit.dst.add( passEps ) );
 
 		} ).ElseIf( shadowMaterial.transparent, () => {
 
@@ -246,8 +244,9 @@ export const traceShadowRay = Fn( ( [
 			} );
 
 			// Continue ray past transparent surface
-			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( 0.001 ) ) );
-			remainingDist.subAssign( shadowHit.dst.add( 0.001 ) );
+			const passEps = max( float( 1e-5 ), length( shadowHit.hitPoint ).mul( 1e-6 ) );
+			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( passEps ) ) );
+			remainingDist.subAssign( shadowHit.dst.add( passEps ) );
 
 		} ).Else( () => {
 
@@ -267,28 +266,8 @@ export const traceShadowRay = Fn( ( [
 // RAY OFFSET CALCULATION
 // ================================================================================
 
-export const calculateRayOffset = Fn( ( [ hitPoint, normal, material ] ) => {
-
-	// Base epsilon scaled by scene size; adjusted by material properties below.
-	const materialEpsilon = max( float( 1e-4 ), length( hitPoint ).mul( 1e-6 ) ).toVar();
-
-	If( material.transmission.greaterThan( 0.0 ), () => {
-
-		// Transmissive materials need larger offsets
-		materialEpsilon.mulAssign( 2.0 );
-
-	} );
-
-	If( material.roughness.lessThan( 0.1 ), () => {
-
-		// Smooth materials are more sensitive to precision issues
-		materialEpsilon.mulAssign( 1.5 );
-
-	} );
-
-	return normal.mul( materialEpsilon );
-
-} );
+// Vector from hitPoint to its ray spawn point (offsetRayOrigin), for callers that add it themselves.
+export const calculateRayOffset = Fn( ( [ hitPoint, normal ] ) => offsetRayOrigin( hitPoint, normal ).sub( hitPoint ) );
 
 // ================================================================================
 // LIGHT IMPORTANCE ESTIMATION

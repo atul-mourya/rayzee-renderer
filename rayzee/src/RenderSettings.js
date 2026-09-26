@@ -42,6 +42,7 @@ const SETTING_ROUTES = {
 	anamorphicRatio: { uniform: 'anamorphicRatio', reset: true },
 	samplingTechnique: { uniform: 'samplingTechnique', reset: true },
 	fireflyThreshold: { uniform: 'fireflyThreshold', reset: true },
+	shadowTerminatorOffset: { uniform: 'shadowTerminatorOffset', reset: true },
 	enableAlphaShadows: { uniform: 'enableAlphaShadows', reset: true },
 	// Adaptive sampling — whole-frame early-stop (useAdaptiveSampling) + per-pixel freeze (usePixelFreeze)
 	useAdaptiveSampling: { uniform: 'useAdaptiveSampling', reset: true },

@@ -66,8 +66,17 @@ export class Compositor extends RenderStage {
 	 */
 	_resolveSourceTexture( context ) {
 
-		return context.getTexture( 'bloom:output' )
-			|| context.getTexture( 'oidn:output' )
+		return context.getTexture( 'bloom:output' ) || this.resolveLightTexture( context );
+
+	}
+
+	/**
+	 * The newest scene-referred image the pipeline holds — denoised when a denoiser has run — without
+	 * bloom, which is a look added on top rather than light in the scene.
+	 */
+	resolveLightTexture( context ) {
+
+		return context.getTexture( 'oidn:output' )
 			|| context.getTexture( 'edgeFiltering:output' )
 			|| context.getTexture( 'bilateralFiltering:output' )
 			|| context.getTexture( 'asvgf:output' )

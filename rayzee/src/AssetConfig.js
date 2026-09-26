@@ -26,8 +26,21 @@ const config = {
 	dracoDecoderPath: 'https://www.gstatic.com/draco/v1/decoders/',
 	ktx2TranscoderPath: 'https://cdn.jsdelivr.net/npm/three@0.183.2/examples/jsm/libs/basis/',
 
-	// OIDN denoiser model weights (oidn-web tza files).
-	oidnWeightsBaseUrl: 'https://cdn.jsdelivr.net/npm/denoiser/tzas/',
+	// OIDN denoiser model weights (oidn-web tza files): the four tiers' models, mirrored from the
+	// `denoiser` npm package 0.0.11 with their Apache-2.0 licence. Versioned so they cannot change underneath.
+	oidnWeightsBaseUrl: 'https://assets.rayzee.atulmourya.com/oidn/denoiser-0.0.11/',
+
+	// OpenColorIO WebAssembly runtime (~6 MB), needed only once a colour-managed config is
+	// loaded. The engine never names the package: a bare specifier in engine source would make it
+	// a hard dependency of every host, and @vite-ignore leaves the browser unable to resolve it.
+	//
+	//   configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } )   // bundled
+	//   configureAssets( { ocioRuntimeUrl: '/vendor/ocio/index.js' } )                 // served
+	//
+	ocioRuntimeFactory: null,
+	ocioRuntimeUrl: null,
+	// Only needed when a served runtime cannot find its own .wasm.
+	ocioWasmUrl: null,
 
 	// AI upscaler ONNX model base URL. Quality presets resolve relative paths against this.
 	upscalerModelBaseUrl: 'https://huggingface.co/notaneimu/onnx-image-models/resolve/main/',

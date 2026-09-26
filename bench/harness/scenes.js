@@ -1145,6 +1145,10 @@ const FURNACE_MATERIALS = {
 	// sensitive probe.
 	'furnace-dielectric-glossy': { roughness: 0.15, metalness: 0 },
 
+	// At MIN_ROUGHNESS the GGX peak's denominator is ~1e-10. A floor of 1e-6 on it once cut the lobe
+	// 8000× while the sampler still drew the true one — a 22 % reflection loss 0.15 cannot see.
+	'furnace-dielectric-smooth': { roughness: 0.05, metalness: 0 },
+
 	// Metal, two points that fail in opposite directions when the multiscatter compensation is
 	// miscalibrated: it overshoots around mid roughness while r = 1 shows the single-scattering
 	// GGX deficit. One point alone would let a bad refit trade one for the other.
@@ -1274,6 +1278,50 @@ for ( const [ id, seg ] of Object.entries( { 'furnace-lowpoly-16': 16, 'furnace-
 	} );
 
 }
+
+// Foliage cards: fully transparent, crossed like a grass tuft, with the vertex normals such assets
+// ship — all pointing up, far from the vertical facets. The cards must vanish. Offsetting a
+// pass-through ray along that normal kept it in the card's own plane: it hit the same card again
+// until the transparent-bounce guard ended the path, and the cards drew black.
+SCENES.push( {
+	id: 'furnace-foliage-cards',
+	covers: 'white furnace — alpha pass-through on cards whose vertex normals point away from the facet (ray spawn off the facet, not the interpolated normal)',
+	spp: 64,
+	truthSpp: 512,
+	settings: { maxBounces: 4, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const clear = new DataTexture( new Uint8Array( 4 * 4 * 4 ), 4, 4, RGBAFormat );
+		clear.colorSpace = SRGBColorSpace;
+		clear.needsUpdate = true;
+
+		const group = new Group();
+		for ( let i = 0; i < 6; i ++ ) {
+
+			const geometry = new PlaneGeometry( 3.2, 3.2 );
+			const normals = geometry.attributes.normal;
+			for ( let v = 0; v < normals.count; v ++ ) normals.setXYZ( v, 0, 1, 0 );
+
+			// BLEND like a glTF foliage export, and MASK, alternately.
+			const card = new Mesh( geometry, new MeshPhysicalMaterial( {
+				map: clear, side: DoubleSide, roughness: 1, metalness: 0,
+				...( i % 2 ? { alphaTest: 0.5 } : { transparent: true } ),
+			} ) );
+			card.rotation.y = i * Math.PI / 6;
+			group.add( card );
+
+		}
+
+		await app.loadObject3D( group, 'furnace-foliage-cards' );
+		setCamera( app, [ 0, 0.9, 2.6 ], [ 0, 0, 0 ] );
+
+	},
+} );
 
 // ── Analytic area light ──────────────────────────────────────────
 // Irradiance on a plane from a parallel Lambertian rectangle of uniform radiance L is E = π·L·F,

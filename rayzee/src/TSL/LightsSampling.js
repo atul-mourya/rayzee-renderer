@@ -81,15 +81,15 @@ import {
 	powerHeuristic,
 	balanceHeuristic,
 	computeDotProductsAniso,
+	offsetRayOrigin,
+	SHADOW_END,
 } from './Common.js';
 import {
 	sampleEquirectProbability,
 } from './Environment.js';
+import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 
 const TWO_PI = 2.0 * PI;
-// Visibility rays stop this fraction short of the sampled light point: unit-free, and ≫ float
-// error, so an emitter coplanar with its fixture is never occluded by it.
-const SHADOW_END = 1.0 - 1e-4;
 
 // =============================================================================
 // Light Sampling Functions
@@ -795,12 +795,19 @@ export const calculateDirectLightingUnified = Fn( ( [
 	// Shadow catcher: when true, also accumulate the unoccluded (visibility=1) reference
 	// at every light/env site so the caller can form a shadow ratio. Dead path otherwise.
 	wantUnoccluded,
+	// The facet on the viewer's side, which shadow rays are offset off, and the shadow terminator lift
+	// (ShadowTerminator.js) for the light and environment ones
+	terminatorLift, facetNormal, terminatorCutoff,
 ] ) => {
 
 	const totalContribution = vec3( 0.0 ).toVar();
 	// Unoccluded reference (visibility forced to 1) — only filled when wantUnoccluded.
 	const unoccludedContribution = vec3( 0.0 ).toVar();
-	const rayOrigin = hitPoint.add( geomNormal.mul( 0.001 ) ).toVar();
+	const rayOrigin = offsetRayOrigin( hitPoint, facetNormal ).toVar();
+	const lightShadowOrigin = L => shadowTerminatorOrigin( {
+		hitPoint, offsetNormal: facetNormal, lift: terminatorLift, faceN: facetNormal, smoothN: geomNormal, L,
+		cutoff: terminatorCutoff,
+	} );
 
 	// Binds BVH params so shadow-ray sites at varying call depths use a 3-arg call
 	const shadow = Fn( ( [ origin, dir, maxDist ] ) =>
@@ -845,9 +852,10 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 				// Light geometry is measured from the hit point; only the visibility ray starts on the lifted
 				// origin, aimed at the sampled point and stopped a relative hair short of it.
-				const toSample = hitPoint.add( lightSample.direction.mul( lightSample.distance ) ).sub( rayOrigin ).toVar();
+				const lightOrigin = lightShadowOrigin( lightSample.direction ).toVar();
+				const toSample = hitPoint.add( lightSample.direction.mul( lightSample.distance ) ).sub( lightOrigin ).toVar();
 				const shadowDistance = length( toSample ).toVar();
-				const visibility = shadow( rayOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
+				const visibility = shadow( lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
 				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
@@ -1004,7 +1012,7 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: envDirection, surfaceNormal: geomNormal } ) ), () => {
 
-				const visibility = shadow( rayOrigin, envDirection, float( 1e20 ) );
+				const visibility = shadow( lightShadowOrigin( envDirection ), envDirection, float( 1e20 ) );
 
 				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 

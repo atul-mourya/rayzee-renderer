@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 import { RENDER_PROFILES, getRenderProfile, ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
-import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping } from 'three';
+import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping, AgXToneMapping } from 'three';
 
 describe( 'settings provenance', () => {
 
@@ -71,7 +71,7 @@ describe( 'render profiles', () => {
 	it( 'states the viewer tuning the engine ships', () => {
 
 		expect( RENDER_PROFILES.viewer.areaLightIntensityScale ).toBe( 0.1 );
-		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 270 );
+		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 0 );
 
 	} );
 
@@ -82,12 +82,14 @@ describe( 'render profiles', () => {
 
 	} );
 
-	// The grade is the half the first cut missed: saturation 1.2 and ACES are viewer choices.
-	it( 'drops the viewer grade under the physical profile', () => {
+	it( 'grades neither profile: both show AgX at neutral saturation', () => {
 
-		expect( RENDER_PROFILES.viewer.saturation ).toBe( 1.2 );
-		expect( RENDER_PROFILES.physical.saturation ).toBe( 1.0 );
-		expect( RENDER_PROFILES.physical.toneMapping ).not.toBe( RENDER_PROFILES.viewer.toneMapping );
+		for ( const profile of [ RENDER_PROFILES.viewer, RENDER_PROFILES.physical ] ) {
+
+			expect( profile.toneMapping ).toBe( AgXToneMapping );
+			expect( profile.saturation ).toBe( 1.0 );
+
+		}
 
 	} );
 
