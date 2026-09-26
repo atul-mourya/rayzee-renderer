@@ -55,4 +55,11 @@ export default [
 			globals: { ...globals.node },
 		},
 	},
+	{
+		// WebGPU tests run under Node with the browser's GPU globals installed.
+		files: [ 'tests/gpu/**/*.js' ],
+		languageOptions: {
+			globals: { ...globals.node },
+		},
+	},
 ];

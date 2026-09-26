@@ -33,6 +33,12 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 
 ### Testing
 - `npm test` - Run Vitest from root
+- `tests/gpu/` (Vitest project `gpu`) runs on the real GPU in Node through Dawn — the `webgpu`
+  package, the same WebGPU implementation Chrome ships. `evaluate()` in `tests/gpu/gpu.js` runs a TSL
+  function per element and returns the buffer, so a shader function or a CPU/GPU twin is tested in
+  milliseconds. Skipped on CI (no Vulkan driver there); on a workstation a missing adapter fails the
+  run. ⚠️ Dawn segfaults the process if its `create()` result is garbage-collected while a device
+  lives — `tests/gpu/environment.js` holds it for that reason.
 
 ### Regression Bench (`bench/`)
 Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
@@ -603,8 +609,8 @@ guarantees 16 sampled textures per stage.
 - EdgeAware filtering disabled when ASVGF enabled
 - Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
 - ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
-  bug-compatible with it, rounding included. `bench:upscale` checks the two against each other on a
-  real device before anything else, because vitest has no GPU.
+  bug-compatible with it, rounding included. `tests/gpu/toneMapParity.test.js` checks the two on
+  Dawn in Node, and `bench:upscale` again in Chrome before anything else.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
