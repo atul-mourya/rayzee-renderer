@@ -4,7 +4,7 @@
  *
  * A mirror of `ToneMapCPU.js` — same curves, same order (exposure, saturation, curve, transfer),
  * same rounding. It exists because reading half-floats back and converting them in JavaScript
- * costs more than the neural upscale itself at production sizes. `bench:tonemap` compares the two
+ * costs more than the neural upscale itself at production sizes. `bench:upscale` compares the two
  * implementations on a real device and fails on any drift.
  *
  * Both sides are generated from `../Color/ViewTransforms.js`, so a view baked from an OCIO config
