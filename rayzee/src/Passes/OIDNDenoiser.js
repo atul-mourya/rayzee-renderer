@@ -688,6 +688,14 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._computeInputScale( device, width * height );
 		this._applyColorScale( device, width * height );
 
+		// A final denoise is shown tile by tile, so the tiles still to come must show this render
+		// rather than the blank or previous-view picture the output holds between runs.
+		if ( ! continuous && ! this._hasOutput ) {
+
+			this._unpackToTexture( this._gpuInputBuffers.color, width, { x: 0, y: 0, width, height }, false );
+
+		}
+
 		// Pass GPU storage buffers to oidn-web (GPUBuffer path, well-tested)
 		const config = {
 			color: { data: this._gpuInputBuffers.color, width, height },
@@ -996,11 +1004,12 @@ export class OIDNDenoiser extends EventDispatcher {
 	/**
 	 * Writes a rectangle of the denoised buffer into the output picture, on the card.
 	 *
-	 * @param {GPUBuffer} src - denoised rgba32float, full image
+	 * @param {GPUBuffer} src - rgba32float, full image, scaled by the input autoexposure
 	 * @param {number} srcWidth
 	 * @param {{x: number, y: number, width: number, height: number}} rect
+	 * @param {boolean} [denoised=true] - false for the raw render laid under a tiled run
 	 */
-	_unpackToTexture( src, srcWidth, rect ) {
+	_unpackToTexture( src, srcWidth, rect, denoised = true ) {
 
 		const device = this.gpuDevice;
 		if ( ! device || ! this._ensureScalePipelines( device ) ) return;
@@ -1047,7 +1056,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			// Set here rather than when the run resolves: 'end' is dispatched from execute()'s
 			// finally, which runs first, so a listener that waits for the run would see the very
 			// first denoise as having produced nothing.
-			this._hasOutput = true;
+			if ( denoised ) this._hasOutput = true;
 
 		} finally {
 
@@ -1060,8 +1069,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * Promise wrapper around tileExecute for the GPU path. Each tile is written straight into the
-	 * output picture on the card, so there is nothing to await between a tile finishing and it
-	 * being visible.
+	 * output picture on the card; 'tileProgress' is what puts it on screen.
 	 */
 	_executeWithAbortGPU( config, continuous = false ) {
 

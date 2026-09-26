@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock( '@/core/Passes/OIDNDenoiser.js', () => ( { OIDNDenoiser: class {} } ) );
+vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
+
+	const { EventDispatcher } = await import( 'three' );
+	return { OIDNDenoiser: class extends EventDispatcher {} };
+
+} );
 vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
 
 const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
@@ -223,6 +228,49 @@ describe( 'DenoisingManager — first refresh of an accumulation', () => {
 
 		manager._lastCadenceAt = performance.now() - 60;
 		expect( manager.tickContinuousDenoise( 2 ) ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'DenoisingManager — a tiled denoise on screen', () => {
+
+	function makeTiledManager() {
+
+		const { manager, textures, shown } = makeManager();
+		textures.delete( OUTPUT_KEY );
+
+		manager.upscalerCanvas = {};
+		manager._stages.compositor = { render: vi.fn() };
+		manager.setupDenoiser();
+		manager.denoiser.outputTexture = { name: OUTPUT_KEY };
+
+		const tile = ( continuous ) => manager.denoiser.dispatchEvent( { type: 'tileProgress', tile: { x: 0, y: 0, width: 4, height: 4 }, continuous } );
+
+		return { manager, shown, tile };
+
+	}
+
+	// The render loop has stopped by the time the final denoise runs, so nothing else would draw it.
+	it( 'shows each tile of the final denoise as it lands', () => {
+
+		const { manager, shown, tile } = makeTiledManager();
+
+		tile( false );
+		expect( shown() ).toBe( 'denoised' );
+		tile( false );
+		expect( manager._stages.compositor.render ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'leaves a live refresh to the running loop and its own end', () => {
+
+		const { manager, shown, tile } = makeTiledManager();
+
+		tile( true );
+
+		expect( shown() ).toBe( 'raw' );
+		expect( manager._stages.compositor.render ).not.toHaveBeenCalled();
 
 	} );
 

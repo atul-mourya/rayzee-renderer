@@ -162,6 +162,7 @@ export class DenoisingManager extends EventDispatcher {
 		// Bound event forwarding handlers (stored for removal on re-setup / dispose)
 		this._denoiserStartHandler = null;
 		this._denoiserEndHandler = null;
+		this._denoiserTileHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;
@@ -298,8 +299,21 @@ export class DenoisingManager extends EventDispatcher {
 
 		};
 
+		// The loop has stopped by the time a final denoise runs, so each tile has to redraw the
+		// canvas itself. Not through the display-refresh callback: that restarts the loop, which a
+		// video export drives by hand.
+		this._denoiserTileHandler = e => {
+
+			if ( e.continuous ) return;
+			this._publishOutput();
+			const ctx = this.pipeline?.context;
+			if ( this._stages.compositor && ctx ) this._stages.compositor.render( ctx );
+
+		};
+
 		this.denoiser.addEventListener( 'start', this._denoiserStartHandler );
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
+		this.denoiser.addEventListener( 'tileProgress', this._denoiserTileHandler );
 
 	}
 
@@ -1194,6 +1208,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( this._denoiserStartHandler ) this.denoiser.removeEventListener( 'start', this._denoiserStartHandler );
 			if ( this._denoiserEndHandler ) this.denoiser.removeEventListener( 'end', this._denoiserEndHandler );
+			if ( this._denoiserTileHandler ) this.denoiser.removeEventListener( 'tileProgress', this._denoiserTileHandler );
 			this.denoiser.dispose();
 			this.denoiser = null;
 
@@ -1216,6 +1231,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._denoiserStartHandler = null;
 		this._denoiserEndHandler = null;
+		this._denoiserTileHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;
