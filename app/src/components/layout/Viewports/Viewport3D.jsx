@@ -194,6 +194,9 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				appRef.current = app;
 				setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );
 				await app.init();
+				// Loading resets, and a reset restarts rendering unless paused: nothing may draw
+				// before the scene and the colour view are in.
+				app.pause();
 
 				// Pre-load the bundled spot-light gobo + IES profile libraries so
 				// they're ready by the time the user opens the Lights tab.
@@ -232,12 +235,12 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				// metadata; loading the default first would fetch a ~1.6 MB HDRI, build its CDF,
 				// upload it, and then throw all of it away — and make the engine build a second
 				// CDF for the same texture during the scene rebuild. Nothing renders until
-				// app.animate() below, so the scene is never visible without an environment.
+				// app.resume() below, so the scene is never visible without an environment.
 				const urlParams = new URLSearchParams( window.location.search );
 				const modelUrl = urlParams.get( 'model' );
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Model...", progress: 65 } );
 				// The colour config downloads alongside the model and loads once the scene is in,
-				// before the first frame: loading it mid-scene would reset, and a reset starts rendering.
+				// before the first frame.
 				const { fetchDefaultConfig, loadDefaultConfig } = await import( '@/lib/colorManagement' );
 				const colorDownload = fetchDefaultConfig();
 				colorDownload.catch( () => {} );
@@ -282,7 +285,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				setLoading( { isLoading: true, title: "Starting", status: "Setup Complete!", progress: 100 } );
 
-				app.animate();
+				app.resume();
 				app.reset();
 
 			};
@@ -299,6 +302,9 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				} )
 				.finally( () => {
+
+					// A failed load must not leave the app paused for the next one.
+					if ( appRef.current?.isInitialized ) appRef.current.resume();
 
 					const resetLoadingFn = useStore.getState().resetLoading;
 					resetLoadingFn();
