@@ -7,6 +7,7 @@ let computeCanvasDimensions;
 let computeOutputDimensions;
 let ASPECT_RATIO_PRESETS;
 let aspectRatioLabel;
+let walkSpeedRange;
 
 beforeAll( async () => {
 
@@ -16,6 +17,7 @@ beforeAll( async () => {
 	computeOutputDimensions = mod.computeOutputDimensions;
 	ASPECT_RATIO_PRESETS = mod.ASPECT_RATIO_PRESETS;
 	aspectRatioLabel = mod.aspectRatioLabel;
+	walkSpeedRange = mod.walkSpeedRange;
 
 } );
 
@@ -195,6 +197,18 @@ describe( 'aspectRatioLabel', () => {
 		expect( aspectRatioLabel( '16:9', 'portrait' ) ).toBe( '9:16' );
 		expect( aspectRatioLabel( '2.39:1', 'portrait' ) ).toBe( '1:2.39' );
 		expect( aspectRatioLabel( '1:1', 'portrait' ) ).toBe( '1:1' );
+
+	} );
+
+} );
+
+describe( 'walkSpeedRange', () => {
+
+	it( 'spans a tenth to four times the fitted speed on a round step', () => {
+
+		expect( walkSpeedRange( 1.41 ) ).toEqual( { min: 0.1, max: 5.7, step: 0.1, precision: 1 } );
+		expect( walkSpeedRange( 0.018 ) ).toEqual( { min: 0.001, max: 0.072, step: 0.001, precision: 3 } );
+		expect( walkSpeedRange( 188 ) ).toEqual( { min: 10, max: 760, step: 10, precision: 0 } );
 
 	} );
 

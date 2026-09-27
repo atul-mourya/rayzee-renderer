@@ -477,7 +477,15 @@ engine.cameraManager.getNames()              // List available cameras
 engine.cameraManager.focusOn(center)         // Focus orbit camera on a world-space point
 engine.cameraManager.setAutoFocusMode(mode)  // 'auto' | 'manual'
 engine.cameraManager.setAFScreenPoint(x, y)  // Set normalized AF screen point (0-1)
+engine.cameraManager.setNavigationMode(mode) // 'orbit' | 'walk'
+engine.cameraManager.walkControls.speed      // Walk speed, scene units per second
 ```
+
+**Walk mode** is first-person navigation: drag to look, W A S D or the arrow keys to walk level, E and Q to
+rise and sink, Shift faster, Alt slower. A new model resets `speed` so the walk crosses it in about eight
+seconds. Keys are ignored while focus is in a text field, list or menu, and when a focused control has
+already used the key. The mode obeys `controls.enabled`, so anything that locks the orbit camera locks walking
+too. Switching back to `'orbit'` circles the surface at the centre of the view.
 
 ### Camera Projection (360° Panorama)
 

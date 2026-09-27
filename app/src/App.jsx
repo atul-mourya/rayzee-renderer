@@ -10,7 +10,7 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useStore, usePathTracerStore } from '@/store';
+import { useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { createLogger } from 'rayzee';
 
@@ -72,9 +72,9 @@ const App = () => {
 			}
 
 			const noModifiers = ! event.ctrlKey && ! event.altKey && ! event.shiftKey && ! event.metaKey;
-			const hasSelection = !! useStore.getState().selectedObject;
 
-			// Prevent default behavior only for our specific shortcuts
+			// Prevent default behavior only for our specific shortcuts. The gizmo mode has no keys:
+			// letters belong to walk mode.
 			switch ( event.key ) {
 
 				case 'Escape':
@@ -82,42 +82,12 @@ const App = () => {
 					handleDeselect();
 					break;
 
-				case 'w':
-				case 'W':
-					if ( noModifiers && hasSelection ) {
-
-						event.preventDefault();
-						getApp()?.transformManager.setMode( 'translate' );
-
-					}
-
-					break;
-
-				case 'e':
-				case 'E':
-					if ( noModifiers && hasSelection ) {
-
-						event.preventDefault();
-						getApp()?.transformManager.setMode( 'rotate' );
-
-					}
-
-					break;
-
 				case 'r':
 				case 'R':
 					if ( noModifiers ) {
 
 						event.preventDefault();
-						if ( hasSelection ) {
-
-							getApp()?.transformManager.setMode( 'scale' );
-
-						} else {
-
-							handleResetCamera();
-
-						}
+						handleResetCamera();
 
 					}
 

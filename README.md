@@ -33,6 +33,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
 - **360° equirectangular panorama** camera projection, with longitude/latitude range cropping and a level-horizon option
 - **Fast Navigation** — renders at lower resolution while the camera moves and restores full quality the moment you stop, keeping navigation responsive
+- **Walk mode** — first-person navigation for interiors and large scenes: drag to look, walk at eye height with the keyboard, at a speed set in metres per second; switching back to orbit circles whatever you were looking at
 - **Broad asset support** — GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, and USDZ models; HDR/EXR environments; ZIP archives with automatic model detection
 - **Scenes larger than memory** — a pbrt-v4 archive of tens of gigabytes can be inspected without unpacking it and loaded one element at a time; triangle and node storage is chunked past the browser's ~2 GB single-array ceiling, and a CPU memory preflight refuses a scene that would kill the tab rather than letting it die mid-build
 - **OpenColorIO colour management** — opens in Blender 5.1's own config (AgX, Medium High Contrast), with its views, looks and displays, ACES configs, or a studio's own config folder; render in ACEScg or another working space, set per-texture colour spaces, and save EXR in a delivery space. The default look ships pre-built, so the first frame needs neither the colour runtime nor its download. Exposure in stops, with automatic exposure
@@ -83,9 +84,19 @@ Bench baselines are machine-specific and the suite refuses to compare across a m
 | Key | Action |
 |-----|--------|
 | `Space` | Toggle rendering pause/play |
-| `W` / `E` | Translate / rotate the transform gizmo (when an object is selected) |
-| `R` | Scale the gizmo (object selected) — otherwise resets the camera to its default position |
+| `R` | Reset the camera to its default position |
 | `Esc` | Deselect current object |
+
+The transform gizmo's mode (translate, rotate, scale) is set from the viewport toolbar only.
+
+In **Walk** navigation (Camera tab → Navigation):
+
+| Key | Action |
+|-----|--------|
+| Drag | Look around |
+| `W` `A` `S` `D` / arrow keys | Walk forward, left, back, right — level, even while looking down |
+| `E` / `Q` | Move up / down |
+| `Shift` / `Alt` | Faster / slower while held |
 
 ## Usage
 

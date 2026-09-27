@@ -360,7 +360,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		if ( this.cameraManager.controls ) this.cameraManager.controls.update();
+		this.cameraManager.updateControls();
 
 		this._applyPendingRenderScale();
 
@@ -3416,14 +3416,19 @@ export class PathTracerApp extends EventDispatcher {
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
 
-		this._addTrackedListener( this.cameraManager.controls, 'change', () => {
+		const onCameraMoved = () => {
 
 			this.needsReset = true;
 			// Here rather than in render(), so the first frame of the move is already at the lower resolution.
 			this.stages.pathTracer?.enterInteractionMode();
 			this.wake();
 
-		} );
+		};
+
+		this._addTrackedListener( this.cameraManager.controls, 'change', onCameraMoved );
+		this._addTrackedListener( this.cameraManager.walkControls, 'change', onCameraMoved );
+		// A held key moves the camera from the frame loop, which may be asleep.
+		this._addTrackedListener( this.cameraManager.walkControls, 'start', () => this.wake() );
 
 	}
 
@@ -3567,9 +3572,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Auto-focus context — CameraManager stores it, reads it each frame
 		this.cameraManager.initAutoFocus( {
-			meshScene: this.meshScene,
 			assetLoader: this.assetLoader,
-			floorPlane: this.assetLoader.floorPlane,
 			pathTracer: this.stages.pathTracer,
 			settings: this.settings,
 			softReset: () => this.reset( true ),
@@ -3823,6 +3826,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.cameraManager.controls.saveState();
 		this.cameraManager.controls.update();
+		this.cameraManager.walkControls.fitSpeed( this.assetLoader.getSceneScale() );
 
 	}
 

@@ -134,6 +134,16 @@ vi.mock( 'three/addons/controls/OrbitControls.js', () => ( {
 	}
 } ) );
 
+vi.mock( '@/core/managers/WalkControls.js', () => ( {
+	WalkControls: class {
+
+		update() {}
+		release() {}
+		dispose() {}
+
+	}
+} ) );
+
 vi.mock( '@/core/EngineEvents.js', () => ( {
 	EngineEvents: { AUTO_FOCUS_UPDATED: 'AUTO_FOCUS_UPDATED' }
 } ) );

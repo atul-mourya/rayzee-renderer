@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BoxGeometry, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, Scene, Vector3 } from 'three';
 import { CameraManager } from '@/core/managers/CameraManager.js';
+import { InteractionManager } from '@/core/managers/InteractionManager.js';
 
 function manager( { target = new Vector3() } = {} ) {
 
@@ -17,7 +18,7 @@ function manager( { target = new Vector3() } = {} ) {
 	const cm = Object.create( CameraManager.prototype );
 	Object.assign( cm, {
 		camera, controls: { target }, autoFocusMode: 'auto', afScreenPoint: { x: 0.5, y: 0.5 }, afSmoothingFactor: 0.15,
-		interactionManager: { raycaster: new Raycaster() }, _lastValidFocusDistance: null, _smoothedFocusDistance: null,
+		interactionManager: Object.assign( Object.create( InteractionManager.prototype ), { raycaster: new Raycaster(), camera } ), _lastValidFocusDistance: null, _smoothedFocusDistance: null,
 		_afPointDirty: false, _afSuspended: false, _listeners: {},
 	} );
 	cm.dispatchEvent = vi.fn();
@@ -28,8 +29,9 @@ function manager( { target = new Vector3() } = {} ) {
 const frame = ( cm, meshScene, focus = 0, projection = 0 ) => {
 
 	const setFocusDistance = vi.fn();
+	cm.interactionManager.scene = meshScene;
 	cm.updateAutoFocus( {
-		meshScene, assetLoader: { getSceneScale: () => 2 }, floorPlane: null, currentFocusDistance: focus,
+		assetLoader: { getSceneScale: () => 2 }, currentFocusDistance: focus,
 		pathTracer: { enableDOF: { value: 1 }, cameraProjection: { value: projection } }, setFocusDistance, softReset: vi.fn(), hardReset: vi.fn(),
 	} );
 	return setFocusDistance.mock.calls.at( - 1 )?.[ 0 ];

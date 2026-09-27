@@ -1889,6 +1889,9 @@ const useCameraStore = create( ( set, get ) => ( {
 	...DEFAULT_STATE,
 	activePreset: "custom",
 	dofMode: readDofMode(),
+	navigationMode: 'orbit',
+	walkSpeed: 1,
+	walkSpeedFitted: 1,
 	modelDimensions: [ 1, 1, 1 ],
 	cameraNames: [],
 	selectedCameraIndex: 0,
@@ -1987,7 +1990,7 @@ const useCameraStore = create( ( set, get ) => ( {
 
 	},
 
-	// A new model starts in its own file's units.
+	// A new model starts in its own file's units, at the walk speed the engine fitted to it.
 	syncModelSize: ( { resetUnits = false } = {} ) => {
 
 		const app = getApp();
@@ -2002,10 +2005,27 @@ const useCameraStore = create( ( set, get ) => ( {
 
 			next.unitsPerMetre = 1;
 			app.settings.set( 'unitsPerMetre', 1, { reset: false } );
+			next.walkSpeed = next.walkSpeedFitted = app.cameraManager.walkControls.speed;
 
 		}
 
 		if ( Object.keys( next ).length ) set( next );
+
+	},
+
+	handleNavigationModeChange: mode => {
+
+		set( { navigationMode: mode } );
+		getApp()?.cameraManager.setNavigationMode( mode );
+
+	},
+
+	handleWalkSpeedChange: metresPerSecond => {
+
+		const walkSpeed = metresPerSecond * get().unitsPerMetre;
+		set( { walkSpeed } );
+		const walk = getApp()?.cameraManager.walkControls;
+		if ( walk ) walk.speed = walkSpeed;
 
 	},
 

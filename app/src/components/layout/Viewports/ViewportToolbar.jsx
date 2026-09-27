@@ -242,14 +242,14 @@ const ViewportToolbar = ( {
 					<>
 						<ControlButton
 							onClick={() => handleTransformModeChange( 'translate' )}
-							tooltip="Translate (W)"
+							tooltip="Translate"
 							icon={<Move />}
 							isActive={transformMode === 'translate'}
 						/>
 						{canRotate && (
 							<ControlButton
 								onClick={() => handleTransformModeChange( 'rotate' )}
-								tooltip="Rotate (E)"
+								tooltip="Rotate"
 								icon={<RotateCw />}
 								isActive={transformMode === 'rotate'}
 							/>
@@ -257,7 +257,7 @@ const ViewportToolbar = ( {
 						{canScale && (
 							<ControlButton
 								onClick={() => handleTransformModeChange( 'scale' )}
-								tooltip="Scale (R)"
+								tooltip="Scale"
 								icon={<Maximize2 />}
 								isActive={transformMode === 'scale'}
 							/>

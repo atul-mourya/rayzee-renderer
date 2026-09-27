@@ -1,4 +1,4 @@
-import { Ruler, Aperture, Camera, Crosshair, RotateCcw, Ellipsis, Plus, Trash2, Globe } from 'lucide-react';
+import { Ruler, Aperture, Camera, Crosshair, RotateCcw, Ellipsis, Plus, Trash2, Globe, Footprints } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Row } from "@/components/ui/row";
 import { Slider } from "@/components/ui/slider";
@@ -9,7 +9,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { InfoTip } from "@/components/ui/info-tip";
 import AspectRatioControl from './AspectRatioControl';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CAMERA_RANGES, CAMERA_PRESETS, isPanorama } from '@/Constants';
+import { CAMERA_RANGES, CAMERA_PRESETS, isPanorama, walkSpeedRange } from '@/Constants';
 import { useCameraStore, usePathTracerStore } from '@/store';
 import { useEffect } from 'react';
 import { getApp } from '@/lib/appProxy';
@@ -44,6 +44,9 @@ const CameraTab = () => {
 		focalLength,
 		enableDOF,
 		zoomToCursor,
+		navigationMode,
+		walkSpeed,
+		walkSpeedFitted,
 		activePreset,
 		apertureScale,
 		anamorphicRatio,
@@ -69,6 +72,8 @@ const CameraTab = () => {
 		handleFocalLengthChange,
 		handleEnableDOFChange,
 		handleZoomToCursorChange,
+		handleNavigationModeChange,
+		handleWalkSpeedChange,
 		handleCameraMove,
 		handleCameraChange,
 		handleAddCamera,
@@ -133,6 +138,8 @@ const CameraTab = () => {
 		{ x: 75, y: 75 }, // bottom right view
 	];
 
+	const walking = navigationMode === 'walk';
+	const walkRange = walkSpeedRange( walkSpeedFitted / unitsPerMetre );
 	const isAFPointCustom = afScreenPoint.x !== 0.5 || afScreenPoint.y !== 0.5;
 	const simple = dofMode === 'look';
 	const focusMetres = threeDigits( focusDistance / unitsPerMetre );
@@ -230,12 +237,50 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
-					<Switch
-						checked={zoomToCursor}
-						label="Zoom to Cursor"
-						onCheckedChange={handleZoomToCursorChange}
-					/>
+					<span className="opacity-50 text-xs truncate inline-flex items-center">
+						Navigation
+						<InfoTip text="Orbit circles the camera around a point. Walk moves it through the scene on foot: drag to look around, and use the keys to move. Back in Orbit, the camera circles whatever it is looking at." />
+					</span>
+					<ToggleGroup
+						type="single"
+						value={navigationMode}
+						onValueChange={( val ) => val && handleNavigationModeChange( val )}
+						className="max-w-40"
+					>
+						<ToggleGroupItem value="orbit" className="text-xs px-3 h-5">Orbit</ToggleGroupItem>
+						<ToggleGroupItem value="walk" className="text-xs px-3 h-5">Walk</ToggleGroupItem>
+					</ToggleGroup>
 				</Row>
+
+				{walking ? (
+					<>
+						<Row>
+							<Slider
+								label={<>Walk Speed<InfoTip text="How fast the keys move the camera. It starts at a speed that crosses the model in about eight seconds, and counts the file's units as metres unless a Subject Size says otherwise." /></>}
+								icon={Footprints}
+								min={walkRange.min}
+								max={walkRange.max}
+								step={walkRange.step}
+								precision={walkRange.precision}
+								unit=" m/s"
+								value={[ walkSpeed / unitsPerMetre ]}
+								onValueChange={( values ) => handleWalkSpeedChange( values[ 0 ] )}
+							/>
+						</Row>
+						<p className="text-[10px] opacity-50 leading-relaxed">
+							Drag to look · W A S D or arrows to walk · E / Q up and down<br />
+							Hold Shift to go faster, Alt/Option to go slower
+						</p>
+					</>
+				) : (
+					<Row>
+						<Switch
+							checked={zoomToCursor}
+							label="Zoom to Cursor"
+							onCheckedChange={handleZoomToCursorChange}
+						/>
+					</Row>
+				)}
 
 				<Separator />
 
@@ -437,7 +482,7 @@ const CameraTab = () => {
 
 				<Separator />
 
-				{selectedCameraIndex == 0 && (
+				{selectedCameraIndex == 0 && ! walking && (
 					<div className="flex items-center">
 						<Trackpad
 							label={"Camera Position"}

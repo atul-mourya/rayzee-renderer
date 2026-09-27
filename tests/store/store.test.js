@@ -213,7 +213,7 @@ describe( 'depth-of-field presets and subject size', () => {
 		camera.position.set( 0, 0, 4 );
 		const values = { focusDistance: focus, unitsPerMetre: 1 };
 		return {
-			cameraManager: { active: camera, controls: { target: new Vector3(), update: vi.fn() } },
+			cameraManager: { active: camera, controls: { target: new Vector3(), update: vi.fn() }, walkControls: { speed: 0.4 } },
 			assetLoader: { getSceneSize: () => new Vector3( 1.5, MODEL_SIZE, 2.3 ) },
 			settings: {
 				get: k => values[ k ],
@@ -311,7 +311,7 @@ describe( 'depth-of-field presets and subject size', () => {
 
 	} );
 
-	it( 'reads the new model\'s size and goes back to its file units on load', async () => {
+	it( 'reads the new model\'s size and walk speed, and goes back to its file units on load', async () => {
 
 		const app = await withApp( {}, { modelDimensions: [ 1, 1, 1 ], unitsPerMetre: 40 } );
 		cameraStore().syncModelSize( { resetUnits: true } );
@@ -319,6 +319,7 @@ describe( 'depth-of-field presets and subject size', () => {
 		expect( cameraStore().modelDimensions ).toEqual( [ 1.5, MODEL_SIZE, 2.3 ] );
 		expect( cameraStore().unitsPerMetre ).toBe( 1 );
 		expect( app.values.unitsPerMetre ).toBe( 1 );
+		expect( [ cameraStore().walkSpeed, cameraStore().walkSpeedFitted ] ).toEqual( [ 0.4, 0.4 ] );
 
 	} );
 
@@ -341,6 +342,32 @@ describe( 'depth-of-field presets and subject size', () => {
 
 		cameraStore().setAutoFocusDistance( 4.62 );
 		expect( cameraStore().focusDistance ).toBe( 4.62 );
+
+	} );
+
+} );
+
+describe( 'walk speed', () => {
+
+	const withApp = async ( state = {} ) => {
+
+		const walkControls = { speed: 1.4 };
+		const app = { cameraManager: { walkControls } };
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		store.useCameraStore.setState( { unitsPerMetre: 1, ...state } );
+		return walkControls;
+
+	};
+
+	const cameraStore = () => store.useCameraStore.getState();
+
+	it( 'takes the slider in metres per second', async () => {
+
+		const walk = await withApp( { unitsPerMetre: 100 } );
+		cameraStore().handleWalkSpeedChange( 2 );
+
+		expect( walk.speed ).toBe( 200 );
+		expect( cameraStore().walkSpeed ).toBe( 200 );
 
 	} );
 

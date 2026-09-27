@@ -694,6 +694,14 @@ export class InteractionManager extends EventDispatcher {
 
 	}
 
+	/** The nearest scene surface under an NDC point, skipping the floor and helpers. */
+	pickSurface( ndcX, ndcY ) {
+
+		this.raycaster.setFromCamera( { x: ndcX, y: ndcY }, this.camera );
+		return this.filterValidIntersects( this.raycaster.intersectObjects( this.scene.children, true ) )[ 0 ] ?? null;
+
+	}
+
 	/**
 	 * Filter intersections to exclude helper objects and floor plane
 	 * @private

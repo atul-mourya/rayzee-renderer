@@ -1,8 +1,9 @@
-import { EventDispatcher, PerspectiveCamera, Vector3 } from 'three';
+import { EventDispatcher, MathUtils, PerspectiveCamera, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
 import { AF_DEFAULTS } from '../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
+import { WalkControls } from './WalkControls.js';
 
 const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
 
@@ -31,6 +32,8 @@ export class CameraManager extends EventDispatcher {
 		this.controls.screenSpacePanning = true;
 		this.controls.zoomToCursor = true;
 		this.controls.saveState();
+
+		this.walkControls = new WalkControls( this.camera, canvas, this.controls );
 
 		this.interactionManager = null;
 
@@ -357,6 +360,46 @@ export class CameraManager extends EventDispatcher {
 
 	}
 
+	/**
+	 * Orbit around a target, or walk through the scene first-person (see {@link WalkControls}).
+	 * Leaving walk mode orbits around the surface at the centre of the view.
+	 * @param {'orbit' | 'walk'} mode
+	 */
+	setNavigationMode( mode ) {
+
+		const walk = mode === 'walk';
+		if ( this.walkControls.enabled === walk ) return;
+
+		const controls = this.controls;
+		controls.enableRotate = controls.enablePan = controls.enableZoom = ! walk;
+		this.walkControls.enabled = walk;
+		if ( walk ) return;
+
+		this.walkControls.release();
+		const hit = this.interactionManager?.pickSurface( 0, 0 );
+		if ( ! hit ) return;
+
+		const distance = MathUtils.clamp( hit.distance, controls.minDistance, controls.maxDistance );
+		controls.target.copy( this.camera.position ).addScaledVector( this.camera.getWorldDirection( new Vector3() ), distance );
+		controls.update();
+
+	}
+
+	/** @returns {'orbit' | 'walk'} */
+	get navigationMode() {
+
+		return this.walkControls.enabled ? 'walk' : 'orbit';
+
+	}
+
+	/** Per frame, before rendering. */
+	updateControls() {
+
+		this.walkControls.update();
+		this.controls.update();
+
+	}
+
 	// ── Aliases (match Sub-API surface) ───────────────────────────
 
 	/** The active Three.js PerspectiveCamera. */
@@ -424,9 +467,7 @@ export class CameraManager extends EventDispatcher {
 	 * Per-frame auto-focus update. Called in animate() before pipeline.render().
 	 *
 	 * @param {Object} params
-	 * @param {import('three').Scene} params.meshScene
 	 * @param {Object} params.assetLoader
-	 * @param {import('three').Mesh} params.floorPlane
 	 * @param {number} params.currentFocusDistance
 	 * @param {import('../Stages/PathTracer.js').PathTracer} params.pathTracer
 	 * @param {Function} params.setFocusDistance - Callback to update uniform + settings
@@ -435,8 +476,9 @@ export class CameraManager extends EventDispatcher {
 	 */
 	updateAutoFocus( ctx ) {
 
-		const { meshScene, assetLoader, floorPlane, currentFocusDistance, pathTracer, setFocusDistance, softReset, hardReset } = ctx || this._afContext || {};
-		if ( ! meshScene ) return;
+		const context = ctx || this._afContext;
+		if ( ! context || ! this.interactionManager ) return;
+		const { assetLoader, currentFocusDistance, pathTracer, setFocusDistance, softReset, hardReset } = context;
 
 		if ( this.autoFocusMode === 'manual' ) return;
 
@@ -466,22 +508,8 @@ export class CameraManager extends EventDispatcher {
 			&& stage.frameCount > 0
 			&& ! stage.isComplete ) return;
 
-		// Convert AF screen point (normalized 0-1) to NDC (-1 to 1)
-		const ndcX = this.afScreenPoint.x * 2 - 1;
-		const ndcY = - ( this.afScreenPoint.y * 2 - 1 );
-
-		const raycaster = this.interactionManager?.raycaster;
-		if ( ! raycaster ) return;
-
-		raycaster.setFromCamera( { x: ndcX, y: ndcY }, this.camera );
-		const intersects = raycaster.intersectObjects( meshScene.children, true );
-
-		const validHit = intersects.find( hit =>
-			hit.object !== this.interactionManager?.focusPointIndicator &&
-			hit.object !== floorPlane &&
-			! hit.object.name.includes( 'Helper' ) &&
-			hit.object.type === 'Mesh'
-		);
+		// AF screen point (0 to 1, y down) to NDC.
+		const validHit = this.interactionManager.pickSurface( this.afScreenPoint.x * 2 - 1, 1 - this.afScreenPoint.y * 2 );
 
 		let rawDistance;
 		if ( validHit ) {
@@ -574,20 +602,16 @@ export class CameraManager extends EventDispatcher {
 	 * and `updateAutoFocus()` reads from it each frame — no per-frame allocation.
 	 *
 	 * @param {Object} deps
-	 * @param {import('three').Scene}           deps.meshScene
 	 * @param {import('../Processor/AssetLoader.js').AssetLoader} deps.assetLoader
-	 * @param {import('three').Mesh}            deps.floorPlane
 	 * @param {import('../Stages/PathTracer.js').PathTracer} deps.pathTracer
 	 * @param {import('../RenderSettings.js').RenderSettings} deps.settings
 	 * @param {Function}                        deps.softReset
 	 * @param {Function}                        deps.hardReset
 	 */
-	initAutoFocus( { meshScene, assetLoader, floorPlane, pathTracer, settings, softReset, hardReset } ) {
+	initAutoFocus( { assetLoader, pathTracer, settings, softReset, hardReset } ) {
 
 		this._afContext = {
-			meshScene,
 			assetLoader,
-			floorPlane,
 			pathTracer,
 			setFocusDistance: ( d ) => settings.set( 'focusDistance', d, { silent: true } ),
 			softReset,
@@ -603,6 +627,7 @@ export class CameraManager extends EventDispatcher {
 
 	dispose() {
 
+		this.walkControls?.dispose();
 		this.controls?.dispose();
 
 	}
