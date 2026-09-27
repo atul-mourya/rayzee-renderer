@@ -14,6 +14,7 @@ export const RENDER_PROFILES = Object.freeze( {
 		environmentRotation: 0.0, // degrees — the HDRI as authored, as Blender shows it
 		toneMapping: 6, // AgXToneMapping
 		saturation: 1.0, // no grade
+		dofMode: 'look', // depth of field set by how blurry it looks, not by a lens — right at any scene scale
 	} ),
 	physical: Object.freeze( {
 		areaLightIntensityScale: 1.0,
@@ -22,6 +23,7 @@ export const RENDER_PROFILES = Object.freeze( {
 		// engine's own corpus (shade 1.48 vs AgX 3.01 from identical radiance).
 		toneMapping: 6,
 		saturation: 1.0, // no grade
+		dofMode: 'physical',
 	} ),
 } );
 
@@ -114,6 +116,9 @@ export const ENGINE_DEFAULTS = {
 	focalLength: 50,
 	apertureScale: 1.0,
 	anamorphicRatio: 1.0,
+	unitsPerMetre: 1, // scene units per real metre; the lens is specified in mm
+	dofMode: RENDER_PROFILES.viewer.dofMode, // 'look' | 'physical'
+	dofBlur: 0.05, // look mode: a far background's blur, as a fraction of the image height
 
 	// Auto-focus
 	autoFocusMode: 'auto', // 'manual' | 'auto'
@@ -474,44 +479,39 @@ export const CAMERA_PRESETS = {
 	portrait: {
 		name: "Portrait",
 		description: "Shallow depth of field, background blur",
-		fov: 45,
-		focusDistance: 1.5,
+		dofBlur: 0.10,
 		aperture: 1.4,
 		focalLength: 135,
-		apertureScale: 1.5
+		apertureScale: 1.0
 	},
 	landscape: {
 		name: "Landscape",
 		description: "Maximum depth of field, everything in focus",
-		fov: 65,
-		focusDistance: 10.0,
+		dofBlur: 0.001,
 		aperture: 16.0,
 		focalLength: 24,
 		apertureScale: 0.5
 	},
 	macro: {
 		name: "Macro",
-		description: "Extreme close-up with thin focus plane",
-		fov: 40,
-		focusDistance: 0.3,
-		aperture: 2.0,
+		description: "Very thin focus plane for close-ups",
+		dofBlur: 0.14,
+		aperture: 1.4,
 		focalLength: 100,
 		apertureScale: 2.0
 	},
 	product: {
 		name: "Product",
 		description: "Sharp detail with subtle background separation",
-		fov: 50,
-		focusDistance: 0.8,
+		dofBlur: 0.013,
 		aperture: 2.8,
 		focalLength: 85,
-		apertureScale: 1.0
+		apertureScale: 0.4
 	},
 	architectural: {
 		name: "Architectural",
-		description: "Wide view with deep focus",
-		fov: 75,
-		focusDistance: 5.0,
+		description: "Deep focus for rooms and buildings",
+		dofBlur: 0.001,
 		aperture: 11.0,
 		focalLength: 16,
 		apertureScale: 0.5
@@ -519,11 +519,10 @@ export const CAMERA_PRESETS = {
 	cinematic: {
 		name: "Cinematic",
 		description: "Dramatic depth separation with anamorphic bokeh",
-		fov: 35,
-		focusDistance: 3.0,
+		dofBlur: 0.13,
 		aperture: 1.4,
 		focalLength: 200,
-		apertureScale: 1.8,
+		apertureScale: 1.0,
 		anamorphicRatio: 1.5
 	}
 };

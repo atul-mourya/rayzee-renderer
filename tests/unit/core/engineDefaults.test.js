@@ -133,7 +133,7 @@ describe( 'ASVGF_QUALITY_PRESETS', () => {
 
 describe( 'CAMERA_PRESETS', () => {
 
-	const requiredFields = [ 'name', 'fov', 'focusDistance', 'aperture', 'focalLength' ];
+	const requiredFields = [ 'name', 'dofBlur', 'aperture', 'focalLength', 'apertureScale' ];
 
 	it( 'has standard presets', () => {
 
@@ -155,10 +155,9 @@ describe( 'CAMERA_PRESETS', () => {
 
 		} );
 
-		it( `${key} preset has valid fov range`, () => {
+		it( `${key} preset leaves the field of view to the camera`, () => {
 
-			expect( preset.fov ).toBeGreaterThan( 0 );
-			expect( preset.fov ).toBeLessThanOrEqual( 180 );
+			expect( preset ).not.toHaveProperty( 'fov' );
 
 		} );
 

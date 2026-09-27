@@ -292,7 +292,9 @@ export class UniformManager {
 		u( 'aperture', DEFAULT_STATE.aperture, 'float' );
 		u( 'apertureScale', 1.0, 'float' );
 		u( 'anamorphicRatio', DEFAULT_STATE.anamorphicRatio ?? 1.0, 'float' );
-		u( 'sceneScale', 1.0, 'float' );
+		u( 'unitsPerMetre', DEFAULT_STATE.unitsPerMetre, 'float' );
+		u( 'dofMode', DEFAULT_STATE.dofMode === 'look' ? 1 : 0, 'int' );
+		u( 'dofBlur', DEFAULT_STATE.dofBlur, 'float' );
 
 		// Sampling — use the module-level uniform from Random.js so TSL sees the same node
 		this._uniforms.set( 'samplingTechnique', samplingTechniqueUniform );

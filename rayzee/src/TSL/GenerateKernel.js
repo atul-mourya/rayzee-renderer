@@ -40,7 +40,7 @@ export function buildGenerateKernel( params ) {
 		resolution, frame,
 		cameraWorldMatrix, cameraProjectionMatrixInverse,
 		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
-		enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
+		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
 		transmissiveBounces, // per-ray refraction budget (megakernel parity: PathTracerCore.js:606)
@@ -78,7 +78,7 @@ export function buildGenerateKernel( params ) {
 			jitteredUV, seed,
 			cameraWorldMatrix, cameraProjectionMatrixInverse,
 			cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
-			enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
+			enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		) );
 
 		writeRayOriginMeta( rayBufferRW, rayID, ray.origin, int( 0 ), int( 0 ) );

@@ -67,6 +67,7 @@ function createMockEngine() {
 
 function createMockStores() {
 
+	const cameraState = { setSelectMode: vi.fn(), handleAFScreenPointChange: vi.fn(), setAutoFocusDistance: vi.fn(), syncModelSize: vi.fn() };
 	const state = {
 		setIsRenderComplete: vi.fn(),
 		setCompletionReason: vi.fn(),
@@ -86,10 +87,11 @@ function createMockStores() {
 
 	return {
 		useStore: { getState: () => state, setState: vi.fn() },
-		useCameraStore: { getState: () => ( { setSelectMode: vi.fn(), handleAFScreenPointChange: vi.fn(), setAutoFocusDistance: vi.fn() } ) },
+		useCameraStore: { getState: () => cameraState },
 		usePathTracerStore: { getState: () => ( { setCurrentAutoExposure: vi.fn(), setCurrentAvgLuminance: vi.fn() } ) },
 		useAnimationStore: { getState: () => ( { setIsPlaying: vi.fn(), setIsPaused: vi.fn(), setClips: vi.fn() } ) },
 		_state: state,
+		_cameraState: cameraState,
 	};
 
 }
@@ -212,6 +214,15 @@ describe( 'connectEngineToStore', () => {
 
 		delete globalThis.window;
 		delete globalThis.CustomEvent;
+
+	} );
+
+	it( 'puts a new model back in its own file units', () => {
+
+		connectEngineToStore( engine, stores );
+		engine._emit( 'ModelLoaded' );
+
+		expect( stores._cameraState.syncModelSize ).toHaveBeenCalledWith( { resetUnits: true } );
 
 	} );
 

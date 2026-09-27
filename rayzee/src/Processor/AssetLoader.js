@@ -97,6 +97,7 @@ export class AssetLoader extends EventDispatcher {
 		this.targetModel = null;
 		this.floorPlane = null;
 		this.sceneScale = 1.0;
+		this.sceneSize = new Vector3( 1, 1, 1 );
 		this.loaderCache = {};
 		this.uploadedFileInfo = null;
 		this.animations = [];
@@ -2000,6 +2001,7 @@ export class AssetLoader extends EventDispatcher {
 
 		// Calculate scene scale factor based on model size
 		const sceneScale = maxDim;
+		this.sceneSize.copy( size );
 
 		// Rebuild path tracing
 		buildTimer.start( 'setupPathTracing' );
@@ -2213,6 +2215,13 @@ export class AssetLoader extends EventDispatcher {
 	getSceneScale() {
 
 		return this.sceneScale;
+
+	}
+
+	/** The loaded model's bounding-box size along x, y and z, in scene units. */
+	getSceneSize() {
+
+		return this.sceneSize.clone();
 
 	}
 

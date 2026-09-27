@@ -13,7 +13,7 @@
 
 import {
 	Fn, vec3, vec4, float, int,
-	If, normalize, mat3, mix, sin, cos, cross, dot,
+	If, normalize, mat3, mix, sin, cos, cross, dot, select,
 } from 'three/tsl';
 
 import { Ray } from './Struct.js';
@@ -89,7 +89,7 @@ export const generateRayFromCamera = Fn( ( [
 	uv01, rngState,
 	cameraWorldMatrix, cameraProjectionMatrixInverse,
 	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
-	enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio
+	enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur
 ] ) => {
 
 	const rayOriginWorld = vec3( cameraWorldMatrix[ 3 ] ).toVar();
@@ -102,10 +102,18 @@ export const generateRayFromCamera = Fn( ( [
 	const resultOrigin = rayOriginWorld.toVar();
 	const resultDirection = rayDirectionWorld.toVar();
 
-	If( enableDOF.and( focalLength.greaterThan( 0.0 ) ).and( aperture.lessThan( 64.0 ) ).and( focusDistance.greaterThan( 0.001 ) ), () => {
+	const lookMode = dofMode.equal( int( 1 ) );
+	const lensOpen = lookMode.and( dofBlur.greaterThan( 0.0 ) ).or( lookMode.not().and( focalLength.greaterThan( 0.0 ) ).and( aperture.lessThan( 64.0 ) ) );
 
-		const effectiveAperture = focalLength.div( aperture );
-		const apertureRadius = effectiveAperture.mul( 0.001 ).mul( sceneScale ).mul( apertureScale );
+	If( enableDOF.and( lensOpen ).and( focusDistance.greaterThan( 0.001 ) ), () => {
+
+		const halfViewHeight = select( cameraProjection.equal( int( 1 ) ), panoLatRange.y.sub( panoLatRange.x ).mul( 0.5 ), cameraProjectionMatrixInverse[ 1 ].y );
+		const apertureRadius = select( lookMode,
+			// A far background blurs by dofBlur of the image height, whatever the scene's scale.
+			dofBlur.mul( focusDistance ).mul( halfViewHeight ),
+			// f/N is the aperture's diameter, not its radius.
+			focalLength.div( aperture.mul( 2.0 ) ).mul( 0.001 ).mul( unitsPerMetre ).mul( apertureScale )
+		);
 
 		const randomPoint = RandomPointInCircle( rngState );
 		// Anamorphic squeeze — stretch horizontally for oval bokeh
@@ -113,6 +121,7 @@ export const generateRayFromCamera = Fn( ( [
 		const lensY = randomPoint.y;
 
 		const lensOffset = vec3( 0.0 ).toVar();
+		const focusAlongRay = focusDistance.toVar();
 
 		If( cameraProjection.equal( int( 1 ) ), () => {
 
@@ -126,10 +135,13 @@ export const generateRayFromCamera = Fn( ( [
 			const camUp = normalize( vec3( cameraWorldMatrix[ 1 ] ) );
 			lensOffset.assign( camRight.mul( lensX ).add( camUp.mul( lensY ) ) );
 
+			// A flat focal plane: focusDistance is depth along the view axis, not distance along the ray.
+			focusAlongRay.assign( focusDistance.div( dot( rayDirectionWorld, normalize( vec3( cameraWorldMatrix[ 2 ] ) ) ).negate() ) );
+
 		} );
 
 		resultOrigin.assign( rayOriginWorld.add( lensOffset.mul( apertureRadius ) ) );
-		resultDirection.assign( normalize( rayOriginWorld.add( rayDirectionWorld.mul( focusDistance ) ).sub( resultOrigin ) ) );
+		resultDirection.assign( normalize( rayOriginWorld.add( rayDirectionWorld.mul( focusAlongRay ) ).sub( resultOrigin ) ) );
 
 	} );
 

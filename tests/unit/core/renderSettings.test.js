@@ -199,6 +199,45 @@ describe( 'RenderSettings', () => {
 
 	} );
 
+	// ── depth of field ─────────────────────────────────────────
+
+	describe( 'depth of field lens', () => {
+
+		let stage;
+
+		beforeEach( () => {
+
+			stage = { setUniform: vi.fn() };
+			settings.bind( { stages: { pathTracer: stage }, resetCallback: vi.fn() } );
+
+		} );
+
+		it( 'trusts the file: one scene unit is a metre', () => {
+
+			expect( settings.get( 'unitsPerMetre' ) ).toBe( 1 );
+
+		} );
+
+		it( 'scales the real-camera aperture by units per metre', () => {
+
+			settings.set( 'unitsPerMetre', 79.5 );
+			expect( stage.setUniform ).toHaveBeenCalledWith( 'unitsPerMetre', 79.5 );
+
+		} );
+
+		it( 'switches the lens between look and real camera', () => {
+
+			settings.set( 'dofMode', 'physical' );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'dofMode', 0 );
+			settings.set( 'dofMode', 'look' );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'dofMode', 1 );
+			settings.set( 'dofBlur', 0.12 );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'dofBlur', 0.12 );
+
+		} );
+
+	} );
+
 	// ── applyAll ───────────────────────────────────────────────
 
 	describe( 'applyAll', () => {

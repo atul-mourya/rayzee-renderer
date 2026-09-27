@@ -154,7 +154,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => {
 
-		useCameraStore.getState().setAutoFocusDistance( e.distance );
+		useCameraStore.getState().setAutoFocusDistance( e.worldDistance );
 
 	} );
 
@@ -168,29 +168,15 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// Camera switch → sync selection + the camera's own per-camera DOF/focus effects.
-	// The engine emits UI-facing (unscaled) values, so this is a plain passthrough.
 	on( 'CameraSwitched', ( e ) => {
 
 		const cam = useCameraStore.getState();
 		cam.setSelectedCameraIndex( e.cameraIndex );
-
-		if ( e.effects ) {
-
-			cam.applyCameraEffects( {
-				fov: e.fov,
-				enableDOF: e.effects.enableDOF,
-				focusDistance: e.effects.focusDistance,
-				aperture: e.effects.aperture,
-				focalLength: e.effects.focalLength,
-				apertureScale: e.effects.apertureScale,
-				anamorphicRatio: e.effects.anamorphicRatio,
-				autoFocusMode: e.effects.autoFocusMode,
-				afScreenPoint: e.effects.afScreenPoint,
-			} );
-
-		}
+		if ( e.effects ) cam.applyCameraEffects( { fov: e.fov, ...e.effects } );
 
 	} );
+
+	on( 'ModelLoaded', () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
 
 	on( EngineEvents.AUTO_EXPOSURE_UPDATED, ( e ) => {
 
@@ -250,6 +236,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	on( 'SceneRebuild', () => {
+
+		useCameraStore.getState().syncModelSize();
 
 		// Update animation clips list when a new scene is loaded
 		if ( useAnimationStore ) {

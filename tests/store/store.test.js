@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PerspectiveCamera, Vector3 } from 'three';
 
 // Stub browser APIs that Zustand/store.js may reference. localStorage is required: without
 // it the store import throws and the `catch { store = null }` below silently skips every test.
@@ -197,6 +198,149 @@ describe( 'NRD denoiser handlers', () => {
 
 		expect( app.denoisingManager.setNRDDebugMode ).toHaveBeenCalledWith( 3 );
 		expect( store.usePathTracerStore.getState().nrdDebugMode ).toBe( 3 );
+
+	} );
+
+} );
+
+describe( 'depth-of-field presets and subject size', () => {
+
+	const MODEL_SIZE = 3.18;
+
+	const mockApp = ( { focus = 2 } = {} ) => {
+
+		const camera = new PerspectiveCamera( 55, 1, 0.1, 100 );
+		camera.position.set( 0, 0, 4 );
+		const values = { focusDistance: focus, unitsPerMetre: 1 };
+		return {
+			cameraManager: { active: camera, controls: { target: new Vector3(), update: vi.fn() } },
+			assetLoader: { getSceneSize: () => new Vector3( 1.5, MODEL_SIZE, 2.3 ) },
+			settings: {
+				get: k => values[ k ],
+				set: vi.fn( ( k, v ) => ( values[ k ] = v ) ),
+				setMany: vi.fn( u => Object.assign( values, u ) ),
+			},
+			reset: vi.fn(),
+			values,
+		};
+
+	};
+
+	const withApp = async ( options, state = {} ) => {
+
+		const app = mockApp( options );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		store.useCameraStore.setState( { autoFocusMode: 'manual', fov: 55, modelDimensions: [ 1.5, MODEL_SIZE, 2.3 ], unitsPerMetre: 1, ...state } );
+		return app;
+
+	};
+
+	const cameraStore = () => store.useCameraStore.getState();
+
+	it( 'starts on Custom, so the first pick of any preset applies it', () => {
+
+		expect( store.useCameraStore.getInitialState().activePreset ).toBe( 'custom' );
+
+	} );
+
+	it( 'changes only the lens: the camera, its field of view and a manual focus stay put', async () => {
+
+		const app = await withApp( { focus: 2 } );
+		cameraStore().handlePresetChange( 'cinematic' );
+
+		const camera = app.cameraManager.active;
+		expect( camera.fov ).toBe( 55 );
+		expect( camera.position.toArray() ).toEqual( [ 0, 0, 4 ] );
+		expect( app.values.focusDistance ).toBe( 2 );
+		expect( cameraStore().fov ).toBe( 55 );
+		expect( app.settings.setMany.mock.calls.at( - 1 )[ 0 ] ).toEqual( { dofBlur: 0.13, aperture: 1.4, focalLength: 200, apertureScale: 1.0, anamorphicRatio: 1.5 } );
+
+	} );
+
+	it( 'takes the blur slider as a percentage and marks the look custom', async () => {
+
+		const app = await withApp( {}, { activePreset: 'portrait' } );
+		cameraStore().handleDofBlurChange( 6 );
+
+		expect( app.values.dofBlur ).toBeCloseTo( 0.06, 9 );
+		expect( cameraStore().activePreset ).toBe( 'custom' );
+
+	} );
+
+	it( 'switches between Simple and Pro, and remembers the choice', async () => {
+
+		const app = await withApp();
+		cameraStore().handleDofModeChange( 'physical' );
+
+		expect( app.values.dofMode ).toBe( 'physical' );
+		expect( cameraStore().dofMode ).toBe( 'physical' );
+		expect( localStorage.getItem( 'rayzee-dof-mode' ) ).toBe( 'physical' );
+
+		cameraStore().handleDofModeChange( 'look' );
+		expect( localStorage.getItem( 'rayzee-dof-mode' ) ).toBe( 'look' );
+
+	} );
+
+	it( 'keeps Simple or Pro when switching cameras', async () => {
+
+		await withApp( {}, { dofMode: 'physical' } );
+		cameraStore().applyCameraEffects( { dofMode: 'look', dofBlur: 0.02 } );
+
+		expect( cameraStore().dofMode ).toBe( 'physical' );
+		expect( cameraStore().dofBlur ).toBe( 0.02 );
+
+	} );
+
+	it( 'takes a typed real size as the scale between scene units and metres', async () => {
+
+		const app = await withApp();
+		cameraStore().handleSubjectSizeChange( 0.04 );
+
+		expect( app.values.unitsPerMetre ).toBeCloseTo( MODEL_SIZE / 0.04, 9 );
+		expect( cameraStore().unitsPerMetre ).toBeCloseTo( MODEL_SIZE / 0.04, 9 );
+
+	} );
+
+	it( 'ignores a size that is not positive', async () => {
+
+		const app = await withApp();
+		cameraStore().handleSubjectSizeChange( 0 );
+		cameraStore().handleSubjectSizeChange( NaN );
+
+		expect( app.values.unitsPerMetre ).toBe( 1 );
+
+	} );
+
+	it( 'reads the new model\'s size and goes back to its file units on load', async () => {
+
+		const app = await withApp( {}, { modelDimensions: [ 1, 1, 1 ], unitsPerMetre: 40 } );
+		cameraStore().syncModelSize( { resetUnits: true } );
+
+		expect( cameraStore().modelDimensions ).toEqual( [ 1.5, MODEL_SIZE, 2.3 ] );
+		expect( cameraStore().unitsPerMetre ).toBe( 1 );
+		expect( app.values.unitsPerMetre ).toBe( 1 );
+
+	} );
+
+	it( 'keeps a typed size through a rebuild that is not a new model', async () => {
+
+		const app = await withApp( {}, { unitsPerMetre: 40 } );
+		cameraStore().syncModelSize();
+
+		expect( cameraStore().unitsPerMetre ).toBe( 40 );
+		expect( app.settings.set ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'stores an auto-focus distance only when the readout would change', async () => {
+
+		await withApp( {}, { focusDistance: 4.5831 } );
+		const before = store.useCameraStore.getState();
+		cameraStore().setAutoFocusDistance( 4.5834 );
+		expect( store.useCameraStore.getState() ).toBe( before );
+
+		cameraStore().setAutoFocusDistance( 4.62 );
+		expect( cameraStore().focusDistance ).toBe( 4.62 );
 
 	} );
 

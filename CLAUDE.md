@@ -700,7 +700,19 @@ const getDatafromStorageBuffer = Fn(([buffer, index, offset, stride]) => { ... }
 BVH traversal (`BVHTraversal.js`) uses stack-based DFS with two-level dispatch: TLAS inner nodes → BLAS-pointer leaves (per-mesh visibility read from the leaf's slot [2]; skip BLAS if hidden, else push BLAS root onto stack) → BLAS inner nodes → triangle leaves (inline Möller-Trumbore + inline side culling via the per-triangle side flag in `normalCData.w`). Both `traverseBVH` (closest hit) and `traverseBVHShadow` (any hit, early exit) gate on mesh visibility. The visibility flag is packed into the TLAS BLAS-pointer leaf by `TLASBuilder.flatten()` and patched at runtime by `PathTracerStage._patchTLASLeafVisibility()` — there is no separate visibility buffer.
 
 ### Camera & DOF System
-Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro with proper focal length calculations. Focus picking via click-to-focus interaction mode.
+Thin lens in `TSL/CameraRay.js`, with two ways to size the aperture (`dofMode`, a render-profile choice —
+`viewer` → `'look'`, `physical` → `'physical'`):
+- **look** — radius = `dofBlur` × `focusDistance` × tan( fov / 2 ): a far background blurs by `dofBlur` of the image
+  height at any scene scale. Aperture, focal length and `unitsPerMetre` are ignored.
+- **physical** — `focalLength / 2N` mm × `unitsPerMetre` × `apertureScale`. At true size a small object behaves like
+  real macro: wide open, a 4 cm watch that fills the frame is all blur.
+
+Both focus on a **flat** plane: `focusDistance` is depth along the view axis, measured by `viewDepth()`
+(`managers/InteractionManager.js`; a panorama focuses along each ray). Auto-focus resets on a new model or camera
+(`resetAutoFocus()`), falls back to the orbit target's depth when nothing is under its point, and pauses in a
+panorama rather than switching to manual. `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
+no field of view or focus distance, so a preset never moves the camera. `dofBlur` is a per-camera effect;
+`dofMode` is not. The app's panel is a **Simple | Pro** switch over `dofMode`, remembered in localStorage.
 
 ## Common Pitfalls & Solutions
 

@@ -211,6 +211,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				// Startup opens on Preview without a tab change, and only a tab change applies a preset.
 				usePathTracerStore.getState().handleConfigureForPreview();
+				app.settings.set( 'dofMode', useCameraStore.getState().dofMode, { reset: false } );
 
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
 

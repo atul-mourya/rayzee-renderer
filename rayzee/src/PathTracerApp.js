@@ -181,6 +181,7 @@ export class PathTracerApp extends EventDispatcher {
 				...DEFAULT_STATE,
 				environmentRotation: this._profile.environmentRotation,
 				saturation: this._profile.saturation,
+				dofMode: this._profile.dofMode,
 			},
 			{ issues: this._issues }
 		);
@@ -3582,7 +3583,6 @@ export class PathTracerApp extends EventDispatcher {
 			resetCallback: () => this.reset(),
 			reconcileCompletion: () => this._reconcileCompletion(),
 			denoisingManager: this.denoisingManager,
-			cameraManager: this.cameraManager,
 			onInteractionRenderScale: () => {
 
 				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );

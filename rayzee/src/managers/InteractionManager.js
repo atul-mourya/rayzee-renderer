@@ -3,9 +3,27 @@ import {
 	Raycaster,
 	SphereGeometry,
 	Mesh,
-	MeshBasicMaterial
+	MeshBasicMaterial,
+	Vector3
 } from 'three';
 import { EngineEvents } from '../EngineEvents.js';
+
+const _viewAxis = new Vector3();
+const _toPoint = new Vector3();
+
+/** Depth of a point along the camera's view axis — the distance the flat focal plane is measured in. */
+export function viewDepth( point, camera ) {
+
+	return _toPoint.subVectors( point, camera.position ).dot( camera.getWorldDirection( _viewAxis ) );
+
+}
+
+/** The focus distance that puts a raycast hit in focus: a panorama focuses along each ray, not on a plane. */
+export function focusDistanceOfHit( hit, camera, panorama = false ) {
+
+	return panorama ? hit.distance : viewDepth( hit.point, camera );
+
+}
 
 /**
  * InteractionManager
@@ -207,7 +225,8 @@ export class InteractionManager extends EventDispatcher {
 		if ( intersects.length > 0 ) {
 
 			const intersection = intersects[ 0 ];
-			const distance = intersection.distance;
+			const panorama = this.pathTracer?.cameraProjection?.value === 1;
+			const distance = focusDistanceOfHit( intersection, this.camera, panorama );
 
 			// Show visual indicator at focus point
 			this.showFocusPoint( intersection.point );

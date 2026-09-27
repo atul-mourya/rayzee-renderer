@@ -40,6 +40,9 @@ const SETTING_ROUTES = {
 	aperture: { uniform: 'aperture', reset: true },
 	apertureScale: { uniform: 'apertureScale', reset: true },
 	anamorphicRatio: { uniform: 'anamorphicRatio', reset: true },
+	unitsPerMetre: { uniform: 'unitsPerMetre', reset: true },
+	dofMode: { handler: 'handleDofMode', reset: true },
+	dofBlur: { uniform: 'dofBlur', reset: true },
 	samplingTechnique: { uniform: 'samplingTechnique', reset: true },
 	fireflyThreshold: { uniform: 'fireflyThreshold', reset: true },
 	shadowTerminatorOffset: { uniform: 'shadowTerminatorOffset', reset: true },
@@ -149,7 +152,6 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Function} params.resetCallback   - Called to reset accumulation
 	 * @param {Function} [params.reconcileCompletion] - Called when completion limits change
 	 * @param {Object} [params.denoisingManager] - Needed to force ASVGF off under panorama
-	 * @param {Object} [params.cameraManager]    - Needed to force auto-focus manual under panorama
 	 * @param {Function} [params.onInteractionRenderScale] - Applies a new moving-camera render scale
 	 */
 	bind( params ) {
@@ -165,7 +167,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, cameraManager, onInteractionRenderScale } ) {
+	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, onInteractionRenderScale } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -189,10 +191,10 @@ export class RenderSettings extends EventDispatcher {
 				// every pixel is its own direction. Fall back to the spatial-only denoiser rather
 				// than leaving no strategy.
 				if ( denoisingManager?.requiresMotionVectors ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
-				// Auto-focus raycasts via Raycaster.setFromCamera, which only knows the frustum.
-				cameraManager?.setAutoFocusMode( 'manual' );
 
 			},
+
+			handleDofMode: ( value ) => stages.pathTracer?.setUniform( 'dofMode', value === 'look' ? 1 : 0 ),
 
 			handlePanoramaLonRange: ( value ) => setPanoRange( 'panoLonRange', value ),
 

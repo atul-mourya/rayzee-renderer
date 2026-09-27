@@ -2,6 +2,7 @@ import { EventDispatcher, PerspectiveCamera, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
 import { AF_DEFAULTS } from '../EngineDefaults.js';
+import { viewDepth } from './InteractionManager.js';
 
 const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
 
@@ -68,6 +69,7 @@ export class CameraManager extends EventDispatcher {
 
 		this.cameras = cameras;
 		this._userCameraCounter = 0;
+		this.resetAutoFocus();
 
 	}
 
@@ -193,6 +195,7 @@ export class CameraManager extends EventDispatcher {
 			focalLength: get( 'focalLength' ),
 			apertureScale: get( 'apertureScale' ),
 			anamorphicRatio: get( 'anamorphicRatio' ),
+			dofBlur: get( 'dofBlur' ),
 			autoFocusMode: this.autoFocusMode,
 			afScreenPoint: { ...this.afScreenPoint },
 		};
@@ -214,17 +217,11 @@ export class CameraManager extends EventDispatcher {
 			focalLength: eff.focalLength,
 			apertureScale: eff.apertureScale,
 			anamorphicRatio: eff.anamorphicRatio,
+			dofBlur: eff.dofBlur,
 		} );
 
 		if ( eff.autoFocusMode !== undefined ) this.setAutoFocusMode( eff.autoFocusMode );
 		if ( eff.afScreenPoint ) this.setAFScreenPoint( eff.afScreenPoint.x, eff.afScreenPoint.y );
-
-	}
-
-	/** Scene scale used to convert scaled focusDistance to UI-facing units. */
-	_getSceneScale() {
-
-		return this._afContext?.assetLoader?.getSceneScale?.() || 1;
 
 	}
 
@@ -334,6 +331,8 @@ export class CameraManager extends EventDispatcher {
 
 		}
 
+		this.resetAutoFocus();
+
 		// Restore the incoming camera's own DOF/focus effects (if it has any saved;
 		// otherwise it inherits the current global config).
 		this._applyEffects( this.cameras[ index ]?.userData?.__rayzeeEffects );
@@ -341,11 +340,7 @@ export class CameraManager extends EventDispatcher {
 		onResize?.();
 		onReset?.();
 
-		// Emit UI-facing effects: focusDistance unscaled (matching AUTO_FOCUS_UPDATED),
-		// so the adapter is a plain passthrough with no scene-scale awareness.
-		const effects = this._captureEffects();
-		if ( effects ) effects.focusDistance /= this._getSceneScale();
-		this.dispatchEvent( { type: 'CameraSwitched', cameraIndex: index, effects, fov: this.camera.fov } );
+		this.dispatchEvent( { type: 'CameraSwitched', cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov } );
 
 	}
 
@@ -390,6 +385,15 @@ export class CameraManager extends EventDispatcher {
 			this._afPointDirty = true;
 
 		}
+
+	}
+
+	/** Forget what auto-focus last measured: it belonged to another model or viewpoint. */
+	resetAutoFocus() {
+
+		this._lastValidFocusDistance = null;
+		this._smoothedFocusDistance = null;
+		this._afPointDirty = true;
 
 	}
 
@@ -438,9 +442,10 @@ export class CameraManager extends EventDispatcher {
 
 		// Depth-of-field is the only consumer of the auto-focus distance. With DOF
 		// off (the default) the per-frame scene raycast is pure waste, so skip it.
-		// Re-snap on the frame DOF turns back on so focus is correct immediately
+		// A panorama pauses it too: Raycaster.setFromCamera only knows a frustum.
+		// Re-snap on the frame it resumes so focus is correct immediately
 		// rather than racking from a stale smoothed value.
-		if ( ! pathTracer?.enableDOF?.value ) {
+		if ( ! pathTracer?.enableDOF?.value || pathTracer.cameraProjection?.value === 1 ) {
 
 			this._afSuspended = true;
 			return;
@@ -481,7 +486,7 @@ export class CameraManager extends EventDispatcher {
 		let rawDistance;
 		if ( validHit ) {
 
-			rawDistance = validHit.distance;
+			rawDistance = viewDepth( validHit.point, this.camera );
 			this._lastValidFocusDistance = rawDistance;
 
 		} else {
@@ -492,8 +497,9 @@ export class CameraManager extends EventDispatcher {
 
 			} else {
 
-				const scale = assetLoader?.getSceneScale() || 1.0;
-				rawDistance = AF_DEFAULTS.FALLBACK_DISTANCE * scale;
+				// Nothing under the AF point on a fresh view: focus where the camera orbits.
+				const depth = this.controls ? viewDepth( this.controls.target, this.camera ) : 0;
+				rawDistance = depth > 0 ? depth : AF_DEFAULTS.FALLBACK_DISTANCE * ( assetLoader?.getSceneScale() || 1.0 );
 				this._lastValidFocusDistance = rawDistance;
 
 			}
@@ -533,9 +539,8 @@ export class CameraManager extends EventDispatcher {
 
 			setFocusDistance( newFocus );
 
-			// Update store for UI display (unscaled value)
 			const scale = assetLoader?.getSceneScale() || 1.0;
-			this.dispatchEvent( { type: EngineEvents.AUTO_FOCUS_UPDATED, distance: newFocus / scale } );
+			this.dispatchEvent( { type: EngineEvents.AUTO_FOCUS_UPDATED, distance: newFocus / scale, worldDistance: newFocus } );
 
 			const changeRatio = Math.abs( newFocus - prevFocus ) / Math.max( prevFocus, 0.001 );
 			if ( forceReset ) {

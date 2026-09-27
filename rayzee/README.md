@@ -428,9 +428,12 @@ Key settings:
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
 | `enableDOF` | `boolean` | false | Enable depth of field |
-| `focusDistance` | `number` | 0.8 | DOF focus distance |
-| `aperture` | `number` | 5.6 | DOF aperture (f-stop) |
-| `focalLength` | `number` | 50 | DOF focal length (mm) |
+| `dofMode` | `string` | 'look' | `'look'`: the blur is set by `dofBlur`, the same at any scene scale; `'physical'`: a real lens set by `aperture`, `focalLength` and `unitsPerMetre`. The `physical` render profile defaults to `'physical'` |
+| `dofBlur` | `number` | 0.05 | Look mode: how far a distant background blurs, as a fraction of the image height |
+| `focusDistance` | `number` | 0.8 | DOF focus distance in scene units — depth along the view axis (the focal plane is flat) |
+| `aperture` | `number` | 5.6 | Physical mode: f-stop |
+| `focalLength` | `number` | 50 | Physical mode: focal length (mm) |
+| `unitsPerMetre` | `number` | 1 | Physical mode: scene units per real metre, for files whose units are not metres. It carries over between model loads — reset it when the new file's units differ |
 | `transparentBackground` | `boolean` | false | Transparent canvas background |
 | `interactionModeEnabled` | `boolean` | true | Render at lower resolution while the camera moves, keeping the full bounce budget ("Fast Navigation" in the app) |
 | `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser |
@@ -496,9 +499,9 @@ Depth of field still works: the lens plane is built from each ray's own frame, n
 Two features are incompatible with a non-frustum camera and the engine switches them off for you when panorama is enabled:
 
 - **ASVGF** falls back to the `edgeaware` denoiser — ASVGF's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction.
-- **Auto-focus** switches to `'manual'` — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum.
+- **Auto-focus** pauses and focus holds its last distance — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum. It resumes when you switch back to `'perspective'`.
 
-Read the outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`, `engine.cameraManager.autoFocusMode`). Neither is restored automatically when you switch back to `'perspective'`.
+Read the denoiser outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`); it is not restored automatically when you switch back to `'perspective'`.
 
 ### engine.lightManager
 
@@ -941,7 +944,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `TRANSFORM_MODE_CHANGED` | Gizmo mode changed |
 | `SELECT_MODE_CHANGED` | Selection mode toggled |
 | `SETTING_CHANGED` | A render setting is modified |
-| `AUTO_FOCUS_UPDATED` | Auto-focus recalculated |
+| `AUTO_FOCUS_UPDATED` | Auto-focus recalculated — `worldDistance` in scene units, `distance` divided by the model's size |
 | `AUTO_EXPOSURE_UPDATED` | Auto-exposure recalculated |
 | `AF_POINT_PLACED` | Focus point placed on screen |
 | `ANIMATION_STARTED` / `ANIMATION_PAUSED` / `ANIMATION_STOPPED` / `ANIMATION_FINISHED` | Animation lifecycle |

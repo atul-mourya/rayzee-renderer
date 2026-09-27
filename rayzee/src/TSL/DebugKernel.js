@@ -27,7 +27,7 @@ export function buildDebugKernel( params ) {
 		resolution, renderWidth, renderHeight,
 		cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjectionMatrix, cameraViewMatrix,
 		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
-		enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
+		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		bvhBuffer, triangleBuffer, materialBuffer,
 		envTexture, environmentMatrix, environmentIntensity, enableEnvironmentLight,
 		visMode, debugVisScale,
@@ -50,7 +50,7 @@ export function buildDebugKernel( params ) {
 				pixelCoord.div( resolution ), seed,
 				cameraWorldMatrix, cameraProjectionMatrixInverse,
 				cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
-				enableDOF, focalLength, aperture, focusDistance, sceneScale, apertureScale, anamorphicRatio,
+				enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 			) );
 
 			const color = vec4( 1.0, 0.0, 1.0, 1.0 ).toVar();

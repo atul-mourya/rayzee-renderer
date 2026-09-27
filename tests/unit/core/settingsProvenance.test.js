@@ -95,11 +95,18 @@ describe( 'render profiles', () => {
 
 	it( 'keeps every ENGINE_DEFAULTS grade equal to the viewer profile', () => {
 
-		for ( const key of [ 'environmentRotation', 'saturation', 'toneMapping' ] ) {
+		for ( const key of [ 'environmentRotation', 'saturation', 'toneMapping', 'dofMode' ] ) {
 
 			expect( ENGINE_DEFAULTS[ key ] ).toBe( RENDER_PROFILES.viewer[ key ] );
 
 		}
+
+	} );
+
+	it( 'sets depth of field by its look in the viewer and by a real lens in the physical profile', () => {
+
+		expect( RENDER_PROFILES.viewer.dofMode ).toBe( 'look' );
+		expect( RENDER_PROFILES.physical.dofMode ).toBe( 'physical' );
 
 	} );
 

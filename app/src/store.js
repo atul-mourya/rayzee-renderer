@@ -284,6 +284,24 @@ const debouncedGenerateProceduralSkyTexture = debounce( () => {
 
 const RETOUCH_VISIBLE_KEY = 'rayzee-retouch-visible';
 
+// Simple ('look') or Pro ('physical') depth of field — who is using the app, so it is kept across sessions.
+const DOF_MODE_KEY = 'rayzee-dof-mode';
+
+function readDofMode() {
+
+	try {
+
+		const mode = localStorage.getItem( DOF_MODE_KEY );
+		return mode === 'look' || mode === 'physical' ? mode : DEFAULT_STATE.dofMode;
+
+	} catch {
+
+		return DEFAULT_STATE.dofMode;
+
+	}
+
+}
+
 function readRetouchVisible() {
 
 	try {
@@ -1869,10 +1887,11 @@ const useLightStore = create( set => ( {
 // Camera store
 const useCameraStore = create( ( set, get ) => ( {
 	...DEFAULT_STATE,
-	activePreset: "product",
+	activePreset: "custom",
+	dofMode: readDofMode(),
+	modelDimensions: [ 1, 1, 1 ],
 	cameraNames: [],
 	selectedCameraIndex: 0,
-	focusMode: false,
 	selectMode: false,
 
 	// Auto-focus state
@@ -1896,40 +1915,26 @@ const useCameraStore = create( ( set, get ) => ( {
 		if ( e.focalLength !== undefined ) next.focalLength = e.focalLength;
 		if ( e.apertureScale !== undefined ) next.apertureScale = e.apertureScale;
 		if ( e.anamorphicRatio !== undefined ) next.anamorphicRatio = e.anamorphicRatio;
+		if ( e.dofBlur !== undefined ) next.dofBlur = e.dofBlur;
 		if ( e.autoFocusMode !== undefined ) next.autoFocusMode = e.autoFocusMode;
 		if ( e.afScreenPoint !== undefined ) next.afScreenPoint = e.afScreenPoint;
 		return next;
 
 	} ),
-	setFocusMode: mode => set( { focusMode: mode } ),
 	setSelectMode: mode => set( { selectMode: mode } ),
-	setAutoFocusDistance: val => set( { focusDistance: val } ),
+	// Auto-focus reports every frame the focus moves: store only a change the readout would show.
+	setAutoFocusDistance: val => {
+
+		const { focusDistance, unitsPerMetre } = get();
+		const shown = d => ( d / unitsPerMetre ).toPrecision( 3 );
+		if ( shown( val ) !== shown( focusDistance ) ) set( { focusDistance: val } );
+
+	},
 	setFov: val => set( { fov: val, activePreset: "custom" } ),
-	setFocusDistance: val => set( { focusDistance: val, activePreset: "custom" } ),
 	setAperture: val => set( { aperture: val, activePreset: "custom" } ),
 	setFocalLength: val => set( { focalLength: val, activePreset: "custom" } ),
 	setEnableDOF: val => set( { enableDOF: val, activePreset: "custom" } ),
 	setZoomToCursor: val => set( { zoomToCursor: val } ),
-	setPreset: key => {
-
-		if ( key === "custom" ) return;
-		const preset = CAMERA_PRESETS[ key ];
-		set( { ...preset, activePreset: key } );
-
-	},
-
-	handleToggleFocusMode: () => {
-
-		const { autoFocusMode } = get();
-		if ( autoFocusMode !== 'manual' ) return; // Block when auto-focus active
-		const app = getApp();
-		if ( ! app ) return;
-		const isActive = app.interactionManager.toggleFocusMode();
-		console.log( 'Focus mode:', isActive ? 'enabled' : 'disabled' );
-		set( { focusMode: isActive } );
-
-	},
-
 	handleToggleSelectMode: () => {
 
 		const app = getApp();
@@ -1947,6 +1952,63 @@ const useCameraStore = create( ( set, get ) => ( {
 
 	},
 
+	handleDofModeChange: mode => {
+
+		set( { dofMode: mode } );
+		getApp()?.settings.set( 'dofMode', mode );
+
+		try {
+
+			localStorage.setItem( DOF_MODE_KEY, mode );
+
+		} catch {
+
+			// Storage blocked: the choice lasts for this page only.
+
+		}
+
+	},
+
+	handleDofBlurChange: percent => {
+
+		const dofBlur = percent / 100;
+		set( { dofBlur, activePreset: "custom" } );
+		getApp()?.settings.set( 'dofBlur', dofBlur );
+
+	},
+
+	// The real length of the model's longest side, which sets how many scene units the lens takes as a metre.
+	handleSubjectSizeChange: metres => {
+
+		if ( ! ( metres > 0 ) ) return;
+		const unitsPerMetre = Math.max( ...get().modelDimensions ) / metres;
+		set( { unitsPerMetre } );
+		getApp()?.settings.set( 'unitsPerMetre', unitsPerMetre );
+
+	},
+
+	// A new model starts in its own file's units.
+	syncModelSize: ( { resetUnits = false } = {} ) => {
+
+		const app = getApp();
+		if ( ! app ) return;
+
+		const next = {};
+		const modelDimensions = app.assetLoader.getSceneSize().toArray();
+		if ( modelDimensions.some( ( d, i ) => d !== get().modelDimensions[ i ] ) ) next.modelDimensions = modelDimensions;
+
+		// The load that fired this has already reset the render.
+		if ( resetUnits ) {
+
+			next.unitsPerMetre = 1;
+			app.settings.set( 'unitsPerMetre', 1, { reset: false } );
+
+		}
+
+		if ( Object.keys( next ).length ) set( next );
+
+	},
+
 	handleZoomToCursorChange: val => {
 
 		set( { zoomToCursor: val } );
@@ -1956,28 +2018,6 @@ const useCameraStore = create( ( set, get ) => ( {
 			app.cameraManager.controls.zoomToCursor = val;
 
 		}
-
-	},
-
-	handleFocusDistanceChange: val => {
-
-		set( { focusDistance: val, activePreset: "custom", autoFocusMode: 'manual' } );
-		const app = getApp();
-		if ( app ) {
-
-			const scale = app.assetLoader?.getSceneScale() || 1.0;
-			app.settings.set( 'focusDistance', val * scale );
-			app.cameraManager.setAutoFocusMode( 'manual' );
-			app.reset();
-
-		}
-
-	},
-
-	handleAutoFocusModeChange: mode => {
-
-		set( { autoFocusMode: mode, afPlacingPoint: false } );
-		getApp()?.cameraManager.setAutoFocusMode( mode );
 
 	},
 
@@ -2046,37 +2086,11 @@ const useCameraStore = create( ( set, get ) => ( {
 
 		}
 
-		const preset = CAMERA_PRESETS[ key ];
-		const presetApertureScale = preset.apertureScale ?? 1.0;
-		const presetAnamorphicRatio = preset.anamorphicRatio ?? 1.0;
-		set( { ...preset, apertureScale: presetApertureScale, anamorphicRatio: presetAnamorphicRatio, activePreset: key } );
-
-		const app = getApp();
-		if ( app ) {
-
-			const isAutoFocus = get().autoFocusMode === 'auto';
-
-			app.cameraManager.active.fov = preset.fov;
-			app.cameraManager.active.updateProjectionMatrix();
-
-			const updates = {
-				aperture: preset.aperture,
-				focalLength: preset.focalLength,
-				apertureScale: presetApertureScale,
-				anamorphicRatio: presetAnamorphicRatio,
-			};
-
-			// Skip focus distance when auto-focus is active — it will recompute
-			if ( ! isAutoFocus ) {
-
-				const scale = app.assetLoader?.getSceneScale() || 1.0;
-				updates.focusDistance = preset.focusDistance * scale;
-
-			}
-
-			app.settings.setMany( updates );
-
-		}
+		// Sets both lens models, so switching between them keeps the look's intent.
+		const { dofBlur, aperture, focalLength, apertureScale, anamorphicRatio = 1.0 } = CAMERA_PRESETS[ key ];
+		const lens = { dofBlur, aperture, focalLength, apertureScale, anamorphicRatio };
+		set( { ...lens, activePreset: key } );
+		getApp()?.settings.setMany( lens );
 
 	},
 
@@ -2183,7 +2197,6 @@ const useCameraStore = create( ( set, get ) => ( {
 
 	},
 
-	handleFocusChangeEvent: event => set( { focusDistance: event.distance, focusMode: false, activePreset: "custom", autoFocusMode: 'manual' } ),
 
 } ) );
 
