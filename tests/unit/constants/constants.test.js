@@ -6,6 +6,7 @@ import { TRIANGLE_DATA_LAYOUT } from '@/core/EngineDefaults.js';
 let computeCanvasDimensions;
 let computeOutputDimensions;
 let ASPECT_RATIO_PRESETS;
+let aspectRatioLabel;
 
 beforeAll( async () => {
 
@@ -14,6 +15,7 @@ beforeAll( async () => {
 	computeCanvasDimensions = mod.computeCanvasDimensions;
 	computeOutputDimensions = mod.computeOutputDimensions;
 	ASPECT_RATIO_PRESETS = mod.ASPECT_RATIO_PRESETS;
+	aspectRatioLabel = mod.aspectRatioLabel;
 
 } );
 
@@ -180,6 +182,19 @@ describe( 'TRIANGLE_DATA_LAYOUT', () => {
 		}
 
 		expect( lanes.size ).toBe( L.FLOATS_PER_TRIANGLE );
+
+	} );
+
+} );
+
+describe( 'aspectRatioLabel', () => {
+
+	it( 'names the ratio the way the picture has it', () => {
+
+		expect( aspectRatioLabel( '16:9', 'landscape' ) ).toBe( '16:9' );
+		expect( aspectRatioLabel( '16:9', 'portrait' ) ).toBe( '9:16' );
+		expect( aspectRatioLabel( '2.39:1', 'portrait' ) ).toBe( '1:2.39' );
+		expect( aspectRatioLabel( '1:1', 'portrait' ) ).toBe( '1:1' );
 
 	} );
 

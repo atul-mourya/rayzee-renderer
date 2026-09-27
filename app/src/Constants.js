@@ -162,6 +162,14 @@ export const ASPECT_RATIO_PRESETS = {
 	'21:9': { label: '21:9', width: 21, height: 9 },
 };
 
+/** The ratio as the picture has it: 16:9 turned to portrait reads 9:16. */
+export const aspectRatioLabel = ( preset, orientation ) => {
+
+	const label = ASPECT_RATIO_PRESETS[ preset ]?.label ?? preset;
+	return orientation === 'portrait' ? label.split( ':' ).reverse().join( ':' ) : label;
+
+};
+
 // Resolution presets — longest edge in pixels
 export const RESOLUTION_PRESETS = [
 	{ value: 256, label: '256' },

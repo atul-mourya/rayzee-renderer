@@ -1,9 +1,8 @@
-import { RectangleHorizontal, RectangleVertical } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Row } from "@/components/ui/row";
 import { usePathTracerStore } from '@/store';
 import { SR_SCALE } from 'rayzee';
-import { ASPECT_RATIO_PRESETS, RESOLUTION_PRESETS, isPanorama } from '@/Constants';
+import { RESOLUTION_PRESETS, aspectRatioLabel, isPanorama } from '@/Constants';
 
 
 const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolution' } ) => {
@@ -22,8 +21,6 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 		handleResolutionChange,
 		handleFinalRenderResolutionChange,
-		handleAspectPresetChange,
-		handleOrientationToggle,
 	} = usePathTracerStore();
 
 	const currentResolution = resolutionKey === 'finalRenderResolution' ? finalRenderResolution : resolution;
@@ -35,7 +32,6 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 	const upscaleFactor = enableUpscaler ? ( upscalerBackend === 'neural' ? SR_SCALE : upscalerScale ) : 1;
 	const outputWidth = canvasWidth * upscaleFactor;
 	const outputHeight = canvasHeight * upscaleFactor;
-	const showOrientation = aspectRatioPreset !== '1:1';
 
 	return (
 		<>
@@ -55,43 +51,11 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 				</Select>
 			</Row>
 
-			{/* Aspect Ratio + Orientation */}
-			{! panorama && (
-				<Row>
-					<span className="opacity-50 text-xs truncate">Aspect Ratio</span>
-					<div className="flex items-center gap-1">
-						{showOrientation && (
-							<button
-								onClick={handleOrientationToggle}
-								className="p-1 rounded hover:bg-primary/20 transition-colors opacity-40 hover:opacity-100 disabled:opacity-20 disabled:pointer-events-none"
-								title={orientation === 'landscape' ? 'Switch to portrait' : 'Switch to landscape'}
-								disabled={disabled}
-							>
-								{orientation === 'landscape'
-									? <RectangleHorizontal size={10} />
-									: <RectangleVertical size={10} />
-								}
-							</button>
-						)}
-						<Select value={aspectRatioPreset} onValueChange={handleAspectPresetChange} disabled={disabled}>
-							<SelectTrigger className="max-w-28 h-5 rounded-full">
-								<SelectValue placeholder="Select ratio" />
-							</SelectTrigger>
-							<SelectContent>
-								{Object.entries( ASPECT_RATIO_PRESETS ).map( ( [ key, preset ] ) => (
-									<SelectItem key={key} value={key}>{preset.label}</SelectItem>
-								) )}
-							</SelectContent>
-						</Select>
-					</div>
-				</Row>
-			)}
-
 			{/* Computed dimensions display */}
-			<Row>
+			<Row title="The shape is set by Aspect Ratio in the Camera tab, while previewing">
 				<span className="opacity-50 text-xs truncate">Output</span>
 				<span className="text-xs text-muted-foreground">
-					{outputWidth} &times; {outputHeight}{panorama && ' (2:1, 360°)'}
+					{outputWidth} &times; {outputHeight} ({panorama ? '2:1, 360°' : aspectRatioLabel( aspectRatioPreset, orientation )})
 				</span>
 			</Row>
 

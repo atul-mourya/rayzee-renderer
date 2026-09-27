@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Trackpad } from "@/components/ui/trackpad";
 import { NumberInput } from "@/components/ui/number-input";
 import { InfoTip } from "@/components/ui/info-tip";
+import AspectRatioControl from './AspectRatioControl';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CAMERA_RANGES, CAMERA_PRESETS, isPanorama } from '@/Constants';
 import { useCameraStore, usePathTracerStore } from '@/store';
@@ -197,6 +198,8 @@ const CameraTab = () => {
 						</SelectContent>
 					</Select>
 				</Row>
+
+				<AspectRatioControl />
 
 				{panorama && (
 					<>
