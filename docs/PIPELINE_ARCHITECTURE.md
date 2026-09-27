@@ -49,6 +49,7 @@ Rayzee uses an **event-driven pipeline** of modular rendering stages built on We
                               ├───────────────────────┤
                               │ managers/             │
                               │  ├─CameraManager      │
+                              │  │  ├─ViewCamera      │
                               │  │  └─WalkControls    │
                               │  ├─LightManager       │
                               │  ├─DenoisingManager   │

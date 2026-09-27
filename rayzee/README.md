@@ -22,7 +22,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [Configuring Assets (CDN URLs & cache namespace)](#configuring-assets-cdn-urls--cache-namespace)
   - [PathTracerApp](#pathtracerapp)
   - [engine.cameraManager](#enginecameramanager)
-  - [Camera Projection (360° Panorama)](#camera-projection-360-panorama)
+  - [Camera Projection (Orthographic, 360° Panorama)](#camera-projection-orthographic-360-panorama)
   - [engine.lightManager](#enginelightmanager)
   - [engine.animationManager](#engineanimationmanager)
   - [Materials](#materials)
@@ -440,7 +440,7 @@ Key settings:
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'gradient'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
-| `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'equirectangular'` — see [Camera Projection](#camera-projection-360-panorama) |
+| `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` — see [Camera Projection](#camera-projection-orthographic-360-panorama) |
 | `panoramaLonRange` | `[number, number]` | `[-180, 180]` | Panorama longitude sweep, degrees, left→right |
 | `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
 | `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis, so orbit pitch/roll can't tilt the horizon |
@@ -470,7 +470,7 @@ To pause rendering for image-viewing UI, set `engine.pauseRendering = true` and 
 Camera switching, auto-focus, DOF, and direct Three.js access.
 
 ```js
-engine.cameraManager.active                  // The active PerspectiveCamera
+engine.cameraManager.active                  // The active camera: a PerspectiveCamera that can turn orthographic
 engine.cameraManager.controls                // The OrbitControls instance
 engine.cameraManager.switchCamera(index)      // Switch between scene cameras
 engine.cameraManager.getNames()              // List available cameras
@@ -479,6 +479,8 @@ engine.cameraManager.setAutoFocusMode(mode)  // 'auto' | 'manual'
 engine.cameraManager.setAFScreenPoint(x, y)  // Set normalized AF screen point (0-1)
 engine.cameraManager.setNavigationMode(mode) // 'orbit' | 'walk'
 engine.cameraManager.walkControls.speed      // Walk speed, scene units per second
+engine.cameraManager.orthoHeight             // Orthographic view height, scene units, wheel zoom included
+engine.cameraManager.setOrthoHeight(height)  // Set it
 ```
 
 **Walk mode** is first-person navigation: drag to look, W A S D or the arrow keys to walk level, E and Q to
@@ -487,12 +489,26 @@ seconds. Keys are ignored while focus is in a text field, list or menu, and when
 already used the key. The mode obeys `controls.enabled`, so anything that locks the orbit camera locks walking
 too. Switching back to `'orbit'` circles the surface at the centre of the view.
 
-### Camera Projection (360° Panorama)
+### Camera Projection (Orthographic, 360° Panorama)
 
-Two camera models live behind the `cameraProjection` setting. Both branches are compiled into the same kernel, so switching writes a uniform and resets accumulation — it never recompiles WGSL.
+Three camera models live behind the `cameraProjection` setting. All are compiled into the same kernel, so switching writes a uniform and resets accumulation — it never recompiles WGSL.
+
+#### Orthographic
 
 ```js
-engine.settings.set('cameraProjection', 'equirectangular');  // 'perspective' (default) | 'equirectangular'
+engine.settings.set('cameraProjection', 'orthographic');
+engine.cameraManager.setOrthoHeight(12);   // the view's height in scene units
+engine.addEventListener(EngineEvents.ORTHO_HEIGHT_UPDATED, ({ height }) => {}); // the wheel changed it
+```
+
+Rays are parallel and start on the camera's image plane, so nothing behind the camera is seen and nothing shrinks with distance. Switching keeps what the view shows at the orbit target: turning orthographic sizes the view from the orbit distance and field of view, and turning back moves the camera to match. The wheel then zooms by changing the view's size rather than moving the camera. A new model is framed the same way.
+
+`engine.cameraManager.active` stays the same object — it switches its own projection and reports `isOrthographicCamera` — so picking, the transform gizmo and the overlays follow without anything being re-pointed. Imported orthographic cameras (glTF, and pbrt's `Camera "orthographic"`) switch the projection to orthographic at their own size, and a camera left orthographic comes back so; any other camera switches it back to perspective. Every denoiser, auto-focus and depth of field keep working. An environment at infinity is seen from a single direction, so the background is one colour.
+
+#### 360° Panorama
+
+```js
+engine.settings.set('cameraProjection', 'equirectangular');
 
 // Optional: crop the sweep. Degrees, [min, max].
 engine.settings.set('panoramaLonRange', [-90, 90]);   // VR180
@@ -507,9 +523,9 @@ Depth of field still works: the lens plane is built from each ray's own frame, n
 Two features are incompatible with a non-frustum camera and the engine switches them off for you when panorama is enabled:
 
 - **ASVGF** falls back to the `edgeaware` denoiser — ASVGF's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction.
-- **Auto-focus** pauses and focus holds its last distance — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum. It resumes when you switch back to `'perspective'`.
+- **Auto-focus** pauses and focus holds its last distance — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum. It resumes when you leave the panorama.
 
-Read the denoiser outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`); it is not restored automatically when you switch back to `'perspective'`.
+Read the denoiser outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`); it is not restored automatically when you leave the panorama.
 
 ### engine.lightManager
 
@@ -953,6 +969,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `SELECT_MODE_CHANGED` | Selection mode toggled |
 | `SETTING_CHANGED` | A render setting is modified |
 | `AUTO_FOCUS_UPDATED` | Auto-focus recalculated — `worldDistance` in scene units, `distance` divided by the model's size |
+| `ORTHO_HEIGHT_UPDATED` | An orthographic view's height changed — `height` in scene units |
 | `AUTO_EXPOSURE_UPDATED` | Auto-exposure recalculated |
 | `AF_POINT_PLACED` | Focus point placed on screen |
 | `ANIMATION_STARTED` / `ANIMATION_PAUSED` / `ANIMATION_STOPPED` / `ANIMATION_FINISHED` | Animation lifecycle |

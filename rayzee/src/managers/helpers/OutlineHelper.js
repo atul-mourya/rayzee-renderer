@@ -28,12 +28,22 @@ export class OutlineHelper {
 
 		this.layer = 'scene';
 		this._enabled = true;
+		this._scene = scene;
+		this._camera = camera;
+		this._build( [] );
+
+	}
+
+	// OutlineNode reads the camera's type once, as it builds its depth test.
+	_build( selectedObjects ) {
+
+		this._orthographic = this._camera.isOrthographicCamera === true;
 
 		// Outline node (handles its own multi-pass rendering via updateBefore).
 		// It sizes its render targets from the drawing buffer of whatever renderer
 		// draws it — the view overlay surface — so no size override is needed.
-		this._outlineNode = outline( scene, camera, {
-			selectedObjects: [],
+		this._outlineNode = outline( this._scene, this._camera, {
+			selectedObjects,
 			edgeThickness: uniform( 1.0 ),
 			edgeGlow: uniform( 0.0 ),
 		} );
@@ -97,6 +107,16 @@ export class OutlineHelper {
 	render( renderer ) {
 
 		if ( ! this.visible ) return;
+
+		if ( this._camera.isOrthographicCamera !== this._orthographic ) {
+
+			// dispose() empties the list it was given.
+			const selected = [ ...this._outlineNode.selectedObjects ];
+			this._outlineNode.dispose();
+			this._material.dispose();
+			this._build( selected );
+
+		}
 
 		const prevAutoClear = renderer.autoClear;
 		renderer.autoClear = false;

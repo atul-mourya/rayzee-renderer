@@ -31,6 +31,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
 - **Depth of field** with photographic controls (focal length, aperture, focus distance) and click-to-focus
+- **Orthographic camera** — parallel projection for elevations, plans and isometric views, with the view's height set in metres or by scrolling; every denoiser, depth of field and auto-focus work in it, and orthographic cameras in glTF and pbrt files import as such
 - **360° equirectangular panorama** camera projection, with longitude/latitude range cropping and a level-horizon option
 - **Fast Navigation** — renders at lower resolution while the camera moves and restores full quality the moment you stop, keeping navigation responsive
 - **Walk mode** — first-person navigation for interiors and large scenes: drag to look, walk at eye height with the keyboard, at a speed set in metres per second; switching back to orbit circles whatever you were looking at

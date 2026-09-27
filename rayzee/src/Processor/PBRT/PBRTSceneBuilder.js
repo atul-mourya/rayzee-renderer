@@ -3,7 +3,7 @@
  *
  * Output: { group, camera, environment, animations, warnings }
  *   - group:       THREE.Group of meshes (fed to PathTracerApp.loadObject3D)
- *   - camera:      PerspectiveCamera matching the pbrt Camera/LookAt, parented
+ *   - camera:      Perspective- or OrthographicCamera matching the pbrt Camera/LookAt, parented
  *                  into the group so AssetLoader.extractCamerasFromModel finds it
  *   - environment: { texture } | null — set by the caller as scene.environment
  *   - animations:  [ AnimationClip ] when the IR carries motion (see PBRTAnimation.js), else []
@@ -15,7 +15,7 @@
  */
 
 import {
-	Group, Mesh, InstancedMesh, PerspectiveCamera, Matrix4, Vector3, Quaternion,
+	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
@@ -184,7 +184,7 @@ export class PBRTSceneBuilder {
 
 	/**
 	 * @param {object} ir - output of PBRTParser
-	 * @returns {Promise<{group:Group, camera:PerspectiveCamera|null, environment:object|null, warnings:string[]}>}
+	 * @returns {Promise<{group:Group, camera:PerspectiveCamera|OrthographicCamera|null, environment:object|null, warnings:string[]}>}
 	 */
 	async build( ir ) {
 
@@ -494,7 +494,7 @@ export class PBRTSceneBuilder {
 
 			} );
 
-			if ( camMotion.fov ) {
+			if ( camMotion.fov && camera.isPerspectiveCamera ) {
 
 				const fovs = Array.from( camMotion.fov, f => this._verticalFov( { fov: { type: 'float', value: [ f ] } }, camera.aspect ) );
 				tracks.push( new NumberKeyframeTrack( `${camera.name}.fov`, camMotion.times.slice(), fovs ) );
@@ -1175,9 +1175,21 @@ export class PBRTSceneBuilder {
 	_buildCamera( cam, film ) {
 
 		const aspect = film && film.yresolution ? film.xresolution / film.yresolution : 16 / 9;
-		const fov = this._verticalFov( cam.params, aspect );
 
-		const camera = new PerspectiveCamera( fov, aspect, 0.01, 10000 );
+		let camera;
+		if ( cam.type === 'orthographic' ) {
+
+			// pbrt's default screen window spans [-1, 1] along the shorter image axis.
+			const window = cam.params?.screenwindow?.value;
+			const half = window?.length === 4 ? ( window[ 3 ] - window[ 2 ] ) / 2 : Math.max( 1, 1 / aspect );
+			camera = new OrthographicCamera( - half * aspect, half * aspect, half, - half, 0.01, 10000 );
+
+		} else {
+
+			camera = new PerspectiveCamera( this._verticalFov( cam.params, aspect ), aspect, 0.01, 10000 );
+
+		}
+
 		camera.name = 'PBRT Camera';
 		this._poseCamera( camera, cam.cameraToWorld );
 		camera.updateMatrixWorld( true );

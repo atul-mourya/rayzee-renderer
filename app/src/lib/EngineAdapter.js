@@ -167,14 +167,17 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
-	// Camera switch → sync selection + the camera's own per-camera DOF/focus effects.
+	// Camera switch → sync selection, the camera's own per-camera DOF/focus effects and its projection.
 	on( 'CameraSwitched', ( e ) => {
 
 		const cam = useCameraStore.getState();
 		cam.setSelectedCameraIndex( e.cameraIndex );
 		if ( e.effects ) cam.applyCameraEffects( { fov: e.fov, ...e.effects } );
+		usePathTracerStore.getState().syncCameraProjection( e.cameraProjection );
 
 	} );
+
+	on( EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => useCameraStore.getState().setOrthoHeight( e.height ) );
 
 	on( 'ModelLoaded', () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
 

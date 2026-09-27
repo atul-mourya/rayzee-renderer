@@ -1,16 +1,20 @@
-import { EventDispatcher, MathUtils, PerspectiveCamera, Vector3 } from 'three';
+import { EventDispatcher, MathUtils, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
-import { AF_DEFAULTS } from '../EngineDefaults.js';
+import { AF_DEFAULTS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
+import { ViewCamera } from './ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
 
 const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
 
+/** The height of an orthographic camera's view in world units, or null for any other camera. */
+const orthoHeightOf = camera => camera?.isOrthographicCamera ? ( camera.top - camera.bottom ) / camera.zoom : null;
+
 /**
  * Manages camera creation, switching, auto-focus, and AF point placement.
  *
- * Owns the PerspectiveCamera and OrbitControls instances.
+ * Owns the {@link ViewCamera} and OrbitControls instances.
  * Dispatches events that PathTracerApp relays to external consumers.
  */
 export class CameraManager extends EventDispatcher {
@@ -25,7 +29,7 @@ export class CameraManager extends EventDispatcher {
 		const width = canvas.clientWidth;
 		const height = canvas.clientHeight;
 
-		this.camera = new PerspectiveCamera( 60, width / height || 1, 0.01, 1000 );
+		this.camera = new ViewCamera( 60, width / height || 1, 0.01, 1000 );
 		this.camera.position.set( 0, 0, 5 );
 
 		this.controls = new OrbitControls( this.camera, canvas );
@@ -33,11 +37,16 @@ export class CameraManager extends EventDispatcher {
 		this.controls.zoomToCursor = true;
 		this.controls.saveState();
 
+		// The wheel zooms an orthographic view: report its height.
+		this._reportedOrthoHeight = null;
+		this._reportOrthoHeight = this._reportOrthoHeight.bind( this );
+		this.controls.addEventListener( 'change', this._reportOrthoHeight );
+
 		this.walkControls = new WalkControls( this.camera, canvas, this.controls );
 
 		this.interactionManager = null;
 
-		/** @type {import('three').PerspectiveCamera[]} */
+		/** @type {import('three').Camera[]} */
 		this.cameras = [ this.camera ];
 		this.currentCameraIndex = 0;
 
@@ -66,7 +75,7 @@ export class CameraManager extends EventDispatcher {
 
 	/**
 	 * Sets the list of available cameras (default + extracted from model).
-	 * @param {import('three').PerspectiveCamera[]} cameras
+	 * @param {import('three').Camera[]} cameras - perspective or orthographic
 	 */
 	setCameras( cameras ) {
 
@@ -78,8 +87,8 @@ export class CameraManager extends EventDispatcher {
 
 	/**
 	 * Adds a new user camera that snapshots the current render camera's pose,
-	 * FOV, clip planes, and orbit target. The snapshot is a standalone template
-	 * appended to the list; switching to it restores this exact framing.
+	 * FOV or orthographic size, clip planes, and orbit target. The snapshot is a standalone
+	 * template appended to the list; switching to it restores this exact framing.
 	 *
 	 * @param {string} [name] - Optional display name (auto-generated otherwise).
 	 * @returns {number} The index of the newly added camera.
@@ -87,7 +96,10 @@ export class CameraManager extends EventDispatcher {
 	addCameraFromView( name ) {
 
 		const src = this.camera;
-		const cam = new PerspectiveCamera( src.fov, src.aspect, src.near, src.far );
+		const cam = src.orthographic
+			? new OrthographicCamera( src.left, src.right, src.top, src.bottom, src.near, src.far )
+			: new PerspectiveCamera( src.fov, src.aspect, src.near, src.far );
+		cam.zoom = src.zoom;
 		cam.position.copy( src.position );
 		cam.quaternion.copy( src.quaternion );
 		cam.scale.copy( src.scale );
@@ -201,6 +213,7 @@ export class CameraManager extends EventDispatcher {
 			dofBlur: get( 'dofBlur' ),
 			autoFocusMode: this.autoFocusMode,
 			afScreenPoint: { ...this.afScreenPoint },
+			orthoHeight: this.orthoHeight,
 		};
 
 	}
@@ -305,7 +318,7 @@ export class CameraManager extends EventDispatcher {
 			// quaternion can express — a pbrt scene's `Scale -1 1 1`, for one. Copying
 			// pose alone would silently un-mirror the view.
 			this.camera.scale.copy( sourceCamera.scale );
-			this.camera.fov = sourceCamera.fov;
+			if ( sourceCamera.isPerspectiveCamera ) this.camera.fov = sourceCamera.fov;
 			this.camera.near = sourceCamera.near;
 			this.camera.far = sourceCamera.far;
 			this.camera.updateProjectionMatrix();
@@ -336,14 +349,119 @@ export class CameraManager extends EventDispatcher {
 
 		this.resetAutoFocus();
 
+		// A camera left orthographic comes back orthographic; one never visited is what it was made as.
+		const incoming = this.cameras[ index ];
+		const saved = incoming?.userData?.__rayzeeEffects;
+		this._showOrthographic( saved ? saved.orthoHeight : orthoHeightOf( incoming ) );
+
 		// Restore the incoming camera's own DOF/focus effects (if it has any saved;
 		// otherwise it inherits the current global config).
-		this._applyEffects( this.cameras[ index ]?.userData?.__rayzeeEffects );
+		this._applyEffects( saved );
 
 		onResize?.();
 		onReset?.();
 
-		this.dispatchEvent( { type: 'CameraSwitched', cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov } );
+		this.dispatchEvent( {
+			type: 'CameraSwitched', cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov,
+			cameraProjection: this._getSettings?.( 'cameraProjection' ),
+		} );
+
+	}
+
+	/**
+	 * Makes the camera orthographic at `height`, or perspective for null, then hands the `cameraProjection`
+	 * setting the outcome — after, so its handler finds the camera already there. A 360° panorama stays on
+	 * across perspective cameras.
+	 * @param {?number} height - in world units
+	 */
+	_showOrthographic( height ) {
+
+		if ( height > 0 ) this._setView( true, height / 2 );
+		else this._setView( false );
+
+		const current = this._getSettings?.( 'cameraProjection' );
+		const next = height > 0 ? 'orthographic' : current === 'orthographic' ? 'perspective' : current;
+		if ( next !== current ) this._applySettings?.( { cameraProjection: next } );
+
+	}
+
+	/**
+	 * The camera's side of the `cameraProjection` setting: set that, not this. Turning orthographic
+	 * keeps what the view shows at the orbit target, and turning back moves the camera to keep it.
+	 * @param {'perspective' | 'orthographic' | 'equirectangular'} projection
+	 */
+	applyProjection( projection ) {
+
+		const camera = this.camera;
+		const orthographic = projection === 'orthographic';
+		if ( camera.orthographic === orthographic ) return;
+
+		if ( orthographic ) {
+
+			this._setView( true, this._fittedHalfHeight() );
+
+		} else {
+
+			const target = this.controls.target;
+			const distance = this.orthoHeight / 2 / Math.tan( MathUtils.degToRad( camera.fov ) / 2 );
+			camera.position.sub( target ).setLength( distance ).add( target );
+			this._setView( false );
+
+		}
+
+		this.controls.update();
+
+	}
+
+	/** The height of the view in world units while orthographic, the wheel's zoom included; null otherwise. */
+	get orthoHeight() {
+
+		return orthoHeightOf( this.camera );
+
+	}
+
+	/** @param {number} height - the orthographic view's height, in world units */
+	setOrthoHeight( height ) {
+
+		if ( ! ( height > 0 ) ) return;
+		this._setView( this.camera.orthographic, height / 2 );
+		this._onReset?.();
+
+	}
+
+	/** Sizes an orthographic view to show what a perspective one would at the orbit target. */
+	fitOrthographic() {
+
+		if ( this.camera.orthographic ) this.setOrthoHeight( 2 * this._fittedHalfHeight() );
+
+	}
+
+	// The one writer of the camera's projection. The wheel's zoom starts over.
+	_setView( orthographic, halfHeight = this.camera.orthoHalfHeight ) {
+
+		const camera = this.camera;
+		camera.orthographic = orthographic;
+		camera.orthoHalfHeight = halfHeight;
+		camera.zoom = 1;
+		camera.updateProjectionMatrix();
+		this._reportOrthoHeight();
+
+	}
+
+	// Half of what a perspective view shows at the orbit target.
+	_fittedHalfHeight() {
+
+		return this.camera.position.distanceTo( this.controls.target ) * Math.tan( MathUtils.degToRad( this.camera.fov ) / 2 );
+
+	}
+
+	_reportOrthoHeight() {
+
+		if ( ! this.camera.orthographic ) return;
+		const height = this.orthoHeight;
+		if ( height === this._reportedOrthoHeight ) return;
+		this._reportedOrthoHeight = height;
+		this.dispatchEvent( { type: EngineEvents.ORTHO_HEIGHT_UPDATED, height } );
 
 	}
 
@@ -402,7 +520,7 @@ export class CameraManager extends EventDispatcher {
 
 	// ── Aliases (match Sub-API surface) ───────────────────────────
 
-	/** The active Three.js PerspectiveCamera. */
+	/** The active camera, a {@link ViewCamera}. */
 	get active() {
 
 		return this.camera;
@@ -487,7 +605,7 @@ export class CameraManager extends EventDispatcher {
 		// A panorama pauses it too: Raycaster.setFromCamera only knows a frustum.
 		// Re-snap on the frame it resumes so focus is correct immediately
 		// rather than racking from a stale smoothed value.
-		if ( ! pathTracer?.enableDOF?.value || pathTracer.cameraProjection?.value === 1 ) {
+		if ( ! pathTracer?.enableDOF?.value || pathTracer.cameraProjection?.value === CAMERA_PROJECTION_IDS.equirectangular ) {
 
 			this._afSuspended = true;
 			return;
@@ -628,6 +746,7 @@ export class CameraManager extends EventDispatcher {
 	dispose() {
 
 		this.walkControls?.dispose();
+		this.controls?.removeEventListener( 'change', this._reportOrthoHeight );
 		this.controls?.dispose();
 
 	}

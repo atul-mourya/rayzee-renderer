@@ -3532,6 +3532,7 @@ export class PathTracerApp extends EventDispatcher {
 		// Forward manager events → app events
 		this._addTrackedListener( this.cameraManager, 'CameraSwitched', ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.cameraManager, EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.cameraManager, EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => this.dispatchEvent( e ) );
 
 		this._forwardEvents( this.denoisingManager, [
 			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
@@ -3591,6 +3592,7 @@ export class PathTracerApp extends EventDispatcher {
 				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
 
 			},
+			onCameraProjection: ( value ) => this.cameraManager.applyProjection( value ),
 		} );
 
 		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;
@@ -3824,6 +3826,7 @@ export class PathTracerApp extends EventDispatcher {
 
 	_syncControlsAfterLoad() {
 
+		this.cameraManager.fitOrthographic();
 		this.cameraManager.controls.saveState();
 		this.cameraManager.controls.update();
 		this.cameraManager.walkControls.fitSpeed( this.assetLoader.getSceneScale() );

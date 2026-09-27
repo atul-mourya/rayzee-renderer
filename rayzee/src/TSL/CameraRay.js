@@ -1,9 +1,10 @@
 /**
  * CameraRay.js — primary camera ray generation.
  *
- * Two projections behind one `cameraProjection` uniform: 0 = pinhole (NDC through
- * cameraProjectionMatrixInverse), 1 = equirectangular 360 panorama. Both branches live in the same
- * kernel, so switching modes writes a uniform and resets accumulation — it never recompiles WGSL.
+ * Three projections behind one `cameraProjection` uniform (CAMERA_PROJECTION_IDS): pinhole (NDC through
+ * cameraProjectionMatrixInverse), equirectangular 360 panorama, and orthographic (parallel rays from the
+ * camera's image plane). All live in the same kernel, so switching modes writes a uniform and resets
+ * accumulation — it never recompiles WGSL.
  *
  * Equirect mapping, for uv ∈ [0,1] with v = 0 at the top row:
  *   lon = mix( lonMin, lonMax, u ),  lat = mix( latMax, latMin, v )
@@ -12,15 +13,81 @@
  */
 
 import {
-	Fn, vec3, vec4, float, int,
+	Fn, vec3, vec4, float, int, uniform,
 	If, normalize, mat3, mix, sin, cos, cross, dot, select,
 } from 'three/tsl';
+import { Vector2 } from 'three';
 
 import { Ray } from './Struct.js';
 import { constructTBN } from './Common.js';
 import { RandomPointInCircle } from './Random.js';
+import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 
-/** World-space primary ray direction for pixel uv. Origin is always cameraWorldMatrix[3]. */
+const PANORAMA = int( CAMERA_PROJECTION_IDS.equirectangular );
+const ORTHOGRAPHIC = int( CAMERA_PROJECTION_IDS.orthographic );
+
+export const isOrthographic = cameraProjection => cameraProjection.equal( ORTHOGRAPHIC );
+
+/**
+ * The projection uniforms a stage re-tracing the path tracer's primary rays needs. `sync` copies the path
+ * tracer's, once a frame.
+ */
+export function cameraRayUniforms() {
+
+	const u = {
+		cameraProjection: uniform( 0, 'int' ),
+		panoLonRange: uniform( new Vector2(), 'vec2' ),
+		panoLatRange: uniform( new Vector2(), 'vec2' ),
+		panoLevelHorizon: uniform( 1, 'int' ),
+		/** @param {import('../managers/UniformManager.js').UniformManager} source */
+		sync( source ) {
+
+			u.cameraProjection.value = source.get( 'cameraProjection' ).value;
+			u.panoLonRange.value.copy( source.get( 'panoLonRange' ).value );
+			u.panoLatRange.value.copy( source.get( 'panoLatRange' ).value );
+			u.panoLevelHorizon.value = source.get( 'panoLevelHorizon' ).value;
+
+		},
+	};
+	return u;
+
+}
+
+/** Pixel uv's primary ray, for a stage holding {@link cameraRayUniforms}. */
+export const cameraRayOf = ( uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, u ) => ( {
+	origin: cameraRayOrigin( uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, u.cameraProjection ),
+	direction: cameraRayDirection(
+		uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
+		u.cameraProjection, u.panoLonRange, u.panoLatRange, u.panoLevelHorizon
+	),
+} );
+
+/** The point `distance` along pixel uv's primary ray — where a depth the path tracer measured lies. */
+export const cameraRayPoint = ( uv01, distance, cameraWorldMatrix, cameraProjectionMatrixInverse, u ) => {
+
+	const { origin, direction } = cameraRayOf( uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, u );
+	return origin.add( direction.mul( distance ) );
+
+};
+
+/** World-space primary ray origin for pixel uv: the camera, or its image plane when orthographic. */
+export const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjection ] ) => {
+
+	const origin = vec3( cameraWorldMatrix[ 3 ] ).toVar();
+
+	If( isOrthographic( cameraProjection ), () => {
+
+		// An orthographic inverse maps x and y alone, whatever the depth.
+		const onPlane = cameraProjectionMatrixInverse.mul( vec4( uv01.x.mul( 2.0 ).sub( 1.0 ), float( 1.0 ).sub( uv01.y.mul( 2.0 ) ), 0.0, 1.0 ) );
+		origin.assign( cameraWorldMatrix.mul( vec4( onPlane.xy, 0.0, 1.0 ) ).xyz );
+
+	} );
+
+	return origin;
+
+} );
+
+/** World-space primary ray direction for pixel uv, from {@link cameraRayOrigin}. */
 export const cameraRayDirection = Fn( ( [
 	uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
 	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon
@@ -28,7 +95,7 @@ export const cameraRayDirection = Fn( ( [
 
 	const direction = vec3( 0.0 ).toVar();
 
-	If( cameraProjection.equal( int( 1 ) ), () => {
+	If( cameraProjection.equal( PANORAMA ), () => {
 
 		const lon = mix( panoLonRange.x, panoLonRange.y, uv01.x ).toVar();
 		const lat = mix( panoLatRange.y, panoLatRange.x, uv01.y ).toVar();
@@ -68,6 +135,10 @@ export const cameraRayDirection = Fn( ( [
 				.sub( back.mul( cos( lon ).mul( cosLat ) ) )
 		) );
 
+	} ).ElseIf( isOrthographic( cameraProjection ), () => {
+
+		direction.assign( normalize( vec3( cameraWorldMatrix[ 2 ] ) ).negate() );
+
 	} ).Else( () => {
 
 		const ndcPos = vec3( uv01.x.mul( 2.0 ).sub( 1.0 ), float( 1.0 ).sub( uv01.y.mul( 2.0 ) ), 1.0 );
@@ -92,7 +163,7 @@ export const generateRayFromCamera = Fn( ( [
 	enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur
 ] ) => {
 
-	const rayOriginWorld = vec3( cameraWorldMatrix[ 3 ] ).toVar();
+	const rayOriginWorld = cameraRayOrigin( uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjection ).toVar();
 	// .toVar() so the two reads below don't inline the whole projection graph twice.
 	const rayDirectionWorld = cameraRayDirection(
 		uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
@@ -107,7 +178,9 @@ export const generateRayFromCamera = Fn( ( [
 
 	If( enableDOF.and( lensOpen ).and( focusDistance.greaterThan( 0.001 ) ), () => {
 
-		const halfViewHeight = select( cameraProjection.equal( int( 1 ) ), panoLatRange.y.sub( panoLatRange.x ).mul( 0.5 ), cameraProjectionMatrixInverse[ 1 ].y );
+		// Orthographic 1: the blur then does not change with where the camera stands.
+		const halfViewHeight = select( cameraProjection.equal( PANORAMA ), panoLatRange.y.sub( panoLatRange.x ).mul( 0.5 ),
+			select( isOrthographic( cameraProjection ), float( 1.0 ), cameraProjectionMatrixInverse[ 1 ].y ) );
 		const apertureRadius = select( lookMode,
 			// A far background blurs by dofBlur of the image height, whatever the scene's scale.
 			dofBlur.mul( focusDistance ).mul( halfViewHeight ),
@@ -123,7 +196,7 @@ export const generateRayFromCamera = Fn( ( [
 		const lensOffset = vec3( 0.0 ).toVar();
 		const focusAlongRay = focusDistance.toVar();
 
-		If( cameraProjection.equal( int( 1 ) ), () => {
+		If( cameraProjection.equal( PANORAMA ), () => {
 
 			// Every pixel points a different way, so the lens plane is built around the ray. The
 			// camera's right/up would skew bokeh into a slit away from the image centre.

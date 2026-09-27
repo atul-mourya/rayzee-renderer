@@ -6,7 +6,7 @@ import { DataTexture, HalfFloatType, FloatType, RGBAFormat, LinearFilter, Matrix
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { createStorageTexture } from '../Processor/StorageTexturePool.js';
 import { sanitizeRGB, sanitize1, FP16_MAX } from '../TSL/Common.js';
-import { cameraRayDirection } from '../TSL/CameraRay.js';
+import { cameraRayPoint, cameraRayUniforms, isOrthographic } from '../TSL/CameraRay.js';
 import {
 	ALBEDO_EPS, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD, NRD_DEFAULTS,
 	NRD_HIT_DIST_A, NRD_HIT_DIST_B,
@@ -168,10 +168,10 @@ export class NRD extends RenderStage {
 		this.prevCamView = uniform( new Matrix4(), 'mat4' );
 		this.camPos = uniform( new Vector3(), 'vec3' );
 		this.prevCamPos = uniform( new Vector3(), 'vec3' );
-		this.cameraProjection = uniform( 0, 'int' );
-		this.panoLonRange = uniform( new Vector2(), 'vec2' );
-		this.panoLatRange = uniform( new Vector2(), 'vec2' );
-		this.panoLevelHorizon = uniform( 1, 'int' );
+		// Surface to camera while orthographic, where it is the same for every pixel.
+		this.viewVector = uniform( new Vector3(), 'vec3' );
+		this.prevViewVector = uniform( new Vector3(), 'vec3' );
+		this.cameraRay = cameraRayUniforms();
 
 		// Declared here, valued by _syncUniforms below — which is the only place a setting becomes a
 		// uniform, so there is no second copy of the defaults to keep in step.
@@ -322,11 +322,20 @@ export class NRD extends RenderStage {
 	// Same ray the depth was measured along — NormalDepth generates it with this helper too.
 	_worldPosAt( uv, dist, cwm, cpi ) {
 
-		const dir = cameraRayDirection(
-			uv, cwm, cpi,
-			this.cameraProjection, this.panoLonRange, this.panoLatRange, this.panoLevelHorizon
-		);
-		return vec3( cwm[ 3 ] ).add( dir.mul( dist ) );
+		return cameraRayPoint( uv, dist, cwm, cpi, this.cameraRay );
+
+	}
+
+	// NRD's gOrthoMode: a constant view vector, and a pixel's footprint that no longer grows with depth.
+	_viewVector( X, camPos, orthoV ) {
+
+		return select( isOrthographic( this.cameraRay.cameraProjection ), orthoV, normalize( camPos.sub( X ) ) );
+
+	}
+
+	_frustumSize( viewZ ) {
+
+		return this.minRectDimMulUnproject.mul( select( isOrthographic( this.cameraRay.cameraProjection ), float( 1.0 ), viewZ ) );
 
 	}
 
@@ -547,9 +556,9 @@ export class NRD extends RenderStage {
 
 					If( maxRadiusU.greaterThan( 0.0 ), () => {
 
-						const V = normalize( camPos.sub( X ) );
+						const V = this._viewVector( X, camPos, this.viewVector );
 						const NoV = dot( N, V ).abs().toVar();
-						const frustumSize = this.minRectDimMulUnproject.mul( viewZ ).toVar();
+						const frustumSize = this._frustumSize( viewZ ).toVar();
 
 						const k = inputFrames.add( 1.0 );
 						const accumSpeedEff = isPre
@@ -701,9 +710,9 @@ export class NRD extends RenderStage {
 				const pixelUv = this._pixelUv( gx, gy );
 				const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
 				const viewZ = camView.mul( vec4( X, 1.0 ) ).z.abs().toVar();
-				const V = normalize( camPos.sub( X ) );
+				const V = this._viewVector( X, camPos, this.viewVector );
 				const NoV = dot( N, V ).abs().toVar();
-				const frustumSize = this.minRectDimMulUnproject.mul( viewZ ).toVar();
+				const frustumSize = this._frustumSize( viewZ ).toVar();
 
 				// Unnormalized, as NRD requires — its length carries the normal variance. A miss neighbour's
 				// shadingNormal is a literal (0,0,0), which decodes to a fixed fake direction, so substitute
@@ -753,7 +762,7 @@ export class NRD extends RenderStage {
 
 				const accumSpeed = this._applyCustomWeights( prevAccum, occW, float( 0.0 ) ).toVar();
 
-				const Vprev = normalize( prevCamPos.sub( X ) );
+				const Vprev = this._viewVector( X, prevCamPos, this.prevViewVector );
 				const NoVprev = dot( N, Vprev ).abs();
 				const sizeQuality = NoVprev.add( 1e-3 ).div( NoV.add( 1e-3 ) ).toVar();
 				sizeQuality.assign( mix( float( 0.1 ), float( 1.0 ), saturate( sizeQuality.mul( sizeQuality ) ) ) );
@@ -853,7 +862,7 @@ export class NRD extends RenderStage {
 				const pixelUv = this._pixelUv( gx, gy );
 				const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
 				const viewZ = camView.mul( vec4( X, 1.0 ) ).z.abs();
-				const frustumSize = this.minRectDimMulUnproject.mul( viewZ ).toVar();
+				const frustumSize = this._frustumSize( viewZ ).toVar();
 
 				const diff = textureLoad( inTex, coord ).toVar();
 				const nonLinear = float( 1.0 ).div( frameNumEff.add( 1.0 ) ).toVar();
@@ -1200,6 +1209,7 @@ export class NRD extends RenderStage {
 
 			this.prevCamView.value.copy( this.camView.value );
 			this.prevCamPos.value.copy( this.camPos.value );
+			this.prevViewVector.value.copy( this.viewVector.value );
 
 		}
 
@@ -1207,20 +1217,19 @@ export class NRD extends RenderStage {
 		this.camProjInv.value.copy( projInv );
 		this.camView.value.copy( view );
 		this.camPos.value.setFromMatrixPosition( world );
-		this.cameraProjection.value = pt.uniforms.get( 'cameraProjection' ).value;
-		this.panoLonRange.value.copy( pt.uniforms.get( 'panoLonRange' ).value );
-		this.panoLatRange.value.copy( pt.uniforms.get( 'panoLatRange' ).value );
-		this.panoLevelHorizon.value = pt.uniforms.get( 'panoLevelHorizon' ).value;
+		this.viewVector.value.setFromMatrixColumn( world, 2 ).normalize();
+		this.cameraRay.sync( pt.uniforms );
 
 		if ( ! this._camInitialized ) {
 
 			this.prevCamView.value.copy( view );
 			this.prevCamPos.value.copy( this.camPos.value );
+			this.prevViewVector.value.copy( this.viewVector.value );
 			this._camInitialized = true;
 
 		}
 
-		// NRD gUnproject; frustum size follows the shorter edge.
+		// NRD gUnproject; frustum size follows the shorter edge. Orthographic, it is world units per pixel.
 		const projY = proj.elements[ 5 ] || 1;
 		const unproject = 1 / ( 0.5 * this.resH.value * projY );
 		this.minRectDimMulUnproject.value = Math.min( this.resW.value, this.resH.value ) * unproject;

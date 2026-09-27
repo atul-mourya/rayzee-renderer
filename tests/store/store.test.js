@@ -372,3 +372,52 @@ describe( 'walk speed', () => {
 	} );
 
 } );
+
+describe( 'orthographic view height', () => {
+
+	const withApp = async ( state = {}, projection = 'orthographic' ) => {
+
+		const cameraManager = { setOrthoHeight: vi.fn() };
+		const app = {
+			cameraManager,
+			settings: { get: key => ( key === 'cameraProjection' ? projection : undefined ) },
+			setReservedRenderResolution: vi.fn(),
+			setCanvasSize: vi.fn(),
+			reset: vi.fn(),
+		};
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		store.useCameraStore.setState( { unitsPerMetre: 1, orthoHeight: 1, ...state } );
+		return app;
+
+	};
+
+	const cameraStore = () => store.useCameraStore.getState();
+
+	it( 'takes the slider in metres', async () => {
+
+		const app = await withApp( { unitsPerMetre: 100 } );
+		cameraStore().handleOrthoHeightChange( 2.5 );
+
+		expect( app.cameraManager.setOrthoHeight ).toHaveBeenCalledWith( 250 );
+		expect( cameraStore().orthoHeight ).toBe( 250 );
+
+	} );
+
+	it( 'shows the projection a camera switch left, resizing only for a panorama', async () => {
+
+		const app = await withApp();
+		const pathTracer = () => store.usePathTracerStore.getState();
+		store.usePathTracerStore.setState( { cameraProjection: 'perspective' } );
+
+		pathTracer().syncCameraProjection( 'orthographic' );
+		expect( pathTracer().cameraProjection ).toBe( 'orthographic' );
+		expect( app.setCanvasSize ).not.toHaveBeenCalled();
+
+		store.usePathTracerStore.setState( { cameraProjection: 'equirectangular' } );
+		pathTracer().syncCameraProjection( 'orthographic' );
+		expect( pathTracer().cameraProjection ).toBe( 'orthographic' );
+		expect( app.setCanvasSize ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
+} );

@@ -8,7 +8,7 @@ import { createLogger } from '../utils/Logger.js';
 // The neural passes live in `../neural/` but report through the manager that drives them, so they
 // share one namespace: `rayzee.log.only( 'neural' )` shows the whole chain.
 const neuralLog = createLogger( 'neural' );
-import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
 // model and puts the chosen one back for the finished image. Resolution-aware by construction:
@@ -164,7 +164,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._knownResetCount = 0;
 		this._seenTracedFrames = 0;
 		this._viewProj = new Matrix4();
-		this._historyCamera = { world: null, projInv: null, viewProj: null };
+		this._historyCamera = { world: null, projInv: null, viewProj: null, orthographic: false };
 		// TLAS leaf → { world, offset, prev }: placements moved since the last traced frame.
 		this._movedPlacements = new Map();
 		this._movedUpload = { count: 0, leaves: new Uint32Array( 0 ), toPrev: new Float32Array( 0 ) };
@@ -870,7 +870,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		const pt = this._stages.pathTracer;
 		return this.historyWanted && ! this._cadenceSuspended && !! this._stages.normalDepth?.enabled
-			&& ( pt?.uniforms?.get( 'cameraProjection' )?.value ?? 0 ) === 0
+			&& pt?.uniforms?.get( 'cameraProjection' )?.value !== CAMERA_PROJECTION_IDS.equirectangular
 			&& ! ( pt?.visMode?.value > 0 );
 
 	}
@@ -1043,6 +1043,7 @@ export class DenoisingManager extends EventDispatcher {
 		camera.world = pt.cameraWorldMatrix.value.elements;
 		camera.projInv = pt.cameraProjectionMatrixInverse.value.elements;
 		camera.viewProj = this._viewProj.elements;
+		camera.orthographic = pt.uniforms?.get( 'cameraProjection' )?.value === CAMERA_PROJECTION_IDS.orthographic;
 		return camera;
 
 	}

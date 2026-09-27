@@ -1,9 +1,10 @@
-import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform, If, normalize, mat3,
+import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform, If,
 	textureLoad, textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { cameraRayPoint, cameraRayUniforms } from '../TSL/CameraRay.js';
 
 /**
  * WebGPU Motion Vector Stage (Compute Shader)
@@ -20,8 +21,8 @@ import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
  *
  * Algorithm:
  *   1. Read normalDepth from NormalDepth (linear depth in alpha)
- *   2. Reconstruct camera ray from pixel coords via inverse projection
- *   3. World position = cameraPos + normalize(rayDir) * linearDepth
+ *   2. Reconstruct the camera ray NormalDepth traced for the pixel
+ *   3. World position = rayOrigin + rayDir * linearDepth
  *   4. Project to previous frame:  prevVP * worldPos
  *   5. Motion = currentUV - prevUV
  *
@@ -78,6 +79,7 @@ export class MotionVector extends RenderStage {
 		// Synced from PathTracer each frame (same source as NormalDepth)
 		this.cameraWorldMatrix = uniform( new Matrix4(), 'mat4' );
 		this.cameraProjectionMatrixInverse = uniform( new Matrix4(), 'mat4' );
+		this.cameraRay = cameraRayUniforms();
 		this.prevVP = uniform( new Matrix4(), 'mat4' );
 		this.isFirstFrameU = uniform( 1.0 ); // 1.0 = true, 0.0 = false
 		this.deltaTime = uniform( 1.0 / 60.0 );
@@ -175,29 +177,7 @@ export class MotionVector extends RenderStage {
 				// Sky / background (depth >= 65504 sentinel) — no motion
 				If( linearDepth.lessThan( float( 6e4 ) ), () => {
 
-					// Pixel coordinate → NDC
-					// Negate Y to match PathTracer convention
-					const ndcX = float( gx ).add( 0.5 ).div( resW ).mul( 2.0 ).sub( 1.0 );
-					const ndcY = float( gy ).add( 0.5 ).div( resH ).mul( 2.0 ).sub( 1.0 ).negate();
-					const ndcPos = vec3( ndcX, ndcY, 1.0 );
-
-					// Camera-space ray direction via inverse projection
-					const rayDirCS = cpi.mul( vec4( ndcPos, 1.0 ) );
-
-					// Transform to world space (rotation only, via mat3 of world matrix)
-					const rayDirWorld = normalize(
-						mat3(
-							cwm[ 0 ].xyz,
-							cwm[ 1 ].xyz,
-							cwm[ 2 ].xyz
-						).mul( rayDirCS.xyz.div( rayDirCS.w ) )
-					);
-
-					// Camera position (translation column of world matrix)
-					const camPos = vec3( cwm[ 3 ] );
-
-					// World position = camera origin + ray direction * linear depth
-					const worldPos = camPos.add( rayDirWorld.mul( linearDepth ) );
+					const worldPos = cameraRayPoint( currentUV, linearDepth, cwm, cpi, this.cameraRay );
 
 					// Project to previous frame
 					const prevClip = prevVP.mul( vec4( worldPos, 1.0 ) );
@@ -278,27 +258,12 @@ export class MotionVector extends RenderStage {
 				// Skip first frame and sky (depth >= 65504 sentinel)
 				If( isFirstFrameU.lessThan( 0.5 ).and( linearDepth.lessThan( float( 6e4 ) ) ), () => {
 
-					// Pixel coordinate → NDC
-					// Negate Y to match PathTracer convention
-					const ndcX = float( gx ).add( 0.5 ).div( resW ).mul( 2.0 ).sub( 1.0 );
-					const ndcY = float( gy ).add( 0.5 ).div( resH ).mul( 2.0 ).sub( 1.0 ).negate();
-					const ndcPos = vec3( ndcX, ndcY, 1.0 );
-					const rayDirCS = cpi.mul( vec4( ndcPos, 1.0 ) );
-					const rayDirWorld = normalize(
-						mat3(
-							cwm[ 0 ].xyz,
-							cwm[ 1 ].xyz,
-							cwm[ 2 ].xyz
-						).mul( rayDirCS.xyz.div( rayDirCS.w ) )
-					);
-					const camPos = vec3( cwm[ 3 ] );
-					const worldPos = camPos.add( rayDirWorld.mul( linearDepth ) );
-
 					// Current pixel UV
 					const currentUV = vec2(
 						float( gx ).add( 0.5 ).div( resW ),
 						float( gy ).add( 0.5 ).div( resH )
 					);
+					const worldPos = cameraRayPoint( currentUV, linearDepth, cwm, cpi, this.cameraRay );
 
 					// Project to previous frame
 					const prevClip = prevVP.mul( vec4( worldPos, 1.0 ) );
@@ -370,6 +335,7 @@ export class MotionVector extends RenderStage {
 		if ( pt && pt.uniforms ) {
 
 			// Sync from PathTracer (same source as NormalDepth)
+			this.cameraRay.sync( pt.uniforms );
 			worldMatrix = pt.uniforms.get( 'cameraWorldMatrix' ).value;
 			viewMatrix = pt.uniforms.get( 'cameraViewMatrix' ).value;
 			projMatrix = pt.uniforms.get( 'cameraProjectionMatrix' ).value;

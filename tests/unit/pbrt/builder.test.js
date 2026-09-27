@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, Float32BufferAttribute, Matrix4, Mesh, PerspectiveCamera, Vector3 } from 'three';
+import { BufferGeometry, Float32BufferAttribute, Matrix4, Mesh, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
@@ -96,6 +96,26 @@ describe( 'PBRT scene builder', () => {
 
 		const forward = m => new Vector3( 0, 0, - 1 ).applyMatrix4( m ).sub( new Vector3().setFromMatrixPosition( m ) );
 		expect( forward( camera.matrixWorld ).angleTo( forward( plain.matrixWorld ) ) ).toBeLessThan( 1e-6 );
+
+	} );
+
+	it( 'builds an orthographic camera, [-1, 1] along the shorter axis unless a screen window says', async () => {
+
+		const scene = ( camera, x, y ) => enc.encode( SCENE
+			.replace( 'Camera "perspective" "float fov" 40', camera )
+			.replace( '"integer xresolution" 800 "integer yresolution" 600', `"integer xresolution" ${x} "integer yresolution" ${y}` ) );
+		const load = async ( ...args ) => ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': scene( ...args ) } } ) ) ).camera;
+
+		const landscape = await load( 'Camera "orthographic"', 800, 600 );
+		expect( landscape ).toBeInstanceOf( OrthographicCamera );
+		expect( [ landscape.top, landscape.right ] ).toEqual( [ 1, 800 / 600 ] );
+
+		const portrait = await load( 'Camera "orthographic"', 600, 800 );
+		expect( portrait.top ).toBeCloseTo( 800 / 600, 9 );
+		expect( portrait.right ).toBeCloseTo( 1, 9 );
+
+		const windowed = await load( 'Camera "orthographic" "float screenwindow" [ -3 3 -2 2 ]', 800, 600 );
+		expect( windowed.top ).toBe( 2 );
 
 	} );
 

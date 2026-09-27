@@ -201,6 +201,42 @@ describe( 'RenderSettings', () => {
 
 	// ── depth of field ─────────────────────────────────────────
 
+	describe( 'camera projection', () => {
+
+		it( 'hands each projection its uniform id and tells the camera', () => {
+
+			const stage = { setUniform: vi.fn() };
+			const onCameraProjection = vi.fn();
+			settings.bind( { stages: { pathTracer: stage }, resetCallback: vi.fn(), onCameraProjection } );
+
+			settings.set( 'cameraProjection', 'orthographic' );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'cameraProjection', 2 );
+			expect( onCameraProjection ).toHaveBeenLastCalledWith( 'orthographic' );
+
+			settings.set( 'cameraProjection', 'equirectangular' );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'cameraProjection', 1 );
+
+			settings.set( 'cameraProjection', 'perspective' );
+			expect( stage.setUniform ).toHaveBeenLastCalledWith( 'cameraProjection', 0 );
+			expect( onCameraProjection ).toHaveBeenCalledTimes( 3 );
+
+		} );
+
+		it( 'keeps the motion-vector denoisers for an orthographic camera', () => {
+
+			const denoisingManager = { requiresMotionVectors: true, setDenoiserStrategy: vi.fn() };
+			settings.bind( { stages: { pathTracer: { setUniform: vi.fn() } }, resetCallback: vi.fn(), denoisingManager } );
+
+			settings.set( 'cameraProjection', 'orthographic' );
+			expect( denoisingManager.setDenoiserStrategy ).not.toHaveBeenCalled();
+
+			settings.set( 'cameraProjection', 'equirectangular' );
+			expect( denoisingManager.setDenoiserStrategy ).toHaveBeenCalledWith( 'edgeaware' );
+
+		} );
+
+	} );
+
 	describe( 'depth of field lens', () => {
 
 		let stage;

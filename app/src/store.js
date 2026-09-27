@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions } from '@/Constants';
+import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions, isPanorama } from '@/Constants';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
@@ -728,6 +728,16 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 		// Panorama locks the output to 2:1, so the canvas has to be re-derived.
 		get()._applyCanvasDimensions( { cameraProjection: val } );
+
+	},
+
+	// A camera switch can change the projection: its own is orthographic, or it leaves one that was.
+	syncCameraProjection: cameraProjection => {
+
+		if ( ! cameraProjection ) return;
+		// Only a panorama's 2:1 changes the output size.
+		if ( isPanorama( cameraProjection ) !== isPanorama( get().cameraProjection ) ) get()._applyCanvasDimensions( { cameraProjection } );
+		else set( { cameraProjection } );
 
 	},
 
@@ -1892,6 +1902,7 @@ const useCameraStore = create( ( set, get ) => ( {
 	navigationMode: 'orbit',
 	walkSpeed: 1,
 	walkSpeedFitted: 1,
+	orthoHeight: 1,
 	modelDimensions: [ 1, 1, 1 ],
 	cameraNames: [],
 	selectedCameraIndex: 0,
@@ -2026,6 +2037,16 @@ const useCameraStore = create( ( set, get ) => ( {
 		set( { walkSpeed } );
 		const walk = getApp()?.cameraManager.walkControls;
 		if ( walk ) walk.speed = walkSpeed;
+
+	},
+
+	setOrthoHeight: orthoHeight => set( { orthoHeight } ),
+
+	handleOrthoHeightChange: metres => {
+
+		const orthoHeight = metres * get().unitsPerMetre;
+		set( { orthoHeight } );
+		getApp()?.cameraManager.setOrthoHeight( orthoHeight );
 
 	},
 

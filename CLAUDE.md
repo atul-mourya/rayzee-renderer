@@ -703,7 +703,8 @@ BVH traversal (`BVHTraversal.js`) uses stack-based DFS with two-level dispatch: 
 Thin lens in `TSL/CameraRay.js`, with two ways to size the aperture (`dofMode`, a render-profile choice —
 `viewer` → `'look'`, `physical` → `'physical'`):
 - **look** — radius = `dofBlur` × `focusDistance` × tan( fov / 2 ): a far background blurs by `dofBlur` of the image
-  height at any scene scale. Aperture, focal length and `unitsPerMetre` are ignored.
+  height at any scene scale. Aperture, focal length and `unitsPerMetre` are ignored. Orthographic, tan( fov / 2 ) is 1:
+  a point half the view's height behind the focus plane blurs by `dofBlur`, wherever the camera stands.
 - **physical** — `focalLength / 2N` mm × `unitsPerMetre` × `apertureScale`. At true size a small object behaves like
   real macro: wide open, a 4 cm watch that fills the frame is all blur.
 
@@ -713,6 +714,21 @@ Both focus on a **flat** plane: `focusDistance` is depth along the view axis, me
 panorama rather than switching to manual. `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
 no field of view or focus distance, so a preset never moves the camera. `dofBlur` is a per-camera effect;
 `dofMode` is not. The app's panel is a **Simple | Pro** switch over `dofMode`, remembered in localStorage.
+
+**Orthographic** (`cameraProjection: 'orthographic'`, uniform id 2 in `CAMERA_PROJECTION_IDS`): rays are parallel and
+start on the camera's image plane (`cameraRayOrigin()` in `TSL/CameraRay.js`). The live camera is a `ViewCamera`
+(`managers/ViewCamera.js`), a PerspectiveCamera that switches its own projection, so every holder of it — both
+controls, picking, the gizmo, the overlays, the path tracer — follows without being re-pointed; three.js reads the
+type from `isPerspectiveCamera` / `isOrthographicCamera` and the frustum from `top`/`bottom`/`left`/`right`, which
+it derives from `orthoHalfHeight`. The wheel changes `zoom`, not the camera's position, and `cameraManager.orthoHeight`
+(world units, zoom included) is reported by `EngineEvents.ORTHO_HEIGHT_UPDATED`. Turning orthographic keeps what the
+view showed at the orbit target; turning back moves the camera to keep it. Ortho is per camera (an imported
+OrthographicCamera, or one left orthographic, comes back so); a panorama stays global. The denoisers all keep
+working: NormalDepth, MotionVector, NRD (its `gOrthoMode`: constant view vector, pixel footprint that does not grow
+with depth) and the OIDN history reconstruct each pixel from that image-plane origin.
+⚠️ Anything that bakes the camera's type at build time has to rebuild on a switch — `OutlineNode` picks its depth
+conversion once, which is why `OutlineHelper` rebuilds itself (and `OutlineNode.dispose()` empties the selection
+array it was given, so copy it first).
 
 **Walk mode** (`cameraManager.setNavigationMode( 'walk' )`, `managers/WalkControls.js`) rides on the OrbitControls
 rather than replacing them: it turns off their gestures, moves only while `controls.enabled` (so every existing

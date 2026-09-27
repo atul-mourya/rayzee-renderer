@@ -170,15 +170,21 @@ export const aspectRatioLabel = ( preset, orientation ) => {
 
 };
 
-/** Walk Speed slider, in m/s: a tenth to four times the fitted speed, on a round step. */
-export const walkSpeedRange = fitted => {
+// A round step `decades` powers of ten below `fitted`, up to four times it.
+const roundRange = ( fitted, decades ) => {
 
-	const exponent = Math.floor( Math.log10( fitted ) ) - 1;
-	const step = 10 ** exponent;
+	const exponent = Math.floor( Math.log10( fitted ) ) - decades;
 	const precision = Math.max( 0, - exponent );
+	const step = + ( 10 ** exponent ).toFixed( precision );
 	return { min: step, max: + ( Math.ceil( fitted * 4 / step ) * step ).toFixed( precision ), step, precision };
 
 };
+
+/** Walk Speed slider, in m/s: a tenth to four times the fitted speed, on a round step. */
+export const walkSpeedRange = fitted => roundRange( fitted, 1 );
+
+/** View Height slider, in metres: about a hundredth to four times the model's longest side. */
+export const orthoHeightRange = modelSize => roundRange( modelSize, 2 );
 
 // Resolution presets — longest edge in pixels
 export const RESOLUTION_PRESETS = [
@@ -248,6 +254,7 @@ export function computeCanvasDimensions( resolution, aspectPreset, orientation )
 }
 
 export const isPanorama = projection => projection === 'equirectangular';
+export const isOrthographic = projection => projection === 'orthographic';
 
 /**
  * Output dimensions for a render. Equirectangular panoramas are locked to 2:1 with the

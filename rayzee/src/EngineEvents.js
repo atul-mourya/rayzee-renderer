@@ -36,6 +36,7 @@ export const EngineEvents = {
 
 	// Camera
 	AUTO_FOCUS_UPDATED: 'engine:autoFocusUpdated',
+	ORTHO_HEIGHT_UPDATED: 'engine:orthoHeightUpdated',
 	AUTO_EXPOSURE_UPDATED: 'engine:autoExposureUpdated',
 	AF_POINT_PLACED: 'engine:afPointPlaced',
 

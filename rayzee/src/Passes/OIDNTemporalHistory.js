@@ -22,10 +22,11 @@ export const HISTORY_DEFAULTS = Object.freeze( {
 } );
 
 const WG = 8;
-const PARAMS_BYTES = 288;
+const PARAMS_BYTES = 304;
 const MIN_MOVED_CAPACITY = 16;
 const FLAG_CLEAN_AUX = 1;
 const FLAG_SPLIT_COPIES = 2;
+const FLAG_ORTHOGRAPHIC = 4;
 const PICK_MOVED = 0x40000000;
 
 const COMMON_WGSL = /* wgsl */`
@@ -47,6 +48,7 @@ struct Params {
 	prevCamPos: vec4<f32>,
 	moved: vec4<u32>,
 	movedLength: f32,
+	prevCamDir: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> P: Params;
@@ -104,9 +106,19 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 		let size = vec2<f32>( P.size );
 		let uv = ( vec2<f32>( gid.xy ) + 0.5 ) / size;
-		let rc = P.projInv * vec4<f32>( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 1.0, 1.0 );
-		let dir = normalize( ( P.camWorld * vec4<f32>( rc.xyz / rc.w, 0.0 ) ).xyz );
-		var wp = P.camWorld[ 3 ].xyz + dir * g.w;
+		// Depth is along the ray: from the camera, or from its image plane when orthographic.
+		let ortho = ( P.flags & ${ FLAG_ORTHOGRAPHIC }u ) != 0u;
+		let ndc = vec2<f32>( uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0 );
+		var origin = P.camWorld[ 3 ].xyz;
+		var dir: vec3<f32>;
+		if ( ortho ) {
+			origin = ( P.camWorld * vec4<f32>( ( P.projInv * vec4<f32>( ndc, 0.0, 1.0 ) ).xy, 0.0, 1.0 ) ).xyz;
+			dir = - normalize( P.camWorld[ 2 ].xyz );
+		} else {
+			let rc = P.projInv * vec4<f32>( ndc, 1.0, 1.0 );
+			dir = normalize( ( P.camWorld * vec4<f32>( rc.xyz / rc.w, 0.0 ) ).xyz );
+		}
+		var wp = origin + dir * g.w;
 		var n = g.xyz * 2.0 - 1.0;
 
 		// A moved object's surface is looked for where the object was.
@@ -132,7 +144,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 			let pos = vec2<f32>( clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5 ) * size - 0.5;
 			let base = vec2<i32>( floor( pos ) );
 			let f = fract( pos );
-			let expected = length( wp - P.prevCamPos.xyz );
+			let expected = select( length( wp - P.prevCamPos.xyz ), dot( wp - P.prevCamPos.xyz, P.prevCamDir.xyz ), ortho );
 
 			for ( var j = 0; j < 2; j++ ) {
 				for ( var i = 0; i < 2; i++ ) {
@@ -306,6 +318,7 @@ export class OIDNTemporalHistory {
 		this._paramF32 = new Float32Array( this._paramData );
 		this._prevViewProj = new Float32Array( 16 );
 		this._prevCamPos = new Float32Array( 4 );
+		this._prevCamDir = new Float32Array( 4 );
 
 	}
 
@@ -325,7 +338,7 @@ export class OIDNTemporalHistory {
 	/**
 	 * Blends the frame just traced (a restart: one sample) into the reprojected history.
 	 * @param {Object} src - GPUTextures { color, albedo, normal, geo, geoPrev, shading, leaf } and { width, height }
-	 * @param {{ world: Float32Array, projInv: Float32Array, viewProj: Float32Array }} camera - of that frame
+	 * @param {{ world: Float32Array, projInv: Float32Array, viewProj: Float32Array, orthographic: boolean }} camera - of that frame
 	 * @param {?{ count: number, leaves: Uint32Array, toPrev: Float32Array }} [moved] - TLAS leaves
 	 *   (ascending) that moved since the last frame, with each one's current→previous world matrix
 	 */
@@ -524,7 +537,7 @@ export class OIDNTemporalHistory {
 		u[ 0 ] = this.width;
 		u[ 1 ] = this.height;
 		u[ 2 ] = reset ? 1 : 0;
-		u[ 3 ] = ( s.cleanAux ? FLAG_CLEAN_AUX : 0 ) | ( s.splitCopies ? FLAG_SPLIT_COPIES : 0 );
+		u[ 3 ] = ( s.cleanAux ? FLAG_CLEAN_AUX : 0 ) | ( s.splitCopies ? FLAG_SPLIT_COPIES : 0 ) | ( camera.orthographic ? FLAG_ORTHOGRAPHIC : 0 );
 		f[ 4 ] = s.maxLength;
 		f[ 5 ] = s.smoothLength;
 		f[ 6 ] = s.depthTolerance;
@@ -539,6 +552,7 @@ export class OIDNTemporalHistory {
 		f.set( this._prevCamPos, 60 );
 		u[ 64 ] = this._movedCount;
 		f[ 68 ] = s.movedLength;
+		f.set( this._prevCamDir, 72 );
 		this.device.queue.writeBuffer( this._paramsBuffer, 0, this._paramData );
 
 	}
@@ -549,6 +563,10 @@ export class OIDNTemporalHistory {
 		this._prevCamPos[ 0 ] = camera.world[ 12 ];
 		this._prevCamPos[ 1 ] = camera.world[ 13 ];
 		this._prevCamPos[ 2 ] = camera.world[ 14 ];
+		const back = Math.hypot( camera.world[ 8 ], camera.world[ 9 ], camera.world[ 10 ] );
+		this._prevCamDir[ 0 ] = - camera.world[ 8 ] / back;
+		this._prevCamDir[ 1 ] = - camera.world[ 9 ] / back;
+		this._prevCamDir[ 2 ] = - camera.world[ 10 ] / back;
 
 	}
 

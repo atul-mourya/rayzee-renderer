@@ -8,7 +8,7 @@
 import { uniform, uniformArray } from 'three/tsl';
 import { Vector2, Matrix4, Vector3, Color, MathUtils } from 'three';
 import { samplingTechniqueUniform } from '../TSL/Random.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 
 /**
  * Map of uniform names to their WGSL shader names (where different).
@@ -278,9 +278,9 @@ export class UniformManager {
 		u( 'cameraViewMatrix', new Matrix4(), 'mat4' );
 		u( 'cameraProjectionMatrix', new Matrix4(), 'mat4' );
 
-		// Projection: 0 = pinhole, 1 = equirectangular panorama. Ranges are radians (UI carries degrees).
+		// Projection: CAMERA_PROJECTION_IDS. Ranges are radians (UI carries degrees).
 		const radRange = ( [ min, max ] ) => new Vector2( min, max ).multiplyScalar( MathUtils.DEG2RAD );
-		u( 'cameraProjection', DEFAULT_STATE.cameraProjection === 'equirectangular' ? 1 : 0, 'int' );
+		u( 'cameraProjection', CAMERA_PROJECTION_IDS[ DEFAULT_STATE.cameraProjection ], 'int' );
 		u( 'panoLonRange', radRange( DEFAULT_STATE.panoramaLonRange ), 'vec2' );
 		u( 'panoLatRange', radRange( DEFAULT_STATE.panoramaLatRange ), 'vec2' );
 		ub( 'panoLevelHorizon', DEFAULT_STATE.panoramaLevelHorizon );

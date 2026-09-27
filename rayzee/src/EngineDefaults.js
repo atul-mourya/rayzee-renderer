@@ -103,7 +103,7 @@ export const ENGINE_DEFAULTS = {
 	skyMieAnisotropy: 0.76,
 	skyPreset: 'clearMorning',
 
-	// Camera projection — 'perspective' | 'equirectangular'. Panorama ranges are UI-facing degrees.
+	// Camera projection — 'perspective' | 'orthographic' | 'equirectangular'. Panorama ranges are UI-facing degrees.
 	cameraProjection: 'perspective',
 	panoramaLonRange: [ - 180, 180 ],
 	panoramaLatRange: [ - 90, 90 ],
@@ -256,6 +256,9 @@ export const ENGINE_DEFAULTS = {
 	autoExposureAdaptSpeedBright: 3.0,
 	autoExposureAdaptSpeedDark: 0.5,
 };
+
+/** The `cameraProjection` uniform's value for each setting value. */
+export const CAMERA_PROJECTION_IDS = Object.freeze( { perspective: 0, equirectangular: 1, orthographic: 2 } );
 
 // Ray distance NormalDepth writes on a miss. Max finite half-float, so miss−miss diffs stay 0
 // rather than Inf−Inf=NaN.

@@ -309,6 +309,20 @@ describe( 'DenoisingManager — OIDN motion history', () => {
 
 	} );
 
+	it( 'keeps a history for an orthographic camera, and tells it the rays are parallel', () => {
+
+		const { manager, pt, reset, trace } = makeManager();
+		pt.uniforms.get( 'cameraProjection' ).value = 2;
+		pt.viewIsChanging = true;
+
+		reset( true );
+		trace();
+
+		expect( manager._history.accumulate ).toHaveBeenCalledTimes( 1 );
+		expect( manager._history.accumulate.mock.calls[ 0 ][ 1 ].orthographic ).toBe( true );
+
+	} );
+
 	it( 'hands the history each moved placement, current to previous, once', () => {
 
 		const { manager, reset, trace } = makeManager();

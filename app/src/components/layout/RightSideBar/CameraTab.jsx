@@ -1,4 +1,4 @@
-import { Ruler, Aperture, Camera, Crosshair, RotateCcw, Ellipsis, Plus, Trash2, Globe, Footprints } from 'lucide-react';
+import { Ruler, Aperture, Camera, Crosshair, RotateCcw, Ellipsis, Plus, Trash2, Globe, Footprints, MoveVertical } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Row } from "@/components/ui/row";
 import { Slider } from "@/components/ui/slider";
@@ -9,7 +9,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { InfoTip } from "@/components/ui/info-tip";
 import AspectRatioControl from './AspectRatioControl';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CAMERA_RANGES, CAMERA_PRESETS, isPanorama, walkSpeedRange } from '@/Constants';
+import { CAMERA_RANGES, CAMERA_PRESETS, isOrthographic, isPanorama, orthoHeightRange, walkSpeedRange } from '@/Constants';
 import { useCameraStore, usePathTracerStore } from '@/store';
 import { useEffect } from 'react';
 import { getApp } from '@/lib/appProxy';
@@ -47,6 +47,7 @@ const CameraTab = () => {
 		navigationMode,
 		walkSpeed,
 		walkSpeedFitted,
+		orthoHeight,
 		activePreset,
 		apertureScale,
 		anamorphicRatio,
@@ -74,6 +75,7 @@ const CameraTab = () => {
 		handleZoomToCursorChange,
 		handleNavigationModeChange,
 		handleWalkSpeedChange,
+		handleOrthoHeightChange,
 		handleCameraMove,
 		handleCameraChange,
 		handleAddCamera,
@@ -102,6 +104,7 @@ const CameraTab = () => {
 	const handlePanoramaLevelHorizonChange = usePathTracerStore( s => s.handlePanoramaLevelHorizonChange );
 
 	const panorama = isPanorama( cameraProjection );
+	const orthographic = isOrthographic( cameraProjection );
 
 	const modelSize = Math.max( ...modelDimensions );
 	const longestAxis = AXIS_NAMES[ modelDimensions.indexOf( modelSize ) ];
@@ -140,6 +143,7 @@ const CameraTab = () => {
 
 	const walking = navigationMode === 'walk';
 	const walkRange = walkSpeedRange( walkSpeedFitted / unitsPerMetre );
+	const heightRange = orthoHeightRange( modelSize / unitsPerMetre );
 	const isAFPointCustom = afScreenPoint.x !== 0.5 || afScreenPoint.y !== 0.5;
 	const simple = dofMode === 'look';
 	const focusMetres = threeDigits( focusDistance / unitsPerMetre );
@@ -193,7 +197,7 @@ const CameraTab = () => {
 				<Row>
 					<span className="opacity-50 text-xs truncate">Projection</span>
 					<Select value={cameraProjection} onValueChange={handleCameraProjectionChange}>
-						<SelectTrigger className="max-w-32 h-5 rounded-full">
+						<SelectTrigger className="max-w-36 h-5 rounded-full">
 							<div className="h-full pr-1 inline-flex justify-start items-center">
 								<Globe size={12} className="z-10" />
 							</div>
@@ -201,6 +205,7 @@ const CameraTab = () => {
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="perspective">Perspective</SelectItem>
+							<SelectItem value="orthographic">Orthographic</SelectItem>
 							<SelectItem value="equirectangular">360° Panorama</SelectItem>
 						</SelectContent>
 					</Select>
@@ -224,16 +229,30 @@ const CameraTab = () => {
 				)}
 
 				<Row>
-					<Slider
-						label={"FOV"}
-						icon={FieldOfView}
-						min={CAMERA_RANGES.fov.min}
-						max={CAMERA_RANGES.fov.max}
-						step={1}
-						value={[ fov ]}
-						onValueChange={handleFovChange}
-						disabled={panorama}
-					/>
+					{orthographic ? (
+						<Slider
+							label={<>View Height<InfoTip text="How tall a slice of the scene the picture shows, in metres. Nothing shrinks with distance, so it is the same at every depth. Scrolling in the view zooms it too." /></>}
+							icon={MoveVertical}
+							min={heightRange.min}
+							max={heightRange.max}
+							step={heightRange.step}
+							precision={heightRange.precision}
+							unit=" m"
+							value={[ orthoHeight / unitsPerMetre ]}
+							onValueChange={( values ) => handleOrthoHeightChange( values[ 0 ] )}
+						/>
+					) : (
+						<Slider
+							label={"FOV"}
+							icon={FieldOfView}
+							min={CAMERA_RANGES.fov.min}
+							max={CAMERA_RANGES.fov.max}
+							step={1}
+							value={[ fov ]}
+							onValueChange={handleFovChange}
+							disabled={panorama}
+						/>
+					)}
 				</Row>
 
 				<Row>

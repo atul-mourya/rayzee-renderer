@@ -1,5 +1,5 @@
 import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
-import { ENGINE_DEFAULTS } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS, CAMERA_PROJECTION_IDS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
 import { ISSUE_CODES } from './EngineIssues.js';
 
@@ -153,6 +153,7 @@ export class RenderSettings extends EventDispatcher {
 	 * @param {Function} [params.reconcileCompletion] - Called when completion limits change
 	 * @param {Object} [params.denoisingManager] - Needed to force ASVGF off under panorama
 	 * @param {Function} [params.onInteractionRenderScale] - Applies a new moving-camera render scale
+	 * @param {Function} [params.onCameraProjection] - The camera's side of a `cameraProjection` change
 	 */
 	bind( params ) {
 
@@ -167,7 +168,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, onInteractionRenderScale } ) {
+	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, onInteractionRenderScale, onCameraProjection } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -182,10 +183,10 @@ export class RenderSettings extends EventDispatcher {
 
 			handleCameraProjection: ( value ) => {
 
-				const isPanorama = value === 'equirectangular';
-				stages.pathTracer?.setUniform( 'cameraProjection', isPanorama ? 1 : 0 );
+				stages.pathTracer?.setUniform( 'cameraProjection', CAMERA_PROJECTION_IDS[ value ] ?? CAMERA_PROJECTION_IDS.perspective );
+				onCameraProjection?.( value );
 
-				if ( ! isPanorama ) return;
+				if ( value !== 'equirectangular' ) return;
 
 				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once
 				// every pixel is its own direction. Fall back to the spatial-only denoiser rather

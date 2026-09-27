@@ -2,15 +2,18 @@
  * The thin lens: an aperture of radius f / 2N (focal length in mm, scaled by unitsPerMetre and
  * apertureScale), and a flat focal plane at focusDistance along the view axis. A panorama has no
  * single view axis, so there every ray focuses focusDistance away. Look mode sizes the aperture
- * from the blur asked for instead: dofBlur × focusDistance × tan( fov / 2 ).
+ * from the blur asked for instead: dofBlur × focusDistance × tan( fov / 2 ), and dofBlur ×
+ * focusDistance for an orthographic camera, whose rays are parallel and start on its image plane.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { PerspectiveCamera, Vector2, Vector3, Vector4 } from 'three';
+import { PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { generateRayFromCamera } from '@/core/TSL/CameraRay.js';
 import { Ray } from '@/core/TSL/Struct.js';
+import { ViewCamera } from '@/core/managers/ViewCamera.js';
+import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
 
 const FOCUS = 3.5;
 const FOCAL_LENGTH = 85;
@@ -29,6 +32,13 @@ camera.lookAt( - 0.5, 0.3, 0 );
 camera.updateMatrixWorld();
 const forward = camera.getWorldDirection( new Vector3() );
 
+const ortho = new ViewCamera( 70, 1.6, 0.1, 100 );
+ortho.copy( camera );
+ortho.orthographic = true;
+ortho.orthoHalfHeight = 1.25;
+ortho.zoom = 1.6;
+ortho.updateProjectionMatrix();
+
 const uvs = new Float32Array( UVS.length * LENS_SAMPLES * 2 );
 const seeds = new Uint32Array( UVS.length * LENS_SAMPLES );
 let lcg = 12345;
@@ -45,12 +55,13 @@ UVS.forEach( ( [ u, v ], p ) => {
 
 } );
 
-async function trace( renderer, projection, look = false ) {
+async function trace( renderer, projection, look = false, dof = true ) {
 
+	const view = projection === CAMERA_PROJECTION_IDS.orthographic ? ortho : camera;
 	const args = [
-		uniform( camera.matrixWorld.clone() ), uniform( camera.projectionMatrixInverse.clone() ),
+		uniform( view.matrixWorld.clone() ), uniform( view.projectionMatrixInverse.clone() ),
 		uniform( projection, 'int' ), uniform( new Vector2( - Math.PI, Math.PI ) ), uniform( new Vector2( - Math.PI / 2, Math.PI / 2 ) ), uniform( 0, 'int' ),
-		uniform( 1, 'int' ), uniform( FOCAL_LENGTH ), uniform( F_STOP ), uniform( FOCUS ), uniform( UNITS_PER_METRE ), uniform( APERTURE_SCALE ), uniform( 1.0 ),
+		uniform( dof ? 1 : 0, 'int' ), uniform( FOCAL_LENGTH ), uniform( F_STOP ), uniform( FOCUS ), uniform( UNITS_PER_METRE ), uniform( APERTURE_SCALE ), uniform( 1.0 ),
 		uniform( look ? 1 : 0, 'int' ), uniform( BLUR ),
 	];
 	const run = pick => evaluate( renderer, seeds.length, { uv: [ uvs, 'vec2' ], seed: [ seeds, 'uint' ] }, 'vec4', a => {
@@ -79,14 +90,18 @@ function pinholeDirection( [ u, v ] ) {
 
 describeGPU( 'thin lens', () => {
 
-	let renderer, perspective, panorama, look;
+	let renderer, perspective, panorama, look, orthoPinhole, orthoLens, orthoLook;
 
 	beforeAll( async () => {
 
+		const { perspective: pinhole, equirectangular, orthographic } = CAMERA_PROJECTION_IDS;
 		renderer = await createRenderer();
-		perspective = await trace( renderer, 0 );
-		panorama = await trace( renderer, 1 );
-		look = await trace( renderer, 0, true );
+		perspective = await trace( renderer, pinhole );
+		panorama = await trace( renderer, equirectangular );
+		look = await trace( renderer, pinhole, true );
+		orthoPinhole = await trace( renderer, orthographic, false, false );
+		orthoLens = await trace( renderer, orthographic );
+		orthoLook = await trace( renderer, orthographic, true );
 
 	} );
 
@@ -149,6 +164,43 @@ describeGPU( 'thin lens', () => {
 			for ( const point of points ) expect( point.distanceTo( points[ 0 ] ), `uv ${UVS[ p ]}` ).toBeLessThan( 1e-4 * FOCUS );
 
 		}
+
+	} );
+
+	it( 'shoots an orthographic camera\'s rays parallel, from where the Raycaster picks', () => {
+
+		const raycaster = new Raycaster();
+		for ( const { pixel, origin, direction } of orthoPinhole ) {
+
+			const [ u, v ] = UVS[ pixel ];
+			raycaster.setFromCamera( { x: u * 2 - 1, y: 1 - v * 2 }, ortho );
+			expect( origin.distanceTo( raycaster.ray.origin ), `uv ${UVS[ pixel ]}` ).toBeLessThan( 1e-5 );
+			expect( direction.dot( forward ) ).toBeCloseTo( 1, 6 );
+
+		}
+
+	} );
+
+	it( 'focuses an orthographic camera on the plane focusDistance in front of its image plane', () => {
+
+		for ( const { pixel, origin, direction } of orthoLens ) {
+
+			const start = orthoPinhole.find( r => r.pixel === pixel ).origin;
+			const t = ( FOCUS - origin.clone().sub( start ).dot( forward ) ) / direction.dot( forward );
+			const hit = origin.clone().addScaledVector( direction, t );
+			expect( hit.distanceTo( start.clone().addScaledVector( forward, FOCUS ) ), `uv ${UVS[ pixel ]}` ).toBeLessThan( 1e-4 * FOCUS );
+
+		}
+
+	} );
+
+	it( 'in look mode, opens an orthographic lens to dofBlur × focusDistance', () => {
+
+		const expected = BLUR * FOCUS;
+		const widest = Math.max( ...orthoLook.map( ( { pixel, origin } ) => origin.distanceTo( orthoPinhole.find( r => r.pixel === pixel ).origin ) ) );
+
+		expect( widest ).toBeLessThanOrEqual( expected * 1.0001 );
+		expect( widest ).toBeGreaterThan( expected * 0.95 );
 
 	} );
 

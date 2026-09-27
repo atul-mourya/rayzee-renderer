@@ -8,6 +8,7 @@ let computeOutputDimensions;
 let ASPECT_RATIO_PRESETS;
 let aspectRatioLabel;
 let walkSpeedRange;
+let orthoHeightRange;
 
 beforeAll( async () => {
 
@@ -18,6 +19,7 @@ beforeAll( async () => {
 	ASPECT_RATIO_PRESETS = mod.ASPECT_RATIO_PRESETS;
 	aspectRatioLabel = mod.aspectRatioLabel;
 	walkSpeedRange = mod.walkSpeedRange;
+	orthoHeightRange = mod.orthoHeightRange;
 
 } );
 
@@ -209,6 +211,18 @@ describe( 'walkSpeedRange', () => {
 		expect( walkSpeedRange( 1.41 ) ).toEqual( { min: 0.1, max: 5.7, step: 0.1, precision: 1 } );
 		expect( walkSpeedRange( 0.018 ) ).toEqual( { min: 0.001, max: 0.072, step: 0.001, precision: 3 } );
 		expect( walkSpeedRange( 188 ) ).toEqual( { min: 10, max: 760, step: 10, precision: 0 } );
+
+	} );
+
+} );
+
+describe( 'orthoHeightRange', () => {
+
+	it( 'spans about a hundredth to four times the model on a round step', () => {
+
+		expect( orthoHeightRange( 11.27 ) ).toEqual( { min: 0.1, max: 45.1, step: 0.1, precision: 1 } );
+		expect( orthoHeightRange( 0.04 ) ).toEqual( { min: 0.0001, max: 0.16, step: 0.0001, precision: 4 } );
+		expect( orthoHeightRange( 188 ) ).toEqual( { min: 1, max: 752, step: 1, precision: 0 } );
 
 	} );
 
