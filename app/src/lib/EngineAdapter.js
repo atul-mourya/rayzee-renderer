@@ -181,6 +181,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( 'ModelLoaded', () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
 
+	on( EngineEvents.TIMELINE_CHANGED, () => useAnimationStore?.getState().syncTimeline( engine.timeline ) );
+
 	on( EngineEvents.AUTO_EXPOSURE_UPDATED, ( e ) => {
 
 		usePathTracerStore.getState().setCurrentAutoExposure( e.exposure );

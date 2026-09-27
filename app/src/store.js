@@ -1580,6 +1580,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	handleModeChange: mode => {
 
+		getApp()?.timeline.stop();
 		const actions = {
 			preview: 'handleConfigureForPreview',
 			'final-render': 'handleConfigureForFinalRender',
@@ -3049,6 +3050,17 @@ const useFavoritesStore = create( ( set, get ) => ( {
 
 export const VIDEO_RENDER_FPS = 30;
 
+/** The clip's loops at its speed, or the timeline's length in a still scene. */
+export const videoDuration = ( { clips, selectedClip, loopCount, speed, timelineDuration } ) => {
+
+	const clip = clips[ selectedClip ];
+	return clip ? clip.duration * Math.max( 1, loopCount ) / ( speed || 1 ) : timelineDuration;
+
+};
+
+/** A video plays the timeline in a still scene, and alongside a clip when asked. */
+export const videoUsesTimeline = ( { clips, moveCameraInVideo, timelineAnimates } ) => timelineAnimates && ( ! clips.length || moveCameraInVideo );
+
 // Module-scoped refs — not reactive state, only used for imperative cancel
 let _activeVideoManager = null;
 let _activeEncoder = null;
@@ -3130,6 +3142,41 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 	},
 
+	// ── Timeline (camera keyframes) ──────────────────────────
+
+	// Mirrored from app.timeline on every TIMELINE_CHANGED: { id, time } per key, sorted by time.
+	cameraKeys: [],
+	timelineDuration: 0,
+	timelineAnimates: false,
+	isTimelinePlaying: false,
+	moveCameraInVideo: false,
+
+	syncTimeline: timeline => set( {
+		cameraKeys: timeline.camera.keys.map( ( { id, time } ) => ( { id, time } ) ),
+		timelineDuration: timeline.duration,
+		timelineAnimates: timeline.animates,
+		isTimelinePlaying: timeline.isPlaying,
+	} ),
+
+	handleMoveCameraInVideoChange: moveCameraInVideo => set( { moveCameraInVideo } ),
+	handleAddCameraKey: () => getApp()?.timeline.camera.addKey(),
+	handleUpdateCameraKey: id => getApp()?.timeline.camera.updateKey( id ),
+	handleRemoveCameraKey: id => getApp()?.timeline.camera.remove( id ),
+	handleCameraKeyTimeChange: ( id, seconds ) => getApp()?.timeline.camera.setTime( id, seconds ),
+
+	handleGoToCameraKey: id => {
+
+		const app = getApp();
+		const key = app?.timeline.camera.get( id );
+		if ( ! key ) return;
+		app.cameraManager.applyPose( key );
+		app.reset();
+
+	},
+
+	handlePlayTimeline: () => getApp()?.timeline.play(),
+	handleStopTimeline: () => getApp()?.timeline.stop(),
+
 	// ── Video Rendering ──────────────────────────────────────
 
 	loopCount: 1,
@@ -3143,16 +3190,16 @@ const useAnimationStore = create( ( set, get ) => ( {
 	handleRenderAnimation: async ( { totalDuration } = {} ) => {
 
 		const app = getApp();
-		if ( ! app || ! app.animationManager?.clips?.length ) return;
+		if ( ! app ) return;
 
-		const { selectedClip, loopCount, speed } = get();
-		const clip = app.animationManager.clips[ selectedClip ];
-		if ( ! clip ) return;
+		const { selectedClip, clips } = get();
+		const timeline = videoUsesTimeline( get() ) ? app.timeline : null;
+		if ( ! clips.length && ! timeline ) return;
+
+		app.timeline.stop();
 
 		const fps = VIDEO_RENDER_FPS;
-		const loops = Math.max( 1, loopCount );
-		const effectiveDuration = ( clip.duration * loops ) / ( speed || 1 );
-		const duration = totalDuration || effectiveDuration;
+		const duration = totalDuration || videoDuration( get() );
 		const totalFrames = Math.ceil( duration * fps );
 
 		// Check codec support
@@ -3178,7 +3225,8 @@ const useAnimationStore = create( ( set, get ) => ( {
 		await videoManager.renderAnimation( {
 			clipIndex: selectedClip,
 			fps,
-			speed: speed || 1,
+			speed: get().speed || 1,
+			timeline,
 			samplesPerFrame: ENGINE_DEFAULTS.maxSamples,
 			enableOIDN: true,
 			totalFrames,

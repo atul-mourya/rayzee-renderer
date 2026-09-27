@@ -96,6 +96,10 @@ export { TransformManager } from './managers/TransformManager.js';
 // Video rendering
 export { VideoRenderManager } from './managers/VideoRenderManager.js';
 
+// Authored animation: keyframed tracks on one timeline (engine.timeline)
+export { TimelineManager } from './managers/timeline/TimelineManager.js';
+export { CameraTrack } from './managers/timeline/CameraTrack.js';
+
 // Interaction
 export { InteractionManager } from './managers/InteractionManager.js';
 

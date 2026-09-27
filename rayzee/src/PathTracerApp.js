@@ -35,6 +35,7 @@ import { SceneProcessor } from './Processor/SceneProcessor.js';
 // Managers
 import { RenderSettings } from './RenderSettings.js';
 import { CameraManager } from './managers/CameraManager.js';
+import { TimelineManager } from './managers/timeline/TimelineManager.js';
 import { LightManager } from './managers/LightManager.js';
 import { GoboManager } from './managers/GoboManager.js';
 import { IESManager } from './managers/IESManager.js';
@@ -215,6 +216,8 @@ export class PathTracerApp extends EventDispatcher {
 		// ── Managers (direct public access) ──
 		/** @type {CameraManager} */
 		this.cameraManager = null;
+		/** @type {TimelineManager} Authored animation: keyframed tracks. */
+		this.timeline = null;
 		/** @type {LightManager} */
 		this.lightManager = null;
 		/** @type {GoboManager} */
@@ -360,6 +363,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
+		this.timeline.update();
 		this.cameraManager.updateControls();
 
 		this._applyPendingRenderScale();
@@ -639,6 +643,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.iesManager?.dispose();
 		this.denoisingManager?.dispose();
 		this.interactionManager?.dispose();
+		this.timeline?.dispose();
 		this.cameraManager?.dispose();
 
 		this.pipeline?.dispose();
@@ -2089,6 +2094,7 @@ export class PathTracerApp extends EventDispatcher {
 		// refresh landing in the middle of that raced the renderer's own output pass.
 		this.denoisingManager?.setCadenceSuspended( isProduction );
 
+		this.timeline.stop();
 		this.cameraManager.controls.enabled = ! isProduction;
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
@@ -3391,6 +3397,7 @@ export class PathTracerApp extends EventDispatcher {
 	_initCameraManager() {
 
 		this.cameraManager = new CameraManager( this.canvas );
+		this.timeline = new TimelineManager( { cameraManager: this.cameraManager, onReset: () => this.reset() } );
 
 	}
 
@@ -3533,6 +3540,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._addTrackedListener( this.cameraManager, 'CameraSwitched', ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.cameraManager, EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.cameraManager, EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.timeline, EngineEvents.TIMELINE_CHANGED, ( e ) => this.dispatchEvent( e ) );
 
 		this._forwardEvents( this.denoisingManager, [
 			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
@@ -3648,6 +3656,8 @@ export class PathTracerApp extends EventDispatcher {
 
 			const cameras = [ this.cameraManager.camera, ...( event.cameras || [] ) ];
 			this.cameraManager.setCameras( cameras );
+			// Keys are poses in the scene being replaced, like the cameras saved in it.
+			this.timeline.clear();
 
 			if ( this.interactionManager ) {
 

@@ -518,6 +518,45 @@ export class CameraManager extends EventDispatcher {
 
 	}
 
+	/**
+	 * The current view as a pose: where the camera is, what it looks at, and how much it shows — the
+	 * height an orthographic view covers, or what a perspective one covers at its orbit target.
+	 * @returns {import('./timeline/CameraTrack.js').CameraPose}
+	 */
+	captureView() {
+
+		const camera = this.camera;
+		const orthoHeight = this.orthoHeight ?? 2 * this._fittedHalfHeight();
+		return { position: camera.position.clone(), target: this.controls.target.clone(), fov: camera.fov, orthoHeight };
+
+	}
+
+	/**
+	 * Puts the camera at a pose, looking at its target, sized for the projection in use.
+	 * @param {import('./timeline/CameraTrack.js').CameraPose} pose
+	 */
+	applyPose( pose ) {
+
+		const camera = this.camera;
+		camera.position.copy( pose.position );
+		camera.lookAt( pose.target );
+		this.controls.target.copy( pose.target );
+
+		if ( camera.orthographic ) {
+
+			this._setView( true, pose.orthoHeight / 2 );
+
+		} else {
+
+			camera.fov = pose.fov;
+			camera.updateProjectionMatrix();
+
+		}
+
+		camera.updateMatrixWorld();
+
+	}
+
 	// ── Aliases (match Sub-API surface) ───────────────────────────
 
 	/** The active camera, a {@link ViewCamera}. */

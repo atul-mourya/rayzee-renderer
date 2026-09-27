@@ -302,4 +302,96 @@ describe( 'VideoRenderManager', () => {
 
 	} );
 
+	describe( 'timeline', () => {
+
+		// three is mocked out here, so the view is a stand-in that only copies a value around.
+		const vec = ( v ) => ( { v, clone() {
+
+			return vec( this.v );
+
+		}, copy( o ) {
+
+			this.v = o.v; return this;
+
+		} } );
+
+		const withTimeline = ( duration = 0.3 ) => {
+
+			const view = { position: 'start' };
+			Object.assign( app.cameraManager, {
+				camera: { position: vec( 'start' ), updateMatrixWorld: vi.fn() },
+				captureView: vi.fn( () => view ),
+				applyPose: vi.fn( pose => app.cameraManager.camera.position.copy( { v: pose.position } ) ),
+				resetAutoFocus: vi.fn(),
+				updateAutoFocus: vi.fn(),
+			} );
+			const effective = app.settings.getEffective();
+			app.settings.getEffective = vi.fn( () => ( { ...effective, focusDistance: { value: 3, source: 'host' } } ) );
+			return {
+				animates: true,
+				duration,
+				seek: vi.fn( time => {
+
+					app.cameraManager.camera.position.copy( { v: time } );
+					return true;
+
+				} ),
+			};
+
+		};
+
+		it( 'plays the keyframes through a still scene, frame by frame in video time', async () => {
+
+			app.animationManager.hasAnimations = false;
+			const timeline = withTimeline( 0.3 );
+			const onComplete = vi.fn();
+
+			await manager.renderAnimation( { fps: 10, timeline, onComplete } );
+
+			expect( timeline.seek.mock.calls.map( ( [ t ] ) => + t.toFixed( 6 ) ) ).toEqual( [ 0, 0.1, 0.2 ] );
+			expect( app.cameraManager.updateAutoFocus ).toHaveBeenCalledTimes( 3 );
+			expect( app.animationManager.seekTo ).not.toHaveBeenCalled();
+			expect( onComplete ).toHaveBeenCalledWith( true );
+
+		} );
+
+		it( 'needs keyframes that move, without a clip', async () => {
+
+			app.animationManager.hasAnimations = false;
+			const timeline = { ...withTimeline(), animates: false };
+			const onComplete = vi.fn();
+
+			await manager.renderAnimation( { fps: 10, timeline, onComplete } );
+
+			expect( onComplete ).toHaveBeenCalledWith( false );
+
+		} );
+
+		it( 'seeks the timeline after the clip, so its camera wins over a followed one', async () => {
+
+			const timeline = withTimeline();
+			const order = [];
+			app.animationManager.seekTo.mockImplementation( () => void order.push( 'clip' ) );
+			timeline.seek.mockImplementation( () => order.push( 'timeline' ) > 0 );
+
+			await manager.renderAnimation( { fps: 10, timeline, totalFrames: 2 } );
+
+			expect( order ).toEqual( [ 'clip', 'timeline', 'clip', 'timeline' ] );
+
+		} );
+
+		it( 'puts the view back afterwards', async () => {
+
+			app.animationManager.hasAnimations = false;
+			const timeline = withTimeline( 0.2 );
+
+			await manager.renderAnimation( { fps: 10, timeline } );
+
+			expect( app.cameraManager.camera.position.v ).toBe( 'start' );
+			expect( app.settings.set ).toHaveBeenCalledWith( 'focusDistance', 3, expect.objectContaining( { reset: false, source: 'host' } ) );
+
+		} );
+
+	} );
+
 } );

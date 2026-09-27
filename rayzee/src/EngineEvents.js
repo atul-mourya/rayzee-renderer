@@ -49,6 +49,9 @@ export const EngineEvents = {
 	ANIMATION_STOPPED: 'engine:animationStopped',
 	ANIMATION_FINISHED: 'engine:animationFinished',
 
+	// Timeline (authored keyframes)
+	TIMELINE_CHANGED: 'engine:timelineChanged',
+
 	// Video rendering
 	VIDEO_RENDER_PROGRESS: 'engine:videoRenderProgress',
 	VIDEO_RENDER_COMPLETE: 'engine:videoRenderComplete',

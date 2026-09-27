@@ -81,7 +81,10 @@
 
 - [ ] **Advanced Camera Controls**
   - [x] Cinema-grade camera with physical parameters
-  - [ ] Camera animation and keyframing
+  - [x] Orthographic and 360° panorama projections
+  - [x] Walk mode (first-person navigation)
+  - [x] Camera keyframes on a timeline (smooth moves through keyed views, previewed and rendered to video)
+  - [ ] Timeline scrubber, and keyframes for lights and objects
   - [ ] Virtual camera with gamepad support
 
 ### Rendering Management

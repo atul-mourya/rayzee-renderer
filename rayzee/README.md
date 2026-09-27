@@ -25,6 +25,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [Camera Projection (Orthographic, 360° Panorama)](#camera-projection-orthographic-360-panorama)
   - [engine.lightManager](#enginelightmanager)
   - [engine.animationManager](#engineanimationmanager)
+  - [engine.timeline](#enginetimeline)
   - [Materials](#materials)
   - [Colour Management](#colour-management)
   - [engine.environmentManager](#engineenvironmentmanager)
@@ -556,6 +557,34 @@ engine.animationManager.setLoop(true)        // Enable/disable looping
 engine.animationManager.clips                // Get available animation clips
 ```
 
+### engine.timeline
+
+Authored animation: keyframed tracks on one time axis, in seconds. The camera's is the first track; the timeline is where lights and objects will join it. A model's own clips stay with `engine.animationManager`, and saved cameras (`engine.addCamera()`) stay cameras — a keyframe is not a camera.
+
+```js
+const camera = engine.timeline.camera          // the camera's track
+const key = camera.addKey()                    // key the current view, 2 s after the last key
+camera.addKey(5)                               // …or at a time
+camera.updateKey(key.id)                       // give a key the current view
+camera.setTime(key.id, 3.5)                    // retime it; keys stay in time order
+camera.remove(key.id)
+camera.keys                                    // [{ id, time, position, target, fov, orthoHeight }]
+
+engine.timeline.duration                       // seconds to the last key of any track
+engine.timeline.animates                       // a track has two keys or more
+engine.timeline.seek(2.5)                      // put the scene where the timeline has it at 2.5 s
+await engine.timeline.play()                   // run it in the viewport, controls locked
+engine.timeline.stop()                         // or stop early
+
+// Keys changed ({ track: 'camera' }) or playback started or stopped ({ track: undefined })
+engine.addEventListener(EngineEvents.TIMELINE_CHANGED, ({ track }) => {})
+
+// A video of the move through a still scene; pass clipIndex too to move the camera during a clip
+await new VideoRenderManager(engine).renderAnimation({ timeline: engine.timeline, fps: 30, onFrame });
+```
+
+Between keys the camera glides along a smooth curve through their positions while looking along another through their targets, so a subject every key looks at stays in frame. It leaves the first key and reaches the last at rest, runs straight through the keys between, and holds still outside them. FOV, or an orthographic view's height, blends too, in the projection in use. The curves are three.js keyframe tracks (`InterpolateSmooth`). With auto-focus on, focus is measured again on every video frame, and the view is put back when the render ends. A new model clears the keys, as it clears saved cameras.
+
 ### Materials
 
 Material property updates and texture transforms — accessed as direct methods on the engine.
@@ -1052,6 +1081,8 @@ import {
   AnimationManager,
   TransformManager,
   VideoRenderManager,
+  TimelineManager,
+  CameraTrack,
   InteractionManager,
   RenderPipeline,
   RenderStage,

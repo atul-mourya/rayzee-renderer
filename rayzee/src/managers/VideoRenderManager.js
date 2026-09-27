@@ -1,9 +1,9 @@
 /**
  * VideoRenderManager — Drives offline frame-by-frame animation rendering.
  *
- * Seeks the animation to each frame time, accumulates SPP until convergence,
- * optionally denoises, captures the output canvas, and delivers each frame
- * via a callback for encoding.
+ * Seeks the animation clip and the timeline, when given one, to each frame time, accumulates SPP
+ * until convergence, optionally denoises, captures the output canvas, and delivers each frame via a
+ * callback for encoding.
  */
 
 import { EngineEvents } from '../EngineEvents.js';
@@ -30,6 +30,8 @@ export class VideoRenderManager {
 	 * @param {boolean} [options.enableOIDN=true]    - Run OIDN denoiser per frame
 	 * @param {number} [options.speed=1]              - Playback speed multiplier (maps video time to animation time)
 	 * @param {number} [options.totalFrames]         - Override total frame count (for looped animations)
+	 * @param {import('./timeline/TimelineManager.js').TimelineManager} [options.timeline] - Keyframes to
+	 *   play in video time; without a clip the video lasts as long as they do
 	 * @param {Function} [options.onFrame]           - async (ImageBitmap, frameIndex, totalFrames) => void
 	 * @param {Function} [options.onProgress]        - ({ frame, totalFrames, percent }) => void
 	 * @param {Function} [options.onComplete]        - (success: boolean) => void
@@ -42,6 +44,7 @@ export class VideoRenderManager {
 			speed = 1,
 			samplesPerFrame = PRODUCTION_RENDER_CONFIG.maxSamples,
 			enableOIDN = true,
+			timeline = null,
 			onFrame,
 			onProgress,
 			onComplete,
@@ -49,32 +52,32 @@ export class VideoRenderManager {
 
 		const app = this._app;
 
-		if ( ! app.animationManager?.hasAnimations ) {
+		// Keyframes alone make a video too.
+		const clip = app.animationManager?.hasAnimations ? app.animationManager.clips[ clipIndex ] : null;
+		if ( ! clip && ! timeline?.animates ) {
 
-			console.warn( 'VideoRenderManager: No animation clips available' );
+			console.warn( app.animationManager?.hasAnimations ? `VideoRenderManager: Invalid clip index ${clipIndex}` : 'VideoRenderManager: No animation clips or keyframes' );
 			onComplete?.( false );
 			return;
 
 		}
 
-		const clip = app.animationManager.clips[ clipIndex ];
-		if ( ! clip ) {
-
-			console.warn( `VideoRenderManager: Invalid clip index ${clipIndex}` );
-			onComplete?.( false );
-			return;
-
-		}
-
-		const effectiveDuration = clip.duration / ( speed || 1 );
+		const effectiveDuration = clip ? clip.duration / ( speed || 1 ) : timeline.duration;
 		const totalFrames = options.totalFrames || Math.ceil( effectiveDuration * fps );
 		const frameDuration = 1 / fps;
+		if ( ! ( totalFrames > 0 ) ) {
+
+			console.warn( 'VideoRenderManager: No frames to render' );
+			onComplete?.( false );
+			return;
+
+		}
 
 		this._cancelled = false;
 		this._rendering = true;
 
 		// Save current engine state
-		const savedState = this._saveState();
+		const savedState = this._saveState( { view: !! timeline } );
 
 		// Stop the rAF loop — we drive rendering manually
 		app.stopAnimation();
@@ -99,7 +102,16 @@ export class VideoRenderManager {
 				const animationTime = i * frameDuration * speed;
 
 				// 1. Seek animation to frame time
-				const positions = app.animationManager.seekTo( animationTime, clipIndex );
+				const positions = clip ? app.animationManager.seekTo( animationTime, clipIndex ) : null;
+
+				// After the clip, which moves a followed model camera.
+				if ( timeline?.seek( i * frameDuration ) ) {
+
+					// A moving camera changes what is under the focus point.
+					app.cameraManager.resetAutoFocus();
+					app.cameraManager.updateAutoFocus();
+
+				}
 
 				// 2. Refit BVH with deformed positions (also calls reset())
 				if ( positions ) {
@@ -268,16 +280,21 @@ export class VideoRenderManager {
 
 	/**
 	 * Save engine state that we'll modify during video render.
+	 * @param {Object} options
+	 * @param {boolean} options.view - a timeline will move the camera, and auto-focus with it
 	 * @private
 	 */
-	_saveState() {
+	_saveState( { view } ) {
 
 		const app = this._app;
 		const effective = app.settings.getEffective();
+		const keys = Object.keys( modePresetSettings( PRODUCTION_RENDER_CONFIG ) );
+		if ( view ) keys.push( 'focusDistance' );
 
 		return {
+			view: view ? app.cameraManager.captureView() : null,
 			// Everything configureForMode( 'production' ) overwrites, with who set it.
-			settings: Object.keys( modePresetSettings( PRODUCTION_RENDER_CONFIG ) ).map( key => [ key, effective[ key ] ] ),
+			settings: keys.map( key => [ key, effective[ key ] ] ),
 			renderMode: app.stages.pathTracer?.renderMode?.value,
 			controlsEnabled: app.cameraManager.controls?.enabled,
 			oidnEnabled: app.denoisingManager?.finalDenoise,
@@ -320,6 +337,8 @@ export class VideoRenderManager {
 		}
 
 		app.pauseRendering = state.pauseRendering ?? false;
+
+		if ( state.view ) app.cameraManager.applyPose( state.view );
 
 		// configureForMode( 'production' ) suspended the live-view refresh and nothing here switches
 		// back, so the viewport would stay un-denoised until the host changed tab.

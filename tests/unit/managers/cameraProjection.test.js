@@ -182,3 +182,40 @@ describe( 'CameraManager projection', () => {
 	} );
 
 } );
+
+describe( 'CameraManager poses', () => {
+
+	it( 'captures the view: where it is, what it looks at, and what it shows there', () => {
+
+		const { cm, setProjection } = manager();
+		const pose = cm.captureView();
+
+		expect( pose.position.equals( cm.camera.position ) ).toBe( true );
+		expect( pose.target.equals( cm.controls.target ) ).toBe( true );
+		expect( pose.fov ).toBe( cm.camera.fov );
+		expect( pose.orthoHeight ).toBeCloseTo( 2 * cm.camera.position.length() * Math.tan( Math.PI / 6 ), 9 );
+
+		setProjection( 'orthographic' );
+		cm.setOrthoHeight( 3 );
+		expect( cm.captureView().orthoHeight ).toBeCloseTo( 3, 9 );
+
+	} );
+
+	it( 'places the camera at a pose, looking at its target, sized for the projection in use', () => {
+
+		const { cm, setProjection } = manager();
+		const pose = { position: new Vector3( 4, 1, 4 ), target: new Vector3( 1, 0, 0 ), fov: 35, orthoHeight: 5 };
+
+		cm.applyPose( pose );
+		const toTarget = pose.target.clone().sub( pose.position ).normalize();
+		expect( cm.camera.getWorldDirection( new Vector3() ).dot( toTarget ) ).toBeCloseTo( 1, 9 );
+		expect( cm.camera.fov ).toBe( 35 );
+		expect( cm.controls.target.equals( pose.target ) ).toBe( true );
+
+		setProjection( 'orthographic' );
+		cm.applyPose( pose );
+		expect( cm.orthoHeight ).toBeCloseTo( 5, 9 );
+
+	} );
+
+} );

@@ -421,3 +421,83 @@ describe( 'orthographic view height', () => {
 	} );
 
 } );
+
+describe( 'timeline', () => {
+
+	const withApp = async ( state = {} ) => {
+
+		const timeline = {
+			play: vi.fn( async () => {} ),
+			stop: vi.fn(),
+			camera: { addKey: vi.fn(), updateKey: vi.fn(), get: id => ( { id, time: 4 } ), remove: vi.fn(), setTime: vi.fn() },
+		};
+		const app = { timeline, cameraManager: { applyPose: vi.fn() }, reset: vi.fn() };
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		store.useAnimationStore.setState( { clips: [], selectedClip: 0, loopCount: 1, speed: 1, timelineDuration: 5, timelineAnimates: true, moveCameraInVideo: false, ...state } );
+		return app;
+
+	};
+
+	const animation = () => store.useAnimationStore.getState();
+
+	it( 'mirrors the engine timeline', async () => {
+
+		await withApp();
+		animation().syncTimeline( {
+			camera: { keys: [ { id: 3, time: 1, position: {} }, { id: 5, time: 2.5 } ] },
+			duration: 2.5, animates: true, isPlaying: true,
+		} );
+
+		expect( animation().cameraKeys ).toEqual( [ { id: 3, time: 1 }, { id: 5, time: 2.5 } ] );
+		expect( [ animation().timelineDuration, animation().timelineAnimates, animation().isTimelinePlaying ] ).toEqual( [ 2.5, true, true ] );
+
+	} );
+
+	it( 'lasts as long as the timeline in a still scene, and as the clip video otherwise', async () => {
+
+		await withApp();
+		expect( store.videoDuration( animation() ) ).toBe( 5 );
+
+		store.useAnimationStore.setState( { clips: [ { index: 0, name: 'Walk', duration: 2 } ], loopCount: 3, speed: 2 } );
+		expect( store.videoDuration( animation() ) ).toBe( 3 );
+
+	} );
+
+	it( 'plays the timeline in a clip video only when asked, and only if it moves', async () => {
+
+		await withApp();
+		expect( store.videoUsesTimeline( animation() ) ).toBe( true );
+
+		store.useAnimationStore.setState( { clips: [ { index: 0, name: 'Walk', duration: 2 } ] } );
+		expect( store.videoUsesTimeline( animation() ) ).toBe( false );
+		store.useAnimationStore.setState( { moveCameraInVideo: true } );
+		expect( store.videoUsesTimeline( animation() ) ).toBe( true );
+
+		store.useAnimationStore.setState( { timelineAnimates: false } );
+		expect( store.videoUsesTimeline( animation() ) ).toBe( false );
+
+	} );
+
+	it( 'drives the timeline: keys, jumps and playback', async () => {
+
+		const app = await withApp();
+
+		animation().handleAddCameraKey();
+		animation().handleUpdateCameraKey( 1 );
+		animation().handleCameraKeyTimeChange( 2, 3.5 );
+		animation().handleRemoveCameraKey( 3 );
+		animation().handleGoToCameraKey( 2 );
+		animation().handlePlayTimeline();
+		animation().handleStopTimeline();
+
+		expect( app.timeline.camera.addKey ).toHaveBeenCalled();
+		expect( app.timeline.camera.updateKey ).toHaveBeenCalledWith( 1 );
+		expect( app.timeline.camera.setTime ).toHaveBeenCalledWith( 2, 3.5 );
+		expect( app.timeline.camera.remove ).toHaveBeenCalledWith( 3 );
+		expect( app.cameraManager.applyPose ).toHaveBeenCalledWith( { id: 2, time: 4 } );
+		expect( app.timeline.play ).toHaveBeenCalled();
+		expect( app.timeline.stop ).toHaveBeenCalled();
+
+	} );
+
+} );

@@ -49,7 +49,8 @@ Critical for maintaining 60fps during heavy computations:
 Zustand-based stores with **automatic 3D engine synchronization**:
 - `usePathTracerStore` - Rendering parameters with handlers that use `getApp()` from appProxy
 - `useAssetsStore` - Model/environment loading state
-- `useCameraStore` - Camera controls with DOF presets
+- `useCameraStore` - Camera controls, DOF, walk speed, orthographic view height
+- `useAnimationStore` - Clip playback, camera keyframes (mirrored from `app.timeline`), video render
 - Pattern: `handleChange()` utility creates handlers that update both store state and 3D engine, triggering `app.reset()` for immediate visual feedback
 
 ### Data Layout & GPU Optimization
@@ -186,7 +187,10 @@ const getDatafromDataTexture = Fn(([tex, texSize, stride, sampleIndex, dataOffse
 ```
 
 ### Camera & DOF System
-Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro with proper focal length calculations. Focus picking via click-to-focus interaction mode.
+Thin lens in `TSL/CameraRay.js`, sized by `dofMode`: `'look'` (the blur asked for, at any scene scale) or `'physical'` (f/2N × `unitsPerMetre`). `CAMERA_PRESETS` are lens-only settings patches, so a preset never moves the camera. Focus is a flat plane at `focusDistance` along the view axis; auto-focus or click-to-focus picks it.
+- **Projection** (`cameraProjection`): perspective, orthographic or 360° panorama. The live camera is a `ViewCamera` (`managers/ViewCamera.js`) that switches its own projection, so everything holding it follows; every denoiser rebuilds pixels from the orthographic image plane.
+- **Walk mode** (`cameraManager.setNavigationMode( 'walk' )`, `managers/WalkControls.js`) rides on the OrbitControls and keeps their target ahead of the camera.
+- **Camera keyframes** live on `app.timeline` (`managers/timeline/`): `TimelineManager` combines tracks and plays them; `CameraTrack` holds keyed views sampled through three.js keyframe tracks. They are not cameras: the Camera tab's `+` saves cameras, the Anim tab keys the timeline. `VideoRenderManager` seeks the timeline per video frame.
 
 ## Common Pitfalls & Solutions
 
@@ -195,7 +199,7 @@ Photography-inspired presets (`CAMERA_PRESETS`) for portrait/landscape/macro wit
 3. **TSL Hot Reload**: TSL shader changes hot-reload normally via Vite
 4. **Worker Data Transfer**: Use transferable objects for large arrays to avoid main thread blocking
 5. **BVH Memory**: Large models may require treelet optimization (`treeletOptimization: true`) for performance
-6. **Resolution Scaling**: Path tracer resolution independent of UI — use `updateResolution(scale, index)` (2-arg signature)
+6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately)
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 
 ## Testing & Validation

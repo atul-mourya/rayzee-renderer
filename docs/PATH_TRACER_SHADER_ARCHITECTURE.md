@@ -42,6 +42,7 @@ Key features:
 - Physically-based material system with multi-lobe BRDF sampling (diffuse, specular, sheen, clearcoat, transmission) plus iridescence and random-walk subsurface.
 - Environment importance sampling using a marginal + conditional CDF (stored in an R32F texture).
 - Light BVH for stochastic emissive triangle sampling via tree traversal.
+- Three camera projections in one kernel (`TSL/CameraRay.js`, switched by the `cameraProjection` uniform): pinhole, orthographic (parallel rays from the camera's image plane) and 360° equirectangular.
 - Depth of field (thin lens with a flat focal plane, sized either by the blur asked for or as a physical lens) and camera jitter for anti-aliasing.
 - Firefly mitigation (`regularizePathContribution`).
 - Optional material-index sorting (per-workgroup or global radix) for shading coherence.
@@ -132,7 +133,7 @@ First-hit MRT data (normal/depth/albedo) is written by `ShadeKernel` into the pe
 
 Uniforms are owned by `UniformManager` and exposed on the stage; `PathTracer` wires them into the kernel builders. Principal categories:
 
-1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse`, `cameraViewMatrix`, `cameraProjectionMatrix`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
+1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse`, `cameraViewMatrix`, `cameraProjectionMatrix`; `cameraProjection` (`CAMERA_PROJECTION_IDS`), `panoLonRange`, `panoLatRange`, `panoLevelHorizon`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
 2. **Frame & Control:** `frame`, `maxBounces`, `transmissiveBounces`, `maxSubsurfaceSteps`, `renderMode`.
 3. **Accumulation:** `enableAccumulation`, `accumulationAlpha`, `cameraIsMoving`, `hasPreviousAccumulated` (+ prev-frame MRT texture nodes).
 4. **Sampling:** `samplingTechnique` (0=PCG, 1=Halton, 2=Sobol, 3=STBN), STBN texture nodes.
