@@ -96,11 +96,21 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 				settled = true;
 				log.warn( `parallel build failed (${reason}), falling back to single worker` );
 				cleanup();
-				// Copy from SharedArrayBuffer to regular ArrayBuffer for transfer
-				const restoredBuffer = new ArrayBuffer( sharedTriangleData.byteLength );
-				new Uint32Array( restoredBuffer ).set( new Uint32Array( sharedTriangleData ) );
-				const restoredTriangles = new Uint32Array( restoredBuffer );
-				resolve( buildSingleWorker( restoredTriangles, depth, progressCallback, config ) );
+
+				try {
+
+					// Copy from SharedArrayBuffer to regular ArrayBuffer for transfer
+					const restoredBuffer = new ArrayBuffer( sharedTriangleData.byteLength );
+					new Uint32Array( restoredBuffer ).set( new Uint32Array( sharedTriangleData ) );
+					const restoredTriangles = new Uint32Array( restoredBuffer );
+					resolve( buildSingleWorker( restoredTriangles, depth, progressCallback, config ) );
+
+				} catch ( error ) {
+
+					// Out of memory for the copy as well: fail the build rather than leave it waiting.
+					reject( error );
+
+				}
 
 			};
 

@@ -524,9 +524,14 @@ export class InstanceTable {
 	 *
 	 * @param {Float32Array} triangleData - Global triangle data (needed for leaf-root fallback)
 	 */
-	computeAABBs( triangleData ) {
+	/**
+	 * @param {Object} triangleData
+	 * @param {{owners?: boolean}} [options] - `owners: false` when each owner's bounds were taken
+	 *   as its BLAS landed (a build that spills its BLASes keeps none of them here)
+	 */
+	computeAABBs( triangleData, { owners = true } = {} ) {
 
-		for ( let t = 0; t < this.templateCount; t ++ ) {
+		for ( let t = 0; owners && t < this.templateCount; t ++ ) {
 
 			if ( this.tplOwner[ t ] < 0 ) continue;
 			const blas = this.blasData.get( t );

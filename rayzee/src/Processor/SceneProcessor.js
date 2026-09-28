@@ -18,7 +18,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
 import { sharedStorage } from '../Storage/shared.js';
@@ -243,6 +243,8 @@ export class SceneProcessor {
 		const maxBytes = this.config.maxSceneBytes ?? MAX_SCENE_BYTES;
 		const survey = this.geometryExtractor.surveyScene( object );
 		const estimate = estimateSceneBytes( survey );
+		// Spilled as it is built, the BVH is never resident as a whole.
+		if ( this._progressive ) estimate.total -= estimate.bvh;
 		const report = {
 			...survey, estimate,
 			safeBytes: SAFE_SCENE_BYTES, maxBytes,
@@ -418,7 +420,7 @@ export class SceneProcessor {
 	 * @param {Object3D} object
 	 * @param {{sceneKey?: ?string}} [options] - what the scene was loaded from; enables the BLAS cache
 	 */
-	async buildBVH( object, { sceneKey = null } = {} ) {
+	async buildBVH( object, { sceneKey = null, progressive = null } = {} ) {
 
 		if ( this.isProcessing ) {
 
@@ -442,6 +444,7 @@ export class SceneProcessor {
 			this._sceneKey = sceneKey;
 			this._blasKey = null;
 			this._blasRestored = false;
+			this._progressive = progressive?.storage && progressive.uploader ? progressive : null;
 			this._log( 'Starting scene processing' );
 
 			// Step 0: will this scene fit in the address space this process has left?
@@ -760,6 +763,8 @@ export class SceneProcessor {
 				.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
 				.sort( ( a, b ) => a.t - b.t );
 			const restored = await this._restoreBLASes( owners, TLASBuilder.nodeCountFor( meshCount ), workerOpts );
+			const spill = ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
+			const onBuilt = spill ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
 			if ( restored ) {
 
 				poolTasks.length = 0;
@@ -769,7 +774,7 @@ export class SceneProcessor {
 			}
 
 			// Build all meshes via bounded worker pool (main thread stays free)
-			const poolPromise = restored ? Promise.resolve( restored.results ) : this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress );
+			const poolPromise = restored ? Promise.resolve( restored.results ) : this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress, onBuilt );
 
 			// One at a time: each build already spreads over every core and pins ~200 bytes per
 			// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
@@ -795,6 +800,7 @@ export class SceneProcessor {
 
 					}
 
+					onBuilt?.( m, range, result );
 					parallelResults.push( { m, range, result } );
 					reportBLASProgress();
 
@@ -803,6 +809,12 @@ export class SceneProcessor {
 			} )();
 
 			const [ poolResults ] = await Promise.all( [ poolPromise, parallelPromise ] );
+			if ( spill ) {
+
+				await spill.chain;
+				if ( spill.error ) throw spill.error;
+
+			}
 
 			// Store all results, summing per-mesh split stats for one aggregate BVH line
 			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0, treeletsImproved: 0, treeletsProcessed: 0 };
@@ -866,7 +878,7 @@ export class SceneProcessor {
 			// carries packed per-mesh visibility in its slot [2]. The 1-node TLAS
 			// overhead (one extra leaf fetch per ray) is negligible and eliminates
 			// a dedicated visibility storage buffer binding.
-			this.instanceTable.computeAABBs( this.triangles );
+			this.instanceTable.computeAABBs( this.triangles, { owners: ! spill } );
 
 			// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
 			// assigned before the build and the TLAS is written in a single pass.
@@ -883,8 +895,9 @@ export class SceneProcessor {
 			// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
 			// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
 			// reaches them and each BLAS is released as it lands, never both fully resident.
-			this._checkAssemblyHeadroom( totalNodes );
+			if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
 			this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
+			const flushBVH = spill ? await this._beginBVHSpill( spill, table.tlasNodeCount ) : null;
 			this.bvh.setRecords( 0, tlasData );
 			// Hundreds of megabytes at millions of placements, and the chunks below need the room
 			// more than a later refit needs the cache.
@@ -917,17 +930,22 @@ export class SceneProcessor {
 
 				for ( let t = 0; t < table.templateCount; t ++ ) {
 
-					const blas = table.blasData.get( t ); // only owning templates hold one
+					// Only owning templates hold one; spilled, they are read back one at a time.
+					const blas = spill ? await this._readSpilledBLAS( spill, t ) : table.blasData.get( t );
 					if ( ! blas ) continue;
 
 					const blasOffset = table.tplBlasOffset[ t ];
 					this.bvh.setRecords( blasOffset, blas );
 					this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
 					table.blasData.delete( t );
+					await flushBVH?.( blasOffset + blas.length / 16 );
 
 					if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
 
 				}
+
+				await flushBVH?.( totalNodes, true );
+				if ( spill ) await spill.blasStore.dispose();
 
 			}
 
@@ -1151,6 +1169,169 @@ export class SceneProcessor {
 	 * Adjust BLAS node indices in-place within the combined bvhData buffer.
 	 * @private
 	 */
+	/**
+	 * Memory spill during the build (8c): each BLAS goes to a scratch file as it arrives, and each
+	 * triangle chunk goes to the GPU and then to disk once every BLAS over it is built — so the
+	 * triangles and the BVH are never all in memory at once. Chunks holding emitters stay: the
+	 * emissive pass reads them. Null when storage cannot take it, and the build carries on as usual.
+	 * @private
+	 */
+	async _beginProgressiveSpill( owners ) {
+
+		const { storage, uploader } = this._progressive;
+		const tri = this.triangles;
+		const key = `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}`;
+		const stride = tri.recordsPerChunk * tri.lanesPerRecord * tri.LaneType.BYTES_PER_ELEMENT;
+
+		const triStore = await SpillStore.create( storage, `${key}:tri`, stride, { label: 'Triangle records', expectedBytes: tri.byteLength } );
+		const blasStore = triStore && await SpillStore.create( storage, `${key}:blas`, 0, { label: 'BLAS nodes (while building)' } );
+		if ( ! blasStore ) {
+
+			await triStore?.dispose();
+			return null;
+
+		}
+
+		const state = {
+			key, triStore, blasStore, bvhStore: null,
+			blasBytes: 0, blasAt: new Map(),
+			pending: new Int32Array( tri.chunks.length ),
+			emitterChunks: new Set(),
+			emissiveMaterial: this.materials.map( m => ( m?.emissiveIntensity ?? 0 ) > 0 && !! m.emissive && ( m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0 ) ),
+			uploadTriangles: uploader( tri ),
+			chain: Promise.resolve(),
+			error: null,
+		};
+
+		this._spillStores = [ triStore ];
+		this._blasKey = null;
+		for ( const { triOffset, triCount } of owners ) this._forEachChunk( tri, triOffset, triCount, k => state.pending[ k ] ++ );
+		for ( let k = 0; k < tri.chunks.length; k ++ ) if ( state.pending[ k ] === 0 ) this._finishTriangleChunk( state, k );
+		return state;
+
+	}
+
+	/** @private */
+	_forEachChunk( records, start, count, fn ) {
+
+		if ( count <= 0 ) return;
+		const last = ( ( start + count - 1 ) / records.recordsPerChunk ) | 0;
+		for ( let k = ( start / records.recordsPerChunk ) | 0; k <= last; k ++ ) fn( k );
+
+	}
+
+	/** A BLAS has landed: its bounds are taken now, its nodes go to scratch. @private */
+	_onBLASBuilt( state, t, range, result ) {
+
+		const table = this.instanceTable;
+		const nodes = result.bvhData;
+		table.tplTriOffset[ t ] = range.start;
+		table.tplTriCount[ t ] = range.count;
+		table._readRootAABB( nodes, t, this.triangles, table.tplObjectAABB, t * 6 );
+
+		const at = state.blasBytes;
+		state.blasBytes += nodes.byteLength;
+		state.blasAt.set( t, at );
+		result.nodeCount = nodes.length / 16;
+		result.bvhData = null;
+
+		this._queueSpill( state, () => state.blasStore.writeAt( at, nodes ) );
+		this._forEachChunk( this.triangles, range.start, range.count, k => {
+
+			if ( -- state.pending[ k ] === 0 ) this._finishTriangleChunk( state, k );
+
+		} );
+
+	}
+
+	/** @private */
+	_queueSpill( state, step ) {
+
+		state.chain = state.chain.then( step ).catch( error => {
+
+			state.error ??= error;
+
+		} );
+
+	}
+
+	/** Every BLAS over chunk `k` is built: upload it, and let it go unless it holds emitters. @private */
+	_finishTriangleChunk( state, k ) {
+
+		this._queueSpill( state, async () => {
+
+			const tri = this.triangles;
+			const chunk = tri.chunks[ k ];
+			if ( ! chunk ) return;
+			state.uploadTriangles( k );
+
+			const lanes = tri.lanesPerRecord;
+			for ( let o = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET; o < chunk.length; o += lanes ) {
+
+				if ( state.emissiveMaterial[ chunk[ o ] & TRI_MATERIAL_MASK ] ) {
+
+					state.emitterChunks.add( k );
+					return;
+
+				}
+
+			}
+
+			await tri.spillChunk( k, state.triStore );
+
+		} );
+
+	}
+
+	/** @private */
+	async _readSpilledBLAS( state, t ) {
+
+		const at = state.blasAt.get( t );
+		if ( at === undefined ) return null;
+		const bytes = this.instanceTable.tplNodeCount[ t ] * 64;
+		return new Float32Array( await state.blasStore.readAt( at, bytes ) );
+
+	}
+
+	/**
+	 * The combined BVH is filled in ascending order, so every chunk the fill has passed is done:
+	 * upload it and let it go. The TLAS chunks stay, as they do after any spill.
+	 * @returns {Promise<?function(number, boolean=): Promise<void>>} call with the fill's end
+	 * @private
+	 */
+	async _beginBVHSpill( state, tlasNodeCount ) {
+
+		const { storage, uploader } = this._progressive;
+		const bvh = this.bvh;
+		const stride = bvh.recordsPerChunk * bvh.lanesPerRecord * bvh.LaneType.BYTES_PER_ELEMENT;
+		const bvhStore = await SpillStore.create( storage, `${state.key}:bvh`, stride, { label: 'BLAS nodes', expectedBytes: bvh.recordCount * 64 } );
+		const upload = uploader( bvh );
+		const tlasChunks = Math.ceil( tlasNodeCount / bvh.recordsPerChunk );
+		if ( bvhStore ) this._spillStores.push( bvhStore );
+		let next = tlasChunks;
+
+		return async ( filledTo, last = false ) => {
+
+			while ( next < bvh.chunks.length && ( last || ( next + 1 ) * bvh.recordsPerChunk <= filledTo ) ) {
+
+				if ( ! bvh.chunks[ next ] ) bvh._materialize( next );
+				upload( next );
+				if ( bvhStore ) await bvh.spillChunk( next, bvhStore );
+				next ++;
+
+			}
+
+			if ( last ) for ( let k = 0; k < Math.min( tlasChunks, bvh.chunks.length ); k ++ ) {
+
+				if ( ! bvh.chunks[ k ] ) bvh._materialize( k );
+				upload( k );
+
+			}
+
+		};
+
+	}
+
 	_offsetBLASInPlace( startNode, nodeCount, nodeOffset, triOffset ) {
 
 		const idx = this.bvhIndexChunks;
@@ -1186,7 +1367,7 @@ export class SceneProcessor {
 	 * @returns {Promise<Array<{m, range, result}>>}
 	 * @private
 	 */
-	_buildBLASesWithPool( tasks, opts, onProgress ) {
+	_buildBLASesWithPool( tasks, opts, onProgress, onResult = null ) {
 
 		if ( tasks.length === 0 ) return Promise.resolve( [] );
 
@@ -1256,19 +1437,28 @@ export class SceneProcessor {
 
 				const { m, range } = worker._currentTask;
 
-				// Write back now: holding one copy per mesh until the pool drains is the whole
-				// triangle buffer over again, ~3 GB at 40M.
-				if ( data.triangles ) this.triangles.setRecords( range.start, data.triangles );
+				try {
 
-				results.push( {
-					m,
-					range,
-					result: {
+					// Write back now: holding one copy per mesh until the pool drains is the whole
+					// triangle buffer over again, ~3 GB at 40M.
+					if ( data.triangles ) this.triangles.setRecords( range.start, data.triangles );
+
+					const result = {
 						bvhData: data.bvhData,
 						originalToBvh: data.originalToBvh || null,
 						splitStats: data.treeletStats || null,
-					}
-				} );
+					};
+					onResult?.( m, range, result );
+					results.push( { m, range, result } );
+
+				} catch ( error ) {
+
+					// Thrown here, it would stop the pool with the promise never settled.
+					workers.forEach( w => w.terminate() );
+					reject( error );
+					return;
+
+				}
 
 				completed ++;
 				onProgress?.( completed );
@@ -2592,7 +2782,7 @@ export class SceneProcessor {
 
 		const triangles = this.triangles;
 		const bvh = this.bvh;
-		if ( ! storage || this.spilled || ! triangles?.chunks || triangles.chunks.length < 2 || ! bvh?.chunks ) return null;
+		if ( ! storage || this.spilled || this._spillStores || ! triangles?.chunks || triangles.chunks.length < 2 || ! bvh?.chunks ) return null;
 
 		await this._blasStoring;
 		const version = this._geometryVersion;

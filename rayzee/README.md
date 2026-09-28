@@ -1003,8 +1003,9 @@ for a host's own assets. Failures record `storage.*` issues and fall back to mem
 throws for being absent or full.
 
 **Memory spill (experimental).** With `memorySpill: true`, a static scene of more than one 64 MB chunk
-moves its triangle records and BLAS nodes to disk once uploaded — 5.2 GB less resident at 45M
-triangles, the render unchanged. Visibility and rigid moves need nothing back; material edits that
+moves its triangle records and BLAS nodes to disk as it is built — each chunk goes to the GPU and
+then to disk once finished, so they are never all in memory at once: 7.2 GB at rest instead of
+9.1 GB at 50M triangles, the render unchanged. Visibility and rigid moves need nothing back; material edits that
 rewrite triangles (side, transparency, emission) and refits read it back first. `refitBLASes` throws
 on a spilled scene until `await engine.ensureSceneResident()`.
 

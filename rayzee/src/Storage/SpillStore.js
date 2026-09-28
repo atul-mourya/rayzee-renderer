@@ -34,7 +34,14 @@ export class SpillStore {
 
 	}
 
-	async write( k, chunk ) {
+	write( k, chunk ) {
+
+		return this.writeAt( k * this._chunkBytes, chunk );
+
+	}
+
+	/** Writes `data` at a byte offset — for records of varying size, such as one BLAS each. */
+	async writeAt( at, data ) {
 
 		if ( ! this._writer ) {
 
@@ -45,7 +52,7 @@ export class SpillStore {
 
 		}
 
-		await this._writer.write( FILE, chunk, { at: k * this._chunkBytes } );
+		await this._writer.write( FILE, data, { at } );
 
 	}
 
@@ -69,10 +76,15 @@ export class SpillStore {
 
 	}
 
-	async read( k, bytes ) {
+	read( k, bytes ) {
+
+		return this.readAt( k * this._chunkBytes, bytes );
+
+	}
+
+	async readAt( at, bytes ) {
 
 		await this.flush();
-		const at = k * this._chunkBytes;
 		return await this._file.slice( at, at + bytes ).arrayBuffer();
 
 	}

@@ -764,9 +764,10 @@ export class PathTracerStage extends RenderStage {
 		const flat = chunked ? null : ( triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData );
 		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
 		const vec4Count = lanes / 4;
+		this._assertFitsGPU( lanes * 4 );
 
 		const makeAttr = () => chunked
-			? gpuOnlyStorageAttribute( vec4Count, 4, Uint32Array )
+			? chunked._gpuUpload?.attr ?? gpuOnlyStorageAttribute( vec4Count, 4, Uint32Array )
 			: new StorageInstancedBufferAttribute( flat, 4 );
 
 		if ( this.triangleStorageNode ) {
@@ -787,11 +788,77 @@ export class PathTracerStage extends RenderStage {
 		}
 
 		this._triangleRecords = chunked;
-		if ( chunked ) uploadStorageChunks( this.renderer, this.triangleStorageAttr, chunked.chunks );
+		if ( chunked ) this._uploadChunked( this.triangleStorageAttr, chunked );
 
 		this.triangleCount = triangleCount;
 
 		log.debug( `${fmt.n( this.triangleCount )} triangles (storage buffer)` );
+
+	}
+
+	/**
+	 * Allocates the GPU buffer for chunked `records` now and returns a function that writes one
+	 * chunk into it, so a build can hand chunks over as it finishes them and let them go (the
+	 * memory spill). setTriangleData / setBVHData then adopt that buffer rather than upload again.
+	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
+	 * @returns {function(number): void} uploads chunk k from `records.chunks[ k ]`
+	 */
+	createChunkUploader( records ) {
+
+		this._assertFitsGPU( records.recordCount * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT );
+		const attr = gpuOnlyStorageAttribute( records.recordCount * records.lanesPerRecord / 4, 4, records.LaneType );
+		const backend = this.renderer.backend;
+		backend.createStorageAttribute( attr );
+		const buffer = backend.get( attr ).buffer;
+		const stride = records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
+		const uploaded = new Set();
+		records._gpuUpload = { attr, uploaded };
+
+		return k => {
+
+			const chunk = records.chunks[ k ];
+			backend.device.queue.writeBuffer( buffer, k * stride, chunk, 0, chunk.length );
+			uploaded.add( k );
+
+		};
+
+	}
+
+	/**
+	 * One storage buffer holds all of a scene's triangles, and one its BVH. Past the device's
+	 * limit WebGPU hands back an invalid buffer and every write to it fails quietly.
+	 * @private
+	 */
+	_assertFitsGPU( bytes ) {
+
+		const limits = this.renderer?.backend?.device?.limits;
+		const max = Math.min( limits?.maxBufferSize ?? Infinity, limits?.maxStorageBufferBindingSize ?? Infinity );
+		if ( bytes > max ) throw new Error( `the scene needs a ${fmt.mb( bytes )} GPU buffer, past the ${fmt.mb( max )} this GPU allows for one — load fewer triangles` );
+
+	}
+
+	/** Uploads chunked records, or — for a buffer a build already filled — whatever it has not. @private */
+	_uploadChunked( attr, records ) {
+
+		const pre = records._gpuUpload;
+		if ( ! pre || pre.attr !== attr ) {
+
+			uploadStorageChunks( this.renderer, attr, records.chunks );
+			return;
+
+		}
+
+		const buffer = this.renderer.backend.get( attr ).buffer;
+		const stride = records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
+		for ( let k = 0; k < records.chunks.length; k ++ ) {
+
+			if ( pre.uploaded.has( k ) ) continue;
+			const chunk = records.chunks[ k ];
+			if ( ! chunk ) throw new Error( `chunk ${k} is on disk and was never uploaded` );
+			this.renderer.backend.device.queue.writeBuffer( buffer, k * stride, chunk, 0, chunk.length );
+			pre.uploaded.add( k );
+
+		}
 
 	}
 
@@ -809,9 +876,10 @@ export class PathTracerStage extends RenderStage {
 		const flat = chunked ? null : ( bvhImageData.chunks ? bvhImageData.chunks[ 0 ] : bvhImageData );
 		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
 		const vec4Count = lanes / 4;
+		this._assertFitsGPU( lanes * 4 );
 
 		const makeAttr = () => chunked
-			? gpuOnlyStorageAttribute( vec4Count, 4, Float32Array )
+			? chunked._gpuUpload?.attr ?? gpuOnlyStorageAttribute( vec4Count, 4, Float32Array )
 			: new StorageInstancedBufferAttribute( flat, 4 );
 
 		if ( this.bvhStorageNode ) {
@@ -828,7 +896,7 @@ export class PathTracerStage extends RenderStage {
 		}
 
 		this._bvhRecords = chunked;
-		if ( chunked ) uploadStorageChunks( this.renderer, this.bvhStorageAttr, chunked.chunks );
+		if ( chunked ) this._uploadChunked( this.bvhStorageAttr, chunked );
 
 		this.bvhNodeCount = Math.floor( vec4Count / BVH_VEC4_PER_NODE );
 		log.debug( `${fmt.n( this.bvhNodeCount )} BVH nodes (storage buffer)` );

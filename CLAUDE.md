@@ -705,12 +705,20 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
   the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
 - **Memory spill (experimental, `memorySpill: true`, app flag `localStorage['rayzee-memory-spill']`).**
-  After a static multi-chunk scene is uploaded, triangle records and the BLAS part of the BVH go
-  to `spill` (`ChunkedRecords.spill` / `ensureResident`; accessors of a spilled chunk throw).
-  45M triangles: −5.2 GB resident, render unchanged. Readers page in first — `refitBVH`,
-  `rebuildMaterials`, and `setMaterialProperty` for `TRIANGLE_PATCH_PROPERTIES` — while visibility
-  and rigid moves never need to; `refitBLASes` throws until `await app.ensureSceneResident()`.
-  ⚠️ Views taken with `viewAs` keep chunk memory alive, which is why the store tracks them (weakly).
+  The spill happens **during the build** for a static multi-chunk scene
+  (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
+  chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
+  extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
+  scratch, uploading and spilling each chunk the fill passes. Chunks holding emitters and the TLAS
+  chunks stay. `setTriangleData` / `setBVHData` adopt the pre-filled buffers. A scene restored
+  from the BLAS cache spills after upload instead (`spillToDisk`). 50M triangles: 7.2 GB at rest
+  against 9.1 GB; the page peak (~11 GB, at the start of the BLAS phase) is unchanged. Readers
+  page in first — `refitBVH`, `rebuildMaterials`, and `setMaterialProperty` for
+  `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves never need to; `refitBLASes`
+  throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
+  alive, which is why the store tracks them (weakly). ⚠️ The triangle buffer is one storage
+  buffer: past `maxBufferSize` (4 GB here, ~53.6M triangles) WebGPU returns an invalid buffer and
+  every write fails quietly — `_assertFitsGPU` throws instead.
 
 ## Development Commands
 

@@ -147,7 +147,7 @@ export class ChunkedRecords {
 	/** Allocate whatever a lazy fill never touched, so the result behaves like an eager one. */
 	materializeAll() {
 
-		for ( let k = 0; k < this.chunks.length; k ++ ) if ( ! this.chunks[ k ] ) this._materialize( k );
+		for ( let k = 0; k < this.chunks.length; k ++ ) if ( ! this.chunks[ k ] && ! this._spilled?.has( k ) ) this._materialize( k );
 		return this;
 
 	}
@@ -212,6 +212,21 @@ export class ChunkedRecords {
 		}
 
 		return bytes;
+
+	}
+
+	/** Writes one chunk to `store` and lets go of it — a build hands chunks over as it finishes them. */
+	async spillChunk( k, store ) {
+
+		const chunk = this.chunks[ k ];
+		if ( ! chunk ) return 0;
+		this._store = store;
+		this._spilled ??= new Set();
+		await store.write( k, chunk );
+		this.chunks[ k ] = null;
+		for ( const v of this._liveViews() ) v.chunks[ k ] = null;
+		this._spilled.add( k );
+		return chunk.byteLength;
 
 	}
 

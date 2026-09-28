@@ -76,6 +76,37 @@ describe( 'spilling ChunkedRecords', () => {
 
 	} );
 
+	it( 'spills one chunk at a time, as a build finishes them, and never fills them back with zeros', async () => {
+
+		const lazy = ChunkedRecords.lazy( 10, 4, Uint32Array, 3 * 4 * 4 );
+		lazy.setRecords( 0, Uint32Array.from( { length: 24 }, ( _, i ) => i + 1 ) );
+		const view = lazy.viewAs( Float32Array );
+		const store = await SpillStore.create( storage, 'spill:d', lazy.recordsPerChunk * 4 * 4 );
+
+		expect( await lazy.spillChunk( 0, store ) ).toBe( 48 );
+		expect( view.chunks[ 0 ] ).toBeNull();
+		lazy.materializeAll();
+		expect( lazy.chunks[ 0 ] ).toBeNull();
+		expect( lazy.chunks[ 3 ] ).not.toBeNull();
+		expect( () => lazy.copyOf( 0, 1 ) ).toThrow( /on disk/ );
+
+		await lazy.ensureResident( 0, 3 );
+		expect( [ ...lazy.copyOf( 0, 2 ) ] ).toEqual( [ 1, 2, 3, 4, 5, 6, 7, 8 ] );
+		expect( view.chunks[ 0 ].buffer ).toBe( lazy.chunks[ 0 ].buffer );
+
+	} );
+
+	it( 'reads and writes records of any size at a byte offset', async () => {
+
+		const store = await SpillStore.create( storage, 'spill:e', 0 );
+		await store.writeAt( 0, Float32Array.of( 1, 2, 3 ) );
+		await store.writeAt( 12, Float32Array.of( 4, 5 ) );
+		expect( [ ...new Float32Array( await store.readAt( 12, 8 ) ) ] ).toEqual( [ 4, 5 ] );
+		expect( [ ...new Float32Array( await store.readAt( 0, 20 ) ) ] ).toEqual( [ 1, 2, 3, 4, 5 ] );
+		await store.dispose();
+
+	} );
+
 	it( 'writes a changed chunk again on the next spill', async () => {
 
 		const r = records();

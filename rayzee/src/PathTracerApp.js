@@ -1362,7 +1362,7 @@ export class PathTracerApp extends EventDispatcher {
 		// Build BVH
 		timer.start( 'BVH build (SceneProcessor)' );
 		this._sdf.setMaxTextureSize( this._maxTextureSize );
-		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null } );
+		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null, progressive: this._progressiveSpill() } );
 		this.assetLoader?.flushPendingGraph( this._sdf.performanceMetrics.totalProcessingTime );
 		timer.end( 'BVH build (SceneProcessor)' );
 
@@ -1712,6 +1712,18 @@ export class PathTracerApp extends EventDispatcher {
 	async importSceneState( state, options ) {
 
 		return await applySceneState( this, state, options );
+
+	}
+
+	/**
+	 * Experimental memory spill, during the build: static scenes only, since a deforming clip
+	 * refits every frame. @private
+	 */
+	_progressiveSpill() {
+
+		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return null;
+		const stage = this.stages.pathTracer;
+		return { storage: this.storage, uploader: records => stage.createChunkUploader( records ) };
 
 	}
 
