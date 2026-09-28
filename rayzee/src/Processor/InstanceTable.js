@@ -535,7 +535,7 @@ export class InstanceTable {
 
 			if ( this.tplOwner[ t ] < 0 ) continue;
 			const blas = this.blasData.get( t );
-			if ( blas ) this._readRootAABB( blas, t, triangleData, this.tplObjectAABB, t * 6 );
+			if ( blas ) this._readRootAABB( Array.isArray( blas ) ? blas[ 0 ] : blas, t, triangleData, this.tplObjectAABB, t * 6 );
 
 		}
 

@@ -24,6 +24,7 @@ import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, rea
 import { sharedStorage } from '../Storage/shared.js';
 import { SpillStore } from '../Storage/SpillStore.js';
 import { GeometrySpill } from '../Storage/GeometrySpill.js';
+import { partitionRange, joinPieces } from './SplitBLAS.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { VERSION } from '../version.js';
 import { SCENE_CACHE_MIN_BUILD_MS } from '../Storage/sceneCachePolicy.js';
@@ -36,12 +37,31 @@ const TLAS_WORKER_MIN_ENTRIES = 50_000;
 
 // Meshes past this build across every core, one at a time.
 const LARGE_MESH_TRIANGLES = 200000;
+// Past this a mesh is built as spatial pieces of at most SPLIT_PIECE_TRIANGLES, joined into one BLAS.
+const SPLIT_MESH_TRIANGLES = 2_000_000;
+const SPLIT_PIECE_TRIANGLES = 1 << 19;
 // A streamed build's extraction waits while more triangle records than this are in memory.
 const STREAM_RESIDENT_BYTES = 1.5 * 1024 ** 3;
 // Extraction waits while more three.js geometry than this is queued for disk.
 const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
 const log = createLogger( 'scene' );
+
+// A BLAS's nodes: one array, or a split mesh's parts in order — never one array that large.
+const nodeParts = nodes => ( Array.isArray( nodes ) ? nodes : [ nodes ] );
+const nodeBytes = nodes => nodeParts( nodes ).reduce( ( sum, part ) => sum + part.byteLength, 0 );
+const READ_PART_BYTES = 64 * 1024 * 1024;
+
+async function writeNodes( store, at, nodes ) {
+
+	for ( const part of nodeParts( nodes ) ) {
+
+		await store.writeAt( at, part );
+		at += part.byteLength;
+
+	}
+
+}
 
 function largestMeshTriangles( object ) {
 
@@ -374,7 +394,7 @@ export class SceneProcessor {
 
 		if ( table ) {
 
-			for ( const blas of table.blasData.values() ) parts.blasScratch += blas?.byteLength ?? 0;
+			for ( const blas of table.blasData.values() ) parts.blasScratch += blas ? nodeBytes( blas ) : 0;
 			for ( const m of table.bvhToOriginal.values() ) parts.orderMaps += m?.byteLength ?? 0;
 			for ( const m of table.originalToBvhMap.values() ) parts.orderMaps += m?.byteLength ?? 0;
 
@@ -702,15 +722,15 @@ export class SceneProcessor {
 
 			const nodes = result.bvhData;
 			const aabb = new Float32Array( 6 );
-			InstanceTable.rootAABB( nodes, tri, range.start, range.count, aabb, 0 );
+			InstanceTable.rootAABB( nodeParts( nodes )[ 0 ], tri, range.start, range.count, aabb, 0 );
 			templates.set( t, { result, aabb } );
 
 			const at = state.blasBytes;
-			state.blasBytes += nodes.byteLength;
+			state.blasBytes += nodeBytes( nodes );
 			state.blasAt.set( t, at );
-			result.nodeCount = nodes.length / 16;
+			result.nodeCount = nodeBytes( nodes ) / 64;
 			result.bvhData = null;
-			this._queueSpill( state, () => blasStore.writeAt( at, nodes ) );
+			this._queueSpill( state, () => writeNodes( blasStore, at, nodes ) );
 
 			this._forEachChunk( tri, range.start, range.count, k => {
 
@@ -1023,7 +1043,7 @@ export class SceneProcessor {
 
 				this.instanceTable.setEntry( {
 					meshIndex: m,
-					blasNodeCount: result.nodeCount ?? result.bvhData.length / 16,
+					blasNodeCount: result.nodeCount ?? nodeBytes( result.bvhData ) / 64,
 					triOffset: range.start,
 					triCount: range.count,
 					originalToBvhMap: result.originalToBvh || null,
@@ -1122,10 +1142,17 @@ export class SceneProcessor {
 					if ( ! blas ) continue;
 
 					const blasOffset = table.tplBlasOffset[ t ];
-					this.bvh.setRecords( blasOffset, blas );
-					this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
+					let end = blasOffset;
+					for ( const part of nodeParts( blas ) ) {
+
+						this.bvh.setRecords( end, part );
+						end += part.length / 16;
+
+					}
+
+					this._offsetBLASInPlace( blasOffset, end - blasOffset, blasOffset, table.tplTriOffset[ t ] );
 					table.blasData.delete( t );
-					await flushBVH?.( blasOffset + blas.length / 16 );
+					await flushBVH?.( end );
 
 					if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
 
@@ -1221,6 +1248,8 @@ export class SceneProcessor {
 	 */
 	async _buildLargeBLAS( range, workerOpts ) {
 
+		if ( range.count > SPLIT_MESH_TRIANGLES ) return this._buildSplitBLAS( range, workerOpts );
+
 		const meshTriData = new Uint32Array( new SharedArrayBuffer( range.count * this.triangles.lanesPerRecord * 4 ) );
 		this.triangles.readRecords( range.start, range.count, meshTriData );
 		// The builder has its own copy and the order comes back into every record of the range, so
@@ -1243,6 +1272,35 @@ export class SceneProcessor {
 		}
 
 		return result;
+
+	}
+
+	/**
+	 * A mesh too large to build in one piece: its records are sorted in place into spatial pieces,
+	 * each piece built by a pool worker like any mesh, and the pieces joined under the halving that
+	 * made them. Held once, in the store, with a piece's copy per worker — where one build across
+	 * every core held a second copy of the whole mesh and 44 B a triangle of shared scratch.
+	 * @private
+	 */
+	async _buildSplitBLAS( range, workerOpts ) {
+
+		const tri = this.triangles;
+		const { order, pieces, tree } = await partitionRange( tri, range.start, range.count, SPLIT_PIECE_TRIANGLES, { pause: () => new Promise( r => setTimeout( r, 0 ) ) } );
+		const pool = this._blasPool( workerOpts, null, null, Math.min( navigator.hardwareConcurrency || 4, 8 ) );
+		pieces.forEach( ( p, k ) => pool.submit( { m: k, range: { start: range.start + p.start, count: p.count } } ) );
+
+		const built = [];
+		const splitStats = {};
+		for ( const { m: k, range: r, result } of await pool.close() ) {
+
+			result.aabb = new Float32Array( 6 );
+			InstanceTable.rootAABB( result.bvhData, tri, r.start, r.count, result.aabb, 0 );
+			built[ k ] = result;
+			for ( const [ key, value ] of Object.entries( result.splitStats ?? {} ) ) if ( typeof value === 'number' ) splitStats[ key ] = ( splitStats[ key ] ?? 0 ) + value;
+
+		}
+
+		return { ...joinPieces( tree, pieces, built, order ), splitStats };
 
 	}
 
@@ -1507,15 +1565,15 @@ export class SceneProcessor {
 		const nodes = result.bvhData;
 		table.tplTriOffset[ t ] = range.start;
 		table.tplTriCount[ t ] = range.count;
-		table._readRootAABB( nodes, t, this.triangles, table.tplObjectAABB, t * 6 );
+		table._readRootAABB( nodeParts( nodes )[ 0 ], t, this.triangles, table.tplObjectAABB, t * 6 );
 
 		const at = state.blasBytes;
-		state.blasBytes += nodes.byteLength;
+		state.blasBytes += nodeBytes( nodes );
 		state.blasAt.set( t, at );
-		result.nodeCount = nodes.length / 16;
+		result.nodeCount = nodeBytes( nodes ) / 64;
 		result.bvhData = null;
 
-		this._queueSpill( state, () => state.blasStore.writeAt( at, nodes ) );
+		this._queueSpill( state, () => writeNodes( state.blasStore, at, nodes ) );
 		this._forEachChunk( this.triangles, range.start, range.count, k => {
 
 			if ( -- state.pending[ k ] === 0 ) this._finishTriangleChunk( state, k );
@@ -1569,7 +1627,9 @@ export class SceneProcessor {
 		const at = state.blasAt.get( t );
 		if ( at === undefined ) return null;
 		const bytes = this.instanceTable.tplNodeCount[ t ] * 64;
-		return new Float32Array( await state.blasStore.readAt( at, bytes ) );
+		const parts = [];
+		for ( let off = 0; off < bytes; off += READ_PART_BYTES ) parts.push( new Float32Array( await state.blasStore.readAt( at + off, Math.min( READ_PART_BYTES, bytes - off ) ) ) );
+		return parts;
 
 	}
 
@@ -1661,9 +1721,8 @@ export class SceneProcessor {
 	 * arrives, up to the pool size.
 	 * @private
 	 */
-	_blasPool( opts, onProgress, onResult = null ) {
+	_blasPool( opts, onProgress, onResult = null, poolSize = this.config.maxConcurrentTextureTasks || 4 ) {
 
-		const poolSize = this.config.maxConcurrentTextureTasks || 4;
 		const queue = [];
 		const results = [];
 		const workers = [];
