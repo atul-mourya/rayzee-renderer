@@ -4,7 +4,7 @@ import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
 import { InstanceTable, isIdentity, multiplyAffine } from './InstanceTable.js';
-import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver } from './ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver, DEFAULT_CHUNK_BYTES } from './ChunkedRecords.js';
 import {
 	MemoryLedger, estimateSceneBytes, probeAddressSpace,
 	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
@@ -33,7 +33,25 @@ import TLASWorker from './Workers/TLASWorker.js?worker&inline';
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;
 
+// Meshes past this build across every core, one at a time.
+const LARGE_MESH_TRIANGLES = 200000;
+// A streamed build's extraction waits while more triangle records than this are in memory.
+const STREAM_RESIDENT_BYTES = 1.5 * 1024 ** 3;
+
 const log = createLogger( 'scene' );
+
+function largestMeshTriangles( object ) {
+
+	let largest = 0;
+	object.traverse( node => {
+
+		const g = node.isMesh ? node.geometry : null;
+		if ( g ) largest = Math.max( largest, Math.ceil( ( g.index ? g.index.count : ( g.attributes.position?.count ?? 0 ) ) / 3 ) );
+
+	} );
+	return largest;
+
+}
 
 /**
  * SceneProcessor - Processes scene geometry into GPU-ready data:
@@ -245,6 +263,15 @@ export class SceneProcessor {
 		const estimate = estimateSceneBytes( survey );
 		// Spilled as it is built, the BVH is never resident as a whole.
 		if ( this._progressive ) estimate.total -= estimate.bvh;
+		// Streamed, neither are the triangles: what is held is the resident cap plus the largest
+		// mesh, twice over and its build scratch while the parallel builder has it.
+		if ( this._streaming ) {
+
+			const resident = STREAM_RESIDENT_BYTES + largestMeshTriangles( object ) * ( 2 * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 + 44 );
+			estimate.total -= Math.max( 0, estimate.triangles - resident );
+
+		}
+
 		const report = {
 			...survey, estimate,
 			safeBytes: SAFE_SCENE_BYTES, maxBytes,
@@ -445,6 +472,9 @@ export class SceneProcessor {
 			this._blasKey = null;
 			this._blasRestored = false;
 			this._progressive = progressive?.storage && progressive.uploader ? progressive : null;
+			// A spilling build of more than one chunk extracts and builds its BLASes together.
+			this._streaming = !! this._progressive
+				&& this.geometryExtractor._countStoredTriangles( object ) > Math.floor( DEFAULT_CHUNK_BYTES / ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 ) );
 			this._log( 'Starting scene processing' );
 
 			// Step 0: will this scene fit in the address space this process has left?
@@ -455,7 +485,8 @@ export class SceneProcessor {
 			this.processingStage = 'extraction';
 			this.memory.mark( 'extraction' );
 			timer.start( 'Geometry extraction' );
-			await this._extractGeometry( object );
+			if ( this._streaming ) await this._extractStreaming( object );
+			else await this._extractGeometry( object );
 			timer.end( 'Geometry extraction' );
 			this.performanceMetrics.geometryExtractionTime = timer.getDuration( 'Geometry extraction' );
 			// The preflight figure was taken before `_compressAttributes` halved normals and
@@ -573,46 +604,7 @@ export class SceneProcessor {
 
 		try {
 
-			// Extract geometry data
-			const extractedData = this.geometryExtractor.extract( object );
-
-			this._setTriangleData( extractedData.triangleData );
-			this.triangleCount = assertBVHIndexFits( extractedData.triangleCount, 'triangle count' );
-			// Callers build refit buffers by walking meshes, which counts a shared geometry
-			// once per placement; storage counts it once.
-			this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
-			this.instanceSource = extractedData.instanceSource || null;
-			this.instanceMatrices = extractedData.instanceMatrices || null;
-			this.instanceCount = extractedData.instanceCount || 0;
-			this.bakeInverse = extractedData.bakeInverse || null;
-
-			this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
-
-			// Store other extracted data
-			this.materials = extractedData.materials;
-			this.materialTriangleCounts = extractedData.materialTriangleCounts; // Per-material tri count for sort-bin remap
-			this.meshes = extractedData.meshes;
-			this.meshTriangleRanges = extractedData.meshTriangleRanges; // Per-mesh { start, count } for TLAS/BLAS
-			this.maps = extractedData.maps;
-			this.normalMaps = extractedData.normalMaps;
-			this.bumpMaps = extractedData.bumpMaps;
-			this.roughnessMaps = extractedData.roughnessMaps;
-			this.metalnessMaps = extractedData.metalnessMaps;
-			this.emissiveMaps = extractedData.emissiveMaps;
-			this.displacementMaps = extractedData.displacementMaps;
-			this.anisotropyMaps = extractedData.anisotropyMaps;
-			this.transmissionMaps = extractedData.transmissionMaps;
-			this.clearcoatMaps = extractedData.clearcoatMaps;
-			this.clearcoatRoughnessMaps = extractedData.clearcoatRoughnessMaps;
-			this.sheenColorMaps = extractedData.sheenColorMaps;
-			this.sheenRoughnessMaps = extractedData.sheenRoughnessMaps;
-			this.iridescenceMaps = extractedData.iridescenceMaps;
-			this.iridescenceThicknessMaps = extractedData.iridescenceThicknessMaps;
-			this.specularIntensityMaps = extractedData.specularIntensityMaps;
-			this.specularColorMaps = extractedData.specularColorMaps;
-			this.directionalLights = extractedData.directionalLights;
-			this.cameras = extractedData.cameras;
-
+			this._adoptExtraction( this.geometryExtractor.extract( object ) );
 			const duration = performance.now() - startTime;
 			this._log( `Geometry extraction complete (${duration.toFixed( 2 )}ms)`, {
 				triangleCount: this.triangleCount,
@@ -635,6 +627,216 @@ export class SceneProcessor {
 			throw error;
 
 		}
+
+	}
+
+	/**
+	 * Extraction and the BLAS builds together, for a spilling build of several chunks. Each
+	 * stored range goes to a worker the moment it is written, each chunk whose BLASes are all
+	 * built goes to the GPU and then to disk, and the extraction waits whenever more than
+	 * STREAM_RESIDENT_BYTES of triangles are still in memory — so the records are never all
+	 * resident at once, which they are at the start of the BLAS phase otherwise.
+	 * @private
+	 */
+	async _extractStreaming( object ) {
+
+		updateLoading( { isLoading: true, title: 'Processing', status: 'Extracting geometry and building BVHs...', progress: 15 } );
+		await new Promise( r => setTimeout( r, 0 ) );
+		const startTime = performance.now();
+
+		const extractor = this.geometryExtractor;
+		const { storage, uploader } = this._progressive;
+		const key = `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}`;
+		const capacity = extractor._countStoredTriangles( object );
+		const probe = ChunkedRecords.lazy( capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array );
+		const stride = probe.recordsPerChunk * probe.lanesPerRecord * 4;
+
+		const triStore = await SpillStore.create( storage, `${key}:tri`, stride, { label: 'Triangle records', expectedBytes: capacity * stride / probe.recordsPerChunk } );
+		const blasStore = triStore && await SpillStore.create( storage, `${key}:blas`, 0, { label: 'BLAS nodes (while building)' } );
+		if ( ! blasStore ) {
+
+			await triStore?.dispose();
+			this._streaming = false;
+			return this._extractGeometry( object );
+
+		}
+
+		const state = {
+			key, triStore, blasStore, bvhStore: null,
+			blasBytes: 0, blasAt: new Map(),
+			pending: [], extractedChunks: 0,
+			emitterChunks: new Set(),
+			isEmitter: materialIndex => extractor._emissiveMaterial( materialIndex ),
+			uploadTriangles: null,
+			chain: Promise.resolve(),
+			error: null,
+		};
+		this._spillStores = [ triStore ];
+		this._blasKey = null;
+
+		const templates = new Map();
+		const workerOpts = this._blasWorkerOpts();
+		let waiters = [];
+		const built = () => new Promise( resolve => waiters.push( resolve ) );
+		const wake = () => {
+
+			const w = waiters;
+			waiters = [];
+			for ( const resolve of w ) resolve();
+
+		};
+
+		let tri = null;
+		const onBuilt = ( t, range, result ) => {
+
+			const nodes = result.bvhData;
+			const aabb = new Float32Array( 6 );
+			InstanceTable.rootAABB( nodes, tri, range.start, range.count, aabb, 0 );
+			templates.set( t, { result, aabb } );
+
+			const at = state.blasBytes;
+			state.blasBytes += nodes.byteLength;
+			state.blasAt.set( t, at );
+			result.nodeCount = nodes.length / 16;
+			result.bvhData = null;
+			this._queueSpill( state, () => blasStore.writeAt( at, nodes ) );
+
+			this._forEachChunk( tri, range.start, range.count, k => {
+
+				if ( -- state.pending[ k ] === 0 && k < state.extractedChunks ) this._finishTriangleChunk( state, k );
+
+			} );
+			wake();
+
+		};
+
+		let finished = 0;
+		const pool = this._blasPool( workerOpts, () => finished ++, ( t, range, result ) => onBuilt( t, range, result ) );
+		let large = Promise.resolve();
+		let largePending = 0;
+		const advance = ( written ) => {
+
+			const done = written >= tri.recordCount ? tri.chunks.length : Math.floor( written / tri.recordsPerChunk );
+			for ( let k = state.extractedChunks; k < done; k ++ ) if ( ! state.pending[ k ] ) this._finishTriangleChunk( state, k );
+			state.extractedChunks = Math.max( state.extractedChunks, done );
+
+		};
+
+		let extracted;
+		try {
+
+			extracted = await extractor.extractStreaming( object, {
+
+				onStore: store => {
+
+					tri = store;
+					this._setTriangleData( store );
+					state.uploadTriangles = uploader( store, 'triangles' );
+
+				},
+
+				onRange: ( t, range ) => {
+
+					this._forEachChunk( tri, range.start, range.count, k => state.pending[ k ] = ( state.pending[ k ] ?? 0 ) + 1 );
+					if ( this._isLargeMesh( range ) ) {
+
+						largePending ++;
+						large = large.then( async () => {
+
+							onBuilt( t, range, await this._buildLargeBLAS( range, workerOpts ) );
+							largePending --;
+
+						} );
+						large.catch( error => {
+
+							state.error ??= error;
+							wake();
+
+						} );
+
+					} else pool.submit( { m: t, range } );
+
+				},
+
+				pause: async ( written ) => {
+
+					advance( written );
+					updateLoading( { status: `Extracted ${written.toLocaleString()} triangles, ${finished.toLocaleString()} BVHs built...`, progress: 15 + Math.floor( 20 * written / Math.max( 1, capacity ) ) } );
+					await new Promise( r => setTimeout( r, 0 ) );
+					// A timer, not the spill chain: an already-settled promise would spin this loop in
+					// microtasks and keep out the worker messages it is waiting for.
+					while ( tri.byteLength > STREAM_RESIDENT_BYTES && ( pool.pending > 0 || largePending > 0 ) && ! state.error && ! pool.error ) {
+
+						await Promise.race( [ built(), new Promise( r => setTimeout( r, 50 ) ) ] );
+
+					}
+
+					if ( state.error || pool.error ) throw state.error ?? pool.error;
+
+				},
+
+			} );
+
+			advance( Infinity );
+			await Promise.all( [ pool.close(), large ] );
+			await state.chain;
+			if ( state.error ) throw state.error;
+
+		} catch ( error ) {
+
+			pool.abort( error );
+			log.error( 'streamed extraction failed:', error );
+			updateLoading( { status: `Extraction error: ${error.message}`, failed: true, progress: 25 } );
+			throw error;
+
+		}
+
+		this._adoptExtraction( extracted );
+		this._streamed = { state, templates };
+		this._log( `Geometry extracted and ${templates.size} BLASes built together (${( performance.now() - startTime ).toFixed( 0 )}ms)` );
+
+	}
+
+	/** Takes over what the extractor produced. @private */
+	_adoptExtraction( extractedData ) {
+
+		this._setTriangleData( extractedData.triangleData );
+		this.geometryExtractor.releaseTriangles();
+		this.triangleCount = assertBVHIndexFits( extractedData.triangleCount, 'triangle count' );
+		// Callers build refit buffers by walking meshes, which counts a shared geometry
+		// once per placement; storage counts it once.
+		this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
+		this.instanceSource = extractedData.instanceSource || null;
+		this.instanceMatrices = extractedData.instanceMatrices || null;
+		this.instanceCount = extractedData.instanceCount || 0;
+		this.bakeInverse = extractedData.bakeInverse || null;
+
+		this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
+
+		// Store other extracted data
+		this.materials = extractedData.materials;
+		this.materialTriangleCounts = extractedData.materialTriangleCounts; // Per-material tri count for sort-bin remap
+		this.meshes = extractedData.meshes;
+		this.meshTriangleRanges = extractedData.meshTriangleRanges; // Per-mesh { start, count } for TLAS/BLAS
+		this.maps = extractedData.maps;
+		this.normalMaps = extractedData.normalMaps;
+		this.bumpMaps = extractedData.bumpMaps;
+		this.roughnessMaps = extractedData.roughnessMaps;
+		this.metalnessMaps = extractedData.metalnessMaps;
+		this.emissiveMaps = extractedData.emissiveMaps;
+		this.displacementMaps = extractedData.displacementMaps;
+		this.anisotropyMaps = extractedData.anisotropyMaps;
+		this.transmissionMaps = extractedData.transmissionMaps;
+		this.clearcoatMaps = extractedData.clearcoatMaps;
+		this.clearcoatRoughnessMaps = extractedData.clearcoatRoughnessMaps;
+		this.sheenColorMaps = extractedData.sheenColorMaps;
+		this.sheenRoughnessMaps = extractedData.sheenRoughnessMaps;
+		this.iridescenceMaps = extractedData.iridescenceMaps;
+		this.iridescenceThicknessMaps = extractedData.iridescenceThicknessMaps;
+		this.specularIntensityMaps = extractedData.specularIntensityMaps;
+		this.specularColorMaps = extractedData.specularColorMaps;
+		this.directionalLights = extractedData.directionalLights;
+		this.cameras = extractedData.cameras;
 
 	}
 
@@ -684,12 +886,14 @@ export class SceneProcessor {
 			this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
 			this.instanceTable.tplBakeInverse = this.bakeInverse;
 
-			const originalTreeletEnabled = this.config.enableTreeletOptimization;
-			const LARGE_MESH_THRESHOLD = 200000;
+			// Built while the geometry was extracted (the streaming path): only adopt the results.
+			const streamed = this._streamed;
+			this._streamed = null;
 
 			// Separate into worker-pool tasks and multi-worker parallel tasks
 			const poolTasks = [];
 			const parallelTasks = [];
+			const streamedTasks = [];
 
 			// Placements that reuse another's triangles reuse its BLAS too — the whole point of
 			// storing geometry in object space. Only the first placement of a range is built.
@@ -711,41 +915,13 @@ export class SceneProcessor {
 
 				ownerOfRange.set( range.start, m );
 
-				if ( range.count >= LARGE_MESH_THRESHOLD && shouldUseParallelBuild( range.count ) ) {
-
-					parallelTasks.push( { m, range } );
-
-				} else {
-
-					poolTasks.push( { m, range } );
-
-				}
+				if ( streamed ) streamedTasks.push( { m, range } );
+				else if ( this._isLargeMesh( range ) ) parallelTasks.push( { m, range } );
+				else poolTasks.push( { m, range } );
 
 			}
 
-			// Worker config shared by all builds
-			const workerOpts = {
-				depth: this.config.bvhDepth,
-				treeletOptimization: {
-					enabled: originalTreeletEnabled !== false,
-					size: this.config.treeletSize,
-					passes: this.config.treeletOptimizationPasses,
-					minImprovement: this.config.treeletMinImprovement,
-					complexityThreshold: this.config.treeletComplexityThreshold
-				},
-				reinsertionOptimization: {
-					enabled: this.bvhBuilder.enableReinsertionOptimization,
-					batchSizeRatio: this.bvhBuilder.reinsertionBatchSizeRatio,
-					maxIterations: this.bvhBuilder.reinsertionMaxIterations
-				},
-				// BVH build params — previously omitted, so the pool path built at the
-				// BVHBuilder default (leaf 8) instead of the configured value.
-				maxLeafSize: this.bvhBuilder.maxLeafSize,
-				numBins: this.bvhBuilder.numBins,
-				maxBins: this.bvhBuilder.maxBins,
-				minBins: this.bvhBuilder.minBins,
-				logLevel: workerLogLevel(),
-			};
+			const workerOpts = this._blasWorkerOpts();
 
 			const totalTasks = poolTasks.length + parallelTasks.length;
 			let doneTasks = 0;
@@ -762,9 +938,20 @@ export class SceneProcessor {
 			const owners = [ ...poolTasks, ...parallelTasks ]
 				.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
 				.sort( ( a, b ) => a.t - b.t );
-			const restored = await this._restoreBLASes( owners, TLASBuilder.nodeCountFor( meshCount ), workerOpts );
-			const spill = ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
-			const onBuilt = spill ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
+			const restored = streamed ? null : await this._restoreBLASes( owners, TLASBuilder.nodeCountFor( meshCount ), workerOpts );
+			const spill = streamed ? streamed.state
+				: ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
+			const onBuilt = spill && ! streamed ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
+			if ( streamed ) {
+
+				for ( const [ t, built ] of streamed.templates ) {
+
+					this.instanceTable.tplObjectAABB.set( built.aabb, t * 6 );
+
+				}
+
+			}
+
 			if ( restored ) {
 
 				poolTasks.length = 0;
@@ -774,7 +961,9 @@ export class SceneProcessor {
 			}
 
 			// Build all meshes via bounded worker pool (main thread stays free)
-			const poolPromise = restored ? Promise.resolve( restored.results ) : this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress, onBuilt );
+			const poolPromise = restored ? Promise.resolve( restored.results )
+				: streamed ? Promise.resolve( streamedTasks.map( ( { m, range } ) => ( { m, range, result: streamed.templates.get( sourceOf( m ) ).result } ) ) )
+					: this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress, onBuilt );
 
 			// One at a time: each build already spreads over every core and pins ~200 bytes per
 			// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
@@ -783,30 +972,7 @@ export class SceneProcessor {
 
 				for ( const { m, range } of parallelTasks ) {
 
-					const meshTriData = new Uint32Array( new SharedArrayBuffer( range.count * this.triangles.lanesPerRecord * 4 ) );
-					this.triangles.readRecords( range.start, range.count, meshTriData );
-
-					const result = await buildBVHParallel( meshTriData, this.config.bvhDepth, null, {
-						maxLeafSize: this.bvhBuilder.maxLeafSize,
-						numBins: this.bvhBuilder.numBins,
-						maxBins: this.bvhBuilder.maxBins,
-						minBins: this.bvhBuilder.minBins,
-						...workerOpts
-					} );
-
-					if ( result.reorderedTriangles ) {
-
-						this.triangles.setRecords( range.start, result.reorderedTriangles );
-						delete result.reorderedTriangles;
-
-					} else if ( result.order ) {
-
-						this._writeInOrder( range.start, result.triangles, result.order );
-						delete result.order;
-						delete result.triangles;
-
-					}
-
+					const result = await this._buildLargeBLAS( range, workerOpts );
 					onBuilt?.( m, range, result );
 					parallelResults.push( { m, range, result } );
 					reportBLASProgress();
@@ -995,6 +1161,71 @@ export class SceneProcessor {
 			throw error;
 
 		}
+
+	}
+
+	/** Worker config shared by all BLAS builds. @private */
+	_blasWorkerOpts() {
+
+		return {
+			depth: this.config.bvhDepth,
+			treeletOptimization: {
+				enabled: this.config.enableTreeletOptimization !== false,
+				size: this.config.treeletSize,
+				passes: this.config.treeletOptimizationPasses,
+				minImprovement: this.config.treeletMinImprovement,
+				complexityThreshold: this.config.treeletComplexityThreshold
+			},
+			reinsertionOptimization: {
+				enabled: this.bvhBuilder.enableReinsertionOptimization,
+				batchSizeRatio: this.bvhBuilder.reinsertionBatchSizeRatio,
+				maxIterations: this.bvhBuilder.reinsertionMaxIterations
+			},
+			// BVH build params — previously omitted, so the pool path built at the
+			// BVHBuilder default (leaf 8) instead of the configured value.
+			maxLeafSize: this.bvhBuilder.maxLeafSize,
+			numBins: this.bvhBuilder.numBins,
+			maxBins: this.bvhBuilder.maxBins,
+			minBins: this.bvhBuilder.minBins,
+			logLevel: workerLogLevel(),
+		};
+
+	}
+
+	/** @private */
+	_isLargeMesh( range ) {
+
+		return range.count >= LARGE_MESH_TRIANGLES && shouldUseParallelBuild( range.count );
+
+	}
+
+	/**
+	 * One mesh's BLAS across every core. The range is read straight into the SharedArrayBuffer
+	 * the builder works in, and its BVH order written back chunk by chunk, so the mesh is held
+	 * once rather than three times.
+	 * @private
+	 */
+	async _buildLargeBLAS( range, workerOpts ) {
+
+		const meshTriData = new Uint32Array( new SharedArrayBuffer( range.count * this.triangles.lanesPerRecord * 4 ) );
+		this.triangles.readRecords( range.start, range.count, meshTriData );
+
+		const result = await buildBVHParallel( meshTriData, this.config.bvhDepth, null, workerOpts );
+
+		if ( result.reorderedTriangles ) {
+
+			this.triangles.setRecords( range.start, result.reorderedTriangles );
+			delete result.reorderedTriangles;
+
+		} else if ( result.order ) {
+
+			this._writeInOrder( range.start, result.triangles, result.order );
+			delete result.order;
+			delete result.triangles;
+
+		}
+
+		return result;
 
 	}
 
@@ -1224,7 +1455,12 @@ export class SceneProcessor {
 			blasBytes: 0, blasAt: new Map(),
 			pending: new Int32Array( tri.chunks.length ),
 			emitterChunks: new Set(),
-			emissiveMaterial: this.materials.map( m => ( m?.emissiveIntensity ?? 0 ) > 0 && !! m.emissive && ( m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0 ) ),
+			isEmitter: materialIndex => {
+
+				const m = this.materials[ materialIndex ];
+				return ( m?.emissiveIntensity ?? 0 ) > 0 && !! m.emissive && ( m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0 );
+
+			},
 			uploadTriangles: uploader( tri, 'triangles' ),
 			chain: Promise.resolve(),
 			error: null,
@@ -1295,7 +1531,7 @@ export class SceneProcessor {
 			const lanes = tri.lanesPerRecord;
 			for ( let o = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET; o < chunk.length; o += lanes ) {
 
-				if ( state.emissiveMaterial[ chunk[ o ] & TRI_MATERIAL_MASK ] ) {
+				if ( state.isEmitter( chunk[ o ] & TRI_MATERIAL_MASK ) ) {
 
 					state.emitterChunks.add( k );
 					return;
@@ -1396,30 +1632,62 @@ export class SceneProcessor {
 	 */
 	_buildBLASesWithPool( tasks, opts, onProgress, onResult = null ) {
 
-		if ( tasks.length === 0 ) return Promise.resolve( [] );
+		const pool = this._blasPool( opts, onProgress, onResult );
+		for ( const task of tasks ) pool.submit( task );
+		return pool.close();
 
-		const poolSize = Math.min( tasks.length, this.config.maxConcurrentTextureTasks || 4 );
+	}
+
+	/**
+	 * A BLAS worker pool that takes builds while it runs: `submit( { m, range } )` queues one,
+	 * `close()` resolves with every result once the queue has drained. Workers start as work
+	 * arrives, up to the pool size.
+	 * @private
+	 */
+	_blasPool( opts, onProgress, onResult = null ) {
+
+		const poolSize = this.config.maxConcurrentTextureTasks || 4;
+		const queue = [];
 		const results = [];
-		let nextTask = 0;
-		let completed = 0;
+		const workers = [];
+		const idle = [];
+		let closed = false, running = 0, completed = 0, failure = null;
+		let settle;
+		const done = new Promise( ( resolve, reject ) => settle = { resolve, reject } );
+		done.catch( () => {} );
 
-		return new Promise( ( resolve, reject ) => {
+		const fail = ( error ) => {
 
-			const workers = [];
+			if ( failure ) return;
+			failure = error;
+			workers.forEach( w => w.terminate() );
+			settle.reject( error );
 
-			const dispatchNext = ( worker ) => {
+		};
 
-				if ( nextTask >= tasks.length ) {
+		const finishIfDrained = () => {
 
-					// No more tasks — terminate this worker
-					worker.terminate();
-					workers.splice( workers.indexOf( worker ), 1 );
-					if ( workers.length === 0 ) resolve( results );
-					return;
+			if ( failure || ! closed || queue.length > 0 || running > 0 ) return;
+			workers.forEach( w => w.terminate() );
+			settle.resolve( results );
 
-				}
+		};
 
-				const { m, range } = tasks[ nextTask ++ ];
+		const dispatch = ( worker ) => {
+
+			const task = queue.shift();
+			if ( ! task ) {
+
+				idle.push( worker );
+				finishIfDrained();
+				return;
+
+			}
+
+			const { m, range } = task;
+			running ++;
+			try {
+
 				const meshTriData = this.triangles.copyOf( range.start, range.count );
 
 				// Disable treelet for tiny meshes
@@ -1446,87 +1714,115 @@ export class SceneProcessor {
 					logLevel: opts.logLevel,
 				}, [ meshTriData.buffer ] );
 
-			};
+			} catch ( error ) {
 
-			const onWorkerMessage = ( worker, e ) => {
+				fail( error );
 
-				const data = e.data;
+			}
 
-				if ( data.error ) {
+		};
 
-					workers.forEach( w => w.terminate() );
-					reject( new Error( data.error ) );
-					return;
+		const onWorkerMessage = ( worker, e ) => {
 
-				}
+			const data = e.data;
 
-				if ( data.progress !== undefined ) return; // Ignore progress messages
+			if ( data.error ) {
 
-				const { m, range } = worker._currentTask;
+				fail( new Error( data.error ) );
+				return;
 
+			}
+
+			if ( data.progress !== undefined ) return; // Ignore progress messages
+
+			const { m, range } = worker._currentTask;
+			running --;
+
+			try {
+
+				// Write back now: holding one copy per mesh until the pool drains is the whole
+				// triangle buffer over again, ~3 GB at 40M.
+				if ( data.triangles ) this.triangles.setRecords( range.start, data.triangles );
+
+				const result = {
+					bvhData: data.bvhData,
+					originalToBvh: data.originalToBvh || null,
+					splitStats: data.treeletStats || null,
+				};
+				onResult?.( m, range, result );
+				results.push( { m, range, result } );
+
+			} catch ( error ) {
+
+				// Thrown here, it would stop the pool with the promise never settled.
+				fail( error );
+				return;
+
+			}
+
+			completed ++;
+			onProgress?.( completed );
+			dispatch( worker );
+
+		};
+
+		const spawn = () => {
+
+			const worker = new BVHWorker();
+			worker.onmessage = ( e ) => onWorkerMessage( worker, e );
+			worker.onerror = ( err ) => fail( err );
+			workers.push( worker );
+			return worker;
+
+		};
+
+		return {
+
+			submit( task ) {
+
+				if ( failure ) return;
+				queue.push( task );
 				try {
 
-					// Write back now: holding one copy per mesh until the pool drains is the whole
-					// triangle buffer over again, ~3 GB at 40M.
-					if ( data.triangles ) this.triangles.setRecords( range.start, data.triangles );
-
-					const result = {
-						bvhData: data.bvhData,
-						originalToBvh: data.originalToBvh || null,
-						splitStats: data.treeletStats || null,
-					};
-					onResult?.( m, range, result );
-					results.push( { m, range, result } );
+					const worker = idle.pop() ?? ( workers.length < poolSize ? spawn() : null );
+					if ( worker ) dispatch( worker );
 
 				} catch ( error ) {
 
-					// Thrown here, it would stop the pool with the promise never settled.
-					workers.forEach( w => w.terminate() );
-					reject( error );
-					return;
+					fail( error );
 
 				}
 
-				completed ++;
-				onProgress?.( completed );
+			},
 
-				dispatchNext( worker );
+			close() {
 
-			};
+				closed = true;
+				finishIfDrained();
+				return done;
 
-			// Spin up the pool
-			( async () => {
+			},
 
-				for ( let i = 0; i < poolSize; i ++ ) {
+			abort( error ) {
 
-					let worker;
-					try {
+				fail( error ?? new Error( 'BLAS pool aborted' ) );
 
-						worker = new BVHWorker();
+			},
 
-					} catch ( e ) {
+			/** Builds queued or running. */
+			get pending() {
 
-						reject( e );
-						return;
+				return queue.length + running;
 
-					}
+			},
 
-					worker.onmessage = ( e ) => onWorkerMessage( worker, e );
-					worker.onerror = ( err ) => {
+			get error() {
 
-						workers.forEach( w => w.terminate() );
-						reject( err );
+				return failure;
 
-					};
+			},
 
-					workers.push( worker );
-					dispatchNext( worker );
-
-				}
-
-			} )().catch( reject );
-
-		} );
+		};
 
 	}
 

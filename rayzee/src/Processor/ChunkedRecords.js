@@ -375,6 +375,62 @@ export class ChunkedRecords {
 
 	}
 
+	/**
+	 * A lazy store taking more records without moving the ones it has: new chunks are added and
+	 * only a short last chunk is reallocated. A build streaming chunks to disk cannot copy the
+	 * store, since earlier chunks may already be gone.
+	 */
+	grow( recordCount ) {
+
+		if ( recordCount <= this.recordCount ) return;
+		const last = this.chunks.length - 1;
+		const lanesFor = ( k, count ) => Math.min( this.recordsPerChunk, count - k * this.recordsPerChunk ) * this.lanesPerRecord;
+		const old = this.chunks[ last ];
+
+		this.recordCount = recordCount;
+		for ( const v of this._liveViews() ) v.recordCount = recordCount;
+		if ( this.chunks.length * this.recordsPerChunk < recordCount ) {
+
+			this.chunks.length = Math.ceil( recordCount / this.recordsPerChunk );
+			for ( const v of this._liveViews() ) v.chunks.length = this.chunks.length;
+
+		}
+
+		if ( old && old.length < lanesFor( last, recordCount ) ) {
+
+			const chunk = allocChunk( this.LaneType, lanesFor( last, recordCount ), this.shared );
+			chunk.set( old );
+			this.chunks[ last ] = chunk;
+			for ( const v of this._liveViews() ) v.chunks[ last ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
+
+		} else if ( ! old && this._spilled?.has( last ) ) {
+
+			throw new Error( `ChunkedRecords: cannot grow past chunk ${last}, which is on disk` );
+
+		}
+
+	}
+
+	/** {@link trimTo} on this store itself, keeping what it has spilled. */
+	trimInPlace( recordCount ) {
+
+		const needed = Math.max( 1, Math.ceil( recordCount / this.recordsPerChunk ) );
+		const lanes = Math.max( 0, ( recordCount - ( needed - 1 ) * this.recordsPerChunk ) * this.lanesPerRecord );
+		const stores = [ this, ...this._liveViews() ];
+		for ( const s of stores ) {
+
+			s.chunks.length = needed;
+			const last = s.chunks[ needed - 1 ];
+			if ( last && last.length > lanes ) s.chunks[ needed - 1 ] = last.subarray( 0, lanes );
+			s.recordCount = recordCount;
+
+		}
+
+		if ( this._spilled ) for ( const k of this._spilled ) if ( k >= needed ) this._spilled.delete( k );
+		return this;
+
+	}
+
 	/** A parallel set of views of another lane type over the same memory (u32 records read as f32). */
 	viewAs( LaneType ) {
 

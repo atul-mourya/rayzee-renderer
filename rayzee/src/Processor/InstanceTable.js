@@ -579,10 +579,17 @@ export class InstanceTable {
 	 */
 	_readRootAABB( bvhData, template, triangleData, out, off ) {
 
+		InstanceTable.rootAABB( bvhData, triangleData, this.tplTriOffset[ template ], this.tplTriCount[ template ], out, off );
+
+	}
+
+	/** A BLAS's object-space bounds, from its root node or, for a leaf root, its triangles. */
+	static rootAABB( bvhData, triangleData, triOffset, triCount, out, off ) {
+
 		if ( ! bvhData || bvhIndexView( bvhData )[ 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 
 			// Root is a leaf — very small mesh. Scan its triangles.
-			this._computeAABBFromTriangles( template, triangleData, out, off );
+			aabbOfTriangles( triangleData, triOffset, triCount, out, off );
 			return;
 
 		}
@@ -603,39 +610,7 @@ export class InstanceTable {
 	 */
 	_computeAABBFromTriangles( template, triangleData, out, off ) {
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		// Flat array or ChunkedRecords: resolve the chunk once per triangle either way.
-		const chunked = triangleData && triangleData.chunks ? triangleData.viewAs( Float32Array ) : null;
-		const flat = chunked ? null : ( triangleData instanceof Float32Array
-			? triangleData
-			: new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length ) );
-		let minX = Infinity, minY = Infinity, minZ = Infinity;
-		let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
-
-		const triOffset = this.tplTriOffset[ template ], triCount = this.tplTriCount[ template ];
-		for ( let t = 0; t < triCount; t ++ ) {
-
-			const gi = triOffset + t;
-			const tri = chunked ? chunked.chunkFor( gi ) : flat;
-			const base = chunked ? chunked.baseOf( gi ) : gi * FPT;
-
-			// Positions A (offset 0), B (offset 4), C (offset 8)
-			for ( let o = 0; o <= 8; o += 4 ) {
-
-				const x = tri[ base + o ], y = tri[ base + o + 1 ], z = tri[ base + o + 2 ];
-				if ( x < minX ) minX = x;
-				if ( y < minY ) minY = y;
-				if ( z < minZ ) minZ = z;
-				if ( x > maxX ) maxX = x;
-				if ( y > maxY ) maxY = y;
-				if ( z > maxZ ) maxZ = z;
-
-			}
-
-		}
-
-		out[ off ] = minX; out[ off + 1 ] = minY; out[ off + 2 ] = minZ;
-		out[ off + 3 ] = maxX; out[ off + 4 ] = maxY; out[ off + 5 ] = maxZ;
+		aabbOfTriangles( triangleData, this.tplTriOffset[ template ], this.tplTriCount[ template ], out, off );
 
 	}
 
@@ -686,5 +661,43 @@ export class InstanceTable {
 		this.tlasNodeCount = 0;
 
 	}
+
+}
+
+/** Bounds of triangles [triOffset, triOffset + triCount) of a flat or chunked store, into out[off..off+5]. */
+function aabbOfTriangles( triangleData, triOffset, triCount, out, off ) {
+
+	const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+	// Flat array or ChunkedRecords: resolve the chunk once per triangle either way.
+	const chunked = triangleData && triangleData.chunks ? triangleData.viewAs( Float32Array ) : null;
+	const flat = chunked ? null : ( triangleData instanceof Float32Array
+		? triangleData
+		: new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length ) );
+	let minX = Infinity, minY = Infinity, minZ = Infinity;
+	let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
+
+	for ( let t = 0; t < triCount; t ++ ) {
+
+		const gi = triOffset + t;
+		const tri = chunked ? chunked.chunkFor( gi ) : flat;
+		const base = chunked ? chunked.baseOf( gi ) : gi * FPT;
+
+		// Positions A (offset 0), B (offset 4), C (offset 8)
+		for ( let o = 0; o <= 8; o += 4 ) {
+
+			const x = tri[ base + o ], y = tri[ base + o + 1 ], z = tri[ base + o + 2 ];
+			if ( x < minX ) minX = x;
+			if ( y < minY ) minY = y;
+			if ( z < minZ ) minZ = z;
+			if ( x > maxX ) maxX = x;
+			if ( y > maxY ) maxY = y;
+			if ( z > maxZ ) maxZ = z;
+
+		}
+
+	}
+
+	out[ off ] = minX; out[ off + 1 ] = minY; out[ off + 2 ] = minZ;
+	out[ off + 3 ] = maxX; out[ off + 4 ] = maxY; out[ off + 5 ] = maxZ;
 
 }

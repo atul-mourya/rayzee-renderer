@@ -722,8 +722,14 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
   the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
 - **Memory spill (experimental, `memorySpill: true`, app flag `localStorage['rayzee-memory-spill']`).**
-  The spill happens **during the build** for a static multi-chunk scene
-  (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
+  A static scene of more than one chunk is **extracted and built together**
+  (`SceneProcessor._extractStreaming`, `GeometryExtractor.extractStreaming`): each stored range
+  goes to a BLAS worker as soon as it is written (`_blasPool` takes work while it runs), and the
+  extraction waits while more than `STREAM_RESIDENT_BYTES` (1.5 GB) of records are in memory — so
+  the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
+  bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
+  starved the worker messages it waited for (a hung tab). Otherwise the spill happens **during the
+  build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
   chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
   extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
   scratch, uploading and spilling each chunk the fill passes. Chunks holding emitters and the TLAS

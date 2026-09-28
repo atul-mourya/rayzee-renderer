@@ -1,5 +1,6 @@
 import { ENGINE_AREAS } from './StorageManager.js';
 
+const WRITE_PIECE_BYTES = 32 * 1024 * 1024;
 const FILE = 'chunks.bin';
 
 /**
@@ -52,7 +53,16 @@ export class SpillStore {
 
 		}
 
-		await this._writer.write( FILE, data, { at } );
+		// In pieces: an unshared buffer is copied to reach the storage worker, and one copy of a
+		// big BLAS (600 MB for a 15M-triangle mesh) was the allocation that failed a 70M build.
+		const bytes = new Uint8Array( data.buffer, data.byteOffset, data.byteLength );
+		let off = 0;
+		do {
+
+			await this._writer.write( FILE, bytes.subarray( off, Math.min( bytes.length, off + WRITE_PIECE_BYTES ) ), { at: at + off } );
+			off += WRITE_PIECE_BYTES;
+
+		} while ( off < bytes.length );
 
 	}
 

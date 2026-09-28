@@ -258,6 +258,105 @@ export class GeometryExtractor {
 	}
 
 	/**
+	 * `extract()`, handing each stored range to `onRange( meshIndex, range )` as soon as it is
+	 * written and awaiting `pause( triangles )` every `yieldEvery` triangles, so a build can work
+	 * on the first meshes while the rest are read. The store is lazy and sized exactly
+	 * ({@link _countStoredTriangles}): a chunk takes memory when first written, and the receiver
+	 * may send it to disk once it is done with it.
+	 */
+	async extractStreaming( object, { onStore, onRange, pause, yieldEvery = 1 << 20 } ) {
+
+		this.resetArrays();
+		this._triangleCapacity = Math.max( 1, this._countStoredTriangles( object ) );
+		this._allocateTriangles( this._triangleCapacity, true );
+		onStore?.( this.triangles );
+		this.currentTriangleIndex = 0;
+		this._allocatePlacements( this._countPlacements( object ) );
+		this._geometryUses = this._countGeometryUses( object );
+		this.bakeInverse = new Map();
+		this._onRange = onRange;
+
+		try {
+
+			// Depth-first pre-order, as traverseObject: mesh indices follow the same walk.
+			const stack = [ object ];
+			let yielded = 0;
+			while ( stack.length ) {
+
+				const node = stack.pop();
+				this._visit( node );
+				if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
+				if ( this.currentTriangleIndex - yielded >= yieldEvery ) {
+
+					yielded = this.currentTriangleIndex;
+					await pause( this.currentTriangleIndex );
+
+				}
+
+			}
+
+		} finally {
+
+			this._onRange = null;
+
+		}
+
+		this._shareInstanceMatrices();
+		this._compressAttributes( object );
+		this.triangles.trimInPlace( this.currentTriangleIndex );
+		this._streamedStore = true;
+
+		this.logStats();
+		return this.getExtractedData();
+
+	}
+
+	/**
+	 * Triangles `extract()` will store: a geometry shared under one material once, an emissive
+	 * instanced mesh once per instance (it is expanded), everything else once per mesh.
+	 * @private
+	 */
+	_countStoredTriangles( object ) {
+
+		const seen = new Set();
+		let count = 0;
+		const walk = node => {
+
+			if ( node.isMesh && node.geometry && node.material ) {
+
+				const g = node.geometry;
+				const tris = Math.ceil( ( g.index ? g.index.count : ( g.attributes.position?.count ?? 0 ) ) / 3 );
+				const material = Array.isArray( node.material ) ? node.material[ 0 ] : node.material;
+				const e = material?.emissive;
+				const emissive = material?.emissiveIntensity > 0 && !! e && ( e.r > 0 || e.g > 0 || e.b > 0 );
+				const instances = node.isInstancedMesh ? ( node.count ?? 0 ) : 1;
+
+				if ( emissive && node.isInstancedMesh && ! isDeformable( node ) && tris * instances <= MAX_EXPANDED_EMISSIVE_TRIANGLES ) count += tris * instances;
+				else if ( emissive || isDeformable( node ) ) count += tris;
+				else {
+
+					const key = `${g.uuid}|${material?.uuid}`;
+					if ( ! seen.has( key ) ) {
+
+						seen.add( key );
+						count += tris;
+
+					}
+
+				}
+
+			}
+
+			if ( node.children ) for ( const child of node.children ) walk( child );
+
+		};
+
+		walk( object );
+		return count;
+
+	}
+
+	/**
 	 * The sizes a memory preflight needs, without doing any of the work: what `extract()` would
 	 * store, plus the three.js geometry already resident behind it.
 	 *
@@ -462,6 +561,15 @@ export class GeometryExtractor {
 
 		if ( needed <= this._triangleCapacity ) return;
 
+		// A streamed store may already have chunks on disk: it grows where it stands.
+		if ( this._onRange ) {
+
+			this.triangles.grow( needed );
+			this._triangleCapacity = needed;
+			return;
+
+		}
+
 		const previous = this.triangles;
 		const used = this.currentTriangleIndex;
 		this._allocateTriangles( needed );
@@ -486,11 +594,11 @@ export class GeometryExtractor {
 	 * V8 ArrayBuffer cap, well below what the GPU buffer can take.
 	 * @private
 	 */
-	_allocateTriangles( capacity ) {
+	_allocateTriangles( capacity, lazy = false ) {
 
 		// Shared-backed so a refit reads and writes them in place; copying them into shared memory
 		// on first refit would be a second copy of the largest thing in the scene.
-		this.triangles = new ChunkedRecords(
+		this.triangles = ( lazy ? ChunkedRecords.lazy : ( ...a ) => new ChunkedRecords( ...a ) )(
 			capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array,
 			undefined, SHARED_MEMORY_AVAILABLE
 		);
@@ -502,7 +610,24 @@ export class GeometryExtractor {
 
 	traverseObject( object ) {
 
-		// Process the current object
+		this._visit( object );
+
+		// Process children recursively
+		if ( object.children ) {
+
+			for ( const child of object.children ) {
+
+				this.traverseObject( child );
+
+			}
+
+		}
+
+	}
+
+	/** @private */
+	_visit( object ) {
+
 		if ( object.isMesh ) {
 
 			this.processMesh( object );
@@ -514,17 +639,6 @@ export class GeometryExtractor {
 		} else if ( object.isCamera ) {
 
 			this.cameras.push( object );
-
-		}
-
-		// Process children recursively
-		if ( object.children ) {
-
-			for ( const child of object.children ) {
-
-				this.traverseObject( child );
-
-			}
 
 		}
 
@@ -602,6 +716,7 @@ export class GeometryExtractor {
 		this.meshTriangleRanges.push( range );
 		if ( range.count > 0 && ! bake && shareable ) this._geometryRanges.set( key, { ...range, meshIndex } );
 		this._recordPlacements( mesh, meshIndex, bake, expand );
+		if ( range.count > 0 ) this._onRange?.( meshIndex, range );
 
 	}
 
@@ -1209,10 +1324,24 @@ export class GeometryExtractor {
 	}
 
 	/** The filled triangle records, as one chunk when they fit and several when they do not. */
+	/**
+	 * Lets go of the triangle store once its owner has taken it. The extractor's own reference
+	 * (and its float view) kept every chunk alive, so a spilled chunk never left memory.
+	 */
+	releaseTriangles() {
+
+		this.triangles = null;
+		this.triangleData = null;
+		this.triangleFloatChunks = null;
+		this.triangleFloats = null;
+
+	}
+
 	getTriangleData() {
 
 		if ( ! this.triangles ) return null;
-		return this.triangles.trimTo( this.currentTriangleIndex );
+		// A streamed store is trimmed where it stands: its receiver holds chunks of it on disk.
+		return this._streamedStore ? this.triangles : this.triangles.trimTo( this.currentTriangleIndex );
 
 	}
 
@@ -1308,6 +1437,7 @@ export class GeometryExtractor {
 
 		// Reset triangle data
 		this.triangles = null;
+		this._streamedStore = false;
 		this.triangleData = null;
 		this.triangleFloatChunks = null;
 		this.triangleFloats = null;
