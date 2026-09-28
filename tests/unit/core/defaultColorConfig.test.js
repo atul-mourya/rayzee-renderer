@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const cm = { setView: vi.fn( view => ( { id: 209, ocio: view } ) ) };
 const app = { loadColorConfig: vi.fn( async () => ( { id: 'blender-5.1' } ) ) };
 
-vi.mock( 'rayzee', () => ( {
+vi.mock( 'rayzee', async () => ( {
 	configureAssets: vi.fn(),
 	getActiveColorManagement: () => cm,
 	onRegistryChange: vi.fn(),
 	listViewTransforms: () => [],
+	fetchFile: ( await import( '@/core/Storage/DownloadCache.js' ) ).fetchFile,
 } ) );
 vi.mock( '@/lib/appProxy', () => ( { getApp: () => app } ) );
 vi.mock( '@/hooks/useActiveApp', () => ( { useActiveApp: () => app } ) );
@@ -26,8 +27,7 @@ function serve( routes ) {
 		return {
 			ok: true,
 			status: 200,
-			json: async () => body,
-			arrayBuffer: async () => new TextEncoder().encode( body ).buffer,
+			arrayBuffer: async () => new TextEncoder().encode( typeof body === 'string' ? body : JSON.stringify( body ) ).buffer,
 		};
 
 	} ) );
@@ -71,7 +71,7 @@ describe( 'default colour config', () => {
 
 		serve( { [ `${BASE}manifest.json` ]: { config: 'config.ocio', files: [ 'config.ocio', 'luts/missing.cube' ] }, [ `${BASE}config.ocio` ]: '' } );
 
-		await expect( loadDefaultConfig() ).rejects.toThrow( /missing\.cube: HTTP 404/ );
+		await expect( loadDefaultConfig() ).rejects.toThrow( /HTTP 404 .*missing\.cube/ );
 		expect( app.loadColorConfig ).not.toHaveBeenCalled();
 		expect( cm.setView ).not.toHaveBeenCalled();
 

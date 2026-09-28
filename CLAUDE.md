@@ -46,6 +46,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
 - `npm run bench:list` - show the scene corpus
+- `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
 
 Baselines are **machine-specific** (the wavefront path budget derives from device limits, and
 single- vs multi-chunk are different code paths); the suite refuses to compare across a
@@ -113,7 +114,7 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
-- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit/rng buffers + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
+- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
 - **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
@@ -189,8 +190,13 @@ UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
 MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
 MESH_INDEX_OFFSET: 19
 ```
-⚠️ Any new reader of `triangleStorageAttr` must bind `uvec4` **and** pass the hit's
-`instanceLeaf`: triangles of a shared geometry are in object space, not world space.
+On the GPU the five rows are split across two buffers — rows 0–2 (positions + packed normals) in
+`triangleGeoAttr`, rows 3–4 (UVs, flags, mesh index) in `triangleShadeAttr` — because one buffer of
+80 B a triangle hit the 4 GB storage-buffer limit at 53.6M; geo alone at 48 B reaches 89.5M. The CPU
+records stay whole; `PathTracerStage._uploadTriangles` splits them on every upload path.
+Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStorageNode`).
+⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), and pass the
+hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
 **Two-Level BVH Layout** (packed in single GPU storage buffer):
 ```
@@ -200,7 +206,15 @@ Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M node
 - Indices and leaf tags in slot `[3]` are **u32 bit patterns**, read with `floatBitsToUint`.
   Stored as float *values* they rounded past 2^24 and sent rays to a neighbouring node, which
   silently erased geometry from large scenes. Every valid index is below `BVH_MAX_INDEX` (2^30)
-  and the tags sit above it, so `nodeTag >= BVH_MAX_INDEX` means leaf.
+  and the tags sit above it, so `nodeTag >= BVH_MAX_INDEX` means leaf — in an unfolded BVH.
+- **Folded leaves** (past `FOLD_LEAVES_TRIANGLES`, 40M stored triangles): every triangle leaf of
+  ≤ 15 is folded into its parent (`Processor/BVHLeafFold.js`). The child slot holds
+  `~( first << 4 | count )`, the very value traversal pushes, so folded references sit from 2^31
+  up and a leaf node is `tag >> 30 === 1`. BLAS nodes halve (55.7M Moana: 50.1M → 32.0M nodes with
+  the TLAS, 3.1 → 2.0 GB); images bit-identical. The tree buffer carries `foldedLeaves` and the
+  traversal emits the folded code only for it: that code cost 0.5–3.7 % of GPU time in every
+  variant tried (22M ocean + mountain, three views), so an unfolded tree keeps the old code exactly.
+  ⚠️ Rebase through `rebaseNodes` and refit through `BVHRefitter` — both read folded children.
 - **Triangle leaf** (`BVH_LEAF_MARKERS.TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, 0, tag]`
 - **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`,
   and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **placement** index
@@ -615,7 +629,7 @@ guarantees 16 sampled textures per stage.
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
 2. **GeometryExtractor** converts meshes to the 20-lane triangle records, baking single-use and emissive geometry to world space and leaving shared geometry in object space; records per-mesh `meshTriangleRanges`. It never rewrites a host's own geometry (`userData.__rayzeeExternal` subtrees are left alone), and anything skinned or morphed is given triangles of its own so a refit cannot pose every copy at once.
-3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`
+3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`. A mesh past `SPLIT_MESH_TRIANGLES` (2M) is built as spatial pieces (`Processor/SplitBLAS.js`): its records are sorted in place into pieces of ≤ 512k by halving at the centroid median of the longest axis, each piece is built by a pool worker, and the halving becomes the nodes that join them. It holds the mesh once, in the store — one build across every core held a second copy plus 44 B a triangle of scratch. Images bit-identical, frame time unchanged (22M ocean + mountain, three views, within 3 %). ⚠️ The joined BLAS travels as parts (`nodeParts`), never one array: a 610 MB request failed an 80M build with memory to spare. ⚠️ Pivots are sampled with a fixed seed: first/middle/last took a thousand passes on a terrain grid's repeating rows.
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
 
 ### Loading part of a scene archive
@@ -632,8 +646,130 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   is free but *parsing* everything is what runs the tab out of memory. Selecting every element
   is a valid answer and loads the whole scene; `promptBytes` overrides the line.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
-  and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
-  killed the renderer outright — so raising it is a deliberate act on a fresh browser.
+  and the build reports itself truncated. 45M is the highest rung measured to survive without
+  the memory spill. With `memorySpill` on, `loadFile` defaults them to 60M / 8M
+  (`SPILL_TRIANGLE_BUDGET`): the whole 15-part Moana subset (55.7M / 7.0M) loads cold under them.
+  Raised per load, 80M / 4.35M loads and renders (preflight 8.51 GB, with the spill's discounts);
+  89M ran out of memory in the parse, measured before the parse-memory work and not since.
+- **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
+  a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
+  file included again under the same material, with no side effects, is placed as an instance of
+  its first reading (`instanceIncludes`). Templates placed at identical transforms become one, and
+  a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
+  Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
+  what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
+- **Parse memory.** The entry is picked from each `.pbrt`'s first 4 MB (`listEntryPathsFrom`:
+  WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
+  for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
+  ArrayBuffer is freed only at a major GC, which a parse reaches late, so scene text, grown arrays
+  (`PBRT/buffers.js`) and merged shapes' arrays are let go explicitly with
+  `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
+  First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
+  identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those
+  placements build them again after the static ones.
+- **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
+  read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
+  (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
+  there in 0.15 s. `.zip` is read through its central directory (`openZip` / `readZipDirectory`,
+  ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
+  zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
+  URLs load through the download cache (`loadFile( url )`).
+
+### Storage (OPFS) (`rayzee/src/Storage/`)
+`app.storage` is a `StorageManager` over the origin private file system, opened per
+`cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
+`null` when the browser has none (private windows, Node without the fake) — every caller must
+work without it. `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
+turns it off or supplies a host manager; `openHeadless` defaults to off.
+- **Areas.** Engine: `downloads` (URL cache, HEAD-revalidated — the CDN exposes Last-Modified /
+  Content-Length but not ETag), `archives`, `scenes` (graph + BLAS cache), `cdf`, and `spill`
+  (kind `scratch`). App: `renders`, `sessions`, `projects`, `jobs` (kind `user`). `cache` areas
+  share a budget (30 % of quota, ≤ 100 GB) and are evicted least-recently-used, never while
+  locked or pinned; `user` areas are never evicted; `scratch` is outside the budget and cleared at
+  open unless an open page holds it. ⚠️ The budget caps what caches accumulate, not one write —
+  a single entry larger than the budget is allowed when the disk has room.
+- **Entry protocol.** An entry is a directory of files plus `meta.json`, written **last**; no valid
+  meta means invisible, and `sweep()` removes it. `area.create( key )` replaces, `edit( key )`
+  appends (growable files resume from their committed length). ⚠️ `create` removes the old entry
+  first, so anything rewritten often (sessions, checkpoints) alternates between two keys and
+  deletes the older after the commit.
+- **I/O.** All writes go through sync access handles in `StorageWorker` (`createWritable` is Safari
+  26+ only); reads use `File.slice` on the main thread. `EntryWriter.write` copies the data
+  before its first await — muxers and stream readers reuse their buffers.
+- **Locks.** Web Locks per entry (`acquireLock`, in-process fallback in Node): writers exclusive,
+  readers shared with `ifAvailable`, so an entry being written counts as a miss. Sessions hold a
+  lock per tab for the page's lifetime; that is how a second tab tells a live session from one to
+  offer.
+- **Failures** record `storage.*` issues (`unavailable`, `quota_exceeded`, `write_failed`,
+  `read_failed`, `entry_corrupt`, `cache_mismatch`) as warnings and degrade to the in-memory path;
+  nothing throws for lack of storage. A quota failure mid-download retries once in memory.
+- **Identity.** `fileIdentity( file )` = name, size, lastModified and a SHA-256 over the head, tail
+  and 14 probes (~3 MB read at any size); `identityKey()` is the string form used in keys.
+- **Scene cache** (`SceneGraphCodec`, `BLASCache`): stored when the cold build took ≥ 10 s and the
+  read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
+  *during* the build, each array let go once written: held until the build ended, the encoded
+  graph kept every array the build replaces (float normals, instance matrices) alive — ~1 GB at
+  the peak on the whole Moana subset. The BLAS cache is content-checked — a
+  template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
+  textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
+  `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly
+  (`exactColors`, `exactIor`) or the warm render differs. Read sections in one forward pass of
+  large windows: thousands of small `File.slice` reads took 9.8 s, one pass 0.37 s.
+- **Scene state.** `app.exportSceneState()` / `importSceneState( state, { resolve } )`
+  (`SceneState/`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
+  source), colour (config, view, look, working space, context), every light, cameras (live view,
+  user cameras, per-camera effects), timeline keys, host material edits (with values —
+  `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
+  path, materials by index, model cameras by index — each **plus a name check**; UUIDs change per
+  load. `resolve` answers what the engine cannot reach (a local HDRI, a non-builtin OCIO config).
+  `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON.
+  `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
+  archive's `element`); `sceneSourceFile` is the File of a local load. Not restored: texture swaps
+  and texture-transform edits, host Object3D loads, a picked OCIO folder.
+- **Sessions and projects** (app: `lib/session.js`, `lib/project.js`, `SessionDialog`): autosave
+  2 s after the last change and on hide, only in Preview and only when the JSON fingerprint differs
+  from the last save — an untouched startup scene is never offered. Startup asks before restoring
+  (a `?model=` link offers only a session of that model, and reuses the loaded model). A local
+  file is never copied: restore asks the user to pick it again and checks its identity. `.rayzee`
+  = zip of `project.json` + thumbnail + the local model stored inside (≤ 3.5 GB streamed).
+- **Render checkpoints.** `app.captureRenderCheckpoint()` / `restoreRenderCheckpoint( cp )` —
+  colour + aux MRT, m2 / streak / frozenMask, `frameCount`, `_seedTick`, aux samples and
+  convergence; bit-identical continuation in deterministic mode. All six readbacks are submitted
+  in one task, or the parts straddle frames. Restore does not wake the loop (a synchronous frame
+  would add a sample). The app writes one every 2 min of a final render (`lib/stillJob.js`,
+  ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
+  the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
+- **Memory spill (experimental, `memorySpill: true`, app flag `localStorage['rayzee-memory-spill']`).**
+  A static scene of more than one chunk is **extracted and built together**
+  (`SceneProcessor._extractStreaming`, `GeometryExtractor.extractStreaming`): each stored range
+  goes to a BLAS worker as soon as it is written (`_blasPool` takes work while it runs), and the
+  extraction waits while more than `STREAM_RESIDENT_BYTES` (1.5 GB) of records are in memory — so
+  the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
+  bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
+  starved the worker messages it waited for (a hung tab). The three.js geometry goes to disk too,
+  from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
+  `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
+  deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
+  writes and everything is read back in 64 MB windows at the end of `buildBVH` (3.9 GB in 3.0 s at
+  80M). Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
+  build does not read it back — the app discards a failed load's model. ⚠️ A shared buffer handed
+  to the storage worker lives until that worker next collects garbage, which it barely does: every
+  spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
+  `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
+  for that reason. Otherwise the spill happens **during the
+  build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
+  chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
+  extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
+  scratch, uploading and spilling each chunk the fill passes. Chunks holding emitters and the TLAS
+  chunks stay. `setTriangleData` / `setBVHData` adopt the pre-filled buffers. A scene restored
+  from the BLAS cache spills after upload instead (`spillToDisk`). 50M triangles: 7.2 GB at rest
+  against 9.1 GB; the page peak (~11 GB, at the start of the BLAS phase) is unchanged. Readers
+  page in first — `refitBVH`, `rebuildMaterials`, and `setMaterialProperty` for
+  `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves never need to; `refitBLASes`
+  throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
+  alive, which is why the store tracks them (weakly). ⚠️ Past `maxBufferSize` (4 GB here) WebGPU
+  returns an invalid buffer and every write fails quietly — `_assertFitsGPU` throws instead. The
+  geo triangle buffer reaches it at 89.5M triangles, the BVH at ~67M nodes.
 
 ## Development Commands
 
@@ -667,6 +803,16 @@ const MEMORY_LIMITS = {
 }
 ```
 
+⚠️ **`PathTracerStage.sdfs` is not the processor that built the scene** — `PathTracerApp._sdf`
+is. The stage's own is a leftover of the old `stage.build()` path; its `rebuildMaterials` may only
+upload materials and textures from it. Re-uploading everything (`updateSceneUniforms`) put its empty
+emissive data and instance table in place of the scene's, and emitters stopped being sampled.
+
+**Texture arrays' CPU pixels** are released right after three.js uploads them (the texture's
+`onUpdate`): nothing reads them again, since a rebuild packs new arrays from the three.js
+sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
+keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
+
 **CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
 contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host
 stays up. A 40M-triangle Moana needs ~7.3 GB and a fresh renderer places 7.0–9.5 GB, so the same
@@ -690,6 +836,8 @@ build loads after a reboot and fails after a long session.
 - Measured at 40M: peak live 7,350 MB against a 7,289 MB final resident set. The BLAS→BVH handoff
   already releases as it fills, so there is no build transient left worth attacking — the only
   remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
+  With `memorySpill` that mirror is on disk for the build (`Storage/GeometrySpill.js`, see Memory
+  spill below) and read back when it ends.
 
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:
@@ -746,7 +894,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)
-9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
+9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf — except in a folded BVH, where a folded left child also sits above it (from 2^31) and the test is `tag >> 30 === 1`. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag (`normalCData.w`).

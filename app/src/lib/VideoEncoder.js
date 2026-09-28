@@ -1,14 +1,17 @@
 /**
- * VideoEncoderPipeline — WebCodecs VP9 encoder + webm-muxer for WebM output.
+ * VideoEncoderPipeline — WebCodecs VP9/VP8 encoding for video export.
  *
- * Accepts ImageBitmap frames from VideoRenderManager and produces
- * a downloadable .webm video blob.
+ * Two modes: with `onChunk` every frame's encoded chunks go to the caller (a VideoJob journals
+ * them to disk and muxes at the end); without it the WebM is muxed in memory as before.
  */
 
-import { Muxer, ArrayBufferTarget } from 'webm-muxer';
+import { Muxer, ArrayBufferTarget, StreamTarget } from 'webm-muxer';
 
 const VP9_CODEC = 'vp09.00.10.08'; // Profile 0, Level 1.0, 8-bit
 const VP8_CODEC = 'vp8';
+const KEYFRAME_INTERVAL = 30;
+
+export const muxerCodec = codec => ( codec.startsWith( 'vp09' ) ? 'V_VP9' : 'V_VP8' );
 
 /**
  * Check if the WebCodecs VideoEncoder API is available and a codec is supported.
@@ -59,92 +62,121 @@ export class VideoEncoderPipeline {
 	 * @param {number} [options.fps=30]             - Frame rate
 	 * @param {number} [options.bitrate=10_000_000] - Target bitrate in bps
 	 * @param {string} [options.codec]              - WebCodecs codec string (auto-detected if omitted)
+	 * @param {function(EncodedVideoChunk, Object): void} [options.onChunk] - take chunks instead of muxing
 	 */
 	constructor( width, height, options = {} ) {
 
-		const { fps = 30, bitrate = 10_000_000, codec = VP9_CODEC } = options;
+		const { fps = 30, bitrate = 10_000_000, codec = VP9_CODEC, onChunk = null } = options;
 
-		this._fps = fps;
 		this._frameDuration = Math.round( 1_000_000 / fps ); // microseconds
-		this._frameIndex = 0;
 		this._finalized = false;
+		this._error = null;
 
-		// WebM muxer
-		const muxerCodec = codec.startsWith( 'vp09' ) ? 'V_VP9' : 'V_VP8';
-		this._muxer = new Muxer( {
+		this._muxer = onChunk ? null : new Muxer( {
 			target: new ArrayBufferTarget(),
-			video: { codec: muxerCodec, width, height },
+			video: { codec: muxerCodec( codec ), width, height },
 		} );
 
-		// WebCodecs VideoEncoder
 		this._encoder = new VideoEncoder( {
-			output: ( chunk, meta ) => this._muxer.addVideoChunk( chunk, meta ),
-			error: ( e ) => console.error( 'VideoEncoder error:', e ),
+			output: ( chunk, meta ) => ( onChunk ? onChunk( chunk, meta ) : this._muxer.addVideoChunk( chunk, meta ) ),
+			error: ( e ) => {
+
+				this._error = e;
+
+			},
 		} );
 
-		this._encoder.configure( {
-			codec,
-			width,
-			height,
-			bitrate,
-			framerate: fps,
-		} );
+		this._encoder.configure( { codec, width, height, bitrate, framerate: fps } );
+
+	}
+
+	get frameDuration() {
+
+		return this._frameDuration;
+
+	}
+
+	_check() {
+
+		if ( this._error ) throw this._error;
 
 	}
 
 	/**
-	 * Encode a single frame.
-	 * @param {ImageBitmap} imageBitmap - Frame content
+	 * Encode one frame. With `flush` the frame's chunks have all been handed out when this resolves.
+	 * @param {ImageBitmap} imageBitmap
+	 * @param {number} frameIndex - position in the video; sets the timestamp
+	 * @param {{keyFrame?: boolean, flush?: boolean}} [options] - keyFrame is forced every 30 frames
 	 */
-	async addFrame( imageBitmap ) {
+	async addFrame( imageBitmap, frameIndex, { keyFrame = false, flush = false } = {} ) {
 
-		if ( this._finalized ) {
+		if ( this._finalized ) throw new Error( 'VideoEncoderPipeline: Cannot add frames after finalize()' );
+		this._check();
 
-			throw new Error( 'VideoEncoderPipeline: Cannot add frames after finalize()' );
-
-		}
-
-		const timestamp = this._frameIndex * this._frameDuration;
-		const frame = new VideoFrame( imageBitmap, {
-			timestamp,
-			duration: this._frameDuration,
-		} );
-
-		const keyFrame = this._frameIndex % 30 === 0;
-		this._encoder.encode( frame, { keyFrame } );
+		const frame = new VideoFrame( imageBitmap, { timestamp: frameIndex * this._frameDuration, duration: this._frameDuration } );
+		this._encoder.encode( frame, { keyFrame: keyFrame || frameIndex % KEYFRAME_INTERVAL === 0 } );
 		frame.close();
-		this._frameIndex ++;
 
-		// Back-pressure: wait for the encoder queue to drain
-		while ( this._encoder.encodeQueueSize > 5 ) {
-
-			await new Promise( r => setTimeout( r, 10 ) );
-
-		}
+		if ( flush ) await this._encoder.flush();
+		while ( this._encoder.encodeQueueSize > 5 ) await new Promise( r => setTimeout( r, 10 ) );
+		this._check();
 
 	}
 
 	/**
-	 * Flush the encoder and finalize the WebM container.
-	 * @returns {Promise<Blob>} The finished .webm video
+	 * Flush the encoder; in muxing mode finalize the WebM too.
+	 * @returns {Promise<?Blob>} the .webm when muxing in memory
 	 */
 	async finalize() {
 
-		if ( this._finalized ) {
-
-			throw new Error( 'VideoEncoderPipeline: Already finalized' );
-
-		}
-
+		if ( this._finalized ) throw new Error( 'VideoEncoderPipeline: Already finalized' );
 		this._finalized = true;
 
 		await this._encoder.flush();
 		this._encoder.close();
-		this._muxer.finalize();
+		this._check();
+		if ( ! this._muxer ) return null;
 
-		const buffer = this._muxer.target.buffer;
-		return new Blob( [ buffer ], { type: 'video/webm' } );
+		this._muxer.finalize();
+		return new Blob( [ this._muxer.target.buffer ], { type: 'video/webm' } );
 
 	}
+
+	close() {
+
+		try {
+
+			this._encoder.close();
+
+		} catch { /* already closed */ }
+
+	}
+
+}
+
+/**
+ * Muxes stored chunks into a WebM, streaming it out through `write( bytes, position )`.
+ * @param {AsyncIterable<{data: Uint8Array, key: boolean, timestamp: number}>} chunks
+ */
+export async function muxChunks( chunks, { width, height, codec, fps, decoderConfig, write } ) {
+
+	const pending = [];
+	const muxer = new Muxer( {
+		target: new StreamTarget( { onData: ( data, position ) => pending.push( write( data, position ) ), chunked: true } ),
+		video: { codec: muxerCodec( codec ), width, height, frameRate: fps },
+		firstTimestampBehavior: 'offset',
+	} );
+
+	let first = true;
+	for await ( const chunk of chunks ) {
+
+		muxer.addVideoChunkRaw( chunk.data, chunk.key ? 'key' : 'delta', chunk.timestamp, first && decoderConfig ? { decoderConfig } : undefined );
+		first = false;
+		if ( pending.length > 8 ) await Promise.all( pending.splice( 0 ) );
+
+	}
+
+	muxer.finalize();
+	await Promise.all( pending );
 
 }

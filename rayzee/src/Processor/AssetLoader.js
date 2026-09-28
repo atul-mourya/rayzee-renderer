@@ -1,6 +1,6 @@
 import { Box3, BufferGeometry, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
 	TextureLoader, Texture, SRGBColorSpace, RepeatWrapping, Mesh, MeshStandardMaterial, MeshPhysicalMaterial,
-	CircleGeometry, Points, PointsMaterial, LoadingManager, EventDispatcher
+	CircleGeometry, Points, PointsMaterial, LoadingManager, EventDispatcher, LoaderUtils
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
@@ -10,13 +10,22 @@ import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils.js';
 import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { unzipSync, zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import { zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
-	detectArchiveKind, readTarGz, readTar, elementFilter, listArchiveElements, openTar } from './ArchiveReader.js';
+	detectArchiveKind, readTarGz, elementFilter, listArchiveElements, openTar, indexTarHeaders } from './ArchiveReader.js';
+import { openZip, readZipDirectory } from './ZipReader.js';
+import { unpackTarGz, loadTarIndex, saveTarIndex } from './ArchiveCache.js';
+import { DownloadCache, nameFromUrl, cachedObjectURL } from '../Storage/DownloadCache.js';
+import { setEnvironmentSource } from '../Storage/CDFCache.js';
+import { fileIdentity, identityKey, sampleHash } from '../Storage/identity.js';
+import { ENGINE_AREAS } from '../Storage/StorageManager.js';
+import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../Storage/SceneGraphCodec.js';
+import { worthStoring } from '../Storage/sceneCachePolicy.js';
+import { VERSION } from '../version.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { loadPBRTScene, pickEntryPath } from './PBRT/index.js';
+import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -112,6 +121,13 @@ export class AssetLoader extends EventDispatcher {
 		// signal into its fetch). One load runs at a time (guarded upstream).
 		this._loadingManager = new LoadingManager();
 		this._loadCancelled = false;
+		this._urlAbort = null;
+
+		/** @type {?import('../Storage/StorageManager.js').StorageManager} set by the app once storage opens */
+		this.storage = null;
+		this._downloads = null;
+		this._sourceKey = null;
+		this._appended = false;
 
 		this._issues = issues;
 		this._profile = profile ?? getRenderProfile();
@@ -141,6 +157,66 @@ export class AssetLoader extends EventDispatcher {
 
 		this._loadCancelled = true;
 		this._loadingManager.abort();
+		this._urlAbort?.abort();
+
+	}
+
+	/**
+	 * `url` swapped for an object URL of its stored copy, downloading it first if needed. A .gltf
+	 * with its resources beside it, and non-network URLs, pass through untouched.
+	 * @private
+	 */
+	async _viaCache( url, status, cancelable, { cacheKey = url, cachePolicy } = {} ) {
+
+		if ( ! this.storage || ! AssetLoader._isNetworkUrl( url ) || /\.gltf$/i.test( url.split( /[?#]/ )[ 0 ] ) ) {
+
+			return { url, release: () => {}, cached: false };
+
+		}
+
+		const controller = new AbortController();
+		this._urlAbort = controller;
+		try {
+
+			return await cachedObjectURL( url, {
+				downloads: this.downloads, key: cacheKey, policy: cachePolicy, name: nameFromUrl( url ),
+				signal: controller.signal, onProgress: this._downloadProgress( status, cancelable ),
+			} );
+
+		} catch ( error ) {
+
+			if ( this._isCancellation( error ) ) throw this._cancellationError();
+			throw error;
+
+		} finally {
+
+			this._urlAbort = null;
+
+		}
+
+	}
+
+	/**
+	 * What the scene was loaded from, stable across reloads, or null — for the stored-BVH cache.
+	 * Null once anything was appended: the scene is no longer one source's.
+	 */
+	get sceneSourceKey() {
+
+		return this._appended ? null : this._sourceKey;
+
+	}
+
+	_keyed( kind, id ) {
+
+		return id ? `${kind}:${this._profile?.name ?? ''}:${id}` : null;
+
+	}
+
+	/** Downloads go through storage when there is some, into memory otherwise. */
+	get downloads() {
+
+		if ( this._downloads?._storage !== this.storage ) this._downloads = new DownloadCache( this.storage );
+		return this._downloads;
 
 	}
 
@@ -241,6 +317,9 @@ export class AssetLoader extends EventDispatcher {
 	releaseTargetModel() {
 
 		this.sceneMetadata = null;
+		this._sourceKey = null;
+		this._appended = false;
+		this._pendingGraph = null;
 
 		if ( ! this.targetModel ) return;
 
@@ -325,7 +404,74 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/**
+	 * Downloads a URL (through the download cache) and loads it as `loadAssetFromFile` would —
+	 * archives included. An ARCHIVE_NEEDS_ELEMENT error carries the downloaded `file` to retry with.
+	 * @param {string} url
+	 * @param {object} [options] - as loadAssetFromFile, plus `filename` to name the download and
+	 *   `cacheKey` for URLs that expire (signed links)
+	 */
+	async loadAssetFromUrl( url, options = {} ) {
+
+		const { filename = nameFromUrl( url ), cacheKey = url, cachePolicy, ...loadOptions } = options;
+		if ( ! this.getFileFormat( filename ) ) throw new Error( `Unsupported file format: ${filename}` );
+
+		this._loadCancelled = false;
+		const cancelable = AssetLoader._isNetworkUrl( url );
+		const status = `Downloading ${filename}...`;
+		const controller = new AbortController();
+		this._urlAbort = controller;
+
+		updateLoading( { isLoading: true, status, progress: 2, canCancel: cancelable, loadedBytes: 0, totalBytes: 0 } );
+
+		let download;
+		try {
+
+			download = await this.downloads.fetch( url, {
+				key: cacheKey, name: filename, policy: cachePolicy, signal: controller.signal,
+				onProgress: this._downloadProgress( status, cancelable ),
+			} );
+
+		} catch ( error ) {
+
+			if ( this._isCancellation( error ) ) throw this._cancellationError();
+			throw error;
+
+		} finally {
+
+			this._urlAbort = null;
+
+		}
+
+		this._downloadComplete();
+
+		try {
+
+			return await this.loadAssetFromFile( download.file, loadOptions );
+
+		} catch ( error ) {
+
+			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) error.file = download.file;
+			throw error;
+
+		} finally {
+
+			download.release();
+
+		}
+
+	}
+
 	async loadModelFromFile( file, filename ) {
+
+		const key = this.storage ? this._keyed( 'file', identityKey( await fileIdentity( file ) ) ) : null;
+		const result = await this._loadModelFileByExtension( file, filename );
+		this._sourceKey = key;
+		return result;
+
+	}
+
+	async _loadModelFileByExtension( file, filename ) {
 
 		const extension = filename.split( '.' ).pop().toLowerCase();
 		const arrayBuffer = await this.readFileAsArrayBuffer( file );
@@ -357,6 +503,7 @@ export class AssetLoader extends EventDispatcher {
 		try {
 
 			const texture = await this.loadEnvironment( url );
+			setEnvironmentSource( texture, identityKey( await fileIdentity( file ) ) );
 			this.dispatchEvent( { type: 'load', texture, filename } );
 			return texture;
 
@@ -395,6 +542,7 @@ export class AssetLoader extends EventDispatcher {
 			}
 
 			texture.generateMipmaps = true;
+			if ( AssetLoader._isNetworkUrl( envUrl ) ) setEnvironmentSource( texture, envUrl );
 
 			this.applyEnvironmentToScene( texture );
 			this.dispatchEvent( { type: 'load', texture, url: envUrl, filename: envUrl.split( /[?#]/ )[ 0 ].split( '/' ).pop() } );
@@ -465,23 +613,33 @@ export class AssetLoader extends EventDispatcher {
 	async loadEnvironmentByExtension( url, extension ) {
 
 		const cancelable = AssetLoader._isNetworkUrl( url );
-		const onProgress = this._downloadProgress( "Downloading Environment...", cancelable );
+		const status = "Downloading Environment...";
+		const source = await this._viaCache( url, status, cancelable );
+		const onProgress = source.cached ? undefined : this._downloadProgress( status, cancelable );
 
 		let texture;
-		if ( extension === 'hdr' || extension === 'exr' ) {
+		try {
 
-			const loader = extension === 'hdr'
-				? ( this.loaderCache.hdr || ( this.loaderCache.hdr = new HDRLoader( this._loadingManager ).setDataType( FloatType ) ) )
-				: ( this.loaderCache.exr || ( this.loaderCache.exr = new EXRLoader( this._loadingManager ).setDataType( FloatType ) ) );
-			texture = await loader.loadAsync( url, onProgress );
+			if ( extension === 'hdr' || extension === 'exr' ) {
 
-		} else {
+				const loader = extension === 'hdr'
+					? ( this.loaderCache.hdr || ( this.loaderCache.hdr = new HDRLoader( this._loadingManager ).setDataType( FloatType ) ) )
+					: ( this.loaderCache.exr || ( this.loaderCache.exr = new EXRLoader( this._loadingManager ).setDataType( FloatType ) ) );
+				texture = await loader.loadAsync( source.url, onProgress );
 
-			if ( ! this.loaderCache.texture ) this.loaderCache.texture = new TextureLoader( this._loadingManager );
-			texture = await this.loaderCache.texture.loadAsync( url, onProgress );
-			// LDR env maps (jpg/png/webp) are authored in sRGB; tag them so the backend
-			// decodes to linear. HDR/EXR are already linear and keep the loader's setting.
-			texture.colorSpace = SRGBColorSpace;
+			} else {
+
+				if ( ! this.loaderCache.texture ) this.loaderCache.texture = new TextureLoader( this._loadingManager );
+				texture = await this.loaderCache.texture.loadAsync( source.url, onProgress );
+				// LDR env maps (jpg/png/webp) are authored in sRGB; tag them so the backend
+				// decodes to linear. HDR/EXR are already linear and keep the loader's setting.
+				texture.colorSpace = SRGBColorSpace;
+
+			}
+
+		} finally {
+
+			source.release();
 
 		}
 
@@ -524,33 +682,67 @@ export class AssetLoader extends EventDispatcher {
 	async inspectArchive( file ) {
 
 		const kind = detectArchiveKind( await this._readHead( file ) );
+		const scanning = p => updateLoading( {
+			isLoading: true, status: `Scanning archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
+		} );
 
-		if ( kind === 'gzip' || kind === 'tar' ) {
+		let listing;
+		if ( kind === 'gzip' ) {
 
-			const read = kind === 'gzip' ? readTarGz : readTar;
-			const { listing } = await read( file, {
-				filter: () => false,
-				onProgress: p => updateLoading( {
-					isLoading: true, status: `Scanning archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
-				} )
-			} );
-			const { root, elements } = listArchiveElements( listing );
-			return {
-				kind, root, elements,
-				entryCount: listing.length,
-				totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
-			};
+			const unpacked = await this._unpackGzip( file, file.name );
+			if ( unpacked ) {
+
+				listing = unpacked.index.listing;
+				unpacked.release();
+
+			} else {
+
+				( { listing } = await readTarGz( file, { filter: () => false, onProgress: scanning } ) );
+
+			}
+
+		} else if ( kind === 'tar' ) {
+
+			listing = ( await loadTarIndex( file, this.storage ) )?.listing ?? await indexTarHeaders( file, { onProgress: scanning } );
+
+		} else {
+
+			listing = ( await readZipDirectory( file ) ).map( e => ( { path: e.name, size: e.size } ) );
 
 		}
 
-		const zip = unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
-		const listing = Object.keys( zip ).map( path => ( { path, size: zip[ path ].length } ) );
 		const { root, elements } = listArchiveElements( listing );
 		return {
-			kind: 'zip', root, elements,
+			kind: kind ?? 'zip', root, elements,
 			entryCount: listing.length,
 			totalBytes: listing.reduce( ( n, e ) => n + e.size, 0 )
 		};
+
+	}
+
+	/**
+	 * A .tar.gz unpacked to storage, or null to read it the old way (no storage, or no room).
+	 * @private
+	 */
+	async _unpackGzip( file, filename ) {
+
+		try {
+
+			return await unpackTarGz( file, {
+				storage: this.storage,
+				label: filename,
+				onProgress: bytes => updateLoading( {
+					isLoading: true, status: `Unpacking archive… ${( bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
+				} ),
+			} );
+
+		} catch ( error ) {
+
+			// A corrupt stream fails the same way in memory, where the error reads better.
+			console.warn( `Unpacking "${filename}" to storage failed, reading it in memory: ${error.message}` );
+			return null;
+
+		}
 
 	}
 
@@ -572,39 +764,52 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
 	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
 	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
+	 * @param {number} [options.curveTolerance] - how far a curve strip may stray from the curve, as a
+	 *   fraction of its half-width (default 0.05); 0 samples every span `curveSteps` times.
+	 * @param {boolean} [options.instanceIncludes] - place a file included again under the same
+	 *   material as another instance of its first reading (default true).
 	 */
 	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
 
 		try {
 
 			const kind = detectArchiveKind( await this._readHead( file ) );
+			const archiveId = this.storage ? identityKey( await fileIdentity( file ) ) : null;
+			const lazy = { element, promptBytes, pbrtEntry, pbrt, archiveId };
 
-			// An uncompressed tar over a File is seekable, so it is indexed rather than read:
-			// entries are pulled out as the scene asks for them and never all held at once.
-			// That is the difference between a 7 GB archive being refused and loading.
-			if ( kind === 'tar' ) {
+			// A seekable archive is indexed rather than read: entries are pulled out as the scene
+			// asks for them and never all held at once. That is the difference between a 7 GB archive
+			// being refused and loading. A .tar.gz becomes seekable by unpacking it to storage.
+			if ( kind === 'tar' ) return await this._loadSeekable( file, filename, lazy );
 
-				const source = await this._openSeekableArchive( file, filename, element, promptBytes );
-				if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
+			if ( kind === 'gzip' ) {
 
-					return await this.loadPBRTFromZip( {}, filename, pbrtEntry, pbrt, source );
+				const unpacked = await this._unpackGzip( file, filename );
+				if ( unpacked ) {
+
+					try {
+
+						return await this._loadSeekable( unpacked.file, filename, { ...lazy, index: unpacked.index } );
+
+					} finally {
+
+						unpacked.release();
+
+					}
 
 				}
 
-				// Not a pbrt scene: fall back to materialising it, which those paths still expect.
-				for ( const e of source.listing ) source.entries[ e.path ] ??= await source.read( e.path );
-				return await this._loadNonPBRTArchive( source.entries, filename );
+				const entries = await this._readStreamedArchive( file, filename, kind, element, byteBudget );
+
+				// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
+				if ( pickEntryPath( entries ) ) return await this.loadPBRTFromZip( entries, filename, pbrtEntry, pbrt );
+				const result = await this._loadNonPBRTArchive( entries, filename );
+				this._sourceKey = this._keyed( 'archive', archiveId );
+				return result;
 
 			}
 
-			const entries = kind === 'gzip'
-				? await this._readStreamedArchive( file, filename, kind, element, byteBudget )
-				: unzipSync( new Uint8Array( await this.readFileAsArrayBuffer( file ) ) );
-
-			// A pbrt scene archive takes priority — it owns its own geometry/texture refs.
-			if ( pickEntryPath( entries ) ) return await this.loadPBRTFromZip( entries, filename, pbrtEntry, pbrt );
-
-			return await this._loadNonPBRTArchive( entries, filename );
+			return await this._loadSeekable( file, filename, { ...lazy, zip: true } );
 
 		} catch ( error ) {
 
@@ -624,7 +829,170 @@ export class AssetLoader extends EventDispatcher {
 	}
 
 	/**
-	 * Index an uncompressed tar without retaining it. Entries are read back from the File on
+	 * Loads a seekable archive — a .tar (or a .tar.gz unpacked to one) or a .zip — reading each
+	 * entry only when the scene asks for it.
+	 * @private
+	 */
+	async _loadSeekable( file, filename, { element, promptBytes, pbrtEntry, pbrt, index = null, zip = false, archiveId = null } ) {
+
+		const source = await this._openSeekableArchive( file, filename, element, promptBytes, { index, zip } );
+		source.archiveId = archiveId;
+		source.elements = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
+		if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
+
+			return await this.loadPBRTFromZip( {}, filename, pbrtEntry, pbrt, source );
+
+		}
+
+		// Not a pbrt scene: fall back to materialising it, which those paths still expect.
+		for ( const e of source.listing ) if ( e.offset !== undefined ) source.entries[ e.path ] ??= await source.read( e.path );
+		const result = await this._loadNonPBRTArchive( source.entries, filename );
+		this._sourceKey = this._keyed( 'archive', archiveId );
+		return result;
+
+	}
+
+	/**
+	 * The parsed scene stored for this archive and these options, decoded — its textures read back
+	 * out of the archive — or null.
+	 * @private
+	 */
+	async _loadStoredGraph( key, source, { imageFromBytes, envFromBytes } ) {
+
+		const area = this.storage?.area( ENGINE_AREAS.SCENES );
+		const entry = area ? await area.open( key ) : null;
+		if ( ! entry ) return null;
+
+		const start = performance.now();
+		let failure = null;
+		try {
+
+			updateLoading( { isLoading: true, status: 'Opening the stored scene...', progress: 6 } );
+			const manifest = await entry.json( 'graph.json' );
+			const data = await entry.file( 'data.bin' );
+			const vfs = new VirtualFS( {}, source );
+			const decoded = await decodeSceneGraph( manifest, data, {
+				loadTexture: async ( path, loader ) => {
+
+					const bytes = await vfs.readPath( path );
+					if ( ! bytes ) return null;
+					return loader === 'environment' ? envFromBytes( bytes, path ) : imageFromBytes( bytes, path );
+
+				},
+			} );
+
+			return {
+				...decoded.stats,
+				group: decoded.root,
+				environment: decoded.environment ? { texture: decoded.environment } : null,
+				animations: decoded.animations,
+				report: null,
+				parseMs: 0,
+				buildMs: performance.now() - start,
+				fromStorage: true,
+			};
+
+		} catch ( error ) {
+
+			failure = error;
+			return null;
+
+		} finally {
+
+			entry.release();
+			if ( failure ) {
+
+				console.warn( `The stored scene could not be used, parsing the archive instead: ${failure.message}` );
+				this._issues?.warn( ISSUE_CODES.STORAGE_ENTRY_CORRUPT, `stored scene unusable: ${failure.message}`, { key } );
+				area.remove( key ).catch( () => {} );
+
+			}
+
+		}
+
+	}
+
+	/**
+	 * Stores a freshly parsed scene for the next open. Encoded here, before onModelLoad or the
+	 * build touch it; written in the background.
+	 * @private
+	 */
+	_storeGraph( key, built, label ) {
+
+		const area = this.storage?.area( ENGINE_AREAS.SCENES );
+		if ( ! area ) return;
+
+		let encoded;
+		try {
+
+			encoded = encodeSceneGraph( built.group, {
+				environment: built.environment?.texture ?? null,
+				animations: built.animations ?? [],
+				stats: {
+					meshCount: built.meshCount, entryPath: built.entryPath, candidates: built.candidates, frames: built.frames,
+					warnings: built.warnings, triangleCount: built.triangleCount, placementCount: built.placementCount,
+					mergedShapes: built.mergedShapes, skippedForBudget: built.skippedForBudget, droppedNoTemplate: built.droppedNoTemplate,
+				},
+			} );
+
+		} catch ( error ) {
+
+			if ( error instanceof SceneGraphUnsupported ) console.info( `Scene not stored for next time: ${error.message}` );
+			else console.warn( 'Scene not stored for next time:', error );
+			return;
+
+		}
+
+		const pending = { key, encoded, label, parseMs: ( built.parseMs ?? 0 ) + ( built.buildMs ?? 0 ), triangles: built.triangleCount ?? null };
+
+		// A parse slow enough on its own is written now, during the build. Held until the build
+		// ends, it kept every array the build replaces alive with it — the float normals and the
+		// instance matrices, ~1 GB on the whole Moana subset, at the build's peak.
+		if ( worthStoring( pending.parseMs, encoded.byteLength ) ) this._writeGraph( area, pending );
+		else this._pendingGraph = pending;
+
+	}
+
+	/**
+	 * Writes the scene encoded at parse time once the build is done, when the whole cold load —
+	 * parse plus build — was slow enough to be worth it (decision D6).
+	 * @param {number} buildMs - the SceneProcessor build that followed the parse
+	 */
+	flushPendingGraph( buildMs ) {
+
+		const pending = this._pendingGraph;
+		this._pendingGraph = null;
+		const area = this.storage?.area( ENGINE_AREAS.SCENES );
+		if ( ! pending || ! area || ! worthStoring( pending.parseMs + buildMs, pending.encoded.byteLength ) ) return;
+		this._writeGraph( area, pending );
+
+	}
+
+	/** Writes an encoded graph in the background, letting each array go once it is on disk. @private */
+	_writeGraph( area, pending ) {
+
+		( async () => {
+
+			const writer = await area.create( pending.key, { label: `${pending.label} (scene)`, expectedBytes: pending.encoded.byteLength } );
+			if ( ! writer ) return;
+			try {
+
+				await writeSceneGraph( writer, pending.encoded, { release: true } );
+				await writer.commit( { triangles: pending.triangles } );
+
+			} catch ( error ) {
+
+				await writer.abort();
+				console.warn( 'Storing the scene failed:', error );
+
+			}
+
+		} )().catch( error => console.warn( 'Storing the scene failed:', error ) );
+
+	}
+
+	/**
+	 * Index a seekable archive without retaining it. Entries are read back from the File on
 	 * demand, so residency is the open include chain rather than the whole archive.
 	 *
 	 * Indexing is cheap and the whole archive is never held, but *parsing* all of it is not:
@@ -633,14 +1001,30 @@ export class AssetLoader extends EventDispatcher {
 	 * already built at that point, so the question costs nothing.
 	 * @private
 	 */
-	async _openSeekableArchive( file, filename, element, promptBytes ) {
+	async _openSeekableArchive( file, filename, element, promptBytes, { index = null, zip = false } = {} ) {
 
 		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
+		const filter = chosen.length ? elementFilter( chosen ) : null;
 
-		const source = await openTar( file, {
-			filter: chosen.length ? elementFilter( chosen ) : null,
-			retain: () => false,
-		} );
+		let source;
+		if ( zip ) {
+
+			source = await openZip( file, { filter } );
+
+		} else {
+
+			const saved = index ?? await loadTarIndex( file, this.storage );
+			source = await openTar( file, {
+				index: saved,
+				headersOnly: true,
+				filter,
+				onProgress: p => updateLoading( {
+					isLoading: true, status: `Indexing archive… ${( p.bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
+				} ),
+			} );
+			if ( ! saved ) saveTarIndex( file, this.storage, source.index ).catch( () => {} );
+
+		}
 
 		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
 
@@ -695,8 +1079,7 @@ export class AssetLoader extends EventDispatcher {
 	async _readStreamedArchive( file, filename, kind, element, byteBudget ) {
 
 		const chosen = Array.isArray( element ) ? element.filter( Boolean ) : ( element ? [ element ] : [] );
-		const read = kind === 'gzip' ? readTarGz : readTar;
-		const { entries, listing, retainedBytes, truncated } = await read( file, {
+		const { entries, listing, retainedBytes, truncated } = await readTarGz( file, {
 			filter: chosen.length ? elementFilter( chosen ) : null,
 			...( byteBudget === undefined ? {} : { byteBudget } ),
 			onProgress: p => updateLoading( {
@@ -730,6 +1113,19 @@ export class AssetLoader extends EventDispatcher {
 				ISSUE_SEVERITY.WARNING
 			);
 			throw error;
+
+		}
+
+		if ( truncated ) {
+
+			const keep = elementFilter( chosen );
+			const missing = listing.filter( e => keep( e.path, e.size ) && ! entries[ e.path ] ).length;
+			this._issues?.record(
+				ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+				`${missing} files of the chosen parts were left out: they did not fit the ${( ( byteBudget ?? 1.5e9 ) / 1e9 ).toFixed( 1 )} GB in-memory read budget`,
+				{ elements: chosen, missing, retainedBytes },
+				ISSUE_SEVERITY.WARNING
+			);
 
 		}
 
@@ -767,17 +1163,29 @@ export class AssetLoader extends EventDispatcher {
 
 		const plyParser = ( buf ) => this.loaderCache.ply.parse( buf );
 
-		// Texture maps — decode by extension (pbrt uses .png/.jpg but also .exr/.hdr/.tga).
-		const imageFromBytes = ( bytes, fname ) => this._pbrtTextureFromBytes( bytes, fname );
+		// Texture maps — decode by extension (pbrt uses .png/.jpg but also .exr/.hdr/.tga). Tagged
+		// with their archive path so a stored scene can read them back instead of keeping pixels.
+		const imageFromBytes = async ( bytes, fname ) => {
+
+			const texture = await this._pbrtTextureFromBytes( bytes, fname );
+			if ( texture ) texture.userData[ ARCHIVE_PATH ] = fname;
+			return texture;
+
+		};
 
 		// Infinite-light maps → HDR/EXR/LDR via the shared environment decoder.
 		const envFromBytes = async ( bytes, fname ) => {
 
 			const ext = fname.split( '.' ).pop().toLowerCase();
-			const url = URL.createObjectURL( new Blob( [ bytes ] ) );
+			const blob = new Blob( [ bytes ] );
+			const url = URL.createObjectURL( blob );
 			try {
 
-				return await this.loadEnvironmentByExtension( url, ext );
+				const texture = await this.loadEnvironmentByExtension( url, ext );
+				setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
+				texture.userData[ ARCHIVE_PATH ] = fname;
+				texture.userData[ ARCHIVE_LOADER ] = 'environment';
+				return texture;
 
 			} finally {
 
@@ -788,17 +1196,22 @@ export class AssetLoader extends EventDispatcher {
 		};
 
 		const pbrtStart = performance.now();
+		const shape = {
+			animation: options.animation, maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements,
+			mergeShapesAbove: options.mergeShapesAbove, curveSteps: options.curveSteps, curveSides: options.curveSides,
+			curveTolerance: options.curveTolerance, instanceIncludes: options.instanceIncludes,
+		};
+		const graphKey = source?.archiveId
+			? this._keyed( `pbrt:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )
+			: null;
+
+		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, { imageFromBytes, envFromBytes } ) : null;
+		const built = stored ?? await loadPBRTScene( { vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes, ...shape } );
+
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
-			droppedNoTemplate } = await loadPBRTScene( {
-			vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes,
-			animation: options.animation,
-			maxTriangles: options.maxTriangles,
-			maxPlacements: options.maxPlacements,
-			mergeShapesAbove: options.mergeShapesAbove,
-			curveSteps: options.curveSteps,
-			curveSides: options.curveSides
-		} );
+			droppedNoTemplate } = built;
+		if ( stored ) console.info( `PBRT scene "${loadedEntry}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the parse` );
 
 		// Phase breakdown for scaling work; the engine's own build timings live in
 		// SceneProcessor.performanceMetrics.
@@ -852,6 +1265,9 @@ export class AssetLoader extends EventDispatcher {
 
 		group.name = loadedEntry || filename;
 		this.releaseTargetModel();
+		this._sourceKey = graphKey;
+		// Before onModelLoad and the build touch the new group.
+		if ( graphKey && ! stored ) this._storeGraph( graphKey, built, filename );
 		this.targetModel = group;
 		this.animations = animations ?? [];
 
@@ -1499,19 +1915,28 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	async loadModel( modelUrl ) {
+	/**
+	 * @param {string} modelUrl
+	 * @param {{cacheKey?: string, cachePolicy?: string}} [options] - key a download cache entry by
+	 *   something steadier than a signed, expiring URL
+	 */
+	async loadModel( modelUrl, options = {} ) {
 
 		this._loadCancelled = false;
 		const loader = await this.createGLTFLoader();
 		const cancelable = AssetLoader._isNetworkUrl( modelUrl );
+		let source = null;
 
 		try {
 
 			updateLoading( { isLoading: true, status: "Downloading Model...", progress: 2, canCancel: cancelable, loadedBytes: 0, totalBytes: 0 } );
-			const data = await loader.loadAsync( modelUrl, this._downloadProgress( "Downloading Model...", cancelable ) );
+			source = await this._viaCache( modelUrl, "Downloading Model...", cancelable, options );
+			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( modelUrl ) );
+			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
 			this._downloadComplete();
 
 			this.releaseTargetModel();
+			this._sourceKey = cancelable ? this._keyed( 'url', options.cacheKey ?? modelUrl ) : null;
 
 			this.targetModel = data.scene;
 			this.animations = data.animations || [];
@@ -1529,6 +1954,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} finally {
 
+			source?.release();
 			this._disposeGLTFLoader( loader );
 
 		}
@@ -1556,17 +1982,21 @@ export class AssetLoader extends EventDispatcher {
 
 	// Append a model from URL without releasing prior models or reframing.
 	// Reuses createGLTFLoader() so appended KTX2 textures stay RGBA DataArrayTexture.
-	async appendModel( url ) {
+	async appendModel( url, options = {} ) {
 
 		this._loadCancelled = false;
 		const loader = await this.createGLTFLoader();
 		const cancelable = AssetLoader._isNetworkUrl( url );
+		let source = null;
 
 		try {
 
 			updateLoading( { isLoading: true, status: "Downloading Model...", progress: 2, canCancel: cancelable, loadedBytes: 0, totalBytes: 0 } );
-			const data = await loader.loadAsync( url, this._downloadProgress( "Downloading Model...", cancelable ) );
+			source = await this._viaCache( url, "Downloading Model...", cancelable, options );
+			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( url ) );
+			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
 			this._downloadComplete();
+			this._appended = true;
 			this._processAndParent( data.scene );
 			return { root: data.scene, animations: data.animations || [] };
 
@@ -1577,6 +2007,7 @@ export class AssetLoader extends EventDispatcher {
 
 		} finally {
 
+			source?.release();
 			this._disposeGLTFLoader( loader );
 
 		}
@@ -1585,6 +2016,8 @@ export class AssetLoader extends EventDispatcher {
 
 	// Append a copy of a caller-owned Object3D without releasing prior models or reframing.
 	appendObject3D( object3d, name = 'object3d' ) {
+
+		this._appended = true;
 
 		const root = this._adoptExternalObject( object3d );
 		root.name = object3d.name || name;
@@ -2273,6 +2706,11 @@ export class AssetLoader extends EventDispatcher {
 		// onError captures `this`, and a manager outlives the loader via an in-flight fetch.
 		this._loadingManager.onError = undefined;
 		this._issues = null;
+		this._urlAbort?.abort();
+		this._urlAbort = null;
+		this.storage = null;
+		this._downloads = null;
+		this._pendingGraph = null;
 
 		this.releaseTargetModel();
 

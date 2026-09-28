@@ -5,6 +5,7 @@ import {
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';
+import { GeometrySpill } from '../Storage/GeometrySpill.js';
 
 const log = createLogger( 'geometry' );
 
@@ -258,6 +259,167 @@ export class GeometryExtractor {
 	}
 
 	/**
+	 * `extract()`, handing each stored range to `onRange( meshIndex, range )` as soon as it is
+	 * written and awaiting `pause( triangles )` every `yieldEvery` triangles, so a build can work
+	 * on the first meshes while the rest are read. The store is lazy and sized exactly
+	 * ({@link _countStoredTriangles}): a chunk takes memory when first written, and the receiver
+	 * may send it to disk once it is done with it. `releaseGeometry( geometry )` is handed each
+	 * geometry after its last read, already compressed, unless something else still holds its arrays.
+	 */
+	async extractStreaming( object, { onStore, onRange, pause, yieldEvery = 1 << 20, releaseGeometry = null } ) {
+
+		this.resetArrays();
+		this._triangleCapacity = Math.max( 1, this._countStoredTriangles( object ) );
+		this._allocateTriangles( this._triangleCapacity, true );
+		onStore?.( this.triangles );
+		this.currentTriangleIndex = 0;
+		this._allocatePlacements( this._countPlacements( object ) );
+		this._geometryUses = this._countGeometryUses( object );
+		this.bakeInverse = new Map();
+		this._onRange = onRange;
+		this._releaseAfterRead = releaseGeometry ? this._geometryReleaser( object, releaseGeometry ) : null;
+
+		try {
+
+			// Depth-first pre-order, as traverseObject: mesh indices follow the same walk.
+			const stack = [ object ];
+			let yielded = 0;
+			while ( stack.length ) {
+
+				const node = stack.pop();
+				this._visit( node );
+				if ( node.children ) for ( let i = node.children.length - 1; i >= 0; i -- ) stack.push( node.children[ i ] );
+				if ( this.currentTriangleIndex - yielded >= yieldEvery ) {
+
+					yielded = this.currentTriangleIndex;
+					await pause( this.currentTriangleIndex );
+
+				}
+
+			}
+
+		} finally {
+
+			this._onRange = null;
+			this._releaseAfterRead = null;
+
+		}
+
+		this._shareInstanceMatrices();
+		this._compressAttributes( object );
+		this.triangles.trimInPlace( this.currentTriangleIndex );
+		this._streamedStore = true;
+
+		this.logStats();
+		return this.getExtractedData();
+
+	}
+
+	/**
+	 * Triangles `extract()` will store: a geometry shared under one material once, an emissive
+	 * instanced mesh once per instance (it is expanded), everything else once per mesh.
+	 * @private
+	 */
+	_countStoredTriangles( object ) {
+
+		const seen = new Set();
+		let count = 0;
+		const walk = node => {
+
+			if ( node.isMesh && node.geometry && node.material ) {
+
+				const g = node.geometry;
+				const tris = Math.ceil( ( g.index ? g.index.count : ( g.attributes.position?.count ?? 0 ) ) / 3 );
+				const material = Array.isArray( node.material ) ? node.material[ 0 ] : node.material;
+				const e = material?.emissive;
+				const emissive = material?.emissiveIntensity > 0 && !! e && ( e.r > 0 || e.g > 0 || e.b > 0 );
+				const instances = node.isInstancedMesh ? ( node.count ?? 0 ) : 1;
+
+				if ( emissive && node.isInstancedMesh && ! isDeformable( node ) && tris * instances <= MAX_EXPANDED_EMISSIVE_TRIANGLES ) count += tris * instances;
+				else if ( emissive || isDeformable( node ) ) count += tris;
+				else {
+
+					const key = `${g.uuid}|${material?.uuid}`;
+					if ( ! seen.has( key ) ) {
+
+						seen.add( key );
+						count += tris;
+
+					}
+
+				}
+
+			}
+
+			if ( node.children ) for ( const child of node.children ) walk( child );
+
+		};
+
+		walk( object );
+		return count;
+
+	}
+
+	/**
+	 * Counts each geometry's reads, and returns what to call after each mesh: on a geometry's
+	 * last read it is compressed and handed to `release`. Never a host's geometry, a deforming
+	 * one, one GeometrySpill cannot swap, or one sharing an array with another geometry.
+	 * @private
+	 */
+	_geometryReleaser( object, release ) {
+
+		const reads = new Map();
+		const holders = new Map();
+		const kept = new Set();
+
+		const walk = ( node, external ) => {
+
+			external ||= !! node.userData?.__rayzeeExternal;
+			const g = node.isMesh && node.material ? node.geometry : null;
+			if ( g ) {
+
+				if ( ! reads.has( g ) ) {
+
+					if ( ! GeometrySpill.canTake( g ) ) kept.add( g );
+					for ( const attribute of [ ...Object.values( g.attributes ), g.index ] ) {
+
+						const array = attribute?.array;
+						if ( ! array ) continue;
+						const holder = holders.get( array );
+						if ( holder && holder !== g ) kept.add( g ).add( holder );
+						else holders.set( array, g );
+
+					}
+
+				}
+
+				reads.set( g, ( reads.get( g ) ?? 0 ) + 1 );
+				if ( external || isDeformable( node ) ) kept.add( g );
+
+			}
+
+			if ( node.children ) for ( const child of node.children ) walk( child, external );
+
+		};
+
+		walk( object, false );
+
+		return mesh => {
+
+			const g = mesh.material ? mesh.geometry : null;
+			if ( ! g || ! reads.has( g ) ) return;
+			const left = reads.get( g ) - 1;
+			if ( left > 0 ) return void reads.set( g, left );
+			reads.delete( g );
+			if ( kept.has( g ) ) return;
+			this._compressGeometry( g );
+			release( g );
+
+		};
+
+	}
+
+	/**
 	 * The sizes a memory preflight needs, without doing any of the work: what `extract()` would
 	 * store, plus the three.js geometry already resident behind it.
 	 *
@@ -354,8 +516,6 @@ export class GeometryExtractor {
 	 */
 	_compressAttributes( object ) {
 
-		const done = this._compressed;
-
 		// A host's own Object3D is rendered as a copy, but the copy shares its geometry by
 		// reference, so rewriting an attribute there would rewrite the host's data. Its whole
 		// subtree is skipped rather than the root alone.
@@ -369,44 +529,50 @@ export class GeometryExtractor {
 
 		walk( object, o => {
 
-			const g = o.geometry;
-			if ( ! o.isMesh || ! g || done.has( g.uuid ) ) return;
-			done.add( g.uuid );
+			if ( o.isMesh && o.geometry ) this._compressGeometry( o.geometry );
 
-			for ( const name of [ 'normal', 'tangent', 'color' ] ) {
+		} );
 
-				const attr = g.getAttribute( name );
-				if ( ! attr || attr.normalized || ! ( attr.array instanceof Float32Array ) ) continue;
-				if ( g.morphAttributes?.[ name ]?.length ) continue;
+	}
 
-				const src = attr.array;
-				let ok = true;
-				for ( let i = 0; i < src.length; i ++ ) {
+	/** One geometry's share of {@link _compressAttributes}; each geometry is done once. @private */
+	_compressGeometry( g ) {
 
-					const v = src[ i ];
-					if ( ! ( v >= - 1.0001 && v <= 1.0001 ) ) {
+		if ( this._compressed.has( g.uuid ) ) return;
+		this._compressed.add( g.uuid );
 
-						ok = false; break;
+		for ( const name of [ 'normal', 'tangent', 'color' ] ) {
 
-					}
+			const attr = g.getAttribute( name );
+			if ( ! attr || attr.normalized || ! ( attr.array instanceof Float32Array ) ) continue;
+			if ( g.morphAttributes?.[ name ]?.length ) continue;
 
-				}
+			const src = attr.array;
+			let ok = true;
+			for ( let i = 0; i < src.length; i ++ ) {
 
-				// Out of snorm range (or NaN) — leave it as floats rather than silently clamp.
-				if ( ! ok ) continue;
+				const v = src[ i ];
+				if ( ! ( v >= - 1.0001 && v <= 1.0001 ) ) {
 
-				const packed = new Int16Array( src.length );
-				for ( let i = 0; i < src.length; i ++ ) {
-
-					packed[ i ] = Math.round( Math.max( - 1, Math.min( 1, src[ i ] ) ) * 32767 );
+					ok = false; break;
 
 				}
-
-				g.setAttribute( name, new BufferAttribute( packed, attr.itemSize, true ) );
 
 			}
 
-		} );
+			// Out of snorm range (or NaN) — leave it as floats rather than silently clamp.
+			if ( ! ok ) continue;
+
+			const packed = new Int16Array( src.length );
+			for ( let i = 0; i < src.length; i ++ ) {
+
+				packed[ i ] = Math.round( Math.max( - 1, Math.min( 1, src[ i ] ) ) * 32767 );
+
+			}
+
+			g.setAttribute( name, new BufferAttribute( packed, attr.itemSize, true ) );
+
+		}
 
 	}
 
@@ -462,6 +628,15 @@ export class GeometryExtractor {
 
 		if ( needed <= this._triangleCapacity ) return;
 
+		// A streamed store may already have chunks on disk: it grows where it stands.
+		if ( this._onRange ) {
+
+			this.triangles.grow( needed );
+			this._triangleCapacity = needed;
+			return;
+
+		}
+
 		const previous = this.triangles;
 		const used = this.currentTriangleIndex;
 		this._allocateTriangles( needed );
@@ -486,11 +661,11 @@ export class GeometryExtractor {
 	 * V8 ArrayBuffer cap, well below what the GPU buffer can take.
 	 * @private
 	 */
-	_allocateTriangles( capacity ) {
+	_allocateTriangles( capacity, lazy = false ) {
 
 		// Shared-backed so a refit reads and writes them in place; copying them into shared memory
 		// on first refit would be a second copy of the largest thing in the scene.
-		this.triangles = new ChunkedRecords(
+		this.triangles = ( lazy ? ChunkedRecords.lazy : ( ...a ) => new ChunkedRecords( ...a ) )(
 			capacity, TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE, Uint32Array,
 			undefined, SHARED_MEMORY_AVAILABLE
 		);
@@ -502,20 +677,7 @@ export class GeometryExtractor {
 
 	traverseObject( object ) {
 
-		// Process the current object
-		if ( object.isMesh ) {
-
-			this.processMesh( object );
-
-		} else if ( object.isDirectionalLight ) {
-
-			this.directionalLights.push( object );
-
-		} else if ( object.isCamera ) {
-
-			this.cameras.push( object );
-
-		}
+		this._visit( object );
 
 		// Process children recursively
 		if ( object.children ) {
@@ -525,6 +687,26 @@ export class GeometryExtractor {
 				this.traverseObject( child );
 
 			}
+
+		}
+
+	}
+
+	/** @private */
+	_visit( object ) {
+
+		if ( object.isMesh ) {
+
+			this.processMesh( object );
+			this._releaseAfterRead?.( object );
+
+		} else if ( object.isDirectionalLight ) {
+
+			this.directionalLights.push( object );
+
+		} else if ( object.isCamera ) {
+
+			this.cameras.push( object );
 
 		}
 
@@ -602,6 +784,7 @@ export class GeometryExtractor {
 		this.meshTriangleRanges.push( range );
 		if ( range.count > 0 && ! bake && shareable ) this._geometryRanges.set( key, { ...range, meshIndex } );
 		this._recordPlacements( mesh, meshIndex, bake, expand );
+		if ( range.count > 0 ) this._onRange?.( meshIndex, range );
 
 	}
 
@@ -1209,10 +1392,24 @@ export class GeometryExtractor {
 	}
 
 	/** The filled triangle records, as one chunk when they fit and several when they do not. */
+	/**
+	 * Lets go of the triangle store once its owner has taken it. The extractor's own reference
+	 * (and its float view) kept every chunk alive, so a spilled chunk never left memory.
+	 */
+	releaseTriangles() {
+
+		this.triangles = null;
+		this.triangleData = null;
+		this.triangleFloatChunks = null;
+		this.triangleFloats = null;
+
+	}
+
 	getTriangleData() {
 
 		if ( ! this.triangles ) return null;
-		return this.triangles.trimTo( this.currentTriangleIndex );
+		// A streamed store is trimmed where it stands: its receiver holds chunks of it on disk.
+		return this._streamedStore ? this.triangles : this.triangles.trimTo( this.currentTriangleIndex );
 
 	}
 
@@ -1308,6 +1505,7 @@ export class GeometryExtractor {
 
 		// Reset triangle data
 		this.triangles = null;
+		this._streamedStore = false;
 		this.triangleData = null;
 		this.triangleFloatChunks = null;
 		this.triangleFloats = null;

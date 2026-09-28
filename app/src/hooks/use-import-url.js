@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react';
 import { useToggle } from '@/hooks/useToggle';
 import { useToast } from '@/hooks/use-toast';
 import { getApp } from '@/lib/appProxy';
+import { useStore } from '@/store';
+import { isArchiveUrl, isImportableUrl } from '@/lib/archives';
 
 export function useImportUrl() {
 
@@ -28,33 +30,14 @@ export function useImportUrl() {
 
 	}, [] );
 
-	// Validate URL
-	const validateUrl = useCallback( ( url ) => {
-
-		if ( ! url ) return false;
-		if ( ! url.startsWith( 'http' ) ) return false;
-		if ( ! url.endsWith( '.glb' ) && ! url.endsWith( '.gltf' ) ) return false;
-		try {
-
-			new URL( url );
-			return true;
-
-		} catch {
-
-			return false;
-
-		}
-
-	}, [] );
-
 	// Handle import from URL
 	const handleImportFromUrl = useCallback( () => {
 
-		if ( ! validateUrl( importUrl ) ) {
+		if ( ! isImportableUrl( importUrl ) ) {
 
 			toast( {
 				title: "Invalid URL",
-				description: "Please enter a valid URL.",
+				description: "Enter an http(s) link to a .glb / .gltf file or a scene archive (.zip, .tar, .tar.gz).",
 				variant: "destructive",
 			} );
 			return;
@@ -66,7 +49,7 @@ export function useImportUrl() {
 		const app = getApp();
 		if ( app ) {
 
-			app.loadModel( importUrl )
+			( isArchiveUrl( importUrl ) ? app.loadFile( importUrl ) : app.loadModel( importUrl ) )
 				.then( () => {
 
 					setIsImporting( false );
@@ -90,6 +73,15 @@ export function useImportUrl() {
 
 					}
 
+					if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' && error.file ) {
+
+						setImportUrl( '' );
+						toggleImportModal( false );
+						useStore.getState().setArchivePrompt( { file: error.file, elements: error.elements, totalBytes: error.totalBytes } );
+						return;
+
+					}
+
 					toast( {
 						title: "Error Loading Model",
 						description: `${error}`,
@@ -104,7 +96,7 @@ export function useImportUrl() {
 
 		}
 
-	}, [ importUrl, toast, validateUrl, toggleImportModal ] );
+	}, [ importUrl, toast, toggleImportModal ] );
 
 	return {
 		modalState: {

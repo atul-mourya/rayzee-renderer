@@ -14,6 +14,7 @@
  * needed. Enable only if a scene comes out z-mirrored against a known reference.
  */
 
+import { freeNow, resized } from './buffers.js';
 import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
@@ -50,9 +51,7 @@ function grow( array, needed ) {
 	if ( needed <= array.length ) return array;
 	let length = array.length || 1;
 	while ( length < needed ) length *= 2;
-	const out = new array.constructor( length );
-	out.set( array );
-	return out;
+	return resized( array, length );
 
 }
 
@@ -76,6 +75,11 @@ const DEFAULT_TRIANGLE_BUDGET = 45_000_000;
 // Placements are their own budget: geometry is shared, but each costs a TLAS leaf and an
 // instance record. isCoastline's 5.09M loaded and rendered at 23 fps.
 const DEFAULT_PLACEMENT_BUDGET = 6_000_000;
+// With the memory spill the triangles and BVH leave the heap as the build goes, so the host
+// passes these instead. The whole 15-part Moana subset (55.7M / 7.0M) loads cold under them, at
+// an 8.1 GB preflight estimate; the preflight, not the budget, refuses anything larger.
+export const SPILL_TRIANGLE_BUDGET = 60_000_000;
+export const SPILL_PLACEMENT_BUDGET = 8_000_000;
 // Non-instanced shapes merge into a few large meshes: isPalmRig declares 173,338 of them,
 // and one BufferGeometry + Mesh each measured 3.3 GB — the loader OOM'd before tracing.
 const DEFAULT_MERGE_MIN_SHAPES = 256;
@@ -86,6 +90,20 @@ const MERGE_BATCH_TRIANGLES = 500_000;
 // a crossed pair of ribbons is 16 triangles a curve.
 const DEFAULT_CURVE_STEPS = 2;
 const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
+// A strip segment may stray 5 % of the half-width from the curve: 37 % of Moana's curve
+// triangles go, at 3 % frame time in a view full of them. 0.1 took 48 % for 6 %.
+const DEFAULT_CURVE_TOLERANCE = 0.05;
+
+/** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
+export const PBRT_BUILD_REVISION = 4;
+
+function samePlacements( a, b ) {
+
+	if ( a.count !== b.count ) return false;
+	for ( let i = 0, n = a.count * 16; i < n; i ++ ) if ( a.matrices[ i ] !== b.matrices[ i ] ) return false;
+	return true;
+
+}
 
 /** Pixels out of an HTMLImageElement / ImageBitmap, which expose none of their own. */
 function pixelsFromDrawable( image, srgb ) {
@@ -160,6 +178,7 @@ export class PBRTSceneBuilder {
 		this.mergeShapesAbove = resolvers.mergeShapesAbove ?? DEFAULT_MERGE_MIN_SHAPES;
 		this.curveSteps = resolvers.curveSteps ?? DEFAULT_CURVE_STEPS;
 		this.curveSides = resolvers.curveSides ?? null;
+		this.curveTolerance = resolvers.curveTolerance ?? DEFAULT_CURVE_TOLERANCE;
 		this.resolvePLY = resolvers.resolvePLY || ( async () => null );
 		this.resolveImage = resolvers.resolveImage || ( async () => null );
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
@@ -189,6 +208,9 @@ export class PBRTSceneBuilder {
 	async build( ir ) {
 
 		this.ir = ir;
+		// Built again for their moving placements after the static ones, so never freed early.
+		this._keepShapes = new Set();
+		for ( const { name } of ir.animatedInstances ?? [] ) for ( const shape of ir.objects.get( name ) ?? [] ) this._keepShapes.add( shape );
 		this._recoveredColors = 0;
 		this.reportedMeshes = 0;
 		this.triangleCount = 0; // stored triangles — a shared geometry counts once
@@ -333,9 +355,53 @@ export class PBRTSceneBuilder {
 		const scratch = new Float64Array( 16 );
 		const matrix = new Matrix4();
 
-		for ( const [ name, list ] of ir.instances ) {
+		const place = ( list, geometry, material, rel, shapeType, materialType, tris ) => {
 
-			const template = ir.objects.get( name );
+			const affordable = Math.max( 0, this.maxPlacements - this.placementCount );
+			const count = Math.min( list.count, affordable );
+			if ( count < list.count ) this.skippedForBudget += list.count - count;
+			if ( count === 0 ) return;
+
+			const mesh = new InstancedMesh( geometry, material, count );
+			mesh.name = `instance_${n ++}`;
+			mesh.frustumCulled = false;
+
+			for ( let i = 0; i < count; i ++ ) {
+
+				if ( rel ) M.multiplyInto( scratch, list.matrices, i * 16, rel );
+				else for ( let e = 0; e < 16; e ++ ) scratch[ e ] = list.matrices[ i * 16 + e ];
+				mesh.setMatrixAt( i, matrix.fromArray( this.convertHandedness ? M.multiply( FLIP_Z, scratch ) : scratch ) );
+
+			}
+
+			mesh.instanceMatrix.needsUpdate = true;
+			group.add( mesh );
+
+			this.placementCount += count;
+			this.reportedMeshes += count;
+			if ( this.report.length < MAX_REPORT_ROWS ) this.report.push( {
+				mesh: `${mesh.name} ×${count}`,
+				shape: shapeType,
+				material: materialType,
+				color: '#' + material.color.getHexString(),
+				map: material.map ? 'yes' : '-',
+				uv: geometry.getAttribute( 'uv' ) ? 'yes' : 'NO',
+				normals: geometry.getAttribute( 'normal' ) ? 'yes' : 'NO',
+				emissive: material.emissiveIntensity > 0 ? `#${material.emissive.getHexString()}×${material.emissiveIntensity}` : '-',
+				size: `instanced`,
+				tris,
+			} );
+
+		};
+
+		const placeBatch = ( list, batch ) => {
+
+			if ( batch && batch.triangles > 0 ) place( list, this._batchGeometry( batch ), batch.material, null, 'merged', '-', batch.triangles );
+
+		};
+
+		for ( const { name, list, template } of this._samePlacementGroups( ir ) ) {
+
 			if ( ! template ) {
 
 				// Counted, not just warned: these are placements that silently leave the scene,
@@ -345,6 +411,13 @@ export class PBRTSceneBuilder {
 				continue;
 
 			}
+
+			// A template's own small shapes share its placements, so they merge in its space: the
+			// eight Pandanus trees in Moana hold 22,965 leaves each. A .ply may be shared with
+			// other templates and stays whole.
+			let inline = 0;
+			for ( const shape of template ) if ( shape.type !== 'plymesh' ) inline ++;
+			const batches = inline >= 2 ? new Map() : null;
 
 			for ( const shape of template ) {
 
@@ -361,46 +434,79 @@ export class PBRTSceneBuilder {
 				] );
 				if ( ! geometry ) continue;
 
-				const tris = this._accountGeometry( geometry );
-				const affordable = Math.max( 0, this.maxPlacements - this.placementCount );
-				const count = Math.min( list.count, affordable );
-				if ( count < list.count ) this.skippedForBudget += list.count - count;
-				if ( count === 0 ) continue;
+				if ( batches && shape.type !== 'plymesh' && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
-				const material = this._materialForGeometry( shape, geometry, sharedMaterial, `instances_${name}` );
-				const mesh = new InstancedMesh( geometry, material, count );
-				mesh.name = `instance_${n ++}`;
-				mesh.frustumCulled = false;
-
-				const rel = shape.relativeCTM || shape.ctm;
-				for ( let i = 0; i < count; i ++ ) {
-
-					M.multiplyInto( scratch, list.matrices, i * 16, rel );
-					mesh.setMatrixAt( i, matrix.fromArray( this.convertHandedness ? M.multiply( FLIP_Z, scratch ) : scratch ) );
+					this._geometryCache.delete( shape );
+					const full = this._appendToBatch( batches, shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm );
+					this._releaseMerged( shape, geometry );
+					placeBatch( list, full );
+					continue;
 
 				}
 
-				mesh.instanceMatrix.needsUpdate = true;
-				group.add( mesh );
-
-				this.placementCount += count;
-				this.reportedMeshes += count;
-				if ( this.report.length < MAX_REPORT_ROWS ) this.report.push( {
-					mesh: `${mesh.name} ×${count}`,
-					shape: shape.type,
-					material: shape.material?.type || 'diffuse',
-					color: '#' + material.color.getHexString(),
-					map: material.map ? 'yes' : '-',
-					uv: geometry.getAttribute( 'uv' ) ? 'yes' : 'NO',
-					normals: geometry.getAttribute( 'normal' ) ? 'yes' : 'NO',
-					emissive: material.emissiveIntensity > 0 ? `#${material.emissive.getHexString()}×${material.emissiveIntensity}` : '-',
-					size: `instanced`,
-					tris,
-				} );
+				const tris = this._accountGeometry( geometry );
+				const material = this._materialForGeometry( shape, geometry, sharedMaterial, `instances_${name}` );
+				place( list, geometry, material, shape.relativeCTM || shape.ctm, shape.type, shape.material?.type || 'diffuse', tris );
 
 			}
 
+			if ( batches ) for ( const slot of batches.values() ) {
+
+				placeBatch( list, slot[ 0 ] );
+				placeBatch( list, slot[ 1 ] );
+
+			}
+
+			// Copied into each InstancedMesh: 576 MB at 9M placements, held to the end otherwise.
+			freeNow( list.matrices );
+			freeNow( list.matricesEnd );
+
 		}
+
+	}
+
+	/**
+	 * Templates placed at exactly the same transforms, as one template. Each Pandanus tree
+	 * includes ten leaf files; kept apart they were ten overlapping instances a ray entered
+	 * one after another, and the tree rendered 60 % slower than with its leaves world-baked.
+	 * @private
+	 */
+	_samePlacementGroups( ir ) {
+
+		const groups = [];
+		const buckets = new Map();
+
+		for ( const [ name, list ] of ir.instances ) {
+
+			const template = ir.objects.get( name );
+			if ( ! template || list.matricesEnd ) {
+
+				groups.push( { name, list, template } );
+				continue;
+
+			}
+
+			const key = `${list.count}:${Array.prototype.join.call( list.matrices.subarray( 0, 16 ), ',' )}`;
+			let bucket = buckets.get( key );
+			if ( ! bucket ) buckets.set( key, bucket = [] );
+
+			const same = bucket.find( g => samePlacements( g.list, list ) );
+			if ( same ) {
+
+				if ( same.template === ir.objects.get( same.name ) ) same.template = same.template.slice();
+				for ( const shape of template ) same.template.push( shape );
+				freeNow( list.matrices );
+				continue;
+
+			}
+
+			const group = { name, list, template };
+			bucket.push( group );
+			groups.push( group );
+
+		}
+
+		return groups;
 
 	}
 
@@ -637,6 +743,35 @@ export class PBRTSceneBuilder {
 	 */
 	_mergeShape( shape, geometry, sharedMaterial, group ) {
 
+		this.reportedMeshes ++;
+		const world = this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm;
+		const full = this._appendToBatch( this._batches, shape, geometry, sharedMaterial, world );
+		this._releaseMerged( shape, geometry );
+		if ( full ) this._flushBatch( full, group );
+
+	}
+
+	/**
+	 * A merged shape's arrays are in its batch now and nothing reads it again: freed at once, not at
+	 * a GC the build reaches with every one still held — isIronwoodA1's leaves were 3.9 GB twice over.
+	 * @private
+	 */
+	_releaseMerged( shape, geometry ) {
+
+		if ( this._keepShapes?.has( shape ) ) return;
+		for ( const name in geometry.attributes ) freeNow( geometry.attributes[ name ].array );
+		freeNow( geometry.index?.array );
+		for ( const name in shape.params ) if ( ArrayBuffer.isView( shape.params[ name ]?.value ) ) freeNow( shape.params[ name ].value );
+
+	}
+
+	/**
+	 * Copy one shape's triangles, moved by `transform`, into the batch for its material.
+	 * @returns {object|null} the batch, taken out of `batches`, once it is full
+	 * @private
+	 */
+	_appendToBatch( batches, shape, geometry, sharedMaterial, transform ) {
+
 		const material = this._materialForGeometry( shape, geometry, sharedMaterial, 'merged shape' );
 		const position = geometry.getAttribute( 'position' );
 		const normal = geometry.getAttribute( 'normal' );
@@ -646,11 +781,10 @@ export class PBRTSceneBuilder {
 
 		// Charged directly: a merged shape stores its own copy even when two share one .ply.
 		this.triangleCount += ( index ? index.count : vertices ) / 3;
-		this.reportedMeshes ++;
 		this.mergedShapes ++;
 
-		let slot = this._batches.get( material );
-		if ( ! slot ) this._batches.set( material, slot = [ null, null ] );
+		let slot = batches.get( material );
+		if ( ! slot ) batches.set( material, slot = [ null, null ] );
 		const k = uv ? 1 : 0;
 		let batch = slot[ k ];
 		if ( ! batch ) slot[ k ] = batch = {
@@ -662,7 +796,7 @@ export class PBRTSceneBuilder {
 			vertexCount: 0, indexCount: 0, triangles: 0
 		};
 
-		const world = this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm;
+		const world = transform;
 		const inv = M.invert( world );
 		const base = batch.vertexCount;
 
@@ -711,10 +845,25 @@ export class PBRTSceneBuilder {
 
 		if ( batch.triangles >= MERGE_BATCH_TRIANGLES ) {
 
-			this._flushBatch( batch, group );
 			slot[ k ] = null;
+			return batch;
 
 		}
+
+		return null;
+
+	}
+
+	/** A batch's triangles as one geometry; the batch's own arrays are released. @private */
+	_batchGeometry( batch ) {
+
+		const geometry = new BufferGeometry();
+		geometry.setAttribute( 'position', new Float32BufferAttribute( resized( batch.positions, batch.vertexCount * 3 ), 3 ) );
+		geometry.setAttribute( 'normal', new Float32BufferAttribute( resized( batch.normals, batch.vertexCount * 3 ), 3 ) );
+		if ( batch.uvs ) geometry.setAttribute( 'uv', new Float32BufferAttribute( resized( batch.uvs, batch.vertexCount * 2 ), 2 ) );
+		geometry.setIndex( new Uint32BufferAttribute( resized( batch.indices, batch.indexCount ), 1 ) );
+		batch.positions = batch.normals = batch.uvs = batch.indices = null;
+		return geometry;
 
 	}
 
@@ -723,12 +872,7 @@ export class PBRTSceneBuilder {
 
 		if ( ! batch || batch.triangles === 0 ) return;
 
-		const geometry = new BufferGeometry();
-		geometry.setAttribute( 'position', new Float32BufferAttribute( batch.positions.slice( 0, batch.vertexCount * 3 ), 3 ) );
-		geometry.setAttribute( 'normal', new Float32BufferAttribute( batch.normals.slice( 0, batch.vertexCount * 3 ), 3 ) );
-		if ( batch.uvs ) geometry.setAttribute( 'uv', new Float32BufferAttribute( batch.uvs.slice( 0, batch.vertexCount * 2 ), 2 ) );
-		geometry.setIndex( new Uint32BufferAttribute( batch.indices.slice( 0, batch.indexCount ), 1 ) );
-
+		const geometry = this._batchGeometry( batch );
 		const mesh = new Mesh( geometry, batch.material );
 		mesh.name = `merged_${this._mergedBatches ++}`;
 		mesh.frustumCulled = false;
@@ -747,8 +891,6 @@ export class PBRTSceneBuilder {
 			size: 'merged',
 			tris: batch.triangles
 		} );
-
-		batch.positions = batch.normals = batch.uvs = batch.indices = null;
 
 	}
 
@@ -833,7 +975,8 @@ export class PBRTSceneBuilder {
 			width1: pFloat( params, 'width1', width ),
 			N: params.N?.value || null,
 			steps: this.curveSteps,
-			sides: this.curveSides ?? DEFAULT_CURVE_SIDES[ type ] ?? 1
+			sides: this.curveSides ?? DEFAULT_CURVE_SIDES[ type ] ?? 1,
+			tolerance: this.curveTolerance
 		} );
 
 		if ( ! built ) {

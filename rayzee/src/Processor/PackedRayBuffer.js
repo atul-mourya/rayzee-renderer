@@ -2,7 +2,7 @@
  * Packed buffer manager for wavefront path tracing — one storage buffer per data category.
  * RAY/HIT are SoA-within-a-buffer (field `slot` of element `id` lives at `id + slot*_cap`).
  *
- * All three are GPU-only: every lane is written by a kernel before anything reads it and none
+ * Both are GPU-only: every lane is written by a kernel before anything reads it and none
  * is ever read back, so they carry no CPU array (see gpuOnlyStorageAttribute).
  */
 
@@ -17,7 +17,7 @@ import { createLogger, fmt } from '../utils/Logger.js';
 const log = createLogger( 'gpu' );
 
 export const RAY_STRIDE = 7;
-export const HIT_STRIDE = 2;
+export const HIT_STRIDE = 3;
 // Per-pixel G-buffer (first-hit MRT staging): 1 uvec4/pixel — half-packed normal/depth/albedo
 // (pack2x16, no f32 bitcast); read by FinalWrite:
 //   .x=packSnorm2x16(normal.xy)  .y=packSnorm2x16(normal.z, depth)  .z=packUnorm2x16(albedo.rg)
@@ -42,6 +42,9 @@ export const HIT = {
 	// The geometric normal rides as one oct16 word (it was interpolated from oct16 triangle
 	// normals to begin with), which leaves the instance leaf a full 32-bit lane of its own.
 	NORMAL_MAT: 1, // uvec4(octNormal, matIndex, instanceLeaf + 1, 0)
+	// The path's RNG state, here rather than in a buffer of its own: Shade was at the device's
+	// 10 storage buffers, and the second triangle buffer needed the slot. Extend never writes it.
+	RNG: 2, // uvec4(rngState, 0, 0, 0)
 };
 
 // SoA region stride, baked into the shader graph at build time; single instance, rebuilt on resize.
@@ -73,7 +76,6 @@ export class PackedRayBuffer {
 
 		// Each: { rw: StorageBufferNode, ro: StorageBufferNode } over one shared GPU buffer.
 		this.rayBuffer = null;
-		this.rngBuffer = null;
 		this.hitBuffer = null;
 
 		if ( capacity > 0 ) this.allocate( capacity );
@@ -96,13 +98,6 @@ export class PackedRayBuffer {
 			ro: storage( rayAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const rngAttr = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
-		this._attrs.rng = rngAttr;
-		this.rngBuffer = {
-			rw: storage( rngAttr, 'uint' ),
-			ro: storage( rngAttr, 'uint' ).toReadOnly(),
-		};
-
 		const hitCount = capacity * HIT_STRIDE;
 		const hitAttr = gpuOnlyStorageAttribute( hitCount, 4, Uint32Array );
 		this._attrs.hit = hitAttr;
@@ -112,7 +107,7 @@ export class PackedRayBuffer {
 		};
 
 		// Kept for the [gpu] startup summary in PathTracer._buildWavefrontKernels.
-		this.rayBytes = rayCount * 16 + capacity * 4;
+		this.rayBytes = rayCount * 16;
 		this.hitBytes = hitCount * 16;
 		this.totalBytes = this.rayBytes + this.hitBytes;
 
@@ -132,11 +127,9 @@ export class PackedRayBuffer {
 	dispose() {
 
 		freeStorageAttribute( this._renderer, this._attrs.ray );
-		freeStorageAttribute( this._renderer, this._attrs.rng );
 		freeStorageAttribute( this._renderer, this._attrs.hit );
 		this._attrs = {};
 		this.rayBuffer = null;
-		this.rngBuffer = null;
 		this.hitBuffer = null;
 		this.capacity = 0;
 
@@ -284,6 +277,10 @@ export const readHitInstanceLeaf = ( buf, id ) =>
 /** Facet normal and terminator lift, packed by HitFacet.packHitFacet. */
 export const readHitFacet = ( buf, id ) =>
 	buf.element( soa( id, HIT.NORMAL_MAT ) ).w;
+
+export const readRngState = ( buf, id ) => buf.element( soa( id, HIT.RNG ) ).x;
+
+export const writeRngState = ( buf, id, state ) => buf.element( soa( id, HIT.RNG ) ).assign( uvec4( state, 0, 0, 0 ) );
 
 export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf, facet = uint( 0 ) ) => {
 

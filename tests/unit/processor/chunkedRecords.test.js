@@ -252,3 +252,61 @@ describe( 'ChunkedRecords', () => {
 	} );
 
 } );
+
+describe( 'ChunkedRecords.grow / trimInPlace', () => {
+
+	it( 'grows a lazy store without moving what it holds, and trims it keeping its spill', async () => {
+
+		const store = ChunkedRecords.lazy( 5, 2, Uint32Array, 2 * 4 * 3 );
+		const floats = store.viewAs( Float32Array );
+		for ( let i = 0; i < 5; i ++ ) store.chunkFor( i ).fill( 10 + i, store.baseOf( i ), store.baseOf( i ) + 2 );
+		const first = store.chunks[ 0 ];
+
+		store.grow( 11 );
+		expect( store.chunks[ 0 ] ).toBe( first );
+		expect( store.chunks.length ).toBe( 4 );
+		for ( let i = 5; i < 11; i ++ ) store.chunkFor( i ).fill( 10 + i, store.baseOf( i ), store.baseOf( i ) + 2 );
+		expect( Array.from( store.copyOf( 0, 11 ) ).filter( ( _, i ) => i % 2 === 0 ) ).toEqual( [ 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 ] );
+		expect( floats.chunkFor( 4 ).buffer ).toBe( store.chunkFor( 4 ).buffer );
+
+		const disk = new Map();
+		await store.spillChunk( 0, { write: async ( k, c ) => disk.set( k, c.slice() ), read: async k => disk.get( k ).buffer } );
+		store.trimInPlace( 7 );
+		expect( store.recordCount ).toBe( 7 );
+		expect( store.chunks.length ).toBe( 3 );
+		expect( store.chunks[ 2 ].length ).toBe( 2 );
+		expect( store.spilledChunks ).toBe( 1 );
+		await store.ensureResident( 0, 3 );
+		expect( store.chunkFor( 1 )[ store.baseOf( 1 ) ] ).toBe( 11 );
+
+	} );
+
+} );
+
+describe( 'ChunkedRecords.release', () => {
+
+	for ( const lazy of [ false, true ] ) {
+
+		it( `drops only the chunks inside a range and brings them back through every view (${lazy ? 'lazy' : 'eager'})`, () => {
+
+			const store = lazy ? ChunkedRecords.lazy( 10, 2, Uint32Array, 2 * 4 * 3 ) : new ChunkedRecords( 10, 2, Uint32Array, 2 * 4 * 3 );
+			for ( let i = 0; i < 10; i ++ ) store.chunkFor( i ).fill( i, store.baseOf( i ), store.baseOf( i ) + 2 );
+			const floats = store.viewAs( Float32Array );
+
+			// Records 2..9: chunk 0 holds 0-2 and chunk 3 holds 9, so only chunks 1 and 2 go.
+			expect( store.release( 2, 8 ) ).toBe( 2 * 3 * 2 * 4 );
+			expect( store.chunks[ 0 ] ).toBeDefined();
+			expect( store.chunks[ 1 ] ).toBeUndefined();
+			expect( store.chunks[ 2 ] ).toBeUndefined();
+			expect( floats.chunks[ 1 ] ).toBeUndefined();
+
+			store.setRecords( 3, Uint32Array.from( { length: 12 }, ( _, i ) => 100 + i ) );
+			expect( store.chunkFor( 4 )[ store.baseOf( 4 ) ] ).toBe( 102 );
+			expect( floats.chunkFor( 4 ).buffer ).toBe( store.chunkFor( 4 ).buffer );
+			expect( floats.chunkFor( 7 ).buffer ).toBe( store.chunkFor( 7 ).buffer );
+
+		} );
+
+	}
+
+} );

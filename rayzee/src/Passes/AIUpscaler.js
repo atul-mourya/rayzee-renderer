@@ -205,7 +205,7 @@ export class AIUpscaler extends EventDispatcher {
 
 				};
 
-				const { ortRuntimeUrl, ortWasmPaths, cacheNamespace } = getAssetConfig();
+				const { ortRuntimeUrl, ortWasmPaths, cacheNamespace, storage } = getAssetConfig();
 				this._worker.addEventListener( 'message', handler );
 				this._worker.postMessage( {
 					type: 'load',
@@ -214,6 +214,7 @@ export class AIUpscaler extends EventDispatcher {
 					ortRuntimeUrl,
 					ortWasmPaths,
 					cacheNamespace,
+					storage,
 				} );
 
 			} );

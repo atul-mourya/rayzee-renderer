@@ -28,6 +28,7 @@
  * recorded as `ctmEnd` / `cameraToWorldEnd` / `matricesEnd` only where it differs.
  */
 
+import { resized } from './buffers.js';
 import { TokenStream, TokenType } from './PBRTTokenizer.js';
 import * as M from './PBRTMath.js';
 
@@ -38,6 +39,15 @@ import * as M from './PBRTMath.js';
 const TYPED_ARRAY_THRESHOLD = 8;
 
 const START = 1, END = 2, BOTH = 3;
+
+// Directives whose effect outlives the file that holds them, or that tie its shapes to
+// something other than the transform it was included under. A file containing none of them
+// builds the same shapes wherever it is included, so a repeat is placed rather than re-read.
+const INCLUDE_SIDE_EFFECTS = new Set( [
+	'Identity', 'Transform', 'CoordinateSystem', 'CoordSysTransform', 'ActiveTransform', 'TransformTimes',
+	'Camera', 'Film', 'WorldBegin', 'MakeNamedMaterial', 'Texture', 'MakeNamedMedium',
+	'LightSource', 'AreaLightSource', 'ObjectBegin', 'ObjectEnd', 'ObjectInstance'
+] );
 
 function sameMatrix( a, b ) {
 
@@ -58,20 +68,14 @@ const NUMERIC_STORAGE = {
 	rgb: Float32Array
 };
 
-function growFloat32( array, length ) {
-
-	const grown = new Float32Array( length );
-	grown.set( array );
-	return grown;
-
-}
-
 export class PBRTParser {
 
 	/**
 	 * @param {object} [opts]
 	 * @param {(path:string)=>string} [opts.resolveInclude] - returns the text of
 	 *        an Include/Import target, resolved relative to the current file.
+	 * @param {boolean} [opts.instanceIncludes=true] - a file included again under the same
+	 *        material becomes placements of one template instead of a second copy.
 	 */
 	constructor( opts = {} ) {
 
@@ -85,7 +89,12 @@ export class PBRTParser {
 		// Placements past this are counted and dropped as they are read, not after: the peak
 		// is the parse itself, so a limit applied later saves nothing.
 		this.maxPlacements = opts.maxPlacements ?? Infinity;
-
+		this.instanceIncludes = opts.instanceIncludes !== false;
+		this._includes = new Map();
+		this._stateIds = new WeakMap();
+		this._nextStateId = 1;
+		this._effects = 0;
+		this._movedShapes = false;
 
 		// IR accumulators
 		this.ir = {
@@ -143,6 +152,15 @@ export class PBRTParser {
 
 		this.dirStack = [ baseDir ];
 		await this._run( new TokenStream( src ) );
+		if ( this._movedShapes ) this.ir.shapes = this.ir.shapes.filter( Boolean );
+		// Grown by doubling: up to half of every list is spare, 240 MB at 9M placements.
+		for ( const list of this.ir.instances.values() ) {
+
+			list.matrices = resized( list.matrices, list.count * 16 );
+			if ( list.matricesEnd ) list.matricesEnd = resized( list.matricesEnd, list.count * 16 );
+
+		}
+
 		return this.ir;
 
 	}
@@ -150,7 +168,7 @@ export class PBRTParser {
 	// ── token helpers ──────────────────────────────────────────────
 
 	/** Record one placement, copying the CTM straight into the template's matrix buffer. */
-	_addInstance( name ) {
+	_addInstance( name, m = this.ctm ) {
 
 		if ( this.ir.instanceCount >= this.maxPlacements ) {
 
@@ -166,13 +184,12 @@ export class PBRTParser {
 		if ( need > list.matrices.length ) {
 
 			const length = Math.max( need, list.matrices.length * 2 );
-			list.matrices = growFloat32( list.matrices, length );
-			if ( list.matricesEnd ) list.matricesEnd = growFloat32( list.matricesEnd, length );
+			list.matrices = resized( list.matrices, length );
+			if ( list.matricesEnd ) list.matricesEnd = resized( list.matricesEnd, length );
 
 		}
 
 		const o = list.count * 16;
-		const m = this.ctm;
 		for ( let i = 0; i < 16; i ++ ) list.matrices[ o + i ] = m[ i ];
 
 		// Allocated once a placement of this template moves.
@@ -412,20 +429,14 @@ export class PBRTParser {
 
 				const t = this._next();
 				if ( t.type !== TokenType.NUMBER ) return this._finishMixedValue( buf, n, t );
-				if ( n === buf.length ) {
-
-					const grown = new Storage( buf.length * 2 );
-					grown.set( buf );
-					buf = grown;
-
-				}
+				if ( n === buf.length ) buf = resized( buf, buf.length * 2 );
 
 				buf[ n ++ ] = t.value;
 
 			}
 
 			this._next(); // ]
-			return n === buf.length ? buf : buf.slice( 0, n );
+			return n === buf.length ? buf : resized( buf, n );
 
 		}
 
@@ -485,6 +496,8 @@ export class PBRTParser {
 				throw new Error( `PBRT parser: expected directive, got ${t.type} ${t.value ?? ''}` );
 
 			}
+
+			if ( INCLUDE_SIDE_EFFECTS.has( t.value ) ) this._effects ++;
 
 			// Only Include suspends; every other directive returns undefined and the loop
 			// stays synchronous, so an await per token is not paid.
@@ -826,6 +839,9 @@ export class PBRTParser {
 	async _include( path ) {
 
 		const dir = this.dirStack[ this.dirStack.length - 1 ];
+		const key = this._includeKey( path, dir );
+		if ( key !== null && this._placeRepeat( key, path ) ) return;
+
 		const source = await this.resolveInclude( path, dir );
 		if ( source == null ) {
 
@@ -834,6 +850,7 @@ export class PBRTParser {
 
 		}
 
+		const before = key === null ? null : this._includeState();
 		const childDir = path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '';
 		this.dirStack.push( childDir );
 		try {
@@ -846,9 +863,102 @@ export class PBRTParser {
 			// Depth-first, so only the open chain is live. Releasing here is what keeps a
 			// multi-gigabyte scene's text from all being resident at once; a file included
 			// again is simply resolved again.
-			this.releaseInclude?.( path, dir );
+			this.releaseInclude?.( path, dir, source );
 
 		}
+
+		if ( before && this._sameIncludeState( before ) && ! this._includes.has( key ) ) {
+
+			this._includes.set( key, { start: before.shapes, end: this.ir.shapes.length, ctm: before.ctm.slice(), template: null } );
+
+		}
+
+	}
+
+	/** Null when this include cannot be reused: inside an object, moving, or emitting light. */
+	_includeKey( path, dir ) {
+
+		if ( ! this.instanceIncludes || this.currentObject !== null ) return null;
+		if ( this.ctmEnd !== null || this.activeTransform !== BOTH || this.state.areaLight ) return null;
+		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}`;
+
+	}
+
+	_stateId( object ) {
+
+		if ( ! object ) return 0;
+		let id = this._stateIds.get( object );
+		if ( id === undefined ) this._stateIds.set( object, id = this._nextStateId ++ );
+		return id;
+
+	}
+
+	_includeState() {
+
+		return {
+			shapes: this.ir.shapes.length,
+			effects: this._effects,
+			ctm: this.ctm,
+			attributes: this.attributeStack.length,
+			transforms: this.transformStack.length,
+			material: this.state.material,
+			reverseOrientation: this.state.reverseOrientation
+		};
+
+	}
+
+	_sameIncludeState( before ) {
+
+		return this._effects === before.effects && this.ctmEnd === null && this.activeTransform === BOTH &&
+			sameMatrix( this.ctm, before.ctm ) && this.attributeStack.length === before.attributes &&
+			this.transformStack.length === before.transforms && this.state.material === before.material &&
+			this.state.areaLight === null && this.state.reverseOrientation === before.reverseOrientation;
+
+	}
+
+	/**
+	 * Place a repeated include as another instance of the shapes its first reading made,
+	 * turning those into a template the first time. False when they can no longer be moved.
+	 */
+	_placeRepeat( key, path ) {
+
+		const record = this._includes.get( key );
+		if ( ! record ) return false;
+
+		if ( record.template === null ) {
+
+			const { start, end } = record;
+			if ( end === start || this.ir.instanceCount + 2 > this.maxPlacements ) return false;
+			for ( let k = start; k < end; k ++ ) if ( ! this.ir.shapes[ k ] ) {
+
+				this._includes.delete( key );
+				return false;
+
+			}
+
+			const name = `${path}#${this.ir.objects.size}`;
+			const inverse = M.invert( record.ctm );
+			const template = [];
+			let ctm = null, relative = null;
+			for ( let k = start; k < end; k ++ ) {
+
+				const shape = this.ir.shapes[ k ];
+				if ( shape.ctm !== ctm ) relative = M.multiply( inverse, ctm = shape.ctm );
+				shape.relativeCTM = relative;
+				template.push( shape );
+				this.ir.shapes[ k ] = null;
+
+			}
+
+			this.ir.objects.set( name, template );
+			this._addInstance( name, record.ctm );
+			record.template = name;
+			this._movedShapes = true;
+
+		}
+
+		this._addInstance( record.template );
+		return true;
 
 	}
 

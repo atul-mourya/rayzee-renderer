@@ -1,7 +1,7 @@
 import { Fn, float, vec2, int, If, Loop, abs, normalize, dot, max, uintBitsToFloat } from 'three/tsl';
 
 import { struct } from './patches.js';
-import { getDatafromStorageBuffer, TRI_STRIDE, instanceRows, instanceDirToWorld } from './Common.js';
+import { triangleRow, instanceRows, instanceDirToWorld } from './Common.js';
 import { sampleDisplacementMap, bucketTexelSize, getLinearBucketTextures } from './TextureSampling.js';
 
 // Ray-displacement intersection configuration
@@ -42,12 +42,12 @@ export const refineDisplacedIntersection = Fn( ( [
 	// Fetch triangle vertex data
 	const triIdx = hitInfo.triangleIndex;
 
-	const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 0 ), int( TRI_STRIDE ) ).xyz ).toVar();
-	const pB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 1 ), int( TRI_STRIDE ) ).xyz );
-	const pC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 2 ), int( TRI_STRIDE ) ).xyz );
+	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 0 ).xyz ).toVar();
+	const pB = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 1 ).xyz );
+	const pC = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 2 ).xyz );
 
-	const uvData1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 3 ), int( TRI_STRIDE ) ) ).toVar();
-	const uvData2 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIdx, int( 4 ), int( TRI_STRIDE ) ).xy );
+	const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 3 ) ).toVar();
+	const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 4 ).xy );
 
 	const uvA = uvData1.xy.toVar();
 	const uvB = uvData1.zw;

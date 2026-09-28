@@ -251,6 +251,13 @@ class SmartBufferPool {
 
 	}
 
+	/** Stops counting a buffer that is being let go rather than returned. */
+	forget( buffer ) {
+
+		this.memoryUsage = Math.max( 0, this.memoryUsage - buffer.buffer.byteLength );
+
+	}
+
 	releaseBuffer( buffer, Type = Float32Array ) {
 
 		// Recover the full allocated size from the underlying ArrayBuffer
@@ -1407,6 +1414,20 @@ export class TextureCreator {
 
 		// Enhanced disposal
 		texture.userData = { buffer: data, bufferType: Uint8Array };
+
+		// Nothing reads these pixels once they are on the GPU — a rebuild packs new arrays from the
+		// three.js sources — so the CPU copy goes as soon as three.js has uploaded it. Not back to
+		// the pool, which would keep it alive; a cache lookup then sees `buffer: null` and rebuilds.
+		texture.onUpdate = () => {
+
+			const buffer = texture.userData.buffer;
+			if ( ! buffer ) return;
+			this.bufferPool.forget( buffer );
+			texture.userData.buffer = null;
+			texture.image.data = null;
+
+		};
+
 		const originalDispose = texture.dispose.bind( texture );
 		texture.dispose = () => {
 

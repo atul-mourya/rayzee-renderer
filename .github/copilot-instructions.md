@@ -65,6 +65,19 @@ UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
 MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
 MESH_INDEX_OFFSET: 19
 ```
+On the GPU the rows live in two buffers — rows 0–2 (positions + normals, 48 B) in
+`triangleGeoAttr`, rows 3–4 (UVs, flags, mesh index) in `triangleShadeAttr` — because one 80 B
+buffer hit WebGPU's 4 GB buffer limit at 53.6M triangles; geo alone reaches it at 89.5M. Kernels take
+`triangleBuffer = { geo, shade }`; read a row only through `triangleRow( tris, triIndex, row )`
+(`TSL/Common.js`).
+
+**BVH layout**: combined buffer `[ TLAS | BLAS_0 | … ]`, 16 floats a node. Indices and leaf tags in
+slot `[3]` are u32 bit patterns (`floatBitsToUint`); `TRIANGLE_LEAF` 0x40000000 and
+`BLAS_POINTER_LEAF` 0x40000001 sit above `BVH_MAX_INDEX` (2^30). Past 40M stored triangles, leaves
+of ≤ 15 triangles are folded into their parent's child slot as `~( first << 4 | count )`
+(`Processor/BVHLeafFold.js`), so a leaf node is then `tag >> 30 === 1`; rebase with `rebaseNodes`
+and refit with `BVHRefitter`, which both understand folded children.
+
 ⚠️ Geometry storage is hybrid. A geometry used by several objects stays in **object space** and
 the ray is moved into it on entry; a geometry used once — or one that emits light — is **baked to
 world space**. Any new reader of the triangle buffer must bind `uvec4` **and** take the hit's
@@ -135,9 +148,12 @@ Always use `getApp()` from appProxy to access the app instance. Never use store 
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction
-2. **GeometryExtractor** converts meshes to optimized triangle data (32-float layout)
-3. **BVHBuilder** constructs acceleration structure (Web Worker)
-4. **TextureCreator** generates GPU textures for materials, triangles, BVH data
+2. **GeometryExtractor** converts meshes to the 20-lane triangle records
+3. **SceneProcessor** builds a BLAS per mesh on a worker pool, then the TLAS over placements; a mesh past 2M triangles is built as spatial pieces of ≤ 512k (`Processor/SplitBLAS.js`) joined under the tree that split them
+4. **TextureCreator** generates GPU textures for materials
+
+### Storage (OPFS) (`rayzee/src/Storage/`)
+`app.storage` is a `StorageManager` over the origin private file system, or `null` where there is none — every caller must work without it. It holds the download, archive, scene (graph + BLAS) and environment-table caches, the app's sessions, projects and render jobs, and the experimental memory spill (`memorySpill: true`), which builds a large static scene through disk. All writes go through sync access handles in `StorageWorker`. ⚠️ Never post a `SharedArrayBuffer` to the storage worker: it stays alive until that worker next collects garbage, which it barely does — `transferable()` copies shared data into a transferred buffer instead.
 
 ## Development Commands
 
@@ -180,10 +196,10 @@ const MEMORY_LIMITS = {
 ```
 
 ### Shader Data Access Pattern
-Materials and BVH data accessed via texture lookups in TSL:
+Materials and BVH data are read from storage buffers in TSL:
 ```js
 // Standard pattern in TSL shaders
-const getDatafromDataTexture = Fn(([tex, texSize, stride, sampleIndex, dataOffset]) => { ... })
+const getDatafromStorageBuffer = Fn(([buffer, index, offset, stride]) => { ... })
 ```
 
 ### Camera & DOF System

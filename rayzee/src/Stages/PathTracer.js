@@ -188,7 +188,7 @@ export class PathTracer extends PathTracerStage {
 		} );
 
 		// Scene geometry (triangle data, two-level BVH, light BVH + emissive)
-		t.register( 'geometry', () => [ this.triangleStorageAttr, this.bvhStorageAttr, this.lightStorageAttr ] );
+		t.register( 'geometry', () => [ this.triangleGeoAttr, this.triangleShadeAttr, this.bvhStorageAttr, this.lightStorageAttr ] );
 
 		// Material storage buffer + per-property texture arrays
 		t.register( 'materials', () => {
@@ -544,6 +544,107 @@ export class PathTracer extends PathTracerStage {
 			&& this.frameCount >= this.adaptiveMinSamples.value
 			&& this._convergedFraction >= this.adaptiveStopFraction.value
 			&& this._convergedGeometryFraction >= this.adaptiveStopFraction.value;
+
+	}
+
+	/**
+	 * The accumulation as it stands, for a checkpoint: the three MRT attachments (aux only while it
+	 * holds samples), the per-pixel convergence buffers, and the counters that decide the next
+	 * sample — together what a later frame reads, so restoring them continues the same sequence.
+	 * @returns {Promise<Object>} typed arrays, tight rows, top row first as the textures hold them
+	 */
+	async captureAccumulation() {
+
+		const pool = this.storageTextures;
+		const width = pool.renderWidth;
+		const height = pool.renderHeight;
+		const pixels = width * height;
+
+		const readAttachment = async index => {
+
+			const padded = await this.renderer.readRenderTargetPixelsAsync( pool.readTarget, 0, 0, width, height, index );
+			const stride = Math.ceil( width * 16 / 256 ) * 64;
+			if ( stride === width * 4 ) return new Float32Array( padded.buffer, padded.byteOffset, pixels * 4 ).slice();
+			const tight = new Float32Array( pixels * 4 );
+			for ( let y = 0; y < height; y ++ ) tight.set( padded.subarray( y * stride, y * stride + width * 4 ), y * width * 4 );
+			return tight;
+
+		};
+
+		const readBuffer = async ( attr, Type ) => attr ? new Type( await this.renderer.getArrayBufferAsync( attr, null, 0, pixels * 4 ) ) : null;
+		const aux = this._auxGBufferEnabled && this._auxSamples > 0;
+
+		// Every copy is submitted here, in this task, before any await: a frame rendered between two of
+		// them would give a checkpoint whose parts disagree.
+		const state = {
+			frameCount: this.frameCount,
+			seedTick: this._seedTick,
+			auxSamples: aux ? this._auxSamples : 0,
+			convergedFraction: this._convergedFraction,
+			convergedGeometryFraction: this._convergedGeometryFraction,
+			isComplete: this.isComplete,
+		};
+		const reads = [
+			readAttachment( 0 ),
+			aux ? readAttachment( 1 ) : null,
+			aux ? readAttachment( 2 ) : null,
+			readBuffer( this._m2Attr, Float32Array ),
+			readBuffer( this._streakAttr, Uint32Array ),
+			readBuffer( this._frozenMaskAttr, Uint32Array ),
+		];
+		const [ color, normalDepth, albedo, m2, streak, frozenMask ] = await Promise.all( reads );
+
+		return { width, height, state, color, normalDepth, albedo, m2, streak, frozenMask };
+
+	}
+
+	/**
+	 * Writes a {@link captureAccumulation} back, so the next frame continues it. The render size must
+	 * match; nothing may reset accumulation after this.
+	 */
+	restoreAccumulation( checkpoint ) {
+
+		const pool = this.storageTextures;
+		const { width, height, state } = checkpoint;
+		if ( pool.renderWidth !== width || pool.renderHeight !== height ) {
+
+			throw new Error( `checkpoint is ${width}×${height}; the render is ${pool.renderWidth}×${pool.renderHeight}` );
+
+		}
+
+		const backend = this.renderer.backend;
+		const device = backend.device;
+		if ( ! backend.get( pool.readTarget.textures[ 0 ] ).texture ) this.renderer.initRenderTarget( pool.readTarget );
+
+		const writeAttachment = ( index, data ) => device.queue.writeTexture(
+			{ texture: backend.get( pool.readTarget.textures[ index ] ).texture },
+			data,
+			{ bytesPerRow: width * 16, rowsPerImage: height },
+			{ width, height },
+		);
+
+		const writeBuffer = ( attr, data ) => {
+
+			if ( attr && data ) device.queue.writeBuffer( backend.get( attr ).buffer, 0, data );
+
+		};
+
+		writeAttachment( 0, checkpoint.color );
+		if ( checkpoint.normalDepth ) writeAttachment( 1, checkpoint.normalDepth );
+		if ( checkpoint.albedo ) writeAttachment( 2, checkpoint.albedo );
+		writeBuffer( this._m2Attr, checkpoint.m2 );
+		writeBuffer( this._streakAttr, checkpoint.streak );
+		writeBuffer( this._frozenMaskAttr, checkpoint.frozenMask );
+
+		this.frameCount = state.frameCount;
+		this.frame.value = state.frameCount;
+		this._seedTick = state.seedTick;
+		this.hasPreviousAccumulated.value = state.frameCount > 0 ? 1 : 0;
+		this._auxSamples = checkpoint.normalDepth ? state.auxSamples : 0;
+		this._auxSeedPending = this._auxGBufferEnabled && ! checkpoint.normalDepth;
+		this._convergedFraction = state.convergedFraction ?? 0;
+		this._convergedGeometryFraction = state.convergedGeometryFraction ?? 0;
+		this.isComplete = false;
 
 	}
 
@@ -1147,7 +1248,7 @@ export class PathTracer extends PathTracerStage {
 
 		const genParams = {
 			rayBufferRW: pb.rayBuffer.rw,
-			rngBufferRW: pb.rngBuffer.rw,
+			hitBufferRW: pb.hitBuffer.rw,
 			gBufferRW,
 			resolution: this.resolution,
 			// RNG axis only (baseSeed + stratified jitter) — takes the seed counter, not the
@@ -1458,8 +1559,7 @@ export class PathTracer extends PathTracerStage {
 			envCDFTexture: freshEnvCDF,
 			lightBuffer: freshLight,
 			rayBufferRW: pb.rayBuffer.rw,
-			rngBufferRW: pb.rngBuffer.rw,
-			hitBufferRO: pb.hitBuffer.ro,
+			hitBufferRW: pb.hitBuffer.rw,
 			counters,
 			activeIndicesRO: this._sortMaterials ? qm.getSortedRO() : qm.getActiveReadRO(),
 			envTexture: freshEnvTex,

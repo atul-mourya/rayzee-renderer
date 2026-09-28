@@ -2,6 +2,7 @@ import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
 import { ENGINE_DEFAULTS, CAMERA_PROJECTION_IDS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
 import { ISSUE_CODES } from './EngineIssues.js';
+import { toPortable, fromPortable } from './SceneState/portable.js';
 
 /**
  * Routing table: maps each setting key to its target stage/handler.
@@ -421,6 +422,43 @@ export class RenderSettings extends EventDispatcher {
 	getAll() {
 
 		return Object.fromEntries( this._values );
+
+	}
+
+	/** The settings a host set, as portable values (see SceneState/portable.js): what a session restores. */
+	serialize() {
+
+		const out = {};
+		for ( const [ key, value ] of this._values ) {
+
+			if ( this._sources.get( key ) !== SETTING_SOURCE.HOST || ! SETTING_ROUTES[ key ] ) continue;
+			const portable = toPortable( value );
+			if ( portable !== undefined ) out[ key ] = portable;
+
+		}
+
+		return out;
+
+	}
+
+	/**
+	 * Applies {@link serialize}'s values as host settings, once reset at the end. Keys this engine
+	 * no longer routes are left out rather than recorded as unknown.
+	 * @returns {string[]} the keys left out
+	 */
+	restore( values ) {
+
+		const known = {};
+		const unknown = [];
+		for ( const [ key, value ] of Object.entries( values ?? {} ) ) {
+
+			if ( SETTING_ROUTES[ key ] ) known[ key ] = fromPortable( value );
+			else unknown.push( key );
+
+		}
+
+		this.setMany( known );
+		return unknown;
 
 	}
 

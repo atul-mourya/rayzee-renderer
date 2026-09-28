@@ -1,7 +1,7 @@
 /**
  * ShadeKernel.js — wavefront material eval + bounce generation. 256×1 workgroup, 1D dispatch.
- * 10 storage-buffer bindings: bvh, tri, mat, light, ray, rng, hit, gBuffer, counters, activeIndices
- * (at the device per-stage limit of 10; envCDF is a texture, not a storage buffer).
+ * 10 storage-buffer bindings: bvh, triGeo, triShade, mat, light, ray, hit (+ RNG state), gBuffer,
+ * counters, activeIndices (at the device per-stage limit of 10; envCDF is a texture, not a storage buffer).
  */
 
 import {
@@ -63,6 +63,7 @@ import {
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
 	readFeatureThroughput, writeFeatureThroughput,
+	readRngState, writeRngState,
 } from '../Processor/PackedRayBuffer.js';
 
 const WG_SIZE = 256;
@@ -79,7 +80,7 @@ export function buildShadeKernel( params ) {
 		bvhBuffer, triangleBuffer, materialBuffer,
 		envCDFTexture,
 		lightBuffer,
-		rayBufferRW, rngBufferRW, hitBufferRO, gBufferRW,
+		rayBufferRW, hitBufferRW, gBufferRW,
 		counters,
 		activeIndicesRO,
 		envTexture, environmentIntensity, envMatrix,
@@ -196,7 +197,7 @@ export function buildShadeKernel( params ) {
 		const currentRadiance = readRayRadiance( rayBufferRW, rayID ).toVar();
 		// One ray per pixel: rayID is the pixel index.
 		const pixelIndex = rayID;
-		const rngState = rngBufferRW.element( rayID ).toVar();
+		const rngState = readRngState( hitBufferRW, rayID ).toVar();
 
 		// STBN keyed on (GLOBAL pixel, dimension, frame). pixelIndex is the LOCAL path slot; the global pixel
 		// = chunkRowBase·W + localSlot, so the blue-noise pattern stays spatially aligned across row-band chunks
@@ -216,13 +217,13 @@ export function buildShadeKernel( params ) {
 		// deferring continue (a missed persist = stale tint). 1 = untinted (direct hit → today's albedo).
 		const featCarry = readFeatureThroughput( rayBufferRW, rayID ).toVar();
 
-		const hitDist = readHitDistance( hitBufferRO, rayID ).toVar();
-		const hitNormal = readHitNormal( hitBufferRO, rayID ).toVar();
+		const hitDist = readHitDistance( hitBufferRW, rayID ).toVar();
+		const hitNormal = readHitNormal( hitBufferRW, rayID ).toVar();
 		// hitInfo.uv is the interpolated texture UV (not barycentrics)
-		const hitUV = readHitBarycentrics( hitBufferRO, rayID ).toVar();
-		const hitMatIdx = readHitMaterialIndex( hitBufferRO, rayID ).toVar();
-		const hitTriIdx = readHitTriangleIndex( hitBufferRO, rayID ).toVar();
-		const hitInstance = readHitInstanceLeaf( hitBufferRO, rayID ).toVar();
+		const hitUV = readHitBarycentrics( hitBufferRW, rayID ).toVar();
+		const hitMatIdx = readHitMaterialIndex( hitBufferRW, rayID ).toVar();
+		const hitTriIdx = readHitTriangleIndex( hitBufferRW, rayID ).toVar();
+		const hitInstance = readHitInstanceLeaf( hitBufferRW, rayID ).toVar();
 
 		// per-ray camera-bounce depth — advances ONLY on opaque scatter (free bounces don't); drives termination (maxBounces). Megakernel: effectiveBounces.
 		const cameraDepth = readPathBounces( rayBufferRW, rayID ).toVar();
@@ -357,7 +358,7 @@ export function buildShadeKernel( params ) {
 					writeRayRadiance( rayBufferRW, rayID, vec4( outRgb, outAlpha ) );
 					// DDFA: the plane's aux (written above) is a committed surface — lock it (cosmetic; ray dies here).
 					writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ).bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-					rngBufferRW.element( rayID ).assign( rngState );
+					writeRngState( hitBufferRW, rayID, rngState );
 					Return();
 
 				} );
@@ -577,7 +578,7 @@ export function buildShadeKernel( params ) {
 
 						writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 						writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-						rngBufferRW.element( rayID ).assign( rngState );
+						writeRngState( hitBufferRW, rayID, rngState );
 						Return();
 
 					} );
@@ -594,7 +595,7 @@ export function buildShadeKernel( params ) {
 					// fires the next hit's env/emissive MIS, down-weighting SSS-then-env/emitter views.
 					writeRayThroughputPdf( rayBufferRW, rayID, throughput, readRayPdf( rayBufferRW, rayID ) );
 					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-					rngBufferRW.element( rayID ).assign( rngState );
+					writeRngState( hitBufferRW, rayID, rngState );
 					Return();
 
 				} );
@@ -735,7 +736,7 @@ export function buildShadeKernel( params ) {
 
 			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-			rngBufferRW.element( rayID ).assign( rngState );
+			writeRngState( hitBufferRW, rayID, rngState );
 
 		};
 
@@ -935,7 +936,7 @@ export function buildShadeKernel( params ) {
 			throughput.mulAssign( interaction.throughput );
 
 			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
-			const Ng = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) ).faceN;
+			const Ng = unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN;
 			const newOrigin = offsetRayOrigin( hitPoint, select( dot( Ng, interaction.direction ).lessThan( 0.0 ), Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
@@ -979,7 +980,7 @@ export function buildShadeKernel( params ) {
 				writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 
 			} );
-			rngBufferRW.element( rayID ).assign( rngState );
+			writeRngState( hitBufferRW, rayID, rngState );
 			Return();
 
 		} );
@@ -1066,7 +1067,7 @@ export function buildShadeKernel( params ) {
 		const Ngeo = normalize( hitNormal );
 		const NgeoFF = select( dot( Ngeo, V ).lessThan( 0.0 ), Ngeo.negate(), Ngeo ).toVar();
 		// The facet on the viewer's side: every ray spawned from here is offset off it (HitFacet.js).
-		const facet = unpackHitFacet( readHitFacet( hitBufferRO, rayID ) );
+		const facet = unpackHitFacet( readHitFacet( hitBufferRW, rayID ) );
 		const facetN = facet.faceN.toVar();
 		const terminatorLift = Ngeo.mul( facet.liftScale );
 		const lightShadowOrigin = L => shadowTerminatorOrigin( {
@@ -1379,7 +1380,7 @@ export function buildShadeKernel( params ) {
 			writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 
 		} );
-		rngBufferRW.element( rayID ).assign( rngState );
+		writeRngState( hitBufferRW, rayID, rngState );
 
 	} );
 

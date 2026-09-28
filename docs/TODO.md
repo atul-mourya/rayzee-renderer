@@ -77,11 +77,11 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### General
 
-- [ ] introduce OPFS inplace of indexedDB
+- [x] introduce OPFS inplace of indexedDB
 - [ ] headless usage to be vsync bound free
 - [ ] deno compile for dedicated destop app
-- [ ] Introduce Project based workflow
-- [ ] Save rendering state in local storage and load on app start
+- [x] Introduce Project based workflow
+- [x] Save rendering state in local storage and load on app start
 - [ ] export/import option for settings
 - [ ] transform control redesign
 

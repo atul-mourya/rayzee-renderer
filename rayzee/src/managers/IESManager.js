@@ -1,5 +1,6 @@
 import { DataArrayTexture, LinearFilter, RGBAFormat, UnsignedByteType } from 'three';
 import { parseIES, resampleIESToGrid, deriveIESBeamAngle, deriveIESPenumbra } from '../Processor/IESParser.js';
+import { sharedDownloads } from '../Storage/DownloadCache.js';
 
 /**
  * Manages IES photometric profiles for spot lights.
@@ -63,9 +64,8 @@ export class IESManager {
 
 			try {
 
-				const res = await fetch( it.url );
-				if ( ! res.ok ) throw new Error( `HTTP ${res.status}` );
-				const text = await res.text();
+				const { file, release } = await sharedDownloads().fetch( it.url );
+				const text = await file.text().finally( release );
 				const profile = parseIES( text, it.name );
 				const grid = resampleIESToGrid( profile, gridWidth, gridHeight );
 				return { it, profile, grid };

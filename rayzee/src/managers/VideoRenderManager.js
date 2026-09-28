@@ -30,6 +30,7 @@ export class VideoRenderManager {
 	 * @param {boolean} [options.enableOIDN=true]    - Run OIDN denoiser per frame
 	 * @param {number} [options.speed=1]              - Playback speed multiplier (maps video time to animation time)
 	 * @param {number} [options.totalFrames]         - Override total frame count (for looped animations)
+	 * @param {number} [options.startFrame=0]        - First frame to render: a resumed export skips those it has
 	 * @param {import('./timeline/TimelineManager.js').TimelineManager} [options.timeline] - Keyframes to
 	 *   play in video time; without a clip the video lasts as long as they do
 	 * @param {Function} [options.onFrame]           - async (ImageBitmap, frameIndex, totalFrames) => void
@@ -45,6 +46,7 @@ export class VideoRenderManager {
 			samplesPerFrame = PRODUCTION_RENDER_CONFIG.maxSamples,
 			enableOIDN = true,
 			timeline = null,
+			startFrame = 0,
 			onFrame,
 			onProgress,
 			onComplete,
@@ -94,7 +96,7 @@ export class VideoRenderManager {
 
 		try {
 
-			for ( let i = 0; i < totalFrames; i ++ ) {
+			for ( let i = Math.max( 0, startFrame ); i < totalFrames; i ++ ) {
 
 				if ( this._cancelled ) break;
 

@@ -294,9 +294,12 @@ configureAssets({
   ocioRuntimeFactory: () => import('@bb-studio/ocio'),   // or: ocioRuntimeUrl: '/vendor/ocio/index.js'
   ocioWasmUrl: '/vendor/ocio/ocio-wasm.wasm',            // optional override for the .wasm
 
-  // Prefix for engine-managed IndexedDB stores. Set to a unique value if multiple
-  // apps embed the engine on the same origin to avoid cache collisions.
+  // Names the engine's on-disk storage (an OPFS directory). Set a unique value if several
+  // apps embed the engine on the same origin, so their caches stay apart.
   cacheNamespace: 'my-app',
+
+  // On-disk storage: 'auto' (default) where the browser has it, false for none.
+  storage: 'auto',
 });
 
 const engine = new PathTracerApp(canvas);
@@ -321,6 +324,8 @@ const engine = new PathTracerApp(canvas, options?)
 | `options.strict` | `boolean` | Throw an `EngineIssueError` where the engine would otherwise degrade and carry on (default: `false`). See [Degradation contract](#degradation-contract). |
 | `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
 | `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
+| `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
+| `options.memorySpill` | `boolean` | Experimental, default `false`: build a large static scene through disk — triangle records, BLAS nodes and the three.js geometry are written out as the build finishes with them — and raise the pbrt triangle and placement caps to 60M / 8M. See [On-disk storage](#on-disk-storage-opfs). |
 
 The engine creates and mounts everything it needs (denoiser canvas, tile/HUD overlay) into a single parent on `init()`. Performance HUDs (e.g. `stats-gl`) are not bundled — listen to `EngineEvents.FRAME` and tick your own panel.
 
@@ -392,10 +397,20 @@ try {
 }
 ```
 
-Per-load options for pbrt archives: `promptBytes` moves that 4 GB line, `maxTriangles` (default
-45M) and `maxPlacements` (default 6M) cap the build — past either, placements are skipped and the
-build reports itself truncated. 45M is the highest rung measured to survive; raising it is a
-deliberate act on a fresh browser tab.
+Per-load options for pbrt archives:
+
+| Option | Default | Effect |
+|---|---|---|
+| `promptBytes` | 4 GB | moves the line past which a multi-element archive asks for elements |
+| `maxTriangles` | 45M (60M with `memorySpill`) | past it, placements are skipped and the build reports itself truncated |
+| `maxPlacements` | 6M (8M with `memorySpill`) | the same, for placements |
+| `curveTolerance` | 0.05 | how far a curve segment may stray, × the curve's half-width; curves become strips with adaptive segments. `0` gives the old uniform strips bit for bit |
+| `instanceIncludes` | `true` | a file included again under the same material, with no side effects, is placed as an instance of its first reading instead of being read and stored again |
+
+45M is the highest rung measured to survive without the spill; raising either cap is a deliberate
+act on a fresh browser tab. With `memorySpill`, 80M stored triangles (4.35M placements) have loaded
+and rendered; an 89M load ran out of memory while parsing, and WebGPU's 4 GB buffer limit stops the
+triangle data at 89.5M in any case.
 
 #### Settings
 
@@ -897,7 +912,8 @@ Before extraction the engine prices the scene and applies two lines, both record
 
 Raise or lower the hard line with `new PathTracerApp(canvas, { maxSceneBytes })`. The estimate runs
 low at the very top of its range, so the per-load `maxTriangles` cap (45M) is the more reliable
-guard on a scene of that size.
+guard on a scene of that size. With `memorySpill` the estimate leaves out what the build keeps on
+disk (the BVH, and triangle records past what a streamed build holds at once).
 
 ---
 
@@ -967,6 +983,87 @@ const { profile, runtime } = await engine.getDenoiseProfile();
 precision, the model, kernel capabilities, tile state and resource counts — which is the way to
 confirm FP16 actually engaged on a given GPU rather than inferring it from the device's feature
 list. Both need `timestamp-query`, and `getDenoiseProfile()` returns `null` when OIDN is not set up.
+
+### On-disk Storage (OPFS)
+
+`engine.storage` is a `StorageManager` over the browser's origin private file system, or `null` where
+there is none (a private window, Node) — everything works without it, only slower. The engine keeps
+its caches there: downloads (models, skies, OIDN weights, STBN atlases — revalidated with `HEAD`),
+unpacked `.tar.gz` archives and archive indexes, built scenes (reopened without rebuilding BVHs when
+the first build took ≥ 10 s), and environment sampling tables. Caches share a budget of 30 % of the
+quota and are evicted least-recently-used; `engine.storage.usage()` reports each area.
+
+A host keeps its own data beside them:
+
+```js
+import { STORAGE_KIND } from 'rayzee';
+
+engine.storage.defineArea( 'renders', { kind: STORAGE_KIND.USER } );   // never evicted
+const writer = await engine.storage.area( 'renders' ).create( 'render:42', { label: 'Render 42' } );
+await writer.writeFile( 'image.png', blob );
+await writer.commit();                                                // meta.json last: all or nothing
+
+const entry = await engine.storage.area( 'renders' ).open( 'render:42' );
+const file = await entry.file( 'image.png' );
+entry.release();
+```
+
+`loadFile( url )` and `loadModel( url, { cacheKey } )` download through the cache — pass `cacheKey` for
+a link that expires (a signed URL). `fetchFile( url, storage )` / `cachedObjectURL( url )` do the same
+for a host's own assets. Failures record `storage.*` issues and fall back to memory; storage never
+throws for being absent or full.
+
+**Memory spill (experimental).** With `memorySpill: true`, a static scene of more than one 64 MB chunk
+is built through disk, so its large arrays are never all in memory at once:
+
+- Extraction and BVH building run together. Each stored range of triangles goes to a BLAS worker as
+  soon as it is written, and extraction waits while more than 1.5 GB of triangle records are held.
+  On the 55.7M-triangle Moana subset the build peak fell from 6.6 to 4.1 GB.
+- The three.js geometry goes to disk after the build last reads it, and comes back when the build
+  ends. On a 70M-triangle scene the page held 0.84 GB after extraction instead of 4.07 GB.
+- Each triangle chunk and BLAS goes to the GPU, then to disk. At 50M triangles the page settles at
+  7.2 GB instead of 9.1 GB.
+
+With or without the spill, a mesh past 2M triangles is built as spatial pieces of ≤ 512k triangles
+on a worker pool and joined under the tree that split them, so no build holds a second copy of it.
+
+The render is unchanged. Visibility and rigid moves need nothing read back. Material edits that
+rewrite triangles (side, transparency, emission), and refits, read it back first. `refitBLASes`
+throws on a spilled scene until `await engine.ensureSceneResident()`.
+
+### Saving Scene State
+
+```js
+const state = engine.exportSceneState();      // JSON-safe: settings, sky, colour, lights, cameras,
+                                              // timeline keys, material edits, hidden and moved objects
+const source = engine.sceneSource;            // { kind: 'url', url, cacheKey } | { kind: 'local-file', file } | ...
+
+// later, after loading the same model again:
+const { skipped } = await engine.importSceneState( state, {
+  resolve: async ( request ) => {
+    // { kind: 'environment', source }  → a File, a URL or null (the engine loads URL skies itself)
+    // { kind: 'colorConfig', config }  → true once you have loaded it (built-in configs load themselves)
+    return null;
+  },
+} );
+```
+
+Objects, materials and cameras are matched by position in the scene plus a name check — UUIDs
+change on every load — so a different model keeps its own objects and materials and the rest still
+applies; `skipped` lists what could not be put back. Texture swaps on materials are not included yet.
+
+### Render Checkpoints
+
+```js
+const checkpoint = await engine.captureRenderCheckpoint();   // accumulation + the counters that pick the next sample
+// ...a reload later, the same scene state restored and one frame rendered at the same size:
+engine.restoreRenderCheckpoint( checkpoint );
+engine.wake();                                               // or await engine.renderFrames( n, { reset: false } )
+```
+
+In deterministic mode the continued render is bit-identical to one that never stopped. A checkpoint
+is ~60 bytes a pixel (252 MB at 2048²): the accumulated colour and aux buffers as RGBA32F plus three
+per-pixel convergence buffers.
 
 ---
 
@@ -1068,6 +1165,19 @@ import { Logger, createLogger, fmt, LOG_LEVELS } from 'rayzee';
 
 // Asset URL / cache namespace overrides
 import { configureAssets, getAssetConfig } from 'rayzee';
+
+// On-disk storage (OPFS): caches, host areas, downloads, file identity
+import {
+  openStorage, StorageManager, STORAGE_KIND, ENGINE_AREAS, acquireLock, heldLockNames,
+  fileIdentity, identityKey, sameIdentity,
+  DownloadCache, DOWNLOAD_POLICY, fetchFile, nameFromUrl, cachedObjectURL,
+} from 'rayzee';
+
+// Archives read in place, one entry at a time
+import { openZip, readZipDirectory } from 'rayzee';
+
+// Scene state as plain data (engine.exportSceneState), and the engine version as built
+import { SCENE_STATE_VERSION, toPortable, fromPortable, VERSION } from 'rayzee';
 
 // Advanced: managers & pipeline
 import {

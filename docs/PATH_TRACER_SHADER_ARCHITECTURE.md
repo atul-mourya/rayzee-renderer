@@ -140,7 +140,7 @@ Uniforms are owned by `UniformManager` and exposed on the stage; `PathTracer` wi
 5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum`, `envResolution`, `envCompensationDelta`, `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
 6. **Lighting:** `numDirectionalLights`, `numPointLights`, `numSpotLights`, `numAreaLights` + the matching light storage buffer nodes; `globalIlluminationIntensity`.
 7. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`.
-8. **Geometry & Material Data:** `triangleStorageNode`, `bvhStorageNode`, `materialStorageNode`, `lightStorageNode`; `totalTriangleCount`. (The environment CDF is an R32F **texture** node, not a storage buffer — see Environment Importance Sampling.)
+8. **Geometry & Material Data:** `triangleStorageNode` (a `{ geo, shade }` pair, see below), `bvhStorageNode`, `materialStorageNode`, `lightStorageNode`; `totalTriangleCount`. (The environment CDF is an R32F **texture** node, not a storage buffer — see Environment Importance Sampling.)
 9. **Material Sampler Arrays:** `albedoMaps`, `emissiveMaps`, `normalMaps`, `roughnessMaps`, `metalnessMaps`, `bumpMaps`, `displacementMaps` (rebound each frame via `_refreshWfTextureNodes`).
 10. **Debug:** `visMode`, `debugVisScale`.
 
@@ -166,6 +166,13 @@ The store is bound as `uvec4`; positions and UVs are float bit patterns read wit
 whether a shadow ray settles on this triangle without fetching its material: bit 26 always, bit
 27 only while alpha-cutout shadows are off.
 
+On the GPU the five rows live in two buffers: rows 1–3 (positions and normals, 48 B) in
+`triangleGeoAttr` and rows 4–5 (UVs, flags, mesh index) in `triangleShadeAttr`. One 80 B buffer
+reached WebGPU's 4 GB buffer limit at 53.6M triangles; the geo buffer alone reaches it at 89.5M.
+The CPU records stay whole and `PathTracerStage._uploadTriangles` splits them on upload. Kernels
+take the pair as `triangleStorageNode = { geo, shade }` and read a row only through
+`triangleRow( tris, triIndex, row )` (`TSL/Common.js`), which picks the buffer.
+
 ### Two-level BVH (`bvhStorageNode`)
 Combined buffer `[ TLAS | BLAS_0 | BLAS_1 | ... ]`, 16 floats (4 × vec4) per node:
 - Inner node: child AABBs + child indices in slots 0–3 (4 reads, no child fetches).
@@ -174,6 +181,16 @@ Combined buffer `[ TLAS | BLAS_0 | BLAS_1 | ... ]`, 16 floats (4 × vec4) per no
 - BLAS-pointer leaf (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`
   with the world-to-object rows in slots 4–15. Visibility is free-fetched with the leaf; bit 30 of
   slot `[1]` (`TLAS_LEAF_IDENTITY`) marks a baked placement whose ray transform is skipped.
+
+**Folded leaves** (scenes past `FOLD_LEAVES_TRIANGLES`, 40M stored triangles): every triangle leaf
+of ≤ 15 triangles (`BVH_FOLDED_LEAF_MAX`) is folded into its parent (`Processor/BVHLeafFold.js`).
+The parent's child slot then holds `~( first << 4 | count )`, the value traversal pushes, so a
+folded reference sits at 2^31 or above and a leaf node is `tag >> 30 === 1`. BLAS nodes roughly
+halve (55.7M Moana: 50.1M → 32.0M nodes, 3.1 → 2.0 GB), images bit-identical. The tree buffer
+attribute carries `foldedLeaves`, and `BVHTraversal.js` emits the folded code only for such a tree:
+it cost 0.5–3.7 % GPU time in every variant tried, so an unfolded tree runs the old code exactly.
+Offsets are rebased through `rebaseNodes` and refits go through `BVHRefitter`, which both read
+folded children.
 
 ⚠️ Triangles of a geometry shared by several placements are in **object space**: the ray is
 transformed into that space on entering the leaf and the hit's `instanceLeaf` names the leaf to
@@ -270,7 +287,7 @@ Highlights:
 - Inner nodes store both child AABBs + child indices (4 reads, no separate child fetches).
 - Early pruning: compare child-bound min distance against the current closest hit.
 - Per-mesh visibility: at a BLAS-pointer leaf the visibility flag (slot `[2]`, packed into the BVH node data) is checked before pushing the BLAS root onto the stack — an entire hidden mesh's BLAS is skipped. The flag is free-fetched with the leaf; there is no separate visibility buffer.
-- Triangle intersection is inline (Möller–Trumbore); front/back/double-side culling is done inline using the per-triangle side flag (`normalCData.w`, slot 5). `insideMedium` rays bypass culling to hit glass/SSS back faces.
+- Triangle intersection is inline (Möller–Trumbore); front/back/double-side culling is done inline using the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer). `insideMedium` rays bypass culling to hit glass/SSS back faces.
 - `traverseBVHShadow` is the any-hit early-exit variant for shadow rays.
 - `generateRayFromCamera` builds the primary ray (used by Generate and Debug kernels).
 

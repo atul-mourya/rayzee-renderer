@@ -90,6 +90,14 @@ export class EmissiveTriangleBuilder {
 
 		for ( let i = 0; i < triangleCount; i ++ ) {
 
+			// A chunk a build spilled holds no emitters: that is why it could be spilled.
+			if ( chunked?.spilledChunks && ! chunked.isResident( i, 1 ) ) {
+
+				i = ( ( ( i / chunked.recordsPerChunk ) | 0 ) + 1 ) * chunked.recordsPerChunk - 1;
+				continue;
+
+			}
+
 			const triU = chunked ? chunked.chunkFor( i ) : flatU;
 			const triFloats = chunked ? chunkedF.chunkFor( i ) : flatF;
 			const baseOffset = chunked ? chunked.baseOf( i ) : i * FLOATS_PER_TRIANGLE;

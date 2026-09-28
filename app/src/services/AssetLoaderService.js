@@ -50,9 +50,10 @@ export class AssetLoaderService {
 	 * Replace the scene with a model loaded from a URL.
 	 * @param {string} url - Model URL (.glb / .gltf)
 	 * @param {string} [name]
+	 * @param {{cacheKey?: string}} [options] - download-cache key for a link that expires
 	 * @returns {Promise<{success:boolean, modelName:string}>}
 	 */
-	static async loadModelUrl( url, name ) {
+	static async loadModelUrl( url, name, options = {} ) {
 
 		const app = getApp();
 		if ( ! app ) {
@@ -63,7 +64,7 @@ export class AssetLoaderService {
 
 		try {
 
-			await app.loadModel( url );
+			await app.loadModel( url, options );
 			return { success: true, modelName: name || 'Model' };
 
 		} catch ( error ) {
@@ -79,9 +80,10 @@ export class AssetLoaderService {
 	 * Append a model by URL to the current scene (does NOT replace it).
 	 * @param {string} url - Model URL (.glb / .gltf)
 	 * @param {string} [name] - Display name for the scene-object list
+	 * @param {{cacheKey?: string}} [options] - download-cache key for a link that expires
 	 * @returns {Promise<{success:boolean, id:string, modelName:string}>}
 	 */
-	static async addModel( url, name ) {
+	static async addModel( url, name, options = {} ) {
 
 		const app = getApp();
 		if ( ! app ) {
@@ -92,7 +94,7 @@ export class AssetLoaderService {
 
 		try {
 
-			const id = await app.addModel( url, { name } );
+			const id = await app.addModel( url, { name, cacheKey: options.cacheKey } );
 			return { success: true, id, modelName: name || 'Model' };
 
 		} catch ( error ) {

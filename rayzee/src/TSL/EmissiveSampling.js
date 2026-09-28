@@ -30,7 +30,7 @@ import { struct } from './patches.js';
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
-	unpackTriangleNormal, TRI_STRIDE, SHADOW_END
+	unpackTriangleNormal, triangleRow, SHADOW_END
 } from './Common.js';
 import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
@@ -298,11 +298,11 @@ export const TriangleData = struct( {
 export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffer, instanceLeaf ] ) => {
 
 	// Positions carry their packed normal in .w
-	const pos0 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 0 ), int( TRI_STRIDE ) ).toVar();
-	const pos1 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 1 ), int( TRI_STRIDE ) ).toVar();
-	const pos2 = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 2 ), int( TRI_STRIDE ) ).toVar();
+	const pos0 = triangleRow( triangleBuffer, triangleIndex, 0 ).toVar();
+	const pos1 = triangleRow( triangleBuffer, triangleIndex, 1 ).toVar();
+	const pos2 = triangleRow( triangleBuffer, triangleIndex, 2 ).toVar();
 
-	const uvMat = getDatafromStorageBuffer( triangleBuffer, triangleIndex, int( 4 ), int( TRI_STRIDE ) );
+	const uvMat = triangleRow( triangleBuffer, triangleIndex, 4 );
 
 	const v0 = uintBitsToFloat( pos0.xyz ).toVar(), v1 = uintBitsToFloat( pos1.xyz ).toVar(), v2 = uintBitsToFloat( pos2.xyz ).toVar();
 	const n0 = unpackTriangleNormal( pos0.w ).toVar(), n1 = unpackTriangleNormal( pos1.w ).toVar(), n2 = unpackTriangleNormal( pos2.w ).toVar();

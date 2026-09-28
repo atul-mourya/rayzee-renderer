@@ -18,6 +18,7 @@ import { createLogger, fmt } from '../utils/Logger.js';
 const log = createLogger( 'env' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
+import { loadCDF, saveCDF } from '../Storage/CDFCache.js';
 
 export class EnvironmentManager {
 
@@ -140,6 +141,60 @@ export class EnvironmentManager {
 	markDirty() {
 
 		if ( this.environmentTexture ) this.environmentTexture.needsUpdate = true;
+
+	}
+
+	// ===== SAVED SESSIONS =====
+
+	/** Where the HDRI came from (see Storage/CDFCache.js), shown or held while a sky is. */
+	get hdriSource() {
+
+		const hdri = this.envParams.mode === 'hdri' ? this.environmentTexture : this._previousHDRI;
+		return hdri?.userData?.__rayzeeSource ?? null;
+
+	}
+
+	/** The mode, the sky parameters and the HDRI's source, as plain data. */
+	serialize() {
+
+		const p = this.envParams;
+		return {
+			mode: p.mode,
+			hdri: this.hdriSource,
+			gradientZenithColor: p.gradientZenithColor.toArray(),
+			gradientHorizonColor: p.gradientHorizonColor.toArray(),
+			gradientGroundColor: p.gradientGroundColor.toArray(),
+			solidSkyColor: p.solidSkyColor.toArray(),
+			skySunDirection: p.skySunDirection.toArray(),
+			skySunIntensity: p.skySunIntensity,
+			skyRayleighDensity: p.skyRayleighDensity,
+			skyTurbidity: p.skyTurbidity,
+			skyMieAnisotropy: p.skyMieAnisotropy,
+		};
+
+	}
+
+	/**
+	 * Puts back {@link serialize}'s parameters and mode. The HDRI itself is the caller's to load
+	 * first: only it can resolve the source.
+	 */
+	async restore( state ) {
+
+		if ( ! state ) return;
+		const p = this.envParams;
+		for ( const key of [ 'gradientZenithColor', 'gradientHorizonColor', 'gradientGroundColor', 'solidSkyColor', 'skySunDirection' ] ) {
+
+			if ( Array.isArray( state[ key ] ) ) p[ key ].fromArray( state[ key ] );
+
+		}
+
+		for ( const key of [ 'skySunIntensity', 'skyRayleighDensity', 'skyTurbidity', 'skyMieAnisotropy' ] ) {
+
+			if ( typeof state[ key ] === 'number' ) p[ key ] = state[ key ];
+
+		}
+
+		if ( state.mode && ( state.mode !== 'hdri' || p.mode !== 'hdri' ) ) await this.setMode( state.mode );
 
 	}
 
@@ -294,6 +349,7 @@ export class EnvironmentManager {
 
 		if ( ! this.scene.environment ) {
 
+			this._cdfSignature = null;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
@@ -308,6 +364,7 @@ export class EnvironmentManager {
 
 			if ( ! textureForCDF.image ) {
 
+				this._cdfSignature = null;
 				this._updateCDFTexture();
 				this.uniforms.set( 'envTotalSum', 0.0 );
 				this.uniforms.set( 'envCompensationDelta', 0.0 );
@@ -315,7 +372,16 @@ export class EnvironmentManager {
 
 			}
 
-			if ( useWorker ) {
+			// The same pixels as last time: the tables and uniforms already describe them.
+			const signature = `${textureForCDF.uuid}:${textureForCDF.version}`;
+			if ( signature === this._cdfSignature ) return;
+
+			const cached = await loadCDF( textureForCDF ).catch( () => null );
+			if ( cached ) {
+
+				Object.assign( this.equirectHdrInfo, cached );
+
+			} else if ( useWorker ) {
 
 				await this.equirectHdrInfo.updateFromAsync( textureForCDF );
 
@@ -325,6 +391,8 @@ export class EnvironmentManager {
 
 			}
 
+			if ( ! cached ) saveCDF( textureForCDF, this.equirectHdrInfo ).catch( () => {} );
+			this._cdfSignature = signature;
 			this.cdfBuildTime = performance.now() - startTime;
 
 			this._updateCDFTexture();
@@ -340,11 +408,12 @@ export class EnvironmentManager {
 
 			log.info( fmt.list( [
 				fmt.px( this.envTexSize.x, this.envTexSize.y ),
-				`CDF ${fmt.ms( this.cdfBuildTime )}${useWorker ? '' : ' (main thread)'}`,
+				`CDF ${fmt.ms( this.cdfBuildTime )}${cached ? ' (stored)' : useWorker ? '' : ' (main thread)'}`,
 			] ) );
 
 		} catch ( error ) {
 
+			this._cdfSignature = null;
 			log.error( 'CDF build failed:', error );
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );
@@ -406,6 +475,7 @@ export class EnvironmentManager {
 
 		} else {
 
+			this._cdfSignature = null;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
 			this.uniforms.set( 'envCompensationDelta', 0.0 );

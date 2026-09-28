@@ -7,7 +7,7 @@
  * before.
  */
 
-import { configureAssets, getActiveColorManagement, onRegistryChange, listViewTransforms } from 'rayzee';
+import { configureAssets, getActiveColorManagement, onRegistryChange, listViewTransforms, fetchFile } from 'rayzee';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getApp } from '@/lib/appProxy';
 import { useActiveApp } from '@/hooks/useActiveApp';
@@ -62,11 +62,19 @@ export const DEFAULT_COLOR_CONFIG = Object.freeze( {
 	baseUrl: import.meta.env?.VITE_COLOR_CONFIG_URL ?? `${ASSETS_BASE_URL}/ocio/${DEFAULT_COLOR_IDENTITY.id}/`,
 } );
 
-async function fetchOk( url ) {
+/** A config file's bytes, from the download cache when the app has storage. */
+async function fetchBytes( url ) {
 
-	const response = await fetch( url );
-	if ( ! response.ok ) throw new Error( `${url}: HTTP ${response.status}` );
-	return response;
+	const { file, release } = await fetchFile( url, getApp()?.storage ?? null );
+	try {
+
+		return new Uint8Array( await file.arrayBuffer() );
+
+	} finally {
+
+		release();
+
+	}
 
 }
 
@@ -78,10 +86,10 @@ async function fetchOk( url ) {
 export async function fetchDefaultConfig() {
 
 	const { baseUrl } = DEFAULT_COLOR_CONFIG;
-	const manifest = await ( await fetchOk( `${baseUrl}manifest.json` ) ).json();
+	const manifest = JSON.parse( new TextDecoder().decode( await fetchBytes( `${baseUrl}manifest.json` ) ) );
 	const files = await Promise.all( manifest.files.map( async relativePath => ( {
 		relativePath,
-		data: new Uint8Array( await ( await fetchOk( baseUrl + relativePath ) ).arrayBuffer() ),
+		data: await fetchBytes( baseUrl + relativePath ),
 	} ) ) );
 	return { files, configPath: manifest.config };
 
@@ -108,7 +116,7 @@ export async function loadDefaultConfig( download = fetchDefaultConfig() ) {
 export function fetchStartupColor() {
 
 	const { baseUrl, bakedView } = DEFAULT_COLOR_CONFIG;
-	const baked = fetchOk( baseUrl + bakedView ).then( async response => new Uint8Array( await response.arrayBuffer() ) );
+	const baked = fetchBytes( baseUrl + bakedView );
 	const config = baked.then( () => null, () => fetchDefaultConfig() );
 	baked.catch( () => {} );
 	config.catch( () => {} );

@@ -24,6 +24,12 @@ export const ISSUE_CODES = Object.freeze( {
 	VIEW_TRANSFORM_DISPLAY_MISMATCH: 'viewTransform.display_mismatch',
 	VIEW_TRANSFORM_BAKE_FAILED: 'viewTransform.bake_failed',
 	COLOR_CONFIG_LOAD_FAILED: 'color.config_load_failed',
+	STORAGE_UNAVAILABLE: 'storage.unavailable',
+	STORAGE_QUOTA_EXCEEDED: 'storage.quota_exceeded',
+	STORAGE_WRITE_FAILED: 'storage.write_failed',
+	STORAGE_READ_FAILED: 'storage.read_failed',
+	STORAGE_ENTRY_CORRUPT: 'storage.entry_corrupt',
+	STORAGE_CACHE_MISMATCH: 'storage.cache_mismatch',
 } );
 
 /** Strict throws on ERROR only. */

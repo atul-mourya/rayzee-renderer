@@ -7,7 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/store';
 import { ImageProcessorComposer } from '@/utils/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
-import { deleteRender, saveRender } from '@/utils/database';
+import { updateRender, getRenderHDR } from '@/utils/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/utils/viewport';
@@ -568,6 +568,25 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	};
 
+	const downloadHDR = async () => {
+
+		const file = await getRenderHDR( selectedImageId );
+		if ( ! file ) {
+
+			toast( { title: 'No HDR copy', description: 'This render was saved without one.', variant: 'destructive' } );
+			return;
+
+		}
+
+		const url = URL.createObjectURL( file );
+		const link = document.createElement( 'a' );
+		link.href = url;
+		link.download = `render-${selectedImageId}.exr`;
+		link.click();
+		setTimeout( () => URL.revokeObjectURL( url ), 1000 );
+
+	};
+
 	// Save edited image with color correction settings
 	const saveEditedImage = async () => {
 
@@ -575,25 +594,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		try {
 
-			// Get the current color correction settings
 			const colorCorrectionSettings = { ...imageProcessing };
-
-			// Delete any existing edit of this image first
-			await deleteRender( selectedImageId );
-
-			// Create a new edit record
-			const saveData = {
-				image: imageData.image,
-				colorCorrection: colorCorrectionSettings,
-				timestamp: new Date(),
-				renderTime: imageData.renderTime || null,
-				isEdited: true
-			};
-
-			const newId = await saveRender( saveData );
-
-			// Update the selectedImageId with the new record's ID
-			setSelectedImageId( newId );
+			await updateRender( selectedImageId, { colorCorrection: colorCorrectionSettings, isEdited: true } );
 
 			// Update originalSettings to match the newly saved settings
 			setOriginalSettings( { ...colorCorrectionSettings } );
@@ -665,6 +667,18 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 					>
 						<ImageIcon size={12} className="mr-1" />
 						{viewingAIVariant ? 'Show Render' : 'Show AI'}
+					</button>
+				</div>
+			)}
+
+			{imageData?.hasHDR && ! viewingOriginal && (
+				<div className="absolute bottom-16 right-2 z-20">
+					<button
+						onClick={downloadHDR}
+						title="Download the full-range image this render kept"
+						className="flex items-center justify-center bg-secondary hover:bg-secondary/90 text-foreground px-3 py-1 rounded-full text-xs"
+					>
+						Download EXR
 					</button>
 				</div>
 			)}

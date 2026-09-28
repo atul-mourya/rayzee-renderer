@@ -15,7 +15,7 @@ import {
 	packHalf2x16, unpackHalf2x16,
 } from 'three/tsl';
 import {
-	getDatafromStorageBuffer, unpackTriangleNormal, TRI_STRIDE, instanceRows, instanceFaceNormalToWorld,
+	unpackTriangleNormal, triangleRow, instanceRows, instanceFaceNormalToWorld,
 } from './Common.js';
 import { shadowTerminatorLift } from './ShadowTerminator.js';
 
@@ -30,9 +30,9 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hit
 
 	If( didHit, () => {
 
-		const recA = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 0 ), int( TRI_STRIDE ) ).toVar();
-		const recB = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 1 ), int( TRI_STRIDE ) ).toVar();
-		const recC = getDatafromStorageBuffer( triangleBuffer, triIdx, int( 2 ), int( TRI_STRIDE ) ).toVar();
+		const recA = triangleRow( triangleBuffer, triIdx, 0 ).toVar();
+		const recB = triangleRow( triangleBuffer, triIdx, 1 ).toVar();
+		const recC = triangleRow( triangleBuffer, triIdx, 2 ).toVar();
 		const V0 = uintBitsToFloat( recA.xyz ).toVar();
 		const V1 = uintBitsToFloat( recB.xyz ).toVar();
 		const V2 = uintBitsToFloat( recC.xyz ).toVar();

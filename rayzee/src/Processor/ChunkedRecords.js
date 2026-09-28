@@ -134,7 +134,7 @@ export class ChunkedRecords {
 		const lanes = Math.min( this.recordsPerChunk, this.recordCount - from ) * this.lanesPerRecord;
 		const chunk = this.chunks[ k ] = allocChunk( this.LaneType, lanes, this.shared );
 
-		for ( const v of this._views ) {
+		for ( const v of this._liveViews() ) {
 
 			v.chunks[ k ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
 
@@ -147,7 +147,7 @@ export class ChunkedRecords {
 	/** Allocate whatever a lazy fill never touched, so the result behaves like an eager one. */
 	materializeAll() {
 
-		for ( let k = 0; k < this.chunks.length; k ++ ) if ( ! this.chunks[ k ] ) this._materialize( k );
+		for ( let k = 0; k < this.chunks.length; k ++ ) if ( ! this.chunks[ k ] && ! this._spilled?.has( k ) ) this._materialize( k );
 		return this;
 
 	}
@@ -177,7 +177,104 @@ export class ChunkedRecords {
 	chunkFor( record ) {
 
 		const k = ( record / this.recordsPerChunk ) | 0;
-		return this.chunks[ k ] ?? this._materialize( k );
+		const chunk = this.chunks[ k ];
+		if ( chunk ) return chunk;
+		if ( this._spilled?.has( k ) ) throw new Error( `ChunkedRecords: chunk ${k} is on disk — await ensureResident() before touching record ${record}` );
+		return this._materialize( k );
+
+	}
+
+	/**
+	 * Writes every resident chunk to `store` and lets go of it; {@link ensureResident} reads it
+	 * back. A spilled chunk's accessors throw rather than read zeros. Every other holder of a chunk
+	 * (a worker, a view) keeps it alive, so spill only what nothing else holds.
+	 * @param {{write: function(number, ArrayBufferView): Promise<void>, read: function(number, number): Promise<ArrayBuffer>}} store
+	 * @param {{keep?: function(number): boolean}} [options] - chunks that stay in memory
+	 * @returns {Promise<number>} bytes let go
+	 */
+	async spill( store, { keep = () => false } = {} ) {
+
+		if ( this._owner ) throw new Error( 'ChunkedRecords: spill the storage, not a view of it' );
+		this._store = store;
+		this._spilled ??= new Set();
+		let bytes = 0;
+
+		for ( let k = 0; k < this.chunks.length; k ++ ) {
+
+			const chunk = this.chunks[ k ];
+			if ( ! chunk || keep( k ) ) continue;
+			await store.write( k, chunk );
+			this.chunks[ k ] = null;
+			for ( const v of this._liveViews() ) v.chunks[ k ] = null;
+			this._spilled.add( k );
+			bytes += chunk.byteLength;
+
+		}
+
+		return bytes;
+
+	}
+
+	/** Writes one chunk to `store` and lets go of it — a build hands chunks over as it finishes them. */
+	async spillChunk( k, store ) {
+
+		const chunk = this.chunks[ k ];
+		if ( ! chunk ) return 0;
+		this._store = store;
+		this._spilled ??= new Set();
+		await store.write( k, chunk );
+		this.chunks[ k ] = null;
+		for ( const v of this._liveViews() ) v.chunks[ k ] = null;
+		this._spilled.add( k );
+		return chunk.byteLength;
+
+	}
+
+	/** Reads the spilled chunks under records [start, start+count) back into memory. */
+	async ensureResident( start = 0, count = this.recordCount ) {
+
+		if ( ! this._spilled?.size || count <= 0 ) return;
+		const first = ( start / this.recordsPerChunk ) | 0;
+		const last = ( ( start + count - 1 ) / this.recordsPerChunk ) | 0;
+
+		for ( let k = first; k <= last; k ++ ) {
+
+			if ( ! this._spilled.has( k ) ) continue;
+			const lanes = Math.min( this.recordsPerChunk, this.recordCount - k * this.recordsPerChunk ) * this.lanesPerRecord;
+			const bytes = await this._store.read( k, lanes * this.LaneType.BYTES_PER_ELEMENT );
+			const chunk = allocChunk( this.LaneType, lanes, this.shared );
+			new Uint8Array( chunk.buffer, chunk.byteOffset, chunk.byteLength ).set( new Uint8Array( bytes ) );
+			this.chunks[ k ] = chunk;
+			for ( const v of this._liveViews() ) v.chunks[ k ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
+			this._spilled.delete( k );
+
+		}
+
+	}
+
+	/** @private */
+	_liveViews() {
+
+		if ( this._weakViews ) this._weakViews = this._weakViews.filter( ref => ref.deref() );
+		return [ ...( this._views ?? [] ), ...( this._weakViews ?? [] ).map( ref => ref.deref() ) ];
+
+	}
+
+	/** Whether records [start, start+count) are all in memory. */
+	isResident( start = 0, count = this.recordCount ) {
+
+		if ( ! this._spilled?.size || count <= 0 ) return true;
+		const first = ( start / this.recordsPerChunk ) | 0;
+		const last = ( ( start + count - 1 ) / this.recordsPerChunk ) | 0;
+		for ( let k = first; k <= last; k ++ ) if ( this._spilled.has( k ) ) return false;
+		return true;
+
+	}
+
+	/** Chunks currently on disk. */
+	get spilledChunks() {
+
+		return this._spilled?.size ?? 0;
 
 	}
 
@@ -278,6 +375,87 @@ export class ChunkedRecords {
 
 	}
 
+	/**
+	 * A lazy store taking more records without moving the ones it has: new chunks are added and
+	 * only a short last chunk is reallocated. A build streaming chunks to disk cannot copy the
+	 * store, since earlier chunks may already be gone.
+	 */
+	grow( recordCount ) {
+
+		if ( recordCount <= this.recordCount ) return;
+		const last = this.chunks.length - 1;
+		const lanesFor = ( k, count ) => Math.min( this.recordsPerChunk, count - k * this.recordsPerChunk ) * this.lanesPerRecord;
+		const old = this.chunks[ last ];
+
+		this.recordCount = recordCount;
+		for ( const v of this._liveViews() ) v.recordCount = recordCount;
+		if ( this.chunks.length * this.recordsPerChunk < recordCount ) {
+
+			this.chunks.length = Math.ceil( recordCount / this.recordsPerChunk );
+			for ( const v of this._liveViews() ) v.chunks.length = this.chunks.length;
+
+		}
+
+		if ( old && old.length < lanesFor( last, recordCount ) ) {
+
+			const chunk = allocChunk( this.LaneType, lanesFor( last, recordCount ), this.shared );
+			chunk.set( old );
+			this.chunks[ last ] = chunk;
+			for ( const v of this._liveViews() ) v.chunks[ last ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
+
+		} else if ( ! old && this._spilled?.has( last ) ) {
+
+			throw new Error( `ChunkedRecords: cannot grow past chunk ${last}, which is on disk` );
+
+		}
+
+	}
+
+	/**
+	 * Lets go of the chunks lying wholly inside records [start, start+count) without writing them
+	 * anywhere: their contents are about to be rewritten, and the next access allocates them again.
+	 * @returns {number} bytes let go
+	 */
+	release( start, count ) {
+
+		const rpc = this.recordsPerChunk;
+		const first = Math.ceil( start / rpc );
+		const end = Math.floor( ( start + count ) / rpc );
+		let bytes = 0;
+		for ( let k = first; k < end; k ++ ) {
+
+			const chunk = this.chunks[ k ];
+			if ( ! chunk ) continue;
+			bytes += chunk.byteLength;
+			this.chunks[ k ] = undefined;
+			for ( const v of this._liveViews() ) v.chunks[ k ] = undefined;
+
+		}
+
+		return bytes;
+
+	}
+
+	/** {@link trimTo} on this store itself, keeping what it has spilled. */
+	trimInPlace( recordCount ) {
+
+		const needed = Math.max( 1, Math.ceil( recordCount / this.recordsPerChunk ) );
+		const lanes = Math.max( 0, ( recordCount - ( needed - 1 ) * this.recordsPerChunk ) * this.lanesPerRecord );
+		const stores = [ this, ...this._liveViews() ];
+		for ( const s of stores ) {
+
+			s.chunks.length = needed;
+			const last = s.chunks[ needed - 1 ];
+			if ( last && last.length > lanes ) s.chunks[ needed - 1 ] = last.subarray( 0, lanes );
+			s.recordCount = recordCount;
+
+		}
+
+		if ( this._spilled ) for ( const k of this._spilled ) if ( k >= needed ) this._spilled.delete( k );
+		return this;
+
+	}
+
 	/** A parallel set of views of another lane type over the same memory (u32 records read as f32). */
 	viewAs( LaneType ) {
 
@@ -287,14 +465,21 @@ export class ChunkedRecords {
 			this.recordCount, this.lanesPerRecord, this.recordsPerChunk
 		);
 		v.LaneType = LaneType;
+		// A view never allocates for itself: a chunk it finds missing is the storage's to create.
+		v._owner = this;
 
 		if ( this._views ) {
 
-			v._owner = this;
 			this._views.push( v );
+
+		} else {
+
+			// Weakly: callers take short-lived views, and a spill must still reach the lasting ones.
+			( this._weakViews ??= [] ).push( new WeakRef( v ) );
 
 		}
 
+		v._spilled = this._spilled ??= new Set();
 		return v;
 
 	}

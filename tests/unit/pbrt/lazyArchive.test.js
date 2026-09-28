@@ -114,6 +114,54 @@ describe( 'lazily indexed archive', () => {
 
 	} );
 
+	it( 'reads only the heads of big fragments to pick the entry, and frees each file once parsed', async () => {
+
+		const shape = 'Shape "trianglemesh" "point3 P" [ -1 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]\n';
+		const files = {
+			...FILES,
+			'lib/shapes.pbrt': enc.encode( 'NamedMaterial "wood"\n' + shape.repeat( Math.ceil( 5e6 / shape.length ) ) ),
+		};
+		const src = lazySource( files );
+		const heads = [];
+		src.readHead = async ( path, bytes ) => {
+
+			heads.push( path );
+			return files[ path ].slice( 0, bytes );
+
+		};
+
+		const handed = [];
+		const read = src.read;
+		src.read = async ( path ) => {
+
+			const bytes = await read( path );
+			handed.push( bytes );
+			return bytes;
+
+		};
+
+		expect( await pickEntryPathFrom( new VirtualFS( {}, src ) ) ).toBe( 'island.pbrt' );
+		expect( src.reads ).toEqual( [] );
+		expect( heads ).toContain( 'lib/shapes.pbrt' );
+
+		await loadPBRTScene( args( { vfs: {}, source: src } ) );
+		expect( src.reads.filter( p => p === 'lib/shapes.pbrt' ) ).toHaveLength( 2 );
+		for ( const bytes of handed ) expect( bytes.byteLength ).toBe( 0 );
+
+	} );
+
+	it( 'reads files whole when no head declares a world', async () => {
+
+		const late = enc.encode( '#'.repeat( 5e6 ) + '\nWorldBegin\n' );
+		const files = { 'late.pbrt': late, 'other.pbrt': enc.encode( 'Translate 1 0 0\n' ) };
+		const src = lazySource( files );
+		src.readHead = async ( path, bytes ) => files[ path ].slice( 0, bytes );
+
+		expect( await pickEntryPathFrom( new VirtualFS( {}, src ) ) ).toBe( 'late.pbrt' );
+		expect( src.reads ).toContain( 'late.pbrt' );
+
+	} );
+
 	it( 'still works when some entries are resident and others are not', async () => {
 
 		const src = lazySource( FILES );

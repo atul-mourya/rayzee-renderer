@@ -2,6 +2,7 @@ import { TreeletOptimizer } from './TreeletOptimizer.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 // Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
 import { createLogger, fmt } from '../utils/Logger.js';
+import { foldLeaves } from './BVHLeafFold.js';
 
 const log = createLogger( 'bvh' );
 
@@ -68,6 +69,7 @@ export class BVHBuilder {
 
 		this.useWorker = true;
 		this.maxLeafSize = 8;
+		this.foldLeaves = false;
 		this.numBins = 32;
 		this.minBins = 8;
 		this.maxBins = 64;
@@ -539,7 +541,8 @@ export class BVHBuilder {
 	_buildSyncAndFlatten( triangles, depth, progressCallback ) {
 
 		const root = this.buildSync( triangles, depth, progressCallback );
-		const bvhData = this.flattenBVH( root );
+		const flat = this.flattenBVH( root );
+		const bvhData = this.foldLeaves ? foldLeaves( flat ) : flat;
 		// Return reordered triangles if available (avoids 362MB copy)
 		const reorderedTriangles = this.reorderedTriangleData || null;
 		const originalToBvh = this.originalToBvhMap || null;

@@ -28,7 +28,7 @@ import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf,
 	writeRayRadiance, writeGBuffer,
-	writeMediumStack, writeFeatureThroughput,
+	writeMediumStack, writeFeatureThroughput, writeRngState,
 } from '../Processor/PackedRayBuffer.js';
 
 const WG_SIZE = 16;
@@ -36,7 +36,7 @@ const WG_SIZE = 16;
 export function buildGenerateKernel( params ) {
 
 	const {
-		rayBufferRW, rngBufferRW, gBufferRW,
+		rayBufferRW, hitBufferRW, gBufferRW,
 		resolution, frame,
 		cameraWorldMatrix, cameraProjectionMatrixInverse,
 		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
@@ -104,7 +104,7 @@ export function buildGenerateKernel( params ) {
 
 		writeMediumStack( rayBufferRW, rayID, uint( 0 ), uint( transmissiveBounces ), float( 1.0 ), float( 1.0 ), float( 1.0 ) );
 
-		rngBufferRW.element( rayID ).assign( seed );
+		writeRngState( hitBufferRW, rayID, seed );
 
 	};
 

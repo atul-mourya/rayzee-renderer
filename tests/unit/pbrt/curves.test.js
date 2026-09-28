@@ -133,4 +133,100 @@ describe( 'curve tessellation', () => {
 
 	} );
 
+	describe( 'adaptive', () => {
+
+		// A leaf that runs straight and then hooks over at the end.
+		const HOOK = [ 0, 0, 0, 10, 0, 0, 20, 0, 0, 30, 0, 0, 40, 0, 0, 50, 0, 0, 55, 5, 0, 55, 10, 0 ];
+
+		const rows = ( built, sides ) => built.positions.length / 3 / ( sides >= 3 ? sides : sides * 2 );
+
+		it( 'is the uniform strip, bit for bit, at tolerance 0', () => {
+
+			const spec = { P: HOOK, basis: 'bspline', width0: 1, width1: 0.4, steps: 2, sides: 2 };
+			const uniform = tessellateCurve( spec );
+			const zero = tessellateCurve( { ...spec, tolerance: 0 } );
+			expect( Array.from( zero.positions ) ).toEqual( Array.from( uniform.positions ) );
+			expect( Array.from( zero.indices ) ).toEqual( Array.from( uniform.indices ) );
+
+		} );
+
+		it( 'takes a straight curve in one segment', () => {
+
+			const P = [];
+			for ( let i = 0; i < 12; i ++ ) P.push( i, 0, 0 );
+			const { indices } = tessellateCurve( { P, basis: 'bspline', width0: 1, width1: 1, steps: 2, sides: 1, tolerance: 0.1 } );
+			expect( indices.length / 3 ).toBe( 2 );
+
+		} );
+
+		it( 'keeps the bent end and drops the straight run', () => {
+
+			const spec = { P: HOOK, basis: 'bspline', width0: 1, width1: 1, steps: 2, sides: 1 };
+			const uniform = tessellateCurve( spec );
+			const adaptive = tessellateCurve( { ...spec, tolerance: 0.1 } );
+			expect( rows( adaptive, 1 ) ).toBeLessThan( rows( uniform, 1 ) );
+			expect( rows( adaptive, 1 ) ).toBeGreaterThan( 2 );
+
+		} );
+
+		it( 'keeps a subset of the uniform rings, facing the same way', () => {
+
+			const spec = { P: HOOK, basis: 'bspline', width0: 1, width1: 0.4, steps: 2, sides: 2 };
+			const uniform = tessellateCurve( spec );
+			const adaptive = tessellateCurve( { ...spec, tolerance: 0.1 } );
+
+			const ring = ( built, i ) => Array.from( built.positions.subarray( i * 12, i * 12 + 12 ) );
+			const all = [];
+			for ( let i = 0; i < rows( uniform, 2 ); i ++ ) all.push( ring( uniform, i ).join( ',' ) );
+			for ( let i = 0; i < rows( adaptive, 2 ); i ++ ) expect( all ).toContain( ring( adaptive, i ).join( ',' ) );
+
+		} );
+
+		it( 'never strays further than the tolerance or the uniform strip does', () => {
+
+			const width = 1, tolerance = 0.1;
+			const spec = { P: HOOK, basis: 'bspline', width0: width, width1: width, steps: 2, sides: 1 };
+			const truth = tessellateCurve( { ...spec, steps: 64 } );
+			const uniform = tessellateCurve( spec );
+			const adaptive = tessellateCurve( { ...spec, tolerance } );
+
+			const centres = built => {
+
+				const out = [];
+				for ( let i = 0; i < built.positions.length; i += 6 ) out.push( [ 0, 1, 2 ].map( c => ( built.positions[ i + c ] + built.positions[ i + 3 + c ] ) / 2 ) );
+				return out;
+
+			};
+
+			const strayOf = line => {
+
+				let worst = 0;
+				for ( const p of centres( truth ) ) {
+
+					let best = Infinity;
+					for ( let k = 0; k < line.length - 1; k ++ ) {
+
+						const a = line[ k ], b = line[ k + 1 ];
+						const d = [ 0, 1, 2 ].map( c => b[ c ] - a[ c ] );
+						const len2 = d[ 0 ] ** 2 + d[ 1 ] ** 2 + d[ 2 ] ** 2;
+						const t = Math.min( 1, Math.max( 0, ( ( p[ 0 ] - a[ 0 ] ) * d[ 0 ] + ( p[ 1 ] - a[ 1 ] ) * d[ 1 ] + ( p[ 2 ] - a[ 2 ] ) * d[ 2 ] ) / len2 ) );
+						best = Math.min( best, Math.hypot( p[ 0 ] - a[ 0 ] - t * d[ 0 ], p[ 1 ] - a[ 1 ] - t * d[ 1 ], p[ 2 ] - a[ 2 ] - t * d[ 2 ] ) );
+
+					}
+
+					worst = Math.max( worst, best );
+
+				}
+
+				return worst;
+
+			};
+
+			const allowed = Math.max( strayOf( centres( uniform ) ), tolerance * width / 2 );
+			expect( strayOf( centres( adaptive ) ) ).toBeLessThanOrEqual( allowed * 1.05 );
+
+		} );
+
+	} );
+
 } );

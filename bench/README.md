@@ -21,6 +21,7 @@ npm run bench:denoise
 npm run bench:memory
 npm run bench:perf
 npm run bench:ab -- main    # gate perf against another git ref
+npm run bench:storage       # raw OPFS throughput (see "Storage" below)
 ```
 
 Useful flags: `--only scene-a,scene-b`, `--verbose`, `--truth` (regenerate ground truth), `--scene <id>` and `--cycles <n>` for the memory suite.
@@ -550,6 +551,27 @@ itself a known bug.
 
 Both gates were verified against the unfixed engine: `live` reports 4 of 4 and `reachable` 6.6
 MiB/cycle, and the suite exits 1. A gate that has never been shown to fail is not a gate.
+
+### Storage — throughput numbers, not a gate
+
+`npm run bench:storage` measures the origin private file system the engine keeps its caches and
+spill in: sync-access-handle and writable writes, `File.slice` reads, random reads, and with
+`--gz archive.tar.gz` the gunzip-to-disk pipeline `.tar.gz` archives are unpacked through. Each runs
+with and without cross-origin isolation, because production (GitHub Pages) is not isolated. It is
+served by a small static server rather than Vite, so those headers are the only difference between
+the two runs.
+
+```bash
+npm run bench:storage -- --size 2048            # MiB written and read (default 2048)
+npm run bench:storage -- --gz scene.tar.gz      # add the gunzip pipeline
+npm run bench:storage -- --firefox              # the same in Firefox (FIREFOX_PATH)
+npm run bench:storage -- --engine               # the engine's own round trip (exits 1 on a mismatch)
+npm run bench:storage -- --engine --tar a.tar --gz b.tar.gz
+```
+
+The last form loads each archive through the engine and prints time, triangles and peak memory:
+a `.tar` read in place, and a `.tar.gz` three times — the first load (unpacked to storage), the
+second (reopened from storage) and one with storage off, as before storage existed.
 
 ## Baselines are machine-specific
 

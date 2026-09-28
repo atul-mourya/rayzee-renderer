@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useRef, useEffect, lazy, Suspense } from 'react';
+import { useMemo, useCallback, useRef, useEffect, useState, lazy, Suspense } from 'react';
 import { useStore, usePathTracerStore } from '@/store';
 import AuthProvider from './AuthProvider';
 import MenuBar from './MenuBar';
@@ -8,6 +8,8 @@ import { useImportUrl } from '@/hooks/use-import-url';
 
 // Lazy load the ImportUrlModal since it's only used when opening import dialog
 const ImportUrlModal = lazy( () => import( './ImportUrlModal' ) );
+const StorageDialog = lazy( () => import( './StorageDialog' ) );
+const RecentDialog = lazy( () => import( './RecentDialog' ) );
 
 // Loading fallback for modal
 const ModalLoadingFallback = () => (
@@ -35,6 +37,13 @@ const TopBar = () => {
 		appModeRef.current = appMode;
 
 	}, [ appMode ] );
+
+	const [ storageOpen, setStorageOpen ] = useState( false );
+	const openStorage = useCallback( () => setStorageOpen( true ), [] );
+	const closeStorage = useCallback( () => setStorageOpen( false ), [] );
+	const [ recentOpen, setRecentOpen ] = useState( false );
+	const openRecent = useCallback( () => setRecentOpen( true ), [] );
+	const closeRecent = useCallback( () => setRecentOpen( false ), [] );
 
 	// Use custom hooks
 	const {
@@ -76,7 +85,7 @@ const TopBar = () => {
 			{ ( { user, handleLoginClick, handleSignOut } ) => (
 				<div className="flex items-center h-10 border-b">
 					{logo}
-					<MenuBar onOpenImportModal={openImportModal} />
+					<MenuBar onOpenImportModal={openImportModal} onOpenStorage={openStorage} onOpenRecent={openRecent} />
 
 					<div className="grow" />
 					<ViewportTabs currentMode={appMode} onModeChange={handleTabChange} />
@@ -99,6 +108,16 @@ const TopBar = () => {
 							isImporting={modalState.isImporting}
 						/>
 					</Suspense>
+					{ storageOpen && (
+						<Suspense fallback={<ModalLoadingFallback />}>
+							<StorageDialog isOpen={storageOpen} onClose={closeStorage} />
+						</Suspense>
+					) }
+					{ recentOpen && (
+						<Suspense fallback={<ModalLoadingFallback />}>
+							<RecentDialog isOpen={recentOpen} onClose={closeRecent} />
+						</Suspense>
+					) }
 				</div>
 			) }
 		</AuthProvider>
