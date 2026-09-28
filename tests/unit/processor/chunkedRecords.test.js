@@ -282,3 +282,31 @@ describe( 'ChunkedRecords.grow / trimInPlace', () => {
 	} );
 
 } );
+
+describe( 'ChunkedRecords.release', () => {
+
+	for ( const lazy of [ false, true ] ) {
+
+		it( `drops only the chunks inside a range and brings them back through every view (${lazy ? 'lazy' : 'eager'})`, () => {
+
+			const store = lazy ? ChunkedRecords.lazy( 10, 2, Uint32Array, 2 * 4 * 3 ) : new ChunkedRecords( 10, 2, Uint32Array, 2 * 4 * 3 );
+			for ( let i = 0; i < 10; i ++ ) store.chunkFor( i ).fill( i, store.baseOf( i ), store.baseOf( i ) + 2 );
+			const floats = store.viewAs( Float32Array );
+
+			// Records 2..9: chunk 0 holds 0-2 and chunk 3 holds 9, so only chunks 1 and 2 go.
+			expect( store.release( 2, 8 ) ).toBe( 2 * 3 * 2 * 4 );
+			expect( store.chunks[ 0 ] ).toBeDefined();
+			expect( store.chunks[ 1 ] ).toBeUndefined();
+			expect( store.chunks[ 2 ] ).toBeUndefined();
+			expect( floats.chunks[ 1 ] ).toBeUndefined();
+
+			store.setRecords( 3, Uint32Array.from( { length: 12 }, ( _, i ) => 100 + i ) );
+			expect( store.chunkFor( 4 )[ store.baseOf( 4 ) ] ).toBe( 102 );
+			expect( floats.chunkFor( 4 ).buffer ).toBe( store.chunkFor( 4 ).buffer );
+			expect( floats.chunkFor( 7 ).buffer ).toBe( store.chunkFor( 7 ).buffer );
+
+		} );
+
+	}
+
+} );

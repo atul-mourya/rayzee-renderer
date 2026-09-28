@@ -134,7 +134,7 @@ export class ChunkedRecords {
 		const lanes = Math.min( this.recordsPerChunk, this.recordCount - from ) * this.lanesPerRecord;
 		const chunk = this.chunks[ k ] = allocChunk( this.LaneType, lanes, this.shared );
 
-		for ( const v of this._views ) {
+		for ( const v of this._liveViews() ) {
 
 			v.chunks[ k ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
 
@@ -411,6 +411,31 @@ export class ChunkedRecords {
 
 	}
 
+	/**
+	 * Lets go of the chunks lying wholly inside records [start, start+count) without writing them
+	 * anywhere: their contents are about to be rewritten, and the next access allocates them again.
+	 * @returns {number} bytes let go
+	 */
+	release( start, count ) {
+
+		const rpc = this.recordsPerChunk;
+		const first = Math.ceil( start / rpc );
+		const end = Math.floor( ( start + count ) / rpc );
+		let bytes = 0;
+		for ( let k = first; k < end; k ++ ) {
+
+			const chunk = this.chunks[ k ];
+			if ( ! chunk ) continue;
+			bytes += chunk.byteLength;
+			this.chunks[ k ] = undefined;
+			for ( const v of this._liveViews() ) v.chunks[ k ] = undefined;
+
+		}
+
+		return bytes;
+
+	}
+
 	/** {@link trimTo} on this store itself, keeping what it has spilled. */
 	trimInPlace( recordCount ) {
 
@@ -440,10 +465,11 @@ export class ChunkedRecords {
 			this.recordCount, this.lanesPerRecord, this.recordsPerChunk
 		);
 		v.LaneType = LaneType;
+		// A view never allocates for itself: a chunk it finds missing is the storage's to create.
+		v._owner = this;
 
 		if ( this._views ) {
 
-			v._owner = this;
 			this._views.push( v );
 
 		} else {

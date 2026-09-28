@@ -30,8 +30,8 @@ import { getAssetConfig } from '../AssetConfig.js';
 import { cachedObjectURL, DOWNLOAD_POLICY } from '../Storage/DownloadCache.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
-// Triangles converted per staging pass: 1M is 48 + 32 MB of staging.
-const TRIANGLE_UPLOAD_SLICE = 1 << 20;
+// Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
+const TRIANGLE_UPLOAD_SLICE = 1 << 18;
 
 const log = createLogger( 'pathtracer' );
 
@@ -828,9 +828,12 @@ export class PathTracerStage extends RenderStage {
 		const GEO = TRI_GEO_ROWS * 4, SHADE = TRI_SHADE_ROWS * 4;
 		const records = this._triangleRecords;
 		const perChunk = source ? count : records ? records.recordsPerChunk : this._triangleRecordCount;
-		const slice = Math.min( count, TRIANGLE_UPLOAD_SLICE );
-		const geoStage = geo ? new Uint32Array( slice * GEO ) : null;
-		const shadeStage = shade ? new Uint32Array( slice * SHADE ) : null;
+		// One staging pair for every upload: a fresh one per chunk was churn that failed to
+		// allocate on a scene already at the edge of the address space.
+		const slice = TRIANGLE_UPLOAD_SLICE;
+		this._triangleStaging ??= { geo: new Uint32Array( slice * GEO ), shade: new Uint32Array( slice * SHADE ) };
+		const geoStage = this._triangleStaging.geo;
+		const shadeStage = this._triangleStaging.shade;
 
 		for ( let at = start, end = start + count; at < end; ) {
 
@@ -1778,6 +1781,7 @@ export class PathTracerStage extends RenderStage {
 		// Clear data references
 		this.triangleGeoAttr = null;
 		this.triangleShadeAttr = null;
+		this._triangleStaging = null;
 		this._triangleRecords = null;
 		this._triangleFlat = null;
 		this._triangleRecordCount = 0;

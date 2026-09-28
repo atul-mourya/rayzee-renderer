@@ -264,10 +264,11 @@ export class SceneProcessor {
 		// Spilled as it is built, the BVH is never resident as a whole.
 		if ( this._progressive ) estimate.total -= estimate.bvh;
 		// Streamed, neither are the triangles: what is held is the resident cap plus the largest
-		// mesh, twice over and its build scratch while the parallel builder has it.
+		// mesh in the parallel builder — its copy and 44 B a triangle of scratch, the store's own
+		// chunks for it let go meanwhile.
 		if ( this._streaming ) {
 
-			const resident = STREAM_RESIDENT_BYTES + largestMeshTriangles( object ) * ( 2 * TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 + 44 );
+			const resident = STREAM_RESIDENT_BYTES + largestMeshTriangles( object ) * ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 + 44 );
 			estimate.total -= Math.max( 0, estimate.triangles - resident );
 
 		}
@@ -1209,6 +1210,9 @@ export class SceneProcessor {
 
 		const meshTriData = new Uint32Array( new SharedArrayBuffer( range.count * this.triangles.lanesPerRecord * 4 ) );
 		this.triangles.readRecords( range.start, range.count, meshTriData );
+		// The builder has its own copy and the order comes back into every record of the range, so
+		// the chunks wholly inside it can go meanwhile — 1 GB at the build's peak for a 15M mesh.
+		this.triangles.release( range.start, range.count );
 
 		const result = await buildBVHParallel( meshTriData, this.config.bvhDepth, null, workerOpts );
 
