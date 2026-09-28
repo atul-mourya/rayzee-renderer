@@ -728,7 +728,11 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   extraction waits while more than `STREAM_RESIDENT_BYTES` (1.5 GB) of records are in memory — so
   the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
   bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
-  starved the worker messages it waited for (a hung tab). Otherwise the spill happens **during the
+  starved the worker messages it waited for (a hung tab). ⚠️ A shared buffer handed
+  to the storage worker lives until that worker next collects garbage, which it barely does: every
+  spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
+  `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
+  for that reason. Otherwise the spill happens **during the
   build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
   chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
   extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from

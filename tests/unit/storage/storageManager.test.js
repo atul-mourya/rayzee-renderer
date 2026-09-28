@@ -81,6 +81,36 @@ describe( 'StorageManager', () => {
 
 	} );
 
+	it( 'hands the worker a copy of a shared buffer, never the shared buffer itself', async () => {
+
+		const area = ctx.storage.area( 'archives' );
+		const writer = await area.create( 'k' );
+		const transport = ctx.storage._transport;
+		const sent = [];
+		const call = transport.call.bind( transport );
+		transport.call = ( op, args, list ) => {
+
+			if ( op === 'write' ) sent.push( { buffer: args.buffer, list } );
+			return call( op, args, list );
+
+		};
+
+		const shared = new Uint8Array( new SharedArrayBuffer( 8 ) );
+		shared.set( [ 1, 2, 3, 4, 5, 6, 7, 8 ] );
+		await writer.write( 'f', shared.subarray( 2, 6 ) );
+		shared.fill( 0 );
+		await writer.commit();
+		transport.call = call;
+
+		// Held by the worker, a shared buffer stays alive until that worker collects garbage.
+		expect( sent[ 0 ].buffer ).toBeInstanceOf( ArrayBuffer );
+		expect( sent[ 0 ].list ).toEqual( [ sent[ 0 ].buffer ] );
+		const entry = await area.open( 'k' );
+		expect( [ ...new Uint8Array( await ( await entry.file( 'f' ) ).arrayBuffer() ) ] ).toEqual( [ 3, 4, 5, 6 ] );
+		entry.release();
+
+	} );
+
 	it( 'hides an entry that never committed, and the sweep removes it', async () => {
 
 		const area = ctx.storage.area( 'scenes' );

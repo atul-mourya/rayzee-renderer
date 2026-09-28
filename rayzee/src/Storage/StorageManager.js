@@ -37,7 +37,19 @@ function transferable( data, { copy, transfer } ) {
 	const { buffer, byteOffset, byteLength } = data;
 	const shared = typeof SharedArrayBuffer !== 'undefined' && buffer instanceof SharedArrayBuffer;
 
-	if ( ! copy || shared ) return { args: { buffer, byteOffset, byteLength }, list: [] };
+	if ( ! copy ) return { args: { buffer, byteOffset, byteLength }, list: [] };
+
+	// A shared buffer handed over as is lives until the storage worker next collects garbage,
+	// which a worker allocating almost nothing may not do for the rest of a load: 2.5 GB of spilled
+	// 64 MB chunks stayed in memory after they were on disk. A copy is transferred and goes with it.
+	if ( shared ) {
+
+		const clone = new Uint8Array( byteLength );
+		clone.set( new Uint8Array( buffer, byteOffset, byteLength ) );
+		return { args: { buffer: clone.buffer }, list: [ clone.buffer ] };
+
+	}
+
 	if ( transfer && byteOffset === 0 && byteLength === buffer.byteLength ) return { args: { buffer }, list: [ buffer ] };
 
 	const clone = buffer.slice( byteOffset, byteOffset + byteLength );
