@@ -248,3 +248,113 @@ describe( 'PBRT parser', () => {
 	} );
 
 } );
+
+describe( 'PBRT parser: repeated includes', () => {
+
+	const LEAF = 'AttributeBegin\n NamedMaterial "leaf"\n Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]\nAttributeEnd\n';
+	const PREAMBLE = 'MakeNamedMaterial "leaf" "string type" [ "diffuse" ]\nWorldBegin\n';
+	const placedAt = x => `AttributeBegin\n Translate ${x} 0 0\n Include "leaves.pbrt"\nAttributeEnd\n`;
+
+	const parseWith = async ( files, top, opts = {} ) => {
+
+		const reads = {};
+		const parser = new PBRTParser( {
+			resolveInclude: p => {
+
+				reads[ p ] = ( reads[ p ] ?? 0 ) + 1;
+				return files[ p ] ?? null;
+
+			},
+			...opts
+		} );
+		return { ir: await parser.parse( top ), reads };
+
+	};
+
+	it( 'places a file included again instead of reading it again', async () => {
+
+		const { ir, reads } = await parseWith( { 'leaves.pbrt': LEAF + LEAF }, PREAMBLE + placedAt( 1 ) + placedAt( 2 ) + placedAt( 3 ) );
+
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 1 );
+		expect( ir.shapes ).toHaveLength( 0 );
+		expect( ir.objects.size ).toBe( 1 );
+		const [[ name, template ]] = ir.objects;
+		expect( template ).toHaveLength( 2 );
+		expect( Array.from( template[ 0 ].relativeCTM ) ).toEqual( Array.from( { length: 16 }, ( _, i ) => i % 5 === 0 ? 1 : 0 ) );
+
+		const list = ir.instances.get( name );
+		expect( list.count ).toBe( 3 );
+		expect( [ 0, 1, 2 ].map( i => list.matrices[ i * 16 + 12 ] ) ).toEqual( [ 1, 2, 3 ] );
+
+	} );
+
+	it( 'reads it again when it changes what follows it', async () => {
+
+		const leaky = { 'leaves.pbrt': 'Translate 5 0 0\n' + LEAF };
+		const { ir, reads } = await parseWith( leaky, PREAMBLE + placedAt( 1 ) + placedAt( 2 ) );
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 2 );
+		expect( ir.shapes ).toHaveLength( 2 );
+
+		const defines = { 'leaves.pbrt': 'MakeNamedMaterial "leaf" "string type" [ "conductor" ]\n' + LEAF };
+		const second = await parseWith( defines, PREAMBLE + placedAt( 1 ) + placedAt( 2 ) );
+		expect( second.reads[ 'leaves.pbrt' ] ).toBe( 2 );
+
+		const absolute = { 'leaves.pbrt': 'AttributeBegin\n Transform [ 1 0 0 0  0 1 0 0  0 0 1 0  9 9 9 1 ]\n' + LEAF + 'AttributeEnd\n' };
+		const third = await parseWith( absolute, PREAMBLE + placedAt( 1 ) + placedAt( 2 ) );
+		expect( third.reads[ 'leaves.pbrt' ] ).toBe( 2 );
+
+	} );
+
+	it( 'keeps a separate reading under a different material', async () => {
+
+		const top = PREAMBLE + 'Material "diffuse"\n' + placedAt( 1 ) + 'Material "conductor"\n' + placedAt( 2 );
+		const { reads, ir } = await parseWith( { 'leaves.pbrt': 'Shape "sphere"\n' }, top );
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 2 );
+		expect( ir.shapes.map( s => s.material.type ) ).toEqual( [ 'diffuse', 'conductor' ] );
+
+	} );
+
+	it( 'reads every time with instanceIncludes off', async () => {
+
+		const { ir, reads } = await parseWith( { 'leaves.pbrt': LEAF }, PREAMBLE + placedAt( 1 ) + placedAt( 2 ), { instanceIncludes: false } );
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 2 );
+		expect( ir.shapes ).toHaveLength( 2 );
+		expect( ir.objects.size ).toBe( 0 );
+
+	} );
+
+	it( 'reads an inner file again once its first reading went into an outer template', async () => {
+
+		const files = {
+			'outer.pbrt': 'Shape "sphere"\nInclude "leaves.pbrt"\n',
+			'leaves.pbrt': LEAF
+		};
+		const outerAt = x => `AttributeBegin\n Translate ${x} 0 0\n Include "outer.pbrt"\nAttributeEnd\n`;
+		const { ir, reads } = await parseWith( files, PREAMBLE + outerAt( 1 ) + outerAt( 2 ) + placedAt( 7 ) );
+
+		expect( reads[ 'outer.pbrt' ] ).toBe( 1 );
+		expect( reads[ 'leaves.pbrt' ] ).toBe( 2 );
+		expect( ir.shapes ).toHaveLength( 1 );
+		expect( ir.shapes[ 0 ].ctm[ 12 ] ).toBe( 7 );
+		expect( [ ...ir.objects.values() ][ 0 ] ).toHaveLength( 2 );
+
+	} );
+
+	it( 'does not reuse a file that holds its own placements or lights', async () => {
+
+		const files = {
+			'placements.pbrt': 'ObjectInstance "tree"\n',
+			'lamp.pbrt': 'AttributeBegin\n AreaLightSource "diffuse"\n Shape "sphere"\nAttributeEnd\n'
+		};
+		const top = 'WorldBegin\nObjectBegin "tree"\nShape "sphere"\nObjectEnd\n' +
+			'Include "placements.pbrt"\nInclude "placements.pbrt"\nInclude "lamp.pbrt"\nInclude "lamp.pbrt"\n';
+		const { ir, reads } = await parseWith( files, top );
+
+		expect( reads[ 'placements.pbrt' ] ).toBe( 2 );
+		expect( reads[ 'lamp.pbrt' ] ).toBe( 2 );
+		expect( ir.instances.get( 'tree' ).count ).toBe( 2 );
+		expect( ir.shapes ).toHaveLength( 2 );
+
+	} );
+
+} );

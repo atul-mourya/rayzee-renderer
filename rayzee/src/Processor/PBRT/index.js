@@ -19,7 +19,7 @@ import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 
 export { PBRTParser } from './PBRTParser.js';
-export { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
+export { PBRTSceneBuilder, PBRT_BUILD_REVISION } from './PBRTSceneBuilder.js';
 export { tokenize } from './PBRTTokenizer.js';
 export { findFrameSequence, SEQUENCE_FPS } from './PBRTAnimation.js';
 
@@ -378,7 +378,8 @@ export async function loadPBRTScene( args ) {
 			// Depth-first, so this keeps only the open include chain live rather than every
 			// scene file at once — the difference between 5.7 GB resident and a few MB.
 			releaseInclude: ( include, currentDir ) => vfs.releasePath( include, currentDir ),
-			maxPlacements: args.maxPlacements
+			maxPlacements: args.maxPlacements,
+			instanceIncludes: args.instanceIncludes
 		} );
 
 		return parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
@@ -450,6 +451,7 @@ export async function loadPBRTScene( args ) {
 		mergeShapesAbove: args.mergeShapesAbove,
 		curveSteps: args.curveSteps,
 		curveSides: args.curveSides,
+		curveTolerance: args.curveTolerance,
 		resolvePLY: async ( filename ) => {
 
 			const rec = vfs.findRecord( filename );

@@ -25,7 +25,7 @@ import { VERSION } from '../version.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { loadPBRTScene, pickEntryPath, VirtualFS } from './PBRT/index.js';
+import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -764,6 +764,10 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {number} [options.mergeShapesAbove] - merge small non-instanced shapes past this count.
 	 * @param {number} [options.curveSteps] - samples per spline span when tessellating curves.
 	 * @param {number} [options.curveSides] - 1 ribbon, 2 crossed ribbons, >=3 closed tube.
+	 * @param {number} [options.curveTolerance] - how far a curve strip may stray from the curve, as a
+	 *   fraction of its half-width (default 0.05); 0 samples every span `curveSteps` times.
+	 * @param {boolean} [options.instanceIncludes] - place a file included again under the same
+	 *   material as another instance of its first reading (default true).
 	 */
 	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
 
@@ -1183,9 +1187,10 @@ export class AssetLoader extends EventDispatcher {
 		const shape = {
 			animation: options.animation, maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements,
 			mergeShapesAbove: options.mergeShapesAbove, curveSteps: options.curveSteps, curveSides: options.curveSides,
+			curveTolerance: options.curveTolerance, instanceIncludes: options.instanceIncludes,
 		};
 		const graphKey = source?.archiveId
-			? this._keyed( `pbrt:${SCENE_GRAPH_FORMAT}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )
+			? this._keyed( `pbrt:${SCENE_GRAPH_FORMAT}.${PBRT_BUILD_REVISION}:${VERSION}`, `${source.archiveId}|${entryPath ?? ''}|${[ ...( source.elements ?? [] ) ].sort().join( ',' )}|${JSON.stringify( shape )}` )
 			: null;
 
 		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, { imageFromBytes, envFromBytes } ) : null;

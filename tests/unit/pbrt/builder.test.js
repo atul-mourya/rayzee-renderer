@@ -573,10 +573,10 @@ describe( 'PBRT scene builder', () => {
 			'b/objects.pbrt': enc.encode( `ObjectBegin "shapeB"\n${shape}\nObjectEnd\n` )
 		};
 
-		const { placementCount, droppedNoTemplate } = await loadPBRTScene( buildArgs( { vfs } ) );
+		const { triangleCount, droppedNoTemplate } = await loadPBRTScene( buildArgs( { vfs } ) );
 
 		expect( droppedNoTemplate ).toBe( 0 );
-		expect( placementCount ).toBe( 2 );
+		expect( triangleCount ).toBe( 2 );
 
 	} );
 
@@ -590,6 +590,74 @@ describe( 'PBRT scene builder', () => {
 
 		expect( droppedNoTemplate ).toBe( 2 );
 		expect( warnings.some( w => /has no template/.test( w ) ) ).toBe( true );
+
+	} );
+
+	describe( 'repeated includes', () => {
+
+		const leaf = x => `AttributeBegin Translate 0 ${x} 0 Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ] AttributeEnd`;
+		const tree = [ leaf( 0 ), leaf( 1 ), leaf( 2 ) ].join( '\n' );
+		const scene = 'WorldBegin\nMaterial "diffuse"\n' + [ 1, 2, 3, 4 ].map( x =>
+			`AttributeBegin Translate ${x * 10} 0 0 Rotate ${x * 30} 0 1 0 Include "tree.pbrt" AttributeEnd`
+		).join( '\n' );
+
+		const worldVertices = group => {
+
+			const out = [];
+			const p = new Vector3(), m = new Matrix4();
+			group.updateMatrixWorld( true );
+			for ( const mesh of group.children ) {
+
+				if ( ! mesh.isMesh ) continue;
+				const pos = mesh.geometry.getAttribute( 'position' );
+				const count = mesh.isInstancedMesh ? mesh.count : 1;
+				for ( let i = 0; i < count; i ++ ) {
+
+					if ( mesh.isInstancedMesh ) mesh.getMatrixAt( i, m );
+					else m.identity();
+					m.premultiply( mesh.matrixWorld );
+					for ( let v = 0; v < pos.count; v ++ ) out.push( p.fromBufferAttribute( pos, v ).applyMatrix4( m ).toArray().map( c => c.toFixed( 4 ) ).join( ',' ) );
+
+				}
+
+			}
+
+			return out.sort();
+
+		};
+
+		it( 'stores a tree placed four times once, merged, with the same world geometry', async () => {
+
+			const vfs = () => ( { 'scene.pbrt': enc.encode( scene ), 'tree.pbrt': enc.encode( tree ) } );
+			const shared = await loadPBRTScene( buildArgs( { vfs: vfs() } ) );
+			const copied = await loadPBRTScene( buildArgs( { vfs: vfs(), instanceIncludes: false } ) );
+
+			expect( copied.triangleCount ).toBe( 12 );
+			expect( shared.triangleCount ).toBe( 3 );
+
+			const batches = shared.group.children.filter( c => c.isInstancedMesh );
+			expect( batches ).toHaveLength( 1 );
+			expect( batches[ 0 ].count ).toBe( 4 );
+			expect( batches[ 0 ].geometry.index.count ).toBe( 9 );
+
+			expect( worldVertices( shared.group ) ).toEqual( worldVertices( copied.group ) );
+
+		} );
+
+		it( 'makes the files included at the same transforms one instance, not one each', async () => {
+
+			const scene = 'WorldBegin\nMaterial "diffuse"\n' + [ 1, 2, 3 ].map( x =>
+				`AttributeBegin Translate ${x * 10} 0 0 Include "a.pbrt" Include "b.pbrt" AttributeEnd`
+			).join( '\n' );
+			const vfs = { 'scene.pbrt': enc.encode( scene ), 'a.pbrt': enc.encode( tree ), 'b.pbrt': enc.encode( tree ) };
+			const { group, triangleCount } = await loadPBRTScene( buildArgs( { vfs } ) );
+
+			const batches = group.children.filter( c => c.isInstancedMesh );
+			expect( batches ).toHaveLength( 1 );
+			expect( batches[ 0 ].count ).toBe( 3 );
+			expect( triangleCount ).toBe( 6 );
+
+		} );
 
 	} );
 

@@ -635,6 +635,13 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
   and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
   killed the renderer outright — so raising it is a deliberate act on a fresh browser.
+- **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
+  a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
+  file included again under the same material, with no side effects, is placed as an instance of
+  its first reading (`instanceIncludes`). Templates placed at identical transforms become one, and
+  a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
+  Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
+  what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from

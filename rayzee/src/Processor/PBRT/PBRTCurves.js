@@ -58,48 +58,111 @@ function cross( a, b, out ) {
 
 }
 
+function spanCount( P, basis ) {
+
+	const cps = P.length / 3;
+	// bspline: every window of 4 control points is one span. bezier: 4 points per span,
+	// sharing an endpoint between consecutive spans.
+	return basis === 'bspline' ? cps - 3 : Math.max( 1, ( cps - 1 ) / 3 );
+
+}
+
+/** The centreline at spline parameter u in [0, spans], written to out[o..o+2]. */
+function pointAt( P, basis, spans, u, w, out, o ) {
+
+	let span = Math.floor( u );
+	if ( span >= spans ) span = spans - 1;
+	const t = u - span;
+
+	if ( basis === 'bspline' ) bsplineWeights( t, w );
+	else bezierWeights( t, w );
+
+	const base = basis === 'bspline' ? span : span * 3;
+	let x = 0, y = 0, z = 0;
+	for ( let k = 0; k < 4; k ++ ) {
+
+		const c = ( base + k ) * 3;
+		x += w[ k ] * P[ c ];
+		y += w[ k ] * P[ c + 1 ];
+		z += w[ k ] * P[ c + 2 ];
+
+	}
+
+	out[ o ] = x; out[ o + 1 ] = y; out[ o + 2 ] = z;
+
+}
+
 /**
  * Sample a curve's centreline.
  * @returns {{points: Float64Array, count: number}} count points, 3 floats each
  */
 function sampleCenterline( P, basis, steps ) {
 
-	const cps = P.length / 3;
-	// bspline: every window of 4 control points is one span. bezier: 4 points per span,
-	// sharing an endpoint between consecutive spans.
-	const spans = basis === 'bspline' ? cps - 3 : Math.max( 1, ( cps - 1 ) / 3 );
+	const spans = spanCount( P, basis );
 	if ( spans < 1 ) return null;
 
 	const total = Math.max( 1, Math.round( steps * spans ) );
 	const points = new Float64Array( ( total + 1 ) * 3 );
 	const w = [ 0, 0, 0, 0 ];
+	for ( let i = 0; i <= total; i ++ ) pointAt( P, basis, spans, ( i / total ) * spans, w, points, i * 3 );
 
-	for ( let i = 0; i <= total; i ++ ) {
+	return { points, count: total + 1, spans };
 
-		const u = ( i / total ) * spans;
-		let span = Math.floor( u );
-		if ( span >= spans ) span = spans - 1;
-		const t = u - span;
+}
 
-		if ( basis === 'bspline' ) bsplineWeights( t, w );
-		else bezierWeights( t, w );
+/** Distance from point a (in pa) to the segment from b to c (in pb). */
+function segmentDistance( pa, a, pb, b, c ) {
 
-		const base = basis === 'bspline' ? span : span * 3;
-		let x = 0, y = 0, z = 0;
-		for ( let k = 0; k < 4; k ++ ) {
+	const ax = pa[ a * 3 ], ay = pa[ a * 3 + 1 ], az = pa[ a * 3 + 2 ];
+	const bx = pb[ b * 3 ], by = pb[ b * 3 + 1 ], bz = pb[ b * 3 + 2 ];
+	const dx = pb[ c * 3 ] - bx, dy = pb[ c * 3 + 1 ] - by, dz = pb[ c * 3 + 2 ] - bz;
+	const len2 = dx * dx + dy * dy + dz * dz;
+	let t = len2 > 0 ? ( ( ax - bx ) * dx + ( ay - by ) * dy + ( az - bz ) * dz ) / len2 : 0;
+	t = t < 0 ? 0 : t > 1 ? 1 : t;
+	return Math.hypot( ax - bx - t * dx, ay - by - t * dy, az - bz - t * dz );
 
-			const o = ( base + k ) * 3;
-			x += w[ k ] * P[ o ];
-			y += w[ k ] * P[ o + 1 ];
-			z += w[ k ] * P[ o + 2 ];
+}
 
-		}
+/**
+ * Which uniform samples an adaptive strip keeps. A segment may stray by `tolerance` of the
+ * half-width, or by the uniform strip's own worst error on this curve if that is larger.
+ * @returns {Int32Array|null} kept sample indices, or null when every sample is kept
+ */
+function adaptiveSamples( P, basis, line, tolerance, width0, width1 ) {
 
-		points[ i * 3 ] = x; points[ i * 3 + 1 ] = y; points[ i * 3 + 2 ] = z;
+	const { points, count, spans } = line;
+	if ( count < 3 ) return null;
+
+	const mids = new Float64Array( ( count - 1 ) * 3 );
+	const w = [ 0, 0, 0, 0 ];
+	const total = count - 1;
+	for ( let k = 0; k < total; k ++ ) pointAt( P, basis, spans, ( ( k + 0.5 ) / total ) * spans, w, mids, k * 3 );
+
+	let worst = 0;
+	for ( let k = 0; k < total; k ++ ) worst = Math.max( worst, segmentDistance( mids, k, points, k, k + 1 ) );
+
+	const allowed = x => Math.max( worst, tolerance * 0.5 * ( width0 + ( width1 - width0 ) * ( x / total ) ) );
+	const fits = ( i, j ) => {
+
+		for ( let k = i + 1; k < j; k ++ ) if ( segmentDistance( points, k, points, i, j ) > allowed( k ) ) return false;
+		for ( let k = i; k < j; k ++ ) if ( segmentDistance( mids, k, points, i, j ) > allowed( k + 0.5 ) ) return false;
+		return true;
+
+	};
+
+	const kept = new Int32Array( count );
+	let n = 0;
+	kept[ n ++ ] = 0;
+	for ( let i = 0; i < total; ) {
+
+		let j = i + 1;
+		while ( j < total && fits( i, j + 1 ) ) j ++;
+		kept[ n ++ ] = j;
+		i = j;
 
 	}
 
-	return { points, count: total + 1 };
+	return n === count ? null : kept.subarray( 0, n );
 
 }
 
@@ -112,6 +175,9 @@ function sampleCenterline( P, basis, steps ) {
  * @param {ArrayLike<number>} [spec.N] - ribbon normals (start, end), 3 floats each
  * @param {number} [spec.steps] - samples per spline span
  * @param {number} [spec.sides=1] - 1 ribbon, 2 crossed ribbons, >=3 closed tube
+ * @param {number} [spec.tolerance=0] - how far a segment may stray from the curve, as a fraction
+ *   of the strip's half-width; `steps` then caps the resolution rather than fixing it. 0 keeps
+ *   every sample.
  * @returns {{positions: Float32Array, indices: Uint32Array}|null}
  */
 export function tessellateCurve( spec ) {
@@ -126,15 +192,20 @@ export function tessellateCurve( spec ) {
 	if ( ! line ) return null;
 
 	const { points, count } = line;
+	const kept = spec.tolerance > 0 ? adaptiveSamples( P, basis, line, spec.tolerance, width0, width1 ) : null;
+	const rows = kept ? kept.length : count;
 	const rings = sides >= 3 ? sides : sides * 2;
-	const positions = new Float32Array( count * rings * 3 );
+	const positions = new Float32Array( rows * rings * 3 );
 
 	const tangent = [ 0, 0, 0 ];
 	const side = [ 0, 0, 0 ];
 	const up = [ 0, 0, 0 ];
 	const tmp = [ 0, 0, 0 ];
 	let haveSide = false;
+	let row = 0;
 
+	// The frame is carried through every sample, kept or not, so a kept ring faces exactly
+	// as it does in the uniform strip.
 	for ( let i = 0; i < count; i ++ ) {
 
 		const a = Math.max( 0, i - 1 ), b = Math.min( count - 1, i + 1 );
@@ -178,6 +249,8 @@ export function tessellateCurve( spec ) {
 
 		}
 
+		if ( kept && kept[ row ] !== i ) continue;
+
 		cross( tangent, side, up );
 		normalize( up );
 
@@ -205,20 +278,22 @@ export function tessellateCurve( spec ) {
 
 			}
 
-			const o = ( i * rings + r ) * 3;
+			const o = ( row * rings + r ) * 3;
 			positions[ o ] = cx + dx * radius;
 			positions[ o + 1 ] = cy + dy * radius;
 			positions[ o + 2 ] = cz + dz * radius;
 
 		}
 
+		row ++;
+
 	}
 
 	const quads = sides >= 3 ? sides : sides;
-	const indices = new Uint32Array( ( count - 1 ) * quads * 6 );
+	const indices = new Uint32Array( ( rows - 1 ) * quads * 6 );
 	let w = 0;
 
-	for ( let i = 0; i < count - 1; i ++ ) {
+	for ( let i = 0; i < rows - 1; i ++ ) {
 
 		for ( let q = 0; q < quads; q ++ ) {
 
@@ -237,7 +312,7 @@ export function tessellateCurve( spec ) {
 
 }
 
-/** Triangles `tessellateCurve` would produce, without building anything. */
+/** Triangles a uniform `tessellateCurve` would produce (an adaptive one's upper bound), without building anything. */
 export function curveTriangleCount( controlPoints, basis, steps, sides ) {
 
 	const cps = controlPoints / 3;
