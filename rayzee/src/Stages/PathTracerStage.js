@@ -1573,7 +1573,11 @@ export class PathTracerStage extends RenderStage {
 			log.debug( 'material rebuild started' );
 
 			await this.sdfs.rebuildMaterials( scene );
-			this.updateSceneUniforms();
+			// Materials and textures only. `sdfs` is not the processor that built the scene
+			// (PathTracerApp._sdf is), so re-uploading everything from it put its empty emissive
+			// data and instance table in place of the scene's: emitters stopped being sampled.
+			this.materialData.setMaterialData( this.sdfs.materialData, this.sdfs.materials?.map( m => m.sources ) );
+			this.materialData.loadTexturesFromSdfs();
 			this.shaderBuilder.updateSceneTextures( this );
 			this.updateLights();
 			this.reset();

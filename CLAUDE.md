@@ -744,6 +744,11 @@ const MEMORY_LIMITS = {
 }
 ```
 
+⚠️ **`PathTracerStage.sdfs` is not the processor that built the scene** — `PathTracerApp._sdf`
+is. The stage's own is a leftover of the old `stage.build()` path; its `rebuildMaterials` may only
+upload materials and textures from it. Re-uploading everything (`updateSceneUniforms`) put its empty
+emissive data and instance table in place of the scene's, and emitters stopped being sampled.
+
 **Texture arrays' CPU pixels** are released right after three.js uploads them (the texture's
 `onUpdate`): nothing reads them again, since a rebuild packs new arrays from the three.js
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
