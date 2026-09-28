@@ -14,6 +14,7 @@
  * needed. Enable only if a scene comes out z-mirrored against a known reference.
  */
 
+import { freeNow, resized } from './buffers.js';
 import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
@@ -50,9 +51,7 @@ function grow( array, needed ) {
 	if ( needed <= array.length ) return array;
 	let length = array.length || 1;
 	while ( length < needed ) length *= 2;
-	const out = new array.constructor( length );
-	out.set( array );
-	return out;
+	return resized( array, length );
 
 }
 
@@ -209,6 +208,9 @@ export class PBRTSceneBuilder {
 	async build( ir ) {
 
 		this.ir = ir;
+		// Built again for their moving placements after the static ones, so never freed early.
+		this._keepShapes = new Set();
+		for ( const { name } of ir.animatedInstances ?? [] ) for ( const shape of ir.objects.get( name ) ?? [] ) this._keepShapes.add( shape );
 		this._recoveredColors = 0;
 		this.reportedMeshes = 0;
 		this.triangleCount = 0; // stored triangles — a shared geometry counts once
@@ -435,7 +437,9 @@ export class PBRTSceneBuilder {
 				if ( batches && shape.type !== 'plymesh' && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
 					this._geometryCache.delete( shape );
-					placeBatch( list, this._appendToBatch( batches, shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm ) );
+					const full = this._appendToBatch( batches, shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm );
+					this._releaseMerged( shape, geometry );
+					placeBatch( list, full );
 					continue;
 
 				}
@@ -452,6 +456,10 @@ export class PBRTSceneBuilder {
 				placeBatch( list, slot[ 1 ] );
 
 			}
+
+			// Copied into each InstancedMesh: 576 MB at 9M placements, held to the end otherwise.
+			freeNow( list.matrices );
+			freeNow( list.matricesEnd );
 
 		}
 
@@ -487,6 +495,7 @@ export class PBRTSceneBuilder {
 
 				if ( same.template === ir.objects.get( same.name ) ) same.template = same.template.slice();
 				for ( const shape of template ) same.template.push( shape );
+				freeNow( list.matrices );
 				continue;
 
 			}
@@ -737,7 +746,22 @@ export class PBRTSceneBuilder {
 		this.reportedMeshes ++;
 		const world = this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm;
 		const full = this._appendToBatch( this._batches, shape, geometry, sharedMaterial, world );
+		this._releaseMerged( shape, geometry );
 		if ( full ) this._flushBatch( full, group );
+
+	}
+
+	/**
+	 * A merged shape's arrays are in its batch now and nothing reads it again: freed at once, not at
+	 * a GC the build reaches with every one still held — isIronwoodA1's leaves were 3.9 GB twice over.
+	 * @private
+	 */
+	_releaseMerged( shape, geometry ) {
+
+		if ( this._keepShapes?.has( shape ) ) return;
+		for ( const name in geometry.attributes ) freeNow( geometry.attributes[ name ].array );
+		freeNow( geometry.index?.array );
+		for ( const name in shape.params ) if ( ArrayBuffer.isView( shape.params[ name ]?.value ) ) freeNow( shape.params[ name ].value );
 
 	}
 
@@ -834,10 +858,10 @@ export class PBRTSceneBuilder {
 	_batchGeometry( batch ) {
 
 		const geometry = new BufferGeometry();
-		geometry.setAttribute( 'position', new Float32BufferAttribute( batch.positions.slice( 0, batch.vertexCount * 3 ), 3 ) );
-		geometry.setAttribute( 'normal', new Float32BufferAttribute( batch.normals.slice( 0, batch.vertexCount * 3 ), 3 ) );
-		if ( batch.uvs ) geometry.setAttribute( 'uv', new Float32BufferAttribute( batch.uvs.slice( 0, batch.vertexCount * 2 ), 2 ) );
-		geometry.setIndex( new Uint32BufferAttribute( batch.indices.slice( 0, batch.indexCount ), 1 ) );
+		geometry.setAttribute( 'position', new Float32BufferAttribute( resized( batch.positions, batch.vertexCount * 3 ), 3 ) );
+		geometry.setAttribute( 'normal', new Float32BufferAttribute( resized( batch.normals, batch.vertexCount * 3 ), 3 ) );
+		if ( batch.uvs ) geometry.setAttribute( 'uv', new Float32BufferAttribute( resized( batch.uvs, batch.vertexCount * 2 ), 2 ) );
+		geometry.setIndex( new Uint32BufferAttribute( resized( batch.indices, batch.indexCount ), 1 ) );
 		batch.positions = batch.normals = batch.uvs = batch.indices = null;
 		return geometry;
 

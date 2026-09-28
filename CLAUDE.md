@@ -657,6 +657,15 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
   Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
   what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
+- **Parse memory.** The entry is picked from each `.pbrt`'s first 4 MB (`listEntryPathsFrom`:
+  WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
+  for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
+  ArrayBuffer is freed only at a major GC, which a parse reaches late, so scene text, grown arrays
+  (`PBRT/buffers.js`) and merged shapes' arrays are let go explicitly with
+  `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
+  First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
+  identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those
+  placements build them again after the static ones.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from

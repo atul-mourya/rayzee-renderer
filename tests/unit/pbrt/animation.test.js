@@ -114,6 +114,34 @@ describe( 'PBRT animated transforms', () => {
 
 	} );
 
+	it( 'builds a template placed both still and moving whole for its moving placement', async () => {
+
+		const leaf = x => `Shape "trianglemesh" "point3 P" [ ${x} 0 0  ${x + 1} 0 0  ${x} 1 0 ] "integer indices" [ 0 1 2 ]`;
+		const { group } = await loadPBRTScene( {
+			vfs: { 'scene.pbrt': enc.encode( `
+				TransformTimes 0 1
+				WorldBegin
+				ObjectBegin "bush"
+					${leaf( 0 )}
+					${leaf( 2 )}
+				ObjectEnd
+				ObjectInstance "bush"
+				ActiveTransform EndTime
+				Translate 0 3 0
+				ActiveTransform All
+				ObjectInstance "bush"
+			` ) },
+			plyParser: () => null,
+			imageFromBytes: async () => null,
+		} );
+
+		const moving = group.getObjectByName( 'placement_0' );
+		const positions = [];
+		moving.traverse( o => o.isMesh && positions.push( o.geometry.getAttribute( 'position' ).count ) );
+		expect( positions.reduce( ( a, b ) => a + b, 0 ) ).toBe( 6 );
+
+	} );
+
 	it( 'leaves a scene without motion alone', async () => {
 
 		const ir = motionFromShutter( await parse( 'WorldBegin\nShape "sphere"\n' ) );

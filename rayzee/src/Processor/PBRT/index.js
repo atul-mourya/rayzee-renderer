@@ -14,6 +14,7 @@
  *   await loadObject3D(group);
  */
 
+import { freeNow } from './buffers.js';
 import { PBRTParser } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
@@ -105,6 +106,16 @@ export class VirtualFS {
 
 	}
 
+	/** The first `bytes` of a record, reading no more of a lazy one than that when the source can. */
+	async readHead( rec, bytes ) {
+
+		if ( ! rec ) return null;
+		if ( rec.bytes ) return rec.bytes.subarray( 0, bytes );
+		if ( ! rec.lazy || ! this.source ) return null;
+		return this.source.readHead ? this.source.readHead( rec.key, bytes ) : this.source.read( rec.key );
+
+	}
+
 	/** Resolve and read in one step; `dir` is joined first, as Include does. */
 	async readPath( path, dir = null ) {
 
@@ -120,12 +131,15 @@ export class VirtualFS {
 
 	}
 
-	releasePath( path, dir = null ) {
+	/** `bytes`, when given, are what a read of it returned, freed now rather than at the next GC. */
+	releasePath( path, dir = null, bytes = null ) {
 
 		const rec = ( dir !== null && this.findRecord( joinPath( dir, path ) ) ) || this.findRecord( path );
 		// Only a lazy record, which can be read again. Releasing a resident one would drop a
 		// fragment that a later Include still needs — isHibiscusYoung pulls one in six times.
-		if ( rec?.lazy ) this.release( rec );
+		if ( ! rec?.lazy ) return;
+		this.release( rec );
+		freeNow( bytes );
 
 	}
 
@@ -180,6 +194,7 @@ function findBytes( bytes, needle, from = 0 ) {
 }
 
 const ASCII = s => Uint8Array.from( s, c => c.charCodeAt( 0 ) );
+const ENTRY_HEAD_BYTES = 4 * 1024 * 1024;
 const WORLD_BEGIN = ASCII( 'WorldBegin' );
 const INCLUDE_WORDS = [ ASCII( 'Include' ), ASCII( 'Import' ) ];
 
@@ -311,6 +326,11 @@ export async function pickEntryPathFrom( vfs ) {
 /**
  * Candidate scene files for a VirtualFS, best first. Each candidate is read to test it and
  * dropped again, so a lazily-indexed archive is never materialised just to rank its entries.
+ *
+ * WorldBegin may only follow the scene-wide options, so a scene declares it within its first
+ * megabytes: the heads decide, and when they name one scene no file is read whole — the full
+ * reads were 15 GB and 40 s for a 17-part Moana archive before its parse began. Heads that name
+ * none, or several, fall back to reading everything, as the ranking of several needs.
  */
 export async function listEntryPathsFrom( vfs ) {
 
@@ -318,18 +338,34 @@ export async function listEntryPathsFrom( vfs ) {
 	if ( pbrts.length === 0 ) return [];
 	if ( pbrts.length === 1 ) return [ pbrts[ 0 ].key ];
 
-	const included = new Set();
-	const worlds = new Map();
-	for ( const rec of pbrts ) {
+	const scan = async ( read ) => {
 
-		const bytes = await vfs.read( rec );
-		if ( ! bytes ) continue;
-		worlds.set( rec.key, hasWorldBegin( bytes ) );
-		includedBasenames( bytes, included );
-		if ( rec.lazy ) vfs.release( rec ); // read again later if it is actually used
+		const included = new Set();
+		const worlds = new Map();
+		let cut = false;
+		for ( const rec of pbrts ) {
 
-	}
+			const bytes = await read( rec );
+			if ( ! bytes ) continue;
+			worlds.set( rec.key, hasWorldBegin( bytes ) );
+			includedBasenames( bytes, included );
+			if ( bytes.length >= ENTRY_HEAD_BYTES ) cut = true;
+			if ( rec.lazy ) {
 
+				vfs.release( rec ); // read again later if it is actually used
+				freeNow( bytes );
+
+			}
+
+		}
+
+		return { included, worlds, cut };
+
+	};
+
+	const heads = await scan( rec => vfs.readHead( rec, ENTRY_HEAD_BYTES ) );
+	const scenes = [ ...heads.worlds.values() ].filter( Boolean ).length;
+	const { included, worlds } = scenes === 1 || ! heads.cut ? heads : await scan( rec => vfs.read( rec ) );
 	return rankEntryPaths( pbrts.map( r => r.key ), worlds, included );
 
 }
@@ -377,12 +413,14 @@ export async function loadPBRTScene( args ) {
 			resolveInclude: ( include, currentDir ) => vfs.readPath( include, currentDir ),
 			// Depth-first, so this keeps only the open include chain live rather than every
 			// scene file at once — the difference between 5.7 GB resident and a few MB.
-			releaseInclude: ( include, currentDir ) => vfs.releasePath( include, currentDir ),
+			releaseInclude: ( include, currentDir, bytes ) => vfs.releasePath( include, currentDir, bytes ),
 			maxPlacements: args.maxPlacements,
 			instanceIncludes: args.instanceIncludes
 		} );
 
-		return parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
+		const ir = await parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
+		vfs.releasePath( path, null, bytes );
+		return ir;
 
 	};
 

@@ -28,6 +28,7 @@
  * recorded as `ctmEnd` / `cameraToWorldEnd` / `matricesEnd` only where it differs.
  */
 
+import { resized } from './buffers.js';
 import { TokenStream, TokenType } from './PBRTTokenizer.js';
 import * as M from './PBRTMath.js';
 
@@ -66,14 +67,6 @@ const NUMERIC_STORAGE = {
 	normal: Float32Array,
 	rgb: Float32Array
 };
-
-function growFloat32( array, length ) {
-
-	const grown = new Float32Array( length );
-	grown.set( array );
-	return grown;
-
-}
 
 export class PBRTParser {
 
@@ -160,6 +153,14 @@ export class PBRTParser {
 		this.dirStack = [ baseDir ];
 		await this._run( new TokenStream( src ) );
 		if ( this._movedShapes ) this.ir.shapes = this.ir.shapes.filter( Boolean );
+		// Grown by doubling: up to half of every list is spare, 240 MB at 9M placements.
+		for ( const list of this.ir.instances.values() ) {
+
+			list.matrices = resized( list.matrices, list.count * 16 );
+			if ( list.matricesEnd ) list.matricesEnd = resized( list.matricesEnd, list.count * 16 );
+
+		}
+
 		return this.ir;
 
 	}
@@ -183,8 +184,8 @@ export class PBRTParser {
 		if ( need > list.matrices.length ) {
 
 			const length = Math.max( need, list.matrices.length * 2 );
-			list.matrices = growFloat32( list.matrices, length );
-			if ( list.matricesEnd ) list.matricesEnd = growFloat32( list.matricesEnd, length );
+			list.matrices = resized( list.matrices, length );
+			if ( list.matricesEnd ) list.matricesEnd = resized( list.matricesEnd, length );
 
 		}
 
@@ -428,20 +429,14 @@ export class PBRTParser {
 
 				const t = this._next();
 				if ( t.type !== TokenType.NUMBER ) return this._finishMixedValue( buf, n, t );
-				if ( n === buf.length ) {
-
-					const grown = new Storage( buf.length * 2 );
-					grown.set( buf );
-					buf = grown;
-
-				}
+				if ( n === buf.length ) buf = resized( buf, buf.length * 2 );
 
 				buf[ n ++ ] = t.value;
 
 			}
 
 			this._next(); // ]
-			return n === buf.length ? buf : buf.slice( 0, n );
+			return n === buf.length ? buf : resized( buf, n );
 
 		}
 
@@ -868,7 +863,7 @@ export class PBRTParser {
 			// Depth-first, so only the open chain is live. Releasing here is what keeps a
 			// multi-gigabyte scene's text from all being resident at once; a file included
 			// again is simply resolved again.
-			this.releaseInclude?.( path, dir );
+			this.releaseInclude?.( path, dir, source );
 
 		}
 

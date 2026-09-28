@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BufferGeometry, Float32BufferAttribute, Matrix4, Mesh, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
-import { loadPBRTScene, pickEntryPath } from '@/core/Processor/PBRT/index.js';
+import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
 
@@ -476,6 +476,23 @@ describe( 'PBRT scene builder', () => {
 		expect( position.count ).toBe( 900 );
 		expect( position.getX( 299 * 3 ) ).toBeCloseTo( 299, 4 );
 		expect( position.getX( 299 * 3 + 1 ) ).toBeCloseTo( 300, 4 );
+
+	} );
+
+	it( 'frees a merged shape\'s arrays once its triangles are in the batch', async () => {
+
+		const leaf = i => `Translate ${i} 0 0 Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]`;
+		const src = `WorldBegin\nMaterial "diffuse"\nObjectBegin "tree"\n${[ 0, 1, 2 ].map( leaf ).join( '\n' )}\nObjectEnd\n`
+			+ 'ObjectInstance "tree"\nTranslate 0 5 0\nObjectInstance "tree"\n';
+		const ir = await new PBRTParser().parse( enc.encode( src ) );
+		const leaves = ir.objects.get( 'tree' );
+		const { group } = await new PBRTSceneBuilder( { resolvePLY: async () => null } ).build( ir );
+
+		for ( const shape of leaves ) expect( shape.params.P.value.byteLength ).toBe( 0 );
+		const merged = group.children.find( c => c.isInstancedMesh );
+		expect( merged.count ).toBe( 2 );
+		expect( merged.geometry.getAttribute( 'position' ).count ).toBe( 9 );
+		expect( merged.geometry.getAttribute( 'position' ).getX( 8 ) ).toBeCloseTo( 3, 5 );
 
 	} );
 

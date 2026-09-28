@@ -194,6 +194,14 @@ export async function openZip( blob, { filter = null } = {} ) {
 
 	};
 
-	return { entries: Object.create( null ), listing, read, slice, retainedBytes: 0, truncated: false, indexed: byPath.size };
+	// A stored entry's head is a slice; a deflated one is inflated whole, as a read would.
+	const readHead = async ( path, bytes ) => {
+
+		const part = await slice( path );
+		return part ? new Uint8Array( await part.slice( 0, bytes ).arrayBuffer() ) : null;
+
+	};
+
+	return { entries: Object.create( null ), listing, read, readHead, slice, retainedBytes: 0, truncated: false, indexed: byPath.size };
 
 }

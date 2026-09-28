@@ -567,7 +567,16 @@ export async function openTar( source, options = {} ) {
 
 	};
 
-	return { entries, listing, read, retainedBytes, truncated, indexed: byPath.size, index: full ? { v: 1, listing: full } : null };
+	const readHead = async ( path, bytes ) => {
+
+		if ( entries[ path ] ) return entries[ path ].subarray( 0, bytes );
+		const e = byPath.get( path );
+		if ( ! e ) return null;
+		return new Uint8Array( await source.slice( e.offset, e.offset + Math.min( e.size, bytes ) ).arrayBuffer() );
+
+	};
+
+	return { entries, listing, read, readHead, retainedBytes, truncated, indexed: byPath.size, index: full ? { v: 1, listing: full } : null };
 
 }
 

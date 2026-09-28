@@ -11,6 +11,8 @@
  * scene is 20 million triangles or 200 million.
  */
 
+import { resized } from './buffers.js';
+
 const DEFAULT_STEPS = 2;
 
 /** Uniform cubic B-spline basis at t for the four control points of one span. */
@@ -308,7 +310,7 @@ export function tessellateCurve( spec ) {
 
 	}
 
-	return { positions, indices: w === indices.length ? indices : indices.slice( 0, w ) };
+	return { positions, indices: w === indices.length ? indices : resized( indices, w ) };
 
 }
 
