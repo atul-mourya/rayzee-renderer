@@ -763,7 +763,7 @@ export class PathTracerStage extends RenderStage {
 
 		const chunked = triangleData.chunks && triangleData.chunks.length > 1 ? triangleData : null;
 		const flat = chunked ? null : ( triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData );
-		const records = chunked ? chunked.recordCount : flat.length / TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const records = chunked ? chunked.recordCount : Math.ceil( flat.length / TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
 		const pre = chunked?._gpuUpload?.triangles ? chunked._gpuUpload : null;
 		const { geo, shade } = pre ?? this._allocateTriangleBuffers( records );
 
