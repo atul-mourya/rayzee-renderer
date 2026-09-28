@@ -188,7 +188,7 @@ export class PathTracer extends PathTracerStage {
 		} );
 
 		// Scene geometry (triangle data, two-level BVH, light BVH + emissive)
-		t.register( 'geometry', () => [ this.triangleStorageAttr, this.bvhStorageAttr, this.lightStorageAttr ] );
+		t.register( 'geometry', () => [ this.triangleGeoAttr, this.triangleShadeAttr, this.bvhStorageAttr, this.lightStorageAttr ] );
 
 		// Material storage buffer + per-property texture arrays
 		t.register( 'materials', () => {
@@ -1248,7 +1248,7 @@ export class PathTracer extends PathTracerStage {
 
 		const genParams = {
 			rayBufferRW: pb.rayBuffer.rw,
-			rngBufferRW: pb.rngBuffer.rw,
+			hitBufferRW: pb.hitBuffer.rw,
 			gBufferRW,
 			resolution: this.resolution,
 			// RNG axis only (baseSeed + stratified jitter) — takes the seed counter, not the
@@ -1559,8 +1559,7 @@ export class PathTracer extends PathTracerStage {
 			envCDFTexture: freshEnvCDF,
 			lightBuffer: freshLight,
 			rayBufferRW: pb.rayBuffer.rw,
-			rngBufferRW: pb.rngBuffer.rw,
-			hitBufferRO: pb.hitBuffer.ro,
+			hitBufferRW: pb.hitBuffer.rw,
 			counters,
 			activeIndicesRO: this._sortMaterials ? qm.getSortedRO() : qm.getActiveReadRO(),
 			envTexture: freshEnvTex,

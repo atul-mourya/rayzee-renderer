@@ -146,16 +146,19 @@ function handleAssemble( data ) {
 			topFlatData, topNodeCount, frontierMap, subtreeResults
 		);
 
-		// Reorder triangles using final indices from SharedArrayBuffer
 		const indices = new Uint32Array( sharedIndices );
-		const src = new Uint32Array( sharedTriangleData );
-		const dst = new Uint32Array( sharedReorderBuffer );
+		if ( sharedReorderBuffer ) {
 
-		for ( let i = 0; i < triangleCount; i ++ ) {
+			const src = new Uint32Array( sharedTriangleData );
+			const dst = new Uint32Array( sharedReorderBuffer );
 
-			const srcOff = indices[ i ] * FPT;
-			const dstOff = i * FPT;
-			dst.set( src.subarray( srcOff, srcOff + FPT ), dstOff );
+			for ( let i = 0; i < triangleCount; i ++ ) {
+
+				const srcOff = indices[ i ] * FPT;
+				const dstOff = i * FPT;
+				dst.set( src.subarray( srcOff, srcOff + FPT ), dstOff );
+
+			}
 
 		}
 

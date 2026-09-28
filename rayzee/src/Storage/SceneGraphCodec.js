@@ -261,17 +261,24 @@ export function encodeSceneGraph( root, { environment = null, animations = [], s
 
 }
 
-/** Writes an encoded graph into a storage entry: `graph.json` and `data.bin`. */
-export async function writeSceneGraph( writer, { manifest, sections } ) {
+/**
+ * Writes an encoded graph into a storage entry: `graph.json` and `data.bin`.
+ * @param {{release?: boolean}} [options] - drop each section's array once written, so a graph
+ *   written during a build does not keep arrays the build has since replaced
+ */
+export async function writeSceneGraph( writer, { manifest, sections }, { release = false } = {} ) {
 
-	for ( const { offset, array } of sections ) {
+	for ( const section of sections ) {
 
+		const { offset, array } = section;
 		const bytes = new Uint8Array( array.buffer, array.byteOffset, array.byteLength );
 		for ( let at = 0; at < bytes.length; at += PIECE_BYTES ) {
 
 			await writer.write( 'data.bin', bytes.subarray( at, Math.min( bytes.length, at + PIECE_BYTES ) ), { at: offset + at } );
 
 		}
+
+		if ( release ) section.array = null;
 
 	}
 

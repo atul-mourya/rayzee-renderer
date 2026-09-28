@@ -24,10 +24,14 @@ import { SceneProcessor } from '../Processor/SceneProcessor.js';
 import { LightSerializer } from '../Processor/LightSerializer';
 
 // Constants
-import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRI_GEO_ROWS, TRI_SHADE_ROWS } from '../TSL/Common.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { cachedObjectURL, DOWNLOAD_POLICY } from '../Storage/DownloadCache.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+
+// Triangles converted per staging pass: 1M is 48 + 32 MB of staging.
+const TRIANGLE_UPLOAD_SLICE = 1 << 20;
 
 const log = createLogger( 'pathtracer' );
 
@@ -115,21 +119,17 @@ export class PathTracerStage extends RenderStage {
 		// Initialize material data manager
 		this.materialData = new MaterialDataManager( this.sdfs );
 		this.materialData.callbacks.onReset = () => this.reset();
-		// Triangle data carries the per-triangle `side` flag (NORMAL_C.w). The authoritative
-		// CPU copy is `_triangleRecords` when the scene is chunked and triangleStorageAttr.array
-		// otherwise (not sdfs.triangleData, which isn't populated on the PathTracerApp build
-		// path). The patch mutates it in place, then the GPU copy is refreshed.
+		// Material edits patch the per-triangle flags lane in the CPU records (`_triangleRecords`
+		// when chunked, `_triangleFlat` otherwise — not sdfs.triangleData, which the PathTracerApp
+		// build path never fills). The flags live in the shade rows, so only those go up again.
 		this.materialData.callbacks.getTriangleData = () => ( {
-			array: this.triangleStorageAttr?.array,
+			array: this._triangleFlat,
 			records: this._triangleRecords,
 			count: this.triangleCount,
 		} );
 		this.materialData.callbacks.onTriangleDataChanged = () => {
 
-			if ( ! this.triangleStorageAttr ) return;
-			// A chunked attribute owns no CPU array for three.js to re-upload.
-			if ( this._triangleRecords ) uploadStorageChunks( this.renderer, this.triangleStorageAttr, this._triangleRecords.chunks );
-			else this.triangleStorageAttr.needsUpdate = true;
+			if ( this.triangleShadeAttr ) this._uploadTriangles( 0, this._triangleRecordCount, { geo: false } );
 
 		};
 
@@ -184,9 +184,13 @@ export class PathTracerStage extends RenderStage {
 	 */
 	_initDataTextures() {
 
-		// Triangle data (storage buffer for WebGPU)
-		this.triangleStorageAttr = null;
+		// Triangle data: two GPU buffers (TRI_GEO_ROWS / TRI_SHADE_ROWS rows a triangle), one
+		// { geo, shade } node pair, and the CPU records they were written from.
+		this.triangleGeoAttr = null;
+		this.triangleShadeAttr = null;
 		this._triangleRecords = null;
+		this._triangleFlat = null;
+		this._triangleRecordCount = 0;
 		this.triangleStorageNode = null;
 		this.triangleCount = 0;
 
@@ -747,52 +751,116 @@ export class PathTracerStage extends RenderStage {
 	// ===== TEXTURE SETTERS =====
 
 	/**
-	 * Sets the triangle data from raw Float32Array via storage buffer.
-	 * On first call, creates the storage buffer and node.
-	 * On subsequent calls, creates a new attribute with the correct size
-	 * and updates the storage node's value to preserve shader graph references.
-	 * @param {Uint32Array} triangleData - Packed triangle records (uvec4 lanes)
+	 * Sets the triangle data. The records stay whole on the CPU and are split into the geo and
+	 * shade GPU buffers as they go up. Later calls swap the nodes' attributes, which keeps the
+	 * compiled shader graph.
+	 * @param {Uint32Array|import('../Processor/ChunkedRecords.js').ChunkedRecords} triangleData
 	 * @param {number} triangleCount - Number of triangles
 	 */
 	setTriangleData( triangleData, triangleCount ) {
 
 		if ( ! triangleData ) return;
 
-		// Past the ~2 GB array cap the records arrive as several chunks; they still become one
-		// GPU buffer, written at their running byte offsets, so no binding or shader changes.
 		const chunked = triangleData.chunks && triangleData.chunks.length > 1 ? triangleData : null;
 		const flat = chunked ? null : ( triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData );
-		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
-		const vec4Count = lanes / 4;
-		this._assertFitsGPU( lanes * 4 );
-
-		const makeAttr = () => chunked
-			? chunked._gpuUpload?.attr ?? gpuOnlyStorageAttribute( vec4Count, 4, Uint32Array )
-			: new StorageInstancedBufferAttribute( flat, 4 );
+		const records = chunked ? chunked.recordCount : flat.length / TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const pre = chunked?._gpuUpload?.triangles ? chunked._gpuUpload : null;
+		const { geo, shade } = pre ?? this._allocateTriangleBuffers( records );
 
 		if ( this.triangleStorageNode ) {
 
-			// Create new attribute with correct size (old one is GC'd, backend WeakMap cleans up GPU buffer)
-			this.triangleStorageAttr = makeAttr();
-
-			// Update storage node references (preserves compiled shader graph)
-			this.triangleStorageNode.value = this.triangleStorageAttr;
-			this.triangleStorageNode.bufferCount = vec4Count;
+			this.triangleStorageNode.geo.value = geo;
+			this.triangleStorageNode.geo.bufferCount = geo.count;
+			this.triangleStorageNode.shade.value = shade;
+			this.triangleStorageNode.shade.bufferCount = shade.count;
 
 		} else {
 
-			// First time: create storage buffer and node
-			this.triangleStorageAttr = makeAttr();
-			this.triangleStorageNode = storage( this.triangleStorageAttr, 'uvec4', vec4Count ).toReadOnly();
+			this.triangleStorageNode = {
+				geo: storage( geo, 'uvec4', geo.count ).toReadOnly(),
+				shade: storage( shade, 'uvec4', shade.count ).toReadOnly(),
+			};
 
 		}
 
+		this.triangleGeoAttr = geo;
+		this.triangleShadeAttr = shade;
 		this._triangleRecords = chunked;
-		if ( chunked ) this._uploadChunked( this.triangleStorageAttr, chunked );
-
+		this._triangleFlat = flat;
+		this._triangleRecordCount = records;
 		this.triangleCount = triangleCount;
+		this._uploadTriangles( 0, records, { skipChunks: pre?.uploaded } );
 
 		log.debug( `${fmt.n( this.triangleCount )} triangles (storage buffer)` );
+
+	}
+
+	/** GPU-only geo and shade buffers for `records` triangles, created now. @private */
+	_allocateTriangleBuffers( records ) {
+
+		const n = Math.max( 1, records );
+		this._assertFitsGPU( n * TRI_GEO_ROWS * 16 );
+		const geo = gpuOnlyStorageAttribute( n * TRI_GEO_ROWS, 4, Uint32Array );
+		const shade = gpuOnlyStorageAttribute( n * TRI_SHADE_ROWS, 4, Uint32Array );
+		this.renderer.backend.createStorageAttribute( geo );
+		this.renderer.backend.createStorageAttribute( shade );
+		return { geo, shade };
+
+	}
+
+	/**
+	 * Writes triangles [start, start + count) of the CPU records into the geo and shade buffers:
+	 * the first TRI_GEO_ROWS rows of each record to one, the rest to the other.
+	 * @param {number} start
+	 * @param {number} count
+	 * @param {{ geo?: boolean, shade?: boolean, skipChunks?: Set<number>, source?: Uint32Array, sourceStart?: number }} [options]
+	 *   `source` writes those records instead of reading the stage's own (a chunk being handed over).
+	 * @private
+	 */
+	_uploadTriangles( start, count, { geo = true, shade = true, skipChunks = null, source = null, sourceStart = 0, geoAttr = this.triangleGeoAttr, shadeAttr = this.triangleShadeAttr } = {} ) {
+
+		if ( count <= 0 || ! geoAttr ) return;
+
+		const backend = this.renderer.backend;
+		const geoBuffer = backend.get( geoAttr ).buffer;
+		const shadeBuffer = backend.get( shadeAttr ).buffer;
+		const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const GEO = TRI_GEO_ROWS * 4, SHADE = TRI_SHADE_ROWS * 4;
+		const records = this._triangleRecords;
+		const perChunk = source ? count : records ? records.recordsPerChunk : this._triangleRecordCount;
+		const slice = Math.min( count, TRIANGLE_UPLOAD_SLICE );
+		const geoStage = geo ? new Uint32Array( slice * GEO ) : null;
+		const shadeStage = shade ? new Uint32Array( slice * SHADE ) : null;
+
+		for ( let at = start, end = start + count; at < end; ) {
+
+			const k = source ? 0 : Math.floor( at / perChunk );
+			const chunkStart = source ? start : k * perChunk;
+			const chunkEnd = Math.min( end, chunkStart + perChunk );
+			if ( skipChunks?.has( k ) ) {
+
+				at = chunkEnd;
+				continue;
+
+			}
+
+			const src = source ?? ( records ? records.chunks[ k ] : this._triangleFlat );
+			if ( ! src ) throw new Error( `triangle chunk ${k} is on disk and was never uploaded` );
+
+			const n = Math.min( slice, chunkEnd - at );
+			let s = ( source ? at - start + sourceStart : at - chunkStart ) * LANES;
+			for ( let i = 0, g = 0, h = 0; i < n; i ++, s += LANES ) {
+
+				if ( geo ) for ( let l = 0; l < GEO; l ++ ) geoStage[ g ++ ] = src[ s + l ];
+				if ( shade ) for ( let l = GEO; l < LANES; l ++ ) shadeStage[ h ++ ] = src[ s + l ];
+
+			}
+
+			if ( geo ) backend.device.queue.writeBuffer( geoBuffer, at * GEO * 4, geoStage, 0, n * GEO );
+			if ( shade ) backend.device.queue.writeBuffer( shadeBuffer, at * SHADE * 4, shadeStage, 0, n * SHADE );
+			at += n;
+
+		}
 
 	}
 
@@ -818,6 +886,30 @@ export class PathTracerStage extends RenderStage {
 
 			const chunk = records.chunks[ k ];
 			backend.device.queue.writeBuffer( buffer, k * stride, chunk, 0, chunk.length );
+			uploaded.add( k );
+
+		};
+
+	}
+
+	/**
+	 * createChunkUploader for triangle records: both GPU buffers are allocated now and each
+	 * chunk is split into them as it is handed over.
+	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
+	 * @returns {function(number): void}
+	 */
+	createTriangleChunkUploader( records ) {
+
+		const { geo, shade } = this._allocateTriangleBuffers( records.recordCount );
+		const uploaded = new Set();
+		records._gpuUpload = { triangles: true, geo, shade, uploaded };
+		const perChunk = records.recordsPerChunk;
+
+		return k => {
+
+			const first = k * perChunk;
+			const count = Math.min( perChunk, records.recordCount - first );
+			this._uploadTriangles( first, count, { source: records.chunks[ k ], geoAttr: geo, shadeAttr: shade } );
 			uploaded.add( k );
 
 		};
@@ -1105,17 +1197,12 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	/** Update triangle positions in the existing GPU buffer (full). */
+	/** Re-uploads every triangle from the CPU records, adopting `triangleData` as them when given. */
 	updateTriangleData( triangleData ) {
 
-		if ( this._triangleRecords ) {
-
-			uploadStorageChunks( this.renderer, this.triangleStorageAttr, this._triangleRecords.chunks );
-			return;
-
-		}
-
-		this._updateStorageBuffer( this.triangleStorageAttr, triangleData?.chunks ? triangleData.chunks[ 0 ] : triangleData );
+		if ( triangleData?.chunks?.length > 1 ) this._triangleRecords = triangleData;
+		else if ( triangleData ) this._triangleFlat = triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData;
+		this._uploadTriangles( 0, this._triangleRecordCount );
 
 	}
 
@@ -1142,29 +1229,14 @@ export class PathTracerStage extends RenderStage {
 	 */
 	updateBufferRanges( triRanges, bvhRanges ) {
 
-		if ( this.triangleStorageAttr && triRanges.length > 0 ) {
+		if ( this.triangleGeoAttr && triRanges.length > 0 ) {
 
-			if ( this._triangleRecords ) {
+			// Ranges are in lanes of the CPU records; the GPU copy is written a triangle at a time.
+			const lanes = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+			for ( const r of triRanges ) {
 
-				// Chunked: three.js cannot re-upload an attribute with no CPU array, so write
-				// the dirty lanes straight into the GPU buffer.
-				for ( const r of triRanges ) {
-
-					uploadStorageChunkRange( this.renderer, this.triangleStorageAttr, this._triangleRecords, r.offset, r.count );
-
-				}
-
-			} else {
-
-				this.triangleStorageAttr.clearUpdateRanges();
-
-				for ( const r of triRanges ) {
-
-					this.triangleStorageAttr.addUpdateRange( r.offset, r.count );
-
-				}
-
-				this.triangleStorageAttr.version ++;
+				const first = Math.floor( r.offset / lanes );
+				this._uploadTriangles( first, Math.ceil( ( r.offset + r.count ) / lanes ) - first );
 
 			}
 
@@ -1704,8 +1776,11 @@ export class PathTracerStage extends RenderStage {
 		this.placeholderTexture?.dispose();
 
 		// Clear data references
-		this.triangleStorageAttr = null;
+		this.triangleGeoAttr = null;
+		this.triangleShadeAttr = null;
 		this._triangleRecords = null;
+		this._triangleFlat = null;
+		this._triangleRecordCount = 0;
 		this.triangleStorageNode = null;
 		this.bvhStorageAttr = null;
 		this._bvhRecords = null;

@@ -27,7 +27,7 @@ import {
 import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TLAS_LEAF_IDENTITY } from '../EngineDefaults.js';
 import { HitInfo } from './Struct.js';
 import {
-	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, TRI_STRIDE, shadowFlagsSettle
+	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
 } from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
@@ -296,9 +296,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 					const triIndex = triStart.add( i ).toVar();
 
 					// Three fetches carry positions AND the packed normals in their .w lanes.
-					const recA = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).toVar();
-					const recB = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).toVar();
-					const recC = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).toVar();
+					const recA = triangleRow( triangleBuffer, triIndex, 0 ).toVar();
+					const recB = triangleRow( triangleBuffer, triIndex, 1 ).toVar();
+					const recC = triangleRow( triangleBuffer, triIndex, 2 ).toVar();
 					const pA = uintBitsToFloat( recA.xyz );
 					const pB = uintBitsToFloat( recB.xyz );
 					const pC = uintBitsToFloat( recC.xyz );
@@ -317,7 +317,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 						const nA = unpackTriangleNormal( recA.w );
 						const nB = unpackTriangleNormal( recB.w );
 						const nC = unpackTriangleNormal( recC.w );
-						const flags = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).z;
+						const flags = triangleRow( triangleBuffer, triIndex, 4 ).z;
 						const side = int( flags.shiftRight( uint( TRI_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) ).toVar();
 
 						// Interpolate normal for the side-culling dot product (kept local,
@@ -449,9 +449,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		// Re-fetch the winning triangle's normals — trading 3 storage reads (once)
 		// for ~3 regs freed across every BVH iteration.
-		const nA = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 0 ), int( TRI_STRIDE ) ).w );
-		const nB = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 1 ), int( TRI_STRIDE ) ).w );
-		const nC = unpackTriangleNormal( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 2 ), int( TRI_STRIDE ) ).w );
+		const nA = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 0 ).w );
+		const nB = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 1 ).w );
+		const nC = unpackTriangleNormal( triangleRow( triangleBuffer, closestTriIdx, 2 ).w );
 		const objectNormal = normalize( nA.mul( w ).add( nB.mul( closestU ) ).add( nC.mul( closestV ) ) ).toVar();
 		If( hitInstLeaf.greaterThanEqual( int( 0 ) ), () => {
 
@@ -461,8 +461,8 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		closestHit.normal.assign( objectNormal );
 
-		const uvData1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 3 ), int( TRI_STRIDE ) ) );
-		const uvData2 = getDatafromStorageBuffer( triangleBuffer, closestTriIdx, int( 4 ), int( TRI_STRIDE ) ).toVar();
+		const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, closestTriIdx, 3 ) );
+		const uvData2 = triangleRow( triangleBuffer, closestTriIdx, 4 ).toVar();
 		closestHit.uv.assign(
 			uvData1.xy.mul( w ).add( uvData1.zw.mul( closestU ) ).add( uintBitsToFloat( uvData2.xy ).mul( closestV ) )
 		);
@@ -552,16 +552,16 @@ export const traverseBVHShadow = Fn( ( [
 
 					const triIndex = triStart.add( i ).toVar();
 
-					const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), int( TRI_STRIDE ) ).xyz );
-					const pB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), int( TRI_STRIDE ) ).xyz );
-					const pC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), int( TRI_STRIDE ) ).xyz );
+					const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
+					const pB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz );
+					const pC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz );
 
 					const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
 					If( triResult.w.greaterThan( 0.5 ), () => {
 
 						// Per-mesh visibility is handled at the BLAS-pointer level.
-						const uvData2 = getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), int( TRI_STRIDE ) ).toVar();
+						const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
 
 						closestHit.didHit.assign( true );
 						closestHit.dst.assign( triResult.x );

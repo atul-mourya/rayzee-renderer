@@ -27,8 +27,8 @@ import {
 
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
-	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, getDatafromStorageBuffer, instanceRows,
-	instanceFaceNormalToWorld, TRI_STRIDE, getAlphaShadowsUniform, shadowFlagsSettle, offsetRayOrigin,
+	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
+	instanceFaceNormalToWorld, triangleRow, getAlphaShadowsUniform, shadowFlagsSettle, offsetRayOrigin,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
@@ -92,7 +92,7 @@ export const traceShadowRay = Fn( ( [
 		// Opaque fast-path: check the per-triangle blocker bit, set at extraction time when
 		// alphaMode/transparent/transmission/opacity all indicate a fully opaque surface.
 		// Short-circuits the 7-slot getShadowMaterial fetch and the whole alpha decision tree.
-		const flags = getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 4 ), int( TRI_STRIDE ) ).z;
+		const flags = triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).z;
 		If( shadowFlagsSettle( flags ), () => {
 
 			transmittance.assign( 0.0 );
@@ -125,8 +125,8 @@ export const traceShadowRay = Fn( ( [
 					const baryU = shadowHit.uv.x;
 					const baryV = shadowHit.uv.y;
 					const baryW = float( 1.0 ).sub( baryU ).sub( baryV );
-					const uvData1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 3 ), int( TRI_STRIDE ) ) );
-					const uvData2 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 4 ), int( TRI_STRIDE ) ).xy );
+					const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 3 ) );
+					const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).xy );
 					const hitUV = uvData1.xy.mul( baryW ).add( uvData1.zw.mul( baryU ) ).add( uvData2.mul( baryV ) );
 					const albedoUV = getTransformedUV( { uv: hitUV, transform: shadowMaterial.albedoTransform } );
 					texAlpha.assign( sampleBucket( _shadowAlbedoMaps, shadowMaterial.albedoMapIndex, albedoUV ).a );
@@ -181,9 +181,9 @@ export const traceShadowRay = Fn( ( [
 			// Deferred geometric-normal compute — refetch triangle positions and
 			// derive the normal here so opaque/alpha-cutout shadow hits don't pay
 			// the cross+normalize cost in BVH traversal.
-			const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 0 ), int( TRI_STRIDE ) ).xyz );
-			const pB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 1 ), int( TRI_STRIDE ) ).xyz );
-			const pC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, shadowHit.triangleIndex, int( 2 ), int( TRI_STRIDE ) ).xyz );
+			const pA = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 0 ).xyz );
+			const pB = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 1 ).xyz );
+			const pC = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 2 ).xyz );
 			// Positions are in the blocker's object space; the cross product is a normal, so
 			// it rides the inverse-transpose back out rather than the forward matrix.
 			const objNormal = normalize( cross( pB.sub( pA ), pC.sub( pA ) ) ).toVar();

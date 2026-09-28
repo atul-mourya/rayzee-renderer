@@ -6,7 +6,7 @@ import {
 	MaterialSamples,
 	ExtMapResult,
 } from './Struct.js';
-import { getDatafromStorageBuffer, instanceRows, instanceDirToWorld, TRI_STRIDE } from './Common.js';
+import { instanceRows, instanceDirToWorld, triangleRow } from './Common.js';
 import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 
 // ================================================================================
@@ -414,13 +414,12 @@ const uvTransformJacobian = /*@__PURE__*/ wgslFn( `
  */
 export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
 
-	const S = int( TRI_STRIDE );
-	const pA = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 0 ), S ).xyz );
-	const e1 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 1 ), S ).xyz ).sub( pA );
-	const e2 = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 2 ), S ).xyz ).sub( pA );
+	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
+	const e1 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz ).sub( pA );
+	const e2 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz ).sub( pA );
 
-	const uvAB = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 3 ), S ) );
-	const uvC = uintBitsToFloat( getDatafromStorageBuffer( triangleBuffer, triIndex, int( 4 ), S ).xy );
+	const uvAB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 3 ) );
+	const uvC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 4 ).xy );
 	const d1 = uvAB.zw.sub( uvAB.xy );
 	const d2 = uvC.sub( uvAB.xy );
 

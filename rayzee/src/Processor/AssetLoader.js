@@ -943,7 +943,13 @@ export class AssetLoader extends EventDispatcher {
 
 		}
 
-		this._pendingGraph = { key, encoded, label, parseMs: ( built.parseMs ?? 0 ) + ( built.buildMs ?? 0 ), triangles: built.triangleCount ?? null };
+		const pending = { key, encoded, label, parseMs: ( built.parseMs ?? 0 ) + ( built.buildMs ?? 0 ), triangles: built.triangleCount ?? null };
+
+		// A parse slow enough on its own is written now, during the build. Held until the build
+		// ends, it kept every array the build replaces alive with it — the float normals and the
+		// instance matrices, ~1 GB on the whole Moana subset, at the build's peak.
+		if ( worthStoring( pending.parseMs, encoded.byteLength ) ) this._writeGraph( area, pending );
+		else this._pendingGraph = pending;
 
 	}
 
@@ -958,6 +964,12 @@ export class AssetLoader extends EventDispatcher {
 		this._pendingGraph = null;
 		const area = this.storage?.area( ENGINE_AREAS.SCENES );
 		if ( ! pending || ! area || ! worthStoring( pending.parseMs + buildMs, pending.encoded.byteLength ) ) return;
+		this._writeGraph( area, pending );
+
+	}
+
+	/** Writes an encoded graph in the background, letting each array go once it is on disk. @private */
+	_writeGraph( area, pending ) {
 
 		( async () => {
 
@@ -965,7 +977,7 @@ export class AssetLoader extends EventDispatcher {
 			if ( ! writer ) return;
 			try {
 
-				await writeSceneGraph( writer, pending.encoded );
+				await writeSceneGraph( writer, pending.encoded, { release: true } );
 				await writer.commit( { triangles: pending.triangles } );
 
 			} catch ( error ) {
@@ -975,7 +987,7 @@ export class AssetLoader extends EventDispatcher {
 
 			}
 
-		} )();
+		} )().catch( error => console.warn( 'Storing the scene failed:', error ) );
 
 	}
 

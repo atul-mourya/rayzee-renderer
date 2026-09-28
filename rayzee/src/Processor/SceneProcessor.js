@@ -783,7 +783,8 @@ export class SceneProcessor {
 
 				for ( const { m, range } of parallelTasks ) {
 
-					const meshTriData = this.triangles.copyOf( range.start, range.count );
+					const meshTriData = new Uint32Array( new SharedArrayBuffer( range.count * this.triangles.lanesPerRecord * 4 ) );
+					this.triangles.readRecords( range.start, range.count, meshTriData );
 
 					const result = await buildBVHParallel( meshTriData, this.config.bvhDepth, null, {
 						maxLeafSize: this.bvhBuilder.maxLeafSize,
@@ -797,6 +798,12 @@ export class SceneProcessor {
 
 						this.triangles.setRecords( range.start, result.reorderedTriangles );
 						delete result.reorderedTriangles;
+
+					} else if ( result.order ) {
+
+						this._writeInOrder( range.start, result.triangles, result.order );
+						delete result.order;
+						delete result.triangles;
 
 					}
 
@@ -1077,6 +1084,26 @@ export class SceneProcessor {
 	}
 
 	/** Puts records [start, start + count) in built order: slot j takes caller's triangle order[ j ]. @private */
+	/** Record `start + j` of the store becomes record `order[ j ]` of `src`, chunk by chunk. @private */
+	_writeInOrder( start, src, order ) {
+
+		const store = this.triangles;
+		const lanes = store.lanesPerRecord;
+		for ( let j = 0, n = order.length; j < n; ) {
+
+			const dst = store.chunkFor( start + j );
+			const end = Math.min( n, ( ( ( ( start + j ) / store.recordsPerChunk ) | 0 ) + 1 ) * store.recordsPerChunk - start );
+			for ( let d = store.baseOf( start + j ); j < end; j ++, d += lanes ) {
+
+				const s = order[ j ] * lanes;
+				for ( let l = 0; l < lanes; l ++ ) dst[ d + l ] = src[ s + l ];
+
+			}
+
+		}
+
+	}
+
 	_permuteRange( start, count, order ) {
 
 		let identity = true;
@@ -1198,7 +1225,7 @@ export class SceneProcessor {
 			pending: new Int32Array( tri.chunks.length ),
 			emitterChunks: new Set(),
 			emissiveMaterial: this.materials.map( m => ( m?.emissiveIntensity ?? 0 ) > 0 && !! m.emissive && ( m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0 ) ),
-			uploadTriangles: uploader( tri ),
+			uploadTriangles: uploader( tri, 'triangles' ),
 			chain: Promise.resolve(),
 			error: null,
 		};

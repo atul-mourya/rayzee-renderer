@@ -148,7 +148,7 @@ export class NormalDepth extends RenderStage {
 		if ( ! pt ) return false;
 
 		const matAttr = pt.materialData?.materialStorageAttr;
-		const triSwapped = pt.triangleStorageAttr && pt.triangleStorageAttr !== this._lastTriAttr;
+		const triSwapped = pt.triangleGeoAttr && pt.triangleGeoAttr !== this._lastTriAttr;
 		const bvhSwapped = pt.bvhStorageAttr && pt.bvhStorageAttr !== this._lastBvhAttr;
 		const matSwapped = matAttr && matAttr !== this._lastMatAttr;
 
@@ -167,12 +167,13 @@ export class NormalDepth extends RenderStage {
 
 		}
 
-		if ( pt.triangleStorageAttr && ! this._triStorageNode ) {
+		if ( pt.triangleGeoAttr && ! this._triStorageNode ) {
 
 			// uvec4, matching PathTracerStage: packed lanes must keep their exact bit pattern.
-			this._triStorageNode = storage(
-				pt.triangleStorageAttr, 'uvec4', pt.triangleStorageAttr.count
-			).toReadOnly();
+			this._triStorageNode = {
+				geo: storage( pt.triangleGeoAttr, 'uvec4', pt.triangleGeoAttr.count ).toReadOnly(),
+				shade: storage( pt.triangleShadeAttr, 'uvec4', pt.triangleShadeAttr.count ).toReadOnly(),
+			};
 
 		}
 
@@ -193,7 +194,7 @@ export class NormalDepth extends RenderStage {
 		// In-place bucket swaps (model change) — graph closes over the nodes, only .value changes.
 		if ( this._linearBuckets ) refreshBucketTextureNodes( this._linearBuckets, pt.materialData?.linearBuckets );
 
-		this._lastTriAttr = pt.triangleStorageAttr || this._lastTriAttr;
+		this._lastTriAttr = pt.triangleGeoAttr || this._lastTriAttr;
 		this._lastBvhAttr = pt.bvhStorageAttr || this._lastBvhAttr;
 		this._lastMatAttr = matAttr || this._lastMatAttr;
 

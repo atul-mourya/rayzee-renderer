@@ -31,7 +31,9 @@ const MAX_PARALLEL_WORKERS = 8;
  * @param {number} depth - Maximum BVH depth
  * @param {Function|null} progressCallback - Optional progress callback (0-100)
  * @param {Object} config - Builder config (maxLeafSize, numBins, treelet settings, etc.)
- * @returns {Promise<{bvhData: Float32Array, bvhRoot: true, reorderedTriangles: Uint32Array, splitStats: Object}>}
+ * @returns {Promise<{bvhData: Float32Array, bvhRoot: true, order?: Uint32Array, triangles?: Uint32Array, reorderedTriangles?: Uint32Array, splitStats: Object}>}
+ *   the parallel build returns the input `triangles` and the BVH `order` of them (record i of the
+ *   result is record order[i] of the input); its single-worker fallback returns `reorderedTriangles`.
  */
 export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
@@ -45,9 +47,10 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 		( async () => {
 
-			// Allocate SharedArrayBuffers
-			const sharedTriangleData = new SharedArrayBuffer( triangles.byteLength );
-			new Uint32Array( sharedTriangleData ).set( triangles );
+			// A caller that already holds the records in a SharedArrayBuffer hands it over as is.
+			const owned = triangles.buffer instanceof SharedArrayBuffer && triangles.byteOffset === 0 && triangles.byteLength === triangles.buffer.byteLength;
+			const sharedTriangleData = owned ? triangles.buffer : new SharedArrayBuffer( triangles.byteLength );
+			if ( ! owned ) new Uint32Array( sharedTriangleData ).set( triangles );
 			triangles = null; // shared copy is the only one needed; the fallback rebuilds from it
 
 			const sharedCentroids = new SharedArrayBuffer( triangleCount * 3 * 4 );
@@ -55,7 +58,9 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 			const sharedBMax = new SharedArrayBuffer( triangleCount * 3 * 4 );
 			const sharedIndices = new SharedArrayBuffer( triangleCount * 4 );
 			const sharedMortonCodes = new SharedArrayBuffer( triangleCount * 4 );
-			const sharedReorderBuffer = new SharedArrayBuffer( triangleCount * FPT * 4 );
+			// No reordered copy: the caller writes records in `order` from `triangles` itself. At
+			// 14.9M triangles that copy was 1.2 GB, and the allocation that failed the build.
+			const sharedReorderBuffer = null;
 
 			// Phase 1: Coordinator worker
 			const coordinatorWorker = new BVHWorker();
@@ -160,8 +165,11 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 					settled = true;
 					cleanup();
-					const reorderedTriangles = new Uint32Array( sharedReorderBuffer );
-					resolve( { bvhData: msg.bvhData, bvhRoot: true, reorderedTriangles, originalToBvh: msg.originalToBvh || null, splitStats: phase1Stats || {} } );
+					resolve( {
+						bvhData: msg.bvhData, bvhRoot: true,
+						order: new Uint32Array( sharedIndices ), triangles: new Uint32Array( sharedTriangleData ),
+						originalToBvh: msg.originalToBvh || null, splitStats: phase1Stats || {}
+					} );
 					return;
 
 				}

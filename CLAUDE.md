@@ -114,7 +114,7 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
-- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit/rng buffers + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
+- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
 - **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
@@ -190,8 +190,13 @@ UV_AB_OFFSET: 12, UV_C_OFFSET: 16   // f32
 MATERIAL_FLAGS_OFFSET: 18       // materialIndex | side << 24 | shadowBlockerBits << 26
 MESH_INDEX_OFFSET: 19
 ```
-⚠️ Any new reader of `triangleStorageAttr` must bind `uvec4` **and** pass the hit's
-`instanceLeaf`: triangles of a shared geometry are in object space, not world space.
+On the GPU the five rows are split across two buffers — rows 0–2 (positions + packed normals) in
+`triangleGeoAttr`, rows 3–4 (UVs, flags, mesh index) in `triangleShadeAttr` — because one buffer of
+80 B a triangle hit the 4 GB storage-buffer limit at 53.6M; geo alone at 48 B reaches 89.5M. The CPU
+records stay whole; `PathTracerStage._uploadTriangles` splits them on every upload path.
+Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStorageNode`).
+⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), and pass the
+hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
 **Two-Level BVH Layout** (packed in single GPU storage buffer):
 ```
@@ -681,7 +686,10 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
 - **Identity.** `fileIdentity( file )` = name, size, lastModified and a SHA-256 over the head, tail
   and 14 probes (~3 MB read at any size); `identityKey()` is the string form used in keys.
 - **Scene cache** (`SceneGraphCodec`, `BLASCache`): stored when the cold build took ≥ 10 s and the
-  read-back is under a third of it (`worthStoring`). The BLAS cache is content-checked — a
+  read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
+  *during* the build, each array let go once written: held until the build ended, the encoded
+  graph kept every array the build replaces (float normals, instance matrices) alive — ~1 GB at
+  the peak on the whole Moana subset. The BLAS cache is content-checked — a
   template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
   textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
   `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly
@@ -723,9 +731,9 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   page in first — `refitBVH`, `rebuildMaterials`, and `setMaterialProperty` for
   `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves never need to; `refitBLASes`
   throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
-  alive, which is why the store tracks them (weakly). ⚠️ The triangle buffer is one storage
-  buffer: past `maxBufferSize` (4 GB here, ~53.6M triangles) WebGPU returns an invalid buffer and
-  every write fails quietly — `_assertFitsGPU` throws instead.
+  alive, which is why the store tracks them (weakly). ⚠️ Past `maxBufferSize` (4 GB here) WebGPU
+  returns an invalid buffer and every write fails quietly — `_assertFitsGPU` throws instead. The
+  geo triangle buffer reaches it at 89.5M triangles, the BVH at ~67M nodes.
 
 ## Development Commands
 

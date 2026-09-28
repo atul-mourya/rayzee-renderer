@@ -329,8 +329,17 @@ export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dat
 
 } );
 
-/** uvec4 lanes per triangle record — see TRIANGLE_DATA_LAYOUT. */
-export const TRI_STRIDE = 5;
+/**
+ * The five uvec4 rows of a triangle record (TRIANGLE_DATA_LAYOUT) live in two GPU buffers: rows
+ * 0–2, positions with their packed normals, in `tris.geo`; rows 3–4, UVs, flags and mesh index,
+ * in `tris.shade`. One buffer of 80 B a triangle hit the 4 GB storage-buffer limit at 53.6M.
+ */
+export const TRI_GEO_ROWS = 3;
+export const TRI_SHADE_ROWS = 2;
+
+export const triangleRow = ( tris, triIndex, row ) => row < TRI_GEO_ROWS
+	? getDatafromStorageBuffer( tris.geo, triIndex, int( row ), int( TRI_GEO_ROWS ) )
+	: getDatafromStorageBuffer( tris.shade, triIndex, int( row - TRI_GEO_ROWS ), int( TRI_SHADE_ROWS ) );
 
 // Unit normal to an octahedral snorm16 pair; GPU twin of packNormalOct in EngineDefaults.
 export const packNormalOct = /*@__PURE__*/ wgslFn( `

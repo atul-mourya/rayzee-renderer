@@ -1723,7 +1723,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return null;
 		const stage = this.stages.pathTracer;
-		return { storage: this.storage, uploader: records => stage.createChunkUploader( records ) };
+		return { storage: this.storage, uploader: ( records, kind ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records ) : stage.createChunkUploader( records ) };
 
 	}
 
