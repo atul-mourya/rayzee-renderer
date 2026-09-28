@@ -23,6 +23,7 @@ import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
 import { sharedStorage } from '../Storage/shared.js';
 import { SpillStore } from '../Storage/SpillStore.js';
+import { GeometrySpill } from '../Storage/GeometrySpill.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { VERSION } from '../version.js';
 import { SCENE_CACHE_MIN_BUILD_MS } from '../Storage/sceneCachePolicy.js';
@@ -37,6 +38,8 @@ const TLAS_WORKER_MIN_ENTRIES = 50_000;
 const LARGE_MESH_TRIANGLES = 200000;
 // A streamed build's extraction waits while more triangle records than this are in memory.
 const STREAM_RESIDENT_BYTES = 1.5 * 1024 ** 3;
+// Extraction waits while more three.js geometry than this is queued for disk.
+const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
 const log = createLogger( 'scene' );
 
@@ -553,6 +556,7 @@ export class SceneProcessor {
 			timer.print();
 
 			this.processingStage = 'complete';
+			await this._restoreGeometry( object );
 			updateLoading( { status: "Scene data ready", progress: 85 } );
 			if ( this._blasKey && ! this._blasRestored && this.performanceMetrics.totalProcessingTime >= this.config.sceneCacheMinBuildMs ) {
 
@@ -575,6 +579,8 @@ export class SceneProcessor {
 
 		} finally {
 
+			// A failed build's model is discarded, so its geometry is not read back.
+			this._disposeGeometrySpill();
 			setChunkObserver( null );
 			this._sampleMemory( `at ${this.processingStage}` );
 			this._logMemoryReport();
@@ -661,6 +667,10 @@ export class SceneProcessor {
 			return this._extractGeometry( object );
 
 		}
+
+		// The three.js geometry waits on disk from its last read until the build is done.
+		const geometry = await GeometrySpill.create( storage, `${key}:geo`, this.memoryPreflight?.geometryBytes ?? 0 );
+		this._geometrySpill = geometry;
 
 		const state = {
 			key, triStore, blasStore, bvhStore: null,
@@ -759,9 +769,12 @@ export class SceneProcessor {
 
 				},
 
+				releaseGeometry: geometry ? g => geometry.add( g ) : null,
+
 				pause: async ( written ) => {
 
 					advance( written );
+					if ( geometry?.queuedBytes > GEOMETRY_QUEUE_BYTES ) await geometry.written();
 					updateLoading( { status: `Extracted ${written.toLocaleString()} triangles, ${finished.toLocaleString()} BVHs built...`, progress: 15 + Math.floor( 20 * written / Math.max( 1, capacity ) ) } );
 					await new Promise( r => setTimeout( r, 0 ) );
 					// A timer, not the spill chain: an already-settled promise would spin this loop in
@@ -2164,6 +2177,7 @@ export class SceneProcessor {
 
 		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
 		this._disposeSpill();
+		this._disposeGeometrySpill();
 
 		// First dispose any existing resources
 		this._disposeTextures();
@@ -3157,6 +3171,31 @@ export class SceneProcessor {
 		} );
 
 		return this._paging;
+
+	}
+
+	/** Reads the three.js geometry a streamed build moved to disk back into place. @private */
+	async _restoreGeometry( object ) {
+
+		const spill = this._geometrySpill;
+		if ( ! spill?.bytes ) return;
+		updateLoading( { status: 'Reading scene geometry back...', progress: 84 } );
+		const started = performance.now();
+		const bytes = spill.bytes;
+		await spill.restore();
+		this._disposeGeometrySpill();
+		this._geometryBytes = geometryBytesOf( object );
+		log.info( `read ${fmt.mb( bytes )} of scene geometry back from disk in ${fmt.ms( performance.now() - started )}` );
+		if ( spill.error ) log.warn( 'some scene geometry stayed in memory, its spill write failed:', spill.error );
+
+	}
+
+	/** @private */
+	_disposeGeometrySpill() {
+
+		const spill = this._geometrySpill;
+		this._geometrySpill = null;
+		spill?.dispose().catch( () => {} );
 
 	}
 

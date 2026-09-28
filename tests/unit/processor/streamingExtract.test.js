@@ -56,6 +56,71 @@ describe( 'GeometryExtractor.extractStreaming', () => {
 
 	} );
 
+	it( 'hands each geometry over once, after its last read, compressed as extract() leaves it', async () => {
+
+		const plainScene = scene();
+		const plain = new GeometryExtractor().extract( plainScene );
+
+		const released = [];
+		const streamedScene = scene();
+		const readsLeft = new Map();
+		streamedScene.traverse( o => o.isMesh && readsLeft.set( o.geometry, ( readsLeft.get( o.geometry ) ?? 0 ) + 1 ) );
+
+		const extractor = new GeometryExtractor();
+		const streamed = await extractor.extractStreaming( streamedScene, {
+			pause: async () => {},
+			releaseGeometry: g => {
+
+				expect( extractor.meshes.filter( m => m.geometry === g ) ).toHaveLength( readsLeft.get( g ) );
+				released.push( g );
+
+			},
+		} );
+
+		expect( released ).toHaveLength( readsLeft.size );
+		expect( new Set( released ).size ).toBe( released.length );
+		expect( Array.from( streamed.triangleData.copyOf( 0, streamed.triangleCount ) ) )
+			.toEqual( Array.from( plain.triangleData.copyOf( 0, plain.triangleCount ) ) );
+
+		const attributesOf = root => {
+
+			const out = [];
+			root.traverse( o => o.isMesh && out.push( Object.fromEntries( Object.entries( o.geometry.attributes ).map( ( [ k, a ] ) => [ k, [ a.array.constructor.name, a.normalized, Array.from( a.array ) ]] ) ) ) );
+			return out;
+
+		};
+
+		expect( attributesOf( streamedScene ) ).toEqual( attributesOf( plainScene ) );
+
+	} );
+
+	it( 'never hands over a host\'s geometry, or one whose arrays another geometry holds', async () => {
+
+		const group = scene();
+		const host = new Group();
+		host.userData.__rayzeeExternal = true;
+		const hostBox = new BoxGeometry();
+		host.add( new Mesh( hostBox, new MeshStandardMaterial() ) );
+		const twin = new BoxGeometry();
+		twin.setAttribute( 'uv', hostBox.attributes.uv );
+		const loose = new BoxGeometry();
+		loose.setAttribute( 'uv', new SphereGeometry().attributes.uv );
+		const partner = new BoxGeometry();
+		partner.setAttribute( 'uv', loose.attributes.uv );
+		group.add( host, new Mesh( twin, new MeshStandardMaterial() ), new Mesh( loose, new MeshStandardMaterial() ), new Mesh( partner, new MeshStandardMaterial() ) );
+		group.updateMatrixWorld( true );
+
+		const released = new Set();
+		await new GeometryExtractor().extractStreaming( group, { pause: async () => {}, releaseGeometry: g => released.add( g ) } );
+
+		expect( released.has( hostBox ) ).toBe( false );
+		expect( released.has( twin ) ).toBe( false );
+		expect( released.has( loose ) ).toBe( false );
+		expect( released.has( partner ) ).toBe( false );
+		expect( released.size ).toBeGreaterThan( 0 );
+
+	} );
+
 	it( 'sizes its store exactly, counting a shared geometry once and an emissive instance each', () => {
 
 		const extractor = new GeometryExtractor();

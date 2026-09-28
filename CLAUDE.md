@@ -728,7 +728,13 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   extraction waits while more than `STREAM_RESIDENT_BYTES` (1.5 GB) of records are in memory — so
   the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
   bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
-  starved the worker messages it waited for (a hung tab). ⚠️ A shared buffer handed
+  starved the worker messages it waited for (a hung tab). The three.js geometry goes to disk too,
+  from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
+  `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
+  deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
+  writes and everything is read back in 64 MB windows at the end of `buildBVH` (3.9 GB in 3.0 s at
+  80M). Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
+  build does not read it back — the app discards a failed load's model. ⚠️ A shared buffer handed
   to the storage worker lives until that worker next collects garbage, which it barely does: every
   spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
   `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
