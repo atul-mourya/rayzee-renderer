@@ -1,10 +1,11 @@
-import { EventDispatcher, MathUtils, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
+import { EventDispatcher, MathUtils, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
 import { AF_DEFAULTS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
 import { ViewCamera } from './ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
+import { toPortable, fromPortable } from '../SceneState/portable.js';
 
 const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
 
@@ -554,6 +555,173 @@ export class CameraManager extends EventDispatcher {
 		}
 
 		camera.updateMatrixWorld();
+
+	}
+
+	// ── Saved sessions ────────────────────────────────────────────
+
+	/**
+	 * The live view, every camera's own effects, the cameras the user added and which one is
+	 * active, as plain data. The active camera's effects are the render settings themselves.
+	 * @returns {Object}
+	 */
+	serialize() {
+
+		const camera = this.camera;
+		const saved = this._defaultCameraState;
+
+		return {
+			current: this.currentCameraIndex,
+			view: {
+				position: camera.position.toArray(),
+				quaternion: camera.quaternion.toArray(),
+				scale: camera.scale.toArray(),
+				fov: camera.fov,
+				near: camera.near,
+				far: camera.far,
+				zoom: camera.zoom,
+				orthographic: !! camera.orthographic,
+				orthoHalfHeight: camera.orthoHalfHeight,
+				target: this.controls.target.toArray(),
+			},
+			defaultView: saved ? {
+				position: saved.position.toArray(),
+				quaternion: saved.quaternion.toArray(),
+				scale: saved.scale.toArray(),
+				fov: saved.fov,
+				near: saved.near,
+				far: saved.far,
+				target: saved.target?.toArray() ?? null,
+			} : null,
+			navigationMode: this.navigationMode,
+			autoFocus: { mode: this.autoFocusMode, point: { ...this.afScreenPoint } },
+			cameras: this.cameras.map( ( cam, index ) => {
+
+				const entry = { index, name: cam.name ?? '', effects: toPortable( cam.userData?.__rayzeeEffects ) ?? null };
+				if ( index === 0 || ! cam.userData?.__rayzeeUserCamera ) return entry;
+
+				return {
+					...entry,
+					user: true,
+					orthographic: !! cam.isOrthographicCamera,
+					frustum: cam.isOrthographicCamera ? [ cam.left, cam.right, cam.top, cam.bottom ] : null,
+					fov: cam.fov ?? null,
+					aspect: cam.aspect ?? null,
+					near: cam.near,
+					far: cam.far,
+					zoom: cam.zoom,
+					position: cam.position.toArray(),
+					quaternion: cam.quaternion.toArray(),
+					scale: cam.scale.toArray(),
+					orbitTarget: cam.userData.__rayzeeOrbitTarget?.toArray() ?? null,
+				};
+
+			} ),
+		};
+
+	}
+
+	/**
+	 * Puts back what {@link serialize} recorded, against the cameras this load produced. A model
+	 * camera is matched by index and name; one that no longer matches keeps its own effects.
+	 * Restore render settings first: this sets the exact view after any projection change they made.
+	 * @param {Object} state
+	 * @returns {{mismatched: string[]}} model cameras whose saved effects were not applied
+	 */
+	restore( state ) {
+
+		const mismatched = [];
+		if ( ! state ) return { mismatched };
+
+		this.cameras = this.cameras.filter( cam => ! cam.userData?.__rayzeeUserCamera );
+		const indexMap = new Map();
+
+		for ( const entry of state.cameras ?? [] ) {
+
+			if ( entry.user ) {
+
+				const cam = entry.orthographic
+					? new OrthographicCamera( ...entry.frustum, entry.near, entry.far )
+					: new PerspectiveCamera( entry.fov, entry.aspect, entry.near, entry.far );
+				cam.name = entry.name;
+				cam.zoom = entry.zoom ?? 1;
+				cam.position.fromArray( entry.position );
+				cam.quaternion.fromArray( entry.quaternion );
+				cam.scale.fromArray( entry.scale );
+				cam.updateProjectionMatrix();
+				cam.updateMatrixWorld( true );
+				cam.userData.__rayzeeUserCamera = true;
+				cam.userData.__rayzeeEffects = fromPortable( entry.effects );
+				if ( entry.orbitTarget ) cam.userData.__rayzeeOrbitTarget = new Vector3().fromArray( entry.orbitTarget );
+				indexMap.set( entry.index, this.cameras.length );
+				this.cameras.push( cam );
+				continue;
+
+			}
+
+			const cam = this.cameras[ entry.index ];
+			if ( ! cam || ( entry.index > 0 && ( cam.name ?? '' ) !== entry.name ) ) {
+
+				mismatched.push( entry.name );
+				continue;
+
+			}
+
+			indexMap.set( entry.index, entry.index );
+			if ( entry.effects ) cam.userData.__rayzeeEffects = fromPortable( entry.effects );
+
+		}
+
+		this._userCameraCounter = this.cameras.filter( cam => cam.userData?.__rayzeeUserCamera ).length;
+		this.currentCameraIndex = indexMap.get( state.current ) ?? 0;
+
+		const d = state.defaultView;
+		this._defaultCameraState = d ? {
+			position: new Vector3().fromArray( d.position ),
+			quaternion: new Quaternion().fromArray( d.quaternion ),
+			scale: new Vector3().fromArray( d.scale ),
+			fov: d.fov,
+			near: d.near,
+			far: d.far,
+			target: d.target ? new Vector3().fromArray( d.target ) : null,
+		} : null;
+
+		if ( state.navigationMode ) this.setNavigationMode( state.navigationMode );
+
+		const v = state.view;
+		if ( v ) {
+
+			const camera = this.camera;
+			camera.position.fromArray( v.position );
+			camera.quaternion.fromArray( v.quaternion );
+			camera.scale.fromArray( v.scale );
+			camera.fov = v.fov;
+			camera.near = v.near;
+			camera.far = v.far;
+			this._setView( v.orthographic, v.orthoHalfHeight );
+			camera.zoom = v.zoom ?? 1;
+			camera.updateProjectionMatrix();
+			camera.updateMatrixWorld( true );
+			this.controls.target.fromArray( v.target );
+			this.controls.update();
+
+		}
+
+		if ( state.autoFocus ) {
+
+			this.setAutoFocusMode( state.autoFocus.mode );
+			this.setAFScreenPoint( state.autoFocus.point.x, state.autoFocus.point.y );
+
+		}
+
+		this.resetAutoFocus();
+		this._reportOrthoHeight();
+		this.dispatchEvent( {
+			type: 'CameraSwitched', cameraIndex: this.currentCameraIndex, effects: this._captureEffects(), fov: this.camera.fov,
+			cameraProjection: this._getSettings?.( 'cameraProjection' ),
+		} );
+
+		return { mismatched };
 
 	}
 

@@ -20,6 +20,12 @@ import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
 	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
+import { sharedStorage } from '../Storage/shared.js';
+import { SpillStore } from '../Storage/SpillStore.js';
+import { getAssetConfig } from '../AssetConfig.js';
+import { VERSION } from '../version.js';
+import { SCENE_CACHE_MIN_BUILD_MS } from '../Storage/sceneCachePolicy.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
 import TLASWorker from './Workers/TLASWorker.js?worker&inline';
@@ -72,6 +78,9 @@ export class SceneProcessor {
 			treeletMinImprovement: 0.01, // Minimum SAH improvement threshold
 			// Above this triangle count the builder drops treelets to size 3.
 			treeletComplexityThreshold: 50000,
+			// Store the per-mesh BVHs of a scene whose build took at least this long (needs a sceneKey).
+			sceneCache: true,
+			sceneCacheMinBuildMs: SCENE_CACHE_MIN_BUILD_MS,
 			...options
 		};
 
@@ -405,7 +414,11 @@ export class SceneProcessor {
      * @param {Object3D} object - Three.js object to process
      * @returns {Promise<SceneProcessor>} - This instance (for chaining)
      */
-	async buildBVH( object ) {
+	/**
+	 * @param {Object3D} object
+	 * @param {{sceneKey?: ?string}} [options] - what the scene was loaded from; enables the BLAS cache
+	 */
+	async buildBVH( object, { sceneKey = null } = {} ) {
 
 		if ( this.isProcessing ) {
 
@@ -426,6 +439,9 @@ export class SceneProcessor {
 
 			// Reset state before beginning
 			this._reset();
+			this._sceneKey = sceneKey;
+			this._blasKey = null;
+			this._blasRestored = false;
 			this._log( 'Starting scene processing' );
 
 			// Step 0: will this scene fit in the address space this process has left?
@@ -503,6 +519,12 @@ export class SceneProcessor {
 
 			this.processingStage = 'complete';
 			updateLoading( { status: "Scene data ready", progress: 85 } );
+			if ( this._blasKey && ! this._blasRestored && this.performanceMetrics.totalProcessingTime >= this.config.sceneCacheMinBuildMs ) {
+
+				this._blasStoring = this._storeBLASes( object.name ?? '' ).catch( ( error ) => log.debug( 'storing BLASes failed:', error ) );
+
+			}
+
 			return this;
 
 		} catch ( error ) {
@@ -734,8 +756,20 @@ export class SceneProcessor {
 
 			};
 
+			const owners = [ ...poolTasks, ...parallelTasks ]
+				.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
+				.sort( ( a, b ) => a.t - b.t );
+			const restored = await this._restoreBLASes( owners, TLASBuilder.nodeCountFor( meshCount ), workerOpts );
+			if ( restored ) {
+
+				poolTasks.length = 0;
+				parallelTasks.length = 0;
+				updateLoading( { status: 'Restored stored BVHs', progress: 68 } );
+
+			}
+
 			// Build all meshes via bounded worker pool (main thread stays free)
-			const poolPromise = this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress );
+			const poolPromise = restored ? Promise.resolve( restored.results ) : this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress );
 
 			// One at a time: each build already spreads over every core and pins ~200 bytes per
 			// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
@@ -790,7 +824,7 @@ export class SceneProcessor {
 
 				this.instanceTable.setEntry( {
 					meshIndex: m,
-					blasNodeCount: result.bvhData.length / 16,
+					blasNodeCount: result.nodeCount ?? result.bvhData.length / 16,
 					triOffset: range.start,
 					triCount: range.count,
 					originalToBvhMap: result.originalToBvh || null,
@@ -862,23 +896,45 @@ export class SceneProcessor {
 			// as chunks are taken and BLASes released.
 			const sampleEvery = Math.max( 1, Math.ceil( table.templateCount / 32 ) );
 
-			for ( let t = 0; t < table.templateCount; t ++ ) {
+			if ( restored ) {
 
-				const blas = table.blasData.get( t ); // only owning templates hold one
-				if ( ! blas ) continue;
+				// Stored already assembled: same template order, same offsets, indices already rebased.
+				try {
 
-				const blasOffset = table.tplBlasOffset[ t ];
-				this.bvh.setRecords( blasOffset, blas );
-				this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
-				table.blasData.delete( t );
+					const readStart = performance.now();
+					await readNodesInto( restored.nodes, this.bvh, table.tlasNodeCount, totalNodes - table.tlasNodeCount );
+					this.performanceMetrics.blasRestore.readMs = performance.now() - readStart;
 
-				if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
+				} finally {
+
+					restored.release();
+
+				}
+
+				table.blasData.clear();
+
+			} else {
+
+				for ( let t = 0; t < table.templateCount; t ++ ) {
+
+					const blas = table.blasData.get( t ); // only owning templates hold one
+					if ( ! blas ) continue;
+
+					const blasOffset = table.tplBlasOffset[ t ];
+					this.bvh.setRecords( blasOffset, blas );
+					this._offsetBLASInPlace( blasOffset, blas.length / 16, blasOffset, table.tplTriOffset[ t ] );
+					table.blasData.delete( t );
+
+					if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
+
+				}
 
 			}
 
 			this._setBVHData( this.bvh.materializeAll() );
 
-			this._buildBvhToOriginalMaps();
+			if ( restored ) for ( const [ t, map ] of restored.orders ) table.bvhToOriginal.set( t, map );
+			else this._buildBvhToOriginalMaps();
 			this.performanceMetrics.bvhAssembleTime = performance.now() - assembleStart;
 
 			table.originalToBvhMap.clear();
@@ -914,6 +970,180 @@ export class SceneProcessor {
 			throw error;
 
 		}
+
+	}
+
+	_blasCacheKey( workerOpts ) {
+
+		const builder = { ...workerOpts };
+		delete builder.logLevel;
+		const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
+		return `blas:${BLAS_CACHE_FORMAT}:${VERSION}:${JSON.stringify( builder )}:${cores}:${this._sceneKey}`;
+
+	}
+
+	/**
+	 * Reuses stored BLASes when every owning template matches what was stored — same ranges, same
+	 * node counts, same offsets, same triangles — and puts the triangles in their built order.
+	 * @returns {Promise<?{results: Array, orders: Map<number, Uint32Array>, nodes: File, release: function(): void}>}
+	 * @private
+	 */
+	async _restoreBLASes( owners, tlasNodeCount, workerOpts ) {
+
+		if ( ! this._sceneKey || this.config.sceneCache === false ) return null;
+		const storage = sharedStorage( getAssetConfig().cacheNamespace );
+		if ( ! storage ) return null;
+
+		this._blasKey = this._blasCacheKey( workerOpts );
+		const cached = await openBLASCache( storage, this._blasKey );
+		if ( ! cached ) return null;
+
+		const miss = ( reason ) => {
+
+			log.debug( `stored BLASes not used: ${reason}` );
+			cached.release();
+			return null;
+
+		};
+
+		const { index } = cached;
+		if ( index.tlasNodeCount !== tlasNodeCount || index.templates.length !== owners.length ) return miss( 'layout changed' );
+
+		let offset = tlasNodeCount;
+		for ( let i = 0; i < owners.length; i ++ ) {
+
+			const [ t, triOffset, triCount, nodeCount, blasOffset ] = index.templates[ i ];
+			const o = owners[ i ];
+			if ( o.t !== t || o.triOffset !== triOffset || o.triCount !== triCount || blasOffset !== offset ) return miss( 'layout changed' );
+			offset += nodeCount;
+
+		}
+
+		if ( offset !== index.totalNodes ) return miss( 'layout changed' );
+
+		const checkStart = performance.now();
+		const sums = await templateChecksums( this.triangles, owners );
+		for ( let i = 0; i < owners.length; i ++ ) if ( sums[ i ] !== index.templates[ i ][ 6 ] ) return miss( 'triangles changed' );
+		const permuteStart = performance.now();
+
+		try {
+
+			const orders = new Map();
+			const results = [];
+			for ( let i = 0; i < owners.length; i ++ ) {
+
+				const [ t, triOffset, triCount, nodeCount, , orderOffset, , root ] = index.templates[ i ];
+				const order = await readOrder( cached.order, orderOffset, triCount );
+				this._permuteRange( triOffset, triCount, order );
+				orders.set( t, order );
+				results.push( {
+					m: owners[ i ].m,
+					range: owners[ i ].range,
+					result: { bvhData: new Float32Array( Uint32Array.from( root ).buffer ), originalToBvh: null, nodeCount },
+				} );
+
+			}
+
+			this._blasRestored = true;
+			this.performanceMetrics.blasRestore = { checksumMs: permuteStart - checkStart, permuteMs: performance.now() - permuteStart };
+			log.debug( `restored ${fmt.n( owners.length )} stored BLASes` );
+			return { results, orders, nodes: cached.nodes, release: cached.release };
+
+		} catch ( error ) {
+
+			cached.release();
+			throw error;
+
+		}
+
+	}
+
+	/** Puts records [start, start + count) in built order: slot j takes caller's triangle order[ j ]. @private */
+	_permuteRange( start, count, order ) {
+
+		let identity = true;
+		for ( let j = 0; j < count && identity; j ++ ) identity = order[ j ] === j;
+		if ( identity ) return;
+
+		const lanes = this.triangles.lanesPerRecord;
+		// A view when the range sits in one chunk: read from it, write a fresh buffer, copy back once.
+		const src = this.triangles.slice( start, count );
+		const out = new src.constructor( src.length );
+		if ( lanes === 20 ) {
+
+			for ( let j = 0, d = 0; j < count; j ++, d += 20 ) {
+
+				const s = order[ j ] * 20;
+				out[ d ] = src[ s ]; out[ d + 1 ] = src[ s + 1 ]; out[ d + 2 ] = src[ s + 2 ]; out[ d + 3 ] = src[ s + 3 ];
+				out[ d + 4 ] = src[ s + 4 ]; out[ d + 5 ] = src[ s + 5 ]; out[ d + 6 ] = src[ s + 6 ]; out[ d + 7 ] = src[ s + 7 ];
+				out[ d + 8 ] = src[ s + 8 ]; out[ d + 9 ] = src[ s + 9 ]; out[ d + 10 ] = src[ s + 10 ]; out[ d + 11 ] = src[ s + 11 ];
+				out[ d + 12 ] = src[ s + 12 ]; out[ d + 13 ] = src[ s + 13 ]; out[ d + 14 ] = src[ s + 14 ]; out[ d + 15 ] = src[ s + 15 ];
+				out[ d + 16 ] = src[ s + 16 ]; out[ d + 17 ] = src[ s + 17 ]; out[ d + 18 ] = src[ s + 18 ]; out[ d + 19 ] = src[ s + 19 ];
+
+			}
+
+		} else {
+
+			for ( let j = 0; j < count; j ++ ) {
+
+				const s = order[ j ] * lanes;
+				const d = j * lanes;
+				for ( let l = 0; l < lanes; l ++ ) out[ d + l ] = src[ s + l ];
+
+			}
+
+		}
+
+		this.triangles.setRecords( start, out );
+
+	}
+
+	/** Writes this build's BLASes to storage in the background; abandons it if the scene changes. @private */
+	async _storeBLASes( label ) {
+
+		const storage = sharedStorage( getAssetConfig().cacheNamespace );
+		const table = this.instanceTable;
+		if ( ! storage || ! table || ! this.bvh ) return false;
+
+		const key = this._blasKey;
+		const version = this._geometryVersion;
+		const isStale = () => this._geometryVersion !== version || this._blasKey !== key;
+
+		const owners = [];
+		for ( let t = 0; t < table.templateCount; t ++ ) {
+
+			const owner = table.tplOwner[ t ];
+			if ( owner < 0 || table.sourceMesh[ owner ] !== t ) continue;
+			owners.push( { t, triOffset: table.tplTriOffset[ t ], triCount: table.tplTriCount[ t ], nodeCount: table.tplNodeCount[ t ], blasOffset: table.tplBlasOffset[ t ] } );
+
+		}
+
+		const sums = await templateChecksums( this.triangles, owners );
+		if ( isStale() ) return false;
+
+		const rootBits = ( n ) => {
+
+			const chunk = this.bvhIndexChunks.chunkFor( n );
+			const base = this.bvhIndexChunks.baseOf( n );
+			return Array.from( chunk.subarray( base, base + 16 ) );
+
+		};
+
+		let orderOffset = 0;
+		const orders = [];
+		const templates = owners.map( ( o, i ) => {
+
+			orders.push( table.bvhToOriginal.get( o.t ) ?? Uint32Array.from( { length: o.triCount }, ( _, j ) => j ) );
+			const entry = [ o.t, o.triOffset, o.triCount, o.nodeCount, o.blasOffset, orderOffset, sums[ i ], rootBits( o.blasOffset ) ];
+			orderOffset += o.triCount;
+			return entry;
+
+		} );
+
+		const index = { v: BLAS_CACHE_FORMAT, tlasNodeCount: table.tlasNodeCount, totalNodes: table.totalNodeCount, templates };
+		const stored = await saveBLASCache( storage, key, { index, bvh: this.bvh, orders, isStale, label } );
+		if ( stored ) log.debug( `stored ${fmt.n( owners.length )} BLASes for the next load` );
+		return stored;
 
 	}
 
@@ -1415,6 +1645,9 @@ export class SceneProcessor {
      */
 	_reset() {
 
+		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
+		this._disposeSpill();
+
 		// First dispose any existing resources
 		this._disposeTextures();
 
@@ -1772,6 +2005,8 @@ export class SceneProcessor {
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
+		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
+
 		if ( ! this.bvh || ! this.triangles || ! this.instanceTable ) {
 
 			throw new Error( 'No BVH data available for refit. Run buildBVH() first.' );
@@ -1908,6 +2143,8 @@ export class SceneProcessor {
 	}
 
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
+
+		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
 
 		if ( ! this.instanceTable || ! this.bvh || ! this.triangles ) {
 
@@ -2138,9 +2375,10 @@ export class SceneProcessor {
 	 * @param {import('../managers/LightManager.js').LightManager} lightManager
 	 * @param {import('three').Scene} meshScene
 	 * @param {import('three').Texture|null} environmentTexture
+	 * @param {{keepUserLights?: boolean}} [options] - an incremental rebuild keeps the lights a host added
 	 * @returns {boolean} false if critical data is missing
 	 */
-	uploadToPathTracer( pathTracer, lightManager, meshScene, environmentTexture ) {
+	uploadToPathTracer( pathTracer, lightManager, meshScene, environmentTexture, { keepUserLights = false } = {} ) {
 
 		if ( ! this.triangles ) {
 
@@ -2193,6 +2431,8 @@ export class SceneProcessor {
 				this.emissiveTotalPower,
 				this.emissiveBitTrailMap,
 			);
+			// The light buffer holds the map from here; a rebuild makes a new one.
+			this._releaseBitTrailMap();
 
 		}
 
@@ -2205,7 +2445,7 @@ export class SceneProcessor {
 
 		}
 
-		lightManager.transferSceneLights( meshScene );
+		lightManager.transferSceneLights( meshScene, { keepUserLights } );
 		return true;
 
 	}
@@ -2319,14 +2559,104 @@ export class SceneProcessor {
 		this.emissiveTriangleCount = this.emissiveTriangleBuilder.emissiveCount;
 		this.emissiveTotalPower = this.emissiveTriangleBuilder.totalEmissivePower;
 
+		const bitTrailMap = this.emissiveBitTrailMap;
+		this._releaseBitTrailMap();
+
 		return {
 			rawData: this.emissiveTriangleData,
 			emissiveCount: this.emissiveTriangleCount,
 			totalPower: this.emissiveTotalPower,
-			bitTrailMap: this.emissiveBitTrailMap,
+			bitTrailMap,
 			lightBVHNodeData: this.lightBVHNodeData,
 			lightBVHNodeCount: this.lightBVHNodeCount,
 		};
+
+	}
+
+	/** Whether any triangle records or BLAS nodes are on disk (see {@link spillToDisk}). */
+	get spilled() {
+
+		return !! ( this.triangles?.spilledChunks || this.bvh?.spilledChunks );
+
+	}
+
+	/**
+	 * Experimental memory spill: once the scene is on the GPU, moves the triangle records and the
+	 * BLAS part of the BVH to disk. The TLAS stays, so visibility and rigid moves need nothing
+	 * back; anything that reads triangles or BLAS nodes awaits {@link ensureResident} first.
+	 * Multi-chunk scenes only — below a chunk the saving is small and the cost is not.
+	 * @param {import('../Storage/StorageManager.js').StorageManager} storage
+	 * @returns {Promise<?{bytes: number, ms: number}>} null when nothing was spilled
+	 */
+	async spillToDisk( storage ) {
+
+		const triangles = this.triangles;
+		const bvh = this.bvh;
+		if ( ! storage || this.spilled || ! triangles?.chunks || triangles.chunks.length < 2 || ! bvh?.chunks ) return null;
+
+		await this._blasStoring;
+		const version = this._geometryVersion;
+		const started = performance.now();
+		const key = `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}`;
+		const stride = records => records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
+
+		const triStore = await SpillStore.create( storage, `${key}:tri`, stride( triangles ), { label: 'Triangle records', expectedBytes: triangles.byteLength } );
+		const bvhStore = triStore && await SpillStore.create( storage, `${key}:bvh`, stride( bvh ), { label: 'BLAS nodes', expectedBytes: bvh.byteLength } );
+		if ( ! triStore || ! bvhStore ) {
+
+			await triStore?.dispose();
+			return null;
+
+		}
+
+		this._spillStores = [ triStore, bvhStore ];
+		const tlasChunks = Math.ceil( ( this.instanceTable?.tlasNodeCount ?? 1 ) / bvh.recordsPerChunk );
+
+		let bytes = await triangles.spill( triStore );
+		bytes += await bvh.spill( bvhStore, { keep: k => k < tlasChunks } );
+		await triStore.flush();
+		await bvhStore.flush();
+
+		if ( version !== this._geometryVersion ) return null;
+		const ms = performance.now() - started;
+		log.info( `spilled ${( bytes / 1048576 ).toFixed( 0 )} MB of triangles and BLAS nodes to disk in ${ms.toFixed( 0 )} ms` );
+		return { bytes, ms };
+
+	}
+
+	/** Reads every spilled triangle record and BLAS node back, then drops the scratch files. */
+	ensureResident() {
+
+		this._paging ??= ( async () => {
+
+			await this.triangles?.ensureResident?.();
+			await this.bvh?.ensureResident?.();
+			if ( ! this.spilled ) this._disposeSpill();
+
+		} )().finally( () => {
+
+			this._paging = null;
+
+		} );
+
+		return this._paging;
+
+	}
+
+	/** @private */
+	_disposeSpill() {
+
+		const stores = this._spillStores;
+		this._spillStores = null;
+		for ( const store of stores ?? [] ) store.dispose().catch( () => {} );
+
+	}
+
+	/** The map goes to the path tracer's light buffer and is not kept here as well. */
+	_releaseBitTrailMap() {
+
+		this.emissiveBitTrailMap = null;
+		if ( this.emissiveTriangleBuilder ) this.emissiveTriangleBuilder.emissiveBitTrailMap = null;
 
 	}
 
@@ -2771,6 +3101,8 @@ export class SceneProcessor {
 	 */
 	_swapBLAS( meshIdx, entry, workerData, onSwap ) {
 
+		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
+
 		const FPN = 16;
 		const newBvhData = workerData.bvhData;
 		const newNodeCount = newBvhData.length / FPN;
@@ -2884,6 +3216,8 @@ export class SceneProcessor {
      * Call this when the instance is no longer needed
      */
 	dispose() {
+
+		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
 
 		this._log( 'Disposing resources' );
 

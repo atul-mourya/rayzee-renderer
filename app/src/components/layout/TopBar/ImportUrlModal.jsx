@@ -33,7 +33,7 @@ const ImportUrlModal = ( {
 				<DialogHeader>
 					<DialogTitle>Import from URL</DialogTitle>
 					<DialogDescription>
-	                    Enter the URL of the GLB / GLTF file you want to import.
+	                    Enter the URL of a .glb / .gltf file, or of a scene archive (.zip, .tar, .tar.gz).
 					</DialogDescription>
 				</DialogHeader>
 				<Input

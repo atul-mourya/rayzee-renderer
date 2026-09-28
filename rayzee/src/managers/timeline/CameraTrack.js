@@ -133,6 +133,28 @@ export class CameraTrack {
 
 	}
 
+	/** The keys as plain data, for a saved session. */
+	serialize() {
+
+		return this.keys.map( ( { time, position, target, fov, orthoHeight } ) => ( { time, position: position.toArray(), target: target.toArray(), fov, orthoHeight } ) );
+
+	}
+
+	/** Replaces every key with the ones {@link serialize} described. */
+	restore( keys ) {
+
+		this.keys = ( keys ?? [] ).map( key => ( {
+			id: this._nextId ++,
+			time: key.time,
+			position: new Vector3().fromArray( key.position ),
+			target: new Vector3().fromArray( key.target ),
+			fov: key.fov,
+			orthoHeight: key.orthoHeight,
+		} ) );
+		this._changed();
+
+	}
+
 	dispose() {
 
 		this._cameraManager = this._onChange = null;

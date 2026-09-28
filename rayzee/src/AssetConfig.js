@@ -56,6 +56,10 @@ const config = {
 	// Prefix used when the engine writes to client-side stores (IndexedDB, etc).
 	// Set to a unique value to avoid collisions when multiple apps embed the engine on the same origin.
 	cacheNamespace: 'rayzee',
+
+	// On-disk storage (origin private file system) under a directory named by cacheNamespace:
+	// 'auto' uses it where the browser has one, false turns every storage feature off.
+	storage: 'auto',
 };
 
 /**

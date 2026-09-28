@@ -3,6 +3,7 @@ import Viewport3D from './Viewport3D';
 import DropzoneOverlay from './DropzoneOverlay';
 import LoadingOverlay from './LoadingOverlay';
 import ArchiveElementDialog from './ArchiveElementDialog';
+import SessionDialog from './SessionDialog';
 import { useToast } from '@/hooks/use-toast';
 import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
@@ -167,6 +168,15 @@ const MainViewport = ( { mode = "preview" } ) => {
 
 		}
 
+		if ( file.name.toLowerCase().endsWith( '.rayzee' ) ) {
+
+			import( '@/lib/project' )
+				.then( ( { requestProjectOpen } ) => requestProjectOpen( file ) )
+				.catch( error => toast( { title: "Could not open the project", description: error.message, variant: "destructive" } ) );
+			return;
+
+		}
+
 		// Refuse up front rather than letting the engine reject mid-load. AssetLoader disposes
 		// the outgoing model before the engine decides whether to rebuild, so a drop landing
 		// during another load used to leave the path tracer rendering freed geometry.
@@ -264,6 +274,7 @@ const MainViewport = ( { mode = "preview" } ) => {
 			<Toaster />
 			<LoadingOverlay />
 			<ArchiveElementDialog />
+			<SessionDialog />
 			<DropzoneOverlay isActive={isDragging} />
 		</div>
 	);

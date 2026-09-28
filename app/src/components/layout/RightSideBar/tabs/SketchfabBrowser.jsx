@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { SketchfabService } from '@/services/SketchfabService';
 import { useToast } from '@/hooks/use-toast';
+import { getApp } from '@/lib/appProxy';
 
 /**
  * Reusable Sketchfab browse surface. Category-first (like PolyHaven): the primary
@@ -164,13 +165,24 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 			const download = await SketchfabService.getDownload( item.uid );
 			const picked = SketchfabService.pickDownloadUrl( download );
-			if ( picked.url ) {
+			if ( ! picked.url ) {
 
-				await run( picked.url, item.name, item );
+				toast( { title: 'No download', description: 'Sketchfab offers no downloadable file for this model.', variant: 'destructive' } );
+
+			} else if ( picked.format === 'zip' ) {
+
+				if ( run !== onReplace ) {
+
+					toast( { title: 'Replace only', description: 'This model comes as a glTF archive, which can replace the scene but not be added to it.' } );
+					return;
+
+				}
+
+				await getApp()?.loadFile( picked.url, { filename: `${item.uid}.zip`, cacheKey: `sketchfab:${item.uid}:gltf` } );
 
 			} else {
 
-				toast( { title: 'Not available as GLB', description: 'This model only ships as a glTF archive, which is not yet supported.', variant: 'destructive' } );
+				await run( picked.url, item.name, item, { cacheKey: `sketchfab:${item.uid}:glb` } );
 
 			}
 
@@ -184,7 +196,7 @@ const SketchfabBrowser = ( { onReplace, onAdd } ) => {
 
 		}
 
-	}, [ hasToken, toast ] );
+	}, [ hasToken, toast, onReplace ] );
 
 	// Per-card hover actions. Disabled (with a hint) when the model can't be downloaded.
 	const modelActions = useMemo( () => {

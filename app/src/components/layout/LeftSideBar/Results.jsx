@@ -622,7 +622,7 @@ const RenderItem = memo( ( {
 			<div className="relative rounded-t-md overflow-hidden bg-black cursor-pointer group">
 				<div className="aspect-w-16 aspect-h-9 w-full">
 					<LazyImage
-						src={image.image}
+						src={image.thumb ?? image.image}
 						alt={`4K Render ${index + 1}`}
 						className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105"
 						onError={handleImageError}

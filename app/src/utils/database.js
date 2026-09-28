@@ -1,288 +1,302 @@
-// database.js
+// database.js — the Results library. IndexedDB holds each render's details; its images are files
+// in on-disk storage (`renders` area), or Blobs in the record when the browser offers no storage.
 import { createLogger } from 'rayzee';
+import { getStorage, APP_AREAS } from '@/lib/storage';
 
 const log = createLogger( 'db' );
 
 const DB_NAME = 'RenderResultsDB';
-const DB_VERSION = 2; // Incremented to support AI image variants
+const DB_VERSION = 4;
 const STORE_NAME = 'renders';
+const THUMB_EDGE = 320;
 
-// Single instance of DB connection to avoid multiple open requests
-let dbInstance = null;
-let dbInitPromise = null;
+export const RENDER_FILES = Object.freeze( { IMAGE: 'image.png', THUMB: 'thumb.webp', AI: 'ai.png', HDR: 'hdr.exr' } );
 
-/**
- * Initialize and open the database, ensuring schema is correct
- * This should be called once at app startup
- */
-export const initDatabase = () => {
+let dbPromise = null;
+let migration = null;
+const urlCache = new Map();
 
-	if ( ! dbInitPromise ) {
+function openAt( version ) {
 
-		dbInitPromise = new Promise( ( resolve, reject ) => {
+	return new Promise( ( resolve, reject ) => {
 
-			// Check if IndexedDB is supported
-			if ( ! window.indexedDB ) {
+		const request = version ? indexedDB.open( DB_NAME, version ) : indexedDB.open( DB_NAME );
+		request.onupgradeneeded = () => {
 
-				log.error( "Your browser doesn't support IndexedDB" );
-				reject( "IndexedDB not supported" );
-				return;
+			const db = request.result;
+			if ( ! db.objectStoreNames.contains( STORE_NAME ) ) {
+
+				const store = db.createObjectStore( STORE_NAME, { keyPath: 'id', autoIncrement: true } );
+				store.createIndex( 'timestamp', 'timestamp', { unique: false } );
 
 			}
 
-			const openRequest = indexedDB.open( DB_NAME, DB_VERSION );
+		};
 
-			openRequest.onupgradeneeded = ( event ) => {
+		request.onsuccess = () => resolve( request.result );
+		request.onerror = () => reject( request.error );
 
-				log.debug( "Database upgrade needed, creating schema" );
-				const db = event.target.result;
+	} );
 
-				// Create object store if it doesn't exist
-				if ( ! db.objectStoreNames.contains( STORE_NAME ) ) {
+}
 
-					const objectStore = db.createObjectStore( STORE_NAME, {
-						keyPath: 'id',
-						autoIncrement: true
-					} );
+function getDatabase() {
 
-					// Create indices
-					objectStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
-					log.debug( "Created object store and indices" );
+	dbPromise ??= ( async () => {
 
-				}
+		if ( typeof indexedDB === 'undefined' ) throw new Error( "This browser doesn't support IndexedDB" );
+		try {
 
-			};
+			return await openAt( DB_VERSION );
 
-			openRequest.onsuccess = ( event ) => {
+		} catch ( error ) {
 
-				log.debug( "Database opened successfully" );
-				dbInstance = event.target.result;
+			// A newer build already upgraded it: open whatever version is there.
+			if ( error?.name === 'VersionError' ) return openAt( null );
+			throw error;
 
-				// Check if the expected store exists
-				if ( ! dbInstance.objectStoreNames.contains( STORE_NAME ) ) {
+		}
 
-					log.warn( "Database opened but the renders store is missing. Recreating the database..." );
-					dbInstance.close();
+	} )();
 
-					// Recreate the database with a new version to force schema update
-					const newVersion = DB_VERSION + 1;
-					log.debug( `Reopening database with new version ${newVersion}` );
+	dbPromise.catch( () => {
 
-					const reopenRequest = indexedDB.open( DB_NAME, newVersion );
+		dbPromise = null;
 
-					reopenRequest.onupgradeneeded = ( event ) => {
+	} );
 
-						log.debug( "Recreating database schema" );
-						const db = event.target.result;
+	return dbPromise;
 
-						// Create the store
-						const objectStore = db.createObjectStore( STORE_NAME, {
-							keyPath: 'id',
-							autoIncrement: true
-						} );
+}
 
-						// Create indices
-						objectStore.createIndex( 'timestamp', 'timestamp', { unique: false } );
-						log.debug( "Recreated object store and indices" );
+function request( req ) {
 
-					};
+	return new Promise( ( resolve, reject ) => {
 
-					reopenRequest.onsuccess = ( event ) => {
+		req.onsuccess = () => resolve( req.result );
+		req.onerror = () => reject( req.error );
 
-						log.debug( "Database reopened successfully" );
-						dbInstance = event.target.result;
-						resolve( dbInstance );
+	} );
 
-					};
+}
 
-					reopenRequest.onerror = ( event ) => {
+async function store( mode ) {
 
-						log.error( "Error reopening database:", event.target.error );
-						reject( event.target.error );
+	return ( await getDatabase() ).transaction( STORE_NAME, mode ).objectStore( STORE_NAME );
 
-					};
+}
 
-				} else {
+const getRecord = async ( id ) => request( ( await store( 'readonly' ) ).get( id ) );
+const putRecord = async ( record ) => request( ( await store( 'readwrite' ) ).put( record ) );
 
-					resolve( dbInstance );
-
-				}
-
-			};
-
-			openRequest.onerror = ( event ) => {
-
-				log.error( "Error opening database:", event.target.error );
-				reject( event.target.error );
-
-			};
-
-		} );
-
-	}
-
-	return dbInitPromise;
-
-};
+export const initDatabase = () => getDatabase();
 
 /**
- * Get the database instance, initializing if necessary
+ * Once storage is open: moves records that still carry their images (base64 from earlier builds,
+ * or Blobs saved while storage was unavailable) onto files, and drops files whose record is gone.
  */
-export const getDatabase = async () => {
+export function startRenderMaintenance() {
 
-	if ( dbInstance ) {
+	migration ??= maintain().catch( ( error ) => log.warn( 'Saved-render maintenance failed:', error ) );
+	return migration;
 
-		return dbInstance;
+}
 
-	}
+const renderKey = ( id ) => `render:${id}`;
 
-	return initDatabase();
+const IMAGE_FIELDS = [ 'image', 'aiGeneratedImage', 'blobs', 'files' ];
 
-};
+function withoutImages( record, keep = [] ) {
 
-/**
- * Save a rendered image to the database
- */
-export const saveRender = async ( data ) => {
+	const out = { ...record };
+	for ( const field of IMAGE_FIELDS ) if ( ! keep.includes( field ) ) delete out[ field ];
+	return out;
+
+}
+
+function rendersArea() {
+
+	return getStorage()?.area( APP_AREAS.RENDERS ) ?? null;
+
+}
+
+async function toBlob( image ) {
+
+	if ( image instanceof Blob ) return image;
+	if ( typeof image === 'string' ) return ( await fetch( image ) ).blob();
+	if ( image instanceof Uint8Array || image instanceof ArrayBuffer ) return new Blob( [ image ] );
+	return null;
+
+}
+
+function blobToDataURL( blob ) {
+
+	return new Promise( ( resolve, reject ) => {
+
+		const reader = new FileReader();
+		reader.onload = () => resolve( reader.result );
+		reader.onerror = () => reject( reader.error );
+		reader.readAsDataURL( blob );
+
+	} );
+
+}
+
+/** A small WebP for the list, and the image's size. */
+export async function makeThumbnail( blob ) {
+
+	const bitmap = await createImageBitmap( blob );
+	const { width, height } = bitmap;
+	const scale = Math.min( 1, THUMB_EDGE / Math.max( width, height ) );
+	const canvas = new OffscreenCanvas( Math.max( 1, Math.round( width * scale ) ), Math.max( 1, Math.round( height * scale ) ) );
+	canvas.getContext( '2d' ).drawImage( bitmap, 0, 0, canvas.width, canvas.height );
+	bitmap.close();
+	return { thumb: await canvas.convertToBlob( { type: 'image/webp', quality: 0.82 } ), width, height };
+
+}
+
+/** Writes files into the render's storage entry; resolves the names written, or null to keep them in IndexedDB. */
+async function writeFiles( id, files, { edit = false } = {} ) {
+
+	const area = rendersArea();
+	if ( ! area ) return null;
+
+	const present = Object.entries( files ).filter( ( [ , blob ] ) => blob );
+	const bytes = present.reduce( ( n, [ , blob ] ) => n + blob.size, 0 );
+	const writer = edit
+		? await area.edit( renderKey( id ) )
+		: await area.create( renderKey( id ), { label: `Render ${id}`, expectedBytes: bytes } );
+	if ( ! writer ) return null;
 
 	try {
 
-		const db = await getDatabase();
-
-		return new Promise( ( resolve, reject ) => {
-
-			// Create a new transaction for this operation
-			const transaction = db.transaction( STORE_NAME, 'readwrite' );
-			const store = transaction.objectStore( STORE_NAME );
-
-			// Add the new render to the store
-			const request = store.add( {
-				image: data.image,
-				colorCorrection: {
-					brightness: data.colorCorrection.brightness,
-					contrast: data.colorCorrection.contrast,
-					saturation: data.colorCorrection.saturation,
-					hue: data.colorCorrection.hue,
-					exposure: data.colorCorrection.exposure,
-					gamma: data.colorCorrection.gamma,
-			 	},
-				timestamp: new Date(),
-				renderTime: data.renderTime || null,
-				isEdited: data.isEdited || false,
-				// AI-related fields (optional)
-				aiPrompt: data.aiPrompt || null,
-				aiGeneratedImage: data.aiGeneratedImage || null,
-				sourceRenderId: data.sourceRenderId || null,
-			} );
-
-			request.onsuccess = () => {
-
-				log.debug( "Render saved with ID:", request.result );
-				resolve( request.result );
-
-			};
-
-			request.onerror = ( event ) => {
-
-				log.error( "Error saving render:", event.target.error );
-				reject( event.target.error );
-
-			};
-
-			transaction.oncomplete = () => {
-
-				log.debug( 'Transaction completed successfully' );
-
-			};
-
-			transaction.onerror = ( event ) => {
-
-				log.error( 'Transaction error:', event.target.error );
-				reject( event.target.error );
-
-			};
-
-		} );
+		for ( const [ name, blob ] of present ) await writer.writeFile( name, blob );
+		const meta = await writer.commit();
+		return Object.keys( meta.files );
 
 	} catch ( error ) {
 
-		log.error( 'Error in saveRender:', error );
-		throw error;
+		await writer.abort();
+		log.warn( `Could not store render ${id} as files, keeping it in the database:`, error );
+		return null;
 
 	}
 
-};
+}
+
+async function fileOf( record, name ) {
+
+	if ( record.blobs?.[ name ] ) return record.blobs[ name ];
+	if ( ! record.files?.includes( name ) ) return null;
+
+	const entry = await rendersArea()?.open( renderKey( record.id ) );
+	if ( ! entry ) return null;
+	try {
+
+		return await entry.file( name );
+
+	} finally {
+
+		entry.release();
+
+	}
+
+}
+
+function forget( id ) {
+
+	const urls = urlCache.get( id );
+	if ( ! urls ) return;
+	for ( const url of Object.values( urls ) ) if ( url ) URL.revokeObjectURL( url );
+	urlCache.delete( id );
+
+}
+
+/** What the Results UI reads: the record, with `image`, `thumb` and `aiGeneratedImage` as URLs. */
+async function toView( record ) {
+
+	if ( typeof record.image === 'string' ) {
+
+		return { ...record, thumb: record.image, hasHDR: false };
+
+	}
+
+	let urls = urlCache.get( record.id );
+	if ( ! urls ) {
+
+		const url = async ( name ) => {
+
+			const file = await fileOf( record, name );
+			return file ? URL.createObjectURL( file ) : null;
+
+		};
+
+		urls = { image: await url( RENDER_FILES.IMAGE ), thumb: await url( RENDER_FILES.THUMB ), ai: await url( RENDER_FILES.AI ) };
+		urlCache.set( record.id, urls );
+
+	}
+
+	const has = ( name ) => !! ( record.blobs?.[ name ] || record.files?.includes( name ) );
+	return {
+		...withoutImages( record ),
+		image: urls.image,
+		thumb: urls.thumb ?? urls.image,
+		aiGeneratedImage: urls.ai,
+		hasHDR: has( RENDER_FILES.HDR ),
+	};
+
+}
 
 /**
- * Get all renders from the database
+ * Save a render.
+ * @param {{image: Blob|string, hdr?: Blob|Uint8Array, colorCorrection?: Object, renderTime?: number,
+ *   isEdited?: boolean, aiPrompt?: string, aiGeneratedImage?: Blob|string, timestamp?: Date}} data
+ * @returns {Promise<number>} the new render's id
  */
+export const saveRender = async ( data ) => {
+
+	const image = await toBlob( data.image );
+	if ( ! image ) throw new Error( 'saveRender: no image' );
+
+	const { thumb, width, height } = await makeThumbnail( image );
+	const files = {
+		[ RENDER_FILES.IMAGE ]: image,
+		[ RENDER_FILES.THUMB ]: thumb,
+		[ RENDER_FILES.AI ]: await toBlob( data.aiGeneratedImage ),
+		[ RENDER_FILES.HDR ]: await toBlob( data.hdr ),
+	};
+
+	const record = {
+		timestamp: data.timestamp ?? new Date(),
+		renderTime: data.renderTime ?? null,
+		isEdited: data.isEdited ?? false,
+		colorCorrection: { ...data.colorCorrection },
+		aiPrompt: data.aiPrompt ?? null,
+		width,
+		height,
+	};
+
+	const id = await request( ( await store( 'readwrite' ) ).add( record ) );
+	const names = await writeFiles( id, files );
+	if ( names ) record.files = names;
+	else record.blobs = Object.fromEntries( Object.entries( files ).filter( ( [ , blob ] ) => blob ) );
+	await putRecord( { ...record, id } );
+
+	log.debug( 'Render saved with ID:', id );
+	return id;
+
+};
+
+/** Every render, newest first, ready for display. */
 export const getAllRenders = async () => {
 
 	try {
 
-		const db = await getDatabase();
-
-		return new Promise( ( resolve, reject ) => {
-
-			const transaction = db.transaction( STORE_NAME, 'readonly' );
-			const store = transaction.objectStore( STORE_NAME );
-
-			// Get all records and sort by timestamp (newest first)
-			const request = store.getAll();
-
-			request.onsuccess = () => {
-
-				const results = request.result;
-				log.debug( `Retrieved ${results.length} renders from database` );
-
-				// Check for data integrity and sort by timestamp (newest first)
-				if ( results && results.length > 0 ) {
-
-					// Log the first result for debugging
-					if ( results[ 0 ] ) {
-
-						log.debug( 'Sample render data:', {
-							hasImage: Boolean( results[ 0 ].image ),
-							imageType: typeof results[ 0 ].image,
-							imageLength: typeof results[ 0 ].image === 'string' ? results[ 0 ].image.length : 'N/A',
-							hasTimestamp: Boolean( results[ 0 ].timestamp ),
-							timestamp: results[ 0 ].timestamp ? new Date( results[ 0 ].timestamp ).toISOString() : 'N/A'
-						} );
-
-					}
-
-					// Sort by timestamp (newest first)
-					const sortedResults = results
-						.filter( item => item && item.image && item.timestamp )
-						.sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) );
-
-					log.debug( `After filtering and sorting: ${sortedResults.length} renders` );
-					resolve( sortedResults );
-
-				} else {
-
-					log.debug( 'No renders found in database' );
-					resolve( [] );
-
-				}
-
-			};
-
-			request.onerror = ( event ) => {
-
-				log.error( "Error getting renders:", event.target.error );
-				reject( event.target.error );
-
-			};
-
-			transaction.onerror = ( event ) => {
-
-				log.error( "Transaction error in getAllRenders:", event.target.error );
-				reject( event.target.error );
-
-			};
-
-		} );
+		const records = await request( ( await store( 'readonly' ) ).getAll() );
+		const shown = records
+			.filter( ( r ) => r && r.timestamp && ( r.image || r.files || r.blobs ) )
+			.sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) );
+		return Promise.all( shown.map( toView ) );
 
 	} catch ( error ) {
 
@@ -292,183 +306,150 @@ export const getAllRenders = async () => {
 	}
 
 };
-// Add this function to your database.js file
 
-/**
- * Delete a render from the database by ID
- */
-export const deleteRender = async ( id ) => {
-
-	try {
-
-	  const db = await getDatabase();
-
-	  return new Promise( ( resolve, reject ) => {
-
-			const transaction = db.transaction( STORE_NAME, 'readwrite' );
-			const store = transaction.objectStore( STORE_NAME );
-
-			// Delete the render with the given ID
-			const request = store.delete( id );
-
-			request.onsuccess = () => {
-
-		  log.debug( `Render with ID ${id} deleted successfully` );
-		  resolve( true );
-
-			};
-
-			request.onerror = ( event ) => {
-
-		  log.error( `Error deleting render with ID ${id}:`, event.target.error );
-		  reject( event.target.error );
-
-			};
-
-			transaction.oncomplete = () => {
-
-		  log.debug( 'Delete transaction completed successfully' );
-
-			};
-
-			transaction.onerror = ( event ) => {
-
-		  log.error( 'Delete transaction error:', event.target.error );
-		  reject( event.target.error );
-
-			};
-
-		} );
-
-	} catch ( error ) {
-
-	  log.error( 'Error in deleteRender:', error );
-	  throw error;
-
-	}
-
-};
-
-/**
- * get render by ID
- */
 export const getRenderById = async ( id ) => {
 
-	try {
-
-		const db = await getDatabase();
-
-		return new Promise( ( resolve, reject ) => {
-
-			const transaction = db.transaction( STORE_NAME, 'readonly' );
-			const store = transaction.objectStore( STORE_NAME );
-
-			// Get the render with the given ID
-			const request = store.get( id );
-
-			request.onsuccess = () => {
-
-				log.debug( `Render with ID ${id} retrieved successfully` );
-				resolve( request.result );
-
-			};
-
-			request.onerror = ( event ) => {
-
-				log.error( `Error retrieving render with ID ${id}:`, event.target.error );
-				reject( event.target.error );
-
-			};
-
-		} );
-
-	} catch ( error ) {
-
-		log.error( 'Error in getRenderById:', error );
-		throw error;
-
-	}
+	const record = await getRecord( id );
+	return record ? toView( record ) : null;
 
 };
 
-/**
- * Update an existing render with AI-generated image variant
- */
+/** Updates a render's details in place — colour correction, edited flag — keeping its images. */
+export const updateRender = async ( id, patch ) => {
+
+	const record = await getRecord( id );
+	if ( ! record ) throw new Error( `Render with ID ${id} not found` );
+	await putRecord( { ...record, ...patch, id } );
+	return true;
+
+};
+
+export const deleteRender = async ( id ) => {
+
+	await request( ( await store( 'readwrite' ) ).delete( id ) );
+	forget( id );
+	await rendersArea()?.remove( renderKey( id ) );
+	log.debug( `Render with ID ${id} deleted` );
+	return true;
+
+};
+
+/** Attaches (or replaces) a render's AI-generated variant. */
 export const updateRenderWithAI = async ( id, aiPrompt, aiGeneratedImage ) => {
 
-	try {
+	const record = await getRecord( id );
+	if ( ! record ) throw new Error( `Render with ID ${id} not found` );
 
-		const db = await getDatabase();
+	if ( typeof record.image === 'string' ) {
 
-		return new Promise( ( resolve, reject ) => {
-
-			const transaction = db.transaction( STORE_NAME, 'readwrite' );
-			const store = transaction.objectStore( STORE_NAME );
-
-			// First get the existing render
-			const getRequest = store.get( id );
-
-			getRequest.onsuccess = () => {
-
-				const render = getRequest.result;
-
-				if ( ! render ) {
-
-					reject( new Error( `Render with ID ${id} not found` ) );
-					return;
-
-				}
-
-				// Update with AI data
-				render.aiPrompt = aiPrompt;
-				render.aiGeneratedImage = aiGeneratedImage;
-
-				// Save the updated render
-				const putRequest = store.put( render );
-
-				putRequest.onsuccess = () => {
-
-					log.debug( `Render with ID ${id} updated with AI variant` );
-					resolve( true );
-
-				};
-
-				putRequest.onerror = ( event ) => {
-
-					log.error( `Error updating render with ID ${id}:`, event.target.error );
-					reject( event.target.error );
-
-				};
-
-			};
-
-			getRequest.onerror = ( event ) => {
-
-				log.error( `Error retrieving render with ID ${id}:`, event.target.error );
-				reject( event.target.error );
-
-			};
-
-			transaction.oncomplete = () => {
-
-				log.debug( 'Update transaction completed successfully' );
-
-			};
-
-			transaction.onerror = ( event ) => {
-
-				log.error( 'Update transaction error:', event.target.error );
-				reject( event.target.error );
-
-			};
-
-		} );
-
-	} catch ( error ) {
-
-		log.error( 'Error in updateRenderWithAI:', error );
-		throw error;
+		const dataUrl = typeof aiGeneratedImage === 'string' ? aiGeneratedImage : await blobToDataURL( await toBlob( aiGeneratedImage ) );
+		await putRecord( { ...record, aiPrompt, aiGeneratedImage: dataUrl } );
+		return true;
 
 	}
 
+	const blob = await toBlob( aiGeneratedImage );
+	const next = { ...withoutImages( record, [ 'files', 'blobs' ] ), aiPrompt };
+
+	const names = record.files ? await writeFiles( id, { [ RENDER_FILES.AI ]: blob }, { edit: true } ) : null;
+	if ( names ) next.files = names;
+	else next.blobs = { ...record.blobs, [ RENDER_FILES.AI ]: blob };
+
+	await putRecord( next );
+	forget( id );
+	return true;
+
 };
+
+/** The render's HDR copy (EXR), when it kept one. */
+export const getRenderHDR = async ( id ) => {
+
+	const record = await getRecord( id );
+	return record ? fileOf( record, RENDER_FILES.HDR ) : null;
+
+};
+
+/** Every file of a render, for export: name → Blob. */
+export const getRenderFiles = async ( id ) => {
+
+	const record = await getRecord( id );
+	if ( ! record ) return {};
+	if ( typeof record.image === 'string' ) {
+
+		return Object.fromEntries( [
+			[ RENDER_FILES.IMAGE, await toBlob( record.image ) ],
+			[ RENDER_FILES.AI, await toBlob( record.aiGeneratedImage ) ],
+		].filter( ( [ , blob ] ) => blob ) );
+
+	}
+
+	const out = {};
+	for ( const name of Object.values( RENDER_FILES ) ) {
+
+		const file = await fileOf( record, name );
+		if ( file ) out[ name ] = file;
+
+	}
+
+	return out;
+
+};
+
+/** Raw details of every render, for export. */
+export const getRenderRecords = async () => {
+
+	const records = await request( ( await store( 'readonly' ) ).getAll() );
+	return records.map( ( record ) => withoutImages( record ) );
+
+};
+
+async function maintain() {
+
+	const area = rendersArea();
+	if ( ! area ) return 0;
+
+	const records = await request( ( await store( 'readonly' ) ).getAll() );
+	let moved = 0;
+
+	for ( const record of records ) {
+
+		if ( record.files ) continue;
+
+		const legacy = typeof record.image === 'string';
+		const image = legacy ? await toBlob( record.image ) : record.blobs?.[ RENDER_FILES.IMAGE ];
+		if ( ! image ) continue;
+
+		const files = legacy
+			? { [ RENDER_FILES.IMAGE ]: image, [ RENDER_FILES.AI ]: await toBlob( record.aiGeneratedImage ) }
+			: { ...record.blobs };
+		let size = { width: record.width, height: record.height };
+		if ( ! files[ RENDER_FILES.THUMB ] ) {
+
+			const made = await makeThumbnail( image );
+			files[ RENDER_FILES.THUMB ] = made.thumb;
+			size = { width: made.width, height: made.height };
+
+		}
+
+		const names = await writeFiles( record.id, files );
+		if ( ! names ) break;
+
+		await putRecord( { ...withoutImages( record ), ...size, files: names } );
+		forget( record.id );
+		moved ++;
+
+	}
+
+	const known = new Set( records.map( ( r ) => renderKey( r.id ) ) );
+	for ( const entry of await area.list() ) if ( ! known.has( entry.key ) ) await area.removeById( entry.id );
+
+	if ( moved > 0 ) {
+
+		log.info( `Moved ${moved} saved render${moved > 1 ? 's' : ''} onto files` );
+		window.dispatchEvent( new Event( 'render-saved' ) );
+
+	}
+
+	return moved;
+
+}

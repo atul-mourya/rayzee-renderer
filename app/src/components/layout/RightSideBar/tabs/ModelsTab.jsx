@@ -65,8 +65,8 @@ const ModelsTab = () => {
 
 				<TabsContent value="sketchfab" className="flex-1 min-h-0 mt-2">
 					<SketchfabBrowser
-						onReplace={( url, name ) => loadModelUrl( url, name )}
-						onAdd={( url, name ) => addModel( url, name )}
+						onReplace={( url, name, item, options ) => loadModelUrl( url, name, options )}
+						onAdd={( url, name, item, options ) => addModel( url, name, options )}
 					/>
 				</TabsContent>
 			</Tabs>

@@ -4,6 +4,8 @@ import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESE
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
+import { VideoJob } from '@/lib/videoJob';
+import { toast } from '@/hooks/use-toast';
 
 /**
  * Debounce utility - delays function execution until after wait time has elapsed
@@ -56,6 +58,10 @@ const useStore = create( set => ( {
 	// Set when an archive is too large to load whole and the user must pick one part of it.
 	archivePrompt: null,
 	setArchivePrompt: prompt => set( { archivePrompt: prompt } ),
+
+	// A saved session or project to reopen: `{ origin: 'startup' | 'recent' | 'project', record, thumb, ... }`.
+	sessionRequest: null,
+	setSessionRequest: request => set( { sessionRequest: request } ),
 
 	// Transform controls
 	transformMode: 'translate',
@@ -3063,7 +3069,18 @@ export const videoUsesTimeline = ( { clips, moveCameraInVideo, timelineAnimates 
 
 // Module-scoped refs — not reactive state, only used for imperative cancel
 let _activeVideoManager = null;
-let _activeEncoder = null;
+let _videoCancelled = false;
+
+function downloadFile( file, name ) {
+
+	const url = URL.createObjectURL( file );
+	const a = document.createElement( 'a' );
+	a.href = url;
+	a.download = name;
+	a.click();
+	setTimeout( () => URL.revokeObjectURL( url ), 60_000 );
+
+}
 
 const useAnimationStore = create( ( set, get ) => ( {
 
@@ -3187,52 +3204,127 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 	handleLoopCountChange: ( val ) => set( { loopCount: val } ),
 
-	handleRenderAnimation: async ( { totalDuration } = {} ) => {
+	/**
+	 * Renders the video, journalling each frame to disk. With `resume` (an unfinished VideoJob, its
+	 * scene already restored) it carries on from the first frame the job does not have.
+	 */
+	handleRenderAnimation: async ( { totalDuration, resume = null } = {} ) => {
 
 		const app = getApp();
 		if ( ! app ) return;
 
 		const { selectedClip, clips } = get();
-		const timeline = videoUsesTimeline( get() ) ? app.timeline : null;
+		const saved = resume?.job.options ?? null;
+		const timeline = ( saved ? saved.useTimeline : videoUsesTimeline( get() ) ) ? app.timeline : null;
 		if ( ! clips.length && ! timeline ) return;
 
 		app.timeline.stop();
 
-		const fps = VIDEO_RENDER_FPS;
-		const duration = totalDuration || videoDuration( get() );
-		const totalFrames = Math.ceil( duration * fps );
+		const fps = resume?.job.fps ?? VIDEO_RENDER_FPS;
+		const totalFrames = resume?.job.totalFrames ?? Math.ceil( ( totalDuration || videoDuration( get() ) ) * fps );
+		const startFrame = resume?.framesDone ?? 0;
 
-		// Check codec support
-		const canvas = app.getCanvas() || app.renderer?.domElement;
-		if ( ! canvas ) return;
+		// The output size, not the canvas's: a camera move just before leaves it at the moving-camera drop.
+		const { canvasWidth: width, canvasHeight: height } = usePathTracerStore.getState();
+		if ( ! ( width > 0 && height > 0 ) ) return;
 
-		const { supported, codec } = await checkCodecSupport( canvas.width, canvas.height );
-		if ( ! supported ) {
+		if ( resume && ( width !== resume.job.width || height !== resume.job.height ) ) {
 
-			console.error( 'VideoEncoder: No supported video codec found (VP9/VP8)' );
+			toast( { title: 'Cannot resume the video', description: `It was rendering at ${resume.job.width}×${resume.job.height}; the output is ${width}×${height} now.`, variant: 'destructive' } );
 			return;
 
 		}
 
-		set( { isVideoRendering: true, videoRenderProgress: 0, videoRenderFrame: 0, videoRenderTotalFrames: totalFrames } );
+		const { supported, codec: pickedCodec } = await checkCodecSupport( width, height );
+		if ( ! supported ) {
 
-		const encoder = new VideoEncoderPipeline( canvas.width, canvas.height, { fps, codec } );
+			toast( { title: 'Video export unavailable', description: 'This browser cannot encode VP9 or VP8 video.', variant: 'destructive' } );
+			return;
+
+		}
+
+		const codec = resume?.job.codec ?? pickedCodec;
+		const options = saved ?? {
+			clipIndex: selectedClip,
+			speed: get().speed || 1,
+			useTimeline: !! timeline,
+			samplesPerFrame: ENGINE_DEFAULTS.maxSamples,
+			enableOIDN: true,
+		};
+
+		set( { isVideoRendering: true, videoRenderProgress: ( startFrame / totalFrames ) * 100, videoRenderFrame: startFrame, videoRenderTotalFrames: totalFrames } );
+
+		const job = resume ?? await ( async () => {
+
+			const { captureSession } = await import( '@/lib/session' );
+			const { record } = await captureSession( app, { thumbnail: false } );
+			return VideoJob.start( app.storage, {
+				width, height, fps, codec, totalFrames, options, session: record,
+				label: `Video ${width}×${height}, ${totalFrames} frames`,
+			} );
+
+		} )().catch( ( err ) => {
+
+			console.warn( 'Video export: rendering without a job on disk:', err );
+			return null;
+
+		} );
+
+		// A long export should not be cut short by the screen going to sleep.
+		const wakeLock = await navigator.wakeLock?.request( 'screen' ).catch( () => null );
+		// Every frame moves the scene; the session is the scene as it was before the export.
+		const { getSessionKeeper } = await import( '@/lib/session' );
+		getSessionKeeper()?.setEnabled( false );
+
+		let frameChunks = [];
+		let decoderConfig = null;
+		const encoder = new VideoEncoderPipeline( width, height, {
+			fps, codec,
+			onChunk: job ? ( chunk, meta ) => {
+
+				frameChunks.push( chunk );
+				decoderConfig ??= meta?.decoderConfig ?? null;
+
+			} : null,
+		} );
 		const videoManager = new VideoRenderManager( app );
 
 		_activeVideoManager = videoManager;
-		_activeEncoder = encoder;
+		_videoCancelled = false;
+		let failure = null;
 
 		await videoManager.renderAnimation( {
-			clipIndex: selectedClip,
+			clipIndex: options.clipIndex,
 			fps,
-			speed: get().speed || 1,
+			speed: options.speed,
 			timeline,
-			samplesPerFrame: ENGINE_DEFAULTS.maxSamples,
-			enableOIDN: true,
+			samplesPerFrame: options.samplesPerFrame,
+			enableOIDN: options.enableOIDN,
 			totalFrames,
-			onFrame: async ( bitmap ) => {
+			startFrame,
+			onFrame: async ( bitmap, index ) => {
 
-				await encoder.addFrame( bitmap );
+				try {
+
+					if ( ! job ) {
+
+						await encoder.addFrame( bitmap, index );
+						return;
+
+					}
+
+					// A resumed encoder knows nothing of the frames before: it starts on a keyframe.
+					await encoder.addFrame( bitmap, index, { flush: true, keyFrame: index === startFrame } );
+					const chunks = frameChunks;
+					frameChunks = [];
+					await job.appendFrame( index, chunks, decoderConfig );
+
+				} catch ( err ) {
+
+					failure = err;
+					videoManager.cancel();
+
+				}
 
 			},
 			onProgress: ( { frame, totalFrames: total, percent } ) => {
@@ -3242,37 +3334,43 @@ const useAnimationStore = create( ( set, get ) => ( {
 			},
 			onComplete: async ( success ) => {
 
-				if ( success ) {
+				try {
 
-					try {
+					if ( success && ! failure ) {
 
 						const blob = await encoder.finalize();
-						const url = URL.createObjectURL( blob );
-						const a = document.createElement( 'a' );
-						a.href = url;
-						a.download = `animation-${Date.now()}.webm`;
-						a.click();
-						setTimeout( () => URL.revokeObjectURL( url ), 60_000 );
+						const file = job ? await job.finalize() : blob;
+						downloadFile( file, `animation-${Date.now()}.webm` );
+						if ( job ) setTimeout( () => job.discard(), 60_000 );
 
-					} catch ( err ) {
+					} else {
 
-						console.error( 'VideoEncoder: Finalize failed:', err );
+						encoder.close();
+						if ( _videoCancelled && ! failure ) await job?.discard();
 
 					}
 
-				} else {
+					if ( failure ) {
 
-					// Clean up encoder on cancellation
-					try {
+						console.error( 'Video export failed:', failure );
+						toast( {
+							title: 'Video export failed',
+							description: job ? `${failure.message} — the ${job.framesDone} finished frames are kept and can be resumed.` : failure.message,
+							variant: 'destructive',
+						} );
 
-						encoder._encoder.close();
+					}
 
-					} catch { /* already closed */ }
+				} catch ( err ) {
+
+					console.error( 'Video export: finalize failed:', err );
+					toast( { title: 'Video export failed', description: err.message, variant: 'destructive' } );
 
 				}
 
 				_activeVideoManager = null;
-				_activeEncoder = null;
+				wakeLock?.release().catch( () => {} );
+				getSessionKeeper()?.setEnabled( true );
 				set( { isVideoRendering: false, videoRenderProgress: 0, videoRenderFrame: 0, videoRenderTotalFrames: 0 } );
 
 			},
@@ -3282,6 +3380,7 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 	handleCancelVideoRender: () => {
 
+		_videoCancelled = true;
 		if ( _activeVideoManager ) _activeVideoManager.cancel();
 
 	},

@@ -8,7 +8,33 @@ import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import { NumberInput } from '@/components/ui/number-input';
 import { InfoTip } from '@/components/ui/info-tip';
-import { useAnimationStore, VIDEO_RENDER_FPS, videoDuration } from '@/store';
+import { useEffect, useState } from 'react';
+import { useAnimationStore, useStore, VIDEO_RENDER_FPS, videoDuration } from '@/store';
+import { useActiveApp } from '@/hooks/useActiveApp';
+import { VideoJob } from '@/lib/videoJob';
+
+/** The newest video export that stopped before its last frame, re-read whenever rendering stops. */
+function useUnfinishedVideo( isVideoRendering ) {
+
+	const app = useActiveApp();
+	const [ job, setJob ] = useState( null );
+
+	useEffect( () => {
+
+		if ( isVideoRendering || ! app?.storage ) return undefined;
+		let live = true;
+		VideoJob.unfinished( app.storage ).then( jobs => live && setJob( jobs[ 0 ] ?? null ), () => {} );
+		return () => {
+
+			live = false;
+
+		};
+
+	}, [ app, isVideoRendering ] );
+
+	return [ job, setJob ];
+
+}
 
 const AnimationTab = () => {
 
@@ -45,6 +71,7 @@ const AnimationTab = () => {
 	const handlePlayTimeline = useAnimationStore( s => s.handlePlayTimeline );
 	const handleStopTimeline = useAnimationStore( s => s.handleStopTimeline );
 	const duration = useAnimationStore( videoDuration );
+	const [ unfinished, setUnfinished ] = useUnfinishedVideo( isVideoRendering );
 
 	const hasClips = clips.length > 0;
 	const selectedClipData = clips[ selectedClip ] || clips[ 0 ];
@@ -285,6 +312,33 @@ const AnimationTab = () => {
 					>
 						<Film size={12} className="mr-1" /> Render Video
 					</Button>
+				)}
+
+				{! isVideoRendering && unfinished && (
+					<div className="flex gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							className="flex-1 h-6 text-xs"
+							onClick={() => useStore.getState().setSessionRequest( { origin: 'video', job: unfinished, record: unfinished.job.session } )}
+							disabled={! unfinished.job.session}
+						>
+							<Film size={12} className="mr-1" /> Resume video ({unfinished.framesDone}/{unfinished.job.totalFrames})
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-6 text-xs"
+							onClick={async () => {
+
+								await unfinished.discard();
+								setUnfinished( null );
+
+							}}
+						>
+							Discard
+						</Button>
+					</div>
 				)}
 
 			</div>

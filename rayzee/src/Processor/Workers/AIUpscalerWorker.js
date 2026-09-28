@@ -14,12 +14,16 @@
  *     { type: 'error', message, id? }
  */
 
+import { openInlineStorage } from '../../Storage/StorageManager.js';
+import { DownloadCache } from '../../Storage/DownloadCache.js';
+
 // Asset config supplied via 'load' message from the main thread.
 // Defaults match the upstream Rayzee deployment; override via configureAssets().
 let _assetConfig = {
 	ortRuntimeUrl: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/ort.webgpu.bundle.min.mjs',
 	ortWasmPaths: 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist/',
 	cacheNamespace: 'rayzee',
+	storage: 'auto',
 };
 
 let ort = null;
@@ -38,73 +42,100 @@ async function getOrt() {
 
 }
 
-// IndexedDB names are namespaced so multiple consumers on the same origin don't collide.
-function getIdbName() {
+let session = null;
+let currentModelUrl = null;
+let downloads = null;
 
-	return `${_assetConfig.cacheNamespace}:ai-upscaler-models`;
+// ─── Model cache (the engine's download storage, written from this worker) ─────
+
+function getDownloads() {
+
+	downloads ??= ( async () => {
+
+		if ( _assetConfig.storage === false || ! navigator.storage?.getDirectory ) return new DownloadCache( null );
+
+		try {
+
+			const top = await navigator.storage.getDirectory();
+			const root = await top.getDirectoryHandle( _assetConfig.cacheNamespace, { create: true } );
+			const storage = openInlineStorage( { namespace: _assetConfig.cacheNamespace, root } );
+			await migrateIndexedDB( storage ).catch( () => {} );
+			return new DownloadCache( storage );
+
+		} catch {
+
+			return new DownloadCache( null );
+
+		}
+
+	} )();
+
+	return downloads;
 
 }
 
-const IDB_STORE = 'models';
+// Earlier builds kept models in IndexedDB: move them across once, then drop the database.
+async function migrateIndexedDB( storage ) {
 
-let session = null;
-let currentModelUrl = null;
+	const name = `${_assetConfig.cacheNamespace}:ai-upscaler-models`;
+	if ( typeof indexedDB === 'undefined' || ! indexedDB.databases ) return;
+	if ( ! ( await indexedDB.databases() ).some( ( d ) => d.name === name ) ) return;
 
-// ─── IndexedDB Model Cache ───────────────────────────────────────────────────
+	const entries = await new Promise( ( resolve, reject ) => {
 
-function openDB() {
+		const open = indexedDB.open( name );
+		open.onerror = () => reject( open.error );
+		open.onsuccess = () => {
 
-	return new Promise( ( resolve, reject ) => {
+			const db = open.result;
+			if ( ! db.objectStoreNames.contains( 'models' ) ) {
 
-		const req = indexedDB.open( getIdbName(), 1 );
-		req.onupgradeneeded = () => req.result.createObjectStore( IDB_STORE );
-		req.onsuccess = () => resolve( req.result );
-		req.onerror = () => reject( req.error );
+				db.close();
+				resolve( [] );
+				return;
+
+			}
+
+			const out = [];
+			const cursor = db.transaction( 'models', 'readonly' ).objectStore( 'models' ).openCursor();
+			cursor.onerror = () => reject( cursor.error );
+			cursor.onsuccess = () => {
+
+				const c = cursor.result;
+				if ( ! c ) {
+
+					db.close();
+					resolve( out );
+					return;
+
+				}
+
+				out.push( [ c.key, c.value ] );
+				c.continue();
+
+			};
+
+		};
 
 	} );
 
-}
+	const area = storage.area( 'downloads' );
+	for ( const [ url, buffer ] of entries ) {
 
-async function getCachedModel( url ) {
-
-	try {
-
-		const db = await openDB();
-		return await new Promise( ( resolve, reject ) => {
-
-			const tx = db.transaction( IDB_STORE, 'readonly' );
-			const req = tx.objectStore( IDB_STORE ).get( url );
-			req.onsuccess = () => resolve( req.result || null );
-			req.onerror = () => reject( req.error );
-
-		} );
-
-	} catch {
-
-		return null;
+		if ( typeof url !== 'string' || ! ( buffer instanceof ArrayBuffer ) || await area.has( url ) ) continue;
+		const writer = await area.create( url, { label: url.split( '/' ).pop(), expectedBytes: buffer.byteLength } );
+		if ( ! writer ) continue;
+		await writer.write( 'data', buffer, { transfer: true } );
+		await writer.commit( { url, contentType: 'application/octet-stream', checkedAt: Date.now() } );
 
 	}
 
-}
+	await new Promise( ( resolve ) => {
 
-async function cacheModel( url, buffer ) {
+		const request = indexedDB.deleteDatabase( name );
+		request.onsuccess = request.onerror = request.onblocked = () => resolve();
 
-	try {
-
-		const db = await openDB();
-		await new Promise( ( resolve, reject ) => {
-
-			const tx = db.transaction( IDB_STORE, 'readwrite' );
-			tx.objectStore( IDB_STORE ).put( buffer, url );
-			tx.oncomplete = () => resolve();
-			tx.onerror = () => reject( tx.error );
-
-		} );
-
-	} catch {
-
-		// Cache write failure is non-fatal
-	}
+	} );
 
 }
 
@@ -112,24 +143,19 @@ async function cacheModel( url, buffer ) {
 
 async function fetchModel( url ) {
 
-	// Try IndexedDB cache first
-	const cached = await getCachedModel( url );
-	if ( cached ) {
+	const { file, release, fromCache } = await ( await getDownloads() ).fetch( url );
 
-		console.log( `AI Upscaler Worker: model loaded from cache (${( cached.byteLength / 1024 / 1024 ).toFixed( 1 )}MB)` );
-		return cached;
+	try {
+
+		const buffer = await file.arrayBuffer();
+		if ( fromCache ) console.log( `AI Upscaler Worker: model loaded from cache (${( buffer.byteLength / 1024 / 1024 ).toFixed( 1 )}MB)` );
+		return buffer;
+
+	} finally {
+
+		release();
 
 	}
-
-	// Network fetch + cache
-	const response = await fetch( url );
-	if ( ! response.ok ) throw new Error( `Failed to fetch model: ${response.status}` );
-	const buffer = await response.arrayBuffer();
-
-	// Cache in background (don't block session creation)
-	cacheModel( url, buffer.slice( 0 ) );
-
-	return buffer;
 
 }
 
@@ -219,6 +245,7 @@ self.onmessage = async ( e ) => {
 			if ( e.data.ortRuntimeUrl ) _assetConfig.ortRuntimeUrl = e.data.ortRuntimeUrl;
 			if ( e.data.ortWasmPaths ) _assetConfig.ortWasmPaths = e.data.ortWasmPaths;
 			if ( e.data.cacheNamespace ) _assetConfig.cacheNamespace = e.data.cacheNamespace;
+			if ( e.data.storage !== undefined ) _assetConfig.storage = e.data.storage;
 			await loadModel( e.data.url, e.data.sessionOptions );
 
 		} else if ( type === 'infer' ) {

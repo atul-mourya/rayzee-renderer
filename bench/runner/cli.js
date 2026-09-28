@@ -9,6 +9,8 @@
  *   node bench/runner/cli.js bless   [--only a,b] [--truth]
  *   node bench/runner/cli.js ab <baseRef> [--only a,b]
  *   node bench/runner/cli.js list
+ *   node bench/runner/cli.js storage [--size MiB] [--gz archive.tar.gz] [--firefox]
+ *   node bench/runner/cli.js storage --engine [--tar scene.tar] [--gz scene.tar.gz]
  */
 
 import { execFile } from 'node:child_process';
@@ -31,6 +33,7 @@ import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
 import { runFreeze } from './freeze.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
+import { formatStorage, runArchiveScenarios, runStorage } from './storage.js';
 
 const exec = promisify( execFile );
 
@@ -501,7 +504,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -574,6 +577,62 @@ async function main() {
 	if ( command === 'calibrate' && flags.snippet ) {
 
 		log( appSnippet( flags.model ? String( flags.model ) : CALIBRATION.defaultModel ) );
+		return 0;
+
+	}
+
+	if ( command === 'storage' && flags.engine ) {
+
+		const server = await startDevServer( { verbose } );
+		try {
+
+			const harness = await openHarness( server.url, { verbose, harnessPath: path.join( PATHS.benchRoot, 'harness', 'storage', 'engine.html' ) } );
+			try {
+
+				if ( flags.tar || flags.gz ) {
+
+					const scenarios = [];
+					if ( flags.tar ) scenarios.push( { label: '.tar', file: path.resolve( String( flags.tar ) ) } );
+					if ( flags.gz ) {
+
+						const gz = path.resolve( String( flags.gz ) );
+						scenarios.push(
+							{ label: '.tar.gz, first load (unpacks to storage)', file: gz },
+							{ label: '.tar.gz, second load', file: gz },
+							{ label: '.tar.gz, storage off (in memory, as before)', file: gz, storage: 'off' },
+						);
+
+					}
+
+					await runArchiveScenarios( harness, scenarios, { log } );
+					return 0;
+
+				}
+
+				const result = await harness.page.evaluate( ( opts ) => globalThis.__bench.storage.selfTest( opts ), { sizeMiB: positiveIntFlag( flags.size, 'size' ) ?? 512 } );
+				log( JSON.stringify( result, null, 2 ) );
+				return result.roundtrip && result.streamSizeOK ? 0 : 1;
+
+			} finally {
+
+				await harness.close();
+
+			}
+
+		} finally {
+
+			await server.stop();
+
+		}
+
+	}
+
+	if ( command === 'storage' ) {
+
+		const sizeMiB = positiveIntFlag( flags.size, 'size' ) ?? 2048;
+		const fixture = flags.gz ? path.resolve( String( flags.gz ) ) : null;
+		log( `storage (OPFS throughput, ${sizeMiB} MiB${fixture ? `, gunzip ${path.basename( fixture )}` : ''})` );
+		log( formatStorage( await runStorage( { sizeMiB, fixture, firefox: !! flags.firefox, log } ) ) );
 		return 0;
 
 	}

@@ -26,6 +26,7 @@ import { LightSerializer } from '../Processor/LightSerializer';
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { getAssetConfig } from '../AssetConfig.js';
+import { cachedObjectURL, DOWNLOAD_POLICY } from '../Storage/DownloadCache.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'pathtracer' );
@@ -238,6 +239,8 @@ export class PathTracerStage extends RenderStage {
 		// Per-triangle bit-trail map (root→leaf Light BVH path, 1 float per triangleIndex); packed
 		// after the emissive entries so the bounce-hit MIS path can re-walk the descent pdf.
 		this._bitTrailMapCache = null;
+		this._bitTrailOffset = 0;
+		this._bitTrailLength = 0;
 
 		// Per-mesh visibility is packed into the TLAS BLAS-pointer leaf's slot [2]
 		// (see TLASBuilder.flatten + BVHTraversal.js). The InstanceTable holds the
@@ -384,7 +387,22 @@ export class PathTracerStage extends RenderStage {
 
 		const { stbnScalarAtlas, stbnVec2Atlas } = getAssetConfig();
 
-		const scalarLoad = loader.loadAsync( stbnScalarAtlas ).then( ( tex ) => {
+		const load = async ( url ) => {
+
+			const source = await cachedObjectURL( url, { policy: DOWNLOAD_POLICY.REVALIDATE } );
+			try {
+
+				return await loader.loadAsync( source.url );
+
+			} finally {
+
+				source.release();
+
+			}
+
+		};
+
+		const scalarLoad = load( stbnScalarAtlas ).then( ( tex ) => {
 
 			this.stbnScalarTexture = configure( tex );
 			stbnScalarTextureNode.value = tex;
@@ -392,7 +410,7 @@ export class PathTracerStage extends RenderStage {
 
 		} );
 
-		const vec2Load = loader.loadAsync( stbnVec2Atlas ).then( ( tex ) => {
+		const vec2Load = load( stbnVec2Atlas ).then( ( tex ) => {
 
 			this.stbnVec2Texture = configure( tex );
 			stbnVec2TextureNode.value = tex;
@@ -1438,7 +1456,12 @@ export class PathTracerStage extends RenderStage {
 		const LBVH_STRIDE = 4; // vec4s per LBVH node — must match LightBVHSampling.js
 		const lbvh = this._lbvhDataCache;
 		const emis = this._emissiveDataCache;
-		const trail = this._bitTrailMapCache;
+		// The bit-trail map (4 B a triangle) lives only in the light buffer: without a new one, the
+		// current one is carried over from there rather than kept as a second copy.
+		const held = this.lightStorageAttr?.array;
+		const trail = this._bitTrailMapCache
+			?? ( held && this._bitTrailLength ? held.slice( this._bitTrailOffset, this._bitTrailOffset + this._bitTrailLength ) : null );
+		this._bitTrailMapCache = null;
 		const lbvhLen = lbvh ? lbvh.length : 0;
 		const emisLen = emis ? emis.length : 0;
 		// Bit-trail map packs 4 trails per vec4 → pad to a vec4 boundary.
@@ -1479,6 +1502,8 @@ export class PathTracerStage extends RenderStage {
 		// Offset (in vec4 elements) where the bit-trail map starts (lbvhLen + emisLen are float
 		// counts, both multiples of 4, so this divides cleanly).
 		this.reverseMapVec4Offset.value = ( lbvhLen + emisLen ) / 4;
+		this._bitTrailOffset = lbvhLen + emisLen;
+		this._bitTrailLength = trail ? trail.length : 0;
 
 	}
 

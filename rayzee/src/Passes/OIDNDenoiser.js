@@ -21,6 +21,7 @@ async function getInitUNetFromBuffer() {
 }
 
 import { getAssetConfig } from '../AssetConfig.js';
+import { sharedDownloads, DOWNLOAD_POLICY } from '../Storage/DownloadCache.js';
 
 const MODEL_CONFIG = {
 	// No cleanAux flag in oidn-web, so the blob is it — and it must match what setCleanAuxNormal
@@ -466,12 +467,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		let bytes = this._weights.get( url );
 		if ( ! bytes ) {
 
-			bytes = fetch( url ).then( res => {
-
-				if ( ! res.ok ) throw new Error( `HTTP ${ res.status } fetching ${ url }` );
-				return res.arrayBuffer();
-
-			} );
+			bytes = sharedDownloads().fetch( url, { policy: DOWNLOAD_POLICY.IMMUTABLE } )
+				.then( ( { file, release } ) => file.arrayBuffer().finally( release ) );
 			bytes.catch( () => this._weights.delete( url ) );
 			this._weights.set( url, bytes );
 

@@ -1,4 +1,5 @@
 import { DataArrayTexture, LinearFilter, RGBAFormat, UnsignedByteType } from 'three';
+import { cachedObjectURL } from '../Storage/DownloadCache.js';
 
 /**
  * Manages projection masks ("gobos" / "cookies") for spot lights.
@@ -256,17 +257,27 @@ export class GoboManager {
 
 }
 
-function loadImage( url ) {
+async function loadImage( url ) {
 
-	return new Promise( ( resolve, reject ) => {
+	const source = await cachedObjectURL( url );
 
-		const img = new Image();
-		img.crossOrigin = 'anonymous';
-		img.onload = () => resolve( img );
-		img.onerror = () => reject( new Error( `Failed to load gobo image: ${url}` ) );
-		img.src = url;
+	try {
 
-	} );
+		return await new Promise( ( resolve, reject ) => {
+
+			const img = new Image();
+			img.crossOrigin = 'anonymous';
+			img.onload = () => resolve( img );
+			img.onerror = () => reject( new Error( `Failed to load gobo image: ${url}` ) );
+			img.src = source.url;
+
+		} );
+
+	} finally {
+
+		source.release();
+
+	}
 
 }
 

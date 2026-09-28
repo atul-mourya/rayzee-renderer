@@ -65,4 +65,7 @@ export const EngineEvents = {
 
 	// Scene metadata
 	SCENE_METADATA_APPLIED: 'engine:sceneMetadataApplied',
+
+	// Storage (OPFS): usage or entries changed
+	STORAGE_CHANGED: 'engine:storageChanged',
 };

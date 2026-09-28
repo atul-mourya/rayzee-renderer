@@ -25,6 +25,11 @@ import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
+import { getAssetConfig } from './AssetConfig.js';
+import { StorageManager } from './Storage/StorageManager.js';
+import { acquireSharedStorage } from './Storage/openStorage.js';
+import { nameFromUrl } from './Storage/DownloadCache.js';
+import { fileIdentity, identityKey } from './Storage/identity.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
@@ -44,6 +49,17 @@ import { OverlayManager } from './managers/OverlayManager.js';
 import { AnimationManager } from './managers/AnimationManager.js';
 import { TransformManager } from './managers/TransformManager.js';
 import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
+import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
+import { TRIANGLE_PATCH_PROPERTIES } from './managers/MaterialDataManager.js';
+import { VERSION } from './version.js';
+
+export const RENDER_CHECKPOINT_VERSION = 1;
+
+// The part of an archive a load chose, for sceneSource.
+const partOf = ( { element, pbrtEntry } = {} ) => ( {
+	...( element !== undefined ? { element } : {} ),
+	...( pbrtEntry !== undefined ? { pbrtEntry } : {} ),
+} );
 
 // One app per canvas — auto-dispose a prior owner if the caller double-
 // instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
@@ -129,6 +145,11 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
 	 *   above this. The default refuses where the renderer process would be killed instead of
 	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
+	 * @param {false|'auto'|StorageManager} [options.storage] - on-disk storage; defaults to
+	 *   `configureAssets( { storage } )`. A host-supplied manager stays the host's to dispose.
+	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
+	 *   on the GPU, move its triangle records and BLAS nodes to disk (see
+	 *   {@link ensureSceneResident}). Needs storage; skipped for animated scenes.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -153,6 +174,11 @@ export class PathTracerApp extends EventDispatcher {
 		this._autoResize = options.autoResize !== false;
 		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
 		this._maxSceneBytes = options.maxSceneBytes;
+		this._storageOption = options.storage;
+		this._memorySpill = options.memorySpill === true;
+		/** @type {?StorageManager} on-disk storage, null when off or unavailable */
+		this.storage = null;
+		this._storageRelease = null;
 		this._container = options.container || null;
 		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
@@ -324,6 +350,7 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	async init() {
 
+		const storageReady = this._initStorage();
 		await this._initRenderer();
 		this._applyPendingReservedRenderSize();
 		this._initCameraManager();
@@ -332,6 +359,8 @@ export class PathTracerApp extends EventDispatcher {
 		this._initPipeline();
 		await this._initManagers();
 		this._wireEvents();
+		await storageReady;
+		this._attachStorage();
 
 		// Seed path tracer with minimal empty scene data
 		this.stages.pathTracer.setTriangleData( new Float32Array( 32 ), 0 );
@@ -343,6 +372,48 @@ export class PathTracerApp extends EventDispatcher {
 		log.debug( 'WebGPU path tracer app initialized' );
 
 		return this;
+
+	}
+
+	async _initStorage() {
+
+		const option = this._storageOption ?? getAssetConfig().storage;
+		if ( option === false ) return;
+
+		if ( option instanceof StorageManager ) {
+
+			this.storage = option;
+
+		} else {
+
+			const { storage, reason, release } = await acquireSharedStorage( getAssetConfig().cacheNamespace );
+			if ( this._disposed ) {
+
+				release();
+				return;
+
+			}
+
+			if ( ! storage ) {
+
+				this._issues.warn( ISSUE_CODES.STORAGE_UNAVAILABLE, `on-disk storage is off: ${reason}`, { reason } );
+				return;
+
+			}
+
+			this.storage = storage;
+			this._storageRelease = release;
+
+		}
+
+		this._addTrackedListener( this.storage, 'change', ( e ) => this.dispatchEvent( { type: EngineEvents.STORAGE_CHANGED, area: e.area } ) );
+		this._addTrackedListener( this.storage, 'issue', ( e ) => this._issues.warn( e.code, e.message, e.detail ) );
+
+	}
+
+	_attachStorage() {
+
+		if ( this.assetLoader ) this.assetLoader.storage = this.storage;
 
 	}
 
@@ -624,6 +695,11 @@ export class PathTracerApp extends EventDispatcher {
 		this._removeTrackedListeners();
 		setStatusCallback( null );
 
+		this._storageRelease?.();
+		this._storageRelease = null;
+		this.storage = null;
+		this._sceneSource = this._sceneSourceFile = null;
+
 		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
 
 		// Holds the renderer and the issue log, both of which outlive it otherwise.
@@ -764,6 +840,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.transformManager?.detach?.();
 
 		this.assetLoader?.releaseTargetModel();
+		this._sceneSource = this._sceneSourceFile = null;
 
 		// Clear lights in the WebGPU light scene
 		this.lightManager?.clearLights?.();
@@ -788,12 +865,14 @@ export class PathTracerApp extends EventDispatcher {
 	/**
 	 * Loads a model, builds BVH, and uploads scene data.
 	 * @param {string} url - Model URL
+	 * @param {{cacheKey?: string}} [options] - download-cache key for a URL that expires
 	 */
-	async loadModel( url ) {
+	async loadModel( url, options = {} ) {
 
 		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadModel( url ),
-			{ type: 'ModelLoaded', url }
+			() => this.assetLoader.loadModel( url, options ),
+			{ type: 'ModelLoaded', url },
+			{ kind: 'url', url, cacheKey: options.cacheKey ?? null }
 		);
 
 	}
@@ -817,7 +896,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this._loadWithSceneRebuild(
 			() => this.assetLoader.loadObject3D( object3d, name ),
-			{ type: 'Object3DLoaded', name }
+			{ type: 'Object3DLoaded', name },
+			{ kind: 'object3d', name }
 		);
 
 	}
@@ -891,22 +971,47 @@ export class PathTracerApp extends EventDispatcher {
 	 * tracer rendering buffers whose geometry has been freed. Here a concurrent call throws
 	 * LOAD_IN_PROGRESS before anything is touched.
 	 *
-	 * @param {File} file
+	 * @param {File|string} file - a File, or a URL to download (through the download cache)
 	 * @param {object} [options] - forwarded to the archive loader: `element` to load one
-	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes.
+	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes. For a
+	 *   URL also `filename` and `cacheKey` (see AssetLoader.loadAssetFromUrl).
 	 * @returns {Promise<void>}
 	 */
 	async loadFile( file, options = {} ) {
+
+		if ( typeof file === 'string' ) {
+
+			const filename = options.filename ?? nameFromUrl( file );
+			const format = this.assetLoader?.getFileFormat( filename );
+			if ( ! format ) throw new Error( `Unsupported file format: ${filename}` );
+			if ( format.type === 'environment' || format.type === 'image' ) return this.loadEnvironment( file );
+
+			await this._loadWithSceneRebuild(
+				() => this.assetLoader.loadAssetFromUrl( file, { ...options, filename } ),
+				{ type: 'ModelLoaded', filename },
+				{ kind: 'url', url: file, filename, cacheKey: options.cacheKey ?? null, ...partOf( options ) }
+			);
+			return;
+
+		}
 
 		const format = this.assetLoader?.getFileFormat( file?.name || '' );
 		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
 
 		if ( format.type !== 'environment' && format.type !== 'image' ) {
 
+			const identity = fileIdentity( file ).catch( () => ( { name: file.name, size: file.size, lastModified: file.lastModified ?? 0, sample: null } ) );
 			await this._loadWithSceneRebuild(
 				() => this.assetLoader.loadAssetFromFile( file, options ),
-				{ type: 'ModelLoaded', filename: file.name }
+				{ type: 'ModelLoaded', filename: file.name },
+				async () => {
+
+					const id = await identity;
+					return { kind: 'local-file', file: id, key: id.sample ? identityKey( id ) : null, ...partOf( options ) };
+
+				}
 			);
+			this._sceneSourceFile = file;
 			return;
 
 		}
@@ -948,7 +1053,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this._loadWithSceneRebuild(
 			() => this.assetLoader.loadExampleModels( index, modelFiles ),
-			{ type: 'ModelLoaded', index }
+			{ type: 'ModelLoaded', index },
+			{ kind: 'url', url: modelFiles[ index ]?.url ?? null, cacheKey: null }
 		);
 
 	}
@@ -1009,8 +1115,28 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Where the model on screen came from, as plain data — what a saved session reopens:
+	 * `{ kind: 'url', url, cacheKey, filename?, element?, pbrtEntry? }`,
+	 * `{ kind: 'local-file', file: {name, size, lastModified, sample}, key, element?, pbrtEntry? }` or
+	 * `{ kind: 'object3d', name }`. Null before a load and after {@link unloadScene}.
+	 * @returns {?Object}
+	 */
+	get sceneSource() {
+
+		return this._sceneSource ?? null;
+
+	}
+
+	/** The File a local load came from, so a host can save a project that carries it; null otherwise. */
+	get sceneSourceFile() {
+
+		return this._sceneSourceFile ?? null;
+
+	}
+
 	/** Shared pipeline: load asset → sync controls → build BVH → reset → dispatch events */
-	async _loadWithSceneRebuild( loadFn, eventPayload ) {
+	async _loadWithSceneRebuild( loadFn, eventPayload, source = null ) {
 
 		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
 
@@ -1019,6 +1145,8 @@ export class PathTracerApp extends EventDispatcher {
 		try {
 
 			await loadFn();
+			this._sceneSource = typeof source === 'function' ? await source() : source;
+			this._sceneSourceFile = null;
 			// A fresh model re-establishes the emissive-sampling auto-default (incremental
 			// rebuilds — add/remove object, texture reprocess — preserve the user's choice).
 			this._emissiveSamplingUserSet = false;
@@ -1028,6 +1156,7 @@ export class PathTracerApp extends EventDispatcher {
 			this._clearAppendedModels();
 			this._syncControlsAfterLoad();
 			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
+			this._maybeSpill();
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
 			// shader compilation come first), and a second of the previous model reads as a bug.
@@ -1059,6 +1188,8 @@ export class PathTracerApp extends EventDispatcher {
 	 * @private
 	 */
 	_discardFailedLoad() {
+
+		this._sceneSource = this._sceneSourceFile = null;
 
 		try {
 
@@ -1172,7 +1303,7 @@ export class PathTracerApp extends EventDispatcher {
 	 *   CDF'd concurrently with the BVH build rather than before it.
 	 * @returns {boolean}
 	 */
-	async loadSceneData( { pendingEnvironment = null } = {} ) {
+	async loadSceneData( { pendingEnvironment = null, keepUserLights = false } = {} ) {
 
 		// Clear selection before rebuilding — the old object leaves the scene graph.
 		// Skipped on the append path (addModel): the selected object persists, so its
@@ -1231,7 +1362,8 @@ export class PathTracerApp extends EventDispatcher {
 		// Build BVH
 		timer.start( 'BVH build (SceneProcessor)' );
 		this._sdf.setMaxTextureSize( this._maxTextureSize );
-		await this._sdf.buildBVH( this.meshScene );
+		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null } );
+		this.assetLoader?.flushPendingGraph( this._sdf.performanceMetrics.totalProcessingTime );
 		timer.end( 'BVH build (SceneProcessor)' );
 
 		// Transfer geometry, materials, and textures to GPU
@@ -1241,7 +1373,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
 		// during the BVH build, and the snapshot is then a disposed texture.
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, this.meshScene.environment ) ) return false;
+		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, this.meshScene.environment, { keepUserLights } ) ) return false;
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -1369,7 +1501,8 @@ export class PathTracerApp extends EventDispatcher {
 	/** Reframe-free rebuild sequence. Assumes the _loadingInProgress guard is already held. */
 	async _finishRebuildNoReframe( eventPayload ) {
 
-		await this.loadSceneData(); // emits 'SceneRebuild'
+		await this.loadSceneData( { keepUserLights: true } ); // emits 'SceneRebuild'
+		this._maybeSpill();
 		this._recalibrateControlLimits(); // scene bounds changed — retune zoom limits + near/far (no camera move)
 		this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 		this.reset();
@@ -1385,7 +1518,7 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {string} [opts.name] - Display name for the scene-object list.
 	 * @returns {Promise<string>} the new object's id (Object3D uuid).
 	 */
-	async addModel( url, { name } = {} ) {
+	async addModel( url, { name, cacheKey } = {} ) {
 
 		if ( this._loadingInProgress ) {
 
@@ -1397,8 +1530,10 @@ export class PathTracerApp extends EventDispatcher {
 		this._preserveSelectionOnRebuild = true;
 		try {
 
-			const { root } = await this.assetLoader.appendModel( url );
+			const { root } = await this.assetLoader.appendModel( url, { cacheKey } );
 			root.userData.__rayzeeSceneObject = true;
+			root.userData.__rayzeeSourceUrl = url;
+			if ( cacheKey ) root.userData.__rayzeeCacheKey = cacheKey;
 			if ( name ) root.userData.__rayzeeName = name;
 			await this._finishRebuildNoReframe( { type: 'ModelAdded', url, id: root.uuid } );
 			return root.uuid;
@@ -1551,6 +1686,55 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	/**
+	 * Everything changed since the scene loaded — render settings, environment, colour, lights,
+	 * cameras, timeline keys, material edits, hidden and moved objects — as JSON-safe data. The
+	 * model is not in it: {@link importSceneState} applies it once the host has loaded that again.
+	 * @returns {Object}
+	 */
+	exportSceneState() {
+
+		return captureSceneState( this );
+
+	}
+
+	/**
+	 * Applies {@link exportSceneState}'s data to the scene now loaded. Objects, materials and
+	 * cameras are matched by position plus name; a scene that differs keeps its own objects and
+	 * materials and the rest still applies.
+	 * @param {Object} state
+	 * @param {Object} [options]
+	 * @param {function(Object): Promise<*>} [options.resolve] - supplies what the engine cannot
+	 *   reach: `{ kind: 'environment', source }` → File | URL | null, `{ kind: 'colorConfig', config }`
+	 *   → true once loaded. Without it, URL environments and built-in colour configs still restore.
+	 * @returns {Promise<{skipped: Array<{section: string, reason: string}>}>}
+	 */
+	async importSceneState( state, options ) {
+
+		return await applySceneState( this, state, options );
+
+	}
+
+	/** Experimental memory spill for a static scene, in the background. @private */
+	_maybeSpill() {
+
+		if ( ! this._memorySpill || ! this.storage || this.animationManager?.hasAnimations ) return;
+		this._sdf?.spillToDisk( this.storage )
+			.then( result => result && this.dispatchEvent( { type: 'SceneSpilled', ...result } ) )
+			.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+
+	}
+
+	/**
+	 * Reads back what {@link options.memorySpill} moved to disk. The engine does this itself before
+	 * its own readers; a host calling {@link refitBLASes} on a spilled scene awaits it first.
+	 */
+	async ensureSceneResident() {
+
+		if ( this._sdf?.spilled ) await this._sdf.ensureResident();
+
+	}
+
 	/** Notify consumers that the camera list changed (names / count). */
 	_dispatchCamerasUpdated() {
 
@@ -1629,6 +1813,7 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	async refitBVH( newPositions, newNormals ) {
 
+		await this.ensureSceneResident();
 		const result = await this._sdf.refitBVH( newPositions, newNormals );
 
 		this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
@@ -1651,6 +1836,7 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
+		if ( this._sdf?.spilled ) throw new Error( 'refitBLASes: the scene is spilled to disk — await app.ensureSceneResident() first' );
 		const result = this._sdf.refitBLASes( affectedMeshIndices, newPositions, newNormals );
 
 		const { triRanges, bvhRanges } = this._sdf.computeBLASDirtyRanges( affectedMeshIndices );
@@ -1731,6 +1917,13 @@ export class PathTracerApp extends EventDispatcher {
 	_refreshMovedEmitters() {
 
 		if ( ! this._emittersMoved ) return;
+		if ( this._sdf?.spilled ) {
+
+			this.ensureSceneResident().then( () => this._refreshMovedEmitters() );
+			return;
+
+		}
+
 		this._emittersMoved = false;
 		this._uploadEmissivePayload( this._sdf?.refreshEmissiveTransforms() ?? null );
 
@@ -2104,6 +2297,10 @@ export class PathTracerApp extends EventDispatcher {
 		// renderMode has no SETTING_ROUTES entry
 		this.stages.pathTracer?.setUniform( 'renderMode', parseInt( config.renderMode ) );
 
+		// A move just before this left the moving-camera drop in force or queued; a final render
+		// never runs at it.
+		if ( isProduction ) this._applyRenderScale( 1 );
+
 		this.stages.pathTracer?.updateCompletionThreshold?.();
 
 		const denoiser = this.denoisingManager?.denoiser;
@@ -2444,6 +2641,41 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		return stage.frameCount;
+
+	}
+
+	/**
+	 * A render in progress as data: the accumulated colour (and the aux buffers while they hold
+	 * samples), the per-pixel convergence buffers, and the counters that choose the next sample.
+	 * {@link restoreRenderCheckpoint} continues it — bit-for-bit in deterministic mode, since the
+	 * random sequence is a pure function of pixel, frame and seed tick. At 4K it is ~500 MB.
+	 * @returns {Promise<?Object>} null before the path tracer exists
+	 */
+	async captureRenderCheckpoint() {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) return null;
+		const accumulation = await stage.captureAccumulation();
+		return { v: RENDER_CHECKPOINT_VERSION, engine: VERSION, savedAt: Date.now(), samples: accumulation.state.frameCount, ...accumulation };
+
+	}
+
+	/**
+	 * Continues a {@link captureRenderCheckpoint}. The scene, settings and render size must be the
+	 * ones it was taken with (restore the scene state first), and the scene must have rendered a
+	 * frame at that size since it last changed. Anything that resets accumulation afterwards
+	 * discards it. Rendering is not restarted: call {@link wake} or {@link renderFrames}.
+	 * @param {Object} checkpoint
+	 */
+	restoreRenderCheckpoint( checkpoint ) {
+
+		if ( checkpoint?.v !== RENDER_CHECKPOINT_VERSION ) throw new Error( `render checkpoint version ${checkpoint?.v} is not ${RENDER_CHECKPOINT_VERSION}` );
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) throw new Error( 'restoreRenderCheckpoint: app is not initialized' );
+
+		stage.restoreAccumulation( checkpoint );
+		this.needsReset = false;
+		this.dispatchEvent( { type: EngineEvents.RENDER_RESET, restored: checkpoint.samples } );
 
 	}
 
@@ -2952,6 +3184,14 @@ export class PathTracerApp extends EventDispatcher {
 
 	setMaterialProperty( materialIndex, property, value ) {
 
+		// These rewrite triangle records, which a spilled scene has to read back first.
+		if ( this._sdf?.spilled && TRIANGLE_PATCH_PROPERTIES.has( property ) ) {
+
+			this.ensureSceneResident().then( () => this.setMaterialProperty( materialIndex, property, value ) );
+			return;
+
+		}
+
 		this.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );
 
 		// Keep the emissive-NEE structure in sync unconditionally (not gated on the
@@ -3266,6 +3506,7 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	async rebuildMaterials( scene ) {
 
+		await this.ensureSceneResident();
 		await this.stages.pathTracer?.rebuildMaterials( scene || this.meshScene );
 		this.reset();
 

@@ -17,6 +17,7 @@ import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from '../Processor/Mat
 import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../Processor/GeometryExtractor.js';
 import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+import { toPortable } from '../SceneState/portable.js';
 
 /** Material buffers already moved into the working space, so a re-init cannot convert twice. */
 const convertedBuffers = new WeakSet();
@@ -29,6 +30,9 @@ const TRI_FLAGS_OFFSET = T.MATERIAL_FLAGS_OFFSET;
 
 // Material properties that affect the shadow-ray opaque-blocker flag.
 const BLOCKER_PROPS = new Set( [ 'transmission', 'transparent', 'opacity', 'alphaMode' ] );
+
+/** Material properties whose edit rewrites triangle records (side, shadow blocker, emitters). */
+export const TRIANGLE_PATCH_PROPERTIES = new Set( [ 'side', ...BLOCKER_PROPS, 'emissive', 'emissiveIntensity' ] );
 
 // Map slot → sRGB pool (true) or linear pool.
 const TEXTURE_POOLS = [
@@ -98,7 +102,7 @@ export class MaterialDataManager {
 		 */
 		this.callbacks = {};
 
-		// Per material index: createMaterialObject's sources, and properties a host set since.
+		// Per material index: createMaterialObject's sources, and properties a host set since (name → portable value).
 		this._sources = [];
 		this._hostSet = [];
 
@@ -311,6 +315,22 @@ export class MaterialDataManager {
 	}
 
 	/**
+	 * Every property a host set, per material, as portable values (see SceneState/portable.js).
+	 * @returns {Array<{index: number, props: Object<string, *>}>}
+	 */
+	serializeHostEdits() {
+
+		const out = [];
+		this._hostSet.forEach( ( props, index ) => {
+
+			if ( props?.size ) out.push( { index, props: Object.fromEntries( props ) } );
+
+		} );
+		return out;
+
+	}
+
+	/**
 	 * Update a single material property in the storage buffer.
 	 * @param {number} materialIndex
 	 * @param {string} property
@@ -481,7 +501,7 @@ export class MaterialDataManager {
 		}
 
 		this.materialStorageAttr.needsUpdate = true;
-		( this._hostSet[ materialIndex ] ??= new Set() ).add( property );
+		( this._hostSet[ materialIndex ] ??= new Map() ).set( property, toPortable( value ) );
 
 		// Recompute triangle-data opaque-blocker flag when any input to it changes.
 		if ( BLOCKER_PROPS.has( property ) ) {

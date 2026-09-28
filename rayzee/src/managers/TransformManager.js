@@ -14,6 +14,13 @@ import { EngineEvents } from '../EngineEvents.js';
 // does not mutate its arguments, so this can be a shared constant.
 const FORWARD = new Vector3( 0, 0, - 1 );
 
+const rootScene = object => {
+
+	while ( object.parent ) object = object.parent;
+	return object.isScene ? object : null;
+
+};
+
 export class TransformManager {
 
 	constructor( { camera, canvas, orbitControls, app } ) {
@@ -33,6 +40,8 @@ export class TransformManager {
 		this._meshes = null;
 		this._refitInFlight = false;
 		this._baselineComputed = false;
+		// Objects the gizmo moved, so a saved session can put them back.
+		this._moved = new Set();
 
 		// Light transform state — spot/directional lights aim via a separate
 		// `.target` Object3D rather than their own rotation (see attach()).
@@ -56,6 +65,21 @@ export class TransformManager {
 	setMeshData( meshes ) {
 
 		this._meshes = meshes;
+		for ( const object of this._moved ) if ( ! rootScene( object ) ) this._moved.delete( object );
+
+	}
+
+	/** Objects the gizmo has moved that are still in the scene (lights are saved with the lights). */
+	get movedObjects() {
+
+		return [ ...this._moved ].filter( object => rootScene( object ) );
+
+	}
+
+	/** Counts an object as moved, as a gizmo drag would — for a restored session. */
+	noteMoved( object ) {
+
+		if ( object && ! object.isLight ) this._moved.add( object );
 
 	}
 
@@ -335,6 +359,7 @@ export class TransformManager {
 			// instead costs a pass over every vertex, and corrupts any other object sharing
 			// this geometry.
 			this._app.updateMeshTransforms( affectedIndices );
+			this._moved.add( this._attached );
 
 		} catch ( err ) {
 
@@ -393,6 +418,7 @@ export class TransformManager {
 		this._controls.dispose();
 
 		this._meshes = null;
+		this._moved.clear();
 		this._baselineComputed = false;
 		this._tempForward = null;
 		this._lightTargetDistance = null;

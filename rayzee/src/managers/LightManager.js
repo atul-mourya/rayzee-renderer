@@ -2,6 +2,13 @@ import {
 	EventDispatcher, DirectionalLight, PointLight, SpotLight, RectAreaLight,
 	Object3D, MathUtils
 } from 'three';
+import { toPortable, fromPortable } from '../SceneState/portable.js';
+
+// Set on lights a host added, which live in the light scene alone: a rebuild re-transfers the
+// model's lights and keeps these.
+const USER_LIGHT = '__rayzeeUserLight';
+
+const LIGHT_TYPES = { DirectionalLight, PointLight, SpotLight, RectAreaLight };
 
 /**
  * Manages scene lights: add, remove, transfer from mesh scene to WebGPU
@@ -84,6 +91,8 @@ export class LightManager extends EventDispatcher {
 
 		}
 
+		light.userData[ USER_LIGHT ] = true;
+
 		// Blender-style emission controls common to every light type.
 		light.userData.temperature = 6500;
 		light.userData.useTemperature = false;
@@ -158,10 +167,11 @@ export class LightManager extends EventDispatcher {
 	 * Clones lights from the mesh scene into the WebGPU light scene,
 	 * then updates GPU uniform buffers.
 	 * @param {import('three').Scene} meshScene
+	 * @param {{keepUserLights?: boolean}} [options] - keep the lights a host added (an incremental rebuild)
 	 */
-	transferSceneLights( meshScene ) {
+	transferSceneLights( meshScene, { keepUserLights = false } = {} ) {
 
-		this._removeAllLights();
+		this._removeAllLights( keepUserLights ? light => ! light.userData?.[ USER_LIGHT ] : undefined );
 
 		const sourceLights = meshScene.getObjectsByProperty( 'isLight', true );
 
@@ -225,6 +235,89 @@ export class LightManager extends EventDispatcher {
 			this.sceneHelpers.clear();
 
 		}
+
+	}
+
+	/**
+	 * Every light as plain data, for a saved session: the model's (with any edits) and the host's.
+	 * @returns {Object[]}
+	 */
+	serialize() {
+
+		return this.scene.getObjectsByProperty( 'isLight', true ).map( light => {
+
+			const record = {
+				type: light.type,
+				name: light.name,
+				visible: light.visible,
+				color: [ light.color.r, light.color.g, light.color.b ],
+				intensity: light.intensity,
+				position: light.position.toArray(),
+				quaternion: light.quaternion.toArray(),
+				scale: light.scale.toArray(),
+				userData: toPortable( light.userData ) ?? {},
+			};
+
+			if ( light.isSpotLight ) Object.assign( record, { angle: light.angle, penumbra: light.penumbra, distance: light.distance, decay: light.decay } );
+			if ( light.isPointLight ) Object.assign( record, { distance: light.distance, decay: light.decay } );
+			if ( light.isRectAreaLight ) Object.assign( record, { width: light.width, height: light.height } );
+			if ( light.target && ( light.isSpotLight || light.isDirectionalLight ) ) record.target = light.target.position.toArray();
+			return record;
+
+		} );
+
+	}
+
+	/**
+	 * Replaces every light with the ones {@link serialize} described.
+	 * @param {Object[]} records
+	 * @returns {import('three').Light[]} the new lights, in record order (unknown types skipped)
+	 */
+	restore( records ) {
+
+		this.sceneHelpers?.clear();
+		this._removeAllLights();
+
+		const lights = [];
+		for ( const record of records ?? [] ) {
+
+			const Type = LIGHT_TYPES[ record.type ];
+			if ( ! Type ) continue;
+
+			const light = new Type();
+			light.name = record.name ?? '';
+			light.visible = record.visible !== false;
+			light.color.setRGB( ...record.color );
+			light.intensity = record.intensity;
+			light.position.fromArray( record.position );
+			light.quaternion.fromArray( record.quaternion );
+			light.scale.fromArray( record.scale ?? [ 1, 1, 1 ] );
+			light.userData = fromPortable( record.userData ) ?? {};
+
+			for ( const key of [ 'angle', 'penumbra', 'distance', 'decay', 'width', 'height' ] ) {
+
+				if ( typeof record[ key ] === 'number' ) light[ key ] = record[ key ];
+
+			}
+
+			if ( record.target ) {
+
+				const target = new Object3D();
+				target.position.fromArray( record.target );
+				this.scene.add( target );
+				light.target = target;
+
+			}
+
+			this.scene.add( light );
+			lights.push( light );
+
+		}
+
+		this.updateLights();
+		this._syncHelpers();
+		this._onReset?.();
+		return lights;
 
 	}
 
@@ -295,10 +388,10 @@ export class LightManager extends EventDispatcher {
 
 	// ── Private ───────────────────────────────────────────────────
 
-	/** Syncs helpers in sceneHelpers with current scene lights. */
-	_removeAllLights() {
+	/** @param {function(import('three').Light): boolean} [which] - all lights when omitted */
+	_removeAllLights( which ) {
 
-		this.scene.getObjectsByProperty( 'isLight', true ).forEach( light => {
+		this.scene.getObjectsByProperty( 'isLight', true ).filter( light => ! which || which( light ) ).forEach( light => {
 
 			this._onLightRemoved?.( light );
 			if ( light.target ) this.scene.remove( light.target );

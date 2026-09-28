@@ -105,6 +105,20 @@ export class TimelineManager extends EventDispatcher {
 
 	}
 
+	/** Every track's keys as plain data, for a saved session. */
+	serialize() {
+
+		return { camera: this.camera.serialize() };
+
+	}
+
+	restore( state ) {
+
+		this.stop();
+		this.camera.restore( state?.camera );
+
+	}
+
 	/** Drops every key: they belonged to the scene being replaced. */
 	clear() {
 

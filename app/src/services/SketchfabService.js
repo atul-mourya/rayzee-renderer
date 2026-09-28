@@ -169,16 +169,16 @@ export class SketchfabService {
 	}
 
 	/**
-	 * Choose a directly-loadable URL from a download response. Prefers the GLB
-	 * (feeds straight into the engine loader); gltf-only archives (.zip) are not
-	 * directly supported in v1.
+	 * Choose a loadable URL from a download response: the GLB when there is one, else the glTF
+	 * archive (.zip). The links are signed and expire, so callers key caches by model uid.
 	 * @param {Object} download - result of getDownload()
-	 * @returns {{url: string, format: 'glb'} | {needsArchive: true, gltf: Object|null}}
+	 * @returns {{url: string, format: 'glb'|'zip'} | {url: null}}
 	 */
 	static pickDownloadUrl( download ) {
 
 		if ( download?.glb?.url ) return { url: download.glb.url, format: 'glb' };
-		return { needsArchive: true, gltf: download?.gltf || null };
+		if ( download?.gltf?.url ) return { url: download.gltf.url, format: 'zip' };
+		return { url: null };
 
 	}
 

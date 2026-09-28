@@ -9,17 +9,33 @@ import ViewportToolbar from './ViewportToolbar';
 import InteractionContextMenu from '@/components/ui/InteractionContextMenu';
 import { useToast } from '@/hooks/use-toast';
 import { useStore, usePathTracerStore, useCameraStore, useAnimationStore, useLightStore } from '@/store';
-import { saveRender } from '@/utils/database';
+import { saveRender, startRenderMaintenance } from '@/utils/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { generateViewportStyles } from '@/utils/viewport';
 import { PathTracerApp, configureAssets } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
 import { loadLightLibraries } from '@/lib/lightLibraries';
+import { ensureAppAreas } from '@/lib/storage';
+import { isArchiveUrl } from '@/lib/archives';
 
 
 // How long startup holds the first frame for the CDN colour config before showing the built-in view.
 const DEFAULT_COLOR_WAIT_MS = 2000;
+
+function readFlag( key ) {
+
+	try {
+
+		return localStorage.getItem( key ) === '1';
+
+	} catch {
+
+		return false;
+
+	}
+
+}
 
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
@@ -131,7 +147,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 	}, [ stats ] );
 
 	// Save/Discard Handlers
-	const handleSave = useCallback( async () => {
+	const handleSave = useCallback( async ( { keepHDR = false } = {} ) => {
 
 		const app = getApp();
 		if ( ! app ) return;
@@ -141,9 +157,26 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 			const canvas = app.getCanvas();
 			if ( ! canvas ) return;
 
-			const imageData = canvas.toDataURL( 'image/png' );
+			const image = await new Promise( ( resolve, reject ) => canvas.toBlob( ( blob ) => ( blob ? resolve( blob ) : reject( new Error( 'the canvas gave no image' ) ) ), 'image/png' ) );
+			let hdr = null;
+			if ( keepHDR ) {
+
+				try {
+
+					const { encodeEXR } = await import( '@/lib/colorManagement' );
+					hdr = ( await encodeEXR() ).bytes;
+
+				} catch ( error ) {
+
+					console.warn( 'Saving the render without its HDR copy:', error );
+
+				}
+
+			}
+
 			const saveData = {
-				image: imageData,
+				image,
+				hdr,
 				colorCorrection: {
 					brightness: 0,
 					contrast: 0,
@@ -195,6 +228,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				const app = new PathTracerApp( canvasRef.current, {
 					container: containerRef.current,
+					// Experimental, off unless set: large static scenes move triangle data to disk once on the GPU.
+					memorySpill: readFlag( 'rayzee-memory-spill' ),
 				} );
 				appRef.current = app;
 				setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );
@@ -205,6 +240,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				// Register with appProxy so getApp() works globally
 				setApp( app );
+				ensureAppAreas( app.storage );
+				startRenderMaintenance();
 
 				// Bridge engine events → Zustand stores
 				engineCleanupRef.current = connectEngineToStore( app, { useStore, useCameraStore, usePathTracerStore, useAnimationStore, useLightStore } );
@@ -249,7 +286,20 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 
 				try {
 
-					if ( modelUrl ) {
+					if ( modelUrl && isArchiveUrl( modelUrl ) ) {
+
+						try {
+
+							await app.loadFile( modelUrl );
+
+						} catch ( err ) {
+
+							if ( err?.code !== 'ARCHIVE_NEEDS_ELEMENT' || ! err.file ) throw err;
+							useStore.getState().setArchivePrompt( { file: err.file, elements: err.elements, totalBytes: err.totalBytes } );
+
+						}
+
+					} else if ( modelUrl ) {
 
 						await app.loadModel( modelUrl );
 
@@ -306,6 +356,21 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 				app.resume();
 				app.reset();
 				loadLightLibraries( app );
+
+				// D1: a previous session is offered, never restored unasked. Saving starts once that
+				// is answered, so the startup scene is never saved over the session being offered.
+				const { startSessionKeeper, sessionToOffer } = await import( '@/lib/session' );
+				const keeper = await startSessionKeeper( app, [ usePathTracerStore, useCameraStore, useLightStore, useAnimationStore ] );
+				const { VideoJob } = await import( '@/lib/videoJob' );
+				const { startStillCheckpointer, unfinishedStill } = await import( '@/lib/stillJob' );
+				startStillCheckpointer( app );
+				const [ video ] = await VideoJob.unfinished( app.storage ).catch( () => [] );
+				const still = video?.job.session ? null : await unfinishedStill( app.storage ).catch( () => null );
+				const offer = video?.job.session || still ? null : await sessionToOffer( app.storage, { modelParam: modelUrl } ).catch( () => null );
+				if ( video?.job.session ) useStore.getState().setSessionRequest( { origin: 'video', job: video, record: video.job.session } );
+				else if ( still ) useStore.getState().setSessionRequest( { origin: 'still', still, record: still.job.session } );
+				else if ( offer ) useStore.getState().setSessionRequest( { origin: 'startup', ...offer } );
+				else keeper.setEnabled( true );
 
 			};
 

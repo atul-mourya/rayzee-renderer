@@ -26,6 +26,22 @@ export { SETTING_SOURCE } from './RenderSettings.js';
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 
+// On-disk storage (origin private file system): caches, and areas a host defines for its own data
+export {
+	openStorage, StorageManager, STORAGE_KIND, ENGINE_AREAS, fileIdentity, identityKey, sameIdentity,
+	DownloadCache, DOWNLOAD_POLICY, fetchFile, nameFromUrl, cachedObjectURL, acquireLock, heldLockNames,
+} from './Storage/index.js';
+
+// Archives read in place: one entry at a time, never the whole file in memory
+export { openZip, readZipDirectory } from './Processor/ZipReader.js';
+
+// Engine package version, as built
+export { VERSION } from './version.js';
+
+// A loaded scene's edits as plain data (app.exportSceneState / importSceneState)
+export { SCENE_STATE_VERSION } from './SceneState/SceneState.js';
+export { toPortable, fromPortable } from './SceneState/portable.js';
+
 // glTF alphaMode derivation — the one definition, shared with hosts that edit materials
 export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './Processor/GeometryExtractor.js';
 

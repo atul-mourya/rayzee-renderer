@@ -81,11 +81,13 @@ export async function openHeadless( {
 	profile = 'physical',
 	deterministic = true,
 	settings = null,
+	storage = false,
 } = {} ) {
 
 	if ( ! canvas ) throw new Error( 'openHeadless: a canvas is required' );
 
-	const app = new PathTracerApp( canvas, { autoResize: false, strict, profile } );
+	// Off unless asked for: cached state from an earlier run must not change what a batch renders.
+	const app = new PathTracerApp( canvas, { autoResize: false, strict, profile, storage } );
 
 	try {
 

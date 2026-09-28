@@ -83,16 +83,16 @@ export const useAssetLoader = () => {
 	), [ runModelLoad ] );
 
 	// Append a model by URL to the current scene (does NOT replace it).
-	const addModel = useCallback( ( url, name ) => runModelLoad(
+	const addModel = useCallback( ( url, name, options ) => runModelLoad(
 		{ title: "Adding", status: "Adding Model..." },
-		() => AssetLoaderService.addModel( url, name ),
+		() => AssetLoaderService.addModel( url, name, options ),
 		{ successTitle: "Model Added", describe: r => r.modelName, errorTitle: "Error Adding Model" }
 	), [ runModelLoad ] );
 
 	// Replace the scene with a model loaded from a URL (e.g. a Sketchfab GLB).
-	const loadModelUrl = useCallback( ( url, name ) => runModelLoad(
+	const loadModelUrl = useCallback( ( url, name, options ) => runModelLoad(
 		{ title: "Loading", status: "Loading Model..." },
-		() => AssetLoaderService.loadModelUrl( url, name ),
+		() => AssetLoaderService.loadModelUrl( url, name, options ),
 		{ successTitle: "Model Loaded Successfully", describe: name || 'Model', errorTitle: "Error Loading Model" }
 	), [ runModelLoad ] );
 

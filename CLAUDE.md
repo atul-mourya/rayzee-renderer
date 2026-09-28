@@ -46,6 +46,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
 - `npm run bench:list` - show the scene corpus
+- `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
 
 Baselines are **machine-specific** (the wavefront path budget derives from device limits, and
 single- vs multi-chunk are different code paths); the suite refuses to compare across a
@@ -634,6 +635,82 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
   and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
   killed the renderer outright — so raising it is a deliberate act on a fresh browser.
+- **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
+  read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
+  (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
+  there in 0.15 s. `.zip` is read through its central directory (`openZip` / `readZipDirectory`,
+  ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
+  zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
+  URLs load through the download cache (`loadFile( url )`).
+
+### Storage (OPFS) (`rayzee/src/Storage/`)
+`app.storage` is a `StorageManager` over the origin private file system, opened per
+`cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
+`null` when the browser has none (private windows, Node without the fake) — every caller must
+work without it. `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
+turns it off or supplies a host manager; `openHeadless` defaults to off.
+- **Areas.** Engine: `downloads` (URL cache, HEAD-revalidated — the CDN exposes Last-Modified /
+  Content-Length but not ETag), `archives`, `scenes` (graph + BLAS cache), `cdf`, and `spill`
+  (kind `scratch`). App: `renders`, `sessions`, `projects`, `jobs` (kind `user`). `cache` areas
+  share a budget (30 % of quota, ≤ 100 GB) and are evicted least-recently-used, never while
+  locked or pinned; `user` areas are never evicted; `scratch` is outside the budget and cleared at
+  open unless an open page holds it. ⚠️ The budget caps what caches accumulate, not one write —
+  a single entry larger than the budget is allowed when the disk has room.
+- **Entry protocol.** An entry is a directory of files plus `meta.json`, written **last**; no valid
+  meta means invisible, and `sweep()` removes it. `area.create( key )` replaces, `edit( key )`
+  appends (growable files resume from their committed length). ⚠️ `create` removes the old entry
+  first, so anything rewritten often (sessions, checkpoints) alternates between two keys and
+  deletes the older after the commit.
+- **I/O.** All writes go through sync access handles in `StorageWorker` (`createWritable` is Safari
+  26+ only); reads use `File.slice` on the main thread. `EntryWriter.write` copies the data
+  before its first await — muxers and stream readers reuse their buffers.
+- **Locks.** Web Locks per entry (`acquireLock`, in-process fallback in Node): writers exclusive,
+  readers shared with `ifAvailable`, so an entry being written counts as a miss. Sessions hold a
+  lock per tab for the page's lifetime; that is how a second tab tells a live session from one to
+  offer.
+- **Failures** record `storage.*` issues (`unavailable`, `quota_exceeded`, `write_failed`,
+  `read_failed`, `entry_corrupt`, `cache_mismatch`) as warnings and degrade to the in-memory path;
+  nothing throws for lack of storage. A quota failure mid-download retries once in memory.
+- **Identity.** `fileIdentity( file )` = name, size, lastModified and a SHA-256 over the head, tail
+  and 14 probes (~3 MB read at any size); `identityKey()` is the string form used in keys.
+- **Scene cache** (`SceneGraphCodec`, `BLASCache`): stored when the cold build took ≥ 10 s and the
+  read-back is under a third of it (`worthStoring`). The BLAS cache is content-checked — a
+  template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
+  textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
+  `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly
+  (`exactColors`, `exactIor`) or the warm render differs. Read sections in one forward pass of
+  large windows: thousands of small `File.slice` reads took 9.8 s, one pass 0.37 s.
+- **Scene state.** `app.exportSceneState()` / `importSceneState( state, { resolve } )`
+  (`SceneState/`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
+  source), colour (config, view, look, working space, context), every light, cameras (live view,
+  user cameras, per-camera effects), timeline keys, host material edits (with values —
+  `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
+  path, materials by index, model cameras by index — each **plus a name check**; UUIDs change per
+  load. `resolve` answers what the engine cannot reach (a local HDRI, a non-builtin OCIO config).
+  `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON.
+  `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
+  archive's `element`); `sceneSourceFile` is the File of a local load. Not restored: texture swaps
+  and texture-transform edits, host Object3D loads, a picked OCIO folder.
+- **Sessions and projects** (app: `lib/session.js`, `lib/project.js`, `SessionDialog`): autosave
+  2 s after the last change and on hide, only in Preview and only when the JSON fingerprint differs
+  from the last save — an untouched startup scene is never offered. Startup asks before restoring
+  (a `?model=` link offers only a session of that model, and reuses the loaded model). A local
+  file is never copied: restore asks the user to pick it again and checks its identity. `.rayzee`
+  = zip of `project.json` + thumbnail + the local model stored inside (≤ 3.5 GB streamed).
+- **Render checkpoints.** `app.captureRenderCheckpoint()` / `restoreRenderCheckpoint( cp )` —
+  colour + aux MRT, m2 / streak / frozenMask, `frameCount`, `_seedTick`, aux samples and
+  convergence; bit-identical continuation in deterministic mode. All six readbacks are submitted
+  in one task, or the parts straddle frames. Restore does not wake the loop (a synchronous frame
+  would add a sample). The app writes one every 2 min of a final render (`lib/stillJob.js`,
+  ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
+  the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
+- **Memory spill (experimental, `memorySpill: true`, app flag `localStorage['rayzee-memory-spill']`).**
+  After a static multi-chunk scene is uploaded, triangle records and the BLAS part of the BVH go
+  to `spill` (`ChunkedRecords.spill` / `ensureResident`; accessors of a spilled chunk throw).
+  45M triangles: −5.2 GB resident, render unchanged. Readers page in first — `refitBVH`,
+  `rebuildMaterials`, and `setMaterialProperty` for `TRIANGLE_PATCH_PROPERTIES` — while visibility
+  and rigid moves never need to; `refitBLASes` throws until `await app.ensureSceneResident()`.
+  ⚠️ Views taken with `viewAs` keep chunk memory alive, which is why the store tracks them (weakly).
 
 ## Development Commands
 
@@ -666,6 +743,11 @@ const MEMORY_LIMITS = {
     ADAPTIVE_CHUNK_SIZE: true                   // Dynamic based on texture dimensions
 }
 ```
+
+**Texture arrays' CPU pixels** are released right after three.js uploads them (the texture's
+`onUpdate`): nothing reads them again, since a rebuild packs new arrays from the three.js
+sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
+keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
 
 **CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
 contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host

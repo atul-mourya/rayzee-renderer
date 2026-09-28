@@ -1,7 +1,7 @@
 /**
  * Streaming reader for .tar.gz / .tgz / .tar archives.
  *
- * ZIP is random-access and fflate's unzipSync is fine for it, but a gzipped tar is a
+ * ZIP is random-access (see ZipReader.js), but a gzipped tar is a
  * single compressed stream: the only way to reach the last entry is to decompress
  * everything before it. Holding that in memory is not an option — the pbrt-v4 Moana
  * archive is 5.9 GB compressed and 29 GB unpacked — so entries are decoded one at a
@@ -97,6 +97,38 @@ function paxPath( bytes ) {
 
 }
 
+const paddedSize = size => size + ( ( BLOCK - ( size % BLOCK ) ) % BLOCK );
+
+const isSpecialType = type => type === 'L' || type === 'x' || type === 'X';
+
+function parseHeader( h ) {
+
+	const prefix = fieldString( h, 345, 155 );
+	const raw = fieldString( h, 0, 100 );
+	return {
+		type: String.fromCharCode( h[ 156 ] || 0x30 ),
+		size: fieldNumber( h, 124, 12 ),
+		name: prefix ? `${prefix}/${raw}` : raw,
+	};
+
+}
+
+/** Normalised path of a regular file entry, or null for directories, links and the rest. */
+function regularPath( type, name ) {
+
+	if ( type === '5' || type === 'g' || type === 'K' || name.endsWith( '/' ) ) return null;
+	if ( type !== '0' && type !== ' ' ) return null;
+	return normalizeTarPath( name ) || null;
+
+}
+
+function isZeroBlock( h ) {
+
+	for ( let i = 0; i < BLOCK; i ++ ) if ( h[ i ] !== 0 ) return false;
+	return true;
+
+}
+
 /**
  * Pull-free tar parser: chunks are pushed in as they decompress, and entry bodies are
  * copied straight out of them so a skipped entry never allocates.
@@ -150,8 +182,8 @@ class TarStream {
 				if ( this._headerLen === BLOCK ) {
 
 					this._headerLen = 0;
-					this._readHeader();
 					this._bodyStart = base + i; // body begins right after the header block
+					this._readHeader();
 
 				}
 
@@ -210,21 +242,19 @@ class TarStream {
 
 		}
 
-		const type = String.fromCharCode( h[ 156 ] || 0x30 );
-		const size = fieldNumber( h, 124, 12 );
-		const prefix = fieldString( h, 345, 155 );
-		const raw = fieldString( h, 0, 100 );
-		const name = this._pendingName ?? ( prefix ? `${prefix}/${raw}` : raw );
+		const { type, size, name: headerName } = parseHeader( h );
+		const name = this._pendingName ?? headerName;
 		this._pendingName = null;
 
 		this._size = size;
 		this._copied = 0;
-		this._remaining = size + ( ( BLOCK - ( size % BLOCK ) ) % BLOCK );
+		this._remaining = paddedSize( size );
 		this._dst = null;
 		this._special = null;
+		this._indexed = false;
 		this._state = this._remaining > 0 ? 'body' : 'header';
 
-		if ( type === 'L' || type === 'x' || type === 'X' ) {
+		if ( isSpecialType( type ) ) {
 
 			this._special = type === 'L' ? 'longname' : 'pax';
 			this._dst = new Uint8Array( size );
@@ -232,30 +262,29 @@ class TarStream {
 
 		}
 
-		if ( type === '5' || type === 'g' || type === 'K' || name.endsWith( '/' ) ) return;
-		if ( type !== '0' && type !== ' ' ) return;
-
-		const path = normalizeTarPath( name );
+		const path = regularPath( type, name );
 		if ( ! path ) return;
 
 		this.listing.push( { path, size } );
+		this._indexed = this.filter ? this.filter( path, size ) : true;
 
-		const wanted = this.filter ? this.filter( path, size ) : true;
-		if ( ! wanted ) return;
+		if ( this._indexed && ! ( this.retain && ! this.retain( path, size ) ) ) {
 
-		this._indexed = true;
+			if ( this.retainedBytes + size > this.byteBudget ) {
 
-		if ( this.retain && ! this.retain( path, size ) ) return;
+				this.truncated = true;
 
-		if ( this.retainedBytes + size > this.byteBudget ) {
+			} else {
 
-			this.truncated = true;
-			return;
+				this._dst = new Uint8Array( size );
+				this.retainedBytes += size;
+
+			}
 
 		}
 
-		this._dst = new Uint8Array( size );
-		this.retainedBytes += size;
+		// An empty file has no body block, so nothing else would finish it.
+		if ( this._remaining === 0 ) this._endBody();
 
 	}
 
@@ -399,23 +428,132 @@ export async function readTarGz( source, options = {} ) {
 
 }
 
+const WINDOW_BYTES = 1 << 20;
+
 /**
- * A seekable view over an uncompressed .tar: entries are indexed on one streaming pass and read
- * back on demand from the source, so the archive is never resident.
+ * Lists every regular file of a seekable .tar with its body offset, reading only the headers:
+ * each entry's body is skipped by seeking, so a 7 GB archive of large files costs a few
+ * thousand small reads instead of a full pass.
+ * @param {Blob|File} source
+ * @returns {Promise<Array<{path:string, size:number, offset:number}>>}
+ */
+export async function indexTarHeaders( source, { onProgress = null } = {} ) {
+
+	const size = source.size;
+	const listing = [];
+	let window = null;
+	let windowStart = 0;
+	let pendingName = null;
+	let pos = 0;
+	let nextReport = 0;
+
+	const bytesAt = async ( at, n ) => {
+
+		if ( window && at >= windowStart && at + n <= windowStart + window.length ) {
+
+			return window.subarray( at - windowStart, at - windowStart + n );
+
+		}
+
+		const end = Math.min( size, at + Math.max( n, WINDOW_BYTES ) );
+		window = new Uint8Array( await source.slice( at, end ).arrayBuffer() );
+		windowStart = at;
+		return window.subarray( 0, n );
+
+	};
+
+	while ( pos + BLOCK <= size ) {
+
+		const h = await bytesAt( pos, BLOCK );
+		if ( isZeroBlock( h ) ) break;
+
+		const { type, size: bodySize, name: headerName } = parseHeader( h );
+		const name = pendingName ?? headerName;
+		pendingName = null;
+		const bodyStart = pos + BLOCK;
+
+		if ( isSpecialType( type ) ) {
+
+			const body = await bytesAt( bodyStart, bodySize );
+			pendingName = type === 'L' ? fieldString( body, 0, body.length ) : paxPath( body );
+
+		} else {
+
+			const path = regularPath( type, name );
+			if ( path ) listing.push( { path, size: bodySize, offset: bodyStart } );
+
+		}
+
+		pos = bodyStart + paddedSize( bodySize );
+
+		if ( onProgress && pos >= nextReport ) {
+
+			nextReport = pos + ( 256 << 20 );
+			onProgress( { entries: listing.length, bytes: pos } );
+
+		}
+
+	}
+
+	return listing;
+
+}
+
+/**
+ * Indexes a tar stream as it goes by — for writing a decompressing archive to disk and knowing
+ * where every entry landed without a second pass.
+ */
+export function createTarIndexer() {
+
+	const tar = new TarStream( { retain: () => false } );
+	return {
+		push: chunk => tar.push( chunk ),
+		finish: () => {
+
+			tar.end();
+			return tar.listing.filter( e => e.offset !== undefined );
+
+		},
+	};
+
+}
+
+/**
+ * A seekable view over an uncompressed .tar: entries are indexed and read back on demand from
+ * the source, so the archive is never resident.
  *
- * Only for `.tar` over a Blob/File — a gzip stream cannot be seeked, and a zip is already read
- * whole by fflate.
+ * Only for `.tar` over a Blob/File — a gzip stream cannot be seeked.
  *
  * @param {Blob|File} source
  * @param {object} [options] - `filter` and `retain` as in readTar
- * @returns {Promise<{entries, listing, read: (path:string)=>Promise<Uint8Array|null>, truncated}>}
+ * @param {{listing: Array}} [options.index] - a saved index (`result.index`): skips the walk
+ * @param {boolean} [options.headersOnly] - index by seeking between headers; nothing is retained
+ * @returns {Promise<{entries, listing, read: (path:string)=>Promise<Uint8Array|null>, truncated,
+ *   index: ?{v:number, listing:Array}}>}
  */
 export async function openTar( source, options = {} ) {
 
-	const tar = new TarStream( { ...options } );
-	await forEachSlice( source, slice => tar.push( slice ) );
-	tar.end();
-	const { entries, listing, retainedBytes, truncated } = tar.result();
+	const { index = null, headersOnly = false, onProgress = null, ...streamOptions } = options;
+
+	let entries, listing, retainedBytes, truncated, full = null;
+
+	if ( index || headersOnly ) {
+
+		full = index?.listing ?? await indexTarHeaders( source, { onProgress } );
+		const { filter } = streamOptions;
+		listing = full.map( e => ( ! filter || filter( e.path, e.size ) ? { ...e } : { path: e.path, size: e.size } ) );
+		entries = Object.create( null );
+		retainedBytes = 0;
+		truncated = false;
+
+	} else {
+
+		const tar = new TarStream( { ...streamOptions } );
+		await forEachSlice( source, slice => tar.push( slice ) );
+		tar.end();
+		( { entries, listing, retainedBytes, truncated } = tar.result() );
+
+	}
 
 	const byPath = new Map();
 	for ( const e of listing ) if ( e.offset !== undefined ) byPath.set( e.path, e );
@@ -429,7 +567,7 @@ export async function openTar( source, options = {} ) {
 
 	};
 
-	return { entries, listing, read, retainedBytes, truncated, indexed: byPath.size };
+	return { entries, listing, read, retainedBytes, truncated, indexed: byPath.size, index: full ? { v: 1, listing: full } : null };
 
 }
 
