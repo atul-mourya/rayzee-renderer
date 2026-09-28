@@ -114,7 +114,7 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
-- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
+- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
 - **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
@@ -648,8 +648,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
   and the build reports itself truncated. 45M is the highest rung measured to survive without
   the memory spill. With `memorySpill` on, `loadFile` defaults them to 60M / 8M
-  (`SPILL_TRIANGLE_BUDGET`): the whole 15-part Moana subset (55.7M / 7.0M) loads cold under them,
-  and the preflight is what refuses anything larger.
+  (`SPILL_TRIANGLE_BUDGET`): the whole 15-part Moana subset (55.7M / 7.0M) loads cold under them.
+  Raised per load, 80M / 4.35M loads and renders (preflight 8.51 GB, with the spill's discounts);
+  89M ran out of memory in the parse, measured before the parse-memory work and not since.
 - **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
   a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
   file included again under the same material, with no side effects, is placed as an instance of
@@ -835,6 +836,8 @@ build loads after a reboot and fails after a long session.
 - Measured at 40M: peak live 7,350 MB against a 7,289 MB final resident set. The BLAS→BVH handoff
   already releases as it fills, so there is no build transient left worth attacking — the only
   remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
+  With `memorySpill` that mirror is on disk for the build (`Storage/GeometrySpill.js`, see Memory
+  spill below) and read back when it ends.
 
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:

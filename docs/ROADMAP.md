@@ -76,6 +76,7 @@
   - [x] Dynamic scene object add / remove (runtime BVH insert, no full rebuild)
   - [x] Mesh / group visibility toggling (per-mesh BVH-level, Outliner tree)
   - [x] Interactive transform gizmo (translate/rotate/scale) with per-mesh BVH refit
+  - [x] Sessions autosaved on disk (OPFS) and offered back on return; projects saved as `.rayzee` files with the local model inside
   - [ ] Scene templates and presets
   - [ ] Version control integration (Git LFS)
 
@@ -90,6 +91,7 @@
 ### Rendering Management
 - [ ] **Render Queue & Batch Processing**
   - [x] Offline animation video export (frame-by-frame → WebCodecs VP9/VP8 → WebM)
+  - [x] Resumable final renders and video exports (render checkpoints and frame journals on disk)
   - [ ] Background rendering with progress tracking
   - [ ] Render queue management
   - [ ] Distributed rendering across multiple devices
@@ -114,6 +116,9 @@
   - [x] O(N) bottom-up BVH refit for animated geometry (worker + SharedArrayBuffer)
   - [x] Object-space shared geometry placed by matrix, with single-use and emissive geometry baked to world space
   - [x] Scene storage past the ~2 GB array ceiling (chunked triangle and node records)
+  - [x] Triangles split across two GPU buffers past WebGPU's 4 GB buffer limit (89.5M triangles)
+  - [x] Meshes past 2M triangles built as spatial pieces on a worker pool
+  - [x] Small leaves folded into their parents past 40M triangles (BLAS nodes roughly halved)
   - [ ] GPU-accelerated BVH construction (compute shader)
   - [x] Dynamic BVH updates for animated scenes
   - [ ] Ray frustum culling
@@ -122,6 +127,8 @@
 - [ ] **Memory & Bandwidth Optimization**
   - [x] Size-bucketed material texture arrays (~40% VRAM reduction) + main-thread streaming for large sets
   - [x] VRAM usage tracking — current/peak, per-category via VRAMTracker / `app.getMemoryInfo()`
+  - [x] On-disk caches (OPFS) for downloads, unpacked archives, built scenes and environment tables
+  - [x] Memory spill (experimental): large scenes built through disk — 80M stored triangles load in one tab
   - [ ] GPU-compressed texture arrays (blocked by TSL compute-pipeline teardown limitation)
   - [ ] Geometry level-of-detail (LOD)
   - [ ] Occlusion culling
@@ -240,7 +247,7 @@
 - **Q4 2025:** ~~Compute shaders & denoiser~~ ✅ ASVGF/OIDN GPU-native denoising, compute bilateral filtering, MIS pipeline
 - **Q1 2026:** ~~Wavefront rewrite~~ ✅ Wavefront compute path tracer, subsurface scattering, two-level BVH (TLAS/BLAS), size-bucketed texture arrays, VRAM tracking
 - **Q2 2026:** ~~Content & assets~~ ✅ Sketchfab/PolyHaven asset browsers, dynamic scene add/remove, AI super-resolution upscaling, PBRT-v4 loader, screen-space radiance cache, GPU device-loss recovery
-- **Q3 2026:** ~~Large scenes~~ ✅ Instanced object-space geometry, chunked storage past the 2 GB array ceiling, partial loading of multi-gigabyte scene archives, CPU memory preflight
+- **Q3 2026:** ~~Large scenes~~ ✅ Instanced object-space geometry, chunked storage past the 2 GB array ceiling, partial loading of multi-gigabyte scene archives, CPU memory preflight, on-disk storage (caches, sessions, projects, resumable renders), memory spill to 80M triangles
 - **Q3 2026:** Mobile optimization (pending)
 
 ---

@@ -325,7 +325,7 @@ const engine = new PathTracerApp(canvas, options?)
 | `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
 | `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
 | `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
-| `options.memorySpill` | `boolean` | Experimental, default `false`: once a large static scene is on the GPU, move its triangle records and BLAS nodes to disk. See [On-disk storage](#on-disk-storage-opfs). |
+| `options.memorySpill` | `boolean` | Experimental, default `false`: build a large static scene through disk — triangle records, BLAS nodes and the three.js geometry are written out as the build finishes with them — and raise the pbrt triangle and placement caps to 60M / 8M. See [On-disk storage](#on-disk-storage-opfs). |
 
 The engine creates and mounts everything it needs (denoiser canvas, tile/HUD overlay) into a single parent on `init()`. Performance HUDs (e.g. `stats-gl`) are not bundled — listen to `EngineEvents.FRAME` and tick your own panel.
 
@@ -397,10 +397,20 @@ try {
 }
 ```
 
-Per-load options for pbrt archives: `promptBytes` moves that 4 GB line, `maxTriangles` (default
-45M) and `maxPlacements` (default 6M) cap the build — past either, placements are skipped and the
-build reports itself truncated. 45M is the highest rung measured to survive; raising it is a
-deliberate act on a fresh browser tab.
+Per-load options for pbrt archives:
+
+| Option | Default | Effect |
+|---|---|---|
+| `promptBytes` | 4 GB | moves the line past which a multi-element archive asks for elements |
+| `maxTriangles` | 45M (60M with `memorySpill`) | past it, placements are skipped and the build reports itself truncated |
+| `maxPlacements` | 6M (8M with `memorySpill`) | the same, for placements |
+| `curveTolerance` | 0.05 | how far a curve segment may stray, × the curve's half-width; curves become strips with adaptive segments. `0` gives the old uniform strips bit for bit |
+| `instanceIncludes` | `true` | a file included again under the same material, with no side effects, is placed as an instance of its first reading instead of being read and stored again |
+
+45M is the highest rung measured to survive without the spill; raising either cap is a deliberate
+act on a fresh browser tab. With `memorySpill`, 80M stored triangles (4.35M placements) have loaded
+and rendered; an 89M load ran out of memory while parsing, and WebGPU's 4 GB buffer limit stops the
+triangle data at 89.5M in any case.
 
 #### Settings
 
@@ -902,7 +912,8 @@ Before extraction the engine prices the scene and applies two lines, both record
 
 Raise or lower the hard line with `new PathTracerApp(canvas, { maxSceneBytes })`. The estimate runs
 low at the very top of its range, so the per-load `maxTriangles` cap (45M) is the more reliable
-guard on a scene of that size.
+guard on a scene of that size. With `memorySpill` the estimate leaves out what the build keeps on
+disk (the BVH, and triangle records past what a streamed build holds at once).
 
 ---
 
@@ -1003,11 +1014,22 @@ for a host's own assets. Failures record `storage.*` issues and fall back to mem
 throws for being absent or full.
 
 **Memory spill (experimental).** With `memorySpill: true`, a static scene of more than one 64 MB chunk
-moves its triangle records and BLAS nodes to disk as it is built — each chunk goes to the GPU and
-then to disk once finished, so they are never all in memory at once: 7.2 GB at rest instead of
-9.1 GB at 50M triangles, the render unchanged. Visibility and rigid moves need nothing back; material edits that
-rewrite triangles (side, transparency, emission) and refits read it back first. `refitBLASes` throws
-on a spilled scene until `await engine.ensureSceneResident()`.
+is built through disk, so its large arrays are never all in memory at once:
+
+- Extraction and BVH building run together. Each stored range of triangles goes to a BLAS worker as
+  soon as it is written, and extraction waits while more than 1.5 GB of triangle records are held.
+  On the 55.7M-triangle Moana subset the build peak fell from 6.6 to 4.1 GB.
+- The three.js geometry goes to disk after the build last reads it, and comes back when the build
+  ends. On a 70M-triangle scene the page held 0.84 GB after extraction instead of 4.07 GB.
+- Each triangle chunk and BLAS goes to the GPU, then to disk. At 50M triangles the page settles at
+  7.2 GB instead of 9.1 GB.
+
+With or without the spill, a mesh past 2M triangles is built as spatial pieces of ≤ 512k triangles
+on a worker pool and joined under the tree that split them, so no build holds a second copy of it.
+
+The render is unchanged. Visibility and rigid moves need nothing read back. Material edits that
+rewrite triangles (side, transparency, emission), and refits, read it back first. `refitBLASes`
+throws on a spilled scene until `await engine.ensureSceneResident()`.
 
 ### Saving Scene State
 
