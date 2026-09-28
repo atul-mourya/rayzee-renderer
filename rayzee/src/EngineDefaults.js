@@ -836,6 +836,16 @@ export const BVH_LEAF_MARKERS = {
 	FRONTIER: 0x40000002, // parallel-build placeholder, overwritten during assembly
 };
 
+/**
+ * A triangle leaf of at most this many triangles is folded into its parent: the child's slot ([3]
+ * or [7]) holds `~( first << 4 | count )`, the very value traversal pushes, so an inner node is
+ * read exactly as before and only popping a negative entry differs. Node indices stay below
+ * {@link BVH_MAX_INDEX}, leaf tags between it and 2^31, folded leaves from 2^31 up — so the count
+ * has four bits and the first triangle must stay below {@link BVH_FOLDED_FIRST_LIMIT}.
+ */
+export const BVH_FOLDED_LEAF_MAX = 15;
+export const BVH_FOLDED_FIRST_LIMIT = 1 << 27;
+
 /** A u32 view over a float buffer, for writing index fields as exact bit patterns. */
 export function bvhIndexView( f32 ) {
 

@@ -1,4 +1,5 @@
 import { BVHBuilder } from '../BVHBuilder.js';
+import { foldLeaves } from '../BVHLeafFold.js';
 import { createLogger, fmt, applyWorkerLogLevel } from '../../utils/Logger.js';
 
 const log = createLogger( 'bvh' );
@@ -133,7 +134,7 @@ function handleAssemble( data ) {
 	const {
 		topFlatData, topNodeCount, frontierMap, subtreeResults,
 		sharedTriangleData, sharedIndices, sharedReorderBuffer,
-		triangleCount
+		triangleCount, foldLeaves: fold
 	} = data;
 
 	try {
@@ -142,9 +143,8 @@ function handleAssemble( data ) {
 		const builder = new BVHBuilder();
 
 		// Assemble the final BVH
-		const bvhData = builder.assembleParallelBVH(
-			topFlatData, topNodeCount, frontierMap, subtreeResults
-		);
+		const assembled = builder.assembleParallelBVH( topFlatData, topNodeCount, frontierMap, subtreeResults );
+		const bvhData = fold ? foldLeaves( assembled ) : assembled;
 
 		const indices = new Uint32Array( sharedIndices );
 		if ( sharedReorderBuffer ) {
@@ -193,7 +193,7 @@ function handleAssemble( data ) {
 
 function handleFullBuild( data ) {
 
-	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, treeletOptimization, reinsertionOptimization, sharedReorderBuffer, maxLeafSize, numBins, maxBins, minBins } = data;
+	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, treeletOptimization, reinsertionOptimization, sharedReorderBuffer, maxLeafSize, numBins, maxBins, minBins, foldLeaves: fold } = data;
 	const builder = new BVHBuilder();
 	// Honor the build params forwarded from SceneProcessor (previously ignored → default leaf 8).
 	if ( maxLeafSize !== undefined ) builder.maxLeafSize = maxLeafSize;
@@ -232,7 +232,8 @@ function handleFullBuild( data ) {
 		const bvhRoot = builder.buildSync( inputTriangles, depth, progressCallback, reorderTarget );
 
 		const flattenStart = performance.now();
-		const bvhData = builder.flattenBVH( bvhRoot );
+		const flat = builder.flattenBVH( bvhRoot );
+		const bvhData = fold ? foldLeaves( flat ) : flat;
 		const flattenTime = performance.now() - flattenStart;
 		log.debug( `flatten ${fmt.ms( flattenTime )} (${fmt.mb( bvhData.byteLength )})` );
 

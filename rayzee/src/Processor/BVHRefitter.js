@@ -1,3 +1,4 @@
+
 /**
  * BVHRefitter — Fast O(N) bottom-up BVH AABB refit for animated geometry.
  *
@@ -7,6 +8,8 @@
  *
  * Designed to run in both main thread and Web Worker contexts.
  */
+
+import { isFoldedRef, foldedFirst, foldedCount } from './BVHLeafFold.js';
 
 // Inline copy of layout constants (source of truth: EngineDefaults.js).
 // Cannot import because this runs inside Web Workers where window is not defined.
@@ -161,6 +164,98 @@ function transformBoundsToWorld( bvhData, nodeOff, src, srcOff, dst, dstOff ) {
 }
 
 
+/** Bounds of triangles [first, first + count) into out[ off .. off + 6 ). */
+function triangleBounds( acc, first, count, out, off ) {
+
+	const A = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
+	const B = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
+	const C = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
+	let minX = Infinity, minY = Infinity, minZ = Infinity;
+	let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
+
+	for ( let t = 0; t < count; t ++ ) {
+
+		const gi = first + t;
+		const f = acc.chunked ? acc.f.chunkFor( gi ) : acc.f;
+		const o = acc.chunked ? acc.chunked.baseOf( gi ) : gi * FPT;
+		minX = Math.min( minX, f[ o + A ], f[ o + B ], f[ o + C ] );
+		minY = Math.min( minY, f[ o + A + 1 ], f[ o + B + 1 ], f[ o + C + 1 ] );
+		minZ = Math.min( minZ, f[ o + A + 2 ], f[ o + B + 2 ], f[ o + C + 2 ] );
+		maxX = Math.max( maxX, f[ o + A ], f[ o + B ], f[ o + C ] );
+		maxY = Math.max( maxY, f[ o + A + 1 ], f[ o + B + 1 ], f[ o + C + 1 ] );
+		maxZ = Math.max( maxZ, f[ o + A + 2 ], f[ o + B + 2 ], f[ o + C + 2 ] );
+
+	}
+
+	out[ off ] = minX; out[ off + 1 ] = minY; out[ off + 2 ] = minZ;
+	out[ off + 3 ] = maxX; out[ off + 4 ] = maxY; out[ off + 5 ] = maxZ;
+
+}
+
+const folded = new Float32Array( 12 );
+
+/**
+ * One node of a bottom-up refit: its own bounds into `bounds[ ( i - base ) * 6 ]`, and an inner
+ * node's two child boxes rewritten from theirs. A leaf folded into its parent takes its box from
+ * its triangles.
+ */
+function refitNode( nodes, i, acc, bounds, base ) {
+
+	const bvhF = nodeF( nodes, i );
+	const idx = nodeIdx( nodes, i );
+	const o = nodeBase( nodes, i );
+	const b = ( i - base ) * 6;
+	const marker = idx[ o + 3 ];
+
+	if ( marker === LEAF_MARKER ) {
+
+		triangleBounds( acc, idx[ o ], idx[ o + 1 ], bounds, b );
+		return;
+
+	}
+
+	if ( marker === BLAS_POINTER_MARKER ) {
+
+		// BLAS-pointer leaf (TLAS): the BLAS root's bounds are in the instance's own
+		// space, and the TLAS sorts on world bounds — so carry the box out through the
+		// leaf's transform. Slots 4..15 are the rows of world-to-object; the eight
+		// corners go back the other way through its inverse.
+		transformBoundsToWorld( bvhF, o, bounds, ( idx[ o ] - base ) * 6, bounds, b );
+		return;
+
+	}
+
+	const right = idx[ o + 7 ];
+	let ls = bounds, lb = ( marker - base ) * 6;
+	if ( isFoldedRef( marker ) ) {
+
+		triangleBounds( acc, foldedFirst( marker ), foldedCount( marker ), folded, 0 );
+		ls = folded; lb = 0;
+
+	}
+
+	let rs = bounds, rb = ( right - base ) * 6;
+	if ( isFoldedRef( right ) ) {
+
+		triangleBounds( acc, foldedFirst( right ), foldedCount( right ), folded, 6 );
+		rs = folded; rb = 6;
+
+	}
+
+	bvhF[ o ] = ls[ lb ]; bvhF[ o + 1 ] = ls[ lb + 1 ]; bvhF[ o + 2 ] = ls[ lb + 2 ];
+	bvhF[ o + 4 ] = ls[ lb + 3 ]; bvhF[ o + 5 ] = ls[ lb + 4 ]; bvhF[ o + 6 ] = ls[ lb + 5 ];
+	bvhF[ o + 8 ] = rs[ rb ]; bvhF[ o + 9 ] = rs[ rb + 1 ]; bvhF[ o + 10 ] = rs[ rb + 2 ];
+	bvhF[ o + 12 ] = rs[ rb + 3 ]; bvhF[ o + 13 ] = rs[ rb + 4 ]; bvhF[ o + 14 ] = rs[ rb + 5 ];
+
+	for ( let a = 0; a < 3; a ++ ) {
+
+		bounds[ b + a ] = Math.min( ls[ lb + a ], rs[ rb + a ] );
+		bounds[ b + 3 + a ] = Math.max( ls[ lb + 3 + a ], rs[ rb + 3 + a ] );
+
+	}
+
+}
+
 export class BVHRefitter {
 
 	constructor() {
@@ -254,102 +349,9 @@ export class BVHRefitter {
 
 		}
 
-		const bounds = this._bounds;
-		const endNode = startNode + nodeCount;
 		const nodes = nodeAccess( bvhData );
-
-		for ( let i = endNode - 1; i >= startNode; i -- ) {
-
-			const bvhF = nodeF( nodes, i );
-			const idx = nodeIdx( nodes, i );
-			const o = nodeBase( nodes, i );
-			const b = ( i - startNode ) * 6; // bounds indexed relative to BLAS start
-
-			if ( idx[ o + 3 ] === LEAF_MARKER ) {
-
-				const triOffset = idx[ o ];
-				const triCount = idx[ o + 1 ];
-
-				let minX = Infinity, minY = Infinity, minZ = Infinity;
-				let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
-
-				for ( let t = 0; t < triCount; t ++ ) {
-
-					const gi = triOffset + t;
-					const triFloats = acc.chunked ? acc.f.chunkFor( gi ) : acc.f;
-					const tOff = acc.chunked ? acc.chunked.baseOf( gi ) : gi * FPT;
-					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
-					const ay = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
-					const az = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
-					const bx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
-					const by = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
-					const bz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
-					const cx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
-					const cy = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
-					const cz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
-
-					minX = Math.min( minX, ax, bx, cx );
-					minY = Math.min( minY, ay, by, cy );
-					minZ = Math.min( minZ, az, bz, cz );
-					maxX = Math.max( maxX, ax, bx, cx );
-					maxY = Math.max( maxY, ay, by, cy );
-					maxZ = Math.max( maxZ, az, bz, cz );
-
-				}
-
-				bounds[ b ] = minX;
-				bounds[ b + 1 ] = minY;
-				bounds[ b + 2 ] = minZ;
-				bounds[ b + 3 ] = maxX;
-				bounds[ b + 4 ] = maxY;
-				bounds[ b + 5 ] = maxZ;
-
-			} else {
-
-				// Inner node — child indices are absolute, but bounds index relative to startNode
-				const leftIdx = idx[ o + 3 ];
-				const rightIdx = idx[ o + 7 ];
-				const lb = ( leftIdx - startNode ) * 6;
-				const rb = ( rightIdx - startNode ) * 6;
-
-				const lMinX = bounds[ lb ];
-				const lMinY = bounds[ lb + 1 ];
-				const lMinZ = bounds[ lb + 2 ];
-				const lMaxX = bounds[ lb + 3 ];
-				const lMaxY = bounds[ lb + 4 ];
-				const lMaxZ = bounds[ lb + 5 ];
-
-				const rMinX = bounds[ rb ];
-				const rMinY = bounds[ rb + 1 ];
-				const rMinZ = bounds[ rb + 2 ];
-				const rMaxX = bounds[ rb + 3 ];
-				const rMaxY = bounds[ rb + 4 ];
-				const rMaxZ = bounds[ rb + 5 ];
-
-				bvhF[ o ] = lMinX;
-				bvhF[ o + 1 ] = lMinY;
-				bvhF[ o + 2 ] = lMinZ;
-				bvhF[ o + 4 ] = lMaxX;
-				bvhF[ o + 5 ] = lMaxY;
-				bvhF[ o + 6 ] = lMaxZ;
-
-				bvhF[ o + 8 ] = rMinX;
-				bvhF[ o + 9 ] = rMinY;
-				bvhF[ o + 10 ] = rMinZ;
-				bvhF[ o + 12 ] = rMaxX;
-				bvhF[ o + 13 ] = rMaxY;
-				bvhF[ o + 14 ] = rMaxZ;
-
-				bounds[ b ] = Math.min( lMinX, rMinX );
-				bounds[ b + 1 ] = Math.min( lMinY, rMinY );
-				bounds[ b + 2 ] = Math.min( lMinZ, rMinZ );
-				bounds[ b + 3 ] = Math.max( lMaxX, rMaxX );
-				bounds[ b + 4 ] = Math.max( lMaxY, rMaxY );
-				bounds[ b + 5 ] = Math.max( lMaxZ, rMaxZ );
-
-			}
-
-		}
+		// Bounds indexed relative to the BLAS start; child indices are absolute.
+		for ( let i = startNode + nodeCount - 1; i >= startNode; i -- ) refitNode( nodes, i, acc, this._bounds, startNode );
 
 	}
 
@@ -374,126 +376,8 @@ export class BVHRefitter {
 
 		}
 
-		const bounds = this._bounds;
 		const nodes = nodeAccess( bvhData );
-
-		// Reverse iteration: bottom-up in pre-order layout
-		for ( let i = nodeCount - 1; i >= 0; i -- ) {
-
-			const bvhF = nodeF( nodes, i );
-			const idx = nodeIdx( nodes, i );
-			const o = nodeBase( nodes, i );
-			const b = i * 6;
-
-			const marker = idx[ o + 3 ];
-
-			if ( marker === LEAF_MARKER ) {
-
-				// Triangle leaf: compute AABB from triangles
-				const triOffset = idx[ o ];
-				const triCount = idx[ o + 1 ];
-
-				let minX = Infinity, minY = Infinity, minZ = Infinity;
-				let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;
-
-				for ( let t = 0; t < triCount; t ++ ) {
-
-					const gi = triOffset + t;
-					const triFloats = acc.chunked ? acc.f.chunkFor( gi ) : acc.f;
-					const tOff = acc.chunked ? acc.chunked.baseOf( gi ) : gi * FPT;
-
-					// Position A
-					const ax = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET ];
-					const ay = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 1 ];
-					const az = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET + 2 ];
-					// Position B
-					const bx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET ];
-					const by = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 1 ];
-					const bz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET + 2 ];
-					// Position C
-					const cx = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET ];
-					const cy = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 1 ];
-					const cz = triFloats[ tOff + TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET + 2 ];
-
-					minX = Math.min( minX, ax, bx, cx );
-					minY = Math.min( minY, ay, by, cy );
-					minZ = Math.min( minZ, az, bz, cz );
-					maxX = Math.max( maxX, ax, bx, cx );
-					maxY = Math.max( maxY, ay, by, cy );
-					maxZ = Math.max( maxZ, az, bz, cz );
-
-				}
-
-				bounds[ b ] = minX;
-				bounds[ b + 1 ] = minY;
-				bounds[ b + 2 ] = minZ;
-				bounds[ b + 3 ] = maxX;
-				bounds[ b + 4 ] = maxY;
-				bounds[ b + 5 ] = maxZ;
-
-			} else if ( marker === BLAS_POINTER_MARKER ) {
-
-				// BLAS-pointer leaf (TLAS): the BLAS root's bounds are in the instance's own
-				// space, and the TLAS sorts on world bounds — so carry the box out through the
-				// leaf's transform. Slots 4..15 are the rows of world-to-object; the eight
-				// corners go back the other way through its inverse.
-				const blasRoot = idx[ o ];
-				const br = blasRoot * 6;
-				transformBoundsToWorld( bvhF, o, bounds, br, bounds, b );
-
-			} else {
-
-				// Inner node: union children bounds (already computed since we iterate in reverse)
-				const leftIdx = idx[ o + 3 ];
-				const rightIdx = idx[ o + 7 ];
-				const lb = leftIdx * 6;
-				const rb = rightIdx * 6;
-
-				const lMinX = bounds[ lb ];
-				const lMinY = bounds[ lb + 1 ];
-				const lMinZ = bounds[ lb + 2 ];
-				const lMaxX = bounds[ lb + 3 ];
-				const lMaxY = bounds[ lb + 4 ];
-				const lMaxZ = bounds[ lb + 5 ];
-
-				const rMinX = bounds[ rb ];
-				const rMinY = bounds[ rb + 1 ];
-				const rMinZ = bounds[ rb + 2 ];
-				const rMaxX = bounds[ rb + 3 ];
-				const rMaxY = bounds[ rb + 4 ];
-				const rMaxZ = bounds[ rb + 5 ];
-
-				// Write left child AABB into bvhData
-				bvhF[ o ] = lMinX;
-				bvhF[ o + 1 ] = lMinY;
-				bvhF[ o + 2 ] = lMinZ;
-				// o+3 = leftChildIdx (preserved)
-				bvhF[ o + 4 ] = lMaxX;
-				bvhF[ o + 5 ] = lMaxY;
-				bvhF[ o + 6 ] = lMaxZ;
-				// o+7 = rightChildIdx (preserved)
-
-				// Write right child AABB into bvhData
-				bvhF[ o + 8 ] = rMinX;
-				bvhF[ o + 9 ] = rMinY;
-				bvhF[ o + 10 ] = rMinZ;
-				// o+11 = 0 padding
-				bvhF[ o + 12 ] = rMaxX;
-				bvhF[ o + 13 ] = rMaxY;
-				bvhF[ o + 14 ] = rMaxZ;
-				// o+15 = 0 padding
-
-				// Store this node's bounds as union of children
-				bounds[ b ] = Math.min( lMinX, rMinX );
-				bounds[ b + 1 ] = Math.min( lMinY, rMinY );
-				bounds[ b + 2 ] = Math.min( lMinZ, rMinZ );
-				bounds[ b + 3 ] = Math.max( lMaxX, rMaxX );
-				bounds[ b + 4 ] = Math.max( lMaxY, rMaxY );
-				bounds[ b + 5 ] = Math.max( lMaxZ, rMaxZ );
-
-			}
-
-		}
+		for ( let i = nodeCount - 1; i >= 0; i -- ) refitNode( nodes, i, acc, this._bounds, 0 );
 
 	}
 

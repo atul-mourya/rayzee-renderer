@@ -36,6 +36,7 @@ import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { partitionRange, joinPieces } from '@/core/Processor/SplitBLAS.js';
+import { foldLeaves, isFoldedRef, foldedFirst, foldedCount } from '@/core/Processor/BVHLeafFold.js';
 
 const LANES = 20;
 const ID = 18;
@@ -144,7 +145,7 @@ describe( 'joinPieces', () => {
 
 			const builder = new BVHBuilder();
 			const root = builder.buildSync( r.copyOf( START + p.start, p.count ) );
-			const bvhData = builder.flattenBVH( root );
+			const bvhData = foldLeaves( builder.flattenBVH( root ) );
 			r.setRecords( START + p.start, builder.reorderedTriangleData );
 			const aabb = new Float32Array( 6 );
 			InstanceTable.rootAABB( bvhData, r, START + p.start, p.count, aabb, 0 );
@@ -186,26 +187,35 @@ describe( 'joinPieces', () => {
 		};
 
 		// Every triangle under a node, checked against each box on the way down.
-		const walk = ( n, boxes ) => {
+		const leaf = ( first, count, boxes ) => {
 
-			const o = n * 16;
-			if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
+			for ( let t = first; t < first + count; t ++ ) {
 
-				for ( let t = idx[ o ]; t < idx[ o ] + idx[ o + 1 ]; t ++ ) {
-
-					seen[ t ] ++;
-					for ( const box of boxes ) expect( contains( box, t ) ).toBe( true );
-
-				}
-
-				return;
+				seen[ t ] ++;
+				for ( const box of boxes ) expect( contains( box, t ) ).toBe( true );
 
 			}
 
-			walk( idx[ o + 3 ], [[ bvhData[ o ], bvhData[ o + 1 ], bvhData[ o + 2 ], bvhData[ o + 4 ], bvhData[ o + 5 ], bvhData[ o + 6 ] ], ...boxes ] );
-			walk( idx[ o + 7 ], [[ bvhData[ o + 8 ], bvhData[ o + 9 ], bvhData[ o + 10 ], bvhData[ o + 12 ], bvhData[ o + 13 ], bvhData[ o + 14 ] ], ...boxes ] );
-			expect( idx[ o + 3 ] ).toBeGreaterThan( n );
-			expect( idx[ o + 7 ] ).toBeGreaterThan( n );
+		};
+
+		const walk = ( n, boxes ) => {
+
+			const o = n * 16;
+			if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) return leaf( idx[ o ], idx[ o + 1 ], boxes );
+
+			for ( const [ slot, at ] of [[ 3, 0 ], [ 7, 8 ]] ) {
+
+				const inner = [[ bvhData[ o + at ], bvhData[ o + at + 1 ], bvhData[ o + at + 2 ], bvhData[ o + at + 4 ], bvhData[ o + at + 5 ], bvhData[ o + at + 6 ] ], ...boxes ];
+				const ref = idx[ o + slot ];
+				if ( isFoldedRef( ref ) ) leaf( foldedFirst( ref ), foldedCount( ref ), inner );
+				else {
+
+					expect( ref ).toBeGreaterThan( n );
+					walk( ref, inner );
+
+				}
+
+			}
 
 		};
 

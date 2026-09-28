@@ -18,13 +18,14 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
 import { sharedStorage } from '../Storage/shared.js';
 import { SpillStore } from '../Storage/SpillStore.js';
 import { GeometrySpill } from '../Storage/GeometrySpill.js';
 import { partitionRange, joinPieces } from './SplitBLAS.js';
+import { rebaseNodes } from './BVHLeafFold.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { VERSION } from '../version.js';
 import { SCENE_CACHE_MIN_BUILD_MS } from '../Storage/sceneCachePolicy.js';
@@ -40,6 +41,9 @@ const LARGE_MESH_TRIANGLES = 200000;
 // Past this a mesh is built as spatial pieces of at most SPLIT_PIECE_TRIANGLES, joined into one BLAS.
 const SPLIT_MESH_TRIANGLES = 2_000_000;
 const SPLIT_PIECE_TRIANGLES = 1 << 19;
+// Past this many stored triangles, small leaves are folded into their parents: the BVH halves,
+// at up to 4 % of traversal time, so only a scene whose BVH nears 2 GB pays it.
+const FOLD_LEAVES_TRIANGLES = 40_000_000;
 // A streamed build's extraction waits while more triangle records than this are in memory.
 const STREAM_RESIDENT_BYTES = 1.5 * 1024 ** 3;
 // Extraction waits while more three.js geometry than this is queued for disk.
@@ -496,9 +500,11 @@ export class SceneProcessor {
 			this._blasKey = null;
 			this._blasRestored = false;
 			this._progressive = progressive?.storage && progressive.uploader ? progressive : null;
+			const stored = this.geometryExtractor._countStoredTriangles( object );
 			// A spilling build of more than one chunk extracts and builds its BLASes together.
-			this._streaming = !! this._progressive
-				&& this.geometryExtractor._countStoredTriangles( object ) > Math.floor( DEFAULT_CHUNK_BYTES / ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 ) );
+			this._streaming = !! this._progressive && stored > Math.floor( DEFAULT_CHUNK_BYTES / ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 ) );
+			this._foldLeaves = stored > FOLD_LEAVES_TRIANGLES;
+			this.bvhBuilder.foldLeaves = this._foldLeaves;
 			this._log( 'Starting scene processing' );
 
 			// Step 0: will this scene fit in the address space this process has left?
@@ -837,6 +843,7 @@ export class SceneProcessor {
 		this._setTriangleData( extractedData.triangleData );
 		this.geometryExtractor.releaseTriangles();
 		this.triangleCount = assertBVHIndexFits( extractedData.triangleCount, 'triangle count' );
+		if ( this._foldLeaves && this.triangleCount > BVH_FOLDED_FIRST_LIMIT ) throw new RangeError( `${this.triangleCount.toLocaleString()} triangles is past the ${BVH_FOLDED_FIRST_LIMIT.toLocaleString()} a folded BVH leaf can address` );
 		// Callers build refit buffers by walking meshes, which counts a shared geometry
 		// once per placement; storage counts it once.
 		this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
@@ -1225,6 +1232,7 @@ export class SceneProcessor {
 			// BVH build params — previously omitted, so the pool path built at the
 			// BVHBuilder default (leaf 8) instead of the configured value.
 			maxLeafSize: this.bvhBuilder.maxLeafSize,
+			foldLeaves: this._foldLeaves === true,
 			numBins: this.bvhBuilder.numBins,
 			maxBins: this.bvhBuilder.maxBins,
 			minBins: this.bvhBuilder.minBins,
@@ -1676,22 +1684,13 @@ export class SceneProcessor {
 
 		const idx = this.bvhIndexChunks;
 
-		for ( let i = 0; i < nodeCount; i ++ ) {
+		for ( let n = startNode, end = startNode + nodeCount; n < end; ) {
 
-			const n = startNode + i;
 			const chunk = idx.chunkFor( n );
-			const o = idx.baseOf( n );
-
-			if ( chunk[ o + 3 ] === BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
-
-				chunk[ o ] += triOffset;
-
-			} else {
-
-				chunk[ o + 3 ] += nodeOffset;
-				chunk[ o + 7 ] += nodeOffset;
-
-			}
+			const stop = Math.min( end, ( ( ( n / idx.recordsPerChunk ) | 0 ) + 1 ) * idx.recordsPerChunk );
+			const from = idx.baseOf( n );
+			rebaseNodes( chunk, nodeOffset, triOffset, from, from + ( stop - n ) * 16 );
+			n = stop;
 
 		}
 
@@ -1784,6 +1783,7 @@ export class SceneProcessor {
 					treeletOptimization: treeletOpts,
 					reinsertionOptimization: opts.reinsertionOptimization,
 					maxLeafSize: opts.maxLeafSize,
+					foldLeaves: opts.foldLeaves,
 					numBins: opts.numBins,
 					maxBins: opts.maxBins,
 					minBins: opts.minBins,
@@ -3362,6 +3362,8 @@ export class SceneProcessor {
 				: ChunkedRecords.adopt( [ data ], data.length / 16, 16, data.length / 16 ) );
 
 		this.bvh = records;
+		// Read by the traversal when it is built: only a folded BVH gets that code.
+		if ( records && this._foldLeaves ) records.foldedLeaves = true;
 		this.bvhIndexChunks = records ? records.viewAs( Uint32Array ) : null;
 		// Null once the BVH needs more than one chunk; hot paths use `bvh` / `bvhIndexChunks`.
 		this.bvhData = records ? records.single : null;

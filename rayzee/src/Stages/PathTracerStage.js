@@ -990,6 +990,7 @@ export class PathTracerStage extends RenderStage {
 
 		}
 
+		this.bvhStorageAttr.foldedLeaves = bvhImageData.foldedLeaves === true;
 		this._bvhRecords = chunked;
 		if ( chunked ) this._uploadChunked( this.bvhStorageAttr, chunked );
 

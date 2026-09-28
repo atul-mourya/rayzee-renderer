@@ -233,7 +233,8 @@ async function handlePhase2(
 			sharedTriangleData,
 			sharedIndices,
 			sharedReorderBuffer,
-			triangleCount
+			triangleCount,
+			foldLeaves: config.foldLeaves
 		}, [ topFlatData.buffer ] );
 		return;
 
@@ -311,7 +312,8 @@ async function handlePhase2(
 			sharedTriangleData,
 			sharedIndices,
 			sharedReorderBuffer,
-			triangleCount
+			triangleCount,
+			foldLeaves: config.foldLeaves
 		}, transferables );
 
 	};
@@ -482,7 +484,8 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 				reportProgress: !! progressCallback,
 				sharedReorderBuffer,
 				treeletOptimization: config.treeletOptimization,
-				reinsertionOptimization: config.reinsertionOptimization
+				reinsertionOptimization: config.reinsertionOptimization,
+				foldLeaves: config.foldLeaves
 			}, [ transferBuffer ] );
 
 		} )().catch( ( error ) => {

@@ -1,6 +1,6 @@
-import { BVH_LEAF_MARKERS, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { rebaseNodes } from './BVHLeafFold.js';
 
-const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
 const FLOATS_PER_NODE = 16;
 const A = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
 const B = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
@@ -216,19 +216,7 @@ export function joinPieces( tree, pieces, built, order ) {
 		built[ k ].bvhData = built[ k ].originalToBvh = null;
 		const base = bases[ k ];
 		const { start, count } = pieces[ k ];
-		const pieceIdx = new Uint32Array( bvhData.buffer, bvhData.byteOffset, bvhData.length );
-
-		for ( let o = 0; o < pieceIdx.length; o += FLOATS_PER_NODE ) {
-
-			if ( pieceIdx[ o + 3 ] === TRIANGLE_LEAF ) pieceIdx[ o ] += start;
-			else {
-
-				pieceIdx[ o + 3 ] += base;
-				pieceIdx[ o + 7 ] += base;
-
-			}
-
-		}
+		rebaseNodes( new Uint32Array( bvhData.buffer, bvhData.byteOffset, bvhData.length ), base, start );
 
 		parts.push( bvhData );
 		for ( let i = 0; i < count; i ++ ) originalToBvh[ order[ start + i ] ] = start + ( pieceOrder ? pieceOrder[ i ] : i );
