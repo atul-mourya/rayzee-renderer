@@ -638,8 +638,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   is free but *parsing* everything is what runs the tab out of memory. Selecting every element
   is a valid answer and loads the whole scene; `promptBytes` overrides the line.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
-  and the build reports itself truncated. 45M is the highest rung measured to survive — 50M
-  killed the renderer outright — so raising it is a deliberate act on a fresh browser.
+  and the build reports itself truncated. 45M is the highest rung measured to survive without
+  the memory spill. With `memorySpill` on, `loadFile` defaults them to 60M / 8M
+  (`SPILL_TRIANGLE_BUDGET`): the whole 15-part Moana subset (55.7M / 7.0M) loads cold under them,
+  and the preflight is what refuses anything larger.
 - **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
   a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
   file included again under the same material, with no side effects, is placed as an instance of

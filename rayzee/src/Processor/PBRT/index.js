@@ -19,7 +19,7 @@ import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 
 export { PBRTParser } from './PBRTParser.js';
-export { PBRTSceneBuilder, PBRT_BUILD_REVISION } from './PBRTSceneBuilder.js';
+export { PBRTSceneBuilder, PBRT_BUILD_REVISION, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './PBRTSceneBuilder.js';
 export { tokenize } from './PBRTTokenizer.js';
 export { findFrameSequence, SEQUENCE_FPS } from './PBRTAnimation.js';
 

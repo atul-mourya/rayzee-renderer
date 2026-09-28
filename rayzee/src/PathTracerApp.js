@@ -35,6 +35,7 @@ import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
 import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
+import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/PBRT/index.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 
 // Managers
@@ -979,6 +980,8 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	async loadFile( file, options = {} ) {
 
+		options = this._sceneBudgets( options );
+
 		if ( typeof file === 'string' ) {
 
 			const filename = options.filename ?? nameFromUrl( file );
@@ -1712,6 +1715,14 @@ export class PathTracerApp extends EventDispatcher {
 	async importSceneState( state, options ) {
 
 		return await applySceneState( this, state, options );
+
+	}
+
+	/** Triangle and placement budgets for a scene archive: raised when the build can spill. @private */
+	_sceneBudgets( options ) {
+
+		if ( ! this._memorySpill || ! this.storage ) return options;
+		return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
 
 	}
 
