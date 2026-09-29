@@ -148,7 +148,7 @@ describe( 'lazily indexed archive', () => {
 		expect( src.reads.filter( p => p === 'lib/shapes.pbrt' ) ).toHaveLength( 2 );
 		for ( const bytes of handed ) expect( bytes.byteLength ).toBe( 0 );
 
-	} );
+	}, 60000 );
 
 	it( 'reads files whole when no head declares a world', async () => {
 

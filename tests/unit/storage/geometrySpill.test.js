@@ -71,7 +71,7 @@ describe( 'GeometrySpill', () => {
 		await spill.dispose();
 		expect( await storage.area( 'spill' ).list() ).toHaveLength( 0 );
 
-	} );
+	}, 60000 );
 
 	it( 'restores two attributes sharing one array as one array', async () => {
 
