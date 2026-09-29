@@ -96,7 +96,7 @@ async function withHarness( { cwd = PATHS.repoRoot, verbose }, body ) {
 	let harness;
 	try {
 
-		log( `${DIM}booting harness (first boot compiles shaders, ~20 s)…${RESET}` );
+		log( `${DIM}booting harness…${RESET}` );
 		harness = await openHarness( server.url, { verbose, harnessPath } );
 		return await body( { ...harness, serverURL: server.url } );
 
@@ -285,7 +285,14 @@ async function reportBindingAudit( bench ) {
 
 async function reportShaderErrors( bench, label = '' ) {
 
-	const { entries } = await bench.shaderDiagnostics();
+	const { entries, unanswered } = await bench.shaderDiagnostics();
+
+	if ( unanswered.length ) {
+
+		log( `\n${YELLOW}${unanswered.length} shader module(s) gave no compilation status${label ? ` (${label})` : ''}: ${unanswered.slice( 0, 8 ).join( ', ' )}${RESET}` );
+
+	}
+
 	if ( ! entries.length ) return 0;
 
 	// A kernel that fails to compile is absent from the dispatch, so every timing-based suite
@@ -352,7 +359,7 @@ async function commandAB( baseRef, flags ) {
 		// larger than the regressions this gate exists to find.
 		browser = await launchBrowser();
 
-		log( `${DIM}booting both harnesses (first boot compiles shaders, ~20 s each)…${RESET}` );
+		log( `${DIM}booting both harnesses…${RESET}` );
 		baseHarness = await openHarness( baseServer.url, {
 			verbose, browser, harnessPath: path.join( worktree, 'bench', 'harness', 'index.html' ),
 		} );
@@ -539,7 +546,7 @@ async function main() {
 
 	}
 
-	// Validated before booting anything — a typo should not cost a 20 s harness start.
+	// Validated before booting anything — a typo should not cost a harness start.
 	const cycles = positiveIntFlag( flags.cycles, 'cycles' );
 
 	if ( command === 'list' ) {

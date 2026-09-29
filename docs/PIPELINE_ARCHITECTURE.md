@@ -395,9 +395,9 @@ stage.materialData.updateMaterialProperty(index, property, value);
 
 // EnvironmentManager
 stage.environment.environmentTexture;     // current env texture
-stage.environment.envParams;              // { type, color, ... }
+stage.environment.envParams;              // { mode, sky / gradient / solid-colour parameters }
 await stage.environment.setEnvironmentMap(envMap);
-await stage.environment.generateProceduralSkyTexture();
+await stage.environment.generateProceduralSkyTexture();  // physical sky, baked and importance-sampled on the GPU
 
 // ShaderBuilder — builds/refreshes the scene texture nodes the kernels read
 stage.shaderBuilder.createSceneTextureNodes(stage, storageTextures);

@@ -929,7 +929,7 @@ export const SCENES = [
 	},
 	{
 		id: 'spheres-procedural-sky',
-		covers: 'procedural sky evaluation and environment CDF importance sampling',
+		covers: 'physical sky bake, its GPU-built importance-sampling table, the analytic sun\'s NEE and MIS',
 		// Higher than the rest: with the sky unrotated the sun's reflections are rare and bright, and
 		// the mean wanders ±1 % below ~200 spp (−0.94 % at 64, −0.14 % at 256 against 2048).
 		spp: 256,

@@ -1,34 +1,11 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
 import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions, isPanorama } from '@/Constants';
-import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode } from 'rayzee';
+import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode, sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
 import { VideoJob } from '@/lib/videoJob';
 import { toast } from '@/hooks/use-toast';
-
-/**
- * Debounce utility - delays function execution until after wait time has elapsed
- * since the last time it was invoked
- */
-const debounce = ( func, wait ) => {
-
-	let timeout;
-	return function executedFunction( ...args ) {
-
-		const later = () => {
-
-			clearTimeout( timeout );
-			func( ...args );
-
-		};
-
-		clearTimeout( timeout );
-		timeout = setTimeout( later, wait );
-
-	};
-
-};
 
 const handleChange = ( setter, appUpdater, needsReset = true ) => val => {
 
@@ -275,18 +252,60 @@ const useEnvironmentStore = create( set => ( {
 const FINAL_RENDER_STATE = PRODUCTION_RENDER_CONFIG;
 const PREVIEW_STATE = INTERACTIVE_RENDER_CONFIG;
 
-// Debounced procedural sky texture generation (300ms delay)
-// This prevents expensive texture regeneration on every slider movement
-const debouncedGenerateProceduralSkyTexture = debounce( () => {
+// Never debounced: slider events come faster than any debounce fires. The engine collapses the
+// requests of one task into one bake.
+const generateSky = () => getApp()?.environmentManager.generateProcedural();
 
+const sunDirection = ( azimuthDeg, elevationDeg ) => {
+
+	const azimuth = azimuthDeg * ( Math.PI / 180 );
+	const elevation = elevationDeg * ( Math.PI / 180 );
+	return new THREE.Vector3(
+		Math.cos( elevation ) * Math.sin( azimuth ),
+		Math.sin( elevation ),
+		Math.cos( elevation ) * Math.cos( azimuth )
+	).normalize();
+
+};
+
+// Solar azimuth runs clockwise from north; north lies along −Z (east along +X), turned by skyNorthOffset.
+const sunAnglesFromTime = s => {
+
+	const { azimuth, elevation } = sunPosition( { hours: s.skyTime, dayOfYear: dayOfYearForMonth( s.skyMonth ), latitude: s.skyLatitude } );
+	return { skySunAzimuth: ( ( 180 - azimuth + s.skyNorthOffset ) % 360 + 360 ) % 360, skySunElevation: elevation };
+
+};
+
+// The Angles controls stay in step, so switching to them starts from where the sun is.
+const applySunPath = ( set, get ) => {
+
+	const angles = sunAnglesFromTime( get() );
+	set( angles );
 	const app = getApp();
-	if ( app ) {
+	if ( ! app ) return;
+	app.environmentManager.params.skySunDirection.copy( sunDirection( angles.skySunAzimuth, angles.skySunElevation ) );
+	if ( get().environmentMode === 'procedural' ) generateSky();
 
-		app.environmentManager.generateProcedural();
+};
 
-	}
+const sunPathHandler = ( set, get, key ) => val => {
 
-}, 10 );
+	set( { [ key ]: Number( Array.isArray( val ) ? val[ 0 ] : val ) } );
+	applySunPath( set, get );
+
+};
+
+// Written to the engine in every mode, so switching to the sky bakes what the panel shows.
+const skyHandler = ( set, get, key, apply ) => handleChange(
+	val => set( { [ key ]: Array.isArray( val ) ? val[ 0 ] : val } ),
+	( val, app ) => {
+
+		apply( app.environmentManager.params, Array.isArray( val ) ? val[ 0 ] : val );
+		if ( get().environmentMode === 'procedural' ) generateSky();
+
+	},
+	false,
+);
 
 const RETOUCH_VISIBLE_KEY = 'rayzee-retouch-visible';
 
@@ -395,13 +414,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Solid Color Sky
 	setSolidSkyColor: val => set( { solidSkyColor: val } ),
 
-	// Procedural Sky (Preetham Model)
-	setSkySunAzimuth: val => set( { skySunAzimuth: val } ),
-	setSkySunElevation: val => set( { skySunElevation: val } ),
-	setSkySunIntensity: val => set( { skySunIntensity: val } ),
-	setSkyRayleighDensity: val => set( { skyRayleighDensity: val } ),
-	setSkyTurbidity: val => set( { skyTurbidity: val } ),
-	setSkyMieAnisotropy: val => set( { skyMieAnisotropy: val } ),
 
 	setInteractionModeEnabled: val => set( { interactionModeEnabled: val } ),
 	setEnableASVGF: val => set( { enableASVGF: val } ),
@@ -1368,136 +1380,54 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		}
 	),
 
-	// Procedural Sky (Preetham Model) Handlers
-	handleSkySunAzimuthChange: handleChange(
-		val => set( { skySunAzimuth: val } ),
-		( val, app ) => {
+	// Physical sky handlers
+	handleSkyTimeChange: sunPathHandler( set, get, 'skyTime' ),
+	handleSkyMonthChange: sunPathHandler( set, get, 'skyMonth' ),
+	handleSkyLatitudeChange: sunPathHandler( set, get, 'skyLatitude' ),
+	handleSkyNorthOffsetChange: sunPathHandler( set, get, 'skyNorthOffset' ),
+	handleSkySunModeChange: val => {
 
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
+		set( { skySunMode: val } );
+		if ( val === 'time' ) applySunPath( set, get );
 
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
+	},
+	handleSkySunAzimuthChange: skyHandler( set, get, 'skySunAzimuth', ( p, val ) => p.skySunDirection.copy( sunDirection( val, get().skySunElevation ) ) ),
+	handleSkySunElevationChange: skyHandler( set, get, 'skySunElevation', ( p, val ) => p.skySunDirection.copy( sunDirection( get().skySunAzimuth, val ) ) ),
+	handleSkySunStrengthChange: skyHandler( set, get, 'skySunStrength', ( p, val ) => void ( p.skySunStrength = val ) ),
+	handleSkySunSizeChange: skyHandler( set, get, 'skySunSize', ( p, val ) => void ( p.skySunSize = val ) ),
+	handleSkyTurbidityChange: skyHandler( set, get, 'skyTurbidity', ( p, val ) => void ( p.skyTurbidity = val ) ),
+	handleSkyOzoneChange: skyHandler( set, get, 'skyOzone', ( p, val ) => void ( p.skyOzone = val ) ),
+	handleSkyAirDensityChange: skyHandler( set, get, 'skyAirDensity', ( p, val ) => void ( p.skyAirDensity = val ) ),
+	handleSkyAltitudeChange: skyHandler( set, get, 'skyAltitude', ( p, val ) => void ( p.skyAltitude = val ) ),
+	handleSkyGroundAlbedoChange: skyHandler( set, get, 'skyGroundAlbedo', ( p, val ) => p.skyGroundAlbedo.set( val ) ),
 
-			// Update sun direction based on azimuth and elevation
-			const azimuth = val * ( Math.PI / 180 );
-			const elevation = get().skySunElevation * ( Math.PI / 180 );
-			const sunDir = new THREE.Vector3(
-				Math.cos( elevation ) * Math.sin( azimuth ),
-				Math.sin( elevation ),
-				Math.cos( elevation ) * Math.cos( azimuth )
-			).normalize();
+	handleSkyPresetChange: val => {
 
-			envParams.skySunDirection.copy( sunDir );
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
+		const preset = SKY_PRESETS[ val ];
+		if ( ! preset ) return;
 
-		}
-	),
+		set( { skyPreset: val } );
+		const store = get();
+		if ( store.skySunMode === 'time' ) {
 
-	handleSkySunElevationChange: handleChange(
-		val => set( { skySunElevation: val } ),
-		( val, app ) => {
+			// The preset's sun height, reached on the current date and latitude.
+			store.handleSkyTimeChange( timeForSunElevation( {
+				elevation: preset.sunElevation, dayOfYear: dayOfYearForMonth( store.skyMonth ),
+				latitude: store.skyLatitude, afternoon: preset.sunAzimuth > 180,
+			} ) );
 
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
+		} else {
 
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-
-			// Update sun direction based on azimuth and elevation
-			const azimuth = get().skySunAzimuth * ( Math.PI / 180 );
-			const elevation = val * ( Math.PI / 180 );
-			const sunDir = new THREE.Vector3(
-				Math.cos( elevation ) * Math.sin( azimuth ),
-				Math.sin( elevation ),
-				Math.cos( elevation ) * Math.cos( azimuth )
-			).normalize();
-
-			envParams.skySunDirection.copy( sunDir );
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
+			store.handleSkySunAzimuthChange( preset.sunAzimuth );
+			store.handleSkySunElevationChange( preset.sunElevation );
 
 		}
-	),
 
-	handleSkySunIntensityChange: handleChange(
-		val => set( { skySunIntensity: val } ),
-		( val, app ) => {
+		store.handleSkyTurbidityChange( preset.turbidity );
+		store.handleSkyAltitudeChange( preset.altitude ?? DEFAULT_STATE.skyAltitude );
+		store.handleExposureChange( Math.pow( 2, preset.exposure ?? 0 ) );
 
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			envParams.skySunIntensity = val;
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
-
-		}
-	),
-
-	handleSkyRayleighDensityChange: handleChange(
-		val => set( { skyRayleighDensity: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			envParams.skyRayleighDensity = val;
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
-
-		}
-	),
-
-	handleSkyTurbidityChange: handleChange(
-		val => set( { skyTurbidity: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			envParams.skyTurbidity = val;
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
-
-		}
-	),
-
-
-	handleSkyMieAnisotropyChange: handleChange(
-		val => set( { skyMieAnisotropy: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'procedural' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			envParams.skyMieAnisotropy = val;
-			// Use debounced version to prevent rapid regeneration
-			debouncedGenerateProceduralSkyTexture();
-
-		}
-	),
-
-	handleSkyPresetChange: handleChange(
-		val => set( { skyPreset: val } ),
-		val => {
-
-			const preset = SKY_PRESETS[ val ];
-			if ( ! preset ) return;
-
-			const store = get();
-
-			// Update all parameters using handlers (which update both store AND uniforms)
-			store.handleSkySunAzimuthChange( [ preset.sunAzimuth ] );
-			store.handleSkySunElevationChange( [ preset.sunElevation ] );
-			store.handleSkySunIntensityChange( [ preset.sunIntensity ] );
-			store.handleSkyRayleighDensityChange( [ preset.rayleighDensity ] );
-			store.handleSkyTurbidityChange( [ preset.turbidity ] );
-
-		}
-	),
+	},
 
 	handleToneMappingChange: handleChange(
 		val => set( { toneMapping: val } ),

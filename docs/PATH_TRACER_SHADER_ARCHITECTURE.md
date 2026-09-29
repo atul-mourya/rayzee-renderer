@@ -19,7 +19,7 @@ Explicitly excluded (refer to separate docs):
 
 ## High-Level Overview
 
-The path tracer performs Monte Carlo integration of the rendering equation using multiple importance sampling (MIS) across material lobes and (optionally) an importance-sampled environment map, emissive triangles (uniform CDF or light BVH), and analytic lights for direct lighting.
+The path tracer performs Monte Carlo integration of the rendering equation using multiple importance sampling (MIS) across material lobes and (optionally) an importance-sampled environment map, the physical sky's analytic sun, emissive triangles (uniform CDF or light BVH), and analytic lights for direct lighting.
 
 It is structured as a **wavefront**: rays live in SoA storage buffers and are advanced one bounce at a time by separate compute kernels. Per frame the dispatch order is:
 
@@ -41,6 +41,7 @@ Key features:
 - High-performance stack-based two-level BVH traversal (TLAS → BLAS), per-mesh visibility free-fetched from the BVH leaf.
 - Physically-based material system with multi-lobe BRDF sampling (diffuse, specular, sheen, clearcoat, transmission) plus iridescence and random-walk subsurface.
 - Environment importance sampling using a marginal + conditional CDF (stored in an R32F texture).
+- The physical sky's sun as a light of its own: drawn exactly on a miss, sampled by NEE, the two MIS-weighted.
 - Light BVH for stochastic emissive triangle sampling via tree traversal.
 - Three camera projections in one kernel (`TSL/CameraRay.js`, switched by the `cameraProjection` uniform): pinhole, orthographic (parallel rays from the camera's image plane) and 360° equirectangular.
 - Depth of field (thin lens with a flat focal plane, sized either by the blur asked for or as a physical lens) and camera jitter for anti-aliasing.
@@ -78,12 +79,13 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `Subsurface.js` | `handleSubsurfaceEntry()`, `sampleChromaticCollision()`, `sampleHenyeyGreenstein()` | Random-walk subsurface scattering (reuses the medium stack) |
 | `Clearcoat.js` | `sampleClearcoat()`, `ClearcoatResult` | Clearcoat BRDF layer |
 | `Environment.js` | `sampleEnvironment()`, `sampleEquirect()`, `sampleEquirectProbability()`, `equirectDirectionToUv()`, `equirectUvToDirection()`, `getGroundProjectedDirection()` | HDR sampling, importance sampling, direction↔UV, ground projection |
+| `Sun.js` | `sunRadianceToward()`, `sampleSunDisc()` | The physical sky's sun disc: limb darkening, cut by the sky's horizon, uniform sampling of the cone |
 | `EmissiveSampling.js` | `sampleEmissiveTriangle()`, `calculateEmissiveTriangleContribution()`, `sampleSphericalTriangle()` | NEE from emissive triangles (uniform CDF path) |
 | `LightBVHSampling.js` | `sampleLightBVHTriangle()` | Stochastic light BVH traversal for emissive sampling |
 | `LightsCore.js` | Light data structs; `setGoboMapsTexture()`, `setIESProfilesTexture()` | Light type definitions + gobo/IES texture setters |
 | `LightsDirect.js` | `traceShadowRay()`, `calculateRayOffset()`, importance estimators; `setShadowAlbedoMaps()`, `setAlphaShadowsUniform()` | Shadow rays (with alpha shadows), per-light importance |
 | `LightsIndirect.js` | `calculateIndirectLighting()`, `selectSamplingStrategy()`, `computeSamplingInfo()` | Material-only multi-strategy MIS for the indirect bounce |
-| `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()`, `sampleLightWithImportance()` | Stochastic discrete light/BRDF selection + deterministic environment NEE |
+| `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()`, `sampleLightWithImportance()` | Stochastic discrete light/BRDF selection + deterministic environment and sun NEE |
 | `Fresnel.js` | `fresnelDielectric()`, `dielectricFresnelWeight()`, `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Exact unpolarised Fresnel at every dielectric interface (base layer, clear coat, glass, SSS boundary, glass shadows), as Cycles uses; Schlick for metals and iridescence; IOR↔F0 |
 | `HitFacet.js` | `hitFacet()`, `packHitFacet()`, `unpackHitFacet()` | The hit triangle's facet normal (and the terminator lift), computed in Extend and packed into the hit record's spare lane |
 | `ShadowTerminator.js` | `shadowTerminatorLift()`, `shadowTerminatorOrigin()` | Cycles' Shadow Terminator → Geometry Offset: the smooth-surface lift for light and environment shadow rays |
@@ -137,7 +139,7 @@ Uniforms are owned by `UniformManager` and exposed on the stage; `PathTracer` wi
 2. **Frame & Control:** `frame`, `maxBounces`, `transmissiveBounces`, `maxSubsurfaceSteps`, `renderMode`.
 3. **Accumulation:** `enableAccumulation`, `accumulationAlpha`, `cameraIsMoving`, `hasPreviousAccumulated` (+ prev-frame MRT texture nodes).
 4. **Sampling:** `samplingTechnique` (0=PCG, 1=Halton, 2=Sobol, 3=STBN), STBN texture nodes.
-5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum`, `envResolution`, `envCompensationDelta`, `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
+5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum`, `envResolution`, `envCompensationDelta`, the physical sky's sun (`hasSun`, `sunDirection`, `sunRadiance`, `sunParams` = cos half-angle, solid angle, 1/sin², horizon dip), `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
 6. **Lighting:** `numDirectionalLights`, `numPointLights`, `numSpotLights`, `numAreaLights` + the matching light storage buffer nodes; `globalIlluminationIntensity`.
 7. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`.
 8. **Geometry & Material Data:** `triangleStorageNode` (a `{ geo, shade }` pair, see below), `bvhStorageNode`, `materialStorageNode`, `lightStorageNode`; `totalTriangleCount`. (The environment CDF is an R32F **texture** node, not a storage buffer — see Environment Importance Sampling.)
@@ -233,8 +235,8 @@ SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RA
 There is no swap of the active-index ping-pong during the loop: kernels are build-time-bound to buffer A, so `compactCopyback` copies the dense survivor list B→A for the next bounce.
 
 ### Shade kernel (per-ray work)
-- Miss: environment contribution (background/MIS-weighted env light, ground projection, transparent-background guard).
-- Hit: sample material textures, write bounce-0 MRT data, accumulate emissive, run direct lighting (`calculateDirectLightingUnified` + analytic-light/environment NEE), emissive-triangle NEE (light BVH when `lightBVHNodeCount > 0`, else uniform-CDF `calculateEmissiveTriangleContribution`), handle transmission / medium stack / subsurface, then sample the indirect bounce (`calculateIndirectLighting`) and write the continued ray.
+- Miss: environment contribution (background/MIS-weighted env light, ground projection, transparent-background guard), then the sun disc, power-heuristic weighted against sun NEE when the sending vertex could have drawn that direction (`RAY_FLAG.SUN_NEE`).
+- Hit: sample material textures, write bounce-0 MRT data, accumulate emissive, run direct lighting (`calculateDirectLightingUnified` + analytic-light/environment/sun NEE), emissive-triangle NEE (light BVH when `lightBVHNodeCount > 0`, else uniform-CDF `calculateEmissiveTriangleContribution`), handle transmission / medium stack / subsurface, then sample the indirect bounce (`calculateIndirectLighting`) and write the continued ray.
 
 ---
 
@@ -333,6 +335,9 @@ Material-only multi-strategy MIS (specular, diffuse, transmission, clearcoat —
 
 ### Sampling & PDF
 `sampleEnvironment` evaluates radiance for arbitrary directions; the importance-sampling probability is normalized by `envTotalSum` with the spherical Jacobian applied, clamped to prevent extremes. `getGroundProjectedDirection` bends the primary-ray background lookup onto a virtual ground plane when ground projection is enabled.
+
+### The physical sky
+The sky texture and its CDF texture are both written on the GPU (`Processor/PhysicalSky.js`; the table by `TSL/EnvironmentCDF.js`, the twin of `EquirectHDRInfo.computeCDF` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` and `envCompensationDelta` arrive a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
 
 ---
 

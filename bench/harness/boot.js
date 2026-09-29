@@ -53,18 +53,48 @@ if ( typeof GPUDevice !== 'undefined' ) {
 
 }
 
+const COMPILATION_INFO_TIMEOUT_MS = 15_000;
+
 /** Queried lazily: Dawn returns no messages if called in the same tick as `createShaderModule`. */
 async function shaderDiagnostics() {
 
 	const entries = [];
+	const unanswered = [];
 	const engineDevice = app?.renderer?.backend?.device ?? null;
+	const records = shaderModules.filter( ( r ) => ! engineDevice || ! r.device || r.device === engineDevice );
 
-	for ( const { label, code, module, device } of shaderModules ) {
+	const infos = records.map( () => undefined );
+	const all = Promise.all( records.map( ( r, i ) => r.module.getCompilationInfo()
+		.catch( () => null )
+		.then( ( info ) => {
 
-		if ( engineDevice && device && device !== engineDevice ) continue;
+			infos[ i ] = info;
 
-		const info = await module.getCompilationInfo().catch( () => null );
-		if ( ! info ) continue;
+		} ) ) );
+
+	// Chrome delivers compilation info only while the device has work queued, and nothing renders here.
+	const devices = new Set( records.map( ( r ) => r.device ).filter( Boolean ) );
+	const deadline = performance.now() + COMPILATION_INFO_TIMEOUT_MS;
+
+	while ( infos.includes( undefined ) && performance.now() < deadline ) {
+
+		for ( const device of devices ) device.queue.submit( [ device.createCommandEncoder().finish() ] );
+		await Promise.race( [ all, new Promise( ( resolve ) => setTimeout( resolve, 50 ) ) ] );
+
+	}
+
+	records.forEach( ( { label, code }, i ) => {
+
+		const info = infos[ i ];
+
+		if ( info === undefined ) {
+
+			unanswered.push( label );
+			return;
+
+		}
+
+		if ( ! info ) return;
 
 		const lines = code.split( '\n' );
 
@@ -79,14 +109,9 @@ async function shaderDiagnostics() {
 
 		}
 
-	}
+	} );
 
-	return {
-		modules: shaderModules
-			.filter( ( r ) => ! engineDevice || ! r.device || r.device === engineDevice )
-			.map( ( r ) => r.label ),
-		entries,
-	};
+	return { modules: records.map( ( r ) => r.label ), entries, unanswered };
 
 }
 

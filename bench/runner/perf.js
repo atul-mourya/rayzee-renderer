@@ -41,8 +41,7 @@ import { PATHS, PERF } from './config.js';
 /**
  * Loads one scene and measures its steady-state GPU ms/sample.
  *
- * The first render in a session compiles the whole wavefront to WGSL (~20 s measured),
- * and a scene load recompiles, so a warmup render is always discarded.
+ * A scene load recompiles the wavefront to WGSL, so a warmup render is always discarded.
  *
  * Assumes `setPerfMode( true )` is already in effect on this harness.
  *

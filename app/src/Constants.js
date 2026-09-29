@@ -1,7 +1,7 @@
 import debugModelsData from './DebugModels.json';
 
 // Re-export engine constants for backward compatibility
-import { ENGINE_DEFAULTS, NRD_DEFAULTS } from 'rayzee';
+import { ENGINE_DEFAULTS, NRD_DEFAULTS, DEFAULT_SUN_PATH } from 'rayzee';
 export {
 	ASVGF_QUALITY_PRESETS,
 	NRD_QUALITY_PRESETS,
@@ -9,6 +9,7 @@ export {
 	NRD_PRESET_KEYS,
 	CAMERA_RANGES,
 	SKY_PRESETS,
+	DEFAULT_SUN_PATH,
 	CAMERA_PRESETS,
 	AUTO_FOCUS_MODES,
 	AF_DEFAULTS,
@@ -39,6 +40,12 @@ export const DEFAULT_STATE = {
 	finalRenderResolution: 2048,
 	originalPixelRatio: window.devicePixelRatio / 2,
 	zoomToCursor: true,
+	// Physical sky's sun path; ENGINE_DEFAULTS' sun angles are this position.
+	skySunMode: 'time', // 'time' | 'angles'
+	skyTime: DEFAULT_SUN_PATH.time,
+	skyMonth: DEFAULT_SUN_PATH.month,
+	skyLatitude: DEFAULT_SUN_PATH.latitude,
+	skyNorthOffset: 0,
 	// NRD sliders mirror the engine's ReblurSettings defaults (preset 'medium').
 	nrdMaxAccumulatedFrameNum: NRD_DEFAULTS.maxAccumulatedFrameNum,
 	nrdMaxBlurRadius: NRD_DEFAULTS.maxBlurRadius,

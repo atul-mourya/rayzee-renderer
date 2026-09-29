@@ -56,8 +56,7 @@ export const CHROME = {
 };
 
 export const TIMEOUTS = {
-	// The first scene load in a session compiles the whole wavefront to WGSL (~20 s
-	// measured on Apple M-series); ground-truth renders are thousands of samples.
+	// Generous: ground-truth renders are thousands of samples.
 	boot: 180_000,
 	sceneLoad: 180_000,
 	render: 900_000,

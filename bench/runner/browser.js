@@ -7,8 +7,43 @@
  */
 
 import puppeteer from 'puppeteer-core';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { CHROME, PATHS, TIMEOUTS } from './config.js';
+
+function isAppleSilicon() {
+
+	if ( process.platform !== 'darwin' ) return false;
+
+	try {
+
+		return execFileSync( '/usr/sbin/sysctl', [ '-n', 'hw.optional.arm64' ], { encoding: 'utf8' } ).trim() === '1';
+
+	} catch {
+
+		return false;
+
+	}
+
+}
+
+/**
+ * Launch options that start a browser natively on Apple Silicon. Without them an Intel parent
+ * process (Homebrew's x86_64 `timeout`) starts a universal browser under Rosetta.
+ *
+ * @param {string} executablePath
+ * @returns {{ executablePath: string, env?: Object }}
+ */
+export function nativeLaunchOptions( executablePath ) {
+
+	if ( ! isAppleSilicon() ) return { executablePath };
+
+	return {
+		executablePath: path.join( PATHS.benchRoot, 'runner', 'arm64.sh' ),
+		env: { ...process.env, BENCH_BROWSER: executablePath },
+	};
+
+}
 
 /**
  * Builds the harness URL. The harness lives outside the Vite root, so it is served
@@ -34,7 +69,7 @@ export function harnessURL( baseURL, harnessPath = PATHS.harness ) {
 export function launchBrowser() {
 
 	return puppeteer.launch( {
-		executablePath: CHROME.executablePath,
+		...nativeLaunchOptions( CHROME.executablePath ),
 		headless: true,
 		args: CHROME.args,
 		// Ground-truth renders are thousands of samples; the 180 s CDP default would

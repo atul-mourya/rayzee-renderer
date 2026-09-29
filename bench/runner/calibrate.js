@@ -1,11 +1,10 @@
 /**
  * CPU-timing calibration for the bench harness.
  *
- * The harness renders on a real GPU, but it runs the engine's *CPU* work — geometry extraction,
- * BLAS builds, texture creation — several times slower than the same code in the app in a
- * normally-used browser, and the error is not a constant factor: per-task overhead inflates far
- * more than per-triangle work. That shape inverts rankings, which is how "the BLAS worker pool
- * anti-scales" came out of a harness run and cost a 55 % regression in the app.
+ * A harness browser running under Rosetta did the engine's *CPU* work — geometry extraction, BLAS
+ * builds, texture creation — 5–20× slower than the app, and not by a constant factor: per-task
+ * overhead inflated far more than per-triangle work. That shape inverts rankings, which is how "the
+ * BLAS worker pool anti-scales" came out of a harness run and cost a 55 % regression in the app.
  *
  * So this file does not correct anything. It measures one real model load in the harness, compares
  * it against a reference captured from the app on the same machine, and lets every other suite

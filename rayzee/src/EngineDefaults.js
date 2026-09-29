@@ -1,3 +1,10 @@
+import { sunPosition, dayOfYearForMonth } from './Processor/SunPosition.js';
+
+/** The default sun as a time of day (solar hours), month and latitude; north lies along −Z. */
+export const DEFAULT_SUN_PATH = Object.freeze( { time: 10, month: 3, latitude: 40 } );
+
+const DEFAULT_SUN = sunPosition( { hours: DEFAULT_SUN_PATH.time, dayOfYear: dayOfYearForMonth( DEFAULT_SUN_PATH.month ), latitude: DEFAULT_SUN_PATH.latitude } );
+
 /**
  * Engine-owned default values and configuration constants.
  * These are used exclusively by the rendering engine (src/core/)
@@ -94,14 +101,17 @@ export const ENGINE_DEFAULTS = {
 	// Solid Color Sky
 	solidSkyColor: '#87CEEB',
 
-	// Procedural Sky Parameters (Preetham Model - Clear Morning preset)
-	skySunAzimuth: 90,
-	skySunElevation: 20,
-	skySunIntensity: 15.0,
-	skyRayleighDensity: 0.9,
-	skyTurbidity: 0.8,
-	skyMieAnisotropy: 0.76,
-	skyPreset: 'clearMorning',
+	// Physical sky (Processor/PhysicalSky.js) — the Clear Day preset
+	skySunAzimuth: 180 - DEFAULT_SUN.azimuth,
+	skySunElevation: DEFAULT_SUN.elevation,
+	skySunStrength: 1, // artistic multiplier on the disc and its light; 1 is physical
+	skySunSize: 0.53, // angular diameter, degrees
+	skyTurbidity: 2, // 1 is aerosol-free air, ~2 a clear day, 6+ hazy
+	skyOzone: 300, // Dobson units
+	skyAirDensity: 1,
+	skyGroundAlbedo: '#959595', // 0.3 linear
+	skyAltitude: 50, // metres
+	skyPreset: 'clearDay',
 
 	// Camera projection — 'perspective' | 'orthographic' | 'equirectangular'. Panorama ranges are UI-facing degrees.
 	cameraProjection: 'perspective',
@@ -427,55 +437,17 @@ export const CAMERA_RANGES = {
 	}
 };
 
+// `exposure` (EV) makes up about two thirds of the light a lower sun loses, as a photographer
+// would: a sunset still reads darker than noon.
 export const SKY_PRESETS = {
-	clearMorning: {
-		name: "Clear Morning",
-		sunAzimuth: 90,
-		sunElevation: 20,
-		sunIntensity: 15.0,
-		rayleighDensity: 0.9,
-		turbidity: 0.8,
-	},
-	clearNoon: {
-		name: "Clear Noon",
-		sunAzimuth: 0,
-		sunElevation: 75,
-		sunIntensity: 20.0,
-		rayleighDensity: 1.0,
-		turbidity: 0.3,
-	},
-	overcast: {
-		name: "Overcast",
-		sunAzimuth: 0,
-		sunElevation: 45,
-		sunIntensity: 6.0,
-		rayleighDensity: 0.6,
-		turbidity: 4.0,
-	},
-	goldenHour: {
-		name: "Golden Hour",
-		sunAzimuth: 270,
-		sunElevation: 10,
-		sunIntensity: 19.0,
-		rayleighDensity: 0.8,
-		turbidity: 1.2,
-	},
-	sunset: {
-		name: "Sunset",
-		sunAzimuth: 270,
-		sunElevation: 2,
-		sunIntensity: 18.0,
-		rayleighDensity: 0.7,
-		turbidity: 2.0,
-	},
-	dusk: {
-		name: "Dusk",
-		sunAzimuth: 270,
-		sunElevation: - 8,
-		sunIntensity: 8.0,
-		rayleighDensity: 0.5,
-		turbidity: 1.5,
-	}
+	clearDay: { name: 'Clear Day', sunAzimuth: 180 - DEFAULT_SUN.azimuth, sunElevation: DEFAULT_SUN.elevation, turbidity: 2, exposure: 0 },
+	clearMorning: { name: 'Clear Morning', sunAzimuth: 90, sunElevation: 15, turbidity: 2, exposure: 1.4 },
+	clearNoon: { name: 'Clear Noon', sunAzimuth: 180, sunElevation: 70, turbidity: 2, exposure: 0 },
+	hazyAfternoon: { name: 'Hazy Afternoon', sunAzimuth: 225, sunElevation: 35, turbidity: 4.5, exposure: 0.4 },
+	goldenHour: { name: 'Golden Hour', sunAzimuth: 270, sunElevation: 6, turbidity: 2.5, exposure: 2.7 },
+	sunset: { name: 'Sunset', sunAzimuth: 270, sunElevation: 1, turbidity: 3, exposure: 4.2 },
+	blueHour: { name: 'Blue Hour', sunAzimuth: 270, sunElevation: - 4, turbidity: 2, exposure: 7 },
+	mountain: { name: 'Mountain Air', sunAzimuth: 135, sunElevation: 40, turbidity: 1.3, altitude: 3000, exposure: 0 },
 };
 
 export const CAMERA_PRESETS = {

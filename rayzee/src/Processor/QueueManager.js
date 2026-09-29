@@ -50,6 +50,7 @@ export const RAY_FLAG = {
 	HAS_HIT_OPAQUE: 1 << 16, // bit 16: ray chain has hit non-transmissive geometry (transparent-bg alpha; megakernel hasHitOpaqueSurface)
 	AUX_LOCKED: 1 << 17, // bit 17: OIDN aux (normal/albedo) locked onto first non-specular hit (megakernel auxLocked)
 	REDIRECTED: 1 << 18, // bit 18: ray has been redirected (refraction/reflection/SSS/opaque scatter) since the camera, so env it reaches is transported light (sharp), NOT the direct backdrop. NOT set by pure alpha/transparent passthrough (direction unchanged) → env through cutout holes is still the backdrop (blur/intensity/show/color/ground-projection). Set via bitOr only (positive mask) so it never disturbs ACTIVE/bounce bits.
+	SUN_NEE: 1 << 19, // bit 19: the last opaque scatter's sun NEE could have drawn this direction (MIS partner for a sun hit on miss)
 };
 
 export class QueueManager {

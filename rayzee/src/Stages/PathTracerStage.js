@@ -134,7 +134,7 @@ export class PathTracerStage extends RenderStage {
 		};
 
 		// Initialize environment manager
-		this.environment = new EnvironmentManager( this.scene, this.uniforms );
+		this.environment = new EnvironmentManager( this.scene, this.uniforms, this.renderer );
 		this.environment.callbacks.onReset = () => this.reset();
 		this.environment.callbacks.getSceneTextureNodes = () => this.shaderBuilder.getSceneTextureNodes();
 
@@ -564,36 +564,6 @@ export class PathTracerStage extends RenderStage {
 		this.pointLightsData = mockMaterial.uniforms.pointLights.value;
 		this.spotLightsData = mockMaterial.uniforms.spotLights.value;
 		this.areaLightsData = mockMaterial.uniforms.areaLights.value;
-
-		// Add sun as directional light if procedural sky is active
-		if ( this.hasSun.value ) {
-
-			const scaledSunIntensity = this.environment.envParams.skySunIntensity * 950.0;
-
-			const sunLight = {
-				intensity: scaledSunIntensity,
-				color: { r: 1.0, g: 1.0, b: 1.0 },
-				userData: {
-					angle: this.sunAngularSize.value
-				},
-				updateMatrixWorld: () => {},
-				getWorldPosition: ( target ) => {
-
-					const sunDir = this.sunDirection.value;
-					return target.set( sunDir.x, sunDir.y, sunDir.z ).multiplyScalar( 1e10 );
-
-				}
-			};
-
-			this.lightSerializer.addDirectionalLight( sunLight );
-			this.lightSerializer.preprocessLights();
-			this.lightSerializer.updateShaderUniforms( mockMaterial );
-
-			this.directionalLightsData = mockMaterial.uniforms.directionalLights.value;
-
-			log.debug( `sun added as directional light · intensity ${scaledSunIntensity.toFixed( 2 )}` );
-
-		}
 
 		// Update TSL uniform buffer nodes from raw Float32Array data
 		this._updateLightBufferNodes();

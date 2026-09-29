@@ -38,7 +38,7 @@
 - [ ] **Volumetric Rendering & Atmosphere**
   - [x] Basic volumetric fog and transmission (fog.js TSL module)
   - [ ] Heterogeneous volume rendering (clouds, smoke)
-  - [ ] Atmospheric scattering with multiple scattering
+  - [x] Atmospheric scattering with multiple scattering (the physical sky: spectral, clear sky)
   - [ ] Participating media with anisotropic scattering
   - [ ] Volumetric lighting and shadows
 

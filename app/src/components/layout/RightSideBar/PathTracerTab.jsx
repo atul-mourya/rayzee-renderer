@@ -1,4 +1,4 @@
-import { Sun, Sunrise, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun, Wind } from 'lucide-react';
+import { Sun, Sunrise, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun } from 'lucide-react';
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -16,6 +16,7 @@ import { Separator } from '@/components/ui/separator';
 import { useEffect, useState } from 'react';
 import CanvasDimensionControls from './CanvasDimensionControls';
 import { MAX_TEXTURE_SIZE_PRESETS } from '@/Constants';
+import PhysicalSkyControls from './PhysicalSkyControls';
 import { getApp } from '@/lib/appProxy';
 
 
@@ -151,14 +152,6 @@ const PathTracerTab = () => {
 		gradientHorizonColor,
 		gradientGroundColor,
 		solidSkyColor,
-		// Procedural Sky (Preetham Model)
-		skySunAzimuth,
-		skySunElevation,
-		skySunIntensity,
-		skyRayleighDensity,
-		skyTurbidity,
-		skyMieAnisotropy,
-		skyPreset,
 		enableAlphaShadows,
 		useAdaptiveSampling,
 		noiseThreshold,
@@ -226,14 +219,6 @@ const PathTracerTab = () => {
 		handleGradientHorizonColorChange,
 		handleGradientGroundColorChange,
 		handleSolidSkyColorChange,
-		// Procedural Sky (Preetham Model) Handlers
-		handleSkySunAzimuthChange,
-		handleSkySunElevationChange,
-		handleSkySunIntensityChange,
-		handleSkyRayleighDensityChange,
-		handleSkyTurbidityChange,
-		handleSkyMieAnisotropyChange,
-		handleSkyPresetChange,
 		handleInteractionModeEnabledChange,
 		handleAsvgfQualityPresetChange,
 		handleAsvgfDebugModeChange,
@@ -317,7 +302,7 @@ const PathTracerTab = () => {
 							<SelectItem value="procedural">
 								<div className="flex items-center">
 									<CloudSun size={14} className="mr-1" />
-									<span>Procedural Sky</span>
+									<span>Physical Sky</span>
 								</div>
 							</SelectItem>
 							<SelectItem value="gradient">
@@ -358,47 +343,7 @@ const PathTracerTab = () => {
 					</Row>
 				)}
 
-				{/* Procedural Sky Mode Controls */}
-				{environmentMode === 'procedural' && (
-					<>
-						{/* Preset Selector */}
-						<Row>
-							<Select value={skyPreset} onValueChange={handleSkyPresetChange}>
-								<span className="opacity-50 text-xs truncate">Preset</span>
-								<SelectTrigger className="max-w-32 h-5 rounded-full">
-									<SelectValue placeholder="Select Preset" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="clearMorning">Clear Morning</SelectItem>
-									<SelectItem value="clearNoon">Clear Noon</SelectItem>
-									<SelectItem value="overcast">Overcast</SelectItem>
-									<SelectItem value="goldenHour">Golden Hour</SelectItem>
-									<SelectItem value="sunset">Sunset</SelectItem>
-									<SelectItem value="dusk">Dusk</SelectItem>
-								</SelectContent>
-							</Select>
-						</Row>
-
-						{/* Sun Position */}
-						<Row>
-							<Slider label="Sun Rotation" icon={RefreshCcwDot} min={0} max={360} step={1} value={[ skySunAzimuth ]} snapPoints={[ 0, 90, 180, 270 ]} onValueChange={handleSkySunAzimuthChange} />
-						</Row>
-						<Row>
-							<Slider label="Sun Height" icon={ArrowUp} min={- 10} max={90} step={1} value={[ skySunElevation ]} snapPoints={[ 0, 45, 90 ]} onValueChange={handleSkySunElevationChange} />
-						</Row>
-						<Row>
-							<Slider label="Sun Brightness" icon={Sun} min={0} max={50} step={0.5} value={[ skySunIntensity ]} snapPoints={[ 20 ]} onValueChange={handleSkySunIntensityChange} />
-						</Row>
-
-						{/* Atmospheric Properties */}
-						<Row>
-							<Slider label="Sky Clarity" icon={CloudSun} min={0} max={2} step={0.1} value={[ skyRayleighDensity ]} snapPoints={[ 1 ]} onValueChange={handleSkyRayleighDensityChange} />
-						</Row>
-						<Row>
-							<Slider label="Atmospheric Haze" icon={Wind} min={0} max={5} step={0.1} value={[ skyTurbidity ]} snapPoints={[ 1 ]} onValueChange={handleSkyTurbidityChange} />
-						</Row>
-					</>
-				)}
+				{environmentMode === 'procedural' && <PhysicalSkyControls />}
 
 				<Separator className="my-1 opacity-30" />
 
