@@ -310,6 +310,26 @@ async function reportShaderErrors( bench, label = '' ) {
 
 }
 
+/** The measured revision; `dirty` means the working tree differs from it. */
+async function gitRevision() {
+
+	try {
+
+		const { stdout } = await exec( 'git', [ 'rev-parse', 'HEAD' ], { cwd: PATHS.repoRoot } );
+		// Baselines are rewritten by the bench itself, so they would mark every run dirty.
+		const dirty = await exec(
+			'git', [ 'diff', '--quiet', 'HEAD', '--', '.', ':(exclude)bench/baselines' ], { cwd: PATHS.repoRoot }
+		).then( () => false, () => true );
+		return { commit: stdout.trim(), dirty };
+
+	} catch {
+
+		return null;
+
+	}
+
+}
+
 async function commandAB( baseRef, flags ) {
 
 	const only = flags.only ? String( flags.only ).split( ',' ) : undefined;
@@ -797,6 +817,7 @@ async function main() {
 			const report = await runPerf( bench, { only, log } );
 			await appendTrend( {
 				at: new Date().toISOString(),
+				revision: await gitRevision(),
 				fingerprint: await bench.fingerprint(),
 				scenes: report.results.map( ( r ) => ( {
 					scene: r.scene,
