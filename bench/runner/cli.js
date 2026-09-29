@@ -285,7 +285,14 @@ async function reportBindingAudit( bench ) {
 
 async function reportShaderErrors( bench, label = '' ) {
 
-	const { entries } = await bench.shaderDiagnostics();
+	const { entries, unanswered } = await bench.shaderDiagnostics();
+
+	if ( unanswered.length ) {
+
+		log( `\n${YELLOW}${unanswered.length} shader module(s) gave no compilation status${label ? ` (${label})` : ''}: ${unanswered.slice( 0, 8 ).join( ', ' )}${RESET}` );
+
+	}
+
 	if ( ! entries.length ) return 0;
 
 	// A kernel that fails to compile is absent from the dispatch, so every timing-based suite

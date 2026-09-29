@@ -65,8 +65,11 @@ export async function profileScene( bench, sceneId, options = {} ) {
 
 	// A kernel that fails to compile is absent from the timing map, so the profile still prints and
 	// still reconciles to a clean residual while being fictional. Fail loudly instead.
-	const { modules, entries } = await bench.shaderDiagnostics();
-	log( `    ${modules.length} shader module(s) compiled, ${entries.length} error(s)` );
+	const { modules, entries, unanswered } = await bench.shaderDiagnostics();
+	log(
+		`    ${modules.length} shader module(s) compiled, ${entries.length} error(s)` +
+		( unanswered.length ? `, ${unanswered.length} with no status (${unanswered.slice( 0, 4 ).join( ', ' )})` : '' )
+	);
 
 	if ( entries.length ) {
 
