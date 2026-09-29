@@ -1,14 +1,17 @@
 # Rayzee Path Tracer - TODO List
 
 ## Bugs
-- remove all hacks on rectarealight parsing and treat all the incoming serailized data
-- though oidn enabled by default, it doesnt show up on convergence
+- remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
+
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
-- figure out how to overcome boiling effect with realtime oidn
-- honor pbrt animation
+
+- changing resolution while in final render mode doesnt work properly.
   
 
 ### MVP
+- [ ] Save compiled shaders??
+- [ ] browserless application - https://github.com/dawn-gpu/node-webgpu
+- [ ] engine core to be separated to make a minimal version for headless applications
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
@@ -104,9 +107,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Camera
 
-- [ ] first person camera mode controls as an alternative to orbit controls
-- [ ] Orthographic Camera Support
-
 ### Lighting
 
 
@@ -128,10 +128,8 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Animation
 
-- [ ] add support for animations in pbrt
 - [ ] animating lights support
 - [ ] Timeline scrubber for animation control
-- [ ] Camera animation - interpolate camera path keyframes during video render
 - [ ] PNG image sequence export for better quality and post-processing flexibility
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] ArrayBufferTarget memory for long videos - StreamTarget upgrade
