@@ -281,12 +281,13 @@ export function comparePerf( measurements ) {
 			baseSpreadPct: result.base.spreadPct,
 			headSpreadPct: result.head.spreadPct,
 			verdict: result.verdict,
+			gated: result.base.median >= PERF.abMinGatedMs,
 		};
 
 	} );
 
-	const regressions = comparisons.filter( ( c ) => c.verdict === 'slower' );
-	const decisive = comparisons.filter( ( c ) => c.verdict !== 'inconclusive' );
+	const regressions = comparisons.filter( ( c ) => c.gated && c.verdict === 'slower' );
+	const decisive = comparisons.filter( ( c ) => c.gated && c.verdict !== 'inconclusive' );
 
 	// "No regressions" is only meaningful if something was actually compared decisively.
 	// Zero overlapping scenes, or every scene too noisy to judge, is a failed measurement —
@@ -302,7 +303,9 @@ export function comparePerf( measurements ) {
 			? undefined
 			: comparisons.length === 0
 				? 'no scenes in common between the two runs'
-				: 'every scene was too noisy to judge (machine under load?)',
+				: comparisons.some( ( c ) => c.gated )
+					? 'every scene was too noisy to judge (machine under load?)'
+					: `every scene is under ${PERF.abMinGatedMs} ms/sample, too cheap to gate`,
 	};
 
 }

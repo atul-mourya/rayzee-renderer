@@ -309,6 +309,9 @@ export const PERF = {
 	// The excursions concentrate in the two cheapest scenes (< 1 ms/sample), where fixed
 	// per-dispatch overhead is a large fraction of the measurement.
 	abUnchangedPct: 8,
+	// Scenes cheaper than this (base ms/sample) are reported but never fail the A/B: on identical
+	// code they read `slower` or `inconclusive` most runs, and more samples do not fix it.
+	abMinGatedMs: 1,
 };
 
 /**
