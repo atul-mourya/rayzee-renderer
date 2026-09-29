@@ -4,8 +4,6 @@
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
-
-- changing resolution while in final render mode doesnt work properly.
   
 
 ### MVP
