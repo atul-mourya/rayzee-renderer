@@ -25,7 +25,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### PathTracer Sub-Managers (composition pattern)
 - `UniformManager` — ~60 TSL uniform nodes, `get(name)`, `set(name, value)`
 - `MaterialDataManager` — Material buffers, texture arrays
-- `EnvironmentManager` — HDRI, CDF importance sampling, procedural sky
+- `EnvironmentManager` — HDRI, CDF importance sampling, the physical sky (baked and sampled on the GPU)
 - `ShaderBuilder` — TSL shader graph construction
 - `StorageTexturePool` — Ping-pong MRT storage textures
 

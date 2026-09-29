@@ -88,6 +88,7 @@ import {
 	sampleEquirectProbability,
 } from './Environment.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
+import { sunRadianceToward, sampleSunDisc } from './Sun.js';
 
 const TWO_PI = 2.0 * PI;
 
@@ -798,6 +799,8 @@ export const calculateDirectLightingUnified = Fn( ( [
 	// The facet on the viewer's side, which shadow rays are offset off, and the shadow terminator lift
 	// (ShadowTerminator.js) for the light and environment ones
 	terminatorLift, facetNormal, terminatorCutoff,
+	// The physical sky's sun (Sun.js); its BSDF-sampled partner is the miss branch in ShadeKernel.
+	hasSun, sunDirection, sunRadiance, sunParams,
 ] ) => {
 
 	const totalContribution = vec3( 0.0 ).toVar();
@@ -987,55 +990,71 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 	} );
 	// =====================================================================
-	// DETERMINISTIC ENVIRONMENT NEE
-	// Always runs (not stochastic) — forms a two-strategy Veach MIS
-	// estimator together with the implicit miss check in the main loop.
+	// DETERMINISTIC ENVIRONMENT NEE — the map, then the physical sky's sun, each MIS'd with its
+	// partner at the miss. One loop, so the shadow ray and BSDF evaluation are emitted once.
 	// =====================================================================
 
 	If( enableEnvironmentLight, () => {
 
-		const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
-		const envColor = vec3( 0.0 ).toVar();
+		const passes = select( hasSun.greaterThan( int( 0 ) ), int( 2 ), int( 1 ) );
+		Loop( { start: int( 0 ), end: passes, type: 'int', condition: '<', name: 'envPass' }, ( { envPass } ) => {
 
-		// Sample direction + PDF + color from importance-sampled environment
-		const envSampleResult = sampleEquirectProbability(
-			envTexture, envCDFTexture,
-			envMatrix, environmentIntensity, envTotalSum, envCompensationDelta, envResolution, envRandom, envColor
-		).toVar();
+			const isSun = envPass.equal( int( 1 ) ).toVar();
+			const radiance = vec3( 0.0 ).toVar();
+			const direction = vec3( 0.0, 1.0, 0.0 ).toVar();
+			const lightPdf = float( 0.0 ).toVar();
 
-		const envDirection = envSampleResult.xyz.toVar();
-		const envPdf = envSampleResult.w.toVar();
+			If( isSun, () => {
 
-		If( envPdf.greaterThan( 0.0 ), () => {
+				const sunXi = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 9 ) ), rngState, resolution, frame );
+				direction.assign( sampleSunDisc( sunDirection, sunParams, sunXi ) );
+				radiance.assign( sunRadianceToward( direction, sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ) );
+				lightPdf.assign( select( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ), float( 1.0 ).div( sunParams.y ), float( 0.0 ) ) );
 
-			const NoL = max( float( 0.0 ), dot( hitNormal, envDirection ) ).toVar();
+			} ).Else( () => {
 
-			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: envDirection, surfaceNormal: geomNormal } ) ), () => {
+				const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
+				const envColor = vec3( 0.0 ).toVar();
+				const envSampleResult = sampleEquirectProbability(
+					envTexture, envCDFTexture,
+					envMatrix, environmentIntensity, envTotalSum, envCompensationDelta, envResolution, envRandom, envColor
+				).toVar();
+				direction.assign( envSampleResult.xyz );
+				radiance.assign( envColor );
+				lightPdf.assign( envSampleResult.w );
 
-				const visibility = shadow( lightShadowOrigin( envDirection ), envDirection, float( 1e20 ) );
+			} );
 
-				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+			If( lightPdf.greaterThan( 0.0 ), () => {
 
-					// Share H + dots between env BRDF/PDF — same redundancy fix as the
-					// discrete-light path above.
-					const envDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, envDirection, material ) );
-					const brdfValue = evaluateMaterialResponseFromDots( material, envDots );
-					const bPdf = calculateMaterialPDFFromDots( material, envDots ).toVar();
+				const NoL = max( float( 0.0 ), dot( hitNormal, direction ) ).toVar();
 
-					// Balance heuristic for env MIS — optimal for MIS-compensated PDFs (Karlík et al. 2019).
-					// The implicit path uses material combinedPdf as prevBouncePdf at the miss check.
-					const misW = select(
-						bPdf.greaterThan( 0.0 ),
-						balanceHeuristic( { pdf1: envPdf, pdf2: bPdf } ),
-						float( 1.0 )
-					).toVar();
+				If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction, surfaceNormal: geomNormal } ) ), () => {
 
-					// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
-					const baseContribution = envColor.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( envPdf, 1e-10 ) );
-					totalContribution.addAssign( baseContribution.mul( visibility ) );
-					If( wantUnoccluded, () => {
+					const visibility = shadow( lightShadowOrigin( direction ), direction, float( 1e20 ) );
 
-						unoccludedContribution.addAssign( baseContribution );
+					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+
+						const envDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, direction, material ) );
+						const brdfValue = evaluateMaterialResponseFromDots( material, envDots );
+						const bPdf = calculateMaterialPDFFromDots( material, envDots ).toVar();
+
+						// The map pairs with the balance heuristic — optimal for its MIS-compensated pdf
+						// (Karlík et al. 2019); the sun, a small bright source, with the power heuristic.
+						const misW = select(
+							bPdf.greaterThan( 0.0 ),
+							select( isSun, powerHeuristic( { pdf1: lightPdf, pdf2: bPdf } ), balanceHeuristic( { pdf1: lightPdf, pdf2: bPdf } ) ),
+							float( 1.0 )
+						).toVar();
+
+						// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
+						const baseContribution = radiance.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightPdf, 1e-10 ) );
+						totalContribution.addAssign( baseContribution.mul( visibility ) );
+						If( wantUnoccluded, () => {
+
+							unoccludedContribution.addAssign( baseContribution );
+
+						} );
 
 					} );
 
@@ -1046,7 +1065,6 @@ export const calculateDirectLightingUnified = Fn( ( [
 		} );
 
 	} );
-
 
 	// EMISSIVE TRIANGLE DIRECT LIGHTING
 	// NOTE: Emissive triangle sampling is handled separately in pathtracer_core.fs

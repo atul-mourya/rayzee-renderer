@@ -674,10 +674,27 @@ engine.environmentManager.texture            // The loaded environment texture
 await engine.loadEnvironment(url)            // Load HDR/EXR environment map (method on engine)
 await engine.environmentManager.setEnvironmentMap(tex) // Set a custom environment texture
 await engine.environmentManager.setMode(mode)   // 'hdri' | 'procedural' | 'gradient' | 'color'
-await engine.environmentManager.generateProcedural() // Preetham-model sky
+await engine.environmentManager.generateProcedural() // Physical sky: spectral, multiple scattering, analytic sun
 await engine.environmentManager.generateGradient()   // Gradient sky
 await engine.environmentManager.generateSolid()      // Solid color sky
 engine.environmentManager.markDirty()        // Flag environment for GPU re-upload
+```
+
+The physical sky (mode `'procedural'`) is set through `params`, then baked. It is baked and
+importance-sampled entirely on the GPU (~1.6 ms per sun move), so bake on every slider event rather
+than debouncing: requests made in one task become one bake, and the promise resolves once the
+environment has caught up. The sun is drawn and sampled as a light of its own, not from the texture.
+
+```js
+import { sunPosition, dayOfYearForMonth } from 'rayzee';
+
+const p = engine.environmentManager.params;
+const { azimuth, elevation } = sunPosition( { hours: 17.5, dayOfYear: dayOfYearForMonth( 6 ), latitude: 40 } );
+const az = ( 180 - azimuth ) * Math.PI / 180, el = elevation * Math.PI / 180;   // north along −Z, east along +X
+p.skySunDirection.set( Math.cos( el ) * Math.sin( az ), Math.sin( el ), Math.cos( el ) * Math.cos( az ) );
+p.skyTurbidity = 3;          // haze, 1–10; also skyOzone (Dobson units), skyAirDensity (× Earth's),
+                             // skyGroundAlbedo (Color), skyAltitude (m), skySunSize (°), skySunStrength
+await engine.environmentManager.generateProcedural();
 ```
 
 ### engine.denoisingManager
@@ -1136,6 +1153,7 @@ import {
   CAMERA_PRESETS,
   CAMERA_RANGES,
   SKY_PRESETS,
+  DEFAULT_SUN_PATH,
   AUTO_FOCUS_MODES,
   AF_DEFAULTS,
   TRIANGLE_DATA_LAYOUT,
@@ -1159,6 +1177,9 @@ import {
   convertColor, convertPixelsF32, extractMatrix, hasColorSpace,
   displayCanvasFit,
 } from 'rayzee';
+
+// Where the sun stands for a solar time, date and latitude (degrees; azimuth clockwise from north)
+import { sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';
 
 // Leveled/namespaced logging, shared with the workers
 import { Logger, createLogger, fmt, LOG_LEVELS } from 'rayzee';

@@ -63,6 +63,7 @@ export {
 	CAMERA_PRESETS,
 	CAMERA_RANGES,
 	SKY_PRESETS,
+	DEFAULT_SUN_PATH,
 	AUTO_FOCUS_MODES,
 	AF_DEFAULTS,
 	TRIANGLE_DATA_LAYOUT,
@@ -77,6 +78,7 @@ export {
 	RENDER_PROFILES,
 	getRenderProfile,
 } from './EngineDefaults.js';
+export { sunPosition, timeForSunElevation, dayOfYearForMonth } from './Processor/SunPosition.js';
 
 // Settings & managers (for advanced consumers)
 export { RenderSettings } from './RenderSettings.js';

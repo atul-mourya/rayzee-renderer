@@ -1322,7 +1322,9 @@ export class PathTracerApp extends EventDispatcher {
 		this._tagPrimarySceneObject();
 
 		const timer = new BuildTimer( '', { namespace: 'scene', level: 'info' } );
-		const environmentTexture = this.meshScene.environment;
+		// meshScene.environment is the HDRI slot: a sky, gradient or colour in use outlives the model.
+		const hdri = () => this.stages.pathTracer.environment.envParams.mode === 'hdri' ? this.meshScene.environment : null;
+		const environmentTexture = hdri();
 
 		// Environment CDF build in parallel with BVH
 		let cdfPromise = null;
@@ -1376,7 +1378,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
 		// during the BVH build, and the snapshot is then a disposed texture.
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, this.meshScene.environment, { keepUserLights } ) ) return false;
+		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, hdri(), { keepUserLights } ) ) return false;
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -3518,6 +3520,9 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		if ( envChanged ) await this.environmentManager?.buildEnvironmentCDF?.();
+		// Its pixels never leave the GPU, so it is baked again in the new space rather than converted.
+		if ( env?._isPhysicalSky ) await this.environmentManager.generateProceduralSkyTexture();
+		this.environmentManager?.refreshSun?.();
 
 		this.reset();
 
@@ -3795,6 +3800,8 @@ export class PathTracerApp extends EventDispatcher {
 		// Expose environment manager (lives on pathTracer stage)
 		this.environmentManager = this.stages.pathTracer.environment;
 		this.environmentManager.callbacks.onAutoExposureReset = () => this.pipeline.eventBus.emit( 'autoexposure:resetHistory' );
+		// A whole-app reset, not the stage's: a sky bake lands after its input, often once the loop is idle.
+		this.environmentManager.callbacks.onReset = () => this.reset();
 
 	}
 

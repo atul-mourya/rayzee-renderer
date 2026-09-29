@@ -6,7 +6,7 @@
  */
 
 import { uniform, uniformArray } from 'three/tsl';
-import { Vector2, Matrix4, Vector3, Color, MathUtils } from 'three';
+import { Vector2, Matrix4, Vector3, Vector4, Color, MathUtils } from 'three';
 import { samplingTechniqueUniform } from '../TSL/Random.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 
@@ -249,9 +249,11 @@ export class UniformManager {
 		ub( 'enableGroundCatcher', DEFAULT_STATE.enableGroundCatcher );
 		u( 'groundCatcherHeight', DEFAULT_STATE.groundCatcherHeight, 'float' );
 
-		// Sun parameters
+		// The physical sky's sun (TSL/Sun.js): world direction, disc-average radiance, and
+		// ( cos half-angle, solid angle, 1 / sin² half-angle, horizon dip sin )
 		u( 'sunDirection', new Vector3( 0, 1, 0 ), 'vec3' );
-		u( 'sunAngularSize', 0.0087, 'float' );
+		u( 'sunRadiance', new Vector3(), 'vec3' );
+		u( 'sunParams', new Vector4( 1, 0, 0, 0 ), 'vec4' );
 		ub( 'hasSun', false );
 
 		// Lighting

@@ -95,7 +95,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] Fog
 - [ ] Lens flare
 - [ ] Cone Tracing
-- [ ] Realistic sky rendering (Volumetric atmosphere and clouds)
+- [ ] Clouds for the physical sky
 - [ ] Volumetric rendering
 - [ ] Caustic support - Photon mapping &/ BDPT
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
@@ -143,7 +143,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Pipeline
 
-- [ ] GPU-CPU sync for environment in procedural sky, gradient sky, solid color sky modes
+- [ ] GPU-CPU sync for environment in gradient sky, solid color sky modes
 
 ### BVH
 

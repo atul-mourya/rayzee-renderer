@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, acos,
 	instanceIndex,
 	sampler,
 	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
@@ -28,6 +28,7 @@ import { handleMaterialTransparency, MaterialInteractionResult } from './Materia
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import { IndirectLightingResult, sampleCone } from './LightsCore.js';
+import { sunRadianceToward } from './Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
 import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
@@ -112,6 +113,7 @@ export function buildShadeKernel( params ) {
 		// Aux G-buffer (normal/depth/albedo + surface ID) feeds only the denoiser/OIDN MRT. Gated by a
 		// live uniform (1 = denoiser on) so the wavefront skips these writes when nothing consumes them.
 		auxGBufferEnabled,
+		hasSun, sunDirection, sunRadiance, sunParams,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -288,6 +290,7 @@ export function buildShadeKernel( params ) {
 						enableEnvironmentLight,
 						tslBool( true ), // wantUnoccluded
 						vec3( 0.0 ), planeN, float( 0.0 ),
+						hasSun, sunDirection, sunRadiance, sunParams,
 					) ).toVar();
 
 					const lumShad = max( dot( dual.shadowed, REC709_LUMINANCE_COEFFICIENTS ), float( 0.0 ) );
@@ -469,6 +472,53 @@ export function buildShadeKernel( params ) {
 					),
 					currentRadiance.w
 				) );
+
+				// The sun disc; on a redirected ray, the partner of the sending vertex's sun NEE. A blurred
+				// backdrop gets a smooth falloff: a hard-edged cone reads as a white coin.
+				If( hasSun, () => {
+
+					const sunL = vec3( 0.0 ).toVar();
+					If( isBackdropView.and( backgroundBlurriness.greaterThan( 0.0 ) ), () => {
+
+						const blurAngle = backgroundBlurriness.mul( 1.3 ).toVar();
+						const angle = acos( clamp( dot( normalize( envDir ), sunDirection ), - 1.0, 1.0 ) );
+						If( angle.lessThan( blurAngle ), () => {
+
+							const falloff = float( 1.0 ).sub( angle.div( blurAngle ).pow( 2 ) ).pow( 2 );
+							// ∫ falloff dΩ = π θb² / 3 for a small cone.
+							sunL.assign( sunRadiance.mul( environmentIntensity ).mul( sunParams.y ).mul( falloff ).mul( 3 / Math.PI ).div( blurAngle.mul( blurAngle ) ) );
+
+						} );
+
+					} ).Else( () => {
+
+						sunL.assign( sunRadianceToward( normalize( envDir ), sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ) );
+
+					} );
+					If( sunL.x.add( sunL.y ).add( sunL.z ).greaterThan( 0.0 ), () => {
+
+						const sunW = float( 1.0 ).toVar();
+						If( isBackdropView.not().and( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ) ), () => {
+
+							sunW.assign( powerHeuristic( { pdf1: readRayPdf( rayBufferRW, rayID ), pdf2: float( 1.0 ).div( sunParams.y ) } ) );
+
+						} );
+						const vertex = max( bounceIndex.sub( 1 ), int( 0 ) );
+						const sunScale = select( isBackdropView, backgroundIntensity,
+							sunW.mul( select( vertex.greaterThan( int( 0 ) ), globalIlluminationIntensity, float( 1.0 ) ) ) );
+						currentRadiance.assign( vec4(
+							currentRadiance.xyz.add(
+								regularizePathContribution(
+									throughput.mul( sunL ).mul( sunScale ),
+									select( isBackdropView, float( 0.0 ), float( vertex ) ), fireflyThreshold, int( accumFrame ),
+								),
+							),
+							currentRadiance.w
+						) );
+
+					} );
+
+				} );
 
 			} );
 
@@ -1189,6 +1239,7 @@ export function buildShadeKernel( params ) {
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
+			hasSun, sunDirection, sunRadiance, sunParams,
 		) ).shadowed.toVar();
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
@@ -1367,6 +1418,10 @@ export function buildShadeKernel( params ) {
 		} );
 
 		const newOrigin = offsetRayOrigin( hitPoint, select( dot( facetN, bounceDir ).lessThan( 0.0 ), facetN.negate(), facetN ) );
+
+		// Whether this vertex's sun NEE could have drawn bounceDir, so a sun hit at the miss knows its MIS partner.
+		const sunNEE = brdfIsTransmission.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) );
+		flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ) ).bitOr( select( sunNEE, uint( RAY_FLAG.SUN_NEE ), uint( 0 ) ) ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );

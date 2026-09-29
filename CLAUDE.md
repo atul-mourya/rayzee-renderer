@@ -110,7 +110,7 @@ Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.albedoMaps`, `stage.environment.envParams`):
 - **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)`, `setBool()`. Uniforms created once, only `.value` mutated to preserve compiled shader graph references. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
 - **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), feature scanning (`rescanMaterialFeatures()`), texture array management. Owns `materialStorageAttr` and `materialStorageNode`.
-- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), procedural/gradient/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F CDF texture node).
+- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/gradient/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F CDF texture node) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
@@ -128,7 +128,7 @@ Critical for maintaining 60fps during heavy computations:
 - **`BVHWorker.js`**: Off-main-thread BVH construction using SAH splitting with treelet optimization
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
 - **`BVHSubtreeWorker.js`**: BVH subtree optimization for GPU traversal
-- **`CDFWorker.js`**: CDF computation for environment importance sampling
+- **`CDFWorker.js`**: CDF computation for environment importance sampling (HDRIs and the simple skies; the physical sky builds its own on the GPU)
 - **`BVHRefitWorker.js`**: O(N) bottom-up BVH AABB refit for animated geometry (SharedArrayBuffer protocol)
 
 ### Animation & Transform System (`rayzee/src/managers/`)
@@ -463,10 +463,12 @@ saying the environment was left converted.
   shader's pick probability reads the *material* buffer's. Both are converted, and
   `applyColorWorkingSpace()` rebuilds the emitter list (`rebuildEmissiveColors`); miss either and
   emitters are seen in one space and cast light in another.
-- ⚠️ **The skies reuse one texture.** `ProceduralSky` / `SimpleSky` clear
-  `userData.__rayzeeColorSpace` whenever they rewrite pixels; without that the record says
-  "already converted" and a new sky is never converted. `EnvironmentManager.markDirty()` bumps the
-  version *without* new pixels, which is why this is a record and not a version check.
+- ⚠️ **The skies reuse one texture.** `SimpleSky` clears `userData.__rayzeeColorSpace` whenever
+  it rewrites pixels; without that the record says "already converted" and a new sky is never
+  converted. `EnvironmentManager.markDirty()` bumps the version *without* new pixels, which is why
+  this is a record and not a version check. The physical sky has no CPU pixels to convert: it bakes
+  straight into the working space (`getWorkingMatrix()` folded into its spectrum → RGB weights), and
+  `applyColorWorkingSpace()` bakes it again.
 - **Context variables are read from the config's text** (`environment:` block plus `$VAR`
   references). OCIO's description of a loaded config does not carry file-transform paths, which is
   where they live. The panel offers one input per variable.
@@ -578,6 +580,53 @@ table one code value above zero and every render has a raised black floor.
 
 `MAX_TABLE_TRANSFORMS` is 12: the readback binds every table in one shader and WebGPU only
 guarantees 16 sampled textures per stage.
+
+### Physical sky (`Processor/PhysicalSky.js`, `Processor/AtmosphereModel.js`, `Processor/SunPosition.js`, `TSL/Atmosphere.js`, `TSL/EnvironmentCDF.js`, `TSL/Sun.js`)
+Environment mode `'procedural'` ("Physical Sky" in the app). Bruneton's Earth constants (Rayleigh from
+Bodhaine 1999, ozone, Ångström aerosols from turbidity), 16 spectral bins of 25 nm → CIE 1931 → linear
+Rec.709, baked on the GPU into a 1024×512 equirect in the engine's own mapping (row 0 = nadir).
+Multiple scattering is Hillaire 2020 extended: the incoming field is kept per (height ×
+azimuth-from-sun) cell, three orders are computed explicitly (ground bounces included) and only the tail
+uses 1/(1 − f). Against the Monte Carlo reference in `tests/gpu/skyReference.js`: day within ~6 %,
+sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2–5× bright at twilight.
+- **Nothing leaves the GPU.** The sky is computed per equirect row × 256 azimuths from the sun (π·s²,
+  mirrored: radiance depends on elevation and that azimuth only) and filled into the equirect; the
+  importance-sampling table is built beside it (`TSL/EnvironmentCDF.js`, the GPU twin of
+  `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`); both are copied into
+  textures created without pixels (`source.dataReady = false`). Only the table's two normalisers come
+  back, a few frames later — the frames between use the previous bake's. ⚠️ Such a texture has no
+  `image.data`: `buildEnvironmentCDF`, `convertTexturePixels` and the other CPU readers skip it, and
+  `_isPhysicalSky` marks what `EnvironmentManager` must not dispose (`PhysicalSky` owns it).
+- **Cost** (GPU, M-series). Sun move: sky 1.2 ms + table 0.46 ms (was ~5 ms plus an 8 MB readback, a
+  worker CDF and an upload). Air change (turbidity, ozone, air density, ground, sun size): +24 ms of
+  multiple scattering. First bake compiles, ~250 ms. ~70 MB of GPU buffers, freed when the mode is left.
+  `generateProceduralSkyTexture()` bakes at once — one bake per task, up to 4 queued
+  (`SKY_BAKES_IN_FLIGHT`) — and resolves once the environment has caught up. Dragging Time of Day bakes
+  on every slider event: 120/s on the camera scene, 67/s at a steady 60 fps on the 1.9M-triangle test
+  model. ⚠️ Never debounce it: the store's 10 ms trailing debounce never fired during a drag (slider
+  events come every 8–16 ms), and serialising each bake on its stats readback capped it at 16/s.
+- **Rendering cost:** the sun is one more NEE pass per bounce (~1.8 ms/frame at 1024² on
+  `anisotropy-brushed`) — ⚠️ the Preetham sky it replaced never registered its sun light
+  (`numDirectionalLights` stayed 0), so `main` comparisons read that as a regression.
+- **The sun is not in the texture.** It is drawn and sampled analytically: `hasSun`, `sunDirection` (world),
+  `sunRadiance` (disc average, working space), `sunParams` = (cos half-angle, solid angle, 1/sin², horizon
+  dip). NEE is pass 1 of the environment loop in `calculateDirectLightingUnified` (2D dim +9); its BSDF
+  partner is the miss branch, MIS'd through `RAY_FLAG.SUN_NEE` (set at an opaque scatter whose direction
+  NEE could have drawn; transmission leaves it clear so the sun shows through glass at full weight).
+  Limb darkening (Hestroffer & Magnan 1998) and the sky's horizon apply to both.
+- `refreshSun()` rotates the sun by the environment rotation and converts it to the working space — call
+  it after either changes (`setEnvironmentRotation` and `applyColorWorkingSpace` do).
+- Units: physical luminance / 683 × `SKY_RADIANCE_SCALE` (1/32), so a clear noon lights the ground at
+  bundled-HDRI levels. `SKY_PRESETS` carry an `exposure` (EV) making up ~⅔ of what a low sun loses.
+- ⚠️ `EnvironmentManager.callbacks.onReset` is the **app's** reset: a bake lands after its input, often once
+  the render loop is idle, and the stage's reset alone never woke it (UI edits did nothing on screen).
+- ⚠️ A model load installs `meshScene.environment` (the HDRI slot) only in HDRI mode (`loadSceneData`):
+  otherwise a model loaded under the sky swapped the startup HDRI in with the sun still on — lit twice.
+- Sessions carry `skyModel: 'atmosphere'`; sky keys from older sessions are ignored (same names, other meanings).
+- App panel (`PhysicalSkyControls.jsx`): Preset, Time of Day, Sun Direction, Haze; the rest sits behind each
+  row's ⋮. Time of day goes through `sunPosition()` (`Processor/SunPosition.js`, solar time, month,
+  latitude) with north along −Z; presets aim for their sun *height* on the chosen date
+  (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
 ### Denoising Pipeline Coordination
 - **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (None / EdgeAware /

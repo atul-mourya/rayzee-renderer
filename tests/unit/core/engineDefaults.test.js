@@ -169,6 +169,7 @@ describe( 'SKY_PRESETS', () => {
 
 	it( 'has standard presets', () => {
 
+		expect( SKY_PRESETS ).toHaveProperty( 'clearDay' );
 		expect( SKY_PRESETS ).toHaveProperty( 'clearMorning' );
 		expect( SKY_PRESETS ).toHaveProperty( 'clearNoon' );
 		expect( SKY_PRESETS ).toHaveProperty( 'sunset' );
@@ -182,7 +183,7 @@ describe( 'SKY_PRESETS', () => {
 			expect( preset ).toHaveProperty( 'name' );
 			expect( preset ).toHaveProperty( 'sunAzimuth' );
 			expect( preset ).toHaveProperty( 'sunElevation' );
-			expect( preset ).toHaveProperty( 'sunIntensity' );
+			expect( preset.turbidity ).toBeGreaterThanOrEqual( 1 );
 
 		} );
 

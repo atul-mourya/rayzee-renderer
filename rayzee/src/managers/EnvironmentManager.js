@@ -11,8 +11,9 @@ import {
 	RGBAFormat, RedFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
 } from 'three';
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
-import { ProceduralSky } from '../Processor/ProceduralSky.js';
+import { PhysicalSky } from '../Processor/PhysicalSky.js';
 import { SimpleSky } from '../Processor/SimpleSky.js';
+import { convertLinearTriple } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'env' );
@@ -20,23 +21,41 @@ import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { loadCDF, saveCDF } from '../Storage/CDFCache.js';
 
+const SKY_WIDTH = 1024;
+const SKY_HEIGHT = 512;
+const DEG2RAD = Math.PI / 180;
+const _rotation = new Matrix4();
+
+// Bakes queued on the GPU at once. More only queue behind frames already waiting there.
+const SKY_BAKES_IN_FLIGHT = 4;
+
 export class EnvironmentManager {
 
 	/**
 	 * @param {Object} scene - Three.js scene
 	 * @param {import('./UniformManager').UniformManager} uniforms
+	 * @param {import('three/webgpu').WebGPURenderer} [renderer] - bakes the physical sky
 	 */
-	constructor( scene, uniforms ) {
+	constructor( scene, uniforms, renderer = null ) {
 
 		this.scene = scene;
 		this.uniforms = uniforms;
+		this.renderer = renderer;
 
 		// CDF computation engine
 		this.equirectHdrInfo = new EquirectHDRInfo();
 
 		// Sky renderers (lazy init)
-		this.proceduralSkyRenderer = null;
+		this.physicalSky = null;
 		this.simpleSkyRenderer = null;
+		this._sun = null;
+		this._skyRequested = false;
+		this._skyScheduled = false;
+		this._skyInFlight = 0;
+		this._skyCaughtUp = null;
+		this._resolveSky = null;
+		this._skyBakes = 0;
+		this._skyStatsBake = 0;
 
 		// Environment texture — 1×1 black placeholder for shader compilation. Filters must be
 		// Linear: DataTexture defaults to Nearest, which is unfilterable, and WGSLNodeBuilder then
@@ -72,12 +91,15 @@ export class EnvironmentManager {
 			// Solid Color Sky
 			solidSkyColor: new Color( DEFAULT_STATE.solidSkyColor ),
 
-			// Procedural Sky (Preetham Model)
+			// Physical sky. The sun direction is in the sky's own frame; environment rotation turns both.
 			skySunDirection: this._calculateInitialSunDirection(),
-			skySunIntensity: DEFAULT_STATE.skySunIntensity,
-			skyRayleighDensity: DEFAULT_STATE.skyRayleighDensity,
+			skySunStrength: DEFAULT_STATE.skySunStrength,
+			skySunSize: DEFAULT_STATE.skySunSize,
 			skyTurbidity: DEFAULT_STATE.skyTurbidity,
-			skyMieAnisotropy: DEFAULT_STATE.skyMieAnisotropy,
+			skyOzone: DEFAULT_STATE.skyOzone,
+			skyAirDensity: DEFAULT_STATE.skyAirDensity,
+			skyGroundAlbedo: new Color( DEFAULT_STATE.skyGroundAlbedo ),
+			skyAltitude: DEFAULT_STATE.skyAltitude,
 		};
 
 		/**
@@ -94,7 +116,7 @@ export class EnvironmentManager {
 	// ===== MODE STATE MACHINE =====
 
 	/**
-	 * Switches the environment mode (hdri, gradient, color, procedural).
+	 * Switches the environment mode (hdri, gradient, color, procedural — the physical sky).
 	 * Preserves the HDRI texture when switching away, restores when switching back.
 	 * @param {'hdri'|'gradient'|'color'|'procedural'} mode
 	 */
@@ -128,6 +150,8 @@ export class EnvironmentManager {
 			this._previousHDRI = null;
 
 		}
+
+		if ( mode !== 'procedural' && prev === 'procedural' ) this._releaseSky();
 
 		this.markDirty();
 		this.callbacks.onAutoExposureReset?.();
@@ -165,11 +189,15 @@ export class EnvironmentManager {
 			gradientHorizonColor: p.gradientHorizonColor.toArray(),
 			gradientGroundColor: p.gradientGroundColor.toArray(),
 			solidSkyColor: p.solidSkyColor.toArray(),
+			skyModel: 'atmosphere',
 			skySunDirection: p.skySunDirection.toArray(),
-			skySunIntensity: p.skySunIntensity,
-			skyRayleighDensity: p.skyRayleighDensity,
+			skySunStrength: p.skySunStrength,
+			skySunSize: p.skySunSize,
 			skyTurbidity: p.skyTurbidity,
-			skyMieAnisotropy: p.skyMieAnisotropy,
+			skyOzone: p.skyOzone,
+			skyAirDensity: p.skyAirDensity,
+			skyGroundAlbedo: p.skyGroundAlbedo.toArray(),
+			skyAltitude: p.skyAltitude,
 		};
 
 	}
@@ -182,15 +210,22 @@ export class EnvironmentManager {
 
 		if ( ! state ) return;
 		const p = this.envParams;
-		for ( const key of [ 'gradientZenithColor', 'gradientHorizonColor', 'gradientGroundColor', 'solidSkyColor', 'skySunDirection' ] ) {
+		// Sessions saved before the physical sky gave the same names other meanings.
+		const atmosphere = state.skyModel === 'atmosphere';
+		const colors = [ 'gradientZenithColor', 'gradientHorizonColor', 'gradientGroundColor', 'solidSkyColor', 'skySunDirection' ];
+		for ( const key of atmosphere ? [ ...colors, 'skyGroundAlbedo' ] : colors ) {
 
 			if ( Array.isArray( state[ key ] ) ) p[ key ].fromArray( state[ key ] );
 
 		}
 
-		for ( const key of [ 'skySunIntensity', 'skyRayleighDensity', 'skyTurbidity', 'skyMieAnisotropy' ] ) {
+		if ( atmosphere ) {
 
-			if ( typeof state[ key ] === 'number' ) p[ key ] = state[ key ];
+			for ( const key of [ 'skySunStrength', 'skySunSize', 'skyTurbidity', 'skyOzone', 'skyAirDensity', 'skyAltitude' ] ) {
+
+				if ( typeof state[ key ] === 'number' ) p[ key ] = state[ key ];
+
+			}
 
 		}
 
@@ -274,7 +309,7 @@ export class EnvironmentManager {
 
 		}
 
-		this.envCDFTexture?.dispose?.();
+		if ( ! this.envCDFTexture?._isPhysicalSky ) this.envCDFTexture?.dispose?.();
 		this.envCDFTexture = new DataTexture( data, texW, H, RedFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
 
@@ -335,6 +370,7 @@ export class EnvironmentManager {
 		const rotationRadians = rotationDegrees * ( Math.PI / 180 );
 		this.environmentRotationMatrix.makeRotationY( rotationRadians );
 		this.uniforms.get( 'environmentMatrix' ).value.copy( this.environmentRotationMatrix );
+		this.refreshSun();
 
 	}
 
@@ -356,6 +392,9 @@ export class EnvironmentManager {
 			return;
 
 		}
+
+		// Its table is built with it, on the GPU.
+		if ( this.scene.environment._isPhysicalSky ) return;
 
 		try {
 
@@ -460,7 +499,7 @@ export class EnvironmentManager {
 		// stashed by setMode() for a later sky→hdri restore. Only when actually
 		// installing a new non-null texture (the null-env branch keeps the old ref).
 		const oldTex = this.environmentTexture;
-		if ( envMap && oldTex && oldTex !== envMap && oldTex !== this._envPlaceholder && oldTex !== this._previousHDRI ) {
+		if ( envMap && oldTex && oldTex !== envMap && oldTex !== this._envPlaceholder && oldTex !== this._previousHDRI && ! oldTex._isPhysicalSky ) {
 
 			oldTex.dispose?.();
 
@@ -499,6 +538,8 @@ export class EnvironmentManager {
 			this.uniforms.set( 'hasSun', 0 );
 
 		}
+
+		if ( envMap && oldTex?._isPhysicalSky && this.envParams.mode !== 'procedural' ) this._releaseSky();
 
 		this._notifyReset();
 
@@ -598,42 +639,157 @@ export class EnvironmentManager {
 	}
 
 	/**
-	 * Generate procedural (Preetham) sky texture and set as environment.
+	 * Bake the physical sky and set it as the environment. Requests made in one task become one
+	 * bake, queued straight away while the GPU keeps up and otherwise as soon as it finishes an
+	 * earlier one. Resolves once the environment has caught up with the latest request.
 	 */
-	async generateProceduralSkyTexture() {
+	generateProceduralSkyTexture() {
 
-		if ( ! this.proceduralSkyRenderer ) {
+		this._skyRequested = true;
+		this._skyCaughtUp ??= new Promise( resolve => void ( this._resolveSky = resolve ) );
+		this._pumpSky();
+		return this._skyCaughtUp;
 
-			this.proceduralSkyRenderer = new ProceduralSky( 512, 256 );
+	}
+
+	/** @private */
+	_pumpSky() {
+
+		if ( this._skyScheduled || ! this._skyRequested || this._skyInFlight >= SKY_BAKES_IN_FLIGHT ) return;
+		this._skyScheduled = true;
+		queueMicrotask( () => {
+
+			this._skyScheduled = false;
+			if ( this._skyRequested && this._skyInFlight < SKY_BAKES_IN_FLIGHT ) this._bakePhysicalSky();
+
+		} );
+
+	}
+
+	/** @private */
+	_settleSky() {
+
+		const resolve = this._resolveSky;
+		this._skyCaughtUp = this._resolveSky = null;
+		resolve?.();
+
+	}
+
+	/** @private */
+	async _bakePhysicalSky() {
+
+		this._skyRequested = false;
+		const p = this.envParams;
+		if ( ! this.renderer || p.mode !== 'procedural' ) {
+
+			if ( ! this.renderer ) log.warn( 'physical sky needs a renderer' );
+			if ( this._skyInFlight === 0 ) this._settleSky();
+			return;
 
 		}
 
-		const params = {
-			sunDirection: this.envParams.skySunDirection.clone(),
-			sunIntensity: this.envParams.skySunIntensity * 0.05,
-			rayleighDensity: this.envParams.skyRayleighDensity * 2.0,
-			mieDensity: this.envParams.skyTurbidity * 0.005,
-			mieAnisotropy: this.envParams.skyMieAnisotropy,
-			turbidity: this.envParams.skyTurbidity * 2.0,
-		};
+		const sky = this.physicalSky ??= new PhysicalSky( SKY_WIDTH, SKY_HEIGHT );
+		const albedo = p.skyGroundAlbedo;
+		const bake = ++ this._skyBakes;
+		const latest = () => bake === this._skyBakes && ! this._skyRequested;
+		this._skyInFlight ++;
 
 		try {
 
-			const texture = this.proceduralSkyRenderer.render( params );
-			texture._isGeneratedProcedural = true;
-			await this.setEnvironmentMap( texture );
+			const { texture, cdfTexture, sun, stats } = sky.bake( this.renderer, {
+				sunDirection: p.skySunDirection.toArray(),
+				turbidity: p.skyTurbidity,
+				ozone: p.skyOzone,
+				airDensity: p.skyAirDensity,
+				groundAlbedo: [ albedo.r, albedo.g, albedo.b ],
+				altitude: p.skyAltitude,
+				sunAngularDiameter: p.skySunSize * DEG2RAD,
+				sunStrength: p.skySunStrength,
+			} );
+			this._sun = sun;
+			this._installSky( texture, cdfTexture );
 
-			this.uniforms.get( 'sunDirection' ).value.copy( this.envParams.skySunDirection );
-			this.uniforms.set( 'sunAngularSize', 0.0087 );
-			this.uniforms.set( 'hasSun', 1 );
+			// Frames until they land normalise by an older bake's.
+			const { totalSum, compensationDelta } = await stats;
+			if ( p.mode === 'procedural' && sky === this.physicalSky && bake > this._skyStatsBake ) {
 
-			log.debug( `sun synced · dir ${this.envParams.skySunDirection.toArray().map( v => v.toFixed( 2 ) ).join( ',' )}` );
+				this._skyStatsBake = bake;
+				this.uniforms.set( 'envTotalSum', totalSum );
+				this.uniforms.set( 'envCompensationDelta', compensationDelta );
+				if ( latest() ) this._notifyReset();
+
+			}
+
+			if ( latest() ) log.debug( `physical sky ${fmt.ms( sky.getLastRenderTime() )} · sun ${sun.radiance.map( v => v.toPrecision( 3 ) ).join( ',' )}` );
 
 		} catch ( error ) {
 
-			log.error( 'procedural sky generation failed:', error );
+			log.error( 'physical sky generation failed:', error );
+
+		} finally {
+
+			this._skyInFlight --;
+			if ( latest() ) this._settleSky();
+			else this._pumpSky();
 
 		}
+
+	}
+
+	/** @private */
+	_installSky( texture, cdfTexture ) {
+
+		const oldTex = this.environmentTexture;
+		if ( oldTex && oldTex !== texture && oldTex !== this._envPlaceholder && oldTex !== this._previousHDRI ) oldTex.dispose?.();
+		if ( this.envCDFTexture !== cdfTexture ) {
+
+			this.envCDFTexture?.dispose?.();
+			this.envCDFTexture = cdfTexture;
+
+		}
+
+		// So an HDRI coming back rebuilds its own table.
+		this._cdfSignature = null;
+		texture._isGeneratedProcedural = true;
+		this.scene.environment = texture;
+		this.environmentTexture = texture;
+		this.envTexSize.set( texture.image.width, texture.image.height );
+		this.uniforms.get( 'envResolution' ).value.set( texture.image.width, texture.image.height );
+		const nodes = this.callbacks.getSceneTextureNodes?.();
+		if ( nodes?.envTex ) nodes.envTex.value = texture;
+		this.refreshSun();
+		this._notifyReset();
+
+	}
+
+	/** @private */
+	_releaseSky() {
+
+		if ( ! this.physicalSky ) return;
+		this.physicalSky.dispose( this.renderer );
+		this.physicalSky = null;
+		this._sun = null;
+		this.refreshSun();
+
+	}
+
+	/**
+	 * Push the sun to the shader: into world space through the environment rotation, and into
+	 * the working colour space. Call after either changes.
+	 */
+	refreshSun() {
+
+		const sun = this.envParams.mode === 'procedural' ? this._sun : null;
+		const on = !! sun && sun.radiance.some( v => v > 0 );
+		this.uniforms.set( 'hasSun', on ? 1 : 0 );
+		if ( ! on ) return;
+
+		const direction = this.uniforms.get( 'sunDirection' ).value;
+		direction.fromArray( sun.direction ).transformDirection( _rotation.copy( this.environmentRotationMatrix ).transpose() );
+		const rgb = [ ...sun.radiance ];
+		convertLinearTriple( rgb );
+		this.uniforms.get( 'sunRadiance' ).value.fromArray( rgb );
+		this.uniforms.get( 'sunParams' ).value.set( sun.cosHalfAngle, sun.solidAngle, 1 / ( sun.sinHalfAngle * sun.sinHalfAngle ), sun.horizonSin );
 
 	}
 
@@ -667,8 +823,12 @@ export class EnvironmentManager {
 
 	dispose() {
 
-		this.proceduralSkyRenderer = null;
+		this.callbacks = {};
+		this._settleSky();
+		this.physicalSky?.dispose( this.renderer );
+		this.physicalSky = null;
 		this.simpleSkyRenderer = null;
+		this._sun = null;
 
 		this.envCDFTexture?.dispose?.();
 		this.envCDFTexture = null;

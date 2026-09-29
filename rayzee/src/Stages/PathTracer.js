@@ -1612,6 +1612,10 @@ export class PathTracer extends PathTracerStage {
 			maxRayCount: this._wfMaxRayCount,
 			chunkRowBase: this._wfChunkRowBase,
 			auxGBufferEnabled: this._auxGBufferUniform,
+			hasSun: this.hasSun,
+			sunDirection: this.sunDirection,
+			sunRadiance: this.sunRadiance,
+			sunParams: this.sunParams,
 		} );
 		this._kernelManager.register( 'shade',
 			shadeFn().compute(

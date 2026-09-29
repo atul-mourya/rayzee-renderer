@@ -591,7 +591,7 @@ probes. `npm run bench:list` prints them with what they cover.
 | `spheres-gradient` | diffuse GI, GGX metal/rough response, gradient env importance sampling |
 | `cornell-emissive` | emissive-triangle NEE, MIS weighting, colour bleeding |
 | `glass-transmission` | transmission, TIR, IOR sweep, transmissive bounce cap, rough refraction |
-| `spheres-procedural-sky` | procedural sky evaluation, environment CDF |
+| `spheres-procedural-sky` | physical sky bake, its GPU-built importance-sampling table, the analytic sun's NEE and MIS |
 | `subsurface-marble` | random-walk SSS — chromatic collision sampling, HG phase, medium stack, step cap |
 | `anisotropy-brushed` | anisotropic GGX sampler/eval/PDF across tangent rotations, plus the isotropic path |
 | `shadow-catcher-ground` | analytic ground-plane catcher — NEE dual-sum ratio, coverage gate, occlusion |

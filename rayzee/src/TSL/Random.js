@@ -132,6 +132,7 @@ export const RandomPointInCircle = ( rngState ) => {
 //       +6  subsurface HG scatter dir    (ShadeKernel)
 //       +7  ground-catcher cosine BSDF   (ShadeKernel)
 //       +8  indirect-strategy direction  (LightsIndirect)
+//       +9  physical-sky sun disc        (LightsSampling)
 //   1D  +0  (free — was the {lights,BRDF} stochastic strategy pick)
 //       +1  emissive-triangle pick       (EmissiveSampling / LightBVHSampling)
 //       +2  BSDF lobe selection          (ShadeKernel)
