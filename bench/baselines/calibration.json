@@ -1,6 +1,6 @@
 {
 	"model": "/models/24155522.glb",
-	"recordedAt": "2026-09-19T18:30:17.804Z",
+	"recordedAt": "2026-09-29T04:23:47.600Z",
 	"fingerprint": {
 		"vendor": "apple",
 		"architecture": "metal-3",
@@ -17,16 +17,16 @@
 		"bvhNodes": 1204169
 	},
 	"harness": {
-		"totalMs": 32543.80000001192,
+		"totalMs": 2904.1650000810623,
 		"phases": {
-			"extraction": 2081.780000001192,
-			"blas": 23064.090000003576,
-			"tlas": 391.8900000154972,
-			"assemble": 215.94999998807907,
-			"textures": 10638.905000001192,
-			"scene": 26767.344999998808
+			"extraction": 437,
+			"blas": 878.5900000333786,
+			"tlas": 2.100000023841858,
+			"assemble": 14.639999985694885,
+			"textures": 614.8450000286102,
+			"scene": 1365.9100000858307
 		},
-		"workersBusy": 4.033973375954713
+		"workersBusy": 3.733863351492457
 	},
 	"app": {
 		"totalMs": 3173.0900000035763,

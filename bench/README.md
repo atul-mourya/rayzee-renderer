@@ -28,39 +28,43 @@ Useful flags: `--only scene-a,scene-b`, `--verbose`, `--truth` (regenerate groun
 
 ## What the harness can and cannot measure
 
-The harness renders on a real GPU, but it runs the engine's **CPU** work several times slower than
-the same code in the app in a normally-used browser — and not by a constant factor. Measured on one
-machine, same code, same model, same dev server:
+The harness renders on a real GPU and runs the engine's **CPU** work at the app's speed. Calibrated
+on an Apple M5 Pro against the app in a normally-used Chrome, same model (1.9M triangles, 990
+meshes):
 
 | | app | harness |
 |---|---|---|
-| scene processing | 1.76 s | 25–38 s |
-| BLAS build | 1.15 s | 15–28 s |
-| one 146,670-tri mesh, in a worker | 361 ms | 1,237 ms |
-| summed worker build time, 818 tasks | ~3.4 s | 95–118 s |
+| geometry extraction | 0.43 s | 0.44 s |
+| BLAS build | 1.22 s | 0.88 s |
+| textures | 0.69 s | 0.61 s |
+| scene processing | 1.70 s | 1.37 s |
 
-The big meshes run ~3.5× slow and the hundreds of small ones far worse, so what inflates is the
-**per-task** cost, not the per-triangle cost. It is not headless (headed is identical), not the
-Chrome flags (a browser with none is just as slow), not the DevTools connection (a plain `spawn`ed
-Chrome matches), not thread priority (a synthetic worker load runs at full speed and scales
-normally), not machine load, not the engine's config, and not the algorithm (plain Node builds that
-same mesh in 296 ms, matching the app).
+**That holds only while Chrome runs natively.** On Apple Silicon, a universal binary started from an
+Intel process runs as Intel under Rosetta, and the preference survives native processes in between.
+Homebrew's Intel coreutils `timeout` is enough: `timeout 590 npm run bench` started Chrome
+translated, and its CPU work ran 5–20× slower than the app — not by a constant factor, with small
+per-task costs inflating most. Scene processing read 25–38 s, and shader compile 9–23 s against
+~0.3 s. The runner therefore launches the browser through `runner/arm64.sh`
+(`arch -arm64 -x86_64`, see `nativeLaunchOptions()` in `runner/browser.js`), so it runs natively
+whatever started the runner. To check a live run, `vmmap -summary <chrome pid> | grep "Code Type"`
+must read `ARM64`, not `X86-64 (translated)`.
+
+A distorted harness inverts rankings. This is not hypothetical: a translated run showed the BLAS
+worker pool getting *slower* with more workers, the pool was capped at 2 on that evidence, and in
+the app six workers beat two by 86 % — the "fix" made scene processing 55 % slower. Calibration
+exists so that cannot recur silently.
 
 **Trusted here**
 
 - image quality against goldens and ground truth, and the denoise/freeze ratchets
 - GPU kernel A/B of the same code shape within one browser session (`bench:ab`, `bench:kernels`)
 - VRAM and leak detection
+- CPU build-phase times and shader compile time, while the calibration line reads `calibrated`
 
-**Not trusted here — measure these in the app**
+**Confirm in the app**
 
-- absolute CPU time for any build phase
-- per-task cost, worker counts, pool sizes, anything about concurrency
-- shader compile time (~360 ms in the app; 9–23 s here)
-
-A non-uniform error inverts rankings. This is not hypothetical: a harness run showed the BLAS worker
-pool getting *slower* with more workers, the pool was capped at 2 on that evidence, and in the app
-six workers beat two by 86 % — the "fix" made scene processing 55 % slower.
+- worker counts and pool sizes — the harness keeps more BLAS workers busy than the app does (3.7
+  against 2.5 of 6 on the calibration model), so a concurrency ranking can still differ
 
 ### Calibration
 
@@ -100,9 +104,9 @@ do — procedural primitives have too few meshes to show per-task overhead.
 ### The worker-busy number
 
 `SceneProcessor.performanceMetrics.blasWorkerTime ÷ blasBuildTime` is how many BLAS workers were
-busy on average. The app reports ~1.6–1.8 of 6; a harness run reports 4–5 "busy" while doing 28× the
-total work. It is the cheapest single signal that a CPU measurement is being distorted, and the
-calibration report prints it for both sides.
+busy on average. The app reports ~1.6–2.5 of 6 and a native harness run 3.7; under Rosetta the
+harness reported 4–5 "busy" while doing 28× the total work. It is the cheapest single signal that a
+CPU measurement is being distorted, and the calibration report prints it for both sides.
 
 **Requirements:** Google Chrome installed (override with `CHROME_PATH`). No network access needed — every scene is procedural and the STBN atlases are vendored (see below).
 
@@ -684,7 +688,7 @@ Then do two things that are not optional:
 
 ## Cost
 
-The first scene load in a session compiles the whole wavefront to WGSL (~20 s on Apple M-series) and each subsequent scene load recompiles. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. A full `npm run bench` over the fourteen-scene corpus is several minutes; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
+Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 29-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
 
 ## Known gaps
 
