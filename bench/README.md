@@ -710,7 +710,7 @@ round of an otherwise flat self-A/B. The MAD floor absorbs one per scene; two in
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
 purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
-Not yet built: a PR CI workflow (there is currently no PR gate at all, and CI never lints), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. OIDN is still outside the corpus — it adds an async completion dependency and deserves its own suite.
+Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. OIDN is still outside the corpus — it adds an async completion dependency and deserves its own suite.
 
 Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
 had to work around by hand:
