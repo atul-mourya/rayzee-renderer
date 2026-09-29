@@ -245,7 +245,7 @@ function reportDenoise( report ) {
 
 		if ( entry.blessed ) {
 
-			log( `  ${GREEN}blessed${RESET} ${label.padEnd( 44 )}${DIM} ratio ${entry.ratio.toFixed( 3 )}${RESET}` );
+			log( `  ${GREEN}blessed${RESET} ${label.padEnd( 44 )}${entry.ratio < 1 ? DIM : YELLOW} ratio ${entry.ratio.toFixed( 3 )}${RESET}` );
 			continue;
 
 		}
@@ -712,10 +712,10 @@ async function main() {
 			reportFreeze( await runFreeze( bench, { bless: true, only, log } ) );
 
 			log( '\ndenoise' );
-			reportDenoise( await runDenoise( bench, { bless: true, only, log } ) );
+			const refused = reportDenoise( await runDenoise( bench, { bless: true, only, log } ) );
 
 			log( `\n${GREEN}baselines written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.baselines )}` );
-			return 0;
+			return refused > 0 ? 1 : 0;
 
 		}
 
@@ -752,7 +752,7 @@ async function main() {
 
 			log( `\ndenoise (RMSE vs ground truth, denoised ÷ raw — below 1.0 is a win)${blessDenoise ? ' — blessing' : ''}` );
 			const report = await runDenoise( bench, { bless: blessDenoise, only, log } );
-			if ( reportDenoise( report ) > 0 && ! blessDenoise ) exitCode = 1;
+			if ( reportDenoise( report ) > 0 ) exitCode = 1;
 			if ( blessDenoise ) {
 
 				log( `${GREEN}denoise ratchet written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.denoise )}` );

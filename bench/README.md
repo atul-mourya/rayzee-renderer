@@ -469,6 +469,10 @@ can assert it. Reset whatever config a rung varies, for every other rung, and as
 `bench denoise --bless` records the ratchet **without** touching the quality goldens, so a denoiser
 change does not force a re-bless of the path tracer's baselines.
 
+Only a bless writes `baselines/denoise.json`. A new scene or strategy fails on a plain run until it
+is blessed, and a bless refuses (and exits non-zero on) any rung that fails the absolute gates —
+non-finite output, or `mustHelpAtLowSpp` at 1 spp.
+
 Scene choice is about what the edge-stops key on, not coverage breadth: diffuse GI (the baseline
 case), high-variance transmission (the noisiest input the denoiser sees), and textures (albedo
 demodulation plus mapped normals — the two G-buffer signals the spatial filter weights on).

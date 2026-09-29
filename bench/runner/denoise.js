@@ -185,15 +185,6 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 				const ratio = denoisedRmse / rawRmse;
 				entry.ratio = ratio;
 
-				if ( bless ) {
-
-					next[ id ] = { ratio, rawRmse, denoisedRmse };
-					entry.blessed = true;
-					results.push( entry );
-					continue;
-
-				}
-
 				if ( nonFinite > 0 ) {
 
 					entry.pass = false;
@@ -214,6 +205,25 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 						`${DENOISE_GATES.mustHelpAtLowSpp}). This is the regime the denoiser exists for; ` +
 						'failing it means it is disconnected, mis-wired, or reading the wrong texture.'
 					);
+
+				}
+
+				if ( bless ) {
+
+					// A blessed-in breakage becomes the ratchet's permanent floor.
+					if ( entry.pass ) {
+
+						next[ id ] = { ratio, rawRmse, denoisedRmse };
+						entry.blessed = true;
+
+					} else {
+
+						entry.failures.push( `refusing to bless ${id} — fix the failure above first.` );
+
+					}
+
+					results.push( entry );
+					continue;
 
 				}
 
@@ -240,9 +250,6 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 
 				}
 
-				// Bootstrap only — never overwritten on a comparison run, or the ratchet would
-				// track each regression down and never fire.
-				next[ id ] = stored[ id ] ?? { ratio, rawRmse, denoisedRmse };
 				results.push( entry );
 
 			}
@@ -254,7 +261,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 	// Leave the engine as every other suite expects to find it.
 	await bench.setDenoiser( 'none' );
 
-	await writeJSON( PATHS.denoise, next );
+	if ( bless ) await writeJSON( PATHS.denoise, next );
 
 	return { results, passed: results.every( ( r ) => r.pass !== false ) };
 
