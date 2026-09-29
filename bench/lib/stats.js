@@ -115,6 +115,23 @@ export function stdev( values ) {
 }
 
 /**
+ * Standard deviation estimated from the median absolute deviation (MAD × 1.4826, which equals
+ * the standard deviation for normal data). One wild value barely moves it.
+ *
+ * @param {number[]} values Sample. Not mutated.
+ * @return {number} Robust standard deviation, or 0 for samples shorter than 2.
+ */
+export function robustStdev( values ) {
+
+	if ( ! values || values.length < 2 ) return 0;
+
+	const med = median( values );
+
+	return 1.4826 * median( Array.from( values, ( value ) => Math.abs( value - med ) ) );
+
+}
+
+/**
  * Full summary of a sample, including the coefficient of variation the perf
  * suite uses to decide whether a measurement was too noisy to judge.
  *
@@ -319,9 +336,9 @@ export function compareReplicates( baseMedians, headMedians, { unchangedPct = UN
 	const deltaPct = Number.isFinite( ratio ) ? ( ratio - 1 ) * 100 : NaN;
 
 	// Standard error of the paired ratio. Already dimensionless, so it is a relative error
-	// directly. Crude at three rounds, but measured.
+	// directly. MAD, not stdev: at three rounds one wild round alone made the verdict inconclusive.
 	const relSe = ratios.length > 1 && Number.isFinite( ratio ) && ratio !== 0
-		? ( stdev( ratios ) / Math.sqrt( ratios.length ) ) / Math.abs( ratio )
+		? ( robustStdev( ratios ) / Math.sqrt( ratios.length ) ) / Math.abs( ratio )
 		: 0;
 
 	const noiseFloorPct = 2 * relSe * 100;

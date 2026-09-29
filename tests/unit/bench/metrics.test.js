@@ -5,6 +5,7 @@ import {
 	median,
 	mean,
 	stdev,
+	robustStdev,
 	summarise,
 	discardWarmup,
 	compareRuns,
@@ -438,6 +439,33 @@ describe( 'bench/lib/stats', () => {
 
 	} );
 
+	describe( 'robustStdev', () => {
+
+		it( 'scales the median absolute deviation by 1.4826', () => {
+
+			// median 3; |deviations| 2,1,0,1,97 -> median 1
+			expect( robustStdev( [ 1, 2, 3, 4, 100 ] ) ).toBeCloseTo( 1.4826, 12 );
+
+		} );
+
+		it( 'ignores one wild value that dominates stdev', () => {
+
+			const values = [ 1.00, 1.01, 1.40 ];
+
+			expect( robustStdev( values ) ).toBeCloseTo( 1.4826 * 0.01, 12 );
+			expect( stdev( values ) ).toBeGreaterThan( 0.2 );
+
+		} );
+
+		it( 'returns 0 for samples shorter than 2', () => {
+
+			expect( robustStdev( [ 42 ] ) ).toBe( 0 );
+			expect( robustStdev( [] ) ).toBe( 0 );
+
+		} );
+
+	} );
+
 	describe( 'discardWarmup', () => {
 
 		it( 'drops the requested number of leading samples', () => {
@@ -647,6 +675,23 @@ describe( 'bench/lib/stats', () => {
 			expect( result.deltaPct ).toBeCloseTo( 5, 6 );
 			expect( result.noiseFloorPct ).toBe( 0 );
 			expect( result.verdict ).toBe( 'unchanged' );
+
+		} );
+
+		it( 'is not made inconclusive by one wild round', () => {
+
+			const result = compareReplicates( [ 2.0, 2.0, 2.0 ], [ 2.02, 1.99, 2.8 ], { unchangedPct: 8 } );
+
+			expect( result.verdict ).toBe( 'unchanged' );
+
+		} );
+
+		it( 'still calls a regression slower when one round disagrees', () => {
+
+			const result = compareReplicates( [ 2.0, 2.0, 2.0 ], [ 2.4, 2.42, 1.9 ], { unchangedPct: 8 } );
+
+			expect( result.deltaPct ).toBeCloseTo( 20, 6 );
+			expect( result.verdict ).toBe( 'slower' );
 
 		} );
 

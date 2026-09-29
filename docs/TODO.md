@@ -67,7 +67,7 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Regression bench (`bench/`)
 
-- [ ] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
+- [x] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
 - [ ] the two sub-1 ms scenes are too cheap to measure reliably; either exclude them from perf or raise their sample count
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
 - [ ] HTML report with diff heatmaps (`bench/lib/metrics.js` already has `diffHeatmap()`, unused)
