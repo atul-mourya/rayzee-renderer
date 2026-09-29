@@ -163,7 +163,10 @@ export class KernelManager {
 
 		const node = this.kernels.get( name );
 		if ( ! node ) return;
-		node.dispatchSize = [ Math.ceil( count / node.workgroupSize[ 0 ] ), 1, 1 ];
+		const groups = Math.ceil( count / node.workgroupSize[ 0 ] );
+		// Past the per-dimension limit the grid spills into rows; instanceIndex folds them back in.
+		const max = this.renderer?.backend?.device?.limits.maxComputeWorkgroupsPerDimension ?? 65535;
+		node.dispatchSize = groups > max ? [ max, Math.ceil( groups / max ), 1 ] : [ groups, 1, 1 ];
 
 	}
 
