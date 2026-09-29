@@ -307,8 +307,6 @@ const skyHandler = ( set, get, key, apply ) => handleChange(
 	false,
 );
 
-const RETOUCH_VISIBLE_KEY = 'rayzee-retouch-visible';
-
 // Simple ('look') or Pro ('physical') depth of field — who is using the app, so it is kept across sessions.
 const DOF_MODE_KEY = 'rayzee-dof-mode';
 
@@ -327,20 +325,6 @@ function readDofMode() {
 
 }
 
-function readRetouchVisible() {
-
-	try {
-
-		return localStorage.getItem( RETOUCH_VISIBLE_KEY ) === '1';
-
-	} catch {
-
-		return false;
-
-	}
-
-}
-
 const usePathTracerStore = create( ( set, get ) => ( {
 	...DEFAULT_STATE,
 	GIIntensity: DEFAULT_STATE.globalIlluminationIntensity,
@@ -350,8 +334,8 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	upscalerBackend: 'esrgan',
 
 	// Neural rendering (Retouch): a detail pass on the traced image, before any upscale. Hidden
-	// because its model is not distributed; `rayzee.showRetouch()` in the console reveals it.
-	retouchVisible: readRetouchVisible(),
+	// because its model is not distributed; `rayzee.showRetouch()` reveals it until the next reload.
+	retouchVisible: false,
 	neuralRendering: false,
 	nrIntensity: 1,
 	nrLocalTone: 1,
@@ -933,16 +917,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	),
 
 	setRetouchVisible: visible => {
-
-		try {
-
-			visible ? localStorage.setItem( RETOUCH_VISIBLE_KEY, '1' ) : localStorage.removeItem( RETOUCH_VISIBLE_KEY );
-
-		} catch {
-
-			// Storage blocked: visible for this page only.
-
-		}
 
 		set( { retouchVisible: visible } );
 		if ( ! visible && get().neuralRendering ) get().handleNeuralRenderingChange( false );

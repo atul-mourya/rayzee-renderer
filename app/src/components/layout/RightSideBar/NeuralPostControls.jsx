@@ -42,6 +42,7 @@ const NeuralPostControls = () => {
 	// The detail pass runs FIRST, on the traced image, so the upscaler's factor does not enter into
 	// it. Reachable only if the host raises the render reserve past 2048.
 	const nrTooBig = canvasWidth * canvasHeight > RETOUCH_MAX_PIXELS;
+	const retouchOn = retouchVisible && neuralRendering;
 
 	// The model's settings are engine units; these sliders are what an artist expects to see.
 	//
@@ -126,7 +127,7 @@ const NeuralPostControls = () => {
 				</Row>
 			)}
 
-			{neuralRendering && nrTooBig && (
+			{retouchOn && nrTooBig && (
 				<Row>
 					<span className="opacity-50 text-[10px] leading-snug">
 						Skipped at this size — {canvasWidth} × {canvasHeight} is
@@ -136,7 +137,7 @@ const NeuralPostControls = () => {
 				</Row>
 			)}
 
-			{neuralRendering && ! nrTooBig && ( <>
+			{retouchOn && ! nrTooBig && ( <>
 				{/* Amount is a straight blend, so it behaves predictably. Local Light and Fine Details
 				    are handed to the model as inputs rather than applied after it, which is why their
 				    effect is not proportional to the number. */}

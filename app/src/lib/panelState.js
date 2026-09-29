@@ -5,7 +5,7 @@ import { useStore, useAssetsStore, usePathTracerStore, useCameraStore } from '@/
 // (app.exportSceneState); this is only what the panels show. Lists derived from the engine —
 // lights, cameras, timeline keys — are re-read from it instead.
 const PANELS = {
-	pathTracer: { store: usePathTracerStore, omit: [ 'currentAutoExposure', 'currentAvgLuminance', 'showInspector', 'retouchVisible', 'appMode', 'canvasWidth', 'canvasHeight' ] },
+	pathTracer: { store: usePathTracerStore, omit: [ 'currentAutoExposure', 'currentAvgLuminance', 'showInspector', 'retouchVisible', 'neuralRendering', 'appMode', 'canvasWidth', 'canvasHeight' ] },
 	camera: { store: useCameraStore, omit: [ 'cameraNames', 'selectedCameraIndex', 'afPlacingPoint', 'selectMode', 'modelDimensions' ] },
 	assets: { store: useAssetsStore, only: [ 'model', 'environment', 'selectedEnvironmentIndex' ] },
 	main: { store: useStore, only: [ 'transformMode', 'transformSpace' ] },
