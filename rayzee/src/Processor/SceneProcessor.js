@@ -18,7 +18,7 @@ import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
+	packNormalOct, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
 import { sharedStorage } from '../Storage/shared.js';
@@ -3542,7 +3542,6 @@ export class SceneProcessor {
 	_refitTLAS() {
 
 		const tlasNodeCount = this.instanceTable.tlasNodeCount;
-		const FPN = 16;
 
 		// Grow-only bounds buffer for TLAS refit
 		if ( ! this._tlasBounds || this._tlasBounds.length < tlasNodeCount * 6 ) {

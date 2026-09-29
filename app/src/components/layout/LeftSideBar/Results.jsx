@@ -835,12 +835,11 @@ const VirtualizedGallery = memo( () => {
 	const formatDate = useFormatDate();
 	const containerRef = useRef();
 	const [ visibleRange, setVisibleRange ] = useState( { start: 0, end: 20 } ); // Show 20 items initially
-	const [ containerHeight, setContainerHeight ] = useState( 600 );
+	const [ , setContainerHeight ] = useState( 600 );
 
 	// Item dimensions for 4K thumbnails
 	const ITEM_HEIGHT = 180; // Height per grid item
 	const ITEMS_PER_ROW = 2;
-	const BUFFER_SIZE = 4; // Extra items to render outside viewport
 
 	const handleImageError = useCallback( ( e ) => {
 
@@ -1011,8 +1010,6 @@ const ResultsProvider = ( { children } ) => {
 	const {
 		renderedImages,
 		selectedImageIndex,
-		loading,
-		error,
 		isMountedRef,
 		isResultsTabRef,
 		setImagesState

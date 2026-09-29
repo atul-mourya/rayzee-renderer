@@ -552,7 +552,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 
 export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 	hitPoint, normal, geomNormal, viewDir, material,
-	bounceIndex, rngState,
+	_bounceIndex, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	emissiveBoost,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,

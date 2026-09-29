@@ -307,7 +307,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		}
 
 		const originalCanvas = originalCanvasRef.current;
-		const editedCanvas = editedCanvasRef.current;
 		const aiCanvas = aiCanvasRef.current;
 		const originalCtx = originalCanvas.getContext( '2d' );
 		const aiCtx = aiCanvas.getContext( '2d' );

@@ -302,9 +302,8 @@ function tokenize( text ) {
 function remainderAfterTokens( text, count ) {
 
 	const re = /\S+/g;
-	let m;
 	let n = 0;
-	while ( ( m = re.exec( text ) ) !== null ) {
+	while ( re.exec( text ) !== null ) {
 
 		n ++;
 		if ( n === count ) return text.slice( re.lastIndex );

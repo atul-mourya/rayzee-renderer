@@ -120,7 +120,7 @@ describe( 'ASPECT_RATIO_PRESETS', () => {
 
 	it( 'each preset has width, height, label', () => {
 
-		for ( const [ key, preset ] of Object.entries( ASPECT_RATIO_PRESETS ) ) {
+		for ( const preset of Object.values( ASPECT_RATIO_PRESETS ) ) {
 
 			expect( preset ).toHaveProperty( 'width' );
 			expect( preset ).toHaveProperty( 'height' );

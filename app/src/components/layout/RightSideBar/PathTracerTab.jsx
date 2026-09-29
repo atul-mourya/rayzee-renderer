@@ -1,4 +1,4 @@
-import { Sun, Sunrise, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun } from 'lucide-react';
+import { Sun, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun } from 'lucide-react';
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -130,7 +130,6 @@ const PathTracerTab = () => {
 		showInspector,
 		oidnQuality,
 		enableOIDN,
-		saturation,
 		enableEnvironment,
 		showBackground,
 		transparentBackground,
@@ -145,7 +144,6 @@ const PathTracerTab = () => {
 		groundProjectionHeight,
 		enableGroundCatcher,
 		groundCatcherHeight,
-		GIIntensity,
 		// Environment Mode
 		environmentMode,
 		gradientZenithColor,
@@ -174,9 +172,6 @@ const PathTracerTab = () => {
 		edgePhiNormal,
 		edgePhiDepth,
 		// Auto-exposure state
-		autoExposureMinExposure,
-		autoExposureMaxExposure,
-		autoExposureAdaptSpeedBright,
 
 		// Handlers - now from store
 		handlePathTracerChange,
@@ -198,7 +193,6 @@ const PathTracerTab = () => {
 		handleDebugThresholdChange,
 		handleDebugModeChange,
 		handleInspectorToggle,
-		handleSaturationChange,
 		handleEnableEnvironmentChange,
 		handleBackgroundTypeChange,
 		handleBackgroundIntensityChange,
@@ -212,7 +206,6 @@ const PathTracerTab = () => {
 		handleGroundProjectionHeightChange,
 		handleEnableGroundCatcherChange,
 		handleGroundCatcherHeightChange,
-		handleGIIntensityChange,
 		// Environment Mode Handlers
 		handleEnvironmentModeChange,
 		handleGradientZenithColorChange,
@@ -236,9 +229,6 @@ const PathTracerTab = () => {
 		handleEdgePhiNormalChange,
 		handleEdgePhiDepthChange,
 		// Auto-exposure handlers
-		handleAutoExposureMinExposureChange,
-		handleAutoExposureMaxExposureChange,
-		handleAutoExposureAdaptSpeedChange,
 	} = pathTracerStore;
 
 	// Backdrop mode derived from the two engine flags (single mutually-exclusive choice).

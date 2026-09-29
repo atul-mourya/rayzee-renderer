@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { NumberInput } from '@/components/ui/number-input';
 import { CustomLinkIcon, CustomUnlinkIcon } from '@/assets/icons';
 
-const LinkableVector2 = ( { label, value, onChange, step = 0.1, min, max, className = "" } ) => {
+const LinkableVector2 = ( { label, value, onChange, step = 0.1, min, max } ) => {
 
 	const [ isLinked, setIsLinked ] = useState( false );
 

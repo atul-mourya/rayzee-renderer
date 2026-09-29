@@ -10,11 +10,11 @@ import {
 	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, acos,
 	instanceIndex,
 	sampler,
-	atomicAdd, atomicLoad, atomicStore, uintBitsToFloat,
+	atomicLoad, atomicStore,
 	Return,
 } from 'three/tsl';
 
-import { sampleEnvironment, sampleEquirectProbability, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
+import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
@@ -107,7 +107,7 @@ export function buildShadeKernel( params ) {
 		accumFrame,
 		chunkRowBase, // chunked path pool: global pixel = chunkRowBase·W + localSlot (rayID). See spec.
 		emissiveTriangleCount, emissiveVec4Offset, emissiveTotalPower,
-		emissiveBoost, totalTriangleCount, enableEmissiveTriangleSampling,
+		emissiveBoost, enableEmissiveTriangleSampling,
 		lightBVHNodeCount, reverseMapVec4Offset,
 		maxRayCount,
 		// Aux G-buffer (normal/depth/albedo + surface ID) feeds only the denoiser/OIDN MRT. Gated by a

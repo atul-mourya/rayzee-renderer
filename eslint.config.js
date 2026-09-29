@@ -9,7 +9,7 @@ import reactCompiler from 'eslint-plugin-react-compiler';
 // console.log(mdcs)
 export default [
 	// mdcs,
-	{ ignores: [ 'node_modules', '**/dist', '.claude' ] },
+	{ ignores: [ 'node_modules', '**/dist', 'coverage', '.claude', '.agents', '.cdn-upload', 'app/public' ] },
 	{
 		files: [ '**/*.{js,jsx}' ],
 		languageOptions: {
@@ -44,6 +44,19 @@ export default [
 				{ allowConstantExport: true },
 			],
 			'react-compiler/react-compiler': 'error',
+			// `_` marks a deliberately unused name, e.g. a positional TSL input or a forwardRef ref.
+			'no-unused-vars': [ 'warn', {
+				ignoreRestSiblings: true,
+				argsIgnorePattern: '^_',
+				varsIgnorePattern: '^_',
+				destructuredArrayIgnorePattern: '^_',
+			} ],
+		},
+	},
+	{
+		files: [ '**/*.config.js' ],
+		languageOptions: {
+			globals: { ...globals.node },
 		},
 	},
 	{
@@ -56,10 +69,11 @@ export default [
 		},
 	},
 	{
-		// WebGPU tests run under Node with the browser's GPU globals installed.
-		files: [ 'tests/gpu/**/*.js' ],
+		// Tests run under Node (WebGPU ones with the browser's GPU globals installed), with
+		// vitest's `globals: true`.
+		files: [ 'tests/**/*.js' ],
 		languageOptions: {
-			globals: { ...globals.node },
+			globals: { ...globals.node, ...globals.vitest },
 		},
 	},
 ];

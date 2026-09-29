@@ -36,7 +36,7 @@ vi.mock( 'three', () => {
 
 		constructor( c, i ) {
 
-			this.color = { r: 1, g: 1, b: 1, set( v ) {
+			this.color = { r: 1, g: 1, b: 1, set() {
 
 				return this;
 
@@ -69,7 +69,7 @@ vi.mock( 'three', () => {
 
 		lookAt() {}
 
-		getWorldDirection( v ) {
+		getWorldDirection() {
 
 			return { x: 0, y: 0, z: - 1 };
 

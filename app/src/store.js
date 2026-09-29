@@ -191,7 +191,7 @@ const useAssetsStore = create( set => ( {
 	setSelectedMaterial: idx => set( { selectedMaterial: idx } ),
 	setActiveTab: tab => set( { activeTab: tab } ),
 	setModel: model => set( { model } ),
-	setEnvironment: env => set( s => {
+	setEnvironment: env => set( () => {
 
 		const envStore = useEnvironmentStore.getState();
 		const envs = envStore.environments || [];

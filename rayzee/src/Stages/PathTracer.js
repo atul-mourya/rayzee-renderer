@@ -299,7 +299,7 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
-		this._updateAccumulationUniforms( frameValue, renderMode );
+		this._updateAccumulationUniforms( frameValue );
 		const auxMixes = this._updateAuxAccumulationUniforms( frameValue );
 		this.frame.value = frameValue;
 		this.seedFrame.value = this._seedTick ++;

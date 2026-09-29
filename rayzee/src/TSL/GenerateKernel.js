@@ -12,7 +12,7 @@
 
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
-	If, select, instanceIndex, atomicLoad,
+	If, instanceIndex, atomicLoad,
 	localId, workgroupId,
 } from 'three/tsl';
 
@@ -44,7 +44,6 @@ export function buildGenerateKernel( params ) {
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
 		transmissiveBounces, // per-ray refraction budget (megakernel parity: PathTracerCore.js:606)
-		transparentBackground, // alpha inits to 1 here (megakernel parity: PathTracerCore.js:554) — env-escape-without-opaque zeroes it in Shade
 		auxGBufferEnabled, // live uniform: 1 = init the per-pixel G-buffer (denoiser on), 0 = skip it
 		// listDriven: 1D dispatch over the active-pixel list (activeIndicesRO[tid] = LOCAL slot) instead of 2D.
 		listDriven = false, activeIndicesRO = null, counters = null,

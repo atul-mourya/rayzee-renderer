@@ -1297,7 +1297,7 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
-	onRenderComplete( { isStillComplete, context } ) {
+	onRenderComplete( { isStillComplete } ) {
 
 		// Remove any stale completion-chain listener from a previous render cycle
 		this._cleanupCompletionListener();

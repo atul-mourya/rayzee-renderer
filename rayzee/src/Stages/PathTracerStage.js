@@ -1406,9 +1406,8 @@ export class PathTracerStage extends RenderStage {
 	/**
 	 * Update accumulation uniforms
 	 * @param {number} frameValue
-	 * @param {number} renderMode
 	 */
-	_updateAccumulationUniforms( frameValue, renderMode ) {
+	_updateAccumulationUniforms( frameValue ) {
 
 		const currentInteractionMode = this.cameraOptimizer?.isInInteractionMode() ?? false;
 		this.lastInteractionModeState = currentInteractionMode;

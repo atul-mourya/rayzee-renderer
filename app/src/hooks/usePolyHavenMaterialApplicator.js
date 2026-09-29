@@ -3,7 +3,6 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore, useAssetsStore } from '@/store';
 import { PolyHavenService } from '@/services/PolyHavenService';
 import { PolyHavenMaterialLoader } from '@/services/PolyHavenMaterialLoader';
-import { MaterialService } from '@/services/MaterialService';
 
 /**
  * Custom hook for handling PolyHaven material application to objects

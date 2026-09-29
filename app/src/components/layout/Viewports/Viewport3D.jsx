@@ -37,7 +37,7 @@ function readFlag( key ) {
 
 }
 
-const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
+const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 	const { toast } = useToast();
 
