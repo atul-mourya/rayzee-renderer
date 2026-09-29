@@ -21,7 +21,7 @@ import { promisify } from 'node:util';
 
 import { launchBrowser, openHarness } from './browser.js';
 import { startDevServer } from './devserver.js';
-import { CALIBRATION, PATHS, PERF } from './config.js';
+import { CALIBRATION, PATHS } from './config.js';
 import {
 	appSnippet, calibrationStale, formatBanner, formatComparison, formatReport, measureHarness, readCalibration,
 	writeCalibration,
@@ -403,14 +403,13 @@ async function commandAB( baseRef, flags ) {
 		log( '\nA/B result' );
 		for ( const entry of comparison.comparisons ) {
 
-			const colour = ! entry.gated
-				? DIM
-				: entry.verdict === 'slower' ? RED : entry.verdict === 'faster' ? GREEN : DIM;
+			const colour = entry.verdict === 'slower'
+				? RED
+				: entry.verdict === 'faster' ? GREEN : DIM;
 			log(
 				`  ${colour}${entry.verdict.padEnd( 12 )}${RESET} ${entry.scene.padEnd( 26 )} ` +
 				`${entry.baseMedian.toFixed( 2 )} → ${entry.headMedian.toFixed( 2 )} ms ` +
-				`(${entry.deltaPct >= 0 ? '+' : ''}${entry.deltaPct.toFixed( 1 )} %)` +
-				( entry.gated ? '' : `${DIM}  not gated (< ${PERF.abMinGatedMs} ms/sample)${RESET}` )
+				`(${entry.deltaPct >= 0 ? '+' : ''}${entry.deltaPct.toFixed( 1 )} %)`
 			);
 			// The floor is what makes a verdict readable: "+3 %, floor 7 %" is a clean pass,
 			// "+3 %, floor 1 %" is a real finding, and the number alone cannot tell them apart.
