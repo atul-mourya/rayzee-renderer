@@ -298,16 +298,10 @@ export const PERF = {
 	abMeasureSamples: 60,
 	// Absolute band below which an A/B delta is called unchanged, whatever the rounds say.
 	//
-	// MACHINE-SPECIFIC, and calibrated by measurement rather than chosen: a self-A/B of HEAD
-	// against itself on an idle M-series produced per-scene deltas up to 6.2 %, because the two
-	// harnesses are separate WebGPU devices in one browser and the second page created is
-	// systematically a little slower. No amount of replication removes that — it is a bias, not
-	// variance — so the band has to sit above it. 8 % leaves a thin margin over the worst
-	// observed case, which means this gate resolves roughly a 10 % regression and nothing
-	// finer. Re-derive it with `bench:ab -- HEAD` on a clean tree before trusting it elsewhere.
-	//
-	// The excursions concentrate in the two cheapest scenes (< 1 ms/sample), where fixed
-	// per-dispatch overhead is a large fraction of the measurement.
+	// MACHINE-SPECIFIC, and calibrated by measurement rather than chosen: self-A/Bs of HEAD on an
+	// M-series reached 7.5 % (p95 6 %) over 93 comparisons, so 8 % leaves a thin margin and this
+	// gate resolves roughly a 10 % regression and nothing finer. Re-derive it with
+	// `bench:ab -- HEAD` on a clean tree before trusting it elsewhere.
 	abUnchangedPct: 8,
 };
 

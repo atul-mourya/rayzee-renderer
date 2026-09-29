@@ -219,6 +219,9 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 
 				for ( const [ label, bench ] of order ) {
 
+					// Same tab state for both sides: without it the tab opened second read up to ~13 %
+					// slower on identical code.
+					await bench.bringToFront();
 					const result = await measureScene( bench, scene.id, PERF.abMeasureSamples );
 					rounds[ label ].push( result.gpuMsPerSample.median );
 					line.push( `${label} ${result.gpuMsPerSample.median.toFixed( 2 )}` );

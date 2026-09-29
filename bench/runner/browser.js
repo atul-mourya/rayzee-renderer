@@ -178,6 +178,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 
 	/** Thin typed wrapper so suites never write raw page.evaluate strings. */
 	const bench = {
+		bringToFront: () => page.bringToFront(),
 		fingerprint: () => page.evaluate( () => globalThis.__bench.fingerprint() ),
 		scenes: () => page.evaluate( () => globalThis.__bench.scenes() ),
 		loadScene: ( id ) => page.evaluate(
