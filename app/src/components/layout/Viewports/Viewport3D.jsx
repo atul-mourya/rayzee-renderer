@@ -80,7 +80,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, ref ) => {
 		canvasWidth,
 		canvasHeight,
 		padding: 40,
-		minScale: 25,
+		minScale: 5,
 		maxScale: 200,
 		enabled: canvasReady // Only enable auto-fit after canvases are ready
 	} );

@@ -83,7 +83,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		canvasWidth: actualCanvasWidth,
 		canvasHeight: actualCanvasHeight,
 		padding: 80,
-		minScale: 25,
+		minScale: 5,
 		maxScale: 300
 	} );
 
@@ -97,7 +97,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		viewportRef,
 		viewportScale,
 		onScaleChange: handleViewportResize,
-		minScale: 25,
+		minScale: 5,
 		maxScale: 300,
 		enabled: !! imageData,
 		suppressRef: longPressActiveRef,
@@ -824,7 +824,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 				appRef={mockAppRef}
 				position="bottom-right"
 				defaultSize={100}
-				minSize={25}
+				minSize={5}
 				maxSize={300}
 				zoomStep={25}
 				autoFitScale={autoFitScale}

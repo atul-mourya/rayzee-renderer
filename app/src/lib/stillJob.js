@@ -260,8 +260,8 @@ export async function resumeStill( app, { key, job } ) {
 
 	const { checkpoint } = await readStillCheckpoint( app.storage, key );
 
-	usePathTracerStore.getState().handleModeChange( 'final-render' );
 	useStore.getState().setAppMode( 'final-render' );
+	usePathTracerStore.getState().handleModeChange( 'final-render' );
 	// The mode's preset replaced what was changed in Final Render itself.
 	app.settings.restore( job.settings );
 	restorePanels( job.session.panels );

@@ -679,7 +679,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	_applyCanvasDimensions: ( overrides = {} ) => {
 
 		const state = { ...get(), ...overrides };
-		const res = state.appMode === 'final-render' ? state.finalRenderResolution : state.resolution;
+		const res = useStore.getState().appMode === 'final-render' ? state.finalRenderResolution : state.resolution;
 		const { width, height } = computeOutputDimensions( state, res );
 
 		set( { ...overrides, canvasWidth: width, canvasHeight: height } );

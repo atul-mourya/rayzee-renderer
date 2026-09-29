@@ -10,7 +10,7 @@ export const usePanZoom = ( {
 	viewportRef,
 	viewportScale,
 	onScaleChange,
-	minScale = 25,
+	minScale = 5,
 	maxScale = 300,
 	zoomSensitivity = 0.001,
 	enabled = true,

@@ -59,8 +59,9 @@ const TopBar = () => {
 
 		if ( value !== appModeRef.current ) {
 
-			handleModeChange( value );
+			// First: the mode handler's reset listeners read appMode.
 			setAppMode( value );
+			handleModeChange( value );
 
 		}
 

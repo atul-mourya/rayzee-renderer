@@ -58,7 +58,7 @@ const ViewportToolbar = ( {
 	iconSize = 14,
 
 	// Zoom settings
-	minSize = 25,
+	minSize = 5,
 	maxSize = 200,
 	step = 5,
 	zoomStep = 25,

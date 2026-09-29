@@ -7,7 +7,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react
  * @param {number} options.canvasWidth - Width of the canvas to fit
  * @param {number} options.canvasHeight - Height of the canvas to fit
  * @param {number} options.padding - Padding around the canvas (default: 40)
- * @param {number} options.minScale - Minimum scale percentage (default: 25)
+ * @param {number} options.minScale - Minimum scale percentage (default: 5)
  * @param {number} options.maxScale - Maximum scale percentage (default: 300)
  * @param {number} options.manualThreshold - Threshold for detecting manual scale changes (default: 5)
  * @param {boolean} options.enabled - Flag to enable or disable the hook (default: true)
@@ -18,7 +18,7 @@ export const useAutoFitScale = ( {
 	canvasWidth,
 	canvasHeight,
 	padding = 40,
-	minScale = 25,
+	minScale = 5,
 	maxScale = 300,
 	manualThreshold = 5,
 	enabled = true
