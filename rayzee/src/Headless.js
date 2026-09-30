@@ -27,7 +27,8 @@ import { PathTracerApp } from './PathTracerApp.js';
  * @param {Object} [options.settings] - applied after the model loads
  * @param {function(number): void} [options.onProgress] - running sample count
  * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number,
- *   colorSpace: string, source: string, samples: number, retiredBy: string, issues: Object[], adapter: Object}>}
+ *   colorSpace: string, source: string, samples: number, retiredBy: string, issues: Object[], adapter: Object,
+ *   provenance: Object}>} `provenance` is {@link PathTracerApp#getProvenance} at the moment of capture
  */
 export async function renderHeadless( options ) {
 
@@ -78,6 +79,7 @@ export async function captureHeadless( app, {
 		retiredBy: accumulated < samples ? 'converged' : 'count',
 		issues: app.issues,
 		adapter: app.adapterInfo,
+		provenance: app.getProvenance(),
 	};
 
 }

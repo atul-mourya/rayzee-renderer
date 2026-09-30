@@ -423,6 +423,13 @@ export class OIDNTemporalHistory {
 
 	}
 
+	gpuBytes() {
+
+		if ( ! this._sets ) return 0;
+		return this._sets.length * 3 * this.width * this.height * 16 + this._picked.size + this._copies.size;
+
+	}
+
 	_ensure( width, height ) {
 
 		if ( ! width || ! height ) return false;

@@ -905,13 +905,19 @@ Track GPU (VRAM) usage across the whole pipeline. Sizes are measured from live G
 
 ```js
 const { current, peak, byCategory } = engine.getMemoryInfo();   // bytes
-// byCategory: { rays, queues, gbuffer, accum, geometry, materials, environment, stages }
+// byCategory: { rays, queues, gbuffer, accum, geometry, materials, environment, stages, denoiser, canvas }
 
 engine.vram.resetPeak();   // reset the high-water mark to the current value
 engine.vram.getReport();   // formatted one-line summary string
 ```
 
 `peak` is a high-water mark, reset when a final render begins (`configureForMode('production')`). The engine's VRAM is largely monotonic — the ray pool only grows and the per-stage storage textures are fixed-size — so `peak` equals `current` during a steady render and only exceeds it after memory is released (lower resolution, a smaller scene, or removing the HDRI). The `stages` + `accum` categories (fixed 2048² storage textures) dominate the baseline.
+
+`denoiser` is what the engine allocates for OIDN — its three float inputs, its half-float output and
+the motion history. `canvas` is one image per presented surface (a browser may keep one or two more)
+plus the buffer three.js's output pass tone-maps through. Not counted: oidn-web's own network weights
+and activations, which it reports by count, not by size; and the neural passes, which run on a
+`GPUDevice` of their own.
 
 The React app surfaces this as a `Memory: … | Peak: …` readout in the on-canvas stats overlay.
 
@@ -1042,6 +1048,17 @@ within one level (it rounds half a level up); `'linear'` is exact.
 
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.
+
+**Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
+JSON naming what produced the image: engine and three.js versions, the profile by name *and* by
+value, the adapter, every live setting with its source, the colour pipeline, the render size and
+samples, and whether it ran headless, strict, deterministic or lockstepped. Store it beside each
+render and "what made this?" has an answer without rendering again.
+
+**Pinning a look.** A change to what a render looks like when a host sets nothing — a default
+setting, a mode preset, a profile's values, light units — is released as a **major**, with the
+change described under BREAKING CHANGES in the release notes. Pin a major to pin a look; read the
+notes before moving to the next one.
 
 #### Running in Node
 

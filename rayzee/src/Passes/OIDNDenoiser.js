@@ -989,6 +989,15 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
+	/** Bytes of the GPU memory this pass allocates itself; oidn-web's network is not among them. */
+	gpuBytes() {
+
+		const { color, albedo, normal } = this._gpuInputBuffers;
+		const out = this._outGPUTexture ? this._outTexSize.width * this._outTexSize.height * 8 : 0; // rgba16float
+		return ( color?.size ?? 0 ) + ( albedo?.size ?? 0 ) + ( normal?.size ?? 0 ) + ( this._gpuInputPadBuffer?.size ?? 0 ) + out;
+
+	}
+
 	/**
 	 * Makes sure the output picture exists at the render size. A resize makes a new one rather than
 	 * resizing in place: three.js caches the card-side handle against the wrapper, so the wrapper

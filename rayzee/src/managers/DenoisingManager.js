@@ -218,6 +218,13 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/** GPU bytes of OIDN's inputs, output and motion history. */
+	gpuBytes() {
+
+		return ( this.denoiser?.gpuBytes?.() ?? 0 ) + ( this._history?.gpuBytes?.() ?? 0 );
+
+	}
+
 	_recordNoOverlayCanvas( pass ) {
 
 		this._issues?.record(

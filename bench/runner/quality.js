@@ -164,6 +164,11 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 
 		if ( bless ) {
 
+			// On the same GPU a golden that moves means the engine's default render changed, which
+			// the commit conventions mark BREAKING. A new machine re-blesses every golden and says nothing.
+			const previous = ! mismatch && await exists( goldenPath ) ? await readPNG( goldenPath ) : null;
+			const moved = previous ? ! compare( rendered, previous ).identical : false;
+
 			await writeDataURL( goldenPath, renderedDataURL );
 
 			// rmseVsTruth must be recomputed here, not carried over: it is the convergence
@@ -177,7 +182,7 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 				: undefined;
 
 			nextProbes[ scene.id ] = { ...nextProbes[ scene.id ], golden: probes, rmseVsTruth, furnaceRatio };
-			results.push( { scene: scene.id, blessed: true, probes, rmseVsTruth, furnaceRatio } );
+			results.push( { scene: scene.id, blessed: true, probes, rmseVsTruth, furnaceRatio, moved } );
 			continue;
 
 		}

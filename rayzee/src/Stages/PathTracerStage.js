@@ -1461,6 +1461,9 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
+	/** @deprecated No shader reads a blue-noise texture any more; kept so existing callers do not break. */
+	setBlueNoiseTexture() {}
+
 	/**
 	 * Rebuild the packed light buffer from cached lightBVH + emissive data.
 	 * Layout: [ lightBVH (LBVH_STRIDE vec4s per node) | emissive (EMISSIVE_STRIDE vec4s per entry) ].

@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	Scene, EventDispatcher, Box3, Vector3
+	Scene, EventDispatcher, Box3, Vector3, REVISION,
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -55,6 +55,7 @@ import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
 import { TRIANGLE_PATCH_PROPERTIES } from './managers/MaterialDataManager.js';
 import { VERSION } from './version.js';
+import { toPortable } from './SceneState/portable.js';
 
 export const RENDER_CHECKPOINT_VERSION = 1;
 
@@ -222,6 +223,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		// Before the settings: the profile supplies some of their defaults.
 		this._profile = getRenderProfile( options.profile );
+		this._profileName = options.profile ?? 'viewer';
 
 		// First, so no subsystem can degrade unrecorded.
 		this._issues = new IssueLog( {
@@ -2873,6 +2875,49 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * What produced the current image, as plain JSON, to keep beside a render: engine and three.js
+	 * versions, the profile by name and by value (a name's values can change between releases), the
+	 * adapter, every live setting with its source, the colour pipeline, and the modes that decide
+	 * whether the render reproduces.
+	 * @returns {Object}
+	 */
+	getProvenance() {
+
+		const stage = this.stages.pathTracer;
+		const color = this.color?.status();
+
+		return toPortable( {
+			engine: VERSION,
+			three: REVISION,
+			profile: { name: this._profileName, values: { ...this._profile } },
+			adapter: this.adapterInfo ?? null,
+			mode: {
+				headless: this._headless,
+				strict: this._issues.strict,
+				deterministic: this.isDeterministic,
+				lockstep: !! stage?.lockstepReadbacks,
+			},
+			render: stage ? {
+				width: stage.width,
+				height: stage.height,
+				samples: stage.frameCount,
+				complete: stage.isComplete,
+				retiredBy: stage.isComplete ? this.completion.stopCondition( stage ) ?? 'samples' : null,
+			} : null,
+			color: color ? {
+				config: color.config?.id ?? null,
+				workingSpace: color.workingSpace,
+				view: color.activeView ?? color.activeTransform?.id ?? null,
+				context: color.context,
+			} : null,
+			scene: this.sceneSource,
+			settings: this.settings.getEffective(),
+			issues: this.issues.map( ( { code, severity } ) => ( { code, severity } ) ),
+		} );
+
+	}
+
+	/**
 	 * Lockstep readbacks for renders driven by the loop or by {@link renderFrames}:
 	 * {@link renderUntilComplete} turns them on for its own duration. See PathTracer.setLockstepReadbacks.
 	 * @param {boolean} [enabled=true]
@@ -3315,6 +3360,8 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	getMemoryInfo() {
 
+		// Wired from the loop too, which renderFrames never enters: a headless host would miss these categories.
+		this._ensureVRAMWiring();
 		return this.stages.pathTracer?.vramTracker?.measure() ?? { current: 0, peak: 0, byCategory: {} };
 
 	}
@@ -3347,11 +3394,19 @@ export class PathTracerApp extends EventDispatcher {
 		if ( ! tracker ) return; // stages not ready yet
 
 		tracker.register( 'stages', () => this._collectStageTextures() );
+		tracker.register( 'denoiser', () => ( { bytes: this.denoisingManager?.gpuBytes() ?? 0 } ) );
+		// One image per presented surface (a browser may keep one or two more), and the buffer
+		// three's output pass tone-maps through.
+		tracker.register( 'canvas', () => [
+			{ bytes: this.canvas.width * this.canvas.height * 4 },
+			...( this.renderer?._frameBufferTargets?.values() ?? [] ),
+			...( this.overlayManager?.gpuResources() ?? [] ),
+		] );
 
 		const remeasure = () => tracker.measure();
-		this._addTrackedListener( this, 'SceneRebuild', remeasure );
-		this._addTrackedListener( this, 'EnvironmentLoaded', remeasure );
-		this._addTrackedListener( this, 'resolution_changed', remeasure );
+		this._addTrackedListener( this, EngineEvents.SCENE_REBUILD, remeasure );
+		this._addTrackedListener( this, EngineEvents.ENVIRONMENT_LOADED, remeasure );
+		this._addTrackedListener( this, EngineEvents.RESOLUTION_CHANGED, remeasure );
 
 		this._vramWired = true;
 

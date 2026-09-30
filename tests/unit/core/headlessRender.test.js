@@ -171,6 +171,7 @@ describe( 'captureHeadless', () => {
 			} ) ),
 			issues,
 			adapterInfo: { vendor: 'apple', isSoftware: false },
+			getProvenance: () => ( { engine: 'x.y.z' } ),
 		};
 
 	}
@@ -198,6 +199,7 @@ describe( 'captureHeadless', () => {
 
 		expect( out.issues ).toEqual( issues );
 		expect( out.adapter.vendor ).toBe( 'apple' );
+		expect( out.provenance.engine ).toBe( 'x.y.z' );
 
 	} );
 

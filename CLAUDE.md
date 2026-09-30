@@ -72,6 +72,14 @@ Use **conventional commits**. Every commit message and PR title **must** start w
 
 Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 
+**A change to default pixels is a breaking change.** Anything that changes what a render looks like
+when a host sets nothing — a default setting, a mode preset, a `RENDER_PROFILES` value, light units,
+a sampling or BSDF change that moves the goldens — gets a `BREAKING CHANGE:` footer saying how default
+renders change, so semantic-release makes it a major. Farms pin a major to pin a look and calibrate
+against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Two tripwires:
+`tests/unit/constants/pixelDefaults.test.js` snapshots the defaults, profiles and presets (update with
+`-u`, then add the footer), and `bench:bless` names every golden that moved on the same GPU.
+
 ## Monorepo Structure
 
 **Key import patterns**:
@@ -305,6 +313,9 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   pacings; lockstep 48 spp and one image every time. ⚠️ It turns interaction mode off meanwhile: that
   mode is a 100 ms wall-clock timer that engages on the first frame after a load, frames in it do not
   count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
+- **`app.getProvenance()`** — plain JSON of what produced the image (versions, profile by name and
+  value, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
+  lockstep). `captureHeadless` returns it as `provenance`.
 - **`await app.runFinalDenoise()`** — one OIDN pass at the final tier, awaited, without the render
   loop or the upscaler (`DenoisingManager.denoiseOnce()`: waits out a run or weight load in flight,
   which `start()` would refuse or defer). OIDN must have been on while accumulating — the aux

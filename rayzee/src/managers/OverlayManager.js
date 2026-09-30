@@ -85,6 +85,15 @@ export class OverlayManager {
 
 	}
 
+	/** The overlay surface while it is shown: one presented image and three's output buffers. */
+	gpuResources() {
+
+		const view = this._viewOverlay;
+		if ( ! view?.isVisible ) return [];
+		return [ { bytes: view.canvas.width * view.canvas.height * 4 }, ...( view.renderer?._frameBufferTargets?.values() ?? [] ) ];
+
+	}
+
 	/**
 	 * Sets the SceneHelpers instance used for 3D overlay rendering.
 	 * @param {import('../SceneHelpers.js').SceneHelpers} helperScene

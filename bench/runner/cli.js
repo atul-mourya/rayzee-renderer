@@ -185,7 +185,7 @@ function reportQuality( report ) {
 			const furnace = entry.furnaceRatio !== undefined
 				? `${DIM} furnace ${entry.furnaceRatio.toFixed( 5 )}${RESET}`
 				: '';
-			log( `  ${GREEN}blessed${RESET} ${entry.scene}${furnace}` );
+			log( `  ${GREEN}blessed${RESET} ${entry.scene}${furnace}${entry.moved ? `  ${YELLOW}moved${RESET}` : ''}` );
 			continue;
 
 		}
@@ -744,6 +744,14 @@ async function main() {
 				bless: true, truth: !! flags.truth, only, log,
 			} );
 			reportQuality( report );
+
+			const moved = report.results.filter( ( entry ) => entry.moved ).map( ( entry ) => entry.scene );
+			if ( moved.length ) {
+
+				log( `\n${YELLOW}${moved.length} golden(s) moved on this GPU: ${moved.join( ', ' )}.${RESET}` );
+				log( `${YELLOW}The default render changed — say how in a BREAKING CHANGE footer on the commit (see CLAUDE.md).${RESET}` );
+
+			}
 
 			// After quality, so the ground truth it depends on is guaranteed to exist on a
 			// first bless of a fresh machine.
