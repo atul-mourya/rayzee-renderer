@@ -1253,6 +1253,11 @@ export class PathTracerApp extends EventDispatcher {
 			// there is nothing to fall back to. Leaving it half-built would keep the last
 			// frame's buffers on screen under a scene that no longer exists.
 			if ( ! error || error.code !== 'LOAD_IN_PROGRESS' ) this._discardFailedLoad();
+
+			// Only the scene build reported its own failure; one in the parse left a host's loading
+			// status spinning on its last step. A part prompt is not a failure, so it just ends it.
+			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) resetLoading();
+			else if ( error?.code !== 'LOAD_IN_PROGRESS' ) updateLoading( { status: `Error: ${error?.message ?? error}`, failed: true, progress: 100 } );
 			throw error;
 
 		} finally {

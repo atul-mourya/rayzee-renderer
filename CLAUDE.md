@@ -794,7 +794,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
   First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
   identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those
-  placements build them again after the static ones.
+  placements build them again after the static ones. ⚠️ A `.ply` is decoded once per file name and
+  shared by every shape naming it, so a merged shape frees it only as its last direct user
+  (`_lastPlyUse`), never while a template or an unmerged shape holds it: Zero-Day names one file from
+  up to 320 shapes, and freeing on the first merge failed the load with a detached ArrayBuffer.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from

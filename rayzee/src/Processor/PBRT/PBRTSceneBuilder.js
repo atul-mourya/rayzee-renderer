@@ -211,6 +211,18 @@ export class PBRTSceneBuilder {
 		// Built again for their moving placements after the static ones, so never freed early.
 		this._keepShapes = new Set();
 		for ( const { name } of ir.animatedInstances ?? [] ) for ( const shape of ir.objects.get( name ) ?? [] ) this._keepShapes.add( shape );
+		// One decoded .ply serves every shape naming it: a merge frees it only as its last direct
+		// user, and never while a template or an unmerged shape holds its geometry.
+		this._plyUsers = new Map();
+		this._plyHeld = new Set();
+		for ( const shape of ir.shapes ) if ( shape?.type === 'plymesh' ) {
+
+			const file = pString( shape.params, 'filename', null );
+			this._plyUsers.set( file, ( this._plyUsers.get( file ) ?? 0 ) + 1 );
+
+		}
+
+		for ( const template of ir.objects.values() ) for ( const shape of template ) if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
 		this._recoveredColors = 0;
 		this.reportedMeshes = 0;
 		this.triangleCount = 0; // stored triangles — a shared geometry counts once
@@ -251,6 +263,8 @@ export class PBRTSceneBuilder {
 				continue;
 
 			}
+
+			if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
 
 			const mesh = this._meshFromGeometry( shape, geometry, sharedMaterial, shape.ctm, `shape_${i}` );
 			if ( ! mesh ) continue;
@@ -759,9 +773,21 @@ export class PBRTSceneBuilder {
 	_releaseMerged( shape, geometry ) {
 
 		if ( this._keepShapes?.has( shape ) ) return;
+		if ( shape.type === 'plymesh' && ! this._lastPlyUse( pString( shape.params, 'filename', null ) ) ) return;
 		for ( const name in geometry.attributes ) freeNow( geometry.attributes[ name ].array );
 		freeNow( geometry.index?.array );
 		for ( const name in shape.params ) if ( ArrayBuffer.isView( shape.params[ name ]?.value ) ) freeNow( shape.params[ name ].value );
+
+	}
+
+	/** Whether this merge was the last use of a .ply, which then leaves the cache. @private */
+	_lastPlyUse( file ) {
+
+		const left = ( this._plyUsers.get( file ) ?? 1 ) - 1;
+		this._plyUsers.set( file, left );
+		if ( left > 0 || this._plyHeld.has( file ) ) return false;
+		this._plyCache.delete( file );
+		return true;
 
 	}
 

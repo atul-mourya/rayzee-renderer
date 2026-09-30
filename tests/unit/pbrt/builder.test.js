@@ -576,6 +576,58 @@ describe( 'PBRT scene builder', () => {
 	} );
 
 
+	describe( 'one .ply named by many shapes', () => {
+
+		const triangle = () => {
+
+			const geometry = new BufferGeometry();
+			geometry.setAttribute( 'position', new Float32BufferAttribute( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ], 3 ) );
+			return geometry;
+
+		};
+
+		const shapes = ( count ) => Array.from( { length: count }, ( _, i ) =>
+			`AttributeBegin Translate ${i} 0 0 Shape "plymesh" "string filename" "shared.ply" AttributeEnd`
+		).join( '\n' );
+
+		it( 'merges every one of them, decoding the file once', async () => {
+
+			// Zero-Day names one .ply from up to 320 shapes; the first merge freed it for the rest.
+			let decoded = 0;
+			const { group, mergedShapes } = await loadPBRTScene( buildArgs( {
+				vfs: { 'scene.pbrt': enc.encode( `WorldBegin\n${shapes( 300 )}\n` ), 'shared.ply': enc.encode( 'ply' ) },
+				plyParser: () => ( decoded ++, triangle() ),
+				mergeShapesAbove: 2,
+			} ) );
+
+			expect( decoded ).toBe( 1 );
+			expect( mergedShapes ).toBe( 300 );
+			const merged = group.children.filter( c => c instanceof Mesh && c.name.startsWith( 'merged_' ) );
+			expect( merged.reduce( ( n, m ) => n + m.geometry.getAttribute( 'position' ).count, 0 ) ).toBe( 900 );
+
+		} );
+
+		it( 'leaves it whole for a template that places it too', async () => {
+
+			const { group } = await loadPBRTScene( buildArgs( {
+				vfs: {
+					'scene.pbrt': enc.encode( `WorldBegin\nObjectBegin "kit"\nShape "plymesh" "string filename" "shared.ply"\nObjectEnd\n${shapes( 300 )}\nObjectInstance "kit"\n` ),
+					'shared.ply': enc.encode( 'ply' ),
+				},
+				plyParser: triangle,
+				mergeShapesAbove: 2,
+			} ) );
+
+			const placed = [];
+			group.traverse( ( o ) => o.isMesh && ! o.name.startsWith( 'merged_' ) && placed.push( o ) );
+			expect( placed.length ).toBeGreaterThan( 0 );
+			for ( const mesh of placed ) expect( mesh.geometry.getAttribute( 'position' ).array.byteLength ).toBe( 36 );
+
+		} );
+
+	} );
+
+
 	it( 'never resolves an ambiguous basename to the wrong file', async () => {
 
 		// Every Moana element ships its own objects.pbrt, and an element's own Include joined
