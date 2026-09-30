@@ -27,9 +27,19 @@ function trimPNG( bytes ) {
 
 }
 
-function pixelTexture( { data, width, height } ) {
+// A model's images go to the texture pack worker, which reads a SharedArrayBuffer where they lie.
+function pixelTexture( { data, width, height }, { shared = false } = {} ) {
 
-	const texture = new DataTexture( new Uint8Array( data.buffer, data.byteOffset, width * height * 4 ), width, height, RGBAFormat, UnsignedByteType );
+	const view = new Uint8Array( data.buffer, data.byteOffset, width * height * 4 );
+	let pixels = view;
+	if ( shared && typeof SharedArrayBuffer !== 'undefined' && ! ( view.buffer instanceof SharedArrayBuffer ) ) {
+
+		pixels = new Uint8Array( new SharedArrayBuffer( view.byteLength ) );
+		pixels.set( view );
+
+	}
+
+	const texture = new DataTexture( pixels, width, height, RGBAFormat, UnsignedByteType );
 	texture.needsUpdate = true;
 	return texture;
 
@@ -86,7 +96,7 @@ export function platformImagesPlugin( parser, onFailure = null ) {
 
 		const promise = bytes.then( ( data ) => decodeBytes( data, mimeType ) ).then( ( pixels ) => {
 
-			const texture = pixelTexture( pixels );
+			const texture = pixelTexture( pixels, { shared: true } );
 			if ( def.extras && typeof def.extras === 'object' ) Object.assign( texture.userData, def.extras );
 			texture.userData.mimeType = mimeType;
 			return texture;

@@ -1105,9 +1105,10 @@ app.dispose();
   engine's triangle and BVH stores are once a scene is large; those uploads are copied out, 64 MB at
   a time.
 - **Textures are packed on the CPU** where there is no `createImageBitmap`: exact when a map fits its
-  bucket, bilinear otherwise (a browser's canvas filter differs slightly there). It runs on the main
-  thread, which also feeds the BVH workers: on a 1.9M-triangle, 91-texture model the load took
-  4.1–4.9 s against Chrome's 2.9 s, and 1.8 s with the textures stubbed out.
+  bucket, bilinear otherwise (a browser's canvas filter differs slightly there). A bucket over 8 MB
+  packs in a worker, reading images decoded by `decodeImage` in place (they are kept in shared
+  memory): on the main thread it held up the BVH workers, and a 1.9M-triangle, 91-texture model
+  loaded in 4.1–4.9 s. It now loads in 2.1 s, against Chrome's 2.9 s on the same machine.
 - `nodePlatform()` also defines `ProgressEvent`, which three.js's `FileLoader` constructs while
   streaming; that is the only global it sets. three.js's own Draco and KTX2 workers call the global
   `Worker`, so a model using either also needs `globalThis.Worker = NodeWorker`.

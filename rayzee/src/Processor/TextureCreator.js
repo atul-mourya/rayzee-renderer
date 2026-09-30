@@ -2,13 +2,36 @@ import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColor
 import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
+import PackWorker from './Workers/PackWorker.js?worker&inline';
+import { resampleRGBA8 } from './ResampleRGBA8.js';
 import { ISSUE_CODES, EngineIssueError } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { createLogger } from '../utils/Logger.js';
-import { hardwareThreads } from '../Platform.js';
+import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 
 const log = createLogger( 'textures' );
+
+// Below this a pack is cheaper than starting a worker for it.
+const WORKER_PACK_BYTES = 8 * 2 ** 20;
+
+// Buckets pack concurrently; this keeps their workers within the cores, beside the BVH pool's.
+const packSlots = { busy: 0, waiting: [] };
+
+async function acquirePackSlot() {
+
+	if ( packSlots.busy < Math.max( 1, hardwareThreads() - 1 ) ) packSlots.busy ++;
+	else await new Promise( ( resolve ) => packSlots.waiting.push( resolve ) );
+
+	return () => {
+
+		const next = packSlots.waiting.shift();
+		if ( next ) next();
+		else packSlots.busy --;
+
+	};
+
+}
 
 // A bucket array carries ONE colorSpace and the shader reads each slot from a fixed pool, so a
 // texture disagreeing with its pool cannot be re-routed — its pixels are re-encoded instead.
@@ -790,7 +813,7 @@ export class TextureCreator {
 
 		if ( typeof createImageBitmap === 'undefined' ) {
 
-			const packed = this.processOnCPU( textures );
+			const packed = await this.processOnCPU( textures );
 			const reencoded = this._harmonizeTransfer( packed, textures, srgbPool );
 			this._applyColorManagement( packed, textures, srgbPool, reencoded );
 			this.textureCache.set( cacheKey, packed );
@@ -1055,9 +1078,10 @@ export class TextureCreator {
 	 * Packing without a browser (no createImageBitmap, no 2D canvas): each layer must already be
 	 * pixels — a DataTexture, or an image the platform's decodeImage decoded. A layer that matches its
 	 * bucket is copied exactly; one that does not is resampled bilinearly, where a browser's canvas
-	 * would use its own filter, so those texels can differ slightly from a browser render.
+	 * would use its own filter, so those texels can differ slightly from a browser render. A large
+	 * bucket packs in a worker: on the main thread it starved the BVH workers of their next task.
 	 */
-	processOnCPU( textures ) {
+	async processOnCPU( textures ) {
 
 		const layers = textures.map( ( texture, layer ) => {
 
@@ -1077,10 +1101,63 @@ export class TextureCreator {
 
 		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( layers.map( ( image ) => ( { image } ) ) );
 		const layerBytes = maxWidth * maxHeight * 4;
+
+		const packed = hasWorkers() && layerBytes * layers.length >= WORKER_PACK_BYTES
+			? await this._packInWorker( layers, maxWidth, maxHeight )
+			: null;
+		if ( packed ) return this.createDataArrayTextureFromBuffer( packed, maxWidth, maxHeight, layers.length );
+
 		const data = this.bufferPool.getBuffer( layerBytes * layers.length, Uint8Array );
 		layers.forEach( ( layer, i ) => resampleRGBA8( layer, data, i * layerBytes, maxWidth, maxHeight ) );
 
 		return this.createDataArrayTextureFromBuffer( data, maxWidth, maxHeight, layers.length );
+
+	}
+
+	/** The packed pixels, or null to pack on the main thread instead. */
+	async _packInWorker( layers, width, height ) {
+
+		const release = await acquirePackSlot();
+		let worker = null;
+
+		try {
+
+			// A SharedArrayBuffer view crosses as itself; anything else as a copy of just its bytes,
+			// made only once this bucket has its slot so waiting buckets hold no copies.
+			const transfer = [];
+			const sent = layers.map( ( layer ) => {
+
+				if ( typeof SharedArrayBuffer !== 'undefined' && layer.data.buffer instanceof SharedArrayBuffer ) return layer;
+				const data = layer.data.slice();
+				transfer.push( data.buffer );
+				return { ...layer, data };
+
+			} );
+
+			worker = createWorker( PackWorker );
+			return await new Promise( ( resolve, reject ) => {
+
+				worker.onmessage = ( e ) => ( e.data.error ? reject( new Error( e.data.error ) ) : resolve( e.data.data ) );
+				worker.onerror = ( e ) => reject( e.error ?? new Error( e.message ?? 'texture pack worker failed' ) );
+				worker.postMessage( { layers: sent, width, height }, transfer );
+
+			} );
+
+		} catch ( error ) {
+
+			this._issues?.warn(
+				ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
+				'worker texture packing failed — packing on the main thread',
+				{ cause: String( error?.message ?? error ) }
+			);
+			return null;
+
+		} finally {
+
+			worker?.terminate();
+			release();
+
+		}
 
 	}
 
@@ -1650,44 +1727,6 @@ export class TextureCreator {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Convert raw RGBA pixel data to an ImageBitmap (zero-copy Uint8ClampedArray view). */
-// Bilinear, texel centres aligned; a plain copy when the sizes match. flipY puts the last row first.
-function resampleRGBA8( { data: src, width: sw, height: sh, flipY }, dst, offset, dw, dh ) {
-
-	for ( let y = 0; y < dh; y ++ ) {
-
-		const row = flipY ? dh - 1 - y : y;
-		const out = offset + row * dw * 4;
-
-		if ( sw === dw && sh === dh ) {
-
-			dst.set( src.subarray( y * sw * 4, ( y + 1 ) * sw * 4 ), out );
-			continue;
-
-		}
-
-		const fy = Math.min( Math.max( ( y + 0.5 ) * sh / dh - 0.5, 0 ), sh - 1 );
-		const y0 = Math.floor( fy ), y1 = Math.min( y0 + 1, sh - 1 ), ty = fy - y0;
-
-		for ( let x = 0; x < dw; x ++ ) {
-
-			const fx = Math.min( Math.max( ( x + 0.5 ) * sw / dw - 0.5, 0 ), sw - 1 );
-			const x0 = Math.floor( fx ), x1 = Math.min( x0 + 1, sw - 1 ), tx = fx - x0;
-			const a = ( y0 * sw + x0 ) * 4, b = ( y0 * sw + x1 ) * 4, c = ( y1 * sw + x0 ) * 4, d = ( y1 * sw + x1 ) * 4;
-
-			for ( let ch = 0; ch < 4; ch ++ ) {
-
-				const top = src[ a + ch ] + ( src[ b + ch ] - src[ a + ch ] ) * tx;
-				const bottom = src[ c + ch ] + ( src[ d + ch ] - src[ c + ch ] ) * tx;
-				dst[ out + x * 4 + ch ] = Math.round( top + ( bottom - top ) * ty );
-
-			}
-
-		}
-
-	}
-
-}
-
 function _rawPixelsToBitmap( data, width, height ) {
 
 	const clamped = new Uint8ClampedArray( data.buffer, data.byteOffset, data.byteLength );

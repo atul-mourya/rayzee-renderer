@@ -360,8 +360,13 @@ matched Chrome within 0.05 of a level per 16² block.
   ⚠️ GLTFLoader turns a failed texture into none, silently — the plugin reports `texture.build_failed`
   and a strict host's throw is deferred to the end of the load (`_throwDeferred`).
 - With no `createImageBitmap`, `TextureCreator.processOnCPU` packs raw pixels: exact when a layer fits
-  its bucket, bilinear otherwise. ⚠️ On the main thread, so it starves the BVH workers: 24155522.glb
-  loads in 4.1–4.9 s in Node against Chrome's 2.9 s, 1.8 s with textures stubbed (workers busy 1.25 → 5).
+  its bucket, bilinear otherwise (`ResampleRGBA8.js`). A bucket over 8 MB packs in `PackWorker`, at
+  most cores − 1 at a time; `platformImagesPlugin` keeps decoded images in SharedArrayBuffers so they
+  cross without a copy. On the main thread it starved the BVH workers (busy 1.3 of 5): 24155522.glb
+  loaded in 4.1–4.9 s in Node, now 2.1 s against Chrome's 2.9 s (1.7 s with textures stubbed).
+  ⚠️ Vitest does not inline `?worker&inline` (a dev URL NodeWorker refuses), so the unit test drives
+  PackWorker's handler in-process, and no corpus bucket reaches 8 MB: only a real textured model runs
+  the thread. A failed worker packs on the main thread and records `texture.processing_fallback`.
 - ⚠️ dawn.node 0.6.1 segfaults on `queue.writeBuffer` / `writeTexture` from a `SharedArrayBuffer` (the
   triangle and BVH stores, once a scene is large). `nodePlatform()` wraps `GPUQueue.prototype` to copy
   those out, 64 MB at a time, and so needs the `webgpu` globals installed first. `NodeWorker`'s
