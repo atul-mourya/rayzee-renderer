@@ -8,8 +8,8 @@
 
 ### MVP
 - [ ] Save compiled shaders??
-- [ ] browserless application - https://github.com/dawn-gpu/node-webgpu
-- [ ] engine core to be separated to make a minimal version for headless applications
+- [x] browserless application - https://github.com/dawn-gpu/node-webgpu — 9.2.0: plain Node on Dawn through `rayzee/node`
+- [ ] engine core to be separated to make a minimal version for headless applications — half done in 9.2.0: headless mode builds no overlay, gizmo or render loop; one bundle still carries it all
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
@@ -73,12 +73,13 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 - [ ] CPU-side vitest guards: shader-recompile contract, BVH structural invariants, feature-combo compile smoke
 - [ ] trend dashboard over `bench/baselines/perf.jsonl`
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
+- [ ] `bench:load` — scene loading has no gate. `bench:calibrate` times one model only to check the harness's CPU speed, and `perf.jsonl`'s `loadMs` is the procedural corpus (~18k triangles). Load a local list of real models (textured glTF, Zero-Day for many shapes sharing a `.ply`, one Moana part), skip missing ones (gitignored), in Chrome and Node; discard the first load, record parse / decode / extraction / BLAS / textures / shader compile from `performanceMetrics`; fail on a load error or recorded issue; A/B against a git ref like `bench:ab`, gated per phase. Both of 2026-09-30's load bugs were found by hand: Zero-Day's shared-`.ply` crash (shipped since 9.1.0) and Node's main-thread texture packing (4.5 → 2.1 s once moved to workers)
 
 
 ### General
 
 - [x] introduce OPFS inplace of indexedDB
-- [ ] headless usage to be vsync bound free
+- [x] headless usage to be vsync bound free — 9.2.0: `renderUntilComplete()` paces on the GPU, and lockstep readbacks make the result independent of pacing
 - [ ] deno compile for dedicated destop app
 - [x] Introduce Project based workflow
 - [x] Save rendering state in local storage and load on app start

@@ -1246,7 +1246,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `FRAME` | Fires once per `animate()` tick — hook external instrumentation (stats panels, telemetry) here |
 | `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render |
 | `UPSCALING_START` / `UPSCALING_PROGRESS` / `UPSCALING_END` | AI upscaler runs |
-| `LOADING_UPDATE` / `LOADING_RESET` | Asset loading progress |
+| `LOADING_UPDATE` / `LOADING_RESET` | Asset loading progress. A failed load ends with `failed: true` and the error as `status`; an archive that asks which parts to load ends with `LOADING_RESET` |
 | `STATS_UPDATE` | Performance stats updated |
 | `OBJECT_SELECTED` / `OBJECT_DESELECTED` | Object selection changes |
 | `OBJECT_DOUBLE_CLICKED` | Object double-clicked |

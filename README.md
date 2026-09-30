@@ -118,8 +118,7 @@ The engine renders without a screen — and without a person to notice when some
 import { renderHeadless } from 'rayzee';
 
 const shot = await renderHeadless( {
-	canvas,                            // needed for the WebGPU surface, not for output
-	model: 'https://cdn/scene.glb',
+	model: 'https://cdn/scene.glb',    // no canvas: the engine makes its own
 	width: 1920, height: 1080,
 	samples: 256,
 } );
@@ -137,6 +136,8 @@ Its defaults are the batch renderer's rather than the viewer's. All three are re
 With `strict: false` the same degradations are recorded instead of thrown: read `app.issues`, or subscribe to `EngineEvents.ISSUE`. A non-empty `app.issueErrors` means *do not publish this frame*. Codes (`ISSUE_CODES`) are add-only API surface.
 
 Three more things a caller with no screen tends to need: `settings.getEffective()` returns every setting in force with its provenance (default, host, scene metadata, or mode preset), `app.adapterInfo.isSoftware` flags a software rasterizer rendering correctly and ~100× slower, and `openHeadless()` returns a live app — which you dispose yourself — when you want several frames from one scene.
+
+For a production render — adaptive sampling on, stopping once the image converges — call `await app.renderUntilComplete()` on that app: it reaches the same sample count and the same pixels whatever the frame pacing, and runs the final OIDN pass once. `app.getProvenance()` records what made each image. The same code runs in plain Node on Dawn (the `webgpu` package), with no browser — see [Running in Node](rayzee/README.md#running-in-node).
 
 ## Architecture
 

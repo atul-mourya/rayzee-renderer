@@ -37,7 +37,7 @@ It outputs three Multiple Render Targets (MRT) via write-only StorageTextures:
 
 Key features:
 - Progressive accumulation with temporal blending (in `FinalWriteKernel`).
-- Selectable random sequence generation (PCG / Halton / Sobol / STBN blue noise).
+- Selectable random sequence generation (PCG / Halton / Sobol, the default).
 - High-performance stack-based two-level BVH traversal (TLAS → BLAS), per-mesh visibility free-fetched from the BVH leaf.
 - Physically-based material system with multi-lobe BRDF sampling (diffuse, specular, sheen, clearcoat, transmission) plus iridescence and random-walk subsurface.
 - Environment importance sampling using a marginal + conditional CDF (stored in an R32F texture).
@@ -89,7 +89,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `Fresnel.js` | `fresnelDielectric()`, `dielectricFresnelWeight()`, `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Exact unpolarised Fresnel at every dielectric interface (base layer, clear coat, glass, SSS boundary, glass shadows), as Cycles uses; Schlick for metals and iridescence; IOR↔F0 |
 | `HitFacet.js` | `hitFacet()`, `packHitFacet()`, `unpackHitFacet()` | The hit triangle's facet normal (and the terminator lift), computed in Extend and packed into the hit record's spare lane |
 | `ShadowTerminator.js` | `shadowTerminatorLift()`, `shadowTerminatorOrigin()` | Cycles' Shadow Terminator → Geometry Offset: the smooth-surface lift for light and environment shadow rays |
-| `Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()`, `sampleSTBN2D()`, `pcgHash()` | PCG, Halton, Sobol, STBN blue noise |
+| `Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()`, `pcgHash()` | PCG, Halton, Sobol |
 | `TextureSampling.js` | `sampleAllMaterialTextures()`, `computeUVCache()`, `sampleDisplacementMap()` | UV transforms, material texture arrays |
 | `Displacement.js` | `refineDisplacedIntersection()`, `DisplacementResult` | Ray-marched displacement refinement |
 | `Debugger.js` | `TraceDebugMode()` | Debug visualization modes (reused by `DebugKernel`) |
@@ -138,7 +138,7 @@ Uniforms are owned by `UniformManager` and exposed on the stage; `PathTracer` wi
 1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse`, `cameraViewMatrix`, `cameraProjectionMatrix`; `cameraProjection` (`CAMERA_PROJECTION_IDS`), `panoLonRange`, `panoLatRange`, `panoLevelHorizon`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
 2. **Frame & Control:** `frame`, `maxBounces`, `transmissiveBounces`, `maxSubsurfaceSteps`, `renderMode`.
 3. **Accumulation:** `enableAccumulation`, `accumulationAlpha`, `cameraIsMoving`, `hasPreviousAccumulated` (+ prev-frame MRT texture nodes).
-4. **Sampling:** `samplingTechnique` (0=PCG, 1=Halton, 2=Sobol, 3=STBN), STBN texture nodes.
+4. **Sampling:** `samplingTechnique` (0=PCG, 1=Halton, 2=Sobol, the default).
 5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum`, `envResolution`, `envCompensationDelta`, the physical sky's sun (`hasSun`, `sunDirection`, `sunRadiance`, `sunParams` = cos half-angle, solid angle, 1/sin², horizon dip), `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
 6. **Lighting:** `numDirectionalLights`, `numPointLights`, `numSpotLights`, `numAreaLights` + the matching light storage buffer nodes; `globalIlluminationIntensity`.
 7. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`.
@@ -266,12 +266,13 @@ Selected when `lightBVHNodeCount > 0`. The composite PDF accounts for tree-trave
 `samplingTechnique` selects the generator:
 - `0` — PCG (general-purpose)
 - `1` — Halton (Owen-scrambled)
-- `2` — Sobol (Owen-scrambled direction vectors)
-- `3` — STBN blue noise (spatiotemporal, atlas-tiled)
+- `2` — Sobol (Owen-scrambled direction vectors), the default
+
+The STBN blue-noise atlases were removed in 9.2.0: only a stratified branch for more than one camera
+ray per pixel read them, and no caller asks for more than one.
 
 ### Strategies
-- Stratified sampling jitters the primary ray within the pixel for anti-aliasing (`getStratifiedSample`).
-- STBN: `frame % 64` selects the temporal slice; toroidal tile wrap for spatial decorrelation (`sampleSTBN2D`).
+- The primary ray's jitter within the pixel is the sequence's own 2D sample (`getStratifiedSample`).
 - Fast RNG (`RandomValueFast`) for non-critical jitter (e.g. DOF disk).
 
 ### Seeding
@@ -453,7 +454,6 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 - **DOF**: Depth of Field.
 - **Firefly**: bright outlier sample from a low PDF / high radiance.
 - **SoA**: Structure of Arrays (the packed ray/hit buffer layout).
-- **STBN**: Spatiotemporal Blue Noise.
 - **TLAS / BLAS**: top-/bottom-level acceleration structure.
 - **SSS**: subsurface scattering (random walk).
 - **TSL**: Three Shading Language — JS-based shaders compiled to WGSL.

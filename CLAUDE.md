@@ -760,6 +760,12 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 3. **SceneProcessor** builds two-level BVH (TLAS/BLAS): per-mesh BLAS via `BVHBuilder` (parallel for large meshes via `Promise.all`), then `TLASBuilder` builds SAH tree over mesh AABBs, then assembles combined buffer `[TLAS | BLAS_0 | BLAS_1 | ...]`. A mesh past `SPLIT_MESH_TRIANGLES` (2M) is built as spatial pieces (`Processor/SplitBLAS.js`): its records are sorted in place into pieces of ≤ 512k by halving at the centroid median of the longest axis, each piece is built by a pool worker, and the halving becomes the nodes that join them. It holds the mesh once, in the store — one build across every core held a second copy plus 44 B a triangle of scratch. Images bit-identical, frame time unchanged (22M ocean + mountain, three views, within 3 %). ⚠️ The joined BLAS travels as parts (`nodeParts`), never one array: a 610 MB request failed an 80M build with memory to spare. ⚠️ Pivots are sampled with a fixed seed: first/middle/last took a thousand passes on a terrain grid's repeating rows.
 4. **TextureCreator** generates GPU textures for materials (runs in parallel with BVH build)
 
+A failed load reports itself through `LOADING_UPDATE { failed: true, status }` from
+`_loadWithSceneRebuild` (`ARCHIVE_NEEDS_ELEMENT` → `LOADING_RESET`, `LOAD_IN_PROGRESS` → nothing, the
+other load owns the status). ⚠️ Only the scene build used to: a failure in the parse left the app's
+overlay spinning on its last step with the File menu blocked. Drag-and-drop still resets the overlay in
+its own `finally`, so a failed drop shows only the console.
+
 ### Loading part of a scene archive
 A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
 subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.

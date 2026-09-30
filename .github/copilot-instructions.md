@@ -155,6 +155,9 @@ Always use `getApp()` from appProxy to access the app instance. Never use store 
 ### Storage (OPFS) (`rayzee/src/Storage/`)
 `app.storage` is a `StorageManager` over the origin private file system, or `null` where there is none — every caller must work without it. It holds the download, archive, scene (graph + BLAS) and environment-table caches, the app's sessions, projects and render jobs, and the experimental memory spill (`memorySpill: true`), which builds a large static scene through disk. All writes go through sync access handles in `StorageWorker`. ⚠️ Never post a `SharedArrayBuffer` to the storage worker: it stays alive until that worker next collects garbage, which it barely does — `transferable()` copies shared data into a transferred buffer instead.
 
+### Headless and Node (`Headless.js`, `Platform.js`, `rayzee/src/node/`)
+No canvas means headless: `new PathTracerApp( null )` or `openHeadless()` renders into a plain texture, runs no loop, and builds no overlay or gizmo. `renderFrames( n )` is exact in deterministic mode; `renderUntilComplete()` runs the production path (adaptive on) with lockstep readbacks, so samples and pixels do not depend on pacing, then one final denoise. `renderToBuffer( { source: 'display' } )` reads the denoised image and names what it read; `getProvenance()` records what made it. In plain Node on Dawn: install the `webgpu` globals, then `configurePlatform( nodePlatform( { decodeImage } ) )` from `rayzee/node`. ⚠️ dawn.node segfaults on uploads from a `SharedArrayBuffer`, which `nodePlatform()` copies out. Start workers through `createWorker()` and read cores through `hardwareThreads()`, never `Worker` or `navigator` directly.
+
 ## Development Commands
 
 ### Essential Development Workflow

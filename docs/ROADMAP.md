@@ -138,7 +138,7 @@
 - [ ] **Intelligent Sampling**
   - [ ] Adaptive sampling 2.0 with ML guidance
   - [x] Variance-guided sample distribution
-  - [x] Blue noise sampling sequences
+  - [x] Owen-scrambled Sobol and Halton sequences (the STBN blue-noise atlases were removed in 9.2.0: no live path read them)
   - [x] Emissive triangle sampling with total power integration
 
 - [ ] **Convergence Acceleration**
@@ -224,7 +224,8 @@
   - [x] Color management — OpenColorIO pipeline: Blender 5.1 config by default, ACES and studio configs, working spaces, looks, displays, per-texture colour spaces, EXR export in a delivery space
   - [x] Multi-pass rendering / AOVs (MRT: color, normalDepth, albedo)
   - [x] GPU device-loss detection & recovery (no rendering into a dead device)
-  - [ ] Batch rendering automation
+  - [x] Batch rendering automation — `renderUntilComplete()` with lockstep readbacks, one awaited final denoise, `getProvenance()`, strict mode
+  - [x] Rendering without a browser — plain Node on Dawn through `rayzee/node` (9.2.0)
   - [ ] Integration with render farms
 
 ---
