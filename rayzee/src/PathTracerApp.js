@@ -32,6 +32,7 @@ import { nameFromUrl } from './Storage/DownloadCache.js';
 import { fileIdentity, identityKey } from './Storage/identity.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
+import { PackedToneMapper } from './Processor/ToneMapGPU.js';
 import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
 import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
@@ -786,6 +787,8 @@ export class PathTracerApp extends EventDispatcher {
 		this.color = null;
 		this._textureReadback?.dispose();
 		this._textureReadback = null;
+		this._readbackToneMapper?.dispose();
+		this._readbackToneMapper = null;
 
 		this.interactionManager?.deselect?.();
 		this.transformManager?.detach?.();
@@ -3016,6 +3019,24 @@ export class PathTracerApp extends EventDispatcher {
 		// The pool over-allocates to the reserve, so the texture is larger than the frame.
 		const { width, height } = stage;
 
+		if ( colorSpace === 'srgb' ) {
+
+			const shown = source === 'display' ? this._displaySource( target ) : null;
+			const tone = {
+				exposure: this.renderer.toneMappingExposure,
+				toneMapping: this.renderer.toneMapping,
+				saturation: this.settings.get( 'saturation' ) ?? 1,
+				preserveAlpha,
+			};
+
+			const data = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone )
+				?? toneMapToRGBA8( shown
+					? await this._readTexture( shown.texture, width, height )
+					: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
+			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation' };
+
+		}
+
 		const { data: linear, source: read } = source === 'display'
 			? await this._readDisplaySource( target, width, height )
 			: { data: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), source: 'accumulation' };
@@ -3031,25 +3052,42 @@ export class PathTracerApp extends EventDispatcher {
 		// A named space is a delivery buffer, not a picture: scene-referred float in whatever the
 		// config calls that space. Saving an EXR for a compositor and grading through an sRGB view
 		// on screen are different questions, and this is the one that answers the first.
-		if ( named ) {
+		const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
+		return { data: rgba, width, height, colorSpace: got, source: read };
 
-			const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
-			return { data: rgba, width, height, colorSpace: got, source: read };
+	}
+
+	/**
+	 * Display bytes tone-mapped on the card, or null to do it on the CPU. On the CPU it took 1.4 s at
+	 * 4096×2160 on an M-series Mac and 10 s on a cloud L4's host; the GPU pass matches it within one
+	 * level (`tests/gpu/toneMapParity.test.js`).
+	 */
+	async _toneMapOnGPU( shown, accumulation, width, height, tone ) {
+
+		const backend = this.renderer?.backend;
+		if ( ! backend?.device ) return null;
+
+		try {
+
+			const texture = shown ? this._readbackPass().draw( shown, width, height ).texture : accumulation.textures[ 0 ];
+			const gpuTexture = backend.get( texture ).texture;
+			if ( ! gpuTexture ) return null;
+
+			this._readbackToneMapper ??= new PackedToneMapper( backend.device, 'rayzee:readback-tonemap', { input: 'texture' } );
+			this._readbackToneMapper.ensureSize( width, height );
+			return await this._readbackToneMapper.toRGBA8( gpuTexture, tone );
+
+		} catch ( error ) {
+
+			log.warn( `renderToBuffer: tone mapping on the GPU failed, doing it on the CPU: ${error?.message ?? error}` );
+			return null;
+
+		} finally {
+
+			this._readbackToneMapper?.release();
+			if ( shown ) this._textureReadback?.release();
 
 		}
-
-		return {
-			data: toneMapToRGBA8( linear, {
-				exposure: this.renderer.toneMappingExposure,
-				toneMapping: this.renderer.toneMapping,
-				saturation: this.settings.get( 'saturation' ) ?? 1,
-				preserveAlpha,
-			} ),
-			width,
-			height,
-			colorSpace,
-			source: read,
-		};
 
 	}
 
@@ -3655,32 +3693,56 @@ export class PathTracerApp extends EventDispatcher {
 	}
 
 	/**
+	 * What a `'display'` read shows: the texture a denoiser published, or null for the raw
+	 * accumulation — recorded as a fallback when a denoiser is in use.
+	 * @private
+	 */
+	_displaySource( accumulation ) {
+
+		const context = this.pipeline?.context;
+		const found = context && this.stages.compositor?.resolveLightSource( context );
+		if ( found && found.key !== 'pathtracer:color' && found.texture !== accumulation.texture ) {
+
+			return { texture: found.texture, source: found.key.split( ':' )[ 0 ] };
+
+		}
+
+		if ( this._denoiserInUse() ) {
+
+			this._issues.record(
+				ISSUE_CODES.OUTPUT_SOURCE_FALLBACK,
+				'renderToBuffer: \'display\' was asked for, but no denoiser has published a picture — returned the raw accumulation',
+				{ requested: 'display', read: 'accumulation' }
+			);
+
+		}
+
+		return null;
+
+	}
+
+	/**
 	 * What the Compositor is drawing from, as linear float. Falls back to the accumulation when no
 	 * denoiser has published anything, which is also what the viewport shows then.
 	 * @private
 	 */
 	async _readDisplaySource( accumulation, width, height ) {
 
-		const context = this.pipeline?.context;
-		const found = context && this.stages.compositor?.resolveLightSource( context );
-		if ( ! found || found.key === 'pathtracer:color' || found.texture === accumulation.texture ) {
+		const shown = this._displaySource( accumulation );
+		if ( ! shown ) return { data: await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 ), source: 'accumulation' };
+		return { data: await this._readTexture( shown.texture, width, height ), source: shown.source };
 
-			if ( this._denoiserInUse() ) {
+	}
 
-				this._issues.record(
-					ISSUE_CODES.OUTPUT_SOURCE_FALLBACK,
-					'renderToBuffer: \'display\' was asked for, but no denoiser has published a picture — returned the raw accumulation',
-					{ requested: 'display', read: 'accumulation' }
-				);
+	_readbackPass() {
 
-			}
+		return ( this._textureReadback ??= new TextureReadback( this.renderer ) );
 
-			return { data: await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 ), source: 'accumulation' };
+	}
 
-		}
+	_readTexture( texture, width, height ) {
 
-		this._textureReadback ??= new TextureReadback( this.renderer );
-		return { data: await this._textureReadback.read( found.texture, width, height ), source: found.key.split( ':' )[ 0 ] };
+		return this._readbackPass().read( texture, width, height );
 
 	}
 

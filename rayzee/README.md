@@ -1043,8 +1043,9 @@ are written only while it is on), runs **one** final denoise with `app.runFinalD
 it back with `renderToBuffer( { source: 'display' } )`. Driving it yourself is the same three calls.
 `renderToBuffer` reports the picture it read as `source`, and records `output.source_fallback` when
 `'display'` was asked for, a denoiser is in use, and nothing had published — so a strict host cannot
-ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the CPU and match the canvas to
-within one level (it rounds half a level up); `'linear'` is exact.
+ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the GPU — 9 ms at 4096×2160,
+where the CPU pass it replaced took 1.4 s on an M-series Mac and 10 s on a cloud host — and match the
+canvas to within one level (it rounds half a level up); `'linear'` is exact.
 
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.
@@ -1114,7 +1115,7 @@ app.dispose();
   `Worker`, so a model using either also needs `globalThis.Worker = NodeWorker`.
 
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
-≤ 0.0036, no pixel over 0.02 — the CPU tone map accounts for most of it), and a textured glTF with an
+≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an
 HDR, a PNG sky or a gradient matches Chrome block for block within 0.05 of a level. Not available
 without a browser: on-disk storage (OPFS), gobo libraries (they draw on a 2D canvas), and the AI
 upscaler.

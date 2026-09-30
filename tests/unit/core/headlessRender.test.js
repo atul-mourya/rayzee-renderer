@@ -20,6 +20,10 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], targ
 		},
 		renderToBuffer: PathTracerApp.prototype.renderToBuffer,
 		_readDisplaySource: PathTracerApp.prototype._readDisplaySource,
+		_displaySource: PathTracerApp.prototype._displaySource,
+		_readbackPass: PathTracerApp.prototype._readbackPass,
+		_readTexture: PathTracerApp.prototype._readTexture,
+		_toneMapOnGPU: PathTracerApp.prototype._toneMapOnGPU,
 		_denoiserInUse: PathTracerApp.prototype._denoiserInUse,
 		_issues: new IssueLog(),
 	};
@@ -58,6 +62,19 @@ describe( 'renderToBuffer', () => {
 		expect( out.data ).toBeInstanceOf( Uint8ClampedArray );
 		expect( out.data[ 0 ] ).toBeGreaterThan( 180 ); // linear 0.5 through the sRGB curve
 		expect( out.data[ 3 ] ).toBe( 255 );
+
+	} );
+
+	it( 'takes the bytes tone-mapped on the GPU without reading the float image back', async () => {
+
+		const app = makeApp();
+		const bytes = new Uint8ClampedArray( 8 ).fill( 7 );
+		app._toneMapOnGPU = vi.fn( async () => bytes );
+
+		const out = await app.renderToBuffer( { preserveAlpha: true } );
+		expect( out.data ).toBe( bytes );
+		expect( app._toneMapOnGPU.mock.calls[ 0 ][ 4 ] ).toMatchObject( { toneMapping: NoToneMapping, preserveAlpha: true } );
+		expect( app.renderer.readRenderTargetPixelsAsync ).not.toHaveBeenCalled();
 
 	} );
 

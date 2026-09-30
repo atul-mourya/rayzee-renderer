@@ -396,7 +396,7 @@ pacing a different image. With it on: 24, 32 and 20 spp, identical across all fo
 through the same `sceneSession.js` as the browser harness, so they cannot mean different things in
 the two runtimes. Each render is read back with `renderToBuffer( { colorSpace: 'srgb' } )` and
 compared with the Chrome golden: RMSE ≤ 0.004 and no more than 1 % of pixels over 0.02. It cannot be
-bit-exact — two Dawn builds compile the WGSL, and the CPU tone map is within a level of the canvas the
+bit-exact — two Dawn builds compile the WGSL, and the readback's tone map is within a level of the canvas the
 goldens came from; measured, every scene reads RMSE 0.0019–0.0036.
 
 Mutation-tested: flipping the CPU texture packer's rows fails textured-normalmap at RMSE 0.198 and

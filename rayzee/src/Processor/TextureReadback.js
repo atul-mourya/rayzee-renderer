@@ -46,6 +46,25 @@ export class TextureReadback {
 	 */
 	async read( source, width, height ) {
 
+		try {
+
+			return await this.renderer.readRenderTargetPixelsAsync( this.draw( source, width, height ), 0, 0, width, height );
+
+		} finally {
+
+			this.release();
+
+		}
+
+	}
+
+	/**
+	 * Draws `source` into this pass's float target, for a caller that reads it on the GPU. Pair with
+	 * `release()`.
+	 * @returns {import('three').RenderTarget}
+	 */
+	draw( source, width, height ) {
+
 		this._ensureTarget( width, height );
 
 		if ( this._source !== source ) {
@@ -63,19 +82,16 @@ export class TextureReadback {
 		this.renderer.setRenderTarget( this.target );
 		this.quad.render( this.renderer );
 		this.renderer.setRenderTarget( previous );
+		return this.target;
 
-		try {
+	}
 
-			return await this.renderer.readRenderTargetPixelsAsync( this.target, 0, 0, width, height );
+	// A float target the size of the frame — 132 MB at 4K — for something done once per saved file.
+	// Not worth keeping between saves.
+	release() {
 
-		} finally {
-
-			// A float target the size of the frame — 132 MB at 4K — for something done once per
-			// saved file. Not worth keeping between saves.
-			this.target.dispose();
-			this.target = null;
-
-		}
+		this.target?.dispose();
+		this.target = null;
 
 	}
 

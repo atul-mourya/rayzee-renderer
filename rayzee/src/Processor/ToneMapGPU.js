@@ -39,7 +39,24 @@ function currentShader() {
  */
 export const TONE_MAP_WGSL = currentShader().wgsl;
 
-const packedWGSL = transformWGSL => /* wgsl */ `
+// Where the linear colour comes from: a packed rgba16float buffer, or a float texture read by pixel.
+const SOURCES = {
+	packed: /* wgsl */ `
+@group(0) @binding(0) var<storage, read> src: array<u32>;
+
+fn rayzee_source( x: u32, y: u32 ) -> vec4<f32> {
+	let a = ( y * params.width + x ) * 2u;
+	return vec4<f32>( unpack2x16float( src[ a ] ), unpack2x16float( src[ a + 1u ] ) );
+}`,
+	texture: /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+
+fn rayzee_source( x: u32, y: u32 ) -> vec4<f32> {
+	return textureLoad( src, vec2<u32>( x, y ), 0 );
+}`,
+};
+
+const toneMapPassWGSL = ( transformWGSL, input ) => /* wgsl */ `
 struct Params {
 	width: u32,
 	height: u32,
@@ -47,11 +64,12 @@ struct Params {
 	flipY: u32,
 	exposure: f32,
 	saturation: f32,
+	alpha: u32,
 };
 
-@group(0) @binding(0) var<storage, read> src: array<u32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<u32>;
 @group(0) @binding(2) var<uniform> params: Params;
+${SOURCES[ input ]}
 
 ${transformWGSL}
 
@@ -62,30 +80,31 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	var srcY = gid.y;
 	if ( params.flipY == 1u ) { srcY = params.height - 1u - gid.y; }
 
-	let a = ( srcY * params.width + gid.x ) * 2u;
-	let rg = unpack2x16float( src[ a ] );
-	let ba = unpack2x16float( src[ a + 1u ] );
-
-	let mapped = rayzee_tone_map( vec3<f32>( rg.x, rg.y, ba.x ), params.mode, params.exposure, params.saturation );
+	let linear = rayzee_source( gid.x, srcY );
+	let mapped = rayzee_tone_map( linear.rgb, params.mode, params.exposure, params.saturation );
 	let b8 = rayzee_to_u8( rayzee_encode( mapped, params.mode ) );
-	dst[ gid.y * params.width + gid.x ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( 255u << 24u );
+	var a8 = 255u;
+	if ( params.alpha == 1u ) { a8 = rayzee_to_u8( vec3<f32>( linear.a ) ).x; }
+	dst[ gid.y * params.width + gid.x ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( a8 << 24u );
 }
 `;
 
-/** Uniform blocks round up to 16 bytes; the struct above is 24. */
+/** Uniform blocks round up to 16 bytes; the struct above is 28. */
 const PARAMS_BYTES = 32;
 
 /**
- * Tone-maps a tightly packed rgba16float buffer (two `u32` per pixel) into RGBA bytes.
+ * Tone-maps a tightly packed rgba16float buffer (two `u32` per pixel), or with `input: 'texture'` a
+ * float texture read by pixel, into RGBA bytes.
  *
  * Bound to one device and one image size; `ensureSize()` reallocates when the size changes.
  */
 export class PackedToneMapper {
 
-	constructor( device, label = 'rayzee:tonemap' ) {
+	constructor( device, label = 'rayzee:tonemap', { input = 'packed' } = {} ) {
 
 		this.device = device;
 		this.label = label;
+		this.input = input;
 		this.width = 0;
 		this.height = 0;
 		this._pipeline = null;
@@ -120,7 +139,7 @@ export class PackedToneMapper {
 			label: this.label,
 			layout: 'auto',
 			compute: {
-				module: this.device.createShaderModule( { label: this.label, code: packedWGSL( wgsl ) } ),
+				module: this.device.createShaderModule( { label: this.label, code: toneMapPassWGSL( wgsl, this.input ) } ),
 				entryPoint: 'main',
 			},
 		} );
@@ -206,15 +225,17 @@ export class PackedToneMapper {
 	}
 
 	/**
-	 * @param {GPUBuffer} src packed rgba16float, `width * height * 8` bytes, STORAGE-capable
+	 * @param {GPUBuffer|GPUTexture} src packed rgba16float, `width * height * 8` bytes, STORAGE-capable;
+	 *   or with `input: 'texture'` a float texture at least `width × height`
 	 * @param {object} tone
 	 * @param {number} tone.exposure raw `renderer.toneMappingExposure`
 	 * @param {number} tone.toneMapping Three.js ToneMapping constant
 	 * @param {number} [tone.saturation=1]
 	 * @param {boolean} [tone.flipY=false]
+	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
 	 * @returns {Promise<Uint8ClampedArray>} RGBA bytes, `width * height * 4`
 	 */
-	async toRGBA8( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false } = {} ) {
+	async toRGBA8( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
 		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
@@ -232,6 +253,7 @@ export class PackedToneMapper {
 		this._paramU32[ 3 ] = flipY ? 1 : 0;
 		this._paramF32[ 4 ] = exposure;
 		this._paramF32[ 5 ] = saturation;
+		this._paramU32[ 6 ] = preserveAlpha ? 1 : 0;
 		this.device.queue.writeBuffer( this._params, 0, this._paramData );
 
 		const tableEntries = [ ...this._tables.entries() ]
@@ -241,7 +263,7 @@ export class PackedToneMapper {
 			layout: this._pipeline.getBindGroupLayout( 0 ),
 			entries: [
 				...tableEntries,
-				{ binding: 0, resource: { buffer: src, size: width * height * 8 } },
+				{ binding: 0, resource: this.input === 'texture' ? src.createView() : { buffer: src, size: width * height * 8 } },
 				{ binding: 1, resource: { buffer: this._storage } },
 				{ binding: 2, resource: { buffer: this._params } },
 			],
@@ -260,6 +282,14 @@ export class PackedToneMapper {
 		const bytes = new Uint8ClampedArray( this._map.getMappedRange().slice( 0 ) );
 		this._map.unmap();
 		return bytes;
+
+	}
+
+	/** Frees the size-dependent buffers and keeps the pipeline, for a mapper used now and then. */
+	release() {
+
+		this._releaseBuffers();
+		this.width = this.height = 0;
 
 	}
 

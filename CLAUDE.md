@@ -296,7 +296,9 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
 - **`await app.renderToBuffer( { colorSpace, preserveAlpha, source } )`** — pixels without the canvas, so it
   works headless, works while the page is hidden, and cannot pick up a helper overlay. `'linear'`
   is the raw accumulation, `'srgb'` applies exposure/saturation/tone curve in the output pass's
-  order (CPU, within one level of the canvas). `source: 'accumulation'` (default) reads
+  order, within one level of the canvas — on the GPU (`PackedToneMapper`, `input: 'texture'`): 9 ms
+  at 4096×2160 where the CPU's `toneMapToRGBA8`, now the fallback, took 1.4 s here and 10 s on a cloud
+  L4's host. The two differ by one level on ~0.002 % of bytes. `source: 'accumulation'` (default) reads
   `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
   resolves (denoised, no bloom). The result's `source` names what was read, and a `'display'` read
   that found nothing denoised while a denoiser is in use records `output.source_fallback`.
@@ -751,7 +753,8 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 - EdgeAware filtering disabled when ASVGF enabled
 - Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
 - ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
-  bug-compatible with it, rounding included. `tests/gpu/toneMapParity.test.js` checks the two on
+  bug-compatible with it, rounding included. It serves the neural passes (packed half input) and
+  `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
   Dawn in Node, and `bench:upscale` again in Chrome before anything else.
 
 ### Asset Processing Workflow

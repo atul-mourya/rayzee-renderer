@@ -129,3 +129,64 @@ describeGPU( 'GPU tone map against ToneMapCPU', () => {
 	} );
 
 } );
+
+// renderToBuffer's readback: full float input from a texture, alpha kept.
+describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
+
+	let renderer, mapper, texture;
+	const linear = new Float32Array( PIXELS.length * 4 );
+
+	beforeAll( async () => {
+
+		renderer = await createRenderer();
+		const device = renderer.backend.device;
+
+		PIXELS.forEach( ( rgb, i ) => {
+
+			linear.set( rgb, i * 4 );
+			linear[ i * 4 + 3 ] = [ 0, 0.25, 0.5, 0.998, 1 ][ i % 5 ];
+
+		} );
+
+		texture = device.createTexture( { size: [ PIXELS.length, 1 ], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST } );
+		device.queue.writeTexture( { texture }, linear, { bytesPerRow: PIXELS.length * 16 }, [ PIXELS.length, 1 ] );
+
+		mapper = new PackedToneMapper( device, 'test:texture-tonemap', { input: 'texture' } );
+		mapper.ensureSize( PIXELS.length, 1 );
+
+	} );
+
+	afterAll( () => {
+
+		mapper?.dispose();
+		texture?.destroy();
+		renderer?.dispose();
+
+	} );
+
+	it.each( CURVES )( '%s, alpha kept', async ( name, toneMapping ) => {
+
+		for ( const [ exposure, saturation ] of GRADES ) {
+
+			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const gpu = await mapper.toRGBA8( texture, tone );
+			const cpu = toneMapToRGBA8( linear, tone );
+
+			let worst = 0, differing = 0;
+			for ( let i = 0; i < gpu.length; i ++ ) {
+
+				const d = Math.abs( gpu[ i ] - cpu[ i ] );
+				if ( d ) differing ++;
+				worst = Math.max( worst, d );
+
+			}
+
+			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
+			expect( differing / gpu.length ).toBeLessThanOrEqual( MAX_DIFFERING );
+			for ( let i = 3; i < gpu.length; i += 4 ) expect( gpu[ i ] ).toBe( cpu[ i ] );
+
+		}
+
+	} );
+
+} );
