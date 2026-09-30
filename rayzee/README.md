@@ -1149,7 +1149,7 @@ list. Both need `timestamp-query`, and `getDenoiseProfile()` returns `null` when
 
 `engine.storage` is a `StorageManager` over the browser's origin private file system, or `null` where
 there is none (a private window, Node) — everything works without it, only slower. The engine keeps
-its caches there: downloads (models, skies, OIDN weights — revalidated with `HEAD` at most daily, and served from the cache meanwhile),
+its caches there: downloads (models, skies, OIDN weights — revalidated at most daily with a 1-byte `Range` request, and served from the cache meanwhile),
 unpacked `.tar.gz` archives and archive indexes, built scenes (reopened without rebuilding BVHs when
 the first build took ≥ 10 s), and environment sampling tables. Caches share a budget of 30 % of the
 quota and are evicted least-recently-used; `engine.storage.usage()` reports each area.

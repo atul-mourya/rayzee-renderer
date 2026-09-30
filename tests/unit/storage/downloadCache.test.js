@@ -20,12 +20,21 @@ describe( 'DownloadCache', () => {
 		const root = await fake.root.getDirectoryHandle( 'rayzee', { create: true } );
 		( { storage } = await openStorage( { namespace: 'rayzee', root, transport: 'inline' } ) );
 
-		server = { body: new Uint8Array( [ 1, 2, 3, 4, 5 ] ), lastModified: 'Mon, 01 Jan 2024 00:00:00 GMT' };
+		// As the engine's asset host answers: HEAD refused (no CORS header), Content-Range not exposed.
+		server = { body: new Uint8Array( [ 1, 2, 3, 4, 5 ] ), lastModified: 'Mon, 01 Jan 2024 00:00:00 GMT', exposeRange: false, refuse: false };
 		fetchMock = vi.fn( async ( url, options = {} ) => {
 
 			const headers = { 'content-length': String( server.body.length ), 'last-modified': server.lastModified, 'content-type': 'model/gltf-binary' };
-			if ( options.method === 'HEAD' ) return response( null, { headers } );
+			if ( options.method === 'HEAD' ) throw new TypeError( 'Failed to fetch' );
 			if ( url.includes( '404' ) ) return response( null, { status: 404 } );
+			if ( isProbe( options ) ) {
+
+				if ( server.refuse ) throw new TypeError( 'Failed to fetch' );
+				const range = { 'last-modified': server.lastModified, 'content-length': '1', ...( server.exposeRange && { 'content-range': `bytes 0-0/${server.body.length}` } ) };
+				return new Response( server.body.slice( 0, 1 ), { status: 206, headers: range } );
+
+			}
+
 			return response( server.body, { headers } );
 
 		} );
@@ -41,7 +50,24 @@ describe( 'DownloadCache', () => {
 
 	} );
 
-	const gets = () => fetchMock.mock.calls.filter( ( [ , o ] ) => ( o?.method ?? 'GET' ) === 'GET' ).length;
+	const isProbe = ( options ) => new Headers( options?.headers ).has( 'range' );
+	const gets = () => fetchMock.mock.calls.filter( ( [ , o ] ) => ( o?.method ?? 'GET' ) === 'GET' && ! isProbe( o ) ).length;
+	const probes = () => fetchMock.mock.calls.filter( ( [ , o ] ) => isProbe( o ) ).length;
+
+	const stamp = async ( url ) => {
+
+		const entry = await storage.area( 'downloads' ).open( url );
+		const at = entry?.extra.checkedAt;
+		entry?.release();
+		return at;
+
+	};
+
+	const settle = async ( until ) => {
+
+		for ( let i = 0; i < 40 && ! await until(); i ++ ) await new Promise( ( r ) => setTimeout( r, 25 ) );
+
+	};
 
 	it( 'downloads once, then serves the stored copy', async () => {
 
@@ -110,6 +136,53 @@ describe( 'DownloadCache', () => {
 		}
 
 		expect( later ).toBeGreaterThan( checked );
+		expect( gets() ).toBe( 1 );
+
+	} );
+
+	it( 'checks with one byte, never HEAD, and stamps a refused check so it is not asked again on every load', async () => {
+
+		const cache = new DownloadCache( storage );
+		( await cache.fetch( 'https://cdn/a.glb' ) ).release();
+		const checked = await stamp( 'https://cdn/a.glb' );
+
+		server.refuse = true;
+		await new Promise( ( r ) => setTimeout( r, 5 ) );
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		await settle( async () => ( await stamp( 'https://cdn/a.glb' ) ) > checked );
+
+		expect( await stamp( 'https://cdn/a.glb' ) ).toBeGreaterThan( checked );
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 60_000 } ) ).release();
+		expect( probes() ).toBe( 1 );
+		expect( fetchMock.mock.calls.some( ( [ , o ] ) => o?.method === 'HEAD' ) ).toBe( false );
+
+	} );
+
+	it( 'reads the size from Content-Range when the server exposes it', async () => {
+
+		const cache = new DownloadCache( storage );
+		( await cache.fetch( 'https://cdn/a.glb' ) ).release();
+
+		server.body = new Uint8Array( [ 7, 7, 7 ] );
+		server.exposeRange = true;
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		await settle( async () => gets() === 2 );
+
+		expect( gets() ).toBe( 2 );
+
+	} );
+
+	it( 'goes by Last-Modified alone when the size is not readable', async () => {
+
+		const cache = new DownloadCache( storage );
+		( await cache.fetch( 'https://cdn/a.glb' ) ).release();
+		const checked = await stamp( 'https://cdn/a.glb' );
+
+		server.body = new Uint8Array( [ 7, 7, 7 ] );
+		await new Promise( ( r ) => setTimeout( r, 5 ) );
+		( await cache.fetch( 'https://cdn/a.glb', { maxAgeMs: 0 } ) ).release();
+		await settle( async () => ( await stamp( 'https://cdn/a.glb' ) ) > checked );
+
 		expect( gets() ).toBe( 1 );
 
 	} );

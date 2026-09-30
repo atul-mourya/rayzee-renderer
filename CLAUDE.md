@@ -821,8 +821,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 `null` when the browser has none (private windows, Node without the fake) — every caller must
 work without it. `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
 turns it off or supplies a host manager; `openHeadless` defaults to off.
-- **Areas.** Engine: `downloads` (URL cache, HEAD-revalidated — the CDN exposes Last-Modified /
-  Content-Length but not ETag), `archives`, `scenes` (graph + BLAS cache), `cdf`, and `spill`
+- **Areas.** Engine: `downloads` (URL cache, revalidated at most daily with a 1-byte `Range: bytes=0-0`
+  GET, compared on Last-Modified and, where Content-Range is readable, the size; a failed check is
+  stamped too. ⚠️ Not HEAD: the asset host's CORS rule allows GET only, so every HEAD failed CORS,
+  and unstamped it retried — and logged the error — on every page load), `archives`, `scenes` (graph + BLAS cache), `cdf`, and `spill`
   (kind `scratch`). App: `renders`, `sessions`, `projects`, `jobs` (kind `user`). `cache` areas
   share a budget (30 % of quota, ≤ 100 GB) and are evicted least-recently-used, never while
   locked or pinned; `user` areas are never evicted; `scratch` is outside the budget and cleared at

@@ -191,15 +191,37 @@ export class DownloadCache {
 		if ( this._revalidating.has( key ) ) return;
 		this._revalidating.add( key );
 
+		let changed = false;
+
 		try {
 
-			const head = await fetch( url, { ...fetchOptions, method: 'HEAD' } );
-			if ( ! head.ok ) return;
+			// One byte, not HEAD: a CORS rule that allows GET — the engine's own asset host — refuses
+			// HEAD, and a single-range Range header needs no preflight.
+			const headers = new Headers( fetchOptions?.headers );
+			headers.set( 'Range', 'bytes=0-0' );
+			const probe = await fetch( url, { ...fetchOptions, headers } );
+			probe.body?.cancel().catch( () => {} );
 
-			const lastModified = header( head, 'last-modified' );
-			const length = Number( header( head, 'content-length' ) ) || null;
-			const changed = ( lastModified && extra.lastModified && lastModified !== extra.lastModified )
-				|| ( length && extra.contentLength && length !== extra.contentLength );
+			if ( probe.ok ) {
+
+				const lastModified = header( probe, 'last-modified' );
+				// A 206 carries the size in Content-Range, unreadable cross-origin unless exposed; a server
+				// that ignores Range answers 200 with the whole length.
+				const length = probe.status === 206
+					? Number( header( probe, 'content-range' )?.match( /\/(\d+)$/ )?.[ 1 ] ) || null
+					: Number( header( probe, 'content-length' ) ) || null;
+				changed = !! ( ( lastModified && extra.lastModified && lastModified !== extra.lastModified )
+					|| ( length && extra.contentLength && length !== extra.contentLength ) );
+
+			}
+
+		} catch {
+
+			// Offline, or the server refuses the probe: keep serving the stored copy.
+
+		}
+
+		try {
 
 			if ( changed ) {
 
@@ -208,13 +230,14 @@ export class DownloadCache {
 
 			} else {
 
+				// Stamped when the check failed too, or a refusing server is asked again on every load.
 				await this._area.patchMeta( key, { extra: { ...extra, checkedAt: Date.now() } } );
 
 			}
 
 		} catch {
 
-			// Offline, or the server refuses HEAD: keep serving the stored copy.
+			// The stored copy stays.
 
 		} finally {
 
