@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { NodeWorker } from '@/core/node/NodeWorker.js';
 
 const moduleURL = ( code ) => 'data:text/javascript;charset=utf-8,' + encodeURIComponent( code );
@@ -79,6 +80,29 @@ describe( 'NodeWorker', () => {
 		const failed = new Promise( ( resolve ) => worker.addEventListener( 'error', resolve ) );
 		worker.postMessage( null );
 		expect( ( await failed ).message ).toMatch( /boom/ );
+
+	} );
+
+	it( 'works in a host started with --input-type=module, whose threads inherit the flag', () => {
+
+		const code = `
+			const { NodeWorker } = await import( ${JSON.stringify( new URL( '../../../rayzee/src/node/NodeWorker.js', import.meta.url ).href )} );
+			const url = ( code ) => 'data:text/javascript;charset=utf-8,' + encodeURIComponent( code );
+			const ask = ( worker, value ) => new Promise( ( resolve, reject ) => {
+				worker.onmessage = ( e ) => resolve( e.data );
+				worker.onerror = ( e ) => reject( e.error );
+				worker.postMessage( value );
+			} );
+			const workers = [
+				new NodeWorker( url( 'self.onmessage = ( e ) => self.postMessage( e.data * 2 );' ), { type: 'module' } ),
+				new NodeWorker( url( 'onmessage = function ( e ) { postMessage( e.data * 3 ); };' ) ),
+			];
+			console.log( JSON.stringify( [ await ask( workers[ 0 ], 21 ), await ask( workers[ 1 ], 5 ) ] ) );
+			workers.forEach( ( w ) => w.terminate() );
+		`;
+
+		const out = execFileSync( process.execPath, [ '--input-type=module', '-e', code ], { encoding: 'utf8', timeout: 20000 } );
+		expect( JSON.parse( out.trim() ) ).toEqual( [ 42, 15 ] );
 
 	} );
 

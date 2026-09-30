@@ -1,7 +1,7 @@
 /**
  * The bench corpus rendered in plain Node on Dawn — the `webgpu` package, the WebGPU inside Chrome —
  * with no browser and no DOM shim, only what the engine's platform seams take: `navigator.gpu` and
- * `configurePlatform( { Worker: NodeWorker } )`. Each render is compared with the Chrome golden, so a
+ * `configurePlatform( nodePlatform() )`. Each render is compared with the Chrome golden, so a
  * new browser dependency, or a Node-only divergence, fails the day it lands.
  *
  *   npm run bench:node [-- --only a,b]
@@ -39,13 +39,13 @@ const gpu = create( [] );
 Object.defineProperty( globalThis.navigator, 'gpu', { value: gpu, configurable: true } );
 
 const { configurePlatform, openHeadless } = await import( 'rayzee' );
-const { NodeWorker } = await import( 'rayzee/node' );
+const { nodePlatform } = await import( 'rayzee/node' );
 const { SCENES, RENDER_SIZE } = await import( '../harness/scenes.js' );
 const { createSceneSession } = await import( '../harness/sceneSession.js' );
 const { compare } = await import( '../lib/metrics.js' );
 const { exists, readPNG } = await import( '../lib/png.js' );
 
-configurePlatform( { Worker: NodeWorker } );
+configurePlatform( nodePlatform() );
 
 const app = await openHeadless( {
 	width: RENDER_SIZE.width,

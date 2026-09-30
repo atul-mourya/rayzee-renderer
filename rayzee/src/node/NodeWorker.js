@@ -2,9 +2,10 @@ import { Worker as ThreadWorker } from 'node:worker_threads';
 import { Buffer, resolveObjectURL } from 'node:buffer';
 
 // Evaluated inside the thread: a dedicated worker's `self` over parentPort, then the module. Messages
-// that arrive before the module has installed its handler are held, not dropped.
+// that arrive before the module has installed its handler are held, not dropped. No require(): a
+// thread inherits --input-type=module, which evaluates this as an ES module.
 const BOOTSTRAP = `
-const { parentPort } = require( 'node:worker_threads' );
+const { parentPort } = process.getBuiltinModule( 'node:worker_threads' );
 const listeners = { message: new Set(), error: new Set(), messageerror: new Set() };
 const held = [];
 let ready = false;
@@ -39,7 +40,7 @@ parentPort.on( 'message', ( message ) => {
 		// A classic worker is a script in the global scope (three's Draco decoder is one).
 		if ( message.classic ) {
 
-			require( 'node:vm' ).runInThisContext( message.__rayzeeModule );
+			process.getBuiltinModule( 'node:vm' ).runInThisContext( message.__rayzeeModule );
 			release();
 
 		} else {

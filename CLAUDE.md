@@ -360,7 +360,12 @@ matched Chrome within 0.05 of a level per 16² block.
   ⚠️ GLTFLoader turns a failed texture into none, silently — the plugin reports `texture.build_failed`
   and a strict host's throw is deferred to the end of the load (`_throwDeferred`).
 - With no `createImageBitmap`, `TextureCreator.processOnCPU` packs raw pixels: exact when a layer fits
-  its bucket, bilinear otherwise.
+  its bucket, bilinear otherwise. ⚠️ On the main thread, so it starves the BVH workers: 24155522.glb
+  loads in 4.1–4.9 s in Node against Chrome's 2.9 s, 1.8 s with textures stubbed (workers busy 1.25 → 5).
+- ⚠️ dawn.node 0.6.1 segfaults on `queue.writeBuffer` / `writeTexture` from a `SharedArrayBuffer` (the
+  triangle and BVH stores, once a scene is large). `nodePlatform()` wraps `GPUQueue.prototype` to copy
+  those out, 64 MB at a time, and so needs the `webgpu` globals installed first. `NodeWorker`'s
+  bootstrap uses `process.getBuiltinModule`, never `require`: a thread inherits `--input-type=module`.
 - ⚠️ three's `Animation.start()` calls `self.requestAnimationFrame` inside `renderer.init()` with no
   guard; `initWithoutFrameLoop` lends an inert one for that call. three's `FileLoader` constructs a
   `ProgressEvent` per streamed chunk; `nodePlatform()` defines one — the only global it sets.

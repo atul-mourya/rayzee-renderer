@@ -1067,6 +1067,7 @@ inside Chrome — with no browser and no DOM shim:
 
 ```js
 import { create, globals } from 'webgpu';
+import sharp from 'sharp';
 import { configurePlatform, openHeadless } from 'rayzee';
 import { nodePlatform } from 'rayzee/node';
 
@@ -1074,7 +1075,11 @@ Object.assign(globalThis, globals);
 const gpu = create([]);                       // keep a reference: Dawn crashes if it is collected
 Object.defineProperty(navigator, 'gpu', { value: gpu });
 
-configurePlatform(nodePlatform({ decodeImage }));   // before any app is constructed
+const decodeImage = async (bytes) => {
+  const { data, info } = await sharp(bytes).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return { data, width: info.width, height: info.height };
+};
+configurePlatform(nodePlatform({ decodeImage }));   // after the webgpu globals, before any app
 const app = await openHeadless({ width: 1920, height: 1080, hostMemoryGB: 16 });   // no canvas: headless
 await app.loadModel('https://…/room.glb');
 const { samples } = await app.renderUntilComplete();
@@ -1088,12 +1093,21 @@ app.dispose();
 - **`configurePlatform({ Worker, decodeImage })`** is where a host without a browser supplies what one
   would. `nodePlatform()` from `rayzee/node` fills it: `NodeWorker`, the Web Worker API over
   `worker_threads`, runs the engine's inlined workers; `decodeImage(bytes, mimeType)` is yours — PNG,
-  JPEG or WebP to RGBA8, top row first (`sharp`, `@napi-rs/canvas`, `pngjs`…), since the engine
-  carries no decoder. It decodes every glTF image, embedded or not, and JPEG/PNG skies. PNGs with bytes
-  after `IEND`, which browsers accept and strict decoders refuse, are trimmed first; a texture that
-  still fails is recorded as `texture.build_failed` rather than dropped.
+  JPEG or WebP to RGBA8, straight alpha, top row first — since the engine carries no decoder. It decodes
+  every glTF image, embedded or not, and JPEG/PNG skies. PNGs with bytes after `IEND`, which browsers
+  accept and strict decoders refuse, are trimmed first; a texture that still fails is recorded as
+  `texture.build_failed` rather than dropped. Measured on a 91-texture model: `sharp` and
+  `@napi-rs/canvas` (`await loadImage()`, then a 2D canvas) both decode in parallel, ~0.3 s against
+  pngjs's 2.5 s serial. The canvas route premultiplies, which zeroes colour under alpha 0 and loses
+  it under low alpha; `sharp` is exact. `jpeg-js` differs from libjpeg-turbo by up to 63 levels.
+- **`nodePlatform()` wraps the `webgpu` queue**, so install its globals first. dawn.node 0.6.1
+  segfaults on `writeBuffer` / `writeTexture` from a `SharedArrayBuffer`, which WebGPU allows and the
+  engine's triangle and BVH stores are once a scene is large; those uploads are copied out, 64 MB at
+  a time.
 - **Textures are packed on the CPU** where there is no `createImageBitmap`: exact when a map fits its
-  bucket, bilinear otherwise (a browser's canvas filter differs slightly there).
+  bucket, bilinear otherwise (a browser's canvas filter differs slightly there). It runs on the main
+  thread, which also feeds the BVH workers: on a 1.9M-triangle, 91-texture model the load took
+  4.1–4.9 s against Chrome's 2.9 s, and 1.8 s with the textures stubbed out.
 - `nodePlatform()` also defines `ProgressEvent`, which three.js's `FileLoader` constructs while
   streaming; that is the only global it sets. three.js's own Draco and KTX2 workers call the global
   `Worker`, so a model using either also needs `globalThis.Worker = NodeWorker`.
