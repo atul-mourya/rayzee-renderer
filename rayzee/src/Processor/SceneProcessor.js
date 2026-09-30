@@ -32,6 +32,7 @@ import { SCENE_CACHE_MIN_BUILD_MS } from '../Storage/sceneCachePolicy.js';
 import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHRefitWorker from './Workers/BVHRefitWorker.js?worker&inline';
 import TLASWorker from './Workers/TLASWorker.js?worker&inline';
+import { createWorker, hardwareThreads } from '../Platform.js';
 
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;
@@ -113,7 +114,7 @@ export class SceneProcessor {
 			textureQuality: 'adaptive', // 'low', 'medium', 'high', 'adaptive'
 			maxTextureSize: TEXTURE_CONSTANTS.DEFAULT_MAX_TEXTURE_SIZE, // longest-edge cap for material textures
 			enableTextureCache: true,
-			maxConcurrentTextureTasks: Math.min( navigator.hardwareConcurrency || 4, 6 ),
+			maxConcurrentTextureTasks: Math.min( hardwareThreads(), 6 ),
 			maxSceneBytes: MAX_SCENE_BYTES,
 			// Treelet optimization configuration
 			// Keep: `_buildBVH` sends `enabled: value !== false`, so undefined re-enables treelets.
@@ -1294,7 +1295,7 @@ export class SceneProcessor {
 
 		const tri = this.triangles;
 		const { order, pieces, tree } = await partitionRange( tri, range.start, range.count, SPLIT_PIECE_TRIANGLES, { pause: () => new Promise( r => setTimeout( r, 0 ) ) } );
-		const pool = this._blasPool( workerOpts, null, null, Math.min( navigator.hardwareConcurrency || 4, 8 ) );
+		const pool = this._blasPool( workerOpts, null, null, Math.min( hardwareThreads(), 8 ) );
 		pieces.forEach( ( p, k ) => pool.submit( { m: k, range: { start: range.start + p.start, count: p.count } } ) );
 
 		const built = [];
@@ -1844,7 +1845,7 @@ export class SceneProcessor {
 
 		const spawn = () => {
 
-			const worker = new BVHWorker();
+			const worker = createWorker( BVHWorker );
 			worker.onmessage = ( e ) => onWorkerMessage( worker, e );
 			worker.onerror = ( err ) => fail( err );
 			workers.push( worker );
@@ -2611,7 +2612,7 @@ export class SceneProcessor {
 		// Lazy-create worker
 		if ( ! this._refitWorker ) {
 
-			this._refitWorker = new BVHRefitWorker();
+			this._refitWorker = createWorker( BVHRefitWorker );
 
 		}
 
@@ -3319,7 +3320,7 @@ export class SceneProcessor {
 	/** @private */
 	_runTLASWorker( aabbs, count ) {
 
-		if ( ! this._tlasWorker ) this._tlasWorker = new TLASWorker();
+		if ( ! this._tlasWorker ) this._tlasWorker = createWorker( TLASWorker );
 		const worker = this._tlasWorker;
 
 		return new Promise( ( resolve, reject ) => {
@@ -3705,7 +3706,7 @@ export class SceneProcessor {
 			const existing = this._pendingRebuilds.get( placement );
 			if ( existing ) existing.terminate();
 
-			dispatchRebuild( placement, entry, new BVHWorker() );
+			dispatchRebuild( placement, entry, createWorker( BVHWorker ) );
 
 		}
 

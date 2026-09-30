@@ -38,6 +38,7 @@ import { AssetLoader } from './Processor/AssetLoader.js';
 import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/PBRT/index.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 import { deviceMemoryGB } from './Processor/HostMemory.js';
+import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
 import { RenderSettings } from './RenderSettings.js';
@@ -69,6 +70,26 @@ const _appsByCanvas = new WeakMap();
 
 const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
 const _warnedEvents = new Set();
+
+// three's Animation.start() calls self.requestAnimationFrame during init() with no guard, and
+// outside a browser there is no `self`. A headless app never uses that loop, so it gets an inert one.
+async function initWithoutFrameLoop( renderer, headless ) {
+
+	if ( ! headless || typeof self !== 'undefined' ) return renderer.init();
+
+	globalThis.self = { requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} };
+
+	try {
+
+		return await renderer.init();
+
+	} finally {
+
+		delete globalThis.self;
+
+	}
+
+}
 
 
 /**
@@ -141,6 +162,9 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {HTMLCanvasElement} canvas - Canvas element for rendering
 	 * @param {Object} [options] - Engine options
 	 * @param {boolean} [options.autoResize=true] - Automatically listen for window resize events
+	 * @param {boolean} [options.headless=false] - a render nobody watches, and the default when no canvas
+	 *   is given: the engine supplies its own canvas (see HeadlessCanvas.js), runs no render loop — drive it
+	 *   with renderFrames() or renderUntilComplete() — and builds neither the overlay nor the gizmo
 	 * @param {HTMLElement} [options.container] - Single DOM parent the engine mounts all auxiliary
 	 *   elements into (HUD overlay, denoiser canvas). Defaults to `canvas.parentNode`.
 	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
@@ -166,6 +190,9 @@ export class PathTracerApp extends EventDispatcher {
 
 		super();
 
+		this._headless = options.headless === true || ! canvas;
+		canvas ??= createHeadlessCanvas();
+
 		try {
 
 			_appsByCanvas.get( canvas )?.dispose();
@@ -179,7 +206,7 @@ export class PathTracerApp extends EventDispatcher {
 		_appsByCanvas.set( canvas, this );
 
 		this.canvas = canvas;
-		this._autoResize = options.autoResize !== false;
+		this._autoResize = ! this._headless && options.autoResize !== false;
 		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
 		this._maxSceneBytes = options.maxSceneBytes;
 		this._hostMemoryGB = options.hostMemoryGB;
@@ -454,6 +481,8 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	animate() {
 
+		if ( this._headless ) throw new Error( 'a headless app has no render loop — drive it with renderFrames() or renderUntilComplete()' );
+
 		// Device lost: stop the loop rather than rescheduling render() on a dead device.
 		if ( this._deviceLost ) return;
 
@@ -669,7 +698,7 @@ export class PathTracerApp extends EventDispatcher {
 	/** Wakes the animation loop if it was stopped due to idle. */
 	wake() {
 
-		if ( this._deviceLost ) return;
+		if ( this._deviceLost || this._headless ) return;
 		if ( ! this.animationManagerId && this.isInitialized && ! this._paused ) this.animate();
 
 	}
@@ -686,7 +715,7 @@ export class PathTracerApp extends EventDispatcher {
 	resume() {
 
 		this._paused = false;
-		if ( ! this.animationManagerId ) this.animate();
+		if ( ! this.animationManagerId && ! this._headless ) this.animate();
 
 	}
 
@@ -3763,9 +3792,9 @@ export class PathTracerApp extends EventDispatcher {
 
 		setStatusCallback( ( event ) => this.dispatchEvent( event ) );
 
-		if ( ! navigator.gpu ) {
+		if ( typeof navigator === 'undefined' || ! navigator.gpu ) {
 
-			throw new Error( 'WebGPU is not supported in this browser' );
+			throw new Error( 'WebGPU is not available — outside a browser, install one as navigator.gpu (for Node, the `webgpu` package)' );
 
 		}
 
@@ -3829,7 +3858,7 @@ export class PathTracerApp extends EventDispatcher {
 			requiredLimits,
 		} );
 
-		await this.renderer.init();
+		await initWithoutFrameLoop( this.renderer, this._headless );
 
 		// WebGPURenderer swaps in WebGL2 on failure with only a warn(). The wavefront path is
 		// compute-only, so every frame would fail against an empty canvas.
@@ -3986,18 +4015,24 @@ export class PathTracerApp extends EventDispatcher {
 			issues: this._issues,
 		} );
 		this._setupDenoisingManager();
-		await this._setupOverlayManager();
 
-		this.transformManager = new TransformManager( {
-			camera: this.cameraManager.camera,
-			canvas: this.canvas,
-			orbitControls: this.cameraManager.controls,
-			app: this,
-		} );
+		// A second renderer, a 2D canvas and a gizmo, all for pixels nobody sees.
+		if ( ! this._headless ) {
 
-		// The gizmo is part of the scene overlay layer, so it draws on the same
-		// view-resolution surface as the light helpers and the outline.
-		this.overlayManager.register( 'transform', new TransformGizmoHelper( this.transformManager ) );
+			await this._setupOverlayManager();
+
+			this.transformManager = new TransformManager( {
+				camera: this.cameraManager.camera,
+				canvas: this.canvas,
+				orbitControls: this.cameraManager.controls,
+				app: this,
+			} );
+
+			// The gizmo is part of the scene overlay layer, so it draws on the same
+			// view-resolution surface as the light helpers and the outline.
+			this.overlayManager.register( 'transform', new TransformGizmoHelper( this.transformManager ) );
+
+		}
 
 		// Wire cross-manager dependencies
 		this.interactionManager.setDependencies( {

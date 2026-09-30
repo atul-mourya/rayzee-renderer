@@ -25,6 +25,7 @@ export { SETTING_SOURCE } from './RenderSettings.js';
 
 // Asset URL / cache namespace overrides (call before constructing PathTracerApp)
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
+export { configurePlatform, getPlatform } from './Platform.js';
 
 // On-disk storage (origin private file system): caches, and areas a host defines for its own data
 export {

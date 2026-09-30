@@ -315,7 +315,9 @@ const engine = new PathTracerApp(canvas, options?)
 | Parameter | Type | Description |
 |---|---|---|
 | `canvas` | `HTMLCanvasElement` | Rendering target |
-| `options.autoResize` | `boolean` | Auto-resize on window resize (default: `true`) |
+| `canvas` may be `null` | | Headless: the engine makes its own canvas and runs no render loop — see [Running in Node](#running-in-node) |
+| `options.headless` | `boolean` | Headless with a canvas of your own (default: `true` when `canvas` is `null`) |
+| `options.autoResize` | `boolean` | Auto-resize on window resize (default: `true`; always off headless) |
 | `options.container` | `HTMLElement` | Single DOM parent the engine mounts auxiliary elements into — HUD overlay (tile borders, helpers) and denoiser canvas. Defaults to `canvas.parentNode`. |
 | `options.strict` | `boolean` | Throw an `EngineIssueError` where the engine would otherwise degrade and carry on (default: `false`). See [Degradation contract](#degradation-contract). |
 | `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
@@ -1041,10 +1043,49 @@ within one level (it rounds half a level up); `'linear'` is exact.
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.
 
-**Without a browser.** The engine renders under Node on Dawn (the `webgpu` package, the WebGPU
-implementation inside Chrome) with the same pixels as Chrome, but only with a host-supplied shim for
-the DOM, the canvas, image decoding and Workers. That is known to work and not yet supported: the
-engine still reaches for browser globals, and there is no seam to plug those services in.
+#### Running in Node
+
+The published build renders in plain Node on Dawn — the `webgpu` package, the WebGPU implementation
+inside Chrome — with no browser and no DOM shim:
+
+```js
+import { create, globals } from 'webgpu';
+import { configurePlatform, openHeadless } from 'rayzee';
+import { nodePlatform } from 'rayzee/node';
+
+Object.assign(globalThis, globals);
+const gpu = create([]);                       // keep a reference: Dawn crashes if it is collected
+Object.defineProperty(navigator, 'gpu', { value: gpu });
+
+configurePlatform(nodePlatform({ decodeImage }));   // before any app is constructed
+const app = await openHeadless({ width: 1920, height: 1080, hostMemoryGB: 16 });   // no canvas: headless
+await app.loadModel('https://…/room.glb');
+const { samples } = await app.renderUntilComplete();
+const frame = await app.renderToBuffer({ source: 'display' });
+app.dispose();
+```
+
+- **No canvas means headless.** `new PathTracerApp(null)` — or `{ headless: true }` — makes its own
+  canvas (a WebGPU context over a plain texture), runs no render loop (drive it with `renderFrames` or
+  `renderUntilComplete`), and builds neither the overlay renderer nor the transform gizmo.
+- **`configurePlatform({ Worker, decodeImage })`** is where a host without a browser supplies what one
+  would. `nodePlatform()` from `rayzee/node` fills it: `NodeWorker`, the Web Worker API over
+  `worker_threads`, runs the engine's inlined workers; `decodeImage(bytes, mimeType)` is yours — PNG,
+  JPEG or WebP to RGBA8, top row first (`sharp`, `@napi-rs/canvas`, `pngjs`…), since the engine
+  carries no decoder. It decodes every glTF image, embedded or not, and JPEG/PNG skies. PNGs with bytes
+  after `IEND`, which browsers accept and strict decoders refuse, are trimmed first; a texture that
+  still fails is recorded as `texture.build_failed` rather than dropped.
+- **Textures are packed on the CPU** where there is no `createImageBitmap`: exact when a map fits its
+  bucket, bilinear otherwise (a browser's canvas filter differs slightly there).
+- `nodePlatform()` also defines `ProgressEvent`, which three.js's `FileLoader` constructs while
+  streaming; that is the only global it sets. three.js's own Draco and KTX2 workers call the global
+  `Worker`, so a model using either also needs `globalThis.Worker = NodeWorker`.
+
+Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
+≤ 0.0036, no pixel over 0.02 — the CPU tone map accounts for most of it), and a textured glTF with an
+HDR, a PNG sky or a gradient matches Chrome block for block within 0.05 of a level. Not available
+without a browser: on-disk storage (OPFS), gobo libraries (they draw on a 2D canvas), and the AI
+upscaler.
 
 #### GPU timing
 
@@ -1227,6 +1268,10 @@ class MyCustomStage extends RenderStage {
 ```js
 // Core
 import { PathTracerApp, EngineEvents, LEGACY_EVENT_NAMES } from 'rayzee';
+
+// Platform services for hosts without a browser (see Running in Node)
+import { configurePlatform, getPlatform } from 'rayzee';
+import { nodePlatform, NodeWorker } from 'rayzee/node';
 
 // Configuration & presets
 import {

@@ -16,6 +16,7 @@ import {
 	openHeadless, setBindingAudit,
 } from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
+import { BASE_SETTINGS, createSceneSession } from './sceneSession.js';
 
 // three.js creates shader modules with no error scope, so WGSL failures reach the console only as
 // `[object GPUValidationError]`. Wrap at the device to keep the source for line-accurate reporting.
@@ -108,79 +109,14 @@ async function shaderDiagnostics() {
 
 const canvas = document.getElementById( 'bench-canvas' );
 
-/** Scene settings applied on top of the deterministic baseline, restored on the next load. */
-const BASE_SETTINGS = {
-	// Effectively off: the clamp suppresses converged bright pixels and would mask exactly
-	// the energy regressions the bias probe exists to catch.
-	fireflyThreshold: 1e9,
-	visMode: 0,
-};
-// Denoisers are deliberately absent above — enableOIDN/enableASVGF are ENGINE_DEFAULTS
-// keys with no SETTING_ROUTES entry, so writing them through settings silently does
-// nothing but pollute getAll(). Both already default off.
-
 let app = null;
 let currentScene = null;
-let pristineSettings = null;
-let pristineEnvParams = null;
+let session = null;
 
 // Sticky across scene loads. loadScene() re-asserts deterministic mode, and without
 // remembering the requested mode it would default back to pinDispatch:true and silently
 // undo setPerfMode( true ) on the very first scene of a perf run.
 let perfModeEnabled = false;
-
-/** Union of every settings key any scene overrides, at its pristine boot value. */
-function sceneSettingsFloor() {
-
-	const floor = {};
-
-	for ( const scene of SCENES ) {
-
-		for ( const key of Object.keys( scene.settings ?? {} ) ) {
-
-			floor[ key ] = pristineSettings[ key ];
-
-		}
-
-	}
-
-	return floor;
-
-}
-
-/**
- * Environment parameters are NOT settings keys — scenes mutate `envParams` directly (the
- * furnace scenes write `solidSkyColor = white`), so `sceneSettingsFloor()` cannot restore
- * them and the mutation leaks into every later scene that calls `setMode( 'color' )`.
- * cornell-emissive's backdrop swung +16 % depending on how many scenes had loaded first.
- * Same argument as the settings floor: restore the union, not just this scene's own keys.
- */
-function restoreEnvParams() {
-
-	const env = app.stages.pathTracer.environment;
-
-	for ( const [ key, value ] of Object.entries( pristineEnvParams ) ) {
-
-		if ( value && typeof value.copy === 'function' ) env.envParams[ key ].copy( value );
-		else env.envParams[ key ] = value;
-
-	}
-
-}
-
-function snapshotEnvParams() {
-
-	const snapshot = {};
-
-	for ( const [ key, value ] of Object.entries( app.stages.pathTracer.environment.envParams ) ) {
-
-		snapshot[ key ] = value && typeof value.clone === 'function' ? value.clone() : value;
-
-	}
-
-	return snapshot;
-
-}
 
 async function boot() {
 
@@ -203,10 +139,7 @@ async function boot() {
 	// rayzee/src/Pipeline/BindingAudit.js.
 	setBindingAudit( true );
 
-	// Snapshot before any scene touches settings, so each load can restore the keys it
-	// does not itself specify.
-	pristineSettings = app.settings.getAll();
-	pristineEnvParams = snapshotEnvParams();
+	session = createSceneSession( app );
 
 	globalThis.app = app; // parity with the real app's dev-console handle
 	return app;
@@ -239,53 +172,9 @@ async function fingerprint() {
 
 }
 
-/** Fails a half-load: a scene missing its textures still renders, and the suite would bless it. */
-function assertLoadedCleanly( what ) {
-
-	const errors = app.issueErrors;
-	if ( errors.length === 0 ) return;
-
-	throw new Error(
-		`bench: ${what} degraded — ${errors.length} issue(s): ` +
-		errors.map( ( e ) => `${e.code} (${e.message})` ).join( '; ' )
-	);
-
-}
-
 async function loadScene( id ) {
 
-	const spec = getScene( id );
-
-	app.clearIssues(); // else the first scene's issues fail every scene after it
-
-	// Deterministic baseline first, then the scene's own overrides. Batched so the
-	// accumulation reset happens once rather than per key.
-	//
-	// Every key ANY scene touches is rewritten on every load, falling back to the pristine
-	// boot value. Applying only this scene's own keys would let a previous scene's settings
-	// leak forward (cornell-emissive enables emissive-triangle sampling; the scenes after it
-	// would silently inherit that), making results depend on scene order — so `--only X`
-	// would disagree with a full run and fail against its own golden.
-	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings }, { silent: true } );
-	restoreEnvParams();
-
-	const startedAt = performance.now();
-	await spec.build( app );
-	const loadMs = performance.now() - startedAt;
-
-	// Denoiser strategy is sticky across loads and is NOT a settings key, so it cannot ride
-	// the sceneSettingsFloor reset above. Without this a denoise run would leave ASVGF on for
-	// every scene the quality suite loaded afterwards, and its goldens would silently be
-	// denoised images.
-	app.denoisingManager.setStrategy( 'none' );
-
-	// build() → loadObject3D() → reset() → wake(). Re-assert determinism and park rAF so
-	// nothing races the manual render loop — preserving the current dispatch mode, since a
-	// hard-coded default here would cancel setPerfMode() for every scene in a perf run.
-	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
-
-	assertLoadedCleanly( `scene "${spec.id}"` );
-
+	const { spec, loadMs } = await session.loadScene( id, { pinDispatch: ! perfModeEnabled } );
 	currentScene = spec;
 	return { id: spec.id, spp: spec.spp, truthSpp: spec.truthSpp, loadMs };
 
@@ -577,8 +466,8 @@ function meshStats() {
 async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
 	app.clearIssues();
-	app.settings.setMany( { ...sceneSettingsFloor(), ...BASE_SETTINGS }, { silent: true } );
-	restoreEnvParams();
+	app.settings.setMany( { ...session.settingsFloor(), ...BASE_SETTINGS }, { silent: true } );
+	session.restoreEnvParams();
 
 	const startedAt = performance.now();
 	await app.loadModel( url );
@@ -595,7 +484,7 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
 	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
 
-	assertLoadedCleanly( `model "${url}"` );
+	session.assertLoadedCleanly( `model "${url}"` );
 
 	// render() gates on currentScene; a minimal stand-in is enough for a timing-only run.
 	currentScene = { id: `model:${url}`, spp: 1, truthSpp: 1, settings: {} };
@@ -1340,7 +1229,7 @@ async function appLifecycleCycle( sceneId, spp = 1 ) {
 		strict: false,
 		profile: 'viewer',
 		deterministic: true,
-		settings: { ...sceneSettingsFloor(), ...BASE_SETTINGS, ...spec.settings },
+		settings: { ...session.settingsFloor(), ...BASE_SETTINGS, ...spec.settings },
 	} );
 
 	await spec.build( throwaway );

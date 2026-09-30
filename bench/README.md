@@ -18,6 +18,7 @@ Individual suites:
 ```bash
 npm run bench:quality
 npm run bench:lockstep     # production path reproducible under any pacing
+npm run bench:node         # the corpus in plain Node on Dawn, against the Chrome goldens
 npm run bench:denoise
 npm run bench:memory
 npm run bench:perf
@@ -386,6 +387,20 @@ each other.
 Mutation-tested: with lockstep switched off inside `renderUntilComplete`, spheres-gradient retired
 at 64 / 37 / 23 / 29 spp across the four pacings and cornell-emissive at 64 / 33 / 30 / 45 — every
 pacing a different image. With it on: 24, 32 and 20 spp, identical across all four.
+
+### Node — the corpus without a browser
+
+`bench node` builds the engine and renders every scene that has a golden in plain Node on Dawn
+(`bench/node/run.js`), through the published build and only the seams a Node host has:
+`navigator.gpu` from the `webgpu` package and `configurePlatform( nodePlatform() )`. The scenes load
+through the same `sceneSession.js` as the browser harness, so they cannot mean different things in
+the two runtimes. Each render is read back with `renderToBuffer( { colorSpace: 'srgb' } )` and
+compared with the Chrome golden: RMSE ≤ 0.004 and no more than 1 % of pixels over 0.02. It cannot be
+bit-exact — two Dawn builds compile the WGSL, and the CPU tone map is within a level of the canvas the
+goldens came from; measured, every scene reads RMSE 0.0019–0.0036.
+
+Mutation-tested: flipping the CPU texture packer's rows fails textured-normalmap at RMSE 0.198 and
+alpha-cutout at 0.014. A new browser dependency fails the scene that reaches it.
 
 ### Denoisers — a ratio, so there is nothing to bless away
 

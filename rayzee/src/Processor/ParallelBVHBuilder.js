@@ -11,8 +11,9 @@ import BVHWorker from './Workers/BVHWorker.js?worker&inline';
 import BVHSubtreeWorker from './Workers/BVHSubtreeWorker.js?worker&inline';
 import { setBVHWorkerFactory } from './BVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 
-setBVHWorkerFactory( () => new BVHWorker() );
+setBVHWorkerFactory( () => createWorker( BVHWorker ) );
 
 const log = createLogger( 'bvh' );
 
@@ -38,7 +39,7 @@ const MAX_PARALLEL_WORKERS = 8;
 export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 
 	const triangleCount = triangles.byteLength / ( FPT * 4 );
-	const numWorkers = Math.min( navigator.hardwareConcurrency || 4, MAX_PARALLEL_WORKERS );
+	const numWorkers = Math.min( hardwareThreads(), MAX_PARALLEL_WORKERS );
 	const parallelDepth = Math.ceil( Math.log2( numWorkers * 2.5 + 1 ) );
 
 	log.debug( `parallel build ${fmt.n( triangleCount )} triangles · ${numWorkers} workers · parallelDepth ${parallelDepth}` );
@@ -63,7 +64,7 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 			const sharedReorderBuffer = null;
 
 			// Phase 1: Coordinator worker
-			const coordinatorWorker = new BVHWorker();
+			const coordinatorWorker = createWorker( BVHWorker );
 
 			let phase1Stats = null;
 			const allWorkers = [ coordinatorWorker ];
@@ -326,7 +327,7 @@ async function handlePhase2(
 		const bucket = workerTaskBuckets[ w ];
 		if ( bucket.length === 0 ) continue;
 
-		const subtreeWorker = new BVHSubtreeWorker();
+		const subtreeWorker = createWorker( BVHSubtreeWorker );
 
 		allWorkers.push( subtreeWorker );
 
@@ -431,7 +432,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 
 		( async () => {
 
-			const worker = new BVHWorker();
+			const worker = createWorker( BVHWorker );
 
 			const triangleCount = triangles.byteLength / ( FPT * 4 );
 			const useShared = typeof SharedArrayBuffer !== 'undefined';
@@ -506,7 +507,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
  */
 export function shouldUseParallelBuild( triangleCount ) {
 
-	return typeof Worker !== 'undefined'
+	return hasWorkers()
 		&& typeof SharedArrayBuffer !== 'undefined'
 		&& triangleCount >= PARALLEL_THRESHOLD;
 

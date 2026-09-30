@@ -3,7 +3,7 @@
  * strict, physical profile, deterministic — all reversible, none reversible by accident.
  *
  * @example
- * const shot = await renderHeadless( { canvas, model: url, width: 1920, height: 1080, samples: 256 } );
+ * const shot = await renderHeadless( { model: url, width: 1920, height: 1080, samples: 256 } );
  */
 
 import { PathTracerApp } from './PathTracerApp.js';
@@ -11,7 +11,9 @@ import { PathTracerApp } from './PathTracerApp.js';
  * One render, start to finish, disposing the app afterwards.
  *
  * @param {Object} options
- * @param {HTMLCanvasElement} options.canvas - needed for the WebGPU surface, not for output
+ * @param {HTMLCanvasElement} [options.canvas] - leave it out and the app runs headless, on a canvas of
+ *   its own (see PathTracerApp's `headless` option); pass one only to also present to it
+ * @param {number} [options.hostMemoryGB] - see PathTracerApp; needed outside Chrome for renders above 2048
  * @param {string} [options.model] - URL to load before rendering
  * @param {number} [options.width=1920]
  * @param {number} [options.height=1080]
@@ -95,12 +97,11 @@ export async function openHeadless( {
 	deterministic = true,
 	settings = null,
 	storage = false,
+	hostMemoryGB = undefined,
 } = {} ) {
 
-	if ( ! canvas ) throw new Error( 'openHeadless: a canvas is required' );
-
 	// Off unless asked for: cached state from an earlier run must not change what a batch renders.
-	const app = new PathTracerApp( canvas, { autoResize: false, strict, profile, storage } );
+	const app = new PathTracerApp( canvas ?? null, { autoResize: false, strict, profile, storage, hostMemoryGB } );
 
 	try {
 

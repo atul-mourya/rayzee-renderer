@@ -9,7 +9,8 @@
     ".": {
       "import": "./dist/rayzee.es.js",
       "require": "./dist/rayzee.umd.js"
-    }
+    },
+    "./node": "./src/node/index.js"
   },
   "files": [
     "dist",

@@ -3,6 +3,7 @@ import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 // Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
 import { createLogger, fmt } from '../utils/Logger.js';
 import { foldLeaves } from './BVHLeafFold.js';
+import { hasWorkers } from '../Platform.js';
 
 const log = createLogger( 'bvh' );
 
@@ -423,7 +424,7 @@ export class BVHBuilder {
 		this.processedTriangles = 0;
 		this.lastProgressUpdate = performance.now();
 
-		if ( this.useWorker && createBVHWorker && typeof Worker !== 'undefined' ) {
+		if ( this.useWorker && createBVHWorker && hasWorkers() ) {
 
 			return new Promise( ( resolve, reject ) => {
 

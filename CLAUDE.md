@@ -327,6 +327,33 @@ in for `navigator.deviceMemory` (absent outside Chrome, read as 4, which caps th
 passes `profile: 'viewer'` and `strict: false` explicitly, and both are load-bearing — `physical`
 would change every golden, and `strict` would abort a run before the runner reported.
 
+### Without a browser (`Platform.js`, `HeadlessCanvas.js`, `rayzee/src/node/`)
+The published build renders in plain Node on Dawn. `npm run bench:node` renders the whole corpus that
+way against the Chrome goldens (all 29 match, RMSE ≤ 0.0036); a textured glTF with an HDR or PNG sky
+matched Chrome within 0.05 of a level per 16² block.
+- **No canvas ⇒ headless** (`new PathTracerApp( null )`, or `{ headless: true }`; `openHeadless` without
+  one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
+  and `animate()` throws — drive it with `renderFrames` / `renderUntilComplete` — and the overlay renderer
+  and gizmo are not built. The InteractionManager stays: auto-focus picks through it.
+- **`configurePlatform( { Worker, decodeImage } )`** is the seam; `rayzee/node` (plain source, exported
+  from `src/`, never bundled) has `nodePlatform()` and `NodeWorker` (Web Worker over `worker_threads`,
+  data:/blob:, module or classic). Every engine worker starts through `createWorker( Ctor )`, which
+  swaps the host class in for the global `Worker` while the bundled constructor runs — the inlined
+  wrappers call `new Worker(…)` themselves. Use `hasWorkers()` / `hardwareThreads()`, never `typeof
+  Worker` or `navigator.*` directly. ⚠️ `rayzee/node` must not import engine modules: a host has the
+  dist's copy of Platform.js, and a second copy would hold its own, unconsulted state.
+- `decodeImage( bytes, mimeType )` decodes every glTF image through `platformImagesPlugin`, which
+  replaces `parser.loadImageSource` (three's needs the DOM or createImageBitmap, and `self.URL` for an
+  embedded image's blob URL), and LDR skies (`loadPlatformImage`, flipY on as TextureLoader leaves it).
+  ⚠️ PNGs from real exporters carry bytes after IEND; `trimPNG` cuts them, or strict decoders throw.
+  ⚠️ GLTFLoader turns a failed texture into none, silently — the plugin reports `texture.build_failed`
+  and a strict host's throw is deferred to the end of the load (`_throwDeferred`).
+- With no `createImageBitmap`, `TextureCreator.processOnCPU` packs raw pixels: exact when a layer fits
+  its bucket, bilinear otherwise.
+- ⚠️ three's `Animation.start()` calls `self.requestAnimationFrame` inside `renderer.init()` with no
+  guard; `initWithoutFrameLoop` lends an inert one for that call. three's `FileLoader` constructs a
+  `ProgressEvent` per streamed chunk; `nodePlatform()` defines one — the only global it sets.
+
 ### Degradation Contract (`EngineIssues.js`)
 The engine degrades rather than fails — right for a viewer, backwards for a batch renderer. Every
 degrade-and-continue site records a structured issue instead of only warning, and one policy decides

@@ -246,9 +246,9 @@ describe( 'captureHeadless', () => {
 
 describe( 'openHeadless', () => {
 
-	it( 'requires a canvas rather than failing later inside init', async () => {
+	it( 'needs no canvas, and says how to supply WebGPU where there is none', async () => {
 
-		await expect( openHeadless( {} ) ).rejects.toThrow( /canvas is required/ );
+		await expect( openHeadless( {} ) ).rejects.toThrow( /WebGPU is not available.*navigator\.gpu/ );
 
 	} );
 

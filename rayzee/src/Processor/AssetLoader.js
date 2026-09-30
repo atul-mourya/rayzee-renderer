@@ -25,6 +25,8 @@ import { VERSION } from '../version.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
+import { getPlatform } from '../Platform.js';
+import { loadPlatformImage, platformImagesPlugin } from './PlatformImageLoader.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
@@ -626,6 +628,11 @@ export class AssetLoader extends EventDispatcher {
 					? ( this.loaderCache.hdr || ( this.loaderCache.hdr = new HDRLoader( this._loadingManager ).setDataType( FloatType ) ) )
 					: ( this.loaderCache.exr || ( this.loaderCache.exr = new EXRLoader( this._loadingManager ).setDataType( FloatType ) ) );
 				texture = await loader.loadAsync( source.url, onProgress );
+
+			} else if ( getPlatform().decodeImage ) {
+
+				texture = await loadPlatformImage( source.url, `image/${extension === 'jpg' ? 'jpeg' : extension}` );
+				texture.colorSpace = SRGBColorSpace;
 
 			} else {
 
@@ -1578,6 +1585,17 @@ export class AssetLoader extends EventDispatcher {
 					loader.parse( gltfContent, '',
 						gltf => {
 
+							try {
+
+								this._throwDeferred();
+
+							} catch ( error ) {
+
+								reject( error );
+								return;
+
+							}
+
 							this.releaseTargetModel();
 							this.targetModel = gltf.scene;
 							this.sceneMetadata = extractSceneMetadata( gltf );
@@ -1889,8 +1907,37 @@ export class AssetLoader extends EventDispatcher {
 		loader.setDRACOLoader( dracoLoader );
 		loader.setKTX2Loader( ktx2Loader );
 		loader.setMeshoptDecoder( MeshoptDecoder );
+		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, ( where, error ) => this._reportImageFailure( where, error ) ) );
 
 		return loader;
+
+	}
+
+	// GLTFLoader swallows the failure and loads the model untextured, so a strict host's throw is kept
+	// for the end of the load (_throwDeferred).
+	_reportImageFailure( where, error ) {
+
+		try {
+
+			this._issues?.record(
+				ISSUE_CODES.TEXTURE_BUILD_FAILED,
+				`image ${where} could not be decoded — the surfaces using it render untextured`,
+				{ image: where, cause: String( error?.message ?? error ) }
+			);
+
+		} catch ( strictError ) {
+
+			this._deferredError ??= strictError;
+
+		}
+
+	}
+
+	_throwDeferred() {
+
+		const error = this._deferredError;
+		this._deferredError = null;
+		if ( error ) throw error;
 
 	}
 
@@ -1934,6 +1981,7 @@ export class AssetLoader extends EventDispatcher {
 			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( modelUrl ) );
 			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
 			this._downloadComplete();
+			this._throwDeferred();
 
 			this.releaseTargetModel();
 			this._sourceKey = cancelable ? this._keyed( 'url', options.cacheKey ?? modelUrl ) : null;
@@ -1996,6 +2044,7 @@ export class AssetLoader extends EventDispatcher {
 			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( url ) );
 			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
 			this._downloadComplete();
+			this._throwDeferred();
 			this._appended = true;
 			this._processAndParent( data.scene );
 			return { root: data.scene, animations: data.animations || [] };
@@ -2055,6 +2104,7 @@ export class AssetLoader extends EventDispatcher {
 			await new Promise( r => setTimeout( r, 0 ) );
 
 			const data = await loader.parseAsync( arrayBuffer, '' );
+			this._throwDeferred();
 
 			this.releaseTargetModel();
 

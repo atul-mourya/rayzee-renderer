@@ -6,6 +6,7 @@ import { ISSUE_CODES, EngineIssueError } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { createLogger } from '../utils/Logger.js';
+import { hardwareThreads } from '../Platform.js';
 
 const log = createLogger( 'textures' );
 
@@ -574,7 +575,7 @@ export class TextureCreator {
 			offscreenCanvas: typeof OffscreenCanvas !== 'undefined',
 			imageBitmap: typeof createImageBitmap !== 'undefined',
 			workers: typeof Worker !== 'undefined',
-			hardwareConcurrency: navigator.hardwareConcurrency || 4
+			hardwareConcurrency: hardwareThreads()
 		};
 
 	}
@@ -786,6 +787,16 @@ export class TextureCreator {
 		const cacheKey = `${srgbPool ? 's' : 'l'}:${colour}:${this.textureCache.generateHash( textures )}`;
 		const cached = this.textureCache.get( cacheKey );
 		if ( cached ) return cached;
+
+		if ( typeof createImageBitmap === 'undefined' ) {
+
+			const packed = this.processOnCPU( textures );
+			const reencoded = this._harmonizeTransfer( packed, textures, srgbPool );
+			this._applyColorManagement( packed, textures, srgbPool, reencoded );
+			this.textureCache.set( cacheKey, packed );
+			return packed;
+
+		}
 
 		// Normalize non-drawable images (KTX2 CompressedTexture RGBA, DataTexture)
 		const { normalized, bitmapsToClose } = await this._normalizeTexturesForProcessing( textures );
@@ -1037,6 +1048,39 @@ export class TextureCreator {
 		}
 
 		return texturesData;
+
+	}
+
+	/**
+	 * Packing without a browser (no createImageBitmap, no 2D canvas): each layer must already be
+	 * pixels — a DataTexture, or an image the platform's decodeImage decoded. A layer that matches its
+	 * bucket is copied exactly; one that does not is resampled bilinearly, where a browser's canvas
+	 * would use its own filter, so those texels can differ slightly from a browser render.
+	 */
+	processOnCPU( textures ) {
+
+		const layers = textures.map( ( texture, layer ) => {
+
+			const image = texture?.image;
+			const pixels = texture?.isCompressedTexture ? texture.mipmaps?.[ 0 ] : image;
+			const data = pixels?.data;
+			if ( data && pixels.width > 0 && pixels.height > 0 && data.byteLength >= pixels.width * pixels.height * 4 ) {
+
+				return { data: new Uint8Array( data.buffer, data.byteOffset, pixels.width * pixels.height * 4 ), width: pixels.width, height: pixels.height, flipY: texture.flipY !== false };
+
+			}
+
+			this._reportTextureLayer( layer, image ? 'not decoded to pixels, and there is no browser to decode it' : 'no image' );
+			return { data: new Uint8Array( [ 255, 255, 255, 255 ] ), width: 1, height: 1, flipY: false };
+
+		} );
+
+		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( layers.map( ( image ) => ( { image } ) ) );
+		const layerBytes = maxWidth * maxHeight * 4;
+		const data = this.bufferPool.getBuffer( layerBytes * layers.length, Uint8Array );
+		layers.forEach( ( layer, i ) => resampleRGBA8( layer, data, i * layerBytes, maxWidth, maxHeight ) );
+
+		return this.createDataArrayTextureFromBuffer( data, maxWidth, maxHeight, layers.length );
 
 	}
 
@@ -1606,6 +1650,44 @@ export class TextureCreator {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Convert raw RGBA pixel data to an ImageBitmap (zero-copy Uint8ClampedArray view). */
+// Bilinear, texel centres aligned; a plain copy when the sizes match. flipY puts the last row first.
+function resampleRGBA8( { data: src, width: sw, height: sh, flipY }, dst, offset, dw, dh ) {
+
+	for ( let y = 0; y < dh; y ++ ) {
+
+		const row = flipY ? dh - 1 - y : y;
+		const out = offset + row * dw * 4;
+
+		if ( sw === dw && sh === dh ) {
+
+			dst.set( src.subarray( y * sw * 4, ( y + 1 ) * sw * 4 ), out );
+			continue;
+
+		}
+
+		const fy = Math.min( Math.max( ( y + 0.5 ) * sh / dh - 0.5, 0 ), sh - 1 );
+		const y0 = Math.floor( fy ), y1 = Math.min( y0 + 1, sh - 1 ), ty = fy - y0;
+
+		for ( let x = 0; x < dw; x ++ ) {
+
+			const fx = Math.min( Math.max( ( x + 0.5 ) * sw / dw - 0.5, 0 ), sw - 1 );
+			const x0 = Math.floor( fx ), x1 = Math.min( x0 + 1, sw - 1 ), tx = fx - x0;
+			const a = ( y0 * sw + x0 ) * 4, b = ( y0 * sw + x1 ) * 4, c = ( y1 * sw + x0 ) * 4, d = ( y1 * sw + x1 ) * 4;
+
+			for ( let ch = 0; ch < 4; ch ++ ) {
+
+				const top = src[ a + ch ] + ( src[ b + ch ] - src[ a + ch ] ) * tx;
+				const bottom = src[ c + ch ] + ( src[ d + ch ] - src[ c + ch ] ) * tx;
+				dst[ out + x * 4 + ch ] = Math.round( top + ( bottom - top ) * ty );
+
+			}
+
+		}
+
+	}
+
+}
+
 function _rawPixelsToBitmap( data, width, height ) {
 
 	const clamped = new Uint8ClampedArray( data.buffer, data.byteOffset, data.byteLength );
