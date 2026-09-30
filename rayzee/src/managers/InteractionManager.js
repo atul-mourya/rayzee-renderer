@@ -809,7 +809,7 @@ export class InteractionManager extends EventDispatcher {
 		this.addEventListener( 'focusChanged', ( event ) => {
 
 			app.settings.set( 'focusDistance', event.worldDistance );
-			app.dispatchEvent( { type: 'focusChanged', distance: event.distance } );
+			app.dispatchEvent( { type: EngineEvents.FOCUS_CHANGED, distance: event.distance } );
 
 		} );
 

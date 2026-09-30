@@ -104,7 +104,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 	page.on( 'console', ( message ) => {
 
 		// Chrome logs a bare "Failed to load resource: 404" with no URL, which makes an
-		// unreachable favicon indistinguishable from a missing STBN atlas. Attach the URL
+		// unreachable favicon indistinguishable from a missing engine asset. Attach the URL
 		// the message came from so a real missing asset is diagnosable from the log alone.
 		if ( message.type() === 'error' ) {
 

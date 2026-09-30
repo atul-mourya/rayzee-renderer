@@ -201,9 +201,9 @@ export function buildShadeKernel( params ) {
 		const pixelIndex = rayID;
 		const rngState = readRngState( hitBufferRW, rayID ).toVar();
 
-		// STBN keyed on (GLOBAL pixel, dimension, frame). pixelIndex is the LOCAL path slot; the global pixel
-		// = chunkRowBase·W + localSlot, so the blue-noise pattern stays spatially aligned across row-band chunks
-		// (and matches Generate's per-pixel RNG seed). chunkRowBase is 0 in the single-chunk case.
+		// Samples key on the GLOBAL pixel. pixelIndex is the LOCAL path slot; the global pixel
+		// = chunkRowBase·W + localSlot, so sequences stay aligned across row-band chunks
+		// (and match Generate's per-pixel RNG seed). chunkRowBase is 0 in the single-chunk case.
 		// Hoisted here rather than at the BSDF draw because the ground catcher runs NEE far earlier.
 		const _resX = int( resolution.x ).toVar();
 		const _globalPixel = int( pixelIndex ).add( chunkRowBase.mul( _resX ) );

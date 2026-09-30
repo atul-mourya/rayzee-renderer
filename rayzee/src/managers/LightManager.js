@@ -110,6 +110,37 @@ export class LightManager extends EventDispatcher {
 	}
 
 	/**
+	 * The light the path tracer traces, by UUID from getAll(). A model's own lights are copied in
+	 * at load, so editing those does nothing: edit this one, then call sync().
+	 * @param {string} uuid
+	 * @returns {?import('three').Light}
+	 */
+	getLight( uuid ) {
+
+		const light = this.scene.getObjectByProperty( 'uuid', uuid );
+		return light?.isLight ? light : null;
+
+	}
+
+	/**
+	 * Sets a traced light's intensity (watts, or W/m² for directional — see the README) and uploads it.
+	 * @param {string} uuid
+	 * @param {number} intensity
+	 * @returns {boolean} false when no traced light has that UUID
+	 */
+	setIntensity( uuid, intensity ) {
+
+		const light = this.getLight( uuid );
+		if ( ! light ) return false;
+
+		light.intensity = intensity;
+		this.updateLights();
+		this._onReset?.();
+		return true;
+
+	}
+
+	/**
 	 * Removes a light by UUID.
 	 * @param {string} uuid
 	 * @returns {boolean}

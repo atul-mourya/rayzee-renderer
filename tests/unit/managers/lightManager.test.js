@@ -288,6 +288,32 @@ describe( 'LightManager', () => {
 
 	// ── removing lights ──────────────────────────────────────
 
+	describe( 'setIntensity', () => {
+
+		it( 'edits the traced light, uploads it and restarts accumulation', () => {
+
+			const onReset = vi.fn();
+			manager = new LightManager( scene, sceneHelpers, pathTracer, { onReset } );
+			const { uuid } = manager.addLight( 'PointLight' );
+			pathTracer.updateLights.mockClear();
+			onReset.mockClear();
+
+			expect( manager.setIntensity( uuid, 42 ) ).toBe( true );
+			expect( manager.getLight( uuid ).intensity ).toBe( 42 );
+			expect( pathTracer.updateLights ).toHaveBeenCalledOnce();
+			expect( onReset ).toHaveBeenCalledOnce();
+
+		} );
+
+		it( 'returns false for a UUID the tracer does not hold', () => {
+
+			expect( manager.setIntensity( 'not-a-light', 1 ) ).toBe( false );
+			expect( manager.getLight( 'not-a-light' ) ).toBeNull();
+
+		} );
+
+	} );
+
 	describe( 'onLightRemoved', () => {
 
 		let onLightRemoved;

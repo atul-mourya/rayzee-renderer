@@ -12,7 +12,7 @@ import './TSL/patches.js';
 export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
 
 // Event types
-export { EngineEvents } from './EngineEvents.js';
+export { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 
 // Headless rendering — the supported entry point for a caller with no screen
 export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';

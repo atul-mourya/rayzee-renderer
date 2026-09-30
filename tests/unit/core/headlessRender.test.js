@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { PathTracerApp } from '@/core/PathTracerApp.js';
 import { captureHeadless, openHeadless } from '@/core/Headless.js';
 import { NoToneMapping } from 'three';
+import { IssueLog } from '@/core/EngineIssues.js';
 
 /** Bare receiver: a real app needs a GPU, and everything here is orchestration. */
 function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], target = {} } = {} ) {
@@ -18,7 +19,20 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], targ
 			readRenderTargetPixelsAsync: vi.fn( async () => pixels ),
 		},
 		renderToBuffer: PathTracerApp.prototype.renderToBuffer,
+		_readDisplaySource: PathTracerApp.prototype._readDisplaySource,
+		_denoiserInUse: PathTracerApp.prototype._denoiserInUse,
+		_issues: new IssueLog(),
 	};
+
+}
+
+/** A pipeline whose Compositor resolves `key`, as a denoiser that has published would. */
+function withPublished( app, key, texture = {} ) {
+
+	app.pipeline = { context: {} };
+	app.stages.compositor = { resolveLightSource: () => ( key ? { key, texture } : null ) };
+	app._textureReadback = { read: vi.fn( async () => new Float32Array( 8 ).fill( 0.75 ) ) };
+	return app;
 
 }
 
@@ -63,6 +77,55 @@ describe( 'renderToBuffer', () => {
 
 	} );
 
+	it( 'says the accumulation is what it read', async () => {
+
+		expect( ( await makeApp().renderToBuffer( { colorSpace: 'linear' } ) ).source ).toBe( 'accumulation' );
+
+	} );
+
+	it( 'reads and names the denoised picture for source: display', async () => {
+
+		const app = withPublished( makeApp(), 'oidn:output' );
+		const out = await app.renderToBuffer( { colorSpace: 'linear', source: 'display' } );
+
+		expect( out.source ).toBe( 'oidn' );
+		expect( out.data[ 0 ] ).toBeCloseTo( 0.75 );
+		expect( app._issues.list ).toHaveLength( 0 );
+
+	} );
+
+	it( 'records the fallback when a denoiser is on but has not published', async () => {
+
+		const app = withPublished( makeApp(), 'pathtracer:color' );
+		app.denoisingManager = { denoiser: { enabled: true }, denoiserStrategy: 'none' };
+		const out = await app.renderToBuffer( { colorSpace: 'linear', source: 'display' } );
+
+		expect( out.source ).toBe( 'accumulation' );
+		expect( app._issues.list.map( ( i ) => i.code ) ).toEqual( [ 'output.source_fallback' ] );
+
+	} );
+
+	it( 'throws on that fallback when strict', async () => {
+
+		const app = withPublished( makeApp(), null );
+		app._issues = new IssueLog( { strict: true } );
+		app.denoisingManager = { denoiser: null, denoiserStrategy: 'asvgf' };
+
+		await expect( app.renderToBuffer( { source: 'display' } ) ).rejects.toThrow( /output.source_fallback/ );
+
+	} );
+
+	it( 'records nothing when no denoiser is in use, since the accumulation is the display', async () => {
+
+		const app = withPublished( makeApp(), 'pathtracer:color' );
+		app.denoisingManager = { denoiser: { enabled: false }, denoiserStrategy: 'none' };
+		const out = await app.renderToBuffer( { source: 'display' } );
+
+		expect( out.source ).toBe( 'accumulation' );
+		expect( app._issues.list ).toHaveLength( 0 );
+
+	} );
+
 	it( 'explains itself when nothing has rendered yet', async () => {
 
 		const app = makeApp();
@@ -76,10 +139,33 @@ describe( 'renderToBuffer', () => {
 
 describe( 'captureHeadless', () => {
 
-	function fakeApp( { samples = 64, issues = [] } = {} ) {
+	function fakeApp( { samples = 64, issues = [], finalDenoise = false } = {} ) {
 
+		const order = [];
 		return {
-			renderFrames: vi.fn( async () => samples ),
+			order,
+			denoisingManager: {
+				finalDenoise,
+				applyOIDNEnabled: vi.fn( function ( on ) {
+
+					order.push( 'enable' );
+					this.finalDenoise = on;
+
+				} ),
+				_syncGBufferStages: vi.fn(),
+			},
+			runFinalDenoise: vi.fn( async () => {
+
+				order.push( 'denoise' );
+				return true;
+
+			} ),
+			renderFrames: vi.fn( async () => {
+
+				order.push( 'accumulate' );
+				return samples;
+
+			} ),
 			renderToBuffer: vi.fn( async () => ( {
 				data: new Uint8ClampedArray( 4 ), width: 1, height: 1, colorSpace: 'srgb',
 			} ) ),
@@ -120,7 +206,39 @@ describe( 'captureHeadless', () => {
 		const app = fakeApp();
 		await captureHeadless( app, { colorSpace: 'linear' } );
 
-		expect( app.renderToBuffer ).toHaveBeenCalledWith( { colorSpace: 'linear' } );
+		expect( app.renderToBuffer ).toHaveBeenCalledWith( { colorSpace: 'linear', source: 'accumulation' } );
+
+	} );
+
+	it( 'leaves the denoiser alone unless asked', async () => {
+
+		const app = fakeApp();
+		await captureHeadless( app, {} );
+
+		expect( app.runFinalDenoise ).not.toHaveBeenCalled();
+		expect( app.denoisingManager.applyOIDNEnabled ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'with denoise: turns OIDN on before accumulating, denoises once, reads the display', async () => {
+
+		const app = fakeApp();
+		await captureHeadless( app, { denoise: true } );
+
+		expect( app.order ).toEqual( [ 'enable', 'accumulate', 'denoise' ] );
+		expect( app.denoisingManager._syncGBufferStages ).toHaveBeenCalledOnce();
+		expect( app.runFinalDenoise ).toHaveBeenCalledOnce();
+		expect( app.renderToBuffer ).toHaveBeenCalledWith( { colorSpace: 'srgb', source: 'display' } );
+
+	} );
+
+	it( 'with denoise and OIDN already on, does not touch the switch', async () => {
+
+		const app = fakeApp( { finalDenoise: true } );
+		await captureHeadless( app, { denoise: true } );
+
+		expect( app.denoisingManager.applyOIDNEnabled ).not.toHaveBeenCalled();
+		expect( app.order ).toEqual( [ 'accumulate', 'denoise' ] );
 
 	} );
 

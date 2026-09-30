@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
-	MemoryLedger, estimateSceneBytes, probeAddressSpace,
+	MemoryLedger, estimateSceneBytes, probeAddressSpace, deviceMemoryGB,
 	PREFLIGHT_SAFETY, PREFLIGHT_MIN_BYTES, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from '@/core/Processor/HostMemory.js';
 import { ChunkedRecords, setChunkObserver } from '@/core/Processor/ChunkedRecords.js';
@@ -250,6 +250,34 @@ describe( 'preflight thresholds', () => {
 	it( 'refuses higher than it warns, so a warned scene is still allowed to try', () => {
 
 		expect( MAX_SCENE_BYTES ).toBeGreaterThan( SAFE_SCENE_BYTES );
+
+	} );
+
+} );
+
+describe( 'deviceMemoryGB', () => {
+
+	afterEach( () => vi.unstubAllGlobals() );
+
+	it( 'prefers what the host states', () => {
+
+		vi.stubGlobal( 'navigator', { deviceMemory: 8 } );
+		expect( deviceMemoryGB( 32 ) ).toEqual( { gb: 32, assumed: false } );
+
+	} );
+
+	it( 'falls back to Chrome\'s figure', () => {
+
+		vi.stubGlobal( 'navigator', { deviceMemory: 16 } );
+		expect( deviceMemoryGB() ).toEqual( { gb: 16, assumed: false } );
+
+	} );
+
+	it( 'says when it had to assume', () => {
+
+		vi.stubGlobal( 'navigator', {} );
+		expect( deviceMemoryGB() ).toEqual( { gb: 4, assumed: true } );
+		expect( deviceMemoryGB( 0 ) ).toEqual( { gb: 4, assumed: true } );
 
 	} );
 

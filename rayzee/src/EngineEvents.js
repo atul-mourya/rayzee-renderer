@@ -35,6 +35,9 @@ export const EngineEvents = {
 	TRANSFORM_MODE_CHANGED: 'engine:transformModeChanged',
 
 	// Camera
+	CAMERA_SWITCHED: 'engine:cameraSwitched',
+	CAMERAS_UPDATED: 'engine:camerasUpdated',
+	FOCUS_CHANGED: 'engine:focusChanged',
 	AUTO_FOCUS_UPDATED: 'engine:autoFocusUpdated',
 	ORTHO_HEIGHT_UPDATED: 'engine:orthoHeightUpdated',
 	AUTO_EXPOSURE_UPDATED: 'engine:autoExposureUpdated',
@@ -63,9 +66,46 @@ export const EngineEvents = {
 	// Degradation
 	ISSUE: 'engine:issue',
 
-	// Scene metadata
+	// Scene and assets
+	MODEL_LOADED: 'engine:modelLoaded',
+	OBJECT3D_LOADED: 'engine:object3dLoaded',
+	MODEL_ADDED: 'engine:modelAdded',
+	SCENE_OBJECT_REMOVED: 'engine:sceneObjectRemoved',
+	SCENE_UNLOADED: 'engine:sceneUnloaded',
+	SCENE_REBUILD: 'engine:sceneRebuild',
+	SCENE_SPILLED: 'engine:sceneSpilled',
 	SCENE_METADATA_APPLIED: 'engine:sceneMetadataApplied',
+	ENVIRONMENT_LOADED: 'engine:environmentLoaded',
+	TEXTURES_REPROCESSED: 'engine:texturesReprocessed',
+
+	// Render size
+	RESOLUTION_CHANGED: 'engine:resolutionChanged',
+	RESERVED_RENDER_SIZE_CHANGED: 'engine:reservedRenderSizeChanged',
 
 	// Storage (OPFS): usage or entries changed
 	STORAGE_CHANGED: 'engine:storageChanged',
 };
+
+/**
+ * The names these events had before they moved under `engine:`. The app dispatches each under both
+ * until the next major.
+ */
+export const LEGACY_EVENT_NAMES = Object.freeze( {
+	[ EngineEvents.RENDER_COMPLETE ]: 'RenderComplete',
+	[ EngineEvents.RENDER_RESET ]: 'RenderReset',
+	[ EngineEvents.CAMERA_SWITCHED ]: 'CameraSwitched',
+	[ EngineEvents.CAMERAS_UPDATED ]: 'CamerasUpdated',
+	[ EngineEvents.FOCUS_CHANGED ]: 'focusChanged',
+	[ EngineEvents.MODEL_LOADED ]: 'ModelLoaded',
+	[ EngineEvents.OBJECT3D_LOADED ]: 'Object3DLoaded',
+	[ EngineEvents.MODEL_ADDED ]: 'ModelAdded',
+	[ EngineEvents.SCENE_OBJECT_REMOVED ]: 'SceneObjectRemoved',
+	[ EngineEvents.SCENE_UNLOADED ]: 'SceneUnloaded',
+	[ EngineEvents.SCENE_REBUILD ]: 'SceneRebuild',
+	[ EngineEvents.SCENE_SPILLED ]: 'SceneSpilled',
+	[ EngineEvents.SCENE_METADATA_APPLIED ]: 'SceneMetadataApplied',
+	[ EngineEvents.ENVIRONMENT_LOADED ]: 'EnvironmentLoaded',
+	[ EngineEvents.TEXTURES_REPROCESSED ]: 'TexturesReprocessed',
+	[ EngineEvents.RESOLUTION_CHANGED ]: 'resolution_changed',
+	[ EngineEvents.RESERVED_RENDER_SIZE_CHANGED ]: 'reserved_render_size_changed',
+} );

@@ -30,6 +30,9 @@ export const ISSUE_CODES = Object.freeze( {
 	STORAGE_READ_FAILED: 'storage.read_failed',
 	STORAGE_ENTRY_CORRUPT: 'storage.entry_corrupt',
 	STORAGE_CACHE_MISMATCH: 'storage.cache_mismatch',
+	DENOISER_UNAVAILABLE: 'denoiser.unavailable',
+	OUTPUT_SOURCE_FALLBACK: 'output.source_fallback',
+	LIGHT_PLACEHOLDER_SKIPPED: 'light.placeholder_skipped',
 } );
 
 /** Strict throws on ERROR only. */

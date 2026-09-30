@@ -12,7 +12,9 @@ async function getInitUNetFromBuffer() {
 
 	if ( ! _initUNetFromBuffer ) {
 
-		_initUNetFromBuffer = ( await import( 'oidn-web' ) ).initUNetFromBuffer;
+		// The bundle, not the package main: that is raw tsc output with extensionless imports,
+		// which Node's ESM resolver refuses.
+		_initUNetFromBuffer = ( await import( 'oidn-web/dist/oidn.js' ) ).initUNetFromBuffer;
 
 	}
 
@@ -365,7 +367,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	async _setupUNetDenoiser() {
+	_setupUNetDenoiser() {
 
 		if ( this.state.isLoading ) {
 
@@ -373,9 +375,23 @@ export class OIDNDenoiser extends EventDispatcher {
 			// nothing would ever fetch them. Reachable on every render now that the refreshes and
 			// the finished image use different tiers. Flag it; the running load picks it up.
 			this._reloadPending = true;
-			return;
+			return Promise.resolve();
 
 		}
+
+		this._loading = this._loadUNet();
+		return this._loading;
+
+	}
+
+	/** Resolves once no weights are loading, including a reload queued behind the current one. */
+	whenLoaded() {
+
+		return this.state.isLoading ? this._loading : Promise.resolve();
+
+	}
+
+	async _loadUNet() {
 
 		do {
 
@@ -389,7 +405,7 @@ export class OIDNDenoiser extends EventDispatcher {
 			} catch ( error ) {
 
 				log.error( 'UNet weights failed to load:', error );
-				this.dispatchEvent( { type: 'error', error: new Error( `Denoiser loading failed: ${error.message}` ) } );
+				this.dispatchEvent( { type: 'error', error: new Error( `Denoiser loading failed: ${error.message}` ), url: this._generateTzaUrl() } );
 
 			} finally {
 

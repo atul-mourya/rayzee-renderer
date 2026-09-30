@@ -9,6 +9,7 @@ import { Group, Object3D, PerspectiveCamera, RectAreaLight, Scene, Vector3 } fro
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
 import { getRenderProfile } from '@/core/EngineDefaults.js';
+import { IssueLog } from '@/core/EngineIssues.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
 const newLoader = profile => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { profile: getRenderProfile( profile ) } );
@@ -152,6 +153,50 @@ describe( 'AssetLoader — host-provided RectAreaLight', () => {
 		const viewerScale = getRenderProfile( 'viewer' ).areaLightIntensityScale;
 		const host = serializedRadiance( adoptHostLight( { intensity: 200 * viewerScale } ) );
 		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { profile: 'viewer' } ) ), 6 );
+
+	} );
+
+} );
+
+describe( 'AssetLoader — placeholders that make no light', () => {
+
+	function load( ...placeholders ) {
+
+		const issues = new IssueLog();
+		const root = new Group();
+		for ( const p of placeholders ) root.add( p );
+		new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { issues, profile: getRenderProfile( 'physical' ) } )
+			.processModelObjects( root );
+		return issues.list;
+
+	}
+
+	const placeholder = ( name, userData ) => Object.assign( new Object3D(), { name, userData } );
+	const valid = () => placeholder( 'RectAreaLightPlaceholder', {
+		type: 'RectAreaLight', name: 'ceilingLight', color: [ 1, 1, 1 ], intensity: 200, width: 70, height: 70,
+	} );
+
+	it( 'records one issue naming the placeholders that were skipped', () => {
+
+		const issues = load( valid(), placeholder( 'RectAreaLightPlaceholder_2', { type: 'PointLight', name: 'x' } ), placeholder( 'RectAreaLightPlaceholder_3', {} ) );
+
+		expect( issues ).toHaveLength( 1 );
+		expect( issues[ 0 ].code ).toBe( 'light.placeholder_skipped' );
+		expect( issues[ 0 ].detail ).toEqual( { count: 2, names: [ 'RectAreaLightPlaceholder_2', 'RectAreaLightPlaceholder_3' ] } );
+
+	} );
+
+	it( 'records nothing when every placeholder became a light', () => {
+
+		expect( load( valid(), valid() ) ).toHaveLength( 0 );
+
+	} );
+
+	it( 'does not count the children of a placeholder', () => {
+
+		const parent = valid();
+		parent.add( placeholder( 'RectAreaLightPlaceholder_mesh', {} ) );
+		expect( load( parent ) ).toHaveLength( 0 );
 
 	} );
 

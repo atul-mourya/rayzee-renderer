@@ -21,10 +21,11 @@ import { PathTracerApp } from './PathTracerApp.js';
  * @param {string} [options.profile='physical'] - see RENDER_PROFILES
  * @param {boolean} [options.deterministic=true]
  * @param {boolean} [options.allowEarlyRetire=false] - needs `deterministic: false` to be reachable
+ * @param {boolean} [options.denoise=false] - one final OIDN pass, read back instead of the raw accumulation
  * @param {Object} [options.settings] - applied after the model loads
  * @param {function(number): void} [options.onProgress] - running sample count
  * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number,
- *   colorSpace: string, samples: number, retiredBy: string, issues: Object[], adapter: Object}>}
+ *   colorSpace: string, source: string, samples: number, retiredBy: string, issues: Object[], adapter: Object}>}
  */
 export async function renderHeadless( options ) {
 
@@ -51,11 +52,23 @@ export async function captureHeadless( app, {
 	samples = 64,
 	colorSpace = 'srgb',
 	allowEarlyRetire = false,
+	denoise = false,
 	onProgress = undefined,
 } = {} ) {
 
+	// Before accumulating: OIDN reads the albedo and normal buffers, which are only written while it is
+	// on. Not setOIDNEnabled(), whose refresh would wake the loop; renderFrames resets anyway.
+	const dm = app.denoisingManager;
+	if ( denoise && dm && ! dm.finalDenoise ) {
+
+		dm.applyOIDNEnabled( true );
+		dm._syncGBufferStages();
+
+	}
+
 	const accumulated = await app.renderFrames( samples, { onProgress, allowEarlyRetire } );
-	const frame = await app.renderToBuffer( { colorSpace } );
+	if ( denoise ) await app.runFinalDenoise();
+	const frame = await app.renderToBuffer( { colorSpace, source: denoise ? 'display' : 'accumulation' } );
 
 	return {
 		...frame,

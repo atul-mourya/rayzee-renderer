@@ -2,7 +2,7 @@ import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColor
 import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
 import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
-import { ISSUE_CODES } from '../EngineIssues.js';
+import { ISSUE_CODES, EngineIssueError } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { createLogger } from '../utils/Logger.js';
@@ -529,10 +529,22 @@ export class TextureCreator {
 	/** A failed map array leaves those surfaces untextured — complete-looking and wrong. @private */
 	_reportTextureFailure( map, error ) {
 
+		if ( error instanceof EngineIssueError ) throw error;
 		this._issues?.record(
 			ISSUE_CODES.TEXTURE_BUILD_FAILED,
 			`${map} texture array failed to build — those surfaces render untextured`,
 			{ map, cause: String( error?.message ?? error ) }
+		);
+
+	}
+
+	// Layers are addressed by position, so a texture that cannot be read keeps its slot.
+	_reportTextureLayer( layer, cause ) {
+
+		this._issues?.record(
+			ISSUE_CODES.TEXTURE_BUILD_FAILED,
+			`texture ${layer} could not be read — its surfaces show a white placeholder`,
+			{ layer, cause: String( cause?.message ?? cause ) }
 		);
 
 	}
@@ -813,6 +825,7 @@ export class TextureCreator {
 
 		} catch ( error ) {
 
+			if ( error instanceof EngineIssueError ) throw error;
 			this._issues?.warn(
 				ISSUE_CODES.TEXTURE_PROCESSING_FALLBACK,
 				'worker texture processing failed — retrying on the main thread',
@@ -885,9 +898,9 @@ export class TextureCreator {
 
 		this.activeWorkers ++;
 
-		try {
+		const worker = new TexturesWorker();
 
-			const worker = new TexturesWorker();
+		try {
 
 			// Prepare textures for worker with direct transfer
 			const texturesData = await this.prepareTexturesForWorkerDirect( textures );
@@ -934,11 +947,11 @@ export class TextureCreator {
 
 			} );
 
-			worker.terminate();
 			return this.createDataArrayTextureFromResult( result );
 
 		} finally {
 
+			worker.terminate();
 			this.activeWorkers --;
 
 		}
@@ -949,10 +962,18 @@ export class TextureCreator {
 	async prepareTexturesForWorkerDirect( textures ) {
 
 		const texturesData = [];
+		const placeholder = () => ( { data: new Uint8ClampedArray( [ 255, 255, 255, 255 ] ).buffer, width: 1, height: 1, isImageData: true } );
 
-		for ( const texture of textures ) {
+		for ( let layer = 0; layer < textures.length; layer ++ ) {
 
-			if ( ! texture?.image ) continue;
+			const texture = textures[ layer ];
+			if ( ! texture?.image ) {
+
+				this._reportTextureLayer( layer, 'no image' );
+				texturesData.push( placeholder() );
+				continue;
+
+			}
 
 			const flipY = texture.flipY !== false;
 
@@ -964,7 +985,7 @@ export class TextureCreator {
 				// getImageData off the main thread (Option 2 blocks it per texture).
 				const img = texture.image;
 				const canDirect = typeof createImageBitmap !== 'undefined' && (
-					img instanceof HTMLImageElement
+					( typeof HTMLImageElement !== 'undefined' && img instanceof HTMLImageElement )
 					|| ( typeof ImageBitmap !== 'undefined' && img instanceof ImageBitmap )
 					|| ( typeof HTMLCanvasElement !== 'undefined' && img instanceof HTMLCanvasElement )
 					|| ( typeof OffscreenCanvas !== 'undefined' && img instanceof OffscreenCanvas )
@@ -1008,7 +1029,8 @@ export class TextureCreator {
 
 			} catch ( error ) {
 
-				console.warn( 'Failed to prepare texture for worker:', error );
+				this._reportTextureLayer( layer, error );
+				texturesData.push( placeholder() );
 
 			}
 
@@ -1465,7 +1487,13 @@ export class TextureCreator {
 
 		for ( const tex of textures ) {
 
-			if ( ! tex?.image ) continue;
+			if ( ! tex?.image ) {
+
+				this._reportTextureLayer( normalized.length, 'no image' );
+				normalized.push( null );
+				continue;
+
+			}
 
 			// RGBA CompressedTexture (KTX2 Basis transcode wraps output as CompressedTexture)
 			if ( tex.isCompressedTexture && tex.format === RGBAFormat && tex.mipmaps?.[ 0 ]?.data ) {
@@ -1489,8 +1517,8 @@ export class TextureCreator {
 			}
 
 			// DataTexture with raw pixel array
-			if ( tex.image.data && ! ( tex.image instanceof HTMLImageElement ) &&
-				! ( tex.image instanceof HTMLCanvasElement ) &&
+			if ( tex.image.data && ! ( typeof HTMLImageElement !== 'undefined' && tex.image instanceof HTMLImageElement ) &&
+				! ( typeof HTMLCanvasElement !== 'undefined' && tex.image instanceof HTMLCanvasElement ) &&
 				! ( typeof ImageBitmap !== 'undefined' && tex.image instanceof ImageBitmap ) ) {
 
 				const idx = normalized.length;
@@ -1522,7 +1550,7 @@ export class TextureCreator {
 
 				} else {
 
-					console.warn( '[TextureCreator] Failed to create ImageBitmap:', result.reason );
+					this._reportTextureLayer( index, result.reason );
 
 				}
 

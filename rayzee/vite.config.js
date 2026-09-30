@@ -35,7 +35,7 @@ export default defineConfig( {
 				"three",
 				/^three\//,
 				/^three\/examples\//,
-				"oidn-web",
+				/^oidn-web(\/|$)/,
 			],
 			output: [
 				{
@@ -50,7 +50,7 @@ export default defineConfig( {
 					globals: ( id ) => {
 
 						if ( id === "three" || id.startsWith( "three/" ) || id.startsWith( "three\\/" ) ) return "THREE";
-						if ( id === "oidn-web" ) return "OIDNWeb";
+						if ( id === "oidn-web" || id.startsWith( "oidn-web/" ) ) return "OIDNWeb";
 						return id;
 
 					},

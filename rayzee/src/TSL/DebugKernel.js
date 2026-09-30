@@ -59,7 +59,7 @@ export function buildDebugKernel( params ) {
 			If( visMode.equal( int( 9 ) ), () => {
 
 				// One ray per pixel — plain per-frame jitter (totalRays = 1 → random, no stratified lattice).
-				const jitter = getStratifiedSample( pixelCoord, int( 0 ), int( 1 ), seed, resolution, frame );
+				const jitter = getStratifiedSample( pixelCoord, int( 0 ), seed, resolution, frame );
 				color.assign( vec4( jitter, 1.0, 1.0 ) );
 
 			} ).Else( () => {

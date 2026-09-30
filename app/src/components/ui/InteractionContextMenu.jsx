@@ -4,6 +4,7 @@ import { Box3, Vector3 } from 'three';
 import { Eye, EyeOff, Focus, Layers, Copy, Clipboard, Grid3x3 } from 'lucide-react';
 import { useStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
+import { EngineEvents } from 'rayzee';
 import { useActiveApp } from '@/hooks/useActiveApp';
 
 /**
@@ -385,9 +386,9 @@ const InteractionContextMenu = () => {
 
 		};
 
-		app.addEventListener( 'ModelLoaded', handleModelLoaded );
+		app.addEventListener( EngineEvents.MODEL_LOADED, handleModelLoaded );
 
-		return () => app?.removeEventListener( 'ModelLoaded', handleModelLoaded );
+		return () => app?.removeEventListener( EngineEvents.MODEL_LOADED, handleModelLoaded );
 
 	}, [ activeApp ] );
 

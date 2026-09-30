@@ -2520,6 +2520,7 @@ export class AssetLoader extends EventDispatcher {
 		// Split after the walk: traverse() caches children.length, so splitting in place
 		// shifts later siblings down a slot and skips one.
 		const multiMaterialMeshes = [];
+		const skippedPlaceholders = [];
 		model.traverse( ( object ) => {
 
 			const userData = object.userData;
@@ -2551,11 +2552,12 @@ export class AssetLoader extends EventDispatcher {
 
 			}
 
+			const placeholder = object.name.startsWith( 'RectAreaLightPlaceholder' );
+			if ( placeholder && ! ( userData.name && userData.type === 'RectAreaLight' )
+				&& ! object.parent?.name?.startsWith( 'RectAreaLightPlaceholder' ) ) skippedPlaceholders.push( object.name );
+
 			// Process ceiling lights
-			if ( object.name.startsWith( 'RectAreaLightPlaceholder' ) &&
-				userData.name
-				// && userData.name.includes( "ceilingLight" )
-			) {
+			if ( placeholder && userData.name ) {
 
 				if ( userData.type === 'RectAreaLight' ) {
 
@@ -2587,6 +2589,16 @@ export class AssetLoader extends EventDispatcher {
 			}
 
 		} );
+
+		if ( skippedPlaceholders.length ) {
+
+			this._issues?.record(
+				ISSUE_CODES.LIGHT_PLACEHOLDER_SKIPPED,
+				`${skippedPlaceholders.length} area-light placeholder(s) lack userData.name or userData.type 'RectAreaLight' — no light was made for them`,
+				{ count: skippedPlaceholders.length, names: skippedPlaceholders.slice( 0, 10 ) }
+			);
+
+		}
 
 		const shared = model.userData.__rayzeeExternal === true;
 

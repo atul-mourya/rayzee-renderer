@@ -25,6 +25,7 @@ import {
 } from '../TSL/SortGlobalKernels.js';
 import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+import { deviceMemoryGB } from '../Processor/HostMemory.js';
 import {
 	Fn, uint, int, atomicStore, atomicLoad, atomicAdd, instanceIndex, If, Return,
 } from 'three/tsl';
@@ -131,6 +132,7 @@ export class PathTracer extends PathTracerStage {
 		this._wfIsFirstChunk = uniform( 1, 'uint' ); // 1 → zero frame-scoped counters (CONVERGED/FROZEN)
 		this._pathBudget = 0; // B, paths-in-flight; computed once from device limits in _buildWavefrontKernels
 		this._pathBudgetOverride = 0; // test hook: force B (0 = derive from device)
+		this.hostMemoryGB = options.hostMemoryGB;
 		this._chunkRows = 0; // rows per chunk = floor(B / renderWidth), clamped ≥1
 		this._numChunks = 1; // ceil(renderHeight / chunkRows)
 
@@ -1031,7 +1033,7 @@ export class PathTracer extends PathTracerStage {
 		const maxBuffer = limits?.maxBufferSize || maxBinding;
 
 		const bByBinding = Math.floor( ( maxBinding * 0.9 ) / RAY_BYTES );
-		const deviceMemBytes = ( ( typeof navigator !== 'undefined' && navigator.deviceMemory ) || 4 ) * 1024 * 1024 * 1024;
+		const deviceMemBytes = deviceMemoryGB( this.hostMemoryGB ).gb * 1024 * 1024 * 1024;
 		const poolVramBudget = Math.min( deviceMemBytes * 0.25, maxBuffer * 4 );
 		const bByVram = Math.floor( poolVramBudget / bytesPerPath );
 
@@ -1596,7 +1598,7 @@ export class PathTracer extends PathTracerStage {
 			cameraViewMatrix: this.cameraViewMatrix,
 			fireflyThreshold: this.fireflyThreshold,
 			shadowTerminatorOffset: this.shadowTerminatorOffset,
-			// RNG axis only (keys STBN via frame & 63).
+			// RNG axis only.
 			frame: this.seedFrame,
 			accumFrame: this.frame,
 			resolution: this.resolution,

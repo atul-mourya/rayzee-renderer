@@ -23,9 +23,9 @@ import { BuildTimer } from './Processor/BuildTimer.js';
 import { TextureReadback } from './Processor/TextureReadback.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
-import { EngineEvents } from './EngineEvents.js';
+import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
-import { getAssetConfig } from './AssetConfig.js';
+import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
 import { StorageManager } from './Storage/StorageManager.js';
 import { acquireSharedStorage } from './Storage/openStorage.js';
 import { nameFromUrl } from './Storage/DownloadCache.js';
@@ -37,6 +37,7 @@ import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/PBRT/index.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
+import { deviceMemoryGB } from './Processor/HostMemory.js';
 
 // Managers
 import { RenderSettings } from './RenderSettings.js';
@@ -65,6 +66,9 @@ const partOf = ( { element, pbrtEntry } = {} ) => ( {
 // One app per canvas — auto-dispose a prior owner if the caller double-
 // instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
 const _appsByCanvas = new WeakMap();
+
+const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
+const _warnedEvents = new Set();
 
 
 /**
@@ -146,8 +150,11 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
 	 *   above this. The default refuses where the renderer process would be killed instead of
 	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
+	 * @param {number} [options.hostMemoryGB] - the host's memory, where `navigator.deviceMemory` is
+	 *   absent (anything but Chrome) or wrong; it sizes the render reserve and the path pool
 	 * @param {false|'auto'|StorageManager} [options.storage] - on-disk storage; defaults to
-	 *   `configureAssets( { storage } )`. A host-supplied manager stays the host's to dispose.
+	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. A host-supplied
+	 *   manager stays the host's to dispose.
 	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
 	 *   on the GPU, move its triangle records and BLAS nodes to disk (see
 	 *   {@link ensureSceneResident}). Needs storage; skipped for animated scenes.
@@ -175,6 +182,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._autoResize = options.autoResize !== false;
 		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
 		this._maxSceneBytes = options.maxSceneBytes;
+		this._hostMemoryGB = options.hostMemoryGB;
 		this._storageOption = options.storage;
 		this._memorySpill = options.memorySpill === true;
 		/** @type {?StorageManager} on-disk storage, null when off or unavailable */
@@ -378,7 +386,9 @@ export class PathTracerApp extends EventDispatcher {
 
 	async _initStorage() {
 
-		const option = this._storageOption ?? getAssetConfig().storage;
+		// A batch render must not be answered from an earlier run's cache unless the host asked for one.
+		const option = this._storageOption
+			?? ( this._issues.strict && ! isAssetConfigured( 'storage' ) ? false : getAssetConfig().storage );
 		if ( option === false ) return;
 
 		if ( option instanceof StorageManager ) {
@@ -415,6 +425,27 @@ export class PathTracerApp extends EventDispatcher {
 	_attachStorage() {
 
 		if ( this.assetLoader ) this.assetLoader.storage = this.storage;
+
+	}
+
+	dispatchEvent( event ) {
+
+		super.dispatchEvent( event );
+		const legacy = LEGACY_EVENT_NAMES[ event.type ];
+		if ( legacy ) super.dispatchEvent( { ...event, type: legacy } );
+
+	}
+
+	addEventListener( type, listener ) {
+
+		if ( ! KNOWN_EVENTS.has( type ) && ! _warnedEvents.has( type ) ) {
+
+			_warnedEvents.add( type );
+			log.warn( `no engine event is named "${type}", so this listener will never fire — see EngineEvents` );
+
+		}
+
+		super.addEventListener( type, listener );
 
 	}
 
@@ -577,7 +608,6 @@ export class PathTracerApp extends EventDispatcher {
 					reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
 				};
 
-				this.dispatchEvent( { type: 'RenderComplete', ...completionInfo } );
 				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...completionInfo } );
 
 			}
@@ -675,7 +705,6 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.completion.reset();
 		this.wake();
-		this.dispatchEvent( { type: 'RenderReset' } );
 		this.dispatchEvent( { type: EngineEvents.RENDER_RESET } );
 
 	}
@@ -859,7 +888,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		this.denoisingManager?.dropDisplay();
 		this.reset();
-		this.dispatchEvent( { type: 'SceneUnloaded' } );
+		this.dispatchEvent( { type: EngineEvents.SCENE_UNLOADED } );
 
 	}
 
@@ -872,7 +901,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this._loadWithSceneRebuild(
 			() => this.assetLoader.loadModel( url, options ),
-			{ type: 'ModelLoaded', url },
+			{ type: EngineEvents.MODEL_LOADED, url },
 			{ kind: 'url', url, cacheKey: options.cacheKey ?? null }
 		);
 
@@ -897,7 +926,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this._loadWithSceneRebuild(
 			() => this.assetLoader.loadObject3D( object3d, name ),
-			{ type: 'Object3DLoaded', name },
+			{ type: EngineEvents.OBJECT3D_LOADED, name },
 			{ kind: 'object3d', name }
 		);
 
@@ -939,7 +968,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
-			this.dispatchEvent( { type: 'EnvironmentLoaded', url } );
+			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, url } );
 
 		} finally {
 
@@ -991,7 +1020,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			await this._loadWithSceneRebuild(
 				() => this.assetLoader.loadAssetFromUrl( file, { ...options, filename } ),
-				{ type: 'ModelLoaded', filename },
+				{ type: EngineEvents.MODEL_LOADED, filename },
 				{ kind: 'url', url: file, filename, cacheKey: options.cacheKey ?? null, ...partOf( options ) }
 			);
 			return;
@@ -1006,7 +1035,7 @@ export class PathTracerApp extends EventDispatcher {
 			const identity = fileIdentity( file ).catch( () => ( { name: file.name, size: file.size, lastModified: file.lastModified ?? 0, sample: null } ) );
 			await this._loadWithSceneRebuild(
 				() => this.assetLoader.loadAssetFromFile( file, options ),
-				{ type: 'ModelLoaded', filename: file.name },
+				{ type: EngineEvents.MODEL_LOADED, filename: file.name },
 				async () => {
 
 					const id = await identity;
@@ -1037,7 +1066,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
 			this.reset();
-			this.dispatchEvent( { type: 'EnvironmentLoaded', filename: file.name } );
+			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, filename: file.name } );
 
 		} finally {
 
@@ -1056,7 +1085,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		await this._loadWithSceneRebuild(
 			() => this.assetLoader.loadExampleModels( index, modelFiles ),
-			{ type: 'ModelLoaded', index },
+			{ type: EngineEvents.MODEL_LOADED, index },
 			{ kind: 'url', url: modelFiles[ index ]?.url ?? null, cacheKey: null }
 		);
 
@@ -1106,7 +1135,7 @@ export class PathTracerApp extends EventDispatcher {
 
 				await this.loadSceneData();
 				this.reset();
-				this.dispatchEvent( { type: 'TexturesReprocessed', maxTextureSize: this._maxTextureSize } );
+				this.dispatchEvent( { type: EngineEvents.TEXTURES_REPROCESSED, maxTextureSize: this._maxTextureSize } );
 
 			} finally {
 
@@ -1446,7 +1475,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._initAnimationAndTransforms();
 
-		this.dispatchEvent( { type: 'SceneRebuild' } );
+		this.dispatchEvent( { type: EngineEvents.SCENE_REBUILD } );
 		return true;
 
 	}
@@ -1540,7 +1569,7 @@ export class PathTracerApp extends EventDispatcher {
 			root.userData.__rayzeeSourceUrl = url;
 			if ( cacheKey ) root.userData.__rayzeeCacheKey = cacheKey;
 			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: 'ModelAdded', url, id: root.uuid } );
+			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, url, id: root.uuid } );
 			return root.uuid;
 
 		} finally {
@@ -1575,7 +1604,7 @@ export class PathTracerApp extends EventDispatcher {
 			const { root } = this.assetLoader.appendObject3D( object3d, name || 'object3d' );
 			root.userData.__rayzeeSceneObject = true;
 			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: 'ModelAdded', id: root.uuid } );
+			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, id: root.uuid } );
 			return root.uuid;
 
 		} finally {
@@ -1627,7 +1656,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			// Ground is permanent (removal refused above), so the scene always keeps
 			// renderable geometry — a full rebuild is always valid here.
-			await this._finishRebuildNoReframe( { type: 'SceneObjectRemoved', id } );
+			await this._finishRebuildNoReframe( { type: EngineEvents.SCENE_OBJECT_REMOVED, id } );
 
 			return true;
 
@@ -1745,7 +1774,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		if ( ! this._memorySpill || ! this.storage || this.animationManager?.hasAnimations ) return;
 		this._sdf?.spillToDisk( this.storage )
-			.then( result => result && this.dispatchEvent( { type: 'SceneSpilled', ...result } ) )
+			.then( result => result && this.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
 			.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
 
 	}
@@ -1764,7 +1793,7 @@ export class PathTracerApp extends EventDispatcher {
 	_dispatchCamerasUpdated() {
 
 		this.dispatchEvent( {
-			type: 'CamerasUpdated',
+			type: EngineEvents.CAMERAS_UPDATED,
 			cameras: this.cameraManager.cameras,
 			cameraNames: this.cameraManager.getCameraNames(),
 		} );
@@ -2060,11 +2089,23 @@ export class PathTracerApp extends EventDispatcher {
 
 		const limits = this.renderer.backend?.device?.limits;
 		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
-		const deviceMemGB = ( typeof navigator !== 'undefined' && navigator.deviceMemory ) || 4;
+		const memory = deviceMemoryGB( this._hostMemoryGB );
 		// 4K reserve pins the accum MRT (~1.5 GB) + aux; only grant it on clearly-capable GPUs.
-		const deviceSafeMax = ( deviceMemGB >= 8 && maxBinding >= 1024 * 1024 * 1024 )
+		const deviceSafeMax = ( memory.gb >= 8 && maxBinding >= 1024 * 1024 * 1024 )
 			? MAX_RESERVABLE_RENDER_SIZE : 2048;
 		const applied = setReservedRenderSize( Math.min( target, deviceSafeMax ) );
+
+		if ( applied < Math.floor( requestedPx ) ) {
+
+			this._issues.warn(
+				ISSUE_CODES.RENDER_RESERVE_CAPPED,
+				`reserved render size ${fmt.n( requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — ` +
+				`renders above ${fmt.n( applied )}px will be declined` +
+				( memory.assumed && memory.gb < 8 ? ' (host memory unknown, 4 GB assumed: pass hostMemoryGB)' : '' ),
+				{ requested: requestedPx, applied, deviceMemoryGB: memory.gb, assumed: memory.assumed, maxStorageBufferBindingSize: maxBinding }
+			);
+
+		}
 
 		// Gate the realloc on the textures that EXIST, not on how the binding moved: a raise applied while
 		// nothing was allocated leaves `applied === prev` for every later call, so keying off that let the
@@ -2102,7 +2143,7 @@ export class PathTracerApp extends EventDispatcher {
 			}
 
 			this.reset();
-			this.dispatchEvent( { type: 'reserved_render_size_changed', size: applied } );
+			this.dispatchEvent( { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: applied } );
 
 		}
 
@@ -2124,19 +2165,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._pendingReservedRenderSize = null;
 
 		const applied = this.setReservedRenderResolution( pending.requestedPx, { allowLower: pending.allowLower } );
-
-		if ( applied < pending.requestedPx ) {
-
-			this._issues.warn(
-				ISSUE_CODES.RENDER_RESERVE_CAPPED,
-				`reserved render size ${fmt.n( pending.requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — ` +
-				`renders above ${fmt.n( applied )}px will be declined`,
-				{ requested: pending.requestedPx, applied }
-			);
-
-		}
-
-		this.dispatchEvent( { type: 'reserved_render_size_changed', size: applied } );
+		this.dispatchEvent( { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: applied } );
 
 	}
 
@@ -2206,7 +2235,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.denoisingManager?.setRenderSize( renderWidth, renderHeight );
 		this.needsReset = true;
 
-		this.dispatchEvent( { type: 'resolution_changed', width: renderWidth, height: renderHeight } );
+		this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: renderWidth, height: renderHeight } );
 
 	}
 
@@ -2382,6 +2411,43 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
+	// Draws once without waking the loop: a woken loop takes a finished render nothing marked
+	// complete (renderFrames, a video export) as newly finished, and denoises it again.
+	_presentDisplay() {
+
+		if ( this.animationManagerId ) {
+
+			this._needsDisplayRefresh = true;
+			return;
+
+		}
+
+		const context = this.pipeline?.context;
+		if ( this._deviceLost || ! context ) return;
+		this.stages.compositor?.render( context );
+		this._renderHelperOverlay();
+
+	}
+
+	/**
+	 * One OIDN pass over the current accumulation at the final tier, resolved once the denoised
+	 * picture is published. Does not start the render loop or the upscaler; read the result with
+	 * `renderToBuffer( { source: 'display' } )`.
+	 * @returns {Promise<boolean>} whether a denoised picture was published
+	 */
+	async runFinalDenoise() {
+
+		const dm = this.denoisingManager;
+		if ( await dm?.denoiseOnce() ) return true;
+
+		const reason = ! dm?.denoiser ? 'the denoiser was not built'
+			: ! dm.denoiser.enabled ? 'OIDN was off while accumulating — call denoisingManager.setOIDNEnabled( true ) first'
+				: 'the denoise did not complete';
+		this._issues.record( ISSUE_CODES.DENOISER_UNAVAILABLE, `final denoise produced no picture: ${reason}`, { reason } );
+		return false;
+
+	}
+
 	// Aborts any in-flight denoise/upscale and puts the denoiser canvas back at base resolution (the
 	// upscaler leaves it enlarged), so the live canvas is what's on screen again.
 	_abortPostProcess( { keepDisplay = false } = {} ) {
@@ -2392,7 +2458,7 @@ export class PathTracerApp extends EventDispatcher {
 
 			const w = this.denoisingManager._lastRenderWidth;
 			const h = this.denoisingManager._lastRenderHeight;
-			this.dispatchEvent( { type: 'resolution_changed', width: w, height: h } );
+			this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: w, height: h } );
 
 		}
 
@@ -2586,9 +2652,6 @@ export class PathTracerApp extends EventDispatcher {
 	/**
 	 * Accumulates exactly `count` samples synchronously, bypassing the rAF loop.
 	 *
-	 * Awaits the STBN atlases first — until they land the sampler reads a constant-0.5
-	 * placeholder that gets baked permanently into the accumulation buffer.
-	 *
 	 * A frame retired by adaptive sampling stops advancing `frameCount`, so a fixed-count loop
 	 * can never reach `count`. `allowEarlyRetire` makes that an outcome instead of a throw.
 	 *
@@ -2605,8 +2668,6 @@ export class PathTracerApp extends EventDispatcher {
 		const stage = this.stages.pathTracer;
 		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
 		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
-
-		await stage.blueNoiseReady;
 
 		const target = ( reset ? 0 : stage.frameCount ) + count;
 
@@ -2721,7 +2782,9 @@ export class PathTracerApp extends EventDispatcher {
 	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
 	 *   viewport is showing — denoised when a denoiser has run, without bloom — instead of the raw
 	 *   accumulation
-	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string}>}
+	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
+	 *   source: string}>} `source` is what was read: `'accumulation'`, or the denoiser that published
+	 *   it (`'oidn'`, `'asvgf'`, `'nrd'`, `'edgeFiltering'`, `'bilateralFiltering'`)
 	 */
 	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
 
@@ -2741,15 +2804,15 @@ export class PathTracerApp extends EventDispatcher {
 		// The pool over-allocates to the reserve, so the texture is larger than the frame.
 		const { width, height } = stage;
 
-		const linear = source === 'display'
+		const { data: linear, source: read } = source === 'display'
 			? await this._readDisplaySource( target, width, height )
-			: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+			: { data: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), source: 'accumulation' };
 
 		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
 		// answer to "linear in what primaries", which only means something once a config is loaded.
 		if ( colorSpace === 'linear' ) {
 
-			return { data: linear, width, height, colorSpace, workingSpace: this.color?.workingSpace ?? null };
+			return { data: linear, width, height, colorSpace, workingSpace: this.color?.workingSpace ?? null, source: read };
 
 		}
 
@@ -2759,7 +2822,7 @@ export class PathTracerApp extends EventDispatcher {
 		if ( named ) {
 
 			const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
-			return { data: rgba, width, height, colorSpace: got };
+			return { data: rgba, width, height, colorSpace: got, source: read };
 
 		}
 
@@ -2773,6 +2836,7 @@ export class PathTracerApp extends EventDispatcher {
 			width,
 			height,
 			colorSpace,
+			source: read,
 		};
 
 	}
@@ -3376,15 +3440,33 @@ export class PathTracerApp extends EventDispatcher {
 	async _readDisplaySource( accumulation, width, height ) {
 
 		const context = this.pipeline?.context;
-		const texture = context && this.stages.compositor?.resolveLightTexture( context );
-		if ( ! texture || texture === accumulation.texture ) {
+		const found = context && this.stages.compositor?.resolveLightSource( context );
+		if ( ! found || found.key === 'pathtracer:color' || found.texture === accumulation.texture ) {
 
-			return await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 );
+			if ( this._denoiserInUse() ) {
+
+				this._issues.record(
+					ISSUE_CODES.OUTPUT_SOURCE_FALLBACK,
+					'renderToBuffer: \'display\' was asked for, but no denoiser has published a picture — returned the raw accumulation',
+					{ requested: 'display', read: 'accumulation' }
+				);
+
+			}
+
+			return { data: await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 ), source: 'accumulation' };
 
 		}
 
 		this._textureReadback ??= new TextureReadback( this.renderer );
-		return await this._textureReadback.read( texture, width, height );
+		return { data: await this._textureReadback.read( found.texture, width, height ), source: found.key.split( ':' )[ 0 ] };
+
+	}
+
+	// With none, the raw accumulation is the display.
+	_denoiserInUse() {
+
+		const dm = this.denoisingManager;
+		return !! dm?.denoiser?.enabled || ( dm?.denoiserStrategy ?? 'none' ) !== 'none';
 
 	}
 
@@ -3764,9 +3846,11 @@ export class PathTracerApp extends EventDispatcher {
 		} );
 		this.goboManager = new GoboManager( this.stages.pathTracer, {
 			onReset: () => this.reset(),
+			issues: this._issues,
 		} );
 		this.iesManager = new IESManager( this.stages.pathTracer, {
 			onReset: () => this.reset(),
+			issues: this._issues,
 		} );
 		this._setupDenoisingManager();
 		await this._setupOverlayManager();
@@ -3794,7 +3878,7 @@ export class PathTracerApp extends EventDispatcher {
 		this.denoisingManager.setOverlayManager( this.overlayManager );
 		this.denoisingManager.setResetCallback( () => this.reset() );
 		this.denoisingManager.setPostProcessRefreshCallback( () => this.requestPostProcessRefresh() );
-		this.denoisingManager.setDisplayRefreshCallback( () => this.refreshFrame() );
+		this.denoisingManager.setDisplayRefreshCallback( () => this._presentDisplay() );
 		this.denoisingManager.setSettings( this.settings );
 
 		// Expose environment manager (lives on pathTracer stage)
@@ -3808,7 +3892,7 @@ export class PathTracerApp extends EventDispatcher {
 	_wireEvents() {
 
 		// Forward manager events → app events
-		this._addTrackedListener( this.cameraManager, 'CameraSwitched', ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.cameraManager, EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.cameraManager, EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => this.dispatchEvent( e ) );
 		this._addTrackedListener( this.timeline, EngineEvents.TIMELINE_CHANGED, ( e ) => this.dispatchEvent( e ) );
@@ -3816,7 +3900,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._forwardEvents( this.denoisingManager, [
 			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
 			EngineEvents.UPSCALING_START, EngineEvents.UPSCALING_PROGRESS, EngineEvents.UPSCALING_END,
-			'resolution_changed',
+			EngineEvents.RESOLUTION_CHANGED,
 		] );
 
 		this._setupAutoExposureListener();
@@ -3970,7 +4054,7 @@ export class PathTracerApp extends EventDispatcher {
 
 	_createStages() {
 
-		this.stages.pathTracer = new PathTracer( this.renderer, this.scene, this.cameraManager.camera );
+		this.stages.pathTracer = new PathTracer( this.renderer, this.scene, this.cameraManager.camera, { hostMemoryGB: this._hostMemoryGB } );
 		this.stages.normalDepth = new NormalDepth( this.renderer, {
 			pathTracer: this.stages.pathTracer
 		} );
@@ -4011,6 +4095,7 @@ export class PathTracerApp extends EventDispatcher {
 			pipeline: this.pipeline,
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
+			issues: this._issues,
 		} );
 
 		this.denoisingManager.setupDenoiser();

@@ -363,7 +363,7 @@ export class CameraManager extends EventDispatcher {
 		onReset?.();
 
 		this.dispatchEvent( {
-			type: 'CameraSwitched', cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov,
+			type: EngineEvents.CAMERA_SWITCHED, cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov,
 			cameraProjection: this._getSettings?.( 'cameraProjection' ),
 		} );
 
@@ -717,7 +717,7 @@ export class CameraManager extends EventDispatcher {
 		this.resetAutoFocus();
 		this._reportOrthoHeight();
 		this.dispatchEvent( {
-			type: 'CameraSwitched', cameraIndex: this.currentCameraIndex, effects: this._captureEffects(), fov: this.camera.fov,
+			type: EngineEvents.CAMERA_SWITCHED, cameraIndex: this.currentCameraIndex, effects: this._captureEffects(), fov: this.camera.fov,
 			cameraProjection: this._getSettings?.( 'cameraProjection' ),
 		} );
 

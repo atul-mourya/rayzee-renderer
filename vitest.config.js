@@ -90,6 +90,7 @@ export default defineConfig( {
 			"rayzee": path.resolve( __dirname, "rayzee/src/index.js" ),
 			"@/core": path.resolve( __dirname, "rayzee/src" ),
 			"@": path.resolve( __dirname, "app/src" ),
+			"oidn-web/dist/oidn.js": path.resolve( __dirname, "tests/__mocks__/oidn-web.js" ),
 			"oidn-web": path.resolve( __dirname, "tests/__mocks__/oidn-web.js" ),
 		},
 	},

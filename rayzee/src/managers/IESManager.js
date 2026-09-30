@@ -1,6 +1,7 @@
 import { DataArrayTexture, LinearFilter, RGBAFormat, UnsignedByteType } from 'three';
 import { parseIES, resampleIESToGrid, deriveIESBeamAngle, deriveIESPenumbra } from '../Processor/IESParser.js';
 import { sharedDownloads } from '../Storage/DownloadCache.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 /**
  * Manages IES photometric profiles for spot lights.
@@ -31,6 +32,7 @@ export class IESManager {
 
 		this.pathTracer = pathTracer;
 		this._onReset = options.onReset || null;
+		this._issues = options.issues ?? null;
 
 		/** @type {DataArrayTexture | null} */
 		this.texture = null;
@@ -72,7 +74,11 @@ export class IESManager {
 
 			} catch ( err ) {
 
-				console.warn( `IESManager: failed to load "${it.name}": ${err.message}` );
+				this._issues?.warn(
+					ISSUE_CODES.ASSET_UNREACHABLE,
+					`IES profile "${it.name}" could not be loaded: ${err.message}`,
+					{ url: it.url, asset: 'ies', cause: err.message }
+				);
 				return null;
 
 			}
@@ -188,7 +194,11 @@ export class IESManager {
 			const entry = this.entries.find( e => e.name === name );
 			if ( ! entry ) {
 
-				console.warn( `IESManager: unknown profile "${name}"` );
+				this._issues?.record(
+					ISSUE_CODES.ASSET_UNREACHABLE,
+					`no IES profile named "${name}" is loaded — the light keeps its plain distribution`,
+					{ name, asset: 'ies' }
+				);
 				return empty;
 
 			}
@@ -249,6 +259,7 @@ export class IESManager {
 		this.entries = [];
 		this.pathTracer = null;
 		this._onReset = null;
+		this._issues = null;
 
 	}
 

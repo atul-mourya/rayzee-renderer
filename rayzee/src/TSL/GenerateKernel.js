@@ -59,11 +59,8 @@ export function buildGenerateKernel( params ) {
 		const baseSeed = getDecorrelatedSeed( { pixelCoord, rayIndex: int( 0 ), frame } ).toVar();
 		const seed = pcgHash( { state: baseSeed } ).toVar();
 
-		// Sample index 1 (not 0) so the AA sub-pixel jitter draws a DIFFERENT STBN cell
-		// than the first-bounce BSDF sample (ShadeKernel uses sampleIndex 0). Every bounce
-		// samples at index 0, so index 1 is collision-free — this decorrelates the sub-pixel
-		// position from the first scatter direction (they were reading the identical cell).
-		const stratifiedJitter = getStratifiedSample( pixelCoord, int( 1 ), int( 1 ), seed, resolution, frame ).toVar();
+		// Sample index 1, not the bounces' 0, so the sub-pixel position is independent of the first scatter.
+		const stratifiedJitter = getStratifiedSample( pixelCoord, int( 1 ), seed, resolution, frame ).toVar();
 
 		// Y is subtracted because uv.y grows downward while the NDC this used to build grew upward —
 		// keeps the sub-pixel sample sequence bit-identical to the pre-panorama ray gen.

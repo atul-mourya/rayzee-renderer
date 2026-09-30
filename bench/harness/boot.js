@@ -12,19 +12,10 @@
  */
 
 import {
-	clearBindingAuditFindings, configureAssets, ENGINE_DEFAULTS, getBindingAuditFindings,
+	clearBindingAuditFindings, ENGINE_DEFAULTS, getBindingAuditFindings,
 	openHeadless, setBindingAudit,
 } from 'rayzee';
 import { getScene, RENDER_SIZE, SCENES } from './scenes.js';
-
-import stbnScalarAtlas from '../assets/noise/stbn_scalar_atlas.png?url';
-import stbnVec2Atlas from '../assets/noise/stbn_vec2_atlas.png?url';
-
-// The engine defaults these to assets.rayzee.atulmourya.com. Point them at the byte-identical
-// copies committed under bench/assets/ instead: a reproducibility gate whose reference inputs
-// live on a mutable CDN is not reproducible — a re-encode there would silently invalidate every
-// golden in the repo, and an outage or an offline machine would stop the suite entirely.
-configureAssets( { stbnScalarAtlas, stbnVec2Atlas } );
 
 // three.js creates shader modules with no error scope, so WGSL failures reach the console only as
 // `[object GPUValidationError]`. Wrap at the device to keep the source for line-accurate reporting.
@@ -211,20 +202,6 @@ async function boot() {
 	// be safe from binding aliasing. Costs one boolean test per stage per frame. See
 	// rayzee/src/Pipeline/BindingAudit.js.
 	setBindingAudit( true );
-
-	// Vendored locally (see configureAssets above), but still asserted: if an atlas fails to
-	// load the sampler silently falls back to a constant-0.5 placeholder and renders converge
-	// to a different image — which would look like a regression, or worse, get blessed as one.
-	const stage = app.stages.pathTracer;
-	await stage.blueNoiseReady;
-	if ( ! stage.stbnScalarTexture || ! stage.stbnVec2Texture ) {
-
-		throw new Error(
-			'bench: STBN atlases failed to load — renders would use the 0.5 placeholder and ' +
-			'baselines would be meaningless. Check bench/assets/noise/ is present.'
-		);
-
-	}
 
 	// Snapshot before any scene touches settings, so each load can restore the keys it
 	// does not itself specify.
@@ -1112,9 +1089,9 @@ async function settleDenoiser( timeoutMs = 180000 ) {
 }
 
 /**
- * Drives the OIDN denoise to completion. No-ops when OIDN is off, so the runner can call it
- * unconditionally. Started explicitly rather than waited for: the denoise normally fires off the
- * rAF completion chain, which renderFrames() has stopped.
+ * Drives the OIDN denoise to completion through the path a render farm uses — runFinalDenoise(),
+ * then a 'display' readback — so both stay under test. No-ops when OIDN is off, so the runner can
+ * call it unconditionally.
  *
  * @param {number} [timeoutMs]
  */
@@ -1123,19 +1100,29 @@ async function awaitDenoise( timeoutMs = 120000 ) {
 	const dn = app.denoisingManager?.denoiser;
 	if ( ! dn?.enabled ) return { ran: false };
 
-	const sleep = ( ms ) => new Promise( ( r ) => setTimeout( r, ms ) );
-	const deadline = performance.now() + timeoutMs;
+	let timer;
+	const timeout = new Promise( ( _, reject ) => {
 
-	// Weights are fetched lazily on first enable (the _large blob is ~7.7 MB).
-	while ( ! dn.unet && performance.now() < deadline ) await sleep( 50 );
-	if ( ! dn.unet ) throw new Error( '__bench.awaitDenoise: UNet weights never loaded' );
+		timer = setTimeout( () => reject( new Error( '__bench.awaitDenoise: denoise did not finish' ) ), timeoutMs );
 
-	const started = await dn.start();
-	while ( dn.state.isDenoising && performance.now() < deadline ) await sleep( 10 );
+	} );
 
-	if ( dn.state.isDenoising ) throw new Error( '__bench.awaitDenoise: denoise did not finish' );
+	try {
 
-	if ( started === false ) throw new Error( '__bench.awaitDenoise: denoiser refused to start' );
+		if ( ! await Promise.race( [ app.runFinalDenoise(), timeout ] ) ) {
+
+			throw new Error( `__bench.awaitDenoise: no denoised picture — ${app.issues.at( - 1 )?.message ?? 'no issue recorded'}` );
+
+		}
+
+		const { source } = await Promise.race( [ app.renderToBuffer( { colorSpace: 'linear', source: 'display' } ), timeout ] );
+		if ( source !== 'oidn' ) throw new Error( `__bench.awaitDenoise: renderToBuffer read '${source}', not the denoised picture` );
+
+	} finally {
+
+		clearTimeout( timer );
+
+	}
 
 	return { ran: true };
 

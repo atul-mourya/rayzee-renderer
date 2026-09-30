@@ -1,11 +1,7 @@
 import { storage } from 'three/tsl';
 import { gpuOnlyStorageAttribute, uploadStorageChunkRange, uploadStorageChunks } from '../TSL/patches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import {
-	NearestFilter, Vector2, Matrix4,
-	TextureLoader, RepeatWrapping
-} from 'three';
-import { stbnScalarTextureNode, stbnVec2TextureNode } from '../TSL/Random.js';
+import { Vector2, Matrix4 } from 'three';
 
 // Pipeline system
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
@@ -26,8 +22,6 @@ import { LightSerializer } from '../Processor/LightSerializer';
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
 import { TRI_GEO_ROWS, TRI_SHADE_ROWS } from '../TSL/Common.js';
-import { getAssetConfig } from '../AssetConfig.js';
-import { cachedObjectURL, DOWNLOAD_POLICY } from '../Storage/DownloadCache.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 // Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
@@ -144,9 +138,6 @@ export class PathTracerStage extends RenderStage {
 		// Initialize rendering state
 		this._initRenderingState();
 
-		// Setup blue noise
-		this.setupBlueNoise();
-
 		// Cache frequently used objects
 		this.tempVector2 = new Vector2();
 		this.lastCameraMatrix = new Matrix4();
@@ -216,14 +207,8 @@ export class PathTracerStage extends RenderStage {
 		// and refreshes the bound TextureNode in-place when it changes.
 		this.iesProfiles = null;
 
-		// STBN noise textures
-		this.stbnScalarTexture = null;
-		this.stbnVec2Texture = null;
-
 		/**
-		 * Resolves once both STBN atlases have loaded. Await before any render whose
-		 * output must be reproducible — see PathTracerApp.setDeterministicMode().
-		 * Replaced by the real promise in setupBlueNoise(), which runs after this.
+		 * @deprecated Always resolved: the engine no longer loads blue-noise textures.
 		 * @type {Promise<void>}
 		 */
 		this.blueNoiseReady = Promise.resolve();
@@ -365,74 +350,6 @@ export class PathTracerStage extends RenderStage {
 				this.emit( 'pathtracer:viewpointChanged' );
 
 			}
-		} );
-
-	}
-
-	/**
-	 * Load STBN (Spatiotemporal Blue Noise) atlas textures.
-	 * Each atlas is 1024×1024: 8×8 grid of 128×128 tiles, 64 temporal slices.
-	 */
-	setupBlueNoise() {
-
-		const loader = new TextureLoader();
-		loader.setCrossOrigin( 'anonymous' );
-
-		const configure = ( tex ) => {
-
-			tex.minFilter = NearestFilter;
-			tex.magFilter = NearestFilter;
-			tex.wrapS = RepeatWrapping;
-			tex.wrapT = RepeatWrapping;
-			tex.generateMipmaps = false;
-			return tex;
-
-		};
-
-		const { stbnScalarAtlas, stbnVec2Atlas } = getAssetConfig();
-
-		const load = async ( url ) => {
-
-			const source = await cachedObjectURL( url, { policy: DOWNLOAD_POLICY.REVALIDATE } );
-			try {
-
-				return await loader.loadAsync( source.url );
-
-			} finally {
-
-				source.release();
-
-			}
-
-		};
-
-		const scalarLoad = load( stbnScalarAtlas ).then( ( tex ) => {
-
-			this.stbnScalarTexture = configure( tex );
-			stbnScalarTextureNode.value = tex;
-			log.debug( `STBN scalar atlas ${fmt.px( tex.image.width, tex.image.height )}` );
-
-		} );
-
-		const vec2Load = load( stbnVec2Atlas ).then( ( tex ) => {
-
-			this.stbnVec2Texture = configure( tex );
-			stbnVec2TextureNode.value = tex;
-			log.debug( `STBN vec2 atlas ${fmt.px( tex.image.width, tex.image.height )}` );
-
-		} );
-
-		// Until the atlases land the STBN sampler reads a constant-0.5 placeholder and bakes
-		// that degenerate "noise" permanently into the accumulation buffer. The cut-over frame
-		// is disk/network dependent, so reproducible renders must await this. Never rejects.
-		this.blueNoiseReady = Promise.allSettled( [ scalarLoad, vec2Load ] ).then( ( results ) => {
-
-			for ( const result of results ) {
-
-				if ( result.status === 'rejected' ) log.warn( 'STBN atlas failed to load', result.reason );
-
-			}
-
 		} );
 
 	}
@@ -1544,14 +1461,6 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	setBlueNoiseTexture( tex ) {
-
-		// Legacy API — sets the scalar STBN atlas texture
-		this.stbnScalarTexture = tex;
-		if ( tex ) stbnScalarTextureNode.value = tex;
-
-	}
-
 	/**
 	 * Rebuild the packed light buffer from cached lightBVH + emissive data.
 	 * Layout: [ lightBVH (LBVH_STRIDE vec4s per node) | emissive (EMISSIVE_STRIDE vec4s per entry) ].
@@ -1744,8 +1653,6 @@ export class PathTracerStage extends RenderStage {
 		this.storageTextures?.dispose();
 
 		// Dispose textures
-		this.stbnScalarTexture?.dispose();
-		this.stbnVec2Texture?.dispose();
 		this.placeholderTexture?.dispose();
 
 		// Clear data references

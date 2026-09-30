@@ -28,6 +28,11 @@ vi.mock( 'rayzee', () => ( {
 		ANIMATION_PAUSED: 'ANIMATION_PAUSED',
 		ANIMATION_STOPPED: 'ANIMATION_STOPPED',
 		ANIMATION_FINISHED: 'ANIMATION_FINISHED',
+		CAMERAS_UPDATED: 'CAMERAS_UPDATED',
+		CAMERA_SWITCHED: 'CAMERA_SWITCHED',
+		MODEL_LOADED: 'MODEL_LOADED',
+		SCENE_REBUILD: 'SCENE_REBUILD',
+		RESOLUTION_CHANGED: 'RESOLUTION_CHANGED',
 	}
 } ) );
 
@@ -208,7 +213,7 @@ describe( 'connectEngineToStore', () => {
 		stores.useAnimationStore = { getState: () => ( { setClips } ) };
 
 		connectEngineToStore( engine, stores );
-		engine._emit( 'SceneRebuild' );
+		engine._emit( 'SCENE_REBUILD' );
 
 		expect( setClips ).toHaveBeenCalledWith( mockClips );
 
@@ -220,7 +225,7 @@ describe( 'connectEngineToStore', () => {
 	it( 'puts a new model back in its own file units', () => {
 
 		connectEngineToStore( engine, stores );
-		engine._emit( 'ModelLoaded' );
+		engine._emit( 'MODEL_LOADED' );
 
 		expect( stores._cameraState.syncModelSize ).toHaveBeenCalledWith( { resetUnits: true } );
 

@@ -328,3 +328,87 @@ describe( 'DenoisingManager completion chain', () => {
 	} );
 
 } );
+
+describe( 'DenoisingManager.denoiseOnce', () => {
+
+	let manager, dn;
+
+	beforeEach( () => {
+
+		manager = makeManager();
+		dn = manager.denoiser;
+		dn.hasOutput = false;
+		dn.whenLoaded = vi.fn( () => {
+
+			dn.state.isLoading = false;
+			return Promise.resolve();
+
+		} );
+		dn.start = vi.fn( () => {
+
+			dn.hasOutput = true;
+			return Promise.resolve( true );
+
+		} );
+
+	} );
+
+	it( 'runs one denoise and presents it, without the upscaler chain', async () => {
+
+		const present = vi.fn();
+		manager.setDisplayRefreshCallback( present );
+
+		expect( await manager.denoiseOnce() ).toBe( true );
+		expect( dn.start ).toHaveBeenCalledOnce();
+		expect( dn.start ).toHaveBeenCalledWith();
+		expect( present ).toHaveBeenCalledOnce();
+		expect( dn.endListenerCount() ).toBe( 0 );
+
+	} );
+
+	it( 'waits for a run in flight instead of being refused', async () => {
+
+		dn.state.isDenoising = true;
+		const pending = manager.denoiseOnce();
+		await Promise.resolve();
+		expect( dn.start ).not.toHaveBeenCalled();
+
+		dn.finish( true );
+		expect( await pending ).toBe( true );
+		expect( dn.start ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'waits for the weights instead of being deferred', async () => {
+
+		dn.state.isLoading = true;
+		expect( await manager.denoiseOnce() ).toBe( true );
+		expect( dn.whenLoaded ).toHaveBeenCalledOnce();
+		expect( dn.start ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'loads the final tier first', async () => {
+
+		manager._finalQuality = 'high';
+		await manager.denoiseOnce();
+		expect( dn.updateQuality ).toHaveBeenCalledWith( 'high' );
+
+	} );
+
+	it( 'refuses when OIDN was off, since the aux buffers were never written', async () => {
+
+		dn.enabled = false;
+		expect( await manager.denoiseOnce() ).toBe( false );
+		expect( dn.start ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'reports a run that published nothing', async () => {
+
+		dn.start = vi.fn( () => Promise.resolve( false ) );
+		expect( await manager.denoiseOnce() ).toBe( false );
+
+	} );
+
+} );

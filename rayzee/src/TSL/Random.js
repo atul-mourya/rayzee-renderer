@@ -1,7 +1,6 @@
 // Three.js Transpiler r182
 
-import { uniform, texture, float, If, wgslFn, uint, TWO_PI, cos, sin, vec2, sqrt, fract, mod, ivec2, select, int, vec4, mix } from 'three/tsl';
-import { DataTexture, FloatType } from 'three';
+import { uniform, float, If, wgslFn, uint, TWO_PI, cos, sin, vec2, sqrt, select, int, vec4 } from 'three/tsl';
 
 // -----------------------------------------------------------------------------
 // Uniform declarations and constants
@@ -11,31 +10,6 @@ export const samplingTechniqueUniform = uniform( 0, 'int' );
 const samplingTechnique = samplingTechniqueUniform;
 
 // 0: PCG, 1: Halton, 2: Owen-scrambled Sobol (default; anything higher falls back to it)
-
-// 1x1 placeholder — real texture assigned later via .value = ...
-const _placeholderData = new Float32Array( [ 0.5, 0.5, 0.5, 1.0 ] );
-
-const _placeholderScalar = new DataTexture( _placeholderData, 1, 1 );
-_placeholderScalar.type = FloatType;
-_placeholderScalar.needsUpdate = true;
-
-const _placeholderVec2 = new DataTexture( new Float32Array( [ 0.5, 0.5, 0.0, 1.0 ] ), 1, 1 );
-_placeholderVec2.type = FloatType;
-_placeholderVec2.needsUpdate = true;
-
-// STBN (Spatiotemporal Blue Noise) atlas textures — Heitz 2019
-// Each atlas: 1024×1024, 8×8 grid of 128×128 tiles, 64 temporal slices
-// Scalar atlas: single-channel (R) — optimal for 1D decisions (RR, lobe selection)
-// Vec2 atlas: two-channel (R,G) — decorrelated 2D pairs (direction sampling Xi)
-export const stbnScalarTextureNode = texture( _placeholderScalar );
-stbnScalarTextureNode.setUpdateMatrix( false );
-
-export const stbnVec2TextureNode = texture( _placeholderVec2 );
-stbnVec2TextureNode.setUpdateMatrix( false );
-
-// R2 quasi-random sequence constants (Roberts 2018) — optimal 2D additive offsets
-const R2_A1 = float( 0.7548776662466927 );
-const R2_A2 = float( 0.5698402909980532 );
 
 // -----------------------------------------------------------------------------
 // Basic random number generation
@@ -159,53 +133,6 @@ export const RandomPointInCircle = ( rngState ) => {
 //   AUX_BASE + 64..    light reservoir, one dimension per scene light (LightsSampling)
 export const SAMPLER_DIMS_PER_BOUNCE = 32;
 export const SAMPLER_DIM_AUX_BASE = 4096;
-
-// -----------------------------------------------------------------------------
-// STBN atlas sampling — spatiotemporal blue noise
-// -----------------------------------------------------------------------------
-// Atlas layout: 8×8 grid of 128×128 tiles = 1024×1024 texture.
-// Temporal axis: frame % 64 selects tile (true STBN temporal decorrelation).
-// Spatial decorrelation: R2 quasi-random offset keyed on dimension + sample index.
-
-const computeSTBNAtlasCoord = ( pixelCoords, sampleIndex, dimensionIndex, frame ) => {
-
-	// Temporal slice — true STBN temporal axis
-	const slice = uint( frame ).bitAnd( uint( 63 ) ); // frame % 64
-
-	// R2 quasi-random spatial offset for per-dimension/per-sample decorrelation
-	const n = float( dimensionIndex ).add( float( sampleIndex ).mul( 7.0 ) );
-	const offsetX = int( fract( n.mul( R2_A1 ).add( 0.5 ) ).mul( 128.0 ) );
-	const offsetY = int( fract( n.mul( R2_A2 ).add( 0.5 ) ).mul( 128.0 ) );
-
-	// Pixel within 128×128 tile (toroidal wrap via bitmask)
-	const px = int( pixelCoords.x ).add( offsetX ).bitAnd( int( 127 ) );
-	const py = int( pixelCoords.y ).add( offsetY ).bitAnd( int( 127 ) );
-
-	// Atlas tile position from slice index
-	const tileCol = int( slice ).bitAnd( int( 7 ) ); // slice % 8
-	const tileRow = int( slice ).shiftRight( int( 3 ) ); // slice / 8
-
-	return ivec2( tileCol.mul( int( 128 ) ).add( px ), tileRow.mul( int( 128 ) ).add( py ) );
-
-};
-
-// Sample decorrelated 2D STBN pair in [0,1]²
-export const sampleSTBN2D = ( pixelCoords, sampleIndex, dimensionPairIndex, frame ) => {
-
-	const coord = computeSTBNAtlasCoord( pixelCoords, sampleIndex, dimensionPairIndex, frame );
-	const raw = stbnVec2TextureNode.load( coord ).xy;
-
-	// The atlas has only 64 temporal slices, so frame N and N+64 read the same slice: the
-	// sample repeats and accumulation stops improving past 64 frames. Decorrelate across
-	// 64-frame cycles with a Cranley-Patterson rotation (toroidal shift) by an R2 offset
-	// keyed on the cycle index (frame >> 6). The offset is uniform per cycle, preserving
-	// spatial and within-window temporal blue noise; cycle 0's offset is 0, so frames
-	// 0-63 stay bit-identical. A toroidal shift of uniform samples stays uniform (unbiased).
-	const cycle = float( uint( frame ).shiftRight( uint( 6 ) ) );
-	const rotation = fract( vec2( R2_A1, R2_A2 ).mul( cycle ) );
-	return fract( raw.add( rotation ) );
-
-};
 
 // -----------------------------------------------------------------------------
 // Low-discrepancy sequence generators
@@ -531,52 +458,8 @@ export const getRandomSample1D = ( pixelCoord, sampleIndex, dimensionIndex, rngS
 
 };
 
-// Stratified sample. Both call sites pass totalRays = 1, so only the first branch is live;
-// the strata path below is kept for the multi-ray-per-pixel mode that was removed.
-
-export const getStratifiedSample = ( pixelCoord, rayIndex, totalRays, rngState, resolution, frame ) => {
-
-	// result variable avoids early-return ReturnNode escaping into outer Fn scope
-	const result = vec2( 0.0 ).toVar();
-
-	If( totalRays.lessThanEqual( int( 1 ) ), () => {
-
-		result.assign( getRandomSample( pixelCoord, rayIndex, int( 0 ), rngState, int( - 1 ), resolution, frame ) );
-
-	} ).Else( () => {
-
-		// Calculate strata dimensions
-
-		const strataX = int( sqrt( float( totalRays ) ) );
-		const strataY = totalRays.add( strataX ).sub( 1 ).div( strataX );
-		const strataIdx = mod( rayIndex, strataX.mul( strataY ) );
-		const sx = mod( strataIdx, strataX );
-		const sy = strataIdx.div( strataX );
-
-		// Base stratified position
-
-		const strataPos = vec2( float( sx ), float( sy ) ).div( vec2( float( strataX ), float( strataY ) ) );
-
-		const j1 = RandomValueFast( rngState ).toVar();
-		const j2 = RandomValueFast( rngState ).toVar();
-		const jitter = vec2( j1, j2 ).toVar();
-
-		If( totalRays.greaterThan( int( 4 ) ), () => {
-
-			const stbnInfluence = sampleSTBN2D( pixelCoord, rayIndex, int( 0 ), frame ).mul( 0.1 );
-			jitter.assign( mix( jitter, stbnInfluence, 0.2 ) );
-
-		} );
-
-		jitter.divAssign( vec2( float( strataX ), float( strataY ) ) );
-
-		result.assign( strataPos.add( jitter ) );
-
-	} );
-
-	return result;
-
-};
+export const getStratifiedSample = ( pixelCoord, rayIndex, rngState, resolution, frame ) =>
+	getRandomSample( pixelCoord, rayIndex, int( 0 ), rngState, int( - 1 ), resolution, frame );
 
 // Get decorrelated seed with better mixing
 

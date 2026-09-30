@@ -238,7 +238,7 @@ export async function runAppLifecycle( bench, { cycles = MEMORY_GATES.lifecycleC
 	}
 
 	// ── Gate 2: realm bytes may not climb per cycle ──
-	// Cycle 1 is excluded: module-level one-time allocations (STBN atlases, lazily imported
+	// Cycle 1 is excluded: module-level one-time allocations (lazily imported
 	// denoiser weights) legitimately land there and never repeat.
 	const measured = cycleResults.filter( ( entry ) => entry.reachable !== null );
 

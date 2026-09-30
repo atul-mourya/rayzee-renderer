@@ -4,6 +4,16 @@ import { NoBlending, NoToneMapping } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../TSL/Common.js';
 
+// In priority order: the first one published wins.
+const LIGHT_SOURCES = [
+	'oidn:output',
+	'edgeFiltering:output',
+	'bilateralFiltering:output',
+	'asvgf:output',
+	'nrd:output',
+	'pathtracer:color',
+];
+
 /**
  * Compositor — Terminal pipeline stage.
  *
@@ -76,12 +86,21 @@ export class Compositor extends RenderStage {
 	 */
 	resolveLightTexture( context ) {
 
-		return context.getTexture( 'oidn:output' )
-			|| context.getTexture( 'edgeFiltering:output' )
-			|| context.getTexture( 'bilateralFiltering:output' )
-			|| context.getTexture( 'asvgf:output' )
-			|| context.getTexture( 'nrd:output' )
-			|| context.getTexture( 'pathtracer:color' );
+		return this.resolveLightSource( context )?.texture ?? null;
+
+	}
+
+	/** {@link resolveLightTexture} plus the context key it came from. */
+	resolveLightSource( context ) {
+
+		for ( const key of LIGHT_SOURCES ) {
+
+			const texture = context.getTexture( key );
+			if ( texture ) return { key, texture };
+
+		}
+
+		return null;
 
 	}
 

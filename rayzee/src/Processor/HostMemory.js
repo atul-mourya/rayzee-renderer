@@ -59,6 +59,20 @@ export const SAFE_SCENE_BYTES = 7040 * 1024 * 1024;
  */
 export const MAX_SCENE_BYTES = 9216 * 1024 * 1024;
 
+/**
+ * The host's memory in GB: the host's own figure when it gives one, else Chrome's
+ * `navigator.deviceMemory`, else an assumed 4 (every other runtime lacks it).
+ * @param {number} [stated]
+ * @returns {{gb: number, assumed: boolean}}
+ */
+export function deviceMemoryGB( stated ) {
+
+	if ( stated > 0 ) return { gb: stated, assumed: false };
+	const reported = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
+	return reported > 0 ? { gb: reported, assumed: false } : { gb: 4, assumed: true };
+
+}
+
 /** Headroom a single build step wants over its own size before it is called safe. */
 export const PREFLIGHT_SAFETY = 1.15;
 

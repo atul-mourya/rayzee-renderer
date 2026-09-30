@@ -159,7 +159,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// Camera list changed (add / remove / model load) → sync names + selection.
-	on( 'CamerasUpdated', ( e ) => {
+	on( EngineEvents.CAMERAS_UPDATED, ( e ) => {
 
 		const cam = useCameraStore.getState();
 		cam.setCameraNames( e.cameraNames || engine.cameraManager.getCameraNames() );
@@ -168,7 +168,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 	} );
 
 	// Camera switch → sync selection, the camera's own per-camera DOF/focus effects and its projection.
-	on( 'CameraSwitched', ( e ) => {
+	on( EngineEvents.CAMERA_SWITCHED, ( e ) => {
 
 		const cam = useCameraStore.getState();
 		cam.setSelectedCameraIndex( e.cameraIndex );
@@ -179,7 +179,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => useCameraStore.getState().setOrthoHeight( e.height ) );
 
-	on( 'ModelLoaded', () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
+	on( EngineEvents.MODEL_LOADED, () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
 
 	on( EngineEvents.TIMELINE_CHANGED, () => useAnimationStore?.getState().syncTimeline( engine.timeline ) );
 
@@ -240,7 +240,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
-	on( 'SceneRebuild', () => {
+	on( EngineEvents.SCENE_REBUILD, () => {
 
 		useCameraStore.getState().syncModelSize();
 
@@ -274,7 +274,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
-	on( 'resolution_changed', ( e ) => {
+	on( EngineEvents.RESOLUTION_CHANGED, ( e ) => {
 
 		window.dispatchEvent( new CustomEvent( 'resolution_changed', {
 			detail: { width: e.width, height: e.height }

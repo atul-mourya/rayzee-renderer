@@ -94,7 +94,7 @@ Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
 - **`EdgeFilter.js`**: Temporal filtering with edge preservation
-- **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer allocates nothing until a helper first becomes visible, and parks itself (`display:none`) when none are.
+- **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
 - **`PathTracerApp.js`**: Main application class managing the WebGPU renderer, scene, camera, and pipeline lifecycle
@@ -276,8 +276,7 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   exit and dynamic dispatch sizing (kernels bind on `ENTERING_COUNT`, so an under-sized grid silently
   drops rays), interaction mode, auto-focus and auto-exposure. Reversible; leaves rAF stopped.
 - **`await app.renderFrames( n, { reset, yieldEvery, onProgress, allowEarlyRetire } )`** —
-  accumulates `n` samples synchronously, returning the count reached. Awaits the STBN atlases (until
-  they land the sampler reads a constant-0.5 placeholder that bakes into accumulation), raises
+  accumulates `n` samples synchronously, returning the count reached. Raises
   `maxSamples` through the settings handler (`completionThreshold` is a cached JS number — writing
   the uniform alone does nothing), and calls `stopAnimation()` after `reset()` because `reset()`
   re-wakes rAF.
@@ -286,20 +285,31 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   top), so a fixed-count loop can never reach `n`. `setDeterministicMode` clears
   `useAdaptiveSampling`, which is why the bench never hits it; anything running the shipping
   adaptive path must pass `allowEarlyRetire: true` and compare the returned count against `n`.
-- **`await app.renderToBuffer( { colorSpace, preserveAlpha } )`** — pixels without the canvas, so it
+- **`await app.renderToBuffer( { colorSpace, preserveAlpha, source } )`** — pixels without the canvas, so it
   works headless, works while the page is hidden, and cannot pick up a helper overlay. `'linear'`
   is the raw accumulation, `'srgb'` applies exposure/saturation/tone curve in the output pass's
-  order. ⚠️ Reads `pathtracer:color`, **upstream of the Compositor** — denoising and bloom are
-  absent. Use `getCanvas()` for what the viewport shows.
+  order (CPU, within one level of the canvas). `source: 'accumulation'` (default) reads
+  `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
+  resolves (denoised, no bloom). The result's `source` names what was read, and a `'display'` read
+  that found nothing denoised while a denoiser is in use records `output.source_fallback`.
+- **`await app.runFinalDenoise()`** — one OIDN pass at the final tier, awaited, without the render
+  loop or the upscaler (`DenoisingManager.denoiseOnce()`: waits out a run or weight load in flight,
+  which `start()` would refuse or defer). OIDN must have been on while accumulating — the aux
+  buffers are written only then. Failure records `denoiser.unavailable`.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
   CPU and stays flat while GPU cost doubles.
 
-`app.stages.pathTracer.blueNoiseReady` resolves when both STBN atlases have loaded.
+`app.stages.pathTracer.blueNoiseReady` is deprecated and always resolved: the STBN atlases were
+never read by a live code path (the default sampler is Sobol), so the load was removed.
 
 `rayzee/src/Headless.js` wraps the above as the supported entry point — `renderHeadless()` for one
 frame, `openHeadless()` to keep a live app across several, `captureHeadless()` to accumulate and read
-back. Defaults are the batch renderer's (`strict`, `profile: 'physical'`, `deterministic`).
+back (`denoise: true` enables OIDN before accumulating, runs `runFinalDenoise()`, reads `'display'`).
+Defaults are the batch renderer's (`strict`, `profile: 'physical'`, `deterministic`). Under `strict`,
+`PathTracerApp` also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):
+the download cache serves a cached copy for up to a day before revalidating. `hostMemoryGB` stands
+in for `navigator.deviceMemory` (absent outside Chrome, read as 4, which caps the reserve at 2048).
 `bench/harness/boot.js` boots through it, so the suite and production share one driver; the bench
 passes `profile: 'viewer'` and `strict: false` explicitly, and both are load-bearing — `physical`
 would change every golden, and `strict` would abort a run before the runner reported.
@@ -319,7 +329,12 @@ the strings, so never rename or repurpose one.
   because `onIssue` captured the app and the most recently disposed app stayed reachable. Only
   `npm run bench:memory` catches this class — unit tests cannot.
 - `Promise.allSettled` swallows a strict host's throw; `TextureCreator` rethrows the first rejected
-  result for that reason. Any new allSettled aggregation needs the same.
+  result for that reason. Any new allSettled aggregation needs the same. Likewise a catch that
+  retries or re-records must rethrow an `EngineIssueError` untouched.
+- **App events** are `EngineEvents` values only. A renamed one keeps its old string in
+  `LEGACY_EVENT_NAMES`, which `PathTracerApp.dispatchEvent` sends alongside until the next major;
+  `addEventListener` warns once for any other name (a listener on a wrong name fails silently —
+  the 7.28.0 rename cost a host four weeks).
 
 ### Settings Provenance & Render Profiles
 - **`settings.getEffective()`** — every live setting as `{ value, source, routed }`. `source` is one
@@ -646,6 +661,9 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   frame is skipped (`DenoisingManager.skipsTrace()`): accumulation is off, the canvas shows the
   denoised picture, and the next denoise reads the newest frame — so tracing it only starves the
   denoise. Measured inside a room at 512²: 19 → 42 refreshes/sec.
+- ⚠️ **The closing denoise redraws through `_presentDisplay()`, never `refreshFrame()`.** Waking the
+  loop made a finished render nothing had marked complete (`renderFrames`, a video export) look newly
+  finished, and it denoised the same image a second time.
 - A **final render suspends the live refresh** (`setCadenceSuspended`, first statement of
   `configureForMode`): it shows its own accumulation and denoises once at the end. Leaving it running
   denoised the image twice and raced the renderer's output-pass rebuild.

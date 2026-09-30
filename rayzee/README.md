@@ -267,16 +267,12 @@ export default defineConfig({
 
 ### Configuring Assets (CDN URLs & cache namespace)
 
-By default, the engine loads STBN blue-noise atlases, GLTF Draco/KTX2 decoders, OIDN denoiser weights, ONNX upscaler models, and the onnxruntime-web bundle from upstream CDNs. If you're self-hosting, embedding the engine alongside a different consumer of the same caches, or operating offline, override them **once before constructing `PathTracerApp`**:
+By default, the engine loads GLTF Draco/KTX2 decoders, OIDN denoiser weights, ONNX upscaler models, and the onnxruntime-web bundle from upstream CDNs. If you're self-hosting, embedding the engine alongside a different consumer of the same caches, or operating offline, override them **once before constructing `PathTracerApp`**:
 
 ```js
 import { configureAssets } from 'rayzee';
 
 configureAssets({
-  // STBN atlases (PNG, decoded as Float textures)
-  stbnScalarAtlas: '/assets/stbn_scalar_atlas.png',
-  stbnVec2Atlas:   '/assets/stbn_vec2_atlas.png',
-
   // onnxruntime-web (loaded by AI upscaler worker via dynamic import)
   ortRuntimeUrl: '/ort/ort.webgpu.bundle.min.mjs',
   ortWasmPaths:  '/ort/',
@@ -324,7 +320,8 @@ const engine = new PathTracerApp(canvas, options?)
 | `options.strict` | `boolean` | Throw an `EngineIssueError` where the engine would otherwise degrade and carry on (default: `false`). See [Degradation contract](#degradation-contract). |
 | `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
 | `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
-| `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
+| `options.hostMemoryGB` | `number` | The host's memory, for runtimes without Chrome's `navigator.deviceMemory` (which then read as 4 GB and cap the render reserve at 2048). Sizes the reserve and the path pool. |
+| `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`; off under `strict` unless you set it there or here). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
 | `options.memorySpill` | `boolean` | Experimental, default `false`: build a large static scene through disk — triangle records, BLAS nodes and the three.js geometry are written out as the build finishes with them — and raise the pbrt triangle and placement caps to 60M / 8M. See [On-disk storage](#on-disk-storage-opfs). |
 
 The engine creates and mounts everything it needs (denoiser canvas, tile/HUD overlay) into a single parent on `init()`. Performance HUDs (e.g. `stats-gl`) are not bundled — listen to `EngineEvents.FRAME` and tick your own panel.
@@ -552,9 +549,15 @@ engine.lightManager.add('PointLight')       // Add a light (PointLight, SpotLigh
 engine.lightManager.remove(uuid)            // Remove by UUID
 engine.lightManager.clear()                 // Remove all lights
 engine.lightManager.getAll()                // Get all light descriptors
-engine.lightManager.sync()                  // Re-upload light data to GPU
+engine.lightManager.setIntensity(uuid, 40)  // Set one light's power and re-upload
+engine.lightManager.getLight(uuid)          // The traced three.js light, to edit other properties
+engine.lightManager.sync()                  // Re-upload light data to GPU after editing a light
 engine.lightManager.showHelpers(true)       // Toggle visual helpers
 ```
+
+The path tracer traces **copies** of a model's lights, made when the model loads. Changing a light
+inside the loaded model does nothing; change the copy — `getLight(uuid)` with a UUID from `getAll()` —
+and call `sync()`, or use `setIntensity()`.
 
 Light `intensity` follows Blender: radiant power in watts for point, spot and area lights, irradiance in W/m² for directional. Dividing power by area only means something in metres, so the engine assumes **one world unit is one metre**; scenes authored in cm or mm must carry that scale in their node transforms, as glTF exporters do. glTF `RectAreaLightPlaceholder` nodes author `intensity` as three.js radiance (their `power` field is `intensity · width · height · π`); the importer converts it to power through the light's world area so the authored radiance is reproduced exactly, then applies the profile's `areaLightIntensityScale`.
 
@@ -824,6 +827,12 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `scene.memory_budget` | the scene needs more CPU memory than is safe, or more than is possible |
 | `emissive.instances_collapsed` | an emissive instanced mesh was too large to expand, so its copies light the scene as one |
 | `refit.shared_geometry` | a deform was asked for on a mesh that shares its triangles, and was skipped |
+| `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
+| `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
+| `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
+
+`asset.unreachable` also covers what the engine fetches for itself: OIDN weights, IES profiles and
+gobos (`detail.asset` says which).
 
 `settings.getEffective()` is the companion for the `setting.unknown_key` case: it returns every live
 setting as `{ value, source, routed }`, and `routed: false` means stored but reaching no stage.
@@ -868,7 +877,7 @@ engine.setReservedRenderResolution(2048, { allowLower: true })   // lower, payin
 engine.getReservedRenderResolution()              // the reserve actually in force
 ```
 
-The request is **device-capped**: a 4096 reserve pins roughly 1.5 GB of MRT textures, so it is only granted on GPUs reporting ≥ 8 GB and a ≥ 1 GB `maxStorageBufferBindingSize`; weaker devices clamp to 2048. `MAX_RESERVABLE_RENDER_SIZE` (4096) is the ceiling on any request.
+The request is **device-capped**: a 4096 reserve pins roughly 1.5 GB of MRT textures, so it is only granted on hosts reporting ≥ 8 GB and a ≥ 1 GB `maxStorageBufferBindingSize`; weaker devices clamp to 2048, recorded as `render.reserve_capped`. The memory figure is `options.hostMemoryGB`, else `navigator.deviceMemory`, else an assumed 4 — so outside Chrome, pass it. `MAX_RESERVABLE_RENDER_SIZE` (4096) is the ceiling on any request.
 
 Raises are monotonic unless you pass `allowLower` — UI-driven callers ask for whatever the current view needs, and honouring every decrease made the reserve oscillate across preview↔render switches, paying a full kernel rebuild each time.
 
@@ -877,10 +886,10 @@ Callable at any point in the lifecycle:
 - **Before `init()`** — recorded and applied during `init()`, after the device exists but before the stages are constructed, so they allocate at the raised size directly. The device gate cannot run without a device, so the return value here is the *request*, not the verdict.
 - **After `init()`** — applied immediately, re-initialising the reserved GPU storage in place.
 
-Either way the verdict arrives as a `reserved_render_size_changed` event (a plain string type, not an `EngineEvents` constant):
+Either way the verdict arrives as `EngineEvents.RESERVED_RENDER_SIZE_CHANGED`:
 
 ```js
-engine.addEventListener('reserved_render_size_changed', e => console.log('reserve:', e.size));
+engine.addEventListener(EngineEvents.RESERVED_RENDER_SIZE_CHANGED, e => console.log('reserve:', e.size));
 engine.setReservedRenderResolution(4096);
 await engine.init();
 console.log(engine.getReservedRenderResolution());   // 4096, or 2048 if the device declined
@@ -974,7 +983,43 @@ The RNG is already pure — `hash(pixel, rayIndex, frame)`, no clock, no `Math.r
 
 - `engine.isDeterministic` — whether output is currently bit-reproducible.
 - `setDeterministicMode(true, { pinDispatch: false })` keeps the two readback-driven dispatch heuristics active. Output is then *not* reproducible; this exists so performance measurements reflect shipping behaviour rather than a configuration production never runs.
-- `renderFrames` awaits `engine.stages.pathTracer.blueNoiseReady` first — until the STBN atlases land the sampler reads a constant-0.5 placeholder that bakes permanently into the accumulation buffer. It raises `maxSamples` if needed, and throws if something retires the render early.
+- `renderFrames` raises `maxSamples` if needed, and throws if something retires the render early.
+
+#### Batch rendering
+
+The supported entry point for a render farm is `rayzee/src/Headless.js`, exported from the package.
+Its defaults are a batch renderer's — `strict`, `profile: 'physical'`, deterministic, storage off —
+so a degraded render throws instead of shipping:
+
+```js
+import { openHeadless, captureHeadless } from 'rayzee';
+
+const app = await openHeadless({ canvas, model: url, width: 1920, height: 1080 });
+try {
+  const frame = await captureHeadless(app, { samples: 256, denoise: true });
+  // frame.data: RGBA8 (colorSpace 'srgb') or Float32 (colorSpace 'linear')
+  // frame.source: what was read — 'oidn' here, 'accumulation' without denoise
+  // frame.issues: everything the engine survived, when not strict
+} finally {
+  app.dispose();
+}
+```
+
+`denoise: true` turns OIDN on before accumulating (it reads the albedo and normal buffers, which
+are written only while it is on), runs **one** final denoise with `app.runFinalDenoise()`, and reads
+it back with `renderToBuffer( { source: 'display' } )`. Driving it yourself is the same three calls.
+`renderToBuffer` reports the picture it read as `source`, and records `output.source_fallback` when
+`'display'` was asked for, a denoiser is in use, and nothing had published — so a strict host cannot
+ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the CPU and match the canvas to
+within one level (it rounds half a level up); `'linear'` is exact.
+
+Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
+set it. Outside Chrome, pass `hostMemoryGB`.
+
+**Without a browser.** The engine renders under Node on Dawn (the `webgpu` package, the WebGPU
+implementation inside Chrome) with the same pixels as Chrome, but only with a host-supplied shim for
+the DOM, the canvas, image decoding and Workers. That is known to work and not yet supported: the
+engine still reaches for browser globals, and there is no seam to plug those services in.
 
 #### GPU timing
 
@@ -1005,7 +1050,7 @@ list. Both need `timestamp-query`, and `getDenoiseProfile()` returns `null` when
 
 `engine.storage` is a `StorageManager` over the browser's origin private file system, or `null` where
 there is none (a private window, Node) — everything works without it, only slower. The engine keeps
-its caches there: downloads (models, skies, OIDN weights, STBN atlases — revalidated with `HEAD`),
+its caches there: downloads (models, skies, OIDN weights — revalidated with `HEAD` at most daily, and served from the cache meanwhile),
 unpacked `.tar.gz` archives and archive indexes, built scenes (reopened without rebuilding BVHs when
 the first build took ≥ 10 s), and environment sampling tables. Caches share a budget of 30 % of the
 quota and are evicted least-recently-used; `engine.storage.usage()` reports each area.
@@ -1119,6 +1164,18 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `VIDEO_RENDER_PROGRESS` / `VIDEO_RENDER_COMPLETE` | Video export progress |
 | `DEVICE_LOST` | The GPU device was lost (driver crash/reset) — rendering halts instead of throwing into a dead device |
 | `DISPOSE` | Engine is being disposed (fires before teardown begins, so listeners can release their own references) |
+| `ISSUE` | An issue was recorded — see [Degradation contract](#degradation-contract) |
+| `MODEL_LOADED` / `OBJECT3D_LOADED` / `MODEL_ADDED` / `SCENE_OBJECT_REMOVED` / `SCENE_UNLOADED` | Scene content changed |
+| `SCENE_REBUILD` / `SCENE_SPILLED` / `SCENE_METADATA_APPLIED` | The scene was rebuilt, moved to disk, or had its authored environment applied |
+| `ENVIRONMENT_LOADED` / `TEXTURES_REPROCESSED` | An environment or the texture arrays were (re)built |
+| `CAMERAS_UPDATED` / `CAMERA_SWITCHED` / `FOCUS_CHANGED` | Camera list, active camera, or focus distance changed |
+| `RESOLUTION_CHANGED` / `RESERVED_RENDER_SIZE_CHANGED` | The render size or the reserve changed |
+| `STORAGE_CHANGED` / `TIMELINE_CHANGED` | On-disk storage or timeline keys changed |
+
+Several of these used to be plain strings (`'ModelLoaded'`, `'RenderComplete'`, `'resolution_changed'`, …).
+The engine still dispatches each under its old name as well, until the next major; `LEGACY_EVENT_NAMES`
+maps new to old. Listening for a name the engine never dispatches logs a warning once, since such a
+listener fails silently otherwise.
 
 ### Advanced: Custom Pipeline Stages
 
@@ -1144,7 +1201,7 @@ class MyCustomStage extends RenderStage {
 
 ```js
 // Core
-import { PathTracerApp, EngineEvents } from 'rayzee';
+import { PathTracerApp, EngineEvents, LEGACY_EVENT_NAMES } from 'rayzee';
 
 // Configuration & presets
 import {

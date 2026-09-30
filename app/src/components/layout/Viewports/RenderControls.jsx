@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useStore, usePathTracerStore, useCameraStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
+import { EngineEvents } from 'rayzee';
 import { useBackendEvent } from '@/hooks/useBackendEvent';
 
 // Reusable control button component using shadcn Button
@@ -96,8 +97,8 @@ const RenderControls = () => {
 
 	};
 
-	useBackendEvent( 'RenderComplete', useCallback( () => setIsRendering( false ), [ setIsRendering ] ) );
-	useBackendEvent( 'RenderReset', useCallback( () => setIsRendering( true ), [ setIsRendering ] ) );
+	useBackendEvent( EngineEvents.RENDER_COMPLETE, useCallback( () => setIsRendering( false ), [ setIsRendering ] ) );
+	useBackendEvent( EngineEvents.RENDER_RESET, useCallback( () => setIsRendering( true ), [ setIsRendering ] ) );
 
 	// Control button definitions — play/pause/restart only when path tracer is enabled
 	const controls = [

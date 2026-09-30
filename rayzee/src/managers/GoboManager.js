@@ -1,5 +1,6 @@
 import { DataArrayTexture, LinearFilter, RGBAFormat, UnsignedByteType } from 'three';
 import { cachedObjectURL } from '../Storage/DownloadCache.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 /**
  * Manages projection masks ("gobos" / "cookies") for spot lights.
@@ -33,6 +34,7 @@ export class GoboManager {
 
 		this.pathTracer = pathTracer;
 		this._onReset = options.onReset || null;
+		this._issues = options.issues ?? null;
 
 		/** @type {DataArrayTexture | null} */
 		this.texture = null;
@@ -140,7 +142,11 @@ export class GoboManager {
 			const entry = this.entries.find( e => e.name === name );
 			if ( ! entry ) {
 
-				console.warn( `GoboManager: unknown gobo "${name}"` );
+				this._issues?.record(
+					ISSUE_CODES.ASSET_UNREACHABLE,
+					`no gobo named "${name}" is loaded — the light projects without one`,
+					{ name, asset: 'gobo' }
+				);
 				return false;
 
 			}
@@ -237,6 +243,7 @@ export class GoboManager {
 		this.entries = [];
 		this.pathTracer = null;
 		this._onReset = null;
+		this._issues = null;
 
 	}
 

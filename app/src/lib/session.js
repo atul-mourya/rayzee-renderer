@@ -309,7 +309,7 @@ export class SessionKeeper {
 		this._release = await acquireLock( lockName( this.id ) );
 
 		const touch = () => this.touch();
-		for ( const type of [ EngineEvents.RENDER_RESET, EngineEvents.TIMELINE_CHANGED, 'CamerasUpdated', 'EnvironmentLoaded', 'SceneRebuild' ] ) {
+		for ( const type of [ EngineEvents.RENDER_RESET, EngineEvents.TIMELINE_CHANGED, EngineEvents.CAMERAS_UPDATED, EngineEvents.ENVIRONMENT_LOADED, EngineEvents.SCENE_REBUILD ] ) {
 
 			this.app.addEventListener( type, touch );
 			this._off.push( () => this.app.removeEventListener( type, touch ) );
@@ -321,8 +321,8 @@ export class SessionKeeper {
 		this._off.push( () => settings.removeEventListener( EngineEvents.SETTING_CHANGED, touch ) );
 
 		const onModel = () => syncModelParam( this.app.sceneSource );
-		this.app.addEventListener( 'ModelLoaded', onModel );
-		this._off.push( () => this.app.removeEventListener( 'ModelLoaded', onModel ) );
+		this.app.addEventListener( EngineEvents.MODEL_LOADED, onModel );
+		this._off.push( () => this.app.removeEventListener( EngineEvents.MODEL_LOADED, onModel ) );
 
 		for ( const store of this._stores ) this._off.push( store.subscribe( touch ) );
 

@@ -3,6 +3,7 @@ import { OutlineHelper } from './helpers/OutlineHelper.js';
 import { ViewOverlayRenderer } from './helpers/ViewOverlayRenderer.js';
 import { createOverlayCanvas, viewPixelSize } from './helpers/overlaySurface.js';
 import { createLogger } from '../utils/Logger.js';
+import { EngineEvents } from '../EngineEvents.js';
 
 const log = createLogger( 'overlay' );
 
@@ -149,7 +150,7 @@ export class OverlayManager {
 
 		tileHelper.setRenderSize( renderWidth || 1, renderHeight || 1 );
 
-		app.addEventListener( 'resolution_changed', ( e ) => {
+		app.addEventListener( EngineEvents.RESOLUTION_CHANGED, ( e ) => {
 
 			tileHelper.setRenderSize( e.width, e.height );
 

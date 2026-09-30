@@ -108,7 +108,7 @@ busy on average. The app reports ~1.6–2.5 of 6 and a native harness run 3.7; u
 harness reported 4–5 "busy" while doing 28× the total work. It is the cheapest single signal that a
 CPU measurement is being distorted, and the calibration report prints it for both sides.
 
-**Requirements:** Google Chrome installed (override with `CHROME_PATH`). No network access needed — every scene is procedural and the STBN atlases are vendored (see below).
+**Requirements:** Google Chrome installed (override with `CHROME_PATH`). No network access needed — every scene is procedural.
 
 ## How it works
 
@@ -119,22 +119,8 @@ bench/
   harness/    boot.js, scenes.js, index.html   # runs in the browser
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
   runner/     cli.js + one module per suite    # runs in Node
-  assets/     noise/stbn_*_atlas.png           # vendored engine assets
   baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json
 ```
-
-### Reference inputs are vendored, not fetched
-
-The engine defaults its STBN blue-noise atlases to `assets.rayzee.atulmourya.com`. The harness
-overrides that with `configureAssets()` and loads byte-identical copies from `bench/assets/noise/`
-instead. A reproducibility gate whose reference inputs live on a mutable host is not reproducible:
-a re-encode there would silently invalidate every golden in the repo, and an outage would stop the
-suite entirely. The copies are byte-for-byte upstream, verified by all four pre-existing goldens
-still rendering bit-identically after the switch.
-
-The load is still asserted after `blueNoiseReady`, because a missing atlas does not throw — the
-sampler falls back to a constant-0.5 placeholder and bakes degenerate "noise" permanently into the
-accumulation buffer, which looks like a regression or, worse, gets blessed as one.
 
 ## Determinism
 
@@ -142,12 +128,11 @@ Image comparison is only meaningful if the renderer is reproducible, and by defa
 
 - async counter readbacks drive the per-bounce early exit and dispatch sizing, and kernels bind on `ENTERING_COUNT`, so an under-sized grid silently drops rays;
 - the adaptive convergence stop retires the frame at a run-dependent sample count;
-- interaction mode is a 100 ms timer that engages on the very first frame;
-- the STBN atlas loads asynchronously, and until it lands the sampler reads a constant-0.5 placeholder that gets baked permanently into the accumulation buffer.
+- interaction mode is a 100 ms timer that engages on the very first frame.
 
 `app.setDeterministicMode( true )` pins all of it, and `app.renderFrames( n )` accumulates exactly `n` samples with the rAF loop parked. With those, two runs of the same scene produce **byte-identical** PNGs.
 
-The harness reaches them through `openHeadless()` / `renderToBuffer()` — the same entry point a render farm uses — so a bug in the shipped headless path cannot hide from the suite that exists to catch bugs. It passes `profile: 'viewer'` and `strict: false` explicitly: `physical` would change every golden, and `strict` would abort a run before the runner reported anything (`assertLoadedCleanly()` gives the same guarantee per load instead).
+The harness reaches them through `openHeadless()` / `renderToBuffer()`, and its OIDN rungs through `runFinalDenoise()` and a `source: 'display'` readback — the same entry points a render farm uses — so a bug in the shipped headless path cannot hide from the suite that exists to catch bugs. It passes `profile: 'viewer'` and `strict: false` explicitly: `physical` would change every golden, and `strict` would abort a run before the runner reported anything (`assertLoadedCleanly()` gives the same guarantee per load instead).
 
 These are public engine API, not bench-only helpers — any host doing offline rendering wants them.
 

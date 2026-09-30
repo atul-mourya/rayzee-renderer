@@ -4,7 +4,7 @@ import { getApp } from '@/lib/appProxy';
 /**
  * React hook that subscribes to an event on the active app.
  *
- * @param {string} eventName - The event name to listen for (e.g., 'RenderComplete')
+ * @param {string} eventName - The event name to listen for (an `EngineEvents` value)
  * @param {Function} handler - The callback to invoke when the event fires
  */
 export function useBackendEvent( eventName, handler ) {

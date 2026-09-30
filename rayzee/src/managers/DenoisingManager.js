@@ -3,6 +3,7 @@ import { OIDNDenoiser } from '../Passes/OIDNDenoiser.js';
 import { OIDNTemporalHistory } from '../Passes/OIDNTemporalHistory.js';
 import { AIUpscaler } from '../Passes/AIUpscaler.js';
 import { EngineEvents } from '../EngineEvents.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger } from '../utils/Logger.js';
 
 // The neural passes live in `../neural/` but report through the manager that drives them, so they
@@ -100,12 +101,14 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {import('../Pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
+	 * @param {import('../EngineIssues.js').IssueLog}  [params.issues]
 	 */
-	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, issues = null } ) {
 
 		super();
 
 		this.renderer = renderer;
+		this._issues = issues;
 		this.mainCanvas = mainCanvas;
 		this.upscalerCanvas = this._createUpscalerCanvas( mainCanvas );
 		this.pipeline = pipeline;
@@ -183,6 +186,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserStartHandler = null;
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
+		this._denoiserErrorHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;
@@ -211,6 +215,16 @@ export class DenoisingManager extends EventDispatcher {
 
 		parent.insertBefore( dc, mainCanvas );
 		return dc;
+
+	}
+
+	_recordNoOverlayCanvas( pass ) {
+
+		this._issues?.record(
+			ISSUE_CODES.DENOISER_UNAVAILABLE,
+			`the ${pass} pass needs the render canvas to be in a document, and it is not — skipped`,
+			{ pass }
+		);
 
 	}
 
@@ -280,8 +294,6 @@ export class DenoisingManager extends EventDispatcher {
 	 */
 	setupDenoiser() {
 
-		if ( ! this.upscalerCanvas ) return;
-
 		const pt = this._stages.pathTracer;
 
 		// No canvas: the denoiser hands its result to the pipeline as a picture, and the
@@ -335,9 +347,17 @@ export class DenoisingManager extends EventDispatcher {
 
 		};
 
+		// Only the weight load names a URL; the init wrapper re-reports that same failure.
+		this._denoiserErrorHandler = e => e.url && this._issues?.record(
+			ISSUE_CODES.ASSET_UNREACHABLE,
+			`denoiser weights "${e.url}" could not be loaded — the render is not denoised`,
+			{ url: e.url, asset: 'oidn-weights', cause: String( e.error?.message ?? e.error ) }
+		);
+
 		this.denoiser.addEventListener( 'start', this._denoiserStartHandler );
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
 		this.denoiser.addEventListener( 'tileProgress', this._denoiserTileHandler );
+		this.denoiser.addEventListener( 'error', this._denoiserErrorHandler );
 
 	}
 
@@ -384,7 +404,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Forward lifecycle events (store refs for removal on re-setup / dispose)
 		this._upscalerResChangedHandler = ( e ) =>
-			this.dispatchEvent( { type: 'resolution_changed', width: e.width, height: e.height } );
+			this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: e.width, height: e.height } );
 		this._upscalerStartHandler = () =>
 			this.dispatchEvent( { type: EngineEvents.UPSCALING_START } );
 		this._upscalerProgressHandler = ( e ) =>
@@ -1101,7 +1121,7 @@ export class DenoisingManager extends EventDispatcher {
 		// The nominal size, not the path tracer's: that one is smaller while the camera moves.
 		if ( wasShowing && this._lastRenderWidth && this._lastRenderHeight ) {
 
-			this.dispatchEvent( { type: 'resolution_changed', width: this._lastRenderWidth, height: this._lastRenderHeight } );
+			this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: this._lastRenderWidth, height: this._lastRenderHeight } );
 
 		}
 
@@ -1166,7 +1186,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		if ( ! this.upscalerCanvas ) {
 
-			neuralLog.warn( 'neural pass skipped: the engine has no overlay canvas to present on' );
+			this._recordNoOverlayCanvas( 'neural' );
 			return;
 
 		}
@@ -1282,7 +1302,7 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this.mainCanvas ) this.mainCanvas.style.opacity = '0';
 
 			// The host shows the output dimensions; without this they keep reading the render size.
-			this.dispatchEvent( { type: 'resolution_changed', width: image.width, height: image.height } );
+			this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: image.width, height: image.height } );
 
 		} catch ( error ) {
 
@@ -1294,6 +1314,44 @@ export class DenoisingManager extends EventDispatcher {
 			this.dispatchEvent( { type: EngineEvents.UPSCALING_END } );
 
 		}
+
+	}
+
+	/**
+	 * One denoise of the accumulation at the final tier, resolved once its picture is published.
+	 * Unlike onRenderComplete(), leaves the render loop and the upscaler alone.
+	 * @returns {Promise<boolean>} whether a denoised picture was published
+	 */
+	async denoiseOnce() {
+
+		const dn = this.denoiser;
+		if ( ! dn?.enabled ) return false;
+
+		this._cleanupCompletionListener();
+		this._resetCadence();
+		this._useFinalQuality();
+
+		// start() refuses during a run and only defers during a weight load.
+		while ( dn.state.isLoading || dn.state.isDenoising ) {
+
+			await ( dn.state.isLoading ? dn.whenLoaded() : new Promise( ( resolve ) => {
+
+				const onEnd = () => {
+
+					dn.removeEventListener( 'end', onEnd );
+					resolve();
+
+				};
+
+				dn.addEventListener( 'end', onEnd );
+
+			} ) );
+
+		}
+
+		const ok = await dn.start();
+		if ( ok ) this._onDisplayRefresh?.();
+		return ok && dn.hasOutput;
 
 	}
 
@@ -1459,6 +1517,7 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this._denoiserStartHandler ) this.denoiser.removeEventListener( 'start', this._denoiserStartHandler );
 			if ( this._denoiserEndHandler ) this.denoiser.removeEventListener( 'end', this._denoiserEndHandler );
 			if ( this._denoiserTileHandler ) this.denoiser.removeEventListener( 'tileProgress', this._denoiserTileHandler );
+			if ( this._denoiserErrorHandler ) this.denoiser.removeEventListener( 'error', this._denoiserErrorHandler );
 			this.denoiser.dispose();
 			this.denoiser = null;
 
@@ -1482,6 +1541,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserStartHandler = null;
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
+		this._denoiserErrorHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;
@@ -1490,6 +1550,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 		this._onDisplayRefresh = null;
+		this._issues = null;
 
 		if ( this.upscalerCanvas?.parentNode ) {
 
@@ -1669,6 +1730,7 @@ export class DenoisingManager extends EventDispatcher {
 	setUpscalerEnabled( enabled ) {
 
 		if ( this.upscaler ) this.upscaler.enabled = enabled;
+		else if ( enabled ) this._recordNoOverlayCanvas( 'upscaler' );
 		// The enlarged picture describes a setting that is no longer on.
 		if ( ! enabled ) this._restoreRenderDisplay();
 
