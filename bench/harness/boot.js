@@ -456,6 +456,37 @@ async function renderFreezeArm( spp, { freeze, threshold, stability } = {} ) {
 
 }
 
+/**
+ * The production path: adaptive sampling, pixel freeze and the readback-driven dispatch left live,
+ * driven by renderUntilComplete(), whose lockstep readbacks are all that keeps it reproducible.
+ * `spinMs` burns CPU after each frame to change the submission pacing. Returns a hash of the linear
+ * accumulation rather than the pixels, which are too big to move over CDP.
+ */
+async function renderLockstep( { drainEvery, spinMs = 0 } = {} ) {
+
+	if ( ! currentScene ) throw new Error( '__bench.renderLockstep: no scene loaded' );
+
+	app.setDeterministicMode( false );
+	app.settings.setMany( { useAdaptiveSampling: true, usePixelFreeze: true, maxSamples: currentScene.spp }, { silent: true } );
+
+	const spin = () => {
+
+		const end = performance.now() + spinMs;
+		while ( performance.now() < end );
+
+	};
+
+	const out = await app.renderUntilComplete( { denoise: false, drainEvery, onProgress: spinMs > 0 ? spin : undefined } );
+	const { data } = await app.renderToBuffer( { colorSpace: 'linear' } );
+
+	const words = new Uint32Array( data.buffer, data.byteOffset, data.length );
+	let hash = 2166136261;
+	for ( let i = 0; i < words.length; i ++ ) hash = Math.imul( hash ^ words[ i ], 16777619 ) >>> 0;
+
+	return { samples: out.samples, retiredBy: out.retiredBy, hash: hash.toString( 16 ) };
+
+}
+
 /** Apply arbitrary settings for an ablation, then re-arm accumulation. */
 function setSettings( values ) {
 
@@ -1374,6 +1405,7 @@ globalThis.__bench = {
 	setRenderSize,
 	setShippingHeuristics,
 	renderFreezeArm,
+	renderLockstep,
 	loadModelScene,
 	profileModelLoad,
 	setSettings,

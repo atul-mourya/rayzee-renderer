@@ -9,7 +9,7 @@ The engine's unit tests cover CPU logic well, but every GPU file — all of `TSL
 ```bash
 npm run bench:list      # show the scene corpus
 npm run bench:bless     # generate ground truth + goldens (first run, slow)
-npm run bench           # quality + denoise + memory + perf
+npm run bench           # quality + freeze + lockstep + denoise + memory + perf
 npm run bench:calibrate # check this browser's CPU timing against the app (see below)
 ```
 
@@ -17,6 +17,7 @@ Individual suites:
 
 ```bash
 npm run bench:quality
+npm run bench:lockstep     # production path reproducible under any pacing
 npm run bench:denoise
 npm run bench:memory
 npm run bench:perf
@@ -371,6 +372,20 @@ spread 3.7 % and 0.9 %, which is what sizes the 25 % ratchet.
 That instability is still unexplained. The obvious suspect — frozen pixels folding stale samples
 into their own variance, which drives the freeze decision — was fixed and **ruled out**: it halved
 the spread on both kept scenes but left `alpha-cutout` chaotic (36.7 % → 51.9 % across five runs).
+
+### Lockstep — the production path, reproducible
+
+Every other suite pins deterministic mode, and that turns adaptive sampling off — so nothing tested
+that the configuration a render farm ships renders the same image twice. `bench lockstep` renders
+each scene through `renderUntilComplete()` with adaptive sampling, pixel freeze and the
+readback-driven early exit all live, under four submission pacings (no draining, the default, a
+drain after every frame, 8 ms of CPU per frame), and requires the same sample count and a
+bit-identical linear accumulation from all four. Nothing is blessed: the four runs are compared with
+each other.
+
+Mutation-tested: with lockstep switched off inside `renderUntilComplete`, spheres-gradient retired
+at 64 / 37 / 23 / 29 spp across the four pacings and cornell-emissive at 64 / 33 / 30 / 45 — every
+pacing a different image. With it on: 24, 32 and 20 spp, identical across all four.
 
 ### Denoisers — a ratio, so there is nothing to bless away
 

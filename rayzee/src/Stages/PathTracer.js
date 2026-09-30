@@ -114,6 +114,11 @@ export class PathTracer extends PathTracerStage {
 		this._geometryPixelCount = 0;
 		this._convergedReadbackPending = false;
 
+		// Lockstep: readbacks issued on a fixed cadence and applied a fixed number of frames later,
+		// so when one lands cannot change the image. { due, read, apply } while one is in flight.
+		this._lockstep = false;
+		this._lockstepRead = null;
+
 		// Tier-2: last settled active-pixel count (maxRays − frozen), sizes next frame's bounce-0 grid.
 		// 0 until a settled readback lands (and on reset/camera-move/resize) → grid stays full-size until then.
 		this._lastActivePixelCount = 0;
@@ -243,6 +248,15 @@ export class PathTracer extends PathTracerStage {
 			this._wavefrontReady = false;
 			this._buildWavefrontKernels();
 			if ( ! this._wavefrontReady ) return;
+
+		}
+
+		const lockstepRead = this._lockstepRead;
+		if ( lockstepRead && this.frameCount >= lockstepRead.due ) {
+
+			if ( ! lockstepRead.apply ) return; // see readbackWait()
+			this._lockstepRead = null;
+			lockstepRead.apply();
 
 		}
 
@@ -659,6 +673,54 @@ export class PathTracer extends PathTracerStage {
 		this._auxSamples = 0;
 		this._auxSeedPending = false;
 
+		if ( this._lockstep ) {
+
+			// Nothing measured by the previous render may steer this one.
+			this._lockstepRead = null;
+			this._readbackGeneration ++;
+			this._lastBounceCounts = null;
+			this._lastBounceEnergy = null;
+			this._lastBounceCountsBudget = - 1;
+			this._lastBounceCountsLoopBound = - 1;
+			this._curveSizingValid = false;
+
+		}
+
+	}
+
+	/**
+	 * Lockstep readbacks: the survivor curve and the convergence counters are read every N frames
+	 * and applied exactly N frames later, waiting when they have not landed, and every reset starts
+	 * from nothing measured and from seed 0. The same input then renders the same image however fast
+	 * frames are submitted. Off by default: waiting costs a stall whenever the GPU falls N frames behind.
+	 * @param {boolean} enabled
+	 */
+	setLockstepReadbacks( enabled ) {
+
+		enabled = !! enabled;
+		if ( enabled === this._lockstep ) return;
+		this._lockstep = enabled;
+		this._lockstepRead = null;
+		this._readbackGeneration ++;
+
+	}
+
+	get lockstepReadbacks() {
+
+		return this._lockstep;
+
+	}
+
+	/**
+	 * While a lockstep readback is due and has not landed, render() traces nothing: await this
+	 * before the next frame. Null otherwise.
+	 * @returns {?Promise<void>}
+	 */
+	readbackWait() {
+
+		const pending = this._lockstepRead;
+		return pending && ! pending.apply && this.frameCount >= pending.due ? pending.read : null;
+
 	}
 
 	/**
@@ -807,6 +869,7 @@ export class PathTracer extends PathTracerStage {
 	_willReadCountersThisFrame() {
 
 		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) return false;
+		if ( this._lockstep ) return ! this._lockstepRead && this.frameCount % this._readbackEveryNFrames === 0;
 		if ( this._readbackPending || this._convergedReadbackPending ) return false;
 		return this._readbackFrameCounter + 1 >= this._readbackEveryNFrames;
 
@@ -820,6 +883,13 @@ export class PathTracer extends PathTracerStage {
 
 	// Async readback of the per-bounce snapshot every N frames; never awaited, so the early-exit uses past-frame data.
 	_maybeReadbackCounters() {
+
+		if ( this._lockstep ) {
+
+			this._issueLockstepReadback();
+			return;
+
+		}
 
 		// Never sample the survivor curve mid-motion, nor while the CameraOptimizer is holding maxBounces
 		// down to its interaction value (1): mid-motion counts belong to a pose we're leaving, and a curve
@@ -866,16 +936,7 @@ export class PathTracer extends PathTracerStage {
 			// Drop counts measured at a now-stale generation (a resize or camera move happened mid-flight).
 			// A surviving readback was initiated while settled (init is skipped mid-motion) and no motion
 			// happened before it resolved, so its counts match the current view — safe to size from.
-			if ( gen === this._readbackGeneration ) {
-
-				const all = new Uint32Array( buf.slice( 0 ) );
-				this._lastBounceCounts = all.subarray( 0, n );
-				this._lastBounceEnergy = all.subarray( n, 2 * n );
-				this._lastBounceCountsBudget = budget;
-				this._lastBounceCountsLoopBound = measuredLoopBound;
-				this._curveSizingValid = true;
-
-			}
+			if ( gen === this._readbackGeneration ) this._applyBounceCounts( buf, budget, measuredLoopBound, n );
 
 			this._readbackPending = false;
 
@@ -901,19 +962,7 @@ export class PathTracer extends PathTracerStage {
 				const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
 				this.renderer.getArrayBufferAsync( cAttr ).then( ( buf ) => {
 
-					if ( cgen === this._readbackGeneration && total > 0 ) {
-
-						const c = new Uint32Array( buf );
-						this._convergedFraction = c[ COUNTER.CONVERGED_COUNT ] / total;
-						// No geometry at all (pure environment) leaves nothing to gate on — 1 lets the
-						// whole-frame fraction decide alone.
-						const geo = c[ COUNTER.GEOMETRY_COUNT ];
-						this._geometryPixelCount = geo;
-						this._convergedGeometryFraction = geo > 0 ? c[ COUNTER.CONVERGED_GEOMETRY_COUNT ] / geo : 1;
-						// Tier-2: bounce-0 active-pixel count measured this settled frame → sizes next frame's grid.
-						this._lastActivePixelCount = c[ COUNTER.ACTIVE_PIXEL_COUNT ];
-
-					}
+					if ( cgen === this._readbackGeneration && total > 0 ) this._applyCounters( buf, total );
 
 					this._convergedReadbackPending = false;
 
@@ -926,6 +975,72 @@ export class PathTracer extends PathTracerStage {
 			}
 
 		}
+
+	}
+
+	_issueLockstepReadback() {
+
+		// One in flight, and none mid-motion: frames there do not count, so frameCount stands still.
+		if ( this._lockstepRead || this.frameCount % this._readbackEveryNFrames !== 0 ) return;
+		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) return;
+
+		const bounceAttr = this._queueManager?.getBounceCountsAttribute();
+		const counterAttr = this._queueManager?.getCountersAttribute();
+		if ( ! bounceAttr || ! counterAttr ) return;
+
+		const gen = this._readbackGeneration;
+		const budget = this.maxBounces.value;
+		const loopBound = this._bounceLoopBound();
+		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
+		const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
+
+		const entry = { due: this.frameCount + this._readbackEveryNFrames, read: null, apply: null };
+		entry.read = Promise.all( [
+			this.renderer.getArrayBufferAsync( bounceAttr ),
+			this.renderer.getArrayBufferAsync( counterAttr ),
+		] ).then( ( [ bounceBuf, counterBuf ] ) => {
+
+			entry.apply = () => {
+
+				if ( gen !== this._readbackGeneration ) return;
+				this._applyBounceCounts( bounceBuf, budget, loopBound, n );
+				if ( total > 0 ) this._applyCounters( counterBuf, total );
+
+			};
+
+		}, ( e ) => {
+
+			log.warn( 'lockstep readback failed:', e );
+			entry.apply = () => {};
+
+		} );
+
+		this._lockstepRead = entry;
+
+	}
+
+	_applyBounceCounts( buf, budget, loopBound, n ) {
+
+		const all = new Uint32Array( buf.slice( 0 ) );
+		this._lastBounceCounts = all.subarray( 0, n );
+		this._lastBounceEnergy = all.subarray( n, 2 * n );
+		this._lastBounceCountsBudget = budget;
+		this._lastBounceCountsLoopBound = loopBound;
+		this._curveSizingValid = true;
+
+	}
+
+	_applyCounters( buf, total ) {
+
+		const c = new Uint32Array( buf );
+		this._convergedFraction = c[ COUNTER.CONVERGED_COUNT ] / total;
+		// No geometry at all (pure environment) leaves nothing to gate on — 1 lets the
+		// whole-frame fraction decide alone.
+		const geo = c[ COUNTER.GEOMETRY_COUNT ];
+		this._geometryPixelCount = geo;
+		this._convergedGeometryFraction = geo > 0 ? c[ COUNTER.CONVERGED_GEOMETRY_COUNT ] / geo : 1;
+		// Tier-2: bounce-0 active-pixel count measured this settled frame → sizes next frame's grid.
+		this._lastActivePixelCount = c[ COUNTER.ACTIVE_PIXEL_COUNT ];
 
 	}
 

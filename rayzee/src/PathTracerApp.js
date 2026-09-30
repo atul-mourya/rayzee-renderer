@@ -554,42 +554,15 @@ export class PathTracerApp extends EventDispatcher {
 
 			}
 
-			this.pipeline.render();
-			this.denoisingManager?.afterTrace();
+			// A lockstep readback is due and still in flight; the frame would trace nothing.
+			if ( this.stages.pathTracer.readbackWait() ) {
 
-			if ( ! this.stages.pathTracer.isComplete ) {
-
-				this.completion.updateTime();
-				this.denoisingManager?.tickContinuousDenoise( this.stages.pathTracer.frameCount );
+				this.dispatchEvent( { type: EngineEvents.FRAME } );
+				return;
 
 			}
 
-			this._ensureVRAMWiring();
-			// VRAM is monotonic and only changes on allocation events (scene/env
-			// load, resize — each re-measures via _ensureVRAMWiring). Within an
-			// accumulation burst nothing reallocates, so re-walking every stage's
-			// textures each frame is wasted. Measure at burst start (catches any
-			// reset-triggered allocation) + a periodic backstop; read cached otherwise.
-			const tracker = this.stages.pathTracer?.vramTracker;
-			const frame = this.stages.pathTracer?.frameCount ?? 0;
-			if ( tracker && ( frame <= 1 || frame % 30 === 0 ) ) tracker.measure();
-
-			updateStats( {
-				timeElapsed: this.completion.timeElapsed,
-				samples: getDisplaySamples( this.stages.pathTracer ),
-				memoryUsed: tracker?.current ?? 0,
-				memoryPeak: tracker?.peak ?? 0,
-			} );
-
-			// Only the wall-clock stop — PathTracer.render() retires the ceiling and convergence
-			// itself, so whichever of the three arrives first wins.
-			if ( this.completion.isTimeLimitReached(
-				this.stages.pathTracer, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' )
-			) ) {
-
-				this.stages.pathTracer.isComplete = true;
-
-			}
+			this._traceFrame( { liveDenoise: true } );
 
 			// Render completion → denoise/upscale chain
 			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) {
@@ -599,16 +572,7 @@ export class PathTracerApp extends EventDispatcher {
 					context: this.pipeline?.context,
 				} );
 
-				const completionInfo = {
-					samples: this.stages.pathTracer.frameCount,
-					timeElapsed: this.completion.timeElapsed,
-					budgetOverrun: this.completion.budgetOverrun,
-					// null means isComplete was forced rather than earned (the reconcile below);
-					// a forced stop is closer to the ceiling than to convergence.
-					reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
-				};
-
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...completionInfo } );
+				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...this._completionInfo() } );
 
 			}
 
@@ -616,6 +580,60 @@ export class PathTracerApp extends EventDispatcher {
 
 		this._renderHelperOverlay();
 		this.dispatchEvent( { type: EngineEvents.FRAME } );
+
+	}
+
+	// One frame of a render and its bookkeeping, shared by animate() and renderUntilComplete().
+	_traceFrame( { liveDenoise = false } = {} ) {
+
+		const stage = this.stages.pathTracer;
+		this.pipeline.render();
+		this.denoisingManager?.afterTrace();
+
+		if ( ! stage.isComplete ) {
+
+			this.completion.updateTime();
+			if ( liveDenoise ) this.denoisingManager?.tickContinuousDenoise( stage.frameCount );
+
+		}
+
+		this._ensureVRAMWiring();
+		// VRAM is monotonic and only changes on allocation events (scene/env
+		// load, resize — each re-measures via _ensureVRAMWiring). Within an
+		// accumulation burst nothing reallocates, so re-walking every stage's
+		// textures each frame is wasted. Measure at burst start (catches any
+		// reset-triggered allocation) + a periodic backstop; read cached otherwise.
+		const tracker = stage.vramTracker;
+		const frame = stage.frameCount ?? 0;
+		if ( tracker && ( frame <= 1 || frame % 30 === 0 ) ) tracker.measure();
+
+		updateStats( {
+			timeElapsed: this.completion.timeElapsed,
+			samples: getDisplaySamples( stage ),
+			memoryUsed: tracker?.current ?? 0,
+			memoryPeak: tracker?.peak ?? 0,
+		} );
+
+		// Only the wall-clock stop — PathTracer.render() retires the ceiling and convergence
+		// itself, so whichever of the three arrives first wins.
+		if ( this.completion.isTimeLimitReached( stage, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' ) ) ) {
+
+			stage.isComplete = true;
+
+		}
+
+	}
+
+	_completionInfo() {
+
+		return {
+			samples: this.stages.pathTracer.frameCount,
+			timeElapsed: this.completion.timeElapsed,
+			budgetOverrun: this.completion.budgetOverrun,
+			// null means isComplete was forced rather than earned (the reconcile below);
+			// a forced stop is closer to the ceiling than to convergence.
+			reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
+		};
 
 	}
 
@@ -2692,6 +2710,14 @@ export class PathTracerApp extends EventDispatcher {
 			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
 			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
 
+			const wait = stage.readbackWait();
+			if ( wait ) {
+
+				await this._awaitReadback( wait );
+				continue;
+
+			}
+
 			this.pipeline.render();
 			passes ++;
 
@@ -2727,6 +2753,113 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		return stage.frameCount;
+
+	}
+
+	/**
+	 * Renders until the render's own stop condition — the sample ceiling, adaptive convergence or the
+	 * time limit, whichever comes first — without requestAnimationFrame, then runs the closing denoise
+	 * once. The production counterpart of {@link renderFrames}: adaptive sampling stays on, and its
+	 * readbacks run in lockstep (see PathTracer.setLockstepReadbacks), so the same input renders the same
+	 * image however fast frames are submitted — except under a time limit, which is wall-clock by nature.
+	 * The upscaler does not run. `EngineEvents.RENDER_COMPLETE` fires as it does from the loop.
+	 *
+	 * @param {Object} [options]
+	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
+	 * @param {boolean} [options.denoise=true] - run the final OIDN pass when `finalDenoise` is on
+	 * @param {AbortSignal} [options.signal] - rejects with its reason once aborted
+	 * @param {number} [options.drainEvery=4] - every N frames, wait for the GPU to finish the frames
+	 *   before the last N, so submissions stay at most 2N frames ahead without the GPU idling
+	 * @param {function(number): void} [options.onProgress] - called with the running sample count
+	 * @returns {Promise<{samples: number, retiredBy: 'samples'|'converged'|'timeLimit', timeElapsed: number,
+	 *   budgetOverrun: boolean, denoised: boolean}>}
+	 */
+	async renderUntilComplete( { reset = true, denoise = true, signal, drainEvery = 4, onProgress } = {} ) {
+
+		const stage = this.stages.pathTracer;
+		if ( ! stage ) throw new Error( 'renderUntilComplete: app is not initialized' );
+		if ( this._loadingInProgress || this._sdf?.isProcessing ) throw new Error( 'renderUntilComplete: a scene is still loading' );
+
+		const lockstepWas = stage.lockstepReadbacks;
+		stage.setLockstepReadbacks( true );
+		// A 100 ms wall-clock mode for camera drags; frames in it do not count, so a batch render has no use for it.
+		const interaction = this.settings.getEffective().interactionModeEnabled;
+		this.settings.set( 'interactionModeEnabled', false, { silent: true, reset: false } );
+
+		try {
+
+			if ( reset ) this.reset();
+			this.stopAnimation();
+
+			const queue = this.renderer.backend.device?.queue;
+			let passes = 0;
+			let previousBatch = null;
+
+			while ( ! stage.isComplete ) {
+
+				signal?.throwIfAborted();
+				if ( this._deviceLost ) throw new Error( 'renderUntilComplete: WebGPU device lost' );
+				if ( ! stage.isReady ) throw new Error( 'renderUntilComplete: path tracer stage is not ready' );
+
+				const wait = stage.readbackWait();
+				if ( wait ) {
+
+					await this._awaitReadback( wait );
+					continue;
+
+				}
+
+				this.cameraManager.camera.updateMatrixWorld();
+				const counted = stage.frameCount;
+				this._traceFrame();
+				onProgress?.( stage.frameCount );
+
+				// A frame that did not count, with no readback to wait on, must still give timers a turn.
+				if ( stage.frameCount === counted && ! stage.isComplete ) await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+
+				if ( queue && drainEvery > 0 && ++ passes % drainEvery === 0 ) {
+
+					const batch = queue.onSubmittedWorkDone();
+					if ( previousBatch ) await previousBatch;
+					previousBatch = batch;
+
+				}
+
+			}
+
+			const info = this._completionInfo();
+			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
+
+			const denoised = denoise && this.denoisingManager?.finalDenoise ? await this.runFinalDenoise() : false;
+			const { reason, ...rest } = info;
+			return { ...rest, retiredBy: reason, denoised };
+
+		} finally {
+
+			stage.setLockstepReadbacks( lockstepWas );
+			if ( interaction ) this.settings.set( 'interactionModeEnabled', interaction.value, { silent: true, reset: false, source: interaction.source } );
+
+		}
+
+	}
+
+	/**
+	 * Lockstep readbacks for renders driven by the loop or by {@link renderFrames}:
+	 * {@link renderUntilComplete} turns them on for its own duration. See PathTracer.setLockstepReadbacks.
+	 * @param {boolean} [enabled=true]
+	 */
+	setLockstepReadbacks( enabled = true ) {
+
+		this.stages.pathTracer?.setLockstepReadbacks( enabled );
+
+	}
+
+	// A readback that never lands would hold the render forever; a lost device is the one way it can't.
+	async _awaitReadback( wait ) {
+
+		const lost = this.renderer.backend.device?.lost;
+		const outcome = await ( lost ? Promise.race( [ wait.then( () => null ), lost ] ) : wait );
+		if ( outcome ) throw new Error( `WebGPU device lost while awaiting a readback: ${outcome.message ?? outcome.reason}` );
 
 	}
 

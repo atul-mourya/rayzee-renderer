@@ -150,6 +150,23 @@ export const FREEZE_GATES = {
 	maxAbsoluteRatio: 4.0,
 };
 
+/**
+ * Lockstep readbacks — the production path (adaptive sampling, pixel freeze, readback-driven dispatch
+ * and early exit all live) rendered under several submission pacings must come out identical. Before
+ * lockstep, two identical runs moved up to 12 % of pixels, which is why every other suite pins
+ * deterministic mode.
+ */
+export const LOCKSTEP_GATES = {
+	scenes: [ 'spheres-gradient', 'cornell-emissive', 'glass-transmission' ],
+	// Tight submission, the default lag, draining after every frame, and a slow CPU per frame.
+	pacings: [
+		{ label: 'drain off', drainEvery: 0 },
+		{ label: 'drain every 4', drainEvery: 4 },
+		{ label: 'drain every 1', drainEvery: 1 },
+		{ label: '8 ms CPU per frame', drainEvery: 4, spinMs: 8 },
+	],
+};
+
 export const MEMORY_GATES = {
 	leakCycles: 5,
 	// Cycled unless --scene overrides. A textured scene is not optional here: every VRAM leak

@@ -985,6 +985,31 @@ The RNG is already pure — `hash(pixel, rayIndex, frame)`, no clock, no `Math.r
 - `setDeterministicMode(true, { pinDispatch: false })` keeps the two readback-driven dispatch heuristics active. Output is then *not* reproducible; this exists so performance measurements reflect shipping behaviour rather than a configuration production never runs.
 - `renderFrames` raises `maxSamples` if needed, and throws if something retires the render early.
 
+#### Production renders, reproducibly
+
+Deterministic mode buys reproducibility by turning adaptive sampling off. To render the way the
+product does — adaptive sampling, pixel freeze and the per-bounce early exit all on — and still get
+the same image for the same input, drive the render with `renderUntilComplete`:
+
+```js
+engine.configureForMode('production');
+const { samples, retiredBy, denoised } = await engine.renderUntilComplete({ signal });
+// retiredBy: 'samples' | 'converged' | 'timeLimit'
+```
+
+It renders without `requestAnimationFrame` until the sample ceiling, convergence or the time limit —
+whichever comes first — then runs the final OIDN denoise once, and fires `RENDER_COMPLETE` as the
+loop does. Adaptive sampling decides from counts read back from the GPU; normally each is applied
+whenever it lands, so the frame that retires depends on how fast frames are submitted. For its
+duration `renderUntilComplete` runs those readbacks in **lockstep**: one issued at frame N is applied
+at frame N + 4 exactly, and the render waits if it has not landed; every reset also starts from seed
+0 and from nothing the previous render measured. It turns interaction mode off meanwhile (a
+wall-clock mode for camera drags), and keeps submissions at most 2 × `drainEvery` frames ahead of
+the GPU. A time limit is wall-clock by nature, so that one stop is not reproducible; neither is
+auto-exposure, if you turn it on.
+
+`engine.setLockstepReadbacks(true)` applies the same lockstep to the rAF loop and to `renderFrames`.
+
 #### Batch rendering
 
 The supported entry point for a render farm is `rayzee/src/Headless.js`, exported from the package.

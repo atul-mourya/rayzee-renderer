@@ -50,7 +50,7 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 		frameCount: 0,
 		isComplete: false,
 		isReady: true,
-		blueNoiseReady: Promise.resolve(),
+		readbackWait: () => null,
 	};
 
 	const app = {

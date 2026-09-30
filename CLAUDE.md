@@ -292,6 +292,19 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
   resolves (denoised, no bloom). The result's `source` names what was read, and a `'display'` read
   that found nothing denoised while a denoiser is in use records `output.source_fallback`.
+- **`await app.renderUntilComplete( { reset, denoise, signal, drainEvery, onProgress } )`** — the
+  production counterpart of `renderFrames`: adaptive sampling stays on, the loop stops on the
+  ceiling, convergence or the time limit (the time limit was never honoured outside `animate()`), and
+  the final denoise runs once. It shares `_traceFrame()` / `_completionInfo()` with `animate()`, so
+  the two cannot drift. For its duration the stage's readbacks run in **lockstep**
+  (`PathTracer.setLockstepReadbacks`, also `app.setLockstepReadbacks()`): the survivor curve and the
+  convergence counters are read every 4 frames and applied exactly 4 frames later, `render()` traces
+  nothing while one is due and in flight (`stage.readbackWait()` is the promise — every driver loop
+  awaits it rather than spin), and each reset clears the curve and rewinds the seed. Measured at
+  400×300 with adaptive on: free-running gave 45 / 72 / 45 / 43 spp and four different images across
+  pacings; lockstep 48 spp and one image every time. ⚠️ It turns interaction mode off meanwhile: that
+  mode is a 100 ms wall-clock timer that engages on the first frame after a load, frames in it do not
+  count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
 - **`await app.runFinalDenoise()`** — one OIDN pass at the final tier, awaited, without the render
   loop or the upscaler (`DenoisingManager.denoiseOnce()`: waits out a run or weight load in flight,
   which `start()` would refuse or defer). OIDN must have been on while accumulating — the aux

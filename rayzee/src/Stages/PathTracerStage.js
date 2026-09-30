@@ -563,8 +563,8 @@ export class PathTracerStage extends RenderStage {
 		// ASVGF's history. A real mode change is still caught by the renderMode comparison.
 		this.lastInteractionModeState = false;
 
-		// Only deterministic mode rewinds the seed axis; see _pinSeedToFrame.
-		if ( this._pinSeedToFrame ) this._seedTick = 0;
+		// Only deterministic mode and lockstep readbacks rewind the seed axis; see _pinSeedToFrame.
+		if ( this._pinSeedToFrame || this._lockstep ) this._seedTick = 0;
 
 	}
 

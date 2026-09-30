@@ -1,7 +1,8 @@
 /**
  * Bench CLI.
  *
- *   node bench/runner/cli.js run [--only a,b] [--verbose]   quality + denoise + memory + perf
+ *   node bench/runner/cli.js run [--only a,b] [--verbose]   quality + freeze + lockstep + denoise + memory + perf
+ *   node bench/runner/cli.js lockstep [--only a,b]
  *   node bench/runner/cli.js quality [--only a,b] [--truth]
  *   node bench/runner/cli.js denoise [--only a,b] [--bless]
  *   node bench/runner/cli.js memory  [--scene id] [--cycles n]
@@ -32,6 +33,7 @@ import { runUpscale } from './upscale.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
 import { runFreeze } from './freeze.js';
+import { runLockstep } from './lockstep.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
 import { formatStorage, runArchiveScenarios, runStorage } from './storage.js';
 
@@ -117,6 +119,23 @@ async function withHarness( { cwd = PATHS.repoRoot, verbose }, body ) {
 		await server.stop();
 
 	}
+
+}
+
+function reportLockstep( report ) {
+
+	let failed = 0;
+
+	for ( const entry of report.results ) {
+
+		if ( ! entry.pass ) failed ++;
+		const verdict = entry.pass ? `identical across ${entry.runs} pacings` : `differed across ${entry.runs} pacings`;
+		log( `  ${entry.pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${entry.scene}${DIM}  ${entry.samples} spp (${entry.retiredBy}), ${verdict}${RESET}` );
+		for ( const failure of entry.failures ) log( `       ${RED}${failure}${RESET}` );
+
+	}
+
+	return failed;
 
 }
 
@@ -531,7 +550,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -761,6 +780,13 @@ async function main() {
 				log( `${GREEN}freeze ratchet written${RESET} to ${path.relative( PATHS.repoRoot, PATHS.freeze )}` );
 
 			}
+
+		}
+
+		if ( command === 'run' || command === 'lockstep' ) {
+
+			log( '\nlockstep (production path, adaptive sampling on — identical under every pacing)' );
+			if ( reportLockstep( await runLockstep( bench, { only, log } ) ) > 0 ) exitCode = 1;
 
 		}
 

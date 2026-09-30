@@ -219,6 +219,14 @@ export class VideoRenderManager {
 
 		while ( ! pathTracer.isComplete && ! this._cancelled ) {
 
+			const wait = pathTracer.readbackWait();
+			if ( wait ) {
+
+				await wait;
+				continue;
+
+			}
+
 			app.cameraManager.camera.updateMatrixWorld();
 			app.pipeline.render();
 

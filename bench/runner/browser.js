@@ -199,6 +199,9 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		renderFreezeArm: ( spp, options ) => page.evaluate(
 			( n, o ) => globalThis.__bench.renderFreezeArm( n, o ), spp, options ?? {}
 		),
+		renderLockstep: ( options ) => page.evaluate(
+			( o ) => globalThis.__bench.renderLockstep( o ), options ?? {}
+		),
 		loadModelScene: ( url, cameraIndex, env ) => page.evaluate(
 			( u, c, e ) => globalThis.__bench.loadModelScene( u, c, e ),
 			url, cameraIndex ?? 1, env ?? 'procedural'

@@ -53,6 +53,7 @@ function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 
 				},
 				set isComplete( v ) {},
+				readbackWait: () => null,
 				get frameCount() {
 
 					return frameCount;
