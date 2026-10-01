@@ -123,7 +123,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	}, [ originalSettings, imageProcessing ] );
 
 	// Screenshot handler - defined early to avoid reference issues
-	const handleScreenshot = useCallback( () => {
+	const handleScreenshot = useCallback( async () => {
 
 		console.log( "Screenshot called in ResultsViewport" );
 
@@ -159,10 +159,13 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		try {
 
+			const blob = await new Promise( ( resolve, reject ) => canvasToDownload.toBlob( b => ( b ? resolve( b ) : reject( new Error( 'the canvas gave no image' ) ) ), 'image/png' ) );
+			const url = URL.createObjectURL( blob );
 			const link = document.createElement( 'a' );
-			link.href = canvasToDownload.toDataURL( 'image/png' );
+			link.href = url;
 			link.download = `raycanvas-${viewingOriginal ? 'original' : 'edited'}-${new Date().getTime()}.png`;
 			link.click();
+			URL.revokeObjectURL( url );
 
 			console.log( "Screenshot download triggered" );
 
