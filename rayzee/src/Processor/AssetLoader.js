@@ -348,29 +348,16 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	// Blob's own readers, not FileReader: Node has no FileReader.
 	readFileAsArrayBuffer( file ) {
 
-		return new Promise( ( resolve, reject ) => {
-
-			const reader = new FileReader();
-			reader.onload = ( event ) => resolve( event.target.result );
-			reader.onerror = ( error ) => reject( error );
-			reader.readAsArrayBuffer( file );
-
-		} );
+		return file.arrayBuffer();
 
 	}
 
 	readFileAsText( file ) {
 
-		return new Promise( ( resolve, reject ) => {
-
-			const reader = new FileReader();
-			reader.onload = ( event ) => resolve( event.target.result );
-			reader.onerror = ( error ) => reject( error );
-			reader.readAsText( file );
-
-		} );
+		return file.text();
 
 	}
 
