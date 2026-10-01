@@ -298,7 +298,8 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   is the raw accumulation, `'srgb'` applies exposure/saturation/tone curve in the output pass's
   order, within one level of the canvas — on the GPU (`PackedToneMapper`, `input: 'texture'`): 9 ms
   at 4096×2160 where the CPU's `toneMapToRGBA8`, now the fallback, took 1.4 s here and 10 s on a cloud
-  L4's host. The two differ by one level on ~0.002 % of bytes. `source: 'accumulation'` (default) reads
+  L4's host. The two differ by one level on ~0.002 % of bytes; a fall back to the CPU sets the result's
+  `toneMappedOn: 'cpu'` and records `output.tonemap_fallback` (a warning — strict does not throw). `source: 'accumulation'` (default) reads
   `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
   resolves (denoised, no bloom). The result's `source` names what was read, and a `'display'` read
   that found nothing denoised while a denoiser is in use records `output.source_fallback`.

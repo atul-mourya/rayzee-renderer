@@ -24,7 +24,7 @@ import { TextureReadback } from './Processor/TextureReadback.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { InteractionManager } from './managers/InteractionManager.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
-import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
+import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
 import { StorageManager } from './Storage/StorageManager.js';
 import { acquireSharedStorage } from './Storage/openStorage.js';
@@ -2998,8 +2998,9 @@ export class PathTracerApp extends EventDispatcher {
 	 *   viewport is showing — denoised when a denoiser has run, without bloom — instead of the raw
 	 *   accumulation
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
-	 *   source: string}>} `source` is what was read: `'accumulation'`, or the denoiser that published
-	 *   it (`'oidn'`, `'asvgf'`, `'nrd'`, `'edgeFiltering'`, `'bilateralFiltering'`)
+	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the
+	 *   denoiser that published it (`'oidn'`, `'asvgf'`, `'nrd'`, `'edgeFiltering'`, `'bilateralFiltering'`).
+	 *   `toneMappedOn` is set for `'srgb'` only.
 	 */
 	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
 
@@ -3029,11 +3030,11 @@ export class PathTracerApp extends EventDispatcher {
 				preserveAlpha,
 			};
 
-			const data = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone )
-				?? toneMapToRGBA8( shown
-					? await this._readTexture( shown.texture, width, height )
-					: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
-			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation' };
+			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
+			const data = gpu ?? toneMapToRGBA8( shown
+				? await this._readTexture( shown.texture, width, height )
+				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
+			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
 
@@ -3065,13 +3066,13 @@ export class PathTracerApp extends EventDispatcher {
 	async _toneMapOnGPU( shown, accumulation, width, height, tone ) {
 
 		const backend = this.renderer?.backend;
-		if ( ! backend?.device ) return null;
+		if ( ! backend?.device ) return this._toneMapFallback( 'the renderer has no WebGPU device' );
 
 		try {
 
 			const texture = shown ? this._readbackPass().draw( shown, width, height ).texture : accumulation.textures[ 0 ];
 			const gpuTexture = backend.get( texture ).texture;
-			if ( ! gpuTexture ) return null;
+			if ( ! gpuTexture ) return this._toneMapFallback( 'the picture has no GPU texture yet' );
 
 			this._readbackToneMapper ??= new PackedToneMapper( backend.device, 'rayzee:readback-tonemap', { input: 'texture' } );
 			this._readbackToneMapper.ensureSize( width, height );
@@ -3079,8 +3080,8 @@ export class PathTracerApp extends EventDispatcher {
 
 		} catch ( error ) {
 
-			log.warn( `renderToBuffer: tone mapping on the GPU failed, doing it on the CPU: ${error?.message ?? error}` );
-			return null;
+			if ( error instanceof EngineIssueError ) throw error;
+			return this._toneMapFallback( 'the GPU pass threw', error );
 
 		} finally {
 
@@ -3088,6 +3089,17 @@ export class PathTracerApp extends EventDispatcher {
 			if ( shown ) this._textureReadback?.release();
 
 		}
+
+	}
+
+	/** A warning, so strict keeps going: the CPU bytes match within a level, only slower. @private */
+	_toneMapFallback( reason, error = null ) {
+
+		const cause = error ? String( error?.message ?? error ) : null;
+		const message = `renderToBuffer: tone mapped on the CPU — ${reason}${cause ? `: ${cause}` : ''}`;
+		log.warn( message );
+		this._issues.warn( ISSUE_CODES.OUTPUT_TONEMAP_FALLBACK, message, { reason, cause } );
+		return null;
 
 	}
 

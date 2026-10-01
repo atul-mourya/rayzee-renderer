@@ -831,6 +831,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `refit.shared_geometry` | a deform was asked for on a mesh that shares its triangles, and was skipped |
 | `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
+| `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
 | `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
 
 `asset.unreachable` also covers what the engine fetches for itself: OIDN weights, IES profiles and
@@ -1045,7 +1046,9 @@ it back with `renderToBuffer( { source: 'display' } )`. Driving it yourself is t
 `'display'` was asked for, a denoiser is in use, and nothing had published — so a strict host cannot
 ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the GPU — 9 ms at 4096×2160,
 where the CPU pass it replaced took 1.4 s on an M-series Mac and 10 s on a cloud host — and match the
-canvas to within one level (it rounds half a level up); `'linear'` is exact.
+canvas to within one level (it rounds half a level up); `'linear'` is exact. When the GPU pass is
+unavailable or fails, the CPU does it instead: the result's `toneMappedOn` says `'cpu'` rather than
+`'gpu'`, and `output.tonemap_fallback` is recorded with the reason.
 
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.

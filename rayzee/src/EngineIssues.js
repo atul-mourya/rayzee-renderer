@@ -32,6 +32,7 @@ export const ISSUE_CODES = Object.freeze( {
 	STORAGE_CACHE_MISMATCH: 'storage.cache_mismatch',
 	DENOISER_UNAVAILABLE: 'denoiser.unavailable',
 	OUTPUT_SOURCE_FALLBACK: 'output.source_fallback',
+	OUTPUT_TONEMAP_FALLBACK: 'output.tonemap_fallback',
 	LIGHT_PLACEHOLDER_SKIPPED: 'light.placeholder_skipped',
 } );
 

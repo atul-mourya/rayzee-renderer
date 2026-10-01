@@ -24,6 +24,7 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], targ
 		_readbackPass: PathTracerApp.prototype._readbackPass,
 		_readTexture: PathTracerApp.prototype._readTexture,
 		_toneMapOnGPU: PathTracerApp.prototype._toneMapOnGPU,
+		_toneMapFallback: PathTracerApp.prototype._toneMapFallback,
 		_denoiserInUse: PathTracerApp.prototype._denoiserInUse,
 		_issues: new IssueLog(),
 	};
@@ -73,8 +74,70 @@ describe( 'renderToBuffer', () => {
 
 		const out = await app.renderToBuffer( { preserveAlpha: true } );
 		expect( out.data ).toBe( bytes );
+		expect( out.toneMappedOn ).toBe( 'gpu' );
 		expect( app._toneMapOnGPU.mock.calls[ 0 ][ 4 ] ).toMatchObject( { toneMapping: NoToneMapping, preserveAlpha: true } );
 		expect( app.renderer.readRenderTargetPixelsAsync ).not.toHaveBeenCalled();
+		expect( app._issues.list ).toHaveLength( 0 );
+
+	} );
+
+	describe( 'when the GPU tone map is not available', () => {
+
+		const fallbacks = {
+			'no device': () => {},
+			'no GPU texture': ( app ) => {
+
+				app.renderer.backend = { device: {}, get: () => ( {} ) };
+
+			},
+			'the pass throws': ( app ) => {
+
+				app.renderer.backend = { device: {}, get: () => {
+
+					throw new Error( 'device lost' );
+
+				} };
+
+			},
+		};
+
+		for ( const [ name, setup ] of Object.entries( fallbacks ) ) {
+
+			it( `${name}: tone maps on the CPU, says so, and records a warning`, async () => {
+
+				const app = makeApp( { target: { textures: [ {} ] } } );
+				setup( app );
+				const out = await app.renderToBuffer();
+
+				expect( out.toneMappedOn ).toBe( 'cpu' );
+				expect( out.data[ 0 ] ).toBeGreaterThan( 180 );
+				expect( app._issues.list ).toEqual( [ expect.objectContaining( {
+					code: 'output.tonemap_fallback', severity: 'warning', detail: expect.objectContaining( { reason: expect.any( String ) } ),
+				} ) ] );
+
+			} );
+
+		}
+
+		it( 'keeps the thrown error as the cause', async () => {
+
+			const app = makeApp( { target: { textures: [ {} ] } } );
+			fallbacks[ 'the pass throws' ]( app );
+			await app.renderToBuffer();
+
+			expect( app._issues.list[ 0 ].detail.cause ).toBe( 'device lost' );
+
+		} );
+
+		it( 'does not throw when strict — the picture is right, only slower', async () => {
+
+			const app = makeApp();
+			app._issues = new IssueLog( { strict: true } );
+
+			await expect( app.renderToBuffer() ).resolves.toMatchObject( { toneMappedOn: 'cpu' } );
+			expect( app._issues.list.map( ( i ) => i.code ) ).toEqual( [ 'output.tonemap_fallback' ] );
+
+		} );
 
 	} );
 
@@ -136,6 +199,7 @@ describe( 'renderToBuffer', () => {
 
 		const app = withPublished( makeApp(), 'pathtracer:color' );
 		app.denoisingManager = { denoiser: { enabled: false }, denoiserStrategy: 'none' };
+		app._toneMapOnGPU = vi.fn( async () => new Uint8ClampedArray( 8 ) );
 		const out = await app.renderToBuffer( { source: 'display' } );
 
 		expect( out.source ).toBe( 'accumulation' );
