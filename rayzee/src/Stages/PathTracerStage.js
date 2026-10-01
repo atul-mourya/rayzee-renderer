@@ -10,7 +10,7 @@ import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { CameraOptimizer } from '../Processor/CameraOptimizer.js';
 import { createPerformanceMonitor, calculateAccumulationAlpha, updateCompletionThreshold } from '../Processor/utils.js';
 import { StorageTexturePool } from '../Processor/StorageTexturePool.js';
-import { UniformManager } from '../managers/UniformManager.js';
+import { UniformManager, LIGHT_FLOATS, lightListCapacity } from '../managers/UniformManager.js';
 import { MaterialDataManager } from '../managers/MaterialDataManager.js';
 import { EnvironmentManager } from '../managers/EnvironmentManager.js';
 import { ShaderBuilder } from '../Processor/ShaderBuilder.js';
@@ -218,8 +218,8 @@ export class PathTracerStage extends RenderStage {
 		// Initialized with dummy data so TSL compilation never sees null.
 		this.lightStorageAttr = new StorageInstancedBufferAttribute( new Float32Array( 16 ), 4 );
 		this.lightStorageNode = storage( this.lightStorageAttr, 'vec4', 1 ).toReadOnly();
-		// Set when _rebuildLightBuffer had to grow-reallocate the attribute: compiled
-		// kernels still bind the old one and must be rebuilt to see the new data.
+		// Set when _rebuildLightBuffer had to grow-reallocate the attribute, or a light list grew
+		// (_writeLightList): compiled kernels still bind the old one and must be rebuilt to see the new data.
 		this._lightBufferRealloc = false;
 
 		// Cached CPU-side data — rebuilt into the packed buffer whenever any source changes.
@@ -492,53 +492,36 @@ export class PathTracerStage extends RenderStage {
 	 */
 	_updateLightBufferNodes() {
 
-		// Directional lights (12 floats per light — 8 light fields + gobo {index, signed intensity, scale, pad})
-		if ( this.directionalLightsData && this.directionalLightsData.length > 0 ) {
+		this._writeLightList( 'directional', this.directionalLightsData, this.numDirectionalLights );
+		this._writeLightList( 'area', this.areaLightsData, this.numAreaLights );
+		this._writeLightList( 'point', this.pointLightsData, this.numPointLights );
+		this._writeLightList( 'spot', this.spotLightsData, this.numSpotLights );
 
-			this.directionalLightsBufferNode.array = Array.from( this.directionalLightsData );
-			this.numDirectionalLights.value = Math.floor( this.directionalLightsData.length / 12 );
+	}
 
-		} else {
+	/**
+	 * In place, because the shader bakes the list's length: sized per scene it compiled a program per
+	 * light count, and three.js uploads only what fits the length it was built with, so a light added
+	 * after a build was dropped. A list grows only past its capacity, and that rebuilds the kernels.
+	 * @private
+	 */
+	_writeLightList( type, data, count ) {
 
-			this.numDirectionalLights.value = 0;
+		const floats = LIGHT_FLOATS[ type ];
+		const node = this[ `${type}LightsBufferNode` ];
+		const lights = data ? Math.floor( data.length / floats ) : 0;
+		const used = lights * floats;
 
-		}
+		if ( used > node.array.length ) {
 
-		// Area lights (16 floats per light — 13 base + normalize/spread/shape)
-		if ( this.areaLightsData && this.areaLightsData.length > 0 ) {
-
-			this.areaLightsBufferNode.array = Array.from( this.areaLightsData );
-			this.numAreaLights.value = Math.floor( this.areaLightsData.length / 16 );
-
-		} else {
-
-			this.numAreaLights.value = 0;
-
-		}
-
-		// Point lights (9 floats per light)
-		if ( this.pointLightsData && this.pointLightsData.length > 0 ) {
-
-			this.pointLightsBufferNode.array = Array.from( this.pointLightsData );
-			this.numPointLights.value = Math.floor( this.pointLightsData.length / 9 );
-
-		} else {
-
-			this.numPointLights.value = 0;
+			node.array = new Float32Array( lightListCapacity( type, lights ) * floats );
+			this._lightBufferRealloc = true;
 
 		}
 
-		// Spot lights (20 floats per light — 14 light fields + gobo {idx, signed intensity} + IES {idx, intensity} + 2 reserved)
-		if ( this.spotLightsData && this.spotLightsData.length > 0 ) {
-
-			this.spotLightsBufferNode.array = Array.from( this.spotLightsData );
-			this.numSpotLights.value = Math.floor( this.spotLightsData.length / 20 );
-
-		} else {
-
-			this.numSpotLights.value = 0;
-
-		}
+		if ( used > 0 ) node.array.set( data.subarray( 0, used ) );
+		node.array.fill( 0, used );
+		count.value = lights;
 
 	}
 

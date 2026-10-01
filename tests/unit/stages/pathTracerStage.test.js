@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BufferAttribute } from 'three';
 import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
+import { UniformManager, LIGHT_FLOATS, LIGHT_LIST_STEP, lightListCapacity } from '@/core/managers/UniformManager.js';
 
 // The stage needs a WebGPU renderer to construct, but the completion-threshold methods only
 // touch three plain fields — call them against a bare receiver.
@@ -115,6 +116,93 @@ describe( 'PathTracerStage BVH uploads', () => {
 
 		expect( stage.bvhStorageAttr.updateRanges ).toEqual( [] );
 		expect( stage.bvhStorageAttr.version ).toBeGreaterThan( version );
+
+	} );
+
+} );
+
+describe( 'PathTracerStage light lists', () => {
+
+	const TYPES = [ 'directional', 'area', 'point', 'spot' ];
+	const COUNT = { directional: 'numDirectionalLights', area: 'numAreaLights', point: 'numPointLights', spot: 'numSpotLights' };
+
+	function makeStage() {
+
+		const nodes = new UniformManager( 4, 4 ).getLightBufferNodes();
+		const stage = Object.create( PathTracerStage.prototype );
+		stage._lightBufferRealloc = false;
+		for ( const type of TYPES ) {
+
+			stage[ `${type}LightsBufferNode` ] = nodes[ type ];
+			stage[ `${type}LightsData` ] = null;
+			stage[ COUNT[ type ] ] = { value: 0 };
+
+		}
+
+		return stage;
+
+	}
+
+	const lights = ( type, n ) => Float32Array.from( { length: n * LIGHT_FLOATS[ type ] }, ( _, i ) => i + 1 );
+
+	// The shader bakes each list's length: a list sized per scene made a new program per light count.
+	it( 'writes lights into the list it was built with, whatever the count', () => {
+
+		const stage = makeStage();
+		const lists = TYPES.map( ( type ) => stage[ `${type}LightsBufferNode` ].array );
+
+		for ( const n of [ 2, 5, 0, 16 ] ) {
+
+			for ( const type of TYPES ) stage[ `${type}LightsData` ] = lights( type, n );
+			stage._updateLightBufferNodes();
+
+			TYPES.forEach( ( type, i ) => {
+
+				const { array } = stage[ `${type}LightsBufferNode` ];
+				const used = n * LIGHT_FLOATS[ type ];
+				expect( array ).toBe( lists[ i ] );
+				expect( array.length ).toBe( LIGHT_FLOATS[ type ] * LIGHT_LIST_STEP );
+				expect( Array.from( array.subarray( 0, used ) ) ).toEqual( Array.from( lights( type, n ) ) );
+				expect( array.subarray( used ).every( ( v ) => v === 0 ) ).toBe( true );
+				expect( stage[ COUNT[ type ] ].value ).toBe( n );
+
+			} );
+
+		}
+
+		expect( stage._lightBufferRealloc ).toBe( false );
+
+	} );
+
+	// three.js uploads only what fits the length a shader was built with: a 17th light was dropped.
+	it( 'grows past its capacity by whole steps, and asks for the kernels to be rebuilt', () => {
+
+		const stage = makeStage();
+		stage.areaLightsData = lights( 'area', 17 );
+		stage._updateLightBufferNodes();
+
+		const { array } = stage.areaLightsBufferNode;
+		expect( array.length ).toBe( 2 * LIGHT_LIST_STEP * LIGHT_FLOATS.area );
+		expect( Array.from( array.subarray( 0, 17 * 16 ) ) ).toEqual( Array.from( lights( 'area', 17 ) ) );
+		expect( stage.numAreaLights.value ).toBe( 17 );
+		expect( stage._lightBufferRealloc ).toBe( true );
+
+		stage._lightBufferRealloc = false;
+		stage.areaLightsData = lights( 'area', 3 );
+		stage._updateLightBufferNodes();
+		expect( stage.areaLightsBufferNode.array ).toBe( array );
+		expect( stage._lightBufferRealloc ).toBe( false );
+
+	} );
+
+	// Spot lights take 20 vec4s each and a binding holds 4096, so 204 fit: rounding up to a step must
+	// not turn a count that fits into one that does not.
+	it( 'never rounds a count that fits a binding into one that does not', () => {
+
+		expect( lightListCapacity( 'area', 3 ) ).toBe( 16 );
+		expect( lightListCapacity( 'area', 17 ) ).toBe( 32 );
+		expect( lightListCapacity( 'spot', 200 ) ).toBe( 204 );
+		expect( lightListCapacity( 'spot', 250 ) ).toBe( 250 );
 
 	} );
 

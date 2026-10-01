@@ -241,8 +241,8 @@ export class PathTracer extends PathTracerStage {
 		// Kernels not built yet (first frame / mid-resize) — skip until ready.
 		if ( ! this.isReady || ! this._wavefrontReady ) return;
 
-		// The packed light buffer was grow-reallocated at runtime (emissive set grew) —
-		// the compiled kernels still bind the old attribute, so rebuild before rendering.
+		// The packed light buffer was grow-reallocated at runtime (emissive set grew) or a light list grew —
+		// the compiled kernels still bind the old one, so rebuild before rendering.
 		if ( this._lightBufferRealloc ) {
 
 			if ( this._kernelManager ) this._kernelManager.dispose();

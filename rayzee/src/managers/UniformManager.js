@@ -19,6 +19,31 @@ const SHADER_NAMES = {
 	cameraProjectionMatrix: 'ptCameraProjectionMatrix',
 };
 
+/** Floats per light in each type's list (see LightSerializer). */
+export const LIGHT_FLOATS = Object.freeze( {
+	directional: 12, // 8 light fields + gobo { index, signed intensity, scale, pad }
+	area: 16, // 13 base + normalize, spread, shape
+	point: 9,
+	spot: 20, // 14 light fields + gobo { index, signed intensity } + IES { index, intensity } + 2 reserved
+} );
+
+/** Lights a list holds before it has to grow. */
+export const LIGHT_LIST_STEP = 16;
+
+// A uniform array gives each float its own vec4; WebGPU guarantees 64 KiB a binding.
+const MAX_UNIFORM_ELEMENTS = 65536 / 16;
+
+/**
+ * Lights a list of this type must hold for `lights`: a whole number of steps, but never past what
+ * fits a binding unless `lights` alone already does — a count that did not fit never did.
+ */
+export function lightListCapacity( type, lights ) {
+
+	const stepped = Math.ceil( lights / LIGHT_LIST_STEP ) * LIGHT_LIST_STEP;
+	return Math.max( lights, Math.min( stepped, Math.floor( MAX_UNIFORM_ELEMENTS / LIGHT_FLOATS[ type ] ) ) );
+
+}
+
 export class UniformManager {
 
 	constructor( width = 1920, height = 1080 ) {
@@ -266,13 +291,11 @@ export class UniformManager {
 		u( 'numPointLights', 0, 'int' );
 		u( 'numSpotLights', 0, 'int' );
 
-		// Light buffer nodes - pre-allocate for up to 16 lights per type (shader hard cap)
-		this._lightBuffers = {
-			directional: uniformArray( new Float32Array( 12 * 16 ), 'float' ),
-			area: uniformArray( new Float32Array( 16 * 16 ), 'float' ),
-			point: uniformArray( new Float32Array( 9 * 16 ), 'float' ),
-			spot: uniformArray( new Float32Array( 20 * 16 ), 'float' ),
-		};
+		// The shader bakes each list's length, so lights are written into these in place and a list is
+		// only replaced when a scene has more lights than it holds (PathTracerStage._writeLightList).
+		this._lightBuffers = Object.fromEntries( Object.entries( LIGHT_FLOATS ).map(
+			( [ type, floats ] ) => [ type, uniformArray( new Float32Array( floats * LIGHT_LIST_STEP ), 'float' ) ]
+		) );
 
 		// Camera matrices
 		u( 'cameraWorldMatrix', new Matrix4(), 'mat4' );
