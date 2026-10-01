@@ -178,15 +178,15 @@ const App = () => {
 			<div className="flex flex-col w-screen h-screen">
 				<TopBar />
 				<ResizablePanelGroup direction="horizontal" className="flex flex-1 overflow-hidden h-full">
-					<ResizablePanel onResize={handleResize} className="min-w-[200px]" defaultSize={20}>
+					<ResizablePanel onResize={handleResize} className="min-w-50" defaultSize={20}>
 						<LeftSidebar />
 					</ResizablePanel>
 					<ResizableHandle withHandle />
-					<ResizablePanel className="min-w-[200px]" defaultSize={60}>
+					<ResizablePanel className="min-w-50" defaultSize={60}>
 						<ViewportTabs />
 					</ResizablePanel>
 					<ResizableHandle withHandle />
-					<ResizablePanel onResize={handleResize} className="min-w-[200px] h-full" defaultSize={20}>
+					<ResizablePanel onResize={handleResize} className="min-w-50 h-full" defaultSize={20}>
 						<RightSidebar />
 					</ResizablePanel>
 				</ResizablePanelGroup>
