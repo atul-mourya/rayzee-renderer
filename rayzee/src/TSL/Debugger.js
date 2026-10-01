@@ -18,6 +18,7 @@ import {
 	If,
 	select,
 	sampler,
+	bool as tslBool,
 } from 'three/tsl';
 
 import { Ray, HitInfo, RayTracingMaterial, MaterialSamples } from './Struct.js';
@@ -343,6 +344,8 @@ export const TraceDebugMode = Fn( ( [
 				bounceRay,
 				bvhBuffer,
 				triangleBuffer,
+				tslBool( false ),
+				tslBool( false ),
 			).toVar() );
 
 			const incoming = vec3( 0.0 ).toVar();

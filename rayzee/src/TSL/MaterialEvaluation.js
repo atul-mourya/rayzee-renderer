@@ -24,7 +24,9 @@ import { evalIridescence } from './MaterialProperties.js';
 // Body of evaluateMaterialResponse taking precomputed dot products. Callers
 // that also need calculateMaterialPDF for the same (V, L, N) should share dots
 // to save one computeDotProducts call.
-export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
+// Roughness 0 marks an exact mirror (ShadeKernel): its delta lobe is left out of this BSDF, and
+// deltaOnly returns that lobe's reflectance instead, under the same sheen and coat attenuation.
+const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ] ) => {
 
 	const result = vec3( 0.0 ).toVar();
 
@@ -92,7 +94,7 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 			const Va = VisibilityGGXAniso( a.x, a.y, dots.ToV, dots.BoV, dots.ToL, dots.BoL, dots.NoV, dots.NoL );
 			specularSS.assign( F.mul( Da.mul( Va ) ) );
 
-		} ).Else( () => {
+		} ).ElseIf( material.roughness.greaterThan( 0.0 ), () => {
 
 			const D = DistributionGGX( dots.NoH, material.roughness );
 			const Vis = VisibilityGGXSmithCorrelated( dots.NoV, dots.NoL, material.roughness );
@@ -105,7 +107,7 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 			bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, iridF, material.iridescence, F0,
 			dots.NoV, material.roughness,
 		) );
-		const specular = specularSS.mul( dfg.compensation );
+		const specular = ( deltaOnly ? F : specularSS ).mul( dfg.compensation );
 
 		// Diffuse energy budget from hemisphere-integrated specular albedo (includes multiscatter)
 		// Transmission removes energy from diffuse just as metalness does — KHR_materials_transmission
@@ -113,7 +115,7 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 		const kD = vec3( 1.0 ).sub( dfg.E_total )
 			.mul( float( 1.0 ).sub( material.metalness ) )
 			.mul( float( 1.0 ).sub( material.transmission ) );
-		const diffuse = kD.mul( materialColor ).mul( PI_INV );
+		const diffuse = deltaOnly ? vec3( 0.0 ) : kD.mul( materialColor ).mul( PI_INV );
 
 		const baseLayer = diffuse.add( specular ).toVar();
 
@@ -131,7 +133,7 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 			const sheenReflectance = clamp( material.sheenColor.mul( material.sheen ).mul( sheenE ), vec3( 0.0 ), vec3( 1.0 ) );
 			const sheenAttenuation = vec3( 1.0 ).sub( sheenReflectance );
 
-			result.assign( baseLayer.mul( sheenAttenuation ).add( sheenTerm ) );
+			result.assign( deltaOnly ? baseLayer.mul( sheenAttenuation ) : baseLayer.mul( sheenAttenuation ).add( sheenTerm ) );
 
 		} ).Else( () => {
 
@@ -161,7 +163,7 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 
 			const ccAttenuation = vec3( 1.0 ).sub( ccDfg.E_total.mul( material.clearcoat ) );
 
-			result.assign( result.mul( ccAttenuation ).add( ccLobe.mul( material.clearcoat ) ) );
+			result.assign( deltaOnly ? result.mul( ccAttenuation ) : result.mul( ccAttenuation ).add( ccLobe.mul( material.clearcoat ) ) );
 
 		} );
 
@@ -170,6 +172,9 @@ export const evaluateMaterialResponseFromDots = Fn( ( [ material, dots ] ) => {
 	return result;
 
 } );
+
+export const evaluateMaterialResponseFromDots = /*@__PURE__*/ makeEvaluateMaterialResponse( false );
+export const evaluateSpecularDeltaFromDots = /*@__PURE__*/ makeEvaluateMaterialResponse( true );
 
 // Wrapper that computes dot products internally. Use this when you don't already
 // have dots; otherwise prefer evaluateMaterialResponseFromDots to share the work.

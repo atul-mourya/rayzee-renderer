@@ -46,7 +46,7 @@ import {
 	calculateBRDFWeights,
 	sheenSamplingRoughness,
 } from './MaterialProperties.js';
-import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
+import { evaluateMaterialResponseFromDots, evaluateSpecularDeltaFromDots } from './MaterialEvaluation.js';
 
 import {
 	ImportanceSampleCosine,
@@ -58,6 +58,9 @@ import {
 // =============================================================================
 // BRDF Direction Sampling
 // =============================================================================
+
+// Stand-in density for a delta (exact mirror) sample; squared in the power heuristic, so it stays f32-safe.
+export const DELTA_PDF = 1e6;
 
 export const generateSampledDirection = Fn( ( [
 	V, N, material, xi, lobeXi, rngState,
@@ -75,6 +78,7 @@ export const generateSampledDirection = Fn( ( [
 	const resultPdf = float( 0.0 ).toVar();
 	const resultIsTransmission = tslBool( false ).toVar();
 	const resultColorWeight = vec3( 1.0 ).toVar();
+	const resultIsDelta = tslBool( false ).toVar();
 
 	// Compute BRDF weights
 	const weights = cachedBrdfWeights.toVar();
@@ -134,7 +138,7 @@ export const generateSampledDirection = Fn( ( [
 
 			resultDirection.assign( reflect( V.negate(), H ) );
 
-		} ).Else( () => {
+		} ).ElseIf( material.roughness.greaterThan( 0.0 ), () => {
 
 			const TBN = constructTBN( { N } );
 			const localV = TBN.transpose().mul( V );
@@ -144,6 +148,11 @@ export const generateSampledDirection = Fn( ( [
 			H.assign( TBN.mul( localH ) );
 
 			resultDirection.assign( reflect( V.negate(), H ) );
+
+		} ).Else( () => {
+
+			resultDirection.assign( reflect( V.negate(), N ) );
+			resultIsDelta.assign( true );
 
 		} );
 
@@ -189,8 +198,20 @@ export const generateSampledDirection = Fn( ( [
 	If( resultIsTransmission.not(), () => {
 
 		const dotsOut = DotProducts.wrap( computeDotProductsAniso( N, V, resultDirection, material ) );
-		resultValue.assign( evaluateMaterialResponseFromDots( material, dotsOut ) );
-		resultPdf.assign( calculateBSDFSamplingPDF( material, weights, dotsOut ) );
+		If( resultIsDelta, () => {
+
+			// A delta lobe has no density to share, so report one large enough that every MIS weight
+			// against it is 1, and scale the value so value·NoL/pdf is reflectance / selection chance.
+			resultPdf.assign( DELTA_PDF );
+			resultValue.assign( evaluateSpecularDeltaFromDots( material, dotsOut )
+				.mul( DELTA_PDF ).div( max( weights.specular.mul( dotsOut.NoL ), 1e-6 ) ) );
+
+		} ).Else( () => {
+
+			resultValue.assign( evaluateMaterialResponseFromDots( material, dotsOut ) );
+			resultPdf.assign( calculateBSDFSamplingPDF( material, weights, dotsOut ) );
+
+		} );
 
 	} );
 

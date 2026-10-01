@@ -1151,6 +1151,11 @@ const FURNACE_MATERIALS = {
 	// 8000× while the sampler still drew the true one — a 22 % reflection loss 0.15 cannot see.
 	'furnace-dielectric-smooth': { roughness: 0.05, metalness: 0 },
 
+	// Below MIN_ROUGHNESS the reflection is a delta lobe: its throughput is the directional albedo
+	// itself, so any disagreement with the energy split the diffuse lobe was given shows up here.
+	'furnace-dielectric-mirror': { roughness: 0, metalness: 0 },
+	'furnace-metal-mirror': { roughness: 0, metalness: 1 },
+
 	// Metal, two points that fail in opposite directions when the multiscatter compensation is
 	// miscalibrated: it overshoots around mid roughness while r = 1 shows the single-scattering
 	// GGX deficit. One point alone would let a bad refit trade one for the other.

@@ -1,16 +1,16 @@
 {
 	"spheres-gradient": {
-		"ratio": 2.0820721456153004,
-		"plainRmse": 0.002443349607970208,
-		"frozenRmse": 0.005087230160754834,
+		"ratio": 1.906642984991701,
+		"plainRmse": 0.0025313697562096595,
+		"frozenRmse": 0.0048264183880973,
 		"samples": 64,
-		"engagedFraction": 0.0452423095703125
+		"engagedFraction": 0.0454559326171875
 	},
 	"cornell-emissive": {
-		"ratio": 1.1490270889728778,
-		"plainRmse": 0.007554582238651597,
-		"frozenRmse": 0.00868041963808405,
+		"ratio": 1.1395923248845041,
+		"plainRmse": 0.007567279956538342,
+		"frozenRmse": 0.008623614158723439,
 		"samples": 64,
-		"engagedFraction": 0.0546417236328125
+		"engagedFraction": 0.0514373779296875
 	}
 }

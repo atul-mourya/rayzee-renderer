@@ -212,8 +212,14 @@ const fastRayAABBDst = wgslFn( `
 // ================================================================================
 // MAIN BVH TRAVERSAL
 // ================================================================================
-// Side culling is performed inline inside traverseBVH/traverseBVHShadow using
-// the per-triangle side flag stored in normalCData.w (slot 5, .w channel).
+
+// Side from a triangle's flags word (row 4 .z): 0 front, 1 back, 2 double.
+export const triangleSide = ( flags ) => int( flags.shiftRight( uint( TRI_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) );
+
+// Whether a face of this side is seen by a ray; rayDotNormal < 0 is a front hit.
+export const sideAccepts = ( side, rayDotNormal ) => side.equal( int( 2 ) )
+	.or( side.equal( int( 0 ) ).and( rayDotNormal.lessThan( - 0.0001 ) ) )
+	.or( side.equal( int( 1 ) ).and( rayDotNormal.greaterThan( 0.0001 ) ) );
 
 // Factory: the boxTests/triTests debug counters are compiled OUT of the hot closest-hit
 // path (extend/normalDepth use traverseBVH = trackStats false) — only the debug viz reads
@@ -223,11 +229,11 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	bvhBuffer,
 	triangleBuffer,
 	insideMedium, // optional: when true (ray inside a medium), bypass front/back culling
+	cullBackFaces, // optional, default true: false hits either side, as shadow rays do
 ] ) => {
 
-	// Interior medium rays (SSS/transmission) must be able to hit boundary faces from
-	// either side to find the exit; exterior rays honor the authored side as before.
-	const inMedium = insideMedium ?? tslBool( false );
+	// Culling is for what the camera sees through; a bounce culling it leaks light through hollow models.
+	const eitherSide = ( insideMedium ?? tslBool( false ) ).or( ( cullBackFaces ?? tslBool( true ) ).not() ).toVar();
 
 	// Folded leaves cost up to 4 % of traversal, so only a BVH built with them gets that code.
 	const folded = bvhBuffer.value?.foldedLeaves === true;
@@ -308,8 +314,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 				const nA = unpackTriangleNormal( recA.w );
 				const nB = unpackTriangleNormal( recB.w );
 				const nC = unpackTriangleNormal( recC.w );
-				const flags = triangleRow( triangleBuffer, triIndex, 4 ).z;
-				const side = int( flags.shiftRight( uint( TRI_SIDE_SHIFT ) ).bitAnd( uint( 3 ) ) ).toVar();
+				const side = triangleSide( triangleRow( triangleBuffer, triIndex, 4 ).z ).toVar();
 
 				// Interpolate normal for the side-culling dot product (kept local,
 				// not stored on closestHit — re-derived post-loop from closestTriIdx).
@@ -319,11 +324,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 				);
 
 				// Side culling (inline; per-mesh visibility is at the BLAS-pointer level).
-				// 0=front (reject back-facing), 1=back (reject front-facing), 2=double (pass).
-				const sidePass = inMedium.or( side.equal( int( 2 ) ) )
-					.or( side.equal( int( 0 ) ).and( rayDotNormal.lessThan( - 0.0001 ) ) )
-					.or( side.equal( int( 1 ) ).and( rayDotNormal.greaterThan( 0.0001 ) ) );
-				If( sidePass, () => {
+				If( eitherSide.or( sideAccepts( side, rayDotNormal ) ), () => {
 
 					closestHit.didHit.assign( true );
 					closestHit.dst.assign( t );

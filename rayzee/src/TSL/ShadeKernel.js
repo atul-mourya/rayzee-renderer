@@ -15,7 +15,7 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END } from './Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
@@ -23,7 +23,7 @@ import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSa
 import { traceShadowRay } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { unpackHitFacet } from './HitFacet.js';
-import { traverseBVHShadow } from './BVHTraversal.js';
+import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
@@ -637,7 +637,7 @@ export function buildShadeKernel( params ) {
 
 					// free-bounce continuation: ray stays in the same medium, so medium stack + coeffs persist
 					// SSS scatter changes direction → no longer the direct backdrop view.
-					flags.assign( flags.bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
+					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
 					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth, sssSteps, transparentCount );
 					writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
 					// Free bounce: preserve prevBouncePdf (megakernel leaves it untouched across SSS scatter,
@@ -705,7 +705,7 @@ export function buildShadeKernel( params ) {
 		// BRDF functions read material.color/metalness/roughness, so apply samples here
 		material.color.assign( matSamples.albedo );
 		material.metalness.assign( matSamples.metalness.clamp( 0.0, 1.0 ) );
-		material.roughness.assign( matSamples.roughness.clamp( 0.05, 1.0 ) );
+		material.roughness.assign( matSamples.roughness.clamp( MIN_ROUGHNESS, 1.0 ) );
 		material.sheenRoughness.assign( material.sheenRoughness.clamp( 0.05, 1.0 ) ); // megakernel parity (PathTracerCore.js:1060): sample/PDF mismatch at sheenRoughness~0
 
 		// Anisotropy + extension maps carry no per-slot transform of their own, so reuse the material's
@@ -736,6 +736,15 @@ export function buildShadeKernel( params ) {
 		material.iridescenceThicknessRange.assign( vec2( material.iridescenceThicknessRange.x, extMaps.iridescenceThickness ) );
 		material.specularIntensity.assign( extMaps.specularIntensity );
 		material.specularColor.assign( extMaps.specularColor );
+
+		// Below the floor the GGX peak is past f32, so a plain reflector reflects exactly: roughness 0
+		// is the delta-lobe marker the sampler and evaluator read. The other lobes keep the floor.
+		If( rawRough.lessThan( MIN_ROUGHNESS ).and( material.anisotropy.equal( 0.0 ) ).and( material.clearcoat.equal( 0.0 ) )
+			.and( material.transmission.equal( 0.0 ) ).and( material.subsurface.equal( 0.0 ) ), () => {
+
+			material.roughness.assign( 0.0 );
+
+		} );
 
 		const albedo = matSamples.albedo.toVar();
 		If(
@@ -987,7 +996,8 @@ export function buildShadeKernel( params ) {
 
 			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
 			const Ng = unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN;
-			const newOrigin = offsetRayOrigin( hitPoint, select( dot( Ng, interaction.direction ).lessThan( 0.0 ), Ng.negate(), Ng ) );
+			const crossesFacet = dot( Ng, interaction.direction ).lessThan( 0.0 ).toVar();
+			const newOrigin = offsetRayOrigin( hitPoint, select( crossesFacet, Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
 			// Transmissive / alpha-skip / SSS-boundary are all FREE bounces — they do NOT advance camera depth (megakernel parity, gap #4). cameraDepth advances only on opaque scatter (below).
@@ -996,7 +1006,9 @@ export function buildShadeKernel( params ) {
 			// backdrop while env through glass becomes sharp redirected light.
 			If( interaction.isAlphaSkip.not(), () => {
 
-				flags.assign( flags.bitOr( uint( RAY_FLAG.REDIRECTED ) ) );
+				const underSurface = interaction.didReflect.and( crossesFacet );
+				flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED ) )
+					.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );
 
 			} ).Else( () => {
 
@@ -1044,6 +1056,16 @@ export function buildShadeKernel( params ) {
 		flags.assign( flags.bitOr( uint( RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.REDIRECTED ) ) );
 
 		const emissive = matSamples.emissive.toVar();
+		// NEE samples only a single-sided emitter's lit side, so from behind (bounce rays) it is a dark occluder.
+		If( isBackdropView.not().and( length( emissive ).greaterThan( 0.0 ) ), () => {
+
+			If( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), dot( direction, hitNormal ) ).not(), () => {
+
+				emissive.assign( vec3( 0.0 ) );
+
+			} );
+
+		} );
 		If( length( emissive ).greaterThan( 0.0 ), () => {
 
 			// Key on backdrop-view (not bounceIndex>0) so an emitter seen DIRECTLY through an alpha-cutout hole
@@ -1417,11 +1439,15 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const newOrigin = offsetRayOrigin( hitPoint, select( dot( facetN, bounceDir ).lessThan( 0.0 ), facetN.negate(), facetN ) );
+		const underFacet = dot( facetN, bounceDir ).lessThan( 0.0 ).toVar();
+		const newOrigin = offsetRayOrigin( hitPoint, select( underFacet, facetN.negate(), facetN ) );
 
 		// Whether this vertex's sun NEE could have drawn bounceDir, so a sun hit at the miss knows its MIS partner.
 		const sunNEE = brdfIsTransmission.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) );
-		flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ) ).bitOr( select( sunNEE, uint( RAY_FLAG.SUN_NEE ), uint( 0 ) ) ) );
+		const underSurface = brdfIsTransmission.not().and( underFacet );
+		flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.SUN_NEE | RAY_FLAG.UNDER_SURFACE ) ) )
+			.bitOr( select( sunNEE, uint( RAY_FLAG.SUN_NEE ), uint( 0 ) ) )
+			.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );
 
 		// Opaque scatter: the only bounce that advances camera depth.
 		writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth.add( 1 ), sssSteps, transparentCount );

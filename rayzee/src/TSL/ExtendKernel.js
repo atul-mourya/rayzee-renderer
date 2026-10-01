@@ -49,7 +49,8 @@ export function buildExtendKernel( params ) {
 
 		// Parity with Shade's guard. Free — the flags share DIR_FLAGS.w with the direction read below.
 		// Only culls work on the pinned-dispatch path, whose identity list still holds dead rays.
-		If( readRayBounceFlags( rayBufferRO, rayID ).bitAnd( uint( RAY_FLAG.ACTIVE ) ).equal( uint( 0 ) ), () => {
+		const flags = readRayBounceFlags( rayBufferRO, rayID ).toVar();
+		If( flags.bitAnd( uint( RAY_FLAG.ACTIVE ) ).equal( uint( 0 ) ), () => {
 
 			Return();
 
@@ -62,8 +63,11 @@ export function buildExtendKernel( params ) {
 
 		// insideMedium bypasses front/back culling so the ray can hit a glass/SSS back-facing boundary.
 		const insideMedium = readMediumStack( rayBufferRO, rayID ).stackDepth.greaterThan( uint( 0 ) );
+		// Only the camera's own view culls back faces, and a bounce that dipped under its surface.
+		const cull = flags.bitAnd( uint( RAY_FLAG.REDIRECTED ) ).equal( uint( 0 ) )
+			.or( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ).notEqual( uint( 0 ) ) );
 		const hitInfo = HitInfo.wrap( traverseBVH(
-			ray, bvhBuffer, triangleBuffer, insideMedium,
+			ray, bvhBuffer, triangleBuffer, insideMedium, cull,
 		) ).toVar();
 
 		const facet = hitFacet( {

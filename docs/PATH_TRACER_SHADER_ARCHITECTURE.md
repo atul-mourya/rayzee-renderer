@@ -290,7 +290,7 @@ Highlights:
 - Inner nodes store both child AABBs + child indices (4 reads, no separate child fetches).
 - Early pruning: compare child-bound min distance against the current closest hit.
 - Per-mesh visibility: at a BLAS-pointer leaf the visibility flag (slot `[2]`, packed into the BVH node data) is checked before pushing the BLAS root onto the stack — an entire hidden mesh's BLAS is skipped. The flag is free-fetched with the leaf; there is no separate visibility buffer.
-- Triangle intersection is inline (Möller–Trumbore); front/back/double-side culling is done inline using the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer). `insideMedium` rays bypass culling to hit glass/SSS back faces.
+- Triangle intersection is inline (Möller–Trumbore); front/back/double-side culling is done inline using the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer), for the camera's view only: `cullBackFaces` is on for a ray not yet `REDIRECTED` or flagged `UNDER_SURFACE` (it dipped under its own facet). Other bounces hit both sides, as shadow rays always have. `insideMedium` rays bypass culling to hit glass/SSS back faces.
 - `traverseBVHShadow` is the any-hit early-exit variant for shadow rays.
 - `generateRayFromCamera` builds the primary ray (used by Generate and Debug kernels).
 
