@@ -2597,6 +2597,7 @@ export class SceneProcessor {
 	async refitBVH( newPositions, newNormals ) {
 
 		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
+		this._tlasLeafBoxesOf = null;
 
 		if ( ! this.bvh || ! this.triangles || ! this.instanceTable ) {
 
@@ -2850,6 +2851,8 @@ export class SceneProcessor {
 		const start = performance.now();
 		const table = this.instanceTable;
 		const composed = this._transformScratch ??= new Float32Array( 16 );
+		if ( this._movedPlacements?.length !== table.count ) this._movedPlacements = new Uint8Array( table.count );
+		const movedMask = this._movedPlacements;
 		let moved = 0;
 
 		for ( const meshIndex of meshIndices ) {
@@ -2886,13 +2889,15 @@ export class SceneProcessor {
 				}
 
 				this._writeLeafMatrix( p );
+				movedMask[ p ] = 1;
 				moved ++;
 
 			}
 
 		}
 
-		this._refitTLAS();
+		this._refitTLAS( movedMask );
+		movedMask.fill( 0 );
 
 		return { refitTimeMs: performance.now() - start, placements: moved };
 
@@ -3373,6 +3378,8 @@ export class SceneProcessor {
 	/** Keep the chunked BVH and its u32 index view in step. @private */
 	_setBVHData( data ) {
 
+		this._tlasLeafBoxesOf = null;
+
 		const records = ! data ? null
 			: ( data instanceof ChunkedRecords
 				? data
@@ -3554,9 +3561,11 @@ export class SceneProcessor {
 	/**
 	 * Refit TLAS AABBs in-place without rebuilding the tree structure.
 	 * O(tlasNodeCount) bottom-up pass — much faster than full SAH rebuild.
+	 * @param {Uint8Array} [moved] - by placement: only these leaves' world boxes are recomputed, the
+	 *   rest kept from the last pass. Every leaf when omitted, or when nothing valid was kept.
 	 * @private
 	 */
-	_refitTLAS() {
+	_refitTLAS( moved = null ) {
 
 		const tlasNodeCount = this.instanceTable.tlasNodeCount;
 
@@ -3564,10 +3573,12 @@ export class SceneProcessor {
 		if ( ! this._tlasBounds || this._tlasBounds.length < tlasNodeCount * 6 ) {
 
 			this._tlasBounds = new Float32Array( tlasNodeCount * 6 );
+			this._tlasLeafBoxesOf = null;
 
 		}
 
 		const table = this.instanceTable;
+		const keep = moved && this._tlasLeafBoxesOf === table;
 
 		// Bottom-up pass: reverse iteration over TLAS nodes
 		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
@@ -3583,7 +3594,7 @@ export class SceneProcessor {
 				// every placement of a shared geometry onto one box, so all but one copy sat
 				// outside its own bounds and rays walked straight past it.
 				const entryIndex = idxChunk[ o + 1 ] & TLAS_PLACEMENT_MASK;
-				if ( entryIndex < table.count ) {
+				if ( entryIndex < table.count && ! ( keep && ! moved[ entryIndex ] ) ) {
 
 					table.writeWorldAABB( entryIndex, this._tlasBounds, i * 6 );
 
@@ -3623,6 +3634,8 @@ export class SceneProcessor {
 			}
 
 		}
+
+		this._tlasLeafBoxesOf = table;
 
 	}
 

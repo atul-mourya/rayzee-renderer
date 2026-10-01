@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
@@ -134,6 +134,42 @@ describe( 'moving an object', () => {
 			{ placement: 1, min: 249, max: 251 },
 			{ placement: 2, min: - 41, max: - 39 },
 		] );
+
+	} );
+
+	it( 'recomputes only the moved placements\' boxes and leaves the TLAS a full refit would', () => {
+
+		const positions = [ 0, 100, - 40, 30, 70 ];
+		const sp = sharedTemplateScene( positions );
+		sp.meshes = positions.map( x => fakeMesh( x ) );
+		sp.updateMeshTransforms( [ 1 ] );
+
+		const writes = vi.spyOn( sp.instanceTable, 'writeWorldAABB' );
+		sp.meshes[ 3 ].matrixWorld.elements.set( translation( - 300 ) );
+		sp.updateMeshTransforms( [ 3 ] );
+		expect( writes ).toHaveBeenCalledTimes( 1 );
+		writes.mockRestore();
+
+		const full = sharedTemplateScene( positions );
+		full.meshes = positions.map( x => fakeMesh( x ) );
+		full.meshes[ 3 ].matrixWorld.elements.set( translation( - 300 ) );
+		full.updateMeshTransforms( positions.map( ( _, i ) => i ) );
+
+		const nodes = sp.instanceTable.tlasNodeCount * 16;
+		expect( Array.from( sp.bvhData.subarray( 0, nodes ) ) ).toEqual( Array.from( full.bvhData.subarray( 0, nodes ) ) );
+
+	} );
+
+	it( 'recomputes every box once the BVH is replaced', () => {
+
+		const sp = sharedTemplateScene( [ 0, 100, - 40 ] );
+		sp.meshes = [ fakeMesh( 0 ), fakeMesh( 100 ), fakeMesh( - 40 ) ];
+		sp.updateMeshTransforms( [ 1 ] );
+		sp._setBVHData( sp.bvhData.slice() );
+
+		const writes = vi.spyOn( sp.instanceTable, 'writeWorldAABB' );
+		sp.updateMeshTransforms( [ 1 ] );
+		expect( writes ).toHaveBeenCalledTimes( 3 );
 
 	} );
 
