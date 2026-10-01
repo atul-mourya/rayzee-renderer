@@ -395,7 +395,7 @@ stage.materialData.updateMaterialProperty(index, property, value);
 
 // EnvironmentManager
 stage.environment.environmentTexture;     // current env texture
-stage.environment.envParams;              // { mode, sky / gradient / solid-colour parameters }
+stage.environment.envParams;              // { mode, sky / solid-colour parameters }
 await stage.environment.setEnvironmentMap(envMap);
 await stage.environment.generateProceduralSkyTexture();  // physical sky, baked and importance-sampled on the GPU
 

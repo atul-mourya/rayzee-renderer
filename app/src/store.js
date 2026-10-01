@@ -387,13 +387,8 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setGIIntensity: val => set( { GIIntensity: val } ),
 	setToneMapping: val => set( { toneMapping: val } ),
 
-	// Environment Mode (HDRI, Procedural Sky, Gradient, Color)
+	// Environment Mode (HDRI, Procedural Sky, Color)
 	setEnvironmentMode: val => set( { environmentMode: val } ),
-
-	// Gradient Sky
-	setGradientZenithColor: val => set( { gradientZenithColor: val } ),
-	setGradientHorizonColor: val => set( { gradientHorizonColor: val } ),
-	setGradientGroundColor: val => set( { gradientGroundColor: val } ),
 
 	// Solid Color Sky
 	setSolidSkyColor: val => set( { solidSkyColor: val } ),
@@ -1291,52 +1286,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		if ( app ) app.environmentManager.setMode( val );
 
 	},
-
-	// Gradient Sky Handlers
-	handleGradientZenithColorChange: handleChange(
-		val => set( { gradientZenithColor: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'gradient' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			const color = new THREE.Color( val );
-			envParams.gradientZenithColor.copy( color );
-			app.environmentManager.generateGradient();
-
-		}
-	),
-
-	handleGradientHorizonColorChange: handleChange(
-		val => set( { gradientHorizonColor: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'gradient' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			const color = new THREE.Color( val );
-			envParams.gradientHorizonColor.copy( color );
-			app.environmentManager.generateGradient();
-
-		}
-	),
-
-	handleGradientGroundColorChange: handleChange(
-		val => set( { gradientGroundColor: val } ),
-		( val, app ) => {
-
-			if ( ! app || get().environmentMode !== 'gradient' ) return;
-
-			const envParams = app.environmentManager.params;
-			if ( ! envParams ) return;
-			const color = new THREE.Color( val );
-			envParams.gradientGroundColor.copy( color );
-			app.environmentManager.generateGradient();
-
-		}
-	),
 
 	// Solid Color Sky Handler
 	handleSolidSkyColorChange: handleChange(

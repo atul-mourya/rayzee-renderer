@@ -13,15 +13,20 @@
 
 import {
 	BoxGeometry,
+	ClampToEdgeWrapping,
 	Color,
 	ConeGeometry,
 	CylinderGeometry,
 	DataTexture,
 	DirectionalLight,
 	DoubleSide,
+	EquirectangularReflectionMapping,
+	FloatType,
 	FrontSide,
 	Group,
 	InstancedMesh,
+	LinearFilter,
+	LinearSRGBColorSpace,
 	Matrix3,
 	Matrix4,
 	Mesh,
@@ -37,6 +42,53 @@ import {
 } from 'three';
 
 import { generateMaterialSpheres } from '@/core/Processor/generateMaterialSpheres.js';
+
+/**
+ * The three-colour sky the engine's removed Gradient mode drew (same colours, same 512x256 grid),
+ * installed as a plain environment map so the goldens do not move. The mode stays 'color':
+ * outside 'hdri', a model load leaves the environment alone.
+ */
+async function setGradientSky( app ) {
+
+	const env = app.stages.pathTracer.environment;
+	await env.setMode( 'color' );
+
+	const zenith = new Color( '#0077BE' ), horizon = new Color( '#87CEEB' ), ground = new Color( '#654321' );
+	const width = 512, height = 256;
+	const pixels = new Float32Array( width * height * 4 );
+	const out = new Color();
+
+	for ( let y = 0; y < height; y ++ ) {
+
+		const t = ( y + 0.5 ) / height;
+		if ( t > 0.5 ) out.lerpColors( horizon, zenith, ( t - 0.5 ) * 2.0 );
+		else out.lerpColors( ground, horizon, t * 2.0 );
+
+		for ( let x = 0; x < width; x ++ ) {
+
+			const i = ( y * width + x ) * 4;
+			pixels[ i ] = out.r;
+			pixels[ i + 1 ] = out.g;
+			pixels[ i + 2 ] = out.b;
+			pixels[ i + 3 ] = 1.0;
+
+		}
+
+	}
+
+	const texture = new DataTexture( pixels, width, height, RGBAFormat, FloatType );
+	texture.mapping = EquirectangularReflectionMapping;
+	texture.colorSpace = LinearSRGBColorSpace;
+	texture.minFilter = LinearFilter;
+	texture.magFilter = LinearFilter;
+	texture.wrapS = RepeatWrapping;
+	texture.wrapT = ClampToEdgeWrapping;
+	texture.generateMipmaps = false;
+	texture.needsUpdate = true;
+	texture._isGeneratedProcedural = true;
+	await env.setEnvironmentMap( texture );
+
+}
 
 /** Shared render size. Small keeps goldens cheap and the suite fast. */
 export const RENDER_SIZE = { width: 256, height: 256 };
@@ -876,7 +928,7 @@ export const SCENES = [
 		settings: { maxBounces: 4 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( generateMaterialSpheres(), 'spheres' );
 			setCamera( app, [ 0, 0, 9 ], [ 0, 0, 0 ] );
 
@@ -921,7 +973,7 @@ export const SCENES = [
 		settings: { maxBounces: 6, transmissiveBounces: 8 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeGlassRow(), 'glass' );
 			setCamera( app, [ 0, 0.6, 7 ], [ 0, 0, 0 ] );
 
@@ -954,7 +1006,7 @@ export const SCENES = [
 		settings: { maxBounces: 6, maxSubsurfaceSteps: 32 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeSubsurfaceRow(), 'subsurface' );
 			setCamera( app, [ 0, 0.3, 6.5 ], [ 0, 0, 0 ] );
 
@@ -987,7 +1039,7 @@ export const SCENES = [
 		settings: { maxBounces: 4, enableGroundCatcher: true, groundCatcherHeight: 0 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeCatcherRig(), 'catcher' );
 			setCamera( app, [ 0, 2.4, 9 ], [ 0, 0.6, 0 ] );
 
@@ -1001,7 +1053,7 @@ export const SCENES = [
 		settings: { maxBounces: 4 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeTexturedRig(), 'textured' );
 			setCamera( app, [ 0, 0.8, 7.5 ], [ 0, - 0.2, 0 ] );
 
@@ -1015,7 +1067,7 @@ export const SCENES = [
 		settings: { maxBounces: 4 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 
 			await app.loadObject3D( makeRefitRig(), 'refit' );
 
@@ -1044,7 +1096,7 @@ export const SCENES = [
 			// Gradient, not the procedural sky: the sky's sun is what turned this scene into a
 			// caustic-variance problem. The contrast dispersion needs comes from the checkered
 			// backdrop instead, which costs no variance at all.
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeDispersionRow(), 'dispersion' );
 			setCamera( app, [ 0, 0.7, 6.8 ], [ 0, - 0.1, 0 ] );
 
@@ -1104,7 +1156,7 @@ export const SCENES = [
 		settings: { maxBounces: 4, enableAlphaShadows: true, environmentIntensity: 0.3 },
 		async build( app ) {
 
-			await app.stages.pathTracer.environment.setMode( 'gradient' );
+			await setGradientSky( app );
 			await app.loadObject3D( makeAlphaCutoutRig(), 'alpha-cutout' );
 			setCamera( app, [ 0, 1.6, 7.5 ], [ 0, 0.1, 0 ] );
 

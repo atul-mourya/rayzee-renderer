@@ -1408,7 +1408,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._tagPrimarySceneObject();
 
 		const timer = new BuildTimer( '', { namespace: 'scene', level: 'info' } );
-		// meshScene.environment is the HDRI slot: a sky, gradient or colour in use outlives the model.
+		// meshScene.environment is the HDRI slot: a sky or colour in use outlives the model.
 		const hdri = () => this.stages.pathTracer.environment.envParams.mode === 'hdri' ? this.meshScene.environment : null;
 		const environmentTexture = hdri();
 

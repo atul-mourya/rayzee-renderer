@@ -91,12 +91,7 @@ export const ENGINE_DEFAULTS = {
 	globalIlluminationIntensity: 1,
 
 	// Environment Mode System
-	environmentMode: 'hdri', // 'hdri' | 'procedural' | 'gradient' | 'color'
-
-	// Gradient Sky Colors
-	gradientZenithColor: '#0077BE',
-	gradientHorizonColor: '#87CEEB',
-	gradientGroundColor: '#654321',
+	environmentMode: 'hdri', // 'hdri' | 'procedural' | 'color'
 
 	// Solid Color Sky
 	solidSkyColor: '#87CEEB',

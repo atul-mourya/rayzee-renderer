@@ -1,6 +1,6 @@
 /**
  * EnvironmentManager.js
- * Manages HDRI loading, CDF importance sampling, procedural/gradient/solid sky
+ * Manages HDRI loading, CDF importance sampling, procedural/solid sky
  * generation, and environment rotation for the path tracing pipeline.
  *
  * Storage buffer nodes are created once and never replaced — only .value
@@ -83,11 +83,6 @@ export class EnvironmentManager {
 		this.envParams = {
 			mode: 'hdri',
 
-			// Gradient Sky
-			gradientZenithColor: new Color( DEFAULT_STATE.gradientZenithColor ),
-			gradientHorizonColor: new Color( DEFAULT_STATE.gradientHorizonColor ),
-			gradientGroundColor: new Color( DEFAULT_STATE.gradientGroundColor ),
-
 			// Solid Color Sky
 			solidSkyColor: new Color( DEFAULT_STATE.solidSkyColor ),
 
@@ -116,9 +111,9 @@ export class EnvironmentManager {
 	// ===== MODE STATE MACHINE =====
 
 	/**
-	 * Switches the environment mode (hdri, gradient, color, procedural — the physical sky).
+	 * Switches the environment mode (hdri, color, procedural — the physical sky).
 	 * Preserves the HDRI texture when switching away, restores when switching back.
-	 * @param {'hdri'|'gradient'|'color'|'procedural'} mode
+	 * @param {'hdri'|'color'|'procedural'} mode
 	 */
 	async setMode( mode ) {
 
@@ -132,11 +127,7 @@ export class EnvironmentManager {
 
 		}
 
-		if ( mode === 'gradient' ) {
-
-			await this.generateGradientTexture();
-
-		} else if ( mode === 'color' ) {
+		if ( mode === 'color' ) {
 
 			await this.generateSolidColorTexture();
 
@@ -185,9 +176,6 @@ export class EnvironmentManager {
 		return {
 			mode: p.mode,
 			hdri: this.hdriSource,
-			gradientZenithColor: p.gradientZenithColor.toArray(),
-			gradientHorizonColor: p.gradientHorizonColor.toArray(),
-			gradientGroundColor: p.gradientGroundColor.toArray(),
 			solidSkyColor: p.solidSkyColor.toArray(),
 			skyModel: 'atmosphere',
 			skySunDirection: p.skySunDirection.toArray(),
@@ -212,7 +200,7 @@ export class EnvironmentManager {
 		const p = this.envParams;
 		// Sessions saved before the physical sky gave the same names other meanings.
 		const atmosphere = state.skyModel === 'atmosphere';
-		const colors = [ 'gradientZenithColor', 'gradientHorizonColor', 'gradientGroundColor', 'solidSkyColor', 'skySunDirection' ];
+		const colors = [ 'solidSkyColor', 'skySunDirection' ];
 		for ( const key of atmosphere ? [ ...colors, 'skyGroundAlbedo' ] : colors ) {
 
 			if ( Array.isArray( state[ key ] ) ) p[ key ].fromArray( state[ key ] );
@@ -229,7 +217,9 @@ export class EnvironmentManager {
 
 		}
 
-		if ( state.mode && ( state.mode !== 'hdri' || p.mode !== 'hdri' ) ) await this.setMode( state.mode );
+		// A session saved with the removed gradient sky keeps the sky it is already showing.
+		const known = [ 'hdri', 'color', 'procedural' ].includes( state.mode );
+		if ( known && ( state.mode !== 'hdri' || p.mode !== 'hdri' ) ) await this.setMode( state.mode );
 
 	}
 
@@ -246,13 +236,6 @@ export class EnvironmentManager {
 	get texture() {
 
 		return this.environmentTexture;
-
-	}
-
-	/** @see generateGradientTexture */
-	generateGradient() {
-
-		return this.generateGradientTexture();
 
 	}
 
@@ -547,7 +530,7 @@ export class EnvironmentManager {
 
 	/**
 	 * Enter 'hdri' mode ahead of an async HDRI install, and drop the texture stashed by a
-	 * previous setMode( 'gradient' | 'color' | 'procedural' ): a new HDRI makes it
+	 * previous setMode( 'color' | 'procedural' ): a new HDRI makes it
 	 * unreachable, so leaving it in place both leaks it and lets a setMode( 'hdri' )
 	 * arriving mid-download restore it over the map we are about to install.
 	 * @param {import('three').Texture} [incoming] - Never disposed, even if it is the stash.
@@ -575,38 +558,6 @@ export class EnvironmentManager {
 	}
 
 	// ===== SKY GENERATORS =====
-
-	/**
-	 * Generate gradient sky texture and set as environment.
-	 */
-	async generateGradientTexture() {
-
-		if ( ! this.simpleSkyRenderer ) {
-
-			this.simpleSkyRenderer = new SimpleSky( 512, 256 );
-
-		}
-
-		const params = {
-			zenithColor: this.envParams.gradientZenithColor,
-			horizonColor: this.envParams.gradientHorizonColor,
-			groundColor: this.envParams.gradientGroundColor,
-		};
-
-		try {
-
-			const texture = this.simpleSkyRenderer.renderGradient( params );
-			texture._isGeneratedProcedural = true;
-			await this.setEnvironmentMap( texture );
-			this.uniforms.set( 'hasSun', 0 );
-
-		} catch ( error ) {
-
-			log.error( 'gradient sky generation failed:', error );
-
-		}
-
-	}
 
 	/**
 	 * Generate solid color sky texture and set as environment.

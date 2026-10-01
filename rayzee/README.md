@@ -454,7 +454,7 @@ Key settings:
 | `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser |
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
-| `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'gradient'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
+| `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
 | `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` — see [Camera Projection](#camera-projection-orthographic-360-panorama) |
 | `panoramaLonRange` | `[number, number]` | `[-180, 180]` | Panorama longitude sweep, degrees, left→right |
 | `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
@@ -678,9 +678,8 @@ engine.environmentManager.params             // Current environment parameters
 engine.environmentManager.texture            // The loaded environment texture
 await engine.loadEnvironment(url)            // Load HDR/EXR environment map (method on engine)
 await engine.environmentManager.setEnvironmentMap(tex) // Set a custom environment texture
-await engine.environmentManager.setMode(mode)   // 'hdri' | 'procedural' | 'gradient' | 'color'
+await engine.environmentManager.setMode(mode)   // 'hdri' | 'procedural' | 'color'
 await engine.environmentManager.generateProcedural() // Physical sky: spectral, multiple scattering, analytic sun
-await engine.environmentManager.generateGradient()   // Gradient sky
 await engine.environmentManager.generateSolid()      // Solid color sky
 engine.environmentManager.markDirty()        // Flag environment for GPU re-upload
 ```
@@ -1121,7 +1120,7 @@ app.dispose();
 
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
 ≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an
-HDR, a PNG sky or a gradient matches Chrome block for block within 0.05 of a level. Not available
+HDR or a PNG sky matches Chrome block for block within 0.05 of a level. Not available
 without a browser: on-disk storage (OPFS), gobo libraries (they draw on a 2D canvas), and the AI
 upscaler.
 

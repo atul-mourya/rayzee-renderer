@@ -64,66 +64,6 @@ describe( 'SimpleSky', () => {
 
 	} );
 
-	// ── renderGradient ─────────────────────────────────────────
-
-	describe( 'renderGradient', () => {
-
-		const gradientParams = {
-			zenithColor: { r: 0.0, g: 0.0, b: 1.0 },
-			horizonColor: { r: 1.0, g: 1.0, b: 1.0 },
-			groundColor: { r: 0.2, g: 0.1, b: 0.0 },
-		};
-
-		it( 'top half blends horizon to zenith, bottom half ground to horizon', () => {
-
-			sky.renderGradient( gradientParams );
-
-			const pixels = sky._pixels;
-			const w = sky.width;
-			const h = sky.height;
-
-			// Bottom row (y=0) should be close to ground color
-			const bottomIdx = 0;
-			expect( pixels[ bottomIdx ] ).toBeCloseTo( 0.2, 1 );
-			expect( pixels[ bottomIdx + 1 ] ).toBeCloseTo( 0.1, 1 );
-			expect( pixels[ bottomIdx + 2 ] ).toBeCloseTo( 0.0, 1 );
-
-			// Top row (y=h-1) should be close to zenith color
-			const topIdx = ( h - 1 ) * w * 4;
-			expect( pixels[ topIdx ] ).toBeCloseTo( 0.0, 1 );
-			expect( pixels[ topIdx + 1 ] ).toBeCloseTo( 0.0, 1 );
-			expect( pixels[ topIdx + 2 ] ).toBeCloseTo( 1.0, 1 );
-
-		} );
-
-		it( 'middle row approximates horizon color', () => {
-
-			sky.renderGradient( gradientParams );
-
-			const pixels = sky._pixels;
-			const w = sky.width;
-			const h = sky.height;
-
-			// The row closest to t=0.5 is the horizon transition
-			// At t=0.5, bottom half blend = t*2 = 1.0 → fully horizon
-			const midY = Math.floor( h / 2 );
-			const midIdx = midY * w * 4;
-
-			expect( pixels[ midIdx ] ).toBeCloseTo( 1.0, 1 );
-			expect( pixels[ midIdx + 1 ] ).toBeCloseTo( 1.0, 1 );
-			expect( pixels[ midIdx + 2 ] ).toBeCloseTo( 1.0, 1 );
-
-		} );
-
-		it( 'returns a texture with needsUpdate=true', () => {
-
-			const tex = sky.renderGradient( gradientParams );
-			expect( tex.needsUpdate ).toBe( true );
-
-		} );
-
-	} );
-
 	// ── setResolution ──────────────────────────────────────────
 
 	describe( 'setResolution', () => {

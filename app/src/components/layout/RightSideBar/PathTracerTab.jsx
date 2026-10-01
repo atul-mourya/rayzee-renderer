@@ -1,4 +1,4 @@
-import { Sun, RefreshCcwDot, Image, Blend, Palette, ArrowUp, CloudSun } from 'lucide-react';
+import { Sun, RefreshCcwDot, Image, Palette, ArrowUp, CloudSun } from 'lucide-react';
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -146,9 +146,6 @@ const PathTracerTab = () => {
 		groundCatcherHeight,
 		// Environment Mode
 		environmentMode,
-		gradientZenithColor,
-		gradientHorizonColor,
-		gradientGroundColor,
 		solidSkyColor,
 		enableAlphaShadows,
 		useAdaptiveSampling,
@@ -208,9 +205,6 @@ const PathTracerTab = () => {
 		handleGroundCatcherHeightChange,
 		// Environment Mode Handlers
 		handleEnvironmentModeChange,
-		handleGradientZenithColorChange,
-		handleGradientHorizonColorChange,
-		handleGradientGroundColorChange,
 		handleSolidSkyColorChange,
 		handleInteractionModeEnabledChange,
 		handleAsvgfQualityPresetChange,
@@ -284,47 +278,26 @@ const PathTracerTab = () => {
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="hdri">
-								<div className="flex items-center">
-									<Image size={14} className="mr-1" />
+								<div className="flex items-center gap-1.5">
+									<Image size={12} />
 									<span>HDRI</span>
 								</div>
 							</SelectItem>
 							<SelectItem value="procedural">
-								<div className="flex items-center">
-									<CloudSun size={14} className="mr-1" />
+								<div className="flex items-center gap-1.5">
+									<CloudSun size={12} />
 									<span>Physical Sky</span>
 								</div>
 							</SelectItem>
-							<SelectItem value="gradient">
-								<div className="flex items-center">
-									<Blend size={14} className="mr-1" />
-									<span>Gradient</span>
-								</div>
-							</SelectItem>
 							<SelectItem value="color">
-								<div className="flex items-center">
-									<Palette size={14} className="mr-1" />
+								<div className="flex items-center gap-1.5">
+									<Palette size={12} />
 									<span>Solid Color</span>
 								</div>
 							</SelectItem>
 						</SelectContent>
 					</Select>
 				</Row>
-
-				{/* Gradient Mode Controls */}
-				{environmentMode === 'gradient' && (
-					<>
-						<Row>
-							<ColorInput label="Zenith" value={gradientZenithColor} onChange={handleGradientZenithColorChange} />
-						</Row>
-						<Row>
-							<ColorInput label="Horizon" value={gradientHorizonColor} onChange={handleGradientHorizonColorChange} />
-						</Row>
-						<Row>
-							<ColorInput label="Ground" value={gradientGroundColor} onChange={handleGradientGroundColorChange} />
-						</Row>
-					</>
-				)}
 
 				{/* Solid Color Mode Controls */}
 				{environmentMode === 'color' && (

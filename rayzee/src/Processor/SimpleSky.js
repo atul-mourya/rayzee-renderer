@@ -6,12 +6,11 @@ import {
 /**
  * SimpleSky
  *
- * CPU-based gradient and solid colour environment texture generator.
+ * CPU-based solid colour environment texture generator.
  * Produces a DataTexture directly — no render targets, no GPU readback,
  * no resource lifecycle issues with the WebGPU backend.
  *
  * Public API matches SimpleSkyRenderer:
- *   renderGradient(params) → texture
  *   renderSolid(params)    → texture
  */
 
@@ -33,66 +32,6 @@ export class SimpleSky {
 		this._texture.wrapS = RepeatWrapping;
 		this._texture.wrapT = ClampToEdgeWrapping;
 		this._texture.generateMipmaps = false;
-
-	}
-
-	/**
-	 * Generate a three-colour vertical gradient sky.
-	 * @param {Object} params - { zenithColor, horizonColor, groundColor } (Three.js Color)
-	 * @returns {DataTexture} Equirectangular gradient texture
-	 */
-	renderGradient( params ) {
-
-		const startTime = performance.now();
-		const { width, height } = this;
-		const pixels = this._pixels;
-
-		const zr = params.zenithColor.r, zg = params.zenithColor.g, zb = params.zenithColor.b;
-		const hr = params.horizonColor.r, hg = params.horizonColor.g, hb = params.horizonColor.b;
-		const gr = params.groundColor.r, gg = params.groundColor.g, gb = params.groundColor.b;
-
-		for ( let y = 0; y < height; y ++ ) {
-
-			const t = ( y + 0.5 ) / height;
-			let r, g, b;
-
-			if ( t > 0.5 ) {
-
-				// Top half: horizon → zenith
-				const blend = ( t - 0.5 ) * 2.0;
-				r = hr + ( zr - hr ) * blend;
-				g = hg + ( zg - hg ) * blend;
-				b = hb + ( zb - hb ) * blend;
-
-			} else {
-
-				// Bottom half: ground → horizon
-				const blend = t * 2.0;
-				r = gr + ( hr - gr ) * blend;
-				g = gg + ( hg - gg ) * blend;
-				b = gb + ( hb - gb ) * blend;
-
-			}
-
-			for ( let x = 0; x < width; x ++ ) {
-
-				const idx = ( y * width + x ) * 4;
-				pixels[ idx ] = r;
-				pixels[ idx + 1 ] = g;
-				pixels[ idx + 2 ] = b;
-				pixels[ idx + 3 ] = 1.0;
-
-			}
-
-		}
-
-		this._texture.needsUpdate = true;
-		// Fresh linear Rec.709 pixels in a reused texture. Colour management records which space a
-		// texture's pixels hold so it never converts them twice; left in place, that record would
-		// claim these were already converted and they never would be.
-		delete this._texture.userData?.__rayzeeColorSpace;
-		this.lastRenderTime = performance.now() - startTime;
-		return this._texture;
 
 	}
 

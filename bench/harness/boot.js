@@ -461,7 +461,7 @@ function meshStats() {
  *
  * @param {string} url - served path, e.g. /models/foo.glb
  * @param {number} [cameraIndex=1] - index into cameraManager.cameras; falls back to 0 if absent
- * @param {'procedural'|'gradient'|'color'|'hdri'|'none'} [env='procedural'] - 'none' keeps the placeholder
+ * @param {'procedural'|'color'|'hdri'|'none'} [env='procedural'] - 'none' keeps the placeholder
  */
 async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
