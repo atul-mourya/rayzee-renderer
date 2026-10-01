@@ -2135,6 +2135,17 @@ const useCameraStore = create( ( set, get ) => ( {
 
 	},
 
+	// Back to the active camera's own view, whose field of view may differ from the slider's.
+	handleResetCamera: () => {
+
+		const cameraManager = getApp()?.cameraManager;
+		if ( ! cameraManager ) return;
+		cameraManager.resetView();
+		const { fov } = cameraManager.camera;
+		if ( fov !== get().fov ) set( { fov } );
+
+	},
+
 	handleApertureScaleChange: val => {
 
 		set( { apertureScale: val, activePreset: "custom" } );

@@ -10,7 +10,7 @@ import {
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { useStore } from '@/store';
+import { useStore, useCameraStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
 import { createLogger } from 'rayzee';
 
@@ -87,7 +87,7 @@ const App = () => {
 					if ( noModifiers ) {
 
 						event.preventDefault();
-						handleResetCamera();
+						useCameraStore.getState().handleResetCamera();
 
 					}
 
@@ -118,18 +118,6 @@ const App = () => {
 				// Update the store to reflect deselection
 				const { setSelectedObject } = useStore.getState();
 				setSelectedObject( null );
-
-			}
-
-		};
-
-		const handleResetCamera = () => {
-
-			const app = getApp();
-			if ( app?.cameraManager?.controls ) {
-
-				// Reset the orbit controls to their default state
-				app.cameraManager.controls.reset();
 
 			}
 

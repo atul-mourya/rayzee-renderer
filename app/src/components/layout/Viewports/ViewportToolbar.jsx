@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { ZoomIn, ZoomOut, RotateCcw, Maximize, Orbit, Camera, Download, Minimize, Move, RotateCw, Maximize2, Globe, Box } from "lucide-react";
-import { useStore } from '@/store';
+import { useStore, useCameraStore } from '@/store';
 import {
 	Tooltip,
 	TooltipTrigger,
@@ -164,11 +164,7 @@ const ViewportToolbar = ( {
 
 	}, [ viewportWrapperRef ] );
 
-	const handleResetCamera = useCallback( () => {
-
-		getApp()?.cameraManager?.controls?.reset();
-
-	}, [] );
+	const handleResetCamera = useCameraStore( state => state.handleResetCamera );
 
 	const handleScreenshot = useCallback( async () => {
 

@@ -7,8 +7,8 @@
   
 
 ### MVP
+- minimize canvas read writes
 - [ ] Save compiled shaders??
-- [x] browserless application - https://github.com/dawn-gpu/node-webgpu — 9.2.0: plain Node on Dawn through `rayzee/node`
 - [ ] engine core to be separated to make a minimal version for headless applications — half done in 9.2.0: headless mode builds no overlay, gizmo or render loop; one bundle still carries it all
 - [ ] dynamic max stack in bvhtraversal
 - [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
@@ -17,7 +17,6 @@
 
 ### Deferred
 
-Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is fastest on Apple; Spatial is 0.57×), engine: 'webnn' (no WebGPU interop in Chrome), modelSpec (our blobs validate against the built-ins), dynamicTile (correctly pinned off).
 
 
 ### Known
@@ -66,8 +65,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 
 ### Regression bench (`bench/`)
 
-- [x] robust dispersion (MAD, not sd) for the A/B noise floor — one wild round currently makes ~1/3 of scenes report `inconclusive`
-- [x] the two sub-1 ms scenes are too cheap to measure reliably; either exclude them from perf or raise their sample count
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
 - [ ] HTML report with diff heatmaps (`bench/lib/metrics.js` already has `diffHeatmap()`, unused)
 - [ ] CPU-side vitest guards: shader-recompile contract, BVH structural invariants, feature-combo compile smoke
@@ -79,7 +76,6 @@ Dead ends already closed, no action: kernel overrides (auto → FP16 Direct is f
 ### General
 
 - [x] introduce OPFS inplace of indexedDB
-- [x] headless usage to be vsync bound free — 9.2.0: `renderUntilComplete()` paces on the GPU, and lockstep readbacks make the result independent of pacing
 - [ ] deno compile for dedicated destop app
 - [x] Introduce Project based workflow
 - [x] Save rendering state in local storage and load on app start

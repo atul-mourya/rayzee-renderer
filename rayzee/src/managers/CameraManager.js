@@ -312,40 +312,7 @@ export class CameraManager extends EventDispatcher {
 
 		} else {
 
-			const sourceCamera = this.cameras[ index ];
-
-			this.camera.position.copy( sourceCamera.position );
-			this.camera.quaternion.copy( sourceCamera.quaternion );
-			// An imported camera can carry a mirror (a negative axis scale) that no
-			// quaternion can express — a pbrt scene's `Scale -1 1 1`, for one. Copying
-			// pose alone would silently un-mirror the view.
-			this.camera.scale.copy( sourceCamera.scale );
-			if ( sourceCamera.isPerspectiveCamera ) this.camera.fov = sourceCamera.fov;
-			this.camera.near = sourceCamera.near;
-			this.camera.far = sourceCamera.far;
-			this.camera.updateProjectionMatrix();
-			this.camera.updateMatrixWorld( true );
-
-			// Restore the saved orbit target for user cameras; otherwise place it
-			// along the forward direction at the focus distance.
-			if ( this.controls ) {
-
-				const savedTarget = sourceCamera.userData?.__rayzeeOrbitTarget;
-				if ( savedTarget ) {
-
-					this.controls.target.copy( savedTarget );
-
-				} else {
-
-					const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( sourceCamera.quaternion );
-					const focusDist = focusDistance || 5.0;
-					this.controls.target.copy( this.camera.position ).addScaledVector( forward, focusDist );
-
-				}
-
-				this.controls.update();
-
-			}
+			this._placeAt( this.cameras[ index ], focusDistance );
 
 		}
 
@@ -367,6 +334,60 @@ export class CameraManager extends EventDispatcher {
 			type: EngineEvents.CAMERA_SWITCHED, cameraIndex: index, effects: this._captureEffects(), fov: this.camera.fov,
 			cameraProjection: this._getSettings?.( 'cameraProjection' ),
 		} );
+
+	}
+
+	/**
+	 * Puts the active camera back at the view it starts from: the default camera at the framing the
+	 * model loaded with, any other at its own pose and lens. Its effects and projection stay.
+	 */
+	resetView() {
+
+		const source = this.currentCameraIndex > 0 ? this.cameras[ this.currentCameraIndex ] : null;
+		if ( ! source ) {
+
+			this.controls.reset();
+			return;
+
+		}
+
+		this._placeAt( source, this._getSettings?.( 'focusDistance' ) );
+		const height = orthoHeightOf( source );
+		if ( this.camera.orthographic ) this._setView( true, height ? height / 2 : this.camera.orthoHalfHeight );
+		this._onReset?.();
+
+	}
+
+	// The view takes a camera's pose and lens, orbiting its saved target or a point ahead at the focus distance.
+	_placeAt( source, focusDistance ) {
+
+		this.camera.position.copy( source.position );
+		this.camera.quaternion.copy( source.quaternion );
+		// An imported camera can carry a mirror (a negative axis scale) that no
+		// quaternion can express — a pbrt scene's `Scale -1 1 1`, for one. Copying
+		// pose alone would silently un-mirror the view.
+		this.camera.scale.copy( source.scale );
+		if ( source.isPerspectiveCamera ) this.camera.fov = source.fov;
+		this.camera.near = source.near;
+		this.camera.far = source.far;
+		this.camera.updateProjectionMatrix();
+		this.camera.updateMatrixWorld( true );
+
+		if ( ! this.controls ) return;
+
+		const savedTarget = source.userData?.__rayzeeOrbitTarget;
+		if ( savedTarget ) {
+
+			this.controls.target.copy( savedTarget );
+
+		} else {
+
+			const forward = new Vector3( 0, 0, - 1 ).applyQuaternion( source.quaternion );
+			this.controls.target.copy( this.camera.position ).addScaledVector( forward, focusDistance || 5.0 );
+
+		}
+
+		this.controls.update();
 
 	}
 

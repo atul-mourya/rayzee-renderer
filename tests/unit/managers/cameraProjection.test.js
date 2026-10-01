@@ -219,3 +219,88 @@ describe( 'CameraManager poses', () => {
 	} );
 
 } );
+
+describe( 'CameraManager reset view', () => {
+
+	it( 'puts the default camera back at the framing saved for it', () => {
+
+		const { cm } = manager();
+		cm.controls.saveState();
+		const home = cm.camera.position.clone();
+
+		cm.camera.position.set( 6, 1, - 2 );
+		cm.controls.target.set( 1, 1, 1 );
+		cm.controls.update();
+		cm.resetView();
+
+		expect( cm.camera.position.distanceTo( home ) ).toBeLessThan( 1e-9 );
+		expect( cm.controls.target.length() ).toBeLessThan( 1e-9 );
+
+	} );
+
+	it( 'puts a model camera back at its own pose and field of view, not the default framing', () => {
+
+		const { cm } = manager();
+		cm.controls.saveState();
+		const lens = new PerspectiveCamera( 40, 1, 0.1, 100 );
+		lens.position.set( 0, 2, 9 );
+		lens.lookAt( 0, 2, 0 );
+		lens.updateMatrixWorld();
+		cm.setCameras( [ cm.camera, lens ] );
+		cm.switchCamera( 1 );
+
+		cm.camera.position.set( 7, 0, 3 );
+		cm.camera.fov = 70;
+		cm.camera.updateProjectionMatrix();
+		cm.controls.update();
+		cm._onReset.mockClear();
+		cm.resetView();
+
+		expect( cm.camera.position.distanceTo( lens.position ) ).toBeLessThan( 1e-9 );
+		expect( cm.camera.getWorldDirection( new Vector3() ).dot( lens.getWorldDirection( new Vector3() ) ) ).toBeCloseTo( 1, 9 );
+		expect( cm.camera.fov ).toBe( 40 );
+		expect( cm.controls.target.distanceTo( new Vector3( 0, 2, 4 ) ) ).toBeLessThan( 1e-9 );
+		expect( cm._onReset ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
+	it( 'orbits a saved camera around the target it was saved with', () => {
+
+		const { cm } = manager();
+		cm.controls.target.set( 0, 1, 0 );
+		cm.controls.update();
+		const index = cm.addCameraFromView();
+		cm.switchCamera( index );
+		const saved = cm.camera.position.clone();
+
+		cm.camera.position.set( - 5, 4, 1 );
+		cm.controls.target.set( 2, 0, 0 );
+		cm.controls.update();
+		cm.resetView();
+
+		expect( cm.currentCameraIndex ).toBe( index );
+		expect( cm.camera.position.distanceTo( saved ) ).toBeLessThan( 1e-9 );
+		expect( cm.controls.target.distanceTo( new Vector3( 0, 1, 0 ) ) ).toBeLessThan( 1e-9 );
+
+	} );
+
+	it( 'gives an imported orthographic camera back its own size', () => {
+
+		const { cm } = manager();
+		const imported = new OrthographicCamera( - 4, 4, 2.5, - 2.5, 0.1, 100 );
+		imported.zoom = 2;
+		imported.position.set( 5, 0, 0 );
+		imported.lookAt( 0, 0, 0 );
+		cm.setCameras( [ cm.camera, imported ] );
+		cm.switchCamera( 1 );
+
+		cm.camera.zoom = 3;
+		cm.camera.updateProjectionMatrix();
+		cm.resetView();
+
+		expect( cm.camera.isOrthographicCamera ).toBe( true );
+		expect( cm.orthoHeight ).toBeCloseTo( 2.5, 9 );
+
+	} );
+
+} );
