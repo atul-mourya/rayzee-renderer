@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, memo, useMemo, useRef, useSyncExternalStore } from 'react';
 import {
 	Search, Box, Circle, Cylinder, Camera, ChevronRight, ChevronDown,
 	Sun, Flashlight, Boxes, Folder, Shapes, Triangle, LampDesk,
@@ -67,17 +67,51 @@ const ObjectIcon = memo( ( { object } ) => {
 
 ObjectIcon.displayName = 'ObjectIcon';
 
-const VisibilityToggle = memo( ( { item, isVisible, onVisibilityChange } ) => {
+// Rows hear about selection from here: thousands of rows each subscribed to the store ran a selector
+// apiece on every store write.
+const rowSelection = {
+	uuid: null,
+	listeners: new Map(),
+	subscribe( uuid, listener ) {
 
-	const toggleMeshVisibility = useStore( ( state ) => state.toggleMeshVisibility );
+		let set = this.listeners.get( uuid );
+		if ( ! set ) this.listeners.set( uuid, set = new Set() );
+		set.add( listener );
+		return () => {
+
+			set.delete( listener );
+			if ( set.size === 0 ) this.listeners.delete( uuid );
+
+		};
+
+	},
+	select( uuid ) {
+
+		if ( uuid === this.uuid ) return;
+		const previous = this.uuid;
+		this.uuid = uuid;
+		this.listeners.get( previous )?.forEach( listener => listener() );
+		this.listeners.get( uuid )?.forEach( listener => listener() );
+
+	},
+};
+
+function useIsSelected( uuid ) {
+
+	const subscribe = useCallback( listener => rowSelection.subscribe( uuid, listener ), [ uuid ] );
+	return useSyncExternalStore( subscribe, () => rowSelection.uuid === uuid );
+
+}
+
+const VisibilityToggle = memo( ( { item, isVisible, onVisibilityChange } ) => {
 
 	const handleToggle = useCallback( ( e ) => {
 
 		e.stopPropagation();
-		toggleMeshVisibility( item.uuid );
+		useStore.getState().toggleMeshVisibility( item.uuid );
 		onVisibilityChange?.( ! isVisible );
 
-	}, [ toggleMeshVisibility, item.uuid, isVisible, onVisibilityChange ] );
+	}, [ item.uuid, isVisible, onVisibilityChange ] );
 
 	return (
 		<div
@@ -163,8 +197,7 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 	const [ isOpen, setIsOpen ] = useState( true );
 	const rowRef = useRef( null );
-	const selectedObject = useStore( ( state ) => state.selectedObject );
-	const setSelectedObject = useStore( ( state ) => state.setSelectedObject );
+	const isSelected = useIsSelected( item.uuid );
 
 	const getInitialVisibility = useCallback( () => {
 
@@ -223,7 +256,8 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 		const app = getApp();
 		if ( ! app ) return;
 
-		if ( selectedObject && selectedObject.uuid === item.uuid ) {
+		const { setSelectedObject } = useStore.getState();
+		if ( isSelected ) {
 
 			app.interactionManager.select( null );
 			app.refreshFrame();
@@ -242,7 +276,7 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 		}
 
-	}, [ selectedObject, setSelectedObject, item.uuid ] );
+	}, [ isSelected, item.uuid ] );
 
 	const handleContextMenu = useCallback( ( e ) => {
 
@@ -258,11 +292,11 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 		if ( object ) {
 
 			// Select object if not already selected
-			if ( ! selectedObject || selectedObject.uuid !== item.uuid ) {
+			if ( ! isSelected ) {
 
 				app.interactionManager.select( object );
 				app.refreshFrame();
-				setSelectedObject( object );
+				useStore.getState().setSelectedObject( object );
 
 			}
 
@@ -276,7 +310,7 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 		}
 
-	}, [ item.uuid, selectedObject, setSelectedObject ] );
+	}, [ item.uuid, isSelected ] );
 
 	const toggleOpen = useCallback( ( e ) => {
 
@@ -285,7 +319,6 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 	}, [] );
 
-	const isSelected = selectedObject && selectedObject.uuid === item.uuid;
 	const paddingLeft = depth * 12 + 8;
 
 	// Runs on mount too, which is what reveals a row that an ancestor just expanded.
@@ -464,6 +497,8 @@ const Outliner = () => {
 	const layers = useStore( ( state ) => state.layers );
 	const setLayers = useStore( ( state ) => state.setLayers );
 	const selectedObject = useStore( ( state ) => state.selectedObject );
+
+	useLayoutEffect( () => rowSelection.select( selectedObject?.uuid ?? null ), [ selectedObject ] );
 
 	const createLayerItem = useCallback( ( object ) => {
 
