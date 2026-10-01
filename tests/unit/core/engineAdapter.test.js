@@ -147,6 +147,7 @@ describe( 'connectEngineToStore', () => {
 
 	it( 'should call setIsRenderComplete(false) and setIsRendering(true) on RENDER_RESET', () => {
 
+		Object.assign( stores._state, { isRenderComplete: true, isRendering: false, completionReason: 'samples' } );
 		connectEngineToStore( engine, stores );
 
 		engine._emit( 'RENDER_RESET' );
@@ -154,6 +155,20 @@ describe( 'connectEngineToStore', () => {
 		expect( stores._state.setIsRenderComplete ).toHaveBeenCalledWith( false );
 		expect( stores._state.setIsRendering ).toHaveBeenCalledWith( true );
 		expect( stores._state.setCompletionReason ).toHaveBeenCalledWith( null );
+
+	} );
+
+	// A reset fires every frame while anything moves, and each store write notifies every subscriber.
+	it( 'writes nothing on RENDER_RESET while a render is already running', () => {
+
+		Object.assign( stores._state, { isRenderComplete: false, isRendering: true, completionReason: null } );
+		connectEngineToStore( engine, stores );
+
+		engine._emit( 'RENDER_RESET' );
+
+		expect( stores._state.setIsRenderComplete ).not.toHaveBeenCalled();
+		expect( stores._state.setIsRendering ).not.toHaveBeenCalled();
+		expect( stores._state.setCompletionReason ).not.toHaveBeenCalled();
 
 	} );
 

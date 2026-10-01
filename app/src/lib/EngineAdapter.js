@@ -33,11 +33,14 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
+	// Fires every frame while anything moves; a store write notifies every subscriber even when
+	// the value is unchanged.
 	on( EngineEvents.RENDER_RESET, () => {
 
-		useStore.getState().setIsRenderComplete( false );
-		useStore.getState().setIsRendering( true );
-		useStore.getState().setCompletionReason( null );
+		const state = useStore.getState();
+		if ( state.isRenderComplete ) state.setIsRenderComplete( false );
+		if ( ! state.isRendering ) state.setIsRendering( true );
+		if ( state.completionReason !== null ) state.setCompletionReason( null );
 
 	} );
 
