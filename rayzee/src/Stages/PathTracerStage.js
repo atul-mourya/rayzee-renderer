@@ -565,6 +565,7 @@ export class PathTracerStage extends RenderStage {
 
 		// Only deterministic mode and lockstep readbacks rewind the seed axis; see _pinSeedToFrame.
 		if ( this._pinSeedToFrame || this._lockstep ) this._seedTick = 0;
+		this._accumulationLockstep = !! this._lockstep;
 
 	}
 
@@ -1288,6 +1289,7 @@ export class PathTracerStage extends RenderStage {
 
 			this.createStorageTextures( width, height );
 			this.frameCount = 0;
+			this._accumulationLockstep = false;
 
 		}
 

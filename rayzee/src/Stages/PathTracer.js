@@ -118,6 +118,7 @@ export class PathTracer extends PathTracerStage {
 		// so when one lands cannot change the image. { due, read, apply } while one is in flight.
 		this._lockstep = false;
 		this._lockstepRead = null;
+		this._accumulationLockstep = false;
 
 		// Tier-2: last settled active-pixel count (maxRays − frozen), sizes next frame's bounce-0 grid.
 		// 0 until a settled readback lands (and on reset/camera-move/resize) → grid stays full-size until then.
@@ -320,6 +321,7 @@ export class PathTracer extends PathTracerStage {
 		this.frame.value = frameValue;
 		this.seedFrame.value = this._seedTick ++;
 		this.tracedFrames ++;
+		if ( ! this._lockstep ) this._accumulationLockstep = false;
 
 		this._setWfDispatch();
 
@@ -661,6 +663,8 @@ export class PathTracer extends PathTracerStage {
 		this._convergedFraction = state.convergedFraction ?? 0;
 		this._convergedGeometryFraction = state.convergedGeometryFraction ?? 0;
 		this.isComplete = false;
+		// The survivor curve is not in a checkpoint, so a continuation is not the lockstep render.
+		this._accumulationLockstep = false;
 
 	}
 
@@ -708,6 +712,13 @@ export class PathTracer extends PathTracerStage {
 	get lockstepReadbacks() {
 
 		return this._lockstep;
+
+	}
+
+	/** Whether the current image was traced in lockstep from a reset made in it; with no sample yet, the setting. */
+	get accumulationLockstep() {
+
+		return this.frameCount > 0 ? this._accumulationLockstep : this._lockstep;
 
 	}
 

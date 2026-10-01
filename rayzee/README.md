@@ -1056,8 +1056,10 @@ set it. Outside Chrome, pass `hostMemoryGB`.
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the profile by name *and* by
 value, the adapter, every live setting with its source, the colour pipeline, the render size and
-samples, and whether it ran headless, strict, deterministic or lockstepped. Store it beside each
-render and "what made this?" has an answer without rendering again.
+samples, and whether it ran headless, strict, deterministic or lockstepped. `mode.lockstep` says
+whether the current image was traced in lockstep, so it stays true after `renderUntilComplete` turns
+lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
+again.
 
 **Pinning a look.** A change to what a render looks like when a host sets nothing — a default
 setting, a mode preset, a profile's values, light units — is released as a **major**, with the

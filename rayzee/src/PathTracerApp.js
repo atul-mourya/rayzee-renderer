@@ -2903,7 +2903,7 @@ export class PathTracerApp extends EventDispatcher {
 				headless: this._headless,
 				strict: this._issues.strict,
 				deterministic: this.isDeterministic,
-				lockstep: !! stage?.lockstepReadbacks,
+				lockstep: !! stage?.accumulationLockstep,
 			},
 			render: stage ? {
 				width: stage.width,

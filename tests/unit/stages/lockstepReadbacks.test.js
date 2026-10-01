@@ -241,4 +241,49 @@ describe( 'lockstep readbacks', () => {
 
 	} );
 
+	describe( 'accumulationLockstep', () => {
+
+		const resettable = ( stage ) => Object.assign( stage, {
+			resetCount: 0, frame: { value: 0 }, hasPreviousAccumulated: { value: 0 }, storageTextures: {},
+			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false,
+		} );
+
+		// renderUntilComplete turns lockstep off again as it returns; the image was still traced in it.
+		it( 'says what the image was traced with, not what is set now', () => {
+
+			const { stage } = makeStage();
+			resettable( stage );
+			stage.setLockstepReadbacks( true );
+			stage.reset();
+			stage.frameCount = 12;
+			stage.setLockstepReadbacks( false );
+
+			expect( stage.lockstepReadbacks ).toBe( false );
+			expect( stage.accumulationLockstep ).toBe( true );
+
+		} );
+
+		it( 'is false when the reset that started the image was not in lockstep', () => {
+
+			const { stage } = makeStage();
+			resettable( stage );
+			stage.reset();
+			stage.setLockstepReadbacks( true );
+			stage.frameCount = 4;
+
+			expect( stage.accumulationLockstep ).toBe( false );
+
+		} );
+
+		it( 'is the setting before any sample', () => {
+
+			const { stage } = makeStage();
+			stage.setLockstepReadbacks( true );
+			expect( stage.accumulationLockstep ).toBe( true );
+
+		} );
+
+	} );
+
+
 } );

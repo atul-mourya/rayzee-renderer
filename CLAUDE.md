@@ -318,7 +318,9 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
 - **`app.getProvenance()`** — plain JSON of what produced the image (versions, profile by name and
   value, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
-  lockstep). `captureHeadless` returns it as `provenance`.
+  lockstep). `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
+  whether the current image was traced in lockstep from a lockstep reset, not the live setting, which
+  `renderUntilComplete` restores on return. A checkpoint restore reports false (the curve is not saved).
 - **`await app.runFinalDenoise()`** — one OIDN pass at the final tier, awaited, without the render
   loop or the upscaler (`DenoisingManager.denoiseOnce()`: waits out a run or weight load in flight,
   which `start()` would refuse or defer). OIDN must have been on while accumulating — the aux
