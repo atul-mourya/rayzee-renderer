@@ -17,6 +17,8 @@ const MAX_DEFAULT_BUDGET = 100 * 1024 ** 3;
 const FREE_MARGIN = 64 * 1024 ** 2;
 const STREAM_BATCH = 8 * 1024 ** 2;
 const STREAM_WINDOW = 4;
+// Other tabs write too, so the cache total kept in memory is listed again at most this often.
+const CACHE_TOTAL_TTL_MS = 30_000;
 
 const encoder = new TextEncoder();
 
@@ -152,6 +154,7 @@ export class EntryWriter {
 		this._sizes = { ...sizes };
 		this._append = append;
 		this._done = false;
+		this._committedBytes = append ? Object.values( sizes ).reduce( ( n, b ) => n + b, 0 ) : 0;
 
 	}
 
@@ -313,6 +316,7 @@ export class EntryWriter {
 
 			const { args, list } = transferable( JSON.stringify( meta ), { copy: false } );
 			await this._transport.call( 'writeFile', { path: this._path, name: META, ...args }, list );
+			if ( this.area.kind === STORAGE_KIND.CACHE ) this.area.manager._countCacheBytes( meta.bytes - this._committedBytes );
 			this.area.manager._changed( this.area.name );
 			return meta;
 
@@ -700,6 +704,7 @@ export class StorageManager extends Emitter {
 		this._transport = transport;
 		this._areas = new Map();
 		this._budget = null;
+		this._cacheTotal = null;
 
 		for ( const name of Object.values( ENGINE_AREAS ) ) this.defineArea( name, { kind: name === ENGINE_AREAS.SPILL ? STORAGE_KIND.SCRATCH : STORAGE_KIND.CACHE } );
 
@@ -775,6 +780,40 @@ export class StorageManager extends Emitter {
 
 	}
 
+	/**
+	 * What cache areas hold together. Every new download asks, and a listing reads every entry's
+	 * metadata, so it is listed once and kept current by this manager's own commits.
+	 */
+	async _cacheBytes() {
+
+		let total = this._cacheTotal;
+		if ( ! total || Date.now() - total.at > CACHE_TOTAL_TTL_MS ) {
+
+			total = this._cacheTotal = { at: Date.now(), bytes: 0, ready: null };
+			total.ready = this._cacheEntries().then( ( entries ) => {
+
+				total.bytes += entries.reduce( ( n, e ) => n + ( e.meta.bytes ?? 0 ), 0 );
+
+			} );
+			total.ready.catch( () => {
+
+				if ( this._cacheTotal === total ) this._cacheTotal = null;
+
+			} );
+
+		}
+
+		await total.ready;
+		return total.bytes;
+
+	}
+
+	_countCacheBytes( bytes ) {
+
+		if ( this._cacheTotal ) this._cacheTotal.bytes += bytes;
+
+	}
+
 	async _cacheEntries() {
 
 		const out = [];
@@ -816,8 +855,8 @@ export class StorageManager extends Emitter {
 
 		const entries = await this._cacheEntries();
 		const budget = await this.budget();
-		let cacheBytes = entries.reduce( ( n, e ) => n + ( e.meta.bytes ?? 0 ), 0 );
-		const target = freeBytes ?? Math.max( 0, cacheBytes - budget );
+		const total = this._cacheTotal = { at: Date.now(), bytes: entries.reduce( ( n, e ) => n + ( e.meta.bytes ?? 0 ), 0 ), ready: null };
+		const target = freeBytes ?? Math.max( 0, total.bytes - budget );
 		if ( target <= 0 ) return 0;
 
 		const held = await heldLockNames();
@@ -832,7 +871,7 @@ export class StorageManager extends Emitter {
 			if ( await area.removeById( meta.id ) ) {
 
 				freed += meta.bytes ?? 0;
-				cacheBytes -= meta.bytes ?? 0;
+				total.bytes -= meta.bytes ?? 0;
 
 			}
 
@@ -855,8 +894,7 @@ export class StorageManager extends Emitter {
 			const free = bytes + FREE_MARGIN - ( quota - usage );
 			if ( kind !== STORAGE_KIND.CACHE ) return { free, budget: 0 };
 
-			const cacheBytes = ( await this._cacheEntries() ).reduce( ( n, e ) => n + ( e.meta.bytes ?? 0 ), 0 );
-			return { free, budget: cacheBytes + bytes - await this.budget() };
+			return { free, budget: await this._cacheBytes() + bytes - await this.budget() };
 
 		};
 

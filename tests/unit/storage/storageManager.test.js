@@ -283,6 +283,44 @@ describe( 'StorageManager', () => {
 
 	} );
 
+	it( 'lists the caches once for many writes, counting each commit', async () => {
+
+		ctx.storage.setBudget( 10 * MiB );
+		const area = ctx.storage.area( 'downloads' );
+		const listing = vi.spyOn( ctx.storage, '_cacheEntries' );
+
+		vi.useFakeTimers( { now: 1_000_000, toFake: [ 'Date' ] } );
+		try {
+
+			for ( let i = 0; i < 4; i ++ ) {
+
+				vi.setSystemTime( 1_000_000 + i * 1000 );
+				const writer = await area.create( `file-${i}`, { expectedBytes: 2 * MiB } );
+				await writer.write( 'data', new Uint8Array( 2 * MiB ) );
+				await writer.commit();
+
+			}
+
+			expect( listing ).toHaveBeenCalledTimes( 1 );
+			expect( await ctx.storage._cacheBytes() ).toBe( 8 * MiB );
+
+			// Over the budget only once the four commits are counted.
+			expect( await ctx.storage.ensureSpace( 3 * MiB ) ).toBe( true );
+			expect( ( await area.list() ).map( ( m ) => m.key ).sort() ).toEqual( [ 'file-1', 'file-2', 'file-3' ] );
+
+			vi.setSystemTime( 1_000_000 + 60_000 );
+			listing.mockClear();
+			await ctx.storage.ensureSpace( 1 );
+			expect( listing ).toHaveBeenCalledTimes( 1 );
+
+		} finally {
+
+			vi.useRealTimers();
+
+		}
+
+	} );
+
 	it( 'lets one write outgrow the budget, clearing other caches for it', async () => {
 
 		ctx.storage.setBudget( 1 * MiB );

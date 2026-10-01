@@ -845,7 +845,12 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   share a budget (30 % of quota, ≤ 100 GB) and are evicted least-recently-used, never while
   locked or pinned; `user` areas are never evicted; `scratch` is outside the budget and cleared at
   open unless an open page holds it. ⚠️ The budget caps what caches accumulate, not one write —
-  a single entry larger than the budget is allowed when the disk has room.
+  a single entry larger than the budget is allowed when the disk has room. The cache total lives in
+  memory (`_cacheBytes`: listed at most every 30 s, this manager's commits counted, `collect` resets
+  it exactly): listing every entry's metadata on every new download cost ~0.4 ms an entry — 100
+  downloads into a 1,090-entry cache took 12–14 s with 173–373 ms frames, now 0.6 s; a first visit
+  read 7,968 meta files, now 377. Removals are not subtracted, so between listings it can only
+  over-count (evict early), never let caches outgrow the budget.
 - **Entry protocol.** An entry is a directory of files plus `meta.json`, written **last**; no valid
   meta means invisible, and `sweep()` removes it. `area.create( key )` replaces, `edit( key )`
   appends (growable files resume from their committed length). ⚠️ `create` removes the old entry
