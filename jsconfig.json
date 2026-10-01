@@ -1,6 +1,5 @@
 {
     "compilerOptions": {
-      "baseUrl": ".",
       "paths": {
         "@/core/*": ["./rayzee/src/*"],
         "@/*": ["./app/src/*"],
