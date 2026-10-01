@@ -15,6 +15,13 @@ const log = createLogger( 'textures' );
 // Below this a pack is cheaper than starting a worker for it.
 const WORKER_PACK_BYTES = 8 * 2 ** 20;
 
+// Main-thread work allowed between yields while streaming layers to a worker.
+const STREAM_YIELD_MS = 16;
+
+const SHARED_PACK_WORKERS = 4;
+// Below about one 8K source a bucket packs fast enough alone, and extra workers only compete with the BVH build.
+const SHARED_PACK_MIN_PIXELS = 8192 * 8192;
+
 // Buckets pack concurrently; this keeps their workers within the cores, beside the BVH pool's.
 const packSlots = { busy: 0, waiting: [] };
 
@@ -835,6 +842,9 @@ export class TextureCreator {
 				case 'worker-direct':
 					result = await this.processWithWorkerDirect( normalized );
 					break;
+				case 'worker-streaming':
+					result = await this.processInWorkerStreaming( normalized );
+					break;
 				case 'main-batch':
 					result = await this.processOnMainThreadBatch( normalized, strategy.batchSize );
 					break;
@@ -892,10 +902,7 @@ export class TextureCreator {
 
 		if ( this.capabilities.workers && estimatedMemory > MEMORY_CONSTANTS.MAX_TEXTURE_MEMORY ) {
 
-			// Very large texture set: stream on the main thread (GC-yielding, builds the
-			// full array correctly). The former 'worker-chunked' path combined its chunks
-			// by returning only the first, silently dropping the rest — removed.
-			return { method: 'main-streaming' };
+			return { method: 'worker-streaming' };
 
 		} else if ( this.capabilities.workers && totalPixels > 2097152 ) {
 
@@ -931,14 +938,24 @@ export class TextureCreator {
 		}
 
 		this.activeWorkers ++;
-
-		const worker = new TexturesWorker();
+		let slots = 1;
+		let worker = null;
 
 		try {
 
 			// Prepare textures for worker with direct transfer
 			const texturesData = await this.prepareTexturesForWorkerDirect( textures );
 
+			const extra = this._sharedPackSlots( texturesData );
+			if ( extra > 0 ) {
+
+				slots += extra;
+				this.activeWorkers += extra;
+				return this.createDataArrayTextureFromResult( await this._packAcrossWorkers( texturesData, slots ) );
+
+			}
+
+			worker = new TexturesWorker();
 			const result = await new Promise( ( resolve, reject ) => {
 
 				worker.onmessage = ( e ) => {
@@ -982,6 +999,153 @@ export class TextureCreator {
 			} );
 
 			return this.createDataArrayTextureFromResult( result );
+
+		} finally {
+
+			worker?.terminate();
+			this.activeWorkers -= slots;
+
+		}
+
+	}
+
+	/** Extra worker slots a bucket may take now, beyond its own. */
+	_sharedPackSlots( texturesData ) {
+
+		if ( typeof SharedArrayBuffer === 'undefined' || ! globalThis.crossOriginIsolated ) return 0;
+		if ( texturesData.reduce( ( sum, t ) => sum + t.width * t.height, 0 ) < SHARED_PACK_MIN_PIXELS ) return 0;
+		const free = this.maxConcurrentWorkers - this.activeWorkers;
+		return Math.max( 0, Math.min( texturesData.length, SHARED_PACK_WORKERS, free + 1 ) - 1 );
+
+	}
+
+	/**
+	 * The worker's direct path split across `count` workers, each drawing its layers straight into
+	 * one shared array. Large sources dominate (their downscale), so they are dealt out first.
+	 */
+	async _packAcrossWorkers( texturesData, count ) {
+
+		const { maxWidth: width, maxHeight: height } = this.calculateOptimalDimensions( texturesData.map( image => ( { image } ) ) );
+		const depth = texturesData.length;
+		const shared = new SharedArrayBuffer( width * height * depth * 4 );
+
+		const parts = Array.from( { length: count }, () => ( { cost: 0, layers: [], transfer: [] } ) );
+		const order = texturesData.map( ( _, index ) => index );
+		const cost = index => texturesData[ index ].width * texturesData[ index ].height;
+		order.sort( ( a, b ) => cost( b ) - cost( a ) );
+
+		for ( const index of order ) {
+
+			const part = parts.reduce( ( least, p ) => ( p.cost < least.cost ? p : least ) );
+			const texture = texturesData[ index ];
+			part.layers.push( { index, texture } );
+			part.cost += cost( index );
+			if ( texture.data instanceof ArrayBuffer ) part.transfer.push( texture.data );
+			else if ( texture.bitmap ) part.transfer.push( texture.bitmap );
+
+		}
+
+		const workers = [];
+
+		try {
+
+			await Promise.all( parts.filter( part => part.layers.length ).map( part => new Promise( ( resolve, reject ) => {
+
+				const worker = createWorker( TexturesWorker );
+				workers.push( worker );
+				worker.onmessage = ( { data } ) => ( data.error ? reject( new Error( data.error ) ) : resolve() );
+				worker.onerror = ( event ) => reject( new Error( event.message || 'texture worker failed' ) );
+				worker.postMessage( { shared, width, height, layers: part.layers, maxTextureSize: this.maxTextureSize }, part.transfer );
+
+			} ) ) );
+
+		} finally {
+
+			for ( const worker of workers ) worker.terminate();
+
+		}
+
+		return { data: shared, width, height, depth };
+
+	}
+
+	/**
+	 * `processOnMainThreadStreaming` with the draw and read moved to a worker: each layer is
+	 * resized here exactly as there, so the array is byte-for-byte the same.
+	 */
+	async processInWorkerStreaming( textures ) {
+
+		const validTextures = textures.filter( tex => tex?.image );
+		if ( validTextures.length === 0 ) return this.createFallbackTexture();
+
+		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( validTextures );
+		const depth = validTextures.length;
+
+		while ( this.activeWorkers >= this.maxConcurrentWorkers ) {
+
+			await new Promise( resolve => setTimeout( resolve, 10 ) );
+
+		}
+
+		this.activeWorkers ++;
+		const worker = createWorker( TexturesWorker );
+
+		try {
+
+			let acked = 0;
+			let wake = null;
+			let settle;
+			const finished = new Promise( ( resolve, reject ) => settle = { resolve, reject } );
+			finished.catch( () => {} );
+
+			worker.onmessage = ( { data } ) => {
+
+				if ( data.error ) settle.reject( new Error( data.error ) );
+				else if ( data.stream === 'ack' ) acked ++;
+				else settle.resolve( data );
+				wake?.();
+
+			};
+
+			worker.onerror = ( event ) => {
+
+				settle.reject( new Error( event.message || 'texture worker failed' ) );
+				wake?.();
+
+			};
+
+			worker.postMessage( { stream: 'begin', width: maxWidth, height: maxHeight, depth } );
+			let lastYield = performance.now();
+
+			for ( let i = 0; i < depth; i ++ ) {
+
+				while ( i - acked >= MEMORY_CONSTANTS.STREAM_BATCH_SIZE ) {
+
+					await Promise.race( [ new Promise( resolve => wake = resolve ), finished ] );
+					lastYield = performance.now();
+
+				}
+
+				const texture = validTextures[ i ];
+				const bitmap = await createImageBitmap( texture.image, {
+					resizeWidth: maxWidth,
+					resizeHeight: maxHeight,
+					resizeQuality: 'high',
+					imageOrientation: texture.flipY !== false ? 'flipY' : 'none',
+				} );
+				worker.postMessage( { stream: 'layer', index: i, bitmap }, [ bitmap ] );
+
+				if ( performance.now() - lastYield > STREAM_YIELD_MS ) {
+
+					await new Promise( resolve => setTimeout( resolve, 0 ) );
+					lastYield = performance.now();
+
+				}
+
+			}
+
+			worker.postMessage( { stream: 'end' } );
+			return this.createDataArrayTextureFromResult( await finished );
 
 		} finally {
 

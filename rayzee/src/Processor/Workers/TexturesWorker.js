@@ -2,14 +2,111 @@ let canvas, ctx;
 
 // Memory limits and chunking configuration
 const MEMORY_LIMITS = {
-	MAX_BYTES_PER_TEXTURE: 256 * 1024 * 1024, // 256MB per texture array
 	MAX_TEXTURE_DIMENSION: 8192, // Hardware ceiling (WebGPU maxTextureDimension2D guaranteed min); the per-scene maxTextureSize setting is the actual knob
 	CHUNK_SIZE: 8, // Optimized: Process textures in chunks of 8 for better memory locality
 	ADAPTIVE_CHUNK_SIZE: true, // Enable adaptive chunk sizing based on texture dimensions
 	MEMORY_SAFETY_FACTOR: 0.8 // Use only 80% of estimated available memory
 };
 
+let stream = null;
+
+function handleStream( msg ) {
+
+	if ( msg.stream === 'begin' ) {
+
+		const { width, height, depth } = msg;
+		const target = new OffscreenCanvas( width, height );
+		const context = target.getContext( '2d', { willReadFrequently: true, alpha: true, desynchronized: true } );
+		stream = { width, height, depth, context, data: new Uint8Array( width * height * depth * 4 ) };
+		return;
+
+	}
+
+	const { width, height, depth, context, data } = stream;
+
+	if ( msg.stream === 'layer' ) {
+
+		context.clearRect( 0, 0, width, height );
+		context.drawImage( msg.bitmap, 0, 0 );
+		msg.bitmap.close();
+		data.set( context.getImageData( 0, 0, width, height ).data, width * height * 4 * msg.index );
+		self.postMessage( { stream: 'ack', index: msg.index } );
+		return;
+
+	}
+
+	stream = null;
+	self.postMessage( { data: data.buffer, width, height, depth }, [ data.buffer ] );
+
+}
+
+async function processIntoShared( { shared, width, height, layers } ) {
+
+	if ( canvas.width !== width || canvas.height !== height ) {
+
+		canvas.width = width;
+		canvas.height = height;
+
+	}
+
+	ctx.imageSmoothingEnabled = true;
+	ctx.imageSmoothingQuality = 'high';
+
+	const data = new Uint8Array( shared );
+	const bytes = width * height * 4;
+
+	for ( const { index, texture } of layers ) {
+
+		try {
+
+			await processSingleTextureOptimized( texture, data, index * bytes, width, height );
+
+		} catch ( error ) {
+
+			console.warn( `Failed to process texture ${index}:`, error );
+			data.fill( 0, index * bytes, ( index + 1 ) * bytes );
+
+		}
+
+	}
+
+}
+
 self.onmessage = async function ( e ) {
+
+	if ( e.data.shared ) {
+
+		try {
+
+			if ( ! canvas ) initializeWorker( e.data.maxTextureSize );
+			await processIntoShared( e.data );
+			self.postMessage( { done: true } );
+
+		} catch ( error ) {
+
+			self.postMessage( { error: error.message } );
+
+		}
+
+		return;
+
+	}
+
+	if ( e.data.stream ) {
+
+		try {
+
+			handleStream( e.data );
+
+		} catch ( error ) {
+
+			self.postMessage( { error: error.message } );
+
+		}
+
+		return;
+
+	}
 
 	const { textures, maxTextureSize, method = 'direct-transfer' } = e.data;
 
@@ -50,17 +147,6 @@ function initializeWorker( maxTextureSize ) {
 }
 
 async function processTextures( textures, maxTextureSize, method ) {
-
-	// Check if we need to use chunked processing
-	const dimensions = calculateOptimalDimensions( textures, maxTextureSize );
-	const estimatedBytes = dimensions.maxWidth * dimensions.maxHeight * textures.length * 4;
-
-	if ( estimatedBytes > MEMORY_LIMITS.MAX_BYTES_PER_TEXTURE ) {
-
-		console.log( `Large texture array detected (${( estimatedBytes / 1024 / 1024 ).toFixed( 2 )}MB), using chunked processing` );
-		return await processTexturesInChunks( textures, maxTextureSize, method );
-
-	}
 
 	switch ( method ) {
 

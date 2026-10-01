@@ -953,14 +953,16 @@ The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach th
 Event-driven stage pipeline with TSL compute kernels compiled to WGSL. All engine code lives in `rayzee/src/`. The path tracer is a pure-wavefront renderer: `PathTracer extends PathTracerStage`, where the base delegates to 5 sub-managers: `UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, and `StorageTexturePool`. External code (other stages, PathTracerApp) accesses sub-managers directly — e.g., `stage.uniforms.get()`, `stage.materialData.*`, `stage.environment.*`. See `docs/PIPELINE_ARCHITECTURE.md` and `docs/PATH_TRACER_SHADER_ARCHITECTURE.md` for details.
 
 ### Memory Management
-Web Workers handle large data processing with chunked allocation:
-```js
-// TexturesWorker.js pattern
-const MEMORY_LIMITS = {
-    MAX_BYTES_PER_TEXTURE: 256 * 1024 * 1024,  // 256MB chunks
-    ADAPTIVE_CHUNK_SIZE: true                   // Dynamic based on texture dimensions
-}
-```
+Material texture arrays pack in `TexturesWorker`, each layer drawn straight into the full array
+(chunking only when that allocation fails: the size-triggered chunking it replaced allocated the
+whole array anyway and copied every chunk twice — 7 × 4096² took 1.1 s, now 0.23 s). A bucket of
+≥ 8192² source pixels splits across up to 4 workers drawing into one SharedArrayBuffer
+(`_packAcrossWorkers`, largest sources dealt first — downscaling an 8K map is ~175 ms, a map at size
+~20 ms), when the page is cross-origin isolated. Times Square 8K: textures 1.1 s → 0.5 s, load
+2.1 → 1.7 s. A bucket over 2 GB of source streams through a worker (`processInWorkerStreaming`),
+resized on the main thread as `processOnMainThreadStreaming` does. ⚠️ Every path keeps its own
+resampling: `worker-direct` scales by `drawImage`, the others by `createImageBitmap` — moving a
+resize to another thread or call changed thousands of bytes a bucket.
 
 ⚠️ **`PathTracerStage.sdfs` is not the processor that built the scene** — `PathTracerApp._sdf`
 is. The stage's own is a leftover of the old `stage.build()` path; its `rebuildMaterials` may only
