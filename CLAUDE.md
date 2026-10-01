@@ -553,6 +553,7 @@ saying the environment was left converted.
   shader's pick probability reads the *material* buffer's. Both are converted, and
   `applyColorWorkingSpace()` rebuilds the emitter list (`rebuildEmissiveColors`); miss either and
   emitters are seen in one space and cast light in another.
+- **Environment modes are `'hdri' | 'procedural' | 'color'`.** The gradient sky was removed (the physical sky covers it); a saved session that names it keeps the sky on screen (`EnvironmentManager.restore`). The eight bench scenes that used it build the same sky through `setGradientSky` (`bench/harness/scenes.js`), goldens bit-identical.
 - ⚠️ **The skies reuse one texture.** `SimpleSky` clears `userData.__rayzeeColorSpace` whenever
   it rewrites pixels; without that the record says "already converted" and a new sky is never
   converted. `EnvironmentManager.markDirty()` bumps the version *without* new pixels, which is why

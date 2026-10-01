@@ -611,7 +611,7 @@ probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
 |---|---|
-| `spheres-gradient` | diffuse GI, GGX metal/rough response, gradient env importance sampling |
+| `spheres-gradient` | diffuse GI, GGX metal/rough response, gradient env importance sampling (the sky is built by the bench itself: `setGradientSky` in `harness/scenes.js`, since the engine's Gradient mode was removed) |
 | `cornell-emissive` | emissive-triangle NEE, MIS weighting, colour bleeding |
 | `glass-transmission` | transmission, TIR, IOR sweep, transmissive bounce cap, rough refraction |
 | `spheres-procedural-sky` | physical sky bake, its GPU-built importance-sampling table, the analytic sun's NEE and MIS |
