@@ -1011,7 +1011,9 @@ Thin lens in `TSL/CameraRay.js`, with two ways to size the aperture (`dofMode`, 
 Both focus on a **flat** plane: `focusDistance` is depth along the view axis, measured by `viewDepth()`
 (`managers/InteractionManager.js`; a panorama focuses along each ray). Auto-focus resets on a new model or camera
 (`resetAutoFocus()`), falls back to the orbit target's depth when nothing is under its point, and pauses in a
-panorama rather than switching to manual. `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
+panorama rather than switching to manual. Its CPU raycast (stock three.js, no BVH; 6.7 ms on Sponza) runs again
+only when the view, the AF point or `stage.resetCount` changed — every scene change resets the render, so
+anything that moves geometry without a reset leaves focus stale. `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
 no field of view or focus distance, so a preset never moves the camera. `dofBlur` is a per-camera effect;
 `dofMode` is not. The app's panel is a **Simple | Pro** switch over `dofMode`, remembered in localStorage.
 

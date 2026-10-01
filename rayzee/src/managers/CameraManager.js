@@ -1,4 +1,4 @@
-import { EventDispatcher, MathUtils, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { EventDispatcher, MathUtils, Matrix4, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
 import { AF_DEFAULTS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
@@ -62,6 +62,7 @@ export class CameraManager extends EventDispatcher {
 		this._smoothedFocusDistance = null;
 		this._afPointDirty = false;
 		this._afSuspended = false;
+		this._afPick = null;
 
 		// Saved state for default camera when switching to model cameras
 		this._defaultCameraState = null;
@@ -833,13 +834,12 @@ export class CameraManager extends EventDispatcher {
 			&& stage.frameCount > 0
 			&& ! stage.isComplete ) return;
 
-		// AF screen point (0 to 1, y down) to NDC.
-		const validHit = this.interactionManager.pickSurface( this.afScreenPoint.x * 2 - 1, 1 - this.afScreenPoint.y * 2 );
+		const hitPoint = this._pickFocusPoint( stage.resetCount );
 
 		let rawDistance;
-		if ( validHit ) {
+		if ( hitPoint ) {
 
-			rawDistance = viewDepth( validHit.point, this.camera );
+			rawDistance = viewDepth( hitPoint, this.camera );
 			this._lastValidFocusDistance = rawDistance;
 
 		} else {
@@ -907,6 +907,32 @@ export class CameraManager extends EventDispatcher {
 			}
 
 		}
+
+	}
+
+	/** Picks again only on a new view or AF point, or a render reset, which every scene change makes. @private */
+	_pickFocusPoint( resetCount ) {
+
+		const camera = this.camera;
+		const { x, y } = this.afScreenPoint;
+		const last = this._afPick ??= { point: new Vector3(), hit: false, resetCount: NaN, x: NaN, y: NaN, view: new Matrix4(), projection: new Matrix4() };
+
+		if ( this._afPointDirty || resetCount !== last.resetCount || x !== last.x || y !== last.y
+			|| ! last.view.equals( camera.matrixWorld ) || ! last.projection.equals( camera.projectionMatrix ) ) {
+
+			// AF screen point (0 to 1, y down) to NDC.
+			const hit = this.interactionManager.pickSurface( x * 2 - 1, 1 - y * 2 );
+			last.hit = !! hit;
+			if ( hit ) last.point.copy( hit.point );
+			last.resetCount = resetCount;
+			last.x = x;
+			last.y = y;
+			last.view.copy( camera.matrixWorld );
+			last.projection.copy( camera.projectionMatrix );
+
+		}
+
+		return last.hit ? last.point : null;
 
 	}
 

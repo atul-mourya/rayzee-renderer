@@ -26,13 +26,13 @@ function manager( { target = new Vector3() } = {} ) {
 
 }
 
-const frame = ( cm, meshScene, focus = 0, projection = 0 ) => {
+const frame = ( cm, meshScene, focus = 0, projection = 0, resetCount = 0 ) => {
 
 	const setFocusDistance = vi.fn();
 	cm.interactionManager.scene = meshScene;
 	cm.updateAutoFocus( {
 		assetLoader: { getSceneScale: () => 2 }, currentFocusDistance: focus,
-		pathTracer: { enableDOF: { value: 1 }, cameraProjection: { value: projection } }, setFocusDistance, softReset: vi.fn(), hardReset: vi.fn(),
+		pathTracer: { enableDOF: { value: 1 }, cameraProjection: { value: projection }, resetCount }, setFocusDistance, softReset: vi.fn(), hardReset: vi.fn(),
 	} );
 	return setFocusDistance.mock.calls.at( - 1 )?.[ 0 ];
 
@@ -82,6 +82,30 @@ describe( 'auto-focus', () => {
 		frame( cm, sceneWithBoxAt( 3 ) );
 
 		expect( cm.dispatchEvent ).toHaveBeenCalledWith( expect.objectContaining( { worldDistance: 2.5, distance: 1.25 } ) );
+
+	} );
+
+	it( 'picks again only when the view, the AF point or the render changed', () => {
+
+		const cm = manager();
+		const scene = sceneWithBoxAt( 3 );
+		const pick = vi.spyOn( cm.interactionManager, 'pickSurface' );
+
+		frame( cm, scene );
+		frame( cm, scene );
+		expect( pick ).toHaveBeenCalledTimes( 1 );
+
+		frame( cm, scene, 2.5, 0, 1 );
+		expect( pick ).toHaveBeenCalledTimes( 2 );
+
+		cm.camera.position.z = 7;
+		cm.camera.updateMatrixWorld();
+		frame( cm, scene, 2.5, 0, 1 );
+		expect( pick ).toHaveBeenCalledTimes( 3 );
+
+		cm.setAFScreenPoint( 0.9, 0.5 );
+		frame( cm, scene, 3.5, 0, 1 );
+		expect( pick ).toHaveBeenCalledTimes( 4 );
 
 	} );
 
