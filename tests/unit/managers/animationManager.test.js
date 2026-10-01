@@ -489,6 +489,7 @@ describe( 'AnimationManager', () => {
 			const node = ( name, extra = {} ) => ( {
 				name, uuid: `uuid-${name}`, visible: true, parent: null, children: [],
 				matrixWorld: { elements: [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] },
+				updateMatrixWorld: vi.fn(),
 				traverse( fn ) {
 
 					fn( this );
@@ -510,7 +511,7 @@ describe( 'AnimationManager', () => {
 			} );
 
 			const geometry = { attributes: { position: { count: 3 } }, index: null };
-			const root = node( 'Root', { updateMatrixWorld: vi.fn() } );
+			const root = node( 'Root' );
 			const group = node( 'Group' );
 			const mover = node( 'Mover', { geometry } );
 			const still = node( 'Still', { geometry } );
@@ -560,6 +561,46 @@ describe( 'AnimationManager', () => {
 			mover.matrixWorld.elements = mover.matrixWorld.elements.map( ( v, i ) => i === 12 ? 5 : v );
 			manager.update();
 			expect( poses[ 2 ].meshIndices ).toEqual( [ 1 ] );
+
+		} );
+
+		it( 'updates only the subtrees its tracks name', () => {
+
+			const { root, group, camera, still, clips, meshes } = rigidScene();
+			manager.init( root, root, meshes, clips );
+			manager.play( 0 );
+			manager.update();
+
+			expect( group.updateMatrixWorld ).toHaveBeenCalledWith( true );
+			expect( camera.updateMatrixWorld ).toHaveBeenCalledWith( true );
+			expect( root.updateMatrixWorld ).not.toHaveBeenCalled();
+			expect( still.updateMatrixWorld ).not.toHaveBeenCalled();
+
+		} );
+
+		it( 'updates the whole model in one pass when most of it moves', () => {
+
+			const { root, group, clips, meshes } = rigidScene();
+			clips[ 0 ].tracks.push( { name: 'Still.position' } );
+			manager.init( root, root, meshes, clips );
+			manager.play( 0 );
+			manager.update();
+
+			expect( root.updateMatrixWorld ).toHaveBeenCalledWith( true );
+			expect( group.updateMatrixWorld ).not.toHaveBeenCalled();
+
+		} );
+
+		it( 'updates the whole model when a track names a node it cannot find', () => {
+
+			const { root, group, clips, meshes } = rigidScene();
+			clips[ 0 ].tracks.push( { name: 'Missing.position' } );
+			manager.init( root, root, meshes, clips );
+			manager.play( 0 );
+			manager.update();
+
+			expect( root.updateMatrixWorld ).toHaveBeenCalledWith( true );
+			expect( group.updateMatrixWorld ).not.toHaveBeenCalled();
 
 		} );
 

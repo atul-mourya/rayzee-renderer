@@ -10,6 +10,23 @@
 import { AnimationMixer, EventDispatcher, Timer, Vector3, LoopRepeat, LoopOnce, PropertyBinding } from 'three';
 import { EngineEvents } from '../EngineEvents.js';
 
+/** The nodes of `nodes` with no ancestor in it, or null when updating each would cost more than one pass over `root`. */
+function subtreeRoots( nodes, root ) {
+
+	const roots = [ ...nodes ].filter( node => {
+
+		for ( let o = node.parent; o; o = o.parent ) if ( nodes.has( o ) ) return false;
+		return true;
+
+	} );
+
+	let total = 0, covered = 0;
+	root.traverse?.( () => total ++ );
+	for ( const node of roots ) node.traverse?.( () => covered ++ );
+	return covered + roots.length / 2 < total ? roots : null;
+
+}
+
 export class AnimationManager extends EventDispatcher {
 
 	constructor() {
@@ -162,11 +179,19 @@ export class AnimationManager extends EventDispatcher {
 
 			const animated = new Set();
 			let visibility = false;
+			let unresolved = false;
 			for ( const track of clip.tracks ) {
 
 				const { nodeName, propertyName } = PropertyBinding.parseTrackName( track.name );
-				const node = byName.get( nodeName );
-				if ( ! node ) continue;
+				// As PropertyBinding.findNode: no node name binds the root itself.
+				const node = nodeName === '' || nodeName === '.' ? root : byName.get( nodeName );
+				if ( ! node ) {
+
+					unresolved = true;
+					continue;
+
+				}
+
 				animated.add( node );
 				if ( propertyName === 'visible' ) visibility = true;
 
@@ -191,7 +216,7 @@ export class AnimationManager extends EventDispatcher {
 			const cameras = new Set();
 			for ( const node of animated ) node.traverse( o => o.isCamera && cameras.add( o ) );
 
-			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ] };
+			return { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], nodes: unresolved ? null : animated, roots: unresolved ? null : subtreeRoots( animated, root ) };
 
 		} );
 
@@ -218,15 +243,18 @@ export class AnimationManager extends EventDispatcher {
 
 			const meshes = new Set(), cameras = new Set();
 			let visibility = false;
+			let nodes = new Set();
 			for ( const plan of this._plans ) {
 
 				plan.meshes.forEach( m => meshes.add( m ) );
 				plan.cameras.forEach( c => cameras.add( c ) );
 				visibility ||= plan.visibility;
+				if ( nodes && plan.nodes ) plan.nodes.forEach( n => nodes.add( n ) );
+				else nodes = null;
 
 			}
 
-			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ] };
+			this._allPlan = { meshes: Int32Array.from( meshes ), visibility, cameras: [ ...cameras ], nodes, roots: nodes ? subtreeRoots( nodes, this._mixerRoot ) : null };
 
 		}
 
@@ -491,7 +519,10 @@ export class AnimationManager extends EventDispatcher {
 
 		// Bones live outside mesh subtrees so per-mesh updateMatrixWorld() misses them. Doing it
 		// once here, on mixerRoot rather than the scene, keeps unrelated static objects out of it.
-		this._mixerRoot.updateMatrixWorld( true );
+		// A rigid clip moves only what its tracks name, so only those subtrees are updated.
+		const roots = this._rigid ? this._planFor( this._activeClip )?.roots : null;
+		if ( roots ) for ( const node of roots ) node.updateMatrixWorld( true );
+		else this._mixerRoot.updateMatrixWorld( true );
 
 		if ( this._rigid ) {
 
