@@ -182,6 +182,20 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 }
 `;
 
+const PACK_WG_SIZE = 8;
+const PACK_WGSL = /* wgsl */`
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4<f32>>;
+@group(0) @binding(2) var<uniform> size: vec2<u32>;
+
+@compute @workgroup_size(${PACK_WG_SIZE}, ${PACK_WG_SIZE})
+fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
+
+	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
+	dst[ gid.y * size.x + gid.x ] = textureLoad( src, gid.xy, 0 );
+}
+`;
+
 export class OIDNDenoiser extends EventDispatcher {
 
 	/**
@@ -210,11 +224,10 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Cached GPU storage buffers for texture→buffer copies (reused across denoise calls)
 		this._gpuInputBuffers = { color: null, albedo: null, normal: null };
 		this._gpuInputBufferSize = { width: 0, height: 0 };
-		// Shared pad-strip buffer for non-256-aligned widths. Reused across
-		// color/albedo/normal copies within the same encoder (WebGPU command
-		// order guarantees the overwrites are serialized).
-		this._gpuInputPadBuffer = null;
-		this._gpuInputPaddedRowBytes = 0;
+		// Packs widths copyTextureToBuffer cannot take; see _beginPack.
+		this._packPipeline = null;
+		this._packLayout = null;
+		this._packParams = null;
 		// The autoexposure scale never leaves the GPU — _applyColorScale and the output pack
 		// both read _inputScaleBuffer directly.
 		this._lumReducePipeline = null;
@@ -671,55 +684,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		// Ensure storage buffers are sized correctly (recreate on resolution change)
 		this._ensureGPUInputBuffers( width, height );
 
-		// Copy render target textures → tightly packed GPU storage buffers for oidn-web.
-		// copyTextureToBuffer requires bytesPerRow to be a multiple of 256. When the tight
-		// row size (width * 16) isn't aligned, copy via a shared pre-allocated padded buffer
-		// (see _ensureGPUInputBuffers) then strip padding row-by-row. The pad buffer is
-		// reused across color/albedo/normal — safe because WebGPU serializes commands
-		// within a single encoder.
-		const encoder = device.createCommandEncoder( { label: 'oidn-tex-to-buf' } );
-		const tightRowBytes = width * 16; // rgba32float
-		const paddedRowBytes = this._gpuInputPaddedRowBytes;
-		const needsPadStrip = paddedRowBytes > tightRowBytes;
-		const padBuf = this._gpuInputPadBuffer;
-
-		const copyTex = ( tex, tightBuf ) => {
-
-			if ( ! needsPadStrip ) {
-
-				encoder.copyTextureToBuffer(
-					{ texture: tex, mipLevel: 0 },
-					{ buffer: tightBuf, offset: 0, bytesPerRow: tightRowBytes, rowsPerImage: height },
-					{ width, height, depthOrArrayLayers: 1 }
-				);
-
-			} else {
-
-				encoder.copyTextureToBuffer(
-					{ texture: tex, mipLevel: 0 },
-					{ buffer: padBuf, offset: 0, bytesPerRow: paddedRowBytes, rowsPerImage: height },
-					{ width, height, depthOrArrayLayers: 1 }
-				);
-
-				for ( let row = 0; row < height; row ++ ) {
-
-					encoder.copyBufferToBuffer( padBuf, row * paddedRowBytes, tightBuf, row * tightRowBytes, tightRowBytes );
-
-				}
-
-			}
-
-		};
-
-		copyTex( textures.color, this._gpuInputBuffers.color );
-		copyTex( textures.albedo, this._gpuInputBuffers.albedo );
-		// The normal stays [0,1]-encoded. This contradicts OIDN's API ("must be in the [-1,1]
-		// range") but is right for this port: OIDN's own getNormal (cpu_input_process.isph) does
-		// `value*0.5+0.5` before the network, and oidn-web omits that remap. Decoding to [-1,1]
-		// measured 0.878 -> 2.439 denoise ratio at 64 spp. Do not "fix" it.
-		copyTex( textures.normal, this._gpuInputBuffers.normal );
-
-		device.queue.submit( [ encoder.finish() ] );
+		this._copyInputs( device, textures, width, height );
 
 		// Autoexposure and the pre-multiply it drives, both on the GPU and both queued behind the
 		// copies above. Nothing is awaited here — an await would drain the queue before the UNet.
@@ -745,6 +710,53 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
+	/** Copies the render's colour, albedo and normal into the tightly packed buffers oidn-web reads. @private */
+	_copyInputs( device, textures, width, height ) {
+
+		// copyTextureToBuffer takes only 256-byte-aligned rows; any other width packs on the GPU.
+		const encoder = device.createCommandEncoder( { label: 'oidn-tex-to-buf' } );
+		const tightRowBytes = width * 16; // rgba32float
+		const pass = tightRowBytes % 256 === 0 ? null : this._beginPack( device, encoder, width, height );
+
+		const copyTex = ( tex, tightBuf ) => {
+
+			if ( pass ) {
+
+				pass.setBindGroup( 0, device.createBindGroup( {
+					layout: this._packLayout,
+					entries: [
+						{ binding: 0, resource: tex.createView() },
+						{ binding: 1, resource: { buffer: tightBuf } },
+						{ binding: 2, resource: { buffer: this._packParams } },
+					],
+				} ) );
+				pass.dispatchWorkgroups( Math.ceil( width / PACK_WG_SIZE ), Math.ceil( height / PACK_WG_SIZE ) );
+
+			} else {
+
+				encoder.copyTextureToBuffer(
+					{ texture: tex, mipLevel: 0 },
+					{ buffer: tightBuf, offset: 0, bytesPerRow: tightRowBytes, rowsPerImage: height },
+					{ width, height, depthOrArrayLayers: 1 }
+				);
+
+			}
+
+		};
+
+		copyTex( textures.color, this._gpuInputBuffers.color );
+		copyTex( textures.albedo, this._gpuInputBuffers.albedo );
+		// The normal stays [0,1]-encoded. This contradicts OIDN's API ("must be in the [-1,1]
+		// range") but is right for this port: OIDN's own getNormal (cpu_input_process.isph) does
+		// `value*0.5+0.5` before the network, and oidn-web omits that remap. Decoding to [-1,1]
+		// measured 0.878 -> 2.439 denoise ratio at 64 spp. Do not "fix" it.
+		copyTex( textures.normal, this._gpuInputBuffers.normal );
+
+		pass?.end();
+		device.queue.submit( [ encoder.finish() ] );
+
+	}
+
 	/**
 	 * Creates or recreates the GPU storage buffers used as oidn-web inputs.
 	 * Reuses existing buffers if the resolution hasn't changed.
@@ -767,24 +779,40 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._gpuInputBuffers.normal = device.createBuffer( { label: 'oidn-in-normal', size: byteSize, usage } );
 		this._gpuInputBufferSize = { width, height };
 
-		// Pre-allocate the row-pad staging buffer when width * 16 isn't 256-aligned.
-		// Shared across the three texture copies; recreated only on resolution change.
-		const tightRowBytes = width * 16;
-		const paddedRowBytes = Math.ceil( tightRowBytes / 256 ) * 256;
-		if ( paddedRowBytes !== tightRowBytes ) {
+	}
 
-			this._gpuInputPadBuffer = device.createBuffer( {
-				label: 'oidn-in-pad',
-				size: paddedRowBytes * height,
-				usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+	/** Opens the compute pass that packs unaligned rows; one dispatch per texture follows. @private */
+	_beginPack( device, encoder, width, height ) {
+
+		if ( ! this._packPipeline ) {
+
+			// Explicit: rgba32float is unfilterable, which an auto layout would not declare.
+			this._packLayout = device.createBindGroupLayout( {
+				label: 'oidn-pack',
+				entries: [
+					{ binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
+					{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+					{ binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+				],
 			} );
-			this._gpuInputPaddedRowBytes = paddedRowBytes;
-
-		} else {
-
-			this._gpuInputPaddedRowBytes = tightRowBytes;
+			this._packPipeline = device.createComputePipeline( {
+				label: 'oidn-pack',
+				layout: device.createPipelineLayout( { bindGroupLayouts: [ this._packLayout ] } ),
+				compute: { module: device.createShaderModule( { label: 'oidn-pack', code: PACK_WGSL } ), entryPoint: 'main' },
+			} );
 
 		}
+
+		if ( ! this._packParams ) {
+
+			this._packParams = device.createBuffer( { label: 'oidn-pack-size', size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST } );
+			device.queue.writeBuffer( this._packParams, 0, new Uint32Array( [ width, height ] ) );
+
+		}
+
+		const pass = encoder.beginComputePass( { label: 'oidn-pack' } );
+		pass.setPipeline( this._packPipeline );
+		return pass;
 
 	}
 
@@ -793,7 +821,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._gpuInputBuffers.color?.destroy();
 		this._gpuInputBuffers.albedo?.destroy();
 		this._gpuInputBuffers.normal?.destroy();
-		this._gpuInputPadBuffer?.destroy();
+		this._packParams?.destroy();
 
 		// Bind groups hold the destroyed buffers; pipelines are device-scoped and survive.
 		this._colorScaleBindGroup = null;
@@ -805,8 +833,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._inputScaleBuffer?.destroy();
 		this._inputScaleBuffer = null;
 		this._gpuInputBuffers = { color: null, albedo: null, normal: null };
-		this._gpuInputPadBuffer = null;
-		this._gpuInputPaddedRowBytes = 0;
+		this._packParams = null;
 		this._gpuInputBufferSize = { width: 0, height: 0 };
 
 	}
@@ -994,7 +1021,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		const { color, albedo, normal } = this._gpuInputBuffers;
 		const out = this._outGPUTexture ? this._outTexSize.width * this._outTexSize.height * 8 : 0; // rgba16float
-		return ( color?.size ?? 0 ) + ( albedo?.size ?? 0 ) + ( normal?.size ?? 0 ) + ( this._gpuInputPadBuffer?.size ?? 0 ) + out;
+		return ( color?.size ?? 0 ) + ( albedo?.size ?? 0 ) + ( normal?.size ?? 0 ) + out;
 
 	}
 

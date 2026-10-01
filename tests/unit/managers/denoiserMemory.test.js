@@ -8,12 +8,11 @@ describe( 'denoiser GPU memory', () => {
 
 		const pass = Object.assign( Object.create( OIDNDenoiser.prototype ), {
 			_gpuInputBuffers: { color: { size: 1000 }, albedo: { size: 1000 }, normal: { size: 1000 } },
-			_gpuInputPadBuffer: { size: 24 },
 			_outGPUTexture: {},
 			_outTexSize: { width: 10, height: 5 },
 		} );
 
-		expect( pass.gpuBytes() ).toBe( 3024 + 10 * 5 * 8 );
+		expect( pass.gpuBytes() ).toBe( 3000 + 10 * 5 * 8 );
 
 	} );
 
@@ -21,7 +20,6 @@ describe( 'denoiser GPU memory', () => {
 
 		const pass = Object.assign( Object.create( OIDNDenoiser.prototype ), {
 			_gpuInputBuffers: { color: null, albedo: null, normal: null },
-			_gpuInputPadBuffer: null,
 			_outGPUTexture: null,
 			_outTexSize: { width: 0, height: 0 },
 		} );
