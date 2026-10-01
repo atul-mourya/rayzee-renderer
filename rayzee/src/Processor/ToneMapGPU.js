@@ -56,7 +56,39 @@ fn rayzee_source( x: u32, y: u32 ) -> vec4<f32> {
 }`,
 };
 
-const toneMapPassWGSL = ( transformWGSL, input ) => /* wgsl */ `
+// RGBA bytes for a picture, or four float planes (r, g, b, a) for a network that wants the curve
+// unquantized. The planes take a 2.2 power, not the sRGB curve: what the AI upscaler has always fed
+// its network, so its output does not move.
+const OUTPUTS = {
+	rgba8: /* wgsl */ `
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+
+fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
+	let b8 = rayzee_to_u8( rayzee_encode( mapped, params.mode ) );
+	var a8 = 255u;
+	if ( params.alpha == 1u ) { a8 = rayzee_to_u8( vec3<f32>( linear.a ) ).x; }
+	dst[ i ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( a8 << 24u );
+}`,
+	planar: /* wgsl */ `
+@group(0) @binding(1) var<storage, read_write> dst: array<f32>;
+
+fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
+	var c = clamp( mapped, vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
+	if ( ! rayzee_output_encoded( params.mode ) ) {
+		let m = max( mapped, vec3<f32>( 0.0 ) );
+		c = select( pow( m, vec3<f32>( 1.0 / 2.2 ) ), vec3<f32>( 0.0 ), m <= vec3<f32>( 0.0 ) );
+	}
+	let n = params.width * params.height;
+	dst[ i ] = c.r;
+	dst[ n + i ] = c.g;
+	dst[ 2u * n + i ] = c.b;
+	dst[ 3u * n + i ] = linear.a;
+}`,
+};
+
+const BYTES_PER_PIXEL = { rgba8: 4, planar: 16 };
+
+const toneMapPassWGSL = ( transformWGSL, input, output ) => /* wgsl */ `
 struct Params {
 	width: u32,
 	height: u32,
@@ -67,11 +99,11 @@ struct Params {
 	alpha: u32,
 };
 
-@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
 @group(0) @binding(2) var<uniform> params: Params;
 ${SOURCES[ input ]}
 
 ${transformWGSL}
+${OUTPUTS[ output ]}
 
 @compute @workgroup_size(8, 8)
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
@@ -81,11 +113,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	if ( params.flipY == 1u ) { srcY = params.height - 1u - gid.y; }
 
 	let linear = rayzee_source( gid.x, srcY );
-	let mapped = rayzee_tone_map( linear.rgb, params.mode, params.exposure, params.saturation );
-	let b8 = rayzee_to_u8( rayzee_encode( mapped, params.mode ) );
-	var a8 = 255u;
-	if ( params.alpha == 1u ) { a8 = rayzee_to_u8( vec3<f32>( linear.a ) ).x; }
-	dst[ gid.y * params.width + gid.x ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( a8 << 24u );
+	rayzee_store( gid.y * params.width + gid.x, linear, rayzee_tone_map( linear.rgb, params.mode, params.exposure, params.saturation ) );
 }
 `;
 
@@ -94,17 +122,18 @@ const PARAMS_BYTES = 32;
 
 /**
  * Tone-maps a tightly packed rgba16float buffer (two `u32` per pixel), or with `input: 'texture'` a
- * float texture read by pixel, into RGBA bytes.
+ * float texture read by pixel, into RGBA bytes — or with `output: 'planar'` into float planes.
  *
  * Bound to one device and one image size; `ensureSize()` reallocates when the size changes.
  */
 export class PackedToneMapper {
 
-	constructor( device, label = 'rayzee:tonemap', { input = 'packed' } = {} ) {
+	constructor( device, label = 'rayzee:tonemap', { input = 'packed', output = 'rgba8' } = {} ) {
 
 		this.device = device;
 		this.label = label;
 		this.input = input;
+		this.output = output;
 		this.width = 0;
 		this.height = 0;
 		this._pipeline = null;
@@ -139,7 +168,7 @@ export class PackedToneMapper {
 			label: this.label,
 			layout: 'auto',
 			compute: {
-				module: this.device.createShaderModule( { label: this.label, code: toneMapPassWGSL( wgsl, this.input ) } ),
+				module: this.device.createShaderModule( { label: this.label, code: toneMapPassWGSL( wgsl, this.input, this.output ) } ),
 				entryPoint: 'main',
 			},
 		} );
@@ -202,7 +231,7 @@ export class PackedToneMapper {
 
 		this._releaseBuffers();
 
-		const bytes = width * height * 4;
+		const bytes = width * height * BYTES_PER_PIXEL[ this.output ];
 		this._storage = this.device.createBuffer( {
 			label: `${this.label}-out`,
 			size: bytes,
@@ -235,7 +264,26 @@ export class PackedToneMapper {
 	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
 	 * @returns {Promise<Uint8ClampedArray>} RGBA bytes, `width * height * 4`
 	 */
-	async toRGBA8( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false } = {} ) {
+	async toRGBA8( src, tone ) {
+
+		return new Uint8ClampedArray( await this._run( src, tone ) );
+
+	}
+
+	/**
+	 * The same tone map into four float planes — r, g, b, then the source's alpha — each `width * height`.
+	 * Needs `output: 'planar'`.
+	 * @param {GPUBuffer|GPUTexture} src - as for toRGBA8
+	 * @param {object} tone - as for toRGBA8; `preserveAlpha` does not apply
+	 * @returns {Promise<Float32Array>}
+	 */
+	async toPlanar( src, tone ) {
+
+		return new Float32Array( await this._run( src, tone ) );
+
+	}
+
+	async _run( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
 		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
@@ -246,6 +294,7 @@ export class PackedToneMapper {
 		this._ensureTables();
 
 		const { width, height } = this;
+		const bytes = width * height * BYTES_PER_PIXEL[ this.output ];
 
 		this._paramU32[ 0 ] = width;
 		this._paramU32[ 1 ] = height;
@@ -275,13 +324,13 @@ export class PackedToneMapper {
 		pass.setBindGroup( 0, group );
 		pass.dispatchWorkgroups( Math.ceil( width / 8 ), Math.ceil( height / 8 ) );
 		pass.end();
-		encoder.copyBufferToBuffer( this._storage, 0, this._map, 0, width * height * 4 );
+		encoder.copyBufferToBuffer( this._storage, 0, this._map, 0, bytes );
 		this.device.queue.submit( [ encoder.finish() ] );
 
 		await this._map.mapAsync( GPUMapMode.READ );
-		const bytes = new Uint8ClampedArray( this._map.getMappedRange().slice( 0 ) );
+		const out = this._map.getMappedRange().slice( 0 );
 		this._map.unmap();
-		return bytes;
+		return out;
 
 	}
 

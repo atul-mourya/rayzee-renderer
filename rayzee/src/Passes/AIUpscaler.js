@@ -1,14 +1,7 @@
 import { EventDispatcher, ACESFilmicToneMapping } from 'three';
-import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '../Processor/ToneMapCPU.js';
+import { PackedToneMapper } from '../Processor/ToneMapGPU.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import AIUpscalerWorker from '../Processor/Workers/AIUpscalerWorker.js?worker&inline';
-
-
-// An OCIO view already returned colour encoded for its display, so the gamma step below would
-// encode it twice. A built-in curve returns linear and does want it.
-const displayEncoder = toneMapping => isOutputEncoded( toneMapping )
-	? ( c => ( c > 1 ? 1 : c < 0 ? 0 : c ) )
-	: ( c => Math.pow( c, SRGB_GAMMA ) );
 
 // ─── Model Configuration ───────────────────────────────────────────────────────
 // Quality presets reference relative paths against asset-config `upscalerModelBaseUrl`.
@@ -140,13 +133,8 @@ export class AIUpscaler extends EventDispatcher {
 		this._baseWidth = output.width;
 		this._baseHeight = output.height;
 
-		// Pooled HDR readback staging buffer — reused across _captureSourceHDR calls.
-		// Rebuilt only when the source texture dimensions change (same spirit as
-		// r184's ReadbackBuffer; we can't use renderer.getArrayBufferAsync directly
-		// because our source is a raw GPUTexture, not a Three.js BufferAttribute).
-		this._hdrStagingBuffer = null;
-		this._hdrStagingWidth = 0;
-		this._hdrStagingHeight = 0;
+		// Tone-maps the HDR source on the card; its buffers are released after each capture.
+		this._toneMapper = null;
 
 	}
 
@@ -283,7 +271,7 @@ export class AIUpscaler extends EventDispatcher {
 		// so we must grab the pixels before awaiting model load.
 		if ( this.hdr && this.getGPUTextures ) {
 
-			// HDR path: read float32 from GPU texture, tonemap happens after upscale
+			// HDR path: float planes tone-mapped on the GPU, no 8-bit step before the network
 			this._capturedSource = await this._captureSourceHDR();
 
 		} else {
@@ -403,17 +391,6 @@ export class AIUpscaler extends EventDispatcher {
 		// The SR model outputs RGB only — alpha would be lost without this.
 		this._cacheUpscaledAlpha( sourceImageData, srcW * scale, srcH * scale );
 
-		// Cache HDR tonemapping state for tile extraction (avoids per-pixel lookups)
-		if ( sourceImageData.isHDR ) {
-
-			this._hdrToneMapFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
-			this._hdrEncode = displayEncoder( this.getToneMapping() );
-			this._hdrExposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
-			this._hdrSaturation = this.getSaturation();
-			this._tmOut = new Float32Array( 3 );
-
-		}
-
 		// Tile-based inference
 		const overlap = MODEL_CONFIG.TILE_OVERLAP;
 		const tileSize = this.tileSize;
@@ -503,83 +480,61 @@ export class AIUpscaler extends EventDispatcher {
 	}
 
 	/**
-	 * HDR capture: reads float32 color data directly from the path tracer's GPU texture.
-	 * Returns an ImageData-like object with float32 RGBA data and dimensions.
+	 * HDR capture: tone-maps the path tracer's float colour on the card and reads back float
+	 * planes — r, g, b, a — so the network gets the curve without 8-bit quantization.
 	 */
 	async _captureSourceHDR() {
 
 		const gpuTextures = this.getGPUTextures();
 		if ( ! gpuTextures?.color ) throw new Error( 'No GPU color texture available for HDR capture' );
 
-		const device = this.renderer.backend.device;
 		const colorTexture = gpuTextures.color;
-		const width = colorTexture.width;
-		const height = colorTexture.height;
+		const { width, height } = colorTexture;
 
-		// GPU texture → pooled staging buffer → CPU readback.
-		// The staging buffer is kept alive between calls (unmap, don't destroy)
-		// and only re-created when texture dimensions change.
-		const bytesPerRow = Math.ceil( width * 16 / 256 ) * 256; // rgba32float=16 bytes, aligned to 256
-		const bufferSize = bytesPerRow * height;
+		this._toneMapper ??= new PackedToneMapper( this.renderer.backend.device, 'aiupscaler-tonemap', { input: 'texture', output: 'planar' } );
+		this._toneMapper.ensureSize( width, height );
+		const planes = await this._toneMapper.toPlanar( colorTexture, {
+			exposure: this.getExposure(),
+			toneMapping: this.getToneMapping() ?? ACESFilmicToneMapping,
+			saturation: this.getSaturation(),
+		} );
+		this._toneMapper.release();
 
-		if ( this._hdrStagingWidth !== width || this._hdrStagingHeight !== height ) {
-
-			this._hdrStagingBuffer?.destroy();
-			this._hdrStagingBuffer = device.createBuffer( {
-				label: 'aiupscaler-hdr-readback',
-				size: bufferSize,
-				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-			} );
-			this._hdrStagingWidth = width;
-			this._hdrStagingHeight = height;
-
-		}
-
-		const stagingBuffer = this._hdrStagingBuffer;
-
-		const encoder = device.createCommandEncoder();
-		encoder.copyTextureToBuffer(
-			{ texture: colorTexture },
-			{ buffer: stagingBuffer, bytesPerRow, rowsPerImage: height },
-			{ width, height, depthOrArrayLayers: 1 }
-		);
-		device.queue.submit( [ encoder.finish() ] );
-
-		await stagingBuffer.mapAsync( GPUMapMode.READ );
-		const mappedData = new Float32Array( stagingBuffer.getMappedRange() );
-
-		// Copy to ImageData-like structure (handle row alignment padding)
-		const pixelFloats = width * 4;
-		const rowFloats = bytesPerRow / 4;
-		const data = new Float32Array( width * height * 4 );
-
-		for ( let y = 0; y < height; y ++ ) {
-
-			const srcOffset = y * rowFloats;
-			const dstOffset = y * pixelFloats;
-			data.set( mappedData.subarray( srcOffset, srcOffset + pixelFloats ), dstOffset );
-
-		}
-
-		stagingBuffer.unmap();
-
-		// Mark as HDR so _extractTile and _tensorToImageData handle it correctly
-		return { data, width, height, isHDR: true };
+		return { planes, width, height, isHDR: true };
 
 	}
 
 	/**
 	 * Extracts a tile region from the source image.
 	 * Returns a Float32Array in NCHW format [1, 3, H, W] with values in [0, 1].
-	 * Handles both LDR (uint8 ImageData) and HDR (float32) sources.
+	 * Handles both LDR (uint8 ImageData) and HDR (tone-mapped float planes) sources.
 	 */
 	_extractTile( sourceImageData, x, y, w, h ) {
 
-		const { data, width } = sourceImageData;
-		const isHDR = sourceImageData.isHDR;
+		const { width } = sourceImageData;
 		const pixelCount = w * h;
 		const floats = new Float32Array( 3 * pixelCount );
 
+		if ( sourceImageData.isHDR ) {
+
+			const { planes } = sourceImageData;
+			const plane = width * sourceImageData.height;
+			for ( let c = 0; c < 3; c ++ ) {
+
+				for ( let row = 0; row < h; row ++ ) {
+
+					const from = c * plane + ( y + row ) * width + x;
+					floats.set( planes.subarray( from, from + w ), c * pixelCount + row * w );
+
+				}
+
+			}
+
+			return floats;
+
+		}
+
+		const { data } = sourceImageData;
 		for ( let row = 0; row < h; row ++ ) {
 
 			for ( let col = 0; col < w; col ++ ) {
@@ -587,37 +542,10 @@ export class AIUpscaler extends EventDispatcher {
 				const srcIdx = ( ( y + row ) * width + ( x + col ) ) * 4;
 				const dstIdx = row * w + col;
 
-				if ( isHDR ) {
-
-					// HDR: exposure + saturation + tonemap + gamma to sRGB [0,1] at float32 precision.
-					// The SR model expects sRGB-range input — we tonemap before the model
-					// but keep float32 precision (no uint8 quantization bottleneck).
-					const tmFn = this._hdrToneMapFn;
-					const exposure = this._hdrExposure;
-					const saturation = this._hdrSaturation;
-					let er = data[ srcIdx ] * exposure, eg = data[ srcIdx + 1 ] * exposure, eb = data[ srcIdx + 2 ] * exposure;
-					if ( saturation !== 1.0 ) {
-
-						this._tmOut[ 0 ] = er; this._tmOut[ 1 ] = eg; this._tmOut[ 2 ] = eb;
-						applySaturation( this._tmOut, saturation );
-						er = this._tmOut[ 0 ]; eg = this._tmOut[ 1 ]; eb = this._tmOut[ 2 ];
-
-					}
-
-					tmFn( er, eg, eb, 1.0, this._tmOut );
-					const encode = this._hdrEncode;
-					floats[ dstIdx ] = encode( this._tmOut[ 0 ] );
-					floats[ pixelCount + dstIdx ] = encode( this._tmOut[ 1 ] );
-					floats[ 2 * pixelCount + dstIdx ] = encode( this._tmOut[ 2 ] );
-
-				} else {
-
-					// LDR: normalize uint8 [0,255] to [0,1]
-					floats[ dstIdx ] = data[ srcIdx ] / 255;
-					floats[ pixelCount + dstIdx ] = data[ srcIdx + 1 ] / 255;
-					floats[ 2 * pixelCount + dstIdx ] = data[ srcIdx + 2 ] / 255;
-
-				}
+				// LDR: normalize uint8 [0,255] to [0,1]
+				floats[ dstIdx ] = data[ srcIdx ] / 255;
+				floats[ pixelCount + dstIdx ] = data[ srcIdx + 1 ] / 255;
+				floats[ 2 * pixelCount + dstIdx ] = data[ srcIdx + 2 ] / 255;
 
 			}
 
@@ -715,14 +643,19 @@ export class AIUpscaler extends EventDispatcher {
 	 */
 	_cacheUpscaledAlpha( sourceImageData, outW, outH ) {
 
-		const { data, width, height } = sourceImageData;
+		const { width, height } = sourceImageData;
+		const count = width * height;
 
+		// HDR alpha is the fourth plane, LDR every fourth byte.
 		const isHDR = sourceImageData.isHDR;
+		const data = isHDR ? sourceImageData.planes.subarray( 3 * count ) : sourceImageData.data;
+		const stride = isHDR ? 1 : 4;
+		const offset = isHDR ? 0 : 3;
 		const opaqueVal = isHDR ? 1.0 : 255;
 
 		// Check if source has any non-opaque pixels
 		let hasAlpha = false;
-		for ( let i = 3; i < data.length; i += 4 ) {
+		for ( let i = offset; i < data.length; i += stride ) {
 
 			if ( data[ i ] < opaqueVal ) {
 
@@ -748,10 +681,10 @@ export class AIUpscaler extends EventDispatcher {
 		const srcCtx = srcCanvas.getContext( '2d' );
 		const alphaImage = srcCtx.createImageData( width, height );
 
-		for ( let i = 0, len = width * height; i < len; i ++ ) {
+		for ( let i = 0; i < count; i ++ ) {
 
 			const a = isHDR
-				? Math.min( Math.max( data[ i * 4 + 3 ] * 255, 0 ), 255 ) | 0
+				? Math.min( Math.max( data[ i ] * 255, 0 ), 255 ) | 0
 				: data[ i * 4 + 3 ];
 			alphaImage.data[ i * 4 ] = a;
 			alphaImage.data[ i * 4 + 1 ] = a;
@@ -797,32 +730,18 @@ export class AIUpscaler extends EventDispatcher {
 
 		if ( sourceImageData.isHDR ) {
 
-			// HDR source: tonemap to LDR for the backup canvas display
-			const { data, width, height } = sourceImageData;
+			// Already tone-mapped and encoded on the card; only quantized here.
+			const { planes, width, height } = sourceImageData;
+			const count = width * height;
 			const imageData = ctx.createImageData( width, height );
 			const pixels = imageData.data;
-			const tmFn = TONE_MAP_FNS.get( this.getToneMapping() ) || TONE_MAP_FNS.get( ACESFilmicToneMapping );
-			const exposure = effectiveExposure( this.getExposure(), this.getToneMapping() );
-			const encode = displayEncoder( this.getToneMapping() );
-			const saturation = this.getSaturation();
-			const out = new Float32Array( 3 );
 
-			for ( let i = 0, len = width * height; i < len; i ++ ) {
+			for ( let i = 0; i < count; i ++ ) {
 
 				const si = i * 4;
-				let er = data[ si ] * exposure, eg = data[ si + 1 ] * exposure, eb = data[ si + 2 ] * exposure;
-				if ( saturation !== 1.0 ) {
-
-					out[ 0 ] = er; out[ 1 ] = eg; out[ 2 ] = eb;
-					applySaturation( out, saturation );
-					er = out[ 0 ]; eg = out[ 1 ]; eb = out[ 2 ];
-
-				}
-
-				tmFn( er, eg, eb, 1.0, out );
-				pixels[ si ] = ( encode( out[ 0 ] ) * 255 + 0.5 ) | 0;
-				pixels[ si + 1 ] = ( encode( out[ 1 ] ) * 255 + 0.5 ) | 0;
-				pixels[ si + 2 ] = ( encode( out[ 2 ] ) * 255 + 0.5 ) | 0;
+				pixels[ si ] = ( planes[ i ] * 255 + 0.5 ) | 0;
+				pixels[ si + 1 ] = ( planes[ count + i ] * 255 + 0.5 ) | 0;
+				pixels[ si + 2 ] = ( planes[ 2 * count + i ] * 255 + 0.5 ) | 0;
 				pixels[ si + 3 ] = 255;
 
 			}
@@ -927,10 +846,8 @@ export class AIUpscaler extends EventDispatcher {
 		this._upscaledAlpha = null;
 		this.state.abortController = null;
 
-		this._hdrStagingBuffer?.destroy();
-		this._hdrStagingBuffer = null;
-		this._hdrStagingWidth = 0;
-		this._hdrStagingHeight = 0;
+		this._toneMapper?.dispose();
+		this._toneMapper = null;
 
 		console.log( 'AIUpscaler disposed' );
 

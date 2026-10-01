@@ -764,7 +764,8 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 - ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
   bug-compatible with it, rounding included. It serves the neural passes (packed half input) and
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
-  Dawn in Node, and `bench:upscale` again in Chrome before anything else.
+  Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
+  AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
 - OIDN's inputs are copied into tight buffers by `copyTextureToBuffer` when a row is a multiple of 256 bytes (width
   a multiple of 16) and by one compute pass otherwise (`_copyInputs`); the per-row copies it replaced were ~3,000
   commands a denoise at 1080p, 2.9 → 0.9 ms on the GPU here.

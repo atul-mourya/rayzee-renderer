@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataUtils } from 'three';
 import { describeGPU, createRenderer, gpuAvailable } from './gpu.js';
 import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
-import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
+import { toneMapToRGBA8, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
 import { countTableTransforms, listViewTransforms } from '@/core/Color/ViewTransforms.js';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
@@ -52,6 +52,12 @@ const GRADES = [[ 1, 1 ], [ 2, 1 ], [ 0.5, 1.2 ], [ 1.5, 0.6 ]];
 
 const MAX_DIFFERING = 0.02;
 
+// Once every group has run: the OCIO view has to stay registered for each of them.
+afterAll( () => ColorManagement.resetAll() );
+
+// A tenth of an 8-bit level.
+const MAX_PLANAR_DELTA = 0.1 / 255;
+
 describeGPU( 'GPU tone map against ToneMapCPU', () => {
 
 	let renderer, mapper, src;
@@ -91,7 +97,6 @@ describeGPU( 'GPU tone map against ToneMapCPU', () => {
 		mapper?.dispose();
 		src?.destroy();
 		renderer?.dispose();
-		ColorManagement.resetAll();
 
 	} );
 
@@ -184,6 +189,78 @@ describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
 			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
 			expect( differing / gpu.length ).toBeLessThanOrEqual( MAX_DIFFERING );
 			for ( let i = 3; i < gpu.length; i += 4 ) expect( gpu[ i ] ).toBe( cpu[ i ] );
+
+		}
+
+	} );
+
+} );
+
+// The AI upscaler's network input, as AIUpscaler computed it in JavaScript before the planes moved
+// to the card: a 2.2 power, not the sRGB curve, and no 8-bit step.
+function upscalerInput( linear, { exposure, toneMapping, saturation } ) {
+
+	const curve = TONE_MAP_FNS.get( toneMapping );
+	const gain = effectiveExposure( exposure, toneMapping );
+	const encode = isOutputEncoded( toneMapping ) ? c => Math.min( Math.max( c, 0 ), 1 ) : c => Math.pow( c, SRGB_GAMMA );
+	const n = linear.length / 4, out = new Float32Array( n * 4 ), rgb = [ 0, 0, 0 ];
+
+	for ( let i = 0; i < n; i ++ ) {
+
+		rgb[ 0 ] = linear[ i * 4 ] * gain; rgb[ 1 ] = linear[ i * 4 + 1 ] * gain; rgb[ 2 ] = linear[ i * 4 + 2 ] * gain;
+		applySaturation( rgb, saturation );
+		curve( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ], 1.0, rgb );
+		for ( let c = 0; c < 3; c ++ ) out[ c * n + i ] = encode( rgb[ c ] );
+		out[ 3 * n + i ] = linear[ i * 4 + 3 ];
+
+	}
+
+	return out;
+
+}
+
+describeGPU( 'GPU planar tone map against the upscaler\'s old JavaScript', () => {
+
+	let renderer, mapper, texture;
+	const linear = new Float32Array( PIXELS.length * 4 );
+
+	beforeAll( async () => {
+
+		renderer = await createRenderer();
+		const device = renderer.backend.device;
+		PIXELS.forEach( ( rgb, i ) => {
+
+			linear.set( rgb, i * 4 );
+			linear[ i * 4 + 3 ] = [ 0, 0.25, 0.5, 0.998, 1 ][ i % 5 ];
+
+		} );
+
+		texture = device.createTexture( { size: [ PIXELS.length, 1 ], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST } );
+		device.queue.writeTexture( { texture }, linear, { bytesPerRow: PIXELS.length * 16 }, [ PIXELS.length, 1 ] );
+		mapper = new PackedToneMapper( device, 'test:planar-tonemap', { input: 'texture', output: 'planar' } );
+		mapper.ensureSize( PIXELS.length, 1 );
+
+	} );
+
+	afterAll( () => {
+
+		mapper?.dispose();
+		texture?.destroy();
+		renderer?.dispose();
+
+	} );
+
+	it.each( CURVES )( '%s', async ( name, toneMapping ) => {
+
+		for ( const [ exposure, saturation ] of GRADES ) {
+
+			const tone = { exposure, toneMapping, saturation };
+			const gpu = await mapper.toPlanar( texture, tone );
+			const cpu = upscalerInput( linear, tone );
+
+			let worst = 0;
+			for ( let i = 0; i < gpu.length; i ++ ) worst = Math.max( worst, Math.abs( gpu[ i ] - cpu[ i ] ) );
+			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThan( MAX_PLANAR_DELTA );
 
 		}
 

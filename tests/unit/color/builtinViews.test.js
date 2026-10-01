@@ -94,8 +94,7 @@ describe( 'built-in view transforms', () => {
 
 	it( 'keeps None and Linear distinct', () => {
 
-		// They look interchangeable and are not: None ignores exposure, Linear applies it, and
-		// `AIUpscaler` calls these functions directly rather than through `toneMapToRGBA8`.
+		// They look interchangeable and are not: None ignores exposure, Linear applies it.
 		const a = [ 0, 0, 0 ], b = [ 0, 0, 0 ];
 		TONE_MAP_FNS.get( NoToneMapping )( 0.2, 0.2, 0.2, 100, a );
 		TONE_MAP_FNS.get( LinearToneMapping )( 0.2, 0.2, 0.2, 100, b );
