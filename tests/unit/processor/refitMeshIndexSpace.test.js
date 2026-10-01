@@ -96,6 +96,26 @@ describe( 'a mesh index is not a placement index', () => {
 
 	} );
 
+	it( 'reports the triangle ranges of only the meshes it was handed positions for', async () => {
+
+		const sp = makeProcessor();
+		Object.assign( sp, {
+			bvh: {}, triangles: {}, _refitSharedBuffers: {}, _updateMeshTrianglePositions() {},
+			_refitWorker: { postMessage() {
+
+				this.onmessage( { data: { type: 'refitComplete', refitTimeMs: 1 } } );
+
+			} },
+		} );
+
+		const sphereOnly = await sp.refitBVH( ( mesh, triCount ) => mesh === 1 ? new Float32Array( triCount * 9 ) : null );
+		expect( sphereOnly.triRanges ).toEqual( [ { offset: BOX_TRIS * FPT, count: SPHERE_TRIS * FPT } ] );
+
+		const both = await sp.refitBVH( ( mesh, triCount ) => new Float32Array( triCount * 9 ) );
+		expect( both.triRanges ).toEqual( [ { offset: 0, count: ( BOX_TRIS + SPHERE_TRIS ) * FPT } ] );
+
+	} );
+
 	it( 'still resolves a mesh that placed nothing to no placement at all', () => {
 
 		const sp = makeProcessor();

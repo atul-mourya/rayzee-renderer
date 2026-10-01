@@ -1925,9 +1925,9 @@ export class PathTracerApp extends EventDispatcher {
 	async refitBVH( newPositions, newNormals ) {
 
 		await this.ensureSceneResident();
-		const result = await this._sdf.refitBVH( newPositions, newNormals );
+		const { triRanges, ...result } = await this._sdf.refitBVH( newPositions, newNormals );
 
-		this.stages.pathTracer.updateTriangleData( this._sdf.triangles );
+		this.stages.pathTracer.updateTriangleData( this._sdf.triangles, triRanges );
 		this.stages.pathTracer.updateBVHData( this._sdf.bvh );
 		this.reset( false, { motion: true } );
 

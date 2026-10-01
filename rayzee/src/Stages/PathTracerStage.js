@@ -1088,12 +1088,17 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	/** Re-uploads every triangle from the CPU records, adopting `triangleData` as them when given. */
-	updateTriangleData( triangleData ) {
+	/**
+	 * Re-uploads triangles from the CPU records, adopting `triangleData` as them when given.
+	 * @param {Object} [triangleData]
+	 * @param {Array<{offset:number,count:number}>} [ranges] - only these, in record lanes; every triangle when omitted
+	 */
+	updateTriangleData( triangleData, ranges ) {
 
 		if ( triangleData?.chunks?.length > 1 ) this._triangleRecords = triangleData;
 		else if ( triangleData ) this._triangleFlat = triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData;
-		this._uploadTriangles( 0, this._triangleRecordCount );
+		if ( ranges ) this.updateBufferRanges( ranges, [] );
+		else this._uploadTriangles( 0, this._triangleRecordCount );
 
 	}
 

@@ -2648,6 +2648,8 @@ export class SceneProcessor {
 		// can be released as soon as it is read. Callers hand over world space; triangles are
 		// stored per instance, so each mesh comes back through its own inverse.
 		const table = this.instanceTable;
+		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const triRanges = [];
 		for ( let i = 0; i < table.count; i ++ ) {
 
 			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
@@ -2664,6 +2666,11 @@ export class SceneProcessor {
 
 			}
 
+			const offset = table.triOffsetOf( i ) * FPT, count = table.triCountOf( i ) * FPT;
+			const last = triRanges.at( - 1 );
+			if ( last && last.offset + last.count === offset ) last.count += count;
+			else triRanges.push( { offset, count } );
+
 		}
 
 		return new Promise( ( resolve, reject ) => {
@@ -2673,7 +2680,7 @@ export class SceneProcessor {
 				const msg = e.data;
 				if ( msg.type === 'refitComplete' ) {
 
-					resolve( { refitTimeMs: msg.refitTimeMs } );
+					resolve( { refitTimeMs: msg.refitTimeMs, triRanges } );
 
 				} else if ( msg.type === 'error' ) {
 

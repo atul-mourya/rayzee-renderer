@@ -617,6 +617,66 @@ describe( 'AnimationManager', () => {
 
 	} );
 
+	describe( 'deforming clips', () => {
+
+		function deformingScene() {
+
+			const mesh = ( extra = {} ) => ( {
+				matrixWorld: { elements: [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] },
+				geometry: { attributes: { position: { count: 3 } }, index: null },
+				getVertexPosition: vi.fn( ( i, t ) => t ),
+				...extra
+			} );
+
+			return [ mesh( { isSkinnedMesh: true } ), mesh(), mesh( { morphTargetInfluences: [ 0, 0.5 ] } ) ];
+
+		}
+
+		const read = ( reader, count ) => Array.from( { length: count }, ( _, m ) => reader( m ) !== null );
+
+		it( 'reads only the meshes that skinned, moved or morphed since their last read', () => {
+
+			const meshes = deformingScene();
+			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
+			manager.play( 0 );
+
+			expect( read( manager.update(), 3 ) ).toEqual( [ true, true, true ] );
+			expect( read( manager.update(), 3 ) ).toEqual( [ true, false, false ] );
+
+			meshes[ 1 ].matrixWorld.elements[ 12 ] = 2;
+			meshes[ 2 ].morphTargetInfluences[ 1 ] = 0.75;
+			expect( read( manager.update(), 3 ) ).toEqual( [ true, true, true ] );
+			expect( read( manager.seekTo( 0.5 ), 3 ) ).toEqual( [ true, false, false ] );
+
+		} );
+
+		it( 'answers the same for a mesh asked for twice by one reader', () => {
+
+			const meshes = deformingScene();
+			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
+			manager.play( 0 );
+
+			const reader = manager.update();
+			expect( reader( 1 ) ).toBeInstanceOf( Float32Array );
+			expect( reader( 1 ) ).toBeInstanceOf( Float32Array );
+
+		} );
+
+		it( 'reads every mesh again after a new init', () => {
+
+			const meshes = deformingScene();
+			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
+			manager.play( 0 );
+			manager.update()( 1 );
+
+			manager.init( mockScene, mockMixerRoot, meshes, mockAnimations );
+			manager.play( 0 );
+			expect( manager.update()( 1 ) ).toBeInstanceOf( Float32Array );
+
+		} );
+
+	} );
+
 	describe( 'dispose', () => {
 
 		it( 'clears all state', () => {

@@ -39,6 +39,8 @@ export class AnimationManager extends EventDispatcher {
 		this._slotOf = null; // meshIndex -> row in the two caches below, or -1
 		this._lastWorld = null; // world matrix last handed to applyPoseCallback, 16 per row
 		this._lastVisible = null; // 0 / 1, or 2 before the first pose
+		this._lastMeshWorld = null; // deforming clips: world matrix at each mesh's last read, 16 per mesh
+		this._lastMorphWeights = null;
 
 		/** Injected by PathTracerApp — wakes the render loop after play/resume. */
 		this.wakeCallback = null;
@@ -135,6 +137,8 @@ export class AnimationManager extends EventDispatcher {
 		// 9 floats × every triangle — 1,030 MB at 30M, past what a renderer can allocate.
 		this._skinnedCache = [];
 		this._meshPositions = [];
+		this._lastMeshWorld = this._rigid ? null : new Float64Array( meshes.length * 16 ).fill( NaN );
+		this._lastMorphWeights = [];
 
 		const skinnedCount = meshes.filter( m => m.isSkinnedMesh ).length;
 		console.debug( `[AnimationManager] Init: ${animations.length} clips, ${meshes.length} meshes (${skinnedCount} skinned), ${offset} triangles, ${this._rigid ? 'rigid' : 'deforming'}` );
@@ -499,7 +503,52 @@ export class AnimationManager extends EventDispatcher {
 		const cameras = this._planFor( this._activeClip )?.cameras;
 		if ( cameras?.length ) this.applyPoseCallback?.( { meshIndices: [], visibilityChanged: false, cameras } );
 
-		return m => this._computeMeshPositions( m );
+		// Decided once per reader: an expanded instanced emitter asks for one mesh several times.
+		const moved = new Int8Array( this._meshes.length );
+		return m => {
+
+			if ( moved[ m ] === 0 ) moved[ m ] = this._meshes[ m ].isSkinnedMesh || this._poseChanged( m ) ? 1 : - 1;
+			return moved[ m ] > 0 ? this._computeMeshPositions( m ) : null;
+
+		};
+
+	}
+
+	/** Whether a mesh's world matrix or morph weights differ from when its positions were last read. @private */
+	_poseChanged( m ) {
+
+		const mesh = this._meshes[ m ];
+		const last = this._lastMeshWorld;
+		const e = mesh.matrixWorld.elements;
+		const o = m * 16;
+		let changed = false;
+
+		for ( let i = 0; i < 16; i ++ ) {
+
+			if ( last[ o + i ] !== e[ i ] ) {
+
+				for ( let j = 0; j < 16; j ++ ) last[ o + j ] = e[ j ];
+				changed = true;
+				break;
+
+			}
+
+		}
+
+		const weights = mesh.morphTargetInfluences;
+		if ( weights?.length ) {
+
+			const lastWeights = this._lastMorphWeights[ m ];
+			if ( ! lastWeights || lastWeights.length !== weights.length || lastWeights.some( ( w, i ) => w !== weights[ i ] ) ) {
+
+				this._lastMorphWeights[ m ] = Float64Array.from( weights );
+				changed = true;
+
+			}
+
+		}
+
+		return changed;
 
 	}
 
@@ -640,6 +689,8 @@ export class AnimationManager extends EventDispatcher {
 		this._slotOf = null;
 		this._lastWorld = null;
 		this._lastVisible = null;
+		this._lastMeshWorld = null;
+		this._lastMorphWeights = null;
 
 	}
 
