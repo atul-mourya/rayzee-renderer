@@ -71,6 +71,7 @@ export class GoboManager {
 		cnv.width = width;
 		cnv.height = height;
 		const ctx = cnv.getContext( '2d', { willReadFrequently: true } );
+		let lastYield = performance.now();
 
 		for ( let i = 0; i < depth; i ++ ) {
 
@@ -78,6 +79,14 @@ export class GoboManager {
 			ctx.drawImage( images[ i ], 0, 0, width, height );
 			const img = ctx.getImageData( 0, 0, width, height );
 			data.set( img.data, i * width * height * 4 );
+
+			// Each first draw decodes its image, so the library packs in short tasks.
+			if ( performance.now() - lastYield > 16 ) {
+
+				await new Promise( resolve => setTimeout( resolve, 0 ) );
+				lastYield = performance.now();
+
+			}
 
 		}
 
