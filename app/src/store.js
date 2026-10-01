@@ -36,7 +36,7 @@ const useStore = create( set => ( {
 	archivePrompt: null,
 	setArchivePrompt: prompt => set( { archivePrompt: prompt } ),
 
-	// A saved session or project to reopen: `{ origin: 'startup' | 'recent' | 'project', record, thumb, ... }`.
+	// A saved session, project or unfinished render to reopen: `{ origin: 'recent' | 'project' | 'video' | 'still', record, thumb, ... }`.
 	sessionRequest: null,
 	setSessionRequest: request => set( { sessionRequest: request } ),
 

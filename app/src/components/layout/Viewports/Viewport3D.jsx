@@ -357,19 +357,17 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 				app.reset();
 				loadLightLibraries( app );
 
-				// D1: a previous session is offered, never restored unasked. Saving starts once that
-				// is answered, so the startup scene is never saved over the session being offered.
-				const { startSessionKeeper, sessionToOffer } = await import( '@/lib/session' );
+				// An unfinished render is offered; saved sessions wait in Open Recent. Saving starts once
+				// the offer is answered, so the startup scene is never saved over the render's session.
+				const { startSessionKeeper } = await import( '@/lib/session' );
 				const keeper = await startSessionKeeper( app, [ usePathTracerStore, useCameraStore, useLightStore, useAnimationStore ] );
 				const { VideoJob } = await import( '@/lib/videoJob' );
 				const { startStillCheckpointer, unfinishedStill } = await import( '@/lib/stillJob' );
 				startStillCheckpointer( app );
 				const [ video ] = await VideoJob.unfinished( app.storage ).catch( () => [] );
 				const still = video?.job.session ? null : await unfinishedStill( app.storage ).catch( () => null );
-				const offer = video?.job.session || still ? null : await sessionToOffer( app.storage, { modelParam: modelUrl } ).catch( () => null );
 				if ( video?.job.session ) useStore.getState().setSessionRequest( { origin: 'video', job: video, record: video.job.session } );
 				else if ( still ) useStore.getState().setSessionRequest( { origin: 'still', still, record: still.job.session } );
-				else if ( offer ) useStore.getState().setSessionRequest( { origin: 'startup', ...offer } );
 				else keeper.setEnabled( true );
 
 			};

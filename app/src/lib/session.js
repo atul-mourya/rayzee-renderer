@@ -150,27 +150,6 @@ export async function readSession( storage, key ) {
 
 }
 
-/**
- * The session to offer at startup (D1: ask first), or null: the newest one no open tab owns whose
- * model can be reopened. With a `?model=` link, only a session of that same model is offered.
- */
-export async function sessionToOffer( storage, { modelParam = null } = {} ) {
-
-	for ( const meta of await listSessions( storage ) ) {
-
-		if ( meta.locked ) continue;
-		const session = await readSession( storage, meta.key );
-		const source = session?.record.source;
-		if ( ! isRestorable( source ) ) continue;
-		if ( modelParam && ( source.kind !== 'url' || source.url !== modelParam ) ) return null;
-		return { ...meta, ...session };
-
-	}
-
-	return null;
-
-}
-
 function identityFromKey( key ) {
 
 	const match = /^file:(.*)\|(\d+)\|(\d+)\|([0-9a-f]+)$/.exec( key ?? '' );
@@ -239,7 +218,7 @@ export async function openSource( app, source, { pickFile } ) {
  * @param {Object} options
  * @param {function(Object, string): Promise<?File>} options.pickFile - asks the user for a file
  * @param {boolean} [options.reuseLoaded] - keep the model on screen when it is the session's and
- *   still as it loaded (startup), rather than loading it twice
+ *   still as it loaded, rather than loading it twice
  * @returns {Promise<?{skipped: Array}>} null when the model's file was not opened
  */
 export async function restoreSession( app, record, { pickFile, reuseLoaded = false } ) {
@@ -283,7 +262,7 @@ export async function restoreSession( app, record, { pickFile, reuseLoaded = fal
 /**
  * Saves the scene into `sessions/` a moment after the last change, and when the page is hidden or
  * closed. Each tab owns one session through a Web Lock, so two tabs never write the same one and
- * a new tab only offers sessions no open tab owns. Writes alternate between two entries, so a
+ * Open Recent lists only sessions no open tab owns. Writes alternate between two entries, so a
  * save cut short leaves the previous one intact.
  */
 export class SessionKeeper {
@@ -298,6 +277,7 @@ export class SessionKeeper {
 		this._timer = null;
 		this._dirty = false;
 		this._enabled = false;
+		this._loaded = null;
 		this._saving = null;
 		this._release = null;
 		this._off = [];
@@ -307,6 +287,7 @@ export class SessionKeeper {
 	async start() {
 
 		this._release = await acquireLock( lockName( this.id ) );
+		this._loaded = this._print();
 
 		const touch = () => this.touch();
 		for ( const type of [ EngineEvents.RENDER_RESET, EngineEvents.TIMELINE_CHANGED, EngineEvents.CAMERAS_UPDATED, EngineEvents.ENVIRONMENT_LOADED, EngineEvents.SCENE_REBUILD ] ) {
@@ -320,7 +301,13 @@ export class SessionKeeper {
 		settings.addEventListener( EngineEvents.SETTING_CHANGED, touch );
 		this._off.push( () => settings.removeEventListener( EngineEvents.SETTING_CHANGED, touch ) );
 
-		const onModel = () => syncModelParam( this.app.sceneSource );
+		const onModel = () => {
+
+			this._loaded = this._print();
+			syncModelParam( this.app.sceneSource );
+
+		};
+
 		this.app.addEventListener( EngineEvents.MODEL_LOADED, onModel );
 		this._off.push( () => this.app.removeEventListener( EngineEvents.MODEL_LOADED, onModel ) );
 
@@ -350,14 +337,27 @@ export class SessionKeeper {
 
 		}
 
-		// What is on screen now is already saved, or not worth offering: an untouched startup scene.
+		// What is on screen now is already saved, or not worth keeping: an untouched startup scene.
+		this._written = this._print();
+
+	}
+
+	/** Whether the scene is still as it loaded, so restoring a session of that model can keep it. */
+	isAsLoaded() {
+
+		return this._loaded !== null && this._print() === this._loaded;
+
+	}
+
+	_print() {
+
 		try {
 
-			this._written = fingerprint( this.app );
+			return fingerprint( this.app );
 
 		} catch {
 
-			this._written = null;
+			return null;
 
 		}
 

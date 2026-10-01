@@ -48,7 +48,7 @@ function useObjectURL( blob ) {
 }
 
 /**
- * Reopens a saved session or project: asks first at startup (D1), asks for any local file the
+ * Reopens a saved session, project or unfinished render: asks first, asks for any local file the
  * browser could not keep (D2), then restores the model and every edit.
  */
 const SessionDialog = () => {
@@ -87,13 +87,14 @@ const SessionDialog = () => {
 		const app = getApp();
 		if ( ! app ) return;
 		const keeper = getSessionKeeper();
+		const reuseLoaded = request.origin === 'recent' && !! keeper?.isAsLoaded();
 		keeper?.setEnabled( false );
 		setStep( 'working' );
 		let resumeVideo = null;
 
 		try {
 
-			const report = await restoreSession( app, request.record, { pickFile, reuseLoaded: request.origin === 'startup' } );
+			const report = await restoreSession( app, request.record, { pickFile, reuseLoaded } );
 			if ( report === null ) {
 
 				toast( { title: 'Session not restored', description: 'Its model was not opened, so the scene stays as it is.' } );
@@ -101,7 +102,7 @@ const SessionDialog = () => {
 
 			}
 
-			if ( ( request.origin === 'startup' || request.origin === 'recent' ) && request.key ) await keeper?.adopt( request );
+			if ( request.origin === 'recent' && request.key ) await keeper?.adopt( request );
 			const missing = [ ...new Set( report.skipped.map( s => SECTION_NAMES[ s.section ] ?? s.section ) ) ];
 
 			if ( request.origin === 'video' ) {
@@ -190,7 +191,6 @@ const SessionDialog = () => {
 
 	const { record } = request;
 	const busy = step === 'working';
-	const startup = request.origin === 'startup';
 	const video = request.origin === 'video' ? request.job : null;
 	const still = request.origin === 'still' ? request.still.job : null;
 
@@ -206,23 +206,21 @@ const SessionDialog = () => {
 				{step === 'offer' && (
 					<>
 						<DialogHeader>
-							<DialogTitle>{video ? 'Finish the video render?' : still ? 'Finish the final render?' : startup ? 'Pick up where you left off?' : `Open ${record.title}?`}</DialogTitle>
+							<DialogTitle>{video ? 'Finish the video render?' : still ? 'Finish the final render?' : `Open ${record.title}?`}</DialogTitle>
 							<DialogDescription>
 								{video
 									? `${record.title} · ${video.framesDone} of ${video.job.totalFrames} frames done. Resuming reopens its scene and renders the rest.`
 									: still
 										? `${record.title} · ${still.samples} of ${still.target} samples at ${still.width}×${still.height}. Resuming reopens its scene and carries on from there.`
-										: startup
-											? `${record.title} · saved ${savedAgo( record.savedAt )}`
-											: `Saved ${savedAgo( record.savedAt )}. It replaces the scene you have open.`}
+										: `Saved ${savedAgo( record.savedAt )}. It replaces the scene you have open.`}
 							</DialogDescription>
 						</DialogHeader>
 						{thumbUrl && <img src={thumbUrl} alt="" className="w-full rounded border object-contain max-h-56 bg-muted" />}
 						<DialogFooter className="gap-2">
 							{video || still
 								? <Button variant="outline" onClick={discardJob}>{video ? 'Discard frames' : 'Discard render'}</Button>
-								: <Button variant="outline" onClick={finish}>{startup ? 'Start fresh' : 'Cancel'}</Button>}
-							<Button onClick={run}>{video || still ? 'Resume' : startup ? 'Restore' : 'Open'}</Button>
+								: <Button variant="outline" onClick={finish}>Cancel</Button>}
+							<Button onClick={run}>{video || still ? 'Resume' : 'Open'}</Button>
 						</DialogFooter>
 					</>
 				)}

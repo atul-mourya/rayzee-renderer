@@ -879,8 +879,9 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   and texture-transform edits, host Object3D loads, a picked OCIO folder.
 - **Sessions and projects** (app: `lib/session.js`, `lib/project.js`, `SessionDialog`): autosave
   2 s after the last change and on hide, only in Preview and only when the JSON fingerprint differs
-  from the last save — an untouched startup scene is never offered. Startup asks before restoring
-  (a `?model=` link offers only a session of that model, and reuses the loaded model). A local
+  from the last save — an untouched startup scene is never saved. Startup offers only an unfinished
+  render; saved sessions wait in File → Open Recent, and opening one whose model is on screen, still
+  as it loaded (`SessionKeeper.isAsLoaded()`), reuses that model rather than loading it twice. A local
   file is never copied: restore asks the user to pick it again and checks its identity. `.rayzee`
   = zip of `project.json` + thumbnail + the local model stored inside (≤ 3.5 GB streamed).
 - **Render checkpoints.** `app.captureRenderCheckpoint()` / `restoreRenderCheckpoint( cp )` —

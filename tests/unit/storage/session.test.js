@@ -21,11 +21,12 @@ import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/Storage/openStorage.js';
 import { fileIdentity, identityKey } from '@/core/Storage/identity.js';
 import { ensureAppAreas } from '@/lib/storage';
-import { SessionKeeper, listSessions, sessionToOffer, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
+import { SessionKeeper, listSessions, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
 import { snapshotPanels, restorePanels } from '@/lib/panelState';
 import { readProject, PROJECT_FORMAT } from '@/lib/project';
 import { zipInto } from '@/lib/zipSink';
 import { usePathTracerStore, useCameraStore } from '@/store';
+import { EngineEvents } from 'rayzee';
 
 const encoder = new TextEncoder();
 
@@ -108,7 +109,7 @@ describe( 'sessions', () => {
 
 	} );
 
-	it( 'offers only a session no open tab owns, and one of the linked model', async () => {
+	it( 'marks a session an open tab owns, and hands it over once that tab closes', async () => {
 
 		const first = fakeApp( storage );
 		const keeper = new SessionKeeper( first, { delay: 5 } );
@@ -118,20 +119,36 @@ describe( 'sessions', () => {
 		keeper.touch();
 		await keeper.flush();
 
-		expect( await sessionToOffer( storage ) ).toBeNull();
+		expect( ( await listSessions( storage ) )[ 0 ].locked ).toBe( true );
 		keeper.dispose();
 
-		const offered = await sessionToOffer( storage );
-		expect( offered.record.title ).toBe( 'a.glb' );
-		expect( await sessionToOffer( storage, { modelParam: 'https://example.com/other.glb' } ) ).toBeNull();
-		expect( ( await sessionToOffer( storage, { modelParam: 'https://example.com/a.glb' } ) ).id ).toBe( offered.id );
+		const [ saved ] = await listSessions( storage );
+		expect( saved ).toMatchObject( { title: 'a.glb', locked: false } );
 
 		const second = new SessionKeeper( fakeApp( storage ), { delay: 5 } );
 		await second.start();
-		expect( await second.adopt( offered ) ).toBe( true );
-		expect( second.id ).toBe( offered.id );
-		expect( await sessionToOffer( storage ) ).toBeNull();
+		expect( await second.adopt( saved ) ).toBe( true );
+		expect( second.id ).toBe( saved.id );
+		expect( ( await listSessions( storage ) )[ 0 ].locked ).toBe( true );
 		second.dispose();
+
+	} );
+
+	it( 'knows whether the scene is still as it loaded', async () => {
+
+		const app = fakeApp( storage );
+		const keeper = new SessionKeeper( app, { delay: 5 } );
+		await keeper.start();
+		expect( keeper.isAsLoaded() ).toBe( true );
+
+		app.edits = 1;
+		expect( keeper.isAsLoaded() ).toBe( false );
+
+		app.sceneSource = { kind: 'url', url: 'https://example.com/b.glb', cacheKey: null };
+		app.dispatchEvent( new Event( EngineEvents.MODEL_LOADED ) );
+		expect( keeper.isAsLoaded() ).toBe( true );
+
+		keeper.dispose();
 
 	} );
 
