@@ -3,7 +3,8 @@
  *
  * Protocol:
  *   'init'  → receives the shared triangle and node buffers (once per scene)
- *   'refit' → recomputes every node's AABB from the triangles already written there
+ *   'refit' → recomputes every node's AABB from the triangles already written there, or with
+ *             `blasRanges` only those BLASes and the TLAS
  *
  * Positions never reach here: the main thread scatters each mesh into the shared triangle
  * records as it reads it, so no buffer the size of the scene exists on either side.
@@ -45,7 +46,9 @@ self.onmessage = function ( e ) {
 
 			const startTime = performance.now();
 
-			refitter.refit( bvhData, triData, nodeCount );
+			const { blasRanges, tlasNodeCount } = e.data;
+			if ( blasRanges ) refitter.refitPartial( bvhData, triData, blasRanges, tlasNodeCount );
+			else refitter.refit( bvhData, triData, nodeCount );
 
 			self.postMessage( {
 				type: 'refitComplete',

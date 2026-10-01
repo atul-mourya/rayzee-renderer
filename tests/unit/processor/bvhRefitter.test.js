@@ -409,6 +409,57 @@ describe( 'BVHRefitter', () => {
 
 	} );
 
+	describe( 'refitPartial', () => {
+
+		// TLAS: root 0 over pointer leaves 1 (identity, BLAS0 at 3) and 2 (scaled and moved, BLAS1 at 6).
+		// BLAS0: inner root 3 over leaves 4, 5. BLAS1: a single leaf, 6.
+		function scene() {
+
+			const pointer = ( root, rows ) => [ bits( root ), 0, 0, bits( BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ), ...rows ];
+			const bvhData = new Float32Array( [
+				...makeInner( [ 0, 0, 0 ], [ 0, 0, 0 ], 1, [ 0, 0, 0 ], [ 0, 0, 0 ], 2 ),
+				...pointer( 3, [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 ] ),
+				...pointer( 6, [ 0.5, 0, 0, - 2, 0, 0.5, 0, 1, 0, 0, 0.5, 3 ] ),
+				...makeInner( [ 0, 0, 0 ], [ 0, 0, 0 ], 4, [ 0, 0, 0 ], [ 0, 0, 0 ], 5 ),
+				...makeLeaf( 0, 1 ),
+				...makeLeaf( 1, 1 ),
+				...makeLeaf( 2, 1 ),
+			] );
+
+			const triangleData = new Uint32Array( 3 * FPT );
+			triangleData.set( makeTriangle( 0, 0, 0, 1, 0, 0, 0, 1, 0 ), 0 );
+			triangleData.set( makeTriangle( 2, 2, 2, 3, 2, 2, 2, 3, 3 ), FPT );
+			triangleData.set( makeTriangle( - 1, - 1, - 1, 1, 0.5, 0, 0, 1, 1 ), 2 * FPT );
+			new BVHRefitter().refit( bvhData, triangleData, 7 );
+			return { bvhData, triangleData };
+
+		}
+
+		const moveTriangle = ( triangleData, t, d ) => {
+
+			const f = new Float32Array( triangleData.buffer );
+			for ( const lane of [ 0, 1, 2, 4, 5, 6, 8, 9, 10 ] ) f[ t * FPT + lane ] += d;
+
+		};
+
+		it.each( [
+			[ 'an inner-rooted BLAS', 1, [ 3, 3 ]],
+			[ 'a leaf-rooted BLAS under a transformed leaf', 2, [ 6, 1 ]],
+		] )( 'leaves the same nodes as a full refit after moving %s', ( _, tri, range ) => {
+
+			const full = scene(), part = scene();
+			moveTriangle( full.triangleData, tri, 0.75 );
+			moveTriangle( part.triangleData, tri, 0.75 );
+
+			new BVHRefitter().refit( full.bvhData, full.triangleData, 7 );
+			new BVHRefitter().refitPartial( part.bvhData, part.triangleData, range, 3 );
+
+			expect( new Uint32Array( part.bvhData.buffer ) ).toEqual( new Uint32Array( full.bvhData.buffer ) );
+
+		} );
+
+	} );
+
 } );
 
 describe( 'SceneProcessor.sceneBounds', () => {

@@ -74,6 +74,22 @@ describe( 'PathTracerStage BVH uploads', () => {
 		_flushBVHEdits: PathTracerStage.prototype._flushBVHEdits,
 		_updateStorageBuffer: PathTracerStage.prototype._updateStorageBuffer,
 		updateBVHData: PathTracerStage.prototype.updateBVHData,
+		updateBufferRanges: PathTracerStage.prototype.updateBufferRanges,
+	} );
+
+	it( 'a ranged update copies and uploads only those ranges from records held elsewhere', () => {
+
+		const stage = makeStage();
+		const records = new Float32Array( 16 * 8 ).fill( 7 );
+
+		stage.updateBVHData( { chunks: [ records ] }, [ { offset: 0, count: 16 }, { offset: 48, count: 32 } ] );
+
+		const own = stage.bvhStorageAttr.array;
+		expect( own.slice( 0, 16 ).every( v => v === 7 ) ).toBe( true );
+		expect( own.slice( 16, 48 ).every( v => v === 0 ) ).toBe( true );
+		expect( own.slice( 48, 80 ).every( v => v === 7 ) ).toBe( true );
+		expect( stage.bvhStorageAttr.updateRanges ).toEqual( [ { start: 0, count: 16 }, { start: 48, count: 32 } ] );
+
 	} );
 
 	it( 'uploads only the TLAS leaves a visibility edit touched', () => {

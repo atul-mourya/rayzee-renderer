@@ -1102,17 +1102,34 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	/** Update BVH node data in the existing GPU buffer (full). */
-	updateBVHData( bvhData ) {
+	/**
+	 * Update BVH node data in the existing GPU buffer.
+	 * @param {Object} [bvhData]
+	 * @param {Array<{offset:number,count:number}>} [ranges] - only these, in floats; every node when omitted
+	 */
+	updateBVHData( bvhData, ranges ) {
 
 		if ( this._bvhRecords ) {
 
-			uploadStorageChunks( this.renderer, this.bvhStorageAttr, this._bvhRecords.chunks );
+			if ( bvhData?.chunks?.length > 1 ) this._bvhRecords = bvhData;
+			if ( ranges ) this.updateBufferRanges( [], ranges );
+			else uploadStorageChunks( this.renderer, this.bvhStorageAttr, this._bvhRecords.chunks );
 			return;
 
 		}
 
-		this._updateStorageBuffer( this.bvhStorageAttr, bvhData?.chunks ? bvhData.chunks[ 0 ] : bvhData );
+		const flat = bvhData?.chunks ? bvhData.chunks[ 0 ] : bvhData;
+		if ( ! ranges ) {
+
+			this._updateStorageBuffer( this.bvhStorageAttr, flat );
+			return;
+
+		}
+
+		// The attribute keeps its own array once the refit has moved the nodes into shared memory.
+		const own = this.bvhStorageAttr?.array;
+		if ( flat && own && flat !== own ) for ( const r of ranges ) own.set( flat.subarray( r.offset, r.offset + r.count ), r.offset );
+		this.updateBufferRanges( [], ranges );
 
 	}
 

@@ -96,13 +96,17 @@ describe( 'a mesh index is not a placement index', () => {
 
 	} );
 
-	it( 'reports the triangle ranges of only the meshes it was handed positions for', async () => {
+	it( 'refits and reports only the meshes it was handed positions for', async () => {
 
 		const sp = makeProcessor();
+		const TLAS_NODES = 9;
+		sp.instanceTable.tlasNodeCount = TLAS_NODES;
+		const sent = [];
 		Object.assign( sp, {
 			bvh: {}, triangles: {}, _refitSharedBuffers: {}, _updateMeshTrianglePositions() {},
-			_refitWorker: { postMessage() {
+			_refitWorker: { postMessage( msg ) {
 
+				sent.push( msg );
 				this.onmessage( { data: { type: 'refitComplete', refitTimeMs: 1 } } );
 
 			} },
@@ -110,9 +114,16 @@ describe( 'a mesh index is not a placement index', () => {
 
 		const sphereOnly = await sp.refitBVH( ( mesh, triCount ) => mesh === 1 ? new Float32Array( triCount * 9 ) : null );
 		expect( sphereOnly.triRanges ).toEqual( [ { offset: BOX_TRIS * FPT, count: SPHERE_TRIS * FPT } ] );
+		expect( sent[ 0 ] ).toMatchObject( { blasRanges: [ 100 + BOX_NODES, SPHERE_NODES ], tlasNodeCount: TLAS_NODES } );
+		expect( sphereOnly.bvhRanges ).toEqual( [
+			{ offset: 0, count: TLAS_NODES * FPN },
+			{ offset: ( 100 + BOX_NODES ) * FPN, count: SPHERE_NODES * FPN },
+		] );
 
 		const both = await sp.refitBVH( ( mesh, triCount ) => new Float32Array( triCount * 9 ) );
 		expect( both.triRanges ).toEqual( [ { offset: 0, count: ( BOX_TRIS + SPHERE_TRIS ) * FPT } ] );
+		expect( sent[ 1 ].blasRanges ).toBeNull();
+		expect( both.bvhRanges ).toBeNull();
 
 	} );
 

@@ -2650,13 +2650,17 @@ export class SceneProcessor {
 		const table = this.instanceTable;
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const triRanges = [];
+		const blasRanges = [];
+		let owners = 0;
 		for ( let i = 0; i < table.count; i ++ ) {
 
 			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
+			owners ++;
 
 			const p = positionsFor( i );
 			if ( ! p ) continue;
 			this._updateMeshTrianglePositions( i, p );
+			blasRanges.push( table.blasOffsetOf( i ), table.blasNodeCountOf( i ) );
 
 			// Smooth normals overwrite the face normals just computed, so they follow per mesh.
 			if ( normalsFor ) {
@@ -2673,6 +2677,11 @@ export class SceneProcessor {
 
 		}
 
+		const tlasNodeCount = table.tlasNodeCount;
+		const partial = tlasNodeCount > 0 && blasRanges.length / 2 < owners;
+		const bvhRanges = partial ? [ this.computeTLASDirtyRange() ] : null;
+		for ( let r = 0; partial && r < blasRanges.length; r += 2 ) bvhRanges.push( { offset: blasRanges[ r ] * 16, count: blasRanges[ r + 1 ] * 16 } );
+
 		return new Promise( ( resolve, reject ) => {
 
 			this._refitWorker.onmessage = ( e ) => {
@@ -2680,7 +2689,7 @@ export class SceneProcessor {
 				const msg = e.data;
 				if ( msg.type === 'refitComplete' ) {
 
-					resolve( { refitTimeMs: msg.refitTimeMs, triRanges } );
+					resolve( { refitTimeMs: msg.refitTimeMs, triRanges, bvhRanges } );
 
 				} else if ( msg.type === 'error' ) {
 
@@ -2691,7 +2700,7 @@ export class SceneProcessor {
 			};
 
 			// Signal worker — no data transfer needed, everything is in shared memory
-			this._refitWorker.postMessage( { type: 'refit' } );
+			this._refitWorker.postMessage( { type: 'refit', blasRanges: partial ? blasRanges : null, tlasNodeCount } );
 
 		} );
 

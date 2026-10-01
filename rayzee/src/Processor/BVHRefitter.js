@@ -194,6 +194,29 @@ function triangleBounds( acc, first, count, out, off ) {
 
 const folded = new Float32Array( 12 );
 
+/** A node's own box from what it stores — its two child boxes, or a leaf's triangles — into out[ 0 .. 6 ). */
+function storedBounds( nodes, n, acc, out ) {
+
+	const f = nodeF( nodes, n );
+	const idx = nodeIdx( nodes, n );
+	const o = nodeBase( nodes, n );
+
+	if ( idx[ o + 3 ] === LEAF_MARKER ) {
+
+		triangleBounds( acc, idx[ o ], idx[ o + 1 ], out, 0 );
+		return;
+
+	}
+
+	for ( let a = 0; a < 3; a ++ ) {
+
+		out[ a ] = Math.min( f[ o + a ], f[ o + 8 + a ] );
+		out[ 3 + a ] = Math.max( f[ o + 4 + a ], f[ o + 12 + a ] );
+
+	}
+
+}
+
 /**
  * One node of a bottom-up refit: its own bounds into `bounds[ ( i - base ) * 6 ]`, and an inner
  * node's two child boxes rewritten from theirs. A leaf folded into its parent takes its box from
@@ -264,6 +287,8 @@ export class BVHRefitter {
 		// Resized only when nodeCount changes (i.e., new scene loaded).
 		this._bounds = null;
 		this._boundsNodeCount = 0;
+		this._tlasBounds = null;
+		this._rootBox = null;
 
 	}
 
@@ -352,6 +377,45 @@ export class BVHRefitter {
 		const nodes = nodeAccess( bvhData );
 		// Bounds indexed relative to the BLAS start; child indices are absolute.
 		for ( let i = startNode + nodeCount - 1; i >= startNode; i -- ) refitNode( nodes, i, acc, this._bounds, startNode );
+
+	}
+
+	/**
+	 * Refit the given BLAS node ranges, then the TLAS from every BLAS root's stored box. The same
+	 * nodes as refit() when every other BLAS is as the last refit left it.
+	 *
+	 * @param {Float32Array} bvhData - Combined BVH array (TLAS + all BLASes)
+	 * @param {Uint32Array} triangleData - Global triangle records
+	 * @param {ArrayLike<number>} blasRanges - flat [ startNode, nodeCount, ... ]
+	 * @param {number} tlasNodeCount - the TLAS occupies nodes [0, tlasNodeCount)
+	 */
+	refitPartial( bvhData, triangleData, blasRanges, tlasNodeCount ) {
+
+		for ( let r = 0; r < blasRanges.length; r += 2 ) this.refitRange( bvhData, triangleData, blasRanges[ r ], blasRanges[ r + 1 ] );
+
+		const acc = triAccess( triangleData );
+		const nodes = nodeAccess( bvhData );
+		if ( ! this._tlasBounds || this._tlasBounds.length < tlasNodeCount * 6 ) this._tlasBounds = new Float32Array( tlasNodeCount * 6 );
+		const bounds = this._tlasBounds;
+		const rootBox = this._rootBox ||= new Float32Array( 6 );
+
+		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
+
+			const idx = nodeIdx( nodes, i );
+			const o = nodeBase( nodes, i );
+
+			if ( idx[ o + 3 ] === BLAS_POINTER_MARKER ) {
+
+				storedBounds( nodes, idx[ o ], acc, rootBox );
+				transformBoundsToWorld( nodeF( nodes, i ), o, rootBox, 0, bounds, i * 6 );
+
+			} else {
+
+				refitNode( nodes, i, acc, bounds, 0 );
+
+			}
+
+		}
 
 	}
 
