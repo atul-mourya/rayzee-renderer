@@ -606,7 +606,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Twenty-nine scenes, one failure axis each — seventeen image scenes plus twelve `furnace-*` energy
+Thirty-three scenes, one failure axis each — nineteen image scenes plus fourteen `furnace-*` energy
 probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
@@ -628,9 +628,13 @@ probes. `npm run bench:list` prints them with what they cover.
 | `arealight-analytic` | analytic area light against closed-form irradiance — power→radiance convention, spherical-rectangle NEE, NEE/BSDF MIS, shadow-ray origin |
 | `arealights-two` | two area lights of unequal size, power, shape and spread — reservoir selection, per-light MIS, disk sampling, spread attenuation |
 | `instanced-storage` | object-space shared geometry, InstancedMesh placements, a mirrored placement's winding, an emissive geometry placed twice — the storage paths every other scene skips |
+| `cornell-bidirectional` | the bidirectional integrator — light subpaths, connections, light tracing and their MIS; its truth is the path tracer's estimate of the same room (`truthSettings`) |
+| `caustic-bidirectional` | bidirectional through glass and a mirror — light-traced caustics, MIS across specular vertices, importance through refraction |
 | `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
 | `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
 | `furnace-dielectric-smooth` | the same at `MIN_ROUGHNESS`, where a floored GGX denominator read 1.10 |
+| `furnace-dielectric-mirror` | an exact dielectric reflector (roughness 0, the delta lobe) |
+| `furnace-metal-mirror` | an exact metal mirror — the delta lobe's value and its MIS weight of 1 |
 | `furnace-metal-mid` | metal multiscatter compensation overshoot at mid roughness |
 | `furnace-metal-rough` | single-scattering GGX deficit at r = 1 — the opposite failure to `metal-mid` |
 | `furnace-clearcoat` | clearcoat layer energy on top of the base |
@@ -656,7 +660,9 @@ guard's other half untested.
 
 A scene that renders the right picture for the wrong reason still blesses cleanly. So for each
 scene, the feature it claims to cover was disabled and the suite re-run: **8 of 8 mutations were
-caught**, with 1.8–15 % energy-bias deltas and 21–1164 % RMSE increases. The margins matter as much
+caught**, with 1.8–15 % energy-bias deltas and 21–1164 % RMSE increases. The two bidirectional
+scenes were mutated three ways — connections dropped (−3.9 / −3.5 % bias), light tracing dropped (−15 %),
+NEE's weight blind to the light subpaths (+19 / +17 %) — and both failed every time. The margins matter as much
 as the pass — a scene detected only at the threshold is one refactor away from being decorative.
 
 That pass also demonstrated why both gates exist. Flattening `textured-normalmap`'s UV transform to
@@ -686,6 +692,10 @@ spec is never returned — the field list is explicit, and a field missing from 
 
 Two rules that are easy to get wrong:
 
+- **A scene may take its truth from another estimator of the same image** — `truthSettings` applies
+  only to the ground-truth render (`cornell-bidirectional` uses `{ integrator: 'path' }`), so the gate
+  holds two integrators to each other rather than each to itself. Like every runner field it must be
+  listed in `scenes()` in `harness/boot.js`.
 - **Pin the camera explicitly**, via `setCamera()` *after* loading — `loadObject3D()` rebuilds the
   scene and may reframe.
 - **Every engine setting the scene touches must be listed in its `settings` object**, even one the
@@ -711,7 +721,7 @@ Then do two things that are not optional:
 
 ## Cost
 
-Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 29-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
+Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 33-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
 
 ## Known gaps
 

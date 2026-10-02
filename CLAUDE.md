@@ -345,7 +345,7 @@ would change every golden, and `strict` would abort a run before the runner repo
 
 ### Without a browser (`Platform.js`, `HeadlessCanvas.js`, `rayzee/src/node/`)
 The published build renders in plain Node on Dawn. `npm run bench:node` renders the whole corpus that
-way against the Chrome goldens (all 31 match, RMSE ≤ 0.0036); a textured glTF with an HDR or PNG sky
+way against the Chrome goldens (all 33 match, RMSE ≤ 0.0036); a textured glTF with an HDR or PNG sky
 matched Chrome within 0.05 of a level per 16² block.
 - **No canvas ⇒ headless** (`new PathTracerApp( null )`, or `{ headless: true }`; `openHeadless` without
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
@@ -793,8 +793,12 @@ identical to the previous build apart from node ids.
 - **Measured** (Apple M-series): Cornell 1024² 19 → 49 ms a sample; the 1.9M-triangle interior at 512²,
   60 spp 1.5 → 3.2 s; kernels compile in ~0.4 s on a switch. Caustic room at 64 spp: RMSE against the
   unbiased reference 10× lower than path tracing; Cornell with emissive NEE off 4.7× lower, with it on
-  equal. Bench: `cornell-bidirectional` takes its truth from the path tracer (`truthSettings`, new in
-  `bench/runner/quality.js`), `caustic-bidirectional` from itself.
+  equal. Equal time, error variance against an independent reference: `BDPT.glb` (lamp behind a door)
+  2.2–2.9× lower; Sponza's sunlit arcade 1.6× *higher* and a ceiling-lit room 1.7× higher — light reached
+  directly is already what camera paths + NEE do best. Bench: `cornell-bidirectional` takes its truth
+  from the path tracer (`truthSettings`, new in `bench/runner/quality.js`), `caustic-bidirectional` from
+  itself; both catch dropped connections (−3.5 %), dropped light tracing (−15 %) and a broken NEE weight
+  (+17 %).
 - **Not covered:** analytic lights (rect area, point, spot, directional) and the sky texture / HDRIs as
   light-path sources — a scene lit only by them gets 0 light paths and renders exactly as `'path'`;
   emissive textures (NEE and light paths both use the per-triangle emission); a dispersion wavelength
