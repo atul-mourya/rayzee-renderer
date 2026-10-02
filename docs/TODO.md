@@ -20,6 +20,19 @@
 
 ### Known
 
+- [ ] **Default path tracer loses most light from a two-sided lamp seen from behind** — `veach-bidir.glb`
+  (Blender export, every material `doubleSided`) reads **−83 %** against the bidirectional integrator, with the
+  firefly clamp off; path tracing with emissive NEE off and BDPT's camera-hits-alone both agree with BDPT
+  (−2.3 % / −1.8 %). NEE samples only an emitter's winding front (`sampleLightBVHTriangle`: `emissiveFacing > 0`),
+  but the emissive-hit MIS in ShadeKernel's unidirectional branch takes `calculateLightBVHPdf` /
+  `calculateEmissiveLightPdf` with no side test, and `max( cosLight, 0.001 )` makes a back hit's NEE pdf huge —
+  so its weight is ≈ 0 and neither strategy counts that light. Fix: NEE pdf 0 in the hit MIS for a side NEE
+  never samples (or let NEE sample the facing side of a DoubleSide emitter). It brightens default renders of
+  such scenes, so it needs a decision on the release type before it ships.
+- [ ] **Very large triangles read dark in bands** — a 400 × 400 floor made of 2 triangles under a lamp, against
+  the closed-form answer: camera-side estimators (default PT, NEE, BSDF hits) read 1.3 % and 4–5 % dark in sharp
+  bands; an 8-unit floor or the same floor split 64 × 64 is exact. Rays leaving the big triangle re-hit it
+  (intersection precision vs `offsetRayOrigin`'s 1e-5). Changes default pixels when fixed.
 - [ ] **What a Blender glTF export cannot carry**, measured against Cycles renders of the same scene
   (scenes + probes in this session's scratchpad). The engine side is now at parity: point, spot and
   sun all match Cycles to render noise, and three.js' own glTF exporter writes `intensity` straight
@@ -92,7 +105,7 @@
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky
 - [ ] Volumetric rendering
-- [ ] Caustic support - Photon mapping &/ BDPT
+- [ ] Caustic support - Photon mapping &/ BDPT (bidirectional covers emissive lights and the sun; the sky texture and HDRIs still need photon mapping)
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
@@ -165,7 +178,7 @@
 - [x] irradiance probes,
 - [ ] SPOM (Silhouette Parallax Occlusion Mapping) ->  more suited for rasterization
 - [ ] Photon mapping
-- [ ] Bidirectional path tracing support
+- [x] Bidirectional path tracing support — `integrator: 'bidirectional'` (emissive triangles and the sun; see CLAUDE.md)
 - [ ] Experiment PLOC for maximum BVH performance scenarios
 - [x] tiered-material-buffer-access generalization - already at its practical optimum
 - [ ] Opacity micro map

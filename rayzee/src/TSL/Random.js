@@ -123,6 +123,8 @@ export const RandomPointInCircle = ( rngState ) => {
 //      +13  clearcoat lobe               (Clearcoat)
 //      +14  area/spot light phi          (LightsSampling)
 //      +15  light uv second component    (LightsSampling)
+//      +16  light path to connect to     (ConnectKernel, bidirectional)
+//      +17  light vertex on that path    (ConnectKernel, bidirectional)
 //
 // Stride is 32 rather than the ~16 in use so a new call site does not force a renumbering.
 // The index only keys a scramble seed, so spare slots cost nothing.
@@ -131,6 +133,8 @@ export const RandomPointInCircle = ( rngState ) => {
 // the next bounce's dimensions, so they live above AUX_BASE:
 //   AUX_BASE +  0..63   env-backdrop blur taps      (ShadeKernel)
 //   AUX_BASE + 64..    light reservoir, one dimension per scene light (LightsSampling)
+//   AUX_BASE + 2048..  light subpath emission (LightGenerateKernel); light paths draw at pixels
+//                      offset by LIGHT_PIXEL_ROW_OFFSET rows, so no camera path shares a sequence
 export const SAMPLER_DIMS_PER_BOUNCE = 32;
 export const SAMPLER_DIM_AUX_BASE = 4096;
 

@@ -56,7 +56,7 @@ export function setShadowAlbedoMaps( buckets ) {
 // ================================================================================
 
 // Note: traverseBVH is passed as a parameter to avoid circular dependency
-export const traceShadowRay = Fn( ( [
+const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 	origin, dir, maxDist,
 	// BVH traversal function and textures passed as parameters
 	traverseBVHShadowFn,
@@ -176,7 +176,12 @@ export const traceShadowRay = Fn( ( [
 			rayOrigin.assign( shadowHit.hitPoint.add( dir.mul( alphaEps ) ) );
 			remainingDist.subAssign( shadowHit.dst.add( alphaEps ) );
 
-		} ).ElseIf( shadowMaterial.transmission.greaterThan( 0.0 ), () => {
+		} ).ElseIf( shadowMaterial.transmission.greaterThan( 0.0 ), refractiveBlocks ? () => {
+
+			transmittance.assign( 0.0 );
+			Break();
+
+		} : () => {
 
 			// Deferred geometric-normal compute — refetch triangle positions and
 			// derive the normal here so opaque/alpha-cutout shadow hits don't pay
@@ -261,6 +266,11 @@ export const traceShadowRay = Fn( ( [
 	return transmittance;
 
 } );
+
+export const traceShadowRay = /*@__PURE__*/ makeTraceShadowRay( false );
+
+// For the bidirectional strategies: their light paths carry what refracts, so glass must block.
+export const traceShadowRayRefractiveOpaque = /*@__PURE__*/ makeTraceShadowRay( true );
 
 // ================================================================================
 // RAY OFFSET CALCULATION

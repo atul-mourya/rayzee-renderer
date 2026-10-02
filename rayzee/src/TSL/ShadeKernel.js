@@ -7,7 +7,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	bool as tslBool,
-	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, acos,
+	If, Loop, normalize, max, min, exp, log, clamp, dot, length, select, smoothstep, acos, abs, cross,
 	instanceIndex,
 	sampler,
 	atomicLoad, atomicStore,
@@ -15,27 +15,34 @@ import {
 } from 'three/tsl';
 
 import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
-import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS } from './Common.js';
+import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
-import { traceShadowRay } from './LightsDirect.js';
+import { traceShadowRay, traceShadowRayRefractiveOpaque } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
-import { unpackHitFacet } from './HitFacet.js';
+import { hitFacet, unpackHitFacet } from './HitFacet.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import { IndirectLightingResult, sampleCone } from './LightsCore.js';
-import { sunRadianceToward } from './Sun.js';
-import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette } from './PathTracerCore.js';
+import { sunRadianceToward, sampleSunDisc } from './Sun.js';
+import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from './PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
 import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
-import { calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample } from './EmissiveSampling.js';
-import { sampleLightBVHTriangle, calculateLightBVHPdf } from './LightBVHSampling.js';
+import {
+	calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample, EmissiveSampleIndexed,
+	sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
+} from './EmissiveSampling.js';
+import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from './LightBVHSampling.js';
+import {
+	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine,
+	strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET,
+} from './Bidirectional.js';
 import {
 	Ray,
 	HitInfo,
@@ -65,6 +72,7 @@ import {
 	readRayRadiance,
 	readFeatureThroughput, writeFeatureThroughput,
 	readRngState, writeRngState,
+	readMisState, writeRngMis, pendingVertex, cachedVertex, writeVertexRecord, writeLightPathLength, readLightOrigin,
 } from '../Processor/PackedRayBuffer.js';
 
 const WG_SIZE = 256;
@@ -114,6 +122,8 @@ export function buildShadeKernel( params ) {
 		// live uniform (1 = denoiser on) so the wavefront skips these writes when nothing consumes them.
 		auxGBufferEnabled,
 		hasSun, sunDirection, sunRadiance, sunParams,
+		// Bidirectional: light subpaths shade here too; camera vertices leave connections for ConnectKernel.
+		bidirectional: bdpt = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -147,6 +157,29 @@ export function buildShadeKernel( params ) {
 
 		} );
 		return acc.div( float( n ) );
+
+	};
+
+	// Emissive NEE's solid-angle density for a triangle's point, from whichever sampler it runs.
+	const emissiveNEEPdf = ( triangle, dist, toLight, from, instanceLeaf ) => {
+
+		const pdf = float( 0.0 ).toVar();
+		If( lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
+
+			pdf.assign( calculateLightBVHPdf(
+				triangle, dist, toLight, from,
+				lightBuffer, emissiveVec4Offset, reverseMapVec4Offset, triangleBuffer, bvhBuffer,
+			) );
+
+		} ).Else( () => {
+
+			pdf.assign( calculateEmissiveLightPdf(
+				triangle, dist, toLight, from,
+				triangleBuffer, materialBuffer, emissiveTotalPower, bvhBuffer, instanceLeaf,
+			) );
+
+		} );
+		return pdf;
 
 	};
 
@@ -186,6 +219,11 @@ export function buildShadeKernel( params ) {
 
 		} );
 
+		// A light subpath gathers nothing; camera-only work is gated on it.
+		const isLight = bdpt ? flags.bitAnd( uint( RAY_FLAG.LIGHT_PATH ) ).notEqual( uint( 0 ) ).toVar() : null;
+		const cameraOnly = ( cond ) => ( bdpt ? cond.and( isLight.not() ) : cond );
+		const aux = cameraOnly( auxOn );
+
 		// Backdrop-view = the ray still travels the original camera direction (only alpha/transparent passthrough
 		// since the camera, REDIRECTED still clear). Captured at ARRIVAL (before the opaque/redirect bitOr below)
 		// so it stays valid for both the miss branch and the emissive-hit scale. This — not bounceIndex==0 — is
@@ -200,6 +238,11 @@ export function buildShadeKernel( params ) {
 		// One ray per pixel: rayID is the pixel index.
 		const pixelIndex = rayID;
 		const rngState = readRngState( hitBufferRW, rayID ).toVar();
+		const subpathState = bdpt ? readMisState( hitBufferRW, rayID ) : null;
+		const subpath = bdpt ? { dVCM: subpathState.dVCM.toVar(), dVC: subpathState.dVC.toVar() } : null;
+		const persistRng = () => ( bdpt
+			? writeRngMis( hitBufferRW, rayID, rngState, subpath.dVCM, subpath.dVC )
+			: writeRngState( hitBufferRW, rayID, rngState ) );
 
 		// Samples key on the GLOBAL pixel. pixelIndex is the LOCAL path slot; the global pixel
 		// = chunkRowBase·W + localSlot, so sequences stay aligned across row-band chunks
@@ -207,9 +250,10 @@ export function buildShadeKernel( params ) {
 		// Hoisted here rather than at the BSDF draw because the ground catcher runs NEE far earlier.
 		const _resX = int( resolution.x ).toVar();
 		const _globalPixel = int( pixelIndex ).add( chunkRowBase.mul( _resX ) );
+		const _pixelRow = float( _globalPixel.div( _resX ) ).add( 0.5 );
 		const _pixelCoord = vec2(
 			float( _globalPixel.mod( _resX ) ).add( 0.5 ),
-			float( _globalPixel.div( _resX ) ).add( 0.5 ),
+			bdpt ? _pixelRow.add( select( isLight, float( LIGHT_PIXEL_ROW_OFFSET ), float( 0.0 ) ) ) : _pixelRow,
 		);
 		// This bounce's block of sampler dimensions — see the budget table in Random.js.
 		const dimBase = int( currentBounce ).mul( int( SAMPLER_DIMS_PER_BOUNCE ) );
@@ -236,7 +280,7 @@ export function buildShadeKernel( params ) {
 
 		// NRD guide: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
 		// doesn't shorten it. Unconditional at depth 1, so the post-skip segment wins.
-		If( auxOn.and( cameraDepth.equal( 1 ) ), () => {
+		If( aux.and( cameraDepth.equal( 1 ) ), () => {
 
 			const scatterViewZ = cameraViewMatrix.mul( vec4( origin, 1.0 ) ).z.abs();
 			const norm = scatterViewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A );
@@ -252,7 +296,7 @@ export function buildShadeKernel( params ) {
 		// ratio in alpha (rgb = 0) so it composites as bg·ratio over a transparent background.
 		// Shadows are caught by the EXISTING NEE shadow ray into real geometry — the plane itself
 		// never enters the BVH. Secondary bounces ignore it entirely.
-		If( enableGroundCatcher.and( bounceIndex.equal( 0 ) ), () => {
+		If( cameraOnly( enableGroundCatcher.and( bounceIndex.equal( 0 ) ) ), () => {
 
 			const dirY = direction.y.toVar();
 			If( dirY.abs().greaterThan( float( EPSILON ) ), () => {
@@ -351,7 +395,7 @@ export function buildShadeKernel( params ) {
 					// The catcher is a real ground surface for the denoiser — write the plane's normal/depth
 					// + a neutral albedo (black albedo would break OIDN demodulation) and mark the pixel a
 					// valid surface, so OIDN/ASVGF don't smear the caught shadow as a background miss.
-					If( auxOn, () => {
+					If( aux, () => {
 
 						const planeDepth = computeNDCDepth( { worldPos: planePoint, cameraProjectionMatrix, cameraViewMatrix } );
 						writeGBuffer( gBufferRW, pixelIndex, planeN, planeDepth, vec3( 1.0 ) );
@@ -361,7 +405,7 @@ export function buildShadeKernel( params ) {
 					writeRayRadiance( rayBufferRW, rayID, vec4( outRgb, outAlpha ) );
 					// DDFA: the plane's aux (written above) is a committed surface — lock it (cosmetic; ray dies here).
 					writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ).bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-					writeRngState( hitBufferRW, rayID, rngState );
+					persistRng();
 					Return();
 
 				} );
@@ -371,6 +415,13 @@ export function buildShadeKernel( params ) {
 		} );
 
 		If( hitDist.greaterThan( MISS_DIST ), () => {
+
+			if ( bdpt ) If( isLight, () => {
+
+				writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+				Return();
+
+			} );
 
 			// Background and environment-lighting are decoupled (independent axes):
 			//  • Visible backdrop: a PRIMARY ray draws the env image only when showBackground — regardless
@@ -498,11 +549,28 @@ export function buildShadeKernel( params ) {
 					If( sunL.x.add( sunL.y ).add( sunL.z ).greaterThan( 0.0 ), () => {
 
 						const sunW = float( 1.0 ).toVar();
-						If( isBackdropView.not().and( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ) ), () => {
+						if ( bdpt ) {
 
-							sunW.assign( powerHeuristic( { pdf1: readRayPdf( rayBufferRW, rayID ), pdf2: float( 1.0 ).div( sunParams.y ) } ) );
+							// Georgiev (43) for a light at infinity: no distance, and NEE's density is solid angle.
+							If( isBackdropView.not(), () => {
 
-						} );
+								const directPdfW = select( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ), float( 1.0 ).div( sunParams.y ), float( 0.0 ) );
+								const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), sunEmissionPdf( bdpt, sunParams ), float( 0.0 ) );
+								sunW.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
+									misWeight( float( 0.0 ), mis( directPdfW ).mul( subpath.dVCM ).add( mis( emissionPdfW ).mul( subpath.dVC ) ) ) ) );
+
+							} );
+
+						} else {
+
+							If( isBackdropView.not().and( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ) ), () => {
+
+								sunW.assign( powerHeuristic( { pdf1: readRayPdf( rayBufferRW, rayID ), pdf2: float( 1.0 ).div( sunParams.y ) } ) );
+
+							} );
+
+						}
+
 						const vertex = max( bounceIndex.sub( 1 ), int( 0 ) );
 						const sunScale = select( isBackdropView, backgroundIntensity,
 							sunW.mul( select( vertex.greaterThan( int( 0 ) ), globalIlluminationIntensity, float( 1.0 ) ) ) );
@@ -553,7 +621,7 @@ export function buildShadeKernel( params ) {
 			// per pixel → OIDN sees structure tracking the refracted view); depth kept at the primary hit.
 			// AUX_LOCKED-clear alone means "never committed" — the old black-probe is redundant. A direct
 			// backdrop (REDIRECTED clear) keeps Generate's black/far default (regression-safe sky guide).
-			If( auxOn
+			If( aux
 				.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) )
 				.and( flags.bitAnd( uint( RAY_FLAG.REDIRECTED ) ).notEqual( uint( 0 ) ) ), () => {
 
@@ -570,6 +638,11 @@ export function buildShadeKernel( params ) {
 
 		const hitPoint = origin.add( direction.mul( hitDist ) ).toVar();
 		const N = normalize( hitNormal ).toVar();
+		// The hit record's facet is 11-bit; light tracing's and connections' grazing geometry terms need it exact.
+		const exactFacetN = bdpt ? hitFacet( {
+			triangleBuffer, bvhBuffer, triIdx: int( hitTriIdx ), instanceLeaf: hitInstance, hitPoint,
+			smoothNormal: N, viewDir: direction.negate(), didHit: tslBool( true ), liftEnabled: tslBool( false ),
+		} ).faceN : null;
 
 		// medium stack read once here; reused by the transparency block below
 		const medStack = readMediumStack( rayBufferRW, rayID );
@@ -595,7 +668,7 @@ export function buildShadeKernel( params ) {
 				const beer = exp( mSigmaA.mul( hitDist ).negate() ).toVar();
 				throughput.mulAssign( beer );
 				// DDFA: colored-glass volume tints the deferred aux guide by the same absorption.
-				If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+				If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 					featCarry.mulAssign( beer );
 
@@ -628,7 +701,7 @@ export function buildShadeKernel( params ) {
 
 						writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 						writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-						writeRngState( hitBufferRW, rayID, rngState );
+						persistRng();
 						Return();
 
 					} );
@@ -645,7 +718,7 @@ export function buildShadeKernel( params ) {
 					// fires the next hit's env/emissive MIS, down-weighting SSS-then-env/emitter views.
 					writeRayThroughputPdf( rayBufferRW, rayID, throughput, readRayPdf( rayBufferRW, rayID ) );
 					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
-					writeRngState( hitBufferRW, rayID, rngState );
+					persistRng();
 					Return();
 
 				} );
@@ -781,7 +854,7 @@ export function buildShadeKernel( params ) {
 		// Plain JS inliner, not an Fn — it closes over albedo/featPrefix/flags .toVar()s.
 		const commitDeferredAux = ( normal ) => {
 
-			If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+			If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 				writeGBuffer( gBufferRW, pixelIndex, normal, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
@@ -795,14 +868,14 @@ export function buildShadeKernel( params ) {
 
 			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
-			writeRngState( hitBufferRW, rayID, rngState );
+			persistRng();
 
 		};
 
 		// first-hit MRT data (bounce 0 only): write the primary DEPTH now with the default normal/albedo.
 		// The real normal/albedo are committed by the DDFA decision blocks below (which re-pack this depth);
 		// they may defer through smooth glass/mirror and commit at the first diffuse-enough surface or the env.
-		If( bounceIndex.equal( 0 ).and( auxOn ), () => {
+		If( bounceIndex.equal( 0 ).and( aux ), () => {
 
 			const linearDepth = computeNDCDepth( {
 				worldPos: hitPoint,
@@ -847,7 +920,7 @@ export function buildShadeKernel( params ) {
 		// ─── DDFA aux decision at a transmissive / alpha / SSS interaction. Runs for BOTH the continuing and
 		// the BLEND fall-through paths, so it sits before If(continueRay). If/ElseIf chaining so BLEND wins
 		// over the transmission branch (fixes the BLEND-glass per-frame flicker + the BLEND+transmission case). ───
-		If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 			// N here is the mapped normal — faceforward it (a ray exiting glass sees a back-facing N).
@@ -994,6 +1067,15 @@ export function buildShadeKernel( params ) {
 
 			throughput.mulAssign( interaction.throughput );
 
+			// Importance, unlike radiance, is not rescaled by refraction.
+			if ( bdpt ) If( isLight.and( interaction.isTransmissive.or( interaction.isSubsurface ) ).and( interaction.didReflect.not() ), () => {
+
+				const n1 = select( interaction.entering, currentMediumIOR, material.ior );
+				const n2 = select( interaction.entering, material.ior, previousMediumIOR );
+				throughput.mulAssign( n2.mul( n2 ).div( max( n1.mul( n1 ), EPSILON ) ) );
+
+			} );
+
 			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
 			const Ng = unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN;
 			const crossesFacet = dot( Ng, interaction.direction ).lessThan( 0.0 ).toVar();
@@ -1009,6 +1091,15 @@ export function buildShadeKernel( params ) {
 				const underSurface = interaction.didReflect.and( crossesFacet );
 				flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) ).bitOr( uint( RAY_FLAG.REDIRECTED ) )
 					.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );
+
+				// Not connectible; an alpha skip is no vertex at all.
+				if ( bdpt ) {
+
+					misOnHit( subpath, hitDist.add( readMisRayT( rayBufferRW, rayID ) ), abs( dot( exactFacetN, direction ) ) );
+					misOnSpecular( subpath, abs( dot( exactFacetN, interaction.direction ) ) );
+					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ) ) );
+
+				}
 
 			} ).Else( () => {
 
@@ -1037,12 +1128,12 @@ export function buildShadeKernel( params ) {
 			writeMediumStack( rayBufferRW, rayID, uint( mediumStackDepth ), uint( transTraversals ), mediumStack_ior_1, mediumStack_ior_2, mediumStack_ior_3, uint( pathWavelength.add( 0.5 ) ) );
 			// DDFA: persist the (possibly tinted) see-through throughput for the next bounce. MUST run after
 			// the writeMediumSigmaA above — both RMW slot 5 (sigmaA.xyz / featTP.w). Gated AUX_LOCKED-clear.
-			If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+			If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 				writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 
 			} );
-			writeRngState( hitBufferRW, rayID, rngState );
+			persistRng();
 			Return();
 
 		} );
@@ -1055,9 +1146,44 @@ export function buildShadeKernel( params ) {
 		// so any later env-escape is redirected light, not the direct backdrop). Single positive bitOr.
 		flags.assign( flags.bitOr( uint( RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.REDIRECTED ) ) );
 
+		if ( bdpt ) {
+
+			const arrivalDist = hitDist.add( readMisRayT( rayBufferRW, rayID ) ).toVar();
+
+			// A light path's NEE density needs its first vertex.
+			If( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ).notEqual( uint( 0 ) ), () => {
+
+				const start = readLightOrigin( hitBufferRW, rayID );
+				const neePdfA = float( 0.0 ).toVar();
+				If( start.triangle.lessThan( int( 0 ) ), () => {
+
+					// The sun: its NEE density is in already, and a light at infinity has no distance to square.
+					neePdfA.assign( float( 1.0 ).div( max( arrivalDist.mul( arrivalDist ), 1e-30 ) ) );
+
+				} ).Else( () => {
+
+					// NEE samples only a triangle's winding front; a negative cosine marks a back start.
+					if ( useEmissiveNEE ) If( enableEmissiveTriangleSampling.equal( int( 1 ) )
+						.and( emissiveTriangleCount.greaterThan( int( 0 ) ) ).and( start.cosLight.greaterThan( 0.0 ) ), () => {
+
+						neePdfA.assign( emissiveNEEPdf( start.triangle, arrivalDist, direction.negate(), hitPoint, start.instanceLeaf )
+							.mul( start.cosLight ).div( arrivalDist.mul( arrivalDist ) ) );
+
+					} );
+
+				} );
+				subpath.dVCM.mulAssign( mis( neePdfA ) );
+				flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ) ) );
+
+			} );
+
+			misOnHit( subpath, arrivalDist, abs( dot( exactFacetN, direction ) ) );
+
+		}
+
 		const emissive = matSamples.emissive.toVar();
 		// NEE samples only a single-sided emitter's lit side, so from behind (bounce rays) it is a dark occluder.
-		If( isBackdropView.not().and( length( emissive ).greaterThan( 0.0 ) ), () => {
+		If( cameraOnly( isBackdropView.not().and( length( emissive ).greaterThan( 0.0 ) ) ), () => {
 
 			If( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), dot( direction, hitNormal ) ).not(), () => {
 
@@ -1066,7 +1192,7 @@ export function buildShadeKernel( params ) {
 			} );
 
 		} );
-		If( length( emissive ).greaterThan( 0.0 ), () => {
+		If( cameraOnly( length( emissive ).greaterThan( 0.0 ) ), () => {
 
 			// Key on backdrop-view (not bounceIndex>0) so an emitter seen DIRECTLY through an alpha-cutout hole
 			// renders at full intensity (1.0) like a direct view, consistent with env-through-hole — instead of
@@ -1078,7 +1204,34 @@ export function buildShadeKernel( params ) {
 			// two estimators. Without it emissive geometry / area lights double-count (~2x bright + noisier).
 			// Primary hits keep weight 1.0 (the wavefront's bounce-0 stored pdf is the Generate init, not a NEE pdf).
 			const emissiveMISWeight = float( 1.0 ).toVar();
-			if ( useEmissiveNEE ) {
+			if ( bdpt ) {
+
+				// Georgiev (43): NEE from the previous vertex, and every light subpath strategy.
+				If( isBackdropView.not(), () => {
+
+					const misT = readMisRayT( rayBufferRW, rayID ).toVar();
+					const misDist = hitDist.add( misT ).toVar();
+					const tri = TriangleData.wrap( fetchTriangleData( int( hitTriIdx ), triangleBuffer, bvhBuffer, hitInstance ) );
+					const cosToward = dot( direction.negate(), normalize( cross( tri.v1.sub( tri.v0 ), tri.v2.sub( tri.v0 ) ) ) ).toVar();
+					const areaPdf = emitterAreaPdf( material.emissive.mul( material.emissiveIntensity ), emissiveTotalPower ).toVar();
+					const emissionPdf = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						areaPdf.mul( float( 1.0 ).sub( bdpt.sunPick ) ).mul( emitterSideProbability( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), cosToward ) )
+							.mul( abs( cosToward ) ).div( Math.PI ),
+						float( 0.0 ) );
+					const neePdfA = float( 0.0 ).toVar();
+					if ( useEmissiveNEE ) If( enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) )
+						.and( cosToward.greaterThan( 0.0 ) ).and( areaPdf.greaterThan( 0.0 ) ), () => {
+
+						neePdfA.assign( emissiveNEEPdf( int( hitTriIdx ), misDist, direction, origin.sub( direction.mul( misT ) ), hitInstance )
+							.mul( cosToward ).div( misDist.mul( misDist ) ) );
+
+					} );
+					emissiveMISWeight.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
+						misWeight( float( 0.0 ), mis( neePdfA ).mul( subpath.dVCM ).add( mis( emissionPdf ).mul( subpath.dVC ) ) ) ) );
+
+				} );
+
+			} else if ( useEmissiveNEE ) {
 
 				If( enableEmissiveTriangleSampling.equal( int( 1 ) )
 					.and( emissiveTriangleCount.greaterThan( int( 0 ) ) )
@@ -1133,6 +1286,13 @@ export function buildShadeKernel( params ) {
 
 		} );
 
+		if ( bdpt ) If( flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) ), () => {
+
+			terminatePath();
+			Return();
+
+		} );
+
 		// BRDF sample (needed by both direct + indirect)
 		const V = direction.negate().toVar();
 		// face-forwarded geometric normal: horizon guard for NEE and the bounce continuation
@@ -1164,7 +1324,7 @@ export function buildShadeKernel( params ) {
 		// ─── DDFA opaque aux decision: commit at the first diffuse-enough surface, defer through smooth
 		// mirror/metal so the guide describes what the mirror reflects, not the mirror itself. N is already
 		// viewer-facing (two-sided flip above); depth read back + re-packed (idempotent snorm — no drift). ───
-		If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 			If( auxCommit, () => {
@@ -1245,7 +1405,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const directLight = DirectLightingDual.wrap( calculateDirectLightingUnified(
+		const directLighting = () => DirectLightingDual.wrap( calculateDirectLightingUnified(
 			hitPoint, N, NgeoFF, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
@@ -1261,8 +1421,15 @@ export function buildShadeKernel( params ) {
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
-			hasSun, sunDirection, sunRadiance, sunParams,
-		) ).shadowed.toVar();
+			// Bidirectional mode samples the sun itself, below.
+			bdpt ? int( 0 ) : hasSun, sunDirection, sunRadiance, sunParams,
+		) ).shadowed;
+		const directLight = bdpt ? vec3( 0.0 ).toVar() : directLighting().toVar();
+		if ( bdpt ) If( isLight.not(), () => {
+
+			directLight.assign( directLighting() );
+
+		} );
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
 		// Per-term firefly suppression (megakernel parity: PathTracerCore.js:1164) — wrap the direct-light add
@@ -1278,8 +1445,144 @@ export function buildShadeKernel( params ) {
 			currentRadiance.w
 		) );
 
+		// Georgiev (44)-(45). Glass blocks the shadow ray: light through it arrives on the light subpaths.
+		const bidirectionalEmissiveNEE = () => {
+
+			const position = vec3( 0.0 ).toVar();
+			const lightDir = vec3( 0.0 ).toVar();
+			const emission = vec3( 0.0 ).toVar();
+			const lightPdf = float( 0.0 ).toVar();
+			const valid = tslBool( false ).toVar();
+			const lightTriangle = int( 0 ).toVar();
+			const windingN = vec3( 0.0 ).toVar();
+			const take = ( sample ) => {
+
+				const e = EmissiveSampleIndexed.wrap( sample );
+				position.assign( e.position );
+				lightDir.assign( e.direction );
+				emission.assign( e.emission );
+				lightPdf.assign( e.pdf );
+				valid.assign( e.valid );
+				lightTriangle.assign( e.triangleIndex );
+				windingN.assign( e.faceNormal );
+
+			};
+
+			If( lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
+
+				take( sampleLightBVHTriangleIndexed(
+					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
+					lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer,
+				) );
+
+			} ).Else( () => {
+
+				take( sampleEmissiveTriangleIndexed(
+					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
+					lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer,
+				) );
+
+			} );
+
+			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
+			const side = triangleSide( triangleRow( triangleBuffer, lightTriangle, 4 ).z ).toVar();
+			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) )
+				.and( sideAccepts( side, dot( lightDir, windingN ) ) ), () => {
+
+				const rayOrigin = lightShadowOrigin( lightDir ).toVar();
+				const toSample = position.sub( rayOrigin ).toVar();
+				const shadowDist = length( toSample ).toVar();
+				const visibility = traceShadowRayRefractiveOpaque(
+					rayOrigin, toSample.div( shadowDist ), shadowDist.mul( SHADOW_END ),
+					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				).toVar();
+
+				If( visibility.greaterThan( 0.0 ), () => {
+
+					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
+					const forward = calculateMaterialPDF( V, lightDir, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					// Emission density over NEE's, both seen from here; the light's cosine cancels.
+					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						emitterAreaPdf( emission, emissiveTotalPower, float( 1.0 ).sub( bdpt.sunPick ) )
+							.mul( emitterSideProbability( side, dot( lightDir.negate(), windingN ) ) )
+							.mul( abs( dot( lightDir, exactFacetN ) ) ).div( lightPdf.mul( Math.PI ) ),
+						float( 0.0 ) );
+					const wLight = mis( forward.div( lightPdf ) );
+					const wCamera = misPartial( emissionOverDirect, subpath, reverse );
+
+					currentRadiance.assign( vec4(
+						currentRadiance.xyz.add(
+							regularizePathContribution(
+								emission.mul( brdfVal ).mul( NoL ).div( lightPdf ).mul( visibility ).mul( emissiveBoost )
+									.mul( strategyWeight( bdpt.strategyView, STRATEGY.NEE, misWeight( wLight, wCamera ) ) ).mul( throughput ).mul( giScale ),
+								float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+							),
+						),
+						currentRadiance.w,
+					) );
+
+				} );
+
+			} );
+
+		};
+
+		// Georgiev (44)-(45) for the sun; as for emitters, glass blocks the shadow ray.
+		const bidirectionalSunNEE = () => {
+
+			const lightDir = sampleSunDisc( sunDirection, sunParams, getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 9 ) ), rngState, resolution, frame ) ).toVar();
+			const radiance = sunRadianceToward( lightDir, sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ).toVar();
+			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
+			If( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+
+				const visibility = traceShadowRayRefractiveOpaque(
+					lightShadowOrigin( lightDir ), lightDir, float( 1e20 ),
+					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				).toVar();
+
+				If( visibility.greaterThan( 0.0 ), () => {
+
+					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
+					const forward = calculateMaterialPDF( V, lightDir, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						sunEmissionPdf( bdpt, sunParams ).mul( sunParams.y ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
+					const weight = misWeight( mis( forward.mul( sunParams.y ) ), misPartial( emissionOverDirect, subpath, reverse ) );
+
+					currentRadiance.assign( vec4(
+						currentRadiance.xyz.add(
+							regularizePathContribution(
+								radiance.mul( brdfVal ).mul( NoL ).mul( sunParams.y ).mul( visibility )
+									.mul( strategyWeight( bdpt.strategyView, STRATEGY.NEE, weight ) ).mul( throughput ).mul( giScale ),
+								float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+							),
+						),
+						currentRadiance.w,
+					) );
+
+				} );
+
+			} );
+
+		};
+
+		if ( bdpt ) If( isLight.not().and( hasSun.greaterThan( int( 0 ) ) ).and( enableEnvironmentLight ), () => {
+
+			bidirectionalSunNEE();
+
+		} );
+
 		// emissive triangle NEE: light-BVH fast path when available, flat-CDF fallback otherwise
-		if ( useEmissiveNEE ) {
+		if ( useEmissiveNEE && bdpt ) {
+
+			If( isLight.not().and( enableEmissiveTriangleSampling.equal( int( 1 ) ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ), () => {
+
+				bidirectionalEmissiveNEE();
+
+			} );
+
+		} else if ( useEmissiveNEE ) {
 
 			If(
 				enableEmissiveTriangleSampling.equal( int( 1 ) )
@@ -1389,6 +1692,40 @@ export function buildShadeKernel( params ) {
 		// per-term (env / emissive-hit / direct-light / emissive-NEE), matching the megakernel which never
 		// re-suppresses the running radiance.
 
+		if ( bdpt ) {
+
+			// Light from below the shading normal: a camera path neither samples it nor lets NEE take it.
+			If( isLight.and( dot( V, N ).lessThanEqual( 0.0 ) ), () => {
+
+				terminatePath();
+				Return();
+
+			} );
+
+			If( isLight, () => {
+
+				// The path's vertex count rides in its first slot.
+				const first = rayID.mul( bdpt.slotsPerPath ).toVar();
+				writeVertexRecord( hitBufferRW, cachedVertex( first.add( uint( cameraDepth ) ) ), {
+					position: hitPoint, tag: uint( 0 ), throughput: throughput.mul( readLightOrigin( hitBufferRW, rayID ).scale ),
+					V, N, facetN: exactFacetN, materialIndex: hitMatIdx, uv: samplingUV, dVCM: subpath.dVCM, dVC: subpath.dVC,
+					// 1: a camera on this side would cull the face, so light tracing must not show it.
+					extra: select( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), dot( direction, hitNormal ) ), uint( 0 ), uint( 1 ) ),
+				} );
+				writeLightPathLength( hitBufferRW, cachedVertex( first ), bdpt.lightTag, uint( cameraDepth ).add( uint( 1 ) ) );
+
+			} ).ElseIf( bdpt.lightPaths.greaterThan( uint( 0 ) ).and( cameraDepth.lessThan( maxBounceCount ) ), () => {
+
+				// For ConnectKernel; a light vertex must still fit in the bounce budget.
+				writeVertexRecord( hitBufferRW, pendingVertex( rayID ), {
+					position: hitPoint, tag: bdpt.passTag, throughput,
+					V, N, facetN: exactFacetN, materialIndex: hitMatIdx, uv: samplingUV, dVCM: subpath.dVCM, dVC: subpath.dVC, extra: uint( cameraDepth ),
+				} );
+
+			} );
+
+		}
+
 		const indirectResult = IndirectLightingResult.wrap( calculateIndirectLighting(
 			N, material,
 			brdfDir, brdfPdf, brdfValue,
@@ -1410,7 +1747,35 @@ export function buildShadeKernel( params ) {
 		} );
 		// combinedPdf is stored as next bounce's prevBouncePdf for NEE↔implicit-env MIS
 		const bouncePdf = max( indirectResult.combinedPdf, 0.001 ).toVar();
-		throughput.mulAssign( indirectResult.throughput );
+		const specularScatter = bdpt ? brdfIsTransmission.or( brdfPdf.greaterThanEqual( DELTA_PDF * 0.5 ) ).toVar() : null;
+		if ( bdpt ) {
+
+			If( isLight, () => {
+
+				// Light flows V → bounceDir; the BSDF is not reciprocal. Shading-normal correction: Veach 5.3.2.
+				const correction = lightEndCosine( V, N, exactFacetN, bounceDir ).div( max( abs( dot( bounceDir, N ) ), 1e-4 ) ).toVar();
+				If( specularScatter.or( brdfPdf.greaterThan( 0.0 ).not() ), () => {
+
+					throughput.mulAssign( indirectResult.throughput.mul( correction ) );
+
+				} ).Else( () => {
+
+					throughput.mulAssign( evaluateMaterialResponse( bounceDir, V, N, material )
+						.mul( max( dot( N, bounceDir ), 0.0 ) ).div( max( brdfPdf, MIN_PDF ) ).mul( correction ) );
+
+				} );
+
+			} ).Else( () => {
+
+				throughput.mulAssign( indirectResult.throughput );
+
+			} );
+
+		} else {
+
+			throughput.mulAssign( indirectResult.throughput );
+
+		}
 
 		// Adaptive Russian roulette (gap #7) — material-importance + throughput + env-direction aware, replacing
 		// the flat clamp(maxThroughput,0.05,0.95). depth = bounceIndex (path length, per gap #4); rayDirection =
@@ -1434,10 +1799,40 @@ export function buildShadeKernel( params ) {
 		If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
 
 			commitDeferredAux( N );
-			terminatePath();
-			Return();
+			if ( bdpt ) {
+
+				// One segment more, for the emitter it may hit: every strategy then reaches the longest paths.
+				If( isLight, () => {
+
+					terminatePath();
+					Return();
+
+				} );
+				flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
+
+			} else {
+
+				terminatePath();
+				Return();
+
+			}
 
 		} );
+
+		if ( bdpt ) {
+
+			const cosOut = abs( dot( bounceDir, exactFacetN ) );
+			If( specularScatter, () => {
+
+				misOnSpecular( subpath, cosOut );
+
+			} ).Else( () => {
+
+				misOnScatter( subpath, cosOut, calculateMaterialPDF( V, bounceDir, N, material ), calculateMaterialPDF( bounceDir, V, N, material ) );
+
+			} );
+
+		}
 
 		const underFacet = dot( facetN, bounceDir ).lessThan( 0.0 ).toVar();
 		const newOrigin = offsetRayOrigin( hitPoint, select( underFacet, facetN.negate(), facetN ) );
@@ -1456,12 +1851,12 @@ export function buildShadeKernel( params ) {
 		writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 		writeMediumStack( rayBufferRW, rayID, uint( mediumStackDepth ), uint( transTraversals ), mediumStack_ior_1, mediumStack_ior_2, mediumStack_ior_3, uint( pathWavelength.add( 0.5 ) ) );
 		// DDFA: persist the (possibly mirror-tinted) see-through throughput for the next bounce.
-		If( auxOn.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 
 		} );
-		writeRngState( hitBufferRW, rayID, rngState );
+		persistRng();
 
 	} );
 

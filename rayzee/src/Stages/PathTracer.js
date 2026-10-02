@@ -5,9 +5,12 @@
  */
 
 import { uniform, texture, storage } from 'three/tsl';
+import { Vector3 } from 'three';
 import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
-import { PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute } from '../Processor/PackedRayBuffer.js';
+import {
+	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute,
+} from '../Processor/PackedRayBuffer.js';
 import { QueueManager, COUNTER, ENERGY_SCALE } from '../Processor/QueueManager.js';
 import { VRAMTracker } from '../Processor/VRAMTracker.js';
 import { KernelManager } from '../Processor/KernelManager.js';
@@ -17,13 +20,19 @@ import { buildShadeKernel, SHADE_WG_SIZE } from '../TSL/ShadeKernel.js';
 import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from '../TSL/CompactKernel.js';
 import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../TSL/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
+import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../TSL/LightGenerateKernel.js';
+import { buildConnectKernel, CONNECT_WG_SIZE } from '../TSL/ConnectKernel.js';
+import {
+	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
+} from '../TSL/LightSplatKernel.js';
+import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE } from '../TSL/Bidirectional.js';
 import { setMaterialBucketTextures, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
 import { setShadowAlbedoMaps } from '../TSL/LightsDirect.js';
 import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
 } from '../TSL/SortGlobalKernels.js';
-import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE, CAMERA_PROJECTION_IDS, BVH_MAX_INDEX } from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { deviceMemoryGB } from '../Processor/HostMemory.js';
 import {
@@ -37,7 +46,11 @@ const LIST_WG_SIZE = 256;
 
 // Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
 // (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
-const BOUNCE_KERNELS = [ 'extend', 'shade', 'globalHist', 'globalScatter', 'compact', 'compactCopyback' ];
+const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
+
+// Light vertex cache for the bidirectional integrator, at most this much of the hit buffer.
+const LIGHT_CACHE_BYTES = 256 * 1024 * 1024;
+const LIGHT_TAG_MAX = ( 1 << 24 ) - 1;
 
 export class PathTracer extends PathTracerStage {
 
@@ -142,6 +155,32 @@ export class PathTracer extends PathTracerStage {
 		this._chunkRows = 0; // rows per chunk = floor(B / renderWidth), clamped ≥1
 		this._numChunks = 1; // ceil(renderHeight / chunkRows)
 
+		// Bidirectional integrator (setIntegrator). Off builds exactly the unidirectional kernels.
+		this._bidirectionalEnabled = false;
+		this._lightCacheSlots = 0;
+		this._splatAttr = null;
+		this._lightTag = 0;
+		this._passTag = 0;
+		this._lastLightBounceCounts = null;
+		this._lastLightBounceEnergy = null;
+		this._lastLightCurveKey = null;
+		this._lightCurveKey = null;
+		this._bidirectional = {
+			lightPaths: uniform( 0, 'uint' ),
+			slotsPerPath: uniform( 1, 'uint' ),
+			lightTag: uniform( 1, 'uint' ),
+			passTag: uniform( 0, 'uint' ),
+			lightTrace: uniform( 0, 'uint' ),
+			strategyView: uniform( 0, 'uint' ),
+			pixelArea: uniform( 1, 'float' ),
+			cameraPosition: uniform( new Vector3(), 'vec3' ),
+			cameraForward: uniform( new Vector3( 0, 0, - 1 ), 'vec3' ),
+			sunPick: uniform( 0, 'float' ),
+			sceneCenter: uniform( new Vector3(), 'vec3' ),
+			sceneRadius: uniform( 1, 'float' ),
+		};
+		this._u32Views = new WeakMap();
+
 		// VRAM accounting — providers are thunks reading CURRENT live resources,
 		// so they survive buffer/texture reallocation (resize, scene/material reload).
 		this.vramTracker = new VRAMTracker( this.renderer );
@@ -162,6 +201,9 @@ export class PathTracer extends PathTracerStage {
 			return a ? [ a.ray, a.rng, a.hit ] : null;
 
 		} );
+
+		// Light tracing's splat image (the light vertex cache rides in the hit buffer, under 'rays')
+		t.register( 'bidirectional', () => ( this._splatAttr ? [ this._splatAttr ] : null ) );
 
 		// Queue indices + atomic counters
 		t.register( 'queues', () => {
@@ -233,6 +275,45 @@ export class PathTracer extends PathTracerStage {
 			this._buildWavefrontKernels();
 
 		}
+
+	}
+
+	/**
+	 * Switching rebuilds the kernels: only the bidirectional ones bind the light vertex cache and splat image.
+	 * @param {'path'|'bidirectional'} name
+	 */
+	setIntegrator( name ) {
+
+		const enabled = name === 'bidirectional';
+		if ( enabled === this._bidirectionalEnabled ) return;
+		this._bidirectionalEnabled = enabled;
+		this._pathBudget = 0;
+		this._lastLightCurveKey = null;
+
+		if ( this._packedBuffers && this.materialData?.materialCount > 0 ) {
+
+			if ( this._kernelManager ) this._kernelManager.dispose();
+			this._wavefrontReady = false;
+			this._buildWavefrontKernels();
+
+		}
+
+	}
+
+	/**
+	 * Verification only: keep one bidirectional strategy, MIS-weighted, or alone at full weight.
+	 * @param {'all'|'hit'|'nee'|'connect'|'lightTrace'} strategy
+	 */
+	setBidirectionalStrategy( strategy = 'all', { alone = false } = {} ) {
+
+		const code = { all: STRATEGY.ALL, hit: STRATEGY.HIT, nee: STRATEGY.NEE, connect: STRATEGY.CONNECT, lightTrace: STRATEGY.LIGHT_TRACE }[ strategy ] ?? STRATEGY.ALL;
+		this._bidirectional.strategyView.value = code === STRATEGY.ALL ? code : code + ( alone ? STRATEGY_ALONE : 0 );
+
+	}
+
+	get integrator() {
+
+		return this._bidirectionalEnabled ? 'bidirectional' : 'path';
 
 	}
 
@@ -390,6 +471,11 @@ export class PathTracer extends PathTracerStage {
 				: Math.min( this._lastBounceCountsBudget, this._lastBounceCountsLoopBound ) )
 			: 0;
 
+		// Light subpaths first, through the same pool; every camera chunk then connects to them.
+		const bidirectional = this._bidirectionalEnabled && this._updateBidirectionalUniforms();
+		const lightTraced = bidirectional && this._bidirectional.lightTrace.value > 0;
+		if ( bidirectional ) this._traceLightPaths( loopBound );
+
 		// Blender-style row-band streaming: the fixed-budget path pool processes the image in bands of ≤ chunkRows
 		// rows (one chunk when the frame fits the budget → identical to the pre-chunking path). See spec.
 		for ( let chunkIndex = 0, rowBase = 0; rowBase < frameHeight; rowBase += chunkRows, chunkIndex ++ ) {
@@ -492,7 +578,9 @@ export class PathTracer extends PathTracerStage {
 
 				}
 
+				if ( bidirectional ) this._bidirectional.passTag.value = this._nextPassTag();
 				km.dispatch( 'shade' ); // shade thread 0 folds resetActiveCounter (zeroes ACTIVE_RAY_COUNT before compact)
+				if ( bidirectional ) km.dispatch( 'connect' );
 				km.dispatch( 'compact' );
 				if ( useFunctionalCompaction ) {
 
@@ -521,6 +609,7 @@ export class PathTracer extends PathTracerStage {
 
 			}
 
+			if ( lightTraced ) km.dispatch( 'splatResolve' );
 			km.dispatch( 'finalWrite' );
 
 		}
@@ -544,6 +633,192 @@ export class PathTracer extends PathTracerStage {
 		if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
 		this.performanceMonitor?.end();
+
+	}
+
+	// False when there is no emissive triangle and no sun to start a light path on.
+	_updateBidirectionalUniforms() {
+
+		const bd = this._bidirectional;
+		const w = this._wfRenderWidth.value;
+		const h = this._wfRenderHeight.value;
+		const slots = this.maxBounces.value + 1;
+		const emitterFlux = this.emissiveTriangleCount.value > 0 ? Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value : 0;
+		const sunFlux = this._sunFlux();
+		bd.sunPick.value = sunFlux > 0 ? sunFlux / ( sunFlux + emitterFlux ) : 0;
+		const paths = emitterFlux > 0 || sunFlux > 0
+			? Math.min( w * h, this._packedBuffers.capacity, Math.floor( this._lightCacheSlots / slots ) )
+			: 0;
+
+		bd.lightPaths.value = paths;
+		bd.slotsPerPath.value = slots;
+		this._lightCurveKey = `${paths}:${slots}:${this._bounceLoopBound()}`;
+		if ( paths === 0 ) {
+
+			bd.lightTrace.value = 0;
+			return false;
+
+		}
+
+		this._lightTag = this._lightTag % LIGHT_TAG_MAX + 1;
+		bd.lightTag.value = this._lightTag;
+
+		const world = this.cameraWorldMatrix.value.elements;
+		bd.cameraPosition.value.set( world[ 12 ], world[ 13 ], world[ 14 ] );
+		bd.cameraForward.value.set( - world[ 8 ], - world[ 9 ], - world[ 10 ] ).normalize();
+		const projection = this.cameraProjectionMatrix.value.elements;
+		bd.pixelArea.value = 4 / ( projection[ 0 ] * projection[ 5 ] * w * h );
+		// Light tracing needs a pinhole camera.
+		const pinhole = this.cameraProjection.value === CAMERA_PROJECTION_IDS.perspective && ! this.enableDOF.value;
+		bd.lightTrace.value = pinhole ? 1 : 0;
+		return true;
+
+	}
+
+	// What the sun sends through the scene's bounding disc (luminance), or 0 when it lights nothing.
+	_sunFlux() {
+
+		const bd = this._bidirectional;
+		const bounds = this.hasSun.value > 0 && this.enableEnvironment.value > 0 ? this._visibleSceneBounds() : null;
+		if ( ! bounds ) return 0;
+
+		const [ x0, y0, z0 ] = bounds.min;
+		const [ x1, y1, z1 ] = bounds.max;
+		const radius = 0.5 * Math.hypot( x1 - x0, y1 - y0, z1 - z0 );
+		if ( ! ( radius > 0 && Number.isFinite( radius ) ) ) return 0;
+		bd.sceneCenter.value.set( ( x0 + x1 ) / 2, ( y0 + y1 ) / 2, ( z0 + z1 ) / 2 );
+		bd.sceneRadius.value = radius;
+
+		const { x: r, y: g, z: b } = this.sunRadiance.value;
+		const luminance = ( 0.2126 * r + 0.7152 * g + 0.0722 * b ) * this.environmentIntensity.value;
+		return Math.max( luminance, 0 ) * this.sunParams.value.y * Math.PI * radius * radius;
+
+	}
+
+	/**
+	 * The visible placements' world box, read from the TLAS as uploaded; hidden meshes are left out.
+	 * @returns {?{min: number[], max: number[]}}
+	 */
+	_visibleSceneBounds() {
+
+		const records = this._bvhRecords;
+		const flat = records ? null : this.bvhStorageAttr?.array;
+		if ( ! records && ! ( flat?.length >= 16 ) ) return null;
+
+		const view = ( f ) => {
+
+			let u = this._u32Views.get( f );
+			if ( ! u ) this._u32Views.set( f, u = new Uint32Array( f.buffer, f.byteOffset, f.length ) );
+			return u;
+
+		};
+
+		const node = ( i ) => {
+
+			const f = records ? records.chunkFor( i ) : flat;
+			return { f, u: view( f ), o: records ? records.baseOf( i ) : i * 16 };
+
+		};
+
+		const root = node( 0 );
+		if ( root.u[ root.o + 3 ] >= BVH_MAX_INDEX ) return null;
+
+		const min = [], max = [];
+		for ( let axis = 0; axis < 3; axis ++ ) for ( const sign of [ 1, - 1 ] ) {
+
+			// Inner node: [leftMin, left, leftMax, right, rightMin, -, rightMax, -]; a child no further out than the best visible leaf is skipped.
+			const score = ( n, child ) => sign > 0 ? n.f[ n.o + child * 8 + 4 + axis ] : - n.f[ n.o + child * 8 + axis ];
+			const childIndex = ( n, child ) => n.u[ n.o + 3 + child * 4 ];
+			let best = - Infinity;
+			const stack = [];
+			const push = ( n ) => {
+
+				const a = score( n, 0 ), b = score( n, 1 );
+				const first = a <= b ? 0 : 1;
+				stack.push( childIndex( n, first ), first === 0 ? a : b, childIndex( n, 1 - first ), first === 0 ? b : a );
+
+			};
+
+			push( root );
+			while ( stack.length ) {
+
+				const s = stack.pop(), index = stack.pop();
+				if ( s <= best ) continue;
+				const n = node( index );
+				if ( n.u[ n.o + 3 ] >= BVH_MAX_INDEX ) {
+
+					if ( n.f[ n.o + 2 ] !== 0 ) best = s;
+
+				} else push( n );
+
+			}
+
+			if ( best === - Infinity ) return null;
+			( sign > 0 ? max : min )[ axis ] = sign > 0 ? best : - best;
+
+		}
+
+		return { min, max };
+
+	}
+
+	_nextPassTag() {
+
+		this._passTag = ( this._passTag + 1 ) & 0x7FFFFFFF;
+		return ( PASS_TAG_BIT | this._passTag ) >>> 0;
+
+	}
+
+	// Sized and cut short off its own survivor curve, as the camera loop is.
+	_traceLightPaths( loopBound ) {
+
+		const km = this._kernelManager;
+		const paths = this._bidirectional.lightPaths.value;
+
+		this._wfChunkRowBase.value = 0;
+		this._wfMaxRayCount.value = paths;
+		km.setDispatchForCount( 'lightGenerate', paths );
+		km.dispatch( 'lightGenerate' );
+
+		const dynamic = this._useDynamicDispatch;
+		const curveValid = this._lastLightCurveKey === this._lightCurveKey;
+		const counts = curveValid ? this._lastLightBounceCounts : null;
+		const energy = curveValid ? this._lastLightBounceEnergy : null;
+		const exitEnergy = this._bounceEarlyExitThreshold >= 0 ? this._bounceEarlyExitThreshold * paths * ENERGY_SCALE : - 1;
+
+		for ( let bounce = 0; bounce <= loopBound; bounce ++ ) {
+
+			this._wfCurrentBounce.value = bounce;
+
+			const prev = bounce > 0 ? counts?.[ bounce - 1 ] : undefined;
+			const sized = dynamic && prev > 0 ? Math.min( paths, Math.ceil( prev * 1.5 ) + 1024 ) : paths;
+			for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, sized );
+			if ( ! dynamic ) km.dispatch( 'enterFull' );
+
+			km.dispatch( 'extend' );
+			if ( this._sortMaterials ) {
+
+				km.dispatch( 'resetGlobalHist' );
+				km.dispatch( 'globalHist' );
+				km.dispatch( 'globalPrefix' );
+				km.dispatch( 'globalScatter' );
+
+			}
+
+			km.dispatch( 'shade' );
+			km.dispatch( 'compact' );
+			km.dispatch( dynamic ? 'lightCopyback' : 'lightSnapshot' );
+
+			if ( exitEnergy >= 0 && bounce < loopBound && energy?.[ bounce ] !== undefined && energy[ bounce ] <= exitEnergy ) break;
+
+		}
+
+		if ( this._bidirectional.lightTrace.value > 0 ) {
+
+			km.setDispatchForCount( 'lightSplat', paths * this._bidirectional.slotsPerPath.value );
+			km.dispatch( 'lightSplat' );
+
+		}
 
 	}
 
@@ -888,7 +1163,8 @@ export class PathTracer extends PathTracerStage {
 
 	_bounceLoopBound() {
 
-		return this.maxBounces.value + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value;
+		// Bidirectional camera paths take one segment past their last bounce (ShadeKernel, EMISSION_ONLY).
+		return this.maxBounces.value + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value + ( this._bidirectionalEnabled ? 1 : 0 );
 
 	}
 
@@ -942,12 +1218,13 @@ export class PathTracer extends PathTracerStage {
 		const budget = this.maxBounces.value;
 		const measuredLoopBound = this._bounceLoopBound();
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
+		const lightKey = this._lightCurveKey;
 		this.renderer.getArrayBufferAsync( attr ).then( ( buf ) => {
 
 			// Drop counts measured at a now-stale generation (a resize or camera move happened mid-flight).
 			// A surviving readback was initiated while settled (init is skipped mid-motion) and no motion
 			// happened before it resolved, so its counts match the current view — safe to size from.
-			if ( gen === this._readbackGeneration ) this._applyBounceCounts( buf, budget, measuredLoopBound, n );
+			if ( gen === this._readbackGeneration ) this._applyBounceCounts( buf, budget, measuredLoopBound, n, lightKey );
 
 			this._readbackPending = false;
 
@@ -1004,6 +1281,7 @@ export class PathTracer extends PathTracerStage {
 		const loopBound = this._bounceLoopBound();
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
 		const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
+		const lightKey = this._lightCurveKey;
 
 		const entry = { due: this.frameCount + this._readbackEveryNFrames, read: null, apply: null };
 		entry.read = Promise.all( [
@@ -1014,7 +1292,7 @@ export class PathTracer extends PathTracerStage {
 			entry.apply = () => {
 
 				if ( gen !== this._readbackGeneration ) return;
-				this._applyBounceCounts( bounceBuf, budget, loopBound, n );
+				this._applyBounceCounts( bounceBuf, budget, loopBound, n, lightKey );
 				if ( total > 0 ) this._applyCounters( counterBuf, total );
 
 			};
@@ -1030,11 +1308,14 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	_applyBounceCounts( buf, budget, loopBound, n ) {
+	_applyBounceCounts( buf, budget, loopBound, n, lightKey = null ) {
 
 		const all = new Uint32Array( buf.slice( 0 ) );
 		this._lastBounceCounts = all.subarray( 0, n );
 		this._lastBounceEnergy = all.subarray( n, 2 * n );
+		this._lastLightBounceCounts = all.subarray( 2 * n, 3 * n );
+		this._lastLightBounceEnergy = all.subarray( 3 * n, 4 * n );
+		this._lastLightCurveKey = lightKey;
 		this._lastBounceCountsBudget = budget;
 		this._lastBounceCountsLoopBound = loopBound;
 		this._curveSizingValid = true;
@@ -1148,19 +1429,27 @@ export class PathTracer extends PathTracerStage {
 	// any resolution through this pool, so a small B just means more row-bands (works on weak / small-VRAM GPUs).
 	_computePathBudget() {
 
-		if ( this._pathBudgetOverride > 0 ) return this._pathBudgetOverride;
-
 		const RAY_BYTES = RAY_STRIDE * 16;
-		const bytesPerPath = RAY_STRIDE * 16 + HIT_STRIDE * 16 + 4 /* rng */ + GBUFFER_STRIDE * 16
+		const HIT_BYTES = ( this._bidirectionalEnabled ? HIT_STRIDE_BIDIRECTIONAL : HIT_STRIDE ) * 16;
+		const bytesPerPath = RAY_BYTES + HIT_BYTES + 4 /* rng */ + GBUFFER_STRIDE * 16
 			+ 4 + 4 /* activeIndices A/B */ + 4;
 
 		const limits = this.renderer?.backend?.device?.limits;
 		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
 		const maxBuffer = limits?.maxBufferSize || maxBinding;
-
-		const bByBinding = Math.floor( ( maxBinding * 0.9 ) / RAY_BYTES );
 		const deviceMemBytes = deviceMemoryGB( this.hostMemoryGB ).gb * 1024 * 1024 * 1024;
-		const poolVramBudget = Math.min( deviceMemBytes * 0.25, maxBuffer * 4 );
+
+		// The light vertex cache shares the hit buffer's binding with the paths.
+		const lightVertexBytes = LIGHT_VERTEX_STRIDE * 16;
+		const cacheBytes = this._bidirectionalEnabled
+			? Math.floor( Math.min( LIGHT_CACHE_BYTES, maxBinding * 0.45, deviceMemBytes * 0.05 ) / lightVertexBytes ) * lightVertexBytes
+			: 0;
+		this._lightCacheSlots = cacheBytes / lightVertexBytes;
+
+		if ( this._pathBudgetOverride > 0 ) return this._pathBudgetOverride;
+
+		const bByBinding = Math.floor( Math.min( ( maxBinding * 0.9 ) / RAY_BYTES, ( maxBinding * 0.9 - cacheBytes ) / HIT_BYTES ) );
+		const poolVramBudget = Math.min( deviceMemBytes * 0.25, maxBuffer * 4 ) - cacheBytes;
 		const bByVram = Math.floor( poolVramBudget / bytesPerPath );
 
 		const MIN_B = 512 * 512;
@@ -1242,13 +1531,14 @@ export class PathTracer extends PathTracerStage {
 
 		// Per-path buffers (RAY/HIT/rng) sized to the budget B and indexed by LOCAL slot r ∈ [0,B). _cap = B is
 		// baked into the SoA stride but never changes with resolution, so this build happens once (model load).
+		const lightVertices = this._bidirectionalEnabled ? this._lightCacheSlots : 0;
 		if ( ! this._packedBuffers ) {
 
-			this._packedBuffers = new PackedRayBuffer( B, this.renderer );
+			this._packedBuffers = new PackedRayBuffer( B, this.renderer, lightVertices );
 
 		} else {
 
-			this._packedBuffers.resize( B );
+			this._packedBuffers.resize( B, lightVertices );
 
 		}
 
@@ -1283,6 +1573,23 @@ export class PathTracer extends PathTracerStage {
 			// Tier-2: dilated frozen mask (1 = skip). buildActivePixels writes; active-list + FinalWrite read → race-free.
 			freeStorageAttribute( this.renderer, this._frozenMaskAttr );
 			this._frozenMaskAttr = gpuOnlyStorageAttribute( maxPixels, 1, Uint32Array );
+
+		}
+
+		// Light tracing's image: a u32 per channel per pixel, fixed point (LightSplatKernel).
+		if ( this._bidirectionalEnabled ) {
+
+			if ( ! this._splatAttr || this._splatAttr.count < maxPixels * 3 ) {
+
+				freeStorageAttribute( this.renderer, this._splatAttr );
+				this._splatAttr = gpuOnlyStorageAttribute( maxPixels * 3, 1, Uint32Array );
+
+			}
+
+		} else if ( this._splatAttr ) {
+
+			freeStorageAttribute( this.renderer, this._splatAttr );
+			this._splatAttr = null;
 
 		}
 
@@ -1404,6 +1711,7 @@ export class PathTracer extends PathTracerStage {
 			transmissiveBounces: this.transmissiveBounces,
 			transparentBackground: this.transparentBackground,
 			auxGBufferEnabled: this._auxGBufferUniform,
+			bidirectional: this._bidirectionalEnabled ? this._bidirectional : null,
 		};
 		const genFn = buildGenerateKernel( genParams );
 		this._kernelManager.register( 'generate',
@@ -1744,6 +2052,7 @@ export class PathTracer extends PathTracerStage {
 			sunDirection: this.sunDirection,
 			sunRadiance: this.sunRadiance,
 			sunParams: this.sunParams,
+			bidirectional: this._bidirectionalEnabled ? this._bidirectional : null,
 		} );
 		this._kernelManager.register( 'shade',
 			shadeFn().compute(
@@ -1811,6 +2120,128 @@ export class PathTracer extends PathTracerStage {
 		this._kernelManager.register( 'compactCopyback',
 			copyFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
+
+		if ( this._bidirectionalEnabled ) {
+
+			const bd = this._bidirectional;
+			const n = qm.MAX_BOUNCE_SNAPSHOTS;
+
+			// The light pass keeps its own survivor curve, after the camera's: [2n, 3n) counts, [3n, 4n) energy.
+			const recordLightCurve = ( active ) => {
+
+				const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( n - 1 ) );
+				bounceCountsBuf.element( slot.add( uint( 2 * n ) ) ).assign( active );
+				bounceCountsBuf.element( slot.add( uint( 3 * n ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
+				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+
+			};
+
+			this._kernelManager.register( 'lightSnapshot', Fn( () => {
+
+				recordLightCurve( atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) ) );
+
+			} )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] ) );
+
+			this._kernelManager.register( 'lightCopyback', Fn( () => {
+
+				const tid = instanceIndex;
+				const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
+				If( tid.equal( uint( 0 ) ), () => {
+
+					recordLightCurve( active );
+
+				} );
+				If( tid.greaterThanEqual( active ), () => {
+
+					Return();
+
+				} );
+				copyWriteA.element( tid ).assign( copyReadB.element( tid ) );
+
+			} )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] ) );
+
+			this._kernelManager.register( 'lightGenerate', buildLightGenerateKernel( {
+				rayBufferRW: pb.rayBuffer.rw,
+				hitBufferRW: pb.hitBuffer.rw,
+				activeIndicesRW: qm.activeIndices.a,
+				counters,
+				lightBuffer: freshLight,
+				triangleBuffer: freshTri,
+				bvhBuffer: freshBvh,
+				emissiveTriangleCount: this.emissiveTriangleCount,
+				emissiveVec4Offset: this.emissiveVec4Offset,
+				emissiveTotalPower: this.emissiveTotalPower,
+				emissiveBoost: this.emissiveBoost,
+				sunDirection: this.sunDirection,
+				sunRadiance: this.sunRadiance,
+				sunParams: this.sunParams,
+				environmentIntensity: this.environmentIntensity,
+				bidirectional: bd,
+				resolution: this.resolution,
+				frame: this.seedFrame,
+				transmissiveBounces: this.transmissiveBounces,
+			} )().compute( [ Math.ceil( maxRays / LIGHT_GENERATE_WG_SIZE ), 1, 1 ], [ LIGHT_GENERATE_WG_SIZE, 1, 1 ] ) );
+
+			this._kernelManager.register( 'connect', buildConnectKernel( {
+				rayBufferRW: pb.rayBuffer.rw,
+				hitBufferRO: pb.hitBuffer.ro,
+				activeIndicesRO: qm.getActiveReadRO(),
+				counters,
+				bvhBuffer: freshBvh,
+				triangleBuffer: freshTri,
+				materialBuffer: freshMat,
+				resolution: this.resolution,
+				frame: this.seedFrame,
+				accumFrame: this.frame,
+				currentBounce: this._wfCurrentBounce,
+				chunkRowBase: this._wfChunkRowBase,
+				lightPaths: bd.lightPaths,
+				slotsPerPath: bd.slotsPerPath,
+				lightTag: bd.lightTag,
+				passTag: bd.passTag,
+				strategyView: bd.strategyView,
+				maxBounceCount: this.maxBounces,
+				globalIlluminationIntensity: this.globalIlluminationIntensity,
+				fireflyThreshold: this.fireflyThreshold,
+			} )().compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
+
+			const splatBuffer = storage( this._splatAttr, 'uint' ).toAtomic();
+
+			this._kernelManager.register( 'lightSplat', buildLightSplatKernel( {
+				hitBufferRO: pb.hitBuffer.ro,
+				splatBuffer,
+				bvhBuffer: freshBvh,
+				triangleBuffer: freshTri,
+				materialBuffer: freshMat,
+				lightPaths: bd.lightPaths,
+				slotsPerPath: bd.slotsPerPath,
+				lightTag: bd.lightTag,
+				strategyView: bd.strategyView,
+				cameraPosition: bd.cameraPosition,
+				cameraForward: bd.cameraForward,
+				cameraViewMatrix: this.cameraViewMatrix,
+				cameraProjectionMatrix: this.cameraProjectionMatrix,
+				pixelArea: bd.pixelArea,
+				renderWidth: this._wfRenderWidth,
+				renderHeight: this._wfRenderHeight,
+				globalIlluminationIntensity: this.globalIlluminationIntensity,
+				fireflyThreshold: this.fireflyThreshold,
+				accumFrame: this.frame,
+				frame: this.seedFrame,
+			} )().compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
+
+			this._kernelManager.register( 'splatResolve', buildSplatResolveKernel( {
+				rayBufferRW: pb.rayBuffer.rw,
+				splatBuffer,
+				renderWidth: this._wfRenderWidth,
+				chunkRowBase: this._wfChunkRowBase,
+				chunkRows: this._wfChunkRows,
+			} )().compute(
+				[ Math.ceil( w / SPLAT_RESOLVE_WG_SIZE ), Math.ceil( this._chunkRows / SPLAT_RESOLVE_WG_SIZE ), 1 ],
+				[ SPLAT_RESOLVE_WG_SIZE, SPLAT_RESOLVE_WG_SIZE, 1 ]
+			) );
+
+		}
 
 		const fwFn = buildFinalWriteKernel( {
 			rayBufferRO: pb.rayBuffer.ro,
@@ -1909,6 +2340,7 @@ export class PathTracer extends PathTracerStage {
 			`${fmt.mb( bufferBytes )} wavefront buffers`,
 			`budget ${fmt.n( B )} paths`,
 			this._numChunks > 1 ? `${this._numChunks} chunks of ≤${this._chunkRows} rows` : null,
+			this._bidirectionalEnabled ? `bidirectional: ${fmt.n( this._lightCacheSlots )} light vertex slots` : null,
 		] ) );
 
 	}
@@ -1941,6 +2373,7 @@ export class PathTracer extends PathTracerStage {
 		const km = this._kernelManager;
 		km.setDispatchForGrid( 'generate', w, rows );
 		km.setDispatchForGrid( 'finalWrite', w, rows );
+		km.setDispatchForGrid( 'splatResolve', w, rows );
 		km.setDispatchForCount( 'initActiveIndices', chunkPixels );
 		km.setDispatchForCount( 'buildActivePixels', chunkPixels );
 
@@ -1958,6 +2391,8 @@ export class PathTracer extends PathTracerStage {
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
 		this._frozenMaskAttr?.dispose?.();
+		freeStorageAttribute( this.renderer, this._splatAttr );
+		this._splatAttr = null;
 		this._packedBuffers = null;
 		this._queueManager = null;
 		this._kernelManager = null;

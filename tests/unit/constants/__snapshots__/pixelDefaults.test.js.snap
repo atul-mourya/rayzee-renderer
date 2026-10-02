@@ -91,6 +91,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "groundProjectionHeight": 15,
   "groundProjectionLevel": 0,
   "groundProjectionRadius": 100,
+  "integrator": "path",
   "interactionModeEnabled": true,
   "interactionRenderScale": 0.5,
   "maxSamples": 60,

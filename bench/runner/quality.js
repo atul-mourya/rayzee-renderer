@@ -147,9 +147,12 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 		if ( bless && ( truth || ! await exists( truthPath ) ) ) {
 
 			log( `    ground truth @ ${scene.truthSpp} spp…` );
+			// A scene may take its truth from another estimator of the same image.
+			if ( scene.truthSettings ) await bench.setSettings( scene.truthSettings );
 			await bench.render( scene.truthSpp );
 			await writeDataURL( truthPath, await bench.capturePNG() );
 			nextProbes[ scene.id ] = { ...nextProbes[ scene.id ], truth: await bench.probes() };
+			if ( scene.truthSettings ) await bench.loadScene( scene.id );
 
 		}
 

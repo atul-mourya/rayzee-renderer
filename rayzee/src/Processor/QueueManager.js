@@ -52,6 +52,9 @@ export const RAY_FLAG = {
 	REDIRECTED: 1 << 18, // bit 18: ray has been redirected (refraction/reflection/SSS/opaque scatter) since the camera, so env it reaches is transported light (sharp), NOT the direct backdrop. NOT set by pure alpha/transparent passthrough (direction unchanged) → env through cutout holes is still the backdrop (blur/intensity/show/color/ground-projection). Set via bitOr only (positive mask) so it never disturbs ACTIVE/bounce bits.
 	SUN_NEE: 1 << 19, // bit 19: the last opaque scatter's sun NEE could have drawn this direction (MIS partner for a sun hit on miss)
 	UNDER_SURFACE: 1 << 20, // bit 20: the last opaque scatter left below its own facet (shading normal allowed it), so the ray culls back faces to leave that shell
+	LIGHT_PATH: 1 << 21, // bit 21: bidirectional light subpath (traced from an emitter, gathers nothing)
+	LIGHT_EMITTED: 1 << 22, // bit 22: light subpath not yet past its first interaction (its MIS start is still open)
+	EMISSION_ONLY: 1 << 23, // bit 23: bidirectional camera ray past its last bounce, traced only for the emitter it hits
 };
 
 export class QueueManager {
@@ -90,10 +93,11 @@ export class QueueManager {
 		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( COUNTER.COUNT ), 1 );
 		this.counters = storage( this._countersAttr, 'uint' ).toAtomic();
 
-		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY
+		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY,
+		// then the same pair for the bidirectional light pass
 		this.MAX_BOUNCE_SNAPSHOTS = 32;
 		this._bounceCountsAttr = new StorageInstancedBufferAttribute(
-			new Uint32Array( 2 * this.MAX_BOUNCE_SNAPSHOTS ), 1,
+			new Uint32Array( 4 * this.MAX_BOUNCE_SNAPSHOTS ), 1,
 		);
 		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
 

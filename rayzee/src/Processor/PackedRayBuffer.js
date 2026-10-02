@@ -44,11 +44,19 @@ export const HIT = {
 	NORMAL_MAT: 1, // uvec4(octNormal, matIndex, instanceLeaf + 1, 0)
 	// The path's RNG state, here rather than in a buffer of its own: Shade was at the device's
 	// 10 storage buffers, and the second triangle buffer needed the slot. Extend never writes it.
-	RNG: 2, // uvec4(rngState, 0, 0, 0)
+	// Bidirectional mode keeps the path's MIS partial sums in .y/.z.
+	RNG: 2, // uvec4(rngState, bits(dVCM), bits(dVC), 0)
+	// Bidirectional only: a camera vertex awaiting its connection, or a light path's emission.
+	VERTEX: 3, // 4 slots, a vertex record (see writeVertexRecord)
 };
+
+// Bidirectional: the light vertex cache follows the path regions — Shade has no binding left.
+export const HIT_STRIDE_BIDIRECTIONAL = HIT_STRIDE + 4;
+export const LIGHT_VERTEX_STRIDE = 4;
 
 // SoA region stride, baked into the shader graph at build time; single instance, rebuilt on resize.
 let _cap = 0;
+let _lightVertexBase = 0;
 
 const soa = ( id, slot ) => ( slot === 0 ? id : id.add( slot * _cap ) );
 
@@ -68,9 +76,10 @@ export class PackedRayBuffer {
 	// image resolution and fixed for the device — the image is streamed through the pool in row bands
 	// (see docs/internal/specs/wavefront-chunked-pool.md), so the SoA stride _cap never changes with
 	// resolution and the wavefront kernels are built once (no resize-triggered WGSL regen).
-	constructor( capacity = 0, renderer = null ) {
+	constructor( capacity = 0, renderer = null, lightVertices = 0 ) {
 
 		this.capacity = 0;
+		this.lightVertices = 0;
 		this._renderer = renderer;
 		this._attrs = {};
 
@@ -78,16 +87,23 @@ export class PackedRayBuffer {
 		this.rayBuffer = null;
 		this.hitBuffer = null;
 
-		if ( capacity > 0 ) this.allocate( capacity );
+		if ( capacity > 0 ) this.allocate( capacity, lightVertices );
 
 	}
 
-	allocate( capacity ) {
+	/**
+	 * @param {number} capacity - paths in flight
+	 * @param {number} [lightVertices] - light vertex cache slots; non-zero selects the bidirectional layout
+	 */
+	allocate( capacity, lightVertices = 0 ) {
 
 		this.dispose();
 
 		this.capacity = capacity;
+		this.lightVertices = lightVertices;
 		_cap = capacity;
+		const hitSlots = lightVertices > 0 ? HIT_STRIDE_BIDIRECTIONAL : HIT_STRIDE;
+		_lightVertexBase = capacity * hitSlots;
 
 		// count=0 so StorageBufferNode.getHash() shares the buffer → RW and RO nodes bind the same GPU data.
 		const rayCount = capacity * RAY_STRIDE;
@@ -98,7 +114,7 @@ export class PackedRayBuffer {
 			ro: storage( rayAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const hitCount = capacity * HIT_STRIDE;
+		const hitCount = capacity * hitSlots + lightVertices * LIGHT_VERTEX_STRIDE;
 		const hitAttr = gpuOnlyStorageAttribute( hitCount, 4, Uint32Array );
 		this._attrs.hit = hitAttr;
 		this.hitBuffer = {
@@ -115,11 +131,11 @@ export class PackedRayBuffer {
 
 	}
 
-	// Reallocates only if a larger budget capacity is requested; returns true if it did.
-	resize( capacity ) {
+	// Reallocates if a larger budget or a different light vertex cache is requested; returns true if it did.
+	resize( capacity, lightVertices = 0 ) {
 
-		if ( capacity <= this.capacity && this.capacity > 0 ) return false;
-		this.allocate( capacity );
+		if ( capacity <= this.capacity && this.capacity > 0 && lightVertices === this.lightVertices ) return false;
+		this.allocate( capacity, lightVertices );
 		return true;
 
 	}
@@ -132,6 +148,7 @@ export class PackedRayBuffer {
 		this.rayBuffer = null;
 		this.hitBuffer = null;
 		this.capacity = 0;
+		this.lightVertices = 0;
 
 	}
 
@@ -281,6 +298,92 @@ export const readHitFacet = ( buf, id ) =>
 export const readRngState = ( buf, id ) => buf.element( soa( id, HIT.RNG ) ).x;
 
 export const writeRngState = ( buf, id, state ) => buf.element( soa( id, HIT.RNG ) ).assign( uvec4( state, 0, 0, 0 ) );
+
+/** The subpath's MIS partial sums (Georgiev 2012, "Implementing Vertex Connection and Merging"). */
+export const readMisState = ( buf, id ) => {
+
+	const v = buf.element( soa( id, HIT.RNG ) );
+	return { dVCM: uintBitsToFloat( v.y ), dVC: uintBitsToFloat( v.z ) };
+
+};
+
+export const writeRngMis = ( buf, id, state, dVCM, dVC ) =>
+	buf.element( soa( id, HIT.RNG ) ).assign( uvec4( state, floatBitsToUint( dVCM ), floatBitsToUint( dVC ), uint( 0 ) ) );
+
+// A vertex record is four uvec4s:
+//   0  bits(position.xyz), tag
+//   1  bits(throughput.xyz), oct(V) — V points back along the subpath it was reached by
+//   2  oct(N), oct(facet normal), material index, bits(uv.x) — both normals on V's side
+//   3  bits(uv.y), bits(dVCM), bits(dVC), extra
+// `at( k )` addresses quad k, in a path's VERTEX slots or in the cache.
+export const pendingVertex = ( id ) => ( k ) => soa( id, HIT.VERTEX + k );
+export const cachedVertex = ( slot ) => ( k ) => uint( slot ).mul( LIGHT_VERTEX_STRIDE ).add( _lightVertexBase + k );
+
+export const writeVertexRecord = ( buf, at, v ) => {
+
+	buf.element( at( 0 ) ).assign( uvec4( floatBitsToUint( v.position ), v.tag ) );
+	buf.element( at( 1 ) ).assign( uvec4( floatBitsToUint( v.throughput ), packNormalOct( v.V ) ) );
+	buf.element( at( 2 ) ).assign( uvec4( packNormalOct( v.N ), packNormalOct( v.facetN ), uint( v.materialIndex ), floatBitsToUint( v.uv.x ) ) );
+	buf.element( at( 3 ) ).assign( uvec4( floatBitsToUint( v.uv.y ), floatBitsToUint( v.dVCM ), floatBitsToUint( v.dVC ), uint( v.extra ) ) );
+
+};
+
+export const readVertexTag = ( buf, at ) => buf.element( at( 0 ) ).w;
+
+export const readVertexRecord = ( buf, at ) => {
+
+	const q0 = buf.element( at( 0 ) ).toVar();
+	const q1 = buf.element( at( 1 ) ).toVar();
+	const q2 = buf.element( at( 2 ) ).toVar();
+	const q3 = buf.element( at( 3 ) ).toVar();
+	return {
+		position: uintBitsToFloat( q0.xyz ),
+		tag: q0.w,
+		throughput: uintBitsToFloat( q1.xyz ),
+		V: unpackTriangleNormal( q1.w ),
+		N: unpackTriangleNormal( q2.x ),
+		facetN: unpackTriangleNormal( q2.y ),
+		materialIndex: q2.z,
+		uv: vec2( uintBitsToFloat( q2.w ), uintBitsToFloat( q3.x ) ),
+		dVCM: uintBitsToFloat( q3.y ),
+		dVC: uintBitsToFloat( q3.z ),
+		extra: q3.w,
+	};
+
+};
+
+// A light path's vertex count, in its first slot's tag lane, stamped with the frame's tag.
+export const readLightPathLength = ( buf, at, frameTag ) => {
+
+	const word = buf.element( at( 0 ) ).w;
+	return select( word.shiftRight( uint( 8 ) ).equal( frameTag ), word.bitAnd( uint( 0xFF ) ), uint( 0 ) );
+
+};
+
+export const writeLightPathLength = ( buf, at, frameTag, length ) => {
+
+	const keep = buf.element( at( 0 ) ).xyz.toVar();
+	buf.element( at( 0 ) ).assign( uvec4( keep, frameTag.shiftLeft( uint( 8 ) ).bitOr( uint( length ) ) ) );
+
+};
+
+/** A light path's point of emission, held in its VERTEX slot until the first hit settles its MIS. */
+export const writeLightOrigin = ( buf, id, triangle, instanceLeaf, cosLight, scale ) =>
+	buf.element( soa( id, HIT.VERTEX ) ).assign( uvec4(
+		uint( triangle ), uint( int( instanceLeaf ).add( int( 1 ) ) ), floatBitsToUint( cosLight ), floatBitsToUint( scale ),
+	) );
+
+export const readLightOrigin = ( buf, id ) => {
+
+	const v = buf.element( soa( id, HIT.VERTEX ) ).toVar();
+	return {
+		triangle: int( v.x ),
+		instanceLeaf: int( v.y ).sub( int( 1 ) ),
+		cosLight: uintBitsToFloat( v.z ),
+		scale: uintBitsToFloat( v.w ),
+	};
+
+};
 
 export const writeHitPacked = ( buf, id, distance, triIndex, baryU, baryV, normal, matIndex, instanceLeaf, facet = uint( 0 ) ) => {
 

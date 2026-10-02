@@ -801,6 +801,13 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
+	handleIntegratorChange: val => {
+
+		set( { integrator: val } );
+		getApp()?.settings.set( 'integrator', val );
+
+	},
+
 	handleShadowTerminatorOffsetChange: val => {
 
 		const v = Array.isArray( val ) ? val[ 0 ] : val;

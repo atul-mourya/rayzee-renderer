@@ -54,6 +54,21 @@ export const EmissiveSample = struct( {
 	valid: 'bool', // Whether sample is valid
 } );
 
+// EmissiveSample plus the triangle it landed on, for the bidirectional MIS weight.
+export const EmissiveSampleIndexed = struct( {
+	position: 'vec3',
+	normal: 'vec3',
+	emission: 'vec3',
+	direction: 'vec3',
+	distance: 'float',
+	pdf: 'float',
+	area: 'float',
+	cosThetaLight: 'float',
+	valid: 'bool',
+	triangleIndex: 'int',
+	faceNormal: 'vec3', // winding normal
+} );
+
 export const EmissiveContributionResult = struct( {
 	contribution: 'vec3',
 	hasEmissive: 'bool',
@@ -378,7 +393,7 @@ export const calculateEmissiveLightPdf = Fn( ( [
 // CDF values are stored in the .b channel of the emissive buffer.
 // `emissiveOffset` is the vec4-element offset into the packed light buffer
 // where emissive entries start (0 if using a non-packed buffer).
-const binarySearchCDF = Fn( ( [ emissiveTriangleBuffer, emissiveOffset, emissiveTriangleCount, rand ] ) => {
+export const binarySearchCDF = Fn( ( [ emissiveTriangleBuffer, emissiveOffset, emissiveTriangleCount, rand ] ) => {
 
 	const lo = int( 0 ).toVar();
 	const hi = emissiveTriangleCount.sub( 1 ).toVar();
@@ -407,7 +422,7 @@ const binarySearchCDF = Fn( ( [ emissiveTriangleBuffer, emissiveOffset, emissive
 // Sample from emissive triangle index using CDF importance sampling.
 // `emissiveTriangleBuffer` may be the shared packed light buffer; `emissiveVec4Offset`
 // gives the vec4 offset where emissive entries begin.
-export const sampleEmissiveTriangle = Fn( ( [
+const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
@@ -415,7 +430,7 @@ export const sampleEmissiveTriangle = Fn( ( [
 	triangleBuffer, bvhBuffer,
 ] ) => {
 
-	const result = EmissiveSample( {
+	const fields = {
 		position: vec3( 0.0 ),
 		normal: vec3( 0.0 ),
 		emission: vec3( 0.0 ),
@@ -425,7 +440,10 @@ export const sampleEmissiveTriangle = Fn( ( [
 		area: float( 0.0 ),
 		cosThetaLight: float( 0.0 ),
 		valid: false,
-	} ).toVar();
+	};
+	const result = ( indexed
+		? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+		: EmissiveSample( fields ) ).toVar();
 
 	// Check if we have emissive triangles
 	If( emissiveTriangleCount.greaterThan( int( 0 ) ), () => {
@@ -495,6 +513,12 @@ export const sampleEmissiveTriangle = Fn( ( [
 					result.area.assign( area );
 					result.cosThetaLight.assign( emissiveFacing );
 					result.valid.assign( true );
+					if ( indexed ) {
+
+						result.triangleIndex.assign( triangleIndex );
+						result.faceNormal.assign( geoNormal );
+
+					}
 
 				} );
 
@@ -530,6 +554,12 @@ export const sampleEmissiveTriangle = Fn( ( [
 				result.area.assign( area );
 				result.cosThetaLight.assign( emissiveFacing );
 				result.valid.assign( true );
+				if ( indexed ) {
+
+					result.triangleIndex.assign( triangleIndex );
+					result.faceNormal.assign( geoNormal );
+
+				}
 
 			} );
 
@@ -540,6 +570,9 @@ export const sampleEmissiveTriangle = Fn( ( [
 	return result;
 
 } );
+
+export const sampleEmissiveTriangle = /*@__PURE__*/ makeSampleEmissiveTriangle( false );
+export const sampleEmissiveTriangleIndexed = /*@__PURE__*/ makeSampleEmissiveTriangle( true );
 
 // ================================================================================
 // EMISSIVE TRIANGLE DIRECT LIGHTING CONTRIBUTION

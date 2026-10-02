@@ -125,6 +125,7 @@ const PathTracerTab = () => {
 		maxTextureSize,
 		fireflyThreshold,
 		shadowTerminatorOffset,
+		integrator,
 		debugMode,
 		debugThreshold,
 		showInspector,
@@ -180,6 +181,7 @@ const PathTracerTab = () => {
 		handleMaxTextureSizeChange,
 		handleFireflyThresholdChange,
 		handleShadowTerminatorOffsetChange,
+		handleIntegratorChange,
 		handleEnableAlphaShadowsChange,
 		handleUseAdaptiveSamplingChange,
 		handleNoiseThresholdChange,
@@ -253,6 +255,18 @@ const PathTracerTab = () => {
 					</>
 				)}>
 					<Slider label={"Bounces"} min={0} max={20} step={1} value={[ bounces ]} onFinishChange={handleBouncesChange} />
+				</Row>
+				<Row>
+					<Select value={integrator} onValueChange={handleIntegratorChange}>
+						<span className="opacity-50 text-xs truncate">Light Transport<InfoTip text="Bidirectional also traces light from glowing surfaces and the sun toward the camera. It finds caustics — light focused by glass or mirrors — far faster, at roughly twice the cost per sample. For ordinary bounced light it rarely pays off. Lamps and the sky are unaffected. Experimental." /></span>
+						<SelectTrigger className="max-w-32 h-5 rounded-full">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="path">Path Tracing</SelectItem>
+							<SelectItem value="bidirectional">Bidirectional</SelectItem>
+						</SelectContent>
+					</Select>
 				</Row>
 				<CanvasDimensionControls />
 			</ControlGroup>

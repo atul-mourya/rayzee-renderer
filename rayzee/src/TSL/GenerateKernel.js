@@ -13,7 +13,7 @@
 import {
 	Fn, float, vec2, vec3, vec4, int, uint,
 	If, instanceIndex, atomicLoad,
-	localId, workgroupId,
+	localId, workgroupId, dot, max, select,
 } from 'three/tsl';
 
 import {
@@ -23,12 +23,13 @@ import {
 } from './Random.js';
 
 import { generateRayFromCamera } from './CameraRay.js';
+import { mis } from './Bidirectional.js';
 import { Ray } from './Struct.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf,
 	writeRayRadiance, writeGBuffer,
-	writeMediumStack, writeFeatureThroughput, writeRngState,
+	writeMediumStack, writeFeatureThroughput, writeRngState, writeRngMis,
 } from '../Processor/PackedRayBuffer.js';
 
 const WG_SIZE = 16;
@@ -47,6 +48,7 @@ export function buildGenerateKernel( params ) {
 		auxGBufferEnabled, // live uniform: 1 = init the per-pixel G-buffer (denoiser on), 0 = skip it
 		// listDriven: 1D dispatch over the active-pixel list (activeIndicesRO[tid] = LOCAL slot) instead of 2D.
 		listDriven = false, activeIndicesRO = null, counters = null,
+		bidirectional: bdpt = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -100,7 +102,19 @@ export function buildGenerateKernel( params ) {
 
 		writeMediumStack( rayBufferRW, rayID, uint( 0 ), uint( transmissiveBounces ), float( 1.0 ), float( 1.0 ), float( 1.0 ) );
 
-		writeRngState( hitBufferRW, rayID, seed );
+		if ( bdpt ) {
+
+			// Georgiev (31): light tracing's N_L samples over this ray's density 1 / (A_pixel cos³θ).
+			const cosCamera = max( dot( ray.direction, bdpt.cameraForward ), 1e-4 );
+			const dVCM = select( bdpt.lightTrace.greaterThan( uint( 0 ) ),
+				mis( float( bdpt.lightPaths ).mul( bdpt.pixelArea ).mul( cosCamera ).mul( cosCamera ).mul( cosCamera ) ), float( 0.0 ) );
+			writeRngMis( hitBufferRW, rayID, seed, dVCM, float( 0.0 ) );
+
+		} else {
+
+			writeRngState( hitBufferRW, rayID, seed );
+
+		}
 
 	};
 

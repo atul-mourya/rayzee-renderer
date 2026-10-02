@@ -23,6 +23,7 @@ import { MIN_PDF } from './Common.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
 	EmissiveSample,
+	EmissiveSampleIndexed,
 	sampleTriangle,
 	interpolateNormal,
 	fetchTriangleData,
@@ -103,7 +104,7 @@ export const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO
  *
  * Returns an EmissiveSample struct.
  */
-export const sampleLightBVHTriangle = Fn( ( [
+const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 	hitPoint, surfaceNormal,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
@@ -113,7 +114,7 @@ export const sampleLightBVHTriangle = Fn( ( [
 	triangleBuffer, bvhBuffer,
 ] ) => {
 
-	const result = EmissiveSample( {
+	const fields = {
 		position: vec3( 0.0 ),
 		normal: vec3( 0.0 ),
 		emission: vec3( 0.0 ),
@@ -123,7 +124,10 @@ export const sampleLightBVHTriangle = Fn( ( [
 		area: float( 0.0 ),
 		cosThetaLight: float( 0.0 ),
 		valid: false,
-	} ).toVar();
+	};
+	const result = ( indexed
+		? EmissiveSampleIndexed( { ...fields, triangleIndex: int( - 1 ), faceNormal: vec3( 0.0 ) } )
+		: EmissiveSample( fields ) ).toVar();
 
 	// Accumulated selection PDF (product of per-level choice probabilities)
 	const selectionPdf = float( 1.0 ).toVar();
@@ -305,6 +309,12 @@ export const sampleLightBVHTriangle = Fn( ( [
 					result.area.assign( area );
 					result.cosThetaLight.assign( emissiveFacing );
 					result.valid.assign( true );
+					if ( indexed ) {
+
+						result.triangleIndex.assign( triangleIndex );
+						result.faceNormal.assign( geoNormal );
+
+					}
 
 				} );
 
@@ -339,6 +349,12 @@ export const sampleLightBVHTriangle = Fn( ( [
 				result.area.assign( area );
 				result.cosThetaLight.assign( emissiveFacing );
 				result.valid.assign( true );
+				if ( indexed ) {
+
+					result.triangleIndex.assign( triangleIndex );
+					result.faceNormal.assign( geoNormal );
+
+				}
 
 			} );
 
@@ -349,6 +365,9 @@ export const sampleLightBVHTriangle = Fn( ( [
 	return result;
 
 } );
+
+export const sampleLightBVHTriangle = /*@__PURE__*/ makeSampleLightBVHTriangle( false );
+export const sampleLightBVHTriangleIndexed = /*@__PURE__*/ makeSampleLightBVHTriangle( true );
 
 // ================================================================================
 // LIGHT-BVH MIS PDF (re-walk)

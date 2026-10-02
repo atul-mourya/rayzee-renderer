@@ -65,6 +65,9 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `SortGlobalKernels.js` | `buildResetGlobalHistKernel()`, `buildGlobalHistKernel()`, `buildGlobalPrefixKernel()`, `buildGlobalScatterKernel()`, `SORT_GLOBAL_WG_SIZE`, `SORT_GLOBAL_MAX_BINS` | Global material counting sort (reset → histogram → prefix-sum → scatter) → material-pure workgroups for shading coherence; bins sized per-scene to material count |
 | `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE` | Per-pixel: temporal accumulation blend, MRT StorageTexture writes; visMode 11 flags NaN/Inf red |
 | `DebugKernel.js` | `buildDebugKernel()`, `DEBUG_WG_SIZE` | Single-pass primary-ray debug viz for visMode 1–10 (delegates to `TraceDebugMode`); mode 9 computed inline |
+| `LightGenerateKernel.js` | `buildLightGenerateKernel()` | Bidirectional only: starts one light subpath per pool slot on an emissive triangle (power-picked, uniform point, cosine direction) or the physical sky's sun (a direction over its disc, a point on a disc covering the visible scene) |
+| `ConnectKernel.js` | `buildConnectKernel()` | Bidirectional only: connects each camera vertex Shade left pending to one cached light vertex |
+| `LightSplatKernel.js` | `buildLightSplatKernel()`, `buildSplatResolveKernel()` | Bidirectional only: light tracing — every cached light vertex to the pinhole, into a fixed-point splat image; the resolve adds it into each chunk before FinalWrite |
 
 ### Shared sampling / shading helpers (imported by the kernels)
 
@@ -209,7 +212,7 @@ Packed emissive-triangle data + power; light BVH nodes built by `LightBVHBuilder
 Marginal + conditional CDF for importance-sampling inversion in `Environment.js`. Stored as an `(W+1)×H` R32F texture (moved off a storage buffer to free a Shade-stage binding): conditional CDF at texel `(cx, cy)`, marginal CDF at texel `(W, cy)`; sampled via integer `.load()`.
 
 ### Packed ray buffers (`PackedRayBuffer.js`)
-SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RAY_STRIDE = 7`, `HIT_STRIDE = 2`. RAY slots (7): `ORIGIN_META`, `DIR_FLAGS`, `THROUGHPUT_PDF`, `RADIANCE_ALPHA`, `MEDIUM_STACK`, `MEDIUM_SIGMA_A`, `SSS_SIGMA_S`. HIT slots (2): `DIST_TRI_BARY` (distance, triangle, texture UV — not barycentrics), `NORMAL_MAT` (the **interpolated** normal, material, instance leaf, and in `.w` the facet normal as an 11:11 octahedral pair plus the terminator lift's top 10 half-float bits — `HitFacet.js`). First-hit MRT (normal/depth/albedo) is **not** in the ray buffer — it lives in a separate **per-pixel** G-buffer (`GBUFFER_STRIDE = 1`, one half-packed `uvec4`/pixel) written at bounce 0 and read by `FinalWrite`. Capacity uses a 1.25× headroom with no pow2 rounding.
+SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RAY_STRIDE = 7`, `HIT_STRIDE = 3` (`HIT_STRIDE_BIDIRECTIONAL = 7`, plus the light vertex cache after the path regions). RAY slots (7): `ORIGIN_META`, `DIR_FLAGS`, `THROUGHPUT_PDF`, `RADIANCE_ALPHA`, `MEDIUM_STACK`, `MEDIUM_SIGMA_A`, `SSS_SIGMA_S`. HIT slots (2): `DIST_TRI_BARY` (distance, triangle, texture UV — not barycentrics), `NORMAL_MAT` (the **interpolated** normal, material, instance leaf, and in `.w` the facet normal as an 11:11 octahedral pair plus the terminator lift's top 10 half-float bits — `HitFacet.js`). First-hit MRT (normal/depth/albedo) is **not** in the ray buffer — it lives in a separate **per-pixel** G-buffer (`GBUFFER_STRIDE = 1`, one half-packed `uvec4`/pixel) written at bounce 0 and read by `FinalWrite`. Capacity uses a 1.25× headroom with no pow2 rounding.
 
 ---
 
@@ -229,6 +232,11 @@ SoA-within-a-buffer: field `slot` of ray `id` lives at `id + slot*capacity`. `RA
    - `resetActiveCounter` → `Compact` (+ `compactCopyback` on the functional path) → `snapshotBounceCount`.
    - Early-exit when the (stale, async-readback) survivors' summed throughput for this bounce falls below `_bounceEarlyExitThreshold` × a full frame's worth. Energy, not ray count: past Russian roulette a few survivors carry the weight of many.
 8. `FinalWrite` (per-pixel temporal blend + MRT writes).
+
+With `integrator: 'bidirectional'` the frame first runs a light pass through the same pool —
+`lightGenerate`, then the bounce loop over light subpaths (`extend` / `shade` / `compact` /
+`lightCopyback`), then `lightSplat` — and each camera bounce adds `connect` after `shade`, each chunk
+`splatResolve` before `FinalWrite`. See [Bidirectional integrator](#bidirectional-integrator).
 9. Async counter readback (`_maybeReadbackCounters`, every N frames) for the survivor curve.
 10. Copy write StorageTextures → readable MRT RenderTarget; publish to context; emit events; `frameCount++`.
 
@@ -237,6 +245,16 @@ There is no swap of the active-index ping-pong during the loop: kernels are buil
 ### Shade kernel (per-ray work)
 - Miss: environment contribution (background/MIS-weighted env light, ground projection, transparent-background guard), then the sun disc, power-heuristic weighted against sun NEE when the sending vertex could have drawn that direction (`RAY_FLAG.SUN_NEE`).
 - Hit: sample material textures, write bounce-0 MRT data, accumulate emissive, run direct lighting (`calculateDirectLightingUnified` + analytic-light/environment/sun NEE), emissive-triangle NEE (light BVH when `lightBVHNodeCount > 0`, else uniform-CDF `calculateEmissiveTriangleContribution`), handle transmission / medium stack / subsurface, then sample the indirect bounce (`calculateIndirectLighting`) and write the continued ray.
+
+### Bidirectional integrator
+`TSL/Bidirectional.js` holds the shared pieces: the MIS recursion (Georgiev 2012's dVCM/dVC, power
+heuristic, `calculateMaterialPDF` densities both ways), emitter side and area densities, and
+`resolveSurfaceMaterial`, which re-reads a stored vertex's material as Shade folds it. Light subpaths
+start on emissive triangles and the physical sky's sun; other lights keep their unidirectional pair. A light ray in Shade skips
+everything camera-only (backdrop, aux, emission, NEE), stores an opaque vertex in the light vertex cache —
+the hit buffer's tail, `path × (maxBounces + 1) + depth` — and scatters with the adjoint BSDF. Camera
+vertices write a pending record that ConnectKernel resolves after Shade. Shadow rays of the bidirectional
+strategies treat glass as opaque (`traceShadowRayRefractiveOpaque`). Full notes in `CLAUDE.md`.
 
 ---
 

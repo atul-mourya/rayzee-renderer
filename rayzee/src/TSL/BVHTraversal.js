@@ -517,7 +517,8 @@ export const traverseBVHDebug = /*@__PURE__*/ makeTraverseBVH( true );
 // SHADOW RAY TRAVERSAL (OPTIMIZED - early exit on any hit)
 // ================================================================================
 
-export const traverseBVHShadow = Fn( ( [
+// cameraCulled: skip the faces a camera ray along −direction would cull, for a ray standing in for one.
+const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 	ray,
 	bvhBuffer,
 	triangleBuffer,
@@ -579,29 +580,43 @@ export const traverseBVHShadow = Fn( ( [
 				// Per-mesh visibility is handled at the BLAS-pointer level.
 				const uvData2 = triangleRow( triangleBuffer, triIndex, 4 ).toVar();
 
-				closestHit.didHit.assign( true );
-				closestHit.dst.assign( triResult.x );
-				closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
-				closestHit.meshIndex.assign( int( uvData2.w ) );
-				closestHit.instanceLeaf.assign( instLeaf );
+				const record = () => {
 
-				// Hit point is cheap (origin + dir*t). Geometric normal is deferred
-				// to traceShadowRay — only the transmission branch needs it, so we
-				// skip the cross+normalize for the (much more common) opaque-blocker
-				// and alpha-cutout paths. Normal stays vec3(0) from struct init.
-				closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
+					closestHit.didHit.assign( true );
+					closestHit.dst.assign( triResult.x );
+					closestHit.materialIndex.assign( int( uvData2.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ) );
+					closestHit.meshIndex.assign( int( uvData2.w ) );
+					closestHit.instanceLeaf.assign( instLeaf );
 
-				closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
-				closestHit.triangleIndex.assign( triIndex );
+					// Hit point is cheap (origin + dir*t). Geometric normal is deferred
+					// to traceShadowRay — only the transmission branch needs it, so we
+					// skip the cross+normalize for the (much more common) opaque-blocker
+					// and alpha-cutout paths. Normal stays vec3(0) from struct init.
+					closestHit.hitPoint.assign( worldOrigin.add( worldDirection.mul( triResult.x ) ) );
 
-				// An opaque blocker settles the ray. A surface light passes through has to be
-				// the nearest one, or the layers behind the first find are never counted.
-				If( shadowFlagsSettle( uvData2.z ), () => {
+					closestHit.uv.assign( vec2( triResult.y, triResult.z ) );
+					closestHit.triangleIndex.assign( triIndex );
 
-					blocked.assign( true );
-					Break();
+					// An opaque blocker settles the ray. A surface light passes through has to be
+					// the nearest one, or the layers behind the first find are never counted.
+					If( shadowFlagsSettle( uvData2.z ), () => {
 
-				} );
+						blocked.assign( true );
+						Break();
+
+					} );
+
+				};
+
+				if ( cameraCulled ) {
+
+					const w = float( 1.0 ).sub( triResult.y ).sub( triResult.z );
+					const n = normalize( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 0 ).w ).mul( w )
+						.add( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 1 ).w ).mul( triResult.y ) )
+						.add( unpackTriangleNormal( triangleRow( triangleBuffer, triIndex, 2 ).w ).mul( triResult.z ) ) );
+					If( sideAccepts( triangleSide( uvData2.z ), rayDirection.dot( n ).negate() ), record );
+
+				} else record();
 
 			} );
 
@@ -726,3 +741,6 @@ export const traverseBVHShadow = Fn( ( [
 	return closestHit;
 
 } );
+
+export const traverseBVHShadow = /*@__PURE__*/ makeTraverseBVHShadow( false );
+export const traverseBVHShadowCameraCulled = /*@__PURE__*/ makeTraverseBVHShadow( true );

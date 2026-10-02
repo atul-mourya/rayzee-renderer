@@ -164,6 +164,7 @@ export const ENGINE_DEFAULTS = {
 	convergenceOverlay: false, // display-only Compositor overlay; never alters the render
 
 	samplingTechnique: 2,
+	integrator: 'path', // 'path' | 'bidirectional'
 	enableEmissiveTriangleSampling: false,
 	emissiveBoost: 1.0,
 

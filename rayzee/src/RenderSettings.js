@@ -77,6 +77,7 @@ const SETTING_ROUTES = {
 	renderLimitMode: { handler: 'handleRenderLimitMode' },
 	renderTimeLimit: { handler: 'handleRenderTimeLimit', reset: false },
 	renderMode: { handler: 'handleRenderMode' },
+	integrator: { handler: 'handleIntegrator', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
 
 };
@@ -271,6 +272,12 @@ export class RenderSettings extends EventDispatcher {
 			handleRenderMode: ( value ) => {
 
 				stages.pathTracer?.setUniform( 'renderMode', parseInt( value ) );
+
+			},
+
+			handleIntegrator: ( value ) => {
+
+				stages.pathTracer?.setIntegrator?.( value );
 
 			},
 

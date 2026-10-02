@@ -95,7 +95,7 @@ export const RENDER_SIZE = { width: 256, height: 256 };
 
 // ── Builders ────────────────────────────────────────────────────
 
-function makeRoom( { size = 6, emissiveCeiling = false } = {} ) {
+function makeRoom( { size = 6, emissiveCeiling = false, lightSize = size * 0.3, lightIntensity = 12 } = {} ) {
 
 	const room = new Group();
 	const half = size / 2;
@@ -124,11 +124,11 @@ function makeRoom( { size = 6, emissiveCeiling = false } = {} ) {
 	if ( emissiveCeiling ) {
 
 		const light = new Mesh(
-			new PlaneGeometry( size * 0.3, size * 0.3 ),
+			new PlaneGeometry( lightSize, lightSize ),
 			new MeshPhysicalMaterial( {
 				color: 0x000000,
 				emissive: 0xffffff,
-				emissiveIntensity: 12,
+				emissiveIntensity: lightIntensity,
 				roughness: 1,
 			} )
 		);
@@ -139,6 +139,31 @@ function makeRoom( { size = 6, emissiveCeiling = false } = {} ) {
 	}
 
 	return room;
+
+}
+
+async function buildCornell( app ) {
+
+	await app.stages.pathTracer.environment.setMode( 'color' );
+
+	const scene = makeRoom( { emissiveCeiling: true } );
+	const ball = new Mesh(
+		new SphereGeometry( 1, 48, 48 ),
+		new MeshPhysicalMaterial( { color: 0xdddddd, roughness: 0.25, metalness: 0 } )
+	);
+	ball.position.set( - 1.1, - 2, 0.4 );
+	scene.add( ball );
+
+	const box = new Mesh(
+		new BoxGeometry( 1.6, 3, 1.6 ),
+		new MeshPhysicalMaterial( { color: 0xdddddd, roughness: 0.9, metalness: 0 } )
+	);
+	box.position.set( 1.3, - 1.5, - 0.8 );
+	box.rotation.set( 0, 0.4, 0 );
+	scene.add( box );
+
+	await app.loadObject3D( scene, 'cornell' );
+	setCamera( app, [ 0, 0, 8.5 ], [ 0, 0, 0 ] );
 
 }
 
@@ -916,6 +941,7 @@ function extractWorldTriangles( app ) {
  * @property {function} build       - async (app) => void; loads geometry + env, sets camera
  * @property {number} [furnaceRadiance] - marks a white-furnace scene and gives the environment
  *      radiance the render must reproduce exactly. See FURNACE_MATERIALS.
+ * @property {Object} [truthSettings] - settings for the ground-truth render only
  */
 
 /** @type {SceneSpec[]} */
@@ -940,30 +966,7 @@ export const SCENES = [
 		spp: 64,
 		truthSpp: 2048,
 		settings: { maxBounces: 6, enableEmissiveTriangleSampling: true, enableEnvironment: false },
-		async build( app ) {
-
-			await app.stages.pathTracer.environment.setMode( 'color' );
-
-			const scene = makeRoom( { emissiveCeiling: true } );
-			const ball = new Mesh(
-				new SphereGeometry( 1, 48, 48 ),
-				new MeshPhysicalMaterial( { color: 0xdddddd, roughness: 0.25, metalness: 0 } )
-			);
-			ball.position.set( - 1.1, - 2, 0.4 );
-			scene.add( ball );
-
-			const box = new Mesh(
-				new BoxGeometry( 1.6, 3, 1.6 ),
-				new MeshPhysicalMaterial( { color: 0xdddddd, roughness: 0.9, metalness: 0 } )
-			);
-			box.position.set( 1.3, - 1.5, - 0.8 );
-			box.rotation.set( 0, 0.4, 0 );
-			scene.add( box );
-
-			await app.loadObject3D( scene, 'cornell' );
-			setCamera( app, [ 0, 0, 8.5 ], [ 0, 0, 0 ] );
-
-		},
+		build: buildCornell,
 	},
 	{
 		id: 'glass-transmission',
@@ -1686,6 +1689,48 @@ function setCamera( app, position, target ) {
 	}
 
 }
+
+SCENES.push( {
+	id: 'cornell-bidirectional',
+	covers: 'bidirectional integrator: light subpaths, vertex connections, light tracing and their MIS, held to the path tracer\'s estimate of the same room',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 6, enableEmissiveTriangleSampling: true, enableEnvironment: false, integrator: 'bidirectional' },
+	// The two integrators must agree, not just each stay where it was.
+	truthSettings: { integrator: 'path' },
+	build: buildCornell,
+} );
+
+SCENES.push( {
+	id: 'caustic-bidirectional',
+	covers: 'bidirectional through glass and a mirror: light-traced caustics, the MIS recursion across specular vertices, importance through refraction',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 8, transmissiveBounces: 8, enableEmissiveTriangleSampling: true, enableEnvironment: false, integrator: 'bidirectional' },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+
+		const scene = makeRoom( { emissiveCeiling: true, lightSize: 1, lightIntensity: 40 } );
+		const glass = new Mesh(
+			new SphereGeometry( 0.9, 64, 64 ),
+			new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 0, transmission: 1, ior: 1.5, thickness: 1 } )
+		);
+		glass.position.set( - 0.9, - 1.6, 0.2 );
+		scene.add( glass );
+
+		const mirror = new Mesh(
+			new SphereGeometry( 0.8, 64, 64 ),
+			new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 1 } )
+		);
+		mirror.position.set( 1.3, - 2.2, - 0.8 );
+		scene.add( mirror );
+
+		await app.loadObject3D( scene, 'caustic' );
+		setCamera( app, [ 0, 0, 8.5 ], [ 0, - 0.5, 0 ] );
+
+	},
+} );
 
 export function getScene( id ) {
 

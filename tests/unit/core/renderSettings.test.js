@@ -274,6 +274,28 @@ describe( 'RenderSettings', () => {
 
 	} );
 
+	describe( 'integrator', () => {
+
+		it( 'defaults to the path tracer', () => {
+
+			expect( settings.get( 'integrator' ) ).toBe( 'path' );
+
+		} );
+
+		it( 'hands the choice to the path tracer and restarts accumulation', () => {
+
+			const stage = { setUniform: vi.fn(), setIntegrator: vi.fn() };
+			const resetCallback = vi.fn();
+			settings.bind( { stages: { pathTracer: stage }, resetCallback } );
+
+			settings.set( 'integrator', 'bidirectional' );
+			expect( stage.setIntegrator ).toHaveBeenCalledWith( 'bidirectional' );
+			expect( resetCallback ).toHaveBeenCalledTimes( 1 );
+
+		} );
+
+	} );
+
 	// ── applyAll ───────────────────────────────────────────────
 
 	describe( 'applyAll', () => {
