@@ -3,8 +3,11 @@
  * for importance sampling. Pure math — no Three.js dependencies.
  *
  * Input:  { floatData: Float32Array, width, height }
- * Output: { marginalData: Float32Array, conditionalData: Float32Array, totalSum, width, height }
+ * Output: { marginalData, conditionalData, totalSum, compensationDelta, width, height } and the exact table
+ * (EnvironmentExactTable.js)
  */
+
+import { buildExactEnvironmentTable } from '../EnvironmentExactTable.js';
 
 function binarySearchFindClosestIndexOf( array, targetValue, offset, count ) {
 
@@ -182,6 +185,7 @@ self.onmessage = function ( e ) {
 	try {
 
 		const result = buildCDF( floatData, width, height );
+		const exact = buildExactEnvironmentTable( floatData, width, height );
 
 		// Transfer arrays back zero-copy
 		self.postMessage(
@@ -192,8 +196,9 @@ self.onmessage = function ( e ) {
 				compensationDelta: result.compensationDelta,
 				width,
 				height,
+				...exact,
 			},
-			[ result.marginalData.buffer, result.conditionalData.buffer ]
+			[ result.marginalData.buffer, result.conditionalData.buffer, exact.exactConditional.buffer, exact.exactMarginal.buffer ]
 		);
 
 	} catch ( error ) {

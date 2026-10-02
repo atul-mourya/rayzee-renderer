@@ -32,11 +32,13 @@ import {
 	Mesh,
 	MeshPhysicalMaterial,
 	PlaneGeometry,
+	PointLight,
 	Quaternion,
 	RectAreaLight,
 	RepeatWrapping,
 	RGBAFormat,
 	SphereGeometry,
+	SpotLight,
 	SRGBColorSpace,
 	Vector3,
 } from 'three';
@@ -1727,6 +1729,115 @@ SCENES.push( {
 		scene.add( mirror );
 
 		await app.loadObject3D( scene, 'caustic' );
+		setCamera( app, [ 0, 0, 8.5 ], [ 0, - 0.5, 0 ] );
+
+	},
+} );
+
+SCENES.push( {
+	id: 'lamps-bidirectional',
+	covers: 'bidirectional with every lamp type as a light-path source: the source table, the lamp pick at both ends of a path, lamps no camera path can hit, a rect light reached by the continuation (seen in rough metal), a directional light\'s disc',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEnvironment: false, integrator: 'bidirectional' },
+	truthSettings: { integrator: 'path' },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+		const scene = makeRoom();
+		const box = new Mesh( new BoxGeometry( 1.4, 2, 1.4 ), new MeshPhysicalMaterial( { color: 0xaaaaaa, roughness: 1, metalness: 0 } ) );
+		box.position.set( 1.1, - 2, - 0.8 );
+		box.rotation.y = 0.4;
+		scene.add( box );
+		// Rough metal, where a rect light's hit and its NEE share the weight.
+		const ball = new Mesh( new SphereGeometry( 0.7, 64, 64 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0.3, metalness: 1 } ) );
+		ball.position.set( - 1.2, - 2.3, 0.8 );
+		scene.add( ball );
+
+		// three.js lamps are photometric: candela and lux, at 683 lm/W.
+		const point = new PointLight( 0xffffff, 12 * 683, 0, 2 );
+		point.position.set( - 0.5, 2, 0.3 );
+		const spot = new SpotLight( 0xffeedd, 30 * 683, 0, 0.5, 0.4, 2 );
+		spot.position.set( - 0.5, 2.6, 0.3 );
+		spot.target.position.set( - 0.6, - 3, 0.5 );
+		const sun = new DirectionalLight( 0xffffff, 3 * 683 );
+		sun.position.set( 0.25, 0.6, 1 );
+		scene.add( point, spot, spot.target, sun, sun.target );
+		for ( const [ x, shape ] of [[ - 1.4, 'rect' ], [ 1.4, 'disk' ]] ) {
+
+			const panel = new RectAreaLight( 0xffffff, 12, 1.2, 1.2 );
+			panel.position.set( x, 2.999, 0 );
+			if ( shape === 'disk' ) panel.userData.shape = 'disk';
+			scene.add( panel );
+			panel.lookAt( x, - 10, 0 );
+
+		}
+
+		await app.loadObject3D( scene, 'lamps' );
+		setCamera( app, [ 0, 0, 8.5 ], [ 0, - 0.5, 0 ] );
+
+	},
+} );
+
+// A sky with a sun painted into it, as an HDRI has one, low in front of the room's open side.
+async function setSunSky( app ) {
+
+	const env = app.stages.pathTracer.environment;
+	await env.setMode( 'color' );
+
+	const width = 512, height = 256;
+	const toSun = new Vector3( 0.15, 0.55, 0.82 ).normalize();
+	const sunX = ( Math.atan2( toSun.z, toSun.x ) / ( 2 * Math.PI ) + 0.5 ) * width;
+	const sunY = ( 1 - Math.acos( toSun.y ) / Math.PI ) * height;
+	const pixels = new Float32Array( width * height * 4 );
+	for ( let y = 0; y < height; y ++ ) {
+
+		const up = - Math.cos( ( y + 0.5 ) / height * Math.PI );
+		for ( let x = 0; x < width; x ++ ) {
+
+			const sun = Math.abs( x + 0.5 - sunX ) < 2.5 && Math.abs( y + 0.5 - sunY ) < 2.5;
+			const L = sun ? 1500 : 0.25 + 0.75 * Math.max( 0, up );
+			pixels.set( [ L * 0.9, L * 0.95, L, 1 ], ( y * width + x ) * 4 );
+
+		}
+
+	}
+
+	const texture = new DataTexture( pixels, width, height, RGBAFormat, FloatType );
+	texture.mapping = EquirectangularReflectionMapping;
+	texture.colorSpace = LinearSRGBColorSpace;
+	texture.minFilter = LinearFilter;
+	texture.magFilter = LinearFilter;
+	texture.wrapS = RepeatWrapping;
+	texture.wrapT = ClampToEdgeWrapping;
+	texture.generateMipmaps = false;
+	texture.needsUpdate = true;
+	texture._isGeneratedProcedural = true;
+	await env.setEnvironmentMap( texture );
+
+}
+
+SCENES.push( {
+	id: 'sky-bidirectional',
+	covers: 'bidirectional with the environment as a light-path source: its exact sampling table, NEE and the miss weight drawn from it, sunlight through glass into a room',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 6, transmissiveBounces: 8, enableEnvironment: true, integrator: 'bidirectional' },
+	async build( app ) {
+
+		await setSunSky( app );
+		const scene = makeRoom();
+		const glass = new Mesh(
+			new SphereGeometry( 0.9, 64, 64 ),
+			new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 0, transmission: 1, ior: 1.5, thickness: 1 } )
+		);
+		glass.position.set( - 0.9, - 2.1, 0.9 );
+		scene.add( glass );
+		const mirror = new Mesh( new SphereGeometry( 0.6, 64, 64 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 1 } ) );
+		mirror.position.set( 1.6, - 2.4, 0.2 );
+		scene.add( mirror );
+
+		await app.loadObject3D( scene, 'sky' );
 		setCamera( app, [ 0, 0, 8.5 ], [ 0, - 0.5, 0 ] );
 
 	},

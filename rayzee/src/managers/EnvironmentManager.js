@@ -266,24 +266,30 @@ export class EnvironmentManager {
 
 		this.envCDFTexture = new DataTexture( new Float32Array( [ 0 ] ), 1, 1, RedFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
+		this._exactTable = null;
 
 	}
 
 	/**
 	 * Rebuild the CDF texture from equirectHdrInfo. Packs the 2D conditional + 1D marginal into one
 	 * R32F texture of (W+1)×H: conditional[cy*W+cx] at texel (cx, cy); marginal[cy] at texel (W, cy).
+	 * The exact table (EnvironmentExactTable.js) follows in rows [H, H + its height), marginal in column w.
 	 * @private
 	 */
 	_updateCDFTexture() {
 
-		const marginal = this.equirectHdrInfo.marginalData;
-		const conditional = this.equirectHdrInfo.conditionalData;
+		const info = this.equirectHdrInfo;
+		const marginal = info.marginalData;
+		const conditional = info.conditionalData;
 		if ( ! marginal || ! conditional ) return;
 
-		const W = this.equirectHdrInfo.width;
-		const H = this.equirectHdrInfo.height;
+		const W = info.width;
+		const H = info.height;
 		const texW = W + 1;
-		const data = new Float32Array( texW * H );
+		const exact = info.exactConditional && info.exactWidth > 0 ? info : null;
+		const ew = exact ? exact.exactWidth : 0;
+		const eh = exact ? exact.exactHeight : 0;
+		const data = new Float32Array( texW * ( H + eh ) );
 		for ( let cy = 0; cy < H; cy ++ ) {
 
 			const dstRow = cy * texW;
@@ -292,9 +298,29 @@ export class EnvironmentManager {
 
 		}
 
+		for ( let y = 0; y < eh; y ++ ) {
+
+			const dstRow = ( H + y ) * texW;
+			data.set( exact.exactConditional.subarray( y * ew, y * ew + ew ), dstRow );
+			data[ dstRow + ew ] = exact.exactMarginal[ y ];
+
+		}
+
 		if ( ! this.envCDFTexture?._isPhysicalSky ) this.envCDFTexture?.dispose?.();
-		this.envCDFTexture = new DataTexture( data, texW, H, RedFormat, FloatType );
+		this.envCDFTexture = new DataTexture( data, texW, H + eh, RedFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
+		this._exactTable = exact ? { radianceIntegral: exact.radianceIntegral } : null;
+
+	}
+
+	/**
+	 * The environment as a bidirectional light source: ∫ luminance dω of the map, before intensity, while the
+	 * CDF texture carries its exact table; null otherwise.
+	 * @returns {?{ radianceIntegral: number }}
+	 */
+	get exactTable() {
+
+		return this.scene.environment ? this._exactTable ?? null : null;
 
 	}
 
@@ -661,12 +687,13 @@ export class EnvironmentManager {
 			this._installSky( texture, cdfTexture );
 
 			// Frames until they land normalise by an older bake's.
-			const { totalSum, compensationDelta } = await stats;
+			const { totalSum, compensationDelta, radianceIntegral } = await stats;
 			if ( p.mode === 'procedural' && sky === this.physicalSky && bake > this._skyStatsBake ) {
 
 				this._skyStatsBake = bake;
 				this.uniforms.set( 'envTotalSum', totalSum );
 				this.uniforms.set( 'envCompensationDelta', compensationDelta );
+				if ( this._exactTable?.sky ) this._exactTable.radianceIntegral = radianceIntegral;
 				if ( latest() ) this._notifyReset();
 
 			}
@@ -701,6 +728,7 @@ export class EnvironmentManager {
 
 		// So an HDRI coming back rebuilds its own table.
 		this._cdfSignature = null;
+		if ( ! this._exactTable?.sky ) this._exactTable = { radianceIntegral: 0, sky: true };
 		texture._isGeneratedProcedural = true;
 		this.scene.environment = texture;
 		this.environmentTexture = texture;

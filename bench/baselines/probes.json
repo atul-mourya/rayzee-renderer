@@ -706,5 +706,47 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.011073333817449469
+	},
+	"lamps-bidirectional": {
+		"truth": {
+			"meanR": 0.4246439896376941,
+			"meanG": 0.42305912204644613,
+			"meanB": 0.3673491181006554,
+			"meanLuminance": 0.4193738026115201,
+			"maxLuminance": 2.496930032205581,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.4255400160180969,
+			"meanG": 0.4244937160269231,
+			"meanB": 0.3674599549782833,
+			"meanLuminance": 0.42059832185739116,
+			"maxLuminance": 26.19311565246582,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.0378271281660405
+	},
+	"sky-bidirectional": {
+		"truth": {
+			"meanR": 0.2849065654517666,
+			"meanG": 0.2720500896541225,
+			"meanB": 0.24093039755845247,
+			"meanLuminance": 0.27253653463930705,
+			"maxLuminance": 309.18316329956053,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.2837948613640826,
+			"meanG": 0.2709384887724884,
+			"meanB": 0.2395317384616984,
+			"meanLuminance": 0.2714041862129353,
+			"maxLuminance": 318.05507300415036,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.03046753684760082
 	}
 }

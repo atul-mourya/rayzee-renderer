@@ -98,6 +98,29 @@ export const emitterAreaPdf = ( emission, totalPower, share = 1 ) =>
 export const sunEmissionPdf = ( bdpt, sunParams ) =>
 	bdpt.sunPick.div( max( sunParams.y.mul( Math.PI ).mul( bdpt.sceneRadius ).mul( bdpt.sceneRadius ), 1e-30 ) );
 
+// Where a light subpath starts, in its pick table's order (`sourceCdf`, a running sum); each lamp list follows
+// at `sourceOffsets[ type ]`, by LIGHT_TYPE. A light path's origin code is its triangle, or −1 − its source.
+export const SOURCE = { SUN: 0, EMITTERS: 1, ENVIRONMENT: 2, LAMPS: 3 };
+
+export const sourcePick = ( bdpt, source ) => {
+
+	const s = int( source );
+	return bdpt.sourceCdf.element( s ).sub( select( s.greaterThan( int( 0 ) ), bdpt.sourceCdf.element( max( s.sub( int( 1 ) ), int( 0 ) ) ), float( 0.0 ) ) );
+
+};
+
+export const lampSource = ( bdpt, type, index ) => select( type.equal( int( 0 ) ), int( bdpt.sourceOffsets[ 0 ] ),
+	select( type.equal( int( 1 ) ), int( bdpt.sourceOffsets[ 1 ] ), select( type.equal( int( 2 ) ), int( bdpt.sourceOffsets[ 2 ] ), int( bdpt.sourceOffsets[ 3 ] ) ) ) ).add( index );
+
+export const sourceLampType = ( bdpt, source ) => select( source.lessThan( int( bdpt.sourceOffsets[ 1 ] ) ), int( 0 ),
+	select( source.lessThan( int( bdpt.sourceOffsets[ 2 ] ) ), int( 1 ), select( source.lessThan( int( bdpt.sourceOffsets[ 3 ] ) ), int( 2 ), int( 3 ) ) ) );
+
+export const sourceLampIndex = ( bdpt, source, type ) => source.sub( select( type.equal( int( 0 ) ), int( bdpt.sourceOffsets[ 0 ] ),
+	select( type.equal( int( 1 ) ), int( bdpt.sourceOffsets[ 1 ] ), select( type.equal( int( 2 ) ), int( bdpt.sourceOffsets[ 2 ] ), int( bdpt.sourceOffsets[ 3 ] ) ) ) ) );
+
+// Light paths through the scene's bounding disc, for a light at infinity.
+export const sceneDiscPdf = ( bdpt ) => float( 1.0 ).div( max( bdpt.sceneRadius.mul( bdpt.sceneRadius ).mul( Math.PI ), 1e-30 ) );
+
 // The material at a stored vertex, folded as ShadeKernel folds it; its shading normal is already stored.
 export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 

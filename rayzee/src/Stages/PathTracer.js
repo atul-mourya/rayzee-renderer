@@ -4,10 +4,11 @@
  * for shared engine/scene infrastructure (managers, uniforms, camera, lights, BVH, accumulation).
  */
 
-import { uniform, texture, storage } from 'three/tsl';
+import { uniform, uniformArray, texture, storage } from 'three/tsl';
 import { Vector3 } from 'three';
 import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
+import { LIGHT_FLOATS } from '../managers/UniformManager.js';
 import {
 	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute,
 } from '../Processor/PackedRayBuffer.js';
@@ -25,7 +26,7 @@ import { buildConnectKernel, CONNECT_WG_SIZE } from '../TSL/ConnectKernel.js';
 import {
 	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
 } from '../TSL/LightSplatKernel.js';
-import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE } from '../TSL/Bidirectional.js';
+import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE } from '../TSL/Bidirectional.js';
 import { setMaterialBucketTextures, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
 import { setShadowAlbedoMaps } from '../TSL/LightsDirect.js';
 import {
@@ -176,6 +177,14 @@ export class PathTracer extends PathTracerStage {
 			cameraPosition: uniform( new Vector3(), 'vec3' ),
 			cameraForward: uniform( new Vector3( 0, 0, - 1 ), 'vec3' ),
 			sunPick: uniform( 0, 'float' ),
+			emitterPick: uniform( 0, 'float' ),
+			envPick: uniform( 0, 'float' ),
+			// 1 while the CDF texture carries the environment's exact table.
+			envTable: uniform( 0, 'uint' ),
+			// Running sum over SOURCE, then each lamp list at sourceOffsets[ type ], sized to the lists' capacity.
+			sourceCdf: uniformArray( new Float32Array( SOURCE.LAMPS ), 'float' ),
+			sourceCount: SOURCE.LAMPS,
+			sourceOffsets: [ SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS ],
 			sceneCenter: uniform( new Vector3(), 'vec3' ),
 			sceneRadius: uniform( 1, 'float' ),
 		};
@@ -636,17 +645,15 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	// False when there is no emissive triangle and no sun to start a light path on.
+	// False when nothing can start a light path.
 	_updateBidirectionalUniforms() {
 
 		const bd = this._bidirectional;
 		const w = this._wfRenderWidth.value;
 		const h = this._wfRenderHeight.value;
 		const slots = this.maxBounces.value + 1;
-		const emitterFlux = this.emissiveTriangleCount.value > 0 ? Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value : 0;
-		const sunFlux = this._sunFlux();
-		bd.sunPick.value = sunFlux > 0 ? sunFlux / ( sunFlux + emitterFlux ) : 0;
-		const paths = emitterFlux > 0 || sunFlux > 0
+		const total = this._updateSourceTable();
+		const paths = total > 0
 			? Math.min( w * h, this._packedBuffers.capacity, Math.floor( this._lightCacheSlots / slots ) )
 			: 0;
 
@@ -675,11 +682,99 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	// What the sun sends through the scene's bounding disc (luminance), or 0 when it lights nothing.
-	_sunFlux() {
+	/** Sizes the source table to the lamp lists' capacity; its layout is baked into the kernels. */
+	_sizeSourceTable() {
 
 		const bd = this._bidirectional;
-		const bounds = this.hasSun.value > 0 && this.enableEnvironment.value > 0 ? this._visibleSceneBounds() : null;
+		let at = SOURCE.LAMPS;
+		[ 'directional', 'area', 'point', 'spot' ].forEach( ( type, i ) => {
+
+			bd.sourceOffsets[ i ] = at;
+			at += this[ `${type}LightsBufferNode` ].array.length / LIGHT_FLOATS[ type ];
+
+		} );
+		bd.sourceCount = at;
+		if ( bd.sourceCdf.array.length !== at ) bd.sourceCdf.array = new Float32Array( at );
+
+	}
+
+	/**
+	 * Each source's chance of starting a light path, by the luminous flux it sends into the scene.
+	 * @returns {number} the total flux, 0 when nothing emits
+	 */
+	_updateSourceTable() {
+
+		const bd = this._bidirectional;
+		const cdf = bd.sourceCdf.array;
+		const flux = new Float64Array( cdf.length );
+		const lum = ( a, i ) => Math.max( 0.2126 * a[ i ] + 0.7152 * a[ i + 1 ] + 0.0722 * a[ i + 2 ], 0 );
+		const lights = ( type ) => ( { a: this[ `${type}LightsBufferNode` ].array, n: this[ `num${type[ 0 ].toUpperCase()}${type.slice( 1 )}Lights` ].value, f: LIGHT_FLOATS[ type ] } );
+		const directional = lights( 'directional' );
+
+		const environmentOn = this.enableEnvironment.value > 0;
+		const table = this.environment.exactTable;
+		bd.envTable.value = table ? 1 : 0;
+		const atInfinity = environmentOn && ( this.hasSun.value > 0 || table ) || directional.n > 0;
+		const discArea = atInfinity ? this._sceneDisc() : 0;
+		if ( environmentOn && table ) flux[ SOURCE.ENVIRONMENT ] = Math.max( table.radianceIntegral, 0 ) * this.environmentIntensity.value * discArea;
+
+		if ( this.emissiveTriangleCount.value > 0 ) flux[ SOURCE.EMITTERS ] = Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value;
+		if ( environmentOn && this.hasSun.value > 0 ) {
+
+			const { x: r, y: g, z: b } = this.sunRadiance.value;
+			flux[ SOURCE.SUN ] = Math.max( 0.2126 * r + 0.7152 * g + 0.0722 * b, 0 ) * this.environmentIntensity.value * this.sunParams.value.y * discArea;
+
+		}
+
+		for ( let i = 0; i < directional.n; i ++ ) flux[ bd.sourceOffsets[ 0 ] + i ] = lum( directional.a, i * directional.f + 3 ) * directional.a[ i * directional.f + 6 ] * discArea;
+
+		const area = lights( 'area' );
+		for ( let i = 0; i < area.n; i ++ ) {
+
+			const a = area.a, o = i * area.f;
+			const cx = a[ o + 4 ] * a[ o + 8 ] - a[ o + 5 ] * a[ o + 7 ], cy = a[ o + 5 ] * a[ o + 6 ] - a[ o + 3 ] * a[ o + 8 ], cz = a[ o + 3 ] * a[ o + 7 ] - a[ o + 4 ] * a[ o + 6 ];
+			const size = 4 * Math.hypot( cx, cy, cz ) * ( a[ o + 15 ] > 0.5 ? Math.PI / 4 : 1 );
+			flux[ bd.sourceOffsets[ 1 ] + i ] = size > 0 ? lum( a, o + 9 ) * Math.max( a[ o + 12 ], 0 ) * ( a[ o + 13 ] > 0.5 ? 1 : size ) : 0;
+
+		}
+
+		const point = lights( 'point' );
+		for ( let i = 0; i < point.n; i ++ ) flux[ bd.sourceOffsets[ 2 ] + i ] = 4 * Math.PI * lum( point.a, i * point.f + 3 ) * Math.max( point.a[ i * point.f + 6 ], 0 );
+
+		const spot = lights( 'spot' );
+		for ( let i = 0; i < spot.n; i ++ ) {
+
+			const o = i * spot.f;
+			flux[ bd.sourceOffsets[ 3 ] + i ] = 2 * Math.PI * ( 1 - Math.cos( spot.a[ o + 10 ] ) ) * lum( spot.a, o + 6 ) * Math.max( spot.a[ o + 9 ], 0 );
+
+		}
+
+		let total = 0;
+		for ( let i = 0; i < flux.length; i ++ ) total += Number.isFinite( flux[ i ] ) ? flux[ i ] : 0;
+		let sum = 0;
+		for ( let i = 0; i < flux.length; i ++ ) {
+
+			sum += Number.isFinite( flux[ i ] ) ? flux[ i ] : 0;
+			cdf[ i ] = total > 0 ? sum / total : 0;
+
+		}
+
+		if ( total > 0 ) cdf[ cdf.length - 1 ] = 1;
+
+		// The shaders difference the stored sum, so these are taken from it the same way.
+		const pick = ( i ) => Math.fround( cdf[ i ] - ( i > 0 ? cdf[ i - 1 ] : 0 ) );
+		bd.sunPick.value = pick( SOURCE.SUN );
+		bd.emitterPick.value = pick( SOURCE.EMITTERS );
+		bd.envPick.value = pick( SOURCE.ENVIRONMENT );
+		return total;
+
+	}
+
+	// The disc a light at infinity starts its paths on: the visible scene's bounding sphere, facing it. Its area, or 0.
+	_sceneDisc() {
+
+		const bd = this._bidirectional;
+		const bounds = this._visibleSceneBounds();
 		if ( ! bounds ) return 0;
 
 		const [ x0, y0, z0 ] = bounds.min;
@@ -688,10 +783,7 @@ export class PathTracer extends PathTracerStage {
 		if ( ! ( radius > 0 && Number.isFinite( radius ) ) ) return 0;
 		bd.sceneCenter.value.set( ( x0 + x1 ) / 2, ( y0 + y1 ) / 2, ( z0 + z1 ) / 2 );
 		bd.sceneRadius.value = radius;
-
-		const { x: r, y: g, z: b } = this.sunRadiance.value;
-		const luminance = ( 0.2126 * r + 0.7152 * g + 0.0722 * b ) * this.environmentIntensity.value;
-		return Math.max( luminance, 0 ) * this.sunParams.value.y * Math.PI * radius * radius;
+		return Math.PI * radius * radius;
 
 	}
 
@@ -1515,6 +1607,7 @@ export class PathTracer extends PathTracerStage {
 
 		// A fresh build binds the current lightStorageAttr — any pending realloc is covered.
 		this._lightBufferRealloc = false;
+		if ( this._bidirectionalEnabled ) this._sizeSourceTable();
 
 		const w = this.storageTextures.renderWidth;
 		const h = this.storageTextures.renderHeight;
@@ -2176,6 +2269,14 @@ export class PathTracer extends PathTracerStage {
 				sunRadiance: this.sunRadiance,
 				sunParams: this.sunParams,
 				environmentIntensity: this.environmentIntensity,
+				envTexture: freshEnvTex,
+				envCDFTexture: freshEnvCDF,
+				envMatrix: this.environmentMatrix,
+				envResolution: this.envResolution,
+				directionalLightsBuffer: this.directionalLightsBufferNode,
+				areaLightsBuffer: this.areaLightsBufferNode,
+				pointLightsBuffer: this.pointLightsBufferNode,
+				spotLightsBuffer: this.spotLightsBufferNode,
 				bidirectional: bd,
 				resolution: this.resolution,
 				frame: this.seedFrame,

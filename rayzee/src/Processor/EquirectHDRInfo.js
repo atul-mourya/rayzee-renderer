@@ -1,6 +1,7 @@
 import { DataUtils, HalfFloatType, FloatType, SRGBColorSpace } from 'three';
 import CDFWorker from './Workers/CDFWorker.js?worker&inline';
 import { createWorker } from '../Platform.js';
+import { buildExactEnvironmentTable } from './EnvironmentExactTable.js';
 
 /**
  * Binary search to find the closest index
@@ -175,6 +176,11 @@ export class EquirectHDRInfo {
 		this.compensationDelta = 0;
 		this.width = 0;
 		this.height = 0;
+		this.exactConditional = null;
+		this.exactMarginal = null;
+		this.exactWidth = 0;
+		this.exactHeight = 0;
+		this.radianceIntegral = 0;
 
 		this._worker = null;
 
@@ -184,6 +190,8 @@ export class EquirectHDRInfo {
 
 		this.marginalData = null;
 		this.conditionalData = null;
+		this.exactConditional = null;
+		this.exactMarginal = null;
 
 		if ( this._worker ) {
 
@@ -209,6 +217,7 @@ export class EquirectHDRInfo {
 		this.compensationDelta = result.compensationDelta;
 		this.width = width;
 		this.height = height;
+		Object.assign( this, buildExactEnvironmentTable( floatData, width, height ) );
 
 	}
 
@@ -259,6 +268,11 @@ export class EquirectHDRInfo {
 			this.compensationDelta = result.compensationDelta;
 			this.width = result.width;
 			this.height = result.height;
+			this.exactConditional = result.exactConditional;
+			this.exactMarginal = result.exactMarginal;
+			this.exactWidth = result.exactWidth;
+			this.exactHeight = result.exactHeight;
+			this.radianceIntegral = result.radianceIntegral;
 
 		} finally {
 

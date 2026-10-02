@@ -14,20 +14,29 @@ import {
 	Return,
 } from 'three/tsl';
 
-import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir } from './Environment.js';
+import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from './Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
-import { calculateDirectLightingUnified, calculateMaterialPDF } from './LightsSampling.js';
-import { traceShadowRay, traceShadowRayRefractiveOpaque } from './LightsDirect.js';
+import {
+	calculateDirectLightingUnified, calculateMaterialPDF,
+	sampleDirectionalLight, sampleRectAreaLight, samplePointLightWithAttenuation, sampleSpotLightWithRadius,
+	areaLightRadiance, areaLightSpreadAttenuation,
+} from './LightsSampling.js';
+import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { hitFacet, unpackHitFacet } from './HitFacet.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
-import { IndirectLightingResult, sampleCone } from './LightsCore.js';
+import {
+	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
+	getDirectionalLight, getAreaLight, getPointLight, getSpotLight, intersectAreaLight, getDistanceAttenuation, sampleDirectionalGoboMask,
+	LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_AREA, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT,
+} from './LightsCore.js';
+import { LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW } from './BidirectionalLamps.js';
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from './PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
@@ -42,6 +51,7 @@ import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBV
 import {
 	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine,
 	strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET,
+	sourcePick, lampSource, sourceLampType, sourceLampIndex, sceneDiscPdf, SOURCE,
 } from './Bidirectional.js';
 import {
 	Ray,
@@ -129,6 +139,10 @@ export function buildShadeKernel( params ) {
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
 
 	const useEmissiveNEE = lightBuffer !== undefined;
+	const lamps = {
+		directional: directionalLightsBuffer, numDirectional: numDirectionalLights, area: areaLightsBuffer, numArea: numAreaLights,
+		point: pointLightsBuffer, numPoint: numPointLights, spot: spotLightsBuffer, numSpot: numSpotLights,
+	};
 
 	// Stochastic cone-jitter blur of an env backdrop lookup. Plain JS inliner (NOT a Fn — an rng Fn-param
 	// would freeze; see TSL pitfalls) so it mutates the caller's rngState .toVar() directly. Shared by the
@@ -483,7 +497,17 @@ export function buildShadeKernel( params ) {
 
 				// MIS weight for implicit env hit — prevents double-counting with NEE
 				const envMisWeight = float( 1.0 ).toVar();
-				If( isBackdropView.not(), () => {
+				if ( bdpt ) If( isBackdropView.not(), () => {
+
+					// Georgiev (43) for the environment at infinity, from the exact table its NEE and light paths draw from.
+					const pdfW = select( bdpt.envTable.greaterThan( uint( 0 ) ), environmentPdfExact( envCDFTexture, envMatrix, envResolution, direction ), float( 0.0 ) ).toVar();
+					const directPdfW = select( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ), pdfW, float( 0.0 ) );
+					const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), bdpt.envPick.mul( pdfW ).mul( sceneDiscPdf( bdpt ) ), float( 0.0 ) );
+					envMisWeight.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
+						misWeight( float( 0.0 ), mis( directPdfW ).mul( subpath.dVCM ).add( mis( emissionPdfW ).mul( subpath.dVC ) ) ) ) );
+
+				} );
+				else If( isBackdropView.not(), () => {
 
 					const prevBouncePdf = readRayPdf( rayBufferRW, rayID );
 					If( prevBouncePdf.greaterThan( 0.0 ), () => {
@@ -643,6 +667,100 @@ export function buildShadeKernel( params ) {
 			triangleBuffer, bvhBuffer, triIdx: int( hitTriIdx ), instanceLeaf: hitInstance, hitPoint,
 			smoothNormal: N, viewDir: direction.negate(), didHit: tslBool( true ), liftEnabled: tslBool( false ),
 		} ).faceN : null;
+
+		// Where a lamp's light path first lands: its falloff and a directional gobo apply here.
+		const lampLanding = bdpt ? { source: int( - 1 ).toVar(), dist: float( 0.0 ).toVar() } : null;
+		const landLampPath = ( dist ) => {
+
+			const start = readLightOrigin( hitBufferRW, rayID );
+			const source = int( - 1 ).sub( start.triangle ).toVar();
+			If( start.triangle.lessThan( int( 0 ) ).and( source.greaterThanEqual( int( SOURCE.LAMPS ) ) ), () => {
+
+				const type = sourceLampType( bdpt, source ).toVar();
+				const index = sourceLampIndex( bdpt, source, type ).toVar();
+				If( type.equal( int( LIGHT_TYPE_DIRECTIONAL ) ), () => {
+
+					throughput.mulAssign( sampleDirectionalGoboMask( DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, index ) ), hitPoint ) );
+
+				} ).ElseIf( type.equal( int( LIGHT_TYPE_POINT ) ), () => {
+
+					const light = PointLight.wrap( getPointLight( pointLightsBuffer, index ) );
+					throughput.mulAssign( getDistanceAttenuation( { lightDistance: dist, cutoffDistance: light.distance, decayExponent: light.decay } ).mul( dist.mul( dist ) ) );
+
+				} ).ElseIf( type.equal( int( LIGHT_TYPE_SPOT ) ), () => {
+
+					const light = SpotLight.wrap( getSpotLight( spotLightsBuffer, index ) );
+					throughput.mulAssign( getDistanceAttenuation( { lightDistance: dist, cutoffDistance: light.distance, decayExponent: light.decay } ).mul( dist.mul( dist ) ) );
+
+				} );
+				lampLanding.source.assign( source );
+				lampLanding.dist.assign( dist );
+
+			} );
+
+		};
+
+		// Georgiev (43) for the rect light a continuation reaches. Lamps are not geometry, so the new ray is tested
+		// here, after any scatter, with glass blocking as it does NEE's. `nearPick` gives NEE's pick of it here.
+		const bidirectionalAreaHit = ( from, dir, nearPick ) => {
+
+			const nearestT = float( 1e30 ).toVar();
+			const nearest = int( - 1 ).toVar();
+			Loop( { start: int( 0 ), end: numAreaLights, type: 'int', condition: '<' }, ( { i } ) => {
+
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, i ) );
+				If( light.intensity.greaterThan( 0.0 ), () => {
+
+					const t = intersectAreaLight( light, hitPoint, dir ).toVar();
+					If( t.greaterThan( 0.0 ).and( t.lessThan( nearestT ) ), () => {
+
+						nearestT.assign( t );
+						nearest.assign( i );
+
+					} );
+
+				} );
+
+			} );
+
+			If( nearest.greaterThanEqual( int( 0 ) ), () => {
+
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, nearest ) );
+				const cosLight = dot( dir, light.normal ).negate().toVar();
+				const toLight = hitPoint.add( dir.mul( nearestT ) ).sub( from ).toVar();
+				const len = length( toLight ).toVar();
+				const visibility = traceShadowRayRefractiveOpaque(
+					from, toLight.div( len ), len.mul( SHADOW_END ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				).toVar();
+
+				If( visibility.greaterThan( 0.0 ).and( cosLight.greaterThan( 0.0 ) ), () => {
+
+					const arrived = { dVCM: subpath.dVCM.toVar(), dVC: subpath.dVC.toVar() };
+					misOnHit( arrived, nearestT, cosLight );
+					const neePdfA = nearPick
+						? nearPick( light ).mul( areaLightDirectPdfW( light, hitPoint, nearestT, cosLight ) ).mul( cosLight ).div( max( nearestT.mul( nearestT ), 1e-30 ) )
+						: float( 0.0 );
+					const emissionPdf = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						sourcePick( bdpt, lampSource( bdpt, int( LIGHT_TYPE_AREA ), nearest ) ).div( max( light.area, 1e-20 ) ).mul( cosLight ).div( Math.PI ), float( 0.0 ) );
+					const weight = strategyWeight( bdpt.strategyView, STRATEGY.HIT,
+						misWeight( float( 0.0 ), mis( neePdfA ).mul( arrived.dVCM ).add( mis( emissionPdf ).mul( arrived.dVC ) ) ) );
+
+					currentRadiance.assign( vec4(
+						currentRadiance.xyz.add(
+							regularizePathContribution(
+								areaLightRadiance( light ).mul( areaLightSpreadAttenuation( cosLight, light.spread ) ).mul( throughput ).mul( visibility ).mul( weight )
+									.mul( select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) ) ),
+								float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+							),
+						),
+						currentRadiance.w,
+					) );
+
+				} );
+
+			} );
+
+		};
 
 		// medium stack read once here; reused by the transparency block below
 		const medStack = readMediumStack( rayBufferRW, rayID );
@@ -1097,7 +1215,17 @@ export function buildShadeKernel( params ) {
 
 					misOnHit( subpath, hitDist.add( readMisRayT( rayBufferRW, rayID ) ), abs( dot( exactFacetN, direction ) ) );
 					misOnSpecular( subpath, abs( dot( exactFacetN, interaction.direction ) ) );
+					If( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ).notEqual( uint( 0 ) ), () => {
+
+						landLampPath( hitDist.add( readMisRayT( rayBufferRW, rayID ) ) );
+
+					} );
 					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ) ) );
+					If( isLight.not().and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
+
+						bidirectionalAreaHit( newOrigin, interaction.direction, null );
+
+					} );
 
 				}
 
@@ -1157,8 +1285,12 @@ export function buildShadeKernel( params ) {
 				const neePdfA = float( 0.0 ).toVar();
 				If( start.triangle.lessThan( int( 0 ) ), () => {
 
-					// The sun: its NEE density is in already, and a light at infinity has no distance to square.
-					neePdfA.assign( float( 1.0 ).div( max( arrivalDist.mul( arrivalDist ), 1e-30 ) ) );
+					// A light at infinity has no distance to square. The sun's NEE density is in already; a lamp's
+					// depends on this vertex's material, below.
+					const source = int( - 1 ).sub( start.triangle );
+					neePdfA.assign( select( source.lessThan( int( SOURCE.LAMPS ) ).or( sourceLampType( bdpt, source ).equal( int( LIGHT_TYPE_DIRECTIONAL ) ) ),
+						float( 1.0 ).div( max( arrivalDist.mul( arrivalDist ), 1e-30 ) ), float( 1.0 ) ) );
+					landLampPath( arrivalDist );
 
 				} ).Else( () => {
 
@@ -1421,21 +1553,16 @@ export function buildShadeKernel( params ) {
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
-			// Bidirectional mode samples the sun itself, below.
-			bdpt ? int( 0 ) : hasSun, sunDirection, sunRadiance, sunParams,
+			hasSun, sunDirection, sunRadiance, sunParams,
 		) ).shadowed;
-		const directLight = bdpt ? vec3( 0.0 ).toVar() : directLighting().toVar();
-		if ( bdpt ) If( isLight.not(), () => {
-
-			directLight.assign( directLighting() );
-
-		} );
+		// Bidirectional mode samples every light itself, below.
+		const directLight = bdpt ? null : directLighting().toVar();
 
 		const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
 		// Per-term firefly suppression (megakernel parity: PathTracerCore.js:1164) — wrap the direct-light add
 		// like every other contribution (env/emissive-hit/emissive-NEE). This replaces the cumulative catch-all
 		// that re-suppressed already-wrapped terms + prior-bounce radiance — suppress(a+b) ≠ suppress(a)+suppress(b) (gap #13).
-		currentRadiance.assign( vec4(
+		if ( ! bdpt ) currentRadiance.assign( vec4(
 			currentRadiance.xyz.add(
 				regularizePathContribution(
 					throughput.mul( directLight ).mul( giScale ),
@@ -1570,6 +1697,181 @@ export function buildShadeKernel( params ) {
 		if ( bdpt ) If( isLight.not().and( hasSun.greaterThan( int( 0 ) ) ).and( enableEnvironmentLight ), () => {
 
 			bidirectionalSunNEE();
+
+		} );
+
+		// Georgiev (44)-(45) for the environment, drawn exactly (environmentPdfExact); glass blocks it as it does the sun's.
+		const bidirectionalEnvironmentNEE = () => {
+
+			const drawn = sampleEnvironmentExact( envCDFTexture, envMatrix, envResolution,
+				getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ) );
+			const lightDir = drawn.direction.toVar();
+			const lightPdf = drawn.pdf.toVar();
+			const radiance = sampleEnvironment( {
+				tex: envTexture, samp: sampler( envTexture ), direction: lightDir, environmentMatrix: envMatrix, environmentIntensity, enableEnvironmentLight: float( 1.0 ),
+			} ).xyz.toVar();
+			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
+			If( lightPdf.greaterThan( 0.0 ).and( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) )
+				.and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+
+				const visibility = traceShadowRayRefractiveOpaque(
+					lightShadowOrigin( lightDir ), lightDir, float( 1e20 ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				).toVar();
+
+				If( visibility.greaterThan( 0.0 ), () => {
+
+					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
+					const forward = calculateMaterialPDF( V, lightDir, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const lead = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						bdpt.envPick.mul( sceneDiscPdf( bdpt ) ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
+					const weight = misWeight( mis( forward.div( lightPdf ) ), misPartial( lead, subpath, reverse ) );
+
+					currentRadiance.assign( vec4(
+						currentRadiance.xyz.add(
+							regularizePathContribution(
+								radiance.mul( brdfVal ).mul( NoL ).div( lightPdf ).mul( visibility )
+									.mul( strategyWeight( bdpt.strategyView, STRATEGY.NEE, weight ) ).mul( throughput ).mul( giScale ),
+								float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+							),
+						),
+						currentRadiance.w,
+					) );
+
+				} );
+
+			} );
+
+		};
+
+		if ( bdpt ) If( isLight.not().and( enableEnvironmentLight ).and( bdpt.envTable.greaterThan( uint( 0 ) ) ), () => {
+
+			bidirectionalEnvironmentNEE();
+
+		} );
+
+		// The lamps' reservoir total here, for the BSDF-hit partner at the continuation.
+		const lampTotal = bdpt ? float( 0.0 ).toVar() : null;
+
+		// Georgiev (44)-(45) for a lamp, picked as the path tracer picks it. A point, a spot or a directional light no
+		// camera path can hit; a rect light's partner is the continuation's hit (bidirectionalAreaHit).
+		const bidirectionalLampNEE = () => {
+
+			const lightRandom = getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 2 ) ), rngState, resolution, frame ).toVar();
+			const pick = LampPick.wrap( pickLamp( lamps, hitPoint, N, material, lightRandom.x,
+				( dim ) => getRandomSample1D( _pixelCoord, int( 0 ), dim, rngState, resolution, frame ) ) ).toVar();
+			lampTotal.assign( pick.total );
+
+			const valid = tslBool( false ).toVar();
+			const lightDir = vec3( 0.0, 1.0, 0.0 ).toVar();
+			const emission = vec3( 0.0 ).toVar();
+			const dist = float( 0.0 ).toVar();
+			const lightPdf = float( 0.0 ).toVar();
+			// Emission density over NEE's, but for the cosine here.
+			const emissionOverDirect = float( 0.0 ).toVar();
+			const take = ( sample ) => {
+
+				const ls = LightSample.wrap( sample );
+				valid.assign( ls.valid );
+				lightDir.assign( ls.direction );
+				emission.assign( ls.emission );
+				dist.assign( ls.distance );
+				lightPdf.assign( ls.pdf );
+
+			};
+
+			const pE = sourcePick( bdpt, lampSource( bdpt, pick.kind, pick.index ) ).toVar();
+
+			If( pick.kind.equal( int( LIGHT_TYPE_DIRECTIONAL ) ), () => {
+
+				const light = DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, pick.index ) );
+				take( sampleDirectionalLight( light, hitPoint, pick.pdf, lightRandom.y,
+					getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame ) ) );
+				emissionOverDirect.assign( pE.mul( sceneDiscPdf( bdpt ) ).div( max( pick.pdf, 1e-30 ) ) );
+
+			} ).ElseIf( pick.kind.equal( int( LIGHT_TYPE_AREA ) ), () => {
+
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, pick.index ) );
+				take( sampleRectAreaLight( light, hitPoint,
+					vec2( lightRandom.y, getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ), pick.pdf ) );
+				emissionOverDirect.assign( pE.div( max( light.area.mul( Math.PI ).mul( lightPdf ), 1e-30 ) ) );
+
+			} ).ElseIf( pick.kind.equal( int( LIGHT_TYPE_POINT ) ), () => {
+
+				take( samplePointLightWithAttenuation( PointLight.wrap( getPointLight( pointLightsBuffer, pick.index ) ), hitPoint, pick.pdf ) );
+				emissionOverDirect.assign( pE.div( max( float( 4 * Math.PI ).mul( pick.pdf ).mul( dist ).mul( dist ), 1e-30 ) ) );
+
+			} ).Else( () => {
+
+				const light = SpotLight.wrap( getSpotLight( spotLightsBuffer, pick.index ) );
+				take( sampleSpotLightWithRadius( light, hitPoint, pick.pdf ) );
+				emissionOverDirect.assign( pE.div( max( spotConeSolidAngle( light ).mul( pick.pdf ).mul( dist ).mul( dist ), 1e-30 ) ) );
+
+			} );
+
+			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
+			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+
+				const atInfinity = pick.kind.equal( int( LIGHT_TYPE_DIRECTIONAL ) );
+				const shadowOrigin = lightShadowOrigin( lightDir ).toVar();
+				const toSample = hitPoint.add( lightDir.mul( dist ) ).sub( shadowOrigin ).toVar();
+				const shadowDist = length( toSample ).toVar();
+				const visibility = traceShadowRayRefractiveOpaque(
+					shadowOrigin, select( atInfinity, lightDir, toSample.div( shadowDist ) ), select( atInfinity, float( 1e20 ), shadowDist.mul( SHADOW_END ) ),
+					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+				).toVar();
+
+				If( visibility.greaterThan( 0.0 ), () => {
+
+					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
+					const forward = calculateMaterialPDF( V, lightDir, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const lead = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), emissionOverDirect.mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
+					const wLight = select( pick.kind.equal( int( LIGHT_TYPE_AREA ) ), mis( forward.div( lightPdf ) ), float( 0.0 ) );
+
+					currentRadiance.assign( vec4(
+						currentRadiance.xyz.add(
+							regularizePathContribution(
+								emission.mul( brdfVal ).mul( NoL ).div( lightPdf ).mul( visibility )
+									.mul( strategyWeight( bdpt.strategyView, STRATEGY.NEE, misWeight( wLight, misPartial( lead, subpath, reverse ) ) ) ).mul( throughput ).mul( giScale ),
+								float( bounceIndex ), fireflyThreshold, int( accumFrame ),
+							),
+						),
+						currentRadiance.w,
+					) );
+
+				} );
+
+			} );
+
+		};
+
+		if ( bdpt ) If( isLight.not().and( lampCount( lamps ).greaterThan( int( 0 ) ) ), () => {
+
+			bidirectionalLampNEE();
+
+		} );
+
+		// NEE's density for a lamp's light path depends on this vertex's material.
+		if ( bdpt ) If( isLight.and( lampLanding.source.greaterThanEqual( int( SOURCE.LAMPS ) ) ), () => {
+
+			const type = sourceLampType( bdpt, lampLanding.source ).toVar();
+			const index = sourceLampIndex( bdpt, lampLanding.source, type ).toVar();
+			const d = lampLanding.dist;
+			const direct = lampPickPdf( lamps, type, index, hitPoint, N, material ).toVar();
+			If( type.equal( int( LIGHT_TYPE_DIRECTIONAL ) ), () => {
+
+				const light = DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, index ) );
+				direct.divAssign( select( light.angle.greaterThan( 0.0 ), directionalConeSolidAngle( light ), float( 1.0 ) ) );
+
+			} ).ElseIf( type.equal( int( LIGHT_TYPE_AREA ) ), () => {
+
+				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, index ) );
+				const cosLight = dot( direction, light.normal ).toVar();
+				direct.mulAssign( areaLightDirectPdfW( light, hitPoint, d, cosLight ).mul( cosLight ).div( max( d.mul( d ), 1e-30 ) ) );
+
+			} );
+			subpath.dVCM.mulAssign( mis( direct ) );
 
 		} );
 
@@ -1836,6 +2138,15 @@ export function buildShadeKernel( params ) {
 
 		const underFacet = dot( facetN, bounceDir ).lessThan( 0.0 ).toVar();
 		const newOrigin = offsetRayOrigin( hitPoint, select( underFacet, facetN.negate(), facetN ) );
+
+		if ( bdpt ) If( isLight.not().and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
+
+			const connectible = specularScatter.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) ).and( dot( bounceDir, NgeoFF ).greaterThan( 0.0 ) );
+			bidirectionalAreaHit( newOrigin, bounceDir, ( light ) => select( connectible, select( lampTotal.greaterThan( 0.0 ),
+				estimateLightImportance( light, hitPoint, N, material ).div( max( lampTotal, 1e-30 ) ),
+				float( 1.0 ).div( max( float( lampCount( lamps ) ), 1.0 ) ) ), float( 0.0 ) ) );
+
+		} );
 
 		// Whether this vertex's sun NEE could have drawn bounceDir, so a sun hit at the miss knows its MIS partner.
 		const sunNEE = brdfIsTransmission.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) );

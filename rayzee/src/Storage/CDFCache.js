@@ -2,7 +2,7 @@ import { ENGINE_AREAS } from './StorageManager.js';
 import { sharedStorage } from './shared.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
-const FORMAT = 1;
+const FORMAT = 2;
 
 /**
  * Where an environment texture came from, recorded by the loader so its sampling tables can be
@@ -25,7 +25,9 @@ function keyFor( texture ) {
 
 const area = () => sharedStorage( getAssetConfig().cacheNamespace )?.area( ENGINE_AREAS.CDF ) ?? null;
 
-/** @returns {Promise<?{marginalData: Float32Array, conditionalData: Float32Array, totalSum: number, compensationDelta: number, width: number, height: number}>} */
+const FILES = [ 'marginal.f32', 'conditional.f32', 'exactConditional.f32', 'exactMarginal.f32' ];
+
+/** @returns {Promise<?Object>} the fields of an EquirectHDRInfo build */
 export async function loadCDF( texture ) {
 
 	const key = keyFor( texture );
@@ -34,14 +36,11 @@ export async function loadCDF( texture ) {
 
 	try {
 
-		const [ marginal, conditional ] = await Promise.all( [ entry.file( 'marginal.f32' ), entry.file( 'conditional.f32' ) ] );
-		if ( ! marginal || ! conditional ) return null;
-		const { totalSum, compensationDelta, width, height } = entry.extra;
-		return {
-			marginalData: new Float32Array( await marginal.arrayBuffer() ),
-			conditionalData: new Float32Array( await conditional.arrayBuffer() ),
-			totalSum, compensationDelta, width, height,
-		};
+		const files = await Promise.all( FILES.map( name => entry.file( name ) ) );
+		if ( files.some( f => ! f ) ) return null;
+		const [ marginalData, conditionalData, exactConditional, exactMarginal ] = await Promise.all( files.map( async f => new Float32Array( await f.arrayBuffer() ) ) );
+		const { totalSum, compensationDelta, width, height, exactWidth, exactHeight, radianceIntegral } = entry.extra;
+		return { marginalData, conditionalData, totalSum, compensationDelta, width, height, exactConditional, exactMarginal, exactWidth, exactHeight, radianceIntegral };
 
 	} finally {
 
@@ -51,20 +50,21 @@ export async function loadCDF( texture ) {
 
 }
 
-export async function saveCDF( texture, { marginalData, conditionalData, totalSum, compensationDelta, width, height } ) {
+export async function saveCDF( texture, info ) {
 
+	const { marginalData, conditionalData, exactConditional, exactMarginal, totalSum, compensationDelta, width, height, exactWidth, exactHeight, radianceIntegral } = info;
+	const arrays = [ marginalData, conditionalData, exactConditional, exactMarginal ];
 	const key = keyFor( texture );
 	const target = key ? area() : null;
-	if ( ! target || ! marginalData || ! conditionalData ) return false;
+	if ( ! target || arrays.some( a => ! a ) ) return false;
 
-	const writer = await target.create( key, { label: texture.name || 'environment', expectedBytes: marginalData.byteLength + conditionalData.byteLength } );
+	const writer = await target.create( key, { label: texture.name || 'environment', expectedBytes: arrays.reduce( ( n, a ) => n + a.byteLength, 0 ) } );
 	if ( ! writer ) return false;
 
 	try {
 
-		await writer.write( 'marginal.f32', marginalData );
-		await writer.write( 'conditional.f32', conditionalData );
-		await writer.commit( { totalSum, compensationDelta, width, height } );
+		for ( let i = 0; i < FILES.length; i ++ ) await writer.write( FILES[ i ], arrays[ i ] );
+		await writer.commit( { totalSum, compensationDelta, width, height, exactWidth, exactHeight, radianceIntegral } );
 		return true;
 
 	} catch {

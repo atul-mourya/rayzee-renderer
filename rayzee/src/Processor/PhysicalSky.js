@@ -50,7 +50,8 @@ export class PhysicalSky {
 		this._texture.wrapS = RepeatWrapping;
 		this._texture.wrapT = ClampToEdgeWrapping;
 		this._texture.generateMipmaps = false;
-		this._cdfTexture = gpuTexture( width + 1, height, RedFormat );
+		// The exact table's rows (EnvironmentExactTable.js) follow the inverted one's.
+		this._cdfTexture = gpuTexture( width + 1, 2 * height, RedFormat );
 		this._rec709Weights = spectrumToRec709( SKY_RADIANCE_SCALE );
 
 		this._attrs = null;
@@ -87,7 +88,7 @@ export class PhysicalSky {
 			cdfRows: attr( this.height ),
 			cdfPrefix: gpuOnlyStorageAttribute( this.width * this.height, 2 ),
 			cdfStats: attr( 2 ),
-			cdf: gpuOnlyStorageAttribute( cdfRowStride( this.width ) * this.height, 1 ),
+			cdf: gpuOnlyStorageAttribute( cdfRowStride( this.width ) * 2 * this.height, 1 ),
 			phaseCells: new StorageInstancedBufferAttribute( phaseCellWeights( MS_VIEW_MU, MS_VIEW_PHI, MS_BANDS, MS_SECTORS ), 4 ),
 		};
 		const node = ( key, type = 'vec4' ) => storage( this._attrs[ key ], type, this._attrs[ key ].count );
@@ -177,9 +178,9 @@ export class PhysicalSky {
 			[ this.width, this.height ],
 		);
 		encoder.copyBufferToTexture(
-			{ buffer: backend.get( this._attrs.cdf ).buffer, bytesPerRow: cdfRowStride( this.width ) * 4, rowsPerImage: this.height },
+			{ buffer: backend.get( this._attrs.cdf ).buffer, bytesPerRow: cdfRowStride( this.width ) * 4, rowsPerImage: 2 * this.height },
 			{ texture: backend.get( this._cdfTexture ).texture },
-			[ this.width + 1, this.height ],
+			[ this.width + 1, 2 * this.height ],
 		);
 		backend.device.queue.submit( [ encoder.finish() ] );
 
@@ -209,7 +210,7 @@ export class PhysicalSky {
 	 * @param {number} p.altitude - metres
 	 * @param {number} p.sunAngularDiameter - radians
 	 * @param {number} [p.sunStrength=1]
-	 * @returns {{ texture: DataTexture, cdfTexture: DataTexture, sun: Object, stats: Promise<{ totalSum: number, compensationDelta: number }> }}
+	 * @returns {{ texture: DataTexture, cdfTexture: DataTexture, sun: Object, stats: Promise<{ totalSum: number, compensationDelta: number, radianceIntegral: number }> }}
 	 */
 	bake( renderer, p ) {
 
@@ -258,7 +259,7 @@ export class PhysicalSky {
 		const stats = renderer.getArrayBufferAsync( this._attrs.cdfStats ).then( buffer => {
 
 			const s = new Float32Array( buffer );
-			return { totalSum: s[ 4 ], compensationDelta: s[ 5 ] };
+			return { totalSum: s[ 4 ], compensationDelta: s[ 5 ], radianceIntegral: 2 * Math.PI * Math.PI * s[ 0 ] / ( this.width * this.height ) };
 
 		} );
 
