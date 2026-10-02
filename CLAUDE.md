@@ -730,7 +730,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - **Frame:** `lightGenerate` → light bounce loop (`extend`/[sort]/`shade`/`compact`/`lightCopyback`, the
   same kernels, rays flagged `RAY_FLAG.LIGHT_PATH`) → `lightSplat` → camera chunks, where `connect` runs
   between `shade` and `compact` and `splatResolve` before `finalWrite`. Light paths per frame =
-  min(pixels, pool, cache slots ÷ (maxBounces + 1)). The light pass keeps its own survivor curve in
+  min(half the pixels, pool, cache slots ÷ (maxBounces + 1)): at equal time half a pixel's worth beat one on
+  the interior below and the caustic room alike (`LIGHT_PATHS_PER_PIXEL`). The light pass keeps its own survivor curve in
   `bounceCounts` [2n, 4n), keyed on that count, the slot count and the loop bound.
 - **Strategies:** camera path hits the light (Shade), NEE (Shade, `bidirectionalEmissiveNEE` /
   `bidirectionalSunNEE` — the path tracer's own sun pass is off in this mode), one connection per camera
@@ -751,7 +752,10 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   the drawn direction. The bounds are the *visible* placements' box, read from the TLAS as the GPU has it
   (`_visibleSceneBounds`, six branch-and-bound searches): the engine keeps a hidden 240-unit ground plane,
   which made the disc 100× too large. Shade undoes `misOnHit`'s distance at their first hit, since a light at
-  infinity has none.
+  infinity has none. Beside lamps or emitters they get light paths for `INFINITE_LIGHT_PATH_SHARE` (5 %) of
+  their flux: most of what crosses the disc lands where their NEE does better, and on the 1.9M-triangle
+  interior (HDRI + six rect lamps) the sky's 89 % of light paths had made light tracing the noisiest strategy.
+  Alone they still get every light path, so their caustics keep them.
 - **Lamps** (`TSL/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
   same dimensions — less its bounce-depth factor, which a light path cannot know. A lamp's light path
   multiplies that pick into dVCM at its first opaque vertex, with that vertex's normal and material
@@ -766,9 +770,11 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   `TSL/Environment.js`): NEE, light paths and the miss weight share an exact table — each cell drawn as
   often as the density it reports, both read from the same running sums — in the CDF texture's rows past the
   map's height. Cells are capped at 1024 wide; each texel weighs as its brightest neighbour (filtering
-  spreads a bright texel's light into the next ones: NEE alone on a painted sun went 100× quieter); every
-  cell keeps 1e-4 of the mean, so NEE or light tracing alone covers the sphere. Built with the CDF for HDRIs
-  and colour skies (`CDFWorker`, cached as `cdf:2`), on the GPU for the physical sky (`EnvironmentCDF.js`);
+  spreads a bright texel's light into the next ones: NEE alone on a painted sun went 100× quieter), less the
+  mean, as the path tracer's table is MIS-compensated (Karlík et al. 2019) — a room lit through a window
+  went from 1.8× to 1.5× path tracing's noise with it; every cell keeps 1e-4 of the mean, so the sphere stays
+  covered (NEE or light tracing alone then misses little but is noisy where compensation cut). Built with the CDF for HDRIs
+  and colour skies (`CDFWorker`, cached as `cdf:3`), on the GPU for the physical sky (`EnvironmentCDF.js`);
   `bidirectional.envTable` says it is there. ⚠️ The path tracer's `sampleEquirectProbability` interpolates
   an inverted table and reports the texel's density, not its own: on a 1K HDRI with a sun, NEE alone read
   4 % bright for upward surfaces and 59 % dark from below, and its MIS compensation gives a colour sky's
@@ -825,20 +831,23 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   summing to 100.00 %. In a room at 4 bounces each lamp, all five at once, and a sky through the open side
   match the path tracer (lamps) or the BSDF-only path tracer (sky) within ±0.06 %, with glass too; a rect
   light behind glass matches the same room with an emissive panel (+0.052 % against +0.050 %).
-- **Measured** (Apple M-series): Cornell 1024² 19 → 49 ms a sample; the 1.9M-triangle interior at 512²,
-  60 spp 1.5 → 3.2 s; kernels compile in ~0.4 s on a switch. Caustic room at 64 spp: RMSE against the
+- **Measured** (Apple M-series): the 1.9M-triangle interior (HDRI + six rect lamps + emitters) at 512², 3
+  bounces, 16.8 → 34.3 ms a frame; kernels compile in ~0.4 s on a switch. At equal GPU time (256 against
+  125 spp, each against its own 4096-spp image) it is 23 % lower in screen RMSE (1.67 against 2.17 levels):
+  dark rooms 28 % lower, mid tones 18 % lower, sky-lit walls 5 % higher. Before the sky's share, the
+  compensated table and half the light paths it was 2.02 against 2.17, sky-lit walls 2.2× higher. Caustic room at 64 spp: RMSE against the
   unbiased reference 10× lower than path tracing; Cornell with emissive NEE off 4.7× lower, with it on
   equal. Equal time, error variance against an independent reference: `BDPT.glb` (lamp behind a door)
   2.2–2.9× lower; Sponza's sunlit arcade 1.6× *higher* and a ceiling-lit room 1.7× higher — light reached
-  directly is already what camera paths + NEE do best. The same holds for lamps and skies: a room lit by
-  the five lamps is ~3× better path traced at equal time, while a spot or a sky with a sun through a glass
-  ball is light the path tracer never converges to (−0.75 % and −7.7 %, its shadow rays passing the glass
-  straight). Lamps and the environment cost ~2 % on a scene with neither. Bench: `cornell-bidirectional`
-  and `lamps-bidirectional` take their truth from the path tracer (`truthSettings`, new in
-  `bench/runner/quality.js`), `caustic-bidirectional` and `sky-bidirectional` from themselves. They catch
-  dropped connections (−3.5 %), dropped light tracing (−15 %), a broken NEE weight (+17 %), no lamp or
-  environment light paths (−46 %, −36 %), the lamp pick left out at landing (−25 %), the environment's miss
-  weight blind to light paths (+5.7 %) and its density off by a factor (×136). `lamps-bidirectional` has a
+  directly is already what camera paths + NEE do best (those three predate the changes above). A room lit only
+  through a window stays 1.5× better path traced; a spot or a sky with a sun through a glass ball is light the
+  path tracer never converges to (−0.75 % and −7.7 %, its shadow rays passing the glass straight). Bench:
+  `cornell-bidirectional` and `lamps-bidirectional` take their truth from the path tracer (`truthSettings`,
+  new in `bench/runner/quality.js`), `caustic-bidirectional` and `sky-bidirectional` from themselves. They
+  catch dropped connections (−4.9 / −4.3 %), dropped light tracing (−8.2 / −8.5 %), an emitter NEE weight
+  blind to light paths (+13 / +11 %), no lamp or environment light paths (−30 %, −24 %), the lamp pick left
+  out at landing (−15 %), the environment's miss weight blind to light paths (+4.2 %) and its density off by a
+  factor (×140). `lamps-bidirectional` has a
   rough metal ball because only there does a rect light's continuation hit carry weight: in an all-matte
   room both of its terms could be dropped unnoticed.
 - **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion

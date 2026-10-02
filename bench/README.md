@@ -663,12 +663,12 @@ guard's other half untested.
 A scene that renders the right picture for the wrong reason still blesses cleanly. So for each
 scene, the feature it claims to cover was disabled and the suite re-run: **8 of 8 mutations were
 caught**, with 1.8–15 % energy-bias deltas and 21–1164 % RMSE increases. The two bidirectional
-scenes were mutated three ways — connections dropped (−3.9 / −3.5 % bias), light tracing dropped (−15 %),
-NEE's weight blind to the light subpaths (+19 / +17 %) — and both failed every time. The lamp and sky
-scenes failed for every one of eight more: no lamp or environment light paths (−46 / −36 %), the lamp pick left
-out where a light path lands (−25 %), either term of a rect light's hit weight dropped (+0.4 / +0.6 %, golden
-differing on 0.7 % of pixels), the environment's miss weight blind to light paths (+5.7 %) and its density off
-by a factor (×136). The margins matter as much
+scenes were mutated three ways — connections dropped (−4.9 / −4.3 % bias), light tracing dropped (−8.2 /
+−8.5 %), NEE's weight blind to the light subpaths (+13 / +11 %) — and both failed every time. The lamp and sky
+scenes failed for every one of six more: no lamp or environment light paths (−30 / −24 %), the lamp pick left
+out where a light path lands (−15 %), either term of a rect light's hit weight dropped (+0.1 / +0.3 %, golden
+differing on 0.7 % of pixels), the environment's miss weight blind to light paths (+4.2 %) and its density off
+by a factor (×140). The margins matter as much
 as the pass — a scene detected only at the threshold is one refactor away from being decorative.
 
 That pass also demonstrated why both gates exist. Flattening `textured-normalmap`'s UV transform to

@@ -437,7 +437,7 @@ Key settings:
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
 | `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
-| `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'`. Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample, no gain for directly lit scenes. Switching rebuilds the kernels |
+| `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'`. Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. Switching rebuilds the kernels |
 | `fireflyThreshold` | `number` | 3.0 | Firefly clamping threshold |
 | `shadowTerminatorOffset` | `number` | 0.1 | Cycles' Shadow Terminator → Geometry Offset: near the light's terminator on a smooth-shaded low-poly mesh, light and environment shadow rays start on the smooth surface the vertex normals describe, not the flat facet. Blender's default; `0` disables |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
