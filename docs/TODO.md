@@ -2,6 +2,7 @@
 
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
+- Press and hold when "show AI" on, shows empty canvas
 
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
   
@@ -29,6 +30,24 @@
   so its weight is ≈ 0 and neither strategy counts that light. Fix: NEE pdf 0 in the hit MIS for a side NEE
   never samples (or let NEE sample the facing side of a DoubleSide emitter). It brightens default renders of
   such scenes, so it needs a decision on the release type before it ships.
+- [ ] **The environment sampler reports a density it does not draw** — `sampleEquirectProbability` interpolates
+  an inverted CDF table (and its conditional across rows) but returns the pdf of the texel it lands on. On
+  Poly Haven's 1K `kloofendal_48d_partly_cloudy_puresky`, NEE alone reads ~4 % bright for upward surfaces and
+  59 % dark from below; on a sky with a small sun, a third of its draws land where its own pdf is 0. A real
+  render: a sunlit courtyard's sky light +0.26 % (z 14) against BSDF sampling alone, the HDRI courtyard −0.8 %
+  against an exact sampler. The bidirectional integrator's exact table (`EnvironmentExactTable.js`) is the
+  fix; adopting it moves default pixels.
+- [ ] **NEE at the last bounce is weighted for a BSDF partner that is never traced** — the path tracer stops at
+  `maxBounces` without the continuation, so the MIS'd environment and emitter NEE there lose the BSDF share of
+  the longest paths (the BSDF-hit area term is evaluated in place and is fine). A floor under a uniform colour
+  sky at 0 bounces reads −79 % (the compensated sky table gives NEE no chance near the zenith, which BSDF
+  sampling was to cover); a sky-lit room at 4 bounces −0.27 % (z −12). Bidirectional takes one more segment
+  (`EMISSION_ONLY`); the path tracer could weigh last-vertex NEE at 1. Moves default pixels.
+- [ ] **IES profiles are read over the wrong angles** — `resampleIESToGrid` spans the file's own range
+  (often 0–90° vertically, 0–90° or 0–180° around), but `sampleIESProfile` maps the texture as 0–180° and
+  0–360°: a downlight's beam comes out about twice as wide and lights what is behind it. Moves default pixels.
+- [ ] `sampleEquirectProbability` divides by `envTotalSum` without a zero check (NaN when it is 0, e.g. a
+  host zeroing it to switch environment NEE off).
 - [ ] **Very large triangles read dark in bands** — a 400 × 400 floor made of 2 triangles under a lamp, against
   the closed-form answer: camera-side estimators (default PT, NEE, BSDF hits) read 1.3 % and 4–5 % dark in sharp
   bands; an 8-unit floor or the same floor split 64 × 64 is exact. Rays leaving the big triangle re-hit it
@@ -105,7 +124,7 @@
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky
 - [ ] Volumetric rendering
-- [ ] Caustic support - Photon mapping &/ BDPT (bidirectional covers emissive lights and the sun; the sky texture and HDRIs still need photon mapping)
+- [ ] Caustic support - Photon mapping &/ BDPT (bidirectional covers every light; photon mapping would add the specular–diffuse–specular paths no BDPT strategy samples from a point, spot or sharp directional lamp)
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
@@ -163,6 +182,7 @@
 ## Experiments
 
 - [x] explore OpenColorIO OCIO color management
+- [ ] Expirement with meshlet
 - [ ] Neural-texture-compression <https://syllogi-graphikon.vercel.app/posts/metal-neural-texture-compression/>
 - [ ] Offscreen canvas rendering - <https://threejs.org/manual/#en/offscreencanvas>
 - [ ] Ray-Guiding based on Octahedron Mapping CDF
@@ -178,7 +198,7 @@
 - [x] irradiance probes,
 - [ ] SPOM (Silhouette Parallax Occlusion Mapping) ->  more suited for rasterization
 - [ ] Photon mapping
-- [x] Bidirectional path tracing support — `integrator: 'bidirectional'` (emissive triangles and the sun; see CLAUDE.md)
+- [x] Bidirectional path tracing support — `integrator: 'bidirectional'` (every light: emitters, lamps, the sun, the environment; see CLAUDE.md)
 - [ ] Experiment PLOC for maximum BVH performance scenarios
 - [x] tiered-material-buffer-access generalization - already at its practical optimum
 - [ ] Opacity micro map

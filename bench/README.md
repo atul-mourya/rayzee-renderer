@@ -606,7 +606,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Thirty-three scenes, one failure axis each — nineteen image scenes plus fourteen `furnace-*` energy
+Thirty-five scenes, one failure axis each — twenty-one image scenes plus fourteen `furnace-*` energy
 probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
@@ -630,6 +630,8 @@ probes. `npm run bench:list` prints them with what they cover.
 | `instanced-storage` | object-space shared geometry, InstancedMesh placements, a mirrored placement's winding, an emissive geometry placed twice — the storage paths every other scene skips |
 | `cornell-bidirectional` | the bidirectional integrator — light subpaths, connections, light tracing and their MIS; its truth is the path tracer's estimate of the same room (`truthSettings`) |
 | `caustic-bidirectional` | bidirectional through glass and a mirror — light-traced caustics, MIS across specular vertices, importance through refraction |
+| `lamps-bidirectional` | bidirectional with every lamp type as a light-path source — the source table, the lamp pick at both ends, lamps no camera path can hit, a rect light reached by the continuation (in rough metal); truth from the path tracer |
+| `sky-bidirectional` | bidirectional with a painted-sun sky as a light-path source — the exact environment table, NEE and the miss weight from it, sunlight through glass |
 | `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
 | `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
 | `furnace-dielectric-smooth` | the same at `MIN_ROUGHNESS`, where a floored GGX denominator read 1.10 |
@@ -662,7 +664,11 @@ A scene that renders the right picture for the wrong reason still blesses cleanl
 scene, the feature it claims to cover was disabled and the suite re-run: **8 of 8 mutations were
 caught**, with 1.8–15 % energy-bias deltas and 21–1164 % RMSE increases. The two bidirectional
 scenes were mutated three ways — connections dropped (−3.9 / −3.5 % bias), light tracing dropped (−15 %),
-NEE's weight blind to the light subpaths (+19 / +17 %) — and both failed every time. The margins matter as much
+NEE's weight blind to the light subpaths (+19 / +17 %) — and both failed every time. The lamp and sky
+scenes failed for every one of eight more: no lamp or environment light paths (−46 / −36 %), the lamp pick left
+out where a light path lands (−25 %), either term of a rect light's hit weight dropped (+0.4 / +0.6 %, golden
+differing on 0.7 % of pixels), the environment's miss weight blind to light paths (+5.7 %) and its density off
+by a factor (×136). The margins matter as much
 as the pass — a scene detected only at the threshold is one refactor away from being decorative.
 
 That pass also demonstrated why both gates exist. Flattening `textured-normalmap`'s UV transform to
@@ -721,7 +727,7 @@ Then do two things that are not optional:
 
 ## Cost
 
-Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 33-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
+Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 35-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
 
 ## Known gaps
 

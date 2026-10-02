@@ -65,7 +65,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `SortGlobalKernels.js` | `buildResetGlobalHistKernel()`, `buildGlobalHistKernel()`, `buildGlobalPrefixKernel()`, `buildGlobalScatterKernel()`, `SORT_GLOBAL_WG_SIZE`, `SORT_GLOBAL_MAX_BINS` | Global material counting sort (reset → histogram → prefix-sum → scatter) → material-pure workgroups for shading coherence; bins sized per-scene to material count |
 | `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE` | Per-pixel: temporal accumulation blend, MRT StorageTexture writes; visMode 11 flags NaN/Inf red |
 | `DebugKernel.js` | `buildDebugKernel()`, `DEBUG_WG_SIZE` | Single-pass primary-ray debug viz for visMode 1–10 (delegates to `TraceDebugMode`); mode 9 computed inline |
-| `LightGenerateKernel.js` | `buildLightGenerateKernel()` | Bidirectional only: starts one light subpath per pool slot on an emissive triangle (power-picked, uniform point, cosine direction) or the physical sky's sun (a direction over its disc, a point on a disc covering the visible scene) |
+| `LightGenerateKernel.js` | `buildLightGenerateKernel()` | Bidirectional only: starts one light subpath per pool slot on a source picked by flux from the source table — an emissive triangle (power-picked, uniform point, cosine direction), a lamp (rect/disk, point, spot, directional), or a light at infinity (the sun, the environment's exact table, a directional light), whose paths start on a disc covering the visible scene |
 | `ConnectKernel.js` | `buildConnectKernel()` | Bidirectional only: connects each camera vertex Shade left pending to one cached light vertex |
 | `LightSplatKernel.js` | `buildLightSplatKernel()`, `buildSplatResolveKernel()` | Bidirectional only: light tracing — every cached light vertex to the pinhole, into a fixed-point splat image; the resolve adds it into each chunk before FinalWrite |
 
@@ -248,9 +248,12 @@ There is no swap of the active-index ping-pong during the loop: kernels are buil
 
 ### Bidirectional integrator
 `TSL/Bidirectional.js` holds the shared pieces: the MIS recursion (Georgiev 2012's dVCM/dVC, power
-heuristic, `calculateMaterialPDF` densities both ways), emitter side and area densities, and
-`resolveSurfaceMaterial`, which re-reads a stored vertex's material as Shade folds it. Light subpaths
-start on emissive triangles and the physical sky's sun; other lights keep their unidirectional pair. A light ray in Shade skips
+heuristic, `calculateMaterialPDF` densities both ways), emitter side and area densities, the source table
+helpers and `resolveSurfaceMaterial`, which re-reads a stored vertex's material as Shade folds it;
+`TSL/BidirectionalLamps.js` holds the lamp pick NEE and a light path's landing share. Light subpaths start on
+every light, and in this mode Shade samples each itself (lamps, sun, environment, emitters) rather than through
+`calculateDirectLightingUnified`; the environment through the exact table in the CDF texture's lower rows
+(`sampleEnvironmentExact`). Rect lights, not being geometry, are tested on each camera continuation. A light ray in Shade skips
 everything camera-only (backdrop, aux, emission, NEE), stores an opaque vertex in the light vertex cache —
 the hit buffer's tail, `path × (maxBounces + 1) + depth` — and scatters with the adjoint BSDF. Camera
 vertices write a pending record that ConnectKernel resolves after Shade. Shadow rays of the bidirectional

@@ -118,7 +118,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.albedoMaps`, `stage.environment.envParams`):
 - **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)`, `setBool()`. Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
 - **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), feature scanning (`rescanMaterialFeatures()`), texture array management. Owns `materialStorageAttr` and `materialStorageNode`.
-- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F CDF texture node) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
+- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F CDF texture node; the rows past the map's height hold the bidirectional integrator's exact table, `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
@@ -345,7 +345,7 @@ would change every golden, and `strict` would abort a run before the runner repo
 
 ### Without a browser (`Platform.js`, `HeadlessCanvas.js`, `rayzee/src/node/`)
 The published build renders in plain Node on Dawn. `npm run bench:node` renders the whole corpus that
-way against the Chrome goldens (all 33 match, RMSE ≤ 0.0036); a textured glTF with an HDR or PNG sky
+way against the Chrome goldens (all 35 match, RMSE ≤ 0.0036); a textured glTF with an HDR or PNG sky
 matched Chrome within 0.05 of a level per 16² block.
 - **No canvas ⇒ headless** (`new PathTracerApp( null )`, or `{ headless: true }`; `openHeadless` without
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
@@ -683,7 +683,8 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 - **Nothing leaves the GPU.** The sky is computed per equirect row × 256 azimuths from the sun (π·s²,
   mirrored: radiance depends on elevation and that azimuth only) and filled into the equirect; the
   importance-sampling table is built beside it (`TSL/EnvironmentCDF.js`, the GPU twin of
-  `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`); both are copied into
+  `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`, and of the bidirectional exact
+  table in the next `height` rows); both are copied into
   textures created without pixels (`source.dataReady = false`). Only the table's two normalisers come
   back, a few frames later — the frames between use the previous bake's. ⚠️ Such a texture has no
   `image.data`: `buildEnvironmentCDF`, `convertTexturePixels` and the other CPU readers skip it, and
@@ -719,13 +720,13 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   latitude) with north along −Z; presets aim for their sun *height* on the chosen date
   (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
-### Bidirectional integrator (`integrator: 'bidirectional'`, `TSL/Bidirectional.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`)
+### Bidirectional integrator (`integrator: 'bidirectional'`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`)
 Opt-in (`settings.set( 'integrator', 'bidirectional' )`; the app's Path Tracer tab → Light Transport). Light
-subpaths start on **emissive triangles and the physical sky's sun**; the environment map, the sky texture and
-the analytic lights keep their NEE + BSDF-hit pair, which stays consistent because a path is weighted over
-the strategies that can sample it. `'path'` builds exactly the unidirectional kernels: everything
-bidirectional is JS-gated on `params.bidirectional`, and all 83 default kernels dumped over 5 scenes compare
-identical to the previous build apart from node ids.
+subpaths start on **every light**: emissive triangles, the physical sky's sun, the environment map (HDRI,
+physical-sky texture, colour sky) and the four lamp types (rect/disk area, point, spot, directional). In this
+mode Shade samples each of them itself; `calculateDirectLightingUnified` is not called. `'path'` builds
+exactly the unidirectional kernels: everything bidirectional is JS-gated on `params.bidirectional`, and all
+102 default kernels dumped over 6 scenes compare identical to the previous build apart from node ids.
 - **Frame:** `lightGenerate` → light bounce loop (`extend`/[sort]/`shade`/`compact`/`lightCopyback`, the
   same kernels, rays flagged `RAY_FLAG.LIGHT_PATH`) → `lightSplat` → camera chunks, where `connect` runs
   between `shade` and `compact` and `splatResolve` before `finalWrite`. Light paths per frame =
@@ -739,19 +740,47 @@ identical to the previous build apart from node ids.
   camera's dVCM starts at 0, which removes it from every weight. A camera path at the bounce limit takes one
   more segment flagged `RAY_FLAG.EMISSION_ONLY`, so the camera-hits-light strategy reaches the longest
   paths too and the weights still sum to one there.
-- **The sun as a light:** a light path picks the sun with probability `sunPick` (its flux through the
-  scene's disc against the emitters', `PathTracer._sunFlux`), draws a direction over the disc
-  (`sampleSunDisc`) and a point on a disc of the scene's bounding radius facing it. The bounds are the
-  *visible* placements' box, read from the TLAS as the GPU has it (`_visibleSceneBounds`, six
-  branch-and-bound searches): the engine keeps a hidden 240-unit ground plane, which made the disc 100×
-  too large. Light-origin triangle −1 marks a sun start; Shade then undoes `misOnHit`'s distance at the
-  first hit, since a light at infinity has none.
+- **The source table** (`sourceCdf`, `PathTracer._updateSourceTable`, rebuilt each frame): a running sum over
+  the sun, the emitters, the environment, then each lamp list at `sourceOffsets[ LIGHT_TYPE ]`, by the
+  luminous flux each sends into the scene — π·boost·power for emitters; for the sun, a directional light and
+  the environment (∫L dω, `environment.exactTable.radianceIntegral`) what crosses the scene's disc; 4πI a
+  point, 2π(1 − cos θ)I a spot, P (×A when not normalised) a rect light. It is sized to the lamp lists'
+  capacity, which a growing list rebuilds with the kernels. A light path's origin code is its triangle, or
+  −1 − its source.
+- **Lights at infinity** (sun, environment, directional) start on a disc of the scene's bounding radius facing
+  the drawn direction. The bounds are the *visible* placements' box, read from the TLAS as the GPU has it
+  (`_visibleSceneBounds`, six branch-and-bound searches): the engine keeps a hidden 240-unit ground plane,
+  which made the disc 100× too large. Shade undoes `misOnHit`'s distance at their first hit, since a light at
+  infinity has none.
+- **Lamps** (`TSL/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
+  same dimensions — less its bounce-depth factor, which a light path cannot know. A lamp's light path
+  multiplies that pick into dVCM at its first opaque vertex, with that vertex's normal and material
+  (`lampPickPdf`), times a rect light's spherical-rectangle density there. A point, spot or sharp
+  directional lamp has no hit strategy, so its light paths start with dVC 0; so does a soft directional one,
+  which nothing adds at a miss. Falloff other than inverse-square (decay, cutoff, the near clamp) and a
+  directional gobo apply where the light path first lands (`landLampPath`); spot cone, penumbra, gobo and
+  IES at emission. Rect lights are not geometry: each camera continuation, after any scatter including
+  refraction, is tested against them with a glass-blocking shadow ray (`bidirectionalAreaHit`), where the
+  path tracer's own BSDF-hit term follows reflection only.
+- **Environment** (`Processor/EnvironmentExactTable.js`; `sampleEnvironmentExact` / `environmentPdfExact`,
+  `TSL/Environment.js`): NEE, light paths and the miss weight share an exact table — each cell drawn as
+  often as the density it reports, both read from the same running sums — in the CDF texture's rows past the
+  map's height. Cells are capped at 1024 wide; each texel weighs as its brightest neighbour (filtering
+  spreads a bright texel's light into the next ones: NEE alone on a painted sun went 100× quieter); every
+  cell keeps 1e-4 of the mean, so NEE or light tracing alone covers the sphere. Built with the CDF for HDRIs
+  and colour skies (`CDFWorker`, cached as `cdf:2`), on the GPU for the physical sky (`EnvironmentCDF.js`);
+  `bidirectional.envTable` says it is there. ⚠️ The path tracer's `sampleEquirectProbability` interpolates
+  an inverted table and reports the texel's density, not its own: on a 1K HDRI with a sun, NEE alone read
+  4 % bright for upward surfaces and 59 % dark from below, and its MIS compensation gives a colour sky's
+  poles (beyond ±50°) no chance at all. `tests/gpu/environmentExact.test.js` holds the exact one to its
+  density cell by cell.
 - **MIS:** Georgiev 2012's dVCM/dVC recursion, power heuristic, densities from `calculateMaterialPDF` both
   ways round everywhere (`misOnHit` / `misOnScatter` / `misOnSpecular` / `misPartial`). Russian roulette and
   the transparency-layer picks are left out of every density alike, so the weights still sum to one.
   Refraction, a subsurface boundary and a delta lobe are not connectible: dVCM 0, dVC × cos. The partial
-  sums ride in `HIT.RNG.yz`. `tests/gpu/bidirectionalMis.test.js` checks the four strategies of a
-  two-bounce path against the power heuristic from explicit densities; a dropped exponent fails it.
+  sums ride in `HIT.RNG.yz`. `tests/gpu/bidirectionalMis.test.js` checks a two-bounce path's strategies
+  against the power heuristic from explicit densities — for an emitter, a point and a directional lamp, and
+  the environment; a dropped exponent or a light at infinity's undone distance fails it.
 - ⚠️ **Light tracing obeys the camera's face culling.** Its segment to the pinhole stands in for the primary
   ray, which sees through single-sided faces from behind, so it traces `traverseBVHShadowCameraCulled`, and
   a light vertex on a face the camera would cull carries `extra` = 1 and is not splatted. Hitting both
@@ -774,10 +803,11 @@ identical to the previous build apart from node ids.
   capped at `SPLAT_MAX` (4096): only light tracing *alone* comes near it (a sun path carries the flux of
   the whole disc). Cost: +512 MB at the default pool (cache 256 MB, pending slots 256 MB) plus 12 B per
   reserved pixel.
-- ⚠️ **Glass blocks the bidirectional shadow rays** (`traceShadowRayRefractiveOpaque`), the sun's included:
+- ⚠️ **Glass blocks the bidirectional shadow rays** (`traceShadowRayRefractiveOpaque`), every light's:
   light through it travels the light subpaths. The path tracer's shadow rays pass straight through glass,
   which counts that light a second time, so in a glass scene the two integrators legitimately differ — the
-  unbiased reference there is the path tracer with emissive NEE off.
+  unbiased reference there is the path tracer with emissive NEE off (and, for the sky, its table's weights
+  zeroed: an `envCompensationDelta` of 1e30).
 - ⚠️ **A light subpath carries importance:** Shade undoes refraction's (n1/n2)², evaluates the BSDF with V
   and L swapped (`evaluateMaterialResponse` is not reciprocal — energy compensation keys on NoV), and
   applies the shading-normal correction (Veach 5.3.2, `lightEndCosine`) to light-side cosines.
@@ -789,21 +819,34 @@ identical to the previous build apart from node ids.
   (Lambert's polygon formula): every strategy alone and the combination land within noise of it (all
   |bias| ≤ 0.02 %). Exact-length references come from the path tracer with emissive NEE off at
   maxBounces + 1. Sunlit courtyard (5° sun, 4 bounces) against NEE alone: combined −0.002 %, light tracing
-  −0.002 %, connections +0.23 % (z 1.1), camera hits +0.16 % (z 0.6).
+  −0.002 %, connections +0.23 % (z 1.1), camera hits +0.16 % (z 0.6). Each lamp type over the floor has a
+  closed form too (I·cos/d³, a smoothstepped cone, Lambert, a parallel disk, E·cos), as does a uniform or
+  painted-sun sky over it: every strategy alone and the combination within noise, the weighted views
+  summing to 100.00 %. In a room at 4 bounces each lamp, all five at once, and a sky through the open side
+  match the path tracer (lamps) or the BSDF-only path tracer (sky) within ±0.06 %, with glass too; a rect
+  light behind glass matches the same room with an emissive panel (+0.052 % against +0.050 %).
 - **Measured** (Apple M-series): Cornell 1024² 19 → 49 ms a sample; the 1.9M-triangle interior at 512²,
   60 spp 1.5 → 3.2 s; kernels compile in ~0.4 s on a switch. Caustic room at 64 spp: RMSE against the
   unbiased reference 10× lower than path tracing; Cornell with emissive NEE off 4.7× lower, with it on
   equal. Equal time, error variance against an independent reference: `BDPT.glb` (lamp behind a door)
   2.2–2.9× lower; Sponza's sunlit arcade 1.6× *higher* and a ceiling-lit room 1.7× higher — light reached
-  directly is already what camera paths + NEE do best. Bench: `cornell-bidirectional` takes its truth
-  from the path tracer (`truthSettings`, new in `bench/runner/quality.js`), `caustic-bidirectional` from
-  itself; both catch dropped connections (−3.5 %), dropped light tracing (−15 %) and a broken NEE weight
-  (+17 %).
-- **Not covered:** analytic lights (rect area, point, spot, directional) and the sky texture / HDRIs as
-  light-path sources — a scene lit only by them gets 0 light paths and renders exactly as `'path'`;
-  emissive textures (NEE and light paths both use the per-triangle emission); a dispersion wavelength
-  shared between the subpaths. Connections test the camera end against the facet, where NEE and the
-  bounce leak guard use the interpolated normal: smooth meshes can differ at grazing directions.
+  directly is already what camera paths + NEE do best. The same holds for lamps and skies: a room lit by
+  the five lamps is ~3× better path traced at equal time, while a spot or a sky with a sun through a glass
+  ball is light the path tracer never converges to (−0.75 % and −7.7 %, its shadow rays passing the glass
+  straight). Lamps and the environment cost ~2 % on a scene with neither. Bench: `cornell-bidirectional`
+  and `lamps-bidirectional` take their truth from the path tracer (`truthSettings`, new in
+  `bench/runner/quality.js`), `caustic-bidirectional` and `sky-bidirectional` from themselves. They catch
+  dropped connections (−3.5 %), dropped light tracing (−15 %), a broken NEE weight (+17 %), no lamp or
+  environment light paths (−46 %, −36 %), the lamp pick left out at landing (−25 %), the environment's miss
+  weight blind to light paths (+5.7 %) and its density off by a factor (×136). `lamps-bidirectional` has a
+  rough metal ball because only there does a rect light's continuation hit carry weight: in an all-matte
+  room both of its terms could be dropped unnoticed.
+- **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
+  wavelength shared between the subpaths. Specular–diffuse–specular paths from a lamp no camera path can
+  hit (a point, spot or sharp directional lamp) have no strategy at all — such a lamp behind glass lights a
+  floor seen in a mirror only in the path tracer's straight-through approximation. Connections test the
+  camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth
+  meshes can differ at grazing directions.
 
 ### Denoising Pipeline Coordination
 - **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (None / EdgeAware /

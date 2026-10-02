@@ -56,7 +56,7 @@
   - [ ] Car paint and complex layered materials
 
 - [ ] **Caustics & Advanced Light Transport**
-  - [x] Bidirectional path tracing (BDPT) — light subpaths from emissive geometry and the sun, light tracing for caustics
+  - [x] Bidirectional path tracing (BDPT) — light subpaths from every light (emissive geometry, lamps, the sun, the environment), light tracing for caustics
   - [ ] Photon mapping for caustics
   - [x] Multiple importance sampling (environment + emissive triangle + direct lighting MIS)
   - [ ] Light path caching and reuse
