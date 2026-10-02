@@ -258,7 +258,7 @@ const PathTracerTab = () => {
 				</Row>
 				<Row>
 					<Select value={integrator} onValueChange={handleIntegratorChange}>
-						<span className="opacity-50 text-xs truncate">Light Transport<InfoTip text="Bidirectional also traces light from every light toward the camera. It finds caustics — light focused by glass or mirrors — far faster, at roughly twice the cost per sample. For ordinary bounced light it rarely pays off. Experimental." /></span>
+						<span className="opacity-50 text-xs truncate">Light Transport<InfoTip text="Bidirectional also traces light from every light toward the camera. It finds caustics — light focused by glass or mirrors — far faster, at roughly twice the cost per sample, and helps rooms lit by lamps. Rooms lit only through windows stay better path traced. Experimental." /></span>
 						<SelectTrigger className="max-w-32 h-5 rounded-full">
 							<SelectValue />
 						</SelectTrigger>

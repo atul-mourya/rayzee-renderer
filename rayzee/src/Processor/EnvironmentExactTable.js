@@ -1,7 +1,9 @@
 /**
  * An environment's exact sampling table, for the bidirectional integrator: piecewise constant over cells of
  * at most EXACT_TABLE_MAX_WIDTH × half that, so a direction's density is its cell's share, read back from the
- * same cumulative sums it is drawn from. Pure math: CDFWorker runs it too.
+ * same cumulative sums it is drawn from. MIS-compensated as the path tracer's table is (Karlík et al. 2019):
+ * each texel weighs what it has above the mean, and camera paths' BSDF hits cover the rest. Pure math:
+ * CDFWorker runs it too.
  */
 
 export const EXACT_TABLE_MAX_WIDTH = 1024;
@@ -42,24 +44,46 @@ export function buildExactEnvironmentTable( floatData, width, height ) {
 	}
 
 	// Each texel weighs as its brightest neighbour: filtering spreads a bright texel's light into the next ones.
-	const cells = new Float64Array( w * h );
-	for ( let y = 0; y < height; y ++ ) {
+	const eachTexel = ( visit ) => {
 
-		const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
-		const row = Math.floor( y / k ) * w;
-		const ys = [ Math.max( y - 1, 0 ), y, Math.min( y + 1, height - 1 ) ];
-		for ( let x = 0; x < width; x ++ ) {
+		for ( let y = 0; y < height; y ++ ) {
 
-			const xs = [ ( x + width - 1 ) % width, x, ( x + 1 ) % width ];
-			let peak = 0;
-			for ( const yy of ys ) for ( const xx of xs ) peak = Math.max( peak, lum[ yy * width + xx ] );
-			cells[ row + Math.floor( x / k ) ] += peak * sinTheta;
+			const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
+			const row = Math.floor( y / k ) * w;
+			const ys = [ Math.max( y - 1, 0 ), y, Math.min( y + 1, height - 1 ) ];
+			for ( let x = 0; x < width; x ++ ) {
+
+				const xs = [ ( x + width - 1 ) % width, x, ( x + 1 ) % width ];
+				let peak = 0;
+				for ( const yy of ys ) for ( const xx of xs ) peak = Math.max( peak, lum[ yy * width + xx ] );
+				visit( row + Math.floor( x / k ), peak * sinTheta );
+
+			}
 
 		}
 
+	};
+
+	let dilated = 0;
+	eachTexel( ( cell, weight ) => void ( dilated += weight ) );
+	const mean = dilated / ( width * height );
+	const cells = new Float64Array( w * h );
+	let compensated = 0;
+	eachTexel( ( cell, weight ) => {
+
+		cells[ cell ] += Math.max( weight - mean, 0 );
+		compensated += Math.max( weight - mean, 0 );
+
+	} );
+	// A flat map has nothing above its mean: then the raw weights, as computeCDF falls back.
+	if ( ! ( compensated > 0 ) ) {
+
+		cells.fill( 0 );
+		eachTexel( ( cell, weight ) => void ( cells[ cell ] += weight ) );
+
 	}
 
-	const floor = raw > 0 ? FLOOR * raw / ( w * h ) : 0;
+	const floor = dilated > 0 ? FLOOR * dilated / ( w * h ) : 0;
 	const exactConditional = new Float32Array( w * h );
 	const exactMarginal = new Float32Array( h );
 	const rowSums = new Float64Array( h );

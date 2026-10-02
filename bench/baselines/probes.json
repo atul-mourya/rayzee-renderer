@@ -676,77 +676,77 @@
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.2726744693854237,
-			"meanG": 0.3099683339315824,
-			"meanB": 0.2932383345590406,
-			"meanLuminance": 0.3008317523744039,
+			"meanR": 0.27266861608268567,
+			"meanG": 0.3099423559797394,
+			"meanB": 0.2932481782277323,
+			"meanLuminance": 0.30081263924396545,
 			"maxLuminance": 12.000009733009339,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.007475335625710612
+		"rmseVsTruth": 0.007248192509058043
 	},
 	"caustic-bidirectional": {
 		"truth": {
-			"meanR": 0.3045037396678051,
-			"meanG": 0.35667407082561886,
-			"meanB": 0.34241190607401106,
-			"meanLuminance": 0.34455293012646204,
+			"meanR": 0.30450187417242003,
+			"meanG": 0.35667593428838823,
+			"meanB": 0.3424127340171362,
+			"meanLuminance": 0.3445539260482111,
 			"maxLuminance": 39.99999999999999,
 			"nonFinite": 0,
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.30468788355753773,
-			"meanG": 0.3568206942498491,
-			"meanB": 0.34257943847791245,
-			"meanLuminance": 0.34470904002999575,
+			"meanR": 0.3046835408230608,
+			"meanG": 0.3567874095583946,
+			"meanB": 0.34258059471855035,
+			"meanLuminance": 0.3446843950338858,
 			"maxLuminance": 39.99999999999999,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.011073333817449469
+		"rmseVsTruth": 0.010934843711170384
 	},
 	"lamps-bidirectional": {
 		"truth": {
-			"meanR": 0.4246439896376941,
-			"meanG": 0.42305912204644613,
-			"meanB": 0.3673491181006554,
-			"meanLuminance": 0.4193738026115201,
-			"maxLuminance": 2.496930032205581,
+			"meanR": 0.4257805526079501,
+			"meanG": 0.42461681674500085,
+			"meanB": 0.3676253105205056,
+			"meanLuminance": 0.4207494402401079,
+			"maxLuminance": 26.166742648315427,
 			"nonFinite": 0,
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.4255400160180969,
-			"meanG": 0.4244937160269231,
-			"meanB": 0.3674599549782833,
-			"meanLuminance": 0.42059832185739116,
-			"maxLuminance": 26.19311565246582,
+			"meanR": 0.42585647801041304,
+			"meanG": 0.4245881566905254,
+			"meanB": 0.36758104253721413,
+			"meanLuminance": 0.42074188816132047,
+			"maxLuminance": 26.32018784828186,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.0378271281660405
+		"rmseVsTruth": 0.015952297145941437
 	},
 	"sky-bidirectional": {
 		"truth": {
-			"meanR": 0.2849065654517666,
-			"meanG": 0.2720500896541225,
-			"meanB": 0.24093039755845247,
-			"meanLuminance": 0.27253653463930705,
+			"meanR": 0.2849013033257748,
+			"meanG": 0.2720490745741202,
+			"meanB": 0.24094608713875054,
+			"meanLuminance": 0.2725358227138021,
 			"maxLuminance": 309.18316329956053,
 			"nonFinite": 0,
 			"samples": 2048
 		},
 		"golden": {
-			"meanR": 0.2837948613640826,
-			"meanG": 0.2709384887724884,
-			"meanB": 0.2395317384616984,
-			"meanLuminance": 0.2714041862129353,
+			"meanR": 0.28382904850925605,
+			"meanG": 0.2708396623544296,
+			"meanB": 0.23954655910923606,
+			"meanLuminance": 0.27134184379655546,
 			"maxLuminance": 318.05507300415036,
 			"nonFinite": 0,
 			"samples": 64
 		},
-		"rmseVsTruth": 0.03046753684760082
+		"rmseVsTruth": 0.029309486858356066
 	}
 }

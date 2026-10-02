@@ -75,16 +75,22 @@ describeGPU( 'exact environment sampling', () => {
 		const reported = new Float32Array( await evaluate( renderer, N, { d: [ dirs, 'vec4' ] }, 'float', ( { d } ) =>
 			environmentPdfExact( texture( cdf ), matrix, vec2( W, H ), d.xyz ) ) );
 
+		const below = ( a, j, b ) => ( j > 0 ? a[ b + j - 1 ] : 0 );
+		const shares = new Float64Array( ew * eh );
+		for ( let y = 0; y < eh; y ++ ) for ( let x = 0; x < ew; x ++ ) {
+
+			shares[ y * ew + x ] = ( table.exactMarginal[ y ] - below( table.exactMarginal, y, 0 ) )
+				* ( table.exactConditional[ y * ew + x ] - below( table.exactConditional, x, y * ew ) );
+
+		}
+
+		// The cells MIS compensation leaves weight in: E[ 1 / p ] over them is their solid angle.
+		const kept = ( c ) => shares[ c ] >= 1e-5;
+
 		// Directions back in the map's own frame, to find their texel and cell.
 		const m = new Matrix4().makeRotationY( 0.7 ).elements;
-		const lum = ( x, y ) => {
-
-			const i = ( y * W + x ) * 4; return 0.2126 * pixels[ i ] + 0.7152 * pixels[ i + 1 ] + 0.0722 * pixels[ i + 2 ];
-
-		};
-
 		const counts = new Float64Array( ew * eh );
-		let estimate = 0, mismatched = 0;
+		let estimate = 0, mismatched = 0, keptCount = 0, upperHalf = 0, rightHalf = 0;
 		for ( let i = 0; i < N; i ++ ) {
 
 			const [ x0, y0, z0 ] = [ drawn[ i * 4 ], drawn[ i * 4 + 1 ], drawn[ i * 4 + 2 ] ];
@@ -93,28 +99,36 @@ describeGPU( 'exact environment sampling', () => {
 			const x = Math.min( W - 1, Math.floor( u * W ) ), y = Math.min( H - 1, Math.floor( v * H ) );
 			const p = drawn[ i * 4 + 3 ];
 			if ( Math.abs( reported[ i ] / p - 1 ) > 1e-3 ) mismatched ++;
-			counts[ Math.floor( y / k ) * ew + Math.floor( x / k ) ] ++;
-			estimate += lum( x, y ) / p;
+			const cell = Math.floor( y / k ) * ew + Math.floor( x / k );
+			counts[ cell ] ++;
+			if ( kept( cell ) ) {
+
+				// Uniform inside its cell, in uv, as the density says.
+				estimate += 1 / p;
+				keptCount ++;
+				if ( ( v * eh ) % 1 >= 0.5 ) upperHalf ++;
+				if ( ( u * ew ) % 1 >= 0.5 ) rightHalf ++;
+
+			}
 
 		}
 
-		let integral = 0;
-		for ( let y = 0; y < H; y ++ ) for ( let x = 0; x < W; x ++ ) {
+		let solidAngle = 0;
+		for ( let y = 0; y < eh; y ++ ) for ( let x = 0; x < ew; x ++ ) {
 
-			integral += lum( x, y ) * ( 2 * Math.PI / W ) * ( Math.cos( Math.PI * y / H ) - Math.cos( Math.PI * ( y + 1 ) / H ) );
+			if ( kept( y * ew + x ) ) solidAngle += ( 2 * Math.PI / ew ) * ( Math.cos( Math.PI * y / eh ) - Math.cos( Math.PI * ( y + 1 ) / eh ) );
 
 		}
 
 		expect( mismatched / N ).toBeLessThan( 1e-3 );
-		expect( estimate / N / integral ).toBeCloseTo( 1, 2 );
+		expect( estimate / N / solidAngle ).toBeCloseTo( 1, 2 );
+		expect( Math.abs( upperHalf / keptCount - 0.5 ) ).toBeLessThan( 0.01 );
+		expect( Math.abs( rightHalf / keptCount - 0.5 ) ).toBeLessThan( 0.01 );
 
 		let worst = 0;
 		for ( let y = 0; y < eh; y ++ ) for ( let x = 0; x < ew; x ++ ) {
 
-			const below = ( a, j, b ) => ( j > 0 ? a[ b + j - 1 ] : 0 );
-			const share = ( table.exactMarginal[ y ] - below( table.exactMarginal, y, 0 ) )
-				* ( table.exactConditional[ y * ew + x ] - below( table.exactConditional, x, y * ew ) );
-			const expected = share * N;
+			const expected = shares[ y * ew + x ] * N;
 			if ( expected >= 400 ) worst = Math.max( worst, Math.abs( counts[ y * ew + x ] - expected ) / Math.sqrt( expected ) );
 
 		}

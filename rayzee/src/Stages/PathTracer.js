@@ -51,6 +51,9 @@ const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'globalHist', 'globalScat
 
 // Light vertex cache for the bidirectional integrator, at most this much of the hit buffer.
 const LIGHT_CACHE_BYTES = 256 * 1024 * 1024;
+const INFINITE_LIGHT_PATH_SHARE = 0.05;
+// Light paths cost more than camera paths and help fewer pixels: at equal time half a pixel's worth beat one.
+const LIGHT_PATHS_PER_PIXEL = 0.5;
 const LIGHT_TAG_MAX = ( 1 << 24 ) - 1;
 
 export class PathTracer extends PathTracerStage {
@@ -654,7 +657,7 @@ export class PathTracer extends PathTracerStage {
 		const slots = this.maxBounces.value + 1;
 		const total = this._updateSourceTable();
 		const paths = total > 0
-			? Math.min( w * h, this._packedBuffers.capacity, Math.floor( this._lightCacheSlots / slots ) )
+			? Math.min( Math.ceil( w * h * LIGHT_PATHS_PER_PIXEL ), this._packedBuffers.capacity, Math.floor( this._lightCacheSlots / slots ) )
 			: 0;
 
 		bd.lightPaths.value = paths;
@@ -715,7 +718,9 @@ export class PathTracer extends PathTracerStage {
 		const table = this.environment.exactTable;
 		bd.envTable.value = table ? 1 : 0;
 		const atInfinity = environmentOn && ( this.hasSun.value > 0 || table ) || directional.n > 0;
-		const discArea = atInfinity ? this._sceneDisc() : 0;
+		// What a light at infinity sends through the scene's disc mostly lands where its NEE does better: next to
+		// lamps or emitters it gets this share of its flux in light paths (alone, it gets them all regardless).
+		const discArea = atInfinity ? this._sceneDisc() * INFINITE_LIGHT_PATH_SHARE : 0;
 		if ( environmentOn && table ) flux[ SOURCE.ENVIRONMENT ] = Math.max( table.radianceIntegral, 0 ) * this.environmentIntensity.value * discArea;
 
 		if ( this.emissiveTriangleCount.value > 0 ) flux[ SOURCE.EMITTERS ] = Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value;

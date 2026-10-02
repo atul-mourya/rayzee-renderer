@@ -37,8 +37,8 @@ function lowerBound( n, valueAt, target ) {
 
 /**
  * The GPU twin of `EquirectHDRInfo.computeCDF`, into the packed (width + 1) × height table the
- * sampler reads, and of `buildExactEnvironmentTable` into the next `height` rows (one cell a texel, without its
- * neighbour weighting: the sky has no sharp texel).
+ * sampler reads, and of `buildExactEnvironmentTable` into the next `height` rows (one cell a texel, compensated
+ * by the same mean, without its neighbour weighting: the sky has no sharp texel).
  * `stats[ 1 ]` ends as ( totalSum, compensationDelta, compensated, 0 ).
  * @returns {Array} kernels, dispatched in order
  */
@@ -186,11 +186,14 @@ export function buildEnvironmentCDFKernels( { pixels, rows, prefix, stats, cdf, 
 		} );
 
 		const floor = exactFloor().toVar();
-		const rowSum = rows.element( y ).x.add( floor.mul( width ) ).toVar();
+		const compensated = stats.element( 1 ).z.greaterThan( 0 ).toVar();
+		const r = rows.element( y ).toVar();
+		const rowSum = select( compensated, r.y, r.x ).add( floor.mul( width ) ).toVar();
 		const out = y.add( uint( height ) ).mul( stride ).toVar();
 		Loop( { start: int( 0 ), end: int( width ), type: 'int', condition: '<' }, ( { i } ) => {
 
-			const c = prefix.element( y.mul( width ).add( uint( i ) ) ).x.add( floor.mul( float( i ).add( 1 ) ) ).div( max( rowSum, 1e-30 ) );
+			const p = prefix.element( y.mul( width ).add( uint( i ) ) ).toVar();
+			const c = select( compensated, p.y, p.x ).add( floor.mul( float( i ).add( 1 ) ) ).div( max( rowSum, 1e-30 ) );
 			cdf.element( out.add( uint( i ) ) ).assign( select( rowSum.greaterThan( 0 ), select( i.equal( int( width - 1 ) ), float( 1 ), c ), float( 0 ) ) );
 
 		} );
@@ -201,16 +204,23 @@ export function buildEnvironmentCDFKernels( { pixels, rows, prefix, stats, cdf, 
 
 		firstThreadOnly();
 		const floor = exactFloor().mul( width ).toVar();
+		const compensated = stats.element( 1 ).z.greaterThan( 0 ).toVar();
+		const rowSum = ( i ) => {
+
+			const r = rows.element( i ); return select( compensated, r.y, r.x ).add( floor );
+
+		};
+
 		const total = float( 0 ).toVar();
 		Loop( { start: int( 0 ), end: int( height ), type: 'int', condition: '<' }, ( { i } ) => {
 
-			total.addAssign( rows.element( i ).x.add( floor ) );
+			total.addAssign( rowSum( i ) );
 
 		} );
 		const cumulative = float( 0 ).toVar();
 		Loop( { start: int( 0 ), end: int( height ), type: 'int', condition: '<' }, ( { i } ) => {
 
-			cumulative.addAssign( rows.element( i ).x.add( floor ) );
+			cumulative.addAssign( rowSum( i ) );
 			const c = select( i.equal( int( height - 1 ) ), float( 1 ), cumulative.div( max( total, 1e-30 ) ) );
 			cdf.element( uint( i ).add( uint( height ) ).mul( stride ).add( uint( width ) ) ).assign( select( total.greaterThan( 0 ), c, float( 0 ) ) );
 
