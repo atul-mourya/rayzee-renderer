@@ -22,6 +22,9 @@
     "./addons/bidirectional": {
       "import": "./dist/addons/bidirectional.es.js"
     },
+    "./addons/color": {
+      "import": "./dist/addons/color.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [

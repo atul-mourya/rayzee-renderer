@@ -18,7 +18,7 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'env' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
-import { getActiveColorManagement } from '../Color/ColorManagement.js';
+import { getActiveColorManagement } from '../Color/ActiveColor.js';
 import { loadCDF, saveCDF } from '../Storage/CDFCache.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 

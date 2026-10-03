@@ -346,7 +346,7 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader or bidirectional integrator, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader, bidirectional integrator or OpenColorIO pipeline, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -390,7 +390,19 @@ renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader
 await renderer.loadFile(archiveFile);
 ```
 
-Several renderers, core or full, can live in one page; they share only the colour configuration, which is page-wide.
+OpenColorIO colour management — configs, their views and looks, working spaces and export spaces. Without it the core
+renders in linear Rec.709 through three.js's own view transforms, and `loadColorConfig()` records `capability.missing`:
+
+```js
+import { configureAssets } from 'rayzee/core';
+import { ColorManagement } from 'rayzee/addons/color';
+
+configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
+renderer.setColorManagement(ColorManagement);
+await renderer.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' });
+```
+
+Several renderers, core or full, can live in one page; they share only the colour management, which is page-wide.
 
 #### Loading Assets
 

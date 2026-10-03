@@ -53,6 +53,7 @@ const ABOVE_THE_CORE = [
 	/^Processor\/PBRT\//,
 	/^Storage\/SceneGraphCodec\.js$/,
 	/^integrators\//,
+	/^Color\/(ColorManagement|OcioViews|OcioRuntime|LutBake|ColorSpaces|InputColorSpaces|BakedViews|Displays)\.js$/,
 	/^TSL\/(Bidirectional|BidirectionalLamps|LightGenerateKernel|ConnectKernel|LightSplatKernel|MergeKernel|LightGuide)\.js$/,
 ];
 
@@ -99,6 +100,14 @@ describe( 'the renderer core', () => {
 		const bidirectional = reachable( 'addons/bidirectional.js' );
 		expect( bidirectional ).toEqual( expect.arrayContaining( [ 'integrators/BidirectionalIntegrator.js', 'TSL/ConnectKernel.js' ] ) );
 		expect( bidirectional.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'leaves the OCIO pipeline to its add-on, which reaches no viewer code', () => {
+
+		const color = reachable( 'addons/color.js' );
+		expect( color ).toEqual( expect.arrayContaining( [ 'Color/ColorManagement.js', 'Color/OcioRuntime.js' ] ) );
+		expect( color.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
 

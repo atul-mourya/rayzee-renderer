@@ -44,34 +44,9 @@ import {
 } from './InputColorSpaces.js';
 import { setWorkingMatrix, convertLinearTriple, convertLinearTriples } from './WorkingMatrix.js';
 import { packHalf, unpackHalf } from './LutBake.js';
+import { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManagement, claimActiveColorManagement } from './ActiveColor.js';
 
-/** What the engine renders in when no config has been adopted. */
-export const DEFAULT_WORKING_SPACE = 'Linear Rec.709 (sRGB)';
-
-/**
- * The instance the rest of the engine reads.
- *
- * A config, a working space and a set of view transforms are process-wide — there is one OCIO
- * runtime and one set of baked tables — so code far from the app (texture processing, the asset
- * loader) asks for the active instance rather than having one threaded through six constructors.
- */
-let active = null;
-
-/** The colour management the engine is currently using, or null. */
-export function getActiveColorManagement() {
-
-	return active;
-
-}
-
-/** Make an instance the one the engine reads. Normally the app's own, set on construction. */
-export function setActiveColorManagement( cm ) {
-
-	active = cm;
-	// Whatever the previous instance published is not this one's working space.
-	cm?._publishWorkingMatrix?.();
-
-}
+export { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManagement };
 
 /** The canvas colour space for a display: its own when it has one, sRGB otherwise. */
 export function canvasColorSpaceFor( display ) {
@@ -150,7 +125,7 @@ export class ColorManagement {
 
 		} );
 
-		if ( active === null ) active = this;
+		claimActiveColorManagement( this );
 
 	}
 
@@ -850,6 +825,7 @@ export class ColorManagement {
 	/** Recompute the published primaries matrix. Called whenever the config or space changes. */
 	_publishWorkingMatrix() {
 
+		const active = getActiveColorManagement();
 		if ( active !== null && active !== this ) return;
 		setWorkingMatrix( hasConfig() ? this.primariesMatrixToWorking() : null, this.workingSpace );
 
@@ -1094,12 +1070,12 @@ export class ColorManagement {
 		setOcioIssueLog( null );
 		this._renderer = null;
 		this._issues = null;
-		if ( active === this ) {
+		if ( getActiveColorManagement() === this ) {
 
 			// The matrix is module state that materials and lights read with no idea whose it is.
 			// Left behind, the next app would convert every colour into a space it never adopted.
 			setWorkingMatrix( null );
-			active = null;
+			setActiveColorManagement( null );
 
 		}
 
@@ -1108,7 +1084,7 @@ export class ColorManagement {
 	/** Tear down the shared runtime as well. Tests use this; an app normally should not. */
 	static resetAll() {
 
-		active = null;
+		setActiveColorManagement( null );
 		setWorkingMatrix( null );
 		disposeOcioViewTextures();
 		resetViewTransforms();

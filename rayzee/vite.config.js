@@ -30,6 +30,7 @@ export default defineConfig( {
 					"addons/physical-sky": path.resolve( __dirname, "src/addons/physicalSky.js" ),
 					"addons/archives": path.resolve( __dirname, "src/addons/archives.js" ),
 					"addons/bidirectional": path.resolve( __dirname, "src/addons/bidirectional.js" ),
+					"addons/color": path.resolve( __dirname, "src/addons/color.js" ),
 				},
 			name: "Rayzee",
 		},

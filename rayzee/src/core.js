@@ -21,6 +21,7 @@ export { RenderSettings, SETTING_SOURCE } from './RenderSettings.js';
 export { configureAssets, getAssetConfig } from './AssetConfig.js';
 export { configurePlatform, getPlatform } from './Platform.js';
 export { LightManager } from './managers/LightManager.js';
+export { listViewTransforms, getViewTransform, onRegistryChange } from './Color/ViewTransforms.js';
 export {
 	ENGINE_DEFAULTS,
 	MATERIAL_DEFAULTS,

@@ -6,7 +6,7 @@ import PackWorker from './Workers/PackWorker.js?worker&inline';
 import { resampleRGBA8 } from './ResampleRGBA8.js';
 import { ISSUE_CODES, EngineIssueError } from '../EngineIssues.js';
 import { linearToSRGB } from './ToneMapCPU.js';
-import { getActiveColorManagement } from '../Color/ColorManagement.js';
+import { getActiveColorManagement } from '../Color/ActiveColor.js';
 import { createLogger } from '../utils/Logger.js';
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 

@@ -24,7 +24,8 @@ import { fileIdentity, identityKey } from './Storage/identity.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { PackedToneMapper } from './Processor/ToneMapGPU.js';
-import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
+import { BasicColor } from './Color/BasicColor.js';
+import { setActiveColorManagement } from './Color/ActiveColor.js';
 import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
@@ -208,12 +209,10 @@ export class RayzeeRenderer extends EventDispatcher {
 		} );
 
 		/**
-		 * Colour management: what the engine renders in, shows it as, and hands out.
-		 *
-		 * Inert until a host loads an OCIO config — until then the working space is linear
-		 * Rec.709 and the view transforms are three.js's own seven, exactly as before.
+		 * Colour management: what the engine renders in, shows it as, and hands out. Here linear Rec.709 and
+		 * three.js's own seven view transforms; setColorManagement() installs the OCIO pipeline.
 		 */
-		this.color = new ColorManagement( { issues: this._issues } );
+		this.color = new BasicColor( { issues: this._issues } );
 		setActiveColorManagement( this.color );
 
 		// ── Settings (single source of truth for all render parameters) ──
@@ -3302,6 +3301,20 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		texture.needsUpdate = true;
 		if ( this.stages.pathTracer?.sdfs ) await this.rebuildMaterials();
+
+	}
+
+	/**
+	 * Installs a colour-management class in place of the core's basic one — `ColorManagement` from
+	 * rayzee/addons/color, the OCIO pipeline. Before init() or after; PathTracerApp installs it itself.
+	 * @param {Function} ColorClass - constructed with `{ issues }`
+	 */
+	setColorManagement( ColorClass ) {
+
+		this.color?.dispose();
+		this.color = new ColorClass( { issues: this._issues } );
+		setActiveColorManagement( this.color );
+		if ( this.renderer ) this.color.attachRenderer( this.renderer );
 
 	}
 

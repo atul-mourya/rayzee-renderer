@@ -124,13 +124,23 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    from internal name numbers (209 of 209 over 10 scenes, five of them bidirectional or VCM), and the core plus the
    add-on renders all 36 bench scenes byte-identically with the full engine.
 
-   Downloads, compressed: the core 281 KB, `rayzee` 429 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
-   bidirectional 14 KB.
+9. **OCIO colour as an add-on** — done. `rayzee/addons/color` exports `ColorManagement` and the OCIO helpers (views,
+   input spaces, conversions, table baking); `renderer.setColorManagement( ColorManagement )` installs it, and
+   `PathTracerApp` does so itself. Without it the core's `renderer.color` is `BasicColor`: linear Rec.709, three.js's
+   seven view transforms, and `loadColorConfig()` records `capability.missing` and rejects naming the add-on. The
+   shaders and readbacks read the active colour management through `Color/ActiveColor.js`, so either one serves them.
+   About 3,060 of the 3,885 colour lines left the core; it keeps the view-transform registry, the built-in views and
+   the working matrix. The core plus the add-on renders all 36 bench scenes byte-identically with the full engine.
+
+   Downloads, compressed: the core 270 KB, `rayzee` 432 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
+   bidirectional 14 KB, colour 14 KB.
 
 ## What still ties the layers
 
-- **The core still carries capabilities:** the OCIO pipeline (3,800 lines) and storage (3,000). Shade still holds
-  the bidirectional branches (compiled out unless an integrator passes its uniforms); moving them out means a shading
+- **The core still carries storage** (3,000 lines: download and scene caches, memory spill). Shade still holds the
+  bidirectional branches (compiled out unless an integrator passes its uniforms); moving them out means a shading
   kernel of the integrator's own.
+- **Colour is one per page.** The active colour management (`Color/ActiveColor.js`) is shared by every renderer in the
+  page, by design: a config is a page-wide choice, and the texture cache keys on it.
 - **Settings are routed from one table** (`RenderSettings`), which still names viewer pieces (`denoisingManager`,
   `stages.autoExposure`). Each layer should declare its own settings.
