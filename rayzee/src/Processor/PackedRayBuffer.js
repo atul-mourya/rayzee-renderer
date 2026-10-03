@@ -319,8 +319,8 @@ export const writeRngMis = ( buf, id, state, dVCM, dVC ) =>
 // A vertex record is four uvec4s:
 //   0  bits(position.xyz), tag
 //   1  bits(throughput.xyz), oct(V) — V points back along the subpath it was reached by
-//   2  oct(N), oct(facet normal), material index, bits(uv.x) — both normals on V's side
-//   3  bits(uv.y), bits(dVCM), bits(dVC), extra
+//   2  oct(N), oct(facet normal), material index | extra << 24, bits(uv.x) — both normals on V's side
+//   3  bits(uv.y), bits(dVCM), bits(dVC), next — the merge grid's list (MergeKernel), in the cache only
 // `at( k )` addresses quad k, in a path's VERTEX slots or in the cache.
 export const pendingVertex = ( id ) => ( k ) => soa( id, HIT.VERTEX + k );
 export const cachedVertex = ( slot ) => ( k ) => uint( slot ).mul( LIGHT_VERTEX_STRIDE ).add( _lightVertexBase + k );
@@ -329,12 +329,16 @@ export const writeVertexRecord = ( buf, at, v ) => {
 
 	buf.element( at( 0 ) ).assign( uvec4( floatBitsToUint( v.position ), v.tag ) );
 	buf.element( at( 1 ) ).assign( uvec4( floatBitsToUint( v.throughput ), packNormalOct( v.V ) ) );
-	buf.element( at( 2 ) ).assign( uvec4( packNormalOct( v.N ), packNormalOct( v.facetN ), uint( v.materialIndex ), floatBitsToUint( v.uv.x ) ) );
-	buf.element( at( 3 ) ).assign( uvec4( floatBitsToUint( v.uv.y ), floatBitsToUint( v.dVCM ), floatBitsToUint( v.dVC ), uint( v.extra ) ) );
+	buf.element( at( 2 ) ).assign( uvec4( packNormalOct( v.N ), packNormalOct( v.facetN ),
+		uint( v.materialIndex ).bitOr( uint( v.extra ).bitAnd( uint( 0xFF ) ).shiftLeft( uint( 24 ) ) ), floatBitsToUint( v.uv.x ) ) );
+	buf.element( at( 3 ) ).assign( uvec4( floatBitsToUint( v.uv.y ), floatBitsToUint( v.dVCM ), floatBitsToUint( v.dVC ), uint( 0 ) ) );
 
 };
 
 export const readVertexTag = ( buf, at ) => buf.element( at( 0 ) ).w;
+export const readVertexPosition = ( buf, at ) => uintBitsToFloat( buf.element( at( 0 ) ).xyz );
+export const readVertexNext = ( buf, at ) => buf.element( at( 3 ) ).w;
+export const writeVertexNext = ( buf, at, next ) => buf.element( at( 3 ) ).w.assign( next );
 
 export const readVertexRecord = ( buf, at ) => {
 
@@ -349,11 +353,11 @@ export const readVertexRecord = ( buf, at ) => {
 		V: unpackTriangleNormal( q1.w ),
 		N: unpackTriangleNormal( q2.x ),
 		facetN: unpackTriangleNormal( q2.y ),
-		materialIndex: q2.z,
+		materialIndex: q2.z.bitAnd( uint( 0xFFFFFF ) ),
 		uv: vec2( uintBitsToFloat( q2.w ), uintBitsToFloat( q3.x ) ),
 		dVCM: uintBitsToFloat( q3.y ),
 		dVC: uintBitsToFloat( q3.z ),
-		extra: q3.w,
+		extra: q2.z.shiftRight( uint( 24 ) ),
 	};
 
 };

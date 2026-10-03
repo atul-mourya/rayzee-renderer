@@ -33,6 +33,8 @@ export function buildConnectKernel( params ) {
 		resolution, frame, accumFrame, currentBounce, chunkRowBase,
 		lightPaths, slotsPerPath, lightTag, passTag, strategyView,
 		maxBounceCount, globalIlluminationIntensity, fireflyThreshold,
+		// Vertex merging's η² at a point (Bidirectional.js mergeVmAt), or null without it.
+		mergeVm = null,
 	} = params;
 
 	return Fn( () => {
@@ -52,7 +54,8 @@ export function buildConnectKernel( params ) {
 
 		} );
 
-		const cam = readVertexRecord( hitBufferRO, pending );
+		const camRecord = readVertexRecord( hitBufferRO, pending );
+		const cam = { ...camRecord, vm: mergeVm?.( camRecord.position ) ?? null };
 		const cameraVertices = int( cam.extra ).add( int( 1 ) ).toVar();
 
 		const resX = int( resolution.x );
@@ -75,7 +78,8 @@ export function buildConnectKernel( params ) {
 		} );
 
 		const c = min( int( float( usable ).mul( uVertex ) ), usable.sub( int( 1 ) ) ).toVar();
-		const light = readVertexRecord( hitBufferRO, cachedVertex( first.add( uint( c ) ) ) );
+		const lightRecord = readVertexRecord( hitBufferRO, cachedVertex( first.add( uint( c ) ) ) );
+		const light = { ...lightRecord, vm: mergeVm?.( lightRecord.position ) ?? null };
 
 		const toLight = light.position.sub( cam.position ).toVar();
 		const dist2 = max( dot( toLight, toLight ), 1e-12 ).toVar();

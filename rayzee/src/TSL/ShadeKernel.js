@@ -50,7 +50,7 @@ import {
 } from './EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from './LightBVHSampling.js';
 import {
-	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine,
+	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt,
 	strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET,
 	sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE,
 } from './Bidirectional.js';
@@ -254,7 +254,7 @@ export function buildShadeKernel( params ) {
 		const pixelIndex = rayID;
 		const rngState = readRngState( hitBufferRW, rayID ).toVar();
 		const subpathState = bdpt ? readMisState( hitBufferRW, rayID ) : null;
-		const subpath = bdpt ? { dVCM: subpathState.dVCM.toVar(), dVC: subpathState.dVC.toVar() } : null;
+		const subpath = bdpt ? { dVCM: subpathState.dVCM.toVar(), dVC: subpathState.dVC.toVar(), vm: null } : null;
 		const persistRng = () => ( bdpt
 			? writeRngMis( hitBufferRW, rayID, rngState, subpath.dVCM, subpath.dVC )
 			: writeRngState( hitBufferRW, rayID, rngState ) );
@@ -670,6 +670,8 @@ export function buildShadeKernel( params ) {
 		// On the triangle's plane: origin + t · direction alone sits off a large triangle by t's error (HitFacet.js).
 		const hitPoint = origin.add( direction.mul( hitDist ) )
 			.add( unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN.mul( readHitSurfaceOffset( hitBufferRW, rayID ) ) ).toVar();
+		// Vertex merging: a merge here, weighed in every sum this vertex ends or scatters.
+		if ( bdpt?.merging ) subpath.vm = mergeVmAt( bdpt, hitPoint ).toVar();
 		const N = normalize( hitNormal ).toVar();
 		// The hit record's facet is 11-bit; light tracing's and connections' grazing geometry terms need it exact.
 		const exactFacetN = bdpt ? hitFacet( {
@@ -2028,9 +2030,9 @@ export function buildShadeKernel( params ) {
 				} );
 				writeLightPathLength( hitBufferRW, cachedVertex( first ), bdpt.lightTag, uint( cameraDepth ).add( uint( 1 ) ) );
 
-			} ).ElseIf( bdpt.lightPaths.greaterThan( uint( 0 ) ).and( cameraDepth.lessThan( maxBounceCount ) ), () => {
+			} ).ElseIf( bdpt.lightPaths.greaterThan( uint( 0 ) ).and( bdpt.merging ? cameraDepth.lessThanEqual( maxBounceCount ) : cameraDepth.lessThan( maxBounceCount ) ), () => {
 
-				// For ConnectKernel; a light vertex must still fit in the bounce budget.
+				// For ConnectKernel (and MergeKernel); a light vertex must still fit in the bounce budget.
 				writeVertexRecord( hitBufferRW, pendingVertex( rayID ), {
 					position: hitPoint, tag: bdpt.passTag, throughput,
 					V, N, facetN: exactFacetN, materialIndex: hitMatIdx, uv: samplingUV, dVCM: subpath.dVCM, dVC: subpath.dVC, extra: uint( cameraDepth ),

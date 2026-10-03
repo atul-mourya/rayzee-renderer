@@ -32,6 +32,7 @@ export function buildLightSplatKernel( params ) {
 		cameraPosition, cameraForward, cameraViewMatrix, cameraProjectionMatrix, pixelArea,
 		renderWidth, renderHeight,
 		globalIlluminationIntensity, fireflyThreshold, accumFrame, frame,
+		mergeVm = null,
 	} = params;
 
 	return Fn( () => {
@@ -51,7 +52,8 @@ export function buildLightSplatKernel( params ) {
 
 		} );
 
-		const v = readVertexRecord( hitBufferRO, cachedVertex( slot ) );
+		const record = readVertexRecord( hitBufferRO, cachedVertex( slot ) );
+		const v = { ...record, vm: mergeVm?.( record.position ) ?? null };
 
 		const toCamera = cameraPosition.sub( v.position ).toVar();
 		const dist2 = max( dot( toCamera, toCamera ), 1e-12 ).toVar();

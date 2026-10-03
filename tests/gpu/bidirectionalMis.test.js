@@ -1,13 +1,14 @@
 /**
  * The bidirectional MIS recursion, composed as the kernels compose it, against the power heuristic from
  * explicit densities, for camera z0 → x1 → x2 → light y0 and its strategies (hit, NEE, connect, light trace):
- * an emitter, a point or directional lamp (no hit), and the environment (at infinity).
+ * an emitter, a point or directional lamp (no hit), and the environment (at infinity); then the emitter with
+ * vertex merging, which adds a merge at x1 and at x2.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { mis, misOnHit, misOnScatter, misPartial, misWeight } from '@/core/TSL/Bidirectional.js';
+import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight } from '@/core/TSL/Bidirectional.js';
 
 const CASES = 64;
 
@@ -273,6 +274,92 @@ describeGPU( 'bidirectional MIS', () => {
 			const sum = q.reduce( ( s, x ) => s + x * x, 0 );
 			const got = Array.from( out.subarray( i * 4, i * 4 + 4 ) );
 			expect( got[ 0 ] + got[ 1 ] + got[ 2 ] + got[ 3 ] ).toBeCloseTo( 1, 4 );
+			got.forEach( ( w, k ) => expect( w ).toBeCloseTo( q[ k ] * q[ k ] / sum, 4 ) );
+
+		} );
+
+	} );
+
+	// Vertex merging at η = πr² · light paths, r each vertex's own radius: a merge at x2 is the camera reaching x2 and
+	// a light path reaching it; at x1, a light path through x2 reaching x1. Against the connection: camX2 · η2, lightX1 · η1.
+	it( 'weighs an emitter path\'s six strategies with merging by the power heuristic, summing to one', async () => {
+
+		const cases = makeCases().map( ( c, i ) => ( {
+			...c, eta1: 10 ** ( - 2 + 4 * ( ( i * 29 ) % 64 ) / 64 ), eta2: 10 ** ( - 2 + 4 * ( ( i * 41 + 7 ) % 64 ) / 64 ),
+		} ) );
+		const pack = ( keys ) => new Float32Array( cases.flatMap( ( c ) => keys.map( ( k ) => c[ k ] ) ) );
+		const inputs = {
+			a: [ pack( [ 'lightPaths', 'pixelArea', 'cosCamera', 'd1' ] ), 'vec4' ],
+			b: [ pack( [ 'd2', 'd3', 'cIn1', 'cOut1' ] ), 'vec4' ],
+			c: [ pack( [ 'cIn2', 'cOut2', 'cL', 'f1' ] ), 'vec4' ],
+			d: [ pack( [ 'r1', 'f2', 'r2', 'areaPdf' ] ), 'vec4' ],
+			e: [ pack( [ 'neePdf', 'eta1', 'eta2', 'eta2' ] ), 'vec4' ],
+		};
+
+		const weights = ( which ) => evaluate( renderer, CASES, inputs, 'vec4', ( { a, b, c, d, e } ) => {
+
+			const [ lightPaths, pixelArea, cosCamera, d1 ] = [ a.x, a.y, a.z, a.w ];
+			const [ d2, d3, cIn1, cOut1 ] = [ b.x, b.y, b.z, b.w ];
+			const [ cIn2, cOut2, cL, f1 ] = [ c.x, c.y, c.z, c.w ];
+			const [ r1, f2, r2, areaPdf ] = [ d.x, d.y, d.z, d.w ];
+			const [ neePdf, eta1, eta2 ] = [ e.x, e.y, e.z ];
+			// Each vertex's η², as Shade gives a state at that vertex (mergeVmAt).
+			const vm1 = eta1.mul( eta1 ).toVar(), vm2 = eta2.mul( eta2 ).toVar();
+
+			const emissionPdf = areaPdf.mul( cL ).div( Math.PI );
+			const neePdfA = neePdf.mul( cL ).div( d3.mul( d3 ) );
+			const snapshot = ( state, vm ) => ( { dVCM: state.dVCM.toVar(), dVC: state.dVC.toVar(), vm } );
+
+			const camera = { dVCM: mis( lightPaths.mul( pixelArea ).mul( cosCamera.mul( cosCamera ).mul( cosCamera ) ) ).toVar(), dVC: float( 0 ).toVar(), vm: vm1 };
+			misOnHit( camera, d1, cIn1 );
+			const atX1 = snapshot( camera, vm1 );
+			misOnScatter( camera, cOut1, f1, r1 );
+			misOnHit( camera, d2, cIn2 );
+			const atX2 = snapshot( camera, vm2 );
+			camera.vm = vm2;
+			misOnScatter( camera, cOut2, f2, r2 );
+			misOnHit( camera, d3, cL );
+
+			const light = { dVCM: mis( float( 1 ).div( emissionPdf ) ).toVar(), dVC: mis( cL.div( emissionPdf ) ).toVar(), vm: vm2 };
+			light.dVCM.mulAssign( mis( neePdfA ) );
+			misOnHit( light, d3, cOut2 );
+			const lightAtX2 = snapshot( light, vm2 );
+			misOnScatter( light, cIn2, r2, f2 );
+			misOnHit( light, d2, cOut1 );
+			light.vm = vm1;
+
+			if ( which === 'merge' ) return vec4(
+				misWeight( misMergePartial( light, f1, float( 1 ).div( vm1 ) ), misMergePartial( atX1, r1, float( 1 ).div( vm1 ) ) ),
+				misWeight( misMergePartial( lightAtX2, f2, float( 1 ).div( vm2 ) ), misMergePartial( atX2, r2, float( 1 ).div( vm2 ) ) ),
+				float( 0 ), float( 0 ),
+			);
+
+			const dist2 = d2.mul( d2 );
+			const cameraPdfW = float( 1 ).div( pixelArea.mul( cosCamera ).mul( cosCamera ).mul( cosCamera ) );
+			return vec4(
+				misWeight( float( 0 ), mis( neePdfA ).mul( camera.dVCM ).add( mis( emissionPdf ).mul( camera.dVC ) ) ),
+				misWeight( mis( f2.div( neePdf ) ), misPartial( areaPdf.mul( cOut2 ).div( neePdf.mul( Math.PI ) ), atX2, r2 ) ),
+				misWeight( misPartial( f1.mul( cIn2 ).div( dist2 ), lightAtX2, f2 ), misPartial( r2.mul( cOut1 ).div( dist2 ), atX1, r1 ) ),
+				misWeight( misPartial( cameraPdfW.mul( cIn1 ).div( d1.mul( d1 ) ).div( lightPaths ), light, f1 ), float( 0 ) ),
+			);
+
+		} );
+
+		const connection = new Float32Array( await weights( 'connect' ) );
+		const merge = new Float32Array( await weights( 'merge' ) );
+
+		cases.forEach( ( c, i ) => {
+
+			const camX1 = c.cIn1 / ( c.pixelArea * c.cosCamera ** 3 * c.d1 ** 2 );
+			const camX2 = c.f1 * c.cIn2 / c.d2 ** 2;
+			const camY0 = c.f2 * c.cL / c.d3 ** 2;
+			const neeY0 = c.neePdf * c.cL / c.d3 ** 2;
+			const lightX2 = c.areaPdf * ( c.cL / Math.PI ) * c.cOut2 / c.d3 ** 2;
+			const lightX1 = c.r2 * c.cOut1 / c.d2 ** 2;
+			const q = [ camX2 * camY0 / lightX2, camX2 * neeY0 / lightX2, 1, c.lightPaths * lightX1 / camX1, lightX1 * c.eta1, camX2 * c.eta2 ];
+			const sum = q.reduce( ( s, x ) => s + x * x, 0 );
+			const got = [ ...connection.subarray( i * 4, i * 4 + 4 ), ...merge.subarray( i * 4, i * 4 + 2 ) ];
+			expect( got.reduce( ( s, w ) => s + w, 0 ) ).toBeCloseTo( 1, 4 );
 			got.forEach( ( w, k ) => expect( w ).toBeCloseTo( q[ k ] * q[ k ] / sum, 4 ) );
 
 		} );

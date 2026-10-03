@@ -24,10 +24,11 @@ import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
 import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../TSL/LightGenerateKernel.js';
 import { buildGuideKernel, buildGuideClearKernel, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from '../TSL/LightGuide.js';
 import { buildConnectKernel, CONNECT_WG_SIZE } from '../TSL/ConnectKernel.js';
+import { buildMergeClearKernel, buildMergeInsertKernel, buildMergeKernel, MERGE_WG_SIZE } from '../TSL/MergeKernel.js';
 import {
 	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
 } from '../TSL/LightSplatKernel.js';
-import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE } from '../TSL/Bidirectional.js';
+import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE, mergeVmAt } from '../TSL/Bidirectional.js';
 import { setMaterialBucketTextures, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
 import { setShadowAlbedoMaps } from '../TSL/LightsDirect.js';
 import {
@@ -48,7 +49,7 @@ const LIST_WG_SIZE = 256;
 
 // Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
 // (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
-const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
+const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
 
 // Light vertex cache for the bidirectional integrator, at most this much of the hit buffer.
 const LIGHT_CACHE_BYTES = 256 * 1024 * 1024;
@@ -56,6 +57,11 @@ const INFINITE_LIGHT_PATH_SHARE = 0.05;
 // Light paths cost more than camera paths and help fewer pixels: at equal time half a pixel's worth beat one.
 const LIGHT_PATHS_PER_PIXEL = 0.5;
 const LIGHT_TAG_MAX = ( 1 << 24 ) - 1;
+// Vertex merging: the radius at the first sample, in pixels' footprint where it gathers, shrinking as
+// n^((α − 1) / 2) so the estimate converges (Knaus & Zwicker 2011).
+const MERGE_RADIUS_PIXELS = 1;
+const MERGE_ALPHA = 0.75;
+const MERGE_TRUST = 0.25;
 
 export class PathTracer extends PathTracerStage {
 
@@ -162,6 +168,9 @@ export class PathTracer extends PathTracerStage {
 
 		// Bidirectional integrator (setIntegrator). Off builds exactly the unidirectional kernels.
 		this._bidirectionalEnabled = false;
+		this._mergingEnabled = false;
+		this._mergeRadiusPixels = MERGE_RADIUS_PIXELS;
+		this._mergeHeadAttr = null;
 		this._lightCacheSlots = 0;
 		this._splatAttr = null;
 		this._lightTag = 0;
@@ -196,6 +205,15 @@ export class PathTracer extends PathTracerStage {
 			guide: uniform( 0, 'uint' ),
 			guideLearning: uniform( 1, 'uint' ),
 			guideTexture: null,
+			// Vertex merging (integrator 'vcm', MergeKernel.js), fixed at build: the radius at a point is
+			// mergeConst + mergeSlope · its distance from the camera, at least mergeMin (Bidirectional.js mergeRadiusAt).
+			merging: false,
+			mergeConst: uniform( 0, 'float' ),
+			mergeSlope: uniform( 0, 'float' ),
+			mergeMin: uniform( 1, 'float' ),
+			// How far the weights take a merge's density at its word (Bidirectional.js mergeVmAt).
+			mergeTrust: uniform( MERGE_TRUST, 'float' ),
+			hashMask: uniform( 0, 'uint' ),
 		};
 		this._lightGuiding = true;
 		this._guideTexture = null;
@@ -224,7 +242,7 @@ export class PathTracer extends PathTracerStage {
 		} );
 
 		// Light tracing's splat image (the light vertex cache rides in the hit buffer, under 'rays')
-		t.register( 'bidirectional', () => ( this._splatAttr ? [ this._splatAttr ] : null ) );
+		t.register( 'bidirectional', () => ( this._splatAttr ? [ this._splatAttr, this._mergeHeadAttr ].filter( Boolean ) : null ) );
 
 		// Queue indices + atomic counters
 		t.register( 'queues', () => {
@@ -301,13 +319,17 @@ export class PathTracer extends PathTracerStage {
 
 	/**
 	 * Switching rebuilds the kernels: only the bidirectional ones bind the light vertex cache and splat image.
-	 * @param {'path'|'bidirectional'} name
+	 * 'vcm' is bidirectional with vertex merging (photon mapping) added as a strategy.
+	 * @param {'path'|'bidirectional'|'vcm'} name
 	 */
 	setIntegrator( name ) {
 
-		const enabled = name === 'bidirectional';
-		if ( enabled === this._bidirectionalEnabled ) return;
+		const enabled = name === 'bidirectional' || name === 'vcm';
+		const merging = name === 'vcm';
+		if ( enabled === this._bidirectionalEnabled && merging === this._mergingEnabled ) return;
 		this._bidirectionalEnabled = enabled;
+		this._mergingEnabled = merging;
+		this._bidirectional.merging = merging;
 		this._pathBudget = 0;
 		this._lastLightCurveKey = null;
 
@@ -323,18 +345,39 @@ export class PathTracer extends PathTracerStage {
 
 	/**
 	 * Verification only: keep one bidirectional strategy, MIS-weighted, or alone at full weight.
-	 * @param {'all'|'hit'|'nee'|'connect'|'lightTrace'} strategy
+	 * @param {'all'|'hit'|'nee'|'connect'|'lightTrace'|'merge'} strategy
 	 */
 	setBidirectionalStrategy( strategy = 'all', { alone = false } = {} ) {
 
-		const code = { all: STRATEGY.ALL, hit: STRATEGY.HIT, nee: STRATEGY.NEE, connect: STRATEGY.CONNECT, lightTrace: STRATEGY.LIGHT_TRACE }[ strategy ] ?? STRATEGY.ALL;
+		const code = { all: STRATEGY.ALL, hit: STRATEGY.HIT, nee: STRATEGY.NEE, connect: STRATEGY.CONNECT, lightTrace: STRATEGY.LIGHT_TRACE, merge: STRATEGY.MERGE }[ strategy ] ?? STRATEGY.ALL;
 		this._bidirectional.strategyView.value = code === STRATEGY.ALL ? code : code + ( alone ? STRATEGY_ALONE : 0 );
 
 	}
 
 	get integrator() {
 
-		return this._bidirectionalEnabled ? 'bidirectional' : 'path';
+		return this._mergingEnabled ? 'vcm' : this._bidirectionalEnabled ? 'bidirectional' : 'path';
+
+	}
+
+	/**
+	 * Vertex merging's radius at the first sample, in pixels: the footprint where it gathers, so the blur is the same
+	 * on screen at any scene scale. It shrinks with every sample after. Larger gathers more light vertices — less
+	 * noise in caustics, more blur — at more cost.
+	 */
+	setMergeRadius( pixels = MERGE_RADIUS_PIXELS ) {
+
+		this._mergeRadiusPixels = Math.max( pixels, 1e-3 );
+
+	}
+
+	/**
+	 * How much of the light other strategies can also reach vertex merging takes: 1 weighs merges by their density,
+	 * less hands that light back to the unblurred strategies. Light only merging reaches is all merging's either way.
+	 */
+	setMergeTrust( trust = MERGE_TRUST ) {
+
+		this._bidirectional.mergeTrust.value = Math.max( trust, 1e-4 );
 
 	}
 
@@ -607,6 +650,7 @@ export class PathTracer extends PathTracerStage {
 				if ( bidirectional ) this._bidirectional.passTag.value = this._nextPassTag();
 				km.dispatch( 'shade' ); // shade thread 0 folds resetActiveCounter (zeroes ACTIVE_RAY_COUNT before compact)
 				if ( bidirectional ) km.dispatch( 'connect' );
+				if ( bidirectional && this._mergingEnabled ) km.dispatch( 'merge' );
 				km.dispatch( 'compact' );
 				if ( useFunctionalCompaction ) {
 
@@ -695,7 +739,26 @@ export class PathTracer extends PathTracerStage {
 		// Light tracing needs a pinhole camera.
 		const pinhole = this.cameraProjection.value === CAMERA_PROJECTION_IDS.perspective && ! this.enableDOF.value;
 		bd.lightTrace.value = pinhole ? 1 : 0;
+		if ( this._mergingEnabled ) this._updateMergeRadius( w, h );
 		return true;
+
+	}
+
+	// A pixel's footprint: grows with the distance from a perspective or panoramic camera, constant for an orthographic one.
+	_updateMergeRadius( w, h ) {
+
+		const bd = this._bidirectional;
+		const pixels = this._mergeRadiusPixels * Math.pow( this.frameCount + 1, ( MERGE_ALPHA - 1 ) / 2 );
+		const projection = this.cameraProjection.value;
+		const p = this.cameraProjectionMatrix.value.elements;
+		let slope = 0, constant = 0;
+		if ( projection === CAMERA_PROJECTION_IDS.orthographic ) constant = pixels * 2 / ( p[ 5 ] * h );
+		else if ( projection === CAMERA_PROJECTION_IDS.equirectangular ) slope = pixels * 2 * Math.PI / w;
+		else slope = pixels * Math.sqrt( bd.pixelArea.value );
+		bd.mergeSlope.value = Math.min( slope, 0.1 );
+		bd.mergeConst.value = constant;
+		// Nearer than a thousandth of the scene, the radius stops shrinking: shells start there.
+		bd.mergeMin.value = Math.max( constant, slope * 1e-3 * bd.sceneRadius.value, 1e-9 );
 
 	}
 
@@ -734,7 +797,9 @@ export class PathTracer extends PathTracerStage {
 		const atInfinity = environmentOn && ( this.hasSun.value > 0 || table ) || directional.n > 0;
 		// What a light at infinity sends through the scene's disc mostly lands where its NEE does better: next to
 		// lamps or emitters it gets this share of its flux in light paths (alone, it gets them all regardless).
-		const discArea = atInfinity ? this._sceneDisc() * INFINITE_LIGHT_PATH_SHARE : 0;
+		// Vertex merging sizes its radius by the scene, so it measures the disc too.
+		const disc = atInfinity || this._mergingEnabled ? this._sceneDisc() : 0;
+		const discArea = atInfinity ? disc * INFINITE_LIGHT_PATH_SHARE : 0;
 		if ( environmentOn && table ) flux[ SOURCE.ENVIRONMENT ] = Math.max( table.radianceIntegral, 0 ) * this.environmentIntensity.value * discArea;
 
 		if ( this.emissiveTriangleCount.value > 0 ) flux[ SOURCE.EMITTERS ] = Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value;
@@ -981,6 +1046,14 @@ export class PathTracer extends PathTracerStage {
 
 			km.setDispatchForCount( 'lightSplat', paths * this._bidirectional.slotsPerPath.value );
 			km.dispatch( 'lightSplat' );
+
+		}
+
+		if ( this._mergingEnabled ) {
+
+			km.dispatch( 'mergeClear' );
+			km.setDispatchForCount( 'mergeInsert', paths * this._bidirectional.slotsPerPath.value );
+			km.dispatch( 'mergeInsert' );
 
 		}
 
@@ -1758,6 +1831,17 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
+		// Vertex merging's list heads: at least one a light vertex slot, a power of two (the hash's mask).
+		const hashSize = this._mergingEnabled ? 2 ** Math.ceil( Math.log2( Math.max( this._lightCacheSlots, 1024 ) ) ) : 0;
+		if ( this._mergeHeadAttr?.count !== hashSize ) {
+
+			freeStorageAttribute( this.renderer, this._mergeHeadAttr );
+			this._mergeHeadAttr = hashSize > 0 ? gpuOnlyStorageAttribute( hashSize, 1, Uint32Array ) : null;
+
+		}
+
+		this._bidirectional.hashMask.value = Math.max( hashSize - 1, 0 );
+
 		// The light guide's table: built into a buffer, copied into a texture Shade can read (it has no buffer to spare).
 		if ( this._bidirectionalEnabled ) {
 
@@ -2399,7 +2483,33 @@ export class PathTracer extends PathTracerStage {
 				maxBounceCount: this.maxBounces,
 				globalIlluminationIntensity: this.globalIlluminationIntensity,
 				fireflyThreshold: this.fireflyThreshold,
+				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
 			} )().compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
+
+			if ( bd.merging ) {
+
+				const head = storage( this._mergeHeadAttr, 'uint' ).toAtomic();
+				this._kernelManager.register( 'mergeClear', buildMergeClearKernel( { head, hashSize: this._mergeHeadAttr.count } ) );
+				this._kernelManager.register( 'mergeInsert', buildMergeInsertKernel( {
+					hitBufferRW: pb.hitBuffer.rw,
+					head,
+					bidirectional: bd,
+				} )().compute( [ Math.ceil( this._lightCacheSlots / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
+				this._kernelManager.register( 'merge', buildMergeKernel( {
+					rayBufferRW: pb.rayBuffer.rw,
+					hitBufferRO: pb.hitBuffer.ro,
+					activeIndicesRO: qm.getActiveReadRO(),
+					counters,
+					head,
+					materialBuffer: freshMat,
+					bidirectional: bd,
+					maxBounceCount: this.maxBounces,
+					globalIlluminationIntensity: this.globalIlluminationIntensity,
+					fireflyThreshold: this.fireflyThreshold,
+					accumFrame: this.frame,
+				} )().compute( [ Math.ceil( maxRays / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
+
+			}
 
 			const splatBuffer = storage( this._splatAttr, 'uint' ).toAtomic();
 
@@ -2424,6 +2534,7 @@ export class PathTracer extends PathTracerStage {
 				fireflyThreshold: this.fireflyThreshold,
 				accumFrame: this.frame,
 				frame: this.seedFrame,
+				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
 			} )().compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
 
 			this._kernelManager.register( 'splatResolve', buildSplatResolveKernel( {
@@ -2536,7 +2647,7 @@ export class PathTracer extends PathTracerStage {
 			`${fmt.mb( bufferBytes )} wavefront buffers`,
 			`budget ${fmt.n( B )} paths`,
 			this._numChunks > 1 ? `${this._numChunks} chunks of ≤${this._chunkRows} rows` : null,
-			this._bidirectionalEnabled ? `bidirectional: ${fmt.n( this._lightCacheSlots )} light vertex slots` : null,
+			this._bidirectionalEnabled ? `bidirectional: ${fmt.n( this._lightCacheSlots )} light vertex slots${this._mergingEnabled ? ' + merging' : ''}` : null,
 		] ) );
 
 	}
@@ -2589,6 +2700,8 @@ export class PathTracer extends PathTracerStage {
 		this._frozenMaskAttr?.dispose?.();
 		freeStorageAttribute( this.renderer, this._splatAttr );
 		this._splatAttr = null;
+		freeStorageAttribute( this.renderer, this._mergeHeadAttr );
+		this._mergeHeadAttr = null;
 		this._disposeLightGuide();
 		this._packedBuffers = null;
 		this._queueManager = null;

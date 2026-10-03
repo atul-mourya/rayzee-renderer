@@ -1735,6 +1735,36 @@ SCENES.push( {
 } );
 
 SCENES.push( {
+	id: 'mirror-caustic-vcm',
+	covers: 'vertex merging (integrator vcm): a point lamp over a glass ball, its caustic on the floor seen in a mirror — light no connection reaches, only a merge; the shell grid, the per-vertex merge factor',
+	spp: 64,
+	truthSpp: 1024,
+	settings: { maxBounces: 6, transmissiveBounces: 8, enableEnvironment: false, integrator: 'vcm' },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+		const scene = makeRoom();
+		const glass = new Mesh(
+			new SphereGeometry( 0.8, 64, 64 ),
+			new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 0, transmission: 1, ior: 1.5, thickness: 1.6 } )
+		);
+		glass.position.set( - 0.6, - 2.0, 0.4 );
+		const mirror = new Mesh(
+			new PlaneGeometry( 5.6, 4 ),
+			new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0, metalness: 1 } )
+		);
+		mirror.position.set( 0, - 1, - 2.95 );
+		const lamp = new PointLight( 0xffffff, 12 * 683, 0, 2 );
+		lamp.position.set( - 0.6, 1.5, 0.4 );
+		scene.add( glass, mirror, lamp );
+
+		await app.loadObject3D( scene, 'mirror-caustic' );
+		setCamera( app, [ 2.2, 0.2, 8.5 ], [ - 0.4, - 1.9, - 1 ] );
+
+	},
+} );
+
+SCENES.push( {
 	id: 'lamps-bidirectional',
 	covers: 'bidirectional with every lamp type as a light-path source: the source table, the lamp pick at both ends of a path, lamps no camera path can hit, a rect light reached by the continuation (seen in rough metal), a directional light\'s disc',
 	spp: 64,

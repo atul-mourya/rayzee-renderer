@@ -1,11 +1,13 @@
 /**
  * Bidirectional path tracing — shared by the light pass, ConnectKernel and LightSplatKernel.
- * MIS is Georgiev 2012's dVCM/dVC recursion (no merging); every density comes from
- * calculateMaterialPDF, both ways round, so every strategy evaluates the same weights.
+ * MIS is Georgiev 2012's dVCM/dVC recursion; every density comes from calculateMaterialPDF, both ways
+ * round, so every strategy evaluates the same weights. With vertex merging (integrator 'vcm') a state also
+ * carries `vm`, η² at its vertex (η = πr² · light paths, r that vertex's merge radius): Georgiev's dVM there is
+ * dVC / η², so it is never stored.
  */
 
 import {
-	float, vec2, vec4, int, uint, If, max, select, abs, dot,
+	float, vec2, vec4, int, uint, If, max, select, abs, dot, length,
 } from 'three/tsl';
 
 import { getMaterial, MIN_ROUGHNESS, REC709_LUMINANCE_COEFFICIENTS } from './Common.js';
@@ -43,7 +45,7 @@ export const lightPathPixel = ( index, resolution ) => {
 // The power heuristic (β = 2). The recursion stores every density ratio already raised to it.
 export const mis = ( x ) => x.mul( x );
 
-// MIS recursion: `state` holds two .toVar()s, { dVCM, dVC }, updated in place.
+// MIS recursion: `state` holds two .toVar()s, { dVCM, dVC }, updated in place, and `vm` when merging.
 
 /** Arriving at a vertex `dist` from the last one, at |cos| `cosIn` to its facet. */
 export const misOnHit = ( state, dist, cosIn ) => {
@@ -66,19 +68,48 @@ export const misOnSpecular = ( state, cosOut ) => {
 export const misOnScatter = ( state, cosOut, pdfForward, pdfReverse ) => {
 
 	const p = max( pdfForward, 1e-12 );
-	state.dVC.assign( finite( mis( cosOut.div( p ) ).mul( finite( state.dVC.mul( mis( pdfReverse ) ).add( state.dVCM ) ) ) ) );
+	const partial = state.dVC.mul( mis( pdfReverse ) ).add( state.dVCM );
+	state.dVC.assign( finite( mis( cosOut.div( p ) ).mul( finite( state.vm ? partial.add( state.vm ) : partial ) ) ) );
 	state.dVCM.assign( finite( mis( float( 1.0 ).div( p ) ) ) );
 
 };
 
 // Georgiev (40)-(46): `lead` is the other side's density of reaching this end, `reverse` this end's density back.
-export const misPartial = ( lead, state, reverse ) =>
-	finite( finite( mis( lead ) ).mul( finite( state.dVCM.add( state.dVC.mul( mis( reverse ) ) ) ) ) );
+export const misPartial = ( lead, state, reverse ) => {
+
+	const partial = state.dVCM.add( state.dVC.mul( mis( reverse ) ) );
+	return finite( finite( mis( lead ) ).mul( finite( state.vm ? partial.add( state.vm ) : partial ) ) );
+
+};
+
+// Vertex merging's radius at p: a few pixels' footprint seen from the camera (`mergeConst` + `mergeSlope` · distance),
+// at least `mergeMin`. A function of position alone, so both subpaths weigh a merge at any vertex alike.
+export const mergeRadiusAt = ( bdpt, p ) =>
+	max( bdpt.mergeConst.add( bdpt.mergeSlope.mul( length( p.sub( bdpt.cameraPosition ) ) ) ), bdpt.mergeMin );
+
+// η = πr² · light paths: a merge's density over a connection's, there.
+export const mergeEta = ( bdpt, radius ) => radius.mul( radius ).mul( Math.PI ).mul( float( bdpt.lightPaths ) );
+
+/**
+ * η² at p as the weights take it, a state's `vm` (Georgiev's vmFactor, per vertex): η scaled by `mergeTrust`. Any
+ * density the strategies agree on still sums their weights to one; trust below 1 hands light other strategies can
+ * also reach back to them, unblurred, and leaves light only a merge reaches (a caustic in a mirror) all to merging.
+ */
+export const mergeVmAt = ( bdpt, p ) => {
+
+	const eta = mergeEta( bdpt, mergeRadiusAt( bdpt, p ) ).mul( bdpt.mergeTrust );
+	return eta.mul( eta );
+
+};
+
+// Georgiev (38)-(39), a merge at a camera vertex: each side's sum, `density` the camera vertex's BSDF density
+// (of the light's arrival direction for the light side, back along its own for the camera side); `vc` = 1 / η².
+export const misMergePartial = ( state, density, vc ) => finite( finite( state.dVCM.add( state.dVC.mul( mis( density ) ) ) ).mul( vc ) );
 
 export const misWeight = ( wLight, wCamera ) => float( 1.0 ).div( float( 1.0 ).add( finite( wLight ) ).add( finite( wCamera ) ) );
 
 // Verification: a view keeps one strategy, MIS-weighted, or alone at full weight (+ STRATEGY_ALONE).
-export const STRATEGY = { ALL: 0, HIT: 1, NEE: 2, CONNECT: 3, LIGHT_TRACE: 4 };
+export const STRATEGY = { ALL: 0, HIT: 1, NEE: 2, CONNECT: 3, LIGHT_TRACE: 4, MERGE: 5 };
 export const STRATEGY_ALONE = 8;
 
 export const strategyWeight = ( view, strategy, weight, alone = float( 1.0 ) ) =>
