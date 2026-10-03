@@ -119,7 +119,7 @@ export function createSceneSession( app ) {
 			// the settingsFloor reset above. Without this a denoise run would leave ASVGF on for
 			// every scene the quality suite loaded afterwards, and its goldens would silently be
 			// denoised images.
-			app.denoisingManager.setStrategy( 'none' );
+			app.denoisingManager?.setStrategy( 'none' );
 
 			// build() → loadObject3D() → reset() → wake(). Re-assert determinism and park rAF so
 			// nothing races the manual render loop. The caller passes the dispatch mode, since a

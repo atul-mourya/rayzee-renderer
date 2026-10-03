@@ -1,11 +1,5 @@
-import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
-import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
-import {
-	Scene, EventDispatcher, Box3, Vector3, REVISION,
-} from 'three';
-import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
-import { SceneHelpers } from './SceneHelpers.js';
-import { PathTracer } from './Stages/PathTracer.js';
+import { Box3, Vector3 } from 'three';
+import { RayzeeRenderer, describeAdapter, RENDER_CHECKPOINT_VERSION } from './RayzeeRenderer.js';
 import { NormalDepth } from './Stages/NormalDepth.js';
 import { MotionVector } from './Stages/MotionVector.js';
 import { ASVGF } from './Stages/ASVGF.js';
@@ -14,38 +8,14 @@ import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
 import { AutoExposure } from './Stages/AutoExposure.js';
-import { Compositor } from './Stages/Compositor.js';
-import { RenderPipeline } from './Pipeline/RenderPipeline.js';
-import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
-import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
-import { BuildTimer } from './Processor/BuildTimer.js';
-import { TextureReadback } from './Processor/TextureReadback.js';
-import { createLogger, fmt } from './utils/Logger.js';
-import { InteractionManager } from './managers/InteractionManager.js';
-import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
-import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
-import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
-import { StorageManager } from './Storage/StorageManager.js';
-import { acquireSharedStorage } from './Storage/openStorage.js';
-import { nameFromUrl } from './Storage/DownloadCache.js';
-import { fileIdentity, identityKey } from './Storage/identity.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
+import { createLogger } from './utils/Logger.js';
+import { EngineEvents } from './EngineEvents.js';
+import { ISSUE_CODES } from './EngineIssues.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
-import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
-import { PackedToneMapper } from './Processor/ToneMapGPU.js';
-import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
-import { getViewTransform } from './Color/ViewTransforms.js';
-import { AssetLoader } from './Processor/AssetLoader.js';
-import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/PBRT/index.js';
-import { SceneProcessor } from './Processor/SceneProcessor.js';
-import { deviceMemoryGB } from './Processor/HostMemory.js';
-import { createHeadlessCanvas } from './HeadlessCanvas.js';
-
-// Managers
-import { RenderSettings } from './RenderSettings.js';
 import { CameraManager } from './managers/CameraManager.js';
 import { TimelineManager } from './managers/timeline/TimelineManager.js';
-import { LightManager } from './managers/LightManager.js';
+import { InteractionManager } from './managers/InteractionManager.js';
 import { GoboManager } from './managers/GoboManager.js';
 import { IESManager } from './managers/IESManager.js';
 import { DenoisingManager } from './managers/DenoisingManager.js';
@@ -54,48 +24,15 @@ import { AnimationManager } from './managers/AnimationManager.js';
 import { TransformManager } from './managers/TransformManager.js';
 import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
-import { TRIANGLE_PATCH_PROPERTIES } from './managers/MaterialDataManager.js';
-import { VERSION } from './version.js';
-import { toPortable } from './SceneState/portable.js';
 
-export const RENDER_CHECKPOINT_VERSION = 1;
+export { describeAdapter, RENDER_CHECKPOINT_VERSION };
 
-// The part of an archive a load chose, for sceneSource.
-const partOf = ( { element, pbrtEntry } = {} ) => ( {
-	...( element !== undefined ? { element } : {} ),
-	...( pbrtEntry !== undefined ? { pbrtEntry } : {} ),
-} );
-
-// One app per canvas — auto-dispose a prior owner if the caller double-
-// instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
-const _appsByCanvas = new WeakMap();
-
-const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
-const _warnedEvents = new Set();
-
-// three's Animation.start() calls self.requestAnimationFrame during init() with no guard, and
-// outside a browser there is no `self`. A headless app never uses that loop, so it gets an inert one.
-async function initWithoutFrameLoop( renderer, headless ) {
-
-	if ( ! headless || typeof self !== 'undefined' ) return renderer.init();
-
-	globalThis.self = { requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} };
-
-	try {
-
-		return await renderer.init();
-
-	} finally {
-
-		delete globalThis.self;
-
-	}
-
-}
-
+const log = createLogger( 'engine' );
 
 /**
- * WebGPU Path Tracer Application.
+ * The viewer: {@link RayzeeRenderer} plus everything a person working in a scene uses — camera controls,
+ * picking, the gizmo and overlays, the timeline and animation playback, the denoisers and picture stages,
+ * gobos and IES profiles, saved scene state and the preview / final presets.
  *
  * Managers are exposed as direct public properties (Three.js style):
  * - `app.cameraManager`      — {@link CameraManager} (camera, controls, auto-focus, DOF)
@@ -114,178 +51,30 @@ async function initWithoutFrameLoop( renderer, headless ) {
  *
  * Extends EventDispatcher for event-driven communication with stores/UI.
  */
-
-const log = createLogger( 'engine' );
-
-/**
- * Attaches the device-lost handler at module scope so the reaction closure captures only
- * `holder` — an arrow written inside a method would share that method's context and pin
- * the app through `this`. See _initRenderer().
- */
-function attachDeviceLostHandler( device, holder ) {
-
-	device.lost.then( ( info ) => {
-
-		if ( holder.app ) holder.app._handleDeviceLost( info );
-
-	} );
-
-}
-
-const SOFTWARE_ADAPTER = /swiftshader|llvmpipe|lavapipe|basic render|microsoft basic|warp/i;
-
-/**
- * Flags software rasterizers: correct output, ~100x slower, invisible in the image.
- * `isFallbackAdapter` only covers adapters we asked to be fallbacks, so the strings matter.
- *
- * @param {GPUAdapter} adapter
- * @returns {{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}}
- */
-export function describeAdapter( adapter ) {
-
-	const info = adapter.info ?? {};
-	const identity = `${info.vendor ?? ''} ${info.architecture ?? ''} ${info.device ?? ''} ${info.description ?? ''}`;
-
-	return {
-		vendor: info.vendor ?? '',
-		architecture: info.architecture ?? '',
-		device: info.device ?? '',
-		description: info.description ?? '',
-		isSoftware: info.isFallbackAdapter === true
-			|| adapter.isFallbackAdapter === true
-			|| SOFTWARE_ADAPTER.test( identity ),
-	};
-
-}
-
-export class PathTracerApp extends EventDispatcher {
+export class PathTracerApp extends RayzeeRenderer {
 
 	/**
-	 * @param {HTMLCanvasElement} canvas - Canvas element for rendering
-	 * @param {Object} [options] - Engine options
-	 * @param {boolean} [options.autoResize=true] - Automatically listen for window resize events
-	 * @param {boolean} [options.headless=false] - a render nobody watches, and the default when no canvas
-	 *   is given: the engine supplies its own canvas (see HeadlessCanvas.js), runs no render loop — drive it
-	 *   with renderFrames() or renderUntilComplete() — and builds neither the overlay nor the gizmo
+	 * @param {HTMLCanvasElement} canvas
+	 * @param {Object} [options] - as {@link RayzeeRenderer}, plus:
 	 * @param {HTMLElement} [options.container] - Single DOM parent the engine mounts all auxiliary
 	 *   elements into (HUD overlay, denoiser canvas). Defaults to `canvas.parentNode`.
-	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
-	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
-	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
-	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
-	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
-	 *   above this. The default refuses where the renderer process would be killed instead of
-	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
-	 * @param {number} [options.hostMemoryGB] - the host's memory, where `navigator.deviceMemory` is
-	 *   absent (anything but Chrome) or wrong; it sizes the render reserve and the path pool
-	 * @param {false|'auto'|StorageManager} [options.storage] - on-disk storage; defaults to
-	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. A host-supplied
-	 *   manager stays the host's to dispose.
-	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
-	 *   on the GPU, move its triangle records and BLAS nodes to disk (see
-	 *   {@link ensureSceneResident}). Needs storage; skipped for animated scenes.
 	 *
-	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
-	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
+	 * Headless (no canvas, or `headless: true`), it builds neither the overlay nor the gizmo.
 	 */
 	constructor( canvas, options = {} ) {
 
-		super();
+		super( canvas, options );
 
-		this._headless = options.headless === true || ! canvas;
-		canvas ??= createHeadlessCanvas();
-
-		try {
-
-			_appsByCanvas.get( canvas )?.dispose();
-
-		} catch ( err ) {
-
-			log.warn( 'prior canvas owner dispose failed', err );
-
-		}
-
-		_appsByCanvas.set( canvas, this );
-
-		this.canvas = canvas;
-		this._autoResize = ! this._headless && options.autoResize !== false;
-		// A scene budget the host may raise; read where SceneProcessor is built, well after this.
-		this._maxSceneBytes = options.maxSceneBytes;
-		this._hostMemoryGB = options.hostMemoryGB;
-		this._storageOption = options.storage;
-		this._memorySpill = options.memorySpill === true;
-		/** @type {?StorageManager} on-disk storage, null when off or unavailable */
-		this.storage = null;
-		this._storageRelease = null;
 		this._container = options.container || null;
-		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
-		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
-		this._unlitRestore = null;
-		this._applyingSceneMetadata = false;
-
-		// Before the settings: the profile supplies some of their defaults.
-		this._profile = getRenderProfile( options.profile );
-		this._profileName = options.profile ?? 'viewer';
-
-		// First, so no subsystem can degrade unrecorded.
-		this._issues = new IssueLog( {
-			strict: options.strict === true,
-			onIssue: ( issue ) => this.dispatchEvent( { type: EngineEvents.ISSUE, issue } ),
-		} );
-
-		/**
-		 * Colour management: what the engine renders in, shows it as, and hands out.
-		 *
-		 * Inert until a host loads an OCIO config — until then the working space is linear
-		 * Rec.709 and the view transforms are three.js's own seven, exactly as before.
-		 */
-		this.color = new ColorManagement( { issues: this._issues } );
-		setActiveColorManagement( this.color );
-
-		// ── Settings (single source of truth for all render parameters) ──
-		this.settings = new RenderSettings(
-			{
-				...DEFAULT_STATE,
-				environmentRotation: this._profile.environmentRotation,
-				saturation: this._profile.saturation,
-				dofMode: this._profile.dofMode,
-			},
-			{ issues: this._issues }
-		);
-
-		// ── Core objects (populated in init) ──
-		this.renderer = null;
-		this.scene = null;
-		this.meshScene = null;
-		this._sceneHelpers = null;
-
-		// ── Asset pipeline ──
-		this.assetLoader = null;
-		this._sdf = null;
 		this._animRefitInFlight = false;
 		this._emittersMoved = false;
-		// Max material-texture dimension (longest edge); applied on each scene build.
-		this._maxTextureSize = DEFAULT_STATE.maxTextureSize;
-
-		// ── Pipeline & stages ──
-		this.pipeline = null;
-
-		this._pendingReservedRenderSize = null;
-
-		/**
-		 * Named access to all pipeline stages.
-		 * Advanced consumers can reach into stages for fine-grained control.
-		 * @type {Object}
-		 */
-		this.stages = {};
+		this._pendingRenderScale = null;
 
 		// ── Managers (direct public access) ──
 		/** @type {CameraManager} */
 		this.cameraManager = null;
 		/** @type {TimelineManager} Authored animation: keyframed tracks. */
 		this.timeline = null;
-		/** @type {LightManager} */
-		this.lightManager = null;
 		/** @type {GoboManager} */
 		this.goboManager = null;
 		/** @type {IESManager} */
@@ -300,204 +89,226 @@ export class PathTracerApp extends EventDispatcher {
 		this.transformManager = null;
 		/** @type {AnimationManager} */
 		this.animationManager = new AnimationManager();
-		/** @type {import('./managers/EnvironmentManager.js').EnvironmentManager} */
-		this.environmentManager = null;
-
-		// ── State ──
-		this.isInitialized = false;
-		this.pauseRendering = false;
-		this._pathTracerEnabled = true;
-		this._rasterPrecompile = null;
-		this.animationManagerId = null;
-		this.needsReset = false;
-		this._loadingInProgress = false;
-		this._needsDisplayRefresh = false;
-		this._paused = false;
-		// Emissive-triangle NEE auto-follows the scene (on when it has emissive geometry)
-		// until the user toggles it explicitly; reset on each fresh model load.
-		this._emissiveSamplingUserSet = false;
-
-		// Render completion tracking
-		this.completion = new CompletionTracker();
-
-		// Resolution state
-		this._resizeDebounceTimer = null;
-		// The size the host asked for. The canvas backing store is this × _renderScale, which drops
-		// below 1 only while the camera moves.
-		this._displayWidth = 0;
-		this._displayHeight = 0;
-		this._renderScale = 1;
-		this._pendingRenderScale = null;
-
-		// Tracked listeners for clean dispose()
-		this._trackedListeners = [];
-		this._disposed = false;
-		this._deviceLost = false;
-		this._gpuDevice = null;
-		this._deviceLostHolder = null;
-
-		// Deterministic-render mode — see setDeterministicMode()
-		this._deterministic = false;
-		this._dispatchPinned = false;
-		this._deterministicRestore = null;
-
-		/** @type {?{vendor:string, architecture:string, device:string, description:string, isSoftware:boolean}} */
-		this.adapterInfo = null;
-
-	}
-
-	/**
-	 * Registers an event listener and tracks it for automatic cleanup on dispose().
-	 * @param {EventTarget|{addEventListener:Function, removeEventListener:Function}} target
-	 * @param {string} type
-	 * @param {Function} handler
-	 */
-	_addTrackedListener( target, type, handler ) {
-
-		if ( ! target ) return;
-		target.addEventListener( type, handler );
-		this._trackedListeners.push( { target, type, handler } );
-
-	}
-
-	/** Removes all listeners registered via _addTrackedListener. */
-	_removeTrackedListeners() {
-
-		for ( const { target, type, handler } of this._trackedListeners ) {
-
-			try {
-
-				target.removeEventListener( type, handler );
-
-			} catch ( err ) {
-
-				log.warn( 'failed to remove listener', type, err );
-
-			}
-
-		}
-
-		this._trackedListeners.length = 0;
 
 	}
 
 	// ═══════════════════════════════════════════════════════════════
-	// Lifecycle
+	// Setup — the core's init steps, extended
 	// ═══════════════════════════════════════════════════════════════
 
-	/**
-	 * Initializes the WebGPU renderer, pipeline stages, and managers.
-	 */
-	async init() {
+	_createCamera() {
 
-		const storageReady = this._initStorage();
-		await this._initRenderer();
-		this._applyPendingReservedRenderSize();
-		this._initCameraManager();
-		this._initScenes();
-		this._initAssetPipeline();
-		this._initPipeline();
-		await this._initManagers();
-		this._wireEvents();
-		await storageReady;
-		this._attachStorage();
-
-		// Seed path tracer with minimal empty scene data
-		this.stages.pathTracer.setTriangleData( new Uint32Array( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ), 0 );
-		this.stages.pathTracer.setBVHData( new Float32Array( 16 ) );
-		this.stages.pathTracer.materialData.setMaterialData( new Float32Array( 16 ) );
-		this.stages.pathTracer.setupMaterial();
-
-		this.isInitialized = true;
-		log.debug( 'WebGPU path tracer app initialized' );
-
-		return this;
+		this.cameraManager = new CameraManager( this.canvas );
+		this.timeline = new TimelineManager( { cameraManager: this.cameraManager, onReset: () => this.reset() } );
+		return this.cameraManager.camera;
 
 	}
 
-	async _initStorage() {
+	_initAssetPipeline() {
 
-		// A batch render must not be answered from an earlier run's cache unless the host asked for one.
-		const option = this._storageOption
-			?? ( this._issues.strict && ! isAssetConfigured( 'storage' ) ? false : getAssetConfig().storage );
-		if ( option === false ) return;
+		super._initAssetPipeline();
+		this.assetLoader.controls = this.cameraManager.controls;
 
-		if ( option instanceof StorageManager ) {
+		const onCameraMoved = () => {
 
-			this.storage = option;
+			this.needsReset = true;
+			// Here rather than in render(), so the first frame of the move is already at the lower resolution.
+			this.stages.pathTracer?.enterInteractionMode();
+			this.wake();
 
-		} else {
+		};
 
-			const { storage, reason, release } = await acquireSharedStorage( getAssetConfig().cacheNamespace );
-			if ( this._disposed ) {
+		this._addTrackedListener( this.cameraManager.controls, 'change', onCameraMoved );
+		this._addTrackedListener( this.cameraManager.walkControls, 'change', onCameraMoved );
+		// A held key moves the camera from the frame loop, which may be asleep.
+		this._addTrackedListener( this.cameraManager.walkControls, 'start', () => this.wake() );
 
-				release();
-				return;
+	}
+
+	_createExtraStages() {
+
+		const { renderer, stages } = this;
+		stages.normalDepth = new NormalDepth( renderer, { pathTracer: stages.pathTracer } );
+		stages.motionVector = new MotionVector( renderer, this.camera, { pathTracer: stages.pathTracer } );
+		stages.asvgf = new ASVGF( renderer, { enabled: false } );
+		stages.nrd = new NRD( renderer, { enabled: false, pathTracer: stages.pathTracer } );
+		stages.variance = new Variance( renderer, { enabled: false } );
+		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
+		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
+		stages.autoExposure = new AutoExposure( renderer, { enabled: DEFAULT_STATE.autoExposure ?? false } );
+
+		return [
+			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
+			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure,
+		];
+
+	}
+
+	_initPipeline() {
+
+		super._initPipeline();
+
+		this.pipeline.eventBus.on( 'pathtracer:interactionStart', () => this._requestRenderScale( this._interactionRenderScale() ) );
+		// Never fires inside a frame (a timer, or interaction mode being switched off), so it applies at once —
+		// renderFrames() and the video renderer drive pipeline.render() without passing through animate().
+		this.pipeline.eventBus.on( 'pathtracer:interactionEnd', () => this._applyRenderScale( 1 ) );
+
+	}
+
+	async _initManagers() {
+
+		await super._initManagers();
+
+		this.interactionManager = new InteractionManager( {
+			scene: this.meshScene,
+			camera: this.camera,
+			canvas: this.canvas,
+			assetLoader: this.assetLoader,
+			pathTracer: null,
+			floorPlane: this.assetLoader.floorPlane
+		} );
+
+		this.interactionManager.wireAppEvents( this );
+
+		this.cameraManager.setInteractionManager( this.interactionManager );
+		this.goboManager = new GoboManager( this.stages.pathTracer, {
+			onReset: () => this.reset(),
+			issues: this._issues,
+		} );
+		this.iesManager = new IESManager( this.stages.pathTracer, {
+			onReset: () => this.reset(),
+			issues: this._issues,
+		} );
+		this._setupDenoisingManager();
+
+		// A second renderer, a 2D canvas and a gizmo, all for pixels nobody sees.
+		if ( ! this._headless ) {
+
+			await this._setupOverlayManager();
+
+			this.transformManager = new TransformManager( {
+				camera: this.camera,
+				canvas: this.canvas,
+				orbitControls: this.cameraManager.controls,
+				app: this,
+			} );
+
+			// The gizmo is part of the scene overlay layer, so it draws on the same
+			// view-resolution surface as the light helpers and the outline.
+			this.overlayManager.register( 'transform', new TransformGizmoHelper( this.transformManager ) );
+
+		}
+
+		// Wire cross-manager dependencies
+		this.interactionManager.setDependencies( {
+			overlayManager: this.overlayManager,
+			transformManager: this.transformManager,
+			appDispatch: ( e ) => this.dispatchEvent( e ),
+			orbitControls: this.cameraManager.controls,
+			helperScene: this._sceneHelpers.scene,
+		} );
+
+		this.denoisingManager.setOverlayManager( this.overlayManager );
+		this.denoisingManager.setResetCallback( () => this.reset() );
+		this.denoisingManager.setPostProcessRefreshCallback( () => this.requestPostProcessRefresh() );
+		this.denoisingManager.setDisplayRefreshCallback( () => this._presentDisplay() );
+		this.denoisingManager.setSettings( this.settings );
+
+	}
+
+	_wireEvents() {
+
+		// Forward manager events → app events
+		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.cameraManager, EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.cameraManager, EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => this.dispatchEvent( e ) );
+		this._addTrackedListener( this.timeline, EngineEvents.TIMELINE_CHANGED, ( e ) => this.dispatchEvent( e ) );
+
+		this._forwardEvents( this.denoisingManager, [
+			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
+			EngineEvents.UPSCALING_START, EngineEvents.UPSCALING_PROGRESS, EngineEvents.UPSCALING_END,
+			EngineEvents.RESOLUTION_CHANGED,
+		] );
+
+		this._setupAutoExposureListener();
+
+		// Animation lifecycle → wake + refit flag
+		this.animationManager.wakeCallback = () => this.wake();
+		this.animationManager.applyPoseCallback = ( pose ) => this._applyAnimationPose( pose );
+		this._forwardEvents( this.animationManager, [
+			EngineEvents.ANIMATION_STARTED,
+			EngineEvents.ANIMATION_PAUSED,
+			EngineEvents.ANIMATION_STOPPED,
+		] );
+		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_PAUSED, () => {
+
+			this._animRefitInFlight = false;
+			this._refreshMovedEmitters();
+
+		} );
+		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_STOPPED, () => {
+
+			this._animRefitInFlight = false;
+
+		} );
+
+		// Camera callbacks for switchCamera / focusOn
+		this.cameraManager.initCallbacks( {
+			onResize: () => this.onResize(),
+			onReset: () => this.reset(),
+			getSettings: ( k ) => this.settings.get( k ),
+			// Per-camera DOF restore — silent + reset:false so switchCamera's own onReset() is the single reset.
+			applySettings: ( updates ) => this.settings.setMany( updates, { silent: true, reset: false } ),
+		} );
+
+		// Auto-focus context — CameraManager stores it, reads it each frame
+		this.cameraManager.initAutoFocus( {
+			assetLoader: this.assetLoader,
+			pathTracer: this.stages.pathTracer,
+			settings: this.settings,
+			softReset: () => this.reset( true ),
+			hardReset: () => this.reset(),
+		} );
+
+		super._wireEvents();
+
+		this._addTrackedListener( this.assetLoader, 'modelProcessed', ( event ) => {
+
+			const cameras = [ this.cameraManager.camera, ...( event.cameras || [] ) ];
+			this.cameraManager.setCameras( cameras );
+			// Keys are poses in the scene being replaced, like the cameras saved in it.
+			this.timeline.clear();
+
+			if ( this.interactionManager ) {
+
+				this.interactionManager.floorPlane = this.assetLoader.floorPlane;
 
 			}
 
-			if ( ! storage ) {
-
-				this._issues.warn( ISSUE_CODES.STORAGE_UNAVAILABLE, `on-disk storage is off: ${reason}`, { reason } );
-				return;
-
-			}
-
-			this.storage = storage;
-			this._storageRelease = release;
-
-		}
-
-		this._addTrackedListener( this.storage, 'change', ( e ) => this.dispatchEvent( { type: EngineEvents.STORAGE_CHANGED, area: e.area } ) );
-		this._addTrackedListener( this.storage, 'issue', ( e ) => this._issues.warn( e.code, e.message, e.detail ) );
+		} );
 
 	}
 
-	_attachStorage() {
+	_settingsBindings() {
 
-		if ( this.assetLoader ) this.assetLoader.storage = this.storage;
+		return {
+			...super._settingsBindings(),
+			denoisingManager: this.denoisingManager,
+			onInteractionRenderScale: () => {
 
-	}
+				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
 
-	dispatchEvent( event ) {
-
-		super.dispatchEvent( event );
-		const legacy = LEGACY_EVENT_NAMES[ event.type ];
-		if ( legacy ) super.dispatchEvent( { ...event, type: legacy } );
-
-	}
-
-	addEventListener( type, listener ) {
-
-		if ( ! KNOWN_EVENTS.has( type ) && ! _warnedEvents.has( type ) ) {
-
-			_warnedEvents.add( type );
-			log.warn( `no engine event is named "${type}", so this listener will never fire — see EngineEvents` );
-
-		}
-
-		super.addEventListener( type, listener );
+			},
+			onCameraProjection: ( value ) => this.cameraManager.applyProjection( value ),
+		};
 
 	}
 
-	/**
-	 * Starts the animation loop.
-	 */
-	animate() {
+	// ═══════════════════════════════════════════════════════════════
+	// The core's hooks
+	// ═══════════════════════════════════════════════════════════════
 
-		if ( this._headless ) throw new Error( 'a headless app has no render loop — drive it with renderFrames() or renderUntilComplete()' );
-
-		// Device lost: stop the loop rather than rescheduling render() on a dead device.
-		if ( this._deviceLost ) return;
-
-		this.animationManagerId = requestAnimationFrame( () => this.animate() );
-
-		if ( this._loadingInProgress || this._sdf?.isProcessing ) {
-
-			this.dispatchEvent( { type: EngineEvents.FRAME } );
-			return;
-
-		}
+	_beginFrame() {
 
 		this.timeline.update();
 		this.cameraManager.updateControls();
@@ -524,229 +335,59 @@ export class PathTracerApp extends EventDispatcher {
 
 		}
 
-		const cameraMoved = this.needsReset;
-		if ( this.needsReset ) {
+	}
 
-			// Before the reset, so the denoising manager's abort sees this frame as part of a move
-			// rather than deciding to hold on the first frame and dropping it on the second.
-			this.stages.pathTracer?.noteViewChanged();
-			this.reset( true );
-			this.needsReset = false;
+	_beforeTrace() {
 
-		}
-
-		this.cameraManager.camera.updateMatrixWorld();
-
-		// Raster fallback when path tracer is disabled
-		if ( ! this.pathTracerEnabled ) {
-
-			this.renderer.render( this.meshScene, this.cameraManager.camera );
-			this._renderHelperOverlay();
-			return;
-
-		}
-
-		if ( this.pauseRendering ) return;
-
-		// Auto-focus: compute focus distance before rendering
 		this.cameraManager.updateAutoFocus();
 
-		// Render path tracing
-		if ( this.stages.pathTracer?.isReady ) {
+	}
 
-			if ( this.stages.pathTracer.isComplete && this.completion.renderCompleteDispatched ) {
+	// A frame traced while a denoise is in flight is never seen: only denoised frames reach
+	// the canvas during a camera move, and the next denoise reads the newest frame anyway.
+	// Tracing it only takes the GPU away from the denoise the viewport is waiting on —
+	// inside a room that turned a 10 ms denoise into 185 ms of wall clock.
+	_holdTrace( cameraMoved ) {
 
-				if ( this._needsDisplayRefresh ) {
-
-					this._needsDisplayRefresh = false;
-					this.stages.compositor.render( this.pipeline.context );
-					this._renderHelperOverlay();
-
-				}
-
-				// Stop the loop to avoid constant CPU usage while idle
-				this.stopAnimation();
-				return;
-
-			}
-
-			// A frame traced while a denoise is in flight is never seen: only denoised frames reach
-			// the canvas during a camera move, and the next denoise reads the newest frame anyway.
-			// Tracing it only takes the GPU away from the denoise the viewport is waiting on —
-			// inside a room that turned a 10 ms denoise into 185 ms of wall clock.
-			if ( this.denoisingManager?.skipsTrace() ) {
-
-				// The camera is still being dragged; without this the interaction timeout can
-				// expire inside a long denoise and drop the view out of interaction mode.
-				if ( cameraMoved ) this.stages.pathTracer.enterInteractionMode();
-				// Gizmos and outlines are drawn against the live camera, not the traced frame, so
-				// they would visibly lag the view if they only redrew on the frames that traced.
-				this._renderHelperOverlay();
-				this.dispatchEvent( { type: EngineEvents.FRAME } );
-				return;
-
-			}
-
-			// A lockstep readback is due and still in flight; the frame would trace nothing.
-			if ( this.stages.pathTracer.readbackWait() ) {
-
-				this.dispatchEvent( { type: EngineEvents.FRAME } );
-				return;
-
-			}
-
-			this._traceFrame( { liveDenoise: true } );
-
-			// Render completion → denoise/upscale chain
-			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) {
-
-				this.denoisingManager.onRenderComplete( {
-					isStillComplete: () => this.completion.renderCompleteDispatched,
-					context: this.pipeline?.context,
-				} );
-
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...this._completionInfo() } );
-
-			}
-
-		}
-
-		this._renderHelperOverlay();
-		this.dispatchEvent( { type: EngineEvents.FRAME } );
+		if ( ! this.denoisingManager?.skipsTrace() ) return false;
+		// The camera is still being dragged; without this the interaction timeout can
+		// expire inside a long denoise and drop the view out of interaction mode.
+		if ( cameraMoved ) this.stages.pathTracer.enterInteractionMode();
+		return true;
 
 	}
 
-	// One frame of a render and its bookkeeping, shared by animate() and renderUntilComplete().
-	_traceFrame( { liveDenoise = false } = {} ) {
+	_afterTrace( stage, live ) {
 
-		const stage = this.stages.pathTracer;
-		this.pipeline.render();
 		this.denoisingManager?.afterTrace();
+		if ( live && ! stage.isComplete ) this.denoisingManager?.tickContinuousDenoise( stage.frameCount );
 
-		if ( ! stage.isComplete ) {
+	}
 
-			this.completion.updateTime();
-			if ( liveDenoise ) this.denoisingManager?.tickContinuousDenoise( stage.frameCount );
+	// Render completion → denoise/upscale chain
+	_renderCompleted() {
 
-		}
-
-		this._ensureVRAMWiring();
-		// VRAM is monotonic and only changes on allocation events (scene/env
-		// load, resize — each re-measures via _ensureVRAMWiring). Within an
-		// accumulation burst nothing reallocates, so re-walking every stage's
-		// textures each frame is wasted. Measure at burst start (catches any
-		// reset-triggered allocation) + a periodic backstop; read cached otherwise.
-		const tracker = stage.vramTracker;
-		const frame = stage.frameCount ?? 0;
-		if ( tracker && ( frame <= 1 || frame % 30 === 0 ) ) tracker.measure();
-
-		updateStats( {
-			timeElapsed: this.completion.timeElapsed,
-			samples: getDisplaySamples( stage ),
-			memoryUsed: tracker?.current ?? 0,
-			memoryPeak: tracker?.peak ?? 0,
+		this.denoisingManager.onRenderComplete( {
+			isStillComplete: () => this.completion.renderCompleteDispatched,
+			context: this.pipeline?.context,
 		} );
 
-		// Only the wall-clock stop — PathTracer.render() retires the ceiling and convergence
-		// itself, so whichever of the three arrives first wins.
-		if ( this.completion.isTimeLimitReached( stage, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' ) ) ) {
+	}
 
-			stage.isComplete = true;
+	_renderHelperOverlay() {
 
-		}
+		super._renderHelperOverlay();
+		this.overlayManager?.render();
 
 	}
 
-	_completionInfo() {
+	_beforeReset( keepHistory ) {
 
-		return {
-			samples: this.stages.pathTracer.frameCount,
-			timeElapsed: this.completion.timeElapsed,
-			budgetOverrun: this.completion.budgetOverrun,
-			// null means isComplete was forced rather than earned (the reconcile below);
-			// a forced stop is closer to the ceiling than to convergence.
-			reason: this.completion.stopCondition( this.stages.pathTracer ) ?? 'samples',
-		};
+		this.denoisingManager?.beforeReset( { keepHistory } );
 
 	}
 
-	/**
-	 * Stops the animation loop.
-	 */
-	stopAnimation() {
-
-		if ( this.animationManagerId ) {
-
-			cancelAnimationFrame( this.animationManagerId );
-			this.animationManagerId = null;
-
-		}
-
-	}
-
-	/**
-	 * Handle GPU device loss: halt the render loop and notify hosts so they can surface a
-	 * "renderer lost — reload" prompt. Full auto-recovery would require rebuilding every GPU
-	 * resource, so this deliberately stops cleanly rather than attempting to re-init.
-	 */
-	_handleDeviceLost( info ) {
-
-		if ( this._deviceLost ) return;
-		this._deviceLost = true;
-		log.error( `WebGPU device lost (${info?.reason || 'unknown'}): ${info?.message || ''}` );
-		this.stopAnimation();
-		this.dispatchEvent( { type: EngineEvents.DEVICE_LOST, reason: info?.reason, message: info?.message } );
-
-	}
-
-	/** Wakes the animation loop if it was stopped due to idle. */
-	wake() {
-
-		if ( this._deviceLost || this._headless ) return;
-		if ( ! this.animationManagerId && this.isInitialized && ! this._paused ) this.animate();
-
-	}
-
-	/** Pauses the animation loop. */
-	pause() {
-
-		this._paused = true;
-		this.stopAnimation();
-
-	}
-
-	/** Resumes the animation loop. */
-	resume() {
-
-		this._paused = false;
-		if ( ! this.animationManagerId && ! this._headless ) this.animate();
-
-	}
-
-	/**
-	 * Resets the accumulation buffer.
-	 * @param {boolean} soft - When true, preserves ASVGF temporal history
-	 * @param {Object} [options]
-	 * @param {boolean} [options.motion] - only object placements or geometry moved; keeps the OIDN
-	 *   motion history, which rejects what moved per pixel
-	 */
-	reset( soft = false, { motion = false } = {} ) {
-
-		// Objects moving is the view changing, as far as the live denoiser's refresh cadence goes.
-		if ( motion ) this.stages.pathTracer?.noteViewChanged();
-		this.denoisingManager?.beforeReset( { keepHistory: soft || motion } );
-
-		if ( this.pipeline ) {
-
-			this.pipeline.reset();
-			if ( ! soft ) {
-
-				this.pipeline.eventBus.emit( 'asvgf:reset' );
-				this.pipeline.eventBus.emit( 'denoiser:reset' );
-
-			}
-
-		}
+	_afterReset() {
 
 		this.denoisingManager?.afterReset();
 
@@ -754,42 +395,144 @@ export class PathTracerApp extends EventDispatcher {
 		// moves: the denoising manager decides, since only it knows something is coming.
 		this._abortPostProcess( { keepDisplay: true } );
 
-		this.completion.reset();
-		this.wake();
-		this.dispatchEvent( { type: EngineEvents.RENDER_RESET } );
+	}
+
+	_dropDisplay() {
+
+		this.denoisingManager?.dropDisplay();
 
 	}
 
-	/**
-	 * Disposes of all resources.
-	 */
-	dispose() {
+	// Stops playback, and drops the selection and the gizmo unless the selected object survives.
+	_releaseSceneState( { keepSelection = false } = {} ) {
 
-		if ( this._disposed ) return;
-		this._disposed = true;
+		if ( ! keepSelection ) {
 
-		this.dispatchEvent( { type: EngineEvents.DISPOSE } );
-		this.stopAnimation();
-		clearTimeout( this._resizeDebounceTimer );
-		this._resizeDebounceTimer = null;
+			this.interactionManager?.deselect();
+			this.transformManager?.detach?.();
 
-		this._removeTrackedListeners();
-		setStatusCallback( null );
+		}
 
-		this._storageRelease?.();
-		this._storageRelease = null;
-		this.storage = null;
-		this._sceneSource = this._sceneSourceFile = null;
+		this.animationManager?.dispose();
+		this._animRefitInFlight = false;
+		this._emittersMoved = false;
 
-		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
+	}
 
-		// Holds the renderer and the issue log, both of which outlive it otherwise.
-		this.color?.dispose();
-		this.color = null;
-		this._textureReadback?.dispose();
-		this._textureReadback = null;
-		this._readbackToneMapper?.dispose();
-		this._readbackToneMapper = null;
+	_modelReplaced() {
+
+		this._syncControlsAfterLoad();
+		this.cameraManager.currentCameraIndex = 0;
+
+	}
+
+	_modelAnnounced() {
+
+		this._dispatchCamerasUpdated();
+
+	}
+
+	_sceneRebuilt() {
+
+		this._initAnimationAndTransforms();
+
+	}
+
+	_sceneBoundsChanged() {
+
+		this._recalibrateControlLimits();
+
+	}
+
+	// The gizmo stays attached to a removed light and warns every frame it draws.
+	_lightRemoved( light ) {
+
+		if ( this.interactionManager?.selectedObject === light ) this.interactionManager.deselect();
+
+	}
+
+	// Full size: the denoiser only runs once the camera has stopped.
+	_renderSizeChanged( width, height ) {
+
+		this.denoisingManager?.setRenderSize( width, height );
+
+	}
+
+	// Restore live preview: abort() on the denoising manager already
+	// handles canvas opacity, denoiser output visibility, and upscaler reset.
+	_completionReopened() {
+
+		this.denoisingManager?.abort( this.canvas );
+
+	}
+
+	async _finalDenoise() {
+
+		return this.denoisingManager?.finalDenoise ? await this.runFinalDenoise() : false;
+
+	}
+
+	// Whatever is on the overlay is what the viewport shows, so it is also what a save must
+	// write. Gating on `upscaler.enabled` instead missed the neural-rendering pass, which puts
+	// a picture there without the ONNX upscaler being on at all — saves silently wrote the
+	// un-enhanced render.
+	_displayCanvas() {
+
+		const overlay = this.denoisingManager?.upscalerCanvas;
+		return overlay && overlay.style.display !== 'none' ? overlay : null;
+
+	}
+
+	_registerVRAM( tracker ) {
+
+		tracker.register( 'denoiser', () => ( { bytes: this.denoisingManager?.gpuBytes() ?? 0 } ) );
+
+	}
+
+	_canvasResources() {
+
+		return this.overlayManager?.gpuResources() ?? [];
+
+	}
+
+	_deterministicSnapshot() {
+
+		return {
+			autoFocusMode: this.cameraManager?.autoFocusMode,
+			autoExposure: this.stages.autoExposure?.enabled,
+			continuousDenoise: this.denoisingManager?.continuousDenoise,
+		};
+
+	}
+
+	_setDeterministicExtras( enabled, snapshot ) {
+
+		if ( enabled ) {
+
+			this.cameraManager?.setAutoFocusMode( 'manual' );
+			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+			// Cadence denoising is wall-clock driven, so which frame it lands on is not reproducible.
+			this.denoisingManager?.setContinuousDenoise( false );
+			return;
+
+		}
+
+		if ( snapshot.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( snapshot.autoFocusMode );
+		if ( this.stages.autoExposure && snapshot.autoExposure !== undefined ) {
+
+			this.stages.autoExposure.enabled = snapshot.autoExposure;
+
+		}
+
+		if ( snapshot.continuousDenoise !== undefined ) {
+
+			this.denoisingManager?.setContinuousDenoise( snapshot.continuousDenoise );
+
+		}
+
+	}
+
+	_disposeExtensions() {
 
 		this.interactionManager?.deselect?.();
 		this.transformManager?.detach?.();
@@ -797,7 +540,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.animationManager?.dispose();
 		this.transformManager?.dispose();
 		this.overlayManager?.dispose();
-		this.lightManager?.dispose();
 		this.goboManager?.dispose();
 		this.iesManager?.dispose();
 		this.denoisingManager?.dispose();
@@ -805,982 +547,10 @@ export class PathTracerApp extends EventDispatcher {
 		this.timeline?.dispose();
 		this.cameraManager?.dispose();
 
-		this.pipeline?.dispose();
-
-		// _sdf + assetLoader own the heaviest GPU allocations (material texture arrays,
-		// BVH/triangle buffers, loaded GLTF resources, BVH refit worker, loader caches).
-		// They are not referenced by the pipeline, so pipeline.dispose() does not reach them.
-		this._sdf?.dispose();
-		this._sdf = null;
-
-		this.assetLoader?.dispose();
-		this.assetLoader = null;
-
-		if ( this.meshScene ) {
-
-			this.meshScene.environment?.dispose();
-			this.meshScene.environment = null;
-
-			for ( const child of [ ...this.meshScene.children ] ) {
-
-				disposeObjectFromMemory( child );
-
-			}
-
-			this.meshScene.clear();
-			this.meshScene = null;
-
-		}
-
-		this._sceneHelpers?.clear();
-		this._sceneHelpers = null;
-
-		this.scene?.clear();
-		this.scene = null;
-
-		// Three.js 0.184 leak (confirmed via heap-snapshot retainer analysis): the
-		// Textures manager (one per renderer) registers a per-texture 'dispose'
-		// listener that closes over `this = Textures` — which transitively captures
-		// backend → renderer. These listeners are removed only when the texture
-		// itself is destroyed. For module-level singletons like EmptyTexture (new
-		// Texture in TextureNode.js) and its CubeTexture counterpart, the texture is
-		// never destroyed, so every renderer ever created leaks through the
-		// singleton's listener array.
-		//
-		// Safe when only a single PathTracerApp is active at a time. If you run
-		// multiple in parallel, reset listeners only on the renderer being disposed
-		// (not the shared singletons). The sibling _canvasTarget leak is handled by
-		// disposeRenderer().
-		try {
-
-			const emptyTex = _tslTexture().value;
-			const emptyCube = _tslCubeTexture().value;
-			if ( emptyTex?._listeners?.dispose ) emptyTex._listeners.dispose.length = 0;
-			if ( emptyCube?._listeners?.dispose ) emptyCube._listeners.dispose.length = 0;
-
-		} catch ( err ) {
-
-			log.warn( 'failed to clear TSL texture singleton listeners', err );
-
-		}
-
-		// Value of a WeakMap keyed by a canvas that outlives us: without this the whole
-		// disposed graph stays reachable until another app claims the same canvas.
-		if ( this.canvas && _appsByCanvas.get( this.canvas ) === this ) _appsByCanvas.delete( this.canvas );
-
-		if ( this._gpuDevice ) {
-
-			this._gpuDevice.onuncapturederror = null;
-			this._gpuDevice = null;
-
-		}
-
-		if ( this._deviceLostHolder ) {
-
-			this._deviceLostHolder.app = null;
-			this._deviceLostHolder = null;
-
-		}
-
-		disposeRenderer( this.renderer );
-		this.renderer = null;
-
-		this.stages = {};
-		this.isInitialized = false;
-
 	}
 
 	// ═══════════════════════════════════════════════════════════════
-	// Asset Loading
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * Tears down the current scene: stops animation, deselects, disposes
-	 * the loaded model + its GPU resources, clears lights, and seeds the
-	 * path tracer with an empty scene. Leaves the renderer, pipeline, and
-	 * managers intact so a subsequent loadModel() can reuse them.
-	 *
-	 * Safe to call at any point after init() (including while idle).
-	 * Throws if called concurrently with a load.
-	 */
-	unloadScene() {
-
-		if ( ! this.isInitialized ) return;
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.unloadScene: cannot unload while a load is in progress' );
-
-		}
-
-		if ( this._disposed ) return;
-
-		// Stop animation + refit
-		this.animationManager?.dispose();
-		this._animRefitInFlight = false;
-
-		// Drop selection + transform gizmo attachment
-		this.interactionManager?.deselect();
-		this.transformManager?.detach?.();
-
-		this.assetLoader?.releaseTargetModel();
-		this._sceneSource = this._sceneSourceFile = null;
-
-		// Clear lights in the WebGPU light scene
-		this.lightManager?.clearLights?.();
-
-		// Seed path tracer with empty data (matches the init-time seed)
-		if ( this.stages.pathTracer ) {
-
-			this.stages.pathTracer.setTriangleData( new Uint32Array( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ), 0 );
-			this.stages.pathTracer.setBVHData( new Float32Array( 16 ) );
-			this.stages.pathTracer.materialData.setMaterialData( new Float32Array( 16 ) );
-			this.stages.pathTracer.setEmissiveTriangleData?.( new Float32Array( 0 ), 0, 0 );
-			this.stages.pathTracer.setupMaterial();
-
-		}
-
-		this.denoisingManager?.dropDisplay();
-		this.reset();
-		this.dispatchEvent( { type: EngineEvents.SCENE_UNLOADED } );
-
-	}
-
-	/**
-	 * Loads a model, builds BVH, and uploads scene data.
-	 * @param {string} url - Model URL
-	 * @param {{cacheKey?: string}} [options] - download-cache key for a URL that expires
-	 */
-	async loadModel( url, options = {} ) {
-
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadModel( url, options ),
-			{ type: EngineEvents.MODEL_LOADED, url },
-			{ kind: 'url', url, cacheKey: options.cacheKey ?? null }
-		);
-
-	}
-
-	/**
-	 * Loads a Three.js Object3D directly into the path tracer scene.
-	 * Builds BVH from the object's meshes and uploads scene data.
-	 *
-	 * Renders a copy: `object3d` is never reparented, rewritten or disposed, so passing a
-	 * subtree of a scene the host still renders is safe. Geometry/material/texture are shared
-	 * by reference, and any ancestor transform is baked in. Later edits to `object3d` do not
-	 * reach the render — mutate {@link sceneModel}, then {@link refitBVH}/{@link refitBLASes}.
-	 *
-	 * Lights keep three.js units — `RectAreaLight.intensity` in nits, point/spot in candela — and are
-	 * converted to radiant power on the copy. `areaLightIntensityScale` does not apply here.
-	 *
-	 * @param {import('three').Object3D} object3d - The Object3D to render; left untouched.
-	 * @param {string} [name='object3d'] - Display name for the object
-	 */
-	async loadObject3D( object3d, name = 'object3d' ) {
-
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadObject3D( object3d, name ),
-			{ type: EngineEvents.OBJECT3D_LOADED, name },
-			{ kind: 'object3d', name }
-		);
-
-	}
-
-	/**
-	 * A load is already running. Typed so hosts can tell "you clicked too fast" apart from
-	 * a genuine load failure and say so, instead of dropping the request on the floor.
-	 * @private
-	 */
-	_busyError( where ) {
-
-		const error = new Error( `${where}: another load is already in progress` );
-		error.code = 'LOAD_IN_PROGRESS';
-		return error;
-
-	}
-
-	/**
-	 * Loads an environment map and rebuilds CDF.
-	 * @param {string} url - Environment URL
-	 */
-	async loadEnvironment( url ) {
-
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadEnvironment' );
-
-		this._loadingInProgress = true;
-
-		try {
-
-			await this.assetLoader.loadEnvironment( url );
-
-			const environmentTexture = this.meshScene.environment;
-			if ( environmentTexture && this.stages.pathTracer ) {
-
-				await this.stages.pathTracer.environment.setEnvironmentMap( environmentTexture );
-
-			}
-
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
-			this.reset();
-			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, url } );
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Lists the independently loadable parts of an archive without unpacking it, so a host
-	 * can offer a choice for a scene too large to load whole.
-	 * @param {File} file
-	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
-	 */
-	async inspectArchive( file ) {
-
-		return await this.assetLoader.inspectArchive( file );
-
-	}
-
-	/**
-	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
-	 * map, dispatched by extension.
-	 *
-	 * Prefer this over driving `assetLoader.loadAssetFromFile()` directly. That bypasses the
-	 * in-progress guard, and AssetLoader disposes the outgoing model before it knows whether
-	 * the engine will rebuild: a file dropped mid-load would tear down the live scene, add the
-	 * new one to the graph, and then be discarded by the `load` handler — leaving the path
-	 * tracer rendering buffers whose geometry has been freed. Here a concurrent call throws
-	 * LOAD_IN_PROGRESS before anything is touched.
-	 *
-	 * @param {File|string} file - a File, or a URL to download (through the download cache)
-	 * @param {object} [options] - forwarded to the archive loader: `element` to load one
-	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes. For a
-	 *   URL also `filename` and `cacheKey` (see AssetLoader.loadAssetFromUrl).
-	 * @returns {Promise<void>}
-	 */
-	async loadFile( file, options = {} ) {
-
-		options = this._sceneBudgets( options );
-
-		if ( typeof file === 'string' ) {
-
-			const filename = options.filename ?? nameFromUrl( file );
-			const format = this.assetLoader?.getFileFormat( filename );
-			if ( ! format ) throw new Error( `Unsupported file format: ${filename}` );
-			if ( format.type === 'environment' || format.type === 'image' ) return this.loadEnvironment( file );
-
-			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromUrl( file, { ...options, filename } ),
-				{ type: EngineEvents.MODEL_LOADED, filename },
-				{ kind: 'url', url: file, filename, cacheKey: options.cacheKey ?? null, ...partOf( options ) }
-			);
-			return;
-
-		}
-
-		const format = this.assetLoader?.getFileFormat( file?.name || '' );
-		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
-
-		if ( format.type !== 'environment' && format.type !== 'image' ) {
-
-			const identity = fileIdentity( file ).catch( () => ( { name: file.name, size: file.size, lastModified: file.lastModified ?? 0, sample: null } ) );
-			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromFile( file, options ),
-				{ type: EngineEvents.MODEL_LOADED, filename: file.name },
-				async () => {
-
-					const id = await identity;
-					return { kind: 'local-file', file: id, key: id.sample ? identityKey( id ) : null, ...partOf( options ) };
-
-				}
-			);
-			this._sceneSourceFile = file;
-			return;
-
-		}
-
-		// Environment drop: install it, no scene rebuild.
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadFile' );
-
-		this._loadingInProgress = true;
-
-		try {
-
-			await this.assetLoader.loadAssetFromFile( file );
-
-			const texture = this.meshScene.environment;
-			if ( texture && this.stages.pathTracer ) {
-
-				await this.stages.pathTracer.environment.applyHDRI( texture );
-
-			}
-
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
-			this.reset();
-			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, filename: file.name } );
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Loads example models by index.
-	 * @param {number} index
-	 * @param {Array} modelFiles
-	 */
-	async loadExampleModels( index, modelFiles ) {
-
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadExampleModels( index, modelFiles ),
-			{ type: EngineEvents.MODEL_LOADED, index },
-			{ kind: 'url', url: modelFiles[ index ]?.url ?? null, cacheKey: null }
-		);
-
-	}
-
-	/**
-	 * Cancel the in-flight model/environment download, if any. The active
-	 * loadAsync() rejects with a typed LOAD_CANCELLED error, which callers treat
-	 * as a user cancellation (not a load failure). Only the network-download phase
-	 * is cancelable — once processing (BVH/textures) has started this is a no-op.
-	 * The scene is untouched: replace-loads release the old model only after the
-	 * download succeeds, and appends parent nothing until then.
-	 */
-	cancelLoad() {
-
-		if ( ! this._loadingInProgress ) return;
-		this.assetLoader?.cancelActiveLoad();
-
-	}
-
-	/**
-	 * Set the max material-texture dimension (longest edge) used when processing a
-	 * scene's textures into GPU arrays. Clamped to the hardware ceiling. Larger =
-	 * sharper textures, ~quadratic VRAM. By default reprocesses the current scene so
-	 * the change is visible without a manual reload.
-	 * @param {number} size
-	 * @param {Object} [opts]
-	 * @param {boolean} [opts.reprocess=true] - Rebuild the current scene now.
-	 * @returns {Promise<void>}
-	 */
-	async setMaxTextureSize( size, { reprocess = true } = {} ) {
-
-		const prev = this._maxTextureSize;
-		const clamped = this._sdf?.setMaxTextureSize( size );
-		this._maxTextureSize = clamped ?? size;
-		if ( typeof this.stages?.pathTracer?.sdfs?.setMaxTextureSize === 'function' ) {
-
-			this.stages.pathTracer.sdfs.setMaxTextureSize( this._maxTextureSize );
-
-		}
-
-		// Reprocess the loaded scene so the new cap takes effect immediately.
-		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
-
-			this._loadingInProgress = true;
-			try {
-
-				await this.loadSceneData();
-				this.reset();
-				this.dispatchEvent( { type: EngineEvents.TEXTURES_REPROCESSED, maxTextureSize: this._maxTextureSize } );
-
-			} finally {
-
-				this._loadingInProgress = false;
-
-			}
-
-		}
-
-	}
-
-	/**
-	 * Where the model on screen came from, as plain data — what a saved session reopens:
-	 * `{ kind: 'url', url, cacheKey, filename?, element?, pbrtEntry? }`,
-	 * `{ kind: 'local-file', file: {name, size, lastModified, sample}, key, element?, pbrtEntry? }` or
-	 * `{ kind: 'object3d', name }`. Null before a load and after {@link unloadScene}.
-	 * @returns {?Object}
-	 */
-	get sceneSource() {
-
-		return this._sceneSource ?? null;
-
-	}
-
-	/** The File a local load came from, so a host can save a project that carries it; null otherwise. */
-	get sceneSourceFile() {
-
-		return this._sceneSourceFile ?? null;
-
-	}
-
-	/** Shared pipeline: load asset → sync controls → build BVH → reset → dispatch events */
-	async _loadWithSceneRebuild( loadFn, eventPayload, source = null ) {
-
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
-
-		this._loadingInProgress = true;
-
-		try {
-
-			await loadFn();
-			this._sceneSource = typeof source === 'function' ? await source() : source;
-			this._sceneSourceFile = null;
-			// A fresh model re-establishes the emissive-sampling auto-default (incremental
-			// rebuilds — add/remove object, texture reprocess — preserve the user's choice).
-			this._emissiveSamplingUserSet = false;
-			// Replace-load clears any dynamically-appended models — but only AFTER
-			// loadFn() succeeds, so a failed load leaves the current scene intact.
-			// (The old primary was already released by releaseTargetModel() in loadFn.)
-			this._clearAppendedModels();
-			this._syncControlsAfterLoad();
-			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
-			this._maybeSpill();
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
-			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
-			// shader compilation come first), and a second of the previous model reads as a bug.
-			this.denoisingManager?.dropDisplay();
-			this.reset();
-			this.cameraManager.currentCameraIndex = 0;
-			this.dispatchEvent( eventPayload );
-			this._dispatchCamerasUpdated();
-
-		} catch ( error ) {
-
-			// loadFn released the previous model before this one was known to be loadable, so
-			// there is nothing to fall back to. Leaving it half-built would keep the last
-			// frame's buffers on screen under a scene that no longer exists.
-			if ( ! error || error.code !== 'LOAD_IN_PROGRESS' ) this._discardFailedLoad();
-
-			// Only the scene build reported its own failure; one in the parse left a host's loading
-			// status spinning on its last step. A part prompt is not a failure, so it just ends it.
-			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) resetLoading();
-			else if ( error?.code !== 'LOAD_IN_PROGRESS' ) updateLoading( { status: `Error: ${error?.message ?? error}`, failed: true, progress: 100 } );
-			throw error;
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Put the engine back to an empty scene after a load failed part-way. The failure itself is
-	 * rethrown for the host to report; this only makes sure what is on screen matches it.
-	 * @private
-	 */
-	_discardFailedLoad() {
-
-		this._sceneSource = this._sceneSourceFile = null;
-
-		try {
-
-			this._clearAppendedModels();
-			this.assetLoader?.releaseTargetModel();
-			this.denoisingManager?.dropDisplay();
-			this.reset();
-
-		} catch ( cleanupError ) {
-
-			console.warn( 'PathTracerApp: could not clear the scene after a failed load', cleanupError );
-
-		}
-
-	}
-
-	/**
-	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
-	 * or null when the file has none. See {@link module:Processor/SceneMetadata}. A pbrt scene
-	 * without an infinite light carries `environment: { enabled: false }`.
-	 * @type {{ environment?: { sourceFile?: string, rotation?: number, intensity?: number, enabled?: boolean } }|null}
-	 */
-	get sceneMetadata() {
-
-		return this.assetLoader?.sceneMetadata ?? null;
-
-	}
-
-	/**
-	 * Starts fetching the environment authored into the just-loaded model's metadata and
-	 * returns a promise for the texture — deliberately NOT awaited here. The fetch is the
-	 * longest single step of such a load (measured 1448 ms for a 1k HDRI against 325 ms to
-	 * build and upload a 112k-triangle scene), so the promise is handed to loadSceneData(),
-	 * which installs it and builds its CDF while the BVH builds.
-	 *
-	 * Called from both replace-load seams: the URL/catalog path (_loadWithSceneRebuild) and
-	 * the drag-drop / File-open path, which drives the AssetLoader directly and rebuilds via
-	 * the 'load' event (_onAssetLoaded). Appending a model never applies it — an appended
-	 * model must not hijack the scene's environment.
-	 *
-	 * Resolves to null rather than rejecting: a failed fetch leaves the model on the current
-	 * environment. Returns null outright when there is nothing to apply. Under `strict` the
-	 * recorded issue throws instead, and the rejection surfaces where loadSceneData awaits it.
-	 * Opt out per app with `new PathTracerApp( canvas, { applySceneMetadata: false } )`.
-	 *
-	 * @returns {Promise<import('three').Texture|null>|null}
-	 */
-	_beginSceneMetadataEnvironment() {
-
-		this._restoreUnlitSettings();
-		const env = this.sceneMetadata?.environment;
-		if ( this._applySceneMetadataEnabled && env?.enabled === false ) {
-
-			this._applyUnlitSettings();
-			return null;
-
-		}
-
-		if ( ! this._applySceneMetadataEnabled || ! env?.sourceFile || ! this.stages.pathTracer ) return null;
-
-		// Claim 'hdri' mode up front: loadEnvironment() fires beforeEnvironmentLoad, and a
-		// host that answers it with setMode( 'hdri' ) would otherwise restore the HDRI
-		// stashed by the current sky mode on top of the download now in flight.
-		this.stages.pathTracer.environment.beginHDRI();
-		this._applyingSceneMetadata = true;
-
-		return this.assetLoader.loadEnvironment( env.sourceFile )
-			.catch( error => {
-
-				this._issues.record(
-					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
-					`authored environment "${env.sourceFile}" failed to load — lighting falls back to the previous environment`,
-					{ sourceFile: env.sourceFile, cause: String( error?.message ?? error ) }
-				);
-				return null;
-
-			} )
-			.finally( () => {
-
-				this._applyingSceneMetadata = false;
-
-			} );
-
-	}
-
-	/**
-	 * Mirrors the authored environment onto the settings once its texture is installed.
-	 * The authored env is both the light and the backdrop, so the backdrop axis
-	 * (showBackground / transparentBackground) is forced to the image.
-	 * @private
-	 */
-	_applySceneMetadataSettings( texture ) {
-
-		const metadata = this.sceneMetadata;
-		const env = metadata?.environment;
-		if ( ! env || env.enabled === false ) return;
-
-		const updates = { enableEnvironment: true, showBackground: true, transparentBackground: false };
-		if ( env.intensity !== undefined ) {
-
-			updates.environmentIntensity = env.intensity;
-			updates.backgroundIntensity = env.intensity;
-
-		}
-
-		if ( env.rotation !== undefined ) updates.environmentRotation = env.rotation;
-
-		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
-		if ( this.scene ) this.scene.background = texture;
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
-
-	}
-
-	/**
-	 * A scene that has no environment (a pbrt scene without an infinite light) renders with none: no light
-	 * from it and a plain backdrop. The next model gets back what it replaced, unless someone changed it since.
-	 * @private
-	 */
-	_applyUnlitSettings() {
-
-		const effective = this.settings.getEffective();
-		const updates = { enableEnvironment: false, showBackground: false };
-		this._unlitRestore = Object.fromEntries( Object.keys( updates ).map( key => [ key, { value: effective[ key ].value, source: effective[ key ].source } ] ) );
-		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: false } } );
-
-	}
-
-	/** @private */
-	_restoreUnlitSettings() {
-
-		const saved = this._unlitRestore;
-		if ( ! saved ) return;
-		this._unlitRestore = null;
-		const effective = this.settings.getEffective();
-		for ( const [ key, { value, source } ] of Object.entries( saved ) ) {
-
-			if ( effective[ key ]?.source === SETTING_SOURCE.SCENE_METADATA ) this.settings.set( key, value, { reset: false, source } );
-
-		}
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: this.settings.get( 'enableEnvironment' ) } } );
-
-	}
-
-	/**
-	 * Builds BVH from meshScene and uploads all scene data to the path tracer.
-	 * @param {Object} [options]
-	 * @param {Promise<import('three').Texture|null>} [options.pendingEnvironment] - An
-	 *   environment still being fetched (see _beginSceneMetadataEnvironment). Installed and
-	 *   CDF'd concurrently with the BVH build rather than before it.
-	 * @returns {boolean}
-	 */
-	async loadSceneData( { pendingEnvironment = null, keepUserLights = false } = {} ) {
-
-		// Clear selection before rebuilding — the old object leaves the scene graph.
-		// Skipped on the append path (addModel): the selected object persists, so its
-		// selection + transform gizmo should survive the rebuild.
-		if ( ! this._preserveSelectionOnRebuild ) this.interactionManager?.deselect();
-
-		// Stop any running animation before rebuilding scene data
-		this.animationManager.dispose();
-		this._animRefitInFlight = false;
-		this._emittersMoved = false;
-
-		// Tag the primary (replace-loaded) model so it appears in the scene-object list.
-		this._tagPrimarySceneObject();
-
-		const timer = new BuildTimer( '', { namespace: 'scene', level: 'info' } );
-		// meshScene.environment is the HDRI slot: a sky or colour in use outlives the model.
-		const hdri = () => this.stages.pathTracer.environment.envParams.mode === 'hdri' ? this.meshScene.environment : null;
-		const environmentTexture = hdri();
-
-		// Environment CDF build in parallel with BVH
-		let cdfPromise = null;
-		if ( pendingEnvironment ) {
-
-			// The authored environment is still downloading. Install + CDF it off to the side so
-			// the fetch overlaps the BVH build below instead of gating it.
-			timer.start( 'Environment fetch + CDF (concurrent)' );
-			cdfPromise = pendingEnvironment
-				.then( async texture => {
-
-					if ( ! texture ) return;
-					await this.stages.pathTracer.environment.applyHDRI( texture );
-					this._applySceneMetadataSettings( texture );
-
-				} )
-				.catch( error => this._issues.record(
-					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
-					'authored environment failed to install — the scene is lit by whatever was already loaded',
-					{ cause: String( error?.message ?? error ) }
-				) )
-				.finally( () => timer.end( 'Environment fetch + CDF (concurrent)' ) );
-
-		} else if ( environmentTexture?.image?.data ) {
-
-			timer.start( 'Environment CDF build (worker)' );
-			this.stages.pathTracer.scene.environment = environmentTexture;
-			cdfPromise = this.stages.pathTracer.environment.buildEnvironmentCDF()
-				.then( () => {
-
-					timer.end( 'Environment CDF build (worker)' );
-					// A loader can install the environment itself and still author how it should
-					// be read — a pbrt scene bakes the light's transform in and needs rotation 0.
-					if ( this._applySceneMetadataEnabled ) this._applySceneMetadataSettings( environmentTexture );
-
-				} );
-
-		}
-
-		// Build BVH
-		timer.start( 'BVH build (SceneProcessor)' );
-		this._sdf.setMaxTextureSize( this._maxTextureSize );
-		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null, progressive: this._progressiveSpill() } );
-		this.assetLoader?.flushPendingGraph( this._sdf.performanceMetrics.totalProcessingTime );
-		timer.end( 'BVH build (SceneProcessor)' );
-
-		// Transfer geometry, materials, and textures to GPU
-		updateLoading( { status: "Transferring data to GPU...", progress: 86 } );
-		await new Promise( r => setTimeout( r, 0 ) );
-		timer.start( 'GPU data transfer' );
-
-		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
-		// during the BVH build, and the snapshot is then a disposed texture.
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, hdri(), { keepUserLights } ) ) return false;
-
-		// Patch per-mesh visibility into the TLAS leaves we just uploaded
-		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
-		this.stages.pathTracer.setMeshVisibilityData( this.stages.pathTracer._meshRefs );
-
-		// Drop authored-hidden meshes' triangles from the emissive-NEE structure
-		// (runs before setupMaterial so the kernels compile against the final buffer)
-		this._refreshEmissiveForVisibility();
-
-		timer.end( 'GPU data transfer' );
-
-		// Compile shaders
-		updateLoading( { status: "Compiling shaders...", progress: 90 } );
-		await new Promise( r => setTimeout( r, 0 ) );
-		timer.start( 'Material setup (TSL compile)' );
-		this.stages.pathTracer.setupMaterial();
-		timer.end( 'Material setup (TSL compile)' );
-
-		this._rasterPrecompile = null;
-
-		if ( ! this._pathTracerEnabled ) {
-
-			timer.start( 'Pipeline precompile' );
-			await this.precompileRaster();
-			timer.end( 'Pipeline precompile' );
-
-		}
-
-		// Wait for CDF
-		if ( cdfPromise ) {
-
-			updateLoading( { status: "Finalizing environment map...", progress: 95 } );
-			await cdfPromise;
-			this.stages.pathTracer.environment.applyCDFResults();
-
-		}
-
-		// Seed the ground-projection plane AND the shadow-catcher plane to the scene floor so models
-		// that aren't authored at y=0 sit on the ground (not sunk) — auto-updates on every model change.
-		const sceneMinY = this.getSceneMinY();
-		this.settings.set( 'groundProjectionLevel', sceneMinY, { reset: false } );
-		this.settings.set( 'groundCatcherHeight', sceneMinY, { reset: false } );
-
-		// Auto-follow the scene: enable emissive-triangle NEE when the scene has emissive
-		// geometry, disable it when it doesn't — unless the user set the toggle explicitly.
-		// Runs before applyAll()/SceneRebuild so the uniform and UI both pick up the new value.
-		if ( ! this._emissiveSamplingUserSet ) {
-
-			// Keyed on the canonical (unfiltered) emissive set — emissiveTriangleCount
-			// reflects only the visible subset, and hidden emitters can be shown later.
-			const hasEmissive = ( this._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.length
-				?? this._sdf?.emissiveTriangleCount ?? 0 ) > 0;
-			this.settings.set( 'enableEmissiveTriangleSampling', hasEmissive, { reset: false } );
-
-		}
-
-		// Apply all settings to stages in one shot
-		timer.start( 'Apply settings' );
-		this.settings.applyAll();
-		this.stages.compositor.setTransparentBackground( this.settings.get( 'transparentBackground' ) );
-		timer.end( 'Apply settings' );
-
-		timer.print( this._sceneSummaryParts() );
-		resetLoading();
-
-		this._initAnimationAndTransforms();
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_REBUILD } );
-		return true;
-
-	}
-
-	/** Counts for the single `[scene]` summary line emitted after a scene build. */
-	_sceneSummaryParts() {
-
-		const pt = this.stages.pathTracer;
-		const meshes = this._sdf?.instanceTable?.setCount ?? 0;
-		const maps = this._sdf?.geometryExtractor?.maps?.length ?? 0;
-
-		return [
-			fmt.count( pt.triangleCount, 'tri' ),
-			meshes ? fmt.count( meshes, 'mesh', 'meshes' ) : null,
-			fmt.count( pt.materialData.materialCount, 'material' ),
-			maps ? fmt.count( maps, 'map' ) : null,
-			fmt.count( pt.bvhNodeCount, 'BVH node' ),
-		];
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Dynamic scene objects (add / remove / list / visibility)
-	//
-	// Top-level objects are the auto-created "Ground" plane plus each loaded
-	// model root parented into meshScene. The scene graph + per-root userData
-	// tags are the single source of truth (no separate registry): ids are
-	// Object3D uuids (stable across rebuilds, since the same root persists).
-	// ═══════════════════════════════════════════════════════════════
-
-	/** Tag the primary (replace-loaded) model as a removable scene object (read by the Outliner + removeSceneObject). Idempotent. */
-	_tagPrimarySceneObject() {
-
-		const m = this.sceneModel;
-		if ( ! m ) return;
-		m.userData.__rayzeeSceneObject = true;
-
-	}
-
-	/** Remove + dispose all dynamically-appended models (keeps Ground and the primary). */
-	_clearAppendedModels() {
-
-		const scene = this.meshScene;
-		if ( ! scene ) return;
-		const floor = this.assetLoader?.floorPlane;
-		const primary = this.sceneModel;
-		for ( const child of [ ...scene.children ] ) {
-
-			if ( child === floor || child === primary ) continue;
-			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			this.assetLoader.removeModelRoot( child );
-
-		}
-
-	}
-
-	/** Reframe-free rebuild sequence. Assumes the _loadingInProgress guard is already held. */
-	async _finishRebuildNoReframe( eventPayload ) {
-
-		await this.loadSceneData( { keepUserLights: true } ); // emits 'SceneRebuild'
-		this._maybeSpill();
-		this._recalibrateControlLimits(); // scene bounds changed — retune zoom limits + near/far (no camera move)
-		this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
-		this.reset();
-		if ( eventPayload ) this.dispatchEvent( eventPayload );
-
-	}
-
-	/**
-	 * Append a model by URL to the current scene (does NOT replace it), then rebuild
-	 * without reframing the camera.
-	 * @param {string} url
-	 * @param {Object} [opts]
-	 * @param {string} [opts.name] - Display name for the scene-object list.
-	 * @returns {Promise<string>} the new object's id (Object3D uuid).
-	 */
-	async addModel( url, { name, cacheKey } = {} ) {
-
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.addModel: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		this._preserveSelectionOnRebuild = true;
-		try {
-
-			const { root } = await this.assetLoader.appendModel( url, { cacheKey } );
-			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeSourceUrl = url;
-			if ( cacheKey ) root.userData.__rayzeeCacheKey = cacheKey;
-			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, url, id: root.uuid } );
-			return root.uuid;
-
-		} finally {
-
-			this._preserveSelectionOnRebuild = false;
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Append a caller-owned Object3D to the current scene, then rebuild (no reframe).
-	 * Appends a copy; the object passed in is never mutated. Same rules as {@link loadObject3D}.
-	 * @param {import('three').Object3D} object3d
-	 * @param {Object} [opts]
-	 * @param {string} [opts.name]
-	 * @returns {Promise<string>} the new object's id (Object3D uuid).
-	 */
-	async addModelFromObject3D( object3d, { name } = {} ) {
-
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.addModelFromObject3D: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		this._preserveSelectionOnRebuild = true;
-		try {
-
-			const { root } = this.assetLoader.appendObject3D( object3d, name || 'object3d' );
-			root.userData.__rayzeeSceneObject = true;
-			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, id: root.uuid } );
-			return root.uuid;
-
-		} finally {
-
-			this._preserveSelectionOnRebuild = false;
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Remove a scene object by id (Object3D uuid). The Ground plane is permanent.
-	 * @param {string} id
-	 * @returns {Promise<boolean>} true if removed.
-	 */
-	async removeSceneObject( id ) {
-
-		const scene = this.meshScene;
-		if ( ! scene ) return false;
-
-		const floor = this.assetLoader?.floorPlane;
-		if ( floor && floor.uuid === id ) return false; // Ground is not deletable
-
-		const root = this.getSceneObject( id );
-		if ( ! root ) return false;
-
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.removeSceneObject: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		try {
-
-			this.interactionManager?.deselect();
-			this.transformManager?.detach?.();
-
-			if ( root === this.sceneModel ) {
-
-				this.assetLoader.releaseTargetModel();
-
-			} else {
-
-				this.assetLoader.removeModelRoot( root );
-
-			}
-
-			// Ground is permanent (removal refused above), so the scene always keeps
-			// renderable geometry — a full rebuild is always valid here.
-			await this._finishRebuildNoReframe( { type: EngineEvents.SCENE_OBJECT_REMOVED, id } );
-
-			return true;
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
-
-	}
-
-	/**
-	 * Toggle a scene object's visibility without rebuilding (O(1) TLAS-leaf patch).
-	 * @param {string} id - Object3D uuid.
-	 * @param {boolean | ((prev:boolean)=>boolean)} visible
-	 * @returns {boolean|null} new visibility, or null if not found.
-	 */
-	setSceneObjectVisibility( id, visible ) {
-
-		return this.setMeshVisibilityByUuid( id, visible );
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Dynamic cameras (add / remove)
+	// Cameras, scene state, animation, presets and post-processing
 	// ═══════════════════════════════════════════════════════════════
 
 	/** The index of the currently active camera (0 = built-in default). */
@@ -1848,46 +618,6 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	/** Triangle and placement budgets for a scene archive: raised when the build can spill. @private */
-	_sceneBudgets( options ) {
-
-		if ( ! this._memorySpill || ! this.storage ) return options;
-		return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
-
-	}
-
-	/**
-	 * Experimental memory spill, during the build: static scenes only, since a deforming clip
-	 * refits every frame. @private
-	 */
-	_progressiveSpill() {
-
-		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return null;
-		const stage = this.stages.pathTracer;
-		return { storage: this.storage, uploader: ( records, kind ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records ) : stage.createChunkUploader( records ) };
-
-	}
-
-	/** Experimental memory spill for a static scene, in the background. @private */
-	_maybeSpill() {
-
-		if ( ! this._memorySpill || ! this.storage || this.animationManager?.hasAnimations ) return;
-		this._sdf?.spillToDisk( this.storage )
-			.then( result => result && this.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
-			.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-
-	}
-
-	/**
-	 * Reads back what {@link options.memorySpill} moved to disk. The engine does this itself before
-	 * its own readers; a host calling {@link refitBLASes} on a spilled scene awaits it first.
-	 */
-	async ensureSceneResident() {
-
-		if ( this._sdf?.spilled ) await this._sdf.ensureResident();
-
-	}
-
 	/** Notify consumers that the camera list changed (names / count). */
 	_dispatchCamerasUpdated() {
 
@@ -1896,118 +626,6 @@ export class PathTracerApp extends EventDispatcher {
 			cameras: this.cameraManager.cameras,
 			cameraNames: this.cameraManager.getCameraNames(),
 		} );
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// BVH Refit (Animation)
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * The meshes backing the current acceleration structure, in the order their triangles
-	 * occupy the shared buffers — which is what "original mesh order" means in
-	 * {@link refitBVH} and {@link refitBLASes}, and what `meshIndex` indexes.
-	 *
-	 * Walking your own model instead is not equivalent: the list is a depth-first pre-order
-	 * traversal of the whole mesh scene, so it also contains engine-owned meshes (the hidden
-	 * ground-projection disk) and any mesh a multi-material split produced. A positions
-	 * buffer built from a different set is silently misaligned.
-	 *
-	 * @returns {import('three').Mesh[]} Live reference — do not mutate.
-	 */
-	get sceneMeshes() {
-
-		return this._sdf?.meshes ?? [];
-
-	}
-
-	/**
-	 * Root of the model actually being rendered. For {@link loadObject3D} this is the engine's
-	 * copy, not the object you passed — mutate this one, then {@link refitBVH}/{@link refitBLASes}.
-	 *
-	 * @returns {import('three').Object3D|null} Live reference, or null when nothing is loaded.
-	 */
-	get sceneModel() {
-
-		return this.assetLoader?.targetModel ?? null;
-
-	}
-
-	/**
-	 * Resolve an id from {@link addModel}/{@link addModelFromObject3D} to the root being
-	 * rendered for it — for an appended Object3D, the engine's copy.
-	 *
-	 * @param {string} id
-	 * @returns {import('three').Object3D|null} Live reference, or null if no such object.
-	 */
-	getSceneObject( id ) {
-
-		const root = this.meshScene?.children.find( c => c.uuid === id );
-		return root?.userData?.__rayzeeSceneObject ? root : null;
-
-	}
-
-	/**
-	 * Update vertex positions for animation without full BVH rebuild.
-	 * O(N) bottom-up AABB refit instead of O(N log N) SAH rebuild.
-	 *
-	 * Topology must stay the same (same triangle count and connectivity).
-	 * Call this per-frame for skeletal/morph-target animation.
-	 *
-	 * Positions come in one of two shapes. A **callback** `(meshIndex, triCount) => Float32Array`
-	 * is asked for one mesh at a time and may return the same scratch buffer each call — prefer it,
-	 * since it never holds more than one mesh. A **scene-wide Float32Array** of 9 floats per
-	 * triangle for every triangle (meshes in {@link sceneMeshes} order, triangles in index order)
-	 * still works, but is 1,030 MB at 30M triangles and will not allocate at that size.
-	 *
-	 * @param {Float32Array|function(number, number): Float32Array} newPositions - (ax,ay,az, bx,by,bz, cx,cy,cz) per triangle, world space
-	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals, same two shapes. If omitted, face normals are computed from positions.
-	 * @returns {Promise<{ refitTimeMs: number }>}
-	 */
-	async refitBVH( newPositions, newNormals ) {
-
-		await this.ensureSceneResident();
-		const { triRanges, bvhRanges, ...result } = await this._sdf.refitBVH( newPositions, newNormals );
-
-		this.stages.pathTracer.updateTriangleData( this._sdf.triangles, triRanges );
-		this.stages.pathTracer.updateBVHData( this._sdf.bvh, bvhRanges );
-		this.reset( false, { motion: true } );
-
-		return result;
-
-	}
-
-	/**
-	 * Refit specific mesh BLASes and rebuild TLAS after object transform.
-	 * Faster than refitBVH for single-object transforms in multi-mesh scenes.
-	 *
-	 * @param {number[]} affectedMeshIndices - Mesh indices to refit
-	 * @param {Float32Array|function(number, number): Float32Array} newPositions - the same two shapes
-	 *   {@link refitBVH} takes; only the affected meshes are asked for
-	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals
-	 * @returns {{ refitTimeMs: number }}
-	 */
-	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
-
-		if ( this._sdf?.spilled ) throw new Error( 'refitBLASes: the scene is spilled to disk — await app.ensureSceneResident() first' );
-		const result = this._sdf.refitBLASes( affectedMeshIndices, newPositions, newNormals );
-
-		const { triRanges, bvhRanges } = this._sdf.computeBLASDirtyRanges( affectedMeshIndices );
-		this.stages.pathTracer.updateBufferRanges( triRanges, bvhRanges );
-		this.reset( false, { motion: true } );
-
-		// Kick off background rebuild for optimal SAH quality
-		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, ( meshIndex ) => {
-
-			// Swap complete — upload just that mesh's triangles and nodes, plus the TLAS. A whole
-			// re-upload here is gigabytes on a large scene, for one mesh's worth of change.
-			const dirty = this._sdf.computeBLASDirtyRanges( [ meshIndex ] );
-			this.stages.pathTracer.updateBufferRanges( dirty.triRanges, dirty.bvhRanges );
-			this.reset( false, { motion: true } );
-
-		} );
-
-		return result;
 
 	}
 
@@ -2125,262 +743,6 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	/**
-	 * Apply new transforms for objects that moved, without touching their geometry.
-	 *
-	 * This is the right call for a gizmo drag or any other rigid move: triangles are stored in
-	 * each object's own space, so only the placement matrix changes. {@link refitBLASes} is for
-	 * geometry that actually deformed — on a rigid move it rewrites vertices needlessly, and
-	 * drags along any other object sharing the same geometry.
-	 *
-	 * @param {number[]} meshIndices - indices into {@link sceneMeshes}
-	 * @returns {{ refitTimeMs: number, placements: number }}
-	 */
-	updateMeshTransforms( meshIndices ) {
-
-		this._notePlacementsMoving( meshIndices );
-		const result = this._sdf.updateMeshTransforms( meshIndices );
-
-		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
-		this.reset( false, { motion: true } );
-
-		return result;
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Resize
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * Raise (or lower) the reserved render size — the square dimension every compute StorageTexture + aux
-	 * buffer is pre-allocated at. Needed to enable resolutions above the 2048 default (e.g. 4K). The request
-	 * is device-capped: 4K reservation (~1.5 GB of MRT textures) is only granted on GPUs with ample VRAM +
-	 * a large storage-buffer binding limit; weaker devices clamp to 2048.
-	 *
-	 * Callable at any point in the lifecycle:
-	 *  - before init(): recorded, then applied during init() before the stages are constructed, so they
-	 *    pre-allocate at the raised size directly. The device gate cannot run until the device exists, so
-	 *    the value returned here is the request, not the verdict — read getReservedRenderResolution() after
-	 *    init(), or listen for `reserved_render_size_changed`.
-	 *  - after init(): applied immediately, re-initialising the reserved GPU storage in place.
-	 * @param {number}  requestedPx desired reserved size (longest edge)
-	 * @param {Object}  [opts]
-	 * @param {boolean} [opts.allowLower=false] permit lowering, paying a rebuild, to reclaim VRAM
-	 * @returns {number} the applied reserved size (the pending request when called before init)
-	 */
-	setReservedRenderResolution( requestedPx, { allowLower = false } = {} ) {
-
-		const prev = MAX_STORAGE_TEXTURE_SIZE;
-
-		// Monotonic up: UI-driven callers request whatever the current view needs, so honouring decreases made
-		// the reserve oscillate on every preview↔render switch and paid a full kernel rebuild each time.
-		const target = allowLower ? requestedPx : Math.max( requestedPx, prev );
-
-		// No device yet: the gate below has nothing to interrogate and would clamp a 4K-capable GPU to 2048.
-		// init() replays the request once the device exists, still before the stages allocate.
-		if ( ! this.renderer ) {
-
-			this._pendingReservedRenderSize = { requestedPx, allowLower };
-			return Math.max( 256, Math.min( MAX_RESERVABLE_RENDER_SIZE, Math.floor( target ) || 256 ) );
-
-		}
-
-		const limits = this.renderer.backend?.device?.limits;
-		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
-		const memory = deviceMemoryGB( this._hostMemoryGB );
-		// 4K reserve pins the accum MRT (~1.5 GB) + aux; only grant it on clearly-capable GPUs.
-		const deviceSafeMax = ( memory.gb >= 8 && maxBinding >= 1024 * 1024 * 1024 )
-			? MAX_RESERVABLE_RENDER_SIZE : 2048;
-		const applied = setReservedRenderSize( Math.min( target, deviceSafeMax ) );
-
-		if ( applied < Math.floor( requestedPx ) ) {
-
-			this._issues.warn(
-				ISSUE_CODES.RENDER_RESERVE_CAPPED,
-				`reserved render size ${fmt.n( requestedPx )}px was capped to ${fmt.n( applied )}px by this device's limits — ` +
-				`renders above ${fmt.n( applied )}px will be declined` +
-				( memory.assumed && memory.gb < 8 ? ' (host memory unknown, 4 GB assumed: pass hostMemoryGB)' : '' ),
-				{ requested: requestedPx, applied, deviceMemoryGB: memory.gb, assumed: memory.assumed, maxStorageBufferBindingSize: maxBinding }
-			);
-
-		}
-
-		// Gate the realloc on the textures that EXIST, not on how the binding moved: a raise applied while
-		// nothing was allocated leaves `applied === prev` for every later call, so keying off that let the
-		// first ineffective call poison every effective one after it (issue #9). The path tracer's write MRT
-		// witnesses the reserve the stages were last built at.
-		const allocated = this.stages?.pathTracer?.storageTextures?.writeColor?.image?.width ?? applied;
-
-		// Re-init the reserved GPU storage in place: each stage recreates its pre-allocated StorageTextures at
-		// the new size + rebuilds its compute pipelines. Stage OBJECTS, manager refs and event wiring are
-		// preserved (so no re-subscription needed); scene geometry buffers are resolution-independent and
-		// reused. Rendering is paused across the swap so no in-flight dispatch references a disposed texture.
-		if ( allocated !== applied ) {
-
-			const wasPaused = this.pauseRendering;
-			this.pauseRendering = true;
-			try {
-
-				// Lowering below the live backing store makes copyToReadTargets read past the end of the
-				// (now smaller) write textures — a GPUValidationError. Shrink the backing store first.
-				// renderer.setSize, not setCanvasSize/onResize: those also rewrite camera.aspect.
-				const backing = this.renderer.domElement;
-				if ( backing.width > applied || backing.height > applied ) {
-
-					this.renderer.setSize(
-						Math.min( backing.width, applied ), Math.min( backing.height, applied ), false );
-
-				}
-
-				for ( const stage of Object.values( this.stages ) ) stage?.reallocateReservedStorage?.();
-
-			} finally {
-
-				this.pauseRendering = wasPaused;
-
-			}
-
-			this.reset();
-			this.dispatchEvent( { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: applied } );
-
-		}
-
-		return applied;
-
-	}
-
-	/**
-	 * Replay a setReservedRenderResolution() call made before init(): after the device exists, so the gate is
-	 * evaluated against the real GPU, and before _initPipeline() constructs the stages, which read the reserve
-	 * in their constructors. The event carries the device's verdict — the only authoritative answer a pre-init
-	 * caller can get.
-	 */
-	_applyPendingReservedRenderSize() {
-
-		const pending = this._pendingReservedRenderSize;
-		if ( ! pending ) return;
-
-		this._pendingReservedRenderSize = null;
-
-		const applied = this.setReservedRenderResolution( pending.requestedPx, { allowLower: pending.allowLower } );
-		this.dispatchEvent( { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: applied } );
-
-	}
-
-	/**
-	 * The current reserved (pre-allocated) square render size in px.
-	 * @returns {number}
-	 */
-	getReservedRenderResolution() {
-
-		return MAX_STORAGE_TEXTURE_SIZE;
-
-	}
-
-	/**
-	 * Guard against render resolutions the compute pipeline can't support.
-	 * Per-resolution StorageTextures are pre-allocated at MAX_STORAGE_TEXTURE_SIZE
-	 * and never resized, so a larger request would overflow them. Warn and skip.
-	 * @returns {boolean} true if the size is renderable
-	 */
-	_isRenderSizeSupported( width, height ) {
-
-		if ( width > MAX_STORAGE_TEXTURE_SIZE || height > MAX_STORAGE_TEXTURE_SIZE ) {
-
-			this._issues.record(
-				ISSUE_CODES.RENDER_SIZE_DECLINED,
-				`render resolution ${width}×${height} exceeds the ${MAX_STORAGE_TEXTURE_SIZE}px storage reserve — resize ignored, ` +
-				`so output stays at the previous size. Raise it with setReservedRenderResolution( ${Math.max( width, height )} ) before init().`,
-				{ width, height, reserve: MAX_STORAGE_TEXTURE_SIZE }
-			);
-			return false;
-
-		}
-
-		return true;
-
-	}
-
-	onResize() {
-
-		const width = this.canvas.clientWidth;
-		const height = this.canvas.clientHeight;
-		if ( width === 0 || height === 0 ) return;
-		if ( ! this._isRenderSizeSupported( width, height ) ) return;
-
-		this.renderer.setPixelRatio( 1.0 );
-		this._setDisplaySize( width, height );
-
-		const lastW = this.denoisingManager?._lastRenderWidth ?? 0;
-		const lastH = this.denoisingManager?._lastRenderHeight ?? 0;
-		if ( width === lastW && height === lastH ) return;
-
-		clearTimeout( this._resizeDebounceTimer );
-		this._resizeDebounceTimer = setTimeout( () => {
-
-			this._applyRenderResize( width, height );
-
-		}, 300 );
-
-	}
-
-	_applyRenderResize( renderWidth, renderHeight ) {
-
-		if ( ! this._isRenderSizeSupported( renderWidth, renderHeight ) ) return;
-
-		this.pipeline?.setSize( this._scaled( renderWidth ), this._scaled( renderHeight ) );
-		// Full size: the denoiser only runs once the camera has stopped.
-		this.denoisingManager?.setRenderSize( renderWidth, renderHeight );
-		this.needsReset = true;
-
-		this.dispatchEvent( { type: EngineEvents.RESOLUTION_CHANGED, width: renderWidth, height: renderHeight } );
-
-	}
-
-	/**
-	 * Set the render resolution in pixels, applied immediately (unlike the debounced onResize()).
-	 * @param {number} width
-	 * @param {number} height
-	 * @returns {{width: number, height: number}|null} the size now in effect, or null if the request was
-	 *   declined — zero, or above the reserved render size (raise it with setReservedRenderResolution).
-	 *   A declined request leaves the previous size in place, so ignoring this return renders at the
-	 *   wrong resolution with nothing but a warning to show for it.
-	 */
-	setCanvasSize( width, height ) {
-
-		if ( width === 0 || height === 0 ) return null;
-		if ( ! this._isRenderSizeSupported( width, height ) ) return null;
-
-		this.renderer.setPixelRatio( 1.0 );
-		this._setDisplaySize( width, height );
-
-		clearTimeout( this._resizeDebounceTimer );
-		this._applyRenderResize( width, height );
-
-		return { width, height };
-
-	}
-
-	_scaled( size ) {
-
-		return Math.max( 1, Math.round( size * this._renderScale ) );
-
-	}
-
-	// The wavefront takes its resolution from the canvas backing store, so that is what has to shrink.
-	// updateStyle=false keeps the CSS size, and the browser stretches the smaller frame over it.
-	_setDisplaySize( width, height ) {
-
-		this._displayWidth = width;
-		this._displayHeight = height;
-
-		this.renderer.setSize( this._scaled( width ), this._scaled( height ), false );
-		this.cameraManager.camera.aspect = width / height;
-		this.cameraManager.camera.updateProjectionMatrix();
-
-	}
-
 	// OIDN as the live denoiser rebuilds its network on every size change, so it keeps full size.
 	_interactionRenderScale() {
 
@@ -2421,10 +783,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.needsReset = true;
 
 	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Mode Configuration
-	// ═══════════════════════════════════════════════════════════════
 
 	/**
 	 * Configures the engine for a specific rendering quality tier.
@@ -2503,13 +861,6 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	refreshFrame() {
-
-		this._needsDisplayRefresh = true;
-		this.wake();
-
-	}
-
 	// Draws once without waking the loop: a woken loop takes a finished render nothing marked
 	// complete (renderFrames, a video export) as newly finished, and denoises it again.
 	_presentDisplay() {
@@ -2578,592 +929,6 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	// ═══════════════════════════════════════════════════════════════
-	// Deterministic / headless control
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * Pins every wall-clock- and readback-dependent input so that N samples from a
-	 * fresh `reset()` reproduce bit-for-bit.
-	 *
-	 * The image is always a pure function of (pixel, frame, uniforms) — no shader reads
-	 * a clock and there is no `Math.random()` in the render path. What varies run to run
-	 * is *which* uniforms and dispatch grids are live on frame k:
-	 *
-	 * - `useAdaptiveSampling` retires the whole frame off an async CONVERGED_COUNT
-	 *   readback, so two runs accumulate different sample totals for one `maxSamples`.
-	 * - `usePixelFreeze` sizes the bounce-0 grid from a stale active-pixel readback.
-	 * - `_bounceEarlyExitThreshold` / `_useDynamicDispatch` both consume the async
-	 *   survivor curve. Kernels bind on ENTERING_COUNT, so an under-sized grid silently
-	 *   drops rays, and the frame a readback lands on is GPU-scheduled.
-	 * - `interactionModeEnabled` is a 100 ms timer that lowers the render resolution, disables
-	 *   accumulation and freezes frameCount; it engages on the very first frame.
-	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
-	 *
-	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
-	 * Idempotent; pass `false` to restore the previous configuration.
-	 *
-	 * `pinDispatch: false` keeps the two readback-driven dispatch heuristics
-	 * (`_useDynamicDispatch` and the per-bounce early exit) ACTIVE while still pinning the
-	 * render loop, sample count and timers. Output is then no longer bit-reproducible, so
-	 * this is only for performance measurement — it exists because those heuristics are
-	 * real shipping behaviour, and benchmarking with them disabled measures a configuration
-	 * production never runs.
-	 *
-	 * @param {boolean} [enabled=true]
-	 * @param {Object} [options]
-	 * @param {boolean} [options.pinDispatch=true] - false to keep production dispatch heuristics
-	 * @returns {boolean} whether deterministic mode is now active
-	 */
-	setDeterministicMode( enabled = true, { pinDispatch = true } = {} ) {
-
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) return false;
-
-		if ( enabled ) {
-
-			if ( ! this._deterministicRestore ) {
-
-				this._deterministicRestore = {
-					settings: {
-						useAdaptiveSampling: this.settings.get( 'useAdaptiveSampling' ),
-						usePixelFreeze: this.settings.get( 'usePixelFreeze' ),
-						interactionModeEnabled: this.settings.get( 'interactionModeEnabled' ),
-						renderLimitMode: this.settings.get( 'renderLimitMode' ),
-						renderTimeLimit: this.settings.get( 'renderTimeLimit' ),
-					},
-					bounceEarlyExit: stage._bounceEarlyExitThreshold,
-					dynamicDispatch: stage._useDynamicDispatch,
-					autoFocusMode: this.cameraManager?.autoFocusMode,
-					autoExposure: this.stages.autoExposure?.enabled,
-					continuousDenoise: this.denoisingManager?.continuousDenoise,
-				};
-
-			}
-
-			// Cleared together on purpose: the freeze streak is stamped inside the
-			// convergence block, so freeze-on/adaptive-off would run the freeze path
-			// against a streak buffer nothing writes or clears.
-			this.settings.setMany( {
-				useAdaptiveSampling: false,
-				usePixelFreeze: false,
-				interactionModeEnabled: false,
-				renderLimitMode: 'frames',
-				renderTimeLimit: 0,
-			}, { silent: true } );
-
-			if ( pinDispatch ) {
-
-				// -1 is unreachable by a uint survivor count, and both _buildWavefrontKernels()
-				// and _resizeWavefrontInPlace() preserve the sentinel across rebuilds.
-				stage._bounceEarlyExitThreshold = - 1;
-				stage._useDynamicDispatch = false;
-
-			} else {
-
-				// Restore the values captured on first enable, so a perf pass measures the
-				// same dispatch behaviour a real render uses.
-				stage._bounceEarlyExitThreshold = this._deterministicRestore.bounceEarlyExit;
-				stage._useDynamicDispatch = this._deterministicRestore.dynamicDispatch;
-
-			}
-
-			this.cameraManager?.setAutoFocusMode( 'manual' );
-			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
-			// Cadence denoising is wall-clock driven, so which frame it lands on is not reproducible.
-			this.denoisingManager?.setContinuousDenoise( false );
-
-			// The seed axis free-runs across accumulation resets so a camera drag gets fresh
-			// sequences; offline rendering needs the opposite. Pinning it makes seedFrame track
-			// frameCount, so N samples reproduce bit-for-bit. reset() below zeroes the tick.
-			stage._pinSeedToFrame = true;
-
-			this._deterministic = true;
-			this._dispatchPinned = pinDispatch;
-
-		} else if ( this._deterministicRestore ) {
-
-			const prev = this._deterministicRestore;
-
-			this.settings.setMany( prev.settings, { silent: true } );
-			stage._bounceEarlyExitThreshold = prev.bounceEarlyExit;
-			stage._useDynamicDispatch = prev.dynamicDispatch;
-
-			if ( prev.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( prev.autoFocusMode );
-			if ( this.stages.autoExposure && prev.autoExposure !== undefined ) {
-
-				this.stages.autoExposure.enabled = prev.autoExposure;
-
-			}
-
-			if ( prev.continuousDenoise !== undefined ) {
-
-				this.denoisingManager?.setContinuousDenoise( prev.continuousDenoise );
-
-			}
-
-			stage._pinSeedToFrame = false;
-
-			this._deterministicRestore = null;
-			this._deterministic = false;
-			this._dispatchPinned = false;
-
-		}
-
-		this.reset();
-		this.stopAnimation(); // reset() calls wake(); a manual render loop must not race rAF
-
-		return this._deterministic;
-
-	}
-
-	/** What the engine survived rather than failed on, oldest first. @returns {Object[]} copies */
-	get issues() {
-
-		return this._issues.list;
-
-	}
-
-	/** Non-empty means: do not publish this frame. */
-	get issueErrors() {
-
-		return this._issues.errors;
-
-	}
-
-	/** Scopes the log to one render on a reused app. */
-	clearIssues() {
-
-		this._issues.clear();
-
-	}
-
-	/**
-	 * Whether output is currently bit-reproducible. False when the dispatch heuristics
-	 * were left active via `pinDispatch: false`, since those consume async readbacks.
-	 */
-	get isDeterministic() {
-
-		return this._deterministic && this._dispatchPinned;
-
-	}
-
-	/**
-	 * Accumulates exactly `count` samples synchronously, bypassing the rAF loop.
-	 *
-	 * A frame retired by adaptive sampling stops advancing `frameCount`, so a fixed-count loop
-	 * can never reach `count`. `allowEarlyRetire` makes that an outcome instead of a throw.
-	 *
-	 * @param {number} count - samples to accumulate
-	 * @param {Object} [options]
-	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
-	 * @param {number} [options.yieldEvery=8] - yield to the event loop every N passes (0 disables)
-	 * @param {function(number): void} [options.onProgress] - called with the running sample count
-	 * @param {boolean} [options.allowEarlyRetire=false]
-	 * @returns {Promise<number>} samples accumulated; below `count` only when retired early
-	 */
-	async renderFrames( count, { reset = true, yieldEvery = 8, onProgress, allowEarlyRetire = false } = {} ) {
-
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) throw new Error( 'renderFrames: app is not initialized' );
-		if ( ! ( count > 0 ) ) throw new Error( `renderFrames: count must be positive, got ${count}` );
-
-		const target = ( reset ? 0 : stage.frameCount ) + count;
-
-		// completionThreshold is a cached JS number derived from maxSamples, so this must
-		// go through the settings handler — writing the uniform alone would not move it.
-		if ( this.settings.get( 'maxSamples' ) < target ) {
-
-			this.settings.set( 'maxSamples', target, { silent: true, reset: false } );
-
-		}
-
-		if ( reset ) this.reset();
-		this.stopAnimation();
-
-		const maxPasses = count + 64;
-		let passes = 0;
-
-		let retiredEarly = false;
-
-		while ( stage.frameCount < target && passes < maxPasses ) {
-
-			if ( this._deviceLost ) throw new Error( 'renderFrames: WebGPU device lost' );
-			if ( ! stage.isReady ) throw new Error( 'renderFrames: path tracer stage is not ready' );
-
-			const wait = stage.readbackWait();
-			if ( wait ) {
-
-				await this._awaitReadback( wait );
-				continue;
-
-			}
-
-			this.pipeline.render();
-			passes ++;
-
-			// render() no-ops once complete; spinning would burn the budget for nothing.
-			if ( stage.isComplete && stage.frameCount < target ) {
-
-				retiredEarly = true;
-				break;
-
-			}
-
-			onProgress?.( stage.frameCount );
-
-			if ( yieldEvery > 0 && passes % yieldEvery === 0 ) {
-
-				await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
-
-			}
-
-		}
-
-		if ( stage.frameCount < target && ! ( retiredEarly && allowEarlyRetire ) ) {
-
-			const cause = retiredEarly
-				? 'adaptive sampling retired the frame at the convergence threshold — pass ' +
-					'`allowEarlyRetire: true`, or disable it with setDeterministicMode()'
-				: 'something retired the render (maxSamples, a stray reset, or a canvas resize)';
-
-			throw new Error(
-				`renderFrames: stopped at ${stage.frameCount}/${target} samples after ${passes} passes — ${cause}`
-			);
-
-		}
-
-		return stage.frameCount;
-
-	}
-
-	/**
-	 * Renders until the render's own stop condition — the sample ceiling, adaptive convergence or the
-	 * time limit, whichever comes first — without requestAnimationFrame, then runs the closing denoise
-	 * once. The production counterpart of {@link renderFrames}: adaptive sampling stays on, and its
-	 * readbacks run in lockstep (see PathTracer.setLockstepReadbacks), so the same input renders the same
-	 * image however fast frames are submitted — except under a time limit, which is wall-clock by nature.
-	 * The upscaler does not run. `EngineEvents.RENDER_COMPLETE` fires as it does from the loop.
-	 *
-	 * @param {Object} [options]
-	 * @param {boolean} [options.reset=true] - restart accumulation from sample 0 first
-	 * @param {boolean} [options.denoise=true] - run the final OIDN pass when `finalDenoise` is on
-	 * @param {AbortSignal} [options.signal] - rejects with its reason once aborted
-	 * @param {number} [options.drainEvery=4] - every N frames, wait for the GPU to finish the frames
-	 *   before the last N, so submissions stay at most 2N frames ahead without the GPU idling
-	 * @param {function(number): void} [options.onProgress] - called with the running sample count
-	 * @returns {Promise<{samples: number, retiredBy: 'samples'|'converged'|'timeLimit', timeElapsed: number,
-	 *   budgetOverrun: boolean, denoised: boolean}>}
-	 */
-	async renderUntilComplete( { reset = true, denoise = true, signal, drainEvery = 4, onProgress } = {} ) {
-
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) throw new Error( 'renderUntilComplete: app is not initialized' );
-		if ( this._loadingInProgress || this._sdf?.isProcessing ) throw new Error( 'renderUntilComplete: a scene is still loading' );
-
-		const lockstepWas = stage.lockstepReadbacks;
-		stage.setLockstepReadbacks( true );
-		// A 100 ms wall-clock mode for camera drags; frames in it do not count, so a batch render has no use for it.
-		const interaction = this.settings.getEffective().interactionModeEnabled;
-		this.settings.set( 'interactionModeEnabled', false, { silent: true, reset: false } );
-
-		try {
-
-			if ( reset ) this.reset();
-			this.stopAnimation();
-
-			const queue = this.renderer.backend.device?.queue;
-			let passes = 0;
-			let previousBatch = null;
-
-			while ( ! stage.isComplete ) {
-
-				signal?.throwIfAborted();
-				if ( this._deviceLost ) throw new Error( 'renderUntilComplete: WebGPU device lost' );
-				if ( ! stage.isReady ) throw new Error( 'renderUntilComplete: path tracer stage is not ready' );
-
-				const wait = stage.readbackWait();
-				if ( wait ) {
-
-					await this._awaitReadback( wait );
-					continue;
-
-				}
-
-				this.cameraManager.camera.updateMatrixWorld();
-				const counted = stage.frameCount;
-				this._traceFrame();
-				onProgress?.( stage.frameCount );
-
-				// A frame that did not count, with no readback to wait on, must still give timers a turn.
-				if ( stage.frameCount === counted && ! stage.isComplete ) await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
-
-				if ( queue && drainEvery > 0 && ++ passes % drainEvery === 0 ) {
-
-					const batch = queue.onSubmittedWorkDone();
-					if ( previousBatch ) await previousBatch;
-					previousBatch = batch;
-
-				}
-
-			}
-
-			const info = this._completionInfo();
-			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
-
-			const denoised = denoise && this.denoisingManager?.finalDenoise ? await this.runFinalDenoise() : false;
-			const { reason, ...rest } = info;
-			return { ...rest, retiredBy: reason, denoised };
-
-		} finally {
-
-			stage.setLockstepReadbacks( lockstepWas );
-			if ( interaction ) this.settings.set( 'interactionModeEnabled', interaction.value, { silent: true, reset: false, source: interaction.source } );
-
-		}
-
-	}
-
-	/**
-	 * What produced the current image, as plain JSON, to keep beside a render: engine and three.js
-	 * versions, the profile by name and by value (a name's values can change between releases), the
-	 * adapter, every live setting with its source, the colour pipeline, and the modes that decide
-	 * whether the render reproduces.
-	 * @returns {Object}
-	 */
-	getProvenance() {
-
-		const stage = this.stages.pathTracer;
-		const color = this.color?.status();
-
-		return toPortable( {
-			engine: VERSION,
-			three: REVISION,
-			profile: { name: this._profileName, values: { ...this._profile } },
-			adapter: this.adapterInfo ?? null,
-			mode: {
-				headless: this._headless,
-				strict: this._issues.strict,
-				deterministic: this.isDeterministic,
-				lockstep: !! stage?.accumulationLockstep,
-			},
-			render: stage ? {
-				width: stage.width,
-				height: stage.height,
-				samples: stage.frameCount,
-				complete: stage.isComplete,
-				retiredBy: stage.isComplete ? this.completion.stopCondition( stage ) ?? 'samples' : null,
-			} : null,
-			color: color ? {
-				config: color.config?.id ?? null,
-				workingSpace: color.workingSpace,
-				view: color.activeView ?? color.activeTransform?.id ?? null,
-				context: color.context,
-			} : null,
-			scene: this.sceneSource,
-			settings: this.settings.getEffective(),
-			issues: this.issues.map( ( { code, severity } ) => ( { code, severity } ) ),
-		} );
-
-	}
-
-	/**
-	 * Lockstep readbacks for renders driven by the loop or by {@link renderFrames}:
-	 * {@link renderUntilComplete} turns them on for its own duration. See PathTracer.setLockstepReadbacks.
-	 * @param {boolean} [enabled=true]
-	 */
-	setLockstepReadbacks( enabled = true ) {
-
-		this.stages.pathTracer?.setLockstepReadbacks( enabled );
-
-	}
-
-	// A readback that never lands would hold the render forever; a lost device is the one way it can't.
-	async _awaitReadback( wait ) {
-
-		const lost = this.renderer.backend.device?.lost;
-		const outcome = await ( lost ? Promise.race( [ wait.then( () => null ), lost ] ) : wait );
-		if ( outcome ) throw new Error( `WebGPU device lost while awaiting a readback: ${outcome.message ?? outcome.reason}` );
-
-	}
-
-	/**
-	 * A render in progress as data: the accumulated colour (and the aux buffers while they hold
-	 * samples), the per-pixel convergence buffers, and the counters that choose the next sample.
-	 * {@link restoreRenderCheckpoint} continues it — bit-for-bit in deterministic mode, since the
-	 * random sequence is a pure function of pixel, frame and seed tick. At 4K it is ~500 MB.
-	 * @returns {Promise<?Object>} null before the path tracer exists
-	 */
-	async captureRenderCheckpoint() {
-
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) return null;
-		const accumulation = await stage.captureAccumulation();
-		return { v: RENDER_CHECKPOINT_VERSION, engine: VERSION, savedAt: Date.now(), samples: accumulation.state.frameCount, ...accumulation };
-
-	}
-
-	/**
-	 * Continues a {@link captureRenderCheckpoint}. The scene, settings and render size must be the
-	 * ones it was taken with (restore the scene state first), and the scene must have rendered a
-	 * frame at that size since it last changed. Anything that resets accumulation afterwards
-	 * discards it. Rendering is not restarted: call {@link wake} or {@link renderFrames}.
-	 * @param {Object} checkpoint
-	 */
-	restoreRenderCheckpoint( checkpoint ) {
-
-		if ( checkpoint?.v !== RENDER_CHECKPOINT_VERSION ) throw new Error( `render checkpoint version ${checkpoint?.v} is not ${RENDER_CHECKPOINT_VERSION}` );
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) throw new Error( 'restoreRenderCheckpoint: app is not initialized' );
-
-		stage.restoreAccumulation( checkpoint );
-		this.needsReset = false;
-		this.dispatchEvent( { type: EngineEvents.RENDER_RESET, restored: checkpoint.samples } );
-
-	}
-
-	/**
-	 * The path tracer's accumulation as pixels, read from its storage target rather than the
-	 * canvas — so it works headless, works while the page is hidden, and cannot pick up a
-	 * helper overlay.
-	 *
-	 * This is `pathtracer:color`, NOT the Compositor's resolved output: denoising, bloom and
-	 * edge filtering are downstream and are absent here. Use getCanvas() when you want what
-	 * the viewport shows.
-	 *
-	 * @param {Object} [options]
-	 * @param {string} [options.colorSpace='srgb'] - `'srgb'` for display bytes through the active
-	 *   view transform, `'linear'` for the raw working-space accumulation, or the name of a colour
-	 *   space in the loaded OCIO config for a delivery buffer (float, e.g. `'ACES2065-1'`)
-	 * @param {boolean} [options.preserveAlpha=false] - srgb only
-	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
-	 *   viewport is showing — denoised when a denoiser has run, without bloom — instead of the raw
-	 *   accumulation
-	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
-	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the
-	 *   denoiser that published it (`'oidn'`, `'asvgf'`, `'nrd'`, `'edgeFiltering'`, `'bilateralFiltering'`).
-	 *   `toneMappedOn` is set for `'srgb'` only.
-	 */
-	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
-
-		const named = colorSpace !== 'linear' && colorSpace !== 'srgb';
-		if ( named && ! this.color?.hasConfig ) {
-
-			throw new Error(
-				`renderToBuffer: colorSpace must be 'linear' or 'srgb' without a colour config loaded, got "${colorSpace}"`
-			);
-
-		}
-
-		const stage = this.stages?.pathTracer;
-		const target = stage?.storageTextures?.readTarget;
-		if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
-
-		// The pool over-allocates to the reserve, so the texture is larger than the frame.
-		const { width, height } = stage;
-
-		if ( colorSpace === 'srgb' ) {
-
-			const shown = source === 'display' ? this._displaySource( target ) : null;
-			const tone = {
-				exposure: this.renderer.toneMappingExposure,
-				toneMapping: this.renderer.toneMapping,
-				saturation: this.settings.get( 'saturation' ) ?? 1,
-				preserveAlpha,
-			};
-
-			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
-			const data = gpu ?? toneMapToRGBA8( shown
-				? await this._readTexture( shown.texture, width, height )
-				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
-			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
-
-		}
-
-		const { data: linear, source: read } = source === 'display'
-			? await this._readDisplaySource( target, width, height )
-			: { data: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), source: 'accumulation' };
-
-		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
-		// answer to "linear in what primaries", which only means something once a config is loaded.
-		if ( colorSpace === 'linear' ) {
-
-			return { data: linear, width, height, colorSpace, workingSpace: this.color?.workingSpace ?? null, source: read };
-
-		}
-
-		// A named space is a delivery buffer, not a picture: scene-referred float in whatever the
-		// config calls that space. Saving an EXR for a compositor and grading through an sRGB view
-		// on screen are different questions, and this is the one that answers the first.
-		const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
-		return { data: rgba, width, height, colorSpace: got, source: read };
-
-	}
-
-	/**
-	 * Display bytes tone-mapped on the card, or null to do it on the CPU. On the CPU it took 1.4 s at
-	 * 4096×2160 on an M-series Mac and 10 s on a cloud L4's host; the GPU pass matches it within one
-	 * level (`tests/gpu/toneMapParity.test.js`).
-	 */
-	async _toneMapOnGPU( shown, accumulation, width, height, tone ) {
-
-		const backend = this.renderer?.backend;
-		if ( ! backend?.device ) return this._toneMapFallback( 'the renderer has no WebGPU device' );
-
-		try {
-
-			const texture = shown ? this._readbackPass().draw( shown, width, height ).texture : accumulation.textures[ 0 ];
-			const gpuTexture = backend.get( texture ).texture;
-			if ( ! gpuTexture ) return this._toneMapFallback( 'the picture has no GPU texture yet' );
-
-			this._readbackToneMapper ??= new PackedToneMapper( backend.device, 'rayzee:readback-tonemap', { input: 'texture' } );
-			this._readbackToneMapper.ensureSize( width, height );
-			return await this._readbackToneMapper.toRGBA8( gpuTexture, tone );
-
-		} catch ( error ) {
-
-			if ( error instanceof EngineIssueError ) throw error;
-			return this._toneMapFallback( 'the GPU pass threw', error );
-
-		} finally {
-
-			this._readbackToneMapper?.release();
-			if ( shown ) this._textureReadback?.release();
-
-		}
-
-	}
-
-	/** A warning, so strict keeps going: the CPU bytes match within a level, only slower. @private */
-	_toneMapFallback( reason, error = null ) {
-
-		const cause = error ? String( error?.message ?? error ) : null;
-		const message = `renderToBuffer: tone mapped on the CPU — ${reason}${cause ? `: ${cause}` : ''}`;
-		log.warn( message );
-		this._issues.warn( ISSUE_CODES.OUTPUT_TONEMAP_FALLBACK, message, { reason, cause } );
-		return null;
-
-	}
-
-	/**
-	 * Enables WebGPU timestamp queries so {@link PathTracerApp#getGPUTimings} reports real
-	 * GPU time. Off by default because the queries themselves cost time. No-ops when the
-	 * device lacks the `timestamp-query` feature.
-	 *
-	 * @param {boolean} [enabled=true]
-	 * @returns {boolean} whether timestamp tracking is now active
-	 */
-	enableGPUTiming( enabled = true ) {
-
-		const backend = this.renderer?.backend;
-		if ( ! backend ) return false;
-		if ( enabled && backend.hasFeature?.( 'timestamp-query' ) !== true ) return false;
-
-		backend.trackTimestamp = enabled;
-		return backend.trackTimestamp === enabled;
-
-	}
-
 	/**
 	 * Arms per-layer GPU timestamping inside the OIDN denoiser for the next denoise only.
 	 * Read the result with {@link PathTracerApp#getDenoiseProfile}.
@@ -3197,1174 +962,11 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	/**
-	 * Real GPU milliseconds for the last resolved frame, from WebGPU timestamp queries.
-	 * Returns null unless {@link PathTracerApp#enableGPUTiming} was called.
-	 *
-	 * This is the only true GPU metric available: `pipeline.getStats()` times
-	 * `performance.now()` around each stage's render(), which is command *encoding*
-	 * time and stays flat while GPU cost doubles.
-	 *
-	 * @returns {Promise<{ compute: number, render: number, total: number }|null>}
-	 */
-	async getGPUTimings() {
-
-		const renderer = this.renderer;
-		if ( ! renderer?.backend?.trackTimestamp ) return null;
-
-		await renderer.resolveTimestampsAsync( 'compute' );
-		await renderer.resolveTimestampsAsync( 'render' );
-
-		const compute = renderer.info.compute.timestamp || 0;
-		const render = renderer.info.render.timestamp || 0;
-
-		return { compute, render, total: compute + render };
-
-	}
-
-	/**
-	 * Per-kernel GPU milliseconds for the last resolved frame.
-	 *
-	 * {@link PathTracerApp#getGPUTimings} only reports the frame aggregate, which buries a change to
-	 * one kernel under everything else. The backend's timestamp query pool already retains one
-	 * duration per compute pass, keyed `c:<frameCalls>:<nodeId>:f<frame>` (three.js
-	 * `WebGPUTimestampQueryPool.resolveQueriesAsync` → `timestamps`); this attributes those back to
-	 * kernel names through `KernelManager`'s registry.
-	 *
-	 * Durations are SUMMED per kernel across the frame, so `extend` reports its whole per-frame cost
-	 * over every bounce iteration rather than one bounce. `unattributed` collects passes belonging to
-	 * no registered kernel (other stages, denoisers) so `sum(kernels) + unattributed` reconciles with
-	 * `total` — a gap there means a pass was missed, not that a kernel is free.
-	 *
-	 * The pool's map accumulates across frames and is never pruned, hence the newest-frame filter.
-	 *
-	 * Requires {@link PathTracerApp#enableGPUTiming}. Returns null when timestamps are unavailable.
-	 *
-	 * @returns {Promise<{kernels: Object<string, number>, total: number, unattributed: number, frame: number}|null>}
-	 */
-	async getKernelGPUTimings() {
-
-		const renderer = this.renderer;
-		if ( ! renderer?.backend?.trackTimestamp ) return null;
-
-		await renderer.resolveTimestampsAsync( 'compute' );
-
-		const timestamps = renderer.backend.timestampQueryPool?.compute?.timestamps;
-		if ( ! timestamps || timestamps.size === 0 ) return null;
-
-		const nameByNodeId = new Map();
-		const kernelMap = this.stages?.pathTracer?._kernelManager?.kernels;
-		if ( kernelMap ) {
-
-			for ( const [ name, node ] of kernelMap ) nameByNodeId.set( node.id, name );
-
-		}
-
-		const parsed = [];
-		let frame = - 1;
-
-		for ( const [ uid, ms ] of timestamps ) {
-
-			// 'c:<frameCalls>:<nodeId>:f<frame>'
-			const parts = uid.split( ':' );
-			if ( parts.length !== 4 ) continue;
-
-			const f = Number( parts[ 3 ].slice( 1 ) );
-			if ( ! Number.isFinite( f ) ) continue;
-
-			parsed.push( { nodeId: Number( parts[ 2 ] ), f, ms } );
-			if ( f > frame ) frame = f;
-
-		}
-
-		const kernels = {};
-		let total = 0;
-		let unattributed = 0;
-
-		for ( const entry of parsed ) {
-
-			if ( entry.f !== frame ) continue;
-
-			total += entry.ms;
-			const name = nameByNodeId.get( entry.nodeId );
-			if ( name === undefined ) unattributed += entry.ms;
-			else kernels[ name ] = ( kernels[ name ] ?? 0 ) + entry.ms;
-
-		}
-
-		return { kernels, total, unattributed, frame };
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Output (absorbed from OutputAPI)
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * Returns the canvas element holding the image on screen — denoised, graded and tone-mapped,
-	 * whatever is currently showing. The upscaler is the one thing that paints elsewhere.
-	 * @returns {HTMLCanvasElement|null}
-	 */
-	getCanvas() {
-
-		if ( ! this.renderer?.domElement ) return null;
-
-		// Whatever is on the overlay is what the viewport shows, so it is also what a save must
-		// write. Gating on `upscaler.enabled` instead missed the neural-rendering pass, which puts
-		// a picture there without the ONNX upscaler being on at all — saves silently wrote the
-		// un-enhanced render.
-		const dm = this.denoisingManager;
-		const overlay = dm?.upscalerCanvas;
-		if ( overlay && overlay.style.display !== 'none' ) return overlay;
-
-		// A presented WebGPU canvas only reads back what was drawn immediately before, so draw.
-		// This also puts the denoised picture on it: the Compositor prefers it over the raw render.
-		if ( this.stages.compositor && this.pipeline?.context ) {
-
-			this.stages.compositor.render( this.pipeline.context );
-
-		}
-
-		return this.renderer.domElement;
-
-	}
-
-	/**
-	 * Captures the current render as a Blob. Returns null if no canvas is
-	 * available. The host is responsible for downloading or otherwise
-	 * consuming the result.
-	 *
-	 * @param {Object}  [options]
-	 * @param {string}  [options.type='image/png']  - MIME type for the encoded image
-	 * @param {number}  [options.quality]           - 0–1 quality hint for lossy formats
-	 * @returns {Promise<Blob|null>}
-	 */
-	screenshot( { type = 'image/png', quality } = {} ) {
-
-		const canvas = this.getCanvas();
-		if ( ! canvas ) return Promise.resolve( null );
-
-		return new Promise( ( resolve ) => canvas.toBlob( resolve, type, quality ) );
-
-	}
-
-	/**
-	 * Returns scene statistics (triangle count, mesh count, etc.).
-	 * @returns {Object|null}
-	 */
-	getStatistics() {
-
-		try {
-
-			return this._sdf?.getStatistics?.() ?? null;
-
-		} catch {
-
-			return null;
-
-		}
-
-	}
-
-	/**
-	 * When false, `animate()` rasters `meshScene` instead of path tracing. Those raster pipelines
-	 * are compiled on the switch rather than at load — `compileAsync` costs seconds on a
-	 * many-material model, and path tracing, the default, never uses them.
-	 * @returns {boolean}
-	 */
-	get pathTracerEnabled() {
-
-		return this._pathTracerEnabled;
-
-	}
-
-	set pathTracerEnabled( value ) {
-
-		this._pathTracerEnabled = value;
-		if ( ! value ) this.precompileRaster();
-
-	}
-
-	/**
-	 * Warms the raster fallback's pipelines. Once per loaded model; concurrent callers await the
-	 * same compile rather than racing past a flag set before it finishes.
-	 * @returns {Promise<void>}
-	 */
-	precompileRaster() {
-
-		if ( ! this.renderer || ! this.meshScene ) return Promise.resolve();
-
-		this._rasterPrecompile ??= this.renderer
-			.compileAsync( this.meshScene, this.cameraManager.camera )
-			.catch( err => log.warn( 'raster fallback precompile failed', err ) );
-
-		return this._rasterPrecompile;
-
-	}
-
-	/**
-	 * Whether a model/environment load is currently in progress.
-	 * @returns {boolean}
-	 */
-	get isLoading() {
-
-		return this._loadingInProgress;
-
-	}
-
-	/**
-	 * Whether the path tracer has finished converging.
-	 * @returns {boolean}
-	 */
-	isComplete() {
-
-		return this.stages.pathTracer?.isComplete ?? false;
-
-	}
-
-	/**
-	 * Returns the current accumulated frame/sample count.
-	 * @returns {number}
-	 */
-	getFrameCount() {
-
-		return this.stages.pathTracer?.frameCount || 0;
-
-	}
-
-	/**
-	 * Adaptive-sampling telemetry: `{ converged, activePixels, totalPixels, frame }`.
-	 * Counts come from an async readback taken on settled views only, so they lag a few frames
-	 * and read zero while the camera moves.
-	 * @returns {?Object}
-	 */
-	getConvergenceStats() {
-
-		return this.stages.pathTracer?.getConvergenceStats?.() ?? null;
-
-	}
-
-	/** The path tracer's VRAM tracker, or null before stages are built. */
-	get vram() {
-
-		return this.stages.pathTracer?.vramTracker ?? null;
-
-	}
-
-	/**
-	 * On-demand current/peak GPU memory snapshot.
-	 * @returns {{ current: number, peak: number, byCategory: Object }} bytes
-	 */
-	getMemoryInfo() {
-
-		// Wired from the loop too, which renderFrames never enters: a headless host would miss these categories.
-		this._ensureVRAMWiring();
-		return this.stages.pathTracer?.vramTracker?.measure() ?? { current: 0, peak: 0, byCategory: {} };
-
-	}
-
-	/**
-	 * CPU-side memory for the last scene build: what the preflight predicted, what each phase
-	 * allocated, and what was live at each phase boundary.
-	 *
-	 * Note that `performance.memory.usedJSHeapSize` does NOT count SharedArrayBuffer, and the
-	 * triangle and BVH stores are SAB-backed — so the browser's own heap reading under-reports
-	 * a large scene by several gigabytes and this is the figure to trust.
-	 *
-	 * @returns {?{preflight: ?Object, allocatedBytes: number, peakLiveBytes: number,
-	 *   byPhase: Object, samples: Object[]}} null before a scene is built
-	 */
-	getHostMemoryInfo() {
-
-		const sp = this._sdf;
-		if ( ! sp?.memory ) return null;
-		return { preflight: sp.memoryPreflight, ...sp.memory.report };
-
-	}
-
-	// Idempotent: registers the cross-stage texture provider and re-measures on
-	// allocation events (scene/env load, resize) so peak is caught even while idle.
-	_ensureVRAMWiring() {
-
-		if ( this._vramWired ) return;
-		const tracker = this.stages.pathTracer?.vramTracker;
-		if ( ! tracker ) return; // stages not ready yet
-
-		tracker.register( 'stages', () => this._collectStageTextures() );
-		tracker.register( 'denoiser', () => ( { bytes: this.denoisingManager?.gpuBytes() ?? 0 } ) );
-		// One image per presented surface (a browser may keep one or two more), and the buffer
-		// three's output pass tone-maps through.
-		tracker.register( 'canvas', () => [
-			{ bytes: this.canvas.width * this.canvas.height * 4 },
-			...( this.renderer?._frameBufferTargets?.values() ?? [] ),
-			...( this.overlayManager?.gpuResources() ?? [] ),
-		] );
-
-		const remeasure = () => tracker.measure();
-		this._addTrackedListener( this, EngineEvents.SCENE_REBUILD, remeasure );
-		this._addTrackedListener( this, EngineEvents.ENVIRONMENT_LOADED, remeasure );
-		this._addTrackedListener( this, EngineEvents.RESOLUTION_CHANGED, remeasure );
-
-		this._vramWired = true;
-
-	}
-
-	// Direct StorageTexture/RenderTarget properties of every non-pathTracer stage
-	// (denoiser/G-buffer/filter targets). The pathTracer's own buffers/textures are
-	// registered explicitly; measure() dedupes by identity so overlaps don't double-count.
-	_collectStageTextures() {
-
-		const out = [];
-		const stages = this.stages || {};
-		const pt = stages.pathTracer;
-
-		for ( const key in stages ) {
-
-			const stage = stages[ key ];
-			if ( ! stage || stage === pt || typeof stage !== 'object' ) continue;
-
-			for ( const prop in stage ) {
-
-				const v = stage[ prop ];
-				if ( v && ( v.isTexture || v.isRenderTarget ) ) out.push( v );
-
-			}
-
-		}
-
-		return out;
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Materials (absorbed from MaterialsAPI)
-	// ═══════════════════════════════════════════════════════════════
-
-	/**
-	 * Updates a single material property and triggers emissive rebuild if needed.
-	 * @param {number} materialIndex
-	 * @param {string} property
-	 * @param {*} value
-	 */
-	/**
-	 * World-space minimum Y of the loaded scene (the floor). Used to seed the
-	 * analytic ground-plane shadow catcher height. Returns 0 if no scene is loaded.
-	 * @returns {number}
-	 */
-	getSceneMinY() {
-
-		if ( ! this.meshScene ) return 0;
-		const box = new Box3().setFromObject( this.meshScene );
-		return Number.isFinite( box.min.y ) ? box.min.y : 0;
-
-	}
-
-	/**
-	 * Read back the scalar material property the shader is actually using.
-	 * @param {number} materialIndex
-	 * @param {string} property
-	 * @returns {number|undefined}
-	 */
-	getMaterialProperty( materialIndex, property ) {
-
-		return this.stages.pathTracer?.materialData.getMaterialProperty( materialIndex, property );
-
-	}
-
-	/**
-	 * Where a material property's value came from: `'material'` (the three.js material carried
-	 * it), `'mapped'` (converted from a Basic/Lambert/Phong/Toon material), `'default'` (the model
-	 * never said; filled from MATERIAL_DEFAULTS) or `'host'` (set through setMaterialProperty).
-	 * @param {number} materialIndex
-	 * @param {string} property
-	 * @returns {string|undefined}
-	 */
-	getMaterialPropertySource( materialIndex, property ) {
-
-		return this.stages.pathTracer?.materialData.getMaterialPropertySource( materialIndex, property );
-
-	}
-
-	setMaterialProperty( materialIndex, property, value ) {
-
-		// These rewrite triangle records, which a spilled scene has to read back first.
-		if ( this._sdf?.spilled && TRIANGLE_PATCH_PROPERTIES.has( property ) ) {
-
-			this.ensureSceneResident().then( () => this.setMaterialProperty( materialIndex, property, value ) );
-			return;
-
-		}
-
-		this.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );
-
-		// Keep the emissive-NEE structure in sync unconditionally (not gated on the
-		// sampling toggle) so edits made while NEE is off aren't lost on re-enable.
-		const emissiveAffectingProps = [ 'emissive', 'emissiveIntensity' ];
-		if ( emissiveAffectingProps.includes( property ) && this._sdf ) {
-
-			this._uploadEmissivePayload( this._sdf.updateMaterialEmissive( materialIndex, property, value ) );
-
-		}
-
-		this.reset();
-
-	}
-
-	/**
-	 * Upload a rebuilt emissive-NEE payload (sorted emissive data + Light BVH +
-	 * bit-trail map) to the path tracer stage. No-op for a null payload.
-	 * @param {object|null} payload
-	 * @private
-	 */
-	_uploadEmissivePayload( payload ) {
-
-		if ( ! payload || ! this.stages.pathTracer ) return;
-
-		this.stages.pathTracer.setEmissiveTriangleData(
-			payload.rawData, payload.emissiveCount, payload.totalPower, payload.bitTrailMap,
-		);
-		if ( payload.lightBVHNodeData ) {
-
-			this.stages.pathTracer.setLightBVHData( payload.lightBVHNodeData, payload.lightBVHNodeCount );
-
-		}
-
-	}
-
-	/**
-	 * Re-derive the emissive-NEE sampled set from current per-mesh world-visibility
-	 * (InstanceTable is the source of truth — patched by the stage's visibility API).
-	 * Hidden meshes' triangles are dropped from the Light BVH so they stop casting
-	 * NEE light; the shadow ray can't do it (a hidden mesh no longer self-occludes).
-	 * @private
-	 */
-	_refreshEmissiveForVisibility() {
-
-		const table = this._sdf?.instanceTable;
-		if ( ! table ) return;
-
-		// The emitter list names meshes, the table placements.
-		const hidden = new Set();
-		for ( let i = 0; i < table.count; i ++ ) {
-
-			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( table.sourceMesh[ i ] );
-
-		}
-
-		this._uploadEmissivePayload( this._sdf.rebuildEmissiveForVisibility( hidden ) );
-
-	}
-
-	/**
-	 * Explicitly enable/disable emissive-triangle next-event estimation. Marks the
-	 * setting as user-controlled so scene rebuilds stop auto-following the scene's
-	 * emissive content; the next fresh model load re-arms the auto-default.
-	 * @param {boolean} enabled
-	 */
-	setEmissiveTriangleSampling( enabled ) {
-
-		this._emissiveSamplingUserSet = true;
-		this.settings.set( 'enableEmissiveTriangleSampling', enabled );
-
-	}
-
-	/**
-	 * @returns {boolean} True if the current scene contains emissive geometry
-	 * (regardless of per-mesh visibility).
-	 */
-	hasEmissiveGeometry() {
-
-		return ( this._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.length
-			?? this._sdf?.emissiveTriangleCount ?? 0 ) > 0;
-
-	}
-
-	/**
-	 * Update per-mesh visibility without rebuilding the scene.
-	 * Walks the parent chain to resolve world-space visibility.
-	 * @param {number} meshIndex
-	 * @param {boolean} visible
-	 */
-	setMeshVisibility( meshIndex, visible ) {
-
-		this.stages.pathTracer?.updateMeshVisibility( meshIndex, visible );
-		this._refreshEmissiveForVisibility();
-		this.reset();
-
-	}
-
-	/**
-	 * Recompute world-visibility for all meshes.
-	 * Call after changing visibility on groups or parent objects.
-	 */
-	updateAllMeshVisibility() {
-
-		this.stages.pathTracer?.updateAllMeshVisibility();
-		this._refreshEmissiveForVisibility();
-		this.reset();
-
-	}
-
-	/**
-	 * The active mesh-bearing scene. Prefer this over reading `scene`/`meshScene`
-	 * directly — the engine may swap the underlying scene between rebuilds.
-	 * @returns {import('three').Scene}
-	 */
-	getScene() {
-
-		return this.meshScene || this.scene;
-
-	}
-
-	// Sets when `visible` is a boolean; toggles when it's an updater (prev) => next.
-	/**
-	 * @param {string} uuid
-	 * @param {boolean | ((prev: boolean) => boolean)} visible
-	 * @returns {boolean | null} new visibility, or null if the mesh wasn't found
-	 */
-	setMeshVisibilityByUuid( uuid, visible ) {
-
-		const object = this.getScene()?.getObjectByProperty( 'uuid', uuid );
-		if ( ! object ) return null;
-		const next = typeof visible === 'function' ? !! visible( object.visible ) : !! visible;
-		object.visible = next;
-		this.updateAllMeshVisibility();
-		return next;
-
-	}
-
-	/**
-	 * Updates a material's texture transform (offset, repeat, rotation).
-	 * @param {number} materialIndex
-	 * @param {string} textureName
-	 * @param {Object} transform
-	 */
-	setTextureTransform( materialIndex, textureName, transform ) {
-
-		this.stages.pathTracer?.materialData.updateTextureTransform( materialIndex, textureName, transform );
-		this.reset();
-
-	}
-
-	/**
-	 * What a `'display'` read shows: the texture a denoiser published, or null for the raw
-	 * accumulation — recorded as a fallback when a denoiser is in use.
-	 * @private
-	 */
-	_displaySource( accumulation ) {
-
-		const context = this.pipeline?.context;
-		const found = context && this.stages.compositor?.resolveLightSource( context );
-		if ( found && found.key !== 'pathtracer:color' && found.texture !== accumulation.texture ) {
-
-			return { texture: found.texture, source: found.key.split( ':' )[ 0 ] };
-
-		}
-
-		if ( this._denoiserInUse() ) {
-
-			this._issues.record(
-				ISSUE_CODES.OUTPUT_SOURCE_FALLBACK,
-				'renderToBuffer: \'display\' was asked for, but no denoiser has published a picture — returned the raw accumulation',
-				{ requested: 'display', read: 'accumulation' }
-			);
-
-		}
-
-		return null;
-
-	}
-
-	/**
-	 * What the Compositor is drawing from, as linear float. Falls back to the accumulation when no
-	 * denoiser has published anything, which is also what the viewport shows then.
-	 * @private
-	 */
-	async _readDisplaySource( accumulation, width, height ) {
-
-		const shown = this._displaySource( accumulation );
-		if ( ! shown ) return { data: await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 ), source: 'accumulation' };
-		return { data: await this._readTexture( shown.texture, width, height ), source: shown.source };
-
-	}
-
-	_readbackPass() {
-
-		return ( this._textureReadback ??= new TextureReadback( this.renderer ) );
-
-	}
-
-	_readTexture( texture, width, height ) {
-
-		return this._readbackPass().read( texture, width, height );
-
-	}
-
 	// With none, the raw accumulation is the display.
 	_denoiserInUse() {
 
 		const dm = this.denoisingManager;
 		return !! dm?.denoiser?.enabled || ( dm?.denoiserStrategy ?? 'none' ) !== 'none';
-
-	}
-
-	/**
-	 * Set what colour space one texture is in, then rebuild so it takes effect.
-	 *
-	 * The per-image colour space every OCIO application offers. Three kinds of answer:
-	 *   - `null`             — automatic: tag, override, the config's file rules, then three.js
-	 *   - `'srgb'`/`'linear'` — three.js's own two, which work with no config at all
-	 *   - a config space     — anything the loaded config names, including log and camera spaces
-	 *
-	 * A config space is carried as `userData.ocioColorSpace`, and the texture's three.js colour space
-	 * is set to match the colour pool while it is, so harmonization leaves the stored bytes as the
-	 * author wrote them — the named transform has to read them raw. The original is kept and put
-	 * back when the choice is cleared.
-	 *
-	 * @param {import('three').Texture} texture
-	 * @param {?string} choice
-	 */
-	async setTextureColorSpace( texture, choice ) {
-
-		if ( ! texture?.isTexture ) throw new Error( 'setTextureColorSpace wants a three.js texture' );
-
-		const ud = texture.userData ?? ( texture.userData = {} );
-		if ( ud.__rayzeeOriginalColorSpace === undefined ) ud.__rayzeeOriginalColorSpace = texture.colorSpace;
-		const original = ud.__rayzeeOriginalColorSpace;
-
-		delete ud.ocioColorSpace;
-		delete ud.__rayzeeColorSpaceChoice;
-
-		if ( choice === null || choice === undefined ) {
-
-			texture.colorSpace = original;
-			delete ud.__rayzeeOriginalColorSpace;
-
-		} else if ( choice === 'srgb' || choice === 'linear' ) {
-
-			texture.colorSpace = choice === 'srgb' ? SRGBColorSpace : LinearSRGBColorSpace;
-			ud.__rayzeeColorSpaceChoice = choice;
-
-		} else {
-
-			if ( ! this.color?.hasConfig ) throw new Error( `"${choice}" needs a colour config loaded` );
-			ud.ocioColorSpace = choice;
-			texture.colorSpace = SRGBColorSpace;
-
-		}
-
-		texture.needsUpdate = true;
-		if ( this.stages.pathTracer?.sdfs ) await this.rebuildMaterials();
-
-	}
-
-	/**
-	 * Load a colour config, keeping the scene consistent with it.
-	 *
-	 * Prefer this to `app.color.loadConfig()` whenever a scene is loaded. A working space adopted
-	 * under the previous config is undone first, *while that config is still loaded* — the
-	 * environment is converted in place, and only the config that converted it can convert it
-	 * back. With `adoptWorkingSpace` the scene is rebuilt in the new space afterwards.
-	 *
-	 * @param {Object} options - as `ColorManagement.loadConfig`
-	 * @returns {Promise<Object>} the config description
-	 */
-	async loadColorConfig( options = {} ) {
-
-		await this._leaveColorWorkingSpace();
-		const shown = getViewTransform( this.renderer?.toneMapping );
-		const described = await this.color.loadConfig( options );
-		if ( this.color.workingSpaceAdopted ) await this.applyColorWorkingSpace();
-		// A baked view the config kept is still what is on screen.
-		const kept = shown?.source === 'ocio' && getViewTransform( this.renderer?.toneMapping ) === shown;
-		if ( ! kept || this.color.workingSpaceAdopted ) this.reset();
-		return described;
-
-	}
-
-	/** Unload the colour config, putting the scene back into linear Rec.709 first. */
-	async unloadColorConfig() {
-
-		await this._leaveColorWorkingSpace();
-		this.color.unloadConfig();
-		this.reset();
-
-	}
-
-	/** @private */
-	async _leaveColorWorkingSpace() {
-
-		if ( ! this.color?.workingSpaceAdopted ) return;
-		this.color.setWorkingSpace( null );
-		await this.applyColorWorkingSpace();
-
-	}
-
-	/**
-	 * Rebuild everything the working space touches, after it has been changed.
-	 *
-	 * Changing what the engine renders in is not a display setting — it changes what every texture,
-	 * tint and light colour already loaded *means*. Textures and materials are re-packed from their
-	 * pristine three.js sources, so they convert cleanly; the environment is converted where it
-	 * lies, from whichever space it currently holds, and its importance-sampling table is rebuilt
-	 * because its pixels moved.
-	 *
-	 * Call this after `app.color.setWorkingSpace()`. Doing nothing instead leaves a scene half in
-	 * one space and half in another, which reads as a colour cast with no obvious cause.
-	 */
-	async applyColorWorkingSpace() {
-
-		const env = this.environmentManager?.getEnvironmentTexture?.();
-		let envChanged = false;
-
-		if ( env && this.color?.hasConfig ) {
-
-			try {
-
-				envChanged = this.color.convertTexturePixels( env );
-
-			} catch ( error ) {
-
-				log.warn( `environment colour conversion failed: ${error.message}` );
-
-			}
-
-		}
-
-		// Nothing to rebuild before a scene exists; anything loaded later converts on its way in.
-		if ( this.stages.pathTracer?.sdfs ) {
-
-			await this.rebuildMaterials();
-			this._uploadEmissivePayload( this._sdf?.rebuildEmissiveColors?.() ?? null );
-
-		}
-
-		if ( envChanged ) await this.environmentManager?.buildEnvironmentCDF?.();
-		// Its pixels never leave the GPU, so it is baked again in the new space rather than converted.
-		if ( env?._isPhysicalSky ) await this.environmentManager.generateProceduralSkyTexture();
-		this.environmentManager?.refreshSun?.();
-
-		this.reset();
-
-	}
-
-	/**
-	 * Full material rebuild (required after texture changes).
-	 * @param {import('three').Scene} [scene]
-	 */
-	async rebuildMaterials( scene ) {
-
-		await this.ensureSceneResident();
-		await this.stages.pathTracer?.rebuildMaterials( scene || this.meshScene );
-		this.reset();
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Private — Initialization
-	// ═══════════════════════════════════════════════════════════════
-
-	async _initRenderer() {
-
-		setStatusCallback( ( event ) => this.dispatchEvent( event ) );
-
-		if ( typeof navigator === 'undefined' || ! navigator.gpu ) {
-
-			throw new Error( 'WebGPU is not available — outside a browser, install one as navigator.gpu (for Node, the `webgpu` package)' );
-
-		}
-
-		const adapter = await navigator.gpu.requestAdapter( { powerPreference: 'high-performance' } );
-		if ( ! adapter ) {
-
-			throw new Error( 'Failed to get WebGPU adapter' );
-
-		}
-
-		this.adapterInfo = describeAdapter( adapter );
-		if ( this.adapterInfo.isSoftware ) {
-
-			// Warning: the image is correct, only the cost is wrong.
-			this._issues.warn(
-				ISSUE_CODES.ADAPTER_SOFTWARE,
-				`software GPU adapter "${this.adapterInfo.description || this.adapterInfo.vendor}" — ` +
-				'renders are correct but orders of magnitude slower than hardware',
-				{ ...this.adapterInfo }
-			);
-			log.warn( `software GPU adapter — check app.adapterInfo.isSoftware. ${this.adapterInfo.description}` );
-
-		}
-
-		const adapterLimits = adapter.limits;
-
-		// A limit that is NOT requested is granted at WebGPU's portable default, never at the
-		// adapter's maximum — on Apple Metal-3 that is 16 sampled textures of 48, 4 storage
-		// textures of 8, 256 workgroup invocations of 1024 and 256 array layers of 2048.
-		// Requesting exactly what the adapter reports can never fail, so a weaker GPU simply
-		// gets less and every consumer has to stay adaptive.
-		const requiredLimits = { maxColorAttachmentBytesPerSample: 128 };
-
-		for ( const key of [
-			'maxBufferSize',
-			'maxStorageBufferBindingSize',
-			'maxSampledTexturesPerShaderStage',
-			'maxStorageTexturesPerShaderStage',
-			'maxTextureArrayLayers',
-			'maxTextureDimension2D',
-			'maxComputeInvocationsPerWorkgroup',
-			'maxComputeWorkgroupStorageSize',
-			'maxComputeWorkgroupSizeX',
-			'maxComputeWorkgroupSizeY',
-			'maxComputeWorkgroupSizeZ',
-		] ) {
-
-			const value = adapterLimits[ key ];
-			if ( value !== undefined ) requiredLimits[ key ] = value;
-
-		}
-
-		// Shade binds exactly 10 and the kernels are written to that budget; asking for more
-		// buys nothing, and 10 is already this adapter's ceiling.
-		requiredLimits.maxStorageBuffersPerShaderStage = Math.min( adapterLimits.maxStorageBuffersPerShaderStage, 10 );
-
-		this.renderer = new WebGPURenderer( {
-			canvas: this.canvas,
-			alpha: true,
-			powerPreference: 'high-performance',
-			requiredLimits,
-		} );
-
-		await initWithoutFrameLoop( this.renderer, this._headless );
-
-		// WebGPURenderer swaps in WebGL2 on failure with only a warn(). The wavefront path is
-		// compute-only, so every frame would fail against an empty canvas.
-		if ( ! this.renderer.backend?.isWebGPUBackend ) {
-
-			throw new Error(
-				'WebGPU backend unavailable — three.js fell back to WebGL2, which cannot run the ' +
-				'path tracer\'s compute kernels. Check GPU process flags and driver support.'
-			);
-
-		}
-
-		// Detect GPU device loss (dGPU/iGPU switch, driver reset, TDR watchdog on heavy
-		// compute). Without this the rAF loop keeps calling render() on a dead device,
-		// spewing errors forever. reason 'destroyed' during dispose() is intentional teardown.
-		//
-		// Neither handler may outlive dispose() still holding this app. The device itself does
-		// outlive it: three's RenderObjects.dispose() drops its chain maps without disposing
-		// the render objects, and its Textures manager leaves a listener on every module-level
-		// texture singleton, so backend and device stay reachable for the page's lifetime. A
-		// handler capturing `this` therefore pinned the whole app graph — ~120 MiB of triangle,
-		// BVH and CPU-side texture data per create/dispose cycle. `lost` is a pending promise
-		// whose reaction cannot be unregistered, so it reads the app out of a holder that
-		// dispose() empties; `onuncapturederror` is cleared there directly.
-		const gpuDevice = this.renderer.backend?.device;
-		if ( gpuDevice?.lost ) {
-
-			this._gpuDevice = gpuDevice;
-			this._deviceLostHolder = { app: this };
-			attachDeviceLostHandler( gpuDevice, this._deviceLostHolder );
-			gpuDevice.onuncapturederror = ( event ) => log.error( 'WebGPU uncaptured error:', event.error );
-
-		}
-
-		RectAreaLightNode.setLTC( RectAreaLightTexturesLib.init() );
-
-		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.toneMapping = this._profile.toneMapping;
-		this.renderer.toneMappingExposure = 1.0;
-		this.renderer.setPixelRatio( 1.0 );
-
-		// Hands every registered view transform to the renderer and keeps `outputColorSpace` in
-		// step with whichever is selected — an OCIO view already encoded for its display must not
-		// be encoded a second time by the output pass.
-		this.color.attachRenderer( this.renderer );
-
-	}
-
-	_initCameraManager() {
-
-		this.cameraManager = new CameraManager( this.canvas );
-		this.timeline = new TimelineManager( { cameraManager: this.cameraManager, onReset: () => this.reset() } );
-
-	}
-
-	_initScenes() {
-
-		this.scene = new Scene();
-		this.meshScene = new Scene();
-		this._sceneHelpers = new SceneHelpers();
-
-	}
-
-	_initAssetPipeline() {
-
-		this._sdf = new SceneProcessor( {
-			issues: this._issues,
-			// Spread into defaults, so only pass it when the host actually set one.
-			...( this._maxSceneBytes === undefined ? {} : { maxSceneBytes: this._maxSceneBytes } ),
-		} );
-		this.assetLoader = new AssetLoader(
-			this.meshScene, this.cameraManager.camera, this.cameraManager.controls,
-			{ issues: this._issues, profile: this._profile }
-		);
-		this.assetLoader.setRenderer( this.renderer );
-		this.assetLoader.createFloorPlane();
-
-		const onCameraMoved = () => {
-
-			this.needsReset = true;
-			// Here rather than in render(), so the first frame of the move is already at the lower resolution.
-			this.stages.pathTracer?.enterInteractionMode();
-			this.wake();
-
-		};
-
-		this._addTrackedListener( this.cameraManager.controls, 'change', onCameraMoved );
-		this._addTrackedListener( this.cameraManager.walkControls, 'change', onCameraMoved );
-		// A held key moves the camera from the frame loop, which may be asleep.
-		this._addTrackedListener( this.cameraManager.walkControls, 'start', () => this.wake() );
-
-	}
-
-	_initPipeline() {
-
-		this._createStages();
-
-		const { clientWidth: w, clientHeight: h } = this.canvas;
-		this.pipeline = new RenderPipeline( this.renderer, w || 1, h || 1, { issues: this._issues } );
-
-		this.pipeline.addStage( this.stages.pathTracer );
-		this.pipeline.addStage( this.stages.normalDepth );
-		this.pipeline.addStage( this.stages.motionVector );
-		this.pipeline.addStage( this.stages.nrd );
-		this.pipeline.addStage( this.stages.asvgf );
-		this.pipeline.addStage( this.stages.variance );
-		this.pipeline.addStage( this.stages.bilateralFilter );
-		this.pipeline.addStage( this.stages.edgeFilter );
-		this.pipeline.addStage( this.stages.autoExposure );
-		this.pipeline.addStage( this.stages.compositor );
-
-		const initRenderW = this.canvas.clientWidth || 1;
-		const initRenderH = this.canvas.clientHeight || 1;
-		this._displayWidth = initRenderW;
-		this._displayHeight = initRenderH;
-		this.pipeline.setSize( initRenderW, initRenderH );
-
-		this.pipeline.eventBus.on( 'pathtracer:interactionStart', () => this._requestRenderScale( this._interactionRenderScale() ) );
-		// Never fires inside a frame (a timer, or interaction mode being switched off), so it applies at once —
-		// renderFrames() and the video renderer drive pipeline.render() without passing through animate().
-		this.pipeline.eventBus.on( 'pathtracer:interactionEnd', () => this._applyRenderScale( 1 ) );
-
-	}
-
-	async _initManagers() {
-
-		this.interactionManager = new InteractionManager( {
-			scene: this.meshScene,
-			camera: this.cameraManager.camera,
-			canvas: this.canvas,
-			assetLoader: this.assetLoader,
-			pathTracer: null,
-			floorPlane: this.assetLoader.floorPlane
-		} );
-
-		this.interactionManager.wireAppEvents( this );
-
-		this.cameraManager.setInteractionManager( this.interactionManager );
-		this.lightManager = new LightManager( this.scene, this._sceneHelpers, this.stages.pathTracer, {
-			onReset: () => this.reset(),
-			// The gizmo stays attached to a removed light and warns every frame it draws.
-			onLightRemoved: light => {
-
-				if ( this.interactionManager?.selectedObject === light ) this.interactionManager.deselect();
-
-			},
-		} );
-		this.goboManager = new GoboManager( this.stages.pathTracer, {
-			onReset: () => this.reset(),
-			issues: this._issues,
-		} );
-		this.iesManager = new IESManager( this.stages.pathTracer, {
-			onReset: () => this.reset(),
-			issues: this._issues,
-		} );
-		this._setupDenoisingManager();
-
-		// A second renderer, a 2D canvas and a gizmo, all for pixels nobody sees.
-		if ( ! this._headless ) {
-
-			await this._setupOverlayManager();
-
-			this.transformManager = new TransformManager( {
-				camera: this.cameraManager.camera,
-				canvas: this.canvas,
-				orbitControls: this.cameraManager.controls,
-				app: this,
-			} );
-
-			// The gizmo is part of the scene overlay layer, so it draws on the same
-			// view-resolution surface as the light helpers and the outline.
-			this.overlayManager.register( 'transform', new TransformGizmoHelper( this.transformManager ) );
-
-		}
-
-		// Wire cross-manager dependencies
-		this.interactionManager.setDependencies( {
-			overlayManager: this.overlayManager,
-			transformManager: this.transformManager,
-			appDispatch: ( e ) => this.dispatchEvent( e ),
-			orbitControls: this.cameraManager.controls,
-			helperScene: this._sceneHelpers.scene,
-		} );
-
-		this.denoisingManager.setOverlayManager( this.overlayManager );
-		this.denoisingManager.setResetCallback( () => this.reset() );
-		this.denoisingManager.setPostProcessRefreshCallback( () => this.requestPostProcessRefresh() );
-		this.denoisingManager.setDisplayRefreshCallback( () => this._presentDisplay() );
-		this.denoisingManager.setSettings( this.settings );
-
-		// Expose environment manager (lives on pathTracer stage)
-		this.environmentManager = this.stages.pathTracer.environment;
-		this.environmentManager.callbacks.onAutoExposureReset = () => this.pipeline.eventBus.emit( 'autoexposure:resetHistory' );
-		// A whole-app reset, not the stage's: a sky bake lands after its input, often once the loop is idle.
-		this.environmentManager.callbacks.onReset = () => this.reset();
-
-	}
-
-	_wireEvents() {
-
-		// Forward manager events → app events
-		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, ( e ) => this.dispatchEvent( e ) );
-		this._addTrackedListener( this.cameraManager, EngineEvents.AUTO_FOCUS_UPDATED, ( e ) => this.dispatchEvent( e ) );
-		this._addTrackedListener( this.cameraManager, EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => this.dispatchEvent( e ) );
-		this._addTrackedListener( this.timeline, EngineEvents.TIMELINE_CHANGED, ( e ) => this.dispatchEvent( e ) );
-
-		this._forwardEvents( this.denoisingManager, [
-			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
-			EngineEvents.UPSCALING_START, EngineEvents.UPSCALING_PROGRESS, EngineEvents.UPSCALING_END,
-			EngineEvents.RESOLUTION_CHANGED,
-		] );
-
-		this._setupAutoExposureListener();
-
-		// Animation lifecycle → wake + refit flag
-		this.animationManager.wakeCallback = () => this.wake();
-		this.animationManager.applyPoseCallback = ( pose ) => this._applyAnimationPose( pose );
-		this._forwardEvents( this.animationManager, [
-			EngineEvents.ANIMATION_STARTED,
-			EngineEvents.ANIMATION_PAUSED,
-			EngineEvents.ANIMATION_STOPPED,
-		] );
-		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_PAUSED, () => {
-
-			this._animRefitInFlight = false;
-			this._refreshMovedEmitters();
-
-		} );
-		this._addTrackedListener( this.animationManager, EngineEvents.ANIMATION_STOPPED, () => {
-
-			this._animRefitInFlight = false;
-
-		} );
-
-		// Camera callbacks for switchCamera / focusOn
-		this.cameraManager.initCallbacks( {
-			onResize: () => this.onResize(),
-			onReset: () => this.reset(),
-			getSettings: ( k ) => this.settings.get( k ),
-			// Per-camera DOF restore — silent + reset:false so switchCamera's own onReset() is the single reset.
-			applySettings: ( updates ) => this.settings.setMany( updates, { silent: true, reset: false } ),
-		} );
-
-		// Auto-focus context — CameraManager stores it, reads it each frame
-		this.cameraManager.initAutoFocus( {
-			assetLoader: this.assetLoader,
-			pathTracer: this.stages.pathTracer,
-			settings: this.settings,
-			softReset: () => this.reset( true ),
-			hardReset: () => this.reset(),
-		} );
-
-		// Bind settings to pipeline stages
-		this.settings.bind( {
-			stages: this.stages,
-			renderer: this.renderer,
-			resetCallback: () => this.reset(),
-			reconcileCompletion: () => this._reconcileCompletion(),
-			denoisingManager: this.denoisingManager,
-			onInteractionRenderScale: () => {
-
-				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
-
-			},
-			onCameraProjection: ( value ) => this.cameraManager.applyProjection( value ),
-		} );
-
-		this.renderer.toneMappingExposure = this.settings.get( 'exposure' ) ?? 1.0;
-
-		// Resize handling
-		this.onResize();
-		this.resizeHandler = () => this.onResize();
-		if ( this._autoResize ) {
-
-			this._addTrackedListener( window, 'resize', this.resizeHandler );
-
-		}
-
-		// Asset load events
-		this._onAssetLoaded = async ( event ) => {
-
-			if ( this._loadingInProgress ) return;
-
-			// The authored-environment fetch runs through this same AssetLoader, so its 'load'
-			// event lands right back here. We install that texture ourselves — without the
-			// guard the texture branch below would rebuild the CDF a second time and
-			// resetLoading() would tear down the overlay mid-upload. Model events still pass:
-			// a user can drop another file while the environment is in flight.
-			if ( this._applyingSceneMetadata && event.texture ) return;
-
-			if ( event.model ) {
-
-				// Drag-drop / file load is a replace: clear any appended models first.
-				this._clearAppendedModels();
-				await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
-
-			} else if ( event.texture ) {
-
-				const envTexture = this.meshScene.environment;
-				if ( envTexture && this.stages.pathTracer ) {
-
-					await this.stages.pathTracer.environment.setEnvironmentMap( envTexture );
-
-				}
-
-				resetLoading();
-
-			}
-
-			this.pauseRendering = false;
-			this.reset();
-
-		};
-
-		this._addTrackedListener( this.assetLoader, 'load', this._onAssetLoaded );
-
-		this._addTrackedListener( this.assetLoader, 'modelProcessed', ( event ) => {
-
-			const cameras = [ this.cameraManager.camera, ...( event.cameras || [] ) ];
-			this.cameraManager.setCameras( cameras );
-			// Keys are poses in the scene being replaced, like the cameras saved in it.
-			this.timeline.clear();
-
-			if ( this.interactionManager ) {
-
-				this.interactionManager.floorPlane = this.assetLoader.floorPlane;
-
-			}
-
-		} );
 
 	}
 
@@ -4389,33 +991,6 @@ export class PathTracerApp extends EventDispatcher {
 		}
 
 		this.transformManager?.setMeshData( this._sdf.meshes );
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Private — Stage creation & setup
-	// ═══════════════════════════════════════════════════════════════
-
-	_createStages() {
-
-		this.stages.pathTracer = new PathTracer( this.renderer, this.scene, this.cameraManager.camera, { hostMemoryGB: this._hostMemoryGB } );
-		this.stages.normalDepth = new NormalDepth( this.renderer, {
-			pathTracer: this.stages.pathTracer
-		} );
-		this.stages.motionVector = new MotionVector( this.renderer, this.cameraManager.camera, {
-			pathTracer: this.stages.pathTracer
-		} );
-		this.stages.asvgf = new ASVGF( this.renderer, { enabled: false } );
-		this.stages.nrd = new NRD( this.renderer, { enabled: false, pathTracer: this.stages.pathTracer } );
-		this.stages.variance = new Variance( this.renderer, { enabled: false } );
-		this.stages.bilateralFilter = new BilateralFilter( this.renderer, { enabled: false } );
-		this.stages.edgeFilter = new EdgeFilter( this.renderer, { enabled: false } );
-		this.stages.autoExposure = new AutoExposure( this.renderer, { enabled: DEFAULT_STATE.autoExposure ?? false } );
-
-		this.stages.compositor = new Compositor( this.renderer, {
-			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,
-			pathTracer: this.stages.pathTracer,
-		} );
 
 	}
 
@@ -4456,35 +1031,6 @@ export class PathTracerApp extends EventDispatcher {
 
 	}
 
-	_reconcileCompletion() {
-
-		const stage = this.stages.pathTracer;
-		if ( ! stage ) return;
-
-		const shouldBeComplete = this.completion.isLimitReached(
-			stage, this.settings.get( 'renderLimitMode' ), this.settings.get( 'renderTimeLimit' )
-		);
-
-		if ( shouldBeComplete && ! stage.isComplete ) {
-
-			stage.isComplete = true;
-
-		} else if ( ! shouldBeComplete && stage.isComplete ) {
-
-			stage.isComplete = false;
-			this.completion.resumeFromPause();
-
-			// Restore live preview: abort() on the denoising manager already
-			// handles canvas opacity, denoiser output visibility, and upscaler reset.
-			this.denoisingManager?.abort( this.canvas );
-
-			this.dispatchEvent( { type: EngineEvents.RENDER_RESET } );
-			this.wake();
-
-		}
-
-	}
-
 	_setupAutoExposureListener() {
 
 		if ( ! this.stages.autoExposure ) return;
@@ -4498,13 +1044,6 @@ export class PathTracerApp extends EventDispatcher {
 			} );
 
 		} );
-
-	}
-
-	_renderHelperOverlay() {
-
-		this.scene.updateMatrixWorld();
-		this.overlayManager?.render();
 
 	}
 
@@ -4532,7 +1071,6 @@ export class PathTracerApp extends EventDispatcher {
 		this.overlayManager.mount( this._container );
 
 	}
-
 
 	_syncControlsAfterLoad() {
 
@@ -4597,20 +1135,6 @@ export class PathTracerApp extends EventDispatcher {
 		controls.maxDistance = Math.max( cameraDistance * 10, currentDist * 1.1 );
 
 		controls.update();
-
-	}
-
-	/**
-	 * Forwards events from a source EventDispatcher to this app instance.
-	 */
-	_forwardEvents( source, eventTypes ) {
-
-		if ( ! source ) return;
-		for ( const type of eventTypes ) {
-
-			this._addTrackedListener( source, type, ( e ) => this.dispatchEvent( e ) );
-
-		}
 
 	}
 

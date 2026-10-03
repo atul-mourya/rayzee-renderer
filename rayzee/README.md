@@ -21,6 +21,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
 - [API Reference](#api-reference)
   - [Configuring Assets (CDN URLs & cache namespace)](#configuring-assets-cdn-urls--cache-namespace)
   - [PathTracerApp](#pathtracerapp)
+  - [Renderer core (`rayzee/core`)](#renderer-core-rayzeecore)
   - [engine.cameraManager](#enginecameramanager)
   - [Camera Projection (Orthographic, 360° Panorama)](#camera-projection-orthographic-360-panorama)
   - [engine.lightManager](#enginelightmanager)
@@ -342,6 +343,25 @@ engine.wake()                 // Resume render loop if idle
 ```
 
 Constructing a new `PathTracerApp` on a canvas that already has an active instance auto-disposes the prior one — safe under React StrictMode and HMR even without explicit cleanup, though `engine.dispose()` remains the recommended teardown path.
+
+### Renderer core (`rayzee/core`)
+
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, and its entry point downloads about 20 % less. It takes the same options, loads the same files, and renders the same pixels.
+
+```js
+import { RayzeeRenderer } from 'rayzee/core';
+
+const renderer = await new RayzeeRenderer(canvas).init();
+await renderer.loadModel('/models/scene.glb');
+renderer.camera.position.set(0, 2, 6);   // the camera it renders from; reset() after moving it
+renderer.camera.lookAt(0, 0, 0);
+renderer.reset();
+await renderer.renderFrames(256);
+const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
+renderer.dispose();
+```
+
+Only one renderer (core or full) should be alive in a page at a time: some shader state is shared between them.
 
 #### Loading Assets
 

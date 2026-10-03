@@ -8,8 +8,9 @@
 // Patches (side-effect imports — must run before any StorageTexture usage)
 import './TSL/patches.js';
 
-// Main application
+// Main application: the viewer, built on the renderer core (also `rayzee/core`)
 export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
+export { RayzeeRenderer } from './RayzeeRenderer.js';
 
 // Event types
 export { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';

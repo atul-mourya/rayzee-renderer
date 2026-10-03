@@ -1487,7 +1487,7 @@ SCENES.push( {
 		group.add( light );
 		await app.loadObject3D( group, 'arealight-analytic' );
 
-		const camera = app.cameraManager.camera;
+		const camera = app.camera;
 		if ( Math.abs( camera.fov - fov ) > 1e-6 ) {
 
 			throw new Error( `arealight-analytic: reference assumes fov ${fov}, camera has ${camera.fov}` );
@@ -1677,12 +1677,13 @@ SCENES.push( {
  */
 function setCamera( app, position, target ) {
 
-	const camera = app.cameraManager.camera;
+	const camera = app.camera;
 	camera.position.set( ...position );
 	camera.lookAt( ...target );
 	camera.updateMatrixWorld( true );
 
-	const controls = app.cameraManager.controls;
+	// The renderer core has no orbit controls.
+	const controls = app.cameraManager?.controls;
 	if ( controls ) {
 
 		controls.target.set( ...target );

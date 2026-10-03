@@ -10,6 +10,9 @@
       "import": "./dist/rayzee.es.js",
       "require": "./dist/rayzee.umd.js"
     },
+    "./core": {
+      "import": "./dist/rayzee-core.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [
@@ -32,7 +35,7 @@
   "author": "Atul Mourya",
   "license": "MIT",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && RAYZEE_FORMAT=umd vite build",
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {

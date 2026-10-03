@@ -2432,7 +2432,7 @@ export class AssetLoader extends EventDispatcher {
 		const center = box.getCenter( new Vector3() );
 		const size = box.getSize( new Vector3() );
 
-		this.controls.target.copy( center );
+		this.controls?.target.copy( center );
 
 		const maxDim = Math.max( size.x, size.y, size.z );
 		const fov = this.camera.fov * ( Math.PI / 180 );
@@ -2452,9 +2452,14 @@ export class AssetLoader extends EventDispatcher {
 		this.camera.near = maxDim / 100;
 		this.camera.far = maxDim * 100;
 		this.camera.updateProjectionMatrix();
-		this.controls.maxDistance = cameraDistance * 10;
-		this.controls.saveState();
-		this.controls.update();
+		if ( this.controls ) {
+
+			this.controls.maxDistance = cameraDistance * 10;
+			this.controls.saveState();
+			this.controls.update();
+
+		}
+
 		buildTimer.end( 'Camera setup' );
 
 		// Adjust floor plane
