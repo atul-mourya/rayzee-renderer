@@ -1,5 +1,4 @@
 import { BVHBuilder } from '../BVHBuilder.js';
-import { TreeletOptimizer } from '../TreeletOptimizer.js';
 import { ReinsertionOptimizer } from '../ReinsertionOptimizer.js';
 
 self.onmessage = function ( e ) {
@@ -9,7 +8,6 @@ self.onmessage = function ( e ) {
 		sharedTriangleData, sharedCentroids, sharedBMin, sharedBMax, sharedIndices,
 		triangleCount,
 		maxLeafSize, numBins, maxBins, minBins,
-		treeletConfig,
 		reinsertionConfig,
 		reportProgress
 	} = e.data;
@@ -46,8 +44,7 @@ self.onmessage = function ( e ) {
 			builder.splitStats = {
 				sahSplits: 0, objectMedianSplits: 0, spatialMedianSplits: 0,
 				failedSplits: 0, avgBinsUsed: 0, totalSplitAttempts: 0,
-				mortonSortTime: 0, totalBuildTime: 0, treeletOptimizationTime: 0,
-				treeletsProcessed: 0, treeletsImproved: 0, averageSAHImprovement: 0,
+				mortonSortTime: 0, totalBuildTime: 0,
 				initTime: 0, sahBuildTime: 0, reorderTime: 0
 			};
 
@@ -69,36 +66,6 @@ self.onmessage = function ( e ) {
 				task.preMinX, task.preMinY, task.preMinZ,
 				task.preMaxX, task.preMaxY, task.preMaxZ
 			);
-
-			// Treelet optimization on subtree
-			if ( treeletConfig && treeletConfig.enabled && ( task.end - task.start ) > 1000 ) {
-
-				const isLargeSubtree = ( task.end - task.start ) > 50000;
-				const adaptiveSize = isLargeSubtree ? 3 : ( treeletConfig.size || 5 );
-				const adaptiveMax = isLargeSubtree ? 10 : 20;
-
-				const optimizer = new TreeletOptimizer( builder.traversalCost, builder.intersectionCost );
-				optimizer.setTreeletSize( adaptiveSize );
-				optimizer.setMinImprovement( treeletConfig.minImprovement || 0.02 );
-				optimizer.setMaxTreelets( adaptiveMax );
-
-				const passes = treeletConfig.passes || 1;
-				for ( let pass = 0; pass < passes; pass ++ ) {
-
-					try {
-
-						optimizer.optimizeBVH( root, null );
-
-					} catch ( err ) {
-
-						console.error( `[BVHSubtreeWorker] Treelet pass ${pass + 1} error:`, err );
-						break;
-
-					}
-
-				}
-
-			}
 
 			// Reinsertion optimization on subtree
 			if ( reinsertionConfig && reinsertionConfig.enabled && ( task.end - task.start ) > 1000 ) {

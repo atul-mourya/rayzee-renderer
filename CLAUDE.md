@@ -134,7 +134,7 @@ PathTracer delegates to these via composition — external code accesses them di
 
 ### Multi-Threading Architecture (`rayzee/src/Processor/Workers/`)
 Critical for maintaining 60fps during heavy computations:
-- **`BVHWorker.js`**: Off-main-thread BVH construction using SAH splitting with treelet optimization
+- **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
 - **`BVHSubtreeWorker.js`**: BVH subtree optimization for GPU traversal
 - **`CDFWorker.js`**: CDF computation for environment importance sampling (HDRIs and the simple skies; the physical sky builds its own on the GPU)
@@ -1184,7 +1184,7 @@ Access via Path Tracer tab → Debug Mode:
 ### Performance Profiling
 The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach their own stats panel (e.g. `stats-gl`) — the app does this in `app/src/components/layout/Viewports/StatsPanel.jsx`. Other built-in profiling signals:
 - Triangle intersection counters in shaders
-- BVH construction timings with treelet optimization metrics
+- BVH construction timings and split statistics
 - Memory usage tracking for texture arrays
 - Progressive rendering convergence monitoring
 
@@ -1294,7 +1294,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 2. **App Access**: Always use `getApp()` from `@/lib/appProxy` to access the app instance
 3. **TSL Hot Reload**: TSL shader changes hot-reload normally via Vite
 4. **Worker Data Transfer**: Use transferable objects for large arrays to avoid main thread blocking
-5. **BVH Memory**: Large models may require treelet optimization (`treeletOptimization: true`) for performance
+5. **BVH quality**: the builder is binned SAH plus reinsertion. Treelet restructuring was removed (2026-10): on five models it bought ≤0.6 % tree SAH, no measurable render speed, for 2–24× the BLAS build time. Judge any new tree post-pass by render time per sample, not SAH alone
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)

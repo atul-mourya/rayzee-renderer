@@ -111,7 +111,7 @@
 
 ### Performance Optimization
 - [ ] **Next-Gen BVH & Acceleration**
-  - [x] BVH with SAH splitting and treelet optimization
+  - [x] BVH with SAH splitting and reinsertion optimization
   - [x] Two-level BVH (TLAS/BLAS) with per-mesh refit for transforms
   - [x] O(N) bottom-up BVH refit for animated geometry (worker + SharedArrayBuffer)
   - [x] Object-space shared geometry placed by matrix, with single-use and emissive geometry baked to world space

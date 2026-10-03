@@ -116,14 +116,6 @@ export class SceneProcessor {
 			enableTextureCache: true,
 			maxConcurrentTextureTasks: Math.min( hardwareThreads(), 6 ),
 			maxSceneBytes: MAX_SCENE_BYTES,
-			// Treelet optimization configuration
-			// Keep: `_buildBVH` sends `enabled: value !== false`, so undefined re-enables treelets.
-			enableTreeletOptimization: false,
-			treeletSize: 7, // 7 nodes gives 315 topologies for optimal enumeration
-			treeletOptimizationPasses: 1,
-			treeletMinImprovement: 0.01, // Minimum SAH improvement threshold
-			// Above this triangle count the builder drops treelets to size 3.
-			treeletComplexityThreshold: 50000,
 			// Store the per-mesh BVHs of a scene whose build took at least this long (needs a sceneKey).
 			sceneCache: true,
 			sceneCacheMinBuildMs: SCENE_CACHE_MIN_BUILD_MS,
@@ -234,15 +226,6 @@ export class SceneProcessor {
 		// Create and configure BVH builder
 		this.bvhBuilder = new BVHBuilder();
 		this.bvhBuilder.maxLeafSize = this.config.maxLeafSize;
-
-		// Configure treelet optimization
-		this.bvhBuilder.setTreeletConfig( {
-			enabled: this.config.enableTreeletOptimization,
-			size: this.config.treeletSize,
-			passes: this.config.treeletOptimizationPasses,
-			minImprovement: this.config.treeletMinImprovement,
-			complexityThreshold: this.config.treeletComplexityThreshold
-		} );
 
 		// Create and configure texture creator
 		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize, issues: this.config.issues } );
@@ -1032,7 +1015,7 @@ export class SceneProcessor {
 			}
 
 			// Store all results, summing per-mesh split stats for one aggregate BVH line
-			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0, treeletsImproved: 0, treeletsProcessed: 0 };
+			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0 };
 
 			for ( const { m, range, result } of [ ...poolResults, ...parallelResults ] ) {
 
@@ -1043,8 +1026,6 @@ export class SceneProcessor {
 					blasStats.objMed += st.objectMedianSplits ?? 0;
 					blasStats.spatMed += st.spatialMedianSplits ?? 0;
 					blasStats.failed += st.failedSplits ?? 0;
-					blasStats.treeletsImproved += st.treeletsImproved ?? 0;
-					blasStats.treeletsProcessed += st.treeletsProcessed ?? 0;
 					this.performanceMetrics.blasWorkerTime += st.totalBuildTime ?? 0;
 
 				}
@@ -1190,7 +1171,6 @@ export class SceneProcessor {
 				`${fmt.n( table.setCount )} BLASes + TLAS`,
 				`${fmt.n( this.bvh.recordCount )} nodes`,
 				`SAH ${fmt.n( blasStats.sah )} · objMed ${blasStats.objMed} · spatMed ${blasStats.spatMed} · failed ${blasStats.failed}`,
-				blasStats.treeletsProcessed ? `treelets ${blasStats.treeletsImproved}/${blasStats.treeletsProcessed} improved` : null,
 				fmt.ms( duration ),
 			] ) );
 
@@ -1218,13 +1198,6 @@ export class SceneProcessor {
 
 		return {
 			depth: this.config.bvhDepth,
-			treeletOptimization: {
-				enabled: this.config.enableTreeletOptimization !== false,
-				size: this.config.treeletSize,
-				passes: this.config.treeletOptimizationPasses,
-				minImprovement: this.config.treeletMinImprovement,
-				complexityThreshold: this.config.treeletComplexityThreshold
-			},
 			reinsertionOptimization: {
 				enabled: this.bvhBuilder.enableReinsertionOptimization,
 				batchSizeRatio: this.bvhBuilder.reinsertionBatchSizeRatio,
@@ -1702,7 +1675,7 @@ export class SceneProcessor {
 	 * Each mesh is dispatched to an available BVHWorker; at most poolSize workers run concurrently.
 	 *
 	 * @param {Array<{m: number, range: {start: number, count: number}}>} tasks
-	 * @param {Object} opts - Worker build options (depth, treeletOptimization, reinsertionOptimization)
+	 * @param {Object} opts - Worker build options (depth, reinsertionOptimization)
 	 * @param {Function} onProgress - Called with (completedCount) as builds finish
 	 * @returns {Promise<Array<{m, range, result}>>}
 	 * @private
@@ -1766,11 +1739,7 @@ export class SceneProcessor {
 
 				const meshTriData = this.triangles.copyOf( range.start, range.count );
 
-				// Disable treelet for tiny meshes
 				const triCount = range.count;
-				const treeletOpts = triCount <= 500
-					? { ...opts.treeletOptimization, enabled: false }
-					: opts.treeletOptimization;
 
 				worker._currentTask = { m, range };
 				worker.postMessage( {
@@ -1781,7 +1750,6 @@ export class SceneProcessor {
 					depth: opts.depth,
 					reportProgress: false,
 					sharedReorderBuffer: null,
-					treeletOptimization: treeletOpts,
 					reinsertionOptimization: opts.reinsertionOptimization,
 					maxLeafSize: opts.maxLeafSize,
 					foldLeaves: opts.foldLeaves,
@@ -1824,7 +1792,7 @@ export class SceneProcessor {
 				const result = {
 					bvhData: data.bvhData,
 					originalToBvh: data.originalToBvh || null,
-					splitStats: data.treeletStats || null,
+					splitStats: data.splitStats || null,
 				};
 				onResult?.( m, range, result );
 				results.push( { m, range, result } );
@@ -2476,15 +2444,6 @@ export class SceneProcessor {
 		if ( this.bvhBuilder ) {
 
 			this.bvhBuilder.maxLeafSize = this.config.maxLeafSize;
-
-			// Update treelet optimization configuration
-			this.bvhBuilder.setTreeletConfig( {
-				enabled: this.config.enableTreeletOptimization,
-				size: this.config.treeletSize,
-				passes: this.config.treeletOptimizationPasses,
-				minImprovement: this.config.treeletMinImprovement,
-				complexityThreshold: this.config.treeletComplexityThreshold
-			} );
 
 		}
 
@@ -3688,9 +3647,6 @@ export class SceneProcessor {
 
 			};
 
-			// Disable treelet for tiny meshes
-			const treeletEnabled = entry.triCount > 500;
-
 			worker.postMessage( {
 				triangleData: meshTriData.buffer,
 				triangleByteOffset: meshTriData.byteOffset,
@@ -3706,13 +3662,6 @@ export class SceneProcessor {
 				minBins: this.bvhBuilder.minBins,
 				reportProgress: false,
 				sharedReorderBuffer: null,
-				treeletOptimization: {
-					enabled: treeletEnabled,
-					size: this.config.treeletSize,
-					passes: this.config.treeletOptimizationPasses,
-					minImprovement: this.config.treeletMinImprovement,
-					complexityThreshold: this.config.treeletComplexityThreshold
-				},
 				reinsertionOptimization: {
 					enabled: this.bvhBuilder.enableReinsertionOptimization,
 					batchSizeRatio: this.bvhBuilder.reinsertionBatchSizeRatio,

@@ -8,22 +8,6 @@ import { Fn, instanceIndex, instancedArray, storage, vec4, float, bool as tslBoo
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { describeGPU, createRenderer } from './gpu.js';
 
-vi.mock( '@/core/Processor/TreeletOptimizer.js', () => ( {
-	TreeletOptimizer: class {
-
-		setTreeletSize() {}
-		setMinImprovement() {}
-		setMaxTreelets() {}
-		optimizeBVH() {}
-		getStatistics() {
-
-			return {};
-
-		}
-
-	}
-} ) );
-
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 

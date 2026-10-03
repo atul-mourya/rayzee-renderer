@@ -31,7 +31,7 @@ const MAX_PARALLEL_WORKERS = 8;
  * @param {Uint32Array} triangles - Triangle records (20 lanes each)
  * @param {number} depth - Maximum BVH depth
  * @param {Function|null} progressCallback - Optional progress callback (0-100)
- * @param {Object} config - Builder config (maxLeafSize, numBins, treelet settings, etc.)
+ * @param {Object} config - Builder config (maxLeafSize, numBins, reinsertion settings, etc.)
  * @returns {Promise<{bvhData: Float32Array, bvhRoot: true, order?: Uint32Array, triangles?: Uint32Array, reorderedTriangles?: Uint32Array, splitStats: Object}>}
  *   the parallel build returns the input `triangles` and the BVH `order` of them (record i of the
  *   result is record order[i] of the input); its single-worker fallback returns `reorderedTriangles`.
@@ -192,7 +192,6 @@ export function buildBVHParallel( triangles, depth, progressCallback, config ) {
 				depth,
 				parallelDepth,
 				reportProgress: !! progressCallback,
-				treeletOptimization: config.treeletOptimization
 			} );
 
 		} )().catch( ( error ) => {
@@ -413,7 +412,6 @@ async function handlePhase2(
 			numBins: config.numBins,
 			maxBins: config.maxBins,
 			minBins: config.minBins,
-			treeletConfig: config.treeletOptimization,
 			reinsertionConfig: config.reinsertionOptimization,
 			reportProgress: !! progressCallback
 		} );
@@ -442,7 +440,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 
 			worker.onmessage = ( e ) => {
 
-				const { bvhData, triangles: transferredTriangles, originalToBvh, error, progress, treeletStats } = e.data;
+				const { bvhData, triangles: transferredTriangles, originalToBvh, error, progress, splitStats } = e.data;
 
 				if ( error ) {
 
@@ -464,7 +462,7 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 					? new Uint32Array( sharedReorderBuffer )
 					: transferredTriangles;
 
-				resolve( { bvhData, bvhRoot: true, reorderedTriangles, originalToBvh: originalToBvh || null, splitStats: treeletStats || {} } );
+				resolve( { bvhData, bvhRoot: true, reorderedTriangles, originalToBvh: originalToBvh || null, splitStats: splitStats || {} } );
 
 			};
 
@@ -484,7 +482,6 @@ function buildSingleWorker( triangles, depth, progressCallback, config ) {
 				depth,
 				reportProgress: !! progressCallback,
 				sharedReorderBuffer,
-				treeletOptimization: config.treeletOptimization,
 				reinsertionOptimization: config.reinsertionOptimization,
 				foldLeaves: config.foldLeaves
 			}, [ transferBuffer ] );

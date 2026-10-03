@@ -41,18 +41,12 @@ function handlePhase1( data ) {
 		sharedTriangleData, sharedCentroids, sharedBMin, sharedBMax,
 		sharedIndices, sharedMortonCodes,
 		triangleCount, depth, parallelDepth,
-		reportProgress, treeletOptimization
+		reportProgress
 	} = data;
 
 	try {
 
 		const builder = new BVHBuilder();
-
-		if ( treeletOptimization ) {
-
-			builder.setTreeletConfig( treeletOptimization );
-
-		}
 
 		const progressCallback = reportProgress ? ( progress ) => {
 
@@ -77,8 +71,7 @@ function handlePhase1( data ) {
 		builder.splitStats = {
 			sahSplits: 0, objectMedianSplits: 0, spatialMedianSplits: 0,
 			failedSplits: 0, avgBinsUsed: 0, totalSplitAttempts: 0,
-			mortonSortTime: 0, totalBuildTime: 0, treeletOptimizationTime: 0,
-			treeletsProcessed: 0, treeletsImproved: 0, averageSAHImprovement: 0,
+			mortonSortTime: 0, totalBuildTime: 0,
 			initTime: 0, sahBuildTime: 0, reorderTime: 0
 		};
 
@@ -193,7 +186,7 @@ function handleAssemble( data ) {
 
 function handleFullBuild( data ) {
 
-	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, treeletOptimization, reinsertionOptimization, sharedReorderBuffer, maxLeafSize, numBins, maxBins, minBins, foldLeaves: fold } = data;
+	const { triangleData, triangleByteOffset, triangleByteLength, depth, reportProgress, reinsertionOptimization, sharedReorderBuffer, maxLeafSize, numBins, maxBins, minBins, foldLeaves: fold } = data;
 	const builder = new BVHBuilder();
 	// Honor the build params forwarded from SceneProcessor (previously ignored → default leaf 8).
 	if ( maxLeafSize !== undefined ) builder.maxLeafSize = maxLeafSize;
@@ -202,12 +195,6 @@ function handleFullBuild( data ) {
 	if ( minBins !== undefined ) builder.minBins = minBins;
 
 	try {
-
-		if ( treeletOptimization ) {
-
-			builder.setTreeletConfig( treeletOptimization );
-
-		}
 
 		if ( reinsertionOptimization ) {
 
@@ -248,7 +235,7 @@ function handleFullBuild( data ) {
 				bvhData,
 				originalToBvh,
 				triangleCount: inputTriangles.length / FPT,
-				treeletStats: builder.splitStats
+				splitStats: builder.splitStats
 			}, transferables );
 
 		} else {
@@ -264,7 +251,7 @@ function handleFullBuild( data ) {
 				triangles: reordered,
 				originalToBvh,
 				triangleCount,
-				treeletStats: builder.splitStats
+				splitStats: builder.splitStats
 			}, transferables );
 
 		}

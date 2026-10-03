@@ -1,28 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
 
-vi.mock( '@/core/Processor/TreeletOptimizer.js', () => ( {
-	TreeletOptimizer: class {
-
-		constructor() {
-
-			this.stats = { treeletsProcessed: 0, treeletsImproved: 0, totalSAHImprovement: 0, averageSAHImprovement: 0, optimizationTime: 0 };
-
-		}
-
-		setTreeletSize() {}
-		setMinImprovement() {}
-		setMaxTreelets() {}
-		optimizeBVH() {}
-		getStatistics() {
-
-			return this.stats;
-
-		}
-
-	}
-} ) );
-
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
@@ -78,7 +56,6 @@ describe( 'BVHBuilder', () => {
 
 		builder = new BVHBuilder();
 		// Disable optimizations that are too complex for unit tests
-		builder.enableTreeletOptimization = false;
 		builder.enableReinsertionOptimization = false;
 		builder.useMortonCodes = false;
 
@@ -327,37 +304,6 @@ describe( 'BVHBuilder', () => {
 
 		} );
 
-		describe( 'setTreeletConfig', () => {
-
-			it( 'clamps size to [3, 12]', () => {
-
-				builder.setTreeletConfig( { size: 1 } );
-				expect( builder.treeletSize ).toBe( 3 );
-
-				builder.setTreeletConfig( { size: 50 } );
-				expect( builder.treeletSize ).toBe( 12 );
-
-			} );
-
-			it( 'clamps passes to [1, 3]', () => {
-
-				builder.setTreeletConfig( { passes: 0 } );
-				expect( builder.treeletOptimizationPasses ).toBe( 1 );
-
-				builder.setTreeletConfig( { passes: 10 } );
-				expect( builder.treeletOptimizationPasses ).toBe( 3 );
-
-			} );
-
-			it( 'clamps minImprovement to at least 0.001', () => {
-
-				builder.setTreeletConfig( { minImprovement: 0.0001 } );
-				expect( builder.treeletMinImprovement ).toBe( 0.001 );
-
-			} );
-
-		} );
-
 		describe( 'setReinsertionConfig', () => {
 
 			it( 'clamps batchSizeRatio to [0.005, 0.1]', () => {
@@ -377,19 +323,6 @@ describe( 'BVHBuilder', () => {
 
 				builder.setReinsertionConfig( { maxIterations: 20 } );
 				expect( builder.reinsertionMaxIterations ).toBe( 5 );
-
-			} );
-
-		} );
-
-		describe( 'disableTreeletOptimization', () => {
-
-			it( 'sets enableTreeletOptimization to false', () => {
-
-				const b = new BVHBuilder();
-				b.enableTreeletOptimization = true; // default is false
-				b.disableTreeletOptimization();
-				expect( b.enableTreeletOptimization ).toBe( false );
 
 			} );
 

@@ -219,7 +219,6 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 			( c ) => globalThis.__bench.setSceneConfig( c ), config
 		),
 		rebuildKernels: () => page.evaluate( () => globalThis.__bench.rebuildKernels() ),
-		meshStats: () => page.evaluate( () => globalThis.__bench.meshStats() ),
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),

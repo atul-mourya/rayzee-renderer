@@ -1,22 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BVH_LEAF_MARKERS, BVH_FOLDED_LEAF_MAX } from '@/core/EngineDefaults.js';
 
-vi.mock( '@/core/Processor/TreeletOptimizer.js', () => ( {
-	TreeletOptimizer: class {
-
-		setTreeletSize() {}
-		setMinImprovement() {}
-		setMaxTreelets() {}
-		optimizeBVH() {}
-		getStatistics() {
-
-			return {};
-
-		}
-
-	}
-} ) );
-
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 

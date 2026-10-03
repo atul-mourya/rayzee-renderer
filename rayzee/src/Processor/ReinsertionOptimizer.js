@@ -11,7 +11,7 @@
  *   3. Sort reinsertions by area improvement, apply non-conflicting ones greedily.
  *   4. Repeat for a configurable number of iterations.
  *
- * Typically yields 10-20% SAH cost reduction on top of treelet optimization.
+ * On this binned-SAH build it buys ~0.04 % tree SAH (3.5M triangles, 2026-08) for ~430 ms of worker time.
  */
 export class ReinsertionOptimizer {
 
@@ -52,7 +52,7 @@ export class ReinsertionOptimizer {
 
 	}
 
-	// --- Surface area (half SA, consistent with TreeletOptimizer) ---
+	// --- Surface area (half SA) ---
 
 	surfaceArea( node ) {
 

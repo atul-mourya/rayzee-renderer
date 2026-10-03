@@ -1,4 +1,3 @@
-import { TreeletOptimizer } from './TreeletOptimizer.js';
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
 // Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
 import { createLogger, fmt } from '../utils/Logger.js';
@@ -104,22 +103,10 @@ export class BVHBuilder {
 			totalSplitAttempts: 0,
 			mortonSortTime: 0,
 			totalBuildTime: 0,
-			treeletOptimizationTime: 0,
-			treeletsProcessed: 0,
-			treeletsImproved: 0,
-			averageSAHImprovement: 0,
 			reinsertionOptimizationTime: 0,
 			reinsertionsApplied: 0,
 			reinsertionIterations: 0
 		};
-
-		// Off: repairs LBVH trees, so on this binned-SAH build it buys 0.005% tree SAH for 72%
-		// of build time.
-		this.enableTreeletOptimization = false;
-		this.treeletSize = 5;
-		this.treeletOptimizationPasses = 1;
-		this.treeletMinImprovement = 0.02;
-		this.treeletComplexityThreshold = 50000;
 
 		// Reinsertion optimization configuration
 		this.enableReinsertionOptimization = true;
@@ -198,22 +185,6 @@ export class BVHBuilder {
 
 		if ( config.objectMedian !== undefined ) this.enableObjectMedianFallback = config.objectMedian;
 		if ( config.spatialMedian !== undefined ) this.enableSpatialMedianFallback = config.spatialMedian;
-
-	}
-
-	setTreeletConfig( config ) {
-
-		if ( config.enabled !== undefined ) this.enableTreeletOptimization = config.enabled;
-		if ( config.size !== undefined ) this.treeletSize = Math.max( 3, Math.min( 12, config.size ) );
-		if ( config.passes !== undefined ) this.treeletOptimizationPasses = Math.max( 1, Math.min( 3, config.passes ) );
-		if ( config.minImprovement !== undefined ) this.treeletMinImprovement = Math.max( 0.001, config.minImprovement );
-		if ( config.complexityThreshold !== undefined ) this.treeletComplexityThreshold = config.complexityThreshold;
-
-	}
-
-	disableTreeletOptimization() {
-
-		this.enableTreeletOptimization = false;
 
 	}
 
@@ -442,7 +413,7 @@ export class BVHBuilder {
 
 					worker.onmessage = ( e ) => {
 
-						const { bvhData, triangles: transferredTriangles, originalToBvh, error, progress, treeletStats } = e.data;
+						const { bvhData, triangles: transferredTriangles, originalToBvh, error, progress, splitStats } = e.data;
 
 						if ( error ) {
 
@@ -459,9 +430,9 @@ export class BVHBuilder {
 
 						}
 
-						if ( treeletStats ) {
+						if ( splitStats ) {
 
-							this.splitStats = treeletStats;
+							this.splitStats = splitStats;
 
 						}
 
@@ -493,12 +464,6 @@ export class BVHBuilder {
 						depth,
 						reportProgress: !! progressCallback,
 						sharedReorderBuffer,
-						treeletOptimization: {
-							enabled: this.enableTreeletOptimization,
-							size: this.treeletSize,
-							passes: this.treeletOptimizationPasses,
-							minImprovement: this.treeletMinImprovement
-						},
 						reinsertionOptimization: {
 							enabled: this.enableReinsertionOptimization,
 							batchSizeRatio: this.reinsertionBatchSizeRatio,
@@ -571,10 +536,6 @@ export class BVHBuilder {
 			totalSplitAttempts: 0,
 			mortonSortTime: 0,
 			totalBuildTime: 0,
-			treeletOptimizationTime: 0,
-			treeletsProcessed: 0,
-			treeletsImproved: 0,
-			averageSAHImprovement: 0,
 			reinsertionOptimizationTime: 0,
 			reinsertionsApplied: 0,
 			reinsertionIterations: 0,
@@ -608,58 +569,7 @@ export class BVHBuilder {
 		const root = this.buildNodeRecursive( 0, n, depth, progressCallback );
 		this.splitStats.sahBuildTime = performance.now() - sahStart;
 
-		// Phase 4: Treelet optimization
-		if ( this.enableTreeletOptimization && this.totalTriangles > 1000 ) {
-
-			const isLargeScene = this.totalTriangles > this.treeletComplexityThreshold;
-			const adaptiveTreeletSize = isLargeScene ? 3 : this.treeletSize;
-
-			const optimizer = new TreeletOptimizer( this.traversalCost, this.intersectionCost );
-			optimizer.setTreeletSize( adaptiveTreeletSize );
-			optimizer.setMinImprovement( this.treeletMinImprovement );
-
-			const optimizationStartTime = performance.now();
-
-			for ( let pass = 0; pass < this.treeletOptimizationPasses; pass ++ ) {
-
-				const passCallback = progressCallback ? ( status ) => {
-
-					progressCallback( `Treelet optimization pass ${pass + 1}/${this.treeletOptimizationPasses}: ${status}` );
-
-				} : null;
-
-				try {
-
-					optimizer.optimizeBVH( root, passCallback );
-
-				} catch ( error ) {
-
-					log.error( `treelet optimizer failed in pass ${pass + 1}:`, error );
-					break;
-
-				}
-
-				// optimizeBVH resets stats internally, so afterStats reflects this pass only
-				const afterStats = optimizer.getStatistics();
-				const passTime = performance.now() - optimizationStartTime;
-				if ( ( afterStats.treeletsImproved === 0 && pass > 0 ) || passTime > 15000 ) {
-
-					break;
-
-				}
-
-			}
-
-			const treeletTime = performance.now() - optimizationStartTime;
-			this.splitStats.treeletOptimizationTime = treeletTime;
-			const treeletStats = optimizer.getStatistics();
-			this.splitStats.treeletsProcessed = treeletStats.treeletsProcessed;
-			this.splitStats.treeletsImproved = treeletStats.treeletsImproved;
-			this.splitStats.averageSAHImprovement = treeletStats.averageSAHImprovement;
-
-		}
-
-		// Phase 4b: Reinsertion optimization (Meister & Bittner)
+		// Phase 4: Reinsertion optimization (Meister & Bittner)
 		if ( this.enableReinsertionOptimization && this.totalTriangles > 1000 ) {
 
 			const reinsertionOptimizer = new ReinsertionOptimizer( this.traversalCost, this.intersectionCost );
@@ -728,7 +638,6 @@ export class BVHBuilder {
 		log.debug(
 			`${fmt.n( n )} tris → ${fmt.n( this.totalNodes )} nodes in ${fmt.ms( total )}` +
 			` | SAH ${s.sahSplits} objMed ${s.objectMedianSplits} spatMed ${s.spatialMedianSplits} failed ${s.failedSplits}` +
-			( s.treeletsProcessed ? ` | treelets ${s.treeletsImproved}/${s.treeletsProcessed} improved` : '' ) +
 			( s.reinsertionsApplied ? ` | reinsertions ${s.reinsertionsApplied}` : '' )
 		);
 
