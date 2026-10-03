@@ -21,37 +21,33 @@
 
 ### Known
 
-- [ ] **Default path tracer loses most light from a two-sided lamp seen from behind** — `veach-bidir.glb`
-  (Blender export, every material `doubleSided`) reads **−83 %** against the bidirectional integrator, with the
-  firefly clamp off; path tracing with emissive NEE off and BDPT's camera-hits-alone both agree with BDPT
-  (−2.3 % / −1.8 %). NEE samples only an emitter's winding front (`sampleLightBVHTriangle`: `emissiveFacing > 0`),
-  but the emissive-hit MIS in ShadeKernel's unidirectional branch takes `calculateLightBVHPdf` /
-  `calculateEmissiveLightPdf` with no side test, and `max( cosLight, 0.001 )` makes a back hit's NEE pdf huge —
-  so its weight is ≈ 0 and neither strategy counts that light. Fix: NEE pdf 0 in the hit MIS for a side NEE
-  never samples (or let NEE sample the facing side of a DoubleSide emitter). It brightens default renders of
-  such scenes, so it needs a decision on the release type before it ships.
-- [ ] **The environment sampler reports a density it does not draw** — `sampleEquirectProbability` interpolates
-  an inverted CDF table (and its conditional across rows) but returns the pdf of the texel it lands on. On
-  Poly Haven's 1K `kloofendal_48d_partly_cloudy_puresky`, NEE alone reads ~4 % bright for upward surfaces and
-  59 % dark from below; on a sky with a small sun, a third of its draws land where its own pdf is 0. A real
-  render: a sunlit courtyard's sky light +0.26 % (z 14) against BSDF sampling alone, the HDRI courtyard −0.8 %
-  against an exact sampler. The bidirectional integrator's exact table (`EnvironmentExactTable.js`) is the
-  fix; adopting it moves default pixels.
-- [ ] **NEE at the last bounce is weighted for a BSDF partner that is never traced** — the path tracer stops at
-  `maxBounces` without the continuation, so the MIS'd environment and emitter NEE there lose the BSDF share of
-  the longest paths (the BSDF-hit area term is evaluated in place and is fine). A floor under a uniform colour
-  sky at 0 bounces reads −79 % (the compensated sky table gives NEE no chance near the zenith, which BSDF
-  sampling was to cover); a sky-lit room at 4 bounces −0.27 % (z −12). Bidirectional takes one more segment
-  (`EMISSION_ONLY`); the path tracer could weigh last-vertex NEE at 1. Moves default pixels.
-- [ ] **IES profiles are read over the wrong angles** — `resampleIESToGrid` spans the file's own range
-  (often 0–90° vertically, 0–90° or 0–180° around), but `sampleIESProfile` maps the texture as 0–180° and
-  0–360°: a downlight's beam comes out about twice as wide and lights what is behind it. Moves default pixels.
-- [ ] `sampleEquirectProbability` divides by `envTotalSum` without a zero check (NaN when it is 0, e.g. a
-  host zeroing it to switch environment NEE off).
-- [ ] **Very large triangles read dark in bands** — a 400 × 400 floor made of 2 triangles under a lamp, against
-  the closed-form answer: camera-side estimators (default PT, NEE, BSDF hits) read 1.3 % and 4–5 % dark in sharp
-  bands; an 8-unit floor or the same floor split 64 × 64 is exact. Rays leaving the big triangle re-hit it
-  (intersection precision vs `offsetRayOrigin`'s 1e-5). Changes default pixels when fixed.
+- [x] **Default path tracer lost most light from a two-sided lamp seen from behind** (fixed 2026-10-03) — NEE
+  now draws a triangle on every side it emits from and weighs by the facet's cosine; the hit-side pdfs return 0
+  for a side NEE cannot draw. `veach-bidir.glb` (was −83 %): +1.1 % against camera hits alone, −0.5 % against
+  bidirectional (both z ≈ 1). The emitter-hit side test uses the winding normal: the interpolated one turned away
+  near a coarse sphere's silhouette and dropped light (12-segment bulbs: PT +0.24 % over camera hits, now
+  +0.002 %). Residual: a 32-segment sphere still reads +0.035 % (z 11) — suspect the solid angle of edge-on
+  triangles in `useSphericalSampling`'s branch.
+- [x] **The environment sampler reported a density it did not draw** (fixed 2026-10-03) — the path tracer now
+  samples the exact table (`EnvironmentExactTable.js`, guided search) and weighs sky hits by it; the old inverted
+  tables are gone, and with them the unguarded `envTotalSum` division. Each texel weighs as the bilinear filter's
+  mean over it (it was the brightest neighbour, which spread a sun three texels wide). Sunlit 1K-HDRI courtyard
+  against bidirectional: −0.18 % overall / −1.3 % in shadow before, −0.02 % / −0.3 % after (with the last-bounce
+  fix). Noise: a smooth sky is slightly less noisy; an HDRI's sun is now sampled over its area (soft, correct)
+  rather than at a texel centre, +8–19 % RMSE in the sunlit courtyard at equal samples.
+- [x] **NEE at the last bounce was weighted for a BSDF partner never traced** (fixed 2026-10-03) — every camera
+  path now takes one segment past its last bounce (`RAY_FLAG.EMISSION_ONLY`, as bidirectional did), so the pair
+  keeps its MIS weights. Weighing last-vertex NEE at 1 was tried first: right energy, +38 % RMSE in a gradient
+  sky's shadows. Furnaces: diffuse 0.99985 → 0.99999, dielectrics 0.9991 → 0.9997, clear coat 0.99974 → 1.00000.
+  Cost: the extra segment, +3–7 % GPU time a sample on the bench scenes measured (with the sampler change).
+- [x] **IES profiles were read over the wrong angles** (fixed 2026-10-03) — `resampleIESToGrid` fills the whole
+  0–180° × 0–360° grid the shader reads: dark outside the file's vertical range, horizontal symmetries (0–90,
+  0–180, 90–270) mirrored round. Type A/B profiles still stretch as before.
+- [x] **Very large triangles read dark in bands** (fixed 2026-10-03) — two causes. The hit point
+  origin + t · direction sat off a large triangle by t's error (it grows with the triangle's size), so Extend stores
+  a correction to the triangle's plane (`HitFacet.js`, HIT.RNG.w) and Shade applies it; and the triangle test
+  rejects t within its own rounding error (pbrt-v4's bound). 400-unit floor of 2 triangles vs split 64 × 64:
+  −0.3 % overall, −4.2 % in the worst band before; every band 1.0000 after. Extend time unchanged.
 - [ ] **What a Blender glTF export cannot carry**, measured against Cycles renders of the same scene
   (scenes + probes in this session's scratchpad). The engine side is now at parity: point, spot and
   sun all match Cycles to render noise, and three.js' own glTF exporter writes `intensity` straight
@@ -124,7 +120,8 @@
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky
 - [ ] Volumetric rendering
-- [ ] Caustic support - Photon mapping &/ BDPT (bidirectional covers every light; photon mapping would add the specular–diffuse–specular paths no BDPT strategy samples from a point, spot or sharp directional lamp)
+- [x] Caustic support - Photon mapping &/ BDPT — bidirectional covers every light; vertex merging (`integrator: 'vcm'`, 2026-10-03) adds the specular–diffuse–specular paths no connection reaches (a point lamp's caustic seen in a mirror or through glass)
+- [x] Guide bidirectional sky / sun light paths through windows (2026-10-03, `TSL/LightGuide.js`) — learned from camera escapes, no scene knowledge; classroom equal-time noise −19 % mid tones, +14 % frame time
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
@@ -197,7 +194,7 @@
 - [x] Bindless texture - True hardware-level bindless isn't available in WebGPU
 - [x] irradiance probes,
 - [ ] SPOM (Silhouette Parallax Occlusion Mapping) ->  more suited for rasterization
-- [ ] Photon mapping
+- [x] Photon mapping (vertex merging, `integrator: 'vcm'`)
 - [x] Bidirectional path tracing support — `integrator: 'bidirectional'` (every light: emitters, lamps, the sun, the environment; see CLAUDE.md)
 - [ ] Experiment PLOC for maximum BVH performance scenarios
 - [x] tiered-material-buffer-access generalization - already at its practical optimum
@@ -240,7 +237,7 @@
 ---
 
 ## References
-
+- Path Tracing a Trillion Triangles <https://community.intel.com/t5/Blogs/Tech-Innovation/Client/Path-Tracing-a-Trillion-Triangles/post/1687563>
 - WebGPU Graphics Pipeline: <https://shi-yan.github.io/webgpuunleashed/Introduction/the_gpu_pipeline.html>
 - See [ROADMAP.md] for long-term vision and strategic planning
 - See [CONTRIBUTING.md] for development guidelines

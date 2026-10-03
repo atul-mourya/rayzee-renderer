@@ -81,7 +81,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `MaterialTransmission.js` | `sampleMicrofacetTransmission()`, `handleMaterialTransparency()`, `handleTransmission()`, medium structs | Refraction, dispersion, Beer–Lambert absorption, medium stack |
 | `Subsurface.js` | `handleSubsurfaceEntry()`, `sampleChromaticCollision()`, `sampleHenyeyGreenstein()` | Random-walk subsurface scattering (reuses the medium stack) |
 | `Clearcoat.js` | `sampleClearcoat()`, `ClearcoatResult` | Clearcoat BRDF layer |
-| `Environment.js` | `sampleEnvironment()`, `sampleEquirect()`, `sampleEquirectProbability()`, `equirectDirectionToUv()`, `equirectUvToDirection()`, `getGroundProjectedDirection()` | HDR sampling, importance sampling, direction↔UV, ground projection |
+| `Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()`, `equirectDirectionToUv()`, `equirectUvToDirection()`, `getGroundProjectedDirection()` | HDR sampling, importance sampling, direction↔UV, ground projection |
 | `Sun.js` | `sunRadianceToward()`, `sampleSunDisc()` | The physical sky's sun disc: limb darkening, cut by the sky's horizon, uniform sampling of the cone |
 | `EmissiveSampling.js` | `sampleEmissiveTriangle()`, `calculateEmissiveTriangleContribution()`, `sampleSphericalTriangle()` | NEE from emissive triangles (uniform CDF path) |
 | `LightBVHSampling.js` | `sampleLightBVHTriangle()` | Stochastic light BVH traversal for emissive sampling |
@@ -142,7 +142,7 @@ Uniforms are owned by `UniformManager` and exposed on the stage; `PathTracer` wi
 2. **Frame & Control:** `frame`, `maxBounces`, `transmissiveBounces`, `maxSubsurfaceSteps`, `renderMode`.
 3. **Accumulation:** `enableAccumulation`, `accumulationAlpha`, `cameraIsMoving`, `hasPreviousAccumulated` (+ prev-frame MRT texture nodes).
 4. **Sampling:** `samplingTechnique` (0=PCG, 1=Halton, 2=Sobol, the default).
-5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum`, `envResolution`, `envCompensationDelta`, the physical sky's sun (`hasSun`, `sunDirection`, `sunRadiance`, `sunParams` = cos half-angle, solid angle, 1/sin², horizon dip), `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
+5. **Environment:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum` (> 0 while a sampling table is bound), `envResolution`, the physical sky's sun (`hasSun`, `sunDirection`, `sunRadiance`, `sunParams` = cos half-angle, solid angle, 1/sin², horizon dip), `backgroundIntensity`, `showBackground`, `transparentBackground`, `fireflyThreshold`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`).
 6. **Lighting:** `numDirectionalLights`, `numPointLights`, `numSpotLights`, `numAreaLights` + the matching light storage buffer nodes; `globalIlluminationIntensity`.
 7. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`.
 8. **Geometry & Material Data:** `triangleStorageNode` (a `{ geo, shade }` pair, see below), `bvhStorageNode`, `materialStorageNode`, `lightStorageNode`; `totalTriangleCount`. (The environment CDF is an R32F **texture** node, not a storage buffer — see Environment Importance Sampling.)
@@ -350,16 +350,16 @@ Material-only multi-strategy MIS (specular, diffuse, transmission, clearcoat —
 ## Environment Importance Sampling (`Environment.js`)
 
 ### CDF-Based Sampling
-2D sampling via inversion of marginal (row) and conditional (column) CDFs stored in the `envCDFTexture` R32F texture (`sampleEquirect`, `sampleEquirectProbability`).
+2D sampling by inverting the piecewise-constant table in the `envCDFTexture` R32F texture (`Processor/EnvironmentExactTable.js`): a guided search over the row sums, then the chosen row's, drawn exactly at the density `environmentPdfExact` reads back from the same sums (`sampleEnvironmentExact`).
 
 ### Direction Conversion
 `equirectDirectionToUv` / `equirectUvToDirection` map between spherical and UV space applying `environmentMatrix` (HDRI rotation).
 
 ### Sampling & PDF
-`sampleEnvironment` evaluates radiance for arbitrary directions; the importance-sampling probability is normalized by `envTotalSum` with the spherical Jacobian applied, clamped to prevent extremes. `getGroundProjectedDirection` bends the primary-ray background lookup onto a virtual ground plane when ground projection is enabled.
+`sampleEnvironment` evaluates radiance for arbitrary directions; a cell's density is its share of the table over its uv area, divided by 2π² sin θ for solid angle. `envTotalSum` > 0 says a table is bound. `getGroundProjectedDirection` bends the primary-ray background lookup onto a virtual ground plane when ground projection is enabled.
 
 ### The physical sky
-The sky texture and its CDF texture are both written on the GPU (`Processor/PhysicalSky.js`; the table by `TSL/EnvironmentCDF.js`, the twin of `EquirectHDRInfo.computeCDF` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` and `envCompensationDelta` arrive a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
+The sky texture and its CDF texture are both written on the GPU (`Processor/PhysicalSky.js`; the table by `TSL/EnvironmentCDF.js`, the twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
 
 ---
 

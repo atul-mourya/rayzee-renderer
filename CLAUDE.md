@@ -118,7 +118,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.albedoMaps`, `stage.environment.envParams`):
 - **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)`, `setBool()`. Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
 - **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), feature scanning (`rescanMaterialFeatures()`), texture array management. Owns `materialStorageAttr` and `materialStorageNode`.
-- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F CDF texture node; the rows past the map's height hold the bidirectional integrator's exact table, `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
+- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F, the environment's sampling table as `packExactTable` lays it out; `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
@@ -450,7 +450,11 @@ the strings, so never rename or repurpose one.
   distance: the old 1 mm let rays out of sub-millimetre grooves, and a 14 cm camera read up to 14 %
   bright in its crevices against Cycles — the same model scaled 100× matched. A shadow ray towards a
   sampled light point (area lights and emissive NEE alike) is re-aimed from that origin and stops
-  `SHADOW_END` (1 − 1e-4) of the way, never a fixed distance short.
+  `SHADOW_END` (1 − 1e-4) of the way, never a fixed distance short. ⚠️ The hit point Shade rebuilds,
+  origin + t · direction, sits off a large triangle by t's own error, which grows with the triangle's size:
+  points on a 400-unit two-triangle floor fell under it and read up to 4 % dark in bands. Extend stores the
+  correction to the triangle's plane in `HIT.RNG.w` (`HitFacet.js`, `writeHitSurfaceOffset`) and Shade adds it;
+  the triangle test also rejects t within its rounding error (pbrt-v4's bound — free, Extend is memory-bound).
 - **Shadow terminator** — Cycles' Shadow Terminator → Geometry Offset (`TSL/ShadowTerminator.js`,
   setting `shadowTerminatorOffset`, 0.1 as in Blender, 0 off), ported from Cycles 5.1's
   `kernel/light/sample.h`: near the terminator, light and environment shadow rays from a smooth-shaded
@@ -720,7 +724,7 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   latitude) with north along −Z; presets aim for their sun *height* on the chosen date
   (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
-### Bidirectional integrator (`integrator: 'bidirectional'`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`)
+### Bidirectional integrator (`integrator: 'bidirectional'` | `'vcm'`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`, `TSL/MergeKernel.js`)
 Opt-in (`settings.set( 'integrator', 'bidirectional' )`; the app's Path Tracer tab → Light Transport). Light
 subpaths start on **every light**: emissive triangles, the physical sky's sun, the environment map (HDRI,
 physical-sky texture, colour sky) and the four lamp types (rect/disk area, point, spot, directional). In this
@@ -739,8 +743,9 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   budget, weighted by that count — Davidovič et al. 2014's light vertex cache), and light tracing to the
   pinhole (LightSplatKernel). Light tracing needs a pinhole — perspective with DOF off — and otherwise the
   camera's dVCM starts at 0, which removes it from every weight. A camera path at the bounce limit takes one
-  more segment flagged `RAY_FLAG.EMISSION_ONLY`, so the camera-hits-light strategy reaches the longest
-  paths too and the weights still sum to one there.
+  more segment flagged `RAY_FLAG.EMISSION_ONLY` (in either integrator: it is the BSDF-hit partner of the last
+  vertex's NEE), so the camera-hits-light strategy reaches the longest paths too and the weights still sum to
+  one there.
 - **The source table** (`sourceCdf`, `PathTracer._updateSourceTable`, rebuilt each frame): a running sum over
   the sun, the emitters, the environment, then each lamp list at `sourceOffsets[ LIGHT_TYPE ]`, by the
   luminous flux each sends into the scene — π·boost·power for emitters; for the sun, a directional light and
@@ -756,6 +761,17 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   their flux: most of what crosses the disc lands where their NEE does better, and on the 1.9M-triangle
   interior (HDRI + six rect lamps) the sky's 89 % of light paths had made light tracing the noisiest strategy.
   Alone they still get every light path, so their caustics keep them.
+- **Light guide** (`TSL/LightGuide.js`, `pt.setLightGuiding( bool )`, default on): where on that disc a light
+  path starts is learned from camera paths. Each escape at p toward ω counts one in p's cell of the disc
+  facing ω (64² cells, 16 octahedral direction bins, in the counter buffer at `COUNTER.GUIDE` — Shade has no
+  binding to spare); a kernel folds the counts into running sums at frames 1, 2, 4 … 32, then every 32nd,
+  copied into a 4097 × 16 R32F texture. A start is drawn from a learned cell with chance 0.8, uniformly over
+  the disc otherwise (`GUIDE_UNIFORM_SHARE`), and every density — light paths, the camera side's sun /
+  environment / directional weights — reads `guidedDiscPdf`, so it stays unbiased whatever was learned. A
+  reset clears the counts. `tests/gpu/lightGuide.test.js` holds the sampler to its density. Classroom
+  (sky + sun through windows) at 256², equal time against unguided: noise −19 % in mid tones, −13 % bright,
+  −3 % dark, at +14 % frame time; now below the path tracer in mid tones. Correct to −0.23 % against it.
+  An interior lit mainly by lamps (Livspace) is unchanged.
 - **Lamps** (`TSL/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
   same dimensions — less its bounce-depth factor, which a light path cannot know. A lamp's light path
   multiplies that pick into dVCM at its first opaque vertex, with that vertex's normal and material
@@ -767,19 +783,20 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   refraction, is tested against them with a glass-blocking shadow ray (`bidirectionalAreaHit`), where the
   path tracer's own BSDF-hit term follows reflection only.
 - **Environment** (`Processor/EnvironmentExactTable.js`; `sampleEnvironmentExact` / `environmentPdfExact`,
-  `TSL/Environment.js`): NEE, light paths and the miss weight share an exact table — each cell drawn as
-  often as the density it reports, both read from the same running sums — in the CDF texture's rows past the
-  map's height. Cells are capped at 1024 wide; each texel weighs as its brightest neighbour (filtering
-  spreads a bright texel's light into the next ones: NEE alone on a painted sun went 100× quieter), less the
-  mean, as the path tracer's table is MIS-compensated (Karlík et al. 2019) — a room lit through a window
-  went from 1.8× to 1.5× path tracing's noise with it; every cell keeps 1e-4 of the mean, so the sphere stays
-  covered (NEE or light tracing alone then misses little but is noisy where compensation cut). Built with the CDF for HDRIs
-  and colour skies (`CDFWorker`, cached as `cdf:3`), on the GPU for the physical sky (`EnvironmentCDF.js`);
-  `bidirectional.envTable` says it is there. ⚠️ The path tracer's `sampleEquirectProbability` interpolates
-  an inverted table and reports the texel's density, not its own: on a 1K HDRI with a sun, NEE alone read
-  4 % bright for upward surfaces and 59 % dark from below, and its MIS compensation gives a colour sky's
-  poles (beyond ±50°) no chance at all. `tests/gpu/environmentExact.test.js` holds the exact one to its
-  density cell by cell.
+  `TSL/Environment.js`): both integrators' NEE, light paths and the miss weight share one table — each cell
+  drawn as often as the density it reports, both read from the same running sums. Cells are capped at 1024
+  wide; each texel weighs as the bilinear filter's mean over it (1/8, 6/8, 1/8 along each axis: a cell has
+  weight wherever the filtered map has light, a sharp texel's neighbours only their share — the brightest
+  neighbour it replaced spread a sun three texels wide), less the mean (MIS compensation, Karlík et al. 2019);
+  every cell keeps 1e-4 of the mean, so the sphere stays covered. A guide per running sum (Chen & Hsu's
+  cutpoints) starts each search within a cell or two of its answer. Layout (`packExactTable`), ( w + 1 ) × 2h:
+  guides in rows [0, h), running sums in [h, 2h), each set's marginal in column w. Built in `CDFWorker` for
+  HDRIs and colour skies (cached as `cdf:4`), on the GPU for the physical sky (`EnvironmentCDF.js`, its twin
+  without the filter); `envTotalSum` > 0 (the path tracer) and `bidirectional.envTable` say it is there.
+  It replaced an interpolated inverted table that reported the texel's density, not its own (on a 1K HDRI with
+  a sun NEE alone read 4 % bright for upward surfaces and 59 % dark from below). ⚠️ Shade is near a register
+  limit: removing the search loop made it *slower*. Measure Shade changes in place (`bench:kernels`).
+  `tests/gpu/environmentExact.test.js` holds the table to its density cell by cell.
 - **MIS:** Georgiev 2012's dVCM/dVC recursion, power heuristic, densities from `calculateMaterialPDF` both
   ways round everywhere (`misOnHit` / `misOnScatter` / `misOnSpecular` / `misPartial`). Russian roulette and
   the transparency-layer picks are left out of every density alike, so the weights still sum to one.
@@ -812,14 +829,19 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - ⚠️ **Glass blocks the bidirectional shadow rays** (`traceShadowRayRefractiveOpaque`), every light's:
   light through it travels the light subpaths. The path tracer's shadow rays pass straight through glass,
   which counts that light a second time, so in a glass scene the two integrators legitimately differ — the
-  unbiased reference there is the path tracer with emissive NEE off (and, for the sky, its table's weights
-  zeroed: an `envCompensationDelta` of 1e30).
+  unbiased reference there is the path tracer with emissive NEE off (and, for the sky, `envTotalSum` set to 0,
+  which turns its NEE and the miss weight off).
 - ⚠️ **A light subpath carries importance:** Shade undoes refraction's (n1/n2)², evaluates the BSDF with V
   and L swapped (`evaluateMaterialResponse` is not reciprocal — energy compensation keys on NoV), and
   applies the shading-normal correction (Veach 5.3.2, `lightEndCosine`) to light-side cosines.
-- **Emitter sides:** emission follows the triangle's side flag (half each way for DoubleSide). NEE samples
-  only a triangle's winding front, so a light path that left by the back gets no NEE density, and the
-  bidirectional NEE drops a side the emitter does not emit from.
+- **Emitter sides:** emission follows the triangle's side flag (half each way for DoubleSide). NEE draws a
+  triangle on every side it emits from (`sideAccepts` on the winding normal, the facet's cosine for the
+  density) and the hit-side pdfs return 0 for a side it cannot draw; front-only NEE had cost the path tracer
+  83 % of a two-sided lamp seen from behind. ⚠️ The emitter-hit side test uses the winding normal
+  (`windingNormal`, `HitFacet.js`): the interpolated one turned away near a coarse sphere's silhouette.
+  ⚠️ Every side test takes a **unit** normal: `sideAccepts` has a ±1e-4 threshold, and a raw cross product of a
+  small triangle is under it — a 3 cm bulb's NEE density read 0 on the light side and bidirectional counted its
+  light twice (2.0× on the floor). `tests/gpu/emitterSides.test.js` holds it at 1 and 1e-3 units.
 - **Verification** (`pt.setBidirectionalStrategy( 'hit' | 'nee' | 'connect' | 'lightTrace', { alone } )`
   keeps one strategy, MIS-weighted or alone at full weight). A lamp over a matte floor has a closed form
   (Lambert's polygon formula): every strategy alone and the combination land within noise of it (all
@@ -850,10 +872,41 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   factor (×140). `lamps-bidirectional` has a
   rough metal ball because only there does a rect light's continuation hit carry weight: in an all-matte
   room both of its terms could be dropped unnoticed.
+- **Vertex merging** (`integrator: 'vcm'`, `TSL/MergeKernel.js`; Georgiev et al. 2012): bidirectional plus
+  photon merging, the one strategy for light no connection reaches — a point lamp's caustic seen in a mirror or
+  through glass (specular–diffuse–specular). Each camera vertex Shade leaves pending (now also at the bounce limit)
+  gathers this frame's light vertices within its radius; a merged path of k scattering vertices needs
+  cameraDepth + l ≤ maxBounces + 1. MIS: Georgiev's dVM is dVC / η² at the merge vertex (η = πr² · light paths),
+  so nothing new is stored: `misOnScatter` adds η² of the vertex it leaves to dVC, `misPartial` η² of the vertex a
+  sum ends at, and a merge weighs both sides with `misMergePartial` and 1 / η². `bidirectionalMis.test.js` checks a
+  two-bounce path's six strategies with a different η at each vertex.
+  - **The radius is a pixel's footprint where it gathers** (`mergeRadiusAt`: `mergeConst` + `mergeSlope` ·
+    distance from the camera, ≥ `mergeMin`; constant for orthographic), default 1 px (`pt.setMergeRadius( px )`),
+    shrinking as n^−⅛ (α = 0.75). A function of position alone, so both subpaths agree on η anywhere. ⚠️ A fraction
+    of the scene's radius (SmallVCM's choice) made the classroom's 30 cm (its bounds include the outdoors): 5× the
+    frame time and 92 % of the image merged. And `sceneRadius` was only measured with a light at infinity.
+  - **Trust** (`pt.setMergeTrust( t )`, default 0.25): the weights take η × t. Any density the strategies agree on
+    still sums to one; light only merging reaches keeps weight 1 (the mirror caustic is identical at 1 and 0.25),
+    and light other strategies reach goes back to them unblurred. Merging's bias is boundary bias (a sphere past a
+    crease or a small object): Livspace read +6.1 % at 2 px, +0.69 % at 1 px, +0.17 % at 1 px with trust 0.25; the
+    classroom +0.95 / +0.28 / +0.08 %. ⚠️ Rejecting light vertices of a differently facing surface (a corner's
+    other wall) made it −3 % instead: their light stands in for the sphere past the crease.
+  - **Grid:** light vertices are filed by their radius in shells (ratio 1.25; a sphere reaches at most two), each a
+    hash grid of cells 2 · its largest radius / (1 − slope) wide — one list a cell through the cached record's spare
+    lane (`next`, record quad 3 .w; `extra` moved to the material word's top 8 bits). `mergeClear` + `mergeInsert`
+    after the light pass; `merge` after `connect` walks 2³ cells per shell, counting a light vertex only in its own
+    shell and cell (a hash collision would count it twice), at most 1024 a cell. Heads: a power of two ≥ the cache
+    slots (16 MB at 4M).
+  - **Measured** (Apple M-series): frame time over bidirectional +9 % classroom and +28 % Livspace (256², 1 px),
+    +5 % glass of water (512², 2 px). The SDS test (`sds-mirror` / `sds-mirror-bulb` in the test-scene manifest): with a 3 cm
+    bulb a camera path can hit, bidirectional with the firefly limit off reaches the mirror caustic at 4096 spp
+    (0.2329) where merging does at 512 (0.2301, overall −0.02 %); with the default limit bidirectional loses it
+    (0.07). Cornell box, merging alone against bidirectional: −0.14 % (z 1.3). Where other strategies already
+    work it costs more than it saves (Livspace and the classroom +7–8 % noise at equal time); it is for caustics
+    seen in mirrors and through glass. Bench: `mirror-caustic-vcm` (truth from itself).
 - **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
-  wavelength shared between the subpaths. Specular–diffuse–specular paths from a lamp no camera path can
-  hit (a point, spot or sharp directional lamp) have no strategy at all — such a lamp behind glass lights a
-  floor seen in a mirror only in the path tracer's straight-through approximation. Connections test the
+  wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
+  path can hit (a point, spot or sharp directional lamp) have no strategy at all — `'vcm'` covers them. Connections test the
   camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth
   meshes can differ at grazing directions.
 
@@ -962,6 +1015,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   shared by every shape naming it, so a merged shape frees it only as its last direct user
   (`_lastPlyUse`), never while a template or an unmerged shape holds it: Zero-Day names one file from
   up to 320 shapes, and freeing on the first merge failed the load with a detached ArrayBuffer.
+- **Lights.** `infinite` becomes the environment; a scene without one renders with the environment off
+  (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes
+  back with the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in
+  the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
+  photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
+  brought to luminance 1 as pbrt does. `.pfm` images load (`Processor/PBRT/PFM.js`).
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
