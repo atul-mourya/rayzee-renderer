@@ -100,7 +100,7 @@ export class EnvironmentManager {
 
 		/**
 		 * Optional callbacks set by the owning stage.
-		 * @type {{ onReset?: Function, onAutoExposureReset?: Function, getSceneTextureNodes?: Function }}
+		 * @type {{ onReset?: Function, onLightingChanged?: Function, getSceneTextureNodes?: Function }}
 		 */
 		this.callbacks = {};
 
@@ -146,7 +146,7 @@ export class EnvironmentManager {
 		if ( mode !== 'procedural' && prev === 'procedural' ) this._releaseSky();
 
 		this.markDirty();
-		this.callbacks.onAutoExposureReset?.();
+		this.callbacks.onLightingChanged?.();
 		this._notifyReset();
 
 	}

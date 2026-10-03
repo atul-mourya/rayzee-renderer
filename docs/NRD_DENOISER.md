@@ -78,7 +78,7 @@ interactive path pays nothing.
   texture and skips its dispatches. The filter hands the image back as it converges instead of
   blurring a clean render — the failure mode the denoise bench exists to catch — and the 64-spp
   rung measures exactly 1.000. While passing through, the geometry history and previous camera
-  freeze, so the stage marks them stale: a camera move is a *soft* reset (no `denoiser:reset`), and
+  freeze, so the stage marks them stale: a camera move is a *soft* reset (no `pipeline:historyReset`), and
   reprojecting a one-frame motion vector into a 60-frame-old G-buffer would otherwise keep whichever
   taps happened to pass the plane test.
 - **Lobe volume.** `NRD_MAX_PERCENT_OF_LOBE_VOLUME` is 0.75 in NRD, with a source comment that it
@@ -130,7 +130,7 @@ radius, anti-firefly, and a debug view selector. Any field in `NRD_DEFAULTS` can
 Debug views (`setNRDDebugMode`): 1 history length, 2 normalized hit distance, 3 roughness, 4 fast
 history, 5 disocclusion bits.
 
-`denoiser:reset` (emitted with `asvgf:reset` on every hard reset) drops the history; camera moves
+`pipeline:historyReset` (emitted on every hard reset) drops the history; camera moves
 are soft resets and are handled by the motion-vector reprojection.
 
 ## Validation

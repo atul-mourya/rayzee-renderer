@@ -4,15 +4,6 @@ import { NoBlending, NoToneMapping } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../TSL/Common.js';
 
-// In priority order: the first one published wins.
-const LIGHT_SOURCES = [
-	'oidn:output',
-	'edgeFiltering:output',
-	'bilateralFiltering:output',
-	'asvgf:output',
-	'nrd:output',
-	'pathtracer:color',
-];
 
 /**
  * Compositor — Terminal pipeline stage.
@@ -35,6 +26,10 @@ export class Compositor extends RenderStage {
 		} );
 
 		this.renderer = renderer;
+
+		// In priority order: the first one published wins. Whoever builds the pipeline names the
+		// processed pictures; the accumulation is the fallback that is always there.
+		this._lightSources = [ ...( options.displaySources ?? [] ), 'pathtracer:color' ];
 
 		// 1.0 = neutral; >1 boosts to compensate for ACES/AgX desaturation.
 		this.saturation = uniform( options.saturation ?? 1.0 );
@@ -93,7 +88,7 @@ export class Compositor extends RenderStage {
 	/** {@link resolveLightTexture} plus the context key it came from. */
 	resolveLightSource( context ) {
 
-		for ( const key of LIGHT_SOURCES ) {
+		for ( const key of this._lightSources ) {
 
 			const texture = context.getTexture( key );
 			if ( texture ) return { key, texture };

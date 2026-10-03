@@ -471,7 +471,7 @@ export class AutoExposure extends RenderStage {
 	setupEventListeners() {
 
 		this.on( 'pipeline:reset', () => this.reset() );
-		this.on( 'autoexposure:resetHistory', () => this.resetHistory() );
+		this.on( 'pipeline:lightingChanged', () => this.resetHistory() );
 
 		this.on( 'autoexposure:toggle', ( enabled ) => {
 

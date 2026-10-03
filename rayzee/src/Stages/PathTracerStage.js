@@ -53,8 +53,7 @@ const BVH_VEC4_PER_NODE = 4;
  * Events emitted:
  * - pathtracer:frameComplete - When a frame finishes rendering
  * - camera:moved - When camera position/orientation changes
- * - asvgf:reset - Request ASVGF to reset temporal data
- * - asvgf:updateParameters - Update ASVGF parameters
+ * - pipeline:historyReset - temporal history from before is not comparable (render mode change)
  *
  * Textures published to context:
  * - pathtracer:color - Main color output
@@ -542,7 +541,7 @@ export class PathTracerStage extends RenderStage {
 		this.performanceMonitor?.reset();
 
 		// lastRenderMode is deliberately NOT invalidated here — clearing it made
-		// manageASVGFForRenderMode see a phantom mode change 50 ms after every reset, wiping
+		// resetHistoryOnRenderModeChange see a phantom mode change 50 ms after every reset, wiping
 		// ASVGF's history. A real mode change is still caught by the renderMode comparison.
 		this.lastInteractionModeState = false;
 
@@ -1420,7 +1419,7 @@ export class PathTracerStage extends RenderStage {
 
 	// ===== ASVGF DENOISING MANAGEMENT =====
 
-	manageASVGFForRenderMode( renderMode ) {
+	resetHistoryOnRenderModeChange( renderMode ) {
 
 		if ( renderMode !== this.lastRenderMode ) {
 
@@ -1440,8 +1439,7 @@ export class PathTracerStage extends RenderStage {
 					// History from the previous mode is not comparable. temporalAlpha is NOT
 					// touched here — it is owned by ASVGF_QUALITY_PRESETS, and overwriting it
 					// with a hardcoded value meant `medium` and `high` never took effect.
-					this.emit( 'asvgf:reset' );
-					this.emit( 'denoiser:reset' );
+					this.emit( 'pipeline:historyReset' );
 
 				}
 

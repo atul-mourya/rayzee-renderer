@@ -657,12 +657,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( this.pipeline ) {
 
 			this.pipeline.reset();
-			if ( ! soft ) {
-
-				this.pipeline.eventBus.emit( 'asvgf:reset' );
-				this.pipeline.eventBus.emit( 'denoiser:reset' );
-
-			}
+			// History from before a hard restart is not comparable; a soft one keeps it.
+			if ( ! soft ) this.pipeline.eventBus.emit( 'pipeline:historyReset' );
 
 		}
 
@@ -916,7 +912,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			}
 
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
 			this.reset();
 			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, url } );
 
@@ -1014,7 +1010,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			}
 
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
 			this.reset();
 			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, filename: file.name } );
 
@@ -1139,7 +1135,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			this._modelReplaced();
 			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this._maybeSpill();
-			this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
 			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
 			// shader compilation come first), and a second of the previous model reads as a bug.
 			this._dropDisplay();
@@ -1526,7 +1522,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		await this.loadSceneData( { keepUserLights: true } ); // emits 'SceneRebuild'
 		this._maybeSpill();
 		this._sceneBoundsChanged();
-		this.pipeline?.eventBus.emit( 'autoexposure:resetHistory' );
+		this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
 		this.reset();
 		if ( eventPayload ) this.dispatchEvent( eventPayload );
 
@@ -3584,7 +3580,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		// Expose environment manager (lives on pathTracer stage)
 		this.environmentManager = this.stages.pathTracer.environment;
-		this.environmentManager.callbacks.onAutoExposureReset = () => this.pipeline.eventBus.emit( 'autoexposure:resetHistory' );
+		this.environmentManager.issues = this._issues;
+		this.environmentManager.callbacks.onLightingChanged = () => this.pipeline.eventBus.emit( 'pipeline:lightingChanged' );
 		// A whole-app reset, not the stage's: a sky bake lands after its input, often once the loop is idle.
 		this.environmentManager.callbacks.onReset = () => this.reset();
 
@@ -3656,6 +3653,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		this.stages.compositor = new Compositor( this.renderer, {
 			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,
 			pathTracer: this.stages.pathTracer,
+			displaySources: this._displaySources(),
 		} );
 
 	}
@@ -3715,6 +3713,13 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/** Stages run between the path tracer and the compositor, in pipeline order. */
 	_createExtraStages() {
+
+		return [];
+
+	}
+
+	/** Context keys of pictures the compositor shows instead of the accumulation, first published wins. */
+	_displaySources() {
 
 		return [];
 

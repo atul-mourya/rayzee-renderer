@@ -174,10 +174,9 @@ Event-driven communication between stages.
 'pathtracer:frameComplete'    // PathTracerStage — frame finished { frame, isComplete }
 'camera:moved'                // PathTracerStage — camera transform changed
 'pathtracer:viewpointChanged' // PathTracerStage — camera optimizer reset
-'asvgf:reset'                 // PathTracerStage / PathTracerApp — reset ASVGF history
-'denoiser:reset'              // PathTracerStage / PathTracerApp — drop any real-time denoiser history (NRD listens)
+'pipeline:historyReset'       // RayzeeRenderer / PathTracerStage / PathTracerApp — history from before is not comparable (ASVGF, NRD listen)
 'asvgf:updateParameters'      // PathTracerStage — push ASVGF params
-'autoexposure:resetHistory'   // PathTracerApp / EnvironmentManager — reset exposure history
+'pipeline:lightingChanged'    // RayzeeRenderer / EnvironmentManager — model or environment changed (AutoExposure listens)
 'autoexposure:updated'        // AutoExposure
 'motionvector:computed'       // MotionVector
 'frame:complete'              // RenderPipeline — after all stages run { frame }
@@ -193,8 +192,8 @@ Event-driven communication between stages.
 // PathTracer signals a finished frame
 this.emit('pathtracer:frameComplete', { frame: this.frameCount, isComplete: this.isComplete });
 
-// ASVGF listens for reset
-this.on('asvgf:reset', () => this.resetTemporalData());
+// ASVGF listens for the core's restart signal
+this.on('pipeline:historyReset', () => this.resetTemporalData());
 ```
 
 ---

@@ -465,7 +465,7 @@ export class PathTracer extends PathTracerStage {
 		}
 
 		this._handleResize();
-		this.manageASVGFForRenderMode( renderMode );
+		this.resetHistoryOnRenderModeChange( renderMode );
 
 		// Full-frame render is always a complete cycle (PER_CYCLE stages gate on this).
 		if ( context ) context.setState( 'tileRenderingComplete', true );

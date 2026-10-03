@@ -289,6 +289,12 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
+	_displaySources() {
+
+		return [ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ];
+
+	}
+
 	_settingsBindings() {
 
 		return {
@@ -778,8 +784,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		this._setDisplaySize( this._displayWidth, this._displayHeight );
 		this.pipeline?.setSize( this._scaled( this._displayWidth ), this._scaled( this._displayHeight ) );
 		// History from the other size would reproject garbage.
-		this.pipeline?.eventBus.emit( 'asvgf:reset' );
-		this.pipeline?.eventBus.emit( 'denoiser:reset' );
+		this.pipeline?.eventBus.emit( 'pipeline:historyReset' );
 		this.needsReset = true;
 
 	}

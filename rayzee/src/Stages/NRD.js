@@ -133,7 +133,7 @@ function hash01( n ) {
  * Reads:     pathtracer:color, pathtracer:albedo (.w = normHitDist), pathtracer:normalDepth,
  *            pathtracer:shadingNormal (.w = roughness), motionVector:screenSpace
  * Publishes: nrd:output
- * Events:    denoiser:reset
+ * Events:    pipeline:historyReset
  */
 export class NRD extends RenderStage {
 
@@ -1190,7 +1190,7 @@ export class NRD extends RenderStage {
 
 	setupEventListeners() {
 
-		this.on( 'denoiser:reset', () => this.resetHistory() );
+		this.on( 'pipeline:historyReset', () => this.resetHistory() );
 
 	}
 

@@ -62,10 +62,6 @@ export class PipelineContext {
 			// Time
 			time: 0,
 			deltaTime: 0,
-
-			// Feature flags
-			enableASVGF: false,
-			enableEdgeFiltering: false,
 			// Can be extended by stages as needed
 		};
 

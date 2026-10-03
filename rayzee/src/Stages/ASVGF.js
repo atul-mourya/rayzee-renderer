@@ -52,7 +52,7 @@ export class ASVGF extends RenderStage {
 		this.resH = uniform( options.height || 1 );
 
 		this.temporalEnabledU = uniform( 1.0 );
-		// 1.0 for one frame after asvgf:reset → forces a fresh sample so stale pre-reset
+		// 1.0 for one frame after pipeline:historyReset → forces a fresh sample so stale pre-reset
 		// (wrong-scene) history isn't blended in (mirrors Variance's _needsWarmReset).
 		this.forceResetU = uniform( 0.0 );
 
@@ -398,7 +398,7 @@ export class ASVGF extends RenderStage {
 				const demodResult = vec4( currentLighting, 1.0 ).toVar();
 				const modulatedResult = vec4( currentColor, currentAlpha ).toVar();
 
-				// forceResetU skips the blend for one frame after asvgf:reset → re-anchors
+				// forceResetU skips the blend for one frame after pipeline:historyReset → re-anchors
 				// history to the current (post-reset) scene instead of the stale ping-pong.
 				If( temporalEnabledU.greaterThan( 0.5 ).and( forceResetU.lessThan( 0.5 ) ), () => {
 
@@ -647,7 +647,7 @@ export class ASVGF extends RenderStage {
 
 	setupEventListeners() {
 
-		this.on( 'asvgf:reset', () => this.resetTemporalData() );
+		this.on( 'pipeline:historyReset', () => this.resetTemporalData() );
 
 		this.on( 'asvgf:updateParameters', ( data ) => this.updateParameters( data ) );
 
@@ -720,7 +720,7 @@ export class ASVGF extends RenderStage {
 
 		}
 
-		// One-shot fresh re-anchor after asvgf:reset, threaded through the SINGLE
+		// One-shot fresh re-anchor after pipeline:historyReset, threaded through the SINGLE
 		// writeNode dispatch (a dual-node warmup would alias the read target — see setSize).
 		this.forceResetU.value = this._needsWarmReset ? 1.0 : 0.0;
 		this.renderer.compute( writeNode );
@@ -865,7 +865,7 @@ export class ASVGF extends RenderStage {
 
 	reset() {
 
-		// No-op: motion vectors handle camera moves; explicit asvgf:reset
+		// No-op: motion vectors handle camera moves; explicit pipeline:historyReset
 		// clears history on scene/mode change.
 
 	}
