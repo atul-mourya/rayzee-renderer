@@ -148,6 +148,11 @@ export class NRD extends RenderStage {
 		this.pathTracer = options.pathTracer || null;
 		this.settings = { ...NRD_DEFAULTS, ...( options.settings || {} ) };
 
+		// The path tracer's hit distance, normalised by view depth as ReBLUR reads it (pathtracer:albedo.w).
+		this._releaseHitDistance = this.pathTracer?.requestOutput?.( 'hitDistance', {
+			encode: ( distance, viewZ ) => distance.div( max( viewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A ), float( 1e-4 ) ) ).clamp( 0.0, 1.0 ),
+		} ) ?? null;
+
 		const w = options.width || 1;
 		const h = options.height || 1;
 
@@ -1383,6 +1388,8 @@ export class NRD extends RenderStage {
 
 	dispose() {
 
+		this._releaseHitDistance?.();
+		this._releaseHitDistance = null;
 		this._disposeKernels();
 		this._disposeStorage();
 		this.outputTarget?.dispose();

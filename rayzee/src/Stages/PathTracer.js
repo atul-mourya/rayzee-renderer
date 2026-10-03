@@ -166,6 +166,10 @@ export class PathTracer extends PathTracerStage {
 		this._chunkRows = 0; // rows per chunk = floor(B / renderWidth), clamped ≥1
 		this._numChunks = 1; // ceil(renderHeight / chunkRows)
 
+		// Outputs a later stage asked for (requestOutput), compiled into Shade only while asked.
+		this._outputs = new Map();
+		this._outputsChanged = false;
+
 		// Bidirectional integrator (setIntegrator). Off builds exactly the unidirectional kernels.
 		this._bidirectionalEnabled = false;
 		this._mergingEnabled = false;
@@ -318,6 +322,30 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
+	 * Asks Shade for an extra per-pixel output, compiled in only while someone asks for it; the kernels rebuild
+	 * before the next frame. `'hitDistance'`: the first bounce's segment plus any alpha-skip run, at camera
+	 * depth 1, as `encode( distance, viewZ )` returns it — a [0, 1] value, in `pathtracer:albedo.w`. Written only
+	 * while the aux outputs are on.
+	 * @param {'hitDistance'} name
+	 * @param {{encode: function(Node, Node): Node}} options
+	 * @returns {function(): void} withdraws the request
+	 */
+	requestOutput( name, options ) {
+
+		this._outputs.set( name, options );
+		this._outputsChanged = true;
+
+		return () => {
+
+			if ( this._outputs.get( name ) !== options ) return;
+			this._outputs.delete( name );
+			this._outputsChanged = true;
+
+		};
+
+	}
+
+	/**
 	 * Switching rebuilds the kernels: only the bidirectional ones bind the light vertex cache and splat image.
 	 * 'vcm' is bidirectional with vertex merging (photon mapping) added as a strategy.
 	 * @param {'path'|'bidirectional'|'vcm'} name
@@ -387,8 +415,8 @@ export class PathTracer extends PathTracerStage {
 		if ( ! this.isReady || ! this._wavefrontReady ) return;
 
 		// The packed light buffer was grow-reallocated at runtime (emissive set grew) or a light list grew —
-		// the compiled kernels still bind the old one, so rebuild before rendering.
-		if ( this._lightBufferRealloc ) {
+		// the compiled kernels still bind the old one, so rebuild before rendering. Likewise a changed output request.
+		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
 			if ( this._kernelManager ) this._kernelManager.dispose();
 			this._wavefrontReady = false;
@@ -1752,6 +1780,7 @@ export class PathTracer extends PathTracerStage {
 
 		// A fresh build binds the current lightStorageAttr — any pending realloc is covered.
 		this._lightBufferRealloc = false;
+		this._outputsChanged = false;
 		if ( this._bidirectionalEnabled ) this._sizeSourceTable();
 
 		const w = this.storageTextures.renderWidth;
@@ -2322,6 +2351,7 @@ export class PathTracer extends PathTracerStage {
 			sunRadiance: this.sunRadiance,
 			sunParams: this.sunParams,
 			bidirectional: this._bidirectionalEnabled ? this._bidirectional : null,
+			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
 		} );
 		this._kernelManager.register( 'shade',
 			shadeFn().compute(

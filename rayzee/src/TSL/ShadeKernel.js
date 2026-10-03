@@ -41,7 +41,6 @@ import { LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directi
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from './PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
-import { NRD_HIT_DIST_A, NRD_HIT_DIST_B } from '../EngineDefaults.js';
 import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
 import {
@@ -135,6 +134,8 @@ export function buildShadeKernel( params ) {
 		hasSun, sunDirection, sunRadiance, sunParams,
 		// Bidirectional: light subpaths shade here too; camera vertices leave connections for ConnectKernel.
 		bidirectional: bdpt = null,
+		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
+		hitDistanceEncode = null,
 	} = params;
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
@@ -293,14 +294,13 @@ export function buildShadeKernel( params ) {
 		const sssSteps = readSssSteps( rayBufferRW, rayID ).toVar();
 		const transparentCount = readTransparentCount( rayBufferRW, rayID ).toVar();
 
-		// NRD guide: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
+		// Hit distance: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
 		// doesn't shorten it. Unconditional at depth 1, so the post-skip segment wins.
-		If( aux.and( cameraDepth.equal( 1 ) ), () => {
+		if ( hitDistanceEncode ) If( aux.and( cameraDepth.equal( 1 ) ), () => {
 
 			const scatterViewZ = cameraViewMatrix.mul( vec4( origin, 1.0 ) ).z.abs();
-			const norm = scatterViewZ.mul( NRD_HIT_DIST_B ).add( NRD_HIT_DIST_A );
 			const total = readMisRayT( rayBufferRW, rayID ).add( min( hitDist, float( 1e6 ) ) );
-			writeGBufferHitDist( gBufferRW, pixelIndex, total.div( max( norm, float( 1e-4 ) ) ).clamp( 0.0, 1.0 ) );
+			writeGBufferHitDist( gBufferRW, pixelIndex, hitDistanceEncode( total, scatterViewZ ) );
 
 		} );
 
