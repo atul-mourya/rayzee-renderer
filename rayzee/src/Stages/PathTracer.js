@@ -29,8 +29,8 @@ import {
 	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
 } from '../TSL/LightSplatKernel.js';
 import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE, mergeVmAt } from '../TSL/Bidirectional.js';
-import { setMaterialBucketTextures, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
-import { setShadowAlbedoMaps } from '../TSL/LightsDirect.js';
+import { buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
+import { withSceneResources } from '../TSL/SceneResources.js';
 import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
@@ -2204,13 +2204,20 @@ export class PathTracer extends PathTracerStage {
 		const _mat = this.materialData;
 		const _env = this.environment;
 		// Consolidated size-bucket nodes (K sRGB + K linear). Empty buckets get placeholders so
-		// every runtime branch references a valid node. Published to the sampling module before
-		// the Shade/Debug graphs are built so they bake in these (per-pipeline) nodes.
+		// every runtime branch references a valid node.
 		const freshSrgbBuckets = buildBucketTextureNodes( _mat.srgbBuckets );
 		const freshLinearBuckets = buildBucketTextureNodes( _mat.linearBuckets );
-		setMaterialBucketTextures( freshSrgbBuckets, freshLinearBuckets );
-		// Alpha-cutout shadow rays sample albedo (sRGB pool) — emitted into the shade graph now.
-		setShadowAlbedoMaps( freshSrgbBuckets );
+		// This renderer's resources, in the build context of each kernel that samples them (SceneResources.js).
+		// Alpha-cutout shadow rays sample albedo (sRGB pool).
+		const resources = {
+			srgbBuckets: freshSrgbBuckets,
+			linearBuckets: freshLinearBuckets,
+			shadowAlbedoMaps: freshSrgbBuckets,
+			goboMaps: texNodes.goboMapsTex,
+			iesProfiles: texNodes.iesProfilesTex,
+			alphaShadows: this.uniforms.get( 'enableAlphaShadows' ),
+		};
+		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
 
 		this._wfTexNodes = {
@@ -2354,7 +2361,7 @@ export class PathTracer extends PathTracerStage {
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
 		} );
 		this._kernelManager.register( 'shade',
-			shadeFn().compute(
+			own( shadeFn() ).compute(
 				[ Math.ceil( maxRays / SHADE_WG_SIZE ), 1, 1 ],
 				[ SHADE_WG_SIZE, 1, 1 ]
 			)
@@ -2462,7 +2469,7 @@ export class PathTracer extends PathTracerStage {
 			this._kernelManager.register( 'guideClear', buildGuideClearKernel( { counters } ) );
 			this._kernelManager.register( 'guideBuild', buildGuideKernel( { counters, out: storage( this._guideBuildAttr, 'float' ) } ) );
 
-			this._kernelManager.register( 'lightGenerate', buildLightGenerateKernel( {
+			this._kernelManager.register( 'lightGenerate', own( buildLightGenerateKernel( {
 				rayBufferRW: pb.rayBuffer.rw,
 				hitBufferRW: pb.hitBuffer.rw,
 				activeIndicesRW: qm.activeIndices.a,
@@ -2490,9 +2497,9 @@ export class PathTracer extends PathTracerStage {
 				resolution: this.resolution,
 				frame: this.seedFrame,
 				transmissiveBounces: this.transmissiveBounces,
-			} )().compute( [ Math.ceil( maxRays / LIGHT_GENERATE_WG_SIZE ), 1, 1 ], [ LIGHT_GENERATE_WG_SIZE, 1, 1 ] ) );
+			} )() ).compute( [ Math.ceil( maxRays / LIGHT_GENERATE_WG_SIZE ), 1, 1 ], [ LIGHT_GENERATE_WG_SIZE, 1, 1 ] ) );
 
-			this._kernelManager.register( 'connect', buildConnectKernel( {
+			this._kernelManager.register( 'connect', own( buildConnectKernel( {
 				rayBufferRW: pb.rayBuffer.rw,
 				hitBufferRO: pb.hitBuffer.ro,
 				activeIndicesRO: qm.getActiveReadRO(),
@@ -2514,7 +2521,7 @@ export class PathTracer extends PathTracerStage {
 				globalIlluminationIntensity: this.globalIlluminationIntensity,
 				fireflyThreshold: this.fireflyThreshold,
 				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
-			} )().compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
+			} )() ).compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
 
 			if ( bd.merging ) {
 
@@ -2525,7 +2532,7 @@ export class PathTracer extends PathTracerStage {
 					head,
 					bidirectional: bd,
 				} )().compute( [ Math.ceil( this._lightCacheSlots / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
-				this._kernelManager.register( 'merge', buildMergeKernel( {
+				this._kernelManager.register( 'merge', own( buildMergeKernel( {
 					rayBufferRW: pb.rayBuffer.rw,
 					hitBufferRO: pb.hitBuffer.ro,
 					activeIndicesRO: qm.getActiveReadRO(),
@@ -2537,13 +2544,13 @@ export class PathTracer extends PathTracerStage {
 					globalIlluminationIntensity: this.globalIlluminationIntensity,
 					fireflyThreshold: this.fireflyThreshold,
 					accumFrame: this.frame,
-				} )().compute( [ Math.ceil( maxRays / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
+				} )() ).compute( [ Math.ceil( maxRays / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
 
 			}
 
 			const splatBuffer = storage( this._splatAttr, 'uint' ).toAtomic();
 
-			this._kernelManager.register( 'lightSplat', buildLightSplatKernel( {
+			this._kernelManager.register( 'lightSplat', own( buildLightSplatKernel( {
 				hitBufferRO: pb.hitBuffer.ro,
 				splatBuffer,
 				bvhBuffer: freshBvh,
@@ -2565,7 +2572,7 @@ export class PathTracer extends PathTracerStage {
 				accumFrame: this.frame,
 				frame: this.seedFrame,
 				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
-			} )().compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
+			} )() ).compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
 
 			this._kernelManager.register( 'splatResolve', buildSplatResolveKernel( {
 				rayBufferRW: pb.rayBuffer.rw,
@@ -2662,7 +2669,7 @@ export class PathTracer extends PathTracerStage {
 			frame: this.frame,
 		} );
 		this._kernelManager.register( 'debug',
-			debugFn().compute(
+			own( debugFn() ).compute(
 				[ Math.ceil( w / DEBUG_WG_SIZE ), Math.ceil( h / DEBUG_WG_SIZE ), 1 ],
 				[ DEBUG_WG_SIZE, DEBUG_WG_SIZE, 1 ]
 			)

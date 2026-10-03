@@ -42,6 +42,7 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
 import { Ray } from '@/core/TSL/Struct.js';
+import { withSceneResources } from '@/core/TSL/SceneResources.js';
 import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/EngineDefaults.js';
 
 const LANES = 20;
@@ -111,7 +112,8 @@ async function trace( renderer, { bvh, triangles, count }, { origins, dirs }, in
 	const rayCount = origins.length / 4;
 	const o = instancedArray( origins, 'vec4' ), d = instancedArray( dirs, 'vec4' );
 	const out = instancedArray( rayCount, 'vec4' );
-	const kernel = Fn( () => {
+	// No textures: alpha-cutout shadows off.
+	const kernel = withSceneResources( Fn( () => {
 
 		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
 		const hit = ( cullBackFaces === undefined
@@ -120,7 +122,7 @@ async function trace( renderer, { bvh, triangles, count }, { origins, dirs }, in
 		const shadow = traverseBVHShadow( ray, bvhNode, tris, float( 25 ) ).toVar();
 		out.element( instanceIndex ).assign( vec4( float( hit.get( 'didHit' ) ), float( shadow.get( 'didHit' ) ), float( 0 ), float( 0 ) ) );
 
-	} )().compute( rayCount );
+	} )(), { alphaShadows: null } ).compute( rayCount );
 
 	await renderer.computeAsync( kernel );
 	const result = new Float32Array( await renderer.getArrayBufferAsync( out.value ) );

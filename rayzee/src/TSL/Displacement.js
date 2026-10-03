@@ -1,8 +1,9 @@
+import { sceneResources } from './SceneResources.js';
 import { Fn, float, vec2, int, If, Loop, abs, normalize, dot, max, uintBitsToFloat } from 'three/tsl';
 
 import { struct } from './patches.js';
 import { triangleRow, instanceRows, instanceDirToWorld } from './Common.js';
-import { sampleDisplacementMap, bucketTexelSize, getLinearBucketTextures } from './TextureSampling.js';
+import { sampleDisplacementMap, bucketTexelSize } from './TextureSampling.js';
 
 // Ray-displacement intersection configuration
 const MAX_MARCH_STEPS = 32;
@@ -32,7 +33,7 @@ export const DisplacementResult = struct( {
  */
 export const refineDisplacedIntersection = Fn( ( [
 	ray, hitInfo, triangleBuffer, material, bounceIndex, bvhBuffer, instanceLeaf
-] ) => {
+], builder ) => {
 
 	const resultHitPoint = hitInfo.hitPoint.toVar();
 	const resultUV = hitInfo.uv.toVar();
@@ -205,7 +206,7 @@ export const refineDisplacedIntersection = Fn( ( [
 
 				// Compute displaced normal from height-field gradients using UV tangent vectors.
 				// Finite-difference step = one texel of the SELECTED bucket array's real dimensions.
-				const texel = bucketTexelSize( getLinearBucketTextures(), material.displacementMapIndex ).toVar();
+				const texel = bucketTexelSize( sceneResources( builder ).linearBuckets, material.displacementMapIndex ).toVar();
 				const hC = finalHeight;
 				const hU = sampleDisplacementMap(
 					material.displacementMapIndex, finalUV.add( vec2( texel.x, 0.0 ) ), material.displacementTransform,

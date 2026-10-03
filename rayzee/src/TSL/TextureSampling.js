@@ -1,3 +1,4 @@
+import { sceneResources } from './SceneResources.js';
 import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize, uintBitsToFloat } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
@@ -18,29 +19,10 @@ import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
 // footprint. Bucket shapes are planned per scene (planTextureBuckets) — not powers of two.
 // A map's stored index encodes (bucket, layer) as bucket * BUCKET_LAYER_STRIDE + layer.
 //
-// The bucket texture nodes live at module level (same pattern as gobo/IES/shadowAlbedo):
-// each stage sets them via setMaterialBucketTextures() right before building its graph,
-// so each pipeline bakes in its own fresh nodes (avoiding cross-pipeline TextureNode
-// caching, just like the per-type nodes did before).
+// The bucket texture nodes are the kernel's own (SceneResources.js): each pipeline builds fresh nodes,
+// avoiding cross-pipeline TextureNode caching, and hands them to its kernels' build context.
 
 const _STRIDE = TEXTURE_CONSTANTS.BUCKET_LAYER_STRIDE;
-
-// Array<MATERIAL_BUCKET_COUNT> of texture nodes (never null — empty buckets get placeholders).
-let _srgbBuckets = null;
-let _linearBuckets = null;
-
-/**
- * Set the bucket texture node arrays read by the sampling functions. Call before building
- * any graph that samples material textures (Shade / NormalDepth / Debug kernels).
- * @param {Array} srgb   sRGB pool nodes (albedo + emissive)
- * @param {Array} linear linear pool nodes (normal/bump/roughness/metalness/displacement)
- */
-export function setMaterialBucketTextures( srgb, linear ) {
-
-	_srgbBuckets = srgb;
-	_linearBuckets = linear;
-
-}
 
 // Run `fn(node, layer)` inside a runtime branch that selects the bucket node a packed
 // index points to. Emits one If/ElseIf arm per bucket; only the matching arm executes.
@@ -88,13 +70,6 @@ export const bucketTexelSize = ( buckets, packedIndex ) => {
 	return ts;
 
 };
-
-// The linear-pool node set (displacement lives here) — for Displacement.js texel sizing.
-export function getLinearBucketTextures() {
-
-	return _linearBuckets;
-
-}
 
 // 1×1 white placeholder array so empty-bucket branches always reference a valid node.
 export function makeBucketPlaceholder() {
@@ -334,13 +309,15 @@ export const computeUVCache = Fn( ( [ baseUV, material ] ) => {
 // PROCESSING FUNCTIONS
 // ================================================================================
 
-export const processAlbedo = Fn( ( [ material, uvCache ] ) => {
+export const processAlbedo = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { srgbBuckets } = sceneResources( builder );
 
 	const result = material.color.toVar();
 
 	If( material.albedoMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		const albedoSample = sampleBucket( _srgbBuckets, material.albedoMapIndex, uvCache.albedoUV ).toVar();
+		const albedoSample = sampleBucket( srgbBuckets, material.albedoMapIndex, uvCache.albedoUV ).toVar();
 		// sRGB→linear handled by GPU hardware (sRGB bucket arrays carry SRGBColorSpace → rgba8unorm-srgb)
 		result.assign( vec4( material.color.rgb.mul( albedoSample.rgb ), material.color.a.mul( albedoSample.a ) ) );
 
@@ -350,7 +327,9 @@ export const processAlbedo = Fn( ( [ material, uvCache ] ) => {
 
 } );
 
-export const processMetalnessRoughness = Fn( ( [ material, uvCache ] ) => {
+export const processMetalnessRoughness = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
 
 	const metalness = material.metalness.toVar();
 	const roughness = material.roughness.toVar();
@@ -358,7 +337,7 @@ export const processMetalnessRoughness = Fn( ( [ material, uvCache ] ) => {
 	If( material.metalnessMapIndex.greaterThanEqual( int( 0 ) ).and( material.metalnessMapIndex.equal( material.roughnessMapIndex ) ), () => {
 
 		// Same packed index → same bucket layer (e.g. ORM) → sample once.
-		const sample = sampleBucket( _linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
+		const sample = sampleBucket( linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
 		metalness.assign( material.metalness.mul( sample.b ) );
 		roughness.assign( material.roughness.mul( sample.g ) );
 
@@ -366,14 +345,14 @@ export const processMetalnessRoughness = Fn( ( [ material, uvCache ] ) => {
 
 		If( material.metalnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-			const metSample = sampleBucket( _linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
+			const metSample = sampleBucket( linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
 			metalness.assign( material.metalness.mul( metSample.b ) );
 
 		} );
 
 		If( material.roughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-			const rghSample = sampleBucket( _linearBuckets, material.roughnessMapIndex, uvCache.roughnessUV );
+			const rghSample = sampleBucket( linearBuckets, material.roughnessMapIndex, uvCache.roughnessUV );
 			roughness.assign( material.roughness.mul( rghSample.g ) );
 
 		} );
@@ -471,13 +450,15 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
  * arbitrary frame comes out 90 deg off, so the rib normals tilt up/down instead of across
  * the ribs.
  */
-export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ] ) => {
+export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
 
 	const result = geometryNormal.toVar();
 
 	If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		const normalSample = sampleBucket( _linearBuckets, material.normalMapIndex, uvCache.normalUV );
+		const normalSample = sampleBucket( linearBuckets, material.normalMapIndex, uvCache.normalUV );
 		const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
 		normalMap.x.mulAssign( material.normalScale.x );
 		normalMap.y.assign( normalMap.y.negate().mul( material.normalScale.x ) );
@@ -512,7 +493,9 @@ export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangen
 
 } );
 
-export const processBump = Fn( ( [ currentNormal, material, uvCache ] ) => {
+export const processBump = Fn( ( [ currentNormal, material, uvCache ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
 
 	const result = currentNormal.toVar();
 
@@ -521,7 +504,7 @@ export const processBump = Fn( ( [ currentNormal, material, uvCache ] ) => {
 		// Taps + texel size come from the SELECTED bucket node (its real dimensions), so the
 		// finite-difference step is correct per bucket — done inside one bucket-branch.
 		const bumpNormal = vec3( 0.0, 0.0, 1.0 ).toVar();
-		withBucket( _linearBuckets, material.bumpMapIndex, ( node, layer ) => {
+		withBucket( linearBuckets, material.bumpMapIndex, ( node, layer ) => {
 
 			const texelSize = vec2( 1.0 ).div( vec2( textureSize( node ) ) ).toVar();
 			const h_c = texture( node, uvCache.bumpUV ).depth( layer ).r;
@@ -549,11 +532,13 @@ export const processBump = Fn( ( [ currentNormal, material, uvCache ] ) => {
 // Fold the glTF anisotropyTexture (RG = tangent-space direction, B = strength) into scalar
 // (strength, rotationRadians) per three.js: anisotropy · R(rotation) · (normalize(rg·2−1)·b).
 // Caller guarantees anisotropyMapIndex >= 0. `uv` is pre-transformed by the caller (albedo transform).
-export const processAnisotropyMap = Fn( ( [ material, uv ] ) => {
+export const processAnisotropyMap = Fn( ( [ material, uv ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
 
 	const result = vec2( material.anisotropy, material.anisotropyRotation ).toVar();
 
-	const s = sampleBucket( _linearBuckets, material.anisotropyMapIndex, uv ).toVar();
+	const s = sampleBucket( linearBuckets, material.anisotropyMapIndex, uv ).toVar();
 	const texDir = s.rg.mul( 2.0 ).sub( 1.0 ).toVar();
 	const dlen = texDir.length().toVar();
 
@@ -581,7 +566,9 @@ export const processAnisotropyMap = Fn( ( [ material, uv ] ) => {
 // pre-transformed by the caller with the material's albedo KHR_texture_transform (extension maps
 // share the base UV set/transform in practice). Color maps (sheenColor, specularColor) read the
 // sRGB pool; data maps read the linear pool.
-export const applyExtensionMaps = Fn( ( [ material, uv ] ) => {
+export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
+
+	const { srgbBuckets, linearBuckets } = sceneResources( builder );
 
 	const r = ExtMapResult( {
 		transmission: material.transmission,
@@ -597,49 +584,49 @@ export const applyExtensionMaps = Fn( ( [ material, uv ] ) => {
 
 	If( material.transmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.transmission.assign( r.transmission.mul( sampleBucket( _linearBuckets, material.transmissionMapIndex, uv ).r ) );
+		r.transmission.assign( r.transmission.mul( sampleBucket( linearBuckets, material.transmissionMapIndex, uv ).r ) );
 
 	} );
 	If( material.clearcoatMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.clearcoat.assign( r.clearcoat.mul( sampleBucket( _linearBuckets, material.clearcoatMapIndex, uv ).r ) );
+		r.clearcoat.assign( r.clearcoat.mul( sampleBucket( linearBuckets, material.clearcoatMapIndex, uv ).r ) );
 
 	} );
 	If( material.clearcoatRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.clearcoatRoughness.assign( r.clearcoatRoughness.mul( sampleBucket( _linearBuckets, material.clearcoatRoughnessMapIndex, uv ).g ) );
+		r.clearcoatRoughness.assign( r.clearcoatRoughness.mul( sampleBucket( linearBuckets, material.clearcoatRoughnessMapIndex, uv ).g ) );
 
 	} );
 	If( material.sheenColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.sheenColor.assign( r.sheenColor.mul( sampleBucket( _srgbBuckets, material.sheenColorMapIndex, uv ).rgb ) );
+		r.sheenColor.assign( r.sheenColor.mul( sampleBucket( srgbBuckets, material.sheenColorMapIndex, uv ).rgb ) );
 
 	} );
 	If( material.sheenRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		// clamp to [0.05,1] to keep parity with the sample/PDF floor applied in ShadeKernel
-		r.sheenRoughness.assign( clamp( r.sheenRoughness.mul( sampleBucket( _linearBuckets, material.sheenRoughnessMapIndex, uv ).a ), 0.05, 1.0 ) );
+		r.sheenRoughness.assign( clamp( r.sheenRoughness.mul( sampleBucket( linearBuckets, material.sheenRoughnessMapIndex, uv ).a ), 0.05, 1.0 ) );
 
 	} );
 	If( material.iridescenceMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.iridescence.assign( r.iridescence.mul( sampleBucket( _linearBuckets, material.iridescenceMapIndex, uv ).r ) );
+		r.iridescence.assign( r.iridescence.mul( sampleBucket( linearBuckets, material.iridescenceMapIndex, uv ).r ) );
 
 	} );
 	If( material.iridescenceThicknessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		const g = sampleBucket( _linearBuckets, material.iridescenceThicknessMapIndex, uv ).g;
+		const g = sampleBucket( linearBuckets, material.iridescenceThicknessMapIndex, uv ).g;
 		r.iridescenceThickness.assign( mix( material.iridescenceThicknessRange.x, material.iridescenceThicknessRange.y, g ) );
 
 	} );
 	If( material.specularIntensityMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.specularIntensity.assign( r.specularIntensity.mul( sampleBucket( _linearBuckets, material.specularIntensityMapIndex, uv ).a ) );
+		r.specularIntensity.assign( r.specularIntensity.mul( sampleBucket( linearBuckets, material.specularIntensityMapIndex, uv ).a ) );
 
 	} );
 	If( material.specularColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		r.specularColor.assign( r.specularColor.mul( sampleBucket( _srgbBuckets, material.specularColorMapIndex, uv ).rgb ) );
+		r.specularColor.assign( r.specularColor.mul( sampleBucket( srgbBuckets, material.specularColorMapIndex, uv ).rgb ) );
 
 	} );
 
@@ -647,13 +634,15 @@ export const applyExtensionMaps = Fn( ( [ material, uv ] ) => {
 
 } );
 
-export const processEmissive = Fn( ( [ material, uvCache ] ) => {
+export const processEmissive = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { srgbBuckets } = sceneResources( builder );
 
 	const emissionBase = material.emissive.mul( material.emissiveIntensity ).toVar();
 
 	If( material.emissiveMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		const emissiveSample = sampleBucket( _srgbBuckets, material.emissiveMapIndex, uvCache.emissiveUV ).toVar();
+		const emissiveSample = sampleBucket( srgbBuckets, material.emissiveMapIndex, uvCache.emissiveUV ).toVar();
 		// sRGB→linear handled by GPU hardware (sRGB bucket arrays carry SRGBColorSpace → rgba8unorm-srgb)
 		emissionBase.assign( emissionBase.mul( emissiveSample.rgb ) );
 
@@ -707,14 +696,16 @@ export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, u
 } );
 
 // Sample displacement map (linear pool) at given UV coordinates.
-export const sampleDisplacementMap = Fn( ( [ displacementMapIndex, uv, transform ] ) => {
+export const sampleDisplacementMap = Fn( ( [ displacementMapIndex, uv, transform ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
 
 	const result = float( 0.0 ).toVar();
 
 	If( displacementMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		const transformedUV = getTransformedUV( { uv, transform } );
-		result.assign( sampleBucket( _linearBuckets, displacementMapIndex, transformedUV ).r );
+		result.assign( sampleBucket( linearBuckets, displacementMapIndex, transformedUV ).r );
 
 	} );
 

@@ -612,22 +612,12 @@ export const getShadowMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
  * rides along in the rest — no second binding, which matters on a backend that
  * allows ten storage buffers per stage.
  */
-// Runtime uniform that toggles alpha-cutout shadows; set by ShaderBuilder before the kernels build.
-let _enableAlphaShadows = null;
-
-export function setAlphaShadowsUniform( node ) {
-
-	_enableAlphaShadows = node;
-
-}
-
-export const getAlphaShadowsUniform = () => _enableAlphaShadows;
-
-// Does a hit on a triangle with these flags settle the shadow ray without a material fetch?
-export const shadowFlagsSettle = ( flags ) => {
+// Does a hit on a triangle with these flags settle the shadow ray without a material fetch? `alphaShadows` is the
+// kernel's switch (SceneResources); null means alpha is never tested.
+export const shadowFlagsSettle = ( flags, alphaShadows ) => {
 
 	const bit = ( shift ) => flags.shiftRight( uint( shift ) ).bitAnd( uint( 1 ) ).equal( uint( 1 ) );
-	const alphaOff = _enableAlphaShadows ? _enableAlphaShadows.equal( int( 0 ) ) : tslBool( true );
+	const alphaOff = alphaShadows ? alphaShadows.equal( int( 0 ) ) : tslBool( true );
 	return bit( TRI_BLOCKER_SHIFT ).or( bit( TRI_BLOCKER_ALPHA_SHIFT ).and( alphaOff ) );
 
 };

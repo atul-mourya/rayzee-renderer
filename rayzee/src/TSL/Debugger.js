@@ -72,7 +72,7 @@ export const TraceDebugMode = Fn( ( [
 	visMode, debugVisScale,
 	// Screen info
 	pixelCoord, resolution,
-	// Material textures are read from the module-level bucket nodes (setMaterialBucketTextures).
+	// Material textures come from the kernel's SceneResources.
 	// Camera matrices (for depth debug mode)
 	cameraProjectionMatrix, cameraViewMatrix,
 	// Frame counter (for stochastic debug modes)

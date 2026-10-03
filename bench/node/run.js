@@ -7,9 +7,8 @@
  *   npm run bench:node [-- --only a,b] [-- --core]
  *
  * It runs the BUILT engine (rayzee/dist), which is what a Node host imports; the npm script builds it.
- * `--core` then renders each scene with the renderer core (`rayzee/core`), which must match the full
- * engine byte for byte. One after the other: some shader state is module-level, so two live renderers
- * would share it.
+ * `--core` also renders each scene with the renderer core (`rayzee/core`), alive beside the full engine,
+ * and it must match the full engine byte for byte.
  */
 
 import path from 'node:path';
@@ -75,7 +74,8 @@ async function openCore() {
 
 }
 
-const frames = new Map();
+const core = coreToo ? await openCore() : null;
+const coreSession = core && createSceneSession( core );
 
 const session = createSceneSession( app );
 let failed = 0;
@@ -104,7 +104,18 @@ for ( const scene of SCENES ) {
 			`${( m.fractionOverThreshold * 100 ).toFixed( 3 )} % over ${GATES.pixelThreshold}, max linear Δ ${m.maxChannelDelta.toFixed( 4 )} · ${ms} ms${RESET}`
 		);
 
-		if ( coreToo ) frames.set( scene.id, frame.data );
+		if ( core ) {
+
+			await coreSession.loadScene( scene.id );
+			await core.renderFrames( spec.spp );
+			const { data } = await core.renderToBuffer( { colorSpace: 'srgb' } );
+			let differ = 0;
+			for ( let i = 0; i < data.length; i ++ ) if ( data[ i ] !== frame.data[ i ] ) differ ++;
+			const same = differ === 0 && data.length === frame.data.length;
+			if ( ! same ) failed ++;
+			console.log( `  ${same ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${scene.id}${DIM}  core vs full engine: ${differ} of ${frame.data.length} bytes differ${RESET}` );
+
+		}
 
 	} catch ( error ) {
 
@@ -116,37 +127,7 @@ for ( const scene of SCENES ) {
 }
 
 app.dispose();
-
-if ( coreToo ) {
-
-	console.log( '' );
-	const core = await openCore();
-	const coreSession = createSceneSession( core );
-	for ( const [ id, full ] of frames ) {
-
-		try {
-
-			const { spec } = await coreSession.loadScene( id );
-			await core.renderFrames( spec.spp );
-			const { data } = await core.renderToBuffer( { colorSpace: 'srgb' } );
-			let differ = 0;
-			for ( let i = 0; i < data.length; i ++ ) if ( data[ i ] !== full[ i ] ) differ ++;
-			const same = differ === 0 && data.length === full.length;
-			if ( ! same ) failed ++;
-			console.log( `  ${same ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${id}${DIM}  core vs full engine: ${differ} of ${full.length} bytes differ${RESET}` );
-
-		} catch ( error ) {
-
-			failed ++;
-			console.log( `  ${RED}FAIL${RESET} ${id}  core: ${error.message}` );
-
-		}
-
-	}
-
-	core.dispose();
-
-}
+core?.dispose();
 
 console.log( failed ? `\n${RED}${failed} scene(s) failed${RESET}` : `\n${GREEN}all scenes match Chrome${RESET}` );
 process.exit( failed ? 1 : 0 );

@@ -43,6 +43,7 @@ import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
 import { foldLeaves } from '@/core/Processor/BVHLeafFold.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
 import { Ray } from '@/core/TSL/Struct.js';
+import { withSceneResources } from '@/core/TSL/SceneResources.js';
 import { TRI_SIDE_SHIFT } from '@/core/EngineDefaults.js';
 
 const LANES = 20;
@@ -109,14 +110,15 @@ async function trace( renderer, bvhNodes, folded, triangles, { origins, dirs } )
 
 	const o = instancedArray( origins, 'vec4' ), d = instancedArray( dirs, 'vec4' );
 	const out = instancedArray( RAYS, 'vec4' );
-	const kernel = Fn( () => {
+	// No textures: alpha-cutout shadows off.
+	const kernel = withSceneResources( Fn( () => {
 
 		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 25 ) ).toVar();
 		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( 0 ) ) );
 
-	} )().compute( RAYS );
+	} )(), { alphaShadows: null } ).compute( RAYS );
 
 	await renderer.computeAsync( kernel );
 	return new Float32Array( await renderer.getArrayBufferAsync( out.value ) );

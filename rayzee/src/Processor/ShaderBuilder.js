@@ -1,16 +1,13 @@
 /**
  * ShaderBuilder.js — shared scene texture-node factory for the path tracer.
  *
- * Creates the texture/storage nodes the wavefront kernels read (environment, material map
- * arrays, previous-frame MRT, adaptive-sampling, gobo/IES) and configures the module-level
- * shadow/alpha/gobo/IES shader state. Nodes are created once and updated in-place via
- * .value mutation to preserve compiled shader-graph references.
+ * Creates the texture/storage nodes the wavefront kernels read (environment, previous-frame MRT,
+ * adaptive-sampling, gobo/IES). Nodes are created once and updated in-place via .value mutation to
+ * preserve compiled shader-graph references.
  */
 
 import { texture } from 'three/tsl';
 import { LinearFilter, DataArrayTexture } from 'three';
-import { setAlphaShadowsUniform } from '../TSL/LightsDirect.js';
-import { setGoboMapsTexture, setIESProfilesTexture } from '../TSL/LightsCore.js';
 import { createLogger } from '../utils/Logger.js';
 
 const log = createLogger( 'shader' );
@@ -81,8 +78,7 @@ export class ShaderBuilder {
 
 	}
 
-	// Creates the shared scene texture nodes (env, material maps, prev-frame, adaptive, gobo, IES)
-	// + configures the module-level shadow/alpha/gobo/IES shader state read by the wavefront kernels.
+	// Creates the shared scene texture nodes (env, prev-frame, adaptive, gobo, IES).
 	// Call from setupMaterial before the kernels are built.
 	createSceneTextureNodes( stage, storageTextures ) {
 
@@ -92,9 +88,6 @@ export class ShaderBuilder {
 		// Packed light buffer — [lightBVH | emissive triangles]. One node fed to both
 		// TSL params; emissive reads offset by stage.emissiveVec4Offset.
 		const lightBufferStorage = stage.lightStorageNode;
-
-		// Set alpha-shadow uniform (module-level in LightsDirect.js, read at runtime)
-		setAlphaShadowsUniform( stage.uniforms.get( 'enableAlphaShadows' ) );
 
 		const envTex = texture( stage.environment.environmentTexture );
 
@@ -115,17 +108,14 @@ export class ShaderBuilder {
 
 		};
 
-		// Material map arrays (consolidated size buckets) are owned by PathTracer's
-		// independent wavefront nodes + setMaterialBucketTextures/setShadowAlbedoMaps —
-		// see PathTracer._buildWavefrontKernels. Nothing material-map related is bound here.
+		// Material map arrays (consolidated size buckets) are owned by PathTracer's independent wavefront
+		// nodes, handed to its kernels as SceneResources — see PathTracer._buildWavefrontKernels.
 
 		// Spot light gobo array — placeholder until GoboManager populates it.
 		const goboMapsTex = stage.goboMaps ? texture( stage.goboMaps ) : createArrayPlaceholder();
-		setGoboMapsTexture( goboMapsTex );
 
 		// Spot light IES profiles array — placeholder until IESManager populates it.
 		const iesProfilesTex = stage.iesProfiles ? texture( stage.iesProfiles ) : createArrayPlaceholder();
-		setIESProfilesTexture( iesProfilesTex );
 
 		const result = {
 			triStorage, bvhStorage, matStorage, lightBufferStorage,

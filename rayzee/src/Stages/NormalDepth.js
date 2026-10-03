@@ -8,7 +8,8 @@ import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
 import { cameraRayOf, cameraRayUniforms } from '../TSL/CameraRay.js';
 import { getMaterial } from '../TSL/Common.js';
-import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes, setMaterialBucketTextures } from '../TSL/TextureSampling.js';
+import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
+import { withSceneResources } from '../TSL/SceneResources.js';
 
 /**
  * NormalDepth — primary-ray G-buffer for SVGF gates.
@@ -207,11 +208,13 @@ export class NormalDepth extends RenderStage {
 		const triStorage = this._triStorageNode;
 		const bvhStorage = this._bvhStorageNode;
 		const matStorage = this._matStorageNode;
-		// Independent linear-pool bucket nodes for this pipeline (normal + bump). The sRGB pool
-		// is never sampled here, so it gets placeholders. Publish to the sampling module before
-		// the graph is built so processNormal/processBump bake in THESE (per-pipeline) nodes.
+		// Independent linear-pool bucket nodes for this pipeline (normal + bump), in its kernel's build
+		// context (SceneResources.js). The sRGB pool is never sampled here, so it gets placeholders.
 		this._linearBuckets = buildBucketTextureNodes( this.pathTracer?.materialData?.linearBuckets );
-		setMaterialBucketTextures( buildBucketTextureNodes( null ), this._linearBuckets );
+		const resources = {
+			srgbBuckets: buildBucketTextureNodes( null ), linearBuckets: this._linearBuckets,
+			shadowAlbedoMaps: null, goboMaps: null, iesProfiles: null, alphaShadows: null,
+		};
 		const camWorld = this.cameraWorldMatrix;
 		const camProjInv = this.cameraProjectionMatrixInverse;
 		const resW = this.resolutionWidth;
@@ -308,7 +311,7 @@ export class NormalDepth extends RenderStage {
 
 		} );
 
-		this._computeNode = computeFn( camWorld, camProjInv ).compute(
+		this._computeNode = withSceneResources( computeFn( camWorld, camProjInv ), resources ).compute(
 			[ this._dispatchX, this._dispatchY, 1 ],
 			[ WG_SIZE, WG_SIZE, 1 ]
 		);

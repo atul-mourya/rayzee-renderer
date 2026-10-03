@@ -2,6 +2,7 @@
 // Direct lighting calculations including shadow ray tracing
 // and contribution calculations for all light types.
 
+import { sceneResources } from './SceneResources.js';
 import {
 	Fn,
 	float,
@@ -28,28 +29,11 @@ import {
 import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
-	instanceFaceNormalToWorld, triangleRow, getAlphaShadowsUniform, shadowFlagsSettle, offsetRayOrigin,
+	instanceFaceNormalToWorld, triangleRow, shadowFlagsSettle, offsetRayOrigin,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
-
-// Module-level state for alpha-cutout shadow testing.
-// Set by PathTracer before shade-graph construction.
-let _shadowAlbedoMaps = null;
-
-export { setAlphaShadowsUniform } from './Common.js';
-
-/**
- * Set the sRGB bucket texture node array for alpha-aware shadow rays (albedo alpha).
- * Must be called before the shade graph is constructed.
- * @param {Array} buckets - K sRGB bucket texture nodes
- */
-export function setShadowAlbedoMaps( buckets ) {
-
-	_shadowAlbedoMaps = buckets;
-
-}
 
 // ================================================================================
 // SHADOW RAY TRACING
@@ -63,8 +47,9 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 	bvhBuffer,
 	triangleBuffer,
 	materialBuffer,
-] ) => {
+], builder ) => {
 
+	const { alphaShadows, shadowAlbedoMaps } = sceneResources( builder );
 	const transmittance = float( 1.0 ).toVar();
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
@@ -93,7 +78,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 		// alphaMode/transparent/transmission/opacity all indicate a fully opaque surface.
 		// Short-circuits the 7-slot getShadowMaterial fetch and the whole alpha decision tree.
 		const flags = triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).z;
-		If( shadowFlagsSettle( flags ), () => {
+		If( shadowFlagsSettle( flags, alphaShadows ), () => {
 
 			transmittance.assign( 0.0 );
 			Break();
@@ -111,14 +96,13 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 		// ---------------------------------------------------------------
 		const alphaCutout = tslBool( false ).toVar();
 
-		const alphaShadows = getAlphaShadowsUniform();
 		if ( alphaShadows ) If( alphaShadows.equal( int( 1 ) ), () => {
 
 			// Sample texture alpha once (shared by MASK and BLEND paths).
 			// Deferred UV: barycentrics in shadowHit.uv, triangle index in shadowHit.triangleIndex.
 			const texAlpha = float( 1.0 ).toVar();
 
-			if ( _shadowAlbedoMaps ) {
+			if ( shadowAlbedoMaps ) {
 
 				If( shadowMaterial.albedoMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
@@ -129,7 +113,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 					const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).xy );
 					const hitUV = uvData1.xy.mul( baryW ).add( uvData1.zw.mul( baryU ) ).add( uvData2.mul( baryV ) );
 					const albedoUV = getTransformedUV( { uv: hitUV, transform: shadowMaterial.albedoTransform } );
-					texAlpha.assign( sampleBucket( _shadowAlbedoMaps, shadowMaterial.albedoMapIndex, albedoUV ).a );
+					texAlpha.assign( sampleBucket( shadowAlbedoMaps, shadowMaterial.albedoMapIndex, albedoUV ).a );
 
 				} );
 

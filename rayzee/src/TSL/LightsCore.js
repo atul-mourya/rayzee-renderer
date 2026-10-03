@@ -1,6 +1,7 @@
 // Lights Core - Ported from lights_core.fs
 // Light data structures, access functions, and utility functions
 
+import { sceneResources } from './SceneResources.js';
 import {
 	Fn, wgslFn,
 	vec2,
@@ -268,28 +269,14 @@ export const getSpotAttenuation = /*@__PURE__*/ wgslFn( `
 // SPOT LIGHT GOBO (PROJECTION MASK) SAMPLING
 // ================================================================================
 
-// Module-level state for spot light gobo masks.
-// Set by ShaderBuilder before graph construction.
-let _goboMapsTexNode = null;
-
-/**
- * Set the DataArrayTexture node used to sample spot light gobo masks.
- * Must be called before the shader graph is constructed.
- * @param {TextureNode} node - TSL texture node for the gobo DataArrayTexture
- */
-export function setGoboMapsTexture( node ) {
-
-	_goboMapsTexNode = node;
-
-}
-
 // Sample a spot light's gobo mask. Returns 1.0 if no gobo assigned.
 // Projects the surface direction onto a plane perpendicular to the light's
 // forward axis at unit distance; cone edge maps to UV ±0.5 around centre.
 //
 // `lightDir` = unit direction from surface TO light (matches `LightSample.direction`).
-export const sampleSpotGoboMask = /*@__PURE__*/ Fn( ( [ light, lightDir ] ) => {
+export const sampleSpotGoboMask = /*@__PURE__*/ Fn( ( [ light, lightDir ], builder ) => {
 
+	const { goboMaps } = sceneResources( builder );
 	const mask = float( 1.0 ).toVar();
 
 	If( light.goboIndex.greaterThanEqual( int( 0 ) ), () => {
@@ -319,13 +306,13 @@ export const sampleSpotGoboMask = /*@__PURE__*/ Fn( ( [ light, lightDir ] ) => {
 			const u = clamp( px.mul( invTan ).add( 0.5 ), float( 0.0 ), float( 1.0 ) );
 			const v = clamp( py.mul( invTan ).add( 0.5 ), float( 0.0 ), float( 1.0 ) );
 
-			if ( _goboMapsTexNode ) {
+			if ( goboMaps ) {
 
 				// Sample min(.r, .a) so masks encoded in either RGB-luminance
 				// or alpha (Kenney's "Transparent" variants store the shape in alpha
 				// with RGB=white) both produce the expected result.
 				// Sign of goboIntensity encodes inversion: negative = inverted, |value| = strength.
-				const tex = texture( _goboMapsTexNode, vec2( u, v ) ).depth( light.goboIndex );
+				const tex = texture( goboMaps, vec2( u, v ) ).depth( light.goboIndex );
 				const sample = min( tex.r, tex.a );
 				const inverted = light.goboIntensity.lessThan( 0.0 );
 				const effective = select( inverted, float( 1.0 ).sub( sample ), sample );
@@ -353,8 +340,9 @@ export const sampleSpotGoboMask = /*@__PURE__*/ Fn( ( [ light, lightDir ] ) => {
 // can cover any scene size by adjusting the scale.
 //
 // `surfacePoint` = world-space position of the surface being shaded.
-export const sampleDirectionalGoboMask = /*@__PURE__*/ Fn( ( [ light, surfacePoint ] ) => {
+export const sampleDirectionalGoboMask = /*@__PURE__*/ Fn( ( [ light, surfacePoint ], builder ) => {
 
+	const { goboMaps } = sceneResources( builder );
 	const mask = float( 1.0 ).toVar();
 
 	If( light.goboIndex.greaterThanEqual( int( 0 ) ), () => {
@@ -379,9 +367,9 @@ export const sampleDirectionalGoboMask = /*@__PURE__*/ Fn( ( [ light, surfacePoi
 		const uTiled = u.sub( u.floor() );
 		const vTiled = v.sub( v.floor() );
 
-		if ( _goboMapsTexNode ) {
+		if ( goboMaps ) {
 
-			const tex = texture( _goboMapsTexNode, vec2( uTiled, vTiled ) ).depth( light.goboIndex );
+			const tex = texture( goboMaps, vec2( uTiled, vTiled ) ).depth( light.goboIndex );
 			const sample = min( tex.r, tex.a );
 			const inverted = light.goboIntensity.lessThan( 0.0 );
 			const effective = select( inverted, float( 1.0 ).sub( sample ), sample );
@@ -400,20 +388,6 @@ export const sampleDirectionalGoboMask = /*@__PURE__*/ Fn( ( [ light, surfacePoi
 // IES PROFILE (PHOTOMETRIC INTENSITY) SAMPLING
 // ================================================================================
 
-// Module-level texture node for IES profile DataArrayTexture.
-// Set by ShaderBuilder before graph construction.
-let _iesProfilesTexNode = null;
-
-/**
- * Bind the DataArrayTexture node carrying all loaded IES profiles.
- * @param {TextureNode} node
- */
-export function setIESProfilesTexture( node ) {
-
-	_iesProfilesTexNode = node;
-
-}
-
 // Sample a spot light's IES profile. Returns a normalized multiplier in [0,1]
 // (or 1.0 if no profile assigned).
 //
@@ -421,8 +395,9 @@ export function setIESProfilesTexture( node ) {
 // where V=0 is along the light's "forward" axis (the spot's direction).
 //
 // `lightDir` = unit direction from surface TO light (matches LightSample.direction).
-export const sampleIESProfile = /*@__PURE__*/ Fn( ( [ light, lightDir ] ) => {
+export const sampleIESProfile = /*@__PURE__*/ Fn( ( [ light, lightDir ], builder ) => {
 
+	const { iesProfiles } = sceneResources( builder );
 	const result = float( 1.0 ).toVar();
 
 	If( light.iesIndex.greaterThanEqual( int( 0 ) ), () => {
@@ -451,9 +426,9 @@ export const sampleIESProfile = /*@__PURE__*/ Fn( ( [ light, lightDir ] ) => {
 		const phi = atan( py, px );
 		const u = phi.div( float( 2.0 * Math.PI ) ).add( 0.5 );
 
-		if ( _iesProfilesTexNode ) {
+		if ( iesProfiles ) {
 
-			const sample = texture( _iesProfilesTexNode, vec2( u, v ) ).depth( light.iesIndex ).r;
+			const sample = texture( iesProfiles, vec2( u, v ) ).depth( light.iesIndex ).r;
 			// Blend between flat (1.0) and full profile by iesIntensity.
 			const strength = clamp( light.iesIntensity, float( 0.0 ), float( 1.0 ) );
 			result.assign( mix( float( 1.0 ), sample, strength ) );

@@ -1,3 +1,4 @@
+import { sceneResources } from './SceneResources.js';
 import {
 	Fn,
 	wgslFn,
@@ -540,7 +541,9 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 	bvhBuffer,
 	triangleBuffer,
 	maxShadowDist,
-] ) => {
+], builder ) => {
+
+	const { alphaShadows } = sceneResources( builder );
 
 	const folded = bvhBuffer.value?.foldedLeaves === true;
 	const isLeafTag = leafTagTest( folded );
@@ -616,7 +619,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 					// An opaque blocker settles the ray. A surface light passes through has to be
 					// the nearest one, or the layers behind the first find are never counted.
-					If( shadowFlagsSettle( uvData2.z ), () => {
+					If( shadowFlagsSettle( uvData2.z, alphaShadows ), () => {
 
 						blocked.assign( true );
 						Break();
