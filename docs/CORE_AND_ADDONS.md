@@ -40,7 +40,7 @@ renderer runs without a browser.
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
 | Importers | pbrt and scene archives; OBJ, FBX, USD, STL and the other three.js loaders (already loaded on demand) |
-| Storage | Download and scene caches, memory spill |
+| Storage | The on-disk store behind the download and scene caches and the memory spill (the caches themselves are core and run without it) |
 
 ## Rules between the layers
 
@@ -132,14 +132,22 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    About 3,060 of the 3,885 colour lines left the core; it keeps the view-transform registry, the built-in views and
    the working matrix. The core plus the add-on renders all 36 bench scenes byte-identically with the full engine.
 
-   Downloads, compressed: the core 270 KB, `rayzee` 432 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
-   bidirectional 14 KB, colour 14 KB.
+10. **On-disk storage as an add-on** — done. `rayzee/addons/storage` exports `acquireSharedStorage` and the OPFS
+   implementation behind it (`StorageManager`, its worker, transports and locks); `renderer.setStorageOpener(
+   acquireSharedStorage )` installs it, and `PathTracerApp` does so itself. The caches that use storage stay in the
+   core, unchanged: each takes a manager or null, and without one a download lands in memory and nothing is cached.
+   Asked for storage without the add-on, the core records `capability.missing` as a warning, as every storage failure
+   is. The core plus the add-on renders all 36 bench scenes byte-identically with the full engine.
+
+   Downloads, compressed: the core 263 KB, `rayzee` 432 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
+   bidirectional 14 KB, colour 14 KB, storage 8 KB.
 
 ## What still ties the layers
 
-- **The core still carries storage** (3,000 lines: download and scene caches, memory spill). Shade still holds the
-  bidirectional branches (compiled out unless an integrator passes its uniforms); moving them out means a shading
-  kernel of the integrator's own.
+- **Shade still holds the bidirectional branches** (compiled out unless an integrator passes its uniforms); moving
+  them out means a shading kernel of the integrator's own.
+- **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, page-in). It
+  does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
 - **Colour is one per page.** The active colour management (`Color/ActiveColor.js`) is shared by every renderer in the
   page, by design: a config is a page-wide choice, and the texture cache keys on it.
 - **Settings are routed from one table** (`RenderSettings`), which still names viewer pieces (`denoisingManager`,

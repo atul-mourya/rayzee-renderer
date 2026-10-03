@@ -17,7 +17,7 @@ import { openZip, readZipDirectory } from './ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from './ArchiveCache.js';
 import { setEnvironmentSource } from '../Storage/CDFCache.js';
 import { fileIdentity, identityKey, sampleHash } from '../Storage/identity.js';
-import { ENGINE_AREAS } from '../Storage/StorageManager.js';
+import { ENGINE_AREAS } from '../Storage/areas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../Storage/SceneGraphCodec.js';
 import { worthStoring } from '../Storage/sceneCachePolicy.js';
 import { VERSION } from '../version.js';

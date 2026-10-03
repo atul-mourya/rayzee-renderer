@@ -105,7 +105,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 - **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
-- **`RayzeeRenderer.js`** (entry `core.js`, published as `rayzee/core`): the renderer core — WebGPU device, scene build, path tracer + compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. It builds no denoiser, camera controls, gizmo, overlay or timeline, and `tests/unit/core/coreBoundary.test.js` fails if its imports reach one. Capabilities install on it from `rayzee/addons/*` (`physical-sky`, `archives`, `bidirectional`, `color`); `PathTracerApp` installs all four itself. See `docs/CORE_AND_ADDONS.md`.
+- **`RayzeeRenderer.js`** (entry `core.js`, published as `rayzee/core`): the renderer core — WebGPU device, scene build, path tracer + compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. It builds no denoiser, camera controls, gizmo, overlay or timeline, and `tests/unit/core/coreBoundary.test.js` fails if its imports reach one. Capabilities install on it from `rayzee/addons/*` (`physical-sky`, `archives`, `bidirectional`, `color`, `storage`); `PathTracerApp` installs all five itself. See `docs/CORE_AND_ADDONS.md`.
 - **`PathTracerApp.js`**: the viewer, `extends RayzeeRenderer` — camera manager, interaction, gizmo, overlays, timeline, animation playback, denoisers and picture stages, gobo/IES, scene state, mode presets. It plugs in through the core's hooks (listed under "Hooks" at the end of `RayzeeRenderer.js`; each runs at a fixed point of the frame, reset or load sequence). ⚠️ Viewer code goes in the viewer: a core method that needs it gets a hook, never a `this.denoisingManager?.` call.
 - **`PathTracer.js`** + **`PathTracerStage.js`** (in `rayzee/src/Stages/`): the pure-wavefront path tracer. `PathTracerStage` is the shared base — owns the 5 sub-managers (composition), uniforms, camera, lights, BVH/scene buffers, accumulation, completion, ASVGF coordination, mesh visibility, and lifecycle. `PathTracer extends PathTracerStage` and owns the per-frame wavefront kernel dispatch (`render()`, `_buildWavefrontKernels()`). External code accesses the sub-managers directly (see Processor classes below).
 - **`index.js`**: Public API barrel export for the engine package
@@ -1061,7 +1061,12 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 `app.storage` is a `StorageManager` over the origin private file system, opened per
 `cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
 `null` when the browser has none (private windows, Node without the fake) — every caller must
-work without it. `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
+work without it.
+An add-on (`rayzee/addons/storage`): the OPFS implementation (`StorageManager`, `StorageOps`, `StorageWorker`, the
+transports, `locks`, `events`, `openStorage`) is reached only through `renderer.setStorageOpener( acquireSharedStorage )`
+— `PathTracerApp` installs it. The caches that *use* a manager stay core (`DownloadCache`, `CDFCache`, `BLASCache`,
+`SpillStore`, `GeometrySpill`, `identity`, `shared`) and import area names from `Storage/areas.js`, never
+`StorageManager.js`. Without the add-on, `storage: 'auto'` asked for explicitly records `capability.missing` (a warning). `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
 turns it off or supplies a host manager; `openHeadless` defaults to off.
 - **Areas.** Engine: `downloads` (URL cache, revalidated at most daily with a 1-byte `Range: bytes=0-0`
   GET, compared on Last-Modified and, where Content-Range is readable, the size; a failed check is

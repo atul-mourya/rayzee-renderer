@@ -25,6 +25,9 @@
     "./addons/color": {
       "import": "./dist/addons/color.es.js"
     },
+    "./addons/storage": {
+      "import": "./dist/addons/storage.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [

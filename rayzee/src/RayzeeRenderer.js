@@ -17,8 +17,6 @@ import { createLogger, fmt } from './utils/Logger.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
-import { StorageManager } from './Storage/StorageManager.js';
-import { acquireSharedStorage } from './Storage/openStorage.js';
 import { nameFromUrl } from './Storage/DownloadCache.js';
 import { fileIdentity, identityKey } from './Storage/identity.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
@@ -154,9 +152,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
 	 * @param {number} [options.hostMemoryGB] - the host's memory, where `navigator.deviceMemory` is
 	 *   absent (anything but Chrome) or wrong; it sizes the render reserve and the path pool
-	 * @param {false|'auto'|StorageManager} [options.storage] - on-disk storage; defaults to
-	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. A host-supplied
-	 *   manager stays the host's to dispose.
+	 * @param {false|'auto'|Object} [options.storage] - on-disk storage; defaults to
+	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. 'auto' opens it through
+	 *   {@link setStorageOpener} (rayzee/addons/storage); a host-supplied StorageManager stays the host's to dispose.
 	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
 	 *   on the GPU, move its triangle records and BLAS nodes to disk (see
 	 *   {@link ensureSceneResident}). Needs storage; skipped for animated scenes.
@@ -189,8 +187,9 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._maxSceneBytes = options.maxSceneBytes;
 		this._hostMemoryGB = options.hostMemoryGB;
 		this._storageOption = options.storage;
+		this._storageOpener = null;
 		this._memorySpill = options.memorySpill === true;
-		/** @type {?StorageManager} on-disk storage, null when off or unavailable */
+		/** @type {?Object} on-disk storage (a StorageManager), null when off or unavailable */
 		this.storage = null;
 		this._storageRelease = null;
 		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
@@ -373,6 +372,20 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
+	/**
+	 * Installs on-disk storage — `acquireSharedStorage` from rayzee/addons/storage — for the download, environment and
+	 * scene caches and the memory spill. Before init(), or after it resolves; PathTracerApp installs it itself.
+	 * @param {function(string): Promise<{storage: ?Object, reason?: string, release: function(): void}>} opener
+	 */
+	async setStorageOpener( opener ) {
+
+		this._storageOpener = opener;
+		if ( ! this.isInitialized || this.storage || this._disposed ) return;
+		await this._initStorage();
+		this._attachStorage();
+
+	}
+
 	async _initStorage() {
 
 		// A batch render must not be answered from an earlier run's cache unless the host asked for one.
@@ -380,13 +393,25 @@ export class RayzeeRenderer extends EventDispatcher {
 			?? ( this._issues.strict && ! isAssetConfigured( 'storage' ) ? false : getAssetConfig().storage );
 		if ( option === false ) return;
 
-		if ( option instanceof StorageManager ) {
+		if ( option && typeof option === 'object' ) {
 
 			this.storage = option;
 
 		} else {
 
-			const { storage, reason, release } = await acquireSharedStorage( getAssetConfig().cacheNamespace );
+			if ( ! this._storageOpener ) {
+
+				if ( this._storageOption !== undefined || isAssetConfigured( 'storage' ) ) {
+
+					this._issues.warn( ISSUE_CODES.CAPABILITY_MISSING, 'on-disk storage needs rayzee/addons/storage: setStorageOpener( acquireSharedStorage )' );
+
+				}
+
+				return;
+
+			}
+
+			const { storage, reason, release } = await this._storageOpener( getAssetConfig().cacheNamespace );
 			if ( this._disposed ) {
 
 				release();

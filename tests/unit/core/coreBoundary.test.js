@@ -55,6 +55,7 @@ const ABOVE_THE_CORE = [
 	/^integrators\//,
 	/^Color\/(ColorManagement|OcioViews|OcioRuntime|LutBake|ColorSpaces|InputColorSpaces|BakedViews|Displays)\.js$/,
 	/^TSL\/(Bidirectional|BidirectionalLamps|LightGenerateKernel|ConnectKernel|LightSplatKernel|MergeKernel|LightGuide)\.js$/,
+	/^Storage\/(StorageManager|StorageOps|StorageWorker|openStorage|transport|inlineTransport|locks|events)\.js$/,
 ];
 
 // What a capability may not reach: the viewer, or another capability.
@@ -108,6 +109,14 @@ describe( 'the renderer core', () => {
 		const color = reachable( 'addons/color.js' );
 		expect( color ).toEqual( expect.arrayContaining( [ 'Color/ColorManagement.js', 'Color/OcioRuntime.js' ] ) );
 		expect( color.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'leaves on-disk storage to its add-on, which reaches no viewer code', () => {
+
+		const storage = reachable( 'addons/storage.js' );
+		expect( storage ).toEqual( expect.arrayContaining( [ 'Storage/StorageManager.js', 'Storage/openStorage.js' ] ) );
+		expect( storage.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
 

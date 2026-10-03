@@ -1,4 +1,4 @@
-import { ENGINE_AREAS } from './StorageManager.js';
+import { ENGINE_AREAS } from './areas.js';
 import { sharedStorage } from './shared.js';
 import { getAssetConfig } from '../AssetConfig.js';
 

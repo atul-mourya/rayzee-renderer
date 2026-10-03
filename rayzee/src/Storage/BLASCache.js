@@ -4,7 +4,7 @@
  * stored BLAS is only ever used for exactly the triangles it was built over.
  */
 
-import { ENGINE_AREAS } from './StorageManager.js';
+import { ENGINE_AREAS } from './areas.js';
 
 export const BLAS_CACHE_FORMAT = 2;
 

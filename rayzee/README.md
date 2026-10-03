@@ -346,7 +346,7 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader, bidirectional integrator or OpenColorIO pipeline, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader, bidirectional integrator, OpenColorIO pipeline or on-disk cache, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -402,7 +402,20 @@ renderer.setColorManagement(ColorManagement);
 await renderer.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' });
 ```
 
-Several renderers, core or full, can live in one page; they share only the colour management, which is page-wide.
+On-disk storage (the browser's origin private file system), for the download, environment and scene caches and the
+`memorySpill` option. Without it downloads land in memory and nothing is cached between visits. Install it before
+`init()`:
+
+```js
+import { acquireSharedStorage } from 'rayzee/addons/storage';
+
+const renderer = new RayzeeRenderer(canvas);
+renderer.setStorageOpener(acquireSharedStorage);
+await renderer.init();
+```
+
+Several renderers, core or full, can live in one page; they share only the colour management and the on-disk storage,
+which are page-wide.
 
 #### Loading Assets
 

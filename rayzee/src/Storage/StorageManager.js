@@ -3,11 +3,9 @@ import { acquireLock, heldLockNames } from './locks.js';
 import { entryIdFor } from './identity.js';
 import { Emitter } from './events.js';
 import { InlineTransport } from './inlineTransport.js';
+import { STORAGE_KIND, ENGINE_AREAS } from './areas.js';
 
-export const STORAGE_KIND = Object.freeze( { CACHE: 'cache', USER: 'user', SCRATCH: 'scratch' } );
-
-/** Areas the engine itself writes; hosts define their own with `defineArea`. */
-export const ENGINE_AREAS = Object.freeze( { DOWNLOADS: 'downloads', ARCHIVES: 'archives', SCENES: 'scenes', CDF: 'cdf', SPILL: 'spill' } );
+export { STORAGE_KIND, ENGINE_AREAS };
 
 const META = 'meta.json';
 const META_VERSION = 1;

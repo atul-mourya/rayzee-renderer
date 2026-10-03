@@ -1,5 +1,5 @@
 import { createTarIndexer } from './ArchiveReader.js';
-import { ENGINE_AREAS } from '../Storage/StorageManager.js';
+import { ENGINE_AREAS } from '../Storage/areas.js';
 import { fileIdentity, identityKey } from '../Storage/identity.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 

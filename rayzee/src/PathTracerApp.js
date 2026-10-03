@@ -28,6 +28,7 @@ import { PhysicalSky } from './Processor/PhysicalSky.js';
 import { ArchiveImporter } from './Processor/ArchiveImporter.js';
 import { BidirectionalIntegrator } from './integrators/BidirectionalIntegrator.js';
 import { ColorManagement } from './Color/ColorManagement.js';
+import { acquireSharedStorage } from './Storage/openStorage.js';
 
 export { describeAdapter, RENDER_CHECKPOINT_VERSION };
 
@@ -69,6 +70,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		super( canvas, options );
 		this.setColorManagement( ColorManagement );
+		this.setStorageOpener( acquireSharedStorage );
 
 		this._container = options.container || null;
 		this._animRefitInFlight = false;

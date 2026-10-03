@@ -1,4 +1,4 @@
-import { ENGINE_AREAS } from './StorageManager.js';
+import { ENGINE_AREAS } from './areas.js';
 
 const WRITE_PIECE_BYTES = 32 * 1024 * 1024;
 const FILE = 'chunks.bin';
