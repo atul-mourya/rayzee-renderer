@@ -144,15 +144,26 @@ function namedMetalKey( s ) {
 
 }
 
-/** Roughness from `roughness` or anisotropic `uroughness`/`vroughness`. */
+/**
+ * The engine's roughness for pbrt's `roughness` or anisotropic `uroughness`/`vroughness` (their α averaged). pbrt-v4
+ * takes GGX α = √roughness (`remaproughness`, the default) or α = roughness; the engine's GGX takes α = roughness².
+ * Passing pbrt's number through made `remaproughness false` 0.1 an α of 0.01, a near mirror. `dflt` is the engine's.
+ */
 function resolveRoughness( params, dflt ) {
 
-	if ( params.roughness && typeof params.roughness.value[ 0 ] === 'number' ) return params.roughness.value[ 0 ];
-	const u = pFloat( params, 'uroughness', null );
-	const v = pFloat( params, 'vroughness', null );
-	if ( u !== null && v !== null ) return ( u + v ) / 2;
-	if ( u !== null ) return u;
-	return dflt;
+	const remap = params.remaproughness?.value?.[ 0 ];
+	const alpha = ( r ) => ( remap === false || remap === 'false' ? r : Math.sqrt( Math.max( r, 0 ) ) );
+	let a = null;
+	if ( params.roughness && typeof params.roughness.value[ 0 ] === 'number' ) a = alpha( params.roughness.value[ 0 ] );
+	else {
+
+		const u = pFloat( params, 'uroughness', null );
+		const v = pFloat( params, 'vroughness', null );
+		if ( u !== null ) a = v !== null ? ( alpha( u ) + alpha( v ) ) / 2 : alpha( u );
+
+	}
+
+	return a === null ? dflt : Math.sqrt( Math.max( a, 0 ) );
 
 }
 
@@ -193,9 +204,11 @@ export async function buildMaterial( def, ctx ) {
 
 		case 'diffuse': {
 
+			// Lambertian: no dielectric specular layer, which MeshPhysicalMaterial has by default.
 			applyAlbedo( await resolveSpectrum( params, 'reflectance', ctx, [ 0.5, 0.5, 0.5 ] ) );
 			mat.roughness = 1;
 			mat.metalness = 0;
+			mat.specularIntensity = 0;
 			break;
 
 		}

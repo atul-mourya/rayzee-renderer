@@ -28,6 +28,7 @@ import { getAssetConfig } from '../AssetConfig.js';
 import { getPlatform } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin } from './PlatformImageLoader.js';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
+import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -1172,10 +1173,11 @@ export class AssetLoader extends EventDispatcher {
 
 			const ext = fname.split( '.' ).pop().toLowerCase();
 			const blob = new Blob( [ bytes ] );
-			const url = URL.createObjectURL( blob );
+			const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
 			try {
 
-				const texture = await this.loadEnvironmentByExtension( url, ext );
+				const texture = url ? await this.loadEnvironmentByExtension( url, ext ) : pfmTexture( bytes );
+				texture.mapping = EquirectangularReflectionMapping;
 				setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
 				texture.userData[ ARCHIVE_PATH ] = fname;
 				texture.userData[ ARCHIVE_LOADER ] = 'environment';
@@ -1183,7 +1185,7 @@ export class AssetLoader extends EventDispatcher {
 
 			} finally {
 
-				URL.revokeObjectURL( url );
+				if ( url ) URL.revokeObjectURL( url );
 
 			}
 
@@ -1267,7 +1269,8 @@ export class AssetLoader extends EventDispatcher {
 
 		// The light's own orientation and `scale` are already baked into the texture, so the
 		// scene is only correct at rotation 0 / intensity 1 — pinned, whatever the host's defaults.
-		if ( environment?.texture ) this.sceneMetadata = { environment: { rotation: 0, intensity: 1 } };
+		// Without an infinite light pbrt has no environment at all.
+		this.sceneMetadata = { environment: environment?.texture ? { rotation: 0, intensity: 1 } : { enabled: false } };
 
 		updateLoading( { isLoading: true, status: 'Processing PBRT geometry...', progress: 10 } );
 		await this.onModelLoad( this.targetModel );
@@ -1296,6 +1299,10 @@ export class AssetLoader extends EventDispatcher {
 				: ( this.loaderCache.exr || ( this.loaderCache.exr = new EXRLoader().setDataType( FloatType ) ) );
 			tex = await this._loadViaObjectURL( loader, bytes );
 			// HDR/EXR maps are linear — leave colorSpace as the loader set it.
+
+		} else if ( ext === 'pfm' ) {
+
+			tex = pfmTexture( bytes );
 
 		} else if ( ext === 'tga' ) {
 

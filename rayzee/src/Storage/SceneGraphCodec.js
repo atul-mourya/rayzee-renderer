@@ -10,7 +10,7 @@
 
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, Group, InstancedBufferAttribute, InstancedMesh,
-	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera,
+	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, DirectionalLight, PointLight, SpotLight,
 } from 'three';
 
 export const SCENE_GRAPH_FORMAT = 2;
@@ -28,6 +28,7 @@ const TEXTURE_PROPS = [
 	'flipY', 'generateMipmaps', 'premultiplyAlpha', 'unpackAlignment', 'colorSpace',
 ];
 
+const LIGHT_PROPS = [ 'intensity', 'distance', 'decay', 'angle', 'penumbra' ];
 const OBJECT_PROPS = [ 'name', 'visible', 'castShadow', 'receiveShadow', 'frustumCulled', 'renderOrder', 'matrixAutoUpdate' ];
 
 export class SceneGraphUnsupported extends Error {
@@ -48,6 +49,9 @@ function kindOf( object ) {
 	if ( object.isMesh ) return 'Mesh';
 	if ( object.isPerspectiveCamera ) return 'PerspectiveCamera';
 	if ( object.isOrthographicCamera ) return 'OrthographicCamera';
+	if ( object.isDirectionalLight ) return 'DirectionalLight';
+	if ( object.isPointLight ) return 'PointLight';
+	if ( object.isSpotLight ) return 'SpotLight';
 	if ( object.isLight || object.isPoints || object.isLine || object.isSprite || object.isLOD ) return null;
 	if ( object.isGroup ) return 'Group';
 	return object.constructor === Object3D ? 'Object3D' : null;
@@ -231,6 +235,14 @@ export function encodeSceneGraph( root, { environment = null, animations = [], s
 				if ( object[ prop ] !== undefined ) node[ prop ] = object[ prop ];
 
 			}
+
+		}
+
+		if ( object.isLight ) {
+
+			node.color = object.color.toArray();
+			for ( const prop of LIGHT_PROPS ) if ( object[ prop ] !== undefined ) node[ prop ] = object[ prop ];
+			if ( object.target ) node.target = object.target.uuid;
 
 		}
 
@@ -462,6 +474,9 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 			case 'PerspectiveCamera': object = new PerspectiveCamera(); break;
 			case 'OrthographicCamera': object = new OrthographicCamera(); break;
 			case 'Group': object = new Group(); break;
+			case 'DirectionalLight': object = new DirectionalLight(); break;
+			case 'PointLight': object = new PointLight(); break;
+			case 'SpotLight': object = new SpotLight(); break;
 			default: object = new Object3D();
 
 		}
@@ -487,10 +502,25 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 
 		}
 
+		if ( object.isLight ) {
+
+			object.color.fromArray( node.color );
+			for ( const prop of LIGHT_PROPS ) if ( node[ prop ] !== undefined ) object[ prop ] = node[ prop ];
+
+		}
+
 		built.push( object );
 		if ( node.parent >= 0 ) built[ node.parent ].add( object );
 
 	}
+
+	// A light aims at its target, which is stored as an object of its own.
+	const byUuid = new Map( built.map( ( object ) => [ object.uuid, object ] ) );
+	manifest.nodes.forEach( ( node, i ) => {
+
+		if ( node.target && byUuid.has( node.target ) ) built[ i ].target = byUuid.get( node.target );
+
+	} );
 
 	return {
 		root: built[ 0 ],

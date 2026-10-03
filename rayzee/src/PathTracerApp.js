@@ -220,6 +220,7 @@ export class PathTracerApp extends EventDispatcher {
 		this._container = options.container || null;
 		// Apply the environment authored into a model file's metadata on load. See _beginSceneMetadataEnvironment().
 		this._applySceneMetadataEnabled = options.applySceneMetadata !== false;
+		this._unlitRestore = null;
 		this._applyingSceneMetadata = false;
 
 		// Before the settings: the profile supplies some of their defaults.
@@ -1297,8 +1298,9 @@ export class PathTracerApp extends EventDispatcher {
 
 	/**
 	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
-	 * or null when the file has none. See {@link module:Processor/SceneMetadata}.
-	 * @type {{ environment?: { sourceFile: string, rotation?: number, intensity?: number } }|null}
+	 * or null when the file has none. See {@link module:Processor/SceneMetadata}. A pbrt scene
+	 * without an infinite light carries `environment: { enabled: false }`.
+	 * @type {{ environment?: { sourceFile?: string, rotation?: number, intensity?: number, enabled?: boolean } }|null}
 	 */
 	get sceneMetadata() {
 
@@ -1327,7 +1329,15 @@ export class PathTracerApp extends EventDispatcher {
 	 */
 	_beginSceneMetadataEnvironment() {
 
+		this._restoreUnlitSettings();
 		const env = this.sceneMetadata?.environment;
+		if ( this._applySceneMetadataEnabled && env?.enabled === false ) {
+
+			this._applyUnlitSettings();
+			return null;
+
+		}
+
 		if ( ! this._applySceneMetadataEnabled || ! env?.sourceFile || ! this.stages.pathTracer ) return null;
 
 		// Claim 'hdri' mode up front: loadEnvironment() fires beforeEnvironmentLoad, and a
@@ -1365,7 +1375,7 @@ export class PathTracerApp extends EventDispatcher {
 
 		const metadata = this.sceneMetadata;
 		const env = metadata?.environment;
-		if ( ! env ) return;
+		if ( ! env || env.enabled === false ) return;
 
 		const updates = { enableEnvironment: true, showBackground: true, transparentBackground: false };
 		if ( env.intensity !== undefined ) {
@@ -1381,6 +1391,38 @@ export class PathTracerApp extends EventDispatcher {
 		if ( this.scene ) this.scene.background = texture;
 
 		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
+
+	}
+
+	/**
+	 * A scene that has no environment (a pbrt scene without an infinite light) renders with none: no light
+	 * from it and a plain backdrop. The next model gets back what it replaced, unless someone changed it since.
+	 * @private
+	 */
+	_applyUnlitSettings() {
+
+		const effective = this.settings.getEffective();
+		const updates = { enableEnvironment: false, showBackground: false };
+		this._unlitRestore = Object.fromEntries( Object.keys( updates ).map( key => [ key, { value: effective[ key ].value, source: effective[ key ].source } ] ) );
+		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
+		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: false } } );
+
+	}
+
+	/** @private */
+	_restoreUnlitSettings() {
+
+		const saved = this._unlitRestore;
+		if ( ! saved ) return;
+		this._unlitRestore = null;
+		const effective = this.settings.getEffective();
+		for ( const [ key, { value, source } ] of Object.entries( saved ) ) {
+
+			if ( effective[ key ]?.source === SETTING_SOURCE.SCENE_METADATA ) this.settings.set( key, value, { reset: false, source } );
+
+		}
+
+		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: this.settings.get( 'enableEnvironment' ) } } );
 
 	}
 

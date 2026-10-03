@@ -20,13 +20,27 @@ import {
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
-	NumberKeyframeTrack, BooleanKeyframeTrack
+	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight
 } from 'three';
 import { buildMaterial, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
+
+const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
+
+// pbrt scales a light's spectrum to luminance 1 unless it is RGB, so a blackbody of any temperature is equally bright.
+async function lightRGB( params, name, ctx ) {
+
+	const p = params[ name ];
+	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && p.value[ 0 ].startsWith( 'stdillum' ) ) return [ 1, 1, 1 ];
+	const rgb = ( await resolveSpectrum( params, name, ctx, [ 1, 1, 1 ] ) ).rgb || [ 1, 1, 1 ];
+	if ( ! p || p.type === 'rgb' || p.type === 'color' || p.type === 'float' ) return rgb;
+	const y = 0.2126 * rgb[ 0 ] + 0.7152 * rgb[ 1 ] + 0.0722 * rgb[ 2 ];
+	return y > 0 ? rgb.map( v => v / y ) : rgb;
+
+}
 
 const FLIP_Z = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, - 1, 0, 0, 0, 0, 1 ];
 const MAX_SKY_READBACK = 4096;
@@ -95,7 +109,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 4;
+export const PBRT_BUILD_REVISION = 6;
 
 function samePlacements( a, b ) {
 
@@ -308,6 +322,7 @@ export class PBRTSceneBuilder {
 
 		// Infinite light → environment
 		const environment = await this._buildEnvironment( ir.lights );
+		await this._buildLamps( ir.lights, group );
 
 		this._reportUnsupportedLights( ir.lights );
 
@@ -1203,9 +1218,8 @@ export class PBRTSceneBuilder {
 
 	async _applyAreaLight( material, areaLight, ctx ) {
 
-		const L = await resolveSpectrum( areaLight.params, 'L', ctx, [ 1, 1, 1 ] );
+		const rgb = await lightRGB( areaLight.params, 'L', ctx );
 		const scale = pFloat( areaLight.params, 'scale', 1 );
-		const rgb = L.rgb || [ 1, 1, 1 ];
 		material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
 		material.emissiveIntensity = scale;
 
@@ -1500,8 +1514,7 @@ export class PBRTSceneBuilder {
 
 		// Constant-radiance infinite light → tiny float texture (CDF-buildable).
 		const ctx = { resolveNamedTexture: async () => null, warn: ( m ) => this.warn( m ) };
-		const L = await resolveSpectrum( inf.params, 'L', ctx, [ 1, 1, 1 ] );
-		const rgb = ( L.rgb || [ 1, 1, 1 ] ).map( v => v * scale );
+		const rgb = ( await lightRGB( inf.params, 'L', ctx ) ).map( v => v * scale );
 
 		const w = 2, h = 1;
 		const data = new Float32Array( w * h * 4 );
@@ -1523,13 +1536,89 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/**
+	 * `distant`, `point` and `spot` lights as three.js lamps, in the engine's units: a directional lamp's
+	 * intensity is the irradiance it gives (pbrt's L), a point or spot lamp's is 4π × its radiant intensity.
+	 */
+	async _buildLamps( lights, group ) {
+
+		const ctx = { resolveNamedTexture: async () => null, warn: ( m ) => this.warn( m ) };
+		for ( const l of lights ) {
+
+			if ( ! LAMP_TYPES.has( l.type ) ) continue;
+
+			const world = new Matrix4().fromArray( this.convertHandedness ? M.multiply( FLIP_Z, l.ctm ) : l.ctm );
+			const point = ( name, dflt ) => {
+
+				const v = l.params[ name ]?.value;
+				return new Vector3().fromArray( v?.length >= 3 ? v : dflt ).applyMatrix4( world );
+
+			};
+
+			const rgb = await lightRGB( l.params, l.type === 'distant' ? 'L' : 'I', ctx );
+			let scale = pFloat( l.params, 'scale', 1 );
+			const from = point( 'from', [ 0, 0, 0 ] );
+			const to = point( 'to', [ 0, 0, 1 ] );
+			let light;
+			if ( l.type === 'distant' ) {
+
+				const illuminance = pFloat( l.params, 'illuminance', - 1 );
+				if ( illuminance > 0 ) scale *= illuminance;
+				light = new DirectionalLight();
+				light.userData.__luxConverted = true;
+
+			} else if ( l.type === 'point' ) {
+
+				// `power` sets the radiant intensity to power / 4π.
+				const power = pFloat( l.params, 'power', - 1 );
+				scale *= power > 0 ? power : 4 * Math.PI;
+				light = new PointLight();
+				light.userData.__candelaConverted = true;
+
+			} else {
+
+				// pbrt's falloff is smoothstep( cos cone, cos( cone − delta ), cos θ ); the engine's blend is that width over 1 − cos cone.
+				const cone = Math.min( Math.max( pFloat( l.params, 'coneangle', 30 ), 0 ), 90 ) * Math.PI / 180;
+				const delta = Math.min( Math.max( pFloat( l.params, 'conedeltaangle', 5 ) * Math.PI / 180, 0 ), cone );
+				const cosEnd = Math.cos( cone ), cosStart = Math.cos( cone - delta );
+				const power = pFloat( l.params, 'power', - 1 );
+				if ( power > 0 ) scale *= power / ( 2 * Math.PI * ( ( 1 - cosStart ) + ( cosStart - cosEnd ) / 2 ) );
+				scale *= 4 * Math.PI;
+				light = new SpotLight();
+				light.angle = cone;
+				light.penumbra = cosEnd < 1 ? Math.min( ( cosStart - cosEnd ) / ( 1 - cosEnd ), 1 ) : 0;
+				light.userData.__candelaConverted = true;
+
+			}
+
+			const peak = Math.max( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+			if ( ! ( peak > 0 ) || ! ( scale > 0 ) ) continue;
+			light.color.setRGB( rgb[ 0 ] / peak, rgb[ 1 ] / peak, rgb[ 2 ] / peak );
+			light.intensity = peak * scale;
+			light.name = `pbrt ${l.type}`;
+			light.position.copy( from );
+			light.decay = 2;
+			light.distance = 0;
+			if ( light.target ) {
+
+				light.target.position.subVectors( to, from );
+				light.add( light.target );
+
+			}
+
+			group.add( light );
+
+		}
+
+	}
+
 	_reportUnsupportedLights( lights ) {
 
 		for ( const l of lights ) {
 
-			if ( l.type !== 'infinite' ) {
+			if ( l.type !== 'infinite' && ! LAMP_TYPES.has( l.type ) ) {
 
-				this.warn( `light "${l.type}" not supported (only infinite lights and emissive area lights are mapped)` );
+				this.warn( `light "${l.type}" not supported (only infinite, distant, point and spot lights and emissive area lights are mapped)` );
 
 			}
 

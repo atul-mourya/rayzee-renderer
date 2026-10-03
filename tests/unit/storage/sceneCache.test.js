@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, FloatType, Group, InstancedMesh, Matrix4, Mesh,
 	MeshPhysicalMaterial, PerspectiveCamera, RGBAFormat, RepeatWrapping, SRGBColorSpace, Texture, VectorKeyframeTrack, PointLight,
+	SpotLight, DirectionalLight, HemisphereLight, Vector3,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/Storage/openStorage.js';
@@ -153,10 +154,40 @@ describe( 'SceneGraphCodec', () => {
 
 	} );
 
+	it( 'stores lamps with their targets', async () => {
+
+		const root = new Group();
+		const spot = new SpotLight( 0xff8800, 12.5, 0, 0.4, 0.25, 2 );
+		spot.position.set( 1, 2, 3 );
+		spot.target.position.set( 0, - 2, 0 );
+		spot.add( spot.target );
+		const sun = new DirectionalLight( 0xffffff, 3 );
+		sun.position.set( 0, 5, 0 );
+		sun.target.position.set( 1, - 5, 0 );
+		sun.add( sun.target );
+		const point = new PointLight( 0x0000ff, 7 );
+		point.userData.__candelaConverted = true;
+		root.add( spot, sun, point );
+
+		const encoded = encodeSceneGraph( root );
+		const decoded = await decodeSceneGraph( JSON.parse( JSON.stringify( encoded.manifest ) ), new Blob( [] ), { loadTexture: async () => null } );
+		const [ s, d, p ] = decoded.root.children;
+		decoded.root.updateMatrixWorld( true );
+
+		expect( s.isSpotLight && d.isDirectionalLight && p.isPointLight ).toBe( true );
+		expect( [ s.intensity, s.angle, s.penumbra, s.decay ] ).toEqual( [ 12.5, 0.4, 0.25, 2 ] );
+		expect( s.color.toArray() ).toEqual( spot.color.toArray() );
+		expect( s.target.getWorldPosition( new Vector3() ).toArray() ).toEqual( [ 1, 0, 3 ] );
+		expect( d.target.getWorldPosition( new Vector3() ).toArray() ).toEqual( [ 1, 0, 0 ] );
+		expect( p.intensity ).toBe( 7 );
+		expect( p.userData.__candelaConverted ).toBe( true );
+
+	} );
+
 	it( 'refuses what it does not know rather than store it wrongly', () => {
 
 		const { root } = buildScene();
-		root.add( new PointLight() );
+		root.add( new HemisphereLight() );
 		expect( () => encodeSceneGraph( root ) ).toThrow( SceneGraphUnsupported );
 
 		const plain = new Group();

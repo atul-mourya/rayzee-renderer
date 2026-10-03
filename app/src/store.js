@@ -1192,10 +1192,19 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	},
 
-	// Mirrors an environment the engine installed by itself — today that is the HDRI authored
-	// into a model file's metadata, reported via the SceneMetadataApplied event. The engine has
-	// already applied its own settings; this only pulls the UI back in sync with them.
+	// Mirrors an environment the engine installed by itself — the HDRI authored into a model
+	// file's metadata, or none for a pbrt scene without a sky (`enabled`), reported via the
+	// SceneMetadataApplied event. The engine has already applied its own settings; this only
+	// pulls the UI back in sync with them.
 	syncSceneEnvironment: env => {
+
+		if ( env?.enabled !== undefined ) {
+
+			const settings = getApp()?.settings;
+			if ( settings ) set( { enableEnvironment: settings.get( 'enableEnvironment' ), showBackground: settings.get( 'showBackground' ), transparentBackground: settings.get( 'transparentBackground' ) } );
+			return;
+
+		}
 
 		if ( ! env?.sourceFile ) return;
 
