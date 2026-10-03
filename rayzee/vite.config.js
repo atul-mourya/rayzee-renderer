@@ -29,6 +29,7 @@ export default defineConfig( {
 					"rayzee-core": path.resolve( __dirname, "src/core.js" ),
 					"addons/physical-sky": path.resolve( __dirname, "src/addons/physicalSky.js" ),
 					"addons/archives": path.resolve( __dirname, "src/addons/archives.js" ),
+					"addons/bidirectional": path.resolve( __dirname, "src/addons/bidirectional.js" ),
 				},
 			name: "Rayzee",
 		},

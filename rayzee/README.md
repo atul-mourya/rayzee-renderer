@@ -346,7 +346,7 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky or archive reader, and its entry point downloads about 30 % less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader or bidirectional integrator, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -371,6 +371,15 @@ await renderer.environmentManager.setMode('procedural');
 ```
 
 Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`).
+
+Bidirectional path tracing and vertex merging, for `integrator: 'bidirectional' | 'vcm'`:
+
+```js
+import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
+
+renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
+renderer.settings.set('integrator', 'bidirectional');
+```
 
 Scene archives (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
 

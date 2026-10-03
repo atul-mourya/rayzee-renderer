@@ -26,6 +26,7 @@ import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
 import { PhysicalSky } from './Processor/PhysicalSky.js';
 import { ArchiveImporter } from './Processor/ArchiveImporter.js';
+import { BidirectionalIntegrator } from './integrators/BidirectionalIntegrator.js';
 
 export { describeAdapter, RENDER_CHECKPOINT_VERSION };
 
@@ -162,6 +163,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		await super._initManagers();
 		this.environmentManager.setProceduralSky( PhysicalSky );
+		this.stages.pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) );
 
 		this.interactionManager = new InteractionManager( {
 			scene: this.meshScene,

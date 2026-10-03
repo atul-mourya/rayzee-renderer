@@ -19,6 +19,9 @@
     "./addons/archives": {
       "import": "./dist/addons/archives.es.js"
     },
+    "./addons/bidirectional": {
+      "import": "./dist/addons/bidirectional.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [

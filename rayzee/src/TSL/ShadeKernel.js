@@ -27,7 +27,6 @@ import {
 import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { hitFacet, unpackHitFacet, windingNormal } from './HitFacet.js';
-import { guidedDiscPdf, recordEscape } from './LightGuide.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
@@ -37,7 +36,6 @@ import {
 	getDirectionalLight, getAreaLight, getPointLight, getSpotLight, intersectAreaLight, getDistanceAttenuation, sampleDirectionalGoboMask,
 	LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_AREA, LIGHT_TYPE_POINT, LIGHT_TYPE_SPOT,
 } from './LightsCore.js';
-import { LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW } from './BidirectionalLamps.js';
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
 import { regularizePathContribution, generateSampledDirection, computeNDCDepth, handleRussianRoulette, DELTA_PDF } from './PathTracerCore.js';
 import { evaluateSpecularDFG, baseFresnelParams } from './MaterialProperties.js';
@@ -48,11 +46,6 @@ import {
 	sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
 } from './EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from './LightBVHSampling.js';
-import {
-	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt,
-	strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET,
-	sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE,
-} from './Bidirectional.js';
 import {
 	Ray,
 	HitInfo,
@@ -137,6 +130,11 @@ export function buildShadeKernel( params ) {
 		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
 		hitDistanceEncode = null,
 	} = params;
+
+	// The bidirectional shading functions come with the integrator's uniforms (BidirectionalIntegrator), only used where bdpt is.
+	const {
+		mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt, strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET, sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE, guidedDiscPdf, recordEscape, LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW,
+	} = bdpt?.lib ?? {};
 
 	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
 

@@ -52,6 +52,8 @@ const ABOVE_THE_CORE = [
 	/^Processor\/(ArchiveImporter|ArchiveReader|ArchiveCache|ZipReader)\.js$/,
 	/^Processor\/PBRT\//,
 	/^Storage\/SceneGraphCodec\.js$/,
+	/^integrators\//,
+	/^TSL\/(Bidirectional|BidirectionalLamps|LightGenerateKernel|ConnectKernel|LightSplatKernel|MergeKernel|LightGuide)\.js$/,
 ];
 
 // What a capability may not reach: the viewer, or another capability.
@@ -89,6 +91,14 @@ describe( 'the renderer core', () => {
 		const archives = reachable( 'addons/archives.js' );
 		expect( archives ).toEqual( expect.arrayContaining( [ 'Processor/ArchiveImporter.js', 'Processor/PBRT/index.js' ] ) );
 		expect( archives.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'leaves bidirectional and vertex merging to their add-on, which reaches no viewer code', () => {
+
+		const bidirectional = reachable( 'addons/bidirectional.js' );
+		expect( bidirectional ).toEqual( expect.arrayContaining( [ 'integrators/BidirectionalIntegrator.js', 'TSL/ConnectKernel.js' ] ) );
+		expect( bidirectional.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
 

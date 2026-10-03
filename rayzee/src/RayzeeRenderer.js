@@ -3582,6 +3582,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		// Expose environment manager (lives on pathTracer stage)
 		this.environmentManager = this.stages.pathTracer.environment;
 		this.environmentManager.issues = this._issues;
+		this.stages.pathTracer.issues = this._issues;
 		this.environmentManager.callbacks.onLightingChanged = () => this.pipeline.eventBus.emit( 'pipeline:lightingChanged' );
 		// A whole-app reset, not the stage's: a sky bake lands after its input, often once the loop is idle.
 		this.environmentManager.callbacks.onReset = () => this.reset();

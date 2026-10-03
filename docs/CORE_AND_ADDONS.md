@@ -108,7 +108,7 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    `environmentManager.setProceduralSky( PhysicalSky )` installs it, and `PathTracerApp` does so itself. Asked for
    'procedural' mode without it, the core records `capability.missing` (it throws under `strict`). The core reaches
    none of its modules; the sun it shades keeps only the limb-darkening constant (`Processor/SolarLimb.js`). The core
-   now downloads 326 KB compressed (from 341), the add-on 27 KB. `bench:node -- --core` installs it on the core.
+   now downloads 326 KB compressed (from 341). `bench:node -- --core` installs it on the core.
 6. **Per-renderer shader resources** — done (above); the Node bench now runs the core beside the full engine.
 7. **Archives and pbrt as an add-on** — done. `rayzee/addons/archives` exports `ArchiveImporter` (the archive half
    of the old `AssetLoader`, moved whole) with the readers and pbrt behind it; `assetLoader.setArchiveImporter()`
@@ -116,11 +116,21 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    moved to `EngineDefaults`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
    with the core plus the add-on. That check found a core bug the viewer had hidden: a load frames the camera with
    `lookAt()`, which leaves its world matrix stale, and only the orbit controls refreshed it — `renderFrames` now
-   does, each pass. The core downloads 289 KB compressed (from 326); the add-on 68 KB.
+   does, each pass. The core downloads 289 KB compressed (from 326).
+8. **Bidirectional and vertex merging as an add-on** — done. `rayzee/addons/bidirectional` exports
+   `BidirectionalIntegrator`; the path tracer has integrator hooks instead of bidirectional code
+   (`registerIntegrator`, `setIntegrator`, `activeIntegrator`; `PathTracer.js` 2,718 → 2,116 lines), and Shade and
+   Generate take the bidirectional functions from the integrator's uniforms. The GPU programs are unchanged apart
+   from internal name numbers (209 of 209 over 10 scenes, five of them bidirectional or VCM), and the core plus the
+   add-on renders all 36 bench scenes byte-identically with the full engine.
+
+   Downloads, compressed: the core 281 KB, `rayzee` 429 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
+   bidirectional 14 KB.
 
 ## What still ties the layers
 
-- **The core still carries capabilities:** the OCIO pipeline (3,800 lines), storage (3,000) and bidirectional /
-  VCM (1,400, plus code in `PathTracer` and Shade compiled out unless chosen). These are the next extractions.
+- **The core still carries capabilities:** the OCIO pipeline (3,800 lines) and storage (3,000). Shade still holds
+  the bidirectional branches (compiled out unless an integrator passes its uniforms); moving them out means a shading
+  kernel of the integrator's own.
 - **Settings are routed from one table** (`RenderSettings`), which still names viewer pieces (`denoisingManager`,
   `stages.autoExposure`). Each layer should declare its own settings.

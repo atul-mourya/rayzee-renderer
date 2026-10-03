@@ -732,6 +732,13 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
 ### Bidirectional integrator (`integrator: 'bidirectional'` | `'vcm'`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`, `TSL/MergeKernel.js`)
+An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`integrators/`) holds everything bidirectional —
+its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
+`beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
+'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate
+take the bidirectional functions from `uniforms.lib`, so the core imports none of them; choosing an unregistered
+integrator records `capability.missing`. Its controls are on the instance: `pt.activeIntegrator.setBidirectionalStrategy()`
+and the like. ⚠️ A new integrator plugs into the same hooks; never add `if ( bidirectional )` to `PathTracer` again.
 Opt-in (`settings.set( 'integrator', 'bidirectional' )`; the app's Path Tracer tab → Light Transport). Light
 subpaths start on **every light**: emissive triangles, the physical sky's sun, the environment map (HDRI,
 physical-sky texture, colour sky) and the four lamp types (rect/disk area, point, spot, directional). In this
@@ -768,7 +775,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   their flux: most of what crosses the disc lands where their NEE does better, and on the 1.9M-triangle
   interior (HDRI + six rect lamps) the sky's 89 % of light paths had made light tracing the noisiest strategy.
   Alone they still get every light path, so their caustics keep them.
-- **Light guide** (`TSL/LightGuide.js`, `pt.setLightGuiding( bool )`, default on): where on that disc a light
+- **Light guide** (`TSL/LightGuide.js`, `pt.activeIntegrator.setLightGuiding( bool )`, default on): where on that disc a light
   path starts is learned from camera paths. Each escape at p toward ω counts one in p's cell of the disc
   facing ω (64² cells, 16 octahedral direction bins, in the counter buffer at `COUNTER.GUIDE` — Shade has no
   binding to spare); a kernel folds the counts into running sums at frames 1, 2, 4 … 32, then every 32nd,
@@ -853,7 +860,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   ⚠️ Every side test takes a **unit** normal: `sideAccepts` has a ±1e-4 threshold, and a raw cross product of a
   small triangle is under it — a 3 cm bulb's NEE density read 0 on the light side and bidirectional counted its
   light twice (2.0× on the floor). `tests/gpu/emitterSides.test.js` holds it at 1 and 1e-3 units.
-- **Verification** (`pt.setBidirectionalStrategy( 'hit' | 'nee' | 'connect' | 'lightTrace', { alone } )`
+- **Verification** (`pt.activeIntegrator.setBidirectionalStrategy( 'hit' | 'nee' | 'connect' | 'lightTrace', { alone } )`
   keeps one strategy, MIS-weighted or alone at full weight). A lamp over a matte floor has a closed form
   (Lambert's polygon formula): every strategy alone and the combination land within noise of it (all
   |bias| ≤ 0.02 %). Exact-length references come from the path tracer with emissive NEE off at
@@ -892,11 +899,11 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   sum ends at, and a merge weighs both sides with `misMergePartial` and 1 / η². `bidirectionalMis.test.js` checks a
   two-bounce path's six strategies with a different η at each vertex.
   - **The radius is a pixel's footprint where it gathers** (`mergeRadiusAt`: `mergeConst` + `mergeSlope` ·
-    distance from the camera, ≥ `mergeMin`; constant for orthographic), default 1 px (`pt.setMergeRadius( px )`),
+    distance from the camera, ≥ `mergeMin`; constant for orthographic), default 1 px (`pt.activeIntegrator.setMergeRadius( px )`),
     shrinking as n^−⅛ (α = 0.75). A function of position alone, so both subpaths agree on η anywhere. ⚠️ A fraction
     of the scene's radius (SmallVCM's choice) made the classroom's 30 cm (its bounds include the outdoors): 5× the
     frame time and 92 % of the image merged. And `sceneRadius` was only measured with a light at infinity.
-  - **Trust** (`pt.setMergeTrust( t )`, default 0.25): the weights take η × t. Any density the strategies agree on
+  - **Trust** (`pt.activeIntegrator.setMergeTrust( t )`, default 0.25): the weights take η × t. Any density the strategies agree on
     still sums to one; light only merging reaches keeps weight 1 (the mirror caustic is identical at 1 and 0.25),
     and light other strategies reach goes back to them unblurred. Merging's bias is boundary bias (a sphere past a
     crease or a small object): Livspace read +6.1 % at 2 px, +0.69 % at 1 px, +0.17 % at 1 px with trust 0.25; the

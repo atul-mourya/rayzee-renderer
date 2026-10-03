@@ -23,7 +23,6 @@ import {
 } from './Random.js';
 
 import { generateRayFromCamera } from './CameraRay.js';
-import { mis } from './Bidirectional.js';
 import { Ray } from './Struct.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
@@ -107,7 +106,7 @@ export function buildGenerateKernel( params ) {
 			// Georgiev (31): light tracing's N_L samples over this ray's density 1 / (A_pixel cos³θ).
 			const cosCamera = max( dot( ray.direction, bdpt.cameraForward ), 1e-4 );
 			const dVCM = select( bdpt.lightTrace.greaterThan( uint( 0 ) ),
-				mis( float( bdpt.lightPaths ).mul( bdpt.pixelArea ).mul( cosCamera ).mul( cosCamera ).mul( cosCamera ) ), float( 0.0 ) );
+				bdpt.lib.mis( float( bdpt.lightPaths ).mul( bdpt.pixelArea ).mul( cosCamera ).mul( cosCamera ).mul( cosCamera ) ), float( 0.0 ) );
 			writeRngMis( hitBufferRW, rayID, seed, dVCM, float( 0.0 ) );
 
 		} else {

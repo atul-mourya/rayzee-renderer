@@ -4,13 +4,11 @@
  * for shared engine/scene infrastructure (managers, uniforms, camera, lights, BVH, accumulation).
  */
 
-import { uniform, uniformArray, texture, storage } from 'three/tsl';
-import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
+import { uniform, texture, storage } from 'three/tsl';
 import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
-import { LIGHT_FLOATS } from '../managers/UniformManager.js';
 import {
-	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute,
+	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute,
 } from '../Processor/PackedRayBuffer.js';
 import { QueueManager, COUNTER, ENERGY_SCALE } from '../Processor/QueueManager.js';
 import { VRAMTracker } from '../Processor/VRAMTracker.js';
@@ -21,21 +19,14 @@ import { buildShadeKernel, SHADE_WG_SIZE } from '../TSL/ShadeKernel.js';
 import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from '../TSL/CompactKernel.js';
 import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../TSL/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
-import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../TSL/LightGenerateKernel.js';
-import { buildGuideKernel, buildGuideClearKernel, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from '../TSL/LightGuide.js';
-import { buildConnectKernel, CONNECT_WG_SIZE } from '../TSL/ConnectKernel.js';
-import { buildMergeClearKernel, buildMergeInsertKernel, buildMergeKernel, MERGE_WG_SIZE } from '../TSL/MergeKernel.js';
-import {
-	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
-} from '../TSL/LightSplatKernel.js';
-import { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE, mergeVmAt } from '../TSL/Bidirectional.js';
 import { buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
 import { withSceneResources } from '../TSL/SceneResources.js';
 import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
 } from '../TSL/SortGlobalKernels.js';
-import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE, CAMERA_PROJECTION_IDS, BVH_MAX_INDEX } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { deviceMemoryGB } from '../Processor/HostMemory.js';
 import {
@@ -45,23 +36,11 @@ import {
 const log = createLogger( 'wavefront' );
 
 // Shared by the 1D index-list kernels built inline below.
-const LIST_WG_SIZE = 256;
+export const LIST_WG_SIZE = 256;
 
 // Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
 // (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
-const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
-
-// Light vertex cache for the bidirectional integrator, at most this much of the hit buffer.
-const LIGHT_CACHE_BYTES = 256 * 1024 * 1024;
-const INFINITE_LIGHT_PATH_SHARE = 0.05;
-// Light paths cost more than camera paths and help fewer pixels: at equal time half a pixel's worth beat one.
-const LIGHT_PATHS_PER_PIXEL = 0.5;
-const LIGHT_TAG_MAX = ( 1 << 24 ) - 1;
-// Vertex merging: the radius at the first sample, in pixels' footprint where it gathers, shrinking as
-// n^((α − 1) / 2) so the estimate converges (Knaus & Zwicker 2011).
-const MERGE_RADIUS_PIXELS = 1;
-const MERGE_ALPHA = 0.75;
-const MERGE_TRUST = 0.25;
+export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
 
 export class PathTracer extends PathTracerStage {
 
@@ -170,59 +149,11 @@ export class PathTracer extends PathTracerStage {
 		this._outputs = new Map();
 		this._outputsChanged = false;
 
-		// Bidirectional integrator (setIntegrator). Off builds exactly the unidirectional kernels.
-		this._bidirectionalEnabled = false;
-		this._mergingEnabled = false;
-		this._mergeRadiusPixels = MERGE_RADIUS_PIXELS;
-		this._mergeHeadAttr = null;
-		this._lightCacheSlots = 0;
-		this._splatAttr = null;
-		this._lightTag = 0;
-		this._passTag = 0;
-		this._lastLightBounceCounts = null;
-		this._lastLightBounceEnergy = null;
-		this._lastLightCurveKey = null;
-		this._lightCurveKey = null;
-		this._bidirectional = {
-			lightPaths: uniform( 0, 'uint' ),
-			slotsPerPath: uniform( 1, 'uint' ),
-			lightTag: uniform( 1, 'uint' ),
-			passTag: uniform( 0, 'uint' ),
-			lightTrace: uniform( 0, 'uint' ),
-			strategyView: uniform( 0, 'uint' ),
-			pixelArea: uniform( 1, 'float' ),
-			cameraPosition: uniform( new Vector3(), 'vec3' ),
-			cameraForward: uniform( new Vector3( 0, 0, - 1 ), 'vec3' ),
-			sunPick: uniform( 0, 'float' ),
-			emitterPick: uniform( 0, 'float' ),
-			envPick: uniform( 0, 'float' ),
-			// 1 while the CDF texture carries the environment's exact table.
-			envTable: uniform( 0, 'uint' ),
-			// Running sum over SOURCE, then each lamp list at sourceOffsets[ type ], sized to the lists' capacity.
-			sourceCdf: uniformArray( new Float32Array( SOURCE.LAMPS ), 'float' ),
-			sourceCount: SOURCE.LAMPS,
-			sourceOffsets: [ SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS ],
-			sceneCenter: uniform( new Vector3(), 'vec3' ),
-			sceneRadius: uniform( 1, 'float' ),
-			// The light guide (TSL/LightGuide.js): 1 once a table has been built since the last reset; and
-			// whether camera paths count their escapes.
-			guide: uniform( 0, 'uint' ),
-			guideLearning: uniform( 1, 'uint' ),
-			guideTexture: null,
-			// Vertex merging (integrator 'vcm', MergeKernel.js), fixed at build: the radius at a point is
-			// mergeConst + mergeSlope · its distance from the camera, at least mergeMin (Bidirectional.js mergeRadiusAt).
-			merging: false,
-			mergeConst: uniform( 0, 'float' ),
-			mergeSlope: uniform( 0, 'float' ),
-			mergeMin: uniform( 1, 'float' ),
-			// How far the weights take a merge's density at its word (Bidirectional.js mergeVmAt).
-			mergeTrust: uniform( MERGE_TRUST, 'float' ),
-			hashMask: uniform( 0, 'uint' ),
-		};
-		this._lightGuiding = true;
-		this._guideTexture = null;
-		this._guideBuildAttr = null;
-		this._u32Views = new WeakMap();
+		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
+		// null for plain path tracing, which builds exactly the unidirectional kernels.
+		this._integratorFactories = new Map();
+		this._integratorInstances = new Map();
+		this._integrator = null;
 
 		// VRAM accounting — providers are thunks reading CURRENT live resources,
 		// so they survive buffer/texture reallocation (resize, scene/material reload).
@@ -245,8 +176,8 @@ export class PathTracer extends PathTracerStage {
 
 		} );
 
-		// Light tracing's splat image (the light vertex cache rides in the hit buffer, under 'rays')
-		t.register( 'bidirectional', () => ( this._splatAttr ? [ this._splatAttr, this._mergeHeadAttr ].filter( Boolean ) : null ) );
+		// An integrator's own buffers (a light vertex cache rides in the hit buffer, under 'rays')
+		t.register( 'integrator', () => this._integrator?.gpuResources() ?? null );
 
 		// Queue indices + atomic counters
 		t.register( 'queues', () => {
@@ -346,20 +277,45 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
-	 * Switching rebuilds the kernels: only the bidirectional ones bind the light vertex cache and splat image.
-	 * 'vcm' is bidirectional with vertex merging (photon mapping) added as a strategy.
-	 * @param {'path'|'bidirectional'|'vcm'} name
+	 * Makes an integrator choosable by name. `create( pathTracer )` makes its instance, once, which then takes the
+	 * integrator hooks this class calls (see BidirectionalIntegrator); one class may answer several names.
+	 * @param {string|string[]} names
+	 * @param {function(PathTracer): Object} create
+	 */
+	registerIntegrator( names, create ) {
+
+		for ( const name of [ names ].flat() ) this._integratorFactories.set( name, create );
+
+	}
+
+	/**
+	 * Switching rebuilds the kernels: only an integrator's own bind its buffers. 'path' is the path tracer's own;
+	 * the others must have been registered (rayzee/addons/bidirectional: 'bidirectional', 'vcm').
+	 * @param {string} name
 	 */
 	setIntegrator( name ) {
 
-		const enabled = name === 'bidirectional' || name === 'vcm';
-		const merging = name === 'vcm';
-		if ( enabled === this._bidirectionalEnabled && merging === this._mergingEnabled ) return;
-		this._bidirectionalEnabled = enabled;
-		this._mergingEnabled = merging;
-		this._bidirectional.merging = merging;
+		let next = null;
+		if ( name !== 'path' ) {
+
+			const create = this._integratorFactories.get( name );
+			if ( ! create ) {
+
+				this.issues?.record( ISSUE_CODES.CAPABILITY_MISSING, `integrator "${name}" is not installed: pathTracer.registerIntegrator(), or rayzee/addons/bidirectional`, { capability: name } );
+				return;
+
+			}
+
+			next = this._integratorInstances.get( create );
+			if ( ! next ) this._integratorInstances.set( create, next = create( this ) );
+
+		}
+
+		if ( next === this._integrator && ( ! next || next.name === name ) ) return;
+		if ( this._integrator && this._integrator !== next ) this._integrator.dispose();
+		next?.select( name );
+		this._integrator = next;
 		this._pathBudget = 0;
-		this._lastLightCurveKey = null;
 
 		if ( this._packedBuffers && this.materialData?.materialCount > 0 ) {
 
@@ -371,41 +327,16 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	/**
-	 * Verification only: keep one bidirectional strategy, MIS-weighted, or alone at full weight.
-	 * @param {'all'|'hit'|'nee'|'connect'|'lightTrace'|'merge'} strategy
-	 */
-	setBidirectionalStrategy( strategy = 'all', { alone = false } = {} ) {
-
-		const code = { all: STRATEGY.ALL, hit: STRATEGY.HIT, nee: STRATEGY.NEE, connect: STRATEGY.CONNECT, lightTrace: STRATEGY.LIGHT_TRACE, merge: STRATEGY.MERGE }[ strategy ] ?? STRATEGY.ALL;
-		this._bidirectional.strategyView.value = code === STRATEGY.ALL ? code : code + ( alone ? STRATEGY_ALONE : 0 );
-
-	}
-
 	get integrator() {
 
-		return this._mergingEnabled ? 'vcm' : this._bidirectionalEnabled ? 'bidirectional' : 'path';
+		return this._integrator?.name ?? 'path';
 
 	}
 
-	/**
-	 * Vertex merging's radius at the first sample, in pixels: the footprint where it gathers, so the blur is the same
-	 * on screen at any scene scale. It shrinks with every sample after. Larger gathers more light vertices — less
-	 * noise in caustics, more blur — at more cost.
-	 */
-	setMergeRadius( pixels = MERGE_RADIUS_PIXELS ) {
+	/** The chosen integrator's instance — its controls, e.g. setStrategy() — or null for plain path tracing. */
+	get activeIntegrator() {
 
-		this._mergeRadiusPixels = Math.max( pixels, 1e-3 );
-
-	}
-
-	/**
-	 * How much of the light other strategies can also reach vertex merging takes: 1 weighs merges by their density,
-	 * less hands that light back to the unblurred strategies. Light only merging reaches is all merging's either way.
-	 */
-	setMergeTrust( trust = MERGE_TRUST ) {
-
-		this._bidirectional.mergeTrust.value = Math.max( trust, 1e-4 );
+		return this._integrator;
 
 	}
 
@@ -563,15 +494,8 @@ export class PathTracer extends PathTracerStage {
 				: Math.min( this._lastBounceCountsBudget, this._lastBounceCountsLoopBound ) )
 			: 0;
 
-		// Light subpaths first, through the same pool; every camera chunk then connects to them.
-		const bidirectional = this._bidirectionalEnabled && this._updateBidirectionalUniforms();
-		const lightTraced = bidirectional && this._bidirectional.lightTrace.value > 0;
-		if ( bidirectional ) {
-
-			this._updateLightGuide();
-			this._traceLightPaths( loopBound );
-
-		}
+		// An integrator's light subpaths first, through the same pool; every camera chunk then connects to them.
+		const integrator = this._integrator?.beginFrame( loopBound ) ? this._integrator : null;
 
 		// Blender-style row-band streaming: the fixed-budget path pool processes the image in bands of ≤ chunkRows
 		// rows (one chunk when the frame fits the budget → identical to the pre-chunking path). See spec.
@@ -675,10 +599,9 @@ export class PathTracer extends PathTracerStage {
 
 				}
 
-				if ( bidirectional ) this._bidirectional.passTag.value = this._nextPassTag();
+				integrator?.beforeShade();
 				km.dispatch( 'shade' ); // shade thread 0 folds resetActiveCounter (zeroes ACTIVE_RAY_COUNT before compact)
-				if ( bidirectional ) km.dispatch( 'connect' );
-				if ( bidirectional && this._mergingEnabled ) km.dispatch( 'merge' );
+				integrator?.afterShade( km );
 				km.dispatch( 'compact' );
 				if ( useFunctionalCompaction ) {
 
@@ -707,7 +630,7 @@ export class PathTracer extends PathTracerStage {
 
 			}
 
-			if ( lightTraced ) km.dispatch( 'splatResolve' );
+			integrator?.resolve( km );
 			km.dispatch( 'finalWrite' );
 
 		}
@@ -731,359 +654,6 @@ export class PathTracer extends PathTracerStage {
 		if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
 		this.performanceMonitor?.end();
-
-	}
-
-	// False when nothing can start a light path.
-	_updateBidirectionalUniforms() {
-
-		const bd = this._bidirectional;
-		const w = this._wfRenderWidth.value;
-		const h = this._wfRenderHeight.value;
-		const slots = this.maxBounces.value + 1;
-		const total = this._updateSourceTable();
-		const paths = total > 0
-			? Math.min( Math.ceil( w * h * LIGHT_PATHS_PER_PIXEL ), this._packedBuffers.capacity, Math.floor( this._lightCacheSlots / slots ) )
-			: 0;
-
-		bd.lightPaths.value = paths;
-		bd.slotsPerPath.value = slots;
-		this._lightCurveKey = `${paths}:${slots}:${this._bounceLoopBound()}`;
-		if ( paths === 0 ) {
-
-			bd.lightTrace.value = 0;
-			return false;
-
-		}
-
-		this._lightTag = this._lightTag % LIGHT_TAG_MAX + 1;
-		bd.lightTag.value = this._lightTag;
-
-		const world = this.cameraWorldMatrix.value.elements;
-		bd.cameraPosition.value.set( world[ 12 ], world[ 13 ], world[ 14 ] );
-		bd.cameraForward.value.set( - world[ 8 ], - world[ 9 ], - world[ 10 ] ).normalize();
-		const projection = this.cameraProjectionMatrix.value.elements;
-		bd.pixelArea.value = 4 / ( projection[ 0 ] * projection[ 5 ] * w * h );
-		// Light tracing needs a pinhole camera.
-		const pinhole = this.cameraProjection.value === CAMERA_PROJECTION_IDS.perspective && ! this.enableDOF.value;
-		bd.lightTrace.value = pinhole ? 1 : 0;
-		if ( this._mergingEnabled ) this._updateMergeRadius( w, h );
-		return true;
-
-	}
-
-	// A pixel's footprint: grows with the distance from a perspective or panoramic camera, constant for an orthographic one.
-	_updateMergeRadius( w, h ) {
-
-		const bd = this._bidirectional;
-		const pixels = this._mergeRadiusPixels * Math.pow( this.frameCount + 1, ( MERGE_ALPHA - 1 ) / 2 );
-		const projection = this.cameraProjection.value;
-		const p = this.cameraProjectionMatrix.value.elements;
-		let slope = 0, constant = 0;
-		if ( projection === CAMERA_PROJECTION_IDS.orthographic ) constant = pixels * 2 / ( p[ 5 ] * h );
-		else if ( projection === CAMERA_PROJECTION_IDS.equirectangular ) slope = pixels * 2 * Math.PI / w;
-		else slope = pixels * Math.sqrt( bd.pixelArea.value );
-		bd.mergeSlope.value = Math.min( slope, 0.1 );
-		bd.mergeConst.value = constant;
-		// Nearer than a thousandth of the scene, the radius stops shrinking: shells start there.
-		bd.mergeMin.value = Math.max( constant, slope * 1e-3 * bd.sceneRadius.value, 1e-9 );
-
-	}
-
-	/** Sizes the source table to the lamp lists' capacity; its layout is baked into the kernels. */
-	_sizeSourceTable() {
-
-		const bd = this._bidirectional;
-		let at = SOURCE.LAMPS;
-		[ 'directional', 'area', 'point', 'spot' ].forEach( ( type, i ) => {
-
-			bd.sourceOffsets[ i ] = at;
-			at += this[ `${type}LightsBufferNode` ].array.length / LIGHT_FLOATS[ type ];
-
-		} );
-		bd.sourceCount = at;
-		if ( bd.sourceCdf.array.length !== at ) bd.sourceCdf.array = new Float32Array( at );
-
-	}
-
-	/**
-	 * Each source's chance of starting a light path, by the luminous flux it sends into the scene.
-	 * @returns {number} the total flux, 0 when nothing emits
-	 */
-	_updateSourceTable() {
-
-		const bd = this._bidirectional;
-		const cdf = bd.sourceCdf.array;
-		const flux = new Float64Array( cdf.length );
-		const lum = ( a, i ) => Math.max( 0.2126 * a[ i ] + 0.7152 * a[ i + 1 ] + 0.0722 * a[ i + 2 ], 0 );
-		const lights = ( type ) => ( { a: this[ `${type}LightsBufferNode` ].array, n: this[ `num${type[ 0 ].toUpperCase()}${type.slice( 1 )}Lights` ].value, f: LIGHT_FLOATS[ type ] } );
-		const directional = lights( 'directional' );
-
-		const environmentOn = this.enableEnvironment.value > 0;
-		const table = this.environment.exactTable;
-		bd.envTable.value = table ? 1 : 0;
-		const atInfinity = environmentOn && ( this.hasSun.value > 0 || table ) || directional.n > 0;
-		// What a light at infinity sends through the scene's disc mostly lands where its NEE does better: next to
-		// lamps or emitters it gets this share of its flux in light paths (alone, it gets them all regardless).
-		// Vertex merging sizes its radius by the scene, so it measures the disc too.
-		const disc = atInfinity || this._mergingEnabled ? this._sceneDisc() : 0;
-		const discArea = atInfinity ? disc * INFINITE_LIGHT_PATH_SHARE : 0;
-		if ( environmentOn && table ) flux[ SOURCE.ENVIRONMENT ] = Math.max( table.radianceIntegral, 0 ) * this.environmentIntensity.value * discArea;
-
-		if ( this.emissiveTriangleCount.value > 0 ) flux[ SOURCE.EMITTERS ] = Math.PI * this.emissiveBoost.value * this.emissiveTotalPower.value;
-		if ( environmentOn && this.hasSun.value > 0 ) {
-
-			const { x: r, y: g, z: b } = this.sunRadiance.value;
-			flux[ SOURCE.SUN ] = Math.max( 0.2126 * r + 0.7152 * g + 0.0722 * b, 0 ) * this.environmentIntensity.value * this.sunParams.value.y * discArea;
-
-		}
-
-		for ( let i = 0; i < directional.n; i ++ ) flux[ bd.sourceOffsets[ 0 ] + i ] = lum( directional.a, i * directional.f + 3 ) * directional.a[ i * directional.f + 6 ] * discArea;
-
-		const area = lights( 'area' );
-		for ( let i = 0; i < area.n; i ++ ) {
-
-			const a = area.a, o = i * area.f;
-			const cx = a[ o + 4 ] * a[ o + 8 ] - a[ o + 5 ] * a[ o + 7 ], cy = a[ o + 5 ] * a[ o + 6 ] - a[ o + 3 ] * a[ o + 8 ], cz = a[ o + 3 ] * a[ o + 7 ] - a[ o + 4 ] * a[ o + 6 ];
-			const size = 4 * Math.hypot( cx, cy, cz ) * ( a[ o + 15 ] > 0.5 ? Math.PI / 4 : 1 );
-			flux[ bd.sourceOffsets[ 1 ] + i ] = size > 0 ? lum( a, o + 9 ) * Math.max( a[ o + 12 ], 0 ) * ( a[ o + 13 ] > 0.5 ? 1 : size ) : 0;
-
-		}
-
-		const point = lights( 'point' );
-		for ( let i = 0; i < point.n; i ++ ) flux[ bd.sourceOffsets[ 2 ] + i ] = 4 * Math.PI * lum( point.a, i * point.f + 3 ) * Math.max( point.a[ i * point.f + 6 ], 0 );
-
-		const spot = lights( 'spot' );
-		for ( let i = 0; i < spot.n; i ++ ) {
-
-			const o = i * spot.f;
-			flux[ bd.sourceOffsets[ 3 ] + i ] = 2 * Math.PI * ( 1 - Math.cos( spot.a[ o + 10 ] ) ) * lum( spot.a, o + 6 ) * Math.max( spot.a[ o + 9 ], 0 );
-
-		}
-
-		let total = 0;
-		for ( let i = 0; i < flux.length; i ++ ) total += Number.isFinite( flux[ i ] ) ? flux[ i ] : 0;
-		let sum = 0;
-		for ( let i = 0; i < flux.length; i ++ ) {
-
-			sum += Number.isFinite( flux[ i ] ) ? flux[ i ] : 0;
-			cdf[ i ] = total > 0 ? sum / total : 0;
-
-		}
-
-		if ( total > 0 ) cdf[ cdf.length - 1 ] = 1;
-
-		// The shaders difference the stored sum, so these are taken from it the same way.
-		const pick = ( i ) => Math.fround( cdf[ i ] - ( i > 0 ? cdf[ i - 1 ] : 0 ) );
-		bd.sunPick.value = pick( SOURCE.SUN );
-		bd.emitterPick.value = pick( SOURCE.EMITTERS );
-		bd.envPick.value = pick( SOURCE.ENVIRONMENT );
-		return total;
-
-	}
-
-	// The disc a light at infinity starts its paths on: the visible scene's bounding sphere, facing it. Its area, or 0.
-	_sceneDisc() {
-
-		const bd = this._bidirectional;
-		const bounds = this._visibleSceneBounds();
-		if ( ! bounds ) return 0;
-
-		const [ x0, y0, z0 ] = bounds.min;
-		const [ x1, y1, z1 ] = bounds.max;
-		const radius = 0.5 * Math.hypot( x1 - x0, y1 - y0, z1 - z0 );
-		if ( ! ( radius > 0 && Number.isFinite( radius ) ) ) return 0;
-		bd.sceneCenter.value.set( ( x0 + x1 ) / 2, ( y0 + y1 ) / 2, ( z0 + z1 ) / 2 );
-		bd.sceneRadius.value = radius;
-		return Math.PI * radius * radius;
-
-	}
-
-	/**
-	 * The visible placements' world box, read from the TLAS as uploaded; hidden meshes are left out.
-	 * @returns {?{min: number[], max: number[]}}
-	 */
-	_visibleSceneBounds() {
-
-		const records = this._bvhRecords;
-		const flat = records ? null : this.bvhStorageAttr?.array;
-		if ( ! records && ! ( flat?.length >= 16 ) ) return null;
-
-		const view = ( f ) => {
-
-			let u = this._u32Views.get( f );
-			if ( ! u ) this._u32Views.set( f, u = new Uint32Array( f.buffer, f.byteOffset, f.length ) );
-			return u;
-
-		};
-
-		const node = ( i ) => {
-
-			const f = records ? records.chunkFor( i ) : flat;
-			return { f, u: view( f ), o: records ? records.baseOf( i ) : i * 16 };
-
-		};
-
-		const root = node( 0 );
-		if ( root.u[ root.o + 3 ] >= BVH_MAX_INDEX ) return null;
-
-		const min = [], max = [];
-		for ( let axis = 0; axis < 3; axis ++ ) for ( const sign of [ 1, - 1 ] ) {
-
-			// Inner node: [leftMin, left, leftMax, right, rightMin, -, rightMax, -]; a child no further out than the best visible leaf is skipped.
-			const score = ( n, child ) => sign > 0 ? n.f[ n.o + child * 8 + 4 + axis ] : - n.f[ n.o + child * 8 + axis ];
-			const childIndex = ( n, child ) => n.u[ n.o + 3 + child * 4 ];
-			let best = - Infinity;
-			const stack = [];
-			const push = ( n ) => {
-
-				const a = score( n, 0 ), b = score( n, 1 );
-				const first = a <= b ? 0 : 1;
-				stack.push( childIndex( n, first ), first === 0 ? a : b, childIndex( n, 1 - first ), first === 0 ? b : a );
-
-			};
-
-			push( root );
-			while ( stack.length ) {
-
-				const s = stack.pop(), index = stack.pop();
-				if ( s <= best ) continue;
-				const n = node( index );
-				if ( n.u[ n.o + 3 ] >= BVH_MAX_INDEX ) {
-
-					if ( n.f[ n.o + 2 ] !== 0 ) best = s;
-
-				} else push( n );
-
-			}
-
-			if ( best === - Infinity ) return null;
-			( sign > 0 ? max : min )[ axis ] = sign > 0 ? best : - best;
-
-		}
-
-		return { min, max };
-
-	}
-
-	/**
-	 * Lights at infinity start their light paths where camera paths escaped (TSL/LightGuide.js). Each reset forgets
-	 * the counts; the table is rebuilt from them at frames 1, 2, 4 … 32 and every 32nd after, so a render of the same
-	 * input learns the same table. Off: light paths start uniformly over the scene's disc, as before.
-	 * @param {boolean} enabled
-	 */
-	setLightGuiding( enabled ) {
-
-		this._lightGuiding = enabled !== false;
-		this._bidirectional.guide.value = 0;
-		this.reset();
-
-	}
-
-	_updateLightGuide() {
-
-		const bd = this._bidirectional;
-		const km = this._kernelManager;
-		bd.guideLearning.value = this._lightGuiding ? 1 : 0;
-		const f = this.frameCount;
-		if ( f === 0 ) {
-
-			km.dispatch( 'guideClear' );
-			bd.guide.value = 0;
-			return;
-
-		}
-
-		if ( ! this._lightGuiding || ! ( f <= 32 ? ( f & ( f - 1 ) ) === 0 : f % 32 === 0 ) ) return;
-		km.dispatch( 'guideBuild' );
-
-		const backend = this.renderer.backend;
-		this.renderer.initTexture( this._guideTexture );
-		const encoder = backend.device.createCommandEncoder( { label: 'LightGuide' } );
-		encoder.copyBufferToTexture(
-			{ buffer: backend.get( this._guideBuildAttr ).buffer, bytesPerRow: GUIDE_ROW_STRIDE * 4, rowsPerImage: GUIDE_BINS },
-			{ texture: backend.get( this._guideTexture ).texture },
-			[ GUIDE_TEXTURE_WIDTH, GUIDE_BINS ],
-		);
-		backend.device.queue.submit( [ encoder.finish() ] );
-		bd.guide.value = 1;
-
-	}
-
-	_disposeLightGuide() {
-
-		freeStorageAttribute( this.renderer, this._guideBuildAttr );
-		this._guideTexture?.dispose();
-		this._guideTexture = this._guideBuildAttr = null;
-		this._bidirectional.guideTexture = null;
-
-	}
-
-	_nextPassTag() {
-
-		this._passTag = ( this._passTag + 1 ) & 0x7FFFFFFF;
-		return ( PASS_TAG_BIT | this._passTag ) >>> 0;
-
-	}
-
-	// Sized and cut short off its own survivor curve, as the camera loop is.
-	_traceLightPaths( loopBound ) {
-
-		const km = this._kernelManager;
-		const paths = this._bidirectional.lightPaths.value;
-
-		this._wfChunkRowBase.value = 0;
-		this._wfMaxRayCount.value = paths;
-		km.setDispatchForCount( 'lightGenerate', paths );
-		km.dispatch( 'lightGenerate' );
-
-		const dynamic = this._useDynamicDispatch;
-		const curveValid = this._lastLightCurveKey === this._lightCurveKey;
-		const counts = curveValid ? this._lastLightBounceCounts : null;
-		const energy = curveValid ? this._lastLightBounceEnergy : null;
-		const exitEnergy = this._bounceEarlyExitThreshold >= 0 ? this._bounceEarlyExitThreshold * paths * ENERGY_SCALE : - 1;
-
-		for ( let bounce = 0; bounce <= loopBound; bounce ++ ) {
-
-			this._wfCurrentBounce.value = bounce;
-
-			const prev = bounce > 0 ? counts?.[ bounce - 1 ] : undefined;
-			const sized = dynamic && prev > 0 ? Math.min( paths, Math.ceil( prev * 1.5 ) + 1024 ) : paths;
-			for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, sized );
-			if ( ! dynamic ) km.dispatch( 'enterFull' );
-
-			km.dispatch( 'extend' );
-			if ( this._sortMaterials ) {
-
-				km.dispatch( 'resetGlobalHist' );
-				km.dispatch( 'globalHist' );
-				km.dispatch( 'globalPrefix' );
-				km.dispatch( 'globalScatter' );
-
-			}
-
-			km.dispatch( 'shade' );
-			km.dispatch( 'compact' );
-			km.dispatch( dynamic ? 'lightCopyback' : 'lightSnapshot' );
-
-			if ( exitEnergy >= 0 && bounce < loopBound && energy?.[ bounce ] !== undefined && energy[ bounce ] <= exitEnergy ) break;
-
-		}
-
-		if ( this._bidirectional.lightTrace.value > 0 ) {
-
-			km.setDispatchForCount( 'lightSplat', paths * this._bidirectional.slotsPerPath.value );
-			km.dispatch( 'lightSplat' );
-
-		}
-
-		if ( this._mergingEnabled ) {
-
-			km.dispatch( 'mergeClear' );
-			km.setDispatchForCount( 'mergeInsert', paths * this._bidirectional.slotsPerPath.value );
-			km.dispatch( 'mergeInsert' );
-
-		}
 
 	}
 
@@ -1483,7 +1053,7 @@ export class PathTracer extends PathTracerStage {
 		const budget = this.maxBounces.value;
 		const measuredLoopBound = this._bounceLoopBound();
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
-		const lightKey = this._lightCurveKey;
+		const lightKey = this._integrator?.curveKey ?? null;
 		this.renderer.getArrayBufferAsync( attr ).then( ( buf ) => {
 
 			// Drop counts measured at a now-stale generation (a resize or camera move happened mid-flight).
@@ -1546,7 +1116,7 @@ export class PathTracer extends PathTracerStage {
 		const loopBound = this._bounceLoopBound();
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
 		const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
-		const lightKey = this._lightCurveKey;
+		const lightKey = this._integrator?.curveKey ?? null;
 
 		const entry = { due: this.frameCount + this._readbackEveryNFrames, read: null, apply: null };
 		entry.read = Promise.all( [
@@ -1578,9 +1148,8 @@ export class PathTracer extends PathTracerStage {
 		const all = new Uint32Array( buf.slice( 0 ) );
 		this._lastBounceCounts = all.subarray( 0, n );
 		this._lastBounceEnergy = all.subarray( n, 2 * n );
-		this._lastLightBounceCounts = all.subarray( 2 * n, 3 * n );
-		this._lastLightBounceEnergy = all.subarray( 3 * n, 4 * n );
-		this._lastLightCurveKey = lightKey;
+		// An integrator's light pass keeps its own curve after the camera's.
+		this._integrator?.applyLightCurve( all.subarray( 2 * n, 3 * n ), all.subarray( 3 * n, 4 * n ), lightKey );
 		this._lastBounceCountsBudget = budget;
 		this._lastBounceCountsLoopBound = loopBound;
 		this._curveSizingValid = true;
@@ -1695,7 +1264,7 @@ export class PathTracer extends PathTracerStage {
 	_computePathBudget() {
 
 		const RAY_BYTES = RAY_STRIDE * 16;
-		const HIT_BYTES = ( this._bidirectionalEnabled ? HIT_STRIDE_BIDIRECTIONAL : HIT_STRIDE ) * 16;
+		const HIT_BYTES = ( this._integrator?.hitStride ?? HIT_STRIDE ) * 16;
 		const bytesPerPath = RAY_BYTES + HIT_BYTES + 4 /* rng */ + GBUFFER_STRIDE * 16
 			+ 4 + 4 /* activeIndices A/B */ + 4;
 
@@ -1704,12 +1273,8 @@ export class PathTracer extends PathTracerStage {
 		const maxBuffer = limits?.maxBufferSize || maxBinding;
 		const deviceMemBytes = deviceMemoryGB( this.hostMemoryGB ).gb * 1024 * 1024 * 1024;
 
-		// The light vertex cache shares the hit buffer's binding with the paths.
-		const lightVertexBytes = LIGHT_VERTEX_STRIDE * 16;
-		const cacheBytes = this._bidirectionalEnabled
-			? Math.floor( Math.min( LIGHT_CACHE_BYTES, maxBinding * 0.45, deviceMemBytes * 0.05 ) / lightVertexBytes ) * lightVertexBytes
-			: 0;
-		this._lightCacheSlots = cacheBytes / lightVertexBytes;
+		// An integrator's light vertex cache shares the hit buffer's binding with the paths.
+		const cacheBytes = this._integrator?.cacheBytes( maxBinding, deviceMemBytes ) ?? 0;
 
 		if ( this._pathBudgetOverride > 0 ) return this._pathBudgetOverride;
 
@@ -1781,7 +1346,7 @@ export class PathTracer extends PathTracerStage {
 		// A fresh build binds the current lightStorageAttr — any pending realloc is covered.
 		this._lightBufferRealloc = false;
 		this._outputsChanged = false;
-		if ( this._bidirectionalEnabled ) this._sizeSourceTable();
+		this._integrator?.beforeKernelBuild();
 
 		const w = this.storageTextures.renderWidth;
 		const h = this.storageTextures.renderHeight;
@@ -1798,7 +1363,7 @@ export class PathTracer extends PathTracerStage {
 
 		// Per-path buffers (RAY/HIT/rng) sized to the budget B and indexed by LOCAL slot r ∈ [0,B). _cap = B is
 		// baked into the SoA stride but never changes with resolution, so this build happens once (model load).
-		const lightVertices = this._bidirectionalEnabled ? this._lightCacheSlots : 0;
+		const lightVertices = this._integrator?.lightVertices ?? 0;
 		if ( ! this._packedBuffers ) {
 
 			this._packedBuffers = new PackedRayBuffer( B, this.renderer, lightVertices );
@@ -1843,54 +1408,7 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
-		// Light tracing's image: a u32 per channel per pixel, fixed point (LightSplatKernel).
-		if ( this._bidirectionalEnabled ) {
-
-			if ( ! this._splatAttr || this._splatAttr.count < maxPixels * 3 ) {
-
-				freeStorageAttribute( this.renderer, this._splatAttr );
-				this._splatAttr = gpuOnlyStorageAttribute( maxPixels * 3, 1, Uint32Array );
-
-			}
-
-		} else if ( this._splatAttr ) {
-
-			freeStorageAttribute( this.renderer, this._splatAttr );
-			this._splatAttr = null;
-
-		}
-
-		// Vertex merging's list heads: at least one a light vertex slot, a power of two (the hash's mask).
-		const hashSize = this._mergingEnabled ? 2 ** Math.ceil( Math.log2( Math.max( this._lightCacheSlots, 1024 ) ) ) : 0;
-		if ( this._mergeHeadAttr?.count !== hashSize ) {
-
-			freeStorageAttribute( this.renderer, this._mergeHeadAttr );
-			this._mergeHeadAttr = hashSize > 0 ? gpuOnlyStorageAttribute( hashSize, 1, Uint32Array ) : null;
-
-		}
-
-		this._bidirectional.hashMask.value = Math.max( hashSize - 1, 0 );
-
-		// The light guide's table: built into a buffer, copied into a texture Shade can read (it has no buffer to spare).
-		if ( this._bidirectionalEnabled ) {
-
-			if ( ! this._guideTexture ) {
-
-				this._guideTexture = new DataTexture( null, GUIDE_TEXTURE_WIDTH, GUIDE_BINS, RedFormat, FloatType );
-				this._guideTexture.source.dataReady = false;
-				this._guideTexture.needsUpdate = true;
-				this._guideBuildAttr = gpuOnlyStorageAttribute( GUIDE_ROW_STRIDE * GUIDE_BINS, 1, Float32Array );
-
-			}
-
-			this._bidirectional.guideTexture = texture( this._guideTexture );
-			this._bidirectional.guide.value = 0;
-
-		} else {
-
-			this._disposeLightGuide();
-
-		}
+		this._integrator?.allocate( maxPixels );
 
 		const m2RW = storage( this._m2Attr, 'float' );
 		const streakRW = storage( this._streakAttr, 'uint' );
@@ -2010,7 +1528,7 @@ export class PathTracer extends PathTracerStage {
 			transmissiveBounces: this.transmissiveBounces,
 			transparentBackground: this.transparentBackground,
 			auxGBufferEnabled: this._auxGBufferUniform,
-			bidirectional: this._bidirectionalEnabled ? this._bidirectional : null,
+			bidirectional: this._integrator?.uniforms ?? null,
 		};
 		const genFn = buildGenerateKernel( genParams );
 		this._kernelManager.register( 'generate',
@@ -2357,7 +1875,7 @@ export class PathTracer extends PathTracerStage {
 			sunDirection: this.sunDirection,
 			sunRadiance: this.sunRadiance,
 			sunParams: this.sunParams,
-			bidirectional: this._bidirectionalEnabled ? this._bidirectional : null,
+			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
 		} );
 		this._kernelManager.register( 'shade',
@@ -2427,165 +1945,10 @@ export class PathTracer extends PathTracerStage {
 			copyFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
-		if ( this._bidirectionalEnabled ) {
-
-			const bd = this._bidirectional;
-			const n = qm.MAX_BOUNCE_SNAPSHOTS;
-
-			// The light pass keeps its own survivor curve, after the camera's: [2n, 3n) counts, [3n, 4n) energy.
-			const recordLightCurve = ( active ) => {
-
-				const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( n - 1 ) );
-				bounceCountsBuf.element( slot.add( uint( 2 * n ) ) ).assign( active );
-				bounceCountsBuf.element( slot.add( uint( 3 * n ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
-				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
-
-			};
-
-			this._kernelManager.register( 'lightSnapshot', Fn( () => {
-
-				recordLightCurve( atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) ) );
-
-			} )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] ) );
-
-			this._kernelManager.register( 'lightCopyback', Fn( () => {
-
-				const tid = instanceIndex;
-				const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
-				If( tid.equal( uint( 0 ) ), () => {
-
-					recordLightCurve( active );
-
-				} );
-				If( tid.greaterThanEqual( active ), () => {
-
-					Return();
-
-				} );
-				copyWriteA.element( tid ).assign( copyReadB.element( tid ) );
-
-			} )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] ) );
-
-			this._kernelManager.register( 'guideClear', buildGuideClearKernel( { counters } ) );
-			this._kernelManager.register( 'guideBuild', buildGuideKernel( { counters, out: storage( this._guideBuildAttr, 'float' ) } ) );
-
-			this._kernelManager.register( 'lightGenerate', own( buildLightGenerateKernel( {
-				rayBufferRW: pb.rayBuffer.rw,
-				hitBufferRW: pb.hitBuffer.rw,
-				activeIndicesRW: qm.activeIndices.a,
-				counters,
-				lightBuffer: freshLight,
-				triangleBuffer: freshTri,
-				bvhBuffer: freshBvh,
-				emissiveTriangleCount: this.emissiveTriangleCount,
-				emissiveVec4Offset: this.emissiveVec4Offset,
-				emissiveTotalPower: this.emissiveTotalPower,
-				emissiveBoost: this.emissiveBoost,
-				sunDirection: this.sunDirection,
-				sunRadiance: this.sunRadiance,
-				sunParams: this.sunParams,
-				environmentIntensity: this.environmentIntensity,
-				envTexture: freshEnvTex,
-				envCDFTexture: freshEnvCDF,
-				envMatrix: this.environmentMatrix,
-				envResolution: this.envResolution,
-				directionalLightsBuffer: this.directionalLightsBufferNode,
-				areaLightsBuffer: this.areaLightsBufferNode,
-				pointLightsBuffer: this.pointLightsBufferNode,
-				spotLightsBuffer: this.spotLightsBufferNode,
-				bidirectional: bd,
-				resolution: this.resolution,
-				frame: this.seedFrame,
-				transmissiveBounces: this.transmissiveBounces,
-			} )() ).compute( [ Math.ceil( maxRays / LIGHT_GENERATE_WG_SIZE ), 1, 1 ], [ LIGHT_GENERATE_WG_SIZE, 1, 1 ] ) );
-
-			this._kernelManager.register( 'connect', own( buildConnectKernel( {
-				rayBufferRW: pb.rayBuffer.rw,
-				hitBufferRO: pb.hitBuffer.ro,
-				activeIndicesRO: qm.getActiveReadRO(),
-				counters,
-				bvhBuffer: freshBvh,
-				triangleBuffer: freshTri,
-				materialBuffer: freshMat,
-				resolution: this.resolution,
-				frame: this.seedFrame,
-				accumFrame: this.frame,
-				currentBounce: this._wfCurrentBounce,
-				chunkRowBase: this._wfChunkRowBase,
-				lightPaths: bd.lightPaths,
-				slotsPerPath: bd.slotsPerPath,
-				lightTag: bd.lightTag,
-				passTag: bd.passTag,
-				strategyView: bd.strategyView,
-				maxBounceCount: this.maxBounces,
-				globalIlluminationIntensity: this.globalIlluminationIntensity,
-				fireflyThreshold: this.fireflyThreshold,
-				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
-			} )() ).compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
-
-			if ( bd.merging ) {
-
-				const head = storage( this._mergeHeadAttr, 'uint' ).toAtomic();
-				this._kernelManager.register( 'mergeClear', buildMergeClearKernel( { head, hashSize: this._mergeHeadAttr.count } ) );
-				this._kernelManager.register( 'mergeInsert', buildMergeInsertKernel( {
-					hitBufferRW: pb.hitBuffer.rw,
-					head,
-					bidirectional: bd,
-				} )().compute( [ Math.ceil( this._lightCacheSlots / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
-				this._kernelManager.register( 'merge', own( buildMergeKernel( {
-					rayBufferRW: pb.rayBuffer.rw,
-					hitBufferRO: pb.hitBuffer.ro,
-					activeIndicesRO: qm.getActiveReadRO(),
-					counters,
-					head,
-					materialBuffer: freshMat,
-					bidirectional: bd,
-					maxBounceCount: this.maxBounces,
-					globalIlluminationIntensity: this.globalIlluminationIntensity,
-					fireflyThreshold: this.fireflyThreshold,
-					accumFrame: this.frame,
-				} )() ).compute( [ Math.ceil( maxRays / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
-
-			}
-
-			const splatBuffer = storage( this._splatAttr, 'uint' ).toAtomic();
-
-			this._kernelManager.register( 'lightSplat', own( buildLightSplatKernel( {
-				hitBufferRO: pb.hitBuffer.ro,
-				splatBuffer,
-				bvhBuffer: freshBvh,
-				triangleBuffer: freshTri,
-				materialBuffer: freshMat,
-				lightPaths: bd.lightPaths,
-				slotsPerPath: bd.slotsPerPath,
-				lightTag: bd.lightTag,
-				strategyView: bd.strategyView,
-				cameraPosition: bd.cameraPosition,
-				cameraForward: bd.cameraForward,
-				cameraViewMatrix: this.cameraViewMatrix,
-				cameraProjectionMatrix: this.cameraProjectionMatrix,
-				pixelArea: bd.pixelArea,
-				renderWidth: this._wfRenderWidth,
-				renderHeight: this._wfRenderHeight,
-				globalIlluminationIntensity: this.globalIlluminationIntensity,
-				fireflyThreshold: this.fireflyThreshold,
-				accumFrame: this.frame,
-				frame: this.seedFrame,
-				mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
-			} )() ).compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
-
-			this._kernelManager.register( 'splatResolve', buildSplatResolveKernel( {
-				rayBufferRW: pb.rayBuffer.rw,
-				splatBuffer,
-				renderWidth: this._wfRenderWidth,
-				chunkRowBase: this._wfChunkRowBase,
-				chunkRows: this._wfChunkRows,
-			} )().compute(
-				[ Math.ceil( w / SPLAT_RESOLVE_WG_SIZE ), Math.ceil( this._chunkRows / SPLAT_RESOLVE_WG_SIZE ), 1 ],
-				[ SPLAT_RESOLVE_WG_SIZE, SPLAT_RESOLVE_WG_SIZE, 1 ]
-			) );
-
-		}
+		this._integrator?.registerKernels( {
+			km: this._kernelManager, qm, pb, counters, bounceCountsBuf, wfCurrentBounce, copyReadB, copyWriteA, maxRays, w, own,
+			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF,
+		} );
 
 		const fwFn = buildFinalWriteKernel( {
 			rayBufferRO: pb.rayBuffer.ro,
@@ -2684,7 +2047,7 @@ export class PathTracer extends PathTracerStage {
 			`${fmt.mb( bufferBytes )} wavefront buffers`,
 			`budget ${fmt.n( B )} paths`,
 			this._numChunks > 1 ? `${this._numChunks} chunks of ≤${this._chunkRows} rows` : null,
-			this._bidirectionalEnabled ? `bidirectional: ${fmt.n( this._lightCacheSlots )} light vertex slots${this._mergingEnabled ? ' + merging' : ''}` : null,
+			this._integrator?.describe() ?? null,
 		] ) );
 
 	}
@@ -2735,11 +2098,9 @@ export class PathTracer extends PathTracerStage {
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
 		this._frozenMaskAttr?.dispose?.();
-		freeStorageAttribute( this.renderer, this._splatAttr );
-		this._splatAttr = null;
-		freeStorageAttribute( this.renderer, this._mergeHeadAttr );
-		this._mergeHeadAttr = null;
-		this._disposeLightGuide();
+		for ( const integrator of this._integratorInstances.values() ) integrator.dispose();
+		this._integratorInstances.clear();
+		this._integrator = null;
 		this._packedBuffers = null;
 		this._queueManager = null;
 		this._kernelManager = null;
