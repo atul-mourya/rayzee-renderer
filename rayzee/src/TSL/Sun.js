@@ -1,6 +1,6 @@
 import { Fn, float, vec3, sqrt, max, dot, cross, pow, cos, sin, abs, normalize, select, If } from 'three/tsl';
 
-import { LIMB_DARKENING_EXPONENT } from '../Processor/AtmosphereModel.js';
+import { LIMB_DARKENING_EXPONENT } from '../Processor/SolarLimb.js';
 
 const LIMB_EXPONENT = vec3( ...LIMB_DARKENING_EXPONENT );
 // µ^α averages to 2 / (α + 2) over the disc, so this keeps the mean at `sunRadiance`.

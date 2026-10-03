@@ -9,7 +9,7 @@ import { PathTracer } from './Stages/PathTracer.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { TextureReadback } from './Processor/TextureReadback.js';
@@ -27,7 +27,6 @@ import { PackedToneMapper } from './Processor/ToneMapGPU.js';
 import { ColorManagement, setActiveColorManagement } from './Color/ColorManagement.js';
 import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
-import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/PBRT/index.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 import { deviceMemoryGB } from './Processor/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
@@ -961,7 +960,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			const filename = options.filename ?? nameFromUrl( file );
 			const format = this.assetLoader?.getFileFormat( filename );
-			if ( ! format ) throw new Error( `Unsupported file format: ${filename}` );
+			if ( ! format ) throw this.assetLoader.formatError( filename );
 			if ( format.type === 'environment' || format.type === 'image' ) return this.loadEnvironment( file );
 
 			await this._loadWithSceneRebuild(
@@ -974,7 +973,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		}
 
 		const format = this.assetLoader?.getFileFormat( file?.name || '' );
-		if ( ! format ) throw new Error( `Unsupported file format: ${file?.name}` );
+		if ( ! format ) throw this.assetLoader.formatError( file?.name || '' );
 
 		if ( format.type !== 'environment' && format.type !== 'image' ) {
 

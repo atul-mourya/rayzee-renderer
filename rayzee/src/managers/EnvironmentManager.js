@@ -12,7 +12,6 @@ import {
 } from 'three';
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
 import { packExactTable } from '../Processor/EnvironmentExactTable.js';
-import { PhysicalSky } from '../Processor/PhysicalSky.js';
 import { SimpleSky } from '../Processor/SimpleSky.js';
 import { convertLinearTriple } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
@@ -21,6 +20,7 @@ const log = createLogger( 'env' );
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
 import { getActiveColorManagement } from '../Color/ColorManagement.js';
 import { loadCDF, saveCDF } from '../Storage/CDFCache.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 const SKY_WIDTH = 1024;
 const SKY_HEIGHT = 512;
@@ -46,7 +46,10 @@ export class EnvironmentManager {
 		// CDF computation engine
 		this.equirectHdrInfo = new EquirectHDRInfo();
 
-		// Sky renderers (lazy init)
+		// Sky renderers (lazy init). The physical sky is a capability: setProceduralSky() installs its class.
+		this.ProceduralSky = null;
+		/** @type {?import('../EngineIssues.js').IssueLog} */
+		this.issues = null;
 		this.physicalSky = null;
 		this.simpleSkyRenderer = null;
 		this._sun = null;
@@ -593,6 +596,17 @@ export class EnvironmentManager {
 	 */
 	generateProceduralSkyTexture() {
 
+		if ( ! this.ProceduralSky ) {
+
+			this.issues?.record(
+				ISSUE_CODES.CAPABILITY_MISSING,
+				'procedural mode needs the physical sky: environmentManager.setProceduralSky( PhysicalSky ), from rayzee/addons/physical-sky',
+				{ capability: 'physical-sky' }
+			);
+			return Promise.resolve();
+
+		}
+
 		this._skyRequested = true;
 		this._skyCaughtUp ??= new Promise( resolve => void ( this._resolveSky = resolve ) );
 		this._pumpSky();
@@ -636,7 +650,7 @@ export class EnvironmentManager {
 
 		}
 
-		const sky = this.physicalSky ??= new PhysicalSky( SKY_WIDTH, SKY_HEIGHT );
+		const sky = this.physicalSky ??= new this.ProceduralSky( SKY_WIDTH, SKY_HEIGHT );
 		const albedo = p.skyGroundAlbedo;
 		const bake = ++ this._skyBakes;
 		const latest = () => bake === this._skyBakes && ! this._skyRequested;
@@ -681,6 +695,20 @@ export class EnvironmentManager {
 			else this._pumpSky();
 
 		}
+
+	}
+
+	/**
+	 * Installs the class that bakes 'procedural' mode — `PhysicalSky` from rayzee/addons/physical-sky: constructed with
+	 * (width, height), `bake( renderer, params )` returns `{ texture, cdfTexture, sun, stats }`, and `dispose( renderer )`.
+	 * @param {?Function} Sky
+	 */
+	setProceduralSky( Sky ) {
+
+		if ( Sky === this.ProceduralSky ) return;
+		this._releaseSky();
+		this.ProceduralSky = Sky;
+		if ( Sky && this.envParams.mode === 'procedural' ) this.generateProceduralSkyTexture();
 
 	}
 

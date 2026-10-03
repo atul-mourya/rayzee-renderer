@@ -24,6 +24,8 @@ import { AnimationManager } from './managers/AnimationManager.js';
 import { TransformManager } from './managers/TransformManager.js';
 import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
+import { PhysicalSky } from './Processor/PhysicalSky.js';
+import { ArchiveImporter } from './Processor/ArchiveImporter.js';
 
 export { describeAdapter, RENDER_CHECKPOINT_VERSION };
 
@@ -108,6 +110,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		super._initAssetPipeline();
 		this.assetLoader.controls = this.cameraManager.controls;
+		this.assetLoader.setArchiveImporter( new ArchiveImporter( this.assetLoader ) );
 
 		const onCameraMoved = () => {
 
@@ -158,6 +161,7 @@ export class PathTracerApp extends RayzeeRenderer {
 	async _initManagers() {
 
 		await super._initManagers();
+		this.environmentManager.setProceduralSky( PhysicalSky );
 
 		this.interactionManager = new InteractionManager( {
 			scene: this.meshScene,

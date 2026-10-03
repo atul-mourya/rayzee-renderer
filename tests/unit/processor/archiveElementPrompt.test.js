@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gzipSync } from 'three/addons/libs/fflate.module.js';
-import { AssetLoader, ARCHIVE_ELEMENT_PROMPT_BYTES } from '@/core/Processor/AssetLoader.js';
+import { ArchiveImporter, ARCHIVE_ELEMENT_PROMPT_BYTES } from '@/core/Processor/ArchiveImporter.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from '@/core/EngineIssues.js';
 
 const BLOCK = 512;
@@ -89,9 +89,9 @@ const total = listing => listing.reduce( ( n, e ) => n + e.size, 0 );
 
 describe( 'choosing parts of a large scene archive', () => {
 
-	const loader = Object.create( AssetLoader.prototype );
+	const importer = new ArchiveImporter( {} );
 	const ask = ( listing, promptBytes ) =>
-		loader._requireElementChoice( 'island.tar', listing, total( listing ), promptBytes );
+		importer._requireElementChoice( 'island.tar', listing, total( listing ), promptBytes );
 
 	it( 'asks which parts to load when the archive is large and has several', () => {
 
@@ -141,8 +141,7 @@ describe( 'choosing parts of a large scene archive', () => {
 
 		// record() throws on its own in strict mode. Raising the refusal as an error there
 		// replaced the typed one, so the host got no list and could not offer the choice.
-		const strict = Object.create( AssetLoader.prototype );
-		strict._issues = new IssueLog( { strict: true } );
+		const strict = new ArchiveImporter( { _issues: new IssueLog( { strict: true } ) } );
 
 		const listing = islandListing( 15, 5e8 );
 		let thrown = null;
@@ -159,7 +158,7 @@ describe( 'choosing parts of a large scene archive', () => {
 		expect( thrown ).not.toBeInstanceOf( EngineIssueError );
 		expect( thrown?.code ).toBe( 'ARCHIVE_NEEDS_ELEMENT' );
 		expect( thrown.elements ).toHaveLength( 15 );
-		expect( strict._issues.list.map( e => e.code ) ).toContain( ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE );
+		expect( strict.loader._issues.list.map( e => e.code ) ).toContain( ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE );
 
 	} );
 
@@ -174,13 +173,7 @@ describe( 'reading a compressed archive that runs past the read budget', () => {
 		{ name: 'isBeach/isBeach.pbrt', text: 'y'.repeat( 4096 ) },
 	] ) );
 
-	const loader = () => {
-
-		const l = Object.create( AssetLoader.prototype );
-		l._issues = new IssueLog();
-		return l;
-
-	};
+	const loader = () => new ArchiveImporter( { _issues: new IssueLog() } );
 
 	it( 'stops and asks when nobody chose, and says which parts there are', async () => {
 

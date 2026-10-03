@@ -311,8 +311,7 @@ function transmittanceSpectrum( coefficients, depth ) {
 
 }
 
-// Hestroffer & Magnan 1998: I(µ)/I(1) = µ^α, α = −0.023 + 0.292 / λ[µm], at each primary's centroid.
-export const LIMB_DARKENING_EXPONENT = [ 610, 550, 465 ].map( l => - 0.023 + 0.292 / ( l / 1000 ) );
+export { LIMB_DARKENING_EXPONENT } from './SolarLimb.js';
 
 /** Solid angle of a cone of the given half-angle, without the cancellation `2π(1 − cos)` suffers. */
 export function coneSolidAngle( halfAngle ) {

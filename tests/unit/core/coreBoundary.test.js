@@ -47,7 +47,15 @@ const ABOVE_THE_CORE = [
 	/^Passes\//,
 	/^neural\//,
 	/^SceneState\/SceneState\.js$/,
+	/^addons\//,
+	/^(Processor\/(PhysicalSky|AtmosphereModel)|TSL\/(Atmosphere|EnvironmentCDF))\.js$/,
+	/^Processor\/(ArchiveImporter|ArchiveReader|ArchiveCache|ZipReader)\.js$/,
+	/^Processor\/PBRT\//,
+	/^Storage\/SceneGraphCodec\.js$/,
 ];
+
+// What a capability may not reach: the viewer, or another capability.
+const VIEWER = ABOVE_THE_CORE.slice( 0, 8 );
 
 describe( 'the renderer core', () => {
 
@@ -65,6 +73,22 @@ describe( 'the renderer core', () => {
 
 		const leaks = modules.filter( m => ABOVE_THE_CORE.some( rule => rule.test( m ) ) );
 		expect( leaks ).toEqual( [] );
+
+	} );
+
+	it( 'leaves the physical sky to its add-on, which reaches no viewer code', () => {
+
+		const sky = reachable( 'addons/physicalSky.js' );
+		expect( sky ).toContain( 'Processor/PhysicalSky.js' );
+		expect( sky.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'leaves archives and pbrt to their add-on, which reaches no viewer code', () => {
+
+		const archives = reachable( 'addons/archives.js' );
+		expect( archives ).toEqual( expect.arrayContaining( [ 'Processor/ArchiveImporter.js', 'Processor/PBRT/index.js' ] ) );
+		expect( archives.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
 

@@ -52,6 +52,12 @@ export function getRenderProfile( name = 'viewer' ) {
 
 }
 
+// Scene-archive budgets with the memory spill on: the triangles and BVH leave the heap as the build goes, so the host
+// passes these instead of the importer's own. The whole 15-part Moana subset (55.7M / 7.0M) loads cold under them, at
+// an 8.1 GB preflight estimate; the preflight, not the budget, refuses anything larger.
+export const SPILL_TRIANGLE_BUDGET = 60_000_000;
+export const SPILL_PLACEMENT_BUDGET = 8_000_000;
+
 export const ENGINE_DEFAULTS = {
 	// Canvas output
 	resolution: 512,

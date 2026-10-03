@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 
 const __dirname = path.resolve();
 
-// Two passes: ES with both entries sharing chunks, then UMD, which holds one entry only.
+// Two passes: ES with every entry sharing chunks, then UMD, which holds one entry only.
 const umd = process.env.RAYZEE_FORMAT === 'umd';
 
 export default defineConfig( {
@@ -24,7 +24,12 @@ export default defineConfig( {
 		lib: {
 			entry: umd
 				? { rayzee: path.resolve( __dirname, "src/index.js" ) }
-				: { rayzee: path.resolve( __dirname, "src/index.js" ), "rayzee-core": path.resolve( __dirname, "src/core.js" ) },
+				: {
+					rayzee: path.resolve( __dirname, "src/index.js" ),
+					"rayzee-core": path.resolve( __dirname, "src/core.js" ),
+					"addons/physical-sky": path.resolve( __dirname, "src/addons/physicalSky.js" ),
+					"addons/archives": path.resolve( __dirname, "src/addons/archives.js" ),
+				},
 			name: "Rayzee",
 		},
 		outDir: "dist",

@@ -65,9 +65,11 @@ console.log( `${DIM}${app.adapterInfo.description || app.adapterInfo.vendor} · 
 async function openCore() {
 
 	const { RayzeeRenderer } = await import( 'rayzee/core' );
+	const { PhysicalSky } = await import( 'rayzee/addons/physical-sky' );
 	const core = new RayzeeRenderer( null, { autoResize: false, strict: false, profile: 'viewer', storage: false, hostMemoryGB: os.totalmem() / 2 ** 30 } );
 	core.setReservedRenderResolution( Math.max( RENDER_SIZE.width, RENDER_SIZE.height ) );
 	await core.init();
+	core.environmentManager.setProceduralSky( PhysicalSky );
 	core.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
 	core.setDeterministicMode( true );
 	return core;

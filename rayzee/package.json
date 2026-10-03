@@ -13,6 +13,12 @@
     "./core": {
       "import": "./dist/rayzee-core.es.js"
     },
+    "./addons/physical-sky": {
+      "import": "./dist/addons/physical-sky.es.js"
+    },
+    "./addons/archives": {
+      "import": "./dist/addons/archives.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [
