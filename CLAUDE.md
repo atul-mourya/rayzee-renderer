@@ -359,6 +359,11 @@ matched Chrome within 0.05 of a level per 16² block.
   wrappers call `new Worker(…)` themselves. Use `hasWorkers()` / `hardwareThreads()`, never `typeof
   Worker` or `navigator.*` directly. ⚠️ `rayzee/node` must not import engine modules: a host has the
   dist's copy of Platform.js, and a second copy would hold its own, unconsulted state.
+- three's DRACOLoader and KTX2Loader start their own workers with `new Worker(…)` after awaiting a decoder
+  download, which `createWorker` cannot reach. Every glTF parse in `AssetLoader` runs inside
+  `withHostWorker( task )` (`Platform.js`): where there is no global `Worker`, the host's class is lent as one
+  for the whole parse (overlapping parses share one loan) and removed after. Without it a Draco model failed to
+  load in Node with `Worker is not defined`.
 - `decodeImage( bytes, mimeType )` decodes every glTF image through `platformImagesPlugin`, which
   replaces `parser.loadImageSource` (three's needs the DOM or createImageBitmap, and `self.URL` for an
   embedded image's blob URL), and LDR skies (`loadPlatformImage`, flipY on as TextureLoader leaves it).

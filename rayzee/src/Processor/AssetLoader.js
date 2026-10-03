@@ -16,7 +16,7 @@ import { fileIdentity, identityKey } from '../Storage/identity.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { getPlatform } from '../Platform.js';
+import { getPlatform, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin } from './PlatformImageLoader.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
@@ -771,7 +771,7 @@ export class AssetLoader extends EventDispatcher {
 			updateLoading( { isLoading: true, status: "Downloading Model...", progress: 2, canCancel: cancelable, loadedBytes: 0, totalBytes: 0 } );
 			source = await this._viaCache( modelUrl, "Downloading Model...", cancelable, options );
 			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( modelUrl ) );
-			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
+			const data = await withHostWorker( () => loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) ) );
 			this._downloadComplete();
 			this._throwDeferred();
 
@@ -834,7 +834,7 @@ export class AssetLoader extends EventDispatcher {
 			updateLoading( { isLoading: true, status: "Downloading Model...", progress: 2, canCancel: cancelable, loadedBytes: 0, totalBytes: 0 } );
 			source = await this._viaCache( url, "Downloading Model...", cancelable, options );
 			if ( source.cached ) loader.setResourcePath( LoaderUtils.extractUrlBase( url ) );
-			const data = await loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) );
+			const data = await withHostWorker( () => loader.loadAsync( source.url, source.cached ? undefined : this._downloadProgress( "Downloading Model...", cancelable ) ) );
 			this._downloadComplete();
 			this._throwDeferred();
 			this._appended = true;
@@ -895,7 +895,7 @@ export class AssetLoader extends EventDispatcher {
 			updateLoading( { isLoading: true, status: "Processing GLB Data...", progress: 5 } );
 			await new Promise( r => setTimeout( r, 0 ) );
 
-			const data = await loader.parseAsync( arrayBuffer, '' );
+			const data = await withHostWorker( () => loader.parseAsync( arrayBuffer, '' ) );
 			this._throwDeferred();
 
 			this.releaseTargetModel();
