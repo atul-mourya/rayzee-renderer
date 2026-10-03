@@ -417,6 +417,14 @@ await renderer.init();
 Several renderers, core or full, can live in one page; they share only the colour management and the on-disk storage,
 which are page-wide.
 
+Code of your own that adds a setting declares it on the renderer's settings, so it gets the same provenance, change
+events and session saving as the built-in ones:
+
+```js
+renderer.settings.define('myGlowStrength', { apply: (value) => glow.setStrength(value), reset: true });
+renderer.settings.set('myGlowStrength', 2);
+```
+
 #### Loading Assets
 
 ```js

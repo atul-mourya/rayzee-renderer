@@ -5,13 +5,13 @@ import { ISSUE_CODES } from './EngineIssues.js';
 import { toPortable, fromPortable } from './SceneState/portable.js';
 
 /**
- * Routing table: maps each setting key to its target stage/handler.
+ * The renderer core's settings: maps each key to its target.
  *
  * - `uniform`  → forwarded to PathTracer.setUniform(uniform, value)
  * - `handler`  → calls a named handler method for multi-stage settings
- * - `delegate` → routes to a named manager's updateParam(param, value)
  * - `reset`    → whether to reset accumulation after the change (default true)
- * - `after`    → optional method to call on PathTracer after the uniform is set
+ *
+ * Other layers add their own keys with {@link RenderSettings#define}.
  */
 const SETTING_ROUTES = {
 
@@ -68,7 +68,6 @@ const SETTING_ROUTES = {
 	panoramaLonRange: { handler: 'handlePanoramaLonRange', reset: true },
 	panoramaLatRange: { handler: 'handlePanoramaLatRange', reset: true },
 	interactionModeEnabled: { handler: 'handleInteractionModeEnabled', reset: false },
-	interactionRenderScale: { handler: 'handleInteractionRenderScale', reset: false },
 	maxSamples: { handler: 'handleMaxSamples', reset: false },
 	transparentBackground: { handler: 'handleTransparentBackground' },
 	backgroundColor: { handler: 'handleBackgroundColor', reset: true },
@@ -123,6 +122,12 @@ export class RenderSettings extends EventDispatcher {
 
 		this._issues = issues;
 
+		/** Default values, kept for keys another layer defines later */
+		this._defaults = defaults;
+
+		/** @type {Map<string, Object>} - the core's routes and those other layers define */
+		this._routes = new Map( Object.entries( SETTING_ROUTES ) );
+
 		/** @type {Map<string, *>} */
 		this._values = new Map();
 
@@ -138,31 +143,47 @@ export class RenderSettings extends EventDispatcher {
 		/** @type {Object<string, Function>} - Named handlers for multi-stage settings */
 		this._handlers = {};
 
-		/** @type {Object<string, Object>} - Named delegate managers */
-		this._delegates = {};
-
 		// Initialize values from ENGINE_DEFAULTS
 		this._initDefaults( defaults );
 
 	}
 
 	/**
-	 * Wires internal references. Called by PathTracerApp after init().
+	 * Wires the core's settings to their targets. Called by the renderer during init().
 	 *
 	 * @param {Object} params
-	 * @param {Object} params.stages           - Pipeline stages { pathTracer, compositor, autoExposure, ... }
+	 * @param {Object} params.stages           - Pipeline stages { pathTracer, compositor }
 	 * @param {Function} params.resetCallback   - Called to reset accumulation
 	 * @param {Function} [params.reconcileCompletion] - Called when completion limits change
-	 * @param {Object} [params.denoisingManager] - Needed to force ASVGF off under panorama
-	 * @param {Function} [params.onInteractionRenderScale] - Applies a new moving-camera render scale
+	 * @param {Function} [params.applyExposure] - Shows a new `exposure`
 	 * @param {Function} [params.onCameraProjection] - The camera's side of a `cameraProjection` change
 	 */
 	bind( params ) {
 
 		this._pathTracer = params.stages.pathTracer;
 		this._resetCallback = params.resetCallback;
-		this._delegates = {};
 		this._handlers = this._buildHandlers( params );
+
+	}
+
+	/**
+	 * Adds a setting of another layer — the viewer's, or an add-on's — with the same provenance, events, session
+	 * saving and reset as the core's. Its default comes from the defaults this store was built with.
+	 * @param {string} key
+	 * @param {Object} route
+	 * @param {function(*, *): void} route.apply - called with ( value, prev ) on every change, and by applyAll()
+	 * @param {boolean} [route.reset=true] - reset accumulation after a change
+	 */
+	define( key, { apply, reset = true } ) {
+
+		if ( this._routes.has( key ) ) throw new Error( `setting "${key}" is already defined` );
+		this._routes.set( key, { apply, reset } );
+		if ( ! this._values.has( key ) && key in this._defaults ) {
+
+			this._values.set( key, this._defaults[ key ] );
+			this._sources.set( key, SETTING_SOURCE.DEFAULT );
+
+		}
 
 	}
 
@@ -170,7 +191,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, renderer, resetCallback, reconcileCompletion, denoisingManager, onInteractionRenderScale, onCameraProjection } ) {
+	_buildHandlers( { stages, resetCallback, reconcileCompletion, applyExposure, onCameraProjection } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -187,13 +208,6 @@ export class RenderSettings extends EventDispatcher {
 
 				stages.pathTracer?.setUniform( 'cameraProjection', CAMERA_PROJECTION_IDS[ value ] ?? CAMERA_PROJECTION_IDS.perspective );
 				onCameraProjection?.( value );
-
-				if ( value !== 'equirectangular' ) return;
-
-				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once
-				// every pixel is its own direction. Fall back to the spatial-only denoiser rather
-				// than leaving no strategy.
-				if ( denoisingManager?.requiresMotionVectors ) denoisingManager.setDenoiserStrategy( 'edgeaware' );
 
 			},
 
@@ -221,13 +235,7 @@ export class RenderSettings extends EventDispatcher {
 
 			handleExposure: ( value ) => {
 
-				// Three.js applies toneMappingExposure inside the tone-mapping branch,
-				// so this has no effect when renderer.toneMapping === NoToneMapping.
-				if ( ! stages.autoExposure?.enabled && renderer ) {
-
-					renderer.toneMappingExposure = value;
-
-				}
+				applyExposure?.( value );
 
 			},
 
@@ -290,12 +298,6 @@ export class RenderSettings extends EventDispatcher {
 			handleInteractionModeEnabled: ( value ) => {
 
 				stages.pathTracer?.setInteractionModeEnabled( value );
-
-			},
-
-			handleInteractionRenderScale: ( value ) => {
-
-				onInteractionRenderScale?.( value );
 
 			},
 
@@ -372,7 +374,7 @@ export class RenderSettings extends EventDispatcher {
 		this._values.set( key, value );
 		this._sources.set( key, source );
 
-		const route = SETTING_ROUTES[ key ];
+		const route = this._routes.get( key );
 		if ( ! route ) {
 
 			this._reportUnknownKey( key );
@@ -417,7 +419,7 @@ export class RenderSettings extends EventDispatcher {
 			out[ key ] = {
 				value,
 				source: this._sources.get( key ) ?? SETTING_SOURCE.DEFAULT,
-				routed: SETTING_ROUTES[ key ] !== undefined,
+				routed: this._routes.has( key ),
 			};
 
 		}
@@ -438,7 +440,7 @@ export class RenderSettings extends EventDispatcher {
 		const out = {};
 		for ( const [ key, value ] of this._values ) {
 
-			if ( this._sources.get( key ) !== SETTING_SOURCE.HOST || ! SETTING_ROUTES[ key ] ) continue;
+			if ( this._sources.get( key ) !== SETTING_SOURCE.HOST || ! this._routes.has( key ) ) continue;
 			const portable = toPortable( value );
 			if ( portable !== undefined ) out[ key ] = portable;
 
@@ -459,7 +461,7 @@ export class RenderSettings extends EventDispatcher {
 		const unknown = [];
 		for ( const [ key, value ] of Object.entries( values ?? {} ) ) {
 
-			if ( SETTING_ROUTES[ key ] ) known[ key ] = fromPortable( value );
+			if ( this._routes.has( key ) ) known[ key ] = fromPortable( value );
 			else unknown.push( key );
 
 		}
@@ -477,7 +479,7 @@ export class RenderSettings extends EventDispatcher {
 
 		for ( const [ key, value ] of this._values ) {
 
-			const route = SETTING_ROUTES[ key ];
+			const route = this._routes.get( key );
 			if ( ! route ) continue;
 
 			// prev is undefined on initial apply — handlers should not rely on it
@@ -494,15 +496,14 @@ export class RenderSettings extends EventDispatcher {
 		if ( route.uniform ) {
 
 			this._pathTracer?.setUniform( route.uniform, value );
-			if ( route.after ) this._pathTracer?.[ route.after ]?.();
 
 		} else if ( route.handler ) {
 
 			this._handlers[ route.handler ]?.( value, prev );
 
-		} else if ( route.delegate ) {
+		} else {
 
-			this._delegates[ route.delegate ]?.updateParam?.( route.param, value );
+			route.apply( value, prev );
 
 		}
 

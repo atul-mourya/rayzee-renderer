@@ -407,6 +407,11 @@ the strings, so never rename or repurpose one.
 - **`settings.getEffective()`** — every live setting as `{ value, source, routed }`. `source` is one
   of `SETTING_SOURCE` (default / host / scene-metadata / mode-preset); `routed: false` means stored
   but reaching no stage, which is how a typo becomes a wrong image.
+- **Each layer declares its own settings.** `RenderSettings`' table is the core's alone and names no viewer piece;
+  another layer adds a key with `settings.define( key, { apply, reset } )` (the viewer: `interactionRenderScale`), and
+  gets provenance, events, `serialize()` and reset like a core key. The viewer's rules for a core key go in the
+  bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
+  moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
 - **`RENDER_PROFILES`** (`EngineDefaults.js`) — product decisions for a real-time viewer that are not
   physical constants, collected so choosing between them is one flag rather than a hunt:
   `areaLightIntensityScale` (glTF placeholder area-light power), `environmentRotation`, `toneMapping`,

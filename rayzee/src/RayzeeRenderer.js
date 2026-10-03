@@ -3770,9 +3770,14 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		return {
 			stages: this.stages,
-			renderer: this.renderer,
 			resetCallback: () => this.reset(),
 			reconcileCompletion: () => this._reconcileCompletion(),
+			// three.js applies it inside the tone-mapping branch, so NoToneMapping ignores it
+			applyExposure: ( value ) => {
+
+				this.renderer.toneMappingExposure = value;
+
+			},
 		};
 
 	}

@@ -141,6 +141,13 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
 
    Downloads, compressed: the core 263 KB, `rayzee` 432 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
    bidirectional 14 KB, colour 14 KB, storage 8 KB.
+11. **Each layer declares its own settings** — done. `RenderSettings` holds only the core's settings and names no
+   viewer piece; `settings.define( key, { apply, reset } )` adds another layer's, with the same provenance, events,
+   session saving and reset. The viewer defines `interactionRenderScale` (the core has no moving-camera resolution
+   drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure leaves a manual
+   `exposure` unshown while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
+   viewer's capabilities (denoisers, upscaler, bloom) keep their own methods, as before. Asked for a key only the
+   viewer defines, the core records `setting.unknown_key`, as for any key nothing applies.
 
 ## What still ties the layers
 
@@ -150,5 +157,3 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
   does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
 - **Colour is one per page.** The active colour management (`Color/ActiveColor.js`) is shared by every renderer in the
   page, by design: a config is a page-wide choice, and the texture cache keys on it.
-- **Settings are routed from one table** (`RenderSettings`), which still names viewer pieces (`denoisingManager`,
-  `stages.autoExposure`). Each layer should declare its own settings.

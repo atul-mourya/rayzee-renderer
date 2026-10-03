@@ -71,6 +71,14 @@ export class PathTracerApp extends RayzeeRenderer {
 		super( canvas, options );
 		this.setColorManagement( ColorManagement );
 		this.setStorageOpener( acquireSharedStorage );
+		this.settings.define( 'interactionRenderScale', {
+			apply: () => {
+
+				if ( this.stages?.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
+
+			},
+			reset: false,
+		} );
 
 		this._container = options.container || null;
 		this._animRefitInFlight = false;
@@ -307,15 +315,23 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_settingsBindings() {
 
+		const core = super._settingsBindings();
 		return {
-			...super._settingsBindings(),
-			denoisingManager: this.denoisingManager,
-			onInteractionRenderScale: () => {
+			...core,
+			// auto exposure drives the exposure while it is on, and restores this value when turned off
+			applyExposure: ( value ) => {
 
-				if ( this.stages.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
+				if ( ! this.stages.autoExposure?.enabled ) core.applyExposure( value );
 
 			},
-			onCameraProjection: ( value ) => this.cameraManager.applyProjection( value ),
+			onCameraProjection: ( value ) => {
+
+				this.cameraManager.applyProjection( value );
+				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once every pixel is its
+				// own direction: fall back to the spatial-only denoiser rather than leaving no strategy.
+				if ( value === 'equirectangular' && this.denoisingManager?.requiresMotionVectors ) this.denoisingManager.setDenoiserStrategy( 'edgeaware' );
+
+			},
 		};
 
 	}

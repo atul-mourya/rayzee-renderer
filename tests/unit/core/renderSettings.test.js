@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RenderSettings } from '@/core/RenderSettings.js';
+import { EngineEvents } from '@/core/EngineEvents.js';
 
 describe( 'RenderSettings', () => {
 
@@ -51,7 +52,7 @@ describe( 'RenderSettings', () => {
 
 			const original = settings.get( 'exposure' );
 			const spy = vi.fn();
-			settings.addEventListener( 'settingChanged', spy );
+			settings.addEventListener( EngineEvents.SETTING_CHANGED, spy );
 			settings.set( 'exposure', original );
 			expect( spy ).not.toHaveBeenCalled();
 
@@ -91,22 +92,22 @@ describe( 'RenderSettings', () => {
 
 		it( 'routes handler setting to named handler', () => {
 
-			const mockRenderer = { toneMappingExposure: 1.0 };
+			const applyExposure = vi.fn();
 			settings.bind( {
 				stages: { pathTracer: null },
-				renderer: mockRenderer,
+				applyExposure,
 				resetCallback: vi.fn(),
 			} );
 
 			settings.set( 'exposure', 2.0 );
-			expect( mockRenderer.toneMappingExposure ).toBe( 2.0 );
+			expect( applyExposure ).toHaveBeenCalledWith( 2.0 );
 
 		} );
 
 		it( 'silent option suppresses event', () => {
 
 			const spy = vi.fn();
-			settings.addEventListener( 'settingChanged', spy );
+			settings.addEventListener( EngineEvents.SETTING_CHANGED, spy );
 			settings.set( 'exposure', 5, { silent: true } );
 			expect( spy ).not.toHaveBeenCalled();
 
@@ -222,19 +223,6 @@ describe( 'RenderSettings', () => {
 
 		} );
 
-		it( 'keeps the motion-vector denoisers for an orthographic camera', () => {
-
-			const denoisingManager = { requiresMotionVectors: true, setDenoiserStrategy: vi.fn() };
-			settings.bind( { stages: { pathTracer: { setUniform: vi.fn() } }, resetCallback: vi.fn(), denoisingManager } );
-
-			settings.set( 'cameraProjection', 'orthographic' );
-			expect( denoisingManager.setDenoiserStrategy ).not.toHaveBeenCalled();
-
-			settings.set( 'cameraProjection', 'equirectangular' );
-			expect( denoisingManager.setDenoiserStrategy ).toHaveBeenCalledWith( 'edgeaware' );
-
-		} );
-
 	} );
 
 	describe( 'depth of field lens', () => {
@@ -304,12 +292,60 @@ describe( 'RenderSettings', () => {
 
 			const mockStage = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
 			const mockCompositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
-			const mockRenderer = { toneMappingExposure: 1.0 };
-			settings.bind( { stages: { pathTracer: mockStage, compositor: mockCompositor }, renderer: mockRenderer, resetCallback: vi.fn(), reconcileCompletion: vi.fn() } );
+			settings.bind( { stages: { pathTracer: mockStage, compositor: mockCompositor }, applyExposure: vi.fn(), resetCallback: vi.fn(), reconcileCompletion: vi.fn() } );
 			settings.applyAll();
 
 			// Should have called setUniform for each uniform-routed key
 			expect( mockStage.setUniform ).toHaveBeenCalled();
+
+		} );
+
+	} );
+
+	// ── define ─────────────────────────────────────────────────
+
+	describe( 'define', () => {
+
+		it( 'leaves keys of other layers out of the core', () => {
+
+			expect( settings.get( 'interactionRenderScale' ) ).toBeUndefined();
+			expect( settings.getEffective().interactionRenderScale ).toBeUndefined();
+
+		} );
+
+		it( 'gives a defined key its default, provenance, events, saving and reset', () => {
+
+			const apply = vi.fn();
+			const resetCallback = vi.fn();
+			const pathTracer = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), setIntegrator: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
+			const compositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
+			settings.bind( { stages: { pathTracer, compositor }, resetCallback } );
+			settings.define( 'interactionRenderScale', { apply, reset: false } );
+
+			expect( settings.getEffective().interactionRenderScale ).toEqual( { value: 0.5, source: 'default', routed: true } );
+
+			const changed = vi.fn();
+			settings.addEventListener( EngineEvents.SETTING_CHANGED, changed );
+			settings.set( 'interactionRenderScale', 0.25 );
+			expect( apply ).toHaveBeenCalledWith( 0.25, 0.5 );
+			expect( changed ).toHaveBeenCalledTimes( 1 );
+			expect( resetCallback ).not.toHaveBeenCalled();
+			expect( settings.serialize().interactionRenderScale ).toBe( 0.25 );
+
+			settings.applyAll();
+			expect( apply ).toHaveBeenLastCalledWith( 0.25, undefined );
+
+		} );
+
+		it( 'resets accumulation by default, and refuses a key already defined', () => {
+
+			const resetCallback = vi.fn();
+			settings.bind( { stages: { pathTracer: { setUniform: vi.fn() } }, resetCallback } );
+			settings.define( 'myAddonStrength', { apply: vi.fn() } );
+			settings.set( 'myAddonStrength', 3 );
+			expect( resetCallback ).toHaveBeenCalledTimes( 1 );
+
+			expect( () => settings.define( 'maxBounces', { apply: vi.fn() } ) ).toThrow( /already defined/ );
 
 		} );
 
