@@ -2289,6 +2289,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			}
 
+			// A host moves the camera between calls, and a load frames it with lookAt(), which leaves matrixWorld stale.
+			this.camera.updateMatrixWorld();
 			this.pipeline.render();
 			passes ++;
 

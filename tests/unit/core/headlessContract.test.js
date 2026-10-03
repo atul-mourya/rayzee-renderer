@@ -64,6 +64,7 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 
 		},
 		stopAnimation: () => {},
+		camera: { updateMatrixWorld: () => {} },
 		pipeline: {
 			render: () => {
 
@@ -93,6 +94,17 @@ describe( 'renderFrames', () => {
 
 		const { app } = makeApp();
 		await expect( app.renderFrames( 8, { yieldEvery: 0 } ) ).resolves.toBe( 8 );
+
+	} );
+
+	// A load frames the camera with lookAt(), which leaves matrixWorld stale; nothing else refreshes it headless.
+	it( 'brings the camera\'s world matrix up to date before every pass', async () => {
+
+		const { app } = makeApp();
+		let updates = 0;
+		app.camera.updateMatrixWorld = () => void updates ++;
+		await app.renderFrames( 5, { yieldEvery: 0 } );
+		expect( updates ).toBe( 5 );
 
 	} );
 
