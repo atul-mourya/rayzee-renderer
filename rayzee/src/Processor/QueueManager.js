@@ -54,7 +54,7 @@ export const RAY_FLAG = {
 	UNDER_SURFACE: 1 << 20, // bit 20: the last opaque scatter left below its own facet (shading normal allowed it), so the ray culls back faces to leave that shell
 	LIGHT_PATH: 1 << 21, // bit 21: bidirectional light subpath (traced from an emitter, gathers nothing)
 	LIGHT_EMITTED: 1 << 22, // bit 22: light subpath not yet past its first interaction (its MIS start is still open)
-	EMISSION_ONLY: 1 << 23, // bit 23: bidirectional camera ray past its last bounce, traced only for the emitter it hits
+	EMISSION_ONLY: 1 << 23, // bit 23: camera ray past its last bounce, traced only for the light it hits
 };
 
 export class QueueManager {

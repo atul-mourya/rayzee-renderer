@@ -45,7 +45,7 @@ export const HIT = {
 	// The path's RNG state, here rather than in a buffer of its own: Shade was at the device's
 	// 10 storage buffers, and the second triangle buffer needed the slot. Extend never writes it.
 	// Bidirectional mode keeps the path's MIS partial sums in .y/.z.
-	RNG: 2, // uvec4(rngState, bits(dVCM), bits(dVC), 0)
+	RNG: 2, // uvec4(rngState, bits(dVCM), bits(dVC), bits(surface offset))
 	// Bidirectional only: a camera vertex awaiting its connection, or a light path's emission.
 	VERTEX: 3, // 4 slots, a vertex record (see writeVertexRecord)
 };
@@ -296,6 +296,12 @@ export const readHitFacet = ( buf, id ) =>
 	buf.element( soa( id, HIT.NORMAL_MAT ) ).w;
 
 export const readRngState = ( buf, id ) => buf.element( soa( id, HIT.RNG ) ).x;
+
+// Extend's correction along the facet normal from origin + t · direction to the triangle's plane, in the RNG
+// slot's spare lane: t's error grows with the triangle's size and left points on a large floor under it. Shade
+// reads it before it rewrites the slot, whose writers clear the lane.
+export const writeHitSurfaceOffset = ( buf, id, offset ) => buf.element( soa( id, HIT.RNG ) ).w.assign( floatBitsToUint( offset ) );
+export const readHitSurfaceOffset = ( buf, id ) => uintBitsToFloat( buf.element( soa( id, HIT.RNG ) ).w );
 
 export const writeRngState = ( buf, id, state ) => buf.element( soa( id, HIT.RNG ) ).assign( uvec4( state, 0, 0, 0 ) );
 

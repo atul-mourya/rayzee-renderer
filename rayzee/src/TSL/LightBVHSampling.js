@@ -18,8 +18,10 @@ import {
 	normalize,
 	cross,
 	length,
+	abs,
 } from 'three/tsl';
 import { MIN_PDF } from './Common.js';
+import { sideAccepts } from './BVHTraversal.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import {
 	EmissiveSample,
@@ -283,9 +285,9 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 				const samplePos = sphResult.position;
 
 				const surfaceFacing = dot( dir, surfaceNormal );
-				const emissiveFacing = dot( dir, geoNormal.negate() );
+				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( float( 0.0 ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
+				If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const barycentricCoords = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -332,9 +334,10 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 			const dir = toEmissive.div( dist );
 
 			const surfaceFacing = dot( dir, surfaceNormal );
-			const emissiveFacing = dot( dir, sampleNormal.negate() );
+			// The facet's cosine, not the shading normal's: it is what turns an area density into a solid-angle one.
+			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-			If( surfaceFacing.greaterThan( float( 0.0 ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
+			If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 				// PDF: selectionPdf / area, converted to solid angle: pdfArea * distSq / cosLight
 				const pdfArea = selectionPdf.div( max( area, float( 1e-10 ) ) );
@@ -501,6 +504,12 @@ export const calculateLightBVHPdf = Fn( ( [
 
 			// Convert selection pdf → solid-angle measure using the SAME heuristic as the sampler.
 			const triData = TriangleData.wrap( fetchTriangleData( triIdx, triangleBuffer, bvhBuffer, targetInstance ) );
+			// The sampler draws only the sides the triangle emits from (a unit normal: sideAccepts has a threshold).
+			If( sideAccepts( triData.side, dot( rayDir, normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) ) ) ).not(), () => {
+
+				selectionPdf.assign( float( 0.0 ) );
+
+			} );
 			If( useSphericalSampling( triData.v0, triData.v1, triData.v2, shadingPoint ), () => {
 
 				const solidAngle = sphericalTriangleSolidAngle( triData.v0, triData.v1, triData.v2, shadingPoint );
@@ -509,7 +518,7 @@ export const calculateLightBVHPdf = Fn( ( [
 			} ).Else( () => {
 
 				const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
-				const cosLight = max( dot( rayDir.negate(), geoNormal ), float( 0.001 ) );
+				const cosLight = max( abs( dot( rayDir, geoNormal ) ), float( 0.001 ) );
 				const area = triangleArea( triData.v0, triData.v1, triData.v2 );
 				const distSq = hitDistance.mul( hitDistance );
 				const pdfArea = selectionPdf.div( max( area, float( 1e-10 ) ) );
@@ -521,6 +530,6 @@ export const calculateLightBVHPdf = Fn( ( [
 
 	} );
 
-	return max( result, MIN_PDF );
+	return select( result.greaterThan( 0.0 ), max( result, MIN_PDF ), float( 0.0 ) );
 
 } );

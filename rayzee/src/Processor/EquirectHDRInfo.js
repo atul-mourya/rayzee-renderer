@@ -4,44 +4,6 @@ import { createWorker } from '../Platform.js';
 import { buildExactEnvironmentTable } from './EnvironmentExactTable.js';
 
 /**
- * Binary search to find the closest index
- */
-function binarySearchFindClosestIndexOf( array, targetValue, offset = 0, count = array.length ) {
-
-	let lower = offset;
-	let upper = offset + count - 1;
-
-	while ( lower < upper ) {
-
-		const mid = ( lower + upper ) >> 1;
-
-		if ( array[ mid ] < targetValue ) {
-
-			lower = mid + 1;
-
-		} else {
-
-			upper = mid;
-
-		}
-
-	}
-
-	return lower - offset;
-
-}
-
-/**
- * Calculate luminance from RGB values
- */
-function colorToLuminance( r, g, b ) {
-
-	// https://en.wikipedia.org/wiki/Relative_luminance
-	return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-}
-
-/**
  * sRGB to linear conversion (IEC 61966-2-1 transfer function)
  */
 function sRGBToLinear( c ) {
@@ -155,29 +117,21 @@ export function extractFloatData( envMap ) {
 }
 
 /**
- * EquirectHDRInfo - Importance sampling data for equirectangular HDR maps
- *
- * Builds inverted marginal and conditional CDFs from an HDR environment map.
- * Outputs Float32Arrays consumed directly by StorageInstancedBufferAttribute
- * on the GPU — no intermediate DataTexture or HalfFloat conversion needed.
- *
- * Supports two modes:
- * - `updateFrom(hdr)`: synchronous, runs on main thread
- * - `updateFromAsync(hdr)`: offloads CDF math to a Web Worker
+ * EquirectHDRInfo - an equirectangular environment's sampling table (EnvironmentExactTable.js), built on the
+ * main thread (`updateFrom`) or in CDFWorker (`updateFromAsync`). `totalSum` is the map's ∫ luminance dω, 0
+ * when there is nothing to sample.
  */
 export class EquirectHDRInfo {
 
 	constructor() {
 
-		// Placeholder data matching the default storage buffer sizes in PathTracer
-		this.marginalData = new Float32Array( [ 0, 1 ] );
-		this.conditionalData = new Float32Array( [ 0, 0, 1, 1 ] );
 		this.totalSum = 0;
-		this.compensationDelta = 0;
 		this.width = 0;
 		this.height = 0;
 		this.exactConditional = null;
 		this.exactMarginal = null;
+		this.exactRowGuide = null;
+		this.exactMarginalGuide = null;
 		this.exactWidth = 0;
 		this.exactHeight = 0;
 		this.radianceIntegral = 0;
@@ -188,10 +142,10 @@ export class EquirectHDRInfo {
 
 	dispose() {
 
-		this.marginalData = null;
-		this.conditionalData = null;
 		this.exactConditional = null;
 		this.exactMarginal = null;
+		this.exactRowGuide = null;
+		this.exactMarginalGuide = null;
 
 		if ( this._worker ) {
 
@@ -202,29 +156,28 @@ export class EquirectHDRInfo {
 
 	}
 
-	/**
-	 * Synchronous CDF build on main thread (fallback path).
-	 */
-	updateFrom( hdr ) {
+	_adopt( table, width, height ) {
 
-		const { floatData, width, height } = extractFloatData( hdr );
-
-		const result = EquirectHDRInfo.computeCDF( floatData, width, height );
-
-		this.marginalData = result.marginalData;
-		this.conditionalData = result.conditionalData;
-		this.totalSum = result.totalSum;
-		this.compensationDelta = result.compensationDelta;
+		Object.assign( this, table );
 		this.width = width;
 		this.height = height;
-		Object.assign( this, buildExactEnvironmentTable( floatData, width, height ) );
+		this.totalSum = table.radianceIntegral;
 
 	}
 
 	/**
-	 * Async CDF build offloaded to a Web Worker.
-	 * Float extraction (HalfFloat → Float32) runs on main thread (needs Three.js DataUtils),
-	 * then the pure-math CDF computation runs off-thread.
+	 * Synchronous build on the main thread (fallback path).
+	 */
+	updateFrom( hdr ) {
+
+		const { floatData, width, height } = extractFloatData( hdr );
+		this._adopt( buildExactEnvironmentTable( floatData, width, height ), width, height );
+
+	}
+
+	/**
+	 * The build offloaded to a Web Worker. Float extraction (HalfFloat → Float32) runs on the main thread
+	 * (it needs three's DataUtils); the table's math runs off it.
 	 * @returns {Promise<void>}
 	 */
 	async updateFromAsync( hdr ) {
@@ -262,17 +215,8 @@ export class EquirectHDRInfo {
 
 			} );
 
-			this.marginalData = result.marginalData;
-			this.conditionalData = result.conditionalData;
-			this.totalSum = result.totalSum;
-			this.compensationDelta = result.compensationDelta;
-			this.width = result.width;
-			this.height = result.height;
-			this.exactConditional = result.exactConditional;
-			this.exactMarginal = result.exactMarginal;
-			this.exactWidth = result.exactWidth;
-			this.exactHeight = result.exactHeight;
-			this.radianceIntegral = result.radianceIntegral;
+			const { width: w, height: h, ...table } = result;
+			this._adopt( table, w, h );
 
 		} finally {
 
@@ -284,157 +228,6 @@ export class EquirectHDRInfo {
 			}
 
 		}
-
-	}
-
-	/**
-	 * Pure-math CDF computation. Used by both the sync path and CDFWorker.
-	 * Static so it can be called without an instance.
-	 */
-	static computeCDF( floatData, width, height ) {
-
-		const numPixels = width * height;
-
-		// Pass 1: compute per-pixel luminance weighted by sin(theta) and raw total sum.
-		// sin(theta) compensates for the equirectangular projection: pixels near the poles
-		// cover less solid angle, so weighting by sin(theta) makes the CDF proportional to
-		// luminance per solid angle rather than luminance per pixel.
-		const pixelWeights = new Float32Array( numPixels );
-		let rawTotalSum = 0.0;
-
-		for ( let y = 0; y < height; y ++ ) {
-
-			const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
-
-			for ( let x = 0; x < width; x ++ ) {
-
-				const i = y * width + x;
-				const w = colorToLuminance(
-					floatData[ 4 * i ],
-					floatData[ 4 * i + 1 ],
-					floatData[ 4 * i + 2 ],
-				) * sinTheta;
-				pixelWeights[ i ] = w;
-				rawTotalSum += w;
-
-			}
-
-		}
-
-		// MIS Compensation (Karlík et al. 2019, Eq. 14)
-		// With equal sample allocation (c_I = 0.5): delta = 2*(1 - 0.5)*meanWeight = meanWeight
-		// Subtracting mean sharpens the env map PDF, reducing oversampling
-		// of dim regions already well-covered by BSDF sampling.
-		const meanWeight = rawTotalSum / numPixels;
-		let compensatedTotalSum = 0.0;
-
-		for ( let i = 0; i < numPixels; i ++ ) {
-
-			pixelWeights[ i ] = Math.max( 0, pixelWeights[ i ] - meanWeight );
-			compensatedTotalSum += pixelWeights[ i ];
-
-		}
-
-		// Fall back to raw weights if compensation zeroed everything (uniform env map)
-		const useCompensation = compensatedTotalSum > 0;
-		const totalSumValue = useCompensation ? compensatedTotalSum : rawTotalSum;
-		const compensationDelta = useCompensation ? meanWeight : 0;
-
-		if ( ! useCompensation ) {
-
-			for ( let y = 0; y < height; y ++ ) {
-
-				const sinTheta = Math.sin( Math.PI * ( y + 0.5 ) / height );
-
-				for ( let x = 0; x < width; x ++ ) {
-
-					const i = y * width + x;
-					pixelWeights[ i ] = colorToLuminance(
-						floatData[ 4 * i ],
-						floatData[ 4 * i + 1 ],
-						floatData[ 4 * i + 2 ],
-					) * sinTheta;
-
-				}
-
-			}
-
-		}
-
-		// Pass 2: build conditional and marginal CDFs from (compensated) weights
-		const cdfConditional = new Float32Array( numPixels );
-		const cdfMarginal = new Float32Array( height );
-
-		let cumulativeWeightMarginal = 0.0;
-
-		for ( let y = 0; y < height; y ++ ) {
-
-			let cumulativeRowWeight = 0.0;
-			for ( let x = 0; x < width; x ++ ) {
-
-				const i = y * width + x;
-				cumulativeRowWeight += pixelWeights[ i ];
-				cdfConditional[ i ] = cumulativeRowWeight;
-
-			}
-
-			// Normalize row CDF to [0, 1]
-			if ( cumulativeRowWeight !== 0 ) {
-
-				for ( let i = y * width, l = y * width + width; i < l; i ++ ) {
-
-					cdfConditional[ i ] /= cumulativeRowWeight;
-
-				}
-
-			}
-
-			cumulativeWeightMarginal += cumulativeRowWeight;
-			cdfMarginal[ y ] = cumulativeWeightMarginal;
-
-		}
-
-		// Normalize marginal CDF to [0, 1]
-		if ( cumulativeWeightMarginal !== 0 ) {
-
-			for ( let i = 0, l = cdfMarginal.length; i < l; i ++ ) {
-
-				cdfMarginal[ i ] /= cumulativeWeightMarginal;
-
-			}
-
-		}
-
-		// Create inverted CDF arrays (Float32 directly for storage buffers)
-		const marginalData = new Float32Array( height );
-		const conditionalData = new Float32Array( numPixels );
-
-		// Invert marginal CDF
-		for ( let i = 0; i < height; i ++ ) {
-
-			const dist = ( i + 1 ) / height;
-			const row = binarySearchFindClosestIndexOf( cdfMarginal, dist );
-
-			marginalData[ i ] = ( row + 0.5 ) / height;
-
-		}
-
-		// Invert conditional CDFs
-		for ( let y = 0; y < height; y ++ ) {
-
-			for ( let x = 0; x < width; x ++ ) {
-
-				const i = y * width + x;
-				const dist = ( x + 1 ) / width;
-				const col = binarySearchFindClosestIndexOf( cdfConditional, dist, y * width, width );
-
-				conditionalData[ i ] = ( col + 0.5 ) / width;
-
-			}
-
-		}
-
-		return { marginalData, conditionalData, totalSum: totalSumValue, compensationDelta };
 
 	}
 

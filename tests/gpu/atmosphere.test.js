@@ -3,7 +3,7 @@ import { Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { PhysicalSky } from '@/core/Processor/PhysicalSky.js';
-import { EquirectHDRInfo } from '@/core/Processor/EquirectHDRInfo.js';
+import { buildExactEnvironmentTable } from '@/core/Processor/EnvironmentExactTable.js';
 import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/Processor/AtmosphereModel.js';
 import { sunRadianceToward, sampleSunDisc } from '@/core/TSL/Sun.js';
 import { depthTable, referenceRadiance, singleScattering, spectrumToEngineRGB } from './skyReference.js';
@@ -133,35 +133,35 @@ describeGPU( 'physical sky', () => {
 	it( 'builds the importance-sampling table the CPU builder would', async () => {
 
 		const sky = new PhysicalSky( 512, 256 );
+		const W = sky.width, H = sky.height;
 		for ( const sunEl of [ 30, 2, - 20 ] ) {
 
 			const { stats } = bake( sky, sunEl );
-			const { totalSum, compensationDelta } = await stats;
+			const { totalSum, radianceIntegral } = await stats;
 			const { pixels, cdf, cdfStride } = await sky.readBack( renderer );
-			const cpu = EquirectHDRInfo.computeCDF( pixels, sky.width, sky.height );
-			expect( totalSum / cpu.totalSum, `sun ${sunEl}°` ).toBeCloseTo( 1, 4 );
-			expect( compensationDelta / cpu.compensationDelta, `sun ${sunEl}°` ).toBeCloseTo( 1, 4 );
+			const cpu = buildExactEnvironmentTable( pixels, W, H, { filtered: false } );
+			expect( radianceIntegral / cpu.radianceIntegral, `sun ${sunEl}°` ).toBeCloseTo( 1, 4 );
+			expect( totalSum, `sun ${sunEl}°` ).toBeGreaterThan( 0 );
 
-			// f32 against f64 sums can land a search one texel over at a tie. The whole-row target is
-			// skipped: the CPU's normalised sums can end short of 1 and pick the last texel.
-			let off = 0, worst = 0;
-			const compare = ( gpu, ref, n ) => {
+			// Running sums in rows [H, 2H), within f32 against f64 summing. A guide may land one entry over at a
+			// tie; the sampler searches from one below to two above.
+			let worst = 0, guideOff = 0;
+			for ( let y = 0; y < H; y ++ ) {
 
-				const d = Math.abs( gpu - ref ) * n;
-				if ( d > 0.01 ) off ++;
-				worst = Math.max( worst, d );
+				const row = ( H + y ) * cdfStride;
+				worst = Math.max( worst, Math.abs( cdf[ row + W ] - cpu.exactMarginal[ y ] ) );
+				if ( Math.abs( cdf[ y * cdfStride + W ] - cpu.exactMarginalGuide[ y ] ) > 1 ) guideOff ++;
+				for ( let x = 0; x < W; x ++ ) {
 
-			};
+					worst = Math.max( worst, Math.abs( cdf[ row + x ] - cpu.exactConditional[ y * W + x ] ) );
+					if ( Math.abs( cdf[ y * cdfStride + x ] - cpu.exactRowGuide[ y * W + x ] ) > 1 ) guideOff ++;
 
-			for ( let y = 0; y < sky.height; y ++ ) {
-
-				if ( y < sky.height - 1 ) compare( cdf[ y * cdfStride + sky.width ], cpu.marginalData[ y ], sky.height );
-				for ( let x = 0; x < sky.width - 1; x ++ ) compare( cdf[ y * cdfStride + x ], cpu.conditionalData[ y * sky.width + x ], sky.width );
+				}
 
 			}
 
-			expect( off / ( sky.width * sky.height ), `sun ${sunEl}°` ).toBeLessThan( 1e-3 );
-			expect( worst, `sun ${sunEl}°` ).toBeLessThan( 1.01 );
+			expect( worst, `sun ${sunEl}°` ).toBeLessThan( 1e-4 );
+			expect( guideOff, `sun ${sunEl}°` ).toBe( 0 );
 
 		}
 

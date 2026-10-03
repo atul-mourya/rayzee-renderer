@@ -37,6 +37,7 @@ import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
 import { DotProducts } from './Struct.js';
+import { triangleSide, sideAccepts } from './BVHTraversal.js';
 
 // ================================================================================
 // STRUCTS
@@ -300,6 +301,7 @@ export const TriangleData = struct( {
 	v0: 'vec3', v1: 'vec3', v2: 'vec3',
 	n0: 'vec3', n1: 'vec3', n2: 'vec3',
 	materialIndex: 'int',
+	side: 'int', // 0 front, 1 back, 2 double (BVHTraversal.js triangleSide)
 } );
 
 // Fetch triangle vertices from storage buffer
@@ -338,6 +340,7 @@ export const fetchTriangleData = Fn( ( [ triangleIndex, triangleBuffer, bvhBuffe
 	return TriangleData( {
 		v0, v1, v2, n0, n1, n2,
 		materialIndex: int( uvMat.z.bitAnd( uint( TRI_MATERIAL_MASK ) ) ),
+		side: triangleSide( uvMat.z ),
 	} );
 
 } );
@@ -374,14 +377,16 @@ export const calculateEmissiveLightPdf = Fn( ( [
 
 		// Area: PDF = (power/totalPower) / area, converted to solid angle
 		const geoNormal = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
-		const cosLight = max( dot( rayDir.negate(), geoNormal ), 0.001 );
+		const cosLight = max( abs( dot( rayDir, geoNormal ) ), 0.001 );
 		const distSq = hitDistance.mul( hitDistance );
 		const pdfArea = selectionPdf.div( area );
 		result.assign( pdfArea.mul( distSq ).div( cosLight ) );
 
 	} );
 
-	return max( result, MIN_PDF );
+	// The sampler draws only the sides the triangle emits from (a unit normal: sideAccepts has a threshold).
+	const winding = normalize( cross( triData.v1.sub( triData.v0 ), triData.v2.sub( triData.v0 ) ) );
+	return select( sideAccepts( triData.side, dot( rayDir, winding ) ), max( result, MIN_PDF ), float( 0.0 ) );
 
 } );
 
@@ -487,9 +492,9 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 				const samplePos = sphResult.position;
 
 				const surfaceFacing = dot( dir, surfaceNormal );
-				const emissiveFacing = dot( dir, geoNormal.negate() );
+				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( 0.0 ).and( emissiveFacing.greaterThan( 0.0 ) ), () => {
+				If( surfaceFacing.greaterThan( 0.0 ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const bary = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -536,9 +541,10 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 			const dir = toEmissive.div( dist );
 
 			const surfaceFacing = dot( dir, surfaceNormal );
-			const emissiveFacing = dot( dir, sampleNormal.negate() );
+			// The facet's cosine, not the shading normal's: it is what turns an area density into a solid-angle one.
+			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-			If( surfaceFacing.greaterThan( 0.0 ).and( emissiveFacing.greaterThan( 0.0 ) ), () => {
+			If( surfaceFacing.greaterThan( 0.0 ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 				// PDF: CDF selection (power/totalPower) * uniform area (1/area)
 				// Converted to solid angle: pdfArea * distSq / cosLight

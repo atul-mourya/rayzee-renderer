@@ -1,6 +1,6 @@
 /**
- * The bidirectional environment sampler draws each cell of its table exactly as often as the density it reports,
- * so NEE and light tracing over it are unbiased — the path tracer's interpolated inverse CDF is not.
+ * The environment sampler draws each cell of its table exactly as often as the density it reports, so NEE and
+ * light tracing over it are unbiased. Its guided search finds what a full binary search would.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { DataTexture, RedFormat, FloatType, Matrix4 } from 'three';
 import { vec4, texture, uniform, vec2 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { sampleEnvironmentExact, environmentPdfExact } from '@/core/TSL/Environment.js';
-import { buildExactEnvironmentTable, exactTableSize } from '@/core/Processor/EnvironmentExactTable.js';
+import { buildExactEnvironmentTable, exactTableSize, packExactTable } from '@/core/Processor/EnvironmentExactTable.js';
 
 const N = 1 << 19;
 
@@ -29,19 +29,11 @@ function makeSky( W, H ) {
 
 }
 
-// The CDF texture as EnvironmentManager packs it: the exact table in the rows past the map's height.
-function packTable( table, W, H ) {
+// The CDF texture as EnvironmentManager packs it.
+function packTable( table ) {
 
-	const texW = W + 1, ew = table.exactWidth, eh = table.exactHeight;
-	const data = new Float32Array( texW * ( H + eh ) );
-	for ( let y = 0; y < eh; y ++ ) {
-
-		data.set( table.exactConditional.subarray( y * ew, y * ew + ew ), ( H + y ) * texW );
-		data[ ( H + y ) * texW + ew ] = table.exactMarginal[ y ];
-
-	}
-
-	const t = new DataTexture( data, texW, H + eh, RedFormat, FloatType );
+	const { data, width, height } = packExactTable( table );
+	const t = new DataTexture( data, width, height, RedFormat, FloatType );
 	t.needsUpdate = true;
 	return t;
 
@@ -58,7 +50,7 @@ describeGPU( 'exact environment sampling', () => {
 		const pixels = makeSky( W, H );
 		const table = buildExactEnvironmentTable( pixels, W, H );
 		const { k, width: ew, height: eh } = exactTableSize( W, H );
-		const cdf = packTable( table, W, H );
+		const cdf = packTable( table );
 		const matrix = uniform( new Matrix4().makeRotationY( 0.7 ) );
 
 		let s = 9; const rnd = () => ( ( s = ( s * 1664525 + 1013904223 ) >>> 0 ) / 4294967296 );
@@ -113,15 +105,20 @@ describeGPU( 'exact environment sampling', () => {
 
 		}
 
-		let solidAngle = 0;
+		// And how far the estimate may stray: a cell of share s and solid angle Ω adds Ω² (1 − s) / ( N s ) to its variance.
+		let solidAngle = 0, variance = 0;
 		for ( let y = 0; y < eh; y ++ ) for ( let x = 0; x < ew; x ++ ) {
 
-			if ( kept( y * ew + x ) ) solidAngle += ( 2 * Math.PI / ew ) * ( Math.cos( Math.PI * y / eh ) - Math.cos( Math.PI * ( y + 1 ) / eh ) );
+			const c = y * ew + x;
+			if ( ! kept( c ) ) continue;
+			const omega = ( 2 * Math.PI / ew ) * ( Math.cos( Math.PI * y / eh ) - Math.cos( Math.PI * ( y + 1 ) / eh ) );
+			solidAngle += omega;
+			variance += omega * omega * ( 1 - shares[ c ] ) / ( N * shares[ c ] );
 
 		}
 
 		expect( mismatched / N ).toBeLessThan( 1e-3 );
-		expect( estimate / N / solidAngle ).toBeCloseTo( 1, 2 );
+		expect( Math.abs( estimate / N - solidAngle ) ).toBeLessThan( 4 * Math.sqrt( variance ) );
 		expect( Math.abs( upperHalf / keptCount - 0.5 ) ).toBeLessThan( 0.01 );
 		expect( Math.abs( rightHalf / keptCount - 0.5 ) ).toBeLessThan( 0.01 );
 

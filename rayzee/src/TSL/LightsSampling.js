@@ -37,6 +37,7 @@ import {
 	select,
 	If,
 	Loop,
+	sampler,
 } from 'three/tsl';
 
 import {
@@ -84,9 +85,7 @@ import {
 	offsetRayOrigin,
 	SHADOW_END,
 } from './Common.js';
-import {
-	sampleEquirectProbability,
-} from './Environment.js';
+import { sampleEnvironment, sampleEnvironmentExact } from './Environment.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
 
@@ -791,7 +790,7 @@ export const calculateDirectLightingUnified = Fn( ( [
 	// Environment resources
 	envTexture, environmentIntensity, envMatrix,
 	envCDFTexture,
-	envTotalSum, envCompensationDelta, envResolution,
+	envTotalSum, envResolution,
 	enableEnvironmentLight,
 	// Shadow catcher: when true, also accumulate the unoccluded (visibility=1) reference
 	// at every light/env site so the caller can form a shadow ratio. Dead path otherwise.
@@ -1011,17 +1010,16 @@ export const calculateDirectLightingUnified = Fn( ( [
 				radiance.assign( sunRadianceToward( direction, sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ) );
 				lightPdf.assign( select( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ), float( 1.0 ).div( sunParams.y ), float( 0.0 ) ) );
 
-			} ).Else( () => {
+			} ).ElseIf( envTotalSum.greaterThan( 0.0 ), () => {
 
-				const envRandom = getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ).toVar();
-				const envColor = vec3( 0.0 ).toVar();
-				const envSampleResult = sampleEquirectProbability(
-					envTexture, envCDFTexture,
-					envMatrix, environmentIntensity, envTotalSum, envCompensationDelta, envResolution, envRandom, envColor
-				).toVar();
-				direction.assign( envSampleResult.xyz );
-				radiance.assign( envColor );
-				lightPdf.assign( envSampleResult.w );
+				// Drawn from the table its density is read back from; a total of 0 is no table, or a black map.
+				const drawn = sampleEnvironmentExact( envCDFTexture, envMatrix, envResolution,
+					getRandomSample2D( pixelCoord, int( 0 ), dimBase.add( int( 1 ) ), rngState, resolution, frame ) );
+				direction.assign( drawn.direction );
+				radiance.assign( sampleEnvironment( {
+					tex: envTexture, samp: sampler( envTexture ), direction, environmentMatrix: envMatrix, environmentIntensity, enableEnvironmentLight: float( 1.0 ),
+				} ).xyz );
+				lightPdf.assign( drawn.pdf );
 
 			} );
 

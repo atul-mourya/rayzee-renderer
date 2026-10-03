@@ -10,6 +10,7 @@ vi.mock( 'three', () => ( {
 
 import { extractFloatData } from '@/core/Processor/EquirectHDRInfo.js';
 import { EquirectHDRInfo } from '@/core/Processor/EquirectHDRInfo.js';
+import { buildExactEnvironmentTable, packExactTable } from '@/core/Processor/EnvironmentExactTable.js';
 
 describe( 'extractFloatData', () => {
 
@@ -83,71 +84,77 @@ describe( 'extractFloatData', () => {
 
 } );
 
-describe( 'EquirectHDRInfo.computeCDF', () => {
+describe( 'buildExactEnvironmentTable', () => {
 
-	it( 'uniform image produces near-uniform CDF', () => {
+	const image = ( width, height, at ) => {
 
-		// 4x2 uniform white image (RGBA)
-		const width = 4;
-		const height = 2;
-		const floatData = new Float32Array( width * height * 4 );
-		for ( let i = 0; i < width * height; i ++ ) {
+		const data = new Float32Array( width * height * 4 );
+		for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width; x ++ ) {
 
-			floatData[ i * 4 ] = 1; // R
-			floatData[ i * 4 + 1 ] = 1; // G
-			floatData[ i * 4 + 2 ] = 1; // B
-			floatData[ i * 4 + 3 ] = 1; // A
+			const v = at( x, y );
+			data.set( [ v, v, v, 1 ], ( y * width + x ) * 4 );
 
 		}
 
-		const { marginalData, conditionalData, totalSum } = EquirectHDRInfo.computeCDF( floatData, width, height );
+		return data;
 
-		expect( totalSum ).toBeGreaterThan( 0 );
-		expect( marginalData ).toHaveLength( height );
-		expect( conditionalData ).toHaveLength( width * height );
+	};
 
-		// Marginal CDF for uniform image: values should be roughly evenly spaced
-		// Each entry maps to a row index via inverted CDF
-		for ( let i = 0; i < height; i ++ ) {
+	// Each guide is the first entry above its step's start, or the last.
+	const checkGuides = ( cdf, offset, n, guide, guideOffset ) => {
 
-			expect( marginalData[ i ] ).toBeGreaterThanOrEqual( 0 );
-			expect( marginalData[ i ] ).toBeLessThanOrEqual( 1 );
+		for ( let g = 0; g < n; g ++ ) {
+
+			const i = guide[ guideOffset + g ];
+			expect( i === n - 1 || cdf[ offset + i ] > g / n ).toBe( true );
+			if ( i > 0 ) expect( cdf[ offset + i - 1 ] ).toBeLessThanOrEqual( g / n );
 
 		}
 
-	} );
+	};
 
-	it( 'bright pixel concentrates CDF', () => {
+	it( 'spreads a uniform map evenly and guides each step to its entry', () => {
 
-		// 2x2 image: one bright pixel, rest dark
-		const width = 2;
-		const height = 2;
-		const floatData = new Float32Array( width * height * 4 );
-		// Set pixel (0,0) to be very bright
-		floatData[ 0 ] = 100; // R
-		floatData[ 1 ] = 100; // G
-		floatData[ 2 ] = 100; // B
-		floatData[ 3 ] = 1; // A
-
-		const { totalSum } = EquirectHDRInfo.computeCDF( floatData, width, height );
-
-		// Total sum reflects sin(θ)-weighted luminance with MIS compensation
-		// (mean-subtraction). For luminance ≈ 100 at row 0 of a 2x2 image:
-		//   raw   = 100 * sin(π/4) ≈ 70.71
-		//   mean  = 70.71 / 4     ≈ 17.68
-		//   final = 70.71 - 17.68 ≈ 53.03
-		expect( totalSum ).toBeGreaterThan( 50 );
+		const t = buildExactEnvironmentTable( image( 8, 4, () => 1 ), 8, 4 );
+		expect( [ t.exactWidth, t.exactHeight ] ).toEqual( [ 8, 4 ] );
+		for ( let x = 0; x < 8; x ++ ) expect( t.exactConditional[ x ] ).toBeCloseTo( ( x + 1 ) / 8, 6 );
+		expect( t.exactMarginal[ 3 ] ).toBe( 1 );
+		for ( let y = 0; y < 4; y ++ ) checkGuides( t.exactConditional, y * 8, 8, t.exactRowGuide, y * 8 );
+		checkGuides( t.exactMarginal, 0, 4, t.exactMarginalGuide, 0 );
+		expect( t.radianceIntegral ).toBeGreaterThan( 0 );
 
 	} );
 
-	it( 'all-black image has zero totalSum', () => {
+	it( 'guides a peaked map, past empty stretches', () => {
 
-		const width = 2;
-		const height = 2;
-		const floatData = new Float32Array( width * height * 4 ); // all zeros
+		const W = 64, H = 32;
+		const t = buildExactEnvironmentTable( image( W, H, ( x, y ) => ( x === 40 && y === 20 ? 1000 : y < 8 ? 0 : 0.1 ) ), W, H );
+		for ( let y = 0; y < H; y ++ ) checkGuides( t.exactConditional, y * W, W, t.exactRowGuide, y * W );
+		checkGuides( t.exactMarginal, 0, H, t.exactMarginalGuide, 0 );
+		// Most steps land on the sun's row and its neighbours (the filter gives them a share of it).
+		const sunRows = [ ...t.exactMarginalGuide ].filter( y => Math.abs( y - 20 ) <= 1 ).length;
+		expect( sunRows / H ).toBeGreaterThan( 0.9 );
 
-		const { totalSum } = EquirectHDRInfo.computeCDF( floatData, width, height );
-		expect( totalSum ).toBe( 0 );
+	} );
+
+	it( 'packs guides and running sums as the shader reads them', () => {
+
+		const t = buildExactEnvironmentTable( image( 8, 4, ( x ) => x + 1 ), 8, 4 );
+		const { data, width, height } = packExactTable( t );
+		expect( [ width, height ] ).toEqual( [ 9, 8 ] );
+		expect( data[ 2 * 9 + 3 ] ).toBe( t.exactRowGuide[ 2 * 8 + 3 ] );
+		expect( data[ 1 * 9 + 8 ] ).toBe( t.exactMarginalGuide[ 1 ] );
+		expect( data[ ( 4 + 2 ) * 9 + 3 ] ).toBe( t.exactConditional[ 2 * 8 + 3 ] );
+		expect( data[ ( 4 + 1 ) * 9 + 8 ] ).toBe( t.exactMarginal[ 1 ] );
+
+	} );
+
+	it( 'gives a black map nothing to sample', () => {
+
+		const info = new EquirectHDRInfo();
+		info._adopt( buildExactEnvironmentTable( new Float32Array( 2 * 2 * 4 ), 2, 2 ), 2, 2 );
+		expect( info.totalSum ).toBe( 0 );
+		expect( [ ...info.exactMarginal ] ).toEqual( [ 0, 0 ] );
 
 	} );
 

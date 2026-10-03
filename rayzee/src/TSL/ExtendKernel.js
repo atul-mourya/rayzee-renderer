@@ -14,7 +14,7 @@ import { traverseBVH } from './BVHTraversal.js';
 import { Ray, HitInfo } from './Struct.js';
 import {
 	readRayOrigin, readRayDirection, readRayBounceFlags, readMediumStack,
-	writeHitPacked,
+	writeHitPacked, writeHitSurfaceOffset,
 } from '../Processor/PackedRayBuffer.js';
 import { COUNTER, RAY_FLAG } from '../Processor/QueueManager.js';
 import { hitFacet, packHitFacet } from './HitFacet.js';
@@ -87,6 +87,7 @@ export function buildExtendKernel( params ) {
 			uint( hitInfo.instanceLeaf.add( int( 1 ) ) ),
 			packHitFacet( facet.faceN, facet.liftScale ),
 		);
+		writeHitSurfaceOffset( hitBufferRW, rayID, facet.surfaceOffset );
 
 	} );
 

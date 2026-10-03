@@ -265,7 +265,6 @@ export class UniformManager {
 		ub( 'enableEnvironment', DEFAULT_STATE.enableEnvironment );
 		u( 'environmentMatrix', new Matrix4(), 'mat4' );
 		u( 'envTotalSum', 0.0, 'float' );
-		u( 'envCompensationDelta', 0.0, 'float' );
 		u( 'envResolution', new Vector2( 1, 1 ), 'vec2' );
 		ub( 'groundProjectionEnabled', DEFAULT_STATE.groundProjectionEnabled );
 		u( 'groundProjectionRadius', DEFAULT_STATE.groundProjectionRadius, 'float' );

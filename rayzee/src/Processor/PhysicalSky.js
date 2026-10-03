@@ -50,7 +50,7 @@ export class PhysicalSky {
 		this._texture.wrapS = RepeatWrapping;
 		this._texture.wrapT = ClampToEdgeWrapping;
 		this._texture.generateMipmaps = false;
-		// The exact table's rows (EnvironmentExactTable.js) follow the inverted one's.
+		// packExactTable's layout (EnvironmentExactTable.js): guides, then running sums.
 		this._cdfTexture = gpuTexture( width + 1, 2 * height, RedFormat );
 		this._rec709Weights = spectrumToRec709( SKY_RADIANCE_SCALE );
 
@@ -210,7 +210,7 @@ export class PhysicalSky {
 	 * @param {number} p.altitude - metres
 	 * @param {number} p.sunAngularDiameter - radians
 	 * @param {number} [p.sunStrength=1]
-	 * @returns {{ texture: DataTexture, cdfTexture: DataTexture, sun: Object, stats: Promise<{ totalSum: number, compensationDelta: number, radianceIntegral: number }> }}
+	 * @returns {{ texture: DataTexture, cdfTexture: DataTexture, sun: Object, stats: Promise<{ totalSum: number, radianceIntegral: number }> }}
 	 */
 	bake( renderer, p ) {
 
@@ -259,7 +259,7 @@ export class PhysicalSky {
 		const stats = renderer.getArrayBufferAsync( this._attrs.cdfStats ).then( buffer => {
 
 			const s = new Float32Array( buffer );
-			return { totalSum: s[ 4 ], compensationDelta: s[ 5 ], radianceIntegral: 2 * Math.PI * Math.PI * s[ 0 ] / ( this.width * this.height ) };
+			return { totalSum: s[ 4 ], radianceIntegral: 2 * Math.PI * Math.PI * s[ 0 ] / ( this.width * this.height ) };
 
 		} );
 

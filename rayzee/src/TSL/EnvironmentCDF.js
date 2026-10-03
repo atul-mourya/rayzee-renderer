@@ -5,8 +5,8 @@ import { REC709_LUMINANCE_COEFFICIENTS } from './Common.js';
 /** Floats per row of the packed table: width + 1 texels, padded to the 256 bytes a buffer→texture copy needs. */
 export const cdfRowStride = width => Math.ceil( ( width + 1 ) * 4 / 256 ) * 64;
 
-// First index in [0, n) whose value is ≥ target, n − 1 when none is — as the CPU builder's search.
-function lowerBound( n, valueAt, target ) {
+// First index in [0, n) whose value is above target, n − 1 when none is — as the CPU builder's cutpoints.
+function firstAbove( n, valueAt, target ) {
 
 	const lo = int( 0 ).toVar();
 	const hi = int( n - 1 ).toVar();
@@ -15,7 +15,7 @@ function lowerBound( n, valueAt, target ) {
 		If( lo.lessThan( hi ), () => {
 
 			const mid = lo.add( hi ).div( 2 ).toVar();
-			If( valueAt( mid ).lessThan( target ), () => {
+			If( valueAt( mid ).lessThanEqual( target ), () => {
 
 				lo.assign( mid.add( 1 ) );
 
@@ -36,9 +36,8 @@ function lowerBound( n, valueAt, target ) {
 // against the row total it ends on.
 
 /**
- * The GPU twin of `EquirectHDRInfo.computeCDF`, into the packed (width + 1) × height table the
- * sampler reads, and of `buildExactEnvironmentTable` into the next `height` rows (one cell a texel, compensated
- * by the same mean, without its neighbour weighting: the sky has no sharp texel).
+ * The GPU twin of `buildExactEnvironmentTable`, in packExactTable's (width + 1) × 2·height layout (one cell a
+ * texel, compensated by the same mean, without its neighbour weighting: the sky has no sharp texel).
  * `stats[ 1 ]` ends as ( totalSum, compensationDelta, compensated, 0 ).
  * @returns {Array} kernels, dispatched in order
  */
@@ -111,7 +110,7 @@ export function buildEnvironmentCDFKernels( { pixels, rows, prefix, stats, cdf, 
 
 	} )().compute( height, [ 64 ] );
 
-	const marginal = Fn( () => {
+	const totals = Fn( () => {
 
 		firstThreadOnly();
 		const compensatedTotal = float( 0 ).toVar();
@@ -120,58 +119,10 @@ export function buildEnvironmentCDFKernels( { pixels, rows, prefix, stats, cdf, 
 			compensatedTotal.addAssign( rows.element( i ).y );
 
 		} );
-		const useCompensated = compensatedTotal.greaterThan( 0 ).toVar();
-
-		const cumulative = float( 0 ).toVar();
-		Loop( { start: int( 0 ), end: int( height ), type: 'int', condition: '<' }, ( { i } ) => {
-
-			const r = rows.element( i ).toVar();
-			cumulative.addAssign( select( useCompensated, r.y, r.x ) );
-			rows.element( i ).assign( vec4( r.x, r.y, cumulative, 0 ) );
-
-		} );
-
 		const s = stats.element( 0 ).toVar();
-		stats.element( 1 ).assign( select( useCompensated, vec4( compensatedTotal, s.y, 1, 0 ), vec4( s.x, 0, 0, 0 ) ) );
-
-		Loop( { start: int( 0 ), end: int( height ), type: 'int', condition: '<', name: 'row' }, ( { row } ) => {
-
-			const k = select(
-				cumulative.greaterThan( 0 ),
-				float( lowerBound( height, j => rows.element( j ).z, float( row ).add( 1 ).div( height ).mul( cumulative ) ) ),
-				float( height - 1 ),
-			);
-			cdf.element( uint( row ).mul( stride ).add( width ) ).assign( k.add( 0.5 ).div( height ) );
-
-		} );
+		stats.element( 1 ).assign( select( compensatedTotal.greaterThan( 0 ), vec4( compensatedTotal, s.y, 1, 0 ), vec4( s.x, 0, 0, 0 ) ) );
 
 	} )().compute( 1, [ 1 ] );
-
-	const conditional = Fn( () => {
-
-		const idx = instanceIndex;
-		If( idx.greaterThanEqual( uint( width * height ) ), () => {
-
-			Return();
-
-		} );
-
-		const x = idx.mod( width );
-		const y = idx.div( width );
-		const useCompensated = stats.element( 1 ).z.greaterThan( 0 ).toVar();
-		const r = rows.element( y ).toVar();
-		const rowTotal = select( useCompensated, r.y, r.x ).toVar();
-		const base = y.mul( width ).toVar();
-		const k = lowerBound( width, j => {
-
-			const p = prefix.element( base.add( uint( j ) ) );
-			return select( useCompensated, p.y, p.x );
-
-		}, float( x ).add( 1 ).div( width ).mul( rowTotal ) );
-		const column = select( rowTotal.greaterThan( 0 ), float( k ), float( width - 1 ) );
-		cdf.element( y.mul( stride ).add( x ) ).assign( column.add( 0.5 ).div( width ) );
-
-	} )().compute( width * height, [ 64 ] );
 
 	// buildExactEnvironmentTable's floor: a share of the mean weight in every cell.
 	const exactFloor = () => stats.element( 0 ).x.mul( 1e-4 / ( width * height ) );
@@ -228,6 +179,34 @@ export function buildEnvironmentCDFKernels( { pixels, rows, prefix, stats, cdf, 
 
 	} )().compute( 1, [ 1 ] );
 
-	return [ rowTotals, mean, prefixSums, marginal, conditional, exactRows, exactMarginal ];
+	// Rows' guides in rows [0, height), the marginal's in column width of them.
+	const guides = Fn( () => {
+
+		const idx = instanceIndex;
+		If( idx.greaterThanEqual( uint( width * height + height ) ), () => {
+
+			Return();
+
+		} );
+
+		If( idx.lessThan( uint( width * height ) ), () => {
+
+			const g = idx.mod( width );
+			const y = idx.div( width ).toVar();
+			const row = y.add( uint( height ) ).mul( stride ).toVar();
+			const x = firstAbove( width, j => cdf.element( row.add( uint( j ) ) ), float( g ).div( width ) );
+			cdf.element( y.mul( stride ).add( g ) ).assign( float( x ) );
+
+		} ).Else( () => {
+
+			const g = idx.sub( uint( width * height ) ).toVar();
+			const y = firstAbove( height, j => cdf.element( uint( j ).add( uint( height ) ).mul( stride ).add( uint( width ) ) ), float( g ).div( height ) );
+			cdf.element( g.mul( stride ).add( uint( width ) ) ).assign( float( y ) );
+
+		} );
+
+	} )().compute( width * height + height, [ 64 ] );
+
+	return [ rowTotals, mean, prefixSums, totals, exactRows, exactMarginal, guides ];
 
 }

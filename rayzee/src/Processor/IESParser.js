@@ -126,18 +126,38 @@ export function parseIES( text, name = 'ies' ) {
 }
 
 /**
+ * The horizontal angle a type C profile stores for `hDeg` in [0, 360), by the symmetry its range implies
+ * (LM-63): one angle — the same all round; 0–90 — mirrored about the 0–180 and 90–270 planes; 0–180 — about the
+ * 0–180 plane; 90–270 — about the 90–270 plane; 0–360 — none.
+ */
+function storedHorizontalAngle( hDeg, hMin, hMax ) {
+
+	if ( hMin === 0 && hMax === 90 ) {
+
+		const half = hDeg % 180;
+		return half > 90 ? 180 - half : half;
+
+	}
+
+	if ( hMin === 0 && hMax === 180 ) return hDeg > 180 ? 360 - hDeg : hDeg;
+	if ( hMin === 90 && hMax === 270 ) return hDeg >= 90 && hDeg <= 270 ? hDeg : ( ( 540 - hDeg ) % 360 );
+	return hDeg;
+
+}
+
+/**
  * Resample an IESProfile onto a fixed-size 2D grid suitable for a
  * DataArrayTexture layer. Values are normalised to [0,1] by `maxCandela`
  * so the shader gets a pure shape multiplier; absolute intensity scaling
  * stays in `light.intensity`.
  *
- * UV convention:
+ * UV convention (TSL/LightsCore.js sampleIESProfile reads it so):
  *   U = horizontal angle / 360  (0..1)
  *   V = vertical angle / 180    (0..1, 0 = bulb axis, 1 = opposite axis)
  *
- * Profiles that are rotationally symmetric (single horizontal sample, or all
- * H angles identical) replicate the row across the U axis so the shader can
- * sample uniformly without a symmetry flag.
+ * The grid always spans the whole sphere: a downlight's 0–90° fills the lower half and leaves the upper dark, and
+ * a horizontal range with a symmetry is mirrored round (storedHorizontalAngle). Angles outside the file's range
+ * emit nothing. Type A and B profiles, whose angles mean something else, are stretched over the grid as before.
  *
  * @param {IESProfile} profile
  * @param {number} width   - texture width in samples (horizontal/U axis)
@@ -147,20 +167,34 @@ export function parseIES( text, name = 'ies' ) {
 export function resampleIESToGrid( profile, width, height ) {
 
 	const data = new Uint8Array( width * height );
-	const { verticalAngles: vA, horizontalAngles: hA, candela, maxCandela } = profile;
+	const { verticalAngles: vA, horizontalAngles: hA, candela, maxCandela, photometricType } = profile;
 
 	if ( maxCandela <= 0 ) return data; // dead profile → zeros
 
-	const vMaxDeg = vA[ vA.length - 1 ];
-	const hMaxDeg = hA[ hA.length - 1 ];
+	const typeC = photometricType === undefined || photometricType === 1;
+	const vMin = vA[ 0 ];
+	const vMax = vA[ vA.length - 1 ];
 	const hMin = hA[ 0 ];
-	const rotationallySymmetric = hA.length === 1 || hMaxDeg === hMin;
+	const hMax = hA[ hA.length - 1 ];
+	const rotationallySymmetric = hA.length === 1 || hMax === hMin;
+
+	const at = ( v0, v1, vt, hDeg ) => {
+
+		if ( rotationallySymmetric ) return lerp( candela[ v0 ][ 0 ], candela[ v1 ][ 0 ], vt );
+		if ( hDeg < hMin || hDeg > hMax ) return 0;
+		const h0 = lowerBoundIdx( hA, hDeg );
+		const h1 = Math.min( h0 + 1, hA.length - 1 );
+		const hSpan = hA[ h1 ] - hA[ h0 ];
+		const ht = hSpan > 0 ? ( hDeg - hA[ h0 ] ) / hSpan : 0;
+		return lerp( lerp( candela[ v0 ][ h0 ], candela[ v0 ][ h1 ], ht ), lerp( candela[ v1 ][ h0 ], candela[ v1 ][ h1 ], ht ), vt );
+
+	};
 
 	for ( let py = 0; py < height; py ++ ) {
 
-		// V coordinate → vertical angle in degrees. Texture covers [0, vMaxDeg].
 		const tV = ( py + 0.5 ) / height;
-		const vDeg = tV * vMaxDeg;
+		const vDeg = typeC ? tV * 180 : vMin + tV * ( vMax - vMin );
+		if ( vDeg < vMin || vDeg > vMax ) continue;
 		const v0 = lowerBoundIdx( vA, vDeg );
 		const v1 = Math.min( v0 + 1, vA.length - 1 );
 		const vSpan = vA[ v1 ] - vA[ v0 ];
@@ -168,31 +202,9 @@ export function resampleIESToGrid( profile, width, height ) {
 
 		for ( let px = 0; px < width; px ++ ) {
 
-			let cd;
-
-			if ( rotationallySymmetric ) {
-
-				// Single column → just bilerp on V axis.
-				cd = lerp( candela[ v0 ][ 0 ], candela[ v1 ][ 0 ], vt );
-
-			} else {
-
-				const tH = ( px + 0.5 ) / width;
-				const hDeg = hMin + tH * ( hMaxDeg - hMin );
-				const h0 = lowerBoundIdx( hA, hDeg );
-				const h1 = Math.min( h0 + 1, hA.length - 1 );
-				const hSpan = hA[ h1 ] - hA[ h0 ];
-				const ht = hSpan > 0 ? ( hDeg - hA[ h0 ] ) / hSpan : 0;
-
-				const c00 = candela[ v0 ][ h0 ];
-				const c10 = candela[ v0 ][ h1 ];
-				const c01 = candela[ v1 ][ h0 ];
-				const c11 = candela[ v1 ][ h1 ];
-				cd = lerp( lerp( c00, c10, ht ), lerp( c01, c11, ht ), vt );
-
-			}
-
-			const norm = Math.min( 1, Math.max( 0, cd / maxCandela ) );
+			const tH = ( px + 0.5 ) / width;
+			const hDeg = typeC ? storedHorizontalAngle( tH * 360, hMin, hMax ) : hMin + tH * ( hMax - hMin );
+			const norm = Math.min( 1, Math.max( 0, at( v0, v1, vt, hDeg ) / maxCandela ) );
 			data[ py * width + px ] = Math.round( norm * 255 );
 
 		}

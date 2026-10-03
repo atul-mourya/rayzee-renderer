@@ -11,6 +11,7 @@ import {
 	RGBAFormat, RedFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
 } from 'three';
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
+import { packExactTable } from '../Processor/EnvironmentExactTable.js';
 import { PhysicalSky } from '../Processor/PhysicalSky.js';
 import { SimpleSky } from '../Processor/SimpleSky.js';
 import { convertLinearTriple } from '../Color/WorkingMatrix.js';
@@ -271,51 +272,26 @@ export class EnvironmentManager {
 	}
 
 	/**
-	 * Rebuild the CDF texture from equirectHdrInfo. Packs the 2D conditional + 1D marginal into one
-	 * R32F texture of (W+1)×H: conditional[cy*W+cx] at texel (cx, cy); marginal[cy] at texel (W, cy).
-	 * The exact table (EnvironmentExactTable.js) follows in rows [H, H + its height), marginal in column w.
+	 * Rebuild the CDF texture from equirectHdrInfo's table, laid out as packExactTable (EnvironmentExactTable.js)
+	 * has it.
 	 * @private
 	 */
 	_updateCDFTexture() {
 
 		const info = this.equirectHdrInfo;
-		const marginal = info.marginalData;
-		const conditional = info.conditionalData;
-		if ( ! marginal || ! conditional ) return;
+		if ( ! info.exactConditional || ! ( info.exactWidth > 0 ) ) return;
 
-		const W = info.width;
-		const H = info.height;
-		const texW = W + 1;
-		const exact = info.exactConditional && info.exactWidth > 0 ? info : null;
-		const ew = exact ? exact.exactWidth : 0;
-		const eh = exact ? exact.exactHeight : 0;
-		const data = new Float32Array( texW * ( H + eh ) );
-		for ( let cy = 0; cy < H; cy ++ ) {
-
-			const dstRow = cy * texW;
-			data.set( conditional.subarray( cy * W, cy * W + W ), dstRow ); // conditional → columns [0,W)
-			data[ dstRow + W ] = marginal[ cy ]; // marginal → column W
-
-		}
-
-		for ( let y = 0; y < eh; y ++ ) {
-
-			const dstRow = ( H + y ) * texW;
-			data.set( exact.exactConditional.subarray( y * ew, y * ew + ew ), dstRow );
-			data[ dstRow + ew ] = exact.exactMarginal[ y ];
-
-		}
-
+		const { data, width, height } = packExactTable( info );
 		if ( ! this.envCDFTexture?._isPhysicalSky ) this.envCDFTexture?.dispose?.();
-		this.envCDFTexture = new DataTexture( data, texW, H + eh, RedFormat, FloatType );
+		this.envCDFTexture = new DataTexture( data, width, height, RedFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
-		this._exactTable = exact ? { radianceIntegral: exact.radianceIntegral } : null;
+		this._exactTable = { radianceIntegral: info.radianceIntegral };
 
 	}
 
 	/**
 	 * The environment as a bidirectional light source: ∫ luminance dω of the map, before intensity, while the
-	 * CDF texture carries its exact table; null otherwise.
+	 * CDF texture carries its table; null otherwise.
 	 * @returns {?{ radianceIntegral: number }}
 	 */
 	get exactTable() {
@@ -397,7 +373,6 @@ export class EnvironmentManager {
 			this._cdfSignature = null;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
-			this.uniforms.set( 'envCompensationDelta', 0.0 );
 			return;
 
 		}
@@ -415,7 +390,6 @@ export class EnvironmentManager {
 				this._cdfSignature = null;
 				this._updateCDFTexture();
 				this.uniforms.set( 'envTotalSum', 0.0 );
-				this.uniforms.set( 'envCompensationDelta', 0.0 );
 				return;
 
 			}
@@ -445,7 +419,6 @@ export class EnvironmentManager {
 
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', this.equirectHdrInfo.totalSum );
-			this.uniforms.set( 'envCompensationDelta', this.equirectHdrInfo.compensationDelta );
 
 			const { width, height } = this.equirectHdrInfo;
 			if ( width && height ) {
@@ -464,7 +437,6 @@ export class EnvironmentManager {
 			this._cdfSignature = null;
 			log.error( 'CDF build failed:', error );
 			this.uniforms.set( 'envTotalSum', 0.0 );
-			this.uniforms.set( 'envCompensationDelta', 0.0 );
 
 		}
 
@@ -526,7 +498,6 @@ export class EnvironmentManager {
 			this._cdfSignature = null;
 			this._updateCDFTexture();
 			this.uniforms.set( 'envTotalSum', 0.0 );
-			this.uniforms.set( 'envCompensationDelta', 0.0 );
 
 		}
 
@@ -687,12 +658,11 @@ export class EnvironmentManager {
 			this._installSky( texture, cdfTexture );
 
 			// Frames until they land normalise by an older bake's.
-			const { totalSum, compensationDelta, radianceIntegral } = await stats;
+			const { totalSum, radianceIntegral } = await stats;
 			if ( p.mode === 'procedural' && sky === this.physicalSky && bake > this._skyStatsBake ) {
 
 				this._skyStatsBake = bake;
 				this.uniforms.set( 'envTotalSum', totalSum );
-				this.uniforms.set( 'envCompensationDelta', compensationDelta );
 				if ( this._exactTable?.sky ) this._exactTable.radianceIntegral = radianceIntegral;
 				if ( latest() ) this._notifyReset();
 

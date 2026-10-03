@@ -138,7 +138,18 @@ const RayTriangleGeometry = wgslFn( `
 				let tSigned = T * detSign;
 				let detAbs = abs( det );
 
-				if ( tSigned > 0.0f && tSigned < closestHitDst * detAbs ) {
+				// t must clear its own rounding error (pbrt-v4 Triangle::Intersect, γn = n·2⁻²⁴ / (1 − n·2⁻²⁴)), or a
+				// ray leaving a large triangle can hit it again: its error grows with the distance to the vertices.
+				let maxZ = max( max( abs( Sz * Akz ), abs( Sz * Bkz ) ), abs( Sz * Ckz ) );
+				let maxX = max( max( abs( Ax ), abs( Bx ) ), abs( Cx ) );
+				let maxY = max( max( abs( Ay ), abs( By ) ), abs( Cy ) );
+				let maxE = max( max( abs( U ), abs( V ) ), abs( W ) );
+				let deltaX = 2.98023e-7f * ( maxX + maxZ );
+				let deltaY = 2.98023e-7f * ( maxY + maxZ );
+				let deltaE = 2.0f * ( 1.19209e-7f * maxX * maxY + deltaY * maxX + deltaX * maxY );
+				let errT = 3.0f * maxZ * ( 3.57628e-7f * maxE + deltaE );
+
+				if ( tSigned > errT && tSigned < closestHitDst * detAbs ) {
 
 					// Match Möller-Trumbore convention: u = weight of B, v = weight of C.
 					// In Woop's edge functions, U → weight of A, V → weight of B, W → weight of C.

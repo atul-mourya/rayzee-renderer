@@ -1260,8 +1260,8 @@ export class PathTracer extends PathTracerStage {
 
 	_bounceLoopBound() {
 
-		// Bidirectional camera paths take one segment past their last bounce (ShadeKernel, EMISSION_ONLY).
-		return this.maxBounces.value + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value + ( this._bidirectionalEnabled ? 1 : 0 );
+		// Camera paths take one segment past their last bounce (ShadeKernel, EMISSION_ONLY).
+		return this.maxBounces.value + this.transmissiveBounces.value + this.maxSubsurfaceSteps.value + 1;
 
 	}
 
@@ -2086,7 +2086,6 @@ export class PathTracer extends PathTracerStage {
 
 		const shadeFn = buildShadeKernel( {
 			gBufferRW,
-			envCompensationDelta: this.envCompensationDelta,
 			bvhBuffer: freshBvh,
 			triangleBuffer: freshTri,
 			materialBuffer: freshMat,

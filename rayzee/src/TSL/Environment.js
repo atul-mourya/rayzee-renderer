@@ -1,6 +1,5 @@
-import { Fn, wgslFn, vec2, vec3, vec4, ivec2, float, int, If, Loop, texture, dot, sin, sqrt, floor, fract, min, max, mix, clamp, select } from 'three/tsl';
+import { Fn, wgslFn, vec2, vec3, ivec2, float, int, If, Loop, sin, sqrt, min, max, clamp, select } from 'three/tsl';
 
-import { REC709_LUMINANCE_COEFFICIENTS } from './Common.js';
 import { EXACT_TABLE_MAX_WIDTH } from '../Processor/EnvironmentExactTable.js';
 
 // Convert direction to UV coordinates for equirectangular map
@@ -29,128 +28,8 @@ export const equirectUvToDirection = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-// Evaluate PDF for a given direction (for MIS)
-// Returns vec4(color.rgb, pdf) since TSL cannot use inout params
-// Uses MIS-compensated PDF (Karlík et al. 2019): max(0, lum - delta) / compensatedTotalSum
-export const sampleEquirect = Fn( ( [ environment, direction, environmentMatrix, envTotalSum, envCompensationDelta, envResolution ] ) => {
-
-	const result = vec4( 0.0 ).toVar();
-
-	If( envTotalSum.equal( 0.0 ), () => {
-
-		// Exclude black environments from MIS
-		result.assign( vec4( 0.0 ) );
-
-	} ).Else( () => {
-
-		const uv = equirectDirectionToUv( { direction, environmentMatrix } ).toVar();
-		const color = texture( environment, uv, 0 ).rgb.toVar();
-
-		// sin(theta) matches the CDF's solid-angle weighting (lum * sinTheta)
-		const sinTheta = sin( uv.y.mul( Math.PI ) ).toVar();
-		const lum = dot( color, REC709_LUMINANCE_COEFFICIENTS );
-		const weightedLum = lum.mul( sinTheta );
-		// MIS Compensation: subtract delta to match the sharpened CDF
-		const compensatedWeight = max( float( 0.0 ), weightedLum.sub( envCompensationDelta ) );
-		const pdf = compensatedWeight.div( envTotalSum );
-
-		// Inline equirectDirectionPdf using the uv + sinTheta already in scope —
-		// the helper would otherwise re-derive uv via atan2+acos and recompute sin.
-		const dirPdf = sinTheta.greaterThan( 0.0 ).select(
-			float( 1.0 ).div( float( 2.0 * Math.PI * Math.PI ).mul( sinTheta ) ),
-			float( 0.0 )
-		);
-		const finalPdf = float( envResolution.x ).mul( float( envResolution.y ) ).mul( pdf ).mul( dirPdf );
-
-		result.assign( vec4( color, finalPdf ) );
-
-	} );
-
-	return result;
-
-} );
-
-// Sample environment map using importance sampling
-// Returns vec4(direction.xyz, pdf). Optionally writes sampled color to colorOutput.
-// Exact implementation from three-gpu-pathtracer
-export const sampleEquirectProbability = Fn( ( [
-	environment,
-	envCDFTexture,
-	environmentMatrix,
-	environmentIntensity,
-	envTotalSum,
-	envCompensationDelta,
-	envResolution,
-	r,
-	colorOutput
-] ) => {
-
-	// CDF texture layout: (W+1)×H R32F — conditional[cy*W+cx] at texel (cx,cy); marginal[cy] at column W.
-	const cdfMarginalCol = int( envResolution.x ).toVar();
-
-	// Sample marginal CDF for V coordinate (1D, linear interpolation)
-	const marginalSize = envResolution.y;
-	const mIdx = clamp( r.x.mul( marginalSize.sub( 1.0 ) ), 0.0, marginalSize.sub( 1.0 ) );
-	const mI0 = int( floor( mIdx ) );
-	const mI1 = min( mI0.add( 1 ), int( marginalSize ).sub( 1 ) );
-	const mFrac = fract( mIdx );
-	const v = mix(
-		envCDFTexture.load( ivec2( cdfMarginalCol, mI0 ) ).x,
-		envCDFTexture.load( ivec2( cdfMarginalCol, mI1 ) ).x,
-		mFrac,
-	).toVar();
-
-	// Sample conditional CDF for U coordinate (2D grid, bilinear interpolation)
-	const condW = envResolution.x;
-	const condH = envResolution.y;
-	const cxf = clamp( r.y.mul( condW.sub( 1.0 ) ), 0.0, condW.sub( 1.0 ) );
-	const cyf = clamp( v.mul( condH.sub( 1.0 ) ), 0.0, condH.sub( 1.0 ) );
-	const cx0 = int( floor( cxf ) );
-	const cy0 = int( floor( cyf ) );
-	const cx1 = min( cx0.add( 1 ), int( condW ).sub( 1 ) );
-	const cy1 = min( cy0.add( 1 ), int( condH ).sub( 1 ) );
-	const fx = fract( cxf );
-	const fy = fract( cyf );
-	const v00 = envCDFTexture.load( ivec2( cx0, cy0 ) ).x;
-	const v10 = envCDFTexture.load( ivec2( cx1, cy0 ) ).x;
-	const v01 = envCDFTexture.load( ivec2( cx0, cy1 ) ).x;
-	const v11 = envCDFTexture.load( ivec2( cx1, cy1 ) ).x;
-	const u = mix( mix( v00, v10, fx ), mix( v01, v11, fx ), fy ).toVar();
-
-	const uv = vec2( u, v ).toVar();
-
-	// Convert UV to direction
-	const direction = equirectUvToDirection( { uv, environmentMatrix } ).toVar();
-
-	// Sample color
-	const color = texture( environment, uv, 0 ).rgb.mul( environmentIntensity ).toVar();
-
-	// Write color to output parameter (avoids redundant CDF texture lookups)
-	colorOutput.assign( color );
-
-	// Calculate PDF — sin(theta) weighting + MIS Compensation (Karlík et al. 2019)
-	const sinTheta = sin( uv.y.mul( Math.PI ) ).toVar();
-	const lum = dot( color.div( environmentIntensity ), REC709_LUMINANCE_COEFFICIENTS );
-	const weightedLum = lum.mul( sinTheta );
-	const compensatedWeight = max( float( 0.0 ), weightedLum.sub( envCompensationDelta ) );
-	const pdf = compensatedWeight.div( envTotalSum );
-
-	// Inline equirectDirectionPdf — uv + sinTheta are already in scope, so we
-	// skip the helper's redundant uv-from-direction + sin recompute.
-	const dirPdf = sinTheta.greaterThan( 0.0 ).select(
-		float( 1.0 ).div( float( 2.0 * Math.PI * Math.PI ).mul( sinTheta ) ),
-		float( 0.0 )
-	);
-	const finalPdf = float( envResolution.x ).mul( float( envResolution.y ) ).mul( pdf ).mul( dirPdf );
-
-	return vec4( direction, finalPdf );
-
-} );
-
-// Note: powerHeuristic() is defined in Common.js
-
-// The exact table (EnvironmentExactTable.js) in the CDF texture's rows past the environment's height: each row's
-// running sum over its w cells in columns [0, w), the rows' in column w. Cells and sizes as exactTableSize derives them.
+// The table (EnvironmentExactTable.js packExactTable): each row's running sum over its w cells in columns [0, w) of
+// rows [h, 2h), the rows' in column w; their guides in the same places of rows [0, h). Sizes as exactTableSize.
 const exactTable = ( cdfTexture, envResolution ) => {
 
 	const W = int( envResolution.x );
@@ -158,9 +37,35 @@ const exactTable = ( cdfTexture, envResolution ) => {
 	const k = max( W.add( int( EXACT_TABLE_MAX_WIDTH - 1 ) ).div( int( EXACT_TABLE_MAX_WIDTH ) ), int( 1 ) );
 	const w = W.add( k ).sub( int( 1 ) ).div( k ).toVar();
 	const h = H.add( k ).sub( int( 1 ) ).div( k ).toVar();
-	const at = ( x, y ) => cdfTexture.load( ivec2( x, H.add( y ) ) ).x;
+	const at = ( x, y ) => cdfTexture.load( ivec2( x, h.add( y ) ) ).x;
+	const guide = ( x, y ) => int( cdfTexture.load( ivec2( x, y ) ).x );
 	const below = ( x, y, along ) => select( along.greaterThan( int( 0 ) ), at( x, y ), float( 0.0 ) );
-	return { w, h, at, below };
+	return { w, h, at, guide, below };
+
+};
+
+// First of `count` entries above `target`, the last when none is. The answer lies between the guides of the step
+// below and two above: one entry of slack each way for f32 rounding of target × count.
+const guidedSearch = ( count, guideAt, valueAt, target ) => {
+
+	const step = clamp( int( target.mul( float( count ) ) ), int( 0 ), count.sub( int( 1 ) ) ).toVar();
+	const lo = max( guideAt( step ).sub( int( 1 ) ), int( 0 ) ).toVar();
+	const hi = select( step.add( int( 2 ) ).lessThan( count ), guideAt( min( step.add( int( 2 ) ), count.sub( int( 1 ) ) ) ), count.sub( int( 1 ) ) ).toVar();
+	Loop( lo.lessThan( hi ), () => {
+
+		const mid = lo.add( hi ).div( 2 ).toVar();
+		If( valueAt( mid ).lessThanEqual( target ), () => {
+
+			lo.assign( mid.add( 1 ) );
+
+		} ).Else( () => {
+
+			hi.assign( mid );
+
+		} );
+
+	} );
+	return lo;
 
 };
 
@@ -176,34 +81,12 @@ const cellPdf = ( share, w, h, v ) => {
 /** A direction drawn exactly from the table, and its density per steradian. */
 export function sampleEnvironmentExact( cdfTexture, environmentMatrix, envResolution, xi ) {
 
-	const { w, h, at, below } = exactTable( cdfTexture, envResolution );
+	const { w, h, at, guide, below } = exactTable( cdfTexture, envResolution );
 
-	const search = ( count, valueAt, target ) => {
-
-		const lo = int( 0 ).toVar();
-		const hi = count.sub( int( 1 ) ).toVar();
-		Loop( lo.lessThan( hi ), () => {
-
-			const mid = lo.add( hi ).div( 2 ).toVar();
-			If( valueAt( mid ).lessThanEqual( target ), () => {
-
-				lo.assign( mid.add( 1 ) );
-
-			} ).Else( () => {
-
-				hi.assign( mid );
-
-			} );
-
-		} );
-		return lo;
-
-	};
-
-	const y = search( h, ( i ) => at( w, i ), xi.y ).toVar();
+	const y = guidedSearch( h, ( i ) => guide( w, i ), ( i ) => at( w, i ), xi.y ).toVar();
 	const rowTop = at( w, y ).toVar();
 	const rowBottom = below( w, max( y.sub( int( 1 ) ), int( 0 ) ), y ).toVar();
-	const x = search( w, ( i ) => at( i, y ), xi.x ).toVar();
+	const x = guidedSearch( w, ( i ) => guide( i, y ), ( i ) => at( i, y ), xi.x ).toVar();
 	const cellTop = at( x, y ).toVar();
 	const cellBottom = below( max( x.sub( int( 1 ) ), int( 0 ) ), y, x ).toVar();
 	const pRow = rowTop.sub( rowBottom ).toVar();

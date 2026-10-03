@@ -15,18 +15,20 @@ import {
 	packHalf2x16, unpackHalf2x16,
 } from 'three/tsl';
 import {
-	unpackTriangleNormal, triangleRow, instanceRows, instanceFaceNormalToWorld,
+	unpackTriangleNormal, triangleRow, instanceRows, instanceFaceNormalToWorld, instancePointToWorld,
 } from './Common.js';
 import { shadowTerminatorLift } from './ShadowTerminator.js';
 
 /**
- * @returns {{ faceN: Node, liftScale: Node }} the facet normal on the viewer's side (the
- *   interpolated one for a degenerate triangle), and the terminator lift (0 unless `liftEnabled`)
+ * @returns {{ faceN: Node, liftScale: Node, surfaceOffset: Node }} the facet normal on the viewer's side (the
+ *   interpolated one for a degenerate triangle), the terminator lift (0 unless `liftEnabled`), and how far along
+ *   faceN `hitPoint` lies from the triangle's plane (PackedRayBuffer writeHitSurfaceOffset)
  */
 export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hitPoint, smoothNormal, viewDir, didHit, liftEnabled } ) {
 
 	const faceN = vec3( 0.0, 0.0, 1.0 ).toVar();
 	const liftScale = float( 0.0 ).toVar();
+	const surfaceOffset = float( 0.0 ).toVar();
 
 	If( didHit, () => {
 
@@ -47,8 +49,17 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hit
 
 		} );
 
-		const n = select( dot( face, face ).greaterThan( 0.0 ), normalize( face ), smoothNormal ).toVar();
+		const degenerate = dot( face, face ).lessThanEqual( 0.0 ).toVar();
+		const n = select( degenerate, smoothNormal, normalize( face ) ).toVar();
 		faceN.assign( select( dot( n, viewDir ).lessThan( 0.0 ), n.negate(), n ) );
+
+		const corner = V0.toVar();
+		If( instanced, () => {
+
+			corner.assign( instancePointToWorld( instanceRows( bvhBuffer, instanceLeaf ), V0 ) );
+
+		} );
+		surfaceOffset.assign( select( degenerate, float( 0.0 ), dot( corner.sub( hitPoint ), faceN ) ) );
 
 		If( liftEnabled, () => {
 
@@ -62,7 +73,26 @@ export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hit
 
 	} );
 
-	return { faceN, liftScale };
+	return { faceN, liftScale, surfaceOffset };
+
+}
+
+/**
+ * The triangle's unit winding normal in world space: what the traversal's front/back test sees (a mirrored
+ * placement keeps its object-space sense). The interpolated normal can face the other way near a coarse mesh's
+ * silhouette. Unit length because sideAccepts has a threshold: a raw cross product of a small triangle is under it.
+ */
+export function windingNormal( triangleBuffer, bvhBuffer, triIdx, instanceLeaf ) {
+
+	const V0 = uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 0 ).xyz ).toVar();
+	const local = cross( uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 1 ).xyz ).sub( V0 ), uintBitsToFloat( triangleRow( triangleBuffer, triIdx, 2 ).xyz ).sub( V0 ) ).toVar();
+	const n = local.toVar();
+	If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+		n.assign( instanceFaceNormalToWorld( instanceRows( bvhBuffer, instanceLeaf ), local ) );
+
+	} );
+	return normalize( n );
 
 }
 

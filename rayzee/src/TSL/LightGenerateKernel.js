@@ -159,8 +159,7 @@ export function buildLightGenerateKernel( params ) {
 				// NEE's density for this point depends on the first hit; Shade multiplies it into dVCM there.
 				dVCM.assign( mis( float( 1.0 ).div( emissionPdf ) ) );
 				dVC.assign( mis( cosLight.div( emissionPdf ) ) );
-				// Signed: NEE samples a triangle from its winding front only, so it cannot have drawn a back start.
-				startCos.assign( select( back, cosLight.negate(), cosLight ) );
+				startCos.assign( cosLight );
 				valid.assign( true );
 
 			} );

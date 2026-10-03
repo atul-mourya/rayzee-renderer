@@ -14,7 +14,7 @@ import {
 	Return,
 } from 'three/tsl';
 
-import { sampleEnvironment, sampleEquirect, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from './Environment.js';
+import { sampleEnvironment, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from './Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
@@ -26,7 +26,7 @@ import {
 } from './LightsSampling.js';
 import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
-import { hitFacet, unpackHitFacet } from './HitFacet.js';
+import { hitFacet, unpackHitFacet, windingNormal } from './HitFacet.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
@@ -76,7 +76,7 @@ import {
 	readTransparentCount,
 	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
-	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet,
+	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet, readHitSurfaceOffset,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
@@ -106,7 +106,7 @@ export function buildShadeKernel( params ) {
 		enableEnvironmentLight,
 		groundProjectionEnabled, groundProjectionRadius, groundProjectionHeight, groundProjectionLevel,
 		enableGroundCatcher, groundCatcherHeight,
-		envTotalSum, envCompensationDelta, envResolution,
+		envTotalSum, envResolution,
 		directionalLightsBuffer, numDirectionalLights,
 		areaLightsBuffer, numAreaLights,
 		pointLightsBuffer, numPointLights,
@@ -344,7 +344,7 @@ export function buildShadeKernel( params ) {
 						bvhBuffer, triangleBuffer, materialBuffer,
 						envTexture, environmentIntensity, envMatrix,
 						envCDFTexture,
-						envTotalSum, envCompensationDelta, envResolution,
+						envTotalSum, envResolution,
 						enableEnvironmentLight,
 						tslBool( true ), // wantUnoccluded
 						vec3( 0.0 ), planeN, float( 0.0 ),
@@ -510,12 +510,9 @@ export function buildShadeKernel( params ) {
 				else If( isBackdropView.not(), () => {
 
 					const prevBouncePdf = readRayPdf( rayBufferRW, rayID );
-					If( prevBouncePdf.greaterThan( 0.0 ), () => {
+					If( prevBouncePdf.greaterThan( 0.0 ).and( envTotalSum.greaterThan( 0.0 ) ), () => {
 
-						const envEval = sampleEquirect(
-							envTexture, direction, envMatrix, envTotalSum, envCompensationDelta, envResolution,
-						);
-						const envPdf = envEval.w;
+						const envPdf = environmentPdfExact( envCDFTexture, envMatrix, envResolution, direction ).toVar();
 						If( envPdf.greaterThan( 0.0 ), () => {
 
 							envMisWeight.assign( balanceHeuristic( { pdf1: prevBouncePdf, pdf2: envPdf } ) ); // megakernel parity (PathTracerCore.js:774): env NEE also uses balance
@@ -660,7 +657,9 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		const hitPoint = origin.add( direction.mul( hitDist ) ).toVar();
+		// On the triangle's plane: origin + t · direction alone sits off a large triangle by t's error (HitFacet.js).
+		const hitPoint = origin.add( direction.mul( hitDist ) )
+			.add( unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN.mul( readHitSurfaceOffset( hitBufferRW, rayID ) ) ).toVar();
 		const N = normalize( hitNormal ).toVar();
 		// The hit record's facet is 11-bit; light tracing's and connections' grazing geometry terms need it exact.
 		const exactFacetN = bdpt ? hitFacet( {
@@ -1294,12 +1293,12 @@ export function buildShadeKernel( params ) {
 
 				} ).Else( () => {
 
-					// NEE samples only a triangle's winding front; a negative cosine marks a back start.
+					// NEE draws a triangle on every side it emits from, as the light path left it.
 					if ( useEmissiveNEE ) If( enableEmissiveTriangleSampling.equal( int( 1 ) )
-						.and( emissiveTriangleCount.greaterThan( int( 0 ) ) ).and( start.cosLight.greaterThan( 0.0 ) ), () => {
+						.and( emissiveTriangleCount.greaterThan( int( 0 ) ) ), () => {
 
 						neePdfA.assign( emissiveNEEPdf( start.triangle, arrivalDist, direction.negate(), hitPoint, start.instanceLeaf )
-							.mul( start.cosLight ).div( arrivalDist.mul( arrivalDist ) ) );
+							.mul( abs( start.cosLight ) ).div( arrivalDist.mul( arrivalDist ) ) );
 
 					} );
 
@@ -1314,10 +1313,12 @@ export function buildShadeKernel( params ) {
 		}
 
 		const emissive = matSamples.emissive.toVar();
-		// NEE samples only a single-sided emitter's lit side, so from behind (bounce rays) it is a dark occluder.
+		// NEE samples only a single-sided emitter's lit side, so from behind (bounce rays) it is a dark occluder. The side
+		// is the facet's, as NEE's: the interpolated normal turns away near a coarse mesh's silhouette.
 		If( cameraOnly( isBackdropView.not().and( length( emissive ).greaterThan( 0.0 ) ) ), () => {
 
-			If( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), dot( direction, hitNormal ) ).not(), () => {
+			If( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ),
+				dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ) ).not(), () => {
 
 				emissive.assign( vec3( 0.0 ) );
 
@@ -1352,10 +1353,10 @@ export function buildShadeKernel( params ) {
 						float( 0.0 ) );
 					const neePdfA = float( 0.0 ).toVar();
 					if ( useEmissiveNEE ) If( enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) )
-						.and( cosToward.greaterThan( 0.0 ) ).and( areaPdf.greaterThan( 0.0 ) ), () => {
+						.and( areaPdf.greaterThan( 0.0 ) ), () => {
 
 						neePdfA.assign( emissiveNEEPdf( int( hitTriIdx ), misDist, direction, origin.sub( direction.mul( misT ) ), hitInstance )
-							.mul( cosToward ).div( misDist.mul( misDist ) ) );
+							.mul( abs( cosToward ) ).div( misDist.mul( misDist ) ) );
 
 					} );
 					emissiveMISWeight.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
@@ -1418,7 +1419,7 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		if ( bdpt ) If( flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) ), () => {
+		If( flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) ), () => {
 
 			terminatePath();
 			Return();
@@ -1549,7 +1550,7 @@ export function buildShadeKernel( params ) {
 			bvhBuffer, triangleBuffer, materialBuffer,
 			envTexture, environmentIntensity, envMatrix,
 			envCDFTexture,
-			envTotalSum, envCompensationDelta, envResolution,
+			envTotalSum, envResolution,
 			enableEnvironmentLight,
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
@@ -2012,7 +2013,8 @@ export function buildShadeKernel( params ) {
 					position: hitPoint, tag: uint( 0 ), throughput: throughput.mul( readLightOrigin( hitBufferRW, rayID ).scale ),
 					V, N, facetN: exactFacetN, materialIndex: hitMatIdx, uv: samplingUV, dVCM: subpath.dVCM, dVC: subpath.dVC,
 					// 1: a camera on this side would cull the face, so light tracing must not show it.
-					extra: select( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ), dot( direction, hitNormal ) ), uint( 0 ), uint( 1 ) ),
+					extra: select( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ),
+						dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ) ), uint( 0 ), uint( 1 ) ),
 				} );
 				writeLightPathLength( hitBufferRW, cachedVertex( first ), bdpt.lightTag, uint( cameraDepth ).add( uint( 1 ) ) );
 
@@ -2101,23 +2103,15 @@ export function buildShadeKernel( params ) {
 		If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
 
 			commitDeferredAux( N );
-			if ( bdpt ) {
-
-				// One segment more, for the emitter it may hit: every strategy then reaches the longest paths.
-				If( isLight, () => {
-
-					terminatePath();
-					Return();
-
-				} );
-				flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
-
-			} else {
+			// One segment more, for the light it may hit: light sampled here keeps its BSDF-hit partner (and its MIS
+			// weight), and bidirectional strategies all reach the longest paths.
+			if ( bdpt ) If( isLight, () => {
 
 				terminatePath();
 				Return();
 
-			}
+			} );
+			flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
 
 		} );
 
