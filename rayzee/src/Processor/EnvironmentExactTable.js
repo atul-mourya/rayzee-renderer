@@ -2,14 +2,18 @@
  * An environment's sampling table: piecewise constant over cells of at most EXACT_TABLE_MAX_WIDTH × half that,
  * so a direction's density is its cell's share, read back from the same cumulative sums it is drawn from.
  * MIS-compensated (Karlík et al. 2019): each texel weighs what it has above the mean, and BSDF-sampled rays
- * cover the rest. A guide per running sum (Chen & Hsu's cutpoint method) starts each search within a cell or
- * two of its answer. Pure math: CDFWorker runs it too.
+ * cover the rest. Drawn by inverting the sums, which keeps the samples' stratification (an alias table does not:
+ * it doubled a furnace's noise). Two guides per entry (Chen & Hsu's cutpoints, GUIDES_PER_ENTRY) land most
+ * draws on their entry at once. Pure math: CDFWorker runs it too.
  */
 
 export const EXACT_TABLE_MAX_WIDTH = 1024;
 
 // Every cell keeps this share of the mean, so light tracing or NEE alone covers the whole sphere.
 const FLOOR = 1e-4;
+
+/** Guides per running-sum entry: step g of n · GUIDES_PER_ENTRY points at the first entry above it. */
+export const GUIDES_PER_ENTRY = 2;
 
 /** Cells the table has for a width × height environment; TSL/Environment.js derives the same. */
 export function exactTableSize( width, height ) {
@@ -19,13 +23,13 @@ export function exactTableSize( width, height ) {
 
 }
 
-// For each of n equal steps of a running sum, the first entry above the step's start; n − 1 past the end.
-function cutpoints( cdf, offset, n, out, outOffset ) {
+// For each of m equal steps of an n-entry running sum, the first entry above the step's start; n − 1 past the end.
+function cutpoints( cdf, offset, n, out, outOffset, m ) {
 
 	let x = 0;
-	for ( let g = 0; g < n; g ++ ) {
+	for ( let g = 0; g < m; g ++ ) {
 
-		while ( x < n - 1 && cdf[ offset + x ] <= g / n ) x ++;
+		while ( x < n - 1 && cdf[ offset + x ] <= g / m ) x ++;
 		out[ outOffset + g ] = x;
 
 	}
@@ -37,7 +41,8 @@ function cutpoints( cdf, offset, n, out, outOffset ) {
  * @param {{ filtered?: boolean }} [options] - filtered false: each texel weighs as itself (the physical sky's GPU twin)
  * @returns {{ exactWidth: number, exactHeight: number, exactConditional: Float32Array, exactMarginal: Float32Array,
  *   exactRowGuide: Float32Array, exactMarginalGuide: Float32Array, radianceIntegral: number }}
- *   each row's running sum over its cells and the rows' over all, both ending at 1, and their guides; ∫ luminance dω.
+ *   each row's running sum over its cells and the rows' over all, both ending at 1, and their guides (GUIDES_PER_ENTRY
+ *   an entry); ∫ luminance dω.
  */
 export function buildExactEnvironmentTable( floatData, width, height, { filtered = true } = {} ) {
 
@@ -136,10 +141,11 @@ export function buildExactEnvironmentTable( floatData, width, height, { filtered
 
 	}
 
-	const exactRowGuide = new Float32Array( w * h );
-	const exactMarginalGuide = new Float32Array( h );
-	for ( let y = 0; y < h; y ++ ) cutpoints( exactConditional, y * w, w, exactRowGuide, y * w );
-	cutpoints( exactMarginal, 0, h, exactMarginalGuide, 0 );
+	const G = GUIDES_PER_ENTRY;
+	const exactRowGuide = new Float32Array( G * w * h );
+	const exactMarginalGuide = new Float32Array( G * h );
+	for ( let y = 0; y < h; y ++ ) cutpoints( exactConditional, y * w, w, exactRowGuide, G * y * w, G * w );
+	cutpoints( exactMarginal, 0, h, exactMarginalGuide, 0, G * h );
 
 	return {
 		exactWidth: w, exactHeight: h, exactConditional, exactMarginal, exactRowGuide, exactMarginalGuide,
@@ -149,22 +155,33 @@ export function buildExactEnvironmentTable( floatData, width, height, { filtered
 }
 
 /**
- * The table as the CDF texture holds it, ( w + 1 ) × 2h floats: the guides in rows [0, h), the running sums in
- * rows [h, 2h), and in column w of each the rows' own. TSL/Environment.js reads this layout.
+ * The table as the CDF texture holds it, ( w + 1 ) × h RGBA floats: texel ( x, y ) holds row y's entry x — its running
+ * sum, the one below it (0 at the first), and the guides of steps 2x and 2x + 1 — and texel ( w, y ) the rows' entry y
+ * likewise. TSL/Environment.js reads this layout.
  */
 export function packExactTable( { exactWidth: w, exactHeight: h, exactConditional, exactMarginal, exactRowGuide, exactMarginalGuide } ) {
 
 	const stride = w + 1;
-	const data = new Float32Array( stride * 2 * h );
+	const data = new Float32Array( 4 * stride * h );
 	for ( let y = 0; y < h; y ++ ) {
 
-		data.set( exactRowGuide.subarray( y * w, y * w + w ), y * stride );
-		data[ y * stride + w ] = exactMarginalGuide[ y ];
-		data.set( exactConditional.subarray( y * w, y * w + w ), ( h + y ) * stride );
-		data[ ( h + y ) * stride + w ] = exactMarginal[ y ];
+		let o = 4 * y * stride;
+		for ( let x = 0, i = y * w; x < w; x ++, i ++, o += 4 ) {
+
+			data[ o ] = exactConditional[ i ];
+			data[ o + 1 ] = x > 0 ? exactConditional[ i - 1 ] : 0;
+			data[ o + 2 ] = exactRowGuide[ 2 * i ];
+			data[ o + 3 ] = exactRowGuide[ 2 * i + 1 ];
+
+		}
+
+		data[ o ] = exactMarginal[ y ];
+		data[ o + 1 ] = y > 0 ? exactMarginal[ y - 1 ] : 0;
+		data[ o + 2 ] = exactMarginalGuide[ 2 * y ];
+		data[ o + 3 ] = exactMarginalGuide[ 2 * y + 1 ];
 
 	}
 
-	return { data, width: stride, height: 2 * h };
+	return { data, width: stride, height: h };
 
 }

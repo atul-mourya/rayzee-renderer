@@ -1,10 +1,10 @@
 /**
  * The environment sampler draws each cell of its table exactly as often as the density it reports, so NEE and
- * light tracing over it are unbiased. Its guided search finds what a full binary search would.
+ * light tracing over it are unbiased. Its guided inversion finds what a full binary search would.
  */
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { DataTexture, RedFormat, FloatType, Matrix4 } from 'three';
+import { DataTexture, RGBAFormat, FloatType, Matrix4 } from 'three';
 import { vec4, texture, uniform, vec2 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { sampleEnvironmentExact, environmentPdfExact } from '@/core/TSL/Environment.js';
@@ -33,7 +33,7 @@ function makeSky( W, H ) {
 function packTable( table ) {
 
 	const { data, width, height } = packExactTable( table );
-	const t = new DataTexture( data, width, height, RedFormat, FloatType );
+	const t = new DataTexture( data, width, height, RGBAFormat, FloatType );
 	t.needsUpdate = true;
 	return t;
 

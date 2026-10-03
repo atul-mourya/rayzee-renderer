@@ -3,8 +3,8 @@
  */
 
 import {
-	Fn, uint, int,
-	If,
+	Fn, uint, int, float,
+	If, dot, abs, select,
 	instanceIndex,
 	atomicLoad,
 	Return,
@@ -14,7 +14,7 @@ import { traverseBVH } from './BVHTraversal.js';
 import { Ray, HitInfo } from './Struct.js';
 import {
 	readRayOrigin, readRayDirection, readRayBounceFlags, readMediumStack,
-	writeHitPacked, writeHitSurfaceOffset,
+	writeHitPacked,
 } from '../Processor/PackedRayBuffer.js';
 import { COUNTER, RAY_FLAG } from '../Processor/QueueManager.js';
 import { hitFacet, packHitFacet } from './HitFacet.js';
@@ -76,9 +76,14 @@ export function buildExtendKernel( params ) {
 			didHit: hitInfo.didHit, liftEnabled: shadowTerminatorOffset.greaterThan( 0.0 ),
 		} );
 
+		// origin + t · direction sits off a large triangle by t's own error, which grows with the triangle's size: the
+		// distance stored is moved along the ray onto the triangle's plane (not where it grazes the plane).
+		const cosToPlane = dot( direction, facet.faceN ).toVar();
+		const planeDst = hitInfo.dst.add( select( abs( cosToPlane ).greaterThan( 1e-3 ), facet.surfaceOffset.div( cosToPlane ), float( 0.0 ) ) );
+
 		writeHitPacked(
 			hitBufferRW, rayID,
-			hitInfo.dst,
+			planeDst,
 			uint( hitInfo.triangleIndex ),
 			hitInfo.uv.x, hitInfo.uv.y,
 			hitInfo.normal,
@@ -87,7 +92,6 @@ export function buildExtendKernel( params ) {
 			uint( hitInfo.instanceLeaf.add( int( 1 ) ) ),
 			packHitFacet( facet.faceN, facet.liftScale ),
 		);
-		writeHitSurfaceOffset( hitBufferRW, rayID, facet.surfaceOffset );
 
 	} );
 

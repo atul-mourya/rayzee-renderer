@@ -22,7 +22,7 @@ import { shadowTerminatorLift } from './ShadowTerminator.js';
 /**
  * @returns {{ faceN: Node, liftScale: Node, surfaceOffset: Node }} the facet normal on the viewer's side (the
  *   interpolated one for a degenerate triangle), the terminator lift (0 unless `liftEnabled`), and how far along
- *   faceN `hitPoint` lies from the triangle's plane (PackedRayBuffer writeHitSurfaceOffset)
+ *   faceN `hitPoint` lies from the triangle's plane (ExtendKernel moves the stored distance onto it)
  */
 export function hitFacet( { triangleBuffer, bvhBuffer, triIdx, instanceLeaf, hitPoint, smoothNormal, viewDir, didHit, liftEnabled } ) {
 

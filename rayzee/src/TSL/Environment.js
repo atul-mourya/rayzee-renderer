@@ -1,6 +1,6 @@
 import { Fn, wgslFn, vec2, vec3, ivec2, float, int, If, Loop, sin, sqrt, min, max, clamp, select } from 'three/tsl';
 
-import { EXACT_TABLE_MAX_WIDTH } from '../Processor/EnvironmentExactTable.js';
+import { EXACT_TABLE_MAX_WIDTH, GUIDES_PER_ENTRY } from '../Processor/EnvironmentExactTable.js';
 
 // Convert direction to UV coordinates for equirectangular map
 // Exact implementation from three-gpu-pathtracer
@@ -28,8 +28,8 @@ export const equirectUvToDirection = /*@__PURE__*/ wgslFn( `
 	}
 ` );
 
-// The table (EnvironmentExactTable.js packExactTable): each row's running sum over its w cells in columns [0, w) of
-// rows [h, 2h), the rows' in column w; their guides in the same places of rows [0, h). Sizes as exactTableSize.
+// The table (EnvironmentExactTable.js packExactTable): texel ( x, y ) is row y's entry x — its running sum, the one
+// below it, and the guides of steps 2x and 2x + 1 — and texel ( w, y ) the rows' entry y likewise. Sizes as exactTableSize.
 const exactTable = ( cdfTexture, envResolution ) => {
 
 	const W = int( envResolution.x );
@@ -37,35 +37,45 @@ const exactTable = ( cdfTexture, envResolution ) => {
 	const k = max( W.add( int( EXACT_TABLE_MAX_WIDTH - 1 ) ).div( int( EXACT_TABLE_MAX_WIDTH ) ), int( 1 ) );
 	const w = W.add( k ).sub( int( 1 ) ).div( k ).toVar();
 	const h = H.add( k ).sub( int( 1 ) ).div( k ).toVar();
-	const at = ( x, y ) => cdfTexture.load( ivec2( x, h.add( y ) ) ).x;
-	const guide = ( x, y ) => int( cdfTexture.load( ivec2( x, y ) ).x );
-	const below = ( x, y, along ) => select( along.greaterThan( int( 0 ) ), at( x, y ), float( 0.0 ) );
-	return { w, h, at, guide, below };
+	return { w, h, entry: ( x, y ) => cdfTexture.load( ivec2( x, y ) ) };
 
 };
 
-// First of `count` entries above `target`, the last when none is. The answer lies between the guides of the step
-// below and two above: one entry of slack each way for f32 rounding of target × count.
-const guidedSearch = ( count, guideAt, valueAt, target ) => {
+// The first of `count` entries whose running sum is above target: the guide of target's step names it at once unless
+// the step holds more than one entry boundary, or f32 rounding of target × steps picked the step beside it; then a
+// search from one entry below the guide to the guide two steps on. Returns the entry with its sum and the one below.
+const invert = ( count, entryAt, target ) => {
 
-	const step = clamp( int( target.mul( float( count ) ) ), int( 0 ), count.sub( int( 1 ) ) ).toVar();
-	const lo = max( guideAt( step ).sub( int( 1 ) ), int( 0 ) ).toVar();
-	const hi = select( step.add( int( 2 ) ).lessThan( count ), guideAt( min( step.add( int( 2 ) ), count.sub( int( 1 ) ) ) ), count.sub( int( 1 ) ) ).toVar();
-	Loop( lo.lessThan( hi ), () => {
+	const steps = count.mul( int( GUIDES_PER_ENTRY ) ).toVar();
+	const step = clamp( int( target.mul( float( steps ) ) ), int( 0 ), steps.sub( int( 1 ) ) ).toVar();
+	const odd = step.bitAnd( int( 1 ) ).equal( int( 1 ) ).toVar();
+	const guides = entryAt( step.shiftRight( int( 1 ) ) ).toVar();
+	const index = int( select( odd, guides.w, guides.z ) ).toVar();
+	const e = entryAt( index ).toVar();
+	If( target.lessThan( e.y ).or( target.greaterThanEqual( e.x ).and( index.lessThan( count.sub( int( 1 ) ) ) ) ), () => {
 
-		const mid = lo.add( hi ).div( 2 ).toVar();
-		If( valueAt( mid ).lessThanEqual( target ), () => {
+		const lo = max( index.sub( int( 1 ) ), int( 0 ) ).toVar();
+		const ahead = entryAt( step.shiftRight( int( 1 ) ).add( int( 1 ) ) );
+		const hi = select( step.add( int( 2 ) ).lessThan( steps ), int( select( odd, ahead.w, ahead.z ) ), count.sub( int( 1 ) ) ).toVar();
+		Loop( lo.lessThan( hi ), () => {
 
-			lo.assign( mid.add( 1 ) );
+			const mid = lo.add( hi ).div( 2 ).toVar();
+			If( entryAt( mid ).x.lessThanEqual( target ), () => {
 
-		} ).Else( () => {
+				lo.assign( mid.add( 1 ) );
 
-			hi.assign( mid );
+			} ).Else( () => {
+
+				hi.assign( mid );
+
+			} );
 
 		} );
+		index.assign( lo );
+		e.assign( entryAt( lo ) );
 
 	} );
-	return lo;
+	return { index, top: e.x, bottom: e.y };
 
 };
 
@@ -81,20 +91,16 @@ const cellPdf = ( share, w, h, v ) => {
 /** A direction drawn exactly from the table, and its density per steradian. */
 export function sampleEnvironmentExact( cdfTexture, environmentMatrix, envResolution, xi ) {
 
-	const { w, h, at, guide, below } = exactTable( cdfTexture, envResolution );
+	const { w, h, entry } = exactTable( cdfTexture, envResolution );
+	const row = invert( h, ( i ) => entry( w, i ), xi.y );
+	const y = row.index.toVar();
+	const cell = invert( w, ( i ) => entry( i, y ), xi.x );
+	const pRow = row.top.sub( row.bottom ).toVar();
+	const pCell = cell.top.sub( cell.bottom ).toVar();
 
-	const y = guidedSearch( h, ( i ) => guide( w, i ), ( i ) => at( w, i ), xi.y ).toVar();
-	const rowTop = at( w, y ).toVar();
-	const rowBottom = below( w, max( y.sub( int( 1 ) ), int( 0 ) ), y ).toVar();
-	const x = guidedSearch( w, ( i ) => guide( i, y ), ( i ) => at( i, y ), xi.x ).toVar();
-	const cellTop = at( x, y ).toVar();
-	const cellBottom = below( max( x.sub( int( 1 ) ), int( 0 ) ), y, x ).toVar();
-	const pRow = rowTop.sub( rowBottom ).toVar();
-	const pCell = cellTop.sub( cellBottom ).toVar();
-
-	const fv = clamp( xi.y.sub( rowBottom ).div( max( pRow, 1e-30 ) ), 0.0, 0.99999994 );
-	const fu = clamp( xi.x.sub( cellBottom ).div( max( pCell, 1e-30 ) ), 0.0, 0.99999994 );
-	const uv = vec2( float( x ).add( fu ).div( float( w ) ), float( y ).add( fv ).div( float( h ) ) ).toVar();
+	const fv = clamp( xi.y.sub( row.bottom ).div( max( pRow, 1e-30 ) ), 0.0, 0.99999994 );
+	const fu = clamp( xi.x.sub( cell.bottom ).div( max( pCell, 1e-30 ) ), 0.0, 0.99999994 );
+	const uv = vec2( float( cell.index ).add( fu ).div( float( w ) ), float( y ).add( fv ).div( float( h ) ) ).toVar();
 
 	return { direction: equirectUvToDirection( { uv, environmentMatrix } ), pdf: cellPdf( pRow.mul( pCell ), w, h, uv.y ) };
 
@@ -103,13 +109,13 @@ export function sampleEnvironmentExact( cdfTexture, environmentMatrix, envResolu
 /** sampleEnvironmentExact's density per steradian for `direction`. */
 export function environmentPdfExact( cdfTexture, environmentMatrix, envResolution, direction ) {
 
-	const { w, h, at, below } = exactTable( cdfTexture, envResolution );
+	const { w, h, entry } = exactTable( cdfTexture, envResolution );
 	const uv = equirectDirectionToUv( { direction, environmentMatrix } ).toVar();
 	const x = clamp( int( uv.x.mul( float( w ) ) ), int( 0 ), w.sub( int( 1 ) ) ).toVar();
 	const y = clamp( int( uv.y.mul( float( h ) ) ), int( 0 ), h.sub( int( 1 ) ) ).toVar();
-	const pRow = at( w, y ).sub( below( w, max( y.sub( int( 1 ) ), int( 0 ) ), y ) );
-	const pCell = at( x, y ).sub( below( max( x.sub( int( 1 ) ), int( 0 ) ), y, x ) );
-	return cellPdf( pRow.mul( pCell ), w, h, uv.y );
+	const rowEntry = entry( w, y ).toVar();
+	const cellEntry = entry( x, y ).toVar();
+	return cellPdf( rowEntry.x.sub( rowEntry.y ).mul( cellEntry.x.sub( cellEntry.y ) ), w, h, uv.y );
 
 }
 

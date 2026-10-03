@@ -77,7 +77,7 @@ import {
 	readTransparentCount,
 	readMisRayT,
 	readHitDistance, readHitBarycentrics, readHitNormal,
-	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet, readHitSurfaceOffset,
+	readHitMaterialIndex, readHitTriangleIndex, readHitInstanceLeaf, readHitFacet,
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance,
 	writeGBuffer, writeGBufferHitDist, readGBuffer, gbDecodeNormalDepth,
 	readRayRadiance,
@@ -667,9 +667,8 @@ export function buildShadeKernel( params ) {
 
 		} );
 
-		// On the triangle's plane: origin + t · direction alone sits off a large triangle by t's error (HitFacet.js).
-		const hitPoint = origin.add( direction.mul( hitDist ) )
-			.add( unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN.mul( readHitSurfaceOffset( hitBufferRW, rayID ) ) ).toVar();
+		// On the triangle's plane: Extend stores the distance to it (ExtendKernel).
+		const hitPoint = origin.add( direction.mul( hitDist ) ).toVar();
 		// Vertex merging: a merge here, weighed in every sum this vertex ends or scatters.
 		if ( bdpt?.merging ) subpath.vm = mergeVmAt( bdpt, hitPoint ).toVar();
 		const N = normalize( hitNormal ).toVar();
@@ -861,6 +860,19 @@ export function buildShadeKernel( params ) {
 		const material = RayTracingMaterial.wrap(
 			getMaterial( int( hitMatIdx ), materialBuffer )
 		).toVar();
+
+		// The segment past the last bounce is traced only for the light it hits: an opaque surface that does not glow
+		// ends it before any texture is read (emission is factor × map, so a zero factor is zero).
+		If( flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) )
+			.and( material.alphaMode.equal( int( 0 ) ) ).and( material.transmission.lessThanEqual( 0.0 ) ).and( material.subsurface.lessThanEqual( 0.0 ) )
+			.and( max( max( material.emissive.x, material.emissive.y ), material.emissive.z ).mul( material.emissiveIntensity ).lessThanEqual( 0.0 ) ), () => {
+
+			writeRayRadiance( rayBufferRW, rayID, currentRadiance );
+			writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+			persistRng();
+			Return();
+
+		} );
 
 		// displacement: analytical ray-height marching refines hitPoint/UV/normal; no-op without a map
 		const samplingUV = hitUV.toVar();

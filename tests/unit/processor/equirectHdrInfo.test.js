@@ -100,14 +100,14 @@ describe( 'buildExactEnvironmentTable', () => {
 
 	};
 
-	// Each guide is the first entry above its step's start, or the last.
+	// Each guide is the first entry above its step's start, or the last; two steps an entry.
 	const checkGuides = ( cdf, offset, n, guide, guideOffset ) => {
 
-		for ( let g = 0; g < n; g ++ ) {
+		for ( let g = 0; g < 2 * n; g ++ ) {
 
 			const i = guide[ guideOffset + g ];
-			expect( i === n - 1 || cdf[ offset + i ] > g / n ).toBe( true );
-			if ( i > 0 ) expect( cdf[ offset + i - 1 ] ).toBeLessThanOrEqual( g / n );
+			expect( i === n - 1 || cdf[ offset + i ] > g / ( 2 * n ) ).toBe( true );
+			if ( i > 0 ) expect( cdf[ offset + i - 1 ] ).toBeLessThanOrEqual( g / ( 2 * n ) );
 
 		}
 
@@ -119,7 +119,7 @@ describe( 'buildExactEnvironmentTable', () => {
 		expect( [ t.exactWidth, t.exactHeight ] ).toEqual( [ 8, 4 ] );
 		for ( let x = 0; x < 8; x ++ ) expect( t.exactConditional[ x ] ).toBeCloseTo( ( x + 1 ) / 8, 6 );
 		expect( t.exactMarginal[ 3 ] ).toBe( 1 );
-		for ( let y = 0; y < 4; y ++ ) checkGuides( t.exactConditional, y * 8, 8, t.exactRowGuide, y * 8 );
+		for ( let y = 0; y < 4; y ++ ) checkGuides( t.exactConditional, y * 8, 8, t.exactRowGuide, 2 * y * 8 );
 		checkGuides( t.exactMarginal, 0, 4, t.exactMarginalGuide, 0 );
 		expect( t.radianceIntegral ).toBeGreaterThan( 0 );
 
@@ -129,23 +129,24 @@ describe( 'buildExactEnvironmentTable', () => {
 
 		const W = 64, H = 32;
 		const t = buildExactEnvironmentTable( image( W, H, ( x, y ) => ( x === 40 && y === 20 ? 1000 : y < 8 ? 0 : 0.1 ) ), W, H );
-		for ( let y = 0; y < H; y ++ ) checkGuides( t.exactConditional, y * W, W, t.exactRowGuide, y * W );
+		for ( let y = 0; y < H; y ++ ) checkGuides( t.exactConditional, y * W, W, t.exactRowGuide, 2 * y * W );
 		checkGuides( t.exactMarginal, 0, H, t.exactMarginalGuide, 0 );
 		// Most steps land on the sun's row and its neighbours (the filter gives them a share of it).
 		const sunRows = [ ...t.exactMarginalGuide ].filter( y => Math.abs( y - 20 ) <= 1 ).length;
-		expect( sunRows / H ).toBeGreaterThan( 0.9 );
+		expect( sunRows / ( 2 * H ) ).toBeGreaterThan( 0.9 );
 
 	} );
 
-	it( 'packs guides and running sums as the shader reads them', () => {
+	it( 'packs running sums and guides as the shader reads them', () => {
 
 		const t = buildExactEnvironmentTable( image( 8, 4, ( x ) => x + 1 ), 8, 4 );
 		const { data, width, height } = packExactTable( t );
-		expect( [ width, height ] ).toEqual( [ 9, 8 ] );
-		expect( data[ 2 * 9 + 3 ] ).toBe( t.exactRowGuide[ 2 * 8 + 3 ] );
-		expect( data[ 1 * 9 + 8 ] ).toBe( t.exactMarginalGuide[ 1 ] );
-		expect( data[ ( 4 + 2 ) * 9 + 3 ] ).toBe( t.exactConditional[ 2 * 8 + 3 ] );
-		expect( data[ ( 4 + 1 ) * 9 + 8 ] ).toBe( t.exactMarginal[ 1 ] );
+		expect( [ width, height ] ).toEqual( [ 9, 4 ] );
+		const texel = ( x, y ) => [ ...data.subarray( 4 * ( y * 9 + x ), 4 * ( y * 9 + x ) + 4 ) ];
+		const i = 2 * 8 + 3;
+		expect( texel( 3, 2 ) ).toEqual( [ t.exactConditional[ i ], t.exactConditional[ i - 1 ], t.exactRowGuide[ 2 * i ], t.exactRowGuide[ 2 * i + 1 ] ] );
+		expect( texel( 0, 2 )[ 1 ] ).toBe( 0 );
+		expect( texel( 8, 1 ) ).toEqual( [ t.exactMarginal[ 1 ], t.exactMarginal[ 0 ], t.exactMarginalGuide[ 2 ], t.exactMarginalGuide[ 3 ] ] );
 
 	} );
 

@@ -1,5 +1,5 @@
 import {
-	RGBAFormat, RedFormat, FloatType, LinearFilter, RepeatWrapping, ClampToEdgeWrapping,
+	RGBAFormat, FloatType, LinearFilter, RepeatWrapping, ClampToEdgeWrapping,
 	EquirectangularReflectionMapping, LinearSRGBColorSpace, DataTexture, Vector3, Vector4,
 } from 'three';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
@@ -50,8 +50,8 @@ export class PhysicalSky {
 		this._texture.wrapS = RepeatWrapping;
 		this._texture.wrapT = ClampToEdgeWrapping;
 		this._texture.generateMipmaps = false;
-		// packExactTable's layout (EnvironmentExactTable.js): guides, then running sums.
-		this._cdfTexture = gpuTexture( width + 1, 2 * height, RedFormat );
+		// packExactTable's layout (EnvironmentExactTable.js): running sums and guides, RGBA.
+		this._cdfTexture = gpuTexture( width + 1, height, RGBAFormat );
 		this._rec709Weights = spectrumToRec709( SKY_RADIANCE_SCALE );
 
 		this._attrs = null;
@@ -88,7 +88,7 @@ export class PhysicalSky {
 			cdfRows: attr( this.height ),
 			cdfPrefix: gpuOnlyStorageAttribute( this.width * this.height, 2 ),
 			cdfStats: attr( 2 ),
-			cdf: gpuOnlyStorageAttribute( cdfRowStride( this.width ) * 2 * this.height, 1 ),
+			cdf: gpuOnlyStorageAttribute( cdfRowStride( this.width ) * this.height, 1 ),
 			phaseCells: new StorageInstancedBufferAttribute( phaseCellWeights( MS_VIEW_MU, MS_VIEW_PHI, MS_BANDS, MS_SECTORS ), 4 ),
 		};
 		const node = ( key, type = 'vec4' ) => storage( this._attrs[ key ], type, this._attrs[ key ].count );
@@ -178,9 +178,9 @@ export class PhysicalSky {
 			[ this.width, this.height ],
 		);
 		encoder.copyBufferToTexture(
-			{ buffer: backend.get( this._attrs.cdf ).buffer, bytesPerRow: cdfRowStride( this.width ) * 4, rowsPerImage: 2 * this.height },
+			{ buffer: backend.get( this._attrs.cdf ).buffer, bytesPerRow: cdfRowStride( this.width ) * 4, rowsPerImage: this.height },
 			{ texture: backend.get( this._cdfTexture ).texture },
-			[ this.width + 1, 2 * this.height ],
+			[ this.width + 1, this.height ],
 		);
 		backend.device.queue.submit( [ encoder.finish() ] );
 

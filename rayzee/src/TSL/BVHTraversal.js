@@ -88,8 +88,10 @@ const toObjectDir = ( rows, d ) => vec3(
 // at shared triangle edges that Möller-Trumbore exhibits under FP32. Per-ray shears
 // are precomputed once via computeWoopFromInvDir; per-triangle test is FMA-friendly
 // and uses sign-aware depth comparison so it works for any det orientation.
-const RayTriangleGeometry = wgslFn( `
-	fn RayTriangleGeometry( rayOrigin: vec3f, rayDir: vec3f, pA: vec3f, pB: vec3f, pC: vec3f, closestHitDst: f32, woopParams: vec4f ) -> vec4f {
+// guardT: reject t within its own rounding error. Closest-hit rays need it to leave a large triangle; shadow rays
+// start lifted off their surface and skip it — its registers cost Shade's shadow traversal ~4 %.
+const rayTriangle = ( name, guardT ) => wgslFn( `
+	fn ${ name }( rayOrigin: vec3f, rayDir: vec3f, pA: vec3f, pB: vec3f, pC: vec3f, closestHitDst: f32, woopParams: vec4f ) -> vec4f {
 
 		// Returns vec4(t, u, v, hit) where hit > 0.5 means intersection.
 		// woopParams: (Sx, Sy, Sz, bitcast<f32>(packed kx|ky<<2|kz<<4))
@@ -138,6 +140,7 @@ const RayTriangleGeometry = wgslFn( `
 				let tSigned = T * detSign;
 				let detAbs = abs( det );
 
+${ guardT ? `
 				// t must clear its own rounding error (pbrt-v4 Triangle::Intersect, γn = n·2⁻²⁴ / (1 − n·2⁻²⁴)), or a
 				// ray leaving a large triangle can hit it again: its error grows with the distance to the vertices.
 				let maxZ = max( max( abs( Sz * Akz ), abs( Sz * Bkz ) ), abs( Sz * Ckz ) );
@@ -148,8 +151,8 @@ const RayTriangleGeometry = wgslFn( `
 				let deltaY = 2.98023e-7f * ( maxY + maxZ );
 				let deltaE = 2.0f * ( 1.19209e-7f * maxX * maxY + deltaY * maxX + deltaX * maxY );
 				let errT = 3.0f * maxZ * ( 3.57628e-7f * maxE + deltaE );
-
-				if ( tSigned > errT && tSigned < closestHitDst * detAbs ) {
+` : '' }
+				if ( tSigned > ${ guardT ? 'errT' : '0.0f' } && tSigned < closestHitDst * detAbs ) {
 
 					// Match Möller-Trumbore convention: u = weight of B, v = weight of C.
 					// In Woop's edge functions, U → weight of A, V → weight of B, W → weight of C.
@@ -166,6 +169,9 @@ const RayTriangleGeometry = wgslFn( `
 
 	}
 ` );
+
+const RayTriangleGeometry = rayTriangle( 'RayTriangleGeometry', true );
+const RayTriangleGeometryShadow = rayTriangle( 'RayTriangleGeometryShadow', false );
 
 // Compute Woop ray-space transform (Woop 2013, §3.1) — runs once per ray and
 // amortizes across hundreds of triangle tests. Returns Sx/Sy/Sz shears plus the
@@ -584,7 +590,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 			const pB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz );
 			const pC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz );
 
-			const triResult = RayTriangleGeometry( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
+			const triResult = RayTriangleGeometryShadow( { rayOrigin, rayDir: rayDirection, pA, pB, pC, closestHitDst: closestHit.dst, woopParams } );
 
 			If( triResult.w.greaterThan( 0.5 ), () => {
 

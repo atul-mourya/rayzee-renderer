@@ -143,22 +143,25 @@ describeGPU( 'physical sky', () => {
 			expect( radianceIntegral / cpu.radianceIntegral, `sun ${sunEl}°` ).toBeCloseTo( 1, 4 );
 			expect( totalSum, `sun ${sunEl}°` ).toBeGreaterThan( 0 );
 
-			// Running sums in rows [H, 2H), within f32 against f64 summing. A guide may land one entry over at a
-			// tie; the sampler searches from one below to two above.
+			// Texel ( x, y ): row y's running sum at x, the one below it, and the guides of steps 2x and 2x + 1; texel
+			// ( W, y ) the rows' likewise. Sums within f32 against f64 summing. A guide may land one entry over at a tie;
+			// the sampler searches from one below.
+			const texel = ( x, y ) => cdf.subarray( y * cdfStride + 4 * x, y * cdfStride + 4 * x + 4 );
 			let worst = 0, guideOff = 0;
 			for ( let y = 0; y < H; y ++ ) {
 
-				const row = ( H + y ) * cdfStride;
-				worst = Math.max( worst, Math.abs( cdf[ row + W ] - cpu.exactMarginal[ y ] ) );
-				if ( Math.abs( cdf[ y * cdfStride + W ] - cpu.exactMarginalGuide[ y ] ) > 1 ) guideOff ++;
+				worst = Math.max( worst, Math.abs( texel( W, y )[ 0 ] - cpu.exactMarginal[ y ] ), Math.abs( texel( W, y )[ 1 ] - ( y > 0 ? cpu.exactMarginal[ y - 1 ] : 0 ) ) );
 				for ( let x = 0; x < W; x ++ ) {
 
-					worst = Math.max( worst, Math.abs( cdf[ row + x ] - cpu.exactConditional[ y * W + x ] ) );
-					if ( Math.abs( cdf[ y * cdfStride + x ] - cpu.exactRowGuide[ y * W + x ] ) > 1 ) guideOff ++;
+					const t = texel( x, y );
+					worst = Math.max( worst, Math.abs( t[ 0 ] - cpu.exactConditional[ y * W + x ] ), Math.abs( t[ 1 ] - ( x > 0 ? cpu.exactConditional[ y * W + x - 1 ] : 0 ) ) );
+					for ( let k = 0; k < 2; k ++ ) if ( Math.abs( t[ 2 + k ] - cpu.exactRowGuide[ 2 * ( y * W + x ) + k ] ) > 1 ) guideOff ++;
 
 				}
 
 			}
+
+			for ( let g = 0; g < 2 * H; g ++ ) if ( Math.abs( texel( W, g >> 1 )[ 2 + ( g & 1 ) ] - cpu.exactMarginalGuide[ g ] ) > 1 ) guideOff ++;
 
 			expect( worst, `sun ${sunEl}°` ).toBeLessThan( 1e-4 );
 			expect( guideOff, `sun ${sunEl}°` ).toBe( 0 );

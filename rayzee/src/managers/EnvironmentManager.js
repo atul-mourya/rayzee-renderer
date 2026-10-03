@@ -8,7 +8,7 @@
  */
 
 import {
-	RGBAFormat, RedFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
+	RGBAFormat, FloatType, LinearFilter, Vector2, Vector3, Color, Matrix4, DataTexture,
 } from 'three';
 import { EquirectHDRInfo } from '../Processor/EquirectHDRInfo.js';
 import { packExactTable } from '../Processor/EnvironmentExactTable.js';
@@ -260,12 +260,12 @@ export class EnvironmentManager {
 	 * Initialize the packed CDF storage buffer with placeholder data.
 	 * Must be called before shader compilation so the node exists in the graph.
 	 *
-	 * 1×1 R32F placeholder until a real env CDF is built (env IS is off meanwhile).
+	 * 1×1 RGBA32F placeholder until a real env table is built (env IS is off meanwhile).
 	 * @private
 	 */
 	_initCDFTexture() {
 
-		this.envCDFTexture = new DataTexture( new Float32Array( [ 0 ] ), 1, 1, RedFormat, FloatType );
+		this.envCDFTexture = new DataTexture( new Float32Array( 4 ), 1, 1, RGBAFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
 		this._exactTable = null;
 
@@ -283,7 +283,7 @@ export class EnvironmentManager {
 
 		const { data, width, height } = packExactTable( info );
 		if ( ! this.envCDFTexture?._isPhysicalSky ) this.envCDFTexture?.dispose?.();
-		this.envCDFTexture = new DataTexture( data, width, height, RedFormat, FloatType );
+		this.envCDFTexture = new DataTexture( data, width, height, RGBAFormat, FloatType );
 		this.envCDFTexture.needsUpdate = true;
 		this._exactTable = { radianceIntegral: info.radianceIntegral };
 

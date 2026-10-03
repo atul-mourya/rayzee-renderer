@@ -2,7 +2,7 @@ import { ENGINE_AREAS } from './StorageManager.js';
 import { sharedStorage } from './shared.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
-const FORMAT = 4;
+const FORMAT = 5;
 
 /**
  * Where an environment texture came from, recorded by the loader so its sampling tables can be

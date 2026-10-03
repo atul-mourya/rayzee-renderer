@@ -118,7 +118,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.albedoMaps`, `stage.environment.envParams`):
 - **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)`, `setBool()`. Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
 - **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), feature scanning (`rescanMaterialFeatures()`), texture array management. Owns `materialStorageAttr` and `materialStorageNode`.
-- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (R32F, the environment's sampling table as `packExactTable` lays it out; `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
+- **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (RGBA32F, the environment's sampling table as `packExactTable` lays it out; `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
 - **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
@@ -452,9 +452,12 @@ the strings, so never rename or repurpose one.
   sampled light point (area lights and emissive NEE alike) is re-aimed from that origin and stops
   `SHADOW_END` (1 − 1e-4) of the way, never a fixed distance short. ⚠️ The hit point Shade rebuilds,
   origin + t · direction, sits off a large triangle by t's own error, which grows with the triangle's size:
-  points on a 400-unit two-triangle floor fell under it and read up to 4 % dark in bands. Extend stores the
-  correction to the triangle's plane in `HIT.RNG.w` (`HitFacet.js`, `writeHitSurfaceOffset`) and Shade adds it;
-  the triangle test also rejects t within its rounding error (pbrt-v4's bound — free, Extend is memory-bound).
+  points on a 400-unit two-triangle floor fell under it and read up to 4 % dark in bands. Extend moves the stored
+  distance along the ray onto the triangle's plane (`HitFacet.js` `surfaceOffset`, not where the ray grazes it), and
+  the closest-hit triangle test rejects t within its rounding error (pbrt-v4's bound). ⚠️ Storing the correction in a
+  slot of its own cost Extend 10–15 % (one more scattered write a ray: it is memory-bound), and the bound in the
+  shadow test cost Shade ~4 % in registers alone; shadow rays start lifted off their surface and skip it
+  (`RayTriangleGeometryShadow`). Every band reads 1.0000 against the floor split 64 × 64, both integrators.
 - **Shadow terminator** — Cycles' Shadow Terminator → Geometry Offset (`TSL/ShadowTerminator.js`,
   setting `shadowTerminatorOffset`, 0.1 as in Blender, 0 off), ported from Cycles 5.1's
   `kernel/light/sample.h`: near the terminator, light and environment shadow rays from a smooth-shaded
@@ -687,8 +690,8 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 - **Nothing leaves the GPU.** The sky is computed per equirect row × 256 azimuths from the sun (π·s²,
   mirrored: radiance depends on elevation and that azimuth only) and filled into the equirect; the
   importance-sampling table is built beside it (`TSL/EnvironmentCDF.js`, the GPU twin of
-  `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`, and of the bidirectional exact
-  table in the next `height` rows); both are copied into
+  `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`, packed as `packExactTable` packs it);
+  both are copied into
   textures created without pixels (`source.dataReady = false`). Only the table's two normalisers come
   back, a few frames later — the frames between use the previous bake's. ⚠️ Such a texture has no
   `image.data`: `buildEnvironmentCDF`, `convertTexturePixels` and the other CPU readers skip it, and
@@ -744,8 +747,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   pinhole (LightSplatKernel). Light tracing needs a pinhole — perspective with DOF off — and otherwise the
   camera's dVCM starts at 0, which removes it from every weight. A camera path at the bounce limit takes one
   more segment flagged `RAY_FLAG.EMISSION_ONLY` (in either integrator: it is the BSDF-hit partner of the last
-  vertex's NEE), so the camera-hits-light strategy reaches the longest paths too and the weights still sum to
-  one there.
+  vertex's NEE; Shade ends it before reading any texture when it lands on an opaque surface that does not glow),
+  so the camera-hits-light strategy reaches the longest paths too and the weights still sum to one there.
 - **The source table** (`sourceCdf`, `PathTracer._updateSourceTable`, rebuilt each frame): a running sum over
   the sun, the emitters, the environment, then each lamp list at `sourceOffsets[ LIGHT_TYPE ]`, by the
   luminous flux each sends into the scene — π·boost·power for emitters; for the sun, a directional light and
@@ -788,14 +791,18 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   wide; each texel weighs as the bilinear filter's mean over it (1/8, 6/8, 1/8 along each axis: a cell has
   weight wherever the filtered map has light, a sharp texel's neighbours only their share — the brightest
   neighbour it replaced spread a sun three texels wide), less the mean (MIS compensation, Karlík et al. 2019);
-  every cell keeps 1e-4 of the mean, so the sphere stays covered. A guide per running sum (Chen & Hsu's
-  cutpoints) starts each search within a cell or two of its answer. Layout (`packExactTable`), ( w + 1 ) × 2h:
-  guides in rows [0, h), running sums in [h, 2h), each set's marginal in column w. Built in `CDFWorker` for
-  HDRIs and colour skies (cached as `cdf:4`), on the GPU for the physical sky (`EnvironmentCDF.js`, its twin
-  without the filter); `envTotalSum` > 0 (the path tracer) and `bidirectional.envTable` say it is there.
-  It replaced an interpolated inverted table that reported the texel's density, not its own (on a 1K HDRI with
-  a sun NEE alone read 4 % bright for upward surfaces and 59 % dark from below). ⚠️ Shade is near a register
-  limit: removing the search loop made it *slower*. Measure Shade changes in place (`bench:kernels`).
+  every cell keeps 1e-4 of the mean, so the sphere stays covered. A draw inverts the sums: two guides an entry
+  (Chen & Hsu's cutpoints, `GUIDES_PER_ENTRY`) name its entry at once in most draws, else a binary search between
+  the guides. Layout (`packExactTable`), ( w + 1 ) × h RGBA: texel ( x, y ) is row y's entry x — its running sum,
+  the one below, the guides of steps 2x and 2x + 1 — and texel ( w, y ) the rows' entry y; a draw is two reads per
+  dimension, a density two reads in all. Built in `CDFWorker` for HDRIs and colour skies (cached as `cdf:5`), on
+  the GPU for the physical sky (`EnvironmentCDF.js`, its twin without the filter); `envTotalSum` > 0 (the path
+  tracer) and `bidirectional.envTable` say it is there. It replaced an interpolated inverted table that reported
+  the texel's density, not its own (on a 1K HDRI with a sun NEE alone read 4 % bright for upward surfaces and 59 %
+  dark from below). The search it first used cost Shade 9–13 % against main; this layout brought the frame back to
+  +3 % median (`bench:ab -- main`, no scene slower). ⚠️ An alias table (one read a dimension) was as fast and
+  unbiased but doubled a furnace's noise: it breaks the samples' stratification, which inversion keeps — the bench's
+  CONVERGENCE gate caught it. ⚠️ Shade is near a register limit: measure Shade changes in place (`bench:kernels`).
   `tests/gpu/environmentExact.test.js` holds the table to its density cell by cell.
 - **MIS:** Georgiev 2012's dVCM/dVC recursion, power heuristic, densities from `calculateMaterialPDF` both
   ways round everywhere (`misOnHit` / `misOnScatter` / `misOnSpecular` / `misPartial`). Russian roulette and
