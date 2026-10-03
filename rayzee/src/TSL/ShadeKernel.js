@@ -27,6 +27,7 @@ import {
 import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance } from './LightsDirect.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { hitFacet, unpackHitFacet, windingNormal } from './HitFacet.js';
+import { guidedDiscPdf, recordEscape } from './LightGuide.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
@@ -51,7 +52,7 @@ import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBV
 import {
 	mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine,
 	strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET,
-	sourcePick, lampSource, sourceLampType, sourceLampIndex, sceneDiscPdf, SOURCE,
+	sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE,
 } from './Bidirectional.js';
 import {
 	Ray,
@@ -446,6 +447,13 @@ export function buildShadeKernel( params ) {
 			// is the direct backdrop", so env seen through alpha-cutout foliage holes is treated identically to
 			// the open sky (blur, intensity, show/hide, color-mode, ground projection all match).
 			// isBackdropView was captured at arrival (above) so it survives the REDIRECTED bitOr on opaque hits.
+			// A camera path out to the sky: where light from infinity gets in (LightGuide.js).
+			if ( bdpt ) If( isBackdropView.not().and( isLight.not() ), () => {
+
+				recordEscape( counters, bdpt, direction, origin );
+
+			} );
+
 			const wantBackdrop = isBackdropView.and( showBackground ); // draw env image as backdrop
 			const wantEnvLight = isBackdropView.not().and( enableEnvironmentLight ); // env as light on redirected bounces
 
@@ -502,7 +510,8 @@ export function buildShadeKernel( params ) {
 					// Georgiev (43) for the environment at infinity, from the exact table its NEE and light paths draw from.
 					const pdfW = select( bdpt.envTable.greaterThan( uint( 0 ) ), environmentPdfExact( envCDFTexture, envMatrix, envResolution, direction ), float( 0.0 ) ).toVar();
 					const directPdfW = select( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ), pdfW, float( 0.0 ) );
-					const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), bdpt.envPick.mul( pdfW ).mul( sceneDiscPdf( bdpt ) ), float( 0.0 ) );
+					const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+						bdpt.envPick.mul( pdfW ).mul( guidedDiscPdf( bdpt, bdpt.guideTexture, direction, origin ) ), float( 0.0 ) );
 					envMisWeight.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
 						misWeight( float( 0.0 ), mis( directPdfW ).mul( subpath.dVCM ).add( mis( emissionPdfW ).mul( subpath.dVC ) ) ) ) );
 
@@ -576,7 +585,8 @@ export function buildShadeKernel( params ) {
 							If( isBackdropView.not(), () => {
 
 								const directPdfW = select( flags.bitAnd( uint( RAY_FLAG.SUN_NEE ) ).notEqual( uint( 0 ) ), float( 1.0 ).div( sunParams.y ), float( 0.0 ) );
-								const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), sunEmissionPdf( bdpt, sunParams ), float( 0.0 ) );
+								const emissionPdfW = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
+									sunEmissionPdf( bdpt, sunParams, guidedDiscPdf( bdpt, bdpt.guideTexture, direction, origin ) ), float( 0.0 ) );
 								sunW.assign( strategyWeight( bdpt.strategyView, STRATEGY.HIT,
 									misWeight( float( 0.0 ), mis( directPdfW ).mul( subpath.dVCM ).add( mis( emissionPdfW ).mul( subpath.dVC ) ) ) ) );
 
@@ -1675,7 +1685,7 @@ export function buildShadeKernel( params ) {
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
 					const reverse = calculateMaterialPDF( lightDir, V, N, material );
 					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
-						sunEmissionPdf( bdpt, sunParams ).mul( sunParams.y ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
+						sunEmissionPdf( bdpt, sunParams, guidedDiscPdf( bdpt, bdpt.guideTexture, lightDir, hitPoint ) ).mul( sunParams.y ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
 					const weight = misWeight( mis( forward.mul( sunParams.y ) ), misPartial( emissionOverDirect, subpath, reverse ) );
 
 					currentRadiance.assign( vec4(
@@ -1725,7 +1735,7 @@ export function buildShadeKernel( params ) {
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
 					const reverse = calculateMaterialPDF( lightDir, V, N, material );
 					const lead = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
-						bdpt.envPick.mul( sceneDiscPdf( bdpt ) ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
+						bdpt.envPick.mul( guidedDiscPdf( bdpt, bdpt.guideTexture, lightDir, hitPoint ) ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
 					const weight = misWeight( mis( forward.div( lightPdf ) ), misPartial( lead, subpath, reverse ) );
 
 					currentRadiance.assign( vec4(
@@ -1788,7 +1798,7 @@ export function buildShadeKernel( params ) {
 				const light = DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, pick.index ) );
 				take( sampleDirectionalLight( light, hitPoint, pick.pdf, lightRandom.y,
 					getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( 14 ) ), rngState, resolution, frame ) ) );
-				emissionOverDirect.assign( pE.mul( sceneDiscPdf( bdpt ) ).div( max( pick.pdf, 1e-30 ) ) );
+				emissionOverDirect.assign( pE.mul( guidedDiscPdf( bdpt, bdpt.guideTexture, lightDir, hitPoint ) ).div( max( pick.pdf, 1e-30 ) ) );
 
 			} ).ElseIf( pick.kind.equal( int( LIGHT_TYPE_AREA ) ), () => {
 

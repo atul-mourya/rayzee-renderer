@@ -31,8 +31,13 @@ export const COUNTER = {
 	// Survivors' summed throughput (max channel, fixed-point ENERGY_SCALE). The early exit gates on this,
 	// not the count: past Russian roulette a few survivors carry the weight of many.
 	ACTIVE_ENERGY: 7,
+	// Words read back; the light guide's escape counts (TSL/LightGuide.js) follow, never read back.
 	COUNT: 8,
+	GUIDE: 8,
 };
+
+/** The light guide's counts: 16 direction bins × 64 × 64 disc cells (TSL/LightGuide.js). */
+export const GUIDE_COUNTER_WORDS = 16 * 64 * 64;
 
 export const ENERGY_SCALE = 64;
 export const ENERGY_RAY_CLAMP = 65535;
@@ -90,7 +95,7 @@ export class QueueManager {
 		this.capacity = capacity;
 
 		// explicit attribute (not attributeArray) so it can be referenced for async readback
-		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( COUNTER.COUNT ), 1 );
+		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( COUNTER.GUIDE + GUIDE_COUNTER_WORDS ), 1 );
 		this.counters = storage( this._countersAttr, 'uint' ).toAtomic();
 
 		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY,

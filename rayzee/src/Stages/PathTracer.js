@@ -5,7 +5,7 @@
  */
 
 import { uniform, uniformArray, texture, storage } from 'three/tsl';
-import { Vector3 } from 'three';
+import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
 import { gpuOnlyStorageAttribute } from '../TSL/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
 import { LIGHT_FLOATS } from '../managers/UniformManager.js';
@@ -22,6 +22,7 @@ import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from 
 import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../TSL/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
 import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../TSL/LightGenerateKernel.js';
+import { buildGuideKernel, buildGuideClearKernel, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from '../TSL/LightGuide.js';
 import { buildConnectKernel, CONNECT_WG_SIZE } from '../TSL/ConnectKernel.js';
 import {
 	buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE,
@@ -190,7 +191,15 @@ export class PathTracer extends PathTracerStage {
 			sourceOffsets: [ SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS ],
 			sceneCenter: uniform( new Vector3(), 'vec3' ),
 			sceneRadius: uniform( 1, 'float' ),
+			// The light guide (TSL/LightGuide.js): 1 once a table has been built since the last reset; and
+			// whether camera paths count their escapes.
+			guide: uniform( 0, 'uint' ),
+			guideLearning: uniform( 1, 'uint' ),
+			guideTexture: null,
 		};
+		this._lightGuiding = true;
+		this._guideTexture = null;
+		this._guideBuildAttr = null;
 		this._u32Views = new WeakMap();
 
 		// VRAM accounting — providers are thunks reading CURRENT live resources,
@@ -486,7 +495,12 @@ export class PathTracer extends PathTracerStage {
 		// Light subpaths first, through the same pool; every camera chunk then connects to them.
 		const bidirectional = this._bidirectionalEnabled && this._updateBidirectionalUniforms();
 		const lightTraced = bidirectional && this._bidirectional.lightTrace.value > 0;
-		if ( bidirectional ) this._traceLightPaths( loopBound );
+		if ( bidirectional ) {
+
+			this._updateLightGuide();
+			this._traceLightPaths( loopBound );
+
+		}
 
 		// Blender-style row-band streaming: the fixed-budget path pool processes the image in bands of ≤ chunkRows
 		// rows (one chunk when the frame fits the budget → identical to the pre-chunking path). See spec.
@@ -856,6 +870,59 @@ export class PathTracer extends PathTracerStage {
 		}
 
 		return { min, max };
+
+	}
+
+	/**
+	 * Lights at infinity start their light paths where camera paths escaped (TSL/LightGuide.js). Each reset forgets
+	 * the counts; the table is rebuilt from them at frames 1, 2, 4 … 32 and every 32nd after, so a render of the same
+	 * input learns the same table. Off: light paths start uniformly over the scene's disc, as before.
+	 * @param {boolean} enabled
+	 */
+	setLightGuiding( enabled ) {
+
+		this._lightGuiding = enabled !== false;
+		this._bidirectional.guide.value = 0;
+		this.reset();
+
+	}
+
+	_updateLightGuide() {
+
+		const bd = this._bidirectional;
+		const km = this._kernelManager;
+		bd.guideLearning.value = this._lightGuiding ? 1 : 0;
+		const f = this.frameCount;
+		if ( f === 0 ) {
+
+			km.dispatch( 'guideClear' );
+			bd.guide.value = 0;
+			return;
+
+		}
+
+		if ( ! this._lightGuiding || ! ( f <= 32 ? ( f & ( f - 1 ) ) === 0 : f % 32 === 0 ) ) return;
+		km.dispatch( 'guideBuild' );
+
+		const backend = this.renderer.backend;
+		this.renderer.initTexture( this._guideTexture );
+		const encoder = backend.device.createCommandEncoder( { label: 'LightGuide' } );
+		encoder.copyBufferToTexture(
+			{ buffer: backend.get( this._guideBuildAttr ).buffer, bytesPerRow: GUIDE_ROW_STRIDE * 4, rowsPerImage: GUIDE_BINS },
+			{ texture: backend.get( this._guideTexture ).texture },
+			[ GUIDE_TEXTURE_WIDTH, GUIDE_BINS ],
+		);
+		backend.device.queue.submit( [ encoder.finish() ] );
+		bd.guide.value = 1;
+
+	}
+
+	_disposeLightGuide() {
+
+		freeStorageAttribute( this.renderer, this._guideBuildAttr );
+		this._guideTexture?.dispose();
+		this._guideTexture = this._guideBuildAttr = null;
+		this._bidirectional.guideTexture = null;
 
 	}
 
@@ -1345,7 +1412,7 @@ export class PathTracer extends PathTracerStage {
 				// Full-FRAME pixel count (CONVERGED_COUNT sums across all chunks) — not _wfMaxRayCount, which
 				// after the chunk loop holds only the last band's pixel count.
 				const total = this._wfRenderWidth.value * this._wfRenderHeight.value;
-				this.renderer.getArrayBufferAsync( cAttr ).then( ( buf ) => {
+				this.renderer.getArrayBufferAsync( cAttr, null, 0, COUNTER.COUNT * 4 ).then( ( buf ) => {
 
 					if ( cgen === this._readbackGeneration && total > 0 ) this._applyCounters( buf, total );
 
@@ -1383,7 +1450,7 @@ export class PathTracer extends PathTracerStage {
 		const entry = { due: this.frameCount + this._readbackEveryNFrames, read: null, apply: null };
 		entry.read = Promise.all( [
 			this.renderer.getArrayBufferAsync( bounceAttr ),
-			this.renderer.getArrayBufferAsync( counterAttr ),
+			this.renderer.getArrayBufferAsync( counterAttr, null, 0, COUNTER.COUNT * 4 ),
 		] ).then( ( [ bounceBuf, counterBuf ] ) => {
 
 			entry.apply = () => {
@@ -1688,6 +1755,27 @@ export class PathTracer extends PathTracerStage {
 
 			freeStorageAttribute( this.renderer, this._splatAttr );
 			this._splatAttr = null;
+
+		}
+
+		// The light guide's table: built into a buffer, copied into a texture Shade can read (it has no buffer to spare).
+		if ( this._bidirectionalEnabled ) {
+
+			if ( ! this._guideTexture ) {
+
+				this._guideTexture = new DataTexture( null, GUIDE_TEXTURE_WIDTH, GUIDE_BINS, RedFormat, FloatType );
+				this._guideTexture.source.dataReady = false;
+				this._guideTexture.needsUpdate = true;
+				this._guideBuildAttr = gpuOnlyStorageAttribute( GUIDE_ROW_STRIDE * GUIDE_BINS, 1, Float32Array );
+
+			}
+
+			this._bidirectional.guideTexture = texture( this._guideTexture );
+			this._bidirectional.guide.value = 0;
+
+		} else {
+
+			this._disposeLightGuide();
 
 		}
 
@@ -2257,6 +2345,9 @@ export class PathTracer extends PathTracerStage {
 
 			} )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] ) );
 
+			this._kernelManager.register( 'guideClear', buildGuideClearKernel( { counters } ) );
+			this._kernelManager.register( 'guideBuild', buildGuideKernel( { counters, out: storage( this._guideBuildAttr, 'float' ) } ) );
+
 			this._kernelManager.register( 'lightGenerate', buildLightGenerateKernel( {
 				rayBufferRW: pb.rayBuffer.rw,
 				hitBufferRW: pb.hitBuffer.rw,
@@ -2498,6 +2589,7 @@ export class PathTracer extends PathTracerStage {
 		this._frozenMaskAttr?.dispose?.();
 		freeStorageAttribute( this.renderer, this._splatAttr );
 		this._splatAttr = null;
+		this._disposeLightGuide();
 		this._packedBuffers = null;
 		this._queueManager = null;
 		this._kernelManager = null;

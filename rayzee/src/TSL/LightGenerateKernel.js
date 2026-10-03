@@ -6,7 +6,7 @@
 
 import {
 	Fn, float, vec3, vec4, int, uint, If, instanceIndex, atomicStore, normalize, cross, dot, max, select, Return,
-	abs, sqrt, cos, sin, Loop, sampler, bool as tslBool,
+	sqrt, cos, sin, Loop, sampler, bool as tslBool,
 } from 'three/tsl';
 
 import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash } from './Random.js';
@@ -23,8 +23,9 @@ import {
 import { areaLightRadiance, areaLightSpreadAttenuation } from './LightsSampling.js';
 import { spotConeSolidAngle, directionalConeSolidAngle } from './BidirectionalLamps.js';
 import {
-	lightPathPixel, mis, sunEmissionPdf, sourcePick, sourceLampType, sourceLampIndex, sceneDiscPdf, SOURCE, DIM_EMIT,
+	lightPathPixel, mis, sunEmissionPdf, sourcePick, sourceLampType, sourceLampIndex, SOURCE, DIM_EMIT,
 } from './Bidirectional.js';
+import { sampleGuidedDisc, guidedDiscPdf } from './LightGuide.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance, writeMediumStack,
@@ -96,15 +97,15 @@ export function buildLightGenerateKernel( params ) {
 
 		} );
 
-		// From the scene's bounding disc facing `toLight`, for a light at infinity.
+		// From the scene's bounding disc facing `toLight`, for a light at infinity, where the guide learned light gets in;
+		// returns the start and its area density.
+		const guide = bidirectional.guideTexture;
 		const discOrigin = ( toLight ) => {
 
-			const u = normalize( cross( select( abs( toLight.x ).greaterThan( 0.9 ), vec3( 0, 1, 0 ), vec3( 1, 0, 0 ) ), toLight ) ).toVar();
-			const v = cross( toLight, u );
-			const disc = getRandomSample2D( pixel, int( 0 ), int( DIM_EMIT + 6 ), rng, resolution, frame ).toVar();
-			const r = sqrt( disc.x ).mul( bidirectional.sceneRadius );
-			const phi = disc.y.mul( 2 * Math.PI );
-			return bidirectional.sceneCenter.add( toLight.mul( bidirectional.sceneRadius ) ).add( u.mul( cos( phi ) ).add( v.mul( sin( phi ) ) ).mul( r ) );
+			const start = sampleGuidedDisc( bidirectional, guide, toLight,
+				getRandomSample1D( pixel, int( 0 ), int( DIM_EMIT + 7 ), rng, resolution, frame ),
+				getRandomSample2D( pixel, int( 0 ), int( DIM_EMIT + 6 ), rng, resolution, frame ) ).toVar();
+			return { start, pdf: guidedDiscPdf( bidirectional, guide, toLight, start ) };
 
 		};
 
@@ -112,11 +113,12 @@ export function buildLightGenerateKernel( params ) {
 
 			const toSun = sampleSunDisc( sunDirection, sunParams, getRandomSample2D( pixel, int( 0 ), int( DIM_EMIT + 5 ), rng, resolution, frame ) ).toVar();
 			const radiance = sunRadianceToward( toSun, sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ).toVar();
-			const emissionPdf = sunEmissionPdf( bidirectional, sunParams ).toVar();
+			const disc = discOrigin( toSun );
+			const emissionPdf = sunEmissionPdf( bidirectional, sunParams, disc.pdf ).toVar();
 
 			If( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ).and( emissionPdf.greaterThan( 0.0 ) ), () => {
 
-				origin.assign( discOrigin( toSun ) );
+				origin.assign( disc.start );
 				direction.assign( toSun.negate() );
 				throughput.assign( radiance.div( emissionPdf ) );
 				// NEE draws this direction at 1 / solid angle, from any point; the distance is undone at the first hit.
@@ -173,11 +175,12 @@ export function buildLightGenerateKernel( params ) {
 			const radiance = sampleEnvironment( {
 				tex: envTexture, samp: sampler( envTexture ), direction: toEnvironment, environmentMatrix: envMatrix, environmentIntensity, enableEnvironmentLight: float( 1.0 ),
 			} ).xyz.toVar();
-			const emissionPdf = bidirectional.envPick.mul( directionPdf ).mul( sceneDiscPdf( bidirectional ) ).toVar();
+			const disc = discOrigin( toEnvironment );
+			const emissionPdf = bidirectional.envPick.mul( directionPdf ).mul( disc.pdf ).toVar();
 
 			If( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ).and( emissionPdf.greaterThan( 0.0 ) ), () => {
 
-				origin.assign( discOrigin( toEnvironment ) );
+				origin.assign( disc.start );
 				direction.assign( toEnvironment.negate() );
 				throughput.assign( radiance.div( emissionPdf ) );
 				// NEE draws the direction from the same table, from any point.
@@ -204,7 +207,7 @@ export function buildLightGenerateKernel( params ) {
 				const light = DirectionalLight.wrap( getDirectionalLight( directionalLightsBuffer, index ) );
 				const toLight = normalize( light.direction ).toVar();
 				radiance.assign( light.color.mul( light.intensity ) );
-				emissionPdf.assign( pick.mul( sceneDiscPdf( bidirectional ) ) );
+				emissionPdf.assign( pick );
 				If( light.angle.greaterThan( 0.0 ), () => {
 
 					const solidAngle = directionalConeSolidAngle( light ).toVar();
@@ -213,7 +216,9 @@ export function buildLightGenerateKernel( params ) {
 					emissionPdf.divAssign( solidAngle );
 
 				} );
-				origin.assign( discOrigin( toLight ) );
+				const disc = discOrigin( toLight );
+				emissionPdf.mulAssign( disc.pdf );
+				origin.assign( disc.start );
 				direction.assign( toLight.negate() );
 
 			} ).ElseIf( type.equal( int( LIGHT_TYPE_AREA ) ), () => {

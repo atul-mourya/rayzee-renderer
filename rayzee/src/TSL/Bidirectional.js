@@ -94,9 +94,9 @@ export const emitterSideProbability = ( side, cosToward ) => select( side.equal(
 export const emitterAreaPdf = ( emission, totalPower, share = 1 ) =>
 	max( dot( emission, REC709_LUMINANCE_COEFFICIENTS ), 0.0 ).div( max( totalPower, 1e-10 ) ).mul( share );
 
-// The sun as a light subpath start: a direction over its disc, then a point on the scene's bounding disc.
-export const sunEmissionPdf = ( bdpt, sunParams ) =>
-	bdpt.sunPick.div( max( sunParams.y.mul( Math.PI ).mul( bdpt.sceneRadius ).mul( bdpt.sceneRadius ), 1e-30 ) );
+// The sun as a light subpath start: a direction over its disc, then a point on the scene's bounding disc at `discPdf`
+// (LightGuide.js guidedDiscPdf).
+export const sunEmissionPdf = ( bdpt, sunParams, discPdf ) => bdpt.sunPick.mul( discPdf ).div( max( sunParams.y, 1e-30 ) );
 
 // Where a light subpath starts, in its pick table's order (`sourceCdf`, a running sum); each lamp list follows
 // at `sourceOffsets[ type ]`, by LIGHT_TYPE. A light path's origin code is its triangle, or −1 − its source.
@@ -117,9 +117,6 @@ export const sourceLampType = ( bdpt, source ) => select( source.lessThan( int( 
 
 export const sourceLampIndex = ( bdpt, source, type ) => source.sub( select( type.equal( int( 0 ) ), int( bdpt.sourceOffsets[ 0 ] ),
 	select( type.equal( int( 1 ) ), int( bdpt.sourceOffsets[ 1 ] ), select( type.equal( int( 2 ) ), int( bdpt.sourceOffsets[ 2 ] ), int( bdpt.sourceOffsets[ 3 ] ) ) ) ) );
-
-// Light paths through the scene's bounding disc, for a light at infinity.
-export const sceneDiscPdf = ( bdpt ) => float( 1.0 ).div( max( bdpt.sceneRadius.mul( bdpt.sceneRadius ).mul( Math.PI ), 1e-30 ) );
 
 // The material at a stored vertex, folded as ShadeKernel folds it; its shading normal is already stored.
 export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
