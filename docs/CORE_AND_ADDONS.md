@@ -57,6 +57,16 @@ at a fixed point of the frame, reset or load sequence and does nothing in the co
 code rather than spread across events. `PathTracerApp` overrides them; its setup steps (`_createCamera`,
 `_createExtraStages`, `_initManagers`, `_wireEvents`) call the core's first or last, as each needs.
 
+**Signals.** The core emits two events on the pipeline's bus and names no capability: `pipeline:historyReset` (a hard
+restart; history from before is not comparable — ASVGF and NRD listen) and `pipeline:lightingChanged` (a model or
+environment came in — auto exposure listens). Which processed picture the compositor shows is the builder's call:
+`_displaySources()` lists the context keys in priority order, and the core's list is empty.
+
+**Per-renderer shader resources.** Material texture buckets, shadow albedo maps, gobo and IES textures and the
+alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`), never in module variables: a TSL
+function body runs when its kernel compiles, so module state was read from whichever renderer set it last. Two
+renderers in one page no longer share anything but the colour configuration.
+
 **Outputs on request.** `pathTracer.requestOutput( name, options )` returns a function that withdraws the request; the
 kernels rebuild before the next frame either way. `'hitDistance'` takes `encode( distance, viewZ )`: NRD passes its
 normalisation, so the core's shading program holds no NRD code and leaves the output out when nobody asks.
@@ -73,7 +83,7 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
 1. **Boundary** — this page. Done.
 2. **Minimal renderer** — done. `RayzeeRenderer` (`RayzeeRenderer.js`, entry `core.js`) is the core class
    `PathTracerApp` extends. It imports and builds no denoiser, camera controls, gizmo, overlay or timeline
-   (`coreBoundary.test.js`). `npm run bench:node -- --core` renders every bench scene with it after the full engine:
+   (`coreBoundary.test.js`). `npm run bench:node -- --core` renders every bench scene with it beside the full engine:
    36 of 36 byte-identical, and the full engine still matches the Chrome references.
    Download: the core is 1,253 KB (341 KB compressed) against 1,560 KB (420 KB) for `rayzee`; 162 of the 198 modules,
    69,700 of 89,100 lines.
@@ -94,16 +104,23 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    About 5 % of Shade, 2.5–3.6 % of the frame, for two layers; compile time did not change (~0.7 s a scene in Node
    either way). Worth doing once material layers are modules, each with its own switch, and a material edit that turns
    one on rebuilds the kernels as `requestOutput` does. Not worth a separate project now.
+5. **Physical sky as an add-on** — done. `rayzee/addons/physical-sky` exports `PhysicalSky`; the core's
+   `environmentManager.setProceduralSky( PhysicalSky )` installs it, and `PathTracerApp` does so itself. Asked for
+   'procedural' mode without it, the core records `capability.missing` (it throws under `strict`). The core reaches
+   none of its modules; the sun it shades keeps only the limb-darkening constant (`Processor/SolarLimb.js`). The core
+   now downloads 326 KB compressed (from 341), the add-on 27 KB. `bench:node -- --core` installs it on the core.
+6. **Per-renderer shader resources** — done (above); the Node bench now runs the core beside the full engine.
+7. **Archives and pbrt as an add-on** — done. `rayzee/addons/archives` exports `ArchiveImporter` (the archive half
+   of the old `AssetLoader`, moved whole) with the readers and pbrt behind it; `assetLoader.setArchiveImporter()`
+   installs it, `PathTracerApp` does so itself, and without it an archive's error names the add-on. The spill budgets
+   moved to `EngineDefaults`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
+   with the core plus the add-on. That check found a core bug the viewer had hidden: a load frames the camera with
+   `lookAt()`, which leaves its world matrix stale, and only the orbit controls refreshed it — `renderFrames` now
+   does, each pass. The core downloads 289 KB compressed (from 326); the add-on 68 KB.
 
 ## What still ties the layers
 
-- **Module-level shader state.** The alpha-shadow switch, shadow albedo maps, gobo and IES textures and the material
-  texture buckets are set at module level when a scene builds (`ShaderBuilder.createSceneTextureNodes`), so two live
-  renderers in one process share them and the last build wins — run them one after the other. Fixing this is what
-  makes a capability, or a second view, safe to load beside a renderer.
-- **The core still carries capabilities:** pbrt and archives (`AssetLoader` → `PBRT/`), storage, the OCIO pipeline,
-  the physical sky (`EnvironmentManager` → `PhysicalSky`) and bidirectional / VCM (in `PathTracer` and Shade, compiled
-  out unless chosen). These are the next extractions, in roughly that order of size.
-- **Names the core knows:** the Compositor's list of denoiser outputs (`asvgf:output`, `nrd:output`, …) and the
-  `asvgf:reset` / `denoiser:reset` / `autoexposure:resetHistory` events the core emits. A capability should register
-  its output and listen for the core's restart signal instead.
+- **The core still carries capabilities:** the OCIO pipeline (3,800 lines), storage (3,000) and bidirectional /
+  VCM (1,400, plus code in `PathTracer` and Shade compiled out unless chosen). These are the next extractions.
+- **Settings are routed from one table** (`RenderSettings`), which still names viewer pieces (`denoisingManager`,
+  `stages.autoExposure`). Each layer should declare its own settings.

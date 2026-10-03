@@ -94,7 +94,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 - **`RenderPipeline.js`**: Orchestrates stage execution order with shared context and event bus
 - **`RenderStage.js`**: Base class for all rendering stages (replaces Three.js Pass pattern)
 - **`PipelineContext.js`**: Shared state, textures, and uniforms between stages
-- **`EventDispatcher.js`**: Loose coupling via events (e.g., `pathtracer:frameComplete`, `asvgf:reset`)
+- **`EventDispatcher.js`**: Loose coupling via events (e.g., `pathtracer:frameComplete`, `pipeline:historyReset`)
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
 **Execution order matters** - stages run sequentially:
@@ -245,12 +245,11 @@ Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M node
 ```js
 // PathTracer emitting events
 this.eventBus.emit('pathtracer:frameComplete', { frame, samples });
-this.eventBus.emit('asvgf:reset');
-this.eventBus.emit('tile:changed', { tileX, tileY });
+this.eventBus.emit('pipeline:historyReset');     // the core's restart signal, never a capability's name
 
 // ASVGF listening for events
 this.eventBus.on('pathtracer:frameComplete', this.handlePathTracerComplete.bind(this));
-this.eventBus.on('asvgf:reset', this.resetTemporalData.bind(this));
+this.eventBus.on('pipeline:historyReset', this.resetTemporalData.bind(this));
 ```
 
 ### Pipeline Context Texture Sharing
@@ -682,6 +681,9 @@ table one code value above zero and every render has a raised black floor.
 guarantees 16 sampled textures per stage.
 
 ### Physical sky (`Processor/PhysicalSky.js`, `Processor/AtmosphereModel.js`, `Processor/SunPosition.js`, `TSL/Atmosphere.js`, `TSL/EnvironmentCDF.js`, `TSL/Sun.js`)
+An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class
+`environmentManager.setProceduralSky( PhysicalSky )` installed — `PathTracerApp` installs it — and records
+`capability.missing` without one. The core's own sun shading (`TSL/Sun.js`) imports only `Processor/SolarLimb.js`.
 Environment mode `'procedural'` ("Physical Sky" in the app). Bruneton's Earth constants (Rayleigh from
 Bodhaine 1999, ozone, Ångström aerosols from turbidity), 16 spectral bins of 25 nm → CIE 1931 → linear
 Rec.709, baked on the GPU into a 1024×512 equirect in the engine's own mapping (row 0 = nadir).
@@ -987,6 +989,10 @@ overlay spinning on its last step with the File menu blocked. Drag-and-drop stil
 its own `finally`, so a failed drop shows only the console.
 
 ### Loading part of a scene archive
+Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which
+the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )` —
+`PathTracerApp` installs it. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
+add-on. The importer reads the loader's members through `this.loader`.
 A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
 subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - `assetLoader.inspectArchive( file )` lists the elements without retaining any of them.
@@ -1274,4 +1280,4 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag, for camera rays only (see Shader Data Access Pattern).
 13. **Partial storage uploads**: three.js uploads an attribute whole only when its `updateRanges` is empty — any pending `addUpdateRange` cuts a later `needsUpdate = true` down to that range. Full uploads therefore clear ranges first (`PathTracerStage._updateStorageBuffer`). Without that, the TLAS-leaf range a visibility patch leaves at load swallowed the refit that followed it (`refit-deform` read +16.6 %).
-14. **One renderer per process**: the alpha-shadow switch, shadow albedo maps, gobo and IES textures and the material texture buckets are module-level shader state, set when a scene builds (`ShaderBuilder.createSceneTextureNodes`). Two live renderers share them and the last build wins (`bench:node -- --core` renders the core after the full engine for that reason).
+14. **No module-level shader state**: a TSL function's body runs when its kernel *compiles* (often the first dispatch), not when the JS builds the graph, so a module variable is read from whichever renderer or stage set it last. Per-renderer resources (material buckets, shadow albedo maps, gobo/IES textures, the alpha-shadow switch) ride in the kernel's build context instead: `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in a function body (`TSL/SceneResources.js`). A kernel that reads them without the context throws. `bench:node -- --core` runs the core beside the full engine to hold this. Colour management stays page-wide by design (one OCIO runtime).

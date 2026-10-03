@@ -346,7 +346,7 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, and its entry point downloads about 20 % less. It takes the same options, loads the same files, and renders the same pixels.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky or archive reader, and its entry point downloads about 30 % less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -361,7 +361,27 @@ const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
 renderer.dispose();
 ```
 
-Only one renderer (core or full) should be alive in a page at a time: some shader state is shared between them.
+Add-ons install on it explicitly. The physical sky, for `environmentMode: 'procedural'`:
+
+```js
+import { PhysicalSky } from 'rayzee/addons/physical-sky';
+
+renderer.environmentManager.setProceduralSky(PhysicalSky);
+await renderer.environmentManager.setMode('procedural');
+```
+
+Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`).
+
+Scene archives (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
+
+```js
+import { ArchiveImporter } from 'rayzee/addons/archives';
+
+renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
+await renderer.loadFile(archiveFile);
+```
+
+Several renderers, core or full, can live in one page; they share only the colour configuration, which is page-wide.
 
 #### Loading Assets
 
