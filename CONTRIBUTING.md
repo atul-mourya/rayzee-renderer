@@ -1,154 +1,132 @@
-# Contributing to Rayzee Path Tracer
+# Contributing to Rayzee
 
-Thank you for your interest in contributing to Rayzee! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to Rayzee! This guide covers setup, conventions and how changes are
+checked. `CLAUDE.md` at the repository root is the detailed guide to the engine's architecture and its known traps.
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-- **Node.js** >= 20.11.1
-- **npm** or **yarn**
-- Modern browser with WebGPU support (Chrome 113+, Edge 113+)
-- Basic knowledge of JavaScript, React, and Three.js
-- Understanding of path tracing concepts (helpful but not required)
+- **Node.js** >= 20.19.0 and **npm** (the repo is an npm workspace with a `package-lock.json`)
+- A browser with WebGPU: Chrome or Edge 113+, Safari 18+, Firefox 141+
+- Basic knowledge of JavaScript, React and three.js; path tracing helps but is not required
 
 ### Development Setup
 
-1. **Fork and Clone**
+1. **Fork and clone**
    ```bash
    git clone https://github.com/YOUR_USERNAME/rayzee-renderer.git
    cd rayzee-renderer
    ```
 
-2. **Install Dependencies**
+2. **Install dependencies**
    ```bash
    npm install
    ```
 
-3. **Start Development Server**
+3. **Start the development server**
    ```bash
    npm run dev
    ```
 
-4. **Verify Setup**
-   - Open http://localhost:5173
-   - Load a model and verify rendering works
-   - Check browser console for errors
+4. **Verify the setup**: open http://localhost:5173, load a model, and check the console for errors.
 
-## 📝 Code Style and Conventions
+## 🗂 Repository Layout
 
-### JavaScript/React Style
+```
+rayzee/                   # The engine, published to npm as `rayzee`
+├── src/
+│   ├── RayzeeRenderer.js # The renderer core (`rayzee/core`)
+│   ├── PathTracerApp.js  # The viewer: denoisers, controls, gizmo, overlays, timeline
+│   ├── addons/           # Optional capabilities (physical sky, archives, bidirectional, colour, storage)
+│   ├── integrators/      # Alternative light-transport integrators (bidirectional / VCM)
+│   ├── Stages/           # Pipeline stages (path tracer, denoisers, compositor)
+│   ├── TSL/              # TSL shader modules and wavefront kernels
+│   ├── Processor/        # Scene building: BVH, textures, geometry, loaders
+│   ├── managers/         # Sub-managers (uniforms, materials, environment, camera, lights, …)
+│   └── Pipeline/         # RenderPipeline, RenderStage, PipelineContext
+└── README.md             # The package's API reference
+app/                      # The React UI
+└── src/
+    ├── components/       # React components (ui/ and layout/)
+    ├── hooks/            # Custom hooks
+    ├── lib/              # Engine integration (appProxy, EngineAdapter, sessions, colour)
+    ├── store.js          # Zustand stores
+    └── utils/
+bench/                    # Headless-GPU regression bench (bench/README.md)
+tests/                    # Vitest: unit/ and gpu/ (GPU tests run on Dawn in Node)
+docs/                     # Architecture notes (see docs/CORE_AND_ADDONS.md for the engine's layers)
+```
 
-- **Indentation**: Use tabs (as per existing codebase)
-- **Semicolons**: Always use semicolons
-- **Quotes**: Single quotes for strings, double quotes for JSX attributes
-- **Function Declarations**: Use function declarations for named functions
-- **Arrow Functions**: Use for callbacks and inline functions
-- **Destructuring**: Prefer destructuring for props and state
+The engine has three layers: the **renderer core**, **add-ons**, and the **viewer** built on both. Viewer code never
+goes into the core; see `docs/CORE_AND_ADDONS.md`.
 
-### Component Structure
+## 📝 Code Style
+
+The style is enforced by ESLint (`eslint-config-mdcs`, the three.js style): tabs, semicolons, and spaces inside
+parentheses and brackets. Run `npm run lint-fix` rather than formatting by hand.
+
+- **Components**: `const ComponentName = ( { prop1, prop2 } ) => { … }`, as the rest of the app does
+- **React Compiler**: the app is compiled with it — avoid manual `useMemo` / `useCallback` / `React.memo`
+- **Engine state from the UI**: change render parameters through the store's handlers, which reach the engine with
+  `getApp()` from `@/lib/appProxy`
+- **Comments**: short; explain why, not what
 
 ```jsx
-// Good component structure
-import { useState, useEffect, useCallback } from 'react';
-import { SomeIcon } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { useStore } from '@/store';
 
-const ComponentName = ({ prop1, prop2 }) => {
-	
-	// Hooks first
-	const [localState, setLocalState] = useState(null);
-	const storeValue = useStore(state => state.value);
-	
-	// Callbacks and handlers
-	const handleClick = useCallback(() => {
-		// Handle click
-	}, []);
-	
-	// Effects
-	useEffect(() => {
-		// Effect logic
-	}, []);
-	
+const ComponentName = ( { label } ) => {
+
+	const [ open, setOpen ] = useState( false );
+	const value = useStore( ( state ) => state.value );
+
+	useEffect( () => {
+
+		// …
+
+	}, [ value ] );
+
 	return (
-		<div className="component-container">
-			{/* Component JSX */}
-		</div>
+		<button className="px-2 text-sm" onClick={() => setOpen( ! open )}>
+			{label}
+		</button>
 	);
-	
+
 };
 
 export default ComponentName;
 ```
 
-### Naming Conventions
+### Naming
 
 - **Components**: PascalCase (`PathTracerTab`, `ResultsViewport`)
-- **Files**: PascalCase for components, camelCase for utilities
+- **Files**: PascalCase for components and classes, camelCase for utilities
 - **Functions**: camelCase (`handleClick`, `processModel`)
-- **Constants**: UPPER_SNAKE_CASE (`DEFAULT_STATE`, `SUPPORTED_FORMATS`)
-- **CSS Classes**: kebab-case with Tailwind utility classes
+- **Constants**: UPPER_SNAKE_CASE (`ENGINE_DEFAULTS`, `SUPPORTED_FORMATS`)
 
-### File Organization
+## 🧪 Testing
 
-```
-src/
-├── components/           # React components
-│   ├── ui/              # Reusable UI components
-│   └── layout/          # Layout-specific components
-├── core/                # Core path tracing engine
-│   ├── PathTracerApp.js # Main application class
-│   ├── Stages/          # Rendering pipeline stages
-│   ├── TSL/             # TSL shader modules
-│   └── Processor/       # Asset processing
-├── hooks/              # Custom React hooks
-├── store/              # Zustand stores
-├── utils/              # Utility functions
-└── assets/             # Static assets
-```
+Before submitting a PR:
 
-## 🧪 Testing Requirements
+- `npm run lint` — no errors
+- `npm test` — unit tests and the GPU tests (`tests/gpu/`, run on the real GPU through Dawn; skipped on CI, but a
+  workstation without a WebGPU adapter fails them)
+- **Rendering changes**: `npm run bench:quality` compares every bench scene with its reference image, and
+  `npm run bench:ab -- main` is the performance gate. The bench's references are specific to one machine; run
+  `npm run bench:bless` once on a new one. See `bench/README.md`
+- **Engine core changes**: `npm run bench:node -- --core` renders every bench scene with the renderer core and the
+  full engine and requires them to match byte for byte
+- **UI changes**: load a model and an HDRI, check the controls you touched, and watch the console
 
-### Manual Testing Checklist
-
-Before submitting a PR, ensure:
-
-- [ ] **Basic Functionality**: App loads without errors
-- [ ] **Model Loading**: Can load GLB/GLTF files via drag-drop and file picker
-- [ ] **Environment Loading**: HDRI environments load correctly
-- [ ] **Path Tracing**: Rendering works with progressive improvement
-- [ ] **UI Interactions**: All controls respond properly
-- [ ] **Results System**: Can save and view rendered images
-- [ ] **Cross-browser**: Test in Chrome, Firefox, Safari, Edge
-- [ ] **Performance**: No significant performance regressions
-
-### Code Quality
-
-- **ESLint**: Run `npm run lint` - no errors allowed
-- **TypeScript**: If using TypeScript, no type errors
-- **Console Logs**: Remove debug logs before submitting
-- **Memory Leaks**: Ensure proper cleanup of Three.js objects
+Remove debug logs, and dispose every GPU resource and listener a change creates.
 
 ## 🔄 Pull Request Process
 
-### Before Submitting
-
-1. **Create Feature Branch**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-2. **Make Changes**
-   - Follow code style guidelines
-   - Add comments for complex logic
-   - Update documentation if needed
-
-3. **Test Thoroughly**
-   - Manual testing checklist
-   - Cross-browser verification
-   - Performance impact assessment
-
-4. **Commit** following the conventions below.
+1. **Branch** from `main`, named by change type: `feat/…`, `fix/…`, `refactor/…`, `docs/…`.
+2. **Make the change**, updating `CLAUDE.md`, `rayzee/README.md` or `docs/` when behaviour or API changes.
+3. **Test** as above.
+4. **Commit** following the conventions below, and open the PR — the template lists what to fill in.
 
 ### Commit & PR conventions
 
@@ -167,142 +145,40 @@ nothing — a default setting, a mode preset, a render profile, light units, a s
 bench's reference images — needs a `BREAKING CHANGE:` footer saying how default renders change, so the release is a
 new major version. `tests/unit/constants/pixelDefaults.test.js` and `npm run bench:bless` both flag such a change.
 
-### PR Template
+### Review
 
-When creating a PR, include:
+- No checks run automatically on a pull request: run lint and the tests yourself. The release workflow
+  (`.github/workflows/release.yaml`) runs lint, the engine build and the tests on every push to `main`, then
+  publishes with semantic-release — so a merge to `main` is a release.
+- At least one maintainer reviews, and tests rendering changes.
+- PRs are merged with a merge commit.
 
-```markdown
-## Description
-Brief description of changes and motivation.
+## 🐛 Issues
 
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Performance improvement
-- [ ] Documentation update
-- [ ] Code refactoring
-
-## Testing
-- [ ] Manual testing completed
-- [ ] Cross-browser testing
-- [ ] Performance impact assessed
-
-## Screenshots/Videos
-If applicable, add screenshots or videos demonstrating the changes.
-
-## Checklist
-- [ ] Code follows project style guidelines
-- [ ] Self-review completed
-- [ ] Comments added for complex code
-- [ ] Documentation updated
-```
-
-### Review Process
-
-1. **Automated Checks**: PRs must pass ESLint and build checks
-2. **Code Review**: At least one maintainer review required
-3. **Testing**: Reviewer will test functionality
-4. **Merge**: Squash and merge after approval
-
-## 🐛 Issue Reporting
-
-### Bug Reports
-
-Use the bug report template:
-
-```markdown
-**Bug Description**
-Clear description of the bug.
-
-**Steps to Reproduce**
-1. Go to '...'
-2. Click on '...'
-3. See error
-
-**Expected Behavior**
-What should happen.
-
-**Actual Behavior**
-What actually happens.
-
-**Environment**
-- OS: [e.g., Windows 10, macOS 13.2]
-- Browser: [e.g., Chrome 120, Firefox 119]
-- GPU: [e.g., NVIDIA RTX 3080, AMD RX 6800]
-
-**Screenshots**
-If applicable, add screenshots.
-
-**Console Errors**
-Include any console error messages.
-```
-
-### Feature Requests
-
-```markdown
-**Feature Description**
-Clear description of the proposed feature.
-
-**Use Case**
-Why is this feature needed?
-
-**Proposed Implementation**
-If you have ideas on implementation.
-
-**Additional Context**
-Any other relevant information.
-```
+Use the issue forms on GitHub (bug report, feature request). For a rendering bug, include the browser, OS and GPU,
+the model if you can share it, and any console errors. Questions go to
+[Discussions](https://github.com/atul-mourya/rayzee-renderer/discussions).
 
 ## 🎯 Contribution Areas
 
-### High-Priority Areas
-
-- **Performance Optimization**: Shader improvements, memory management
-- **File Format Support**: New 3D model formats, texture formats
-- **Denoising**: Algorithm improvements, parameter tuning
-- **UI/UX**: Better user experience, accessibility improvements
-- **Documentation**: Tutorials, API documentation, examples
-
-### Low-Priority Areas
-
-- **New Rendering Features**: Volumetrics, subsurface scattering
-- **Platform Support**: Mobile optimization, Safari WebGPU compatibility
-- **Export Features**: Animation support, batch operations
-- **Advanced Materials**: Procedural materials, material editor
+- **Performance**: shader and memory work, measured with the bench
+- **Formats**: model and texture formats, scene importers
+- **Denoising and picture**: denoiser quality, tone mapping, colour
+- **Add-ons**: new capabilities built on the renderer core — skies, integrators, importers
+- **UI/UX and accessibility**
+- **Documentation**: tutorials, examples, API reference
 
 ## 📚 Resources
 
-### Learning Materials
-
-- **Three.js Documentation**: https://threejs.org/docs/
-- **Path Tracing Theory**: "Physically Based Rendering" by Pharr, Jakob, Humphreys
+- **three.js**: https://threejs.org/docs/ (and `llms.txt` in this repo for the TSL reference)
+- **Path tracing**: *Physically Based Rendering* by Pharr, Jakob and Humphreys
 - **WebGPU**: https://webgpufundamentals.org/
-- **React Best Practices**: https://react.dev/
-
-### Useful Tools
-
-- **Browser DevTools**: For debugging and profiling
-- **Chrome DevTools GPU panel**: WebGPU debugging and profiling
+- **React**: https://react.dev/
 
 ## 🤝 Community Guidelines
 
-- **Be Respectful**: Treat all contributors with respect
-- **Be Patient**: Remember that everyone is learning
-- **Be Helpful**: Help others learn and contribute
-- **Stay On Topic**: Keep discussions focused on the project
-- **Follow Code of Conduct**: Professional and inclusive behavior
-
-## ❓ Getting Help
-
-- **Discussions**: Use GitHub Discussions for questions
-- **Issues**: Create issues for bugs and feature requests
-- **Documentation**: Check existing documentation first
-- **Code Examples**: Look at similar implementations in the codebase
+Be respectful, patient and helpful, and keep discussions on topic. See the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## 📄 License
 
 By contributing to Rayzee, you agree that your contributions will be licensed under the MIT License.
-
----
-
-Thank you for contributing to Rayzee! Your efforts help make real-time path tracing accessible to everyone. 🚀
