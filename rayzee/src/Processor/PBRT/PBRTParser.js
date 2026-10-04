@@ -111,6 +111,7 @@ export class PBRTParser {
 			instanceCount: 0,
 			skippedInstances: 0,
 			objects: new Map(),
+			media: new Map(),
 			transformTimes: { start: 0, end: 1 },
 			hasMotion: false,
 			warnings: []
@@ -122,14 +123,13 @@ export class PBRTParser {
 		this.activeTransform = BOTH;
 		this._ctmSource = null;
 		this._ctmValue = null;
-		this.state = { material: null, areaLight: null, reverseOrientation: false };
+		this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null };
 		this.attributeStack = [];
 		this.transformStack = [];
 		this.coordSystems = new Map();
 
 		// Object capture (ObjectBegin/End)
 		this.currentObject = null; // name being captured, or null
-		this.objectBeginCTM = null; // CTM frame at ObjectBegin
 
 		// Directory stack for resolving nested Includes
 		this.dirStack = [ '' ];
@@ -275,7 +275,8 @@ export class PBRTParser {
 			activeTransform: this.activeTransform,
 			material: this.state.material,
 			areaLight: this.state.areaLight,
-			reverseOrientation: this.state.reverseOrientation
+			reverseOrientation: this.state.reverseOrientation,
+			interior: this.state.interior
 		} );
 
 	}
@@ -287,7 +288,7 @@ export class PBRTParser {
 		this.ctm = s.ctm;
 		this.ctmEnd = s.ctmEnd;
 		this.activeTransform = s.activeTransform;
-		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation };
+		this.state = { material: s.material, areaLight: s.areaLight, reverseOrientation: s.reverseOrientation, interior: s.interior };
 
 	}
 
@@ -624,7 +625,7 @@ export class PBRTParser {
 				this.ctm = M.identity();
 				this.ctmEnd = null;
 				this.activeTransform = BOTH;
-				this.state = { material: null, areaLight: null, reverseOrientation: false };
+				this.state = { material: null, areaLight: null, reverseOrientation: false, interior: null };
 				break;
 			case 'WorldEnd': break; // legacy v3
 
@@ -673,14 +674,21 @@ export class PBRTParser {
 
 			case 'MediumInterface': {
 
-				// up to two strings (inside/outside)
-				if ( this._peek() && this._peek().type === TokenType.STRING ) this._next();
-				if ( this._peek() && this._peek().type === TokenType.STRING ) this._next();
+				// "interior" "exterior"; a single name is both. Only the interior colours a shape.
+				const interior = this._peek()?.type === TokenType.STRING ? this._next().value : '';
+				if ( this._peek()?.type === TokenType.STRING ) this._next();
+				this.state.interior = interior || null;
 				break;
 
 			}
 
-			case 'MakeNamedMedium': this._skipNamedAndParams(); break;
+			case 'MakeNamedMedium': {
+
+				const mediumName = this._expectString( 'MakeNamedMedium name' );
+				this.ir.media.set( mediumName, this._parseParams() );
+				break;
+
+			}
 
 			// ── materials ──
 			case 'Material': {
@@ -748,13 +756,18 @@ export class PBRTParser {
 
 				const type = this._expectString( 'Shape type' );
 				const params = this._parseParams();
+				// pbrt: a shape of alpha 0 is never hit, and an area light on it emits nothing.
+				const alpha = params.alpha;
+				if ( alpha?.type === 'float' && alpha.value[ 0 ] <= 0 ) break;
+				if ( alpha && ! ( alpha.type === 'float' && alpha.value[ 0 ] >= 1 ) ) this._warnOnce( 'alpha', 'shape "alpha" between 0 and 1, or as a texture, is not supported — drawn opaque' );
 				const shape = {
 					type,
 					params,
 					ctm: this._ctmSnapshot(),
 					material: this.state.material,
 					areaLight: this.state.areaLight,
-					reverseOrientation: this.state.reverseOrientation
+					reverseOrientation: this.state.reverseOrientation,
+					interior: this.state.interior
 				};
 				const end = this.currentObject === null ? this._ctmEndSnapshot() : null;
 				if ( end ) shape.ctmEnd = end;
@@ -776,7 +789,6 @@ export class PBRTParser {
 				// pbrt implicitly pushes graphics state.
 				this._pushGraphicsState();
 				this.currentObject = objName;
-				this.objectBeginCTM = this.ctm.slice();
 				if ( ! this.ir.objects.has( objName ) ) this.ir.objects.set( objName, [] );
 				break;
 
@@ -785,7 +797,6 @@ export class PBRTParser {
 			case 'ObjectEnd': {
 
 				this.currentObject = null;
-				this.objectBeginCTM = null;
 				this._popGraphicsState();
 				break;
 
@@ -824,8 +835,8 @@ export class PBRTParser {
 
 		if ( this.currentObject !== null ) {
 
-			// Store relative to the ObjectBegin frame so instances can re-place it.
-			shape.relativeCTM = M.multiply( M.invert( this.objectBeginCTM ), shape.ctm );
+			// pbrt keeps a template shape's whole transform and puts each placement's on top of it,
+			// whatever the transform was at ObjectBegin (kroken defines under one and places at Identity).
 			this.ir.objects.get( this.currentObject ).push( shape );
 
 		} else {
@@ -880,7 +891,7 @@ export class PBRTParser {
 
 		if ( ! this.instanceIncludes || this.currentObject !== null ) return null;
 		if ( this.ctmEnd !== null || this.activeTransform !== BOTH || this.state.areaLight ) return null;
-		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}`;
+		return `${dir}\0${path}\0${this._stateId( this.state.material )}\0${this.state.reverseOrientation}\0${this.state.interior}`;
 
 	}
 
@@ -902,7 +913,8 @@ export class PBRTParser {
 			attributes: this.attributeStack.length,
 			transforms: this.transformStack.length,
 			material: this.state.material,
-			reverseOrientation: this.state.reverseOrientation
+			reverseOrientation: this.state.reverseOrientation,
+			interior: this.state.interior
 		};
 
 	}
@@ -912,7 +924,8 @@ export class PBRTParser {
 		return this._effects === before.effects && this.ctmEnd === null && this.activeTransform === BOTH &&
 			sameMatrix( this.ctm, before.ctm ) && this.attributeStack.length === before.attributes &&
 			this.transformStack.length === before.transforms && this.state.material === before.material &&
-			this.state.areaLight === null && this.state.reverseOrientation === before.reverseOrientation;
+			this.state.areaLight === null && this.state.reverseOrientation === before.reverseOrientation &&
+			this.state.interior === before.interior;
 
 	}
 

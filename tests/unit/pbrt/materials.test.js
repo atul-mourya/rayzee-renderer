@@ -26,6 +26,40 @@ describe( 'pbrt materials', () => {
 
 	} );
 
+	it( 'makes a coated conductor a metal under a clear coat, pbrt\'s roughnesses defaulting to 0', async () => {
+
+		const gold = await buildMaterial( { type: 'coatedconductor', params: {
+			'conductor.eta': param( 'spectrum', 'metal-Au-eta' ), 'conductor.k': param( 'spectrum', 'metal-Au-k' ),
+			'conductor.roughness': param( 'float', 0.01 ), 'interface.roughness': param( 'float', 0.1 )
+		} }, ctx );
+		expect( gold.metalness ).toBe( 1 );
+		expect( gold.clearcoat ).toBe( 1 );
+		expect( gold.color.toArray() ).toEqual( [ 1.0, 0.78, 0.34 ] );
+		expect( gold.roughness ** 4 ).toBeCloseTo( 0.01, 6 );
+		expect( gold.clearcoatRoughness ** 4 ).toBeCloseTo( 0.1, 6 );
+
+		const black = await buildMaterial( { type: 'coatedconductor', params: { reflectance: param( 'rgb', 0.04, 0.04, 0.04 ) } }, ctx );
+		expect( black.color.toArray() ).toEqual( [ 0.04, 0.04, 0.04 ] );
+		expect( [ black.roughness, black.clearcoatRoughness ] ).toEqual( [ 0, 0 ] );
+
+	} );
+
+	it( 'takes a textured roughness as the texture\'s mean', async () => {
+
+		const withMean = { ...ctx, floatTextureMean: async ( name ) => ( name === 'gloss' ? 0.25 : null ) };
+		const mat = await buildMaterial( { type: 'coateddiffuse', params: { roughness: param( 'texture', 'gloss' ) } }, withMean );
+		expect( mat.clearcoatRoughness ** 4 ).toBeCloseTo( 0.25, 6 );
+
+	} );
+
+	it( 'keeps a diffuse-transmission surface reflecting R while T passes through', async () => {
+
+		const rug = await buildMaterial( { type: 'diffusetransmission', params: { reflectance: param( 'rgb', 0.85, 0.85, 0.85 ), transmittance: param( 'rgb', 0.15, 0.15, 0.15 ) } }, ctx );
+		expect( rug.transmission ).toBeCloseTo( 0.15, 6 );
+		expect( rug.color.r * ( 1 - rug.transmission ) ).toBeCloseTo( 0.85, 6 );
+
+	} );
+
 	it( 'makes diffuse Lambertian', async () => {
 
 		const mat = await buildMaterial( { type: 'diffuse', params: { reflectance: param( 'rgb', 0.2, 0.4, 0.6 ) } }, ctx );

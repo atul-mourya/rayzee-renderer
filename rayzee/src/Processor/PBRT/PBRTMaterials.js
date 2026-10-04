@@ -65,6 +65,13 @@ export function pString( params, name, dflt ) {
 
 }
 
+export function pBool( params, name, dflt ) {
+
+	const v = params[ name ]?.value?.[ 0 ];
+	return v === undefined ? dflt : v === true || v === 'true';
+
+}
+
 /**
  * Resolve a spectrum/color/float-valued parameter to an RGB triple and/or a
  * texture. Returns `{ rgb, texture }` — exactly one is typically non-null.
@@ -144,26 +151,74 @@ function namedMetalKey( s ) {
 
 }
 
+// A float parameter's value, or a float texture's mean (`ctx.floatTextureMean`); null when absent or unreadable.
+async function floatOrMean( params, name, ctx ) {
+
+	const p = params[ name ];
+	if ( ! p ) return null;
+	if ( typeof p.value[ 0 ] === 'number' ) return p.value[ 0 ];
+	if ( p.type === 'texture' ) return ( await ctx.floatTextureMean?.( p.value[ 0 ] ) ) ?? null;
+	return null;
+
+}
+
 /**
- * The engine's roughness for pbrt's `roughness` or anisotropic `uroughness`/`vroughness` (their α averaged). pbrt-v4
- * takes GGX α = √roughness (`remaproughness`, the default) or α = roughness; the engine's GGX takes α = roughness².
- * Passing pbrt's number through made `remaproughness false` 0.1 an α of 0.01, a near mirror. `dflt` is the engine's.
+ * The engine's roughness for pbrt's `roughness` or anisotropic `uroughness`/`vroughness` (their α averaged), under
+ * `prefix` for a layer (`conductor.`, `interface.`); a textured roughness counts as its mean. pbrt-v4 takes GGX
+ * α = √roughness (`remaproughness`, the default) or α = roughness; the engine's GGX takes α = roughness². Passing
+ * pbrt's number through made `remaproughness false` 0.1 an α of 0.01, a near mirror. `dflt` is the engine's.
  */
-function resolveRoughness( params, dflt ) {
+async function resolveRoughness( params, dflt, ctx, prefix = '' ) {
 
 	const remap = params.remaproughness?.value?.[ 0 ];
 	const alpha = ( r ) => ( remap === false || remap === 'false' ? r : Math.sqrt( Math.max( r, 0 ) ) );
 	let a = null;
-	if ( params.roughness && typeof params.roughness.value[ 0 ] === 'number' ) a = alpha( params.roughness.value[ 0 ] );
+	const r = await floatOrMean( params, `${prefix}roughness`, ctx );
+	if ( r !== null ) a = alpha( r );
 	else {
 
-		const u = pFloat( params, 'uroughness', null );
-		const v = pFloat( params, 'vroughness', null );
+		const u = await floatOrMean( params, `${prefix}uroughness`, ctx );
+		const v = await floatOrMean( params, `${prefix}vroughness`, ctx );
 		if ( u !== null ) a = v !== null ? ( alpha( u ) + alpha( v ) ) / 2 : alpha( u );
 
 	}
 
 	return a === null ? dflt : Math.sqrt( Math.max( a, 0 ) );
+
+}
+
+// A conductor's colour: `reflectance`, else normal-incidence Fresnel of `eta`/`k` (under `prefix` for a coated
+// conductor). pbrt's default is copper.
+async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setColor ) {
+
+	const refl = await resolveSpectrum( params, 'reflectance', ctx, null );
+	const etaP = params[ `${prefix}eta` ], kP = params[ `${prefix}k` ];
+	const etaNamed = etaP && etaP.type === 'spectrum' && typeof etaP.value[ 0 ] === 'string';
+
+	if ( refl.rgb || refl.texture ) {
+
+		applyAlbedo( refl );
+
+	} else if ( etaP && kP && ! etaNamed ) {
+
+		// Normal-incidence reflectance from complex IOR: ((η-1)²+k²)/((η+1)²+k²).
+		const eta = ( await resolveSpectrum( params, `${prefix}eta`, ctx, [ 0.2, 0.92, 1.1 ] ) ).rgb;
+		const k = ( await resolveSpectrum( params, `${prefix}k`, ctx, [ 3.9, 2.45, 2.14 ] ) ).rgb;
+		const fr = ( n, kk ) => ( ( n - 1 ) ** 2 + kk ** 2 ) / ( ( n + 1 ) ** 2 + kk ** 2 );
+		setColor( [ fr( eta[ 0 ], k[ 0 ] ), fr( eta[ 1 ], k[ 1 ] ), fr( eta[ 2 ], k[ 2 ] ) ] );
+
+	} else if ( etaP ) {
+
+		// Named conductor spectrum → metal albedo table.
+		setColor( ( await resolveSpectrum( params, `${prefix}eta`, ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
+
+	} else {
+
+		setColor( METAL_ALBEDO.cu ); // pbrt-v4 default conductor is copper
+
+	}
+
+	mat.metalness = 1;
 
 }
 
@@ -216,35 +271,19 @@ export async function buildMaterial( def, ctx ) {
 		case 'conductor':
 		case 'metal': {
 
-			const refl = await resolveSpectrum( params, 'reflectance', ctx, null );
-			const etaP = params.eta, kP = params.k;
-			const etaNamed = etaP && etaP.type === 'spectrum' && typeof etaP.value[ 0 ] === 'string';
+			await applyConductorColor( mat, params, ctx, '', applyAlbedo, setColor );
+			mat.roughness = await resolveRoughness( params, 0.1, ctx );
+			break;
 
-			if ( refl.rgb || refl.texture ) {
+		}
 
-				applyAlbedo( refl );
+		case 'coatedconductor': {
 
-			} else if ( etaP && kP && ! etaNamed ) {
-
-				// Normal-incidence reflectance from complex IOR: ((η-1)²+k²)/((η+1)²+k²).
-				const eta = ( await resolveSpectrum( params, 'eta', ctx, [ 0.2, 0.92, 1.1 ] ) ).rgb;
-				const k = ( await resolveSpectrum( params, 'k', ctx, [ 3.9, 2.45, 2.14 ] ) ).rgb;
-				const fr = ( n, kk ) => ( ( n - 1 ) ** 2 + kk ** 2 ) / ( ( n + 1 ) ** 2 + kk ** 2 );
-				setColor( [ fr( eta[ 0 ], k[ 0 ] ), fr( eta[ 1 ], k[ 1 ] ), fr( eta[ 2 ], k[ 2 ] ) ] );
-
-			} else if ( etaP ) {
-
-				// Named conductor spectrum → metal albedo table.
-				setColor( ( await resolveSpectrum( params, 'eta', ctx, DEFAULT_METAL ) ).rgb || DEFAULT_METAL );
-
-			} else {
-
-				setColor( METAL_ALBEDO.cu ); // pbrt-v4 default conductor is copper
-
-			}
-
-			mat.metalness = 1;
-			mat.roughness = resolveRoughness( params, 0.1 );
+			// A conductor under a dielectric coat; pbrt's roughnesses default to 0 for both.
+			await applyConductorColor( mat, params, ctx, 'conductor.', applyAlbedo, setColor );
+			mat.roughness = await resolveRoughness( params, 0, ctx, 'conductor.' );
+			mat.clearcoat = 1;
+			mat.clearcoatRoughness = await resolveRoughness( params, 0, ctx, 'interface.' );
 			break;
 
 		}
@@ -256,7 +295,7 @@ export async function buildMaterial( def, ctx ) {
 			mat.metalness = 0;
 			mat.color.setRGB( 1, 1, 1 );
 			mat.ior = pFloat( params, 'eta', 1.5 );
-			mat.roughness = resolveRoughness( params, 0 );
+			mat.roughness = await resolveRoughness( params, 0, ctx );
 			mat.thickness = type === 'thindielectric' ? 0 : pFloat( params, 'thickness', 0 );
 			break;
 
@@ -268,16 +307,22 @@ export async function buildMaterial( def, ctx ) {
 			mat.roughness = 0.6;
 			mat.metalness = 0;
 			mat.clearcoat = 1;
-			mat.clearcoatRoughness = resolveRoughness( params, 0 );
+			mat.clearcoatRoughness = await resolveRoughness( params, 0, ctx );
 			break;
 
 		}
 
 		case 'diffusetransmission': {
 
+			// pbrt reflects R and transmits T, both diffusely and both × `scale`. The engine's transmission takes its
+			// share from the base lobe, so the base is R / (1 − T) to keep reflecting R; what passes goes on unscattered.
+			const scale = pFloat( params, 'scale', 1 );
 			const trans = await resolveSpectrum( params, 'transmittance', ctx, [ 0.25, 0.25, 0.25 ] );
-			applyAlbedo( await resolveSpectrum( params, 'reflectance', ctx, [ 0.25, 0.25, 0.25 ] ) );
-			mat.transmission = trans.rgb ? ( trans.rgb[ 0 ] + trans.rgb[ 1 ] + trans.rgb[ 2 ] ) / 3 : 0.5;
+			const t = Math.min( 0.99, trans.rgb ? Math.min( 1, scale * ( trans.rgb[ 0 ] + trans.rgb[ 1 ] + trans.rgb[ 2 ] ) / 3 ) : 0.5 );
+			const refl = await resolveSpectrum( params, 'reflectance', ctx, [ 0.25, 0.25, 0.25 ] );
+			const base = ( v ) => Math.min( 1, Math.min( 1, scale * v ) / ( 1 - t ) );
+			applyAlbedo( { texture: refl.texture, rgb: refl.rgb ? refl.rgb.map( base ) : null } );
+			mat.transmission = t;
 			mat.roughness = 1;
 			mat.ior = 1.0;
 			break;
@@ -305,13 +350,18 @@ export async function buildMaterial( def, ctx ) {
 			// instead of warning per shape. Recursive: mix-in-mix terminates as the
 			// chain bottoms out at a non-mix.
 			const matNames = params.materials?.value || [];
-			const t = Math.max( 0, Math.min( 1, pFloat( params, 'amount', 0.5 ) ) );
+			let t = Math.max( 0, Math.min( 1, pFloat( params, 'amount', 0.5 ) ) );
 			const defA = matNames[ 0 ] ? ctx.namedMaterials?.get( matNames[ 0 ] ) : null;
 			const defB = matNames[ 1 ] ? ctx.namedMaterials?.get( matNames[ 1 ] ) : null;
 
 			if ( defA && defB ) {
 
 				const [ matA, matB ] = await Promise.all( [ buildMaterial( defA, ctx ), buildMaterial( defB, ctx ) ] );
+				// pbrt picks the second material where a texture amount says so; its colours are baked by that
+				// texture (`ctx.bakeMaterialMix`) and the rest is weighed by the texture's mean.
+				const amountP = params.amount;
+				const baked = amountP?.type === 'texture' ? await ctx.bakeMaterialMix?.( matA, matB, amountP.value[ 0 ] ) : null;
+				if ( baked ) t = baked.mean;
 				const lerp = ( a, b ) => a * ( 1 - t ) + b * t;
 				mat.color.lerpColors( matA.color, matB.color, t );
 				mat.roughness = lerp( matA.roughness, matB.roughness );
@@ -323,8 +373,16 @@ export async function buildMaterial( def, ctx ) {
 				mat.clearcoatRoughness = lerp( matA.clearcoatRoughness ?? 0, matB.clearcoatRoughness ?? 0 );
 				mat.emissive.lerpColors( matA.emissive, matB.emissive, t );
 				mat.emissiveIntensity = lerp( matA.emissiveIntensity ?? 0, matB.emissiveIntensity ?? 0 );
-				// Maps can't be lerped — pick the dominant side.
+				// Maps can't be lerped — pick the dominant side, unless the amount's own texture baked them together.
 				mat.map = ( t < 0.5 ? matA.map : matB.map ) || null;
+				mat.normalMap = ( t < 0.5 ? matA.normalMap : matB.normalMap ) || null;
+				if ( baked?.texture ) {
+
+					mat.map = baked.texture;
+					mat.color.setRGB( 1, 1, 1 );
+
+				}
+
 				break;
 
 			}
@@ -356,6 +414,9 @@ export async function buildMaterial( def, ctx ) {
 		}
 
 	}
+
+	const normalMap = pString( params, 'normalmap', null );
+	if ( normalMap && ctx.resolveNormalMap ) mat.normalMap = await ctx.resolveNormalMap( normalMap );
 
 	mat.roughness = Math.max( 0, Math.min( 1, mat.roughness ) );
 	return mat;

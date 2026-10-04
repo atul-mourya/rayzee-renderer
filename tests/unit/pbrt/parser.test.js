@@ -170,6 +170,60 @@ describe( 'PBRT parser', () => {
 
 	} );
 
+	it( 'keeps a template shape\'s whole transform, with the placement\'s on top (kroken\'s cushions)', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			AttributeBegin
+				Translate 300 0 -400
+				ObjectBegin "cushion"
+					Shape "sphere" "float radius" 1
+				ObjectEnd
+				Identity
+				ObjectInstance "cushion"
+			AttributeEnd
+		` );
+
+		const [ shape ] = ir.objects.get( 'cushion' );
+		const placement = ir.instances.get( 'cushion' ).matrices;
+		expect( Array.from( placement.slice( 12, 15 ) ) ).toEqual( [ 0, 0, 0 ] );
+		expect( Array.from( ( shape.relativeCTM ?? shape.ctm ).slice( 12, 15 ) ) ).toEqual( [ 300, 0, - 400 ] );
+
+	} );
+
+	it( 'drops a shape of alpha 0, which pbrt neither hits nor lets emit', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			AttributeBegin
+				AreaLightSource "diffuse" "blackbody L" 6500
+				Shape "sphere" "float radius" 90 "float alpha" 0
+			AttributeEnd
+			Shape "sphere" "float radius" 1 "float alpha" 1
+		` );
+
+		expect( ir.shapes ).toHaveLength( 1 );
+		expect( ir.warnings.some( ( w ) => /alpha/.test( w ) ) ).toBe( false );
+
+	} );
+
+	it( 'records named media and the interior medium of each shape', async () => {
+
+		const ir = await parsePBRT( `
+			WorldBegin
+			MakeNamedMedium "red" "string type" "homogeneous" "rgb sigma_a" [ 0.002 0.025 0.025 ] "float scale" 200
+			AttributeBegin
+				MediumInterface "red" ""
+				Shape "sphere"
+			AttributeEnd
+			Shape "sphere"
+		` );
+
+		expect( ir.media.get( 'red' ).scale.value[ 0 ] ).toBe( 200 );
+		expect( ir.shapes.map( ( s ) => s.interior ) ).toEqual( [ 'red', null ] );
+
+	} );
+
 	it( 'warns on unknown directives without desyncing', async () => {
 
 		const ir = await parsePBRT( `

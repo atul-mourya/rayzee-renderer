@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, Float32BufferAttribute, Matrix4, Mesh, OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, OrthographicCamera, PerspectiveCamera, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/Processor/PBRT/index.js';
 
 const enc = new TextEncoder();
@@ -148,8 +148,8 @@ describe( 'PBRT scene builder', () => {
 			Material "mix" "string materials" [ "Red" "Blue" ] "float amount" 0.8
 			Shape "sphere" "float radius" 1
 		`;
-		// Stub image: any non-null Texture so the texture path resolves
-		const stubTex = { isTexture: true };
+		// Stub image: any Texture so the texture path resolves; each named texture gets a copy sharing its image.
+		const stubTex = new Texture();
 		const r = await loadPBRTScene( {
 			vfs: { 'scene.pbrt': enc2.encode( scene ), 'wood.png': enc2.encode( 'x' ) },
 			plyParser: () => null,
@@ -161,7 +161,7 @@ describe( 'PBRT scene builder', () => {
 		expect( spheres ).toHaveLength( 3 );
 
 		// 1) scale texture: map = inner texture, color = scale tint (0.5, 0.2, 0.1)
-		expect( spheres[ 0 ].material.map ).toBe( stubTex );
+		expect( spheres[ 0 ].material.map.source ).toBe( stubTex.source );
 		expect( spheres[ 0 ].material.color.r ).toBeCloseTo( 0.5, 5 );
 		expect( spheres[ 0 ].material.color.g ).toBeCloseTo( 0.2, 5 );
 		expect( spheres[ 0 ].material.color.b ).toBeCloseTo( 0.1, 5 );
@@ -192,11 +192,7 @@ describe( 'PBRT scene builder', () => {
 			Shape "trianglemesh" "point3 P" [ 0 0 0 1 0 0 0 1 0 ] "point2 uv" [ 0 0 1 0 0 1 ] "integer indices" [ 0 1 2 ]
 			Shape "trianglemesh" "point3 P" [ 0 0 0 1 0 0 0 1 0 ] "integer indices" [ 0 1 2 ]
 		`;
-		const stubTex = { isTexture: true, clone() {
-
-			return { ...this };
-
-		} };
+		const stubTex = new Texture();
 		const r = await loadPBRTScene( {
 			vfs: { 'scene.pbrt': enc2.encode( scene ), 'wood.png': enc2.encode( 'x' ) },
 			plyParser: () => null,
@@ -209,7 +205,7 @@ describe( 'PBRT scene builder', () => {
 		const noUV = meshes.find( m => ! m.geometry.getAttribute( 'uv' ) );
 
 		// The UV'd mesh keeps its texture; the UV-less one drops it on a clone.
-		expect( withUV.material.map ).toBe( stubTex );
+		expect( withUV.material.map.source ).toBe( stubTex.source );
 		expect( noUV.material.map ).toBe( null );
 		// Distinct instances — the shared material was not mutated.
 		expect( noUV.material ).not.toBe( withUV.material );
@@ -727,6 +723,174 @@ describe( 'PBRT scene builder', () => {
 			expect( triangleCount ).toBe( 6 );
 
 		} );
+
+	} );
+
+} );
+
+describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
+
+	const meshesOf = async ( scene, files = {}, images = {} ) => {
+
+		const vfs = { 'scene.pbrt': enc.encode( 'WorldBegin\n' + scene ) };
+		for ( const name of Object.keys( files ) ) vfs[ name ] = enc.encode( files[ name ] );
+		for ( const name of Object.keys( images ) ) vfs[ name ] = enc.encode( 'x' );
+		const result = await loadPBRTScene( buildArgs( { vfs, imageFromBytes: async ( bytes, name ) => images[ name ] ?? null } ) );
+		return { ...result, meshes: result.group.children.filter( ( c ) => c instanceof Mesh ) };
+
+	};
+
+	const TRI = '"point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]';
+	// One row, `values` 0–255 in every channel.
+	const image = ( ...values ) => new DataTexture( new Uint8Array( values.flatMap( ( v ) => [ v, v, v, 255 ] ) ), values.length, 1 );
+
+	it( 'lights only the side a one-sided area light faces: its vertex normals', async () => {
+
+		const { meshes } = await meshesOf( `
+			AreaLightSource "diffuse" "rgb L" [ 1 1 1 ]
+			Shape "trianglemesh" ${TRI} "normal N" [ 0 0 -1  0 0 -1  0 0 -1 ]
+		` );
+
+		expect( meshes[ 0 ].material.side ).toBe( FrontSide );
+		// Wound +z, normals −z: the triangle is turned to face its normals.
+		expect( Array.from( meshes[ 0 ].geometry.index.array ) ).toEqual( [ 0, 2, 1 ] );
+
+	} );
+
+	it( 'turns a one-sided light without normals over for ReverseOrientation, and leaves a twosided one alone', async () => {
+
+		const { meshes } = await meshesOf( `
+			AttributeBegin
+				AreaLightSource "diffuse" "rgb L" [ 1 1 1 ]
+				ReverseOrientation
+				Shape "trianglemesh" ${TRI}
+			AttributeEnd
+			AttributeBegin
+				AreaLightSource "diffuse" "rgb L" [ 1 1 1 ] "bool twosided" true
+				Shape "trianglemesh" ${TRI} "normal N" [ 0 0 -1  0 0 -1  0 0 -1 ]
+			AttributeEnd
+		` );
+
+		expect( Array.from( meshes[ 0 ].geometry.index.array ) ).toEqual( [ 0, 2, 1 ] );
+		expect( meshes[ 0 ].material.side ).toBe( FrontSide );
+		expect( Array.from( meshes[ 1 ].geometry.index.array ) ).toEqual( [ 0, 1, 2 ] );
+		expect( meshes[ 1 ].material.side ).toBe( DoubleSide );
+
+	} );
+
+	it( 'places a template defined under a transform where pbrt does', async () => {
+
+		const { meshes, group } = await meshesOf( `
+			AttributeBegin
+				Translate 300 0 -400
+				ObjectBegin "cushion"
+					Shape "trianglemesh" ${TRI}
+				ObjectEnd
+				Identity
+				ObjectInstance "cushion"
+			AttributeEnd
+		` );
+
+		const placed = meshes.length ? meshes[ 0 ] : group.children.find( ( c ) => c.isInstancedMesh );
+		placed.updateMatrixWorld( true );
+		const m = new Matrix4();
+		if ( placed.isInstancedMesh ) placed.getMatrixAt( 0, m );
+		else m.copy( placed.matrixWorld );
+		expect( new Vector3().setFromMatrixPosition( m ).toArray() ).toEqual( [ 300, 0, - 400 ] );
+
+	} );
+
+	it( 'fills glass with its interior medium as attenuation', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMedium "red" "string type" "homogeneous" "rgb sigma_a" [ 0.002 0.025 0.025 ] "rgb sigma_s" [ 0.002 0.025 0.025 ] "float scale" 200
+			Material "dielectric"
+			AttributeBegin
+				MediumInterface "red" ""
+				Shape "trianglemesh" ${TRI}
+			AttributeEnd
+			Shape "trianglemesh" ${TRI}
+		` );
+
+		// σt = (0.8, 10, 10) per unit: distance 1/10, colour e^(−σt/10).
+		const red = meshes[ 0 ].material;
+		expect( red.attenuationDistance ).toBeCloseTo( 0.1, 6 );
+		expect( red.attenuationColor.toArray().map( ( v ) => + v.toFixed( 4 ) ) ).toEqual( [ + Math.exp( - 0.08 ).toFixed( 4 ), + Math.exp( - 1 ).toFixed( 4 ), + Math.exp( - 1 ).toFixed( 4 ) ] );
+		expect( meshes[ 1 ].material.attenuationDistance ).toBe( Infinity );
+
+	} );
+
+	it( 'bakes a mix texture whose amount is an image', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			Texture "dots" "float" "imagemap" "string filename" "dots.png"
+			Texture "paint" "spectrum" "mix" "texture amount" "dots" "rgb tex1" [ 1 0 0 ] "rgb tex2" [ 0 0 1 ]
+			Material "diffuse" "texture reflectance" "paint"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'dots.png': image( 0, 255 ) } );
+
+		expect( warnings.filter( ( w ) => /mix/.test( w ) ) ).toEqual( [] );
+		const map = meshes[ 0 ].material.map;
+		expect( Array.from( map.image.data ) ).toEqual( [ 255, 0, 0, 255, 0, 0, 255, 255 ] );
+		expect( meshes[ 0 ].material.color.toArray() ).toEqual( [ 1, 1, 1 ] );
+
+	} );
+
+	it( 'clamps each albedo before mixing it, as pbrt does (kroken\'s floor: an image scaled 4×)', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "concrete" "spectrum" "imagemap" "string filename" "c.png" "float scale" 4
+			Texture "floor" "spectrum" "mix" "texture tex1" "concrete" "rgb tex2" [ 0 0 0 ] "float amount" 0.5
+			Material "diffuse" "texture reflectance" "floor"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'c.png': image( 255 ) } );
+
+		// min( 4 · 1, 1 ) / 2 = 0.5 linear, not min( 4 / 2, 1 ) = 1.
+		expect( meshes[ 0 ].material.map.image.data[ 0 ] ).toBe( 188 );
+
+	} );
+
+	it( 'bakes a scale texture whose multiplier is an image (kroken\'s bricks: colour × dirt)', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "dirt" "float" "imagemap" "string filename" "dirt.png"
+			Texture "color" "spectrum" "imagemap" "string filename" "color.png"
+			Texture "muddled" "spectrum" "scale" "texture tex" "color" "texture scale" "dirt"
+			Material "diffuse" "texture reflectance" "muddled"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'dirt.png': image( 255, 0 ), 'color.png': image( 255, 255 ) } );
+
+		expect( Array.from( meshes[ 0 ].material.map.image.data ) ).toEqual( [ 255, 255, 255, 255, 0, 0, 0, 255 ] );
+
+	} );
+
+	it( 'gives an image texture pbrt\'s uv scale and offset', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "wood" "spectrum" "imagemap" "string filename" "w.png" "float uscale" 5 "float vscale" 2 "float udelta" 0.25
+			Material "diffuse" "texture reflectance" "wood"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'w.png': image( 128 ) } );
+
+		const map = meshes[ 0 ].material.map;
+		expect( [ map.repeat.x, map.repeat.y, map.offset.x, map.offset.y ] ).toEqual( [ 5, 2, 0.25, 0 ] );
+
+	} );
+
+	it( 'bakes a mix material\'s colours by its amount texture and weighs the rest by its mean', async () => {
+
+		const { meshes } = await meshesOf( `
+			MakeNamedMaterial "blue" "string type" "coateddiffuse" "rgb reflectance" [ 0 0 1 ]
+			MakeNamedMaterial "white" "string type" "diffuse" "rgb reflectance" [ 1 1 1 ]
+			Texture "dots" "float" "imagemap" "string filename" "dots.png"
+			Material "mix" "string materials" [ "blue" "white" ] "texture amount" "dots"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'dots.png': image( 0, 0, 0, 255 ) } );
+
+		const material = meshes[ 0 ].material;
+		expect( Array.from( material.map.image.data.slice( 0, 4 ) ) ).toEqual( [ 0, 0, 255, 255 ] );
+		expect( Array.from( material.map.image.data.slice( 12, 16 ) ) ).toEqual( [ 255, 255, 255, 255 ] );
+		expect( material.clearcoat ).toBeCloseTo( 0.75, 6 );
 
 	} );
 

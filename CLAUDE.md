@@ -1075,7 +1075,23 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   back with the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in
   the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
   photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
-  brought to luminance 1 as pbrt does. `.pfm` images load (`Processor/PBRT/PFM.js`).
+  brought to luminance 1 as pbrt does. `.pfm` images load (`Processor/PBRT/PFM.js`). An area light is one-sided
+  unless `"bool twosided"`: `FrontSide`, its triangles rewound to face the vertex normals, or turned over by
+  ReverseOrientation where it has none (`_facingEmission`). A shape of `"float alpha" 0` is dropped: pbrt never hits it
+  and an area light on it emits nothing (kroken's 90-unit "sun" sphere).
+- **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
+  never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
+  places them at `Identity`; the relative reading put all of them at the world origin.
+- **Materials.** `coatedconductor` is a metal under a clear coat (pbrt's roughnesses default to 0); a textured
+  roughness counts as its mean; `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
+  map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
+  attenuation from σa + σs (no scattering inside). `diffusetransmission` keeps reflecting R: base R / (1 − T).
+  Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
+  their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
+  material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
+  input is clamped to [0, 1] before mixing, as pbrt clamps an albedo. An imagemap's `uscale`/`vscale`/`udelta`/
+  `vdelta` become the texture's repeat/offset; `planar`/`spherical`/`cylindrical` mappings and `directionmix` are not
+  supported. Bump `PBRT_BUILD_REVISION` with any of this, or a stored graph of the old build comes back.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from

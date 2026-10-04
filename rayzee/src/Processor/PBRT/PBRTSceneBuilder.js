@@ -19,10 +19,12 @@ import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
-	SRGBColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
-	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight
+	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
+	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
+	RepeatWrapping
 } from 'three';
-import { buildMaterial, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
+import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
+import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve } from './PBRTCurves.js';
@@ -105,7 +107,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 6;
+export const PBRT_BUILD_REVISION = 7;
 
 function samePlacements( a, b ) {
 
@@ -142,6 +144,115 @@ function pixelsFromDrawable( image, srgb ) {
 		return null;
 
 	}
+
+}
+
+/**
+ * A texture's pixels, for baking: `{ data, width, height, channels: 4, topDown, float }`, or null where this runtime
+ * cannot read them. A DataTexture's rows run bottom up unless it says flipY; a drawable's top down.
+ */
+function texturePixels( texture ) {
+
+	const image = texture?.image;
+	if ( ! image ) return null;
+
+	if ( ArrayBuffer.isView( image.data ) ) {
+
+		return { data: image.data, width: image.width, height: image.height, channels: 4, topDown: texture.flipY === true, float: ! ( image.data instanceof Uint8Array || image.data instanceof Uint8ClampedArray ) };
+
+	}
+
+	const { width, height } = image;
+	if ( ! width || ! height ) return null;
+	let canvas = null;
+	if ( typeof OffscreenCanvas !== 'undefined' ) canvas = new OffscreenCanvas( width, height );
+	else if ( typeof document !== 'undefined' ) {
+
+		canvas = document.createElement( 'canvas' );
+		canvas.width = width;
+		canvas.height = height;
+
+	} else return null;
+
+	try {
+
+		const ctx = canvas.getContext( '2d', { willReadFrequently: true } );
+		if ( ! ctx ) return null;
+		ctx.drawImage( image, 0, 0 );
+		return { data: ctx.getImageData( 0, 0, width, height ).data, width, height, channels: 4, topDown: true, float: false };
+
+	} catch {
+
+		return null;
+
+	}
+
+}
+
+// pbrt's `encoding`: an 8-bit image is sRGB unless it says "linear" (or "gamma g").
+function decoderFor( params ) {
+
+	const encoding = pString( params, 'encoding', 'sRGB' );
+	if ( encoding === 'linear' ) return ( v ) => v;
+	const gamma = /^gamma\s+([\d.]+)$/.exec( encoding );
+	return gamma ? ( v ) => v ** Number( gamma[ 1 ] ) : srgbToLinear;
+
+}
+
+function uvMapping( params ) {
+
+	return {
+		su: pFloat( params, 'uscale', 1 ), sv: pFloat( params, 'vscale', 1 ),
+		du: pFloat( params, 'udelta', 0 ), dv: pFloat( params, 'vdelta', 0 )
+	};
+
+}
+
+function setMapping( texture, { su, sv, du, dv } ) {
+
+	texture.repeat.set( su, sv );
+	texture.offset.set( du, dv );
+
+}
+
+/**
+ * A float image (EXR, HDR, PFM) as 8-bit, the only texel a material map takes here: sRGB-encoded for a colour,
+ * linear for data. Any other texture comes back as it is.
+ */
+function eightBit( texture, { srgb } ) {
+
+	const data = texture?.image?.data;
+	if ( ! ArrayBuffer.isView( data ) || data instanceof Uint8Array || data instanceof Uint8ClampedArray ) return texture;
+
+	const { width, height } = texture.image;
+	const bytes = new Uint8Array( width * height * 4 );
+	const channels = data.length / ( width * height );
+	for ( let i = 0; i < width * height; i ++ ) for ( let c = 0; c < 4; c ++ ) {
+
+		const v = c < channels ? Math.min( 1, Math.max( 0, data[ i * channels + c ] ) ) : 1;
+		bytes[ i * 4 + c ] = Math.round( 255 * ( srgb && c < 3 ? linearToSRGB( v ) : v ) );
+
+	}
+
+	const out = new DataTexture( bytes, width, height, RGBAFormat );
+	out.flipY = texture.flipY;
+	out.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
+	out.wrapS = out.wrapT = RepeatWrapping;
+	// No archive path: a stored scene keeps these bytes rather than decoding the float file again.
+	out.needsUpdate = true;
+	return out;
+
+}
+
+// A baked image as a texture: sRGB bytes, bottom row first, in the uv mapping it was baked in.
+function bakedTexture( { data, width, height, mapping } ) {
+
+	const texture = new DataTexture( data, width, height, RGBAFormat );
+	texture.colorSpace = SRGBColorSpace;
+	texture.wrapS = texture.wrapT = RepeatWrapping;
+	setMapping( texture, mapping );
+	texture.needsUpdate = true;
+	return texture;
 
 }
 
@@ -202,6 +313,9 @@ export class PBRTSceneBuilder {
 		this._materialBySignature = new Map(); // visual signature -> shared MeshPhysicalMaterial
 		this._noUVMaterials = new Map(); // textured material -> its map-less clone
 		this._plyCache = new Map(); // filename -> Promise<BufferGeometry|null>
+		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
+		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
+		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 
 	}
 
@@ -944,6 +1058,58 @@ export class PBRTSceneBuilder {
 
 	async _createGeometry( shape ) {
 
+		const geometry = await this._shapeGeometry( shape );
+		return geometry && shape.areaLight && ! pBool( shape.areaLight.params, 'twosided', false ) ? this._facingEmission( shape, geometry ) : geometry;
+
+	}
+
+	/**
+	 * A one-sided area light emits on the side pbrt's surface normal faces: towards the vertex normals where the shape
+	 * has them, else its winding's side, turned over by ReverseOrientation. The engine emits from a triangle's front,
+	 * so a triangle facing the other way is rewound, on an index of its own: the geometry may be shared.
+	 * @private
+	 */
+	_facingEmission( shape, geometry ) {
+
+		const normal = geometry.userData.pbrtNormals ? geometry.getAttribute( 'normal' ) : null;
+		if ( ! normal && ! shape.reverseOrientation ) return geometry;
+
+		const p = geometry.getAttribute( 'position' ).array, n = normal?.array;
+		const src = geometry.index?.array ?? null;
+		const count = src ? src.length : geometry.getAttribute( 'position' ).count;
+		const index = new Uint32Array( count );
+		let flipped = 0;
+
+		for ( let t = 0; t + 2 < count; t += 3 ) {
+
+			const a = src ? src[ t ] : t, b = src ? src[ t + 1 ] : t + 1, c = src ? src[ t + 2 ] : t + 2;
+			let flip = shape.reverseOrientation;
+			if ( n ) {
+
+				const ux = p[ b * 3 ] - p[ a * 3 ], uy = p[ b * 3 + 1 ] - p[ a * 3 + 1 ], uz = p[ b * 3 + 2 ] - p[ a * 3 + 2 ];
+				const vx = p[ c * 3 ] - p[ a * 3 ], vy = p[ c * 3 + 1 ] - p[ a * 3 + 1 ], vz = p[ c * 3 + 2 ] - p[ a * 3 + 2 ];
+				const sx = n[ a * 3 ] + n[ b * 3 ] + n[ c * 3 ], sy = n[ a * 3 + 1 ] + n[ b * 3 + 1 ] + n[ c * 3 + 1 ], sz = n[ a * 3 + 2 ] + n[ b * 3 + 2 ] + n[ c * 3 + 2 ];
+				flip = ( uy * vz - uz * vy ) * sx + ( uz * vx - ux * vz ) * sy + ( ux * vy - uy * vx ) * sz < 0;
+
+			}
+
+			index[ t ] = a;
+			index[ t + 1 ] = flip ? c : b;
+			index[ t + 2 ] = flip ? b : c;
+			if ( flip ) flipped ++;
+
+		}
+
+		if ( flipped === 0 ) return geometry;
+		const oriented = new BufferGeometry();
+		for ( const name in geometry.attributes ) oriented.setAttribute( name, geometry.getAttribute( name ) );
+		oriented.setIndex( new Uint32BufferAttribute( index, 1 ) );
+		return oriented;
+
+	}
+
+	_shapeGeometry( shape ) {
+
 		switch ( shape.type ) {
 
 			case 'trianglemesh': return this._triangleMesh( shape.params );
@@ -974,7 +1140,12 @@ export class PBRTSceneBuilder {
 		geo.setAttribute( 'position', new Float32BufferAttribute( float32( P ), 3 ) );
 
 		const N = params.N?.value;
-		if ( N && N.length === P.length ) geo.setAttribute( 'normal', new Float32BufferAttribute( float32( N ), 3 ) );
+		if ( N && N.length === P.length ) {
+
+			geo.setAttribute( 'normal', new Float32BufferAttribute( float32( N ), 3 ) );
+			geo.userData.pbrtNormals = true;
+
+		}
 
 		const uv = ( params.uv || params.st )?.value;
 		if ( uv && uv.length === ( P.length / 3 ) * 2 ) geo.setAttribute( 'uv', new Float32BufferAttribute( float32( uv ), 2 ) );
@@ -1111,7 +1282,8 @@ export class PBRTSceneBuilder {
 
 			}
 
-			if ( ! geo.getAttribute( 'normal' ) ) geo.computeVertexNormals();
+			if ( geo.getAttribute( 'normal' ) ) geo.userData.pbrtNormals = true;
+			else geo.computeVertexNormals();
 			return geo;
 
 		} catch ( e ) {
@@ -1164,6 +1336,13 @@ export class PBRTSceneBuilder {
 
 	async _getMaterial( shape ) {
 
+		const material = await this._surfaceMaterial( shape );
+		return shape.interior ? this._inMedium( material, shape.interior ) : material;
+
+	}
+
+	async _surfaceMaterial( shape ) {
+
 		// Cache by (material, areaLight) object identity — many shapes share a
 		// NamedMaterial, so this dedupes the build + texture-decode work. Nested
 		// Map keys on the object refs directly (null is a valid key).
@@ -1177,11 +1356,7 @@ export class PBRTSceneBuilder {
 
 		if ( byLight.has( shape.areaLight ) ) return byLight.get( shape.areaLight );
 
-		const ctx = {
-			resolveNamedTexture: ( n ) => this._resolveNamedTexture( n ),
-			namedMaterials: this.ir.namedMaterials,
-			warn: ( m ) => this.warn( m )
-		};
+		const ctx = this._materialContext();
 		const material = await buildMaterial( shape.material, ctx );
 
 		if ( shape.areaLight ) await this._applyAreaLight( material, shape.areaLight, ctx );
@@ -1189,6 +1364,75 @@ export class PBRTSceneBuilder {
 		const shared = this._dedupeMaterial( material );
 		byLight.set( shape.areaLight, shared );
 		return shared;
+
+	}
+
+	_materialContext() {
+
+		return this._ctx ??= {
+			resolveNamedTexture: ( n ) => this._resolveNamedTexture( n ),
+			namedMaterials: this.ir.namedMaterials,
+			warn: ( m ) => this.warn( m ),
+			floatTextureMean: async ( n ) => {
+
+				const term = await this._bakeTerm( n, 1 );
+				return term ? ( term.layer ? layerMean( term.layer ) : term.rgb[ 0 ] ) : null;
+
+			},
+			bakeMaterialMix: ( a, b, amountName ) => this._bakeMaterialMix( a, b, amountName ),
+			resolveNormalMap: async ( filename ) => {
+
+				const image = await this._image( filename );
+				if ( ! image ) return null;
+				const texture = eightBit( image, { srgb: false } );
+				const normalMap = texture === image ? image.clone() : texture;
+				normalMap.colorSpace = NoColorSpace;
+				return normalMap;
+
+			}
+		};
+
+	}
+
+	/**
+	 * Glass filled with a homogeneous medium: what passes straight through it (σt = σa + σs) becomes Beer–Lambert
+	 * attenuation, since the engine traces no scattering inside a solid. A medium in an opaque shape changes nothing.
+	 * @private
+	 */
+	async _inMedium( material, name ) {
+
+		if ( ! ( material.transmission > 0 ) ) return material;
+		let byName = this._mediumMaterials.get( material );
+		if ( ! byName ) this._mediumMaterials.set( material, byName = new Map() );
+		if ( ! byName.has( name ) ) byName.set( name, this._attenuated( material, name ) );
+		return byName.get( name );
+
+	}
+
+	async _attenuated( material, name ) {
+
+		const params = this.ir.media?.get( name );
+		const type = params && pString( params, 'type', '' );
+		if ( type !== 'homogeneous' ) {
+
+			this.warn( params ? `medium "${name}" (${type}) is not supported — "${name}" glass left clear` : `medium "${name}" not defined` );
+			return material;
+
+		}
+
+		if ( params.preset ) this.warn( `medium preset "${pString( params, 'preset', '' )}" is not supported — using sigma_a / sigma_s` );
+		const ctx = this._materialContext();
+		const a = ( await resolveSpectrum( params, 'sigma_a', ctx, [ 1, 1, 1 ] ) ).rgb;
+		const s = ( await resolveSpectrum( params, 'sigma_s', ctx, [ 1, 1, 1 ] ) ).rgb;
+		const scale = pFloat( params, 'scale', 1 );
+		const sigma = [ 0, 1, 2 ].map( ( c ) => ( a[ c ] + s[ c ] ) * scale );
+		const max = Math.max( ...sigma );
+		if ( ! ( max > 0 ) ) return material;
+
+		const variant = material.clone();
+		variant.attenuationDistance = 1 / max;
+		variant.attenuationColor.setRGB( ...sigma.map( ( v ) => Math.exp( - v / max ) ) );
+		return this._dedupeMaterial( variant );
 
 	}
 
@@ -1203,7 +1447,8 @@ export class PBRTSceneBuilder {
 		const key = `${c.r},${c.g},${c.b}|${e.r},${e.g},${e.b}|${material.emissiveIntensity}|` +
 			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.metalness}|` +
 			`${material.transmission}|${material.ior}|${material.thickness}|` +
-			`${material.clearcoat}|${material.clearcoatRoughness}|${material.opacity}|${material.side}`;
+			`${material.clearcoat}|${material.clearcoatRoughness}|${material.opacity}|${material.side}|` +
+			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}`;
 
 		const existing = this._materialBySignature.get( key );
 		if ( existing ) return existing;
@@ -1218,6 +1463,8 @@ export class PBRTSceneBuilder {
 		const scale = pFloat( areaLight.params, 'scale', 1 );
 		material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
 		material.emissiveIntensity = scale;
+		// pbrt's diffuse area light is one-sided unless "twosided" (_facingEmission turns the triangles).
+		material.side = pBool( areaLight.params, 'twosided', false ) ? DoubleSide : FrontSide;
 
 	}
 
@@ -1234,22 +1481,11 @@ export class PBRTSceneBuilder {
 
 		} else if ( def.class === 'imagemap' ) {
 
-			const filename = pString( def.params, 'filename', null );
-			if ( filename ) {
+			result = await this._imageMapTexture( name, def );
 
-				try {
+		} else if ( def.class === 'mix' ) {
 
-					const tex = await this.resolveImage( filename );
-					if ( tex ) result = { texture: tex };
-					else this.warn( `image not found for texture "${name}": ${filename}` );
-
-				} catch ( e ) {
-
-					this.warn( `failed to load texture "${name}" (${filename}): ${e.message}` );
-
-				}
-
-			}
+			result = await this._mixTexture( name, def );
 
 		} else if ( def.class === 'constant' ) {
 
@@ -1286,6 +1522,176 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/** A file's image, decoded once however many named textures read it. @private */
+	_image( filename ) {
+
+		let pending = this._imageCache.get( filename );
+		if ( ! pending ) {
+
+			pending = Promise.resolve().then( () => this.resolveImage( filename ) ).catch( ( e ) => {
+
+				this.warn( `failed to load image ${filename}: ${e.message}` );
+				return null;
+
+			} );
+			this._imageCache.set( filename, pending );
+
+		}
+
+		return pending;
+
+	}
+
+	/**
+	 * An image texture with pbrt's uv mapping; its `scale` becomes the material's tint, except that a scale above 1 or
+	 * `invert` is baked (pbrt clamps an albedo per texel, which a tint cannot).
+	 * @private
+	 */
+	async _imageMapTexture( name, def ) {
+
+		const filename = pString( def.params, 'filename', null );
+		if ( ! filename ) return null;
+		const image = await this._image( filename );
+		if ( ! image ) {
+
+			this.warn( `image not found for texture "${name}": ${filename}` );
+			return null;
+
+		}
+
+		const mapping = pString( def.params, 'mapping', 'uv' );
+		if ( mapping !== 'uv' ) this.warn( `texture "${name}": "${mapping}" mapping is not supported — using the mesh's uv` );
+
+		const scale = pFloat( def.params, 'scale', 1 );
+		if ( scale > 1 || pBool( def.params, 'invert', false ) ) {
+
+			const term = await this._bakeTerm( name, 3 );
+			const baked = term?.layer && bake( [ { ...term, clamp: true } ], ( [ v ] ) => v );
+			if ( baked ) return { texture: bakedTexture( baked ) };
+			this.warn( `texture "${name}": its scale or invert could not be baked here — ignored` );
+
+		}
+
+		const color = eightBit( image, { srgb: true } );
+		const texture = color === image ? image.clone() : color;
+		setMapping( texture, uvMapping( def.params ) );
+		texture.needsUpdate = true;
+		return scale < 1 ? { texture, constant: [ scale, scale, scale ] } : { texture };
+
+	}
+
+	/** pbrt's `mix` texture, ( 1 − amount ) · tex1 + amount · tex2, baked when any of the three is an image. @private */
+	async _mixTexture( name, def ) {
+
+		const [ a, b, amount ] = await Promise.all( [
+			this._paramTerm( def.params, 'tex1', 3, [ 0, 0, 0 ] ),
+			this._paramTerm( def.params, 'tex2', 3, [ 1, 1, 1 ] ),
+			this._paramTerm( def.params, 'amount', 1, [ 0.5, 0.5, 0.5 ] )
+		] );
+		if ( ! a || ! b || ! amount ) {
+
+			this.warn( `texture "${name}": a "mix" input could not be read here` );
+			return null;
+
+		}
+
+		const unit = ( rgb ) => rgb.map( ( v ) => Math.min( 1, Math.max( 0, v ) ) );
+		const baked = bake( [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf );
+		return baked ? { texture: bakedTexture( baked ) } : { constant: mixOf( [ unit( a.rgb ), unit( b.rgb ), amount.rgb ] ) };
+
+	}
+
+	/** A texture parameter as a bake term: a constant, or the texture it names. @private */
+	async _paramTerm( params, key, channels, dflt ) {
+
+		const p = params[ key ];
+		if ( ! p ) return { rgb: dflt };
+		if ( p.type === 'texture' ) return this._bakeTerm( p.value[ 0 ], channels );
+		const rgb = ( await resolveSpectrum( params, key, this._materialContext(), dflt ) ).rgb;
+		return rgb ? { rgb } : null;
+
+	}
+
+	/**
+	 * A named texture as pbrt evaluates it, for baking: `{ rgb }` for a constant, `{ layer, tint? }` for an image;
+	 * null when it cannot be read in this runtime.
+	 * @param {string} name
+	 * @param {number} channels - 1 where it is read as a float texture (its red channel), 3 as a spectrum
+	 * @private
+	 */
+	_bakeTerm( name, channels ) {
+
+		const key = `${name}\0${channels}`;
+		let pending = this._termCache.get( key );
+		if ( ! pending ) this._termCache.set( key, pending = this._createBakeTerm( name, channels ) );
+		return pending;
+
+	}
+
+	async _createBakeTerm( name, channels ) {
+
+		const def = this.ir.namedTextures.get( name );
+		if ( def?.class === 'imagemap' ) {
+
+			if ( pString( def.params, 'mapping', 'uv' ) !== 'uv' ) return null;
+			const filename = pString( def.params, 'filename', null );
+			const pixels = texturePixels( filename && await this._image( filename ) );
+			if ( ! pixels ) return null;
+			return { layer: makeLayer( pixels, {
+				channels, decode: pixels.float ? null : decoderFor( def.params ),
+				scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: uvMapping( def.params )
+			} ) };
+
+		}
+
+		const resolved = await this._resolveNamedTexture( name );
+		if ( ! resolved ) return null;
+		if ( ! resolved.texture ) return resolved.constant ? { rgb: resolved.constant } : null;
+		const layer = this._textureLayer( resolved.texture, channels );
+		return layer ? { layer, tint: resolved.constant ?? null } : null;
+
+	}
+
+	// A texture already built for a material (an image or a bake) as a layer, in the mapping it carries.
+	_textureLayer( texture, channels ) {
+
+		const pixels = texturePixels( texture );
+		if ( ! pixels ) return null;
+		const srgb = ! pixels.float && texture.colorSpace === SRGBColorSpace;
+		return makeLayer( pixels, {
+			channels, decode: pixels.float ? null : ( srgb ? srgbToLinear : ( v ) => v ),
+			mapping: { su: texture.repeat.x, sv: texture.repeat.y, du: texture.offset.x, dv: texture.offset.y }
+		} );
+
+	}
+
+	/**
+	 * A mix material whose amount is a texture: its two materials' colours (map × colour) baked by that texture, and
+	 * the texture's mean to weigh everything else. Null when nothing here can read it.
+	 * @private
+	 */
+	async _bakeMaterialMix( matA, matB, amountName ) {
+
+		const amount = await this._bakeTerm( amountName, 1 );
+		if ( ! amount ) return null;
+		if ( ! amount.layer ) return { mean: amount.rgb[ 0 ], texture: null };
+
+		const mean = layerMean( amount.layer );
+		const term = ( m ) => {
+
+			if ( ! m.map ) return { rgb: m.color.toArray(), clamp: true };
+			const layer = this._textureLayer( m.map, 3 );
+			return layer && { layer, tint: m.color.toArray(), clamp: true };
+
+		};
+
+		const a = term( matA ), b = term( matB );
+		if ( ! a || ! b ) return { mean, texture: null };
+		const baked = bake( [ a, b, amount ], mixOf );
+		return { mean, texture: baked ? bakedTexture( baked ) : null };
+
+	}
+
 	_colorFromLikeNamedMaterial( texName ) {
 
 		for ( const candidate of materialNameCandidates( texName ) ) {
@@ -1307,6 +1713,25 @@ export class PBRTSceneBuilder {
 	async _resolveScaleTexture( name, def ) {
 
 		// pbrt-v4 uses "tex" (the inner texture or constant) and "scale" (the multiplier).
+		if ( def.params.scale?.type === 'texture' ) {
+
+			// A texture multiplier (kroken's bricks: colour × dirt) is baked.
+			const [ inner, factor ] = await Promise.all( [
+				this._paramTerm( def.params, 'tex', 3, [ 1, 1, 1 ] ),
+				this._paramTerm( def.params, 'scale', 1, [ 1, 1, 1 ] )
+			] );
+			const product = ( [ a, f ] ) => [ a[ 0 ] * f[ 0 ], a[ 1 ] * f[ 0 ], a[ 2 ] * f[ 0 ] ];
+			if ( inner && factor ) {
+
+				const baked = bake( [ { ...inner, clamp: true }, factor ], product );
+				return baked ? { texture: bakedTexture( baked ) } : { constant: product( [ inner.rgb, factor.rgb ] ) };
+
+			}
+
+			this.warn( `texture "${name}": its "scale" texture could not be read here — ignored` );
+
+		}
+
 		const innerP = def.params.tex;
 		let inner = null;
 
