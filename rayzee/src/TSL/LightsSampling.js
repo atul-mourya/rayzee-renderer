@@ -776,38 +776,37 @@ export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material 
 
 } );
 
-// One shadow ray a hit: keeps one offered light with chance ∝ its unshadowed luminance × its kind's learned visibility,
-// traces only it and divides by that chance. `u` is rescaled at each offer.
+// Fewer shadow rays a hit (setting shadowRays). Each light kind offers its sample unshadowed; `variant`:
+//   'one' — keeps one with chance ∝ luminance × √(its kind's learned visibility), traced and divided by that chance;
+//   'two' — always traces the strongest as well, and picks one of the rest.
 const ONE_BELOW = 0.99999994;
 
-export const lightPick = ( u0, learned = null ) => {
+const slotOf = () => ( {
+	kind: int( 0 ).toVar(), weight: float( 0.0 ).toVar(), value: vec3( 0.0 ).toVar(),
+	origin: vec3( 0.0 ).toVar(), direction: vec3( 0.0, 1.0, 0.0 ).toVar(), distance: float( 0.0 ).toVar(),
+} );
+
+const FIELDS = [ 'kind', 'weight', 'value', 'origin', 'direction', 'distance' ];
+const assignSlot = ( slot, from ) => FIELDS.forEach( ( f ) => slot[ f ].assign( from[ f ] ) );
+
+// `learned` (LightVisibility.js) gives `share( kind )` and `record( kind, visible )`.
+export const lightPick = ( u0, learned = null, variant = 'one' ) => {
 
 	const u = float( u0 ).toVar();
-	const kind = int( 0 ).toVar();
 	const total = float( 0.0 ).toVar();
-	const weight = float( 0.0 ).toVar();
-	const value = vec3( 0.0 ).toVar();
-	const origin = vec3( 0.0 ).toVar();
-	const direction = vec3( 0.0, 1.0, 0.0 ).toVar();
-	const distance = float( 0.0 ).toVar();
+	const kept = slotOf();
+	const best = variant === 'two' ? slotOf() : null;
 
-	const offer = ( contribution, from, dir, maxDist, lightKind = 0 ) => {
+	const keep = ( c ) => {
 
-		const luminance = dot( contribution, REC709_LUMINANCE_COEFFICIENTS );
-		const w = ( learned ? luminance.mul( visibilityShare( learned.counters, learned.cell, lightKind ) ) : luminance ).toVar();
-		If( w.greaterThan( 0.0 ), () => {
+		If( c.weight.greaterThan( 0.0 ), () => {
 
-			total.addAssign( w );
-			const p = w.div( total ).toVar();
+			total.addAssign( c.weight );
+			const p = c.weight.div( total ).toVar();
 			If( u.lessThan( p ), () => {
 
 				u.assign( min( u.div( p ), ONE_BELOW ) );
-				kind.assign( int( lightKind ) );
-				weight.assign( w );
-				value.assign( contribution );
-				origin.assign( from );
-				direction.assign( dir );
-				distance.assign( maxDist );
+				assignSlot( kept, c );
 
 			} ).Else( () => {
 
@@ -819,14 +818,45 @@ export const lightPick = ( u0, learned = null ) => {
 
 	};
 
-	const resolve = ( visibility ) => {
+	const offer = ( contribution, from, dir, maxDist, lightKind = 0 ) => {
 
-		if ( learned ) recordVisibility( learned.counters, learned.cell, kind, visibility.greaterThan( 0.0 ) );
-		return value.mul( visibility ).mul( total.div( max( weight, 1e-30 ) ) );
+		const luminance = dot( contribution, REC709_LUMINANCE_COEFFICIENTS );
+		const c = {
+			kind: int( lightKind ), value: contribution, origin: from, direction: dir, distance: maxDist,
+			weight: ( learned ? luminance.mul( learned.share( lightKind ) ) : luminance ).toVar(),
+		};
+		if ( ! best ) return keep( c );
+
+		const better = c.weight.greaterThan( best.weight ).toVar();
+		const loser = Object.fromEntries( FIELDS.map( ( f ) => [ f, select( better, best[ f ], c[ f ] ).toVar() ] ) );
+		keep( loser );
+		If( better, () => assignSlot( best, c ) );
 
 	};
 
-	return { offer, total, origin, direction, distance, resolve };
+	// The direct light, tracing what the variant keeps through `shadow( origin, direction, distance )`.
+	const trace = ( shadow ) => {
+
+		const result = vec3( 0.0 ).toVar();
+		Loop( { start: int( 0 ), end: int( best ? 2 : 1 ), type: 'int', condition: '<' }, ( { i } ) => {
+
+			const isBest = best ? i.equal( int( 0 ) ) : tslBool( false );
+			const pickOf = ( f ) => ( best ? select( isBest, best[ f ], kept[ f ] ) : kept[ f ] );
+			const weight = pickOf( 'weight' ).toVar();
+			If( weight.greaterThan( 0.0 ), () => {
+
+				const visibility = shadow( pickOf( 'origin' ), pickOf( 'direction' ), pickOf( 'distance' ) ).toVar();
+				if ( learned ) learned.record( pickOf( 'kind' ), visibility.greaterThan( 0.0 ) );
+				result.addAssign( pickOf( 'value' ).mul( visibility ).mul( select( isBest, float( 1.0 ), total.div( weight ) ) ) );
+
+			} );
+
+		} );
+		return result;
+
+	};
+
+	return { offer, total, trace };
 
 };
 
@@ -836,7 +866,7 @@ export const lightPick = ( u0, learned = null ) => {
 
 // Optimized direct lighting function with importance-based sampling and better MIS. `throughSurfaces` (compile
 // time) adds light from behind a surface that passes it through diffusely; without it the code is exactly as before.
-const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
+const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 	// Surface hit data
 	hitPoint, hitNormal, geomNormal, material,
 	// View direction
@@ -870,7 +900,7 @@ const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
 	terminatorLift, facetNormal, terminatorCutoff,
 	// The physical sky's sun (Sun.js); its BSDF-sampled partner is the miss branch in ShadeKernel.
 	hasSun, sunDirection, sunRadiance, sunParams,
-	// oneRay: the caller's emitter sample, unshadowed, and the learned visibility (LightVisibility.js) at this point
+	// picked: the caller's emitter sample, unshadowed, and the learned visibility (LightVisibility.js) at this point
 	emissiveValue, emissiveOrigin, emissiveDirection, emissiveDistance,
 	visibilityCounters, visibilityCell,
 ] ) => {
@@ -940,8 +970,11 @@ const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
 	// rather than re-walking every light buffer to rebuild the same sum.
 	const neeTotalWeight = float( 0.0 ).toVar();
 
-	const pick = oneRay ? lightPick( getRandomSample1D( pixelCoord, int( 0 ), dimBase, rngState, resolution, frame ),
-		{ counters: visibilityCounters, cell: visibilityCell } ) : null;
+	const learned = picked ? {
+		share: ( kind ) => visibilityShare( visibilityCounters, visibilityCell, kind ),
+		record: ( kind, visible ) => recordVisibility( visibilityCounters, visibilityCell, kind, visible ),
+	} : null;
+	const pick = picked ? lightPick( getRandomSample1D( pixelCoord, int( 0 ), dimBase, rngState, resolution, frame ), learned, picked ) : null;
 	if ( pick ) pick.offer( emissiveValue, emissiveOrigin, emissiveDirection, emissiveDistance, VISIBILITY_KIND.EMITTERS );
 
 	// =====================================================================
@@ -1207,11 +1240,7 @@ const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
 
 	} );
 
-	if ( pick ) If( pick.total.greaterThan( 0.0 ), () => {
-
-		totalContribution.addAssign( pick.resolve( shadow( pick.origin, pick.direction, pick.distance ).toVar() ) );
-
-	} );
+	if ( pick ) totalContribution.addAssign( pick.trace( shadow ) );
 
 	// EMISSIVE TRIANGLE DIRECT LIGHTING
 	// NOTE: Emissive triangle sampling is handled separately in pathtracer_core.fs
@@ -1223,5 +1252,12 @@ const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
 
 export const calculateDirectLightingUnified = /*@__PURE__*/ makeDirectLighting( false );
 export const calculateDirectLightingThroughSurfaces = /*@__PURE__*/ makeDirectLighting( true );
-export const calculateDirectLightingOneRay = /*@__PURE__*/ makeDirectLighting( false, true );
-export const calculateDirectLightingThroughSurfacesOneRay = /*@__PURE__*/ makeDirectLighting( true, true );
+const pickedLighting = new Map();
+/** The direct light with fewer shadow rays a hit; `variant` as lightPick takes it. */
+export const calculateDirectLightingPicked = ( throughSurfaces, variant ) => {
+
+	const key = `${throughSurfaces}:${variant}`;
+	if ( ! pickedLighting.has( key ) ) pickedLighting.set( key, makeDirectLighting( throughSurfaces, variant ) );
+	return pickedLighting.get( key );
+
+};

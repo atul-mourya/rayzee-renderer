@@ -103,7 +103,6 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "nrdQualityPreset": "medium",
   "oidnQuality": "fast",
   "oidnTemporalHistory": true,
-  "oneShadowRay": false,
   "panoramaLatRange": [
     -90,
     90,
@@ -122,6 +121,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "resolution": 512,
   "samplingTechnique": 2,
   "saturation": 1,
+  "shadowRays": "all",
   "shadowTerminatorOffset": 0.1,
   "showAsvgfHeatmap": false,
   "showBackground": true,

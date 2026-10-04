@@ -541,17 +541,20 @@ the strings, so never rename or repurpose one.
   ⚠️ `bench:ab` read +7–9 % on identical code for two scenes that day: net any A/B of a self-run.
   ⚠️ Shade's `Ngeo`/`NgeoFF` are the interpolated normal, not the facet (`facetN` is), and the hit
   keeps texture UVs, not barycentrics.
-- **One shadow ray a hit** (`oneShadowRay`, off by default; path integrator only) — instead of a shadow ray per kind
-  of light (the lamp pick, environment, sun, emissive triangles), each kind's sample is offered unshadowed to `lightPick`
-  (`TSL/LightsSampling.js`), which keeps one with chance ∝ its luminance × √(the share of its kind's rays that got
-  through here) and traces only it, divided by that chance. MIS weights are unchanged, so it stays unbiased; the
-  rect-light BSDF-hit ray is kept. The learned visibility (`TSL/LightVisibility.js`) sits in the counter buffer past the
-  light guide: tries/visible per cell × kind, a cell ~1/32 of its distance from the camera (power of two) and its facing
-  axis. Shade reads the learned half and adds to the fresh half; `visibilityFold` merges them after each frame, so a
-  render repeats bit for bit. A reset clears it unless only the camera moved. Equal-time error against off (Apple
-  M-series): 24155522.glb with the physical sky 1.63× samples/s, 0.66–0.76 (1.11 visible-noise loss without the learned
-  visibility: the walled-out sun took the ray); small scenes 0.91–0.96. ⚠️ Sun + sky in full view loses to colour noise
-  — one light's colour a sample, not their mix: `sheen-velvet` 1.18–1.25, `shadow-catcher-ground` 1.35–1.60.
+- **Fewer shadow rays** (`shadowRays`: `'all'` default, `'two'`, `'one'`; path integrator only) — `'all'` is a shadow ray
+  per kind of light (the lamp pick, environment, sun, emissive triangles). Otherwise each kind offers its sample
+  unshadowed to `lightPick` (`TSL/LightsSampling.js`): `'one'` keeps one with chance ∝ its luminance × √(the share of its
+  kind's rays that got through here) and traces only it, divided by that chance; `'two'` always traces the strongest as
+  well. MIS weights are unchanged, so both stay unbiased; the rect-light BSDF-hit ray is kept. The learned visibility
+  (`TSL/LightVisibility.js`) sits in the counter buffer past the light guide: tries/visible per cell × kind, a cell ~1/32
+  of its distance from the camera (power of two) and its facing axis. Shade reads the learned half and adds to the fresh
+  half; `visibilityFold` merges them after each frame, so a render repeats bit for bit. A reset clears it unless only
+  the camera moved. Equal-time error against `'all'` (Apple M-series): 24155522.glb with the physical sky `'one'` 1.63×
+  samples/s, 0.66–0.76; `'two'` 1.23×, 0.82–0.84; small scenes `'one'` 0.89–0.98, `'two'` 0.93–1.05. ⚠️ `'one'` loses
+  where a white sun and a blue sky are both in view — a sample carries one light's colour, not their mix:
+  `shadow-catcher-ground` 1.54–1.92, `sheen-velvet` 1.18–1.33 (`'two'` 0.97 and 0.96). Rejected: a control variate (add
+  every light × its learned visibility, trace one to correct it) — no better than `'one'`, and 7.7 % of a single sample's
+  channels negative on the interior, which the denoisers are fed.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

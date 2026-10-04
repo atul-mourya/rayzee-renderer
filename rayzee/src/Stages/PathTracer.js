@@ -41,6 +41,8 @@ export const LIST_WG_SIZE = 256;
 
 // Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
 // (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
+const SHADOW_RAY_MODES = [ 'all', 'two', 'one' ];
+
 export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
 
 export class PathTracer extends PathTracerStage {
@@ -154,7 +156,7 @@ export class PathTracer extends PathTracerStage {
 		this._outputsChanged = false;
 		// The material layers the kernels were compiled with (_layersToCompile).
 		this._compiledLayers = null;
-		this._oneShadowRay = false;
+		this._shadowRays = 'all';
 		this._learnsVisibility = false;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
@@ -337,14 +339,22 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
-	 * One shadow ray a hit for every light (lamps, sky, sun, emitters), picked by its unshadowed light, instead of one
-	 * per kind. Rebuilds the kernels before the next frame; bidirectional integrators ignore it.
-	 * @param {boolean} enabled
+	 * Shadow rays a hit for the lamps, sky, sun and emitters: 'all', one per kind; 'two', the strongest and one picked
+	 * from the rest; 'one', one picked, by unshadowed light and where each kind gets through. Rebuilds the kernels
+	 * before the next frame; bidirectional integrators ignore it.
+	 * @param {'all'|'two'|'one'} mode
 	 */
-	setOneShadowRay( enabled ) {
+	setShadowRays( mode ) {
 
-		if ( this._oneShadowRay === !! enabled ) return;
-		this._oneShadowRay = !! enabled;
+		if ( ! SHADOW_RAY_MODES.includes( mode ) ) {
+
+			log.warn( `shadowRays: unknown mode "${mode}", using 'all'` );
+			mode = 'all';
+
+		}
+
+		if ( this._shadowRays === mode ) return;
+		this._shadowRays = mode;
 		this._outputsChanged = true;
 
 	}
@@ -1533,7 +1543,8 @@ export class PathTracer extends PathTracerStage {
 		const prevNormalDepth = this.shaderBuilder.prevNormalDepthTexNode;
 		const writeTex = this.storageTextures.getWriteTextures();
 
-		const learnsVisibility = this._oneShadowRay && ! this._integrator;
+		const picked = this._integrator || this._shadowRays === 'all' ? null : this._shadowRays;
+		const learnsVisibility = picked !== null;
 		this._learnsVisibility = learnsVisibility;
 		qm.setVisibilityTable( learnsVisibility );
 		const counters = qm.getCounters();
@@ -1971,7 +1982,7 @@ export class PathTracer extends PathTracerStage {
 			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
 			materialLayers: this._compiledLayers,
-			oneShadowRay: learnsVisibility,
+			shadowRays: picked,
 			cameraWorldMatrix: this.cameraWorldMatrix,
 		} );
 		this._kernelManager.register( 'shade',

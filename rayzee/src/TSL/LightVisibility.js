@@ -1,5 +1,5 @@
 /**
- * Where each kind of light gets through, learned from the one-shadow-ray pick's own rays (LightsSampling lightPick):
+ * Where each kind of light gets through, learned from the shadow-ray pick's own rays (LightsSampling lightPick):
  * tries and visible counts per cell of space and facing. Shade reads the learned half, which no kernel writes during
  * a frame, so a render repeats; it adds to the fresh half, folded into the learned one after each frame.
  */

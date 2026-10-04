@@ -21,7 +21,7 @@ import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, ge
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import {
 	calculateDirectLightingUnified, calculateDirectLightingThroughSurfaces, calculateMaterialPDF,
-	calculateDirectLightingOneRay, calculateDirectLightingThroughSurfacesOneRay,
+	calculateDirectLightingPicked,
 	sampleDirectionalLight, sampleRectAreaLight, samplePointLightWithAttenuation, sampleSpotLightWithRadius,
 	areaLightRadiance, areaLightSpreadAttenuation,
 } from './LightsSampling.js';
@@ -136,8 +136,8 @@ export function buildShadeKernel( params ) {
 		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out. Bidirectional
 		// always leaves diffuse transmission out: its connections and light tracing do not cross surfaces yet.
 		materialLayers: layers = ALL_MATERIAL_LAYERS,
-		// One shadow ray a hit for every light, emitters included (LightsSampling lightPick); path tracing only.
-		oneShadowRay = false,
+		// Fewer shadow rays a hit, emitters included: null (one per light kind) or a lightPick variant; path tracing only.
+		shadowRays = null,
 		cameraWorldMatrix = null,
 	} = params;
 	const diffuseTransmission = layers.diffuseTransmission;
@@ -150,7 +150,7 @@ export function buildShadeKernel( params ) {
 	const auxOn = gBuffer ? auxGBufferEnabled.greaterThan( uint( 0 ) ) : null;
 
 	const useEmissiveNEE = lightBuffer !== undefined;
-	const onePick = oneShadowRay && ! bdpt;
+	const picksLights = shadowRays && ! bdpt;
 	const lamps = {
 		directional: directionalLightsBuffer, numDirectional: numDirectionalLights, area: areaLightsBuffer, numArea: numAreaLights,
 		point: pointLightsBuffer, numPoint: numPointLights, spot: spotLightsBuffer, numSpot: numSpotLights,
@@ -1685,11 +1685,11 @@ export function buildShadeKernel( params ) {
 
 		};
 
-		const oneRayArgs = onePick
+		const pickArgs = picksLights
 			? [ ...emitterCandidate(), counters, visibilityCell( hitPoint, NgeoFF, vec3( cameraWorldMatrix[ 3 ] ) ) ]
 			: [];
-		const directLightingFn = onePick
-			? ( transmitting ? calculateDirectLightingThroughSurfacesOneRay : calculateDirectLightingOneRay )
+		const directLightingFn = picksLights
+			? calculateDirectLightingPicked( transmitting, shadowRays )
 			: ( transmitting ? calculateDirectLightingThroughSurfaces : calculateDirectLightingUnified );
 		const directLighting = () => DirectLightingDual.wrap( directLightingFn(
 			hitPoint, N, NgeoFF, material, V,
@@ -1708,7 +1708,7 @@ export function buildShadeKernel( params ) {
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
 			hasSun, sunDirection, sunRadiance, sunParams,
-			...oneRayArgs,
+			...pickArgs,
 		) ).shadowed;
 		// Bidirectional mode samples every light itself, below.
 		const directLight = bdpt ? null : directLighting().toVar();
@@ -2039,7 +2039,7 @@ export function buildShadeKernel( params ) {
 
 			} );
 
-		} else if ( useEmissiveNEE && ! onePick ) {
+		} else if ( useEmissiveNEE && ! picksLights ) {
 
 			If(
 				enableEmissiveTriangleSampling.equal( int( 1 ) )
