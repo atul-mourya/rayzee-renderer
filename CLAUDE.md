@@ -23,7 +23,7 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 ### Development
 - `npm run dev` - Start development server (Vite, delegates to app workspace) on http://localhost:5173
 - `npm run build` - Build engine lib then app
-- `npm run build:engine` - Engine library only (ESM + UMD)
+- `npm run build:engine` - Engine library only: the full engine (ESM + UMD), `rayzee-core.es.js` and `addons/*.es.js` (ESM)
 - `npm run build:app` - App only
 - `npm run preview` - Preview production build locally
 
@@ -42,7 +42,7 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 
 ### Regression Bench (`bench/`)
 Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
-- `npm run bench` - quality + memory + perf against the working tree
+- `npm run bench` - quality, freeze, lockstep, denoise, memory and perf against the working tree
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
 - `npm run bench:list` - show the scene corpus
@@ -97,11 +97,13 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 - **`EventDispatcher.js`**: Loose coupling via events (e.g., `pathtracer:frameComplete`, `pipeline:historyReset`)
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
-**Execution order matters** - stages run sequentially:
+**Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
+`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter and
+AutoExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
-- **`EdgeFilter.js`**: Temporal filtering with edge preservation
+- **`EdgeFilter.js`**: Spatial-only edge-aware à-trous filter (no temporal history)
 - **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
@@ -115,28 +117,29 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 - **`EngineAdapter.js`**: Bridges engine events to Zustand stores
 - **`VideoEncoder.js`**: WebCodecs VP9/VP8 encoder + `webm-muxer` for `.webm` video output. `VideoEncoderPipeline` class accepts `ImageBitmap` frames, encodes via `VideoEncoder` API, muxes into WebM container.
 
-### Processor Classes (`rayzee/src/Processor/`)
-PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.albedoMaps`, `stage.environment.envParams`):
-- **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)`, `setBool()`. Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
-- **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), feature scanning (`rescanMaterialFeatures()`), texture array management. Owns `materialStorageAttr` and `materialStorageNode`.
+### Sub-managers and Processor Classes (`rayzee/src/managers/`, `rayzee/src/Processor/`)
+PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). UniformManager, MaterialDataManager and EnvironmentManager live in `managers/`, the rest in `Processor/`:
+- **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)` (booleans are converted inside `set`). Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
+- **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), texture arrays (`srgbBuckets` — albedo/emissive — and `linearBuckets`, consolidated by size). Owns `materialStorageAttr` and `materialStorageNode`.
 - **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (RGBA32F, the environment's sampling table as `packExactTable` lays it out; `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
-- **`ShaderBuilder.js`**: shared scene texture-node factory — `createSceneTextureNodes()` builds the env / material-map / prev-frame MRT / gobo / IES nodes the kernels read, and configures the module-level shadow/alpha/gobo/IES shader state. In-place texture updates via `updateSceneTextures()` on model change (no shader rebuild).
+- **`ShaderBuilder.js`**: scene texture-node factory — `createSceneTextureNodes()` builds the environment, previous-frame MRT, gobo and IES texture nodes and hands back the scene's storage nodes. In-place updates via `updateSceneTextures()` / `updateGoboMaps()` / `updateIESProfiles()` on model change (no shader rebuild). The material buckets belong to PathTracer, and every per-renderer resource reaches a kernel through its build context (`TSL/SceneResources.js`, pitfall 14), never module state.
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
-- **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchCount()`). Used by `PathTracer` as `this._kernelManager`.
+- **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()`). Used by `PathTracer` as `this._kernelManager`.
 - **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
 - **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
-23 TSL files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
-- `pathTracerMain.js`, `bvhTraverse.js`, `materialSampling.js`, `environmentSampling.js`
-- `disney.js`, `transmission.js`, `directLighting.js`, `fog.js`, etc.
+44 files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
+- Wavefront kernels: `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`, `SortGlobalKernels.js`, `DebugKernel.js`; bidirectional/VCM: `LightGenerateKernel.js`, `ConnectKernel.js`, `LightSplatKernel.js`, `MergeKernel.js`
+- Traversal and shading: `BVHTraversal.js`, `MaterialEvaluation.js`, `MaterialSampling.js`, `MaterialTransmission.js`, `Subsurface.js`, `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `Environment.js`, `TextureSampling.js`, `SceneResources.js`, etc.
 
 ### Multi-Threading Architecture (`rayzee/src/Processor/Workers/`)
 Critical for maintaining 60fps during heavy computations:
 - **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
-- **`BVHSubtreeWorker.js`**: BVH subtree optimization for GPU traversal
+- **`BVHSubtreeWorker.js`**: builds subtrees of one large mesh's BVH in parallel (`ParallelBVHBuilder.js`)
+- **`TLASWorker.js`**, **`PackWorker.js`** (texture packing without a canvas, in Node), **`AIUpscalerWorker.js`** (viewer)
 - **`CDFWorker.js`**: CDF computation for environment importance sampling (HDRIs and the simple skies; the physical sky builds its own on the GPU)
 - **`BVHRefitWorker.js`**: O(N) bottom-up BVH AABB refit for animated geometry (SharedArrayBuffer protocol)
 
@@ -276,7 +279,7 @@ Mode switching lives in app-store handlers `handleConfigureForPreview` / `handle
 **While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser (it rebuilds its network on every size change).
 
 ### Deterministic / Headless Rendering API
-Public `PathTracerApp` methods for offline rendering and reproducible output:
+Public renderer methods for offline rendering and reproducible output — on `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()`, which is the viewer's:
 - **`app.setDeterministicMode( enabled = true )`** — pins every wall-clock- and readback-dependent
   input so N samples reproduce bit-for-bit. The RNG is already pure (`hash(pixel, rayIndex, frame)`,
   no clock, no `Math.random()` in any shader); what varies is *which uniforms and dispatch grids are
@@ -301,7 +304,7 @@ Public `PathTracerApp` methods for offline rendering and reproducible output:
   L4's host. The two differ by one level on ~0.002 % of bytes; a fall back to the CPU sets the result's
   `toneMappedOn: 'cpu'` and records `output.tonemap_fallback` (a warning — strict does not throw). `source: 'accumulation'` (default) reads
   `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
-  resolves (denoised, no bloom). The result's `source` names what was read, and a `'display'` read
+  resolves (denoised). The result's `source` names what was read, and a `'display'` read
   that found nothing denoised while a denoiser is in use records `output.source_fallback`.
 - **`await app.renderUntilComplete( { reset, denoise, signal, drainEvery, onProgress } )`** — the
   production counterpart of `renderFrames`: adaptive sampling stays on, the loop stops on the
@@ -336,7 +339,7 @@ never read by a live code path (the default sampler is Sobol), so the load was r
 frame, `openHeadless()` to keep a live app across several, `captureHeadless()` to accumulate and read
 back (`denoise: true` enables OIDN before accumulating, runs `runFinalDenoise()`, reads `'display'`).
 Defaults are the batch renderer's (`strict`, `profile: 'physical'`, `deterministic`). Under `strict`,
-`PathTracerApp` also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):
+the renderer also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):
 the download cache serves a cached copy for up to a day before revalidating. `hostMemoryGB` stands
 in for `navigator.deviceMemory` (absent outside Chrome, read as 4, which caps the reserve at 2048).
 `bench/harness/boot.js` boots through it, so the suite and production share one driver; the bench
@@ -404,7 +407,7 @@ the strings, so never rename or repurpose one.
   result for that reason. Any new allSettled aggregation needs the same. Likewise a catch that
   retries or re-records must rethrow an `EngineIssueError` untouched.
 - **App events** are `EngineEvents` values only. A renamed one keeps its old string in
-  `LEGACY_EVENT_NAMES`, which `PathTracerApp.dispatchEvent` sends alongside until the next major;
+  `LEGACY_EVENT_NAMES`, which `RayzeeRenderer.dispatchEvent` sends alongside until the next major;
   `addEventListener` warns once for any other name (a listener on a wrong name fails silently —
   the 7.28.0 rename cost a host four weeks).
 
@@ -606,7 +609,7 @@ saying the environment was left converted.
   that needs the renderer's canvas format changed to half-float at construction and a PQ-to-
   extended-range conversion.
 - **EXR export** (`app/src/lib/colorManagement.js` → `saveEXR`) writes
-  `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows, without bloom,
+  `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows,
   read through `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an
   ExternalTexture no render target owns) — in the chosen space through three's `EXRExporter`. ⚠️ The readback is top row first and the exporter
   assumes bottom row first, so rows are flipped before encoding. A PNG screenshot is a picture and
@@ -737,8 +740,9 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   it after either changes (`setEnvironmentRotation` and `applyColorWorkingSpace` do).
 - Units: physical luminance / 683 × `SKY_RADIANCE_SCALE` (1/32), so a clear noon lights the ground at
   bundled-HDRI levels. `SKY_PRESETS` carry an `exposure` (EV) making up ~⅔ of what a low sun loses.
-- ⚠️ `EnvironmentManager.callbacks.onReset` is the **app's** reset: a bake lands after its input, often once
+- ⚠️ `EnvironmentManager.callbacks.onReset` is the **renderer's** reset: a bake lands after its input, often once
   the render loop is idle, and the stage's reset alone never woke it (UI edits did nothing on screen).
+  `callbacks.onLightingChanged` (a new environment) emits `pipeline:lightingChanged`, which auto exposure listens for.
 - ⚠️ A model load installs `meshScene.environment` (the HDRI slot) only in HDRI mode (`loadSceneData`):
   otherwise a model loaded under the sky swapped the startup HDRI in with the sun still on — lit twice.
 - Sessions carry `skyModel: 'atmosphere'`; sky keys from older sessions are ignored (same names, other meanings).
@@ -752,8 +756,8 @@ An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`integrato
 its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
 `beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate
-take the bidirectional functions from `uniforms.lib`, so the core imports none of them; choosing an unregistered
-integrator records `capability.missing`. Its controls are on the instance: `pt.activeIntegrator.setBidirectionalStrategy()`
+take the bidirectional functions from `uniforms.lib`, so the core imports none of them. The `integrator` setting calls
+`pathTracer.setIntegrator( name )`; choosing an unregistered integrator records `capability.missing`. Its controls are on the instance: `pt.activeIntegrator.setBidirectionalStrategy()`
 and the like. ⚠️ A new integrator plugs into the same hooks; never add `if ( bidirectional )` to `PathTracer` again.
 Opt-in (`settings.set( 'integrator', 'bidirectional' )`; the app's Path Tracer tab → Light Transport). Light
 subpaths start on **every light**: emissive triangles, the physical sky's sun, the environment map (HDRI,
@@ -776,7 +780,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   more segment flagged `RAY_FLAG.EMISSION_ONLY` (in either integrator: it is the BSDF-hit partner of the last
   vertex's NEE; Shade ends it before reading any texture when it lands on an opaque surface that does not glow),
   so the camera-hits-light strategy reaches the longest paths too and the weights still sum to one there.
-- **The source table** (`sourceCdf`, `PathTracer._updateSourceTable`, rebuilt each frame): a running sum over
+- **The source table** (`sourceCdf`, `BidirectionalIntegrator._updateSourceTable`, rebuilt each frame): a running sum over
   the sun, the emitters, the environment, then each lamp list at `sourceOffsets[ LIGHT_TYPE ]`, by the
   luminous flux each sends into the scene — π·boost·power for emitters; for the sun, a directional light and
   the environment (∫L dω, `environment.exactTable.radianceIntegral`) what crosses the scene's disc; 4πI a
@@ -950,8 +954,9 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   finished image gets a pass. Two live denoisers would mean paying for one whose result the other
   covers.
 - **Every denoiser publishes a texture; the Compositor picks the newest.** `asvgf:output`,
-  `nrd:output`, `edgeFiltering:output`, `oidn:output` — `Compositor._resolveSourceTexture()` is the
-  priority chain and `DenoisingManager._clearDenoiserTextures()` is the list that wipes them. There
+  `nrd:output`, `edgeFiltering:output`, `bilateralFiltering:output`, `oidn:output` — the viewer's `_displaySources()`
+  hook is the priority list (first published wins; the core's is empty), handed to the Compositor, and
+  `DenoisingManager._clearDenoiserTextures()` is the list that wipes them. A new denoiser goes in both. There
   is one canvas: OIDN writes its result into a picture on the card (`ExternalTexture` wrapping a raw
   `GPUTexture`) rather than painting a second canvas. The only other canvas belongs to the **AI
   upscaler**, which works in ordinary pixels and shows a picture larger than the render.
@@ -1179,12 +1184,11 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
 ## Development Commands
 
 ### Debug Visualizations (visMode uniform)
-Access via Path Tracer tab → Debug Mode:
-- `1-2`: BVH traversal statistics (triangle/box tests)
-- `3`: Ray distance visualization
-- `4`: Surface normals
-- `6`: Environment map luminance heat map
-- `7`: Environment importance sampling PDF
+Access via Path Tracer tab → Debug Mode (`TSL/Debugger.js`; modes 1–10 run the one-pass `DebugKernel`):
+- `1` Normals · `2` Depth · `3` Albedo · `4` Emissive · `5` Indirect (GI) · `6` Environment reflection
+- `7` Triangle tests · `8` Box tests per camera ray (value = count ÷ `debugVisScale`; red when over)
+- `9` Stratified samples · `10` Environment luminance
+- `11` NaN / Inf (in FinalWrite, bypasses accumulation)
 
 ### Performance Profiling
 The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach their own stats panel (e.g. `stats-gl`) — the app does this in `app/src/components/layout/Viewports/StatsPanel.jsx`. Other built-in profiling signals:
@@ -1210,7 +1214,7 @@ resized on the main thread as `processOnMainThreadStreaming` does. ⚠️ Every 
 resampling: `worker-direct` scales by `drawImage`, the others by `createImageBitmap` — moving a
 resize to another thread or call changed thousands of bytes a bucket.
 
-⚠️ **`PathTracerStage.sdfs` is not the processor that built the scene** — `PathTracerApp._sdf`
+⚠️ **`PathTracerStage.sdfs` is not the processor that built the scene** — `RayzeeRenderer._sdf`
 is. The stage's own is a leftover of the old `stage.build()` path; its `rebuildMaterials` may only
 upload materials and textures from it. Re-uploading everything (`updateSceneUniforms`) put its empty
 emissive data and instance table in place of the scene's, and emitters stopped being sampled.
@@ -1302,7 +1306,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 5. **BVH quality**: the builder is binned SAH plus reinsertion. Treelet restructuring was removed (2026-10): on five models it bought ≤0.6 % tree SAH, no measurable render speed, for 2–24× the BLAS build time. Judge any new tree post-pass by render time per sample, not SAH alone
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
-8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.asvgfStage?.enabled`)
+8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.stages.asvgf?.enabled`). A bare `RayzeeRenderer` has only `stages.pathTracer` and `stages.compositor`
 9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf — except in a folded BVH, where a folded left child also sits above it (from 2^31) and the test is `tag >> 30 === 1`. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).

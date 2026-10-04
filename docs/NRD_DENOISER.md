@@ -48,15 +48,19 @@ ReBLUR needs two guide signals the pipeline did not have:
   `pathtracer:shadingNormal.w`, which previously held a duplicate of the depth.
 - **Hit distance.** The shade kernel writes the length of the first segment after the primary
   opaque scatter (alpha-skip distance included, misses saturate) into a previously unused 16-bit
-  lane of the per-pixel G-buffer, normalized NRD-style as `hitDist / (A + B·viewZ)`. `A` and `B` are
-  the shared `NRD_HIT_DIST_A`/`_B` constants: the write and the decode must agree, and the
-  normalization is a pure round trip, so nothing is gained by making it tunable at runtime.
-  `FinalWrite` decodes it into `pathtracer:albedo.w` and accumulates it with the other aux channels.
-  OIDN consumes albedo as three channels, so its aux guide is unaffected. `writeGBuffer` preserves
-  that lane so the later DDFA albedo commits do not zero it; `Generate` clears it explicitly.
+  lane of the per-pixel G-buffer. Shade holds no NRD code: NRD asks for the output in its
+  constructor with `pathTracer.requestOutput( 'hitDistance', { encode } )`, and `encode( distance,
+  viewZ )` is its own normalisation, `hitDist / (A + B·viewZ)` with the shared `NRD_HIT_DIST_A`/`_B`
+  constants — the write and NRD's decode use the same constants, and the normalization is a pure
+  round trip, so nothing is gained by making it tunable at runtime. While nothing requests it, the
+  write is not compiled at all (the renderer core never compiles it; the viewer always builds NRD, so
+  there it is compiled). `FinalWrite` decodes it into `pathtracer:albedo.w` and accumulates it with
+  the other aux channels. OIDN consumes albedo as three channels, so its aux guide is unaffected.
+  `writeGBuffer` preserves that lane so the later DDFA albedo commits do not zero it; `Generate`
+  clears it explicitly.
 
 Both are only produced while a denoiser (or OIDN) has the aux G-buffer switched on, so the default
-interactive path pays nothing.
+interactive path pays nothing at run time.
 
 ## Deviations from NRD, and why
 

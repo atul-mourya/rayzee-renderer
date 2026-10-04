@@ -47,8 +47,9 @@ renderer runs without a browser.
 1. **Who creates a resource frees it.** A capability gets read-only views of core outputs and disposes only what it made.
 2. **The core announces every restart of accumulation, with its reason** (camera, scene, setting). Each capability
    decides what of its own history to keep.
-3. **A capability names the outputs it needs; the core writes them.** Extra per-pixel outputs (normal, depth, albedo,
-   roughness, hit distance) are compiled into the core's GPU programs only when something asks for them.
+3. **A capability names the outputs it needs; the core writes them.** An extra per-pixel output is compiled into the
+   core's GPU programs only when something asks for it (`requestOutput`). Today that holds for the hit distance; the
+   normal/depth/albedo G-buffer is still always compiled and switched at runtime (see the last section).
 4. **A missing capability costs nothing.** Nothing is built for it, and the core runs without it.
 
 The viewer plugs into the core through a fixed set of protected methods on `RayzeeRenderer`, listed under "Hooks" at
@@ -65,7 +66,7 @@ environment came in — auto exposure listens). Which processed picture the comp
 **Per-renderer shader resources.** Material texture buckets, shadow albedo maps, gobo and IES textures and the
 alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`), never in module variables: a TSL
 function body runs when its kernel compiles, so module state was read from whichever renderer set it last. Two
-renderers in one page no longer share anything but the colour configuration.
+renderers in one page now share only the colour management and the on-disk storage, both page-wide by design.
 
 **Outputs on request.** `pathTracer.requestOutput( name, options )` returns a function that withdraws the request; the
 kernels rebuild before the next frame either way. `'hitDistance'` takes `encode( distance, viewZ )`: NRD passes its
@@ -146,8 +147,15 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    session saving and reset. The viewer defines `interactionRenderScale` (the core has no moving-camera resolution
    drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure leaves a manual
    `exposure` unshown while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
-   viewer's capabilities (denoisers, upscaler, bloom) keep their own methods, as before. Asked for a key only the
-   viewer defines, the core records `setting.unknown_key`, as for any key nothing applies.
+   viewer's capabilities (denoisers, upscaler, auto exposure) keep their own methods, as before. Asked for a key only
+   the viewer defines, the core records `setting.unknown_key`, as for any key nothing applies.
+12. **Treelet optimiser removed** — measured on five models (33k to 1.9M triangles) it bought at most 0.57 % tree
+   SAH and no measurable render speed for 2–24× the BLAS build time. Default trees are byte-identical.
+13. **Draco and KTX2 in Node** — three's loaders start their own workers after awaiting a decoder, out of
+   `createWorker`'s reach; each glTF parse now runs inside `withHostWorker()` (`Platform.js`), which lends the host's
+   worker class only where there is no global one.
+
+   Downloads now, compressed: the core 249 KB (the treelet optimiser was bundled three times), `rayzee` 418 KB.
 
 ## What still ties the layers
 
@@ -155,5 +163,9 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
   them out means a shading kernel of the integrator's own.
 - **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, page-in). It
   does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
-- **Colour is one per page.** The active colour management (`Color/ActiveColor.js`) is shared by every renderer in the
-  page, by design: a config is a page-wide choice, and the texture cache keys on it.
+- **The normal/depth/albedo G-buffer is always compiled** into Generate, Shade and FinalWrite and switched at runtime
+  (`auxGBufferEnabled`). Making it a requested output like the hit distance would take it out of the core's programs.
+- **The Compositor looks for a `bloom:output` picture** before the display sources, though nothing publishes one.
+- **Colour and storage are one per page.** The active colour management (`Color/ActiveColor.js`) and the shared OPFS
+  manager serve every renderer in the page, by design: a config is a page-wide choice, the texture cache keys on it,
+  and one origin has one file system.
