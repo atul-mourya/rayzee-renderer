@@ -335,6 +335,16 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   and FinalWrite (`gBuffer` build param; `'hitDistance'` implies it). `PathTracerApp` asks for it in `_initManagers`,
   so a denoiser toggles only the live `auxGBufferEnabled` uniform; on the bare core the first
   `setAuxGBufferEnabled( true )` asks for it (one rebuild). Without it the core's kernels carry none of that code.
+- **Kernels compile in the background.** `_buildWavefrontKernels` ends in `_compileKernels()`: `KernelManager.compile()`
+  runs three's `compileComputeAsync` (WGSL built in steps that yield, pipelines through `createComputePipelineAsync`).
+  Until it resolves `render()` traces nothing and the canvas keeps its last frame; `readbackWait()` returns the
+  promise, so every driver loop (`animate`, `renderFrames`, `renderUntilComplete`, video export) awaits it rather than
+  spin; `EngineEvents.SHADERS_COMPILING` brackets it (the app's "Compiling shaders" label). A newer build supersedes
+  an older compile (`_kernelGeneration`). The debug-view kernel registers `eager: false` and compiles at first
+  dispatch. Measured on a layer combination new to the browser: page freeze 3.7 s → 0.4 s (the main thread still
+  builds the WGSL), the new image 4.1 → 4.6 s. ⚠️ The old synchronous first-dispatch compile only looked fast: the
+  frame was submitted after 0.2 s and the GPU finished it after 4 s — time a first frame to
+  `queue.onSubmittedWorkDone()`, not to `frameCount`.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
   CPU and stays flat while GPU cost doubles.

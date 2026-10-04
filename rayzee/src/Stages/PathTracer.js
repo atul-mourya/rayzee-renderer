@@ -61,6 +61,9 @@ export class PathTracer extends PathTracerStage {
 		this._convDebugSource = null; // memoized handle set for the Compositor's convergence overlay
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
 		this._wavefrontReady = false;
+		// The background compile of the kernels last built (_compileKernels), and its build's number.
+		this._kernelsCompiling = null;
+		this._kernelGeneration = 0;
 
 		// Aux MRT (normalDepth + albedo) feeds only the denoiser/OIDN. When no denoiser is active the
 		// wavefront skips those writes (Generate/Shade G-buffer + FinalWrite stores). Gated by a live
@@ -845,14 +848,47 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
-	 * While a lockstep readback is due and has not landed, render() traces nothing: await this
-	 * before the next frame. Null otherwise.
+	 * While the kernels compile in the background, or a lockstep readback is due and has not landed, render() traces
+	 * nothing: await this before the next frame. Null otherwise.
 	 * @returns {?Promise<void>}
 	 */
 	readbackWait() {
 
+		if ( this._kernelsCompiling ) return this._kernelsCompiling;
 		const pending = this._lockstepRead;
 		return pending && ! pending.apply && this.frameCount >= pending.due ? pending.read : null;
+
+	}
+
+	/**
+	 * Compiles the kernels just built without blocking the page. Until they are ready render() traces nothing and the
+	 * canvas keeps its last frame; every driver loop awaits readbackWait(), which returns this. A build started
+	 * meanwhile supersedes it. A failed background compile — and every compile in Node — leaves each kernel to compile
+	 * at its first dispatch.
+	 */
+	_compileKernels() {
+
+		const generation = ++ this._kernelGeneration;
+		if ( ! KernelManager.canCompileInBackground ) {
+
+			this._kernelsCompiling = null;
+			this._wavefrontReady = true;
+			return;
+
+		}
+
+		const kernels = this._kernelManager;
+		this.emit( 'pathtracer:compiling', { compiling: true } );
+		this._kernelsCompiling = kernels.compile()
+			.catch( ( error ) => log.warn( `background kernel compile failed — compiling at first dispatch: ${error?.message ?? error}` ) )
+			.then( () => {
+
+				if ( generation !== this._kernelGeneration ) return;
+				this._kernelsCompiling = null;
+				this._wavefrontReady = true;
+				this.emit( 'pathtracer:compiling', { compiling: false } );
+
+			} );
 
 	}
 
@@ -2064,14 +2100,16 @@ export class PathTracer extends PathTracerStage {
 			debugVisScale: this.debugVisScale,
 			frame: this.frame,
 		} );
+		// Only the debug views dispatch it, so it compiles when one is first chosen.
 		this._kernelManager.register( 'debug',
 			own( debugFn() ).compute(
 				[ Math.ceil( w / DEBUG_WG_SIZE ), Math.ceil( h / DEBUG_WG_SIZE ), 1 ],
 				[ DEBUG_WG_SIZE, DEBUG_WG_SIZE, 1 ]
-			)
+			),
+			{ eager: false },
 		);
 
-		this._wavefrontReady = true;
+		this._compileKernels();
 
 		const bufferBytes = ( this._packedBuffers?.totalBytes ?? 0 ) + ( this._queueManager?.totalBytes ?? 0 );
 
@@ -2143,6 +2181,8 @@ export class PathTracer extends PathTracerStage {
 		this._frozenMaskAttr = null;
 		this._convDebugSource = null;
 		this._wavefrontReady = false;
+		this._kernelGeneration ++;
+		this._kernelsCompiling = null;
 
 	}
 

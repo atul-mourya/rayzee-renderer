@@ -8,6 +8,8 @@ export const EngineEvents = {
 	RENDER_COMPLETE: 'engine:renderComplete',
 	RENDER_RESET: 'engine:renderReset',
 	FRAME: 'engine:frame',
+	// The path tracer compiles its shaders in the background ({ compiling }); the canvas keeps its last frame meanwhile.
+	SHADERS_COMPILING: 'engine:shadersCompiling',
 
 	// Denoiser
 	DENOISING_START: 'engine:denoisingStart',

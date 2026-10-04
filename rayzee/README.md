@@ -1430,6 +1430,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | Event | Fired when |
 |---|---|
 | `RENDER_COMPLETE` | Rendering has converged |
+| `SHADERS_COMPILING` | The path tracer compiles its shaders in the background (`event.compiling` true, then false) — after a model load, a new material layer, a light transport switch. The page stays responsive; the canvas keeps its last frame until they are ready, and `renderFrames()` waits for them |
 | `RENDER_RESET` | Accumulation buffer is reset |
 | `FRAME` | Fires once per `animate()` tick — hook external instrumentation (stats panels, telemetry) here |
 | `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render |

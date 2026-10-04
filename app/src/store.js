@@ -62,6 +62,8 @@ const useStore = create( set => ( {
 	setStats: stats => set( { stats } ),
 	isDenoising: false,
 	setIsDenoising: val => set( { isDenoising: val } ),
+	isCompilingShaders: false,
+	setIsCompilingShaders: val => set( { isCompilingShaders: val } ),
 	isUpscaling: false,
 	setIsUpscaling: val => set( { isUpscaling: val } ),
 	upscalingProgress: 0,

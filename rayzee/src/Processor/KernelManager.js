@@ -95,11 +95,44 @@ export class KernelManager {
 	 * Register a pre-built compute node.
 	 * @param {string} name - Kernel name (e.g. 'generate', 'extend')
 	 * @param {ComputeNode} computeNode - Built via `Fn().compute([dx,dy,dz], [wgx,wgy,wgz])`
+	 * @param {{eager?: boolean}} [options] - `eager: false` leaves it out of compile(): it compiles at its first dispatch
 	 */
-	register( name, computeNode ) {
+	register( name, computeNode, { eager = true } = {} ) {
 
 		this.kernels.set( name, computeNode );
-		this.timing.set( name, { compiledOnce: false, lastDispatchMs: 0 } );
+		this.timing.set( name, { compiledOnce: false, lastDispatchMs: 0, eager } );
+
+	}
+
+	/**
+	 * Whether compile() can run here: three yields between build steps through scheduler.yield or requestAnimationFrame,
+	 * and Node has neither (nor a page to keep responsive).
+	 */
+	static get canCompileInBackground() {
+
+		return typeof globalThis.requestAnimationFrame === 'function' || typeof globalThis.scheduler?.yield === 'function';
+
+	}
+
+	/**
+	 * Compiles the eager kernels without blocking the page: three.js generates their WGSL in steps that yield and
+	 * creates the GPU pipelines asynchronously. A dispatch after it compiles nothing.
+	 * @returns {Promise<void>}
+	 */
+	async compile() {
+
+		const eager = [ ...this.kernels ].filter( ( [ name ] ) => this.timing.get( name )?.eager );
+		const t0 = performance.now();
+		// One call per kernel, all at once: the GPU compiles them side by side rather than each after the last.
+		await Promise.all( eager.map( ( [ , node ] ) => this.renderer.compileComputeAsync( node ) ) );
+		for ( const [ name ] of eager ) {
+
+			const entry = this.timing.get( name );
+			if ( entry ) entry.compiledOnce = true;
+
+		}
+
+		log.info( `${eager.length} kernels compiled in the background in ${fmt.ms( performance.now() - t0 )}` );
 
 	}
 

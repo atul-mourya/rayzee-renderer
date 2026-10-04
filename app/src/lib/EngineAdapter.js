@@ -44,6 +44,12 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
+	on( EngineEvents.SHADERS_COMPILING, ( e ) => {
+
+		useStore.getState().setIsCompilingShaders( !! e?.compiling );
+
+	} );
+
 	// ── Denoiser ─────────────────────────────────────────────
 	// `continuous` marks a cadence denoise of the still-accumulating preview. Those run many times
 	// a second and would strobe the "Denoising" badge; only the denoise that closes a render is status.

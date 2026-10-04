@@ -397,12 +397,13 @@ function setSortMaterials( enabled ) {
  * kernel-build time, and reaching it via loadModelScene would rebuild the BVH too — orders of
  * magnitude slower per ablation config.
  */
-function rebuildKernels() {
+async function rebuildKernels() {
 
 	const stage = app.stages.pathTracer;
 	stage._kernelManager?.dispose();
 	stage._wavefrontReady = false;
 	stage._buildWavefrontKernels();
+	await stage.readbackWait();
 	app.reset();
 	app.stopAnimation();
 	return stage._wavefrontReady === true;

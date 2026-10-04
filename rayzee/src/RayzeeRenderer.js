@@ -3689,6 +3689,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		this._addTrackedListener( this.assetLoader, 'load', this._onAssetLoaded );
 
+		this.pipeline.eventBus.on( 'pathtracer:compiling', ( { compiling } ) => this.dispatchEvent( { type: EngineEvents.SHADERS_COMPILING, compiling } ) );
+
 	}
 
 	// ═══════════════════════════════════════════════════════════════
