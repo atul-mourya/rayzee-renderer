@@ -6,360 +6,291 @@
 
 ## Overview
 
-Rayzee uses an **event-driven pipeline** of modular rendering stages built on WebGPU. TSL (Three Shading Language) shaders are compiled to WGSL at runtime. The `PathTracerApp` manages the renderer, scene, camera, and pipeline lifecycle, while the UI/store layer accesses it via `getApp()` from appProxy.
+Rayzee renders through an **event-driven pipeline** of stages on WebGPU. Shaders are written in TSL (Three Shading Language) and compiled to WGSL at runtime. Two classes own the pipeline:
+
+- **`RayzeeRenderer`** (`RayzeeRenderer.js`, entry `core.js`, published as `rayzee/core`) — the renderer core: WebGPU device, scene build, path tracer and compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. Its pipeline is **PathTracer → Compositor**.
+- **`PathTracerApp extends RayzeeRenderer`** (`PathTracerApp.js`, published as `rayzee`) — the viewer. It adds camera controls, picking, gizmo, overlays, timeline, animation playback, the denoisers and picture stages, and installs the add-ons.
+
+The viewer plugs into the core through ~30 protected hook methods, listed under "Hooks" at the end of `RayzeeRenderer.js` (`_createExtraStages`, `_displaySources`, `_beginFrame`, `_holdTrace`, `_afterTrace`, `_beforeReset`, …). Each runs at a fixed point of the frame, reset or load sequence and does nothing in the core. The layer rules — what each layer owns, the add-ons, the boundary test — are in `docs/CORE_AND_ADDONS.md`.
 
 ### System Architecture
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │              UI / React                  │
-                    │  (Zustand Store + appProxy.getApp())    │
-                    └─────────────────┬───────────────────────┘
-                                      │
-                              ┌───────┴───────┐
-                              │  appProxy     │
-                              │  getApp()     │
-                              │  subscribeApp()│
-                              └───────┬───────┘
-                                      │
-                              ┌───────┴───────────────┐
-                              │    PathTracerApp      │
-                              │    (WebGPU Renderer)  │
-                              ├───────────────────────┤
-                              │ RenderSettings        │
-                              │ AssetLoader           │
-                              │ SceneProcessor        │
-                              ├───────────────────────┤
-                              │ RenderPipeline        │
-                              │ ├─PathTracer          │
-                              │ │ ├─UniformManager    │
-                              │ │ ├─MaterialDataMgr   │
-                              │ │ ├─EnvironmentMgr    │
-                              │ │ ├─ShaderBuilder     │
-                              │ │ └─StorageTexturePool│
-                              │ ├─NormalDepth         │
-                              │ ├─MotionVector        │
-                              │ ├─NRD                 │
-                              │ ├─ASVGF               │
-                              │ ├─Variance            │
-                              │ ├─BilateralFilter     │
-                              │ ├─EdgeFilter          │
-                              │ ├─AutoExposure        │
-                              │ └─Compositor          │
-                              ├───────────────────────┤
-                              │ managers/             │
-                              │  ├─CameraManager      │
-                              │  │  ├─ViewCamera      │
-                              │  │  └─WalkControls    │
-                              │  ├─timeline/          │
-                              │  │  ├─TimelineManager │
-                              │  │  └─CameraTrack     │
-                              │  ├─LightManager       │
-                              │  ├─DenoisingManager   │
-                              │  │  ├─OIDNDenoiser    │
-                              │  │  ├─OIDNTemporal-   │
-                              │  │  │  History        │
-                              │  │  └─AIUpscaler      │
-                              │  └─OverlayManager     │
-                              │     └─TileHelper      │
-                              └───────────────────────┘
+UI / React (Zustand store)
+    │  getApp() / subscribeApp()      app/src/lib/appProxy.js
+    ▼
+PathTracerApp (viewer, `rayzee`)  ──extends──▶  RayzeeRenderer (core, `rayzee/core`)
+
+
+RayzeeRenderer (core)                     PathTracerApp (viewer) adds
+├─ WebGPURenderer                         ├─ cameraManager: CameraManager
+├─ settings: RenderSettings               │   ├─ ViewCamera
+├─ color: BasicColor                      │   └─ WalkControls
+├─ assetLoader: AssetLoader               ├─ timeline: TimelineManager (CameraTrack)
+├─ SceneProcessor (_sdf)                  ├─ animationManager: AnimationManager
+├─ lightManager: LightManager             ├─ interactionManager, transformManager
+├─ completion: CompletionTracker          ├─ goboManager, iesManager
+└─ pipeline: RenderPipeline               ├─ denoisingManager: DenoisingManager
+   ├─ PathTracer                          │   ├─ OIDNDenoiser
+   │  ├─ UniformManager                   │   ├─ OIDNTemporalHistory
+   │  ├─ MaterialDataManager              │   └─ AIUpscaler
+   │  ├─ EnvironmentManager               ├─ overlayManager: OverlayManager
+   │  ├─ ShaderBuilder                    │   └─ TileHelper, OutlineHelper, gizmo
+   │  └─ StorageTexturePool               ├─ stages from _createExtraStages():
+   ├─ [ _createExtraStages() ]            │   NormalDepth, MotionVector, NRD, ASVGF,
+   └─ Compositor                          │   Variance, BilateralFilter, EdgeFilter, AutoExposure
+                                          └─ add-ons: ColorManagement, PhysicalSky,
+                                              BidirectionalIntegrator, ArchiveImporter, storage
 ```
+
+`init()` runs `_initStorage`, `_initRenderer`, `_createCamera()`, `_initScenes`, `_initAssetPipeline`, `_initPipeline` (stages, then the pipeline), `_initManagers` and `_wireEvents`. The viewer overrides `_createCamera`, `_initAssetPipeline`, `_initPipeline`, `_initManagers` and `_wireEvents`, calling the core's version first or last as each needs.
 
 ### App Proxy (`app/src/lib/appProxy.js`)
 
-All UI/store code accesses the app via `getApp()`:
+All UI/store code reaches the viewer through `getApp()`:
 
 ```javascript
 import { getApp, subscribeApp } from '@/lib/appProxy';
 
-const app = getApp();  // Returns app instance or null
-if (app) app.setMaxBounces(8);
+const app = getApp();  // the initialised app, or null
+if ( app ) app.settings.set( 'maxBounces', 8 );
 
-// Subscribe to app initialization/changes
-const unsub = subscribeApp((app) => {
-    if (app) console.log('App ready');
-});
+// Subscribe to app changes
+const unsub = subscribeApp( ( app ) => {
+    if ( app ) console.log( 'App ready' );
+} );
 ```
+
+### Settings
+
+`app.settings` is a `RenderSettings` (`RenderSettings.js`). It holds the core's settings, each routed to a path-tracer uniform or a handler. Another layer adds its own with `settings.define( key, { apply, reset } )`; the viewer defines `interactionRenderScale`.
 
 ---
 
-## Architecture Benefits
+## Design
 
-### Solved Problems
-
-**Before (Legacy Pass Architecture):**
-- Tight coupling between passes
-- Implicit execution order
-- Difficult to test in isolation
-- Hard to add new features
-- Manual texture passing between passes
-
-**After (Pipeline Architecture):**
-- ✅ Loose coupling via events
-- ✅ Explicit execution order (stages added sequentially)
-- ✅ Easy to test (mock context/events)
-- ✅ Simple to extend (just add new stage)
-- ✅ Automatic texture sharing via context
-
-### Design Principles
-
-1. **Single Responsibility** - Each stage does one thing well
-2. **Dependency Inversion** - Stages depend on context/events, not each other
-3. **Event-Driven** - Communication through pub/sub pattern
-4. **Explicit Over Implicit** - Clear execution order, no hidden dependencies
+1. **Explicit order.** Stages run in the order they are added. Order matters: BilateralFilter reads what ASVGF and Variance published earlier in the same frame.
+2. **Textures by name.** Stages share textures through the context, never by holding each other.
+3. **Signals by event.** Stages talk over the event bus. A stage that needs the path tracer itself — its uniforms, or an extra output — is handed it in its options (`options.pathTracer`).
+4. **The core names no capability.** It announces a hard restart (`pipeline:historyReset`) and a lighting change (`pipeline:lightingChanged`); each stage decides what of its own history to drop.
 
 ---
 
 ## Core Components
 
-### 1. PipelineContext
+### 1. PipelineContext (`Pipeline/PipelineContext.js`)
 
-Shared state container for all stages.
+Shared state for all stages: named textures, render targets, uniforms and a state object.
 
-**Purpose:**
-- Store textures (for sharing between stages)
-- Store state (frame counters, settings, etc.)
-- Manage frame lifecycle
-
-**Key Methods:**
 ```javascript
 // Textures
-context.setTexture('pathtracer:color', texture);
-context.getTexture('pathtracer:color');
+context.setTexture( 'pathtracer:color', texture );
+context.getTexture( 'pathtracer:color' );
+context.removeTexture( 'asvgf:output' );
 
 // State
-context.setState('frame', 0);
-context.getState('frame');
+context.setState( 'renderMode', 1 );
+context.getState( 'frame' );
 
 // Lifecycle
-context.incrementFrame();
-context.reset();
+context.incrementFrame();  // RenderPipeline, after every render()
+context.reset();           // frame counters and flags; textures are kept
 ```
 
-**Important State Keys:**
-| Key | Type | Description |
-|-----|------|-------------|
-| `frame` | number | Current frame counter |
-| `renderMode` | number | 0=interactive, 1=production (full-frame in both; no tile loop) |
-| `tileRenderingComplete` | boolean | Set `true` by PathTracer every frame; PER_CYCLE stages gate on it |
-| `interactionMode` | boolean | True during camera movement |
-| `width` / `height` | number | Viewport dimensions |
+**State keys in use:**
+| Key | Type | Written by |
+|-----|------|------------|
+| `frame` | number | RenderPipeline, after each `render()`; zeroed by `reset()` |
+| `renderMode` | number | PathTracer, each frame: 0 = interactive, 1 = production |
+| `tileRenderingComplete` | boolean | PathTracer, `true` on every frame it traces |
+| `interactionMode` | boolean | PathTracer, true while the camera moves |
+| `pathtracer:samples` | number | PathTracer's frame count (NRD's handover reads it) |
+| `width` / `height` | number | RenderPipeline constructor and `setSize()` |
+| `autoexposure:value` / `autoexposure:avgLuminance` | number | AutoExposure |
 
-> The engine renders full-frame only. `tileRenderingComplete` is a legacy state key kept as the PER_CYCLE gate — the path tracer always sets it `true` (a full frame is one complete cycle), so PER_CYCLE stages run every frame. See Execution Modes below.
+> The engine renders full-frame only. `tileRenderingComplete` is a legacy key kept as the PER_CYCLE gate in production mode; nothing sets it `false`. See Execution Modes below.
 
 **Example:**
 ```javascript
-// PathTracer publishes its output
-context.setTexture('pathtracer:color', this.colorTarget.texture);
-context.setTexture('pathtracer:normalDepth', this.normalDepthTarget.texture);
+// PathTracerStage._publishTexturesToContext()
+context.setTexture( 'pathtracer:color', writeTex.color );
+context.setTexture( 'pathtracer:normalDepth', writeTex.normalDepth );
+context.setTexture( 'pathtracer:albedo', writeTex.albedo );
 
-// ASVGF reads PathTracer output
-const colorTexture = context.getTexture('pathtracer:color');
-const normalDepth = context.getTexture('pathtracer:normalDepth');
+// A later stage
+const color = context.getTexture( 'pathtracer:color' );
 ```
 
 ---
 
-### 2. EventBus
+### 2. EventBus (`Pipeline/EventDispatcher.js`)
 
-Event-driven communication between stages.
+`pipeline.eventBus`, shared by every stage (`on`, `once`, `off`, `emit`, `listenerCount`, `eventNames`).
 
-**Purpose:**
-- Decouple stages
-- Enable reactive updates
-- Support async workflows
+**Events (verified emitters in `rayzee/src`):**
+| Event | Emitted by | Payload | Listened by |
+|-------|-----------|---------|-------------|
+| `pathtracer:frameComplete` | PathTracerStage, every traced frame | `{ frame, isComplete }` | — |
+| `camera:moved` | PathTracerStage, on a frame the camera changed | — | NormalDepth |
+| `pathtracer:interactionStart` / `pathtracer:interactionEnd` | PathTracerStage, when its CameraOptimizer enters / leaves interaction mode | — | PathTracerApp (drops / restores the render scale) |
+| `pathtracer:viewpointChanged` | PathTracerStage, after interaction mode ends and the stage resets | — | Variance |
+| `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | ASVGF, NRD |
+| `pipeline:lightingChanged` | RayzeeRenderer (model or environment load, rebuild after adding or removing an object), EnvironmentManager mode change (`callbacks.onLightingChanged`) | — | AutoExposure |
+| `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, OverlayManager (hides TileHelper) |
+| `pipeline:resize` | `RenderPipeline.setSize()` | `{ width, height }` | PathTracerStage |
+| `frame:complete` | RenderPipeline, after all stages | `{ frame, accumulatedFrames }` | — |
+| `autoexposure:updated` | AutoExposure | `{ exposure, luminance, targetExposure }` | PathTracerApp (re-dispatched as `EngineEvents.AUTO_EXPOSURE_UPDATED`) |
+| `motionvector:computed` | MotionVector | `{ frame, isFirstFrame }` | — |
+| `stage:enabled` / `stage:disabled` | `RenderStage.enable()` / `disable()` | `{ stage }` | — |
 
-**Key Events (verified emitters in `rayzee/src`):**
-```javascript
-'pathtracer:frameComplete'    // PathTracerStage — frame finished { frame, isComplete }
-'camera:moved'                // PathTracerStage — camera transform changed
-'pathtracer:viewpointChanged' // PathTracerStage — camera optimizer reset
-'pipeline:historyReset'       // RayzeeRenderer / PathTracerStage / PathTracerApp — history from before is not comparable (ASVGF, NRD listen)
-'asvgf:updateParameters'      // PathTracerStage — push ASVGF params
-'pipeline:lightingChanged'    // RayzeeRenderer / EnvironmentManager — model or environment changed (AutoExposure listens)
-'autoexposure:updated'        // AutoExposure
-'motionvector:computed'       // MotionVector
-'frame:complete'              // RenderPipeline — after all stages run { frame }
-'pipeline:reset'              // RenderPipeline — pipeline reset
-'pipeline:resize'             // RenderPipeline — viewport resized { width, height }
-'stage:enabled' / 'stage:disabled' // RenderStage.enable()/disable()
-```
+Some stages listen for events nothing in the engine emits: `asvgf:updateParameters` (ASVGF), `autoexposure:toggle` and `autoexposure:updateParameters` (AutoExposure), `pathtracer:setCompletionThreshold` (PathTracerStage). The viewer calls the stages' methods directly instead (`DenoisingManager` → `asvgf.updateParameters()`); a host may emit them on `pipeline.eventBus`.
 
-> There is no `tile:changed` event — the engine renders full-frame only. TileHelper's overlay is driven by `tileProgress`/`end` events the OIDN denoiser and AI upscaler emit on themselves (DOM-style `addEventListener`, not this bus); see Tile Visualization below.
+> There is no `tile:changed` event — the engine renders full-frame only. TileHelper's overlay is driven by `tileProgress` / `end` events the OIDN denoiser and AI upscaler emit on themselves (DOM-style `addEventListener`, not this bus); see Overlays below.
 
 **Example:**
 ```javascript
-// PathTracer signals a finished frame
-this.emit('pathtracer:frameComplete', { frame: this.frameCount, isComplete: this.isComplete });
+// PathTracerStage signals a finished frame
+this.emit( 'pathtracer:frameComplete', { frame: this.frameCount, isComplete: this.isComplete } );
 
 // ASVGF listens for the core's restart signal
-this.on('pipeline:historyReset', () => this.resetTemporalData());
+this.on( 'pipeline:historyReset', () => this.resetTemporalData() );
 ```
 
 ---
 
-### 3. RenderPipeline
+### 3. RenderPipeline (`Pipeline/RenderPipeline.js`)
 
-Orchestrates stage execution.
+Runs the stages in order and owns the context and the event bus.
 
-**Purpose:**
-- Manage stage lifecycle
-- Execute stages in order
-- Handle errors gracefully
-- Track performance
-
-**Usage:**
 ```javascript
-const pipeline = new RenderPipeline(renderer, width, height);
+const pipeline = new RenderPipeline( renderer, width, height, { issues } );
 
-// Add stages in execution order
-pipeline.addStage(pathTracerStage);
-pipeline.addStage(asvgfStage);
-pipeline.addStage(edgeFilteringStage);
-// Render all enabled stages
-pipeline.render(writeBuffer);
-
-// Lifecycle
-pipeline.reset();
-pipeline.setSize(width, height);
+pipeline.addStage( stage );         // runs in the order added; calls stage.initialize( context, eventBus )
+pipeline.render();                  // each stage whose shouldExecuteThisFrame() is true, then frame:complete
+pipeline.reset();                   // pipeline:reset, every stage's reset(), context.reset()
+pipeline.setSize( width, height );  // pipeline:resize, every stage's setSize()
 pipeline.dispose();
+
+pipeline.getStage( 'EdgeAwareFiltering' );  // by the stage's name
+pipeline.setStageEnabled( 'NRD', false );
 ```
+
+The core builds it in `RayzeeRenderer._initPipeline()`: `stages.pathTracer`, then whatever `_createExtraStages()` returned, then `stages.compositor`.
+
+A stage that throws is logged and recorded once per stage and phase as `stage.render_failed` (`EngineIssues.js`); a strict renderer throws there, otherwise the remaining stages still run.
 
 ---
 
-### 4. RenderStage (Base Class)
+### 4. RenderStage (Base Class, `Pipeline/RenderStage.js`)
 
-Base class for all stages.
+Base class for all stages. Exported from `rayzee` (with `StageExecutionMode`, `RenderPipeline` and `PipelineContext`), not from `rayzee/core`.
+
+**Lifecycle:** `constructor` → `initialize( context, eventBus )` (from `addStage`, calls `setupEventListeners()`) → `render( context, writeBuffer )` each frame → `reset()` / `setSize()` / `dispose()` as the pipeline calls them.
 
 #### Execution Modes
 
-Stages declare when they execute via `executionMode` (defined in `RenderStage.js`):
-
 ```javascript
 export const StageExecutionMode = {
-    ALWAYS: 'always',         // Execute every frame
-    PER_CYCLE: 'per_cycle',   // Execute when the path tracer completes a frame
-    PER_TILE: 'per_tile',     // Execute every frame (currently equivalent to ALWAYS; unused)
-    CONDITIONAL: 'conditional' // Custom logic via shouldExecute() override
+    ALWAYS: 'always',          // every frame
+    PER_CYCLE: 'per_cycle',    // when the path tracer has completed a frame
+    PER_TILE: 'per_tile',      // every frame (same as ALWAYS; unused)
+    CONDITIONAL: 'conditional' // shouldExecute() override
 };
 ```
 
-`shouldExecuteThisFrame()` gates each stage: `PER_CYCLE` runs when `renderMode === 0`, or when `tileRenderingComplete === true`. Since the engine renders full-frame only and PathTracer sets `tileRenderingComplete = true` every frame, **PER_CYCLE simply means "after the path tracer finishes a frame"** — which is every frame. The mechanism survives the tile-rendering removal; it no longer skips intermediate frames because there are none.
+`shouldExecuteThisFrame()` returns false for a disabled stage. Otherwise `PER_CYCLE` runs when `renderMode === 0`, or when `tileRenderingComplete === true`. PathTracer sets that flag on every frame it traces, so **PER_CYCLE means "after the path tracer finishes a frame"** — every frame.
 
-**Usage by Stage Type:**
+**Each stage's mode:**
 
-| Mode | Use Case | Example Stages |
-|------|----------|---------------|
-| `ALWAYS` | Accumulator stages | PathTracer |
-| `PER_CYCLE` | Post-processing, denoisers, filters | ASVGF, EdgeFilter, BilateralFilter |
-| `PER_TILE` | Currently unused | - |
-| `CONDITIONAL` | Custom `shouldExecute()` logic | - |
+| Stage | Mode | Layer |
+|-------|------|-------|
+| PathTracer | `ALWAYS` (set by `PathTracerStage`) | core |
+| NormalDepth | `ALWAYS` | viewer |
+| MotionVector | `ALWAYS` | viewer |
+| NRD | `PER_CYCLE` | viewer |
+| ASVGF | `PER_CYCLE` | viewer |
+| Variance | `ALWAYS` | viewer |
+| BilateralFilter | `ALWAYS` | viewer |
+| EdgeFilter | `PER_CYCLE` | viewer |
+| AutoExposure | `ALWAYS` | viewer |
+| Compositor | `ALWAYS` | core |
 
-**Example:**
-```javascript
-export class MyDenoiserStage extends RenderStage {
-    constructor(options = {}) {
-        super('MyDenoiser', {
-            ...options,
-            executionMode: StageExecutionMode.PER_CYCLE
-        });
-    }
-
-    render(context, writeBuffer) {
-        // Runs after PathTracer publishes a completed frame.
-    }
-}
-```
+No stage uses `PER_TILE` or `CONDITIONAL`.
 
 **Key Methods to Override:**
 ```javascript
 class MyStage extends RenderStage {
 
-    // Required: Render this stage
-    render(context, writeBuffer) {
-        // Read from context
-        const input = context.getTexture('previous:output');
-
-        // Render
-        renderer.setRenderTarget(this.outputTarget);
-        this.quad.render(renderer);
-
-        // Write to context
-        context.setTexture('mystage:output', this.outputTarget.texture);
+    // Required
+    render( context, writeBuffer ) {
+        const input = context.getTexture( 'pathtracer:color' );
+        // ... dispatch or draw into this stage's own target ...
+        context.setTexture( 'mystage:output', this.outputTarget.texture );
     }
 
-    // Optional: Setup event listeners
+    // Optional
     setupEventListeners() {
-        this.on('asvgf:reset', () => { ... });
+        this.on( 'pipeline:historyReset', () => this.resetHistory() );
     }
 
-    // Optional: Reset state
-    reset() {
-        this.frameCount = 0;
-    }
-
-    // Optional: Resize render targets
-    setSize(width, height) {
-        this.outputTarget.setSize(width, height);
-    }
-
-    // Optional: Cleanup
-    dispose() {
-        this.outputTarget.dispose();
-        this.material.dispose();
-    }
+    reset() {}                      // every pipeline.reset(), soft or hard
+    setSize( width, height ) {}     // every pipeline.setSize()
+    dispose() {}
 }
 ```
 
 **Utility Methods:**
 ```javascript
 // Events
-this.emit('event:name', data);
-this.on('event:name', callback);
-this.off('event:name', callback);
+this.emit( 'event:name', data );
+this.on( 'event:name', callback );
+this.once( 'event:name', callback );
+this.off( 'event:name', callback );
 
 // Logging
-this.log('message');
-this.warn('warning');
-this.error('error');
+this.log( 'message' );
+this.warn( 'warning' );
+this.error( 'error' );
 
-// Enable/Disable
+// Enable/Disable — emit stage:enabled / stage:disabled
 this.enable();
 this.disable();
+this.toggle();
 ```
+
+Setting `stage.enabled` directly, as `DenoisingManager` does, emits nothing.
 
 ---
 
 ## Stage Descriptions
 
-### PathTracer
+### PathTracer (core)
 
-`Stages/PathTracer.js` (`class PathTracer extends PathTracerStage`). Core ray tracing renderer.
+`Stages/PathTracer.js` (`class PathTracer extends PathTracerStage`). The ray tracer.
 
-**Execution Mode:** `ALWAYS` (set by the `PathTracerStage` base) — accumulates a sample every frame.
+**Execution Mode:** `ALWAYS` — accumulates a sample every frame until complete.
 
-**Input:** Scene geometry, materials, camera
+**Input:** scene geometry, materials, lights, camera.
 **Output (published to context):**
-- `pathtracer:color` - Accumulated color
-- `pathtracer:normalDepth` - G-buffer (normals + depth)
-- `pathtracer:albedo` - Albedo (for denoisers)
+- `pathtracer:color` - accumulated colour
+- `pathtracer:normalDepth` - normals + depth
+- `pathtracer:albedo` - albedo (denoiser guide)
 
 **Key Features:**
 - Progressive full-frame accumulation (no tile loop)
-- BVH acceleration (two-level TLAS/BLAS)
-- Material sampling (PBR, emissive, etc.)
+- Two-level BVH (TLAS/BLAS)
 - Storage-texture MRT outputs (color / normalDepth / albedo)
 
-**Wavefront architecture:** PathTracer is a pure wavefront tracer — there is no megakernel / monolithic `PathTracerPass`. Each frame is a sequence of decomposed compute kernels dispatched via `KernelManager`: **Generate → per-bounce [Extend → (Sort) → Shade → Compact] → FinalWrite**, plus a single-pass **DebugKernel** for `visMode`. The kernel-level detail (queues, ray buffers, stream compaction, sorting) lives in `PATH_TRACER_SHADER_ARCHITECTURE.md`; this doc only covers its place in the stage pipeline.
+**Wavefront architecture:** PathTracer is a pure wavefront tracer — there is no megakernel. Each frame is a sequence of compute kernels dispatched through `KernelManager`: **Generate → per-bounce [Extend → (Sort) → Shade → Compact] → FinalWrite**, plus a single `debug` kernel for `visMode`. An integrator installed with `registerIntegrator()` (the `rayzee/addons/bidirectional` add-on) adds its kernels through the path tracer's integrator hooks. Kernel-level detail (queues, ray buffers, stream compaction, sorting) is in `PATH_TRACER_SHADER_ARCHITECTURE.md`.
 
-**Events Emitted:**
-- `pathtracer:frameComplete` - After each frame `{ frame, isComplete }`
-- `camera:moved` - When the camera transform changes
-- (plus `asvgf:*` coordination events — see EventBus above)
+**Events Emitted:** `pathtracer:frameComplete`, `camera:moved`, `pathtracer:interactionStart` / `pathtracer:interactionEnd`, `pathtracer:viewpointChanged`, and `pipeline:historyReset` after a render-mode change — see EventBus above.
+**Events Listened:** `pipeline:reset` (`reset()`), `pipeline:resize` (`setSize()`).
+
+**Outputs on request.** `pathTracer.requestOutput( name, options )` compiles an extra per-pixel output into Shade while someone asks for it; the kernels rebuild before the next frame. It returns a function that withdraws the request. The one output today is `'hitDistance'`: `encode( distance, viewZ )` returns a [0, 1] value written to `pathtracer:albedo.w`, only while the aux outputs are on. The viewer's NRD stage requests it at construction and withdraws it on dispose.
 
 #### Composition Architecture
 
-`PathTracer` extends `PathTracerStage`. The base (`Stages/PathTracerStage.js`) owns the renderer-agnostic state and delegates data management to 5 focused sub-managers via composition; the subclass adds the wavefront kernel orchestration (`render()`, `KernelManager`/`QueueManager`/`PackedRayBuffer` wiring):
+`PathTracer` extends `PathTracerStage`. The base (`Stages/PathTracerStage.js`) owns the renderer-agnostic state and delegates data management to 5 sub-managers; the subclass adds the wavefront kernel orchestration (`render()`, `KernelManager` / `QueueManager` / `PackedRayBuffer` wiring):
 
 ```
 PathTracer  (Stages/PathTracer.js — wavefront render() + kernel orchestration)
@@ -371,186 +302,219 @@ PathTracer  (Stages/PathTracer.js — wavefront render() + kernel orchestration)
         └── storageTextures: StorageTexturePool (Processor/StorageTexturePool.js)
 ```
 
-The base keeps: constructor, `reset()`, `build()`, `setupMaterial()`, scene/light/camera uniform updates, event emission, ASVGF coordination, and disposal. The subclass keeps: `render()` (the per-bounce kernel loop) and kernel/buffer lifecycle. Data management is delegated to the sub-managers.
+The base keeps: constructor, `reset()`, `build()`, `setupMaterial()`, scene/light/camera uniform updates, event emission, the history reset on a render-mode change, and disposal. The subclass keeps `render()` (the per-bounce kernel loop) and the kernel/buffer lifecycle.
 
 **Sub-Manager Access Pattern:**
 
-External code (other stages, PathTracerApp) accesses sub-managers directly:
+External code (other stages, the renderer) accesses sub-managers directly:
 
 ```javascript
-// UniformManager — get/set TSL uniform nodes
-const maxBounces = stage.uniforms.get('maxBounces');      // returns TSL uniform node
-stage.uniforms.set('maxBounces', 12);                     // sets node.value
+// UniformManager — TSL uniform nodes
+const maxBounces = stage.uniforms.get( 'maxBounces' );   // the uniform node
+stage.uniforms.set( 'maxBounces', 12 );                  // sets node.value
 
-// Dynamic getters on PathTracer (shorthand for uniforms)
-stage.maxBounces;                // equivalent to stage.uniforms.get('maxBounces')
-stage.cameraWorldMatrix;         // equivalent to stage.uniforms.get('cameraWorldMatrix')
+// Getters defined by PathTracerStage._defineUniformGetters()
+stage.maxBounces;           // same as stage.uniforms.get( 'maxBounces' )
+stage.cameraWorldMatrix;    // same as stage.uniforms.get( 'cameraWorldMatrix' )
 
 // MaterialDataManager
 stage.materialData.materialStorageAttr;   // StorageInstancedBufferAttribute
-stage.materialData.materialStorageNode;   // storage().toReadOnly() node
-stage.materialData.albedoMaps;            // DataArrayTexture
-stage.materialData.updateMaterialProperty(index, property, value);
+stage.materialData.materialStorageNode;   // storage( …, 'vec4' ).toReadOnly() node
+stage.materialData.srgbBuckets;           // DataArrayTexture | null per size bucket — colour maps
+stage.materialData.linearBuckets;         // DataArrayTexture | null per size bucket — data maps
+stage.materialData.updateMaterialProperty( index, property, value );
 
 // EnvironmentManager
-stage.environment.environmentTexture;     // current env texture
+stage.environment.environmentTexture;     // current environment texture
 stage.environment.envParams;              // { mode, sky / solid-colour parameters }
-await stage.environment.setEnvironmentMap(envMap);
-await stage.environment.generateProceduralSkyTexture();  // physical sky, baked and importance-sampled on the GPU
+await stage.environment.setEnvironmentMap( envMap );
+await stage.environment.generateProceduralSkyTexture();  // needs the physical-sky add-on
 
-// ShaderBuilder — builds/refreshes the scene texture nodes the kernels read
-stage.shaderBuilder.createSceneTextureNodes(stage, storageTextures);
-stage.shaderBuilder.updateSceneTextures(stage);  // in-place texture node update
+// ShaderBuilder — the scene texture nodes the kernels read
+stage.shaderBuilder.createSceneTextureNodes( stage, storageTextures );
+stage.shaderBuilder.updateSceneTextures( stage );  // in-place node update
 stage.shaderBuilder.getSceneTextureNodes();
 
 // StorageTexturePool
 stage.storageTextures.swap();
-stage.storageTextures.getReadTextures();  // returns current read textures
-stage.storageTextures.ensureSize(width, height);
+stage.storageTextures.getReadTextures();
+stage.storageTextures.ensureSize( width, height );
 
-// VRAMTracker (on the PathTracer subclass) — current/peak GPU memory
-stage.vramTracker.measure();              // { current, peak, byCategory } in bytes
-stage.vramTracker.resetPeak();            // reset the high-water mark
+// VRAMTracker (on the PathTracer subclass)
+stage.vramTracker.measure();     // { current, peak, byCategory } in bytes
+stage.vramTracker.resetPeak();
 ```
 
-`VRAMTracker` (`Processor/VRAMTracker.js`) is owned by the `PathTracer` subclass (not one of the base's 5 sub-managers). It registers thunk providers that read live GPU resources — ray/queue buffers, scene geometry, materials, environment, the accumulation pool, and (via `PathTracerApp`) every other stage's storage textures — and sums their real `byteLength`/texture sizes, de-duplicated by identity. `PathTracerApp` exposes it as `app.vram` / `app.getMemoryInfo()` and re-measures per frame plus on scene/environment/resolution change.
+`generateProceduralSkyTexture()` bakes only once the `rayzee/addons/physical-sky` add-on is installed with `environmentManager.setProceduralSky( PhysicalSky )` — the viewer does this in `_initManagers()`. Without it the call records `capability.missing` and resolves.
+
+`VRAMTracker` (`Processor/VRAMTracker.js`) is owned by the `PathTracer` subclass, not one of the 5 sub-managers. Its providers are thunks that read live GPU resources, summed by real size and de-duplicated by identity. The path tracer registers its own (rays, queues, G-buffer, accumulation, geometry, materials, environment, integrator); the core's `_ensureVRAMWiring()` adds every other stage's textures and render targets and the canvas, and the viewer's `_registerVRAM()` hook adds the denoiser. The renderer exposes it as `vram` and `getMemoryInfo()`, and measures on a burst's first frames, every 30th frame, and on scene rebuild, environment load and resolution change.
 
 **Callback Pattern:**
 
-Sub-managers use callbacks to communicate back without circular dependencies:
+Sub-managers report back through callbacks rather than holding the stage:
 
 ```javascript
-// In PathTracer constructor:
+// PathTracerStage constructor
 this.materialData.callbacks.onReset = () => this.reset();
 this.environment.callbacks.onReset = () => this.reset();
-this.environment.callbacks.getSceneTextureNodes = () =>
-    this.shaderBuilder.getSceneTextureNodes();
+this.environment.callbacks.getSceneTextureNodes = () => this.shaderBuilder.getSceneTextureNodes();
+
+// RayzeeRenderer._initManagers() — replaces the environment's
+this.environmentManager.callbacks.onLightingChanged = () => this.pipeline.eventBus.emit( 'pipeline:lightingChanged' );
+this.environmentManager.callbacks.onReset = () => this.reset();
 ```
+
+The renderer swaps the environment's `onReset` for its own `reset()`, not the stage's: a sky bake lands after its input, often once the render loop is idle, and only the renderer's reset wakes the loop (it also emits `pipeline:historyReset`).
 
 **Key Design Constraint:** TSL uniform nodes and texture nodes are created once and never replaced — only `.value` is mutated. This preserves compiled shader graph references. All sub-managers follow this pattern.
 
+**Per-renderer shader resources.** Material texture buckets, the albedo maps alpha-cutout shadow rays read, gobo and IES textures and the alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`). A kernel's root is built with `withSceneResources( call, resources )` (`PathTracer._buildWavefrontKernels`, NormalDepth), and a TSL function body reads them with `sceneResources( builder )`, which throws when the kernel was built without them. They are never module state: a TSL function body runs when its kernel compiles, often at its first dispatch, so a module variable would be read from whichever renderer set it last.
+
 ---
+
+### Compositor (core)
+
+`Stages/Compositor.js`. **Execution Mode:** `ALWAYS`. The last stage: it picks the picture, grades saturation, sets alpha (opaque unless a transparent background is on) and draws to the canvas.
+
+**Which picture.** `_resolveSourceTexture()` returns, in order:
+1. `bloom:output`, if published — nothing publishes it today;
+2. the first published key of `displaySources`, the list `_displaySources()` returned when the stages were created;
+3. `pathtracer:color`.
+
+The core's `_displaySources()` returns `[]`, so the core shows the accumulation. The viewer's returns `[ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ]`. The list is read once, in `_createStages()`. `resolveLightSource( context )` is the same chain without bloom; `renderToBuffer( { source: 'display' } )` reads through it.
+
+With the `convergenceOverlay` setting on, it draws a convergence heat map from `pathtracer:color` and the path tracer's convergence buffers instead.
+
+Exposure is not applied here: the renderer's output pass applies `renderer.toneMappingExposure` (inside its tone-mapping branch only), the view transform, then sRGB unless the view already encodes.
+
+---
+
+### Viewer stages
+
+`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter and EdgeFilter start disabled; AutoExposure follows `ENGINE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
+
+| Stage (`name`) | On while | Reads | Publishes |
+|----------------|----------|-------|-----------|
+| NormalDepth | a denoiser, EdgeFilter/BilateralFilter or the OIDN motion history needs it | `pathtracer:color` (size only) | `pathtracer:normalDepth` (replaces the path tracer's), `pathtracer:prevNormalDepth`, `pathtracer:shadingNormal`, `pathtracer:instanceLeaf` (opt-in) |
+| MotionVector | ASVGF or NRD is on | `pathtracer:normalDepth` | `motionVector:screenSpace`, `motionVector:worldSpace`, `motionVector:motion` (alias of screenSpace) |
+| NRD | strategy `'nrd'` | `pathtracer:color`, `:albedo`, `:normalDepth`, `:shadingNormal`, `motionVector:screenSpace` | `nrd:output` |
+| ASVGF | strategy `'asvgf'` | `pathtracer:color`, `:albedo`, `:normalDepth`, `:prevNormalDepth`, `motionVector:screenSpace` | `asvgf:output`, `asvgf:demodulated`, `asvgf:gradient` |
+| Variance (`VarianceEstimation`) | strategies `'asvgf'`, `'edgeaware'` | `pathtracer:color` | `variance:output` |
+| BilateralFilter (`BilateralFiltering`) | strategy `'asvgf'` | `asvgf:demodulated` (else `asvgf:output`, else `pathtracer:color`), `pathtracer:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `bilateralFiltering:output` |
+| EdgeFilter (`EdgeAwareFiltering`) | strategy `'edgeaware'` | `pathtracer:color`, `:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `edgeFiltering:output` |
+| AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `edgeFiltering:output`, else `asvgf:output`, else `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
+
+OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/depth and albedo storage textures directly (`storageTextures.getReadTextures()`) and publishes its result as `oidn:output`.
 
 ### ASVGF
 
-**Purpose:** Adaptive Spatially-Varying Global Filtering (denoiser)
-**Execution Mode:** `PER_CYCLE` - Only denoises complete frames
+**Purpose:** the temporal half of the ASVGF strategy. A temporal gradient (anti-lag) and temporal accumulation of albedo-demodulated lighting, with motion vectors from MotionVector.
+**Execution Mode:** `PER_CYCLE`
 
-**Input:**
-- `pathtracer:color`
-- `pathtracer:normalDepth`
+The spatial half is BilateralFilter: a 5×5 à-trous wavelet over `asvgf:demodulated`, guided by `variance:output`, remodulated by albedo on its last pass. Its `bilateralFiltering:output` is what the Compositor shows.
 
-**Output:**
-- `asvgf:output` - Denoised color (context texture)
-- `asvgf:variance` - Variance map (context texture)
-- `asvgf:temporalColor` - Temporal accumulation (context texture)
-- `stage.heatmapTarget` - Public `RenderTarget` for host-side debug overlays (not in context — only written when `setHeatmapEnabled(true)`)
-
-**Key Features:**
-- Motion vector calculation
-- Temporal accumulation
-- Variance estimation
-- A-trous wavelet filtering
-- Edge-aware filtering
+**Debug output:** `stage.heatmapTarget` — a public `RenderTarget` for host-side overlays, not in the context, written only after `setHeatmapEnabled( true )`.
 
 **Events Listened:**
-- `asvgf:reset` - Reset temporal history
+- `pipeline:historyReset` - drop temporal history (`resetTemporalData()`)
+- `asvgf:updateParameters` - `updateParameters( data )` (nothing in the engine emits it)
+
+`reset()` is a no-op: motion vectors handle camera moves.
 
 ---
 
 ### NRD
 
-**Purpose:** Port of NVIDIA Real-Time Denoisers' ReBLUR (recurrent blur) — a second real-time
-denoiser strategy next to ASVGF. Full write-up: `docs/NRD_DENOISER.md`.
+**Purpose:** port of NVIDIA Real-Time Denoisers' ReBLUR (recurrent blur). Full write-up: `docs/NRD_DENOISER.md`.
 **Execution Mode:** `PER_CYCLE`
 
 **Input:**
-- `pathtracer:color`, `pathtracer:albedo` (`.w` = normalized hit distance)
+- `pathtracer:color`, `pathtracer:albedo` (`.w` = normalised hit distance, requested through `requestOutput( 'hitDistance', { encode } )`)
 - `pathtracer:normalDepth`, `pathtracer:shadingNormal` (`.w` = roughness)
 - `motionVector:screenSpace`
 
 **Output:**
-- `nrd:output` - Denoised, remodulated color
+- `nrd:output` - denoised, remodulated colour
 
 **Key Features:**
-- Six compute passes: pre-pass, temporal accumulation, history fix, blur, post-blur, temporal stabilization
-- Hit-distance-driven blur radius, lobe-aware normal weights, plane-distance disocclusion
-- Fast-history clamping, antilag, firefly suppression (NRD formulas)
-- Progressive-aware: fades out as the path tracer's own accumulation converges
+- Six compute passes: PrePass, TemporalAccumulation, HistoryFix, Blur, PostBlur, TemporalStabilization
+- Passes the input through when a guide is missing
+- Progressive-aware: once `pathtracer:samples` + 1 reaches `handoverFrames`, it republishes the input and skips its passes
 
 **Events Listened:**
-- `denoiser:reset` - Drop history
+- `pipeline:historyReset` - drop history
 
 ---
 
 ### EdgeFilter
 
-**Purpose:** Temporal edge-aware filtering (alternative to ASVGF)
-**Execution Mode:** `PER_CYCLE` - Only filters complete frames
+**Purpose:** spatial-only SVGF à-trous on the accumulated frame — no temporal reprojection, motion vectors or history.
+**Execution Mode:** `PER_CYCLE`
 
-**Input:**
-- `pathtracer:color`
-- `pathtracer:normalDepth`
-
-**Output:**
-- `edgeFiltering:output` - Filtered color
-
-**Key Features:**
-- Edge detection
-- Temporal accumulation
-- Pixel sharpness control
-- Iteration-based filtering
-
-**Note:** Typically disabled when ASVGF is enabled
+Demodulates by albedo, runs `iterations` à-trous passes with variance-guided luminance, shading-normal and relative-depth edge-stops, and remodulates on the last. It passes `pathtracer:color` through when a guide is missing and while the camera moves (`interactionMode`).
 
 ---
 
-### Tile Visualization (OverlayManager)
+### Overlays
 
-The path tracer renders full-frame, so there are no path-trace tiles to draw. `TileHelper` (`managers/helpers/TileHelper.js`, registered by `OverlayManager`) survives only to draw the progress border of the **OIDN denoiser** and **AI upscaler**, which process the final image in tiles. It listens for `tileProgress` / `end` events the denoiser/upscaler emit on themselves (via DOM-style `addEventListener`, wired in `OverlayManager._wireDenoiserTileEvents` — not the pipeline event bus). It renders on a 2D canvas overlay so the border is never baked into saved images.
+The overlay is not a stage. After each frame `animate()` calls the `_renderHelperOverlay()` hook; the viewer draws `OverlayManager` there, at view resolution, on canvases of its own, so helpers never reach a saved image.
+
+`TileHelper` (`managers/helpers/TileHelper.js`, registered by `OverlayManager`) draws the progress border of the **OIDN denoiser** and **AI upscaler**, which process the final image in tiles. It listens for `tileProgress` / `end` events they emit on themselves (`OverlayManager._wireDenoiserTileEvents`), and hides on `pipeline:reset`.
 
 ---
 
 ## Execution Flow
 
-### Per-Frame Flow (full-frame, both render modes)
+### Per frame
 
-The engine renders full-frame every frame. PathTracer accumulates one sample, marks the frame complete, and all enabled stages run:
+`animate()` (or `renderFrames()` / `renderUntilComplete()`) calls `_traceFrame()`, which runs `pipeline.render()`:
 
 ```
-1. PathTracer.render() [ALWAYS]
-   ↓ runs the wavefront kernel sequence (Generate → bounces → FinalWrite)
-   ↓ writes 'pathtracer:color', 'pathtracer:normalDepth', 'pathtracer:albedo' to context
+1. PathTracer.render()                [ALWAYS]
    ↓ sets 'tileRenderingComplete' = true
-   ↓ emits 'pathtracer:frameComplete'
+   ↓ runs the wavefront kernels (Generate → bounces → FinalWrite)
+   ↓ publishes pathtracer:color / normalDepth / albedo; state renderMode, interactionMode, pathtracer:samples
+   ↓ emits pathtracer:frameComplete (and camera:moved when the camera changed)
 
-2. ASVGF.render() [PER_CYCLE] ✅ Executes
-   ↓ reads 'pathtracer:color', 'pathtracer:normalDepth'
-   ↓ writes 'asvgf:output', 'asvgf:variance' to context
+2. Viewer stages, in order, each only while enabled
+   NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure
 
-3. EdgeFilter.render() [PER_CYCLE] ✅ Executes
-   ↓ reads 'pathtracer:color', 'pathtracer:normalDepth'
-   ↓ writes 'edgeFiltering:output' to context
+3. Compositor.render()                 [ALWAYS]
+   ↓ picks its source, grades saturation, draws to the canvas through the renderer's output pass
 
-5. Compositor.render() → renderer's output pass (view transform, then sRGB unless the view already encodes) → Screen
-   ↓ then OverlayManager renders outline + helpers on top
+4. RenderPipeline: frame + 1, emits frame:complete
 ```
 
-`renderMode` (0=interactive, 1=production) still tunes quality — e.g. production forces bounces/SPP to 1 on the first frame and drives the OIDN denoise/upscale path — but neither mode subdivides the frame into tiles. Since `tileRenderingComplete` is always `true`, no PER_CYCLE stage is ever skipped.
+Then the `_afterTrace()` hook runs, and `animate()` calls `_renderHelperOverlay()`. `animate()` skips tracing when `_holdTrace()` says so (the viewer may hold while the view moves and an OIDN denoise is in flight) and stops the loop once the render is complete.
+
+`renderMode` (0 = interactive, 1 = production) still tunes quality — production traces its first frame with one bounce — but neither mode tiles the frame, so no PER_CYCLE stage is skipped.
+
+### Reset
+
+`renderer.reset( soft )`:
+
+```
+_beforeReset( keepHistory )        hook — the viewer's DenoisingManager.beforeReset()
+pipeline.reset()                   pipeline:reset, every stage's reset(), context.reset()
+pipeline:historyReset              only when not soft
+_afterReset()                      hook
+completion reset, wake(), EngineEvents.RENDER_RESET
+```
+
+A camera move is a soft reset from `animate()`, so temporal denoisers keep their history across it.
 
 ### Pipeline Integration
 
 ```
-RenderPipeline.render(writeBuffer)
-    ↓ executes stages sequentially
-[PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
+Core:    [PathTracer → Compositor]
+Viewer:  [PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
     ↓
-Compositor → renderer.toneMapping output pass (view transform + sRGB) → Screen
+Compositor → renderer output pass (exposure, view transform, sRGB) → canvas
     ↓
-OverlayManager → outline + scene helpers + HUD (at display resolution)
+_renderHelperOverlay() → OverlayManager (viewer): outline, scene helpers, HUD at view resolution
 ```
 
-`renderer.toneMapping` is an id in the view-transform registry (`Color/ViewTransforms.js`): three.js's seven curves, or an OpenColorIO view baked to a table by `engine.color`. An OCIO view returns colour already encoded for its display, so `ColorManagement` sets `renderer.outputColorSpace` to linear while one is active; the readbacks (`ToneMapGPU`, `ToneMapCPU`) read the same registry, so a saved image matches the canvas.
+`renderer.toneMapping` is an id in the view-transform registry (`Color/ViewTransforms.js`): three.js's seven built-in curves, plus OpenColorIO views baked to tables once the `rayzee/addons/color` add-on is installed (`renderer.setColorManagement( ColorManagement )`; the viewer does). Without it `renderer.color` is the core's `BasicColor` (`Color/BasicColor.js`): linear Rec.709, the built-in views, nothing converted. An OCIO view returns colour already encoded for its display, so `ColorManagement` sets `renderer.outputColorSpace` to linear while one is active. The readbacks (`ToneMapGPU`, `ToneMapCPU`) read the same registry, so a saved image matches the canvas.
 
 ---
 
@@ -558,21 +522,30 @@ OverlayManager → outline + scene helpers + HUD (at display resolution)
 
 ### Context Texture Registry
 
+Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
+
 | Texture Key | Producer | Consumers | Description |
 |-------------|----------|-----------|-------------|
-| `pathtracer:color` | PathTracer | ASVGF, NRD, EdgeFilter, Compositor | Accumulated path traced color |
-| `pathtracer:normalDepth` | PathTracer / NormalDepth | ASVGF, NRD, EdgeFilter, MotionVector, OIDN motion history | G-buffer: normals + depth (NormalDepth overrides with its jitter-free version while a denoiser runs) |
-| `pathtracer:prevNormalDepth` | NormalDepth | ASVGF, OIDN motion history | The previous traced frame's jitter-free normals + depth |
-| `pathtracer:shadingNormal` | NormalDepth | EdgeFilter, NRD, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
-| `pathtracer:instanceLeaf` | NormalDepth (opt-in, `setInstanceLeafOutput`) | OIDN motion history | r32uint: the hit's transformed TLAS leaf + 1, 0 = none |
-| `pathtracer:albedo` | PathTracer | ASVGF, NRD, BilateralFilter, OIDN | Albedo (denoiser guide); `.w` = NRD-normalized secondary hit distance |
-| `motionVector:screenSpace` | MotionVector | ASVGF, NRD | Screen-space motion (current − previous uv) |
-| `asvgf:output` | ASVGF | Compositor | Denoised color |
-| `nrd:output` | NRD | Compositor | ReBLUR-denoised color (see `docs/NRD_DENOISER.md`) |
+| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure (fallback), NormalDepth (size only) | Accumulated colour |
+| `pathtracer:normalDepth` | PathTracer; replaced by NormalDepth while it runs | ASVGF, NRD, EdgeFilter, BilateralFilter, MotionVector, OIDN motion history | Normals + depth. NormalDepth's: geometric normal, jitter-free linear ray distance |
+| `pathtracer:albedo` | PathTracer | ASVGF, NRD, EdgeFilter, BilateralFilter | Albedo (denoiser guide). `.w` holds the hit distance only while a stage has called `requestOutput( 'hitDistance', { encode } )` — the viewer's NRD |
+| `pathtracer:prevNormalDepth` | NormalDepth | ASVGF, OIDN motion history | The previous traced frame's normals + depth |
+| `pathtracer:shadingNormal` | NormalDepth | NRD, EdgeFilter, BilateralFilter, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
+| `pathtracer:instanceLeaf` | NormalDepth (opt-in, `setInstanceLeafOutput( true )`) | OIDN motion history | r32uint: the hit's transformed TLAS leaf + 1, 0 = none |
+| `motionVector:screenSpace` | MotionVector | ASVGF, NRD | xy = motion (current − previous uv), z = depth, w = validity |
+| `motionVector:worldSpace` | MotionVector | - | xyz = world velocity, w = validity |
+| `motionVector:motion` | MotionVector | - | Alias of `motionVector:screenSpace` |
+| `asvgf:output` | ASVGF | Compositor, BilateralFilter (fallback), AutoExposure | Temporally accumulated, remodulated colour |
+| `asvgf:demodulated` | ASVGF | BilateralFilter | Demodulated lighting + history |
+| `asvgf:gradient` | ASVGF | - | Temporal gradient |
+| `variance:output` | Variance | BilateralFilter, EdgeFilter | Luminance mean, second moment, temporal variance, spatial variance |
+| `bilateralFiltering:output` | BilateralFilter | Compositor | ASVGF strategy's final picture |
+| `edgeFiltering:output` | EdgeFilter | Compositor, AutoExposure | Filtered colour |
+| `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
-| `variance:output` | Variance | BilateralFilter | Variance map |
-| `asvgf:temporalColor` | ASVGF | - | Temporal accumulation |
-| `edgeFiltering:output` | EdgeFilter | Compositor | Filtered color |
+| `bloom:output` | — (nothing publishes it) | Compositor (checked first) | — |
+
+The Compositor shows only keys in its display list (see Compositor above). `DenoisingManager._clearDenoiserTextures()` removes the denoiser keys when the strategy changes.
 
 ---
 
@@ -580,108 +553,113 @@ OverlayManager → outline + scene helpers + HUD (at display resolution)
 
 ### Step 1: Create Stage Class
 
-**Choose the Right Execution Mode:**
-- **ALWAYS** - If your stage accumulates data or provides real-time feedback
-- **PER_CYCLE** - If your stage does post-processing/filtering (most common for new stages; runs after the path tracer finishes a frame)
-- **CONDITIONAL** - If you have complex custom logic (override `shouldExecute()`)
+**Choose the Execution Mode:**
+- **ALWAYS** - work every frame regardless of the path tracer's state
+- **PER_CYCLE** - post-processing that needs a completed path-tracer frame
+- **CONDITIONAL** - custom logic (override `shouldExecute()`)
 
 ```javascript
-import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
+import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';  // a host: from 'rayzee'
 import { MeshBasicNodeMaterial, QuadMesh, RenderTarget, TextureNode } from 'three/webgpu';
 import { uv, uniform } from 'three/tsl';
 
 export class MyCustomStage extends RenderStage {
 
-    constructor(renderer, options = {}) {
-        super('MyCustom', {
+    constructor( renderer, options = {} ) {
+
+        super( 'MyCustom', {
             ...options,
-            executionMode: StageExecutionMode.PER_CYCLE // Choose appropriate mode
-        });
+            executionMode: StageExecutionMode.PER_CYCLE
+        } );
 
         this.renderer = renderer;
+        this.outputTarget = new RenderTarget( options.width || 1, options.height || 1 );
 
-        // Create render target
-        this.outputTarget = new RenderTarget(
-            options.width,
-            options.height
-        );
+        this.intensity = uniform( 1.0 );
 
-        // TSL uniform
-        this.intensity = uniform(1.0);
-
-        // Updatable texture node
+        // Updatable texture node — only .value changes, the shader does not recompile
         this._inputTexNode = new TextureNode();
 
-        // Build TSL shader — sample input and apply intensity
-        const shader = this._inputTexNode.sample(uv()).mul(this.intensity);
-
         this.material = new MeshBasicNodeMaterial();
-        this.material.outputNode = shader;
+        this.material.outputNode = this._inputTexNode.sample( uv() ).mul( this.intensity );
+        this.quad = new QuadMesh( this.material );
 
-        this.quad = new QuadMesh(this.material);
     }
 
-    setupEventListeners() {
-        this.on('mycustom:update', (data) => {
-            this.material.uniforms.intensity.value = data.intensity;
-        });
-    }
+    render( context ) {
 
-    render(context, writeBuffer) {
-        if (!this.enabled) return;
+        if ( ! this.enabled ) return;
 
-        // Read input from context
-        const inputTexture = context.getTexture('pathtracer:color');
-        if (!inputTexture) return;
+        const inputTexture = context.getTexture( 'pathtracer:color' );
+        if ( ! inputTexture ) return;
 
-        // Swap texture node value (no shader recompile)
         this._inputTexNode.value = inputTexture;
 
-        // Render to output target
-        this.renderer.setRenderTarget(this.outputTarget);
-        this.quad.render(this.renderer);
+        this.renderer.setRenderTarget( this.outputTarget );
+        this.quad.render( this.renderer );
+        this.renderer.setRenderTarget( null );
 
-        // Publish to context
-        context.setTexture('mycustom:output', this.outputTarget.texture);
+        context.setTexture( 'mycustom:output', this.outputTarget.texture );
+
     }
 
-    setSize(width, height) {
-        this.outputTarget.setSize(width, height);
+    setSize( width, height ) {
+
+        this.outputTarget.setSize( width, height );
+
     }
 
     dispose() {
+
         this.outputTarget.dispose();
         this.material.dispose();
+        this.context?.removeTexture( 'mycustom:output' );
+
     }
+
 }
 ```
 
+Give every `TextureNode` a kernel reads its real texture before the kernel first runs: two nodes still holding the default empty texture share one GPU binding (`Pipeline/BindingAudit.js` checks this when `setBindingAudit( true )`; the bench turns it on). A node read later than that gets its own placeholder texture (`readNode()` in `NRD.js`).
+
 ### Step 2: Add to Pipeline
 
+A viewer stage goes in `PathTracerApp._createExtraStages()`, in pipeline order. To be shown, its output key must be in `_displaySources()`, in priority order:
+
 ```javascript
-// In PathTracerApp.js setupPipeline()
-import { MyCustomStage } from './Stages/MyCustomStage.js';
+// PathTracerApp.js
+_createExtraStages() {
 
-const myStage = new MyCustomStage(this.renderer, {
-    width: this.width,
-    height: this.height,
-    enabled: true
-});
+    const { renderer, stages } = this;
+    // ... existing stages ...
+    stages.myCustom = new MyCustomStage( renderer, { enabled: false } );
 
-// Add in desired execution order
-this.pipeline.addStage(pathTracer);
-this.pipeline.addStage(asvgf);
-this.pipeline.addStage(myStage);  // ← Add here
-this.pipeline.addStage(compositor);
+    return [
+        stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
+        stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure,
+        stages.myCustom,   // runs before the Compositor
+    ];
+
+}
+
+_displaySources() {
+
+    return [ 'mycustom:output', 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ];
+
+}
 ```
+
+On the core alone, subclass `RayzeeRenderer` and override the same two hooks. The core adds the returned stages between PathTracer and the Compositor; the pipeline's `setSize()` sizes them.
+
+If the stage needs a per-pixel output the path tracer does not write, it asks with `pathTracer.requestOutput( name, options )` (pass the path tracer in through the stage's options) rather than the core naming the stage. `'hitDistance'` is the one output so far; a new one is added to Shade the same way.
 
 ### Step 3: Add Store Handler (Optional)
 
 ```javascript
-// In app/src/store.js - uses getApp() from appProxy
+// app/src/store.js — handleChange calls the updater with ( val, app ), then app.reset()
 handleMyCustomIntensity: handleChange(
-    val => set({ myCustomIntensity: val }),
-    val => getApp().myStage.intensity.value = val
+    val => set( { myCustomIntensity: val } ),
+    ( val, app ) => { app.stages.myCustom.intensity.value = val; }
 ),
 ```
 
@@ -689,111 +667,69 @@ handleMyCustomIntensity: handleChange(
 
 ## Best Practices
 
-### Do's ✅
+### Do
 
-- **Use context for texture sharing** - Don't pass textures directly between stages
-- **Emit events for state changes** - Let other stages react
-- **Check enabled state** - Early return if disabled
-- **Choose correct execution mode** - PER_CYCLE for post-processing, ALWAYS for accumulators
-- **Dispose resources** - Clean up in dispose()
-- **Use meaningful texture keys** - Format: `stageName:textureName`
-- **Document events** - What data is emitted
-- **Handle missing inputs gracefully** - Check if textures exist
-- **Use `getApp()` from appProxy** - Never store direct app references in components
+- **Share textures through the context** - format `stageName:textureName`
+- **Handle missing inputs** - fall back or pass the input through (NRD, EdgeFilter)
+- **Return early when disabled**
+- **Pick the right execution mode** - PER_CYCLE for post-processing, ALWAYS for work every frame
+- **Remove your context textures and dispose your targets** in `dispose()`
+- **Mutate `.value`** on uniform and texture nodes; never replace a node a compiled kernel holds
+- **Use `getApp()` from appProxy** in UI code - never hold the app in a component
 
-### Don'ts ❌
+### Don't
 
-- **Don't access other stages directly** - Use context/events
-- **Don't assume execution order** - Stages should work independently
-- **Don't leak render targets** - Always dispose
-- **Don't allocate in render loop** - Pre-allocate in constructor
-- **Don't modify shared state without events** - Others won't know
-- **Don't forget to check this.enabled** - Wasted GPU cycles
+- **Don't reach into other stages for textures** - read them from the context
+- **Don't name a capability in the core** - add a hook, a context key or `requestOutput`
+- **Don't keep per-renderer shader state in module variables** - use the kernel's build context (`TSL/SceneResources.js`)
+- **Don't allocate in `render()`** - allocate in the constructor or on resize
+- **Don't drop history on every reset** - listen for `pipeline:historyReset`; a soft reset (a camera move) keeps it
 
 ---
 
 ## Performance Considerations
 
-### Optimization Tips
-
-1. **Conditional Execution**
-   ```javascript
-   render(context, writeBuffer) {
-       if (!this.enabled) return;  // Early exit
-       // ... expensive work
-   }
-   ```
-
-2. **Lazy Initialization**
-   ```javascript
-   if (!this.copyMaterial) {
-       this.copyMaterial = new ShaderMaterial({...});
-   }
-   ```
-
-3. **Render Target Reuse**
-   ```javascript
-   // Ping-pong between two targets
-   [this.targetA, this.targetB] = [this.targetB, this.targetA];
-   ```
-
-4. **Event Debouncing**
-   ```javascript
-   this.on('expensive:event', debounce(() => {
-       // ... expensive operation
-   }, 100));
-   ```
+1. **Disabled stages cost nothing per frame** — `shouldExecuteThisFrame()` skips them before `render()`.
+2. **Skip work the frame does not need** — ASVGF skips its gradient dispatch when `gradientStrength` is 0 and the heatmap is off; NRD skips its passes past the handover; EdgeFilter passes through while the camera moves.
+3. **Lazy initialization** — the Compositor builds its convergence-overlay material on first enable, so the normal display path carries none of its bindings.
+4. **Ping-pong targets** — NormalDepth, Variance and ASVGF alternate two textures for current and previous frame.
 
 ### Performance Monitoring
 
 ```javascript
-pipeline.setStatsEnabled(true);
-pipeline.logStats();  // Shows per-stage timing
+pipeline.setStatsEnabled( true );
+pipeline.logStats();  // per-stage timing
 ```
+
+These time command **encoding** on the CPU, not GPU execution: on a compute-heavy pipeline they stay flat while GPU cost doubles. For GPU milliseconds use `app.enableGPUTiming( true )` and `await app.getGPUTimings()` (WebGPU timestamp queries).
 
 ---
 
 ## Debugging
 
-### Enable Debug Logging
-
-```javascript
-// In stage constructor
-this.debug = true;
-
-// In render method
-if (this.debug) {
-    console.log('[MyStage] Rendering with:', {
-        enabled: this.enabled,
-        inputTexture: !!inputTexture,
-        frame: context.getState('frame')
-    });
-}
-```
-
 ### Check Pipeline State
 
 ```javascript
-// In browser console
-getApp().pipeline.getInfo();
-// Returns: stage names, enabled states, execution order
+// Dev builds expose the app as `app` in the browser console (appProxy.js)
+app.pipeline.getInfo();
+// stage names and enabled states, context state, texture names, event names
 
-getApp().pipeline.context.textures;
-// Shows all registered textures
+app.pipeline.context.getTextureNames();
 
-getApp().pipeline.eventBus.listenerCount('asvgf:reset');
-// Check event listeners
+app.pipeline.eventBus.listenerCount( 'pipeline:historyReset' );
+
+app.issues;  // includes stage.render_failed for a stage that threw
 ```
 
 ### Debug Stage Execution
 
 ```javascript
-// Log any stages skipped this frame (e.g. disabled stages)
-getApp().pipeline.stats.enabled = true;
-getApp().pipeline.stats.logSkipped = true;
+// Log each stage skipped this frame (disabled, or gated by its execution mode)
+app.pipeline.setStatsEnabled( true );
+app.pipeline.stats.logSkipped = true;
 
-getApp().pipeline.context.getState('tileRenderingComplete');
-// Always true (full-frame). PER_CYCLE stages run whenever this is true.
+app.pipeline.context.getState( 'tileRenderingComplete' );
+// true once the path tracer has traced a frame; PER_CYCLE stages then run.
 ```
 
 ---
@@ -803,71 +739,38 @@ getApp().pipeline.context.getState('tileRenderingComplete');
 ### Reading from Previous Stage
 
 ```javascript
-render(context, writeBuffer) {
-    // Try multiple sources (priority order)
-    let input = context.getTexture('asvgf:output');
-    if (!input) input = context.getTexture('pathtracer:color');
-    if (!input) {
-        this.warn('No input texture');
-        return;
-    }
-    // ... use input
+// AutoExposure: the newest picture available
+const inputTex = context.getTexture( 'edgeFiltering:output' )
+    || context.getTexture( 'asvgf:output' )
+    || context.getTexture( 'pathtracer:color' );
+if ( ! inputTex ) return;
+```
+
+### Passing Through
+
+```javascript
+// NRD: no guides ⇒ no guidance. Pass through rather than blur blind.
+if ( ! albedoTex || ! ndTex || ! snTex || ! motionTex ) {
+    context.setTexture( 'nrd:output', colorTex );
+    return;
 }
 ```
 
-### Copying to writeBuffer
+### Sizing From the Input
 
 ```javascript
-render(context, writeBuffer) {
-    // Render to own target
-    renderer.setRenderTarget(this.outputTarget);
-    this.quad.render(renderer);
-
-    // Publish to context
-    context.setTexture('mystage:output', this.outputTarget.texture);
-
-    // Copy to writeBuffer
-    if (writeBuffer && !this.renderToScreen) {
-        this.copyTexture(renderer, this.outputTarget, writeBuffer);
-    }
-}
-```
-
-### Temporal Accumulation
-
-```javascript
-render(context, writeBuffer) {
-    // Blend current with previous
-    this.material.uniforms.tCurrent.value = currentTexture;
-    this.material.uniforms.tPrevious.value = this.prevTarget.texture;
-    this.material.uniforms.alpha.value = 0.1;  // Blend factor
-
-    renderer.setRenderTarget(this.currentTarget);
-    this.quad.render(renderer);
-
-    // Swap for next frame
-    [this.currentTarget, this.prevTarget] =
-        [this.prevTarget, this.currentTarget];
+// Stages size their targets from the texture they read, not only from setSize()
+const img = colorTex.image;
+if ( img && img.width > 0 && img.height > 0 &&
+    ( img.width !== this.outputTarget.width || img.height !== this.outputTarget.height ) ) {
+    this.setSize( img.width, img.height );
 }
 ```
 
 ---
 
-## Summary
+## See Also
 
-The Pipeline architecture provides:
-
-- ✅ **Modularity** - Each stage is independent
-- ✅ **Testability** - Mock context/events for unit tests
-- ✅ **Extensibility** - Add stages without modifying existing code
-- ✅ **Maintainability** - Clear responsibilities, easy to understand
-- ✅ **Performance** - Enable/disable stages dynamically, declarative execution modes
-- ✅ **Flexibility** - Events enable reactive workflows
-
-**Execution Modes:** Stages declaratively control when they run via `executionMode`. The engine renders full-frame only, so `PER_CYCLE` resolves to "after the path tracer finishes a frame" — every frame.
-
-**Wavefront path tracer:** The PathTracer stage is a pure wavefront tracer (decomposed compute kernels), not a megakernel. See `PATH_TRACER_SHADER_ARCHITECTURE.md`.
-
-**TSL:** TSL shaders compile JavaScript shader definitions to WGSL at runtime, enabling path tracing on WebGPU without hand-written WGSL.
-
-**Result:** Clean, maintainable, and scalable WebGPU rendering pipeline with TSL shaders.
+- `docs/CORE_AND_ADDONS.md` — the core, capability and viewer layers and the rules between them
+- `docs/PATH_TRACER_SHADER_ARCHITECTURE.md` — the wavefront kernels
+- `docs/NRD_DENOISER.md` — the NRD port
