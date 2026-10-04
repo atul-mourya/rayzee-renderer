@@ -12,7 +12,7 @@ TSL (Three Shading Language) is a JavaScript shader authoring system that three.
 
 Explicitly excluded (refer to separate docs):
 - Denoisers (ASVGF, NRD, EdgeFilter, BilateralFilter; NRD in `NRD_DENOISER.md`)
-- Post-processing (bloom, tone mapping, auto exposure)
+- Post-processing (tone mapping, auto exposure)
 - Pipeline orchestration, backend, and state management (see `PIPELINE_ARCHITECTURE.md`)
 - The renderer core / add-on boundary (see `CORE_AND_ADDONS.md`)
 

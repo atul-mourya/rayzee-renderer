@@ -143,7 +143,7 @@ const color = context.getTexture( 'pathtracer:color' );
 | `motionvector:computed` | MotionVector | `{ frame, isFirstFrame }` | — |
 | `stage:enabled` / `stage:disabled` | `RenderStage.enable()` / `disable()` | `{ stage }` | — |
 
-Some stages listen for events nothing in the engine emits: `asvgf:updateParameters` (ASVGF), `autoexposure:toggle` and `autoexposure:updateParameters` (AutoExposure), `pathtracer:setCompletionThreshold` (PathTracerStage). The viewer calls the stages' methods directly instead (`DenoisingManager` → `asvgf.updateParameters()`); a host may emit them on `pipeline.eventBus`.
+Parameters reach a stage through its methods, not events: the viewer's `DenoisingManager` calls `asvgf.updateParameters()`, `autoExposure.updateParameters()` and the like, and the sample ceiling goes through `settings.set( 'maxSamples', n )`.
 
 > There is no `tile:changed` event — the engine renders full-frame only. TileHelper's overlay is driven by `tileProgress` / `end` events the OIDN denoiser and AI upscaler emit on themselves (DOM-style `addEventListener`, not this bus); see Overlays below.
 
@@ -376,12 +376,11 @@ The renderer swaps the environment's `onReset` for its own `reset()`, not the st
 
 `Stages/Compositor.js`. **Execution Mode:** `ALWAYS`. The last stage: it picks the picture, grades saturation, sets alpha (opaque unless a transparent background is on) and draws to the canvas.
 
-**Which picture.** `_resolveSourceTexture()` returns, in order:
-1. `bloom:output`, if published — nothing publishes it today;
-2. the first published key of `displaySources`, the list `_displaySources()` returned when the stages were created;
-3. `pathtracer:color`.
+**Which picture.** `resolveLightTexture()` returns, in order:
+1. the first published key of `displaySources`, the list `_displaySources()` returned when the stages were created;
+2. `pathtracer:color`.
 
-The core's `_displaySources()` returns `[]`, so the core shows the accumulation. The viewer's returns `[ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ]`. The list is read once, in `_createStages()`. `resolveLightSource( context )` is the same chain without bloom; `renderToBuffer( { source: 'display' } )` reads through it.
+The core's `_displaySources()` returns `[]`, so the core shows the accumulation. The viewer's returns `[ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ]`. The list is read once, in `_createStages()`. `resolveLightSource( context )` also returns the key it came from; `renderToBuffer( { source: 'display' } )` reads through it.
 
 With the `convergenceOverlay` setting on, it draws a convergence heat map from `pathtracer:color` and the path tracer's convergence buffers instead.
 
@@ -417,7 +416,6 @@ The spatial half is BilateralFilter: a 5×5 à-trous wavelet over `asvgf:demodul
 
 **Events Listened:**
 - `pipeline:historyReset` - drop temporal history (`resetTemporalData()`)
-- `asvgf:updateParameters` - `updateParameters( data )` (nothing in the engine emits it)
 
 `reset()` is a no-op: motion vectors handle camera moves.
 
@@ -543,7 +541,6 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 | `edgeFiltering:output` | EdgeFilter | Compositor, AutoExposure | Filtered colour |
 | `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
-| `bloom:output` | — (nothing publishes it) | Compositor (checked first) | — |
 
 The Compositor shows only keys in its display list (see Compositor above). `DenoisingManager._clearDenoiserTextures()` removes the denoiser keys when the strategy changes.
 

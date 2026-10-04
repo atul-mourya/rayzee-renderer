@@ -374,16 +374,6 @@ export class PathTracerStage extends RenderStage {
 
 		} );
 
-		this.on( 'pathtracer:setCompletionThreshold', ( data ) => {
-
-			if ( data && data.threshold !== undefined ) {
-
-				this.completionThreshold = data.threshold;
-
-			}
-
-		} );
-
 	}
 
 	// ===== PUBLIC API METHODS =====

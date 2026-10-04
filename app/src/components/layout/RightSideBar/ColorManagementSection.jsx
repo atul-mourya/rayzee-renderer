@@ -450,7 +450,7 @@ const ColorManagementSection = () => {
 			<Row>
 				<span className="opacity-50 text-xs truncate flex items-center gap-1">
 					Save EXR
-					<InfoTip text="Saves the render as an OpenEXR file for compositing or grading: the light itself, denoised, without bloom or exposure. Choose the colour space the next person in the pipeline expects." />
+					<InfoTip text="Saves the render as an OpenEXR file for compositing or grading: the light itself, denoised, without exposure. Choose the colour space the next person in the pipeline expects." />
 				</span>
 				<div className="flex items-center gap-1">
 					{config ? (

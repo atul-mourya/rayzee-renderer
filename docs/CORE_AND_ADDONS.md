@@ -165,7 +165,6 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
   does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
 - **The normal/depth/albedo G-buffer is always compiled** into Generate, Shade and FinalWrite and switched at runtime
   (`auxGBufferEnabled`). Making it a requested output like the hit distance would take it out of the core's programs.
-- **The Compositor looks for a `bloom:output` picture** before the display sources, though nothing publishes one.
 - **Colour and storage are one per page.** The active colour management (`Color/ActiveColor.js`) and the shared OPFS
   manager serve every renderer in the page, by design: a config is a page-wide choice, the texture cache keys on it,
   and one origin has one file system.

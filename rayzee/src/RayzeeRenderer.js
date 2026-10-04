@@ -2544,7 +2544,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * canvas — so it works headless, works while the page is hidden, and cannot pick up a
 	 * helper overlay.
 	 *
-	 * This is `pathtracer:color`, NOT the Compositor's resolved output: denoising, bloom and
+	 * This is `pathtracer:color`, NOT the Compositor's resolved output: denoising and
 	 * edge filtering are downstream and are absent here. Use getCanvas() when you want what
 	 * the viewport shows.
 	 *
@@ -2554,7 +2554,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   space in the loaded OCIO config for a delivery buffer (float, e.g. `'ACES2065-1'`)
 	 * @param {boolean} [options.preserveAlpha=false] - srgb only
 	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
-	 *   viewport is showing — denoised when a denoiser has run, without bloom — instead of the raw
+	 *   viewport is showing — denoised when a denoiser has run — instead of the raw
 	 *   accumulation
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
 	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the

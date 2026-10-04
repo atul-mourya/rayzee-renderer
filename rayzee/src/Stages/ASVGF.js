@@ -649,8 +649,6 @@ export class ASVGF extends RenderStage {
 
 		this.on( 'pipeline:historyReset', () => this.resetTemporalData() );
 
-		this.on( 'asvgf:updateParameters', ( data ) => this.updateParameters( data ) );
-
 	}
 
 	render( context ) {

@@ -66,18 +66,8 @@ export class Compositor extends RenderStage {
 	}
 
 	/**
-	 * Later stages in the chain take priority; `pathtracer:color` is the
-	 * baseline fallback that is always present.
-	 */
-	_resolveSourceTexture( context ) {
-
-		return context.getTexture( 'bloom:output' ) || this.resolveLightTexture( context );
-
-	}
-
-	/**
-	 * The newest scene-referred image the pipeline holds — denoised when a denoiser has run — without
-	 * bloom, which is a look added on top rather than light in the scene.
+	 * The picture to show: the first published of the display sources, else `pathtracer:color` — the newest
+	 * scene-referred image the pipeline holds, denoised when a denoiser has run.
 	 */
 	resolveLightTexture( context ) {
 
@@ -210,7 +200,7 @@ export class Compositor extends RenderStage {
 
 		}
 
-		const sourceTexture = this._resolveSourceTexture( context );
+		const sourceTexture = this.resolveLightTexture( context );
 		if ( ! sourceTexture ) return;
 
 		this._sourceTexNode.value = sourceTexture;

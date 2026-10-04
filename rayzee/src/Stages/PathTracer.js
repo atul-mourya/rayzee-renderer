@@ -172,7 +172,7 @@ export class PathTracer extends PathTracerStage {
 		t.register( 'rays', () => {
 
 			const a = this._packedBuffers?._attrs;
-			return a ? [ a.ray, a.rng, a.hit ] : null;
+			return a ? [ a.ray, a.hit ] : null;
 
 		} );
 
@@ -1265,7 +1265,7 @@ export class PathTracer extends PathTracerStage {
 
 		const RAY_BYTES = RAY_STRIDE * 16;
 		const HIT_BYTES = ( this._integrator?.hitStride ?? HIT_STRIDE ) * 16;
-		const bytesPerPath = RAY_BYTES + HIT_BYTES + 4 /* rng */ + GBUFFER_STRIDE * 16
+		const bytesPerPath = RAY_BYTES + HIT_BYTES + GBUFFER_STRIDE * 16
 			+ 4 + 4 /* activeIndices A/B */ + 4;
 
 		const limits = this.renderer?.backend?.device?.limits;
@@ -1863,7 +1863,6 @@ export class PathTracer extends PathTracerStage {
 			emissiveVec4Offset: this.emissiveVec4Offset,
 			emissiveTotalPower: this.emissiveTotalPower,
 			emissiveBoost: this.emissiveBoost,
-			totalTriangleCount: this.totalTriangleCount,
 			enableEmissiveTriangleSampling: this.enableEmissiveTriangleSampling,
 			lightBVHNodeCount: this.lightBVHNodeCount,
 			reverseMapVec4Offset: this.reverseMapVec4Offset,

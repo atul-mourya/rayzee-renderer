@@ -80,9 +80,8 @@ const adaptExposure = /*@__PURE__*/ wgslFn( `
  * Execution: ALWAYS
  *
  * Events listened:
- *   pipeline:reset              — reset temporal history
- *   autoexposure:toggle         — enable/disable
- *   autoexposure:updateParameters — update key value, speeds, bounds, percentiles
+ *   pipeline:reset              — soft reset (keeps the exposure, discards an in-flight readback)
+ *   pipeline:lightingChanged    — a new model or environment: start the exposure history over
  *
  * Textures published:  (none — publishes state, not textures)
  * Textures read:       edgeFiltering:output > asvgf:output > pathtracer:color
@@ -472,14 +471,6 @@ export class AutoExposure extends RenderStage {
 
 		this.on( 'pipeline:reset', () => this.reset() );
 		this.on( 'pipeline:lightingChanged', () => this.resetHistory() );
-
-		this.on( 'autoexposure:toggle', ( enabled ) => {
-
-			this.enabled = enabled;
-
-		} );
-
-		this.on( 'autoexposure:updateParameters', ( data ) => data && this.updateParameters( data ) );
 
 	}
 

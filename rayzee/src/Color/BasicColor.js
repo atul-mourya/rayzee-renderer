@@ -58,6 +58,34 @@ export class BasicColor {
 
 	}
 
+	/** Every registered view transform, for a host menu. */
+	listViews() {
+
+		return listViewTransforms();
+
+	}
+
+	/** The active OCIO view: none without a config. */
+	get activeView() {
+
+		return null;
+
+	}
+
+	/**
+	 * Make a registered transform the one the renderer uses — three.js's own seven, or one a host added. A view that
+	 * returns display-encoded colour (an OCIO view) needs the OCIO pipeline, which sets the output colour space for it.
+	 */
+	setActiveView( id ) {
+
+		const t = getViewTransform( id );
+		if ( ! t ) throw new Error( `no view transform with id ${id}` );
+		if ( t.outputEncoded ) throw new Error( `"${t.name}" returns display-encoded colour: it needs rayzee/addons/color` );
+		if ( this._renderer ) this._renderer.toneMapping = id;
+		return t;
+
+	}
+
 	_publishWorkingMatrix() {
 
 		setWorkingMatrix( null, DEFAULT_WORKING_SPACE );

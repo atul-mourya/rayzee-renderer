@@ -289,9 +289,8 @@ export function useColorStatus() {
  * transform — and a delivery space cannot change it. An EXR is scene-referred float, which is the
  * one place a colour space like ACES2065-1 is the answer rather than a category error.
  *
- * Taken from what the viewport shows — denoised when a denoiser has run — but without bloom, which a
- * compositor adds back itself. Exposure is not applied: it is part of how the image is viewed, not of
- * the light in it.
+ * Taken from what the viewport shows — denoised when a denoiser has run. Exposure is not applied: it is
+ * part of how the image is viewed, not of the light in it.
  *
  * @param {?string} space - a config colour space, or null for the working space as-is
  * @returns {Promise<{ colorSpace: string, width: number, height: number, bytes: number }>}
