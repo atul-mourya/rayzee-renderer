@@ -25,6 +25,7 @@ import { TransformManager } from './managers/TransformManager.js';
 import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
 import { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
+import { allFormats } from './Processor/FileFormats.js';
 import { BidirectionalIntegrator } from './integrators/BidirectionalIntegrator.js';
 import { ColorManagement } from './Color/ColorManagement.js';
 import { acquireSharedStorage } from './Storage/openStorage.js';
@@ -122,6 +123,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		super._initAssetPipeline();
 		this.assetLoader.controls = this.cameraManager.controls;
+		this.assetLoader.registerFormat( ...allFormats );
 		// Loaded on first use, as a chunk of its own: most sessions never open an archive.
 		this.assetLoader.setArchiveImporterLoader( () => import( './Processor/ArchiveImporter.js' ).then( ( m ) => new m.ArchiveImporter( this.assetLoader ) ), ARCHIVE_FORMATS );
 

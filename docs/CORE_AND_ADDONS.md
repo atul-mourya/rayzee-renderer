@@ -39,7 +39,7 @@ renderer runs without a browser.
 | Picture | AI upscaler, auto exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
-| Importers | pbrt and scene archives; OBJ, FBX, USD, STL and the other three.js loaders (already loaded on demand) |
+| Importers | pbrt and scene archives; FBX, OBJ, STL, PLY, Collada, 3MF, USD and EXR (`rayzee/addons/formats`) |
 | Storage | The on-disk store behind the download and scene caches and the memory spill (the caches themselves are core and run without it) |
 
 ## Rules between the layers
@@ -165,6 +165,12 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
 15. **Examples** — `rayzee/examples/core-node.mjs` renders with the core alone in Node (`npm run example:node`; the Node
    bench runs it), and `rayzee/examples/core-browser/` is the core plus the physical sky in a page
    (`npm run example:browser`).
+16. **File formats as an add-on** — the core reads glTF/GLB, `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF,
+   USD and EXR are descriptors in `rayzee/addons/formats` (`fbxFormat` … `exrFormat`, `allFormats`), registered with
+   `assetLoader.registerFormat()` and read through one shared path in place of seven copies (`AssetLoader.js`
+   1,622 → 1,351 lines); a host's own format registers the same way. glTF's Draco, KTX2 and meshopt decoders are
+   imported only for a file that uses them (`GLTFDecoders.js`). Built as a host would (the core-browser example):
+   the main chunk 577 → 534 KB gzip, and the seven model-loader chunks are no longer emitted.
 
 ## What still ties the layers
 

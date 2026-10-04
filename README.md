@@ -20,8 +20,8 @@ import { PathTracerApp } from 'rayzee';               // the full engine, as the
 import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, about 40 % smaller
 ```
 
-The renderer core takes optional add-ons — physical sky, scene archives, bidirectional path tracing, OpenColorIO
-colour, on-disk storage — from `rayzee/addons/*`: how to install each is in
+The renderer core takes optional add-ons — file formats beyond glTF, physical sky, scene archives, bidirectional path
+tracing, OpenColorIO colour, on-disk storage — from `rayzee/addons/*`: how to install each is in
 [rayzee/README.md → Add-ons](rayzee/README.md#add-ons), the layer rules in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md). Two runnable
 examples, in Node and in a page, are in [`rayzee/examples/`](rayzee/examples).
 See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference — installation, framework integration, managers, events, and custom pipeline stages.
@@ -148,7 +148,7 @@ For a production render — adaptive sampling on, stopping once the image conver
 
 ## Architecture
 
-Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter` and `AutoExposure` between them, plus camera controls, the gizmo, overlays and the timeline; five capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
+Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter` and `AutoExposure` between them, plus camera controls, the gizmo, overlays and the timeline; six capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
 
 For the full stage breakdown and shader architecture, see [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) and [docs/PATH_TRACER_SHADER_ARCHITECTURE.md](docs/PATH_TRACER_SHADER_ARCHITECTURE.md).
 

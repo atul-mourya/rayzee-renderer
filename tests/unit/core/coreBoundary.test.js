@@ -50,6 +50,7 @@ const ABOVE_THE_CORE = [
 	/^addons\//,
 	/^(Processor\/(PhysicalSky|AtmosphereModel)|TSL\/(Atmosphere|EnvironmentCDF))\.js$/,
 	/^Processor\/(ArchiveImporter|ArchiveReader|ArchiveCache|ZipReader)\.js$/,
+	/^Processor\/FileFormats\.js$/,
 	/^Processor\/PBRT\//,
 	/^Storage\/SceneGraphCodec\.js$/,
 	/^integrators\//,
@@ -85,6 +86,32 @@ describe( 'the renderer core', () => {
 		const sky = reachable( 'addons/physicalSky.js' );
 		expect( sky ).toContain( 'Processor/PhysicalSky.js' );
 		expect( sky.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'reads glTF and .hdr itself, and imports the glTF decoders only for a file that uses them', () => {
+
+		const THREE_ADDON = /^three\/(addons|examples\/jsm)\//;
+		const DYNAMIC_IMPORT = /import\(\s*['"]([^'"]+)['"]\s*\)/g;
+		const statics = new Set(), dynamics = new Set();
+		for ( const module of modules ) {
+
+			const text = readFileSync( resolve( SRC, module ), 'utf8' );
+			for ( const [ , spec ] of text.matchAll( STATIC_IMPORT ) ) if ( THREE_ADDON.test( spec ) && spec.includes( '/loaders/' ) ) statics.add( spec.split( '/' ).pop() );
+			for ( const [ , spec ] of text.matchAll( DYNAMIC_IMPORT ) ) if ( THREE_ADDON.test( spec ) ) dynamics.add( spec.split( '/' ).pop() );
+
+		}
+
+		expect( [ ...statics ].sort() ).toEqual( [ 'GLTFLoader.js', 'HDRLoader.js' ] );
+		expect( [ ...dynamics ].sort() ).toEqual( [ 'DRACOLoader.js', 'KTX2Loader.js', 'meshopt_decoder.module.js' ] );
+
+	} );
+
+	it( 'leaves the other file formats to their add-on, which reaches no viewer code', () => {
+
+		const formats = reachable( 'addons/formats.js' );
+		expect( formats ).toContain( 'Processor/FileFormats.js' );
+		expect( formats.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
 

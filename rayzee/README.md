@@ -351,11 +351,14 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 #### Loading Assets
 
 ```js
-await engine.loadModel(url)                  // Load GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USDZ/ZIP
+await engine.loadModel(url)                  // Load a GLB/GLTF by URL
+await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, archives, HDR/EXR
 await engine.loadObject3D(object3d, name?)    // Load a Three.js Object3D directly (name is optional, defaults to 'object3d')
 await engine.loadEnvironment(url)             // Load HDR/EXR environment map
 engine.cancelLoad()                           // Abort an in-flight download (network phase only; no-op once processing starts)
 ```
+
+On `rayzee/core`, formats other than glTF and `.hdr` need the `rayzee/addons/formats` add-on — see [Add-ons](#add-ons).
 
 `loadModel` / `loadObject3D` **replace** the current scene. To add or remove objects from a live scene without a full reload (and without reframing the camera):
 
@@ -490,7 +493,7 @@ To pause rendering for image-viewing UI, set `engine.pauseRendering = true` and 
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. The denoisers, camera controls, gizmo, overlays, timeline and animation playback exist only in `PathTracerApp`; five capabilities come as add-ons — the physical sky, scene archives, bidirectional path tracing, OpenColorIO colour and on-disk storage. Its entry point downloads about 40 % less (249 KB against 418 KB compressed). It takes the same constructor options except `container`, and renders the same pixels.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. The denoisers, camera controls, gizmo, overlays, timeline and animation playback exist only in `PathTracerApp`; six capabilities come as add-ons — file formats beyond glTF and `.hdr`, the physical sky, scene archives, bidirectional path tracing, OpenColorIO colour and on-disk storage. Its entry point downloads about 40 % less (249 KB against 418 KB compressed). It takes the same constructor options except `container`, and renders the same pixels.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -510,21 +513,22 @@ and `rayzee/examples/core-browser/` (the core plus the physical sky, accumulatin
 
 #### Add-ons
 
-Five capabilities install on the core explicitly. `PathTracerApp` installs all five itself, so nothing in this
+Six capabilities install on the core explicitly. `PathTracerApp` installs all six itself, so nothing in this
 section applies to it.
 
 | Add-on | Import | Install | When | Without it |
 |---|---|---|---|---|
+| File formats | `fbxFormat`, `objFormat`, `stlFormat`, `plyFormat`, `colladaFormat`, `threeMFFormat`, `usdFormat`, `exrFormat` or `allFormats` from `rayzee/addons/formats` | `renderer.assetLoader.registerFormat(objFormat, exrFormat)` | after `init()` | only glTF/GLB, `.hdr` and images load; any other file's error names the add-on |
 | Physical sky | `PhysicalSky` from `rayzee/addons/physical-sky` | `renderer.environmentManager.setProceduralSky(PhysicalSky)` | after `init()` | `'procedural'` mode records `capability.missing` (throws under `strict`) |
 | Scene archives and pbrt | `ArchiveImporter` from `rayzee/addons/archives` | `renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader))` | after `init()` | `.zip`, `.tar` and `.tgz` are not supported formats, and the error names the add-on |
 | Bidirectional and VCM | `BidirectionalIntegrator` from `rayzee/addons/bidirectional` | `renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt))` | after `init()` | choosing either integrator records `capability.missing` (throws under `strict`) and keeps the current one |
 | OpenColorIO colour | `ColorManagement` from `rayzee/addons/color` | `renderer.setColorManagement(ColorManagement)` | before or after `init()` | linear Rec.709 through three.js's own tone mappers; `loadColorConfig()` records `capability.missing` and rejects |
 | On-disk storage | `acquireSharedStorage` from `rayzee/addons/storage` | `renderer.setStorageOpener(acquireSharedStorage)` | **before** `init()` | downloads land in memory and nothing is cached between visits |
 
-`init()` creates the asset loader, the environment manager and the path tracer stage, which is why three of them come
+`init()` creates the asset loader, the environment manager and the path tracer stage, which is why four of them come
 after it. Storage is opened during `init()`, so its opener has to be set first.
 
-All five, in that order:
+All six, in that order:
 
 ```js
 import { RayzeeRenderer, configureAssets } from 'rayzee/core';
@@ -533,6 +537,7 @@ import { ColorManagement } from 'rayzee/addons/color';
 import { ArchiveImporter } from 'rayzee/addons/archives';
 import { PhysicalSky } from 'rayzee/addons/physical-sky';
 import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
+import { allFormats } from 'rayzee/addons/formats';
 
 configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
 
@@ -540,6 +545,7 @@ const renderer = new RayzeeRenderer(canvas);
 renderer.setStorageOpener(acquireSharedStorage);             // before init()
 renderer.setColorManagement(ColorManagement);
 await renderer.init();
+renderer.assetLoader.registerFormat(...allFormats);
 renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
 renderer.environmentManager.setProceduralSky(PhysicalSky);
 renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
@@ -561,6 +567,29 @@ renderer.assetLoader.setArchiveImporterLoader(
 
 Colour, storage and the integrators have no loader: colour and storage are used at startup, and an integrator applies
 the moment it is chosen (a lazy one would trace plain frames meanwhile and break reproducible renders).
+
+**File formats.** The core reads glTF/GLB (Draco, KTX2 and meshopt decoders are fetched only for a file that uses
+them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USD/USDZ and EXR are formats to register — import only
+those you read and a bundler leaves the rest out; each three.js loader is downloaded the first time its format is read:
+
+```js
+import { objFormat, usdFormat, exrFormat } from 'rayzee/addons/formats';
+
+renderer.assetLoader.registerFormat(objFormat, usdFormat, exrFormat);
+await renderer.loadFile(objFile);
+```
+
+A format of your own registers the same way. A model format's `parse` gets the file and resolves to the model; an
+environment format's `createLoader` returns a three.js loader whose `loadAsync` resolves to a texture:
+
+```js
+renderer.assetLoader.registerFormat({
+  name: 'Point cloud (XYZ)', label: 'XYZ', type: 'model', extensions: ['xyz'],
+  async parse(file, { filename }) {
+    return { model: buildPoints(await file.text(), filename) };
+  },
+});
+```
 
 **Physical sky**, for `environmentMode: 'procedural'`:
 

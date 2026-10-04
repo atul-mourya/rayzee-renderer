@@ -1,45 +1,41 @@
 import { Box3, BufferGeometry, Vector3, RectAreaLight, Color, FloatType, LinearFilter, EquirectangularReflectionMapping,
-	TextureLoader, SRGBColorSpace, Mesh, MeshStandardMaterial, MeshPhysicalMaterial,
-	CircleGeometry, Points, PointsMaterial, LoadingManager, EventDispatcher, LoaderUtils
+	TextureLoader, SRGBColorSpace, Mesh, MeshPhysicalMaterial,
+	CircleGeometry, LoadingManager, EventDispatcher, LoaderUtils
 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
-import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
-import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils.js';
 import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
-import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { DownloadCache, nameFromUrl, cachedObjectURL } from '../Storage/DownloadCache.js';
 import { setEnvironmentSource } from '../Storage/CDFCache.js';
 import { fileIdentity, identityKey } from '../Storage/identity.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
-import { getAssetConfig } from '../AssetConfig.js';
 import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
+import { decodersOnDemand } from './GLTFDecoders.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
 
 // Define supported file formats
-export const SUPPORTED_FORMATS = {
+// What the core reads itself; every other format is registered (registerFormat) or comes with an add-on.
+const CORE_FORMATS = {
 	'glb': { type: 'model', name: 'GLB (GLTF Binary)' }, 'gltf': { type: 'model', name: 'GLTF' },
-	'fbx': { type: 'model', name: 'FBX' }, 'obj': { type: 'model', name: 'OBJ' },
-	'stl': { type: 'model', name: 'STL' }, 'ply': { type: 'model', name: 'PLY (Polygon File Format)' },
-	'dae': { type: 'model', name: 'Collada' }, '3mf': { type: 'model', name: '3D Manufacturing Format' },
-	'usd': { type: 'model', name: 'USD (Universal Scene Description)' },
-	'usda': { type: 'model', name: 'USDA (USD ASCII)' },
-	'usdc': { type: 'model', name: 'USDC (USD Crate)' },
-	'usdz': { type: 'model', name: 'USDZ (USD Archive)' },
-	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' }, 'exr': { type: 'environment', name: 'EXR (OpenEXR)' },
+	'hdr': { type: 'environment', name: 'HDR (High Dynamic Range)' },
 	'png': { type: 'image', name: 'PNG' }, 'jpg': { type: 'image', name: 'JPEG' },
 	'jpeg': { type: 'image', name: 'JPEG' }, 'webp': { type: 'image', name: 'WebP' },
 };
 
 // Formats an add-on reads, for the error that names it.
-const ADDON_FORMATS = { zip: 'rayzee/addons/archives', gz: 'rayzee/addons/archives', tgz: 'rayzee/addons/archives', tar: 'rayzee/addons/archives' };
+const ARCHIVES = { addOn: 'rayzee/addons/archives', install: 'assetLoader.setArchiveImporter()' };
+const FORMATS = { addOn: 'rayzee/addons/formats', install: 'assetLoader.registerFormat()' };
+const ADDON_FORMATS = {
+	zip: ARCHIVES, gz: ARCHIVES, tgz: ARCHIVES, tar: ARCHIVES,
+	fbx: FORMATS, obj: FORMATS, stl: FORMATS, ply: FORMATS, dae: FORMATS, '3mf': FORMATS,
+	usd: FORMATS, usda: FORMATS, usdc: FORMATS, usdz: FORMATS, exr: FORMATS,
+};
 
 // A throwaway stand-in for a geometry the engine must not mutate: the split's mergeGroups()
 // reorders and disposes what it is given, but never writes the attributes.
@@ -109,6 +105,8 @@ export class AssetLoader extends EventDispatcher {
 		this.archives = null;
 		/** @type {?{load: function(): Promise<Object>, formats: Object, pending: ?Promise}} see setArchiveImporterLoader() */
 		this._archiveLoader = null;
+		/** @type {Map<string, Object>} extension → a format registerFormat() added */
+		this._formats = new Map();
 
 		this._issues = issues;
 		this._profile = profile ?? getRenderProfile();
@@ -357,11 +355,24 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/**
+	 * Adds file formats beyond glTF and .hdr — those of rayzee/addons/formats, or a host's own. Each is
+	 * `{ name, label, type: 'model' | 'environment', extensions, parse | createLoader }` (see Processor/FileFormats.js).
+	 * @param {...Object} formats
+	 * @returns {this}
+	 */
+	registerFormat( ...formats ) {
+
+		for ( const format of formats ) for ( const extension of format.extensions ) this._formats.set( extension, format );
+		return this;
+
+	}
+
 	// File utilities
 	getFileFormat( filename ) {
 
 		const extension = filename.split( '.' ).pop().toLowerCase();
-		return SUPPORTED_FORMATS[ extension ] || this._archiveFormats?.[ extension ] || null;
+		return CORE_FORMATS[ extension ] || this._formats.get( extension ) || this._archiveFormats?.[ extension ] || null;
 
 	}
 
@@ -370,7 +381,7 @@ export class AssetLoader extends EventDispatcher {
 
 		const addOn = ADDON_FORMATS[ filename.split( '.' ).pop().toLowerCase() ];
 		return new Error( addOn
-			? `${filename}: archives are read by ${addOn} — install it with assetLoader.setArchiveImporter()`
+			? `${filename}: this format is read by ${addOn.addOn} — install it with ${addOn.install}`
 			: `Unsupported file format: ${filename}` );
 
 	}
@@ -506,23 +517,36 @@ export class AssetLoader extends EventDispatcher {
 	async _loadModelFileByExtension( file, filename ) {
 
 		const extension = filename.split( '.' ).pop().toLowerCase();
-		const arrayBuffer = await this.readFileAsArrayBuffer( file );
+		if ( extension === 'glb' || extension === 'gltf' ) return await this.loadGLBFromArrayBuffer( await this.readFileAsArrayBuffer( file ), filename );
 
-		switch ( extension ) {
+		const format = this._formats.get( extension );
+		if ( format?.type !== 'model' ) throw this.formatError( filename );
+		return await this._loadModelWithFormat( format, file, filename );
 
-			case 'glb':
-			case 'gltf': return await this.loadGLBFromArrayBuffer( arrayBuffer, filename );
-			case 'fbx': return await this.loadFBXFromArrayBuffer( arrayBuffer, filename );
-			case 'obj': return await this.loadOBJFromFile( file, filename );
-			case 'stl': return await this.loadSTLFromArrayBuffer( arrayBuffer, filename );
-			case 'ply': return await this.loadPLYFromArrayBuffer( arrayBuffer, filename );
-			case 'dae': return await this.loadColladaFromFile( file, filename );
-			case '3mf': return await this.load3MFFromArrayBuffer( arrayBuffer, filename );
-			case 'usd':
-			case 'usda':
-			case 'usdc':
-			case 'usdz': return await this.loadUSDFromArrayBuffer( arrayBuffer, filename );
-			default: throw new Error( `Support for ${extension} files is not yet implemented` );
+	}
+
+	async _loadModelWithFormat( format, file, filename ) {
+
+		try {
+
+			updateLoading( { isLoading: true, status: `Processing ${format.label} Data...`, progress: 5 } );
+			await new Promise( r => setTimeout( r, 0 ) );
+
+			const { model, result = model } = await format.parse( file, { filename, cache: this.loaderCache } );
+			this.releaseTargetModel();
+			this.targetModel = model;
+
+			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
+			await this.onModelLoad( this.targetModel );
+
+			this.dispatchEvent( { type: 'load', model, filename } );
+			return result;
+
+		} catch ( error ) {
+
+			console.error( `Error loading ${format.label}:`, error );
+			this.dispatchEvent( { type: 'error', message: error.message, filename } );
+			throw error;
 
 		}
 
@@ -642,7 +666,17 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	async loadEnvironmentByExtension( url, extension ) {
+	/**
+	 * @param {string} url
+	 * @param {string} extension
+	 * @param {{loader?: Object}} [options] - a three.js loader to read the file with, for a format nothing registered
+	 */
+	async loadEnvironmentByExtension( url, extension, { loader = null } = {} ) {
+
+		const format = this._formats.get( extension );
+		if ( ! loader && format?.type === 'environment' ) loader = this.loaderCache[ extension ] ??= await format.createLoader( this._loadingManager );
+		if ( ! loader && extension === 'hdr' ) loader = this.loaderCache.hdr ??= new HDRLoader( this._loadingManager ).setDataType( FloatType );
+		if ( ! loader && ADDON_FORMATS[ extension ] ) throw this.formatError( `environment.${extension}` );
 
 		const cancelable = AssetLoader._isNetworkUrl( url );
 		const status = "Downloading Environment...";
@@ -652,11 +686,8 @@ export class AssetLoader extends EventDispatcher {
 		let texture;
 		try {
 
-			if ( extension === 'hdr' || extension === 'exr' ) {
+			if ( loader ) {
 
-				const loader = extension === 'hdr'
-					? ( this.loaderCache.hdr || ( this.loaderCache.hdr = new HDRLoader( this._loadingManager ).setDataType( FloatType ) ) )
-					: ( this.loaderCache.exr || ( this.loaderCache.exr = new EXRLoader( this._loadingManager ).setDataType( FloatType ) ) );
 				texture = await loader.loadAsync( source.url, onProgress );
 
 			} else if ( getPlatform().decodeImage ) {
@@ -696,40 +727,11 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
-	// Returns a fresh loader each call — DRACOLoader/KTX2Loader hold persistent
+	// Returns a fresh loader each call — the DRACOLoader/KTX2Loader a file needs hold persistent
 	// worker pools. Callers must invoke _disposeGLTFLoader() to terminate them.
 	async createGLTFLoader() {
 
-		const { dracoDecoderPath, ktx2TranscoderPath } = getAssetConfig();
-
-		const dracoLoader = new DRACOLoader();
-		dracoLoader.setDecoderConfig( { type: 'js' } );
-		dracoLoader.setDecoderPath( dracoDecoderPath );
-
-		const ktx2Loader = new KTX2Loader();
-		ktx2Loader.setTranscoderPath( ktx2TranscoderPath );
-
-		if ( this.renderer ) {
-
-			ktx2Loader.detectSupport( this.renderer );
-
-			// Force RGBA output for Basis Universal textures. GPU-compressed
-			// texture arrays (CompressedArrayTexture) are blocked by a Three.js
-			// TSL limitation: the node compiler maintains global state that
-			// survives dispose(), so swapping texture array formats between
-			// DataArrayTexture and CompressedArrayTexture at runtime causes
-			// WGSL compilation failures (unresolved uniform bindings).
-			ktx2Loader.workerConfig = {
-				astcSupported: false, etc1Supported: false, etc2Supported: false,
-				dxtSupported: false, bptcSupported: false, pvrtcSupported: false,
-			};
-
-		}
-
-		const loader = new GLTFLoader( this._loadingManager );
-		loader.setDRACOLoader( dracoLoader );
-		loader.setKTX2Loader( ktx2Loader );
-		loader.setMeshoptDecoder( MeshoptDecoder );
+		const loader = decodersOnDemand( new GLTFLoader( this._loadingManager ), this.renderer );
 		const onImageFailure = ( where, error ) => this._reportImageFailure( where, error );
 		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
@@ -952,280 +954,6 @@ export class AssetLoader extends EventDispatcher {
 		} finally {
 
 			this._disposeGLTFLoader( loader );
-
-		}
-
-	}
-
-	async loadFBXFromArrayBuffer( arrayBuffer, filename = 'model.fbx' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing FBX Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.fbx ) {
-
-				const { FBXLoader } = await import( 'three/examples/jsm/loaders/FBXLoader.js' );
-				this.loaderCache.fbx = new FBXLoader();
-
-			}
-
-			const object = this.loaderCache.fbx.parse( arrayBuffer );
-			this.releaseTargetModel();
-			this.targetModel = object;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: object, filename } );
-			return object;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading FBX:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async loadOBJFromFile( file, filename = 'model.obj' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing OBJ Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.obj ) {
-
-				const { OBJLoader } = await import( 'three/examples/jsm/loaders/OBJLoader.js' );
-				this.loaderCache.obj = new OBJLoader();
-
-			}
-
-			const contents = await this.readFileAsText( file );
-			const object = this.loaderCache.obj.parse( contents );
-			object.name = filename;
-
-			this.releaseTargetModel();
-			this.targetModel = object;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: object, filename } );
-			return object;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading OBJ:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async loadSTLFromArrayBuffer( arrayBuffer, filename = 'model.stl' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing STL Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.stl ) {
-
-				const { STLLoader } = await import( 'three/examples/jsm/loaders/STLLoader.js' );
-				this.loaderCache.stl = new STLLoader();
-
-			}
-
-			const geometry = this.loaderCache.stl.parse( arrayBuffer );
-			const material = new MeshStandardMaterial();
-			const mesh = new Mesh( geometry, material );
-			mesh.name = filename;
-
-			this.releaseTargetModel();
-			this.targetModel = mesh;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: mesh, filename } );
-			return mesh;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading STL:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async loadPLYFromArrayBuffer( arrayBuffer, filename = 'model.ply' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing PLY Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.ply ) {
-
-				const { PLYLoader } = await import( 'three/examples/jsm/loaders/PLYLoader.js' );
-				this.loaderCache.ply = new PLYLoader();
-
-			}
-
-			const geometry = this.loaderCache.ply.parse( arrayBuffer );
-			let object;
-
-			if ( geometry.index !== null ) {
-
-				const material = new MeshStandardMaterial();
-				object = new Mesh( geometry, material );
-
-			} else {
-
-				const material = new PointsMaterial( { size: 0.01 } );
-				material.vertexColors = geometry.hasAttribute( 'color' );
-				object = new Points( geometry, material );
-
-			}
-
-			object.name = filename;
-			this.releaseTargetModel();
-			this.targetModel = object;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: object, filename } );
-			return object;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading PLY:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async loadColladaFromFile( file, filename = 'model.dae' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing Collada Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.collada ) {
-
-				const { ColladaLoader } = await import( 'three/examples/jsm/loaders/ColladaLoader.js' );
-				this.loaderCache.collada = new ColladaLoader();
-
-			}
-
-			const contents = await this.readFileAsText( file );
-			const collada = this.loaderCache.collada.parse( contents );
-			collada.scene.name = filename;
-
-			this.releaseTargetModel();
-			this.targetModel = collada.scene;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: collada.scene, filename } );
-			return collada;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading Collada:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async load3MFFromArrayBuffer( arrayBuffer, filename = 'model.3mf' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing 3MF Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.threemf ) {
-
-				const { ThreeMFLoader } = await import( 'three/examples/jsm/loaders/3MFLoader.js' );
-				this.loaderCache.threemf = new ThreeMFLoader();
-
-			}
-
-			const object = this.loaderCache.threemf.parse( arrayBuffer );
-
-			this.releaseTargetModel();
-			this.targetModel = object;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: object, filename } );
-			return object;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading 3MF:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
-
-		}
-
-	}
-
-	async loadUSDFromArrayBuffer( data, filename = 'model.usd' ) {
-
-		try {
-
-			updateLoading( { isLoading: true, status: "Processing USD Data...", progress: 5 } );
-			await new Promise( r => setTimeout( r, 0 ) );
-
-			if ( ! this.loaderCache.usd ) {
-
-				const { USDLoader } = await import( 'three/examples/jsm/loaders/USDLoader.js' );
-				this.loaderCache.usd = new USDLoader();
-
-			}
-
-			// parse() returns the group synchronously but resolves textures async;
-			// setupPathTracing snapshots materials, so maps must land before it runs.
-			const object = await new Promise( ( resolve, reject ) => {
-
-				this.loaderCache.usd.parse( data, '', resolve, reject );
-
-			} );
-
-			object.name = filename;
-
-			this.releaseTargetModel();
-			this.targetModel = object;
-
-			updateLoading( { isLoading: true, status: "Processing Data...", progress: 10 } );
-			await this.onModelLoad( this.targetModel );
-
-			this.dispatchEvent( { type: 'load', model: object, filename } );
-			return object;
-
-		} catch ( error ) {
-
-			console.error( 'Error loading USD:', error );
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
-			throw error;
 
 		}
 
@@ -1559,7 +1287,8 @@ export class AssetLoader extends EventDispatcher {
 
 	getSupportedFormats( type = null ) {
 
-		const formats = { ...SUPPORTED_FORMATS, ...this._archiveFormats };
+		const formats = { ...CORE_FORMATS, ...this._archiveFormats };
+		for ( const [ extension, { type, name } ] of this._formats ) formats[ extension ] = { type, name };
 		if ( type ) {
 
 			const filtered = {};

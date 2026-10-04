@@ -28,6 +28,9 @@
     "./addons/storage": {
       "import": "./dist/addons/storage.es.js"
     },
+    "./addons/formats": {
+      "import": "./dist/addons/formats.es.js"
+    },
     "./node": "./src/node/index.js"
   },
   "files": [

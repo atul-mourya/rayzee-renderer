@@ -26,7 +26,6 @@ import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './
 import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
-import { SUPPORTED_FORMATS as MODEL_FORMATS } from './AssetLoader.js';
 import { ARCHIVE_FORMATS } from './archiveFormats.js';
 
 // Loose USD layers inside a ZIP compose into one scene; these pick out the
@@ -587,7 +586,7 @@ export class ArchiveImporter {
 			const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
 			try {
 
-				const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext ) : pfmTexture( bytes );
+				const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null } ) : pfmTexture( bytes );
 				texture.mapping = EquirectangularReflectionMapping;
 				setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
 				texture.userData[ ARCHIVE_PATH ] = fname;
@@ -698,6 +697,13 @@ export class ArchiveImporter {
 	 * @param {string} fname
 	 * @returns {Promise<import('three').Texture>}
 	 */
+	// pbrt scenes carry EXR maps whether or not the host registered the EXR format.
+	_exrLoader() {
+
+		return this.loader.loaderCache.exr ??= new EXRLoader().setDataType( FloatType );
+
+	}
+
 	async _pbrtTextureFromBytes( bytes, fname ) {
 
 		const ext = fname.split( '.' ).pop().toLowerCase();
@@ -707,7 +713,7 @@ export class ArchiveImporter {
 
 			const loader = ext === 'hdr'
 				? ( this.loader.loaderCache.hdr || ( this.loader.loaderCache.hdr = new HDRLoader().setDataType( FloatType ) ) )
-				: ( this.loader.loaderCache.exr || ( this.loader.loaderCache.exr = new EXRLoader().setDataType( FloatType ) ) );
+				: this._exrLoader();
 			tex = await this._loadViaObjectURL( loader, bytes );
 			// HDR/EXR maps are linear — leave colorSpace as the loader set it.
 
@@ -843,7 +849,7 @@ export class ArchiveImporter {
 		for ( const path in zip ) {
 
 			const extension = path.split( '.' ).pop().toLowerCase();
-			if ( MODEL_FORMATS[ extension ] && MODEL_FORMATS[ extension ].type === 'model' ) {
+			if ( extension === 'obj' || this.loader.getFileFormat( path )?.type === 'model' ) {
 
 				// A loose layer is only one slice of a USD scene — hand the whole
 				// archive over so its references and payloads can resolve.
@@ -879,7 +885,7 @@ export class ArchiveImporter {
 
 		}
 
-		return await this.loader.loadUSDFromArrayBuffer( zipSync( packed ), root );
+		return await this.loader._loadModelFileByExtension( new File( [ zipSync( packed ) ], root ), root );
 
 	}
 
@@ -917,39 +923,11 @@ export class ArchiveImporter {
 				case 'gltf':
 					result = await this.handleGltfFromZip( extension, fileContent, filePath, zipContents );
 					break;
-				case 'fbx':
-					result = await this.loader.loadFBXFromArrayBuffer( fileContent.buffer, filePath );
-					break;
 				case 'obj':
 					result = await this.handleObjFromZip( fileContent, filePath, zipContents );
 					break;
-				case 'stl':
-					result = await this.loader.loadSTLFromArrayBuffer( fileContent.buffer, filePath );
-					break;
-				case 'ply':
-					result = await this.loader.loadPLYFromArrayBuffer( fileContent.buffer, filePath );
-					break;
-				case 'dae':
-					{
-
-						const daeContent = strFromU8( fileContent );
-						const daeFile = new File( [ new Blob( [ daeContent ] ) ], filePath );
-						result = await this.loader.loadColladaFromFile( daeFile, filePath );
-
-					}
-
-					break;
-				case '3mf':
-					result = await this.loader.load3MFFromArrayBuffer( fileContent.buffer, filePath );
-					break;
-				case 'usd':
-				case 'usda':
-				case 'usdc':
-				case 'usdz':
-					result = await this.loader.loadUSDFromArrayBuffer( fileContent, filePath );
-					break;
 				default:
-					throw new Error( `Support for ${extension} files is not yet implemented` );
+					result = await this.loader._loadModelFileByExtension( new File( [ fileContent ], filePath ), filePath );
 
 			}
 

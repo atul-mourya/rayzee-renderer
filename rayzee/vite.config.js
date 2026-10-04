@@ -32,6 +32,7 @@ export default defineConfig( {
 					"addons/bidirectional": path.resolve( __dirname, "src/addons/bidirectional.js" ),
 					"addons/color": path.resolve( __dirname, "src/addons/color.js" ),
 					"addons/storage": path.resolve( __dirname, "src/addons/storage.js" ),
+					"addons/formats": path.resolve( __dirname, "src/addons/formats.js" ),
 				},
 			name: "Rayzee",
 		},

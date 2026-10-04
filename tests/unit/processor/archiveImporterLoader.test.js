@@ -7,6 +7,7 @@ function loaderWith( load ) {
 
 	const loader = Object.create( AssetLoader.prototype );
 	loader.archives = null;
+	loader._formats = new Map();
 	loader.setArchiveImporterLoader( load, ARCHIVE_FORMATS );
 	return loader;
 
