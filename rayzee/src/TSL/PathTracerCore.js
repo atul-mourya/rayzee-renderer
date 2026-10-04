@@ -48,6 +48,7 @@ import {
 	diffuseTransmissionPdf,
 } from './MaterialProperties.js';
 import { evaluateMaterialResponseFromDots, evaluateSpecularDeltaFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
+import { materialLayers } from './SceneResources.js';
 
 import {
 	ImportanceSampleCosine,
@@ -72,8 +73,9 @@ export const generateSampledDirection = Fn( ( [
 	mc,
 	weightsComputed, cachedBrdfWeights,
 	materialCacheCached, cachedMaterialCache,
-] ) => {
+], builder ) => {
 
+	const layers = materialLayers( builder );
 	const resultDirection = vec3( 0.0 ).toVar();
 	const resultValue = vec3( 0.0 ).toVar();
 	const resultPdf = float( 0.0 ).toVar();
@@ -120,28 +122,11 @@ export const generateSampledDirection = Fn( ( [
 	const cumulativeDiffuseTransmission = cumulativeClearcoat.add( weights.diffuseTransmission );
 
 	// Chained If/ElseIf so emitted WGSL becomes a single mutually-exclusive branch
-	// (replaces five separate If blocks gated on a `sampled` flag — divergence hotspot)
-	If( rand.lessThan( cumulativeDiffuse ), () => {
+	// (replaces five separate If blocks gated on a `sampled` flag — divergence hotspot). A layer no material uses
+	// has weight 0, so its link could never be taken and is left out.
+	const isotropicSpecular = () => {
 
-		resultDirection.assign( ImportanceSampleCosine( { N, xi } ) );
-
-	} ).ElseIf( rand.lessThan( cumulativeSpecular ), () => {
-
-		If( material.anisotropy.greaterThan( 0.0 ), () => {
-
-			// Shared frame → sampler and eval/PDF stay bit-identical (MIS consistency)
-			const f = AnisoFrame.wrap( anisoTangentFrame( N, material.anisotropyRotation ) );
-			const Ta = f.Ta;
-			const Ba = f.Ba;
-
-			const localV = vec3( dot( V, Ta ), dot( V, Ba ), dot( V, N ) );
-			const a = computeAnisoAlphas( material.roughness, material.anisotropy );
-			const localH = sampleGGXVNDFAniso( { V: localV, alphaX: a.x, alphaY: a.y, Xi: xi } );
-			H.assign( Ta.mul( localH.x ).add( Ba.mul( localH.y ) ).add( N.mul( localH.z ) ) );
-
-			resultDirection.assign( reflect( V.negate(), H ) );
-
-		} ).ElseIf( material.roughness.greaterThan( 0.0 ), () => {
+		If( material.roughness.greaterThan( 0.0 ), () => {
 
 			const TBN = constructTBN( { N } );
 			const localV = TBN.transpose().mul( V );
@@ -159,7 +144,34 @@ export const generateSampledDirection = Fn( ( [
 
 		} );
 
-	} ).ElseIf( rand.lessThan( cumulativeSheen ), () => {
+	};
+
+	let lobes = If( rand.lessThan( cumulativeDiffuse ), () => {
+
+		resultDirection.assign( ImportanceSampleCosine( { N, xi } ) );
+
+	} ).ElseIf( rand.lessThan( cumulativeSpecular ), () => {
+
+		if ( ! layers.anisotropy ) isotropicSpecular();
+		else If( material.anisotropy.greaterThan( 0.0 ), () => {
+
+			// Shared frame → sampler and eval/PDF stay bit-identical (MIS consistency)
+			const f = AnisoFrame.wrap( anisoTangentFrame( N, material.anisotropyRotation ) );
+			const Ta = f.Ta;
+			const Ba = f.Ba;
+
+			const localV = vec3( dot( V, Ta ), dot( V, Ba ), dot( V, N ) );
+			const a = computeAnisoAlphas( material.roughness, material.anisotropy );
+			const localH = sampleGGXVNDFAniso( { V: localV, alphaX: a.x, alphaY: a.y, Xi: xi } );
+			H.assign( Ta.mul( localH.x ).add( Ba.mul( localH.y ) ).add( N.mul( localH.z ) ) );
+
+			resultDirection.assign( reflect( V.negate(), H ) );
+
+		} ).Else( isotropicSpecular );
+
+	} );
+
+	if ( layers.sheen ) lobes = lobes.ElseIf( rand.lessThan( cumulativeSheen ), () => {
 
 		H.assign( ImportanceSampleGGX( { N, roughness: sheenSamplingRoughness( material.sheenRoughness ), Xi: xi } ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
@@ -168,7 +180,9 @@ export const generateSampledDirection = Fn( ( [
 		// would add a P(reject)·cos term to the true density that calculateBSDFSamplingPDF cannot
 		// model, and dividing by the smaller modelled density inflated the lobe 23 %.
 
-	} ).ElseIf( rand.lessThan( cumulativeClearcoat ), () => {
+	} );
+
+	if ( layers.clearcoat ) lobes = lobes.ElseIf( rand.lessThan( cumulativeClearcoat ), () => {
 
 		// VNDF, not ImportanceSampleGGX: the mixture density reports this lobe with
 		// calculateVNDFPDF, and sampling the half-vector GGX distribution instead would make the
@@ -178,12 +192,16 @@ export const generateSampledDirection = Fn( ( [
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: xi } ) ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
 
-	} ).ElseIf( rand.lessThan( cumulativeDiffuseTransmission ), () => {
+	} );
+
+	if ( layers.diffuseTransmission ) lobes = lobes.ElseIf( rand.lessThan( cumulativeDiffuseTransmission ), () => {
 
 		resultDirection.assign( ImportanceSampleCosine( { N: N.negate(), xi } ) );
 		resultIsDiffuseTransmission.assign( true );
 
-	} ).Else( () => {
+	} );
+
+	lobes.Else( () => {
 
 		const entering = dot( V, N ).greaterThan( 0.0 );
 		// pathWavelength=0 — the spectral lock happens downstream; colorWeight is carried out on
@@ -202,12 +220,7 @@ export const generateSampledDirection = Fn( ( [
 	} );
 
 	// Below the surface only the diffuse transmission lobe draws, so its own density is the mixture's.
-	If( resultIsDiffuseTransmission, () => {
-
-		resultValue.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
-		resultPdf.assign( diffuseTransmissionPdf( weights.diffuseTransmission, dot( N, resultDirection ).negate() ) );
-
-	} ).ElseIf( resultIsTransmission.not(), () => {
+	const reflected = () => {
 
 		// One mixture density for every reflection lobe: any of them could have produced this
 		// direction, so the chosen lobe's own pdf is not the density we sampled from.
@@ -227,7 +240,15 @@ export const generateSampledDirection = Fn( ( [
 
 		} );
 
-	} );
+	};
+
+	if ( ! layers.diffuseTransmission ) If( resultIsTransmission.not(), reflected );
+	else If( resultIsDiffuseTransmission, () => {
+
+		resultValue.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
+		resultPdf.assign( diffuseTransmissionPdf( weights.diffuseTransmission, dot( N, resultDirection ).negate() ) );
+
+	} ).ElseIf( resultIsTransmission.not(), reflected );
 
 	resultPdf.assign( max( resultPdf, MIN_PDF ) );
 

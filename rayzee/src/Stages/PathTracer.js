@@ -20,7 +20,7 @@ import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from 
 import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../TSL/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
 import { buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
-import { withSceneResources } from '../TSL/SceneResources.js';
+import { withSceneResources, MATERIAL_LAYERS } from '../TSL/SceneResources.js';
 import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
@@ -148,6 +148,8 @@ export class PathTracer extends PathTracerStage {
 		// Outputs a later stage asked for (requestOutput), compiled into Shade only while asked.
 		this._outputs = new Map();
 		this._outputsChanged = false;
+		// The material layers the kernels were compiled with (_layersToCompile).
+		this._compiledLayers = null;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
 		// null for plain path tracing, which builds exactly the unidirectional kernels.
@@ -347,10 +349,12 @@ export class PathTracer extends PathTracerStage {
 
 		// The packed light buffer was grow-reallocated at runtime (emissive set grew) or a light list grew —
 		// the compiled kernels still bind the old one, so rebuild before rendering. Likewise a changed output request.
+		// A layer some material now uses is compiled in at once; one nothing uses any more waits for the next build.
 		if ( this._materialFeaturesChanged ) {
 
 			this._materialFeaturesChanged = false;
-			if ( this.materialData.hasDiffuseTransmission() !== this._diffuseTransmissionCompiled ) this._outputsChanged = true;
+			const needed = this._layersToCompile();
+			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
 
 		}
 
@@ -1345,6 +1349,15 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** The material layers the scene uses; bidirectional leaves diffuse transmission out (its paths do not cross surfaces). */
+	_layersToCompile() {
+
+		const layers = this.materialData.materialLayers();
+		if ( this._integrator ) layers.diffuseTransmission = false;
+		return layers;
+
+	}
+
 	_buildWavefrontKernels() {
 
 		const texNodes = this.shaderBuilder.getSceneTextureNodes();
@@ -1741,6 +1754,7 @@ export class PathTracer extends PathTracerStage {
 			goboMaps: texNodes.goboMapsTex,
 			iesProfiles: texNodes.iesProfilesTex,
 			alphaShadows: this.uniforms.get( 'enableAlphaShadows' ),
+			materialLayers: this._compiledLayers = this._layersToCompile(),
 		};
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
@@ -1883,7 +1897,7 @@ export class PathTracer extends PathTracerStage {
 			sunParams: this.sunParams,
 			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
-			diffuseTransmission: this._diffuseTransmissionCompiled = this.materialData.hasDiffuseTransmission(),
+			materialLayers: this._compiledLayers,
 		} );
 		this._kernelManager.register( 'shade',
 			own( shadeFn() ).compute(

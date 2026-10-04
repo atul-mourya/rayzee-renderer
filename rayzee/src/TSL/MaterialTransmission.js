@@ -10,6 +10,7 @@ import { DistributionGGX } from './MaterialProperties.js';
 import { ImportanceSampleGGX } from './MaterialSampling.js';
 import { getRandomSample1D, getRandomSample2D, pcgHash } from './Random.js';
 import { handleSubsurfaceEntry, SubsurfaceEntryResult } from './Subsurface.js';
+import { materialLayers } from './SceneResources.js';
 
 // ================================================================================
 // STRUCTS (local to transmission)
@@ -158,8 +159,9 @@ export const calculateBeerLawAbsorption = /*@__PURE__*/ wgslFn( `
 export const sampleMicrofacetTransmission = Fn( ( [
 	V, N, ior, roughness, entering, dispersion, xi, rngState, pathWavelength,
 	pixelCoord, resolution, frame, dimBase,
-] ) => {
+], builder ) => {
 
+	const layers = materialLayers( builder );
 	const result = MicrofacetTransmissionResult( {
 		direction: vec3( 0.0 ),
 		halfVector: vec3( 0.0 ),
@@ -169,48 +171,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 		pathWavelength: pathWavelength,
 	} ).toVar();
 
-	// For smooth surfaces with dispersion, use perfect refraction with spectral IOR
-	If( roughness.lessThanEqual( 0.05 ).and( dispersion.greaterThan( 0.0 ) ), () => {
-
-		result.halfVector.assign( N );
-		result.didReflect.assign( false );
-
-		const eta = ior;
-		const etaRatio = select( entering, float( 1.0 ).div( eta ), eta ).toVar();
-
-		// Reuse the path's locked wavelength if any; else sample a new one and tint once.
-		If( pathWavelength.greaterThan( 0.0 ), () => {
-
-			const lockedIOR = iorFromWavelength( ior, dispersion, pathWavelength );
-			etaRatio.assign( select( entering, float( 1.0 ).div( lockedIOR ), lockedIOR ) );
-
-		} ).Else( () => {
-
-			const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
-			etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
-			result.colorWeight.assign( spectralSample.colorWeight );
-			result.pathWavelength.assign( spectralSample.wavelength );
-
-		} );
-
-		// Perfect refraction using surface normal
-		const refractDir = refract( V.negate(), N, etaRatio ).toVar();
-
-		// Check for total internal reflection
-		If( dot( refractDir, refractDir ).lessThan( 0.001 ), () => {
-
-			result.direction.assign( reflect( V.negate(), N ) );
-			result.didReflect.assign( true );
-			result.pdf.assign( 1.0 );
-
-		} ).Else( () => {
-
-			result.direction.assign( refractDir );
-			result.pdf.assign( 1.0 );
-
-		} );
-
-	} ).Else( () => {
+	const microfacet = () => {
 
 		// Use minimum roughness to avoid numerical issues for rough surfaces
 		const transmissionRoughness = max( MIN_ROUGHNESS, roughness );
@@ -223,7 +184,7 @@ export const sampleMicrofacetTransmission = Fn( ( [
 		const etaRatio = select( entering, float( 1.0 ).div( ior ), ior ).toVar();
 
 		// Reuse the path's locked wavelength if any; else sample a new one and tint once.
-		If( dispersion.greaterThan( 0.0 ), () => {
+		if ( layers.dispersion ) If( dispersion.greaterThan( 0.0 ), () => {
 
 			If( pathWavelength.greaterThan( 0.0 ), () => {
 
@@ -278,7 +239,51 @@ export const sampleMicrofacetTransmission = Fn( ( [
 
 		} );
 
-	} );
+	};
+
+	// For smooth surfaces with dispersion, use perfect refraction with spectral IOR
+	if ( ! layers.dispersion ) microfacet();
+	else If( roughness.lessThanEqual( 0.05 ).and( dispersion.greaterThan( 0.0 ) ), () => {
+
+		result.halfVector.assign( N );
+		result.didReflect.assign( false );
+
+		const eta = ior;
+		const etaRatio = select( entering, float( 1.0 ).div( eta ), eta ).toVar();
+
+		// Reuse the path's locked wavelength if any; else sample a new one and tint once.
+		If( pathWavelength.greaterThan( 0.0 ), () => {
+
+			const lockedIOR = iorFromWavelength( ior, dispersion, pathWavelength );
+			etaRatio.assign( select( entering, float( 1.0 ).div( lockedIOR ), lockedIOR ) );
+
+		} ).Else( () => {
+
+			const spectralSample = SpectralSample.wrap( sampleWavelengthForDispersion( ior, dispersion, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 5 ) ), rngState, resolution, frame ) ) );
+			etaRatio.assign( select( entering, float( 1.0 ).div( spectralSample.ior ), spectralSample.ior ) );
+			result.colorWeight.assign( spectralSample.colorWeight );
+			result.pathWavelength.assign( spectralSample.wavelength );
+
+		} );
+
+		// Perfect refraction using surface normal
+		const refractDir = refract( V.negate(), N, etaRatio ).toVar();
+
+		// Check for total internal reflection
+		If( dot( refractDir, refractDir ).lessThan( 0.001 ), () => {
+
+			result.direction.assign( reflect( V.negate(), N ) );
+			result.didReflect.assign( true );
+			result.pdf.assign( 1.0 );
+
+		} ).Else( () => {
+
+			result.direction.assign( refractDir );
+			result.pdf.assign( 1.0 );
+
+		} );
+
+	} ).Else( microfacet );
 
 	return result;
 
@@ -430,7 +435,7 @@ export const handleMaterialTransparency = Fn( ( [
 	transmissiveTraversals,
 	currentMediumIOR, previousMediumIOR,
 	pathWavelength,
-] ) => {
+], builder ) => {
 
 	const result = MaterialInteractionResult( {
 		continueRay: false,
@@ -534,7 +539,7 @@ export const handleMaterialTransparency = Fn( ( [
 
 		// Subsurface (independent of transmission; works at transmission==0). Entry is a lottery
 		// (prob = weight) so 1-weight falls through to the opaque BRDF; exit is deterministic.
-		If( handled.not().and( material.subsurface.greaterThan( 0.0 ) ), () => {
+		if ( materialLayers( builder ).subsurface ) If( handled.not().and( material.subsurface.greaterThan( 0.0 ) ), () => {
 
 			const entering = dot( ray.direction, normal ).lessThan( 0.0 );
 			const doEnter = entering.not().or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 8 ) ), rngState, resolution, frame ).lessThan( material.subsurface ) );

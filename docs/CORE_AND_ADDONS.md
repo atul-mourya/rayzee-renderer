@@ -91,7 +91,10 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
 3. **NRD out of the core shading program** — done (outputs on request, above). The full engine's GPU programs are
    byte-identical to before (125 of 125 over 7 scenes); the core's shading program differs only by the missing
    hit-distance block.
-4. **Compile only what a scene uses** — measured, not built. With subsurface and clear coat cut out of Shade, its
+4. **Compile only what a scene uses** — built (2026-10-04) for seven material layers: clear coat, sheen, iridescence,
+   anisotropy, subsurface, dispersion and diffuse transmission compile into the kernels only while some material
+   has them (`materialLayers( builder )`, `TSL/SceneResources.js`). Every bench image unchanged; frame time −3.9 to
+   −24.3 %, median −9.6 % over 28 scenes. The measurement that led to it: With subsurface and clear coat cut out of Shade, its
    sampling and the BSDF (Shade, MaterialTransmission, MaterialEvaluation, MaterialProperties, PathTracerCore), scenes
    without them still matched their references and ran faster, alternating runs at 1024² in Chrome (Apple M-series):
 

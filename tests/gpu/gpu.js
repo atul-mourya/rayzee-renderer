@@ -1,6 +1,7 @@
 import { describe } from 'vitest';
 import { WebGPURenderer } from 'three/webgpu';
 import { Fn, instanceIndex, instancedArray } from 'three/tsl';
+import { withSceneResources } from '@/core/TSL/SceneResources.js';
 
 const unavailable = globalThis.__rayzeeGPUUnavailable;
 
@@ -39,18 +40,20 @@ export async function createRenderer() {
  * Runs `fn` once per element on the GPU and returns the ArrayBuffer it wrote.
  * @param {Object<string, [ArrayLike<number>, string]>} inputs - name → [ data, TSL element type ]
  * @param {function(Object<string, Node>): Node} fn - gets each input's element by name
+ * @param {{materialLayers?: Object<string, boolean>}} [resources] - the kernel's scene resources (SceneResources.js)
  */
-export async function evaluate( renderer, count, inputs, outType, fn ) {
+export async function evaluate( renderer, count, inputs, outType, fn, resources = null ) {
 
 	const buffers = Object.entries( inputs ).map( ( [ name, [ data, type ]] ) => [ name, instancedArray( data, type ) ] );
 	const out = instancedArray( count, outType );
 
-	const kernel = Fn( () => {
+	const body = Fn( () => {
 
 		const args = Object.fromEntries( buffers.map( ( [ name, buffer ] ) => [ name, buffer.element( instanceIndex ) ] ) );
 		out.element( instanceIndex ).assign( fn( args ) );
 
-	} )().compute( count );
+	} )();
+	const kernel = ( resources ? withSceneResources( body, resources ) : body ).compute( count );
 
 	await renderer.computeAsync( kernel );
 	return renderer.getArrayBufferAsync( out.value );

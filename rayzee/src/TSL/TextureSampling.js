@@ -1,4 +1,4 @@
-import { sceneResources } from './SceneResources.js';
+import { sceneResources, materialLayers } from './SceneResources.js';
 import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize, uintBitsToFloat } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
@@ -569,6 +569,7 @@ export const processAnisotropyMap = Fn( ( [ material, uv ], builder ) => {
 export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 
 	const { srgbBuckets, linearBuckets } = sceneResources( builder );
+	const layers = materialLayers( builder );
 
 	const r = ExtMapResult( {
 		transmission: material.transmission,
@@ -589,33 +590,33 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 		r.transmission.assign( r.transmission.mul( sampleBucket( linearBuckets, material.transmissionMapIndex, uv ).r ) );
 
 	} );
-	If( material.clearcoatMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.clearcoat ) If( material.clearcoatMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.clearcoat.assign( r.clearcoat.mul( sampleBucket( linearBuckets, material.clearcoatMapIndex, uv ).r ) );
 
 	} );
-	If( material.clearcoatRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.clearcoat ) If( material.clearcoatRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.clearcoatRoughness.assign( r.clearcoatRoughness.mul( sampleBucket( linearBuckets, material.clearcoatRoughnessMapIndex, uv ).g ) );
 
 	} );
-	If( material.sheenColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.sheen ) If( material.sheenColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.sheenColor.assign( r.sheenColor.mul( sampleBucket( srgbBuckets, material.sheenColorMapIndex, uv ).rgb ) );
 
 	} );
-	If( material.sheenRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.sheen ) If( material.sheenRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		// clamp to [0.05,1] to keep parity with the sample/PDF floor applied in ShadeKernel
 		r.sheenRoughness.assign( clamp( r.sheenRoughness.mul( sampleBucket( linearBuckets, material.sheenRoughnessMapIndex, uv ).a ), 0.05, 1.0 ) );
 
 	} );
-	If( material.iridescenceMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.iridescence ) If( material.iridescenceMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.iridescence.assign( r.iridescence.mul( sampleBucket( linearBuckets, material.iridescenceMapIndex, uv ).r ) );
 
 	} );
-	If( material.iridescenceThicknessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.iridescence ) If( material.iridescenceThicknessMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		const g = sampleBucket( linearBuckets, material.iridescenceThicknessMapIndex, uv ).g;
 		r.iridescenceThickness.assign( mix( material.iridescenceThicknessRange.x, material.iridescenceThicknessRange.y, g ) );
@@ -632,12 +633,12 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 
 	} );
 	// KHR_materials_diffuse_transmission: the factor from the map's alpha, the colour from its RGB.
-	If( material.diffuseTransmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.diffuseTransmission ) If( material.diffuseTransmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.diffuseTransmission.assign( r.diffuseTransmission.mul( sampleBucket( linearBuckets, material.diffuseTransmissionMapIndex, uv ).a ) );
 
 	} );
-	If( material.diffuseTransmissionColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+	if ( layers.diffuseTransmission ) If( material.diffuseTransmissionColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.diffuseTransmissionColor.assign( r.diffuseTransmissionColor.mul( sampleBucket( srgbBuckets, material.diffuseTransmissionColorMapIndex, uv ).rgb ) );
 

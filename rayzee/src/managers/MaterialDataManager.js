@@ -18,6 +18,7 @@ import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../Processor/Geo
 import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { toPortable } from '../SceneState/portable.js';
+import { MATERIAL_LAYERS } from '../TSL/SceneResources.js';
 
 /** Material buffers already moved into the working space, so a re-init cannot convert twice. */
 const convertedBuffers = new WeakSet();
@@ -189,6 +190,7 @@ export class MaterialDataManager {
 		this.materialCount = Math.floor( vec4Count / PIXELS_PER_MATERIAL );
 		this._sources = [ ...sources ];
 		this._hostSet = [];
+		this.callbacks.onMaterialFeaturesChanged?.();
 		log.debug( `${fmt.n( this.materialCount )} materials (storage buffer)` );
 
 	}
@@ -303,13 +305,23 @@ export class MaterialDataManager {
 
 	}
 
-	/** Whether any material passes light through diffusely: the shade kernel compiles that lobe in only then. */
-	hasDiffuseTransmission() {
+	/**
+	 * Which MATERIAL_LAYERS some material uses (its factor above 0): the kernels compile the others out.
+	 * @returns {Object<string, boolean>}
+	 */
+	materialLayers() {
 
+		const layers = Object.fromEntries( MATERIAL_LAYERS.map( ( layer ) => [ layer, false ] ) );
 		const data = this.materialStorageAttr?.array;
-		if ( ! data ) return false;
-		for ( let i = 0; i < this.materialCount; i ++ ) if ( data[ i * M.FLOATS_PER_MATERIAL + M.DIFFUSE_TRANSMISSION ] > 0 ) return true;
-		return false;
+		if ( ! data ) return layers;
+		for ( let i = 0; i < this.materialCount; i ++ ) {
+
+			const base = i * M.FLOATS_PER_MATERIAL;
+			for ( const layer of MATERIAL_LAYERS ) if ( data[ base + SCALAR_PROPERTY_OFFSETS[ layer ] ] > 0 ) layers[ layer ] = true;
+
+		}
+
+		return layers;
 
 	}
 
@@ -536,8 +548,8 @@ export class MaterialDataManager {
 
 		}
 
-		// The diffuse-transmission lobe is compiled in only while some material uses it.
-		if ( property === 'diffuseTransmission' ) this.callbacks.onMaterialFeaturesChanged?.();
+		// A material layer is compiled in only while some material uses it.
+		if ( MATERIAL_LAYERS.includes( property ) ) this.callbacks.onMaterialFeaturesChanged?.();
 
 		this._notifyReset();
 

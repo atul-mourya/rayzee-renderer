@@ -6,6 +6,7 @@ import { BRDFWeights, MaterialCache, MaterialClassification, DFGResult, BaseFres
 import { PI, PI_INV, TWO_PI, EPSILON, MIN_ROUGHNESS, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS, XYZ_TO_REC709, square, classifyMaterial } from './Common.js';
 
 import { fresnelSchlickFloat, fresnel0ToIor, iorToFresnel0Vec3, iorToFresnel0, dielectricF0 } from './Fresnel.js';
+import { materialLayers } from './SceneResources.js';
 
 // -----------------------------------------------------------------------------
 // Microfacet Distribution Functions
@@ -407,8 +408,9 @@ export const evalIridescence = Fn( ( [ outsideIOR, eta2, cosTheta1, thinFilmThic
 // BRDF Weight Calculation
 // -----------------------------------------------------------------------------
 
-export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
+export const calculateBRDFWeights = Fn( ( [ material, mc, cache ], builder ) => {
 
+	const layers = materialLayers( builder );
 	// Use precomputed values from cache
 	const invRoughness = cache.invRoughness;
 	const metalFactor = cache.metalFactor;
@@ -438,10 +440,10 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
 	const diffuse = float( 1.0 ).sub( baseSpecularWeight )
 		.mul( float( 1.0 ).sub( material.metalness ) )
 		.mul( float( 1.0 ).sub( material.transmission ) ).toVar();
-	const sheen = material.sheen.mul( cache.maxSheenColor ).toVar();
+	const sheen = ( layers.sheen ? material.sheen.mul( cache.maxSheenColor ) : float( 0.0 ) ).toVar();
 
 	const clearcoat = float( 0.0 ).toVar();
-	If( mc.hasClearcoat, () => {
+	if ( layers.clearcoat ) If( mc.hasClearcoat, () => {
 
 		clearcoat.assign( material.clearcoat.mul( invRoughness ).mul( 0.4 ) );
 
@@ -471,17 +473,18 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
 	// Iridescence: shifts energy from diffuse to specular since it modifies specular F0
 	// This preserves the total weight (no inflation) while increasing specular importance
 	const iridescenceBase = invRoughness.mul( mc.isSmooth.select( float( 0.6 ), float( 0.5 ) ) );
-	const iridescenceWeight = material.iridescence.mul( iridescenceBase )
+	// Off, the weight is 0 but the shift is kept: min( 0, diffuse ) still moves a negative diffuse weight to specular.
+	const iridescenceWeight = layers.iridescence ? material.iridescence.mul( iridescenceBase )
 		.mul( float( 0.5 ).add( float( 0.5 ).mul(
 			material.iridescenceThicknessRange.y.sub( material.iridescenceThicknessRange.x ).div( 1000.0 )
 		) ) )
-		.mul( float( 0.5 ).add( float( 0.5 ).mul( material.iridescenceIOR.div( 2.0 ) ) ) );
+		.mul( float( 0.5 ).add( float( 0.5 ).mul( material.iridescenceIOR.div( 2.0 ) ) ) ) : float( 0.0 );
 	const iridescenceShift = min( iridescenceWeight, diffuse );
 	specular.addAssign( iridescenceShift );
 	diffuse.subAssign( iridescenceShift );
 
 	// The diffuse lobe's transmitted share is drawn on the other side, in proportion.
-	const diffuseTransmission = diffuse.mul( material.diffuseTransmission ).toVar();
+	const diffuseTransmission = ( layers.diffuseTransmission ? diffuse.mul( material.diffuseTransmission ) : float( 0.0 ) ).toVar();
 	diffuse.subAssign( diffuseTransmission );
 
 	// Single normalization pass
@@ -513,8 +516,9 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
 //
 // Transmission is absent because it only produces NoL < 0. `weights` is normalised over all
 // lobes including transmission, so omitting its term is exact, not an approximation.
-export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ] ) => {
+export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ], builder ) => {
 
+	const layers = materialLayers( builder );
 	const pdf = float( 0.0 ).toVar();
 
 	If( dots.NoL.greaterThan( 0.0 ), () => {
@@ -522,21 +526,24 @@ export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ] ) => {
 		pdf.addAssign( weights.diffuse.mul( dots.NoL ).mul( PI_INV ) );
 
 		const specPdf = float( 0.0 ).toVar();
-		If( material.anisotropy.greaterThan( 0.0 ), () => {
+		// Raw roughness, not clamped: sampleGGXVNDF is called with material.roughness, and a
+		// clamp here would report a density the sampler never drew from.
+		const isotropic = () => {
+
+			specPdf.assign( calculateVNDFPDF( dots.NoH, dots.NoV, material.roughness ) );
+
+		};
+
+		if ( ! layers.anisotropy ) isotropic();
+		else If( material.anisotropy.greaterThan( 0.0 ), () => {
 
 			const a = computeAnisoAlphas( material.roughness, material.anisotropy );
 			specPdf.assign( calculateVNDFPDFAniso( a.x, a.y, dots.NoH, dots.ToH, dots.BoH, dots.NoV, dots.ToV, dots.BoV ) );
 
-		} ).Else( () => {
-
-			// Raw roughness, not clamped: sampleGGXVNDF is called with material.roughness, and a
-			// clamp here would report a density the sampler never drew from.
-			specPdf.assign( calculateVNDFPDF( dots.NoH, dots.NoV, material.roughness ) );
-
-		} );
+		} ).Else( isotropic );
 		pdf.addAssign( weights.specular.mul( specPdf ) );
 
-		If( weights.sheen.greaterThan( 0.0 ), () => {
+		if ( layers.sheen ) If( weights.sheen.greaterThan( 0.0 ), () => {
 
 			const sheenPdf = SheenDistribution( dots.NoH, material.sheenRoughness )
 				.mul( dots.NoH ).div( max( float( 4.0 ).mul( dots.VoH ), EPSILON ) );
@@ -544,7 +551,7 @@ export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ] ) => {
 
 		} );
 
-		If( weights.clearcoat.greaterThan( 0.0 ), () => {
+		if ( layers.clearcoat ) If( weights.clearcoat.greaterThan( 0.0 ), () => {
 
 			const ccRoughness = clamp( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS );
 			pdf.addAssign( weights.clearcoat.mul( calculateVNDFPDF( dots.NoH, dots.NoV, ccRoughness ) ) );

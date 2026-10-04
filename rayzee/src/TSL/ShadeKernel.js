@@ -30,6 +30,7 @@ import { hitFacet, unpackHitFacet, windingNormal } from './HitFacet.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
+import { ALL_MATERIAL_LAYERS } from './SceneResources.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -129,10 +130,11 @@ export function buildShadeKernel( params ) {
 		bidirectional: bdpt = null,
 		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
 		hitDistanceEncode = null,
-		// Some material passes light through diffusely (MaterialDataManager.hasDiffuseTransmission). Off, the lobe is
-		// compiled out; bidirectional always leaves it out, its connections and light tracing do not cross surfaces yet.
-		diffuseTransmission = false,
+		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out. Bidirectional
+		// always leaves diffuse transmission out: its connections and light tracing do not cross surfaces yet.
+		materialLayers: layers = ALL_MATERIAL_LAYERS,
 	} = params;
+	const diffuseTransmission = layers.diffuseTransmission;
 
 	// The bidirectional shading functions come with the integrator's uniforms (BidirectionalIntegrator), only used where bdpt is.
 	const {
@@ -787,11 +789,7 @@ export function buildShadeKernel( params ) {
 		If( mediumStackDepth.greaterThan( 0 ), () => {
 
 			const mSigmaA = readMediumSigmaA( rayBufferRW, rayID ).toVar();
-			const sssMed = readSSSMedium( rayBufferRW, rayID );
-			const mSigmaS = sssMed.sigmaS.toVar();
-			const mG = sssMed.g.toVar();
-
-			If( max( max( mSigmaS.x, mSigmaS.y ), mSigmaS.z ).lessThanEqual( 0.0 ), () => {
+			const absorb = () => {
 
 				// glass: Beer-Lambert absorption
 				const beer = exp( mSigmaA.mul( hitDist ).negate() ).toVar();
@@ -803,7 +801,21 @@ export function buildShadeKernel( params ) {
 
 				} );
 
-			} ).Else( () => {
+			};
+
+			// Without subsurface materials every medium is glass (scattering 0).
+			if ( ! layers.subsurface ) {
+
+				absorb();
+				return;
+
+			}
+
+			const sssMed = readSSSMedium( rayBufferRW, rayID );
+			const mSigmaS = sssMed.sigmaS.toVar();
+			const mG = sssMed.g.toVar();
+
+			If( max( max( mSigmaS.x, mSigmaS.y ), mSigmaS.z ).lessThanEqual( 0.0 ), absorb ).Else( () => {
 
 				// subsurface: chromatic collision-distance sampling
 				const mSigmaT = mSigmaA.add( mSigmaS );
@@ -866,6 +878,13 @@ export function buildShadeKernel( params ) {
 			material.diffuseTransmission.assign( 0.0 );
 			material.diffuseTransmissionMapIndex.assign( int( - 1 ) );
 			material.diffuseTransmissionColorMapIndex.assign( int( - 1 ) );
+
+		}
+
+		// A layer no material has is 0 in every material; saying so lets the compiler fold what still reads it.
+		for ( const layer of [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion' ] ) {
+
+			if ( ! layers[ layer ] ) material[ layer ].assign( 0.0 );
 
 		}
 
@@ -937,7 +956,7 @@ export function buildShadeKernel( params ) {
 		const extUV = getTransformedUV( { uv: samplingUV, transform: material.albedoTransform } ).toVar();
 
 		// Fold the anisotropy texture (if any) into the scalar anisotropy/rotation used by the BRDF
-		If( material.anisotropyMapIndex.greaterThanEqual( int( 0 ) ), () => {
+		if ( layers.anisotropy ) If( material.anisotropyMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 			const aniso = processAnisotropyMap( material, extUV ).toVar();
 			material.anisotropy.assign( aniso.x );
@@ -1078,7 +1097,7 @@ export function buildShadeKernel( params ) {
 			const Nff = select( dot( N, direction.negate() ).lessThan( 0.0 ), N.negate(), N ).toVar();
 			const auxAlbedo = clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ).toVar();
 
-			If( material.alphaMode.equal( int( 2 ) ), () => {
+			let auxCases = If( material.alphaMode.equal( int( 2 ) ), () => {
 
 				// BLEND: deterministic own-surface commit on BOTH stochastic skip + shade frames (no flicker).
 				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo );
@@ -1088,13 +1107,15 @@ export function buildShadeKernel( params ) {
 
 				// MASK cutout passthrough: keep deferring, tint unchanged (backdrop through the hole commits later).
 
-			} ).ElseIf( interaction.isSubsurface, () => {
+			} );
+			if ( layers.subsurface ) auxCases = auxCases.ElseIf( interaction.isSubsurface, () => {
 
 				// SSS boundary: force-commit the skin surface as diffuse.
 				writeGBuffer( gBufferRW, pixelIndex, Nff, primaryDepth, auxAlbedo );
 				flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
 
-			} ).ElseIf( interaction.isTransmissive, () => {
+			} );
+			auxCases.ElseIf( interaction.isTransmissive, () => {
 
 				If( auxCommit.or( material.dispersion.greaterThan( 0.0 ) ), () => {
 
@@ -1165,7 +1186,7 @@ export function buildShadeKernel( params ) {
 			} );
 
 			// subsurface boundary: push the scattering medium on enter, pop on exit; free bounce
-			If( interaction.isSubsurface.and( interaction.didReflect.not() ), () => {
+			if ( layers.subsurface ) If( interaction.isSubsurface.and( interaction.didReflect.not() ), () => {
 
 				If( interaction.entering, () => {
 
@@ -1547,7 +1568,26 @@ export function buildShadeKernel( params ) {
 		const brdfColorWeight = vec3( 1.0 ).toVar();
 		const brdfIsDiffuseTransmission = tslBool( false ).toVar();
 
-		If( material.clearcoat.greaterThan( 0.0 ), () => {
+		const sampleLobes = () => {
+
+			const bs = DirectionSample.wrap( generateSampledDirection(
+				V, N, material, xi, lobeXi, rngState,
+				_pixelCoord, resolution, frame, dimBase,
+				mc,
+				false, emptyWeights,
+				false, emptyCache,
+			) );
+			brdfDir.assign( bs.direction );
+			brdfValue.assign( bs.value );
+			brdfPdf.assign( bs.pdf );
+			brdfIsTransmission.assign( bs.isTransmission );
+			brdfColorWeight.assign( bs.colorWeight );
+			brdfIsDiffuseTransmission.assign( bs.isDiffuseTransmission );
+
+		};
+
+		if ( ! layers.clearcoat ) sampleLobes();
+		else If( material.clearcoat.greaterThan( 0.0 ), () => {
 
 			const ccRay = Ray( { origin, direction } );
 			const ccHit = HitInfo( {
@@ -1564,23 +1604,7 @@ export function buildShadeKernel( params ) {
 			brdfPdf.assign( ccResult.pdf );
 			brdfIsDiffuseTransmission.assign( ccResult.isDiffuseTransmission );
 
-		} ).Else( () => {
-
-			const bs = DirectionSample.wrap( generateSampledDirection(
-				V, N, material, xi, lobeXi, rngState,
-				_pixelCoord, resolution, frame, dimBase,
-				mc,
-				false, emptyWeights,
-				false, emptyCache,
-			) );
-			brdfDir.assign( bs.direction );
-			brdfValue.assign( bs.value );
-			brdfPdf.assign( bs.pdf );
-			brdfIsTransmission.assign( bs.isTransmission );
-			brdfColorWeight.assign( bs.colorWeight );
-			brdfIsDiffuseTransmission.assign( bs.isDiffuseTransmission );
-
-		} );
+		} ).Else( sampleLobes );
 
 		const directLighting = () => DirectLightingDual.wrap( ( transmitting ? calculateDirectLightingThroughSurfaces : calculateDirectLightingUnified )(
 			hitPoint, N, NgeoFF, material, V,

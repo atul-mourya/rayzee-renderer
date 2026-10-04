@@ -474,9 +474,7 @@ the strings, so never rename or repurpose one.
   triangles (`throughSurface` on the samplers): the cosine below N, the shadow ray off the other side of the facet
   (`backOrigin`, no terminator lift). A transmission draw must cross the geometric surface (the leak guard's mirror
   case), is never flagged UNDER_SURFACE, and sets SUN_NEE. **Compiled in only while some material has it**
-  (`MaterialDataManager.hasDiffuseTransmission()`, rechecked on every edit): otherwise Shade zeroes the field after
-  `getMaterial` and every branch folds away, so scenes without it run the same code — the 36 older bench scenes
-  unchanged, 18 still bit-identical. Bidirectional always leaves it out (its connections and light tracing do not
+  (a material layer — see **Material layers** below). Bidirectional always leaves it out (its connections and light tracing do not
   cross surfaces yet; `resolveSurfaceMaterial` zeroes it too). Packed at 39 (factor) and 129–131 (colour); slot 33
   holds the two map indices and `getMaterial` reads it only when the factor is above 0. Maps (`diffuseTransmissionMap`,
   its A channel, linear bucket; `diffuseTransmissionColorMap`, RGB, sRGB bucket) fold in through `applyExtensionMaps`
@@ -486,6 +484,20 @@ the strings, so never rename or repurpose one.
   the lobe's draw rate and sampler/NEE agreement; `furnace-diffuse-transmission` (a closed sphere, 0.99989) and
   `translucent-panel` (lit from behind, truth with emissive NEE off: +0.017 %) gate it. Khronos'
   DiffuseTransmissionTest / Teacup / Plant render as their reference viewers show them.
+- **Material layers** — clear coat, sheen, iridescence, anisotropy, subsurface, dispersion and diffuse transmission
+  (`MATERIAL_LAYERS`, `TSL/SceneResources.js`) are compiled into the kernels only while some material has the layer's
+  factor above 0 (`MaterialDataManager.materialLayers()`). The set rides in each kernel's build context
+  (`resources.materialLayers`); a function body reads it with `materialLayers( builder )` and leaves the layer's code
+  out with a plain JS `if` — the weight, density, sampling link, extension maps and Shade's paths (the coat sampler,
+  the subsurface walk and boundary). Shade also zeroes each absent layer's factor after `getMaterial`. Outside a
+  scene kernel (a GPU test) every layer is in. A scene load rebuilds the kernels for its exact set; an edit that turns
+  a layer on rebuilds before the next frame (`onMaterialFeaturesChanged` → `_layersToCompile`), one that turns it off
+  waits for the next build, so dragging a slider through 0 does not recompile twice. ⚠️ Removing a layer's code must
+  be exact for a material without it: the iridescence weight keeps `min( 0, diffuse )` (it moves a negative diffuse
+  weight to specular even at 0), and a sampling link may go only because its weight is 0 and so its cumulative bound
+  equals the previous one. `tests/gpu/materialLayers.test.js` holds a layer-free material bit-identical with every
+  layer compiled out; every bench golden is unchanged scene by scene. Frame time (`bench:ab`, 28 scenes, Apple
+  M-series): −3.9 to −24.3 %, median −9.6 % — scenes with a layer gain too, from the others going.
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's
