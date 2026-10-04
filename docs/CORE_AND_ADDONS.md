@@ -156,6 +156,15 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
    worker class only where there is no global one.
 
    Downloads now, compressed: the core 249 KB (the treelet optimiser was bundled three times), `rayzee` 418 KB.
+14. **The viewer loads two add-ons on first use** — `PathTracerApp` installs the physical sky and the archive importer
+   with loaders (`setProceduralSkyLoader`, `setArchiveImporterLoader`), so each is a chunk of its own, fetched the first
+   time the physical sky is baked or an archive is read. What `rayzee` loads at startup beyond the core went from 169 to
+   121 KB compressed; the app's startup JavaScript from 1,214 to 1,175 KB. Colour and storage are used at startup, and
+   choosing an integrator applies at once (a lazy one would trace plain frames meanwhile and break reproducible
+   renders), so those three stay eager.
+15. **Examples** — `rayzee/examples/core-node.mjs` renders with the core alone in Node (`npm run example:node`; the Node
+   bench runs it), and `rayzee/examples/core-browser/` is the core plus the physical sky in a page
+   (`npm run example:browser`).
 
 ## What still ties the layers
 

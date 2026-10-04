@@ -210,7 +210,10 @@ Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStora
 ⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), and pass the
 hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
-**Two-Level BVH Layout** (packed in single GPU storage buffer):
+**Two-Level BVH Layout** (packed in single GPU storage buffer). ⚠️ An empty scene's tree is one empty triangle leaf
+(`emptyBVH()` in `RayzeeRenderer.js`): sixteen zeros read as an inner node whose children are itself, and a CPU walk of
+the TLAS (the bidirectional integrator's `_visibleSceneBounds`) searched it forever whenever a frame ran between an
+unload and the next build:
 ```
 Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M nodes ]
 ```
@@ -349,8 +352,10 @@ would change every golden, and `strict` would abort a run before the runner repo
 ### Without a browser (`Platform.js`, `HeadlessCanvas.js`, `rayzee/src/node/`)
 The published build renders in plain Node on Dawn. `npm run bench:node` renders the whole corpus that
 way against the Chrome goldens (all 36 match, RMSE ≤ 0.0036); `-- --core` then renders it again with the renderer
-core alone, which must match the full engine byte for byte (36 of 36). A textured glTF with an HDR or PNG sky
-matched Chrome within 0.05 of a level per 16² block.
+core alone, which must match the full engine byte for byte (36 of 36). It also renders a Draco and a KTX2 (Basis)
+glTF against uncompressed twins (`bench/node/fixtures/`, built by `bench/tools/make-compressed-fixtures.mjs`; three's
+decoders served from `node_modules`, no network) and runs `rayzee/examples/core-node.mjs` as a host would. A textured
+glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block.
 - **No canvas ⇒ headless** (`new PathTracerApp( null )`, or `{ headless: true }`; `openHeadless` without
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
   and `animate()` throws — drive it with `renderFrames` / `renderUntilComplete` — and the overlay renderer
@@ -373,6 +378,10 @@ matched Chrome within 0.05 of a level per 16² block.
   ⚠️ PNGs from real exporters carry bytes after IEND; `trimPNG` cuts them, or strict decoders throw.
   ⚠️ GLTFLoader turns a failed texture into none, silently — the plugin reports `texture.build_failed`
   and a strict host's throw is deferred to the end of the load (`_throwDeferred`).
+  ⚠️ An image an extension decodes (KHR_texture_basisu → KTX2Loader) arrives with that loader: the plugin hands it the
+  bytes (`loader.parse`), never `decodeImage` — before that no KTX2 texture loaded in Node. Without `decodeImage` and
+  with no DOM (`hasImageDecoder()`), `missingImageDecoderPlugin` fails each image with what to configure; three's own
+  path threw `self is not defined` and took the whole load down.
 - With no `createImageBitmap`, `TextureCreator.processOnCPU` packs raw pixels: exact when a layer fits
   its bucket, bilinear otherwise (`ResampleRGBA8.js`). A bucket over 8 MB packs in `PackWorker`, at
   most cores − 1 at a time; `platformImagesPlugin` keeps decoded images in SharedArrayBuffers so they
@@ -701,8 +710,9 @@ guarantees 16 sampled textures per stage.
 
 ### Physical sky (`Processor/PhysicalSky.js`, `Processor/AtmosphereModel.js`, `Processor/SunPosition.js`, `TSL/Atmosphere.js`, `TSL/EnvironmentCDF.js`, `TSL/Sun.js`)
 An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class
-`environmentManager.setProceduralSky( PhysicalSky )` installed — `PathTracerApp` installs it — and records
-`capability.missing` without one. The core's own sun shading (`TSL/Sun.js`) imports only `Processor/SolarLimb.js`.
+`environmentManager.setProceduralSky( PhysicalSky )` installed, or `setProceduralSkyLoader( load )`, which imports it
+the first time 'procedural' mode is baked — `PathTracerApp` does that, so the add-on is a chunk of its own that a
+session without the physical sky never downloads — and records `capability.missing` without either. The core's own sun shading (`TSL/Sun.js`) imports only `Processor/SolarLimb.js`.
 Environment mode `'procedural'` ("Physical Sky" in the app). Bruneton's Earth constants (Rayleigh from
 Bodhaine 1999, ozone, Ångström aerosols from turbidity), 16 spectral bins of 25 nm → CIE 1931 → linear
 Rec.709, baked on the GPU into a 1024×512 equirect in the engine's own mapping (row 0 = nadir).
@@ -1018,8 +1028,10 @@ its own `finally`, so a failed drop shows only the console.
 
 ### Loading part of a scene archive
 Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which
-the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )` —
-`PathTracerApp` installs it. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
+the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or
+`setArchiveImporterLoader( load, ARCHIVE_FORMATS )`, which loads it for the first archive read — `PathTracerApp` does
+that, so archive reading and pbrt are a chunk of their own. The formats come from `Processor/archiveFormats.js`, so the
+loader recognises an archive before the code that reads it exists. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
 add-on. The importer reads the loader's members through `this.loader`.
 A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
 subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.

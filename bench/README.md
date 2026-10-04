@@ -128,8 +128,8 @@ bench/
   harness/    boot.js, scenes.js, sceneSession.js, index.html, storage/   # runs in the browser
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
   runner/     cli.js + one module per suite    # runs in Node
-  node/       run.js, resolve.js               # the corpus in plain Node (bench:node)
-  tools/      gen-dfg-lut.mjs                  # bench:lut
+  node/       run.js, resolve.js, fixtures/    # the corpus in plain Node (bench:node), compressed glTF fixtures
+  tools/      gen-dfg-lut.mjs (bench:lut), make-compressed-fixtures.mjs
   baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json,
               denoise.json, freeze.json, upscale.json
 ```
@@ -310,9 +310,10 @@ Perf runs with the **production dispatch heuristics active** (`setPerfMode`), un
 
 To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side.
 
-> **Bidirectional scenes can lose the WebGPU device in `bench:ab`.** Both sides hold a bidirectional scene's extra
-> buffers (~0.5 GB each) at once; `caustic-bidirectional` lost the device on an Apple M-series machine. The rounds
-> measured before the loss are valid. Time those scenes one at a time with `--only`.
+> **Bidirectional scenes are measured one side at a time.** Both sides holding a bidirectional scene's extra buffers
+> (~0.5 GB each) lost the WebGPU device on an Apple M-series machine (`caustic-bidirectional`). Before measuring a
+> scene whose integrator is not `'path'`, `bench:ab` releases the other side's scene and integrator buffers
+> (`release()`); that side reloads its scene on its own turn, as every measurement does.
 
 > **`bench:ab` requires `bench/` to exist in the base ref.** Each side boots the harness from its *own* tree — Vite's `server.fs.allow` resolves to the tree the dev server runs in, so serving one tree's harness to the other's server returns 403. A ref predating this tooling therefore has no harness to boot and cannot be used as a base.
 
@@ -415,6 +416,11 @@ goldens came from; measured, every scene reads RMSE 0.0019–0.0036.
 
 Mutation-tested: flipping the CPU texture packer's rows fails textured-normalmap at RMSE 0.198 and
 alpha-cutout at 0.014. A new browser dependency fails the scene that reaches it.
+
+It then loads two compressed glTF fixtures against uncompressed twins — Draco geometry (`knot-draco.glb`) and a Basis
+KTX2 texture (`checker-ktx2.glb`), in `bench/node/fixtures/`, rebuilt with `bench/tools/make-compressed-fixtures.mjs` —
+serving three's own decoders from `node_modules` so nothing touches the network, and runs
+`rayzee/examples/core-node.mjs` in a process of its own. `--only compressed-gltf` or `--only example` runs just those.
 
 `--core` renders each scene a second time with the renderer core (`RayzeeRenderer` from `rayzee/core`, with the
 physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte

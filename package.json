@@ -37,6 +37,8 @@
     "bench:storage": "node bench/runner/cli.js storage",
     "release": "cross-env $(cat .env | xargs) semantic-release --no-ci",
     "bench:lut": "node bench/tools/gen-dfg-lut.mjs",
+    "example:node": "npm run build:engine && node rayzee/examples/core-node.mjs",
+    "example:browser": "vite --config rayzee/examples/vite.config.js",
     "color:bake": "node app/scripts/bake-default-view.mjs"
   },
   "devDependencies": {

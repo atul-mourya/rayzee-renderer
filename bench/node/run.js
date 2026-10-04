@@ -226,6 +226,18 @@ async function compressedGLTF() {
 
 if ( ! only || only.includes( 'compressed-gltf' ) ) await compressedGLTF();
 
+// The core-only example (rayzee/examples/core-node.mjs) in a process of its own, as a host would run it.
+if ( ! only || only.includes( 'example' ) ) {
+
+	const { spawnSync } = await import( 'node:child_process' );
+	const out = path.join( os.tmpdir(), `rayzee-core-example-${process.pid}.png` );
+	const run = spawnSync( process.execPath, [ path.resolve( here, '../../rayzee/examples/core-node.mjs' ), out ], { encoding: 'utf8' } );
+	const line = run.stdout.trim().split( '\n' ).pop();
+	if ( run.status !== 0 ) failed ++;
+	console.log( `  ${run.status === 0 ? GREEN + 'pass' : RED + 'FAIL'}${RESET} rayzee/examples/core-node.mjs${DIM}  ${run.status === 0 ? line : run.stderr.trim().split( '\n' ).slice( - 3 ).join( ' ' )}${RESET}` );
+
+}
+
 app.dispose();
 core?.dispose();
 

@@ -504,6 +504,9 @@ const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
 renderer.dispose();
 ```
 
+Two runnable examples live in the repository: `rayzee/examples/core-node.mjs` (the core alone, in Node, writing a PNG)
+and `rayzee/examples/core-browser/` (the core plus the physical sky, accumulating on a canvas).
+
 Add-ons install on it explicitly. The physical sky, for `environmentMode: 'procedural'`:
 
 ```js
@@ -513,7 +516,13 @@ renderer.environmentManager.setProceduralSky(PhysicalSky);
 await renderer.environmentManager.setMode('procedural');
 ```
 
-Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`).
+Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`). To fetch the
+add-on only when the sky is first used, install a loader instead — `PathTracerApp` does this, and the same works for
+archives with `assetLoader.setArchiveImporterLoader( load, formats )`:
+
+```js
+renderer.environmentManager.setProceduralSkyLoader(() => import('rayzee/addons/physical-sky').then((m) => m.PhysicalSky));
+```
 
 Bidirectional path tracing and vertex merging, for `integrator: 'bidirectional' | 'vcm'`:
 
@@ -1205,7 +1214,9 @@ app.dispose();
   JPEG or WebP to RGBA8, straight alpha, top row first — since the engine carries no decoder. It decodes
   every glTF image, embedded or not, and JPEG/PNG skies. PNGs with bytes after `IEND`, which browsers
   accept and strict decoders refuse, are trimmed first; a texture that still fails is recorded as
-  `texture.build_failed` rather than dropped. Measured on a 91-texture model: `sharp` and
+  `texture.build_failed` rather than dropped. Without `decodeImage`, each glTF image is recorded that way with what to
+  configure (a strict host's load throws), and the model loads untextured. KTX2 (Basis) textures need no
+  `decodeImage`: three's KTX2 loader decodes them, in a `NodeWorker` the engine lends it. Measured on a 91-texture model: `sharp` and
   `@napi-rs/canvas` (`await loadImage()`, then a 2D canvas) both decode in parallel, ~0.3 s against
   pngjs's 2.5 s serial. The canvas route premultiplies, which zeroes colour under alpha 0 and loses
   it under low alpha; `sharp` is exact. `jpeg-js` differs from libjpeg-turbo by up to 63 levels.
