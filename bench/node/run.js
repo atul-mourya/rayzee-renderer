@@ -42,7 +42,7 @@ Object.assign( globalThis, globals );
 const gpu = create( [] );
 Object.defineProperty( globalThis.navigator, 'gpu', { value: gpu, configurable: true } );
 
-const { configurePlatform, openHeadless } = await import( 'rayzee' );
+const { configurePlatform, configureAssets, openHeadless } = await import( 'rayzee' );
 const { nodePlatform } = await import( 'rayzee/node' );
 const { SCENES, RENDER_SIZE } = await import( '../harness/scenes.js' );
 const { createSceneSession } = await import( '../harness/sceneSession.js' );
@@ -129,6 +129,102 @@ for ( const scene of SCENES ) {
 	}
 
 }
+
+// Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
+// the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
+// renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's
+// own files, served from node_modules: no network.
+async function compressedGLTF() {
+
+	const http = await import( 'node:http' );
+	const fs = await import( 'node:fs/promises' );
+	const libs = path.resolve( here, '../../node_modules/three/examples/jsm/libs' );
+	const server = http.createServer( async ( req, res ) => {
+
+		const file = path.join( libs, path.normalize( decodeURIComponent( new URL( req.url, 'http://local' ).pathname ) ) );
+		try {
+
+			if ( ! file.startsWith( libs ) ) throw new Error( 'outside libs' );
+			res.end( await fs.readFile( file ) );
+
+		} catch {
+
+			res.statusCode = 404;
+			res.end();
+
+		}
+
+	} );
+	await new Promise( ( resolve ) => server.listen( 0, '127.0.0.1', resolve ) );
+	const base = `http://127.0.0.1:${server.address().port}`;
+	configureAssets( { dracoDecoderPath: `${base}/draco/`, ktx2TranscoderPath: `${base}/basis/` } );
+
+	const sharp = ( await import( 'sharp' ) ).default;
+	configurePlatform( { decodeImage: async ( bytes ) => {
+
+		const { data, info } = await sharp( bytes ).ensureAlpha().raw().toBuffer( { resolveWithObject: true } );
+		return { data: new Uint8Array( data.buffer, data.byteOffset, data.length ), width: info.width, height: info.height };
+
+	} } );
+
+	// The corpus's last scene leaves its settings and sky behind (an integrator, a bounce count); start from boot's.
+	app.settings.setMany( session.settingsFloor(), { silent: true } );
+	session.restoreEnvParams();
+
+	const render = async ( name, eye ) => {
+
+		const before = app.issues.length;
+		await app.loadFile( new File( [ await fs.readFile( path.join( here, 'fixtures', name ) ) ], name ) );
+		await app.stages.pathTracer.environment.setMode( 'color' );
+		app.camera.position.set( ...eye );
+		app.camera.lookAt( 0, 0, 0 );
+		app.camera.updateMatrixWorld( true );
+		await app.renderFrames( 32, { reset: true } );
+		return {
+			frame: await app.renderToBuffer( { colorSpace: 'srgb' } ),
+			triangles: app.stages.pathTracer.triangleCount,
+			issues: app.issues.slice( before ).map( ( i ) => i.code ),
+		};
+
+	};
+
+	// Draco quantizes positions to 14 bits (measured rmse 0.0007); ETC1S is lossy at the checker's edges (0.0026).
+	const pairs = [
+		{ plain: 'knot.glb', packed: 'knot-draco.glb', eye: [ 0, 0, 3 ], maxRmse: 0.003 },
+		{ plain: 'checker.glb', packed: 'checker-ktx2.glb', eye: [ 0, 0, 2.6 ], maxRmse: 0.01 },
+	];
+
+	try {
+
+		for ( const { plain, packed, eye, maxRmse } of pairs ) {
+
+			const a = await render( plain, eye );
+			const b = await render( packed, eye );
+			const m = compare( b.frame, a.frame, { threshold: GATES.pixelThreshold } );
+			const issues = [ ...a.issues, ...b.issues ];
+			const pass = m.rmseSrgb <= maxRmse && a.triangles === b.triangles && ! issues.length && typeof globalThis.Worker === 'undefined';
+			if ( ! pass ) failed ++;
+			console.log(
+				`  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${packed}${DIM}  vs ${plain}: rmse ${m.rmseSrgb.toFixed( 5 )} (≤ ${maxRmse}), ` +
+				`${b.triangles} / ${a.triangles} triangles${issues.length ? `, issues: ${issues.join( ', ' )}` : ''}${RESET}`
+			);
+
+		}
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} compressed glTF  ${error.message}` );
+
+	} finally {
+
+		server.close();
+
+	}
+
+}
+
+if ( ! only || only.includes( 'compressed-gltf' ) ) await compressedGLTF();
 
 app.dispose();
 core?.dispose();
