@@ -331,6 +331,10 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   loop or the upscaler (`DenoisingManager.denoiseOnce()`: waits out a run or weight load in flight,
   which `start()` would refuse or defer). OIDN must have been on while accumulating — the aux
   buffers are written only then. Failure records `denoiser.unavailable`.
+- **`pathTracer.requestOutput( 'gBuffer' )`** compiles the denoisers' normal/depth/albedo writes into Generate, Shade
+  and FinalWrite (`gBuffer` build param; `'hitDistance'` implies it). `PathTracerApp` asks for it in `_initManagers`,
+  so a denoiser toggles only the live `auxGBufferEnabled` uniform; on the bare core the first
+  `setAuxGBufferEnabled( true )` asks for it (one rebuild). Without it the core's kernels carry none of that code.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
   CPU and stays flat while GPU cost doubles.

@@ -72,6 +72,10 @@ async function openCore() {
 	await core.init();
 	core.environmentManager.setProceduralSky( PhysicalSky );
 	core.stages.pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) );
+	// The full engine compiles the denoisers' G-buffer; with it here too both run the same programs, so a byte that
+	// differs is state shared between renderers. Without it the core's Shade compiles differently (arealights-two: 56
+	// bytes of 262,144, compiler scheduling) — the core-node example renders that way.
+	core.stages.pathTracer.requestOutput( 'gBuffer' );
 	core.setCanvasSize( RENDER_SIZE.width, RENDER_SIZE.height );
 	core.setDeterministicMode( true );
 	return core;

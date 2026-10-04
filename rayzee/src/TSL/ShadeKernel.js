@@ -122,9 +122,10 @@ export function buildShadeKernel( params ) {
 		emissiveBoost, enableEmissiveTriangleSampling,
 		lightBVHNodeCount, reverseMapVec4Offset,
 		maxRayCount,
-		// Aux G-buffer (normal/depth/albedo + surface ID) feeds only the denoiser/OIDN MRT. Gated by a
-		// live uniform (1 = denoiser on) so the wavefront skips these writes when nothing consumes them.
-		auxGBufferEnabled,
+		// Aux G-buffer (normal/depth/albedo + surface ID) feeds only the denoiser/OIDN MRT. Compiled in only when
+		// requested (PathTracer.requestOutput( 'gBuffer' )); then a live uniform (1 = denoiser on) skips the writes
+		// while nothing consumes them.
+		auxGBufferEnabled, gBuffer = true,
 		hasSun, sunDirection, sunRadiance, sunParams,
 		// Bidirectional: light subpaths shade here too; camera vertices leave connections for ConnectKernel.
 		bidirectional: bdpt = null,
@@ -141,7 +142,7 @@ export function buildShadeKernel( params ) {
 		mis, misOnHit, misOnSpecular, misOnScatter, misPartial, misWeight, emitterSideProbability, emitterAreaPdf, lightEndCosine, mergeVmAt, strategyWeight, sunEmissionPdf, STRATEGY, LIGHT_PIXEL_ROW_OFFSET, sourcePick, lampSource, sourceLampType, sourceLampIndex, SOURCE, guidedDiscPdf, recordEscape, LampPick, pickLamp, lampPickPdf, lampCount, spotConeSolidAngle, directionalConeSolidAngle, areaLightDirectPdfW,
 	} = bdpt?.lib ?? {};
 
-	const auxOn = auxGBufferEnabled.greaterThan( uint( 0 ) );
+	const auxOn = gBuffer ? auxGBufferEnabled.greaterThan( uint( 0 ) ) : null;
 
 	const useEmissiveNEE = lightBuffer !== undefined;
 	const lamps = {
@@ -241,7 +242,7 @@ export function buildShadeKernel( params ) {
 		// A light subpath gathers nothing; camera-only work is gated on it.
 		const isLight = bdpt ? flags.bitAnd( uint( RAY_FLAG.LIGHT_PATH ) ).notEqual( uint( 0 ) ).toVar() : null;
 		const cameraOnly = ( cond ) => ( bdpt ? cond.and( isLight.not() ) : cond );
-		const aux = cameraOnly( auxOn );
+		const aux = auxOn ? cameraOnly( auxOn ) : null;
 
 		// Backdrop-view = the ray still travels the original camera direction (only alpha/transparent passthrough
 		// since the camera, REDIRECTED still clear). Captured at ARRIVAL (before the opaque/redirect bitOr below)
@@ -280,7 +281,7 @@ export function buildShadeKernel( params ) {
 		// DDFA see-through aux tint carried across smooth glass/mirror; committed into the OIDN/ASVGF
 		// albedo guide at the first diffuse-enough surface (or env). Mutated locally, persisted on every
 		// deferring continue (a missed persist = stale tint). 1 = untinted (direct hit → today's albedo).
-		const featCarry = readFeatureThroughput( rayBufferRW, rayID ).toVar();
+		const featCarry = aux ? readFeatureThroughput( rayBufferRW, rayID ).toVar() : null;
 
 		const hitDist = readHitDistance( hitBufferRW, rayID ).toVar();
 		const hitNormal = readHitNormal( hitBufferRW, rayID ).toVar();
@@ -299,7 +300,7 @@ export function buildShadeKernel( params ) {
 
 		// Hit distance: first segment after the primary scatter, plus any alpha-skip run so a cutout hole
 		// doesn't shorten it. Unconditional at depth 1, so the post-skip segment wins.
-		if ( hitDistanceEncode ) If( aux.and( cameraDepth.equal( 1 ) ), () => {
+		if ( hitDistanceEncode && aux ) If( aux.and( cameraDepth.equal( 1 ) ), () => {
 
 			const scatterViewZ = cameraViewMatrix.mul( vec4( origin, 1.0 ) ).z.abs();
 			const total = readMisRayT( rayBufferRW, rayID ).add( min( hitDist, float( 1e6 ) ) );
@@ -413,7 +414,7 @@ export function buildShadeKernel( params ) {
 					// The catcher is a real ground surface for the denoiser — write the plane's normal/depth
 					// + a neutral albedo (black albedo would break OIDN demodulation) and mark the pixel a
 					// valid surface, so OIDN/ASVGF don't smear the caught shadow as a background miss.
-					If( aux, () => {
+					if ( aux ) If( aux, () => {
 
 						const planeDepth = computeNDCDepth( { worldPos: planePoint, cameraProjectionMatrix, cameraViewMatrix } );
 						writeGBuffer( gBufferRW, pixelIndex, planeN, planeDepth, vec3( 1.0 ) );
@@ -462,7 +463,7 @@ export function buildShadeKernel( params ) {
 
 			// DDFA: env colour a redirected ray escaping to the environment sees (e.g. smooth glass over
 			// sky). Committed (tinted by featCarry) into the aux G-buffer before the miss Return below.
-			const escapedAuxAlbedo = vec3( 0.0 ).toVar();
+			const escapedAuxAlbedo = aux ? vec3( 0.0 ).toVar() : null;
 
 			If( wantBackdrop.or( wantEnvLight ), () => {
 
@@ -504,7 +505,7 @@ export function buildShadeKernel( params ) {
 
 				// DDFA: remember the (clamped) env colour this escaped ray sees, for the redirected-escape
 				// aux commit below (tinted by the accumulated see-through throughput).
-				escapedAuxAlbedo.assign( clamp( envColor, vec3( 0.0 ), vec3( 1.0 ) ) );
+				if ( aux ) escapedAuxAlbedo.assign( clamp( envColor, vec3( 0.0 ), vec3( 1.0 ) ) );
 
 				// MIS weight for implicit env hit — prevents double-counting with NEE
 				const envMisWeight = float( 1.0 ).toVar();
@@ -655,7 +656,7 @@ export function buildShadeKernel( params ) {
 			// per pixel → OIDN sees structure tracking the refracted view); depth kept at the primary hit.
 			// AUX_LOCKED-clear alone means "never committed" — the old black-probe is redundant. A direct
 			// backdrop (REDIRECTED clear) keeps Generate's black/far default (regression-safe sky guide).
-			If( aux
+			if ( aux ) If( aux
 				.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) )
 				.and( flags.bitAnd( uint( RAY_FLAG.REDIRECTED ) ).notEqual( uint( 0 ) ) ), () => {
 
@@ -795,7 +796,7 @@ export function buildShadeKernel( params ) {
 				const beer = exp( mSigmaA.mul( hitDist ).negate() ).toVar();
 				throughput.mulAssign( beer );
 				// DDFA: colored-glass volume tints the deferred aux guide by the same absorption.
-				If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+				if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 					featCarry.mulAssign( beer );
 
@@ -1012,19 +1013,19 @@ export function buildShadeKernel( params ) {
 		const metal = material.metalness.toVar();
 		const trans = material.transmission.toVar();
 		const roughFrac = smoothstep( float( 0.0 ), float( 0.15 ), rawRough ).toVar();
-		const auxCommit = clamp(
+		const auxCommit = aux ? clamp(
 			float( 1.0 ).sub( metal ).mul( float( 1.0 ).sub( trans ) )
 				.add( roughFrac.mul( metal.mul( float( 1.0 ).sub( trans ) ).add( trans ) ) ),
 			0.0, 1.0,
-		).greaterThanEqual( float( 0.25 ) ).toVar();
-		const featPrefix = featCarry.toVar();
+		).greaterThanEqual( float( 0.25 ) ).toVar() : null;
+		const featPrefix = aux ? featCarry.toVar() : null;
 
 		// DDFA terminal fallback: a ray dying while still deferring (e.g. a mirror maze) commits its last
 		// surface instead of leaving a black guide OIDN would demod-amplify.
 		// Plain JS inliner, not an Fn — it closes over albedo/featPrefix/flags .toVar()s.
 		const commitDeferredAux = ( normal ) => {
 
-			If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+			if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 				const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 				writeGBuffer( gBufferRW, pixelIndex, normal, primaryDepth, clamp( albedo.mul( featPrefix ), vec3( 0.0 ), vec3( 1.0 ) ) );
@@ -1045,7 +1046,7 @@ export function buildShadeKernel( params ) {
 		// first-hit MRT data (bounce 0 only): write the primary DEPTH now with the default normal/albedo.
 		// The real normal/albedo are committed by the DDFA decision blocks below (which re-pack this depth);
 		// they may defer through smooth glass/mirror and commit at the first diffuse-enough surface or the env.
-		If( bounceIndex.equal( 0 ).and( aux ), () => {
+		if ( aux ) If( bounceIndex.equal( 0 ).and( aux ), () => {
 
 			const linearDepth = computeNDCDepth( {
 				worldPos: hitPoint,
@@ -1090,7 +1091,7 @@ export function buildShadeKernel( params ) {
 		// ─── DDFA aux decision at a transmissive / alpha / SSS interaction. Runs for BOTH the continuing and
 		// the BLEND fall-through paths, so it sits before If(continueRay). If/ElseIf chaining so BLEND wins
 		// over the transmission branch (fixes the BLEND-glass per-frame flicker + the BLEND+transmission case). ───
-		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 			// N here is the mapped normal — faceforward it (a ray exiting glass sees a back-facing N).
@@ -1310,7 +1311,7 @@ export function buildShadeKernel( params ) {
 			writeMediumStack( rayBufferRW, rayID, uint( mediumStackDepth ), uint( transTraversals ), mediumStack_ior_1, mediumStack_ior_2, mediumStack_ior_3, uint( pathWavelength.add( 0.5 ) ) );
 			// DDFA: persist the (possibly tinted) see-through throughput for the next bounce. MUST run after
 			// the writeMediumSigmaA above — both RMW slot 5 (sigmaA.xyz / featTP.w). Gated AUX_LOCKED-clear.
-			If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+			if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 				writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 
@@ -1519,7 +1520,7 @@ export function buildShadeKernel( params ) {
 		// ─── DDFA opaque aux decision: commit at the first diffuse-enough surface, defer through smooth
 		// mirror/metal so the guide describes what the mirror reflects, not the mirror itself. N is already
 		// viewer-facing (two-sided flip above); depth read back + re-packed (idempotent snorm — no drift). ───
-		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			const primaryDepth = gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w;
 			If( auxCommit, () => {
@@ -2233,7 +2234,7 @@ export function buildShadeKernel( params ) {
 		writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 		writeMediumStack( rayBufferRW, rayID, uint( mediumStackDepth ), uint( transTraversals ), mediumStack_ior_1, mediumStack_ior_2, mediumStack_ior_3, uint( pathWavelength.add( 0.5 ) ) );
 		// DDFA: persist the (possibly mirror-tinted) see-through throughput for the next bounce.
-		If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+		if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
 
 			writeFeatureThroughput( rayBufferRW, rayID, featCarry );
 

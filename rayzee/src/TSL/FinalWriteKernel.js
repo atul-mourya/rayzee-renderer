@@ -46,7 +46,7 @@ export function buildFinalWriteKernel( params ) {
 		visMode,
 		// Aux MRT (normalDepth + albedo) feeds only the denoiser/OIDN. Gated by a live uniform (1 = denoiser
 		// on): when off, skip the G-buffer decode, the prev-frame aux mix, and the two aux stores.
-		auxGBufferEnabled,
+		auxGBufferEnabled, gBuffer = true, // compiled in only when requested (PathTracer.requestOutput( 'gBuffer' ))
 		// Clean-aux normal (1 = temporally accumulate + renormalize the aux normal). On only for clean-aux
 		// OIDN models (calb_cnrm/high, alb_nrm/balanced); off for fast/ASVGF which want the bump normal.
 		cleanAuxNormalEnabled,
@@ -98,7 +98,7 @@ export function buildFinalWriteKernel( params ) {
 			const finalAlbedo = vec4( 0.0 ).xyz.toVar();
 			// Albedo .w carries the hit distance — OIDN reads albedo as 3 channels, so it is free.
 			const finalHitDist = float( 0.0 ).toVar();
-			If( auxOn, () => {
+			if ( gBuffer ) If( auxOn, () => {
 
 				const gbuf = readGBuffer( gBufferRO, rayID );
 				finalNormalDepth.assign( gbDecodeNormalDepth( gbuf ) );
@@ -118,7 +118,7 @@ export function buildFinalWriteKernel( params ) {
 
 				// Frozen pixels pass prev colour through unchanged (stale sample); active pixels accumulate.
 				finalColor.assign( select( wasFrozen, prevAccumSample.xyz, mix( prevAccumSample.xyz, sampleColor.xyz, accumulationAlpha ) ) );
-				If( auxOn.and( hasPreviousAux ), () => {
+				if ( gBuffer ) If( auxOn.and( hasPreviousAux ), () => {
 
 					// Albedo averages cleanly (it's a colour); so does the normalized hit distance in .w.
 					const prevAlbedoSample = texture( prevAlbedoTexture, prevUV, 0 ).toVar();
@@ -253,7 +253,7 @@ export function buildFinalWriteKernel( params ) {
 
 			const uintCoord = uvec2( uint( gx ), uint( gy ) );
 			textureStore( writeColorTex, uintCoord, vec4( finalColor, outputAlpha ) ).toWriteOnly();
-			If( auxOn, () => {
+			if ( gBuffer ) If( auxOn, () => {
 
 				textureStore( writeNDTex, uintCoord, finalNormalDepth ).toWriteOnly();
 				textureStore( writeAlbedoTex, uintCoord, vec4( finalAlbedo, finalHitDist ) ).toWriteOnly();

@@ -45,6 +45,7 @@ export function buildGenerateKernel( params ) {
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
 		transmissiveBounces, // per-ray refraction budget (megakernel parity: PathTracerCore.js:606)
 		auxGBufferEnabled, // live uniform: 1 = init the per-pixel G-buffer (denoiser on), 0 = skip it
+		gBuffer = true, // compiled in only when requested (PathTracer.requestOutput( 'gBuffer' ))
 		// listDriven: 1D dispatch over the active-pixel list (activeIndicesRO[tid] = LOCAL slot) instead of 2D.
 		listDriven = false, activeIndicesRO = null, counters = null,
 		bidirectional: bdpt = null,
@@ -90,7 +91,7 @@ export function buildGenerateKernel( params ) {
 		// tell subject from background. Output is unaffected: FinalWrite forces alpha 1 when transparent-bg is off.
 		writeRayRadiance( rayBufferRW, rayID, vec4( vec3( 0.0 ), float( 1.0 ) ) );
 
-		If( auxOn, () => {
+		if ( gBuffer ) If( auxOn, () => {
 
 			// default: normal +Z, depth 1 (far), black albedo (background/miss). Per-CHUNK G-buffer → LOCAL slot.
 			writeGBuffer( gBufferRW, rayID, vec3( 0.0, 0.0, 1.0 ), float( 1.0 ), vec3( 0.0 ), float( 0.0 ) );

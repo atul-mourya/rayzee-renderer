@@ -48,8 +48,8 @@ renderer runs without a browser.
 2. **The core announces every restart of accumulation, with its reason** (camera, scene, setting). Each capability
    decides what of its own history to keep.
 3. **A capability names the outputs it needs; the core writes them.** An extra per-pixel output is compiled into the
-   core's GPU programs only when something asks for it (`requestOutput`). Today that holds for the hit distance; the
-   normal/depth/albedo G-buffer is still always compiled and switched at runtime (see the last section).
+   core's GPU programs only when something asks for it (`requestOutput`): the hit distance, and the
+   normal/depth/albedo G-buffer the denoisers read.
 4. **A missing capability costs nothing.** Nothing is built for it, and the core runs without it.
 
 The viewer plugs into the core through a fixed set of protected methods on `RayzeeRenderer`, listed under "Hooks" at
@@ -71,6 +71,9 @@ renderers in one page now share only the colour management and the on-disk stora
 **Outputs on request.** `pathTracer.requestOutput( name, options )` returns a function that withdraws the request; the
 kernels rebuild before the next frame either way. `'hitDistance'` takes `encode( distance, viewZ )`: NRD passes its
 normalisation, so the core's shading program holds no NRD code and leaves the output out when nobody asks.
+`'gBuffer'` compiles the denoisers' normal/depth/albedo writes into Generate, Shade and FinalWrite; the viewer asks for
+it at start-up (so switching a denoiser on never rebuilds), and the first `setAuxGBufferEnabled( true )` asks for it on
+the core. Without it the core's programs carry none of that code, and still render byte for byte as the full engine.
 
 ## Decisions
 
@@ -181,8 +184,6 @@ normalisation, so the core's shading program holds no NRD code and leaves the ou
   them out means a shading kernel of the integrator's own.
 - **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, page-in). It
   does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
-- **The normal/depth/albedo G-buffer is always compiled** into Generate, Shade and FinalWrite and switched at runtime
-  (`auxGBufferEnabled`). Making it a requested output like the hit distance would take it out of the core's programs.
 - **Colour and storage are one per page.** The active colour management (`Color/ActiveColor.js`) and the shared OPFS
   manager serve every renderer in the page, by design: a config is a page-wide choice, the texture cache keys on it,
   and one origin has one file system.

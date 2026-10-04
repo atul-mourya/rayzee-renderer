@@ -178,6 +178,8 @@ export class PathTracerApp extends RayzeeRenderer {
 		await super._initManagers();
 		this.environmentManager.setProceduralSkyLoader( () => import( './Processor/PhysicalSky.js' ).then( ( m ) => m.PhysicalSky ) );
 		this.stages.pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) );
+		// The denoisers read the G-buffer: compiled in from the first build, so switching one on never rebuilds kernels.
+		this.stages.pathTracer.requestOutput( 'gBuffer' );
 
 		this.interactionManager = new InteractionManager( {
 			scene: this.meshScene,

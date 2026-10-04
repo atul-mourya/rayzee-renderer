@@ -255,15 +255,16 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	/**
-	 * Asks Shade for an extra per-pixel output, compiled in only while someone asks for it; the kernels rebuild
-	 * before the next frame. `'hitDistance'`: the first bounce's segment plus any alpha-skip run, at camera
-	 * depth 1, as `encode( distance, viewZ )` returns it — a [0, 1] value, in `pathtracer:albedo.w`. Written only
-	 * while the aux outputs are on.
-	 * @param {'hitDistance'} name
-	 * @param {{encode: function(Node, Node): Node}} options
+	 * Asks for an extra per-pixel output, compiled in only while someone asks for it; the kernels rebuild before the
+	 * next frame. `'gBuffer'`: the denoisers' normal/depth (`pathtracer:normalDepth`) and albedo (`pathtracer:albedo`),
+	 * written while setAuxGBufferEnabled( true ). `'hitDistance'`: the first bounce's segment plus any alpha-skip run,
+	 * at camera depth 1, as `encode( distance, viewZ )` returns it — a [0, 1] value, in `pathtracer:albedo.w`; it
+	 * brings the G-buffer with it.
+	 * @param {'gBuffer'|'hitDistance'} name
+	 * @param {{encode?: function(Node, Node): Node}} [options]
 	 * @returns {function(): void} withdraws the request
 	 */
-	requestOutput( name, options ) {
+	requestOutput( name, options = {} ) {
 
 		this._outputs.set( name, options );
 		this._outputsChanged = true;
@@ -919,11 +920,12 @@ export class PathTracer extends PathTracerStage {
 	}
 
 	// Aux MRT (normalDepth/albedo) is needed only by the denoiser/OIDN; DenoisingManager calls this to
-	// turn the wavefront's aux writes on/off. It's a live uniform, so toggling is just a value flip —
-	// no kernel rebuild, no UI freeze.
+	// turn the wavefront's aux writes on/off. The first call that turns them on compiles them in (requestOutput,
+	// kept for good); after that it is a live uniform, so toggling is a value flip — no kernel rebuild, no UI freeze.
 	setAuxGBufferEnabled( enabled ) {
 
 		enabled = !! enabled;
+		if ( enabled && ! this._outputs.has( 'gBuffer' ) ) this.requestOutput( 'gBuffer' );
 		if ( this._auxGBufferEnabled === enabled ) return;
 		this._auxGBufferEnabled = enabled;
 		this._auxGBufferUniform.value = enabled ? 1 : 0;
@@ -1358,6 +1360,13 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether the kernels write the G-buffer: asked for directly, or for the hit distance that rides in it. */
+	get _gBufferCompiled() {
+
+		return this._outputs.has( 'gBuffer' ) || this._outputs.has( 'hitDistance' );
+
+	}
+
 	_buildWavefrontKernels() {
 
 		const texNodes = this.shaderBuilder.getSceneTextureNodes();
@@ -1548,6 +1557,7 @@ export class PathTracer extends PathTracerStage {
 			transmissiveBounces: this.transmissiveBounces,
 			transparentBackground: this.transparentBackground,
 			auxGBufferEnabled: this._auxGBufferUniform,
+			gBuffer: this._gBufferCompiled,
 			bidirectional: this._integrator?.uniforms ?? null,
 		};
 		const genFn = buildGenerateKernel( genParams );
@@ -1891,6 +1901,7 @@ export class PathTracer extends PathTracerStage {
 			maxRayCount: this._wfMaxRayCount,
 			chunkRowBase: this._wfChunkRowBase,
 			auxGBufferEnabled: this._auxGBufferUniform,
+			gBuffer: this._gBufferCompiled,
 			hasSun: this.hasSun,
 			sunDirection: this.sunDirection,
 			sunRadiance: this.sunRadiance,
@@ -1993,6 +2004,7 @@ export class PathTracer extends PathTracerStage {
 			renderHeight: this._wfRenderHeight,
 			visMode: this.visMode,
 			auxGBufferEnabled: this._auxGBufferUniform,
+			gBuffer: this._gBufferCompiled,
 			cleanAuxNormalEnabled: this._cleanAuxNormalUniform,
 			m2BufferRW: m2RW,
 			useAdaptiveSampling: this.useAdaptiveSampling,
