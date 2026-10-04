@@ -36,7 +36,8 @@
 
 ### Next-Generation Rendering Features
 - [ ] **Volumetric Rendering & Atmosphere**
-  - [x] Basic volumetric fog and transmission (fog.js TSL module)
+  - [x] Volumetric absorption in transmission (attenuation colour and distance, nested media)
+  - [ ] Fog and homogeneous participating media
   - [ ] Heterogeneous volume rendering (clouds, smoke)
   - [x] Atmospheric scattering with multiple scattering (the physical sky: spectral, clear sky)
   - [ ] Participating media with anisotropic scattering
@@ -57,7 +58,7 @@
 
 - [ ] **Caustics & Advanced Light Transport**
   - [x] Bidirectional path tracing (BDPT) — light subpaths from every light (emissive geometry, lamps, the sun, the environment), light tracing for caustics
-  - [ ] Photon mapping for caustics
+  - [x] Photon mapping for caustics — vertex merging (`integrator: 'vcm'`), for caustics seen in mirrors and through glass
   - [x] Multiple importance sampling (environment + emissive triangle + direct lighting MIS)
   - [ ] Light path caching and reuse
 
@@ -100,7 +101,7 @@
 - [ ] **Advanced Denoising Pipeline**
   - [x] GPU-native OIDN denoising (HDR with ACES tonemapping)
   - [x] Temporal denoising (SVGF/A-SVGF improvements)
-  - [x] ASVGF quality presets (performance/balanced/quality)
+  - [x] ASVGF quality presets (low/medium/high)
   - [x] AI super-resolution upscaling (ONNX model, tiled with progress overlay)
   - [ ] Machine learning denoising models
   - [ ] Custom denoising parameter profiles
@@ -190,11 +191,12 @@
   - [ ] iOS/Android app store presence
 
 ### Developer Experience
-- [ ] **Plugin Architecture**
-  - [ ] JavaScript plugin system
-  - [ ] Custom render passes
+- [ ] **Plugin Architecture** (see [CORE_AND_ADDONS.md](CORE_AND_ADDONS.md))
+  - [x] Renderer core and add-ons: `rayzee/core` plus `rayzee/addons/*` (physical sky, archives, bidirectional, colour, storage)
+  - [x] Custom render passes: stages via `_createExtraStages()`, shown via `_displaySources()`, extra path-tracer outputs via `requestOutput()`
+  - [x] Integrator plugins (`registerIntegrator()`) and plugin settings (`settings.define()`)
   - [ ] Material and light plugins
-  - [ ] API for third-party integrations
+  - [ ] A public plugin API (today the viewer plugs in through protected hook methods)
 
 - [ ] **Documentation & Learning**
   - [ ] Interactive tutorials
@@ -244,7 +246,7 @@
 
 ### Technical Milestones
 - **Q2 2025:** ~~WebGPU beta release~~ ✅ WebGPU TSL backend shipped, WebGL removed
-- **Q3 2025:** ~~Volumetric rendering~~ ✅ Basic volumetric fog/transmission, iridescence, dispersion, nested media
+- **Q3 2025:** ~~Volumetric rendering~~ ✅ Volumetric transmission, iridescence, dispersion, nested media
 - **Q4 2025:** ~~Compute shaders & denoiser~~ ✅ ASVGF/OIDN GPU-native denoising, compute bilateral filtering, MIS pipeline
 - **Q1 2026:** ~~Wavefront rewrite~~ ✅ Wavefront compute path tracer, subsurface scattering, two-level BVH (TLAS/BLAS), size-bucketed texture arrays, VRAM tracking
 - **Q2 2026:** ~~Content & assets~~ ✅ Sketchfab/PolyHaven asset browsers, dynamic scene add/remove, AI super-resolution upscaling, PBRT-v4 loader, screen-space radiance cache, GPU device-loss recovery
@@ -262,7 +264,7 @@
 4. ~~Performance profiling setup~~ ✅ stats-gl, BVH timings, convergence monitoring
 
 ### Phase 2 (Short term - 6 months) ✅ Mostly Complete
-1. ~~Volumetric rendering~~ ✅ Basic fog, volumetric transmission
+1. ~~Volumetric rendering~~ ✅ Volumetric transmission (fog not yet)
 2. ~~Advanced materials~~ ✅ Iridescence, dispersion, nested transmission, clearcoat, sheen
 3. ~~WebGPU compute shaders~~ ✅ ASVGF denoiser, bilateral filtering, variance estimation (BVH compute still pending)
 4. Community features — pending
@@ -312,9 +314,9 @@
 
 ---
 
-*Last Updated: July 2026*
-*Current Version: 7.10.0*
-*Project Demo: <https://atul-mourya.github.io/RayTracing/>*
+*Last Updated: October 2026*
+*Current Version: 9.4*
+*Project Demo: <https://atul-mourya.github.io/rayzee-renderer/>*
 
 **Contributing:** See [CONTRIBUTING.md] for development guidelines
 **Discussions:** Join our community discussions for feature requests and feedback

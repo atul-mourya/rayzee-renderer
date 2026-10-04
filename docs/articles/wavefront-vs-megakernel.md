@@ -121,7 +121,7 @@ writes back, and the next kernel picks up.
 
 | Kernel | Real-world station | What it does |
 |---|---|---|
-| **Generate** | "Cut the raw steel" | Create one fresh camera ray per pixel; set defaults |
+| **Generate** | "Cut the raw steel" | Create one fresh camera ray per pixel still converging (converged pixels are skipped); set defaults |
 | **Extend** | "Find what it hit" | Traverse the BVH; record the closest surface for every ray |
 | **Sort** *(optional)* | "Group by paint color" | Reorder rays so similar materials sit together |
 | **Shade** | "Do the surface work" | Evaluate the material, sample lights, pick the next bounce direction |
@@ -220,8 +220,8 @@ flowchart TD
 ```mermaid
 flowchart TD
     Start([Frame start]) --> RC[Reset counters]
-    RC --> GEN[GENERATE kernel<br/>one fresh ray per pixel]
-    GEN --> INIT[Init active list<br/>= every pixel]
+    RC --> GEN[GENERATE kernel<br/>one fresh ray per active pixel]
+    GEN --> INIT[Init active list<br/>= every pixel not yet converged]
     INIT --> LOOP{{Per-bounce loop}}
 
     subgraph BOUNCE [One bounce — runs over ALL active rays]
