@@ -22,6 +22,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [Configuring Assets (CDN URLs & cache namespace)](#configuring-assets-cdn-urls--cache-namespace)
   - [PathTracerApp](#pathtracerapp)
   - [Renderer core (`rayzee/core`)](#renderer-core-rayzeecore)
+    - [Add-ons](#add-ons)
   - [engine.cameraManager](#enginecameramanager)
   - [Camera Projection (Orthographic, 360° Panorama)](#camera-projection-orthographic-360-panorama)
   - [engine.lightManager](#enginelightmanager)
@@ -507,28 +508,70 @@ renderer.dispose();
 Two runnable examples live in the repository: `rayzee/examples/core-node.mjs` (the core alone, in Node, writing a PNG)
 and `rayzee/examples/core-browser/` (the core plus the physical sky, accumulating on a canvas).
 
-Add-ons install on it explicitly. The physical sky, for `environmentMode: 'procedural'`:
+#### Add-ons
+
+Five capabilities install on the core explicitly. `PathTracerApp` installs all five itself, so nothing in this
+section applies to it.
+
+| Add-on | Import | Install | When | Without it |
+|---|---|---|---|---|
+| Physical sky | `PhysicalSky` from `rayzee/addons/physical-sky` | `renderer.environmentManager.setProceduralSky(PhysicalSky)` | after `init()` | `'procedural'` mode records `capability.missing` (throws under `strict`) |
+| Scene archives and pbrt | `ArchiveImporter` from `rayzee/addons/archives` | `renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader))` | after `init()` | `.zip`, `.tar` and `.tgz` are not supported formats, and the error names the add-on |
+| Bidirectional and VCM | `BidirectionalIntegrator` from `rayzee/addons/bidirectional` | `renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt))` | after `init()` | choosing either integrator records `capability.missing` (throws under `strict`) and keeps the current one |
+| OpenColorIO colour | `ColorManagement` from `rayzee/addons/color` | `renderer.setColorManagement(ColorManagement)` | before or after `init()` | linear Rec.709 through three.js's own tone mappers; `loadColorConfig()` records `capability.missing` and rejects |
+| On-disk storage | `acquireSharedStorage` from `rayzee/addons/storage` | `renderer.setStorageOpener(acquireSharedStorage)` | **before** `init()` | downloads land in memory and nothing is cached between visits |
+
+`init()` creates the asset loader, the environment manager and the path tracer stage, which is why three of them come
+after it. Storage is opened during `init()`, so its opener has to be set first.
+
+All five, in that order:
 
 ```js
+import { RayzeeRenderer, configureAssets } from 'rayzee/core';
+import { acquireSharedStorage } from 'rayzee/addons/storage';
+import { ColorManagement } from 'rayzee/addons/color';
+import { ArchiveImporter } from 'rayzee/addons/archives';
 import { PhysicalSky } from 'rayzee/addons/physical-sky';
+import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
 
+configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
+
+const renderer = new RayzeeRenderer(canvas);
+renderer.setStorageOpener(acquireSharedStorage);             // before init()
+renderer.setColorManagement(ColorManagement);
+await renderer.init();
+renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
+renderer.environmentManager.setProceduralSky(PhysicalSky);
+renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
+```
+
+**Loading on first use.** The physical sky and the archive importer can be installed as loaders instead, so their code
+is fetched only the first time the sky is baked or an archive is read — `PathTracerApp` does this. The archive loader
+takes the formats it reads, which `rayzee/core` exports, so the loader recognises an archive before its code exists:
+
+```js
+import { ARCHIVE_FORMATS } from 'rayzee/core';
+
+renderer.environmentManager.setProceduralSkyLoader(() => import('rayzee/addons/physical-sky').then((m) => m.PhysicalSky));
+renderer.assetLoader.setArchiveImporterLoader(
+  () => import('rayzee/addons/archives').then((m) => new m.ArchiveImporter(renderer.assetLoader)),
+  ARCHIVE_FORMATS,
+);
+```
+
+Colour, storage and the integrators have no loader: colour and storage are used at startup, and an integrator applies
+the moment it is chosen (a lazy one would trace plain frames meanwhile and break reproducible renders).
+
+**Physical sky**, for `environmentMode: 'procedural'`:
+
+```js
 renderer.environmentManager.setProceduralSky(PhysicalSky);
 await renderer.environmentManager.setMode('procedural');
 ```
 
-Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`). To fetch the
-add-on only when the sky is first used, install a loader instead — `PathTracerApp` does this, and the same works for
-archives with `assetLoader.setArchiveImporterLoader( load, formats )`:
+**Bidirectional path tracing and vertex merging**, for `integrator: 'bidirectional' | 'vcm'`:
 
 ```js
-renderer.environmentManager.setProceduralSkyLoader(() => import('rayzee/addons/physical-sky').then((m) => m.PhysicalSky));
-```
-
-Bidirectional path tracing and vertex merging, for `integrator: 'bidirectional' | 'vcm'`:
-
-```js
-import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
-
 renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
 renderer.settings.set('integrator', 'bidirectional');
 ```
@@ -543,35 +586,28 @@ integrator.setLightGuiding(true);                    // learn where light paths 
 integrator.setBidirectionalStrategy('connect', { alone: true });  // keep one strategy, for verification
 ```
 
-Scene archives (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
+**Scene archives** (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
 
 ```js
-import { ArchiveImporter } from 'rayzee/addons/archives';
-
 renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
 await renderer.loadFile(archiveFile);
 ```
 
-OpenColorIO colour management — configs, their views and looks, working spaces and export spaces. Without it the core
-renders in linear Rec.709 through three.js's own tone mappers, chosen on the three.js renderer
-(`renderer.renderer.toneMapping = AgXToneMapping`), and `loadColorConfig()` records `capability.missing` and rejects:
+**OpenColorIO colour management** — configs, their views and looks, working spaces and export spaces. The host supplies
+the OCIO runtime (the engine never names the package). Without the add-on, pick a tone mapper on the three.js renderer
+instead (`renderer.renderer.toneMapping = AgXToneMapping`):
 
 ```js
-import { configureAssets } from 'rayzee/core';
-import { ColorManagement } from 'rayzee/addons/color';
-
 configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
 renderer.setColorManagement(ColorManagement);
 await renderer.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' });
 ```
 
-On-disk storage (the browser's origin private file system), for the download, environment and scene caches and the
-`memorySpill` option. Without it downloads land in memory and nothing is cached between visits. Install it before
-`init()`:
+**On-disk storage** (the browser's origin private file system), for the download, environment and scene caches and
+the `memorySpill` option. Asking for it without the add-on (`storage: 'auto'`) records a `capability.missing` warning;
+`storage: false` turns it off either way:
 
 ```js
-import { acquireSharedStorage } from 'rayzee/addons/storage';
-
 const renderer = new RayzeeRenderer(canvas);
 renderer.setStorageOpener(acquireSharedStorage);
 await renderer.init();

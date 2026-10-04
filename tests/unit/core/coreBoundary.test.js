@@ -88,6 +88,13 @@ describe( 'the renderer core', () => {
 
 	} );
 
+	it( 'exports the archive formats, so a host can install that add-on to load on first use', () => {
+
+		const core = readFileSync( resolve( SRC, 'core.js' ), 'utf8' );
+		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS \} from '\.\/Processor\/archiveFormats\.js'/ );
+
+	} );
+
 	it( 'leaves archives and pbrt to their add-on, which reaches no viewer code', () => {
 
 		const archives = reachable( 'addons/archives.js' );

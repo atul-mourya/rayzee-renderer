@@ -1053,7 +1053,7 @@ its own `finally`, so a failed drop shows only the console.
 ### Loading part of a scene archive
 Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which
 the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or
-`setArchiveImporterLoader( load, ARCHIVE_FORMATS )`, which loads it for the first archive read — `PathTracerApp` does
+`setArchiveImporterLoader( load, ARCHIVE_FORMATS )` (`ARCHIVE_FORMATS` is exported from `rayzee/core` for that), which loads it for the first archive read — `PathTracerApp` does
 that, so archive reading and pbrt are a chunk of their own. The formats come from `Processor/archiveFormats.js`, so the
 loader recognises an archive before the code that reads it exists. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
 add-on. The importer reads the loader's members through `this.loader`.

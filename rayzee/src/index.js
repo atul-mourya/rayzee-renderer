@@ -36,6 +36,7 @@ export {
 
 // Archives read in place: one entry at a time, never the whole file in memory
 export { openZip, readZipDirectory } from './Processor/ZipReader.js';
+export { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
 
 // Engine package version, as built
 export { VERSION } from './version.js';

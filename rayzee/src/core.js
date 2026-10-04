@@ -22,6 +22,7 @@ export { configureAssets, getAssetConfig } from './AssetConfig.js';
 export { configurePlatform, getPlatform } from './Platform.js';
 export { LightManager } from './managers/LightManager.js';
 export { listViewTransforms, getViewTransform, onRegistryChange } from './Color/ViewTransforms.js';
+export { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
 export {
 	ENGINE_DEFAULTS,
 	MATERIAL_DEFAULTS,
