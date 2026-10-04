@@ -480,8 +480,12 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
 	specular.addAssign( iridescenceShift );
 	diffuse.subAssign( iridescenceShift );
 
+	// The diffuse lobe's transmitted share is drawn on the other side, in proportion.
+	const diffuseTransmission = diffuse.mul( material.diffuseTransmission ).toVar();
+	diffuse.subAssign( diffuseTransmission );
+
 	// Single normalization pass
-	const total = specular.add( diffuse ).add( sheen ).add( clearcoat ).add( transmission );
+	const total = specular.add( diffuse ).add( sheen ).add( clearcoat ).add( transmission ).add( diffuseTransmission );
 	const invTotal = float( 1.0 ).div( max( total, 0.001 ) );
 
 	return BRDFWeights( {
@@ -491,6 +495,7 @@ export const calculateBRDFWeights = Fn( ( [ material, mc, cache ] ) => {
 		clearcoat: clearcoat.mul( invTotal ),
 		transmission: transmission.mul( invTotal ),
 		iridescence: float( 0.0 ),
+		diffuseTransmission: diffuseTransmission.mul( invTotal ),
 	} );
 
 } );
@@ -549,6 +554,21 @@ export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ] ) => {
 	} );
 
 	return pdf;
+
+} );
+
+// The sampling density below the surface (cosBelow = −N·L > 0): only the diffuse transmission lobe draws there,
+// chosen with probability `weight` (BRDFWeights.diffuseTransmission).
+export const diffuseTransmissionPdf = Fn( ( [ weight, cosBelow ] ) => {
+
+	return weight.mul( cosBelow ).mul( PI_INV );
+
+} );
+
+// The diffuse transmission lobe's selection probability, for samplers outside the classify-once path.
+export const diffuseTransmissionWeight = Fn( ( [ material ] ) => {
+
+	return BRDFWeights.wrap( calculateBRDFWeightsFromMaterial( material ) ).diffuseTransmission;
 
 } );
 

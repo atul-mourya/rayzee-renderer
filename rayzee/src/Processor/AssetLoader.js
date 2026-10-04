@@ -18,6 +18,7 @@ import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
 import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin } from './PlatformImageLoader.js';
+import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -732,6 +733,7 @@ export class AssetLoader extends EventDispatcher {
 		const onImageFailure = ( where, error ) => this._reportImageFailure( where, error );
 		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
+		loader.register( ( parser ) => diffuseTransmissionPlugin( parser ) );
 
 		return loader;
 

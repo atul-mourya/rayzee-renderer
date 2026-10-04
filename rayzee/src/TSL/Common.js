@@ -432,6 +432,13 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 	const data30 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_A ), int( MATERIAL_SLOTS ) ).toVar();
 	const data31 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_B ), int( MATERIAL_SLOTS ) ).toVar();
 	const data32 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_C ), int( MATERIAL_SLOTS ) ).toVar();
+	// Only a material with diffuse transmission has maps for it.
+	const data33 = vec4( - 1.0, - 1.0, 0.0, 0.0 ).toVar();
+	If( data5.a.greaterThan( 0.0 ), () => {
+
+		data33.assign( getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_D ), int( MATERIAL_SLOTS ) ) );
+
+	} );
 
 	return RayTracingMaterial( {
 		color: vec4( data0.rgb, 1.0 ),
@@ -470,6 +477,10 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 		iridescenceThicknessMapIndex: int( data31.b ),
 		specularIntensityMapIndex: int( data31.a ),
 		specularColorMapIndex: int( data32.r ),
+		diffuseTransmission: data5.a,
+		diffuseTransmissionColor: data32.gba,
+		diffuseTransmissionMapIndex: int( data33.r ),
+		diffuseTransmissionColorMapIndex: int( data33.g ),
 		albedoMapIndex: int( data8.r ),
 		normalMapIndex: int( data8.g ),
 		roughnessMapIndex: int( data8.b ),
@@ -569,6 +580,10 @@ export const diffuseGroundMaterial = Fn( () => {
 		iridescenceThicknessMapIndex: int( - 1 ),
 		specularIntensityMapIndex: int( - 1 ),
 		specularColorMapIndex: int( - 1 ),
+		diffuseTransmission: float( 0.0 ),
+		diffuseTransmissionColor: vec3( 1.0 ),
+		diffuseTransmissionMapIndex: int( - 1 ),
+		diffuseTransmissionColorMapIndex: int( - 1 ),
 	} );
 
 } );

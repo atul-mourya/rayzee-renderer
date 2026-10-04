@@ -267,9 +267,14 @@ export const calculateRayOffset = Fn( ( [ hitPoint, normal ] ) => offsetRayOrigi
 // LIGHT IMPORTANCE ESTIMATION
 // ================================================================================
 
+// A light's cosine for importance: either side for a surface that passes light through diffusely.
+const importanceCosine = ( normal, direction, material ) => select(
+	material.diffuseTransmission.greaterThan( 0.0 ), abs( dot( normal, direction ) ), max( float( 0.0 ), dot( normal, direction ) ),
+);
+
 export const calculateDirectionalLightImportance = Fn( ( [ light, normal, material, bounceIndex ] ) => {
 
-	const NoL = max( float( 0.0 ), dot( normal, light.direction ) );
+	const NoL = importanceCosine( normal, light.direction, material );
 	const result = float( 0.0 ).toVar();
 
 	If( NoL.greaterThan( 0.0 ), () => {
@@ -306,7 +311,7 @@ export const estimateLightImportance = Fn( ( [ light, hitPoint, normal, material
 	const distSq = dist.mul( dist );
 
 	const lightDir = toLight.div( dist );
-	const NoL = max( dot( normal, lightDir ), 0.0 );
+	const NoL = importanceCosine( normal, lightDir, material );
 	const result = float( 0.0 ).toVar();
 
 	If( NoL.greaterThan( 0.0 ), () => {
@@ -360,7 +365,7 @@ export const calculatePointLightImportance = Fn( ( [ light, hitPoint, normal, ma
 
 		const dist = sqrt( distSq );
 		const lightDir = toLight.div( dist );
-		const NoL = max( float( 0.0 ), dot( normal, lightDir ) );
+		const NoL = importanceCosine( normal, lightDir, material );
 
 		If( NoL.greaterThan( 0.0 ), () => {
 
@@ -411,7 +416,7 @@ export const calculateSpotLightImportance = Fn( ( [ light, hitPoint, normal, mat
 	If( distSq.greaterThanEqual( 0.001 ), () => {
 
 		const lightDir = toLight.div( sqrt( distSq ) );
-		const NoL = max( float( 0.0 ), dot( normal, lightDir ) );
+		const NoL = importanceCosine( normal, lightDir, material );
 
 		If( NoL.greaterThan( 0.0 ), () => {
 

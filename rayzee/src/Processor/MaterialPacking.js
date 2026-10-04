@@ -15,8 +15,7 @@ const TRANSFORMS = [
 
 /** Floats no field writes; the packer gives them fixed values. */
 export const MATERIAL_RESERVED_FLOATS = Object.freeze( [
-	M.VISIBLE, M.SHEEN_COLOR + 3, M.DISPLACEMENT_MAP_INDEX + 1,
-	M.SPECULAR_COLOR_MAP_INDEX + 1, M.SPECULAR_COLOR_MAP_INDEX + 2, M.SPECULAR_COLOR_MAP_INDEX + 3,
+	M.VISIBLE, M.DISPLACEMENT_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2,
 ] );
 
 /**
@@ -25,7 +24,7 @@ export const MATERIAL_RESERVED_FLOATS = Object.freeze( [
  */
 export const UNIT_RANGE_PROPERTIES = Object.freeze( new Set( [
 	'metalness', 'roughness', 'transmission', 'opacity', 'clearcoat', 'clearcoatRoughness',
-	'sheen', 'sheenRoughness', 'specularIntensity', 'iridescence', 'subsurface', 'anisotropy',
+	'sheen', 'sheenRoughness', 'specularIntensity', 'iridescence', 'subsurface', 'anisotropy', 'diffuseTransmission',
 ] ) );
 
 export const clampUnit = ( value ) => Math.min( Math.max( value, 0 ), 1 );
@@ -116,6 +115,7 @@ export function packMaterial( data, base, mat ) {
 	u( M.SHEEN_ROUGHNESS, mat.sheenRoughness, D.sheenRoughness );
 
 	writeTriple( data, base + M.SHEEN_COLOR, mat.sheenColor, D.sheenColor );
+	u( M.DIFFUSE_TRANSMISSION, mat.diffuseTransmission, D.diffuseTransmission );
 
 	u( M.SPECULAR_INTENSITY, mat.specularIntensity, D.specularIntensity );
 	writeTriple( data, base + M.SPECULAR_COLOR, mat.specularColor, D.specularColor );
@@ -157,12 +157,13 @@ export function packMaterial( data, base, mat ) {
 	data[ base + M.SPECULAR_INTENSITY_MAP_INDEX ] = mapIndex( mat.specularIntensityMap );
 
 	data[ base + M.SPECULAR_COLOR_MAP_INDEX ] = mapIndex( mat.specularColorMap );
+	writeTriple( data, base + M.DIFFUSE_TRANSMISSION_COLOR, mat.diffuseTransmissionColor, D.diffuseTransmissionColor );
+	data[ base + M.DIFFUSE_TRANSMISSION_MAP_INDEX ] = mapIndex( mat.diffuseTransmissionMap );
+	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX ] = mapIndex( mat.diffuseTransmissionColorMap );
 
 	data[ base + M.VISIBLE ] = 1;
-	data[ base + M.SHEEN_COLOR + 3 ] = 1;
 	data[ base + M.DISPLACEMENT_MAP_INDEX + 1 ] = 0;
-	data[ base + M.SPECULAR_COLOR_MAP_INDEX + 1 ] = 0;
-	data[ base + M.SPECULAR_COLOR_MAP_INDEX + 2 ] = 0;
-	data[ base + M.SPECULAR_COLOR_MAP_INDEX + 3 ] = 0;
+	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1 ] = 0;
+	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2 ] = 0;
 
 }

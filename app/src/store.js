@@ -2352,6 +2352,17 @@ const useMaterialStore = create( ( set, get ) => ( {
 	},
 	// Artist-facing translucency dial → drives the engine's radius-scale multiplier.
 	handleSubsurfaceTranslucencyChange: val => get().updateMaterialProperty( 'subsurfaceRadiusScale', translucencyToScale( val[ 0 ] ) ),
+	handleDiffuseTransmissionChange: val => get().updateMaterialProperty( 'diffuseTransmission', val[ 0 ] ),
+	handleDiffuseTransmissionColorChange: val => {
+
+		const obj = useStore.getState().selectedObject;
+		if ( ! obj?.material ) return;
+		// An engine property three.js does not have, so the Color may not exist yet.
+		if ( ! obj.material.diffuseTransmissionColor?.isColor ) obj.material.diffuseTransmissionColor = new THREE.Color( val );
+		else obj.material.diffuseTransmissionColor.set( val );
+		get().updateMaterialProperty( 'diffuseTransmissionColor', obj.material.diffuseTransmissionColor );
+
+	},
 	// Apply a named SSS preset. The radius is derived from the object's world-space size so the
 	// look is scale-invariant: radius = ratio × bboxDiagonal × depth (see SSS_PRESETS).
 	applySubsurfacePreset: presetName => {
@@ -2752,6 +2763,14 @@ const useMaterialStore = create( ( set, get ) => ( {
 					properties: {
 						anisotropy: enabled ? 0.5 : 0
 					}
+				},
+				translucency: {
+					properties: {
+						diffuseTransmission: enabled ? 0.5 : 0
+					},
+					colorDefaults: enabled ? {
+						diffuseTransmissionColor: { value: '#ffffff', condition: () => ! obj.material.diffuseTransmissionColor?.isColor }
+					} : {}
 				},
 				dispersion: {
 					properties: {

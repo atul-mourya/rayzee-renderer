@@ -27,6 +27,8 @@ function buildScene() {
 	material.color.setRGB( 0.123456, 0.654321, 0.00123 );
 	material.sheenColor.setRGB( 0.3141, 0.2718, 0.1618 );
 	material.userData.pbrt = { type: 'coateddiffuse' };
+	material.diffuseTransmission = 0.15;
+	material.diffuseTransmissionColor = material.color.clone().setRGB( 0.9, 0.5, 0.25 );
 
 	const geometry = new BufferGeometry();
 	geometry.setAttribute( 'position', new BufferAttribute( new Float32Array( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] ), 3 ) );
@@ -139,6 +141,9 @@ describe( 'SceneGraphCodec', () => {
 		expect( material.color.toArray() ).toEqual( root.children[ 0 ].material.color.toArray() );
 		expect( material.sheenColor.toArray() ).toEqual( root.children[ 0 ].material.sheenColor.toArray() );
 		expect( material.userData.pbrt ).toEqual( { type: 'coateddiffuse' } );
+		// Engine properties three.js does not serialise.
+		expect( material.diffuseTransmission ).toBe( 0.15 );
+		expect( material.diffuseTransmissionColor.toArray() ).toEqual( root.children[ 0 ].material.diffuseTransmissionColor.toArray() );
 		expect( material.map.uuid ).toBe( root.children[ 0 ].material.map.uuid );
 		expect( material.map.repeat.toArray() ).toEqual( [ 4, 2 ] );
 		expect( material.map.colorSpace ).toBe( SRGBColorSpace );

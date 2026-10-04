@@ -11,7 +11,7 @@ const log = createLogger( 'geometry' );
 
 const MAX_TEXTURES_LIMIT = TEXTURE_CONSTANTS.MAX_TEXTURES_LIMIT;
 
-const COLOR_DEFAULTS = new Set( [ 'color', 'emissive', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurfaceColor' ] );
+const COLOR_DEFAULTS = new Set( [ 'color', 'emissive', 'attenuationColor', 'sheenColor', 'specularColor', 'subsurfaceColor', 'diffuseTransmissionColor' ] );
 
 /**
  * Where a packed material value came from: the three.js material carried it, a legacy-type
@@ -58,6 +58,8 @@ export function resolveMaterialTextures( material ) {
 		sheenRoughnessMap: material.sheenRoughnessMap,
 		specularIntensityMap: material.specularIntensityMap,
 		specularColorMap: material.specularColorMap,
+		diffuseTransmissionMap: material.diffuseTransmissionMap,
+		diffuseTransmissionColorMap: material.diffuseTransmissionColorMap,
 		iridescenceMap: material.iridescenceMap,
 		iridescenceThicknessMap: material.iridescenceThicknessMap,
 	};
@@ -1110,6 +1112,9 @@ export class GeometryExtractor {
 			specularIntensity: pick( 'specularIntensity' ),
 			specularColor: pick( 'specularColor' ),
 
+			diffuseTransmission: pick( 'diffuseTransmission' ),
+			diffuseTransmissionColor: pick( 'diffuseTransmissionColor' ),
+
 			normalScale: pick( 'normalScale' ),
 			bumpScale: pick( 'bumpScale' ),
 			displacementScale: pick( 'displacementScale' ),
@@ -1141,6 +1146,8 @@ export class GeometryExtractor {
 			sheenRoughnessMap: this.processTexture( textures.sheenRoughnessMap, this.sheenRoughnessMaps ),
 			specularIntensityMap: this.processTexture( textures.specularIntensityMap, this.specularIntensityMaps ),
 			specularColorMap: this.processTexture( textures.specularColorMap, this.specularColorMaps ),
+			diffuseTransmissionMap: this.processTexture( textures.diffuseTransmissionMap, this.diffuseTransmissionMaps ),
+			diffuseTransmissionColorMap: this.processTexture( textures.diffuseTransmissionColorMap, this.diffuseTransmissionColorMaps ),
 			iridescenceMap: this.processTexture( textures.iridescenceMap, this.iridescenceMaps ),
 			iridescenceThicknessMap: this.processTexture( textures.iridescenceThicknessMap, this.iridescenceThicknessMaps ),
 
@@ -1537,6 +1544,8 @@ export class GeometryExtractor {
 		this.iridescenceThicknessMaps = [];
 		this.specularIntensityMaps = [];
 		this.specularColorMaps = [];
+		this.diffuseTransmissionMaps = [];
+		this.diffuseTransmissionColorMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 
@@ -1578,6 +1587,8 @@ export class GeometryExtractor {
 			iridescenceThicknessMaps: this.iridescenceThicknessMaps,
 			specularIntensityMaps: this.specularIntensityMaps,
 			specularColorMaps: this.specularColorMaps,
+			diffuseTransmissionMaps: this.diffuseTransmissionMaps,
+			diffuseTransmissionColorMaps: this.diffuseTransmissionColorMaps,
 			directionalLights: this.directionalLights,
 			cameras: this.cameras
 		};

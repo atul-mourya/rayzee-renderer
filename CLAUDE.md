@@ -463,6 +463,29 @@ the strings, so never rename or repurpose one.
   `evaluateSpecularDeltaFromDots` gives its reflectance under the same sheen/coat attenuation.
   Glass already refracted exactly below 0.05; clear coat keeps its 0.089 floor.
   `furnace-metal-mirror` (1.00000) and `furnace-dielectric-mirror` gate it.
+- **Diffuse transmission** (KHR_materials_diffuse_transmission; `material.diffuseTransmission`, `diffuseTransmissionColor`,
+  engine properties three.js does not have) — a thin surface passes that share of its diffuse lobe to the other side:
+  reflected (1 − dt)·baseColor/π, transmitted kD·dt·colour/π with the reflected diffuse's own budget kD (what the
+  specular lobes leave, less metal and specular transmission) under the same sheen and coat attenuation
+  (`evaluateDiffuseTransmission`). It enters no medium. The sampler draws it with the diffuse weight's dt share
+  (`BRDFWeights.diffuseTransmission`, cosine about −N, density `diffuseTransmissionPdf`); `evaluateMaterialResponse` /
+  `calculateMaterialPDF` answer a direction below N with it, so every MIS site agrees. NEE lights the surface from
+  behind at every site — lamps (and their importance), the rect-light BSDF hit, environment and sun, emissive
+  triangles (`throughSurface` on the samplers): the cosine below N, the shadow ray off the other side of the facet
+  (`backOrigin`, no terminator lift). A transmission draw must cross the geometric surface (the leak guard's mirror
+  case), is never flagged UNDER_SURFACE, and sets SUN_NEE. **Compiled in only while some material has it**
+  (`MaterialDataManager.hasDiffuseTransmission()`, rechecked on every edit): otherwise Shade zeroes the field after
+  `getMaterial` and every branch folds away, so scenes without it run the same code — the 36 older bench scenes
+  unchanged, 18 still bit-identical. Bidirectional always leaves it out (its connections and light tracing do not
+  cross surfaces yet; `resolveSurfaceMaterial` zeroes it too). Packed at 39 (factor) and 129–131 (colour); slot 33
+  holds the two map indices and `getMaterial` reads it only when the factor is above 0. Maps (`diffuseTransmissionMap`,
+  its A channel, linear bucket; `diffuseTransmissionColorMap`, RGB, sRGB bucket) fold in through `applyExtensionMaps`
+  on the albedo map's uv transform. Loaders: glTF through `GLTFDiffuseTransmission.js` (factors and both textures,
+  via `parser.assignTexture`); pbrt `diffusetransmission` with dt = max(T), base R / (1 − dt), colour T / dt, exact
+  while max(R) + max(T) ≤ 1. `tests/gpu/diffuseTransmission.test.js` holds energy (the split moves it, creates none),
+  the lobe's draw rate and sampler/NEE agreement; `furnace-diffuse-transmission` (a closed sphere, 0.99989) and
+  `translucent-panel` (lit from behind, truth with emissive NEE off: +0.017 %) gate it. Khronos'
+  DiffuseTransmissionTest / Teacup / Plant render as their reference viewers show them.
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's
@@ -952,7 +975,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
     (0.07). Cornell box, merging alone against bidirectional: −0.14 % (z 1.3). Where other strategies already
     work it costs more than it saves (Livspace and the classroom +7–8 % noise at equal time); it is for caustics
     seen in mirrors and through glass. Bench: `mirror-caustic-vcm` (truth from itself).
-- **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
+- **Not covered:** diffuse transmission (left out in this integrator — see Settings → Diffuse transmission); emissive
+  textures (NEE and light paths both use the per-triangle emission); a dispersion
   wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
   path can hit (a point, spot or sharp directional lamp) have no strategy at all — `'vcm'` covers them. Connections test the
   camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth
@@ -1085,7 +1109,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - **Materials.** `coatedconductor` is a metal under a clear coat (pbrt's roughnesses default to 0); a textured
   roughness counts as its mean; `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
   map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
-  attenuation from σa + σs (no scattering inside). `diffusetransmission` keeps reflecting R: base R / (1 − T).
+  attenuation from σa + σs (no scattering inside). `diffusetransmission` is the engine's diffuse transmission lobe.
   Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
   their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
   material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour

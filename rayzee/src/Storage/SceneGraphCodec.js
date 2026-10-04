@@ -9,11 +9,13 @@
  */
 
 import {
-	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, Group, InstancedBufferAttribute, InstancedMesh,
+	AnimationClip, BufferAttribute, BufferGeometry, Color, DataTexture, Group, InstancedBufferAttribute, InstancedMesh,
 	MaterialLoader, Mesh, Object3D, OrthographicCamera, PerspectiveCamera, DirectionalLight, PointLight, SpotLight,
 } from 'three';
 
 export const SCENE_GRAPH_FORMAT = 2;
+// Texture slots the engine reads off a material that three.js does not serialise.
+const ENGINE_TEXTURES = [ 'diffuseTransmissionMap', 'diffuseTransmissionColorMap' ];
 export const ARCHIVE_PATH = '__rayzeeArchivePath';
 export const ARCHIVE_LOADER = '__rayzeeArchiveLoader';
 
@@ -167,6 +169,9 @@ function encodeMaterial( material, meta ) {
 	for ( const [ key, value ] of Object.entries( material ) ) if ( value?.isColor ) json.exactColors[ key ] = [ value.r, value.g, value.b ];
 	// MaterialLoader sets `reflectivity` after `ior`, and that setter rewrites ior with rounding.
 	if ( material.ior !== undefined ) json.exactIor = material.ior;
+	// Engine properties three.js does not know, so toJSON drops them.
+	if ( material.diffuseTransmission !== undefined ) json.diffuseTransmission = material.diffuseTransmission;
+	for ( const key of ENGINE_TEXTURES ) if ( material[ key ]?.isTexture ) ( json.engineTextures ??= {} )[ key ] = material[ key ].uuid;
 	return json;
 
 }
@@ -431,8 +436,16 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 	for ( const json of manifest.materials ) {
 
 		const material = materialLoader.parse( json );
-		for ( const [ key, rgb ] of Object.entries( json.exactColors ?? {} ) ) material[ key ]?.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+		for ( const [ key, rgb ] of Object.entries( json.exactColors ?? {} ) ) {
+
+			if ( key === 'diffuseTransmissionColor' ) material[ key ] = new Color();
+			material[ key ]?.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+
+		}
+
 		if ( json.exactIor !== undefined ) material.ior = json.exactIor;
+		if ( json.diffuseTransmission !== undefined ) material.diffuseTransmission = json.diffuseTransmission;
+		for ( const [ key, uuid ] of Object.entries( json.engineTextures ?? {} ) ) if ( textures[ uuid ] ) material[ key ] = textures[ uuid ];
 		materials[ json.uuid ] = material;
 
 	}

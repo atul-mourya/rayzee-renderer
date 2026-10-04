@@ -1,5 +1,5 @@
 import {
-	Fn, float, vec3,
+	Fn, float, vec3, dot,
 	If, max, min, clamp, mix
 } from 'three/tsl';
 
@@ -21,6 +21,14 @@ import { evalIridescence } from './MaterialProperties.js';
 // Main Material Response Evaluation
 // -----------------------------------------------------------------------------
 
+// A rough plain dielectric: its BSDF is a bare Lambert term (no specular lobe, no DFG budget).
+const isLambertian = ( material ) => material.roughness.greaterThan( 0.98 )
+	.and( material.metalness.lessThan( 0.02 ) )
+	.and( material.transmission.equal( 0.0 ) )
+	.and( material.clearcoat.equal( 0.0 ) )
+	.and( material.sheen.equal( 0.0 ) )
+	.and( material.iridescence.equal( 0.0 ) );
+
 // Body of evaluateMaterialResponse taking precomputed dot products. Callers
 // that also need calculateMaterialPDF for the same (V, L, N) should share dots
 // to save one computeDotProducts call.
@@ -34,14 +42,10 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ] )
 	// `sheen` is in the guard because this fast path returns a bare Lambert term: without it a
 	// rough sheen material lost its sheen lobe entirely — silently, since the fast path is only
 	// taken above roughness 0.98.
-	If( material.roughness.greaterThan( 0.98 )
-		.and( material.metalness.lessThan( 0.02 ) )
-		.and( material.transmission.equal( 0.0 ) )
-		.and( material.clearcoat.equal( 0.0 ) )
-		.and( material.sheen.equal( 0.0 ) )
-		.and( material.iridescence.equal( 0.0 ) ), () => {
+	If( isLambertian( material ), () => {
 
-		result.assign( material.color.rgb.mul( float( 1.0 ).sub( material.metalness ) ).mul( PI_INV ) );
+		result.assign( material.color.rgb.mul( float( 1.0 ).sub( material.metalness ) )
+			.mul( float( 1.0 ).sub( material.diffuseTransmission ) ).mul( PI_INV ) );
 
 	} ).Else( () => {
 
@@ -112,9 +116,11 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ] )
 		// Diffuse energy budget from hemisphere-integrated specular albedo (includes multiscatter)
 		// Transmission removes energy from diffuse just as metalness does — KHR_materials_transmission
 		// defines transmission as replacing the diffuse component.
+		// Diffuse transmission takes its share of the diffuse lobe to the other side (evaluateDiffuseTransmission).
 		const kD = vec3( 1.0 ).sub( dfg.E_total )
 			.mul( float( 1.0 ).sub( material.metalness ) )
-			.mul( float( 1.0 ).sub( material.transmission ) );
+			.mul( float( 1.0 ).sub( material.transmission ) )
+			.mul( float( 1.0 ).sub( material.diffuseTransmission ) );
 		const diffuse = deltaOnly ? vec3( 0.0 ) : kD.mul( materialColor ).mul( PI_INV );
 
 		const baseLayer = diffuse.add( specular ).toVar();
@@ -176,12 +182,83 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ] )
 export const evaluateMaterialResponseFromDots = /*@__PURE__*/ makeEvaluateMaterialResponse( false );
 export const evaluateSpecularDeltaFromDots = /*@__PURE__*/ makeEvaluateMaterialResponse( true );
 
+/**
+ * KHR_materials_diffuse_transmission's BTDF, for light arriving from the far side of a thin surface: the diffuse
+ * budget the reflected diffuse lobe has (what the specular lobes leave, less metal and specular transmission) × the
+ * transmitted share × its colour / π, under the same sheen and coat attenuation. Zero when the material has none.
+ */
+export const evaluateDiffuseTransmission = Fn( ( [ material, NoV ] ) => {
+
+	const result = vec3( 0.0 ).toVar();
+
+	If( material.diffuseTransmission.greaterThan( 0.0 ), () => {
+
+		const kD = vec3( float( 1.0 ).sub( material.metalness ).mul( float( 1.0 ).sub( material.transmission ) ) ).toVar();
+
+		If( isLambertian( material ).not(), () => {
+
+			const bf = BaseFresnel.wrap( baseFresnelParams( material, material.color.rgb ) );
+			const F0 = bf.F0.toVar();
+			const iridF = vec3( 0.0 ).toVar();
+			If( material.iridescence.greaterThan( 0.0 ), () => {
+
+				// No half vector across the surface: the iridescent F0 at normal incidence to the view.
+				iridF.assign( evalIridescence( float( 1.0 ), material.iridescenceIOR, NoV, material.iridescenceThicknessRange.y, F0 ) );
+				F0.assign( mix( F0, iridF, material.iridescence ) );
+
+			} );
+			const dfg = DFGResult.wrap( evaluateSpecularDFG(
+				bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, iridF, material.iridescence, F0,
+				NoV, material.roughness,
+			) );
+			kD.mulAssign( vec3( 1.0 ).sub( dfg.E_total ) );
+
+		} );
+
+		result.assign( kD.mul( material.diffuseTransmission ).mul( material.diffuseTransmissionColor ).mul( PI_INV ) );
+
+		If( material.sheen.greaterThan( 0.0 ), () => {
+
+			const sheenE = sheenDirectionalAlbedo( NoV, material.sheenRoughness );
+			result.mulAssign( vec3( 1.0 ).sub( clamp( material.sheenColor.mul( material.sheen ).mul( sheenE ), vec3( 0.0 ), vec3( 1.0 ) ) ) );
+
+		} );
+
+		If( material.clearcoat.greaterThan( 0.0 ), () => {
+
+			const ccDfg = DFGResult.wrap( evaluateSpecularDFG(
+				vec3( 0.04 ), float( 1.0 ), float( 1.5 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.04 ),
+				NoV, max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS ),
+			) );
+			result.mulAssign( vec3( 1.0 ).sub( ccDfg.E_total.mul( material.clearcoat ) ) );
+
+		} );
+
+	} );
+
+	return result;
+
+} );
+
 // Wrapper that computes dot products internally. Use this when you don't already
 // have dots; otherwise prefer evaluateMaterialResponseFromDots to share the work.
+// L below N reaches only the diffuse transmission lobe.
 export const evaluateMaterialResponse = Fn( ( [ V, L, N, material ] ) => {
 
-	const dots = DotProducts.wrap( computeDotProductsAniso( N, V, L, material ) );
-	return evaluateMaterialResponseFromDots( material, dots );
+	const result = vec3( 0.0 ).toVar();
+
+	If( dot( N, L ).lessThan( 0.0 ).and( material.diffuseTransmission.greaterThan( 0.0 ) ), () => {
+
+		result.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
+
+	} ).Else( () => {
+
+		const dots = DotProducts.wrap( computeDotProductsAniso( N, V, L, material ) );
+		result.assign( evaluateMaterialResponseFromDots( material, dots ) );
+
+	} );
+
+	return result;
 
 } );
 

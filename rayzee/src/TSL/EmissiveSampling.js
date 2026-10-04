@@ -35,7 +35,8 @@ import {
 import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
-import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
+import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
+import { diffuseTransmissionWeight, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { DotProducts } from './Struct.js';
 import { triangleSide, sideAccepts } from './BVHTraversal.js';
 
@@ -433,6 +434,8 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 	pixelCoord, resolution, frame, dimBase,
 	emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 	triangleBuffer, bvhBuffer,
+	// The surface passes light through diffusely: a point behind it is as good as one in front.
+	throughSurface,
 ] ) => {
 
 	const fields = {
@@ -494,7 +497,7 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 				const surfaceFacing = dot( dir, surfaceNormal );
 				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( 0.0 ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
+				If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const bary = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -545,7 +548,7 @@ const makeSampleEmissiveTriangle = ( indexed ) => Fn( ( [
 			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
 			// Edge-on (a two-sided emitter passes its side test there) the density is infinite and the light zero.
-			If( surfaceFacing.greaterThan( 0.0 ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( 0.0 ) ), () => {
+			If( surfaceFacing.greaterThan( 0.0 ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( 0.0 ) ), () => {
 
 				// PDF: CDF selection (power/totalPower) * uniform area (1/area)
 				// Converted to solid angle: pdfArea * distSq / cosLight
@@ -613,11 +616,12 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 	// down-weights BSDF hits deletes emitter energy from deep GI.
 
 	// Sample emissive triangle (CDF importance-weighted)
+	const transmits = material.diffuseTransmission.greaterThan( 0.0 );
 	const emissiveSample = EmissiveSample.wrap( sampleEmissiveTriangle(
 		hitPoint, normal, rngState,
 		pixelCoord, resolution, frame, dimBase,
 		emissiveTriangleBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
-		triangleBuffer, bvhBuffer,
+		triangleBuffer, bvhBuffer, transmits,
 	) );
 
 	If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
@@ -626,10 +630,12 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 		result.emissionOnly.assign( emissiveSample.emission );
 		result.distance.assign( emissiveSample.distance );
 
-		// Check geometric validity
-		const NoL = max( float( 0.0 ), dot( normal, emissiveSample.direction ) );
+		// Check geometric validity: in front, or behind a surface that passes light through diffusely
+		const back = transmits.and( dot( normal, emissiveSample.direction ).lessThan( 0.0 ) )
+			.and( dot( emissiveSample.direction, geomNormal ).lessThan( 0.0 ) ).toVar();
+		const NoL = abs( dot( normal, emissiveSample.direction ) );
 
-		If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ), () => {
+		If( back.or( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, geomNormal ).greaterThan( 0.0 ) ) ), () => {
 
 			// Aimed at the sampled point and stopped a relative hair short, as for area lights.
 			const rayOrigin = hitPoint.add( calculateRayOffsetFn( hitPoint, geomNormal, emissiveSample.direction ) );
@@ -642,8 +648,9 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 				// Share H + dot products between BRDF eval and PDF (computeDotProducts
 				// would otherwise run twice with identical inputs).
 				const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, emissiveSample.direction, material ) );
-				const brdfValue = evaluateMaterialResponseFromDots( material, dots );
-				const brdfPdf = calculateMaterialPDFFromDots( material, dots );
+				const brdfValue = select( back, evaluateDiffuseTransmission( material, max( dot( normal, viewDir ), 0.001 ) ), evaluateMaterialResponseFromDots( material, dots ) );
+				const brdfPdf = select( back,
+					diffuseTransmissionPdf( diffuseTransmissionWeight( material ), NoL ), calculateMaterialPDFFromDots( material, dots ) );
 
 				// MIS weight: balance light sampling vs BRDF sampling
 				const misWeight = select(

@@ -68,6 +68,11 @@ export const RayTracingMaterial = struct( {
 	iridescenceThicknessMapIndex: 'int',
 	specularIntensityMapIndex: 'int',
 	specularColorMapIndex: 'int',
+	// KHR_materials_diffuse_transmission: the diffuse lobe's share sent through to the other side, and its tint.
+	diffuseTransmission: 'float',
+	diffuseTransmissionColor: 'vec3',
+	diffuseTransmissionMapIndex: 'int',
+	diffuseTransmissionColorMapIndex: 'int',
 } );
 
 // Result of folding the glTF extension textures into their scalar factors (applyExtensionMaps).
@@ -82,6 +87,8 @@ export const ExtMapResult = struct( {
 	iridescenceThickness: 'float', // resolved thin-film thickness → written into iridescenceThicknessRange.y
 	specularIntensity: 'float',
 	specularColor: 'vec3',
+	diffuseTransmission: 'float',
+	diffuseTransmissionColor: 'vec3',
 } );
 
 // Lightweight material for shadow ray evaluation — only the fields needed
@@ -159,6 +166,8 @@ export const DirectionSample = struct( {
 	isTransmission: 'bool',
 	// Spectral tint from the transmission sampler; vec3(1) for every reflection lobe.
 	colorWeight: 'vec3',
+	// Drawn from the diffuse transmission lobe: `value` is its BTDF and the direction is below N.
+	isDiffuseTransmission: 'bool',
 } );
 
 export const BRDFWeights = struct( {
@@ -168,6 +177,7 @@ export const BRDFWeights = struct( {
 	clearcoat: 'float',
 	transmission: 'float',
 	iridescence: 'float',
+	diffuseTransmission: 'float',
 } );
 
 

@@ -580,6 +580,8 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 		iridescenceThickness: material.iridescenceThicknessRange.y, // default = max (no-texture behavior)
 		specularIntensity: material.specularIntensity,
 		specularColor: material.specularColor,
+		diffuseTransmission: material.diffuseTransmission,
+		diffuseTransmissionColor: material.diffuseTransmissionColor,
 	} ).toVar();
 
 	If( material.transmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
@@ -627,6 +629,17 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 	If( material.specularColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.specularColor.assign( r.specularColor.mul( sampleBucket( srgbBuckets, material.specularColorMapIndex, uv ).rgb ) );
+
+	} );
+	// KHR_materials_diffuse_transmission: the factor from the map's alpha, the colour from its RGB.
+	If( material.diffuseTransmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.diffuseTransmission.assign( r.diffuseTransmission.mul( sampleBucket( linearBuckets, material.diffuseTransmissionMapIndex, uv ).a ) );
+
+	} );
+	If( material.diffuseTransmissionColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.diffuseTransmissionColor.assign( r.diffuseTransmissionColor.mul( sampleBucket( srgbBuckets, material.diffuseTransmissionColorMapIndex, uv ).rgb ) );
 
 	} );
 

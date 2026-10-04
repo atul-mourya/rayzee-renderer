@@ -72,8 +72,8 @@ import {
 } from './LightsDirect.js';
 
 import { traverseBVHShadow } from './BVHTraversal.js';
-import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
-import { calculateBSDFSamplingPDFFromMaterial } from './MaterialProperties.js';
+import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
+import { calculateBSDFSamplingPDFFromMaterial, diffuseTransmissionWeight, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { getRandomSample1D, getRandomSample2D, SAMPLER_DIM_AUX_BASE } from './Random.js';
 import {
 	PI,
@@ -756,8 +756,20 @@ export const calculateMaterialPDFFromDots = Fn( ( [ material, dots ] ) => {
 
 export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material ] ) => {
 
-	const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, lightDir, material ) );
-	return calculateMaterialPDFFromDots( material, dots );
+	const pdf = float( 0.0 ).toVar();
+
+	If( dot( normal, lightDir ).lessThan( 0.0 ).and( material.diffuseTransmission.greaterThan( 0.0 ) ), () => {
+
+		pdf.assign( max( diffuseTransmissionPdf( diffuseTransmissionWeight( material ), dot( normal, lightDir ).negate() ), 1e-8 ) );
+
+	} ).Else( () => {
+
+		const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, lightDir, material ) );
+		pdf.assign( calculateMaterialPDFFromDots( material, dots ) );
+
+	} );
+
+	return pdf;
 
 } );
 
@@ -765,8 +777,9 @@ export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material 
 // Unified Direct Lighting System
 // =============================================================================
 
-// Optimized direct lighting function with importance-based sampling and better MIS
-export const calculateDirectLightingUnified = Fn( ( [
+// Optimized direct lighting function with importance-based sampling and better MIS. `throughSurfaces` (compile
+// time) adds light from behind a surface that passes it through diffusely; without it the code is exactly as before.
+const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 	// Surface hit data
 	hitPoint, hitNormal, geomNormal, material,
 	// View direction
@@ -816,6 +829,46 @@ export const calculateDirectLightingUnified = Fn( ( [
 		traceShadowRay( origin, dir, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer )
 	);
 
+	// Light from behind a surface that passes light through diffusely: its shadow ray leaves from the other side,
+	// and the BSDF is the transmission lobe.
+	const throughSurface = L => ( throughSurfaces
+		? material.diffuseTransmission.greaterThan( 0.0 ).and( dot( hitNormal, L ).lessThan( 0.0 ) ).and( dot( L, geomNormal ).lessThan( 0.0 ) )
+		: tslBool( false ) );
+	const backOrigin = throughSurfaces ? offsetRayOrigin( hitPoint, facetNormal.negate() ) : null;
+	const inFront = L => dot( hitNormal, L ).greaterThan( 0.0 ).and( isDirectionValid( { direction: L, surfaceNormal: geomNormal } ) );
+	const reachesSurface = ( L, back ) => ( throughSurfaces ? back.or( inFront( L ) ) : inFront( L ) );
+	const cosineTo = L => ( throughSurfaces ? abs( dot( hitNormal, L ) ) : max( float( 0.0 ), dot( hitNormal, L ) ) );
+	const originFor = ( back, front ) => ( throughSurfaces ? select( back, backOrigin, front ) : front );
+	const reflection = L => {
+
+		// Share H + dot products between BRDF eval and PDF — otherwise each
+		// would recompute normalize(V+L) + 5 dot products independently.
+		const dots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, L, material ) );
+		return { value: evaluateMaterialResponseFromDots( material, dots ), pdf: calculateMaterialPDFFromDots( material, dots ).toVar() };
+
+	};
+
+	const bsdfToward = ( L, back ) => {
+
+		if ( ! throughSurfaces ) return reflection( L );
+		const value = vec3( 0.0 ).toVar();
+		const pdf = float( 0.0 ).toVar();
+		If( back, () => {
+
+			value.assign( evaluateDiffuseTransmission( material, max( dot( hitNormal, viewDir ), 0.001 ) ) );
+			pdf.assign( max( diffuseTransmissionPdf( diffuseTransmissionWeight( material ), dot( hitNormal, L ).negate() ), 1e-8 ) );
+
+		} ).Else( () => {
+
+			const r = reflection( L );
+			value.assign( r.value );
+			pdf.assign( r.pdf );
+
+		} );
+		return { value, pdf };
+
+	};
+
 
 	// NEE and BSDF-hit both run at every vertex, one sample each, so the MIS weights are the
 	// plain power heuristic over the raw densities. Picking one strategy stochastically and
@@ -848,24 +901,21 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 		If( lightSample.valid.and( lightSample.pdf.greaterThan( 0.0 ) ), () => {
 
-			const NoL = max( float( 0.0 ), dot( hitNormal, lightSample.direction ) ).toVar();
+			const back = throughSurface( lightSample.direction ).toVar();
+			const NoL = cosineTo( lightSample.direction ).toVar();
 
-			If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: lightSample.direction, surfaceNormal: geomNormal } ) ), () => {
+			If( reachesSurface( lightSample.direction, back ), () => {
 
 				// Light geometry is measured from the hit point; only the visibility ray starts on the lifted
 				// origin, aimed at the sampled point and stopped a relative hair short of it.
-				const lightOrigin = lightShadowOrigin( lightSample.direction ).toVar();
+				const lightOrigin = originFor( back, lightShadowOrigin( lightSample.direction ) ).toVar();
 				const toSample = hitPoint.add( lightSample.direction.mul( lightSample.distance ) ).sub( lightOrigin ).toVar();
 				const shadowDistance = length( toSample ).toVar();
 				const visibility = shadow( lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
 				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
-					// Share H + dot products between BRDF eval and PDF — otherwise each
-					// would recompute normalize(V+L) + 5 dot products independently.
-					const sharedDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, lightSample.direction, material ) );
-					const brdfValue = evaluateMaterialResponseFromDots( material, sharedDots );
-					const bPdf = calculateMaterialPDFFromDots( material, sharedDots ).toVar();
+					const { value: brdfValue, pdf: bPdf } = bsdfToward( lightSample.direction, back );
 
 					// Power heuristic only for area lights — they are the only type the BRDF
 					// path can intersect, so elsewhere MIS would just delete energy.
@@ -901,9 +951,10 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 	If( brdfSamplePdf.greaterThan( 0.0 ).and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
 
-		const NoL = max( float( 0.0 ), dot( hitNormal, brdfSampleDirection ) ).toVar();
+		const back = throughSurface( brdfSampleDirection ).toVar();
+		const NoL = cosineTo( brdfSampleDirection ).toVar();
 
-		If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction: brdfSampleDirection, surfaceNormal: geomNormal } ) ), () => {
+		If( reachesSurface( brdfSampleDirection, back ), () => {
 
 			// Nearest hit — the ray stops at the first emitter, so a brighter one behind it is
 			// the wrong emitter and the wrong pdf. No importance gate: skipping a light drops
@@ -935,9 +986,10 @@ export const calculateDirectLightingUnified = Fn( ( [
 			If( nearestLight.greaterThanEqual( int( 0 ) ), () => {
 
 				const light = AreaLight.wrap( getAreaLight( areaLightsBuffer, nearestLight ) );
-				const toLight = hitPoint.add( brdfSampleDirection.mul( nearestT ) ).sub( rayOrigin ).toVar();
+				const hitOrigin = originFor( back, rayOrigin ).toVar();
+				const toLight = hitPoint.add( brdfSampleDirection.mul( nearestT ) ).sub( hitOrigin ).toVar();
 				const shadowDistance = length( toLight ).toVar();
-				const visibility = shadow( rayOrigin, toLight.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
+				const visibility = shadow( hitOrigin, toLight.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
 
 				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
@@ -1025,17 +1077,16 @@ export const calculateDirectLightingUnified = Fn( ( [
 
 			If( lightPdf.greaterThan( 0.0 ), () => {
 
-				const NoL = max( float( 0.0 ), dot( hitNormal, direction ) ).toVar();
+				const back = throughSurface( direction ).toVar();
+				const NoL = cosineTo( direction ).toVar();
 
-				If( NoL.greaterThan( 0.0 ).and( isDirectionValid( { direction, surfaceNormal: geomNormal } ) ), () => {
+				If( reachesSurface( direction, back ), () => {
 
-					const visibility = shadow( lightShadowOrigin( direction ), direction, float( 1e20 ) );
+					const visibility = shadow( originFor( back, lightShadowOrigin( direction ) ), direction, float( 1e20 ) );
 
 					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
 
-						const envDots = DotProducts.wrap( computeDotProductsAniso( hitNormal, viewDir, direction, material ) );
-						const brdfValue = evaluateMaterialResponseFromDots( material, envDots );
-						const bPdf = calculateMaterialPDFFromDots( material, envDots ).toVar();
+						const { value: brdfValue, pdf: bPdf } = bsdfToward( direction, back );
 
 						// The map pairs with the balance heuristic — optimal for its MIS-compensated pdf
 						// (Karlík et al. 2019); the sun, a small bright source, with the power heuristic.
@@ -1071,3 +1122,6 @@ export const calculateDirectLightingUnified = Fn( ( [
 	return DirectLightingDual( { shadowed: totalContribution, unoccluded: unoccludedContribution } );
 
 } );
+
+export const calculateDirectLightingUnified = /*@__PURE__*/ makeDirectLighting( false );
+export const calculateDirectLightingThroughSurfaces = /*@__PURE__*/ makeDirectLighting( true );

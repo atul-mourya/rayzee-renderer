@@ -71,6 +71,11 @@ const MATERIAL_PROPERTIES = {
 		[ 'subsurfaceAnisotropy', { type: 'slider', default: 0, min: - 1, max: 1, step: 0.01, label: 'Anisotropy (g)' } ],
 		[ 'ior', IOR_CONFIG ],
 	],
+	// Diffuse transmission (KHR_materials_diffuse_transmission): light passes through a thin surface, scattered.
+	translucency: [
+		[ 'diffuseTransmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Amount' } ],
+		[ 'diffuseTransmissionColor', { type: 'color', default: '#ffffff', label: 'Color' } ],
+	],
 	transparency: [
 		[ 'transparent', { type: 'switch', default: false, label: 'Transparent' } ],
 		[ 'opacity', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Opacity' } ],
@@ -112,7 +117,8 @@ const COMMON_TEXTURE_NAMES = [
 	// KHR_materials_* extension maps now honored by the path tracer
 	'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap',
 	'specularIntensityMap', 'specularColorMap',
-	'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap'
+	'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap',
+	'diffuseTransmissionMap', 'diffuseTransmissionColorMap'
 ];
 
 // Texture slots that users can add via the UI (subset that the path tracer supports)
@@ -135,6 +141,7 @@ const isFeatureEnabled = ( materialState, featureName ) => {
 		clearcoat: () => materialState.clearcoat > 0,
 		volumetric: () => materialState.transmission > 0,
 		subsurface: () => materialState.subsurface > 0,
+		translucency: () => materialState.diffuseTransmission > 0,
 		transparency: () => materialState.transparent || materialState.opacity < 1 || materialState.alphaTest > 0,
 		iridescence: () => materialState.iridescence > 0,
 		sheen: () => materialState.sheen > 0,
@@ -689,6 +696,17 @@ const MaterialTab = () => {
 								</Select>
 							</Row>
 							{MATERIAL_PROPERTIES.subsurface?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
+						</>
+					)}
+					<Separator />
+
+					{/* Translucency: diffuse transmission through a thin surface (leaves, paper, lampshades) */}
+					<Row className="w-full">
+						<Switch label="Enable Translucency" checked={isFeatureEnabled( materialState, 'translucency' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'translucency', enabled )} />
+					</Row>
+					{isFeatureEnabled( materialState, 'translucency' ) && (
+						<>
+							{MATERIAL_PROPERTIES.translucency?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
 						</>
 					)}
 					<Separator />

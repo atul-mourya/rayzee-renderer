@@ -636,8 +636,8 @@ export function unpackNormalOct( packed, out ) {
 // Shared between CPU writers (TextureCreator, MaterialDataManager) and GPU readers (Common.js getMaterial).
 export const MATERIAL_DATA_LAYOUT = {
 
-	SLOTS_PER_MATERIAL: 33, // vec4 slots per material
-	FLOATS_PER_MATERIAL: 132, // total floats per material (33 × 4)
+	SLOTS_PER_MATERIAL: 34, // vec4 slots per material
+	FLOATS_PER_MATERIAL: 136, // total floats per material (34 × 4)
 
 	// ── Flat float offsets (CPU side) ────────────────────────────────
 	// Used as: data[ materialIndex * FLOATS_PER_MATERIAL + offset ]
@@ -661,8 +661,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	EMISSIVE_MAP_INDEX: 28, BUMP_MAP_INDEX: 29, CLEARCOAT: 30, CLEARCOAT_ROUGHNESS: 31,
 	// Slot 8: dispersion + visible + sheen + sheenRoughness         [extended BxDF]
 	DISPERSION: 32, VISIBLE: 33, SHEEN: 34, SHEEN_ROUGHNESS: 35,
-	// Slot 9: sheenColor.rgb + (reserved)                           [extended BxDF]
-	SHEEN_COLOR: 36,
+	// Slot 9: sheenColor.rgb + diffuseTransmission                 [extended BxDF]
+	SHEEN_COLOR: 36, DIFFUSE_TRANSMISSION: 39,
 	// Slot 10: specularIntensity + specularColor.rgb                [extended BxDF]
 	SPECULAR_INTENSITY: 40, SPECULAR_COLOR: 41,
 	// Slot 11: iridescence + iridescenceIOR + iridescenceThicknessRange [extended BxDF]
@@ -690,8 +690,11 @@ export const MATERIAL_DATA_LAYOUT = {
 	TRANSMISSION_MAP_INDEX: 120, CLEARCOAT_MAP_INDEX: 121, CLEARCOAT_ROUGHNESS_MAP_INDEX: 122, SHEEN_COLOR_MAP_INDEX: 123,
 	// Slot 31: extension-texture map indices B (sheenRoughness, iridescence, iridescenceThickness, specularIntensity)
 	SHEEN_ROUGHNESS_MAP_INDEX: 124, IRIDESCENCE_MAP_INDEX: 125, IRIDESCENCE_THICKNESS_MAP_INDEX: 126, SPECULAR_INTENSITY_MAP_INDEX: 127,
-	// Slot 32: extension-texture map indices C (specularColor + 3 reserved)
-	SPECULAR_COLOR_MAP_INDEX: 128,
+	// Slot 32: extension-texture map index C (specularColor) + diffuseTransmissionColor.rgb
+	SPECULAR_COLOR_MAP_INDEX: 128, DIFFUSE_TRANSMISSION_COLOR: 129,
+	// Slot 33: extension-texture map indices D (diffuseTransmission, diffuseTransmissionColor) + 2 reserved;
+	// read only for a material with diffuse transmission
+	DIFFUSE_TRANSMISSION_MAP_INDEX: 132, DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX: 133,
 
 	// ── Vec4 slot indices (GPU/TSL side) ─────────────────────────────
 	// Used with getDatafromStorageBuffer( buf, matIdx, int(slot), int(SLOTS_PER_MATERIAL) )
@@ -705,7 +708,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		MAP_INDICES_A: 6, // [maps] albedo, normal, roughness, metalness
 		MAP_INDICES_B: 7, // [maps] emissive, bump, clearcoat, clearcoatRoughness
 		DISPERSION_SHEEN: 8, // [extended] dispersion, visible, sheen, sheenRoughness
-		SHEEN_COLOR: 9, // [extended] sheenColor, reserved
+		SHEEN_COLOR: 9, // [extended] sheenColor, diffuseTransmission
 		SPECULAR: 10, // [extended] specularIntensity, specularColor
 		IRIDESCENCE: 11, // [extended] iridescence, iridescenceIOR, iridescenceThicknessRange
 		BUMP_DISPLACEMENT: 12, // bumpScale, displacementScale, displacementMapIndex
@@ -721,7 +724,8 @@ export const MATERIAL_DATA_LAYOUT = {
 		SUBSURFACE_C: 29, // subsurfaceAnisotropy g, anisotropy, anisotropyRotation, anisotropyMapIndex
 		EXT_MAP_INDICES_A: 30, // transmission, clearcoat, clearcoatRoughness, sheenColor map indices
 		EXT_MAP_INDICES_B: 31, // sheenRoughness, iridescence, iridescenceThickness, specularIntensity map indices
-		EXT_MAP_INDICES_C: 32, // specularColor map index + 3 reserved
+		EXT_MAP_INDICES_C: 32, // specularColor map index, diffuseTransmissionColor
+		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor map indices + 2 reserved
 	},
 
 };
@@ -771,6 +775,9 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	subsurfaceAnisotropy: 0,
 	anisotropy: 0,
 	anisotropyRotation: 0,
+	// KHR_materials_diffuse_transmission: the share of the diffuse lobe passed through to the other side.
+	diffuseTransmission: 0,
+	diffuseTransmissionColor: [ 1, 1, 1 ],
 } );
 
 function deepFreeze( object ) {

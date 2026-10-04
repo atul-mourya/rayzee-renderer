@@ -314,17 +314,23 @@ export async function buildMaterial( def, ctx ) {
 
 		case 'diffusetransmission': {
 
-			// pbrt reflects R and transmits T, both diffusely and both × `scale`. The engine's transmission takes its
-			// share from the base lobe, so the base is R / (1 − T) to keep reflecting R; what passes goes on unscattered.
+			// pbrt reflects R and transmits T, both diffusely and both × `scale`, clamped to [0, 1]; no specular layer.
+			// The engine splits its diffuse lobe by `diffuseTransmission`: reflecting (1 − dt) · base, transmitting
+			// dt · colour. dt = max(T) makes both exact whenever max(R) + max(T) ≤ 1.
 			const scale = pFloat( params, 'scale', 1 );
+			const unit = ( v ) => Math.min( 1, Math.max( 0, scale * v ) );
 			const trans = await resolveSpectrum( params, 'transmittance', ctx, [ 0.25, 0.25, 0.25 ] );
-			const t = Math.min( 0.99, trans.rgb ? Math.min( 1, scale * ( trans.rgb[ 0 ] + trans.rgb[ 1 ] + trans.rgb[ 2 ] ) / 3 ) : 0.5 );
+			const T = trans.rgb ? trans.rgb.map( unit ) : [ 0.5, 0.5, 0.5 ];
+			const dt = Math.min( 0.99, Math.max( ...T ) );
 			const refl = await resolveSpectrum( params, 'reflectance', ctx, [ 0.25, 0.25, 0.25 ] );
-			const base = ( v ) => Math.min( 1, Math.min( 1, scale * v ) / ( 1 - t ) );
-			applyAlbedo( { texture: refl.texture, rgb: refl.rgb ? refl.rgb.map( base ) : null } );
-			mat.transmission = t;
+			const base = ( v ) => Math.min( 1, unit( v ) / ( 1 - dt ) );
+			applyAlbedo( { texture: refl.texture, rgb: refl.rgb ? refl.rgb.map( base ) : ( refl.texture ? [ 1, 1, 1 ].map( base ) : null ) } );
+			if ( trans.texture ) ctx.warn( 'diffusetransmission: a textured "transmittance" is not supported — using 0.5' );
+			mat.diffuseTransmission = dt;
+			mat.diffuseTransmissionColor = new Color().setRGB( ...T.map( ( v ) => ( dt > 0 ? Math.min( 1, v / dt ) : 1 ) ) );
 			mat.roughness = 1;
-			mat.ior = 1.0;
+			mat.metalness = 0;
+			mat.specularIntensity = 0;
 			break;
 
 		}
@@ -372,6 +378,14 @@ export async function buildMaterial( def, ctx ) {
 				mat.clearcoat = lerp( matA.clearcoat ?? 0, matB.clearcoat ?? 0 );
 				mat.clearcoatRoughness = lerp( matA.clearcoatRoughness ?? 0, matB.clearcoatRoughness ?? 0 );
 				mat.emissive.lerpColors( matA.emissive, matB.emissive, t );
+				const dtA = matA.diffuseTransmission ?? 0, dtB = matB.diffuseTransmission ?? 0;
+				if ( dtA > 0 || dtB > 0 ) {
+
+					mat.diffuseTransmission = lerp( dtA, dtB );
+					mat.diffuseTransmissionColor = new Color().lerpColors( matA.diffuseTransmissionColor ?? new Color( 1, 1, 1 ), matB.diffuseTransmissionColor ?? new Color( 1, 1, 1 ), t );
+
+				}
+
 				mat.emissiveIntensity = lerp( matA.emissiveIntensity ?? 0, matB.emissiveIntensity ?? 0 );
 				// Maps can't be lerped — pick the dominant side, unless the amount's own texture baked them together.
 				mat.map = ( t < 0.5 ? matA.map : matB.map ) || null;

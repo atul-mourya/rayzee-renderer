@@ -156,6 +156,8 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.normalMapIndex.assign( int( - 1 ) );
 	material.bumpMapIndex.assign( int( - 1 ) );
 	material.displacementMapIndex.assign( int( - 1 ) );
+	// Shade leaves diffuse transmission out in this integrator (its strategies do not cross surfaces yet).
+	material.diffuseTransmission.assign( 0.0 );
 
 	const samples = MaterialSamples.wrap( sampleAllMaterialTextures( material, uv, N, vec4( 0.0 ) ) ).toVar();
 	const rawRough = samples.roughness.toVar();

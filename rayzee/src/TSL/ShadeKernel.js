@@ -20,7 +20,7 @@ import { cosineWeightedSample } from './MaterialSampling.js';
 import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import {
-	calculateDirectLightingUnified, calculateMaterialPDF,
+	calculateDirectLightingUnified, calculateDirectLightingThroughSurfaces, calculateMaterialPDF,
 	sampleDirectionalLight, sampleRectAreaLight, samplePointLightWithAttenuation, sampleSpotLightWithRadius,
 	areaLightRadiance, areaLightSpreadAttenuation,
 } from './LightsSampling.js';
@@ -129,6 +129,9 @@ export function buildShadeKernel( params ) {
 		bidirectional: bdpt = null,
 		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
 		hitDistanceEncode = null,
+		// Some material passes light through diffusely (MaterialDataManager.hasDiffuseTransmission). Off, the lobe is
+		// compiled out; bidirectional always leaves it out, its connections and light tracing do not cross surfaces yet.
+		diffuseTransmission = false,
 	} = params;
 
 	// The bidirectional shading functions come with the integrator's uniforms (BidirectionalIntegrator), only used where bdpt is.
@@ -858,6 +861,13 @@ export function buildShadeKernel( params ) {
 		const material = RayTracingMaterial.wrap(
 			getMaterial( int( hitMatIdx ), materialBuffer )
 		).toVar();
+		if ( ! diffuseTransmission || bdpt ) {
+
+			material.diffuseTransmission.assign( 0.0 );
+			material.diffuseTransmissionMapIndex.assign( int( - 1 ) );
+			material.diffuseTransmissionColorMapIndex.assign( int( - 1 ) );
+
+		}
 
 		// The segment past the last bounce is traced only for the light it hits: an opaque surface that does not glow
 		// ends it before any texture is read (emission is factor × map, so a zero factor is zero).
@@ -948,6 +958,8 @@ export function buildShadeKernel( params ) {
 		material.iridescenceThicknessRange.assign( vec2( material.iridescenceThicknessRange.x, extMaps.iridescenceThickness ) );
 		material.specularIntensity.assign( extMaps.specularIntensity );
 		material.specularColor.assign( extMaps.specularColor );
+		material.diffuseTransmission.assign( extMaps.diffuseTransmission );
+		material.diffuseTransmissionColor.assign( extMaps.diffuseTransmissionColor );
 
 		// Below the floor the GGX peak is past f32, so a plain reflector reflects exactly: roughness 0
 		// is the delta-lobe marker the sampler and evaluator read. The other lobes keep the floor.
@@ -1461,6 +1473,13 @@ export function buildShadeKernel( params ) {
 			hitPoint, offsetNormal: facetN, lift: terminatorLift, faceN: facetN, smoothN: NgeoFF, L,
 			cutoff: shadowTerminatorOffset,
 		} );
+		// Light from behind a surface that passes light through diffusely: its rays leave from the other side.
+		// Compiled in only with the lobe (see `diffuseTransmission`).
+		const transmitting = diffuseTransmission && ! bdpt;
+		const transmitsDiffusely = transmitting ? material.diffuseTransmission.greaterThan( 0.0 ) : tslBool( false );
+		const throughSurface = L => ( transmitting ? transmitsDiffusely.and( dot( N, L ).lessThan( 0.0 ) ).and( dot( L, NgeoFF ).lessThan( 0.0 ) ) : tslBool( false ) );
+		const backOrigin = transmitting ? offsetRayOrigin( hitPoint, facetN.negate() ) : null;
+		const originFor = ( L, front ) => ( transmitting ? select( throughSurface( L ), backOrigin, front ) : front );
 
 		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
 		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
@@ -1526,6 +1545,7 @@ export function buildShadeKernel( params ) {
 		const brdfPdf = float( 0.0 ).toVar();
 		const brdfIsTransmission = tslBool( false ).toVar();
 		const brdfColorWeight = vec3( 1.0 ).toVar();
+		const brdfIsDiffuseTransmission = tslBool( false ).toVar();
 
 		If( material.clearcoat.greaterThan( 0.0 ), () => {
 
@@ -1542,6 +1562,7 @@ export function buildShadeKernel( params ) {
 			brdfDir.assign( ccResult.L );
 			brdfValue.assign( ccResult.brdf );
 			brdfPdf.assign( ccResult.pdf );
+			brdfIsDiffuseTransmission.assign( ccResult.isDiffuseTransmission );
 
 		} ).Else( () => {
 
@@ -1557,10 +1578,11 @@ export function buildShadeKernel( params ) {
 			brdfPdf.assign( bs.pdf );
 			brdfIsTransmission.assign( bs.isTransmission );
 			brdfColorWeight.assign( bs.colorWeight );
+			brdfIsDiffuseTransmission.assign( bs.isDiffuseTransmission );
 
 		} );
 
-		const directLighting = () => DirectLightingDual.wrap( calculateDirectLightingUnified(
+		const directLighting = () => DirectLightingDual.wrap( ( transmitting ? calculateDirectLightingThroughSurfaces : calculateDirectLightingUnified )(
 			hitPoint, N, NgeoFF, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
@@ -1622,14 +1644,14 @@ export function buildShadeKernel( params ) {
 
 				take( sampleLightBVHTriangleIndexed(
 					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
-					lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer,
+					lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer, tslBool( false ),
 				) );
 
 			} ).Else( () => {
 
 				take( sampleEmissiveTriangleIndexed(
 					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
-					lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer,
+					lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer, tslBool( false ),
 				) );
 
 			} );
@@ -1934,18 +1956,22 @@ export function buildShadeKernel( params ) {
 							lightBuffer,
 							emissiveVec4Offset,
 							triangleBuffer, bvhBuffer,
+							transmitsDiffusely,
 						) );
 
 						// No rough-diffuse secondary-bounce skip here: dropping NEE while the emissive-hit
 						// MIS still down-weights BSDF hits deletes emitter energy from deep GI.
 						If( emissiveSample.valid.and( emissiveSample.pdf.greaterThan( 0.0 ) ), () => {
 
-							const NoL = max( float( 0.0 ), dot( N, emissiveSample.direction ) );
+							const back = throughSurface( emissiveSample.direction ).toVar();
+							const NoL = transmitting ? abs( dot( N, emissiveSample.direction ) ) : max( float( 0.0 ), dot( N, emissiveSample.direction ) );
+							const inFront = NoL.greaterThan( 0.0 ).and( dot( N, emissiveSample.direction ).greaterThan( 0.0 ) )
+								.and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) );
 
-							If( NoL.greaterThan( 0.0 ).and( dot( emissiveSample.direction, NgeoFF ).greaterThan( 0.0 ) ), () => {
+							If( transmitting ? back.or( inFront ) : inFront, () => {
 
 								// Aimed at the sampled point and stopped a relative hair short, as for area lights.
-								const rayOrigin = lightShadowOrigin( emissiveSample.direction ).toVar();
+								const rayOrigin = originFor( emissiveSample.direction, lightShadowOrigin( emissiveSample.direction ) ).toVar();
 								const toSample = emissiveSample.position.sub( rayOrigin ).toVar();
 								const shadowDist = length( toSample ).toVar();
 								const visibility = traceShadowRayWrapped(
@@ -1993,7 +2019,7 @@ export function buildShadeKernel( params ) {
 							lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower,
 							triangleBuffer, bvhBuffer,
 							traceShadowRayWrapped,
-							Fn( ( [ p, , L ] ) => lightShadowOrigin( L ).sub( p ) ),
+							Fn( ( [ p, , L ] ) => originFor( L, lightShadowOrigin( L ) ).sub( p ) ),
 						);
 
 						currentRadiance.assign( vec4(
@@ -2056,6 +2082,7 @@ export function buildShadeKernel( params ) {
 			N, material,
 			brdfDir, brdfPdf, brdfValue,
 			brdfIsTransmission, brdfColorWeight,
+			brdfIsDiffuseTransmission,
 			rngState,
 			_pixelCoord, resolution, frame, dimBase,
 		) ).toVar();
@@ -2063,8 +2090,10 @@ export function buildShadeKernel( params ) {
 		const bounceDir = indirectResult.direction.toVar();
 
 		// Shading-normal leak guard: a normal-mapped lobe can sample below the geometric surface;
-		// tracing that ray tunnels through single-sided shells onto whatever sits behind them.
-		If( brdfIsTransmission.not().and( dot( bounceDir, NgeoFF ).lessThanEqual( 0.0 ) ), () => {
+		// tracing that ray tunnels through single-sided shells onto whatever sits behind them. A diffuse
+		// transmission draw is the mirror case: it must cross the surface.
+		If( select( brdfIsDiffuseTransmission, dot( bounceDir, NgeoFF ).greaterThanEqual( 0.0 ),
+			brdfIsTransmission.not().and( dot( bounceDir, NgeoFF ).lessThanEqual( 0.0 ) ) ), () => {
 
 			commitDeferredAux( N );
 			terminatePath();
@@ -2165,8 +2194,10 @@ export function buildShadeKernel( params ) {
 		} );
 
 		// Whether this vertex's sun NEE could have drawn bounceDir, so a sun hit at the miss knows its MIS partner.
-		const sunNEE = brdfIsTransmission.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) );
-		const underSurface = brdfIsTransmission.not().and( underFacet );
+		// Through a diffusely transmitting surface it samples the far side too.
+		const sunNEE = brdfIsTransmission.not().and( dot( N, bounceDir ).greaterThan( 0.0 ).or( brdfIsDiffuseTransmission ) );
+		// Diffuse transmission crosses the surface on purpose; the next hit is an ordinary bounce's.
+		const underSurface = brdfIsTransmission.not().and( brdfIsDiffuseTransmission.not() ).and( underFacet );
 		flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.SUN_NEE | RAY_FLAG.UNDER_SURFACE ) ) )
 			.bitOr( select( sunNEE, uint( RAY_FLAG.SUN_NEE ), uint( 0 ) ) )
 			.bitOr( select( underSurface, uint( RAY_FLAG.UNDER_SURFACE ), uint( 0 ) ) ) );

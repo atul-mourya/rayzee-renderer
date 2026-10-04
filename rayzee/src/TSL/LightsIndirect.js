@@ -32,6 +32,8 @@ export const calculateIndirectLighting = Fn( ( [
 	brdfSampleDirection, brdfSamplePdf, brdfSampleValue,
 	// DirectionSample carries these so refraction throughput does not need a second sampler run.
 	isTransmission, brdfSampleColorWeight,
+	// Drawn through the surface by the diffuse transmission lobe: its cosine is taken below N.
+	isDiffuseTransmission,
 	rngState,
 	pixelCoord, resolution, frame, dimBase,
 ] ) => {
@@ -61,7 +63,7 @@ export const calculateIndirectLighting = Fn( ( [
 		//
 		// brdfSamplePdf is now the true mixture density (calculateBSDFSamplingPDF), so the
 		// estimator is just f·NoL/pdf and the MIS pairs share one function by construction.
-		const NoL = max( dot( N, brdfSampleDirection ), 0.0 ).toVar();
+		const NoL = select( isDiffuseTransmission, dot( N, brdfSampleDirection ).negate(), max( dot( N, brdfSampleDirection ), 0.0 ) ).toVar();
 		const pdf = max( brdfSamplePdf, MIN_PDF ).toVar();
 
 		r_direction.assign( brdfSampleDirection );

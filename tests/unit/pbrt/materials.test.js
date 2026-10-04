@@ -52,11 +52,16 @@ describe( 'pbrt materials', () => {
 
 	} );
 
-	it( 'keeps a diffuse-transmission surface reflecting R while T passes through', async () => {
+	it( 'makes diffusetransmission the engine\'s diffuse transmission lobe: reflecting R, transmitting T', async () => {
 
-		const rug = await buildMaterial( { type: 'diffusetransmission', params: { reflectance: param( 'rgb', 0.85, 0.85, 0.85 ), transmittance: param( 'rgb', 0.15, 0.15, 0.15 ) } }, ctx );
-		expect( rug.transmission ).toBeCloseTo( 0.15, 6 );
-		expect( rug.color.r * ( 1 - rug.transmission ) ).toBeCloseTo( 0.85, 6 );
+		// kroken's rug, with a tinted T; exact while max( R ) + max( T ) ≤ 1.
+		const rug = await buildMaterial( { type: 'diffusetransmission', params: { reflectance: param( 'rgb', 0.85, 0.8, 0.85 ), transmittance: param( 'rgb', 0.1, 0.15, 0.1 ) } }, ctx );
+		expect( rug.transmission ).toBe( 0 );
+		expect( rug.specularIntensity ).toBe( 0 );
+		expect( rug.diffuseTransmission ).toBeCloseTo( 0.15, 6 );
+		// Reflected (1 − dt) · base = R, transmitted dt · colour = T.
+		expect( rug.color.toArray().map( ( c ) => c * ( 1 - rug.diffuseTransmission ) ) ).toEqual( [ 0.85, 0.8, 0.85 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
+		expect( rug.diffuseTransmissionColor.toArray().map( ( c ) => c * rug.diffuseTransmission ) ).toEqual( [ 0.1, 0.15, 0.1 ].map( ( v ) => expect.closeTo( v, 6 ) ) );
 
 	} );
 

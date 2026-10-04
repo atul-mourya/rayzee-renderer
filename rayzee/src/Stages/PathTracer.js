@@ -347,6 +347,13 @@ export class PathTracer extends PathTracerStage {
 
 		// The packed light buffer was grow-reallocated at runtime (emissive set grew) or a light list grew —
 		// the compiled kernels still bind the old one, so rebuild before rendering. Likewise a changed output request.
+		if ( this._materialFeaturesChanged ) {
+
+			this._materialFeaturesChanged = false;
+			if ( this.materialData.hasDiffuseTransmission() !== this._diffuseTransmissionCompiled ) this._outputsChanged = true;
+
+		}
+
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
 			if ( this._kernelManager ) this._kernelManager.dispose();
@@ -1876,6 +1883,7 @@ export class PathTracer extends PathTracerStage {
 			sunParams: this.sunParams,
 			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
+			diffuseTransmission: this._diffuseTransmissionCompiled = this.materialData.hasDiffuseTransmission(),
 		} );
 		this._kernelManager.register( 'shade',
 			own( shadeFn() ).compute(

@@ -144,6 +144,8 @@ export class SceneProcessor {
 		this.iridescenceThicknessMaps = [];
 		this.specularIntensityMaps = [];
 		this.specularColorMaps = [];
+		this.diffuseTransmissionMaps = [];
+		this.diffuseTransmissionColorMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 		this.spheres = [];
@@ -860,6 +862,8 @@ export class SceneProcessor {
 		this.iridescenceThicknessMaps = extractedData.iridescenceThicknessMaps;
 		this.specularIntensityMaps = extractedData.specularIntensityMaps;
 		this.specularColorMaps = extractedData.specularColorMaps;
+		this.diffuseTransmissionMaps = extractedData.diffuseTransmissionMaps ?? [];
+		this.diffuseTransmissionColorMaps = extractedData.diffuseTransmissionColorMaps ?? [];
 		this.directionalLights = extractedData.directionalLights;
 		this.cameras = extractedData.cameras;
 
@@ -2009,11 +2013,12 @@ export class SceneProcessor {
 
 		};
 
-		const srgbTypes = [ this.maps, this.emissiveMaps, this.sheenColorMaps, this.specularColorMaps ];
+		const srgbTypes = [ this.maps, this.emissiveMaps, this.sheenColorMaps, this.specularColorMaps, this.diffuseTransmissionColorMaps ];
 		const linearTypes = [
 			this.normalMaps, this.bumpMaps, this.roughnessMaps, this.metalnessMaps, this.displacementMaps,
 			this.anisotropyMaps, this.transmissionMaps, this.clearcoatMaps, this.clearcoatRoughnessMaps,
 			this.sheenRoughnessMaps, this.iridescenceMaps, this.iridescenceThicknessMaps, this.specularIntensityMaps,
+			this.diffuseTransmissionMaps,
 		];
 
 		const srgbShapes = planTextureBuckets( poolSizes( srgbTypes ), cap, K );
@@ -2104,6 +2109,8 @@ export class SceneProcessor {
 			iridescenceThickness: remapType( this.iridescenceThicknessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			specularIntensity: remapType( this.specularIntensityMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			specularColor: remapType( this.specularColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
+			diffuseTransmission: remapType( this.diffuseTransmissionMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			diffuseTransmissionColor: remapType( this.diffuseTransmissionColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
 		};
 
 		return { srgbLists, linearLists, remap };
@@ -2138,6 +2145,8 @@ export class SceneProcessor {
 			mat.iridescenceThicknessMap = fix( mat.iridescenceThicknessMap, remap.iridescenceThickness );
 			mat.specularIntensityMap = fix( mat.specularIntensityMap, remap.specularIntensity );
 			mat.specularColorMap = fix( mat.specularColorMap, remap.specularColor );
+			mat.diffuseTransmissionMap = fix( mat.diffuseTransmissionMap, remap.diffuseTransmission );
+			mat.diffuseTransmissionColorMap = fix( mat.diffuseTransmissionColorMap, remap.diffuseTransmissionColor );
 
 		}
 
@@ -2233,6 +2242,8 @@ export class SceneProcessor {
 		this.iridescenceThicknessMaps = [];
 		this.specularIntensityMaps = [];
 		this.specularColorMaps = [];
+		this.diffuseTransmissionMaps = [];
+		this.diffuseTransmissionColorMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 		this.spheres = [];

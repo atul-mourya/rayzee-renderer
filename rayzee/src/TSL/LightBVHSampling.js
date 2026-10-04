@@ -114,6 +114,8 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 	emissiveTriangleBuffer,
 	emissiveVec4Offset,
 	triangleBuffer, bvhBuffer,
+	// The surface passes light through diffusely: a point behind it is as good as one in front.
+	throughSurface,
 ] ) => {
 
 	const fields = {
@@ -287,7 +289,7 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 				const surfaceFacing = dot( dir, surfaceNormal );
 				const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-				If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
+				If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
 
 					// Interpolate normal at sampled point via barycentric coords
 					const barycentricCoords = barycentricFromPoint( samplePos, triData.v0, triData.v1, triData.v2 );
@@ -338,7 +340,7 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
 			// Edge-on (a two-sided emitter passes its side test there) the density is infinite and the light zero.
-			If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
+			If( surfaceFacing.greaterThan( float( 0.0 ) ).or( throughSurface ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
 
 				// PDF: selectionPdf / area, converted to solid angle: pdfArea * distSq / cosLight
 				const pdfArea = selectionPdf.div( max( area, float( 1e-10 ) ) );

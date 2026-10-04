@@ -7,6 +7,7 @@ import {
 	reflect,
 	max,
 	If,
+	bool as tslBool,
 } from 'three/tsl';
 
 import { struct } from './patches.js';
@@ -15,15 +16,16 @@ import { AnisoFrame, DotProducts,
 	BRDFWeights,
 } from './Struct.js';
 import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN } from './Common.js';
-import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF } from './MaterialProperties.js';
+import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';
-import { evaluateMaterialResponseFromDots } from './MaterialEvaluation.js';
+import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 import { getRandomSample1D } from './Random.js';
 
 export const ClearcoatResult = struct( {
 	brdf: 'vec3',
 	L: 'vec3',
 	pdf: 'float',
+	isDiffuseTransmission: 'bool',
 } );
 
 // Improved clearcoat sampling function
@@ -55,6 +57,7 @@ export const sampleClearcoat = Fn( ( [
 
 	const L = vec3( 0.0 ).toVar();
 	const H = vec3( 0.0 ).toVar();
+	const transmitted = tslBool( false ).toVar();
 
 	If( rand.lessThan( clearcoatWeight ), () => {
 
@@ -83,6 +86,11 @@ export const sampleClearcoat = Fn( ( [
 		} );
 		L.assign( reflect( V.negate(), H ) );
 
+	} ).ElseIf( rand.lessThan( clearcoatWeight.add( specularWeight ).add( weights.diffuseTransmission ) ), () => {
+
+		L.assign( ImportanceSampleCosine( { N: N.negate(), xi: randomSample } ) );
+		transmitted.assign( true );
+
 	} ).Else( () => {
 
 		// Sample diffuse
@@ -94,16 +102,17 @@ export const sampleClearcoat = Fn( ( [
 	// Calculate dot products (aniso-aware: also projects onto the anisotropy frame)
 	const dots = DotProducts.wrap( computeDotProductsAniso( N, V, L, material ) );
 
-	// One density for every MIS site — see calculateBSDFSamplingPDF.
-	const pdf = max( calculateBSDFSamplingPDF( material, weights, dots ), 0.001 );
+	// One density for every MIS site — see calculateBSDFSamplingPDF. Below the surface only the
+	// diffuse transmission lobe draws.
+	const pdf = max( transmitted.select( diffuseTransmissionPdf( weights.diffuseTransmission, dot( N, L ).negate() ), calculateBSDFSamplingPDF( material, weights, dots ) ), 0.001 );
 
 	// Evaluate complete BRDF
 	// The same BRDF every other site evaluates — see the clearcoat note in MaterialEvaluation.
-	const brdf = evaluateMaterialResponseFromDots( material, dots );
+	const brdf = transmitted.select( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ), evaluateMaterialResponseFromDots( material, dots ) );
 
 	// Return brdf, L direction, and pdf packed together
 	// Caller needs L and pdf - return as struct-like output
 	// We pack: result.xyz = brdf, result.w = pdf, L stored in separate output
-	return ClearcoatResult( { brdf, L, pdf } );
+	return ClearcoatResult( { brdf, L, pdf, isDiffuseTransmission: transmitted } );
 
 } );

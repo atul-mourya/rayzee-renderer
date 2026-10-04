@@ -41,6 +41,7 @@ const TEXTURE_POOLS = [
 	[ 'displacementMap', false ], [ 'anisotropyMap', false ], [ 'transmissionMap', false ],
 	[ 'clearcoatMap', false ], [ 'clearcoatRoughnessMap', false ], [ 'sheenRoughnessMap', false ],
 	[ 'iridescenceMap', false ], [ 'iridescenceThicknessMap', false ], [ 'specularIntensityMap', false ],
+	[ 'diffuseTransmissionColorMap', true ], [ 'diffuseTransmissionMap', false ],
 ];
 
 // Scalar slots readable via getMaterialProperty().
@@ -67,6 +68,7 @@ const SCALAR_PROPERTY_OFFSETS = {
 	subsurfaceAnisotropy: M.SUBSURFACE_ANISOTROPY,
 	anisotropy: M.ANISOTROPY,
 	anisotropyRotation: M.ANISOTROPY_ROTATION, // radians, unlike the degrees hosts usually show
+	diffuseTransmission: M.DIFFUSE_TRANSMISSION,
 };
 
 export class MaterialDataManager {
@@ -119,6 +121,7 @@ export class MaterialDataManager {
 	 */
 	static COLOR_OFFSETS = [
 		M.COLOR, M.EMISSIVE, M.ATTENUATION_COLOR, M.SHEEN_COLOR, M.SPECULAR_COLOR, M.SUBSURFACE_COLOR,
+		M.DIFFUSE_TRANSMISSION_COLOR,
 	].filter( o => Number.isInteger( o ) );
 
 	/**
@@ -300,6 +303,16 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether any material passes light through diffusely: the shade kernel compiles that lobe in only then. */
+	hasDiffuseTransmission() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) if ( data[ i * M.FLOATS_PER_MATERIAL + M.DIFFUSE_TRANSMISSION ] > 0 ) return true;
+		return false;
+
+	}
+
 	/**
 	 * Where a material property's value came from, as a MATERIAL_VALUE_SOURCE. `default` means the
 	 * model never said and the engine filled it in.
@@ -466,6 +479,19 @@ export class MaterialDataManager {
 			case 'subsurfaceAnisotropy': data[ stride + M.SUBSURFACE_ANISOTROPY ] = value; break;
 			case 'anisotropy': data[ stride + M.ANISOTROPY ] = value; break;
 			case 'anisotropyRotation': data[ stride + M.ANISOTROPY_ROTATION ] = value; break;
+			case 'diffuseTransmission': data[ stride + M.DIFFUSE_TRANSMISSION ] = value; break;
+			case 'diffuseTransmissionColor':
+				if ( value.r !== undefined ) {
+
+					this._writeColor( data, stride + M.DIFFUSE_TRANSMISSION_COLOR, value.r, value.g, value.b );
+
+				} else if ( Array.isArray( value ) ) {
+
+					this._writeColor( data, stride + M.DIFFUSE_TRANSMISSION_COLOR, value[ 0 ], value[ 1 ], value[ 2 ] );
+
+				}
+
+				break;
 			case 'subsurfaceColor':
 				if ( value.r !== undefined ) {
 
@@ -510,6 +536,9 @@ export class MaterialDataManager {
 
 		}
 
+		// The diffuse-transmission lobe is compiled in only while some material uses it.
+		if ( property === 'diffuseTransmission' ) this.callbacks.onMaterialFeaturesChanged?.();
+
 		this._notifyReset();
 
 	}
@@ -545,6 +574,7 @@ export class MaterialDataManager {
 		// Both read back the block, so they must follow the write.
 		this._patchTriangleSideForMaterial( materialIndex, data[ base + M.SIDE ] );
 		this._recomputeOpaqueBlockerForMaterial( materialIndex );
+		this.callbacks.onMaterialFeaturesChanged?.();
 
 		this.materialStorageAttr.needsUpdate = true;
 		this._notifyReset();

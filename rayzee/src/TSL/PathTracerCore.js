@@ -45,8 +45,9 @@ import {
 	computeAnisoAlphas,
 	calculateBRDFWeights,
 	sheenSamplingRoughness,
+	diffuseTransmissionPdf,
 } from './MaterialProperties.js';
-import { evaluateMaterialResponseFromDots, evaluateSpecularDeltaFromDots } from './MaterialEvaluation.js';
+import { evaluateMaterialResponseFromDots, evaluateSpecularDeltaFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 
 import {
 	ImportanceSampleCosine,
@@ -79,6 +80,7 @@ export const generateSampledDirection = Fn( ( [
 	const resultIsTransmission = tslBool( false ).toVar();
 	const resultColorWeight = vec3( 1.0 ).toVar();
 	const resultIsDelta = tslBool( false ).toVar();
+	const resultIsDiffuseTransmission = tslBool( false ).toVar();
 
 	// Compute BRDF weights
 	const weights = cachedBrdfWeights.toVar();
@@ -114,7 +116,8 @@ export const generateSampledDirection = Fn( ( [
 	const cumulativeDiffuse = weights.diffuse.toVar();
 	const cumulativeSpecular = cumulativeDiffuse.add( weights.specular ).toVar();
 	const cumulativeSheen = cumulativeSpecular.add( weights.sheen ).toVar();
-	const cumulativeClearcoat = cumulativeSheen.add( weights.clearcoat );
+	const cumulativeClearcoat = cumulativeSheen.add( weights.clearcoat ).toVar();
+	const cumulativeDiffuseTransmission = cumulativeClearcoat.add( weights.diffuseTransmission );
 
 	// Chained If/ElseIf so emitted WGSL becomes a single mutually-exclusive branch
 	// (replaces five separate If blocks gated on a `sampled` flag — divergence hotspot)
@@ -175,6 +178,11 @@ export const generateSampledDirection = Fn( ( [
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: xi } ) ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
 
+	} ).ElseIf( rand.lessThan( cumulativeDiffuseTransmission ), () => {
+
+		resultDirection.assign( ImportanceSampleCosine( { N: N.negate(), xi } ) );
+		resultIsDiffuseTransmission.assign( true );
+
 	} ).Else( () => {
 
 		const entering = dot( V, N ).greaterThan( 0.0 );
@@ -193,10 +201,16 @@ export const generateSampledDirection = Fn( ( [
 
 	} );
 
-	// One mixture density for every reflection lobe: any of them could have produced this
-	// direction, so the chosen lobe's own pdf is not the density we sampled from.
-	If( resultIsTransmission.not(), () => {
+	// Below the surface only the diffuse transmission lobe draws, so its own density is the mixture's.
+	If( resultIsDiffuseTransmission, () => {
 
+		resultValue.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
+		resultPdf.assign( diffuseTransmissionPdf( weights.diffuseTransmission, dot( N, resultDirection ).negate() ) );
+
+	} ).ElseIf( resultIsTransmission.not(), () => {
+
+		// One mixture density for every reflection lobe: any of them could have produced this
+		// direction, so the chosen lobe's own pdf is not the density we sampled from.
 		const dotsOut = DotProducts.wrap( computeDotProductsAniso( N, V, resultDirection, material ) );
 		If( resultIsDelta, () => {
 
@@ -223,6 +237,7 @@ export const generateSampledDirection = Fn( ( [
 		pdf: resultPdf,
 		isTransmission: resultIsTransmission,
 		colorWeight: resultColorWeight,
+		isDiffuseTransmission: resultIsDiffuseTransmission,
 	} );
 
 } );

@@ -618,5 +618,105 @@
 		"ratio": 0.5201333345601594,
 		"rawRmse": 0.004585072669097229,
 		"denoisedRmse": 0.002384849136578192
+	},
+	"furnace-diffuse-transmission/asvgf/1": {
+		"ratio": 0.3261526692672999,
+		"rawRmse": 0.12684010077401833,
+		"denoisedRmse": 0.04136923743757939
+	},
+	"furnace-diffuse-transmission/nrd/1": {
+		"ratio": 0.07419244431693571,
+		"rawRmse": 0.12684010077401833,
+		"denoisedRmse": 0.00941057711383087
+	},
+	"furnace-diffuse-transmission/edgeaware/1": {
+		"ratio": 0.46806847867693924,
+		"rawRmse": 0.12684010077401833,
+		"denoisedRmse": 0.05936985300452442
+	},
+	"furnace-diffuse-transmission/oidn/1": {
+		"ratio": 0.05168544674404159,
+		"rawRmse": 0.12684010077401833,
+		"denoisedRmse": 0.006555787273564393
+	},
+	"furnace-diffuse-transmission/oidn-tiled/1": {
+		"ratio": 0.05442209434901557,
+		"rawRmse": 0.12684010077401833,
+		"denoisedRmse": 0.0069029039315622685
+	},
+	"furnace-diffuse-transmission/asvgf/64": {
+		"ratio": 0.4306029580270376,
+		"rawRmse": 0.014366734007414067,
+		"denoisedRmse": 0.006186358160780133
+	},
+	"furnace-diffuse-transmission/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.014366734007414067,
+		"denoisedRmse": 0.014366734007414067
+	},
+	"furnace-diffuse-transmission/edgeaware/64": {
+		"ratio": 0.7546002453013834,
+		"rawRmse": 0.014366734007414067,
+		"denoisedRmse": 0.01084114100617438
+	},
+	"furnace-diffuse-transmission/oidn/64": {
+		"ratio": 0.42896354406336357,
+		"rawRmse": 0.014366734007414067,
+		"denoisedRmse": 0.006162805136435988
+	},
+	"furnace-diffuse-transmission/oidn-tiled/64": {
+		"ratio": 0.42814199685500337,
+		"rawRmse": 0.014366734007414067,
+		"denoisedRmse": 0.006151002186218943
+	},
+	"translucent-panel/asvgf/1": {
+		"ratio": 0.8573150857681765,
+		"rawRmse": 0.09872180929175868,
+		"denoisedRmse": 0.08463569640015366
+	},
+	"translucent-panel/nrd/1": {
+		"ratio": 0.47412827684544784,
+		"rawRmse": 0.09872180929175868,
+		"denoisedRmse": 0.04680680132656646
+	},
+	"translucent-panel/edgeaware/1": {
+		"ratio": 0.6940588737413561,
+		"rawRmse": 0.09872180929175868,
+		"denoisedRmse": 0.06851874777074697
+	},
+	"translucent-panel/oidn/1": {
+		"ratio": 0.12694104192488775,
+		"rawRmse": 0.09872180929175868,
+		"denoisedRmse": 0.012531849332205912
+	},
+	"translucent-panel/oidn-tiled/1": {
+		"ratio": 0.12777337971498953,
+		"rawRmse": 0.09872180929175868,
+		"denoisedRmse": 0.012614019224786664
+	},
+	"translucent-panel/asvgf/64": {
+		"ratio": 0.7087610479028114,
+		"rawRmse": 0.010041069849144147,
+		"denoisedRmse": 0.007116719188344729
+	},
+	"translucent-panel/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.010041069849144147,
+		"denoisedRmse": 0.010041069849144147
+	},
+	"translucent-panel/edgeaware/64": {
+		"ratio": 0.8401853405662504,
+		"rawRmse": 0.010041069849144147,
+		"denoisedRmse": 0.008436359690852683
+	},
+	"translucent-panel/oidn/64": {
+		"ratio": 0.627211660881128,
+		"rawRmse": 0.010041069849144147,
+		"denoisedRmse": 0.006297876097105118
+	},
+	"translucent-panel/oidn-tiled/64": {
+		"ratio": 0.6268719595899682,
+		"rawRmse": 0.010041069849144147,
+		"denoisedRmse": 0.006294465132712738
 	}
 }

@@ -171,6 +171,12 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mat
     1,
   ],
   "depthWrite": 1,
+  "diffuseTransmission": 0,
+  "diffuseTransmissionColor": [
+    1,
+    1,
+    1,
+  ],
   "dispersion": 0,
   "displacementScale": 1,
   "emissive": [

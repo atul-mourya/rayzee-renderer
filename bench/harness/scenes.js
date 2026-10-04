@@ -1387,6 +1387,71 @@ SCENES.push( {
 	},
 } );
 
+// Diffuse transmission (KHR_materials_diffuse_transmission): light crosses a closed sphere's surface diffusely, in and
+// out many times. Albedo 1 on both sides under a uniform sky makes the equilibrium radiance the sky's for any split,
+// so energy the transmission lobe, NEE through the surface or their MIS gains or loses reads here.
+SCENES.push( {
+	id: 'furnace-diffuse-transmission',
+	covers: 'white furnace — diffuse transmission through a closed surface (its BTDF, NEE through it, their MIS)',
+	spp: 128,
+	truthSpp: 512,
+	settings: { maxBounces: 32, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		// three.js has no such property; the engine reads it off the material (MATERIAL_DEFAULTS).
+		const material = new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1, metalness: 0, side: DoubleSide } );
+		material.diffuseTransmission = 0.5;
+		const group = new Group();
+		group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), material ) );
+		await app.loadObject3D( group, 'furnace-diffuse-transmission' );
+		setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
+// A translucent sheet lit only from behind: what the camera sees of it is light NEE reaches through the surface,
+// MIS'd with transmission draws that hit the emitter. The truth turns emissive NEE off, so the sheet's light arrives
+// by transmission draws alone — the two estimates agree only if their densities and values do.
+SCENES.push( {
+	id: 'translucent-panel',
+	covers: 'diffuse transmission lit from behind: emissive NEE through the surface and its BSDF-hit partner, held to BSDF sampling alone',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEmissiveTriangleSampling: true, enableEnvironment: false },
+	truthSettings: { enableEmissiveTriangleSampling: false },
+	async build( app ) {
+
+		await app.stages.pathTracer.environment.setMode( 'color' );
+
+		const scene = new Group();
+		const floor = new Mesh( new PlaneGeometry( 8, 8 ), new MeshPhysicalMaterial( { color: 0xcccccc, roughness: 1, metalness: 0 } ) );
+		floor.rotation.x = - Math.PI / 2;
+		floor.position.y = - 1.6;
+		scene.add( floor );
+
+		const light = new Mesh( new PlaneGeometry( 2.4, 2.4 ), new MeshPhysicalMaterial( {
+			color: 0x000000, emissive: 0xffffff, emissiveIntensity: 4, roughness: 1,
+		} ) );
+		light.position.set( 0, 0, - 1.2 );
+		scene.add( light );
+
+		const sheetMaterial = new MeshPhysicalMaterial( { color: 0xe6e6e6, roughness: 1, metalness: 0, side: DoubleSide } );
+		sheetMaterial.diffuseTransmission = 0.6;
+		sheetMaterial.diffuseTransmissionColor = new Color( 1, 0.8, 0.6 );
+		const sheet = new Mesh( new PlaneGeometry( 3, 3 ), sheetMaterial );
+		scene.add( sheet );
+
+		await app.loadObject3D( scene, 'translucent-panel' );
+		setCamera( app, [ 1.2, 0.4, 5 ], [ 0, - 0.3, 0 ] );
+
+	},
+} );
+
 // ── Analytic area light ──────────────────────────────────────────
 // Irradiance on a plane from a parallel Lambertian rectangle of uniform radiance L is E = π·L·F,
 // F the configuration factor. rectCornerFactor is the textbook differential-element-under-a-corner

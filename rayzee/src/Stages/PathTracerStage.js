@@ -112,6 +112,13 @@ export class PathTracerStage extends RenderStage {
 		// Initialize material data manager
 		this.materialData = new MaterialDataManager( this.sdfs );
 		this.materialData.callbacks.onReset = () => this.reset();
+		// A material edit can switch the diffuse transmission lobe on or off, which the shade kernel compiles in.
+		this.materialData.callbacks.onMaterialFeaturesChanged = () => {
+
+			this._materialFeaturesChanged = true;
+
+		};
+
 		// Material edits patch the per-triangle flags lane in the CPU records (`_triangleRecords`
 		// when chunked, `_triangleFlat` otherwise — not sdfs.triangleData, which the PathTracerApp
 		// build path never fills). The flags live in the shade rows, so only those go up again.
