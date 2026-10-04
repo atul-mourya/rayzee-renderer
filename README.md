@@ -16,9 +16,12 @@ A real-time path tracer that runs entirely in the browser. Rayzee combines a Web
 The project is a monorepo with two packages: **`rayzee/`** — the standalone rendering engine, publishable to npm — and **`app/`** — the React UI built on top of it. External clients can use the engine independently:
 
 ```js
-import { PathTracerApp } from 'rayzee';
+import { PathTracerApp } from 'rayzee';               // the full engine, as the app uses it
+import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, about 40 % smaller
 ```
 
+The renderer core takes optional add-ons — physical sky, scene archives, bidirectional path tracing, OpenColorIO
+colour, on-disk storage — from `rayzee/addons/*` ([docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md)).
 See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference — installation, framework integration, managers, events, and custom pipeline stages.
 
 ## Highlights
@@ -26,8 +29,9 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Wavefront path tracer** — decomposed `generate → extend → shade → compact` compute kernels with stream compaction, driving a Monte Carlo core with configurable multi-bounce transport and progressive accumulation
 - **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
 - **Instanced geometry** — a geometry used by several objects is stored once in its own space and placed by matrix, so a scene of repeated furniture costs one copy rather than one per placement; geometry used once, or geometry that emits light, is baked to world space instead so rays skip the transform entirely
-- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders or as the live viewport denoiser (fed a reprojected motion history while the view moves, which roughly halves its boiling), running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
+- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering or a port of NVIDIA NRD's ReBLUR for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders or as the live viewport denoiser (fed a reprojected motion history while the view moves, which roughly halves its boiling), running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
 - **Neural upscaling** — a finished render can be enlarged 2x or 4x by Real-ESRGAN rather than traced at full size. It runs once, when the render completes, on the denoised result
+- **Bidirectional path tracing and vertex merging** — opt-in integrators that also trace light from every source (glowing surfaces, lamps, the sun, the sky): caustics, light through small openings, and caustics seen in mirrors and through glass
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
 - **Physical sky** — a spectral clear-sky atmosphere (air, haze, ozone, light scattered many times over, the ground's bounce) with a sun that is drawn and sampled as a light of its own, placed by time of day, month and latitude; it is rebuilt on the GPU fast enough to follow the Time of Day slider frame by frame
 - **Full PBR material pipeline** with live, real-time editing of materials, camera, depth of field, and environment — no re-render required to see a change
@@ -48,10 +52,10 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 | Category | Technologies |
 |----------|-------------|
 | **Frontend** | React 19, Vite 8, TailwindCSS 4 |
-| **3D Rendering** | Three.js 0.185+, WebGPU, TSL Shaders (WGSL) |
+| **3D Rendering** | Three.js 0.186+, WebGPU, TSL Shaders (WGSL) |
 | **UI Components** | Radix UI, Lucide Icons |
 | **State Management** | Zustand |
-| **Denoising** | Intel OIDN Web, Custom ASVGF |
+| **Denoising** | Intel OIDN Web, custom ASVGF, NRD ReBLUR port |
 | **Colour** | OpenColorIO 2.5 (WebAssembly), Blender 5.1 config |
 | **Neural post** | Real-ESRGAN (ONNX Runtime Web) |
 | **Build Tools** | Vite, ESLint, Semantic Release |
@@ -108,7 +112,7 @@ Drag and drop a model (GLB, GLTF, FBX, OBJ, STL, PLY, DAE, 3MF, USDZ — or a ZI
 
 The Denoising panel also carries the **AI Upscaler**, which delivers an image larger than the one traced (Real-ESRGAN, 2x or 4x). It needs **Final Denoise (OIDN)** on, which is the default; without it the upscaler works on noise and does more harm than good, so its switch stays disabled until it is.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full walkthrough and development workflow.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow.
 
 ## Headless rendering
 
@@ -132,6 +136,7 @@ Its defaults are the batch renderer's rather than the viewer's. All three are re
 | `strict` | `true` | throws at the point of degradation instead of rendering around it |
 | `profile` | `'physical'` | drops viewer tuning — the glTF area-light damping |
 | `deterministic` | `true` | pins every clock- and readback-dependent input, so N samples reproduce bit-for-bit |
+| `storage` | `false` | no on-disk cache, so an earlier run's cached state cannot change what a batch renders |
 
 With `strict: false` the same degradations are recorded instead of thrown: read `app.issues`, or subscribe to `EngineEvents.ISSUE`. A non-empty `app.issueErrors` means *do not publish this frame*. Codes (`ISSUE_CODES`) are add-only API surface.
 
@@ -141,7 +146,7 @@ For a production render — adaptive sampling on, stopping once the image conver
 
 ## Architecture
 
-Rayzee runs an event-driven, stage-based render pipeline: a wavefront `PathTracer` core feeds `NormalDepth`, `MotionVector`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter`, `AutoExposure`, and a terminal `Compositor` stage, each communicating through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI — it's consumable standalone via `import { PathTracerApp } from 'rayzee'` — while the React app (`app/`) wires engine events into Zustand stores.
+Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter` and `AutoExposure` between them, plus camera controls, the gizmo, overlays and the timeline; five capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
 
 For the full stage breakdown and shader architecture, see [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) and [docs/PATH_TRACER_SHADER_ARCHITECTURE.md](docs/PATH_TRACER_SHADER_ARCHITECTURE.md).
 
