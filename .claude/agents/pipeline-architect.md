@@ -12,32 +12,39 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### Stage Execution Model
 - `RenderPipeline.js` orchestrates stage execution order with shared `PipelineContext` and `EventDispatcher`
 - `RenderStage.js` is the base class for all rendering stages
-- Stages communicate via events, NEVER direct coupling
+- Stages communicate via events and context textures; the viewer hands NormalDepth, MotionVector and NRD the path tracer directly, and nothing else couples stages
 - `PipelineContext` provides automatic texture sharing between stages
 
-### Core Stages (execution order matters)
-1. **PathTracer** — Monte Carlo path tracing with MRT outputs
-2. **ASVGF** — Real-time spatiotemporal denoising
-3. **AdaptiveSampling** — Variance-guided sample distribution
-4. **EdgeFilter** — Temporal filtering with edge preservation
-5. **OverlayManager** — Tile visualization via 2D canvas overlay (not a pipeline stage)
+### Layers (see `docs/CORE_AND_ADDONS.md`)
+- **Renderer core** `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`) builds only PathTracer → Compositor
+- **Viewer** `PathTracerApp extends RayzeeRenderer`; its `_createExtraStages()` inserts the other stages between them, and ~30 no-op hooks at the end of RayzeeRenderer.js ("Hooks") are where it plugs in
+- **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `integrators/`), OCIO colour, storage
+- Viewer code never goes in the core: a core method that needs it gets a hook. `tests/unit/core/coreBoundary.test.js` fails if the core imports viewer or add-on modules
+
+### Stages (execution order matters)
+1. **PathTracer** — wavefront Monte Carlo path tracing with MRT outputs (core)
+2. **NormalDepth**, **MotionVector** — denoiser G-buffer inputs (viewer)
+3. **NRD**, **ASVGF**, **Variance**, **BilateralFilter**, **EdgeFilter** — real-time denoisers; one owns the live view (viewer)
+4. **AutoExposure** (viewer)
+5. **Compositor** — shows the first published of the display sources, else the accumulation (core)
+- **OverlayManager** draws helpers on separate canvases, not a pipeline stage
 
 ### PathTracer Sub-Managers (composition pattern)
 - `UniformManager` — ~60 TSL uniform nodes, `get(name)`, `set(name, value)`
 - `MaterialDataManager` — Material buffers, texture arrays
-- `EnvironmentManager` — HDRI, CDF importance sampling, the physical sky (baked and sampled on the GPU)
-- `ShaderBuilder` — TSL shader graph construction
+- `EnvironmentManager` — HDRI, the exact environment sampling table, the procedural sky slot (the physical sky add-on bakes on the GPU)
+- `ShaderBuilder` — scene texture nodes (environment, previous frame, gobo, IES)
 - `StorageTexturePool` — Ping-pong MRT storage textures
 
 ### Event Bus Patterns
 ```js
-// Emitting
+// The core's signals name no capability
+this.eventBus.emit('pipeline:historyReset');      // hard restart — ASVGF and NRD drop their history
+this.eventBus.emit('pipeline:lightingChanged');   // new model or environment — auto exposure re-adapts
 this.eventBus.emit('pathtracer:frameComplete', { frame, samples });
-this.eventBus.emit('asvgf:reset');
-this.eventBus.emit('tile:changed', { tileX, tileY });
 
 // Listening
-this.eventBus.on('pathtracer:frameComplete', handler);
+this.eventBus.on('pipeline:historyReset', handler);
 ```
 
 ### Context Texture Sharing
@@ -56,13 +63,17 @@ When evaluating changes:
 
 2. **Context Cleanup** — When enabling/disabling stages, stale textures in PipelineContext can cause wrong textures in downstream stages (especially Compositor fallback chain). Verify cleanup.
 
-3. **Compositor Fallback Chain** — Priority: `bloom > edgeFiltering > bilateralFiltering > asvgf > pathtracer:color`. Enabled stages publishing dark output override raw path tracer.
+3. **Display Sources** — The Compositor shows the first published of `_displaySources()` (core: none; viewer, `PathTracerApp.js`: `oidn > edgeFiltering > bilateralFiltering > asvgf > nrd`), else `pathtracer:color`. A new denoiser goes in that list and in `DenoisingManager._clearDenoiserTextures()`. Enabled stages publishing dark output override the raw path tracer.
 
 4. **Denoiser Coordination** — exactly one denoiser owns the live view (None / EdgeAware / ASVGF / NRD / OIDN); OIDN's final pass on the finished image is a separate switch. EdgeAware filtering disabled when ASVGF enabled.
 
-5. **Rendering Modes** — Interactive (low quality, real-time), Final (high quality, tiled), Results (paused). Mode switching batch-updates uniforms and resets pipeline.
+5. **Rendering Modes** — The engine has two tiers, `'interactive'` and `'production'` (full frame, adaptive sampling, OIDN), via `app.configureForMode()`; the app's Results tab only pauses rendering. Mode switching applies `modePresetSettings()` and resets.
 
 6. **Camera Matrix Consistency** — Stages sharing depth/position data MUST sync camera matrices from PathTracer uniforms, not from the camera object directly.
+
+7. **Per-renderer shader resources** — Anything a kernel samples that belongs to one renderer (material buckets, gobo/IES textures, the alpha-shadow switch) rides in the kernel's build context (`TSL/SceneResources.js`), never module state: a TSL function body runs when its kernel compiles.
+
+8. **Outputs on request** — A stage that needs an extra path-tracer output asks for it with `pathTracer.requestOutput( name, options )`; the core compiles it only while requested.
 
 ## Design Principles
 - Prefer event-driven communication over direct coupling
@@ -75,6 +86,6 @@ When evaluating changes:
 1. Define inputs (what context textures it reads)
 2. Define outputs (what context textures it publishes)
 3. Define events it emits and listens to
-4. Determine execution order relative to existing stages
+4. Determine execution order relative to existing stages, and whether it is core or viewer (`_createExtraStages()`)
 5. Consider cleanup when stage is disabled
 6. Plan dispose() method for GPU resource cleanup

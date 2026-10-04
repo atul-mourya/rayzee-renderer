@@ -2,7 +2,7 @@
 name: check-tsl
 description: >
   Validate TSL shader code against known pitfalls. Run this after writing or modifying any TSL
-  shader file (src/core/TSL/) to catch common bugs before they become runtime issues.
+  shader file (rayzee/src/TSL/) to catch common bugs before they become runtime issues.
   Checks for NaN sources, If/Else chains, UV flips, outputNode usage, compute patterns,
   and redundant .toVar() materializations that inflate register pressure.
 allowed-tools: Read, Glob, Grep
@@ -12,7 +12,7 @@ You are a TSL (Three Shading Language) validator for the Rayzee path tracer. Sca
 
 ## How to Find Modified Files
 1. Run `git diff --name-only` to find uncommitted changes
-2. Filter for files in `src/core/TSL/`, `src/core/Stages/`, and any file importing from `three/tsl`
+2. Filter for files in `rayzee/src/TSL/`, `rayzee/src/Stages/`, `rayzee/src/integrators/`, and any file importing from `three/tsl`
 3. Read each modified file
 
 ## Validation Checks
@@ -57,7 +57,7 @@ You are a TSL (Three Shading Language) validator for the Rayzee path tracer. Sca
 - May return zeros — must copy to RenderTarget between dispatches
 
 ### Check 9: Redundant `.toVar()` (Register Pressure)
-**Search for**: `.toVar()` on values that are used exactly once and never mutated. Each `.toVar()` emits a named WGSL `var` that the compiler must keep live until its last use — redundant ones inflate register pressure for no benefit. On Apple GPUs especially, register spills tank occupancy (see [[feedback_validate_gpu_perf_claims]]).
+**Search for**: `.toVar()` on values that are used exactly once and never mutated. Each `.toVar()` emits a named WGSL `var` that the compiler must keep live until its last use — redundant ones inflate register pressure for no benefit. On Apple GPUs especially, register spills tank occupancy — measure a Shade change with `npm run bench:kernels` before claiming a win.
 
 **FLAG `.toVar()` as removable when ALL of:**
 1. The binding is used **exactly once** in its enclosing `Fn()` scope. Count carefully: uses across `If`/`ElseIf`/`Else`/`Loop` branches each count as a separate use.
@@ -76,6 +76,11 @@ You are a TSL (Three Shading Language) validator for the Rayzee path tracer. Sca
 **Fix**: Remove the `.toVar()` decoration. The expression inlines at its single use site; the compiler is free to keep the value in a register only across the consuming op rather than the entire scope.
 
 **Verification**: After removal, verify the variable name doesn't appear in any `.assign`/`.addAssign`/etc. — false positives from variable-name shadowing across `Fn()` scopes are common; the mutation must be in the **same** scope as the binding.
+
+### Check 10: Module-Level Shader State
+**Search for**: a module-level `let`/`const` holding a texture, node or uniform that a `Fn()` body reads, or a setter that assigns one (e.g. `setXTexture( tex ) { moduleVar = tex }`)
+- A `Fn()` body runs at kernel compile, so module state is read from whichever renderer set it last (two renderers in one page, or a later stage, overwrite it)
+- **Fix**: pass it in the kernel's build context — `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in the body (`TSL/SceneResources.js`)
 
 ## Output Format
 For each file checked, report:
