@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { BVH_LEAF_MARKERS } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS } from '@/core/Processor/BufferLayout.js';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 

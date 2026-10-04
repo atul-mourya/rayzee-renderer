@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
 import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';

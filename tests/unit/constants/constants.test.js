@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
 
 // Constants.js uses window.devicePixelRatio at module scope, so we must
 // provide a global `window` object before dynamic import.

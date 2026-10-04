@@ -17,8 +17,10 @@ import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { SRGBColorSpace } from 'three';
 import {
-	TRIANGLE_DATA_LAYOUT, TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets,
-	packNormalOct, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, TLAS_PLACEMENT_MASK, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
+	TRIANGLE_DATA_LAYOUT, packNormalOct, TRI_MATERIAL_MASK, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT,
+	assertBVHIndexFits, TLAS_PLACEMENT_MASK,
+} from './BufferLayout.js';
+import { TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from './TextureBuckets.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../Storage/BLASCache.js';
 import { sharedStorage } from '../Storage/shared.js';

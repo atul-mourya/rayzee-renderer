@@ -8,9 +8,8 @@ import { createStorageTexture } from '../Processor/StorageTexturePool.js';
 import { sanitizeRGB, sanitize1, FP16_MAX } from '../TSL/Common.js';
 import { cameraRayPoint, cameraRayUniforms, isOrthographic } from '../TSL/CameraRay.js';
 import {
-	ALBEDO_EPS, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD, NRD_DEFAULTS,
-	NRD_HIT_DIST_A, NRD_HIT_DIST_B,
-} from '../EngineDefaults.js';
+	NRD_DEFAULTS, NRD_HIT_DIST_A, NRD_HIT_DIST_B, ALBEDO_EPS, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD,
+} from './DenoiserSettings.js';
 
 const NRD_EPS = 1e-6;
 const NORMAL_ENCODING_ERROR = 1.5 / 255.0;

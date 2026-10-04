@@ -148,10 +148,6 @@ vi.mock( '@/core/EngineEvents.js', () => ( {
 	EngineEvents: { AUTO_FOCUS_UPDATED: 'AUTO_FOCUS_UPDATED' }
 } ) );
 
-vi.mock( '@/core/EngineDefaults.js', () => ( {
-	AF_DEFAULTS: { SMOOTHING_FACTOR: 0.2, FALLBACK_DISTANCE: 5.0, SNAP_THRESHOLD: 0.5, RESET_THRESHOLD: 0.01 }
-} ) );
-
 const { CameraManager } = await import( '@/core/managers/CameraManager.js' );
 
 function createMockCanvas() {

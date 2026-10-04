@@ -1,5 +1,6 @@
 import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping, FloatType, HalfFloatType } from "three";
-import { alignBucketWidth, TEXTURE_CONSTANTS, MEMORY_CONSTANTS, MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from './BufferLayout.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS } from './TextureBuckets.js';
 import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './Workers/TexturesWorker.js?worker&inline';
 import PackWorker from './Workers/PackWorker.js?worker&inline';
@@ -11,6 +12,14 @@ import { createLogger } from '../utils/Logger.js';
 import { createWorker, hardwareThreads, hasWorkers } from '../Platform.js';
 
 const log = createLogger( 'textures' );
+
+// Memory management constants
+export const MEMORY_CONSTANTS = {
+	MAX_BUFFER_MEMORY: 1024 * 1024 * 1024,
+	MAX_TEXTURE_MEMORY: 2048 * 1024 * 1024,
+	CLEANUP_THRESHOLD: 0.8,
+	STREAM_BATCH_SIZE: 4
+};
 
 // Below this a pack is cheaper than starting a worker for it.
 const WORKER_PACK_BYTES = 8 * 2 ** 20;

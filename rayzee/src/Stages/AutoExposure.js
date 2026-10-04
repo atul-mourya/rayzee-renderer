@@ -7,6 +7,15 @@ import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { luminance } from '../TSL/Common.js';
 
 // ── Histogram constants ────────────────────────────────────
+export const AUTO_EXPOSURE_DEFAULTS = {
+	autoExposure: false,
+	autoExposureKeyValue: 0.18,
+	autoExposureMinExposure: 0.1,
+	autoExposureMaxExposure: 20.0,
+	autoExposureAdaptSpeedBright: 3.0,
+	autoExposureAdaptSpeedDark: 0.5,
+};
+
 const NUM_BINS = 256;
 const MIN_LOG_LUM = - 8.0; // ln(~0.00034)  — very dark
 const MAX_LOG_LUM = 6.0; // ln(~403)     — bright specular
@@ -103,11 +112,11 @@ export class AutoExposure extends RenderStage {
 
 		// ── Adaptation uniforms ──────────────────────────
 
-		this.keyValueU = uniform( options.keyValue ?? 0.18 );
-		this.minExposureU = uniform( options.minExposure ?? 0.1 );
-		this.maxExposureU = uniform( options.maxExposure ?? 20.0 );
-		this.adaptSpeedBrightU = uniform( options.adaptSpeedBright ?? 3.0 );
-		this.adaptSpeedDarkU = uniform( options.adaptSpeedDark ?? 0.5 );
+		this.keyValueU = uniform( options.keyValue ?? AUTO_EXPOSURE_DEFAULTS.autoExposureKeyValue );
+		this.minExposureU = uniform( options.minExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMinExposure );
+		this.maxExposureU = uniform( options.maxExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMaxExposure );
+		this.adaptSpeedBrightU = uniform( options.adaptSpeedBright ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedBright );
+		this.adaptSpeedDarkU = uniform( options.adaptSpeedDark ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedDark );
 		this.epsilonU = uniform( options.epsilon ?? 0.0001 );
 		this.deltaTimeU = uniform( 1.0 / 60.0 );
 		this.isFirstFrameU = uniform( 1.0 ); // 1.0 = true

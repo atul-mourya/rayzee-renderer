@@ -1,12 +1,10 @@
-// Inline copies of EngineDefaults' BVH_LEAF_MARKERS.TRIANGLE_LEAF, BVH_MAX_INDEX and
-// BVH_FOLDED_LEAF_MAX: this runs in the BVH workers, which cannot import it. Keep in step.
-const TRIANGLE_LEAF = 0x40000000;
-const BVH_MAX_INDEX = 0x40000000;
-const BVH_FOLDED_LEAF_MAX = 15;
+import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX } from './BufferLayout.js';
+
+const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
 const FLOATS_PER_NODE = 16;
 const FOLDED = 0x80000000;
 
-/** A folded leaf as its parent stores it (EngineDefaults: BVH_FOLDED_LEAF_MAX). */
+/** A folded leaf as its parent stores it (see BVH_FOLDED_LEAF_MAX). */
 export const foldedRef = ( first, count ) => ( ~ ( ( first << 4 ) | count ) ) >>> 0;
 export const isFoldedRef = ref => ref >= FOLDED;
 export const foldedFirst = ref => ( ( ~ ref ) >>> 0 ) >>> 4;

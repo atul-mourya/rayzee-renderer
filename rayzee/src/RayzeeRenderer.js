@@ -9,7 +9,9 @@ import { PathTracer } from './Stages/PathTracer.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE } from './EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
+import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './Processor/StorageTexturePool.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { TextureReadback } from './Processor/TextureReadback.js';
@@ -27,7 +29,7 @@ import { setActiveColorManagement } from './Color/ActiveColor.js';
 import { getViewTransform } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
-import { deviceMemoryGB } from './Processor/HostMemory.js';
+import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
@@ -154,8 +156,6 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   with renderFrames() or renderUntilComplete()
 	 * @param {boolean} [options.strict=false] - Throw at the point of degradation instead of
 	 *   rendering a plausible wrong image. See EngineIssues.js; read `app.issues` when off.
-	 * @param {string} [options.profile='viewer'] - Which tuning to apply where the viewer's
-	 *   product decisions differ from the physical answer. See RENDER_PROFILES.
 	 * @param {number} [options.maxSceneBytes] - refuse a scene whose estimated host memory is
 	 *   above this. The default refuses where the renderer process would be killed instead of
 	 *   throwing; raise it deliberately, on a fresh browser. See HostMemory.js.
@@ -206,9 +206,12 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._unlitRestore = null;
 		this._applyingSceneMetadata = false;
 
-		// Before the settings: the profile supplies some of their defaults.
-		this._profile = getRenderProfile( options.profile );
-		this._profileName = options.profile ?? 'viewer';
+		if ( options.profile !== undefined ) {
+
+			throw new Error( 'the `profile` option was removed: the engine has one set of defaults. For the old \'physical\' '
+				+ 'profile set `areaLightIntensityScale: 1` and `dofMode: \'physical\'` through `settings`.' );
+
+		}
 
 		// First, so no subsystem can degrade unrecorded.
 		this._issues = new IssueLog( {
@@ -224,15 +227,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		setActiveColorManagement( this.color );
 
 		// ── Settings (single source of truth for all render parameters) ──
-		this.settings = new RenderSettings(
-			{
-				...DEFAULT_STATE,
-				environmentRotation: this._profile.environmentRotation,
-				saturation: this._profile.saturation,
-				dofMode: this._profile.dofMode,
-			},
-			{ issues: this._issues }
-		);
+		this.settings = new RenderSettings( DEFAULT_STATE, { issues: this._issues } );
 
 		// ── Core objects (populated in init) ──
 		this.renderer = null;
@@ -2452,8 +2447,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/**
 	 * What produced the current image, as plain JSON, to keep beside a render: engine and three.js
-	 * versions, the profile by name and by value (a name's values can change between releases), the
-	 * adapter, every live setting with its source, the colour pipeline, and the modes that decide
+	 * versions, the adapter, every live setting with its source, the colour pipeline, and the modes that decide
 	 * whether the render reproduces.
 	 * @returns {Object}
 	 */
@@ -2465,7 +2459,6 @@ export class RayzeeRenderer extends EventDispatcher {
 		return toPortable( {
 			engine: VERSION,
 			three: REVISION,
-			profile: { name: this._profileName, values: { ...this._profile } },
 			adapter: this.adapterInfo ?? null,
 			mode: {
 				headless: this._headless,
@@ -3566,7 +3559,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		RectAreaLightNode.setLTC( RectAreaLightTexturesLib.init() );
 
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.toneMapping = this._profile.toneMapping;
+		this.renderer.toneMapping = DEFAULT_STATE.toneMapping;
 		this.renderer.toneMappingExposure = 1.0;
 		this.renderer.setPixelRatio( 1.0 );
 
@@ -3592,7 +3585,10 @@ export class RayzeeRenderer extends EventDispatcher {
 			// Spread into defaults, so only pass it when the host actually set one.
 			...( this._maxSceneBytes === undefined ? {} : { maxSceneBytes: this._maxSceneBytes } ),
 		} );
-		this.assetLoader = new AssetLoader( this.meshScene, this.camera, null, { issues: this._issues, profile: this._profile } );
+		this.assetLoader = new AssetLoader( this.meshScene, this.camera, null, {
+			issues: this._issues,
+			areaLightIntensityScale: () => this.settings.get( 'areaLightIntensityScale' ),
+		} );
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
 

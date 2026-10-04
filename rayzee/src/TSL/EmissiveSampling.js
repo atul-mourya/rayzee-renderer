@@ -32,7 +32,7 @@ import {
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
 	unpackTriangleNormal, triangleRow, SHADOW_END
 } from './Common.js';
-import { TRI_MATERIAL_MASK } from '../EngineDefaults.js';
+import { TRI_MATERIAL_MASK } from '../Processor/BufferLayout.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';

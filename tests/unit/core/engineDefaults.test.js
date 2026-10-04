@@ -1,22 +1,12 @@
 import { describe, it, expect } from 'vitest';
+import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG } from '@/core/EngineDefaults.js';
+import { TEXTURE_CONSTANTS } from '@/core/Processor/TextureBuckets.js';
+import { MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
 import {
-	ENGINE_DEFAULTS,
-	ASVGF_QUALITY_PRESETS,
-	NRD_DEFAULTS,
-	NRD_QUALITY_PRESETS,
-	NRD_PRESET_KEYS,
-	NRD_HIT_DIST_A,
+	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
-	CAMERA_PRESETS,
-	SKY_PRESETS,
-	CAMERA_RANGES,
-	AUTO_FOCUS_MODES,
-	AF_DEFAULTS,
-	TEXTURE_CONSTANTS,
-	MEMORY_CONSTANTS,
-	PRODUCTION_RENDER_CONFIG,
-	INTERACTIVE_RENDER_CONFIG,
-} from '@/core/EngineDefaults.js';
+} from '@/core/Stages/DenoiserSettings.js';
+import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
 
 describe( 'ENGINE_DEFAULTS', () => {
 
@@ -31,7 +21,6 @@ describe( 'ENGINE_DEFAULTS', () => {
 
 	it( 'has environment parameters', () => {
 
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'environmentMode' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'environmentIntensity' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'environmentRotation' );
 
@@ -46,12 +35,22 @@ describe( 'ENGINE_DEFAULTS', () => {
 
 	} );
 
-	it( 'has denoising parameters', () => {
+	it( 'holds the core\'s settings only: the viewer pieces and the app keep their own', () => {
 
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'enableOIDN' );
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'enableASVGF' );
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'denoiserStrategy' );
-		expect( ENGINE_DEFAULTS.nrdQualityPreset ).toBe( 'medium' );
+		for ( const key of [ 'enableOIDN', 'denoiserStrategy', 'asvgfQualityPreset', 'autoExposure', 'afSmoothingFactor', 'interactionRenderScale', 'canvasWidth', 'debugModel' ] ) {
+
+			expect( ENGINE_DEFAULTS ).not.toHaveProperty( key );
+
+		}
+
+	} );
+
+	it( 'has denoising parameters in DENOISER_DEFAULTS', () => {
+
+		expect( DENOISER_DEFAULTS.enableOIDN ).toBe( false );
+		expect( DENOISER_DEFAULTS.enableASVGF ).toBe( false );
+		expect( DENOISER_DEFAULTS.denoiserStrategy ).toBe( 'none' );
+		expect( DENOISER_DEFAULTS.nrdQualityPreset ).toBe( 'medium' );
 
 	} );
 
@@ -131,110 +130,20 @@ describe( 'ASVGF_QUALITY_PRESETS', () => {
 
 } );
 
-describe( 'CAMERA_PRESETS', () => {
-
-	const requiredFields = [ 'name', 'dofBlur', 'aperture', 'focalLength', 'apertureScale' ];
-
-	it( 'has standard presets', () => {
-
-		expect( CAMERA_PRESETS ).toHaveProperty( 'portrait' );
-		expect( CAMERA_PRESETS ).toHaveProperty( 'landscape' );
-		expect( CAMERA_PRESETS ).toHaveProperty( 'macro' );
-
-	} );
-
-	for ( const [ key, preset ] of Object.entries( CAMERA_PRESETS ) ) {
-
-		it( `${key} preset has required fields`, () => {
-
-			for ( const field of requiredFields ) {
-
-				expect( preset ).toHaveProperty( field );
-
-			}
-
-		} );
-
-		it( `${key} preset leaves the field of view to the camera`, () => {
-
-			expect( preset ).not.toHaveProperty( 'fov' );
-
-		} );
-
-	}
-
-} );
-
-describe( 'SKY_PRESETS', () => {
-
-	it( 'has standard presets', () => {
-
-		expect( SKY_PRESETS ).toHaveProperty( 'clearDay' );
-		expect( SKY_PRESETS ).toHaveProperty( 'clearMorning' );
-		expect( SKY_PRESETS ).toHaveProperty( 'clearNoon' );
-		expect( SKY_PRESETS ).toHaveProperty( 'sunset' );
-
-	} );
-
-	for ( const [ key, preset ] of Object.entries( SKY_PRESETS ) ) {
-
-		it( `${key} has name and sun parameters`, () => {
-
-			expect( preset ).toHaveProperty( 'name' );
-			expect( preset ).toHaveProperty( 'sunAzimuth' );
-			expect( preset ).toHaveProperty( 'sunElevation' );
-			expect( preset.turbidity ).toBeGreaterThanOrEqual( 1 );
-
-		} );
-
-	}
-
-} );
-
-describe( 'CAMERA_RANGES', () => {
-
-	it( 'fov has min < max', () => {
-
-		expect( CAMERA_RANGES.fov.min ).toBeLessThan( CAMERA_RANGES.fov.max );
-
-	} );
-
-	it( 'focusDistance has min < max', () => {
-
-		expect( CAMERA_RANGES.focusDistance.min ).toBeLessThan( CAMERA_RANGES.focusDistance.max );
-
-	} );
-
-	it( 'aperture has options array', () => {
-
-		expect( Array.isArray( CAMERA_RANGES.aperture.options ) ).toBe( true );
-		expect( CAMERA_RANGES.aperture.options.length ).toBeGreaterThan( 0 );
-
-	} );
-
-} );
-
 describe( 'Other constants', () => {
 
-	it( 'AUTO_FOCUS_MODES has MANUAL and AUTO', () => {
+	it( 'AUTO_FOCUS_DEFAULTS starts in auto mode at the centre', () => {
 
-		expect( AUTO_FOCUS_MODES.MANUAL ).toBe( 'manual' );
-		expect( AUTO_FOCUS_MODES.AUTO ).toBe( 'auto' );
-
-	} );
-
-	it( 'AF_DEFAULTS has SMOOTHING_FACTOR', () => {
-
-		expect( AF_DEFAULTS ).toHaveProperty( 'SMOOTHING_FACTOR' );
-		expect( typeof AF_DEFAULTS.SMOOTHING_FACTOR ).toBe( 'number' );
+		expect( AUTO_FOCUS_DEFAULTS.autoFocusMode ).toBe( 'auto' );
+		expect( AUTO_FOCUS_DEFAULTS.afScreenPoint ).toEqual( { x: 0.5, y: 0.5 } );
+		expect( typeof AUTO_FOCUS_DEFAULTS.afSmoothingFactor ).toBe( 'number' );
 
 	} );
 
 	it( 'TEXTURE_CONSTANTS has expected keys', () => {
 
-		expect( TEXTURE_CONSTANTS ).toHaveProperty( 'PIXELS_PER_MATERIAL' );
 		expect( TEXTURE_CONSTANTS ).toHaveProperty( 'MAX_TEXTURE_SIZE' );
-		expect( TEXTURE_CONSTANTS.PIXELS_PER_MATERIAL ).toBe( 30 );
+		expect( TEXTURE_CONSTANTS ).toHaveProperty( 'BUCKET_LAYER_STRIDE' );
 
 	} );
 

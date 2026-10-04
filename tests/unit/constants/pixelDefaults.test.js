@@ -7,15 +7,21 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-	ENGINE_DEFAULTS, MATERIAL_DEFAULTS, RENDER_PROFILES,
-	PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings,
+	ENGINE_DEFAULTS, MATERIAL_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings,
 } from '@/core/EngineDefaults.js';
+import { DENOISER_DEFAULTS } from '@/core/Stages/DenoiserSettings.js';
+import { AUTO_EXPOSURE_DEFAULTS } from '@/core/Stages/AutoExposure.js';
+import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
 
 describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', () => {
 
-	it( 'render profiles', () => {
+	it( 'viewer piece defaults', () => {
 
-		expect( RENDER_PROFILES ).toMatchSnapshot();
+		expect( {
+			denoisers: DENOISER_DEFAULTS,
+			autoExposure: AUTO_EXPOSURE_DEFAULTS,
+			autoFocus: AUTO_FOCUS_DEFAULTS,
+		} ).toMatchSnapshot();
 
 	} );
 

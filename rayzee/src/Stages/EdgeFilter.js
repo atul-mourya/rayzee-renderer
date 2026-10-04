@@ -5,7 +5,8 @@ import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { FloatType, RGBAFormat, LinearFilter, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { luminance } from '../TSL/Common.js';
-import { ALBEDO_EPS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
+import { ALBEDO_EPS } from './DenoiserSettings.js';
 
 // NormalDepth writes depth ≈ 65504 for miss (env/background) rays. This sits below
 // the sentinel and above any real ray distance, so it's a clean hit/miss flag.

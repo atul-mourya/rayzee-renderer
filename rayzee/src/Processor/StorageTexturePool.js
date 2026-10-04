@@ -14,8 +14,29 @@
 
 import { StorageTexture, RenderTarget } from 'three/webgpu';
 import { RGBAFormat, FloatType, LinearFilter, NearestFilter, Box2, Vector2 } from 'three';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
 import { createLogger, fmt } from '../utils/Logger.js';
+
+// Hard ceiling the engine supports for the reserved (pre-allocated) render size. 4K (3840×2160)
+// fits within 4096². Raising the reserved size to this pins ~1.5 GB of MRT textures — opt-in only.
+export const MAX_RESERVABLE_RENDER_SIZE = 4096;
+
+// Reserved render size: every per-resolution compute StorageTexture + aux buffer is pre-allocated at
+// this SQUARE size and never resized at runtime (works around three.js StorageTexture-resize bugs —
+// see TSL/patches history). Render resolution must not exceed it; the engine warns + ignores larger.
+// It is a LIVE binding (mutable) so it can be raised (e.g. for 4K) via setReservedRenderSize(); consumers
+// read it inside their constructors, and stages already built at a lower value are re-initialised in place
+// by PathTracerApp.setReservedRenderResolution() — which is the device-gated API hosts should call, at any
+// point in the lifecycle. Default 2048 (zero VRAM regression). See docs/internal/specs/wavefront-chunked-pool.md.
+export let MAX_STORAGE_TEXTURE_SIZE = 2048;
+
+// Set the reserved render size. MUST be called before pipeline construction (stages pre-allocate at
+// this value and cannot resize). Clamped to [256, MAX_RESERVABLE_RENDER_SIZE]. Returns the applied value.
+export function setReservedRenderSize( px ) {
+
+	MAX_STORAGE_TEXTURE_SIZE = Math.max( 256, Math.min( MAX_RESERVABLE_RENDER_SIZE, Math.floor( px ) || 256 ) );
+	return MAX_STORAGE_TEXTURE_SIZE;
+
+}
 
 const log = createLogger( 'gpu' );
 

@@ -3,7 +3,7 @@ import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform, If,
 import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
 import { cameraRayPoint, cameraRayUniforms } from '../TSL/CameraRay.js';
 
 /**

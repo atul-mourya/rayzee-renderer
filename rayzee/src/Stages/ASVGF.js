@@ -5,7 +5,8 @@ import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, FloatType, RGBAFormat, NearestFilter, LinearFilter, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { luminance } from '../TSL/Common.js';
-import { ALBEDO_EPS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
+import { ALBEDO_EPS, ASVGF_QUALITY_PRESETS } from './DenoiserSettings.js';
 
 // Replace NaN/±Inf with a bounded value so one firefly can't permanently poison the
 // temporal EMA (mix() propagates NaN forever). Per-channel: NaN (x!=x) → 0, ±Inf → [0,1e7].
@@ -39,14 +40,14 @@ export class ASVGF extends RenderStage {
 
 		this.renderer = renderer;
 
-		this.temporalAlpha = uniform( options.temporalAlpha ?? 0.0 );
-		// > 0 is required for firefly rejection, not just anti-lag — see ENGINE_DEFAULTS.
-		this.gradientStrength = uniform( options.gradientStrength ?? 1.0 );
+		this.temporalAlpha = uniform( options.temporalAlpha ?? ASVGF_QUALITY_PRESETS.medium.temporalAlpha );
+		// > 0 is required for firefly rejection, not just anti-lag — see DENOISER_DEFAULTS.
+		this.gradientStrength = uniform( options.gradientStrength ?? ASVGF_QUALITY_PRESETS.medium.gradientStrength );
 		// σ multiplier for the per-pixel noise floor (NRD luminanceSigmaScale ≈ 2).
-		this.gradientSigmaScale = uniform( options.gradientSigmaScale ?? 2.0 );
+		this.gradientSigmaScale = uniform( options.gradientSigmaScale ?? ASVGF_QUALITY_PRESETS.medium.gradientSigmaScale );
 		// Secondary relative floor on the normalised gradient (0 = rely on σ alone).
-		this.gradientNoiseFloor = uniform( options.gradientNoiseFloor ?? 0.0 );
-		this.maxAccumFrames = uniform( options.maxAccumFrames ?? 32.0 );
+		this.gradientNoiseFloor = uniform( options.gradientNoiseFloor ?? ASVGF_QUALITY_PRESETS.medium.gradientNoiseFloor );
+		this.maxAccumFrames = uniform( options.maxAccumFrames ?? ASVGF_QUALITY_PRESETS.medium.maxAccumFrames );
 
 		this.resW = uniform( options.width || 1 );
 		this.resH = uniform( options.height || 1 );

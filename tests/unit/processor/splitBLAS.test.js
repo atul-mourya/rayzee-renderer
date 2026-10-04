@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BVH_LEAF_MARKERS } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS } from '@/core/Processor/BufferLayout.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {

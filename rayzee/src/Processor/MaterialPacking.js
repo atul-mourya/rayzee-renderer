@@ -1,4 +1,5 @@
-import { MATERIAL_DATA_LAYOUT as M, MATERIAL_DEFAULTS as D, normalizeAttenuationDistance } from '../EngineDefaults.js';
+import { MATERIAL_DEFAULTS as D } from '../EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT as M, normalizeAttenuationDistance } from './BufferLayout.js';
 
 // The first 8 Matrix3 elements; the GPU rebuilds the 9th (always 1).
 const IDENTITY_UV = [ 1, 0, 0, 0, 1, 0, 0, 0 ];

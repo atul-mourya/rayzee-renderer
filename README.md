@@ -136,9 +136,10 @@ Its defaults are the batch renderer's rather than the viewer's. All three are re
 | option | default | effect |
 | --- | --- | --- |
 | `strict` | `true` | throws at the point of degradation instead of rendering around it |
-| `profile` | `'physical'` | drops viewer tuning — the glTF area-light damping |
 | `deterministic` | `true` | pins every clock- and readback-dependent input, so N samples reproduce bit-for-bit |
 | `storage` | `false` | no on-disk cache, so an earlier run's cached state cannot change what a batch renders |
+
+The engine has one set of defaults, the viewer's. A batch host that wants lens-accurate depth of field and glTF placeholder area lights at their authored power passes `settings: { dofMode: 'physical', areaLightIntensityScale: 1 }`.
 
 With `strict: false` the same degradations are recorded instead of thrown: read `app.issues`, or subscribe to `EngineEvents.ISSUE`. A non-empty `app.issueErrors` means *do not publish this frame*. Codes (`ISSUE_CODES`) are add-only API surface.
 

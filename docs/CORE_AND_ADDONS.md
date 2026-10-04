@@ -120,7 +120,7 @@ the core. Without it the core's programs carry none of that code, and still rend
 7. **Archives and pbrt as an add-on** — done. `rayzee/addons/archives` exports `ArchiveImporter` (the archive half
    of the old `AssetLoader`, moved whole) with the readers and pbrt behind it; `assetLoader.setArchiveImporter()`
    installs it, `PathTracerApp` does so itself, and without it an archive's error names the add-on. The spill budgets
-   moved to `EngineDefaults`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
+   moved to `Processor/HostMemory.js`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
    with the core plus the add-on. That check found a core bug the viewer had hidden: a load frames the camera with
    `lookAt()`, which leaves its world matrix stale, and only the orbit controls refreshed it — `renderFrames` now
    does, each pass. The core downloads 289 KB compressed (from 326).

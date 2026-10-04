@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TextureCreator } from '@/core/Processor/TextureCreator.js';
+import { TextureCreator, MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
 import { configurePlatform } from '@/core/Platform.js';
-import { MEMORY_CONSTANTS } from '@/core/EngineDefaults.js';
 
 // A bitmap carries the pixels createImageBitmap would have produced for its source and options.
 class FakeBitmap {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
-import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK } from '@/core/Processor/BufferLayout.js';
 
 const translation = ( x ) => [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1 ];
 

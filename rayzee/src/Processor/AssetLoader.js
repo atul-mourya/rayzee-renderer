@@ -17,7 +17,7 @@ import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { decodersOnDemand } from './GLTFDecoders.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { getRenderProfile } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 
 // Define supported file formats
 // What the core reads itself; every other format is registered (registerFormat) or comes with an add-on.
@@ -70,7 +70,7 @@ function areaLightPowerFactor( node, width, height, userData ) {
  */
 export class AssetLoader extends EventDispatcher {
 
-	constructor( scene, camera, controls, { issues = null, profile = null } = {} ) {
+	constructor( scene, camera, controls, { issues = null, areaLightIntensityScale = null } = {} ) {
 
 		super();
 		this.scene = scene;
@@ -109,7 +109,7 @@ export class AssetLoader extends EventDispatcher {
 		this._formats = new Map();
 
 		this._issues = issues;
-		this._profile = profile ?? getRenderProfile();
+		this._areaLightIntensityScale = areaLightIntensityScale ?? ( () => ENGINE_DEFAULTS.areaLightIntensityScale );
 
 		// A glTF whose external texture 404s still loads. Only place the engine sees the URL.
 		// ZIP paths build their own managers and are not covered.
@@ -187,7 +187,8 @@ export class AssetLoader extends EventDispatcher {
 
 	_keyed( kind, id ) {
 
-		return id ? `${kind}:${this._profile?.name ?? ''}:${id}` : null;
+		// The empty field held a profile name that was never set; kept so stored caches and sessions still match.
+		return id ? `${kind}::${id}` : null;
 
 	}
 
@@ -1175,7 +1176,7 @@ export class AssetLoader extends EventDispatcher {
 					const power = userData.intensity * areaLightPowerFactor( object, userData.width, userData.height, userData );
 					const light = new RectAreaLight(
 						new Color( ...userData.color ),
-						power * this._profile.areaLightIntensityScale,
+						power * this._areaLightIntensityScale(),
 						userData.width,
 						userData.height
 					);

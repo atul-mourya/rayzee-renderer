@@ -1,4 +1,4 @@
-import { GBUFFER_MISS_THRESHOLD } from '../EngineDefaults.js';
+import { GBUFFER_MISS_THRESHOLD } from '../Stages/DenoiserSettings.js';
 
 /**
  * History of the frames the path tracer restarted while the view moved, reprojected into the

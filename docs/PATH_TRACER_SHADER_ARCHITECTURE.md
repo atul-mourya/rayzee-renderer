@@ -186,7 +186,7 @@ Wavefront uniforms live on `PathTracer`: `_wfRenderWidth`, `_wfRenderHeight`, `_
 ## Data Layouts (GPU storage buffers)
 
 ### Triangle data (`triangleStorageNode`)
-Compact, vec4-aligned 5-slot layout (20 u32 lanes = 80 B per triangle, `TRIANGLE_DATA_LAYOUT` in `EngineDefaults.js`).
+Compact, vec4-aligned 5-slot layout (20 u32 lanes = 80 B per triangle, `TRIANGLE_DATA_LAYOUT` in `Processor/BufferLayout.js`).
 The store is bound as `uvec4`; positions and UVs are float bit patterns read with
 `uintBitsToFloat`, and each vertex normal is an oct16 pair in its position's spare `.w` lane:
 1. posA.xyz, normalA (oct16)
@@ -231,7 +231,7 @@ transform back through. Single-use and emissive geometry is baked to world space
 identity leaf instead, so it needs no transform either way.
 
 ### Material data (`materialStorageNode`)
-33 vec4 slots (132 floats) per material, laid out by `MATERIAL_DATA_LAYOUT` (`EngineDefaults.js`) and written only by `packMaterial()` (`Processor/MaterialPacking.js`): the shadow-path fields first (IOR, transmission, thickness, attenuation, opacity, side, alpha), then base colour / metalness / emissive / roughness, map indices, clear coat, dispersion, sheen, specular, iridescence, bump and displacement, the per-map UV transforms, subsurface, anisotropy and the extension-map indices.
+33 vec4 slots (132 floats) per material, laid out by `MATERIAL_DATA_LAYOUT` (`Processor/BufferLayout.js`) and written only by `packMaterial()` (`Processor/MaterialPacking.js`): the shadow-path fields first (IOR, transmission, thickness, attenuation, opacity, side, alpha), then base colour / metalness / emissive / roughness, map indices, clear coat, dispersion, sheen, specular, iridescence, bump and displacement, the per-map UV transforms, subsurface, anisotropy and the extension-map indices.
 
 ### Emissive triangles / Light BVH (`lightStorageNode`)
 One packed buffer `[ light BVH nodes | emissive entries | bit-trail map ]` (`PathTracerStage._rebuildLightBuffer`). `emissiveVec4Offset` is where the emissive entries start, `reverseMapVec4Offset` where the per-triangle bit trails start.
@@ -497,7 +497,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 1. **Add a new material lobe**: integrate into `calculateBRDFWeights`, the `generateSampledDirection` lobe chain (PathTracerCore.js), the mixture density `calculateBSDFSamplingPDF`, and `evaluateMaterialResponse`.
 2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `TSL/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
 3. **Add a wavefront kernel**: build a new `Fn().compute()`, register it in `_buildWavefrontKernels`, dispatch it in `render()`. A new integrator plugs into the integrator hooks instead (see `BidirectionalIntegrator`); never branch on it inside `PathTracer`.
-4. **Per-triangle custom attributes**: expand the triangle layout (`EngineDefaults.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
+4. **Per-triangle custom attributes**: expand the triangle layout (`Processor/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
 5. **Per-pixel ray policies**: `buildActivePixels` already decides which pixels are traced (the pixel freeze); `generateList` traces only the list it builds.
 
 ---

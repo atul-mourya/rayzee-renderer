@@ -1,8 +1,9 @@
+import { TEXTURE_CONSTANTS, alignBucketWidth } from '../TextureBuckets.js';
+
 let canvas, ctx;
 
 // Memory limits and chunking configuration
 const MEMORY_LIMITS = {
-	MAX_TEXTURE_DIMENSION: 8192, // Hardware ceiling (WebGPU maxTextureDimension2D guaranteed min); the per-scene maxTextureSize setting is the actual knob
 	CHUNK_SIZE: 8, // Optimized: Process textures in chunks of 8 for better memory locality
 	ADAPTIVE_CHUNK_SIZE: true, // Enable adaptive chunk sizing based on texture dimensions
 	MEMORY_SAFETY_FACTOR: 0.8 // Use only 80% of estimated available memory
@@ -136,7 +137,7 @@ self.onmessage = async function ( e ) {
 function initializeWorker( maxTextureSize ) {
 
 	// Initialize OffscreenCanvas with optimal settings
-	const size = Math.min( maxTextureSize, MEMORY_LIMITS.MAX_TEXTURE_DIMENSION );
+	const size = Math.min( maxTextureSize, TEXTURE_CONSTANTS.MAX_TEXTURE_SIZE );
 	canvas = new OffscreenCanvas( size, size );
 	ctx = canvas.getContext( '2d', {
 		willReadFrequently: true,
@@ -706,7 +707,7 @@ function calculateOptimalDimensions( textures, maxTextureSize ) {
 	}
 
 	// Scale down proportionally only when the cap is exceeded; native res is kept below it.
-	const cap = Math.min( maxTextureSize, MEMORY_LIMITS.MAX_TEXTURE_DIMENSION );
+	const cap = Math.min( maxTextureSize, TEXTURE_CONSTANTS.MAX_TEXTURE_SIZE );
 	const longest = Math.max( maxWidth, maxHeight );
 	if ( longest > cap ) {
 
@@ -716,9 +717,7 @@ function calculateOptimalDimensions( textures, maxTextureSize ) {
 
 	}
 
-	// An RGBA8 row upload must be a multiple of 256 bytes, so widths land on 64 texels.
-	// Mirrors alignBucketWidth in EngineDefaults (not importable from worker context).
-	maxWidth = Math.min( cap, Math.max( 4, Math.ceil( Math.max( 1, maxWidth ) / 64 ) * 64 ) );
+	maxWidth = alignBucketWidth( maxWidth, cap );
 
 	return { maxWidth, maxHeight: Math.max( 1, maxHeight ) };
 

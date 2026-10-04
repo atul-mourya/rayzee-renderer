@@ -14,7 +14,7 @@
  * that actually runs out (BVH assembly), where it asks only for that step's bytes.
  */
 
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from './BufferLayout.js';
 import { DEFAULT_CHUNK_BYTES } from './ChunkedRecords.js';
 
 /** Bytes one stored triangle occupies in the triangle records. */
@@ -58,6 +58,12 @@ export const SAFE_SCENE_BYTES = 7040 * 1024 * 1024;
  * advance. Raise it with `new SceneProcessor( { maxSceneBytes } )` to test a bigger rung.
  */
 export const MAX_SCENE_BYTES = 9216 * 1024 * 1024;
+
+// Scene-archive budgets with the memory spill on: the triangles and BVH leave the heap as the build goes, so the host
+// passes these instead of the importer's own. The whole 15-part Moana subset (55.7M / 7.0M) loads cold under them, at
+// an 8.1 GB preflight estimate; the preflight, not the budget, refuses anything larger.
+export const SPILL_TRIANGLE_BUDGET = 60_000_000;
+export const SPILL_PLACEMENT_BUDGET = 8_000_000;
 
 /**
  * The host's memory in GB: the host's own figure when it gives one, else Chrome's

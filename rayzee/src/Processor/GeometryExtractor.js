@@ -1,7 +1,7 @@
 import { BufferAttribute, Vector3, Vector2, Color, Matrix3, Matrix4, FrontSide, BackSide, DoubleSide, RGBAFormat } from "three";
-import {
-	TEXTURE_CONSTANTS, TRIANGLE_DATA_LAYOUT, MATERIAL_DEFAULTS, packNormalOct, packTriangleFlags
-} from '../EngineDefaults.js';
+import { MATERIAL_DEFAULTS } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, packNormalOct, packTriangleFlags } from './BufferLayout.js';
+import { TEXTURE_CONSTANTS } from './TextureBuckets.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from './ChunkedRecords.js';
 import { createLogger, fmt, warnOnce } from '../utils/Logger.js';

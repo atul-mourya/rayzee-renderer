@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
 
 // Triangle record: 20 uint lanes; positions f32 at 0,1,2 (A), 4,5,6 (B), 8,9,10 (C)
 const FPT = 20;

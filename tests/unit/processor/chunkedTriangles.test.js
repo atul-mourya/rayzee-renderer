@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
 import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';

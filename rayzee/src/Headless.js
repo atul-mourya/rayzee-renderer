@@ -1,6 +1,6 @@
 /**
  * The supported way to render without a person watching. Defaults are the batch renderer's —
- * strict, physical profile, deterministic — all reversible, none reversible by accident.
+ * strict, deterministic — all reversible, none reversible by accident.
  *
  * @example
  * const shot = await renderHeadless( { model: url, width: 1920, height: 1080, samples: 256 } );
@@ -20,11 +20,10 @@ import { PathTracerApp } from './PathTracerApp.js';
  * @param {number} [options.samples=64] - samples to accumulate
  * @param {'linear'|'srgb'} [options.colorSpace='srgb']
  * @param {boolean} [options.strict=true]
- * @param {string} [options.profile='physical'] - see RENDER_PROFILES
  * @param {boolean} [options.deterministic=true]
  * @param {boolean} [options.allowEarlyRetire=false] - needs `deterministic: false` to be reachable
  * @param {boolean} [options.denoise=false] - one final OIDN pass, read back instead of the raw accumulation
- * @param {Object} [options.settings] - applied after the model loads
+ * @param {Object} [options.settings] - applied before the model loads and again after it
  * @param {function(number): void} [options.onProgress] - running sample count
  * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number,
  *   colorSpace: string, source: string, samples: number, retiredBy: string, issues: Object[], adapter: Object,
@@ -95,7 +94,6 @@ export async function openHeadless( {
 	width = 1920,
 	height = 1080,
 	strict = true,
-	profile = 'physical',
 	deterministic = true,
 	settings = null,
 	storage = false,
@@ -103,7 +101,7 @@ export async function openHeadless( {
 } = {} ) {
 
 	// Off unless asked for: cached state from an earlier run must not change what a batch renders.
-	const app = new PathTracerApp( canvas ?? null, { autoResize: false, strict, profile, storage, hostMemoryGB } );
+	const app = new PathTracerApp( canvas ?? null, { autoResize: false, strict, storage, hostMemoryGB } );
 
 	try {
 
@@ -114,7 +112,10 @@ export async function openHeadless( {
 		await app.init();
 		app.setCanvasSize( width, height );
 
+		// Before the load as well: some are read while a model loads (areaLightIntensityScale).
+		if ( settings ) app.settings.setMany( settings, { silent: true } );
 		if ( model ) await app.loadModel( model );
+		// Again after it, over anything the model's metadata set.
 		if ( settings ) app.settings.setMany( settings, { silent: true } );
 
 		// After the model: scene metadata can turn adaptive sampling back on.

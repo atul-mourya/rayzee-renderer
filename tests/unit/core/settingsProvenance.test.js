@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
-import { RENDER_PROFILES, getRenderProfile, ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
+import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
 import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping, AgXToneMapping } from 'three';
 
@@ -59,67 +59,54 @@ describe( 'settings provenance', () => {
 
 } );
 
-describe( 'render profiles', () => {
+describe( 'engine defaults', () => {
 
-	it( 'keeps the viewer profile as the default', () => {
+	it( 'ships one tuning: placeholder area lights at a tenth, the HDRI unrotated, AgX at neutral saturation', () => {
 
-		expect( getRenderProfile() ).toBe( RENDER_PROFILES.viewer );
-		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( RENDER_PROFILES.viewer.environmentRotation );
-
-	} );
-
-	it( 'states the viewer tuning the engine ships', () => {
-
-		expect( RENDER_PROFILES.viewer.areaLightIntensityScale ).toBe( 0.1 );
-		expect( RENDER_PROFILES.viewer.environmentRotation ).toBe( 0 );
+		expect( ENGINE_DEFAULTS.areaLightIntensityScale ).toBe( 0.1 );
+		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( 0 );
+		expect( ENGINE_DEFAULTS.toneMapping ).toBe( AgXToneMapping );
+		expect( ENGINE_DEFAULTS.saturation ).toBe( 1.0 );
 
 	} );
 
-	it( 'leaves authored values alone under the physical profile', () => {
+	it( 'sets depth of field by its look', () => {
 
-		expect( RENDER_PROFILES.physical.areaLightIntensityScale ).toBe( 1.0 );
-		expect( RENDER_PROFILES.physical.environmentRotation ).toBe( 0 );
-
-	} );
-
-	it( 'grades neither profile: both show AgX at neutral saturation', () => {
-
-		for ( const profile of [ RENDER_PROFILES.viewer, RENDER_PROFILES.physical ] ) {
-
-			expect( profile.toneMapping ).toBe( AgXToneMapping );
-			expect( profile.saturation ).toBe( 1.0 );
-
-		}
+		expect( ENGINE_DEFAULTS.dofMode ).toBe( 'look' );
 
 	} );
 
-	it( 'keeps every ENGINE_DEFAULTS grade equal to the viewer profile', () => {
+	it( 'keeps areaLightIntensityScale as a setting with provenance, for the loader to read', () => {
 
-		for ( const key of [ 'environmentRotation', 'saturation', 'toneMapping', 'dofMode' ] ) {
+		const settings = new RenderSettings();
+		settings.set( 'areaLightIntensityScale', 1, { silent: true } );
 
-			expect( ENGINE_DEFAULTS[ key ] ).toBe( RENDER_PROFILES.viewer[ key ] );
-
-		}
-
-	} );
-
-	it( 'sets depth of field by its look in the viewer and by a real lens in the physical profile', () => {
-
-		expect( RENDER_PROFILES.viewer.dofMode ).toBe( 'look' );
-		expect( RENDER_PROFILES.physical.dofMode ).toBe( 'physical' );
+		expect( settings.get( 'areaLightIntensityScale' ) ).toBe( 1 );
+		expect( settings.getEffective().areaLightIntensityScale ).toMatchObject( { value: 1, source: SETTING_SOURCE.HOST, routed: true } );
+		expect( () => settings.applyAll() ).not.toThrow();
 
 	} );
 
-	it( 'refuses an unknown profile rather than falling back', () => {
+} );
 
-		expect( () => getRenderProfile( 'phyiscal' ) ).toThrow( /unknown render profile/ );
+describe( 'RenderSettings.define', () => {
+
+	it( 'takes the default a layer brings', () => {
+
+		const settings = new RenderSettings( {} );
+		settings.define( 'viewerScale', { default: 0.5, apply: () => {} } );
+
+		expect( settings.get( 'viewerScale' ) ).toBe( 0.5 );
+		expect( settings.getEffective().viewerScale ).toMatchObject( { value: 0.5, source: SETTING_SOURCE.DEFAULT, routed: true } );
 
 	} );
 
-	it( 'freezes the profiles', () => {
+	it( 'falls back to the defaults the store was built with', () => {
 
-		expect( Object.isFrozen( RENDER_PROFILES ) ).toBe( true );
-		expect( Object.isFrozen( RENDER_PROFILES.viewer ) ).toBe( true );
+		const settings = new RenderSettings( { viewerScale: 0.25 } );
+		settings.define( 'viewerScale', { apply: () => {} } );
+
+		expect( settings.get( 'viewerScale' ) ).toBe( 0.25 );
 
 	} );
 

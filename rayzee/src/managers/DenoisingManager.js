@@ -9,7 +9,10 @@ import { createLogger } from '../utils/Logger.js';
 // The neural passes live in `../neural/` but report through the manager that drives them, so they
 // share one namespace: `rayzee.log.only( 'neural' )` shows the whole chain.
 const neuralLog = createLogger( 'neural' );
-import { ENGINE_DEFAULTS as DEFAULT_STATE, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
+import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
+import {
+	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS,
+} from '../Stages/DenoiserSettings.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
 // model and puts the chosen one back for the finished image. Resolution-aware by construction:
@@ -135,13 +138,13 @@ export class DenoisingManager extends EventDispatcher {
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
-		this._finalQuality = DEFAULT_STATE.oidnQuality;
+		this._finalQuality = DENOISER_DEFAULTS.oidnQuality;
 		// Two independent decisions. `finalDenoise` is the OIDN pass on the finished image;
 		// `continuousDenoise` is OIDN as the live-view denoiser. `denoiser.enabled` means only
 		// "OIDN is in use at all", which is what the aux G-buffer wiring needs.
-		this.finalDenoise = DEFAULT_STATE.enableOIDN;
-		this.continuousDenoise = DEFAULT_STATE.continuousDenoise;
-		this.continuousDenoiseInterval = DEFAULT_STATE.continuousDenoiseInterval;
+		this.finalDenoise = DENOISER_DEFAULTS.enableOIDN;
+		this.continuousDenoise = DENOISER_DEFAULTS.continuousDenoise;
+		this.continuousDenoiseInterval = DENOISER_DEFAULTS.continuousDenoiseInterval;
 		// -Infinity, not 0: 0 reads as "denoised at time zero", which blocks the first cadence
 		// denoise while performance.now() is still below the interval.
 		this._lastCadenceAt = - Infinity;
@@ -160,7 +163,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._onPostProcessRefresh = null;
 		this._onDisplayRefresh = null;
 
-		this.temporalHistory = DEFAULT_STATE.oidnTemporalHistory;
+		this.temporalHistory = DENOISER_DEFAULTS.oidnTemporalHistory;
 		this._history = null;
 		// Stale after a scene-changing reset, or one the app did not announce (material/env edits).
 		this._historyDirty = true;
@@ -307,7 +310,8 @@ export class DenoisingManager extends EventDispatcher {
 		// Compositor decides what the single canvas shows. The exposure, grade and tone curve
 		// come from the renderer's own output pass, so it is not told about them either.
 		this.denoiser = new OIDNDenoiser( this.renderer, {
-			...DEFAULT_STATE,
+			enableOIDN: DENOISER_DEFAULTS.enableOIDN,
+			oidnQuality: DENOISER_DEFAULTS.oidnQuality,
 
 			backendParams: () => ( {
 				device: this.renderer.backend.device,
@@ -378,8 +382,8 @@ export class DenoisingManager extends EventDispatcher {
 		const pt = this._stages.pathTracer;
 
 		this.upscaler = new AIUpscaler( this.upscalerCanvas, this.renderer, {
-			scaleFactor: DEFAULT_STATE.upscalerScale || 2,
-			quality: DEFAULT_STATE.upscalerQuality || 'fast',
+			scaleFactor: DENOISER_DEFAULTS.upscalerScale || 2,
+			quality: DENOISER_DEFAULTS.upscalerQuality || 'fast',
 
 			// One source: the render canvas shows whatever the Compositor picked — the denoised
 			// picture when OIDN is on, the raw render otherwise — so the upscaler always enlarges
@@ -407,7 +411,7 @@ export class DenoisingManager extends EventDispatcher {
 			getSaturation: () => this._getSaturation(),
 		} );
 
-		this.upscaler.enabled = DEFAULT_STATE.enableUpscaler || false;
+		this.upscaler.enabled = DENOISER_DEFAULTS.enableUpscaler || false;
 
 		// Forward lifecycle events (store refs for removal on re-setup / dispose)
 		this._upscalerResChangedHandler = ( e ) =>

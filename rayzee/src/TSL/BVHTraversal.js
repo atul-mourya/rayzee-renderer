@@ -25,7 +25,10 @@ import {
 	bool as tslBool,
 } from 'three/tsl';
 
-import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TLAS_LEAF_IDENTITY } from '../EngineDefaults.js';
+import {
+	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX,
+	TLAS_LEAF_IDENTITY,
+} from '../Processor/BufferLayout.js';
 import { HitInfo } from './Struct.js';
 import {
 	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle

@@ -128,7 +128,6 @@ async function boot() {
 		width: RENDER_SIZE.width,
 		height: RENDER_SIZE.height,
 		strict: false,
-		profile: 'viewer',
 		deterministic: true,
 	} );
 
@@ -1197,7 +1196,6 @@ async function appLifecycleCycle( sceneId, spp = 1 ) {
 		width: RENDER_SIZE.width,
 		height: RENDER_SIZE.height,
 		strict: false,
-		profile: 'viewer',
 		deterministic: true,
 		settings: { ...session.settingsFloor(), ...BASE_SETTINGS, ...spec.settings },
 	} );

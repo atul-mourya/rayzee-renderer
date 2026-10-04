@@ -28,7 +28,7 @@ import { foldLeaves } from '@/core/Processor/BVHLeafFold.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
 import { Ray } from '@/core/TSL/Struct.js';
 import { withSceneResources } from '@/core/TSL/SceneResources.js';
-import { TRI_SIDE_SHIFT } from '@/core/EngineDefaults.js';
+import { TRI_SIDE_SHIFT } from '@/core/Processor/BufferLayout.js';
 
 const LANES = 20;
 const TRIANGLES = 4000;

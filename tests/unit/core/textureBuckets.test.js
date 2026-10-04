@@ -1,11 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-	alignBucketWidth,
-	getTextureBucketId,
-	packTextureIndex,
-	planTextureBuckets,
-	TEXTURE_CONSTANTS,
-} from '@/core/EngineDefaults.js';
+	alignBucketWidth, getTextureBucketId, packTextureIndex, planTextureBuckets, TEXTURE_CONSTANTS,
+} from '@/core/Processor/TextureBuckets.js';
 
 const CAP = 4096;
 const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;

@@ -320,7 +320,7 @@ describe( 'RenderSettings', () => {
 			const pathTracer = { setUniform: vi.fn(), setInteractionModeEnabled: vi.fn(), updateCompletionThreshold: vi.fn(), setIntegrator: vi.fn(), environment: { setEnvironmentRotation: vi.fn() } };
 			const compositor = { setSaturation: vi.fn(), setTransparentBackground: vi.fn(), setConvergenceOverlay: vi.fn() };
 			settings.bind( { stages: { pathTracer, compositor }, resetCallback } );
-			settings.define( 'interactionRenderScale', { apply, reset: false } );
+			settings.define( 'interactionRenderScale', { default: 0.5, apply, reset: false } );
 
 			expect( settings.getEffective().interactionRenderScale ).toEqual( { value: 0.5, source: 'default', routed: true } );
 

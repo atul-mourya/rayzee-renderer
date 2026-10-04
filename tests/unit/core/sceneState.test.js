@@ -6,7 +6,7 @@ import { CameraManager } from '@/core/managers/CameraManager.js';
 import { CameraTrack } from '@/core/managers/timeline/CameraTrack.js';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
-import { MATERIAL_DATA_LAYOUT } from '@/core/EngineDefaults.js';
+import { MATERIAL_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
 
 const json = value => JSON.parse( JSON.stringify( value ) );
 

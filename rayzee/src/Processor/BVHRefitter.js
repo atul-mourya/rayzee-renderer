@@ -10,18 +10,7 @@
  */
 
 import { isFoldedRef, foldedFirst, foldedCount } from './BVHLeafFold.js';
-
-// Inline copy of layout constants (source of truth: EngineDefaults.js).
-// Cannot import because this runs inside Web Workers where window is not defined.
-const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 20,
-	POSITION_A_OFFSET: 0,
-	POSITION_B_OFFSET: 4,
-	POSITION_C_OFFSET: 8,
-	NORMAL_A_PACKED_OFFSET: 3,
-	NORMAL_B_PACKED_OFFSET: 7,
-	NORMAL_C_PACKED_OFFSET: 11,
-};
+import { TRIANGLE_DATA_LAYOUT, packNormalOct, BVH_LEAF_MARKERS } from './BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 
@@ -62,41 +51,9 @@ const triAccess = ( triangleData ) => {
 
 };
 
-// Octahedral snorm16 pair, matching packNormalOct in EngineDefaults (not importable here).
-function packNormalOct( x, y, z ) {
-
-	const len = Math.sqrt( x * x + y * y + z * z );
-	if ( len > 0 ) {
-
-		x /= len; y /= len; z /= len;
-
-	} else {
-
-		x = 0; y = 0; z = 1;
-
-	}
-
-	const sum = Math.abs( x ) + Math.abs( y ) + Math.abs( z );
-	let u = x / sum, v = y / sum;
-	if ( z < 0 ) {
-
-		const au = u, av = v;
-		u = ( 1 - Math.abs( av ) ) * ( au >= 0 ? 1 : - 1 );
-		v = ( 1 - Math.abs( au ) ) * ( av >= 0 ? 1 : - 1 );
-
-	}
-
-	const qu = Math.round( Math.min( 1, Math.max( - 1, u ) ) * 32767 ) & 0xffff;
-	const qv = Math.round( Math.min( 1, Math.max( - 1, v ) ) * 32767 ) & 0xffff;
-	return ( ( qv << 16 ) | qu ) >>> 0;
-
-}
-
 const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
-// Inline copies of EngineDefaults.BVH_LEAF_MARKERS — this module also runs inside a worker.
-// Index fields are u32 BIT PATTERNS (exact past 2^24), read through `indexView`.
-const LEAF_MARKER = 0x40000000;
-const BLAS_POINTER_MARKER = 0x40000001;
+const LEAF_MARKER = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+const BLAS_POINTER_MARKER = BVH_LEAF_MARKERS.BLAS_POINTER_LEAF;
 
 // Relative to the matrix's own magnitude, never an absolute floor — see transformBoundsToWorld.
 const SINGULAR_REL_EPS = 1e-12;

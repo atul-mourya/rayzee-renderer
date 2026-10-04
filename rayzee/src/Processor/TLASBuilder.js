@@ -15,9 +15,7 @@
  * known before its subtree is built, which is what lets the write be single-pass.
  */
 
-import {
-	BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK
-} from '../EngineDefaults.js';
+import { BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK } from './BufferLayout.js';
 import { invertAffineInto, isIdentityAt } from './InstanceTable.js';
 
 const FLOATS_PER_NODE = 16;

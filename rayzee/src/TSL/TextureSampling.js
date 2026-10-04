@@ -8,7 +8,7 @@ import {
 	ExtMapResult,
 } from './Struct.js';
 import { instanceRows, instanceDirToWorld, triangleRow } from './Common.js';
-import { TEXTURE_CONSTANTS } from '../EngineDefaults.js';
+import { TEXTURE_CONSTANTS } from '../Processor/TextureBuckets.js';
 
 // ================================================================================
 // CONSOLIDATED SHAPE-BUCKETED MATERIAL TEXTURES

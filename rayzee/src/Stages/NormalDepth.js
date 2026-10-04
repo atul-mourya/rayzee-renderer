@@ -3,7 +3,8 @@ import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, storage, 
 import { RenderTarget, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
+import { GBUFFER_MISS_DEPTH } from './DenoiserSettings.js';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
 import { cameraRayOf, cameraRayUniforms } from '../TSL/CameraRay.js';
@@ -248,7 +249,7 @@ export class NormalDepth extends RenderStage {
 
 				const result = hit.didHit.select(
 					vec4( encodedNormal, depth ),
-					vec4( 0.0, 0.0, 0.0, float( 65504.0 ) )
+					vec4( 0.0, 0.0, 0.0, float( GBUFFER_MISS_DEPTH ) )
 				);
 
 				textureStore(

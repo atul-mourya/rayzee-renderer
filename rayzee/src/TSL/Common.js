@@ -39,7 +39,7 @@ export const FP16_MAX = 65504.0;
 export const sanitize1 = ( x, ceiling = 1e7 ) => select( x.equal( x ), x, float( 0.0 ) ).clamp( 0.0, ceiling );
 export const sanitizeRGB = ( c, ceiling = 1e7 ) =>
 	vec3( sanitize1( c.x, ceiling ), sanitize1( c.y, ceiling ), sanitize1( c.z, ceiling ) );
-import { MATERIAL_DATA_LAYOUT, TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT } from '../EngineDefaults.js';
+import { TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT, MATERIAL_DATA_LAYOUT } from '../Processor/BufferLayout.js';
 
 export const MATERIAL_SLOTS = MATERIAL_DATA_LAYOUT.SLOTS_PER_MATERIAL;
 export const MATERIAL_SLOT = MATERIAL_DATA_LAYOUT.SLOT;

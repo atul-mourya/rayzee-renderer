@@ -8,14 +8,15 @@ import { describe, expect, it } from 'vitest';
 import { Group, Object3D, PerspectiveCamera, RectAreaLight, Scene, Vector3 } from 'three';
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
-import { getRenderProfile } from '@/core/EngineDefaults.js';
+import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
-const newLoader = profile => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { profile: getRenderProfile( profile ) } );
+const newLoader = scale => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { areaLightIntensityScale: () => scale } );
+const DEFAULT_SCALE = ENGINE_DEFAULTS.areaLightIntensityScale;
 
 // Mirrors the shipped assets: a 70 x 70 placeholder authored in cm under a 0.01 node scale.
-function importPlaceholder( { profile = 'physical', scale = [ 0.01, 0.01, 0.01 ], ...userData } = {} ) {
+function importPlaceholder( { lightScale = 1, scale = [ 0.01, 0.01, 0.01 ], ...userData } = {} ) {
 
 	const root = new Group();
 	const scaled = new Group();
@@ -29,7 +30,7 @@ function importPlaceholder( { profile = 'physical', scale = [ 0.01, 0.01, 0.01 ]
 	scaled.add( placeholder );
 	root.add( scaled );
 
-	newLoader( profile ).processModelObjects( root );
+	newLoader( lightScale ).processModelObjects( root );
 	return placeholder.children.find( o => o.isRectAreaLight );
 
 }
@@ -48,7 +49,7 @@ function serializedRadiance( light ) {
 
 describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 
-	it( 'reproduces the authored radiance (physical profile)', () => {
+	it( 'reproduces the authored radiance at a scale of 1', () => {
 
 		const light = importPlaceholder();
 		expect( light.userData.normalize ).toBe( true );
@@ -74,10 +75,10 @@ describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 
 	} );
 
-	it( 'applies the profile scale on top, and nothing else', () => {
+	it( 'applies areaLightIntensityScale on top, and nothing else', () => {
 
-		const viewer = importPlaceholder( { profile: 'viewer' } );
-		expect( serializedRadiance( viewer ) ).toBeCloseTo( 200 * getRenderProfile( 'viewer' ).areaLightIntensityScale, 6 );
+		const dimmed = importPlaceholder( { lightScale: DEFAULT_SCALE } );
+		expect( serializedRadiance( dimmed ) ).toBeCloseTo( 200 * DEFAULT_SCALE, 6 );
 
 	} );
 
@@ -91,7 +92,7 @@ describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 } );
 
 // A host handing over its own scene authors three.js units, where intensity is radiance in nits.
-function adoptHostLight( { profile = 'physical', scale = [ 0.01, 0.01, 0.01 ], intensity = 200, width = 70, height = 70, userData = {}, times = 1 } = {} ) {
+function adoptHostLight( { lightScale = 1, scale = [ 0.01, 0.01, 0.01 ], intensity = 200, width = 70, height = 70, userData = {}, times = 1 } = {} ) {
 
 	const root = new Group();
 	const scaled = new Group();
@@ -101,7 +102,7 @@ function adoptHostLight( { profile = 'physical', scale = [ 0.01, 0.01, 0.01 ], i
 	scaled.add( light );
 	root.add( scaled );
 
-	for ( let i = 0; i < times; i ++ ) newLoader( profile ).processModelObjects( root );
+	for ( let i = 0; i < times; i ++ ) newLoader( lightScale ).processModelObjects( root );
 	return light;
 
 }
@@ -144,15 +145,14 @@ describe( 'AssetLoader — host-provided RectAreaLight', () => {
 
 	it( 'takes no viewer fudge — that tunes the placeholder convention only', () => {
 
-		expect( serializedRadiance( adoptHostLight( { profile: 'viewer' } ) ) ).toBeCloseTo( 200, 6 );
+		expect( serializedRadiance( adoptHostLight( { lightScale: DEFAULT_SCALE } ) ) ).toBeCloseTo( 200, 6 );
 
 	} );
 
 	it( 'agrees with the placeholder path at equal authored radiance', () => {
 
-		const viewerScale = getRenderProfile( 'viewer' ).areaLightIntensityScale;
-		const host = serializedRadiance( adoptHostLight( { intensity: 200 * viewerScale } ) );
-		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { profile: 'viewer' } ) ), 6 );
+		const host = serializedRadiance( adoptHostLight( { intensity: 200 * DEFAULT_SCALE } ) );
+		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { lightScale: DEFAULT_SCALE } ) ), 6 );
 
 	} );
 
@@ -165,7 +165,7 @@ describe( 'AssetLoader — placeholders that make no light', () => {
 		const issues = new IssueLog();
 		const root = new Group();
 		for ( const p of placeholders ) root.add( p );
-		new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { issues, profile: getRenderProfile( 'physical' ) } )
+		new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { issues, areaLightIntensityScale: () => 1 } )
 			.processModelObjects( root );
 		return issues.list;
 

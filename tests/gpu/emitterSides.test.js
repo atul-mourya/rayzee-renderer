@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec3, vec4, float, int, normalize, select } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { describeGPU, createRenderer } from './gpu.js';
-import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/EngineDefaults.js';
+import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/Processor/BufferLayout.js';
 import { MATERIAL_SLOTS, MATERIAL_SLOT } from '@/core/TSL/Common.js';
 import { calculateEmissiveLightPdf } from '@/core/TSL/EmissiveSampling.js';
 import { sideAccepts } from '@/core/TSL/BVHTraversal.js';

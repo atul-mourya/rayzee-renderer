@@ -10,9 +10,9 @@
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage } from 'three/tsl';
 import {
-	MATERIAL_DATA_LAYOUT as M, TRIANGLE_DATA_LAYOUT as T, normalizeAttenuationDistance,
-	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits
-} from '../EngineDefaults.js';
+	TRIANGLE_DATA_LAYOUT as T, TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, TRI_BLOCKER_SHIFT, shadowBlockerBits,
+	MATERIAL_DATA_LAYOUT as M, normalizeAttenuationDistance,
+} from '../Processor/BufferLayout.js';
 import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from '../Processor/MaterialPacking.js';
 import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../Processor/GeometryExtractor.js';
 import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../Color/WorkingMatrix.js';

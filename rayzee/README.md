@@ -325,7 +325,6 @@ const engine = new PathTracerApp(canvas, options?)
 | `options.autoResize` | `boolean` | Auto-resize on window resize (default: `true`; always off headless) |
 | `options.container` | `HTMLElement` | Single DOM parent the engine mounts auxiliary elements into — HUD overlay (tile borders, helpers) and denoiser canvas. Defaults to `canvas.parentNode`. |
 | `options.strict` | `boolean` | Throw an `EngineIssueError` where the engine would otherwise degrade and carry on (default: `false`). See [Degradation contract](#degradation-contract). |
-| `options.profile` | `string` | `'viewer'` (default) or `'physical'` — product tuning that is not a physical constant: area-light scale, environment rotation, tone mapping, saturation. An unknown name throws. |
 | `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
 | `options.hostMemoryGB` | `number` | The host's memory, for runtimes without Chrome's `navigator.deviceMemory` (which then read as 4 GB and cap the render reserve at 2048). Sizes the reserve and the path pool. |
 | `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`; off under `strict` unless you set it there or here). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
@@ -445,6 +444,7 @@ Key settings:
 | `enableEnvironment` | `boolean` | true | Use environment lighting |
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
+| `areaLightIntensityScale` | `number` | 0.1 | Power of a glTF model's placeholder area lights (RectAreaLight extras), read when the model loads, so set it first; 1 is the authored power |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
 | `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
 | `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'` \| `'vcm'` (on the core, needs the bidirectional add-on). Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. `'vcm'` adds photon merging, for caustics seen in mirrors and through glass. Switching rebuilds the kernels |
@@ -454,7 +454,7 @@ Key settings:
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
 | `enableDOF` | `boolean` | false | Enable depth of field |
-| `dofMode` | `string` | 'look' | `'look'`: the blur is set by `dofBlur`, the same at any scene scale; `'physical'`: a real lens set by `aperture`, `focalLength` and `unitsPerMetre`. The `physical` render profile defaults to `'physical'` |
+| `dofMode` | `string` | 'look' | `'look'`: the blur is set by `dofBlur`, the same at any scene scale; `'physical'`: a real lens set by `aperture`, `focalLength` and `unitsPerMetre`. |
 | `dofBlur` | `number` | 0.05 | Look mode: how far a distant background blurs, as a fraction of the image height |
 | `focusDistance` | `number` | 0.8 | DOF focus distance in scene units — depth along the view axis (the focal plane is flat) |
 | `aperture` | `number` | 5.6 | Physical mode: f-stop |
@@ -1199,7 +1199,7 @@ auto-exposure, if you turn it on.
 #### Batch rendering
 
 The supported entry point for a render farm is `rayzee/src/Headless.js`, exported from the package.
-Its defaults are a batch renderer's — `strict`, `profile: 'physical'`, deterministic, storage off —
+Its defaults are a batch renderer's — `strict`, deterministic, storage off —
 so a degraded render throws instead of shipping:
 
 ```js
@@ -1230,16 +1230,19 @@ unavailable or fails, the CPU does it instead: the result's `toneMappedOn` says 
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.
 
+The engine has one set of defaults, the viewer's. For lens-accurate depth of field and glTF placeholder area
+lights at their authored power, set `dofMode: 'physical'` and `areaLightIntensityScale: 1` — through `settings`
+here, or `engine.settings` before loading the model.
+
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
-JSON naming what produced the image: engine and three.js versions, the profile by name *and* by
-value, the adapter, every live setting with its source, the colour pipeline, the render size and
+JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
 samples, and whether it ran headless, strict, deterministic or lockstepped. `mode.lockstep` says
 whether the current image was traced in lockstep, so it stays true after `renderUntilComplete` turns
 lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
 again.
 
 **Pinning a look.** A change to what a render looks like when a host sets nothing — a default
-setting, a mode preset, a profile's values, light units — is released as a **major**, with the
+setting, a mode preset, light units — is released as a **major**, with the
 change described under BREAKING CHANGES in the release notes. Pin a major to pin a look; read the
 notes before moving to the next one.
 
@@ -1515,22 +1518,16 @@ import { nodePlatform, NodeWorker } from 'rayzee/node';
 // Configuration & presets
 import {
   ENGINE_DEFAULTS,
+  DENOISER_DEFAULTS,
+  AUTO_EXPOSURE_DEFAULTS,
+  AUTO_FOCUS_DEFAULTS,
   ASVGF_QUALITY_PRESETS,
-  CAMERA_PRESETS,
-  CAMERA_RANGES,
-  SKY_PRESETS,
   DEFAULT_SUN_PATH,
-  AUTO_FOCUS_MODES,
-  AF_DEFAULTS,
   TRIANGLE_DATA_LAYOUT,
   BVH_LEAF_MARKERS,
-  TEXTURE_CONSTANTS,
-  DEFAULT_TEXTURE_MATRIX,
-  MEMORY_CONSTANTS,
   PRODUCTION_RENDER_CONFIG,
   INTERACTIVE_RENDER_CONFIG,
   MAX_RESERVABLE_RENDER_SIZE,
-  RENDER_PROFILES,
   MATERIAL_DEFAULTS,
 } from 'rayzee';
 

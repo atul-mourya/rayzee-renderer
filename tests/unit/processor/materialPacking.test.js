@@ -25,9 +25,10 @@ vi.mock( 'three/tsl', () => ( { storage: () => ( { toReadOnly() {
 
 } } ) } ) );
 
+import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
 import {
-	MATERIAL_DATA_LAYOUT as M, MATERIAL_DEFAULTS, TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, shadowBlockerBits,
-} from '@/core/EngineDefaults.js';
+	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
+} from '@/core/Processor/BufferLayout.js';
 import { packMaterial, MATERIAL_RESERVED_FLOATS } from '@/core/Processor/MaterialPacking.js';
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/Processor/GeometryExtractor.js';
 import { TextureCreator } from '@/core/Processor/TextureCreator.js';

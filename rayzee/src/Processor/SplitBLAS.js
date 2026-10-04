@@ -1,4 +1,4 @@
-import { TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from './BufferLayout.js';
 import { rebaseNodes } from './BVHLeafFold.js';
 
 const FLOATS_PER_NODE = 16;

@@ -1,23 +1,9 @@
 import debugModelsData from './DebugModels.json';
 
-// Re-export engine constants for backward compatibility
-import { ENGINE_DEFAULTS, NRD_DEFAULTS, DEFAULT_SUN_PATH } from 'rayzee';
-export {
-	ASVGF_QUALITY_PRESETS,
-	NRD_QUALITY_PRESETS,
-	NRD_DEFAULTS,
-	NRD_PRESET_KEYS,
-	CAMERA_RANGES,
-	SKY_PRESETS,
-	DEFAULT_SUN_PATH,
-	CAMERA_PRESETS,
-	AUTO_FOCUS_MODES,
-	AF_DEFAULTS,
-	TRIANGLE_DATA_LAYOUT,
-	TEXTURE_CONSTANTS,
-	DEFAULT_TEXTURE_MATRIX,
-	MEMORY_CONSTANTS,
+import {
+	ENGINE_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS, DEFAULT_SUN_PATH,
 } from 'rayzee';
+export { ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, NRD_DEFAULTS } from 'rayzee';
 
 // CDN base URL for static assets (models, hdri, noise)
 export const ASSETS_BASE_URL = 'https://assets.rayzee.atulmourya.com';
@@ -26,13 +12,27 @@ export const ASSETS_BASE_URL = 'https://assets.rayzee.atulmourya.com';
 // aggressive per-client rate limiting (raw.githubusercontent.com returns 429 under load).
 export const GLTF_SAMPLE_ASSETS_BASE = 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models';
 
-// DEFAULT_STATE = engine defaults + UI-only keys
+// DEFAULT_STATE = the engine's defaults, those of the viewer pieces the app drives, and the app's own keys
 export const DEFAULT_STATE = {
 	...ENGINE_DEFAULTS,
+	...DENOISER_DEFAULTS,
+	...AUTO_EXPOSURE_DEFAULTS,
+	...AUTO_FOCUS_DEFAULTS,
 	// The app turns the final denoise on out of the box — see INTERACTIVE_RENDER_CONFIG. The engine
 	// default stays off so an embedder is not made to fetch OIDN's weights it never asked for.
 	enableOIDN: true,
 	// UI-only keys (not needed by the engine)
+	canvasWidth: 512,
+	canvasHeight: 512,
+	fov: 55,
+	environmentMode: 'hdri', // 'hdri' | 'procedural' | 'color'
+	skyPreset: 'clearDay',
+	enablePathTracer: true,
+	pauseRendering: false,
+	tilesHelper: true, // show OIDN denoise / AI upscale tile progress overlay
+	showLightHelper: false,
+	debugThreshold: 100,
+	debugModel: 0,
 	model: 9,
 	environment: 'aristea_wreck_puresky',
 	aspectRatioPreset: '1:1',
@@ -51,6 +51,93 @@ export const DEFAULT_STATE = {
 	nrdMaxBlurRadius: NRD_DEFAULTS.maxBlurRadius,
 	nrdPrepassBlurRadius: NRD_DEFAULTS.prepassBlurRadius,
 	nrdAntiFirefly: NRD_DEFAULTS.enableAntiFirefly,
+};
+
+export const CAMERA_RANGES = {
+	fov: {
+		min: 10,
+		max: 90,
+		default: DEFAULT_STATE.fov
+	},
+	focusDistance: {
+		min: 0.3,
+		max: 100.0,
+		default: DEFAULT_STATE.focusDistance
+	},
+	aperture: {
+		options: [ 1.4, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0 ],
+		default: DEFAULT_STATE.aperture
+	},
+	focalLength: {
+		min: 0,
+		max: 200,
+		default: DEFAULT_STATE.focalLength
+	}
+};
+
+// `exposure` (EV) makes up about two thirds of the light a lower sun loses, as a photographer
+// would: a sunset still reads darker than noon.
+export const SKY_PRESETS = {
+	clearDay: { name: 'Clear Day', sunAzimuth: ENGINE_DEFAULTS.skySunAzimuth, sunElevation: ENGINE_DEFAULTS.skySunElevation, turbidity: 2, exposure: 0 },
+	clearMorning: { name: 'Clear Morning', sunAzimuth: 90, sunElevation: 15, turbidity: 2, exposure: 1.4 },
+	clearNoon: { name: 'Clear Noon', sunAzimuth: 180, sunElevation: 70, turbidity: 2, exposure: 0 },
+	hazyAfternoon: { name: 'Hazy Afternoon', sunAzimuth: 225, sunElevation: 35, turbidity: 4.5, exposure: 0.4 },
+	goldenHour: { name: 'Golden Hour', sunAzimuth: 270, sunElevation: 6, turbidity: 2.5, exposure: 2.7 },
+	sunset: { name: 'Sunset', sunAzimuth: 270, sunElevation: 1, turbidity: 3, exposure: 4.2 },
+	blueHour: { name: 'Blue Hour', sunAzimuth: 270, sunElevation: - 4, turbidity: 2, exposure: 7 },
+	mountain: { name: 'Mountain Air', sunAzimuth: 135, sunElevation: 40, turbidity: 1.3, altitude: 3000, exposure: 0 },
+};
+
+export const CAMERA_PRESETS = {
+	portrait: {
+		name: "Portrait",
+		description: "Shallow depth of field, background blur",
+		dofBlur: 0.10,
+		aperture: 1.4,
+		focalLength: 135,
+		apertureScale: 1.0
+	},
+	landscape: {
+		name: "Landscape",
+		description: "Maximum depth of field, everything in focus",
+		dofBlur: 0.001,
+		aperture: 16.0,
+		focalLength: 24,
+		apertureScale: 0.5
+	},
+	macro: {
+		name: "Macro",
+		description: "Very thin focus plane for close-ups",
+		dofBlur: 0.14,
+		aperture: 1.4,
+		focalLength: 100,
+		apertureScale: 2.0
+	},
+	product: {
+		name: "Product",
+		description: "Sharp detail with subtle background separation",
+		dofBlur: 0.013,
+		aperture: 2.8,
+		focalLength: 85,
+		apertureScale: 0.4
+	},
+	architectural: {
+		name: "Architectural",
+		description: "Deep focus for rooms and buildings",
+		dofBlur: 0.001,
+		aperture: 11.0,
+		focalLength: 16,
+		apertureScale: 0.5
+	},
+	cinematic: {
+		name: "Cinematic",
+		description: "Dramatic depth separation with anamorphic bokeh",
+		dofBlur: 0.13,
+		aperture: 1.4,
+		focalLength: 200,
+		apertureScale: 1.0,
+		anamorphicRatio: 1.5
+	}
 };
 
 // export const MODEL_BASE_URL = 'https://raw.githubusercontent.com/gkjohnson/3d-demo-data/main/models/';

@@ -3,7 +3,7 @@ import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, bvhIndexView } from '@/core/EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const IDENTITY = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];

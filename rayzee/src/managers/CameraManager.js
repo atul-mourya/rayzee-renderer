@@ -1,11 +1,21 @@
 import { EventDispatcher, MathUtils, Matrix4, OrthographicCamera, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EngineEvents, } from '../EngineEvents.js';
-import { AF_DEFAULTS, CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
+import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
 import { ViewCamera } from './ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
 import { toPortable, fromPortable } from '../SceneState/portable.js';
+
+export const AUTO_FOCUS_DEFAULTS = {
+	autoFocusMode: 'auto', // 'manual' | 'auto'
+	afScreenPoint: { x: 0.5, y: 0.5 },
+	afSmoothingFactor: 0.15,
+};
+
+const AF_RESET_THRESHOLD = 0.05;
+const AF_FALLBACK_DISTANCE = 10.0;
+const AF_SNAP_THRESHOLD = 0.5;
 
 const DEFAULT_CAMERA_SCALE = Object.freeze( new Vector3( 1, 1, 1 ) );
 
@@ -55,9 +65,9 @@ export class CameraManager extends EventDispatcher {
 		this._userCameraCounter = 0;
 
 		// Auto-focus state
-		this.autoFocusMode = AF_DEFAULTS.SMOOTHING_FACTOR ? 'auto' : 'manual';
-		this.afScreenPoint = { x: 0.5, y: 0.5 };
-		this.afSmoothingFactor = AF_DEFAULTS.SMOOTHING_FACTOR;
+		this.autoFocusMode = AUTO_FOCUS_DEFAULTS.autoFocusMode;
+		this.afScreenPoint = { ...AUTO_FOCUS_DEFAULTS.afScreenPoint };
+		this.afSmoothingFactor = AUTO_FOCUS_DEFAULTS.afSmoothingFactor;
 		this._lastValidFocusDistance = null;
 		this._smoothedFocusDistance = null;
 		this._afPointDirty = false;
@@ -873,7 +883,7 @@ export class CameraManager extends EventDispatcher {
 
 				// Nothing under the AF point on a fresh view: focus where the camera orbits.
 				const depth = this.controls ? viewDepth( this.controls.target, this.camera ) : 0;
-				rawDistance = depth > 0 ? depth : AF_DEFAULTS.FALLBACK_DISTANCE * ( assetLoader?.getSceneScale() || 1.0 );
+				rawDistance = depth > 0 ? depth : AF_FALLBACK_DISTANCE * ( assetLoader?.getSceneScale() || 1.0 );
 				this._lastValidFocusDistance = rawDistance;
 
 			}
@@ -893,7 +903,7 @@ export class CameraManager extends EventDispatcher {
 			const changeFraction = Math.abs( rawDistance - this._smoothedFocusDistance )
 				/ this._smoothedFocusDistance;
 
-			if ( changeFraction > AF_DEFAULTS.SNAP_THRESHOLD ) {
+			if ( changeFraction > AF_SNAP_THRESHOLD ) {
 
 				this._smoothedFocusDistance = rawDistance;
 
@@ -921,7 +931,7 @@ export class CameraManager extends EventDispatcher {
 
 				hardReset?.();
 
-			} else if ( changeRatio > AF_DEFAULTS.RESET_THRESHOLD ) {
+			} else if ( changeRatio > AF_RESET_THRESHOLD ) {
 
 				softReset?.();
 

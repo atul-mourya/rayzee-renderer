@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
+import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_PLACEMENT_MASK } from '@/core/Processor/BufferLayout.js';
 
 /** A table of `n` placements with the given world AABBs (6 floats each). */
 function makeTable( bounds ) {

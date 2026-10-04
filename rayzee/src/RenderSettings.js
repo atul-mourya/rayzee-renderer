@@ -9,6 +9,7 @@ import { toPortable, fromPortable } from './SceneState/portable.js';
  *
  * - `uniform`  → forwarded to PathTracer.setUniform(uniform, value)
  * - `handler`  → calls a named handler method for multi-stage settings
+ * - neither   → stored only; whoever needs it reads it
  * - `reset`    → whether to reset accumulation after the change (default true)
  *
  * Other layers add their own keys with {@link RenderSettings#define}.
@@ -79,6 +80,8 @@ const SETTING_ROUTES = {
 	integrator: { handler: 'handleIntegrator', reset: true },
 	shadowRays: { handler: 'handleShadowRays', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
+	// No target: the asset loader reads it when a model loads.
+	areaLightIntensityScale: { reset: false },
 
 };
 
@@ -169,19 +172,21 @@ export class RenderSettings extends EventDispatcher {
 
 	/**
 	 * Adds a setting of another layer — the viewer's, or an add-on's — with the same provenance, events, session
-	 * saving and reset as the core's. Its default comes from the defaults this store was built with.
+	 * saving and reset as the core's. The layer brings its own default.
 	 * @param {string} key
 	 * @param {Object} route
+	 * @param {*} [route.default] - the value until someone sets one; else the one this store was built with
 	 * @param {function(*, *): void} route.apply - called with ( value, prev ) on every change, and by applyAll()
 	 * @param {boolean} [route.reset=true] - reset accumulation after a change
 	 */
-	define( key, { apply, reset = true } ) {
+	define( key, { default: initial, apply, reset = true } ) {
 
 		if ( this._routes.has( key ) ) throw new Error( `setting "${key}" is already defined` );
 		this._routes.set( key, { apply, reset } );
-		if ( ! this._values.has( key ) && key in this._defaults ) {
+		const value = initial !== undefined ? initial : this._defaults[ key ];
+		if ( ! this._values.has( key ) && value !== undefined ) {
 
-			this._values.set( key, this._defaults[ key ] );
+			this._values.set( key, value );
 			this._sources.set( key, SETTING_SOURCE.DEFAULT );
 
 		}
@@ -510,7 +515,7 @@ export class RenderSettings extends EventDispatcher {
 
 		} else {
 
-			route.apply( value, prev );
+			route.apply?.( value, prev );
 
 		}
 

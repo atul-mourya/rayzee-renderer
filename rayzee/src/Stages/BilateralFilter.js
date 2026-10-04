@@ -4,7 +4,8 @@ import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, LinearFilter, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { luminance } from '../TSL/Common.js';
-import { ALBEDO_EPS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
+import { ALBEDO_EPS } from './DenoiserSettings.js';
 
 // SVGF bilateral edge-stopping weight. All three φ params are relative
 // tolerances (unitless fractions) so the filter is scale-invariant across

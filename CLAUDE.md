@@ -73,11 +73,11 @@ Use **conventional commits**. Every commit message and PR title **must** start w
 Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 
 **A change to default pixels is a breaking change.** Anything that changes what a render looks like
-when a host sets nothing — a default setting, a mode preset, a `RENDER_PROFILES` value, light units,
+when a host sets nothing — a default setting (the core's or a viewer piece's), a mode preset, light units,
 a sampling or BSDF change that moves the goldens — gets a `BREAKING CHANGE:` footer saying how default
 renders change, so semantic-release makes it a major. Farms pin a major to pin a look and calibrate
 against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Two tripwires:
-`tests/unit/constants/pixelDefaults.test.js` snapshots the defaults, profiles and presets (update with
+`tests/unit/constants/pixelDefaults.test.js` snapshots the defaults (core and viewer pieces) and presets (update with
 `-u`, then add the footer), and `bench:bless` names every golden that moved on the same GPU.
 
 ## Monorepo Structure
@@ -194,7 +194,7 @@ Zustand-based stores with **automatic 3D engine synchronization**:
 **Triangle Data Layout** (20 u32 lanes per triangle = 80 B, 5 vec4s). The buffer is bound as
 `uvec4`, so a reader binds `'uvec4'` and floats come back through `uintBitsToFloat`:
 ```js
-// EngineDefaults.js - TRIANGLE_DATA_LAYOUT
+// Processor/BufferLayout.js - TRIANGLE_DATA_LAYOUT
 FLOATS_PER_TRIANGLE: 20         // 5 vec4s; positions carry their own normal
 POSITION_A/B/C_OFFSET: 0/4/8    // f32 xyz, normal packed in the spare .w lane
 NORMAL_A/B/C_PACKED_OFFSET: 3/7/11  // oct16 (packNormalOct), ~0.03° worst case
@@ -322,8 +322,7 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   pacings; lockstep 48 spp and one image every time. ⚠️ It turns interaction mode off meanwhile: that
   mode is a 100 ms wall-clock timer that engages on the first frame after a load, frames in it do not
   count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
-- **`app.getProvenance()`** — plain JSON of what produced the image (versions, profile by name and
-  value, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
+- **`app.getProvenance()`** — plain JSON of what produced the image (versions, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
   lockstep). `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
   whether the current image was traced in lockstep from a lockstep reset, not the live setting, which
   `renderUntilComplete` restores on return. A checkpoint restore reports false (the curve is not saved).
@@ -355,13 +354,13 @@ never read by a live code path (the default sampler is Sobol), so the load was r
 `rayzee/src/Headless.js` wraps the above as the supported entry point — `renderHeadless()` for one
 frame, `openHeadless()` to keep a live app across several, `captureHeadless()` to accumulate and read
 back (`denoise: true` enables OIDN before accumulating, runs `runFinalDenoise()`, reads `'display'`).
-Defaults are the batch renderer's (`strict`, `profile: 'physical'`, `deterministic`). Under `strict`,
+Defaults are the batch renderer's (`strict`, `deterministic`); its `settings` are applied before the load and again
+after it, since some are read while a model loads (`areaLightIntensityScale`). Under `strict`,
 the renderer also defaults storage off unless the host set it (`isAssetConfigured( 'storage' )`):
 the download cache serves a cached copy for up to a day before revalidating. `hostMemoryGB` stands
 in for `navigator.deviceMemory` (absent outside Chrome, read as 4, which caps the reserve at 2048).
 `bench/harness/boot.js` boots through it, so the suite and production share one driver; the bench
-passes `profile: 'viewer'` and `strict: false` explicitly, and both are load-bearing — `physical`
-would change every golden, and `strict` would abort a run before the runner reported.
+passes `strict: false` explicitly, and it is load-bearing — `strict` would abort a run before the runner reported.
 
 ### Without a browser (`Platform.js`, `HeadlessCanvas.js`, `rayzee/src/node/`)
 The published build renders in plain Node on Dawn. `npm run bench:node` renders the whole corpus that
@@ -439,17 +438,19 @@ the strings, so never rename or repurpose one.
   of `SETTING_SOURCE` (default / host / scene-metadata / mode-preset); `routed: false` means stored
   but reaching no stage, which is how a typo becomes a wrong image.
 - **Each layer declares its own settings.** `RenderSettings`' table is the core's alone and names no viewer piece;
-  another layer adds a key with `settings.define( key, { apply, reset } )` (the viewer: `interactionRenderScale`), and
-  gets provenance, events, `serialize()` and reset like a core key. The viewer's rules for a core key go in the
+  another layer adds a key with `settings.define( key, { default, apply, reset } )` (the viewer: `interactionRenderScale`),
+  bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules for a core key go in the
   bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
   moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
-- **`RENDER_PROFILES`** (`EngineDefaults.js`) — product decisions for a real-time viewer that are not
-  physical constants, collected so choosing between them is one flag rather than a hunt:
-  `areaLightIntensityScale` (glTF placeholder area-light power), `environmentRotation`, `toneMapping`,
-  `saturation`. `viewer` is the default and `ENGINE_DEFAULTS` mirrors it exactly; both show AgX at neutral
-  saturation and the HDRI unrotated (0°, as Blender's unmapped world shows it), so today they differ only
-  in area-light damping. `new PathTracerApp( canvas, { profile: 'physical' } )`; an unknown name
-  throws rather than silently selecting viewer tuning.
+- **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) holds the core's settings
+  only. A viewer piece keeps its own beside its code — `DENOISER_DEFAULTS` (`Stages/DenoiserSettings.js`),
+  `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
+  builds its store from those plus its own keys and menus (`app/src/Constants.js`: `CAMERA_PRESETS`, `SKY_PRESETS`,
+  `CAMERA_RANGES`). The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI
+  unrotated, `dofMode: 'look'`, glTF placeholder area lights at `areaLightIntensityScale` 0.1) and a host sets
+  otherwise through `settings` — a batch renderer wanting the old `physical` sets `areaLightIntensityScale: 1` and
+  `dofMode: 'physical'`. `areaLightIntensityScale` is a stored-only route the asset loader reads at load, so set it
+  before the model. The `profile` constructor option throws, so a farm cannot keep passing it unnoticed.
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
   (`Processor/MaterialPacking.js`) is the only writer of the material block, for the scene upload
@@ -819,7 +820,7 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
 - `refreshSun()` rotates the sun by the environment rotation and converts it to the working space — call
   it after either changes (`setEnvironmentRotation` and `applyColorWorkingSpace` do).
 - Units: physical luminance / 683 × `SKY_RADIANCE_SCALE` (1/32), so a clear noon lights the ground at
-  bundled-HDRI levels. `SKY_PRESETS` carry an `exposure` (EV) making up ~⅔ of what a low sun loses.
+  bundled-HDRI levels. The app's `SKY_PRESETS` carry an `exposure` (EV) making up ~⅔ of what a low sun loses.
 - ⚠️ `EnvironmentManager.callbacks.onReset` is the **renderer's** reset: a bake lands after its input, often once
   the render loop is idle, and the stage's reset alone never woke it (UI edits did nothing on screen).
   `callbacks.onLightingChanged` (a new environment) emits `pipeline:lightingChanged`, which auto exposure listens for.
@@ -1365,8 +1366,7 @@ const getDatafromStorageBuffer = Fn(([buffer, index, offset, stride]) => { ... }
 BVH traversal (`BVHTraversal.js`) uses stack-based DFS with two-level dispatch: TLAS inner nodes → BLAS-pointer leaves (per-mesh visibility read from the leaf's slot [2]; skip BLAS if hidden, else push BLAS root onto stack) → BLAS inner nodes → triangle leaves (inline Möller-Trumbore + inline side culling via the per-triangle side flag, flags word bits 24–25). Both `traverseBVH` (closest hit) and `traverseBVHShadow` (any hit, early exit) gate on mesh visibility. ⚠️ Side culling is for what the camera sees: Extend culls only a ray not yet `REDIRECTED`, or one flagged `UNDER_SURFACE` (a scatter the shading normal sent under its own facet — without it the low-poly furnaces lose energy). Every other bounce, like every shadow ray, hits both sides: culled bounces passed through hollow single-sided models (open-bottomed furniture) and lit the floor beneath them. A single-sided emitter a bounce hits from behind emits nothing, as NEE never samples it there. The visibility flag is packed into the TLAS BLAS-pointer leaf by `TLASBuilder.flatten()` and patched at runtime by `PathTracerStage._patchTLASLeafVisibility()` — there is no separate visibility buffer.
 
 ### Camera & DOF System
-Thin lens in `TSL/CameraRay.js`, with two ways to size the aperture (`dofMode`, a render-profile choice —
-`viewer` → `'look'`, `physical` → `'physical'`):
+Thin lens in `TSL/CameraRay.js`, with two ways to size the aperture (`dofMode`, default `'look'`):
 - **look** — radius = `dofBlur` × `focusDistance` × tan( fov / 2 ): a far background blurs by `dofBlur` of the image
   height at any scene scale. Aperture, focal length and `unitsPerMetre` are ignored. Orthographic, tan( fov / 2 ) is 1:
   a point half the view's height behind the focus plane blurs by `dofBlur`, wherever the camera stands.
@@ -1378,7 +1378,7 @@ Both focus on a **flat** plane: `focusDistance` is depth along the view axis, me
 (`resetAutoFocus()`), falls back to the orbit target's depth when nothing is under its point, and pauses in a
 panorama rather than switching to manual. Its CPU raycast (stock three.js, no BVH; 6.7 ms on Sponza) runs again
 only when the view, the AF point or `stage.resetCount` changed — every scene change resets the render, so
-anything that moves geometry without a reset leaves focus stale. `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
+anything that moves geometry without a reset leaves focus stale. The app's `CAMERA_PRESETS` are settings patches (`dofBlur` plus the lens) with
 no field of view or focus distance, so a preset never moves the camera. `dofBlur` is a per-camera effect;
 `dofMode` is not. The app's panel is a **Simple | Pro** switch over `dofMode`, remembered in localStorage.
 
@@ -1413,7 +1413,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
 8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.stages.asvgf?.enabled`). A bare `RayzeeRenderer` has only `stages.pathTracer` and `stages.compositor`
-9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf — except in a folded BVH, where a folded left child also sits above it (from 2^31) and the test is `tag >> 30 === 1`. `BVHRefitter` has inline copies of these constants (cannot import EngineDefaults in worker context).
+9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf — except in a folded BVH, where a folded left child also sits above it (from 2^31) and the test is `tag >> 30 === 1`. They live in `Processor/BufferLayout.js`, which imports nothing, so the worker-side `BVHBuilder`, `BVHLeafFold` and `BVHRefitter` import them rather than keeping copies.
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).
 12. **Mesh Visibility**: Controlled per-mesh at the BLAS-pointer level in BVH traversal, NOT per-material. Use `app.updateAllMeshVisibility()` after changing `object.visible` on any Three.js object/group — it walks the parent chain to resolve world-visibility and patches the visibility flag into each TLAS leaf (slot [2]) via `_patchTLASLeafVisibility` (no separate GPU buffer). Material-level `visible` was removed from the pipeline. Front/back/double-side culling is handled inline in `traverseBVH` via the per-triangle side flag, for camera rays only (see Shader Data Access Pattern).

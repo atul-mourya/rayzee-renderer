@@ -27,7 +27,7 @@ import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
 import { Ray } from '@/core/TSL/Struct.js';
 import { withSceneResources } from '@/core/TSL/SceneResources.js';
-import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/EngineDefaults.js';
+import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/Processor/BufferLayout.js';
 
 const LANES = 20;
 const SIDES = [ 0, 1, 2 ];

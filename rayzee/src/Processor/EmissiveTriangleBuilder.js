@@ -7,7 +7,7 @@
  */
 
 import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
-import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from './BufferLayout.js';
 import { LightBVHBuilder } from './LightBVHBuilder.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { convertLinearTriple, getWorkingMatrix } from '../Color/WorkingMatrix.js';

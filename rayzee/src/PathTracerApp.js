@@ -7,8 +7,8 @@ import { NRD } from './Stages/NRD.js';
 import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
-import { AutoExposure } from './Stages/AutoExposure.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
+import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
+import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
 import { createLogger } from './utils/Logger.js';
 import { EngineEvents } from './EngineEvents.js';
 import { ISSUE_CODES } from './EngineIssues.js';
@@ -71,7 +71,9 @@ export class PathTracerApp extends RayzeeRenderer {
 		super( canvas, options );
 		this.setColorManagement( ColorManagement );
 		this.setStorageOpener( acquireSharedStorage );
+		// Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); 1 turns it off.
 		this.settings.define( 'interactionRenderScale', {
+			default: 0.5,
 			apply: () => {
 
 				if ( this.stages?.pathTracer?.interactionMode ) this._requestRenderScale( this._interactionRenderScale() );
@@ -153,7 +155,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		stages.variance = new Variance( renderer, { enabled: false } );
 		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
 		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
-		stages.autoExposure = new AutoExposure( renderer, { enabled: DEFAULT_STATE.autoExposure ?? false } );
+		stages.autoExposure = new AutoExposure( renderer, { enabled: AUTO_EXPOSURE_DEFAULTS.autoExposure } );
 
 		return [
 			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,

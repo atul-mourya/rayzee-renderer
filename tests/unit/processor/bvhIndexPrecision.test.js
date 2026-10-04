@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK } from '@/core/EngineDefaults.js';
+import {
+	BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK,
+} from '@/core/Processor/BufferLayout.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';

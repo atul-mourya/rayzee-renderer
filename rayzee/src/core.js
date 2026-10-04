@@ -23,13 +23,8 @@ export { configurePlatform, getPlatform } from './Platform.js';
 export { LightManager } from './managers/LightManager.js';
 export { listViewTransforms, getViewTransform, onRegistryChange } from './Color/ViewTransforms.js';
 export { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
-export {
-	ENGINE_DEFAULTS,
-	MATERIAL_DEFAULTS,
-	RENDER_PROFILES,
-	getRenderProfile,
-	MAX_RESERVABLE_RENDER_SIZE,
-	TRIANGLE_DATA_LAYOUT,
-} from './EngineDefaults.js';
+export { ENGINE_DEFAULTS, MATERIAL_DEFAULTS } from './EngineDefaults.js';
+export { MAX_RESERVABLE_RENDER_SIZE } from './Processor/StorageTexturePool.js';
+export { TRIANGLE_DATA_LAYOUT } from './Processor/BufferLayout.js';
 export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
 export { VERSION } from './version.js';

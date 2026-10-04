@@ -9,12 +9,11 @@ import { describe, expect, it } from 'vitest';
 import { DirectionalLight, Group, PerspectiveCamera, PointLight, Scene, SpotLight, Vector3 } from 'three';
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
-import { getRenderProfile } from '@/core/EngineDefaults.js';
 
 const LUMENS_PER_WATT = 683;
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
-const newLoader = () => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { profile: getRenderProfile( 'physical' ) } );
+const newLoader = () => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls() );
 
 // What Blender's exporter writes for a lamp of `watts` (io_scene_gltf2, SPEC lighting mode).
 const exportedCandela = watts => watts * LUMENS_PER_WATT / ( 4 * Math.PI );

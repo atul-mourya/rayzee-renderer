@@ -55,7 +55,6 @@ const app = await openHeadless( {
 	width: RENDER_SIZE.width,
 	height: RENDER_SIZE.height,
 	strict: false,
-	profile: 'viewer',
 	deterministic: true,
 	hostMemoryGB: os.totalmem() / 2 ** 30,
 } );
@@ -67,7 +66,7 @@ async function openCore() {
 	const { RayzeeRenderer } = await import( 'rayzee/core' );
 	const { PhysicalSky } = await import( 'rayzee/addons/physical-sky' );
 	const { BidirectionalIntegrator } = await import( 'rayzee/addons/bidirectional' );
-	const core = new RayzeeRenderer( null, { autoResize: false, strict: false, profile: 'viewer', storage: false, hostMemoryGB: os.totalmem() / 2 ** 30 } );
+	const core = new RayzeeRenderer( null, { autoResize: false, strict: false, storage: false, hostMemoryGB: os.totalmem() / 2 ** 30 } );
 	core.setReservedRenderResolution( Math.max( RENDER_SIZE.width, RENDER_SIZE.height ) );
 	await core.init();
 	core.environmentManager.setProceduralSky( PhysicalSky );

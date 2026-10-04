@@ -2,13 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { REVISION } from 'three';
 import { PathTracerApp } from '@/core/PathTracerApp.js';
 import { VERSION } from '@/core/version.js';
-import { getRenderProfile } from '@/core/EngineDefaults.js';
 
 describe( 'getProvenance', () => {
 
 	it( 'names what produced an image, as plain JSON', () => {
 
-		const app = new PathTracerApp( null, { profile: 'physical', strict: true } );
+		const app = new PathTracerApp( null, { strict: true } );
 		app.adapterInfo = { vendor: 'apple', architecture: 'metal-3', isSoftware: false };
 
 		const provenance = app.getProvenance();
@@ -17,7 +16,6 @@ describe( 'getProvenance', () => {
 		expect( provenance ).toMatchObject( {
 			engine: VERSION,
 			three: REVISION,
-			profile: { name: 'physical', values: { ...getRenderProfile( 'physical' ) } },
 			adapter: { vendor: 'apple' },
 			mode: { headless: true, strict: true, deterministic: false, lockstep: false },
 			render: null,
@@ -36,9 +34,16 @@ describe( 'getProvenance', () => {
 
 	} );
 
-	it( 'reports the viewer profile by name when none is asked for', () => {
+	it( 'carries the area-light scale with the other settings', () => {
 
-		expect( new PathTracerApp( null ).getProvenance().profile.name ).toBe( 'viewer' );
+		expect( new PathTracerApp( null ).getProvenance().settings.areaLightIntensityScale )
+			.toMatchObject( { value: 0.1, source: 'default', routed: true } );
+
+	} );
+
+	it( 'refuses the removed profile option rather than ignoring it', () => {
+
+		expect( () => new PathTracerApp( null, { profile: 'physical' } ) ).toThrow( /`profile` option was removed/ );
 
 	} );
 

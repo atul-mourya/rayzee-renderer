@@ -4,7 +4,7 @@ import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
 import { FloatType, RGBAFormat, LinearFilter, Box2, Vector2 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { luminance } from '../TSL/Common.js';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
 
 // NaN/±Inf guard: a poisoned luminance would otherwise corrupt the moment EMA forever
 // (mean/meanSq → variance → BilateralFilter sigmaL). NaN (x!=x) → 0, ±Inf → [0,1e7].

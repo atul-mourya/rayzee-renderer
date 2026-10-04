@@ -4,7 +4,7 @@ import {
 	Matrix4, Vector3, Float32BufferAttribute
 } from 'three';
 import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
 
 /** The three corners the extractor stored for one triangle, in storage order. */
 function storedTriangle( extractor, index ) {

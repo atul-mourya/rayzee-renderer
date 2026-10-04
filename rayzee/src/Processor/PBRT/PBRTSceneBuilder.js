@@ -91,7 +91,7 @@ const DEFAULT_TRIANGLE_BUDGET = 45_000_000;
 // Placements are their own budget: geometry is shared, but each costs a TLAS leaf and an
 // instance record. isCoastline's 5.09M loaded and rendered at 23 fps.
 const DEFAULT_PLACEMENT_BUDGET = 6_000_000;
-export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../../EngineDefaults.js';
+export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../HostMemory.js';
 // Non-instanced shapes merge into a few large meshes: isPalmRig declares 173,338 of them,
 // and one BufferGeometry + Mesh each measured 3.3 GB — the loader OOM'd before tracing.
 const DEFAULT_MERGE_MIN_SHAPES = 256;

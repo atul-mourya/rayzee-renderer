@@ -9,7 +9,7 @@
  * denormalised one. World bounds and the inverse transform are derived on demand.
  */
 
-import { BVH_LEAF_MARKERS, TRIANGLE_DATA_LAYOUT, assertBVHIndexFits, bvhIndexView } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from './BufferLayout.js';
 
 const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] );
 

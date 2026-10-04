@@ -20,7 +20,8 @@ import { SceneProcessor } from '../Processor/SceneProcessor.js';
 import { LightSerializer } from '../Processor/LightSerializer';
 
 // Constants
-import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
+import { TRIANGLE_DATA_LAYOUT } from '../Processor/BufferLayout.js';
 import { TRI_GEO_ROWS, TRI_SHADE_ROWS } from '../TSL/Common.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 

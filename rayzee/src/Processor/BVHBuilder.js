@@ -1,25 +1,14 @@
 import { ReinsertionOptimizer } from './ReinsertionOptimizer.js';
-// Logger is worker-safe (globalThis only, storage access guarded), unlike Constants.js below.
+// Logger is worker-safe (globalThis only, storage access guarded).
 import { createLogger, fmt } from '../utils/Logger.js';
 import { foldLeaves } from './BVHLeafFold.js';
 import { hasWorkers } from '../Platform.js';
+import { BVH_LEAF_MARKERS, bvhIndexView, assertBVHIndexFits, TRIANGLE_DATA_LAYOUT } from './BufferLayout.js';
 
 const log = createLogger( 'bvh' );
 
-// Inline copies of EngineDefaults.BVH_LEAF_MARKERS / bvhIndexView — this module also runs inside
-// a worker, where importing Constants is not safe. Keep in step with EngineDefaults.js.
-// Index fields are u32 BIT PATTERNS, never float values: as floats they round past 2^24.
-const TRIANGLE_LEAF = 0x40000000;
-const FRONTIER_LEAF = 0x40000002;
-const indexView = f32 => new Uint32Array( f32.buffer, f32.byteOffset, f32.length );
-const BVH_MAX_INDEX = 0x40000000;
-
-function assertFits( count, what ) {
-
-	if ( count >= BVH_MAX_INDEX ) throw new RangeError( `${what} is ${count}, at or past the BVH index limit of ${BVH_MAX_INDEX}` );
-	return count;
-
-}
+const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+const FRONTIER_LEAF = BVH_LEAF_MARKERS.FRONTIER;
 
 // Injected, not imported: this module also runs inside the worker, and `?worker&inline`
 // would embed a second copy of BVHWorker's source there.
@@ -30,16 +19,6 @@ export function setBVHWorkerFactory( factory ) {
 	createBVHWorker = factory;
 
 }
-
-// Inline copy of TRIANGLE_DATA_LAYOUT (mirrors Constants.js).
-// Cannot import Constants.js because BVHBuilder runs inside BVHWorker
-// where `window` (used elsewhere in Constants.js) is not defined.
-const TRIANGLE_DATA_LAYOUT = {
-	FLOATS_PER_TRIANGLE: 20,
-	POSITION_A_OFFSET: 0,
-	POSITION_B_OFFSET: 4,
-	POSITION_C_OFFSET: 8
-};
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 
@@ -1507,9 +1486,9 @@ export class BVHBuilder {
 		// Inner: [leftMin.xyz, leftChild] [leftMax.xyz, rightChild] [rightMin.xyz, 0] [rightMax.xyz, 0]
 		// Leaf:  [triOffset, triCount, 0, -1] [0,0,0,0] [0,0,0,0] [0,0,0,0]
 		const FLOATS_PER_NODE = 16;
-		assertFits( nodes.length, 'BLAS node count' );
+		assertBVHIndexFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
-		const idx = indexView( data );
+		const idx = bvhIndexView( data );
 
 		for ( let i = 0; i < nodes.length; i ++ ) {
 
@@ -1581,10 +1560,10 @@ export class BVHBuilder {
 		}
 
 		// Second pass: write flat data
-		assertFits( nodes.length, 'BLAS node count' );
+		assertBVHIndexFits( nodes.length, 'BLAS node count' );
 		const data = new Float32Array( nodes.length * FLOATS_PER_NODE );
 		const frontierMap = [];
-		const idx = indexView( data );
+		const idx = bvhIndexView( data );
 
 		for ( let i = 0; i < nodes.length; i ++ ) {
 
@@ -1663,9 +1642,9 @@ export class BVHBuilder {
 		}
 
 		// Allocate final array
-		assertFits( totalNodes, 'assembled BLAS node count' );
+		assertBVHIndexFits( totalNodes, 'assembled BLAS node count' );
 		const finalData = new Float32Array( totalNodes * FLOATS_PER_NODE );
-		const finalIdx = indexView( finalData );
+		const finalIdx = bvhIndexView( finalData );
 
 		// Copy top-level data
 		finalData.set( topFlatData );

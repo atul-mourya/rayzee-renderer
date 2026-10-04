@@ -6,7 +6,7 @@ vi.mock( '@/core/Passes/OIDNDenoiser.js', () => ( { OIDNDenoiser: class {} } ) )
 vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
 
 const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
-const { NRD_QUALITY_PRESETS, NRD_DEFAULTS, NRD_PRESET_KEYS } = await import( '@/core/EngineDefaults.js' );
+const { NRD_QUALITY_PRESETS, NRD_DEFAULTS, NRD_PRESET_KEYS } = await import( '@/core/Stages/DenoiserSettings.js' );
 
 function makeStage( extra = {} ) {
 

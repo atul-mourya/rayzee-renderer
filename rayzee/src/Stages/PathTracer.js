@@ -26,7 +26,8 @@ import {
 	buildResetGlobalHistKernel, buildGlobalHistKernel, buildGlobalPrefixKernel, buildGlobalScatterKernel,
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
 } from '../TSL/SortGlobalKernels.js';
-import { ENGINE_DEFAULTS, MAX_STORAGE_TEXTURE_SIZE } from '../EngineDefaults.js';
+import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { deviceMemoryGB } from '../Processor/HostMemory.js';
