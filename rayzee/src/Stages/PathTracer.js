@@ -16,6 +16,7 @@ import { KernelManager } from '../Processor/KernelManager.js';
 import { buildGenerateKernel, GENERATE_WG_SIZE } from '../TSL/GenerateKernel.js';
 import { buildExtendKernel, EXTEND_WG_SIZE } from '../TSL/ExtendKernel.js';
 import { buildShadeKernel, SHADE_WG_SIZE } from '../TSL/ShadeKernel.js';
+import { buildVisibilityFoldKernel, buildVisibilityClearKernel } from '../TSL/LightVisibility.js';
 import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from '../TSL/CompactKernel.js';
 import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../TSL/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../TSL/DebugKernel.js';
@@ -153,6 +154,8 @@ export class PathTracer extends PathTracerStage {
 		this._outputsChanged = false;
 		// The material layers the kernels were compiled with (_layersToCompile).
 		this._compiledLayers = null;
+		this._oneShadowRay = false;
+		this._learnsVisibility = false;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
 		// null for plain path tracing, which builds exactly the unidirectional kernels.
@@ -330,6 +333,19 @@ export class PathTracer extends PathTracerStage {
 			this._buildWavefrontKernels();
 
 		}
+
+	}
+
+	/**
+	 * One shadow ray a hit for every light (lamps, sky, sun, emitters), picked by its unshadowed light, instead of one
+	 * per kind. Rebuilds the kernels before the next frame; bidirectional integrators ignore it.
+	 * @param {boolean} enabled
+	 */
+	setOneShadowRay( enabled ) {
+
+		if ( this._oneShadowRay === !! enabled ) return;
+		this._oneShadowRay = !! enabled;
+		this._outputsChanged = true;
 
 	}
 
@@ -511,6 +527,12 @@ export class PathTracer extends PathTracerStage {
 
 		// An integrator's light subpaths first, through the same pool; every camera chunk then connects to them.
 		const integrator = this._integrator?.beginFrame( loopBound ) ? this._integrator : null;
+		// A camera move keeps what was learned (it is kept per place in the scene); a repeatable render starts afresh.
+		if ( this._learnsVisibility && frameValue === 0 && ( this._pinSeedToFrame || this._lockstep || ! this.cameraChanged ) ) {
+
+			km.dispatch( 'visibilityClear' );
+
+		}
 
 		// Blender-style row-band streaming: the fixed-budget path pool processes the image in bands of ≤ chunkRows
 		// rows (one chunk when the frame fits the budget → identical to the pre-chunking path). See spec.
@@ -650,6 +672,7 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
+		if ( this._learnsVisibility ) km.dispatch( 'visibilityFold' );
 		this._maybeReadbackCounters();
 
 		// Skip the normalDepth/albedo copies when aux is off — the wavefront didn't write them and
@@ -1510,6 +1533,9 @@ export class PathTracer extends PathTracerStage {
 		const prevNormalDepth = this.shaderBuilder.prevNormalDepthTexNode;
 		const writeTex = this.storageTextures.getWriteTextures();
 
+		const learnsVisibility = this._oneShadowRay && ! this._integrator;
+		this._learnsVisibility = learnsVisibility;
+		qm.setVisibilityTable( learnsVisibility );
 		const counters = qm.getCounters();
 
 		// Copy ACTIVE_RAY_COUNT into bounceCounts[currentBounce] for the readback survivor curve.
@@ -1945,6 +1971,8 @@ export class PathTracer extends PathTracerStage {
 			bidirectional: this._integrator?.uniforms ?? null,
 			hitDistanceEncode: this._outputs.get( 'hitDistance' )?.encode ?? null,
 			materialLayers: this._compiledLayers,
+			oneShadowRay: learnsVisibility,
+			cameraWorldMatrix: this.cameraWorldMatrix,
 		} );
 		this._kernelManager.register( 'shade',
 			own( shadeFn() ).compute(
@@ -1952,6 +1980,12 @@ export class PathTracer extends PathTracerStage {
 				[ SHADE_WG_SIZE, 1, 1 ]
 			)
 		);
+		if ( learnsVisibility ) {
+
+			this._kernelManager.register( 'visibilityClear', buildVisibilityClearKernel( { counters } ) );
+			this._kernelManager.register( 'visibilityFold', buildVisibilityFoldKernel( { counters } ) );
+
+		}
 
 		// Subgroup prefix-sum variant when supported.
 		const subgroupsOK = this._useSubgroupCompact

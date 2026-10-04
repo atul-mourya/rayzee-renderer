@@ -35,6 +35,7 @@ import {
 	length,
 	mix,
 	select,
+	min,
 	If,
 	Loop,
 	sampler,
@@ -84,10 +85,12 @@ import {
 	computeDotProductsAniso,
 	offsetRayOrigin,
 	SHADOW_END,
+	REC709_LUMINANCE_COEFFICIENTS,
 } from './Common.js';
 import { sampleEnvironment, sampleEnvironmentExact } from './Environment.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
+import { VISIBILITY_KIND, visibilityShare, recordVisibility } from './LightVisibility.js';
 
 const TWO_PI = 2.0 * PI;
 
@@ -773,13 +776,67 @@ export const calculateMaterialPDF = Fn( ( [ viewDir, lightDir, normal, material 
 
 } );
 
+// One shadow ray a hit: keeps one offered light with chance ∝ its unshadowed luminance × its kind's learned visibility,
+// traces only it and divides by that chance. `u` is rescaled at each offer.
+const ONE_BELOW = 0.99999994;
+
+export const lightPick = ( u0, learned = null ) => {
+
+	const u = float( u0 ).toVar();
+	const kind = int( 0 ).toVar();
+	const total = float( 0.0 ).toVar();
+	const weight = float( 0.0 ).toVar();
+	const value = vec3( 0.0 ).toVar();
+	const origin = vec3( 0.0 ).toVar();
+	const direction = vec3( 0.0, 1.0, 0.0 ).toVar();
+	const distance = float( 0.0 ).toVar();
+
+	const offer = ( contribution, from, dir, maxDist, lightKind = 0 ) => {
+
+		const luminance = dot( contribution, REC709_LUMINANCE_COEFFICIENTS );
+		const w = ( learned ? luminance.mul( visibilityShare( learned.counters, learned.cell, lightKind ) ) : luminance ).toVar();
+		If( w.greaterThan( 0.0 ), () => {
+
+			total.addAssign( w );
+			const p = w.div( total ).toVar();
+			If( u.lessThan( p ), () => {
+
+				u.assign( min( u.div( p ), ONE_BELOW ) );
+				kind.assign( int( lightKind ) );
+				weight.assign( w );
+				value.assign( contribution );
+				origin.assign( from );
+				direction.assign( dir );
+				distance.assign( maxDist );
+
+			} ).Else( () => {
+
+				u.assign( min( u.sub( p ).div( float( 1.0 ).sub( p ) ), ONE_BELOW ) );
+
+			} );
+
+		} );
+
+	};
+
+	const resolve = ( visibility ) => {
+
+		if ( learned ) recordVisibility( learned.counters, learned.cell, kind, visibility.greaterThan( 0.0 ) );
+		return value.mul( visibility ).mul( total.div( max( weight, 1e-30 ) ) );
+
+	};
+
+	return { offer, total, origin, direction, distance, resolve };
+
+};
+
 // =============================================================================
 // Unified Direct Lighting System
 // =============================================================================
 
 // Optimized direct lighting function with importance-based sampling and better MIS. `throughSurfaces` (compile
 // time) adds light from behind a surface that passes it through diffusely; without it the code is exactly as before.
-const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
+const makeDirectLighting = ( throughSurfaces, oneRay = false ) => Fn( ( [
 	// Surface hit data
 	hitPoint, hitNormal, geomNormal, material,
 	// View direction
@@ -813,6 +870,9 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 	terminatorLift, facetNormal, terminatorCutoff,
 	// The physical sky's sun (Sun.js); its BSDF-sampled partner is the miss branch in ShadeKernel.
 	hasSun, sunDirection, sunRadiance, sunParams,
+	// oneRay: the caller's emitter sample, unshadowed, and the learned visibility (LightVisibility.js) at this point
+	emissiveValue, emissiveOrigin, emissiveDirection, emissiveDistance,
+	visibilityCounters, visibilityCell,
 ] ) => {
 
 	const totalContribution = vec3( 0.0 ).toVar();
@@ -880,6 +940,10 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 	// rather than re-walking every light buffer to rebuild the same sum.
 	const neeTotalWeight = float( 0.0 ).toVar();
 
+	const pick = oneRay ? lightPick( getRandomSample1D( pixelCoord, int( 0 ), dimBase, rngState, resolution, frame ),
+		{ counters: visibilityCounters, cell: visibilityCell } ) : null;
+	if ( pick ) pick.offer( emissiveValue, emissiveOrigin, emissiveDirection, emissiveDistance, VISIBILITY_KIND.EMITTERS );
+
 	// =====================================================================
 	// LIGHT SAMPLING PATH
 	// =====================================================================
@@ -911,9 +975,7 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 				const lightOrigin = originFor( back, lightShadowOrigin( lightSample.direction ) ).toVar();
 				const toSample = hitPoint.add( lightSample.direction.mul( lightSample.distance ) ).sub( lightOrigin ).toVar();
 				const shadowDistance = length( toSample ).toVar();
-				const visibility = shadow( lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
-
-				If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+				const lampLight = () => {
 
 					const { value: brdfValue, pdf: bPdf } = bsdfToward( lightSample.direction, back );
 
@@ -927,17 +989,33 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 
 					} );
 
-					// Base contribution WITHOUT visibility; shadowed = base × visibility (identical to the
-					// pre-dual-sum math), unoccluded = base × 1 (shadow-catcher reference only).
-					const baseContribution = lightSample.emission.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightSample.pdf, 1e-10 ) );
-					totalContribution.addAssign( baseContribution.mul( visibility ) );
-					If( wantUnoccluded, () => {
+					return lightSample.emission.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightSample.pdf, 1e-10 ) );
 
-						unoccludedContribution.addAssign( baseContribution );
+				};
+
+				if ( pick ) {
+
+					pick.offer( lampLight(), lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ), VISIBILITY_KIND.LAMPS );
+
+				} else {
+
+					const visibility = shadow( lightOrigin, toSample.div( shadowDistance ), shadowDistance.mul( SHADOW_END ) );
+
+					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+
+						// Base contribution WITHOUT visibility; shadowed = base × visibility (identical to the
+						// pre-dual-sum math), unoccluded = base × 1 (shadow-catcher reference only).
+						const baseContribution = lampLight();
+						totalContribution.addAssign( baseContribution.mul( visibility ) );
+						If( wantUnoccluded, () => {
+
+							unoccludedContribution.addAssign( baseContribution );
+
+						} );
 
 					} );
 
-				} );
+				}
 
 			} );
 
@@ -1082,9 +1160,7 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 
 				If( reachesSurface( direction, back ), () => {
 
-					const visibility = shadow( originFor( back, lightShadowOrigin( direction ) ), direction, float( 1e20 ) );
-
-					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+					const skyLight = () => {
 
 						const { value: brdfValue, pdf: bPdf } = bsdfToward( direction, back );
 
@@ -1096,8 +1172,24 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 							float( 1.0 )
 						).toVar();
 
+						return radiance.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightPdf, 1e-10 ) );
+
+					};
+
+					if ( pick ) {
+
+						pick.offer( skyLight(), originFor( back, lightShadowOrigin( direction ) ), direction, float( 1e20 ),
+							select( isSun, int( VISIBILITY_KIND.SUN ), int( VISIBILITY_KIND.ENVIRONMENT ) ) );
+						return;
+
+					}
+
+					const visibility = shadow( originFor( back, lightShadowOrigin( direction ) ), direction, float( 1e20 ) );
+
+					If( visibility.greaterThan( 0.0 ).or( wantUnoccluded ), () => {
+
 						// Base contribution WITHOUT visibility (deterministic estimator; no stochastic scaling).
-						const baseContribution = radiance.mul( brdfValue ).mul( NoL ).mul( misW ).div( max( lightPdf, 1e-10 ) );
+						const baseContribution = skyLight();
 						totalContribution.addAssign( baseContribution.mul( visibility ) );
 						If( wantUnoccluded, () => {
 
@@ -1115,6 +1207,12 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 
 	} );
 
+	if ( pick ) If( pick.total.greaterThan( 0.0 ), () => {
+
+		totalContribution.addAssign( pick.resolve( shadow( pick.origin, pick.direction, pick.distance ).toVar() ) );
+
+	} );
+
 	// EMISSIVE TRIANGLE DIRECT LIGHTING
 	// NOTE: Emissive triangle sampling is handled separately in pathtracer_core.fs
 	// to bypass firefly suppression. Do not add it here to avoid double-counting.
@@ -1125,3 +1223,5 @@ const makeDirectLighting = ( throughSurfaces ) => Fn( ( [
 
 export const calculateDirectLightingUnified = /*@__PURE__*/ makeDirectLighting( false );
 export const calculateDirectLightingThroughSurfaces = /*@__PURE__*/ makeDirectLighting( true );
+export const calculateDirectLightingOneRay = /*@__PURE__*/ makeDirectLighting( false, true );
+export const calculateDirectLightingThroughSurfacesOneRay = /*@__PURE__*/ makeDirectLighting( true, true );

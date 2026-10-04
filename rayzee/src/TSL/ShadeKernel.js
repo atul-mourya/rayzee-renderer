@@ -21,6 +21,7 @@ import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, ge
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import {
 	calculateDirectLightingUnified, calculateDirectLightingThroughSurfaces, calculateMaterialPDF,
+	calculateDirectLightingOneRay, calculateDirectLightingThroughSurfacesOneRay,
 	sampleDirectionalLight, sampleRectAreaLight, samplePointLightWithAttenuation, sampleSpotLightWithRadius,
 	areaLightRadiance, areaLightSpreadAttenuation,
 } from './LightsSampling.js';
@@ -28,6 +29,7 @@ import { traceShadowRay, traceShadowRayRefractiveOpaque, estimateLightImportance
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { hitFacet, unpackHitFacet, windingNormal } from './HitFacet.js';
 import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js';
+import { visibilityCell } from './LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
 import { ALL_MATERIAL_LAYERS } from './SceneResources.js';
@@ -44,7 +46,7 @@ import { sampleClearcoat, ClearcoatResult } from './Clearcoat.js';
 import { refineDisplacedIntersection, DisplacementResult } from './Displacement.js';
 import {
 	calculateEmissiveTriangleContribution, calculateEmissiveLightPdf, EmissiveSample, EmissiveSampleIndexed,
-	sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
+	sampleEmissiveTriangle, sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
 } from './EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from './LightBVHSampling.js';
 import {
@@ -134,6 +136,9 @@ export function buildShadeKernel( params ) {
 		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out. Bidirectional
 		// always leaves diffuse transmission out: its connections and light tracing do not cross surfaces yet.
 		materialLayers: layers = ALL_MATERIAL_LAYERS,
+		// One shadow ray a hit for every light, emitters included (LightsSampling lightPick); path tracing only.
+		oneShadowRay = false,
+		cameraWorldMatrix = null,
 	} = params;
 	const diffuseTransmission = layers.diffuseTransmission;
 
@@ -145,6 +150,7 @@ export function buildShadeKernel( params ) {
 	const auxOn = gBuffer ? auxGBufferEnabled.greaterThan( uint( 0 ) ) : null;
 
 	const useEmissiveNEE = lightBuffer !== undefined;
+	const onePick = oneShadowRay && ! bdpt;
 	const lamps = {
 		directional: directionalLightsBuffer, numDirectional: numDirectionalLights, area: areaLightsBuffer, numArea: numAreaLights,
 		point: pointLightsBuffer, numPoint: numPointLights, spot: spotLightsBuffer, numSpot: numSpotLights,
@@ -1607,7 +1613,85 @@ export function buildShadeKernel( params ) {
 
 		} ).Else( sampleLobes );
 
-		const directLighting = () => DirectLightingDual.wrap( ( transmitting ? calculateDirectLightingThroughSurfaces : calculateDirectLightingUnified )(
+		const emitterCandidate = () => {
+
+			const value = vec3( 0.0 ).toVar();
+			const from = vec3( 0.0 ).toVar();
+			const dir = vec3( 0.0, 1.0, 0.0 ).toVar();
+			const dist = float( 0.0 ).toVar();
+			if ( ! useEmissiveNEE ) return [ value, from, dir, dist ];
+
+			If( enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ), () => {
+
+				const position = vec3( 0.0 ).toVar();
+				const direction = vec3( 0.0, 1.0, 0.0 ).toVar();
+				const emission = vec3( 0.0 ).toVar();
+				const pdf = float( 0.0 ).toVar();
+				const valid = tslBool( false ).toVar();
+				const take = ( sample ) => {
+
+					const e = EmissiveSample.wrap( sample );
+					position.assign( e.position );
+					direction.assign( e.direction );
+					emission.assign( e.emission );
+					pdf.assign( e.pdf );
+					valid.assign( e.valid );
+
+				};
+
+				If( lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
+
+					take( sampleLightBVHTriangle(
+						hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
+						lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer, transmitsDiffusely,
+					) );
+
+				} ).Else( () => {
+
+					take( sampleEmissiveTriangle(
+						hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
+						lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer, transmitsDiffusely,
+					) );
+
+				} );
+
+				If( valid.and( pdf.greaterThan( 0.0 ) ), () => {
+
+					const back = throughSurface( direction ).toVar();
+					const NoL = transmitting ? abs( dot( N, direction ) ) : max( float( 0.0 ), dot( N, direction ) );
+					const inFront = NoL.greaterThan( 0.0 ).and( dot( N, direction ).greaterThan( 0.0 ) )
+						.and( dot( direction, NgeoFF ).greaterThan( 0.0 ) );
+
+					If( transmitting ? back.or( inFront ) : inFront, () => {
+
+						from.assign( originFor( direction, lightShadowOrigin( direction ) ) );
+						const toSample = position.sub( from ).toVar();
+						const span = length( toSample ).toVar();
+						dir.assign( toSample.div( span ) );
+						dist.assign( span.mul( SHADOW_END ) );
+
+						const bPdf = calculateMaterialPDF( V, direction, N, material );
+						const misW = select( bPdf.greaterThan( 0.0 ), powerHeuristic( { pdf1: pdf, pdf2: bPdf } ), float( 1.0 ) );
+						value.assign( emission.mul( evaluateMaterialResponse( V, direction, N, material ) ).mul( NoL )
+							.div( pdf ).mul( emissiveBoost ).mul( misW ) );
+
+					} );
+
+				} );
+
+			} );
+
+			return [ value, from, dir, dist ];
+
+		};
+
+		const oneRayArgs = onePick
+			? [ ...emitterCandidate(), counters, visibilityCell( hitPoint, NgeoFF, vec3( cameraWorldMatrix[ 3 ] ) ) ]
+			: [];
+		const directLightingFn = onePick
+			? ( transmitting ? calculateDirectLightingThroughSurfacesOneRay : calculateDirectLightingOneRay )
+			: ( transmitting ? calculateDirectLightingThroughSurfaces : calculateDirectLightingUnified );
+		const directLighting = () => DirectLightingDual.wrap( directLightingFn(
 			hitPoint, N, NgeoFF, material, V,
 			brdfDir, brdfPdf, brdfValue,
 			bounceIndex, rngState,
@@ -1624,6 +1708,7 @@ export function buildShadeKernel( params ) {
 			tslBool( false ), // wantUnoccluded: false on real surfaces — dead-codes the unoccluded sum
 			terminatorLift, facetN, shadowTerminatorOffset,
 			hasSun, sunDirection, sunRadiance, sunParams,
+			...oneRayArgs,
 		) ).shadowed;
 		// Bidirectional mode samples every light itself, below.
 		const directLight = bdpt ? null : directLighting().toVar();
@@ -1954,7 +2039,7 @@ export function buildShadeKernel( params ) {
 
 			} );
 
-		} else if ( useEmissiveNEE ) {
+		} else if ( useEmissiveNEE && ! onePick ) {
 
 			If(
 				enableEmissiveTriangleSampling.equal( int( 1 ) )

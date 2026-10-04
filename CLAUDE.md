@@ -541,6 +541,17 @@ the strings, so never rename or repurpose one.
   ⚠️ `bench:ab` read +7–9 % on identical code for two scenes that day: net any A/B of a self-run.
   ⚠️ Shade's `Ngeo`/`NgeoFF` are the interpolated normal, not the facet (`facetN` is), and the hit
   keeps texture UVs, not barycentrics.
+- **One shadow ray a hit** (`oneShadowRay`, off by default; path integrator only) — instead of a shadow ray per kind
+  of light (the lamp pick, environment, sun, emissive triangles), each kind's sample is offered unshadowed to `lightPick`
+  (`TSL/LightsSampling.js`), which keeps one with chance ∝ its luminance × √(the share of its kind's rays that got
+  through here) and traces only it, divided by that chance. MIS weights are unchanged, so it stays unbiased; the
+  rect-light BSDF-hit ray is kept. The learned visibility (`TSL/LightVisibility.js`) sits in the counter buffer past the
+  light guide: tries/visible per cell × kind, a cell ~1/32 of its distance from the camera (power of two) and its facing
+  axis. Shade reads the learned half and adds to the fresh half; `visibilityFold` merges them after each frame, so a
+  render repeats bit for bit. A reset clears it unless only the camera moved. Equal-time error against off (Apple
+  M-series): 24155522.glb with the physical sky 1.63× samples/s, 0.66–0.76 (1.11 visible-noise loss without the learned
+  visibility: the walled-out sun took the ray); small scenes 0.91–0.96. ⚠️ Sun + sky in full view loses to colour noise
+  — one light's colour a sample, not their mix: `sheen-velvet` 1.18–1.25, `shadow-catcher-ground` 1.35–1.60.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

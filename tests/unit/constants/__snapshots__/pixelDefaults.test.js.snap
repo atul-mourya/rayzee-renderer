@@ -103,6 +103,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "nrdQualityPreset": "medium",
   "oidnQuality": "fast",
   "oidnTemporalHistory": true,
+  "oneShadowRay": false,
   "panoramaLatRange": [
     -90,
     90,

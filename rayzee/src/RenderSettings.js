@@ -77,6 +77,7 @@ const SETTING_ROUTES = {
 	renderTimeLimit: { handler: 'handleRenderTimeLimit', reset: false },
 	renderMode: { handler: 'handleRenderMode' },
 	integrator: { handler: 'handleIntegrator', reset: true },
+	oneShadowRay: { handler: 'handleOneShadowRay', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
 
 };
@@ -286,6 +287,12 @@ export class RenderSettings extends EventDispatcher {
 			handleIntegrator: ( value ) => {
 
 				stages.pathTracer?.setIntegrator?.( value );
+
+			},
+
+			handleOneShadowRay: ( value ) => {
+
+				stages.pathTracer?.setOneShadowRay?.( value );
 
 			},
 

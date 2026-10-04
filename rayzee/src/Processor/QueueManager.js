@@ -39,6 +39,12 @@ export const COUNTER = {
 /** The light guide's counts: 16 direction bins × 64 × 64 disc cells (TSL/LightGuide.js). */
 export const GUIDE_COUNTER_WORDS = 16 * 64 * 64;
 
+/** Learned light visibility (TSL/LightVisibility.js): tries and visible per cell and light kind, learned then fresh. */
+export const VISIBILITY_BASE = COUNTER.GUIDE + GUIDE_COUNTER_WORDS;
+export const VISIBILITY_CELLS = 1 << 17;
+export const VISIBILITY_KINDS = 4;
+export const VISIBILITY_COUNTER_WORDS = VISIBILITY_CELLS * VISIBILITY_KINDS * 2;
+
 export const ENERGY_SCALE = 64;
 export const ENERGY_RAY_CLAMP = 65535;
 
@@ -72,6 +78,7 @@ export class QueueManager {
 		this._renderer = renderer;
 		this.capacity = 0;
 		this.counters = null;
+		this._visibilityTable = false;
 		// A/B alternate: one read by current bounce, other written by compaction
 		this.activeIndices = null;
 		this.activeIndicesRO = null;
@@ -94,9 +101,7 @@ export class QueueManager {
 		this.dispose();
 		this.capacity = capacity;
 
-		// explicit attribute (not attributeArray) so it can be referenced for async readback
-		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( COUNTER.GUIDE + GUIDE_COUNTER_WORDS ), 1 );
-		this.counters = storage( this._countersAttr, 'uint' ).toAtomic();
+		this._allocateCounters();
 
 		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY,
 		// then the same pair for the bidirectional light pass
@@ -141,6 +146,26 @@ export class QueueManager {
 		this.totalBytes = COUNTER.COUNT * 4 + capacity * 4 * 3;
 
 		log.debug( `queues capacity ${fmt.n( capacity )} · ${fmt.mb( this.totalBytes )}` );
+
+	}
+
+	_allocateCounters() {
+
+		// explicit attribute (not attributeArray) so it can be referenced for async readback
+		const words = VISIBILITY_BASE + ( this._visibilityTable ? 2 * VISIBILITY_COUNTER_WORDS : 0 );
+		this._countersAttr = new StorageInstancedBufferAttribute( new Uint32Array( words ), 1 );
+		this.counters = storage( this._countersAttr, 'uint' ).toAtomic();
+
+	}
+
+	/** Room for the learned light visibility in the counter buffer; kernels bound to the old buffer must rebuild. */
+	setVisibilityTable( enabled ) {
+
+		if ( this._visibilityTable === !! enabled ) return;
+		this._visibilityTable = !! enabled;
+		if ( ! this._countersAttr ) return;
+		freeStorageAttribute( this._renderer, this._countersAttr );
+		this._allocateCounters();
 
 	}
 
