@@ -9,7 +9,7 @@ import { PathTracer } from './Stages/PathTracer.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
-import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './EngineDefaults.js';
+import { ENGINE_DEFAULTS as DEFAULT_STATE, TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize, getRenderProfile, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './EngineDefaults.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
 import { TextureReadback } from './Processor/TextureReadback.js';
@@ -92,6 +92,15 @@ async function initWithoutFrameLoop( renderer, headless ) {
  */
 
 const log = createLogger( 'engine' );
+
+// An empty scene's tree: one triangle leaf holding nothing. Sixteen zeros read as an inner node whose children are itself.
+function emptyBVH() {
+
+	const nodes = new Float32Array( 16 );
+	new Uint32Array( nodes.buffer )[ 3 ] = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+	return nodes;
+
+}
 
 /**
  * Attaches the device-lost handler at module scope so the reaction closure captures only
@@ -361,7 +370,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		// Seed path tracer with minimal empty scene data
 		this.stages.pathTracer.setTriangleData( new Uint32Array( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ), 0 );
-		this.stages.pathTracer.setBVHData( new Float32Array( 16 ) );
+		this.stages.pathTracer.setBVHData( emptyBVH() );
 		this.stages.pathTracer.materialData.setMaterialData( new Float32Array( 16 ) );
 		this.stages.pathTracer.setupMaterial();
 
@@ -848,7 +857,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( this.stages.pathTracer ) {
 
 			this.stages.pathTracer.setTriangleData( new Uint32Array( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE ), 0 );
-			this.stages.pathTracer.setBVHData( new Float32Array( 16 ) );
+			this.stages.pathTracer.setBVHData( emptyBVH() );
 			this.stages.pathTracer.materialData.setMaterialData( new Float32Array( 16 ) );
 			this.stages.pathTracer.setEmissiveTriangleData?.( new Float32Array( 0 ), 0, 0 );
 			this.stages.pathTracer.setupMaterial();

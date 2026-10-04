@@ -664,6 +664,8 @@ export class BidirectionalIntegrator {
 
 		const root = node( 0 );
 		if ( root.u[ root.o + 3 ] >= BVH_MAX_INDEX ) return null;
+		// A tree that reaches a node twice is malformed; no search visits more nodes than the tree holds.
+		const nodeCount = records ? records.recordCount : flat.length / 16;
 
 		const min = [], max = [];
 		for ( let axis = 0; axis < 3; axis ++ ) for ( const sign of [ 1, - 1 ] ) {
@@ -682,10 +684,12 @@ export class BidirectionalIntegrator {
 			};
 
 			push( root );
+			let visits = 0;
 			while ( stack.length ) {
 
 				const s = stack.pop(), index = stack.pop();
 				if ( s <= best ) continue;
+				if ( index >= nodeCount || ++ visits > nodeCount ) return null;
 				const n = node( index );
 				if ( n.u[ n.o + 3 ] >= BVH_MAX_INDEX ) {
 
