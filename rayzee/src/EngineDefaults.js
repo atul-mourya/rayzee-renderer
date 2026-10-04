@@ -171,7 +171,7 @@ export const ENGINE_DEFAULTS = {
 
 	samplingTechnique: 2,
 	integrator: 'path', // 'path' | 'bidirectional' | 'vcm'
-	shadowRays: 'all', // 'all' | 'two' | 'one' — shadow rays a hit for the lamps, sky, sun and emitters (path integrator)
+	shadowRays: 'two', // 'all' | 'two' | 'one' — shadow rays a hit for the lamps, sky, sun and emitters (path integrator)
 	enableEmissiveTriangleSampling: false,
 	emissiveBoost: 1.0,
 

@@ -121,7 +121,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "resolution": 512,
   "samplingTechnique": 2,
   "saturation": 1,
-  "shadowRays": "all",
+  "shadowRays": "two",
   "shadowTerminatorOffset": 0.1,
   "showAsvgfHeatmap": false,
   "showBackground": true,
