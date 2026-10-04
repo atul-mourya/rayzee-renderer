@@ -1736,6 +1736,34 @@ SCENES.push( {
 	},
 } );
 
+SCENES.push( {
+	id: 'mixed-lights',
+	covers: 'shadowRays \'two\' (the default): a rect lamp, a glowing ceiling panel and a painted-sun sky through the open side — the strongest kind traced, one of the rest picked by where it gets through; held to a ray per kind',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEnvironment: true, enableEmissiveTriangleSampling: true, shadowRays: 'two' },
+	truthSettings: { shadowRays: 'all' },
+	async build( app ) {
+
+		await setSunSky( app );
+		const scene = makeRoom( { emissiveCeiling: true, lightSize: 1, lightIntensity: 20 } );
+		const lamp = new RectAreaLight( 0xffe0c0, 10, 1.2, 0.8 );
+		lamp.position.set( - 2.999, 0.8, - 1 );
+		scene.add( lamp );
+		lamp.lookAt( 10, 0.8, - 1 );
+		const box = new Mesh( new BoxGeometry( 1.4, 2, 1.4 ), new MeshPhysicalMaterial( { color: 0xaaaaaa, roughness: 1, metalness: 0 } ) );
+		box.position.set( 1.1, - 2, - 0.8 );
+		box.rotation.y = 0.4;
+		const ball = new Mesh( new SphereGeometry( 0.7, 64, 64 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 0.3, metalness: 1 } ) );
+		ball.position.set( - 1.2, - 2.3, 0.8 );
+		scene.add( box, ball );
+
+		await app.loadObject3D( scene, 'mixed-lights' );
+		setCamera( app, [ 0, 0, 8.5 ], [ 0, - 0.5, 0 ] );
+
+	},
+} );
+
 /**
  * Pins the camera explicitly. Must run AFTER loadObject3D, which rebuilds the scene and
  * selects camera index 0 (potentially reframing).

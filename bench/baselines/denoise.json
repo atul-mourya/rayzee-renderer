@@ -718,5 +718,50 @@
 		"ratio": 0.6268719595899682,
 		"rawRmse": 0.010041069849144147,
 		"denoisedRmse": 0.006294465132712738
+	},
+	"mixed-lights/asvgf/1": {
+		"ratio": 0.6025010067003272,
+		"rawRmse": 0.10173583608894533,
+		"denoisedRmse": 0.06129594366108904
+	},
+	"mixed-lights/edgeaware/1": {
+		"ratio": 0.5768491573081659,
+		"rawRmse": 0.10173583608894533,
+		"denoisedRmse": 0.058686231315949806
+	},
+	"mixed-lights/oidn/1": {
+		"ratio": 0.21119072522140897,
+		"rawRmse": 0.10173583608894533,
+		"denoisedRmse": 0.021485665004630755
+	},
+	"mixed-lights/oidn-tiled/1": {
+		"ratio": 0.21029650230098595,
+		"rawRmse": 0.10173583608894533,
+		"denoisedRmse": 0.021394690488171622
+	},
+	"mixed-lights/asvgf/64": {
+		"ratio": 0.5543216348697174,
+		"rawRmse": 0.01850573816101751,
+		"denoisedRmse": 0.010258131031886143
+	},
+	"mixed-lights/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.01850573816101751,
+		"denoisedRmse": 0.01850573816101751
+	},
+	"mixed-lights/edgeaware/64": {
+		"ratio": 0.6632398349185634,
+		"rawRmse": 0.01850573816101751,
+		"denoisedRmse": 0.012273742722959412
+	},
+	"mixed-lights/oidn/64": {
+		"ratio": 0.30351981823606394,
+		"rawRmse": 0.01850573816101751,
+		"denoisedRmse": 0.005616858282956227
+	},
+	"mixed-lights/oidn-tiled/64": {
+		"ratio": 0.3027767067868282,
+		"rawRmse": 0.01850573816101751,
+		"denoisedRmse": 0.0056031064570522164
 	}
 }

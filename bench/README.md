@@ -653,6 +653,7 @@ probes. `npm run bench:list` prints them with what they cover.
 | `arealight-analytic` | analytic area light against closed-form irradiance — power→radiance convention, spherical-rectangle NEE, NEE/BSDF MIS, shadow-ray origin |
 | `arealights-two` | two area lights of unequal size, power, shape and spread — reservoir selection, per-light MIS, disk sampling, spread attenuation |
 | `instanced-storage` | object-space shared geometry, InstancedMesh placements, a mirrored placement's winding, an emissive geometry placed twice — the storage paths every other scene skips |
+| `mixed-lights` | the default `shadowRays: 'two'`: a rect lamp, a glowing panel and a painted-sun sky — the only scene with three light kinds, so the only one where the pick runs; its truth is one shadow ray per kind |
 | `cornell-bidirectional` | the bidirectional integrator — light subpaths, connections, light tracing and their MIS; its truth is the path tracer's estimate of the same room (`truthSettings`) |
 | `caustic-bidirectional` | bidirectional through glass and a mirror — light-traced caustics, MIS across specular vertices, importance through refraction |
 | `lamps-bidirectional` | bidirectional with every lamp type as a light-path source — the source table, the lamp pick at both ends, lamps no camera path can hit, a rect light reached by the continuation (in rough metal); truth from the path tracer |
