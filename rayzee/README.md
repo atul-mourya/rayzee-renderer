@@ -40,6 +40,9 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
   - [Memory Monitoring](#memory-monitoring)
   - [Logging](#logging)
   - [Deterministic & Headless Rendering](#deterministic--headless-rendering)
+  - [On-disk Storage (OPFS)](#on-disk-storage-opfs)
+  - [Saving Scene State](#saving-scene-state)
+  - [Render Checkpoints](#render-checkpoints)
   - [Events](#events)
   - [Advanced: Custom Pipeline Stages](#advanced-custom-pipeline-stages)
   - [All Exports](#all-exports)
@@ -56,7 +59,7 @@ A real-time WebGPU path tracing engine built on Three.js. Framework-agnostic —
 npm install rayzee three
 ```
 
-`three` (>=0.185.0) is a required peer dependency.
+`three` (>=0.186.0) is a required peer dependency.
 
 ## Getting Started
 
@@ -138,10 +141,10 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
-      "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js",
-      "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/",
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js",
+      "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.tsl.js",
+      "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
       "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js",
       "rayzee": "https://cdn.jsdelivr.net/npm/rayzee/dist/rayzee.es.js"
     }
@@ -307,7 +310,7 @@ All keys are optional — only what you pass is overridden. Call `getAssetConfig
 
 ### PathTracerApp
 
-The main engine class. Extends Three.js `EventDispatcher`. Related functionality is grouped into **namespaced managers** accessed via `engine.cameraManager`, `engine.lightManager`, etc., or as direct methods on the engine instance.
+The main engine class. Extends `RayzeeRenderer`, the [renderer core](#renderer-core-rayzeecore), which extends three.js's `EventDispatcher`. Related functionality is grouped into **namespaced managers** accessed via `engine.cameraManager`, `engine.lightManager`, etc., or as direct methods on the engine instance.
 
 ```js
 const engine = new PathTracerApp(canvas, options?)
@@ -344,87 +347,6 @@ engine.wake()                 // Resume render loop if idle
 
 Constructing a new `PathTracerApp` on a canvas that already has an active instance auto-disposes the prior one — safe under React StrictMode and HMR even without explicit cleanup, though `engine.dispose()` remains the recommended teardown path.
 
-### Renderer core (`rayzee/core`)
-
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. It has no denoisers, camera controls, gizmo, overlays, timeline or animation playback, physical sky, archive reader, bidirectional integrator, OpenColorIO pipeline or on-disk cache, and its entry point downloads about a third less. It takes the same options and renders the same pixels; the add-ons below bring back the rest.
-
-```js
-import { RayzeeRenderer } from 'rayzee/core';
-
-const renderer = await new RayzeeRenderer(canvas).init();
-await renderer.loadModel('/models/scene.glb');
-renderer.camera.position.set(0, 2, 6);   // the camera it renders from; reset() after moving it
-renderer.camera.lookAt(0, 0, 0);
-renderer.reset();
-await renderer.renderFrames(256);
-const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
-renderer.dispose();
-```
-
-Add-ons install on it explicitly. The physical sky, for `environmentMode: 'procedural'`:
-
-```js
-import { PhysicalSky } from 'rayzee/addons/physical-sky';
-
-renderer.environmentManager.setProceduralSky(PhysicalSky);
-await renderer.environmentManager.setMode('procedural');
-```
-
-Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`).
-
-Bidirectional path tracing and vertex merging, for `integrator: 'bidirectional' | 'vcm'`:
-
-```js
-import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
-
-renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
-renderer.settings.set('integrator', 'bidirectional');
-```
-
-Scene archives (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
-
-```js
-import { ArchiveImporter } from 'rayzee/addons/archives';
-
-renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
-await renderer.loadFile(archiveFile);
-```
-
-OpenColorIO colour management — configs, their views and looks, working spaces and export spaces. Without it the core
-renders in linear Rec.709 through three.js's own view transforms, and `loadColorConfig()` records `capability.missing`:
-
-```js
-import { configureAssets } from 'rayzee/core';
-import { ColorManagement } from 'rayzee/addons/color';
-
-configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
-renderer.setColorManagement(ColorManagement);
-await renderer.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' });
-```
-
-On-disk storage (the browser's origin private file system), for the download, environment and scene caches and the
-`memorySpill` option. Without it downloads land in memory and nothing is cached between visits. Install it before
-`init()`:
-
-```js
-import { acquireSharedStorage } from 'rayzee/addons/storage';
-
-const renderer = new RayzeeRenderer(canvas);
-renderer.setStorageOpener(acquireSharedStorage);
-await renderer.init();
-```
-
-Several renderers, core or full, can live in one page; they share only the colour management and the on-disk storage,
-which are page-wide.
-
-Code of your own that adds a setting declares it on the renderer's settings, so it gets the same provenance, change
-events and session saving as the built-in ones:
-
-```js
-renderer.settings.define('myGlowStrength', { apply: (value) => glow.setStrength(value), reset: true });
-renderer.settings.set('myGlowStrength', 2);
-```
-
 #### Loading Assets
 
 ```js
@@ -449,6 +371,8 @@ engine.setSceneObjectVisibility(id, visible)                      // Toggle visi
 `id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. For `addModelFromObject3D` the engine carries your object's uuid onto its copy, so the id matches the object you passed. The built-in ground plane is permanent and can't be removed.
 
 ##### Loading part of a scene archive
+
+On `rayzee/core`, archives and pbrt need the `rayzee/addons/archives` add-on — see [Renderer core](#renderer-core-rayzeecore).
 
 A pbrt-v4 scene archive (`.tar`, `.tar.gz`, `.zip`) is usually a root `.pbrt` file that includes one
 subtree per element, and the whole thing rarely fits in a browser tab — Moana is 29 GB unpacked.
@@ -519,7 +443,7 @@ Key settings:
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
 | `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
-| `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'`. Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. Switching rebuilds the kernels |
+| `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'` \| `'vcm'` (on the core, needs the bidirectional add-on). Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. `'vcm'` adds photon merging, for caustics seen in mirrors and through glass. Switching rebuilds the kernels |
 | `fireflyThreshold` | `number` | 3.0 | Firefly clamping threshold |
 | `shadowTerminatorOffset` | `number` | 0.1 | Cycles' Shadow Terminator → Geometry Offset: near the light's terminator on a smooth-shaded low-poly mesh, light and environment shadow rays start on the smooth surface the vertex normals describe, not the flat facet. Blender's default; `0` disables |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
@@ -534,7 +458,7 @@ Key settings:
 | `unitsPerMetre` | `number` | 1 | Physical mode: scene units per real metre, for files whose units are not metres. It carries over between model loads — reset it when the new file's units differ |
 | `transparentBackground` | `boolean` | false | Transparent canvas background |
 | `interactionModeEnabled` | `boolean` | true | Render at lower resolution while the camera moves, keeping the full bounce budget ("Fast Navigation" in the app) |
-| `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser |
+| `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser. `PathTracerApp` only |
 | `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
@@ -543,14 +467,14 @@ Key settings:
 | `panoramaLatRange` | `[number, number]` | `[-90, 90]` | Panorama latitude sweep, degrees, bottom→top |
 | `panoramaLevelHorizon` | `boolean` | true | Yaw-only panorama basis, so orbit pitch/roll can't tilt the horizon |
 | `useAdaptiveSampling` | `boolean` | true | Whole-frame early-stop once convergence reaches `adaptiveStopFraction` |
-| `noiseThreshold` | `number` | 0.02 | √-luminance-normalized per-pixel noise below which a pixel counts as converged |
+| `noiseThreshold` | `number` | 0.1 | √-luminance-normalized per-pixel noise below which a pixel counts as converged (the production preset uses 0.02) |
 | `adaptiveMinSamples` | `number` | 8 | Minimum samples before adaptive sampling can trigger |
-| `adaptiveStopFraction` | `number` | 0.95 | Fraction of pixels that must converge before the frame retires |
+| `adaptiveStopFraction` | `number` | 0.90 | Fraction of pixels that must converge before the frame retires (the production preset uses 0.94) |
 | `usePixelFreeze` | `boolean` | true | Per-pixel freeze (Tier-2): skip individually-converged pixels via active-list compaction |
 | `pixelFreezeThreshold` | `number` | 0.02 | Relative-error threshold for a pixel to become a freeze candidate |
 | `pixelFreezeStability` | `number` | 8 | Consecutive candidate frames required before a pixel freezes |
 
-See `ENGINE_DEFAULTS` for the full list with default values. The default look is AgX (`toneMapping: 6`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`.
+See `ENGINE_DEFAULTS` for the full list with default values. The default look is AgX (`toneMapping: 6`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`. On the core without the colour add-on, set `renderer.renderer.toneMapping`.
 
 #### Rendering Modes
 
@@ -562,6 +486,98 @@ engine.configureForMode('interactive')  // Real-time navigation (3 bounces, cont
 To pause rendering for image-viewing UI, set `engine.pauseRendering = true` and disable camera controls directly — the engine doesn't model viewport visibility.
 
 ---
+
+### Renderer core (`rayzee/core`)
+
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. The denoisers, camera controls, gizmo, overlays, timeline and animation playback exist only in `PathTracerApp`; five capabilities come as add-ons — the physical sky, scene archives, bidirectional path tracing, OpenColorIO colour and on-disk storage. Its entry point downloads about 40 % less (249 KB against 418 KB compressed). It takes the same constructor options except `container`, and renders the same pixels.
+
+```js
+import { RayzeeRenderer } from 'rayzee/core';
+
+const renderer = await new RayzeeRenderer(canvas).init();
+await renderer.loadModel('/models/scene.glb');
+renderer.camera.position.set(0, 2, 6);   // the camera it renders from; reset() after moving it
+renderer.camera.lookAt(0, 0, 0);
+renderer.reset();
+await renderer.renderFrames(256);
+const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
+renderer.dispose();
+```
+
+Add-ons install on it explicitly. The physical sky, for `environmentMode: 'procedural'`:
+
+```js
+import { PhysicalSky } from 'rayzee/addons/physical-sky';
+
+renderer.environmentManager.setProceduralSky(PhysicalSky);
+await renderer.environmentManager.setMode('procedural');
+```
+
+Without it, asking for the procedural sky records a `capability.missing` issue (an error under `strict`).
+
+Bidirectional path tracing and vertex merging, for `integrator: 'bidirectional' | 'vcm'`:
+
+```js
+import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
+
+renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt));
+renderer.settings.set('integrator', 'bidirectional');
+```
+
+Its controls are on the active integrator (the same on `PathTracerApp`):
+
+```js
+const integrator = renderer.stages.pathTracer.activeIntegrator;
+integrator.setMergeRadius(1);                        // 'vcm': gather radius in pixels
+integrator.setMergeTrust(0.25);                      // 'vcm': how far merging is trusted against the other strategies
+integrator.setLightGuiding(true);                    // learn where light paths from the sky and sun start
+integrator.setBidirectionalStrategy('connect', { alone: true });  // keep one strategy, for verification
+```
+
+Scene archives (`.zip`, `.tar`, `.tar.gz`) and the pbrt scenes in them:
+
+```js
+import { ArchiveImporter } from 'rayzee/addons/archives';
+
+renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader));
+await renderer.loadFile(archiveFile);
+```
+
+OpenColorIO colour management — configs, their views and looks, working spaces and export spaces. Without it the core
+renders in linear Rec.709 through three.js's own tone mappers, chosen on the three.js renderer
+(`renderer.renderer.toneMapping = AgXToneMapping`), and `loadColorConfig()` records `capability.missing` and rejects:
+
+```js
+import { configureAssets } from 'rayzee/core';
+import { ColorManagement } from 'rayzee/addons/color';
+
+configureAssets({ ocioRuntimeFactory: () => import('@bb-studio/ocio') });
+renderer.setColorManagement(ColorManagement);
+await renderer.loadColorConfig({ builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' });
+```
+
+On-disk storage (the browser's origin private file system), for the download, environment and scene caches and the
+`memorySpill` option. Without it downloads land in memory and nothing is cached between visits. Install it before
+`init()`:
+
+```js
+import { acquireSharedStorage } from 'rayzee/addons/storage';
+
+const renderer = new RayzeeRenderer(canvas);
+renderer.setStorageOpener(acquireSharedStorage);
+await renderer.init();
+```
+
+Several renderers, core or full, can live in one page; they share only the colour management and the on-disk storage,
+which are page-wide.
+
+Code of your own that adds a setting declares it on the renderer's settings, so it gets the same provenance, change
+events and session saving as the built-in ones:
+
+```js
+renderer.settings.define('myGlowStrength', { apply: (value) => glow.setStrength(value), reset: true });
+renderer.settings.set('myGlowStrength', 2);
+```
 
 ### engine.cameraManager
 
@@ -724,6 +740,8 @@ A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported
 
 ### Colour Management
 
+On `rayzee/core` this is the `rayzee/addons/color` add-on — see [Renderer core](#renderer-core-rayzeecore).
+
 `engine.color` is an OpenColorIO pipeline: what textures and lights mean, what the render happens in, and what it is shown and saved as. **It is inert until a config is loaded** — the render stays linear Rec.709 and the view transforms are three.js's own seven, so a host that never loads one sees no change. The host supplies the runtime (`ocioRuntimeFactory` or `ocioRuntimeUrl` in [`configureAssets`](#configuring-assets-cdn-urls--cache-namespace)).
 
 ```js
@@ -762,7 +780,7 @@ engine.environmentManager.texture            // The loaded environment texture
 await engine.loadEnvironment(url)            // Load HDR/EXR environment map (method on engine)
 await engine.environmentManager.setEnvironmentMap(tex) // Set a custom environment texture
 await engine.environmentManager.setMode(mode)   // 'hdri' | 'procedural' | 'color'
-await engine.environmentManager.generateProcedural() // Physical sky: spectral, multiple scattering, analytic sun
+await engine.environmentManager.generateProcedural() // Physical sky: spectral, multiple scattering, analytic sun (core: needs rayzee/addons/physical-sky)
 await engine.environmentManager.generateSolid()      // Solid color sky
 engine.environmentManager.markDirty()        // Flag environment for GPU re-upload
 ```
@@ -790,15 +808,15 @@ Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure.
 
 ```js
 // Strategy
-engine.denoisingManager.setStrategy('asvgf', 'medium')  // 'none' | 'asvgf' | 'edgeaware'
+engine.denoisingManager.setStrategy('asvgf', 'medium')  // 'none' | 'asvgf' | 'nrd' | 'edgeaware' | 'oidn'
 engine.denoisingManager.denoiserStrategy                 // read back the active strategy (derived from stage state)
 engine.denoisingManager.setASVGFEnabled(true, 'medium')
 engine.denoisingManager.applyASVGFPreset('high')         // 'low' | 'medium' | 'high'
 engine.denoisingManager.setAutoExposure(true)
 
 // Fine-grained parameters
-engine.denoisingManager.setASVGFParams({ temporalAlpha: 0.1, phiColor: 10 })
-engine.denoisingManager.setEdgeAwareParams({ pixelEdgeSharpness: 1.0 })
+engine.denoisingManager.setASVGFParams({ temporalAlpha: 0.1, maxAccumFrames: 16 })
+engine.denoisingManager.setEdgeAwareParams({ phiLuminance: 4.0, atrousIterations: 5 })
 engine.denoisingManager.setAutoExposureParams({ keyValue: 0.18 })
 
 // OIDN & Upscaler
@@ -809,7 +827,7 @@ engine.denoisingManager.setTemporalHistory(false)        // live OIDN without th
 engine.denoisingManager.continuousDenoiseInterval = 250   // cap refreshes at 4/sec (default 8 = uncapped)
 engine.denoisingManager.setUpscalerEnabled(true)
 engine.denoisingManager.setUpscalerScaleFactor(2)         // 2 or 4
-engine.denoisingManager.setUpscalerQuality('high')        // ESRGAN only
+engine.denoisingManager.setUpscalerQuality('quality')     // 'fast' | 'balanced' | 'quality'
 ```
 
 ### engine.interactionManager
@@ -915,6 +933,9 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
 | `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
 | `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
+| `capability.missing` | a feature was asked for whose add-on is not installed on the core (procedural sky, an unregistered integrator, a colour config, storage) — names the add-on |
+| `color.config_load_failed` / `viewTransform.bake_failed` / `viewTransform.display_mismatch` | a colour config failed to load (the previous one stays), a view could not be rebaked, or a view targets a display the canvas cannot show (a saved buffer is still right) — warnings |
+| `storage.unavailable` / `storage.quota_exceeded` / `storage.write_failed` / `storage.read_failed` / `storage.entry_corrupt` / `storage.cache_mismatch` | on-disk storage is off or failed; the engine carries on in memory — warnings |
 
 `asset.unreachable` also covers what the engine fetches for itself: OIDN weights, IES profiles and
 gobos (`detail.asset` says which).
@@ -1235,6 +1256,8 @@ list. Both need `timestamp-query`, and `getDenoiseProfile()` returns `null` when
 
 ### On-disk Storage (OPFS)
 
+On `rayzee/core`, storage needs the `rayzee/addons/storage` add-on (`setStorageOpener`) — see [Renderer core](#renderer-core-rayzeecore).
+
 `engine.storage` is a `StorageManager` over the browser's origin private file system, or `null` where
 there is none (a private window, Node) — everything works without it, only slower. The engine keeps
 its caches there: downloads (models, skies, OIDN weights — revalidated at most daily with a 1-byte `Range` request, and served from the cache meanwhile),
@@ -1384,11 +1407,28 @@ class MyCustomStage extends RenderStage {
 }
 ```
 
+To run between the path tracer and the compositor, subclass the renderer and return the stage from
+`_createExtraStages()` (call the parent's and add yours); for the compositor to show its picture, list
+`'my-stage:output'` in `_displaySources()`. `pipeline.addStage()` after `init()` appends after the
+compositor. A stage that needs an extra path-tracer output asks for it with
+`stages.pathTracer.requestOutput( name, options )`.
+
 ### All Exports
 
 ```js
-// Core
+// The full engine (it also exports RayzeeRenderer)
 import { PathTracerApp, EngineEvents, LEGACY_EVENT_NAMES } from 'rayzee';
+
+// The renderer core and its add-ons (see Renderer core)
+import { RayzeeRenderer } from 'rayzee/core';
+import { PhysicalSky } from 'rayzee/addons/physical-sky';
+import { ArchiveImporter } from 'rayzee/addons/archives';
+import { BidirectionalIntegrator } from 'rayzee/addons/bidirectional';
+import { ColorManagement } from 'rayzee/addons/color';
+import { acquireSharedStorage } from 'rayzee/addons/storage';
+
+// Headless rendering (see Deterministic & Headless Rendering)
+import { renderHeadless, openHeadless, captureHeadless } from 'rayzee';
 
 // Platform services for hosts without a browser (see Running in Node)
 import { configurePlatform, getPlatform } from 'rayzee';
@@ -1514,7 +1554,7 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 OIDN provides high-quality AI denoising. It runs automatically once the render converges (reaches
 `maxSamples`), and — in `'interactive'` mode — also on a cadence while the image is still
 accumulating, so a preview shows a clean picture as it refines instead of only at the end. See
-[Continuous denoising](#continuous-denoising).
+[When the denoiser runs](#when-the-denoiser-runs).
 
 1. **Install the package**
 
