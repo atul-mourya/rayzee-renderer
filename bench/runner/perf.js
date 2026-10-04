@@ -219,6 +219,14 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 
 				for ( const [ label, bench ] of order ) {
 
+					// Two sides each holding a bidirectional scene's buffers lost the WebGPU device; the other
+					// side reloads its scene on its own turn anyway.
+					if ( scene.integrator && scene.integrator !== 'path' ) {
+
+						await ( bench === headBench ? baseBench : headBench ).release();
+
+					}
+
 					// Same tab state for both sides: without it the tab opened second read up to ~13 %
 					// slower on identical code.
 					await bench.bringToFront();

@@ -253,6 +253,15 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		gpuTimings: () => page.evaluate( () => globalThis.__bench.gpuTimings() ),
 		frameCount: () => page.evaluate( () => globalThis.__bench.frameCount() ),
 		unload: () => page.evaluate( () => globalThis.__bench.unload() ),
+		// Drops the scene and an integrator's own buffers (~0.5 GB for bidirectional), which unload keeps. Works
+		// against an older ref's harness too: one without integrators skips that half.
+		release: () => page.evaluate( async () => {
+
+			await globalThis.__bench.unload();
+			const settings = globalThis.app?.settings;
+			if ( settings?.getEffective?.().integrator ) settings.set( 'integrator', 'path', { silent: true, reset: false } );
+
+		} ),
 		appLifecycleCycle: ( sceneId, spp ) => page.evaluate(
 			( id, n ) => globalThis.__bench.appLifecycleCycle( id, n ), sceneId, spp ?? 1
 		),

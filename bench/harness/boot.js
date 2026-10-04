@@ -1254,6 +1254,7 @@ globalThis.__bench = {
 	scenes: () => SCENES.map( ( s ) => ( {
 		id: s.id, covers: s.covers, spp: s.spp, truthSpp: s.truthSpp,
 		furnaceRadiance: s.furnaceRadiance, truthSettings: s.truthSettings,
+		integrator: s.settings?.integrator ?? 'path',
 	} ) ),
 	fingerprint,
 	loadScene,
