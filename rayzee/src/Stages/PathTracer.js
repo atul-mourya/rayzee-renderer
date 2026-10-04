@@ -41,7 +41,8 @@ export const LIST_WG_SIZE = 256;
 
 // Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
 // (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
-const SHADOW_RAY_MODES = [ 'all', 'two', 'one' ];
+const PICKED_SHADOW_RAYS = [ 'two', 'one' ];
+const SHADOW_RAY_MODES = [ 'all', ...PICKED_SHADOW_RAYS ];
 
 export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
 
@@ -157,6 +158,7 @@ export class PathTracer extends PathTracerStage {
 		// The material layers the kernels were compiled with (_layersToCompile).
 		this._compiledLayers = null;
 		this._shadowRays = 'all';
+		this._compiledPick = null;
 		this._learnsVisibility = false;
 
 		// Integrators other than the path tracer's own, by name (registerIntegrator); the chosen one's instance, or
@@ -359,6 +361,23 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/**
+	 * The lightPick variant to compile, or null for a ray per light kind: also when the scene has no more kinds than the
+	 * variant traces rays, where it would only add its bookkeeping.
+	 */
+	_pickedShadowRays() {
+
+		if ( this._integrator || ! PICKED_SHADOW_RAYS.includes( this._shadowRays ) ) return null;
+		const environment = this.enableEnvironment.value > 0;
+		const lamps = this.numDirectionalLights.value + this.numAreaLights.value + this.numPointLights.value + this.numSpotLights.value;
+		const kinds = Number( lamps > 0 )
+			+ Number( environment && this.envTotalSum.value > 0 )
+			+ Number( environment && this.hasSun.value > 0 )
+			+ Number( this.enableEmissiveTriangleSampling.value > 0 && this.emissiveTriangleCount.value > 0 );
+		return kinds > ( this._shadowRays === 'two' ? 2 : 1 ) ? this._shadowRays : null;
+
+	}
+
 	get integrator() {
 
 		return this._integrator?.name ?? 'path';
@@ -387,6 +406,8 @@ export class PathTracer extends PathTracerStage {
 			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
 
 		}
+
+		if ( PICKED_SHADOW_RAYS.includes( this._shadowRays ) && this._pickedShadowRays() !== this._compiledPick ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -1543,7 +1564,8 @@ export class PathTracer extends PathTracerStage {
 		const prevNormalDepth = this.shaderBuilder.prevNormalDepthTexNode;
 		const writeTex = this.storageTextures.getWriteTextures();
 
-		const picked = this._integrator || this._shadowRays === 'all' ? null : this._shadowRays;
+		const picked = this._pickedShadowRays();
+		this._compiledPick = picked;
 		const learnsVisibility = picked !== null;
 		this._learnsVisibility = learnsVisibility;
 		qm.setVisibilityTable( learnsVisibility );
