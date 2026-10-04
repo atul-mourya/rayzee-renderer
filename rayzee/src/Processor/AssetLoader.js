@@ -16,8 +16,8 @@ import { fileIdentity, identityKey } from '../Storage/identity.js';
 import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getAssetConfig } from '../AssetConfig.js';
-import { getPlatform, withHostWorker } from '../Platform.js';
-import { loadPlatformImage, platformImagesPlugin } from './PlatformImageLoader.js';
+import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
+import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin } from './PlatformImageLoader.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { getRenderProfile } from '../EngineDefaults.js';
@@ -699,7 +699,9 @@ export class AssetLoader extends EventDispatcher {
 		loader.setDRACOLoader( dracoLoader );
 		loader.setKTX2Loader( ktx2Loader );
 		loader.setMeshoptDecoder( MeshoptDecoder );
-		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, ( where, error ) => this._reportImageFailure( where, error ) ) );
+		const onImageFailure = ( where, error ) => this._reportImageFailure( where, error );
+		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
+		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
 
 		return loader;
 
@@ -713,7 +715,7 @@ export class AssetLoader extends EventDispatcher {
 
 			this._issues?.record(
 				ISSUE_CODES.TEXTURE_BUILD_FAILED,
-				`image ${where} could not be decoded — the surfaces using it render untextured`,
+				`image ${where} could not be decoded (${error?.message ?? error}) — the surfaces using it render untextured`,
 				{ image: where, cause: String( error?.message ?? error ) }
 			);
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { configurePlatform } from '@/core/Platform.js';
-import { platformImagesPlugin, loadPlatformImage } from '@/core/Processor/PlatformImageLoader.js';
+import { configurePlatform, hasImageDecoder } from '@/core/Platform.js';
+import { platformImagesPlugin, missingImageDecoderPlugin, loadPlatformImage } from '@/core/Processor/PlatformImageLoader.js';
 
 // A PNG signature, one IHDR-shaped chunk and IEND, then the trailing bytes exporters leave.
 function pngWithTrailer() {
@@ -102,6 +102,46 @@ describe( 'platform image decoding', () => {
 		const texture = await loadPlatformImage( 'https://cdn.test/sky.png' );
 		expect( texture.flipY ).toBe( true );
 		expect( texture.image.width ).toBe( 2 );
+
+	} );
+
+	it( 'says what to configure where nothing can decode an image', async () => {
+
+		configurePlatform( { decodeImage: null } );
+		expect( hasImageDecoder() ).toBe( false );
+		const failures = [];
+		const parser = fakeParser( [ { uri: 'albedo.png', mimeType: 'image/png' } ], [] );
+		missingImageDecoderPlugin( parser, ( where, error ) => failures.push( [ where, error.message ] ) );
+
+		await expect( parser.loadImageSource( 0 ) ).rejects.toThrow( /decodeImage/ );
+		expect( failures ).toEqual( [[ 'albedo.png', expect.stringMatching( /nodePlatform\( \{ decodeImage \} \)/ ) ]] );
+
+		configurePlatform( { decodeImage: async () => ( { data: new Uint8Array( 4 ), width: 1, height: 1 } ) } );
+		expect( hasImageDecoder() ).toBe( true );
+
+	} );
+
+	it( 'hands an image an extension decodes (KTX2) to that loader, not the host decoder', async () => {
+
+		const decodeImage = vi.fn();
+		configurePlatform( { decodeImage } );
+		const bytes = new Uint8Array( [ 0xab, 0x4b, 0x54, 0x58 ] );
+		const parser = fakeParser( [ { bufferView: 0, mimeType: 'image/ktx2' } ], [ bytes ] );
+		parser.textureLoader = { load() {} };
+		const ktx2 = { parse: vi.fn( ( buffer, onLoad ) => onLoad( { isCompressedTexture: true, clone() {
+
+			return this;
+
+		}, size: buffer.byteLength } ) ) };
+		platformImagesPlugin( parser );
+
+		const texture = await parser.loadImageSource( 0, ktx2 );
+		expect( texture.size ).toBe( 4 );
+		expect( decodeImage ).not.toHaveBeenCalled();
+
+		missingImageDecoderPlugin( parser );
+		parser.sourceCache = {};
+		expect( ( await parser.loadImageSource( 0, ktx2 ) ).size ).toBe( 4 );
 
 	} );
 

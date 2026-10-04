@@ -41,6 +41,14 @@ export function hardwareThreads() {
 
 }
 
+/** Whether images can be decoded: by the host's `decodeImage`, or the browser's own (a canvas or `createImageBitmap`). */
+export function hasImageDecoder() {
+
+	return !! platform.decodeImage
+		|| ( typeof self !== 'undefined' && ( typeof createImageBitmap !== 'undefined' || typeof document !== 'undefined' ) );
+
+}
+
 /** Whether a worker can be started at all: the browser's or the host's. */
 export function hasWorkers() {
 

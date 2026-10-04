@@ -59,6 +59,32 @@ async function fetchBytes( url ) {
 
 }
 
+function imageBytes( parser, def ) {
+
+	return def.bufferView !== undefined
+		? parser.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => new Uint8Array( buffer ) )
+		: fetchBytes( parser.options.manager.resolveURL( LoaderUtils.resolveURL( def.uri, parser.options.path ) ) );
+
+}
+
+// GLTFLoader hands an image its extension decodes (KHR_texture_basisu → KTX2Loader) a loader of its own; three's way to
+// it is an object URL through `self.URL`, so here the loader parses the bytes.
+const ownsLoader = ( parser, loader ) => !! loader && loader !== parser.textureLoader && typeof loader.parse === 'function';
+
+function loadWithOwnLoader( parser, sourceIndex, loader ) {
+
+	if ( parser.sourceCache[ sourceIndex ] !== undefined ) return parser.sourceCache[ sourceIndex ].then( ( texture ) => texture.clone() );
+
+	const promise = imageBytes( parser, parser.json.images[ sourceIndex ] ).then( ( bytes ) => new Promise( ( resolve, reject ) => {
+
+		loader.parse( bytes.buffer.slice( bytes.byteOffset, bytes.byteOffset + bytes.byteLength ), resolve, reject );
+
+	} ) );
+	parser.sourceCache[ sourceIndex ] = promise;
+	return promise;
+
+}
+
 /**
  * An image file as a texture, decoded by the platform: the counterpart of TextureLoader for hosts
  * with no DOM. Rows stay top first with `flipY` on, exactly as TextureLoader leaves an image.
@@ -68,6 +94,27 @@ export async function loadPlatformImage( url, mimeType = mimeTypeOf( { uri: url 
 	const texture = pixelTexture( await decodeBytes( await fetchBytes( url ), mimeType ) );
 	texture.flipY = true;
 	return texture;
+
+}
+
+/**
+ * A GLTFLoader plugin for a runtime with no way to decode an image (Node without `decodeImage`): each image fails with
+ * what to configure, where three.js's own path threw `self is not defined` and took the whole load down.
+ */
+export function missingImageDecoderPlugin( parser, onFailure = null ) {
+
+	parser.loadImageSource = function ( sourceIndex, loader ) {
+
+		if ( ownsLoader( this, loader ) ) return loadWithOwnLoader( this, sourceIndex, loader );
+
+		const def = this.json.images[ sourceIndex ];
+		const error = new Error( 'no image decoder in this runtime: configurePlatform( nodePlatform( { decodeImage } ) ) — see "Running in Node"' );
+		onFailure?.( def.uri ?? `bufferView ${def.bufferView}`, error );
+		return Promise.reject( error );
+
+	};
+
+	return { name: 'RAYZEE_missing_image_decoder' };
 
 }
 
@@ -82,19 +129,16 @@ export async function loadPlatformImage( url, mimeType = mimeTypeOf( { uri: url 
  */
 export function platformImagesPlugin( parser, onFailure = null ) {
 
-	parser.loadImageSource = function ( sourceIndex ) {
+	parser.loadImageSource = function ( sourceIndex, loader ) {
 
+		if ( ownsLoader( this, loader ) ) return loadWithOwnLoader( this, sourceIndex, loader );
 		if ( this.sourceCache[ sourceIndex ] !== undefined ) return this.sourceCache[ sourceIndex ].then( ( texture ) => texture.clone() );
 
 		const def = this.json.images[ sourceIndex ];
 		const mimeType = mimeTypeOf( def );
 		const where = def.uri ?? `bufferView ${def.bufferView}`;
 
-		const bytes = def.bufferView !== undefined
-			? this.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => new Uint8Array( buffer ) )
-			: fetchBytes( this.options.manager.resolveURL( LoaderUtils.resolveURL( def.uri, this.options.path ) ) );
-
-		const promise = bytes.then( ( data ) => decodeBytes( data, mimeType ) ).then( ( pixels ) => {
+		const promise = imageBytes( this, def ).then( ( data ) => decodeBytes( data, mimeType ) ).then( ( pixels ) => {
 
 			const texture = pixelTexture( pixels, { shared: true } );
 			if ( def.extras && typeof def.extras === 'object' ) Object.assign( texture.userData, def.extras );
