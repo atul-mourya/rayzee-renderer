@@ -337,7 +337,8 @@ const makeSampleLightBVHTriangle = ( indexed ) => Fn( ( [
 			// The facet's cosine, not the shading normal's: it is what turns an area density into a solid-angle one.
 			const emissiveFacing = abs( dot( dir, geoNormal ) );
 
-			If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ), () => {
+			// Edge-on (a two-sided emitter passes its side test there) the density is infinite and the light zero.
+			If( surfaceFacing.greaterThan( float( 0.0 ) ).and( sideAccepts( triData.side, dot( dir, geoNormal ) ) ).and( emissiveFacing.greaterThan( float( 0.0 ) ) ), () => {
 
 				// PDF: selectionPdf / area, converted to solid angle: pdfArea * distSq / cosLight
 				const pdfArea = selectionPdf.div( max( area, float( 1e-10 ) ) );
