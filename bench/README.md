@@ -2,7 +2,7 @@
 
 Automated detection of **quality**, **performance**, and **memory** regressions in the rendering engine.
 
-The engine's unit tests cover CPU logic well, but every GPU file — all of `TSL/`, every stage, `PathTracerApp`, the texture and shader processors — is excluded from them. That exclusion list is almost exactly the list of files where regressions actually happen. This bench closes that gap by rendering a fixed scene corpus in headless Chrome against a real GPU and comparing the results numerically.
+The engine's unit tests cover CPU logic, and `tests/gpu/` runs individual TSL functions on the GPU through Dawn, but neither renders a whole scene through the stages, the kernels and the readback — which is where regressions actually happen. This bench closes that gap by rendering a fixed scene corpus in headless Chrome against a real GPU and comparing the results numerically.
 
 ## Quick start
 
@@ -17,16 +17,23 @@ Individual suites:
 
 ```bash
 npm run bench:quality
+npm run bench:freeze       # per-pixel freeze: the same render with and without it
 npm run bench:lockstep     # production path reproducible under any pacing
 npm run bench:node         # the corpus in plain Node on Dawn, against the Chrome goldens
+npm run bench:node -- --core   # …and again with the renderer core, which must match the full engine byte for byte
 npm run bench:denoise
+npm run bench:upscale      # GPU tone map against the CPU one, then the AI upscaler
 npm run bench:memory
 npm run bench:perf
+npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
 npm run bench:ab -- main    # gate perf against another git ref
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
+npm run bench:lut          # regenerate the DFG lookup table after a lobe or sampler change
 ```
 
-Useful flags: `--only scene-a,scene-b`, `--verbose`, `--truth` (regenerate ground truth), `--scene <id>` and `--cycles <n>` for the memory suite.
+Useful flags: `--only scene-a,scene-b`, `--verbose`, and `--scene <id>` / `--cycles <n>` for the memory suite.
+`--truth` (regenerate ground truth) is accepted only by `bench:bless`. `bench:calibrate -- --compare <file.json>`
+prints the stored app timing against a new one captured in the app (before/after a CPU change, no browser needed).
 
 ## What the harness can and cannot measure
 
@@ -118,10 +125,13 @@ CPU measurement is being distorted, and the calibration report prints it for bot
 
 ```
 bench/
-  harness/    boot.js, scenes.js, index.html   # runs in the browser
+  harness/    boot.js, scenes.js, sceneSession.js, index.html, storage/   # runs in the browser
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
   runner/     cli.js + one module per suite    # runs in Node
-  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json
+  node/       run.js, resolve.js               # the corpus in plain Node (bench:node)
+  tools/      gen-dfg-lut.mjs                  # bench:lut
+  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json,
+              denoise.json, freeze.json, upscale.json
 ```
 
 ## Determinism
@@ -300,6 +310,10 @@ Perf runs with the **production dispatch heuristics active** (`setPerfMode`), un
 
 To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side.
 
+> **Bidirectional scenes can lose the WebGPU device in `bench:ab`.** Both sides hold a bidirectional scene's extra
+> buffers (~0.5 GB each) at once; `caustic-bidirectional` lost the device on an Apple M-series machine. The rounds
+> measured before the loss are valid. Time those scenes one at a time with `--only`.
+
 > **`bench:ab` requires `bench/` to exist in the base ref.** Each side boots the harness from its *own* tree — Vite's `server.fs.allow` resolves to the tree the dev server runs in, so serving one tree's harness to the other's server returns 403. A ref predating this tooling therefore has no harness to boot and cannot be used as a base.
 
 #### What the gate can actually resolve — and how that was established
@@ -390,7 +404,7 @@ pacing a different image. With it on: 24, 32 and 20 spp, identical across all fo
 
 ### Node — the corpus without a browser
 
-`bench node` builds the engine and renders every scene that has a golden in plain Node on Dawn
+`npm run bench:node` builds the engine and renders every scene that has a golden in plain Node on Dawn
 (`bench/node/run.js`), through the published build and only the seams a Node host has:
 `navigator.gpu` from the `webgpu` package and `configurePlatform( nodePlatform() )`. The scenes load
 through the same `sceneSession.js` as the browser harness, so they cannot mean different things in
@@ -401,6 +415,11 @@ goldens came from; measured, every scene reads RMSE 0.0019–0.0036.
 
 Mutation-tested: flipping the CPU texture packer's rows fails textured-normalmap at RMSE 0.198 and
 alpha-cutout at 0.014. A new browser dependency fails the scene that reaches it.
+
+`--core` renders each scene a second time with the renderer core (`RayzeeRenderer` from `rayzee/core`, with the
+physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte
+for byte. It holds the core/viewer split to "same pixels", and it is what found module-level shader state shared
+between two renderers in one process (see `TSL/SceneResources.js`).
 
 ### Denoisers — a ratio, so there is nothing to bless away
 
@@ -514,7 +533,7 @@ separate `denoisedNonFinite()` probe reads the denoiser's own output target for 
 `probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in the bilateral weight put NaN on
 ~12 % of pixels with nothing in the suite reacting.
 
-OIDN is still excluded: it adds an async completion dependency and deserves its own suite.
+OIDN is in the suite as `oidn` and `oidn-tiled` (see the table above).
 
 ### Texture binding audit — a structural guard, not a metric
 
@@ -606,7 +625,7 @@ Each baseline stores a GPU fingerprint (vendor, architecture, key limits, device
 
 ## The scene corpus
 
-Thirty-five scenes, one failure axis each — twenty-one image scenes plus fourteen `furnace-*` energy
+Thirty-six scenes, one failure axis each — twenty-two image scenes plus fourteen `furnace-*` energy
 probes. `npm run bench:list` prints them with what they cover.
 
 | scene | pins |
@@ -632,6 +651,7 @@ probes. `npm run bench:list` prints them with what they cover.
 | `caustic-bidirectional` | bidirectional through glass and a mirror — light-traced caustics, MIS across specular vertices, importance through refraction |
 | `lamps-bidirectional` | bidirectional with every lamp type as a light-path source — the source table, the lamp pick at both ends, lamps no camera path can hit, a rect light reached by the continuation (in rough metal); truth from the path tracer |
 | `sky-bidirectional` | bidirectional with a painted-sun sky as a light-path source — the exact environment table, NEE and the miss weight from it, sunlight through glass |
+| `mirror-caustic-vcm` | vertex merging (`integrator: 'vcm'`): a point lamp over a glass ball, its caustic on the floor seen in a mirror — light no connection reaches, only a merge; the shell grid, the per-vertex merge factor |
 | `furnace-diffuse` | white furnace control — Lambert energy conservation, and that the rig itself is sound |
 | `furnace-dielectric-glossy` | dielectric specular energy at low roughness (the most sensitive point) |
 | `furnace-dielectric-smooth` | the same at `MIN_ROUGHNESS`, where a floored GGX denominator read 1.10 |
@@ -706,7 +726,7 @@ Two rules that are easy to get wrong:
   scene and may reframe.
 - **Every engine setting the scene touches must be listed in its `settings` object**, even one the
   engine then overwrites itself (`groundCatcherHeight` is auto-seeded to the scene's min-Y on load).
-  `sceneSettingsFloor()` builds the per-load reset from the union of those keys, so a setting mutated
+  `session.settingsFloor()` (`harness/sceneSession.js`) builds the per-load reset from the union of those keys, so a setting mutated
   outside them leaks into whichever scene loads next and makes results depend on scene order.
 
 Then do two things that are not optional:
@@ -727,7 +747,7 @@ Then do two things that are not optional:
 
 ## Cost
 
-Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 35-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures 14 scenes × 2 sides × 3 rounds, so budget longer again — `--only` is your friend while iterating.
+Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. Steady-state GPU cost is 0.9–4.3 ms/sample at 256² depending on scene. `npm run bench:quality` over the 36-scene corpus takes ~40 s end to end, and a one-scene `bench:kernels` ~7 s; `bench:bless --truth` is considerably more, because each scene renders a 1–2 k-sample reference. `bench:ab` boots two harnesses and measures every scene both refs share × 2 sides × 3 rounds (36 today), so budget longer again — `--only` is your friend while iterating.
 
 ## Known gaps
 
@@ -741,7 +761,7 @@ round of an otherwise flat self-A/B. The MAD floor absorbs one per scene; two in
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
 purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
-Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`. OIDN is still outside the corpus — it adds an async completion dependency and deserves its own suite.
+Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`.
 
 Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
 had to work around by hand:
