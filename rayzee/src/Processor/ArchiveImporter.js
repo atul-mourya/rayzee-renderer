@@ -27,6 +27,7 @@ import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { SUPPORTED_FORMATS as MODEL_FORMATS } from './AssetLoader.js';
+import { ARCHIVE_FORMATS } from './archiveFormats.js';
 
 // Loose USD layers inside a ZIP compose into one scene; these pick out the
 // layers and the image assets they reference.
@@ -47,12 +48,7 @@ export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 export class ArchiveImporter {
 
 	/** The archive formats it adds to the loader's. */
-	static FORMATS = {
-		'zip': { type: 'archive', name: 'ZIP Archive' },
-		'gz': { type: 'archive', name: 'Gzipped TAR Archive' },
-		'tgz': { type: 'archive', name: 'Gzipped TAR Archive' },
-		'tar': { type: 'archive', name: 'TAR Archive' },
-	};
+	static FORMATS = ARCHIVE_FORMATS;
 
 	/** @param {import('./AssetLoader.js').AssetLoader} loader - the loader it reads archives for */
 	constructor( loader ) {

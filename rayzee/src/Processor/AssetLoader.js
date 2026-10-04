@@ -106,6 +106,8 @@ export class AssetLoader extends EventDispatcher {
 		this._appended = false;
 		/** @type {?import('./ArchiveImporter.js').ArchiveImporter} reads archives; see setArchiveImporter() */
 		this.archives = null;
+		/** @type {?{load: function(): Promise<Object>, formats: Object, pending: ?Promise}} see setArchiveImporterLoader() */
+		this._archiveLoader = null;
 
 		this._issues = issues;
 		this._profile = profile ?? getRenderProfile();
@@ -327,11 +329,38 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/**
+	 * Installs the archive importer on first use: `load()` resolves to one, the first time an archive is read. `formats`
+	 * are the extensions it reads (its class's `FORMATS`), known before its code is loaded.
+	 * @param {function(): Promise<import('./ArchiveImporter.js').ArchiveImporter>} load
+	 * @param {Object<string, {type: string, name: string}>} formats
+	 */
+	setArchiveImporterLoader( load, formats ) {
+
+		this._archiveLoader = { load, formats, pending: null };
+
+	}
+
+	/** The archive importer, loading it first if it was installed with setArchiveImporterLoader(). @private */
+	async _archiveImporter() {
+
+		if ( ! this.archives && this._archiveLoader ) this.archives = await ( this._archiveLoader.pending ??= this._archiveLoader.load() );
+		return this.archives;
+
+	}
+
+	/** @private */
+	get _archiveFormats() {
+
+		return this.archives?.constructor.FORMATS ?? this._archiveLoader?.formats ?? null;
+
+	}
+
 	// File utilities
 	getFileFormat( filename ) {
 
 		const extension = filename.split( '.' ).pop().toLowerCase();
-		return SUPPORTED_FORMATS[ extension ] || this.archives?.constructor.FORMATS[ extension ] || null;
+		return SUPPORTED_FORMATS[ extension ] || this._archiveFormats?.[ extension ] || null;
 
 	}
 
@@ -348,8 +377,9 @@ export class AssetLoader extends EventDispatcher {
 	/** @see ArchiveImporter#inspectArchive */
 	async inspectArchive( file ) {
 
-		if ( ! this.archives ) throw this.formatError( file.name ?? 'archive.zip' );
-		return await this.archives.inspectArchive( file );
+		const archives = await this._archiveImporter();
+		if ( ! archives ) throw this.formatError( file.name ?? 'archive.zip' );
+		return await archives.inspectArchive( file );
 
 	}
 
@@ -389,7 +419,7 @@ export class AssetLoader extends EventDispatcher {
 				case 'model': result = await this.loadModelFromFile( file, filename ); break;
 				case 'environment':
 				case 'image': result = await this.loadEnvironmentFromFile( file, filename ); break;
-				case 'archive': result = await this.archives.loadArchiveFromFile( file, filename, options ); break;
+				case 'archive': result = await ( await this._archiveImporter() ).loadArchiveFromFile( file, filename, options ); break;
 				default: throw new Error( `Unknown asset type: ${format.type}` );
 
 			}
@@ -1527,7 +1557,7 @@ export class AssetLoader extends EventDispatcher {
 
 	getSupportedFormats( type = null ) {
 
-		const formats = { ...SUPPORTED_FORMATS, ...this.archives?.constructor.FORMATS };
+		const formats = { ...SUPPORTED_FORMATS, ...this._archiveFormats };
 		if ( type ) {
 
 			const filtered = {};
@@ -1574,6 +1604,7 @@ export class AssetLoader extends EventDispatcher {
 		this._downloads = null;
 		this.archives?.release();
 		this.archives = null;
+		this._archiveLoader = null;
 
 		this.releaseTargetModel();
 

@@ -24,8 +24,7 @@ import { AnimationManager } from './managers/AnimationManager.js';
 import { TransformManager } from './managers/TransformManager.js';
 import { TransformGizmoHelper } from './managers/helpers/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState/SceneState.js';
-import { PhysicalSky } from './Processor/PhysicalSky.js';
-import { ArchiveImporter } from './Processor/ArchiveImporter.js';
+import { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
 import { BidirectionalIntegrator } from './integrators/BidirectionalIntegrator.js';
 import { ColorManagement } from './Color/ColorManagement.js';
 import { acquireSharedStorage } from './Storage/openStorage.js';
@@ -123,7 +122,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		super._initAssetPipeline();
 		this.assetLoader.controls = this.cameraManager.controls;
-		this.assetLoader.setArchiveImporter( new ArchiveImporter( this.assetLoader ) );
+		// Loaded on first use, as a chunk of its own: most sessions never open an archive.
+		this.assetLoader.setArchiveImporterLoader( () => import( './Processor/ArchiveImporter.js' ).then( ( m ) => new m.ArchiveImporter( this.assetLoader ) ), ARCHIVE_FORMATS );
 
 		const onCameraMoved = () => {
 
@@ -174,7 +174,7 @@ export class PathTracerApp extends RayzeeRenderer {
 	async _initManagers() {
 
 		await super._initManagers();
-		this.environmentManager.setProceduralSky( PhysicalSky );
+		this.environmentManager.setProceduralSkyLoader( () => import( './Processor/PhysicalSky.js' ).then( ( m ) => m.PhysicalSky ) );
 		this.stages.pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) );
 
 		this.interactionManager = new InteractionManager( {

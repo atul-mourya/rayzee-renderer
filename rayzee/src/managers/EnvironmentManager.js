@@ -48,6 +48,8 @@ export class EnvironmentManager {
 
 		// Sky renderers (lazy init). The physical sky is a capability: setProceduralSky() installs its class.
 		this.ProceduralSky = null;
+		this._loadProceduralSky = null;
+		this._proceduralSkyLoading = null;
 		/** @type {?import('../EngineIssues.js').IssueLog} */
 		this.issues = null;
 		this.physicalSky = null;
@@ -596,6 +598,18 @@ export class EnvironmentManager {
 	 */
 	generateProceduralSkyTexture() {
 
+		if ( ! this.ProceduralSky && this._loadProceduralSky ) {
+
+			this._proceduralSkyLoading ??= this._loadProceduralSky().then( ( Sky ) => {
+
+				this._proceduralSkyLoading = null;
+				if ( ! this.ProceduralSky ) this.ProceduralSky = Sky;
+
+			} );
+			return this._proceduralSkyLoading.then( () => this.generateProceduralSkyTexture() );
+
+		}
+
 		if ( ! this.ProceduralSky ) {
 
 			this.issues?.record(
@@ -705,10 +719,22 @@ export class EnvironmentManager {
 	 */
 	setProceduralSky( Sky ) {
 
+		this._loadProceduralSky = null;
 		if ( Sky === this.ProceduralSky ) return;
 		this._releaseSky();
 		this.ProceduralSky = Sky;
 		if ( Sky && this.envParams.mode === 'procedural' ) this.generateProceduralSkyTexture();
+
+	}
+
+	/**
+	 * Installs the physical sky on first use: `load()` resolves to the class setProceduralSky() takes, the first time
+	 * 'procedural' mode is baked.
+	 * @param {function(): Promise<Function>} load
+	 */
+	setProceduralSkyLoader( load ) {
+
+		this._loadProceduralSky = load;
 
 	}
 

@@ -36,4 +36,24 @@ describe( 'the physical sky as a capability', () => {
 
 	} );
 
+	it( 'loads the class on first use when installed with a loader, once however many bakes ask', async () => {
+
+		const env = new EnvironmentManager( {}, uniforms );
+		env.issues = new IssueLog();
+		class Sky {}
+		let loads = 0;
+		env.setProceduralSkyLoader( async () => {
+
+			loads ++;
+			return Sky;
+
+		} );
+		expect( env.ProceduralSky ).toBeNull();
+		await Promise.all( [ env.generateProceduralSkyTexture(), env.generateProceduralSkyTexture() ] );
+		expect( env.ProceduralSky ).toBe( Sky );
+		expect( loads ).toBe( 1 );
+		expect( env.issues.list ).toEqual( [] );
+
+	} );
+
 } );
