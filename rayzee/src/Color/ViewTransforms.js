@@ -18,7 +18,7 @@
  * `outputEncoded` is what tells each consumer which it is holding.
  */
 
-import { NoToneMapping } from 'three';
+import { NoToneMapping, AgXToneMapping } from 'three';
 import { BUILTIN_VIEWS } from './BuiltinViews.js';
 
 /** First id an OCIO-derived view gets. Clear of three.js's own constants and room to grow. */
@@ -321,3 +321,7 @@ export function resetViewTransforms() {
 
 /** The id to fall back to when a chosen one disappears. */
 export const FALLBACK_VIEW = NoToneMapping;
+
+// The view a renderer starts on: AgX, Blender/Cycles' default. ACES crushes shadows on this engine's own
+// corpus (shade 1.48 against AgX's 3.01 from identical radiance).
+export const DEFAULT_VIEW = AgXToneMapping;

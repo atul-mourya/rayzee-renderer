@@ -57,7 +57,6 @@ export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
 // Configuration defaults and presets
 export {
 	ENGINE_DEFAULTS,
-	DEFAULT_SUN_PATH,
 	MATERIAL_DEFAULTS,
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
@@ -67,6 +66,7 @@ export {
 	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
 } from './Stages/DenoiserSettings.js';
+export { SKY_DEFAULTS, DEFAULT_SUN_PATH } from './managers/EnvironmentManager.js';
 export { AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
 export { AUTO_FOCUS_DEFAULTS } from './managers/CameraManager.js';
 export { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
@@ -130,7 +130,7 @@ export { displayCanvasFit } from './Color/Displays.js';
 export {
 	VIEW_TRANSFORMS, listViewTransforms, getViewTransform, addViewTransform, removeViewTransform,
 	onRegistryChange, getRegistryVersion, buildToneMapWGSL,
-	OCIO_VIEW_BASE, MAX_TABLE_TRANSFORMS,
+	OCIO_VIEW_BASE, MAX_TABLE_TRANSFORMS, DEFAULT_VIEW,
 } from './Color/ViewTransforms.js';
 export {
 	buildOcioView, addOcioView, addAllOcioViews,

@@ -120,9 +120,8 @@ let perfModeEnabled = false;
 
 async function boot() {
 
-	// Both options are load-bearing: openHeadless prefers 'physical', which would change every
-	// golden; and strict would abort the run before the runner reports. loadScene() asserts
-	// app.issueErrors instead.
+	// strict: false is load-bearing: strict would abort the run before the runner reports.
+	// loadScene() asserts app.issueErrors instead.
 	app = await openHeadless( {
 		canvas,
 		width: RENDER_SIZE.width,
@@ -387,7 +386,7 @@ function setSettings( values ) {
 /** Read at kernel-build time, so this only takes effect on the NEXT model load. */
 function setSortMaterials( enabled ) {
 
-	ENGINE_DEFAULTS.wavefrontSortMaterials = enabled;
+	app.settings.set( 'wavefrontSortMaterials', enabled, { silent: true, reset: false } );
 
 }
 

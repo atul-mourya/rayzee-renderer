@@ -28,7 +28,7 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
 - **Extra path-tracer outputs are requested** with `pathTracer.requestOutput( name, options )`, compiled only while
   requested. A new integrator registers with `pathTracer.registerIntegrator()`; never add integrator branches to
   `PathTracer.js`.
-- **Settings:** `settings.set()`; another layer adds its own key with `settings.define( key, { apply, reset } )`.
+- **Settings:** `settings.set()`; another layer adds its own key, with its default, through `settings.define( key, { default, apply, reset } )`.
   In the app, change render parameters through the store's handlers, which call `getApp()` (`@/lib/appProxy`).
 - **Uniforms are created once**; only `.value` changes, so compiled shader graphs keep their references.
 - **Triangles** are read only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), with the hit's

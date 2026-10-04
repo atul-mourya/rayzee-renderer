@@ -63,7 +63,7 @@ const unsub = subscribeApp( ( app ) => {
 
 ### Settings
 
-`app.settings` is a `RenderSettings` (`RenderSettings.js`). It holds the core's settings, each routed to a path-tracer uniform or a handler. Another layer adds its own with `settings.define( key, { apply, reset } )`; the viewer defines `interactionRenderScale`.
+`app.settings` is a `RenderSettings` (`RenderSettings.js`). It holds the core's settings, each routed to a path-tracer uniform or a handler, or only stored for whoever reads it (`maxTextureSize` and `areaLightIntensityScale` at load); `ENGINE_DEFAULTS` holds exactly their defaults. Another layer adds its own with `settings.define( key, { default, apply, reset } )`; the viewer defines `interactionRenderScale`.
 
 ---
 
@@ -390,7 +390,7 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 
 ### Viewer stages
 
-`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter and EdgeFilter start disabled; AutoExposure follows `ENGINE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
+`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter and EdgeFilter start disabled; AutoExposure follows `AUTO_EXPOSURE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
 
 | Stage (`name`) | On while | Reads | Publishes |
 |----------------|----------|-------|-----------|

@@ -12,6 +12,8 @@ import {
 import { DENOISER_DEFAULTS } from '@/core/Stages/DenoiserSettings.js';
 import { AUTO_EXPOSURE_DEFAULTS } from '@/core/Stages/AutoExposure.js';
 import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
+import { SKY_DEFAULTS } from '@/core/managers/EnvironmentManager.js';
+import { DEFAULT_VIEW } from '@/core/Color/ViewTransforms.js';
 
 describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', () => {
 
@@ -37,6 +39,12 @@ describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', (
 	it( 'engine defaults', () => {
 
 		expect( ENGINE_DEFAULTS ).toMatchSnapshot();
+
+	} );
+
+	it( 'starting sky and view', () => {
+
+		expect( { sky: SKY_DEFAULTS, view: DEFAULT_VIEW } ).toMatchSnapshot();
 
 	} );
 

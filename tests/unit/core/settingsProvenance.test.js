@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
+import { DEFAULT_VIEW } from '@/core/Color/ViewTransforms.js';
 import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
 import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping, AgXToneMapping } from 'three';
 
@@ -65,7 +66,7 @@ describe( 'engine defaults', () => {
 
 		expect( ENGINE_DEFAULTS.areaLightIntensityScale ).toBe( 0.1 );
 		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( 0 );
-		expect( ENGINE_DEFAULTS.toneMapping ).toBe( AgXToneMapping );
+		expect( DEFAULT_VIEW ).toBe( AgXToneMapping );
 		expect( ENGINE_DEFAULTS.saturation ).toBe( 1.0 );
 
 	} );

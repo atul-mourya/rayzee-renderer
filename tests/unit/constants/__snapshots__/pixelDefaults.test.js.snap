@@ -12,15 +12,12 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "backgroundBlurriness": 0,
   "backgroundColor": "#000000",
   "backgroundIntensity": 1,
-  "bounces": 3,
   "cameraProjection": "perspective",
   "convergenceOverlay": false,
-  "debugMode": 0,
   "debugVisScale": 100,
   "dofBlur": 0.05,
   "dofMode": "look",
   "emissiveBoost": 1,
-  "enableAccumulation": true,
   "enableAlphaShadows": false,
   "enableDOF": false,
   "enableEmissiveTriangleSampling": false,
@@ -40,6 +37,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "groundProjectionRadius": 100,
   "integrator": "path",
   "interactionModeEnabled": true,
+  "maxBounces": 3,
   "maxSamples": 60,
   "maxSubsurfaceSteps": 8,
   "maxTextureSize": 4096,
@@ -59,28 +57,17 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "renderLimitMode": "frames",
   "renderMode": 0,
   "renderTimeLimit": 30,
-  "resolution": 512,
   "samplingTechnique": 2,
   "saturation": 1,
   "shadowRays": "two",
   "shadowTerminatorOffset": 0.1,
   "showBackground": true,
-  "skyAirDensity": 1,
-  "skyAltitude": 50,
-  "skyGroundAlbedo": "#959595",
-  "skyOzone": 300,
-  "skySunAzimuth": 41.88504521072275,
-  "skySunElevation": 41.50412161826075,
-  "skySunSize": 0.53,
-  "skySunStrength": 1,
-  "skyTurbidity": 2,
-  "solidSkyColor": "#87CEEB",
-  "toneMapping": 6,
   "transmissiveBounces": 5,
   "transparentBackground": false,
   "unitsPerMetre": 1,
   "useAdaptiveSampling": true,
   "usePixelFreeze": true,
+  "visMode": 0,
   "wavefrontSortMaterials": true,
 }
 `;
@@ -199,6 +186,24 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mod
     "useAdaptiveSampling": true,
     "usePixelFreeze": true,
   },
+}
+`;
+
+exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > starting sky and view 1`] = `
+{
+  "sky": {
+    "skyAirDensity": 1,
+    "skyAltitude": 50,
+    "skyGroundAlbedo": "#959595",
+    "skyOzone": 300,
+    "skySunAzimuth": 41.88504521072275,
+    "skySunElevation": 41.50412161826075,
+    "skySunSize": 0.53,
+    "skySunStrength": 1,
+    "skyTurbidity": 2,
+    "solidSkyColor": "#87CEEB",
+  },
+  "view": 6,
 }
 `;
 

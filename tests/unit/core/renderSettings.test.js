@@ -18,7 +18,6 @@ describe( 'RenderSettings', () => {
 
 		it( 'returns default value for known keys', () => {
 
-			// maxBounces is mapped from ENGINE_DEFAULTS.bounces
 			expect( settings.get( 'maxBounces' ) ).toBeDefined();
 
 		} );

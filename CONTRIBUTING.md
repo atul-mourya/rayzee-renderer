@@ -141,7 +141,7 @@ git commit -m "fix(tsl): resolve NaN in the clear-coat lobe"
 ```
 
 **A change to default pixels is a breaking change.** Anything that changes what a render looks like when a host sets
-nothing — a default setting, a mode preset, a render profile, light units, a sampling or BSDF change that moves the
+nothing — a default setting (the core's or a viewer piece's), a mode preset, light units, a sampling or BSDF change that moves the
 bench's reference images — needs a `BREAKING CHANGE:` footer saying how default renders change, so the release is a
 new major version. `tests/unit/constants/pixelDefaults.test.js` and `npm run bench:bless` both flag such a change.
 

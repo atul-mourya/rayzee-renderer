@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ENGINE_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS } from 'rayzee';
+import { ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS } from 'rayzee';
 
 globalThis.window = globalThis.window || {};
 const { CAMERA_PRESETS, SKY_PRESETS, CAMERA_RANGES, DEFAULT_STATE } = await import( '@/Constants' );
@@ -8,7 +8,7 @@ describe( 'DEFAULT_STATE', () => {
 
 	it( 'carries the engine\'s defaults and those of each viewer piece the app drives', () => {
 
-		for ( const defaults of [ ENGINE_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS ] ) {
+		for ( const defaults of [ ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS ] ) {
 
 			for ( const key of Object.keys( defaults ) ) expect( DEFAULT_STATE ).toHaveProperty( key );
 
@@ -112,8 +112,8 @@ describe( 'SKY_PRESETS clearDay', () => {
 
 	it( 'is the engine\'s default sun', () => {
 
-		expect( SKY_PRESETS.clearDay.sunAzimuth ).toBe( ENGINE_DEFAULTS.skySunAzimuth );
-		expect( SKY_PRESETS.clearDay.sunElevation ).toBe( ENGINE_DEFAULTS.skySunElevation );
+		expect( SKY_PRESETS.clearDay.sunAzimuth ).toBe( SKY_DEFAULTS.skySunAzimuth );
+		expect( SKY_PRESETS.clearDay.sunElevation ).toBe( SKY_DEFAULTS.skySunElevation );
 
 	} );
 

@@ -88,9 +88,10 @@ export class PathTracer extends PathTracerStage {
 		// CPU sizes per-bounce kernels from last frame's survivor curve; kernels bound on ENTERING_COUNT so over-sizing is safe. (indirect dispatch not viable — three.js doesn't sync compute-written indirect buffers across submissions)
 		this._useDynamicDispatch = true;
 
-		// Global material-coherence sort: set per-build from ENGINE_DEFAULTS + material count (>8).
+		// Global material-coherence sort: the wavefrontSortMaterials setting, applied per build above 8 materials.
 		// Reorders entering rays into material-pure workgroups before Shade; runs under dynamic dispatch
 		// (compact reads the unsorted active list, so the survivor set is unchanged). Measured −8% at 1024²/8b.
+		this.sortMaterials = options.sortMaterials ?? ENGINE_DEFAULTS.wavefrontSortMaterials;
 		this._sortMaterials = false;
 
 		// Flag-gated off: perf-neutral vs atomic-append and adds a 'subgroups' feature dependency.
@@ -1873,8 +1874,7 @@ export class PathTracer extends PathTracerStage {
 		};
 
 		// Material-coherence sort gate (experiment): only worthwhile above a few materials.
-		this._sortMaterials = ( ENGINE_DEFAULTS.wavefrontSortMaterials ?? false )
-			&& ( this.materialData?.materialCount ?? 0 ) > 8;
+		this._sortMaterials = this.sortMaterials && ( this.materialData?.materialCount ?? 0 ) > 8;
 
 		const extFn = buildExtendKernel( {
 			bvhBuffer: freshBvh,

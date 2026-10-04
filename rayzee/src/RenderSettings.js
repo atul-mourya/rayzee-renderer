@@ -80,15 +80,14 @@ const SETTING_ROUTES = {
 	integrator: { handler: 'handleIntegrator', reset: true },
 	shadowRays: { handler: 'handleShadowRays', reset: true },
 	environmentRotation: { handler: 'handleEnvironmentRotation' },
-	// No target: the asset loader reads it when a model loads.
+	// Read when the kernels next build.
+	wavefrontSortMaterials: { handler: 'handleWavefrontSortMaterials', reset: false },
+	// No target: read when a model loads (setMaxTextureSize() also reprocesses the scene now).
+	maxTextureSize: { reset: false },
 	areaLightIntensityScale: { reset: false },
 
 };
 
-/**
- * Default keys to extract from ENGINE_DEFAULTS for initializing the values map.
- * Maps ENGINE_DEFAULTS key → RenderSettings key when they differ.
- */
 /** Provenance tags for getEffective(). Add-only — hosts branch on them. */
 export const SETTING_SOURCE = Object.freeze( {
 	DEFAULT: 'default',
@@ -96,11 +95,6 @@ export const SETTING_SOURCE = Object.freeze( {
 	SCENE_METADATA: 'scene-metadata',
 	MODE_PRESET: 'mode-preset',
 } );
-
-const DEFAULTS_KEY_MAP = {
-	bounces: 'maxBounces',
-	debugMode: 'visMode',
-};
 
 /**
  * Single source of truth for all render parameters.
@@ -304,6 +298,12 @@ export class RenderSettings extends EventDispatcher {
 			handleEnvironmentRotation: ( value ) => {
 
 				stages.pathTracer?.environment.setEnvironmentRotation( value );
+
+			},
+
+			handleWavefrontSortMaterials: ( value ) => {
+
+				if ( stages.pathTracer ) stages.pathTracer.sortMaterials = value;
 
 			},
 
@@ -523,29 +523,15 @@ export class RenderSettings extends EventDispatcher {
 
 	/**
 	 * Populates the values map from ENGINE_DEFAULTS.
-	 * Handles key renames via DEFAULTS_KEY_MAP.
 	 */
 	_initDefaults( defaults ) {
 
-		// Keys that exist in both SETTING_ROUTES and ENGINE_DEFAULTS (direct match)
 		for ( const key of Object.keys( SETTING_ROUTES ) ) {
 
 			if ( key in defaults ) {
 
 				this._values.set( key, defaults[ key ] );
 				this._sources.set( key, SETTING_SOURCE.DEFAULT );
-
-			}
-
-		}
-
-		// Keys where ENGINE_DEFAULTS uses a different name
-		for ( const [ defaultsKey, settingsKey ] of Object.entries( DEFAULTS_KEY_MAP ) ) {
-
-			if ( defaultsKey in defaults ) {
-
-				this._values.set( settingsKey, defaults[ defaultsKey ] );
-				this._sources.set( settingsKey, SETTING_SOURCE.DEFAULT );
 
 			}
 

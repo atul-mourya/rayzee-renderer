@@ -26,7 +26,7 @@ import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { PackedToneMapper } from './Processor/ToneMapGPU.js';
 import { BasicColor } from './Color/BasicColor.js';
 import { setActiveColorManagement } from './Color/ActiveColor.js';
-import { getViewTransform } from './Color/ViewTransforms.js';
+import { getViewTransform, DEFAULT_VIEW } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/HostMemory.js';
@@ -238,8 +238,6 @@ export class RayzeeRenderer extends EventDispatcher {
 		// ── Asset pipeline ──
 		this.assetLoader = null;
 		this._sdf = null;
-		// Max material-texture dimension (longest edge); applied on each scene build.
-		this._maxTextureSize = DEFAULT_STATE.maxTextureSize;
 
 		// ── Pipeline & stages ──
 		this.pipeline = null;
@@ -1091,24 +1089,24 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	async setMaxTextureSize( size, { reprocess = true } = {} ) {
 
-		const prev = this._maxTextureSize;
-		const clamped = this._sdf?.setMaxTextureSize( size );
-		this._maxTextureSize = clamped ?? size;
+		const prev = this.settings.get( 'maxTextureSize' );
+		const applied = this._sdf?.setMaxTextureSize( size ) ?? size;
+		this.settings.set( 'maxTextureSize', applied, { reset: false } );
 		if ( typeof this.stages?.pathTracer?.sdfs?.setMaxTextureSize === 'function' ) {
 
-			this.stages.pathTracer.sdfs.setMaxTextureSize( this._maxTextureSize );
+			this.stages.pathTracer.sdfs.setMaxTextureSize( applied );
 
 		}
 
 		// Reprocess the loaded scene so the new cap takes effect immediately.
-		if ( reprocess && this._maxTextureSize !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
+		if ( reprocess && applied !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
 
 			this._loadingInProgress = true;
 			try {
 
 				await this.loadSceneData();
 				this.reset();
-				this.dispatchEvent( { type: EngineEvents.TEXTURES_REPROCESSED, maxTextureSize: this._maxTextureSize } );
+				this.dispatchEvent( { type: EngineEvents.TEXTURES_REPROCESSED, maxTextureSize: applied } );
 
 			} finally {
 
@@ -1406,7 +1404,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		// Build BVH
 		timer.start( 'BVH build (SceneProcessor)' );
-		this._sdf.setMaxTextureSize( this._maxTextureSize );
+		this._sdf.setMaxTextureSize( this.settings.get( 'maxTextureSize' ) );
 		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null, progressive: this._progressiveSpill() } );
 		this.assetLoader?.flushPendingGraph( this._sdf.performanceMetrics.totalProcessingTime );
 		timer.end( 'BVH build (SceneProcessor)' );
@@ -3559,7 +3557,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		RectAreaLightNode.setLTC( RectAreaLightTexturesLib.init() );
 
 		this.renderer.outputColorSpace = SRGBColorSpace;
-		this.renderer.toneMapping = DEFAULT_STATE.toneMapping;
+		this.renderer.toneMapping = DEFAULT_VIEW;
 		this.renderer.toneMappingExposure = 1.0;
 		this.renderer.setPixelRatio( 1.0 );
 
@@ -3695,7 +3693,10 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	_createStages() {
 
-		this.stages.pathTracer = new PathTracer( this.renderer, this.scene, this.camera, { hostMemoryGB: this._hostMemoryGB } );
+		this.stages.pathTracer = new PathTracer( this.renderer, this.scene, this.camera, {
+			hostMemoryGB: this._hostMemoryGB,
+			sortMaterials: this.settings.get( 'wavefrontSortMaterials' ),
+		} );
 		this._extraStages = this._createExtraStages();
 		this.stages.compositor = new Compositor( this.renderer, {
 			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,

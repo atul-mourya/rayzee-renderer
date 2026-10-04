@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG } from '@/core/EngineDefaults.js';
+import { RenderSettings } from '@/core/RenderSettings.js';
 import { TEXTURE_CONSTANTS } from '@/core/Processor/TextureBuckets.js';
 import { MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
 import {
@@ -12,8 +13,7 @@ describe( 'ENGINE_DEFAULTS', () => {
 
 	it( 'has core rendering parameters', () => {
 
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'resolution' );
-		expect( ENGINE_DEFAULTS ).toHaveProperty( 'bounces' );
+		expect( ENGINE_DEFAULTS ).toHaveProperty( 'maxBounces' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'exposure' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'maxSamples' );
 
@@ -32,6 +32,20 @@ describe( 'ENGINE_DEFAULTS', () => {
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'focusDistance' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'aperture' );
 		expect( ENGINE_DEFAULTS ).toHaveProperty( 'focalLength' );
+
+	} );
+
+	it( 'is the settings table: every key a setting of the same name, every setting\'s default here', () => {
+
+		const routes = [ ...new RenderSettings()._routes.keys() ];
+		expect( Object.keys( ENGINE_DEFAULTS ).sort() ).toEqual( routes.sort() );
+
+	} );
+
+	it( 'cannot be changed at runtime', () => {
+
+		expect( Object.isFrozen( ENGINE_DEFAULTS ) ).toBe( true );
+		expect( Object.isFrozen( ENGINE_DEFAULTS.panoramaLonRange ) ).toBe( true );
 
 	} );
 
@@ -82,8 +96,7 @@ describe( 'ENGINE_DEFAULTS', () => {
 
 	it( 'has numeric values for numeric parameters', () => {
 
-		expect( typeof ENGINE_DEFAULTS.resolution ).toBe( 'number' );
-		expect( typeof ENGINE_DEFAULTS.bounces ).toBe( 'number' );
+		expect( typeof ENGINE_DEFAULTS.maxBounces ).toBe( 'number' );
 		expect( typeof ENGINE_DEFAULTS.exposure ).toBe( 'number' );
 		expect( typeof ENGINE_DEFAULTS.focusDistance ).toBe( 'number' );
 

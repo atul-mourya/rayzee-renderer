@@ -218,12 +218,12 @@ export class UniformManager {
 		// reset, and a camera move resets each frame of a drag, so the RNG redrew the identical
 		// sequence and temporal denoising had nothing to average.
 		u( 'seedFrame', 0, 'uint' );
-		u( 'maxBounces', DEFAULT_STATE.bounces, 'int' );
+		u( 'maxBounces', DEFAULT_STATE.maxBounces, 'int' );
 		u( 'maxSamples', DEFAULT_STATE.maxSamples, 'int' );
 		u( 'transmissiveBounces', DEFAULT_STATE.transmissiveBounces, 'int' );
 		u( 'maxSubsurfaceSteps', DEFAULT_STATE.maxSubsurfaceSteps, 'int' );
 		u( 'maxTransparentBounces', DEFAULT_STATE.maxTransparentBounces, 'int' );
-		u( 'visMode', DEFAULT_STATE.debugMode, 'int' );
+		u( 'visMode', DEFAULT_STATE.visMode, 'int' );
 		u( 'debugVisScale', DEFAULT_STATE.debugVisScale, 'float' );
 
 		// Tier-1 convergence early-stop (FinalWrite reads these; live-toggled, no shader rebuild)

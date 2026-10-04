@@ -439,18 +439,23 @@ the strings, so never rename or repurpose one.
   but reaching no stage, which is how a typo becomes a wrong image.
 - **Each layer declares its own settings.** `RenderSettings`' table is the core's alone and names no viewer piece;
   another layer adds a key with `settings.define( key, { default, apply, reset } )` (the viewer: `interactionRenderScale`),
-  bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules for a core key go in the
-  bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
+  bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules
+  for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
   moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
-- **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) holds the core's settings
-  only. A viewer piece keeps its own beside its code — `DENOISER_DEFAULTS` (`Stages/DenoiserSettings.js`),
+- **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) is exactly the settings
+  table: every key a `RenderSettings` route of the same name, every route's default there (`engineDefaults.test.js`
+  holds both ways), frozen. Starting state that is not a setting sits with its owner: `SKY_DEFAULTS` and
+  `DEFAULT_SUN_PATH` in `managers/EnvironmentManager.js`, `DEFAULT_VIEW` (AgX) in `Color/ViewTransforms.js`. Values read
+  at one moment are stored-only routes read there — `maxTextureSize` and `areaLightIntensityScale` at load
+  (`setMaxTextureSize()` also reprocesses now), `wavefrontSortMaterials` at the next kernel build. A viewer piece keeps
+  its own beside its code — `DENOISER_DEFAULTS` (`Stages/DenoiserSettings.js`),
   `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
   builds its store from those plus its own keys and menus (`app/src/Constants.js`: `CAMERA_PRESETS`, `SKY_PRESETS`,
-  `CAMERA_RANGES`). The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI
-  unrotated, `dofMode: 'look'`, glTF placeholder area lights at `areaLightIntensityScale` 0.1) and a host sets
-  otherwise through `settings` — a batch renderer wanting the old `physical` sets `areaLightIntensityScale: 1` and
-  `dofMode: 'physical'`. `areaLightIntensityScale` is a stored-only route the asset loader reads at load, so set it
-  before the model. The `profile` constructor option throws, so a farm cannot keep passing it unnoticed.
+  `CAMERA_RANGES`; its store keeps the names `bounces`, `debugMode` and `toneMapping`, which saved sessions carry).
+  The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI unrotated,
+  `dofMode: 'look'`, glTF placeholder area lights at `areaLightIntensityScale` 0.1) and a host sets otherwise through
+  `settings` — a batch renderer wanting the old `physical` sets `areaLightIntensityScale: 1` and `dofMode: 'physical'`,
+  before the model loads. The `profile` constructor option throws, so a farm cannot keep passing it unnoticed.
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
   (`Processor/MaterialPacking.js`) is the only writer of the material block, for the scene upload

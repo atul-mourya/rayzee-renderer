@@ -15,12 +15,31 @@ import { packExactTable } from '../Processor/EnvironmentExactTable.js';
 import { SimpleSky } from '../Processor/SimpleSky.js';
 import { convertLinearTriple } from '../Color/WorkingMatrix.js';
 import { createLogger, fmt } from '../utils/Logger.js';
-
-const log = createLogger( 'env' );
-import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
+import { sunPosition, dayOfYearForMonth } from '../Processor/SunPosition.js';
 import { getActiveColorManagement } from '../Color/ActiveColor.js';
 import { loadCDF, saveCDF } from '../Storage/CDFCache.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
+
+const log = createLogger( 'env' );
+
+/** The default sun as a time of day (solar hours), month and latitude; north lies along −Z. */
+export const DEFAULT_SUN_PATH = Object.freeze( { time: 10, month: 3, latitude: 40 } );
+
+const DEFAULT_SUN = sunPosition( { hours: DEFAULT_SUN_PATH.time, dayOfYear: dayOfYearForMonth( DEFAULT_SUN_PATH.month ), latitude: DEFAULT_SUN_PATH.latitude } );
+
+/** The skies an environment starts with: a solid colour, and the physical sky's Clear Day. */
+export const SKY_DEFAULTS = Object.freeze( {
+	solidSkyColor: '#87CEEB',
+	skySunAzimuth: 180 - DEFAULT_SUN.azimuth,
+	skySunElevation: DEFAULT_SUN.elevation,
+	skySunStrength: 1, // artistic multiplier on the disc and its light; 1 is physical
+	skySunSize: 0.53, // angular diameter, degrees
+	skyTurbidity: 2, // 1 is aerosol-free air, ~2 a clear day, 6+ hazy
+	skyOzone: 300, // Dobson units
+	skyAirDensity: 1,
+	skyGroundAlbedo: '#959595', // 0.3 linear
+	skyAltitude: 50, // metres
+} );
 
 const SKY_WIDTH = 1024;
 const SKY_HEIGHT = 512;
@@ -90,17 +109,17 @@ export class EnvironmentManager {
 			mode: 'hdri',
 
 			// Solid Color Sky
-			solidSkyColor: new Color( DEFAULT_STATE.solidSkyColor ),
+			solidSkyColor: new Color( SKY_DEFAULTS.solidSkyColor ),
 
 			// Physical sky. The sun direction is in the sky's own frame; environment rotation turns both.
 			skySunDirection: this._calculateInitialSunDirection(),
-			skySunStrength: DEFAULT_STATE.skySunStrength,
-			skySunSize: DEFAULT_STATE.skySunSize,
-			skyTurbidity: DEFAULT_STATE.skyTurbidity,
-			skyOzone: DEFAULT_STATE.skyOzone,
-			skyAirDensity: DEFAULT_STATE.skyAirDensity,
-			skyGroundAlbedo: new Color( DEFAULT_STATE.skyGroundAlbedo ),
-			skyAltitude: DEFAULT_STATE.skyAltitude,
+			skySunStrength: SKY_DEFAULTS.skySunStrength,
+			skySunSize: SKY_DEFAULTS.skySunSize,
+			skyTurbidity: SKY_DEFAULTS.skyTurbidity,
+			skyOzone: SKY_DEFAULTS.skyOzone,
+			skyAirDensity: SKY_DEFAULTS.skyAirDensity,
+			skyGroundAlbedo: new Color( SKY_DEFAULTS.skyGroundAlbedo ),
+			skyAltitude: SKY_DEFAULTS.skyAltitude,
 		};
 
 		/**
@@ -801,8 +820,8 @@ export class EnvironmentManager {
 	/** @private */
 	_calculateInitialSunDirection() {
 
-		const azimuth = DEFAULT_STATE.skySunAzimuth * ( Math.PI / 180 );
-		const elevation = DEFAULT_STATE.skySunElevation * ( Math.PI / 180 );
+		const azimuth = SKY_DEFAULTS.skySunAzimuth * ( Math.PI / 180 );
+		const elevation = SKY_DEFAULTS.skySunElevation * ( Math.PI / 180 );
 		return new Vector3(
 			Math.cos( elevation ) * Math.sin( azimuth ),
 			Math.sin( elevation ),

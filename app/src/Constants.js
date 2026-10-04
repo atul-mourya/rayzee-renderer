@@ -1,7 +1,8 @@
 import debugModelsData from './DebugModels.json';
 
 import {
-	ENGINE_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS, DEFAULT_SUN_PATH,
+	ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS,
+	DEFAULT_SUN_PATH, DEFAULT_VIEW,
 } from 'rayzee';
 export { ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, NRD_DEFAULTS } from 'rayzee';
 
@@ -15,13 +16,20 @@ export const GLTF_SAMPLE_ASSETS_BASE = 'https://cdn.jsdelivr.net/gh/KhronosGroup
 // DEFAULT_STATE = the engine's defaults, those of the viewer pieces the app drives, and the app's own keys
 export const DEFAULT_STATE = {
 	...ENGINE_DEFAULTS,
+	...SKY_DEFAULTS,
 	...DENOISER_DEFAULTS,
 	...AUTO_EXPOSURE_DEFAULTS,
 	...AUTO_FOCUS_DEFAULTS,
 	// The app turns the final denoise on out of the box — see INTERACTIVE_RENDER_CONFIG. The engine
 	// default stays off so an embedder is not made to fetch OIDN's weights it never asked for.
 	enableOIDN: true,
+	// The app's names for engine values
+	bounces: ENGINE_DEFAULTS.maxBounces,
+	debugMode: ENGINE_DEFAULTS.visMode,
+	toneMapping: DEFAULT_VIEW,
 	// UI-only keys (not needed by the engine)
+	resolution: 512,
+	enableAccumulation: true,
 	canvasWidth: 512,
 	canvasHeight: 512,
 	fov: 55,
@@ -40,7 +48,7 @@ export const DEFAULT_STATE = {
 	finalRenderResolution: 2048,
 	originalPixelRatio: window.devicePixelRatio / 2,
 	zoomToCursor: true,
-	// Physical sky's sun path; ENGINE_DEFAULTS' sun angles are this position.
+	// Physical sky's sun path; SKY_DEFAULTS' sun angles are this position.
 	skySunMode: 'time', // 'time' | 'angles'
 	skyTime: DEFAULT_SUN_PATH.time,
 	skyMonth: DEFAULT_SUN_PATH.month,
@@ -78,7 +86,7 @@ export const CAMERA_RANGES = {
 // `exposure` (EV) makes up about two thirds of the light a lower sun loses, as a photographer
 // would: a sunset still reads darker than noon.
 export const SKY_PRESETS = {
-	clearDay: { name: 'Clear Day', sunAzimuth: ENGINE_DEFAULTS.skySunAzimuth, sunElevation: ENGINE_DEFAULTS.skySunElevation, turbidity: 2, exposure: 0 },
+	clearDay: { name: 'Clear Day', sunAzimuth: SKY_DEFAULTS.skySunAzimuth, sunElevation: SKY_DEFAULTS.skySunElevation, turbidity: 2, exposure: 0 },
 	clearMorning: { name: 'Clear Morning', sunAzimuth: 90, sunElevation: 15, turbidity: 2, exposure: 1.4 },
 	clearNoon: { name: 'Clear Noon', sunAzimuth: 180, sunElevation: 70, turbidity: 2, exposure: 0 },
 	hazyAfternoon: { name: 'Hazy Afternoon', sunAzimuth: 225, sunElevation: 35, turbidity: 4.5, exposure: 0.4 },

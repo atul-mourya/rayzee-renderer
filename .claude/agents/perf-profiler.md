@@ -36,7 +36,7 @@ You are a WebGPU performance specialist for the Rayzee real-time path tracer.
 - Treelet restructuring was removed (2026-10): no measurable render gain. Judge any tree change by render time per sample, not SAH
 
 #### Memory Management
-- Texture arrays pack in `TexturesWorker` (`MEMORY_LIMITS`: `MAX_TEXTURE_DIMENSION`, `CHUNK_SIZE`, `ADAPTIVE_CHUNK_SIZE`, `MEMORY_SAFETY_FACTOR`); the per-scene knob is `maxTextureSize`
+- Texture arrays pack in `TexturesWorker` (`MEMORY_LIMITS`: `CHUNK_SIZE`, `ADAPTIVE_CHUNK_SIZE`, `MEMORY_SAFETY_FACTOR`; the hardware ceiling is `TEXTURE_CONSTANTS.MAX_TEXTURE_SIZE` in `Processor/TextureBuckets.js`); the per-scene knob is the `maxTextureSize` setting
 - Large scenes: host memory preflight (`Processor/HostMemory.js`), chunked triangle/BVH stores
 - Use transferable objects for Worker↔main thread large array transfers
 - Dispose GPU resources in stage `dispose()` methods

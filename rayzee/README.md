@@ -445,6 +445,8 @@ Key settings:
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
 | `areaLightIntensityScale` | `number` | 0.1 | Power of a glTF model's placeholder area lights (RectAreaLight extras), read when the model loads, so set it first; 1 is the authored power |
+| `maxTextureSize` | `number` | 4096 | Longest edge of a material texture, read when a model loads (clamped to the hardware ceiling); `setMaxTextureSize()` applies it to the current scene too |
+| `wavefrontSortMaterials` | `boolean` | true | Sort rays by material before shading, above 8 materials; read when the shaders next build |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
 | `samplingTechnique` | `number` | 2 | Sampler: `0` PCG, `1` scrambled Halton, `2` Owen-scrambled Sobol |
 | `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'` \| `'vcm'` (on the core, needs the bidirectional add-on). Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. `'vcm'` adds photon merging, for caustics seen in mirrors and through glass. Switching rebuilds the kernels |
@@ -478,7 +480,7 @@ Key settings:
 | `pixelFreezeThreshold` | `number` | 0.02 | Relative-error threshold for a pixel to become a freeze candidate |
 | `pixelFreezeStability` | `number` | 8 | Consecutive candidate frames required before a pixel freezes |
 
-See `ENGINE_DEFAULTS` for the full list with default values. The default look is AgX (`toneMapping: 6`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`. On the core without the colour add-on, set `renderer.renderer.toneMapping`.
+See `ENGINE_DEFAULTS` for the full list with default values — every key in it is a setting of the same name. The default look is AgX (`DEFAULT_VIEW`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`. On the core without the colour add-on, set `renderer.renderer.toneMapping`.
 
 #### Rendering Modes
 
@@ -645,11 +647,11 @@ await renderer.init();
 Several renderers, core or full, can live in one page; they share only the colour management and the on-disk storage,
 which are page-wide.
 
-Code of your own that adds a setting declares it on the renderer's settings, so it gets the same provenance, change
-events and session saving as the built-in ones:
+Code of your own that adds a setting declares it on the renderer's settings, with its default, so it gets the same
+provenance, change events and session saving as the built-in ones:
 
 ```js
-renderer.settings.define('myGlowStrength', { apply: (value) => glow.setStrength(value), reset: true });
+renderer.settings.define('myGlowStrength', { default: 1, apply: (value) => glow.setStrength(value), reset: true });
 renderer.settings.set('myGlowStrength', 2);
 ```
 
@@ -790,7 +792,8 @@ engine.stages.pathTracer.materialData.updateMaterial(index, mat)  // Replace a m
 await engine.rebuildMaterials(scene)  // Full rebuild (after texture changes)
 
 // Cap the longest edge of processed material textures (clamped to the hardware max).
-// Larger = sharper textures, ~quadratic VRAM. Reprocesses the current scene by default.
+// Larger = sharper textures, ~quadratic VRAM. Reprocesses the current scene by default;
+// settings.set('maxTextureSize', n) stores it for the next load instead.
 await engine.setMaxTextureSize(2048)
 await engine.setMaxTextureSize(4096, { reprocess: false })
 
@@ -1522,7 +1525,9 @@ import {
   AUTO_EXPOSURE_DEFAULTS,
   AUTO_FOCUS_DEFAULTS,
   ASVGF_QUALITY_PRESETS,
+  SKY_DEFAULTS,
   DEFAULT_SUN_PATH,
+  DEFAULT_VIEW,
   TRIANGLE_DATA_LAYOUT,
   BVH_LEAF_MARKERS,
   PRODUCTION_RENDER_CONFIG,

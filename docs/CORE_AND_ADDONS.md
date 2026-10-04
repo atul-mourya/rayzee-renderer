@@ -149,7 +149,7 @@ the core. Without it the core's programs carry none of that code, and still rend
    Downloads, compressed: the core 263 KB, `rayzee` 432 KB. Beyond the core: physical sky 11 KB, archives 40 KB,
    bidirectional 14 KB, colour 14 KB, storage 8 KB.
 11. **Each layer declares its own settings** — done. `RenderSettings` holds only the core's settings and names no
-   viewer piece; `settings.define( key, { apply, reset } )` adds another layer's, with the same provenance, events,
+   viewer piece; `settings.define( key, { default, apply, reset } )` adds another layer's, with the same provenance, events,
    session saving and reset. The viewer defines `interactionRenderScale` (the core has no moving-camera resolution
    drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure leaves a manual
    `exposure` unshown while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
