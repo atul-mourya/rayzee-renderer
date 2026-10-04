@@ -11,7 +11,7 @@ A real-time path tracer that runs entirely in the browser. Rayzee combines a Web
   <img src="docs/images/hero.png" alt="Rayzee real-time path tracing screenshot" width="800" />
 </p>
 
-🌐 **[Launch App](https://atul-mourya.github.io/RayTracing/)**
+🌐 **[Launch App](https://atul-mourya.github.io/rayzee-renderer/)**
 
 The project is a monorepo with two packages: **`rayzee/`** — the standalone rendering engine, publishable to npm — and **`app/`** — the React UI built on top of it. External clients can use the engine independently:
 
@@ -62,8 +62,8 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 **Prerequisites**: Node.js >= 20.19.0 and a browser with WebGPU support (Chrome 113+, Edge 113+, Safari 18+, or Firefox 141+).
 
 ```bash
-git clone https://github.com/atul-mourya/RayTracing.git
-cd RayTracing
+git clone https://github.com/atul-mourya/rayzee-renderer.git
+cd rayzee-renderer
 npm install        # installs both rayzee/ and app/ workspaces
 npm run dev         # http://localhost:5173
 ```

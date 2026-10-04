@@ -4,12 +4,12 @@ Thank you for helping keep Rayzee and its users safe.
 
 ## Supported Versions
 
-Security fixes are applied to the latest minor release of the `rayzee` engine package on npm. Older minor versions are not patched — please upgrade to the current `5.x` line to receive fixes.
+Security fixes are applied to the latest release of the `rayzee` engine package on npm. Older versions are not patched — please upgrade to the latest release to receive fixes.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.x     | :white_check_mark: |
-| < 5.0   | :x:                |
+| Version        | Supported          |
+| -------------- | ------------------ |
+| Latest release | :white_check_mark: |
+| Older releases | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -17,7 +17,7 @@ Security fixes are applied to the latest minor release of the `rayzee` engine pa
 
 Instead, report them privately using one of the following channels:
 
-1. **Preferred:** [GitHub Private Vulnerability Reporting](https://github.com/atul-mourya/RayTracing/security/advisories/new) — opens a private advisory visible only to maintainers.
+1. **Preferred:** [GitHub Private Vulnerability Reporting](https://github.com/atul-mourya/rayzee-renderer/security/advisories/new) — opens a private advisory visible only to maintainers.
 2. **Email:** [atul.mourya@gmail.com](mailto:atul.mourya@gmail.com) with the subject line `[SECURITY] Rayzee - <short summary>`.
 
 Please include as much of the following as you can:

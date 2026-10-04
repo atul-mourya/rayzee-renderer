@@ -1198,8 +1198,9 @@ app.dispose();
   memory): on the main thread it held up the BVH workers, and a 1.9M-triangle, 91-texture model
   loaded in 4.1–4.9 s. It now loads in 2.1 s, against Chrome's 2.9 s on the same machine.
 - `nodePlatform()` also defines `ProgressEvent`, which three.js's `FileLoader` constructs while
-  streaming; that is the only global it sets. three.js's own Draco and KTX2 workers call the global
-  `Worker`, so a model using either also needs `globalThis.Worker = NodeWorker`.
+  streaming; that is the only global it sets. three.js's own Draco and KTX2 loaders call the global
+  `Worker`; the engine lends them `NodeWorker` for the length of each glTF parse, so a Draco or KTX2
+  model loads with nothing set by the host.
 
 Measured on this bench's corpus: all 29 scenes match the Chrome goldens (`npm run bench:node`, RMSE
 ≤ 0.0036, no pixel over 0.02 — the readback's tone map accounts for most of it), and a textured glTF with an

@@ -16,8 +16,8 @@ Thank you for your interest in contributing to Rayzee! This document provides gu
 
 1. **Fork and Clone**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/RayTracing.git
-   cd RayTracing
+   git clone https://github.com/YOUR_USERNAME/rayzee-renderer.git
+   cd rayzee-renderer
    ```
 
 2. **Install Dependencies**
@@ -148,13 +148,24 @@ Before submitting a PR, ensure:
    - Cross-browser verification
    - Performance impact assessment
 
-4. **Commit Guidelines**
-   ```bash
-   # Use conventional commits
-   git commit -m "feat: add adaptive sampling quality presets"
-   git commit -m "fix: resolve memory leak in texture processing"
-   git commit -m "docs: update README with new features"
-   ```
+4. **Commit** following the conventions below.
+
+### Commit & PR conventions
+
+Every commit message and PR title starts with a [conventional commit](https://www.conventionalcommits.org/) type:
+`feat:`, `fix:`, `refactor:` (no behaviour change), `perf:`, `docs:`, `test:`, `chore:`, `build:`, `ci:`, `style:`
+or `revert:`. A scope is optional: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`. The release is cut from these
+types, so a wrong one ships a wrong version.
+
+```bash
+git commit -m "feat: add adaptive sampling quality presets"
+git commit -m "fix(tsl): resolve NaN in the clear-coat lobe"
+```
+
+**A change to default pixels is a breaking change.** Anything that changes what a render looks like when a host sets
+nothing — a default setting, a mode preset, a render profile, light units, a sampling or BSDF change that moves the
+bench's reference images — needs a `BREAKING CHANGE:` footer saying how default renders change, so the release is a
+new major version. `tests/unit/constants/pixelDefaults.test.js` and `npm run bench:bless` both flag such a change.
 
 ### PR Template
 
