@@ -461,6 +461,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this._syncControlsAfterLoad();
 		this.cameraManager.currentCameraIndex = 0;
+		if ( this.cameraManager.cameras.length > 1 ) this.cameraManager.switchCamera( 1 );
 
 	}
 

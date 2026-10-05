@@ -359,7 +359,7 @@ engine.cancelLoad()                           // Abort an in-flight download (ne
 
 On `rayzee/core`, formats other than glTF and `.hdr` need the `rayzee/addons/formats` add-on — see [Add-ons](#add-ons).
 
-`loadModel` / `loadObject3D` **replace** the current scene. To add or remove objects from a live scene without a full reload (and without reframing the camera):
+`loadModel` / `loadObject3D` **replace** the current scene. A model that carries cameras opens through its first one; `cameraManager.switchCamera(0)` goes back to the default view, fitted to the model. To add or remove objects from a live scene without a full reload (and without reframing the camera):
 
 ```js
 const id = await engine.addModel(url, { name })                  // Append a model, rebuild in place

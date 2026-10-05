@@ -448,7 +448,7 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
 
 	const cameras = app.cameraManager?.cameras ?? [];
 	const picked = cameraIndex > 0 && cameraIndex < cameras.length ? cameraIndex : 0;
-	if ( picked > 0 ) app.cameraManager.switchCamera( picked );
+	if ( picked !== app.cameraManager.currentCameraIndex ) app.cameraManager.switchCamera( picked );
 
 	app.setDeterministicMode( true, { pinDispatch: ! perfModeEnabled } );
 
