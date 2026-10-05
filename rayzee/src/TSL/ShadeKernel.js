@@ -189,6 +189,11 @@ export function buildShadeKernel( params ) {
 	// Emissive NEE's solid-angle density for a triangle's point, from whichever sampler it runs.
 	const emissiveNEEPdf = ( triangle, dist, toLight, from, instanceLeaf ) => {
 
+		// As values: an expression is generated at its first read, inside the light tree's walk, which a one-node tree
+		// leaves before reaching it — every later read saw zero.
+		dist = float( dist ).toVar();
+		toLight = vec3( toLight ).toVar();
+		from = vec3( from ).toVar();
 		const pdf = float( 0.0 ).toVar();
 		If( lightBVHNodeCount.greaterThan( int( 0 ) ), () => {
 
