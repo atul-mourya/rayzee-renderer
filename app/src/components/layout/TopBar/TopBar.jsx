@@ -1,6 +1,5 @@
 import { useMemo, useCallback, useRef, useEffect, useState, lazy, Suspense } from 'react';
 import { useStore, usePathTracerStore } from '@/store';
-import AuthProvider from './AuthProvider';
 import MenuBar from './MenuBar';
 import ViewportTabs from './ViewportTabs';
 import ActionBar from './ActionBar';
@@ -82,46 +81,37 @@ const TopBar = () => {
 	), [] );
 
 	return (
-		<AuthProvider>
-			{ ( { user, handleLoginClick, handleSignOut } ) => (
-				<div className="flex items-center h-10 border-b">
-					{logo}
-					<MenuBar onOpenImportModal={openImportModal} onOpenStorage={openStorage} onOpenRecent={openRecent} />
+		<div className="flex items-center h-10 border-b">
+			{logo}
+			<MenuBar onOpenImportModal={openImportModal} onOpenStorage={openStorage} onOpenRecent={openRecent} />
 
-					<div className="grow" />
-					<ViewportTabs currentMode={appMode} onModeChange={handleTabChange} />
-					<div className="grow" />
+			<div className="grow" />
+			<ViewportTabs currentMode={appMode} onModeChange={handleTabChange} />
+			<div className="grow" />
 
-					<ActionBar
-						user={user}
-						onLoginClick={handleLoginClick}
-						onSignOut={handleSignOut}
-						onGithubClick={handleGithubRedirection}
-					/>
+			<ActionBar onGithubClick={handleGithubRedirection} />
 
-					<Suspense fallback={<ModalLoadingFallback />}>
-						<ImportUrlModal
-							isOpen={modalState.isImportModalOpen}
-							onClose={closeImportModal}
-							importUrl={modalState.importUrl}
-							setImportUrl={setImportUrl}
-							onImport={handleImportFromUrl}
-							isImporting={modalState.isImporting}
-						/>
-					</Suspense>
-					{ storageOpen && (
-						<Suspense fallback={<ModalLoadingFallback />}>
-							<StorageDialog isOpen={storageOpen} onClose={closeStorage} />
-						</Suspense>
-					) }
-					{ recentOpen && (
-						<Suspense fallback={<ModalLoadingFallback />}>
-							<RecentDialog isOpen={recentOpen} onClose={closeRecent} />
-						</Suspense>
-					) }
-				</div>
+			<Suspense fallback={<ModalLoadingFallback />}>
+				<ImportUrlModal
+					isOpen={modalState.isImportModalOpen}
+					onClose={closeImportModal}
+					importUrl={modalState.importUrl}
+					setImportUrl={setImportUrl}
+					onImport={handleImportFromUrl}
+					isImporting={modalState.isImporting}
+				/>
+			</Suspense>
+			{ storageOpen && (
+				<Suspense fallback={<ModalLoadingFallback />}>
+					<StorageDialog isOpen={storageOpen} onClose={closeStorage} />
+				</Suspense>
 			) }
-		</AuthProvider>
+			{ recentOpen && (
+				<Suspense fallback={<ModalLoadingFallback />}>
+					<RecentDialog isOpen={recentOpen} onClose={closeRecent} />
+				</Suspense>
+			) }
+		</div>
 	);
 
 };
