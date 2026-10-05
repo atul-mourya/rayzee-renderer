@@ -793,7 +793,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
 							backgroundColor: 'black',
-							display: ( viewingOriginal && imageLoadState.loaded && ! viewingAIVariant ) ? 'block' : 'none',
+							display: ( viewingOriginal && imageLoadState.loaded ) ? 'block' : 'none',
 							imageRendering: 'pixelated' // Better for 4K images
 						}}
 					/>
