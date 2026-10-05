@@ -501,3 +501,67 @@ describe( 'timeline', () => {
 	} );
 
 } );
+
+describe( 'the loading panel waits for the shaders a load built', () => {
+
+	const main = () => store.useStore.getState();
+
+	beforeEach( () => {
+
+		main().setIsCompilingShaders( false );
+		main().setLoading( { isLoading: false } );
+		main().resetLoading();
+
+	} );
+
+	it( 'stays up through the compile, through the app\'s own reset too, and closes when it ends', () => {
+
+		main().setLoading( { isLoading: true, status: 'Compiling shaders...', progress: 90 } );
+		main().setIsCompilingShaders( true );
+		main().resetLoading();
+		main().resetLoading();
+		expect( main().loading ).toMatchObject( { isLoading: true, status: 'Compiling shaders...', canCancel: false } );
+
+		main().setIsCompilingShaders( false );
+		expect( main().loading.isLoading ).toBe( false );
+
+	} );
+
+	it( 'closes at once when nothing is compiling', () => {
+
+		main().setLoading( { isLoading: true, status: 'Finalizing environment map...' } );
+		main().resetLoading();
+		expect( main().loading.isLoading ).toBe( false );
+
+	} );
+
+	it( 'opens no panel for a compile outside a load', () => {
+
+		main().setIsCompilingShaders( true );
+		main().resetLoading();
+		main().setIsCompilingShaders( false );
+		expect( main().loading.isLoading ).toBe( false );
+
+	} );
+
+	it( 'leaves a newer load\'s panel alone when the held compile ends', () => {
+
+		main().setLoading( { isLoading: true } );
+		main().setIsCompilingShaders( true );
+		main().resetLoading();
+		main().setLoading( { isLoading: true, status: 'Downloading Model...' } );
+		main().setIsCompilingShaders( false );
+		expect( main().loading ).toMatchObject( { isLoading: true, status: 'Downloading Model...' } );
+
+	} );
+
+	it( 'does not hold a failed load', () => {
+
+		main().setLoading( { isLoading: true, failed: true, status: 'Error: out of memory' } );
+		main().setIsCompilingShaders( true );
+		main().resetLoading();
+		expect( main().loading.isLoading ).toBe( false );
+
+	} );
+
+} );

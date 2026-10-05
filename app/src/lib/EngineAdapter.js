@@ -296,6 +296,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 		handlers.forEach( ( [ type, fn ] ) => engine.removeEventListener( type, fn ) );
 		handlers.length = 0;
+		// A compile this engine never finishes must not hold the loading panel open.
+		useStore.getState().setIsCompilingShaders( false );
 
 	};
 

@@ -27,6 +27,8 @@ const handleChange = ( setter, appUpdater, needsReset = true ) => val => {
 
 };
 
+const IDLE_LOADING = Object.freeze( { isLoading: false, progress: 0, title: '', status: '', loadedBytes: null, totalBytes: null, canCancel: false, failed: false } );
+
 // Main store
 const useStore = create( set => ( {
 	selectedObject: null,
@@ -56,14 +58,19 @@ const useStore = create( set => ( {
 		false
 	),
 
-	loading: { isLoading: false, progress: 0, title: '', status: '', loadedBytes: null, totalBytes: null, canCancel: false, failed: false },
-	setLoading: state => set( s => ( { loading: { ...s.loading, ...state } } ) ),
+	loading: { ...IDLE_LOADING },
+	// A load ends before the shaders it built have compiled, and nothing new is drawn until they have, so the
+	// loading panel stays up through that compile rather than closing on the old frame.
+	loadingHeldForCompile: false,
+	setLoading: state => set( s => ( { loading: { ...s.loading, ...state }, loadingHeldForCompile: false } ) ),
 	stats: { samples: 0, timeElapsed: 0, memoryUsed: 0, memoryPeak: 0 },
 	setStats: stats => set( { stats } ),
 	isDenoising: false,
 	setIsDenoising: val => set( { isDenoising: val } ),
 	isCompilingShaders: false,
-	setIsCompilingShaders: val => set( { isCompilingShaders: val } ),
+	setIsCompilingShaders: val => set( s => ( ! val && s.loadingHeldForCompile
+		? { isCompilingShaders: false, loading: { ...IDLE_LOADING }, loadingHeldForCompile: false }
+		: { isCompilingShaders: val } ) ),
 	isUpscaling: false,
 	setIsUpscaling: val => set( { isUpscaling: val } ),
 	upscalingProgress: 0,
@@ -77,7 +84,9 @@ const useStore = create( set => ( {
 	setCompletionReason: val => set( { completionReason: val } ),
 	isRendering: true,
 	setIsRendering: val => set( { isRendering: val } ),
-	resetLoading: () => set( { loading: { isLoading: false, progress: 0, title: '', status: '', loadedBytes: null, totalBytes: null, canCancel: false, failed: false } } ),
+	resetLoading: () => set( s => ( s.isCompilingShaders && s.loading.isLoading && ! s.loading.failed
+		? { loading: { ...s.loading, status: 'Compiling shaders...', canCancel: false, loadedBytes: null, totalBytes: null }, loadingHeldForCompile: true }
+		: { loading: { ...IDLE_LOADING }, loadingHeldForCompile: false } ) ),
 	appMode: 'preview',
 	setAppMode: mode => set( { appMode: mode } ),
 	activeTab: 'pathtracer',

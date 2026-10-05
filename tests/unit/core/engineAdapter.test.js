@@ -78,6 +78,7 @@ function createMockStores() {
 		setCompletionReason: vi.fn(),
 		setIsRendering: vi.fn(),
 		setIsDenoising: vi.fn(),
+		setIsCompilingShaders: vi.fn(),
 		setIsUpscaling: vi.fn(),
 		setUpscalingProgress: vi.fn(),
 		setLoading: vi.fn(),
@@ -261,6 +262,9 @@ describe( 'connectEngineToStore', () => {
 			expect( engine._listeners[ type ] ).toHaveLength( 0 );
 
 		}
+
+		// A compile the engine never finishes would otherwise hold the loading panel open.
+		expect( stores._state.setIsCompilingShaders ).toHaveBeenCalledWith( false );
 
 	} );
 
