@@ -135,9 +135,12 @@ function isZeroBlock( h ) {
  */
 class TarStream {
 
-	constructor( { filter = null, retain = null, byteBudget = DEFAULT_BYTE_BUDGET, onEntry = null } = {} ) {
+	constructor( { filter = null, retain = null, byteBudget = DEFAULT_BYTE_BUDGET, onEntry = null, sink = null } = {} ) {
 
 		this.filter = filter;
+		// Passed each indexed entry's bytes in order: the listing then records offsets into what the sink wrote.
+		this.sink = sink;
+		this._sunk = 0;
 		// Entries that pass `filter` but fail `retain` are indexed, not copied: the listing
 		// records where their bytes live so a caller with a seekable source can read them later.
 		// An uncompressed tar over a File is seekable, which is how a 7 GB archive loads without
@@ -190,6 +193,14 @@ class TarStream {
 			} else {
 
 				const n = Math.min( this._remaining, chunk.length - i );
+				if ( this.sink && this._indexed && this._sinkLeft > 0 ) {
+
+					const take = Math.min( n, this._sinkLeft );
+					this.sink( chunk.subarray( i, i + take ) );
+					this._sinkLeft -= take;
+
+				}
+
 				if ( this._dst && this._copied < this._size ) {
 
 					const take = Math.min( n, this._size - this._copied );
@@ -267,6 +278,13 @@ class TarStream {
 
 		this.listing.push( { path, size } );
 		this._indexed = this.filter ? this.filter( path, size ) : true;
+		if ( this.sink && this._indexed ) {
+
+			this._sinkStart = this._sunk;
+			this._sinkLeft = size;
+			this._sunk += size;
+
+		}
 
 		if ( this._indexed && ! ( this.retain && ! this.retain( path, size ) ) ) {
 
@@ -313,7 +331,7 @@ class TarStream {
 
 		if ( this._indexed && entry ) {
 
-			entry.offset = this._bodyStart;
+			entry.offset = this.sink ? this._sinkStart : this._bodyStart;
 			this._indexed = false;
 
 		}
@@ -503,9 +521,9 @@ export async function indexTarHeaders( source, { onProgress = null } = {} ) {
  * Indexes a tar stream as it goes by — for writing a decompressing archive to disk and knowing
  * where every entry landed without a second pass.
  */
-export function createTarIndexer() {
+export function createTarIndexer( { filter = null, sink = null } = {} ) {
 
-	const tar = new TarStream( { retain: () => false } );
+	const tar = new TarStream( { retain: () => false, filter, sink } );
 	return {
 		push: chunk => tar.push( chunk ),
 		finish: () => {

@@ -1196,7 +1196,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
-  there in 0.15 s. `.zip` is read through its central directory (`openZip` / `readZipDirectory`,
+  there in 0.15 s. With parts chosen only they are written (`filter`/`part`; a whole unpack still serves any part):
+  Moana unpacks to 31 GB, a profile's quota was 11 GB, and the in-memory fallback's 1.5 GB budget silently dropped
+  4,573 of isCoral's files — `objects.pbrt` among them, so every placement lost its template and nothing drew. `.zip` is read through its central directory (`openZip` / `readZipDirectory`,
   ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
   zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
   URLs load through the download cache (`loadFile( url )`).

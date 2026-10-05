@@ -165,6 +165,36 @@ describe( 'ArchiveCache', () => {
 
 	} );
 
+	it( 'unpacks only the chosen part, and a whole unpack serves any part', async () => {
+
+		await makeStorage();
+		const tar = makeTar( FILES );
+		const gz = new File( [ gzipSync( tar ) ], 'scene.tar.gz', { lastModified: 2 } );
+		const keep = ( path ) => path.endsWith( '.ply' ) || path === 'tail.txt';
+
+		const part = await unpackTarGz( gz, { storage, filter: keep, part: 'ply' } );
+		expect( part.cached ).toBe( false );
+		// Only what it keeps is written, end to end, and listed.
+		expect( part.file.size ).toBe( 'PLY'.repeat( 300 ).length + 'LONG'.repeat( 100 ).length + 3 );
+		expect( part.index.listing.map( ( e ) => [ e.path, e.offset ] ) ).toEqual( [[ 'after-empty.ply', 0 ], [ LONG, 900 ], [ 'tail.txt', 1300 ]] );
+
+		const source = await openTar( part.file, { index: part.index, filter: keep } );
+		expect( await source.read( LONG ) ).toEqual( text( 'LONG'.repeat( 100 ) ) );
+		expect( await source.read( 'tail.txt' ) ).toEqual( text( 'end' ) );
+		expect( await source.read( 'big.bin' ) ).toBeNull();
+		part.release();
+
+		const again = await unpackTarGz( gz, { storage, filter: keep, part: 'ply' } );
+		expect( again.cached ).toBe( true );
+		again.release();
+
+		( await unpackTarGz( gz, { storage } ) ).release();
+		const fromWhole = await unpackTarGz( gz, { storage, filter: keep, part: 'other' } );
+		expect( [ fromWhole.cached, fromWhole.file.size ] ).toEqual( [ true, tar.length ] );
+		fromWhole.release();
+
+	} );
+
 	it( 'gives up without a trace when there is no room', async () => {
 
 		const fake = await makeStorage();

@@ -129,13 +129,15 @@ export class ArchiveImporter {
 	 * A .tar.gz unpacked to storage, or null to read it the old way (no storage, or no room).
 	 * @private
 	 */
-	async _unpackGzip( file, filename ) {
+	async _unpackGzip( file, filename, element = null ) {
 
+		const chosen = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
 		try {
 
 			return await unpackTarGz( file, {
 				storage: this.loader.storage,
 				label: filename,
+				...( chosen.length ? { filter: elementFilter( chosen ), part: [ ...chosen ].sort().join( ',' ) } : {} ),
 				onProgress: bytes => updateLoading( {
 					isLoading: true, status: `Unpacking archive… ${( bytes / 1e9 ).toFixed( 1 )} GB`, progress: 4
 				} ),
@@ -189,7 +191,7 @@ export class ArchiveImporter {
 
 			if ( kind === 'gzip' ) {
 
-				const unpacked = await this._unpackGzip( file, filename );
+				const unpacked = await this._unpackGzip( file, filename, element );
 				if ( unpacked ) {
 
 					try {

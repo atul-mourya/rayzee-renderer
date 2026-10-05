@@ -16,30 +16,43 @@ export async function archiveKey( kind, file ) {
 /**
  * Decompresses a .tar.gz into storage once, indexing it on the way, and hands back the unpacked
  * .tar as a seekable File. A second call for the same file skips the work.
+ *
+ * With `filter` (and `part`, naming what it keeps) only the entries it keeps are written, end to end, and only they
+ * get offsets in the listing: a 31 GB scene archive need not fit to load the part of it chosen. An unpack of the whole
+ * archive serves any part.
  * @returns {Promise<?{file: File, index: {v:number, listing:Array}, release: function(): void, cached: boolean}>}
  *   null when storage cannot take it — the caller reads the archive the old way.
  */
-export async function unpackTarGz( file, { storage, label = file.name, onProgress = null } ) {
+export async function unpackTarGz( file, { storage, label = file.name, onProgress = null, filter = null, part = null } ) {
 
 	if ( ! storage || typeof DecompressionStream === 'undefined' ) return null;
 
 	const area = storage.area( ENGINE_AREAS.ARCHIVES );
-	const key = await archiveKey( 'gunzip', file );
+	const whole = await archiveKey( 'gunzip', file );
+	let key = whole;
 
-	let entry = await area.open( key );
+	let entry = await area.open( whole );
+	if ( ! entry && filter ) entry = await area.open( key = `${whole}|${part}` );
 	const cached = !! entry;
 
 	if ( ! entry ) {
 
-		const writer = await area.create( key, { label, expectedBytes: file.size * GUESSED_EXPANSION } );
+		// A part's size is known only once its headers are read: a write past the quota falls back below.
+		const writer = await area.create( key, filter ? { label: `${label} (${part})` } : { label, expectedBytes: file.size * GUESSED_EXPANSION } );
 		if ( ! writer ) return null;
 
-		const indexer = createTarIndexer();
+		let out = null;
+		const indexer = createTarIndexer( filter ? { filter, sink: ( bytes ) => out.enqueue( bytes ) } : {} );
 		const tap = new TransformStream( {
+			start( controller ) {
+
+				out = controller;
+
+			},
 			transform( chunk, controller ) {
 
 				indexer.push( chunk );
-				controller.enqueue( chunk );
+				if ( ! filter ) controller.enqueue( chunk );
 
 			},
 		} );
