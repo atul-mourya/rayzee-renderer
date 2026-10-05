@@ -2,8 +2,6 @@
 
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
-- Press and hold when "show AI" on, shows empty canvas
-- on model loaded, use the incoming camera, if any, instead of default
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
   
 
