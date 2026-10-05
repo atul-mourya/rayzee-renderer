@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useActiveApp } from '@/hooks/useActiveApp';
-import { describeUsage, formatBytes } from '@/lib/storage';
+import { APP_AREAS, describeUsage, formatBytes } from '@/lib/storage';
 
 const StorageDialog = ( { isOpen, onClose } ) => {
 
@@ -146,8 +146,8 @@ const StorageDialog = ( { isOpen, onClose } ) => {
 											variant="ghost"
 											size="icon"
 											className="h-7 w-7 shrink-0"
-											title={`Clear ${row.label.toLowerCase()}`}
-											disabled={row.entries === 0 || busy !== null}
+											title={row.name === APP_AREAS.RENDERS ? 'Delete saved renders from the Results tab' : `Clear ${row.label.toLowerCase()}`}
+											disabled={row.name === APP_AREAS.RENDERS || row.entries === 0 || busy !== null}
 											onClick={() => ( row.kind === 'user' ? setConfirmArea( row.name ) : clearArea( row.name ) )}
 										>
 											{ busy === row.name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" /> }
