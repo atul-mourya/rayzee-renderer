@@ -226,4 +226,11 @@ describe( 'orthoHeightRange', () => {
 
 	} );
 
+	it( 'falls back to a unit model when there is none to fit (an empty load crashed the Camera tab)', () => {
+
+		for ( const size of [ 0, NaN, Infinity, - 3 ] ) expect( orthoHeightRange( size ) ).toEqual( orthoHeightRange( 1 ) );
+		expect( walkSpeedRange( 0 ) ).toEqual( walkSpeedRange( 1 ) );
+
+	} );
+
 } );

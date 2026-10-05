@@ -272,9 +272,10 @@ export const aspectRatioLabel = ( preset, orientation ) => {
 
 };
 
-// A round step `decades` powers of ten below `fitted`, up to four times it.
+// A round step `decades` powers of ten below `fitted`, up to four times it. An empty scene fits nothing: size 1.
 const roundRange = ( fitted, decades ) => {
 
+	if ( ! ( fitted > 0 && Number.isFinite( fitted ) ) ) fitted = 1;
 	const exponent = Math.floor( Math.log10( fitted ) ) - decades;
 	const precision = Math.max( 0, - exponent );
 	const step = + ( 10 ** exponent ).toFixed( precision );
