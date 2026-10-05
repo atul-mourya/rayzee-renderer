@@ -337,6 +337,7 @@ export class ArchiveImporter {
 					meshCount: built.meshCount, entryPath: built.entryPath, candidates: built.candidates, frames: built.frames,
 					warnings: built.warnings, triangleCount: built.triangleCount, placementCount: built.placementCount,
 					mergedShapes: built.mergedShapes, skippedForBudget: built.skippedForBudget, droppedNoTemplate: built.droppedNoTemplate,
+					render: built.render ?? null,
 				},
 			} );
 
@@ -680,7 +681,10 @@ export class ArchiveImporter {
 		// The light's own orientation and `scale` are already baked into the texture, so the
 		// scene is only correct at rotation 0 / intensity 1 — pinned, whatever the host's defaults.
 		// Without an infinite light pbrt has no environment at all.
-		this.loader.sceneMetadata = { environment: environment?.texture ? { rotation: 0, intensity: 1 } : { enabled: false } };
+		this.loader.sceneMetadata = {
+			environment: environment?.texture ? { rotation: 0, intensity: 1 } : { enabled: false },
+			...( built.render ? { render: { ...built.render } } : {} ),
+		};
 
 		updateLoading( { isLoading: true, status: 'Processing PBRT geometry...', progress: 10 } );
 		await this.loader.onModelLoad( this.loader.targetModel );

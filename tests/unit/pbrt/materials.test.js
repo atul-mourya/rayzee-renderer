@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildMaterial } from '@/core/Processor/PBRT/PBRTMaterials.js';
+import { albedoForReflectance, dipoleReflectance } from '@/core/Processor/PBRT/PBRTScattering.js';
 
 const ctx = { resolveNamedTexture: async () => null, warn: () => {} };
 const param = ( type, ...value ) => ( { type, value } );
@@ -70,6 +71,40 @@ describe( 'pbrt materials', () => {
 		const mat = await buildMaterial( { type: 'diffuse', params: { reflectance: param( 'rgb', 0.2, 0.4, 0.6 ) } }, ctx );
 		expect( mat.specularIntensity ).toBe( 0 );
 		expect( mat.color.toArray() ).toEqual( [ 0.2, 0.4, 0.6 ] );
+
+	} );
+
+	it( 'makes subsurface the engine\'s random walk: albedo σs / σt, mean free path 1 / σt, scaled as pbrt scales them', async () => {
+
+		const coefficients = await buildMaterial( { type: 'subsurface', params: {
+			sigma_a: param( 'rgb', 1, 2, 3 ), sigma_s: param( 'rgb', 3, 2, 1 ), scale: param( 'float', 0.5 ), g: param( 'float', 0.3 ), eta: param( 'float', 1.4 )
+		} }, ctx );
+		expect( coefficients.subsurface ).toBe( 1 );
+		expect( coefficients.subsurfaceColor.toArray() ).toEqual( [ 0.75, 0.5, 0.25 ] );
+		expect( coefficients.subsurfaceRadius ).toEqual( [ 0.5, 0.5, 0.5 ] );
+		expect( [ coefficients.subsurfaceAnisotropy, coefficients.ior ] ).toEqual( [ 0.3, 1.4 ] );
+
+		// A named medium is σ′s with g 0, whatever g says.
+		const skin = await buildMaterial( { type: 'subsurface', params: { name: param( 'string', 'Skin1' ), g: param( 'float', 0.8 ) } }, ctx );
+		expect( skin.subsurfaceAnisotropy ).toBe( 0 );
+		expect( skin.subsurfaceRadius[ 0 ] ).toBeCloseTo( 1 / ( 0.74 + 0.032 ), 9 );
+
+		// Nothing given: pbrt's default, whole milk.
+		const milk = await buildMaterial( { type: 'subsurface', params: {} }, ctx );
+		expect( milk.subsurfaceRadius[ 2 ] ).toBeCloseTo( 1 / ( 3.77 + 0.014 ), 9 );
+
+	} );
+
+	it( 'inverts a subsurface reflectance through the dipole, at the mean free path asked for', async () => {
+
+		const mat = await buildMaterial( { type: 'subsurface', params: {
+			reflectance: param( 'rgb', 0.8, 0.5, 0.2 ), mfp: param( 'rgb', 2, 1, 0.5 ), scale: param( 'float', 2 )
+		} }, ctx );
+		expect( mat.subsurfaceRadius ).toEqual( [ 4, 2, 1 ] );
+		const albedo = mat.subsurfaceColor.toArray();
+		[ 0.8, 0.5, 0.2 ].forEach( ( r, c ) => expect( dipoleReflectance( albedo[ c ], 1.33 ) ).toBeCloseTo( r, 6 ) );
+		expect( mat.color.r ).toBeCloseTo( 0.8, 6 );
+		expect( albedoForReflectance( 0, 1.33 ) ).toBeCloseTo( 0, 9 );
 
 	} );
 

@@ -3,8 +3,8 @@
  * an image texture's `scale` above 1 or `invert`, and a `mix` material whose amount is a texture.
  *
  * A layer is an image as pbrt evaluates it: linear values, top row first, `channels` 1 (a float texture reads
- * the red channel) or 3, already scaled and inverted, and the uv mapping pbrt applies before the lookup
- * (st = scale · uv + delta, image row from the top = 1 − t).
+ * an image's alpha where it has one, else the mean of its colour) or 3, already scaled and inverted, and the uv
+ * mapping pbrt applies before the lookup (st = scale · uv + delta, image row from the top = 1 − t).
  */
 
 const MAX_BAKE_SIZE = 4096;
@@ -28,6 +28,10 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 	const stride = pixels.channels ?? 4;
 	const data = new Float32Array( width * height * channels );
 	const topDown = pixels.topDown !== false;
+	// pbrt's encoding applies to every channel of an 8-bit image, alpha included.
+	const read = ( i ) => ( decode ? decode( pixels.data[ i ] / 255 ) : pixels.data[ i ] );
+	const fromAlpha = channels === 1 && stride === 4 && hasAlpha( pixels );
+	const mean = channels === 1 && stride >= 3 && ! fromAlpha;
 
 	for ( let y = 0; y < height; y ++ ) {
 
@@ -37,8 +41,10 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 			const src = ( row * width + x ) * stride, dst = ( y * width + x ) * channels;
 			for ( let c = 0; c < channels; c ++ ) {
 
-				const raw = pixels.data[ src + Math.min( c, stride - 1 ) ];
-				const v = scale * ( decode ? decode( raw / 255 ) : raw );
+				const raw = fromAlpha ? read( src + 3 )
+					: mean ? ( read( src ) + read( src + 1 ) + read( src + 2 ) ) / 3
+						: read( src + Math.min( c, stride - 1 ) );
+				const v = scale * raw;
 				data[ dst + c ] = invert ? Math.max( 0, 1 - v ) : v;
 
 			}
@@ -48,6 +54,16 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 	}
 
 	return { width, height, channels, data, su: 1, sv: 1, du: 0, dv: 0, ...mapping };
+
+}
+
+/** Whether an RGBA image's alpha is anything but opaque — pbrt reads it as an RGB image when it is not. */
+export function hasAlpha( pixels ) {
+
+	const { data } = pixels;
+	const one = pixels.float ? 1 : 255;
+	for ( let i = 3; i < data.length; i += 4 ) if ( data[ i ] !== one ) return true;
+	return false;
 
 }
 
@@ -91,9 +107,12 @@ function sample( layer, s, t, out ) {
  * (bottom row first), clamped to [0, 1] as pbrt clamps an albedo. Null when every term is a constant.
  * @param {Array<{ rgb?: number[], layer?: object, tint?: number[] }>} terms
  * @param {(values: number[][]) => number[]} combine - linear RGB from each term's linear RGB
+ * @param {object} [options]
+ * @param {(values: number[][]) => number} [options.alphaOf] - the alpha channel, linear; opaque without it
+ * @param {boolean} [options.linear=false] - linear bytes, for a data map
  * @returns {{ data: Uint8Array, width: number, height: number, mapping: { su: number, sv: number, du: number, dv: number } } | null}
  */
-export function bake( terms, combine ) {
+export function bake( terms, combine, { alphaOf = null, linear = false } = {} ) {
 
 	let driver = null;
 	for ( const term of terms ) if ( term.layer && ( ! driver || term.layer.width * term.layer.height > driver.width * driver.height ) ) driver = term.layer;
@@ -134,8 +153,14 @@ export function bake( terms, combine ) {
 
 			const rgb = combine( values );
 			const o = ( j * width + i ) * 4;
-			for ( let c = 0; c < 3; c ++ ) out[ o + c ] = Math.round( 255 * linearToSRGB( Math.min( 1, Math.max( 0, rgb[ c ] ) ) ) );
-			out[ o + 3 ] = 255;
+			for ( let c = 0; c < 3; c ++ ) {
+
+				const v = Math.min( 1, Math.max( 0, rgb[ c ] ) );
+				out[ o + c ] = Math.round( 255 * ( linear ? v : linearToSRGB( v ) ) );
+
+			}
+
+			out[ o + 3 ] = alphaOf ? Math.round( 255 * Math.min( 1, Math.max( 0, alphaOf( values ) ) ) ) : 255;
 
 		}
 

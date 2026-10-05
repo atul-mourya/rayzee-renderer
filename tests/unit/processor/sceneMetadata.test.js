@@ -11,6 +11,15 @@ const PAYLOAD = {
 
 describe( 'parseSceneMetadata', () => {
 
+	it( 'reads what a file asks the renderer for, alone or beside an environment, keeping only positive counts', () => {
+
+		expect( parseSceneMetadata( { rayzee: { render: { maxBounces: '15', samples: 1024, width: 0, height: - 2, fov: 40 } } } ) )
+			.toEqual( { render: { maxBounces: 15, samples: 1024 } } );
+		expect( parseSceneMetadata( { ...PAYLOAD, render: { samples: 64 } } ) ).toEqual( { ...PAYLOAD, render: { samples: 64 } } );
+		expect( parseSceneMetadata( { render: { width: 0 } } ) ).toBeNull();
+
+	} );
+
 	it( 'reads the documented payload', () => {
 
 		expect( parseSceneMetadata( PAYLOAD ) ).toEqual( PAYLOAD );

@@ -14,6 +14,9 @@
  *       "sourceFile": "https://.../brown_photostudio_02_1k.hdr",
  *       "rotation": 0,      // degrees around Y, matches the environmentRotation setting
  *       "intensity": 1      // drives both environmentIntensity and backgroundIntensity
+ *     },
+ *     "render": {           // what the file asks the renderer for; reported, not applied
+ *       "maxBounces": 15, "samples": 1024, "width": 1920, "height": 1080
  *     }
  *   }
  *
@@ -56,10 +59,11 @@ function pickPayload( container ) {
 	const obj = asObject( container );
 	if ( ! obj ) return null;
 
+	const has = ( o ) => o && ( o.environment !== undefined || o.render !== undefined );
 	const scoped = asObject( obj.rayzee );
-	if ( scoped && scoped.environment !== undefined ) return scoped;
+	if ( has( scoped ) ) return scoped;
 
-	return obj.environment !== undefined ? obj : null;
+	return has( obj ) ? obj : null;
 
 }
 
@@ -84,10 +88,29 @@ function normalizeEnvironment( raw ) {
 
 }
 
+const RENDER_KEYS = [ 'maxBounces', 'samples', 'width', 'height' ];
+
+function normalizeRender( raw ) {
+
+	const render = asObject( raw );
+	if ( ! render ) return null;
+
+	const normalized = {};
+	for ( const key of RENDER_KEYS ) {
+
+		const n = asNumber( render[ key ] );
+		if ( n !== undefined && n > 0 ) normalized[ key ] = Math.round( n );
+
+	}
+
+	return Object.keys( normalized ).length ? normalized : null;
+
+}
+
 /**
  * Reads scene metadata out of one `extras`-shaped container.
  * @param {Object|string|null} container
- * @returns {{ environment?: { sourceFile: string, rotation?: number, intensity?: number } }|null}
+ * @returns {{ environment?: { sourceFile: string, rotation?: number, intensity?: number }, render?: { maxBounces?: number, samples?: number, width?: number, height?: number } }|null}
  */
 export function parseSceneMetadata( container ) {
 
@@ -95,14 +118,16 @@ export function parseSceneMetadata( container ) {
 	if ( ! payload ) return null;
 
 	const environment = normalizeEnvironment( payload.environment );
-	return environment ? { environment } : null;
+	const render = normalizeRender( payload.render );
+	if ( ! environment && ! render ) return null;
+	return { ...( environment ? { environment } : {} ), ...( render ? { render } : {} ) };
 
 }
 
 /**
  * Reads scene metadata out of a GLTFLoader parse result.
  * @param {Object} gltf - The object GLTFLoader resolves with
- * @returns {{ environment?: { sourceFile: string, rotation?: number, intensity?: number } }|null}
+ * @returns {ReturnType<typeof parseSceneMetadata>}
  */
 export function extractSceneMetadata( gltf ) {
 

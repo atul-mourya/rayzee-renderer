@@ -9,6 +9,7 @@
  */
 
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
+import { namedScattering, dipoleReflectance, albedoForReflectance } from './PBRTScattering.js';
 
 // Normal-incidence reflectance approximations for pbrt's named conductor spectra.
 const METAL_ALBEDO = {
@@ -168,10 +169,17 @@ async function floatOrMean( params, name, ctx ) {
  * α = √roughness (`remaproughness`, the default) or α = roughness; the engine's GGX takes α = roughness². Passing
  * pbrt's number through made `remaproughness false` 0.1 an α of 0.01, a near mirror. `dflt` is the engine's.
  */
-async function resolveRoughness( params, dflt, ctx, prefix = '' ) {
+const remapsRoughness = ( params ) => {
 
 	const remap = params.remaproughness?.value?.[ 0 ];
-	const alpha = ( r ) => ( remap === false || remap === 'false' ? r : Math.sqrt( Math.max( r, 0 ) ) );
+	return remap !== false && remap !== 'false';
+
+};
+
+async function resolveRoughness( params, dflt, ctx, prefix = '' ) {
+
+	const remap = remapsRoughness( params );
+	const alpha = ( r ) => ( remap ? Math.sqrt( Math.max( r, 0 ) ) : r );
 	let a = null;
 	const r = await floatOrMean( params, `${prefix}roughness`, ctx );
 	if ( r !== null ) a = alpha( r );
@@ -184,6 +192,116 @@ async function resolveRoughness( params, dflt, ctx, prefix = '' ) {
 	}
 
 	return a === null ? dflt : Math.sqrt( Math.max( a, 0 ) );
+
+}
+
+/**
+ * Sets `target` (`roughness` or `clearcoatRoughness`) as resolveRoughness does, except that a textured roughness becomes
+ * a roughness map with the remap baked in (`ctx.bakeFloatMap`), the value 1 multiplying it.
+ */
+async function applyRoughness( mat, target, params, dflt, ctx, prefix = '' ) {
+
+	const single = params[ `${prefix}roughness` ];
+	const keys = single ? [ `${prefix}roughness` ] : [ `${prefix}uroughness`, `${prefix}vroughness` ].filter( ( key ) => params[ key ] );
+	if ( ctx.bakeFloatMap && keys.some( ( key ) => params[ key ].type === 'texture' ) ) {
+
+		const remap = remapsRoughness( params );
+		const alpha = ( r ) => ( remap ? Math.sqrt( Math.max( r, 0 ) ) : Math.max( r, 0 ) );
+		const map = await ctx.bakeFloatMap( params, keys, ( values ) => Math.sqrt( values.reduce( ( sum, r ) => sum + alpha( r ), 0 ) / values.length ) );
+		if ( map ) {
+
+			mat[ `${target}Map` ] = map;
+			mat[ target ] = 1;
+			return;
+
+		}
+
+	}
+
+	mat[ target ] = await resolveRoughness( params, dflt, ctx, prefix );
+
+}
+
+// A spectrum parameter as one RGB; a texture counts as its mean (`ctx.textureMeanRGB`).
+async function spectrumMean( params, key, ctx, dflt ) {
+
+	const p = params[ key ];
+	if ( p?.type === 'texture' ) return ( await ctx.textureMeanRGB?.( p.value[ 0 ] ) ) ?? dflt;
+	return ( await resolveSpectrum( params, key, ctx, dflt ) ).rgb ?? dflt;
+
+}
+
+// pbrt's default subsurface medium (materials.cpp), mm⁻¹.
+const SUBSURFACE_SIGMA_A = [ 0.0011, 0.0024, 0.014 ];
+const SUBSURFACE_SIGMA_S = [ 2.55, 3.21, 3.77 ];
+
+/**
+ * pbrt's `subsurface` as the engine's random walk under a dielectric boundary of `eta`: σt = σa + σs (times `scale`),
+ * single-scattering albedo σs / σt, mean free path 1 / σt. The coefficients come as pbrt takes them — a named medium
+ * (g 0), `sigma_a` and `sigma_s`, or a `reflectance` and `mfp` (scaled) inverted through the dipole — and default to
+ * pbrt's. The base colour is the reflectance the dipole gives, for what reads it as an albedo.
+ */
+async function applySubsurface( mat, params, ctx ) {
+
+	const eta = pFloat( params, 'eta', 1.33 );
+	const scale = pFloat( params, 'scale', 1 );
+	const scaled = ( rgb ) => rgb.map( ( v ) => Math.max( 0, v * scale ) );
+	let g = pFloat( params, 'g', 0 );
+	let sigmaA, sigmaS;
+
+	const name = pString( params, 'name', '' );
+	const named = name ? namedScattering( name ) : null;
+	if ( name && ! named ) ctx.warn( `subsurface: no medium named "${name}" — using pbrt's default` );
+
+	if ( named ) {
+
+		sigmaA = scaled( named.sigmaA );
+		sigmaS = scaled( named.sigmaS );
+		g = 0;
+
+	} else if ( params.sigma_a && params.sigma_s ) {
+
+		sigmaA = scaled( await spectrumMean( params, 'sigma_a', ctx, SUBSURFACE_SIGMA_A ) );
+		sigmaS = scaled( await spectrumMean( params, 'sigma_s', ctx, SUBSURFACE_SIGMA_S ) );
+
+	} else if ( params.reflectance && ! name ) {
+
+		const reflectance = await spectrumMean( params, 'reflectance', ctx, [ 0.5, 0.5, 0.5 ] );
+		const mfp = scaled( params.mfp ? await spectrumMean( params, 'mfp', ctx, [ 1, 1, 1 ] ) : [ 1, 1, 1 ] );
+		sigmaA = [];
+		sigmaS = [];
+		for ( let c = 0; c < 3; c ++ ) {
+
+			const sigmaT = 1 / Math.max( mfp[ c ], 1e-9 );
+			// The reduced albedo σ′s / ( σa + σ′s ), σ′s = ( 1 − g ) σs, back to σs at this σt.
+			const reduced = albedoForReflectance( reflectance[ c ], eta );
+			sigmaS[ c ] = reduced * sigmaT / ( 1 - g + reduced * g );
+			sigmaA[ c ] = sigmaT - sigmaS[ c ];
+
+		}
+
+	} else {
+
+		sigmaA = scaled( SUBSURFACE_SIGMA_A );
+		sigmaS = scaled( SUBSURFACE_SIGMA_S );
+
+	}
+
+	const sigmaT = sigmaA.map( ( a, c ) => a + sigmaS[ c ] );
+	mat.subsurface = 1;
+	mat.subsurfaceColor = new Color( ...sigmaT.map( ( t, c ) => ( t > 0 ? sigmaS[ c ] / t : 0 ) ) );
+	mat.subsurfaceRadius = sigmaT.map( ( t ) => ( t > 0 ? 1 / t : 1e6 ) );
+	mat.subsurfaceRadiusScale = 1;
+	mat.subsurfaceAnisotropy = Math.max( - 0.99, Math.min( 0.99, g ) );
+	mat.ior = eta;
+	mat.metalness = 0;
+	mat.color.setRGB( ...sigmaT.map( ( t, c ) => {
+
+		const reducedS = ( 1 - g ) * sigmaS[ c ];
+		return t > 0 ? dipoleReflectance( reducedS / ( sigmaA[ c ] + reducedS ), eta ) : 0;
+
+	} ) );
+	await applyRoughness( mat, 'roughness', params, 0, ctx );
 
 }
 
@@ -272,7 +390,7 @@ export async function buildMaterial( def, ctx ) {
 		case 'metal': {
 
 			await applyConductorColor( mat, params, ctx, '', applyAlbedo, setColor );
-			mat.roughness = await resolveRoughness( params, 0.1, ctx );
+			await applyRoughness( mat, 'roughness', params, 0.1, ctx );
 			break;
 
 		}
@@ -281,9 +399,9 @@ export async function buildMaterial( def, ctx ) {
 
 			// A conductor under a dielectric coat; pbrt's roughnesses default to 0 for both.
 			await applyConductorColor( mat, params, ctx, 'conductor.', applyAlbedo, setColor );
-			mat.roughness = await resolveRoughness( params, 0, ctx, 'conductor.' );
+			await applyRoughness( mat, 'roughness', params, 0, ctx, 'conductor.' );
 			mat.clearcoat = 1;
-			mat.clearcoatRoughness = await resolveRoughness( params, 0, ctx, 'interface.' );
+			await applyRoughness( mat, 'clearcoatRoughness', params, 0, ctx, 'interface.' );
 			break;
 
 		}
@@ -295,7 +413,7 @@ export async function buildMaterial( def, ctx ) {
 			mat.metalness = 0;
 			mat.color.setRGB( 1, 1, 1 );
 			mat.ior = pFloat( params, 'eta', 1.5 );
-			mat.roughness = await resolveRoughness( params, 0, ctx );
+			await applyRoughness( mat, 'roughness', params, 0, ctx );
 			mat.thickness = type === 'thindielectric' ? 0 : pFloat( params, 'thickness', 0 );
 			break;
 
@@ -307,7 +425,7 @@ export async function buildMaterial( def, ctx ) {
 			mat.roughness = 0.6;
 			mat.metalness = 0;
 			mat.clearcoat = 1;
-			mat.clearcoatRoughness = await resolveRoughness( params, 0, ctx );
+			await applyRoughness( mat, 'clearcoatRoughness', params, 0, ctx );
 			break;
 
 		}
@@ -407,7 +525,13 @@ export async function buildMaterial( def, ctx ) {
 
 		}
 
-		case 'subsurface':
+		case 'subsurface': {
+
+			await applySubsurface( mat, params, ctx );
+			break;
+
+		}
+
 		case 'hair':
 		case 'measured': {
 

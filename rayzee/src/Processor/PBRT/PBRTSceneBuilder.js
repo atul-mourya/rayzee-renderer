@@ -17,14 +17,14 @@
 import { freeNow, resized } from './buffers.js';
 import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
-	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute, SphereGeometry,
+	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
 	RepeatWrapping
 } from 'three';
 import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
-import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB } from './PBRTTextureBake.js';
+import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve } from './PBRTCurves.js';
@@ -107,7 +107,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 8;
+export const PBRT_BUILD_REVISION = 9;
 
 function samePlacements( a, b ) {
 
@@ -244,13 +244,255 @@ function eightBit( texture, { srgb } ) {
 
 }
 
-// A baked image as a texture: sRGB bytes, bottom row first, in the uv mapping it was baked in.
-function bakedTexture( { data, width, height, mapping } ) {
+// A baked image as a texture: bytes bottom row first, sRGB unless a data map, in the uv mapping it was baked in.
+function bakedTexture( { data, width, height, mapping }, { srgb = true } = {} ) {
 
 	const texture = new DataTexture( data, width, height, RGBAFormat );
-	texture.colorSpace = SRGBColorSpace;
+	texture.colorSpace = srgb ? SRGBColorSpace : NoColorSpace;
 	texture.wrapS = texture.wrapT = RepeatWrapping;
 	setMapping( texture, mapping );
+	texture.needsUpdate = true;
+	return texture;
+
+}
+
+/**
+ * pbrt's thin lens as the camera's own effects (CameraManager applies them when the camera is chosen): the same
+ * aperture radius in either DOF mode — `dofBlur` for 'look', a full-frame lens and its f-number for 'physical' at one
+ * scene unit a metre — focused by hand at pbrt's distance.
+ */
+function lensEffects( camera, radius, focusDistance ) {
+
+	const ortho = camera.isOrthographicCamera === true;
+	const tanHalf = ortho ? 1 : Math.tan( camera.fov * Math.PI / 360 );
+	const focalLength = ortho ? 50 : 12 / tanHalf;
+	return {
+		enableDOF: true,
+		focusDistance,
+		aperture: focalLength * 0.001 / ( 2 * radius ),
+		focalLength,
+		apertureScale: 1,
+		anamorphicRatio: 1,
+		dofBlur: radius / ( focusDistance * tanHalf ),
+		autoFocusMode: 'manual',
+		afScreenPoint: { x: 0.5, y: 0.5 },
+		orthoHeight: ortho ? ( camera.top - camera.bottom ) / camera.zoom : null,
+	};
+
+}
+
+// What the scene asks the renderer for, where it says: the Integrator's maxdepth, the Sampler's pixelsamples, the Film's
+// resolution — scene metadata's `render`.
+function renderRequest( ir ) {
+
+	const render = {};
+	if ( ir.integrator?.maxdepth > 0 ) render.maxBounces = Math.round( ir.integrator.maxdepth );
+	if ( ir.sampler?.pixelsamples > 0 ) render.samples = Math.round( ir.sampler.pixelsamples );
+	if ( ir.film?.resolutionGiven ) {
+
+		render.width = ir.film.xresolution;
+		render.height = ir.film.yresolution;
+
+	}
+
+	return Object.keys( render ).length ? render : null;
+
+}
+
+const QUADRIC_SEGMENTS = 48; // around a whole turn
+
+// pbrt's quadric parameters, clamped as pbrt clamps them (shapes.h).
+function sphereParams( params ) {
+
+	const radius = pFloat( params, 'radius', 1 );
+	const z0 = pFloat( params, 'zmin', - radius ), z1 = pFloat( params, 'zmax', radius );
+	const clamp = ( z ) => Math.min( radius, Math.max( - radius, z ) );
+	return { radius, zMin: clamp( Math.min( z0, z1 ) ), zMax: clamp( Math.max( z0, z1 ) ), phiMax: phiMaxOf( params ) };
+
+}
+
+function cylinderParams( params ) {
+
+	const z0 = pFloat( params, 'zmin', - 1 ), z1 = pFloat( params, 'zmax', 1 );
+	return { radius: pFloat( params, 'radius', 1 ), zMin: Math.min( z0, z1 ), zMax: Math.max( z0, z1 ), phiMax: phiMaxOf( params ) };
+
+}
+
+function diskParams( params ) {
+
+	return {
+		radius: pFloat( params, 'radius', 1 ), inner: pFloat( params, 'innerradius', 0 ),
+		height: pFloat( params, 'height', 0 ), phiMax: phiMaxOf( params )
+	};
+
+}
+
+const phiMaxOf = ( params ) => Math.min( 360, Math.max( 0, pFloat( params, 'phimax', 360 ) ) ) * Math.PI / 180;
+
+/**
+ * A quadric as pbrt parameterises it: `at( u, v, p, n )` over [0, 1]², u around the z axis to `phiMax`; the uv is
+ * pbrt's own. Triangles face ∂p/∂u × ∂p/∂v, pbrt's normal; a cell edge of no length (a pole, a centre) drops its
+ * triangle.
+ */
+function quadric( phiMax, vSegments, at ) {
+
+	const uSegments = Math.max( 3, Math.ceil( QUADRIC_SEGMENTS * phiMax / ( 2 * Math.PI ) ) );
+	const row = uSegments + 1;
+	const position = new Float32Array( row * ( vSegments + 1 ) * 3 );
+	const normal = new Float32Array( position.length );
+	const uv = new Float32Array( row * ( vSegments + 1 ) * 2 );
+	const p = new Vector3(), n = new Vector3();
+
+	for ( let j = 0; j <= vSegments; j ++ ) for ( let i = 0; i <= uSegments; i ++ ) {
+
+		const k = j * row + i;
+		at( i / uSegments, j / vSegments, p, n );
+		p.toArray( position, k * 3 );
+		n.toArray( normal, k * 3 );
+		uv[ k * 2 ] = i / uSegments;
+		uv[ k * 2 + 1 ] = j / vSegments;
+
+	}
+
+	let extent = 0;
+	for ( let k = 0; k < position.length; k ++ ) extent = Math.max( extent, Math.abs( position[ k ] ) );
+	const apart = ( a, b ) => Math.hypot( position[ a * 3 ] - position[ b * 3 ], position[ a * 3 + 1 ] - position[ b * 3 + 1 ], position[ a * 3 + 2 ] - position[ b * 3 + 2 ] ) > extent * 1e-6;
+	const index = [];
+	for ( let j = 0; j < vSegments; j ++ ) for ( let i = 0; i < uSegments; i ++ ) {
+
+		const a = j * row + i, b = a + 1, c = a + row, d = c + 1;
+		if ( apart( a, b ) ) index.push( a, b, d );
+		if ( apart( c, d ) ) index.push( a, d, c );
+
+	}
+
+	const geometry = new BufferGeometry();
+	geometry.setAttribute( 'position', new Float32BufferAttribute( position, 3 ) );
+	geometry.setAttribute( 'normal', new Float32BufferAttribute( normal, 3 ) );
+	geometry.setAttribute( 'uv', new Float32BufferAttribute( uv, 2 ) );
+	geometry.setIndex( new Uint32BufferAttribute( new Uint32Array( index ), 1 ) );
+	return geometry;
+
+}
+
+// What pbrt calls a shape's area when it scales an area light's `power`: a quadric's in its own space, a mesh's in the
+// scene's (pbrt keeps triangles transformed).
+function shapeArea( shape, geometry ) {
+
+	const params = shape.params;
+	switch ( shape.type ) {
+
+		case 'sphere': {
+
+			const { radius, zMin, zMax, phiMax } = sphereParams( params );
+			return phiMax * radius * ( zMax - zMin );
+
+		}
+
+		case 'cylinder': {
+
+			const { radius, zMin, zMax, phiMax } = cylinderParams( params );
+			return phiMax * radius * ( zMax - zMin );
+
+		}
+
+		case 'disk': {
+
+			const { radius, inner, phiMax } = diskParams( params );
+			return phiMax * 0.5 * ( radius * radius - inner * inner );
+
+		}
+
+	}
+
+	const world = new Matrix4().fromArray( shape.ctm );
+	const position = geometry.getAttribute( 'position' );
+	const index = geometry.index;
+	const count = index ? index.count : position.count;
+	const a = new Vector3(), b = new Vector3(), c = new Vector3();
+	let area = 0;
+	for ( let t = 0; t + 2 < count; t += 3 ) {
+
+		a.fromBufferAttribute( position, index ? index.getX( t ) : t ).applyMatrix4( world );
+		b.fromBufferAttribute( position, index ? index.getX( t + 1 ) : t + 1 ).applyMatrix4( world );
+		c.fromBufferAttribute( position, index ? index.getX( t + 2 ) : t + 2 ).applyMatrix4( world );
+		area += b.sub( a ).cross( c.sub( a ) ).length() / 2;
+
+	}
+
+	return area;
+
+}
+
+const CHECK_TEXELS = 64; // a baked checkerboard's texels along one check
+const BILERP_TEXELS = 64;
+
+// `colorAt( s, t )` (linear RGB) over a w × h grid as sRGB bytes, bottom row first, clamped as pbrt clamps an albedo.
+function rasterize( width, height, colorAt ) {
+
+	const data = new Uint8Array( width * height * 4 );
+	for ( let j = 0; j < height; j ++ ) for ( let i = 0; i < width; i ++ ) {
+
+		const rgb = colorAt( ( i + 0.5 ) / width, ( j + 0.5 ) / height );
+		const o = ( j * width + i ) * 4;
+		for ( let c = 0; c < 3; c ++ ) data[ o + c ] = Math.round( 255 * linearToSRGB( Math.min( 1, Math.max( 0, rgb[ c ] ) ) ) );
+		data[ o + 3 ] = 255;
+
+	}
+
+	return data;
+
+}
+
+// A clone that keeps the engine's own material properties, which three.js's copy() does not know.
+function cloneMaterial( material ) {
+
+	const out = material.clone();
+	for ( const key of Object.keys( material ) ) if ( ! ( key in out ) ) out[ key ] = material[ key ];
+	return out;
+
+}
+
+// pbrt's shape alpha as the engine's blend mode: a ray passes with chance 1 − α, shadow rays too.
+function translucent( material, alpha ) {
+
+	const out = cloneMaterial( material );
+	out.transparent = true;
+	out.opacity = material.opacity * alpha;
+	return out;
+
+}
+
+const sameMapping = ( texture, { su, sv, du, dv } ) =>
+	texture.repeat.x === su && texture.repeat.y === sv && texture.offset.x === du && texture.offset.y === dv;
+
+// An 8-bit image's colour with its alpha decoded as pbrt reads it; null when its alpha is opaque throughout.
+function withDecodedAlpha( pixels, decode ) {
+
+	if ( pixels.float || ! hasAlpha( pixels ) ) return null;
+	const { data, width, height } = pixels;
+	const lut = new Uint8Array( 256 );
+	for ( let v = 0; v < 256; v ++ ) lut[ v ] = Math.round( 255 * Math.min( 1, Math.max( 0, decode( v / 255 ) ) ) );
+
+	const out = new Uint8Array( width * height * 4 );
+	const rowBytes = width * 4;
+	for ( let y = 0; y < height; y ++ ) {
+
+		const src = ( pixels.topDown ? height - 1 - y : y ) * rowBytes, dst = y * rowBytes;
+		for ( let x = 0; x < rowBytes; x += 4 ) {
+
+			out[ dst + x ] = data[ src + x ];
+			out[ dst + x + 1 ] = data[ src + x + 1 ];
+			out[ dst + x + 2 ] = data[ src + x + 2 ];
+			out[ dst + x + 3 ] = lut[ data[ src + x + 3 ] ];
+
+		}
+
+	}
+
+	const texture = new DataTexture( out, width, height, RGBAFormat );
+	texture.colorSpace = SRGBColorSpace;
+	texture.wrapS = texture.wrapT = RepeatWrapping;
 	texture.needsUpdate = true;
 	return texture;
 
@@ -316,6 +558,7 @@ export class PBRTSceneBuilder {
 		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
+		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
 
 	}
 
@@ -373,11 +616,12 @@ export class PBRTSceneBuilder {
 			}
 
 			const shape = ir.shapes[ i ];
-			const [ geometry, sharedMaterial ] = await Promise.all( [
+			const [ geometry, surface ] = await Promise.all( [
 				this._batches ? this._createGeometry( shape ) : this._buildGeometry( shape ),
 				this._getMaterial( shape )
 			] );
 			if ( ! geometry ) continue;
+			const sharedMaterial = shape.areaLight ? this._poweredMaterial( shape, geometry, surface ) : surface;
 
 			// A moving shape needs a node of its own to move.
 			if ( this._batches && ! shape.motion && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
@@ -442,6 +686,7 @@ export class PBRTSceneBuilder {
 
 		return {
 			group, camera, environment, animations,
+			render: renderRequest( ir ),
 			report: this.report,
 			meshCount: this.reportedMeshes,
 			triangleCount: this.triangleCount,
@@ -865,7 +1110,7 @@ export class PBRTSceneBuilder {
 		if ( ! material ) {
 
 			this.warn( `${name} (${shape.type}, "${shape.material?.type || 'diffuse'}") has a texture map but no UVs — dropping map, using base color` );
-			material = sharedMaterial.clone();
+			material = cloneMaterial( sharedMaterial );
 			material.map = null;
 			this._noUVMaterials.set( sharedMaterial, material );
 
@@ -1119,6 +1364,7 @@ export class PBRTSceneBuilder {
 			case 'plymesh': return this._plyMesh( shape.params );
 			case 'sphere': return this._sphere( shape.params );
 			case 'disk': return this._disk( shape.params );
+			case 'cylinder': return this._cylinder( shape.params );
 			default:
 				this.warn( `shape "${shape.type}" not supported — skipped` );
 				return null;
@@ -1229,28 +1475,75 @@ export class PBRTSceneBuilder {
 	}
 
 	// Bilinear patch mesh → triangulate each quad (P + indices in quads of 4).
+	/**
+	 * pbrt's bilinear patches as two triangles each: corners p00, p10, p01, p11 (not a ring), facing ∂p/∂u × ∂p/∂v. One
+	 * patch of four points needs no indices. Without uvs a patch takes its own (u, v), so its corners are not shared.
+	 */
 	_bilinearMesh( params ) {
 
 		const P = params.P?.value;
-		const quad = params.indices?.value;
+		const quad = params.indices?.value ?? ( P?.length === 12 ? [ 0, 1, 2, 3 ] : null );
 		if ( ! P || ! quad ) {
 
 			this.warn( 'bilinearmesh missing P/indices' ); return null;
 
 		}
 
-		const tris = [];
-		for ( let i = 0; i + 3 < quad.length; i += 4 ) {
+		const count = P.length / 3;
+		const uv = params.uv?.value?.length === count * 2 ? params.uv.value : null;
+		const N = params.N?.value?.length === count * 3 ? params.N.value : null;
+		const geo = new BufferGeometry();
 
-			const [ a, b, c, d ] = [ quad[ i ], quad[ i + 1 ], quad[ i + 2 ], quad[ i + 3 ] ];
-			tris.push( a, b, c, a, c, d );
+		if ( uv ) {
+
+			const index = [];
+			for ( let i = 0; i + 3 < quad.length; i += 4 ) {
+
+				const [ a, b, c, d ] = [ quad[ i ], quad[ i + 1 ], quad[ i + 2 ], quad[ i + 3 ] ];
+				index.push( a, b, d, a, d, c );
+
+			}
+
+			geo.setAttribute( 'position', new Float32BufferAttribute( Float32Array.from( P ), 3 ) );
+			geo.setAttribute( 'uv', new Float32BufferAttribute( Float32Array.from( uv ), 2 ) );
+			if ( N ) geo.setAttribute( 'normal', new Float32BufferAttribute( Float32Array.from( N ), 3 ) );
+			geo.setIndex( new Uint32BufferAttribute( new Uint32Array( index ), 1 ) );
+
+		} else {
+
+			const patches = Math.floor( quad.length / 4 );
+			const position = new Float32Array( patches * 12 ), normal = N ? new Float32Array( patches * 12 ) : null;
+			const corners = new Float32Array( patches * 8 ), index = new Uint32Array( patches * 6 );
+			for ( let i = 0; i < patches; i ++ ) {
+
+				for ( let k = 0; k < 4; k ++ ) {
+
+					const v = quad[ i * 4 + k ];
+					for ( let c = 0; c < 3; c ++ ) {
+
+						position[ i * 12 + k * 3 + c ] = P[ v * 3 + c ];
+						if ( normal ) normal[ i * 12 + k * 3 + c ] = N[ v * 3 + c ];
+
+					}
+
+					corners[ i * 8 + k * 2 ] = k & 1;
+					corners[ i * 8 + k * 2 + 1 ] = k >> 1;
+
+				}
+
+				index.set( [ 0, 1, 3, 0, 3, 2 ].map( ( k ) => i * 4 + k ), i * 6 );
+
+			}
+
+			geo.setAttribute( 'position', new Float32BufferAttribute( position, 3 ) );
+			geo.setAttribute( 'uv', new Float32BufferAttribute( corners, 2 ) );
+			if ( normal ) geo.setAttribute( 'normal', new Float32BufferAttribute( normal, 3 ) );
+			geo.setIndex( new Uint32BufferAttribute( index, 1 ) );
 
 		}
 
-		const geo = new BufferGeometry();
-		geo.setAttribute( 'position', new Float32BufferAttribute( Float32Array.from( P ), 3 ) );
-		geo.setIndex( tris );
-		geo.computeVertexNormals();
+		if ( N ) geo.userData.pbrtNormals = true;
+		else geo.computeVertexNormals();
 		return geo;
 
 	}
@@ -1297,38 +1590,41 @@ export class PBRTSceneBuilder {
 
 	_sphere( params ) {
 
-		const radius = pFloat( params, 'radius', 1 );
-		return new SphereGeometry( radius, 48, 32 );
+		const { radius, zMin, zMax, phiMax } = sphereParams( params );
+		const thetaMin = Math.acos( zMin / radius ), thetaMax = Math.acos( zMax / radius );
+		return quadric( phiMax, Math.max( 1, Math.ceil( 32 * ( thetaMin - thetaMax ) / Math.PI ) ), ( u, v, p, n ) => {
+
+			const phi = u * phiMax, theta = thetaMin + v * ( thetaMax - thetaMin );
+			n.set( Math.sin( theta ) * Math.cos( phi ), Math.sin( theta ) * Math.sin( phi ), Math.cos( theta ) );
+			p.copy( n ).multiplyScalar( radius );
+
+		} );
+
+	}
+
+	_cylinder( params ) {
+
+		const { radius, zMin, zMax, phiMax } = cylinderParams( params );
+		return quadric( phiMax, 1, ( u, v, p, n ) => {
+
+			const phi = u * phiMax;
+			n.set( Math.cos( phi ), Math.sin( phi ), 0 );
+			p.set( radius * n.x, radius * n.y, zMin + v * ( zMax - zMin ) );
+
+		} );
 
 	}
 
 	_disk( params ) {
 
-		// Approximate as a thin ring/disk in the z=height plane.
-		const radius = pFloat( params, 'radius', 1 );
-		const inner = pFloat( params, 'innerradius', 0 );
-		const h = pFloat( params, 'height', 0 );
-		const seg = 48;
-		const pos = [];
-		const idx = [];
-		for ( let i = 0; i < seg; i ++ ) {
+		const { radius, inner, height, phiMax } = diskParams( params );
+		return quadric( phiMax, 1, ( u, v, p, n ) => {
 
-			const a0 = ( i / seg ) * Math.PI * 2;
-			const a1 = ( ( i + 1 ) / seg ) * Math.PI * 2;
-			const base = pos.length / 3;
-			pos.push( Math.cos( a0 ) * inner, Math.sin( a0 ) * inner, h );
-			pos.push( Math.cos( a0 ) * radius, Math.sin( a0 ) * radius, h );
-			pos.push( Math.cos( a1 ) * radius, Math.sin( a1 ) * radius, h );
-			pos.push( Math.cos( a1 ) * inner, Math.sin( a1 ) * inner, h );
-			idx.push( base, base + 1, base + 2, base, base + 2, base + 3 );
+			const phi = u * phiMax, r = radius - v * ( radius - inner );
+			p.set( r * Math.cos( phi ), r * Math.sin( phi ), height );
+			n.set( 0, 0, 1 );
 
-		}
-
-		const geo = new BufferGeometry();
-		geo.setAttribute( 'position', new Float32BufferAttribute( Float32Array.from( pos ), 3 ) );
-		geo.setIndex( idx );
-		geo.computeVertexNormals();
-		return geo;
+		} );
 
 	}
 
@@ -1336,8 +1632,75 @@ export class PBRTSceneBuilder {
 
 	async _getMaterial( shape ) {
 
-		const material = await this._surfaceMaterial( shape );
-		return shape.interior ? this._inMedium( material, shape.interior ) : material;
+		let material = await this._surfaceMaterial( shape );
+		if ( shape.interior ) material = await this._inMedium( material, shape.interior );
+		return shape.params.alpha ? this._withAlpha( material, shape.params.alpha ) : material;
+
+	}
+
+	/** The material under a shape's `alpha`, one per material and alpha. @private */
+	_withAlpha( material, alpha ) {
+
+		const key = alpha.type === 'texture' ? alpha.value[ 0 ] : `#${alpha.value[ 0 ]}`;
+		let byAlpha = this._alphaMaterials.get( material );
+		if ( ! byAlpha ) this._alphaMaterials.set( material, byAlpha = new Map() );
+		if ( ! byAlpha.has( key ) ) byAlpha.set( key, this._createAlphaMaterial( material, alpha ) );
+		return byAlpha.get( key );
+
+	}
+
+	async _createAlphaMaterial( material, alpha ) {
+
+		if ( alpha.type !== 'texture' ) return alpha.value[ 0 ] < 1 ? translucent( material, alpha.value[ 0 ] ) : material;
+
+		const name = alpha.value[ 0 ];
+		const map = await this._alphaMap( material.map, name );
+		if ( ! map ) {
+
+			this.warn( `shape alpha "${name}" could not be read here — drawn opaque` );
+			return material;
+
+		}
+
+		if ( map.constant !== undefined ) return map.constant < 1 ? translucent( material, map.constant ) : material;
+		const out = cloneMaterial( material );
+		out.map = map;
+		out.transparent = true;
+		return out;
+
+	}
+
+	/**
+	 * The colour map with the float texture `name` in its alpha channel, `{ constant }` when that texture is one value,
+	 * or null when it cannot be read here.
+	 * @private
+	 */
+	async _alphaMap( colorMap, name ) {
+
+		const def = this.ir.namedTextures.get( name );
+		const filename = def?.class === 'imagemap' ? pString( def.params, 'filename', null ) : null;
+		// Most often the alpha is the colour map's own image: its colour stays as it is.
+		if ( filename && colorMap?.userData.pbrtImage === filename && pString( def.params, 'mapping', 'uv' ) === 'uv'
+			&& pFloat( def.params, 'scale', 1 ) === 1 && ! pBool( def.params, 'invert', false ) && sameMapping( colorMap, uvMapping( def.params ) ) ) {
+
+			const pixels = texturePixels( colorMap );
+			const own = pixels && withDecodedAlpha( pixels, decoderFor( def.params ) );
+			if ( own ) {
+
+				setMapping( own, uvMapping( def.params ) );
+				return own;
+
+			}
+
+		}
+
+		const alpha = await this._bakeTerm( name, 1 );
+		if ( ! alpha ) return null;
+		if ( ! alpha.layer ) return { constant: alpha.rgb[ 0 ] };
+		const color = colorMap ? this._textureLayer( colorMap, 3 ) : null;
+		if ( colorMap && ! color ) return null;
+		const baked = bake( [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], ( [ c ] ) => c, { alphaOf: ( [ , a ] ) => a[ 0 ] } );
+		return baked && bakedTexture( baked );
 
 	}
 
@@ -1380,6 +1743,17 @@ export class PBRTSceneBuilder {
 
 			},
 			bakeMaterialMix: ( a, b, amountName ) => this._bakeMaterialMix( a, b, amountName ),
+			bakeFloatMap: ( params, keys, combine ) => this._floatMap( params, keys, combine ),
+			textureMeanRGB: async ( n ) => {
+
+				const term = await this._bakeTerm( n, 3 );
+				if ( ! term?.layer ) return term?.rgb ?? null;
+				const { data } = term.layer;
+				const sum = [ 0, 0, 0 ];
+				for ( let i = 0; i < data.length; i ++ ) sum[ i % 3 ] += data[ i ];
+				return sum.map( ( v, c ) => v / ( data.length / 3 ) * ( term.tint?.[ c ] ?? 1 ) );
+
+			},
 			resolveNormalMap: async ( filename ) => {
 
 				const image = await this._image( filename );
@@ -1429,7 +1803,7 @@ export class PBRTSceneBuilder {
 		const max = Math.max( ...sigma );
 		if ( ! ( max > 0 ) ) return material;
 
-		const variant = material.clone();
+		const variant = cloneMaterial( material );
 		variant.attenuationDistance = 1 / max;
 		variant.attenuationColor.setRGB( ...sigma.map( ( v ) => Math.exp( - v / max ) ) );
 		return this._dedupeMaterial( variant );
@@ -1445,16 +1819,34 @@ export class PBRTSceneBuilder {
 
 		const c = material.color, e = material.emissive;
 		const key = `${c.r},${c.g},${c.b}|${e.r},${e.g},${e.b}|${material.emissiveIntensity}|` +
-			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.metalness}|` +
+			`${material.map ? material.map.uuid : '-'}|${material.roughness}|${material.roughnessMap?.uuid ?? '-'}|${material.metalness}|` +
 			`${material.transmission}|${material.ior}|${material.thickness}|` +
-			`${material.clearcoat}|${material.clearcoatRoughness}|${material.opacity}|${material.side}|` +
+			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|` +
 			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
-			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}`;
+			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
+			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}`;
 
 		const existing = this._materialBySignature.get( key );
 		if ( existing ) return existing;
 		this._materialBySignature.set( key, material );
 		return material;
+
+	}
+
+	/**
+	 * An area light given as `power`: pbrt scales its radiance to that power over this shape's area (both sides of a
+	 * twosided one); an image's mean is not in it, as an emitting image is not supported.
+	 * @private
+	 */
+	_poweredMaterial( shape, geometry, material ) {
+
+		const power = pFloat( shape.areaLight.params, 'power', - 1 );
+		if ( ! ( power > 0 ) ) return material;
+		const area = shapeArea( shape, geometry ) * ( pBool( shape.areaLight.params, 'twosided', false ) ? 2 : 1 );
+		if ( ! ( area > 0 ) ) return material;
+		const out = cloneMaterial( material );
+		out.emissiveIntensity = material.emissiveIntensity * power / ( Math.PI * area );
+		return out;
 
 	}
 
@@ -1494,6 +1886,10 @@ export class PBRTSceneBuilder {
 			if ( v && v.type === 'rgb' ) result = { constant: [ v.value[ 0 ], v.value[ 1 ], v.value[ 2 ] ] };
 			else if ( v ) result = { constant: [ v.value[ 0 ], v.value[ 0 ], v.value[ 0 ] ] };
 
+		} else if ( def.class === 'checkerboard' || def.class === 'bilerp' ) {
+
+			result = await this._proceduralTexture( name, def );
+
 		} else if ( def.class === 'scale' ) {
 
 			// Scale = inner_texture * scale_factor. Resolve the inner (recursively if
@@ -1520,6 +1916,52 @@ export class PBRTSceneBuilder {
 
 		this._textureCache.set( name, result );
 		return result;
+
+	}
+
+	/**
+	 * pbrt's 2D `checkerboard` and `bilerp`, baked: one period of the checks (two each way), or the bilerp over the unit
+	 * square, in the texture's uv mapping. A textured input counts as its mean.
+	 * @private
+	 */
+	async _proceduralTexture( name, def ) {
+
+		const params = def.params;
+		const ctx = this._materialContext();
+		const value = async ( key, dflt ) => {
+
+			const p = params[ key ];
+			if ( p?.type === 'texture' ) return ( await ctx.textureMeanRGB( p.value[ 0 ] ) ) ?? dflt;
+			return ( await resolveSpectrum( params, key, ctx, dflt ) ).rgb ?? dflt;
+
+		};
+
+		const mapping = pString( params, 'mapping', 'uv' );
+		if ( mapping !== 'uv' ) this.warn( `texture "${name}": "${mapping}" mapping is not supported — using the mesh's uv` );
+		const { su, sv, du, dv } = uvMapping( params );
+
+		if ( def.class === 'checkerboard' ) {
+
+			if ( pFloat( params, 'dimension', 2 ) !== 2 ) {
+
+				this.warn( `texture "${name}": a 3D checkerboard is not supported` );
+				return null;
+
+			}
+
+			const [ a, b ] = await Promise.all( [ value( 'tex1', [ 1, 1, 1 ] ), value( 'tex2', [ 0, 0, 0 ] ) ] );
+			const n = 2 * CHECK_TEXELS;
+			const data = rasterize( n, n, ( s, t ) => ( ( Math.floor( 2 * s ) + Math.floor( 2 * t ) ) % 2 ? b : a ) );
+			return { texture: bakedTexture( { data, width: n, height: n, mapping: { su: su / 2, sv: sv / 2, du: du / 2, dv: dv / 2 } } ) };
+
+		}
+
+		const [ v00, v01, v10, v11 ] = await Promise.all( [
+			value( 'v00', [ 0, 0, 0 ] ), value( 'v01', [ 1, 1, 1 ] ), value( 'v10', [ 0, 0, 0 ] ), value( 'v11', [ 1, 1, 1 ] )
+		] );
+		const data = rasterize( BILERP_TEXELS, BILERP_TEXELS, ( s, t ) => [ 0, 1, 2 ].map( ( c ) =>
+			( 1 - s ) * ( 1 - t ) * v00[ c ] + s * ( 1 - t ) * v10[ c ] + ( 1 - s ) * t * v01[ c ] + s * t * v11[ c ] ) );
+		return { texture: bakedTexture( { data, width: BILERP_TEXELS, height: BILERP_TEXELS, mapping: { su, sv, du, dv } } ) };
 
 	}
 
@@ -1575,9 +2017,29 @@ export class PBRTSceneBuilder {
 
 		const color = eightBit( image, { srgb: true } );
 		const texture = color === image ? image.clone() : color;
+		texture.userData.pbrtImage = filename;
 		setMapping( texture, uvMapping( def.params ) );
 		texture.needsUpdate = true;
 		return scale < 1 ? { texture, constant: [ scale, scale, scale ] } : { texture };
+
+	}
+
+	/**
+	 * A data map (linear, in every channel) of `combine` over float parameters `keys`, constants or textures; null when
+	 * one cannot be read here or all are constants.
+	 * @private
+	 */
+	async _floatMap( params, keys, combine ) {
+
+		const terms = await Promise.all( keys.map( ( key ) => this._paramTerm( params, key, 1, [ 0, 0, 0 ] ) ) );
+		if ( terms.some( ( term ) => ! term ) ) return null;
+		const baked = bake( terms, ( values ) => {
+
+			const v = combine( values.map( ( value ) => value[ 0 ] ) );
+			return [ v, v, v ];
+
+		}, { linear: true } );
+		return baked && bakedTexture( baked, { srgb: false } );
 
 	}
 
@@ -1617,7 +2079,7 @@ export class PBRTSceneBuilder {
 	 * A named texture as pbrt evaluates it, for baking: `{ rgb }` for a constant, `{ layer, tint? }` for an image;
 	 * null when it cannot be read in this runtime.
 	 * @param {string} name
-	 * @param {number} channels - 1 where it is read as a float texture (its red channel), 3 as a spectrum
+	 * @param {number} channels - 1 where it is read as a float texture, 3 as a spectrum
 	 * @private
 	 */
 	_bakeTerm( name, channels ) {
@@ -1798,6 +2260,8 @@ export class PBRTSceneBuilder {
 		camera.name = 'PBRT Camera';
 		this._poseCamera( camera, cam.cameraToWorld );
 		camera.updateMatrixWorld( true );
+		const lensRadius = pFloat( cam.params, 'lensradius', 0 );
+		if ( lensRadius > 0 ) camera.userData.__rayzeeEffects = lensEffects( camera, lensRadius, pFloat( cam.params, 'focaldistance', 1e6 ) );
 		return camera;
 
 	}

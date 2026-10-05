@@ -1216,8 +1216,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	/**
 	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
 	 * or null when the file has none. See {@link module:Processor/SceneMetadata}. A pbrt scene
-	 * without an infinite light carries `environment: { enabled: false }`.
-	 * @type {{ environment?: { sourceFile?: string, rotation?: number, intensity?: number, enabled?: boolean } }|null}
+	 * without an infinite light carries `environment: { enabled: false }`. `render` is what the file asks
+	 * the renderer for (pbrt's maxdepth, pixelsamples and film resolution); nothing applies it.
+	 * @type {{ environment?: { sourceFile?: string, rotation?: number, intensity?: number, enabled?: boolean }, render?: { maxBounces?: number, samples?: number, width?: number, height?: number } }|null}
 	 */
 	get sceneMetadata() {
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, OrthographicCamera, PerspectiveCamera, Texture, Vector3 } from 'three';
+import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, Texture, Vector3 } from 'three';
 import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/Processor/PBRT/index.js';
+import { deriveAlphaMode } from '@/core/Processor/GeometryExtractor.js';
 
 const enc = new TextEncoder();
 
@@ -119,6 +120,31 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'reports what the scene asks the renderer for: its depth, samples and film size', async () => {
+
+		const scene = 'Integrator "volpath" "integer maxdepth" 15\nSampler "zsobol" "integer pixelsamples" 1024\n' + SCENE;
+		const { render } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		expect( render ).toEqual( { maxBounces: 15, samples: 1024, width: 800, height: 600 } );
+		const bare = 'WorldBegin\nShape "sphere"\n';
+		expect( ( await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( bare ) } } ) ) ).render ).toBeNull();
+
+	} );
+
+	it( 'gives a thin-lens camera its own depth of field: the same aperture radius in both DOF modes', async () => {
+
+		const scene = SCENE.replace( 'Camera "perspective" "float fov" 40', 'Camera "perspective" "float fov" 40 "float lensradius" 0.05 "float focaldistance" 4' );
+		const { camera } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const effects = camera.userData.__rayzeeEffects;
+		const tanHalf = Math.tan( camera.fov * Math.PI / 360 );
+
+		expect( effects ).toMatchObject( { enableDOF: true, focusDistance: 4, autoFocusMode: 'manual', apertureScale: 1 } );
+		expect( effects.dofBlur * effects.focusDistance * tanHalf ).toBeCloseTo( 0.05, 9 );
+		expect( effects.focalLength / ( 2 * effects.aperture ) * 0.001 ).toBeCloseTo( 0.05, 9 );
+		// Without a lens radius the camera keeps whatever the viewer has.
+		expect( ( await loadPBRTScene( buildArgs() ) ).camera.userData.__rayzeeEffects ).toBeUndefined();
+
+	} );
+
 	it( 'maps area-light L onto an emissive material', async () => {
 
 		const { group } = await loadPBRTScene( buildArgs() );
@@ -215,7 +241,7 @@ describe( 'PBRT scene builder', () => {
 	it( 'maps diffuse reflectance onto base color', async () => {
 
 		const { group } = await loadPBRTScene( buildArgs() );
-		const sphere = group.children.find( c => c instanceof Mesh && c.geometry.type === 'SphereGeometry' );
+		const sphere = group.children.find( c => c instanceof Mesh && c.name === 'shape_1' );
 
 		expect( sphere.material.color.r ).toBeCloseTo( 0.8, 5 );
 		expect( sphere.material.roughness ).toBe( 1 );
@@ -238,7 +264,7 @@ describe( 'PBRT scene builder', () => {
 	it( 'records the sphere translate in its baked matrix', async () => {
 
 		const { group } = await loadPBRTScene( buildArgs() );
-		const sphere = group.children.find( c => c instanceof Mesh && c.geometry.type === 'SphereGeometry' );
+		const sphere = group.children.find( c => c instanceof Mesh && c.name === 'shape_1' );
 		const t = sphere.matrix.elements.slice( 12, 15 );
 		expect( t[ 0 ] ).toBeCloseTo( 0, 5 );
 		expect( t[ 1 ] ).toBeCloseTo( - 1, 5 );
@@ -874,6 +900,225 @@ describe( 'PBRT scene builder: pbrt-v4 fidelity', () => {
 
 		const map = meshes[ 0 ].material.map;
 		expect( [ map.repeat.x, map.repeat.y, map.offset.x, map.offset.y ] ).toEqual( [ 5, 2, 0.25, 0 ] );
+
+	} );
+
+	// One row of RGBA texels.
+	const rgba = ( ...texels ) => new DataTexture( new Uint8Array( texels.flat() ), texels.length, 1 );
+
+	it( 'passes rays through a shape by its alpha texture: the colour map\'s own alpha, decoded as pbrt reads it', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			Texture "leaf" "spectrum" "imagemap" "string filename" "leaf.png"
+			Texture "leaf-alpha" "float" "imagemap" "string filename" "leaf.png"
+			Material "diffuse" "texture reflectance" "leaf"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ] "texture alpha" "leaf-alpha"
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'leaf.png': rgba( [ 200, 100, 50, 255 ], [ 10, 20, 30, 0 ], [ 10, 20, 30, 128 ] ) } );
+
+		expect( warnings.filter( ( w ) => /alpha/.test( w ) ) ).toEqual( [] );
+		const [ cut, solid ] = meshes.map( ( m ) => m.material );
+		expect( cut.transparent ).toBe( true );
+		expect( deriveAlphaMode( cut ) ).toBe( 2 );
+		// Colour as it was; alpha through the sRGB curve, as pbrt decodes every channel of an 8-bit image.
+		expect( Array.from( cut.map.image.data ) ).toEqual( [ 200, 100, 50, 255, 10, 20, 30, 0, 10, 20, 30, 55 ] );
+		expect( deriveAlphaMode( solid ) ).toBe( 0 );
+
+	} );
+
+	it( 'bakes an alpha from another image into the colour map, reading the mean of its colour where it has no alpha', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "paint" "spectrum" "imagemap" "string filename" "paint.png"
+			Texture "mask" "float" "imagemap" "string filename" "mask.png"
+			Material "diffuse" "texture reflectance" "paint"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ] "texture alpha" "mask"
+		`, {}, { 'paint.png': image( 255, 255 ), 'mask.png': rgba( [ 255, 0, 0, 255 ], [ 255, 255, 255, 255 ] ) } );
+
+		// Mean of red alone, decoded: 1/3; all three: 1.
+		expect( Array.from( meshes[ 0 ].material.map.image.data ) ).toEqual( [ 255, 255, 255, 85, 255, 255, 255, 255 ] );
+
+	} );
+
+	// Each triangle's winding normal · its vertex normals: positive when it faces them.
+	const facing = ( geometry ) => {
+
+		const p = geometry.getAttribute( 'position' ), n = geometry.getAttribute( 'normal' ), index = geometry.index.array;
+		const at = ( k ) => new Vector3().fromBufferAttribute( p, k );
+		const out = [];
+		for ( let t = 0; t < index.length; t += 3 ) {
+
+			const [ a, b, c ] = [ index[ t ], index[ t + 1 ], index[ t + 2 ] ];
+			const w = at( b ).sub( at( a ) ).cross( at( c ).sub( at( a ) ) );
+			out.push( w.dot( new Vector3().fromBufferAttribute( n, a ).add( new Vector3().fromBufferAttribute( n, b ) ).add( new Vector3().fromBufferAttribute( n, c ) ) ) );
+
+		}
+
+		return out;
+
+	};
+
+	it( 'builds pbrt\'s quadrics whole or in part, in pbrt\'s uv, facing their normals', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			Shape "sphere" "float radius" 2 "float zmin" 0 "float phimax" 90
+			Shape "cylinder" "float radius" 0.5 "float zmin" -1 "float zmax" 3
+			Shape "disk" "float radius" 1 "float innerradius" 0.5 "float height" 2 "float phimax" 180
+		` );
+
+		expect( warnings.filter( ( w ) => /not supported/.test( w ) ) ).toEqual( [] );
+		const [ sphere, cylinder, disk ] = meshes.map( ( m ) => m.geometry );
+		for ( const geometry of [ sphere, cylinder, disk ] ) expect( Math.min( ...facing( geometry ) ) ).toBeGreaterThan( 0 );
+
+		// A quarter of the upper hemisphere: x, y ≥ 0, z from 0 to the pole; v runs from zmin up.
+		sphere.computeBoundingBox();
+		expect( sphere.boundingBox.min.toArray().map( ( v ) => Math.round( v * 1e4 ) / 1e4 ) ).toEqual( [ 0, 0, 0 ] );
+		expect( sphere.boundingBox.max.toArray().map( ( v ) => Math.round( v * 1e4 ) / 1e4 ) ).toEqual( [ 2, 2, 2 ] );
+		const top = sphere.getAttribute( 'uv' ).count - 1;
+		expect( sphere.getAttribute( 'position' ).getZ( top ) ).toBeCloseTo( 2, 6 );
+		expect( sphere.getAttribute( 'uv' ).getY( top ) ).toBe( 1 );
+
+		cylinder.computeBoundingBox();
+		expect( [ cylinder.boundingBox.min.z, cylinder.boundingBox.max.z ] ).toEqual( [ - 1, 3 ] );
+		expect( cylinder.getAttribute( 'normal' ).getZ( 0 ) ).toBe( 0 );
+
+		// Half an annulus at z = 2, facing +z; v = 0 on the outer edge.
+		disk.computeBoundingBox();
+		expect( disk.boundingBox.min.y ).toBeCloseTo( 0, 6 );
+		expect( disk.boundingBox.min.z ).toBe( 2 );
+		expect( Math.hypot( disk.getAttribute( 'position' ).getX( 0 ), disk.getAttribute( 'position' ).getY( 0 ) ) ).toBeCloseTo( 1, 6 );
+
+	} );
+
+	it( 'builds a bilinear patch from pbrt\'s corner order, needing no indices for one, its uv its own', async () => {
+
+		const { meshes } = await meshesOf( `
+			Shape "bilinearmesh" "point3 P" [ 0 0 0  1 0 0  0 1 0  1 1 0 ]
+			Shape "bilinearmesh" "point3 P" [ 0 0 1  1 0 1  0 1 1  1 1 1 ] "integer indices" [ 0 1 2 3 ] "point2 uv" [ 0 1  1 1  0 0  1 0 ]
+		` );
+
+		const [ own, given ] = meshes.map( ( m ) => m.geometry );
+		// p00 p10 p01 p11: the square, not a bow tie; both triangles face +z.
+		expect( facing( own ).every( ( f ) => f > 0 ) ).toBe( true );
+		own.computeBoundingBox();
+		expect( own.boundingBox.max.toArray() ).toEqual( [ 1, 1, 0 ] );
+		const area = ( g ) => {
+
+			const p = g.getAttribute( 'position' ), index = g.index.array;
+			let sum = 0;
+			for ( let t = 0; t < index.length; t += 3 ) {
+
+				const a = new Vector3().fromBufferAttribute( p, index[ t ] );
+				sum += new Vector3().fromBufferAttribute( p, index[ t + 1 ] ).sub( a ).cross( new Vector3().fromBufferAttribute( p, index[ t + 2 ] ).sub( a ) ).length() / 2;
+
+			}
+
+			return sum;
+
+		};
+
+		expect( area( own ) ).toBeCloseTo( 1, 9 );
+		expect( Array.from( own.getAttribute( 'uv' ).array ) ).toEqual( [ 0, 0, 1, 0, 0, 1, 1, 1 ] );
+		expect( Array.from( given.getAttribute( 'uv' ).array ) ).toEqual( [ 0, 1, 1, 1, 0, 0, 1, 0 ] );
+		expect( area( given ) ).toBeCloseTo( 1, 9 );
+
+	} );
+
+	it( 'leaves no sliver at a pole or a centre', async () => {
+
+		const { meshes } = await meshesOf( `
+			Shape "sphere" "float radius" 1
+			Shape "disk" "float radius" 1
+		` );
+
+		const [ sphere, disk ] = meshes.map( ( m ) => m.geometry );
+		expect( Math.min( ...facing( sphere ) ) ).toBeGreaterThan( 0 );
+		// A fan: one triangle a segment.
+		expect( disk.index.count / 3 ).toBe( 48 );
+
+	} );
+
+	it( 'scales an area light given as power to its shape\'s area', async () => {
+
+		const { meshes } = await meshesOf( `
+			AttributeBegin
+				AreaLightSource "diffuse" "float power" 100
+				Shape "disk" "float radius" 2
+			AttributeEnd
+			AttributeBegin
+				Scale 2 2 2
+				AreaLightSource "diffuse" "float power" 100 "bool twosided" true "float scale" 3
+				Shape "trianglemesh" ${TRI}
+			AttributeEnd
+		` );
+
+		const [ disk, triangle ] = meshes.map( ( m ) => m.material );
+		expect( disk.emissiveIntensity ).toBeCloseTo( 100 / ( Math.PI * Math.PI * 4 ), 9 );
+		// Scaled 2×: an area of 2, both sides.
+		expect( triangle.emissiveIntensity ).toBeCloseTo( 3 * 100 / ( Math.PI * 2 * 2 ), 9 );
+
+	} );
+
+	it( 'bakes pbrt\'s 2D checkerboard and bilerp textures in their uv mapping', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			Texture "checks" "spectrum" "checkerboard" "float uscale" 8 "float vscale" 4 "rgb tex1" [ 1 0 0 ] "rgb tex2" [ 0 0 1 ]
+			Material "diffuse" "texture reflectance" "checks"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+			Texture "ramp" "spectrum" "bilerp" "rgb v00" [ 0 0 0 ] "rgb v10" [ 1 1 1 ] "rgb v01" [ 0 0 0 ] "rgb v11" [ 1 1 1 ]
+			Material "diffuse" "texture reflectance" "ramp"
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]
+		` );
+
+		expect( warnings.filter( ( w ) => /not supported/.test( w ) ) ).toEqual( [] );
+		const checks = meshes[ 0 ].material.map;
+		// One period, two checks each way: st = 8u spans four periods of the tile.
+		expect( [ checks.repeat.x, checks.repeat.y ] ).toEqual( [ 4, 2 ] );
+		const texel = ( map, x, y ) => Array.from( map.image.data.slice( ( y * map.image.width + x ) * 4, ( y * map.image.width + x ) * 4 + 3 ) );
+		expect( texel( checks, 0, 0 ) ).toEqual( [ 255, 0, 0 ] );
+		expect( texel( checks, checks.image.width - 1, 0 ) ).toEqual( [ 0, 0, 255 ] );
+		expect( texel( checks, checks.image.width - 1, checks.image.height - 1 ) ).toEqual( [ 255, 0, 0 ] );
+
+		// Black along s = 0, white along s = 1, whatever t.
+		const ramp = meshes[ 1 ].material.map;
+		expect( texel( ramp, 0, 10 )[ 0 ] ).toBeLessThan( 40 );
+		expect( texel( ramp, ramp.image.width - 1, 50 )[ 0 ] ).toBeGreaterThan( 250 );
+
+	} );
+
+	it( 'bakes a textured roughness into a roughness map, pbrt\'s remap included', async () => {
+
+		const { meshes } = await meshesOf( `
+			Texture "rough" "float" "imagemap" "string filename" "rough.png" "string encoding" "linear"
+			Material "conductor" "texture roughness" "rough"
+			Shape "trianglemesh" ${TRI} "point2 uv" [ 0 0 1 0 0 1 ]
+			Material "coateddiffuse" "texture roughness" "rough" "bool remaproughness" false
+			Shape "trianglemesh" "point3 P" [ 0 0 1  1 0 1  0 1 1 ] "integer indices" [ 0 1 2 ] "point2 uv" [ 0 0 1 0 0 1 ]
+		`, {}, { 'rough.png': image( 0, 16, 255 ) } );
+
+		const [ metal, coated ] = meshes.map( ( m ) => m.material );
+		// Remapped: engine roughness = √α = roughness^¼; 16/255 → 0.5005.
+		expect( metal.roughness ).toBe( 1 );
+		expect( Array.from( metal.roughnessMap.image.data.filter( ( _, i ) => i % 4 === 1 ) ) ).toEqual( [ 0, 128, 255 ] );
+		expect( metal.roughnessMap.colorSpace ).toBe( NoColorSpace );
+		// remaproughness false: α is the value, √ of it.
+		expect( coated.clearcoatRoughness ).toBe( 1 );
+		expect( Array.from( coated.clearcoatRoughnessMap.image.data.filter( ( _, i ) => i % 4 === 1 ) ) ).toEqual( [ 0, 64, 255 ] );
+
+	} );
+
+	it( 'reads a constant alpha as the chance a ray stops, and keeps the engine\'s own material properties', async () => {
+
+		const { meshes, warnings } = await meshesOf( `
+			Material "diffusetransmission" "rgb reflectance" [ 0.25 0.25 0.25 ] "rgb transmittance" [ 0.5 0.5 0.5 ]
+			Shape "trianglemesh" ${TRI} "float alpha" 0.25
+		` );
+
+		const material = meshes[ 0 ].material;
+		expect( warnings.filter( ( w ) => /alpha/.test( w ) ) ).toEqual( [] );
+		expect( [ material.transparent, material.opacity ] ).toEqual( [ true, 0.25 ] );
+		expect( deriveAlphaMode( material ) ).toBe( 2 );
+		expect( material.diffuseTransmission ).toBeCloseTo( 0.5, 6 );
 
 	} );
 

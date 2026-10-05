@@ -603,15 +603,33 @@ export class PBRTParser {
 				this.ir.film = {
 					xresolution: this._num( params.xresolution, 1280 ),
 					yresolution: this._num( params.yresolution, 720 ),
+					resolutionGiven: Boolean( params.xresolution || params.yresolution ),
 					filename: this._str( params.filename, null )
 				};
 				break;
 
 			}
 
+			// What the scene asks the renderer for; reported, not applied (PBRTSceneBuilder renderRequest).
+			case 'Integrator': {
+
+				this._expectString( 'Integrator type' );
+				const params = this._parseParams();
+				if ( params.maxdepth ) this.ir.integrator = { maxdepth: this._num( params.maxdepth, 5 ) };
+				break;
+
+			}
+
+			case 'Sampler': {
+
+				this._expectString( 'Sampler type' );
+				const params = this._parseParams();
+				if ( params.pixelsamples ) this.ir.sampler = { pixelsamples: this._num( params.pixelsamples, 16 ) };
+				break;
+
+			}
+
 			// Consumed for completeness; not used by the engine.
-			case 'Integrator':
-			case 'Sampler':
 			case 'PixelFilter':
 			case 'Filter':
 			case 'Accelerator':
@@ -759,7 +777,6 @@ export class PBRTParser {
 				// pbrt: a shape of alpha 0 is never hit, and an area light on it emits nothing.
 				const alpha = params.alpha;
 				if ( alpha?.type === 'float' && alpha.value[ 0 ] <= 0 ) break;
-				if ( alpha && ! ( alpha.type === 'float' && alpha.value[ 0 ] >= 1 ) ) this._warnOnce( 'alpha', 'shape "alpha" between 0 and 1, or as a texture, is not supported — drawn opaque' );
 				const shape = {
 					type,
 					params,
