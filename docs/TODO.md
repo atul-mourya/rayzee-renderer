@@ -5,14 +5,11 @@
 - Press and hold when "show AI" on, shows empty canvas
 - on model loaded, use the incoming camera, if any, instead of default
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
-- [x] add diffuse transmission to the bidirectional integrator (2026-10-05, see Deferred)
   
 
 ### MVP
 - [ ] Save compiled shaders??
-- [x] engine core to be separated to make a minimal version for headless applications — done in 9.5.0: `rayzee/core` (`RayzeeRenderer`, its own bundle) with opt-in add-ons (formats, physical sky, archives, bidirectional, colour, storage); `PathTracerApp` is the viewer on top. See docs/CORE_AND_ADDONS.md
 - [ ] dynamic max stack in bvhtraversal
-- [x] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel — done: one Adaptive Sampling switch (frame early-stop + per-pixel freeze, Cycles-style noise threshold and min samples), on in both modes. Pixel freeze does little on real interiors — see Known
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
@@ -75,7 +72,6 @@
 
 ### General
 
-- [x] introduce OPFS inplace of indexedDB
 - [ ] deno compile for dedicated destop app
 - [x] Introduce Project based workflow
 - [x] Save rendering state in local storage and load on app start
@@ -83,7 +79,6 @@
 - [ ] transform control redesign
 
 ### Compilation
-- [x] compileAsync for compute shader (2026-10-04) — every kernel rebuild compiles in the background (`KernelManager.compile()`); page freeze on a new layer combination 3.7 s → 0.4 s, `SHADERS_COMPILING` event + app label
 
 ### Rendering
 
@@ -94,9 +89,6 @@
 - [ ] Cone Tracing
 - [ ] Clouds for the physical sky
 - [ ] Volumetric rendering
-- [x] Caustic support - Photon mapping &/ BDPT — bidirectional covers every light; vertex merging (`integrator: 'vcm'`, 2026-10-03) adds the specular–diffuse–specular paths no connection reaches (a point lamp's caustic seen in a mirror or through glass)
-- [x] Guide bidirectional sky / sun light paths through windows (2026-10-03, `TSL/LightGuide.js`) — learned from camera escapes, no scene knowledge; classroom equal-time noise −19 % mid tones, +14 % frame time
-- [x] Diffuse transmission in the bidirectional integrator and VCM (2026-10-05) — light subpaths cross the surface; NEE, connections, light tracing and merges reach a vertex from behind (`facingSide`). `translucent-panel-bidirectional` reads +0.016 % against the path tracer, the furnace 0.99946. Found on the way: the emitter-hit MIS weight measured its NEE density from the world origin whenever the light tree was one node (a TSL argument first read after a loop's `Break`), +6 % on a grazing-lit floor since the integrator landed — fixed, six bidirectional baselines re-blessed. Still open: NRD at 1 spp on `cornell-bidirectional` / `caustic-bidirectional` reads 4.6–4.8× worse than no denoising (same on main)
 - [ ] **Texture filtering (mipmaps + a level per hit)** — explored 2026-10-05 with a throwaway prototype, nothing kept.
   Today the packed texture arrays have no mips (`generateMipmaps = false` in `TextureCreator`) and every lookup reads
   level 0; three r186 builds mips per array layer when asked (one flag, +33 % texture memory).
@@ -236,19 +228,6 @@ once looked at. How it should have been built so they could not happen:
 The core should support three.js objects and glTF/GLB out of the box; everything else a host chooses. Sizes are
 minified + gzip of the three.js loader alone (three is external, so it lands in the host's bundle, not ours).
 
-- [x] **Model formats as add-ons** (2026-10-04) — `rayzee/addons/formats` (`fbxFormat` … `exrFormat`, `allFormats`),
-  registered with `assetLoader.registerFormat()`; one shared load path replaced seven wrappers (AssetLoader 1,622 →
-  1,351 lines); a host's own format registers the same way. Archives kept `setArchiveImporter` (already public).
-- [x] **glTF decoders on demand** (2026-10-04) — `GLTFDecoders.js` reads the glTF's JSON for the extension names
-  before the parse and imports only those decoders; Node's Draco and KTX2 fixtures still match their twins.
-- [x] **EXR environments** (2026-10-04) — `exrFormat` in the formats add-on; pbrt archives keep their own EXRLoader.
-  Host bundle (core-browser example): main chunk 577 → 534 KB gzip, and the seven model-loader chunks are gone.
-- [x] **Material layers compiled only when used** (2026-10-04) — clear coat, sheen, iridescence, anisotropy,
-  subsurface, dispersion, diffuse transmission (`materialLayers( builder )`). Images unchanged; frame time median
-  −9.6 % (−3.9 to −24.3 %) over 28 scenes. Specular transmission is the one big layer left (glass handling,
-  shadow rays through glass) — needs the sampler's leftover `Else` (rand ≥ the summed weights) kept exact.
-- [x] **G-buffer on request** (2026-10-04) — `requestOutput( 'gBuffer' )`; the viewer asks at start-up, the core's
-  kernels leave it out. Core still renders byte for byte as the full engine.
 - [ ] The bidirectional NEE in Shade (~250 lines, ~2.9 KB gzip of source, ~1 % of the core) could move into the add-on
   as one function taking Shade's locals; the ~40 small `if ( bdpt )` sites (MIS bookkeeping) would stay. Low value.
 - [ ] The memory spill's orchestration in `SceneProcessor` (~6 KB): moving it needs hooks inside the three hardest build
