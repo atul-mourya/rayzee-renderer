@@ -494,8 +494,10 @@ the strings, so never rename or repurpose one.
   triangles (`throughSurface` on the samplers): the cosine below N, the shadow ray off the other side of the facet
   (`backOrigin`, no terminator lift). A transmission draw must cross the geometric surface (the leak guard's mirror
   case), is never flagged UNDER_SURFACE, and sets SUN_NEE. **Compiled in only while some material has it**
-  (a material layer — see **Material layers** below). Bidirectional always leaves it out (its connections and light tracing do not
-  cross surfaces yet; `resolveSurfaceMaterial` zeroes it too). Packed at 39 (factor) and 129–131 (colour); slot 33
+  (a material layer — see **Material layers** below). Bidirectional and VCM carry it: light subpaths cross the surface,
+  NEE reaches through it, and a connection, light-tracing splat or merge may reach a vertex from behind — the BSDF and
+  both densities then take the normal on the far side (`facingSide`), the cosines absolute, the shadow ray off that side;
+  a light vertex records in `extra` which of its sides the camera culls (bit 0 near, bit 1 far). Packed at 39 (factor) and 129–131 (colour); slot 33
   holds the two map indices and `getMaterial` reads it only when the factor is above 0. Maps (`diffuseTransmissionMap`,
   its A channel, linear bucket; `diffuseTransmissionColorMap`, RGB, sRGB bucket) fold in through `applyExtensionMaps`
   on the albedo map's uv transform. Loaders: glTF through `GLTFDiffuseTransmission.js` (factors and both textures,
@@ -1028,8 +1030,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
     (0.07). Cornell box, merging alone against bidirectional: −0.14 % (z 1.3). Where other strategies already
     work it costs more than it saves (Livspace and the classroom +7–8 % noise at equal time); it is for caustics
     seen in mirrors and through glass. Bench: `mirror-caustic-vcm` (truth from itself).
-- **Not covered:** diffuse transmission (left out in this integrator — see Settings → Diffuse transmission); emissive
-  textures (NEE and light paths both use the per-triangle emission); a dispersion
+- **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
   wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
   path can hit (a point, spot or sharp directional lamp) have no strategy at all — `'vcm'` covers them. Connections test the
   camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth

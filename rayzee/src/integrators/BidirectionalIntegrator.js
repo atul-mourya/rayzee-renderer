@@ -196,8 +196,10 @@ export class BidirectionalIntegrator {
 
 		const {
 			km, qm, pb, counters, bounceCountsBuf, wfCurrentBounce, copyReadB, copyWriteA, maxRays, w, own,
-			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF,
+			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF, materialLayers,
 		} = ctx;
+		// Whether some material passes light through diffusely: its strategies then cross surfaces.
+		const transmits = materialLayers?.diffuseTransmission ?? true;
 
 		const bd = this.uniforms;
 		const n = qm.MAX_BOUNCE_SNAPSHOTS;
@@ -291,6 +293,7 @@ export class BidirectionalIntegrator {
 			globalIlluminationIntensity: this.pt.globalIlluminationIntensity,
 			fireflyThreshold: this.pt.fireflyThreshold,
 			mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
+			diffuseTransmission: transmits,
 		} )() ).compute( [ Math.ceil( maxRays / CONNECT_WG_SIZE ), 1, 1 ], [ CONNECT_WG_SIZE, 1, 1 ] ) );
 
 		if ( bd.merging ) {
@@ -314,6 +317,7 @@ export class BidirectionalIntegrator {
 				globalIlluminationIntensity: this.pt.globalIlluminationIntensity,
 				fireflyThreshold: this.pt.fireflyThreshold,
 				accumFrame: this.pt.frame,
+				diffuseTransmission: transmits,
 			} )() ).compute( [ Math.ceil( maxRays / MERGE_WG_SIZE ), 1, 1 ], [ MERGE_WG_SIZE, 1, 1 ] ) );
 
 		}
@@ -342,6 +346,7 @@ export class BidirectionalIntegrator {
 			accumFrame: this.pt.frame,
 			frame: this.pt.seedFrame,
 			mergeVm: bd.merging ? ( p ) => mergeVmAt( bd, p ) : null,
+			diffuseTransmission: transmits,
 		} )() ).compute( [ Math.ceil( this._lightCacheSlots / LIGHT_SPLAT_WG_SIZE ), 1, 1 ], [ LIGHT_SPLAT_WG_SIZE, 1, 1 ] ) );
 
 		km.register( 'splatResolve', buildSplatResolveKernel( {

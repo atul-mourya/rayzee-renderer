@@ -156,8 +156,6 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.normalMapIndex.assign( int( - 1 ) );
 	material.bumpMapIndex.assign( int( - 1 ) );
 	material.displacementMapIndex.assign( int( - 1 ) );
-	// Shade leaves diffuse transmission out in this integrator (its strategies do not cross surfaces yet).
-	material.diffuseTransmission.assign( 0.0 );
 
 	const samples = MaterialSamples.wrap( sampleAllMaterialTextures( material, uv, N, vec4( 0.0 ) ) ).toVar();
 	const rawRough = samples.roughness.toVar();
@@ -187,6 +185,8 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.iridescenceThicknessRange.assign( vec2( material.iridescenceThicknessRange.x, ext.iridescenceThickness ) );
 	material.specularIntensity.assign( ext.specularIntensity );
 	material.specularColor.assign( ext.specularColor );
+	material.diffuseTransmission.assign( ext.diffuseTransmission );
+	material.diffuseTransmissionColor.assign( ext.diffuseTransmissionColor );
 
 	If( rawRough.lessThan( MIN_ROUGHNESS ).and( material.anisotropy.equal( 0.0 ) ).and( material.clearcoat.equal( 0.0 ) )
 		.and( material.transmission.equal( 0.0 ) ).and( material.subsurface.equal( 0.0 ) ), () => {
@@ -198,6 +198,10 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	return material;
 
 }
+
+// The normal of the frame with `toward` on top: a surface that passes light through diffusely is seen from either side.
+export const facingSide = ( N, toward, material ) => select(
+	material.diffuseTransmission.greaterThan( 0.0 ).and( dot( N, toward ).lessThan( 0.0 ) ), N.negate(), N );
 
 // The light end's cosine with the shading-normal correction (Veach 5.3.2): |V·N| |d·Ng| / |V·Ng|.
 export const lightEndCosine = ( V, N, facetN, toOther ) =>

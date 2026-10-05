@@ -763,5 +763,105 @@
 		"ratio": 0.3027767067868282,
 		"rawRmse": 0.01850573816101751,
 		"denoisedRmse": 0.0056031064570522164
+	},
+	"furnace-diffuse-transmission-bidirectional/asvgf/1": {
+		"ratio": 0.2920529023995137,
+		"rawRmse": 0.1466048154343478,
+		"denoisedRmse": 0.0428163618533463
+	},
+	"furnace-diffuse-transmission-bidirectional/nrd/1": {
+		"ratio": 0.05367377447759186,
+		"rawRmse": 0.1466048154343478,
+		"denoisedRmse": 0.007868833800952163
+	},
+	"furnace-diffuse-transmission-bidirectional/edgeaware/1": {
+		"ratio": 0.42070340421127905,
+		"rawRmse": 0.1466048154343478,
+		"denoisedRmse": 0.061677144926996386
+	},
+	"furnace-diffuse-transmission-bidirectional/oidn/1": {
+		"ratio": 0.051836905316323914,
+		"rawRmse": 0.1466048154343478,
+		"denoisedRmse": 0.00759953993658743
+	},
+	"furnace-diffuse-transmission-bidirectional/oidn-tiled/1": {
+		"ratio": 0.05428022124552809,
+		"rawRmse": 0.1466048154343478,
+		"denoisedRmse": 0.00795774181743621
+	},
+	"furnace-diffuse-transmission-bidirectional/asvgf/64": {
+		"ratio": 0.5908815736859862,
+		"rawRmse": 0.01218579560910982,
+		"denoisedRmse": 0.0072003620861265894
+	},
+	"furnace-diffuse-transmission-bidirectional/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.01218579560910982,
+		"denoisedRmse": 0.01218579560910982
+	},
+	"furnace-diffuse-transmission-bidirectional/edgeaware/64": {
+		"ratio": 0.7997646388167486,
+		"rawRmse": 0.01218579560910982,
+		"denoisedRmse": 0.009745768424014437
+	},
+	"furnace-diffuse-transmission-bidirectional/oidn/64": {
+		"ratio": 0.5958336532544574,
+		"rawRmse": 0.01218579560910982,
+		"denoisedRmse": 0.0072607071155880295
+	},
+	"furnace-diffuse-transmission-bidirectional/oidn-tiled/64": {
+		"ratio": 0.5949067992868813,
+		"rawRmse": 0.01218579560910982,
+		"denoisedRmse": 0.0072494126625796546
+	},
+	"translucent-panel-bidirectional/asvgf/1": {
+		"ratio": 0.653565738853551,
+		"rawRmse": 0.08697102051038644,
+		"denoisedRmse": 0.05684127927871805
+	},
+	"translucent-panel-bidirectional/nrd/1": {
+		"ratio": 0.5290737550170699,
+		"rawRmse": 0.08697102051038644,
+		"denoisedRmse": 0.04601408439909675
+	},
+	"translucent-panel-bidirectional/edgeaware/1": {
+		"ratio": 0.5650014413913058,
+		"rawRmse": 0.08697102051038644,
+		"denoisedRmse": 0.049138751947641154
+	},
+	"translucent-panel-bidirectional/oidn/1": {
+		"ratio": 0.1346000953913135,
+		"rawRmse": 0.08697102051038644,
+		"denoisedRmse": 0.011706307656977898
+	},
+	"translucent-panel-bidirectional/oidn-tiled/1": {
+		"ratio": 0.1349605017685903,
+		"rawRmse": 0.08697102051038644,
+		"denoisedRmse": 0.011737652567408113
+	},
+	"translucent-panel-bidirectional/asvgf/64": {
+		"ratio": 0.5939792379031228,
+		"rawRmse": 0.012340849307110973,
+		"denoisedRmse": 0.007330208266515057
+	},
+	"translucent-panel-bidirectional/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.012340849307110973,
+		"denoisedRmse": 0.012340849307110973
+	},
+	"translucent-panel-bidirectional/edgeaware/64": {
+		"ratio": 0.8930755848759269,
+		"rawRmse": 0.012340849307110973,
+		"denoisedRmse": 0.011021311212813809
+	},
+	"translucent-panel-bidirectional/oidn/64": {
+		"ratio": 0.5160201828389064,
+		"rawRmse": 0.012340849307110973,
+		"denoisedRmse": 0.006368127315842795
+	},
+	"translucent-panel-bidirectional/oidn-tiled/64": {
+		"ratio": 0.5153908700112125,
+		"rawRmse": 0.012340849307110973,
+		"denoisedRmse": 0.006360361061069194
 	}
 }

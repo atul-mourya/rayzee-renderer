@@ -1397,21 +1397,35 @@ SCENES.push( {
 	truthSpp: 512,
 	settings: { maxBounces: 32, enableEnvironment: true, environmentIntensity: 1 },
 	furnaceRadiance: 1.0,
-	async build( app ) {
+	build: buildDiffuseTransmissionFurnace,
+} );
 
-		const env = app.stages.pathTracer.environment;
-		env.envParams.solidSkyColor = new Color( 0xffffff );
-		await env.setMode( 'color' );
+async function buildDiffuseTransmissionFurnace( app ) {
 
-		// three.js has no such property; the engine reads it off the material (MATERIAL_DEFAULTS).
-		const material = new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1, metalness: 0, side: DoubleSide } );
-		material.diffuseTransmission = 0.5;
-		const group = new Group();
-		group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), material ) );
-		await app.loadObject3D( group, 'furnace-diffuse-transmission' );
-		setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+	const env = app.stages.pathTracer.environment;
+	env.envParams.solidSkyColor = new Color( 0xffffff );
+	await env.setMode( 'color' );
 
-	},
+	// three.js has no such property; the engine reads it off the material (MATERIAL_DEFAULTS).
+	const material = new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1, metalness: 0, side: DoubleSide } );
+	material.diffuseTransmission = 0.5;
+	const group = new Group();
+	group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), material ) );
+	await app.loadObject3D( group, 'furnace-diffuse-transmission' );
+	setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+}
+
+// The same furnace in the bidirectional integrator: light subpaths from the sky cross the surface too, and every
+// strategy — connections and light tracing reaching a vertex from behind — must still add up to the sky.
+SCENES.push( {
+	id: 'furnace-diffuse-transmission-bidirectional',
+	covers: 'white furnace — diffuse transmission in the bidirectional integrator (light paths, connections and light tracing through the surface)',
+	spp: 64,
+	truthSpp: 256,
+	settings: { maxBounces: 16, enableEnvironment: true, environmentIntensity: 1, integrator: 'bidirectional' },
+	furnaceRadiance: 1.0,
+	build: buildDiffuseTransmissionFurnace,
 } );
 
 // A translucent sheet lit only from behind: what the camera sees of it is light NEE reaches through the surface,
@@ -1424,32 +1438,46 @@ SCENES.push( {
 	truthSpp: 2048,
 	settings: { maxBounces: 4, enableEmissiveTriangleSampling: true, enableEnvironment: false },
 	truthSettings: { enableEmissiveTriangleSampling: false },
-	async build( app ) {
+	build: buildTranslucentPanel,
+} );
 
-		await app.stages.pathTracer.environment.setMode( 'color' );
+async function buildTranslucentPanel( app ) {
 
-		const scene = new Group();
-		const floor = new Mesh( new PlaneGeometry( 8, 8 ), new MeshPhysicalMaterial( { color: 0xcccccc, roughness: 1, metalness: 0 } ) );
-		floor.rotation.x = - Math.PI / 2;
-		floor.position.y = - 1.6;
-		scene.add( floor );
+	await app.stages.pathTracer.environment.setMode( 'color' );
 
-		const light = new Mesh( new PlaneGeometry( 2.4, 2.4 ), new MeshPhysicalMaterial( {
-			color: 0x000000, emissive: 0xffffff, emissiveIntensity: 4, roughness: 1,
-		} ) );
-		light.position.set( 0, 0, - 1.2 );
-		scene.add( light );
+	const scene = new Group();
+	const floor = new Mesh( new PlaneGeometry( 8, 8 ), new MeshPhysicalMaterial( { color: 0xcccccc, roughness: 1, metalness: 0 } ) );
+	floor.rotation.x = - Math.PI / 2;
+	floor.position.y = - 1.6;
+	scene.add( floor );
 
-		const sheetMaterial = new MeshPhysicalMaterial( { color: 0xe6e6e6, roughness: 1, metalness: 0, side: DoubleSide } );
-		sheetMaterial.diffuseTransmission = 0.6;
-		sheetMaterial.diffuseTransmissionColor = new Color( 1, 0.8, 0.6 );
-		const sheet = new Mesh( new PlaneGeometry( 3, 3 ), sheetMaterial );
-		scene.add( sheet );
+	const light = new Mesh( new PlaneGeometry( 2.4, 2.4 ), new MeshPhysicalMaterial( {
+		color: 0x000000, emissive: 0xffffff, emissiveIntensity: 4, roughness: 1,
+	} ) );
+	light.position.set( 0, 0, - 1.2 );
+	scene.add( light );
 
-		await app.loadObject3D( scene, 'translucent-panel' );
-		setCamera( app, [ 1.2, 0.4, 5 ], [ 0, - 0.3, 0 ] );
+	const sheetMaterial = new MeshPhysicalMaterial( { color: 0xe6e6e6, roughness: 1, metalness: 0, side: DoubleSide } );
+	sheetMaterial.diffuseTransmission = 0.6;
+	sheetMaterial.diffuseTransmissionColor = new Color( 1, 0.8, 0.6 );
+	const sheet = new Mesh( new PlaneGeometry( 3, 3 ), sheetMaterial );
+	scene.add( sheet );
 
-	},
+	await app.loadObject3D( scene, 'translucent-panel' );
+	setCamera( app, [ 1.2, 0.4, 5 ], [ 0, - 0.3, 0 ] );
+
+}
+
+// The panel in the bidirectional integrator, held to the path tracer drawing the sheet's light by BSDF sampling alone:
+// light paths from the emitter cross the sheet, and NEE, connections and light tracing reach it from behind.
+SCENES.push( {
+	id: 'translucent-panel-bidirectional',
+	covers: 'diffuse transmission in the bidirectional integrator lit from behind, held to the path tracer\'s BSDF sampling alone',
+	spp: 64,
+	truthSpp: 2048,
+	settings: { maxBounces: 4, enableEmissiveTriangleSampling: true, enableEnvironment: false, integrator: 'bidirectional' },
+	truthSettings: { integrator: 'path', enableEmissiveTriangleSampling: false },
+	build: buildTranslucentPanel,
 } );
 
 // ── Analytic area light ──────────────────────────────────────────

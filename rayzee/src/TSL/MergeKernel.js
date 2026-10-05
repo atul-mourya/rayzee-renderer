@@ -12,14 +12,14 @@
 
 import {
 	Fn, float, vec3, vec4, int, uint, ivec3, If, Loop, instanceIndex, atomicLoad, atomicStore, atomicFunc, Return, dot, floor, max, min, select,
-	length, log2, exp2, Break,
+	length, log2, exp2, Break, abs,
 } from 'three/tsl';
 
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import { calculateMaterialPDF } from './LightsSampling.js';
 import { luminance } from './Common.js';
 import { regularizePathContribution } from './PathTracerCore.js';
-import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, STRATEGY } from './Bidirectional.js';
+import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, facingSide, STRATEGY } from './Bidirectional.js';
 import { COUNTER } from '../Processor/QueueManager.js';
 import {
 	readRayRadiance, writeRayRadiance, pendingVertex, cachedVertex, readVertexTag, readVertexRecord, readVertexPosition,
@@ -105,6 +105,8 @@ export function buildMergeKernel( params ) {
 	const {
 		rayBufferRW, hitBufferRO, activeIndicesRO, counters, head, materialBuffer, bidirectional: bdpt,
 		maxBounceCount, globalIlluminationIntensity, fireflyThreshold, accumFrame,
+		// Some material passes light through diffusely: light arriving from behind its surface merges too.
+		diffuseTransmission = true,
 	} = params;
 	const { passTag, slotsPerPath, strategyView, hashMask } = bdpt;
 
@@ -173,19 +175,23 @@ export function buildMergeKernel( params ) {
 						const light = readVertexRecord( hitBufferRO, at );
 						const cosShading = dot( light.V, cam.N ).toVar();
 						const cosFacet = dot( light.V, cam.facetN ).toVar();
-						// Light arriving on this side. A corner's other wall stays in: its light vertices stand in for the
-						// part of the sphere past the corner, which the density divides by too.
-						If( cosShading.greaterThan( 0.0 ).and( cosFacet.greaterThan( 0.0 ) ), () => {
+						// Light arriving on this side, or from behind a surface that passes it through diffusely. A corner's
+						// other wall stays in: its light vertices stand in for the part of the sphere past the corner, which
+						// the density divides by too.
+						const onThisSide = cosShading.greaterThan( 0.0 ).and( cosFacet.greaterThan( 0.0 ) );
+						const throughSurface = material.diffuseTransmission.greaterThan( 0.0 ).and( cosShading.lessThan( 0.0 ) ).and( cosFacet.lessThan( 0.0 ) );
+						If( diffuseTransmission ? onThisSide.or( throughSurface ) : onThisSide, () => {
 
 							const f = evaluateMaterialResponse( cam.V, light.V, cam.N, material );
 							const wLight = misMergePartial( light, calculateMaterialPDF( cam.V, light.V, cam.N, material ), vc );
-							const wCamera = misMergePartial( cam, calculateMaterialPDF( light.V, cam.V, cam.N, material ), vc );
+							const reverseN = diffuseTransmission ? facingSide( cam.N, light.V, material ) : cam.N;
+							const wCamera = misMergePartial( cam, calculateMaterialPDF( light.V, cam.V, reverseN, material ), vc );
 							const scattering = cameraDepth.add( l );
 							// Alone, a path of k scattering vertices is reached by k merges.
 							const weight = strategyWeight( strategyView, STRATEGY.MERGE, misWeight( wLight, wCamera ), float( 1.0 ).div( float( scattering ) ) );
 							const gi = select( scattering.greaterThan( int( 1 ) ), globalIlluminationIntensity, float( 1.0 ) );
 							// The photon's flux is per unit area; the BSDF wants it per projected solid angle (Veach 5.3.2).
-							const correction = cosShading.div( max( cosFacet, 1e-4 ) );
+							const correction = diffuseTransmission ? abs( cosShading ).div( max( abs( cosFacet ), 1e-4 ) ) : cosShading.div( max( cosFacet, 1e-4 ) );
 							gathered.addAssign( regularizePathContribution(
 								cam.throughput.mul( f ).mul( light.throughput ).mul( weight.mul( correction ).div( eta ).mul( gi ) ),
 								float( scattering.sub( int( 1 ) ) ), fireflyThreshold, int( accumFrame ),

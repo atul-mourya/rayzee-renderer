@@ -5,7 +5,7 @@
 
 import {
 	Fn, float, vec3, vec4, int, uint, If, instanceIndex, atomicAdd, atomicLoad, atomicStore, Return,
-	dot, sqrt, max, min, floor, length, localId, workgroupId,
+	dot, sqrt, max, min, floor, length, localId, workgroupId, select, abs,
 } from 'three/tsl';
 
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
@@ -15,7 +15,7 @@ import { traverseBVHShadowCameraCulled } from './BVHTraversal.js';
 import { offsetRayOrigin, SHADOW_END, sanitizeRGB } from './Common.js';
 import { pcgHash } from './Random.js';
 import { regularizePathContribution } from './PathTracerCore.js';
-import { resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, STRATEGY, SPLAT_SCALE, SPLAT_MAX } from './Bidirectional.js';
+import { resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, STRATEGY, SPLAT_SCALE, SPLAT_MAX } from './Bidirectional.js';
 import {
 	cachedVertex, readVertexRecord, readLightPathLength, readRayRadiance, writeRayRadiance,
 } from '../Processor/PackedRayBuffer.js';
@@ -33,6 +33,8 @@ export function buildLightSplatKernel( params ) {
 		renderWidth, renderHeight,
 		globalIlluminationIntensity, fireflyThreshold, accumFrame, frame,
 		mergeVm = null,
+		// Some material passes light through diffusely: the camera may then see a light vertex from behind its surface.
+		diffuseTransmission = true,
 	} = params;
 
 	return Fn( () => {
@@ -60,8 +62,13 @@ export function buildLightSplatKernel( params ) {
 		const dir = toCamera.div( sqrt( dist2 ) ).toVar();
 		const cosFacet = dot( dir, v.facetN ).toVar();
 		const cosCamera = dot( dir, cameraForward ).negate().toVar();
-		// The camera is this vertex's viewer: like a camera path, only the facet decides which side it is on.
-		If( cosFacet.lessThanEqual( 0.0 ).or( cosCamera.lessThanEqual( 1e-6 ) ).or( v.extra.notEqual( uint( 0 ) ) ), () => {
+		// The camera is this vertex's viewer: like a camera path, only the facet decides which side it is on. Behind the
+		// surface (only through diffuse transmission, checked below) the cull flag is the far side's, bit 1.
+		const behind = cosFacet.lessThan( 0.0 );
+		const culled = diffuseTransmission
+			? select( behind, v.extra.bitAnd( uint( 2 ) ), v.extra.bitAnd( uint( 1 ) ) ).notEqual( uint( 0 ) )
+			: v.extra.notEqual( uint( 0 ) );
+		If( ( diffuseTransmission ? cosFacet.equal( 0.0 ) : cosFacet.lessThanEqual( 0.0 ) ).or( cosCamera.lessThanEqual( 1e-6 ) ).or( culled ), () => {
 
 			Return();
 
@@ -83,14 +90,22 @@ export function buildLightSplatKernel( params ) {
 		} );
 
 		const material = resolveSurfaceMaterial( v.materialIndex, v.uv, v.N, materialBuffer );
-		const f = evaluateMaterialResponse( dir, v.V, v.N, material ).toVar();
+		if ( diffuseTransmission ) If( behind.and( material.diffuseTransmission.lessThanEqual( 0.0 ) ), () => {
+
+			Return();
+
+		} );
+
+		// Read in the frame with the camera on top.
+		const viewN = diffuseTransmission ? facingSide( v.N, dir, material ) : v.N;
+		const f = evaluateMaterialResponse( dir, v.V, viewN, material ).toVar();
 
 		// The pinhole's solid-angle density for a uniform point in a pixel: 1 / (A_pixel cos³θ).
 		const cameraPdfW = float( 1.0 ).div( pixelArea.mul( cosCamera ).mul( cosCamera ).mul( cosCamera ) );
 		const toSurface = cameraPdfW.div( dist2 ).toVar();
 
 		// Georgiev (46); the camera side has no sum of its own.
-		const wLight = misPartial( toSurface.mul( cosFacet ).div( float( lightPaths ) ), v, calculateMaterialPDF( dir, v.V, v.N, material ) );
+		const wLight = misPartial( toSurface.mul( diffuseTransmission ? abs( cosFacet ) : cosFacet ).div( float( lightPaths ) ), v, calculateMaterialPDF( dir, v.V, viewN, material ) );
 		const bounces = c.add( uint( 1 ) );
 		const gi = float( 1.0 ).toVar();
 		If( bounces.greaterThan( uint( 1 ) ), () => {
@@ -105,7 +120,7 @@ export function buildLightSplatKernel( params ) {
 			float( c ), fireflyThreshold, int( accumFrame ),
 		).toVar();
 
-		const origin = offsetRayOrigin( v.position, v.facetN ).toVar();
+		const origin = offsetRayOrigin( v.position, diffuseTransmission ? select( behind, v.facetN.negate(), v.facetN ) : v.facetN ).toVar();
 		const segment = cameraPosition.sub( origin ).toVar();
 		const segmentLength = length( segment ).toVar();
 		// This segment stands in for the primary ray, which sees through the faces it culls.

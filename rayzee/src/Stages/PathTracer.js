@@ -1443,12 +1443,10 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	/** The material layers the scene uses; bidirectional leaves diffuse transmission out (its paths do not cross surfaces). */
+	/** The material layers the scene uses. */
 	_layersToCompile() {
 
-		const layers = this.materialData.materialLayers();
-		if ( this._integrator ) layers.diffuseTransmission = false;
-		return layers;
+		return this.materialData.materialLayers();
 
 	}
 
@@ -2083,7 +2081,7 @@ export class PathTracer extends PathTracerStage {
 
 		this._integrator?.registerKernels( {
 			km: this._kernelManager, qm, pb, counters, bounceCountsBuf, wfCurrentBounce, copyReadB, copyWriteA, maxRays, w, own,
-			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF,
+			freshLight, freshTri, freshBvh, freshMat, freshEnvTex, freshEnvCDF, materialLayers: this._compiledLayers,
 		} );
 
 		const fwFn = buildFinalWriteKernel( {

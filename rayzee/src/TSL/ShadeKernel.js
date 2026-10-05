@@ -133,8 +133,7 @@ export function buildShadeKernel( params ) {
 		bidirectional: bdpt = null,
 		// The hit-distance output, when a stage asked for it (PathTracer.requestOutput).
 		hitDistanceEncode = null,
-		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out. Bidirectional
-		// always leaves diffuse transmission out: its connections and light tracing do not cross surfaces yet.
+		// The material layers some material uses (MaterialDataManager.materialLayers); the rest compile out.
 		materialLayers: layers = ALL_MATERIAL_LAYERS,
 		// Fewer shadow rays a hit, emitters included: null (one per light kind) or a lightPick variant; path tracing only.
 		shadowRays = null,
@@ -885,7 +884,7 @@ export function buildShadeKernel( params ) {
 		const material = RayTracingMaterial.wrap(
 			getMaterial( int( hitMatIdx ), materialBuffer )
 		).toVar();
-		if ( ! diffuseTransmission || bdpt ) {
+		if ( ! diffuseTransmission ) {
 
 			material.diffuseTransmission.assign( 0.0 );
 			material.diffuseTransmissionMapIndex.assign( int( - 1 ) );
@@ -1508,11 +1507,22 @@ export function buildShadeKernel( params ) {
 		} );
 		// Light from behind a surface that passes light through diffusely: its rays leave from the other side.
 		// Compiled in only with the lobe (see `diffuseTransmission`).
-		const transmitting = diffuseTransmission && ! bdpt;
+		const transmitting = diffuseTransmission;
 		const transmitsDiffusely = transmitting ? material.diffuseTransmission.greaterThan( 0.0 ) : tslBool( false );
 		const throughSurface = L => ( transmitting ? transmitsDiffusely.and( dot( N, L ).lessThan( 0.0 ) ).and( dot( L, NgeoFF ).lessThan( 0.0 ) ) : tslBool( false ) );
 		const backOrigin = transmitting ? offsetRayOrigin( hitPoint, facetN.negate() ) : null;
 		const originFor = ( L, front ) => ( transmitting ? select( throughSurface( L ), backOrigin, front ) : front );
+		// Bidirectional NEE: whether light from L reaches the surface, its cosine, and the normal of the frame with L on
+		// top, in which the density of drawing V back from L is read.
+		const reaches = L => {
+
+			const inFront = dot( N, L ).greaterThan( 0.0 ).and( dot( L, NgeoFF ).greaterThan( 0.0 ) );
+			return transmitting ? inFront.or( throughSurface( L ) ) : inFront;
+
+		};
+
+		const cosineTo = L => ( transmitting ? abs( dot( N, L ) ) : max( float( 0.0 ), dot( N, L ) ) );
+		const facing = L => ( transmitting ? select( throughSurface( L ), N.negate(), N ) : N );
 
 		// Two-sided shading: opaque path only (transmissive/SSS already continued). Decide the flip on the
 		// GEOMETRIC normal — an inward-normal / double-sided mesh (GLB/PBRT) faces away as a whole — so a
@@ -1759,24 +1769,24 @@ export function buildShadeKernel( params ) {
 
 				take( sampleLightBVHTriangleIndexed(
 					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
-					lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer, tslBool( false ),
+					lightBuffer, lightBuffer, emissiveVec4Offset, triangleBuffer, bvhBuffer, transmitsDiffusely,
 				) );
 
 			} ).Else( () => {
 
 				take( sampleEmissiveTriangleIndexed(
 					hitPoint, N, rngState, _pixelCoord, resolution, frame, dimBase,
-					lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer, tslBool( false ),
+					lightBuffer, emissiveVec4Offset, emissiveTriangleCount, emissiveTotalPower, triangleBuffer, bvhBuffer, transmitsDiffusely,
 				) );
 
 			} );
 
-			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
+			const NoL = cosineTo( lightDir ).toVar();
 			const side = triangleSide( triangleRow( triangleBuffer, lightTriangle, 4 ).z ).toVar();
-			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) )
+			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( reaches( lightDir ) )
 				.and( sideAccepts( side, dot( lightDir, windingN ) ) ), () => {
 
-				const rayOrigin = lightShadowOrigin( lightDir ).toVar();
+				const rayOrigin = originFor( lightDir, lightShadowOrigin( lightDir ) ).toVar();
 				const toSample = position.sub( rayOrigin ).toVar();
 				const shadowDist = length( toSample ).toVar();
 				const visibility = traceShadowRayRefractiveOpaque(
@@ -1788,7 +1798,7 @@ export function buildShadeKernel( params ) {
 
 					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
-					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, facing( lightDir ), material );
 					// Emission density over NEE's, both seen from here; the light's cosine cancels.
 					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
 						emitterAreaPdf( emission, emissiveTotalPower, float( 1.0 ).sub( bdpt.sunPick ) )
@@ -1820,11 +1830,11 @@ export function buildShadeKernel( params ) {
 
 			const lightDir = sampleSunDisc( sunDirection, sunParams, getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( 9 ) ), rngState, resolution, frame ) ).toVar();
 			const radiance = sunRadianceToward( lightDir, sunDirection, sunRadiance, sunParams ).mul( environmentIntensity ).toVar();
-			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
-			If( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+			const NoL = cosineTo( lightDir ).toVar();
+			If( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ).and( reaches( lightDir ) ), () => {
 
 				const visibility = traceShadowRayRefractiveOpaque(
-					lightShadowOrigin( lightDir ), lightDir, float( 1e20 ),
+					originFor( lightDir, lightShadowOrigin( lightDir ) ), lightDir, float( 1e20 ),
 					traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
@@ -1832,7 +1842,7 @@ export function buildShadeKernel( params ) {
 
 					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
-					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, facing( lightDir ), material );
 					const emissionOverDirect = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
 						sunEmissionPdf( bdpt, sunParams, guidedDiscPdf( bdpt, bdpt.guideTexture, lightDir, hitPoint ) ).mul( sunParams.y ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
 					const weight = misWeight( mis( forward.mul( sunParams.y ) ), misPartial( emissionOverDirect, subpath, reverse ) );
@@ -1870,19 +1880,18 @@ export function buildShadeKernel( params ) {
 			const radiance = sampleEnvironment( {
 				tex: envTexture, samp: sampler( envTexture ), direction: lightDir, environmentMatrix: envMatrix, environmentIntensity, enableEnvironmentLight: float( 1.0 ),
 			} ).xyz.toVar();
-			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
-			If( lightPdf.greaterThan( 0.0 ).and( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) )
-				.and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+			const NoL = cosineTo( lightDir ).toVar();
+			If( lightPdf.greaterThan( 0.0 ).and( radiance.x.add( radiance.y ).add( radiance.z ).greaterThan( 0.0 ) ).and( reaches( lightDir ) ), () => {
 
 				const visibility = traceShadowRayRefractiveOpaque(
-					lightShadowOrigin( lightDir ), lightDir, float( 1e20 ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
+					originFor( lightDir, lightShadowOrigin( lightDir ) ), lightDir, float( 1e20 ), traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer,
 				).toVar();
 
 				If( visibility.greaterThan( 0.0 ), () => {
 
 					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
-					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, facing( lightDir ), material );
 					const lead = select( bdpt.lightPaths.greaterThan( uint( 0 ) ),
 						bdpt.envPick.mul( guidedDiscPdf( bdpt, bdpt.guideTexture, lightDir, hitPoint ) ).mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
 					const weight = misWeight( mis( forward.div( lightPdf ) ), misPartial( lead, subpath, reverse ) );
@@ -1969,11 +1978,11 @@ export function buildShadeKernel( params ) {
 
 			} );
 
-			const NoL = max( float( 0.0 ), dot( N, lightDir ) ).toVar();
-			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( NoL.greaterThan( 0.0 ) ).and( dot( lightDir, NgeoFF ).greaterThan( 0.0 ) ), () => {
+			const NoL = cosineTo( lightDir ).toVar();
+			If( valid.and( lightPdf.greaterThan( 0.0 ) ).and( reaches( lightDir ) ), () => {
 
 				const atInfinity = pick.kind.equal( int( LIGHT_TYPE_DIRECTIONAL ) );
-				const shadowOrigin = lightShadowOrigin( lightDir ).toVar();
+				const shadowOrigin = originFor( lightDir, lightShadowOrigin( lightDir ) ).toVar();
 				const toSample = hitPoint.add( lightDir.mul( dist ) ).sub( shadowOrigin ).toVar();
 				const shadowDist = length( toSample ).toVar();
 				const visibility = traceShadowRayRefractiveOpaque(
@@ -1985,7 +1994,7 @@ export function buildShadeKernel( params ) {
 
 					const brdfVal = evaluateMaterialResponse( V, lightDir, N, material );
 					const forward = calculateMaterialPDF( V, lightDir, N, material );
-					const reverse = calculateMaterialPDF( lightDir, V, N, material );
+					const reverse = calculateMaterialPDF( lightDir, V, facing( lightDir ), material );
 					const lead = select( bdpt.lightPaths.greaterThan( uint( 0 ) ), emissionOverDirect.mul( abs( dot( lightDir, exactFacetN ) ) ), float( 0.0 ) );
 					const wLight = select( pick.kind.equal( int( LIGHT_TYPE_AREA ) ), mis( forward.div( lightPdf ) ), float( 0.0 ) );
 
@@ -2170,14 +2179,18 @@ export function buildShadeKernel( params ) {
 
 			If( isLight, () => {
 
+				const side = triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ).toVar();
+				const cosWinding = dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ).toVar();
+				const nearCulled = select( sideAccepts( side, cosWinding ), uint( 0 ), uint( 1 ) );
+				const cullFlags = transmitting ? nearCulled.bitOr( select( sideAccepts( side, cosWinding.negate() ), uint( 0 ), uint( 2 ) ) ) : nearCulled;
 				// The path's vertex count rides in its first slot.
 				const first = rayID.mul( bdpt.slotsPerPath ).toVar();
 				writeVertexRecord( hitBufferRW, cachedVertex( first.add( uint( cameraDepth ) ) ), {
 					position: hitPoint, tag: uint( 0 ), throughput: throughput.mul( readLightOrigin( hitBufferRW, rayID ).scale ),
 					V, N, facetN: exactFacetN, materialIndex: hitMatIdx, uv: samplingUV, dVCM: subpath.dVCM, dVC: subpath.dVC,
-					// 1: a camera on this side would cull the face, so light tracing must not show it.
-					extra: select( sideAccepts( triangleSide( triangleRow( triangleBuffer, int( hitTriIdx ), 4 ).z ),
-						dot( direction, windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance ) ) ), uint( 0 ), uint( 1 ) ),
+					// Bit 0: a camera on this side would cull the face, so light tracing must not show it; bit 1: one on the
+					// far side would, which only light passing through the surface (diffuse transmission) can reach.
+					extra: cullFlags,
 				} );
 				writeLightPathLength( hitBufferRW, cachedVertex( first ), bdpt.lightTag, uint( cameraDepth ).add( uint( 1 ) ) );
 
@@ -2230,8 +2243,10 @@ export function buildShadeKernel( params ) {
 
 				} ).Else( () => {
 
-					throughput.mulAssign( evaluateMaterialResponse( bounceDir, V, N, material )
-						.mul( max( dot( N, bounceDir ), 0.0 ) ).div( max( brdfPdf, MIN_PDF ) ).mul( correction ) );
+					// A transmission draw leaves from the far side: read the BSDF in the frame with bounceDir on top.
+					const cosOut = transmitting ? select( brdfIsDiffuseTransmission, dot( N, bounceDir ).negate(), max( dot( N, bounceDir ), 0.0 ) ) : max( dot( N, bounceDir ), 0.0 );
+					throughput.mulAssign( evaluateMaterialResponse( bounceDir, V, transmitting ? select( brdfIsDiffuseTransmission, N.negate(), N ) : N, material )
+						.mul( cosOut ).div( max( brdfPdf, MIN_PDF ) ).mul( correction ) );
 
 				} );
 
@@ -2290,7 +2305,8 @@ export function buildShadeKernel( params ) {
 
 			} ).Else( () => {
 
-				misOnScatter( subpath, cosOut, calculateMaterialPDF( V, bounceDir, N, material ), calculateMaterialPDF( bounceDir, V, N, material ) );
+				misOnScatter( subpath, cosOut, calculateMaterialPDF( V, bounceDir, N, material ),
+					calculateMaterialPDF( bounceDir, V, transmitting ? select( brdfIsDiffuseTransmission, N.negate(), N ) : N, material ) );
 
 			} );
 
@@ -2301,7 +2317,7 @@ export function buildShadeKernel( params ) {
 
 		if ( bdpt ) If( isLight.not().and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
 
-			const connectible = specularScatter.not().and( dot( N, bounceDir ).greaterThan( 0.0 ) ).and( dot( bounceDir, NgeoFF ).greaterThan( 0.0 ) );
+			const connectible = specularScatter.not().and( reaches( bounceDir ) );
 			bidirectionalAreaHit( newOrigin, bounceDir, ( light ) => select( connectible, select( lampTotal.greaterThan( 0.0 ),
 				estimateLightImportance( light, hitPoint, N, material ).div( max( lampTotal, 1e-30 ) ),
 				float( 1.0 ).div( max( float( lampCount( lamps ) ), 1.0 ) ) ), float( 0.0 ) ) );
