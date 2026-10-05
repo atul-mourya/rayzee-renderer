@@ -3,15 +3,16 @@
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 - Press and hold when "show AI" on, shows empty canvas
-
+- on model loaded, use the incoming camera, if any, instead of default
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
+- [x] add diffuse transmission to the bidirectional integrator (2026-10-05, see Deferred)
   
 
 ### MVP
 - [ ] Save compiled shaders??
-- [ ] engine core to be separated to make a minimal version for headless applications — half done in 9.2.0: headless mode builds no overlay, gizmo or render loop; one bundle still carries it all
+- [x] engine core to be separated to make a minimal version for headless applications — done in 9.5.0: `rayzee/core` (`RayzeeRenderer`, its own bundle) with opt-in add-ons (formats, physical sky, archives, bidirectional, colour, storage); `PathTracerApp` is the viewer on top. See docs/CORE_AND_ADDONS.md
 - [ ] dynamic max stack in bvhtraversal
-- [ ] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel
+- [x] need adaptive sampling like what we had in megakernal. its too good to have sacrifised from megakernel — done: one Adaptive Sampling switch (frame early-stop + per-pixel freeze, Cycles-style noise threshold and min samples), on in both modes. Pixel freeze does little on real interiors — see Known
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
 
@@ -21,33 +22,6 @@
 
 ### Known
 
-- [x] **Default path tracer lost most light from a two-sided lamp seen from behind** (fixed 2026-10-03) — NEE
-  now draws a triangle on every side it emits from and weighs by the facet's cosine; the hit-side pdfs return 0
-  for a side NEE cannot draw. `veach-bidir.glb` (was −83 %): +1.1 % against camera hits alone, −0.5 % against
-  bidirectional (both z ≈ 1). The emitter-hit side test uses the winding normal: the interpolated one turned away
-  near a coarse sphere's silhouette and dropped light (12-segment bulbs: PT +0.24 % over camera hits, now
-  +0.002 %). Residual: a 32-segment sphere still reads +0.035 % (z 11) — suspect the solid angle of edge-on
-  triangles in `useSphericalSampling`'s branch.
-- [x] **The environment sampler reported a density it did not draw** (fixed 2026-10-03) — the path tracer now
-  samples the exact table (`EnvironmentExactTable.js`, guided search) and weighs sky hits by it; the old inverted
-  tables are gone, and with them the unguarded `envTotalSum` division. Each texel weighs as the bilinear filter's
-  mean over it (it was the brightest neighbour, which spread a sun three texels wide). Sunlit 1K-HDRI courtyard
-  against bidirectional: −0.18 % overall / −1.3 % in shadow before, −0.02 % / −0.3 % after (with the last-bounce
-  fix). Noise: a smooth sky is slightly less noisy; an HDRI's sun is now sampled over its area (soft, correct)
-  rather than at a texel centre, +8–19 % RMSE in the sunlit courtyard at equal samples.
-- [x] **NEE at the last bounce was weighted for a BSDF partner never traced** (fixed 2026-10-03) — every camera
-  path now takes one segment past its last bounce (`RAY_FLAG.EMISSION_ONLY`, as bidirectional did), so the pair
-  keeps its MIS weights. Weighing last-vertex NEE at 1 was tried first: right energy, +38 % RMSE in a gradient
-  sky's shadows. Furnaces: diffuse 0.99985 → 0.99999, dielectrics 0.9991 → 0.9997, clear coat 0.99974 → 1.00000.
-  Cost: the extra segment, +3–7 % GPU time a sample on the bench scenes measured (with the sampler change).
-- [x] **IES profiles were read over the wrong angles** (fixed 2026-10-03) — `resampleIESToGrid` fills the whole
-  0–180° × 0–360° grid the shader reads: dark outside the file's vertical range, horizontal symmetries (0–90,
-  0–180, 90–270) mirrored round. Type A/B profiles still stretch as before.
-- [x] **Very large triangles read dark in bands** (fixed 2026-10-03) — two causes. The hit point
-  origin + t · direction sat off a large triangle by t's error (it grows with the triangle's size), so Extend stores
-  a correction to the triangle's plane (`HitFacet.js`, HIT.RNG.w) and Shade applies it; and the triangle test
-  rejects t within its own rounding error (pbrt-v4's bound). 400-unit floor of 2 triangles vs split 64 × 64:
-  −0.3 % overall, −4.2 % in the worst band before; every band 1.0000 after. Extend time unchanged.
 - [ ] **What a Blender glTF export cannot carry**, measured against Cycles renders of the same scene
   (scenes + probes in this session's scratchpad). The engine side is now at parity: point, spot and
   sun all match Cycles to render noise, and three.js' own glTF exporter writes `intensity` straight
@@ -109,7 +83,7 @@
 - [ ] transform control redesign
 
 ### Compilation
-- [ ] compileAsync for compute shader
+- [x] compileAsync for compute shader (2026-10-04) — every kernel rebuild compiles in the background (`KernelManager.compile()`); page freeze on a new layer combination 3.7 s → 0.4 s, `SHADERS_COMPILING` event + app label
 
 ### Rendering
 
@@ -122,6 +96,23 @@
 - [ ] Volumetric rendering
 - [x] Caustic support - Photon mapping &/ BDPT — bidirectional covers every light; vertex merging (`integrator: 'vcm'`, 2026-10-03) adds the specular–diffuse–specular paths no connection reaches (a point lamp's caustic seen in a mirror or through glass)
 - [x] Guide bidirectional sky / sun light paths through windows (2026-10-03, `TSL/LightGuide.js`) — learned from camera escapes, no scene knowledge; classroom equal-time noise −19 % mid tones, +14 % frame time
+- [x] Diffuse transmission in the bidirectional integrator and VCM (2026-10-05) — light subpaths cross the surface; NEE, connections, light tracing and merges reach a vertex from behind (`facingSide`). `translucent-panel-bidirectional` reads +0.016 % against the path tracer, the furnace 0.99946. Found on the way: the emitter-hit MIS weight measured its NEE density from the world origin whenever the light tree was one node (a TSL argument first read after a loop's `Break`), +6 % on a grazing-lit floor since the integrator landed — fixed, six bidirectional baselines re-blessed. Still open: NRD at 1 spp on `cornell-bidirectional` / `caustic-bidirectional` reads 4.6–4.8× worse than no denoising (same on main)
+- [ ] **Texture filtering (mipmaps + a level per hit)** — explored 2026-10-05 with a throwaway prototype, nothing kept.
+  Today the packed texture arrays have no mips (`generateMipmaps = false` in `TextureCreator`) and every lookup reads
+  level 0; three r186 builds mips per array layer when asked (one flag, +33 % texture memory).
+  - **Why: quality at low samples, not speed.** 24155522.glb at 2048², every lookup forced to level 0 / 8: 155 ms a frame
+    both. On a checker floor to the horizon (pbrt-v4's camera footprint at each hit, shrunk by max(⅛, 1/√spp)), RMSE
+    against 2048 spp unfiltered — far band: 1 spp 0.159 → 0.064, 4 spp 0.074 → 0.012, 16 spp 0.036 → 0.0034, 1024 spp
+    0.0027 → 0.0024; mid band better to 64 spp, then a lasting slight blur (1024 spp 0.0015 → 0.0050); near band even.
+    Shows most in Preview and while moving (calm distant textures, no shimmer), and in a cleaner albedo for OIDN.
+  - ⚠️ A fixed one-pixel footprint over-blurs everywhere: pixel jitter already integrates the pixel. Shrink it with samples.
+  - **To build:** mips on the array buckets; dp/dx, dp/dy at the hit from the camera (pbrt-v4 `Approximate_dp_dxy`) →
+    duv/dx, duv/dy through the triangle's uv Jacobian and each map's transform → `textureSampleGrad` with an anisotropic
+    sampler (a single level over-blurs grazing floors sideways); every material map; bump steps at the level's texel
+    size; alpha cutouts keep level 0 or get alpha-preserving mips (MASK foliage thins at distance otherwise); light
+    subpaths level 0.
+  - **Risks:** Shade is near a register limit and the footprint needs the hit triangle's rows — measure in place
+    (`bench:kernels`). Changes default pixels: ship opt-in first, turn on in a major.
 - [ ] Normal-dependent MIS compensation (Karlík et al. 2019, Eq. 13) — precompute 512 compensated env map CDFs indexed by surface normal for ~19% improvement over current normal-independent compensation on diffuse+HDR scenes
 - [ ] ReSTIR DI (Bitterli et al. 2020) — spatiotemporal resampling for many-light scenes
 - [ ] https://cloud.needle.tools/hdris FastHDR
@@ -158,11 +149,110 @@
 
 ---
 
+## pbrt-v4 import
+
+### Learnings (kroken pass, 2026-10-04)
+Compared against pbrt-v4-scenes' `images/kroken/camera-1.png`: chaise cushions, blanket and rug were missing, every coated
+metal was grey, a hidden 90-unit sphere lit the room, and the glass jars were clear. Eleven loader bugs; none was hard
+once looked at. How it should have been built so they could not happen:
+- **Translate from pbrt's source, not from the scenes at hand.** Every bug was a guessed meaning: template shapes stored
+  "relative to the transform at ObjectBegin" (invented — pbrt keeps the whole transform), lights two-sided (pbrt: one-sided
+  unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). Still guessed today:
+  conductor roughness defaults to 0.1 (pbrt 0), and every 8-bit image is read as sRGB (pbrt: only PNG; JPG/TGA are
+  linear unless `encoding` says otherwise). Keep one table per directive — pbrt's parameter names, types, defaults, and
+  the `file:line` in pbrt-v4 they came from — and derive the translators and their tests from it.
+- **Account for every parameter.** pbrt itself calls `ReportUnused()` on each directive. A translator that marks what it
+  consumed, and a loader that reports every unconsumed or approximated parameter once with a count (as an engine issue,
+  not a console list cut off at 19), would have named seven of the silent gaps on the first load: `alpha`, `twosided`,
+  `uscale`/`vscale`/`udelta`/`vdelta`, an imagemap's `scale`/`invert`, `normalmap`, `MediumInterface`, and a texture
+  where a number was expected (`scale`, `amount`). `displacement` and `edgelength` still are.
+- **Gate against pbrt's own images.** pbrt-v4-scenes ships a reference for every camera. Render each at its own camera,
+  film size and `maxdepth`, apply the reference's post (kroken's `makepngs.sh`: OptiX denoise, white balance 6200 K, ACES
+  filmic) and compare per 16² block: a missing object or a grey metal is a block that fails outright.
+- **One generic texture strategy, not a special case per class.** pbrt evaluates a texture graph per hit; the engine
+  samples image × constant per slot. Bake any uv-mapped graph to an image (now done for `mix`, `scale` by a texture,
+  `scale` > 1, `invert`, a `mix` material's colours — `PBRTTextureBake.js`), and turn position-based mappings (planar,
+  spherical, cylindrical) into a generated uv set per shape so they bake too. Only direction-dependent (`directionmix`)
+  and 3D procedural textures need anything more.
+- **Validate at the loader → engine boundary.** A float EXR normal map failed the whole load (`IndexSizeError` in
+  `TextureCreator`). The engine should convert a texel format it cannot pack and record an issue for that texture,
+  never abort the scene.
+- **The engine ties emission side to surface side.** A one-sided pbrt light becomes `FrontSide`, which also makes its back
+  see-through to camera rays; in pbrt it stays opaque (and black). An emitter-side flag apart from culling.
+- **Never cache a failed load.** The archive scene cache stored a 3 GB graph from a load the engine then rejected; the next
+  load would have restored it. Store only once the engine has accepted the scene, and derive the cache revision from the
+  loader's code instead of a hand-bumped `PBRT_BUILD_REVISION`.
+- **Count non-finite samples.** kroken's NaN pixels (two-sided emitter seen edge-on, fixed 057cbc41) were found by eye
+  after OIDN drew them as black dots. A per-frame count in FinalWrite, recorded as an issue, makes the next one a number.
+
+### Missing today
+- [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
+  load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
+- [ ] **Texture mappings** `planar` / `spherical` / `cylindrical` → a generated uv set (see learnings): kroken's book
+  spines, magazine covers, cups, wooden sphere fall back to the mesh's uv today.
+- [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
+  `directionmix` (by the normal); `ptex` (only a like-named material's colour today). 2D `checkerboard` and `bilerp`
+  are baked since 2026-10-05.
+- [ ] **Mix material**: only its colours follow the amount texture; roughness, clear coat and metalness take the
+  texture's mean. Per-texel maps, or pbrt's own per-hit choice between the two materials.
+- [x] **Textured roughness** — a roughness map with pbrt's remap baked in, the clear coat's too (2026-10-05; crown's gold).
+- [ ] **Participating media**: only absorption inside glass is mapped (σa + σs as attenuation). Scattering, a medium in a
+  non-glass shape, the camera's medium and grid/nanovdb media need volumetric path tracing (Rendering → Volumetric).
+- [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
+  noisy at 512 spp and OIDN turns the noise into a bumpy texture. See Known → `thickness` / thin-walled; check how the
+  medium stack treats an open sheet against pbrt's per-interface orientation.
+- [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named spectra
+  (metals, glasses) and integrate against CIE for exact F0, IOR and blackbody colour (kroken reads warmer partly here).
+- [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
+  its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
+- [x] **Shapes**: `cylinder`, partial `sphere`/`disk`, pbrt's uv (2026-10-05). Also fixed: `bilinearmesh` corner order
+  (p00 p10 p01 p11) and a four-point patch without indices (watercolor's floor spots were dropped).
+- [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
+  projection); `realistic` (lens files). `lensradius` / `focaldistance` → the camera's own DOF done 2026-10-05.
+- [ ] **Render settings a file asks for — open question.** `Integrator` maxdepth, `Sampler` pixelsamples and the Film
+  resolution are read into `sceneMetadata.render` (2026-10-05; glTF extras may carry `rayzee.render` too) but nothing
+  applies them (watercolor asks for 15 bounces at 1920×1440). Undecided: apply them at all? Only to the final render
+  (bounces / samples / size), leaving Preview fast? Offer them in the UI ("this scene asks for …")? Applying changes how
+  those files render, and the mode presets own maxBounces and maxSamples today. Film `iso` / `exposuretime` /
+  `whitebalance` not read yet.
+- [x] **Shape `alpha`** between 0 and 1, or a texture — the engine's blend mode, per shape–material pair (2026-10-05;
+  bistro's leaves and curtains, watercolor's splatters).
+- [ ] **Materials** approximated as diffuse: `hair`, `measured`. `subsurface` → the engine's SSS done 2026-10-05
+  (named media, σa/σs, reflectance + mfp through the dipole).
+- [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
+  MIP-filtered render is even).
+- [ ] `bench:pbrt` — the reference-image gate above, over a local copy of pbrt-v4-scenes (skip what is not downloaded).
+
+---
+
 ## Performance & Architecture
 
 ### Pipeline
 
 - [ ] GPU-CPU sync for environment in solid color sky mode
+
+### Core and add-ons — make more of the core opt-in
+
+The core should support three.js objects and glTF/GLB out of the box; everything else a host chooses. Sizes are
+minified + gzip of the three.js loader alone (three is external, so it lands in the host's bundle, not ours).
+
+- [x] **Model formats as add-ons** (2026-10-04) — `rayzee/addons/formats` (`fbxFormat` … `exrFormat`, `allFormats`),
+  registered with `assetLoader.registerFormat()`; one shared load path replaced seven wrappers (AssetLoader 1,622 →
+  1,351 lines); a host's own format registers the same way. Archives kept `setArchiveImporter` (already public).
+- [x] **glTF decoders on demand** (2026-10-04) — `GLTFDecoders.js` reads the glTF's JSON for the extension names
+  before the parse and imports only those decoders; Node's Draco and KTX2 fixtures still match their twins.
+- [x] **EXR environments** (2026-10-04) — `exrFormat` in the formats add-on; pbrt archives keep their own EXRLoader.
+  Host bundle (core-browser example): main chunk 577 → 534 KB gzip, and the seven model-loader chunks are gone.
+- [x] **Material layers compiled only when used** (2026-10-04) — clear coat, sheen, iridescence, anisotropy,
+  subsurface, dispersion, diffuse transmission (`materialLayers( builder )`). Images unchanged; frame time median
+  −9.6 % (−3.9 to −24.3 %) over 28 scenes. Specular transmission is the one big layer left (glass handling,
+  shadow rays through glass) — needs the sampler's leftover `Else` (rand ≥ the summed weights) kept exact.
+- [x] **G-buffer on request** (2026-10-04) — `requestOutput( 'gBuffer' )`; the viewer asks at start-up, the core's
+  kernels leave it out. Core still renders byte for byte as the full engine.
+- [ ] The bidirectional NEE in Shade (~250 lines, ~2.9 KB gzip of source, ~1 % of the core) could move into the add-on
+  as one function taking Shade's locals; the ~40 small `if ( bdpt )` sites (MIS bookkeeping) would stay. Low value.
+- [ ] The memory spill's orchestration in `SceneProcessor` (~6 KB): moving it needs hooks inside the three hardest build
+  functions, testable only on 50M-triangle loads. Low value.
 
 ### BVH
 
