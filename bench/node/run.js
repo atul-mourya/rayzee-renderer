@@ -174,10 +174,38 @@ async function compressedGLTF() {
 	app.settings.setMany( session.settingsFloor(), { silent: true } );
 	session.restoreEnvParams();
 
-	const render = async ( name, eye ) => {
+	const fixture = async ( name ) => new Uint8Array( await fs.readFile( path.join( here, 'fixtures', name ) ) );
+
+	// The same model as loose files: the glTF, its buffer, and its images in a subfolder with a space in their name.
+	const folderOf = async ( name ) => {
+
+		const glb = await fixture( `${name}.glb` );
+		const view = new DataView( glb.buffer, glb.byteOffset, glb.byteLength );
+		const jsonLength = view.getUint32( 12, true );
+		const json = JSON.parse( new TextDecoder().decode( glb.subarray( 20, 20 + jsonLength ) ) );
+		const bin = glb.subarray( 28 + jsonLength, 28 + jsonLength + view.getUint32( 20 + jsonLength, true ) );
+		const files = [];
+		for ( const [ i, image ] of ( json.images ?? [] ).entries() ) {
+
+			const { byteOffset = 0, byteLength } = json.bufferViews[ image.bufferView ];
+			const uri = `textures/image ${i}.png`;
+			files.push( { path: `${name}/${uri}`, file: new File( [ bin.slice( byteOffset, byteOffset + byteLength ) ], `image ${i}.png` ) } );
+			delete image.bufferView;
+			image.uri = encodeURI( uri );
+
+		}
+
+		json.buffers[ 0 ].uri = `${name}.bin`;
+		files.push( { path: `${name}/${name}.bin`, file: new File( [ bin ], `${name}.bin` ) } );
+		files.push( { path: `${name}/${name}.gltf`, file: new File( [ JSON.stringify( json ) ], `${name}.gltf` ) } );
+		return { files };
+
+	};
+
+	const render = async ( input, eye ) => {
 
 		const before = app.issues.length;
-		await app.loadFile( new File( [ await fs.readFile( path.join( here, 'fixtures', name ) ) ], name ) );
+		await app.loadFile( typeof input === 'string' ? new File( [ await fixture( input ) ], input ) : input );
 		await app.stages.pathTracer.environment.setMode( 'color' );
 		app.camera.position.set( ...eye );
 		app.camera.lookAt( 0, 0, 0 );
@@ -192,17 +220,19 @@ async function compressedGLTF() {
 	};
 
 	// Draco quantizes positions to 14 bits (measured rmse 0.0007); ETC1S is lossy at the checker's edges (0.0026).
+	// A folder holds the same bytes as the .glb, so it must render exactly alike.
 	const pairs = [
 		{ plain: 'knot.glb', packed: 'knot-draco.glb', eye: [ 0, 0, 3 ], maxRmse: 0.003 },
 		{ plain: 'checker.glb', packed: 'checker-ktx2.glb', eye: [ 0, 0, 2.6 ], maxRmse: 0.01 },
+		{ plain: 'checker.glb', packed: 'checker/ (folder)', folder: 'checker', eye: [ 0, 0, 2.6 ], maxRmse: 0 },
 	];
 
 	try {
 
-		for ( const { plain, packed, eye, maxRmse } of pairs ) {
+		for ( const { plain, packed, folder, eye, maxRmse } of pairs ) {
 
 			const a = await render( plain, eye );
-			const b = await render( packed, eye );
+			const b = await render( folder ? await folderOf( folder ) : packed, eye );
 			const m = compare( b.frame, a.frame, { threshold: GATES.pixelThreshold } );
 			const issues = [ ...a.issues, ...b.issues ];
 			const pass = m.rmseSrgb <= maxRmse && a.triangles === b.triangles && ! issues.length && typeof globalThis.Worker === 'undefined';

@@ -441,7 +441,32 @@ export class AssetLoader extends EventDispatcher {
 
 		} catch ( error ) {
 
-			this.dispatchEvent( { type: 'error', message: error.message, filename } );
+			if ( error?.code !== 'ARCHIVE_NEEDS_ELEMENT' ) this.dispatchEvent( { type: 'error', message: error.message, filename } );
+			throw error;
+
+		}
+
+	}
+
+	/**
+	 * Loads a folder's files as one model — read by the archive importer, as the same folder zipped would be.
+	 * @param {{name: string, files: Array<{path: string, file: Blob}>}} folder - from `localFolder`
+	 * @param {object} [options] - as loadAssetFromFile
+	 */
+	async loadFolder( folder, options = {} ) {
+
+		const archives = await this._archiveImporter();
+		if ( ! archives ) throw new Error( `${folder.name}: folders are read by ${ARCHIVES.addOn} — install it with ${ARCHIVES.install}` );
+
+		updateLoading( { isLoading: true, status: `Loading ${folder.name}...`, progress: 2 } );
+		try {
+
+			return await archives.loadFolder( folder, options );
+
+		} catch ( error ) {
+
+			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) error.file = folder;
+			else this.dispatchEvent( { type: 'error', message: error.message, filename: folder.name } );
 			throw error;
 
 		}

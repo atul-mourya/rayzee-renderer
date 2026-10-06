@@ -22,7 +22,7 @@ export { configureAssets, getAssetConfig } from './AssetConfig.js';
 export { configurePlatform, getPlatform } from './Platform.js';
 export { LightManager } from './managers/LightManager.js';
 export { listViewTransforms, getViewTransform, onRegistryChange, DEFAULT_VIEW } from './Color/ViewTransforms.js';
-export { ARCHIVE_FORMATS } from './Processor/archiveFormats.js';
+export { ARCHIVE_FORMATS, localFolder } from './Processor/archiveFormats.js';
 export { ENGINE_DEFAULTS, MATERIAL_DEFAULTS } from './EngineDefaults.js';
 export { SKY_DEFAULTS } from './managers/EnvironmentManager.js';
 export { MAX_RESERVABLE_RENDER_SIZE } from './Processor/StorageTexturePool.js';

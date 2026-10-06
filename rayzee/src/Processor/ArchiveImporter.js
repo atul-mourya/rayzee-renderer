@@ -12,11 +12,11 @@ import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
-	detectArchiveKind, readTarGz, elementFilter, listArchiveElements, openTar, indexTarHeaders } from './ArchiveReader.js';
+	detectArchiveKind, readTarGz, elementFilter, listArchiveElements, openTar, indexTarHeaders, openFolder } from './ArchiveReader.js';
 import { openZip, readZipDirectory } from './ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from './ArchiveCache.js';
 import { setEnvironmentSource } from '../Storage/CDFCache.js';
-import { fileIdentity, identityKey, sampleHash } from '../Storage/identity.js';
+import { fileIdentity, folderIdentity, identityKey, sampleHash } from '../Storage/identity.js';
 import { ENGINE_AREAS } from '../Storage/areas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../Storage/SceneGraphCodec.js';
 import { worthStoring } from '../Storage/sceneCachePolicy.js';
@@ -27,12 +27,40 @@ import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { ARCHIVE_FORMATS } from './archiveFormats.js';
+import { withHostWorker } from '../Platform.js';
 
 // Loose USD layers inside a ZIP compose into one scene; these pick out the
 // layers and the image assets they reference.
 const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
 const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
+const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb', 'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb' ];
+
+// An entry is bytes already read, or a Blob read only when a loader asks for it.
+const asBlob = entry => ( entry instanceof Blob ? entry : new Blob( [ entry ], { type: 'application/octet-stream' } ) );
+const bytesOf = async entry => ( entry instanceof Blob ? new Uint8Array( await entry.arrayBuffer() ) : entry );
+const textOf = async entry => ( entry instanceof Blob ? entry.text() : strFromU8( entry ) );
+const joinPath = ( dir, ref ) => {
+
+	const out = [];
+	for ( const part of `${dir}/${ref}`.split( '/' ) ) {
+
+		if ( part === '..' ) out.pop();
+		else if ( part && part !== '.' ) out.push( part );
+
+	}
+
+	return out.join( '/' );
+
+};
+
+const bufferOf = async entry => {
+
+	const bytes = await bytesOf( entry );
+	return bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
+
+};
+
 /**
  * Unpacked size past which a multi-part scene archive asks which parts to load rather than
  * taking all of them. Not a hard limit — picking every part is a valid answer.
@@ -227,6 +255,29 @@ export class ArchiveImporter {
 
 	}
 
+	/**
+	 * Loads a folder as it would the same folder zipped — a glTF with its .bin and textures, an OBJ with its
+	 * materials, a pbrt scene — reading each file only when the scene asks for it.
+	 * @param {{name: string, files: Array<{path: string, file: Blob}>}} folder - from `localFolder`
+	 * @param {object} [options] - `element`, `pbrtEntry`, `promptBytes` and the pbrt options, as loadArchiveFromFile
+	 */
+	async loadFolder( folder, { pbrtEntry = null, element = null, promptBytes, ...pbrt } = {} ) {
+
+		const chosen = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
+		const source = openFolder( folder, { filter: chosen.length ? elementFilter( chosen ) : null } );
+		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
+		if ( chosen.length === 0 ) this._requireElementChoice( folder.name, source.listing, totalBytes, promptBytes );
+
+		console.info(
+			`Folder "${folder.name}": ${source.listing.length} files, ${( totalBytes / 1e9 ).toFixed( 1 )} GB` +
+			( chosen.length ? `, ${chosen.length} part${chosen.length > 1 ? 's' : ''} selected.` : '.' )
+		);
+
+		const archiveId = this.loader.storage ? identityKey( await folderIdentity( folder ) ) : null;
+		return await this._loadSource( source, folder.name, { element, pbrtEntry, pbrt, archiveId, kind: 'folder' } );
+
+	}
+
 	async _loadNonPBRTArchive( entries, filename ) {
 
 		const result = await this.processObjMtlPairsInZip( entries, filename );
@@ -243,6 +294,13 @@ export class ArchiveImporter {
 	async _loadSeekable( file, filename, { element, promptBytes, pbrtEntry, pbrt, index = null, zip = false, archiveId = null } ) {
 
 		const source = await this._openSeekableArchive( file, filename, element, promptBytes, { index, zip } );
+		return await this._loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId } );
+
+	}
+
+	/** Loads what an opened archive or folder holds. @private */
+	async _loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId, kind = 'archive' } ) {
+
 		source.archiveId = archiveId;
 		source.elements = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
 		if ( source.listing.some( e => e.path.toLowerCase().endsWith( '.pbrt' ) ) ) {
@@ -251,10 +309,10 @@ export class ArchiveImporter {
 
 		}
 
-		// Not a pbrt scene: fall back to materialising it, which those paths still expect.
-		for ( const e of source.listing ) if ( e.offset !== undefined ) source.entries[ e.path ] ??= await source.read( e.path );
-		const result = await this._loadNonPBRTArchive( source.entries, filename );
-		this.loader._sourceKey = this.loader._keyed( 'archive', archiveId );
+		const entries = Object.create( null );
+		for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries[ e.path ] ?? await source.slice( e.path );
+		const result = await this._loadNonPBRTArchive( entries, filename );
+		this.loader._sourceKey = this.loader._keyed( kind, archiveId );
 		return result;
 
 	}
@@ -691,7 +749,7 @@ export class ArchiveImporter {
 		updateLoading( { isLoading: true, status: 'Processing PBRT geometry...', progress: 10 } );
 		await this.loader.onModelLoad( this.loader.targetModel );
 
-		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${loadedEntry} (from ZIP)` } );
+		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${loadedEntry} (from ${filename})` } );
 		return group;
 
 	}
@@ -833,42 +891,38 @@ export class ArchiveImporter {
 
 	}
 
-	async findAndLoadModelFromZip( zip ) {
+	async findAndLoadModelFromZip( zip, filename = 'the ZIP archive' ) {
 
-		const mainModelFiles = [
-			'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb',
-			'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb'
-		];
+		const paths = Object.keys( zip );
+		const top = paths[ 0 ]?.split( '/' )[ 0 ];
+		const root = top !== undefined && paths.every( p => p.startsWith( top + '/' ) ) ? top + '/' : '';
+		const models = paths.filter( p => p.split( '.' ).pop().toLowerCase() === 'obj' || this.loader.getFileFormat( p )?.type === 'model' );
+		if ( models.length === 0 ) throw new Error( `No supported model files found in ${filename}` );
 
-		for ( const mainFile of mainModelFiles ) {
+		// Shallowest first, glTF before other formats at the same depth.
+		const rank = p => p.split( '/' ).length * 2 + ( /\.(gltf|glb)$/i.test( p ) ? 0 : 1 );
+		const main = MAIN_MODEL_FILES.map( name => root + name ).find( p => zip[ p ] );
+		const path = main ?? models.reduce( ( best, p ) => ( rank( p ) < rank( best ) ? p : best ) );
 
-			if ( zip[ mainFile ] ) {
+		// A loose layer is only one slice of a USD scene — hand the whole
+		// archive over so its references and payloads can resolve.
+		if ( ! main && USD_LAYER_RE.test( path ) ) return await this.loadUSDHierarchyFromZip( zip );
 
-				console.log( `Found main model file: ${mainFile}` );
-				const extension = mainFile.split( '.' ).pop().toLowerCase();
-				return await this.loadModelFromZipEntry( zip[ mainFile ], mainFile, extension, zip );
+		const others = models.filter( p => p !== path && ! USD_LAYER_RE.test( p ) );
+		if ( others.length > 0 ) {
 
-			}
-
-		}
-
-		for ( const path in zip ) {
-
-			const extension = path.split( '.' ).pop().toLowerCase();
-			if ( extension === 'obj' || this.loader.getFileFormat( path )?.type === 'model' ) {
-
-				// A loose layer is only one slice of a USD scene — hand the whole
-				// archive over so its references and payloads can resolve.
-				if ( USD_LAYER_RE.test( path ) ) return await this.loadUSDHierarchyFromZip( zip );
-
-				console.log( `Loading model file from ZIP: ${path}` );
-				return await this.loadModelFromZipEntry( zip[ path ], path, extension, zip );
-
-			}
+			console.warn( `${filename} holds ${others.length + 1} models; loaded "${path}". Others: ${others.join( ', ' )}` );
+			this.loader._issues?.record(
+				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
+				`${filename} holds ${others.length + 1} models; loaded "${path}"`,
+				{ loaded: path, alternatives: others.slice( 0, 50 ) },
+				ISSUE_SEVERITY.WARNING
+			);
 
 		}
 
-		throw new Error( 'No supported model files found in the ZIP archive' );
+		console.log( `Loading model file from ${filename}: ${path}` );
+		return await this.loadModelFromZipEntry( zip[ path ], path, path.split( '.' ).pop().toLowerCase(), zip, filename );
 
 	}
 
@@ -883,11 +937,11 @@ export class ArchiveImporter {
 		const root = ArchiveImporter._pickUSDRootLayer( layers );
 		console.log( `Loading USD scene from ZIP: ${root} (${layers.length} layers)` );
 
-		const packed = { [ root ]: [ zip[ root ], { level: 0 } ] };
+		const packed = { [ root ]: [ await bytesOf( zip[ root ] ), { level: 0 } ] };
 		for ( const name of Object.keys( zip ) ) {
 
 			if ( name === root ) continue;
-			if ( USD_LAYER_RE.test( name ) || USD_IMAGE_RE.test( name ) ) packed[ name ] = [ zip[ name ], { level: 0 } ];
+			if ( USD_LAYER_RE.test( name ) || USD_IMAGE_RE.test( name ) ) packed[ name ] = [ await bytesOf( zip[ name ] ), { level: 0 } ];
 
 		}
 
@@ -914,13 +968,11 @@ export class ArchiveImporter {
 
 	}
 
-	async loadModelFromZipEntry( fileContent, filePath, extension, zipContents ) {
+	async loadModelFromZipEntry( fileContent, filePath, extension, zipContents, from = 'ZIP' ) {
 
 		try {
 
-			updateLoading( { isLoading: true, status: `Processing ${extension.toUpperCase()} from ZIP...`, progress: 5 } );
-			const blob = new Blob( [ fileContent.buffer ], { type: 'application/octet-stream' } );
-			const blobUrl = URL.createObjectURL( blob );
+			updateLoading( { isLoading: true, status: `Processing ${extension.toUpperCase()} from ${from}...`, progress: 5 } );
 			let result;
 
 			switch ( extension ) {
@@ -937,17 +989,16 @@ export class ArchiveImporter {
 
 			}
 
-			URL.revokeObjectURL( blobUrl );
 			this.loader.dispatchEvent( {
 				type: 'load',
 				model: this.loader.targetModel,
-				filename: `${filePath} (from ZIP)`
+				filename: `${filePath} (from ${from})`
 			} );
 			return result;
 
 		} catch ( error ) {
 
-			console.error( `Error loading ${extension} from ZIP:`, error );
+			console.error( `Error loading ${extension} from ${from}:`, error );
 			this.loader.dispatchEvent( { type: 'error', message: error.message, filename: filePath } );
 			throw error;
 
@@ -959,7 +1010,7 @@ export class ArchiveImporter {
 
 		if ( extension === 'gltf' ) {
 
-			const gltfContent = strFromU8( fileContent );
+			const gltfContent = await textOf( fileContent );
 			const manager = new LoadingManager();
 			const gltfDir = filePath.split( '/' ).slice( 0, - 1 ).join( '/' );
 
@@ -969,32 +1020,13 @@ export class ArchiveImporter {
 
 			try {
 
-				return await new Promise( ( resolve, reject ) => {
-
-					loader.parse( gltfContent, '',
-						gltf => {
-
-							try {
-
-								this.loader._throwDeferred();
-
-							} catch ( error ) {
-
-								reject( error );
-								return;
-
-							}
-
-							this.loader.releaseTargetModel();
-							this.loader.targetModel = gltf.scene;
-							this.loader.sceneMetadata = extractSceneMetadata( gltf );
-							this.loader.onModelLoad( this.loader.targetModel ).then( () => resolve( gltf ) );
-
-						},
-						error => reject( error )
-					);
-
-				} );
+				const gltf = await withHostWorker( () => new Promise( ( resolve, reject ) => loader.parse( gltfContent, '', resolve, reject ) ) );
+				this.loader._throwDeferred();
+				this.loader.releaseTargetModel();
+				this.loader.targetModel = gltf.scene;
+				this.loader.sceneMetadata = extractSceneMetadata( gltf );
+				await this.loader.onModelLoad( this.loader.targetModel );
+				return gltf;
 
 			} finally {
 
@@ -1004,7 +1036,7 @@ export class ArchiveImporter {
 
 		} else {
 
-			return await this.loader.loadGLBFromArrayBuffer( fileContent.buffer, filePath );
+			return await this.loader.loadGLBFromArrayBuffer( await bufferOf( fileContent ), filePath );
 
 		}
 
@@ -1012,7 +1044,7 @@ export class ArchiveImporter {
 
 	async handleObjFromZip( fileContent, filePath, zipContents ) {
 
-		const objContent = strFromU8( fileContent );
+		const objContent = await textOf( fileContent );
 		const mtlMatch = objContent.match( /mtllib\s+([^\s]+)/ );
 		let materials = null;
 
@@ -1100,7 +1132,7 @@ export class ArchiveImporter {
 			if ( zipContents[ path ] ) {
 
 				const { MTLLoader } = await import( 'three/examples/jsm/loaders/MTLLoader.js' );
-				const mtlContent = strFromU8( zipContents[ path ] );
+				const mtlContent = await textOf( zipContents[ path ] );
 				const manager = new LoadingManager();
 				manager.setURLModifier( url => this.resolveZipResource( url, objDir, zipContents ) );
 				const mtlLoader = new MTLLoader( manager );
@@ -1118,25 +1150,30 @@ export class ArchiveImporter {
 
 	resolveZipResource( url, baseDir, zipContents ) {
 
-		const normalizedUrl = url.replace( /^\.\/|^\//, '' );
-		const possiblePaths = [
-			normalizedUrl,
-			`${baseDir}/${normalizedUrl}`,
-			normalizedUrl.split( '/' ).pop()
-		];
+		if ( /^(data|blob|https?):/i.test( url ) ) return url;
 
-		for ( const path of possiblePaths ) {
+		const raw = url.replace( /^\.\/|^\//, '' );
+		let decoded = raw;
+		try {
 
-			if ( zipContents[ path ] ) {
+			decoded = decodeURIComponent( raw );
 
-				const fileBlob = new Blob( [ zipContents[ path ].buffer ], { type: 'application/octet-stream' } );
-				return URL.createObjectURL( fileBlob );
+		} catch {
 
-			}
+			// a literal '%'
 
 		}
 
-		console.warn( `Resource not found in ZIP: ${url}` );
+		for ( const ref of new Set( [ raw, decoded ] ) ) {
+
+			const name = ref.split( '/' ).pop();
+			const path = [ joinPath( baseDir, ref ), ref, name ].find( p => zipContents[ p ] )
+				?? ( name ? Object.keys( zipContents ).find( p => p.endsWith( `/${name}` ) ) : undefined );
+			if ( path ) return URL.createObjectURL( asBlob( zipContents[ path ] ) );
+
+		}
+
+		console.warn( `Resource not found in the archive: ${url}` );
 		return url;
 
 	}
@@ -1151,13 +1188,13 @@ export class ArchiveImporter {
 		const mtlDir = mtlFile.path.split( '/' ).slice( 0, - 1 ).join( '/' );
 
 		manager.setURLModifier( url => this.resolveTextureInZip( url, objDir, mtlDir, mtlFile, zip, createdUrls ) );
-		const mtlContent = this.prepareFixedMtlContent( mtlFile );
+		const mtlContent = await this.prepareFixedMtlContent( mtlFile );
 		const materials = new MTLLoader( manager ).parse( mtlContent, mtlDir );
 		await this.preloadMtlTextures( materials );
 
 		const objLoader = new OBJLoader( manager );
 		objLoader.setMaterials( materials );
-		const objContent = strFromU8( objFile.content );
+		const objContent = await textOf( objFile.content );
 		const object = objLoader.parse( objContent );
 
 		this.loader.releaseTargetModel();
@@ -1175,9 +1212,9 @@ export class ArchiveImporter {
 
 	}
 
-	prepareFixedMtlContent( mtlFile ) {
+	async prepareFixedMtlContent( mtlFile ) {
 
-		const mtlContent = strFromU8( mtlFile.content );
+		const mtlContent = await textOf( mtlFile.content );
 		return mtlContent
 			.replace( new RegExp( `${mtlFile.path.split( '/' ).pop()}\\s+`, 'g' ), ' ' )
 			.replace( /([a-zA-Z_]+)([\\/])/g, '$1 $2' );
@@ -1210,8 +1247,7 @@ export class ArchiveImporter {
 
 			if ( zip[ location ] ) {
 
-				const blob = new Blob( [ zip[ location ].buffer ], { type: 'application/octet-stream' } );
-				const blobUrl = URL.createObjectURL( blob );
+				const blobUrl = URL.createObjectURL( asBlob( zip[ location ] ) );
 				createdUrls.push( blobUrl );
 				return blobUrl;
 
@@ -1231,8 +1267,7 @@ export class ArchiveImporter {
 
 			if ( zipPath.endsWith( textureFilename ) ) {
 
-				const blob = new Blob( [ zip[ zipPath ].buffer ], { type: 'application/octet-stream' } );
-				const blobUrl = URL.createObjectURL( blob );
+				const blobUrl = URL.createObjectURL( asBlob( zip[ zipPath ] ) );
 				createdUrls.push( blobUrl );
 				return blobUrl;
 
@@ -1247,8 +1282,7 @@ export class ArchiveImporter {
 				const zipFilename = zipPath.split( '/' ).pop();
 				if ( zipFilename.includes( textureFilename ) || textureFilename.includes( zipFilename ) ) {
 
-					const blob = new Blob( [ zip[ zipPath ].buffer ], { type: 'application/octet-stream' } );
-					const blobUrl = URL.createObjectURL( blob );
+					const blobUrl = URL.createObjectURL( asBlob( zip[ zipPath ] ) );
 					createdUrls.push( blobUrl );
 					return blobUrl;
 

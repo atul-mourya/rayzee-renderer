@@ -64,9 +64,30 @@ export async function fileIdentity( file ) {
 
 }
 
+/**
+ * A folder's identity: its name, total size, newest change and a SHA-256 over every file's path, size and date. Reads
+ * no file, and changes with any change inside the folder.
+ * @param {{name: string, files: Array<{path: string, file: Blob}>}} folder - from `localFolder`
+ * @returns {Promise<{name: string, size: number, lastModified: number, sample: string, files: number}>}
+ */
+export async function folderIdentity( folder ) {
+
+	let size = 0;
+	let lastModified = 0;
+	const lines = folder.files.map( ( { path, file } ) => {
+
+		size += file.size;
+		lastModified = Math.max( lastModified, file.lastModified ?? 0 );
+		return `${path}|${file.size}|${file.lastModified ?? 0}`;
+
+	} );
+	return { name: folder.name, size, lastModified, sample: await sha256Hex( lines.join( '\n' ) ), files: folder.files.length };
+
+}
+
 export function identityKey( identity ) {
 
-	return `file:${identity.name}|${identity.size}|${identity.lastModified}|${identity.sample}`;
+	return `${identity.files === undefined ? 'file' : 'folder'}:${identity.name}|${identity.size}|${identity.lastModified}|${identity.sample}`;
 
 }
 

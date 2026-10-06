@@ -546,8 +546,8 @@ export function createTarIndexer( { filter = null, sink = null } = {} ) {
  * @param {object} [options] - `filter` and `retain` as in readTar
  * @param {{listing: Array}} [options.index] - a saved index (`result.index`): skips the walk
  * @param {boolean} [options.headersOnly] - index by seeking between headers; nothing is retained
- * @returns {Promise<{entries, listing, read: (path:string)=>Promise<Uint8Array|null>, truncated,
- *   index: ?{v:number, listing:Array}}>}
+ * @returns {Promise<{entries, listing, read: (path:string)=>Promise<Uint8Array|null>,
+ *   slice: (path:string)=>Promise<Blob|null>, truncated, index: ?{v:number, listing:Array}}>}
  */
 export async function openTar( source, options = {} ) {
 
@@ -594,7 +594,50 @@ export async function openTar( source, options = {} ) {
 
 	};
 
-	return { entries, listing, read, readHead, retainedBytes, truncated, indexed: byPath.size, index: full ? { v: 1, listing: full } : null };
+	const slice = async ( path ) => {
+
+		if ( entries[ path ] ) return new Blob( [ entries[ path ] ] );
+		const e = byPath.get( path );
+		return e ? source.slice( e.offset, e.offset + e.size ) : null;
+
+	};
+
+	return { entries, listing, read, readHead, slice, retainedBytes, truncated, indexed: byPath.size, index: full ? { v: 1, listing: full } : null };
+
+}
+
+/**
+ * A folder on disk with the shape of `openTar` and `openZip`: every file is listed, and read only when asked for.
+ * @param {{files: Array<{path: string, file: Blob}>}} folder - from `localFolder`
+ * @param {{filter?: (path:string, size:number) => boolean}} [options]
+ */
+export function openFolder( folder, { filter = null } = {} ) {
+
+	const byPath = new Map();
+	const listing = folder.files.map( ( { path, file } ) => {
+
+		if ( filter && ! filter( path, file.size ) ) return { path, size: file.size };
+		byPath.set( path, file );
+		return { path, size: file.size, offset: 0 };
+
+	} );
+
+	const slice = async ( path ) => byPath.get( path ) ?? null;
+	const read = async ( path ) => {
+
+		const file = byPath.get( path );
+		return file ? new Uint8Array( await file.arrayBuffer() ) : null;
+
+	};
+
+	const readHead = async ( path, bytes ) => {
+
+		const file = byPath.get( path );
+		return file ? new Uint8Array( await file.slice( 0, bytes ).arrayBuffer() ) : null;
+
+	};
+
+	return { entries: Object.create( null ), listing, read, readHead, slice, retainedBytes: 0, truncated: false, indexed: byPath.size };
 
 }
 

@@ -20,7 +20,8 @@ import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
 import { nameFromUrl } from './Storage/DownloadCache.js';
-import { fileIdentity, identityKey } from './Storage/identity.js';
+import { fileIdentity, folderIdentity, identityKey } from './Storage/identity.js';
+import { isFolderInput, localFolder } from './Processor/archiveFormats.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
 import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
 import { PackedToneMapper } from './Processor/ToneMapGPU.js';
@@ -714,7 +715,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._storageRelease?.();
 		this._storageRelease = null;
 		this.storage = null;
-		this._sceneSource = this._sceneSourceFile = null;
+		this._sceneSource = this._sceneSourceInput = null;
 
 		this._issues.detach(); // onIssue captures `this`; see IssueLog.detach()
 
@@ -841,7 +842,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._releaseSceneState();
 
 		this.assetLoader?.releaseTargetModel();
-		this._sceneSource = this._sceneSourceFile = null;
+		this._sceneSource = this._sceneSourceInput = null;
 
 		// Clear lights in the WebGPU light scene
 		this.lightManager?.clearLights?.();
@@ -963,7 +964,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/**
 	 * Loads a user-supplied File (drag-drop, file picker) — model, archive, or environment
-	 * map, dispatched by extension.
+	 * map, dispatched by extension — or a folder of files, read as the same folder zipped would be.
 	 *
 	 * Prefer this over driving `assetLoader.loadAssetFromFile()` directly. That bypasses the
 	 * in-progress guard, and AssetLoader disposes the outgoing model before it knows whether
@@ -972,7 +973,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * tracer rendering buffers whose geometry has been freed. Here a concurrent call throws
 	 * LOAD_IN_PROGRESS before anything is touched.
 	 *
-	 * @param {File|string} file - a File, or a URL to download (through the download cache)
+	 * @param {File|string|{name?: string, files: Iterable<File|{path: string, file: Blob}>}} file - a File, a URL to
+	 *   download (through the download cache), or a folder: `{ files }` — a folder picker's FileList, whose files carry
+	 *   their `webkitRelativePath`, or `{ path, file }` pairs; `name` defaults to the folder they share
 	 * @param {object} [options] - forwarded to the archive loader: `element` to load one
 	 *   subtree of a multi-part scene, `pbrtEntry` to choose among several .pbrt scenes. For a
 	 *   URL also `filename` and `cacheKey` (see AssetLoader.loadAssetFromUrl).
@@ -998,6 +1001,25 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
+		if ( isFolderInput( file ) ) {
+
+			const folder = localFolder( file, { isModel: path => this.assetLoader?.getFileFormat( path )?.type === 'model' } );
+			if ( folder.files.length === 0 ) throw new Error( `${folder.name} holds no files to load` );
+			await this._loadWithSceneRebuild(
+				() => this.assetLoader.loadFolder( folder, options ),
+				{ type: EngineEvents.MODEL_LOADED, filename: folder.name },
+				async () => {
+
+					const id = await folderIdentity( folder );
+					return { kind: 'local-folder', folder: id, key: identityKey( id ), ...( folder.flat ? { flat: true } : {} ), ...partOf( options ) };
+
+				}
+			);
+			this._sceneSourceInput = folder;
+			return;
+
+		}
+
 		const format = this.assetLoader?.getFileFormat( file?.name || '' );
 		if ( ! format ) throw this.assetLoader.formatError( file?.name || '' );
 
@@ -1014,7 +1036,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 				}
 			);
-			this._sceneSourceFile = file;
+			this._sceneSourceInput = file;
 			return;
 
 		}
@@ -1121,8 +1143,10 @@ export class RayzeeRenderer extends EventDispatcher {
 	/**
 	 * Where the model on screen came from, as plain data — what a saved session reopens:
 	 * `{ kind: 'url', url, cacheKey, filename?, element?, pbrtEntry? }`,
-	 * `{ kind: 'local-file', file: {name, size, lastModified, sample}, key, element?, pbrtEntry? }` or
-	 * `{ kind: 'object3d', name }`. Null before a load and after {@link unloadScene}.
+	 * `{ kind: 'local-file', file: {name, size, lastModified, sample}, key, element?, pbrtEntry? }`,
+	 * `{ kind: 'local-folder', folder: {name, size, lastModified, sample, files}, key, flat?, element?, pbrtEntry? }`
+	 * (`flat` when it was loose files rather than one folder) or `{ kind: 'object3d', name }`. Null before a load and
+	 * after {@link unloadScene}.
 	 * @returns {?Object}
 	 */
 	get sceneSource() {
@@ -1134,7 +1158,14 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** The File a local load came from, so a host can save a project that carries it; null otherwise. */
 	get sceneSourceFile() {
 
-		return this._sceneSourceFile ?? null;
+		return this._sceneSourceInput && ! isFolderInput( this._sceneSourceInput ) ? this._sceneSourceInput : null;
+
+	}
+
+	/** The folder a local load came from, as `{ name, files: [{ path, file }] }`; null otherwise. */
+	get sceneSourceFolder() {
+
+		return isFolderInput( this._sceneSourceInput ) ? this._sceneSourceInput : null;
 
 	}
 
@@ -1149,7 +1180,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			await loadFn();
 			this._sceneSource = typeof source === 'function' ? await source() : source;
-			this._sceneSourceFile = null;
+			this._sceneSourceInput = null;
 			// A fresh model re-establishes the emissive-sampling auto-default (incremental
 			// rebuilds — add/remove object, texture reprocess — preserve the user's choice).
 			this._emissiveSamplingUserSet = false;
@@ -1196,7 +1227,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	_discardFailedLoad() {
 
-		this._sceneSource = this._sceneSourceFile = null;
+		this._sceneSource = this._sceneSourceInput = null;
 
 		try {
 

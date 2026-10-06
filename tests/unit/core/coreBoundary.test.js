@@ -118,7 +118,7 @@ describe( 'the renderer core', () => {
 	it( 'exports the archive formats, so a host can install that add-on to load on first use', () => {
 
 		const core = readFileSync( resolve( SRC, 'core.js' ), 'utf8' );
-		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS \} from '\.\/Processor\/archiveFormats\.js'/ );
+		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS\b[^}]*\} from '\.\/Processor\/archiveFormats\.js'/ );
 
 	} );
 

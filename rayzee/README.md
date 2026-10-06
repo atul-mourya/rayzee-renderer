@@ -352,6 +352,7 @@ Constructing a new `PathTracerApp` on a canvas that already has an active instan
 ```js
 await engine.loadModel(url)                  // Load a GLB/GLTF by URL
 await engine.loadFile(fileOrUrl)              // Any supported file: GLB/GLTF/FBX/OBJ/STL/PLY/DAE/3MF/USD/USDZ, archives, HDR/EXR
+await engine.loadFile({ files })              // A folder of files — see Loading a folder
 await engine.loadObject3D(object3d, name?)    // Load a Three.js Object3D directly (name is optional, defaults to 'object3d')
 await engine.loadEnvironment(url)             // Load HDR/EXR environment map
 engine.cancelLoad()                           // Abort an in-flight download (network phase only; no-op once processing starts)
@@ -372,6 +373,27 @@ engine.setSceneObjectVisibility(id, visible)                      // Toggle visi
 `engine.sceneModel` is the root of what is actually being rendered — for `loadObject3D` that is the engine's copy, and it is the object to mutate before `refitBVH()`.
 
 `id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. For `addModelFromObject3D` the engine carries your object's uuid onto its copy, so the id matches the object you passed. The built-in ground plane is permanent and can't be removed.
+
+##### Loading a folder
+
+A model that comes as several files — a `.gltf` with its `.bin` and textures, an `.obj` with its `.mtl`, a pbrt
+scene — loads from its folder as the same folder zipped would, with nothing unpacked or copied: each file is read
+only when the scene asks for it. On `rayzee/core` this needs the `rayzee/addons/archives` add-on.
+
+```js
+await engine.loadFile({ files: input.files });    // <input type="file" webkitdirectory>: paths from webkitRelativePath
+await engine.loadFile({ name: 'Sponza', files: [  // or path + file pairs: a drop, a directory handle, fs.openAsBlob in Node
+  { path: 'Sponza/sponza.gltf', file: gltf },
+  { path: 'Sponza/sponza.bin', file: bin },
+] });
+```
+
+Loose files picked together load the same way. Hidden files and folders (`.DS_Store`, `.git/`) are left out. The model
+that loads is a `scene` / `model` / `main` / `asset` glTF when there is one, else the shallowest model, glTF first; the
+others are named in an `asset.ambiguous_entry` warning. A large pbrt folder of several parts asks which to load, as an
+archive does (below). `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
+— `sample` hashes every file's path, size and date, so any change inside the folder changes it — and
+`sceneSourceFolder` hands the files back, as `{ name, files: [{ path, file }] }`.
 
 ##### Loading part of a scene archive
 
@@ -522,7 +544,7 @@ section applies to it.
 |---|---|---|---|---|
 | File formats | `fbxFormat`, `objFormat`, `stlFormat`, `plyFormat`, `colladaFormat`, `threeMFFormat`, `usdFormat`, `exrFormat` or `allFormats` from `rayzee/addons/formats` | `renderer.assetLoader.registerFormat(objFormat, exrFormat)` | after `init()` | only glTF/GLB, `.hdr` and images load; any other file's error names the add-on |
 | Physical sky | `PhysicalSky` from `rayzee/addons/physical-sky` | `renderer.environmentManager.setProceduralSky(PhysicalSky)` | after `init()` | `'procedural'` mode records `capability.missing` (throws under `strict`) |
-| Scene archives and pbrt | `ArchiveImporter` from `rayzee/addons/archives` | `renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader))` | after `init()` | `.zip`, `.tar` and `.tgz` are not supported formats, and the error names the add-on |
+| Scene archives, folders and pbrt | `ArchiveImporter` from `rayzee/addons/archives` | `renderer.assetLoader.setArchiveImporter(new ArchiveImporter(renderer.assetLoader))` | after `init()` | `.zip`, `.tar`, `.tgz` and folders do not load, and the error names the add-on |
 | Bidirectional and VCM | `BidirectionalIntegrator` from `rayzee/addons/bidirectional` | `renderer.stages.pathTracer.registerIntegrator(['bidirectional', 'vcm'], pt => new BidirectionalIntegrator(pt))` | after `init()` | choosing either integrator records `capability.missing` (throws under `strict`) and keeps the current one |
 | OpenColorIO colour | `ColorManagement` from `rayzee/addons/color` | `renderer.setColorManagement(ColorManagement)` | before or after `init()` | linear Rec.709 through three.js's own tone mappers; `loadColorConfig()` records `capability.missing` and rejects |
 | On-disk storage | `acquireSharedStorage` from `rayzee/addons/storage` | `renderer.setStorageOpener(acquireSharedStorage)` | **before** `init()` | downloads land in memory and nothing is cached between visits |
@@ -1390,7 +1412,7 @@ throws on a spilled scene until `await engine.ensureSceneResident()`.
 ```js
 const state = engine.exportSceneState();      // JSON-safe: settings, sky, colour, lights, cameras,
                                               // timeline keys, material edits, hidden and moved objects
-const source = engine.sceneSource;            // { kind: 'url', url, cacheKey } | { kind: 'local-file', file } | ...
+const source = engine.sceneSource;            // { kind: 'url', url, cacheKey } | { kind: 'local-file', file } | { kind: 'local-folder', folder } | ...
 
 // later, after loading the same model again:
 const { skipped } = await engine.importSceneState( state, {
