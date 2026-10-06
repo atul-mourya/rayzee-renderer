@@ -78,6 +78,7 @@
   - [x] Mesh / group visibility toggling (per-mesh BVH-level, Outliner tree)
   - [x] Interactive transform gizmo (translate/rotate/scale) with per-mesh BVH refit
   - [x] Sessions autosaved on disk (OPFS) and offered back on return; projects saved as `.rayzee` files with the local model inside
+  - [x] Models loaded from a folder (dropped, picked, or several files at once) with no zipping; the folder is remembered for its sessions
   - [ ] Scene templates and presets
   - [ ] Version control integration (Git LFS)
 

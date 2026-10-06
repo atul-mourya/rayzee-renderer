@@ -15,6 +15,9 @@ const RECENT_LIMIT = 10;
 // 4 GB is the ceiling; a download assembled in memory stops far earlier.
 const EMBED_LIMIT_STREAMED = 3.5 * 1024 ** 3;
 const EMBED_LIMIT_IN_MEMORY = 512 * 1024 ** 2;
+// No more entries than a zip without ZIP64 holds.
+const EMBED_FILES_LIMIT = 65000;
+const FOLDER_PREFIX = 'sources/folder/';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -23,15 +26,19 @@ const fileName = title => `${( title || 'project' ).replace( /\.[a-z0-9]+$/i, ''
 
 /**
  * Writes the scene as a `.rayzee` project — the session record, a thumbnail, and the model when it
- * came from a local file — to a file the user picks (or a download).
- * @returns {Promise<{title: string, embedded: boolean}>}
+ * came from a local file or folder — to a file the user picks (or a download).
+ * @returns {Promise<{title: string, embedded: boolean, tooLarge: boolean, folder: boolean}>}
  */
 export async function saveProject( app, { onProgress } = {} ) {
 
 	const { record, thumb } = await captureSession( app );
 	const sink = await openSink( fileName( record.title ), { description: 'Rayzee project', extension: '.rayzee' } );
+	const limit = sink.streamed ? EMBED_LIMIT_STREAMED : EMBED_LIMIT_IN_MEMORY;
 	const file = app.sceneSourceFile;
-	const embed = !! file && file.size <= ( sink.streamed ? EMBED_LIMIT_STREAMED : EMBED_LIMIT_IN_MEMORY );
+	const folder = app.sceneSourceFolder;
+	const folderBytes = folder?.files.reduce( ( n, e ) => n + e.file.size, 0 ) ?? 0;
+	const embed = !! file && file.size <= limit;
+	const embedFolder = !! folder && folderBytes <= limit && folder.files.length <= EMBED_FILES_LIMIT;
 
 	const manifest = {
 		format: PROJECT_FORMAT,
@@ -40,6 +47,7 @@ export async function saveProject( app, { onProgress } = {} ) {
 		app: VERSION,
 		title: record.title,
 		embedded: embed ? `sources/${file.name}` : null,
+		...( embedFolder ? { embeddedFolder: FOLDER_PREFIX } : {} ),
 		session: record,
 	};
 
@@ -49,6 +57,18 @@ export async function saveProject( app, { onProgress } = {} ) {
 		zip.addBytes( MANIFEST, encoder.encode( JSON.stringify( manifest ) ) );
 		if ( thumb ) zip.addBytes( THUMB, new Uint8Array( await thumb.arrayBuffer() ) );
 		if ( embed ) await zip.addBlob( manifest.embedded, file, { onProgress } );
+		if ( embedFolder ) {
+
+			let written = 0;
+			for ( const entry of folder.files ) {
+
+				await zip.addBlob( FOLDER_PREFIX + entry.path, entry.file, { onProgress: f => onProgress?.( ( written + f * entry.file.size ) / folderBytes ) } );
+				written += entry.file.size;
+
+			}
+
+		}
+
 		await zip.finish();
 		await sink.close();
 
@@ -60,7 +80,24 @@ export async function saveProject( app, { onProgress } = {} ) {
 	}
 
 	await rememberProject( app.storage, manifest, thumb );
-	return { title: record.title, embedded: embed, tooLarge: !! file && ! embed };
+	const source = file ?? folder;
+	return { title: record.title, embedded: embed || embedFolder, tooLarge: !! source && ! ( embed || embedFolder ), folder: !! folder };
+
+}
+
+/** The folder a project carries, as `loadFile` takes one; each file a slice of the project, nothing read. */
+async function embeddedFolderOf( zip, prefix, name, lastModified ) {
+
+	const files = [];
+	for ( const { path } of zip.listing ) {
+
+		if ( ! path.startsWith( prefix ) || path.endsWith( '/' ) ) continue;
+		const blob = await zip.slice( path );
+		if ( blob ) files.push( { path: path.slice( prefix.length ), file: new File( [ blob ], path.split( '/' ).pop(), { lastModified } ) } );
+
+	}
+
+	return files.length ? { name, files } : null;
 
 }
 
@@ -92,12 +129,16 @@ export async function readProject( file ) {
 	const embeddedFile = blob && source?.kind === 'local-file'
 		? new File( [ blob ], source.file.name, { lastModified: source.file.lastModified } )
 		: null;
+	const embeddedFolder = manifest.embeddedFolder && source?.kind === 'local-folder'
+		? await embeddedFolderOf( zip, manifest.embeddedFolder, source.folder.name, manifest.savedAt )
+		: null;
 
 	return {
 		manifest,
 		record: manifest.session,
 		thumb: thumbBytes ? new Blob( [ thumbBytes ], { type: 'image/webp' } ) : null,
 		embeddedFile,
+		embeddedFolder,
 	};
 
 }
@@ -111,13 +152,13 @@ export async function rememberProject( storage, manifest, thumb ) {
 	const key = `project:${manifest.title}:${manifest.session?.source?.key ?? manifest.session?.source?.url ?? ''}`;
 	const writer = await area.create( key, {
 		label: `Project · ${manifest.title}`,
-		extra: { kind: 'project', title: manifest.title, savedAt: Date.now(), embedded: !! manifest.embedded },
+		extra: { kind: 'project', title: manifest.title, savedAt: Date.now(), embedded: !! ( manifest.embedded || manifest.embeddedFolder ) },
 	} );
 	if ( ! writer ) return;
 
 	try {
 
-		await writer.writeJSON( MANIFEST, { ...manifest, embedded: null, embeddedName: manifest.embedded } );
+		await writer.writeJSON( MANIFEST, { ...manifest, embedded: null, embeddedFolder: null, embeddedName: manifest.embedded } );
 		if ( thumb ) await writer.writeFile( THUMB, thumb );
 		await writer.commit();
 
@@ -173,7 +214,9 @@ export async function readRecentProject( storage, key ) {
 export async function requestProjectOpen( file ) {
 
 	const project = await readProject( file );
-	useStore.getState().setSessionRequest( { origin: 'project', record: project.record, thumb: project.thumb, embeddedFile: project.embeddedFile } );
+	useStore.getState().setSessionRequest( {
+		origin: 'project', record: project.record, thumb: project.thumb, embeddedFile: project.embeddedFile, embeddedFolder: project.embeddedFolder,
+	} );
 	rememberProject( getApp()?.storage, project.manifest, project.thumb );
 
 }

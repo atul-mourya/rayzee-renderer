@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { getApp } from '@/lib/appProxy';
 import { useStore } from '@/store';
+import { pickFolder, loadFolder } from '@/lib/folders';
 import {
 	Menubar,
 	MenubarContent,
@@ -26,12 +27,13 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 		try {
 
 			const { saveProject } = await import( '@/lib/project' );
-			const { title, embedded, tooLarge } = await saveProject( app );
+			const { title, embedded, tooLarge, folder } = await saveProject( app );
+			const what = folder ? 'model folder' : 'model file';
 			toast( {
 				title: 'Project saved',
 				description: tooLarge
-					? `${title} is saved without its model, which is too large to include here — keep the model file with it.`
-					: embedded ? `${title}, with its model file inside.` : title,
+					? `${title} is saved without its model, which is too large to include here — keep the ${what} with it.`
+					: embedded ? `${title}, with its ${what} inside.` : title,
 			} );
 
 		} catch ( error ) {
@@ -109,9 +111,34 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 	};
 
+	const handleOpenFolder = async () => {
+
+		try {
+
+			const picked = await pickFolder();
+			if ( picked ) await loadFolder( await picked.read(), { handle: picked.handle } );
+
+		} catch ( error ) {
+
+			useStore.getState().resetLoading();
+			toast( { title: 'Could not open the folder', description: error.message, variant: 'destructive' } );
+
+		}
+
+	};
+
 	const handleFileSelect = async ( event ) => {
 
-		const file = event.target.files?.[ 0 ];
+		const files = [ ...( event.target.files ?? [] ) ];
+		if ( files.length > 1 ) {
+
+			event.target.value = '';
+			await loadFolder( { files } );
+			return;
+
+		}
+
+		const file = files[ 0 ];
 		if ( ! file ) return;
 
 		if ( file.name.toLowerCase().endsWith( '.rayzee' ) ) {
@@ -131,7 +158,7 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 			toast( {
 				title: "Invalid File Type",
-				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or an archive: .zip, .tar, .tar.gz, .tgz (incl. pbrt scenes)",
+				description: "Please select a supported 3D model file (.glb, .gltf, .fbx, .obj, .stl, .ply, .dae, .3mf, .usd, .usda, .usdc, .usdz) or an archive: .zip, .tar, .tar.gz, .tgz (incl. pbrt scenes). A model made of several files opens with all of them selected, or from File → Open Folder…",
 				variant: "destructive",
 			} );
 			return;
@@ -174,7 +201,8 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 				}
 				: {
 					title: "Error Loading Model",
-					description: error.message || "Failed to load model",
+					description: ( error.message || "Failed to load model" ) + ( fileName.endsWith( '.gltf' )
+						? ' — a .gltf that uses separate files opens with all of them selected, or from File → Open Folder…' : '' ),
 					variant: "destructive",
 				} );
 
@@ -192,7 +220,8 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 			<input
 				ref={fileInputRef}
 				type="file"
-				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip,.tar,.tgz,.gz,.rayzee"
+				accept=".glb,.gltf,.fbx,.obj,.stl,.ply,.dae,.3mf,.usd,.usda,.usdc,.usdz,.zip,.tar,.tgz,.gz,.rayzee,.bin,.mtl,.png,.jpg,.jpeg,.webp,.avif,.ktx2,.tga,.bmp,.gif,.tif,.tiff"
+				multiple
 				onChange={handleFileSelect}
 				style={{ display: 'none' }}
 			/>
@@ -215,6 +244,7 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 					<MenubarTrigger className="text-muted-foreground text-sm font-medium hover:text-foreground">File</MenubarTrigger>
 					<MenubarContent>
 						<MenubarItem onSelect={handleOpenFile} className="flex items-center">Open</MenubarItem>
+						<MenubarItem onSelect={handleOpenFolder} className="flex items-center">Open Folder…</MenubarItem>
 						<MenubarItem onSelect={onOpenImportModal} className="flex items-center">Import from URL</MenubarItem>
 						<MenubarItem onSelect={onOpenRecent} className="flex items-center">Open Recent…</MenubarItem>
 						<MenubarSeparator />

@@ -19,7 +19,8 @@ vi.hoisted( () => {
 } );
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/Storage/openStorage.js';
-import { fileIdentity, identityKey } from '@/core/Storage/identity.js';
+import { fileIdentity, folderIdentity, identityKey } from '@/core/Storage/identity.js';
+import { localFolder } from '@/core/Processor/archiveFormats.js';
 import { ensureAppAreas } from '@/lib/storage';
 import { SessionKeeper, listSessions, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
 import { snapshotPanels, restorePanels } from '@/lib/panelState';
@@ -185,6 +186,43 @@ describe( 'sessions', () => {
 
 	} );
 
+	it( 'reopens a folder by its name, whether or not its contents changed since', async () => {
+
+		const files = [ { path: 'Room/scene.gltf', file: new File( [ '{}' ], 'scene.gltf', { lastModified: 5 } ) } ];
+		const identity = await folderIdentity( localFolder( { files } ) );
+		const app = fakeApp( storage );
+		const source = { kind: 'local-folder', folder: identity, key: identityKey( identity ), element: 'Room/a' };
+
+		const pickFile = vi.fn( async () => ( { folder: { name: 'Hall', files }, handle: null } ) );
+		await expect( openSource( app, source, { pickFile } ) ).rejects.toMatchObject( { code: 'SESSION_FILE_MISMATCH' } );
+		expect( pickFile ).toHaveBeenCalledWith( { ...identity, key: source.key, flat: false }, 'folder' );
+		expect( await openSource( app, source, { pickFile: async () => null } ) ).toBe( false );
+
+		const changed = { files: [ ...files, { path: 'Room/new.png', file: new File( [ 'x' ], 'new.png' ) } ] };
+		expect( await openSource( app, source, { pickFile: async () => ( { folder: changed, handle: null } ) } ) ).toBe( true );
+		expect( app.loadFile ).toHaveBeenLastCalledWith( changed, { element: 'Room/a' } );
+
+		const loose = { files: [ { path: 'scene.gltf', file: files[ 0 ].file } ] };
+		expect( await openSource( app, { ...source, flat: true }, { pickFile: async () => ( { folder: loose, handle: null } ) } ) ).toBe( true );
+		expect( app.loadFile ).toHaveBeenLastCalledWith( loose, { element: 'Room/a' } );
+
+	} );
+
+	it( 'saves a folder\'s scene under the folder\'s name', async () => {
+
+		const identity = { name: 'Room', size: 2, lastModified: 5, sample: 'ab', files: 1 };
+		const app = fakeApp( storage, { source: { kind: 'local-folder', folder: identity, key: identityKey( identity ) } } );
+		const keeper = new SessionKeeper( app, { delay: 5 } );
+		await keeper.start();
+		keeper.setEnabled( true );
+		app.edits = 1;
+		keeper.touch();
+		await keeper.flush();
+		expect( ( await listSessions( storage ) )[ 0 ] ).toMatchObject( { title: 'Room' } );
+		keeper.dispose();
+
+	} );
+
 	it( 'reopens a catalog model from where the catalog has it now', async () => {
 
 		const app = fakeApp( storage );
@@ -256,6 +294,31 @@ describe( 'project files', () => {
 		expect( await fileIdentity( project.embeddedFile ) ).toEqual( identity );
 
 		await expect( readProject( new File( [ encoder.encode( 'nope' ) ], 'x.rayzee' ) ) ).rejects.toThrow();
+
+	} );
+
+	it( 'hands back the folder a project carries, each file a slice of it', async () => {
+
+		const identity = { name: 'Room', size: 7, lastModified: 5, sample: 'ab', files: 2 };
+		const manifest = {
+			format: PROJECT_FORMAT, v: 1, title: 'Room', embedded: null, embeddedFolder: 'sources/folder/', savedAt: 42,
+			session: { v: 1, title: 'Room', source: { kind: 'local-folder', folder: identity }, scene: { v: 1 }, panels: {} },
+		};
+
+		const chunks = [];
+		const zip = zipInto( { push: c => chunks.push( c ), drain: async () => {} } );
+		zip.addBytes( 'project.json', encoder.encode( JSON.stringify( manifest ) ) );
+		await zip.addBlob( 'sources/folder/Room/scene.gltf', new Blob( [ '{"a":1}' ] ) );
+		await zip.addBlob( 'sources/folder/Room/tex/a b.png', new Blob( [] ) );
+		await zip.finish();
+
+		const { embeddedFolder, embeddedFile } = await readProject( new File( chunks, 'room.rayzee' ) );
+		expect( embeddedFile ).toBeNull();
+		expect( embeddedFolder.name ).toBe( 'Room' );
+		expect( embeddedFolder.files.map( e => e.path ) ).toEqual( [ 'Room/scene.gltf', 'Room/tex/a b.png' ] );
+		expect( await embeddedFolder.files[ 0 ].file.text() ).toBe( '{"a":1}' );
+		expect( embeddedFolder.files[ 1 ].file.size ).toBe( 0 );
+		expect( embeddedFolder.files[ 0 ].file.lastModified ).toBe( 42 );
 
 	} );
 

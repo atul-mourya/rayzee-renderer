@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useStore } from "@/store";
 import { getApp } from "@/lib/appProxy";
+import { rememberFolder } from "@/lib/folders";
 import { useToast } from "@/hooks/use-toast";
 import {
 	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -41,7 +42,7 @@ const ArchiveElementDialog = () => {
 
 	if ( ! archivePrompt ) return null;
 
-	const { file, elements, totalBytes } = archivePrompt;
+	const { file, elements, totalBytes, handle } = archivePrompt;
 	const selectedBytes = elements.reduce( ( n, e ) => n + ( picked.has( e.prefix ) ? e.bytes : 0 ), 0 );
 	const risky = selectedBytes >= RISKY_BYTES;
 
@@ -71,6 +72,7 @@ const ArchiveElementDialog = () => {
 
 			app.pauseRendering = true;
 			await app.loadFile( file, { element: prefixes } );
+			rememberFolder( app.sceneSource?.key, handle );
 			close();
 			toast( {
 				title: "Loaded",

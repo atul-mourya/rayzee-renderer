@@ -368,7 +368,8 @@ The published build renders in plain Node on Dawn. `npm run bench:node` renders 
 way against the Chrome goldens (all 36 match, RMSE ≤ 0.0036); `-- --core` then renders it again with the renderer
 core alone, which must match the full engine byte for byte (36 of 36). It also renders a Draco and a KTX2 (Basis)
 glTF against uncompressed twins (`bench/node/fixtures/`, built by `bench/tools/make-compressed-fixtures.mjs`; three's
-decoders served from `node_modules`, no network) and runs `rayzee/examples/core-node.mjs` as a host would. A textured
+decoders served from `node_modules`, no network), `checker.glb` split into a folder (`.gltf`, `.bin`, a texture with a
+space in its name) that must match it exactly, and runs `rayzee/examples/core-node.mjs` as a host would. A textured
 glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block.
 - **No canvas ⇒ headless** (`new PathTracerApp( null )`, or `{ headless: true }`; `openHeadless` without
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
@@ -1111,6 +1112,19 @@ A failed load reports itself through `LOADING_UPDATE { failed: true, status }` f
 other load owns the status). ⚠️ Only the scene build used to: a failure in the parse left the app's
 overlay spinning on its last step with the File menu blocked. Drag-and-drop still resets the overlay in
 its own `finally`, so a failed drop shows only the console.
+
+### Loading a folder
+`loadFile( { files } )` loads a folder of files as the same folder zipped would load — `files` a folder picker's FileList
+(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`Processor/archiveFormats.js`, core)
+normalises it (sorted, hidden files and folders out, `name` the shared top folder, `flat` for loose files);
+`ArchiveImporter.loadFolder` opens it with `openFolder()` (`ArchiveReader.js`, the shape of `openTar` / `openZip`) and
+goes through the archive path (`_loadSource`), so pbrt scenes, the part prompt (`error.file` is the folder) and glTF /
+OBJ resolution all apply. Every non-pbrt archive entry is now a lazy Blob (`slice`), read only when a loader asks
+(`asBlob` / `textOf` / `bytesOf` there): a folder's unrelated files are never read. `sceneSource` is `local-folder`
+with `folderIdentity()` (path, size, date of every file, no reads). App: `lib/folders.js` reads drops (entries and,
+on Chrome, `FileSystemHandle`s), picks folders (`showDirectoryPicker`, else a `webkitdirectory` input) and keeps
+handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a session or a resumed render reopens the
+folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
 
 ### Loading part of a scene archive
 Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which

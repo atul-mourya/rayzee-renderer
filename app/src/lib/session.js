@@ -1,6 +1,7 @@
-import { acquireLock, heldLockNames, fileIdentity, sameIdentity, EngineEvents } from 'rayzee';
+import { acquireLock, heldLockNames, fileIdentity, sameIdentity, localFolder, EngineEvents } from 'rayzee';
 import { APP_AREAS } from '@/lib/storage';
 import { snapshotPanels, restorePanels } from '@/lib/panelState';
+import { rememberFolder } from '@/lib/folders';
 import { MODEL_FILES } from '@/Constants';
 import { useStore, usePathTracerStore, useLightStore, useCameraStore } from '@/store';
 
@@ -27,10 +28,11 @@ export function describeSource( source ) {
 
 }
 
-/** Whether a session's model can be reopened: from a link, or by the user opening the same file. */
+/** Whether a session's model can be reopened: from a link, or by the user opening the same file or folder. */
 export function isRestorable( source ) {
 
-	return ( source?.kind === 'url' && !! source.url ) || ( source?.kind === 'local-file' && !! source.file?.name );
+	return ( source?.kind === 'url' && !! source.url ) || ( source?.kind === 'local-file' && !! source.file?.name )
+		|| ( source?.kind === 'local-folder' && !! source.folder?.name );
 
 }
 
@@ -38,6 +40,7 @@ function titleOf( source, app ) {
 
 	if ( source?.catalog ) return source.catalog;
 	if ( source?.kind === 'local-file' ) return source.file.name;
+	if ( source?.kind === 'local-folder' ) return source.folder.name;
 	if ( source?.kind === 'url' ) return source.filename ?? decodeURIComponent( source.url.split( /[?#]/ )[ 0 ].split( '/' ).pop() || 'Model' );
 	return app.sceneModel?.name || 'Scene';
 
@@ -177,6 +180,26 @@ async function reopenFile( identity, role, pickFile ) {
 
 }
 
+/**
+ * The folder a session names, from the user or a folder this browser kept: `pickFile( identity, 'folder' )` resolves
+ * `{ folder, handle }` or null. Its contents may have changed since; a folder of another name is refused.
+ */
+async function reopenFolder( source, pickFile ) {
+
+	const picked = await pickFile( { ...source.folder, key: source.key, flat: !! source.flat }, 'folder' );
+	if ( ! picked ) return null;
+	if ( ! source.flat && localFolder( picked.folder ).name !== source.folder.name ) {
+
+		const error = new Error( `That is not the folder this session used — it expected "${source.folder.name}".` );
+		error.code = 'SESSION_FILE_MISMATCH';
+		throw error;
+
+	}
+
+	return picked;
+
+}
+
 /** Whether the model on screen is the one a session names, loaded the same way. */
 export function isSameSource( loaded, saved ) {
 
@@ -205,6 +228,16 @@ export async function openSource( app, source, { pickFile } ) {
 
 	}
 
+	if ( source.kind === 'local-folder' ) {
+
+		const picked = await reopenFolder( source, pickFile );
+		if ( ! picked ) return false;
+		await app.loadFile( picked.folder, part );
+		rememberFolder( app.sceneSource?.key, picked.handle );
+		return true;
+
+	}
+
 	const file = await reopenFile( source.file, 'model', pickFile );
 	if ( ! file ) return false;
 	await app.loadFile( file, part );
@@ -216,7 +249,8 @@ export async function openSource( app, source, { pickFile } ) {
  * Reopens a session: the model, then every edit, then the panels.
  * @param {Object} record - from {@link readSession} or a project file
  * @param {Object} options
- * @param {function(Object, string): Promise<?File>} options.pickFile - asks the user for a file
+ * @param {function(Object, string): Promise<?(File|Object)>} options.pickFile - asks the user for a file, or for a
+ *   folder (`role` 'folder', resolving `{ folder, handle }`)
  * @param {boolean} [options.reuseLoaded] - keep the model on screen when it is the session's and
  *   still as it loaded, rather than loading it twice
  * @returns {Promise<?{skipped: Array}>} null when the model's file was not opened

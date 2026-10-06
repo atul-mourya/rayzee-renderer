@@ -5,6 +5,7 @@ import { useStore, useAnimationStore } from "@/store";
 import { getApp } from "@/lib/appProxy";
 import { useToast } from "@/hooks/use-toast";
 import { restoreSession, getSessionKeeper } from "@/lib/session";
+import { recallFolder, folderAccess, readHandle, pickFolder, pickFiles } from "@/lib/folders";
 import { formatBytes } from "@/lib/storage";
 import {
 	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -70,15 +71,36 @@ const SessionDialog = () => {
 
 	};
 
-	const pickFile = ( identity, role ) => {
+	const ask = ( identity, role, handle = null ) => new Promise( resolve => {
 
-		if ( role === 'model' && request.embeddedFile ) return Promise.resolve( request.embeddedFile );
-		return new Promise( resolve => {
+		setPick( { identity, role, handle, resolve, error: null } );
+		setStep( 'pick' );
 
-			setPick( { identity, role, resolve, error: null } );
-			setStep( 'pick' );
+	} );
 
-		} );
+	const pickFile = async ( identity, role ) => {
+
+		if ( role === 'model' && request.embeddedFile ) return request.embeddedFile;
+		if ( role !== 'folder' ) return ask( identity, role );
+		if ( request.embeddedFolder ) return { folder: request.embeddedFolder, handle: null };
+
+		// Asked for straight away while the click on Open still counts; otherwise the pick step asks.
+		const handle = await recallFolder( identity.key );
+		if ( handle && await folderAccess( handle, { ask: !! navigator.userActivation?.isActive } ) ) {
+
+			try {
+
+				return { folder: await readHandle( handle ), handle };
+
+			} catch {
+
+				return ask( identity, role );
+
+			}
+
+		}
+
+		return ask( identity, role, handle );
 
 	};
 
@@ -181,6 +203,42 @@ const SessionDialog = () => {
 
 	};
 
+	const resolveFolder = ( picked ) => {
+
+		pick.resolve( picked.read().then( folder => ( { folder, handle: picked.handle } ) ) );
+		setPick( null );
+		setStep( 'working' );
+
+	};
+
+	const chooseFolder = async () => {
+
+		const picked = pick.identity.flat ? await pickFiles() : await pickFolder();
+		if ( ! picked ) return;
+		if ( ! pick.identity.flat && picked.name !== pick.identity.name ) {
+
+			setPick( { ...pick, error: `${picked.name} is not the folder this session used.` } );
+			return;
+
+		}
+
+		resolveFolder( picked );
+
+	};
+
+	const allowFolder = async () => {
+
+		if ( ! await folderAccess( pick.handle, { ask: true } ) ) {
+
+			setPick( { ...pick, error: `Access to ${pick.identity.name} was not allowed.` } );
+			return;
+
+		}
+
+		resolveFolder( { handle: pick.handle, read: () => readHandle( pick.handle ) } );
+
+	};
+
 	const skip = () => {
 
 		pick?.resolve( null );
@@ -225,7 +283,32 @@ const SessionDialog = () => {
 					</>
 				)}
 
-				{step === 'pick' && pick && (
+				{step === 'pick' && pick?.role === 'folder' && (
+					<>
+						<DialogHeader>
+							<DialogTitle>{pick.identity.flat ? 'Open the model files again' : 'Open the model folder again'}</DialogTitle>
+							<DialogDescription>
+								This session used <span className="font-medium text-foreground">{pick.identity.name}</span>
+								{Number.isFinite( pick.identity.files ) ? ` (${pick.identity.files} files, ${formatBytes( pick.identity.size )})` : ''}.
+								{pick.handle
+									? ' Allow access to it again to bring the edits back.'
+									: pick.identity.flat
+										? ' The browser does not keep files you open, so choose them again to bring the edits back.'
+										: ' The browser does not keep folders you open, so choose it again to bring the edits back.'}
+							</DialogDescription>
+						</DialogHeader>
+						{pick.error && <p className="text-sm text-destructive">{pick.error}</p>}
+						<DialogFooter className="gap-2">
+							<Button variant="outline" onClick={skip}>Skip</Button>
+							{pick.handle && <Button variant="outline" onClick={chooseFolder}>Choose another…</Button>}
+							{pick.handle
+								? <Button onClick={allowFolder}>Allow access</Button>
+								: <Button onClick={chooseFolder}>Choose {pick.identity.flat ? 'the files' : pick.identity.name}…</Button>}
+						</DialogFooter>
+					</>
+				)}
+
+				{step === 'pick' && pick && pick.role !== 'folder' && (
 					<>
 						<DialogHeader>
 							<DialogTitle>{pick.role === 'model' ? 'Open the model again' : 'Open the sky image again'}</DialogTitle>

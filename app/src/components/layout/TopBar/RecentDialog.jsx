@@ -90,7 +90,7 @@ const RecentDialog = ( { isOpen, onClose } ) => {
 							<div className="text-sm truncate">{item.record.title}</div>
 							<div className="text-xs text-muted-foreground">
 								{new Date( item.meta.savedAt ).toLocaleString()}
-								{item.record.source?.kind === 'local-file' ? ' · local file' : ''}
+								{item.record.source?.kind === 'local-file' ? ' · local file' : item.record.source?.kind === 'local-folder' ? ' · local folder' : ''}
 							</div>
 						</div>
 					</button>

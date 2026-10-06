@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Toaster } from "@/components/ui/toaster";
 import { useStore, useAssetsStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
+import { readDrop, loadFolder } from '@/lib/folders';
 
 const MainViewport = ( { mode = "preview" } ) => {
 
@@ -153,8 +154,8 @@ const MainViewport = ( { mode = "preview" } ) => {
 		dragCounter.current = 0;
 		setIsDragging( false );
 
-		const file = e.dataTransfer.files[ 0 ];
-		if ( ! file ) return;
+		const dropped = readDrop( e.dataTransfer );
+		if ( ! dropped ) return;
 
 		const app = getApp();
 		if ( ! app || ! app.assetLoader ) {
@@ -167,6 +168,29 @@ const MainViewport = ( { mode = "preview" } ) => {
 			return;
 
 		}
+
+		if ( dropped.read ) {
+
+			if ( app.isLoading ) {
+
+				toast( { title: "Still Loading", description: "Wait for the current load to finish, then drop the folder again." } );
+				return;
+
+			}
+
+			dropped.read()
+				.then( ( { folder, handle } ) => loadFolder( folder, { handle } ) )
+				.catch( error => {
+
+					useStore.getState().resetLoading();
+					toast( { title: "Could not read the folder", description: error?.message || String( error ), variant: "destructive" } );
+
+				} );
+			return;
+
+		}
+
+		const { file } = dropped;
 
 		if ( file.name.toLowerCase().endsWith( '.rayzee' ) ) {
 
