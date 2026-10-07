@@ -117,7 +117,7 @@ describeGPU( 'diffuse transmission lobe', () => {
 
 	it( 'moves the diffuse energy through the surface without creating or losing any', async () => {
 
-		for ( const look of [ { roughness: 1 }, { roughness: 0.5 }, { roughness: 0.3, clearcoat: 1 }, { roughness: 0.6, sheen: 0.5 } ] ) {
+		for ( const look of [ { roughness: 1 }, { roughness: 0.5 }, { roughness: 0.3, clearcoat: 1 }, { roughness: 0.6, sheen: 0.5 }, { roughness: 0.4, metalness: 0.6 } ] ) {
 
 			const opaque = await sample( renderer, { ...look, dt: 0 } );
 			const translucent = await sample( renderer, { ...look, dt: 0.4 } );

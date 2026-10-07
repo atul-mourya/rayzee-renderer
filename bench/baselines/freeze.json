@@ -1,10 +1,10 @@
 {
 	"spheres-gradient": {
-		"ratio": 1.924629862530603,
-		"plainRmse": 0.0026150130858696805,
-		"frozenRmse": 0.005032932275973091,
+		"ratio": 1.6095807832327451,
+		"plainRmse": 0.0032560669657627824,
+		"frozenRmse": 0.005240902817010727,
 		"samples": 64,
-		"engagedFraction": 0.04705810546875
+		"engagedFraction": 0.0400848388671875
 	},
 	"cornell-emissive": {
 		"ratio": 1.1388186985905422,

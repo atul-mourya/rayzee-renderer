@@ -108,9 +108,9 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 		} ).ElseIf( material.roughness.greaterThan( 0.0 ), isotropic );
 		else If( material.roughness.greaterThan( 0.0 ), isotropic );
 
-		// Compensation factor and total directional albedo from the same table fetch.
+		// Metalness 0: the diffuse lobe loses only the non-metal share's albedo; (1 − metalness) below removes the metal's.
 		const dfg = DFGResult.wrap( evaluateSpecularDFG(
-			bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, iridF, material.iridescence, F0,
+			bf.f0, bf.f90, bf.eta, bf.F0m, float( 0.0 ), iridF, material.iridescence, F0,
 			dots.NoV, material.roughness,
 		) );
 		const specular = ( deltaOnly ? F : specularSS ).mul( dfg.compensation );
@@ -210,8 +210,9 @@ export const evaluateDiffuseTransmission = Fn( ( [ material, NoV ], builder ) =>
 				F0.assign( mix( F0, iridF, material.iridescence ) );
 
 			} );
+			// Metalness 0, as for the reflected diffuse lobe.
 			const dfg = DFGResult.wrap( evaluateSpecularDFG(
-				bf.f0, bf.f90, bf.eta, bf.F0m, material.metalness, iridF, material.iridescence, F0,
+				bf.f0, bf.f90, bf.eta, bf.F0m, float( 0.0 ), iridF, material.iridescence, F0,
 				NoV, material.roughness,
 			) );
 			kD.mulAssign( vec3( 1.0 ).sub( dfg.E_total ) );
