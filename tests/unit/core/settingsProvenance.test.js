@@ -62,9 +62,9 @@ describe( 'settings provenance', () => {
 
 describe( 'engine defaults', () => {
 
-	it( 'ships one tuning: placeholder area lights at a tenth, the HDRI unrotated, AgX at neutral saturation', () => {
+	it( 'ships one tuning: placeholder area lights at their authored power, the HDRI unrotated, AgX at neutral saturation', () => {
 
-		expect( ENGINE_DEFAULTS.areaLightIntensityScale ).toBe( 0.1 );
+		expect( ENGINE_DEFAULTS.areaLightIntensityScale ).toBe( 1 );
 		expect( ENGINE_DEFAULTS.environmentRotation ).toBe( 0 );
 		expect( DEFAULT_VIEW ).toBe( AgXToneMapping );
 		expect( ENGINE_DEFAULTS.saturation ).toBe( 1.0 );
@@ -80,10 +80,10 @@ describe( 'engine defaults', () => {
 	it( 'keeps areaLightIntensityScale as a setting with provenance, for the loader to read', () => {
 
 		const settings = new RenderSettings();
-		settings.set( 'areaLightIntensityScale', 1, { silent: true } );
+		settings.set( 'areaLightIntensityScale', 0.5, { silent: true } );
 
-		expect( settings.get( 'areaLightIntensityScale' ) ).toBe( 1 );
-		expect( settings.getEffective().areaLightIntensityScale ).toMatchObject( { value: 1, source: SETTING_SOURCE.HOST, routed: true } );
+		expect( settings.get( 'areaLightIntensityScale' ) ).toBe( 0.5 );
+		expect( settings.getEffective().areaLightIntensityScale ).toMatchObject( { value: 0.5, source: SETTING_SOURCE.HOST, routed: true } );
 		expect( () => settings.applyAll() ).not.toThrow();
 
 	} );

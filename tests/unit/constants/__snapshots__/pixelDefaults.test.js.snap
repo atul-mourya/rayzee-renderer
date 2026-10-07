@@ -7,7 +7,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > eng
   "anamorphicRatio": 1,
   "aperture": 5.6,
   "apertureScale": 1,
-  "areaLightIntensityScale": 0.1,
+  "areaLightIntensityScale": 1,
   "backgroundBlurSamples": 8,
   "backgroundBlurriness": 0,
   "backgroundColor": "#000000",

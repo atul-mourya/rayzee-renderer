@@ -455,9 +455,9 @@ the strings, so never rename or repurpose one.
   builds its store from those plus its own keys and menus (`app/src/Constants.js`: `CAMERA_PRESETS`, `SKY_PRESETS`,
   `CAMERA_RANGES`; its store keeps the names `bounces`, `debugMode` and `toneMapping`, which saved sessions carry).
   The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI unrotated,
-  `dofMode: 'look'`, glTF placeholder area lights at `areaLightIntensityScale` 0.1) and a host sets otherwise through
-  `settings` — a batch renderer wanting the old `physical` sets `areaLightIntensityScale: 1` and `dofMode: 'physical'`,
-  before the model loads. The `profile` constructor option throws, so a farm cannot keep passing it unnoticed.
+  `dofMode: 'look'`, glTF placeholder area lights at their authored power, `areaLightIntensityScale` 1) and a host sets
+  otherwise through `settings` — a batch renderer wanting the old `physical` sets `dofMode: 'physical'`, before the
+  model loads. The `profile` constructor option throws, so a farm cannot keep passing it unnoticed.
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
   (`Processor/MaterialPacking.js`) is the only writer of the material block, for the scene upload
