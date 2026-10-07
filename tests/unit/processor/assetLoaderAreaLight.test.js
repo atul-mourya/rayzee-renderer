@@ -8,11 +8,12 @@ import { describe, expect, it } from 'vitest';
 import { Group, Object3D, PerspectiveCamera, RectAreaLight, Scene, Vector3 } from 'three';
 import { AssetLoader } from '@/core/Processor/AssetLoader.js';
 import { LightSerializer } from '@/core/Processor/LightSerializer.js';
+import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
 const newLoader = scale => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls(), { areaLightIntensityScale: () => scale } );
-const SCALE = 0.1; // anything but 1, so applying it shows
+const DEFAULT_SCALE = ENGINE_DEFAULTS.areaLightIntensityScale;
 
 // Mirrors the shipped assets: a 70 x 70 placeholder authored in cm under a 0.01 node scale.
 function importPlaceholder( { lightScale = 1, scale = [ 0.01, 0.01, 0.01 ], ...userData } = {} ) {
@@ -76,8 +77,8 @@ describe( 'AssetLoader — RectAreaLightPlaceholder import', () => {
 
 	it( 'applies areaLightIntensityScale on top, and nothing else', () => {
 
-		const dimmed = importPlaceholder( { lightScale: SCALE } );
-		expect( serializedRadiance( dimmed ) ).toBeCloseTo( 200 * SCALE, 6 );
+		const dimmed = importPlaceholder( { lightScale: DEFAULT_SCALE } );
+		expect( serializedRadiance( dimmed ) ).toBeCloseTo( 200 * DEFAULT_SCALE, 6 );
 
 	} );
 
@@ -144,14 +145,14 @@ describe( 'AssetLoader — host-provided RectAreaLight', () => {
 
 	it( 'takes no viewer fudge — that tunes the placeholder convention only', () => {
 
-		expect( serializedRadiance( adoptHostLight( { lightScale: SCALE } ) ) ).toBeCloseTo( 200, 6 );
+		expect( serializedRadiance( adoptHostLight( { lightScale: DEFAULT_SCALE } ) ) ).toBeCloseTo( 200, 6 );
 
 	} );
 
 	it( 'agrees with the placeholder path at equal authored radiance', () => {
 
-		const host = serializedRadiance( adoptHostLight( { intensity: 200 * SCALE } ) );
-		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { lightScale: SCALE } ) ), 6 );
+		const host = serializedRadiance( adoptHostLight( { intensity: 200 * DEFAULT_SCALE } ) );
+		expect( host ).toBeCloseTo( serializedRadiance( importPlaceholder( { lightScale: DEFAULT_SCALE } ) ), 6 );
 
 	} );
 

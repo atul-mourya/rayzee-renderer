@@ -210,7 +210,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( options.profile !== undefined ) {
 
 			throw new Error( 'the `profile` option was removed: the engine has one set of defaults. For the old \'physical\' '
-				+ 'profile set `dofMode: \'physical\'` through `settings`.' );
+				+ 'profile set `areaLightIntensityScale: 1` and `dofMode: \'physical\'` through `settings`.' );
 
 		}
 

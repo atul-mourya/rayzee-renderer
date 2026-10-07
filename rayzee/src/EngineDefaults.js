@@ -77,7 +77,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 
 	// Read when a model loads
 	maxTextureSize: 4096, // longest edge of a material texture; clamped to the hardware ceiling
-	areaLightIntensityScale: 1, // power of a glTF model's placeholder area lights (RectAreaLight extras)
+	areaLightIntensityScale: 0.1, // power of a glTF model's placeholder area lights (RectAreaLight extras)
 
 	// Debug
 	visMode: 0, // a debug view (TSL/Debugger.js); 0 renders normally

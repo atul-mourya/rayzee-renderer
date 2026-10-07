@@ -37,7 +37,7 @@ describe( 'getProvenance', () => {
 	it( 'carries the area-light scale with the other settings', () => {
 
 		expect( new PathTracerApp( null ).getProvenance().settings.areaLightIntensityScale )
-			.toMatchObject( { value: 1, source: 'default', routed: true } );
+			.toMatchObject( { value: 0.1, source: 'default', routed: true } );
 
 	} );
 

@@ -466,7 +466,7 @@ Key settings:
 | `enableEnvironment` | `boolean` | true | Use environment lighting |
 | `environmentIntensity` | `number` | 1.0 | Environment light strength |
 | `environmentRotation` | `number` | 0 | Environment Y-rotation (degrees); 0 shows the HDRI as authored, as Blender's unmapped world does |
-| `areaLightIntensityScale` | `number` | 1 | Power of a glTF model's placeholder area lights (RectAreaLight extras), read when the model loads, so set it first; 1 is the authored power |
+| `areaLightIntensityScale` | `number` | 0.1 | Power of a glTF model's placeholder area lights (RectAreaLight extras), read when the model loads, so set it first; 1 is the authored power |
 | `maxTextureSize` | `number` | 4096 | Longest edge of a material texture, read when a model loads (clamped to the hardware ceiling); `setMaxTextureSize()` applies it to the current scene too |
 | `wavefrontSortMaterials` | `boolean` | true | Sort rays by material before shading, above 8 materials; read when the shaders next build |
 | `showBackground` | `boolean` | true | Show the environment as a visible backdrop for camera-miss rays (vs. a solid/transparent background) |
@@ -1255,9 +1255,9 @@ unavailable or fails, the CPU does it instead: the result's `toneMappedOn` says 
 Constructing `PathTracerApp` yourself instead: pass `strict: true`; storage is then off unless you
 set it. Outside Chrome, pass `hostMemoryGB`.
 
-The engine has one set of defaults, the viewer's. For lens-accurate depth of field, set `dofMode: 'physical'` —
-through `settings` here, or `engine.settings` before loading the model. glTF placeholder area lights render at their
-authored power (`areaLightIntensityScale: 1`).
+The engine has one set of defaults, the viewer's. For lens-accurate depth of field and glTF placeholder area
+lights at their authored power, set `dofMode: 'physical'` and `areaLightIntensityScale: 1` — through `settings`
+here, or `engine.settings` before loading the model.
 
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
