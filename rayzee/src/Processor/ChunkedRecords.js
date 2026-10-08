@@ -241,9 +241,10 @@ export class ChunkedRecords {
 
 			if ( ! this._spilled.has( k ) ) continue;
 			const lanes = Math.min( this.recordsPerChunk, this.recordCount - k * this.recordsPerChunk ) * this.lanesPerRecord;
-			const bytes = await this._store.read( k, lanes * this.LaneType.BYTES_PER_ELEMENT );
 			const chunk = allocChunk( this.LaneType, lanes, this.shared );
-			new Uint8Array( chunk.buffer, chunk.byteOffset, chunk.byteLength ).set( new Uint8Array( bytes ) );
+			const target = new Uint8Array( chunk.buffer, chunk.byteOffset, chunk.byteLength );
+			if ( this._store.readInto ) await this._store.readInto( k, target );
+			else target.set( new Uint8Array( await this._store.read( k, target.byteLength ) ) );
 			this.chunks[ k ] = chunk;
 			for ( const v of this._liveViews() ) v.chunks[ k ] = new v.LaneType( chunk.buffer, chunk.byteOffset, chunk.byteLength / v.LaneType.BYTES_PER_ELEMENT );
 			this._spilled.delete( k );

@@ -29,7 +29,7 @@ import { PackedToneMapper } from './Processor/ToneMapGPU.js';
 import { BasicColor } from './Color/BasicColor.js';
 import { setActiveColorManagement } from './Color/ActiveColor.js';
 import { getViewTransform, DEFAULT_VIEW } from './Color/ViewTransforms.js';
-import { AssetLoader } from './Processor/AssetLoader.js';
+import { AssetLoader, limitEnvironmentWidth } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
 import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './Processor/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
@@ -53,6 +53,8 @@ const partOf = ( { element, pbrtEntry } = {} ) => ( {
 // One app per canvas — auto-dispose a prior owner if the caller double-
 // instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
 const _appsByCanvas = new WeakMap();
+// Quiet time after an edit before memory spill puts back on disk what the edit read back.
+const RESPILL_AFTER_MS = 30_000;
 
 const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
 const _warnedEvents = new Set();
@@ -166,10 +168,11 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {false|'auto'|Object} [options.storage] - on-disk storage; defaults to
 	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. 'auto' opens it through
 	 *   {@link setStorageOpener} (rayzee/addons/storage); a host-supplied StorageManager stays the host's to dispose.
-	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
-	 *   on the GPU, move its triangle records, BLAS nodes and three.js geometry to disk (see
-	 *   {@link ensureSceneResident}); clicking picks nothing until the geometry is read back. An environment wider
-	 *   than SPILL_ENVIRONMENT_WIDTH is box-filtered down. Needs storage; skipped for animated scenes.
+	 * @param {'auto'|boolean} [options.memorySpill='auto'] - build a static scene through disk: its triangle records,
+	 *   BLAS nodes and three.js geometry leave memory as they are built (see {@link ensureSceneResident}), scene archives
+	 *   load past the default budgets, and an environment wider than SPILL_ENVIRONMENT_WIDTH is box-filtered down.
+	 *   'auto' does so only for a scene whose in-memory estimate passes SAFE_SCENE_BYTES; true for every scene, false
+	 *   never. Needs storage; skipped for animated scenes. See {@link setMemorySpill}.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -200,7 +203,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._hostMemoryGB = options.hostMemoryGB;
 		this._storageOption = options.storage;
 		this._storageOpener = null;
-		this._memorySpill = options.memorySpill === true;
+		this._memorySpill = options.memorySpill === true || options.memorySpill === false ? options.memorySpill : 'auto';
+		this._spillPlan = null;
 		/** @type {?Object} on-disk storage (a StorageManager), null when off or unavailable */
 		this.storage = null;
 		this._storageRelease = null;
@@ -710,6 +714,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		this.stopAnimation();
 		clearTimeout( this._resizeDebounceTimer );
 		this._resizeDebounceTimer = null;
+		clearTimeout( this._respillTimer );
+		this._respillTimer = null;
 
 		this._removeTrackedListeners();
 		setStatusCallback( null );
@@ -1177,6 +1183,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
 
 		this._loadingInProgress = true;
+		// The previous scene's sky width must not narrow this one's while it loads.
+		if ( this.assetLoader ) this.assetLoader.maxEnvironmentWidth = this._memorySpill === true ? SPILL_ENVIRONMENT_WIDTH : 0;
 
 		try {
 
@@ -1191,6 +1199,8 @@ export class RayzeeRenderer extends EventDispatcher {
 			// (The old primary was already released by releaseTargetModel() in loadFn.)
 			this._clearAppendedModels();
 			this._modelReplaced();
+			// Before the scene's own environment starts loading: a spilling scene's is narrowed as it decodes.
+			this._planSpill();
 			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this._maybeSpill();
 			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
@@ -1217,6 +1227,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		} finally {
 
 			this._loadingInProgress = false;
+			this._spillPlan = null;
 
 		}
 
@@ -1447,10 +1458,21 @@ export class RayzeeRenderer extends EventDispatcher {
 		updateLoading( { status: "Transferring data to GPU...", progress: 86 } );
 		await new Promise( r => setTimeout( r, 0 ) );
 		timer.start( 'GPU data transfer' );
+		await this._sdf.uploadChunks( this._chunkUploader() );
 
 		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
 		// during the BVH build, and the snapshot is then a disposed texture.
 		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, hdri(), { keepUserLights } ) ) return false;
+
+		// A bucket at a time, each awaited (PathTracerStage#drainUploads): left to the first frame, three.js sends every
+		// layer at once, and Chrome keeps a pool that size (724 MB for 24155522.glb).
+		for ( const texture of [ ...( this._sdf.srgbBucketTextures ?? [] ), ...( this._sdf.linearBucketTextures ?? [] ) ] ) {
+
+			if ( ! texture ) continue;
+			this.renderer.initTexture( texture );
+			await this.stages.pathTracer.drainUploads();
+
+		}
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -1726,33 +1748,112 @@ export class RayzeeRenderer extends EventDispatcher {
 	// Dynamic cameras (add / remove)
 	// ═══════════════════════════════════════════════════════════════
 
-	/** Triangle and placement budgets for a scene archive: raised when the build can spill. @private */
+	/** How scenes use the disk: 'auto', true or false (see the constructor's `memorySpill`). */
+	get memorySpill() {
+
+		return this._memorySpill;
+
+	}
+
+	/** Sets {@link memorySpill}; the next load or rebuild follows it. */
+	setMemorySpill( mode ) {
+
+		this._memorySpill = mode === true || mode === false ? mode : 'auto';
+
+	}
+
+	/** Whether the current scene was built through disk. */
+	get sceneSpilled() {
+
+		return !! this._sdf?.spilling;
+
+	}
+
+	/** Whether the model's three.js geometry is on disk, so picking skips it until {@link ensureSceneResident}. */
+	get geometryOnDisk() {
+
+		return this._sdf?.geometryOnDisk === true;
+
+	}
+
+	/**
+	 * Triangle and placement budgets for a scene archive: raised whenever a build could spill, since the preflight
+	 * refuses what cannot fit either way. @private
+	 */
 	_sceneBudgets( options ) {
 
-		if ( ! this._memorySpill || ! this.storage ) return options;
+		if ( this._memorySpill === false || ! this.storage ) return options;
 		return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
 
 	}
 
 	/**
-	 * Experimental memory spill, during the build: static scenes only, since a deforming clip
-	 * refits every frame. @private
+	 * Decides whether the scene about to be built spills: static scenes only, since a deforming clip refits every
+	 * frame. Held for the build that follows ({@link _progressiveSpill}). @private
 	 */
-	_progressiveSpill() {
+	_planSpill() {
 
-		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return null;
-		const stage = this.stages.pathTracer;
-		return { storage: this.storage, uploader: ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records ) };
+		const offered = this._memorySpill !== false && !! this.storage && ( this.assetLoader?.animations?.length ?? 0 ) === 0;
+		const spill = offered && ( this._memorySpill === true || this._sdf.needsSpill( this.meshScene ) );
+		if ( this.assetLoader ) this.assetLoader.maxEnvironmentWidth = spill ? SPILL_ENVIRONMENT_WIDTH : 0;
+		// An importer installs its own sky at the end of its read, before this.
+		const sky = spill ? this.meshScene?.environment : null;
+		const image = sky?.image;
+		if ( image ) limitEnvironmentWidth( sky, SPILL_ENVIRONMENT_WIDTH );
+		if ( sky && sky.image !== image ) {
+
+			// three.js keeps an uploaded texture's size, so the old one goes.
+			sky.dispose();
+			sky.needsUpdate = true;
+
+		}
+
+		if ( spill && this._memorySpill === 'auto' ) log.info( 'scene is past the in-memory line: building it through disk' );
+		this._spillPlan = spill;
+		return spill;
 
 	}
 
-	/** Experimental memory spill for a static scene, in the background. @private */
+	/** @private */
+	_progressiveSpill() {
+
+		const spill = this._spillPlan ?? this._planSpill();
+		this._spillPlan = null;
+		return spill ? { storage: this.storage, uploader: this._chunkUploader() } : null;
+
+	}
+
+	/** @private */
+	_chunkUploader() {
+
+		const stage = this.stages.pathTracer;
+		return ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records );
+
+	}
+
+	/** The rest of a spilling scene's spill, once it is on the GPU, in the background. @private */
 	_maybeSpill() {
 
-		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return;
-		this._sdf?.spillToDisk( this.storage )
+		if ( ! this._sdf?.spilling || ! this.storage ) return;
+		this._sdf.spillAfterLoad().catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+		this._sdf.spillToDisk( this.storage )
 			.then( result => result && this.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
 			.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+
+	}
+
+	/** Once edits have been quiet for {@link RESPILL_AFTER_MS}, puts back on disk what they read back. @private */
+	_scheduleRespill() {
+
+		if ( ! this._sdf?.spilling ) return;
+		clearTimeout( this._respillTimer );
+		this._respillTimer = setTimeout( () => {
+
+			this._respillTimer = null;
+			this._sdf?.respill().catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+
+		}, RESPILL_AFTER_MS );
+		this._respillTimer.unref?.();
 
 	}
 
@@ -1889,15 +1990,26 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * drags along any other object sharing the same geometry.
 	 *
 	 * @param {number[]} meshIndices - indices into {@link sceneMeshes}
-	 * @returns {{ refitTimeMs: number, placements: number }}
+	 * @returns {?{ refitTimeMs: number, placements: number }} null when the move waits for a spilled scene's data
 	 */
 	updateMeshTransforms( meshIndices ) {
+
+		// A spilled scene's matrix lists, TLAS or copy records are on disk: the move lands once they are back.
+		if ( this._sdf?.needsPageInForMove( meshIndices ) ) {
+
+			this._sdf.ensureMovable( meshIndices )
+				.then( () => this.updateMeshTransforms( meshIndices ) )
+				.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading instance matrices back failed: ${error.message}` ) );
+			return null;
+
+		}
 
 		this._notePlacementsMoving( meshIndices );
 		const result = this._sdf.updateMeshTransforms( meshIndices );
 
-		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange(), ...this._sdf.takeMovedRecordRanges() ] );
+		this.stages.pathTracer.updateBufferRanges( [], this._sdf.takeMoveRanges() );
 		this.reset( false, { motion: true } );
+		this._scheduleRespill();
 
 		return result;
 
@@ -3202,9 +3314,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setMeshVisibility( meshIndex, visible ) {
 
-		this.stages.pathTracer?.updateMeshVisibility( meshIndex, visible );
-		this._refreshEmissiveForVisibility();
-		this.reset();
+		this._whenTLASEditable( () => this.stages.pathTracer?.updateMeshVisibility( meshIndex, visible ) );
 
 	}
 
@@ -3214,9 +3324,25 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	updateAllMeshVisibility() {
 
-		this.stages.pathTracer?.updateAllMeshVisibility();
-		this._refreshEmissiveForVisibility();
-		this.reset();
+		this._whenTLASEditable( () => this.stages.pathTracer?.updateAllMeshVisibility() );
+
+	}
+
+	/** Applies a visibility edit, then resets — once a spilled TLAS is back in memory. @private */
+	_whenTLASEditable( edit ) {
+
+		const apply = () => {
+
+			edit();
+			this._refreshEmissiveForVisibility();
+			this.reset();
+			this._scheduleRespill();
+
+		};
+
+		const ready = this._sdf?.whenTLASEditable();
+		if ( ! ready ) return apply();
+		ready.then( apply ).catch( error => this._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading the TLAS back failed: ${error.message}` ) );
 
 	}
 
@@ -3636,7 +3762,6 @@ export class RayzeeRenderer extends EventDispatcher {
 		} );
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
-		if ( this._memorySpill ) this.assetLoader.maxEnvironmentWidth = SPILL_ENVIRONMENT_WIDTH;
 
 	}
 

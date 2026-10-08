@@ -12,10 +12,49 @@ const AREA_TEXT = {
 	archives: { label: 'Unpacked archives', hint: 'Compressed scene archives kept unpacked, and archive indexes' },
 	scenes: { label: 'Scene cache', hint: 'Built scenes that reopen without rebuilding' },
 	cdf: { label: 'Sky sampling tables', hint: 'Lighting tables precomputed for environment maps' },
-	spill: { label: 'Memory spill', hint: 'Scene data moved out of memory while a large scene is open (experimental)' },
+	spill: { label: 'Memory spill', hint: 'Scene data moved out of memory while a large scene is open' },
 };
 
 const ORDER = [ 'renders', 'sessions', 'projects', 'jobs', 'downloads', 'archives', 'scenes', 'cdf', 'spill' ];
+
+const MEMORY_SPILL_KEY = 'rayzee-memory-spill';
+const MEMORY_SPILL_MODES = { auto: 'auto', 1: true, 0: false };
+
+/** How large scenes use the disk ('auto', true or false), as this viewer last chose. */
+export function memorySpillPreference() {
+
+	try {
+
+		return MEMORY_SPILL_MODES[ localStorage.getItem( MEMORY_SPILL_KEY ) ] ?? 'auto';
+
+	} catch {
+
+		return 'auto';
+
+	}
+
+}
+
+export function setMemorySpillPreference( mode ) {
+
+	try {
+
+		if ( mode === 'auto' ) localStorage.removeItem( MEMORY_SPILL_KEY );
+		else localStorage.setItem( MEMORY_SPILL_KEY, mode ? '1' : '0' );
+
+	} catch { /* not remembered */ }
+
+	getApp()?.setMemorySpill( mode );
+
+}
+
+/** A sentence for a load's notice when the scene was built through disk; '' otherwise. */
+export function spillNote( app ) {
+
+	if ( ! app?.sceneSpilled ) return '';
+	return ` Built through disk to save memory${app.geometryOnDisk ? '; clicking to select objects is off for this scene' : ''}.`;
+
+}
 
 /** @returns {?import('rayzee').StorageManager} */
 export function getStorage() {

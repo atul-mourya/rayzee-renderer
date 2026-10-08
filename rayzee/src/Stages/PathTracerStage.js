@@ -680,6 +680,8 @@ export class PathTracerStage extends RenderStage {
 		this._triangleRecordCount = records;
 		this.triangleCount = triangleCount;
 		this._uploadTriangles( 0, records, { skipChunks: pre?.uploaded } );
+		// Adopted once: a later call with these records uploads them again, in the layout it asks for.
+		if ( pre ) chunked._gpuUpload = null;
 
 		log.debug( `${fmt.n( this.triangleCount )} triangles (storage buffer)` );
 
@@ -771,7 +773,7 @@ export class PathTracerStage extends RenderStage {
 	 * chunk into it, so a build can hand chunks over as it finishes them and let them go (the
 	 * memory spill). setTriangleData / setBVHData then adopt that buffer rather than upload again.
 	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
-	 * @returns {function(number): void} uploads chunk k from `records.chunks[ k ]`
+	 * @returns {function(number): Promise<void>} uploads chunk k from `records.chunks[ k ]`; resolves with {@link drainUploads}
 	 */
 	createChunkUploader( records ) {
 
@@ -786,8 +788,21 @@ export class PathTracerStage extends RenderStage {
 			const chunk = records.chunks[ k ];
 			parts.write( backend, k * lanesPerChunk, chunk, 0, chunk.length );
 			uploaded.add( k );
+			return this.drainUploads();
 
 		};
+
+	}
+
+	/**
+	 * Resolves once the GPU has taken every upload so far. Chrome passes each upload through a shared memory pool that
+	 * grows to the most ever sent before the GPU caught up and is kept until the page closes (2.2 GB on the Moana
+	 * island); awaiting this after each chunk keeps it to one. Measured: 1 GB in 64 MB writes left 1 GB behind, paced
+	 * 64 MB, in the same time.
+	 */
+	drainUploads() {
+
+		return this.renderer.backend.device.queue.onSubmittedWorkDone();
 
 	}
 
@@ -795,7 +810,7 @@ export class PathTracerStage extends RenderStage {
 	 * createChunkUploader for triangle records: both GPU buffers are allocated now and each
 	 * chunk is split into them as it is handed over.
 	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
-	 * @returns {function(number): void}
+	 * @returns {function(number): Promise<void>}
 	 */
 	createTriangleChunkUploader( records, { textureCoordinates = true } = {} ) {
 
@@ -810,6 +825,7 @@ export class PathTracerStage extends RenderStage {
 			const count = Math.min( perChunk, records.recordCount - first );
 			this._uploadTriangles( first, count, { source: records.chunks[ k ], geoParts: geo, shadeParts: shade } );
 			uploaded.add( k );
+			return this.drainUploads();
 
 		};
 
@@ -923,6 +939,7 @@ export class PathTracerStage extends RenderStage {
 		this._bvhParts = parts;
 		this._bvhRecords = chunked;
 		if ( chunked ) this._uploadChunked( parts, chunked );
+		if ( chunked ) chunked._gpuUpload = null;
 
 		this.bvhNodeCount = Math.floor( vec4Count / BVH_VEC4_PER_NODE );
 		log.debug( `${fmt.n( this.bvhNodeCount )} BVH nodes (storage buffer)` );
@@ -1007,9 +1024,13 @@ export class PathTracerStage extends RenderStage {
 	 */
 	updateMeshVisibility( meshIndex, visible ) {
 
-		if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
-		this._patchGroupNodes();
-		this._flushBVHEdits();
+		this._whenTLASResident( () => {
+
+			if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
+			this._patchGroupNodes();
+			this._flushBVHEdits();
+
+		} );
 
 	}
 
@@ -1021,8 +1042,30 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! this._meshRefs || ! this._instanceTable ) return;
 
-		this._patchVisibilityFromMeshes( this._meshRefs );
-		this._flushBVHEdits();
+		this._whenTLASResident( () => {
+
+			this._patchVisibilityFromMeshes( this._meshRefs );
+			this._flushBVHEdits();
+
+		} );
+
+	}
+
+	/**
+	 * Runs `edit` once the TLAS is in memory: a spilling build of clustered copies leaves it on disk (SceneProcessor
+	 * `_spillTLAS`), and the first edit reads it back, where it then stays.
+	 * @private
+	 */
+	_whenTLASResident( edit ) {
+
+		const records = this._bvhRecords, table = this._instanceTable;
+		if ( ! records || ! table || records.isResident( 0, table.blasBase ) ) return edit();
+		this._tlasReading ??= records.ensureResident( 0, table.blasBase ).finally( () => {
+
+			this._tlasReading = null;
+
+		} );
+		this._tlasReading.then( edit );
 
 	}
 

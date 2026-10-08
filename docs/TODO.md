@@ -3,6 +3,7 @@
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
+- displacement maps dont seem to work properly. test with polyhaven material on ground plane
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
   
 
@@ -227,8 +228,9 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **Light linking** — Moana's palm keys light only the palms (`collection:lightLink`); here every light lights everything.
 - [ ] **Camera dome** — Moana's `sky_dome_cam_llc` (islandsunVIS.png) is the background, the lighting dome another image;
   the engine has one environment.
-- [ ] **The whole island needs memory spill** — without it the budget is 45M and a quarter of the meshes are cut. Meshes
-  past a budget are still cut in read order.
+- [ ] **Meshes past a budget are still cut in read order** — with storage the budgets are 120M / 60M and the whole island
+  fits (the spill turns on by itself); without storage (a private window) the budget is 45M and a quarter of the meshes
+  are cut.
 - [ ] **Ocean** — clear turquoise in RenderMan from `deepWaterVolume.vdb` and PxrSurface's diffuse transmission; dark here.
 - [ ] **Scene cache** — the pbrt importer stores its parsed graph (`_storeGraph`); USD rebuilds every time.
 - [ ] Skeletal animation, NURBS and points prims, UDIM textures, and `.usdz` through this importer.
@@ -241,8 +243,21 @@ once looked at. How it should have been built so they could not happen:
   ~11 B each): 11M extra on the whole island, ~0.8 GB of CPU memory. Store the matrix once a copy.
 - [ ] **glTF instancing** — EXT_mesh_gpu_instancing gives each primitive its own matrix attribute, so its parts do not
   group; group equal matrix lists by content too.
-- [ ] **Placements' memory** — ~330 B a copy across the CPU table, the TLAS copy kept resident and the GPU TLAS: the
-  whole island's 39.9M copies alone need ~13 GB. A compact instancer level (position, rotation, scale) is the lever.
+- [ ] **Placements' memory** — copy clusters (~80 B a copy on the GPU against 128) and the after-load spill (matrix lists,
+  TLAS with its copy records and order maps on disk) took the island's resident CPU data from 6.9 to 2.2 GB; what stays
+  is the table's columns (~1.2 GB, ~25 B a placement). A compact instancer level (position, rotation, scale) is the lever
+  below that.
+- [ ] **A move on a spilled island reads 3.5 GB back** (3.3 s in Chrome): every matrix list and the whole TLAS, though a
+  move needs only the clusters its copies share and their members' lists. A selective restore would cut it.
+- [ ] **SharedArrayBuffer chunks outlive a respill**: ~2 GB of TLAS and copy-record chunks wait for Chrome's next major
+  collection after a move (non-shared buffers are freed at once with `transfer( 0 )`). Paging edits into non-shared chunks
+  would need every SAB reader (the refit worker) to cope.
+- [ ] **Picking and the selection outline on a spilled giant**: a model whose geometry stays on disk (1 GB and up) selects
+  nothing by click and outlines nothing. The outline could read back just the selected mesh's arrays (and matrix list);
+  picking needs a BVH-backed raycast rather than three.js's, which tested 51M empty copies for seconds.
+- [ ] **One big upload is one big block**: Chrome keeps a shared memory block the size of each upload in flight for the
+  page's life. Chunk stores and texture buckets are paced now; the environment still goes in one `writeTexture` (392 MB
+  on the island) and a texture bucket's layers in one burst — splitting those needs a hook into three.js's upload.
 
 ---
 

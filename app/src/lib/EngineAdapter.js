@@ -6,6 +6,8 @@
  * replace this adapter with your own.
  */
 import { EngineEvents } from 'rayzee';
+import { toast } from '@/hooks/use-toast';
+import { spillNote } from '@/lib/storage';
 
 /**
  * Subscribe to engine events and dispatch corresponding Zustand store updates.
@@ -188,7 +190,13 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.ORTHO_HEIGHT_UPDATED, ( e ) => useCameraStore.getState().setOrthoHeight( e.height ) );
 
-	on( EngineEvents.MODEL_LOADED, () => useCameraStore.getState().syncModelSize( { resetUnits: true } ) );
+	on( EngineEvents.MODEL_LOADED, () => {
+
+		useCameraStore.getState().syncModelSize( { resetUnits: true } );
+		// A caller's own notice after the load replaces this one (one at a time) and carries the same note.
+		if ( engine.sceneSpilled ) toast( { title: "Large scene", description: spillNote( engine ).trim() } );
+
+	} );
 
 	on( EngineEvents.TIMELINE_CHANGED, () => useAnimationStore?.getState().syncTimeline( engine.timeline ) );
 

@@ -31,13 +31,15 @@ You are a WebGPU performance specialist for the Rayzee real-time path tracer.
 - Ping-pong StorageTextures: 2 compute nodes (one per direction) since textureStore binding is fixed at compile
 
 #### BVH Traversal
-- 20 u32 lanes per triangle (5 vec4s), split on the GPU into a geo buffer (rows 0–2) and a shade buffer (rows 3–4); read rows only through `triangleRow()` (`TSL/Common.js`)
-- Two-level BVH (TLAS over placements, BLAS per geometry); binned SAH plus reinsertion, built in Web Workers. Extend is memory-bound
+- 20 u32 lanes per triangle (5 vec4s), split on the GPU into a geo buffer (rows 0–2) and a shade buffer (rows 3–4; a uvec2 of flags and mesh index when no material samples a texture); read rows only through `triangleRow()` (`TSL/Common.js`). Past 4 GB a store is split into parts (`splitStorage`): +5–8 % frame time for a split BVH
+- Two-level BVH (TLAS over entries — a placement, a grouped copy, or past 1M entries a cluster of four copies at +17–20 % frame time — BLAS per geometry); binned SAH plus reinsertion, built in Web Workers. Extend is memory-bound
+- Shade binds 8 storage buffers (the device allows 10; the other two are for store parts): adding a buffer means folding it into an existing one
 - Treelet restructuring was removed (2026-10): no measurable render gain. Judge any tree change by render time per sample, not SAH
 
 #### Memory Management
 - Texture arrays pack in `TexturesWorker` (`MEMORY_LIMITS`: `CHUNK_SIZE`, `ADAPTIVE_CHUNK_SIZE`, `MEMORY_SAFETY_FACTOR`; the hardware ceiling is `TEXTURE_CONSTANTS.MAX_TEXTURE_SIZE` in `Processor/TextureBuckets.js`); the per-scene knob is the `maxTextureSize` setting
-- Large scenes: host memory preflight (`Processor/HostMemory.js`), chunked triangle/BVH stores
+- Large scenes: host memory preflight (`Processor/HostMemory.js`), chunked triangle/BVH stores, the memory spill (`memorySpill`: geometry, BLASes and, after the load, matrix lists and TLAS on disk)
+- In Chrome every upload passes through a shared memory pool kept at its peak for the page's life: pace bulk uploads with `stage.drainUploads()`
 - Use transferable objects for Worker↔main thread large array transfers
 - Dispose GPU resources in stage `dispose()` methods
 

@@ -920,7 +920,7 @@ export class GeometryExtractor {
 		// A pbrt archive bakes the CTM into every instance, so the host needs no multiply and the list is read in place.
 		const identityHost = isIdentityElements( world ) && arr.length >= count * 16;
 		const dst = identityHost ? arr : new Float32Array( count * 16 );
-		this._beginRun( dst, 0, identityHost ? 0 : 1 );
+		this._beginRun( identityHost ? mesh.instanceMatrix : dst, 0, identityHost ? 0 : 1 );
 
 		for ( let i = 0; i < count; i ++ ) {
 

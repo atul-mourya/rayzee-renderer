@@ -126,8 +126,8 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()`). Used by `PathTracer` as `this._kernelManager`.
 - **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + the first-hit G-buffer as the hit buffer's last region (`_gBufferBase`, one uvec4 a path; as a buffer of its own it took a Shade binding the BVH parts need) (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
-- **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
-- **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
+- **`TLASBuilder.js`**: Builds SAH BVH over TLAS entry AABBs for the top-level acceleration structure (an entry is a placement, a grouped copy, or — past 1M entries — a copy cluster). Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] entry index + identity bit, slot [2] visibility flag, slots 4–15 world-to-object rows) or cluster leaves (`CLUSTER_LEAF`). Caches flatten buffer across rebuilds.
+- **`InstanceTable.js`**: per-**placement** metadata (template, TLAS leaf, visibility, transform) in typed columns, plus per-template BLAS offsets/sizes and object boxes. Transforms are runs read in place (`matrixRow( p )`), groups map placements to TLAS entries (`entryOf` / `repOf`), and copy clusters add records (`recordEntry`, `clusterLeaf`, `clusterOf`). Placements are positional: write them with `setEntry()` / `setAlias()` at an explicit index.
 
 ### TSL Shader Modules (`rayzee/src/TSL/`)
 44 files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
@@ -166,7 +166,7 @@ glTF / pbrt animation playback and interactive object transforms:
 **BVH refit data flow (two-level)**:
 - **Full refit** (animation): `SceneProcessor.refitBVH()` → the main thread scatters each mesh's positions into the shared triangle records as it reads them, then the worker refits the combined BVH (TLAS + BLASes) in SharedArrayBuffer. Positions never cross the worker boundary. A reader may return null for a mesh that did not change: it is skipped, and when any owner is skipped the worker refits only the BLASes it was handed positions for, then the TLAS from every BLAS root's stored box (`BVHRefitter.refitPartial`, bit-identical to a full refit), and only those ranges are uploaded. AnimationManager's reader does that for every mesh that is not skinned and whose world matrix and morph weights match its last read (classroom, 8 skinned of 359 meshes: 42 → 7 ms an update).
 - **Per-mesh refit** (deformation): `SceneProcessor.refitBLASes(meshIndices)` → main thread updates only affected meshes' triangles, refits their BLAS ranges, rebuilds TLAS from updated AABBs
-- **Rigid move** (transform gizmo): `SceneProcessor.updateMeshTransforms(meshIndices)` → no geometry at all. Writes each placement's world matrix, rewrites its TLAS leaf's world-to-object rows, refits the TLAS — recomputing world boxes only for the moved placements and keeping the rest from the last pass (`_tlasLeafBoxesOf`, dropped by `_setBVHData` and `refitBVH`). ⚠️ Use this, not `refitBLASes`, for anything that only changed a transform: triangles are shared between placements of the same geometry, so baking world positions into them moves every copy.
+- **Rigid move** (transform gizmo): `SceneProcessor.updateMeshTransforms(meshIndices)` → no geometry at all. Writes each placement's world matrix, rewrites its TLAS leaf's world-to-object rows, refits the TLAS top down (`_refitTLAS( leaves )`): a node keeps its children's boxes in its own slots, so only the paths from the moved placements' leaves to the root are visited, and every other box is the one the tree holds. With copy clusters, the moved copy records are uploaded one range a chunk (`takeMovedRecordRanges`), since a spilled scene has only those chunks back. ⚠️ Use this, not `refitBLASes`, for anything that only changed a transform: triangles are shared between placements of the same geometry, so baking world positions into them moves every copy.
 - **Positions**: both accept either a per-mesh callback `(meshIndex, triCount) => Float32Array` — asked for one mesh at a time, and free to hand back the same scratch buffer each call — or a scene-wide Float32Array of 9 floats per triangle for **every triangle in the scene**, meshes in `app.sceneMeshes` order (public getter; DFS pre-order over `meshScene`, so it *includes* the engine-owned hidden ground-projection disk and any multi-material split product), triangles in index order, world space. **Prefer the callback**: the scene-wide array is 1,030 MB at 30M triangles and will not allocate at that size. Walking your own model instead of `sceneMeshes` silently misaligns either shape. Both are length-checked and throw; before that a short buffer wrote NaN through every AABB with no error and the scene just vanished.
 
 **Video render data flow**:
@@ -1188,10 +1188,10 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   is a valid answer and loads the whole scene; `promptBytes` overrides the line.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
   and the build reports itself truncated. 45M is the highest rung measured to survive without
-  the memory spill. With `memorySpill` on, `loadFile` defaults them to 120M / 60M
+  the memory spill. Unless `memorySpill` is false (and with storage), `loadFile` defaults them to 120M / 60M
   (`SPILL_TRIANGLE_BUDGET`), and the preflight prices a streamed build by its larger phase (`spillingPeakBytes`:
   extraction holds geometry + matrix lists + resident records, the TLAS phase lists + table + tree): the whole USD
-  island, 111.6M / 51.0M, estimates 7.8 GB and loads (see USD scenes). 89M ran out of memory in the pbrt parse,
+  island, 111.6M / 51.0M, estimates 8.6 GB (2026-10-09; the hard line is 9.2 GB) and loads (see USD scenes). 89M ran out of memory in the pbrt parse,
   measured before the parse-memory work and not since.
 - **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
   a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
@@ -1305,6 +1305,9 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   **All of it** (2026-10-08, 120M / 60M, memory spill): 111.6M triangles, 51.0M placements → 39.9M entries → 10M copy
   clusters; Chrome on a 24 GB M-series loads it in 304 s (tab peak ~13 GB, GPU buffers 13.1 GB, GPU process ~16 GB) and
   renders the hero shot, swapping ~25 GB beside the other apps open. Node with a disk-backed storage: same, ~5 min.
+  With the after-load spill, paced uploads and the bit-trail placeholder (same day): 265–270 s, tab peak ~12 GB and
+  3.6 GB at rest, GPU buffers 12.7 GB, GPU process ~14 GB (13.5 GB at rest).
+  With no flag (`memorySpill: 'auto'`, 2026-10-09) it spills on its own: 279 s on a production build, sky 7154 wide.
   Through the app (File → Open Folder, all parts): ~5 fps at 512² afterwards. ⚠️ The outliner drew a row per shape
   (1.36M DOM nodes, ~1 fps): it now mounts children 200 at a time. Chrome's `usedJSHeapSize` (5.4 GB here) counts the
   engine's ArrayBuffers too — matrix lists, table, TLAS, order maps, sky — not only JS objects.
@@ -1386,8 +1389,18 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   would add a sample). The app writes one every 2 min of a final render (`lib/stillJob.js`,
   ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
   the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
-- **Memory spill (experimental, `memorySpill: true`, app flag `localStorage['rayzee-memory-spill']`).**
-  A static scene of more than one chunk is **extracted and built together**
+- **Memory spill (`memorySpill`: `'auto'` default | true | false; app: Path Tracer → Advanced → Memory Saver,
+  kept in `localStorage['rayzee-memory-spill']`).** Each build decides (`RayzeeRenderer._planSpill`, after the parse and
+  before the scene's metadata environment starts loading): `'auto'` spills a static scene whose in-memory estimate
+  passes `SAFE_SCENE_BYTES` (`SceneProcessor.needsSpill`, the preflight's survey without the spill), true every static
+  scene, false none; storage is required either way. `sceneProcessor.spilling` / `app.sceneSpilled` say a scene went to
+  disk (built to spill and over one chunk) — the after-load spill and respill run only then, and the app shows a
+  "Large scene" toast on `MODEL_LOADED`. Ordinary models estimate far below the line (24155522.glb: 651 MB) and take the
+  in-memory path exactly as before. ⚠️ An importer installs its own sky at the end of its read (USD dome, pbrt
+  `infinite`), before the decision: `_planSpill` narrows it there and disposes it, since three.js keeps an uploaded
+  texture's size. Narrowed only at decode, the island's 14308-wide sky went to the GPU whole (a 1.5 GB upload block in
+  the GPU process). The width resets at each load's start, so a previous spilling scene never narrows the next one's.
+  A spilling scene of more than one chunk is **extracted and built together**
   (`SceneProcessor._extractStreaming`, `GeometryExtractor.extractStreaming`): each stored range
   goes to a BLAS worker as soon as it is written (`_blasPool` takes work while it runs), and the
   extraction waits while more than `STREAM_RESIDENT_BYTES` (1 GB) of records are in memory — so
@@ -1397,12 +1410,28 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
   `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
   deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
-  writes; a geometry keeps its bounds (computed before its arrays go). It **stays on disk after the build**
-  (`sdf.geometryOnDisk`): `ensureGeometryResident()` / `app.ensureSceneResident()` read it back in 64 MB windows (3.9 GB in
+  writes; a geometry keeps its bounds (computed before its arrays go). From `GEOMETRY_ON_DISK_BYTES` (1 GB) up it
+  **stays on disk after the build** (`sdf.geometryOnDisk`; less comes back at its end — 24155522.glb's 140 MB left on disk had
+  cost picking and the selection outline): `ensureGeometryResident()` / `app.ensureSceneResident()` read it back in 64 MB windows (3.9 GB in
   3.0 s at 80M), and a rebuild of the same model does so first. Picking skips the model meanwhile
   (`InteractionManager._intersectScene`): its arrays are empty, and testing 51M empty copies held the page for seconds.
   Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
-  build does not read it back — the app discards a failed load's model. An environment wider than
+  build does not read it back — the app discards a failed load's model. **After the load** (`spillAfterLoad`, from the
+  renderer's `_maybeSpill`, once the initial visibility pass has used them) the InstancedMesh matrix lists the instance
+  table reads go to disk (`_matrixSpill`; each mesh's `boundingBox`/`boundingSphere` set from its copies' boxes first,
+  since three.js derives them from the list), the TLAS and the copy records too when copies are clustered (`_spillTLAS`,
+  keeping the chunks over the group trees), and the triangle order maps (`_orderSpill`, read back by `ensureResident`). An edit reads back
+  what it needs: visibility waits on `whenTLASEditable()` (the renderer applies and resets after it), a move on
+  `ensureMovable( meshIndices )` (matrix lists, TLAS, that mesh's copy records — `updateMeshTransforms` returns null
+  and lands when they are back). 30 s after the last edit (`RESPILL_AFTER_MS`) the renderer puts back on disk what edits
+  read back (`respill`, skipped while a read is in flight); the matrix lists a restore made, and each 32 MB pack once written, are let go at once
+  (`buffer.transfer( 0 )`) and page-ins read straight into their chunk (`SpillStore.readInto`), since Chrome frees a dropped
+  ArrayBuffer only at a major collection, which an idle page may not reach for minutes. The BVH chunks are
+  SharedArrayBuffers, which cannot be let go early: after a move on the island ~2 GB (TLAS and copy records) waits
+  for that collection. Chrome, island at rest: tab 5.2 → 3.6 GB, GPU process 15.6 → 13.5 GB (with the upload pacing
+  under Memory Management). Moana island at rest, Node: ArrayBuffers 6.9 → 2.2 GB
+  (matrices 2.4, TLAS and copy records 1.6, order maps 0.43, the two cluster columns now derived 0.19); moving its 69,856-copy mesh
+  reads 3.5 GB back (1.7 s), refits in 0.1–0.2 s and uploads 40 MB, where every move had uploaded the whole 1.3 GB TLAS. An environment wider than
   `SPILL_ENVIRONMENT_WIDTH` (8192) is box-filtered down in place when it loads (`limitEnvironmentWidth`): Moana's
   14308×7154 sky was 1.6 GB of floats. Curves are built with 16-bit normals (`packUnitAttribute`, what extraction stores). ⚠️ A shared buffer handed
   to the storage worker lives until that worker next collects garbage, which it barely does: every
@@ -1412,13 +1441,14 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
   chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
   extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
-  scratch, uploading and spilling each chunk the fill passes. Chunks holding emitters and the TLAS
-  chunks stay. `setTriangleData` / `setBVHData` adopt the pre-filled buffers. A scene restored
+  scratch, uploading and spilling each chunk the fill passes (each upload awaited, `stage.drainUploads()`). Chunks
+  holding emitters stay, and the TLAS chunks until the after-load spill. `setTriangleData` / `setBVHData` adopt the
+  pre-filled buffers. A scene restored
   from the BLAS cache spills after upload instead (`spillToDisk`). 50M triangles: 7.2 GB at rest
   against 9.1 GB; the page peak (~11 GB, at the start of the BLAS phase) is unchanged. Readers
   page in first — `refitBVH`, `rebuildMaterials`, and `setMaterialProperty` for
-  `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves never need to; `refitBLASes`
-  throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
+  `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves need only what the after-load spill took (above);
+  `refitBLASes` throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
   alive, which is why the store tracks them (weakly). ⚠️ Past `maxBufferSize` (4 GB here) WebGPU
   returns an invalid buffer and every write fails quietly, so the BVH and triangle stores go up in parts
   (see Buffer parts); the chunk uploaders allocate them.
@@ -1465,6 +1495,18 @@ emissive data and instance table in place of the scene's, and emitters stopped b
 `onUpdate`): nothing reads them again, since a rebuild packs new arrays from the three.js
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
 keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
+
+**Uploads in Chrome.** Every `writeBuffer`, `writeTexture` and `mappedAtCreation` goes through a shared memory pool
+mapped in both the tab and the GPU process; it grows to the most ever sent before the GPU caught up and is kept until
+the page closes (reused, never shrunk; destroying the buffer does not return it). Measured on Chrome 154: 1 GB in 64 MB
+writes left 1 GB behind, in 8 MB writes too; awaiting `onSubmittedWorkDone` after each left 64 MB, in the same time.
+So big uploads are paced: chunk uploaders return `stage.drainUploads()` and the spilling build awaits it,
+`SceneProcessor.uploadChunks` sends a multi-chunk store chunk by chunk before `uploadToPathTracer` adopts it, and the
+load uploads texture buckets one at a time (`renderer.initTexture`; three.js otherwise sends every layer in the first
+frame). 24155522.glb: pool 1,054 → 412 MB; the startup scene 330 → 35 MB. ⚠️ A single upload still takes a block its size:
+the environment (392 MB on the Moana island) goes in one `writeTexture`. With no emitter active the bit-trail map is a
+4-float placeholder (Shade reads it only while `emissiveTriangleCount > 0`): one over every triangle was 446 MB on the
+island, in the tab, on the GPU and in the pool.
 
 **CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
 contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host

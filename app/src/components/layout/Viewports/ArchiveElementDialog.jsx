@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useStore } from "@/store";
 import { getApp } from "@/lib/appProxy";
 import { rememberFolder } from "@/lib/folders";
+import { spillNote } from "@/lib/storage";
 import { useToast } from "@/hooks/use-toast";
 import {
 	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -75,9 +76,10 @@ const ArchiveElementDialog = () => {
 			rememberFolder( app.sceneSource?.key, handle );
 			close();
 			const fit = app.assetLoader?.archives?.lastUSDStats?.fitNote;
+			const note = spillNote( app );
 			toast( {
 				title: "Loaded",
-				description: `${prefixes.length} of ${elements.length} parts from ${file.name}${fit ? `. Thinned to fit memory: ${fit}` : ''}`
+				description: `${prefixes.length} of ${elements.length} parts from ${file.name}${fit ? `. Thinned to fit memory: ${fit}` : ''}${note ? `.${note}` : ''}`
 			} );
 
 		} catch ( error ) {

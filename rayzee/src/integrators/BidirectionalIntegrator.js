@@ -652,6 +652,14 @@ export class BidirectionalIntegrator {
 		const records = this.pt._bvhRecords;
 		const flat = records ? null : this.pt.bvhStorageAttr?.array;
 		if ( ! records && ! ( flat?.length >= 16 ) ) return null;
+		// A spilled TLAS comes back for the next frame's disc.
+		const blasBase = this.pt._instanceTable?.blasBase ?? 1;
+		if ( records && ! records.isResident( 0, blasBase ) ) {
+
+			this.pt._whenTLASResident( () => {} );
+			return null;
+
+		}
 
 		const view = ( f ) => {
 

@@ -3,6 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getApp } from '@/lib/appProxy';
 import { useStore } from '@/store';
 import { pickFolder, loadFolder } from '@/lib/folders';
+import { spillNote } from '@/lib/storage';
 import {
 	Menubar,
 	MenubarContent,
@@ -175,9 +176,10 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 
 				await app.loadFile( file );
 
+				const note = spillNote( app );
 				toast( {
 					title: "Model Loaded",
-					description: `Successfully loaded ${file.name}`,
+					description: `Successfully loaded ${file.name}${note ? `.${note}` : ''}`,
 				} );
 
 			} else {

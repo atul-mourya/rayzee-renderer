@@ -78,6 +78,22 @@ describe( 'GeometryExtractor placement storage', () => {
 
 	} );
 
+	it( 'reads a list through its attribute, so the array can go to disk and come back', () => {
+
+		const inst = new InstancedMesh( triangleGeometry(), new MeshStandardMaterial(), 2 );
+		inst.setMatrixAt( 1, new Matrix4().makeTranslation( 7, 0, 0 ) );
+
+		const table = tableOf( extract( inst ).data );
+		expect( table.adoptedMatrices() ).toEqual( [ inst.instanceMatrix ] );
+
+		const away = inst.instanceMatrix.array;
+		inst.instanceMatrix.array = new Float32Array( 0 );
+		inst.instanceMatrix.array = away.slice();
+		expect( table.matrixWorldOf( 1 )[ 12 ] ).toBe( 7 );
+		expect( table.matrixWorldOf( 1 ).buffer ).toBe( inst.instanceMatrix.array.buffer );
+
+	} );
+
 	it( 'keeps its own copy when the host object is not at the origin', () => {
 
 		const group = new Group();

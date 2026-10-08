@@ -219,11 +219,9 @@ export class InstanceTable {
 		this.groupNodeCount = 0;
 
 		// Copy clusters (planClusters / formClusters): the TLAS is built over clusters of entries, and each entry's
-		// transform is a record behind the BLASes. Cluster c owns records clusterStart[c] .. clusterStart[c + 1] − 1.
+		// transform is a record behind the BLASes. Cluster c owns the CLUSTER_SIZE records from c · CLUSTER_SIZE.
 		this.clusterCount = 0;
-		this.clusterStart = null;
 		this.recordEntry = null;
-		this.recordCluster = null;
 		this.clusterLeaf = null;
 		this.recordNodeStart = 0;
 		this.recordNodeCount = 0;
@@ -557,19 +555,15 @@ export class InstanceTable {
 		for ( let e = 0; e < n; e ++ ) sorted[ e ] = e;
 		splitIntoRuns( sorted, 0, n, world );
 
-		const clusterStart = new Int32Array( this.clusterCount + 1 );
-		const recordCluster = new Int32Array( n );
 		const bounds = new Float64Array( this.clusterCount * 6 );
 		for ( let c = 0; c < this.clusterCount; c ++ ) {
 
 			const r0 = c * CLUSTER_SIZE, end = Math.min( r0 + CLUSTER_SIZE, n );
-			clusterStart[ c ] = r0;
 			const b = c * 6;
 			bounds[ b ] = bounds[ b + 1 ] = bounds[ b + 2 ] = Infinity;
 			bounds[ b + 3 ] = bounds[ b + 4 ] = bounds[ b + 5 ] = - Infinity;
 			for ( let r = r0; r < end; r ++ ) {
 
-				recordCluster[ r ] = c;
 				const o = sorted[ r ] * 6;
 				for ( let a = 0; a < 3; a ++ ) {
 
@@ -582,10 +576,7 @@ export class InstanceTable {
 
 		}
 
-		clusterStart[ this.clusterCount ] = n;
-		this.clusterStart = clusterStart;
 		this.recordEntry = sorted;
-		this.recordCluster = recordCluster;
 		this.clusterLeaf = new Int32Array( this.clusterCount ).fill( - 1 );
 		return bounds;
 
@@ -597,7 +588,7 @@ export class InstanceTable {
 	 */
 	writeClusterLeaf( data, idx, o, c, world, node ) {
 
-		const first = this.clusterStart[ c ], count = this.clusterStart[ c + 1 ] - first;
+		const first = c * CLUSTER_SIZE, count = Math.min( CLUSTER_SIZE, this.entryCount - first );
 		idx[ o ] = ( first | ( count - 1 ) << CLUSTER_COUNT_SHIFT ) >>> 0;
 		idx[ o + 3 ] = BVH_LEAF_MARKERS.CLUSTER_LEAF;
 		for ( let k = 0; k < CLUSTER_SIZE; k ++ ) idx[ o + 12 + k ] = k < count ? this.copyWord( this.recordEntry[ first + k ] ) : 0;
@@ -622,7 +613,7 @@ export class InstanceTable {
 	 */
 	encodeClusterBoxes( data, idx, o, c, world = null, out = null, outOff = 0 ) {
 
-		const first = this.clusterStart[ c ], count = this.clusterStart[ c + 1 ] - first;
+		const first = c * CLUSTER_SIZE, count = Math.min( CLUSTER_SIZE, this.entryCount - first );
 		const boxes = _copyBoxes;
 		for ( let k = 0; k < count; k ++ ) {
 
@@ -652,14 +643,21 @@ export class InstanceTable {
 	leafOfPlacement( p ) {
 
 		const id = this.tlasLeafIndex[ p ];
-		return id < 0 || ! this.clusterCount ? id : this.clusterLeaf[ this.recordCluster[ id ] ];
+		return id < 0 || ! this.clusterCount ? id : this.clusterLeaf[ this.clusterOf( id ) ];
 
 	}
 
 	/** The slot of record `r`'s word in its cluster leaf (`copyWord`). */
 	copyWordSlot( r ) {
 
-		return 12 + r - this.clusterStart[ this.recordCluster[ r ] ];
+		return 12 + r % CLUSTER_SIZE;
+
+	}
+
+	/** The cluster holding record `r`. */
+	clusterOf( r ) {
+
+		return ( r / CLUSTER_SIZE ) | 0;
 
 	}
 
@@ -674,7 +672,8 @@ export class InstanceTable {
 
 	/**
 	 * Placement transforms are runs of rows: run r covers placements first[ r ] … first[ r + 1 ] − 1, whose 16 floats
-	 * each follow from base[ r ] in arrays[ arrayOf[ r ] ]. An adopted array (an InstancedMesh's matrix list) is never
+	 * each follow from base[ r ] in arrays[ arrayOf[ r ] ] — an array of the table's own, or an InstancedMesh's matrix
+	 * attribute, read through it so its array can go to disk and come back (`adoptedMatrices`). An adopted list is never
 	 * written: the first write to its run copies the run into an array of the table's own.
 	 * @private
 	 */
@@ -686,7 +685,7 @@ export class InstanceTable {
 		this._runBase = Float64Array.from( base );
 		this._runOwned = Uint8Array.from( owned );
 		this._lastRun = 0;
-		this.rowArray = this._runArrays[ 0 ] ?? null;
+		this.rowArray = this._runArrays[ 0 ]?.array ?? this._runArrays[ 0 ] ?? null;
 
 	}
 
@@ -714,7 +713,8 @@ export class InstanceTable {
 	matrixRow( p ) {
 
 		const r = this._runOf( p );
-		this.rowArray = this._runArrays[ this._runArray[ r ] ];
+		const a = this._runArrays[ this._runArray[ r ] ];
+		this.rowArray = a.array ?? a;
 		return this._runBase[ r ] + ( p - this._runFirst[ r ] ) * 16;
 
 	}
@@ -722,7 +722,8 @@ export class InstanceTable {
 	/** The transform array when a single run of the table's own holds every placement, else null. */
 	get world() {
 
-		return this._runFirst.length === 2 && this._runBase[ 0 ] === 0 ? this._runArrays[ this._runArray[ 0 ] ] : null;
+		const a = this._runFirst.length === 2 && this._runBase[ 0 ] === 0 ? this._runArrays[ this._runArray[ 0 ] ] : null;
+		return a?.array ?? a;
 
 	}
 
@@ -737,6 +738,21 @@ export class InstanceTable {
 
 	}
 
+	/** The InstancedMesh matrix attributes the table reads in place. */
+	adoptedMatrices() {
+
+		const out = new Set();
+		for ( let r = 0; r < this._runArray.length; r ++ ) {
+
+			const a = this._runArrays[ this._runArray[ r ] ];
+			if ( ! this._runOwned[ r ] && a.isBufferAttribute ) out.add( a );
+
+		}
+
+		return [ ...out ];
+
+	}
+
 	/** @private */
 	_writeRow( p, m, mo ) {
 
@@ -744,7 +760,8 @@ export class InstanceTable {
 		if ( ! this._runOwned[ r ] ) {
 
 			const start = this._runBase[ r ], end = start + ( this._runFirst[ r + 1 ] - this._runFirst[ r ] ) * 16;
-			this._runArrays.push( this._runArrays[ this._runArray[ r ] ].slice( start, end ) );
+			const a = this._runArrays[ this._runArray[ r ] ];
+			this._runArrays.push( ( a.array ?? a ).slice( start, end ) );
 			this._runArray[ r ] = this._runArrays.length - 1;
 			this._runBase[ r ] = 0;
 			this._runOwned[ r ] = 1;

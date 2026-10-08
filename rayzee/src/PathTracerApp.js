@@ -190,7 +190,7 @@ export class PathTracerApp extends RayzeeRenderer {
 			assetLoader: this.assetLoader,
 			pathTracer: null,
 			floorPlane: this.assetLoader.floorPlane,
-			isGeometryOnDisk: () => this._sdf?.geometryOnDisk === true,
+			isGeometryOnDisk: () => this.geometryOnDisk,
 		} );
 
 		this.interactionManager.wireAppEvents( this );
@@ -679,7 +679,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 			this._notePlacementsMoving( meshIndices );
 			this._sdf.updateMeshTransforms( meshIndices );
-			this.stages.pathTracer?.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange(), ...this._sdf.takeMovedRecordRanges() ] );
+			this.stages.pathTracer?.updateBufferRanges( [], this._sdf.takeMoveRanges() );
 			if ( this._sdf.movesEmitters( meshIndices ) ) {
 
 				this._emittersMoved = true;

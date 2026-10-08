@@ -328,7 +328,7 @@ const engine = new PathTracerApp(canvas, options?)
 | `options.maxSceneBytes` | `number` | Raise or lower the CPU memory ceiling a scene may need before the engine refuses it (default 9,216 MB). See [Memory monitoring](#memory-monitoring). |
 | `options.hostMemoryGB` | `number` | The host's memory, for runtimes without Chrome's `navigator.deviceMemory` (which then read as 4 GB and cap the render reserve at 2048). Sizes the reserve and the path pool. |
 | `options.storage` | `false \| 'auto' \| StorageManager` | On-disk storage (default: `configureAssets( { storage } )`; off under `strict` unless you set it there or here). A manager you pass stays yours to dispose. See [On-disk storage](#on-disk-storage-opfs). |
-| `options.memorySpill` | `boolean` | Experimental, default `false`: build a large static scene through disk — triangle records, BLAS nodes and the three.js geometry are written out as the build finishes with them — and raise the pbrt triangle and placement caps to 60M / 8M. See [On-disk storage](#on-disk-storage-opfs). |
+| `options.memorySpill` | `'auto' \| boolean` | Default `'auto'`: build a static scene through disk when it would not fit in memory — triangle records, BLAS nodes and the three.js geometry are written out as the build finishes with them, and the instance matrix lists, the top-level tree and the triangle order maps once the load is done. `'auto'` does so only for a scene whose in-memory estimate passes the safe line (7 GB); `true` for every static scene; `false` never. Unless `false`, the pbrt and USD triangle and placement caps rise to 120M / 60M. Needs storage. Change it later with `engine.setMemorySpill( mode )`; `engine.sceneSpilled` says whether the current scene went to disk. See [On-disk storage](#on-disk-storage-opfs). |
 
 The engine creates and mounts everything it needs (denoiser canvas, tile/HUD overlay) into a single parent on `init()`. Performance HUDs (e.g. `stats-gl`) are not bundled — listen to `EngineEvents.FRAME` and tick your own panel.
 
@@ -390,8 +390,15 @@ await engine.loadFile({ name: 'Sponza', files: [  // or path + file pairs: a dro
 
 Loose files picked together load the same way. Hidden files and folders (`.DS_Store`, `.git/`) are left out. The model
 that loads is a `scene` / `model` / `main` / `asset` glTF when there is one, else the shallowest model, glTF first; the
-others are named in an `asset.ambiguous_entry` warning. A large pbrt folder of several parts asks which to load, as an
-archive does (below). `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
+others are named in an `asset.ambiguous_entry` warning. A large pbrt or USD folder of several parts asks which to load,
+as an archive does (below).
+
+A USD scene — a folder or archive whose main model is a `.usd` / `.usda` / `.usdc` layer, or a loose layer — loads
+through the engine's own USD importer, part of the archives add-on: composition (sublayers, references, payloads,
+inherits, specializes, variants), meshes, curves, point instancers, PxrDisneyBsdf / PxrSurface / UsdPreviewSurface
+materials, cameras, lights and the dome light as the environment. Each layer is read only when composition reaches it. A
+`.usdz` stays with three.js's loader (`usdFormat`). Ptex is not read: a Ptex input takes the mesh's mean
+`displayColor`. `sceneSource` is `{ kind: 'local-folder', folder: { name, size, lastModified, sample, files }, key }`
 — `sample` hashes every file's path, size and date, so any change inside the folder changes it — and
 `sceneSourceFolder` hands the files back, as `{ name, files: [{ path, file }] }`.
 
@@ -406,8 +413,8 @@ The archive can be inspected without retaining any of it, then loaded one elemen
 ```js
 const { kind, root, elements, entryCount, totalBytes } = await engine.inspectArchive(file);
 
-await engine.loadFile(file, { element: elements[0].path });   // one element
-await engine.loadFile(file, { element: [ a.path, b.path ] }); // several together
+await engine.loadFile(file, { element: elements[0].prefix });     // one element
+await engine.loadFile(file, { element: [ a.prefix, b.prefix ] }); // several together
 ```
 
 Everything above a chosen element comes along — the root scene file, the material library, an
@@ -415,8 +422,9 @@ ancestor's `textures` folder — and an `Include` pointing at an element you lef
 which is what makes a partial load work. Selecting every element is a valid answer and loads the
 whole scene.
 
-Past 4 GB unpacked, a multi-element archive **throws** `ARCHIVE_NEEDS_ELEMENT` rather than taking
-all of it. The error carries the element list, so a host can turn it into a picker:
+Past 4 GB unpacked (a USD scene: past 1 GB of layers), a multi-element archive or folder **throws**
+`ARCHIVE_NEEDS_ELEMENT` rather than taking all of it. The error carries the element list — each
+`{ name, prefix, files, bytes, scenes }` — so a host can turn it into a picker:
 
 ```js
 try {
@@ -427,20 +435,23 @@ try {
 }
 ```
 
-Per-load options for pbrt archives:
+Per-load options for pbrt and USD scenes:
 
 | Option | Default | Effect |
 |---|---|---|
 | `promptBytes` | 4 GB | moves the line past which a multi-element archive asks for elements |
-| `maxTriangles` | 45M (60M with `memorySpill`) | past it, placements are skipped and the build reports itself truncated |
-| `maxPlacements` | 6M (8M with `memorySpill`) | the same, for placements |
+| `maxTriangles` | 45M (120M with storage, unless `memorySpill: false`) | past it, placements are skipped and the build reports itself truncated (a USD scene thins curve sets and point instancers first, and never cuts a mesh short unless meshes alone are over) |
+| `maxPlacements` | 6M (60M with storage, unless `memorySpill: false`) | the same, for placements |
 | `curveTolerance` | 0.05 | how far a curve segment may stray, × the curve's half-width; curves become strips with adaptive segments. `0` gives the old uniform strips bit for bit |
 | `instanceIncludes` | `true` | a file included again under the same material, with no side effects, is placed as an instance of its first reading instead of being read and stored again |
 
-45M is the highest rung measured to survive without the spill; raising either cap is a deliberate
-act on a fresh browser tab. With `memorySpill`, 80M stored triangles (4.35M placements) have loaded
-and rendered; an 89M load ran out of memory while parsing, and WebGPU's 4 GB buffer limit stops the
-triangle data at 89.5M in any case.
+45M is the highest rung measured to survive without the spill, which is why the caps rise only where the build can
+spill; the preflight still refuses what cannot fit. With the spill, the whole Moana USD island — 111.6M triangles, 51.0M
+placed copies — loads and renders in Chrome on a 24 GB Apple M-series in about 4½ minutes. Past
+WebGPU's 4 GB buffer limit the triangle and node stores go up in parts, so buffer size no longer caps a
+scene. Past 1M placed copies the top-level tree is built over clusters of four neighbouring copies
+(about 80 bytes a copy instead of 128), which costs such a scene 17–20 % frame time and nothing below
+that size.
 
 #### Settings
 
@@ -593,8 +604,9 @@ Colour, storage and the integrators have no loader: colour and storage are used 
 the moment it is chosen (a lazy one would trace plain frames meanwhile and break reproducible renders).
 
 **File formats.** The core reads glTF/GLB (Draco, KTX2 and meshopt decoders are fetched only for a file that uses
-them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USD/USDZ and EXR are formats to register — import only
-those you read and a bundler leaves the rest out; each three.js loader is downloaded the first time its format is read:
+them), `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF, USDZ and EXR are formats to register — import only
+those you read and a bundler leaves the rest out; each three.js loader is downloaded the first time its format is read
+(a `.usd` / `.usda` / `.usdc` layer is read by the engine's own USD importer, in the archives add-on below):
 
 ```js
 import { objFormat, usdFormat, exrFormat } from 'rayzee/addons/formats';
@@ -827,6 +839,7 @@ engine.setMeshVisibilityByUuid(uuid, prev => !prev)    // toggle via updater fn
 // Lower-level — for callers that already have a meshIndex or have mutated object.visible directly
 engine.setMeshVisibility(meshIndex, visible)
 engine.updateAllMeshVisibility()                  // re-sync after manual object.visible mutations
+// With memorySpill, an edit whose top-level tree is on disk lands once it is read back (a moment later).
 
 // Read access to the active scene (returns the mesh-bearing scene)
 engine.getScene()
@@ -964,9 +977,11 @@ await engine.refitBVH(positions)                    // the whole scene is posed 
 ```
 
 **`updateMeshTransforms` is the one a gizmo drag wants.** Triangles are stored in each object's own
-space, so a rigid move only rewrites a matrix — no vertex pass, no geometry upload. Using
-`refitBLASes` for a move instead rewrites vertices needlessly, and drags along any other object
-sharing the same geometry.
+space, so a rigid move only rewrites a matrix — no vertex pass, no geometry upload — and refits only the
+tree nodes above what moved, uploading just those. Using `refitBLASes` for a move instead rewrites
+vertices needlessly, and drags along any other object sharing the same geometry. It returns
+`{ refitTimeMs, placements }`, or `null` on a `memorySpill` scene whose matrices or tree are on disk:
+the move then lands once they are read back.
 
 All three take **indices into `engine.sceneMeshes`**, which is a depth-first walk of the rendered
 scene and includes the engine's own hidden ground disk. Build your index list from that array, never
@@ -1149,8 +1164,10 @@ Before extraction the engine prices the scene and applies two lines, both record
 
 Raise or lower the hard line with `new PathTracerApp(canvas, { maxSceneBytes })`. The estimate runs
 low at the very top of its range, so the per-load `maxTriangles` cap (45M) is the more reliable
-guard on a scene of that size. With `memorySpill` the estimate leaves out what the build keeps on
-disk (the BVH, and triangle records past what a streamed build holds at once).
+guard on a scene of that size. For a spilling build the estimate leaves out what the build keeps on
+disk (the BVH, the three.js geometry, and triangle records past what a streamed build holds at once)
+and prices the build by its larger phase — extraction, or the top-level tree — since the two never
+hold their arrays at the same time. The whole Moana island estimates 8.6 GB that way.
 
 ---
 
@@ -1389,23 +1406,35 @@ a link that expires (a signed URL). `fetchFile( url, storage )` / `cachedObjectU
 for a host's own assets. Failures record `storage.*` issues and fall back to memory; storage never
 throws for being absent or full.
 
-**Memory spill (experimental).** With `memorySpill: true`, a static scene of more than one 64 MB chunk
-is built through disk, so its large arrays are never all in memory at once:
+**Memory spill.** A static scene too large for memory is built through disk, so its large arrays are never all in
+memory at once. By default (`memorySpill: 'auto'`) a scene spills only when its in-memory estimate passes the safe
+line (7 GB) — ordinary models never do and load exactly as before; `true` spills every static scene of more than one
+64 MB chunk, `false` none. The decision is made per load, and a spilling scene's environment is narrowed to 8192 texels
+wide:
 
 - Extraction and BVH building run together. Each stored range of triangles goes to a BLAS worker as
-  soon as it is written, and extraction waits while more than 1.5 GB of triangle records are held.
+  soon as it is written, and extraction waits while more than 1 GB of triangle records are held.
   On the 55.7M-triangle Moana subset the build peak fell from 6.6 to 4.1 GB.
-- The three.js geometry goes to disk after the build last reads it, and comes back when the build
-  ends. On a 70M-triangle scene the page held 0.84 GB after extraction instead of 4.07 GB.
+- The three.js geometry goes to disk after the build last reads it. Past 1 GB of it, it **stays there**
+  until something needs it: `await engine.ensureSceneResident()` reads it back, and so does a rebuild of
+  the same model. Meanwhile clicking the model selects nothing and a selection draws no outline (its
+  arrays are empty). Less than 1 GB comes back when the build ends. On a 70M-triangle scene
+  the page held 0.84 GB after extraction instead of 4.07 GB.
 - Each triangle chunk and BLAS goes to the GPU, then to disk. At 50M triangles the page settles at
   7.2 GB instead of 9.1 GB.
+- Once the load is done, the instance matrix lists, the top-level tree with its copy records and the
+  triangle order maps go to disk too. An edit reads back what it needs (a visibility change the tree, a
+  move the matrices, the tree and that object's copy records) and lands once it has; 30 s after the
+  last edit it all goes back. On the Moana island the CPU data held at rest fell from 6.9 to 2.2 GB, and
+  a tab in Chrome from 5.2 to 3.6 GB.
+- An environment wider than 8192 pixels is box-filtered down when it loads.
 
 With or without the spill, a mesh past 2M triangles is built as spatial pieces of ≤ 512k triangles
 on a worker pool and joined under the tree that split them, so no build holds a second copy of it.
 
-The render is unchanged. Visibility and rigid moves need nothing read back. Material edits that
-rewrite triangles (side, transparency, emission), and refits, read it back first. `refitBLASes`
-throws on a spilled scene until `await engine.ensureSceneResident()`.
+The render is unchanged. Material edits that rewrite triangles (side, transparency, emission), and
+refits, read the scene back first. `refitBLASes` throws on a spilled scene until
+`await engine.ensureSceneResident()`.
 
 ### Saving Scene State
 

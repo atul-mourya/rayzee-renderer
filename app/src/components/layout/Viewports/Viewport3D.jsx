@@ -16,26 +16,12 @@ import { PathTracerApp, configureAssets } from 'rayzee';
 import { getApp, setApp } from '@/lib/appProxy';
 import { connectEngineToStore } from '@/lib/EngineAdapter';
 import { loadLightLibraries } from '@/lib/lightLibraries';
-import { ensureAppAreas } from '@/lib/storage';
+import { ensureAppAreas, memorySpillPreference } from '@/lib/storage';
 import { isArchiveUrl } from '@/lib/archives';
 
 
 // How long startup holds the first frame for the CDN colour config before showing the built-in view.
 const DEFAULT_COLOR_WAIT_MS = 2000;
-
-function readFlag( key ) {
-
-	try {
-
-		return localStorage.getItem( key ) === '1';
-
-	} catch {
-
-		return false;
-
-	}
-
-}
 
 const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
@@ -228,8 +214,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 				const app = new PathTracerApp( canvasRef.current, {
 					container: containerRef.current,
-					// Experimental, off unless set: large static scenes move triangle data to disk once on the GPU.
-					memorySpill: readFlag( 'rayzee-memory-spill' ),
+					memorySpill: memorySpillPreference(),
 				} );
 				appRef.current = app;
 				setLoading( { isLoading: true, title: "Starting", status: "Initializing WebGPU...", progress: 30 } );

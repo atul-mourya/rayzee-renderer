@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
+import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
 import { BVH_LEAF_MARKERS, bvhIndexView, TLAS_LEAF_IDENTITY, TLAS_PLACEMENT_MASK } from '@/core/Processor/BufferLayout.js';
 
 const translation = ( x ) => [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1 ];
@@ -10,7 +11,7 @@ const translation = ( x ) => [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1 ];
  * Several placements of one unit-box geometry, spread along x. They share a template, so they
  * share a BLAS offset — which is what the refit used to key its bounds lookup on.
  */
-function sharedTemplateScene( positions ) {
+function sharedTemplateScene( positions, { clustered = false } = {} ) {
 
 	const n = positions.length;
 	const table = new InstanceTable();
@@ -32,19 +33,38 @@ function sharedTemplateScene( positions ) {
 
 	for ( let t = 0; t < n; t ++ ) table.tplObjectAABB.set( [ - 1, - 1, - 1, 1, 1, 1 ], t * 6 );
 
+	if ( clustered ) {
+
+		table.planClusters();
+		table.clusterWorld = new Float32Array( table.entryCount * 6 );
+		table.writeEntryWorldAABBs( table.clusterWorld );
+		table.clusterBounds = table.formClusters( table.clusterWorld );
+
+	}
+
 	// Leaf payloads are written during the build, so the offsets have to be final first.
-	table.assignOffsets( TLASBuilder.nodeCountFor( n ) );
+	table.assignOffsets( TLASBuilder.nodeCountFor( clustered ? table.clusterCount : n ) );
 
 	const built = new TLASBuilder().build( table );
 
 	const sp = new SceneProcessor();
 	sp.instanceTable = table;
-	sp._setBVHData( built.data.slice( 0, built.nodeCount * 16 ) );
+	if ( ! clustered ) {
+
+		sp._setBVHData( built.data.slice( 0, built.nodeCount * 16 ) );
+		return sp;
+
+	}
+
+	const nodes = new Float32Array( table.totalNodeCount * 16 );
+	nodes.set( built.data.subarray( 0, built.nodeCount * 16 ) );
+	for ( let r = 0; r < n; r ++ ) table.writeRecord( nodes, table.recordNodeStart * 16 + r * 12, table.repOf( table.recordEntry[ r ] ) );
+	sp._setBVHData( nodes );
 	return sp;
 
 }
 
-/** Every BLAS-pointer leaf as { placement, min, max } on the x axis. */
+/** Every BLAS-pointer leaf as { placement, min, max } on the x axis, read from the slot its parent keeps it in. */
 function leafBoxes( sp ) {
 
 	const data = sp.bvhData;
@@ -54,10 +74,14 @@ function leafBoxes( sp ) {
 	for ( let node = 0; node < sp.instanceTable.tlasNodeCount; node ++ ) {
 
 		const o = node * 16;
-		if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
-		// A leaf's own box lives in its parent, so read it back off the table the refit wrote.
-		const b = sp._tlasBounds;
-		out.push( { placement: idx[ o + 1 ] & TLAS_PLACEMENT_MASK, min: b[ node * 6 ], max: b[ node * 6 + 3 ] } );
+		if ( idx[ o + 3 ] >= BVH_LEAF_MARKERS.TRIANGLE_LEAF ) continue;
+		for ( const [ child, slot ] of [[ idx[ o + 3 ], o ], [ idx[ o + 7 ], o + 8 ]] ) {
+
+			const c = child * 16;
+			if ( idx[ c + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
+			out.push( { placement: idx[ c + 1 ] & TLAS_PLACEMENT_MASK, min: data[ slot ], max: data[ slot + 4 ] } );
+
+		}
 
 	}
 
@@ -95,12 +119,13 @@ describe( 'TLAS refit with shared BLASes', () => {
 
 	} );
 
-	it( 'still places a single unshared mesh correctly', () => {
+	it( 'leaves a tree of one leaf as it is: no parent holds its box', () => {
 
 		const sp = sharedTemplateScene( [ 7 ] );
+		const before = sp.bvhData.slice();
 		sp._refitTLAS();
 
-		expect( leafBoxes( sp ) ).toEqual( [ { placement: 0, min: 6, max: 8 } ] );
+		expect( Array.from( sp.bvhData ) ).toEqual( Array.from( before ) );
 
 	} );
 
@@ -160,7 +185,7 @@ describe( 'moving an object', () => {
 
 	} );
 
-	it( 'recomputes every box once the BVH is replaced', () => {
+	it( 'once the BVH is replaced, measures only what moved and takes the rest from the tree it holds', () => {
 
 		const sp = sharedTemplateScene( [ 0, 100, - 40 ] );
 		sp.meshes = [ fakeMesh( 0 ), fakeMesh( 100 ), fakeMesh( - 40 ) ];
@@ -168,8 +193,55 @@ describe( 'moving an object', () => {
 		sp._setBVHData( sp.bvhData.slice() );
 
 		const writes = vi.spyOn( sp.instanceTable, 'writeWorldAABB' );
+		sp.meshes[ 1 ].matrixWorld.elements.set( translation( 250 ) );
 		sp.updateMeshTransforms( [ 1 ] );
-		expect( writes ).toHaveBeenCalledTimes( 3 );
+		expect( writes ).toHaveBeenCalledTimes( 1 );
+		expect( leafBoxes( sp ) ).toEqual( [
+			{ placement: 0, min: - 1, max: 1 },
+			{ placement: 1, min: 249, max: 251 },
+			{ placement: 2, min: - 41, max: - 39 },
+		] );
+
+		const partial = sp.bvhData.slice();
+		sp._refitTLAS();
+		expect( Array.from( sp.bvhData ) ).toEqual( Array.from( partial ) );
+
+	} );
+
+	it( 'in a clustered TLAS, re-encodes only the moved copy\'s cluster and leaves the tree a full refit would', () => {
+
+		const positions = Array.from( { length: 40 }, ( _, i ) => i * 3 );
+		const sp = sharedTemplateScene( positions, { clustered: true } );
+		sp.meshes = positions.map( x => fakeMesh( x ) );
+
+		const encodes = vi.spyOn( sp.instanceTable, 'encodeClusterBoxes' );
+		sp.meshes[ 17 ].matrixWorld.elements.set( translation( 500 ) );
+		sp.updateMeshTransforms( [ 17 ] );
+		expect( encodes ).toHaveBeenCalledTimes( 1 );
+		encodes.mockRestore();
+		expect( sp.sceneBounds().max[ 0 ] ).toBeGreaterThanOrEqual( 501 );
+
+		const partial = sp.bvhData.slice();
+		sp._refitTLAS();
+		expect( Array.from( sp.bvhData ) ).toEqual( Array.from( partial ) );
+
+	} );
+
+	it( 'uploads only the TLAS nodes a move rewrote', () => {
+
+		const positions = Array.from( { length: 20000 }, ( _, i ) => ( i % 200 ) * 3 + Math.floor( i / 200 ) * 0.01 );
+		const sp = sharedTemplateScene( positions );
+		sp.meshes = positions.map( x => fakeMesh( x ) );
+		const before = sp.bvhData.slice();
+
+		sp.meshes[ 12345 ].matrixWorld.elements.set( translation( 5000 ) );
+		sp.updateMeshTransforms( [ 12345 ] );
+		const ranges = sp.takeMoveRanges();
+		const covered = i => ranges.some( r => i >= r.offset && i < r.offset + r.count );
+		const after = sp.bvhData;
+		for ( let i = 0; i < after.length; i ++ ) if ( after[ i ] !== before[ i ] ) expect( covered( i ) ).toBe( true );
+		expect( ranges.reduce( ( n, r ) => n + r.count, 0 ) ).toBeLessThan( sp.instanceTable.tlasNodeCount * 16 / 4 );
+		expect( sp.takeMoveRanges() ).toEqual( [ sp.computeTLASDirtyRange() ] );
 
 	} );
 
@@ -307,6 +379,30 @@ describe( 'moving an object', () => {
 
 		// A world pose of 15 against a baked pose of 10 leaves a delta of 5 on the leaf.
 		expect( leafBoxes( sp )[ 0 ] ).toEqual( { placement: 0, min: 4, max: 6 } );
+
+	} );
+
+	it( 'uploads moved copy records one range a chunk, never across a chunk nothing was read back into', () => {
+
+		const sp = new SceneProcessor();
+		sp.bvh = new ChunkedRecords( 64, 16, Float32Array, 16 * 16 * 4 );
+		sp.bvhIndexChunks = sp.bvh.viewAs( Uint32Array );
+		sp.instanceTable = {
+			recordNodeStart: 8, clusterLeaf: [ 0 ],
+			writeRecord: ( out, off, p ) => out.fill( p + 1, off, off + 12 ),
+			matrixWorldOf: () => Float32Array.of( 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ),
+			clusterOf: () => 0, copyWordSlot: r => 12 + r % 4,
+		};
+
+		// Record 0 sits in chunk 0 (nodes 8–8.75), record 40 in chunk 2 (node 38); chunk 1 holds neither.
+		sp._writeCopyRecord( 0, 0 );
+		sp._writeCopyRecord( 40, 1 );
+		const ranges = sp.takeMovedRecordRanges();
+		const lanes = 16 * 16;
+		expect( ranges ).toHaveLength( 2 );
+		for ( const { offset, count } of ranges ) expect( Math.floor( offset / lanes ) ).toBe( Math.floor( ( offset + count - 1 ) / lanes ) );
+		expect( ranges.map( r => Math.floor( r.offset / lanes ) ).sort() ).toEqual( [ 0, 2 ] );
+		expect( sp.takeMovedRecordRanges() ).toEqual( [] );
 
 	} );
 

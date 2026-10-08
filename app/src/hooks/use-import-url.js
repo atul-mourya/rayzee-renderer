@@ -4,6 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import { getApp } from '@/lib/appProxy';
 import { useStore } from '@/store';
 import { isArchiveUrl, isImportableUrl } from '@/lib/archives';
+import { spillNote } from '@/lib/storage';
 
 export function useImportUrl() {
 
@@ -58,7 +59,7 @@ export function useImportUrl() {
 
 					toast( {
 						title: "Model Loaded",
-						description: "Successfully loaded model !!",
+						description: `Successfully loaded model.${spillNote( app )}`,
 					} );
 
 				} )

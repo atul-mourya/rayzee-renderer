@@ -738,6 +738,7 @@ describe( 'EmissiveTriangleBuilder', () => {
 			expect( builder.totalEmissivePower ).toBe( 0 );
 			expect( nodeCount ).toBe( 1 );
 			expect( builder.emissiveBitTrailMap.every( v => v === - 1 ) ).toBe( true );
+			expect( builder.emissiveBitTrailMap.length ).toBe( 4 );
 
 		} );
 

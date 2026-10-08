@@ -669,7 +669,9 @@ export class EmissiveTriangleBuilder {
 			this.lightBVHNodeData[ 14 ] = 1.0; // cone axis z
 			this.lightBVHNodeData[ 15 ] = - 1.0; // cosThetaO = whole sphere
 			this.lightBVHNodeCount = 1;
-			this.emissiveBitTrailMap = new Float32Array( Math.max( this._totalTriangleCount, 1 ) ).fill( - 1 );
+			// Shade reads the map only while emissiveTriangleCount > 0: one over every triangle was 446 MB on the Moana
+			// island, in the tab, on the GPU and in Chrome's upload pool.
+			this.emissiveBitTrailMap = new Float32Array( 4 ).fill( - 1 );
 			this.emissiveIndicesArray = new Int32Array( 0 );
 			this.emissivePowerArray = new Float32Array( 0 );
 			this._buildCDF();

@@ -126,7 +126,8 @@ export class InteractionManager extends EventDispatcher {
 	select( object ) {
 
 		const outline = this._overlayManager?.getHelper( 'outline' );
-		if ( outline ) outline.setSelectedObjects( object ? [ object ] : [] );
+		// A spilled model's geometry is on disk: there is nothing to draw the outline from.
+		if ( outline ) outline.setSelectedObjects( object && ! this.isGeometryOnDisk?.() ? [ object ] : [] );
 
 		this.selectedObject = object || null;
 
