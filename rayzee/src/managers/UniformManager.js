@@ -333,6 +333,9 @@ export class UniformManager {
 		u( 'emissiveTriangleCount', 0, 'int' );
 		u( 'emissiveTotalPower', 0.0, 'float' );
 		u( 'lightBVHNodeCount', 0, 'int' );
+		// Where the light data starts in the scene data buffer, after the materials (vec4 elements). Every light read
+		// adds it; the offsets below are within the light data.
+		u( 'lightVec4Offset', 0, 'int' );
 		// Offset (in vec4 elements) within the packed light buffer where emissive
 		// triangle data starts. Equals lightBVHNodeCount * LBVH_STRIDE; computed on upload.
 		u( 'emissiveVec4Offset', 0, 'int' );

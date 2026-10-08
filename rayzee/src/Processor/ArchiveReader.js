@@ -656,44 +656,41 @@ export async function readTar( source, options = {} ) {
 /**
  * Retain-predicate for one or several subtrees of a scene archive.
  *
- * Keeps each chosen element plus everything above it — the top-level scene file, the shared
- * material library, and any `textures` folder hanging off an ancestor — so the entry .pbrt
- * still parses with its siblings absent. An Include pointing at a subtree that was left out
- * only warns, which is what makes a partial load work at all.
+ * Leaves out only the chosen elements' siblings (a `textures` folder excepted) and keeps everything else: the scene
+ * file, a material library beside it (pbrt) or in a directory of its own (USD), textures. An Include or reference
+ * pointing at a subtree that was left out only warns, which is what makes a partial load work at all.
  *
  * @param {string|string[]} prefixes - one element path, or several to load together
  */
 export function elementFilter( prefixes ) {
 
-	const wanted = ( Array.isArray( prefixes ) ? prefixes : [ prefixes ] )
-		.filter( Boolean )
-		.map( prefix => {
+	const chosen = ( Array.isArray( prefixes ) ? prefixes : [ prefixes ] ).filter( Boolean ).map( normalizeTarPath );
+	if ( chosen.length === 0 ) return () => true;
 
-			const p = normalizeTarPath( prefix );
-			return { p, inside: p + '/' };
+	const siblings = new Map();
+	for ( const p of chosen ) {
 
-		} );
+		const cut = p.lastIndexOf( '/' );
+		const parent = cut < 0 ? '' : p.slice( 0, cut + 1 );
+		if ( ! siblings.has( parent ) ) siblings.set( parent, new Set() );
+		siblings.get( parent ).add( p.slice( cut + 1 ) );
 
-	if ( wanted.length === 0 ) return () => true;
+	}
 
 	return path => {
 
-		const cut = path.lastIndexOf( '/' );
-		const dir = cut < 0 ? '' : path.slice( 0, cut );
-		if ( dir === '' ) return true;
+		for ( const [ parent, names ] of siblings ) {
 
-		const tex = dir.lastIndexOf( '/textures' );
-		const texRoot = tex >= 0 && tex === dir.length - 9 ? dir.slice( 0, tex ) + '/' : null;
-
-		for ( const { p, inside } of wanted ) {
-
-			if ( path === p || path.startsWith( inside ) ) return true;
-			if ( inside.startsWith( dir + '/' ) ) return true;
-			if ( texRoot !== null && inside.startsWith( texRoot ) ) return true;
+			if ( ! path.startsWith( parent ) ) continue;
+			const rest = path.slice( parent.length );
+			const slash = rest.indexOf( '/' );
+			if ( slash < 0 ) continue;
+			const name = rest.slice( 0, slash );
+			if ( ! names.has( name ) && name !== 'textures' ) return false;
 
 		}
 
-		return false;
+		return true;
 
 	};
 

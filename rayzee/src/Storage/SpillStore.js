@@ -99,6 +99,15 @@ export class SpillStore {
 
 	}
 
+	/** Reads chunk `k` into `target` (bytes) and lets the read buffer go at once, not at the next major collection. */
+	async readInto( k, target ) {
+
+		const buffer = await this.read( k, target.byteLength );
+		target.set( new Uint8Array( buffer ) );
+		buffer.transfer?.( 0 );
+
+	}
+
 	async dispose() {
 
 		if ( this._writer ) await this._writer.abort();

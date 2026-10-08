@@ -57,6 +57,8 @@ export const LIGHT_VERTEX_STRIDE = 4;
 // SoA region stride, baked into the shader graph at build time; single instance, rebuilt on resize.
 let _cap = 0;
 let _lightVertexBase = 0;
+// The G-buffer is the hit buffer's last region, one uvec4 a path: in a buffer of its own it took Shade's tenth binding.
+let _gBufferBase = 0;
 
 const soa = ( id, slot ) => ( slot === 0 ? id : id.add( slot * _cap ) );
 
@@ -104,6 +106,7 @@ export class PackedRayBuffer {
 		_cap = capacity;
 		const hitSlots = lightVertices > 0 ? HIT_STRIDE_BIDIRECTIONAL : HIT_STRIDE;
 		_lightVertexBase = capacity * hitSlots;
+		_gBufferBase = _lightVertexBase + lightVertices * LIGHT_VERTEX_STRIDE;
 
 		// count=0 so StorageBufferNode.getHash() shares the buffer → RW and RO nodes bind the same GPU data.
 		const rayCount = capacity * RAY_STRIDE;
@@ -114,7 +117,7 @@ export class PackedRayBuffer {
 			ro: storage( rayAttr, 'vec4' ).toReadOnly(),
 		};
 
-		const hitCount = capacity * hitSlots + lightVertices * LIGHT_VERTEX_STRIDE;
+		const hitCount = _gBufferBase + capacity * GBUFFER_STRIDE;
 		const hitAttr = gpuOnlyStorageAttribute( hitCount, 4, Uint32Array );
 		this._attrs.hit = hitAttr;
 		this.hitBuffer = {
@@ -178,7 +181,7 @@ export const readRayRadiance = ( buf, id ) =>
 // normal: raw unit vec3; depth: linear [0,1]; albedo: vec3 [0,1]. Packed values live in u32 lanes
 // verbatim (no f32 bitcast) so NaN-range bit patterns (snorm ±1 → 0x7FFF) survive store/load intact.
 // One uvec4 per pixel (stride 1); AoS base = pixelIndex * GBUFFER_STRIDE.
-const gbLane = ( pixelIndex ) => uint( pixelIndex ).mul( GBUFFER_STRIDE );
+const gbLane = ( pixelIndex ) => uint( pixelIndex ).mul( GBUFFER_STRIDE ).add( _gBufferBase );
 
 // hitDist = null keeps the lane's current normHitDist.
 export const writeGBuffer = ( buf, pixelIndex, normal, depth, albedo, hitDist = null ) => {

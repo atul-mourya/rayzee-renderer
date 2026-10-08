@@ -318,8 +318,8 @@ stage.maxBounces;           // same as stage.uniforms.get( 'maxBounces' )
 stage.cameraWorldMatrix;    // same as stage.uniforms.get( 'cameraWorldMatrix' )
 
 // MaterialDataManager
-stage.materialData.materialStorageAttr;   // StorageInstancedBufferAttribute
-stage.materialData.materialStorageNode;   // storage( …, 'vec4' ).toReadOnly() node
+stage.materialData.materialStorageAttr;   // the scene data buffer: materials, then the light data
+stage.materialData.materialStorageNode;   // storage( …, 'vec4' ).toReadOnly() node; light reads use stage.lightDataNode
 stage.materialData.srgbBuckets;           // DataArrayTexture | null per size bucket — colour maps
 stage.materialData.linearBuckets;         // DataArrayTexture | null per size bucket — data maps
 stage.materialData.updateMaterialProperty( index, property, value );
@@ -347,7 +347,7 @@ stage.vramTracker.resetPeak();
 
 `generateProceduralSkyTexture()` bakes only once the `rayzee/addons/physical-sky` add-on is installed with `environmentManager.setProceduralSky( PhysicalSky )` — the viewer does this in `_initManagers()`. Without it the call records `capability.missing` and resolves.
 
-`VRAMTracker` (`Processor/VRAMTracker.js`) is owned by the `PathTracer` subclass, not one of the 5 sub-managers. Its providers are thunks that read live GPU resources, summed by real size and de-duplicated by identity. The path tracer registers its own (rays, queues, G-buffer, accumulation, geometry, materials, environment, integrator); the core's `_ensureVRAMWiring()` adds every other stage's textures and render targets and the canvas, and the viewer's `_registerVRAM()` hook adds the denoiser. The renderer exposes it as `vram` and `getMemoryInfo()`, and measures on a burst's first frames, every 30th frame, and on scene rebuild, environment load and resolution change.
+`VRAMTracker` (`Processor/VRAMTracker.js`) is owned by the `PathTracer` subclass, not one of the 5 sub-managers. Its providers are thunks that read live GPU resources, summed by real size and de-duplicated by identity. The path tracer registers its own (rays — the hit buffer with its G-buffer region —, queues, G-buffer, accumulation, geometry, materials with the light data, environment, integrator); the core's `_ensureVRAMWiring()` adds every other stage's textures and render targets and the canvas, and the viewer's `_registerVRAM()` hook adds the denoiser. The renderer exposes it as `vram` and `getMemoryInfo()`, and measures on a burst's first frames, every 30th frame, and on scene rebuild, environment load and resolution change.
 
 **Callback Pattern:**
 

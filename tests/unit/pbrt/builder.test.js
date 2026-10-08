@@ -380,6 +380,31 @@ describe( 'PBRT scene builder', () => {
 
 	} );
 
+	it( 'places a template\'s shapes as one object: one matrix list, one placement a copy', async () => {
+
+		const scene = `
+			WorldBegin
+			AttributeBegin
+				ObjectBegin "tree"
+					Material "diffuse" "rgb reflectance" [ 0.4 0.2 0.1 ]
+					Shape "trianglemesh" "point3 P" [ 0 0 0  1 0 0  0 1 0 ] "integer indices" [ 0 1 2 ]
+					Material "diffuse" "rgb reflectance" [ 0.1 0.5 0.1 ]
+					Shape "trianglemesh" "point3 P" [ 0 2 0  1 2 0  0 3 0 ] "integer indices" [ 0 1 2 ]
+				ObjectEnd
+			AttributeEnd
+			${Array.from( { length: 6 }, ( _, i ) => `AttributeBegin Translate ${i} 0 0 ObjectInstance "tree" AttributeEnd` ).join( '\n' )}
+		`;
+
+		const { group, placementCount } = await loadPBRTScene( buildArgs( { vfs: { 'scene.pbrt': enc.encode( scene ) } } ) );
+		const parts = group.children.filter( c => c.isInstancedMesh );
+
+		expect( parts ).toHaveLength( 2 );
+		expect( parts[ 0 ].material ).not.toBe( parts[ 1 ].material );
+		expect( parts[ 1 ].instanceMatrix ).toBe( parts[ 0 ].instanceMatrix );
+		expect( placementCount ).toBe( 6 );
+
+	} );
+
 	it( 'decodes a .ply once when two shapes name it', async () => {
 
 		let decodes = 0;

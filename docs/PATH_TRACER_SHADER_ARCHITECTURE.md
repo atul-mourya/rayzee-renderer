@@ -134,7 +134,7 @@ Material texture buckets, the albedo maps alpha-cutout shadow rays read, the gob
 - **`PathTracer.js`** (`class PathTracer extends PathTracerStage`): the wavefront renderer. Owns the path pool (`PackedRayBuffer`, `QueueManager`, `KernelManager`), sizes the path budget, builds every core kernel in `_buildWavefrontKernels()` and drives the frame in `render()`. It also holds the integrator hooks (`registerIntegrator()`, `setIntegrator()`, `integrator`, `activeIntegrator`) and `requestOutput()`, through which a later stage asks Shade for an extra output.
 
 ### Wavefront resources (`rayzee/src/Processor/`)
-- **`PackedRayBuffer.js`**: the SoA ray and hit buffers (`RAY`, `HIT` slot tables, `RAY_STRIDE`, `HIT_STRIDE`, `HIT_STRIDE_BIDIRECTIONAL`) with their read/write helpers, and the G-buffer helpers (`writeGBuffer`, `gbDecodeNormalDepth`, …). The G-buffer attribute itself is allocated by `PathTracer`.
+- **`PackedRayBuffer.js`**: the SoA ray and hit buffers (`RAY`, `HIT` slot tables, `RAY_STRIDE`, `HIT_STRIDE`, `HIT_STRIDE_BIDIRECTIONAL`) with their read/write helpers, and the G-buffer helpers (`writeGBuffer`, `gbDecodeNormalDepth`, …). The G-buffer is the hit buffer's last region (`_gBufferBase`), not a buffer of its own: Shade binds eight storage buffers, and the device's other two are kept for the BVH and triangle stores' parts.
 - **`QueueManager.js`**: active-index lists A/B, the sorted-index list, the sort histogram, the atomic counters (`COUNTER`; the light guide's counts follow `COUNTER.GUIDE`), the per-bounce snapshot buffer, and `RAY_FLAG`.
 - **`KernelManager.js`**: registers and dispatches the compute nodes (`register()`, `dispatch()`, `has()`, `get()`). `setDispatchForCount()` and `setDispatchForGrid()` size a grid from the workgroup size the node was registered with; a 1D grid past `maxComputeWorkgroupsPerDimension` spills into a second dimension.
 - **`StorageTexturePool.js`**: 3 write-only MRT StorageTextures (allocated at `MAX_STORAGE_TEXTURE_SIZE`, never resized) + 1 readable MRT RenderTarget; `getWriteTextures()`, `getReadTextures()`, `copyToReadTargets()`, `ensureSize()`.
@@ -155,7 +155,7 @@ textures[2] = gAlbedo      // Albedo (RGB) + hit distance (a) — denoiser input
 
 `gNormalDepth` and `gAlbedo` are the aux outputs. They are written, and copied to the read target, only while a denoiser has them on (`setAuxGBufferEnabled()`, a live uniform, so toggling needs no rebuild). They accumulate on their own epoch (`auxAccumulationAlpha`, `hasPreviousAux`).
 
-The aux data is staged in a **G-buffer** of one half-packed `uvec4` per path slot (`GBUFFER_STRIDE = 1`), separate from the ray buffer, written and read within the same band. Generate seeds each slot with normal +Z, depth 1 and black albedo. Shade writes the primary hit's NDC depth at bounce 0; normal and albedo are committed at the first surface diffuse enough to guide a denoiser, deferring through smooth mirrors and glass, and the path is then flagged `RAY_FLAG.AUX_LOCKED`. FinalWrite decodes the slot (`gbDecodeNormalDepth`, `gbDecodeAlbedo`, `gbDecodeHitDist`).
+The aux data is staged in a **G-buffer** of one half-packed `uvec4` per path slot (`GBUFFER_STRIDE = 1`), the hit buffer's last region, written and read within the same band. Generate seeds each slot with normal +Z, depth 1 and black albedo. Shade writes the primary hit's NDC depth at bounce 0; normal and albedo are committed at the first surface diffuse enough to guide a denoiser, deferring through smooth mirrors and glass, and the path is then flagged `RAY_FLAG.AUX_LOCKED`. FinalWrite decodes the slot (`gbDecodeNormalDepth`, `gbDecodeAlbedo`, `gbDecodeHitDist`).
 
 `gAlbedo.a` holds a hit distance only while a stage has asked for it: NRD calls `pathTracer.requestOutput( 'hitDistance', { encode } )`, and Shade then writes `encode( distance, viewZ )` at camera depth 1 — the first bounce's segment plus any alpha-skip run. The request is compiled into Shade (the kernels rebuild before the next frame); Shade holds no NRD code. Otherwise the lane is 0.
 
@@ -172,10 +172,10 @@ Uniforms are owned by `UniformManager` (`rayzee/src/managers/`) and exposed on t
 5. **Sampling:** `samplingTechnique` (0 = PCG, 1 = Halton, 2 = Sobol, the default) — `samplingTechniqueUniform`, a module-level node in `Random.js` that `UniformManager` registers.
 6. **Environment & background:** `enableEnvironment`, `environmentIntensity`, `environmentMatrix`, `envTotalSum` (> 0 while a sampling table is bound), `envResolution`; the physical sky's sun (`hasSun`, `sunDirection`, `sunRadiance`, `sunParams` = cos half-angle, solid angle, 1/sin², horizon dip); `backgroundIntensity`, `backgroundColor`, `backgroundBlurriness`, `backgroundBlurSamples`, `showBackground`, `transparentBackground`; ground projection (`groundProjectionEnabled`, `groundProjectionRadius`, `groundProjectionHeight`, `groundProjectionLevel`); shadow catcher (`enableGroundCatcher`, `groundCatcherHeight`).
 7. **Lighting:** `numDirectionalLights`, `numPointLights`, `numSpotLights`, `numAreaLights` and the four light lists, `uniformArray`s of `LIGHT_FLOATS` per light, written in place (`PathTracerStage._writeLightList`): the shader bakes a list's length, and a list that outgrows its capacity rebuilds the kernels. `globalIlluminationIntensity`, `fireflyThreshold`, `shadowTerminatorOffset`, `enableAlphaShadows`.
-8. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`, `reverseMapVec4Offset`.
+8. **Emissive / Light BVH:** `enableEmissiveTriangleSampling`, `emissiveTriangleCount`, `lightVec4Offset`, `emissiveVec4Offset`, `emissiveTotalPower`, `emissiveBoost`, `lightBVHNodeCount`, `reverseMapVec4Offset`.
 9. **Debug:** `visMode`, `debugVisScale`.
 
-The scene buffers are storage nodes on the stage, not uniforms: `triangleStorageNode` (a `{ geo, shade }` pair, see below), `bvhStorageNode`, `materialData.materialStorageNode`, `lightStorageNode`. The environment's sampling table is a texture (`environment.envCDFTexture`).
+The scene buffers are storage nodes on the stage, not uniforms: `triangleStorageNode` (a `{ geo, shade }` pair, see below), `bvhStorageNode`, and the scene data buffer — `materialData.materialStorageNode`, whose light data sits behind the materials and is read through `lightDataNode` (it adds `lightVec4Offset`). A store past one binding's limit is split into parts (below). The environment's sampling table is a texture (`environment.envCDFTexture`).
 
 Material maps are two lists of `MATERIAL_BUCKET_COUNT` (4) texture-array nodes, `srgbBuckets` and `linearBuckets`, built per kernel build by `buildBucketTextureNodes()` and repointed each frame by `_refreshWfTextureNodes()`. A map's packed index is `bucket * BUCKET_LAYER_STRIDE + layer` (stride 256); `sampleBucket()` picks the bucket with one `If`/`ElseIf` arm per bucket. The sRGB pool holds albedo, emissive, sheen colour and specular colour; the linear pool everything else (normal, bump, roughness, metalness, displacement, anisotropy, transmission, clear coat, clear coat roughness, sheen roughness, iridescence, iridescence thickness, specular intensity).
 
@@ -200,20 +200,40 @@ whether a shadow ray settles on this triangle without fetching its material: bit
 27 only while alpha-cutout shadows are off.
 
 On the GPU the five rows live in two buffers: rows 1–3 (positions and normals, 48 B) in
-`triangleGeoAttr` and rows 4–5 (UVs, flags, mesh index) in `triangleShadeAttr`. One 80 B buffer
-reached WebGPU's 4 GB buffer limit at 53.6M triangles; the geo buffer alone reaches it at 89.5M.
-The CPU records stay whole and `PathTracerStage._uploadTriangles` splits them on upload. Kernels
-take the pair as `triangleStorageNode = { geo, shade }` and read a row only through
-`triangleRow( tris, triIndex, row )` (`TSL/Common.js`), which picks the buffer.
+`triangleGeoAttr` and rows 4–5 (UVs, flags, mesh index) in `triangleShadeAttr`. When no material
+samples a texture (`SceneProcessor.textureCoordinates`), the shade buffer keeps only flags and mesh
+index, a `uvec2` a triangle (`withoutUV` on the pair, 24 B a triangle less), and UVs read as zero;
+`rebuildMaterials` brings them back when a texture arrives. The CPU records stay whole and
+`PathTracerStage._uploadTriangles` splits them on upload. Kernels take the pair as
+`triangleStorageNode = { geo, shade }` and read a row only through `triangleRow( tris, triIndex, row )`
+(`TSL/Common.js`), which picks the buffer.
+
+**Buffer parts.** Dawn caps one buffer at 4 GiB − 4, so past `maxStorageBufferBindingSize` the BVH,
+geo and shade stores are each split into parts of whole records (`StorageParts`, `TSL/patches.js`)
+and read through `splitStorage` (`TSL/Common.js`), which picks the part with an `If` chain. A store
+that fits one buffer is a plain node and compiles exactly the old code. Every part is a binding, and
+Shade binds five other buffers, so the parts total at most five (`PathTracerStage._assertBindings`).
 
 ### Two-level BVH (`bvhStorageNode`)
-Combined buffer `[ TLAS | BLAS_0 | BLAS_1 | ... ]`, 16 floats (4 × vec4) per node:
+Combined buffer `[ TLAS | group trees | empty leaf | BLAS_0 | BLAS_1 | ... | copy records ]`, 16 floats (4 × vec4) per node:
 - Inner node: child AABBs + child indices in slots 0–3 (4 reads, no child fetches).
 - Leaf tags live in `nodeData0.w` as u32 bit patterns (`floatBitsToUint`), above `BVH_MAX_INDEX`.
 - Triangle leaf (`TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, _, tag]`.
-- BLAS-pointer leaf (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`
-  with the world-to-object rows in slots 4–15. Visibility is free-fetched with the leaf; bit 30 of
-  slot `[1]` (`TLAS_LEAF_IDENTITY`) marks a baked placement whose ray transform is skipped.
+- BLAS-pointer leaf (`BLAS_POINTER_LEAF`, 0x40000001): `[rootNodeIndex, entry, visibility, tag]`
+  with the world-to-object rows in slots 4–15. Slot `[1]` is the TLAS entry (the placement, unless
+  placements are grouped); visibility is free-fetched with the leaf; bit 30 of slot `[1]`
+  (`TLAS_LEAF_IDENTITY`) marks a baked placement whose ray transform is skipped.
+
+**Grouped placements.** Instanced meshes sharing one matrix list under the same host transform are one
+object: each copy is one TLAS entry whose root is a small tree over the members' BLAS roots (the group
+trees, plain inner nodes in the copies' shared object space), so traversal is unchanged. A hidden
+member's child points at the empty leaf. `InstanceTable.entryOf` / `repOf` map placements and entries.
+
+**Copy clusters** (past 1M TLAS entries): the TLAS is built over leaves of up to four neighbouring
+copies of any objects (`CLUSTER_LEAF`, 0x40000003; layout in `BufferLayout.js`). The leaf holds each
+copy's box in bytes on a power-of-two grid and one word a copy — its root, the identity bit and
+`CLUSTER_COPY_HIDDEN` — and each copy's world-to-object rows are a 48 B record after the BLASes
+(`copyRecordBase` on the buffer). About 80 B a copy against 128.
 
 **Folded leaves** (scenes past `FOLD_LEAVES_TRIANGLES`, 40M stored triangles): every triangle leaf
 of ≤ 15 triangles (`BVH_FOLDED_LEAF_MAX`) is folded into its parent (`Processor/BVHLeafFold.js`).
@@ -230,11 +250,13 @@ transformed into that space on entering the leaf and the hit's `instanceLeaf` na
 transform back through. Single-use and emissive geometry is baked to world space behind an
 identity leaf instead, so it needs no transform either way.
 
-### Material data (`materialStorageNode`)
+### Scene data: materials, then lights (`materialStorageNode`)
+One buffer, one Shade binding: `[ materials | light BVH nodes | emissive entries | bit-trail map ]`. Light reads go through `lightDataNode`, which adds `lightVec4Offset` (where the light data starts). Material edits upload only the material region.
+
 33 vec4 slots (132 floats) per material, laid out by `MATERIAL_DATA_LAYOUT` (`Processor/BufferLayout.js`) and written only by `packMaterial()` (`Processor/MaterialPacking.js`): the shadow-path fields first (IOR, transmission, thickness, attenuation, opacity, side, alpha), then base colour / metalness / emissive / roughness, map indices, clear coat, dispersion, sheen, specular, iridescence, bump and displacement, the per-map UV transforms, subsurface, anisotropy and the extension-map indices.
 
-### Emissive triangles / Light BVH (`lightStorageNode`)
-One packed buffer `[ light BVH nodes | emissive entries | bit-trail map ]` (`PathTracerStage._rebuildLightBuffer`). `emissiveVec4Offset` is where the emissive entries start, `reverseMapVec4Offset` where the per-triangle bit trails start.
+### Emissive triangles / Light BVH (the light data)
+`[ light BVH nodes | emissive entries | bit-trail map ]` behind the materials (`PathTracerStage._rebuildLightBuffer`). Within the light data, `emissiveVec4Offset` is where the emissive entries start and `reverseMapVec4Offset` where the per-triangle bit trails start. Shade reads the bit trails only while `emissiveTriangleCount > 0`, so with no emitter active the map is a four-float placeholder rather than one float a triangle.
 
 ### Environment sampling table (`envCDFTexture`, RGBA32F)
 The exact table (`Processor/EnvironmentExactTable.js`): `buildExactEnvironmentTable()` builds it (in `CDFWorker` for HDRIs and colour skies) and `packExactTable()` lays it out as a `(w + 1) × h` RGBA float texture. Texel `(x, y)` holds row `y`'s entry `x` — its running sum, the sum below it, and the guides of steps `2x` and `2x + 1`; texel `(w, y)` holds the rows' entry `y` likewise. The table is at most `EXACT_TABLE_MAX_WIDTH` (1024) cells wide; a larger map gives each cell k × k texels. Read with integer `.load()`. It is a texture because Shade has no storage-buffer binding to spare.
@@ -339,10 +361,11 @@ Highlights:
 - Inner nodes store both child AABBs + child indices (4 reads, no separate child fetches).
 - Early pruning: compare child-bound min distance against the current closest hit; the far child is pushed first.
 - Per-mesh visibility: at a BLAS-pointer leaf the visibility flag (slot `[2]`) is checked before pushing the BLAS root — an entire hidden mesh's BLAS is skipped. There is no separate visibility buffer.
+- Copy clusters (only compiled for a clustered tree, `copyRecordBase` on the buffer): a cluster leaf pushes `COPY_ENTRY | leaf << 2 | k` for each copy whose byte box the ray reaches, nearest first; popping one moves the ray into that copy's space from its record and handles it with `Continue()` (nesting the node visit in an `Else` overflowed the JS stack building a large Shade). A copy's hidden bit skips it, and `instanceLeaf` is then the record index.
 - Triangle intersection is inline; front/back/double-side culling uses the per-triangle side flag (bits 24–25 of `flags`, row 5, in the shade buffer), for the camera's view only: Extend culls a ray not yet `REDIRECTED` or flagged `UNDER_SURFACE` (it dipped under its own facet). Other bounces hit both sides, as shadow rays always have. Rays inside a medium bypass culling to hit glass/SSS back faces.
 - `traverseBVHShadow` is the any-hit early-exit variant for shadow rays; `traverseBVHShadowCameraCulled` applies the camera's culling (bidirectional light tracing); `traverseBVHDebug` counts box and triangle tests for the debug views.
 
-Mesh visibility is maintained CPU-side by `PathTracerStage._patchTLASLeafVisibility()` (driven by `updateAllMeshVisibility()`, `setMeshVisibilityData()` and `updateMeshVisibility()`), which writes the flag into the combined BVH buffer at the TLAS leaf; `_flushBVHEdits()` uploads only the touched leaves. World visibility is resolved by walking the parent chain (`_isWorldVisible`).
+Mesh visibility is maintained CPU-side by `PathTracerStage._patchTLASLeafVisibility()` (driven by `updateAllMeshVisibility()`, `setMeshVisibilityData()` and `updateMeshVisibility()`), which writes the flag into the combined BVH buffer at the TLAS leaf — or the copy's hidden bit in its cluster leaf; `_flushBVHEdits()` uploads only the touched leaves. World visibility is resolved by walking the parent chain (`_isWorldVisible`).
 
 ---
 

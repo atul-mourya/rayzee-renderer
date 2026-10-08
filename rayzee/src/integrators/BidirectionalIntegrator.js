@@ -13,7 +13,7 @@ import { LIGHT_FLOATS } from '../managers/UniformManager.js';
 import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from '../Processor/PackedRayBuffer.js';
 import { COUNTER, ENERGY_SCALE } from '../Processor/QueueManager.js';
 import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
-import { BVH_MAX_INDEX } from '../Processor/BufferLayout.js';
+import { BVH_MAX_INDEX, BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '../Processor/BufferLayout.js';
 import { BOUNCE_KERNELS, LIST_WG_SIZE } from '../Stages/PathTracer.js';
 import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../TSL/LightGenerateKernel.js';
 import { buildGuideKernel, buildGuideClearKernel, guidedDiscPdf, recordEscape, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from '../TSL/LightGuide.js';
@@ -652,6 +652,14 @@ export class BidirectionalIntegrator {
 		const records = this.pt._bvhRecords;
 		const flat = records ? null : this.pt.bvhStorageAttr?.array;
 		if ( ! records && ! ( flat?.length >= 16 ) ) return null;
+		// A spilled TLAS comes back for the next frame's disc.
+		const blasBase = this.pt._instanceTable?.blasBase ?? 1;
+		if ( records && ! records.isResident( 0, blasBase ) ) {
+
+			this.pt._whenTLASResident( () => {} );
+			return null;
+
+		}
 
 		const view = ( f ) => {
 
@@ -665,6 +673,16 @@ export class BidirectionalIntegrator {
 
 			const f = records ? records.chunkFor( i ) : flat;
 			return { f, u: view( f ), o: records ? records.baseOf( i ) : i * 16 };
+
+		};
+
+		// A copy cluster is visible while any of its copies is (BufferLayout CLUSTER_LEAF).
+		const leafVisible = ( n ) => {
+
+			if ( n.u[ n.o + 3 ] !== BVH_LEAF_MARKERS.CLUSTER_LEAF ) return n.f[ n.o + 2 ] !== 0;
+			const count = ( ( n.u[ n.o ] >>> CLUSTER_COUNT_SHIFT ) & 3 ) + 1;
+			for ( let k = 0; k < count; k ++ ) if ( ! ( n.u[ n.o + 12 + k ] & CLUSTER_COPY_HIDDEN ) ) return true;
+			return false;
 
 		};
 
@@ -699,7 +717,7 @@ export class BidirectionalIntegrator {
 				const n = node( index );
 				if ( n.u[ n.o + 3 ] >= BVH_MAX_INDEX ) {
 
-					if ( n.f[ n.o + 2 ] !== 0 ) best = s;
+					if ( leafVisible( n ) ) best = s;
 
 				} else push( n );
 

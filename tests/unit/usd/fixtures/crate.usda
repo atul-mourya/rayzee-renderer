@@ -1,0 +1,79 @@
+#usda 1.0
+(
+    defaultPrim = "root"
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "root" (
+    kind = "component"
+    prepend payload = @./other.usd@</x>
+    prepend references = [@./a.usda@, @./b.usda@</b>]
+    customData = {
+        string note = "hello"
+        int count = 3
+    }
+)
+{
+    double3[] primvars:pref = [(1, 2, 3)]
+    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (5, 6, 7, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+    int[] ramp = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    float[] whole = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38]
+    float[] few = [0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25, 0.5, 0.25]
+    float animated.timeSamples = {
+        1: 10,
+        2: 20,
+    }
+    string label = "a label"
+    asset texture = @./tex/wood.png@
+
+    def PointInstancer "inst"
+    {
+        point3f[] positions = [(1, 2, 3), (4, 5, 6)]
+        quath[] orientations = [(1, 0, 0, 0), (0.7071, 0, 0.7071, 0)]
+        int[] protoIndices = [0, 0]
+        prepend rel prototypes = </root/inst/proto>
+
+        def Xform "proto" (
+            payload = @./p.usd@</p>
+        )
+        {
+        }
+    }
+
+    def Xform "geo" (
+        variants = {
+            string shape = "tall"
+        }
+        prepend variantSets = "shape"
+    )
+    {
+        variantSet "shape" = {
+            "short" {
+                def Mesh "body"
+                {
+                    point3f[] points = [(0, 0, 0)]
+                }
+            }
+            "tall" {
+                def Mesh "body"
+                {
+                    point3f[] points = [(0, 0, 0), (0, 0, 2)]
+                }
+            }
+        }
+    }
+
+    def Material "mat"
+    {
+        token outputs:surface.connect = </root/mat/shader.outputs:surface>
+
+        def Shader "shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.25, 0.5, 0.75)
+            token outputs:surface
+        }
+    }
+}

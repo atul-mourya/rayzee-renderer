@@ -6,11 +6,13 @@ import { SAFE_SCENE_BYTES, MAX_SCENE_BYTES } from '@/core/Processor/HostMemory.j
 const MB = 1024 * 1024;
 
 /** The rungs that were actually measured, as the survey would report them. */
+// Measured pbrt Moana rungs; every placement there carried its own matrix (instanceBytes).
+const rung = ( triangles, placements, meshes, geometryMB ) => ( { triangles, placements, meshes, geometryBytes: geometryMB * MB, instanceBytes: placements * 64 } );
 const RUNGS = {
-	small: { triangles: 1e6, placements: 1e4, meshes: 100, geometryBytes: 40 * MB },
-	at30M: { triangles: 30e6, placements: 2.8e6, meshes: 14000, geometryBytes: 1400 * MB },
-	at40M: { triangles: 40e6, placements: 3.7e6, meshes: 18098, geometryBytes: 1832 * MB },
-	at50M: { triangles: 50e6, placements: 4.6e6, meshes: 22000, geometryBytes: 2200 * MB },
+	small: rung( 1e6, 1e4, 100, 40 ),
+	at30M: rung( 30e6, 2.8e6, 14000, 1400 ),
+	at40M: rung( 40e6, 3.7e6, 18098, 1832 ),
+	at50M: rung( 50e6, 4.6e6, 22000, 2200 ),
 };
 
 /**

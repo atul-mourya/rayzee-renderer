@@ -39,7 +39,7 @@ renderer runs without a browser.
 | Picture | AI upscaler, auto exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
-| Importers | pbrt, scene archives and folders; FBX, OBJ, STL, PLY, Collada, 3MF, USD and EXR (`rayzee/addons/formats`) |
+| Importers | pbrt, USD (`.usd` / `.usda` / `.usdc`), scene archives and folders (`rayzee/addons/archives`); FBX, OBJ, STL, PLY, Collada, 3MF, USDZ and EXR (`rayzee/addons/formats`) |
 | Storage | The on-disk store behind the download and scene caches and the memory spill (the caches themselves are core and run without it) |
 
 ## Rules between the layers
@@ -177,13 +177,19 @@ the core. Without it the core's programs carry none of that code, and still rend
    1,622 → 1,351 lines); a host's own format registers the same way. glTF's Draco, KTX2 and meshopt decoders are
    imported only for a file that uses them (`GLTFDecoders.js`). Built as a host would (the core-browser example):
    the main chunk 577 → 534 KB gzip, and the seven model-loader chunks are no longer emitted.
+17. **USD in the archives add-on** — our own USD importer (`Processor/USD/`: crate and text readers, composition, and
+   translation into the pbrt builder's scene description) is reached only through `ArchiveImporter`, for a folder or
+   archive whose main model is a USD layer and for a loose `.usd` / `.usda` / `.usdc`. A `.usdz` stays with three.js's
+   loader in `rayzee/addons/formats`. The core learned nothing about USD: the importer hands the scene over as the pbrt
+   builder does.
 
 ## What still ties the layers
 
 - **Shade still holds the bidirectional branches** (compiled out unless an integrator passes its uniforms); moving
   them out means a shading kernel of the integrator's own.
-- **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, page-in). It
-  does nothing without storage, but it is core code; moving it out means a build-step hook in the scene processor.
+- **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, the after-load
+  spill of matrix lists, top-level tree and order maps, and the page-ins an edit waits for). It does nothing without
+  storage, but it is core code; moving it out means a build-step hook in the scene processor.
 - **Colour and storage are one per page.** The active colour management (`Color/ActiveColor.js`) and the shared OPFS
   manager serve every renderer in the page, by design: a config is a page-wide choice, the texture cache keys on it,
   and one origin has one file system.

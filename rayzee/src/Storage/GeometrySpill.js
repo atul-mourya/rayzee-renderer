@@ -4,6 +4,16 @@ const PACK_BYTES = 32 * 1024 * 1024;
 const OWN_WRITE_BYTES = PACK_BYTES / 4;
 const READ_WINDOW = 64 * 1024 * 1024;
 const EMPTY = new Map();
+// Buffers a restore made: nothing else holds them, so once on disk again they are let go at once rather than at the
+// next major collection, which an idle page may not reach for minutes.
+const RESTORED = new WeakSet();
+
+function release( buffer ) {
+
+	RESTORED.delete( buffer );
+	buffer.transfer?.( 0 );
+
+}
 
 function empty( Type ) {
 
@@ -61,13 +71,25 @@ export class GeometrySpill {
 
 	}
 
-	/** Moves a geometry's arrays to disk, leaving empty arrays of the same type in their place. */
+	/** Moves a geometry's arrays to disk, leaving empty arrays of the same type in their place; its bounds stay. */
 	add( geometry ) {
 
-		const byArray = new Map();
+		if ( ! geometry.boundingBox ) geometry.computeBoundingBox();
+		if ( ! geometry.boundingSphere ) geometry.computeBoundingSphere();
+
 		const attributes = Object.values( geometry.attributes );
 		if ( geometry.index ) attributes.push( geometry.index );
+		this.addAttributes( attributes );
 
+		// What the bounds were with the arrays in place: anything computed from the empty ones must not outlive the restore.
+		this._geometries.push( { geometry, box: geometry.boundingBox.clone(), sphere: geometry.boundingSphere.clone() } );
+
+	}
+
+	/** Moves attributes' arrays to disk, each array once however many attributes share it. */
+	addAttributes( attributes ) {
+
+		const byArray = new Map();
 		for ( const attribute of attributes ) {
 
 			const array = attribute.array;
@@ -78,9 +100,6 @@ export class GeometrySpill {
 			attribute.array = empty( array.constructor );
 
 		}
-
-		// Bounds computed from an empty array would outlive the restore.
-		this._geometries.push( { geometry, box: geometry.boundingBox !== null, sphere: geometry.boundingSphere !== null } );
 
 	}
 
@@ -116,8 +135,9 @@ export class GeometrySpill {
 		record.at = this._packAt + this._packUsed;
 		record.pack = this._pack;
 		record.offset = this._packUsed;
-		this._packUsed += bytes.byteLength;
+		this._packUsed += record.byteLength;
 		this._packRecords.push( record );
+		if ( RESTORED.has( array.buffer ) ) release( array.buffer );
 		return record;
 
 	}
@@ -126,26 +146,35 @@ export class GeometrySpill {
 	_flushPack() {
 
 		if ( ! this._pack ) return;
-		this._queue( this._packAt, this._pack.subarray( 0, this._packUsed ), this._packRecords );
+		this._queue( this._packAt, this._pack.subarray( 0, this._packUsed ), this._packRecords, true );
 		this._pack = null;
 		this._packRecords = [];
 
 	}
 
-	/** @private */
-	_queue( at, bytes, records ) {
+	/** `own`: the buffer is this spill's (a pack), let go once written. @private */
+	_queue( at, bytes, records, own = false ) {
 
-		this._queued += bytes.byteLength;
+		const length = bytes.byteLength;
+		this._queued += length;
 		this._chain = this._chain
 			.then( async () => {
 
 				if ( this.error ) return;
 				await this._store.writeAt( at, bytes );
-				for ( const record of records ) record.array = record.pack = null;
+				for ( const record of records ) {
+
+					const buffer = record.array?.buffer;
+					record.array = record.pack = null;
+					if ( RESTORED.has( buffer ) ) release( buffer );
+
+				}
+
+				if ( own ) bytes.buffer.transfer?.( 0 );
 
 			} )
 			.catch( error => void ( this.error ??= error ) )
-			.finally( () => void ( this._queued -= bytes.byteLength ) );
+			.finally( () => void ( this._queued -= length ) );
 
 	}
 
@@ -176,6 +205,7 @@ export class GeometrySpill {
 
 				if ( ! window || record.at + record.byteLength > windowAt + window.byteLength ) {
 
+					if ( window ) release( window );
 					windowAt = record.at;
 					window = await this._store.readAt( record.at, READ_WINDOW );
 
@@ -186,14 +216,16 @@ export class GeometrySpill {
 			}
 
 			if ( array.byteLength !== record.byteLength ) throw new Error( 'geometry spill: an array came back short' );
+			if ( array !== record.array ) RESTORED.add( array.buffer );
 			for ( const attribute of record.attributes ) attribute.array = array;
 
 		}
 
+		if ( window ) release( window );
 		for ( const { geometry, box, sphere } of this._geometries ) {
 
-			if ( ! box ) geometry.boundingBox = null;
-			if ( ! sphere ) geometry.boundingSphere = null;
+			geometry.boundingBox = box;
+			geometry.boundingSphere = sphere;
 
 		}
 

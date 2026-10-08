@@ -48,6 +48,11 @@ function buildScene() {
 	for ( let i = 0; i < 3; i ++ ) instanced.setMatrixAt( i, new Matrix4().makeTranslation( i, 0, 0 ) );
 	root.add( instanced );
 
+	const sibling = new InstancedMesh( geometry, material, 3 );
+	sibling.name = 'instance_1';
+	sibling.instanceMatrix = instanced.instanceMatrix;
+	root.add( sibling );
+
 	const placement = new Group();
 	placement.name = 'placement_0';
 	placement.add( new Mesh( geometry, material ) );
@@ -115,9 +120,11 @@ describe( 'SceneGraphCodec', () => {
 		const out = decoded.root;
 		expect( out.name ).toBe( 'PBRTScene' );
 		expect( out.uuid ).toBe( root.uuid );
-		expect( out.children.map( ( c ) => c.name ) ).toEqual( [ 'shape_0', 'instance_0', 'placement_0', 'camera' ] );
+		expect( out.children.map( ( c ) => c.name ) ).toEqual( [ 'shape_0', 'instance_0', 'instance_1', 'placement_0', 'camera' ] );
 
-		const [ mesh, instanced, placement, camera ] = out.children;
+		const [ mesh, instanced, sibling, placement, camera ] = out.children;
+		// One matrix list stored once and shared again: the engine places the two as one object.
+		expect( sibling.instanceMatrix ).toBe( instanced.instanceMatrix );
 		expect( mesh.position.toArray() ).toEqual( [ 1, 2, 3 ] );
 		expect( mesh.quaternion.toArray() ).toEqual( root.children[ 0 ].quaternion.toArray() );
 		expect( [ ...mesh.geometry.attributes.position.array ] ).toEqual( [ 0, 0, 0, 1, 0, 0, 0, 1, 0 ] );

@@ -193,9 +193,36 @@ const ChevronToggle = memo( ( { isOpen, onToggle, hasChildren } ) => {
 
 ChevronToggle.displayName = 'ChevronToggle';
 
+// An open node mounts this many children at a time: the Moana island's 71k shapes under one group were 1.4M DOM nodes.
+const CHILD_PAGE = 200;
+// The last reveal, read by rows that mount because of it: they were not mounted to hear the event.
+let pendingReveal = null;
+
+/** Children to mount so the revealed path is among them. */
+const shownFor = ( item, reveal, shown ) => {
+
+	if ( ! reveal?.ancestors.has( item.uuid ) ) return shown;
+	const i = item.children.findIndex( c => c.uuid === reveal.target || reveal.ancestors.has( c.uuid ) );
+	return i < shown ? shown : Math.ceil( ( i + 1 ) / CHILD_PAGE ) * CHILD_PAGE;
+
+};
+
+const ShowMoreRow = memo( ( { depth, hidden, onShowMore } ) => (
+	<div
+		className="flex items-center h-7 pr-1 cursor-pointer text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50"
+		style={{ paddingLeft: depth * 12 + 33 }}
+		onClick={onShowMore}
+	>
+		Show {Math.min( CHILD_PAGE, hidden ).toLocaleString()} more ({hidden.toLocaleString()} hidden)
+	</div>
+) );
+
+ShowMoreRow.displayName = 'ShowMoreRow';
+
 const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 	const [ isOpen, setIsOpen ] = useState( true );
+	const [ shown, setShown ] = useState( () => shownFor( item, pendingReveal, CHILD_PAGE ) );
 	const rowRef = useRef( null );
 	const isSelected = useIsSelected( item.uuid );
 
@@ -241,14 +268,16 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 		const handleReveal = ( event ) => {
 
-			if ( event.detail.ancestors.has( item.uuid ) ) setIsOpen( true );
+			if ( ! event.detail.ancestors.has( item.uuid ) ) return;
+			setIsOpen( true );
+			setShown( n => shownFor( item, event.detail, n ) );
 
 		};
 
 		window.addEventListener( 'outliner:reveal', handleReveal );
 		return () => window.removeEventListener( 'outliner:reveal', handleReveal );
 
-	}, [ item.uuid ] );
+	}, [ item ] );
 
 	const handleNodeClick = useCallback( ( e ) => {
 
@@ -379,9 +408,12 @@ const LayerTreeItem = memo( ( { item, depth, parentHidden } ) => {
 
 			{item.children.length > 0 && isOpen && (
 				<div className="flex flex-col">
-					{item.children.map( child => (
+					{item.children.slice( 0, shown ).map( child => (
 						<LayerTreeItem key={child.uuid} item={child} depth={depth + 1} parentHidden={parentHidden || ! isVisible} />
 					) )}
+					{item.children.length > shown && (
+						<ShowMoreRow depth={depth + 1} hidden={item.children.length - shown} onShowMore={() => setShown( n => n + CHILD_PAGE )} />
+					)}
 				</div>
 			)}
 		</div>
@@ -573,7 +605,8 @@ const Outliner = () => {
 
 		if ( findPath( layers, [] ) && ancestors.size > 0 ) {
 
-			window.dispatchEvent( new CustomEvent( 'outliner:reveal', { detail: { ancestors } } ) );
+			pendingReveal = { ancestors, target: selectedObject.uuid };
+			window.dispatchEvent( new CustomEvent( 'outliner:reveal', { detail: pendingReveal } ) );
 
 		}
 

@@ -94,6 +94,24 @@ function pointAt( P, basis, spans, u, w, out, o ) {
 
 }
 
+/** Width at x in [0, 1] along a curve from a width per control point, weighted as the points are. */
+function widthAlong( widths, basis, spans ) {
+
+	const w = [ 0, 0, 0, 0 ];
+	return x => {
+
+		const u = x * spans;
+		let span = Math.floor( u );
+		if ( span >= spans ) span = spans - 1;
+		if ( basis === 'bspline' ) bsplineWeights( u - span, w );
+		else bezierWeights( u - span, w );
+		const base = basis === 'bspline' ? span : span * 3;
+		return w[ 0 ] * widths[ base ] + w[ 1 ] * widths[ base + 1 ] + w[ 2 ] * widths[ base + 2 ] + w[ 3 ] * widths[ base + 3 ];
+
+	};
+
+}
+
 /**
  * Sample a curve's centreline.
  * @returns {{points: Float64Array, count: number}} count points, 3 floats each
@@ -130,7 +148,7 @@ function segmentDistance( pa, a, pb, b, c ) {
  * half-width, or by the uniform strip's own worst error on this curve if that is larger.
  * @returns {Int32Array|null} kept sample indices, or null when every sample is kept
  */
-function adaptiveSamples( P, basis, line, tolerance, width0, width1 ) {
+function adaptiveSamples( P, basis, line, tolerance, widthOf ) {
 
 	const { points, count, spans } = line;
 	if ( count < 3 ) return null;
@@ -143,7 +161,7 @@ function adaptiveSamples( P, basis, line, tolerance, width0, width1 ) {
 	let worst = 0;
 	for ( let k = 0; k < total; k ++ ) worst = Math.max( worst, segmentDistance( mids, k, points, k, k + 1 ) );
 
-	const allowed = x => Math.max( worst, tolerance * 0.5 * ( width0 + ( width1 - width0 ) * ( x / total ) ) );
+	const allowed = x => Math.max( worst, tolerance * 0.5 * widthOf( x / total ) );
 	const fits = ( i, j ) => {
 
 		for ( let k = i + 1; k < j; k ++ ) if ( segmentDistance( points, k, points, i, j ) > allowed( k ) ) return false;
@@ -174,6 +192,8 @@ function adaptiveSamples( P, basis, line, tolerance, width0, width1 ) {
  * @param {string} [spec.basis='bezier'] - 'bezier' | 'bspline'
  * @param {number} [spec.width0=1]
  * @param {number} [spec.width1=1]
+ * @param {ArrayLike<number>} [spec.widths] - a width per control point, following the curve's basis like the points;
+ *   overrides width0 / width1
  * @param {ArrayLike<number>} [spec.N] - ribbon normals (start, end), 3 floats each
  * @param {number} [spec.steps] - samples per spline span
  * @param {number} [spec.sides=1] - 1 ribbon, 2 crossed ribbons, >=3 closed tube
@@ -193,8 +213,9 @@ export function tessellateCurve( spec ) {
 	const line = sampleCenterline( P, basis, steps );
 	if ( ! line ) return null;
 
-	const { points, count } = line;
-	const kept = spec.tolerance > 0 ? adaptiveSamples( P, basis, line, spec.tolerance, width0, width1 ) : null;
+	const { points, count, spans } = line;
+	const widthOf = spec.widths ? widthAlong( spec.widths, basis, spans ) : x => width0 + ( width1 - width0 ) * x;
+	const kept = spec.tolerance > 0 ? adaptiveSamples( P, basis, line, spec.tolerance, widthOf ) : null;
 	const rows = kept ? kept.length : count;
 	const rings = sides >= 3 ? sides : sides * 2;
 	const positions = new Float32Array( rows * rings * 3 );
@@ -256,8 +277,7 @@ export function tessellateCurve( spec ) {
 		cross( tangent, side, up );
 		normalize( up );
 
-		const u = i / ( count - 1 || 1 );
-		const radius = ( width0 + ( width1 - width0 ) * u ) * 0.5;
+		const radius = widthOf( i / ( count - 1 || 1 ) ) * 0.5;
 		const cx = points[ i * 3 ], cy = points[ i * 3 + 1 ], cz = points[ i * 3 + 2 ];
 
 		for ( let r = 0; r < rings; r ++ ) {
@@ -322,5 +342,203 @@ export function curveTriangleCount( controlPoints, basis, steps, sides ) {
 	if ( spans < 1 ) return 0;
 	const segments = Math.max( 1, Math.round( Math.max( 1, steps ) * spans ) );
 	return segments * Math.max( 1, Math.round( sides ) ) * 2;
+
+}
+
+const lerp3 = ( out, o, P, a, b, t ) => {
+
+	for ( let k = 0; k < 3; k ++ ) out[ o + k ] = P[ a * 3 + k ] + ( P[ b * 3 + k ] - P[ a * 3 + k ] ) * t;
+
+};
+
+/** Linear or Catmull-Rom spans as cubic Bézier ones (exact for both), with widths carried the same way. */
+function bezierSpans( P, widths, segments, ends ) {
+
+	const out = new Float64Array( ( segments.length * 3 + 1 ) * 3 );
+	const w = widths ? new Float64Array( segments.length * 3 + 1 ) : null;
+	let o = 0;
+	for ( let s = 0; s < segments.length; s ++ ) {
+
+		const [ a, b, prev, next ] = segments[ s ];
+		if ( s === 0 ) {
+
+			for ( let k = 0; k < 3; k ++ ) out[ k ] = P[ a * 3 + k ];
+			if ( w ) w[ 0 ] = widths[ a ];
+
+		}
+
+		if ( ends === 'linear' ) {
+
+			lerp3( out, ( o + 1 ) * 3, P, a, b, 1 / 3 );
+			lerp3( out, ( o + 2 ) * 3, P, a, b, 2 / 3 );
+
+		} else {
+
+			for ( let k = 0; k < 3; k ++ ) {
+
+				out[ ( o + 1 ) * 3 + k ] = P[ a * 3 + k ] + ( P[ b * 3 + k ] - P[ prev * 3 + k ] ) / 6;
+				out[ ( o + 2 ) * 3 + k ] = P[ b * 3 + k ] - ( P[ next * 3 + k ] - P[ a * 3 + k ] ) / 6;
+
+			}
+
+		}
+
+		for ( let k = 0; k < 3; k ++ ) out[ ( o + 3 ) * 3 + k ] = P[ b * 3 + k ];
+		if ( w ) {
+
+			w[ o + 1 ] = widths[ a ] + ( widths[ b ] - widths[ a ] ) / 3;
+			w[ o + 2 ] = widths[ a ] + ( widths[ b ] - widths[ a ] ) * 2 / 3;
+			w[ o + 3 ] = widths[ b ];
+
+		}
+
+		o += 3;
+
+	}
+
+	return { P: out, widths: w, basis: 'bezier' };
+
+}
+
+/** One USD curve as the cubic B-spline or Bézier controls tessellateCurve takes, or null. */
+function cubicControls( P, widths, type, basis, wrap ) {
+
+	const n = P.length / 3;
+	const periodic = wrap === 'periodic';
+	if ( type === 'linear' ) {
+
+		if ( n < 2 ) return null;
+		const segments = [];
+		for ( let i = 0; i + 1 < n; i ++ ) segments.push( [ i, i + 1 ] );
+		if ( periodic && n > 2 ) segments.push( [ n - 1, 0 ] );
+		return bezierSpans( P, widths, segments, 'linear' );
+
+	}
+
+	if ( basis === 'bspline' ) {
+
+		if ( wrap === 'pinned' ) {
+
+			const index = [ 0, 0, ...Array.from( { length: n }, ( _, i ) => i ), n - 1, n - 1 ];
+			return withIndex( P, widths, index, 'bspline' );
+
+		}
+
+		if ( periodic ) return withIndex( P, widths, [ ...Array.from( { length: n }, ( _, i ) => i ), 0, 1, 2 ], 'bspline' );
+		return n >= 4 ? { P, widths, basis: 'bspline' } : null;
+
+	}
+
+	if ( basis === 'bezier' ) {
+
+		if ( periodic ) return withIndex( P, widths, [ ...Array.from( { length: n }, ( _, i ) => i ), 0 ], 'bezier' );
+		return n >= 4 ? { P, widths, basis: 'bezier' } : null;
+
+	}
+
+	if ( basis === 'catmullRom' ) {
+
+		const segments = [];
+		const at = i => ( periodic ? ( i + n ) % n : Math.min( n - 1, Math.max( 0, i ) ) );
+		const first = periodic || wrap === 'pinned' ? 0 : 1;
+		const last = periodic ? n : wrap === 'pinned' ? n - 1 : n - 2;
+		for ( let i = first; i < last; i ++ ) segments.push( [ at( i ), at( i + 1 ), at( i - 1 ), at( i + 2 ) ] );
+		return segments.length ? bezierSpans( P, widths, segments, 'catmullRom' ) : null;
+
+	}
+
+	return null;
+
+}
+
+function withIndex( P, widths, index, basis ) {
+
+	const out = new Float64Array( index.length * 3 );
+	const w = widths ? new Float64Array( index.length ) : null;
+	index.forEach( ( v, i ) => {
+
+		for ( let k = 0; k < 3; k ++ ) out[ i * 3 + k ] = P[ v * 3 + k ];
+		if ( w ) w[ i ] = widths[ v ];
+
+	} );
+	return { P: out, widths: w, basis };
+
+}
+
+/**
+ * A USD BasisCurves prim's curves (one point array, a count per curve) as one strip mesh. Modes and types are USD's;
+ * the first normal of a curve orients its ribbon.
+ */
+export function tessellateCurves( spec ) {
+
+	const { P, counts, widths = null, widthMode = 'constant', N = null, normalMode = 'vertex', type = 'cubic', basis = 'bspline', wrap = 'nonperiodic' } = spec;
+	const pieces = [];
+	let vertices = 0, indexCount = 0, skipped = 0, start = 0, varying = 0;
+
+	for ( let c = 0; c < counts.length; c ++ ) {
+
+		const n = counts[ c ];
+		const points = P.subarray ? P.subarray( start * 3, ( start + n ) * 3 ) : P.slice( start * 3, ( start + n ) * 3 );
+		let curveWidths = null, width = 1;
+		if ( widths?.length ) {
+
+			if ( widthMode === 'vertex' ) curveWidths = Float64Array.from( { length: n }, ( _, i ) => widths[ start + i ] );
+			else if ( widthMode === 'uniform' ) width = widths[ c ] ?? widths[ 0 ];
+			else if ( widthMode === 'varying' ) {
+
+				const spans = type === 'linear' ? n - 1 : basis === 'bezier' ? ( n - 1 ) / 3 : n - 3;
+				const k = Math.max( 1, Math.round( spans ) + 1 );
+				const values = Array.from( { length: k }, ( _, i ) => widths[ varying + i ] ?? widths[ widths.length - 1 ] );
+				varying += k;
+				curveWidths = Float64Array.from( { length: n }, ( _, i ) => values[ Math.min( k - 1, Math.round( i / Math.max( 1, n - 1 ) * ( k - 1 ) ) ) ] );
+
+			} else width = widths[ 0 ];
+
+		}
+
+		let seed = null;
+		if ( N?.length ) {
+
+			const at = normalMode === 'uniform' ? c : normalMode === 'constant' ? 0 : start;
+			seed = [ N[ at * 3 ], N[ at * 3 + 1 ], N[ at * 3 + 2 ] ];
+
+		}
+
+		const cubic = cubicControls( points, curveWidths, type, basis, wrap );
+		const built = cubic && tessellateCurve( {
+			P: cubic.P, basis: cubic.basis, widths: cubic.widths, width0: width, width1: width, N: seed,
+			steps: spec.steps, sides: spec.sides, tolerance: spec.tolerance,
+		} );
+
+		if ( built ) {
+
+			pieces.push( built );
+			vertices += built.positions.length / 3;
+			indexCount += built.indices.length;
+
+		} else {
+
+			skipped ++;
+
+		}
+
+		start += n;
+
+	}
+
+	if ( pieces.length === 0 ) return null;
+	const positions = new Float32Array( vertices * 3 );
+	const indices = new Uint32Array( indexCount );
+	let v = 0, i = 0;
+	for ( const piece of pieces ) {
+
+		positions.set( piece.positions, v * 3 );
+		for ( let k = 0; k < piece.indices.length; k ++ ) indices[ i + k ] = piece.indices[ k ] + v;
+		v += piece.positions.length / 3;
+		i += piece.indices.length;
+
+	}
+
+	return { positions, indices, skipped };
 
 }

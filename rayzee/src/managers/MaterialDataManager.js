@@ -173,8 +173,17 @@ export class MaterialDataManager {
 		this._convertColorsToWorkingSpace( matImageData );
 
 		const vec4Count = matImageData.length / 4;
+		this.materialCount = Math.floor( vec4Count / PIXELS_PER_MATERIAL );
 
-		if ( this.materialStorageNode ) {
+		// The owning stage keeps materials at the front of its scene data buffer, the light data behind them: one
+		// binding for both, which the shading kernel's ten could not spare.
+		const shared = this.callbacks.adoptMaterials?.( matImageData );
+		if ( shared ) {
+
+			this.materialStorageAttr = shared.attr;
+			this.materialStorageNode = shared.node;
+
+		} else if ( this.materialStorageNode ) {
 
 			this.materialStorageAttr = new StorageInstancedBufferAttribute( matImageData, 4 );
 			this.materialStorageNode.value = this.materialStorageAttr;
@@ -187,11 +196,19 @@ export class MaterialDataManager {
 
 		}
 
-		this.materialCount = Math.floor( vec4Count / PIXELS_PER_MATERIAL );
 		this._sources = [ ...sources ];
 		this._hostSet = [];
 		this.callbacks.onMaterialFeaturesChanged?.();
 		log.debug( `${fmt.n( this.materialCount )} materials (storage buffer)` );
+
+	}
+
+	/** Sends the materials to the GPU: only their region when the buffer carries the light data too. @private */
+	_uploadMaterials() {
+
+		const attr = this.materialStorageAttr;
+		if ( this.callbacks.adoptMaterials ) attr.addUpdateRange( 0, this.materialCount * PIXELS_PER_MATERIAL * 4 );
+		attr.needsUpdate = true;
 
 	}
 
@@ -538,7 +555,7 @@ export class MaterialDataManager {
 
 		}
 
-		this.materialStorageAttr.needsUpdate = true;
+		this._uploadMaterials();
 		( this._hostSet[ materialIndex ] ??= new Map() ).set( property, toPortable( value ) );
 
 		// Recompute triangle-data opaque-blocker flag when any input to it changes.
@@ -588,7 +605,7 @@ export class MaterialDataManager {
 		this._recomputeOpaqueBlockerForMaterial( materialIndex );
 		this.callbacks.onMaterialFeaturesChanged?.();
 
-		this.materialStorageAttr.needsUpdate = true;
+		this._uploadMaterials();
 		this._notifyReset();
 
 	}
@@ -668,7 +685,7 @@ export class MaterialDataManager {
 
 		}
 
-		this.materialStorageAttr.needsUpdate = true;
+		this._uploadMaterials();
 		this._notifyReset();
 
 	}

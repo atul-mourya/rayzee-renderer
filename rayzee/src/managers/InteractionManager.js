@@ -38,12 +38,13 @@ export function focusDistanceOfHit( hit, camera, panorama = false ) {
  */
 export class InteractionManager extends EventDispatcher {
 
-	constructor( { scene, camera, canvas, assetLoader, pathTracer, floorPlane } ) {
+	constructor( { scene, camera, canvas, assetLoader, pathTracer, floorPlane, isGeometryOnDisk = null } ) {
 
 		super();
 
 		// Core dependencies
 		this.scene = scene;
+		this.isGeometryOnDisk = isGeometryOnDisk;
 		this.camera = camera;
 		this.canvas = canvas;
 		this.assetLoader = assetLoader;
@@ -125,7 +126,8 @@ export class InteractionManager extends EventDispatcher {
 	select( object ) {
 
 		const outline = this._overlayManager?.getHelper( 'outline' );
-		if ( outline ) outline.setSelectedObjects( object ? [ object ] : [] );
+		// A spilled model's geometry is on disk: there is nothing to draw the outline from.
+		if ( outline ) outline.setSelectedObjects( object && ! this.isGeometryOnDisk?.() ? [ object ] : [] );
 
 		this.selectedObject = object || null;
 
@@ -221,7 +223,7 @@ export class InteractionManager extends EventDispatcher {
 		const mouseCoords = this.getMouseCoordinates( event );
 		this.raycaster.setFromCamera( mouseCoords, this.camera );
 
-		const intersects = this.raycaster.intersectObjects( this.scene.children, true );
+		const intersects = this._intersectScene();
 
 		if ( intersects.length > 0 ) {
 
@@ -490,7 +492,7 @@ export class InteractionManager extends EventDispatcher {
 			const mouseCoords = this.getMouseCoordinates( event );
 			this.raycaster.setFromCamera( mouseCoords, this.camera );
 
-			const intersects = this.raycaster.intersectObjects( this.scene.children, true );
+			const intersects = this._intersectScene();
 			const validIntersects = this.filterValidIntersects( intersects );
 			const lightHit = this._pickLightHelper();
 
@@ -576,7 +578,7 @@ export class InteractionManager extends EventDispatcher {
 		const mouseCoords = this.getMouseCoordinates( event );
 		this.raycaster.setFromCamera( mouseCoords, this.camera );
 
-		const intersects = this.raycaster.intersectObjects( this.scene.children, true );
+		const intersects = this._intersectScene();
 		const validIntersects = this.filterValidIntersects( intersects );
 
 		if ( validIntersects.length > 0 ) {
@@ -695,11 +697,22 @@ export class InteractionManager extends EventDispatcher {
 
 	}
 
+	/**
+	 * The scene under the raycaster. Nothing while a spilled model's geometry is on disk: its arrays are empty, and
+	 * testing tens of millions of empty copies held the page for seconds a pick.
+	 * @private
+	 */
+	_intersectScene() {
+
+		return this.isGeometryOnDisk?.() ? [] : this.raycaster.intersectObjects( this.scene.children, true );
+
+	}
+
 	/** The nearest scene surface under an NDC point, skipping the floor and helpers. */
 	pickSurface( ndcX, ndcY ) {
 
 		this.raycaster.setFromCamera( { x: ndcX, y: ndcY }, this.camera );
-		return this.filterValidIntersects( this.raycaster.intersectObjects( this.scene.children, true ) )[ 0 ] ?? null;
+		return this.filterValidIntersects( this._intersectScene() )[ 0 ] ?? null;
 
 	}
 

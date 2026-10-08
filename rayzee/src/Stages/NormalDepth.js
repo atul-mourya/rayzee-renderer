@@ -169,21 +169,16 @@ export class NormalDepth extends RenderStage {
 
 		}
 
-		if ( pt.triangleGeoAttr && ! this._triStorageNode ) {
+		if ( ! this._triStorageNode || ! this._bvhStorageNode ) {
 
-			// uvec4, matching PathTracerStage: packed lanes must keep their exact bit pattern.
-			this._triStorageNode = {
-				geo: storage( pt.triangleGeoAttr, 'uvec4', pt.triangleGeoAttr.count ).toReadOnly(),
-				shade: storage( pt.triangleShadeAttr, 'uvec4', pt.triangleShadeAttr.count ).toReadOnly(),
-			};
+			// The path tracer's layout, split into parts as it is: uvec4 triangles keep packed lanes' exact bits.
+			const nodes = pt.sceneStorageNodes?.();
+			if ( nodes ) {
 
-		}
+				this._triStorageNode = nodes.triangles;
+				this._bvhStorageNode = nodes.bvh;
 
-		if ( pt.bvhStorageAttr && ! this._bvhStorageNode ) {
-
-			this._bvhStorageNode = storage(
-				pt.bvhStorageAttr, 'vec4', pt.bvhStorageAttr.count
-			).toReadOnly();
+			}
 
 		}
 

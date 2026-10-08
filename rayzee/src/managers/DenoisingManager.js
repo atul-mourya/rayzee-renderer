@@ -988,10 +988,10 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {Float32Array} world - the placement matrix pool
 	 * @param {number} offset - where this placement's matrix starts in it
 	 */
-	notePlacementMoving( leaf, world, offset ) {
+	notePlacementMoving( leaf, matrixOf ) {
 
 		if ( leaf < 0 || ! this.historyActive || this._movedPlacements.has( leaf ) ) return;
-		this._movedPlacements.set( leaf, { world, offset, prev: world.slice( offset, offset + 16 ) } );
+		this._movedPlacements.set( leaf, { matrixOf, prev: matrixOf().slice() } );
 
 	}
 
@@ -1013,8 +1013,8 @@ export class DenoisingManager extends EventDispatcher {
 		const leaves = [ ...moved.keys() ].sort( ( a, b ) => a - b );
 		for ( let i = 0; i < leaves.length; i ++ ) {
 
-			const { world, offset, prev } = moved.get( leaves[ i ] );
-			this._matB.fromArray( world, offset ).invert();
+			const { matrixOf, prev } = moved.get( leaves[ i ] );
+			this._matB.fromArray( matrixOf() ).invert();
 			this._matA.fromArray( prev ).multiply( this._matB ).toArray( upload.toPrev, i * 16 );
 			upload.leaves[ i ] = leaves[ i ];
 

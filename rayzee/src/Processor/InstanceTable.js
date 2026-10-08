@@ -9,9 +9,16 @@
  * denormalised one. World bounds and the inverse transform are derived on demand.
  */
 
-import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from './BufferLayout.js';
+import {
+	TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, BVH_EMPTY_BOX, assertBVHIndexFits, bvhIndexView,
+	CLUSTER_SIZE, CLUSTER_FIRST_MASK, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN, RECORD_VEC4, TLAS_LEAF_IDENTITY,
+	encodeClusterBoxes as encodeClusterBoxBytes,
+} from './BufferLayout.js';
 
 const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ] );
+
+/** Passed as a placement's matrix when its row already holds it (a pooled build). */
+export const IN_PLACE = Object.freeze( [] );
 
 /** Determinant of the upper-left 3x3 at `off`. Negative means the transform mirrors. */
 export function determinant3At( m, off ) {
@@ -165,8 +172,8 @@ export class InstanceTable {
 	 *
 	 * @param {number} count - placements
 	 * @param {number} [templateCount] - distinct source meshes; defaults to one per placement
-	 * @param {Float32Array} [worldPool] - adopted as the transform column instead of allocating,
-	 *   so a caller that already built the matrices contiguously hands them over without a copy
+	 * @param {Float32Array|MatrixRuns} [worldPool] - the transforms, adopted rather than copied: one array of a row a
+	 *   placement, or runs of rows (GeometryExtractor) reading an InstancedMesh's own matrix list where it already is
 	 * @param {Int32Array} [sourcePool] - likewise for the source-mesh column
 	 */
 	allocate( count, templateCount = count, worldPool = null, sourcePool = null ) {
@@ -186,17 +193,8 @@ export class InstanceTable {
 		// world space. A move composes the new world matrix against this.
 		this.tplBakeInverse = null;
 
-		if ( worldPool && worldPool.length >= count * 16 ) {
-
-			this.world = worldPool;
-			this.worldPooled = true;
-
-		} else {
-
-			this.world = new Float32Array( count * 16 );
-			this.worldPooled = false;
-
-		}
+		if ( worldPool?.first ) this._adoptRuns( worldPool );
+		else this._adoptRuns( { first: [ 0, count ], arrays: [ worldPool && worldPool.length >= count * 16 ? worldPool : new Float32Array( count * 16 ) ], arrayOf: [ 0 ], base: [ 0 ], owned: [ worldPool ? 0 : 1 ] } );
 
 		this.tplTriOffset = new Int32Array( templateCount );
 		this.tplTriCount = new Int32Array( templateCount );
@@ -207,6 +205,26 @@ export class InstanceTable {
 		this.tplObjectAABB = new Float32Array( templateCount * 6 );
 
 		this._placementRuns = null;
+
+		// TLAS entries: one a placement, or one a copy of a group — instanced meshes placed by one shared matrix list,
+		// traced as one object through a small tree over their BLASes. Null maps are the identity.
+		this.groups = [];
+		this.groupOfTemplate = null;
+		this.memberSlot = null;
+		this.entryCount = count;
+		this.entryRep = null;
+		this.entryGroup = null;
+		this.placementEntry = null;
+		this.groupNodeStart = 0;
+		this.groupNodeCount = 0;
+
+		// Copy clusters (planClusters / formClusters): the TLAS is built over clusters of entries, and each entry's
+		// transform is a record behind the BLASes. Cluster c owns the CLUSTER_SIZE records from c · CLUSTER_SIZE.
+		this.clusterCount = 0;
+		this.recordEntry = null;
+		this.clusterLeaf = null;
+		this.recordNodeStart = 0;
+		this.recordNodeCount = 0;
 
 		// Keyed by template, and only templates that own a BLAS carry them.
 		this.originalToBvhMap = new Map();
@@ -221,24 +239,9 @@ export class InstanceTable {
 		this.isSet[ index ] = 1;
 		this.sourceMesh[ index ] = template;
 
-		const o = index * 16;
-
-		if ( ! matrixWorld ) {
-
-			this.world.set( IDENTITY, o );
-			this.flipWinding[ index ] = 0;
-			return;
-
-		}
-
-		// Already in the pool — adopting it is the whole point of passing it in.
-		if ( matrixWorld !== this.world ) {
-
-			for ( let k = 0; k < 16; k ++ ) this.world[ o + k ] = matrixWorld[ matrixOffset + k ];
-
-		}
-
-		this.flipWinding[ index ] = determinant3At( this.world, o ) < 0 ? 1 : 0;
+		if ( matrixWorld !== IN_PLACE ) this._writeRow( index, matrixWorld ?? IDENTITY, matrixWorld ? matrixOffset : 0 );
+		const o = this.matrixRow( index );
+		this.flipWinding[ index ] = determinant3At( this.rowArray, o ) < 0 ? 1 : 0;
 
 	}
 
@@ -300,12 +303,473 @@ export class InstanceTable {
 
 	}
 
+	/**
+	 * Groups instanced meshes placed by one shared matrix list: each copy becomes one TLAS entry, whose subtree is a
+	 * small tree over the members' BLAS roots in the copies' shared object space. Every member keeps its placements
+	 * (transforms, visibility, refit stay per mesh); only the TLAS sees one entry where it saw one per member.
+	 *
+	 * @param {Array<{members: ArrayLike<number>, starts: ArrayLike<number>, count: number}>} groups - members are
+	 *   templates, `starts` the first placement of each, all `count` long
+	 */
+	setGroups( groups ) {
+
+		this.groups = [];
+		this.groupOfTemplate = null;
+		this.memberSlot = null;
+		this.entryCount = this.count;
+		this.entryRep = null;
+		this.entryGroup = null;
+		this.placementEntry = null;
+		this.groupNodeCount = 0;
+
+		const valid = ( groups ?? [] ).filter( g => g.members.length >= 2 && Array.from( g.starts ).every( s => s >= 0 && s + g.count <= this.count ) );
+		if ( valid.length === 0 ) return;
+
+		const ofTemplate = new Int32Array( this.templateCount ).fill( - 1 );
+		const slot = new Int32Array( this.templateCount );
+		let nodes = 1; // the empty leaf a hidden member points at
+
+		for ( const g of valid ) {
+
+			const id = this.groups.length;
+			const members = Int32Array.from( g.members );
+			this.groups.push( { members, starts: Int32Array.from( g.starts ), count: g.count, offset: - 1, nodes: members.length - 1, aabb: new Float32Array( 6 ) } );
+			for ( let j = 0; j < members.length; j ++ ) {
+
+				ofTemplate[ members[ j ] ] = id;
+				slot[ members[ j ] ] = j;
+
+			}
+
+			nodes += members.length - 1;
+
+		}
+
+		const n = this.count, src = this.sourceMesh;
+		const entryOf = new Int32Array( n );
+		let entries = 0;
+		for ( let p = 0; p < n; p ++ ) {
+
+			const t = src[ p ];
+			if ( ofTemplate[ t ] < 0 || slot[ t ] === 0 ) entryOf[ p ] = entries ++;
+
+		}
+
+		const rep = new Int32Array( entries );
+		const group = new Int32Array( entries ).fill( - 1 );
+		for ( let p = 0; p < n; p ++ ) {
+
+			const t = src[ p ];
+			const g = ofTemplate[ t ];
+			if ( g >= 0 && slot[ t ] !== 0 ) continue;
+			rep[ entryOf[ p ] ] = p;
+			if ( g >= 0 ) group[ entryOf[ p ] ] = g;
+
+		}
+
+		for ( const g of this.groups ) {
+
+			const first = g.starts[ 0 ];
+			for ( let j = 1; j < g.members.length; j ++ ) entryOf.set( entryOf.subarray( first, first + g.count ), g.starts[ j ] );
+
+		}
+
+		this.groupOfTemplate = ofTemplate;
+		this.memberSlot = slot;
+		this.entryCount = entries;
+		this.entryRep = rep;
+		this.entryGroup = group;
+		this.placementEntry = entryOf;
+		this.groupNodeCount = nodes;
+
+	}
+
+	/** The placement whose transform an entry's TLAS leaf carries. */
+	repOf( entry ) {
+
+		return this.entryRep ? this.entryRep[ entry ] : entry;
+
+	}
+
+	/** The TLAS entry a placement is traced through. */
+	entryOf( placement ) {
+
+		return this.placementEntry ? this.placementEntry[ placement ] : placement;
+
+	}
+
+	/** Group of an entry, or -1. */
+	groupOfEntry( entry ) {
+
+		return this.entryGroup ? this.entryGroup[ entry ] : - 1;
+
+	}
+
+	/** The node an entry's leaf points at: its template's BLAS root, or its group's tree. */
+	entryRoot( entry ) {
+
+		const g = this.groupOfEntry( entry );
+		return g >= 0 ? this.groups[ g ].offset : this.tplBlasOffset[ this.sourceMesh[ this.repOf( entry ) ] ];
+
+	}
+
+	/** An entry is visible while any member placement of it is. */
+	entryVisible( entry ) {
+
+		const g = this.groupOfEntry( entry );
+		if ( g < 0 ) return this.visible[ this.repOf( entry ) ] === 1;
+		const { starts } = this.groups[ g ];
+		const copy = this.repOf( entry ) - starts[ 0 ];
+		for ( let j = 0; j < starts.length; j ++ ) if ( this.visible[ starts[ j ] + copy ] ) return true;
+		return false;
+
+	}
+
+	/** Records `node` as the TLAS leaf of every placement traced through `entry`. */
+	setLeafOf( entry, node ) {
+
+		const g = this.groupOfEntry( entry );
+		const p = this.repOf( entry );
+		if ( g < 0 ) {
+
+			this.tlasLeafIndex[ p ] = node;
+			return;
+
+		}
+
+		const { starts } = this.groups[ g ];
+		const copy = p - starts[ 0 ];
+		for ( let j = 0; j < starts.length; j ++ ) this.tlasLeafIndex[ starts[ j ] + copy ] = node;
+
+	}
+
+	/** Each group's object-space bounds: every member's, hidden or not, so a toggle never moves the TLAS. */
+	computeGroupAABBs() {
+
+		for ( const g of this.groups ) {
+
+			const box = g.aabb;
+			box.fill( Infinity, 0, 3 );
+			box.fill( - Infinity, 3, 6 );
+			for ( const t of g.members ) {
+
+				if ( this.tplOwner[ t ] < 0 ) continue;
+				const o = t * 6;
+				for ( let a = 0; a < 3; a ++ ) {
+
+					box[ a ] = Math.min( box[ a ], this.tplObjectAABB[ o + a ] );
+					box[ 3 + a ] = Math.max( box[ 3 + a ], this.tplObjectAABB[ o + 3 + a ] );
+
+				}
+
+			}
+
+			if ( box[ 0 ] > box[ 3 ] ) box.fill( 0 );
+
+		}
+
+	}
+
+	/** The empty leaf a hidden group member points at: the group region's last node. */
+	get emptyGroupLeaf() {
+
+		return this.groupNodeStart + this.groupNodeCount - 1;
+
+	}
+
+	/**
+	 * The group region's nodes, from the members' bounds, BLAS offsets and visibility: each group's tree, then the
+	 * empty leaf a hidden member points at. Pre-order, so a parent precedes its children, as refit expects.
+	 * @returns {Float32Array} groupNodeCount nodes of 16 floats, for node groupNodeStart on
+	 */
+	groupNodeBlock() {
+
+		const block = new Float32Array( this.groupNodeCount * 16 );
+		if ( ! this.groups.length ) return block;
+
+		const idx = new Uint32Array( block.buffer );
+		idx[ ( this.groupNodeCount - 1 ) * 16 + 3 ] = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
+		for ( const g of this.groups ) this._writeGroupTree( g, block, idx );
+		return block;
+
+	}
+
+	/** @private */
+	_writeGroupTree( g, block, idx ) {
+
+		const base = this.groupNodeStart;
+		const empty = this.emptyGroupLeaf;
+		const aabb = this.tplObjectAABB;
+		let next = g.offset;
+
+		const child = ( list ) => {
+
+			if ( list.length === 1 ) {
+
+				const j = list[ 0 ];
+				const t = g.members[ j ];
+				const shown = this.tplOwner[ t ] >= 0 && this.visible[ g.starts[ j ] ] === 1;
+				return shown ? { ref: this.tplBlasOffset[ t ], box: aabb.subarray( t * 6, t * 6 + 6 ) } : { ref: empty, box: null };
+
+			}
+
+			const node = next ++;
+			const [ left, right ] = splitMembers( list, g.members, aabb );
+			const a = child( left );
+			const b = child( right );
+			const o = ( node - base ) * 16;
+			writeChildBox( block, o, a.box );
+			writeChildBox( block, o + 8, b.box );
+			idx[ o + 3 ] = a.ref;
+			idx[ o + 7 ] = b.ref;
+			return { ref: node, box: unionBoxes( a.box, b.box ) };
+
+		};
+
+		child( Array.from( g.members, ( _, j ) => j ) );
+
+	}
+
+	/**
+	 * Plans copy clusters: ⌈entries / CLUSTER_SIZE⌉ of them. Only how many, which is fixed before any bounds exist (the
+	 * BVH layout and the BLAS cache need it then); formClusters picks the members.
+	 */
+	planClusters() {
+
+		this.clusterCount = Math.ceil( this.entryCount / CLUSTER_SIZE );
+		this.recordNodeCount = Math.ceil( this.entryCount * RECORD_VEC4 / 4 );
+		if ( this.entryCount >= CLUSTER_FIRST_MASK ) throw new RangeError( `${this.entryCount.toLocaleString()} copies is past what a copy cluster can address` );
+
+	}
+
+	/**
+	 * Picks each cluster's members: the entries halved at the centre median of their widest axis until runs of
+	 * CLUSTER_SIZE remain, so a cluster holds near neighbours, whatever each draws. Records follow cluster order.
+	 * @param {Float32Array} world - each entry's world bounds, entryCount × 6
+	 * @returns {Float64Array} each cluster's world bounds, clusterCount × 6, what the TLAS sorts on
+	 */
+	formClusters( world ) {
+
+		const n = this.entryCount;
+		const sorted = new Int32Array( n );
+		for ( let e = 0; e < n; e ++ ) sorted[ e ] = e;
+		splitIntoRuns( sorted, 0, n, world );
+
+		const bounds = new Float64Array( this.clusterCount * 6 );
+		for ( let c = 0; c < this.clusterCount; c ++ ) {
+
+			const r0 = c * CLUSTER_SIZE, end = Math.min( r0 + CLUSTER_SIZE, n );
+			const b = c * 6;
+			bounds[ b ] = bounds[ b + 1 ] = bounds[ b + 2 ] = Infinity;
+			bounds[ b + 3 ] = bounds[ b + 4 ] = bounds[ b + 5 ] = - Infinity;
+			for ( let r = r0; r < end; r ++ ) {
+
+				const o = sorted[ r ] * 6;
+				for ( let a = 0; a < 3; a ++ ) {
+
+					if ( world[ o + a ] < bounds[ b + a ] ) bounds[ b + a ] = world[ o + a ];
+					if ( world[ o + 3 + a ] > bounds[ b + 3 + a ] ) bounds[ b + 3 + a ] = world[ o + 3 + a ];
+
+				}
+
+			}
+
+		}
+
+		this.recordEntry = sorted;
+		this.clusterLeaf = new Int32Array( this.clusterCount ).fill( - 1 );
+		return bounds;
+
+	}
+
+	/**
+	 * Writes cluster `c`'s TLAS leaf at float offset `o` of `data` (node `node`), its copies' boxes from `world`, and
+	 * makes each copy's record its placements' instance id (`tlasLeafIndex`).
+	 */
+	writeClusterLeaf( data, idx, o, c, world, node ) {
+
+		const first = c * CLUSTER_SIZE, count = Math.min( CLUSTER_SIZE, this.entryCount - first );
+		idx[ o ] = ( first | ( count - 1 ) << CLUSTER_COUNT_SHIFT ) >>> 0;
+		idx[ o + 3 ] = BVH_LEAF_MARKERS.CLUSTER_LEAF;
+		for ( let k = 0; k < CLUSTER_SIZE; k ++ ) idx[ o + 12 + k ] = k < count ? this.copyWord( this.recordEntry[ first + k ] ) : 0;
+		this.encodeClusterBoxes( data, idx, o, c, world );
+		this.clusterLeaf[ c ] = node;
+		for ( let r = first; r < first + count; r ++ ) this.setLeafOf( this.recordEntry[ r ], r );
+
+	}
+
+	/** A cluster leaf's word for `entry` (BufferLayout): its root, whether its transform is identity, and hidden. */
+	copyWord( entry ) {
+
+		const o = this.matrixRow( this.repOf( entry ) );
+		const identity = isIdentityAt( this.rowArray, o ) ? TLAS_LEAF_IDENTITY : 0;
+		return ( this.entryRoot( entry ) | identity | ( this.entryVisible( entry ) ? 0 : CLUSTER_COPY_HIDDEN ) ) >>> 0;
+
+	}
+
+	/**
+	 * Cluster `c`'s boxes into its leaf at `o` (BufferLayout `encodeClusterBoxes`): each copy's world box from `world`
+	 * (entry-indexed, at build) or, without it, from its transform now. The union goes to `out` at `outOff`.
+	 */
+	encodeClusterBoxes( data, idx, o, c, world = null, out = null, outOff = 0 ) {
+
+		const first = c * CLUSTER_SIZE, count = Math.min( CLUSTER_SIZE, this.entryCount - first );
+		const boxes = _copyBoxes;
+		for ( let k = 0; k < count; k ++ ) {
+
+			const e = this.recordEntry[ first + k ];
+			if ( world ) for ( let i = 0; i < 6; i ++ ) boxes[ k * 6 + i ] = world[ e * 6 + i ];
+			else this.writeEntryWorldAABB( e, boxes, k * 6 );
+
+		}
+
+		encodeClusterBoxBytes( data, idx, o, boxes, count, out, outOff );
+
+	}
+
+	/** A copy record: placement `p`'s world-to-object rows, laid out as a leaf's slots 4–15, at `off` of `out`. */
+	writeRecord( out, off, p ) {
+
+		const inv = _recordInverse;
+		const o = this.matrixRow( p );
+		invertAffineInto( this.rowArray, o, inv );
+		out[ off ] = inv[ 0 ]; out[ off + 1 ] = inv[ 4 ]; out[ off + 2 ] = inv[ 8 ]; out[ off + 3 ] = inv[ 12 ];
+		out[ off + 4 ] = inv[ 1 ]; out[ off + 5 ] = inv[ 5 ]; out[ off + 6 ] = inv[ 9 ]; out[ off + 7 ] = inv[ 13 ];
+		out[ off + 8 ] = inv[ 2 ]; out[ off + 9 ] = inv[ 6 ]; out[ off + 10 ] = inv[ 10 ]; out[ off + 11 ] = inv[ 14 ];
+
+	}
+
+	/** The TLAS leaf holding placement `p`: its cluster's when clustered. */
+	leafOfPlacement( p ) {
+
+		const id = this.tlasLeafIndex[ p ];
+		return id < 0 || ! this.clusterCount ? id : this.clusterLeaf[ this.clusterOf( id ) ];
+
+	}
+
+	/** The slot of record `r`'s word in its cluster leaf (`copyWord`). */
+	copyWordSlot( r ) {
+
+		return 12 + r % CLUSTER_SIZE;
+
+	}
+
+	/** The cluster holding record `r`. */
+	clusterOf( r ) {
+
+		return ( r / CLUSTER_SIZE ) | 0;
+
+	}
+
 	/** Placements actually built. */
 	get setCount() {
 
 		let n = 0;
 		for ( let i = 0; i < this.count; i ++ ) n += this.isSet[ i ];
 		return n;
+
+	}
+
+	/**
+	 * Placement transforms are runs of rows: run r covers placements first[ r ] … first[ r + 1 ] − 1, whose 16 floats
+	 * each follow from base[ r ] in arrays[ arrayOf[ r ] ] — an array of the table's own, or an InstancedMesh's matrix
+	 * attribute, read through it so its array can go to disk and come back (`adoptedMatrices`). An adopted list is never
+	 * written: the first write to its run copies the run into an array of the table's own.
+	 * @private
+	 */
+	_adoptRuns( { first, arrays, arrayOf, base, owned } ) {
+
+		this._runFirst = Int32Array.from( first );
+		this._runArrays = arrays.slice();
+		this._runArray = Int32Array.from( arrayOf );
+		this._runBase = Float64Array.from( base );
+		this._runOwned = Uint8Array.from( owned );
+		this._lastRun = 0;
+		this.rowArray = this._runArrays[ 0 ]?.array ?? this._runArrays[ 0 ] ?? null;
+
+	}
+
+	/** The run holding placement `p`. @private */
+	_runOf( p ) {
+
+		const first = this._runFirst;
+		let r = this._lastRun;
+		if ( p >= first[ r ] && p < first[ r + 1 ] ) return r;
+		let lo = 0, hi = first.length - 2;
+		while ( lo < hi ) {
+
+			const mid = ( lo + hi + 1 ) >> 1;
+			if ( first[ mid ] <= p ) lo = mid;
+			else hi = mid - 1;
+
+		}
+
+		r = this._lastRun = lo;
+		return r;
+
+	}
+
+	/** Where placement `p`'s 16 object-to-world floats start in `this.rowArray`, which this sets. */
+	matrixRow( p ) {
+
+		const r = this._runOf( p );
+		const a = this._runArrays[ this._runArray[ r ] ];
+		this.rowArray = a.array ?? a;
+		return this._runBase[ r ] + ( p - this._runFirst[ r ] ) * 16;
+
+	}
+
+	/** The transform array when a single run of the table's own holds every placement, else null. */
+	get world() {
+
+		const a = this._runFirst.length === 2 && this._runBase[ 0 ] === 0 ? this._runArrays[ this._runArray[ 0 ] ] : null;
+		return a?.array ?? a;
+
+	}
+
+	/** Bytes of transforms the table holds itself, not counting the matrix lists it reads in place. */
+	get matrixBytes() {
+
+		const own = new Set();
+		for ( let r = 0; r < this._runArray.length; r ++ ) if ( this._runOwned[ r ] ) own.add( this._runArrays[ this._runArray[ r ] ] );
+		let bytes = 0;
+		for ( const a of own ) bytes += a.byteLength;
+		return bytes;
+
+	}
+
+	/** The InstancedMesh matrix attributes the table reads in place. */
+	adoptedMatrices() {
+
+		const out = new Set();
+		for ( let r = 0; r < this._runArray.length; r ++ ) {
+
+			const a = this._runArrays[ this._runArray[ r ] ];
+			if ( ! this._runOwned[ r ] && a.isBufferAttribute ) out.add( a );
+
+		}
+
+		return [ ...out ];
+
+	}
+
+	/** @private */
+	_writeRow( p, m, mo ) {
+
+		const r = this._runOf( p );
+		if ( ! this._runOwned[ r ] ) {
+
+			const start = this._runBase[ r ], end = start + ( this._runFirst[ r + 1 ] - this._runFirst[ r ] ) * 16;
+			const a = this._runArrays[ this._runArray[ r ] ];
+			this._runArrays.push( ( a.array ?? a ).slice( start, end ) );
+			this._runArray[ r ] = this._runArrays.length - 1;
+			this._runBase[ r ] = 0;
+			this._runOwned[ r ] = 1;
+
+		}
+
+		const o = this.matrixRow( p ), w = this.rowArray;
+		for ( let k = 0; k < 16; k ++ ) w[ o + k ] = m[ mo + k ];
 
 	}
 
@@ -416,7 +880,8 @@ export class InstanceTable {
 	/** A view of the 16 object-to-world floats for `index`. Cold paths only. */
 	matrixWorldOf( index ) {
 
-		return this.world.subarray( index * 16, index * 16 + 16 );
+		const o = this.matrixRow( index );
+		return this.rowArray.subarray( o, o + 16 );
 
 	}
 
@@ -426,7 +891,8 @@ export class InstanceTable {
 	 */
 	matrixInverseOf( index ) {
 
-		return invertAffineInto( this.world, index * 16, new Float64Array( 16 ) );
+		const o = this.matrixRow( index );
+		return invertAffineInto( this.rowArray, o, new Float64Array( 16 ) );
 
 	}
 
@@ -440,17 +906,59 @@ export class InstanceTable {
 
 		}
 
-		transformAABBInto( this.tplObjectAABB, this.sourceMesh[ index ] * 6, this.world, index * 16, out, off );
+		const o = this.matrixRow( index );
+		transformAABBInto( this.tplObjectAABB, this.sourceMesh[ index ] * 6, this.rowArray, o, out, off );
+
+	}
+
+	/** Writes a TLAS entry's world-space bounds — its group's, for a group copy — into `out` at `off`. */
+	writeEntryWorldAABB( entry, out, off ) {
+
+		const g = this.groupOfEntry( entry );
+		if ( g < 0 ) {
+
+			this.writeWorldAABB( this.repOf( entry ), out, off );
+			return;
+
+		}
+
+		const p = this.repOf( entry );
+		if ( ! this.isSet[ p ] ) {
+
+			for ( let k = 0; k < 6; k ++ ) out[ off + k ] = 0;
+			return;
+
+		}
+
+		const o = this.matrixRow( p );
+		transformAABBInto( this.groups[ g ].aabb, 0, this.rowArray, o, out, off );
 
 	}
 
 	/**
-	 * Every placement's world-space bounds, 6 floats each — what the TLAS sorts on.
+	 * Every TLAS entry's world-space bounds, 6 floats each — what the TLAS sorts on.
+	 * @param {Float64Array|Float32Array} out
+	 */
+	writeEntryWorldAABBs( out ) {
+
+		if ( ! this.entryRep ) {
+
+			this.writeWorldAABBs( out );
+			return;
+
+		}
+
+		for ( let e = 0; e < this.entryCount; e ++ ) this.writeEntryWorldAABB( e, out, e * 6 );
+
+	}
+
+	/**
+	 * Every placement's world-space bounds, 6 floats each.
 	 * @param {Float64Array|Float32Array} out
 	 */
 	writeWorldAABBs( out ) {
 
-		const aabb = this.tplObjectAABB, world = this.world, src = this.sourceMesh, set = this.isSet;
+		const aabb = this.tplObjectAABB, src = this.sourceMesh, set = this.isSet;
 
 		for ( let i = 0; i < this.count; i ++ ) {
 
@@ -464,7 +972,8 @@ export class InstanceTable {
 
 			}
 
-			transformAABBInto( aabb, src[ i ] * 6, world, i * 16, out, o );
+			const m = this.matrixRow( i );
+			transformAABBInto( aabb, src[ i ] * 6, this.rowArray, m, out, o );
 
 		}
 
@@ -621,7 +1130,18 @@ export class InstanceTable {
 	assignOffsets( tlasNodeCount ) {
 
 		this.tlasNodeCount = tlasNodeCount;
+		this.groupNodeStart = tlasNodeCount;
 		let offset = tlasNodeCount;
+		for ( const g of this.groups ) {
+
+			g.offset = offset;
+			offset += g.nodes;
+
+		}
+
+		if ( this.groups.length ) offset ++; // the empty leaf, last: a full refit computes it before any group node reads it
+		const blasBase = offset;
+		this.recordNodeStart = 0;
 
 		for ( let t = 0; t < this.templateCount; t ++ ) {
 
@@ -641,15 +1161,30 @@ export class InstanceTable {
 
 		}
 
-		this.totalBLASNodes = offset - tlasNodeCount;
-		assertBVHIndexFits( offset, 'combined TLAS + BLAS node count' );
+		this.totalBLASNodes = offset - blasBase;
+		if ( this.clusterCount ) this.recordNodeStart = offset;
+		assertBVHIndexFits( offset + ( this.clusterCount ? this.recordNodeCount : 0 ), 'combined TLAS + BLAS node count' );
 
 	}
 
-	/** Total node count (TLAS + all BLASes). */
+	/** Where the BLASes start: after the TLAS and the group trees. */
+	get blasBase() {
+
+		return this.tlasNodeCount + this.groupNodeCount;
+
+	}
+
+	/** Tree nodes: TLAS, group trees, all BLASes. */
+	get treeNodeCount() {
+
+		return this.blasBase + this.totalBLASNodes;
+
+	}
+
+	/** The whole buffer in nodes: the tree, then the copy records when clustered. */
 	get totalNodeCount() {
 
-		return this.tlasNodeCount + this.totalBLASNodes;
+		return this.treeNodeCount + ( this.clusterCount ? this.recordNodeCount : 0 );
 
 	}
 
@@ -661,6 +1196,143 @@ export class InstanceTable {
 		this.tlasNodeCount = 0;
 
 	}
+
+}
+
+const _copyBoxes = new Float64Array( CLUSTER_SIZE * 6 );
+const _recordInverse = new Float64Array( 16 );
+
+/**
+ * Orders `sorted[ lo, hi )` so each run of CLUSTER_SIZE holds neighbours: halved at the centre median of the widest
+ * axis, the lower part a whole number of runs, which keeps the run count ⌈n / CLUSTER_SIZE⌉.
+ */
+function splitIntoRuns( sorted, lo, hi, world ) {
+
+	const stack = [ lo, hi ];
+	while ( stack.length ) {
+
+		const end = stack.pop(), start = stack.pop();
+		if ( end - start <= CLUSTER_SIZE ) continue;
+
+		let axis = 0, widest = - 1;
+		for ( let a = 0; a < 3; a ++ ) {
+
+			let min = Infinity, max = - Infinity;
+			for ( let i = start; i < end; i ++ ) {
+
+				const c = world[ sorted[ i ] * 6 + a ] + world[ sorted[ i ] * 6 + 3 + a ];
+				if ( c < min ) min = c;
+				if ( c > max ) max = c;
+
+			}
+
+			if ( max - min > widest ) {
+
+				widest = max - min;
+				axis = a;
+
+			}
+
+		}
+
+		const mid = start + CLUSTER_SIZE * Math.ceil( ( end - start ) / ( 2 * CLUSTER_SIZE ) );
+		selectNth( sorted, start, end, mid, world, axis );
+		stack.push( start, mid, mid, end );
+
+	}
+
+}
+
+/** Partially sorts `sorted[ lo, hi )` by centre along `axis` so index `k` holds what a full sort would put there. */
+function selectNth( sorted, lo, hi, k, world, axis ) {
+
+	const key = ( i ) => world[ sorted[ i ] * 6 + axis ] + world[ sorted[ i ] * 6 + 3 + axis ];
+	let l = lo, r = hi - 1;
+	while ( r > l ) {
+
+		const m = ( l + r ) >>> 1;
+		const a = key( l ), b = key( m ), c = key( r );
+		const pivot = a < b ? ( b < c ? b : a < c ? c : a ) : ( a < c ? a : b < c ? c : b );
+		let i = l, j = r;
+		while ( i <= j ) {
+
+			while ( key( i ) < pivot ) i ++;
+			while ( key( j ) > pivot ) j --;
+			if ( i <= j ) {
+
+				const t = sorted[ i ];
+				sorted[ i ] = sorted[ j ];
+				sorted[ j ] = t;
+				i ++;
+				j --;
+
+			}
+
+		}
+
+		if ( k <= j ) r = j;
+		else if ( k >= i ) l = i;
+		else return;
+
+	}
+
+}
+
+/** Splits group member slots in two at the centroid median of their widest axis. */
+function splitMembers( list, members, aabb ) {
+
+	const centre = ( j, a ) => aabb[ members[ j ] * 6 + a ] + aabb[ members[ j ] * 6 + 3 + a ];
+	let axis = 0, widest = - 1;
+	for ( let a = 0; a < 3; a ++ ) {
+
+		let lo = Infinity, hi = - Infinity;
+		for ( const j of list ) {
+
+			const c = centre( j, a );
+			if ( c < lo ) lo = c;
+			if ( c > hi ) hi = c;
+
+		}
+
+		if ( hi - lo > widest ) {
+
+			widest = hi - lo;
+			axis = a;
+
+		}
+
+	}
+
+	const sorted = list.slice().sort( ( x, y ) => centre( x, axis ) - centre( y, axis ) || x - y );
+	const mid = sorted.length >> 1;
+	return [ sorted.slice( 0, mid ), sorted.slice( mid ) ];
+
+}
+
+/** A child's box into an inner node's slot at `off`; none is the far point box no ray enters. */
+function writeChildBox( block, off, box ) {
+
+	for ( let a = 0; a < 3; a ++ ) {
+
+		block[ off + a ] = box ? box[ a ] : BVH_EMPTY_BOX;
+		block[ off + 4 + a ] = box ? box[ 3 + a ] : BVH_EMPTY_BOX;
+
+	}
+
+}
+
+function unionBoxes( a, b ) {
+
+	if ( ! a || ! b ) return a ?? b;
+	const out = new Float32Array( 6 );
+	for ( let k = 0; k < 3; k ++ ) {
+
+		out[ k ] = Math.min( a[ k ], b[ k ] );
+		out[ 3 + k ] = Math.max( a[ 3 + k ], b[ 3 + k ] );
+
+	}
+
+	return out;
 
 }
 

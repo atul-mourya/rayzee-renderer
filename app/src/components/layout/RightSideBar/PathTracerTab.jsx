@@ -18,6 +18,7 @@ import CanvasDimensionControls from './CanvasDimensionControls';
 import { MAX_TEXTURE_SIZE_PRESETS } from '@/Constants';
 import PhysicalSkyControls from './PhysicalSkyControls';
 import { getApp } from '@/lib/appProxy';
+import { memorySpillPreference, setMemorySpillPreference } from '@/lib/storage';
 
 
 // Per-debug-mode control renderers. Add a new case to expose mode-specific
@@ -229,6 +230,15 @@ const PathTracerTab = () => {
 
 	// Backdrop mode derived from the two engine flags (single mutually-exclusive choice).
 	const backgroundType = transparentBackground ? 'transparent' : showBackground ? 'environment' : 'color';
+
+	const [ memorySpill, setMemorySpill ] = useState( memorySpillPreference );
+	const handleMemorySpillChange = value => {
+
+		const mode = value === 'auto' ? 'auto' : value === 'true';
+		setMemorySpill( mode );
+		setMemorySpillPreference( mode );
+
+	};
 
 	return (
 		<div className="">
@@ -553,6 +563,21 @@ const PathTracerTab = () => {
 							{MAX_TEXTURE_SIZE_PRESETS.map( ( { value, label } ) => (
 								<SelectItem key={value} value={value.toString()}>{label}</SelectItem>
 							) )}
+						</SelectContent>
+					</Select>
+				</Row>
+				<Row>
+					<Select value={String( memorySpill )} onValueChange={handleMemorySpillChange}>
+						<span className="opacity-50 text-xs truncate inline-flex items-center">
+							Memory Saver<InfoTip text="Keeps the data of scenes too big for memory on your disk. Auto does this only when needed. Applies from the next load." />
+						</span>
+						<SelectTrigger className="max-w-24 h-5 rounded-full" >
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="auto">Auto</SelectItem>
+							<SelectItem value="true">Always</SelectItem>
+							<SelectItem value="false">Never</SelectItem>
 						</SelectContent>
 					</Select>
 				</Row>

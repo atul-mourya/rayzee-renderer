@@ -189,7 +189,8 @@ export class PathTracerApp extends RayzeeRenderer {
 			canvas: this.canvas,
 			assetLoader: this.assetLoader,
 			pathTracer: null,
-			floorPlane: this.assetLoader.floorPlane
+			floorPlane: this.assetLoader.floorPlane,
+			isGeometryOnDisk: () => this.geometryOnDisk,
 		} );
 
 		this.interactionManager.wireAppEvents( this );
@@ -678,7 +679,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 			this._notePlacementsMoving( meshIndices );
 			this._sdf.updateMeshTransforms( meshIndices );
-			this.stages.pathTracer?.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
+			this.stages.pathTracer?.updateBufferRanges( [], this._sdf.takeMoveRanges() );
 			if ( this._sdf.movesEmitters( meshIndices ) ) {
 
 				this._emittersMoved = true;
@@ -717,7 +718,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 			const run = table.placementRunOf( meshIndex );
 			if ( ! run ) continue;
-			for ( let p = run.start; p < run.start + run.count; p ++ ) dm.notePlacementMoving( table.tlasLeafIndex[ p ], table.world, p * 16 );
+			for ( let p = run.start; p < run.start + run.count; p ++ ) dm.notePlacementMoving( table.tlasLeafIndex[ p ], () => table.matrixWorldOf( p ) );
 
 		}
 

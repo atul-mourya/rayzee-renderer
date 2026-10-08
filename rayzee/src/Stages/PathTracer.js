@@ -57,7 +57,6 @@ export class PathTracer extends PathTracerStage {
 		this._packedBuffers = null;
 		this._queueManager = null;
 		this._kernelManager = null;
-		this._gBufferAttr = null; // per-pixel first-hit MRT (ND + albedo); see _buildWavefrontKernels
 		this._m2Attr = null; // per-pixel running mean of luminance² for the Tier-1 convergence early-stop
 		this._streakAttr = null; // Tier-2: per-pixel freeze-candidate streak (u32); frozen := streak >= K
 		// Tier-2 dilation: per-pixel frozen mask (1=skip), written race-free in buildActivePixels; a frozen pixel
@@ -209,7 +208,6 @@ export class PathTracer extends PathTracerStage {
 		t.register( 'gbuffer', () => {
 
 			const a = [];
-			if ( this._gBufferAttr ) a.push( this._gBufferAttr );
 			if ( this._m2Attr ) a.push( this._m2Attr );
 			if ( this._streakAttr ) a.push( this._streakAttr );
 			if ( this._frozenMaskAttr ) a.push( this._frozenMaskAttr );
@@ -226,7 +224,8 @@ export class PathTracer extends PathTracerStage {
 		} );
 
 		// Scene geometry (triangle data, two-level BVH, light BVH + emissive)
-		t.register( 'geometry', () => [ this.triangleGeoAttr, this.triangleShadeAttr, this.bvhStorageAttr, this.lightStorageAttr ] );
+		// The light data shares the materials' buffer and is counted with them.
+		t.register( 'geometry', () => [ ...( this._geoParts?.attrs ?? [] ), ...( this._shadeParts?.attrs ?? [] ), ...( this._bvhParts?.attrs ?? [ this.bvhStorageAttr ] ) ] );
 
 		// Material storage buffer + per-property texture arrays
 		t.register( 'materials', () => {
@@ -1369,8 +1368,9 @@ export class PathTracer extends PathTracerStage {
 	_computePathBudget() {
 
 		const RAY_BYTES = RAY_STRIDE * 16;
-		const HIT_BYTES = ( this._integrator?.hitStride ?? HIT_STRIDE ) * 16;
-		const bytesPerPath = RAY_BYTES + HIT_BYTES + GBUFFER_STRIDE * 16
+		// The hit buffer carries the G-buffer as its last region.
+		const HIT_BYTES = ( ( this._integrator?.hitStride ?? HIT_STRIDE ) + GBUFFER_STRIDE ) * 16;
+		const bytesPerPath = RAY_BYTES + HIT_BYTES
 			+ 4 + 4 /* activeIndices A/B */ + 4;
 
 		const limits = this.renderer?.backend?.device?.limits;
@@ -1493,15 +1493,12 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
-		// Per-CHUNK first-hit G-buffer (LOCAL slot r, size B), 1 uvec4/slot half-packed (pack2x16). Written by
-		// Generate + Shade(bounce 0), read by Shade + FinalWrite within the SAME chunk, so per-chunk suffices.
-		// uint (not f32): packed lanes can hit the NaN exponent range (snorm 1.0 → 0x7FFF) that an f32 store may
-		// canonicalize; u32 stores the bits verbatim.
-		const gBufferVec4s = B * GBUFFER_STRIDE;
-		freeStorageAttribute( this.renderer, this._gBufferAttr );
-		this._gBufferAttr = gpuOnlyStorageAttribute( gBufferVec4s, 4, Uint32Array );
-		const gBufferRW = storage( this._gBufferAttr, 'uvec4' );
-		const gBufferRO = storage( this._gBufferAttr, 'uvec4' ).toReadOnly();
+		// Per-CHUNK first-hit G-buffer (LOCAL slot r, size B), 1 uvec4/slot half-packed (pack2x16), the hit buffer's
+		// last region (PackedRayBuffer). Written by Generate + Shade(bounce 0), read by Shade + FinalWrite within the
+		// SAME chunk, so per-chunk suffices. uint (not f32): packed lanes can hit the NaN exponent range (snorm 1.0 →
+		// 0x7FFF) that an f32 store may canonicalize; u32 stores the bits verbatim.
+		const gBufferRW = this._packedBuffers.hitBuffer.rw;
+		const gBufferRO = this._packedBuffers.hitBuffer.ro;
 
 		// Per-PIXEL persistent buffers (m2/streak/frozenMask) are GLOBAL-pixel-indexed (p = pixelBase + r) and
 		// must span the whole frame across chunks AND persist across frames, so they're sized to the reserved
@@ -1842,7 +1839,7 @@ export class PathTracer extends PathTracerStage {
 		const freshTri = this.triangleStorageNode;
 		const freshMat = this.materialData.materialStorageNode;
 		const freshEnvCDF = texture( this.environment.envCDFTexture ); // independent CDF texture node; refreshed in _refreshWfTextureNodes
-		const freshLight = this.lightStorageNode;
+		const freshLight = this.lightDataNode;
 		// Independent texture nodes (never compiled elsewhere) avoid Three.js TextureNode caching across pipelines; refreshed via _refreshWfTextureNodes.
 		const _mat = this.materialData;
 		const _env = this.environment;
@@ -2231,7 +2228,6 @@ export class PathTracer extends PathTracerStage {
 		this._packedBuffers?.dispose();
 		this._queueManager?.dispose();
 		this._kernelManager?.dispose();
-		this._gBufferAttr?.dispose?.();
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
 		this._frozenMaskAttr?.dispose?.();
@@ -2241,7 +2237,6 @@ export class PathTracer extends PathTracerStage {
 		this._packedBuffers = null;
 		this._queueManager = null;
 		this._kernelManager = null;
-		this._gBufferAttr = null;
 		this._m2Attr = null;
 		this._streakAttr = null;
 		this._frozenMaskAttr = null;

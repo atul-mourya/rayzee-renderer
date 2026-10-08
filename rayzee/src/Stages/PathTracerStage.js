@@ -1,5 +1,5 @@
 import { storage } from 'three/tsl';
-import { gpuOnlyStorageAttribute, uploadStorageChunkRange, uploadStorageChunks } from '../TSL/patches.js';
+import { StorageParts } from '../TSL/patches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { Vector2, Matrix4 } from 'three';
 
@@ -21,14 +21,33 @@ import { LightSerializer } from '../Processor/LightSerializer';
 
 // Constants
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from '../EngineDefaults.js';
-import { TRIANGLE_DATA_LAYOUT } from '../Processor/BufferLayout.js';
-import { TRI_GEO_ROWS, TRI_SHADE_ROWS } from '../TSL/Common.js';
+import { TRIANGLE_DATA_LAYOUT, CLUSTER_COPY_HIDDEN, bvhIndexView } from '../Processor/BufferLayout.js';
+import { TRI_GEO_ROWS, TRI_SHADE_ROWS, splitStorage } from '../TSL/Common.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 
 // Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
 const TRIANGLE_UPLOAD_SLICE = 1 << 18;
 
 const log = createLogger( 'pathtracer' );
+
+
+// Storage buffers the shading kernel binds besides the BVH and triangle parts: rays, hits (with the RNG state and the
+// G-buffer), counters, active indices, and the scene data (materials, then lights). Measured on the compiled WGSL.
+const SHADE_OTHER_BINDINGS = 5;
+
+/** Read-only storage nodes over `parts`, one node when it is a single buffer. */
+function readParts( parts, type ) {
+
+	return splitStorage( parts.attrs.map( ( attr ) => storage( attr, type, attr.count ).toReadOnly() ), parts.elementsPerPart, type );
+
+}
+
+/** The `{ geo, shade }` pair kernels read triangles through (TSL/Common.js `triangleRow`). */
+function triangleNodes( geo, shade ) {
+
+	return { geo: readParts( geo, 'uvec4' ), shade: readParts( shade, shade.withoutUV ? 'uvec2' : 'uvec4' ), withoutUV: shade.withoutUV === true };
+
+}
 
 // How long after the last move the view still counts as moving. Matches CameraOptimizer's own
 // settle delay, so the answer does not change when interaction mode is switched off.
@@ -113,6 +132,7 @@ export class PathTracerStage extends RenderStage {
 		// Initialize material data manager
 		this.materialData = new MaterialDataManager( this.sdfs );
 		this.materialData.callbacks.onReset = () => this.reset();
+		this.materialData.callbacks.adoptMaterials = ( data ) => this._adoptMaterials( data );
 		// A material edit can switch the diffuse transmission lobe on or off, which the shade kernel compiles in.
 		this.materialData.callbacks.onMaterialFeaturesChanged = () => {
 
@@ -625,7 +645,7 @@ export class PathTracerStage extends RenderStage {
 	 * @param {Uint32Array|import('../Processor/ChunkedRecords.js').ChunkedRecords} triangleData
 	 * @param {number} triangleCount - Number of triangles
 	 */
-	setTriangleData( triangleData, triangleCount ) {
+	setTriangleData( triangleData, triangleCount, { textureCoordinates = true } = {} ) {
 
 		if ( ! triangleData ) return;
 
@@ -633,45 +653,57 @@ export class PathTracerStage extends RenderStage {
 		const flat = chunked ? null : ( triangleData.chunks ? triangleData.chunks[ 0 ] : triangleData );
 		const records = chunked ? chunked.recordCount : Math.ceil( flat.length / TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE );
 		const pre = chunked?._gpuUpload?.triangles ? chunked._gpuUpload : null;
-		const { geo, shade } = pre ?? this._allocateTriangleBuffers( records );
+		const { geo, shade } = pre ?? this._allocateTriangleBuffers( records, { textureCoordinates } );
+		const withoutUV = shade.withoutUV === true;
+		const node = this.triangleStorageNode;
 
-		if ( this.triangleStorageNode ) {
+		if ( node && geo.attrs.length === 1 && shade.attrs.length === 1 && ! node.geo.isSplitStorage && ! node.shade.isSplitStorage && !! node.withoutUV === withoutUV ) {
 
-			this.triangleStorageNode.geo.value = geo;
-			this.triangleStorageNode.geo.bufferCount = geo.count;
-			this.triangleStorageNode.shade.value = shade;
-			this.triangleStorageNode.shade.bufferCount = shade.count;
+			node.geo.value = geo.attrs[ 0 ];
+			node.geo.bufferCount = geo.attrs[ 0 ].count;
+			node.shade.value = shade.attrs[ 0 ];
+			node.shade.bufferCount = shade.attrs[ 0 ].count;
 
 		} else {
 
-			this.triangleStorageNode = {
-				geo: storage( geo, 'uvec4', geo.count ).toReadOnly(),
-				shade: storage( shade, 'uvec4', shade.count ).toReadOnly(),
-			};
+			// Kernels rebuild with the scene (setupMaterial), so a new layout takes new nodes.
+			this.triangleStorageNode = triangleNodes( geo, shade );
 
 		}
 
-		this.triangleGeoAttr = geo;
-		this.triangleShadeAttr = shade;
+		this._geoParts = geo;
+		this._shadeParts = shade;
+		this.triangleGeoAttr = geo.attrs[ 0 ];
+		this.triangleShadeAttr = shade.attrs[ 0 ];
 		this._triangleRecords = chunked;
 		this._triangleFlat = flat;
 		this._triangleRecordCount = records;
 		this.triangleCount = triangleCount;
 		this._uploadTriangles( 0, records, { skipChunks: pre?.uploaded } );
+		// Adopted once: a later call with these records uploads them again, in the layout it asks for.
+		if ( pre ) chunked._gpuUpload = null;
 
 		log.debug( `${fmt.n( this.triangleCount )} triangles (storage buffer)` );
 
 	}
 
-	/** GPU-only geo and shade buffers for `records` triangles, created now. @private */
-	_allocateTriangleBuffers( records ) {
+	/**
+	 * GPU-only geo and shade buffers for `records` triangles, in as many parts as one binding's limit needs. Without
+	 * texture coordinates the shade buffer keeps only flags and mesh index, a uvec2 a triangle (TSL/Common.js
+	 * `triangleRow`): 24 B a triangle less, 2.65 GB on the whole Moana island, which samples no texture. @private
+	 */
+	_allocateTriangleBuffers( records, { textureCoordinates = true } = {} ) {
 
 		const n = Math.max( 1, records );
-		this._assertFitsGPU( n * TRI_GEO_ROWS * 16 );
-		const geo = gpuOnlyStorageAttribute( n * TRI_GEO_ROWS, 4, Uint32Array );
-		const shade = gpuOnlyStorageAttribute( n * TRI_SHADE_ROWS, 4, Uint32Array );
-		this.renderer.backend.createStorageAttribute( geo );
-		this.renderer.backend.createStorageAttribute( shade );
+		const max = this._maxPartBytes();
+		const geo = new StorageParts( n * TRI_GEO_ROWS * 4, TRI_GEO_ROWS * 4, max, Uint32Array );
+		const shade = textureCoordinates
+			? new StorageParts( n * TRI_SHADE_ROWS * 4, TRI_SHADE_ROWS * 4, max, Uint32Array )
+			: new StorageParts( n * 2, 2, max, Uint32Array, 2 );
+		shade.withoutUV = ! textureCoordinates;
+		this._assertBindings( { geo: geo.attrs.length, shade: shade.attrs.length, bvh: 1 } );
+		geo.create( this.renderer.backend );
+		shade.create( this.renderer.backend );
 		return { geo, shade };
 
 	}
@@ -685,21 +717,22 @@ export class PathTracerStage extends RenderStage {
 	 *   `source` writes those records instead of reading the stage's own (a chunk being handed over).
 	 * @private
 	 */
-	_uploadTriangles( start, count, { geo = true, shade = true, skipChunks = null, source = null, sourceStart = 0, geoAttr = this.triangleGeoAttr, shadeAttr = this.triangleShadeAttr } = {} ) {
+	_uploadTriangles( start, count, { geo = true, shade = true, skipChunks = null, source = null, sourceStart = 0, geoParts = this._geoParts, shadeParts = this._shadeParts } = {} ) {
 
-		if ( count <= 0 || ! geoAttr ) return;
+		if ( count <= 0 || ! geoParts ) return;
 
 		const backend = this.renderer.backend;
-		const geoBuffer = backend.get( geoAttr ).buffer;
-		const shadeBuffer = backend.get( shadeAttr ).buffer;
 		const LANES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const GEO = TRI_GEO_ROWS * 4, SHADE = TRI_SHADE_ROWS * 4;
+		const GEO = TRI_GEO_ROWS * 4;
+		// Without texture coordinates only the flags and mesh index lanes go up.
+		const SHADE = shadeParts.withoutUV ? 2 : TRI_SHADE_ROWS * 4;
+		const SHADE_FROM = LANES - SHADE;
 		const records = this._triangleRecords;
 		const perChunk = source ? count : records ? records.recordsPerChunk : this._triangleRecordCount;
 		// One staging pair for every upload: a fresh one per chunk was churn that failed to
 		// allocate on a scene already at the edge of the address space.
 		const slice = TRIANGLE_UPLOAD_SLICE;
-		this._triangleStaging ??= { geo: new Uint32Array( slice * GEO ), shade: new Uint32Array( slice * SHADE ) };
+		this._triangleStaging ??= { geo: new Uint32Array( slice * GEO ), shade: new Uint32Array( slice * TRI_SHADE_ROWS * 4 ) };
 		const geoStage = this._triangleStaging.geo;
 		const shadeStage = this._triangleStaging.shade;
 
@@ -723,12 +756,12 @@ export class PathTracerStage extends RenderStage {
 			for ( let i = 0, g = 0, h = 0; i < n; i ++, s += LANES ) {
 
 				if ( geo ) for ( let l = 0; l < GEO; l ++ ) geoStage[ g ++ ] = src[ s + l ];
-				if ( shade ) for ( let l = GEO; l < LANES; l ++ ) shadeStage[ h ++ ] = src[ s + l ];
+				if ( shade ) for ( let l = SHADE_FROM; l < LANES; l ++ ) shadeStage[ h ++ ] = src[ s + l ];
 
 			}
 
-			if ( geo ) backend.device.queue.writeBuffer( geoBuffer, at * GEO * 4, geoStage, 0, n * GEO );
-			if ( shade ) backend.device.queue.writeBuffer( shadeBuffer, at * SHADE * 4, shadeStage, 0, n * SHADE );
+			if ( geo ) geoParts.write( backend, at * GEO, geoStage, 0, n * GEO );
+			if ( shade ) shadeParts.write( backend, at * SHADE, shadeStage, 0, n * SHADE );
 			at += n;
 
 		}
@@ -740,26 +773,36 @@ export class PathTracerStage extends RenderStage {
 	 * chunk into it, so a build can hand chunks over as it finishes them and let them go (the
 	 * memory spill). setTriangleData / setBVHData then adopt that buffer rather than upload again.
 	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
-	 * @returns {function(number): void} uploads chunk k from `records.chunks[ k ]`
+	 * @returns {function(number): Promise<void>} uploads chunk k from `records.chunks[ k ]`; resolves with {@link drainUploads}
 	 */
 	createChunkUploader( records ) {
 
-		this._assertFitsGPU( records.recordCount * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT );
-		const attr = gpuOnlyStorageAttribute( records.recordCount * records.lanesPerRecord / 4, 4, records.LaneType );
+		const parts = this._allocateBVHParts( records.recordCount * records.lanesPerRecord );
 		const backend = this.renderer.backend;
-		backend.createStorageAttribute( attr );
-		const buffer = backend.get( attr ).buffer;
-		const stride = records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
+		const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
 		const uploaded = new Set();
-		records._gpuUpload = { attr, uploaded };
+		records._gpuUpload = { parts, uploaded };
 
 		return k => {
 
 			const chunk = records.chunks[ k ];
-			backend.device.queue.writeBuffer( buffer, k * stride, chunk, 0, chunk.length );
+			parts.write( backend, k * lanesPerChunk, chunk, 0, chunk.length );
 			uploaded.add( k );
+			return this.drainUploads();
 
 		};
+
+	}
+
+	/**
+	 * Resolves once the GPU has taken every upload so far. Chrome passes each upload through a shared memory pool that
+	 * grows to the most ever sent before the GPU caught up and is kept until the page closes (2.2 GB on the Moana
+	 * island); awaiting this after each chunk keeps it to one. Measured: 1 GB in 64 MB writes left 1 GB behind, paced
+	 * 64 MB, in the same time.
+	 */
+	drainUploads() {
+
+		return this.renderer.backend.device.queue.onSubmittedWorkDone();
 
 	}
 
@@ -767,11 +810,11 @@ export class PathTracerStage extends RenderStage {
 	 * createChunkUploader for triangle records: both GPU buffers are allocated now and each
 	 * chunk is split into them as it is handed over.
 	 * @param {import('../Processor/ChunkedRecords.js').ChunkedRecords} records
-	 * @returns {function(number): void}
+	 * @returns {function(number): Promise<void>}
 	 */
-	createTriangleChunkUploader( records ) {
+	createTriangleChunkUploader( records, { textureCoordinates = true } = {} ) {
 
-		const { geo, shade } = this._allocateTriangleBuffers( records.recordCount );
+		const { geo, shade } = this._allocateTriangleBuffers( records.recordCount, { textureCoordinates } );
 		const uploaded = new Set();
 		records._gpuUpload = { triangles: true, geo, shade, uploaded };
 		const perChunk = records.recordsPerChunk;
@@ -780,46 +823,79 @@ export class PathTracerStage extends RenderStage {
 
 			const first = k * perChunk;
 			const count = Math.min( perChunk, records.recordCount - first );
-			this._uploadTriangles( first, count, { source: records.chunks[ k ], geoAttr: geo, shadeAttr: shade } );
+			this._uploadTriangles( first, count, { source: records.chunks[ k ], geoParts: geo, shadeParts: shade } );
 			uploaded.add( k );
+			return this.drainUploads();
 
 		};
 
 	}
 
-	/**
-	 * One storage buffer holds all of a scene's triangles, and one its BVH. Past the device's
-	 * limit WebGPU hands back an invalid buffer and every write to it fails quietly.
-	 * @private
-	 */
-	_assertFitsGPU( bytes ) {
+	/** Fresh read-only nodes over the scene's BVH and triangles, for a stage that builds a kernel of its own. */
+	sceneStorageNodes() {
 
-		const limits = this.renderer?.backend?.device?.limits;
-		const max = Math.min( limits?.maxBufferSize ?? Infinity, limits?.maxStorageBufferBindingSize ?? Infinity );
-		if ( bytes > max ) throw new Error( `the scene needs a ${fmt.mb( bytes )} GPU buffer, past the ${fmt.mb( max )} this GPU allows for one — load fewer triangles` );
+		if ( ! this.bvhStorageAttr || ! this._geoParts ) return null;
+		const bvh = this._bvhParts ? readParts( this._bvhParts, 'vec4' ) : storage( this.bvhStorageAttr, 'vec4', this.bvhStorageAttr.count ).toReadOnly();
+		return { bvh, triangles: triangleNodes( this._geoParts, this._shadeParts ) };
 
 	}
 
-	/** Uploads chunked records, or — for a buffer a build already filled — whatever it has not. @private */
-	_uploadChunked( attr, records ) {
+	/**
+	 * Most bytes one storage buffer may hold: past it WebGPU hands back an invalid buffer and every write to it fails
+	 * quietly, so a larger store is split into parts. `bufferPartBytes` lowers it, for tests to force several parts.
+	 * @private
+	 */
+	_maxPartBytes() {
 
-		const pre = records._gpuUpload;
-		if ( ! pre || pre.attr !== attr ) {
+		const limits = this.renderer?.backend?.device?.limits;
+		const max = Math.min( limits?.maxBufferSize ?? Infinity, limits?.maxStorageBufferBindingSize ?? Infinity );
+		return Math.min( max, this.bufferPartBytes ?? Infinity );
 
-			uploadStorageChunks( this.renderer, attr, records.chunks );
-			return;
+	}
 
-		}
+	/**
+	 * Every part of the tree and triangle stores is a binding of its own, and the shading kernel binds them all beside
+	 * SHADE_OTHER_BINDINGS others, so past the device's per-stage limit no kernel could be built: refuse before upload.
+	 * @private
+	 */
+	_assertBindings( counts ) {
 
-		const buffer = this.renderer.backend.get( attr ).buffer;
-		const stride = records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
+		// The latest allocation of each: a build allocates its triangles before its BVH, and the previous scene's parts
+		// must not count against the next one.
+		this._partCounts = { ...( this._partCounts ?? { bvh: 1, geo: 1, shade: 1 } ), ...counts };
+		const { bvh, geo, shade } = this._partCounts;
+		const limit = this.renderer?.backend?.device?.limits?.maxStorageBuffersPerShaderStage ?? 10;
+		if ( SHADE_OTHER_BINDINGS + bvh + geo + shade <= limit ) return;
+		throw new Error(
+			`the scene's BVH and triangles need ${bvh + geo + shade} GPU buffers (BVH ${bvh}, triangles ${geo} + ${shade}), ` +
+			`more than the ${limit - SHADE_OTHER_BINDINGS} one GPU program can bind beside the rest — load fewer triangles or copies`
+		);
+
+	}
+
+	/** GPU-only BVH buffers for `lanes` floats, in as many parts as one binding's limit needs. @private */
+	_allocateBVHParts( lanes ) {
+
+		const parts = new StorageParts( lanes, 16, this._maxPartBytes(), Float32Array );
+		this._assertBindings( { bvh: parts.attrs.length } );
+		parts.create( this.renderer.backend );
+		return parts;
+
+	}
+
+	/** Uploads chunked records into `parts`, or — for parts a build already filled — whatever it has not. @private */
+	_uploadChunked( parts, records ) {
+
+		const pre = records._gpuUpload?.parts === parts ? records._gpuUpload : null;
+		const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
+		const backend = this.renderer.backend;
 		for ( let k = 0; k < records.chunks.length; k ++ ) {
 
-			if ( pre.uploaded.has( k ) ) continue;
+			if ( pre?.uploaded.has( k ) ) continue;
 			const chunk = records.chunks[ k ];
 			if ( ! chunk ) throw new Error( `chunk ${k} is on disk and was never uploaded` );
-			this.renderer.backend.device.queue.writeBuffer( buffer, k * stride, chunk, 0, chunk.length );
-			pre.uploaded.add( k );
+			parts.write( backend, k * lanesPerChunk, chunk, 0, chunk.length );
+			pre?.uploaded.add( k );
 
 		}
 
@@ -839,28 +915,31 @@ export class PathTracerStage extends RenderStage {
 		const flat = chunked ? null : ( bvhImageData.chunks ? bvhImageData.chunks[ 0 ] : bvhImageData );
 		const lanes = chunked ? chunked.recordCount * chunked.lanesPerRecord : flat.length;
 		const vec4Count = lanes / 4;
-		this._assertFitsGPU( lanes * 4 );
 
-		const makeAttr = () => chunked
-			? chunked._gpuUpload?.attr ?? gpuOnlyStorageAttribute( vec4Count, 4, Float32Array )
-			: new StorageInstancedBufferAttribute( flat, 4 );
+		// A flat array keeps a CPU-backed attribute (patches go up through its update ranges); chunked records go to
+		// GPU-only parts, as many as one binding's limit needs.
+		const parts = chunked ? chunked._gpuUpload?.parts ?? this._allocateBVHParts( lanes ) : null;
+		const attrs = parts ? parts.attrs : [ new StorageInstancedBufferAttribute( flat, 4 ) ];
+		if ( ! parts ) this._assertBindings( { bvh: 1 } );
 
-		if ( this.bvhStorageNode ) {
+		if ( this.bvhStorageNode && attrs.length === 1 && ! this.bvhStorageNode.isSplitStorage ) {
 
-			this.bvhStorageAttr = makeAttr();
-			this.bvhStorageNode.value = this.bvhStorageAttr;
+			this.bvhStorageNode.value = attrs[ 0 ];
 			this.bvhStorageNode.bufferCount = vec4Count;
 
 		} else {
 
-			this.bvhStorageAttr = makeAttr();
-			this.bvhStorageNode = storage( this.bvhStorageAttr, 'vec4', vec4Count ).toReadOnly();
+			this.bvhStorageNode = parts ? readParts( parts, 'vec4' ) : storage( attrs[ 0 ], 'vec4', vec4Count ).toReadOnly();
 
 		}
 
+		this.bvhStorageAttr = attrs[ 0 ];
 		this.bvhStorageAttr.foldedLeaves = bvhImageData.foldedLeaves === true;
+		this.bvhStorageAttr.copyRecordBase = bvhImageData.copyRecordBase;
+		this._bvhParts = parts;
 		this._bvhRecords = chunked;
-		if ( chunked ) this._uploadChunked( this.bvhStorageAttr, chunked );
+		if ( chunked ) this._uploadChunked( parts, chunked );
+		if ( chunked ) chunked._gpuUpload = null;
 
 		this.bvhNodeCount = Math.floor( vec4Count / BVH_VEC4_PER_NODE );
 		log.debug( `${fmt.n( this.bvhNodeCount )} BVH nodes (storage buffer)` );
@@ -913,6 +992,29 @@ export class PathTracerStage extends RenderStage {
 
 		}
 
+		this._patchGroupNodes();
+
+	}
+
+	/**
+	 * Rewrites the group trees: a hidden member's child points at the empty leaf. Every copy of a group shares its
+	 * tree, as every instance of an InstancedMesh shares its visibility.
+	 * @private
+	 */
+	_patchGroupNodes() {
+
+		const table = this._instanceTable;
+		if ( ! table?.groupNodeCount || ! this.bvhStorageAttr ) return;
+
+		table.computeGroupAABBs();
+		const block = table.groupNodeBlock();
+		const start = table.groupNodeStart;
+		if ( this._bvhRecords ) this._bvhRecords.setRecords( start, block );
+		else this.bvhStorageAttr.array.set( block, start * 16 );
+
+		this._dirtyBVHLeaves ??= new Set();
+		for ( let n = 0; n < table.groupNodeCount; n ++ ) this._dirtyBVHLeaves.add( start + n );
+
 	}
 
 	/**
@@ -922,8 +1024,13 @@ export class PathTracerStage extends RenderStage {
 	 */
 	updateMeshVisibility( meshIndex, visible ) {
 
-		if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
-		this._flushBVHEdits();
+		this._whenTLASResident( () => {
+
+			if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
+			this._patchGroupNodes();
+			this._flushBVHEdits();
+
+		} );
 
 	}
 
@@ -935,8 +1042,30 @@ export class PathTracerStage extends RenderStage {
 
 		if ( ! this._meshRefs || ! this._instanceTable ) return;
 
-		this._patchVisibilityFromMeshes( this._meshRefs );
-		this._flushBVHEdits();
+		this._whenTLASResident( () => {
+
+			this._patchVisibilityFromMeshes( this._meshRefs );
+			this._flushBVHEdits();
+
+		} );
+
+	}
+
+	/**
+	 * Runs `edit` once the TLAS is in memory: a spilling build of clustered copies leaves it on disk (SceneProcessor
+	 * `_spillTLAS`), and the first edit reads it back, where it then stays.
+	 * @private
+	 */
+	_whenTLASResident( edit ) {
+
+		const records = this._bvhRecords, table = this._instanceTable;
+		if ( ! records || ! table || records.isResident( 0, table.blasBase ) ) return edit();
+		this._tlasReading ??= records.ensureResident( 0, table.blasBase ).finally( () => {
+
+			this._tlasReading = null;
+
+		} );
+		this._tlasReading.then( edit );
 
 	}
 
@@ -950,14 +1079,25 @@ export class PathTracerStage extends RenderStage {
 		const table = this._instanceTable;
 		if ( ! table || ! table.isSet?.[ meshIndex ] || ! this.bvhStorageAttr ) return false;
 
-		const leaf = table.tlasLeafIndex[ meshIndex ];
+		const leaf = table.leafOfPlacement( meshIndex );
 		if ( leaf < 0 ) return false;
 
 		table.visible[ meshIndex ] = visible ? 1 : 0;
+		// A group copy's leaf is shared by its members: it stays in while any of them is visible.
+		const shown = table.entryVisible( table.entryOf( meshIndex ) );
 
 		// A chunked attribute owns no CPU array; write into the chunk that holds this leaf.
-		if ( this._bvhRecords ) this._bvhRecords.chunkFor( leaf )[ this._bvhRecords.baseOf( leaf ) + 2 ] = visible ? 1.0 : 0.0;
-		else this.bvhStorageAttr.array[ leaf * 16 + 2 ] = visible ? 1.0 : 0.0;
+		const f = this._bvhRecords ? this._bvhRecords.chunkFor( leaf ) : this.bvhStorageAttr.array;
+		const o = this._bvhRecords ? this._bvhRecords.baseOf( leaf ) : leaf * 16;
+		if ( table.clusterCount ) {
+
+			const views = this._indexViews ??= new WeakMap();
+			let idx = views.get( f );
+			if ( ! idx ) views.set( f, idx = bvhIndexView( f ) );
+			const w = o + table.copyWordSlot( table.tlasLeafIndex[ meshIndex ] );
+			idx[ w ] = shown ? idx[ w ] & ~ CLUSTER_COPY_HIDDEN : ( idx[ w ] | CLUSTER_COPY_HIDDEN ) >>> 0;
+
+		} else f[ o + 2 ] = shown ? 1.0 : 0.0;
 
 		this._dirtyBVHLeaves ??= new Set();
 		this._dirtyBVHLeaves.add( leaf );
@@ -999,7 +1139,7 @@ export class PathTracerStage extends RenderStage {
 
 		for ( const leaf of this._dirtyBVHLeaves ?? [] ) {
 
-			uploadStorageChunkRange( this.renderer, this.bvhStorageAttr, this._bvhRecords, leaf * 16, 16 );
+			this._bvhParts.writeRecords( this.renderer.backend, this._bvhRecords, leaf * 16, 16 );
 
 		}
 
@@ -1094,7 +1234,7 @@ export class PathTracerStage extends RenderStage {
 
 			if ( bvhData?.chunks?.length > 1 ) this._bvhRecords = bvhData;
 			if ( ranges ) this.updateBufferRanges( [], ranges );
-			else uploadStorageChunks( this.renderer, this.bvhStorageAttr, this._bvhRecords.chunks );
+			else this._bvhParts.writeRecords( this.renderer.backend, this._bvhRecords, 0, this._bvhRecords.recordCount * this._bvhRecords.lanesPerRecord );
 			return;
 
 		}
@@ -1142,7 +1282,7 @@ export class PathTracerStage extends RenderStage {
 
 				for ( const r of bvhRanges ) {
 
-					uploadStorageChunkRange( this.renderer, this.bvhStorageAttr, this._bvhRecords, r.offset, r.count );
+					this._bvhParts.writeRecords( this.renderer.backend, this._bvhRecords, r.offset, r.count );
 
 				}
 
@@ -1468,15 +1608,28 @@ export class PathTracerStage extends RenderStage {
 	setBlueNoiseTexture() {}
 
 	/**
-	 * Rebuild the packed light buffer from cached lightBVH + emissive data.
-	 * Layout: [ lightBVH (LBVH_STRIDE vec4s per node) | emissive (EMISSIVE_STRIDE vec4s per entry) ].
-	 * Also updates `emissiveVec4Offset` uniform (in vec4 elements).
+	 * Takes the material block into the scene data buffer, in front of the light data, and hands the buffer back as
+	 * the material storage. @private
+	 */
+	_adoptMaterials( data ) {
+
+		this._materialFloats = data.length;
+		this._pendingMaterials = data;
+		this._rebuildLightBuffer();
+		return { attr: this.lightStorageAttr, node: this.lightStorageNode };
+
+	}
+
+	/**
+	 * Rebuild the scene data buffer: [ materials | lightBVH (LBVH_STRIDE vec4s per node) | emissive (EMISSIVE_STRIDE
+	 * vec4s per entry) | bit-trail map ]. One binding for materials and lights: Shade's ten were all spoken for. The
+	 * light offsets are within the light data, which starts at `lightVec4Offset`.
 	 *
 	 * The compiled wavefront kernels bind the attribute that existed at kernel-build
 	 * time and NEVER pick up a `lightStorageNode.value` reassignment — so runtime
-	 * updates MUST write in-place into the bound attribute (+ needsUpdate). Only
-	 * grow-reallocate when the data outgrows capacity, and flag it so the kernels
-	 * get rebuilt against the new attribute.
+	 * updates MUST write in-place into the bound attribute. Only grow-reallocate when the data outgrows capacity, and
+	 * flag it so the kernels get rebuilt against the new attribute. Materials are edited in place (MaterialDataManager)
+	 * and carried over as they stand; only a new material block replaces them.
 	 * @private
 	 */
 	_rebuildLightBuffer() {
@@ -1484,9 +1637,12 @@ export class PathTracerStage extends RenderStage {
 		const LBVH_STRIDE = 4; // vec4s per LBVH node — must match LightBVHSampling.js
 		const lbvh = this._lbvhDataCache;
 		const emis = this._emissiveDataCache;
+		const held = this.lightStorageAttr?.array;
+		const matLen = this._materialFloats ?? 0;
+		const materials = this._pendingMaterials ?? ( held && matLen ? held.subarray( 0, matLen ) : null );
+		this._pendingMaterials = null;
 		// The bit-trail map (4 B a triangle) lives only in the light buffer: without a new one, the
 		// current one is carried over from there rather than kept as a second copy.
-		const held = this.lightStorageAttr?.array;
 		const trail = this._bitTrailMapCache
 			?? ( held && this._bitTrailLength ? held.slice( this._bitTrailOffset, this._bitTrailOffset + this._bitTrailLength ) : null );
 		this._bitTrailMapCache = null;
@@ -1496,28 +1652,36 @@ export class PathTracerStage extends RenderStage {
 		const trailPadded = trail ? Math.ceil( trail.length / 4 ) * 4 : 0;
 
 		// Ensure at least a minimal non-empty buffer so GPU allocation remains valid.
-		const totalLen = Math.max( lbvhLen + emisLen + trailPadded, 4 );
+		const totalLen = Math.max( matLen + lbvhLen + emisLen + trailPadded, 4 );
+		const reuse = this.lightStorageAttr && totalLen <= this.lightStorageAttr.array.length && this._builtMaterialFloats === matLen;
 
-		if ( this.lightStorageAttr && totalLen <= this.lightStorageAttr.array.length ) {
+		if ( reuse ) {
 
 			// In-place update of the bound attribute. Stale floats past the new data
 			// are unreachable — all reads are gated by the count/offset uniforms.
 			const arr = this.lightStorageAttr.array;
-			if ( lbvh ) arr.set( lbvh, 0 );
-			if ( emis ) arr.set( emis, lbvhLen );
-			if ( trail ) arr.set( trail, lbvhLen + emisLen );
+			const newMaterials = materials && materials.buffer !== arr.buffer;
+			if ( newMaterials ) arr.set( materials, 0 );
+			if ( lbvh ) arr.set( lbvh, matLen );
+			if ( emis ) arr.set( emis, matLen + lbvhLen );
+			if ( trail ) arr.set( trail, matLen + lbvhLen + emisLen );
+			// A range, not the whole buffer: a material edit's own range may be pending beside it (pitfall 13).
+			const from = newMaterials ? 0 : matLen;
+			this.lightStorageAttr.addUpdateRange( from, totalLen - from );
 			this.lightStorageAttr.needsUpdate = true;
 
 		} else {
 
 			const combined = new Float32Array( totalLen );
-			if ( lbvh ) combined.set( lbvh, 0 );
-			if ( emis ) combined.set( emis, lbvhLen );
-			if ( trail ) combined.set( trail, lbvhLen + emisLen );
+			if ( materials ) combined.set( materials, 0 );
+			if ( lbvh ) combined.set( lbvh, matLen );
+			if ( emis ) combined.set( emis, matLen + lbvhLen );
+			if ( trail ) combined.set( trail, matLen + lbvhLen + emisLen );
 
 			this.lightStorageAttr = new StorageInstancedBufferAttribute( combined, 4 );
 			this.lightStorageNode.value = this.lightStorageAttr;
 			this.lightStorageNode.bufferCount = combined.length / 4;
+			if ( this.materialData && this.materialData.materialStorageNode === this.lightStorageNode ) this.materialData.materialStorageAttr = this.lightStorageAttr;
 
 			// Already-compiled kernels still bind the old attribute — request a rebuild.
 			// (During scene load this is a no-op: setupMaterial rebuilds kernels anyway.)
@@ -1525,13 +1689,26 @@ export class PathTracerStage extends RenderStage {
 
 		}
 
+		this._builtMaterialFloats = matLen;
+		this.lightVec4Offset.value = matLen / 4;
 		// Offset (in vec4 elements) where emissive data starts.
 		this.emissiveVec4Offset.value = ( this.lightBVHNodeCount.value || 0 ) * LBVH_STRIDE;
 		// Offset (in vec4 elements) where the bit-trail map starts (lbvhLen + emisLen are float
 		// counts, both multiples of 4, so this divides cleanly).
 		this.reverseMapVec4Offset.value = ( lbvhLen + emisLen ) / 4;
-		this._bitTrailOffset = lbvhLen + emisLen;
+		this._bitTrailOffset = matLen + lbvhLen + emisLen;
 		this._bitTrailLength = trail ? trail.length : 0;
+
+	}
+
+	/**
+	 * The light data as kernels read it: the scene data buffer behind the materials. One binding with the materials,
+	 * whichever of the two a kernel reads.
+	 */
+	get lightDataNode() {
+
+		const node = this.lightStorageNode, base = this.lightVec4Offset;
+		return { isLightData: true, node, element: ( index ) => node.element( base.add( index ) ) };
 
 	}
 
