@@ -332,10 +332,11 @@ describe( 'DenoisingManager — OIDN motion history', () => {
 
 		reset( true );
 		trace();
-		manager.notePlacementMoving( 7, world, 16 );
+		const row = ( o ) => () => world.subarray( o, o + 16 );
+		manager.notePlacementMoving( 7, row( 16 ) );
 		new Matrix4().makeTranslation( 3, 0, 0 ).toArray( world, 16 );
-		manager.notePlacementMoving( 7, world, 16 );
-		manager.notePlacementMoving( 2, world, 0 );
+		manager.notePlacementMoving( 7, row( 16 ) );
+		manager.notePlacementMoving( 2, row( 0 ) );
 		reset( true );
 		trace();
 

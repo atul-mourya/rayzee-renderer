@@ -1,7 +1,8 @@
 /**
  * ShadeKernel.js — wavefront material eval + bounce generation. 256×1 workgroup, 1D dispatch.
- * 10 storage-buffer bindings: bvh, triGeo, triShade, mat, light, ray, hit (+ RNG state), gBuffer,
- * counters, activeIndices (at the device per-stage limit of 10; envCDF is a texture, not a storage buffer).
+ * 8 storage-buffer bindings: bvh, triGeo, triShade, scene data (materials, then lights), ray, hit (+ RNG state and the
+ * G-buffer), counters, activeIndices; envCDF is a texture. The device allows 10: the other two are for the BVH and
+ * triangle stores' parts past one buffer's limit (PathTracerStage._assertBindings).
  */
 
 import {

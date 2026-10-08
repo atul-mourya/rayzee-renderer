@@ -3,6 +3,7 @@ import { BoxGeometry, BufferAttribute, BufferGeometry, SphereGeometry } from 'th
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/Storage/openStorage.js';
 import { GeometrySpill } from '@/core/Storage/GeometrySpill.js';
+import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 
 function snapshot( geometry ) {
 
@@ -90,7 +91,7 @@ describe( 'GeometrySpill', () => {
 
 	} );
 
-	it( 'drops bounds computed while the arrays were empty, and keeps ones computed before', async () => {
+	it( 'keeps bounds while the arrays are away, and restores those over any computed from the empty ones', async () => {
 
 		const fresh = new BoxGeometry();
 		const bounded = new BoxGeometry( 2, 2, 2 );
@@ -99,12 +100,35 @@ describe( 'GeometrySpill', () => {
 		const spill = await GeometrySpill.create( storage, 'spill:bounds' );
 		spill.add( fresh );
 		spill.add( bounded );
+		expect( fresh.boundingBox.max.x ).toBe( 0.5 );
+		expect( fresh.boundingSphere.radius ).toBeGreaterThan( 0.8 );
 		fresh.computeBoundingBox();
 		await spill.restore();
 
-		expect( fresh.boundingBox ).toBeNull();
+		expect( fresh.boundingBox.max.x ).toBe( 0.5 );
 		expect( bounded.boundingBox.max.x ).toBe( 1 );
 		await spill.dispose();
+
+	} );
+
+	it( 'stays on disk after a spilling build until the scene asks for it, then comes back once', async () => {
+
+		const g = new SphereGeometry( 1, 16, 8 );
+		const before = snapshot( g );
+		const sp = new SceneProcessor();
+		sp._geometrySpill = await GeometrySpill.create( storage, 'spill:kept' );
+		sp._geometrySpill.add( g );
+		await sp._geometrySpill.written();
+		sp._geometryOwner = {};
+
+		expect( sp.geometryOnDisk ).toBe( true );
+		expect( g.attributes.position.array.length ).toBe( 0 );
+		await Promise.all( [ sp.ensureGeometryResident(), sp.ensureGeometryResident() ] );
+
+		expect( sp.geometryOnDisk ).toBe( false );
+		expect( snapshot( g ) ).toEqual( before );
+		await sp.ensureGeometryResident();
+		sp.dispose();
 
 	} );
 

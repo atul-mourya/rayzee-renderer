@@ -10,7 +10,7 @@
 import { FloatType, EquirectangularReflectionMapping, Texture, SRGBColorSpace, RepeatWrapping, LoadingManager } from 'three';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
-import { zipSync, strFromU8 } from 'three/addons/libs/fflate.module.js';
+import { strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
 	detectArchiveKind, readTarGz, elementFilter, listArchiveElements, openTar, indexTarHeaders, openFolder } from './ArchiveReader.js';
 import { openZip, readZipDirectory } from './ZipReader.js';
@@ -23,16 +23,13 @@ import { worthStoring } from '../Storage/sceneCachePolicy.js';
 import { VERSION } from '../version.js';
 import { updateLoading } from './utils';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
+import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './USD/index.js';
 import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
 import { ARCHIVE_FORMATS } from './archiveFormats.js';
 import { withHostWorker } from '../Platform.js';
 
-// Loose USD layers inside a ZIP compose into one scene; these pick out the
-// layers and the image assets they reference.
-const USD_LAYER_RE = /\.(usd|usda|usdc)$/i;
-const USD_IMAGE_RE = /\.(png|jpg|jpeg|avif)$/i;
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
 const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb', 'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb' ];
 
@@ -72,6 +69,9 @@ const bufferOf = async entry => {
  */
 export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 
+/** The same question for a USD scene, in USD layer bytes: binary layers hold far more geometry a byte than pbrt text. */
+export const USD_ELEMENT_PROMPT_BYTES = 1_000_000_000;
+
 export class ArchiveImporter {
 
 	/** The archive formats it adds to the loader's. */
@@ -83,6 +83,7 @@ export class ArchiveImporter {
 		this.loader = loader;
 		this._pendingGraph = null;
 		this.lastPBRTStats = null;
+		this.lastUSDStats = null;
 
 	}
 
@@ -274,7 +275,7 @@ export class ArchiveImporter {
 		);
 
 		const archiveId = this.loader.storage ? identityKey( await folderIdentity( folder ) ) : null;
-		return await this._loadSource( source, folder.name, { element, pbrtEntry, pbrt, archiveId, kind: 'folder' } );
+		return await this._loadSource( source, folder.name, { element, pbrtEntry, pbrt, archiveId, promptBytes, kind: 'folder' } );
 
 	}
 
@@ -294,12 +295,12 @@ export class ArchiveImporter {
 	async _loadSeekable( file, filename, { element, promptBytes, pbrtEntry, pbrt, index = null, zip = false, archiveId = null } ) {
 
 		const source = await this._openSeekableArchive( file, filename, element, promptBytes, { index, zip } );
-		return await this._loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId } );
+		return await this._loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId, promptBytes } );
 
 	}
 
 	/** Loads what an opened archive or folder holds. @private */
-	async _loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId, kind = 'archive' } ) {
+	async _loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId, promptBytes, kind = 'archive' } ) {
 
 		source.archiveId = archiveId;
 		source.elements = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
@@ -311,7 +312,9 @@ export class ArchiveImporter {
 
 		const entries = Object.create( null );
 		for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries[ e.path ] ?? await source.slice( e.path );
-		const result = await this._loadNonPBRTArchive( entries, filename );
+		const result = this._mainModelPath( Object.keys( entries ) )?.usd
+			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing } )
+			: await this._loadNonPBRTArchive( entries, filename );
 		this.loader._sourceKey = this.loader._keyed( kind, archiveId );
 		return result;
 
@@ -628,39 +631,8 @@ export class ArchiveImporter {
 		}
 
 		const plyParser = ( buf ) => this.loader.loaderCache.ply.parse( buf );
-
-		// Texture maps — decode by extension (pbrt uses .png/.jpg but also .exr/.hdr/.tga). Tagged
-		// with their archive path so a stored scene can read them back instead of keeping pixels.
-		const imageFromBytes = async ( bytes, fname ) => {
-
-			const texture = await this._pbrtTextureFromBytes( bytes, fname );
-			if ( texture ) texture.userData[ ARCHIVE_PATH ] = fname;
-			return texture;
-
-		};
-
-		// Infinite-light maps → HDR/EXR/LDR via the shared environment decoder.
-		const envFromBytes = async ( bytes, fname ) => {
-
-			const ext = fname.split( '.' ).pop().toLowerCase();
-			const blob = new Blob( [ bytes ] );
-			const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
-			try {
-
-				const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null } ) : pfmTexture( bytes );
-				texture.mapping = EquirectangularReflectionMapping;
-				setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
-				texture.userData[ ARCHIVE_PATH ] = fname;
-				texture.userData[ ARCHIVE_LOADER ] = 'environment';
-				return texture;
-
-			} finally {
-
-				if ( url ) URL.revokeObjectURL( url );
-
-			}
-
-		};
+		const imageFromBytes = ( bytes, fname ) => this._archiveImage( bytes, fname );
+		const envFromBytes = ( bytes, fname ) => this._archiveEnvironment( bytes, fname );
 
 		const pbrtStart = performance.now();
 		const shape = {
@@ -751,6 +723,150 @@ export class ArchiveImporter {
 
 		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${loadedEntry} (from ${filename})` } );
 		return group;
+
+	}
+
+	/** A texture map from an archive, tagged with its path so a stored scene can read it back. @private */
+	async _archiveImage( bytes, fname ) {
+
+		const texture = await this._pbrtTextureFromBytes( bytes, fname );
+		if ( texture ) texture.userData[ ARCHIVE_PATH ] = fname;
+		return texture;
+
+	}
+
+	async _archiveEnvironment( bytes, fname ) {
+
+		const ext = fname.split( '.' ).pop().toLowerCase();
+		const blob = new Blob( [ bytes ] );
+		const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
+		try {
+
+			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null } ) : pfmTexture( bytes );
+			texture.mapping = EquirectangularReflectionMapping;
+			setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
+			texture.userData[ ARCHIVE_PATH ] = fname;
+			texture.userData[ ARCHIVE_LOADER ] = 'environment';
+			return texture;
+
+		} finally {
+
+			if ( url ) URL.revokeObjectURL( url );
+
+		}
+
+	}
+
+	/**
+	 * A USD scene from a folder's or archive's files (path → bytes or Blob), each layer read as composition reaches it.
+	 * @param {object} [options] - `element`, `promptBytes`, `listing` (every file, loaded or not), and loadArchiveFromFile's budgets
+	 */
+	async loadUSDScene( entries, filename, options = {} ) {
+
+		updateLoading( { isLoading: true, status: 'Reading USD scene...', progress: 5 } );
+		const paths = Object.keys( entries );
+		const omitted = ( options.listing ?? [] ).filter( e => ! ( e.path in entries ) ).map( e => e.path );
+		const files = new USDFiles( paths, async path => ( entries[ path ] ? bytesOf( entries[ path ] ) : null ), { omitted } );
+		const candidates = listUSDRootLayers( paths );
+		if ( candidates.length === 0 ) throw new Error( `No USD layer found in ${filename}` );
+		const entryPath = candidates[ 0 ];
+		if ( candidates.length > 1 ) {
+
+			console.warn( `${filename} holds ${candidates.length} top-level USD layers; loaded "${entryPath}". Others: ${candidates.slice( 1 ).join( ', ' )}` );
+			this.loader._issues?.record(
+				ISSUE_CODES.ASSET_AMBIGUOUS_ENTRY,
+				`${filename} holds ${candidates.length} top-level USD layers; loaded "${entryPath}"`,
+				{ loaded: entryPath, alternatives: candidates.slice( 1 ) },
+				ISSUE_SEVERITY.WARNING
+			);
+
+		}
+
+		const chosen = ( Array.isArray( options.element ) ? options.element : [ options.element ] ).filter( Boolean );
+		if ( chosen.length === 0 ) await this._requireUSDPartChoice( filename, files, entryPath, options.listing ?? paths.map( path => ( { path, size: entries[ path ]?.size ?? entries[ path ]?.byteLength ?? 0 } ) ), options.promptBytes );
+
+		const start = performance.now();
+		const built = await loadUSDScene( {
+			files, entryPath,
+			resolveImage: async path => {
+
+				const bytes = await files.read( path );
+				return bytes ? this._archiveImage( bytes, path ) : null;
+
+			},
+			resolveEnvironment: async path => {
+
+				const bytes = await files.read( path );
+				return bytes ? this._archiveEnvironment( bytes, path ) : null;
+
+			},
+			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
+			curveSteps: options.curveSteps, curveSides: options.curveSides, curveTolerance: options.curveTolerance,
+		} );
+
+		const { group, environment, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
+		this.lastUSDStats = { parseMs, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
+		if ( fitNote || skippedForBudget > 0 ) this.loader._issues?.record(
+			ISSUE_CODES.SCENE_MEMORY_BUDGET,
+			fitNote ?? `${skippedForBudget.toLocaleString()} placements past the scene budgets left out`,
+			{ triangleCount, placementCount, skippedForBudget },
+			ISSUE_SEVERITY.WARNING
+		);
+		if ( warnings.length ) {
+
+			console.warn( `USD loader: ${warnings.length} warning(s) loading "${entryPath}"` );
+			warnings.forEach( w => console.warn( '  •', w ) );
+
+		}
+
+		if ( environment?.texture ) {
+
+			environment.texture.generateMipmaps = true;
+			this.loader.applyEnvironmentToScene( environment.texture );
+
+		}
+
+		group.name = entryPath.split( '/' ).pop();
+		this.loader.releaseTargetModel();
+		this.loader.targetModel = group;
+		this.loader.animations = [];
+		// Without a dome light the current environment stays: USD assets are usually lit by whatever views them.
+		this.loader.sceneMetadata = environment?.texture ? { environment: { rotation: environment.rotation, intensity: environment.intensity } } : null;
+
+		updateLoading( { isLoading: true, status: 'Processing USD geometry...', progress: 10 } );
+		await this.loader.onModelLoad( group );
+		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${entryPath} (from ${filename})` } );
+		return group;
+
+	}
+
+	/** Asks which parts of a large USD scene to load. @private */
+	async _requireUSDPartChoice( filename, files, entryPath, listing, promptBytes = USD_ELEMENT_PROMPT_BYTES ) {
+
+		const layerBytes = listing.reduce( ( n, e ) => n + ( USD_LAYER.test( e.path ) ? e.size : 0 ), 0 );
+		if ( layerBytes < promptBytes ) return;
+
+		const stage = new USDStage( files );
+		await stage.open( entryPath );
+		const elements = await listUSDParts( stage, listing );
+		if ( elements.length < 2 ) return;
+
+		const totalBytes = listing.reduce( ( n, e ) => n + e.size, 0 );
+		const error = new Error(
+			`"${filename}" holds ${( layerBytes / 1e9 ).toFixed( 1 )} GB of USD across ${elements.length} parts. ` +
+			'Choose which to load — loading all of them at once may exhaust memory.'
+		);
+		error.code = 'ARCHIVE_NEEDS_ELEMENT';
+		error.root = entryPath.includes( '/' ) ? entryPath.slice( 0, entryPath.lastIndexOf( '/' ) ) : '';
+		error.elements = elements;
+		error.totalBytes = totalBytes;
+		this.loader._issues?.record(
+			ISSUE_CODES.ASSET_ARCHIVE_TOO_LARGE,
+			`USD scene holds ${( layerBytes / 1e9 ).toFixed( 1 )} GB of layers across ${elements.length} parts; choose which to load`,
+			{ root: error.root, elements: elements.map( e => e.prefix ), totalBytes },
+			ISSUE_SEVERITY.WARNING
+		);
+		throw error;
 
 	}
 
@@ -891,24 +1007,29 @@ export class ArchiveImporter {
 
 	}
 
-	async findAndLoadModelFromZip( zip, filename = 'the ZIP archive' ) {
+	/** The model an archive or folder loads as: a conventional main file, else the shallowest, glTF first. @private */
+	_mainModelPath( paths ) {
 
-		const paths = Object.keys( zip );
 		const top = paths[ 0 ]?.split( '/' )[ 0 ];
 		const root = top !== undefined && paths.every( p => p.startsWith( top + '/' ) ) ? top + '/' : '';
 		const models = paths.filter( p => p.split( '.' ).pop().toLowerCase() === 'obj' || this.loader.getFileFormat( p )?.type === 'model' );
-		if ( models.length === 0 ) throw new Error( `No supported model files found in ${filename}` );
-
-		// Shallowest first, glTF before other formats at the same depth.
+		if ( models.length === 0 ) return null;
 		const rank = p => p.split( '/' ).length * 2 + ( /\.(gltf|glb)$/i.test( p ) ? 0 : 1 );
-		const main = MAIN_MODEL_FILES.map( name => root + name ).find( p => zip[ p ] );
+		const have = new Set( paths );
+		const main = MAIN_MODEL_FILES.map( name => root + name ).find( p => have.has( p ) );
 		const path = main ?? models.reduce( ( best, p ) => ( rank( p ) < rank( best ) ? p : best ) );
+		return { path, models, main: !! main, usd: ! main && USD_LAYER.test( path ) };
 
-		// A loose layer is only one slice of a USD scene — hand the whole
-		// archive over so its references and payloads can resolve.
-		if ( ! main && USD_LAYER_RE.test( path ) ) return await this.loadUSDHierarchyFromZip( zip );
+	}
 
-		const others = models.filter( p => p !== path && ! USD_LAYER_RE.test( p ) );
+	async findAndLoadModelFromZip( zip, filename = 'the ZIP archive' ) {
+
+		const found = this._mainModelPath( Object.keys( zip ) );
+		if ( ! found ) throw new Error( `No supported model files found in ${filename}` );
+		if ( found.usd ) return await this.loadUSDScene( zip, filename );
+
+		const { path, models } = found;
+		const others = models.filter( p => p !== path && ! USD_LAYER.test( p ) );
 		if ( others.length > 0 ) {
 
 			console.warn( `${filename} holds ${others.length + 1} models; loaded "${path}". Others: ${others.join( ', ' )}` );
@@ -923,48 +1044,6 @@ export class ArchiveImporter {
 
 		console.log( `Loading model file from ${filename}: ${path}` );
 		return await this.loadModelFromZipEntry( zip[ path ], path, path.split( '.' ).pop().toLowerCase(), zip, filename );
-
-	}
-
-	// USDLoader only builds a cross-layer asset map on its USDZ branch, so repack
-	// the archive as USDZ — root layer first, per AOUSD core spec 16.4.1.2 — and
-	// let the loader resolve the references/payloads itself.
-	async loadUSDHierarchyFromZip( zip ) {
-
-		const layers = Object.keys( zip ).filter( name => USD_LAYER_RE.test( name ) );
-		if ( layers.length === 0 ) throw new Error( 'No USD layers found in the ZIP archive' );
-
-		const root = ArchiveImporter._pickUSDRootLayer( layers );
-		console.log( `Loading USD scene from ZIP: ${root} (${layers.length} layers)` );
-
-		const packed = { [ root ]: [ await bytesOf( zip[ root ] ), { level: 0 } ] };
-		for ( const name of Object.keys( zip ) ) {
-
-			if ( name === root ) continue;
-			if ( USD_LAYER_RE.test( name ) || USD_IMAGE_RE.test( name ) ) packed[ name ] = [ await bytesOf( zip[ name ] ), { level: 0 } ];
-
-		}
-
-		return await this.loader._loadModelFileByExtension( new File( [ zipSync( packed ) ], root ), root );
-
-	}
-
-	// Shallowest layer wins; among ties prefer the <dir>/<dir>.usd convention so a
-	// set's entry point beats its sibling variants.
-	static _pickUSDRootLayer( layers ) {
-
-		const depth = name => name.split( '/' ).length;
-		const minDepth = Math.min( ...layers.map( depth ) );
-		const candidates = layers.filter( name => depth( name ) === minDepth );
-
-		const conventional = candidates.find( name => {
-
-			const parts = name.split( '/' );
-			return parts.length > 1 && parts[ parts.length - 1 ].replace( USD_LAYER_RE, '' ) === parts[ parts.length - 2 ];
-
-		} );
-
-		return conventional || candidates[ 0 ];
 
 	}
 

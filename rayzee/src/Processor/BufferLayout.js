@@ -244,7 +244,115 @@ export const BVH_LEAF_MARKERS = {
 	TRIANGLE_LEAF: 0x40000000, // leaf containing triangle references
 	BLAS_POINTER_LEAF: 0x40000001, // TLAS leaf pointing to a BLAS root node
 	FRONTIER: 0x40000002, // parallel-build placeholder, overwritten during assembly
+	CLUSTER_LEAF: 0x40000003, // TLAS leaf over up to CLUSTER_SIZE copies of one object (copy clusters)
 };
+
+/**
+ * Copy clusters, for a TLAS over millions of copies: a leaf holds up to CLUSTER_SIZE neighbouring copies, and each
+ * copy's world-to-object rows are a record of RECORD_VEC4 vec4s behind the BLASes (48 B, against 64 B of leaf node and
+ * 64 B of inner node a copy without them). Leaf slots:
+ *   0       first record | ( count − 1 ) << CLUSTER_COUNT_SHIFT; copy k's record is first + k
+ *   1       byte a: the f32 exponent field of axis a's step, a power of two
+ *   2, 4, 5 the union box's min (x, y, z)
+ *   3       CLUSTER_LEAF
+ *   6–8     copy k's box min on axis 0–2, in steps from the union's min, byte k
+ *   9–11    the same for its max
+ *   12 + k  copy k's object root | TLAS_LEAF_IDENTITY (its record is identity) | CLUSTER_COPY_HIDDEN
+ * A traversal stack entry `COPY_ENTRY | leaf << 2 | k` enters copy k: node indices stay below it, folded leaves start at
+ * 2^31, so a leaf index and a record index must each stay below 2^28.
+ */
+export const CLUSTER_SIZE = 4;
+export const CLUSTER_FIRST_MASK = 0x0fffffff;
+export const CLUSTER_COUNT_SHIFT = 28;
+export const CLUSTER_ROOT_MASK = 0x3fffffff;
+export const CLUSTER_COPY_HIDDEN = 0x80000000;
+export const COPY_ENTRY = 0x40000000;
+export const RECORD_VEC4 = 3;
+
+const _f32 = new Float32Array( 1 );
+const _u32 = new Uint32Array( _f32.buffer );
+
+/** The f32 nearest `x` that is not above it. */
+function f32Down( x ) {
+
+	const f = Math.fround( x );
+	if ( f <= x ) return f;
+	_f32[ 0 ] = f;
+	_u32[ 0 ] += f > 0 ? - 1 : 1;
+	return _f32[ 0 ];
+
+}
+
+/** Four f32 steps at the larger magnitude of `a` and `b`: what an f32 sum near them can be off by, with room. */
+function f32Pad( a, b ) {
+
+	return Math.max( Math.abs( a ), Math.abs( b ), 1e-30 ) * 2 ** - 21;
+
+}
+
+const BASE_SLOT = [ 2, 4, 5 ];
+
+/**
+ * A cluster leaf's boxes (slots 1, 2 and 4–11 at float offset `o`): the union of `count` copies' world boxes (`boxes`,
+ * 6 a copy), then each as bytes of it. Everything is rounded outward by a few f32 steps of its own size, so the GPU's
+ * f32 decode never culls a copy from a ray that reaches it — far from the origin a byte step can be finer than one f32
+ * step. The exact union goes to `out` at `outOff`.
+ */
+export function encodeClusterBoxes( data, idx, o, boxes, count, out, outOff ) {
+
+	let exponents = 0;
+	for ( let a = 0; a < 3; a ++ ) {
+
+		let lo = Infinity, hi = - Infinity;
+		for ( let k = 0; k < count; k ++ ) {
+
+			lo = Math.min( lo, boxes[ k * 6 + a ] );
+			hi = Math.max( hi, boxes[ k * 6 + 3 + a ] );
+
+		}
+
+		if ( out ) {
+
+			out[ outOff + a ] = lo;
+			out[ outOff + 3 + a ] = hi;
+
+		}
+
+		// Every copy hidden (a group's members all are): the far point box no ray enters.
+		if ( ! ( lo <= hi ) ) {
+
+			data[ o + BASE_SLOT[ a ] ] = BVH_EMPTY_BOX;
+			idx[ o + 6 + a ] = 0;
+			idx[ o + 9 + a ] = 0;
+			continue;
+
+		}
+
+		const pad = f32Pad( lo, hi );
+		const base = f32Down( lo - pad );
+		let e = Math.max( - 126, Math.ceil( Math.log2( ( hi + pad - base ) / 255 ) ) );
+		while ( Math.fround( base + 255 * 2 ** e ) < hi + pad ) e ++;
+		const step = 2 ** e;
+		data[ o + BASE_SLOT[ a ] ] = base;
+		exponents |= ( e + 127 ) << ( a * 8 );
+		let qLo = 0, qHi = 0;
+		for ( let k = 0; k < count; k ++ ) {
+
+			const kLo = boxes[ k * 6 + a ], kHi = boxes[ k * 6 + 3 + a ];
+			const kPad = f32Pad( kLo, kHi );
+			qLo |= Math.max( 0, Math.min( 255, Math.floor( ( kLo - kPad - base ) / step ) ) ) << ( k * 8 );
+			qHi |= Math.max( 0, Math.min( 255, Math.ceil( ( kHi + kPad - base ) / step ) ) ) << ( k * 8 );
+
+		}
+
+		idx[ o + 6 + a ] = qLo >>> 0;
+		idx[ o + 9 + a ] = qHi >>> 0;
+
+	}
+
+	idx[ o + 1 ] = exponents >>> 0;
+
+}
 
 /**
  * A triangle leaf of at most this many triangles is folded into its parent: the child's slot ([3]
@@ -255,6 +363,13 @@ export const BVH_LEAF_MARKERS = {
  */
 export const BVH_FOLDED_LEAF_MAX = 15;
 export const BVH_FOLDED_FIRST_LIMIT = 1 << 27;
+
+/**
+ * A child no ray may enter — a hidden part of a grouped object — is stored as a point box this far out: its distance
+ * along any ray exceeds every hit, so it is never pushed. Refits read it back as empty. An inverted box (min > max)
+ * will not do: the slab test swaps the planes and the ray enters it everywhere.
+ */
+export const BVH_EMPTY_BOX = 1e30;
 
 /** A u32 view over a float buffer, for writing index fields as exact bit patterns. */
 export function bvhIndexView( f32 ) {

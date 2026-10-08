@@ -3,22 +3,22 @@ import { BVHBuilder } from './BVHBuilder.js';
 import { BVHRefitter } from './BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from './ParallelBVHBuilder.js';
 import { TLASBuilder } from './TLASBuilder.js';
-import { InstanceTable, isIdentity, multiplyAffine } from './InstanceTable.js';
+import { InstanceTable, IN_PLACE, isIdentity, multiplyAffine } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver, DEFAULT_CHUNK_BYTES } from './ChunkedRecords.js';
 import {
-	MemoryLedger, estimateSceneBytes, probeAddressSpace,
+	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace,
 	PREFLIGHT_MIN_BYTES, PREFLIGHT_SAFETY, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from './HostMemory.js';
 import { TextureCreator } from './TextureCreator.js';
-import { GeometryExtractor, geometryBytesOf } from './GeometryExtractor.js';
+import { GeometryExtractor, geometryBytesOf, usesTextureCoordinates } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
 import { updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
-import { SRGBColorSpace } from 'three';
+import { Matrix4, SRGBColorSpace } from 'three';
 import {
 	TRIANGLE_DATA_LAYOUT, packNormalOct, TRI_MATERIAL_MASK, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT,
-	assertBVHIndexFits, TLAS_PLACEMENT_MASK,
+	assertBVHIndexFits, TLAS_PLACEMENT_MASK, RECORD_VEC4, CLUSTER_FIRST_MASK, TLAS_LEAF_IDENTITY,
 } from './BufferLayout.js';
 import { TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from './TextureBuckets.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
@@ -47,8 +47,11 @@ const SPLIT_PIECE_TRIANGLES = 1 << 19;
 // Past this many stored triangles, small leaves are folded into their parents: the BVH halves,
 // at up to 4 % of traversal time, so only a scene whose BVH nears 2 GB pays it.
 const FOLD_LEAVES_TRIANGLES = 40_000_000;
+// Past this many TLAS entries the TLAS is built over copy clusters (BufferLayout CLUSTER_LEAF): 128 → ~80 B a copy on the
+// GPU, and a quarter of the TLAS build's memory. Below it the old leaves stay, and with them the old code.
+const CLUSTER_MIN_ENTRIES = 1_000_000;
 // A streamed build's extraction waits while more triangle records than this are in memory.
-const STREAM_RESIDENT_BYTES = 1.5 * 1024 ** 3;
+const STREAM_RESIDENT_BYTES = 1024 ** 3;
 // Extraction waits while more three.js geometry than this is queued for disk.
 const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
@@ -276,15 +279,17 @@ export class SceneProcessor {
 		const maxBytes = this.config.maxSceneBytes ?? MAX_SCENE_BYTES;
 		const survey = this.geometryExtractor.surveyScene( object );
 		const estimate = estimateSceneBytes( survey );
-		// Spilled as it is built, the BVH is never resident as a whole.
-		if ( this._progressive ) estimate.total -= estimate.bvh;
-		// Streamed, neither are the triangles: what is held is the resident cap plus the largest
-		// mesh in the parallel builder — its copy and 44 B a triangle of scratch, the store's own
-		// chunks for it let go meanwhile.
+		// Streamed, the triangles held are the resident cap plus the largest mesh in the parallel builder — its copy
+		// and 44 B a triangle of scratch, the store's own chunks for it let go meanwhile — and the peak is one phase.
 		if ( this._streaming ) {
 
 			const resident = STREAM_RESIDENT_BYTES + largestMeshTriangles( object ) * ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 + 44 );
-			estimate.total -= Math.max( 0, estimate.triangles - resident );
+			estimate.total = spillingPeakBytes( estimate, survey.placements, Math.min( estimate.triangles, resident ) );
+
+		} else if ( this._progressive ) {
+
+			// Spilled as it is built, the BVH is never resident as a whole.
+			estimate.total -= estimate.bvh;
 
 		}
 
@@ -379,7 +384,7 @@ export class SceneProcessor {
 			triangles: this.triangles?.byteLength ?? 0,
 			bvh: this.bvh?.byteLength ?? 0,
 			geometry: this._geometryBytes ?? this.memoryPreflight?.geometryBytes ?? 0,
-			placements: table?.world?.byteLength ?? 0,
+			placements: table?.matrixBytes ?? 0,
 			blasScratch: 0,
 			orderMaps: 0,
 		};
@@ -482,6 +487,9 @@ export class SceneProcessor {
 
 		try {
 
+			// A rebuild of the same model reads its geometry back first: _reset drops the files.
+			if ( this._geometryOwner === object ) await this._restoreGeometry( object );
+
 			// Reset state before beginning
 			this._reset();
 			this._sceneKey = sceneKey;
@@ -492,6 +500,8 @@ export class SceneProcessor {
 			// A spilling build of more than one chunk extracts and builds its BLASes together.
 			this._streaming = !! this._progressive && stored > Math.floor( DEFAULT_CHUNK_BYTES / ( TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4 ) );
 			this._foldLeaves = stored > FOLD_LEAVES_TRIANGLES;
+			// No material samples a texture: the GPU keeps no texture coordinates (24 B a triangle).
+			this.textureCoordinates = usesTextureCoordinates( object );
 			this.bvhBuilder.foldLeaves = this._foldLeaves;
 			this._log( 'Starting scene processing' );
 
@@ -570,7 +580,9 @@ export class SceneProcessor {
 			timer.print();
 
 			this.processingStage = 'complete';
-			await this._restoreGeometry( object );
+			// A spilling build leaves the geometry on disk until something reads it (ensureGeometryResident).
+			if ( this._streaming && this._geometrySpill?.bytes ) this._geometryOwner = object;
+			else await this._restoreGeometry( object );
 			updateLoading( { status: "Scene data ready", progress: 85 } );
 			if ( this._blasKey && ! this._blasRestored && this.performanceMetrics.totalProcessingTime >= this.config.sceneCacheMinBuildMs ) {
 
@@ -594,7 +606,7 @@ export class SceneProcessor {
 		} finally {
 
 			// A failed build's model is discarded, so its geometry is not read back.
-			this._disposeGeometrySpill();
+			if ( ! this._geometryOwner ) this._disposeGeometrySpill();
 			setChunkObserver( null );
 			this._sampleMemory( `at ${this.processingStage}` );
 			this._logMemoryReport();
@@ -756,7 +768,7 @@ export class SceneProcessor {
 
 					tri = store;
 					this._setTriangleData( store );
-					state.uploadTriangles = uploader( store, 'triangles' );
+					state.uploadTriangles = uploader( store, 'triangles', { textureCoordinates: this.textureCoordinates } );
 
 				},
 
@@ -836,8 +848,9 @@ export class SceneProcessor {
 		// once per placement; storage counts it once.
 		this.expandedTriangleCount = extractedData.expandedTriangleCount ?? extractedData.triangleCount;
 		this.instanceSource = extractedData.instanceSource || null;
-		this.instanceMatrices = extractedData.instanceMatrices || null;
+		this.matrixRuns = extractedData.matrixRuns || null;
 		this.instanceCount = extractedData.instanceCount || 0;
+		this.instanceGroups = extractedData.instanceGroups ?? [];
 		this.bakeInverse = extractedData.bakeInverse || null;
 
 		this._log( `Using Float32Array format: ${this.triangleCount} triangles, ${( this.triangles.byteLength / ( 1024 * 1024 ) ).toFixed( 2 )}MB` );
@@ -910,12 +923,17 @@ export class SceneProcessor {
 			const pooled = this.instanceCount > 0;
 			const meshCount = pooled ? this.instanceCount : ranges.length;
 			const instSource = this.instanceSource;
-			const worldPool = pooled ? this.instanceMatrices : null;
+			const worldPool = pooled ? this.matrixRuns : null;
 			const sourceOf = m => ( pooled ? instSource[ m ] : m );
 
 			this.instanceTable = new InstanceTable();
 			this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
 			this.instanceTable.tplBakeInverse = this.bakeInverse;
+			this.instanceTable.setGroups( pooled ? this.instanceGroups : null );
+			const clustered = this._clusterCopies( this.instanceTable );
+			if ( clustered ) this.instanceTable.planClusters();
+			const tlasEntries = clustered ? this.instanceTable.clusterCount : this.instanceTable.entryCount;
+			const blasBase = TLASBuilder.nodeCountFor( tlasEntries ) + this.instanceTable.groupNodeCount;
 
 			// Built while the geometry was extracted (the streaming path): only adopt the results.
 			const streamed = this._streamed;
@@ -927,8 +945,9 @@ export class SceneProcessor {
 			const streamedTasks = [];
 
 			// Placements that reuse another's triangles reuse its BLAS too — the whole point of
-			// storing geometry in object space. Only the first placement of a range is built.
-			const aliasOf = new Map();
+			// storing geometry in object space. Only the first placement of a range is built. A column, not a Map: a Map
+			// holds at most 2^24 entries, and the Moana island has 51M placements.
+			const aliasOf = new Int32Array( meshCount ).fill( - 1 );
 			const ownerOfRange = new Map();
 
 			for ( let m = 0; m < meshCount; m ++ ) {
@@ -939,7 +958,7 @@ export class SceneProcessor {
 				const owner = ownerOfRange.get( range.start );
 				if ( owner !== undefined ) {
 
-					aliasOf.set( m, owner );
+					aliasOf[ m ] = owner;
 					continue;
 
 				}
@@ -969,7 +988,7 @@ export class SceneProcessor {
 			const owners = [ ...poolTasks, ...parallelTasks ]
 				.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
 				.sort( ( a, b ) => a.t - b.t );
-			const restored = streamed ? null : await this._restoreBLASes( owners, TLASBuilder.nodeCountFor( meshCount ), workerOpts );
+			const restored = streamed ? null : await this._restoreBLASes( owners, blasBase, workerOpts );
 			const spill = streamed ? streamed.state
 				: ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
 			const onBuilt = spill && ! streamed ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
@@ -1043,22 +1062,22 @@ export class SceneProcessor {
 					triCount: range.count,
 					originalToBvhMap: result.originalToBvh || null,
 					bvhData: result.bvhData,
-					matrixWorld: pooled ? worldPool : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
-					matrixOffset: pooled ? m * 16 : 0,
+					matrixWorld: pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
 					expandedStart: range.expandedStart,
 					sourceMesh: sourceOf( m ),
 				} );
 
 			}
 
-			for ( const [ m, owner ] of aliasOf ) {
+			for ( let m = 0; m < meshCount; m ++ ) {
 
+				const owner = aliasOf[ m ];
+				if ( owner < 0 ) continue;
 				this.instanceTable.setAlias(
 					m, owner,
-					pooled ? worldPool : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
+					pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
 					ranges[ sourceOf( m ) ].expandedStart,
-					sourceOf( m ),
-					pooled ? m * 16 : 0
+					sourceOf( m )
 				);
 
 			}
@@ -1081,13 +1100,24 @@ export class SceneProcessor {
 			// overhead (one extra leaf fetch per ray) is negligible and eliminates
 			// a dedicated visibility storage buffer binding.
 			this.instanceTable.computeAABBs( this.triangles, { owners: ! spill } );
+			this.instanceTable.computeGroupAABBs();
+			if ( clustered ) {
+
+				// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written.
+				table.clusterWorld = new Float32Array( table.entryCount * 6 );
+				table.writeEntryWorldAABBs( table.clusterWorld );
+				table.clusterBounds = table.formClusters( table.clusterWorld );
+
+			}
 
 			// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
 			// assigned before the build and the TLAS is written in a single pass.
-			this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( table.count ) );
+			this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( tlasEntries ) );
 			const totalNodes = this.instanceTable.totalNodeCount;
 
 			let tlasData = await this._buildTLAS( table );
+			table.clusterWorld = null;
+			table.clusterBounds = null;
 			this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
 
 			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
@@ -1099,8 +1129,9 @@ export class SceneProcessor {
 			// reaches them and each BLAS is released as it lands, never both fully resident.
 			if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
 			this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
-			const flushBVH = spill ? await this._beginBVHSpill( spill, table.tlasNodeCount ) : null;
+			const flushBVH = spill ? await this._beginBVHSpill( spill, table.blasBase ) : null;
 			this.bvh.setRecords( 0, tlasData );
+			if ( table.groupNodeCount ) this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
 			// Hundreds of megabytes at millions of placements, and the chunks below need the room
 			// more than a later refit needs the cache.
 			tlasData = null;
@@ -1117,7 +1148,7 @@ export class SceneProcessor {
 				try {
 
 					const readStart = performance.now();
-					await readNodesInto( restored.nodes, this.bvh, table.tlasNodeCount, totalNodes - table.tlasNodeCount );
+					await readNodesInto( restored.nodes, this.bvh, table.blasBase, table.totalBLASNodes );
 					this.performanceMetrics.blasRestore.readMs = performance.now() - readStart;
 
 				} finally {
@@ -1153,11 +1184,13 @@ export class SceneProcessor {
 
 				}
 
+				if ( clustered ) await this._writeCopyRecords( flushBVH );
 				await flushBVH?.( totalNodes, true );
 				if ( spill ) await spill.blasStore.dispose();
 
 			}
 
+			if ( clustered && restored ) await this._writeCopyRecords( null );
 			this._setBVHData( this.bvh.materializeAll() );
 
 			if ( restored ) for ( const [ t, map ] of restored.orders ) table.bvhToOriginal.set( t, map );
@@ -1307,7 +1340,7 @@ export class SceneProcessor {
 	 * @returns {Promise<?{results: Array, orders: Map<number, Uint32Array>, nodes: File, release: function(): void}>}
 	 * @private
 	 */
-	async _restoreBLASes( owners, tlasNodeCount, workerOpts ) {
+	async _restoreBLASes( owners, blasBase, workerOpts ) {
 
 		if ( ! this._sceneKey || this.config.sceneCache === false ) return null;
 		const storage = sharedStorage( getAssetConfig().cacheNamespace );
@@ -1326,9 +1359,10 @@ export class SceneProcessor {
 		};
 
 		const { index } = cached;
-		if ( index.tlasNodeCount !== tlasNodeCount || index.templates.length !== owners.length ) return miss( 'layout changed' );
+		// `tlasNodeCount` is where the stored BLASes start: past the TLAS and any group trees.
+		if ( index.tlasNodeCount !== blasBase || index.templates.length !== owners.length ) return miss( 'layout changed' );
 
-		let offset = tlasNodeCount;
+		let offset = blasBase;
 		for ( let i = 0; i < owners.length; i ++ ) {
 
 			const [ t, triOffset, triCount, nodeCount, blasOffset ] = index.templates[ i ];
@@ -1479,7 +1513,7 @@ export class SceneProcessor {
 
 		} );
 
-		const index = { v: BLAS_CACHE_FORMAT, tlasNodeCount: table.tlasNodeCount, totalNodes: table.totalNodeCount, templates };
+		const index = { v: BLAS_CACHE_FORMAT, tlasNodeCount: table.blasBase, totalNodes: table.treeNodeCount, templates };
 		const stored = await saveBLASCache( storage, key, { index, bvh: this.bvh, orders, isStale, label } );
 		if ( stored ) log.debug( `stored ${fmt.n( owners.length )} BLASes for the next load` );
 		return stored;
@@ -1524,7 +1558,7 @@ export class SceneProcessor {
 				return ( m?.emissiveIntensity ?? 0 ) > 0 && !! m.emissive && ( m.emissive.r > 0 || m.emissive.g > 0 || m.emissive.b > 0 );
 
 			},
-			uploadTriangles: uploader( tri, 'triangles' ),
+			uploadTriangles: uploader( tri, 'triangles', { textureCoordinates: this.textureCoordinates } ),
 			chain: Promise.resolve(),
 			error: null,
 		};
@@ -2673,7 +2707,11 @@ export class SceneProcessor {
 			};
 
 			// Signal worker — no data transfer needed, everything is in shared memory
-			this._refitWorker.postMessage( { type: 'refit', blasRanges: partial ? blasRanges : null, tlasNodeCount } );
+			this._refitWorker.postMessage( {
+				type: 'refit', blasRanges: partial ? blasRanges : null, tlasNodeCount,
+				groupRange: table.groupNodeCount ? [ table.groupNodeStart, table.groupNodeCount ] : null,
+				treeNodeCount: table.treeNodeCount, recordNodeStart: table.clusterCount ? table.recordNodeStart : - 1,
+			} );
 
 		} );
 
@@ -2793,7 +2831,8 @@ export class SceneProcessor {
 
 		}
 
-		// Step 2: Refit TLAS AABBs in-place (O(tlasNodeCount), no SAH rebuild)
+		// Step 2: group trees over the refit BLASes, then the TLAS AABBs in place (no SAH rebuild)
+		this._writeGroupNodes();
 		this._refitTLAS();
 
 		return { refitTimeMs: performance.now() - start };
@@ -2827,7 +2866,7 @@ export class SceneProcessor {
 		const movedMask = this._movedPlacements;
 		let moved = 0;
 
-		for ( const meshIndex of meshIndices ) {
+		for ( const meshIndex of this._withGroupSiblings( meshIndices ) ) {
 
 			const mesh = this.meshes?.[ meshIndex ];
 			const run = table.placementRunOf( meshIndex );
@@ -2835,7 +2874,7 @@ export class SceneProcessor {
 
 			mesh.updateMatrixWorld( true );
 			const world = mesh.matrixWorld.elements;
-			const instances = mesh.isInstancedMesh ? this._ownInstanceMatrices( mesh ) : null;
+			const instances = mesh.isInstancedMesh ? mesh.instanceMatrix?.array ?? null : null;
 			// Baked triangles hold the pose they were extracted at; the leaf only carries the delta.
 			const bakeInverse = table.tplBakeInverse?.get( table.sourceMesh[ run.start ] ) ?? null;
 
@@ -2876,46 +2915,120 @@ export class SceneProcessor {
 	}
 
 	/**
-	 * An InstancedMesh's own instance matrices, split off the placement pool if they still alias it.
-	 *
-	 * The extractor points a host-at-origin InstancedMesh straight at the pool, since world and
-	 * instance matrices hold identical bytes there. Composing a moved host back into the pool would
-	 * overwrite the matrices it just read, so the next move would compose onto its own result.
+	 * A grouped mesh's parts are traced as one object, so a part moved alone takes its siblings with it: each sibling
+	 * is given the first moved member's world transform, and all of them are moved.
 	 * @private
 	 */
-	_ownInstanceMatrices( mesh ) {
+	_withGroupSiblings( meshIndices ) {
 
-		const attr = mesh.instanceMatrix;
-		if ( ! attr?.array ) return null;
+		const table = this.instanceTable;
+		if ( ! table.groups.length ) return meshIndices;
 
-		if ( attr.array.buffer === this.instanceTable.world.buffer ) {
+		const out = new Set( meshIndices );
+		const synced = new Set();
+		const parentInverse = this._parentInverse ??= new Matrix4();
 
-			attr.array = attr.array.slice();
-			attr.needsUpdate = true;
+		for ( const meshIndex of meshIndices ) {
+
+			const g = table.groupOfTemplate[ meshIndex ] ?? - 1;
+			if ( g < 0 || synced.has( g ) ) continue;
+			synced.add( g );
+
+			const mover = this.meshes?.[ meshIndex ];
+			if ( ! mover ) continue;
+			mover.updateMatrixWorld( true );
+
+			for ( const sibling of table.groups[ g ].members ) {
+
+				out.add( sibling );
+				const mesh = this.meshes[ sibling ];
+				if ( ! mesh || mesh === mover ) continue;
+				if ( mesh.parent ) mesh.parent.updateMatrixWorld( true );
+				mesh.matrix.copy( mover.matrixWorld );
+				if ( mesh.parent ) mesh.matrix.premultiply( parentInverse.copy( mesh.parent.matrixWorld ).invert() );
+				mesh.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
+				mesh.updateMatrixWorld( true );
+
+			}
 
 		}
 
-		return attr.array;
+		return out;
 
 	}
 
-	/** Refresh one TLAS leaf's world-to-object matrix from the table. @private */
+	/** Refresh one TLAS leaf's world-to-object matrix from the table — its copy record, when clustered. @private */
 	_writeLeafMatrix( placement ) {
 
-		const node = this.instanceTable.tlasLeafIndex[ placement ];
+		const table = this.instanceTable;
+		const node = table.tlasLeafIndex[ placement ];
 		if ( node < 0 ) return;
+
+		if ( table.clusterCount ) {
+
+			this._writeCopyRecord( node, table.repOf( table.entryOf( placement ) ) );
+			return;
+
+		}
 
 		TLASBuilder.writeLeafMatrix(
 			this.bvh.chunkFor( node ), this.bvhIndexChunks.chunkFor( node ), this.bvh.baseOf( node ),
-			this.instanceTable.world, placement
+			table, placement, table.entryOf( placement )
 		);
 
 	}
 
-	/** The TLAS occupies the front of the BVH buffer and is the only part a move rewrites. */
+	/**
+	 * Rewrites copy record `r` from placement `p`'s transform, and its identity bit (a moved baked placement stops being
+	 * identity); records the range for the next upload. @private
+	 */
+	_writeCopyRecord( r, p ) {
+
+		const table = this.instanceTable;
+		const rows = this._recordScratch ??= new Float32Array( 12 );
+		table.writeRecord( rows, 0, p );
+		const lane = table.recordNodeStart * 16 + r * RECORD_VEC4 * 4;
+		for ( let i = 0; i < 12; i ++ ) {
+
+			const node = ( lane + i ) >> 4;
+			this.bvh.chunkFor( node )[ this.bvh.baseOf( node ) + ( ( lane + i ) & 15 ) ] = rows[ i ];
+
+		}
+
+		const leaf = table.clusterLeaf[ table.recordCluster[ r ] ];
+		const idx = this.bvhIndexChunks.chunkFor( leaf ), o = this.bvh.baseOf( leaf ) + table.copyWordSlot( r );
+		const identity = isIdentity( table.matrixWorldOf( p ) );
+		idx[ o ] = ( ( idx[ o ] & ~ TLAS_LEAF_IDENTITY ) | ( identity ? TLAS_LEAF_IDENTITY : 0 ) ) >>> 0;
+
+		this._movedRecords ??= { lo: Infinity, hi: - 1 };
+		this._movedRecords.lo = Math.min( this._movedRecords.lo, lane );
+		this._movedRecords.hi = Math.max( this._movedRecords.hi, lane + 12 );
+
+	}
+
+	/** The copy records rewritten since the last call, as float ranges of the BVH for an upload. */
+	takeMovedRecordRanges() {
+
+		const moved = this._movedRecords;
+		this._movedRecords = null;
+		return moved ? [ { offset: moved.lo, count: moved.hi - moved.lo } ] : [];
+
+	}
+
+	/** Rewrites the group trees from the members' current bounds and visibility. @private */
+	_writeGroupNodes() {
+
+		const table = this.instanceTable;
+		if ( ! table?.groupNodeCount || ! this.bvh ) return;
+		table.computeGroupAABBs();
+		this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
+
+	}
+
+	/** The TLAS and the group trees occupy the front of the BVH buffer, the only part a move rewrites. */
 	computeTLASDirtyRange() {
 
-		return { offset: 0, count: this.instanceTable.tlasNodeCount * 16 };
+		return { offset: 0, count: this.instanceTable.blasBase * 16 };
 
 	}
 
@@ -2944,8 +3057,8 @@ export class SceneProcessor {
 
 		}
 
-		// Always include TLAS range (rebuilt on every refit)
-		bvhRanges.push( { offset: 0, count: this.instanceTable.tlasNodeCount * FPN } );
+		// Always include the TLAS and group trees (rebuilt on every refit)
+		bvhRanges.push( { offset: 0, count: this.instanceTable.blasBase * FPN } );
 
 		return { triRanges, bvhRanges };
 
@@ -2971,7 +3084,7 @@ export class SceneProcessor {
 
 		}
 
-		pathTracer.setTriangleData( this.triangles, this.triangleCount );
+		pathTracer.setTriangleData( this.triangles, this.triangleCount, { textureCoordinates: this.textureCoordinates } );
 
 		if ( ! this.bvh ) {
 
@@ -3194,7 +3307,7 @@ export class SceneProcessor {
 		}
 
 		this._spillStores = [ triStore, bvhStore ];
-		const tlasChunks = Math.ceil( ( this.instanceTable?.tlasNodeCount ?? 1 ) / bvh.recordsPerChunk );
+		const tlasChunks = Math.ceil( ( this.instanceTable?.blasBase ?? 1 ) / bvh.recordsPerChunk );
 
 		let bytes = await triangles.spill( triStore );
 		bytes += await bvh.spill( bvhStore, { keep: k => k < tlasChunks } );
@@ -3227,12 +3340,36 @@ export class SceneProcessor {
 
 	}
 
+	/** Whether the model's three.js geometry is on disk: its arrays are empty until {@link ensureGeometryResident}. */
+	get geometryOnDisk() {
+
+		return !! this._geometryOwner;
+
+	}
+
+	/** Reads back the three.js geometry a spilling build left on disk. */
+	ensureGeometryResident() {
+
+		return this._geometryOwner ? this._geometryReading ??= this._restoreGeometry( this._geometryOwner ).finally( () => {
+
+			this._geometryReading = null;
+
+		} ) : Promise.resolve();
+
+	}
+
 	/** Reads the three.js geometry a streamed build moved to disk back into place. @private */
 	async _restoreGeometry( object ) {
 
 		const spill = this._geometrySpill;
-		if ( ! spill?.bytes ) return;
-		updateLoading( { status: 'Reading scene geometry back...', progress: 84 } );
+		if ( ! spill?.bytes ) {
+
+			this._geometryOwner = null;
+			return;
+
+		}
+
+		if ( ! this._geometryOwner ) updateLoading( { status: 'Reading scene geometry back...', progress: 84 } );
 		const started = performance.now();
 		const bytes = spill.bytes;
 		await spill.restore();
@@ -3248,6 +3385,7 @@ export class SceneProcessor {
 
 		const spill = this._geometrySpill;
 		this._geometrySpill = null;
+		this._geometryOwner = null;
 		spill?.dispose().catch( () => {} );
 
 	}
@@ -3281,9 +3419,43 @@ export class SceneProcessor {
 	 * never a scene.
 	 * @private
 	 */
+	/** Whether to build the TLAS over copy clusters: `config.clusterCopies`, or by default past CLUSTER_MIN_ENTRIES. @private */
+	_clusterCopies( table ) {
+
+		const choice = this.config.clusterCopies ?? 'auto';
+		return choice === 'auto' ? table.entryCount >= CLUSTER_MIN_ENTRIES : choice === true;
+
+	}
+
+	/**
+	 * The copy records behind the BLASes: each entry's world-to-object rows in cluster order, four records to three
+	 * nodes, written a batch at a time and handed to the spill as the fill passes its chunks. @private
+	 */
+	async _writeCopyRecords( flushBVH ) {
+
+		const table = this.instanceTable;
+		const n = table.entryCount;
+		const batch = 4096; // records, a multiple of 4
+		const nodes = batch * RECORD_VEC4 / 4;
+		const stage = new Float32Array( nodes * 16 );
+		for ( let r = 0; r < n; r += batch ) {
+
+			const count = Math.min( batch, n - r );
+			stage.fill( 0 );
+			for ( let i = 0; i < count; i ++ ) table.writeRecord( stage, i * RECORD_VEC4 * 4, table.repOf( table.recordEntry[ r + i ] ) );
+			const at = table.recordNodeStart + r * RECORD_VEC4 / 4;
+			const used = Math.ceil( count * RECORD_VEC4 / 4 );
+			this.bvh.setRecords( at, used === nodes ? stage : stage.subarray( 0, used * 16 ) );
+			await flushBVH?.( at + used );
+
+		}
+
+	}
+
 	async _buildTLAS( table ) {
 
-		const n = table.count;
+		const clustered = table.clusterCount > 0;
+		const n = clustered ? table.clusterCount : table.entryCount;
 
 		// Below this the build is a few ms and the round trip costs more than it saves.
 		if ( n >= TLAS_WORKER_MIN_ENTRIES && ! this._tlasWorkerFailed ) {
@@ -3291,8 +3463,8 @@ export class SceneProcessor {
 			try {
 
 				// The worker needs a buffer it can own, and world bounds are derived anyway.
-				const aabbs = new Float64Array( n * 6 );
-				table.writeWorldAABBs( aabbs );
+				const aabbs = clustered ? table.clusterBounds : new Float64Array( n * 6 );
+				if ( ! clustered ) table.writeEntryWorldAABBs( aabbs );
 				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n );
 				TLASBuilder.fillLeaves( tlasData, nodeCount, table );
 				return tlasData;
@@ -3358,8 +3530,9 @@ export class SceneProcessor {
 				: ChunkedRecords.adopt( [ data ], data.length / 16, 16, data.length / 16 ) );
 
 		this.bvh = records;
-		// Read by the traversal when it is built: only a folded BVH gets that code.
+		// Read by the traversal when it is built: only a folded BVH gets that code, only a clustered one the copy records.
 		if ( records && this._foldLeaves ) records.foldedLeaves = true;
+		if ( records && this.instanceTable?.clusterCount ) records.copyRecordBase = this.instanceTable.recordNodeStart * 4;
 		this.bvhIndexChunks = records ? records.viewAs( Uint32Array ) : null;
 		// Null once the BVH needs more than one chunk; hot paths use `bvh` / `bvhIndexChunks`.
 		this.bvhData = records ? records.single : null;
@@ -3566,11 +3739,19 @@ export class SceneProcessor {
 				// every placement of a shared geometry onto one box, so all but one copy sat
 				// outside its own bounds and rays walked straight past it.
 				const entryIndex = idxChunk[ o + 1 ] & TLAS_PLACEMENT_MASK;
-				if ( entryIndex < table.count && ! ( keep && ! moved[ entryIndex ] ) ) {
+				if ( entryIndex < table.entryCount && ! ( keep && ! moved[ table.repOf( entryIndex ) ] ) ) {
 
-					table.writeWorldAABB( entryIndex, this._tlasBounds, i * 6 );
+					table.writeEntryWorldAABB( entryIndex, this._tlasBounds, i * 6 );
 
 				}
+
+			} else if ( marker === BVH_LEAF_MARKERS.CLUSTER_LEAF ) {
+
+				// A cluster's boxes follow its copies: re-encoded when any of them moved.
+				const c = table.recordCluster[ idxChunk[ o ] & CLUSTER_FIRST_MASK ];
+				let stale = ! keep;
+				for ( let r = table.clusterStart[ c ]; ! stale && r < table.clusterStart[ c + 1 ]; r ++ ) stale = moved[ table.repOf( table.recordEntry[ r ] ) ] === 1;
+				if ( stale ) table.encodeClusterBoxes( fChunk, idxChunk, o, c, null, this._tlasBounds, i * 6 );
 
 			} else if ( marker < BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
 

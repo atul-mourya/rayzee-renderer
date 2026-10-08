@@ -348,6 +348,9 @@ async function applyConductorColor( mat, params, ctx, prefix, applyAlbedo, setCo
  */
 export async function buildMaterial( def, ctx ) {
 
+	// Built already, by the USD importer.
+	if ( def?.material ) return def.material;
+
 	const type = def?.type || 'diffuse';
 	const params = def?.params || {};
 	const mat = new MeshPhysicalMaterial( { side: DoubleSide, roughness: 1, metalness: 0 } );

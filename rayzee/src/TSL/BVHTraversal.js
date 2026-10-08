@@ -10,6 +10,7 @@ import {
 	If,
 	Loop,
 	Break,
+	Continue,
 	select,
 	abs,
 	sign,
@@ -27,7 +28,7 @@ import {
 
 import {
 	TRI_MATERIAL_MASK, TRI_SIDE_SHIFT, BVH_LEAF_MARKERS, BVH_MAX_INDEX, BVH_FOLDED_LEAF_MAX,
-	TLAS_LEAF_IDENTITY,
+	TLAS_LEAF_IDENTITY, COPY_ENTRY, CLUSTER_FIRST_MASK, CLUSTER_COUNT_SHIFT, CLUSTER_SIZE, CLUSTER_ROOT_MASK, CLUSTER_COPY_HIDDEN,
 } from '../Processor/BufferLayout.js';
 import { HitInfo } from './Struct.js';
 import {
@@ -83,6 +84,61 @@ const toObjectDir = ( rows, d ) => vec3(
 	rows[ 2 ].xyz.dot( d )
 );
 
+// Copy clusters (BufferLayout CLUSTER_LEAF): a leaf pushes a COPY_ENTRY for each copy whose byte box the ray reaches,
+// farthest first so the nearest is entered first, as an inner node orders its children; popping one moves the ray into
+// that copy and pushes its object's root.
+
+// Compare-swaps sorting up to four ascending.
+const SORT_NETWORKS = [[], [], [[ 0, 1 ]], [[ 0, 1 ], [ 1, 2 ], [ 0, 1 ]], [[ 0, 1 ], [ 2, 3 ], [ 0, 2 ], [ 1, 3 ], [ 1, 2 ]]];
+
+const pushHitCopies = ( bvhBuffer, nodeIndex, nodeData0, origin, invDir, stack, stackPtr, limit ) => {
+
+	const d1 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 1 ), int( BVH_STRIDE ) );
+	const d2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
+	const base = vec3( nodeData0.z, d1.x, d1.y ).toVar();
+	const exps = floatBitsToUint( nodeData0.y ).toVar();
+	const stepOf = ( a ) => uintBitsToFloat( exps.shiftRight( uint( a * 8 ) ).bitAnd( uint( 255 ) ).shiftLeft( uint( 23 ) ) );
+	const step = vec3( stepOf( 0 ), stepOf( 1 ), stepOf( 2 ) ).toVar();
+	const lo = [ floatBitsToUint( d1.z ).toVar(), floatBitsToUint( d1.w ).toVar(), floatBitsToUint( d2.x ).toVar() ];
+	const hi = [ floatBitsToUint( d2.y ).toVar(), floatBitsToUint( d2.z ).toVar(), floatBitsToUint( d2.w ).toVar() ];
+	const count = int( floatBitsToUint( nodeData0.x ).shiftRight( uint( CLUSTER_COUNT_SHIFT ) ).bitAnd( uint( 3 ) ) ).add( 1 ).toVar();
+	const byte = ( word, k ) => float( word.shiftRight( uint( k * 8 ) ).bitAnd( uint( 255 ) ) );
+
+	const dist = [], slot = [];
+	for ( let k = 0; k < CLUSTER_SIZE; k ++ ) {
+
+		const boxMin = base.add( vec3( byte( lo[ 0 ], k ), byte( lo[ 1 ], k ), byte( lo[ 2 ], k ) ).mul( step ) );
+		const boxMax = base.add( vec3( byte( hi[ 0 ], k ), byte( hi[ 1 ], k ), byte( hi[ 2 ], k ) ).mul( step ) );
+		const d = fastRayAABBDst( { rayOrigin: origin, invDir, boxMin, boxMax } );
+		dist.push( select( int( k ).lessThan( count ).and( d.lessThan( limit ) ), d, float( 1e30 ) ).toVar() );
+		slot.push( int( k ).toVar() );
+
+	}
+
+	for ( const [ a, b ] of SORT_NETWORKS[ CLUSTER_SIZE ] ) {
+
+		If( dist[ b ].lessThan( dist[ a ] ), () => {
+
+			const td = float( dist[ a ] ).toVar(), ts = int( slot[ a ] ).toVar();
+			dist[ a ].assign( dist[ b ] ); slot[ a ].assign( slot[ b ] );
+			dist[ b ].assign( td ); slot[ b ].assign( ts );
+
+		} );
+
+	}
+
+	for ( let k = CLUSTER_SIZE - 1; k >= 0; k -- ) {
+
+		If( dist[ k ].lessThan( limit ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
+
+			stack.element( stackPtr ).assign( int( uint( COPY_ENTRY ).bitOr( uint( nodeIndex ).shiftLeft( uint( 2 ) ) ).bitOr( uint( slot[ k ] ) ) ) );
+			stackPtr.addAssign( 1 );
+
+		} );
+
+	}
+
+};
 
 // ================================================================================
 // RAY INTERSECTION HELPERS (inlined for BVH traversal performance)
@@ -301,6 +357,49 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 	const instExit = int( 0 ).toVar();
 	const hitInstLeaf = int( - 1 ).toVar();
 
+	// Built over copy clusters: the copies' transforms are records from vec4 `copyRecordBase` (BufferLayout).
+	const clustered = bvhBuffer.value?.copyRecordBase !== undefined;
+	const enterCopy = ( entry ) => {
+
+		const leaf = int( uint( entry ).bitAnd( uint( ~ COPY_ENTRY >>> 0 ) ).shiftRight( uint( 2 ) ) );
+		const k = uint( entry ).bitAnd( uint( 3 ) ).toVar();
+		const head = getDatafromStorageBuffer( bvhBuffer, leaf, int( 0 ), int( BVH_STRIDE ) );
+		const words = floatBitsToUint( getDatafromStorageBuffer( bvhBuffer, leaf, int( 3 ), int( BVH_STRIDE ) ) ).toVar();
+		const word = select( k.equal( uint( 0 ) ), words.x, select( k.equal( uint( 1 ) ), words.y, select( k.equal( uint( 2 ) ), words.z, words.w ) ) ).toVar();
+
+		If( word.bitAnd( uint( CLUSTER_COPY_HIDDEN ) ).equal( uint( 0 ) ), () => {
+
+			If( word.bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
+
+				const record = int( floatBitsToUint( head.x ).bitAnd( uint( CLUSTER_FIRST_MASK ) ).add( k ) ).toVar();
+				const rows = instanceRows( bvhBuffer, record );
+				const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+				rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+				rayDirection.assign( localDir );
+				const localInv = buildInvDir( localDir ).toVar();
+				invDir.assign( localInv );
+				woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
+				instLeaf.assign( record );
+				instExit.assign( stackPtr );
+
+			} ).Else( () => {
+
+				rayOrigin.assign( worldOrigin );
+				rayDirection.assign( worldDirection );
+				invDir.assign( worldInvDir );
+				woopParams.assign( worldWoop );
+				instLeaf.assign( int( - 1 ) );
+
+			} );
+
+			stack.element( stackPtr ).assign( int( word.bitAnd( uint( CLUSTER_ROOT_MASK ) ) ) );
+			stackPtr.addAssign( 1 );
+
+		} );
+
+	};
+
 	// Emitted once per leaf kind, in its own branch: hoisted below both, the range stayed live
 	// through the inner-node path and cost 9–13 % of traversal time.
 	const testLeaf = ( first, count ) => {
@@ -403,7 +502,11 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ) );
 
-				} ).Else( () => {
+				} ).Else( clustered ? () => {
+
+					pushHitCopies( bvhBuffer, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+
+				} : () => {
 
 					// BLAS-pointer leaf — enter the instance if the mesh is visible.
 					// nodeData0: [blasRootNodeIndex, meshIndex, visibility, -2]; slots 4..15 hold
@@ -487,9 +590,22 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		};
 
+		// A copy continues the loop: the visit nested in an Else overflowed the JS stack building the island's kernels.
+		const dispatch = clustered ? () => {
+
+			If( entry.greaterThanEqual( int( COPY_ENTRY ) ), () => {
+
+				enterCopy( entry );
+				Continue();
+
+			} );
+			visitNode();
+
+		} : visitNode;
+
 		// Only a folded BVH has negative entries: a leaf folded into its parent, tested with no fetch.
-		if ( folded ) If( entry.lessThan( int( 0 ) ), () => testLeaf( foldedFirst( entry ), foldedCount( entry ) ) ).Else( visitNode );
-		else visitNode();
+		if ( folded ) If( entry.lessThan( int( 0 ) ), () => testLeaf( foldedFirst( entry ), foldedCount( entry ) ) ).Else( dispatch );
+		else dispatch();
 
 	} );
 
@@ -583,6 +699,49 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 	const instExit = int( 0 ).toVar();
 	const blocked = tslBool( false ).toVar();
 
+	// Built over copy clusters: the copies' transforms are records from vec4 `copyRecordBase` (BufferLayout).
+	const clustered = bvhBuffer.value?.copyRecordBase !== undefined;
+	const enterCopy = ( entry ) => {
+
+		const leaf = int( uint( entry ).bitAnd( uint( ~ COPY_ENTRY >>> 0 ) ).shiftRight( uint( 2 ) ) );
+		const k = uint( entry ).bitAnd( uint( 3 ) ).toVar();
+		const head = getDatafromStorageBuffer( bvhBuffer, leaf, int( 0 ), int( BVH_STRIDE ) );
+		const words = floatBitsToUint( getDatafromStorageBuffer( bvhBuffer, leaf, int( 3 ), int( BVH_STRIDE ) ) ).toVar();
+		const word = select( k.equal( uint( 0 ) ), words.x, select( k.equal( uint( 1 ) ), words.y, select( k.equal( uint( 2 ) ), words.z, words.w ) ) ).toVar();
+
+		If( word.bitAnd( uint( CLUSTER_COPY_HIDDEN ) ).equal( uint( 0 ) ), () => {
+
+			If( word.bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
+
+				const record = int( floatBitsToUint( head.x ).bitAnd( uint( CLUSTER_FIRST_MASK ) ).add( k ) ).toVar();
+				const rows = instanceRows( bvhBuffer, record );
+				const localDir = toObjectDir( rows, worldDirection ).toVar();
+
+				rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
+				rayDirection.assign( localDir );
+				const localInv = buildInvDir( localDir ).toVar();
+				invDir.assign( localInv );
+				woopParams.assign( computeWoopFromInvDir( { rayDir: localDir, invDir: localInv } ) );
+				instLeaf.assign( record );
+				instExit.assign( stackPtr );
+
+			} ).Else( () => {
+
+				rayOrigin.assign( worldOrigin );
+				rayDirection.assign( worldDirection );
+				invDir.assign( worldInvDir );
+				woopParams.assign( worldWoop );
+				instLeaf.assign( int( - 1 ) );
+
+			} );
+
+			stack.element( stackPtr ).assign( int( word.bitAnd( uint( CLUSTER_ROOT_MASK ) ) ) );
+			stackPtr.addAssign( 1 );
+
+		} );
+
+	};
+
 	const testLeaf = ( first, count ) => {
 
 		const triStart = int( first ).toVar();
@@ -672,7 +831,11 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 					testLeaf( floatBitsToUint( nodeData0.x ), floatBitsToUint( nodeData0.y ) );
 
-				} ).Else( () => {
+				} ).Else( clustered ? () => {
+
+					pushHitCopies( bvhBuffer, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+
+				} : () => {
 
 					// BLAS-pointer leaf — enter the instance if the mesh is visible.
 					If( nodeData0.z.greaterThan( 0.5 ).and( stackPtr.lessThan( int( MAX_STACK_DEPTH ) ) ), () => {
@@ -755,9 +918,22 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 		};
 
+		// A copy continues the loop: the visit nested in an Else overflowed the JS stack building the island's kernels.
+		const dispatch = clustered ? () => {
+
+			If( entry.greaterThanEqual( int( COPY_ENTRY ) ), () => {
+
+				enterCopy( entry );
+				Continue();
+
+			} );
+			visitNode();
+
+		} : visitNode;
+
 		// Only a folded BVH has negative entries: a leaf folded into its parent, tested with no fetch.
-		if ( folded ) If( entry.lessThan( int( 0 ) ), () => testLeaf( foldedFirst( entry ), foldedCount( entry ) ) ).Else( visitNode );
-		else visitNode();
+		if ( folded ) If( entry.lessThan( int( 0 ) ), () => testLeaf( foldedFirst( entry ), foldedCount( entry ) ) ).Else( dispatch );
+		else dispatch();
 
 	} );
 

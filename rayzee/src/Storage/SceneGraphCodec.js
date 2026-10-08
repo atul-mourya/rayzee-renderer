@@ -192,6 +192,8 @@ export function encodeSceneGraph( root, { environment = null, animations = [], s
 
 	const sections = new SectionWriter();
 	const nodes = [];
+	// Instanced meshes sharing one matrix attribute are placed as one object; stored once, they come back shared.
+	const instanceSections = new Map();
 	const geometries = new Map();
 	const materials = new Map();
 	const textures = new Map();
@@ -228,7 +230,9 @@ export function encodeSceneGraph( root, { environment = null, animations = [], s
 		if ( object.isInstancedMesh ) {
 
 			node.count = object.count;
-			node.instanceMatrix = sections.add( object.instanceMatrix.array );
+			let matrices = instanceSections.get( object.instanceMatrix );
+			if ( ! matrices ) instanceSections.set( object.instanceMatrix, matrices = sections.add( object.instanceMatrix.array ) );
+			node.instanceMatrix = matrices;
 			node.instanceColor = object.instanceColor ? sections.add( object.instanceColor.array ) : null;
 
 		}
@@ -355,9 +359,16 @@ async function readSections( file, sections ) {
 function sectionsOf( manifest ) {
 
 	const all = [];
+	const seen = new Set();
 	for ( const node of manifest.nodes ) {
 
-		if ( node.instanceMatrix ) all.push( node.instanceMatrix );
+		if ( node.instanceMatrix && ! seen.has( node.instanceMatrix.offset ) ) {
+
+			seen.add( node.instanceMatrix.offset );
+			all.push( node.instanceMatrix );
+
+		}
+
 		if ( node.instanceColor ) all.push( node.instanceColor );
 
 	}
@@ -408,6 +419,7 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 
 	const arrays = await readSections( data, sectionsOf( manifest ) );
 	const section = ( record ) => arrays.get( record.offset );
+	const instanceMatrices = new Map();
 
 	const textures = {};
 	for ( const record of manifest.textures ) {
@@ -476,7 +488,9 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 
 				// Built for one instance, then given the stored matrices: no second full-size array.
 				object = new InstancedMesh( geometries[ node.geometry ], material, 1 );
-				object.instanceMatrix = new InstancedBufferAttribute( section( node.instanceMatrix ), 16 );
+				let matrices = instanceMatrices.get( node.instanceMatrix.offset );
+				if ( ! matrices ) instanceMatrices.set( node.instanceMatrix.offset, matrices = new InstancedBufferAttribute( section( node.instanceMatrix ), 16 ) );
+				object.instanceMatrix = matrices;
 				object.count = node.count;
 				if ( node.instanceColor ) object.instanceColor = new InstancedBufferAttribute( section( node.instanceColor ), 3 );
 				break;

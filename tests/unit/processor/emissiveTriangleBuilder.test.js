@@ -82,6 +82,12 @@ function makeTable( placements ) {
 		count: n, isSet: new Uint8Array( n ).fill( 1 ),
 		world: new Float32Array( n * 16 ), tlasLeafIndex: new Int32Array( n ),
 		sourceMesh: new Int32Array( n ),
+		matrixRow( p ) {
+
+			this.rowArray = this.world;
+			return p * 16;
+
+		},
 		placementRunOf( mesh ) {
 
 			const start = this.sourceMesh.indexOf( mesh );

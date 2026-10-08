@@ -148,6 +148,26 @@ export function geometryBytesOf( object ) {
 
 }
 
+/** Bytes of InstancedMesh matrix lists under `object`, each list once however many meshes share it. */
+export function instanceBytesOf( object ) {
+
+	let bytes = 0;
+	const counted = new Set();
+	object.traverse?.( node => {
+
+		const array = node.isInstancedMesh ? node.instanceMatrix?.array : null;
+		if ( array && ! counted.has( array ) ) {
+
+			counted.add( array );
+			bytes += array.byteLength;
+
+		}
+
+	} );
+	return bytes;
+
+}
+
 // Affine point and linear direction transforms straight off the matrix elements: no perspective
 // divide, no method dispatch, on the hottest per-vertex path of a baked mesh.
 function affinePoint( v, e ) {
@@ -184,6 +204,54 @@ function determinant3( e ) {
 	return e[ 0 ] * ( e[ 5 ] * e[ 10 ] - e[ 9 ] * e[ 6 ] )
 		- e[ 4 ] * ( e[ 1 ] * e[ 10 ] - e[ 9 ] * e[ 2 ] )
 		+ e[ 8 ] * ( e[ 1 ] * e[ 6 ] - e[ 5 ] * e[ 2 ] );
+
+}
+
+/**
+ * Whether any material under `object` holds a texture, so the GPU needs the triangles' texture coordinates. A scene
+ * with none (Moana's USD: its Ptex is baked into colours) is uploaded without them.
+ */
+export function usesTextureCoordinates( object ) {
+
+	let uses = false;
+	const seen = new Set();
+	object.traverse( node => {
+
+		if ( uses || ! node.isMesh || ! node.material ) return;
+		for ( const material of Array.isArray( node.material ) ? node.material : [ node.material ] ) {
+
+			if ( seen.has( material ) ) continue;
+			seen.add( material );
+			for ( const key in material ) if ( material[ key ]?.isTexture ) uses = true;
+
+		}
+
+	} );
+	return uses;
+
+}
+
+/**
+ * Stores a geometry's float attribute in [−1, 1] as normalized 16-bit integers, which three.js reads back as floats.
+ * Left as floats when out of that range (or NaN) rather than silently clamped, or when morph targets use it.
+ */
+export function packUnitAttribute( g, name ) {
+
+	const attr = g.getAttribute( name );
+	if ( ! attr || attr.normalized || ! ( attr.array instanceof Float32Array ) ) return;
+	if ( g.morphAttributes?.[ name ]?.length ) return;
+
+	const src = attr.array;
+	for ( let i = 0; i < src.length; i ++ ) {
+
+		const v = src[ i ];
+		if ( ! ( v >= - 1.0001 && v <= 1.0001 ) ) return;
+
+	}
+
+	const packed = new Int16Array( src.length );
+	for ( let i = 0; i < src.length; i ++ ) packed[ i ] = Math.round( Math.max( - 1, Math.min( 1, src[ i ] ) ) * 32767 );
+	g.setAttribute( name, new BufferAttribute( packed, attr.itemSize, true ) );
 
 }
 
@@ -252,7 +320,6 @@ export class GeometryExtractor {
 
 		// Single traversal: extract geometry, materials, lights, and cameras
 		this.traverseObject( object );
-		this._shareInstanceMatrices();
 		this._compressAttributes( object );
 
 		this.logStats();
@@ -307,7 +374,6 @@ export class GeometryExtractor {
 
 		}
 
-		this._shareInstanceMatrices();
 		this._compressAttributes( object );
 		this.triangles.trimInPlace( this.currentTriangleIndex );
 		this._streamedStore = true;
@@ -448,6 +514,7 @@ export class GeometryExtractor {
 			placements: this._countPlacements( object ),
 			meshes,
 			geometryBytes: geometryBytesOf( object ),
+			instanceBytes: instanceBytesOf( object ),
 		};
 
 	}
@@ -502,9 +569,71 @@ export class GeometryExtractor {
 		this.instanceCount = 0;
 		this.instanceCapacity = count;
 		this.instanceSource = new Int32Array( count );
-		this.instanceMatrices = new Float32Array( count * 16 );
-		this._shareable = [];
+		// Placement transforms as runs of rows (InstanceTable): an InstancedMesh's own matrix list read where it is,
+		// or rows of the extractor's own. A copy of every list was 3 GB beside them on the Moana island.
+		this._runs = { first: [], arrays: [], arrayOf: [], base: [], owned: [] };
+		this._runArrayIndex = new Map();
+		this._singles = null;
+		this._singlesUsed = 0;
+		this._singlesRun = null;
 		this._compressed = new Set();
+		this._matrixLists = new Map();
+
+	}
+
+	/** Starts a run of rows at the next placement. @private */
+	_beginRun( array, base, owned ) {
+
+		const runs = this._runs;
+		let a = this._runArrayIndex.get( array );
+		if ( a === undefined ) this._runArrayIndex.set( array, a = runs.arrays.push( array ) - 1 );
+		runs.first.push( this.instanceCount );
+		runs.arrayOf.push( a );
+		runs.base.push( base );
+		runs.owned.push( owned );
+
+	}
+
+	/** The row for a placement of a mesh without instances, appended to the extractor's own array. @private */
+	_singleRow() {
+
+		const runs = this._runs;
+		if ( ! this._singles ) {
+
+			this._singles = new Float32Array( 1024 * 16 );
+			this._singlesIndex = runs.arrays.push( this._singles ) - 1;
+
+		}
+
+		if ( this._singlesUsed + 16 > this._singles.length ) {
+
+			const grown = new Float32Array( this._singles.length * 2 );
+			grown.set( this._singles );
+			this._singles = runs.arrays[ this._singlesIndex ] = grown;
+
+		}
+
+		if ( this._singlesRun !== runs.first.length - 1 ) {
+
+			runs.first.push( this.instanceCount );
+			runs.arrayOf.push( this._singlesIndex );
+			runs.base.push( this._singlesUsed );
+			runs.owned.push( 1 );
+			this._singlesRun = runs.first.length - 1;
+
+		}
+
+		const o = this._singlesUsed;
+		this._singlesUsed += 16;
+		return o;
+
+	}
+
+	/** The runs, closed at the placement count (InstanceTable.allocate). @private */
+	_matrixRuns() {
+
+		const runs = this._runs;
+		return { first: [ ...runs.first, this.instanceCount ], arrays: runs.arrays, arrayOf: runs.arrayOf, base: runs.base, owned: runs.owned };
 
 	}
 
@@ -543,59 +672,7 @@ export class GeometryExtractor {
 		if ( this._compressed.has( g.uuid ) ) return;
 		this._compressed.add( g.uuid );
 
-		for ( const name of [ 'normal', 'tangent', 'color' ] ) {
-
-			const attr = g.getAttribute( name );
-			if ( ! attr || attr.normalized || ! ( attr.array instanceof Float32Array ) ) continue;
-			if ( g.morphAttributes?.[ name ]?.length ) continue;
-
-			const src = attr.array;
-			let ok = true;
-			for ( let i = 0; i < src.length; i ++ ) {
-
-				const v = src[ i ];
-				if ( ! ( v >= - 1.0001 && v <= 1.0001 ) ) {
-
-					ok = false; break;
-
-				}
-
-			}
-
-			// Out of snorm range (or NaN) — leave it as floats rather than silently clamp.
-			if ( ! ok ) continue;
-
-			const packed = new Int16Array( src.length );
-			for ( let i = 0; i < src.length; i ++ ) {
-
-				packed[ i ] = Math.round( Math.max( - 1, Math.min( 1, src[ i ] ) ) * 32767 );
-
-			}
-
-			g.setAttribute( name, new BufferAttribute( packed, attr.itemSize, true ) );
-
-		}
-
-	}
-
-	/**
-	 * Point each InstancedMesh's matrix attribute at the placement pool that duplicates it.
-	 *
-	 * With the host at the origin the two hold identical bytes — 366 MB apart at 6M instances.
-	 * Runs after the traversal, since growth reallocates the pool.
-	 * @private
-	 */
-	_shareInstanceMatrices() {
-
-		for ( const { mesh, start, count } of this._shareable ) {
-
-			const attr = mesh.instanceMatrix;
-			if ( ! attr || attr.array.length !== count * 16 ) continue;
-			attr.array = this.instanceMatrices.subarray( start * 16, ( start + count ) * 16 );
-
-		}
-
-		this._shareable = [];
+		for ( const name of [ 'normal', 'tangent', 'color' ] ) packUnitAttribute( g, name );
 
 	}
 
@@ -755,7 +832,7 @@ export class GeometryExtractor {
 			};
 			this.expandedTriangleCount += shared.count;
 			this.meshTriangleRanges.push( range );
-			this._recordPlacements( mesh, meshIndex );
+			this._recordPlacements( mesh, meshIndex, false, false, shared.count > 0 );
 			return;
 
 		}
@@ -785,7 +862,7 @@ export class GeometryExtractor {
 		this.expandedTriangleCount += range.count;
 		this.meshTriangleRanges.push( range );
 		if ( range.count > 0 && ! bake && shareable ) this._geometryRanges.set( key, { ...range, meshIndex } );
-		this._recordPlacements( mesh, meshIndex, bake, expand );
+		this._recordPlacements( mesh, meshIndex, bake, expand, range.count > 0 && shareable );
 		if ( range.count > 0 ) this._onRange?.( meshIndex, range );
 
 	}
@@ -796,10 +873,9 @@ export class GeometryExtractor {
 	 * a matrix each rather than a million Object3Ds.
 	 * @private
 	 */
-	_recordPlacements( mesh, meshIndex, baked = false, expanded = false ) {
+	_recordPlacements( mesh, meshIndex, baked = false, expanded = false, groupable = false ) {
 
 		const world = mesh.matrixWorld.elements;
-		const dst = this.instanceMatrices;
 		const src = this.instanceSource;
 
 		// Expanded instances live in the triangles, so the mesh keeps a single placement. The
@@ -807,6 +883,8 @@ export class GeometryExtractor {
 		// every instance equally, which is exactly what composing against it produces.
 		if ( ! mesh.isInstancedMesh || ! mesh.instanceMatrix || expanded ) {
 
+			const d = this._singleRow();
+			const dst = this._singles;
 			const p = this._nextPlacement();
 			src[ p ] = meshIndex;
 
@@ -814,12 +892,12 @@ export class GeometryExtractor {
 
 				// The triangles already carry this pose, so the placement starts at identity. A
 				// later move composes against the inverse of what was baked in.
-				for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = k % 5 === 0 ? 1 : 0;
+				for ( let k = 0; k < 16; k ++ ) dst[ d + k ] = k % 5 === 0 ? 1 : 0;
 				this.bakeInverse.set( meshIndex, Float32Array.from( this._matrixPool.mat4.copy( mesh.matrixWorld ).invert().elements ) );
 
 			} else {
 
-				for ( let k = 0; k < 16; k ++ ) dst[ p * 16 + k ] = world[ k ];
+				for ( let k = 0; k < 16; k ++ ) dst[ d + k ] = world[ k ];
 
 			}
 
@@ -829,27 +907,28 @@ export class GeometryExtractor {
 
 		const arr = mesh.instanceMatrix.array;
 		const count = mesh.count ?? ( arr.length / 16 );
-		// A pbrt archive bakes the CTM into every instance, so the host needs no multiply.
-		const identityHost = isIdentityElements( world );
-		if ( identityHost && arr.length === count * 16 ) {
+		if ( groupable && count > 0 ) {
 
-			this._shareable.push( { mesh, start: this.instanceCount, count } );
+			let list = this._matrixLists.get( mesh.instanceMatrix );
+			if ( ! list ) this._matrixLists.set( mesh.instanceMatrix, list = [] );
+			list.push( { meshIndex, start: this.instanceCount, count, world: Float32Array.from( world ) } );
 
 		}
+
+		if ( count <= 0 ) return;
+
+		// A pbrt archive bakes the CTM into every instance, so the host needs no multiply and the list is read in place.
+		const identityHost = isIdentityElements( world ) && arr.length >= count * 16;
+		const dst = identityHost ? arr : new Float32Array( count * 16 );
+		this._beginRun( dst, 0, identityHost ? 0 : 1 );
 
 		for ( let i = 0; i < count; i ++ ) {
 
 			const o = i * 16;
 			const p = this._nextPlacement();
-			const d = p * 16;
+			const d = i * 16;
 			src[ p ] = meshIndex;
-
-			if ( identityHost ) {
-
-				for ( let k = 0; k < 16; k ++ ) dst[ d + k ] = arr[ o + k ];
-				continue;
-
-			}
+			if ( identityHost ) continue;
 
 			// world = mesh.matrixWorld * instanceMatrix, both column-major.
 			for ( let c = 0; c < 4; c ++ ) {
@@ -869,6 +948,39 @@ export class GeometryExtractor {
 
 	}
 
+	/**
+	 * Instanced meshes sharing one matrix attribute under the same host transform: one object traced once a copy
+	 * (InstanceTable.setGroups). A scene builder shares the attribute between a template's shapes for this.
+	 * @returns {Array<{members: number[], starts: number[], count: number}>}
+	 * @private
+	 */
+	_instanceGroups() {
+
+		const groups = [];
+		for ( const list of this._matrixLists.values() ) {
+
+			const open = [];
+			for ( const member of list ) {
+
+				const group = open.find( g => g.count === member.count && g.world.every( ( v, k ) => v === member.world[ k ] ) );
+				if ( group ) {
+
+					group.members.push( member.meshIndex );
+					group.starts.push( member.start );
+
+				} else open.push( { world: member.world, count: member.count, members: [ member.meshIndex ], starts: [ member.start ] } );
+
+			}
+
+			for ( const g of open ) if ( g.members.length >= 2 ) groups.push( { members: g.members, starts: g.starts, count: g.count } );
+
+		}
+
+		this._matrixLists.clear();
+		return groups;
+
+	}
+
 	/** Next free placement slot, growing only if the pre-count was short. @private */
 	_nextPlacement() {
 
@@ -876,11 +988,8 @@ export class GeometryExtractor {
 
 			const grown = Math.max( 16, this.instanceCapacity * 2 );
 			const srcCol = new Int32Array( grown );
-			const matCol = new Float32Array( grown * 16 );
 			srcCol.set( this.instanceSource );
-			matCol.set( this.instanceMatrices );
 			this.instanceSource = srcCol;
-			this.instanceMatrices = matCol;
 			this.instanceCapacity = grown;
 
 		}
@@ -1566,8 +1675,9 @@ export class GeometryExtractor {
 			meshTriangleRanges: this.meshTriangleRanges, // Per-mesh { start, count } for TLAS/BLAS
 			expandedTriangleCount: this.expandedTriangleCount,
 			instanceSource: this.instanceSource.subarray( 0, this.instanceCount ),
-			instanceMatrices: this.instanceMatrices.subarray( 0, this.instanceCount * 16 ),
+			matrixRuns: this._matrixRuns(),
 			instanceCount: this.instanceCount,
+			instanceGroups: this._instanceGroups(),
 			// meshIndex -> inverse of the pose baked into its triangles; only baked meshes appear.
 			bakeInverse: this.bakeInverse,
 			maps: this.maps,

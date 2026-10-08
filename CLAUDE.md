@@ -120,12 +120,12 @@ AutoExposure between them:
 ### Sub-managers and Processor Classes (`rayzee/src/managers/`, `rayzee/src/Processor/`)
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). UniformManager, MaterialDataManager and EnvironmentManager live in `managers/`, the rest in `Processor/`:
 - **`UniformManager.js`**: Owns ~60 TSL uniform nodes. Provides `get(name)`, `set(name, value)` (booleans are converted inside `set`). Uniforms created once, only `.value` mutated to preserve compiled shader graph references. The four light lists are written in place too (`LIGHT_FLOATS` × 16 a type, `PathTracerStage._writeLightList`): the shader bakes a list's length, so lists sized per scene compiled a new shade program per light count and dropped a light added after a build. A list grows only past its capacity, and that rebuilds the kernels. PathTracer exposes dynamic getters via `_defineUniformGetters()` for backward-compat property access.
-- **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), texture arrays (`srgbBuckets` — albedo/emissive — and `linearBuckets`, consolidated by size). Owns `materialStorageAttr` and `materialStorageNode`.
+- **`MaterialDataManager.js`**: Material buffer read/write, property mapping (`updateMaterialProperty()`), texture arrays (`srgbBuckets` — albedo/emissive — and `linearBuckets`, consolidated by size). The material block sits at the front of the stage's **scene data buffer**, the light data (light BVH, emissive triangles, bit-trail map) behind it: one Shade binding for both (`callbacks.adoptMaterials` → `PathTracerStage._adoptMaterials`; `materialStorageAttr`/`Node` are that buffer). Material reads are unchanged; light reads go through `stage.lightDataNode`, which adds `lightVec4Offset`. Edits upload only the material region (`_uploadMaterials`, an update range), light rebuilds only theirs.
 - **`EnvironmentManager.js`**: HDRI loading, CDF importance sampling (`buildEnvironmentCDF()`), physical/solid sky generation, environment rotation. Owns `environmentTexture`, `envParams`, and the `envCDFTexture` (RGBA32F, the environment's sampling table as `packExactTable` lays it out; `exactTable`) — except while the physical sky is on, whose two textures `PhysicalSky` owns and fills on the GPU.
 - **`ShaderBuilder.js`**: scene texture-node factory — `createSceneTextureNodes()` builds the environment, previous-frame MRT, gobo and IES texture nodes and hands back the scene's storage nodes. In-place updates via `updateSceneTextures()` / `updateGoboMaps()` / `updateIESProfiles()` on model change (no shader rebuild). The material buckets belong to PathTracer, and every per-renderer resource reaches a kernel through its build context (`TSL/SceneResources.js`, pitfall 14), never module state.
 - **`StorageTexturePool.js`**: Ping-pong MRT storage textures for progressive accumulation. `create()`, `swap()`, `getReadTextures()`, `ensureSize()`.
 - **`KernelManager.js`**: Registers + dispatches the wavefront compute kernels (`register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()`). Used by `PathTracer` as `this._kernelManager`.
-- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + a per-pixel first-hit G-buffer (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
+- **`PackedRayBuffer.js`** / **`QueueManager.js`**: SoA ray/hit buffers (the path's RNG state is hit slot `HIT.RNG` — its own buffer would put Shade at 11 storage buffers; the uvec4 slot costs 12 B a ray more than the old 4 B buffer, 592 → 640 MB of ray buffers on this Mac's path budget) + the first-hit G-buffer as the hit buffer's last region (`_gBufferBase`, one uvec4 a path; as a buffer of its own it took a Shade binding the BVH parts need) (+ read helpers) and the active-index queues / atomic counters (`RAY_FLAG`, `COUNTER`) that drive wavefront stream compaction.
 - **`TLASBuilder.js`**: Builds SAH BVH over placement AABBs for the top-level acceleration structure. Flattens with BLAS-pointer leaves (tag `BLAS_POINTER_LEAF`, slot [1] placement index + identity bit, slot [2] per-mesh visibility flag, slots 4–15 world-to-object rows). Caches flatten buffer across rebuilds.
 - **`InstanceTable.js`**: Per-mesh BLAS metadata — tracks `blasOffset`, `blasNodeCount`, `triOffset`, `triCount`, `worldAABB` for each mesh. Provides O(1) AABB reads from BLAS root nodes. Entries indexed by meshIndex (positional).
 
@@ -206,17 +206,31 @@ On the GPU the five rows are split across two buffers — rows 0–2 (positions 
 `triangleGeoAttr`, rows 3–4 (UVs, flags, mesh index) in `triangleShadeAttr` — because one buffer of
 80 B a triangle hit the 4 GB storage-buffer limit at 53.6M; geo alone at 48 B reaches 89.5M. The CPU
 records stay whole; `PathTracerStage._uploadTriangles` splits them on every upload path.
-Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStorageNode`).
+Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStorageNode`). When no material samples a
+texture (`usesTextureCoordinates`, `SceneProcessor.textureCoordinates`) the shade store holds only flags and mesh index,
+a `uvec2` a triangle (24 B less; `withoutUV` on the pair), and `triangleRow` reads its UVs as zero; `rebuildMaterials`
+brings them back when a texture arrives.
+**Buffer parts.** Dawn caps one buffer at 4 GiB − 4 even where Metal allows 13.3 GB, so past
+`maxStorageBufferBindingSize` the BVH, geo and shade stores are each split into parts of whole records
+(`StorageParts` in `TSL/patches.js`; `stage._bvhParts` / `_geoParts` / `_shadeParts`), read through
+`splitStorage` (`TSL/Common.js`): `getDatafromStorageBuffer` → `storageElement` picks the part with an
+`If` chain. A store that fits one buffer is a plain node and compiles exactly the old code. Every part is a
+binding: Shade binds 5 others (rays, hits, counters, active indices, scene data), so parts total ≤ 5 of the
+device's 10 — `_assertBindings` refuses before upload. The BVH and geo both in two parts fit (Shade and
+two VCM kernels then sit at 10). Measured on Moana parts in Node, forced with `stage.bufferPartBytes`
+(a test hook): images byte-identical; frame time +5–8 % for a split BVH, ±0 for split geo.
+`tests/gpu/splitBuffers.test.js` traces folded and unfolded trees over 2–3 parts against single buffers.
 ⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), and pass the
 hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 
-**Two-Level BVH Layout** (packed in single GPU storage buffer). ⚠️ An empty scene's tree is one empty triangle leaf
+**Two-Level BVH Layout** (packed in one logical GPU array, in parts past 4 GB). ⚠️ An empty scene's tree is one empty triangle leaf
 (`emptyBVH()` in `RayzeeRenderer.js`): sixteen zeros read as an inner node whose children are itself, and a CPU walk of
 the TLAS (the bidirectional integrator's `_visibleSceneBounds`) searched it forever whenever a frame ran between an
 unload and the next build:
 ```
-Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M nodes ]
+Combined bvhData: [ TLAS nodes ][ group trees | empty leaf ][ BLAS_0 nodes ]...[ BLAS_M nodes ][ copy records ]
 ```
+`table.blasBase` is where the BLASes start; TLAS-range uploads, spill residency and the BLAS cache all use it.
 - **16 floats per node** (4 × vec4). Inner nodes store children's AABBs + child indices.
 - Indices and leaf tags in slot `[3]` are **u32 bit patterns**, read with `floatBitsToUint`.
   Stored as float *values* they rounded past 2^24 and sent rays to a neighbouring node, which
@@ -231,10 +245,31 @@ Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M node
   variant tried (22M ocean + mountain, three views), so an unfolded tree keeps the old code exactly.
   ⚠️ Rebase through `rebaseNodes` and refit through `BVHRefitter` — both read folded children.
 - **Triangle leaf** (`BVH_LEAF_MARKERS.TRIANGLE_LEAF`, 0x40000000): `[triOffset, triCount, 0, tag]`
-- **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[blasRootNodeIndex, placement, visibility, tag]`,
-  and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **placement** index
-  masked by `TLAS_PLACEMENT_MASK`; its bit 30 (`TLAS_LEAF_IDENTITY`) says the matrix is identity,
-  which is how a baked placement tells traversal to skip the ray transform.
+- **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[rootNodeIndex, entry, visibility, tag]`,
+  and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **TLAS entry** index
+  masked by `TLAS_PLACEMENT_MASK` (the placement, unless placements are grouped); its bit 30 (`TLAS_LEAF_IDENTITY`)
+  says the matrix is identity, which is how a baked placement tells traversal to skip the ray transform.
+- **Grouped placements** (`InstanceTable.setGroups`): instanced meshes sharing one `instanceMatrix` attribute under the
+  same host transform (non-emissive, non-deforming — `GeometryExtractor._instanceGroups`) are one object: each copy is
+  ONE TLAS entry whose root is a small tree over the members' BLAS roots (plain inner nodes in the copies' shared object
+  space, so traversal is unchanged). Members keep their placements, so transforms, visibility and refit stay per mesh;
+  `entryOf` / `repOf` map placements and entries. A hidden member's child points at the empty leaf with a far point box
+  (`BVH_EMPTY_BOX`; an inverted box is entered everywhere), and the refitter reads that box back as empty. A part moved
+  alone takes its siblings along (`SceneProcessor._withGroupSiblings`). The pbrt/USD builder shares one attribute
+  between a template's shapes at the same relative transform, and its placement budget counts copies. Whole Moana
+  island: 50.99M TLAS entries → 39.92M; a five-part render byte-identical grouped or not, 224k → 154k entries.
+  `tests/gpu/groupedInstances.test.js` holds hits, hidden members and refits to the ungrouped tree.
+- **Copy clusters** (past `CLUSTER_MIN_ENTRIES`, 1M TLAS entries; `config.clusterCopies`): the TLAS is built over leaves
+  of up to `CLUSTER_SIZE` (4) neighbouring copies of any objects — the entries halved at the centre median of their widest
+  axis (`InstanceTable.formClusters`), so the count is ⌈entries / 4⌉ before any bounds (the BLAS cache needs `blasBase`
+  then). Each copy's world-to-object rows are a 48 B record after the BLASes (`recordNodeStart`, `copyRecordBase` on the
+  buffer); the leaf (`CLUSTER_LEAF`, layout in `BufferLayout.js`) holds byte boxes of each copy on a power-of-two grid and
+  one word a copy: root | identity | `CLUSTER_COPY_HIDDEN`, so visibility and identity are per copy. ~80 B a copy against
+  128; Moana's 39.9M entries → 10M leaves. Traversal pushes the copies a ray reaches nearest-first as
+  `COPY_ENTRY | leaf << 2 | k` and handles one with `Continue()`: nesting the node visit in an `Else` overflowed the JS
+  stack building the island's Shade. `instanceLeaf` is then the record index. Cost +17–20 % frame time on clustered
+  scenes (plant set and island). ⚠️ Grouping copies of one object only (Morton order) made loose leaves and 2.2× the
+  traversal time — the grouping, not the code (one copy a leaf: +7–11 %).
 - **Geometry storage is hybrid.** A geometry used by exactly one placement — or one that emits
   light — is **baked to world space** behind an identity leaf. A geometry shared by several
   placements stays in **object space** and the ray is moved into it on entry. Emissive instanced
@@ -242,7 +277,12 @@ Combined bvhData: [ TLAS nodes ][ BLAS_0 nodes ][ BLAS_1 nodes ]...[ BLAS_M node
 - **`InstanceTable`**: per-**placement** metadata (a million instances cost a matrix each, not a
   million Object3Ds). `sourceMesh[placement]` names the template; `placementRunOf(template)`
   gives that template's contiguous run. ⚠️ Never index it with a mesh/template index.
-- **`TLASBuilder`**: SAH BVH over placement AABBs with cached flatten buffer
+  Transforms are **runs of rows** (`matrixRow( p )` returns the offset into `rowArray`, which it sets): an InstancedMesh
+  hosted at the origin is read in its own `instanceMatrix` list, never copied, and the first write to such a run copies
+  it into an array of the table's own (`_writeRow`), so a move never rewrites the three.js matrices. The copy into one
+  pool was 3 GB beside the lists on the Moana island, and the allocation that failed it in Chrome. `table.world` exists
+  only when one own run holds everything (tests).
+- **`TLASBuilder`**: SAH BVH over entry AABBs (`writeEntryWorldAABBs`) with cached flatten buffer
 
 ## Key Development Patterns
 
@@ -945,7 +985,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - ⚠️ **Geometry terms use the exact facet** (`exactFacetN` in Shade, from `hitFacet`): the hit record keeps
   the facet to 11 bits, which cannot hold "straight up" (it decodes 0.03° off), and at grazing views that
   tilt made light tracing read 0.09 % dark against a closed-form reference.
-- **Storage:** Shade is at its 10 bindings, so the light vertex cache is the hit buffer's tail
+- **Storage:** Shade binds 8 storage buffers with one part each (10 is the device limit, and BVH/triangle parts take the
+  rest — see Buffer parts), so the light vertex cache is the hit buffer's tail
   (`HIT_STRIDE_BIDIRECTIONAL`, `PackedRayBuffer.cachedVertex`) and a camera vertex's pending connection is
   four more HIT slots (`pendingVertex`). Cache slots are path-major, `path × (maxBounces + 1) + depth`; a
   path's vertex count rides in its first slot's tag lane with a 24-bit frame tag, so nothing is appended
@@ -1147,10 +1188,11 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   is a valid answer and loads the whole scene; `promptBytes` overrides the line.
 - `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
   and the build reports itself truncated. 45M is the highest rung measured to survive without
-  the memory spill. With `memorySpill` on, `loadFile` defaults them to 60M / 8M
-  (`SPILL_TRIANGLE_BUDGET`): the whole 15-part Moana subset (55.7M / 7.0M) loads cold under them.
-  Raised per load, 80M / 4.35M loads and renders (preflight 8.51 GB, with the spill's discounts);
-  89M ran out of memory in the parse, measured before the parse-memory work and not since.
+  the memory spill. With `memorySpill` on, `loadFile` defaults them to 120M / 60M
+  (`SPILL_TRIANGLE_BUDGET`), and the preflight prices a streamed build by its larger phase (`spillingPeakBytes`:
+  extraction holds geometry + matrix lists + resident records, the TLAS phase lists + table + tree): the whole USD
+  island, 111.6M / 51.0M, estimates 7.8 GB and loads (see USD scenes). 89M ran out of memory in the pbrt parse,
+  measured before the parse-memory work and not since.
 - **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
   a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
   file included again under the same material, with no side effects, is placed as an instance of
@@ -1217,6 +1259,55 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
   zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
   URLs load through the download cache (`loadFile( url )`).
+
+### USD scenes (`Processor/USD/`)
+A folder or archive whose main model is a USD layer (`ArchiveImporter._mainModelPath`), and a loose `.usd`/`.usda`/`.usdc`
+(`AssetLoader.loadModelFromFile`), load through the USD importer in the archives add-on; a `.usdz` stays with three's
+USDLoader. Each layer is read only when composition reaches it (`USDFiles` over the folder's or archive's entries).
+- **Layers** (`USDLayer.js`): one in-memory shape for both formats. Text through `USDText.js`; crate through `Crate`, our own
+  reader of OpenUSD's format (0.4.0 on). ⚠️ three's USDCParser was not usable: it decodes paths with the wrong count from 0.8.0
+  (every name after the root shifted), misreads arrays before 0.5.0 (a rank precedes the size), and drops payloads, list
+  ops' lists and dictionaries; its USDAParser misreads `prepend payload` and nested `over` prims. Crate values decode on
+  first read (`PropSpec.value`): Moana's 3.1 GB of crate files decode whole in 2.8 s, most never read at all.
+- **Composition** (`USDStage.js`): sublayers, references, payloads, inherits, specializes and variant sets, per prim on
+  demand, as a tree of nodes in strength order (a prim index). Variants are evaluated after the other arcs, so a stronger
+  site selects a set a referenced layer defines (Moana's `over "geometry" ( variants = … )` per copy). Each node maps the
+  paths its layer authors into the stage's namespace, so bindings and connections land on composed prims.
+  `instanceKey()` leaves out the sites that only hold a copy's own opinions — with them every Moana tree was its own
+  prototype. `release()` drops composed prims and non-root layers after each child of a top prim (one Moana element).
+- **Translation** (`USDScene.js`) writes the pbrt builder's IR, so USD gets its instancing, budgets, merging and curves:
+  meshes (fan triangulation, `leftHanded` reversed, faceVarying primvars per corner, GeomSubset materials), BasisCurves
+  (`curves` shape → `tessellateCurves`, per-vertex widths, ribbons oriented by normals), gprims, instanceable prims and
+  point instancers as templates (nested ones multiplied out; placements stop at the budget). ⚠️ The builder frees a shape's
+  arrays after merging it, so an array is handed over once (`own()`). Materials: PxrDisneyBsdf (Burley 2015 as pbrt-v3
+  reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
+  followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. Ptex is not read: a
+  Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
+  (the engine has no vertex colour). Cameras from apertures (vertical FOV), Rect/Disk/Sphere/Distant lights in the engine's
+  units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
+  engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored.
+- **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
+  the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
+  leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.
+- **Budgets** (`USDSceneReader.fit`): a counting pass first (no positions decoded) prices meshes, curves and placements —
+  a copy costs one placement per distinct relative transform among its template's shapes, as the builder places the
+  shapes at one transform by one shared matrix list (one TLAS entry a copy, see Grouped placements). Past the budgets, curve
+  sets and point instancers are thinned by `fill()`: small sets kept whole, the rest sharing what is left (fronds stay,
+  grass and ground cover thin), each pick a fixed hash under a quota, so loads repeat and never overshoot. Meshes are never
+  thinned: past the triangle budget on their own, what is read last is cut. The note lands in `ISSUE_CODES.SCENE_MEMORY_BUDGET`
+  and the app's "Loaded" toast. A mesh read again under another prim of one part (same specs) shares its geometry
+  (`geometryKey`, kept whole by the builder); curves without normals are one ribbon. ⚠️ Before the counting pass the
+  budget went first come, first served, and selecting every part dropped all after the first four whole.
+- **Measured** (Moana USD v2.1, whole island): 61.6M mesh triangles, 49M of curves, 39.9M copies (50.99M placements and
+  TLAS entries before grouping; the counts below are from then, when a copy cost one placement per shape). 45M / 6M: a
+  quarter of the meshes cut, no curves. 60M / 8M: 1.1M of mesh cut. 80M / 8M: everything, 36 % of curves,
+  13 % of scattered copies — in Chrome with memory spill, 2 min 50 s to the first frame, 10.8 GB, renders the hero shot.
+  **All of it** (2026-10-08, 120M / 60M, memory spill): 111.6M triangles, 51.0M placements → 39.9M entries → 10M copy
+  clusters; Chrome on a 24 GB M-series loads it in 304 s (tab peak ~13 GB, GPU buffers 13.1 GB, GPU process ~16 GB) and
+  renders the hero shot, swapping ~25 GB beside the other apps open. Node with a disk-backed storage: same, ~5 min.
+  Through the app (File → Open Folder, all parts): ~5 fps at 512² afterwards. ⚠️ The outliner drew a row per shape
+  (1.36M DOM nodes, ~1 fps): it now mounts children 200 at a time. Chrome's `usedJSHeapSize` (5.4 GB here) counts the
+  engine's ArrayBuffers too — matrix lists, table, TLAS, order maps, sky — not only JS objects.
 
 ### Storage (OPFS) (`rayzee/src/Storage/`)
 `app.storage` is a `StorageManager` over the origin private file system, opened per
@@ -1299,16 +1390,21 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   A static scene of more than one chunk is **extracted and built together**
   (`SceneProcessor._extractStreaming`, `GeometryExtractor.extractStreaming`): each stored range
   goes to a BLAS worker as soon as it is written (`_blasPool` takes work while it runs), and the
-  extraction waits while more than `STREAM_RESIDENT_BYTES` (1.5 GB) of records are in memory — so
+  extraction waits while more than `STREAM_RESIDENT_BYTES` (1 GB) of records are in memory — so
   the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
   bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
   starved the worker messages it waited for (a hung tab). The three.js geometry goes to disk too,
   from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
   `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
   deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
-  writes and everything is read back in 64 MB windows at the end of `buildBVH` (3.9 GB in 3.0 s at
-  80M). Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
-  build does not read it back — the app discards a failed load's model. ⚠️ A shared buffer handed
+  writes; a geometry keeps its bounds (computed before its arrays go). It **stays on disk after the build**
+  (`sdf.geometryOnDisk`): `ensureGeometryResident()` / `app.ensureSceneResident()` read it back in 64 MB windows (3.9 GB in
+  3.0 s at 80M), and a rebuild of the same model does so first. Picking skips the model meanwhile
+  (`InteractionManager._intersectScene`): its arrays are empty, and testing 51M empty copies held the page for seconds.
+  Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
+  build does not read it back — the app discards a failed load's model. An environment wider than
+  `SPILL_ENVIRONMENT_WIDTH` (8192) is box-filtered down in place when it loads (`limitEnvironmentWidth`): Moana's
+  14308×7154 sky was 1.6 GB of floats. Curves are built with 16-bit normals (`packUnitAttribute`, what extraction stores). ⚠️ A shared buffer handed
   to the storage worker lives until that worker next collects garbage, which it barely does: every
   spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
   `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
@@ -1324,8 +1420,8 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves never need to; `refitBLASes`
   throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
   alive, which is why the store tracks them (weakly). ⚠️ Past `maxBufferSize` (4 GB here) WebGPU
-  returns an invalid buffer and every write fails quietly — `_assertFitsGPU` throws instead. The
-  geo triangle buffer reaches it at 89.5M triangles, the BVH at ~67M nodes.
+  returns an invalid buffer and every write fails quietly, so the BVH and triangle stores go up in parts
+  (see Buffer parts); the chunk uploaders allocate them.
 
 ## Development Commands
 

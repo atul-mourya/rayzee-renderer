@@ -18,6 +18,9 @@ import { decodersOnDemand } from './GLTFDecoders.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
+import { createLogger } from '../utils/Logger.js';
+
+const log = createLogger( 'assets' );
 
 // Define supported file formats
 // What the core reads itself; every other format is registered (registerFormat) or comes with an add-on.
@@ -534,7 +537,9 @@ export class AssetLoader extends EventDispatcher {
 	async loadModelFromFile( file, filename ) {
 
 		const key = this.storage ? this._keyed( 'file', identityKey( await fileIdentity( file ) ) ) : null;
-		const result = await this._loadModelFileByExtension( file, filename );
+		// three's USDLoader misreads crate files from 0.8.0 on; a .usdz package stays with it.
+		const usd = /\.(usd|usda|usdc)$/i.test( filename ) ? await this._archiveImporter() : null;
+		const result = usd ? await usd.loadUSDScene( { [ filename ]: file }, filename ) : await this._loadModelFileByExtension( file, filename );
 		this._sourceKey = key;
 		return result;
 
@@ -739,6 +744,7 @@ export class AssetLoader extends EventDispatcher {
 
 		this._downloadComplete( "Processing Environment...", 62 );
 
+		if ( this.maxEnvironmentWidth ) limitEnvironmentWidth( texture, this.maxEnvironmentWidth );
 		texture.mapping = EquirectangularReflectionMapping;
 		texture.minFilter = LinearFilter;
 		texture.magFilter = LinearFilter;
@@ -1375,3 +1381,44 @@ export class AssetLoader extends EventDispatcher {
 
 }
 
+/**
+ * Shrinks a float environment wider than `maxWidth` by a whole factor, each texel the mean of the block it covers, so
+ * the sky keeps its light. In place, then the buffer is cut to size: Moana's 14K sky is 1.6 GB as RGBA floats.
+ */
+export function limitEnvironmentWidth( texture, maxWidth ) {
+
+	const { data, width, height } = texture.image ?? {};
+	if ( ! ( data instanceof Float32Array ) || width <= maxWidth || data.length !== width * height * 4 ) return;
+
+	const f = Math.ceil( width / maxWidth );
+	const w = Math.ceil( width / f ), h = Math.ceil( height / f );
+	for ( let y = 0; y < h; y ++ ) {
+
+		const y1 = Math.min( height, ( y + 1 ) * f );
+		for ( let x = 0; x < w; x ++ ) {
+
+			const x1 = Math.min( width, ( x + 1 ) * f );
+			let r = 0, g = 0, b = 0, a = 0, n = 0;
+			for ( let sy = y * f; sy < y1; sy ++ ) for ( let sx = x * f; sx < x1; sx ++ ) {
+
+				const i = ( sy * width + sx ) * 4;
+				r += data[ i ]; g += data[ i + 1 ]; b += data[ i + 2 ]; a += data[ i + 3 ];
+				n ++;
+
+			}
+
+			// Never past an unread texel: this block's first is at ( y·f·width + x·f )·4 ≥ the write.
+			const o = ( y * w + x ) * 4;
+			data[ o ] = r / n; data[ o + 1 ] = g / n; data[ o + 2 ] = b / n; data[ o + 3 ] = a / n;
+
+		}
+
+	}
+
+	const bytes = w * h * 16;
+	const whole = data.byteOffset === 0 && data.byteLength === data.buffer.byteLength && data.buffer.transfer;
+	texture.image = { data: whole ? new Float32Array( data.buffer.transfer( bytes ) ) : data.slice( 0, w * h * 4 ), width: w, height: h };
+	texture.needsUpdate = true;
+	log.info( `environment ${width}×${height} shrunk to ${w}×${h} (memory spill)` );
+
+}

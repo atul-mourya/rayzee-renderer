@@ -3,6 +3,7 @@ import {
 	BufferAttribute, BufferGeometry, Group, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial
 } from 'three';
 import { GeometryExtractor, geometryBytesOf } from '@/core/Processor/GeometryExtractor.js';
+import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 
 /** A single unit triangle with explicit normals and UVs. */
 function triangleGeometry( normal = [ 0, 0, 1 ] ) {
@@ -23,6 +24,15 @@ function extract( root ) {
 
 }
 
+/** The placements' transforms as the instance table reads them. */
+function tableOf( data ) {
+
+	const table = new InstanceTable();
+	table.allocate( data.instanceCount, data.instanceCount, data.matrixRuns, data.instanceSource );
+	return table;
+
+}
+
 describe( 'GeometryExtractor placement storage', () => {
 
 	it( 'records placements as typed columns, not one object each', () => {
@@ -37,28 +47,34 @@ describe( 'GeometryExtractor placement storage', () => {
 
 		expect( data.instanceCount ).toBe( 4 );
 		expect( data.instanceSource ).toBeInstanceOf( Int32Array );
-		expect( data.instanceMatrices ).toBeInstanceOf( Float32Array );
-		expect( data.instanceMatrices ).toHaveLength( 4 * 16 );
 		// Translations survive: instance 2 sits at x = 10.
-		expect( data.instanceMatrices[ 2 * 16 + 12 ] ).toBe( 10 );
+		expect( tableOf( data ).matrixWorldOf( 2 )[ 12 ] ).toBe( 10 );
 		// Both placements of the InstancedMesh point at the same source mesh.
 		expect( data.instanceSource[ 0 ] ).toBe( data.instanceSource[ 2 ] );
 		expect( data.instanceSource[ 3 ] ).not.toBe( data.instanceSource[ 0 ] );
 
 	} );
 
-	it( 'points an origin-hosted InstancedMesh at the placement pool rather than a second copy', () => {
+	it( 'reads an origin-hosted InstancedMesh\'s matrices where they are, and copies them only to move it', () => {
 
 		const inst = new InstancedMesh( triangleGeometry(), new MeshStandardMaterial(), 4 );
 		for ( let i = 0; i < 4; i ++ ) inst.setMatrixAt( i, new Matrix4().makeTranslation( i, 0, 0 ) );
 
 		const { data } = extract( inst );
+		const table = tableOf( data );
 
-		expect( inst.instanceMatrix.array.buffer ).toBe( data.instanceMatrices.buffer );
-		// Still readable through the three.js API, and still the right values.
+		expect( table.matrixWorldOf( 3 ).buffer ).toBe( inst.instanceMatrix.array.buffer );
+		expect( table.matrixWorldOf( 3 )[ 12 ] ).toBe( 3 );
+		expect( table.matrixBytes ).toBe( 0 );
+
+		// A move writes the table's own copy of the run; the InstancedMesh keeps its matrices.
+		table.setPlacementMatrix( 1, new Matrix4().makeTranslation( 50, 0, 0 ).elements );
+		expect( table.matrixWorldOf( 1 )[ 12 ] ).toBe( 50 );
+		expect( table.matrixWorldOf( 3 )[ 12 ] ).toBe( 3 );
+		expect( table.matrixWorldOf( 1 ).buffer ).not.toBe( inst.instanceMatrix.array.buffer );
 		const m = new Matrix4();
-		inst.getMatrixAt( 3, m );
-		expect( m.elements[ 12 ] ).toBe( 3 );
+		inst.getMatrixAt( 1, m );
+		expect( m.elements[ 12 ] ).toBe( 1 );
 
 	} );
 
@@ -73,10 +89,11 @@ describe( 'GeometryExtractor placement storage', () => {
 
 		const { data } = extract( group );
 
-		// Sharing would corrupt the renderer's matrices, since the pool holds world space.
-		expect( inst.instanceMatrix.array.buffer ).not.toBe( data.instanceMatrices.buffer );
-		expect( data.instanceMatrices[ 12 ] ).toBe( 101 );
-		expect( data.instanceMatrices[ 16 + 12 ] ).toBe( 102 );
+		// The table holds world space, which here is not the instance matrices.
+		const table = tableOf( data );
+		expect( table.matrixWorldOf( 0 ).buffer ).not.toBe( inst.instanceMatrix.array.buffer );
+		expect( table.matrixWorldOf( 0 )[ 12 ] ).toBe( 101 );
+		expect( table.matrixWorldOf( 1 )[ 12 ] ).toBe( 102 );
 
 	} );
 
@@ -191,7 +208,7 @@ describe( 'GeometryExtractor.surveyScene', () => {
 	it( 'reports an empty scene as empty rather than throwing', () => {
 
 		const survey = new GeometryExtractor().surveyScene( new Group() );
-		expect( survey ).toEqual( { triangles: 0, placements: 0, meshes: 0, geometryBytes: 0 } );
+		expect( survey ).toEqual( { triangles: 0, placements: 0, meshes: 0, geometryBytes: 0, instanceBytes: 0 } );
 
 	} );
 

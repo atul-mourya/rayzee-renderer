@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Group, Mesh, BoxGeometry, MeshStandardMaterial, Vector3 } from 'three';
 import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
+import { InstanceTable } from '@/core/Processor/InstanceTable.js';
 
 const IDENTITY = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 
@@ -51,9 +52,11 @@ describe( 'hybrid geometry storage', () => {
 		const data = extractor.extract( group );
 
 		// solo is mesh 0; the two sharing meshes are 1 and 2.
-		expect( Array.from( data.instanceMatrices.subarray( 0, 16 ) ) ).toEqual( IDENTITY );
-		expect( data.instanceMatrices[ 16 + 13 ] ).toBe( 5 );
-		expect( data.instanceMatrices[ 32 + 13 ] ).toBe( - 5 );
+		const table = new InstanceTable();
+		table.allocate( data.instanceCount, data.instanceCount, data.matrixRuns, data.instanceSource );
+		expect( Array.from( table.matrixWorldOf( 0 ) ) ).toEqual( IDENTITY );
+		expect( table.matrixWorldOf( 1 )[ 13 ] ).toBe( 5 );
+		expect( table.matrixWorldOf( 2 )[ 13 ] ).toBe( - 5 );
 
 		expect( data.bakeInverse.has( 0 ) ).toBe( true );
 		expect( data.bakeInverse.has( 1 ) ).toBe( false );

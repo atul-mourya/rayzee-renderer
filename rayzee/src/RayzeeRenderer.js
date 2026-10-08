@@ -11,6 +11,7 @@ import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from './EngineDefaults.js';
 import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
+import { usesTextureCoordinates } from './Processor/GeometryExtractor.js';
 import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './Processor/StorageTexturePool.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
@@ -30,7 +31,7 @@ import { setActiveColorManagement } from './Color/ActiveColor.js';
 import { getViewTransform, DEFAULT_VIEW } from './Color/ViewTransforms.js';
 import { AssetLoader } from './Processor/AssetLoader.js';
 import { SceneProcessor } from './Processor/SceneProcessor.js';
-import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from './Processor/HostMemory.js';
+import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './Processor/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
@@ -166,8 +167,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   `configureAssets( { storage } )`, or off under `strict` unless that was set. 'auto' opens it through
 	 *   {@link setStorageOpener} (rayzee/addons/storage); a host-supplied StorageManager stays the host's to dispose.
 	 * @param {boolean} [options.memorySpill=false] - experimental: once a large static scene is
-	 *   on the GPU, move its triangle records and BLAS nodes to disk (see
-	 *   {@link ensureSceneResident}). Needs storage; skipped for animated scenes.
+	 *   on the GPU, move its triangle records, BLAS nodes and three.js geometry to disk (see
+	 *   {@link ensureSceneResident}); clicking picks nothing until the geometry is read back. An environment wider
+	 *   than SPILL_ENVIRONMENT_WIDTH is box-filtered down. Needs storage; skipped for animated scenes.
 	 *
 	 * The engine dispatches `EngineEvents.FRAME` after each animate() iteration so hosts can
 	 * tick external instrumentation (e.g. a stats panel) without coupling the engine to it.
@@ -1740,7 +1742,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		if ( ! this._memorySpill || ! this.storage || ( this.assetLoader?.animations?.length ?? 0 ) > 0 ) return null;
 		const stage = this.stages.pathTracer;
-		return { storage: this.storage, uploader: ( records, kind ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records ) : stage.createChunkUploader( records ) };
+		return { storage: this.storage, uploader: ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records ) };
 
 	}
 
@@ -1755,12 +1757,14 @@ export class RayzeeRenderer extends EventDispatcher {
 	}
 
 	/**
-	 * Reads back what {@link options.memorySpill} moved to disk. The engine does this itself before
-	 * its own readers; a host calling {@link refitBLASes} on a spilled scene awaits it first.
+	 * Reads back what {@link options.memorySpill} moved to disk: triangle records, BLAS nodes and the three.js geometry
+	 * (whose arrays are empty until then). The engine does this itself before its own readers; a host calling
+	 * {@link refitBLASes}, or reading the model's geometry, on a spilled scene awaits it first.
 	 */
 	async ensureSceneResident() {
 
 		if ( this._sdf?.spilled ) await this._sdf.ensureResident();
+		await this._sdf?.ensureGeometryResident();
 
 	}
 
@@ -1892,7 +1896,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._notePlacementsMoving( meshIndices );
 		const result = this._sdf.updateMeshTransforms( meshIndices );
 
-		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange() ] );
+		this.stages.pathTracer.updateBufferRanges( [], [ this._sdf.computeTLASDirtyRange(), ...this._sdf.takeMovedRecordRanges() ] );
 		this.reset( false, { motion: true } );
 
 		return result;
@@ -3472,7 +3476,18 @@ export class RayzeeRenderer extends EventDispatcher {
 	async rebuildMaterials( scene ) {
 
 		await this.ensureSceneResident();
-		await this.stages.pathTracer?.rebuildMaterials( scene || this.meshScene );
+		const stage = this.stages.pathTracer;
+		await stage?.rebuildMaterials( scene || this.meshScene );
+
+		// Loaded without texture coordinates, and a material has a texture now: they go up again from the records.
+		if ( stage?.triangleStorageNode?.withoutUV && this._sdf?.triangles && usesTextureCoordinates( scene || this.meshScene ) ) {
+
+			this._sdf.textureCoordinates = true;
+			stage.setTriangleData( this._sdf.triangles, this._sdf.triangleCount, { textureCoordinates: true } );
+			stage.setupMaterial();
+
+		}
+
 		this.reset();
 
 	}
@@ -3621,6 +3636,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		} );
 		this.assetLoader.setRenderer( this.renderer );
 		this.assetLoader.createFloorPlane();
+		if ( this._memorySpill ) this.assetLoader.maxEnvironmentWidth = SPILL_ENVIRONMENT_WIDTH;
 
 	}
 

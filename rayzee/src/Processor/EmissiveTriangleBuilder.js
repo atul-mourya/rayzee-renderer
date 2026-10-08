@@ -132,8 +132,8 @@ export class EmissiveTriangleBuilder {
 				// another object's light as soon as any instanced mesh came earlier.
 				const placement = table?.placementRunOf?.( meshIndex )?.start ?? - 1;
 				const hasInstance = placement >= 0 && table.isSet[ placement ];
-				const m = hasInstance ? table.world : null;
-				const mo = hasInstance ? placement * 16 : 0;
+				const mo = hasInstance ? table.matrixRow( placement ) : 0;
+				const m = hasInstance ? table.rowArray : null;
 				const px = ( x, y, z ) => ( m ? m[ mo ] * x + m[ mo + 4 ] * y + m[ mo + 8 ] * z + m[ mo + 12 ] : x );
 				const py = ( x, y, z ) => ( m ? m[ mo + 1 ] * x + m[ mo + 5 ] * y + m[ mo + 9 ] * z + m[ mo + 13 ] : y );
 				const pz = ( x, y, z ) => ( m ? m[ mo + 2 ] * x + m[ mo + 6 ] * y + m[ mo + 10 ] * z + m[ mo + 14 ] : z );
@@ -231,8 +231,6 @@ export class EmissiveTriangleBuilder {
 		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
 		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
 		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const m = table.world;
-
 		this.totalEmissivePower = 0;
 
 		for ( const tri of this.emissiveTriangles ) {
@@ -245,7 +243,7 @@ export class EmissiveTriangleBuilder {
 			const placement = table.placementRunOf?.( tri.meshIndex )?.start ?? - 1;
 			if ( placement >= 0 && table.isSet[ placement ] ) {
 
-				const o = placement * 16;
+				const o = table.matrixRow( placement ), m = table.rowArray;
 				for ( let k = 0; k < 9; k += 3 ) {
 
 					const x = v[ k ], y = v[ k + 1 ], z = v[ k + 2 ];

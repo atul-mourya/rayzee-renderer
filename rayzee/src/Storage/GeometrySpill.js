@@ -61,8 +61,11 @@ export class GeometrySpill {
 
 	}
 
-	/** Moves a geometry's arrays to disk, leaving empty arrays of the same type in their place. */
+	/** Moves a geometry's arrays to disk, leaving empty arrays of the same type in their place; its bounds stay. */
 	add( geometry ) {
+
+		if ( ! geometry.boundingBox ) geometry.computeBoundingBox();
+		if ( ! geometry.boundingSphere ) geometry.computeBoundingSphere();
 
 		const byArray = new Map();
 		const attributes = Object.values( geometry.attributes );
@@ -79,8 +82,8 @@ export class GeometrySpill {
 
 		}
 
-		// Bounds computed from an empty array would outlive the restore.
-		this._geometries.push( { geometry, box: geometry.boundingBox !== null, sphere: geometry.boundingSphere !== null } );
+		// What the bounds were with the arrays in place: anything computed from the empty ones must not outlive the restore.
+		this._geometries.push( { geometry, box: geometry.boundingBox.clone(), sphere: geometry.boundingSphere.clone() } );
 
 	}
 
@@ -192,8 +195,8 @@ export class GeometrySpill {
 
 		for ( const { geometry, box, sphere } of this._geometries ) {
 
-			if ( ! box ) geometry.boundingBox = null;
-			if ( ! sphere ) geometry.boundingSphere = null;
+			geometry.boundingBox = box;
+			geometry.boundingSphere = sphere;
 
 		}
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
-	MemoryLedger, estimateSceneBytes, probeAddressSpace, deviceMemoryGB,
+	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace, deviceMemoryGB,
 	PREFLIGHT_SAFETY, PREFLIGHT_MIN_BYTES, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
 } from '@/core/Processor/HostMemory.js';
 import { ChunkedRecords, setChunkObserver } from '@/core/Processor/ChunkedRecords.js';
@@ -238,12 +238,23 @@ describe( 'preflight thresholds', () => {
 
 	it( 'puts the rungs that load below the refusal line and the one that crashes above it', () => {
 
-		// Measured: 40M and 45M both load and render; 50M killed the renderer at 9.4 GB.
-		const at = ( t, p, g ) => estimateSceneBytes( { triangles: t, placements: p, geometryBytes: g * MB } ).total;
+		// Measured: 40M and 45M both load and render; 50M killed the renderer at 9.4 GB. Each placement had its own matrix.
+		const at = ( t, p, g ) => estimateSceneBytes( { triangles: t, placements: p, geometryBytes: g * MB, instanceBytes: p * 64 } ).total;
 
 		expect( at( 40e6, 3.7e6, 1832 ) ).toBeLessThan( MAX_SCENE_BYTES );
 		expect( at( 45e6, 4.1e6, 2000 ) ).toBeLessThan( MAX_SCENE_BYTES );
 		expect( at( 50e6, 4.6e6, 2200 ) ).toBeGreaterThan( MAX_SCENE_BYTES );
+
+	} );
+
+	it( 'prices a spilling build by its larger phase, which lets the whole Moana island in', () => {
+
+		// Measured 2026-10-08: 111.6M triangles, 51.0M placements, loaded and rendered in Chrome with the spill on.
+		const parts = estimateSceneBytes( { triangles: 111.6e6, placements: 51e6, geometryBytes: 3690 * MB, instanceBytes: 2380 * MB } );
+		expect( parts.total ).toBeGreaterThan( MAX_SCENE_BYTES );
+		const peak = spillingPeakBytes( parts, 51e6, 1024 * MB );
+		expect( peak ).toBeLessThan( MAX_SCENE_BYTES );
+		expect( peak ).toBeGreaterThanOrEqual( parts.geometry + parts.instances );
 
 	} );
 

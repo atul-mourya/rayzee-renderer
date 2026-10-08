@@ -10,7 +10,10 @@
  */
 
 import { isFoldedRef, foldedFirst, foldedCount } from './BVHLeafFold.js';
-import { TRIANGLE_DATA_LAYOUT, packNormalOct, BVH_LEAF_MARKERS } from './BufferLayout.js';
+import {
+	TRIANGLE_DATA_LAYOUT, packNormalOct, BVH_LEAF_MARKERS, BVH_EMPTY_BOX,
+	CLUSTER_FIRST_MASK, CLUSTER_COUNT_SHIFT, CLUSTER_ROOT_MASK, CLUSTER_SIZE, RECORD_VEC4, TLAS_LEAF_IDENTITY, encodeClusterBoxes,
+} from './BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 
@@ -54,6 +57,7 @@ const triAccess = ( triangleData ) => {
 const FLOATS_PER_NODE = 16; // 4 vec4s per BVH node
 const LEAF_MARKER = BVH_LEAF_MARKERS.TRIANGLE_LEAF;
 const BLAS_POINTER_MARKER = BVH_LEAF_MARKERS.BLAS_POINTER_LEAF;
+const CLUSTER_MARKER = BVH_LEAF_MARKERS.CLUSTER_LEAF;
 
 // Relative to the matrix's own magnitude, never an absolute floor — see transformBoundsToWorld.
 const SINGULAR_REL_EPS = 1e-12;
@@ -63,6 +67,13 @@ const SINGULAR_REL_EPS = 1e-12;
  * written to `dstOff`. Inlined rather than imported: this file also runs inside a worker.
  */
 function transformBoundsToWorld( bvhData, nodeOff, src, srcOff, dst, dstOff ) {
+
+	if ( src[ srcOff ] > src[ srcOff + 3 ] ) {
+
+		for ( let i = 0; i < 6; i ++ ) dst[ dstOff + i ] = src[ srcOff + i ];
+		return;
+
+	}
 
 	const a0 = bvhData[ nodeOff + 4 ], a1 = bvhData[ nodeOff + 5 ], a2 = bvhData[ nodeOff + 6 ], tx = bvhData[ nodeOff + 7 ];
 	const a3 = bvhData[ nodeOff + 8 ], a4 = bvhData[ nodeOff + 9 ], a5 = bvhData[ nodeOff + 10 ], ty = bvhData[ nodeOff + 11 ];
@@ -151,6 +162,19 @@ function triangleBounds( acc, first, count, out, off ) {
 
 const folded = new Float32Array( 12 );
 
+// Empty bounds (a hidden group member, an empty leaf) are min > max while computed — neutral in a union — and stored
+// as the far point box no ray enters, read back as empty.
+const isEmptyStored = ( f, o ) => f[ o ] >= BVH_EMPTY_BOX * 0.5;
+
+/** A child's computed box into its slot at `o`: as it is, or the far point box when empty. */
+function writeChildSlot( f, o, src, s ) {
+
+	const empty = src[ s ] > src[ s + 3 ];
+	f[ o ] = empty ? BVH_EMPTY_BOX : src[ s ]; f[ o + 1 ] = empty ? BVH_EMPTY_BOX : src[ s + 1 ]; f[ o + 2 ] = empty ? BVH_EMPTY_BOX : src[ s + 2 ];
+	f[ o + 4 ] = empty ? BVH_EMPTY_BOX : src[ s + 3 ]; f[ o + 5 ] = empty ? BVH_EMPTY_BOX : src[ s + 4 ]; f[ o + 6 ] = empty ? BVH_EMPTY_BOX : src[ s + 5 ];
+
+}
+
 /** A node's own box from what it stores — its two child boxes, or a leaf's triangles — into out[ 0 .. 6 ). */
 function storedBounds( nodes, n, acc, out ) {
 
@@ -165,12 +189,55 @@ function storedBounds( nodes, n, acc, out ) {
 
 	}
 
+	const left = ! isEmptyStored( f, o ), right = ! isEmptyStored( f, o + 8 );
 	for ( let a = 0; a < 3; a ++ ) {
 
-		out[ a ] = Math.min( f[ o + a ], f[ o + 8 + a ] );
-		out[ 3 + a ] = Math.max( f[ o + 4 + a ], f[ o + 12 + a ] );
+		out[ a ] = Math.min( left ? f[ o + a ] : Infinity, right ? f[ o + 8 + a ] : Infinity );
+		out[ 3 + a ] = Math.max( left ? f[ o + 4 + a ] : - Infinity, right ? f[ o + 12 + a ] : - Infinity );
 
 	}
+
+}
+
+const recordRows = new Float32Array( 16 );
+const rootBox = new Float32Array( 6 );
+const copyBoxes = new Float32Array( CLUSTER_SIZE * 6 );
+
+/**
+ * A cluster leaf's boxes from its copies now: each copy's root's stored box carried to world through its record
+ * (behind the BLASes from node `recordNodeStart`), encoded into the leaf; the union into `out` at `outOff`.
+ */
+function refitClusterLeaf( nodes, i, acc, recordNodeStart, out, outOff ) {
+
+	const f = nodeF( nodes, i ), idx = nodeIdx( nodes, i ), o = nodeBase( nodes, i );
+	const first = idx[ o ] & CLUSTER_FIRST_MASK;
+	const count = ( ( idx[ o ] >>> CLUSTER_COUNT_SHIFT ) & 3 ) + 1;
+
+	for ( let k = 0; k < count; k ++ ) {
+
+		const word = idx[ o + 12 + k ];
+		storedBounds( nodes, word & CLUSTER_ROOT_MASK, acc, rootBox );
+		if ( word & TLAS_LEAF_IDENTITY ) {
+
+			for ( let a = 0; a < 6; a ++ ) copyBoxes[ k * 6 + a ] = rootBox[ a ];
+			continue;
+
+		}
+
+		// A record's 12 floats may straddle a node, and so a chunk.
+		const lane = recordNodeStart * 16 + ( first + k ) * RECORD_VEC4 * 4;
+		for ( let l = 0; l < 12; l ++ ) {
+
+			const n = ( lane + l ) >> 4;
+			recordRows[ 4 + l ] = nodeF( nodes, n )[ nodeBase( nodes, n ) + ( ( lane + l ) & 15 ) ];
+
+		}
+
+		transformBoundsToWorld( recordRows, 0, rootBox, 0, copyBoxes, k * 6 );
+
+	}
+
+	encodeClusterBoxes( f, idx, o, copyBoxes, count, out, outOff );
 
 }
 
@@ -179,7 +246,7 @@ function storedBounds( nodes, n, acc, out ) {
  * node's two child boxes rewritten from theirs. A leaf folded into its parent takes its box from
  * its triangles.
  */
-function refitNode( nodes, i, acc, bounds, base ) {
+function refitNode( nodes, i, acc, bounds, base, recordNodeStart = - 1 ) {
 
 	const bvhF = nodeF( nodes, i );
 	const idx = nodeIdx( nodes, i );
@@ -190,6 +257,13 @@ function refitNode( nodes, i, acc, bounds, base ) {
 	if ( marker === LEAF_MARKER ) {
 
 		triangleBounds( acc, idx[ o ], idx[ o + 1 ], bounds, b );
+		return;
+
+	}
+
+	if ( marker === CLUSTER_MARKER ) {
+
+		refitClusterLeaf( nodes, i, acc, recordNodeStart, bounds, b );
 		return;
 
 	}
@@ -222,10 +296,8 @@ function refitNode( nodes, i, acc, bounds, base ) {
 
 	}
 
-	bvhF[ o ] = ls[ lb ]; bvhF[ o + 1 ] = ls[ lb + 1 ]; bvhF[ o + 2 ] = ls[ lb + 2 ];
-	bvhF[ o + 4 ] = ls[ lb + 3 ]; bvhF[ o + 5 ] = ls[ lb + 4 ]; bvhF[ o + 6 ] = ls[ lb + 5 ];
-	bvhF[ o + 8 ] = rs[ rb ]; bvhF[ o + 9 ] = rs[ rb + 1 ]; bvhF[ o + 10 ] = rs[ rb + 2 ];
-	bvhF[ o + 12 ] = rs[ rb + 3 ]; bvhF[ o + 13 ] = rs[ rb + 4 ]; bvhF[ o + 14 ] = rs[ rb + 5 ];
+	writeChildSlot( bvhF, o, ls, lb );
+	writeChildSlot( bvhF, o + 8, rs, rb );
 
 	for ( let a = 0; a < 3; a ++ ) {
 
@@ -346,15 +418,15 @@ export class BVHRefitter {
 	 * @param {ArrayLike<number>} blasRanges - flat [ startNode, nodeCount, ... ]
 	 * @param {number} tlasNodeCount - the TLAS occupies nodes [0, tlasNodeCount)
 	 */
-	refitPartial( bvhData, triangleData, blasRanges, tlasNodeCount ) {
+	refitPartial( bvhData, triangleData, blasRanges, tlasNodeCount, groupRange = null, recordNodeStart = - 1 ) {
 
 		for ( let r = 0; r < blasRanges.length; r += 2 ) this.refitRange( bvhData, triangleData, blasRanges[ r ], blasRanges[ r + 1 ] );
 
 		const acc = triAccess( triangleData );
 		const nodes = nodeAccess( bvhData );
+		if ( groupRange ) this.refitGroups( nodes, acc, groupRange[ 0 ], groupRange[ 1 ] );
 		if ( ! this._tlasBounds || this._tlasBounds.length < tlasNodeCount * 6 ) this._tlasBounds = new Float32Array( tlasNodeCount * 6 );
 		const bounds = this._tlasBounds;
-		const rootBox = this._rootBox ||= new Float32Array( 6 );
 
 		for ( let i = tlasNodeCount - 1; i >= 0; i -- ) {
 
@@ -368,9 +440,33 @@ export class BVHRefitter {
 
 			} else {
 
-				refitNode( nodes, i, acc, bounds, 0 );
+				refitNode( nodes, i, acc, bounds, 0, recordNodeStart );
 
 			}
+
+		}
+
+	}
+
+	/**
+	 * Group trees between the TLAS and the BLASes: each inner node's child boxes from what its children store, last
+	 * node first, so a child group node is current before its parent reads it. The empty leaf is left alone.
+	 * @private
+	 */
+	refitGroups( nodes, acc, start, count ) {
+
+		const box = this._groupBox ||= new Float32Array( 6 );
+		for ( let i = start + count - 1; i >= start; i -- ) {
+
+			const f = nodeF( nodes, i );
+			const idx = nodeIdx( nodes, i );
+			const o = nodeBase( nodes, i );
+			if ( idx[ o + 3 ] === LEAF_MARKER ) continue;
+
+			storedBounds( nodes, idx[ o + 3 ], acc, box );
+			writeChildSlot( f, o, box, 0 );
+			storedBounds( nodes, idx[ o + 7 ], acc, box );
+			writeChildSlot( f, o + 8, box, 0 );
 
 		}
 
@@ -385,7 +481,7 @@ export class BVHRefitter {
 	 * @param {Uint32Array} triangleData - Updated triangle records
 	 * @param {number} nodeCount - Total number of BVH nodes
 	 */
-	refit( bvhData, triangleData, nodeCount ) {
+	refit( bvhData, triangleData, nodeCount, recordNodeStart = - 1 ) {
 
 		const acc = triAccess( triangleData );
 
@@ -398,7 +494,7 @@ export class BVHRefitter {
 		}
 
 		const nodes = nodeAccess( bvhData );
-		for ( let i = nodeCount - 1; i >= 0; i -- ) refitNode( nodes, i, acc, this._bounds, 0 );
+		for ( let i = nodeCount - 1; i >= 0; i -- ) refitNode( nodes, i, acc, this._bounds, 0, recordNodeStart );
 
 	}
 

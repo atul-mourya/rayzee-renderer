@@ -148,6 +148,90 @@ export function uploadStorageChunks( renderer, attr, chunks ) {
 }
 
 /**
+ * GPU-only storage attributes standing for one array too large for a single binding: lane l lives in part
+ * ⌊l / lanesPerPart⌋, and a part holds whole records, so no record straddles two. Read through `splitStorage`
+ * (TSL/Common.js).
+ */
+export class StorageParts {
+
+	/**
+	 * @param {number} totalLanes
+	 * @param {number} lanesPerRecord
+	 * @param {number} maxPartBytes - at most maxStorageBufferBindingSize
+	 * @param {Function} [LaneType]
+	 * @param {number} [itemSize] - lanes an element: 4 for vec4 storage, 2 for vec2
+	 */
+	constructor( totalLanes, lanesPerRecord, maxPartBytes, LaneType = Float32Array, itemSize = 4 ) {
+
+		this.LaneType = LaneType;
+		this.itemSize = itemSize;
+		this.lanesPerPart = Math.max( 1, Math.floor( maxPartBytes / ( lanesPerRecord * LaneType.BYTES_PER_ELEMENT ) ) ) * lanesPerRecord;
+		this.totalLanes = totalLanes;
+		this.attrs = [];
+		for ( let at = 0; at < totalLanes || this.attrs.length === 0; at += this.lanesPerPart ) {
+
+			const lanes = Math.max( lanesPerRecord, Math.min( this.lanesPerPart, totalLanes - at ) );
+			this.attrs.push( gpuOnlyStorageAttribute( lanes / itemSize, itemSize, LaneType ) );
+
+		}
+
+	}
+
+	/** Elements a full part holds. */
+	get elementsPerPart() {
+
+		return this.lanesPerPart / this.itemSize;
+
+	}
+
+	/** Creates every part's GPU buffer now. */
+	create( backend ) {
+
+		for ( const attr of this.attrs ) backend.createStorageAttribute( attr );
+
+	}
+
+	/** Writes `count` lanes of `src` from `srcOffset` to lane `lane`, across a part boundary if need be. */
+	write( backend, lane, src, srcOffset, count ) {
+
+		const bytes = this.LaneType.BYTES_PER_ELEMENT;
+		while ( count > 0 ) {
+
+			const p = Math.floor( lane / this.lanesPerPart );
+			const local = lane - p * this.lanesPerPart;
+			const n = Math.min( count, this.lanesPerPart - local );
+			const attr = this.attrs[ p ];
+			backend.createStorageAttribute( attr );
+			backend.device.queue.writeBuffer( backend.get( attr ).buffer, local * bytes, src, srcOffset, n );
+			lane += n;
+			srcOffset += n;
+			count -= n;
+
+		}
+
+	}
+
+	/** Writes lanes [startLane, startLane + laneCount) of chunked `records`. */
+	writeRecords( backend, records, startLane, laneCount ) {
+
+		const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
+		for ( let lane = startLane, end = startLane + laneCount; lane < end; ) {
+
+			const ci = Math.floor( lane / lanesPerChunk );
+			const chunk = records.chunks[ ci ];
+			if ( ! chunk ) throw new Error( `chunk ${ci} is on disk and was never uploaded` );
+			const local = lane - ci * lanesPerChunk;
+			const n = Math.min( chunk.length - local, end - lane );
+			this.write( backend, lane, chunk, local, n );
+			lane += n;
+
+		}
+
+	}
+
+}
+
+/**
  * Re-upload one lane range of a chunked storage attribute, spanning chunks as needed.
  *
  * The partial-update path three.js offers (`addUpdateRange` + a version bump) cannot work here:

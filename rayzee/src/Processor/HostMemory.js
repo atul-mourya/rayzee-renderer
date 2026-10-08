@@ -29,8 +29,17 @@ const BVH_NODE_BYTES = 64;
  */
 const NODES_PER_TRIANGLE = 0.9;
 
-/** Bytes per placement in the instance table: a mat4 of world transform. */
-const PLACEMENT_BYTES = 64;
+/**
+ * Bytes per placement in the instance table's own columns, measured on the Moana island (1,415 MB for 51.0M). Its
+ * transforms are read where the scene keeps them (an InstancedMesh's matrix list, `instanceBytes`), not copied.
+ */
+const PLACEMENT_BYTES = 28;
+
+/**
+ * Bytes per placement while a spilling build makes its TLAS: the tree, a quarter of it per copy once copies are
+ * clustered, plus the boxes it is built from. Measured on the island: ~2.3 GB at 51.0M.
+ */
+const TLAS_PHASE_BYTES = 45;
 
 /** Bytes per triangle of per-template reorder map, one Uint32 each. */
 const ORDER_MAP_BYTES = 4;
@@ -59,11 +68,14 @@ export const SAFE_SCENE_BYTES = 7040 * 1024 * 1024;
  */
 export const MAX_SCENE_BYTES = 9216 * 1024 * 1024;
 
-// Scene-archive budgets with the memory spill on: the triangles and BVH leave the heap as the build goes, so the host
-// passes these instead of the importer's own. The whole 15-part Moana subset (55.7M / 7.0M) loads cold under them, at
-// an 8.1 GB preflight estimate; the preflight, not the budget, refuses anything larger.
-export const SPILL_TRIANGLE_BUDGET = 60_000_000;
-export const SPILL_PLACEMENT_BUDGET = 8_000_000;
+// Scene-archive budgets with the memory spill on: the triangles, BVH and geometry leave the heap as the build goes, so
+// the host passes these instead of the importer's own. The whole USD island (111.6M triangles, 51.0M placements) loads
+// under them in Chrome on a 24 GB M-series: 304 s, tab peak ~13 GB, 13 GB of GPU buffers. The preflight, not the
+// budget, refuses anything larger.
+export const SPILL_TRIANGLE_BUDGET = 120_000_000;
+export const SPILL_PLACEMENT_BUDGET = 60_000_000;
+/** Widest environment kept with memory spill on; a wider one is box-filtered down (AssetLoader). */
+export const SPILL_ENVIRONMENT_WIDTH = 8192;
 
 /**
  * The host's memory in GB: the host's own figure when it gives one, else Chrome's
@@ -96,18 +108,36 @@ const PROBE_CEILING_BYTES = 12 * 1024 * 1024 * 1024;
  * @returns {{total: number, triangles: number, bvh: number, geometry: number,
  *   placements: number, orderMaps: number}} bytes
  */
-export function estimateSceneBytes( { triangles, placements, geometryBytes = 0 } ) {
+export function estimateSceneBytes( { triangles, placements, geometryBytes = 0, instanceBytes = 0 } ) {
 
 	const parts = {
 		triangles: triangles * TRIANGLE_BYTES,
 		bvh: Math.ceil( triangles * NODES_PER_TRIANGLE ) * BVH_NODE_BYTES,
 		geometry: geometryBytes,
+		instances: instanceBytes,
 		placements: placements * PLACEMENT_BYTES,
 		orderMaps: triangles * ORDER_MAP_BYTES,
 	};
 
-	parts.total = parts.triangles + parts.bvh + parts.geometry + parts.placements + parts.orderMaps;
+	parts.total = parts.triangles + parts.bvh + parts.geometry + parts.instances + parts.placements + parts.orderMaps;
 	return parts;
+
+}
+
+/**
+ * A spilling, streamed build's peak: the larger of its two phases, since neither the triangles, the BLASes nor the
+ * three.js geometry are resident once each has been read. Extraction holds the geometry, the matrix lists and
+ * `residentTriangleBytes` of records; the TLAS phase the lists, the table, the tree being built and the order maps.
+ * @param {ReturnType<typeof estimateSceneBytes>} parts
+ * @param {number} placements
+ * @param {number} residentTriangleBytes
+ * @returns {number} bytes
+ */
+export function spillingPeakBytes( parts, placements, residentTriangleBytes ) {
+
+	const extraction = parts.geometry + parts.instances + placements * 4 + residentTriangleBytes;
+	const tlas = parts.instances + parts.placements + placements * TLAS_PHASE_BYTES + parts.orderMaps;
+	return Math.max( extraction, tlas );
 
 }
 

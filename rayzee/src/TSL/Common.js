@@ -1,4 +1,4 @@
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, uint, mat3, If, max, dot, clamp, select, bool as tslBool } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, uvec2, uvec4, int, uint, mat3, If, max, dot, clamp, select, bool as tslBool } from 'three/tsl';
 
 import {
 	AnisoFrame,
@@ -322,12 +322,41 @@ export const classifyMaterial = Fn( ( [ metalness, roughness, transmission, clea
 
 // Storage buffer access — flat 1D indexing (WebGPU native)
 // No 2D coordinate math needed: directly indexes into the buffer
-export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dataOffset ] ) => {
+/**
+ * One storage array split over several buffers, for a tree or triangle store past maxStorageBufferBindingSize: element
+ * e lives in part ⌊e / perPart⌋. A single node needs no split and is returned as it is, so a scene that fits one
+ * buffer compiles exactly the code it always did.
+ * @param {Array} parts - storage nodes, all but the last `perPart` vec4 elements long
+ * @param {number} perPart
+ * @param {'vec4'|'uvec4'} type
+ */
+export function splitStorage( parts, perPart, type ) {
 
-	const elementIndex = stride.mul( dataOffset ).add( sampleIndex );
-	return buffer.element( elementIndex );
+	return parts.length === 1 ? parts[ 0 ] : { isSplitStorage: true, parts, perPart, type, value: parts[ 0 ].value };
 
-} );
+}
+
+/** Element `index` of a storage node or of a {@link splitStorage}. */
+export function storageElement( buffer, index ) {
+
+	if ( ! buffer.isSplitStorage ) return buffer.element( index );
+
+	const { parts, perPart } = buffer;
+	const e = int( index ).toVar();
+	const out = ( { uvec4, uvec2 }[ buffer.type ] ?? vec4 )( 0 ).toVar();
+	const read = ( k ) => () => out.assign( parts[ k ].element( k === 0 ? e : e.sub( int( perPart * k ) ) ) );
+	let branch = If( e.lessThan( int( perPart ) ), read( 0 ) );
+	for ( let k = 1; k < parts.length - 1; k ++ ) branch = branch.ElseIf( e.lessThan( int( perPart * ( k + 1 ) ) ), read( k ) );
+	branch.Else( read( parts.length - 1 ) );
+	return out;
+
+}
+
+const asNode = ( v ) => ( v?.isNode ? v : int( v ) );
+
+// Element `index · stride + offset`.
+export const getDatafromStorageBuffer = ( buffer, index, offset, stride ) =>
+	storageElement( buffer, asNode( stride ).mul( asNode( index ) ).add( asNode( offset ) ) );
 
 /**
  * The five uvec4 rows of a triangle record (TRIANGLE_DATA_LAYOUT) live in two GPU buffers: rows
@@ -337,9 +366,17 @@ export const getDatafromStorageBuffer = Fn( ( [ buffer, stride, sampleIndex, dat
 export const TRI_GEO_ROWS = 3;
 export const TRI_SHADE_ROWS = 2;
 
-export const triangleRow = ( tris, triIndex, row ) => row < TRI_GEO_ROWS
-	? getDatafromStorageBuffer( tris.geo, triIndex, int( row ), int( TRI_GEO_ROWS ) )
-	: getDatafromStorageBuffer( tris.shade, triIndex, int( row - TRI_GEO_ROWS ), int( TRI_SHADE_ROWS ) );
+// Without texture coordinates (no material samples a texture) the shade buffer holds only flags and mesh index, one
+// uvec2 a triangle: rows 3–4 read as zero UVs around them, 24 B a triangle saved.
+export const triangleRow = ( tris, triIndex, row ) => {
+
+	if ( row < TRI_GEO_ROWS ) return getDatafromStorageBuffer( tris.geo, triIndex, int( row ), int( TRI_GEO_ROWS ) );
+	if ( ! tris.withoutUV ) return getDatafromStorageBuffer( tris.shade, triIndex, int( row - TRI_GEO_ROWS ), int( TRI_SHADE_ROWS ) );
+	if ( row === TRI_GEO_ROWS ) return uvec4( 0 );
+	const flagsMesh = storageElement( tris.shade, asNode( triIndex ) );
+	return uvec4( 0, 0, flagsMesh.x, flagsMesh.y );
+
+};
 
 // Unit normal to an octahedral snorm16 pair; GPU twin of packNormalOct in EngineDefaults.
 export const packNormalOct = /*@__PURE__*/ wgslFn( `
@@ -637,11 +674,18 @@ export const shadowFlagsSettle = ( flags, alphaShadows ) => {
 
 };
 
-export const instanceRows = ( bvhBuffer, leafIndex ) => [
-	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
-	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),
-	getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 3 ), int( 4 ) )
-];
+export const instanceRows = ( bvhBuffer, leafIndex ) => {
+
+	// Built over copy clusters, an instance is a copy record (3 vec4 from `copyRecordBase`), not a TLAS leaf.
+	const records = bvhBuffer.value?.copyRecordBase;
+	if ( records !== undefined ) return [ 0, 1, 2 ].map( ( row ) => getDatafromStorageBuffer( bvhBuffer, leafIndex, int( records + row ), int( 3 ) ) );
+	return [
+		getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
+		getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),
+		getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 3 ), int( 4 ) )
+	];
+
+};
 
 /** Object-space normal to world: transpose of the world-to-object basis. */
 export const instanceNormalToWorld = ( rows, n ) => vec3(

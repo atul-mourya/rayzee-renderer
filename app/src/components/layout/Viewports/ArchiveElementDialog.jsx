@@ -74,9 +74,10 @@ const ArchiveElementDialog = () => {
 			await app.loadFile( file, { element: prefixes } );
 			rememberFolder( app.sceneSource?.key, handle );
 			close();
+			const fit = app.assetLoader?.archives?.lastUSDStats?.fitNote;
 			toast( {
 				title: "Loaded",
-				description: `${prefixes.length} of ${elements.length} parts from ${file.name}`
+				description: `${prefixes.length} of ${elements.length} parts from ${file.name}${fit ? `. Thinned to fit memory: ${fit}` : ''}`
 			} );
 
 		} catch ( error ) {

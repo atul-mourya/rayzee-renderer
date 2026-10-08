@@ -46,9 +46,9 @@ self.onmessage = function ( e ) {
 
 			const startTime = performance.now();
 
-			const { blasRanges, tlasNodeCount } = e.data;
-			if ( blasRanges ) refitter.refitPartial( bvhData, triData, blasRanges, tlasNodeCount );
-			else refitter.refit( bvhData, triData, nodeCount );
+			const { blasRanges, tlasNodeCount, groupRange, treeNodeCount, recordNodeStart = - 1 } = e.data;
+			if ( blasRanges ) refitter.refitPartial( bvhData, triData, blasRanges, tlasNodeCount, groupRange, recordNodeStart );
+			else refitter.refit( bvhData, triData, treeNodeCount ?? nodeCount, recordNodeStart );
 
 			self.postMessage( {
 				type: 'refitComplete',

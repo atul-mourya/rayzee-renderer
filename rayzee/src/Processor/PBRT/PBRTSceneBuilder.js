@@ -17,7 +17,7 @@
 import { freeNow, resized } from './buffers.js';
 import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
-	BufferGeometry, Float32BufferAttribute, Uint32BufferAttribute,
+	BufferGeometry, BufferAttribute, Float32BufferAttribute, Uint32BufferAttribute,
 	DataTexture, FloatType, RGBAFormat, LinearFilter, EquirectangularReflectionMapping,
 	SRGBColorSpace, NoColorSpace, AnimationClip, VectorKeyframeTrack, QuaternionKeyframeTrack,
 	NumberKeyframeTrack, BooleanKeyframeTrack, DirectionalLight, PointLight, SpotLight, FrontSide, DoubleSide,
@@ -27,8 +27,9 @@ import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMa
 import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
-import { tessellateCurve } from './PBRTCurves.js';
+import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
+import { packUnitAttribute } from '../GeometryExtractor.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -107,7 +108,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 9;
+export const PBRT_BUILD_REVISION = 10;
 
 function samePlacements( a, b ) {
 
@@ -445,7 +446,7 @@ function rasterize( width, height, colorAt ) {
 }
 
 // A clone that keeps the engine's own material properties, which three.js's copy() does not know.
-function cloneMaterial( material ) {
+export function cloneMaterial( material ) {
 
 	const out = material.clone();
 	for ( const key of Object.keys( material ) ) if ( ! ( key in out ) ) out[ key ] = material[ key ];
@@ -617,14 +618,14 @@ export class PBRTSceneBuilder {
 
 			const shape = ir.shapes[ i ];
 			const [ geometry, surface ] = await Promise.all( [
-				this._batches ? this._createGeometry( shape ) : this._buildGeometry( shape ),
+				this._batches && ! shape.shared ? this._createGeometry( shape ) : this._buildGeometry( shape ),
 				this._getMaterial( shape )
 			] );
 			if ( ! geometry ) continue;
 			const sharedMaterial = shape.areaLight ? this._poweredMaterial( shape, geometry, surface ) : surface;
 
 			// A moving shape needs a node of its own to move.
-			if ( this._batches && ! shape.motion && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
+			if ( this._batches && ! shape.motion && ! shape.shared && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
 				this._mergeShape( shape, geometry, sharedMaterial, group );
 				ir.shapes[ i ] = null; // its parsed arrays are copied out; let them go
@@ -738,30 +739,45 @@ export class PBRTSceneBuilder {
 
 		const scratch = new Float64Array( 16 );
 		const matrix = new Matrix4();
+		// A template's shapes at the same relative transform share one matrix attribute, which the
+		// engine places as one object: one TLAS entry a copy, not one a shape.
+		const sharedMatrices = new Map();
 
 		const place = ( list, geometry, material, rel, shapeType, materialType, tris ) => {
 
+			const relKey = rel ? Array.prototype.join.call( rel, ',' ) : '';
+			let byRel = sharedMatrices.get( list );
+			if ( ! byRel ) sharedMatrices.set( list, byRel = new Map() );
+			const shared = byRel.get( relKey );
+
 			const affordable = Math.max( 0, this.maxPlacements - this.placementCount );
-			const count = Math.min( list.count, affordable );
-			if ( count < list.count ) this.skippedForBudget += list.count - count;
+			const count = shared ? shared.count : Math.min( list.count, affordable );
+			if ( ! shared && count < list.count ) this.skippedForBudget += list.count - count;
 			if ( count === 0 ) return;
 
 			const mesh = new InstancedMesh( geometry, material, count );
 			mesh.name = `instance_${n ++}`;
 			mesh.frustumCulled = false;
 
-			for ( let i = 0; i < count; i ++ ) {
+			if ( shared ) mesh.instanceMatrix = shared.attribute;
+			else {
 
-				if ( rel ) M.multiplyInto( scratch, list.matrices, i * 16, rel );
-				else for ( let e = 0; e < 16; e ++ ) scratch[ e ] = list.matrices[ i * 16 + e ];
-				mesh.setMatrixAt( i, matrix.fromArray( this.convertHandedness ? M.multiply( FLIP_Z, scratch ) : scratch ) );
+				for ( let i = 0; i < count; i ++ ) {
+
+					if ( rel ) M.multiplyInto( scratch, list.matrices, i * 16, rel );
+					else for ( let e = 0; e < 16; e ++ ) scratch[ e ] = list.matrices[ i * 16 + e ];
+					mesh.setMatrixAt( i, matrix.fromArray( this.convertHandedness ? M.multiply( FLIP_Z, scratch ) : scratch ) );
+
+				}
+
+				mesh.instanceMatrix.needsUpdate = true;
+				byRel.set( relKey, { attribute: mesh.instanceMatrix, count } );
+				this.placementCount += count;
 
 			}
 
-			mesh.instanceMatrix.needsUpdate = true;
 			group.add( mesh );
 
-			this.placementCount += count;
 			this.reportedMeshes += count;
 			if ( this.report.length < MAX_REPORT_ROWS ) this.report.push( {
 				mesh: `${mesh.name} ×${count}`,
@@ -800,7 +816,7 @@ export class PBRTSceneBuilder {
 			// eight Pandanus trees in Moana hold 22,965 leaves each. A .ply may be shared with
 			// other templates and stays whole.
 			let inline = 0;
-			for ( const shape of template ) if ( shape.type !== 'plymesh' ) inline ++;
+			for ( const shape of template ) if ( shape.type !== 'plymesh' && ! shape.shared ) inline ++;
 			const batches = inline >= 2 ? new Map() : null;
 
 			for ( const shape of template ) {
@@ -818,7 +834,7 @@ export class PBRTSceneBuilder {
 				] );
 				if ( ! geometry ) continue;
 
-				if ( batches && shape.type !== 'plymesh' && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
+				if ( batches && shape.type !== 'plymesh' && ! shape.shared && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
 					this._geometryCache.delete( shape );
 					const full = this._appendToBatch( batches, shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm );
@@ -1253,11 +1269,12 @@ export class PBRTSceneBuilder {
 	/** A batch's triangles as one geometry; the batch's own arrays are released. @private */
 	_batchGeometry( batch ) {
 
+		// The batch's arrays cut to size, not copied: Float32BufferAttribute copies whatever it is given.
 		const geometry = new BufferGeometry();
-		geometry.setAttribute( 'position', new Float32BufferAttribute( resized( batch.positions, batch.vertexCount * 3 ), 3 ) );
-		geometry.setAttribute( 'normal', new Float32BufferAttribute( resized( batch.normals, batch.vertexCount * 3 ), 3 ) );
-		if ( batch.uvs ) geometry.setAttribute( 'uv', new Float32BufferAttribute( resized( batch.uvs, batch.vertexCount * 2 ), 2 ) );
-		geometry.setIndex( new Uint32BufferAttribute( resized( batch.indices, batch.indexCount ), 1 ) );
+		geometry.setAttribute( 'position', new BufferAttribute( resized( batch.positions, batch.vertexCount * 3 ), 3 ) );
+		geometry.setAttribute( 'normal', new BufferAttribute( resized( batch.normals, batch.vertexCount * 3 ), 3 ) );
+		if ( batch.uvs ) geometry.setAttribute( 'uv', new BufferAttribute( resized( batch.uvs, batch.vertexCount * 2 ), 2 ) );
+		geometry.setIndex( new BufferAttribute( resized( batch.indices, batch.indexCount ), 1 ) );
 		batch.positions = batch.normals = batch.uvs = batch.indices = null;
 		return geometry;
 
@@ -1294,9 +1311,11 @@ export class PBRTSceneBuilder {
 
 		// An ObjectInstance template is built once per placement, and the Moana palm debris
 		// alone places one 208-triangle leaf 2.25 million times. three.js is happy to share
-		// one BufferGeometry across meshes; only the per-mesh matrix differs.
-		let pending = this._geometryCache.get( shape );
-		if ( ! pending ) this._geometryCache.set( shape, pending = this._createGeometry( shape ) );
+		// one BufferGeometry across meshes; only the per-mesh matrix differs. Shapes of one
+		// `geometryKey` (a USD mesh read again elsewhere) share it the same way.
+		const key = shape.geometryKey ?? shape;
+		let pending = this._geometryCache.get( key );
+		if ( ! pending ) this._geometryCache.set( key, pending = this._createGeometry( shape ) );
 		return pending;
 
 	}
@@ -1361,6 +1380,7 @@ export class PBRTSceneBuilder {
 			case 'bilinearmesh': return this._bilinearMesh( shape.params );
 			case 'loopsubdiv': return this._loopSubdiv( shape.params );
 			case 'curve': return this._curve( shape.params );
+			case 'curves': return this._curves( shape.params );
 			case 'plymesh': return this._plyMesh( shape.params );
 			case 'sphere': return this._sphere( shape.params );
 			case 'disk': return this._disk( shape.params );
@@ -1439,10 +1459,47 @@ export class PBRTSceneBuilder {
 
 		}
 
+		// The tessellation's own arrays, not copies; normals at 16 bits from the start, as extraction would store them.
 		const geo = new BufferGeometry();
-		geo.setAttribute( 'position', new Float32BufferAttribute( built.positions, 3 ) );
-		geo.setIndex( new Uint32BufferAttribute( built.indices, 1 ) );
+		geo.setAttribute( 'position', new BufferAttribute( built.positions, 3 ) );
+		geo.setIndex( new BufferAttribute( built.indices, 1 ) );
 		geo.computeVertexNormals();
+		packUnitAttribute( geo, 'normal' );
+		return geo;
+
+	}
+
+	/** Many curves on one point array, as USD writes them. */
+	_curves( params ) {
+
+		const built = tessellateCurves( {
+			P: params.P.value,
+			counts: params.counts.value,
+			widths: params.widths?.value ?? null,
+			widthMode: pString( params, 'widthMode', 'constant' ),
+			N: params.N?.value ?? null,
+			normalMode: pString( params, 'normalMode', 'vertex' ),
+			type: pString( params, 'type', 'cubic' ),
+			basis: pString( params, 'basis', 'bspline' ),
+			wrap: pString( params, 'wrap', 'nonperiodic' ),
+			steps: this.curveSteps,
+			sides: this.curveSides ?? 1,
+			tolerance: this.curveTolerance,
+		} );
+
+		if ( ! built ) {
+
+			this.warn( 'curves could not be tessellated' ); return null;
+
+		}
+
+		if ( built.skipped > 0 ) this.warn( `${built.skipped} curve(s) of an unsupported basis or too few points skipped` );
+		// The tessellation's own arrays, not copies; normals at 16 bits from the start, as extraction would store them.
+		const geo = new BufferGeometry();
+		geo.setAttribute( 'position', new BufferAttribute( built.positions, 3 ) );
+		geo.setIndex( new BufferAttribute( built.indices, 1 ) );
+		geo.computeVertexNormals();
+		packUnitAttribute( geo, 'normal' );
 		return geo;
 
 	}

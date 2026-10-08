@@ -94,9 +94,10 @@ export class TLASBuilder {
 	 */
 	build( table ) {
 
-		const aabbs = new Float64Array( table.count * 6 );
-		table.writeWorldAABBs( aabbs );
-		const built = this.buildStructure( aabbs, table.count );
+		const clustered = table.clusterCount > 0;
+		const aabbs = clustered ? table.clusterBounds : new Float64Array( table.entryCount * 6 );
+		if ( ! clustered ) table.writeEntryWorldAABBs( aabbs );
+		const built = this.buildStructure( aabbs, clustered ? table.clusterCount : table.entryCount );
 		TLASBuilder.fillLeaves( built.data, built.nodeCount, table );
 		return built;
 
@@ -235,22 +236,34 @@ export class TLASBuilder {
 	 */
 	static fillLeaves( data, nodeCount, table ) {
 
-		const world = table.world, src = table.sourceMesh;
-		const blasOffset = table.tplBlasOffset, visible = table.visible, leafOf = table.tlasLeafIndex;
 		const idx = bvhIndexView( data );
+
+		if ( table.clusterCount > 0 ) {
+
+			// Built over clusters: each leaf holds one, its copies' transforms in records (table.writeRecord).
+			for ( let node = 0; node < nodeCount; node ++ ) {
+
+				const o = node * FLOATS_PER_NODE;
+				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) table.writeClusterLeaf( data, idx, o, idx[ o + 1 ], table.clusterWorld, node );
+
+			}
+
+			return;
+
+		}
 
 		for ( let node = 0; node < nodeCount; node ++ ) {
 
 			const o = node * FLOATS_PER_NODE;
 			if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;
 
-			const i = idx[ o + 1 ] & TLAS_PLACEMENT_MASK;
-			idx[ o ] = blasOffset[ src[ i ] ];
-			data[ o + 2 ] = visible[ i ] ? 1.0 : 0.0;
+			const e = idx[ o + 1 ] & TLAS_PLACEMENT_MASK;
+			idx[ o ] = table.entryRoot( e );
+			data[ o + 2 ] = table.entryVisible( e ) ? 1.0 : 0.0;
 
-			TLASBuilder.writeLeafMatrix( data, idx, o, world, i );
+			TLASBuilder.writeLeafMatrix( data, idx, o, table, table.repOf( e ), e );
 
-			leafOf[ i ] = node;
+			table.setLeafOf( e, node );
 
 		}
 
@@ -261,25 +274,27 @@ export class TLASBuilder {
 	 * its own whenever a placement moves, so a rigid transform costs a matrix rather than a
 	 * rewrite of the geometry the placement may be sharing.
 	 *
-	 * Slot [1] is rewritten too: the placement index, with {@link TLAS_LEAF_IDENTITY} set when
-	 * the matrix is identity so traversal can skip the ray transform for that leaf.
+	 * Slot [1] is rewritten too: the TLAS entry (the placement, unless placements are grouped), with
+	 * {@link TLAS_LEAF_IDENTITY} set when the matrix is identity so traversal can skip the ray transform for that leaf.
 	 *
 	 * @param {Float32Array} data - the node buffer, or one chunk of it
 	 * @param {Uint32Array} idx - u32 view over the same memory as `data`
 	 * @param {number} off - float offset of the leaf within `data`
-	 * @param {Float32Array} world - the instance table's object-to-world column
-	 * @param {number} placement
+	 * @param {import('./InstanceTable.js').InstanceTable} table
+	 * @param {number} placement - whose transform the leaf carries
+	 * @param {number} [entry] - the TLAS entry it stands for
 	 */
-	static writeLeafMatrix( data, idx, off, world, placement ) {
+	static writeLeafMatrix( data, idx, off, table, placement, entry = placement ) {
 
 		const inv = _inverseScratch;
-		invertAffineInto( world, placement * 16, inv );
+		const row = table.matrixRow( placement ), world = table.rowArray;
+		invertAffineInto( world, row, inv );
 
 		data[ off + 4 ] = inv[ 0 ]; data[ off + 5 ] = inv[ 4 ]; data[ off + 6 ] = inv[ 8 ]; data[ off + 7 ] = inv[ 12 ];
 		data[ off + 8 ] = inv[ 1 ]; data[ off + 9 ] = inv[ 5 ]; data[ off + 10 ] = inv[ 9 ]; data[ off + 11 ] = inv[ 13 ];
 		data[ off + 12 ] = inv[ 2 ]; data[ off + 13 ] = inv[ 6 ]; data[ off + 14 ] = inv[ 10 ]; data[ off + 15 ] = inv[ 14 ];
 
-		idx[ off + 1 ] = ( placement | ( isIdentityAt( world, placement * 16 ) ? TLAS_LEAF_IDENTITY : 0 ) ) >>> 0;
+		idx[ off + 1 ] = ( entry | ( isIdentityAt( world, row ) ? TLAS_LEAF_IDENTITY : 0 ) ) >>> 0;
 
 	}
 
