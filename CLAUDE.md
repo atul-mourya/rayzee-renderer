@@ -38,7 +38,9 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
   function per element and returns the buffer, so a shader function or a CPU/GPU twin is tested in
   milliseconds. Skipped on CI (no Vulkan driver there); on a workstation a missing adapter fails the
   run. ⚠️ Dawn segfaults the process if its `create()` result is garbage-collected while a device
-  lives — `tests/gpu/environment.js` holds it for that reason.
+  lives — `tests/gpu/environment.js` holds it for that reason. ⚠️ An invalid kernel does not throw:
+  `evaluate()` returns zeros. A literal `int( -1 )` instance leaf did that, folded into an
+  out-of-bounds BVH read the WGSL compiler rejects; pass such values in as data (`uvTangent.test.js`).
 
 ### Regression Bench (`bench/`)
 Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
@@ -1461,6 +1463,11 @@ Access via Path Tracer tab → Debug Mode (`TSL/Debugger.js`; modes 1–10 run t
 - `7` Triangle tests · `8` Box tests per camera ray (value = count ÷ `debugVisScale`; red when over)
 - `9` Stratified samples · `10` Environment luminance
 - `11` NaN / Inf (in FinalWrite, bypasses accumulation)
+
+⚠️ Mode `1` perturbs normal maps in the fallback `cross( up, N )` frame, not Shade's UV tangent frame
+(`triangleUVTangent`), so it cannot show whether a normal map is oriented right: compare lit renders.
+`tests/gpu/uvTangent.test.js` holds that frame to the tangent of the transformed UVs, mirrored and
+turned `KHR_texture_transform`s included.
 
 ### Performance Profiling
 The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach their own stats panel (e.g. `stats-gl`) — the app does this in `app/src/components/layout/Viewports/StatsPanel.jsx`. Other built-in profiling signals:

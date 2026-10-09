@@ -363,11 +363,11 @@ export const processMetalnessRoughness = Fn( ( [ material, uvCache ], builder ) 
 
 } );
 
-// (t[1][1], t[0][1]) — the row of the inverse 2x2 linear part that maps dP/du onto dP/du',
-// up to the determinant, which drops out under the normalize that follows.
-const uvTransformJacobian = /*@__PURE__*/ wgslFn( `
-	fn uvTransformJacobian( t: mat3x3f ) -> vec2f {
-		return vec2f( t[1][1], t[0][1] );
+// The inverse of the transform's 2x2 linear part times |det|: .xy takes (dP/du, dP/dv) to dP/du', .zw to dP/dv'.
+// Times det instead, a mirrored transform turned both round.
+const uvTransformInverse = /*@__PURE__*/ wgslFn( `
+	fn uvTransformInverse( t: mat3x3f ) -> vec4f {
+		return vec4f( t[1][1], - t[0][1], - t[1][0], t[0][0] ) * sign( t[0][0] * t[1][1] - t[1][0] * t[0][1] );
 	}
 ` );
 
@@ -411,13 +411,16 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
 		const T = e1.mul( d2.y ).sub( e2.mul( d1.y ) ).mul( r ).toVar();
 		const B = e2.mul( d1.x ).sub( e1.mul( d2.x ) ).mul( r ).toVar();
 
-		// Re-express in the map's transformed UV space (inverse of the 2x2 linear part).
-		const uvJ = uvTransformJacobian( { t: transform } );
-		const Tt = T.mul( uvJ.x ).sub( B.mul( uvJ.y ) ).toVar();
+		// Re-express both in the map's transformed UV space: the handedness test below needs B there too, or a
+		// mirrored map, or one turned past 90°, gets its bitangent reversed.
+		const inv = uvTransformInverse( { t: transform } ).toVar();
+		const Tt = T.mul( inv.x ).add( B.mul( inv.y ) ).toVar();
+		const Bt = T.mul( inv.z ).add( B.mul( inv.w ) ).toVar();
 
 		If( length( Tt ).greaterThan( 1e-12 ), () => {
 
 			T.assign( Tt );
+			B.assign( Bt );
 
 		} );
 
