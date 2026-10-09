@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, X, Loader2, ChevronDown } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
@@ -36,21 +36,13 @@ const toEV = multiplier => Math.min( EV_MAX, Math.max( EV_MIN, Math.log2( Math.m
 
 const label = text => <span className="opacity-50 text-xs truncate">{text}</span>;
 
-const METERING_OPTIONS = [
-	{ value: 'average', label: 'Whole Frame', hint: 'every part of the image counts the same' },
-	{ value: 'center', label: 'Centre', hint: 'the middle of the frame counts most (default)' },
-	{ value: 'spot', label: 'Spot', hint: 'a small area at the focus point (Camera tab)' },
+// How far auto exposure follows each view (its strength): a lit room keeps its exposure, or every view is averaged.
+const FOLLOW_OPTIONS = [
+	{ value: '0.3', label: 'Gently', hint: 'a well-lit room keeps its brightness as you look around (default)' },
+	{ value: '0.6', label: 'More', hint: 'each view nudges the brightness further' },
+	{ value: '1', label: 'Fully', hint: 'every view is brought to the same brightness' },
 ];
-
-const AutoExposureValue = memo( () => {
-
-	const current = usePathTracerStore( state => state.currentAutoExposure );
-	if ( current === undefined || current === null ) return <span className="text-xs opacity-50">Calculating...</span>;
-	return <span className="text-xs opacity-70">{`${Math.log2( Math.max( current, 1e-6 ) ).toFixed( 2 )} EV`}</span>;
-
-} );
-
-AutoExposureValue.displayName = 'AutoExposureValue';
+const followValue = strength => FOLLOW_OPTIONS.reduce( ( best, o ) => ( Math.abs( o.value - strength ) < Math.abs( best.value - strength ) ? o : best ) ).value;
 
 /**
  * Color Management, laid out the way OCIO applications lay it out.
@@ -70,10 +62,9 @@ const ColorManagementSection = () => {
 	const status = useColorStatus();
 	const transforms = useViewTransforms();
 	const {
-		toneMapping, exposure, autoExposure, autoExposureMetering, autoExposureStrength, autoExposureMaxExposure,
-		localExposure, localExposureHighlightContrast, localExposureShadowContrast, localExposureDetailStrength,
-		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureMeteringChange,
-		handleAutoExposureStrengthChange, handleAutoExposureRangeChange, handleLocalExposureChange, handleLocalExposureParamChange,
+		toneMapping, exposure, autoExposure, autoExposureStrength, localExposure, localExposureHighlightContrast,
+		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureStrengthChange,
+		handleLocalExposureChange, handleLocalExposureAmountChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -436,49 +427,30 @@ const ColorManagementSection = () => {
 			)}
 
 			<Row more={autoExposure ? (
-				<>
-					<Row>
-						{label( 'Metering' )}
-						<Select value={autoExposureMetering} onValueChange={handleAutoExposureMeteringChange}>
-							{trigger( 'Which part of the image sets the exposure' )}
-							<SelectContent>{METERING_OPTIONS.map( item )}</SelectContent>
-						</Select>
-					</Row>
-					<Row title="How much the exposure follows each view. Lower keeps a well-lit scene near its exposure as you look around; 100 % follows every view.">
-						<Slider label={'Strength'} min={0} max={100} step={5} unit="%" value={[ Math.round( autoExposureStrength * 100 ) ]} snapPoints={[ 30, 100 ]} onValueChange={v => handleAutoExposureStrengthChange( v[ 0 ] / 100 )} />
-					</Row>
-					<Row title="How far auto exposure may brighten or darken from your exposure. Lower keeps a night scene dark.">
-						<Slider label={'Range'} min={1} max={10} step={0.5} formatValue={v => `±${v} stops`} value={[ Math.round( Math.log2( autoExposureMaxExposure ) * 2 ) / 2 ]} snapPoints={[ 8 ]} onValueChange={v => handleAutoExposureRangeChange( v[ 0 ] )} />
-					</Row>
-				</>
+				<Row>
+					{label( 'Follow View' )}
+					<Select value={followValue( autoExposureStrength )} onValueChange={v => handleAutoExposureStrengthChange( Number( v ) )}>
+						{trigger( 'How far the brightness follows what you look at' )}
+						<SelectContent>{FOLLOW_OPTIONS.map( item )}</SelectContent>
+					</Select>
+				</Row>
 			) : null}>
 				{label( 'Auto Exposure' )}
-				<div className="flex items-center gap-2">
-					{autoExposure && <AutoExposureValue />}
-					<Switch checked={autoExposure} onCheckedChange={handleAutoExposureChange} />
-				</div>
+				<Switch checked={autoExposure} onCheckedChange={handleAutoExposureChange} />
 			</Row>
 
-			<Row title={autoExposure ? 'Brighter or darker than auto exposure chooses, in stops' : undefined}>
-				<Slider icon={Exposure} label={autoExposure ? 'Compensation (EV)' : 'Exposure (EV)'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			<Row title={autoExposure ? 'Brighter or darker than auto exposure chooses, in stops' : 'Brighter or darker, in stops'}>
+				<Slider icon={Exposure} label={'Exposure'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
 			</Row>
 
 			<Row more={localExposure ? (
-				<>
-					<Row title="Brings large bright areas, such as windows, closer to the rest of the frame">
-						<Slider label={'Tame Highlights'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureHighlightContrast', 1 - v[ 0 ] / 100 )} />
-					</Row>
-					<Row title="Brings large dark areas closer to the rest of the frame">
-						<Slider label={'Lift Shadows'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureShadowContrast ) * 100 ) ]} snapPoints={[ 0 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureShadowContrast', 1 - v[ 0 ] / 100 )} />
-					</Row>
-					<Row title="Contrast of fine detail inside those areas">
-						<Slider label={'Detail'} min={50} max={200} step={5} unit="%" value={[ Math.round( localExposureDetailStrength * 100 ) ]} snapPoints={[ 100 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureDetailStrength', v[ 0 ] / 100 )} />
-					</Row>
-				</>
+				<Row title="How strongly bright areas are brought down">
+					<Slider label={'Amount'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureAmountChange( v[ 0 ] / 100 )} />
+				</Row>
 			) : null}>
 				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					Local Exposure
-					<InfoTip text="Balances bright windows and dark corners against the rest of the frame while keeping their detail, as Unreal Engine's local exposure does. Applies to the screen and to saved pictures." />
+					Balance Highlights
+					<InfoTip text="Brings bright windows and sunlit walls closer to the rest of the picture while keeping their detail. Applies to the screen and to saved pictures." />
 				</span>
 				<Switch checked={localExposure} onCheckedChange={handleLocalExposureChange} />
 			</Row>

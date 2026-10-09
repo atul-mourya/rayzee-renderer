@@ -1151,7 +1151,7 @@ less often as samples grow (`meterInterval`), and luminance is taken in the work
   manual exposure and follows it fully past 3; the view adds its difference from the room at `strength`. Averaging to grey
   is what made it milky: on five Livspace rooms, 4 views each, the view-to-view swing was −1 to +2.35 stops at 100 %,
   ±0.85 at 30 %; a sky 16× dimmer under a still camera is still corrected in full. A camera switch re-meters afresh.
-  `autoExposureMinExposure` / `MaxExposure` (default ±8 stops, Bevy's range; the app's Range) cap only where the exposure
+  `autoExposureMinExposure` / `MaxExposure` (default ±8 stops, Bevy's range) cap only where the exposure
   lands. ⚠️ Never clamp the view's reading before the blend: a scene needing +6 with a ±2 range read as "lit near its
   exposure" and was damped to +1.07 instead of landing on +2.
 - The exposure moves in stops (`adaptExposureEV`: speed in stops/s while far, exponential within 1.5 stops): `update()` every
@@ -1166,7 +1166,7 @@ less often as samples grow (`meterInterval`), and luminance is taken in the work
 ### Local exposure (`Stages/LocalExposure.js`, viewer; off in the engine, on in the app)
 Unreal Engine 5's: a bilateral grid of log luminance (cells of 128 px, 32 one-stop bins of exposed luminance) blended
 60/40 with a blurred 1/32 picture as the base layer; the base's contrast around middle grey is scaled
-(`highlightContrast`, `shadowContrast`; the app's Tame Highlights 40 % = 0.6) and detail kept (`detailStrength`). It
+(`highlightContrast`, `shadowContrast`; the app's Balance Highlights amount 40 % = 0.6) and detail kept (`detailStrength`). It
 changes only what is shown, as a per-pixel gain before exposure and the view, written three ways in that file — the
 compositor's TSL (`gainNode`, installed with `compositor.setDisplayGain`), WGSL for `PackedToneMapper`'s `gain` (every
 tone-mapped readback, the AI upscaler and the neural passes, through the core hook `_displayGain()`), and JavaScript
@@ -1175,7 +1175,9 @@ levels, the readback's usual bias. EXR stays scene-referred. The grid is built f
 the metering schedule: 0.05 / 0.13 / 0.5 ms at 540p / 1080p / 4K (Dawn, M-series); the compositor's gain +0.05 ms at
 1080p. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
 The app's `DEFAULT_STATE` turns it on (the engine stays off, so a farm keeps its look); `applyExposureToEngine()` in the
-store puts the panel's auto and local exposure on the engine at startup and after a session restores the panel.
+store puts the panel's auto and local exposure on the engine at startup and after a session restores the panel. The app
+shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.6 / 1), Exposure and Balance Highlights
+(Amount); metering, range, shadows and detail stay engine-only, so a session cannot carry a value no control shows.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction. The core reads glTF/GLB, `.hdr` and LDR

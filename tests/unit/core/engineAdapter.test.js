@@ -94,7 +94,7 @@ function createMockStores() {
 	return {
 		useStore: { getState: () => state, setState: vi.fn() },
 		useCameraStore: { getState: () => cameraState },
-		usePathTracerStore: { getState: () => ( { setCurrentAutoExposure: vi.fn(), setCurrentAvgLuminance: vi.fn() } ) },
+		usePathTracerStore: { getState: () => ( {} ) },
 		useAnimationStore: { getState: () => ( { setIsPlaying: vi.fn(), setIsPaused: vi.fn(), setClips: vi.fn() } ) },
 		_state: state,
 		_cameraState: cameraState,

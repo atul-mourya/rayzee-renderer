@@ -356,9 +356,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	showInspector: false,
 
-	// Auto-exposure computed values (updated in real-time by AutoExposure)
-	currentAutoExposure: null,
-	currentAvgLuminance: null,
 
 	// Simple setters
 	setMaxSamples: val => set( { maxSamples: val } ),
@@ -427,7 +424,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	// Auto-exposure setters
 	setAutoExposure: val => set( { autoExposure: val } ),
-	setAutoExposureMetering: val => set( { autoExposureMetering: val } ),
 	setAutoExposureStrength: val => set( { autoExposureStrength: val } ),
 	setLocalExposure: val => set( { localExposure: val } ),
 	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
@@ -435,8 +431,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
 	setAutoExposureAdaptSpeedBright: val => set( { autoExposureAdaptSpeedBright: val } ),
 	setAutoExposureAdaptSpeedDark: val => set( { autoExposureAdaptSpeedDark: val } ),
-	setCurrentAutoExposure: val => set( { currentAutoExposure: val } ),
-	setCurrentAvgLuminance: val => set( { currentAvgLuminance: val } ),
 
 	// Canvas dimension setters
 	setAspectRatioPreset: val => set( { aspectRatioPreset: val } ),
@@ -1056,12 +1050,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	handleAutoExposureMeteringChange: handleChange(
-		val => set( { autoExposureMetering: val } ),
-		( val, app ) => app.denoisingManager.setAutoExposureParams( { metering: val } ),
-		false
-	),
-
 	handleAutoExposureStrengthChange: handleChange(
 		val => set( { autoExposureStrength: Array.isArray( val ) ? val[ 0 ] : val } ),
 		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: Array.isArray( val ) ? val[ 0 ] : val } ),
@@ -1069,21 +1057,15 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	),
 
 	// Auto and local exposure keep no record in the engine's settings: the panel's values are put on it at
-	// startup and after a session restores the panel.
+	// startup and after a session restores the panel. Only what the panel shows — the rest stay the engine's.
 	applyExposureToEngine: () => {
 
 		const app = getApp();
 		if ( ! app ) return;
 		const s = get();
-		app.denoisingManager.setAutoExposureParams( {
-			metering: s.autoExposureMetering, strength: s.autoExposureStrength, keyValue: s.autoExposureKeyValue,
-			minExposure: s.autoExposureMinExposure, maxExposure: s.autoExposureMaxExposure,
-			adaptSpeedBright: s.autoExposureAdaptSpeedBright, adaptSpeedDark: s.autoExposureAdaptSpeedDark,
-		} );
+		app.denoisingManager.setAutoExposureParams( { strength: s.autoExposureStrength } );
 		app.denoisingManager.setAutoExposure( s.autoExposure );
-		app.setLocalExposureParams?.( {
-			highlightContrast: s.localExposureHighlightContrast, shadowContrast: s.localExposureShadowContrast, detailStrength: s.localExposureDetailStrength,
-		} );
+		app.setLocalExposureParams?.( { highlightContrast: s.localExposureHighlightContrast } );
 		app.setLocalExposure?.( s.localExposure );
 
 	},
@@ -1094,17 +1076,10 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	handleLocalExposureParamChange: ( key, value ) => {
-
-		set( { [ key ]: value } );
-		const param = { localExposureHighlightContrast: 'highlightContrast', localExposureShadowContrast: 'shadowContrast', localExposureDetailStrength: 'detailStrength' }[ key ];
-		getApp()?.setLocalExposureParams?.( { [ param ]: value } );
-
-	},
-
-	handleAutoExposureRangeChange: handleChange(
-		val => set( { autoExposureMinExposure: 2 ** - val, autoExposureMaxExposure: 2 ** val } ),
-		( val, app ) => app.denoisingManager.setAutoExposureParams( { minExposure: 2 ** - val, maxExposure: 2 ** val } ),
+	// Amount is how far bright areas come down: 1 − the engine's highlight contrast.
+	handleLocalExposureAmountChange: handleChange(
+		val => set( { localExposureHighlightContrast: 1 - val } ),
+		( val, app ) => app.setLocalExposureParams?.( { highlightContrast: 1 - val } ),
 		false
 	),
 
