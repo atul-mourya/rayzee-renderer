@@ -91,6 +91,7 @@ function makeApp( { ceiling = 6, waitAtFrame = null, finalDenoise = false, setti
 		_traceFrame: PathTracerApp.prototype._traceFrame,
 		_afterTrace: PathTracerApp.prototype._afterTrace,
 		_finalDenoise: PathTracerApp.prototype._finalDenoise,
+		_finishImage: PathTracerApp.prototype._finishImage,
 		_completionInfo: PathTracerApp.prototype._completionInfo,
 		_awaitReadback: PathTracerApp.prototype._awaitReadback,
 		renderUntilComplete: PathTracerApp.prototype.renderUntilComplete,

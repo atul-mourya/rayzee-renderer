@@ -1,705 +1,596 @@
-import { Fn, wgslFn, vec4, float, int, uint, ivec2, uvec2, uniform, If, max,
-	textureLoad, textureStore, workgroupBarrier, localId, workgroupId,
-	attributeArray, atomicAdd, atomicStore, atomicLoad, Loop } from 'three/tsl';
-import { RenderTarget, TextureNode, StorageTexture, ReadbackBuffer } from 'three/webgpu';
-import { FloatType, RGBAFormat, NearestFilter } from 'three';
+import { Fn, float, int, uint, ivec2, vec2, vec4, uniform, If, Loop, max, min, select, exp, log2, dot,
+	textureLoad, workgroupArray, workgroupBarrier, localId, workgroupId, attributeArray,
+	atomicAdd, atomicLoad, atomicStore, floatBitsToUint } from 'three/tsl';
+import { TextureNode, ReadbackBuffer } from 'three/webgpu';
+import { Matrix3, Vector2, Vector3 } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
-import { luminance } from '../TSL/Common.js';
+import { getWorkingMatrix } from '../Color/WorkingMatrix.js';
 
-// ── Histogram constants ────────────────────────────────────
 export const AUTO_EXPOSURE_DEFAULTS = {
 	autoExposure: false,
+	autoExposureMetering: 'center',
 	autoExposureKeyValue: 0.18,
 	autoExposureMinExposure: 0.1,
 	autoExposureMaxExposure: 20.0,
 	autoExposureAdaptSpeedBright: 3.0,
-	autoExposureAdaptSpeedDark: 0.5,
+	autoExposureAdaptSpeedDark: 1.0,
 };
 
-const NUM_BINS = 256;
-const MIN_LOG_LUM = - 8.0; // ln(~0.00034)  — very dark
-const MAX_LOG_LUM = 6.0; // ln(~403)     — bright specular
-const LOG_LUM_RANGE = MAX_LOG_LUM - MIN_LOG_LUM; // 14 nats ≈ 20 stops
-const BIN_WIDTH = LOG_LUM_RANGE / NUM_BINS;
-const WEIGHT_SCALE = 10000; // float → uint quantisation for metering weights
+export const METERING_MODES = [ 'average', 'center', 'spot' ];
 
-// ── Metering ────────────────────────────────────────────────
-// Centre-weighted Gaussian is the only mode — spot and uniform
-// are unnecessary given the percentile clipping already handles
-// extreme highlights/shadows. The centerWeight uniform controls
-// the Gaussian falloff steepness.
-
-// ── wgslFn helpers ──────────────────────────────────────────
+const GRID = 64; // metering tiles per axis at most
+const MIN_TILE = 8; // pixels per tile side at least, so a one-sample image averages enough of them
+const WG = 8;
+const BINS = 256;
+const LOG2_MIN = - 16;
+const LOG2_MAX = 12;
+const BIN_STOPS = ( LOG2_MAX - LOG2_MIN ) / BINS;
+// A tile below this has no light to meter: a black or transparent background is not part of the exposure.
+const BLACK = 2 ** - 24;
+const WEIGHT_SCALE = 65536;
+const MAX_TILE_READS = 256;
+const SPOT_FALLOFF = 128; // Gaussian over image heights: σ ≈ 6 % of the frame height
+const TRANSITION_STOPS = 1.5;
+const SETTLED_STOPS = 0.01;
+const MAX_STEP_SECONDS = 0.25;
+const REC709_Y = [ 0.2126, 0.7152, 0.0722 ];
 
 /**
- * Temporal adaptation: map luminance → target exposure, smooth asymmetrically.
- *
- * Returns vec4f(exposure, luminance, targetExposure, 1.0).
+ * One adaptation step in stops: constant speed while far, exponential near the target, never past it.
+ * @param {number} current - exposure, log2
+ * @param {number} target - exposure, log2
+ * @param {number} dt - seconds; Infinity lands on the target
+ * @param {number} speedBright - stops a second while the scene gets brighter (exposure falls)
+ * @param {number} speedDark - stops a second while it gets darker
  */
-const adaptExposure = /*@__PURE__*/ wgslFn( `
-	fn adaptExposure(
-		geoMean: f32,
-		prevExposure: f32,
-		keyValue: f32,
-		minExp: f32,
-		maxExp: f32,
-		speedBright: f32,
-		speedDark: f32,
-		dt: f32,
-		isFirstFrame: f32
-	) -> vec4f {
+export function adaptExposureEV( current, target, dt, speedBright, speedDark ) {
 
-		let targetExp = clamp( keyValue / max( geoMean, 0.001 ), minExp, maxExp );
-		var newExposure = targetExp;
+	const delta = target - current;
+	if ( delta === 0 || ! ( dt > 0 ) ) return current;
+	const speed = Math.max( delta < 0 ? speedBright : speedDark, 1e-3 );
+	if ( dt === Infinity ) return target;
+	const step = Math.min( speed * dt, Math.abs( delta ) * ( 1 - Math.exp( - speed * dt / TRANSITION_STOPS ) ) );
+	return current + Math.sign( delta ) * step;
 
-		// Temporal smoothing (skip on first frame)
-		if ( isFirstFrame < 0.5 ) {
+}
 
-			// Asymmetric speed: brighter scenes adapt faster
-			let speed = select( speedDark, speedBright, targetExp < prevExposure );
-			let alpha = 1.0 - exp( -dt * speed );
-			newExposure = mix( prevExposure, targetExp, alpha );
+// Luminance weights of the working space: Rec.709's Y row through the working matrix's inverse.
+function workingLuminance( matrix, out ) {
 
-		}
+	if ( ! matrix ) return out.fromArray( REC709_Y );
+	const inv = new Matrix3().set( ...matrix ).invert().elements; // column-major
+	return out.set(
+		REC709_Y[ 0 ] * inv[ 0 ] + REC709_Y[ 1 ] * inv[ 1 ] + REC709_Y[ 2 ] * inv[ 2 ],
+		REC709_Y[ 0 ] * inv[ 3 ] + REC709_Y[ 1 ] * inv[ 4 ] + REC709_Y[ 2 ] * inv[ 5 ],
+		REC709_Y[ 0 ] * inv[ 6 ] + REC709_Y[ 1 ] * inv[ 7 ] + REC709_Y[ 2 ] * inv[ 8 ],
+	);
 
-		return vec4f( newExposure, geoMean, targetExp, 1.0 );
+}
 
-	}
-` );
+// Fewer meterings as the image converges: its metered brightness settles like the noise does.
+const meterInterval = samples => samples < 16 ? 1 : samples < 64 ? 4 : 16;
 
 /**
- * WebGPU Auto-Exposure Stage — Histogram-Based with Centre-Weighted Metering
+ * Auto exposure: meters the accumulated image on the GPU and adapts on the CPU.
  *
- * GPU-based automatic exposure control with human eye-like adaptation.
- * Uses histogram-based luminance analysis with percentile clipping
- * and centre-weighted spatial metering for robust exposure estimation.
+ * Tiles are averaged in linear light, weighted by alpha, so a one-sample image meters like the
+ * converged one; the percentile-clipped mean of their log2 histogram is read back. The exposure moves
+ * in stops every loop frame (`update()`), in video time (`advance()`), or with each metering
+ * (`instant`), and is applied as 2^EV × the manual exposure.
  *
- * Algorithm:
- *   1. Downsample (compute): full res → 64×64 log-luminance grid
- *   2. Histogram (compute): build 256-bin weighted histogram from the 64×64
- *      grid. Single workgroup of 256 threads; each loads 16 texels, applies
- *      centre-weighted Gaussian, and scatters via atomicAdd into a storage buffer.
- *   3. Analyze (compute): single thread reads the histogram, computes CDF,
- *      extracts percentile-clipped weighted mean (ignoring bottom/top
- *      extremes), and writes the geometric mean to a 1×1 storage texture.
- *   4. Adaptation (compute): temporal smoothing with prev exposure; writes
- *      vec4(exposure, luminance, targetExposure, 1) into a 1-element buffer.
- *   5. Async readback via `renderer.getArrayBufferAsync(attr, ReadbackBuffer)`.
- *
- * Execution: ALWAYS
- *
- * Events listened:
- *   pipeline:reset              — soft reset (keeps the exposure, discards an in-flight readback)
- *   pipeline:lightingChanged    — a new model or environment: start the exposure history over
- *
- * Textures published:  (none — publishes state, not textures)
- * Textures read:       edgeFiltering:output > asvgf:output > pathtracer:color
- * State published:     autoexposure:value, autoexposure:avgLuminance
+ * Events listened: pipeline:reset, pipeline:lightingChanged (lands on the next metering)
+ * Textures read: pathtracer:color
+ * State published: autoexposure:value, autoexposure:avgLuminance
  */
 export class AutoExposure extends RenderStage {
 
 	constructor( renderer, options = {} ) {
 
-		super( 'AutoExposure', {
-			...options,
-			executionMode: StageExecutionMode.ALWAYS
-		} );
+		super( 'AutoExposure', { ...options, executionMode: StageExecutionMode.ALWAYS } );
 
 		this.renderer = renderer;
 
-		// Reduction constant
-		this.REDUCTION_SIZE = 64;
+		this.metering = options.metering ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMetering;
+		this.meteringPoint = new Vector2( 0.5, 0.5 ); // image uv, y down
+		this.keyValue = options.keyValue ?? AUTO_EXPOSURE_DEFAULTS.autoExposureKeyValue;
+		this.minExposure = options.minExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMinExposure;
+		this.maxExposure = options.maxExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMaxExposure;
+		this.adaptSpeedBright = options.adaptSpeedBright ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedBright;
+		this.adaptSpeedDark = options.adaptSpeedDark ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedDark;
+		this.centerWeight = options.centerWeight ?? 8.0;
+		this.instant = false;
+		/** Called when a metering moves the target, or a change needs a frame; the viewer wakes its loop. */
+		this.onChange = null;
 
-		// ── Adaptation uniforms ──────────────────────────
+		this._lowU = uniform( options.lowPercentile ?? 0.10 );
+		this._highU = uniform( options.highPercentile ?? 0.90 );
+		this._falloffU = uniform( new Vector2() );
+		this._pointU = uniform( new Vector2( 0.5, 0.5 ) );
+		this._lumWeightsU = uniform( new Vector3().fromArray( REC709_Y ) );
+		this._widthU = uniform( 1, 'int' );
+		this._heightU = uniform( 1, 'int' );
+		this._strideU = uniform( 1, 'int' );
+		this._gridXU = uniform( GRID, 'int' );
+		this._gridYU = uniform( GRID, 'int' );
+		this._inputNode = new TextureNode();
+		this._workingMatrix = undefined;
 
-		this.keyValueU = uniform( options.keyValue ?? AUTO_EXPOSURE_DEFAULTS.autoExposureKeyValue );
-		this.minExposureU = uniform( options.minExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMinExposure );
-		this.maxExposureU = uniform( options.maxExposure ?? AUTO_EXPOSURE_DEFAULTS.autoExposureMaxExposure );
-		this.adaptSpeedBrightU = uniform( options.adaptSpeedBright ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedBright );
-		this.adaptSpeedDarkU = uniform( options.adaptSpeedDark ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedDark );
-		this.epsilonU = uniform( options.epsilon ?? 0.0001 );
-		this.deltaTimeU = uniform( 1.0 / 60.0 );
-		this.isFirstFrameU = uniform( 1.0 ); // 1.0 = true
-		this.previousExposureU = uniform( options.initialExposure ?? 1.0 );
+		this._histogram = attributeArray( BINS, 'uint' ).toAtomic();
+		this._result = attributeArray( 1, 'vec4' );
+		this._readback = new ReadbackBuffer( 16 );
+		this._readback.name = 'AutoExposure';
+		this._kernels = [ this._buildTileKernel(), this._buildResolveKernel() ];
 
-		// ── Histogram & metering uniforms ────────────────
-
-		this.lowPercentileU = uniform( options.lowPercentile ?? 0.10 );
-		this.highPercentileU = uniform( options.highPercentile ?? 0.90 );
-		this.centerWeightU = uniform( options.centerWeight ?? 8.0 );
-
-		// ── Input resolution uniforms (for downsample compute) ──
-
-		this.inputResW = uniform( 1 );
-		this.inputResH = uniform( 1 );
-
-		// ── Input texture nodes (swap .value, no recompile) ──
-
-		this._inputTexNode = new TextureNode();
-		this._reductionReadTexNode = new TextureNode();
-
-		// ── CPU-side state ───────────────────────────────
-
-		this.currentExposure = options.initialExposure ?? 1.0;
-		this.currentLuminance = 0.18;
-		this.targetExposure = 1.0;
-		this.lastTime = performance.now();
-		this.isFirstFrame = true;
-		this._pendingReadback = false;
-		this._readbackGeneration = 0;
-
-		// ── Render targets & storage textures ────────────
-
-		this._initRenderTargets();
-		this._buildCompute();
-
-	}
-
-	_initRenderTargets() {
-
-		const rtOpts = {
-			type: FloatType,
-			format: RGBAFormat,
-			minFilter: NearestFilter,
-			magFilter: NearestFilter,
-			depthBuffer: false,
-			stencilBuffer: false
-		};
-
-		// Downsample RenderTarget (64×64) — copy destination from compute StorageTexture
-		this._downsampleTarget = new RenderTarget( this.REDUCTION_SIZE, this.REDUCTION_SIZE, rtOpts );
-
-		// Downsample StorageTexture (64×64) — compute writes here
-		this._downsampleStorageTex = new StorageTexture( this.REDUCTION_SIZE, this.REDUCTION_SIZE );
-		this._downsampleStorageTex.type = FloatType;
-		this._downsampleStorageTex.format = RGBAFormat;
-		this._downsampleStorageTex.minFilter = NearestFilter;
-		this._downsampleStorageTex.magFilter = NearestFilter;
-
-		// 1×1 StorageTexture for histogram analysis output
-		this._reductionStorageTex = new StorageTexture( 1, 1 );
-		this._reductionStorageTex.type = FloatType;
-		this._reductionStorageTex.format = RGBAFormat;
-		this._reductionStorageTex.minFilter = NearestFilter;
-		this._reductionStorageTex.magFilter = NearestFilter;
-
-		// 1×1 RenderTarget — readable copy of analysis output (cross-dispatch reads
-		// from StorageTexture return zeros — must copy to RenderTarget first)
-		this._reductionReadTarget = new RenderTarget( 1, 1, rtOpts );
-
-		// Adaptation result — 1×vec4 storage buffer attribute. Compute writes
-		// vec4(exposure, luminance, targetExposure, 1) here; CPU reads via
-		// getArrayBufferAsync + a pooled ReadbackBuffer (16 bytes).
-		this._adaptationResult = attributeArray( 1, 'vec4' );
-		this._readbackBuffer = new ReadbackBuffer( 16 );
-		this._readbackBuffer.name = 'AutoExposureAdaptation';
-
-		// ── Histogram storage buffer (atomic uint, 256 bins) ─────
-		this._histogramBuffer = attributeArray( NUM_BINS, 'uint' ).toAtomic();
+		this._compensation = 1;
+		this._exposureEV = 0;
+		this._targetEV = null;
+		this._meteredLog2 = null;
+		this._snap = true;
+		this._lastUpdate = null;
+		this._emittedEV = null;
+		this._pending = null;
+		this._generation = 0;
+		this._restarts = 0;
+		this._meteredAt = { restarts: - 1, samples: - 1 };
+		this._stale = false;
+		this._disposed = false;
 
 	}
 
-	// ──────────────────────────────────────────────────
-	// TSL shader builders
-	// ──────────────────────────────────────────────────
+	// ── Kernels ──────────────────────────────────────────────
 
-	_buildCompute() {
+	_buildTileKernel() {
 
-		this._buildDownsampleCompute();
-		this._buildHistogramCompute();
-		this._buildHistogramAnalyzeCompute();
-		this._buildAdaptationCompute();
+		const input = this._inputNode;
+		const hist = this._histogram;
+		const width = this._widthU, height = this._heightU, stride = this._strideU, gridX = this._gridXU, gridY = this._gridYU;
+		const lumWeights = this._lumWeightsU, falloff = this._falloffU, point = this._pointU;
 
-	}
+		return Fn( () => {
 
-	/**
-	 * Downsample (compute): full resolution → 64×64
-	 *
-	 * Dispatch: [8, 8, 1] workgroups of [8, 8, 1] = 64×64 threads total.
-	 * Each thread (one output pixel) samples a NxN grid from the input texture.
-	 *
-	 * Output: R = Σ log(L + ε), G = valid pixel count
-	 */
-	_buildDownsampleCompute() {
+			const lid = localId.y.mul( uint( WG ) ).add( localId.x );
+			const tx = int( workgroupId.x ), ty = int( workgroupId.y );
+			const x0 = tx.mul( width ).div( gridX ).toVar(), x1 = tx.add( int( 1 ) ).mul( width ).div( gridX ).toVar();
+			const y0 = ty.mul( height ).div( gridY ).toVar(), y1 = ty.add( int( 1 ) ).mul( height ).div( gridY ).toVar();
+			const step = stride.mul( int( WG ) );
 
-		const inputTex = this._inputTexNode;
-		const outputTex = this._downsampleStorageTex;
-		const epsilon = this.epsilonU;
-		const resW = this.inputResW;
-		const resH = this.inputResH;
+			const sum = float( 0 ).toVar();
+			const cover = float( 0 ).toVar();
 
-		const SAMPLES = 4;
-		const OUT_SIZE = 64;
-		const WG_SIZE = 8;
+			// Whole 8×8 blocks, every stride-th: skipping single pixels would still fetch their memory.
+			Loop( { start: y0.add( int( localId.y ) ), end: y1, type: 'int', condition: '<', update: step, name: 'py' }, ( { py } ) => {
 
-		const computeFn = Fn( () => {
+				Loop( { start: x0.add( int( localId.x ) ), end: x1, type: 'int', condition: '<', update: step, name: 'px' }, ( { px } ) => {
 
-			// Global thread ID → output pixel coordinate
-			const gx = int( workgroupId.x ).mul( WG_SIZE ).add( int( localId.x ) );
-			const gy = int( workgroupId.y ).mul( WG_SIZE ).add( int( localId.y ) );
+					const c = textureLoad( input, ivec2( px, py ) );
+					const lum = dot( c.xyz, lumWeights ).toVar();
+					// NaN or Inf would poison the whole tile.
+					const finite = floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) );
+					const alpha = c.w.clamp( 0.0, 1.0 );
+					sum.addAssign( select( finite, lum.clamp( 0.0, 1e6 ), float( 0 ) ).mul( alpha ) );
+					cover.addAssign( alpha );
 
-			// Block size in input pixels: how many input pixels each output pixel covers
-			const blockW = resW.div( float( OUT_SIZE ) );
-			const blockH = resH.div( float( OUT_SIZE ) );
+				} );
 
-			// Block origin in input pixel space
-			const blockOriginX = float( gx ).mul( blockW );
-			const blockOriginY = float( gy ).mul( blockH );
+			} );
 
-			const logLumSum = float( 0.0 ).toVar();
-			const validCount = float( 0.0 ).toVar();
+			const sharedSum = workgroupArray( 'float', WG * WG );
+			const sharedCover = workgroupArray( 'float', WG * WG );
+			sharedSum.element( lid ).assign( sum );
+			sharedCover.element( lid ).assign( cover );
+			workgroupBarrier();
 
-			// Sample a SAMPLES×SAMPLES grid within the block
-			for ( let sy = 0; sy < SAMPLES; sy ++ ) {
+			for ( let s = ( WG * WG ) >> 1; s > 0; s >>= 1 ) {
 
-				for ( let sx = 0; sx < SAMPLES; sx ++ ) {
+				If( lid.lessThan( uint( s ) ), () => {
 
-					// Offset within block: (sx+0.5)/SAMPLES normalised to block size
-					const inputX = int( blockOriginX.add( float( ( sx + 0.5 ) / SAMPLES ).mul( blockW ) ) );
-					const inputY = int( blockOriginY.add( float( ( sy + 0.5 ) / SAMPLES ).mul( blockH ) ) );
+					sharedSum.element( lid ).addAssign( sharedSum.element( lid.add( uint( s ) ) ) );
+					sharedCover.element( lid ).addAssign( sharedCover.element( lid.add( uint( s ) ) ) );
 
-					const sample = textureLoad( inputTex, ivec2( inputX, inputY ) );
-					const lum = luminance( sample.xyz );
+				} );
+				workgroupBarrier();
 
-					If( lum.greaterThan( epsilon ), () => {
+			}
 
-						logLumSum.addAssign( lum.add( epsilon ).log() );
-						validCount.addAssign( 1.0 );
+			If( lid.equal( uint( 0 ) ), () => {
+
+				const total = sharedSum.element( uint( 0 ) ).toVar();
+				const covered = sharedCover.element( uint( 0 ) ).toVar();
+				const readsAlong = ( span ) => span.div( step ).mul( int( WG ) ).add( min( span.mod( step ), int( WG ) ) );
+				const reads = float( readsAlong( x1.sub( x0 ) ).mul( readsAlong( y1.sub( y0 ) ) ) );
+
+				If( covered.greaterThan( 0.0 ).and( total.greaterThan( covered.mul( BLACK ) ) ), () => {
+
+					const level = log2( total.div( covered ) );
+					const bin = uint( level.sub( LOG2_MIN ).div( BIN_STOPS ).floor().clamp( 0.0, BINS - 1 ) );
+					const uv = vec2( float( x0.add( x1 ) ).div( float( width ) ), float( y0.add( y1 ) ).div( float( height ) ) ).mul( 0.5 );
+					const d = uv.sub( point );
+					const weight = exp( dot( d.mul( d ), falloff ).negate() ).mul( covered.div( max( reads, 1.0 ) ) );
+					const q = uint( weight.mul( WEIGHT_SCALE ).add( 0.5 ) );
+					If( q.greaterThan( uint( 0 ) ), () => {
+
+						atomicAdd( hist.element( bin ), q );
 
 					} );
 
-				}
+				} );
 
-			}
+			} );
 
-			textureStore(
-				outputTex,
-				uvec2( uint( gx ), uint( gy ) ),
-				vec4( logLumSum, validCount, 0.0, 1.0 )
-			).toWriteOnly();
-
-		} );
-
-		this._downsampleComputeNode = computeFn().compute(
-			[ OUT_SIZE / WG_SIZE, OUT_SIZE / WG_SIZE, 1 ],
-			[ WG_SIZE, WG_SIZE, 1 ]
-		);
+		} )().compute( [ GRID, GRID, 1 ], [ WG, WG, 1 ] );
 
 	}
 
-	/**
-	 * Histogram Build (compute): 64×64 downsample → 256-bin weighted histogram
-	 *
-	 * Single workgroup of 256 threads. Each thread processes 16 texels from
-	 * the downsample grid, applies spatial metering weight, and atomically
-	 * scatters into the histogram storage buffer.
-	 *
-	 * Phase 1: Clear all 256 bins (one per thread)
-	 * Phase 2: Build histogram with metering-weighted atomic scatter
-	 */
-	_buildHistogramCompute() {
+	_buildResolveKernel() {
 
-		const downsampleTex = this._downsampleTarget.texture;
-		const histogram = this._histogramBuffer;
-		const centerWeight = this.centerWeightU;
+		const hist = this._histogram;
+		const result = this._result;
+		const low = this._lowU, high = this._highU;
 
-		const WGSIZE = 256;
-		const TEXELS_PER_THREAD = 16; // 4096 / 256
-		const TEX_SIZE = 64;
+		return Fn( () => {
 
-		const computeFn = Fn( () => {
+			const t = localId.x;
+			const weight = float( atomicLoad( hist.element( t ) ) ).toVar();
+			atomicStore( hist.element( t ), uint( 0 ) );
 
-			const tid = localId.x;
-
-			// ── Phase 1: Clear histogram ──────────────────
-			atomicStore( histogram.element( tid ), uint( 0 ) );
+			const scan = workgroupArray( 'float', BINS );
+			const levels = workgroupArray( 'float', BINS );
+			scan.element( t ).assign( weight );
 			workgroupBarrier();
 
-			// ── Phase 2: Build histogram ──────────────────
-			for ( let t = 0; t < TEXELS_PER_THREAD; t ++ ) {
+			for ( let offset = 1; offset < BINS; offset <<= 1 ) {
 
-				const linearIdx = tid.mul( TEXELS_PER_THREAD ).add( t );
-				const px = linearIdx.mod( TEX_SIZE );
-				const py = linearIdx.div( TEX_SIZE );
+				const v = scan.element( t ).toVar();
+				If( t.greaterThanEqual( uint( offset ) ), () => {
 
-				const data = textureLoad( downsampleTex, ivec2( int( px ), int( py ) ) );
-				const logLumSum = data.x;
-				const validCount = data.y;
-
-				If( validCount.greaterThan( 0.0 ), () => {
-
-					// Per-cell average log-luminance (natural log, matches downsample output)
-					const avgLogLum = logLumSum.div( validCount );
-
-					// Map to histogram bin [0, NUM_BINS-1]
-					const normalized = avgLogLum.sub( float( MIN_LOG_LUM ) ).div( float( LOG_LUM_RANGE ) );
-					const bin = uint( normalized.mul( float( NUM_BINS ) ).floor().clamp( 0.0, float( NUM_BINS - 1 ) ) );
-
-					// ── Centre-weighted metering ──────────
-					const uvx = float( px ).add( 0.5 ).div( float( TEX_SIZE ) );
-					const uvy = float( py ).add( 0.5 ).div( float( TEX_SIZE ) );
-					const dx = uvx.sub( 0.5 );
-					const dy = uvy.sub( 0.5 );
-					const dist2 = dx.mul( dx ).add( dy.mul( dy ) );
-
-					// Gaussian falloff: 1.0 at centre, ~0.02 at corners
-					const weight = dist2.mul( centerWeight ).negate().exp();
-
-					const weightUint = uint( weight.mul( float( WEIGHT_SCALE ) ) );
-					atomicAdd( histogram.element( bin ), weightUint );
+					v.addAssign( scan.element( t.sub( uint( offset ) ) ) );
 
 				} );
+				workgroupBarrier();
+				scan.element( t ).assign( v );
+				workgroupBarrier();
 
 			}
 
-		} );
+			const total = scan.element( uint( BINS - 1 ) ).toVar();
+			const above = scan.element( t ).toVar();
+			workgroupBarrier();
 
-		this._histogramComputeNode = computeFn().compute( [ 1, 1, 1 ], [ WGSIZE, 1, 1 ] );
+			// Only the bin's share inside the percentiles: a bin crossing one moves the mean smoothly.
+			const part = max( min( above, total.mul( high ) ).sub( max( above.sub( weight ), total.mul( low ) ) ), 0.0 );
+			scan.element( t ).assign( part );
+			levels.element( t ).assign( part.mul( float( t ).add( 0.5 ).mul( BIN_STOPS ).add( LOG2_MIN ) ) );
+			workgroupBarrier();
 
-	}
+			for ( let s = BINS >> 1; s > 0; s >>= 1 ) {
 
-	/**
-	 * Histogram Analysis (compute): extract percentile-clipped geometric mean
-	 *
-	 * Single thread. Reads the 256-bin histogram, computes the CDF, clips
-	 * the bottom and top percentiles, and computes the weighted geometric
-	 * mean of luminance within the accepted range.
-	 *
-	 * Output: StorageTexture(1×1) = vec4(geometricMean, totalCount, avgLogLum, 1)
-	 */
-	_buildHistogramAnalyzeCompute() {
+				If( t.lessThan( uint( s ) ), () => {
 
-		const histogram = this._histogramBuffer;
-		const outputTex = this._reductionStorageTex;
-		const lowPercentile = this.lowPercentileU;
-		const highPercentile = this.highPercentileU;
-
-		const computeFn = Fn( () => {
-
-			// ── Pass 1: compute total weight ──────────────
-			const totalWeight = float( 0.0 ).toVar();
-
-			Loop( NUM_BINS, ( { i } ) => {
-
-				totalWeight.addAssign( float( atomicLoad( histogram.element( i ) ) ) );
-
-			} );
-
-			// Percentile thresholds (in quantised weight units)
-			const lowThreshold = totalWeight.mul( lowPercentile );
-			const highThreshold = totalWeight.mul( highPercentile );
-
-			// ── Pass 2: percentile-clipped weighted mean ──
-			const cumWeight = float( 0.0 ).toVar();
-			const logLumAccum = float( 0.0 ).toVar();
-			const validWeight = float( 0.0 ).toVar();
-			const prevCum = float( 0.0 ).toVar();
-
-			Loop( NUM_BINS, ( { i } ) => {
-
-				const binWeight = float( atomicLoad( histogram.element( i ) ) );
-				prevCum.assign( cumWeight );
-				cumWeight.addAssign( binWeight );
-
-				// Include bin if it overlaps the [lowThreshold, highThreshold] range
-				If( prevCum.lessThan( highThreshold ).and( cumWeight.greaterThan( lowThreshold ) ), () => {
-
-					// Bin centre in log-luminance space
-					const binCenter = float( MIN_LOG_LUM ).add(
-						float( i ).add( 0.5 ).mul( float( BIN_WIDTH ) )
-					);
-					logLumAccum.addAssign( binCenter.mul( binWeight ) );
-					validWeight.addAssign( binWeight );
+					scan.element( t ).addAssign( scan.element( t.add( uint( s ) ) ) );
+					levels.element( t ).addAssign( levels.element( t.add( uint( s ) ) ) );
 
 				} );
+				workgroupBarrier();
+
+			}
+
+			If( t.equal( uint( 0 ) ), () => {
+
+				const kept = scan.element( uint( 0 ) );
+				result.element( uint( 0 ) ).assign( vec4( levels.element( uint( 0 ) ).div( max( kept, 1e-6 ) ), total.div( WEIGHT_SCALE ), kept.div( WEIGHT_SCALE ), 1.0 ) );
 
 			} );
 
-			const safeWeight = max( validWeight, float( 1.0 ) );
-			const avgLogLum = logLumAccum.div( safeWeight );
-			const geometricMean = avgLogLum.exp();
-
-			textureStore(
-				outputTex,
-				uvec2( uint( 0 ), uint( 0 ) ),
-				vec4( geometricMean, totalWeight, avgLogLum, 1.0 )
-			).toWriteOnly();
-
-		} );
-
-		this._histogramAnalyzeNode = computeFn().compute( 1, [ 1, 1, 1 ] );
+		} )().compute( [ 1, 1, 1 ], [ BINS, 1, 1 ] );
 
 	}
 
-	/**
-	 * Adaptation (compute): temporal smoothing
-	 *
-	 * Single-thread compute dispatch [1, 1, 1], workgroup [1, 1, 1].
-	 * Reads geometric mean from analysis RenderTarget, applies asymmetric
-	 * temporal smoothing using the previous-exposure uniform, and writes
-	 * vec4(exposure, luminance, targetExposure, 1) into a 1-element storage
-	 * buffer which the CPU reads via getArrayBufferAsync + ReadbackBuffer.
-	 */
-	_buildAdaptationCompute() {
-
-		const reductionTex = this._reductionReadTexNode;
-		const resultBuf = this._adaptationResult;
-		const keyValue = this.keyValueU;
-		const minExp = this.minExposureU;
-		const maxExp = this.maxExposureU;
-		const speedBright = this.adaptSpeedBrightU;
-		const speedDark = this.adaptSpeedDarkU;
-		const dt = this.deltaTimeU;
-		const isFirst = this.isFirstFrameU;
-		const prevExposure = this.previousExposureU;
-
-		const computeFn = Fn( () => {
-
-			// Read geometric mean from histogram analysis result (1×1 RenderTarget)
-			const geoMean = textureLoad( reductionTex, ivec2( int( 0 ), int( 0 ) ) ).x;
-
-			const result = adaptExposure(
-				geoMean, prevExposure, keyValue,
-				minExp, maxExp, speedBright, speedDark,
-				dt, isFirst
-			);
-
-			resultBuf.element( uint( 0 ) ).assign( result );
-
-		} );
-
-		this._adaptationComputeNode = computeFn().compute( 1, [ 1, 1, 1 ] );
-
-	}
-
-	// ──────────────────────────────────────────────────
-	// Event listeners
-	// ──────────────────────────────────────────────────
+	// ── Pipeline ─────────────────────────────────────────────
 
 	setupEventListeners() {
 
-		this.on( 'pipeline:reset', () => this.reset() );
+		this.on( 'pipeline:reset', () => this._restarts ++ );
 		this.on( 'pipeline:lightingChanged', () => this.resetHistory() );
 
 	}
-
-	// ──────────────────────────────────────────────────
-	// Render
-	// ──────────────────────────────────────────────────
 
 	render( context ) {
 
 		if ( ! this.enabled ) return;
 
-		// Resolve input texture (fallback chain)
-		const inputTex = context.getTexture( 'edgeFiltering:output' )
-			|| context.getTexture( 'asvgf:output' )
-			|| context.getTexture( 'pathtracer:color' );
+		if ( ! this._pending ) {
 
-		if ( ! inputTex ) return;
-
-		// Delta time
-		const now = performance.now();
-		const dt = Math.min( ( now - this.lastTime ) / 1000, 0.1 );
-		this.lastTime = now;
-		this.deltaTimeU.value = this.isFirstFrame ? 1.0 : dt;
-		this.isFirstFrameU.value = this.isFirstFrame ? 1.0 : 0.0;
-		this.previousExposureU.value = this.currentExposure;
-
-		// Update input resolution uniforms for downsample compute
-		this.inputResW.value = inputTex.image?.width || 1;
-		this.inputResH.value = inputTex.image?.height || 1;
-
-		// ── Pass 1: Downsample full res → 64×64 (compute) ──
-
-		this._inputTexNode.value = inputTex;
-		this.renderer.compute( this._downsampleComputeNode );
-		this.renderer.copyTextureToTexture( this._downsampleStorageTex, this._downsampleTarget.texture );
-
-		// ── Pass 2: Histogram build (compute) ───────────────
-
-		this.renderer.compute( this._histogramComputeNode );
-
-		// ── Pass 3: Histogram analysis → 1×1 result ─────────
-
-		this.renderer.compute( this._histogramAnalyzeNode );
-		this.renderer.copyTextureToTexture( this._reductionStorageTex, this._reductionReadTarget.texture );
-
-		// ── Pass 4: Temporal adaptation (compute) ───────────
-
-		this._reductionReadTexNode.value = this._reductionReadTarget.texture;
-		this.renderer.compute( this._adaptationComputeNode );
-
-		// ── Async readback via pooled ReadbackBuffer ─────
-		// getArrayBufferAsync reuses the ReadbackBuffer's internal staging
-		// GPUBuffer across frames. ReadbackBuffer.release() must be called
-		// before it can be reused — the _pendingReadback flag gates reentry.
-
-		if ( ! this._pendingReadback ) {
-
-			this._pendingReadback = true;
-			const generation = this._readbackGeneration;
-
-			this.renderer.getArrayBufferAsync(
-				this._adaptationResult.value, this._readbackBuffer
-			).then( ( readback ) => {
-
-				// Copy the 4 floats out of the mapped buffer before release(),
-				// because release() nulls readback.buffer and unmaps the GPU buffer.
-				const data = readback && readback.buffer
-					? new Float32Array( readback.buffer.slice( 0 ) )
-					: null;
-				this._readbackBuffer.release();
-				this._pendingReadback = false;
-
-				// Discard stale readback from before a reset
-				if ( data && generation === this._readbackGeneration ) {
-
-					this._applyReadback( data );
-
-				}
-
-			} ).catch( () => {
-
-				try {
-
-					this._readbackBuffer.release();
-
-				} catch { /* buffer may not be mapped on error */ }
-
-				this._pendingReadback = false;
-
-			} );
+			const samples = context.getState( 'pathtracer:samples' ) ?? 0;
+			const last = this._meteredAt;
+			const due = this._stale || this._targetEV === null || last.restarts !== this._restarts || samples - last.samples >= meterInterval( samples );
+			if ( due ) this._meter( context, samples );
 
 		}
 
-		// ── Publish state ────────────────────────────────
+		context.setState( 'autoexposure:value', this.renderer.toneMappingExposure );
+		context.setState( 'autoexposure:avgLuminance', this.luminance );
 
-		context.setState( 'autoexposure:value', this.currentExposure );
-		context.setState( 'autoexposure:avgLuminance', this.currentLuminance );
+	}
 
-		this.emit( 'autoexposure:updated', {
-			exposure: this.currentExposure,
-			luminance: this.currentLuminance,
-			targetExposure: this.targetExposure
+	/**
+	 * Meters the current image once, after any metering in flight, and resolves to the metered
+	 * luminance (log2), or null when nothing could be metered. Does not move the exposure.
+	 */
+	async meter( context = this.context ) {
+
+		while ( this._pending ) await this._pending;
+		const done = this._meter( context, context?.getState( 'pathtracer:samples' ) ?? 0 );
+		return done ? ( await done ) : null;
+
+	}
+
+	_meter( context, samples ) {
+
+		const input = context?.getTexture( 'pathtracer:color' );
+		const width = input?.image?.width | 0, height = input?.image?.height | 0;
+		if ( ! input || width < 1 || height < 1 || this._disposed ) return null;
+
+		this._meteredAt.restarts = this._restarts;
+		this._meteredAt.samples = samples;
+		this._stale = false;
+
+		const matrix = getWorkingMatrix();
+		if ( matrix !== this._workingMatrix ) {
+
+			this._workingMatrix = matrix;
+			workingLuminance( matrix, this._lumWeightsU.value );
+
+		}
+
+		const gridX = Math.min( GRID, Math.max( 1, Math.floor( width / MIN_TILE ) ) );
+		const gridY = Math.min( GRID, Math.max( 1, Math.floor( height / MIN_TILE ) ) );
+		const tileReads = ( width / gridX ) * ( height / gridY );
+		this._gridXU.value = gridX;
+		this._gridYU.value = gridY;
+		this._kernels[ 0 ].dispatchSize = [ gridX, gridY, 1 ];
+		this._strideU.value = Math.max( 1, Math.round( Math.sqrt( tileReads / MAX_TILE_READS ) ) );
+		this._widthU.value = width;
+		this._heightU.value = height;
+		this._updateMeteringPattern( width / height );
+		this._inputNode.value = input;
+
+		this.renderer.compute( this._kernels );
+
+		const generation = this._generation;
+		const pending = this.renderer.getArrayBufferAsync( this._result.value, this._readback ).then( ( readback ) => {
+
+			const data = readback?.buffer ? new Float32Array( readback.buffer.slice( 0, 16 ) ) : null;
+			this._readback.release();
+			return data && generation === this._generation && ! this._disposed ? this._applyMetering( data ) : null;
+
+		}, () => {
+
+			if ( ! this._disposed && this._readback._mapped ) this._readback.release();
+			return null;
+
+		} ).finally( () => {
+
+			if ( this._pending === pending ) this._pending = null;
+
 		} );
 
-		this.isFirstFrame = false;
+		this._pending = pending;
+		return pending;
+
+	}
+
+	_updateMeteringPattern( aspect ) {
+
+		const falloff = this._falloffU.value;
+		const point = this._pointU.value;
+
+		if ( this.metering === 'average' ) {
+
+			falloff.set( 0, 0 );
+
+		} else if ( this.metering === 'spot' ) {
+
+			falloff.set( SPOT_FALLOFF * aspect * aspect, SPOT_FALLOFF );
+			point.copy( this.meteringPoint );
+			return;
+
+		} else {
+
+			falloff.set( this.centerWeight, this.centerWeight );
+
+		}
+
+		point.set( 0.5, 0.5 );
+
+	}
+
+	_applyMetering( data ) {
+
+		const [ level, total, kept ] = data;
+		if ( ! this.enabled || ! ( total > 0 && kept > 0 ) || ! Number.isFinite( level ) ) return null;
+
+		this._meteredLog2 = level;
+		const target = Math.min( Math.max( Math.log2( this.keyValue ) - level, Math.log2( this.minExposure ) ), Math.log2( this.maxExposure ) );
+		const moved = this._targetEV === null || Math.abs( target - this._targetEV ) > SETTLED_STOPS;
+		this._targetEV = target;
+		if ( moved || this.settling ) this.onChange?.();
+		return level;
+
+	}
+
+	// ── Adaptation ───────────────────────────────────────────
+
+	/**
+	 * Steps the exposure by the wall-clock time since the last call. Returns whether it changed.
+	 * @param {number} [now=performance.now()]
+	 */
+	update( now = performance.now() ) {
+
+		const dt = this._lastUpdate === null ? 0 : Math.min( ( now - this._lastUpdate ) / 1000, MAX_STEP_SECONDS );
+		const changed = this.advance( dt );
+		// Settled, the loop may sleep: the time until the next metering is not adaptation time.
+		this._lastUpdate = this.settling ? now : null;
+		return changed;
 
 	}
 
 	/**
-	 * Process async readback data from 1×1 adaptation target.
+	 * Steps the exposure by `seconds` towards the last metering; Infinity lands on it. Returns whether it changed.
+	 * @param {number} seconds
 	 */
-	_applyReadback( data ) {
+	advance( seconds ) {
 
-		if ( ! this.enabled || ! data || data.length < 3 ) return;
+		if ( ! this.enabled || this._targetEV === null ) return false;
 
-		let exposure = data[ 0 ];
-		let luminance = data[ 1 ];
-		let targetExp = data[ 2 ];
+		const before = this._exposureEV;
+		if ( this._snap || this.instant ) {
 
-		// Validate
-		if ( ! isFinite( exposure ) || exposure <= 0 ) exposure = 1.0;
-		if ( ! isFinite( luminance ) || luminance <= 0 ) luminance = 0.18;
-		if ( ! isFinite( targetExp ) || targetExp <= 0 ) targetExp = exposure;
+			this._exposureEV = this._targetEV;
+			this._snap = false;
 
-		this.currentExposure = exposure;
-		this.currentLuminance = luminance;
-		this.targetExposure = targetExp;
+		} else {
 
-		// Apply to renderer
-		this.renderer.toneMappingExposure = exposure;
+			this._exposureEV = adaptExposureEV( before, this._targetEV, seconds, this.adaptSpeedBright, this.adaptSpeedDark );
+			if ( Math.abs( this._targetEV - this._exposureEV ) <= SETTLED_STOPS ) this._exposureEV = this._targetEV;
+
+		}
+
+		if ( this._exposureEV === before ) return false;
+		this._apply();
+		return true;
 
 	}
 
-	// ──────────────────────────────────────────────────
-	// Lifecycle
-	// ──────────────────────────────────────────────────
+	/** Whether the exposure is still on its way to the last metering. */
+	get settling() {
 
-	/**
-	 * Soft reset: preserve exposure state, let temporal smoothing adapt.
-	 * Called on pipeline:reset (camera moves, parameter changes).
-	 */
-	reset() {
-
-		this.lastTime = performance.now();
-		// Bump generation so any in-flight readback is discarded
-		this._readbackGeneration ++;
-		this._pendingReadback = false;
+		return this.enabled && this._targetEV !== null && ( this._snap || Math.abs( this._targetEV - this._exposureEV ) > 0 );
 
 	}
 
+	/** Whether the image on screen should be metered again though no new samples arrive. */
+	get wantsMetering() {
+
+		return this.enabled && ! this._pending && ( this._stale || this._targetEV === null );
+
+	}
+
+	_apply() {
+
+		this.renderer.toneMappingExposure = this.enabled ? 2 ** this._exposureEV * this._compensation : this._compensation;
+		if ( ! this.enabled || ( this._emittedEV !== null && Math.abs( this._exposureEV - this._emittedEV ) < 0.005 ) ) return;
+
+		this._emittedEV = this._exposureEV;
+		this.emit( 'autoexposure:updated', {
+			exposure: this.renderer.toneMappingExposure,
+			autoExposure: this.getExposure(),
+			targetExposure: this._targetEV === null ? null : 2 ** this._targetEV,
+			luminance: this.luminance,
+		} );
+
+	}
+
+	// ── State ────────────────────────────────────────────────
+
 	/**
-	 * Hard reset: wipe exposure history for a clean start.
-	 * Called on scene/environment changes where previous exposure is meaningless.
+	 * @param {boolean} enabled
+	 * @param {number} [compensation] - the manual exposure, multiplied in while on and applied alone while off
 	 */
+	setEnabled( enabled, compensation = this._compensation ) {
+
+		this._compensation = compensation;
+		if ( enabled === this.enabled ) {
+
+			this._apply();
+			return;
+
+		}
+
+		this.enabled = enabled;
+		this._emittedEV = null;
+		if ( enabled ) this.resetHistory();
+		this._apply();
+		this.onChange?.();
+
+	}
+
+	/** The manual exposure: a bias in stops on top of the metered exposure while auto exposure is on. */
+	setCompensation( value ) {
+
+		this._compensation = value;
+		this._apply();
+
+	}
+
+	/** Forget the exposure history: the next metering is applied at once. */
 	resetHistory() {
 
-		this.isFirstFrame = true;
-		this.currentExposure = 1.0;
-		this.currentLuminance = 0.18;
-		this.targetExposure = 1.0;
-		this.lastTime = performance.now();
-		this._readbackGeneration ++;
-		this._pendingReadback = false;
+		this._generation ++;
+		this._targetEV = null;
+		this._meteredLog2 = null;
+		this._snap = true;
 
 	}
 
-	setSize( /* width, height */ ) {
+	/** Lands on the last metering now. */
+	snap() {
 
-		// Downsample and histogram targets are fixed-size (64×64 → 256 bins → 1×1)
-		// No resizing needed — the downsample compute shader reads input
-		// resolution from uniforms and computes block sizes dynamically.
-
-	}
-
-	setExposure( value ) {
-
-		this.currentExposure = value;
-		this.previousExposureU.value = value;
-		this.renderer.toneMappingExposure = value;
+		this._snap = true;
+		this.advance( 0 );
 
 	}
 
+	/** The metered exposure, without compensation. */
 	getExposure() {
 
-		return this.currentExposure;
+		return 2 ** this._exposureEV;
+
+	}
+
+	/** Geometric mean luminance of the last metering, or null. */
+	get luminance() {
+
+		return this._meteredLog2 === null ? null : 2 ** this._meteredLog2;
 
 	}
 
 	getLuminance() {
 
-		return this.currentLuminance;
+		return this.luminance;
 
 	}
 
 	updateParameters( params ) {
 
-		if ( params.keyValue !== undefined ) this.keyValueU.value = params.keyValue;
-		if ( params.minExposure !== undefined ) this.minExposureU.value = params.minExposure;
-		if ( params.maxExposure !== undefined ) this.maxExposureU.value = params.maxExposure;
-		if ( params.adaptSpeedBright !== undefined ) this.adaptSpeedBrightU.value = params.adaptSpeedBright;
-		if ( params.adaptSpeedDark !== undefined ) this.adaptSpeedDarkU.value = params.adaptSpeedDark;
-		if ( params.lowPercentile !== undefined ) this.lowPercentileU.value = params.lowPercentile;
-		if ( params.highPercentile !== undefined ) this.highPercentileU.value = params.highPercentile;
-		if ( params.centerWeight !== undefined ) this.centerWeightU.value = params.centerWeight;
+		const metering = params.metering;
+		if ( metering !== undefined && METERING_MODES.includes( metering ) ) this.metering = metering;
+		if ( params.meteringPoint ) this.meteringPoint.set( params.meteringPoint.x, params.meteringPoint.y );
+		for ( const key of [ 'keyValue', 'minExposure', 'maxExposure', 'adaptSpeedBright', 'adaptSpeedDark', 'centerWeight' ] ) {
+
+			if ( params[ key ] !== undefined ) this[ key ] = params[ key ];
+
+		}
+
+		if ( params.lowPercentile !== undefined ) this._lowU.value = params.lowPercentile;
+		if ( params.highPercentile !== undefined ) this._highU.value = params.highPercentile;
+
+		this._stale = true;
+		if ( this._meteredLog2 !== null ) this._applyMetering( [ this._meteredLog2, 1, 1 ] );
+		this.onChange?.();
 
 	}
 
+	reset() {}
+
+	setSize() {}
+
 	dispose() {
 
-		this._downsampleComputeNode?.dispose();
-		this._histogramComputeNode?.dispose();
-		this._histogramAnalyzeNode?.dispose();
-		this._adaptationComputeNode?.dispose();
-		this._downsampleTarget?.dispose();
-		this._downsampleStorageTex?.dispose();
-		this._reductionStorageTex?.dispose();
-		this._reductionReadTarget?.dispose();
-		this._readbackBuffer?.dispose();
-		this._inputTexNode?.dispose();
-		this._reductionReadTexNode?.dispose();
+		this._disposed = true;
+		this.onChange = null;
+		for ( const kernel of this._kernels ) kernel.dispose();
+		this._readback.dispose();
+		this._inputNode.dispose();
 
 	}
 

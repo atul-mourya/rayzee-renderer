@@ -325,10 +325,11 @@ export class PathTracerApp extends RayzeeRenderer {
 		const core = super._settingsBindings();
 		return {
 			...core,
-			// auto exposure drives the exposure while it is on, and restores this value when turned off
+			// the manual exposure, and the compensation on top of auto exposure while that is on
 			applyExposure: ( value ) => {
 
-				if ( ! this.stages.autoExposure?.enabled ) core.applyExposure( value );
+				if ( this.stages.autoExposure ) this.stages.autoExposure.setCompensation( value );
+				else core.applyExposure( value );
 
 			},
 			onCameraProjection: ( value ) => {
@@ -351,6 +352,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.update();
 		this.cameraManager.updateControls();
+		this._updateAutoExposure();
 
 		this._applyPendingRenderScale();
 
@@ -410,6 +412,22 @@ export class PathTracerApp extends RayzeeRenderer {
 			isStillComplete: () => this.completion.renderCompleteDispatched,
 			context: this.pipeline?.context,
 		} );
+
+	}
+
+	_settling() {
+
+		return !! this.stages.autoExposure?.settling;
+
+	}
+
+	// A batch render is exposed for its own finished image.
+	async _finishImage() {
+
+		const ae = this.stages.autoExposure;
+		if ( ! ae?.enabled ) return;
+		await ae.meter( this.pipeline.context );
+		ae.advance( Infinity );
 
 	}
 
@@ -550,7 +568,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		if ( enabled ) {
 
 			this.cameraManager?.setAutoFocusMode( 'manual' );
-			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+			this.stages.autoExposure?.setEnabled( false );
 			// Cadence denoising is wall-clock driven, so which frame it lands on is not reproducible.
 			this.denoisingManager?.setContinuousDenoise( false );
 			return;
@@ -558,11 +576,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		}
 
 		if ( snapshot.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( snapshot.autoFocusMode );
-		if ( this.stages.autoExposure && snapshot.autoExposure !== undefined ) {
-
-			this.stages.autoExposure.enabled = snapshot.autoExposure;
-
-		}
+		if ( snapshot.autoExposure !== undefined ) this.stages.autoExposure?.setEnabled( snapshot.autoExposure );
 
 		if ( snapshot.continuousDenoise !== undefined ) {
 
@@ -839,6 +853,8 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.stop();
 		this.cameraManager.controls.enabled = ! isProduction;
+		// A final render is exposed for the image as it converges, not adapted to over wall-clock time.
+		if ( this.stages.autoExposure ) this.stages.autoExposure.instant = isProduction;
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
@@ -1072,17 +1088,37 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_setupAutoExposureListener() {
 
-		if ( ! this.stages.autoExposure ) return;
+		const ae = this.stages.autoExposure;
+		if ( ! ae ) return;
 
-		this.stages.autoExposure.on( 'autoexposure:updated', ( data ) => {
+		ae.setCompensation( this.settings.get( 'exposure' ) ?? 1 );
+		// Only a finished render's idle loop is woken: renderFrames() and a video export drive frames themselves.
+		ae.onChange = () => {
 
-			this.dispatchEvent( {
-				type: EngineEvents.AUTO_EXPOSURE_UPDATED,
-				exposure: data.exposure,
-				luminance: data.luminance
-			} );
+			if ( ! this.completion.renderCompleteDispatched ) return;
+			this._needsDisplayRefresh = true;
+			this.wake();
+
+		};
+
+		ae.on( 'autoexposure:updated', ( { exposure, autoExposure, targetExposure, luminance } ) => {
+
+			this.dispatchEvent( { type: EngineEvents.AUTO_EXPOSURE_UPDATED, exposure, autoExposure, targetExposure, luminance } );
 
 		} );
+
+	}
+
+	// Adapts on every loop frame, a finished render included; meters a finished image when asked to.
+	_updateAutoExposure() {
+
+		const ae = this.stages.autoExposure;
+		if ( ! ae?.enabled ) return;
+
+		const af = this.cameraManager.afScreenPoint;
+		if ( ae.metering === 'spot' && ( ae.meteringPoint.x !== af.x || ae.meteringPoint.y !== af.y ) ) ae.updateParameters( { meteringPoint: af } );
+		if ( ae.wantsMetering && this.completion.renderCompleteDispatched ) ae.meter( this.pipeline.context );
+		if ( ae.update() ) this._needsDisplayRefresh = true;
 
 	}
 

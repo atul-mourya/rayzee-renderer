@@ -212,9 +212,10 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > vie
   "autoExposure": {
     "autoExposure": false,
     "autoExposureAdaptSpeedBright": 3,
-    "autoExposureAdaptSpeedDark": 0.5,
+    "autoExposureAdaptSpeedDark": 1,
     "autoExposureKeyValue": 0.18,
     "autoExposureMaxExposure": 20,
+    "autoExposureMetering": "center",
     "autoExposureMinExposure": 0.1,
   },
   "autoFocus": {

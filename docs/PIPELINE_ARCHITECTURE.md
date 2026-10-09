@@ -139,7 +139,7 @@ const color = context.getTexture( 'pathtracer:color' );
 | `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, OverlayManager (hides TileHelper) |
 | `pipeline:resize` | `RenderPipeline.setSize()` | `{ width, height }` | PathTracerStage |
 | `frame:complete` | RenderPipeline, after all stages | `{ frame, accumulatedFrames }` | — |
-| `autoexposure:updated` | AutoExposure | `{ exposure, luminance, targetExposure }` | PathTracerApp (re-dispatched as `EngineEvents.AUTO_EXPOSURE_UPDATED`) |
+| `autoexposure:updated` | AutoExposure, when the exposure moves 0.005 stops or more | `{ exposure, autoExposure, targetExposure, luminance }` | PathTracerApp (re-dispatched as `EngineEvents.AUTO_EXPOSURE_UPDATED`) |
 | `motionvector:computed` | MotionVector | `{ frame, isFirstFrame }` | — |
 | `stage:enabled` / `stage:disabled` | `RenderStage.enable()` / `disable()` | `{ stage }` | — |
 
@@ -401,7 +401,7 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 | Variance (`VarianceEstimation`) | strategies `'asvgf'`, `'edgeaware'` | `pathtracer:color` | `variance:output` |
 | BilateralFilter (`BilateralFiltering`) | strategy `'asvgf'` | `asvgf:demodulated` (else `asvgf:output`, else `pathtracer:color`), `pathtracer:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `bilateralFiltering:output` |
 | EdgeFilter (`EdgeAwareFiltering`) | strategy `'edgeaware'` | `pathtracer:color`, `:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `edgeFiltering:output` |
-| AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `edgeFiltering:output`, else `asvgf:output`, else `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
+| AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
 
 OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/depth and albedo storage textures directly (`storageTextures.getReadTextures()`) and publishes its result as `oidn:output`.
 
@@ -524,7 +524,7 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 
 | Texture Key | Producer | Consumers | Description |
 |-------------|----------|-----------|-------------|
-| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure (fallback), NormalDepth (size only) | Accumulated colour |
+| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure, NormalDepth (size only) | Accumulated colour |
 | `pathtracer:normalDepth` | PathTracer; replaced by NormalDepth while it runs | ASVGF, NRD, EdgeFilter, BilateralFilter, MotionVector, OIDN motion history | Normals + depth. NormalDepth's: geometric normal, jitter-free linear ray distance |
 | `pathtracer:albedo` | PathTracer | ASVGF, NRD, EdgeFilter, BilateralFilter | Albedo (denoiser guide). `.w` holds the hit distance only while a stage has called `requestOutput( 'hitDistance', { encode } )` — the viewer's NRD |
 | `pathtracer:prevNormalDepth` | NormalDepth | ASVGF, OIDN motion history | The previous traced frame's normals + depth |
@@ -533,12 +533,12 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 | `motionVector:screenSpace` | MotionVector | ASVGF, NRD | xy = motion (current − previous uv), z = depth, w = validity |
 | `motionVector:worldSpace` | MotionVector | - | xyz = world velocity, w = validity |
 | `motionVector:motion` | MotionVector | - | Alias of `motionVector:screenSpace` |
-| `asvgf:output` | ASVGF | Compositor, BilateralFilter (fallback), AutoExposure | Temporally accumulated, remodulated colour |
+| `asvgf:output` | ASVGF | Compositor, BilateralFilter (fallback) | Temporally accumulated, remodulated colour |
 | `asvgf:demodulated` | ASVGF | BilateralFilter | Demodulated lighting + history |
 | `asvgf:gradient` | ASVGF | - | Temporal gradient |
 | `variance:output` | Variance | BilateralFilter, EdgeFilter | Luminance mean, second moment, temporal variance, spatial variance |
 | `bilateralFiltering:output` | BilateralFilter | Compositor | ASVGF strategy's final picture |
-| `edgeFiltering:output` | EdgeFilter | Compositor, AutoExposure | Filtered colour |
+| `edgeFiltering:output` | EdgeFilter | Compositor | Filtered colour |
 | `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
 
@@ -736,8 +736,8 @@ app.pipeline.context.getState( 'tileRenderingComplete' );
 ### Reading from Previous Stage
 
 ```javascript
-// AutoExposure: the newest picture available
-const inputTex = context.getTexture( 'edgeFiltering:output' )
+// BilateralFilter: the newest picture available
+const inputTex = context.getTexture( this.inputTextureName )
     || context.getTexture( 'asvgf:output' )
     || context.getTexture( 'pathtracer:color' );
 if ( ! inputTex ) return;

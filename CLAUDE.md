@@ -484,7 +484,7 @@ the strings, so never rename or repurpose one.
 - **Each layer declares its own settings.** `RenderSettings`' table is the core's alone and names no viewer piece;
   another layer adds a key with `settings.define( key, { default, apply, reset } )` (the viewer: `interactionRenderScale`),
   bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules
-  for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
+  for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` becomes auto exposure's compensation while that is on, `onCameraProjection`
   moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
 - **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) is exactly the settings
   table: every key a `RenderSettings` route of the same name, every route's default there (`engineDefaults.test.js`
@@ -1136,6 +1136,22 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - OIDN's inputs are copied into tight buffers by `copyTextureToBuffer` when a row is a multiple of 256 bytes (width
   a multiple of 16) and by one compute pass otherwise (`_copyInputs`); the per-row copies it replaced were ~3,000
   commands a denoise at 1080p, 2.9 → 0.9 ms on the GPU here.
+
+### Auto exposure (`Stages/AutoExposure.js`, viewer)
+Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in
+linear light, weighted by alpha (a transparent or black background is left out), then a 256-bin log2 histogram whose
+percentile-clipped mean (fractional bins) is read back. Averaging before the log is what keeps a 1-spp image metering like
+the converged one (24155522.glb, 1080p: the old per-pixel log drifted 1.06 stops from 1 to 256 spp). Large tiles skip whole
+8×8 blocks, never single pixels: a skipped pixel's memory is fetched anyway. It meters only when no reading is in flight,
+less often as samples grow (`meterInterval`), and luminance is taken in the working space.
+- The exposure moves in stops (`adaptExposureEV`: speed in stops/s while far, exponential within 1.5 stops): `update()` every
+  loop frame from `_beginFrame`, `advance( seconds )` once a frame in video time (VideoRenderManager), `instant` in
+  production. `_settling()` keeps a finished render's loop running until it lands; `_finishImage()` meters the finished
+  image for `renderFrames` / `renderUntilComplete`. The manual exposure is its compensation (`setCompensation`).
+- ⚠️ Never clear the in-flight reading from a reset, nor reuse the ReadbackBuffer while it is mapped: the old stage did on
+  every camera move, and 236 of 237 readings failed silently — the exposure never moved while the camera did.
+- ⚠️ `onChange` wakes only a finished render's idle loop: `renderFrames` and a video export drive frames themselves.
+- Cost a metering (Dawn, Apple M-series): 540p 0.03 ms, 1080p 0.08 ms (every pixel), 4K 0.12 ms.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction. The core reads glTF/GLB, `.hdr` and LDR

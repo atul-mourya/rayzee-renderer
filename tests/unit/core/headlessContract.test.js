@@ -82,6 +82,7 @@ function makeApp( { advanceBy = 1, retireAfter = Infinity } = {} ) {
 			}
 		},
 		renderFrames: PathTracerApp.prototype.renderFrames,
+		_finishImage: PathTracerApp.prototype._finishImage,
 	};
 
 	return { app, stage };

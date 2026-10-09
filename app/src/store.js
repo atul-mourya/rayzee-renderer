@@ -427,6 +427,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	// Auto-exposure setters
 	setAutoExposure: val => set( { autoExposure: val } ),
+	setAutoExposureMetering: val => set( { autoExposureMetering: val } ),
 	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
 	setAutoExposureMinExposure: val => set( { autoExposureMinExposure: val } ),
 	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
@@ -1050,7 +1051,13 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	handleAutoExposureChange: handleChange(
 		val => set( { autoExposure: val } ),
 		( val, app ) => app.denoisingManager.setAutoExposure( val ),
-		false // engine method handles reset internally
+		false
+	),
+
+	handleAutoExposureMeteringChange: handleChange(
+		val => set( { autoExposureMetering: val } ),
+		( val, app ) => app.denoisingManager.setAutoExposureParams( { metering: val } ),
+		false
 	),
 
 	handleAutoExposureKeyValueChange: handleChange(
@@ -1061,7 +1068,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 			app.denoisingManager.setAutoExposureParams( { keyValue: value } );
 
 		},
-		true
+		false
 	),
 
 	handleAutoExposureMinExposureChange: handleChange(
@@ -1072,7 +1079,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 			app.denoisingManager.setAutoExposureParams( { minExposure: value } );
 
 		},
-		true
+		false
 	),
 
 	handleAutoExposureMaxExposureChange: handleChange(
@@ -1083,7 +1090,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 			app.denoisingManager.setAutoExposureParams( { maxExposure: value } );
 
 		},
-		true
+		false
 	),
 
 	handleAutoExposureAdaptSpeedChange: handleChange(
@@ -1091,14 +1098,14 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => {
 
 			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			// Maintain ratio between bright and dark adaptation (6:1)
+			// Darkening adapts at a third of the speed, as the defaults do.
 			app.denoisingManager.setAutoExposureParams( {
 				adaptSpeedBright: value,
-				adaptSpeedDark: value / 6.0
+				adaptSpeedDark: value / 3.0
 			} );
 
 		},
-		true
+		false
 	),
 
 	handleEnableEnvironmentChange: val => {

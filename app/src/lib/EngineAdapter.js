@@ -202,7 +202,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.AUTO_EXPOSURE_UPDATED, ( e ) => {
 
-		usePathTracerStore.getState().setCurrentAutoExposure( e.exposure );
+		usePathTracerStore.getState().setCurrentAutoExposure( e.autoExposure ?? e.exposure );
 		usePathTracerStore.getState().setCurrentAvgLuminance( e.luminance );
 
 	} );

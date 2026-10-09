@@ -532,6 +532,13 @@ export class RayzeeRenderer extends EventDispatcher {
 
 				}
 
+				if ( this._settling() ) {
+
+					this.dispatchEvent( { type: EngineEvents.FRAME } );
+					return;
+
+				}
+
 				// Stop the loop to avoid constant CPU usage while idle
 				this.stopAnimation();
 				return;
@@ -2499,6 +2506,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
+		await this._finishImage();
 		return stage.frameCount;
 
 	}
@@ -2578,6 +2586,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			const info = this._completionInfo();
 			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
 
+			await this._finishImage();
 			const denoised = denoise ? await this._finalDenoise() : false;
 			const { reason, ...rest } = info;
 			return { ...rest, retiredBy: reason, denoised };
@@ -3981,6 +3990,16 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/** Once, on the loop frame the render completes. */
 	_renderCompleted() {}
+
+	/** True keeps the loop running over a finished render, to redraw what is still changing. */
+	_settling() {
+
+		return false;
+
+	}
+
+	/** A render driven by renderFrames() or renderUntilComplete() has its samples, before any closing pass. */
+	async _finishImage() {}
 
 	/** Draws what sits over the image. Here only brings the light scene's matrices up to date. */
 	_renderHelperOverlay() {

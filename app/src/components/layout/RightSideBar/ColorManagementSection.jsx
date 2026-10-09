@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Download, X, Loader2, Target, ChevronDown } from 'lucide-react';
+import { Download, X, Loader2, ChevronDown } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -36,6 +36,12 @@ const toEV = multiplier => Math.min( EV_MAX, Math.max( EV_MIN, Math.log2( Math.m
 
 const label = text => <span className="opacity-50 text-xs truncate">{text}</span>;
 
+const METERING_OPTIONS = [
+	{ value: 'average', label: 'Whole Frame', hint: 'every part of the image counts the same' },
+	{ value: 'center', label: 'Centre', hint: 'the middle of the frame counts most (default)' },
+	{ value: 'spot', label: 'Spot', hint: 'a small area at the focus point (Camera tab)' },
+];
+
 const AutoExposureValue = memo( () => {
 
 	const current = usePathTracerStore( state => state.currentAutoExposure );
@@ -64,8 +70,8 @@ const ColorManagementSection = () => {
 	const status = useColorStatus();
 	const transforms = useViewTransforms();
 	const {
-		toneMapping, exposure, autoExposure, autoExposureKeyValue,
-		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureKeyValueChange,
+		toneMapping, exposure, autoExposure, autoExposureMetering,
+		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureMeteringChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -429,7 +435,11 @@ const ColorManagementSection = () => {
 
 			<Row more={autoExposure ? (
 				<Row>
-					<Slider icon={Target} label={'Target Brightness'} min={0.05} max={0.5} step={0.01} value={[ autoExposureKeyValue ]} snapPoints={[ 0.18 ]} onValueChange={handleAutoExposureKeyValueChange} />
+					{label( 'Metering' )}
+					<Select value={autoExposureMetering} onValueChange={handleAutoExposureMeteringChange}>
+						{trigger( 'Which part of the image sets the exposure' )}
+						<SelectContent>{METERING_OPTIONS.map( item )}</SelectContent>
+					</Select>
 				</Row>
 			) : null}>
 				{label( 'Auto Exposure' )}
@@ -439,11 +449,9 @@ const ColorManagementSection = () => {
 				</div>
 			</Row>
 
-			{! autoExposure && (
-				<Row>
-					<Slider icon={Exposure} label={'Exposure (EV)'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
-				</Row>
-			)}
+			<Row title={autoExposure ? 'Brighter or darker than auto exposure chooses, in stops' : undefined}>
+				<Slider icon={Exposure} label={autoExposure ? 'Compensation (EV)' : 'Exposure (EV)'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			</Row>
 
 			<Separator className="my-1 opacity-30" />
 
