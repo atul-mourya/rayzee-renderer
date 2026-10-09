@@ -70,10 +70,10 @@ const ColorManagementSection = () => {
 	const status = useColorStatus();
 	const transforms = useViewTransforms();
 	const {
-		toneMapping, exposure, autoExposure, autoExposureMetering, autoExposureStrength,
+		toneMapping, exposure, autoExposure, autoExposureMetering, autoExposureStrength, autoExposureMaxExposure,
 		localExposure, localExposureHighlightContrast, localExposureShadowContrast, localExposureDetailStrength,
 		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureMeteringChange,
-		handleAutoExposureStrengthChange, handleLocalExposureChange, handleLocalExposureParamChange,
+		handleAutoExposureStrengthChange, handleAutoExposureRangeChange, handleLocalExposureChange, handleLocalExposureParamChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -446,6 +446,9 @@ const ColorManagementSection = () => {
 					</Row>
 					<Row title="How much the exposure follows each view. Lower keeps a well-lit scene near its exposure as you look around; 100 % follows every view.">
 						<Slider label={'Strength'} min={0} max={100} step={5} unit="%" value={[ Math.round( autoExposureStrength * 100 ) ]} snapPoints={[ 30, 100 ]} onValueChange={v => handleAutoExposureStrengthChange( v[ 0 ] / 100 )} />
+					</Row>
+					<Row title="How far auto exposure may brighten or darken from your exposure. Lower keeps a night scene dark.">
+						<Slider label={'Range'} min={1} max={10} step={0.5} formatValue={v => `±${v} stops`} value={[ Math.round( Math.log2( autoExposureMaxExposure ) * 2 ) / 2 ]} snapPoints={[ 8 ]} onValueChange={v => handleAutoExposureRangeChange( v[ 0 ] )} />
 					</Row>
 				</>
 			) : null}>

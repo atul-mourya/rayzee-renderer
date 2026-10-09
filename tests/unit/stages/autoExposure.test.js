@@ -302,4 +302,27 @@ describe( 'AutoExposure', () => {
 
 	} );
 
+	it( 'corrects up to eight stops each way, and no further than the range it is given', async () => {
+
+		const { stage, renderer, context, bus, land } = setup( { strength: 0.3 } );
+		stage.render( context );
+		await land( KEY - 6 );
+		stage.update( 0 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 6, 6 );
+
+		stage.updateParameters( { minExposure: 2 ** - 2, maxExposure: 2 ** 2 } );
+		stage.advance( Infinity );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 2, 6 );
+
+		// The lights turned up fifteen stops under a still camera.
+		stage.updateParameters( { minExposure: 2 ** - 8, maxExposure: 2 ** 8 } );
+		bus.emit( 'pipeline:reset' );
+		stage.render( context );
+		await land( KEY + 9 );
+		stage.advance( Infinity );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( - 8, 6 );
+
+	} );
+
 } );
+

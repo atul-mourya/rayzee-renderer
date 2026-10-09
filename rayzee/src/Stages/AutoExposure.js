@@ -11,8 +11,8 @@ export const AUTO_EXPOSURE_DEFAULTS = {
 	autoExposureMetering: 'center',
 	autoExposureStrength: 0.3,
 	autoExposureKeyValue: 0.18,
-	autoExposureMinExposure: 0.1,
-	autoExposureMaxExposure: 20.0,
+	autoExposureMinExposure: 2 ** - 8, // how far it may go from the manual exposure, as Bevy's range: ±8 stops
+	autoExposureMaxExposure: 2 ** 8,
 	autoExposureAdaptSpeedBright: 3.0,
 	autoExposureAdaptSpeedDark: 1.0,
 };
@@ -438,7 +438,8 @@ export class AutoExposure extends RenderStage {
 
 		const before = this._viewEV;
 		this._meteredLog2 = level;
-		this._viewEV = this._inRange( Math.log2( this.keyValue ) - level );
+		// Unclamped: the range caps where the exposure lands, not what the curve is told the scene needs.
+		this._viewEV = Math.log2( this.keyValue ) - level;
 
 		if ( this._roomEV === null ) {
 

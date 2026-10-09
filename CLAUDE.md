@@ -1151,6 +1151,9 @@ less often as samples grow (`meterInterval`), and luminance is taken in the work
   manual exposure and follows it fully past 3; the view adds its difference from the room at `strength`. Averaging to grey
   is what made it milky: on five Livspace rooms, 4 views each, the view-to-view swing was −1 to +2.35 stops at 100 %,
   ±0.85 at 30 %; a sky 16× dimmer under a still camera is still corrected in full. A camera switch re-meters afresh.
+  `autoExposureMinExposure` / `MaxExposure` (default ±8 stops, Bevy's range; the app's Range) cap only where the exposure
+  lands. ⚠️ Never clamp the view's reading before the blend: a scene needing +6 with a ±2 range read as "lit near its
+  exposure" and was damped to +1.07 instead of landing on +2.
 - The exposure moves in stops (`adaptExposureEV`: speed in stops/s while far, exponential within 1.5 stops): `update()` every
   loop frame from `_beginFrame`, `advance( seconds )` once a frame in video time (VideoRenderManager), `instant` in
   production. `_settling()` keeps a finished render's loop running until it lands; `_finishImage()` meters the finished
