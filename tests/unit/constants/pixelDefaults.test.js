@@ -11,6 +11,7 @@ import {
 } from '@/core/EngineDefaults.js';
 import { DENOISER_DEFAULTS } from '@/core/Stages/DenoiserSettings.js';
 import { AUTO_EXPOSURE_DEFAULTS } from '@/core/Stages/AutoExposure.js';
+import { LOCAL_EXPOSURE_DEFAULTS } from '@/core/Stages/LocalExposure.js';
 import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
 import { SKY_DEFAULTS } from '@/core/managers/EnvironmentManager.js';
 import { DEFAULT_VIEW } from '@/core/Color/ViewTransforms.js';
@@ -22,6 +23,7 @@ describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', (
 		expect( {
 			denoisers: DENOISER_DEFAULTS,
 			autoExposure: AUTO_EXPOSURE_DEFAULTS,
+			localExposure: LOCAL_EXPOSURE_DEFAULTS,
 			autoFocus: AUTO_FOCUS_DEFAULTS,
 		} ).toMatchSnapshot();
 

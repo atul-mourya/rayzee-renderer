@@ -261,5 +261,11 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > vie
     "upscalerQuality": "fast",
     "upscalerScale": 2,
   },
+  "localExposure": {
+    "localExposure": false,
+    "localExposureDetailStrength": 1,
+    "localExposureHighlightContrast": 0.6,
+    "localExposureShadowContrast": 1,
+  },
 }
 `;

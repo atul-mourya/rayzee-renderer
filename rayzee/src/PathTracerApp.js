@@ -8,6 +8,7 @@ import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
+import { LocalExposure } from './Stages/LocalExposure.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
 import { createLogger } from './utils/Logger.js';
 import { EngineEvents } from './EngineEvents.js';
@@ -156,10 +157,11 @@ export class PathTracerApp extends RayzeeRenderer {
 		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
 		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
 		stages.autoExposure = new AutoExposure( renderer, { enabled: AUTO_EXPOSURE_DEFAULTS.autoExposure } );
+		stages.localExposure = new LocalExposure( renderer, { enabled: false } );
 
 		return [
 			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
-			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure,
+			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure, stages.localExposure,
 		];
 
 	}
@@ -352,7 +354,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.update();
 		this.cameraManager.updateControls();
-		this._updateAutoExposure();
+		this._updateExposure();
 
 		this._applyPendingRenderScale();
 
@@ -418,6 +420,34 @@ export class PathTracerApp extends RayzeeRenderer {
 	_settling() {
 
 		return !! this.stages.autoExposure?.settling;
+
+	}
+
+	_displayGain() {
+
+		return this.stages.localExposure?.toneGain() ?? null;
+
+	}
+
+	/**
+	 * Local exposure (Unreal Engine 5's): scales the contrast of large bright and dark areas around middle grey
+	 * while keeping detail, on the canvas and every tone-mapped readback alike.
+	 * @param {boolean} enabled
+	 */
+	setLocalExposure( enabled ) {
+
+		const le = this.stages.localExposure;
+		if ( ! le ) return;
+		le.setEnabled( enabled );
+		this.stages.compositor.setDisplayGain( enabled ? ( rgb, uv ) => le.gainNode( rgb, uv ) : null );
+		this.refreshFrame();
+
+	}
+
+	/** @param {{highlightContrast?: number, shadowContrast?: number, detailStrength?: number}} params - 1 changes nothing */
+	setLocalExposureParams( params ) {
+
+		this.stages.localExposure?.updateParameters( params );
 
 	}
 
@@ -1069,6 +1099,7 @@ export class PathTracerApp extends RayzeeRenderer {
 			pipeline: this.pipeline,
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
+			getDisplayGain: () => this._displayGain(),
 			issues: this._issues,
 		} );
 
@@ -1092,14 +1123,8 @@ export class PathTracerApp extends RayzeeRenderer {
 		if ( ! ae ) return;
 
 		ae.setCompensation( this.settings.get( 'exposure' ) ?? 1 );
-		// Only a finished render's idle loop is woken: renderFrames() and a video export drive frames themselves.
-		ae.onChange = () => {
-
-			if ( ! this.completion.renderCompleteDispatched ) return;
-			this._needsDisplayRefresh = true;
-			this.wake();
-
-		};
+		if ( this.stages.localExposure ) this.stages.localExposure.onChange = () => this._refreshFinished();
+		ae.onChange = () => this._refreshFinished();
 
 		// Another camera is a cut: meter it afresh.
 		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, () => ae.resetHistory() );
@@ -1112,8 +1137,20 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	// Adapts on every loop frame, a finished render included; meters a finished image when asked to.
-	_updateAutoExposure() {
+	// Only a finished render's idle loop is woken: renderFrames() and a video export drive frames themselves.
+	_refreshFinished() {
+
+		if ( ! this.completion.renderCompleteDispatched ) return;
+		this._needsDisplayRefresh = true;
+		this.wake();
+
+	}
+
+	// Every loop frame, a finished render included: builds local exposure and meters a finished image when asked, adapts.
+	_updateExposure() {
+
+		const le = this.stages.localExposure;
+		if ( le?.wantsBuild && this.completion.renderCompleteDispatched ) le.build( this.pipeline.context );
 
 		const ae = this.stages.autoExposure;
 		if ( ! ae?.enabled ) return;

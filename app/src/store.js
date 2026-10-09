@@ -429,6 +429,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setAutoExposure: val => set( { autoExposure: val } ),
 	setAutoExposureMetering: val => set( { autoExposureMetering: val } ),
 	setAutoExposureStrength: val => set( { autoExposureStrength: val } ),
+	setLocalExposure: val => set( { localExposure: val } ),
 	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
 	setAutoExposureMinExposure: val => set( { autoExposureMinExposure: val } ),
 	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
@@ -1066,6 +1067,20 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: Array.isArray( val ) ? val[ 0 ] : val } ),
 		false
 	),
+
+	handleLocalExposureChange: handleChange(
+		val => set( { localExposure: val } ),
+		( val, app ) => app.setLocalExposure?.( val ),
+		false
+	),
+
+	handleLocalExposureParamChange: ( key, value ) => {
+
+		set( { [ key ]: value } );
+		const param = { localExposureHighlightContrast: 'highlightContrast', localExposureShadowContrast: 'shadowContrast', localExposureDetailStrength: 'detailStrength' }[ key ];
+		getApp()?.setLocalExposureParams?.( { [ param ]: value } );
+
+	},
 
 	handleAutoExposureKeyValueChange: handleChange(
 		val => set( { autoExposureKeyValue: Array.isArray( val ) ? val[ 0 ] : val } ),

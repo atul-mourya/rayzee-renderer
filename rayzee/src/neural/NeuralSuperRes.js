@@ -373,6 +373,7 @@ export class NeuralSuperRes {
 			exposure: tone.exposure ?? 1,
 			toneMapping: tone.toneMapping ?? 0,
 			saturation: tone.saturation ?? 1,
+			gain: tone.gain,
 			// The network emits its picture vertically flipped.
 			flipY: true,
 		} );

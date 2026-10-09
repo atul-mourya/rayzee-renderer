@@ -389,6 +389,7 @@ export class NeuralRetouch {
 			exposure: tone.exposure ?? 1,
 			toneMapping: tone.toneMapping ?? 0,
 			saturation: tone.saturation ?? 1,
+			gain: tone.gain,
 		} );
 
 		return { rgba8, width: w, height: h };

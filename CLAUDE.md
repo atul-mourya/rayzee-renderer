@@ -106,6 +106,7 @@ AutoExposure between them:
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
 - **`EdgeFilter.js`**: Spatial-only edge-aware à-trous filter (no temporal history)
+- **`LocalExposure.js`**: Unreal Engine 5's local exposure — a display-only per-pixel gain (see Local exposure below)
 - **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
@@ -1158,6 +1159,18 @@ less often as samples grow (`meterInterval`), and luminance is taken in the work
   every camera move, and 236 of 237 readings failed silently — the exposure never moved while the camera did.
 - ⚠️ `onChange` wakes only a finished render's idle loop: `renderFrames` and a video export drive frames themselves.
 - Cost a metering (Dawn, Apple M-series): 540p 0.03 ms, 1080p 0.08 ms (every pixel), 4K 0.12 ms.
+
+### Local exposure (`Stages/LocalExposure.js`, viewer; off by default)
+Unreal Engine 5's: a bilateral grid of log luminance (cells of 128 px, 32 one-stop bins of exposed luminance) blended
+60/40 with a blurred 1/32 picture as the base layer; the base's contrast around middle grey is scaled
+(`highlightContrast`, `shadowContrast`; the app's Tame Highlights 40 % = 0.6) and detail kept (`detailStrength`). It
+changes only what is shown, as a per-pixel gain before exposure and the view, written three ways in that file — the
+compositor's TSL (`gainNode`, installed with `compositor.setDisplayGain`), WGSL for `PackedToneMapper`'s `gain` (every
+tone-mapped readback, the AI upscaler and the neural passes, through the core hook `_displayGain()`), and JavaScript
+for the CPU tone map (`pixelGain`) — kept identical by `tests/gpu/localExposure.test.js`. Canvas vs readback: 0.5
+levels, the readback's usual bias. EXR stays scene-referred. The grid is built from `pathtracer:color` on restarts and
+the metering schedule: 0.05 / 0.13 / 0.5 ms at 540p / 1080p / 4K (Dawn, M-series); the compositor's gain +0.05 ms at
+1080p. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction. The core reads glTF/GLB, `.hdr` and LDR

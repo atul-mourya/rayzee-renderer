@@ -104,9 +104,10 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {import('../Pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
+	 * @param {Function}                               [params.getDisplayGain]  - () => the shown picture's per-pixel gain (PackedToneMapper `gain`)
 	 * @param {import('../EngineIssues.js').IssueLog}  [params.issues]
 	 */
-	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, issues = null } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getDisplayGain = null, issues = null } ) {
 
 		super();
 
@@ -121,6 +122,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
+		this._getDisplayGain = getDisplayGain;
 
 		this.denoiser = null;
 		this.upscaler = null;
@@ -409,6 +411,7 @@ export class DenoisingManager extends EventDispatcher {
 			getExposure: () => this._getEffectiveExposure(),
 			getToneMapping: () => this._getToneMapping(),
 			getSaturation: () => this._getSaturation(),
+			getDisplayGain: () => this._getDisplayGain?.() ?? null,
 		} );
 
 		this.upscaler.enabled = DENOISER_DEFAULTS.enableUpscaler || false;
@@ -1236,6 +1239,7 @@ export class DenoisingManager extends EventDispatcher {
 				exposure: this._getEffectiveExposure(),
 				toneMapping: this._getToneMapping(),
 				saturation: this._getSaturation?.() ?? 1,
+				gain: this._getDisplayGain?.() ?? null,
 			};
 
 			// Scene-referred throughout. Exposure reaches the detail pass through its own `paper_white`

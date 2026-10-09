@@ -41,7 +41,7 @@ function reachable( entry ) {
 const ABOVE_THE_CORE = [
 	/^PathTracerApp\.js$/,
 	/^Headless\.js$/,
-	/^Stages\/(NormalDepth|MotionVector|ASVGF|NRD|Variance|BilateralFilter|EdgeFilter|AutoExposure)\.js$/,
+	/^Stages\/(NormalDepth|MotionVector|ASVGF|NRD|Variance|BilateralFilter|EdgeFilter|AutoExposure|LocalExposure)\.js$/,
 	/^managers\/(CameraManager|InteractionManager|TransformManager|OverlayManager|AnimationManager|DenoisingManager|GoboManager|IESManager|VideoRenderManager|WalkControls)\.js$/,
 	/^managers\/(timeline|helpers)\//,
 	/^Passes\//,

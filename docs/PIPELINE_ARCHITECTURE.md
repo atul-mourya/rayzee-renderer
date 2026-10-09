@@ -402,6 +402,7 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 | BilateralFilter (`BilateralFiltering`) | strategy `'asvgf'` | `asvgf:demodulated` (else `asvgf:output`, else `pathtracer:color`), `pathtracer:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `bilateralFiltering:output` |
 | EdgeFilter (`EdgeAwareFiltering`) | strategy `'edgeaware'` | `pathtracer:color`, `:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `edgeFiltering:output` |
 | AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
+| LocalExposure | `app.setLocalExposure( true )` | `pathtracer:color` | a grid and blurred picture its gain reads: the compositor's `setDisplayGain` and readbacks' `_displayGain()` |
 
 OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/depth and albedo storage textures directly (`storageTextures.getReadTextures()`) and publishes its result as `oidn:output`.
 

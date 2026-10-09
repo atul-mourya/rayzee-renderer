@@ -71,8 +71,9 @@ const ColorManagementSection = () => {
 	const transforms = useViewTransforms();
 	const {
 		toneMapping, exposure, autoExposure, autoExposureMetering, autoExposureStrength,
+		localExposure, localExposureHighlightContrast, localExposureShadowContrast, localExposureDetailStrength,
 		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureMeteringChange,
-		handleAutoExposureStrengthChange,
+		handleAutoExposureStrengthChange, handleLocalExposureChange, handleLocalExposureParamChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -457,6 +458,26 @@ const ColorManagementSection = () => {
 
 			<Row title={autoExposure ? 'Brighter or darker than auto exposure chooses, in stops' : undefined}>
 				<Slider icon={Exposure} label={autoExposure ? 'Compensation (EV)' : 'Exposure (EV)'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			</Row>
+
+			<Row more={localExposure ? (
+				<>
+					<Row title="Brings large bright areas, such as windows, closer to the rest of the frame">
+						<Slider label={'Tame Highlights'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureHighlightContrast', 1 - v[ 0 ] / 100 )} />
+					</Row>
+					<Row title="Brings large dark areas closer to the rest of the frame">
+						<Slider label={'Lift Shadows'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureShadowContrast ) * 100 ) ]} snapPoints={[ 0 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureShadowContrast', 1 - v[ 0 ] / 100 )} />
+					</Row>
+					<Row title="Contrast of fine detail inside those areas">
+						<Slider label={'Detail'} min={50} max={200} step={5} unit="%" value={[ Math.round( localExposureDetailStrength * 100 ) ]} snapPoints={[ 100 ]} onValueChange={v => handleLocalExposureParamChange( 'localExposureDetailStrength', v[ 0 ] / 100 )} />
+					</Row>
+				</>
+			) : null}>
+				<span className="opacity-50 text-xs truncate flex items-center gap-1">
+					Local Exposure
+					<InfoTip text="Balances bright windows and dark corners against the rest of the frame while keeping their detail, as Unreal Engine's local exposure does. Applies to the screen and to saved pictures." />
+				</span>
+				<Switch checked={localExposure} onCheckedChange={handleLocalExposureChange} />
 			</Row>
 
 			<Separator className="my-1 opacity-30" />

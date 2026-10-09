@@ -2744,12 +2744,14 @@ export class RayzeeRenderer extends EventDispatcher {
 				toneMapping: this.renderer.toneMapping,
 				saturation: this.settings.get( 'saturation' ) ?? 1,
 				preserveAlpha,
+				gain: this._displayGain(),
 			};
 
 			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
+			const fn = ! gpu && tone.gain ? await tone.gain.cpu() : null;
 			const data = gpu ?? toneMapToRGBA8( shown
 				? await this._readTexture( shown.texture, width, height )
-				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
+				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), { ...tone, pixelGain: fn && { fn, width, height } } );
 			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
@@ -4048,6 +4050,13 @@ export class RayzeeRenderer extends EventDispatcher {
 	async _finalDenoise() {
 
 		return false;
+
+	}
+
+	/** A per-pixel gain the shown picture carries before the view (the compositor's), for tone-mapped readbacks; or null. */
+	_displayGain() {
+
+		return null;
 
 	}
 

@@ -1,7 +1,7 @@
 import debugModelsData from './DebugModels.json';
 
 import {
-	ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS,
+	ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, LOCAL_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS,
 	DEFAULT_SUN_PATH, DEFAULT_VIEW,
 } from 'rayzee';
 export { ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, NRD_DEFAULTS } from 'rayzee';
@@ -19,6 +19,7 @@ export const DEFAULT_STATE = {
 	...SKY_DEFAULTS,
 	...DENOISER_DEFAULTS,
 	...AUTO_EXPOSURE_DEFAULTS,
+	...LOCAL_EXPOSURE_DEFAULTS,
 	...AUTO_FOCUS_DEFAULTS,
 	// The app turns the final denoise on out of the box — see INTERACTIVE_RENDER_CONFIG. The engine
 	// default stays off so an embedder is not made to fetch OIDN's weights it never asked for.
