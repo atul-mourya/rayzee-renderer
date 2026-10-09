@@ -414,6 +414,8 @@ export class PathTracerApp extends RayzeeRenderer {
 			isStillComplete: () => this.completion.renderCompleteDispatched,
 			context: this.pipeline?.context,
 		} );
+		// A finished render shows its own exposure: one reading of the finished image, landed on.
+		if ( this.stages.autoExposure?.enabled ) this._finishImage().then( () => this._refreshFinished() );
 
 	}
 
@@ -883,8 +885,9 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.stop();
 		this.cameraManager.controls.enabled = ! isProduction;
-		// A final render is exposed for the image as it converges, not adapted to over wall-clock time.
-		if ( this.stages.autoExposure ) this.stages.autoExposure.instant = isProduction;
+		// A final render keeps the exposure it starts with through its first, noisiest samples (20 bounces: a 0.4-stop
+		// dip and back within 0.2 s at 2–8 samples), then lands as any still image does.
+		if ( this.stages.autoExposure ) this.stages.autoExposure.holdSamples = isProduction ? 8 : 0;
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.

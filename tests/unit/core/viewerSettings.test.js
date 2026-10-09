@@ -55,3 +55,33 @@ describe( 'the viewer\'s side of the core settings', () => {
 	} );
 
 } );
+
+describe( 'a finished render\'s exposure', () => {
+
+	function complete( enabled ) {
+
+		const calls = [];
+		const app = {
+			stages: { autoExposure: { enabled, meter: async () => calls.push( 'meter' ), advance: ( s ) => calls.push( s ) } },
+			pipeline: { context: {} },
+			completion: { renderCompleteDispatched: true },
+			denoisingManager: { onRenderComplete: vi.fn() },
+			_finishImage: PathTracerApp.prototype._finishImage,
+			_refreshFinished: () => calls.push( 'redraw' ),
+		};
+		PathTracerApp.prototype._renderCompleted.call( app );
+		return calls;
+
+	}
+
+	it( 'reads the finished image, lands on it and redraws', async () => {
+
+		const calls = complete( true );
+		await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
+		expect( calls ).toEqual( [ 'meter', Infinity, 'redraw' ] );
+
+		expect( complete( false ) ).toEqual( [] );
+
+	} );
+
+} );

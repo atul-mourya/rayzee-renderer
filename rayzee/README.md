@@ -918,8 +918,9 @@ await engine.environmentManager.generateProcedural();
 
 Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure. Auto exposure meters the accumulated image on the GPU
 and moves in stops; it follows a room level learned as the camera moves plus a damped share of each view, so a scene lit
-for its manual exposure stays near it while one lit far off is corrected in full. While it is on, `exposure` is its
-compensation.
+for its manual exposure stays near it while one lit far off is corrected in full. It eases while the image restarts
+every frame (a moving camera, playback) and lands within about a third of a second once the image builds up, so a
+finished render shows its own exposure at any sample count. While it is on, `exposure` is its compensation.
 
 ```js
 // Strategy

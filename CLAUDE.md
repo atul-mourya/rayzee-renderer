@@ -1152,18 +1152,25 @@ the converged one (24155522.glb, 1080p: the old per-pixel log drifted 1.06 stops
 8×8 blocks, never single pixels: a skipped pixel's memory is fetched anyway. It meters only when no reading is in flight,
 less often as samples grow (`meterInterval`), and luminance is taken in the working space.
 - It aims at `blendExposureEV( room, view, strength )` (`autoExposureStrength`, default 0.3; 1 = follow every view): a room
-  level, learned over ~4 s of camera motion and moved in full when the scene changes under a still camera (the viewer's
+  level, learned over ~4 s of camera motion and moved in full with every reading under a still camera (the viewer's
   `_noteExposureView()` tells the two apart), goes through a curve that damps it to `strength` within 1.5 stops of the
   manual exposure and follows it fully past 3; the view adds its difference from the room at `strength`. Averaging to grey
   is what made it milky: on five Livspace rooms, 4 views each, the view-to-view swing was −1 to +2.35 stops at 100 %,
   ±0.85 at 30 %; a sky 16× dimmer under a still camera is still corrected in full. A camera switch re-meters afresh.
+  ⚠️ "Every reading", not only the first after a restart: a final render traces frame 0 with one bounce (renderMode 1),
+  and a room held at that reading exposed design (9).glb's finished image +2.10 stops (milky) where Gently gives +1.00.
   `autoExposureMinExposure` / `MaxExposure` (default ±8 stops, Bevy's range) cap only where the exposure
   lands. ⚠️ Never clamp the view's reading before the blend: a scene needing +6 with a ±2 range read as "lit near its
   exposure" and was damped to +1.07 instead of landing on +2.
-- The exposure moves in stops (`adaptExposureEV`: speed in stops/s while far, exponential within 1.5 stops): `update()` every
-  loop frame from `_beginFrame`, `advance( seconds )` once a frame in video time (VideoRenderManager), `instant` in
-  production. `_settling()` keeps a finished render's loop running until it lands; `_finishImage()` meters the finished
-  image for `renderFrames` / `renderUntilComplete`. The manual exposure is its compensation (`setCompensation`).
+- The exposure moves in stops: `update()` every loop frame from `_beginFrame` eases (`adaptExposureEV`: speed in stops/s
+  while far, exponential within 1.5 stops) while the image restarts every frame, and lands in ~0.3 s (`LAND_SECONDS`)
+  once it has two samples; `advance( seconds )` eases once a frame in video time (VideoRenderManager); `instant` snaps
+  (a host's choice). The eased tail took ~8 s to land a 1.4-stop change, so a 16-sample render finished at 0.8 s and
+  drifted on for 7 more; now 0.48 s, at completion. Every finished render is read once more and landed on
+  (`_renderCompleted` in the loop, `_finishImage()` for `renderFrames` / `renderUntilComplete`), so a saved image has its
+  own exposure. A final render keeps the exposure it starts with until 8 samples (`holdSamples`): snapping to each
+  reading, its 20 bounces read a 0.4-stop dip and back within 0.2 s at 2–8 samples. `_settling()` keeps a finished
+  render's loop running until it lands. The manual exposure is its compensation (`setCompensation`).
 - ⚠️ Never clear the in-flight reading from a reset, nor reuse the ReadbackBuffer while it is mapped: the old stage did on
   every camera move, and 236 of 237 readings failed silently — the exposure never moved while the camera did.
 - ⚠️ `onChange` wakes only a finished render's idle loop: `renderFrames` and a video export drive frames themselves.

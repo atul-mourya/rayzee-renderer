@@ -127,15 +127,15 @@ describe( 'blendExposureEV', () => {
 
 describe( 'AutoExposure', () => {
 
-	it( 'lands on its first metering, then adapts in wall-clock time', async () => {
+	it( 'lands on its first metering, then eases in wall-clock time while the image restarts every frame', async () => {
 
-		const { stage, renderer, context, state, land } = setup();
+		const { stage, renderer, context, bus, land } = setup();
 		stage.render( context );
 		await land( KEY - 2 );
 		stage.update( 0 );
 		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 2, 6 );
 
-		state[ 'pathtracer:samples' ] = 2;
+		bus.emit( 'pipeline:reset' ); // one sample since: a moving camera or playback
 		stage.render( context );
 		await land( KEY - 4 ); // the scene got darker by two stops
 		expect( stage.settling ).toBe( true );
@@ -146,6 +146,76 @@ describe( 'AutoExposure', () => {
 		stage.advance( Infinity );
 		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 4, 6 );
 		expect( stage.settling ).toBe( false );
+
+	} );
+
+	// An interactive renderer stops when the image is done: easing past that showed a finished render drifting for seconds.
+	it( 'lands in a third of a second once the image accumulates', async () => {
+
+		const { stage, renderer, context, state, land } = setup();
+		stage.render( context );
+		await land( KEY - 2 );
+		stage.update( 0 );
+
+		state[ 'pathtracer:samples' ] = 2;
+		stage.render( context );
+		await land( KEY - 4 );
+		stage.update( 1000 );
+		stage.update( 1100 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeGreaterThan( 3.5 );
+		for ( let t = 1116; t <= 1400; t += 16 ) stage.update( t );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 4, 6 );
+		expect( stage.settling ).toBe( false );
+
+	} );
+
+	it( 'eases in video time, however many samples a frame has', async () => {
+
+		const { stage, renderer, context, state, land } = setup();
+		stage.render( context );
+		await land( KEY - 2 );
+		stage.advance( 0 );
+		state[ 'pathtracer:samples' ] = 64;
+		stage.render( context );
+		await land( KEY - 4 );
+		stage.advance( 0.1 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 2.1, 6 );
+
+	} );
+
+	// A final render's first samples meter its 20 bounces noisily: a 0.4-stop dip and back within 0.2 s.
+	it( 'keeps an existing exposure through an image\'s first holdSamples samples', async () => {
+
+		const { stage, renderer, context, state, bus, land } = setup();
+		stage.render( context );
+		await land( KEY - 2 );
+
+		stage.holdSamples = 8;
+		bus.emit( 'pipeline:reset' );
+		for ( let samples = 1; samples < 8; samples ++ ) {
+
+			state[ 'pathtracer:samples' ] = samples;
+			stage.render( context );
+
+		}
+
+		expect( renderer.metered ).toBe( 1 );
+
+		const finished = stage.meter( context ); // a finished image is read whatever its samples
+		expect( renderer.metered ).toBe( 2 );
+		await land( KEY - 3 );
+		await finished;
+
+		state[ 'pathtracer:samples' ] = 8;
+		stage.render( context );
+		expect( renderer.metered ).toBe( 3 );
+		await land( KEY - 3 );
+
+		// With no exposure to keep, the first reading is taken at once.
+		stage.resetHistory();
+		state[ 'pathtracer:samples' ] = 1;
+		stage.render( context );
+		expect( renderer.metered ).toBe( 4 );
 
 	} );
 
@@ -250,28 +320,38 @@ describe( 'AutoExposure', () => {
 		stage.render( context );
 		await land( KEY - 2 );
 		stage.update( 0 );
-		const room = blendExposureEV( 2, 2, 0.3 );
-		expect( stage._targetEV ).toBeCloseTo( room, 6 );
+		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( 2, 2, 0.3 ), 6 );
 
-		// The same view, metered again darker: a damped share of the difference, no new room.
+		// The same image read again as it fills in moves the room with it: a final render's first frame is traced with
+		// one bounce, and a room held at that reading exposed the finished image 2.1 stops up where it asked for 1.95.
 		state[ 'pathtracer:samples' ] = 2;
 		stage.render( context );
 		await land( KEY + 1 );
+		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( - 1, - 1, 0.3 ), 6 );
+
+		// A view three stops darker, reached by moving: a damped share of it, and staring at it teaches nothing more.
+		stage.noteViewChanged();
+		bus.emit( 'pipeline:reset' );
+		stage.render( context );
+		await land( KEY - 2 );
 		for ( let t = 1; t <= 100; t ++ ) stage.update( t * 100 );
-		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( 2, - 1, 0.3 ), 6 );
+		const held = stage._targetEV;
+		expect( held ).toBeLessThan( blendExposureEV( 2, 2, 0.3 ) - 0.3 );
+		for ( let t = 101; t <= 200; t ++ ) stage.update( t * 100 );
+		expect( stage._targetEV ).toBeCloseTo( held, 6 );
 
 		// Moving through views that read the same: the room follows them.
-		for ( let t = 101; t <= 400; t ++ ) {
+		for ( let t = 201; t <= 500; t ++ ) {
 
 			stage.noteViewChanged();
 			bus.emit( 'pipeline:reset' );
 			stage.render( context );
-			await land( KEY + 1 );
+			await land( KEY - 2 );
 			stage.update( t * 100 );
 
 		}
 
-		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( - 1, - 1, 0.3 ), 2 );
+		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( 2, 2, 0.3 ), 2 );
 
 	} );
 

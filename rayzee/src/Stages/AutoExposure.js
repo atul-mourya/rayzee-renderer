@@ -33,6 +33,9 @@ const MAX_TILE_READS = 256;
 const SPOT_FALLOFF = 128; // Gaussian over image heights: σ ≈ 6 % of the frame height
 const TRANSITION_STOPS = 1.5;
 const SETTLED_STOPS = 0.01;
+// Seconds for an accumulating image's exposure to close the gap by e: it lands in ~0.3 s. Easing is for a picture
+// that keeps changing; a still one is being looked at, and a low-sample render finishes before an eased exposure lands.
+const LAND_SECONDS = 0.06;
 const MAX_STEP_SECONDS = 0.25;
 const ROOM_SECONDS = 4; // camera motion the room level takes to follow
 const MOTION_HOLD = 0.3; // a metering of a new view counts as motion for this long
@@ -93,8 +96,9 @@ const meterInterval = samples => samples < 16 ? 1 : samples < 64 ? 4 : 16;
  * Tiles are averaged in linear light, weighted by alpha, so a one-sample image meters like the
  * converged one; the percentile-clipped mean of their log2 histogram is read back. It aims at a room
  * level learned while the view changes plus a damped share of each view (`blendExposureEV`), moves in
- * stops every loop frame (`update()`), in video time (`advance()`), or with each metering (`instant`),
- * and is applied as 2^EV × the manual exposure.
+ * stops every loop frame (`update()`: eased while the image restarts every frame, landing in ~0.3 s once
+ * it accumulates), in video time (`advance()`, eased), or with each metering (`instant`), and is applied
+ * as 2^EV × the manual exposure.
  *
  * Events listened: pipeline:reset, pipeline:lightingChanged (lands on the next metering)
  * Textures read: pathtracer:color
@@ -118,6 +122,9 @@ export class AutoExposure extends RenderStage {
 		this.centerWeight = options.centerWeight ?? 8.0;
 		this.strength = options.strength ?? AUTO_EXPOSURE_DEFAULTS.autoExposureStrength;
 		this.instant = false;
+		// Readings of an image with fewer samples leave an existing exposure where it is (a final render's first
+		// samples meter its many bounces noisily); a reading through meter() is always taken.
+		this.holdSamples = 0;
 		/** Called when a metering moves the target, or a change needs a frame; the viewer wakes its loop. */
 		this.onChange = null;
 
@@ -152,6 +159,7 @@ export class AutoExposure extends RenderStage {
 		this._meteredLog2 = null;
 		this._snap = true;
 		this._lastUpdate = null;
+		this._accumulating = false;
 		this._emittedEV = null;
 		this._pending = null;
 		this._generation = 0;
@@ -323,12 +331,16 @@ export class AutoExposure extends RenderStage {
 
 		if ( ! this.enabled ) return;
 
+		const samples = context.getState( 'pathtracer:samples' ) ?? 0;
+		// Two samples since the last restart: no camera move or playback is restarting it every frame.
+		this._accumulating = samples >= 2;
+
 		if ( ! this._pending ) {
 
-			const samples = context.getState( 'pathtracer:samples' ) ?? 0;
 			const last = this._meteredAt;
 			const due = this._stale || this._targetEV === null || last.restarts !== this._restarts || samples - last.samples >= meterInterval( samples );
-			if ( due ) this._meter( context, samples );
+			const held = samples < this.holdSamples && this._targetEV !== null && ! this._stale;
+			if ( due && ! held ) this._meter( context, samples );
 
 		}
 
@@ -449,9 +461,11 @@ export class AutoExposure extends RenderStage {
 
 			this._movingUntil = this._clock + MOTION_HOLD;
 
-		} else if ( image === this._landed || image.restarts !== this._landed.restarts ) {
+		} else {
 
-			// The scene changed under a still camera, or the meter reads it differently: the room changed with it.
+			// Under a still camera the room moves with every reading: the scene changed, or the image reads better as it
+			// fills in. Held at a render's first reading, a final render's 1-bounce frame 0 (0.75 stops dark) became the
+			// room, and the finished image was exposed +2.1 stops where it asked for +1.95.
 			this._roomEV += this._viewEV - before;
 
 		}
@@ -475,7 +489,7 @@ export class AutoExposure extends RenderStage {
 	update( now = performance.now() ) {
 
 		const dt = this._lastUpdate === null ? 0 : Math.min( ( now - this._lastUpdate ) / 1000, MAX_STEP_SECONDS );
-		const changed = this.advance( dt );
+		const changed = this.advance( dt, this._accumulating );
 		// Settled and still, the loop may sleep: the time until the next metering is not adaptation time.
 		this._lastUpdate = this.settling || this._clock <= this._movingUntil ? now : null;
 		return changed;
@@ -485,8 +499,9 @@ export class AutoExposure extends RenderStage {
 	/**
 	 * Steps the exposure by `seconds` towards the last metering; Infinity lands on it. Returns whether it changed.
 	 * @param {number} seconds
+	 * @param {boolean} [still=false] - the image is accumulating: land in ~0.3 s instead of easing
 	 */
-	advance( seconds ) {
+	advance( seconds, still = false ) {
 
 		if ( ! this.enabled || this._targetEV === null ) return false;
 
@@ -511,7 +526,9 @@ export class AutoExposure extends RenderStage {
 
 		} else {
 
-			this._exposureEV = adaptExposureEV( before, this._targetEV, seconds, this.adaptSpeedBright, this.adaptSpeedDark );
+			this._exposureEV = still
+				? before + ( this._targetEV - before ) * ( 1 - Math.exp( - seconds / LAND_SECONDS ) )
+				: adaptExposureEV( before, this._targetEV, seconds, this.adaptSpeedBright, this.adaptSpeedDark );
 			if ( Math.abs( this._targetEV - this._exposureEV ) <= SETTLED_STOPS ) this._exposureEV = this._targetEV;
 
 		}
