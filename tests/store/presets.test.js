@@ -16,6 +16,13 @@ describe( 'DEFAULT_STATE', () => {
 
 	} );
 
+	it( 'turns local exposure on, where the engine leaves it off', () => {
+
+		expect( LOCAL_EXPOSURE_DEFAULTS.localExposure ).toBe( false );
+		expect( DEFAULT_STATE.localExposure ).toBe( true );
+
+	} );
+
 	it( 'turns the final denoise on, where the engine leaves it off', () => {
 
 		expect( DENOISER_DEFAULTS.enableOIDN ).toBe( false );

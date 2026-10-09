@@ -24,6 +24,8 @@ export const DEFAULT_STATE = {
 	// The app turns the final denoise on out of the box — see INTERACTIVE_RENDER_CONFIG. The engine
 	// default stays off so an embedder is not made to fetch OIDN's weights it never asked for.
 	enableOIDN: true,
+	// Local exposure too: it changes the look, so the engine — and a farm pinned to its look — keeps it off.
+	localExposure: true,
 	// The app's names for engine values
 	bounces: ENGINE_DEFAULTS.maxBounces,
 	debugMode: ENGINE_DEFAULTS.visMode,

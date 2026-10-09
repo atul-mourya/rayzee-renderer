@@ -1068,6 +1068,26 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
+	// Auto and local exposure keep no record in the engine's settings: the panel's values are put on it at
+	// startup and after a session restores the panel.
+	applyExposureToEngine: () => {
+
+		const app = getApp();
+		if ( ! app ) return;
+		const s = get();
+		app.denoisingManager.setAutoExposureParams( {
+			metering: s.autoExposureMetering, strength: s.autoExposureStrength, keyValue: s.autoExposureKeyValue,
+			minExposure: s.autoExposureMinExposure, maxExposure: s.autoExposureMaxExposure,
+			adaptSpeedBright: s.autoExposureAdaptSpeedBright, adaptSpeedDark: s.autoExposureAdaptSpeedDark,
+		} );
+		app.denoisingManager.setAutoExposure( s.autoExposure );
+		app.setLocalExposureParams?.( {
+			highlightContrast: s.localExposureHighlightContrast, shadowContrast: s.localExposureShadowContrast, detailStrength: s.localExposureDetailStrength,
+		} );
+		app.setLocalExposure?.( s.localExposure );
+
+	},
+
 	handleLocalExposureChange: handleChange(
 		val => set( { localExposure: val } ),
 		( val, app ) => app.setLocalExposure?.( val ),
