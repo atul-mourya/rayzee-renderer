@@ -70,8 +70,9 @@ const ColorManagementSection = () => {
 	const status = useColorStatus();
 	const transforms = useViewTransforms();
 	const {
-		toneMapping, exposure, autoExposure, autoExposureMetering,
+		toneMapping, exposure, autoExposure, autoExposureMetering, autoExposureStrength,
 		handleToneMappingChange, handleExposureChange, handleAutoExposureChange, handleAutoExposureMeteringChange,
+		handleAutoExposureStrengthChange,
 	} = usePathTracerStore();
 
 	const [ builtins, setBuiltins ] = useState( [] );
@@ -434,13 +435,18 @@ const ColorManagementSection = () => {
 			)}
 
 			<Row more={autoExposure ? (
-				<Row>
-					{label( 'Metering' )}
-					<Select value={autoExposureMetering} onValueChange={handleAutoExposureMeteringChange}>
-						{trigger( 'Which part of the image sets the exposure' )}
-						<SelectContent>{METERING_OPTIONS.map( item )}</SelectContent>
-					</Select>
-				</Row>
+				<>
+					<Row>
+						{label( 'Metering' )}
+						<Select value={autoExposureMetering} onValueChange={handleAutoExposureMeteringChange}>
+							{trigger( 'Which part of the image sets the exposure' )}
+							<SelectContent>{METERING_OPTIONS.map( item )}</SelectContent>
+						</Select>
+					</Row>
+					<Row title="How much the exposure follows each view. Lower keeps a well-lit scene near its exposure as you look around; 100 % follows every view.">
+						<Slider label={'Strength'} min={0} max={100} step={5} unit="%" value={[ Math.round( autoExposureStrength * 100 ) ]} snapPoints={[ 30, 100 ]} onValueChange={v => handleAutoExposureStrengthChange( v[ 0 ] / 100 )} />
+					</Row>
+				</>
 			) : null}>
 				{label( 'Auto Exposure' )}
 				<div className="flex items-center gap-2">

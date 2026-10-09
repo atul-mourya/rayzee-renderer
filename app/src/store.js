@@ -428,6 +428,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	// Auto-exposure setters
 	setAutoExposure: val => set( { autoExposure: val } ),
 	setAutoExposureMetering: val => set( { autoExposureMetering: val } ),
+	setAutoExposureStrength: val => set( { autoExposureStrength: val } ),
 	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
 	setAutoExposureMinExposure: val => set( { autoExposureMinExposure: val } ),
 	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
@@ -1057,6 +1058,12 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	handleAutoExposureMeteringChange: handleChange(
 		val => set( { autoExposureMetering: val } ),
 		( val, app ) => app.denoisingManager.setAutoExposureParams( { metering: val } ),
+		false
+	),
+
+	handleAutoExposureStrengthChange: handleChange(
+		val => set( { autoExposureStrength: Array.isArray( val ) ? val[ 0 ] : val } ),
+		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: Array.isArray( val ) ? val[ 0 ] : val } ),
 		false
 	),
 

@@ -9,6 +9,7 @@ import { getWorkingMatrix } from '../Color/WorkingMatrix.js';
 export const AUTO_EXPOSURE_DEFAULTS = {
 	autoExposure: false,
 	autoExposureMetering: 'center',
+	autoExposureStrength: 0.3,
 	autoExposureKeyValue: 0.18,
 	autoExposureMinExposure: 0.1,
 	autoExposureMaxExposure: 20.0,
@@ -33,6 +34,10 @@ const SPOT_FALLOFF = 128; // Gaussian over image heights: σ ≈ 6 % of the fram
 const TRANSITION_STOPS = 1.5;
 const SETTLED_STOPS = 0.01;
 const MAX_STEP_SECONDS = 0.25;
+const ROOM_SECONDS = 4; // camera motion the room level takes to follow
+const MOTION_HOLD = 0.3; // a metering of a new view counts as motion for this long
+const DAMP_UNTIL = 1.5; // stops from the manual exposure: the room level is damped up to here...
+const FOLLOW_FROM = 3; // ...and followed fully from here
 const REC709_Y = [ 0.2126, 0.7152, 0.0722 ];
 
 /**
@@ -51,6 +56,18 @@ export function adaptExposureEV( current, target, dt, speedBright, speedDark ) {
 	if ( dt === Infinity ) return target;
 	const step = Math.min( speed * dt, Math.abs( delta ) * ( 1 - Math.exp( - speed * dt / TRANSITION_STOPS ) ) );
 	return current + Math.sign( delta ) * step;
+
+}
+
+/**
+ * Where the exposure aims, in stops from the manual exposure: the room level, damped to `strength` near the
+ * manual exposure and followed far from it, plus the view's difference from the room at `strength`.
+ */
+export function blendExposureEV( room, view, strength ) {
+
+	const a = Math.abs( room );
+	const w = a <= DAMP_UNTIL ? strength : a >= FOLLOW_FROM ? 1 : strength + ( 1 - strength ) * ( a - DAMP_UNTIL ) / ( FOLLOW_FROM - DAMP_UNTIL );
+	return room * w + strength * ( view - room );
 
 }
 
@@ -74,9 +91,10 @@ const meterInterval = samples => samples < 16 ? 1 : samples < 64 ? 4 : 16;
  * Auto exposure: meters the accumulated image on the GPU and adapts on the CPU.
  *
  * Tiles are averaged in linear light, weighted by alpha, so a one-sample image meters like the
- * converged one; the percentile-clipped mean of their log2 histogram is read back. The exposure moves
- * in stops every loop frame (`update()`), in video time (`advance()`), or with each metering
- * (`instant`), and is applied as 2^EV × the manual exposure.
+ * converged one; the percentile-clipped mean of their log2 histogram is read back. It aims at a room
+ * level learned while the view changes plus a damped share of each view (`blendExposureEV`), moves in
+ * stops every loop frame (`update()`), in video time (`advance()`), or with each metering (`instant`),
+ * and is applied as 2^EV × the manual exposure.
  *
  * Events listened: pipeline:reset, pipeline:lightingChanged (lands on the next metering)
  * Textures read: pathtracer:color
@@ -98,6 +116,7 @@ export class AutoExposure extends RenderStage {
 		this.adaptSpeedBright = options.adaptSpeedBright ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedBright;
 		this.adaptSpeedDark = options.adaptSpeedDark ?? AUTO_EXPOSURE_DEFAULTS.autoExposureAdaptSpeedDark;
 		this.centerWeight = options.centerWeight ?? 8.0;
+		this.strength = options.strength ?? AUTO_EXPOSURE_DEFAULTS.autoExposureStrength;
 		this.instant = false;
 		/** Called when a metering moves the target, or a change needs a frame; the viewer wakes its loop. */
 		this.onChange = null;
@@ -124,6 +143,12 @@ export class AutoExposure extends RenderStage {
 		this._compensation = 1;
 		this._exposureEV = 0;
 		this._targetEV = null;
+		this._viewEV = null;
+		this._roomEV = null;
+		this._clock = 0;
+		this._movingUntil = - 1;
+		this._viewMoves = 0;
+		this._landed = null;
 		this._meteredLog2 = null;
 		this._snap = true;
 		this._lastUpdate = null;
@@ -357,11 +382,12 @@ export class AutoExposure extends RenderStage {
 		this.renderer.compute( this._kernels );
 
 		const generation = this._generation;
+		const image = { restarts: this._restarts, moves: this._viewMoves };
 		const pending = this.renderer.getArrayBufferAsync( this._result.value, this._readback ).then( ( readback ) => {
 
 			const data = readback?.buffer ? new Float32Array( readback.buffer.slice( 0, 16 ) ) : null;
 			this._readback.release();
-			return data && generation === this._generation && ! this._disposed ? this._applyMetering( data ) : null;
+			return data && generation === this._generation && ! this._disposed ? this._applyMetering( data, image ) : null;
 
 		}, () => {
 
@@ -404,13 +430,34 @@ export class AutoExposure extends RenderStage {
 
 	}
 
-	_applyMetering( data ) {
+	// `image` is the restart and view count it was metered at; none re-reads the same image.
+	_applyMetering( data, image = this._landed ) {
 
 		const [ level, total, kept ] = data;
 		if ( ! this.enabled || ! ( total > 0 && kept > 0 ) || ! Number.isFinite( level ) ) return null;
 
+		const before = this._viewEV;
 		this._meteredLog2 = level;
-		const target = Math.min( Math.max( Math.log2( this.keyValue ) - level, Math.log2( this.minExposure ) ), Math.log2( this.maxExposure ) );
+		this._viewEV = this._inRange( Math.log2( this.keyValue ) - level );
+
+		if ( this._roomEV === null ) {
+
+			this._roomEV = this._viewEV;
+
+		} else if ( image?.moves !== this._landed?.moves ) {
+
+			this._movingUntil = this._clock + MOTION_HOLD;
+
+		} else if ( image === this._landed || image.restarts !== this._landed.restarts ) {
+
+			// The scene changed under a still camera, or the meter reads it differently: the room changed with it.
+			this._roomEV += this._viewEV - before;
+
+		}
+
+		this._landed = image;
+
+		const target = this._aim();
 		const moved = this._targetEV === null || Math.abs( target - this._targetEV ) > SETTLED_STOPS;
 		this._targetEV = target;
 		if ( moved || this.settling ) this.onChange?.();
@@ -428,8 +475,8 @@ export class AutoExposure extends RenderStage {
 
 		const dt = this._lastUpdate === null ? 0 : Math.min( ( now - this._lastUpdate ) / 1000, MAX_STEP_SECONDS );
 		const changed = this.advance( dt );
-		// Settled, the loop may sleep: the time until the next metering is not adaptation time.
-		this._lastUpdate = this.settling ? now : null;
+		// Settled and still, the loop may sleep: the time until the next metering is not adaptation time.
+		this._lastUpdate = this.settling || this._clock <= this._movingUntil ? now : null;
 		return changed;
 
 	}
@@ -441,6 +488,19 @@ export class AutoExposure extends RenderStage {
 	advance( seconds ) {
 
 		if ( ! this.enabled || this._targetEV === null ) return false;
+
+		// The room level learns only while the view changes: staring at one view does not make it the room.
+		if ( seconds > 0 && seconds !== Infinity ) {
+
+			this._clock += seconds;
+			if ( this._clock <= this._movingUntil ) {
+
+				this._roomEV += ( this._viewEV - this._roomEV ) * ( 1 - Math.exp( - Math.min( seconds, MAX_STEP_SECONDS ) / ROOM_SECONDS ) );
+				this._targetEV = this._aim();
+
+			}
+
+		}
 
 		const before = this._exposureEV;
 		if ( this._snap || this.instant ) {
@@ -458,6 +518,25 @@ export class AutoExposure extends RenderStage {
 		if ( this._exposureEV === before ) return false;
 		this._apply();
 		return true;
+
+	}
+
+	_inRange( ev ) {
+
+		return Math.min( Math.max( ev, Math.log2( this.minExposure ) ), Math.log2( this.maxExposure ) );
+
+	}
+
+	_aim() {
+
+		return this._inRange( blendExposureEV( this._roomEV, this._viewEV, this.strength ) );
+
+	}
+
+	/** The camera moved: readings until it stops are of other views, not of a changed scene. */
+	noteViewChanged() {
+
+		this._viewMoves ++;
 
 	}
 
@@ -527,6 +606,9 @@ export class AutoExposure extends RenderStage {
 
 		this._generation ++;
 		this._targetEV = null;
+		this._viewEV = null;
+		this._roomEV = null;
+		this._landed = null;
 		this._meteredLog2 = null;
 		this._snap = true;
 
@@ -565,7 +647,7 @@ export class AutoExposure extends RenderStage {
 		const metering = params.metering;
 		if ( metering !== undefined && METERING_MODES.includes( metering ) ) this.metering = metering;
 		if ( params.meteringPoint ) this.meteringPoint.set( params.meteringPoint.x, params.meteringPoint.y );
-		for ( const key of [ 'keyValue', 'minExposure', 'maxExposure', 'adaptSpeedBright', 'adaptSpeedDark', 'centerWeight' ] ) {
+		for ( const key of [ 'keyValue', 'minExposure', 'maxExposure', 'adaptSpeedBright', 'adaptSpeedDark', 'centerWeight', 'strength' ] ) {
 
 			if ( params[ key ] !== undefined ) this[ key ] = params[ key ];
 

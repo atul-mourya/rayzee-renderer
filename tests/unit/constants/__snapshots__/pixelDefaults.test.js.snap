@@ -217,6 +217,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > vie
     "autoExposureMaxExposure": 20,
     "autoExposureMetering": "center",
     "autoExposureMinExposure": 0.1,
+    "autoExposureStrength": 0.3,
   },
   "autoFocus": {
     "afScreenPoint": {

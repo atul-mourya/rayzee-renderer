@@ -3,12 +3,12 @@
  * The metering kernels run in tests/gpu/autoExposure.test.js.
  */
 import { describe, it, expect } from 'vitest';
-import { AutoExposure, adaptExposureEV } from '@/core/Stages/AutoExposure.js';
+import { AutoExposure, adaptExposureEV, blendExposureEV } from '@/core/Stages/AutoExposure.js';
 import { EventDispatcher } from '@/core/Pipeline/EventDispatcher.js';
 
 const KEY = Math.log2( 0.18 );
 
-function setup( { width = 640, height = 360 } = {} ) {
+function setup( { width = 640, height = 360, strength = 1 } = {} ) {
 
 	const reads = [];
 	const renderer = {
@@ -34,7 +34,7 @@ function setup( { width = 640, height = 360 } = {} ) {
 	};
 
 	const bus = new EventDispatcher();
-	const stage = new AutoExposure( renderer, { enabled: false } );
+	const stage = new AutoExposure( renderer, { enabled: false, strength } );
 	stage.initialize( context, bus );
 	stage.setEnabled( true );
 
@@ -86,6 +86,40 @@ describe( 'adaptExposureEV', () => {
 
 		expect( adaptExposureEV( 1, 1, 1, 3, 1 ) ).toBe( 1 );
 		expect( adaptExposureEV( 1, 3, 0, 3, 1 ) ).toBe( 1 );
+
+	} );
+
+} );
+
+describe( 'blendExposureEV', () => {
+
+	it( 'aims at the view at full strength', () => {
+
+		expect( blendExposureEV( 1.2, - 0.7, 1 ) ).toBeCloseTo( - 0.7, 9 );
+
+	} );
+
+	it( 'damps a room level near the manual exposure and follows one far from it', () => {
+
+		expect( blendExposureEV( 1, 1, 0.3 ) ).toBeCloseTo( 0.3, 9 );
+		expect( blendExposureEV( - 1.5, - 1.5, 0.3 ) ).toBeCloseTo( - 0.45, 9 );
+		expect( blendExposureEV( 2.25, 2.25, 0.3 ) ).toBeCloseTo( 2.25 * 0.65, 9 );
+		expect( blendExposureEV( 4, 4, 0.3 ) ).toBe( 4 );
+		expect( blendExposureEV( - 5, - 5, 0.3 ) ).toBe( - 5 );
+
+	} );
+
+	it( 'adds the view\'s difference from the room at strength, and never reverses', () => {
+
+		expect( blendExposureEV( 0, 2, 0.3 ) ).toBeCloseTo( 0.6, 9 );
+		let last = - Infinity;
+		for ( let room = - 6; room <= 6; room += 0.05 ) {
+
+			const aim = blendExposureEV( room, room, 0.3 );
+			expect( aim ).toBeGreaterThanOrEqual( last );
+			last = aim;
+
+		}
 
 	} );
 
@@ -207,6 +241,64 @@ describe( 'AutoExposure', () => {
 		expect( stage.wantsMetering ).toBe( true );
 		stage.render( context );
 		expect( renderer.metered ).toBe( 2 );
+
+	} );
+
+	it( 'learns the room only while the view changes', async () => {
+
+		const { stage, context, state, bus, land } = setup( { strength: 0.3 } );
+		stage.render( context );
+		await land( KEY - 2 );
+		stage.update( 0 );
+		const room = blendExposureEV( 2, 2, 0.3 );
+		expect( stage._targetEV ).toBeCloseTo( room, 6 );
+
+		// The same view, metered again darker: a damped share of the difference, no new room.
+		state[ 'pathtracer:samples' ] = 2;
+		stage.render( context );
+		await land( KEY + 1 );
+		for ( let t = 1; t <= 100; t ++ ) stage.update( t * 100 );
+		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( 2, - 1, 0.3 ), 6 );
+
+		// Moving through views that read the same: the room follows them.
+		for ( let t = 101; t <= 400; t ++ ) {
+
+			stage.noteViewChanged();
+			bus.emit( 'pipeline:reset' );
+			stage.render( context );
+			await land( KEY + 1 );
+			stage.update( t * 100 );
+
+		}
+
+		expect( stage._targetEV ).toBeCloseTo( blendExposureEV( - 1, - 1, 0.3 ), 2 );
+
+	} );
+
+	it( 'corrects a scene lit far from its manual exposure in full', async () => {
+
+		const { stage, renderer, context, land } = setup( { strength: 0.3 } );
+		stage.render( context );
+		await land( KEY - 4 );
+		stage.update( 0 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 4, 6 );
+
+	} );
+
+	it( 'follows the scene when it changes under a still camera', async () => {
+
+		const { stage, renderer, context, bus, land } = setup( { strength: 0.3 } );
+		stage.render( context );
+		await land( KEY - 3.5 );
+		stage.update( 0 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 3.5, 6 );
+
+		// The lights turned up four stops; the camera did not move.
+		bus.emit( 'pipeline:reset' );
+		stage.render( context );
+		await land( KEY + 0.5 );
+		stage.advance( Infinity );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( blendExposureEV( - 0.5, - 0.5, 0.3 ), 6 );
 
 	} );
 

@@ -1101,6 +1101,9 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		};
 
+		// Another camera is a cut: meter it afresh.
+		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, () => ae.resetHistory() );
+
 		ae.on( 'autoexposure:updated', ( { exposure, autoExposure, targetExposure, luminance } ) => {
 
 			this.dispatchEvent( { type: EngineEvents.AUTO_EXPOSURE_UPDATED, exposure, autoExposure, targetExposure, luminance } );
@@ -1115,10 +1118,22 @@ export class PathTracerApp extends RayzeeRenderer {
 		const ae = this.stages.autoExposure;
 		if ( ! ae?.enabled ) return;
 
+		this._noteExposureView();
 		const af = this.cameraManager.afScreenPoint;
 		if ( ae.metering === 'spot' && ( ae.meteringPoint.x !== af.x || ae.meteringPoint.y !== af.y ) ) ae.updateParameters( { meteringPoint: af } );
 		if ( ae.wantsMetering && this.completion.renderCompleteDispatched ) ae.meter( this.pipeline.context );
 		if ( ae.update() ) this._needsDisplayRefresh = true;
+
+	}
+
+	// Whatever moved the camera (controls, walk, timeline, a video export), auto exposure learns of it here.
+	_noteExposureView() {
+
+		const { matrixWorld, projectionMatrix } = this.camera;
+		const last = this._exposureView;
+		if ( last?.view.equals( matrixWorld ) && last.projection.equals( projectionMatrix ) ) return;
+		this._exposureView = { view: matrixWorld.clone(), projection: projectionMatrix.clone() };
+		if ( last ) this.stages.autoExposure?.noteViewChanged();
 
 	}
 

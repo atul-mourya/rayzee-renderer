@@ -1144,6 +1144,12 @@ percentile-clipped mean (fractional bins) is read back. Averaging before the log
 the converged one (24155522.glb, 1080p: the old per-pixel log drifted 1.06 stops from 1 to 256 spp). Large tiles skip whole
 8×8 blocks, never single pixels: a skipped pixel's memory is fetched anyway. It meters only when no reading is in flight,
 less often as samples grow (`meterInterval`), and luminance is taken in the working space.
+- It aims at `blendExposureEV( room, view, strength )` (`autoExposureStrength`, default 0.3; 1 = follow every view): a room
+  level, learned over ~4 s of camera motion and moved in full when the scene changes under a still camera (the viewer's
+  `_noteExposureView()` tells the two apart), goes through a curve that damps it to `strength` within 1.5 stops of the
+  manual exposure and follows it fully past 3; the view adds its difference from the room at `strength`. Averaging to grey
+  is what made it milky: on five Livspace rooms, 4 views each, the view-to-view swing was −1 to +2.35 stops at 100 %,
+  ±0.85 at 30 %; a sky 16× dimmer under a still camera is still corrected in full. A camera switch re-meters afresh.
 - The exposure moves in stops (`adaptExposureEV`: speed in stops/s while far, exponential within 1.5 stops): `update()` every
   loop frame from `_beginFrame`, `advance( seconds )` once a frame in video time (VideoRenderManager), `instant` in
   production. `_settling()` keeps a finished render's loop running until it lands; `_finishImage()` meters the finished

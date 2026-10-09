@@ -6,7 +6,7 @@ import { AutoExposure } from '@/core/Stages/AutoExposure.js';
 function viewer( { autoExposure = false, requiresMotionVectors = false } = {} ) {
 
 	const renderer = { toneMappingExposure: 1 };
-	const ae = new AutoExposure( renderer, { enabled: false } );
+	const ae = new AutoExposure( renderer, { enabled: false, strength: 1 } );
 	ae.setEnabled( autoExposure );
 	const app = {
 		stages: { pathTracer: { setUniform: vi.fn() }, autoExposure: ae },

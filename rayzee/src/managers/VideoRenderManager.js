@@ -142,6 +142,7 @@ export class VideoRenderManager {
 
 				if ( autoExposure ) {
 
+					app._noteExposureView();
 					await autoExposure.meter( app.pipeline.context );
 					autoExposure.advance( i === Math.max( 0, startFrame ) ? Infinity : frameDuration );
 					app._presentDisplay();
