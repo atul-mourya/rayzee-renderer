@@ -38,7 +38,8 @@ RayzeeRenderer (core)                     PathTracerApp (viewer) adds
    │  ├─ ShaderBuilder                    │   └─ TileHelper, OutlineHelper, gizmo
    │  └─ StorageTexturePool               ├─ stages from _createExtraStages():
    ├─ [ _createExtraStages() ]            │   NormalDepth, MotionVector, NRD, ASVGF,
-   └─ Compositor                          │   Variance, BilateralFilter, EdgeFilter, AutoExposure
+   └─ Compositor                          │   Variance, BilateralFilter, EdgeFilter, AutoExposure,
+                                          │   LocalExposure
                                           └─ add-ons: ColorManagement, PhysicalSky,
                                               BidirectionalIntegrator, ArchiveImporter, storage
 ```
@@ -136,7 +137,7 @@ const color = context.getTexture( 'pathtracer:color' );
 | `pathtracer:viewpointChanged` | PathTracerStage, after interaction mode ends and the stage resets | — | Variance |
 | `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | ASVGF, NRD |
 | `pipeline:lightingChanged` | RayzeeRenderer (model or environment load, rebuild after adding or removing an object), EnvironmentManager mode change (`callbacks.onLightingChanged`) | — | AutoExposure |
-| `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, OverlayManager (hides TileHelper) |
+| `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, LocalExposure, OverlayManager (hides TileHelper) |
 | `pipeline:resize` | `RenderPipeline.setSize()` | `{ width, height }` | PathTracerStage |
 | `frame:complete` | RenderPipeline, after all stages | `{ frame, accumulatedFrames }` | — |
 | `autoexposure:updated` | AutoExposure, when the exposure moves 0.005 stops or more | `{ exposure, autoExposure, targetExposure, luminance }` | PathTracerApp (re-dispatched as `EngineEvents.AUTO_EXPOSURE_UPDATED`) |
@@ -213,6 +214,7 @@ export const StageExecutionMode = {
 | BilateralFilter | `ALWAYS` | viewer |
 | EdgeFilter | `PER_CYCLE` | viewer |
 | AutoExposure | `ALWAYS` | viewer |
+| LocalExposure | `ALWAYS` | viewer |
 | Compositor | `ALWAYS` | core |
 
 No stage uses `PER_TILE` or `CONDITIONAL`.
@@ -390,7 +392,7 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 
 ### Viewer stages
 
-`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter and EdgeFilter start disabled; AutoExposure follows `AUTO_EXPOSURE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
+`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter, EdgeFilter and LocalExposure start disabled; AutoExposure follows `AUTO_EXPOSURE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
 
 | Stage (`name`) | On while | Reads | Publishes |
 |----------------|----------|-------|-----------|
@@ -476,7 +478,7 @@ The overlay is not a stage. After each frame `animate()` calls the `_renderHelpe
    ↓ emits pathtracer:frameComplete (and camera:moved when the camera changed)
 
 2. Viewer stages, in order, each only while enabled
-   NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure
+   NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → LocalExposure
 
 3. Compositor.render()                 [ALWAYS]
    ↓ picks its source, grades saturation, draws to the canvas through the renderer's output pass
@@ -506,7 +508,7 @@ A camera move is a soft reset from `animate()`, so temporal denoisers keep their
 
 ```
 Core:    [PathTracer → Compositor]
-Viewer:  [PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → Compositor]
+Viewer:  [PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → LocalExposure → Compositor]
     ↓
 Compositor → renderer output pass (exposure, view transform, sRGB) → canvas
     ↓
@@ -525,7 +527,7 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 
 | Texture Key | Producer | Consumers | Description |
 |-------------|----------|-----------|-------------|
-| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure, NormalDepth (size only) | Accumulated colour |
+| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure, LocalExposure, NormalDepth (size only) | Accumulated colour |
 | `pathtracer:normalDepth` | PathTracer; replaced by NormalDepth while it runs | ASVGF, NRD, EdgeFilter, BilateralFilter, MotionVector, OIDN motion history | Normals + depth. NormalDepth's: geometric normal, jitter-free linear ray distance |
 | `pathtracer:albedo` | PathTracer | ASVGF, NRD, EdgeFilter, BilateralFilter | Albedo (denoiser guide). `.w` holds the hit distance only while a stage has called `requestOutput( 'hitDistance', { encode } )` — the viewer's NRD |
 | `pathtracer:prevNormalDepth` | NormalDepth | ASVGF, OIDN motion history | The previous traced frame's normals + depth |
@@ -634,7 +636,7 @@ _createExtraStages() {
 
     return [
         stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
-        stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure,
+        stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure, stages.localExposure,
         stages.myCustom,   // runs before the Compositor
     ];
 

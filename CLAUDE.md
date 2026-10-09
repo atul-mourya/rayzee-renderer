@@ -100,8 +100,8 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
 **Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
-`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter and
-AutoExposure between them:
+`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter,
+AutoExposure and LocalExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
@@ -494,7 +494,8 @@ the strings, so never rename or repurpose one.
   at one moment are stored-only routes read there — `maxTextureSize` and `areaLightIntensityScale` at load
   (`setMaxTextureSize()` also reprocesses now), `wavefrontSortMaterials` at the next kernel build. A viewer piece keeps
   its own beside its code — `DENOISER_DEFAULTS` (`Stages/DenoiserSettings.js`),
-  `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
+  `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `LOCAL_EXPOSURE_DEFAULTS` (`Stages/LocalExposure.js`),
+  `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
   builds its store from those plus its own keys and menus (`app/src/Constants.js`: `CAMERA_PRESETS`, `SKY_PRESETS`,
   `CAMERA_RANGES`; its store keeps the names `bounces`, `debugMode` and `toneMapping`, which saved sessions carry).
   The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI unrotated,

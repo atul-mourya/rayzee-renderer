@@ -615,14 +615,6 @@ export class AutoExposure extends RenderStage {
 
 	}
 
-	/** Lands on the last metering now. */
-	snap() {
-
-		this._snap = true;
-		this.advance( 0 );
-
-	}
-
 	/** The metered exposure, without compensation. */
 	getExposure() {
 

@@ -8,7 +8,7 @@ import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
-import { LocalExposure } from './Stages/LocalExposure.js';
+import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
 import { createLogger } from './utils/Logger.js';
 import { EngineEvents } from './EngineEvents.js';
@@ -157,7 +157,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
 		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
 		stages.autoExposure = new AutoExposure( renderer, { enabled: AUTO_EXPOSURE_DEFAULTS.autoExposure } );
-		stages.localExposure = new LocalExposure( renderer, { enabled: false } );
+		stages.localExposure = new LocalExposure( renderer, { enabled: LOCAL_EXPOSURE_DEFAULTS.localExposure } );
 
 		return [
 			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,

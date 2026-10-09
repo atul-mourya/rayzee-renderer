@@ -422,16 +422,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setAsvgfDebugMode: val => set( { asvgfDebugMode: val } ),
 	setAsvgfPreset: val => set( { asvgfQualityPreset: val } ),
 
-	// Auto-exposure setters
-	setAutoExposure: val => set( { autoExposure: val } ),
-	setAutoExposureStrength: val => set( { autoExposureStrength: val } ),
-	setLocalExposure: val => set( { localExposure: val } ),
-	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
-	setAutoExposureMinExposure: val => set( { autoExposureMinExposure: val } ),
-	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
-	setAutoExposureAdaptSpeedBright: val => set( { autoExposureAdaptSpeedBright: val } ),
-	setAutoExposureAdaptSpeedDark: val => set( { autoExposureAdaptSpeedDark: val } ),
-
 	// Canvas dimension setters
 	setAspectRatioPreset: val => set( { aspectRatioPreset: val } ),
 
@@ -1043,7 +1033,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	// Auto-exposure handlers
+	// Exposure handlers
 	handleAutoExposureChange: handleChange(
 		val => set( { autoExposure: val } ),
 		( val, app ) => app.denoisingManager.setAutoExposure( val ),
@@ -1051,8 +1041,8 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	),
 
 	handleAutoExposureStrengthChange: handleChange(
-		val => set( { autoExposureStrength: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: Array.isArray( val ) ? val[ 0 ] : val } ),
+		val => set( { autoExposureStrength: val } ),
+		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: val } ),
 		false
 	),
 
@@ -1080,54 +1070,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	handleLocalExposureAmountChange: handleChange(
 		val => set( { localExposureHighlightContrast: 1 - val } ),
 		( val, app ) => app.setLocalExposureParams?.( { highlightContrast: 1 - val } ),
-		false
-	),
-
-	handleAutoExposureKeyValueChange: handleChange(
-		val => set( { autoExposureKeyValue: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { keyValue: value } );
-
-		},
-		false
-	),
-
-	handleAutoExposureMinExposureChange: handleChange(
-		val => set( { autoExposureMinExposure: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { minExposure: value } );
-
-		},
-		false
-	),
-
-	handleAutoExposureMaxExposureChange: handleChange(
-		val => set( { autoExposureMaxExposure: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { maxExposure: value } );
-
-		},
-		false
-	),
-
-	handleAutoExposureAdaptSpeedChange: handleChange(
-		val => set( { autoExposureAdaptSpeedBright: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			// Darkening adapts at a third of the speed, as the defaults do.
-			app.denoisingManager.setAutoExposureParams( {
-				adaptSpeedBright: value,
-				adaptSpeedDark: value / 3.0
-			} );
-
-		},
 		false
 	),
 

@@ -163,7 +163,6 @@ export class LocalExposure extends RenderStage {
 		this._restarts = 0;
 		this._builtAt = { restarts: - 1, samples: - 1 };
 		this._stale = false;
-		this._version = 0;
 		this._paramsBuffer = null;
 		this._disposed = false;
 
@@ -407,7 +406,6 @@ export class LocalExposure extends RenderStage {
 		p[ 12 ] = BLUR_BLEND;
 		p[ 13 ] = MIDDLE_GREY;
 		for ( let i = 0; i < 4; i ++ ) this._p[ i ].value.fromArray( p, i * 4 );
-		this._version ++;
 		this.onChange?.();
 
 	}
