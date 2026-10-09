@@ -406,6 +406,11 @@ Mutation-tested: with lockstep switched off inside `renderUntilComplete`, sphere
 at 64 / 37 / 23 / 29 spp across the four pacings and cornell-emissive at 64 / 33 / 30 / 45 — every
 pacing a different image. With it on: 24, 32 and 20 spp, identical across all four.
 
+The first pacing is also the first render after another scene, so the suite holds a render independent of
+what was traced before it too. A mismatch on the first pacing alone is that, not the pacing: glass-transmission
+differed in one pixel because the frame after the reset saw the camera as moved (the previous frame traced
+another view), which skipped its readback and delayed the survivor curve by four frames.
+
 ### Node — the corpus without a browser
 
 `npm run bench:node` builds the engine and renders every scene that has a golden in plain Node on Dawn

@@ -366,6 +366,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   pacings; lockstep 48 spp and one image every time. ⚠️ It turns interaction mode off meanwhile: that
   mode is a 100 ms wall-clock timer that engages on the first frame after a load, frames in it do not
   count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
+  ⚠️ A moved camera never skips a lockstep readback (only interaction mode does): a reset's frame 0 sees the camera
+  as moved whenever the frame before traced another view, and skipping it there made the first render after a load
+  differ (glass-transmission, one pixel).
 - **`app.getProvenance()`** — plain JSON of what produced the image (versions, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
   lockstep). `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
   whether the current image was traced in lockstep from a lockstep reset, not the live setting, which

@@ -176,6 +176,22 @@ describe( 'lockstep readbacks', () => {
 
 	} );
 
+	// The frame after a reset sees the camera as moved whenever the frame before it traced another view (another
+	// scene, a host's own camera): skipping that frame's readback made the first render after a load differ.
+	it( 'issues on frame 0 when the frame before traced another view', () => {
+
+		const { stage, reads } = makeStage();
+		stage.setLockstepReadbacks( true );
+		stage.cameraChanged = true;
+		stage.cameraOptimizer = { isInInteractionMode: () => false };
+
+		expect( stage._willReadCountersThisFrame() ).toBe( true );
+		stage._maybeReadbackCounters();
+		expect( reads ).toHaveLength( 2 );
+		expect( stage._lockstepRead.due ).toBe( 4 );
+
+	} );
+
 	it( 'is inert when off', () => {
 
 		const { stage } = makeStage();
