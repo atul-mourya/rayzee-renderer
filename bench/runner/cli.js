@@ -7,6 +7,7 @@
  *   node bench/runner/cli.js denoise [--only a,b] [--bless]
  *   node bench/runner/cli.js memory  [--scene id] [--cycles n]
  *   node bench/runner/cli.js perf    [--only a,b]
+ *   node bench/runner/cli.js exposure [--only a,b] [--size 1024x1024]   auto (and local) exposure against neither
  *   node bench/runner/cli.js bless   [--only a,b] [--truth]
  *   node bench/runner/cli.js ab <baseRef> [--only a,b]
  *   node bench/runner/cli.js list
@@ -27,7 +28,7 @@ import {
 	appSnippet, calibrationStale, formatBanner, formatComparison, formatReport, measureHarness, readCalibration,
 	writeCalibration,
 } from './calibrate.js';
-import { appendTrend, comparePerf, runPerf, runPerfInterleaved } from './perf.js';
+import { appendTrend, comparePerf, runExposurePerf, runPerf, runPerfInterleaved } from './perf.js';
 import { runDenoise } from './denoise.js';
 import { runUpscale } from './upscale.js';
 import { runMemory } from './memory.js';
@@ -550,7 +551,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -863,6 +864,26 @@ async function main() {
 			} );
 			log( `${DIM}  appended to ${path.relative( PATHS.repoRoot, PATHS.perfLog )}${RESET}` );
 			log( `${DIM}  gate on regressions with: npm run bench:ab -- main${RESET}` );
+
+		}
+
+		if ( command === 'exposure' ) {
+
+			const [ width, height ] = flags.size ? String( flags.size ).split( 'x' ).map( Number ) : [];
+			const size = width > 0 && height > 0 ? { width, height } : null;
+			log( `\nexposure — auto exposure, then auto + local exposure, against neither (interleaved, one session${size ? `, ${width}×${height}` : ''})` );
+			const reports = await runExposurePerf( bench, { only, size, log } );
+			for ( const [ mode, report ] of Object.entries( reports ) ) {
+
+				log( `\n  ${mode}` );
+				for ( const c of report.comparisons ) {
+
+					const delta = `${c.deltaPct >= 0 ? '+' : ''}${c.deltaPct.toFixed( 1 )} %`;
+					log( `    ${c.scene.padEnd( 26 )} ${c.baseMedian.toFixed( 3 )} → ${c.headMedian.toFixed( 3 )} ms/sample  ${delta.padStart( 8 )}  noise ±${c.noiseFloorPct.toFixed( 1 )} %  ${c.verdict}` );
+
+				}
+
+			}
 
 		}
 

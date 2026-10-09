@@ -27,6 +27,7 @@ npm run bench:memory
 npm run bench:perf
 npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
 npm run bench:ab -- main    # gate perf against another git ref
+npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
 npm run bench:lut          # regenerate the DFG lookup table after a lobe or sampler change
 ```
@@ -305,6 +306,8 @@ regenerating and the compensation drifts back out of calibration — which the r
 `npm run bench:perf` records real GPU milliseconds (WebGPU timestamp queries) to `baselines/perf.jsonl` as a **monitored trend, not a gate**. A stored number is thermally meaningless on a laptop and would produce false alarms until people ignore it. The trend log is what catches the every-PR-is-+2 % drift that per-run thresholds never see. Each line records the commit it measured and `dirty: true` when the working tree differed from it (the bench's own `baselines/` excluded).
 
 Each measurement renders **exactly one sample** and resolves the timestamp queries immediately. Resolving once after an N-sample render reports whichever frame happened to land last rather than the average — that produced `cv > 100 %` and one scene reading implausibly faster than a simpler one before it was fixed.
+
+⚠️ **Render-pass timestamps overlap.** On Apple M-series a render pass's timestamps overlap the compute before it and each other: `glass-transmission` at 256² reads 1.8 ms compute + 2.0 ms render, and renders at 1.95 ms a sample by the wall clock with the GPU drained. Two sides that draw alike carry the same overlap; when they do not (a compositor change), time them by the wall clock, as `bench:exposure` does (`measureWallPerSample`). Measured 2026-10-10, auto exposure against none: −0.4 to +0.7 % a sample, with local exposure +0.1 to +3.2 % at 256² and −0.4 to +1.0 % at 1024², all within noise.
 
 Perf runs with the **production dispatch heuristics active** (`setPerfMode`), unlike image comparison which needs them pinned off for reproducibility. Benchmarking with them off measures a configuration production never runs. The cost is that per-frame time becomes legitimately bimodal — dispatch sizing is readback-driven — so `cv` sits at 30–40 % even when throughput is rock stable.
 

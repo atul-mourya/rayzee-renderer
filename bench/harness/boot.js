@@ -118,6 +118,9 @@ let session = null;
 // undo setPerfMode( true ) on the very first scene of a perf run.
 let perfModeEnabled = false;
 
+// Sticky for the same reason: loadScene's deterministic mode turns auto exposure off. 'off' | 'auto' | 'auto+local'.
+let exposureMode = 'off';
+
 async function boot() {
 
 	// strict: false is load-bearing: strict would abort the run before the runner reports.
@@ -174,6 +177,7 @@ async function loadScene( id ) {
 
 	const { spec, loadMs } = await session.loadScene( id, { pinDispatch: ! perfModeEnabled } );
 	currentScene = spec;
+	applyExposureMode();
 	return { id: spec.id, spp: spec.spp, truthSpp: spec.truthSpp, loadMs };
 
 }
@@ -216,6 +220,34 @@ async function measureGPUPerSample( count ) {
 	}
 
 	return samples;
+
+}
+
+/**
+ * Wall-clock milliseconds per sample over `batches` renders of `samples` samples, each from an idle GPU
+ * to an idle GPU. For setups that draw differently: render-pass timestamps overlap the work before them and
+ * each other (Apple M-series: the same 256² compositor pass read 0.9 ms or 0.013 ms), so they do not add up.
+ *
+ * @param {number} batches
+ * @param {number} samples
+ * @returns {Promise<number[]>} ms per sample, one a batch
+ */
+async function measureWallPerSample( batches, samples ) {
+
+	const queue = app.renderer.backend.device.queue;
+	const out = [];
+
+	for ( let i = 0; i < batches; i ++ ) {
+
+		await queue.onSubmittedWorkDone();
+		const start = performance.now();
+		await app.renderFrames( samples, { reset: false, yieldEvery: 0 } );
+		await queue.onSubmittedWorkDone();
+		out.push( ( performance.now() - start ) / samples );
+
+	}
+
+	return out;
 
 }
 
@@ -1146,6 +1178,22 @@ function setPerfMode( enabled ) {
 
 }
 
+function applyExposureMode() {
+
+	app.stages.autoExposure?.setEnabled( exposureMode !== 'off' );
+	app.setLocalExposure?.( exposureMode === 'auto+local' );
+
+}
+
+/** Auto exposure, and local exposure with it, for `bench exposure`. Display only: the linear images are unchanged. */
+function setExposureMode( mode ) {
+
+	exposureMode = mode;
+	applyExposureMode();
+	return exposureMode;
+
+}
+
 async function unload() {
 
 	disposeUpscaler();
@@ -1258,6 +1306,7 @@ globalThis.__bench = {
 	loadScene,
 	render,
 	measureGPUPerSample,
+	measureWallPerSample,
 	measureKernelGPU,
 	setRenderSize,
 	setShippingHeuristics,
@@ -1270,6 +1319,7 @@ globalThis.__bench = {
 	setSceneConfig,
 	rebuildKernels,
 	setPerfMode,
+	setExposureMode,
 	setDenoiser,
 	awaitDenoise,
 	upscaleRender,

@@ -28,6 +28,7 @@
     "bench:node": "npm run build:engine && node bench/node/run.js",
     "bench:memory": "node bench/runner/cli.js memory",
     "bench:perf": "node bench/runner/cli.js perf",
+    "bench:exposure": "node bench/runner/cli.js exposure",
     "bench:kernels": "node bench/runner/cli.js kernels",
     "bench:upscale": "node bench/runner/cli.js upscale",
     "bench:bless": "node bench/runner/cli.js bless",

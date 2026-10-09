@@ -47,6 +47,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench` - quality, freeze, lockstep, denoise, memory and perf against the working tree
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
+- `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus
 - `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
 
@@ -390,7 +391,8 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   `queue.onSubmittedWorkDone()`, not to `frameCount`.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
-  CPU and stays flat while GPU cost doubles.
+  CPU and stays flat while GPU cost doubles. ⚠️ The `render` part overlaps the compute before it (Apple M-series: 2.0 ms read for
+  passes the wall clock puts under 0.15 ms): compare totals only between setups that draw alike.
 
 `app.stages.pathTracer.blueNoiseReady` is deprecated and always resolved: the STBN atlases were
 never read by a live code path (the default sampler is Sobol), so the load was removed.
