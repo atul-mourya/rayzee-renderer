@@ -644,199 +644,31 @@ const handleChange = (setter, appUpdater, needsReset = true) => val => {
 Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never use store setters directly for render parameters — always use provided handlers like `handleBouncesChange`, `handleSamplesChange`.
 
 ### Colour management (`rayzee/src/Color/`)
+Full notes: [docs/COLOR_MANAGEMENT.md](docs/COLOR_MANAGEMENT.md) — the API, input resolution, baked views, the app's
+panel and its labels, the startup view, and the shaper + table with its measurements.
 
-`app.color` is an OpenColorIO pipeline covering all three sides: what textures and lights *mean*,
-what the render happens *in*, and what it is *shown* and *saved* as. **It is inert until a host
-loads a config** — the working space stays linear Rec.709, the view transforms stay three.js's own
-seven, and nothing converts anything. No config means no behaviour change.
-
-An add-on (`rayzee/addons/color`): the core's `renderer.color` is `BasicColor` (`Color/BasicColor.js` — linear
-Rec.709, no configs; `loadConfig` records `capability.missing`) until `renderer.setColorManagement( ColorManagement )`;
-`PathTracerApp` installs it in its constructor. Shaders, `TextureCreator` and `EnvironmentManager` read whichever is
-active through `Color/ActiveColor.js`, never `ColorManagement.js` — that keeps OCIO out of the core
-(`coreBoundary.test.js`). The core keeps `ViewTransforms`, `BuiltinViews` and `WorkingMatrix`.
-
-```js
-configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } );  // the host names it
-await app.loadColorConfig( { builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5' } );
-app.color.setView( { display: 'sRGB - Display', view: 'ACES 2.0 - SDR 100 nits (Rec.709)', look } );
-app.color.setContext( { SHOT: '010' } );          // $SHOT in the config resolves to this
-app.color.setWorkingSpace( 'ACEScg' );            // then: await app.applyColorWorkingSpace()
-await app.renderToBuffer( { colorSpace: 'ACES2065-1' } );   // a delivery buffer, not a picture
-await app.unloadColorConfig();
-```
-
-⚠️ **Load and unload through `app.loadColorConfig()` / `app.unloadColorConfig()`**, not
-`app.color` directly, once a scene exists. They undo an adopted working space *while the old
-config is still loaded* — the environment is converted in place, and only the config that
-converted it can convert it back. `app.color.unloadConfig()` with a space adopted records an issue
-saying the environment was left converted.
-
-- **OCIO's own console output goes through the engine logger** (`[ocio]` namespace) via the WASM
-  module's `print`/`printErr` hooks — its environment is internal, so `OCIO_LOGGING_LEVEL` cannot be
-  set. "Info" lines go to `debug`: the ACES CG v1.0.0 config lists four Studio-only displays as
-  inactive and OCIO notes it on every load. Warnings and errors still show.
-- **The engine never names the OCIO package.** It is ~6 MB of WebAssembly; a bare specifier in
-  engine source would make it a hard dependency of every host, and `@vite-ignore` leaves the browser
-  unable to resolve it. The host supplies `ocioRuntimeFactory` or `ocioRuntimeUrl`. The app loads
-  it the first time the colour controls are opened; startup shows a baked view instead (below).
-- **Baked views** (`BakedViews.js`): `saveBakedView( id )` writes a view's table to a file (gzip,
-  delta-coded, 157 KB for 65³) and `loadBakedView( bytes, { expect } )` registers it with no runtime
-  and no config, bit-identical to baking it. When its config later loads, `loadConfig` keeps the
-  entry — no rebake, no new id, and `loadColorConfig` skips its reset — if the files hash to the
-  fingerprint it was baked from (SHA-256 per file, `configFingerprint`) under the same OCIO version;
-  otherwise it is released like any other view.
-- **One registry, four consumers.** `ViewTransforms.js` is the single list; the TSL graph that
-  paints the canvas, the WGSL readback (`ToneMapGPU`), the JavaScript readback (`ToneMapCPU`) and
-  the host's menu are all derived from it. Adding a view at runtime therefore reaches all four —
-  `getRegistryVersion()` moves and the shaders rebuild.
-- ⚠️ **An OCIO view returns display-encoded colour; the built-in seven return linear.** That is what
-  `outputEncoded` records. `ColorManagement` sets `renderer.outputColorSpace` to linear while an
-  OCIO view is active and the readback skips its sRGB step. Get it wrong and every image is encoded
-  twice — washed out with crushed blacks.
-- ⚠️ **`library.addToneMapping` refuses to redefine an id** — it warns and returns without
-  replacing. A rebaked view keeps its id, so `registerWithRenderer` deletes the old entry first, and
-  `OcioViews` reuses the *same* `Data3DTexture` and TSL node across rebakes (swapping the pixels,
-  as `UniformManager` does with uniforms). Without both, the canvas runs the previous table while
-  the readback runs the new one.
-- **Adopting the working space is opt-in and rebuilds the scene.** A texture authored against sRGB
-  primaries means different light in ACEScg, so `setWorkingSpace()` must be followed by
-  `applyColorWorkingSpace()`: textures and materials re-pack from their pristine three.js sources,
-  and the environment converts where it lies (its current space is recorded on the texture, which
-  is what lets it be turned back off). The texture cache key includes the working space.
-- **Input resolution** is tag (`userData.ocioColorSpace`) → override → the config's own file rules
-  → what three.js already believes, mapped onto the config's *roles*. A default file rule matches
-  everything, so it loses to three.js's own tag. `TextureCreator` runs the full named transform
-  only for an *explicit* answer (tag, override, non-default rule), and refuses even that for a
-  layer `_harmonizeTransfer` re-encoded or a float source the packer quantized — the bytes are no
-  longer in the named space. Everything else gets the primaries matrix. The texture cache key is
-  `cm.inputKey` (config + working space + overrides + context), not the working space alone.
-- **Until a working space is adopted, the render is linear Rec.709 named the way *that* config
-  names it** (`findNativeLinearSpace`, aliases included). A hardcoded ACES spelling broke every view
-  bake on configs without that alias.
-- ⚠️ **Colour lives in more buffers than the material buffer.** `EmissiveTriangleBuilder` keeps its
-  own copy of each emitter's colour — the one next-event estimation lights the scene with — and the
-  shader's pick probability reads the *material* buffer's. Both are converted, and
-  `applyColorWorkingSpace()` rebuilds the emitter list (`rebuildEmissiveColors`); miss either and
-  emitters are seen in one space and cast light in another.
-- **Environment modes are `'hdri' | 'procedural' | 'color'`.** The gradient sky was removed (the physical sky covers it); a saved session that names it keeps the sky on screen (`EnvironmentManager.restore`). The eight bench scenes that used it build the same sky through `setGradientSky` (`bench/harness/scenes.js`), goldens bit-identical.
-- ⚠️ **The skies reuse one texture.** `SimpleSky` clears `userData.__rayzeeColorSpace` whenever
-  it rewrites pixels; without that the record says "already converted" and a new sky is never
-  converted. `EnvironmentManager.markDirty()` bumps the version *without* new pixels, which is why
-  this is a record and not a version check. The physical sky has no CPU pixels to convert: it bakes
-  straight into the working space (`getWorkingMatrix()` folded into its spectrum → RGB weights), and
-  `applyColorWorkingSpace()` bakes it again.
-- **Context variables are read from the config's text** (`environment:` block plus `$VAR`
-  references). OCIO's description of a loaded config does not carry file-transform paths, which is
-  where they live. The panel offers one input per variable.
-- **The table ceiling is managed.** Every display/view/look/context combination is its own table;
-  `setView` evicts the least recently selected (never the active one) at `MAX_TABLE_TRANSFORMS`.
-- **Degradations are warnings.** Every colour issue is recorded with `warn()`: `record()` defaults
-  to error, and the headless entry point is strict, so an error-level record would abort a batch
-  render for baking an HDR view.
-- **Per-texture colour space**: `app.setTextureColorSpace( texture, choice )` — `null` (auto),
-  `'srgb'`, `'linear'`, or a config space — then rebuilds. The Material tab shows it under the
-  albedo and emissive maps only; every other slot is packed as data. The texture cache hash
-  includes `colorSpace` and `userData.ocioColorSpace`; before it did, a changed colour space was
-  answered from the cache and silently ignored.
-- **Views rebake lazily.** A `$SHOT` or working-space change rebakes the view on screen;
-  `setActiveView` refreshes any other when it is next chosen (`_isStale`). Twelve registered
-  views at ~0.1 s each used to freeze the UI for over a second.
-- **Display P3 reaches the screen.** three.js configures the WebGPU canvas without a colour space
-  (always sRGB) and reconfigures it on every resize. `ColorManagement` wraps that context's
-  `configure` so a Display P3 view gets `display-p3` and keeps it. HDR views are not shown in HDR:
-  that needs the renderer's canvas format changed to half-float at construction and a PQ-to-
-  extended-range conversion.
-- **EXR export** (`app/src/lib/colorManagement.js` → `saveEXR`) writes
-  `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows,
-  read through `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an
-  ExternalTexture no render target owns) — in the chosen space through three's `EXRExporter`. ⚠️ The readback is top row first and the exporter
-  assumes bottom row first, so rows are flipped before encoding. A PNG screenshot is a picture and
-  never takes an export space.
-
-#### The app's section (`ColorManagementSection.jsx`)
-
-Its own group in the Path Tracer tab, modelled on Blender — the OCIO client that does most for
-artists. The view settings come first, with artist names, in the order they are reached for:
-**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure,
-then **Save EXR**. The project settings — **Color System** (the config) and **Render In**, set once,
-rebuild the scene — sit folded under **Advanced**, whose header shows them (`Blender · Rec.709`) and
-whose open state is remembered in localStorage. One Tone Mapping menu, no separate curve control.
-Exposure is in stops (`2^EV`); the store still holds the multiplier.
-
-The app starts in **Blender 5.1's config** (`DEFAULT_COLOR_CONFIG` in `app/src/lib/colorManagement.js`,
-identity in `colorDefaults.js`: sRGB / AgX / Medium High Contrast) from `${ASSETS_BASE_URL}/ocio/blender-5.1/`
-— a `manifest.json` plus Blender's files, unmodified, and `default-view.bin`, that view baked by
-`npm run color:bake`. `Viewport3D` downloads only the baked view alongside the model and shows it
-before the first frame (`showStartupColor`), waiting at most `DEFAULT_COLOR_WAIT_MS` (2 s); switching
-views after the first frames read as a colour jump. The config itself loads when the Color Management
-group is first opened, or a texture's colour-space menu (`ensureDefaultConfig`), and keeps the baked
-view. Measured on production builds, warm reload: first frame 1.38 → 0.59 s, main thread blocked before
-it 870 → 220 ms, and a cold visit fetches 157 KB instead of 24 files (4.7 MB compressed) and the
-0.65 MB compressed runtime.
-Without the baked file (not uploaded, or its header does not match the default) startup loads the
-whole config as before. ⚠️ Rerun `npm run color:bake` and upload the file whenever the config or the
-default view changes. ⚠️ The app is `pause()`d from `init()` until then: every model, sky and config
-load resets, and a reset's `wake()` restarts rendering unless paused — without it 3 of 5 warm reloads
-drew the built-in look first. A failed default model or sky is reported and startup carries on, so the
-look still loads. The spot-light gobo and IES libraries (~180 files) load after the first frame
-(`lib/lightLibraries.js`); a pick made before they land waits for them.
-⚠️ Those files are GPL-3.0: they live on the CDN only, staged locally in the git-ignored `.cdn-upload/`, never in the app or engine. A dev build points
-elsewhere with `VITE_COLOR_CONFIG_URL`.
-
-Every label and filter lives in `app/src/lib/colorLabels.js`, derived from what the config carries —
-OCIO's guidance is to build menus from UI name, family and description, filtered by category:
-- **Color System**: Blender (default), None, one preset per ACES version (the newest CG config of it) and
-  "Load config folder…" — nothing else. Older builds render the same ACES and Studio configs only add
-  camera spaces, so they are not offered. ⚠️ The runtime's builtin names carry no `ocio://`.
-- **Render In**: spaces tagged `working-space` *and* linear (ACES: Rec.709, ACEScg, P3-D65); untagged
-  configs fall back to the linear family narrowed to the well-known gamuts. Never the interchange space.
-- **Screen** drops the ACES " - Display" suffix and splits SDR | HDR as Blender does (`isHdrDisplay`:
-  the display space's `encoding` is `hdr-video`/`edr-video`; ACES spells that space `<USE_DISPLAY_NAME>`).
-  A display this screen can't show natively (`displayCanvasFit`) says so in its tooltip.
-- **Tone Mapping** labels are the view's own name, with detail added back only where two would collide.
-- Screen and Tone Mapping items carry a one-line hint (`screenHint` / `toneMappingHint`), first regex match
-  wins — put a specific name above the general one (`ACES Filmic` must not reach the `filmic` rule).
-- **Style** follows the tone mapping as Blender's looks do — measured: with AgX Blender accepts only "AgX - …"
-  looks, with Standard only the unprefixed ones. Gamut compression and LMTs are grouped as technical.
-- **Texture colour space**: spaces tagged `texture`, grouped by family.
-- ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
-  to name matching — the tests passed by coincidence until that was caught.
-
-Engine defaults (no app, or before the Blender config lands): no config; a picked config opens on its
-own default display and view; look None; 0 EV; render in linear Rec.709 until the artist picks another.
-The accuracy readout is API-only (`status().bakeError`).
-
-#### Shaper + table
-
-A view is baked to a log2 shaper over 25 stops feeding a 65³ cube, interpolated tetrahedrally —
-the arrangement OCIO emits for its own GPU path. OCIO is the source of truth and the validator, not
-the runtime: a table is the only representation that is identical in a TSL graph, a WGSL compute
-pass and plain JavaScript, and a saved image differing from the viewport is a worse failure than a
-third of a code value. `entry.error` carries what the table cost, measured against the real
-processor during the bake.
-
-⚠️ Grid index 0 is baked from **exactly 0**, not from 2^minEv. Without that, true black leaves the
-table one code value above zero and every render has a raised black floor.
-
-**Measured** (Apple M-series, ACES 2.0 SDR view, `bench:upscale` gates GPU against CPU):
-
-| | |
-|---|---|
-| table vs OCIO CPU | mean 0.07, p95 0.19 code values; 99.85 % within 2 — measured on the half table the GPU samples, which the CPU readback now samples too |
-| live canvas vs readback | 0.5 levels, identical for OCIO and built-in views — the readback's deliberate half-level bias (screenshot pixel crops, measured in the app) |
-| worst case | ~18 code values on saturated colours brighter than white — a clip edge in ACES 2.0's gamut compressor that no table can represent |
-| GPU readback | **+1.4 µs/megapixel** over any analytic curve (~3 %); the pass is memory-bound, so the seven built-ins are indistinguishable from each other |
-| CPU readback | 60 ms/megapixel, against 27 (None) and 76 (three.js AgX) — the table is *cheaper* than the polynomial it replaces |
-| bake | 20 ms at 33³, 93–127 ms at 65³ |
-| VRAM | 2.10 MB per registered view at 65³, **per device** |
-| host memory | 2.1 MB per registered view — the CPU sampler reads the half table in place through a shared 256 KB decode table (a float copy used to add 4.4 MB a view) |
-| runtime | 4.76 MB wasm + 1.39 MB Naga, fetched only when a config is opened; starts in ~32 ms and reserves a 64 MB WebAssembly heap; a config loads in ~35 ms |
-| adopting a working space | 1.9 s on the 3.5M-tri / 642-texture test model, of which ~1.1 s is the ordinary material rebuild and 0.62 s texture conversion (was 3.0 s: three `Math.pow` a pixel, now a sqrt-indexed 64K table, 0.09 % of values one level off). Still on the main thread. Reverting ~1.0 s |
-| EXR save | ~100 ms at 512²; the float copy target is released after each save (132 MB at 4K) |
-
-`MAX_TABLE_TRANSFORMS` is 12: the readback binds every table in one shader and WebGPU only
-guarantees 16 sampled textures per stage.
+`app.color` is an OpenColorIO pipeline: what textures and lights mean, the working space, and what is shown and saved.
+**Inert until a host loads a config** — linear Rec.709, three.js's seven views, nothing converted. An add-on
+(`rayzee/addons/color`): the core's `renderer.color` is `BasicColor` until `setColorManagement( ColorManagement )`
+(`PathTracerApp` installs it). Shaders, `TextureCreator` and `EnvironmentManager` read it through `Color/ActiveColor.js`,
+never `ColorManagement.js` (`coreBoundary.test.js`). The engine never names the OCIO package: the host supplies
+`ocioRuntimeFactory` / `ocioRuntimeUrl`. `ViewTransforms.js` is the one registry behind the canvas, both readbacks and
+the menu. A view is baked to a log2 shaper + 65³ table; `MAX_TABLE_TRANSFORMS` is 12 (16 sampled textures a stage).
+Colour issues are recorded with `warn()` (headless is strict). Environment modes are `'hdri' | 'procedural' | 'color'`;
+the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on screen).
+- ⚠️ Once a scene exists, load and unload through `app.loadColorConfig()` / `unloadColorConfig()`: only the config that
+  converted the environment can convert it back.
+- ⚠️ An OCIO view returns display-encoded colour, the built-ins linear (`outputEncoded`). Get it wrong and every image
+  is encoded twice.
+- ⚠️ `library.addToneMapping` refuses to redefine an id: a rebake deletes the old entry and reuses the same
+  `Data3DTexture` and TSL node, or canvas and readback run different tables.
+- ⚠️ `setWorkingSpace()` must be followed by `applyColorWorkingSpace()`: it re-packs textures and materials, converts
+  the environment in place and rebuilds the emitter list (`EmissiveTriangleBuilder` keeps its own colour copy).
+- ⚠️ `SimpleSky` clears `userData.__rayzeeColorSpace` on every rewrite, or a new sky is never converted. The physical
+  sky bakes straight into the working space.
+- ⚠️ Grid index 0 is baked from exactly 0, or every render has a raised black floor.
+- ⚠️ App: rerun `npm run color:bake` and upload `default-view.bin` whenever the default config or view changes. The
+  GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry `categories`.
 
 ### Physical sky (`Processor/PhysicalSky.js`, `Processor/AtmosphereModel.js`, `Processor/SunPosition.js`, `TSL/Atmosphere.js`, `TSL/EnvironmentCDF.js`, `TSL/Sun.js`)
 An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class
@@ -891,203 +723,33 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   latitude) with north along −Z; presets aim for their sun *height* on the chosen date
   (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
-### Bidirectional integrator (`integrator: 'bidirectional'` | `'vcm'`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`, `TSL/MergeKernel.js`)
-An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`integrators/`) holds everything bidirectional —
-its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
-`beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
-'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate
-take the bidirectional functions from `uniforms.lib`, so the core imports none of them. The `integrator` setting calls
-`pathTracer.setIntegrator( name )`; choosing an unregistered integrator records `capability.missing`. Its controls are on the instance: `pt.activeIntegrator.setBidirectionalStrategy()`
-and the like. ⚠️ A new integrator plugs into the same hooks; never add `if ( bidirectional )` to `PathTracer` again.
-Opt-in (`settings.set( 'integrator', 'bidirectional' )`; the app's Path Tracer tab → Light Transport). Light
-subpaths start on **every light**: emissive triangles, the physical sky's sun, the environment map (HDRI,
-physical-sky texture, colour sky) and the four lamp types (rect/disk area, point, spot, directional). In this
-mode Shade samples each of them itself; `calculateDirectLightingUnified` is not called. `'path'` builds
-exactly the unidirectional kernels: everything bidirectional is JS-gated on `params.bidirectional`, and all
-102 default kernels dumped over 6 scenes compare identical to the previous build apart from node ids.
-- **Frame:** `lightGenerate` → light bounce loop (`extend`/[sort]/`shade`/`compact`/`lightCopyback`, the
-  same kernels, rays flagged `RAY_FLAG.LIGHT_PATH`) → `lightSplat` → camera chunks, where `connect` runs
-  between `shade` and `compact` and `splatResolve` before `finalWrite`. Light paths per frame =
-  min(half the pixels, pool, cache slots ÷ (maxBounces + 1)): at equal time half a pixel's worth beat one on
-  the interior below and the caustic room alike (`LIGHT_PATHS_PER_PIXEL`). The light pass keeps its own survivor curve in
-  `bounceCounts` [2n, 4n), keyed on that count, the slot count and the loop bound.
-- **Strategies:** camera path hits the light (Shade), NEE (Shade, `bidirectionalEmissiveNEE` /
-  `bidirectionalSunNEE` — the path tracer's own sun pass is off in this mode), one connection per camera
-  vertex (ConnectKernel: a light path picked uniformly, then one of its stored vertices that fits the bounce
-  budget, weighted by that count — Davidovič et al. 2014's light vertex cache), and light tracing to the
-  pinhole (LightSplatKernel). Light tracing needs a pinhole — perspective with DOF off — and otherwise the
-  camera's dVCM starts at 0, which removes it from every weight. A camera path at the bounce limit takes one
-  more segment flagged `RAY_FLAG.EMISSION_ONLY` (in either integrator: it is the BSDF-hit partner of the last
-  vertex's NEE; Shade ends it before reading any texture when it lands on an opaque surface that does not glow),
-  so the camera-hits-light strategy reaches the longest paths too and the weights still sum to one there.
-- **The source table** (`sourceCdf`, `BidirectionalIntegrator._updateSourceTable`, rebuilt each frame): a running sum over
-  the sun, the emitters, the environment, then each lamp list at `sourceOffsets[ LIGHT_TYPE ]`, by the
-  luminous flux each sends into the scene — π·boost·power for emitters; for the sun, a directional light and
-  the environment (∫L dω, `environment.exactTable.radianceIntegral`) what crosses the scene's disc; 4πI a
-  point, 2π(1 − cos θ)I a spot, P (×A when not normalised) a rect light. It is sized to the lamp lists'
-  capacity, which a growing list rebuilds with the kernels. A light path's origin code is its triangle, or
-  −1 − its source.
-- **Lights at infinity** (sun, environment, directional) start on a disc of the scene's bounding radius facing
-  the drawn direction. The bounds are the *visible* placements' box, read from the TLAS as the GPU has it
-  (`_visibleSceneBounds`, six branch-and-bound searches): the engine keeps a hidden 240-unit ground plane,
-  which made the disc 100× too large. Shade undoes `misOnHit`'s distance at their first hit, since a light at
-  infinity has none. Beside lamps or emitters they get light paths for `INFINITE_LIGHT_PATH_SHARE` (5 %) of
-  their flux: most of what crosses the disc lands where their NEE does better, and on the 1.9M-triangle
-  interior (HDRI + six rect lamps) the sky's 89 % of light paths had made light tracing the noisiest strategy.
-  Alone they still get every light path, so their caustics keep them.
-- **Light guide** (`TSL/LightGuide.js`, `pt.activeIntegrator.setLightGuiding( bool )`, default on): where on that disc a light
-  path starts is learned from camera paths. Each escape at p toward ω counts one in p's cell of the disc
-  facing ω (64² cells, 16 octahedral direction bins, in the counter buffer at `COUNTER.GUIDE` — Shade has no
-  binding to spare); a kernel folds the counts into running sums at frames 1, 2, 4 … 32, then every 32nd,
-  copied into a 4097 × 16 R32F texture. A start is drawn from a learned cell with chance 0.8, uniformly over
-  the disc otherwise (`GUIDE_UNIFORM_SHARE`), and every density — light paths, the camera side's sun /
-  environment / directional weights — reads `guidedDiscPdf`, so it stays unbiased whatever was learned. A
-  reset clears the counts. `tests/gpu/lightGuide.test.js` holds the sampler to its density. Classroom
-  (sky + sun through windows) at 256², equal time against unguided: noise −19 % in mid tones, −13 % bright,
-  −3 % dark, at +14 % frame time; now below the path tracer in mid tones. Correct to −0.23 % against it.
-  An interior lit mainly by lamps (Livspace) is unchanged.
-- **Lamps** (`TSL/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
-  same dimensions — less its bounce-depth factor, which a light path cannot know. A lamp's light path
-  multiplies that pick into dVCM at its first opaque vertex, with that vertex's normal and material
-  (`lampPickPdf`), times a rect light's spherical-rectangle density there. A point, spot or sharp
-  directional lamp has no hit strategy, so its light paths start with dVC 0; so does a soft directional one,
-  which nothing adds at a miss. Falloff other than inverse-square (decay, cutoff, the near clamp) and a
-  directional gobo apply where the light path first lands (`landLampPath`); spot cone, penumbra, gobo and
-  IES at emission. Rect lights are not geometry: each camera continuation, after any scatter including
-  refraction, is tested against them with a glass-blocking shadow ray (`bidirectionalAreaHit`), where the
-  path tracer's own BSDF-hit term follows reflection only.
-- **Environment** (`Processor/EnvironmentExactTable.js`; `sampleEnvironmentExact` / `environmentPdfExact`,
-  `TSL/Environment.js`): both integrators' NEE, light paths and the miss weight share one table — each cell
-  drawn as often as the density it reports, both read from the same running sums. Cells are capped at 1024
-  wide; each texel weighs as the bilinear filter's mean over it (1/8, 6/8, 1/8 along each axis: a cell has
-  weight wherever the filtered map has light, a sharp texel's neighbours only their share — the brightest
-  neighbour it replaced spread a sun three texels wide), less the mean (MIS compensation, Karlík et al. 2019);
-  every cell keeps 1e-4 of the mean, so the sphere stays covered. A draw inverts the sums: two guides an entry
-  (Chen & Hsu's cutpoints, `GUIDES_PER_ENTRY`) name its entry at once in most draws, else a binary search between
-  the guides. Layout (`packExactTable`), ( w + 1 ) × h RGBA: texel ( x, y ) is row y's entry x — its running sum,
-  the one below, the guides of steps 2x and 2x + 1 — and texel ( w, y ) the rows' entry y; a draw is two reads per
-  dimension, a density two reads in all. Built in `CDFWorker` for HDRIs and colour skies (cached as `cdf:5`), on
-  the GPU for the physical sky (`EnvironmentCDF.js`, its twin without the filter); `envTotalSum` > 0 (the path
-  tracer) and `bidirectional.envTable` say it is there. It replaced an interpolated inverted table that reported
-  the texel's density, not its own (on a 1K HDRI with a sun NEE alone read 4 % bright for upward surfaces and 59 %
-  dark from below). The search it first used cost Shade 9–13 % against main; this layout brought the frame back to
-  +3 % median (`bench:ab -- main`, no scene slower). ⚠️ An alias table (one read a dimension) was as fast and
-  unbiased but doubled a furnace's noise: it breaks the samples' stratification, which inversion keeps — the bench's
-  CONVERGENCE gate caught it. ⚠️ Shade is near a register limit: measure Shade changes in place (`bench:kernels`).
-  `tests/gpu/environmentExact.test.js` holds the table to its density cell by cell.
-- **MIS:** Georgiev 2012's dVCM/dVC recursion, power heuristic, densities from `calculateMaterialPDF` both
-  ways round everywhere (`misOnHit` / `misOnScatter` / `misOnSpecular` / `misPartial`). Russian roulette and
-  the transparency-layer picks are left out of every density alike, so the weights still sum to one.
-  Refraction, a subsurface boundary and a delta lobe are not connectible: dVCM 0, dVC × cos. The partial
-  sums ride in `HIT.RNG.yz`. `tests/gpu/bidirectionalMis.test.js` checks a two-bounce path's strategies
-  against the power heuristic from explicit densities — for an emitter, a point and a directional lamp, and
-  the environment; a dropped exponent or a light at infinity's undone distance fails it.
-- ⚠️ **Light tracing obeys the camera's face culling.** Its segment to the pinhole stands in for the primary
-  ray, which sees through single-sided faces from behind, so it traces `traverseBVHShadowCameraCulled`, and
-  a light vertex on a face the camera would cull carries `extra` = 1 and is not splatted. Hitting both
-  sides there blocked every light-traced point of a room seen from outside through its walls: light
-  tracing read −21 % and the combined image −12 % on `BDPT.glb`'s default view.
-- ⚠️ **A light path ends where light arrives from below the shading normal** (`dot( V, N ) <= 0`, a bump or
-  normal map tilting N past the incoming direction). A camera path never samples that direction and NEE
-  rejects it, so the light side must count it as zero too; `lightEndCosine`'s absolute values had kept
-  it, and an interior with bump-mapped walls read +0.84 % (each strategy alone was exact — only the
-  weights stopped summing to one).
-- ⚠️ **Geometry terms use the exact facet** (`exactFacetN` in Shade, from `hitFacet`): the hit record keeps
-  the facet to 11 bits, which cannot hold "straight up" (it decodes 0.03° off), and at grazing views that
-  tilt made light tracing read 0.09 % dark against a closed-form reference.
-- **Storage:** Shade binds 8 storage buffers with one part each (10 is the device limit, and BVH/triangle parts take the
-  rest — see Buffer parts), so the light vertex cache is the hit buffer's tail
-  (`HIT_STRIDE_BIDIRECTIONAL`, `PackedRayBuffer.cachedVertex`) and a camera vertex's pending connection is
-  four more HIT slots (`pendingVertex`). Cache slots are path-major, `path × (maxBounces + 1) + depth`; a
-  path's vertex count rides in its first slot's tag lane with a 24-bit frame tag, so nothing is appended
-  atomically and the render is deterministic. Light tracing adds into a u32-per-channel image, fixed point
-  ×16384 with stochastic rounding (no float atomics; integer sums are order-free). A weighted splat is
-  capped at `SPLAT_MAX` (4096): only light tracing *alone* comes near it (a sun path carries the flux of
-  the whole disc). Cost: +512 MB at the default pool (cache 256 MB, pending slots 256 MB) plus 12 B per
-  reserved pixel.
-- ⚠️ **Glass blocks the bidirectional shadow rays** (`traceShadowRayRefractiveOpaque`), every light's:
-  light through it travels the light subpaths. The path tracer's shadow rays pass straight through glass,
-  which counts that light a second time, so in a glass scene the two integrators legitimately differ — the
-  unbiased reference there is the path tracer with emissive NEE off (and, for the sky, `envTotalSum` set to 0,
-  which turns its NEE and the miss weight off).
-- ⚠️ **A light subpath carries importance:** Shade undoes refraction's (n1/n2)², evaluates the BSDF with V
-  and L swapped (`evaluateMaterialResponse` is not reciprocal — energy compensation keys on NoV), and
-  applies the shading-normal correction (Veach 5.3.2, `lightEndCosine`) to light-side cosines.
-- **Emitter sides:** emission follows the triangle's side flag (half each way for DoubleSide). NEE draws a
-  triangle on every side it emits from (`sideAccepts` on the winding normal, the facet's cosine for the
-  density) and the hit-side pdfs return 0 for a side it cannot draw; front-only NEE had cost the path tracer
-  83 % of a two-sided lamp seen from behind. ⚠️ The emitter-hit side test uses the winding normal
-  (`windingNormal`, `HitFacet.js`): the interpolated one turned away near a coarse sphere's silhouette.
-  ⚠️ Every side test takes a **unit** normal: `sideAccepts` has a ±1e-4 threshold, and a raw cross product of a
-  small triangle is under it — a 3 cm bulb's NEE density read 0 on the light side and bidirectional counted its
-  light twice (2.0× on the floor). `tests/gpu/emitterSides.test.js` holds it at 1 and 1e-3 units.
-- **Verification** (`pt.activeIntegrator.setBidirectionalStrategy( 'hit' | 'nee' | 'connect' | 'lightTrace', { alone } )`
-  keeps one strategy, MIS-weighted or alone at full weight). A lamp over a matte floor has a closed form
-  (Lambert's polygon formula): every strategy alone and the combination land within noise of it (all
-  |bias| ≤ 0.02 %). Exact-length references come from the path tracer with emissive NEE off at
-  maxBounces + 1. Sunlit courtyard (5° sun, 4 bounces) against NEE alone: combined −0.002 %, light tracing
-  −0.002 %, connections +0.23 % (z 1.1), camera hits +0.16 % (z 0.6). Each lamp type over the floor has a
-  closed form too (I·cos/d³, a smoothstepped cone, Lambert, a parallel disk, E·cos), as does a uniform or
-  painted-sun sky over it: every strategy alone and the combination within noise, the weighted views
-  summing to 100.00 %. In a room at 4 bounces each lamp, all five at once, and a sky through the open side
-  match the path tracer (lamps) or the BSDF-only path tracer (sky) within ±0.06 %, with glass too; a rect
-  light behind glass matches the same room with an emissive panel (+0.052 % against +0.050 %).
-- **Measured** (Apple M-series): the 1.9M-triangle interior (HDRI + six rect lamps + emitters) at 512², 3
-  bounces, 16.8 → 34.3 ms a frame; kernels compile in ~0.4 s on a switch. At equal GPU time (256 against
-  125 spp, each against its own 4096-spp image) it is 23 % lower in screen RMSE (1.67 against 2.17 levels):
-  dark rooms 28 % lower, mid tones 18 % lower, sky-lit walls 5 % higher. Before the sky's share, the
-  compensated table and half the light paths it was 2.02 against 2.17, sky-lit walls 2.2× higher. Caustic room at 64 spp: RMSE against the
-  unbiased reference 10× lower than path tracing; Cornell with emissive NEE off 4.7× lower, with it on
-  equal. Equal time, error variance against an independent reference: `BDPT.glb` (lamp behind a door)
-  2.2–2.9× lower; Sponza's sunlit arcade 1.6× *higher* and a ceiling-lit room 1.7× higher — light reached
-  directly is already what camera paths + NEE do best (those three predate the changes above). A room lit only
-  through a window stays 1.5× better path traced; a spot or a sky with a sun through a glass ball is light the
-  path tracer never converges to (−0.75 % and −7.7 %, its shadow rays passing the glass straight). Bench:
-  `cornell-bidirectional` and `lamps-bidirectional` take their truth from the path tracer (`truthSettings`,
-  new in `bench/runner/quality.js`), `caustic-bidirectional` and `sky-bidirectional` from themselves. They
-  catch dropped connections (−4.9 / −4.3 %), dropped light tracing (−8.2 / −8.5 %), an emitter NEE weight
-  blind to light paths (+13 / +11 %), no lamp or environment light paths (−30 %, −24 %), the lamp pick left
-  out at landing (−15 %), the environment's miss weight blind to light paths (+4.2 %) and its density off by a
-  factor (×140). `lamps-bidirectional` has a
-  rough metal ball because only there does a rect light's continuation hit carry weight: in an all-matte
-  room both of its terms could be dropped unnoticed.
-- **Vertex merging** (`integrator: 'vcm'`, `TSL/MergeKernel.js`; Georgiev et al. 2012): bidirectional plus
-  photon merging, the one strategy for light no connection reaches — a point lamp's caustic seen in a mirror or
-  through glass (specular–diffuse–specular). Each camera vertex Shade leaves pending (now also at the bounce limit)
-  gathers this frame's light vertices within its radius; a merged path of k scattering vertices needs
-  cameraDepth + l ≤ maxBounces + 1. MIS: Georgiev's dVM is dVC / η² at the merge vertex (η = πr² · light paths),
-  so nothing new is stored: `misOnScatter` adds η² of the vertex it leaves to dVC, `misPartial` η² of the vertex a
-  sum ends at, and a merge weighs both sides with `misMergePartial` and 1 / η². `bidirectionalMis.test.js` checks a
-  two-bounce path's six strategies with a different η at each vertex.
-  - **The radius is a pixel's footprint where it gathers** (`mergeRadiusAt`: `mergeConst` + `mergeSlope` ·
-    distance from the camera, ≥ `mergeMin`; constant for orthographic), default 1 px (`pt.activeIntegrator.setMergeRadius( px )`),
-    shrinking as n^−⅛ (α = 0.75). A function of position alone, so both subpaths agree on η anywhere. ⚠️ A fraction
-    of the scene's radius (SmallVCM's choice) made the classroom's 30 cm (its bounds include the outdoors): 5× the
-    frame time and 92 % of the image merged. And `sceneRadius` was only measured with a light at infinity.
-  - **Trust** (`pt.activeIntegrator.setMergeTrust( t )`, default 0.25): the weights take η × t. Any density the strategies agree on
-    still sums to one; light only merging reaches keeps weight 1 (the mirror caustic is identical at 1 and 0.25),
-    and light other strategies reach goes back to them unblurred. Merging's bias is boundary bias (a sphere past a
-    crease or a small object): Livspace read +6.1 % at 2 px, +0.69 % at 1 px, +0.17 % at 1 px with trust 0.25; the
-    classroom +0.95 / +0.28 / +0.08 %. ⚠️ Rejecting light vertices of a differently facing surface (a corner's
-    other wall) made it −3 % instead: their light stands in for the sphere past the crease.
-  - **Grid:** light vertices are filed by their radius in shells (ratio 1.25; a sphere reaches at most two), each a
-    hash grid of cells 2 · its largest radius / (1 − slope) wide — one list a cell through the cached record's spare
-    lane (`next`, record quad 3 .w; `extra` moved to the material word's top 8 bits). `mergeClear` + `mergeInsert`
-    after the light pass; `merge` after `connect` walks 2³ cells per shell, counting a light vertex only in its own
-    shell and cell (a hash collision would count it twice), at most 1024 a cell. Heads: a power of two ≥ the cache
-    slots (16 MB at 4M).
-  - **Measured** (Apple M-series): frame time over bidirectional +9 % classroom and +28 % Livspace (256², 1 px),
-    +5 % glass of water (512², 2 px). The SDS test (`sds-mirror` / `sds-mirror-bulb` in the test-scene manifest): with a 3 cm
-    bulb a camera path can hit, bidirectional with the firefly limit off reaches the mirror caustic at 4096 spp
-    (0.2329) where merging does at 512 (0.2301, overall −0.02 %); with the default limit bidirectional loses it
-    (0.07). Cornell box, merging alone against bidirectional: −0.14 % (z 1.3). Where other strategies already
-    work it costs more than it saves (Livspace and the classroom +7–8 % noise at equal time); it is for caustics
-    seen in mirrors and through glass. Bench: `mirror-caustic-vcm` (truth from itself).
-- **Not covered:** emissive textures (NEE and light paths both use the per-triangle emission); a dispersion
-  wavelength shared between the subpaths. Without merging, specular–diffuse–specular paths from a lamp no camera
-  path can hit (a point, spot or sharp directional lamp) have no strategy at all — `'vcm'` covers them. Connections test the
-  camera end against the facet, where NEE and the bounce leak guard use the interpolated normal: smooth
-  meshes can differ at grazing directions.
+### Bidirectional integrator (`integrator: 'bidirectional'` | `'vcm'`)
+Full notes: [docs/BIDIRECTIONAL.md](docs/BIDIRECTIONAL.md) — frame order, strategies, the source table, lights at
+infinity, the light guide, lamps, the exact environment table, MIS, storage, verification, measurements and vertex
+merging.
+
+An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`integrators/`) owns its uniforms, buffers,
+kernels and frame steps; `PathTracer` calls it through integrator hooks (`beginFrame`, `beforeShade`, `afterShade`,
+`resolve`, `allocate`, `registerKernels`, …) once `registerIntegrator()` has it (`PathTracerApp` does). Shade and
+Generate take its functions from `uniforms.lib`; controls are on `pt.activeIntegrator`. `'path'` compiles exactly the
+unidirectional kernels (everything is JS-gated on `params.bidirectional`). Light subpaths start on every light;
+strategies are camera hits, NEE, one light-vertex-cache connection per camera vertex, light tracing to a pinhole, and
+with `'vcm'` vertex merging; Georgiev's dVCM/dVC MIS, power heuristic. Shared with the path tracer: a camera path at the
+bounce limit takes one more segment flagged `RAY_FLAG.EMISSION_ONLY` (the BSDF-hit partner of the last NEE), and the
+environment's exact table (`Processor/EnvironmentExactTable.js`) serves both integrators' NEE and the miss weight.
+- ⚠️ A new integrator plugs into the same hooks; never add `if ( bidirectional )` to `PathTracer`.
+- ⚠️ Light tracing obeys the camera's face culling (`traverseBVHShadowCameraCulled`).
+- ⚠️ A light path ends where light arrives from below the shading normal; geometry terms use the exact facet
+  (`exactFacetN`), not the hit record's 11-bit one.
+- ⚠️ Glass blocks the bidirectional shadow rays, so in a glass scene the integrators legitimately differ; the unbiased
+  reference is the path tracer with emissive NEE off.
+- ⚠️ A light subpath carries importance: undo refraction's (n1/n2)², swap V and L in the BSDF, apply the shading-normal
+  correction (`lightEndCosine`).
+- ⚠️ Emitter side tests take a **unit** winding normal (`sideAccepts` has a ±1e-4 threshold).
+- ⚠️ An alias table for the environment doubled a furnace's noise (it breaks stratification). Shade is near a register
+  limit and binds 8 of 10 storage buffers: measure Shade changes in place (`bench:kernels`).
+- Check one strategy with `pt.activeIntegrator.setBidirectionalStrategy( 'hit' | 'nee' | 'connect' | 'lightTrace',
+  { alone } )`. Bench: `cornell-`, `lamps-`, `caustic-`, `sky-bidirectional`, `mirror-caustic-vcm`.
 
 ### Denoising Pipeline Coordination
 - **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (None / EdgeAware /
@@ -1217,304 +879,60 @@ other load owns the status). ⚠️ Only the scene build used to: a failure in t
 overlay spinning on its last step with the File menu blocked. Drag-and-drop still resets the overlay in
 its own `finally`, so a failed drop shows only the console.
 
-### Loading a folder
-`loadFile( { files } )` loads a folder of files as the same folder zipped would load — `files` a folder picker's FileList
-(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`Processor/archiveFormats.js`, core)
-normalises it (sorted, hidden files and folders out, `name` the shared top folder, `flat` for loose files);
-`ArchiveImporter.loadFolder` opens it with `openFolder()` (`ArchiveReader.js`, the shape of `openTar` / `openZip`) and
-goes through the archive path (`_loadSource`), so pbrt scenes, the part prompt (`error.file` is the folder) and glTF /
-OBJ resolution all apply. Every non-pbrt archive entry is now a lazy Blob (`slice`), read only when a loader asks
-(`asBlob` / `textOf` / `bytesOf` there): a folder's unrelated files are never read. `sceneSource` is `local-folder`
-with `folderIdentity()` (path, size, date of every file, no reads). App: `lib/folders.js` reads drops (entries and,
-on Chrome, `FileSystemHandle`s), picks folders (`showDirectoryPicker`, else a `webkitdirectory` input) and keeps
-handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a session or a resumed render reopens the
-folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
+### Folders, archives, pbrt and USD
+Full notes: [docs/SCENE_IMPORT.md](docs/SCENE_IMPORT.md) — folder loading, partial archive loads, pbrt (budgets, parse
+memory, lights, shapes, templates, materials, formats) and USD (layers, composition, translation, parts, budgets, the
+Moana island measurements).
 
-### Loading part of a scene archive
-Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which
-the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or
-`setArchiveImporterLoader( load, ARCHIVE_FORMATS )` (`ARCHIVE_FORMATS` is exported from `rayzee/core` for that), which loads it for the first archive read — `PathTracerApp` does
-that, so archive reading and pbrt are a chunk of their own. The formats come from `Processor/archiveFormats.js`, so the
-loader recognises an archive before the code that reads it exists. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
-add-on. The importer reads the loader's members through `this.loader`.
-A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
-subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
-- `assetLoader.inspectArchive( file )` lists the elements without retaining any of them.
-- `loadFile( file, { element } )` takes one element path or **an array of them** to load
-  together. Everything above them — the root scene file, the material library, an ancestor's
-  `textures` folder — comes along, and an `Include` pointing at an element that was left out
-  only warns, which is what makes a partial load work.
-- Past `ARCHIVE_ELEMENT_PROMPT_BYTES` (4 GB unpacked) a multi-element archive throws
-  `ARCHIVE_NEEDS_ELEMENT` carrying `elements`, rather than taking all of it. The app turns that
-  into a multi-select dialog. ⚠️ This applies to the **seekable .tar** path too, where indexing
-  is free but *parsing* everything is what runs the tab out of memory. Selecting every element
-  is a valid answer and loads the whole scene; `promptBytes` overrides the line.
-- `maxTriangles` defaults to 45M and `maxPlacements` to 6M. Past either, placements are skipped
-  and the build reports itself truncated. 45M is the highest rung measured to survive without
-  the memory spill. Unless `memorySpill` is false (and with storage), `loadFile` defaults them to 120M / 60M
-  (`SPILL_TRIANGLE_BUDGET`), and the preflight prices a streamed build by its larger phase (`spillingPeakBytes`:
-  extraction holds geometry + matrix lists + resident records, the TLAS phase lists + table + tree): the whole USD
-  island, 111.6M / 51.0M, estimates 8.6 GB (2026-10-09; the hard line is 9.2 GB) and loads (see USD scenes). 89M ran out of memory in the pbrt parse,
-  measured before the parse-memory work and not since.
-- **Fewer stored triangles.** Curves are strips with adaptive segments (`curveTolerance`: how far
-  a segment may stray, × the half-width; default 0.05, 0 = the old uniform strip bit for bit). A
-  file included again under the same material, with no side effects, is placed as an instance of
-  its first reading (`instanceIncludes`). Templates placed at identical transforms become one, and
-  a template's small non-.ply shapes merge in its own space. ⚠️ Keep that grouping: without it each
-  Moana Pandanus tree was ten overlapping instances and rendered 60 % slower. Anything that changes
-  what the same files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old build is reused.
-- **Parse memory.** The entry is picked from each `.pbrt`'s first 4 MB (`listEntryPathsFrom`:
-  WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
-  for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
-  ArrayBuffer is freed only at a major GC, which a parse reaches late, so scene text, grown arrays
-  (`PBRT/buffers.js`) and merged shapes' arrays are let go explicitly with
-  `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
-  First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
-  identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those
-  placements build them again after the static ones. ⚠️ A `.ply` is decoded once per file name and
-  shared by every shape naming it, so a merged shape frees it only as its last direct user
-  (`_lastPlyUse`), never while a template or an unmerged shape holds it: Zero-Day names one file from
-  up to 320 shapes, and freeing on the first merge failed the load with a detached ArrayBuffer.
-- **Lights.** `infinite` becomes the environment; a scene without one renders with the environment off
-  (`sceneMetadata.environment.enabled === false`, applied at the replace-load seam, and what it replaced comes
-  back with the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in
-  the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
-  photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
-  brought to luminance 1 as pbrt does. `.pfm` images load (`Processor/PBRT/PFM.js`). An area light is one-sided
-  unless `"bool twosided"`: `FrontSide`, its triangles rewound to face the vertex normals, or turned over by
-  ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance to that power
-  over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A shape of
-  `"float alpha" 0` is dropped: pbrt never hits it and an area light on it emits nothing (kroken's 90-unit "sun" sphere).
-  Any other `alpha` is the engine's blend mode — a ray passes with chance 1 − α, shadow rays too — on a material per
-  material and alpha (`_withAlpha`): a constant becomes `opacity`, a texture the colour map's alpha channel (the map's
-  own image when it is the same file, its alpha decoded as pbrt decodes every 8-bit channel; baked otherwise). Bistro's
-  leaves and curtains had drawn as solid cards.
-- **Shapes and cameras.** `sphere`, `disk` and `cylinder` are pbrt's quadrics (`quadric()`): partial by `zmin`/`zmax`/
-  `phimax`, in pbrt's uv, facing ∂p/∂u × ∂p/∂v. A `bilinearmesh` patch's corners are p00, p10, p01, p11 (not a ring),
-  one patch of four points needs no indices, and without uvs a patch takes its own — watercolor's floor spots had been
-  dropped. A camera's `lensradius`/`focaldistance` become its own effects (`userData.__rayzeeEffects`, applied when it is
-  chosen): the same aperture radius in both DOF modes, focused by hand. `Integrator` maxdepth, `Sampler` pixelsamples
-  and the Film's resolution are `sceneMetadata.render` — reported, not applied (glTF extras may carry it too).
-- **Templates.** A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top, as pbrt does —
-  never relative to the transform at ObjectBegin. kroken defines its cushions, blanket and rug under a `Transform` and
-  places them at `Identity`; the relative reading put all of them at the world origin.
-- **Materials.** `coatedconductor` is a metal under a clear coat (pbrt's roughnesses default to 0); a textured
-  roughness becomes a roughness map with pbrt's remap baked in (`applyRoughness`; the clear coat's too); `subsurface` is
-  the engine's random walk (`applySubsurface`: albedo σs / σt, mean free path 1 / σt; pbrt's named media, `sigma_a`/
-  `sigma_s`, or a `reflectance` inverted through the dipole at `mfp`); `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
-  map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
-  attenuation from σa + σs (no scattering inside). `diffusetransmission` is the engine's diffuse transmission lobe.
-  Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in
-  their image's uv mapping: `mix`, `scale` by a texture, an imagemap's `scale` above 1 or `invert`, and a `mix`
-  material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
-  input is clamped to [0, 1] before mixing, as pbrt clamps an albedo. A float texture reads an image's alpha where it has
-  one, else the mean of its colour, as pbrt does. 2D `checkerboard` and `bilerp` are baked too (`_proceduralTexture`).
-  An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset; `planar`/`spherical`/
-  `cylindrical` mappings, `dots` and `directionmix` are not supported. ⚠️ `material.clone()` drops the engine's own
-  properties (diffuse transmission, subsurface): use `cloneMaterial`. Bump `PBRT_BUILD_REVISION` with any of this, or a
-  stored graph of the old build comes back.
-- **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
-  read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
-  (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from
-  there in 0.15 s. With parts chosen only they are written (`filter`/`part`; a whole unpack still serves any part):
-  Moana unpacks to 31 GB, a profile's quota was 11 GB, and the in-memory fallback's 1.5 GB budget silently dropped
-  4,573 of isCoral's files — `objects.pbrt` among them, so every placement lost its template and nothing drew. `.zip` is read through its central directory (`openZip` / `readZipDirectory`,
-  ZIP64 and UTF-8/latin1 names) — never unzipped whole; `slice( path )` of a stored entry is a
-  zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
-  URLs load through the download cache (`loadFile( url )`).
-
-### USD scenes (`Processor/USD/`)
-A folder or archive whose main model is a USD layer (`ArchiveImporter._mainModelPath`), and a loose `.usd`/`.usda`/`.usdc`
-(`AssetLoader.loadModelFromFile`), load through the USD importer in the archives add-on; a `.usdz` stays with three's
-USDLoader. Each layer is read only when composition reaches it (`USDFiles` over the folder's or archive's entries).
-- **Layers** (`USDLayer.js`): one in-memory shape for both formats. Text through `USDText.js`; crate through `Crate`, our own
-  reader of OpenUSD's format (0.4.0 on). ⚠️ three's USDCParser was not usable: it decodes paths with the wrong count from 0.8.0
-  (every name after the root shifted), misreads arrays before 0.5.0 (a rank precedes the size), and drops payloads, list
-  ops' lists and dictionaries; its USDAParser misreads `prepend payload` and nested `over` prims. Crate values decode on
-  first read (`PropSpec.value`): Moana's 3.1 GB of crate files decode whole in 2.8 s, most never read at all.
-- **Composition** (`USDStage.js`): sublayers, references, payloads, inherits, specializes and variant sets, per prim on
-  demand, as a tree of nodes in strength order (a prim index). Variants are evaluated after the other arcs, so a stronger
-  site selects a set a referenced layer defines (Moana's `over "geometry" ( variants = … )` per copy). Each node maps the
-  paths its layer authors into the stage's namespace, so bindings and connections land on composed prims.
-  `instanceKey()` leaves out the sites that only hold a copy's own opinions — with them every Moana tree was its own
-  prototype. `release()` drops composed prims and non-root layers after each child of a top prim (one Moana element).
-- **Translation** (`USDScene.js`) writes the pbrt builder's IR, so USD gets its instancing, budgets, merging and curves:
-  meshes (fan triangulation, `leftHanded` reversed, faceVarying primvars per corner, GeomSubset materials), BasisCurves
-  (`curves` shape → `tessellateCurves`, per-vertex widths, ribbons oriented by normals), gprims, instanceable prims and
-  point instancers as templates (nested ones multiplied out; placements stop at the budget). ⚠️ The builder frees a shape's
-  arrays after merging it, so an array is handed over once (`own()`). Materials: PxrDisneyBsdf (Burley 2015 as pbrt-v3
-  reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
-  followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. Ptex is not read: a
-  Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
-  (the engine has no vertex colour). Cameras from apertures (vertical FOV), Rect/Disk/Sphere/Distant lights in the engine's
-  units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
-  engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored.
-- **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
-  the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
-  leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.
-- **Budgets** (`USDSceneReader.fit`): a counting pass first (no positions decoded) prices meshes, curves and placements —
-  a copy costs one placement per distinct relative transform among its template's shapes, as the builder places the
-  shapes at one transform by one shared matrix list (one TLAS entry a copy, see Grouped placements). Past the budgets, curve
-  sets and point instancers are thinned by `fill()`: small sets kept whole, the rest sharing what is left (fronds stay,
-  grass and ground cover thin), each pick a fixed hash under a quota, so loads repeat and never overshoot. Meshes are never
-  thinned: past the triangle budget on their own, what is read last is cut. The note lands in `ISSUE_CODES.SCENE_MEMORY_BUDGET`
-  and the app's "Loaded" toast. A mesh read again under another prim of one part (same specs) shares its geometry
-  (`geometryKey`, kept whole by the builder); curves without normals are one ribbon. ⚠️ Before the counting pass the
-  budget went first come, first served, and selecting every part dropped all after the first four whole.
-- **Measured** (Moana USD v2.1, whole island): 61.6M mesh triangles, 49M of curves, 39.9M copies (50.99M placements and
-  TLAS entries before grouping; the counts below are from then, when a copy cost one placement per shape). 45M / 6M: a
-  quarter of the meshes cut, no curves. 60M / 8M: 1.1M of mesh cut. 80M / 8M: everything, 36 % of curves,
-  13 % of scattered copies — in Chrome with memory spill, 2 min 50 s to the first frame, 10.8 GB, renders the hero shot.
-  **All of it** (2026-10-08, 120M / 60M, memory spill): 111.6M triangles, 51.0M placements → 39.9M entries → 10M copy
-  clusters; Chrome on a 24 GB M-series loads it in 304 s (tab peak ~13 GB, GPU buffers 13.1 GB, GPU process ~16 GB) and
-  renders the hero shot, swapping ~25 GB beside the other apps open. Node with a disk-backed storage: same, ~5 min.
-  With the after-load spill, paced uploads and the bit-trail placeholder (same day): 265–270 s, tab peak ~12 GB and
-  3.6 GB at rest, GPU buffers 12.7 GB, GPU process ~14 GB (13.5 GB at rest).
-  With no flag (`memorySpill: 'auto'`, 2026-10-09) it spills on its own: 279 s on a production build, sky 7154 wide.
-  Through the app (File → Open Folder, all parts): ~5 fps at 512² afterwards. ⚠️ The outliner drew a row per shape
-  (1.36M DOM nodes, ~1 fps): it now mounts children 200 at a time. Chrome's `usedJSHeapSize` (5.4 GB here) counts the
-  engine's ArrayBuffers too — matrix lists, table, TLAS, order maps, sky — not only JS objects.
+- **Folders**: `loadFile( { files } )` loads a folder as the same folder zipped would (`localFolder()` →
+  `ArchiveImporter.loadFolder` → the archive path). Archive entries are lazy Blobs, read only when a loader asks.
+- **Archives and pbrt** are an add-on (`rayzee/addons/archives`, `Processor/ArchiveImporter.js`), reached through
+  `assetLoader.setArchiveImporter()` or `setArchiveImporterLoader( load, ARCHIVE_FORMATS )`. `.tar` is read in place,
+  `.tar.gz` unpacked once into OPFS `archives/`, `.zip` read through its central directory. `loadFile( file, { element } )`
+  takes one element path or an array. Past `ARCHIVE_ELEMENT_PROMPT_BYTES` (4 GB) a multi-element archive throws
+  `ARCHIVE_NEEDS_ELEMENT` (the app's part dialog), on the seekable `.tar` path too. Budgets: `maxTriangles` 45M /
+  `maxPlacements` 6M, or 120M / 60M with memory spill (`SPILL_TRIANGLE_BUDGET`).
+- **USD** (`Processor/USD/`, same add-on; a `.usdz` stays with three's USDLoader): our own crate reader (three's
+  parsers are not usable), on-demand composition (`USDStage.js`), translated into the pbrt builder's IR (`USDScene.js`).
+  Past `USD_ELEMENT_PROMPT_BYTES` (1 GB) it throws `ARCHIVE_NEEDS_ELEMENT`; a counting pass fits curves and point
+  instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned.
+- ⚠️ Anything that changes what the same pbrt files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old
+  build is reused.
+- ⚠️ Keep the template grouping (templates at identical transforms become one): without it Moana's trees rendered 60 %
+  slower.
+- ⚠️ A `.ply` is shared by every shape naming it and freed only by its last direct user (`_lastPlyUse`).
+- ⚠️ A shape inside `ObjectBegin` keeps its whole transform and a placement's goes on top — never relative to the
+  transform at ObjectBegin.
+- ⚠️ `material.clone()` drops the engine's own properties (diffuse transmission, subsurface): use `cloneMaterial`.
+- ⚠️ The builder frees a shape's arrays after merging it: hand an array over once (`own()`).
 
 ### Storage (OPFS) (`rayzee/src/Storage/`)
-`app.storage` is a `StorageManager` over the origin private file system, opened per
-`cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
-`null` when the browser has none (private windows, Node without the fake) — every caller must
-work without it.
-An add-on (`rayzee/addons/storage`): the OPFS implementation (`StorageManager`, `StorageOps`, `StorageWorker`, the
-transports, `locks`, `events`, `openStorage`) is reached only through `renderer.setStorageOpener( acquireSharedStorage )`
-— `PathTracerApp` installs it. The caches that *use* a manager stay core (`DownloadCache`, `CDFCache`, `BLASCache`,
-`SpillStore`, `GeometrySpill`, `identity`, `shared`) and import area names from `Storage/areas.js`, never
-`StorageManager.js`. Without the add-on, `storage: 'auto'` asked for explicitly records `capability.missing` (a warning). `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
-turns it off or supplies a host manager; `openHeadless` defaults to off.
-- **Areas.** Engine: `downloads` (URL cache, revalidated at most daily with a 1-byte `Range: bytes=0-0`
-  GET, compared on Last-Modified and, where Content-Range is readable, the size; a failed check is
-  stamped too. ⚠️ Not HEAD: the asset host's CORS rule allows GET only, so every HEAD failed CORS,
-  and unstamped it retried — and logged the error — on every page load), `archives`, `scenes` (graph + BLAS cache), `cdf`, and `spill`
-  (kind `scratch`). App: `renders`, `sessions`, `projects`, `jobs` (kind `user`). `cache` areas
-  share a budget (30 % of quota, ≤ 100 GB) and are evicted least-recently-used, never while
-  locked or pinned; `user` areas are never evicted; `scratch` is outside the budget and cleared at
-  open unless an open page holds it. ⚠️ The budget caps what caches accumulate, not one write —
-  a single entry larger than the budget is allowed when the disk has room. The cache total lives in
-  memory (`_cacheBytes`: listed at most every 30 s, this manager's commits counted, `collect` resets
-  it exactly): listing every entry's metadata on every new download cost ~0.4 ms an entry — 100
-  downloads into a 1,090-entry cache took 12–14 s with 173–373 ms frames, now 0.6 s; a first visit
-  read 7,968 meta files, now 377. Removals are not subtracted, so between listings it can only
-  over-count (evict early), never let caches outgrow the budget.
-- **Entry protocol.** An entry is a directory of files plus `meta.json`, written **last**; no valid
-  meta means invisible, and `sweep()` removes it. `area.create( key )` replaces, `edit( key )`
-  appends (growable files resume from their committed length). ⚠️ `create` removes the old entry
-  first, so anything rewritten often (sessions, checkpoints) alternates between two keys and
-  deletes the older after the commit.
-- **I/O.** All writes go through sync access handles in `StorageWorker` (`createWritable` is Safari
-  26+ only); reads use `File.slice` on the main thread. `EntryWriter.write` copies the data
-  before its first await — muxers and stream readers reuse their buffers.
-- **Locks.** Web Locks per entry (`acquireLock`, in-process fallback in Node): writers exclusive,
-  readers shared with `ifAvailable`, so an entry being written counts as a miss. Sessions hold a
-  lock per tab for the page's lifetime; that is how a second tab tells a live session from one to
-  offer.
-- **Failures** record `storage.*` issues (`unavailable`, `quota_exceeded`, `write_failed`,
-  `read_failed`, `entry_corrupt`, `cache_mismatch`) as warnings and degrade to the in-memory path;
-  nothing throws for lack of storage. A quota failure mid-download retries once in memory.
-- **Identity.** `fileIdentity( file )` = name, size, lastModified and a SHA-256 over the head, tail
-  and 14 probes (~3 MB read at any size); `identityKey()` is the string form used in keys.
-- **Scene cache** (`SceneGraphCodec`, `BLASCache`): stored when the cold build took ≥ 10 s and the
-  read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
-  *during* the build, each array let go once written: held until the build ended, the encoded
-  graph kept every array the build replaces (float normals, instance matrices) alive — ~1 GB at
-  the peak on the whole Moana subset. The BLAS cache is content-checked — a
-  template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
-  textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
-  `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly
-  (`exactColors`, `exactIor`) or the warm render differs. Read sections in one forward pass of
-  large windows: thousands of small `File.slice` reads took 9.8 s, one pass 0.37 s.
-- **Scene state.** `app.exportSceneState()` / `importSceneState( state, { resolve } )`
-  (`SceneState/`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
-  source), colour (config, view, look, working space, context), every light, cameras (live view,
-  user cameras, per-camera effects), timeline keys, host material edits (with values —
-  `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
-  path, materials by index, model cameras by index — each **plus a name check**; UUIDs change per
-  load. `resolve` answers what the engine cannot reach (a local HDRI, a non-builtin OCIO config).
-  `toPortable` / `fromPortable` keep colours, vectors and non-finite numbers through JSON.
-  `app.sceneSource` says where the model came from (`url` / `local-file` / `object3d`, with an
-  archive's `element`); `sceneSourceFile` is the File of a local load. Not restored: texture swaps
-  and texture-transform edits, host Object3D loads, a picked OCIO folder.
-- **Sessions and projects** (app: `lib/session.js`, `lib/project.js`, `SessionDialog`): autosave
-  2 s after the last change and on hide, only in Preview and only when the JSON fingerprint differs
-  from the last save — an untouched startup scene is never saved. Startup offers only an unfinished
-  render; saved sessions wait in File → Open Recent, and opening one whose model is on screen, still
-  as it loaded (`SessionKeeper.isAsLoaded()`), reuses that model rather than loading it twice. A local
-  file is never copied: restore asks the user to pick it again and checks its identity. `.rayzee`
-  = zip of `project.json` + thumbnail + the local model stored inside (≤ 3.5 GB streamed).
-- **Render checkpoints.** `app.captureRenderCheckpoint()` / `restoreRenderCheckpoint( cp )` —
-  colour + aux MRT, m2 / streak / frozenMask, `frameCount`, `_seedTick`, aux samples and
-  convergence; bit-identical continuation in deterministic mode. All six readbacks are submitted
-  in one task, or the parts straddle frames. Restore does not wake the loop (a synchronous frame
-  would add a sample). The app writes one every 2 min of a final render (`lib/stillJob.js`,
-  ~60 B a pixel: 252 MB at 2048²) and journals video frames (`lib/videoJob.js`); both resume from
-  the startup dialog. ⚠️ A resumed encoder must start on a keyframe.
-- **Memory spill (`memorySpill`: `'auto'` default | true | false; app: Path Tracer → Advanced → Memory Saver,
-  kept in `localStorage['rayzee-memory-spill']`).** Each build decides (`RayzeeRenderer._planSpill`, after the parse and
-  before the scene's metadata environment starts loading): `'auto'` spills a static scene whose in-memory estimate
-  passes `SAFE_SCENE_BYTES` (`SceneProcessor.needsSpill`, the preflight's survey without the spill), true every static
-  scene, false none; storage is required either way. `sceneProcessor.spilling` / `app.sceneSpilled` say a scene went to
-  disk (built to spill and over one chunk) — the after-load spill and respill run only then, and the app shows a
-  "Large scene" toast on `MODEL_LOADED`. Ordinary models estimate far below the line (24155522.glb: 651 MB) and take the
-  in-memory path exactly as before. ⚠️ An importer installs its own sky at the end of its read (USD dome, pbrt
-  `infinite`), before the decision: `_planSpill` narrows it there and disposes it, since three.js keeps an uploaded
-  texture's size. Narrowed only at decode, the island's 14308-wide sky went to the GPU whole (a 1.5 GB upload block in
-  the GPU process). The width resets at each load's start, so a previous spilling scene never narrows the next one's.
-  A spilling scene of more than one chunk is **extracted and built together**
-  (`SceneProcessor._extractStreaming`, `GeometryExtractor.extractStreaming`): each stored range
-  goes to a BLAS worker as soon as it is written (`_blasPool` takes work while it runs), and the
-  extraction waits while more than `STREAM_RESIDENT_BYTES` (1 GB) of records are in memory — so
-  the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
-  bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
-  starved the worker messages it waited for (a hung tab). The three.js geometry goes to disk too,
-  from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
-  `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
-  deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
-  writes; a geometry keeps its bounds (computed before its arrays go). From `GEOMETRY_ON_DISK_BYTES` (1 GB) up it
-  **stays on disk after the build** (`sdf.geometryOnDisk`; less comes back at its end — 24155522.glb's 140 MB left on disk had
-  cost picking and the selection outline): `ensureGeometryResident()` / `app.ensureSceneResident()` read it back in 64 MB windows (3.9 GB in
-  3.0 s at 80M), and a rebuild of the same model does so first. Picking skips the model meanwhile
-  (`InteractionManager._intersectScene`): its arrays are empty, and testing 51M empty copies held the page for seconds.
-  Page after extraction on the 70M fixture 4.07 → 0.84 GB, render bit-identical. A failed
-  build does not read it back — the app discards a failed load's model. **After the load** (`spillAfterLoad`, from the
-  renderer's `_maybeSpill`, once the initial visibility pass has used them) the InstancedMesh matrix lists the instance
-  table reads go to disk (`_matrixSpill`; each mesh's `boundingBox`/`boundingSphere` set from its copies' boxes first,
-  since three.js derives them from the list), the TLAS and the copy records too when copies are clustered (`_spillTLAS`,
-  keeping the chunks over the group trees), and the triangle order maps (`_orderSpill`, read back by `ensureResident`). An edit reads back
-  what it needs: visibility waits on `whenTLASEditable()` (the renderer applies and resets after it), a move on
-  `ensureMovable( meshIndices )` (matrix lists, TLAS, that mesh's copy records — `updateMeshTransforms` returns null
-  and lands when they are back). 30 s after the last edit (`RESPILL_AFTER_MS`) the renderer puts back on disk what edits
-  read back (`respill`, skipped while a read is in flight); the matrix lists a restore made, and each 32 MB pack once written, are let go at once
-  (`buffer.transfer( 0 )`) and page-ins read straight into their chunk (`SpillStore.readInto`), since Chrome frees a dropped
-  ArrayBuffer only at a major collection, which an idle page may not reach for minutes. The BVH chunks are
-  SharedArrayBuffers, which cannot be let go early: after a move on the island ~2 GB (TLAS and copy records) waits
-  for that collection. Chrome, island at rest: tab 5.2 → 3.6 GB, GPU process 15.6 → 13.5 GB (with the upload pacing
-  under Memory Management). Moana island at rest, Node: ArrayBuffers 6.9 → 2.2 GB
-  (matrices 2.4, TLAS and copy records 1.6, order maps 0.43, the two cluster columns now derived 0.19); moving its 69,856-copy mesh
-  reads 3.5 GB back (1.7 s), refits in 0.1–0.2 s and uploads 40 MB, where every move had uploaded the whole 1.3 GB TLAS. An environment wider than
-  `SPILL_ENVIRONMENT_WIDTH` (8192) is box-filtered down in place when it loads (`limitEnvironmentWidth`): Moana's
-  14308×7154 sky was 1.6 GB of floats. Curves are built with 16-bit normals (`packUnitAttribute`, what extraction stores). ⚠️ A shared buffer handed
-  to the storage worker lives until that worker next collects garbage, which it barely does: every
-  spilled 64 MB chunk stayed in memory (2.5 GB of them measured), invisible to
-  `measureUserAgentSpecificMemory`. `transferable()` copies shared data into a transferred buffer
-  for that reason. Otherwise the spill happens **during the
-  build** (`SceneProcessor._beginProgressiveSpill`): each BLAS goes to scratch as it lands, a triangle
-  chunk is uploaded (`PathTracerStage.createChunkUploader`, a GPU buffer allocated after
-  extraction) and spilled once every BLAS over it is built, and the combined BVH is assembled from
-  scratch, uploading and spilling each chunk the fill passes (each upload awaited, `stage.drainUploads()`). Chunks
-  holding emitters stay, and the TLAS chunks until the after-load spill. `setTriangleData` / `setBVHData` adopt the
-  pre-filled buffers. A scene restored
-  from the BLAS cache spills after upload instead (`spillToDisk`). 50M triangles: 7.2 GB at rest
-  against 9.1 GB; the page peak (~11 GB, at the start of the BLAS phase) is unchanged. Readers
-  page in first — `refitBVH`, `rebuildMaterials`, and `setMaterialProperty` for
-  `TRIANGLE_PATCH_PROPERTIES` — while visibility and rigid moves need only what the after-load spill took (above);
-  `refitBLASes` throws until `await app.ensureSceneResident()`. ⚠️ Views taken with `viewAs` keep chunk memory
-  alive, which is why the store tracks them (weakly). ⚠️ Past `maxBufferSize` (4 GB here) WebGPU
-  returns an invalid buffer and every write fails quietly, so the BVH and triangle stores go up in parts
-  (see Buffer parts); the chunk uploaders allocate them.
+Full notes: [docs/STORAGE.md](docs/STORAGE.md) — areas and the cache budget, the entry protocol, I/O, locks, identity,
+the scene cache, scene state, sessions and projects, render checkpoints, and memory spill in full.
+
+`app.storage` is a `StorageManager` over the origin private file system, shared per `cacheNamespace`
+(`acquireSharedStorage`). It is `null` where there is none (private windows, Node) — **every caller must work without
+it**; failures record `storage.*` warnings and fall back to memory. An add-on (`rayzee/addons/storage`, installed with
+`renderer.setStorageOpener()`); the caches that use it (`DownloadCache`, `CDFCache`, `BLASCache`, `SpillStore`,
+`GeometrySpill`) stay core and import area names from `Storage/areas.js`. Areas are `cache` (one shared budget, evicted
+least-recently-used), `user` (never evicted) or `scratch` (`spill`, cleared at open). Also here:
+`app.exportSceneState()` / `importSceneState()`, the app's sessions and `.rayzee` projects, and render checkpoints
+(`captureRenderCheckpoint()` / `restoreRenderCheckpoint()`).
+- ⚠️ An entry's `meta.json` is written last (no meta = invisible); `create` removes the old entry first, so anything
+  rewritten often alternates between two keys.
+- ⚠️ `EntryWriter.write` copies its data before its first await. Download revalidation is a 1-byte `Range` GET, never
+  HEAD (the asset host's CORS allows GET only).
+- ⚠️ The scene-cache codec carries colours and `ior` exactly (`exactColors`, `exactIor`): `Material.toJSON` rounds both.
+- **Memory spill** (`memorySpill`: `'auto'` default | true | false): `RayzeeRenderer._planSpill` decides per build;
+  `'auto'` spills a static scene past `SAFE_SCENE_BYTES`, and ordinary models never do. A spilling scene of more than one
+  chunk is extracted and built together; its three.js geometry goes to disk during the build (and stays there past
+  `GEOMETRY_ON_DISK_BYTES`); after the load the matrix lists, TLAS, copy records and order maps go too
+  (`spillAfterLoad`), are read back per edit (`whenTLASEditable()`, `ensureMovable()`) and go back 30 s later.
+- ⚠️ `refitBLASes` throws on a spilled scene until `await app.ensureSceneResident()`; picking skips the model while its
+  geometry is on disk.
+- ⚠️ A shared buffer handed to the storage worker lives until that worker collects garbage: `transferable()` copies it.
+  Views taken with `viewAs` keep chunk memory alive.
+- ⚠️ The streaming build's wait races a timer, never a settled promise (that spun in microtasks and hung the tab).
 
 ## Development Commands
 
@@ -1600,7 +1018,7 @@ build loads after a reboot and fails after a long session.
   already releases as it fills, so there is no build transient left worth attacking — the only
   remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
   With `memorySpill` that mirror is on disk for the build (`Storage/GeometrySpill.js`, see Memory
-  spill below) and read back when it ends.
+  spill in `docs/STORAGE.md`) and read back when it ends.
 
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:

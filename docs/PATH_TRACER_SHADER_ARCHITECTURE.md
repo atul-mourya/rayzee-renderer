@@ -307,7 +307,7 @@ Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: 
 
 Frame: `beginFrame()` updates the source table and the light guide (`guideClear`, `guideBuild`), then traces the light subpaths through the same pool — `lightGenerate`, the bounce loop (`extend` / sort / `shade` / `compact` / `lightCopyback`, sized off the light pass's own survivor curve), `lightSplat`, and for `'vcm'` `mergeClear` → `mergeInsert`. Each camera bounce then adds `connect` (and `merge`) after `shade`, and each band `splatResolve` before `finalWrite`.
 
-A light ray in Shade skips everything camera-only, stores its vertices in the light vertex cache (the hit buffer's tail) and scatters with the adjoint BSDF. Camera vertices leave a pending record that ConnectKernel resolves after Shade. In this mode Shade samples every light itself rather than through `calculateDirectLightingUnified`, and the bidirectional strategies' shadow rays treat glass as opaque (`traceShadowRayRefractiveOpaque`). Full notes in `CLAUDE.md`.
+A light ray in Shade skips everything camera-only, stores its vertices in the light vertex cache (the hit buffer's tail) and scatters with the adjoint BSDF. Camera vertices leave a pending record that ConnectKernel resolves after Shade. In this mode Shade samples every light itself rather than through `calculateDirectLightingUnified`, and the bidirectional strategies' shadow rays treat glass as opaque (`traceShadowRayRefractiveOpaque`). Full notes in `docs/BIDIRECTIONAL.md`.
 
 ---
 
