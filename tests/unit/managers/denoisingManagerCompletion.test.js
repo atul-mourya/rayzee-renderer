@@ -448,7 +448,7 @@ describe( 'DenoisingManager neural chain', () => {
 
 		} );
 		manager = makeManager();
-		manager.upscalerCanvas = {};
+		manager.upscalerCanvas = { style: {} };
 		manager.pipeline = { context: { getTexture: () => ( {} ) } };
 		manager.renderer = { toneMapping: 0, toneMappingExposure: 1 };
 		manager.upscaler = { enabled: true, start: vi.fn( async () => true ), abort: vi.fn() };
@@ -465,6 +465,18 @@ describe( 'DenoisingManager neural chain', () => {
 
 		const [ source ] = manager.upscaler.start.mock.calls[ 0 ];
 		expect( [ source.width, source.height, source.data[ 0 ] ] ).toEqual( [ 4, 4, 7 ] );
+		expect( presentRGBA8 ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'discards a retouch in flight when cancelled', async () => {
+
+		manager.denoiser._outTexSize = { width: 4, height: 4 };
+		const run = manager._runNeuralPost( () => true );
+		manager.cancelPostPasses();
+		await run;
+
+		expect( manager.upscaler.start ).not.toHaveBeenCalled();
 		expect( presentRGBA8 ).not.toHaveBeenCalled();
 
 	} );
@@ -532,6 +544,35 @@ describe( 'DenoisingManager switches on a finished render', () => {
 		finish( false );
 		await manager._postRedo;
 		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'cancels the upscale in flight and the rerun queued behind it', async () => {
+
+		let finish;
+		manager.upscaler = upscaler( true );
+		manager.upscaler.start.mockImplementationOnce( () => new Promise( resolve => ( finish = resolve ) ) );
+		manager.onRenderComplete( { isStillComplete: () => done } );
+		manager.setUpscalerEnabled( false );
+		manager.setUpscalerEnabled( true );
+
+		manager.cancelPostPasses();
+		expect( manager.upscaler.abort ).toHaveBeenCalledTimes( 2 );
+
+		const redo = manager._postRedo;
+		finish( false );
+		await redo;
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
+	it( 'applies a switch flipped after a cancel', async () => {
+
+		manager.cancelPostPasses();
+		manager.setUpscalerEnabled( true );
+		await manager._postRedo;
+
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 1 );
 
 	} );
 

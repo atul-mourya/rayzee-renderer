@@ -244,7 +244,7 @@ const StatsMeter = ( { viewportMode } ) => {
 				<StatusLabel
 					label="Upscaling"
 					percent={upscalingProgress * 100}
-					onCancel={() => getApp()?.upscaler?.abort()}
+					onCancel={() => getApp()?.denoisingManager?.cancelPostPasses()}
 				/>
 			)}
 		</div>

@@ -137,10 +137,11 @@ export class DenoisingManager extends EventDispatcher {
 		this._retouch = null;
 		this._superResModule = null;
 		this._neuralPostBusy = false;
-		// The finished render's post passes: its guard, the run in flight, and a queued rerun.
+		// The finished render's post passes: its guard, the run in flight, a queued rerun, and a cancel.
 		this._postIsStillComplete = null;
 		this._postRun = null;
 		this._postRedo = null;
+		this._postCancelled = false;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
@@ -1234,7 +1235,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( ! wantSR && ! runNR ) {
 
-				if ( wantESRGAN ) await this.upscaler.start();
+				if ( wantESRGAN && ! this._postCancelled ) await this.upscaler.start();
 				return;
 
 			}
@@ -1298,7 +1299,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			}
 
-			if ( this._postRedo ) return;
+			if ( this._postRedo || this._postCancelled ) return;
 
 			if ( wantESRGAN ) {
 
@@ -1380,6 +1381,7 @@ export class DenoisingManager extends EventDispatcher {
 	_runPostPasses( isStillComplete ) {
 
 		this._postIsStillComplete = isStillComplete;
+		this._postCancelled = false;
 
 		// The neural chain owns the overlay canvas when it runs, and hands its result to the ONNX upscaler.
 		if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'neural' ) ) {
@@ -1402,14 +1404,26 @@ export class DenoisingManager extends EventDispatcher {
 		if ( ! isStillComplete?.() || this._postRedo ) return;
 
 		this.upscaler?.abort();
+		this._postCancelled = false;
 		this._postRedo = Promise.resolve( this._postRun ).catch( () => {} ).then( () => {
 
 			this._postRedo = null;
-			if ( this._postIsStillComplete !== isStillComplete || ! isStillComplete() ) return;
+			if ( this._postCancelled || this._postIsStillComplete !== isStillComplete || ! isStillComplete() ) return;
 			this._restoreRenderDisplay();
 			this._runPostPasses( isStillComplete );
 
 		} );
+
+	}
+
+	/** Stops the post passes on the finished render, which stays on screen as rendered. The switches stay as they are. */
+	cancelPostPasses() {
+
+		this._postCancelled = true;
+		this.upscaler?.abort();
+		this._restoreRenderDisplay();
+		// A retouch in flight cannot be stopped, only discarded, and ends later.
+		this.dispatchEvent( { type: EngineEvents.UPSCALING_END } );
 
 	}
 
