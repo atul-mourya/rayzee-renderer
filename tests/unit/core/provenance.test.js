@@ -34,6 +34,20 @@ describe( 'getProvenance', () => {
 
 	} );
 
+	it( 'says which display-only exposure shaped an sRGB readback, since no setting records it', () => {
+
+		const app = new PathTracerApp( null );
+		expect( app.getProvenance().exposure ).toEqual( { auto: null, local: null } );
+
+		app.stages.autoExposure = { enabled: true, getExposure: () => 2, strength: 0.3, metering: 'center', keyValue: 0.18 };
+		app.stages.localExposure = { enabled: true, highlightContrast: 0.6, shadowContrast: 1, detailStrength: 1 };
+		expect( app.getProvenance().exposure ).toEqual( {
+			auto: { exposure: 2, strength: 0.3, metering: 'center', keyValue: 0.18 },
+			local: { highlightContrast: 0.6, shadowContrast: 1, detailStrength: 1 },
+		} );
+
+	} );
+
 	it( 'carries the area-light scale with the other settings', () => {
 
 		expect( new PathTracerApp( null ).getProvenance().settings.areaLightIntensityScale )

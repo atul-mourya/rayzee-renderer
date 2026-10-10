@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { PathTracerApp } from '@/core/PathTracerApp.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
+import { EngineEvents } from '@/core/EngineEvents.js';
 import { AutoExposure } from '@/core/Stages/AutoExposure.js';
 
 function viewer( { autoExposure = false, requiresMotionVectors = false } = {} ) {
@@ -58,29 +59,76 @@ describe( 'the viewer\'s side of the core settings', () => {
 
 describe( 'a finished render\'s exposure', () => {
 
-	function complete( enabled ) {
+	function complete( { enabled = true, resetWhileLanding = false } = {} ) {
 
 		const calls = [];
 		const app = {
-			stages: { autoExposure: { enabled, meter: async () => calls.push( 'meter' ), advance: ( s ) => calls.push( s ) } },
+			stages: {
+				pathTracer: { resetCount: 3 },
+				autoExposure: {
+					enabled,
+					meter: async () => {
+
+						calls.push( 'meter' );
+						if ( resetWhileLanding ) app.stages.pathTracer.resetCount ++;
+
+					},
+					advance: ( s ) => calls.push( `land ${s}` ),
+				},
+			},
 			pipeline: { context: {} },
 			completion: { renderCompleteDispatched: true },
-			denoisingManager: { onRenderComplete: vi.fn() },
+			denoisingManager: { onRenderComplete: () => calls.push( 'closing passes' ) },
+			_completionInfo: () => ( { reason: 'samples' } ),
 			_finishImage: PathTracerApp.prototype._finishImage,
+			_renderCompleted: PathTracerApp.prototype._renderCompleted,
 			_refreshFinished: () => calls.push( 'redraw' ),
+			dispatchEvent: ( e ) => calls.push( e.type ),
 		};
-		PathTracerApp.prototype._renderCompleted.call( app );
+		PathTracerApp.prototype._announceComplete.call( app );
 		return calls;
 
 	}
 
-	it( 'reads the finished image, lands on it and redraws', async () => {
+	const settle = () => new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
 
-		const calls = complete( true );
-		await new Promise( ( resolve ) => setTimeout( resolve, 0 ) );
-		expect( calls ).toEqual( [ 'meter', Infinity, 'redraw' ] );
+	// Headless, nothing runs the loop that builds it from each finished image.
+	it( 'builds local exposure for a readback the loop has not built it for', () => {
 
-		expect( complete( false ) ).toEqual( [] );
+		const built = [];
+		const le = {
+			wantsBuild: true,
+			build( context ) {
+
+				built.push( context );
+				this.wantsBuild = false;
+
+			},
+			toneGain: () => 'gain',
+		};
+		const app = { stages: { localExposure: le }, pipeline: { context: 'image' } };
+
+		expect( PathTracerApp.prototype._displayGain.call( app ) ).toBe( 'gain' );
+		expect( PathTracerApp.prototype._displayGain.call( app ) ).toBe( 'gain' );
+		expect( built ).toEqual( [ 'image' ] );
+
+	} );
+
+	it( 'reads the finished image and lands on it before the closing passes and the event', async () => {
+
+		const calls = complete();
+		await settle();
+		expect( calls ).toEqual( [ 'meter', 'land Infinity', 'redraw', 'closing passes', EngineEvents.RENDER_COMPLETE ] );
+
+	} );
+
+	it( 'announces nothing for a render reset while it landed, and at once with auto exposure off', async () => {
+
+		const reset = complete( { resetWhileLanding: true } );
+		await settle();
+		expect( reset ).toEqual( [ 'meter', 'land Infinity' ] );
+
+		expect( complete( { enabled: false } ) ).toEqual( [ 'closing passes', EngineEvents.RENDER_COMPLETE ] );
 
 	} );
 

@@ -605,7 +605,14 @@ export class AutoExposure extends RenderStage {
 
 		this.enabled = enabled;
 		this._emittedEV = null;
-		if ( enabled ) this.resetHistory();
+		if ( enabled ) {
+
+			// From the manual exposure, not one left from when it was last on, perhaps on another scene.
+			this.resetHistory();
+			this._exposureEV = 0;
+
+		}
+
 		this._apply();
 		this.onChange?.();
 

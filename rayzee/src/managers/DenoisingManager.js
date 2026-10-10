@@ -1555,6 +1555,9 @@ export class DenoisingManager extends EventDispatcher {
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 		this._onDisplayRefresh = null;
+		this._getExposure = null;
+		this._getSaturation = null;
+		this._getDisplayGain = null;
 		this._issues = null;
 
 		if ( this.upscalerCanvas?.parentNode ) {

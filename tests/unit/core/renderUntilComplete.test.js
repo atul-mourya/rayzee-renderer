@@ -119,6 +119,27 @@ describe( 'renderUntilComplete', () => {
 
 	} );
 
+	it( 'lands the exposure on the finished image before announcing it', async () => {
+
+		const { app } = makeApp( { ceiling: 4 } );
+		const order = [];
+		app.stages.autoExposure = {
+			enabled: true,
+			// Announced already, a reading's redraw would wake the loop in the middle of the closing denoise.
+			meter: async () => order.push( `meter, announced ${app.completion.renderCompleteDispatched}` ),
+			advance: () => order.push( 'land' ),
+		};
+		app.dispatchEvent = vi.fn( ( e ) => {
+
+			if ( e.type === EngineEvents.RENDER_COMPLETE ) order.push( 'complete' );
+
+		} );
+
+		await app.renderUntilComplete();
+		expect( order ).toEqual( [ 'meter, announced false', 'land', 'complete' ] );
+
+	} );
+
 	it( 'runs its readbacks in lockstep, and puts the previous setting back', async () => {
 
 		const { app, stage } = makeApp();

@@ -565,17 +565,31 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			this._traceFrame( { liveDenoise: true } );
 
-			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) {
-
-				this._renderCompleted();
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...this._completionInfo() } );
-
-			}
+			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) this._announceComplete();
 
 		}
 
 		this._renderHelperOverlay();
 		this.dispatchEvent( { type: EngineEvents.FRAME } );
+
+	}
+
+	// The closing passes and RENDER_COMPLETE wait for _finishImage(), so both see the finished image's exposure.
+	_announceComplete() {
+
+		const info = this._completionInfo();
+		const restarts = this.stages.pathTracer.resetCount;
+		const announce = () => {
+
+			if ( ! this.completion.renderCompleteDispatched || this.stages.pathTracer?.resetCount !== restarts ) return;
+			this._renderCompleted();
+			this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
+
+		};
+
+		const finishing = this._finishImage();
+		if ( finishing ) finishing.then( announce, announce );
+		else announce();
 
 	}
 
@@ -2584,9 +2598,10 @@ export class RayzeeRenderer extends EventDispatcher {
 			}
 
 			const info = this._completionInfo();
+			// Before it is announced: a listener reading pixels sees the finished image's exposure.
+			await this._finishImage();
 			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
 
-			await this._finishImage();
 			const denoised = denoise ? await this._finalDenoise() : false;
 			const { reason, ...rest } = info;
 			return { ...rest, retiredBy: reason, denoised };
@@ -4000,8 +4015,12 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/** A render driven by renderFrames() or renderUntilComplete() has its samples, before any closing pass. */
-	async _finishImage() {}
+	/** A render has its samples, before any closing pass or announcement: a promise to wait for, or null. */
+	_finishImage() {
+
+		return null;
+
+	}
 
 	/** Draws what sits over the image. Here only brings the light scene's matrices up to date. */
 	_renderHelperOverlay() {

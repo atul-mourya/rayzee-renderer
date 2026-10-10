@@ -530,6 +530,7 @@ export async function renderUpscaled( app, {
 			exposure: app.renderer.toneMappingExposure,
 			toneMapping: app.renderer.toneMapping,
 			saturation: app.settings.get( 'saturation' ) ?? 1,
+			gain: app._displayGain?.() ?? null,
 		};
 
 		const { rgba8, width, height, ms, toneMs } = await sr.upscaleToRGBA8( source, tone );

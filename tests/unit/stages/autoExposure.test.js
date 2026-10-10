@@ -219,6 +219,20 @@ describe( 'AutoExposure', () => {
 
 	} );
 
+	it( 'starts from the manual exposure when turned back on, not from where it was last', async () => {
+
+		const { stage, renderer, context, land } = setup();
+		stage.render( context );
+		await land( KEY - 3 );
+		stage.advance( 0 );
+		expect( Math.log2( renderer.toneMappingExposure ) ).toBeCloseTo( 3, 6 );
+
+		stage.setEnabled( false );
+		stage.setEnabled( true ); // another scene, perhaps: nothing read yet
+		expect( renderer.toneMappingExposure ).toBe( 1 );
+
+	} );
+
 	it( 'multiplies the manual exposure in as compensation, and keeps the range', async () => {
 
 		const { stage, renderer, context, land } = setup();

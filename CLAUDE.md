@@ -1167,8 +1167,8 @@ less often as samples grow (`meterInterval`), and luminance is taken in the work
   once it has two samples; `advance( seconds )` eases once a frame in video time (VideoRenderManager); `instant` snaps
   (a host's choice). The eased tail took ~8 s to land a 1.4-stop change, so a 16-sample render finished at 0.8 s and
   drifted on for 7 more; now 0.48 s, at completion. Every finished render is read once more and landed on
-  (`_renderCompleted` in the loop, `_finishImage()` for `renderFrames` / `renderUntilComplete`), so a saved image has its
-  own exposure. A final render keeps the exposure it starts with until 8 samples (`holdSamples`): snapping to each
+  (`_finishImage()`), before RENDER_COMPLETE and the closing denoise or upscale (`_announceComplete()` in the loop), so a
+  saved image has its own exposure; with auto exposure off it returns null and completion stays synchronous. A final render keeps the exposure it starts with until 8 samples (`holdSamples`): snapping to each
   reading, its 20 bounces read a 0.4-stop dip and back within 0.2 s at 2–8 samples. `_settling()` keeps a finished
   render's loop running until it lands. The manual exposure is its compensation (`setCompensation`).
 - ⚠️ Never clear the in-flight reading from a reset, nor reuse the ReadbackBuffer while it is mapped: the old stage did on

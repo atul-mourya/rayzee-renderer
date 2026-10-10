@@ -410,12 +410,12 @@ export class PathTracerApp extends RayzeeRenderer {
 	// Render completion → denoise/upscale chain
 	_renderCompleted() {
 
+		// _finishImage() landed the exposure just before, with the loop already asleep: draw it.
+		if ( this.stages.autoExposure?.enabled ) this._refreshFinished();
 		this.denoisingManager.onRenderComplete( {
 			isStillComplete: () => this.completion.renderCompleteDispatched,
 			context: this.pipeline?.context,
 		} );
-		// A finished render shows its own exposure: one reading of the finished image, landed on.
-		if ( this.stages.autoExposure?.enabled ) this._finishImage().then( () => this._refreshFinished() );
 
 	}
 
@@ -427,7 +427,10 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_displayGain() {
 
-		return this.stages.localExposure?.toneGain() ?? null;
+		const le = this.stages.localExposure;
+		// A readback outside the loop (headless) can come before the loop would have built it from this image.
+		if ( le?.wantsBuild ) le.build( this.pipeline.context );
+		return le?.toneGain() ?? null;
 
 	}
 
@@ -453,13 +456,25 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	// A batch render is exposed for its own finished image.
-	async _finishImage() {
+	// A finished render is exposed for its own image: one reading of it, landed on.
+	_finishImage() {
 
 		const ae = this.stages.autoExposure;
-		if ( ! ae?.enabled ) return;
-		await ae.meter( this.pipeline.context );
-		ae.advance( Infinity );
+		if ( ! ae?.enabled ) return null;
+		return ae.meter( this.pipeline.context ).then( () => ae.advance( Infinity ) );
+
+	}
+
+	/** The core's, plus the display-only exposure an sRGB readback was shaped by, which no setting records. */
+	getProvenance() {
+
+		const provenance = super.getProvenance();
+		const ae = this.stages.autoExposure, le = this.stages.localExposure;
+		provenance.exposure = {
+			auto: ae?.enabled ? { exposure: ae.getExposure(), strength: ae.strength, metering: ae.metering, keyValue: ae.keyValue } : null,
+			local: le?.enabled ? { highlightContrast: le.highlightContrast, shadowContrast: le.shadowContrast, detailStrength: le.detailStrength } : null,
+		};
+		return provenance;
 
 	}
 
