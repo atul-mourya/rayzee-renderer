@@ -1167,14 +1167,8 @@ export class DenoisingManager extends EventDispatcher {
 	}
 
 	/**
-	 * The neural post-chain over the picture the closing denoise just produced: super resolution
-	 * first, then the detail pass, either or both.
-	 *
-	 * Order is forced by the models. Super resolution hands back light that can be fed onward; the
-	 * detail pass writes an `rgba8unorm` texture with no `COPY_SRC`, so nothing can read its result
-	 * and it has to be last — and it presents in its own display space rather than the engine's tone
-	 * curve. Which shape super resolution returns therefore depends on what follows it: packed
-	 * halves when the detail pass is next, display bytes when it is the end of the chain.
+	 * The post-chain over the picture the closing denoise just produced: the detail pass at render size,
+	 * then the chosen upscaler (neural super resolution or the ONNX one), either or both.
 	 *
 	 * Deliberately fire-and-forget: the render is already finished and a failure must not break it.
 	 */
@@ -1182,6 +1176,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		const wantSR = this.upscaler?.enabled && this.upscalerBackend === 'neural';
 		const wantNR = this.neuralRendering;
+		const wantESRGAN = this.upscaler?.enabled && ! wantSR;
 		if ( ! wantSR && ! wantNR ) return;
 
 		// A second completion can land while the first pass is still in flight — the models are
@@ -1230,7 +1225,12 @@ export class DenoisingManager extends EventDispatcher {
 
 			}
 
-			if ( ! wantSR && ! runNR ) return;
+			if ( ! wantSR && ! runNR ) {
+
+				if ( wantESRGAN ) await this.upscaler.start();
+				return;
+
+			}
 
 			// Must be the effective value, not the settings one: AutoExposure overwrites
 			// `renderer.toneMappingExposure` every frame and never touches settings, so reading
@@ -1287,6 +1287,13 @@ export class DenoisingManager extends EventDispatcher {
 			if ( ! isStillComplete() ) {
 
 				this.dropDisplay();
+				return;
+
+			}
+
+			if ( wantESRGAN ) {
+
+				await this.upscaler.start( new ImageData( image.rgba8, image.width, image.height ) );
 				return;
 
 			}
@@ -1383,8 +1390,7 @@ export class DenoisingManager extends EventDispatcher {
 			// denoise. Ordered after `_denoiserEndHandler`, which publishes the picture.
 			if ( closing ) this._onDisplayRefresh?.();
 
-			// One owner of the overlay canvas, so the neural chain and the ONNX upscaler are
-			// exclusive. The neural chain also runs on its own when only its detail pass is on.
+			// The neural chain owns the overlay canvas when it runs, and hands its result to the ONNX upscaler.
 			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'neural' ) ) {
 
 				this._runNeuralPost( isStillComplete );

@@ -227,7 +227,8 @@ export class AIUpscaler extends EventDispatcher {
 
 	// ─── Public Lifecycle ─────────────────────────────────────────────────────
 
-	async start() {
+	/** @param {ImageData} [source] - what to enlarge instead of the render canvas */
+	async start( source = null ) {
 
 		if ( ! this.enabled || this.state.isUpscaling || this.state.isLoading ) {
 
@@ -238,7 +239,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.dispatchEvent( { type: 'start' } );
 
 		const startTime = performance.now();
-		const success = await this.execute();
+		const success = await this.execute( source );
 
 		if ( success ) {
 
@@ -260,7 +261,7 @@ export class AIUpscaler extends EventDispatcher {
 
 	}
 
-	async execute() {
+	async execute( source = null ) {
 
 		if ( ! this.enabled ) return false;
 
@@ -270,7 +271,11 @@ export class AIUpscaler extends EventDispatcher {
 		// Capture source image SYNCHRONOUSLY before any async work.
 		// WebGPU canvas textures expire after each compositor frame,
 		// so we must grab the pixels before awaiting model load.
-		if ( this.hdr && this.getGPUTextures ) {
+		if ( source ) {
+
+			this._capturedSource = source;
+
+		} else if ( this.hdr && this.getGPUTextures ) {
 
 			// HDR path: float planes tone-mapped on the GPU, no 8-bit step before the network
 			this._capturedSource = await this._captureSourceHDR();

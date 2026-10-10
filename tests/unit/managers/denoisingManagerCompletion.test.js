@@ -1,6 +1,23 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventDispatcher } from 'three';
 import { DenoisingManager } from '@/core/managers/DenoisingManager.js';
+import { presentRGBA8 } from '@/core/neural/NeuralSuperRes.js';
+
+vi.mock( '@/core/neural/NeuralSuperRes.js', () => ( {
+	readDenoisedHalf: vi.fn( async () => ( { half: new Uint16Array( 64 ), width: 4, height: 4 } ) ),
+	presentRGBA8: vi.fn(),
+	releaseDenoisedReader: vi.fn(),
+} ) );
+
+vi.mock( '@/core/neural/NeuralRetouch.js', () => ( {
+	RETOUCH_MAX_PIXELS: 16,
+	enhanceFrame: vi.fn( async ( { source } ) => ( {
+		instance: { dispose() {} },
+		rgba8: new Uint8ClampedArray( source.width * source.height * 4 ).fill( 7 ),
+		width: source.width,
+		height: source.height,
+	} ) ),
+} ) );
 
 // A stand-in for OIDNDenoiser: three.js EventDispatcher semantics are the point of these tests.
 class StubDenoiser extends EventDispatcher {
@@ -408,6 +425,55 @@ describe( 'DenoisingManager.denoiseOnce', () => {
 
 		dn.start = vi.fn( () => Promise.resolve( false ) );
 		expect( await manager.denoiseOnce() ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'DenoisingManager neural chain', () => {
+
+	let manager;
+
+	beforeEach( () => {
+
+		vi.clearAllMocks();
+		vi.stubGlobal( 'ImageData', class {
+
+			constructor( data, width, height ) {
+
+				Object.assign( this, { data, width, height } );
+
+			}
+
+		} );
+		manager = makeManager();
+		manager.upscalerCanvas = {};
+		manager.pipeline = { context: { getTexture: () => ( {} ) } };
+		manager.renderer = { toneMapping: 0, toneMappingExposure: 1 };
+		manager.upscaler = { enabled: true, start: vi.fn( async () => true ), abort: vi.fn() };
+		manager.setNeuralRendering( true );
+
+	} );
+
+	afterEach( () => vi.unstubAllGlobals() );
+
+	it( 'hands the retouched picture to the upscaler', async () => {
+
+		manager.denoiser._outTexSize = { width: 4, height: 4 };
+		await manager._runNeuralPost( () => true );
+
+		const [ source ] = manager.upscaler.start.mock.calls[ 0 ];
+		expect( [ source.width, source.height, source.data[ 0 ] ] ).toEqual( [ 4, 4, 7 ] );
+		expect( presentRGBA8 ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'still upscales when the render is too big to retouch', async () => {
+
+		manager.denoiser._outTexSize = { width: 8, height: 8 };
+		await manager._runNeuralPost( () => true );
+
+		expect( manager.upscaler.start ).toHaveBeenCalledWith();
 
 	} );
 
