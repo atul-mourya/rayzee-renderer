@@ -91,8 +91,9 @@ export class VideoRenderManager {
 		const autoExposure = app.stages.autoExposure?.enabled ? app.stages.autoExposure : null;
 		if ( autoExposure ) autoExposure.instant = false;
 
-		// Override samples per frame
-		app.settings.setMany( { maxSamples: samplesPerFrame }, { silent: true } );
+		// Override samples per frame. 'frames': this loop never checks the deadline, so a 'timeOnly'
+		// ceiling of Infinity would never finish a frame.
+		app.settings.setMany( { maxSamples: samplesPerFrame, renderLimitMode: 'frames' }, { silent: true, reset: false } );
 		app.stages.pathTracer?.updateCompletionThreshold?.();
 
 		// Disable camera controls during render
@@ -314,12 +315,12 @@ export class VideoRenderManager {
 
 		const app = this._app;
 		const effective = app.settings.getEffective();
-		const keys = Object.keys( modePresetSettings( PRODUCTION_RENDER_CONFIG ) );
+		const keys = [ ...Object.keys( modePresetSettings( PRODUCTION_RENDER_CONFIG ) ), 'renderLimitMode' ];
 		if ( view ) keys.push( 'focusDistance' );
 
 		return {
 			view: view ? app.cameraManager.captureView() : null,
-			// Everything configureForMode( 'production' ) overwrites, with who set it.
+			// Everything configureForMode( 'production' ) and the export overwrite, with who set it.
 			settings: keys.map( key => [ key, effective[ key ] ] ),
 			renderMode: app.stages.pathTracer?.renderMode?.value,
 			controlsEnabled: app.cameraManager.controls?.enabled,

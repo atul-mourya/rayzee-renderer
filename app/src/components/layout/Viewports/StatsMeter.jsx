@@ -163,6 +163,11 @@ const StatsMeter = ( { viewportMode } ) => {
 	}, [ storeMaxSamples, setStoreMaxSamples ] );
 
 
+	// The engine's 'time' keeps the frame cap as well (a session saved before 'timeOnly' carries it),
+	// so each limit shows whenever it can stop the render.
+	const timeLimited = renderLimitMode === 'time' || renderLimitMode === 'timeOnly';
+	const framesLimited = renderLimitMode !== 'timeOnly';
+
 	const adaptiveLocked = viewportMode === 'final-render';
 	const autoTitle = ( useAdaptiveSampling
 		? 'Adaptive sampling: stops the render early once the image stops changing.'
@@ -179,11 +184,11 @@ const StatsMeter = ( { viewportMode } ) => {
 				)}
 
 				{/* Time Control */}
-				<StatChip active={renderLimitMode === 'time'} onClick={() => handleRenderLimitModeChange( 'time' )}>
+				<StatChip active={timeLimited} onClick={() => handleRenderLimitModeChange( 'timeOnly' )}>
 					Time:
 				</StatChip>
 				<span className="text-white">{stats.timeElapsed.toFixed( 2 )}</span>s
-				{renderLimitMode === 'time' && (
+				{timeLimited && (
 					<> / <EditableValue value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
 				)}
 				<DoneTick show={completionReason === 'timeLimit'} />
@@ -191,11 +196,11 @@ const StatsMeter = ( { viewportMode } ) => {
 				<span className="mx-1">|</span>
 
 				{/* Frames Control */}
-				<StatChip active={renderLimitMode === 'frames'} onClick={() => handleRenderLimitModeChange( 'frames' )}>
+				<StatChip active={framesLimited} onClick={() => handleRenderLimitModeChange( 'frames' )}>
 					Frames:
 				</StatChip>
 				<span className="text-white">{stats.samples}</span>
-				{renderLimitMode === 'frames' && (
+				{framesLimited && (
 					<> / <EditableValue value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
 				)}
 				<DoneTick show={completionReason === 'samples'} />

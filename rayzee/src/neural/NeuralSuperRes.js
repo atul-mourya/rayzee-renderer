@@ -483,6 +483,7 @@ export async function renderUpscaled( app, {
 		width: pathTracer?.width,
 		height: pathTracer?.height,
 		maxSamples: app.settings?.get?.( 'maxSamples' ),
+		renderLimitMode: app.settings?.get?.( 'renderLimitMode' ),
 		finalDenoise: app.denoisingManager?.finalDenoise,
 		paused: app.pauseRendering,
 	};
@@ -513,7 +514,8 @@ export async function renderUpscaled( app, {
 		await new Promise( r => setTimeout( r, 300 ) );
 
 		app.denoisingManager.applyOIDNEnabled( true );
-		app.settings.set( 'maxSamples', samples );
+		// 'frames': under 'timeOnly' the deadline, not `samples`, would end the render.
+		app.settings.setMany( { maxSamples: samples, renderLimitMode: 'frames' }, { reset: false } );
 		const done = waitForDenoise( app, samples, timeoutMs );
 		app.reset();
 		await done;
@@ -552,6 +554,7 @@ export async function renderUpscaled( app, {
 
 		if ( restore.width && restore.height ) app.setCanvasSize( restore.width, restore.height );
 		if ( restore.maxSamples !== undefined ) app.settings?.set?.( 'maxSamples', restore.maxSamples );
+		if ( restore.renderLimitMode !== undefined ) app.settings?.set?.( 'renderLimitMode', restore.renderLimitMode, { reset: false } );
 		if ( restore.finalDenoise !== undefined ) app.denoisingManager?.applyOIDNEnabled( restore.finalDenoise );
 		app.pauseRendering = restore.paused;
 

@@ -24,10 +24,14 @@ vi.mock( '@/core/Processor/utils.js', () => ( {
 const { VideoRenderManager } = await import( '@/core/managers/VideoRenderManager.js' );
 const { modePresetSettings } = await import( '@/core/EngineDefaults.js' );
 
-// Every setting a mode preset owns, each with a distinct value and alternating provenance.
-const SAVED_SETTINGS = Object.fromEntries( Object.keys( modePresetSettings( {} ) ).map(
-	( key, i ) => [ key, { value: `saved-${key}`, source: i % 2 ? 'host' : 'mode-preset' } ]
-) );
+// Every setting a mode preset owns, each with a distinct value and alternating provenance, and
+// the limit mode the export pins.
+const SAVED_SETTINGS = {
+	...Object.fromEntries( Object.keys( modePresetSettings( {} ) ).map(
+		( key, i ) => [ key, { value: `saved-${key}`, source: i % 2 ? 'host' : 'mode-preset' } ]
+	) ),
+	renderLimitMode: { value: 'timeOnly', source: 'host' },
+};
 
 function createMockApp( { clipDuration = 2.0, framesTillComplete = 3 } = {} ) {
 
@@ -173,6 +177,17 @@ describe( 'VideoRenderManager', () => {
 
 		} );
 
+		// This loop never checks the deadline, and 'timeOnly' lifts the sample ceiling: left as it
+		// was, no frame would ever finish.
+		it( 'renders each frame to its sample count, whatever the limit mode', async () => {
+
+			await manager.renderAnimation( { fps: 30, totalFrames: 1, samplesPerFrame: 12 } );
+			expect( app.settings.setMany ).toHaveBeenCalledWith(
+				{ maxSamples: 12, renderLimitMode: 'frames' }, { silent: true, reset: false }
+			);
+
+		} );
+
 		it( 'stops rAF loop before rendering', async () => {
 
 			await manager.renderAnimation( { fps: 30, totalFrames: 1 } );
@@ -243,6 +258,7 @@ describe( 'VideoRenderManager', () => {
 			expect( restored ).toEqual( SAVED_SETTINGS );
 			expect( restored ).toHaveProperty( 'useAdaptiveSampling' );
 			expect( restored ).toHaveProperty( 'usePixelFreeze' );
+			expect( restored.renderLimitMode ).toEqual( { value: 'timeOnly', source: 'host' } );
 			expect( calls.every( ( [ , , opts ] ) => opts.silent === true && opts.reset === false ) ).toBe( true );
 			expect( app.wake ).toHaveBeenCalled();
 

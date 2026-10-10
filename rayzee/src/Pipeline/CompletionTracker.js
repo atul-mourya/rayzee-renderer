@@ -33,20 +33,24 @@ export class CompletionTracker {
 
 	/**
 	 * Checks whether the wall-clock render budget has expired. An additional stop condition,
-	 * never a replacement — the sample ceiling and convergence still bind when they come first.
+	 * never a replacement — convergence still binds when it comes first, and in 'time' mode the
+	 * sample ceiling too ('timeOnly' lifts it: PathTracerStage.updateCompletionThreshold).
 	 *
 	 * Floored at one sample: frameCount does not advance while the stage compiles kernels or
 	 * while the camera is in interaction mode, and retiring in that window denoises an empty
 	 * buffer and captures a blank canvas.
 	 *
 	 * @param {Object} pathTracer - The PathTracer stage
-	 * @param {string} renderLimitMode - 'time' or 'frames'
+	 * @param {string} renderLimitMode - 'frames', 'time' or 'timeOnly'
 	 * @param {number} renderTimeLimit - Time limit in seconds
 	 * @returns {boolean}
 	 */
 	isTimeLimitReached( pathTracer, renderLimitMode, renderTimeLimit ) {
 
-		if ( renderLimitMode !== 'time' || ! ( renderTimeLimit > 0 ) ) return false;
+		// Decided afresh on every check: a raised limit or a switch to 'frames' reopens a render the deadline retired.
+		this.budgetOverrun = false;
+
+		if ( ( renderLimitMode !== 'time' && renderLimitMode !== 'timeOnly' ) || ! ( renderTimeLimit > 0 ) ) return false;
 		if ( this.timeElapsed < renderTimeLimit ) return false;
 
 		if ( ! ( pathTracer?.frameCount > 0 ) ) {

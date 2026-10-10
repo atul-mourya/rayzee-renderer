@@ -283,6 +283,26 @@ describe( 'RenderSettings', () => {
 
 	} );
 
+	// 'timeOnly' lifts the ceiling only while a deadline is armed, so the stage needs both values.
+	describe( 'render limit', () => {
+
+		it( 'hands the stage the mode with the time limit, and reconciles completion', () => {
+
+			const stage = { setUniform: vi.fn(), setRenderLimitMode: vi.fn() };
+			const reconcileCompletion = vi.fn();
+			settings.bind( { stages: { pathTracer: stage }, resetCallback: vi.fn(), reconcileCompletion } );
+
+			settings.set( 'renderLimitMode', 'timeOnly' );
+			expect( stage.setRenderLimitMode ).toHaveBeenLastCalledWith( 'timeOnly', settings.get( 'renderTimeLimit' ) );
+
+			settings.set( 'renderTimeLimit', 0 );
+			expect( stage.setRenderLimitMode ).toHaveBeenLastCalledWith( 'timeOnly', 0 );
+			expect( reconcileCompletion ).toHaveBeenCalledTimes( 2 );
+
+		} );
+
+	} );
+
 	// ── applyAll ───────────────────────────────────────────────
 
 	describe( 'applyAll', () => {

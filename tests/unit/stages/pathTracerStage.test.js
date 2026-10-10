@@ -5,12 +5,13 @@ import { UniformManager, LIGHT_FLOATS, LIGHT_LIST_STEP, lightListCapacity } from
 
 // The stage needs a WebGPU renderer to construct, but the completion-threshold methods only
 // touch three plain fields — call them against a bare receiver.
-function makeReceiver( { renderMode = 0, maxSamples = 30, renderLimitMode = 'frames' } = {} ) {
+function makeReceiver( { renderMode = 0, maxSamples = 30, renderLimitMode = 'frames', renderTimeLimit = 0 } = {} ) {
 
 	return {
 		renderMode: { value: renderMode },
 		maxSamples: { value: maxSamples },
 		renderLimitMode,
+		renderTimeLimit,
 		completionThreshold: 0,
 		updateCompletionThreshold: PathTracerStage.prototype.updateCompletionThreshold,
 		setRenderLimitMode: PathTracerStage.prototype.setRenderLimitMode,
@@ -51,6 +52,39 @@ describe( 'PathTracerStage completion threshold', () => {
 
 		expect( thresholds[ 0 ] ).toBe( thresholds[ 1 ] );
 		expect( thresholds[ 0 ] ).toBeLessThan( Infinity );
+
+	} );
+
+	// The app's Time chip: render until the deadline, however many samples that takes.
+	it( 'lifts the ceiling in timeOnly mode while a deadline is armed', () => {
+
+		const stage = makeReceiver( { maxSamples: 30 } );
+		stage.setRenderLimitMode( 'timeOnly', 20 );
+		expect( stage.completionThreshold ).toBe( Infinity );
+
+	} );
+
+	// Nothing else could stop it.
+	it( 'keeps the ceiling in timeOnly mode with the deadline disarmed', () => {
+
+		const stage = makeReceiver( { maxSamples: 30 } );
+		stage.setRenderLimitMode( 'timeOnly', 0 );
+		expect( stage.completionThreshold ).toBe( 30 );
+		stage.setRenderLimitMode( 'timeOnly', 5 );
+		expect( stage.completionThreshold ).toBe( Infinity );
+		stage.setRenderLimitMode( 'timeOnly', 0 );
+		expect( stage.completionThreshold ).toBe( 30 );
+
+	} );
+
+	it( 'keeps the time limit across a mode change and a new maxSamples', () => {
+
+		const stage = makeReceiver( { maxSamples: 30, renderTimeLimit: 10 } );
+		stage.setRenderLimitMode( 'timeOnly' );
+		expect( stage.completionThreshold ).toBe( Infinity );
+		stage.maxSamples.value = 500;
+		stage.updateCompletionThreshold();
+		expect( stage.completionThreshold ).toBe( Infinity );
 
 	} );
 

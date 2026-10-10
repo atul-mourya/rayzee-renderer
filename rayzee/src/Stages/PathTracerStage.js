@@ -115,6 +115,7 @@ export class PathTracerStage extends RenderStage {
 		this.performanceMonitor = createPerformanceMonitor();
 		this.completionThreshold = 0;
 		this.renderLimitMode = 'frames';
+		this.renderTimeLimit = 0;
 
 		// Initialize data textures
 		this._initDataTextures();
@@ -1536,21 +1537,22 @@ export class PathTracerStage extends RenderStage {
 	}
 
 	/**
-	 * Update completion threshold based on render mode. The ceiling holds in every limit mode —
-	 * uncapping it under a time budget lets a generous deadline silently slow every render.
+	 * Update completion threshold based on render mode. The ceiling holds in 'frames' and 'time' —
+	 * uncapping it under a time budget lets a generous deadline silently slow every render. Only
+	 * 'timeOnly' lifts it, and only while a deadline is armed: without one nothing would stop the render.
 	 */
 	updateCompletionThreshold() {
 
-		this.completionThreshold = updateCompletionThreshold(
-			this.renderMode.value,
-			this.maxSamples.value
-		);
+		this.completionThreshold = this.renderLimitMode === 'timeOnly' && this.renderTimeLimit > 0
+			? Infinity
+			: updateCompletionThreshold( this.renderMode.value, this.maxSamples.value );
 
 	}
 
-	setRenderLimitMode( mode ) {
+	setRenderLimitMode( mode, timeLimit = this.renderTimeLimit ) {
 
 		this.renderLimitMode = mode;
+		this.renderTimeLimit = timeLimit;
 		this.updateCompletionThreshold();
 
 	}

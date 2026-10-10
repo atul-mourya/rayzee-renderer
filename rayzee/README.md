@@ -472,6 +472,8 @@ Key settings:
 |---|---|---|---|
 | `maxBounces` | `number` | 3 | Max ray bounce depth |
 | `maxSamples` | `number` | 60 | Max accumulated samples before stopping |
+| `renderLimitMode` | `string` | 'frames' | What else can stop the render: `'frames'` only `maxSamples`; `'time'` `maxSamples` or `renderTimeLimit`, whichever comes first; `'timeOnly'` only `renderTimeLimit` (`maxSamples` is ignored while the limit is above 0). Convergence (`useAdaptiveSampling`) can stop it in every mode |
+| `renderTimeLimit` | `number` | 30 | Seconds of rendering before the time limit stops it, in `'time'` and `'timeOnly'`; `0` turns the limit off. Raising it after it stopped a render continues that render, unless another limit has been reached |
 | `exposure` | `number` | 1.0 | Exposure value |
 | `saturation` | `number` | 1.0 | Color saturation (1 = no grade) |
 | `enableEnvironment` | `boolean` | true | Use environment lighting |

@@ -258,7 +258,7 @@ export class RenderSettings extends EventDispatcher {
 
 			handleRenderLimitMode: ( value ) => {
 
-				stages.pathTracer?.setRenderLimitMode?.( value );
+				stages.pathTracer?.setRenderLimitMode?.( value, this.get( 'renderTimeLimit' ) );
 				reconcileCompletion?.();
 
 			},
@@ -271,8 +271,10 @@ export class RenderSettings extends EventDispatcher {
 
 			},
 
-			handleRenderTimeLimit: () => {
+			// Arming or disarming the deadline lifts or restores the ceiling in 'timeOnly'.
+			handleRenderTimeLimit: ( value ) => {
 
+				stages.pathTracer?.setRenderLimitMode?.( this.get( 'renderLimitMode' ), value );
 				reconcileCompletion?.();
 
 			},

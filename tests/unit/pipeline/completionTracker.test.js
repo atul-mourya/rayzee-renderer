@@ -77,6 +77,15 @@ describe( 'CompletionTracker', () => {
 
 		} );
 
+		it( 'fires in timeOnly mode', () => {
+
+			const stage = makeStage( { completionThreshold: Infinity } );
+			advance( 5000 );
+			expect( tracker.isTimeLimitReached( stage, 'timeOnly', 5 ) ).toBe( true );
+			expect( tracker.budgetOverrun ).toBe( true );
+
+		} );
+
 		it( 'is inert in frames mode', () => {
 
 			const stage = makeStage();
@@ -198,6 +207,50 @@ describe( 'CompletionTracker', () => {
 		it( 'returns false without a stage', () => {
 
 			expect( tracker.isLimitReached( null, 'time', 5 ) ).toBe( false );
+
+		} );
+
+		// timeOnly's ceiling is Infinity (PathTracerStage.updateCompletionThreshold): only the
+		// deadline and convergence stop it.
+		it( 'timeOnly renders past maxSamples until the deadline', () => {
+
+			const stage = makeStage( { frameCount: 4000, completionThreshold: Infinity } );
+			advance( 4000 );
+			expect( tracker.isLimitReached( stage, 'timeOnly', 5 ) ).toBe( false );
+			advance( 1000 );
+			expect( tracker.isLimitReached( stage, 'timeOnly', 5 ) ).toBe( true );
+			expect( tracker.stopCondition( stage ) ).toBe( 'timeLimit' );
+
+		} );
+
+		// Regression: budgetOverrun stuck once the deadline fired, so raising the limit afterwards
+		// left the render stopped.
+		it( 'reopens when the limit is raised past the elapsed time', () => {
+
+			const stage = makeStage( { frameCount: 40, completionThreshold: Infinity } );
+			advance( 5000 );
+			expect( tracker.isLimitReached( stage, 'timeOnly', 5 ) ).toBe( true );
+			expect( tracker.isLimitReached( stage, 'timeOnly', 10 ) ).toBe( false );
+			expect( tracker.stopCondition( stage ) ).toBeNull();
+
+		} );
+
+		it( 'reopens on a switch to frames below the ceiling', () => {
+
+			const stage = makeStage( { frameCount: 20, completionThreshold: 30 } );
+			advance( 5000 );
+			expect( tracker.isLimitReached( stage, 'time', 5 ) ).toBe( true );
+			expect( tracker.isLimitReached( stage, 'frames', 5 ) ).toBe( false );
+
+		} );
+
+		it( 'stays stopped when a raised limit leaves the ceiling reached', () => {
+
+			const stage = makeStage( { frameCount: 30, completionThreshold: 30 } );
+			advance( 5000 );
+			expect( tracker.isLimitReached( stage, 'time', 5 ) ).toBe( true );
+			expect( tracker.isLimitReached( stage, 'time', 10 ) ).toBe( true );
+			expect( tracker.stopCondition( stage ) ).toBe( 'samples' );
 
 		} );
 

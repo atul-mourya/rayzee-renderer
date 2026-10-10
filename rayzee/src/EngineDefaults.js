@@ -24,8 +24,8 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 
 	// Sampling and convergence
 	maxSamples: 60,
-	renderLimitMode: 'frames',
-	renderTimeLimit: 30,
+	renderLimitMode: 'frames', // 'frames' | 'time' (ceiling or deadline, whichever first) | 'timeOnly' (deadline lifts the ceiling)
+	renderTimeLimit: 30, // seconds; read in 'time' and 'timeOnly'
 	renderMode: 0, // 0 preview, 1 production; configureForMode() sets it
 	useAdaptiveSampling: true,
 	noiseThreshold: 0.1, // a pixel under this √-luminance noise has converged; the interactive tier's value
