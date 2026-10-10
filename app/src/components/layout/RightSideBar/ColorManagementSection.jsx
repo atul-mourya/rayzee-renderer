@@ -439,8 +439,9 @@ const ColorManagementSection = () => {
 				<Switch checked={autoExposure} onCheckedChange={handleAutoExposureChange} />
 			</Row>
 
-			<Row title={autoExposure ? 'Brighter or darker than auto exposure chooses, in stops' : 'Brighter or darker, in stops'}>
-				<Slider icon={Exposure} label={'Exposure'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			{/* With Auto Exposure on, the same value is a push on top of what Auto picks, not the exposure itself. */}
+			<Row title={autoExposure ? 'Brighter or darker than Auto Exposure picks. 0 shows Auto\'s choice.' : 'Brighter or darker, in stops'}>
+				<Slider icon={Exposure} label={autoExposure ? 'Adjust' : 'Exposure'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
 			</Row>
 
 			<Row more={localExposure ? (
