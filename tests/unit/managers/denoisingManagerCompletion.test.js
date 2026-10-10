@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventDispatcher } from 'three';
 import { DenoisingManager } from '@/core/managers/DenoisingManager.js';
+import { AIUpscaler } from '@/core/Passes/AIUpscaler.js';
 import { presentRGBA8 } from '@/core/neural/NeuralSuperRes.js';
 
 vi.mock( '@/core/neural/NeuralSuperRes.js', () => ( {
@@ -474,6 +475,88 @@ describe( 'DenoisingManager neural chain', () => {
 		await manager._runNeuralPost( () => true );
 
 		expect( manager.upscaler.start ).toHaveBeenCalledWith();
+
+	} );
+
+} );
+
+describe( 'DenoisingManager switches on a finished render', () => {
+
+	let manager, done;
+
+	const upscaler = ( enabled = false ) => ( { enabled, start: vi.fn( async () => true ), abort: vi.fn() } );
+
+	beforeEach( () => {
+
+		manager = makeManager();
+		manager.setOIDNEnabled( false );
+		manager.upscaler = upscaler();
+		done = true;
+		manager.onRenderComplete( { isStillComplete: () => done } );
+
+	} );
+
+	it( 'upscales the finished render when the upscaler is turned on', async () => {
+
+		manager.setUpscalerEnabled( true );
+		await manager._postRedo;
+
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 1 );
+
+	} );
+
+	it( 'leaves a render that is still going to its own completion', async () => {
+
+		done = false;
+		manager.setUpscalerEnabled( true );
+		await manager._postRedo;
+
+		expect( manager.upscaler.start ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'reruns once, after the pass in flight has ended', async () => {
+
+		let finish;
+		manager.upscaler = upscaler( true );
+		manager.upscaler.start.mockImplementationOnce( () => new Promise( resolve => ( finish = resolve ) ) );
+		manager.onRenderComplete( { isStillComplete: () => done } );
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 1 );
+
+		manager.setUpscalerEnabled( false );
+		manager.setUpscalerEnabled( true );
+		await Promise.resolve();
+		expect( manager.upscaler.abort ).toHaveBeenCalledTimes( 1 );
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 1 );
+
+		finish( false );
+		await manager._postRedo;
+		expect( manager.upscaler.start ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'does not rerun when a setting is set to what it already is', async () => {
+
+		manager.setUpscalerEnabled( false );
+		manager.setNeuralRendering( false );
+
+		expect( manager._postRedo ).toBe( null );
+
+	} );
+
+} );
+
+describe( 'AIUpscaler.abort', () => {
+
+	it( 'ends the tile in flight, so the aborted run unwinds', async () => {
+
+		const up = new AIUpscaler( { width: 4, height: 4, style: {} }, { domElement: { style: {} } } );
+		up._worker = { addEventListener: vi.fn(), removeEventListener: vi.fn(), postMessage: vi.fn() };
+		const tile = up._inferTile( new Float32Array( 3 ), 1, 1 );
+
+		up._cleanupPendingWorkerHandlers();
+
+		await expect( tile ).rejects.toMatchObject( { name: 'AbortError' } );
 
 	} );
 

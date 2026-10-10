@@ -123,7 +123,7 @@ export class AIUpscaler extends EventDispatcher {
 		this._worker = null;
 		this._currentModelUrl = null;
 		this._tileId = 0;
-		this._pendingWorkerHandlers = new Set();
+		this._pendingWorkerHandlers = new Map();
 
 		// Alpha channel cache (bilinear-upscaled from source, applied per tile)
 		this._upscaledAlpha = null;
@@ -591,7 +591,7 @@ export class AIUpscaler extends EventDispatcher {
 
 			};
 
-			this._pendingWorkerHandlers.add( handler );
+			this._pendingWorkerHandlers.set( handler, reject );
 			this._worker.addEventListener( 'message', handler );
 			this._worker.postMessage(
 				{ type: 'infer', tileData, width, height, id },
@@ -819,15 +819,13 @@ export class AIUpscaler extends EventDispatcher {
 
 	// ─── Disposal ─────────────────────────────────────────────────────────────
 
+	// Rejected, not dropped: an aborted run has to end before the next one starts.
 	_cleanupPendingWorkerHandlers() {
 
-		if ( this._worker ) {
+		for ( const [ handler, reject ] of this._pendingWorkerHandlers ) {
 
-			for ( const handler of this._pendingWorkerHandlers ) {
-
-				this._worker.removeEventListener( 'message', handler );
-
-			}
+			this._worker?.removeEventListener( 'message', handler );
+			reject( new DOMException( 'Aborted', 'AbortError' ) );
 
 		}
 

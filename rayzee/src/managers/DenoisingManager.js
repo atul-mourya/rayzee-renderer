@@ -137,6 +137,10 @@ export class DenoisingManager extends EventDispatcher {
 		this._retouch = null;
 		this._superResModule = null;
 		this._neuralPostBusy = false;
+		// The finished render's post passes: its guard, the run in flight, and a queued rerun.
+		this._postIsStillComplete = null;
+		this._postRun = null;
+		this._postRedo = null;
 
 		// The tier the finished image uses. The loaded tier is not always this one: while the
 		// image is still accumulating we run a cheaper model (see previewQuality).
@@ -1148,6 +1152,7 @@ export class DenoisingManager extends EventDispatcher {
 	/** Turns the neural-rendering (detail) pass on or off, and sets its appearance controls. */
 	setNeuralRendering( enabled, settings = null ) {
 
+		const changed = this.neuralRendering !== !! enabled;
 		this.neuralRendering = !! enabled;
 		if ( settings ) this.neuralRenderingSettings = { ...this.neuralRenderingSettings, ...settings };
 		if ( ! this.neuralRendering ) {
@@ -1156,6 +1161,8 @@ export class DenoisingManager extends EventDispatcher {
 			this._restoreRenderDisplay();
 
 		}
+
+		if ( changed ) this._redoPostPasses();
 
 	}
 
@@ -1291,6 +1298,8 @@ export class DenoisingManager extends EventDispatcher {
 
 			}
 
+			if ( this._postRedo ) return;
+
 			if ( wantESRGAN ) {
 
 				await this.upscaler.start( new ImageData( image.rgba8, image.width, image.height ) );
@@ -1367,10 +1376,48 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/** The neural chain or the ONNX upscaler over the finished render, as the switches ask. */
+	_runPostPasses( isStillComplete ) {
+
+		this._postIsStillComplete = isStillComplete;
+
+		// The neural chain owns the overlay canvas when it runs, and hands its result to the ONNX upscaler.
+		if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'neural' ) ) {
+
+			this._postRun = this._runNeuralPost( isStillComplete );
+
+		} else {
+
+			this._postRun = this.upscaler?.enabled ? this.upscaler.start() : null;
+
+		}
+
+	}
+
+	/** Runs the post passes again on a finished render whose switches changed, once the run in flight ends. */
+	_redoPostPasses() {
+
+		const isStillComplete = this._postIsStillComplete;
+		// No chain yet: the closing denoise is still running and the chain reads the switches when it starts.
+		if ( ! isStillComplete?.() || this._postRedo ) return;
+
+		this.upscaler?.abort();
+		this._postRedo = Promise.resolve( this._postRun ).catch( () => {} ).then( () => {
+
+			this._postRedo = null;
+			if ( this._postIsStillComplete !== isStillComplete || ! isStillComplete() ) return;
+			this._restoreRenderDisplay();
+			this._runPostPasses( isStillComplete );
+
+		} );
+
+	}
+
 	onRenderComplete( { isStillComplete } ) {
 
 		// Remove any stale completion-chain listener from a previous render cycle
 		this._cleanupCompletionListener();
+		this._postIsStillComplete = null;
 
 		// What closes the render, if anything. A full pass at the chosen tier when that switch is
 		// on; otherwise, if OIDN owns the live view, one last cheap refresh — the cadence's last
@@ -1390,15 +1437,7 @@ export class DenoisingManager extends EventDispatcher {
 			// denoise. Ordered after `_denoiserEndHandler`, which publishes the picture.
 			if ( closing ) this._onDisplayRefresh?.();
 
-			// The neural chain owns the overlay canvas when it runs, and hands its result to the ONNX upscaler.
-			if ( this.neuralRendering || ( this.upscaler?.enabled && this.upscalerBackend === 'neural' ) ) {
-
-				this._runNeuralPost( isStillComplete );
-				return;
-
-			}
-
-			if ( this.upscaler?.enabled ) this.upscaler.start();
+			this._runPostPasses( isStillComplete );
 
 		};
 
@@ -1473,6 +1512,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Remove stale completion-chain listener before aborting
 		this._cleanupCompletionListener();
+		this._postIsStillComplete = null;
 
 		// The 2D canvas is the upscaler's alone: a reset means its enlarged result no longer
 		// describes anything, so the render canvas comes back.
@@ -1515,6 +1555,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		// Remove pending completion-chain listener
 		this._cleanupCompletionListener();
+		this._postIsStillComplete = null;
 		// Owns a second GPUDevice plus 3 MB of weights, so it must not outlive the manager.
 		this._releaseNeuralUpscaler();
 		this._releaseNeuralRetouch();
@@ -1743,10 +1784,12 @@ export class DenoisingManager extends EventDispatcher {
 	/** Enables or disables the AI upscaler. */
 	setUpscalerEnabled( enabled ) {
 
+		const changed = !! this.upscaler && this.upscaler.enabled !== !! enabled;
 		if ( this.upscaler ) this.upscaler.enabled = enabled;
 		else if ( enabled ) this._recordNoOverlayCanvas( 'upscaler' );
 		// The enlarged picture describes a setting that is no longer on.
 		if ( ! enabled ) this._restoreRenderDisplay();
+		if ( changed ) this._redoPostPasses();
 
 	}
 
