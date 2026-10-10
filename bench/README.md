@@ -470,9 +470,9 @@ Standing state as of the last bless (`baselines/denoise.json`):
 
 | scene | asvgf @1 | asvgf @64 | nrd @1 | nrd @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.957 | 2.041 | 0.992 | 1.000 | 0.751 | 0.906 | 0.621 | 1.348 | 0.621 | 1.343 |
-| `glass-transmission` | 0.704 | 0.912 | 0.688 | 1.000 | 0.616 | 0.711 | 0.518 | 0.924 | 0.518 | 0.914 |
-| `textured-normalmap` | 0.993 | 1.304 | 0.903 | 1.000 | 0.885 | 0.984 | 0.518 | 0.882 | 0.517 | 0.889 |
+| `spheres-gradient` | 0.957 | 2.041 | 0.992 | 1.000 | 0.751 | 0.906 | 0.553 | 0.969 | 0.553 | 0.969 |
+| `glass-transmission` | 0.704 | 0.912 | 0.688 | 1.000 | 0.616 | 0.711 | 0.522 | 0.783 | 0.522 | 0.783 |
+| `textured-normalmap` | 0.993 | 1.304 | 0.903 | 1.000 | 0.885 | 0.984 | 0.504 | 0.852 | 0.504 | 0.852 |
 
 `nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
 handover point it republishes the path tracer's own texture, so a converged render is never touched.
@@ -503,10 +503,12 @@ intrinsic cost of blending an already-converged image.
 
 ### The tiled OIDN rung
 
-The suite renders at 256×256, which fits inside a single OIDN tile — so overlap is zero and the
-tiled path never runs. `oidn-tiled` caps the tile at 128 to force 2×2 tiles at the same render size,
-which is why its ratios differ slightly from `oidn`. Two traps are worth knowing if you add a rung
-that varies a *config* rather than a strategy:
+The suite renders at 256×256, which fits inside a single OIDN tile — so the tiled path never runs.
+`oidn-tiled` caps the tile at 128, which with the denoiser's 16 px border (288²) is 3×3 tiles. Since
+oidn-web 0.5.0 a tile's halo is half the network's receptive field (112 px for the large model), so
+at this size every tile's input is the whole frame and its ratios match `oidn` exactly: the rung
+gates the multi-tile path — per-tile writes and their crop — not seams. Two traps are worth knowing
+if you add a rung that varies a *config* rather than a strategy:
 
 - `setOIDNQuality` does not await `updateQuality`, and `_setupUNetDenoiser` early-returns while a
   load is in flight, so a config change applied straight after a quality switch is silently dropped.

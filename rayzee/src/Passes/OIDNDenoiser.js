@@ -4,8 +4,21 @@ import { createLogger, fmt } from '../utils/Logger.js';
 
 const log = createLogger( 'oidn' );
 
-// The tile alignment oidn-web's own fitTileDimension uses (its tileScheduler.js).
+// The tile alignment oidn-web's own planner uses (its tileScheduler.js).
 const OIDN_TILE_ALIGNMENT = 16;
+
+// Mirrored around the frame: at the network's own boundary (zero padding, or oidn-web's repeated
+// edge pixel) the outer pixels come out worse than not denoising at all. A multiple of 16 keeps
+// the frame on the network's pooling grid, so pixels away from the edges denoise as before.
+const OIDN_BORDER = 16;
+
+/** The buffer oidn-web reads: the frame inside a mirrored border, both sides a multiple of 16. */
+function oidnInputSize( width, height ) {
+
+	const align = n => Math.ceil( ( n + 2 * OIDN_BORDER ) / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT;
+	return { width: align( width ), height: align( height ) };
+
+}
 
 let _initUNetFromBuffer = null;
 async function getInitUNetFromBuffer() {
@@ -42,11 +55,8 @@ const MODEL_CONFIG = {
 	DEFAULT_OPTIONS: {
 		enableOIDN: true,
 		oidnQuality: 'fast',
-		// A cap, not a fixed size — the effective tile is min( max( w, h ), this ), so a frame
-		// that fits in one tile pays no overlap padding at all. Every tile otherwise runs at
-		// tileSize + 2*overlap (96px, 112 for _large): at 1024²/high, 4x512 tiles measured
-		// 422ms against 229ms for one 1024 tile. 1024 caps the one-time activation
-		// allocation at ~430MB; beyond it larger frames tile and stay bounded.
+		// A cap on the frame, not a tile size: a frame that fits is one tile, with no overlap.
+		// It bounds the network's activation memory (~430 MB at 1024²).
 		tileSize: 1024
 	}
 };
@@ -89,12 +99,13 @@ fn reduce( @builtin(global_invocation_id) gid: vec3<u32>,
 		   @builtin(local_invocation_id) lid: vec3<u32>,
 		   @builtin(workgroup_id) wid: vec3<u32> ) {
 
+	// x: frame pixels, y: frame width, z: buffer width, w: border. The border is not metered.
 	let total = params.x;
 	var sum = 0.0;
 	var i = gid.x;
 	loop {
 		if ( i >= total ) { break; }
-		let c = col[ i ].xyz;
+		let c = col[ ( i / params.y + params.w ) * params.z + i % params.y + params.w ].xyz;
 		let lum = 0.212671 * c.r + 0.71516 * c.g + 0.072169 * c.b;
 		sum = sum + log2( max( lum, 0.0 ) + 0.0001 );
 		i = i + WG * GROUPS;
@@ -155,7 +166,7 @@ struct UnpackParams {
 	tileY: u32,
 	tileW: u32,
 	tileH: u32,
-	pad0: u32,
+	border: u32,
 	pad1: u32,
 	pad2: u32,
 };
@@ -173,7 +184,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 	let px = P.tileX + gid.x;
 	let py = P.tileY + gid.y;
-	let si = py * P.srcWidth + px;
+	let si = ( py + P.border ) * P.srcWidth + px + P.border;
 
 	// scaleBuf is the autoexposure factor the input was multiplied by; dividing it out returns
 	// the renderer's units. Alpha rides through from the path tracer so a transparent background
@@ -186,13 +197,20 @@ const PACK_WG_SIZE = 8;
 const PACK_WGSL = /* wgsl */`
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<vec4<f32>>;
-@group(0) @binding(2) var<uniform> size: vec2<u32>;
+@group(0) @binding(2) var<uniform> size: vec4<u32>; // buffer w, h; frame w, h
+
+fn mirror( i: i32, n: i32 ) -> i32 {
+	let m = abs( i );
+	return clamp( select( m, 2 * n - 2 - m, m >= n ), 0, n - 1 );
+}
 
 @compute @workgroup_size(${PACK_WG_SIZE}, ${PACK_WG_SIZE})
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
-	dst[ gid.y * size.x + gid.x ] = textureLoad( src, gid.xy, 0 );
+	let p = vec2<i32>( gid.xy ) - ${OIDN_BORDER};
+	let s = vec2<i32>( mirror( p.x, i32( size.z ) ), mirror( p.y, i32( size.w ) ) );
+	dst[ gid.y * size.x + gid.x ] = textureLoad( src, s, 0 );
 }
 `;
 
@@ -223,8 +241,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		// Cached GPU storage buffers for texture→buffer copies (reused across denoise calls)
 		this._gpuInputBuffers = { color: null, albedo: null, normal: null };
+		// The frame the buffers hold; they are allocated at oidnInputSize() of it.
 		this._gpuInputBufferSize = { width: 0, height: 0 };
-		// Packs widths copyTextureToBuffer cannot take; see _beginPack.
+		// Packs the frame and its mirrored border; see _beginPack.
 		this._packPipeline = null;
 		this._packLayout = null;
 		this._packParams = null;
@@ -366,16 +385,14 @@ export class OIDNDenoiser extends EventDispatcher {
 		const longest = Math.max( this._renderWidth, this._renderHeight );
 		if ( ! longest ) return this.maxTileSize;
 
-		// Rounded up to the model's 16-pixel alignment, not clamped to the exact frame. The
-		// library's own fitTileDimension aligns the size up and then clamps it back to whatever
-		// cap it is handed, so handing it the raw frame size hands it an unaligned tile — and an
-		// unaligned tile measured 4x the cost of the whole denoise: 336 ms at 900x900 against
-		// 86 ms once aligned, with 896x896 unaffected either way.
-		const aligned = Math.ceil( longest / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT;
-		if ( aligned <= this.maxTileSize ) return aligned;
+		// The cap is on the frame, so the border never splits a frame that fits one tile.
+		if ( longest <= this.maxTileSize ) {
 
-		// The cap has to be aligned too, or a cap somebody picked by hand lands on the same slow
-		// path. Rounded down, so it never rises above what the caller asked for.
+			const input = oidnInputSize( this._renderWidth, this._renderHeight );
+			return Math.max( input.width, input.height );
+
+		}
+
 		return Math.max( OIDN_TILE_ALIGNMENT, Math.floor( this.maxTileSize / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT );
 
 	}
@@ -470,7 +487,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			const params = this.backendParamsGetter();
 			this.gpuDevice = params?.device ?? null;
-			backendParams = params?.device ? params : undefined;
+			backendParams = params?.device ? { device: params.device } : undefined;
 
 		}
 
@@ -648,8 +665,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * GPU-native execution path. Copies render target textures into GPU storage buffers
-	 * via copyTextureToBuffer (GPU-only, no CPU roundtrip), then passes those buffers to
-	 * oidn-web's well-tested GPUBuffer path.
+	 * (GPU-only, no CPU roundtrip), then passes those buffers to oidn-web's GPUBuffer path.
 	 *
 	 * Note: oidn-web's GPUTexture input path produces NaN outputs — using GPUBuffer instead.
 	 */
@@ -688,71 +704,55 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		// Autoexposure and the pre-multiply it drives, both on the GPU and both queued behind the
 		// copies above. Nothing is awaited here — an await would drain the queue before the UNet.
-		this._computeInputScale( device, width * height );
-		this._applyColorScale( device, width * height );
+		const input = oidnInputSize( width, height );
+		this._computeInputScale( device, width, height );
+		this._applyColorScale( device, input.width * input.height );
 
 		// A final denoise is shown tile by tile, so the tiles still to come must show this render
 		// rather than the blank or previous-view picture the output holds between runs.
 		if ( ! continuous && ! this._hasOutput ) {
 
-			this._unpackToTexture( this._gpuInputBuffers.color, width, { x: 0, y: 0, width, height }, false );
+			this._unpackToTexture( this._gpuInputBuffers.color, { x: 0, y: 0, width, height }, false );
 
 		}
 
-		// Pass GPU storage buffers to oidn-web (GPUBuffer path, well-tested)
+		const image = data => ( { data, width: input.width, height: input.height } );
 		const config = {
-			color: { data: this._gpuInputBuffers.color, width, height },
-			albedo: { data: this._gpuInputBuffers.albedo, width, height },
-			normal: { data: this._gpuInputBuffers.normal, width, height }
+			color: image( this._gpuInputBuffers.color ),
+			albedo: image( this._gpuInputBuffers.albedo ),
+			normal: image( this._gpuInputBuffers.normal )
 		};
 
 		return this._executeWithAbortGPU( config, continuous );
 
 	}
 
-	/** Copies the render's colour, albedo and normal into the tightly packed buffers oidn-web reads. @private */
+	/** Copies the render's colour, albedo and normal into the buffers oidn-web reads, border included. @private */
 	_copyInputs( device, textures, width, height ) {
 
-		// copyTextureToBuffer takes only 256-byte-aligned rows; any other width packs on the GPU.
+		const input = oidnInputSize( width, height );
 		const encoder = device.createCommandEncoder( { label: 'oidn-tex-to-buf' } );
-		const tightRowBytes = width * 16; // rgba32float
-		const pass = tightRowBytes % 256 === 0 ? null : this._beginPack( device, encoder, width, height );
+		const pass = this._beginPack( device, encoder, input, width, height );
 
-		const copyTex = ( tex, tightBuf ) => {
-
-			if ( pass ) {
-
-				pass.setBindGroup( 0, device.createBindGroup( {
-					layout: this._packLayout,
-					entries: [
-						{ binding: 0, resource: tex.createView() },
-						{ binding: 1, resource: { buffer: tightBuf } },
-						{ binding: 2, resource: { buffer: this._packParams } },
-					],
-				} ) );
-				pass.dispatchWorkgroups( Math.ceil( width / PACK_WG_SIZE ), Math.ceil( height / PACK_WG_SIZE ) );
-
-			} else {
-
-				encoder.copyTextureToBuffer(
-					{ texture: tex, mipLevel: 0 },
-					{ buffer: tightBuf, offset: 0, bytesPerRow: tightRowBytes, rowsPerImage: height },
-					{ width, height, depthOrArrayLayers: 1 }
-				);
-
-			}
-
-		};
-
-		copyTex( textures.color, this._gpuInputBuffers.color );
-		copyTex( textures.albedo, this._gpuInputBuffers.albedo );
 		// The normal stays [0,1]-encoded. This contradicts OIDN's API ("must be in the [-1,1]
 		// range") but is right for this port: OIDN's own getNormal (cpu_input_process.isph) does
 		// `value*0.5+0.5` before the network, and oidn-web omits that remap. Decoding to [-1,1]
 		// measured 0.878 -> 2.439 denoise ratio at 64 spp. Do not "fix" it.
-		copyTex( textures.normal, this._gpuInputBuffers.normal );
+		for ( const name of [ 'color', 'albedo', 'normal' ] ) {
 
-		pass?.end();
+			pass.setBindGroup( 0, device.createBindGroup( {
+				layout: this._packLayout,
+				entries: [
+					{ binding: 0, resource: textures[ name ].createView() },
+					{ binding: 1, resource: { buffer: this._gpuInputBuffers[ name ] } },
+					{ binding: 2, resource: { buffer: this._packParams } },
+				],
+			} ) );
+			pass.dispatchWorkgroups( Math.ceil( input.width / PACK_WG_SIZE ), Math.ceil( input.height / PACK_WG_SIZE ) );
+
+		}
+
+		pass.end();
 		device.queue.submit( [ encoder.finish() ] );
 
 	}
@@ -760,7 +760,6 @@ export class OIDNDenoiser extends EventDispatcher {
 	/**
 	 * Creates or recreates the GPU storage buffers used as oidn-web inputs.
 	 * Reuses existing buffers if the resolution hasn't changed.
-	 * Usage: COPY_DST (for copyTextureToBuffer) | STORAGE (for oidn-web WGSL read) | COPY_SRC
 	 */
 	_ensureGPUInputBuffers( width, height ) {
 
@@ -771,7 +770,8 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._destroyGPUInputBuffers();
 
 		const device = this.gpuDevice;
-		const byteSize = width * height * 16; // rgba32float, tightly packed for oidn-web
+		const input = oidnInputSize( width, height );
+		const byteSize = input.width * input.height * 16; // rgba32float
 		const usage = GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC;
 
 		this._gpuInputBuffers.color = device.createBuffer( { label: 'oidn-in-color', size: byteSize, usage } );
@@ -781,8 +781,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	/** Opens the compute pass that packs unaligned rows; one dispatch per texture follows. @private */
-	_beginPack( device, encoder, width, height ) {
+	/** Opens the compute pass that packs a frame into its bordered buffer; one dispatch per texture follows. @private */
+	_beginPack( device, encoder, input, width, height ) {
 
 		if ( ! this._packPipeline ) {
 
@@ -803,12 +803,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		if ( ! this._packParams ) {
-
-			this._packParams = device.createBuffer( { label: 'oidn-pack-size', size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST } );
-			device.queue.writeBuffer( this._packParams, 0, new Uint32Array( [ width, height ] ) );
-
-		}
+		this._packParams ??= device.createBuffer( { label: 'oidn-pack-size', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST } );
+		device.queue.writeBuffer( this._packParams, 0, new Uint32Array( [ input.width, input.height, width, height ] ) );
 
 		const pass = encoder.beginComputePass( { label: 'oidn-pack' } );
 		pass.setPipeline( this._packPipeline );
@@ -953,7 +949,7 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	/** Writes OIDN's autoexposure scale into `_inputScaleBuffer`. Never read back. */
-	_computeInputScale( device, pixelCount ) {
+	_computeInputScale( device, width, height ) {
 
 		if ( ! this._ensureScalePipelines( device ) ) return;
 
@@ -964,7 +960,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		device.queue.writeBuffer( this._lumParams, 0, new Uint32Array( [ pixelCount, 0, 0, 0 ] ) );
+		const input = oidnInputSize( width, height );
+		device.queue.writeBuffer( this._lumParams, 0, new Uint32Array( [ width * height, width, input.width, OIDN_BORDER ] ) );
 
 		const encoder = device.createCommandEncoder( { label: 'oidn-autoexposure' } );
 
@@ -1078,12 +1075,11 @@ export class OIDNDenoiser extends EventDispatcher {
 	/**
 	 * Writes a rectangle of the denoised buffer into the output picture, on the card.
 	 *
-	 * @param {GPUBuffer} src - rgba32float, full image, scaled by the input autoexposure
-	 * @param {number} srcWidth
-	 * @param {{x: number, y: number, width: number, height: number}} rect
+	 * @param {GPUBuffer} src - rgba32float, the bordered input size, scaled by the input autoexposure
+	 * @param {{x: number, y: number, width: number, height: number}} rect - in frame pixels
 	 * @param {boolean} [denoised=true] - false for the raw render laid under a tiled run
 	 */
-	_unpackToTexture( src, srcWidth, rect, denoised = true ) {
+	_unpackToTexture( src, rect, denoised = true ) {
 
 		const device = this.gpuDevice;
 		if ( ! device || ! this._ensureScalePipelines( device ) ) return;
@@ -1101,7 +1097,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		try {
 
-			device.queue.writeBuffer( params, 0, new Uint32Array( [ srcWidth, x, y, width, height, 0, 0, 0 ] ) );
+			const srcWidth = oidnInputSize( this._gpuInputBufferSize.width, this._gpuInputBufferSize.height ).width;
+			device.queue.writeBuffer( params, 0, new Uint32Array( [ srcWidth, x, y, width, height, OIDN_BORDER, 0, 0 ] ) );
 
 			const bindGroup = device.createBindGroup( {
 				label: 'oidn-output-unpack',
@@ -1174,13 +1171,23 @@ export class OIDNDenoiser extends EventDispatcher {
 
 			};
 
-			this.state.abortController.signal.addEventListener( 'abort', abortHandler, { once: true } );
+			const signal = this.state.abortController.signal;
+			signal.addEventListener( 'abort', abortHandler, { once: true } );
 
 			abortDenoise = this.unet.tileExecute( {
 				...config,
+				// Refreshes share the GPU with the render; the closing denoise has it to itself.
+				scheduling: continuous ? 'animation-frame' : 'event-loop',
+				error: ( reason ) => {
+
+					signal.removeEventListener( 'abort', abortHandler );
+					abortDenoise = null;
+					reject( reason );
+
+				},
 				done: async ( output ) => {
 
-					this.state.abortController.signal.removeEventListener( 'abort', abortHandler );
+					signal.removeEventListener( 'abort', abortHandler );
 					abortDenoise = null;
 
 					try {
@@ -1203,28 +1210,28 @@ export class OIDNDenoiser extends EventDispatcher {
 				progress: ( outputData, _tileData, tile ) => {
 
 					// oidn-web GPU path: tileData is null, but outputData holds the assembled
-					// full-image buffer updated after each tile. The pack pass reads that tile's
+					// full-image buffer updated after each tile. The unpack pass reads that tile's
 					// rectangle straight out of it, so there are no row-by-row buffer copies.
 					if ( ! outputData?.data || ! tile ) return;
 
-					const fullWidth = outputData.width;
-					const fullHeight = outputData.height;
-
-					// Clamp tile to image bounds (edge tiles may extend past the image)
-					const width = Math.min( tile.width, fullWidth - tile.x );
-					const height = Math.min( tile.height, fullHeight - tile.y );
+					// The tile in frame pixels, without the border.
+					const { width: frameWidth, height: frameHeight } = this._gpuInputBufferSize;
+					const x = Math.max( tile.x - OIDN_BORDER, 0 );
+					const y = Math.max( tile.y - OIDN_BORDER, 0 );
+					const width = Math.min( tile.x + tile.width - OIDN_BORDER, frameWidth ) - x;
+					const height = Math.min( tile.y + tile.height - OIDN_BORDER, frameHeight ) - y;
 					if ( width <= 0 || height <= 0 ) return;
 
-					const rect = { x: tile.x, y: tile.y, width, height };
+					const rect = { x, y, width, height };
 
-					this._unpackToTexture( outputData.data, fullWidth, rect );
+					this._unpackToTexture( outputData.data, rect );
 					this._tilesWritten ++;
 
 					this.dispatchEvent( {
 						type: 'tileProgress',
 						tile: rect,
-						imageWidth: fullWidth,
-						imageHeight: fullHeight,
+						imageWidth: frameWidth,
+						imageHeight: frameHeight,
 						continuous
 					} );
 
@@ -1237,9 +1244,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * Degenerate fallback when no per-tile progress was emitted: one authoritative full paint.
-	 * @param {{ data: GPUBuffer, width: number, height: number }} output
+	 * @param {{ data: GPUBuffer }} output
 	 */
-	_displayGPUOutput( { data: gpuBuffer, width, height } ) {
+	_displayGPUOutput( { data: gpuBuffer } ) {
 
 		if ( ! this.gpuDevice ) {
 
@@ -1248,7 +1255,8 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		this._unpackToTexture( gpuBuffer, width, { x: 0, y: 0, width, height } );
+		const { width, height } = this._gpuInputBufferSize;
+		this._unpackToTexture( gpuBuffer, { x: 0, y: 0, width, height } );
 
 	}
 

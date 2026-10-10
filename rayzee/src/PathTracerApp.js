@@ -844,7 +844,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	// OIDN as the live denoiser rebuilds its network on every size change, so it keeps full size.
+	// Live OIDN keeps full size: a resize drops its motion history and shows the raw render until it denoises again.
 	_interactionRenderScale() {
 
 		if ( this.denoisingManager?.continuousDenoise ) return 1;

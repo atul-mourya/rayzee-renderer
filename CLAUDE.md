@@ -323,7 +323,7 @@ The app maps its UI tab labels (`appMode: 'preview' | 'final-render' | 'results'
 
 Mode switching lives in app-store handlers `handleConfigureForPreview` / `handleConfigureForFinalRender` / `handleConfigureForResults` (in `app/src/store.js`), which delegate to the engine method `app.configureForMode( mode, { canvasWidth, canvasHeight } )` — `mode` is `'interactive' | 'production'`. `configureForMode()` applies `modePresetSettings( config )` (`EngineDefaults.js`) — the one list of settings a preset owns — via `settings.setMany`, toggles OIDN/controls, and calls `reset()`. `VideoRenderManager` saves and restores exactly that list, so a new preset-owned key goes there, never inline.
 
-**While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser (it rebuilds its network on every size change).
+**While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser: a resize drops its motion history and shows the raw render until the next denoise (rebuilding the network itself costs only 3–30 ms on oidn-web 0.5.0).
 
 ### Deterministic / Headless Rendering API
 Public renderer methods for offline rendering and reproducible output — on `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()`, which is the viewer's:
@@ -1141,9 +1141,14 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
   Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
   AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
-- OIDN's inputs are copied into tight buffers by `copyTextureToBuffer` when a row is a multiple of 256 bytes (width
-  a multiple of 16) and by one compute pass otherwise (`_copyInputs`); the per-row copies it replaced were ~3,000
-  commands a denoise at 1080p, 2.9 → 0.9 ms on the GPU here.
+- **OIDN sees the frame inside a 16 px mirrored border** (`OIDN_BORDER`, `oidnInputSize()`), each side then rounded
+  up to 16. At the network's own boundary — its zero padding, or oidn-web 0.5.0 repeating the edge pixel up to a
+  multiple of 16 — the outer pixels came out worse than not denoising at all. Outer 3 px against a 2048-spp
+  reference (four scenes, 250×140 to 1500×844, 1–64 spp): 0.4–0.7× of 0.4.0's error; 0.5.0 alone was 1.3× worse at
+  the bottom at 4 spp. A multiple of 16 keeps the frame on the network's pooling grid, so pixels away from the edges
+  denoise exactly as without it (an 8 px border moved them ±2 %). One compute pass packs all three inputs, border
+  included (`_copyInputs`); autoexposure meters the frame only; the tile cap applies to the frame, so the border
+  never splits a frame that fits one tile. Cost: 3–11 % more denoise time, most on small frames.
 
 ### Auto exposure (`Stages/AutoExposure.js`, viewer)
 Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in
