@@ -197,6 +197,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
 		this._denoiserErrorHandler = null;
+		this._denoiserLoadHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;
@@ -376,6 +377,12 @@ export class DenoisingManager extends EventDispatcher {
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
 		this.denoiser.addEventListener( 'tileProgress', this._denoiserTileHandler );
 		this.denoiser.addEventListener( 'error', this._denoiserErrorHandler );
+
+		// 'error' too: a failed load never sends 'loaded'. The first load starts inside the constructor, before these listen.
+		this._denoiserLoadHandler = e =>
+			this.dispatchEvent( { type: EngineEvents.DENOISER_LOADING, loading: e.type === 'loading' } );
+		for ( const type of [ 'loading', 'loaded', 'error' ] ) this.denoiser.addEventListener( type, this._denoiserLoadHandler );
+		if ( this.denoiser.state?.isLoading ) this.dispatchEvent( { type: EngineEvents.DENOISER_LOADING, loading: true } );
 
 	}
 
@@ -1584,6 +1591,13 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this._denoiserEndHandler ) this.denoiser.removeEventListener( 'end', this._denoiserEndHandler );
 			if ( this._denoiserTileHandler ) this.denoiser.removeEventListener( 'tileProgress', this._denoiserTileHandler );
 			if ( this._denoiserErrorHandler ) this.denoiser.removeEventListener( 'error', this._denoiserErrorHandler );
+			if ( this._denoiserLoadHandler ) {
+
+				for ( const type of [ 'loading', 'loaded', 'error' ] ) this.denoiser.removeEventListener( type, this._denoiserLoadHandler );
+				if ( this.denoiser.state?.isLoading ) this.dispatchEvent( { type: EngineEvents.DENOISER_LOADING, loading: false } );
+
+			}
+
 			this.denoiser.dispose();
 			this.denoiser = null;
 
@@ -1608,6 +1622,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
 		this._denoiserErrorHandler = null;
+		this._denoiserLoadHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
 		this._upscalerProgressHandler = null;

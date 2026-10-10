@@ -68,11 +68,6 @@
   }
 }
 
-@keyframes toggle-green {
-  0%, 100% { background-color: #4ade80; box-shadow: 0 0 4px #4ade80; }
-  50% { background-color: #166534; box-shadow: none; }
-}
-
 /*
   The default border color has changed to `currentColor` in Tailwind CSS v4,
   so we've added these compatibility styles to make sure everything still

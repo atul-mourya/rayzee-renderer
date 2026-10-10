@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback, forwardRef, useMemo } from 'react';
 import DimensionDisplay from './DimensionDisplay';
 import AutoFocusOverlay from './AutoFocusOverlay';
+import { PictureStatus } from './LoadingOverlay';
 import StatsMeter from './StatsMeter';
 import StatsPanel from './StatsPanel';
 import HeatmapOverlay from './HeatmapOverlay';
@@ -432,6 +433,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 					/>
 					<AutoFocusOverlay containerRef={containerRef} />
 				</div>
+				<PictureStatus scale={viewportScale} />
 			</div>
 
 			<DimensionDisplay dimension={renderResolution} />

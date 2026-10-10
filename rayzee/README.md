@@ -1518,6 +1518,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `RENDER_RESET` | Accumulation buffer is reset |
 | `FRAME` | Fires once per `animate()` tick — hook external instrumentation (stats panels, telemetry) here |
 | `DENOISING_START` / `DENOISING_END` | Denoiser runs. `event.continuous` is `true` for a cadence denoise of the still-accumulating image, `false` for the one that ends a render |
+| `DENOISER_LOADING` | The denoiser fetches and builds a network (`event.loading` true, then false) — on first use and on a quality change. A denoise asked for meanwhile starts once it is ready |
 | `UPSCALING_START` / `UPSCALING_PROGRESS` / `UPSCALING_END` | AI upscaler runs |
 | `LOADING_UPDATE` / `LOADING_RESET` | Asset loading progress. A failed load ends with `failed: true` and the error as `status`; an archive that asks which parts to load ends with `LOADING_RESET` |
 | `STATS_UPDATE` | Performance stats updated |

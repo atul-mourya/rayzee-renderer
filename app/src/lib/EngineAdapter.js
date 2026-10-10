@@ -66,6 +66,8 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	} );
 
+	on( EngineEvents.DENOISER_LOADING, e => useStore.getState().setIsLoadingDenoiser( !! e?.loading ) );
+
 	// ── Upscaler ─────────────────────────────────────────────
 	on( EngineEvents.UPSCALING_START, () => {
 
@@ -299,6 +301,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 		handlers.length = 0;
 		// A compile this engine never finishes must not hold the loading panel open.
 		useStore.getState().setIsCompilingShaders( false );
+		useStore.getState().setIsLoadingDenoiser( false );
 
 	};
 

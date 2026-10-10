@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Loader2, AlertTriangle } from "lucide-react";
-import { useStore } from '@/store';
+import { Loader2, AlertTriangle, X } from "lucide-react";
+import { useStore, usePathTracerStore, useAnimationStore } from '@/store';
 import { Progress } from "@/components/ui/progress";
 import { getApp } from '@/lib/appProxy';
 
@@ -188,6 +188,91 @@ const LoadingOverlay = ( {
 						</button>
 					)}
 				</div>
+			</div>
+		</div>
+	);
+
+};
+
+// True once `on` has held for `ms`.
+const useHeld = ( on, ms ) => {
+
+	const [ held, setHeld ] = useState( false );
+
+	useEffect( () => {
+
+		setHeld( false );
+		if ( ! on ) return;
+		const timer = setTimeout( () => setHeld( true ), ms );
+		return () => clearTimeout( timer );
+
+	}, [ on, ms ] );
+
+	return on && held;
+
+};
+
+const StatusPill = ( { label, percent, onCancel } ) => (
+	<div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-card/90 px-3 py-1.5 text-xs text-foreground shadow-lg backdrop-blur-xs animate-in fade-in">
+		<Loader2 className="size-3.5 animate-spin text-primary" />
+		{label}
+		{percent !== undefined && (
+			<span className="rounded-full bg-primary/15 px-1.5 py-px text-[10px] font-medium tabular-nums text-primary">{Math.round( percent )}%</span>
+		)}
+		{onCancel && (
+			<button
+				type="button"
+				onClick={onCancel}
+				title="Cancel"
+				className="pointer-events-auto -mr-1 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive"
+			>
+				<X className="size-3" />
+			</button>
+		)}
+	</div>
+);
+
+// On the picture while work outside a load changes it in the background — shaders compiling, the denoiser's model, the
+// denoise and AI passes that close a render, a video export — with the old picture and the controls still usable.
+// `scale` is the viewport zoom in percent, undone so the badge keeps its size on screen.
+export const PictureStatus = ( { scale = 100 } ) => {
+
+	const loadingPanel = useStore( state => state.loading.isLoading );
+	const compiling = useStore( state => state.isCompilingShaders );
+	// A swap to a model already downloaded takes 10–20 ms, at every render's end and restart: shown, it would only flash.
+	const loadingDenoiser = useHeld( useStore( state => state.isLoadingDenoiser ), 300 );
+	const denoising = useStore( state => state.isDenoising );
+	const upscaling = useStore( state => state.isUpscaling );
+	const upscalingProgress = useStore( state => state.upscalingProgress );
+	const retouchOnly = usePathTracerStore( state => state.neuralRendering && ! state.enableUpscaler );
+	const videoRendering = useAnimationStore( state => state.isVideoRendering );
+	const videoFrame = useAnimationStore( state => state.videoRenderFrame );
+	const videoFrames = useAnimationStore( state => state.videoRenderTotalFrames );
+
+	if ( loadingPanel ) return null;
+
+	// A video export denoises every frame; its own progress says more than a badge flashing once a frame.
+	const pills = [
+		compiling && { key: 'compile', label: 'Compiling shaders...' },
+		videoRendering && {
+			key: 'video', label: `Rendering video · frame ${videoFrame} of ${videoFrames}`,
+			onCancel: () => useAnimationStore.getState().handleCancelVideoRender(),
+		},
+		! videoRendering && loadingDenoiser && ! denoising && { key: 'model', label: 'Loading denoiser...' },
+		! videoRendering && denoising && { key: 'denoise', label: 'Denoising...' },
+		! videoRendering && upscaling && {
+			key: 'upscale', label: retouchOnly ? 'Retouching...' : 'Upscaling...',
+			percent: upscalingProgress > 0 ? upscalingProgress * 100 : undefined,
+			onCancel: () => getApp()?.denoisingManager?.cancelPostPasses(),
+		},
+	].filter( Boolean );
+
+	if ( pills.length === 0 ) return null;
+
+	return (
+		<div className="absolute inset-x-0 top-0 z-20 flex justify-center pointer-events-none">
+			<div className="flex origin-top flex-col items-center gap-1.5 pt-3" style={{ transform: `scale(${100 / scale})` }}>
+				{pills.map( ( { key, ...pill } ) => <StatusPill key={key} {...pill} /> )}
 			</div>
 		</div>
 	);

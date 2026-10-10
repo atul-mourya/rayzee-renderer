@@ -7,6 +7,7 @@ vi.mock( 'rayzee', () => ( {
 		RENDER_RESET: 'RENDER_RESET',
 		DENOISING_START: 'DENOISING_START',
 		DENOISING_END: 'DENOISING_END',
+		DENOISER_LOADING: 'DENOISER_LOADING',
 		UPSCALING_START: 'UPSCALING_START',
 		UPSCALING_PROGRESS: 'UPSCALING_PROGRESS',
 		UPSCALING_END: 'UPSCALING_END',
@@ -79,6 +80,7 @@ function createMockStores() {
 		setIsRendering: vi.fn(),
 		setIsDenoising: vi.fn(),
 		setIsCompilingShaders: vi.fn(),
+		setIsLoadingDenoiser: vi.fn(),
 		setIsUpscaling: vi.fn(),
 		setUpscalingProgress: vi.fn(),
 		setLoading: vi.fn(),
@@ -208,6 +210,18 @@ describe( 'connectEngineToStore', () => {
 
 	} );
 
+	it( 'should mirror the denoiser model load', () => {
+
+		connectEngineToStore( engine, stores );
+
+		engine._emit( 'DENOISER_LOADING', { loading: true } );
+		expect( stores._state.setIsLoadingDenoiser ).toHaveBeenLastCalledWith( true );
+
+		engine._emit( 'DENOISER_LOADING', { loading: false } );
+		expect( stores._state.setIsLoadingDenoiser ).toHaveBeenLastCalledWith( false );
+
+	} );
+
 	it( 'should update animation clips on SceneRebuild', () => {
 
 		// SceneRebuild handler also dispatches a window CustomEvent
@@ -265,6 +279,7 @@ describe( 'connectEngineToStore', () => {
 
 		// A compile the engine never finishes would otherwise hold the loading panel open.
 		expect( stores._state.setIsCompilingShaders ).toHaveBeenCalledWith( false );
+		expect( stores._state.setIsLoadingDenoiser ).toHaveBeenCalledWith( false );
 
 	} );
 

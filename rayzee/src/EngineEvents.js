@@ -14,6 +14,8 @@ export const EngineEvents = {
 	// Denoiser
 	DENOISING_START: 'engine:denoisingStart',
 	DENOISING_END: 'engine:denoisingEnd',
+	// The denoiser fetches and builds its network ({ loading }); a denoise asked for meanwhile waits for it.
+	DENOISER_LOADING: 'engine:denoiserLoading',
 
 	// Upscaler
 	UPSCALING_START: 'engine:upscalingStart',

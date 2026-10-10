@@ -252,7 +252,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		this._addTrackedListener( this.timeline, EngineEvents.TIMELINE_CHANGED, ( e ) => this.dispatchEvent( e ) );
 
 		this._forwardEvents( this.denoisingManager, [
-			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END,
+			EngineEvents.DENOISING_START, EngineEvents.DENOISING_END, EngineEvents.DENOISER_LOADING,
 			EngineEvents.UPSCALING_START, EngineEvents.UPSCALING_PROGRESS, EngineEvents.UPSCALING_END,
 			EngineEvents.RESOLUTION_CHANGED,
 		] );

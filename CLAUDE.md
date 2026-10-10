@@ -385,8 +385,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   runs three's `compileComputeAsync` (WGSL built in steps that yield, pipelines through `createComputePipelineAsync`).
   Until it resolves `render()` traces nothing and the canvas keeps its last frame; `readbackWait()` returns the
   promise, so every driver loop (`animate`, `renderFrames`, `renderUntilComplete`, video export) awaits it rather than
-  spin; `EngineEvents.SHADERS_COMPILING` brackets it (the app's "Compiling shaders" label; a load's loading panel stays up
-  through it — `resetLoading` holds while `isCompilingShaders`, in the store). A newer build supersedes
+  spin; `EngineEvents.SHADERS_COMPILING` brackets it (a badge on the app's picture, `PictureStatus` in `LoadingOverlay.jsx`,
+  which also shows the denoiser's model load, the closing denoise, the AI upscale and a video export; a load's loading
+  panel stays up through it instead — `resetLoading` holds while `isCompilingShaders`, in the store). A newer build supersedes
   an older compile (`_kernelGeneration`). The debug-view kernel registers `eager: false` and compiles at first
   dispatch. Measured on a layer combination new to the browser: page freeze 3.7 s → 0.4 s (the main thread still
   builds the WGSL), the new image 4.1 → 4.6 s. ⚠️ The old synchronous first-dispatch compile only looked fast: the

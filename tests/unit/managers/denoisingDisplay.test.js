@@ -275,3 +275,41 @@ describe( 'DenoisingManager — a tiled denoise on screen', () => {
 	} );
 
 } );
+
+describe( 'DenoisingManager — the denoiser model loading', () => {
+
+	function loads() {
+
+		const { manager } = makeManager();
+		manager.upscalerCanvas = {};
+		manager.setupDenoiser();
+		const seen = [];
+		manager.addEventListener( 'engine:denoiserLoading', e => seen.push( e.loading ) );
+		return { manager, seen };
+
+	}
+
+	it( 'reports a load from start to end', () => {
+
+		const { manager, seen } = loads();
+
+		manager.denoiser.dispatchEvent( { type: 'loading' } );
+		manager.denoiser.dispatchEvent( { type: 'loaded' } );
+
+		expect( seen ).toEqual( [ true, false ] );
+
+	} );
+
+	// A failed load never sends 'loaded', and the host's status would stay up for good.
+	it( 'ends it on a failure too', () => {
+
+		const { manager, seen } = loads();
+
+		manager.denoiser.dispatchEvent( { type: 'loading' } );
+		manager.denoiser.dispatchEvent( { type: 'error', error: new Error( 'offline' ) } );
+
+		expect( seen ).toEqual( [ true, false ] );
+
+	} );
+
+} );

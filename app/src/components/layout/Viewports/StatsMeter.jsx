@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { Check, Sparkles } from 'lucide-react';
 import { useStore, usePathTracerStore } from '@/store';
 import { getApp } from '@/lib/appProxy';
-import { StatusLabel } from '@/components/ui/status-label';
 import { cn } from "@/lib/utils";
 
 // Marks the stop condition that actually retired the frame.
@@ -101,10 +100,6 @@ const StatsMeter = ( { viewportMode } ) => {
 
 	const completionReason = useStore( state => state.completionReason );
 	const stats = useStore( state => state.stats );
-	const isDenoising = useStore( state => state.isDenoising );
-	const isCompilingShaders = useStore( state => state.isCompilingShaders );
-	const isUpscaling = useStore( state => state.isUpscaling );
-	const upscalingProgress = useStore( state => state.upscalingProgress );
 
 	const [ sceneStats, setSceneStats ] = useState( null );
 
@@ -231,22 +226,6 @@ const StatsMeter = ( { viewportMode } ) => {
 				<span className="mx-1">|</span>
 				<span>Peak: <span className="text-white">{formatBytes( stats.memoryPeak )}</span></span>
 			</div>
-
-			{isCompilingShaders && (
-				<StatusLabel label="Compiling shaders" />
-			)}
-
-			{isDenoising && (
-				<StatusLabel label="Denoising" />
-			)}
-
-			{isUpscaling && (
-				<StatusLabel
-					label="Upscaling"
-					percent={upscalingProgress * 100}
-					onCancel={() => getApp()?.denoisingManager?.cancelPostPasses()}
-				/>
-			)}
 		</div>
 	);
 

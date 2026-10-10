@@ -67,6 +67,8 @@ const useStore = create( set => ( {
 	setStats: stats => set( { stats } ),
 	isDenoising: false,
 	setIsDenoising: val => set( { isDenoising: val } ),
+	isLoadingDenoiser: false,
+	setIsLoadingDenoiser: val => set( { isLoadingDenoiser: val } ),
 	isCompilingShaders: false,
 	setIsCompilingShaders: val => set( s => ( ! val && s.loadingHeldForCompile
 		? { isCompilingShaders: false, loading: { ...IDLE_LOADING }, loadingHeldForCompile: false }
