@@ -275,8 +275,9 @@ export class PackedToneMapper {
 	 * @param {number} [tone.saturation=1]
 	 * @param {boolean} [tone.flipY=false]
 	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
-	 * @param {{key: string, wgsl: string, entries: GPUBindGroupEntry[]}} [tone.gain] - a per-pixel gain before the
-	 *   curve: WGSL defining `rayzee_gain( uv, linear, exposure ) -> f32` over bind group 1
+	 * @param {{key: string, wgsl: string, entries: GPUBindGroupEntry[], device?: GPUDevice, copyTo?: Function}} [tone.gain] - a
+	 *   per-pixel gain before the curve: WGSL defining `rayzee_gain( uv, linear, exposure ) -> f32` over bind group 1.
+	 *   One on another device is copied to this one for the run (`copyTo`).
 	 * @returns {Promise<Uint8ClampedArray>} RGBA bytes, `width * height * 4`
 	 */
 	async toRGBA8( src, tone ) {
@@ -298,7 +299,25 @@ export class PackedToneMapper {
 
 	}
 
-	async _run( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false, gain = null } = {} ) {
+	async _run( src, tone = {} ) {
+
+		const gain = tone.gain;
+		if ( ! gain?.device || gain.device === this.device ) return this._dispatch( src, tone );
+
+		const copy = await gain.copyTo( this.device );
+		try {
+
+			return await this._dispatch( src, { ...tone, gain: copy } );
+
+		} finally {
+
+			copy.destroy();
+
+		}
+
+	}
+
+	async _dispatch( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false, gain = null } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
 		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );

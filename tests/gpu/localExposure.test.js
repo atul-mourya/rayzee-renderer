@@ -4,7 +4,7 @@
  */
 
 import { beforeAll, expect, it } from 'vitest';
-import { DataTexture, RGBAFormat, FloatType } from 'three';
+import { DataTexture, DataUtils, RGBAFormat, FloatType } from 'three';
 import { vec2, vec3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { LocalExposure, localExposureGain } from '@/core/Stages/LocalExposure.js';
@@ -210,6 +210,33 @@ describeGPU( 'local exposure', () => {
 		for ( let i = 0; i < cpu.length; i ++ ) worst = Math.max( worst, Math.abs( cpu[ i ] - gpu[ i ] ) );
 		expect( worst ).toBeLessThanOrEqual( 1 );
 		mapper.dispose();
+
+	} );
+
+	it( 'tone-maps on another device exactly as on its own', async () => {
+
+		const half = Uint16Array.from( scene.px, v => DataUtils.toHalfFloat( v ) );
+		const run = async device => {
+
+			const src = device.createBuffer( { size: half.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST } );
+			device.queue.writeBuffer( src, 0, half );
+			const mapper = new PackedToneMapper( device, 'test-tonemap' );
+			mapper.ensureSize( W, H );
+			const out = await mapper.toRGBA8( src, { exposure: 1.5, toneMapping: 0, saturation: 1, gain: stage.toneGain() } );
+			mapper.dispose();
+			src.destroy();
+			return out;
+
+		};
+
+		const other = await ( await navigator.gpu.requestAdapter() ).requestDevice();
+		const own = await run( renderer.backend.device );
+		const moved = await run( other );
+		other.destroy();
+
+		let differing = 0;
+		for ( let i = 0; i < own.length; i ++ ) if ( own[ i ] !== moved[ i ] ) differing ++;
+		expect( differing ).toBe( 0 );
 
 	} );
 

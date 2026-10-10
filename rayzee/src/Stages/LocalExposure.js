@@ -495,7 +495,8 @@ export class LocalExposure extends RenderStage {
 
 	/**
 	 * The gain for a tone-mapping pass outside three.js (`PackedToneMapper`'s `gain`), or null before the
-	 * first build. `cpu()` reads the grid back for the CPU tone map.
+	 * first build. `cpu()` reads the grid back for the CPU tone map; `copyTo( device )` copies it to another
+	 * GPU device (the neural models' own).
 	 */
 	toneGain() {
 
@@ -508,10 +509,12 @@ export class LocalExposure extends RenderStage {
 		this._paramsBuffer ??= backend.device.createBuffer( { label: 'local-exposure-params', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST } );
 		backend.device.queue.writeBuffer( this._paramsBuffer, 0, this._params );
 		const params = this._params.slice();
+		const read = () => Promise.all( [ this.renderer.getArrayBufferAsync( this._grid.value ), this.renderer.getArrayBufferAsync( this._blur.value ) ] );
 
 		return {
 			key: 'local-exposure',
 			wgsl: LOCAL_EXPOSURE_WGSL,
+			device: backend.device,
 			entries: [
 				{ binding: 0, resource: { buffer: grid } },
 				{ binding: 1, resource: { buffer: blur } },
@@ -519,9 +522,29 @@ export class LocalExposure extends RenderStage {
 			],
 			cpu: async () => {
 
-				const [ g, b ] = await Promise.all( [ this.renderer.getArrayBufferAsync( this._grid.value ), this.renderer.getArrayBufferAsync( this._blur.value ) ] );
+				const [ g, b ] = await read();
 				const gridData = new Float32Array( g ), blurData = new Float32Array( b );
 				return ( u, v, lum, logExposure ) => localExposureGain( params, gridData, blurData, u, v, lum, logExposure );
+
+			},
+			copyTo: async device => {
+
+				const [ g, b ] = await read();
+				const buffers = [[ g, GPUBufferUsage.STORAGE ], [ b, GPUBufferUsage.STORAGE ], [ params, GPUBufferUsage.UNIFORM ]].map( ( [ data, usage ] ) => {
+
+					const buffer = device.createBuffer( { label: 'local-exposure-copy', size: data.byteLength, usage: usage | GPUBufferUsage.COPY_DST } );
+					device.queue.writeBuffer( buffer, 0, data );
+					return buffer;
+
+				} );
+
+				return {
+					key: 'local-exposure',
+					wgsl: LOCAL_EXPOSURE_WGSL,
+					device,
+					entries: buffers.map( ( buffer, binding ) => ( { binding, resource: { buffer } } ) ),
+					destroy: () => buffers.forEach( buffer => buffer.destroy() ),
+				};
 
 			},
 		};
