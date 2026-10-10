@@ -25,7 +25,8 @@
   - [x] Material-sorted wavefront shading (global counting sort, ~8% GPU win on multi-material scenes)
   - [ ] Compute shader BVH construction for 3-5x build speedup
   - [x] GPU-accelerated denoising passes (ASVGF port to TSL)
-  - [x] Compute shader bilateral filtering, variance estimation, auto-exposure
+  - [x] Compute shader bilateral filtering, variance estimation, auto-exposure (histogram meter that follows the room, not each view)
+  - [x] Local exposure (Unreal Engine 5's bilateral grid), on the canvas and every saved picture
   - [ ] Support WebGPU ray tracing extensions when available
 
 - [ ] **Advanced Hybrid Rendering Pipeline**

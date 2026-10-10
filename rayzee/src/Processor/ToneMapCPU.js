@@ -128,21 +128,33 @@ export function applySaturation( out, saturation ) {
  * @param {number} options.toneMapping - a registered view transform id
  * @param {number} [options.saturation=1]
  * @param {boolean} [options.preserveAlpha=false]
+ * @param {{fn: function(number, number, number, number): number, width: number, height: number}} [options.pixelGain] -
+ *   the twin of the GPU pass's `gain`: `fn( u, v, luminance, log2 exposure )` per pixel, before the curve
  * @returns {Uint8ClampedArray} RGBA bytes
  */
-export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false } ) {
+export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false, pixelGain = null } ) {
 
 	const curve = TONE_MAP_FNS.get( toneMapping ) ?? TONE_MAP_FNS.get( NoToneMapping );
 	const gain = effectiveExposure( exposure, toneMapping );
 	const encoded = isOutputEncoded( toneMapping );
 	const out = new Uint8ClampedArray( linear.length );
 	const scratch = [ 0, 0, 0 ];
+	const logExposure = Math.log2( exposure );
 
 	for ( let i = 0; i < linear.length; i += 4 ) {
 
-		scratch[ 0 ] = linear[ i ] * gain;
-		scratch[ 1 ] = linear[ i + 1 ] * gain;
-		scratch[ 2 ] = linear[ i + 2 ] * gain;
+		let g = gain;
+		if ( pixelGain ) {
+
+			const p = i >> 2, x = p % pixelGain.width, y = ( p - x ) / pixelGain.width;
+			const lum = linear[ i ] * 0.2126 + linear[ i + 1 ] * 0.7152 + linear[ i + 2 ] * 0.0722;
+			g *= pixelGain.fn( ( x + 0.5 ) / pixelGain.width, ( y + 0.5 ) / pixelGain.height, lum, logExposure );
+
+		}
+
+		scratch[ 0 ] = linear[ i ] * g;
+		scratch[ 1 ] = linear[ i + 1 ] * g;
+		scratch[ 2 ] = linear[ i + 2 ] * g;
 
 		applySaturation( scratch, saturation );
 		curve( scratch[ 0 ], scratch[ 1 ], scratch[ 2 ], 1.0, scratch );

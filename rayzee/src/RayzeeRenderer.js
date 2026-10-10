@@ -532,6 +532,13 @@ export class RayzeeRenderer extends EventDispatcher {
 
 				}
 
+				if ( this._settling() ) {
+
+					this.dispatchEvent( { type: EngineEvents.FRAME } );
+					return;
+
+				}
+
 				// Stop the loop to avoid constant CPU usage while idle
 				this.stopAnimation();
 				return;
@@ -558,17 +565,31 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			this._traceFrame( { liveDenoise: true } );
 
-			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) {
-
-				this._renderCompleted();
-				this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...this._completionInfo() } );
-
-			}
+			if ( this.stages.pathTracer.isComplete && this.completion.markComplete() ) this._announceComplete();
 
 		}
 
 		this._renderHelperOverlay();
 		this.dispatchEvent( { type: EngineEvents.FRAME } );
+
+	}
+
+	// The closing passes and RENDER_COMPLETE wait for _finishImage(), so both see the finished image's exposure.
+	_announceComplete() {
+
+		const info = this._completionInfo();
+		const restarts = this.stages.pathTracer.resetCount;
+		const announce = () => {
+
+			if ( ! this.completion.renderCompleteDispatched || this.stages.pathTracer?.resetCount !== restarts ) return;
+			this._renderCompleted();
+			this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
+
+		};
+
+		const finishing = this._finishImage();
+		if ( finishing ) finishing.then( announce, announce );
+		else announce();
 
 	}
 
@@ -2499,6 +2520,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
+		await this._finishImage();
 		return stage.frameCount;
 
 	}
@@ -2576,6 +2598,8 @@ export class RayzeeRenderer extends EventDispatcher {
 			}
 
 			const info = this._completionInfo();
+			// Before it is announced: a listener reading pixels sees the finished image's exposure.
+			await this._finishImage();
 			if ( this.completion.markComplete() ) this.dispatchEvent( { type: EngineEvents.RENDER_COMPLETE, ...info } );
 
 			const denoised = denoise ? await this._finalDenoise() : false;
@@ -2735,12 +2759,14 @@ export class RayzeeRenderer extends EventDispatcher {
 				toneMapping: this.renderer.toneMapping,
 				saturation: this.settings.get( 'saturation' ) ?? 1,
 				preserveAlpha,
+				gain: this._displayGain(),
 			};
 
 			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
+			const fn = ! gpu && tone.gain ? await tone.gain.cpu() : null;
 			const data = gpu ?? toneMapToRGBA8( shown
 				? await this._readTexture( shown.texture, width, height )
-				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), tone );
+				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), { ...tone, pixelGain: fn && { fn, width, height } } );
 			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
@@ -3982,6 +4008,20 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** Once, on the loop frame the render completes. */
 	_renderCompleted() {}
 
+	/** True keeps the loop running over a finished render, to redraw what is still changing. */
+	_settling() {
+
+		return false;
+
+	}
+
+	/** A render has its samples, before any closing pass or announcement: a promise to wait for, or null. */
+	_finishImage() {
+
+		return null;
+
+	}
+
 	/** Draws what sits over the image. Here only brings the light scene's matrices up to date. */
 	_renderHelperOverlay() {
 
@@ -4029,6 +4069,13 @@ export class RayzeeRenderer extends EventDispatcher {
 	async _finalDenoise() {
 
 		return false;
+
+	}
+
+	/** A per-pixel gain the shown picture carries before the view (the compositor's), for tone-mapped readbacks; or null. */
+	_displayGain() {
+
+		return null;
 
 	}
 

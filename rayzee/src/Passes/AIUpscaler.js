@@ -100,6 +100,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.getExposure = options.getExposure || ( () => 1.0 );
 		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
 		this.getSaturation = options.getSaturation || ( () => 1.0 );
+		this.getDisplayGain = options.getDisplayGain || ( () => null );
 
 		// Configuration
 		this.enabled = false;
@@ -497,6 +498,7 @@ export class AIUpscaler extends EventDispatcher {
 			exposure: this.getExposure(),
 			toneMapping: this.getToneMapping() ?? ACESFilmicToneMapping,
 			saturation: this.getSaturation(),
+			gain: this.getDisplayGain(),
 		} );
 		this._toneMapper.release();
 

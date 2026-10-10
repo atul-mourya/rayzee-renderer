@@ -265,6 +265,7 @@ export async function resumeStill( app, { key, job } ) {
 	// The mode's preset replaced what was changed in Final Render itself.
 	app.settings.restore( job.settings );
 	restorePanels( job.session.panels );
+	usePathTracerStore.getState().applyExposureToEngine();
 
 	// One frame at the final size, so every target exists and the camera is current.
 	for ( let i = 0; i < 120 && ! ( app.stages.pathTracer.frameCount > 0 ); i ++ ) await nextFrame();

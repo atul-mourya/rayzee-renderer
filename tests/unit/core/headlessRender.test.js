@@ -24,6 +24,7 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], targ
 		_readbackPass: PathTracerApp.prototype._readbackPass,
 		_readTexture: PathTracerApp.prototype._readTexture,
 		_toneMapOnGPU: PathTracerApp.prototype._toneMapOnGPU,
+		_displayGain: () => null,
 		_toneMapFallback: PathTracerApp.prototype._toneMapFallback,
 		_denoiserInUse: PathTracerApp.prototype._denoiserInUse,
 		_issues: new IssueLog(),

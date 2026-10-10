@@ -91,6 +91,7 @@ function makeApp( { ceiling = 6, waitAtFrame = null, finalDenoise = false, setti
 		_traceFrame: PathTracerApp.prototype._traceFrame,
 		_afterTrace: PathTracerApp.prototype._afterTrace,
 		_finalDenoise: PathTracerApp.prototype._finalDenoise,
+		_finishImage: PathTracerApp.prototype._finishImage,
 		_completionInfo: PathTracerApp.prototype._completionInfo,
 		_awaitReadback: PathTracerApp.prototype._awaitReadback,
 		renderUntilComplete: PathTracerApp.prototype.renderUntilComplete,
@@ -115,6 +116,27 @@ describe( 'renderUntilComplete', () => {
 		expect( completes ).toHaveLength( 1 );
 		expect( app.stopAnimation ).toHaveBeenCalled();
 		expect( app.denoisingManager.tickContinuousDenoise ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'lands the exposure on the finished image before announcing it', async () => {
+
+		const { app } = makeApp( { ceiling: 4 } );
+		const order = [];
+		app.stages.autoExposure = {
+			enabled: true,
+			// Announced already, a reading's redraw would wake the loop in the middle of the closing denoise.
+			meter: async () => order.push( `meter, announced ${app.completion.renderCompleteDispatched}` ),
+			advance: () => order.push( 'land' ),
+		};
+		app.dispatchEvent = vi.fn( ( e ) => {
+
+			if ( e.type === EngineEvents.RENDER_COMPLETE ) order.push( 'complete' );
+
+		} );
+
+		await app.renderUntilComplete();
+		expect( order ).toEqual( [ 'meter, announced false', 'land', 'complete' ] );
 
 	} );
 

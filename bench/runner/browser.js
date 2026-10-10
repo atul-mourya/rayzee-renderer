@@ -222,8 +222,14 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		measureGPUPerSample: ( count ) => page.evaluate(
 			( n ) => globalThis.__bench.measureGPUPerSample( n ), count
 		),
+		measureWallPerSample: ( batches, samples ) => page.evaluate(
+			( b, n ) => globalThis.__bench.measureWallPerSample( b, n ), batches, samples
+		),
 		setPerfMode: ( enabled ) => page.evaluate(
 			( on ) => globalThis.__bench.setPerfMode( on ), enabled
+		),
+		setExposureMode: ( mode ) => page.evaluate(
+			( m ) => globalThis.__bench.setExposureMode( m ), mode
 		),
 		setDenoiser: ( strategy, preset, options ) => page.evaluate(
 			( s, p, o ) => globalThis.__bench.setDenoiser( s, p, o ), strategy, preset ?? null, options ?? {}

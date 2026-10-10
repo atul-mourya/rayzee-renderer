@@ -68,6 +68,7 @@ export {
 } from './Stages/DenoiserSettings.js';
 export { SKY_DEFAULTS, DEFAULT_SUN_PATH } from './managers/EnvironmentManager.js';
 export { AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
+export { LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
 export { AUTO_FOCUS_DEFAULTS } from './managers/CameraManager.js';
 export { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
 export { sunPosition, timeForSunElevation, dayOfYearForMonth } from './Processor/SunPosition.js';

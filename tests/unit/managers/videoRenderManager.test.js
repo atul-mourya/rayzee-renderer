@@ -250,6 +250,37 @@ describe( 'VideoRenderManager', () => {
 
 	} );
 
+	describe( 'auto exposure', () => {
+
+		it( 'notes each frame\'s view before it accumulates, and puts the final render\'s hold back', async () => {
+
+			const order = [];
+			app.stages.autoExposure = { enabled: true, instant: false, holdSamples: 0, meter: vi.fn( async () => order.push( 'meter' ) ), advance: vi.fn() };
+			app._noteExposureView = vi.fn( () => order.push( 'view' ) );
+			app._presentDisplay = vi.fn();
+			app.configureForMode = vi.fn( () => {
+
+				app.stages.autoExposure.holdSamples = 8;
+
+			} );
+			const render = app.pipeline.render;
+			app.pipeline.render = () => {
+
+				if ( order.at( - 1 ) !== 'trace' ) order.push( 'trace' );
+				render();
+
+			};
+
+			await manager.renderAnimation( { fps: 30, totalFrames: 2 } );
+
+			// A reading taken while the frame accumulates belongs to its own view, not the last one.
+			expect( order ).toEqual( [ 'view', 'trace', 'meter', 'view', 'trace', 'meter' ] );
+			expect( app.stages.autoExposure.holdSamples ).toBe( 0 );
+
+		} );
+
+	} );
+
 	describe( 'cancel', () => {
 
 		it( 'stops rendering on cancel', async () => {

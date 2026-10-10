@@ -25,7 +25,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 1. **PathTracer** — wavefront Monte Carlo path tracing with MRT outputs (core)
 2. **NormalDepth**, **MotionVector** — denoiser G-buffer inputs (viewer)
 3. **NRD**, **ASVGF**, **Variance**, **BilateralFilter**, **EdgeFilter** — real-time denoisers; one owns the live view (viewer)
-4. **AutoExposure** (viewer)
+4. **AutoExposure**, **LocalExposure** (viewer)
 5. **Compositor** — shows the first published of the display sources, else the accumulation (core)
 - **OverlayManager** draws helpers on separate canvases, not a pipeline stage
 

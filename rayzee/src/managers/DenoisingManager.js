@@ -104,9 +104,10 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {import('../Pipeline/RenderPipeline.js').RenderPipeline} params.pipeline
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
+	 * @param {Function}                               [params.getDisplayGain]  - () => the shown picture's per-pixel gain (PackedToneMapper `gain`)
 	 * @param {import('../EngineIssues.js').IssueLog}  [params.issues]
 	 */
-	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, issues = null } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getDisplayGain = null, issues = null } ) {
 
 		super();
 
@@ -121,6 +122,7 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
+		this._getDisplayGain = getDisplayGain;
 
 		this.denoiser = null;
 		this.upscaler = null;
@@ -409,6 +411,7 @@ export class DenoisingManager extends EventDispatcher {
 			getExposure: () => this._getEffectiveExposure(),
 			getToneMapping: () => this._getToneMapping(),
 			getSaturation: () => this._getSaturation(),
+			getDisplayGain: () => this._getDisplayGain?.() ?? null,
 		} );
 
 		this.upscaler.enabled = DENOISER_DEFAULTS.enableUpscaler || false;
@@ -546,21 +549,11 @@ export class DenoisingManager extends EventDispatcher {
 
 	/**
 	 * @param {boolean} enabled
-	 * @param {number}  manualExposure - Restored to renderer.toneMappingExposure when disabling.
+	 * @param {number}  manualExposure - the compensation while on, the exposure again once off
 	 */
 	setAutoExposureEnabled( enabled, manualExposure ) {
 
-		const s = this._stages;
-		if ( ! s.autoExposure ) return;
-
-		s.autoExposure.enabled = enabled;
-
-		// AutoExposure overwrites renderer.toneMappingExposure each frame; restore manual on disable.
-		if ( ! enabled && this.renderer ) {
-
-			this.renderer.toneMappingExposure = manualExposure;
-
-		}
+		this._stages.autoExposure?.setEnabled( enabled, manualExposure );
 
 	}
 
@@ -1246,6 +1239,7 @@ export class DenoisingManager extends EventDispatcher {
 				exposure: this._getEffectiveExposure(),
 				toneMapping: this._getToneMapping(),
 				saturation: this._getSaturation?.() ?? 1,
+				gain: this._getDisplayGain?.() ?? null,
 			};
 
 			// Scene-referred throughout. Exposure reaches the detail pass through its own `paper_white`
@@ -1561,6 +1555,9 @@ export class DenoisingManager extends EventDispatcher {
 		this._onReset = null;
 		this._onPostProcessRefresh = null;
 		this._onDisplayRefresh = null;
+		this._getExposure = null;
+		this._getSaturation = null;
+		this._getDisplayGain = null;
 		this._issues = null;
 
 		if ( this.upscalerCanvas?.parentNode ) {
@@ -1764,13 +1761,12 @@ export class DenoisingManager extends EventDispatcher {
 	// ── Convenience (match DenoisingAPI names with reset) ────────
 
 	/**
-	 * Enables or disables auto-exposure (convenience wrapper).
+	 * Enables or disables auto-exposure. A finished render is metered as it stands, not restarted.
 	 * @param {boolean} enabled
 	 */
 	setAutoExposure( enabled ) {
 
 		this.setAutoExposureEnabled( enabled, this._getExposure() );
-		this._onReset?.();
 
 	}
 

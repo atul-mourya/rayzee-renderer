@@ -200,13 +200,6 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.TIMELINE_CHANGED, () => useAnimationStore?.getState().syncTimeline( engine.timeline ) );
 
-	on( EngineEvents.AUTO_EXPOSURE_UPDATED, ( e ) => {
-
-		usePathTracerStore.getState().setCurrentAutoExposure( e.exposure );
-		usePathTracerStore.getState().setCurrentAvgLuminance( e.luminance );
-
-	} );
-
 	// ── Animation ───────────────────────────────────────────
 	on( EngineEvents.ANIMATION_STARTED, () => {
 

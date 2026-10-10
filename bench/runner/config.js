@@ -320,6 +320,13 @@ export const PERF = {
 	// gate resolves roughly a 10 % regression and nothing finer. Re-derive it with
 	// `bench:ab -- HEAD` on a clean tree before trusting it elsewhere.
 	abUnchangedPct: 8,
+	// `bench exposure`: a spread of lighting, materials and skies, each side timed as `batches` renders of
+	// `batchSamples` samples (wall clock, GPU drained) and the median kept.
+	exposure: {
+		scenes: [ 'spheres-gradient', 'cornell-emissive', 'glass-transmission', 'spheres-procedural-sky', 'textured-normalmap', 'mixed-lights' ],
+		batches: 5,
+		batchSamples: 24,
+	},
 };
 
 /**

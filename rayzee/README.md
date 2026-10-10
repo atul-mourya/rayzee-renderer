@@ -916,7 +916,11 @@ await engine.environmentManager.generateProcedural();
 
 ### engine.denoisingManager
 
-Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure.
+Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure. Auto exposure meters the accumulated image on the GPU
+and moves in stops; it follows a room level learned as the camera moves plus a damped share of each view, so a scene lit
+for its manual exposure stays near it while one lit far off is corrected in full. It eases while the image restarts
+every frame (a moving camera, playback) and lands within about a third of a second once the image builds up, so a
+finished render shows its own exposure at any sample count. While it is on, `exposure` is its compensation.
 
 ```js
 // Strategy
@@ -929,7 +933,13 @@ engine.denoisingManager.setAutoExposure(true)
 // Fine-grained parameters
 engine.denoisingManager.setASVGFParams({ temporalAlpha: 0.1, maxAccumFrames: 16 })
 engine.denoisingManager.setEdgeAwareParams({ phiLuminance: 4.0, atrousIterations: 5 })
-engine.denoisingManager.setAutoExposureParams({ keyValue: 0.18 })
+engine.denoisingManager.setAutoExposureParams({
+  strength: 0.3,           // 0..1, how far it follows each view; 1 averages every view to middle grey
+  metering: 'center',      // 'average' | 'center' | 'spot' (at the auto-focus point)
+  minExposure: 2 ** -8,    // how far it may go from the manual exposure (default ±8 stops)
+  maxExposure: 2 ** 8,
+  keyValue: 0.18,          // the grey it aims the average at
+})
 
 // OIDN & Upscaler
 engine.denoisingManager.setOIDNEnabled(true)
@@ -940,6 +950,21 @@ engine.denoisingManager.continuousDenoiseInterval = 250   // cap refreshes at 4/
 engine.denoisingManager.setUpscalerEnabled(true)
 engine.denoisingManager.setUpscalerScaleFactor(2)         // 2 or 4
 engine.denoisingManager.setUpscalerQuality('quality')     // 'fast' | 'balanced' | 'quality'
+```
+
+### Local exposure
+
+Unreal Engine 5's local exposure: brings large bright (and, if asked, dark) areas toward middle grey while keeping their
+detail. It changes only what is shown — the canvas, `renderToBuffer( { colorSpace: 'srgb' } )`, the AI upscaler and the
+neural passes apply the same per-pixel gain; EXR and `'linear'` reads stay scene-referred. Off by default.
+
+```js
+engine.setLocalExposure(true)
+engine.setLocalExposureParams({
+  highlightContrast: 0.6,  // contrast of the base layer above middle grey; 1 = unchanged
+  shadowContrast: 1,       // below middle grey; < 1 lifts shadows
+  detailStrength: 1,       // contrast of detail within the base layer
+})
 ```
 
 ### engine.interactionManager
@@ -1233,8 +1258,8 @@ duration `renderUntilComplete` runs those readbacks in **lockstep**: one issued 
 at frame N + 4 exactly, and the render waits if it has not landed; every reset also starts from seed
 0 and from nothing the previous render measured. It turns interaction mode off meanwhile (a
 wall-clock mode for camera drags), and keeps submissions at most 2 × `drainEvery` frames ahead of
-the GPU. A time limit is wall-clock by nature, so that one stop is not reproducible; neither is
-auto-exposure, if you turn it on.
+the GPU. A time limit is wall-clock by nature, so that one stop is not reproducible. Auto exposure, if you turn it
+on, lands on a metering of the finished image before the closing denoise.
 
 `engine.setLockstepReadbacks(true)` applies the same lockstep to the rAF loop and to `renderFrames`.
 
@@ -1502,7 +1527,7 @@ engine.addEventListener(EngineEvents.RENDER_COMPLETE, (e) => {
 | `SETTING_CHANGED` | A render setting is modified |
 | `AUTO_FOCUS_UPDATED` | Auto-focus recalculated — `worldDistance` in scene units, `distance` divided by the model's size |
 | `ORTHO_HEIGHT_UPDATED` | An orthographic view's height changed — `height` in scene units |
-| `AUTO_EXPOSURE_UPDATED` | Auto-exposure recalculated |
+| `AUTO_EXPOSURE_UPDATED` | Auto exposure moved — `exposure` (applied, with the manual exposure), `autoExposure` (its own part), `targetExposure`, `luminance` (metered) |
 | `AF_POINT_PLACED` | Focus point placed on screen |
 | `ANIMATION_STARTED` / `ANIMATION_PAUSED` / `ANIMATION_STOPPED` / `ANIMATION_FINISHED` | Animation lifecycle |
 | `VIDEO_RENDER_PROGRESS` / `VIDEO_RENDER_COMPLETE` | Video export progress |
@@ -1574,6 +1599,7 @@ import {
   ENGINE_DEFAULTS,
   DENOISER_DEFAULTS,
   AUTO_EXPOSURE_DEFAULTS,
+  LOCAL_EXPOSURE_DEFAULTS,
   AUTO_FOCUS_DEFAULTS,
   ASVGF_QUALITY_PRESETS,
   SKY_DEFAULTS,

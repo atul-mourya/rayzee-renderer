@@ -255,7 +255,7 @@ describe( 'panel state', () => {
 		usePathTracerStore.setState( { bounces: 7, exposure: 1.5 } );
 		useCameraStore.setState( { fov: 42, afScreenPoint: { x: 0.1, y: 0.9 } } );
 		const snapshot = JSON.parse( JSON.stringify( snapshotPanels() ) );
-		expect( snapshot.pathTracer.currentAutoExposure ).toBeUndefined();
+		expect( snapshot.pathTracer.showInspector ).toBeUndefined();
 
 		usePathTracerStore.setState( { bounces: 2, exposure: 1 } );
 		useCameraStore.setState( { fov: 60 } );

@@ -36,7 +36,7 @@ renderer runs without a browser.
 | Group | Pieces |
 |---|---|
 | Denoisers | OIDN, ASVGF, NRD, EdgeAware, and their helper stages (NormalDepth, MotionVector, Variance, BilateralFilter) |
-| Picture | AI upscaler, auto exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
+| Picture | AI upscaler, auto exposure, local exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
 | Importers | pbrt, USD (`.usd` / `.usda` / `.usdc`), scene archives and folders (`rayzee/addons/archives`); FBX, OBJ, STL, PLY, Collada, 3MF, USDZ and EXR (`rayzee/addons/formats`) |
@@ -53,7 +53,8 @@ renderer runs without a browser.
 4. **A missing capability costs nothing.** Nothing is built for it, and the core runs without it.
 
 The viewer plugs into the core through a fixed set of protected methods on `RayzeeRenderer`, listed under "Hooks" at
-the end of that file (`_beginFrame`, `_holdTrace`, `_afterTrace`, `_beforeReset`, `_releaseSceneState`, …). Each runs
+the end of that file (`_beginFrame`, `_holdTrace`, `_afterTrace`, `_beforeReset`, `_releaseSceneState`, `_settling`,
+`_finishImage`, `_displayGain`, …). Each runs
 at a fixed point of the frame, reset or load sequence and does nothing in the core, so the order is visible in the
 code rather than spread across events. `PathTracerApp` overrides them; its setup steps (`_createCamera`,
 `_createExtraStages`, `_initManagers`, `_wireEvents`) call the core's first or last, as each needs.
@@ -61,7 +62,9 @@ code rather than spread across events. `PathTracerApp` overrides them; its setup
 **Signals.** The core emits two events on the pipeline's bus and names no capability: `pipeline:historyReset` (a hard
 restart; history from before is not comparable — ASVGF and NRD listen) and `pipeline:lightingChanged` (a model or
 environment came in — auto exposure listens). Which processed picture the compositor shows is the builder's call:
-`_displaySources()` lists the context keys in priority order, and the core's list is empty.
+`_displaySources()` lists the context keys in priority order, and the core's list is empty. A per-pixel gain on the shown
+picture (local exposure) is installed with `compositor.setDisplayGain()` and handed to tone-mapped readbacks through
+`_displayGain()`; the core applies it without knowing what it is.
 
 **Per-renderer shader resources.** Material texture buckets, shadow albedo maps, gobo and IES textures and the
 alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`), never in module variables: a TSL
@@ -151,9 +154,9 @@ the core. Without it the core's programs carry none of that code, and still rend
 11. **Each layer declares its own settings** — done. `RenderSettings` holds only the core's settings and names no
    viewer piece; `settings.define( key, { default, apply, reset } )` adds another layer's, with the same provenance, events,
    session saving and reset. The viewer defines `interactionRenderScale` (the core has no moving-camera resolution
-   drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure leaves a manual
-   `exposure` unshown while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
-   viewer's capabilities (denoisers, upscaler, auto exposure) keep their own methods, as before. Asked for a key only
+   drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure takes the manual
+   `exposure` as its compensation while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
+   viewer's capabilities (denoisers, upscaler, auto and local exposure) keep their own methods, as before. Asked for a key only
    the viewer defines, the core records `setting.unknown_key`, as for any key nothing applies.
 12. **Treelet optimiser removed** — measured on five models (33k to 1.9M triangles) it bought at most 0.57 % tree
    SAH and no measurable render speed for 2–24× the BLAS build time. Default trees are byte-identical.

@@ -356,9 +356,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 	showInspector: false,
 
-	// Auto-exposure computed values (updated in real-time by AutoExposure)
-	currentAutoExposure: null,
-	currentAvgLuminance: null,
 
 	// Simple setters
 	setMaxSamples: val => set( { maxSamples: val } ),
@@ -424,16 +421,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 	setAsvgfGradientNoiseFloor: val => set( { asvgfGradientNoiseFloor: val } ),
 	setAsvgfDebugMode: val => set( { asvgfDebugMode: val } ),
 	setAsvgfPreset: val => set( { asvgfQualityPreset: val } ),
-
-	// Auto-exposure setters
-	setAutoExposure: val => set( { autoExposure: val } ),
-	setAutoExposureKeyValue: val => set( { autoExposureKeyValue: val } ),
-	setAutoExposureMinExposure: val => set( { autoExposureMinExposure: val } ),
-	setAutoExposureMaxExposure: val => set( { autoExposureMaxExposure: val } ),
-	setAutoExposureAdaptSpeedBright: val => set( { autoExposureAdaptSpeedBright: val } ),
-	setAutoExposureAdaptSpeedDark: val => set( { autoExposureAdaptSpeedDark: val } ),
-	setCurrentAutoExposure: val => set( { currentAutoExposure: val } ),
-	setCurrentAvgLuminance: val => set( { currentAvgLuminance: val } ),
 
 	// Canvas dimension setters
 	setAspectRatioPreset: val => set( { aspectRatioPreset: val } ),
@@ -1046,59 +1033,44 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	// Auto-exposure handlers
+	// Exposure handlers
 	handleAutoExposureChange: handleChange(
 		val => set( { autoExposure: val } ),
 		( val, app ) => app.denoisingManager.setAutoExposure( val ),
-		false // engine method handles reset internally
+		false
 	),
 
-	handleAutoExposureKeyValueChange: handleChange(
-		val => set( { autoExposureKeyValue: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { keyValue: value } );
-
-		},
-		true
+	handleAutoExposureStrengthChange: handleChange(
+		val => set( { autoExposureStrength: val } ),
+		( val, app ) => app.denoisingManager.setAutoExposureParams( { strength: val } ),
+		false
 	),
 
-	handleAutoExposureMinExposureChange: handleChange(
-		val => set( { autoExposureMinExposure: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
+	// Auto and local exposure keep no record in the engine's settings: the panel's values are put on it at
+	// startup and after a session restores the panel. Only what the panel shows — the rest stay the engine's.
+	applyExposureToEngine: () => {
 
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { minExposure: value } );
+		const app = getApp();
+		if ( ! app ) return;
+		const s = get();
+		app.denoisingManager.setAutoExposureParams( { strength: s.autoExposureStrength } );
+		app.denoisingManager.setAutoExposure( s.autoExposure );
+		app.setLocalExposureParams?.( { highlightContrast: s.localExposureHighlightContrast } );
+		app.setLocalExposure?.( s.localExposure );
 
-		},
-		true
+	},
+
+	handleLocalExposureChange: handleChange(
+		val => set( { localExposure: val } ),
+		( val, app ) => app.setLocalExposure?.( val ),
+		false
 	),
 
-	handleAutoExposureMaxExposureChange: handleChange(
-		val => set( { autoExposureMaxExposure: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setAutoExposureParams( { maxExposure: value } );
-
-		},
-		true
-	),
-
-	handleAutoExposureAdaptSpeedChange: handleChange(
-		val => set( { autoExposureAdaptSpeedBright: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			// Maintain ratio between bright and dark adaptation (6:1)
-			app.denoisingManager.setAutoExposureParams( {
-				adaptSpeedBright: value,
-				adaptSpeedDark: value / 6.0
-			} );
-
-		},
-		true
+	// Amount is how far bright areas come down: 1 − the engine's highlight contrast.
+	handleLocalExposureAmountChange: handleChange(
+		val => set( { localExposureHighlightContrast: 1 - val } ),
+		( val, app ) => app.setLocalExposureParams?.( { highlightContrast: 1 - val } ),
+		false
 	),
 
 	handleEnableEnvironmentChange: val => {

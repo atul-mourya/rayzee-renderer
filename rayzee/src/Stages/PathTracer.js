@@ -1093,9 +1093,9 @@ export class PathTracer extends PathTracerStage {
 	 */
 	_willReadCountersThisFrame() {
 
-		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) return false;
+		if ( this.cameraOptimizer?.isInInteractionMode() ) return false;
 		if ( this._lockstep ) return ! this._lockstepRead && this.frameCount % this._readbackEveryNFrames === 0;
-		if ( this._readbackPending || this._convergedReadbackPending ) return false;
+		if ( this.cameraChanged || this._readbackPending || this._convergedReadbackPending ) return false;
 		return this._readbackFrameCounter + 1 >= this._readbackEveryNFrames;
 
 	}
@@ -1207,9 +1207,11 @@ export class PathTracer extends PathTracerStage {
 
 	_issueLockstepReadback() {
 
-		// One in flight, and none mid-motion: frames there do not count, so frameCount stands still.
+		// One in flight, and none in interaction mode: frames there do not count, so frameCount stands still. A moved
+		// camera skips none: a reset's frame 0 sees one whenever the frame before it traced another view, and skipping
+		// it there made the render depend on what was traced before.
 		if ( this._lockstepRead || this.frameCount % this._readbackEveryNFrames !== 0 ) return;
-		if ( this.cameraChanged || this.cameraOptimizer?.isInInteractionMode() ) return;
+		if ( this.cameraOptimizer?.isInInteractionMode() ) return;
 
 		const bounceAttr = this._queueManager?.getBounceCountsAttribute();
 		const counterAttr = this._queueManager?.getCountersAttribute();

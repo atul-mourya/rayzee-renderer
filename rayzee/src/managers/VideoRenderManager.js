@@ -87,6 +87,10 @@ export class VideoRenderManager {
 		// Configure for high-quality offline rendering
 		app.configureForMode( 'production' );
 
+		// Auto exposure adapts in video time, once a frame, not to each pass's wall clock.
+		const autoExposure = app.stages.autoExposure?.enabled ? app.stages.autoExposure : null;
+		if ( autoExposure ) autoExposure.instant = false;
+
 		// Override samples per frame
 		app.settings.setMany( { maxSamples: samplesPerFrame }, { silent: true } );
 		app.stages.pathTracer?.updateCompletionThreshold?.();
@@ -131,10 +135,22 @@ export class VideoRenderManager {
 				// kill it immediately so it doesn't race with our manual render loop
 				app.stopAnimation();
 
+				// Before accumulating: the stage meters as it goes, and a reading of this frame's view filed under the last
+				// one read as a scene change, moving the room the whole way each frame.
+				if ( autoExposure ) app._noteExposureView();
+
 				// 3. Accumulate samples until convergence
 				await this._accumulateFrame( app );
 
 				if ( this._cancelled ) break;
+
+				if ( autoExposure ) {
+
+					await autoExposure.meter( app.pipeline.context );
+					autoExposure.advance( i === Math.max( 0, startFrame ) ? Infinity : frameDuration );
+					app._presentDisplay();
+
+				}
 
 				// 4. Denoise if enabled
 				if ( enableOIDN && app.denoisingManager?.finalDenoise ) {
@@ -309,6 +325,8 @@ export class VideoRenderManager {
 			controlsEnabled: app.cameraManager.controls?.enabled,
 			oidnEnabled: app.denoisingManager?.finalDenoise,
 			oidnQuality: app.denoisingManager?.oidnQuality,
+			instantExposure: app.stages.autoExposure?.instant,
+			holdExposureSamples: app.stages.autoExposure?.holdSamples,
 			wasPlaying: app.animationManager?.isPlaying,
 			pauseRendering: app.pauseRendering,
 		};
@@ -347,6 +365,13 @@ export class VideoRenderManager {
 		}
 
 		app.pauseRendering = state.pauseRendering ?? false;
+		if ( app.stages.autoExposure ) {
+
+			app.stages.autoExposure.instant = state.instantExposure ?? false;
+			// configureForMode( 'production' ) set it, and nothing switches the mode back: left on, it froze the exposure while orbiting.
+			app.stages.autoExposure.holdSamples = state.holdExposureSamples ?? 0;
+
+		}
 
 		if ( state.view ) app.cameraManager.applyPose( state.view );
 

@@ -88,7 +88,7 @@ fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
 
 const BYTES_PER_PIXEL = { rgba8: 4, planar: 16 };
 
-const toneMapPassWGSL = ( transformWGSL, input, output ) => /* wgsl */ `
+const toneMapPassWGSL = ( transformWGSL, input, output, gainWGSL ) => /* wgsl */ `
 struct Params {
 	width: u32,
 	height: u32,
@@ -104,6 +104,7 @@ ${SOURCES[ input ]}
 
 ${transformWGSL}
 ${OUTPUTS[ output ]}
+${gainWGSL ?? ''}
 
 @compute @workgroup_size(8, 8)
 fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
@@ -113,7 +114,9 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	if ( params.flipY == 1u ) { srcY = params.height - 1u - gid.y; }
 
 	let linear = rayzee_source( gid.x, srcY );
-	rayzee_store( gid.y * params.width + gid.x, linear, rayzee_tone_map( linear.rgb, params.mode, params.exposure, params.saturation ) );
+	let uv = vec2<f32>( ( f32( gid.x ) + 0.5 ) / f32( params.width ), ( f32( gid.y ) + 0.5 ) / f32( params.height ) );
+	let rgb = linear.rgb${gainWGSL ? ' * rayzee_gain( uv, linear.rgb, params.exposure )' : ''};
+	rayzee_store( gid.y * params.width + gid.x, linear, rayzee_tone_map( rgb, params.mode, params.exposure, params.saturation ) );
 }
 `;
 
@@ -136,7 +139,7 @@ export class PackedToneMapper {
 		this.output = output;
 		this.width = 0;
 		this.height = 0;
-		this._pipeline = null;
+		this._pipelines = new Map();
 		this._storage = null;
 		this._map = null;
 		this._params = null;
@@ -157,21 +160,31 @@ export class PackedToneMapper {
 	 * heard of. Without this the readback silently falls through to the clamp and a saved image
 	 * comes back untone-mapped.
 	 */
-	_ensurePipeline() {
+	_ensurePipeline( gain = null ) {
 
 		const { wgsl, bindings, version } = currentShader();
-		if ( this._pipeline && this._shaderVersion === version ) return;
+		if ( this._shaderVersion !== version ) {
 
-		this._bindings = bindings;
-		this._shaderVersion = version;
-		this._pipeline = this.device.createComputePipeline( {
+			this._pipelines.clear();
+			this._bindings = bindings;
+			this._shaderVersion = version;
+
+		}
+
+		const key = gain?.key ?? '';
+		let pipeline = this._pipelines.get( key );
+		if ( pipeline ) return pipeline;
+
+		pipeline = this.device.createComputePipeline( {
 			label: this.label,
 			layout: 'auto',
 			compute: {
-				module: this.device.createShaderModule( { label: this.label, code: toneMapPassWGSL( wgsl, this.input, this.output ) } ),
+				module: this.device.createShaderModule( { label: this.label, code: toneMapPassWGSL( wgsl, this.input, this.output, gain?.wgsl ) } ),
 				entryPoint: 'main',
 			},
 		} );
+		this._pipelines.set( key, pipeline );
+		return pipeline;
 
 	}
 
@@ -262,6 +275,8 @@ export class PackedToneMapper {
 	 * @param {number} [tone.saturation=1]
 	 * @param {boolean} [tone.flipY=false]
 	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
+	 * @param {{key: string, wgsl: string, entries: GPUBindGroupEntry[]}} [tone.gain] - a per-pixel gain before the
+	 *   curve: WGSL defining `rayzee_gain( uv, linear, exposure ) -> f32` over bind group 1
 	 * @returns {Promise<Uint8ClampedArray>} RGBA bytes, `width * height * 4`
 	 */
 	async toRGBA8( src, tone ) {
@@ -283,14 +298,14 @@ export class PackedToneMapper {
 
 	}
 
-	async _run( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false } = {} ) {
+	async _run( src, { exposure = 1, toneMapping = 0, saturation = 1, flipY = false, preserveAlpha = false, gain = null } = {} ) {
 
 		if ( this.disposed ) throw new Error( 'PackedToneMapper: disposed' );
 		if ( ! this._storage ) throw new Error( 'PackedToneMapper: call ensureSize() first' );
 
 		// A config can be loaded between two readbacks, so the registry is re-checked here rather
 		// than only on resize.
-		this._ensurePipeline();
+		const pipeline = this._ensurePipeline( gain );
 		this._ensureTables();
 
 		const { width, height } = this;
@@ -309,7 +324,7 @@ export class PackedToneMapper {
 			.map( ( [ binding, held ] ) => ( { binding, resource: held.view } ) );
 
 		const group = this.device.createBindGroup( {
-			layout: this._pipeline.getBindGroupLayout( 0 ),
+			layout: pipeline.getBindGroupLayout( 0 ),
 			entries: [
 				...tableEntries,
 				{ binding: 0, resource: this.input === 'texture' ? src.createView() : { buffer: src, size: width * height * 8 } },
@@ -320,8 +335,9 @@ export class PackedToneMapper {
 
 		const encoder = this.device.createCommandEncoder( { label: this.label } );
 		const pass = encoder.beginComputePass();
-		pass.setPipeline( this._pipeline );
+		pass.setPipeline( pipeline );
 		pass.setBindGroup( 0, group );
+		if ( gain ) pass.setBindGroup( 1, this.device.createBindGroup( { layout: pipeline.getBindGroupLayout( 1 ), entries: gain.entries } ) );
 		pass.dispatchWorkgroups( Math.ceil( width / 8 ), Math.ceil( height / 8 ) );
 		pass.end();
 		encoder.copyBufferToBuffer( this._storage, 0, this._map, 0, bytes );
@@ -360,7 +376,7 @@ export class PackedToneMapper {
 		this._releaseBuffers();
 		for ( const held of this._tables.values() ) held.texture.destroy();
 		this._tables.clear();
-		this._pipeline = null;
+		this._pipelines.clear();
 
 	}
 

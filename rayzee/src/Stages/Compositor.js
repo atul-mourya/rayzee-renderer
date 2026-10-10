@@ -1,4 +1,4 @@
-import { vec4, vec3, uv, uniform, select, dot, mix, float, int, uint, storage, Fn, If } from 'three/tsl';
+import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If } from 'three/tsl';
 import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
 import { NoBlending, NoToneMapping } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
@@ -49,19 +49,40 @@ export class Compositor extends RenderStage {
 
 		// TextureNode reused across frames — only `.value` mutates, shader doesn't recompile.
 		this._sourceTexNode = new TextureNode();
+		this._displayGain = null;
+
+		this.compositorMaterial = new MeshBasicNodeMaterial();
+		this.compositorMaterial.blending = NoBlending;
+		this._buildColorNode();
+
+		this.compositorQuad = new QuadMesh( this.compositorMaterial );
+
+	}
+
+	_buildColorNode() {
 
 		const texSample = this._sourceTexNode.sample( uv() );
+		const color = this._displayGain ? texSample.xyz.mul( this._displayGain( texSample.xyz, screenUV ) ) : texSample.xyz;
 
-		const luma = dot( texSample.xyz, REC709_LUMINANCE_COEFFICIENTS );
-		const gradedColor = mix( vec3( luma ), texSample.xyz, this.saturation );
+		const luma = dot( color, REC709_LUMINANCE_COEFFICIENTS );
+		const gradedColor = mix( vec3( luma ), color, this.saturation );
 
 		const outputAlpha = select( this._transparentBackground, texSample.w, 1.0 );
 
-		this.compositorMaterial = new MeshBasicNodeMaterial();
 		this.compositorMaterial.colorNode = vec4( gradedColor, outputAlpha );
-		this.compositorMaterial.blending = NoBlending;
+		this.compositorMaterial.needsUpdate = true;
 
-		this.compositorQuad = new QuadMesh( this.compositorMaterial );
+	}
+
+	/**
+	 * A per-pixel gain on the shown picture, before exposure and the view: `( rgb, uv ) => float node`,
+	 * `uv` the image position with y down. A readback applies the same through `_displayGain()`. Null removes it.
+	 */
+	setDisplayGain( gain ) {
+
+		if ( gain === this._displayGain ) return;
+		this._displayGain = gain;
+		this._buildColorNode();
 
 	}
 

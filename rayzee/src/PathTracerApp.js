@@ -8,6 +8,7 @@ import { Variance } from './Stages/Variance.js';
 import { BilateralFilter } from './Stages/BilateralFilter.js';
 import { EdgeFilter } from './Stages/EdgeFilter.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
+import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
 import { createLogger } from './utils/Logger.js';
 import { EngineEvents } from './EngineEvents.js';
@@ -156,10 +157,11 @@ export class PathTracerApp extends RayzeeRenderer {
 		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
 		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
 		stages.autoExposure = new AutoExposure( renderer, { enabled: AUTO_EXPOSURE_DEFAULTS.autoExposure } );
+		stages.localExposure = new LocalExposure( renderer, { enabled: LOCAL_EXPOSURE_DEFAULTS.localExposure } );
 
 		return [
 			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
-			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure,
+			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure, stages.localExposure,
 		];
 
 	}
@@ -325,10 +327,11 @@ export class PathTracerApp extends RayzeeRenderer {
 		const core = super._settingsBindings();
 		return {
 			...core,
-			// auto exposure drives the exposure while it is on, and restores this value when turned off
+			// the manual exposure, and the compensation on top of auto exposure while that is on
 			applyExposure: ( value ) => {
 
-				if ( ! this.stages.autoExposure?.enabled ) core.applyExposure( value );
+				if ( this.stages.autoExposure ) this.stages.autoExposure.setCompensation( value );
+				else core.applyExposure( value );
 
 			},
 			onCameraProjection: ( value ) => {
@@ -351,6 +354,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.update();
 		this.cameraManager.updateControls();
+		this._updateExposure();
 
 		this._applyPendingRenderScale();
 
@@ -406,10 +410,71 @@ export class PathTracerApp extends RayzeeRenderer {
 	// Render completion → denoise/upscale chain
 	_renderCompleted() {
 
+		// _finishImage() landed the exposure just before, with the loop already asleep: draw it.
+		if ( this.stages.autoExposure?.enabled ) this._refreshFinished();
 		this.denoisingManager.onRenderComplete( {
 			isStillComplete: () => this.completion.renderCompleteDispatched,
 			context: this.pipeline?.context,
 		} );
+
+	}
+
+	_settling() {
+
+		return !! this.stages.autoExposure?.settling;
+
+	}
+
+	_displayGain() {
+
+		const le = this.stages.localExposure;
+		// A readback outside the loop (headless) can come before the loop would have built it from this image.
+		if ( le?.wantsBuild ) le.build( this.pipeline.context );
+		return le?.toneGain() ?? null;
+
+	}
+
+	/**
+	 * Local exposure (Unreal Engine 5's): scales the contrast of large bright and dark areas around middle grey
+	 * while keeping detail, on the canvas and every tone-mapped readback alike.
+	 * @param {boolean} enabled
+	 */
+	setLocalExposure( enabled ) {
+
+		const le = this.stages.localExposure;
+		if ( ! le ) return;
+		le.setEnabled( enabled );
+		this.stages.compositor.setDisplayGain( enabled ? ( rgb, uv ) => le.gainNode( rgb, uv ) : null );
+		this.refreshFrame();
+
+	}
+
+	/** @param {{highlightContrast?: number, shadowContrast?: number, detailStrength?: number}} params - 1 changes nothing */
+	setLocalExposureParams( params ) {
+
+		this.stages.localExposure?.updateParameters( params );
+
+	}
+
+	// A finished render is exposed for its own image: one reading of it, landed on.
+	_finishImage() {
+
+		const ae = this.stages.autoExposure;
+		if ( ! ae?.enabled ) return null;
+		return ae.meter( this.pipeline.context ).then( () => ae.advance( Infinity ) );
+
+	}
+
+	/** The core's, plus the display-only exposure an sRGB readback was shaped by, which no setting records. */
+	getProvenance() {
+
+		const provenance = super.getProvenance();
+		const ae = this.stages.autoExposure, le = this.stages.localExposure;
+		provenance.exposure = {
+			auto: ae?.enabled ? { exposure: ae.getExposure(), strength: ae.strength, metering: ae.metering, keyValue: ae.keyValue } : null,
+			local: le?.enabled ? { highlightContrast: le.highlightContrast, shadowContrast: le.shadowContrast, detailStrength: le.detailStrength } : null,
+		};
+		return provenance;
 
 	}
 
@@ -550,7 +615,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		if ( enabled ) {
 
 			this.cameraManager?.setAutoFocusMode( 'manual' );
-			if ( this.stages.autoExposure ) this.stages.autoExposure.enabled = false;
+			this.stages.autoExposure?.setEnabled( false );
 			// Cadence denoising is wall-clock driven, so which frame it lands on is not reproducible.
 			this.denoisingManager?.setContinuousDenoise( false );
 			return;
@@ -558,11 +623,7 @@ export class PathTracerApp extends RayzeeRenderer {
 		}
 
 		if ( snapshot.autoFocusMode !== undefined ) this.cameraManager?.setAutoFocusMode( snapshot.autoFocusMode );
-		if ( this.stages.autoExposure && snapshot.autoExposure !== undefined ) {
-
-			this.stages.autoExposure.enabled = snapshot.autoExposure;
-
-		}
+		if ( snapshot.autoExposure !== undefined ) this.stages.autoExposure?.setEnabled( snapshot.autoExposure );
 
 		if ( snapshot.continuousDenoise !== undefined ) {
 
@@ -839,6 +900,9 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		this.timeline.stop();
 		this.cameraManager.controls.enabled = ! isProduction;
+		// A final render keeps the exposure it starts with through its first, noisiest samples (20 bounces: a 0.4-stop
+		// dip and back within 0.2 s at 2–8 samples), then lands as any still image does.
+		if ( this.stages.autoExposure ) this.stages.autoExposure.holdSamples = isProduction ? 8 : 0;
 
 		// Anything with a SETTING_ROUTES entry must go through settings, not setUniform: set() early-returns on
 		// `prev === value`, so a uniform written behind the map leaves it stale and the next set() silently no-ops.
@@ -1053,6 +1117,7 @@ export class PathTracerApp extends RayzeeRenderer {
 			pipeline: this.pipeline,
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
+			getDisplayGain: () => this._displayGain(),
 			issues: this._issues,
 		} );
 
@@ -1072,17 +1137,58 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_setupAutoExposureListener() {
 
-		if ( ! this.stages.autoExposure ) return;
+		const ae = this.stages.autoExposure;
+		if ( ! ae ) return;
 
-		this.stages.autoExposure.on( 'autoexposure:updated', ( data ) => {
+		ae.setCompensation( this.settings.get( 'exposure' ) ?? 1 );
+		if ( this.stages.localExposure ) this.stages.localExposure.onChange = () => this._refreshFinished();
+		ae.onChange = () => this._refreshFinished();
 
-			this.dispatchEvent( {
-				type: EngineEvents.AUTO_EXPOSURE_UPDATED,
-				exposure: data.exposure,
-				luminance: data.luminance
-			} );
+		// Another camera is a cut: meter it afresh.
+		this._addTrackedListener( this.cameraManager, EngineEvents.CAMERA_SWITCHED, () => ae.resetHistory() );
+
+		ae.on( 'autoexposure:updated', ( { exposure, autoExposure, targetExposure, luminance } ) => {
+
+			this.dispatchEvent( { type: EngineEvents.AUTO_EXPOSURE_UPDATED, exposure, autoExposure, targetExposure, luminance } );
 
 		} );
+
+	}
+
+	// Only a finished render's idle loop is woken: renderFrames() and a video export drive frames themselves.
+	_refreshFinished() {
+
+		if ( ! this.completion.renderCompleteDispatched ) return;
+		this._needsDisplayRefresh = true;
+		this.wake();
+
+	}
+
+	// Every loop frame, a finished render included: builds local exposure and meters a finished image when asked, adapts.
+	_updateExposure() {
+
+		const le = this.stages.localExposure;
+		if ( le?.wantsBuild && this.completion.renderCompleteDispatched ) le.build( this.pipeline.context );
+
+		const ae = this.stages.autoExposure;
+		if ( ! ae?.enabled ) return;
+
+		this._noteExposureView();
+		const af = this.cameraManager.afScreenPoint;
+		if ( ae.metering === 'spot' && ( ae.meteringPoint.x !== af.x || ae.meteringPoint.y !== af.y ) ) ae.updateParameters( { meteringPoint: af } );
+		if ( ae.wantsMetering && this.completion.renderCompleteDispatched ) ae.meter( this.pipeline.context );
+		if ( ae.update() ) this._needsDisplayRefresh = true;
+
+	}
+
+	// Whatever moved the camera (controls, walk, timeline, a video export), auto exposure learns of it here.
+	_noteExposureView() {
+
+		const { matrixWorld, projectionMatrix } = this.camera;
+		const last = this._exposureView;
+		if ( last?.view.equals( matrixWorld ) && last.projection.equals( projectionMatrix ) ) return;
+		this._exposureView = { view: matrixWorld.clone(), projection: projectionMatrix.clone() };
+		if ( last ) this.stages.autoExposure?.noteViewChanged();
 
 	}
 

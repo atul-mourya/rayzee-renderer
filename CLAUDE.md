@@ -47,6 +47,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench` - quality, freeze, lockstep, denoise, memory and perf against the working tree
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
+- `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus
 - `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
 
@@ -100,12 +101,13 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
 **Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
-`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter and
-AutoExposure between them:
+`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter,
+AutoExposure and LocalExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
 - **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
 - **`EdgeFilter.js`**: Spatial-only edge-aware à-trous filter (no temporal history)
+- **`LocalExposure.js`**: Unreal Engine 5's local exposure — a display-only per-pixel gain (see Local exposure below)
 - **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
@@ -364,6 +366,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   pacings; lockstep 48 spp and one image every time. ⚠️ It turns interaction mode off meanwhile: that
   mode is a 100 ms wall-clock timer that engages on the first frame after a load, frames in it do not
   count, and with nothing awaited the loop spun synchronously and starved the timer (a bench hang).
+  ⚠️ A moved camera never skips a lockstep readback (only interaction mode does): a reset's frame 0 sees the camera
+  as moved whenever the frame before traced another view, and skipping it there made the first render after a load
+  differ (glass-transmission, one pixel).
 - **`app.getProvenance()`** — plain JSON of what produced the image (versions, adapter, `settings.getEffective()`, colour, render size/samples, headless/strict/deterministic/
   lockstep). `captureHeadless` returns it as `provenance`. `mode.lockstep` is `stage.accumulationLockstep` —
   whether the current image was traced in lockstep from a lockstep reset, not the live setting, which
@@ -389,7 +394,8 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   `queue.onSubmittedWorkDone()`, not to `frameCount`.
 - **`app.enableGPUTiming( bool )` / `await app.getGPUTimings()`** — real GPU milliseconds from WebGPU
   timestamp queries. `pipeline.getStats()` is **not** a GPU metric: it times command encoding on the
-  CPU and stays flat while GPU cost doubles.
+  CPU and stays flat while GPU cost doubles. ⚠️ The `render` part overlaps the compute before it (Apple M-series: 2.0 ms read for
+  passes the wall clock puts under 0.15 ms): compare totals only between setups that draw alike.
 
 `app.stages.pathTracer.blueNoiseReady` is deprecated and always resolved: the STBN atlases were
 never read by a live code path (the default sampler is Sobol), so the load was removed.
@@ -484,7 +490,7 @@ the strings, so never rename or repurpose one.
 - **Each layer declares its own settings.** `RenderSettings`' table is the core's alone and names no viewer piece;
   another layer adds a key with `settings.define( key, { default, apply, reset } )` (the viewer: `interactionRenderScale`),
   bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules
-  for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` skips while auto exposure drives it, `onCameraProjection`
+  for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` becomes auto exposure's compensation while that is on, `onCameraProjection`
   moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
 - **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) is exactly the settings
   table: every key a `RenderSettings` route of the same name, every route's default there (`engineDefaults.test.js`
@@ -493,7 +499,8 @@ the strings, so never rename or repurpose one.
   at one moment are stored-only routes read there — `maxTextureSize` and `areaLightIntensityScale` at load
   (`setMaxTextureSize()` also reprocesses now), `wavefrontSortMaterials` at the next kernel build. A viewer piece keeps
   its own beside its code — `DENOISER_DEFAULTS` (`Stages/DenoiserSettings.js`),
-  `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
+  `AUTO_EXPOSURE_DEFAULTS` (`Stages/AutoExposure.js`), `LOCAL_EXPOSURE_DEFAULTS` (`Stages/LocalExposure.js`),
+  `AUTO_FOCUS_DEFAULTS` (`managers/CameraManager.js`) — and the app
   builds its store from those plus its own keys and menus (`app/src/Constants.js`: `CAMERA_PRESETS`, `SKY_PRESETS`,
   `CAMERA_RANGES`; its store keeps the names `bounces`, `debugMode` and `toneMapping`, which saved sessions carry).
   The render profiles are gone: the engine ships the viewer tuning (AgX, neutral saturation, the HDRI unrotated,
@@ -1136,6 +1143,54 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
 - OIDN's inputs are copied into tight buffers by `copyTextureToBuffer` when a row is a multiple of 256 bytes (width
   a multiple of 16) and by one compute pass otherwise (`_copyInputs`); the per-row copies it replaced were ~3,000
   commands a denoise at 1080p, 2.9 → 0.9 ms on the GPU here.
+
+### Auto exposure (`Stages/AutoExposure.js`, viewer)
+Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in
+linear light, weighted by alpha (a transparent or black background is left out), then a 256-bin log2 histogram whose
+percentile-clipped mean (fractional bins) is read back. Averaging before the log is what keeps a 1-spp image metering like
+the converged one (24155522.glb, 1080p: the old per-pixel log drifted 1.06 stops from 1 to 256 spp). Large tiles skip whole
+8×8 blocks, never single pixels: a skipped pixel's memory is fetched anyway. It meters only when no reading is in flight,
+less often as samples grow (`meterInterval`), and luminance is taken in the working space.
+- It aims at `blendExposureEV( room, view, strength )` (`autoExposureStrength`, default 0.3; 1 = follow every view): a room
+  level, learned over ~4 s of camera motion and moved in full with every reading under a still camera (the viewer's
+  `_noteExposureView()` tells the two apart), goes through a curve that damps it to `strength` within 1.5 stops of the
+  manual exposure and follows it fully past 3; the view adds its difference from the room at `strength`. Averaging to grey
+  is what made it milky: on five Livspace rooms, 4 views each, the view-to-view swing was −1 to +2.35 stops at 100 %,
+  ±0.85 at 30 %; a sky 16× dimmer under a still camera is still corrected in full. A camera switch re-meters afresh.
+  ⚠️ "Every reading", not only the first after a restart: a final render traces frame 0 with one bounce (renderMode 1),
+  and a room held at that reading exposed design (9).glb's finished image +2.10 stops (milky) where Gently gives +1.00.
+  `autoExposureMinExposure` / `MaxExposure` (default ±8 stops, Bevy's range) cap only where the exposure
+  lands. ⚠️ Never clamp the view's reading before the blend: a scene needing +6 with a ±2 range read as "lit near its
+  exposure" and was damped to +1.07 instead of landing on +2.
+- The exposure moves in stops: `update()` every loop frame from `_beginFrame` eases (`adaptExposureEV`: speed in stops/s
+  while far, exponential within 1.5 stops) while the image restarts every frame, and lands in ~0.3 s (`LAND_SECONDS`)
+  once it has two samples; `advance( seconds )` eases once a frame in video time (VideoRenderManager); `instant` snaps
+  (a host's choice). The eased tail took ~8 s to land a 1.4-stop change, so a 16-sample render finished at 0.8 s and
+  drifted on for 7 more; now 0.48 s, at completion. Every finished render is read once more and landed on
+  (`_finishImage()`), before RENDER_COMPLETE and the closing denoise or upscale (`_announceComplete()` in the loop), so a
+  saved image has its own exposure; with auto exposure off it returns null and completion stays synchronous. A final render keeps the exposure it starts with until 8 samples (`holdSamples`): snapping to each
+  reading, its 20 bounces read a 0.4-stop dip and back within 0.2 s at 2–8 samples. `_settling()` keeps a finished
+  render's loop running until it lands. The manual exposure is its compensation (`setCompensation`).
+- ⚠️ Never clear the in-flight reading from a reset, nor reuse the ReadbackBuffer while it is mapped: the old stage did on
+  every camera move, and 236 of 237 readings failed silently — the exposure never moved while the camera did.
+- ⚠️ `onChange` wakes only a finished render's idle loop: `renderFrames` and a video export drive frames themselves.
+- Cost a metering (Dawn, Apple M-series): 540p 0.03 ms, 1080p 0.08 ms (every pixel), 4K 0.12 ms.
+
+### Local exposure (`Stages/LocalExposure.js`, viewer; off in the engine, on in the app)
+Unreal Engine 5's: a bilateral grid of log luminance (cells of 128 px, 32 one-stop bins of exposed luminance) blended
+60/40 with a blurred 1/32 picture as the base layer; the base's contrast around middle grey is scaled
+(`highlightContrast`, `shadowContrast`; the app's Balance Highlights amount 40 % = 0.6) and detail kept (`detailStrength`). It
+changes only what is shown, as a per-pixel gain before exposure and the view, written three ways in that file — the
+compositor's TSL (`gainNode`, installed with `compositor.setDisplayGain`), WGSL for `PackedToneMapper`'s `gain` (every
+tone-mapped readback, the AI upscaler and the neural passes, through the core hook `_displayGain()`), and JavaScript
+for the CPU tone map (`pixelGain`) — kept identical by `tests/gpu/localExposure.test.js`. Canvas vs readback: 0.5
+levels, the readback's usual bias. EXR stays scene-referred. The grid is built from `pathtracer:color` on restarts and
+the metering schedule: 0.05 / 0.13 / 0.5 ms at 540p / 1080p / 4K (Dawn, M-series); the compositor's gain +0.05 ms at
+1080p. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
+The app's `DEFAULT_STATE` turns it on (the engine stays off, so a farm keeps its look); `applyExposureToEngine()` in the
+store puts the panel's auto and local exposure on the engine at startup and after a session restores the panel. The app
+shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.6 / 1), Exposure and Balance Highlights
+(Amount); metering, range, shadows and detail stay engine-only, so a session cannot carry a value no control shows.
 
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction. The core reads glTF/GLB, `.hdr` and LDR

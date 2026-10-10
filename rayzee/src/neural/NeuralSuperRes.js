@@ -373,6 +373,7 @@ export class NeuralSuperRes {
 			exposure: tone.exposure ?? 1,
 			toneMapping: tone.toneMapping ?? 0,
 			saturation: tone.saturation ?? 1,
+			gain: tone.gain,
 			// The network emits its picture vertically flipped.
 			flipY: true,
 		} );
@@ -529,6 +530,7 @@ export async function renderUpscaled( app, {
 			exposure: app.renderer.toneMappingExposure,
 			toneMapping: app.renderer.toneMapping,
 			saturation: app.settings.get( 'saturation' ) ?? 1,
+			gain: app._displayGain?.() ?? null,
 		};
 
 		const { rgba8, width, height, ms, toneMs } = await sr.upscaleToRGBA8( source, tone );

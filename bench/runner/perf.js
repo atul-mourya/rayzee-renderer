@@ -258,6 +258,76 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 }
 
 /**
+ * Auto exposure, and auto + local exposure, against neither, in ONE harness: each scene measured in
+ * alternating rounds as runPerfInterleaved measures two refs, so the verdicts use the same noise floor.
+ * Wall clock, not timestamps: the setups draw differently, and render-pass timestamps do not add up
+ * (see measureWallPerSample).
+ *
+ * @param {Object} bench
+ * @param {Object} [options]
+ * @param {string[]} [options.only]
+ * @param {{width: number, height: number}} [options.size] - render size instead of the corpus's
+ * @param {function(string): void} [options.log]
+ * @returns {Promise<Object<string, Object>>} comparePerf's report per mode
+ */
+export async function runExposurePerf( bench, { only, size = null, log = () => {} } = {} ) {
+
+	const scenes = await selectScenes( bench, only ?? PERF.exposure.scenes );
+	const reports = {};
+	await bench.setPerfMode( true );
+
+	const measure = async ( sceneId, mode ) => {
+
+		await bench.setExposureMode( mode );
+		await bench.loadScene( sceneId );
+		if ( size ) await bench.setRenderSize( size.width, size.height );
+		await bench.render( PERF.warmupSamples );
+		const perSample = await bench.measureWallPerSample( PERF.exposure.batches, PERF.exposure.batchSamples );
+		return summarise( perSample ).median;
+
+	};
+
+	try {
+
+		for ( const mode of [ 'auto', 'auto+local' ] ) {
+
+			log( `  ${mode} against off` );
+			const measurements = [];
+
+			for ( const scene of scenes ) {
+
+				const rounds = { base: [], head: [] };
+				const line = [];
+
+				for ( let round = 0; round < PERF.abRepeats; round ++ ) {
+
+					const order = round % 2 === 1 ? [[ 'head', mode ], [ 'base', 'off' ]] : [[ 'base', 'off' ], [ 'head', mode ]];
+					for ( const [ side, m ] of order ) rounds[ side ].push( await measure( scene.id, m ) );
+					line.push( `${rounds.base.at( - 1 ).toFixed( 2 )} / ${rounds.head.at( - 1 ).toFixed( 2 )}` );
+
+				}
+
+				log( `    ${scene.id}: ${line.join( '   ' )} ms/sample (off / ${mode})` );
+				measurements.push( { scene: scene.id, baseMedians: rounds.base, headMedians: rounds.head } );
+
+			}
+
+			reports[ mode ] = comparePerf( measurements );
+
+		}
+
+	} finally {
+
+		await bench.setExposureMode( 'off' );
+		await bench.setPerfMode( false );
+
+	}
+
+	return reports;
+
+}
+
+/**
  * Appends a run to the trend log. Monitoring only — never a gate.
  *
  * @param {Object} entry

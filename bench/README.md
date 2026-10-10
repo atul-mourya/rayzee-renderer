@@ -27,6 +27,7 @@ npm run bench:memory
 npm run bench:perf
 npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
 npm run bench:ab -- main    # gate perf against another git ref
+npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
 npm run bench:lut          # regenerate the DFG lookup table after a lobe or sampler change
 ```
@@ -306,6 +307,8 @@ regenerating and the compensation drifts back out of calibration — which the r
 
 Each measurement renders **exactly one sample** and resolves the timestamp queries immediately. Resolving once after an N-sample render reports whichever frame happened to land last rather than the average — that produced `cv > 100 %` and one scene reading implausibly faster than a simpler one before it was fixed.
 
+⚠️ **Render-pass timestamps overlap.** On Apple M-series a render pass's timestamps overlap the compute before it and each other: `glass-transmission` at 256² reads 1.8 ms compute + 2.0 ms render, and renders at 1.95 ms a sample by the wall clock with the GPU drained. Two sides that draw alike carry the same overlap; when they do not (a compositor change), time them by the wall clock, as `bench:exposure` does (`measureWallPerSample`). Measured 2026-10-10, auto exposure against none: −0.4 to +0.7 % a sample, with local exposure +0.1 to +3.2 % at 256² and −0.4 to +1.0 % at 1024², all within noise.
+
 Perf runs with the **production dispatch heuristics active** (`setPerfMode`), unlike image comparison which needs them pinned off for reproducibility. Benchmarking with them off measures a configuration production never runs. The cost is that per-frame time becomes legitimately bimodal — dispatch sizing is readback-driven — so `cv` sits at 30–40 % even when throughput is rock stable.
 
 To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git worktree, serves both trees at once, drives both from **one browser**, and measures each scene in three alternating rounds per side.
@@ -402,6 +405,11 @@ each other.
 Mutation-tested: with lockstep switched off inside `renderUntilComplete`, spheres-gradient retired
 at 64 / 37 / 23 / 29 spp across the four pacings and cornell-emissive at 64 / 33 / 30 / 45 — every
 pacing a different image. With it on: 24, 32 and 20 spp, identical across all four.
+
+The first pacing is also the first render after another scene, so the suite holds a render independent of
+what was traced before it too. A mismatch on the first pacing alone is that, not the pacing: glass-transmission
+differed in one pixel because the frame after the reset saw the camera as moved (the previous frame traced
+another view), which skipped its readback and delayed the survivor curve by four frames.
 
 ### Node — the corpus without a browser
 
