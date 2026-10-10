@@ -176,49 +176,54 @@ const StatsMeter = ( { viewportMode } ) => {
 			? ' Change it in the Path Tracer tab; toggling restarts the render.'
 			: ' Click to toggle.' );
 
+	// Stops short of the play controls centred above the viewport, wrapping whole stats rather than running under them.
 	return (
-		<div className="absolute top-2 left-2 text-xs text-foreground bg-background opacity-50 p-1 rounded flex flex-col gap-1">
-			<div className="flex items-center gap-1">
+		<div className="absolute top-2 left-2 max-w-[calc(50%-4.5rem)] text-xs text-foreground bg-background opacity-50 p-1 rounded flex flex-col gap-1">
+			<div className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
 				{sceneStats?.triangleCount > 0 && (
-					<span className="mr-1">Triangles: <span className="text-white">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
+					<span className="mr-1 whitespace-nowrap">Triangles: <span className="text-white">{sceneStats.triangleCount.toLocaleString()}</span> |</span>
 				)}
 
 				{/* Time Control */}
-				<StatChip active={timeLimited} onClick={() => handleRenderLimitModeChange( 'timeOnly' )}>
-					Time:
-				</StatChip>
-				<span className="text-white">{stats.timeElapsed.toFixed( 2 )}</span>s
-				{timeLimited && (
-					<> / <EditableValue value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
-				)}
-				<DoneTick show={completionReason === 'timeLimit'} />
-
-				<span className="mx-1">|</span>
+				<span className="inline-flex items-center gap-1 whitespace-nowrap">
+					<StatChip active={timeLimited} onClick={() => handleRenderLimitModeChange( 'timeOnly' )}>
+						Time:
+					</StatChip>
+					<span className="text-white">{stats.timeElapsed.toFixed( 2 )}</span>s
+					{timeLimited && (
+						<> / <EditableValue value={renderTimeLimit} onCommit={handleRenderTimeLimitChange} />s </>
+					)}
+					<DoneTick show={completionReason === 'timeLimit'} />
+					<span className="mx-1">|</span>
+				</span>
 
 				{/* Frames Control */}
-				<StatChip active={framesLimited} onClick={() => handleRenderLimitModeChange( 'frames' )}>
-					Frames:
-				</StatChip>
-				<span className="text-white">{stats.samples}</span>
-				{framesLimited && (
-					<> / <EditableValue value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
-				)}
-				<DoneTick show={completionReason === 'samples'} />
-
-				<span className="mx-1">|</span>
+				<span className="inline-flex items-center gap-1 whitespace-nowrap">
+					<StatChip active={framesLimited} onClick={() => handleRenderLimitModeChange( 'frames' )}>
+						Frames:
+					</StatChip>
+					<span className="text-white">{stats.samples}</span>
+					{framesLimited && (
+						<> / <EditableValue value={storeMaxSamples} onCommit={handleMaxSamplesEdit} /> </>
+					)}
+					<DoneTick show={completionReason === 'samples'} />
+					<span className="mx-1">|</span>
+				</span>
 
 				{/* Adaptive sampling stops the render whatever the Time/Frames toggle says, so it
 				    belongs beside them rather than only in the Path Tracer tab. Read-only in final
 				    render: unlike those two it carries reset:true, so a stray click here would throw
 				    away minutes of accumulation. */}
-				<StatChip
-					active={useAdaptiveSampling}
-					onClick={adaptiveLocked ? undefined : () => handleUseAdaptiveSamplingChange( ! useAdaptiveSampling )}
-					title={autoTitle}
-				>
-					<Sparkles className="size-3" />Auto
-				</StatChip>
-				<DoneTick show={completionReason === 'converged'} />
+				<span className="inline-flex items-center gap-1 whitespace-nowrap">
+					<StatChip
+						active={useAdaptiveSampling}
+						onClick={adaptiveLocked ? undefined : () => handleUseAdaptiveSamplingChange( ! useAdaptiveSampling )}
+						title={autoTitle}
+					>
+						<Sparkles className="size-3" />Auto
+					</StatChip>
+					<DoneTick show={completionReason === 'converged'} />
+				</span>
 			</div>
 
 			<div className="flex items-center gap-1">
