@@ -23,6 +23,7 @@ const SliderToggle = forwardRef( ( {
 	precision = 2,
 	disabled = false,
 	label,
+	tip,
 	...props
 }, ref ) => {
 
@@ -47,7 +48,7 @@ const SliderToggle = forwardRef( ( {
 
 	return (
 		<>
-			<span className="opacity-50 text-xs truncate">{label}</span>
+			<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
 			<span className="flex items-center max-w-32 w-full justify-end">
 				<div className="relative flex h-5 w-full overflow-hidden">
 					<div

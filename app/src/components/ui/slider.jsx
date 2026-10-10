@@ -20,6 +20,7 @@ const Slider = React.forwardRef( ( {
 	precision = 2,
 	disabled = false,
 	label,
+	tip,
 	unit = "",
 	formatValue,
 	snapPoints,
@@ -288,7 +289,7 @@ const Slider = React.forwardRef( ( {
 
 	return (
 		<>
-			<span className="opacity-50 text-xs truncate">{label}</span>
+			<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
 			<div
 				ref={elem => {
 

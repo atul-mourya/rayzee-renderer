@@ -15,7 +15,6 @@ import { GOBO_LIBRARY } from '@/services/GoboLibrary';
 import { IES_LIBRARY } from '@/services/IESLibrary';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InfoTip } from "@/components/ui/info-tip";
 import { useEffect, useCallback, useState, useRef } from 'react';
 
 const LIGHT_CONFIG = {
@@ -252,7 +251,7 @@ const IESPicker = ( props ) => (
 const GoboControls = ( { light, index, onLightChange, showScale = false } ) => (
 	<>
 		<Row>
-			<span className="opacity-50 text-xs truncate flex items-center gap-1"><FilmIcon size={11} /> Gobo Mask</span>
+			<span className="opacity-50 text-xs truncate flex items-center gap-1" title="A cut-out pattern over the light, such as window bars or leaves, that shapes its light and shadows."><FilmIcon size={11} /> Gobo Mask</span>
 			<div className="flex items-center gap-1.5">
 				{light.gobo && (
 					<button
@@ -279,6 +278,7 @@ const GoboControls = ( { light, index, onLightChange, showScale = false } ) => (
 				<Row>
 					<Slider
 						label="Mask Strength"
+						tip="How strongly the pattern blocks the light. 0 removes its effect."
 						icon={FilmIcon}
 						min={0}
 						max={1}
@@ -291,6 +291,7 @@ const GoboControls = ( { light, index, onLightChange, showScale = false } ) => (
 					<Row>
 						<Slider
 							label="Tile Scale"
+							tip="How big the repeating pattern is."
 							icon={FilmIcon}
 							min={0.1}
 							max={50}
@@ -317,17 +318,16 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 	// "Strength" (W/m²) for the Sun, which is irradiance rather than wattage.
 	const powerLabel = isSun ? 'Strength' : 'Power';
 	const powerTip = isSun
-		? 'Irradiance in W/m² (Blender Sun “Strength”) — independent of distance.'
-		: isArea
-			? 'Radiant power in Watts (Blender-style). With Normalize on it is the light\'s total power; off, it is surface brightness.'
-			: 'Radiant power in Watts (Blender-style), converted to radiant intensity (÷4π) for shading.';
+		? 'How bright the sunlight is. It is the same across the whole scene.'
+		: 'How bright the light is, in watts.';
 
 	return (
 		<div className="space-y-4 py-4 px-2">
 			{/* Common controls */}
 			<Row>
 				<Slider
-					label={<>{powerLabel}<InfoTip text={powerTip} /></>}
+					label={powerLabel}
+					tip={powerTip}
 					icon={Sunrise}
 					min={config.intensity.min}
 					max={config.intensity.max}
@@ -338,7 +338,8 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			</Row>
 			<Row>
 				<Slider
-					label={<>Exposure<InfoTip text="Brightness in photographic stops, multiplied on top of Power: +1 doubles, −1 halves. Separate from the camera's film exposure." /></>}
+					label="Exposure"
+					tip="Makes the light brighter or dimmer on top of Power: +1 doubles it, −1 halves it."
 					icon={Aperture}
 					min={- 10}
 					max={10}
@@ -351,6 +352,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			<Row>
 				<ColorInput
 					label={( light.useTemperature ?? false ) ? 'Tint' : 'Color'}
+					tip={( light.useTemperature ?? false ) ? 'Tints the colour set by Temperature.' : 'The colour of the light.'}
 					icon={Rainbow}
 					value={light.color}
 					onChange={color => onLightChange( index, 'color', color )}
@@ -358,7 +360,8 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			</Row>
 			<Row>
 				<SliderToggle
-					label={<>Temperature<InfoTip text="Blackbody colour in Kelvin (Blender's curve): 3200 K warm tungsten, 6500 K neutral, higher = cooler/bluer. Multiplies the Color tint; toggle off to use Color alone." /></>}
+					label="Temperature"
+					tip="The light's colour as a temperature: 3200 is a warm bulb, 6500 daylight, and higher is bluer. Off uses Color alone."
 					icon={Thermometer}
 					enabled={light.useTemperature ?? false}
 					min={1000}
@@ -373,6 +376,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			<Row>
 				<Vector3Component
 					label="Position"
+					tip="Where the light is in the scene."
 					value={light.position}
 					onValueChange={value => onLightChange( index, 'position', value )}
 				/>
@@ -384,6 +388,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Vector3Component
 							label="Target"
+							tip="The point the spot light aims at."
 							value={light.target || [ 0, 0, - 1 ]}
 							onValueChange={value => onLightChange( index, 'target', value )}
 						/>
@@ -391,6 +396,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Cone Angle"
+							tip="How far the beam spreads from its centre, in degrees."
 							icon={CircleDot}
 							min={0}
 							max={90}
@@ -402,6 +408,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Penumbra"
+							tip="How soft the edge of the beam is. 0 is a hard edge."
 							icon={CircleDashed}
 							min={0}
 							max={1}
@@ -413,6 +420,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Distance"
+							tip="How far the light reaches before it fades out. 0 means it has no limit."
 							icon={Ruler}
 							min={0}
 							max={100}
@@ -424,6 +432,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Decay"
+							tip="How quickly the light fades with distance. 2 is how real light fades."
 							icon={Activity}
 							min={0}
 							max={4}
@@ -434,7 +443,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					</Row>
 					<GoboControls light={light} index={index} onLightChange={onLightChange} />
 					<Row>
-						<span className="opacity-50 text-xs truncate flex items-center gap-1"><Lightbulb size={11} /> IES Profile</span>
+						<span className="opacity-50 text-xs truncate flex items-center gap-1" title="The beam shape of a real light fixture, as measured by its maker."><Lightbulb size={11} /> IES Profile</span>
 						<IESPicker
 							value={light.ies || null}
 							onChange={name => onLightChange( index, 'ies', name )}
@@ -445,6 +454,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 							<Row>
 								<Slider
 									label="IES Strength"
+									tip="How strongly the fixture's beam shape applies. 0 is a plain, even beam."
 									icon={Lightbulb}
 									min={0}
 									max={1}
@@ -455,7 +465,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 							</Row>
 							{Number.isFinite( light.fixtureLumens ) && light.fixtureLumens > 0 && (
 								<Row>
-									<span className="opacity-50 text-xs">Fixture Lumens</span>
+									<span className="opacity-50 text-xs" title="How much light the fixture gives off, as its maker states it.">Fixture Lumens</span>
 									<span className="text-xs text-muted-foreground">{Math.round( light.fixtureLumens ).toLocaleString()}</span>
 								</Row>
 							)}
@@ -469,7 +479,8 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 				<>
 					<Row>
 						<Slider
-							label={<>Softness<InfoTip text="Angular diameter of the light's disc, in degrees. 0 gives razor-sharp shadows; the real sun is 0.53°. Larger values soften shadow edges and broaden highlights, without changing brightness." /></>}
+							label="Softness"
+							tip="How soft the shadows are. 0 is razor-sharp; the real sun is 0.53°."
 							icon={CircleDashed}
 							min={0}
 							max={10}
@@ -489,6 +500,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Distance"
+							tip="How far the light reaches before it fades out. 0 means it has no limit."
 							icon={Ruler}
 							min={0}
 							max={100}
@@ -500,6 +512,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Slider
 							label="Decay"
+							tip="How quickly the light fades with distance. 2 is how real light fades."
 							icon={Activity}
 							min={0}
 							max={4}
@@ -515,7 +528,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 			{isArea && (
 				<>
 					<Row>
-						<span className="opacity-50 text-xs truncate">Shape</span>
+						<span className="opacity-50 text-xs truncate" title="The outline of the light: square, rectangle, disk or ellipse.">Shape</span>
 						<Select value={areaShape} onValueChange={value => onLightChange( index, 'shape', value )}>
 							<SelectTrigger className="max-w-32 h-5 rounded-full">
 								<SelectValue />
@@ -538,6 +551,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 						<Row>
 							<Slider
 								label="Size"
+								tip="How large the light is. Larger lights cast softer shadows."
 								icon={areaShape === 'disk' ? Circle : Square}
 								min={0.1}
 								max={20}
@@ -551,6 +565,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 							<Row>
 								<Slider
 									label="Width"
+									tip="How wide the light is. Larger lights cast softer shadows."
 									icon={RectangleHorizontal}
 									min={0.1}
 									max={20}
@@ -562,6 +577,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 							<Row>
 								<Slider
 									label="Height"
+									tip="How tall the light is. Larger lights cast softer shadows."
 									icon={RectangleVertical}
 									min={0.1}
 									max={20}
@@ -574,7 +590,8 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					)}
 					<Row>
 						<Slider
-							label={<>Spread<InfoTip text="Emission cone half-angle. 180° fills the whole hemisphere (default — no focusing); lower values beam the light forward like a softbox grid." /></>}
+							label="Spread"
+							tip="How wide the light shines. 180° lights everything in front of it; lower narrows it into a beam."
 							icon={CircleDashed}
 							min={1}
 							max={180}
@@ -585,7 +602,8 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					</Row>
 					<Row>
 						<Switch
-							label={<>Normalize<InfoTip text="On: Power is the light's total radiant power (W), held constant as you resize the light. Off: Power is surface brightness, so larger lights emit more total power." /></>}
+							label="Normalize"
+							tip="On: resizing the light keeps how much light it gives. Off: a bigger light gives more light."
 							checked={light.normalize ?? true}
 							onCheckedChange={checked => onLightChange( index, 'normalize', checked )}
 						/>
@@ -593,6 +611,7 @@ const LightDetailPanel = ( { light, index, onLightChange } ) => {
 					<Row>
 						<Vector3Component
 							label="Target"
+							tip="The point the light faces."
 							value={light.target || [ 0, 0, 0 ]}
 							onValueChange={value => onLightChange( index, 'target', value )}
 						/>
@@ -726,7 +745,7 @@ const LightsTab = () => {
 		<div>
 			{/* Emissive Mesh Sampling */}
 			<Row className="py-2 px-2">
-				<SliderToggle label={"Emissive Geometry"} enabled={ enableEmissiveTriangleSampling } min={0} max={100} step={1} value={[ emissiveBoost ]} onValueChange={ handleEmissiveBoostChange } onToggleChange={ handleEnableEmissiveTriangleSamplingChange } />
+				<SliderToggle label={"Emissive Geometry"} tip="Lets glowing surfaces, such as lamp shades and screens, light the scene with less grain. The number sets how strongly." enabled={ enableEmissiveTriangleSampling } min={0} max={100} step={1} value={[ emissiveBoost ]} onValueChange={ handleEmissiveBoostChange } onToggleChange={ handleEnableEmissiveTriangleSamplingChange } />
 			</Row>
 
 			<Separator className="bg-primary" />
@@ -786,7 +805,7 @@ const LightsTab = () => {
 				<>
 					{/* Light Helper Toggle */}
 					<Row className="py-2 px-2">
-						<Switch label="Light Helper" checked={showLightHelper} onCheckedChange={handleShowLightHelperChange} />
+						<Switch label="Light Helper" tip="Shows the lights in the view as outlines you can click and move." checked={showLightHelper} onCheckedChange={handleShowLightHelperChange} />
 					</Row>
 
 					<Separator className="bg-primary" />

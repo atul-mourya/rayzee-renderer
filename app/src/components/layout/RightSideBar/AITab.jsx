@@ -168,7 +168,7 @@ const AITab = () => {
 						</CardHeader>
 						<CardContent className="space-y-4">
 							<div>
-								<Label htmlFor="apiKey">API Key</Label>
+								<Label htmlFor="apiKey" title="Your key for Google's Gemini image service. It is saved in this browser.">API Key</Label>
 								<Input
 									id="apiKey"
 									type="password"
@@ -202,7 +202,7 @@ const AITab = () => {
 				<CardContent className="space-y-2 p-3">
 					{/* Selected Image from Results Viewport */}
 					<div>
-						<Label>Selected Image</Label>
+						<Label title="The render the AI starts from. Pick one in the Results view.">Selected Image</Label>
 						{selectedResult ? (
 							<div className="mt-2">
 								<img
@@ -225,7 +225,7 @@ const AITab = () => {
 
 					{/* Prompt Input */}
 					<div>
-						<Label htmlFor="prompt">Prompt</Label>
+						<Label htmlFor="prompt" title="Describe in words how the image should change.">Prompt</Label>
 						<Textarea
 							id="prompt"
 							value={prompt}

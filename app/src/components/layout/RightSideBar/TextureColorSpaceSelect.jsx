@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel } from '@/components/ui/select';
-import { InfoTip } from '@/components/ui/info-tip';
 import { getApp } from '@/lib/appProxy';
 import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
 import { textureSpaceGroups, spaceLabel } from '@/lib/colorLabels';
@@ -62,10 +61,7 @@ const TextureColorSpaceSelect = ( { texture } ) => {
 	return (
 		<>
 			<Row>
-				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					Color Space
-					<InfoTip text="What the numbers in this image mean. Auto is right for almost every texture; change it only for the exceptions, like a log-encoded plate or a texture rendered in ACEScg." />
-				</span>
+				<span className="opacity-50 text-xs truncate" title="How this image's colours are read. Leave it on Auto unless you know it needs another.">Color Space</span>
 				<div className="flex items-center gap-1">
 					{busy && <Loader2 size={12} className="animate-spin opacity-60" />}
 					<Select value={choice ?? AUTO} onValueChange={onChange} onOpenChange={open => open && ensureDefaultConfig()} disabled={busy}>

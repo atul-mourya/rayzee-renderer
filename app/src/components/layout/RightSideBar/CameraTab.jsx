@@ -6,7 +6,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Trackpad } from "@/components/ui/trackpad";
 import { NumberInput } from "@/components/ui/number-input";
-import { InfoTip } from "@/components/ui/info-tip";
 import AspectRatioControl from './AspectRatioControl';
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CAMERA_RANGES, CAMERA_PRESETS, isOrthographic, isPanorama, orthoHeightRange, walkSpeedRange } from '@/Constants';
@@ -18,10 +17,11 @@ import { FieldOfView } from "@/assets/icons";
 import { Separator } from "@/components/ui/separator";
 
 /** Min/Max pair for a symmetric ±limit range — the Slider is single-thumb, so it takes two rows. */
-const RangeRows = ( { label, limit, value, onChange } ) => [ 0, 1 ].map( i => (
+const RangeRows = ( { label, tip, limit, value, onChange } ) => [ 0, 1 ].map( i => (
 	<Row key={i}>
 		<Slider
 			label={`${label} ${i ? 'Max' : 'Min'}`}
+			tip={tip[ i ]}
 			min={- limit}
 			max={limit}
 			step={1}
@@ -157,7 +157,7 @@ const CameraTab = () => {
 			<Separator className="bg-primary" />
 			<div className="space-y-4 p-4">
 				<Row>
-					<span className="opacity-50 text-xs truncate">Select Camera</span>
+					<span className="opacity-50 text-xs truncate" title="Which camera you look through. + saves the current view as a new one.">Select Camera</span>
 					<div className="flex items-center gap-1">
 						<Select value={selectedCameraIndex.toString()} onValueChange={handleCameraChange}>
 							<SelectTrigger className="w-28 h-5 rounded-full">
@@ -195,7 +195,7 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
-					<span className="opacity-50 text-xs truncate">Projection</span>
+					<span className="opacity-50 text-xs truncate" title="Perspective sees like an eye. Orthographic keeps sizes the same at any distance, like a floor plan. 360° Panorama sees all around.">Projection</span>
 					<Select value={cameraProjection} onValueChange={handleCameraProjectionChange}>
 						<SelectTrigger className="max-w-36 h-5 rounded-full">
 							<div className="h-full pr-1 inline-flex justify-start items-center">
@@ -219,19 +219,21 @@ const CameraTab = () => {
 							<Switch
 								checked={panoramaLevelHorizon}
 								label="Level Horizon"
+								tip="Keeps the horizon straight across the panorama, however the camera is tilted."
 								onCheckedChange={handlePanoramaLevelHorizonChange}
 							/>
 						</Row>
 
-						<RangeRows label="Longitude" limit={180} value={panoramaLonRange} onChange={handlePanoramaLonRangeChange} />
-						<RangeRows label="Latitude" limit={90} value={panoramaLatRange} onChange={handlePanoramaLatRangeChange} />
+						<RangeRows label="Longitude" tip={[ "How far to the left the panorama reaches, in degrees.", "How far to the right the panorama reaches, in degrees." ]} limit={180} value={panoramaLonRange} onChange={handlePanoramaLonRangeChange} />
+						<RangeRows label="Latitude" tip={[ "How far down the panorama reaches, in degrees.", "How far up the panorama reaches, in degrees." ]} limit={90} value={panoramaLatRange} onChange={handlePanoramaLatRangeChange} />
 					</>
 				)}
 
 				<Row>
 					{orthographic ? (
 						<Slider
-							label={<>View Height<InfoTip text="How tall a slice of the scene the picture shows, in metres. Nothing shrinks with distance, so it is the same at every depth. Scrolling in the view zooms it too." /></>}
+							label={"View Height"}
+							tip="How much of the scene fits in the picture, top to bottom. Scrolling in the view changes it too."
 							icon={MoveVertical}
 							min={heightRange.min}
 							max={heightRange.max}
@@ -244,6 +246,7 @@ const CameraTab = () => {
 					) : (
 						<Slider
 							label={"FOV"}
+							tip="Field of view: how wide the camera sees. Wider takes in more; narrower zooms in."
 							icon={FieldOfView}
 							min={CAMERA_RANGES.fov.min}
 							max={CAMERA_RANGES.fov.max}
@@ -256,10 +259,7 @@ const CameraTab = () => {
 				</Row>
 
 				<Row>
-					<span className="opacity-50 text-xs truncate inline-flex items-center">
-						Navigation
-						<InfoTip text="Orbit circles the camera around a point. Walk moves it through the scene on foot: drag to look around, and use the keys to move. Back in Orbit, the camera circles whatever it is looking at." />
-					</span>
+					<span className="opacity-50 text-xs truncate" title="Orbit circles the camera around a point. Walk: drag to look around, and use the keys to move.">Navigation</span>
 					<ToggleGroup
 						type="single"
 						value={navigationMode}
@@ -275,7 +275,8 @@ const CameraTab = () => {
 					<>
 						<Row>
 							<Slider
-								label={<>Walk Speed<InfoTip text="How fast the keys move the camera. It starts at a speed that crosses the model in about eight seconds, and counts the file's units as metres unless a Subject Size says otherwise." /></>}
+								label={"Walk Speed"}
+								tip="How fast the keys move the camera."
 								icon={Footprints}
 								min={walkRange.min}
 								max={walkRange.max}
@@ -296,6 +297,7 @@ const CameraTab = () => {
 						<Switch
 							checked={zoomToCursor}
 							label="Zoom to Cursor"
+							tip="Scrolling zooms toward the point under the mouse instead of the middle of the view."
 							onCheckedChange={handleZoomToCursorChange}
 						/>
 					</Row>
@@ -307,6 +309,7 @@ const CameraTab = () => {
 					<Switch
 						checked={enableDOF}
 						label="Depth of Field"
+						tip="Blurs things nearer or farther than the focus point, like a real camera."
 						onCheckedChange={handleEnableDOFChange}
 					/>
 				</Row>
@@ -314,10 +317,7 @@ const CameraTab = () => {
 				{enableDOF && (
 					<>
 						<Row>
-							<span className="opacity-50 text-xs truncate inline-flex items-center">
-								Mode
-								<InfoTip text="Simple: pick a look and how blurry the background gets. It works the same on any model. Pro: a real camera, where the f-stop, the focal length and the subject's real size decide the blur, as in a photo or in Blender." />
-							</span>
+							<span className="opacity-50 text-xs truncate" title="Simple: just choose how blurry the background gets. Pro: set the blur like a real camera, by aperture, lens and the model's real size.">Mode</span>
 							<ToggleGroup
 								type="single"
 								value={dofMode}
@@ -331,7 +331,7 @@ const CameraTab = () => {
 
 						<Row>
 							<Select value={activePreset} onValueChange={handlePresetChange}>
-								<span className="opacity-50 text-xs truncate">Look</span>
+								<span className="opacity-50 text-xs truncate" title="A ready-made blur for a kind of shot, such as a portrait or a product. Changing any setting below makes it Custom.">Look</span>
 								<SelectTrigger className="max-w-32 h-5 rounded-full">
 									<div className="h-full pr-1 inline-flex justify-start items-center">
 										<Camera size={12} className="z-10" />
@@ -355,7 +355,8 @@ const CameraTab = () => {
 						{simple && (
 							<Row>
 								<Slider
-									label={<>Background Blur<InfoTip text="How blurry the far background gets, as a share of the picture's height. It looks the same on any model, at any size." /></>}
+									label={"Background Blur"}
+									tip="How blurry the far background gets."
 									icon={Aperture}
 									min={0}
 									max={20}
@@ -371,10 +372,7 @@ const CameraTab = () => {
 						{! simple && (
 							<>
 								<Row>
-									<span className="opacity-50 text-xs truncate inline-flex items-center">
-										Subject Size (m)
-										<InfoTip text={`The length of the model's longest side, its ${longestAxis}. The whole model is ${realDimensions} m (width × height × depth). If the file's units are off, type the real length: a real camera blurs by real size.`} />
-									</span>
+									<span className="opacity-50 text-xs truncate" title={`The real length of the model's longest side, its ${longestAxis}. The model is ${realDimensions} m; if that is wrong, type the real length.`}>Subject Size (m)</span>
 									<div className="flex items-center gap-1.5">
 										<span className="text-[10px] opacity-40 whitespace-nowrap">longest: {longestAxis}</span>
 										<NumberInput
@@ -401,7 +399,7 @@ const CameraTab = () => {
 
 								<Row>
 									<Select value={aperture.toString()} onValueChange={handleApertureChange}>
-										<span className="opacity-50 text-xs truncate">Aperture (f)</span>
+										<span className="opacity-50 text-xs truncate" title="The lens opening. A lower number blurs more; a higher one keeps more sharp.">Aperture (f)</span>
 										<SelectTrigger className="max-w-32 h-5 rounded-full">
 											<div className="h-full pr-1 inline-flex justify-start items-center">
 												<Aperture size={12} className="z-10" />
@@ -419,6 +417,7 @@ const CameraTab = () => {
 								<Row>
 									<Slider
 										label={"Focal Length (mm)"}
+										tip="A higher number blurs the background more. It does not zoom: FOV sets how wide the camera sees."
 										icon={Ruler}
 										min={CAMERA_RANGES.focalLength.min}
 										max={CAMERA_RANGES.focalLength.max}
@@ -431,6 +430,7 @@ const CameraTab = () => {
 								<Row>
 									<Slider
 										label={"DOF Intensity"}
+										tip="More or less blur than the real lens would give. 1 is the real lens."
 										icon={Aperture}
 										min={0.1}
 										max={2.0}
@@ -443,10 +443,7 @@ const CameraTab = () => {
 						)}
 
 						<Row>
-							<span className="opacity-50 text-xs truncate inline-flex items-center">
-								Focus
-								<InfoTip text="Click the part of the picture that should be sharp. Focus follows that spot as the camera moves." />
-							</span>
+							<span className="opacity-50 text-xs truncate" title="Pick the spot that should be sharp. Focus stays on it as the camera moves.">Focus</span>
 							<div className="flex items-center gap-1.5">
 								<Button
 									variant={afPlacingPoint ? "default" : "outline"}
@@ -476,16 +473,14 @@ const CameraTab = () => {
 						{! simple && (
 							<>
 								<Row>
-									<span className="opacity-50 text-xs truncate inline-flex items-center">
-									Focus Distance
-										<InfoTip text="How far the focused spot is from the camera, as auto-focus measures it. It counts the file's units as metres unless a Subject Size says otherwise." />
-									</span>
+									<span className="opacity-50 text-xs truncate" title="How far the sharp spot is from the camera, as measured by auto-focus.">Focus Distance</span>
 									<span className="text-xs tabular-nums opacity-80">{focusMetres} m</span>
 								</Row>
 
 								<Row>
 									<Slider
 										label={"Bokeh Stretch"}
+										tip="Stretches the blurry spots of light into wide ovals. 1 keeps them round."
 										icon={Ellipsis}
 										min={1.0}
 										max={2.0}
@@ -505,6 +500,7 @@ const CameraTab = () => {
 					<div className="flex items-center">
 						<Trackpad
 							label={"Camera Position"}
+							tip="Drag the dot to swing the camera around. The marks are front, side, top and bottom views."
 							points={cameraPoints}
 							onMove={handleCameraMove}
 							className="w-[110px] h-[110px]"

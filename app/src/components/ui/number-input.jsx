@@ -12,6 +12,8 @@ const NumberInput = forwardRef( ( {
 	sensitivity = 1,
 	value: propValue,
 	defaultValue = 0,
+	label,
+	tip,
 	...props
 }, ref ) => {
 
@@ -159,8 +161,8 @@ const NumberInput = forwardRef( ( {
 
 	return (
 		<>
-			{props.label && (
-				<span className="opacity-50 text-xs truncate">{props.label}</span>
+			{label && (
+				<span className="opacity-50 text-xs truncate" title={tip}>{label}</span>
 			)}
 			<div
 				className={cn(

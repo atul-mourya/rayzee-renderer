@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
 
-const TexturePreview = ( { texture, label, actions, expanded, onToggle } ) => {
+const TexturePreview = ( { texture, label, tip, actions, expanded, onToggle } ) => {
 
 	const canvasRef = useRef( null );
 	const largeCanvasRef = useRef( null );
@@ -147,7 +147,7 @@ const TexturePreview = ( { texture, label, actions, expanded, onToggle } ) => {
 					<ChevronRight size={10} className={`shrink-0 opacity-40 transition-transform ${expanded ? 'rotate-90' : ''}`} />
 				)}
 				<div className="min-w-0">
-					{label && <div className="text-[11px] font-medium truncate leading-tight">{label}</div>}
+					{label && <div className="text-[11px] font-medium truncate leading-tight" title={tip}>{label}</div>}
 					{sizeLabel && <div className="text-[10px] opacity-40 leading-tight">{sizeLabel}</div>}
 				</div>
 			</div>

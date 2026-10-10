@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { NumberInput } from '@/components/ui/number-input';
 import { CustomLinkIcon, CustomUnlinkIcon } from '@/assets/icons';
 
-const LinkableVector2 = ( { label, value, onChange, step = 0.1, min, max } ) => {
+const LinkableVector2 = ( { label, tip, value, onChange, step = 0.1, min, max } ) => {
 
 	const [ isLinked, setIsLinked ] = useState( false );
 
@@ -53,7 +53,7 @@ const LinkableVector2 = ( { label, value, onChange, step = 0.1, min, max } ) => 
 
 	return (
 		<>
-			<div className="opacity-50 text-xs mb-1">{label}</div>
+			<div className="opacity-50 text-xs mb-1" title={tip}>{label}</div>
 			<div className="flex items-center gap-1">
 				<div
 					onClick={toggleLink}

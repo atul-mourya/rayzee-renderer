@@ -18,7 +18,7 @@ const AspectRatioControl = () => {
 
 	return (
 		<Row>
-			<span className="opacity-50 text-xs truncate">Aspect Ratio</span>
+			<span className="opacity-50 text-xs truncate" title="The picture's shape. The small button beside it swaps wide and tall.">Aspect Ratio</span>
 			<div className="flex items-center gap-1">
 				{aspectRatioPreset !== '1:1' && (
 					<button

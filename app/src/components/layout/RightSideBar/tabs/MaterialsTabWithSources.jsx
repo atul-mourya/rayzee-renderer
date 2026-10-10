@@ -145,7 +145,7 @@ const MaterialsTabWithSources = () => {
 								value={polyHavenResolution}
 								onValueChange={handlePolyHavenResolutionChange}
 							>
-								<span className="opacity-50 text-xs truncate">Resolution</span>
+								<span className="opacity-50 text-xs truncate" title="The size of the images to download. Larger shows more detail up close but loads slower.">Resolution</span>
 								<SelectTrigger className="max-w-24 h-5 rounded-full">
 									<SelectValue placeholder="Select resolution" />
 								</SelectTrigger>

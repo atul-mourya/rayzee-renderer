@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import { NumberInput } from '@/components/ui/number-input';
-import { InfoTip } from '@/components/ui/info-tip';
 import { useEffect, useState } from 'react';
 import { useAnimationStore, useStore, VIDEO_RENDER_FPS, videoDuration } from '@/store';
 import { useActiveApp } from '@/hooks/useActiveApp';
@@ -98,7 +97,7 @@ const AnimationTab = () => {
 								onValueChange={( val ) => handleClipChange( Number( val ) )}
 								disabled={busy}
 							>
-								<span className="opacity-50 text-xs truncate">Animation Clip</span>
+								<span className="opacity-50 text-xs truncate" title="Which of the model's own animations plays.">Animation Clip</span>
 								<SelectTrigger className="max-w-40 h-5 rounded-full">
 									<div className="h-full pr-1 inline-flex justify-start items-center">
 										<ListMusic size={12} className="z-10" />
@@ -145,7 +144,7 @@ const AnimationTab = () => {
 						{/* Duration Info */}
 						{selectedClipData && (
 							<div className="flex justify-between text-xs">
-								<span className="opacity-50">Duration</span>
+								<span className="opacity-50" title="How long the clip lasts, at normal speed.">Duration</span>
 								<span className="opacity-70">{selectedClipData.duration.toFixed( 2 )}s</span>
 							</div>
 						)}
@@ -154,6 +153,7 @@ const AnimationTab = () => {
 						<Row>
 							<Slider
 								label="Speed"
+								tip="How fast the clip plays. 1 is normal speed."
 								icon={Gauge}
 								min={0.1}
 								max={3.0}
@@ -168,6 +168,7 @@ const AnimationTab = () => {
 							<Switch
 								checked={loop}
 								label="Loop"
+								tip="Plays the clip again from the start when it ends."
 								onCheckedChange={handleLoopChange}
 								disabled={busy}
 							/>
@@ -183,10 +184,9 @@ const AnimationTab = () => {
 
 				{/* Camera Keyframes */}
 				<Row>
-					<span className="opacity-50 text-xs truncate inline-flex items-center">
+					<span className="opacity-50 text-xs truncate inline-flex items-center" title="Saved views the camera glides through, in time order, for a video. Frame a view, add a keyframe, then set the times to pace the move.">
 						<Route size={12} className="mr-1" />
 						Camera Keyframes
-						<InfoTip text="Keyframes for the camera, each the view at a time. The camera glides through them in time order, looking at what each one looked at, starting and ending gently. Frame a view, then add a keyframe; set the times to pace the move." />
 					</span>
 					<Button
 						variant="outline"
@@ -204,7 +204,7 @@ const AnimationTab = () => {
 					<div className="space-y-1.5">
 						{cameraKeys.map( ( key, i ) => (
 							<div key={key.id} className="flex items-center gap-1.5">
-								<span className="text-xs opacity-50 w-10 shrink-0">Key {i + 1}</span>
+								<span className="text-xs opacity-50 w-10 shrink-0" title="When the camera reaches this view, in seconds from the start.">Key {i + 1}</span>
 								<NumberInput
 									min={0}
 									max={3600}
@@ -238,6 +238,7 @@ const AnimationTab = () => {
 								<Switch
 									checked={moveCameraInVideo}
 									label="Move Camera in Video"
+									tip="Moves the camera along the keyframes while the clip plays in the video. Off keeps the camera still."
 									onCheckedChange={handleMoveCameraInVideoChange}
 									disabled={busy}
 								/>
@@ -269,6 +270,7 @@ const AnimationTab = () => {
 							<Row>
 								<NumberInput
 									label="Render Loops"
+									tip="How many times the clip plays in the video."
 									min={1}
 									max={100}
 									step={1}
@@ -280,7 +282,7 @@ const AnimationTab = () => {
 						)}
 						{canRender && duration > 0 && (
 							<div className="flex justify-between text-xs">
-								<span className="opacity-50">Video Duration</span>
+								<span className="opacity-50" title="How long the video will be, and how many frames will be rendered.">Video Duration</span>
 								<span className="opacity-70">{duration.toFixed( 1 )}s ({Math.ceil( duration * VIDEO_RENDER_FPS )} frames)</span>
 							</div>
 						)}

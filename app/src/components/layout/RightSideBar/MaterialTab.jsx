@@ -18,74 +18,74 @@ import { RefreshCw, Trash2, Plus } from 'lucide-react';
 
 // Shown in both the Transmission and Subsurface groups — one object so the flatten below
 // cannot pick a different default depending on group order.
-const IOR_CONFIG = { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'IOR' };
+const IOR_CONFIG = { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'IOR', tip: 'How much the material bends what you see through it, and how strongly it reflects. Water is 1.33, glass 1.5, diamond 2.4.' };
 
 // Configuration for all material properties - pregrouped by section
 const MATERIAL_PROPERTIES = {
 	basic: [
-		[ 'color', { type: 'color', default: '#ffffff', label: 'Color' } ],
-		[ 'roughness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Roughness' } ],
-		[ 'metalness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Metalness' } ],
+		[ 'color', { type: 'color', default: '#ffffff', label: 'Color', tip: 'The base colour of the surface.' } ],
+		[ 'roughness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Roughness', tip: 'How rough the surface is. 0 is a sharp, mirror-like shine; 1 is soft and matte.' } ],
+		[ 'metalness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Metalness', tip: 'How metal-like the surface is. 1 is metal; 0 is wood, plastic, stone and the like.' } ],
 	],
 	clearcoat: [
-		[ 'clearcoat', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat' } ],
-		[ 'clearcoatRoughness', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat Roughness' } ],
+		[ 'clearcoat', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat', tip: 'How strong the clear, glossy top layer is, like car paint or varnish.' } ],
+		[ 'clearcoatRoughness', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat Roughness', tip: 'How rough the shine of the clear top layer is.' } ],
 	],
 	specular: [
-		[ 'specularIntensity', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Specular Intensity' } ],
-		[ 'specularColor', { type: 'color', default: '#ffffff', label: 'Specular Color' } ],
+		[ 'specularIntensity', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Specular Intensity', tip: 'How strong the reflections on the surface are. 0 removes them.' } ],
+		[ 'specularColor', { type: 'color', default: '#ffffff', label: 'Specular Color', tip: 'Tints the reflections on the surface.' } ],
 	],
 	sheen: [
-		[ 'sheen', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Sheen' } ],
-		[ 'sheenRoughness', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Sheen Roughness' } ],
-		[ 'sheenColor', { type: 'color', default: '#000000', label: 'Sheen Color' } ],
+		[ 'sheen', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Sheen', tip: 'A soft shine along the edges, as on velvet and other cloth.' } ],
+		[ 'sheenRoughness', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Sheen Roughness', tip: 'How widely the sheen spreads. Higher is softer.' } ],
+		[ 'sheenColor', { type: 'color', default: '#000000', label: 'Sheen Color', tip: 'The colour of the sheen.' } ],
 	],
 	anisotropy: [
-		[ 'anisotropy', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Anisotropy' } ],
-		[ 'anisotropyRotation', { type: 'slider', default: 0, min: 0, max: 360, step: 1, label: 'Rotation (°)' } ],
+		[ 'anisotropy', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Anisotropy', tip: 'Stretches the shine in one direction, as on brushed metal.' } ],
+		[ 'anisotropyRotation', { type: 'slider', default: 0, min: 0, max: 360, step: 1, label: 'Rotation (°)', tip: 'Turns the direction the shine is stretched in.' } ],
 	],
 	emissive: [
-		[ 'emissive', { type: 'color', default: '#000000', label: 'Emissive' } ],
-		[ 'emissiveIntensity', { type: 'slider', default: 1, min: 0, max: 10, step: 0.1, label: 'Emissive Intensity' } ],
+		[ 'emissive', { type: 'color', default: '#000000', label: 'Emissive', tip: 'The colour the surface glows with. Black is no glow.' } ],
+		[ 'emissiveIntensity', { type: 'slider', default: 1, min: 0, max: 10, step: 0.1, label: 'Emissive Intensity', tip: 'How brightly the surface glows.' } ],
 	],
 	iridescence: [
-		[ 'iridescence', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Iridescence' } ],
-		[ 'iridescenceIOR', { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'Iridescence IOR' } ],
+		[ 'iridescence', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Iridescence', tip: 'A rainbow film on the surface, like a soap bubble or an oil slick.' } ],
+		[ 'iridescenceIOR', { type: 'slider', default: 1.5, min: 1, max: 2.5, step: 0.01, label: 'Iridescence IOR', tip: 'Changes the colours of the rainbow film.' } ],
 	],
 	volumetric: [
 		[ 'ior', IOR_CONFIG ],
-		[ 'transmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Transmission' } ],
-		[ 'attenuationColor', { type: 'color', default: '#ffffff', label: 'Attenuation Color' } ],
+		[ 'transmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Transmission', tip: 'How much light passes through, as through glass. 1 is fully clear.' } ],
+		[ 'attenuationColor', { type: 'color', default: '#ffffff', label: 'Attenuation Color', tip: 'The tint light picks up as it goes through, like coloured glass.' } ],
 		// min/max/step are replaced per-object with a world-scale range (resolvePropertyConfig).
-		[ 'attenuationDistance', { type: 'number', default: 0, min: 0, max: 1000, step: 1, label: 'Attenuation Distance (0 = off)', scaleWithObject: true } ],
+		[ 'attenuationDistance', { type: 'number', default: 0, min: 0, max: 1000, step: 1, label: 'Attenuation Distance (0 = off)', tip: 'How far light goes inside before the tint is full. Shorter gives a stronger tint, darker in thick parts. 0 turns it off.', scaleWithObject: true } ],
 	],
 	// Simple (artist-facing) subsurface controls — always visible.
 	subsurface: [
-		[ 'subsurface', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Amount' } ],
-		[ 'subsurfaceColor', { type: 'color', default: '#ffffff', label: 'Scatter Color' } ],
-		[ 'subsurfaceTranslucency', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Translucency' } ],
+		[ 'subsurface', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Amount', tip: 'How much light enters the surface and scatters inside it, as in skin, wax or marble.' } ],
+		[ 'subsurfaceColor', { type: 'color', default: '#ffffff', label: 'Scatter Color', tip: 'The colour light takes on as it scatters inside.' } ],
+		[ 'subsurfaceTranslucency', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Translucency', tip: 'How far light travels inside. Higher looks softer and more see-through.' } ],
 	],
 	// Advanced subsurface physics — shown in the Subsurface row's ⋮ menu.
 	subsurfaceAdvanced: [
-		[ 'subsurfaceRadius', { type: 'vector3', default: { x: 1, y: 0.2, z: 0.1 }, min: 0, max: 100000, step: 0.01, label: 'Scatter Radius (world units)' } ],
-		[ 'subsurfaceAnisotropy', { type: 'slider', default: 0, min: - 1, max: 1, step: 0.01, label: 'Anisotropy (g)' } ],
+		[ 'subsurfaceRadius', { type: 'vector3', default: { x: 1, y: 0.2, z: 0.1 }, min: 0, max: 100000, step: 0.01, label: 'Scatter Radius (world units)', tip: 'How far red, green and blue light each travel inside. In skin, red travels furthest.' } ],
+		[ 'subsurfaceAnisotropy', { type: 'slider', default: 0, min: - 1, max: 1, step: 0.01, label: 'Anisotropy (g)', tip: 'Which way light scatters inside: below 0 back toward the light, above 0 onward.' } ],
 		[ 'ior', IOR_CONFIG ],
 	],
 	// Diffuse transmission (KHR_materials_diffuse_transmission): light passes through a thin surface, scattered.
 	translucency: [
-		[ 'diffuseTransmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Amount' } ],
-		[ 'diffuseTransmissionColor', { type: 'color', default: '#ffffff', label: 'Color' } ],
+		[ 'diffuseTransmission', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Amount', tip: 'How much soft light passes through the thin surface, as through a leaf, paper or a lampshade.' } ],
+		[ 'diffuseTransmissionColor', { type: 'color', default: '#ffffff', label: 'Color', tip: 'The colour light takes on as it passes through.' } ],
 	],
 	transparency: [
-		[ 'transparent', { type: 'switch', default: false, label: 'Transparent' } ],
-		[ 'opacity', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Opacity' } ],
-		[ 'alphaTest', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Alpha Test' } ],
+		[ 'transparent', { type: 'switch', default: false, label: 'Transparent', tip: 'Turns see-through on; Opacity then sets how much.' } ],
+		[ 'opacity', { type: 'slider', default: 1, min: 0, max: 1, step: 0.01, label: 'Opacity', tip: 'How solid the surface is. 0 is fully see-through.' } ],
+		[ 'alphaTest', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Alpha Test', tip: 'Cuts away parts of the image more see-through than this, as for leaves drawn on a flat card.' } ],
 	],
 	dispersion: [
-		[ 'dispersion', { type: 'slider', default: 0, min: 0, max: 10, step: 0.01, label: 'Dispersion' } ],
+		[ 'dispersion', { type: 'slider', default: 0, min: 0, max: 10, step: 0.01, label: 'Dispersion', tip: 'Splits light into rainbow colours as it passes through, as in a prism or a diamond.' } ],
 	],
 	other: [
-		[ 'side', { type: 'select', default: 0, options: [ { value: 0, label: 'Front' }, { value: 1, label: 'Back' }, { value: 2, label: 'Double' } ], label: 'Side' } ],
+		[ 'side', { type: 'select', default: 0, options: [ { value: 0, label: 'Front', tip: 'Which side of the surface is visible: the front, the back, or both.' }, { value: 1, label: 'Back' }, { value: 2, label: 'Double' } ], label: 'Side' } ],
 	]
 };
 
@@ -100,12 +100,12 @@ const ALL_MATERIAL_PROPERTIES = Object.values( MATERIAL_PROPERTIES ).flat().redu
 
 // Texture properties configuration
 const TEXTURE_PROPERTIES = {
-	offset: { type: 'linkable-vector2', default: { x: 0, y: 0 }, label: 'Offset' },
-	repeat: { type: 'linkable-vector2', default: { x: 1, y: 1 }, label: 'Repeat' },
-	normalScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Normal Scale', textureTypes: [ 'normalMap' ] },
-	bumpScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Bump Scale', textureTypes: [ 'bumpMap' ] },
-	displacementScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Displacement Scale', textureTypes: [ 'displacementMap' ] },
-	rotation: { type: 'slider', default: 0, min: 0, max: 360, step: 1, label: 'Rotation (°)' },
+	offset: { type: 'linkable-vector2', default: { x: 0, y: 0 }, label: 'Offset', tip: 'Slides the image across the surface.' },
+	repeat: { type: 'linkable-vector2', default: { x: 1, y: 1 }, label: 'Repeat', tip: 'How many times the image repeats across the surface.' },
+	normalScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Normal Scale', tip: 'How strong the bumps from the normal map look.', textureTypes: [ 'normalMap' ] },
+	bumpScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Bump Scale', tip: 'How strong the bumps from the bump map look.', textureTypes: [ 'bumpMap' ] },
+	displacementScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Displacement Scale', tip: 'How deep the displacement map makes the surface look.', textureTypes: [ 'displacementMap' ] },
+	rotation: { type: 'slider', default: 0, min: 0, max: 360, step: 1, label: 'Rotation (°)', tip: 'Turns the image on the surface.' },
 };
 
 // Common texture names that might be available on materials
@@ -120,6 +120,34 @@ const COMMON_TEXTURE_NAMES = [
 	'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap',
 	'diffuseTransmissionMap', 'diffuseTransmissionColorMap'
 ];
+
+const TEXTURE_TIPS = {
+	map: 'The colour image painted on the surface.',
+	normalMap: 'Makes the surface look bumpy, using a special bluish image. The shape itself does not change.',
+	roughnessMap: 'Where the surface is rough and where it is shiny.',
+	metalnessMap: 'Where the surface is metal.',
+	aoMap: 'Shadows painted into creases, for other apps. This app does not use it.',
+	emissiveMap: 'Where the surface glows, and in what colour.',
+	bumpMap: 'Adds small bumps from a black-and-white image. The shape itself does not change.',
+	displacementMap: 'Adds deeper relief from a black-and-white image: light parts look raised, dark parts sunken. The shape itself does not change.',
+	alphaMap: 'Where the surface is see-through. This app does not use it.',
+	specularMap: 'Where the surface reflects, for other apps. This app does not use it.',
+	envMap: 'A picture of the surroundings to reflect, for other apps. This app does not use it.',
+	lightMap: 'Lighting painted onto the surface, for other apps. This app does not use it.',
+	clearcoatMap: 'Where the clear, glossy top layer is.',
+	clearcoatNormalMap: 'Bumps in the clear top layer. This app does not use it.',
+	clearcoatRoughnessMap: 'Where the clear top layer is rough and where it is shiny.',
+	sheenColorMap: 'The colour of the sheen across the surface.',
+	sheenRoughnessMap: 'How widely the sheen spreads across the surface.',
+	transmissionMap: 'Where light passes through the surface.',
+	specularIntensityMap: 'Where the surface reflects strongly and where weakly.',
+	specularColorMap: 'The tint of the reflections across the surface.',
+	iridescenceMap: 'Where the rainbow film is.',
+	iridescenceThicknessMap: 'Changes the colours of the rainbow film across the surface.',
+	anisotropyMap: 'The direction and strength of the stretched shine across the surface.',
+	diffuseTransmissionMap: 'Where soft light passes through the thin surface.',
+	diffuseTransmissionColorMap: 'The colour of the light that passes through, across the surface.',
+};
 
 // Texture slots that users can add via the UI (subset that the path tracer supports)
 const ADDABLE_TEXTURE_SLOTS = [
@@ -484,15 +512,15 @@ const MaterialTab = () => {
 		const onChange = ( newValue ) => handlePropertyChange( property, newValue );
 
 		const components = {
-			color: () => <ColorInput label={config.label} value={value} onChange={onChange} />,
-			slider: () => <Slider label={config.label} min={config.min} max={config.max} step={config.step} value={[ value ]} onValueChange={onChange} />,
-			number: () => <NumberInput label={config.label} min={config.min} max={config.max} step={config.step} precision={config.precision} value={value} onValueChange={onChange} />,
+			color: () => <ColorInput label={config.label} tip={config.tip} value={value} onChange={onChange} />,
+			slider: () => <Slider label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} value={[ value ]} onValueChange={onChange} />,
+			number: () => <NumberInput label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} precision={config.precision} value={value} onValueChange={onChange} />,
 			vector3: () => {
 
 				const v3 = Array.isArray( value ) ? { x: value[ 0 ], y: value[ 1 ], z: value[ 2 ] } : ( value ?? { x: 0, y: 0, z: 0 } );
 				return (
 					<Row className="w-full">
-						<div className="opacity-50 text-xs truncate">{config.label}</div>
+						<div className="opacity-50 text-xs truncate" title={config.tip}>{config.label}</div>
 						<div className="flex gap-1">
 							<NumberInput value={v3.x} min={config.min} max={config.max} step={config.step} onValueChange={v => onChange( { ...v3, x: v } )} />
 							<NumberInput value={v3.y} min={config.min} max={config.max} step={config.step} onValueChange={v => onChange( { ...v3, y: v } )} />
@@ -502,10 +530,10 @@ const MaterialTab = () => {
 				);
 
 			},
-			switch: () => <Switch label={config.label} checked={value} onCheckedChange={onChange} />,
+			switch: () => <Switch label={config.label} tip={config.tip} checked={value} onCheckedChange={onChange} />,
 			select: () => (
 				<Row className="w-full">
-					<div className="opacity-50 text-xs truncate">{config.label}</div>
+					<div className="opacity-50 text-xs truncate" title={config.tip}>{config.label}</div>
 					<Select value={value} onValueChange={onChange}>
 						<SelectTrigger className="max-w-25 h-5 rounded-full">
 							<SelectValue placeholder="Select" />
@@ -551,7 +579,7 @@ const MaterialTab = () => {
 			case 'vector2':
 				return (
 					<>
-						<div className="opacity-50 text-xs">{config.label}</div>
+						<div className="opacity-50 text-xs" title={config.tip}>{config.label}</div>
 						<div className="grid grid-cols-[20px_1fr] gap-y-1 items-center">
 							<NumberInput
 								label="X"
@@ -572,6 +600,7 @@ const MaterialTab = () => {
 				return (
 					<LinkableVector2
 						label={config.label}
+						tip={config.tip}
 						value={value}
 						onChange={onChange}
 						step={0.1}
@@ -580,12 +609,12 @@ const MaterialTab = () => {
 					/>
 				);
 			case 'slider':
-				return <Slider className="h-4" label={config.label} min={config.min} max={config.max} step={config.step} value={[ value ]} onValueChange={( val ) => onChange( val[ 0 ] )} />;
+				return <Slider className="h-4" label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} value={[ value ]} onValueChange={( val ) => onChange( val[ 0 ] )} />;
 			case 'number':
 			{
 
 				const numericValue = typeof value === 'number' ? value : ( value?.x ?? 1 );
-				return <NumberInput label={config.label} min={config.min} max={config.max} step={config.step} value={numericValue} onValueChange={onChange} />;
+				return <NumberInput label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} value={numericValue} onValueChange={onChange} />;
 
 			}
 
@@ -652,7 +681,7 @@ const MaterialTab = () => {
 
 					{/* Clearcoat Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Clearcoat" checked={isFeatureEnabled( materialState, 'clearcoat' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'clearcoat', enabled )} />
+						<Switch label="Enable Clearcoat" tip="Adds a clear, glossy top layer, like car paint or varnish." checked={isFeatureEnabled( materialState, 'clearcoat' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'clearcoat', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'clearcoat' ) && (
 						<>
@@ -663,7 +692,7 @@ const MaterialTab = () => {
 
 					{/* Transmission Feature Group (formerly "Volumetric" — it handles glass/transmission) */}
 					<Row className="w-full">
-						<Switch label="Enable Transmission" checked={isFeatureEnabled( materialState, 'volumetric' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'volumetric', enabled )} />
+						<Switch label="Enable Transmission" tip="Lets light pass through the material, as through glass or water." checked={isFeatureEnabled( materialState, 'volumetric' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'volumetric', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'volumetric' ) && (
 						<>
@@ -678,12 +707,12 @@ const MaterialTab = () => {
 							{MATERIAL_PROPERTIES.subsurfaceAdvanced?.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
 						</>
 					) : null}>
-						<Switch label="Enable Subsurface" checked={isFeatureEnabled( materialState, 'subsurface' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'subsurface', enabled )} />
+						<Switch label="Enable Subsurface" tip="Lets light enter the surface and scatter inside, as in skin, wax or marble. More settings are under ⋮." checked={isFeatureEnabled( materialState, 'subsurface' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'subsurface', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'subsurface' ) && (
 						<>
 							<Row className="w-full">
-								<div className="opacity-50 text-xs truncate">Preset</div>
+								<div className="opacity-50 text-xs truncate" title="Fills in the settings below for a common material, such as skin, wax, marble or milk.">Preset</div>
 								<Select onValueChange={( v ) => materialStore.applySubsurfacePreset( v )}>
 									<SelectTrigger className="max-w-32 h-5 rounded-full">
 										<SelectValue placeholder="Choose…" />
@@ -702,7 +731,7 @@ const MaterialTab = () => {
 
 					{/* Translucency: diffuse transmission through a thin surface (leaves, paper, lampshades) */}
 					<Row className="w-full">
-						<Switch label="Enable Translucency" checked={isFeatureEnabled( materialState, 'translucency' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'translucency', enabled )} />
+						<Switch label="Enable Translucency" tip="Lets soft light pass through a thin surface, as through leaves, paper or a lampshade." checked={isFeatureEnabled( materialState, 'translucency' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'translucency', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'translucency' ) && (
 						<>
@@ -713,7 +742,7 @@ const MaterialTab = () => {
 
 					{/* Transparency Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Transparency" checked={isFeatureEnabled( materialState, 'transparency' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'transparency', enabled )} />
+						<Switch label="Enable Transparency" tip="Makes parts of the surface see-through, without bending light the way glass does." checked={isFeatureEnabled( materialState, 'transparency' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'transparency', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'transparency' ) && (
 						<>
@@ -724,7 +753,7 @@ const MaterialTab = () => {
 
 					{/* Iridescence Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Iridescence" checked={isFeatureEnabled( materialState, 'iridescence' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'iridescence', enabled )} />
+						<Switch label="Enable Iridescence" tip="Adds a rainbow film, like a soap bubble or an oil slick." checked={isFeatureEnabled( materialState, 'iridescence' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'iridescence', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'iridescence' ) && (
 						<>
@@ -735,7 +764,7 @@ const MaterialTab = () => {
 
 					{/* Sheen Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Sheen" checked={isFeatureEnabled( materialState, 'sheen' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'sheen', enabled )} />
+						<Switch label="Enable Sheen" tip="Adds a soft shine along the edges, as on velvet and other cloth." checked={isFeatureEnabled( materialState, 'sheen' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'sheen', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'sheen' ) && (
 						<>
@@ -746,7 +775,7 @@ const MaterialTab = () => {
 
 					{/* Anisotropy Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Anisotropy" checked={isFeatureEnabled( materialState, 'anisotropy' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'anisotropy', enabled )} />
+						<Switch label="Enable Anisotropy" tip="Stretches the shine in one direction, as on brushed metal." checked={isFeatureEnabled( materialState, 'anisotropy' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'anisotropy', enabled )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'anisotropy' ) && (
 						<>
@@ -757,7 +786,7 @@ const MaterialTab = () => {
 
 					{/* Dispersion Feature Group */}
 					<Row className="w-full">
-						<Switch label="Enable Dispersion" checked={isFeatureEnabled( materialState, 'dispersion' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'dispersion', enabled )} disabled={! isFeatureEnabled( materialState, 'volumetric' )} />
+						<Switch label="Enable Dispersion" tip="Splits light into rainbow colours as it passes through. Needs Transmission on." checked={isFeatureEnabled( materialState, 'dispersion' )} onCheckedChange={( enabled ) => materialStore.handleToggleFeature( 'dispersion', enabled )} disabled={! isFeatureEnabled( materialState, 'volumetric' )} />
 					</Row>
 					{isFeatureEnabled( materialState, 'dispersion' ) && (
 						<>
@@ -788,6 +817,7 @@ const MaterialTab = () => {
 									<TexturePreview
 										texture={texture}
 										label={displayName}
+										tip={TEXTURE_TIPS[ name ]}
 										expanded={expandedTextures[ name ]}
 										onToggle={() => toggleTextureExpanded( name )}
 										actions={
@@ -830,7 +860,7 @@ const MaterialTab = () => {
 								</div>
 							) )}
 							<Row>
-								<Switch label="Sync Repeat" checked={globalRepeatEnabled} onCheckedChange={setGlobalRepeatEnabled} />
+								<Switch label="Sync Repeat" tip="Changing Repeat on one image changes it on every image of this material." checked={globalRepeatEnabled} onCheckedChange={setGlobalRepeatEnabled} />
 							</Row>
 						</div>
 					)}
@@ -844,7 +874,7 @@ const MaterialTab = () => {
 
 						return (
 							<div className="space-y-2">
-								<div className="text-center opacity-50 text-xs">Add Texture</div>
+								<div className="text-center opacity-50 text-xs" title="Adds an image to an empty slot of this material.">Add Texture</div>
 								<div className="flex flex-wrap gap-1 justify-center">
 									{emptySlots.map( ( { name, label } ) => (
 										<button

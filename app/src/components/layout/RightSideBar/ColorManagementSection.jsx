@@ -5,7 +5,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGr
 import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Separator } from '@/components/ui/separator';
-import { InfoTip } from '@/components/ui/info-tip';
 import { Input } from '@/components/ui/input';
 import { Exposure } from '@/assets/icons';
 import { getApp } from '@/lib/appProxy';
@@ -34,7 +33,7 @@ const EV_MIN = - 6;
 const EV_MAX = 6;
 const toEV = multiplier => Math.min( EV_MAX, Math.max( EV_MIN, Math.log2( Math.max( multiplier, 1e-6 ) ) ) );
 
-const label = text => <span className="opacity-50 text-xs truncate">{text}</span>;
+const label = ( text, tip ) => <span className="opacity-50 text-xs truncate" title={tip}>{text}</span>;
 
 // How far auto exposure follows each view (its strength): a lit room keeps its exposure, or every view is averaged.
 const FOLLOW_OPTIONS = [
@@ -369,10 +368,7 @@ const ColorManagementSection = () => {
 			)}
 
 			<Row>
-				<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
-					Tone Mapping
-					<InfoTip text="How the light in the scene becomes a picture: how bright highlights roll off and how deep shadows hold. It changes how the render looks, never the render itself. (OCIO: view)" />
-				</span>
+				<span className="opacity-50 text-xs shrink-0" title="How the light in the scene is turned into a picture: how bright areas fade to white and how shadows keep their detail.">Tone Mapping</span>
 				<div className="flex flex-1 items-center justify-end gap-1 min-w-0">
 					{isBusy && <Loader2 size={12} className="animate-spin opacity-60 shrink-0" />}
 					<Select value={viewValue} onValueChange={onView} disabled={isBusy}>
@@ -384,10 +380,7 @@ const ColorManagementSection = () => {
 
 			{config && ( creative.length > 0 || technical.length > 0 ) && (
 				<Row>
-					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						Style
-						<InfoTip text="A finishing grade on top of the tone mapping, such as more contrast or black and white. The styles offered depend on the tone mapping. (OCIO: look)" />
-					</span>
+					<span className="opacity-50 text-xs truncate" title="An extra finishing look on top of the tone mapping, such as more contrast or black and white.">Style</span>
 					<Select value={status.activeView?.look ?? NONE} onValueChange={onLook} disabled={isBusy}>
 						{trigger( find( [ ...creative, ...technical ], status.activeView?.look )?.description ?? 'Default' )}
 						<SelectContent>
@@ -406,10 +399,7 @@ const ColorManagementSection = () => {
 
 			{config && (
 				<Row>
-					<span className="opacity-50 text-xs truncate flex items-center gap-1">
-						Screen
-						<InfoTip text="What the picture will be seen on. sRGB suits almost every computer screen. HDR screens are for HDR TVs and deliverables; on a regular screen they are shown converted. (OCIO: display)" />
-					</span>
+					<span className="opacity-50 text-xs truncate" title="The kind of screen the picture is meant for. sRGB suits almost every computer screen; HDR is for HDR TVs.">Screen</span>
 					<Select value={activeDisplay ?? ''} onValueChange={onDisplay} disabled={isBusy}>
 						{trigger( activeDisplay, 'Select screen' )}
 						<SelectContent className={hdrDisplays.length > 0 ? 'min-w-[20rem]' : undefined}>
@@ -428,41 +418,35 @@ const ColorManagementSection = () => {
 
 			<Row more={autoExposure ? (
 				<Row>
-					{label( 'Follow View' )}
+					{label( 'Follow View', 'How much the brightness changes as you look around the scene.' )}
 					<Select value={followValue( autoExposureStrength )} onValueChange={v => handleAutoExposureStrengthChange( Number( v ) )}>
 						{trigger( 'How far the brightness follows what you look at' )}
 						<SelectContent>{FOLLOW_OPTIONS.map( item )}</SelectContent>
 					</Select>
 				</Row>
 			) : null}>
-				{label( 'Auto Exposure' )}
+				{label( 'Auto Exposure', 'Sets the brightness for you from what the camera sees, as a camera does.' )}
 				<Switch checked={autoExposure} onCheckedChange={handleAutoExposureChange} />
 			</Row>
 
 			{/* With Auto Exposure on, the same value is a push on top of what Auto picks, not the exposure itself. */}
-			<Row title={autoExposure ? 'Brighter or darker than Auto Exposure picks. 0 shows Auto\'s choice.' : 'Brighter or darker, in stops'}>
-				<Slider icon={Exposure} label={autoExposure ? 'Adjust' : 'Exposure'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
+			<Row>
+				<Slider icon={Exposure} label={autoExposure ? 'Adjust' : 'Exposure'} tip={autoExposure ? 'Brighter or darker than Auto Exposure picks. 0 shows Auto\'s choice.' : 'Brighter or darker: +1 doubles the brightness, −1 halves it.'} min={EV_MIN} max={EV_MAX} step={0.05} value={[ toEV( exposure ) ]} snapPoints={[ 0 ]} onValueChange={onExposure} />
 			</Row>
 
 			<Row more={localExposure ? (
-				<Row title="How strongly bright areas are brought down">
-					<Slider label={'Amount'} min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureAmountChange( v[ 0 ] / 100 )} />
+				<Row>
+					<Slider label={'Amount'} tip="How strongly bright areas are brought down." min={0} max={80} step={5} unit="%" value={[ Math.round( ( 1 - localExposureHighlightContrast ) * 100 ) ]} snapPoints={[ 40 ]} onValueChange={v => handleLocalExposureAmountChange( v[ 0 ] / 100 )} />
 				</Row>
 			) : null}>
-				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					Balance Highlights
-					<InfoTip text="Brings bright windows and sunlit walls closer to the rest of the picture while keeping their detail. Applies to the screen and to saved pictures." />
-				</span>
+				<span className="opacity-50 text-xs truncate" title="Tones down bright windows and sunlit walls, keeping their detail. Applies to the screen and saved pictures.">Balance Highlights</span>
 				<Switch checked={localExposure} onCheckedChange={handleLocalExposureChange} />
 			</Row>
 
 			<Separator className="my-1 opacity-30" />
 
 			<Row>
-				<span className="opacity-50 text-xs truncate flex items-center gap-1">
-					Save EXR
-					<InfoTip text="Saves the render as an OpenEXR file for compositing or grading: the light itself, denoised, without exposure. Choose the colour space the next person in the pipeline expects." />
-				</span>
+				<span className="opacity-50 text-xs truncate" title="Saves the render as an EXR file for editing programs, keeping detail even in the brightest parts. Pick the colour space the program asks for.">Save EXR</span>
 				<div className="flex items-center gap-1">
 					{config ? (
 						<Select value={status.exportSpace ?? NONE} onValueChange={onExportSpace} disabled={isBusy}>
@@ -494,7 +478,7 @@ const ColorManagementSection = () => {
 				aria-expanded={advancedOpen}
 				onClick={() => setAdvancedOpen( ! advancedOpen )}
 				className="flex w-full items-center justify-between gap-2 text-xs opacity-50 hover:opacity-80 transition-opacity"
-				title="Colour system, render space and config variables — pipeline settings most scenes never change"
+				title="Colour settings for studio workflows. Most scenes never need them."
 			>
 				<span>Advanced</span>
 				<span className="flex items-center gap-1 min-w-0">
@@ -506,10 +490,7 @@ const ColorManagementSection = () => {
 			{advancedOpen && (
 				<>
 					<Row>
-						<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
-							Color System
-							<InfoTip text="Which colour system supplies the tone mappings, styles and screens. Blender is the default and covers almost everything; ACES is the film and VFX standard; None uses the engine's own curves. A studio's own OpenColorIO config can be loaded as a folder. Changing it reloads the colour settings and can rebuild the scene." />
-						</span>
+						<span className="opacity-50 text-xs shrink-0" title="Where the tone mappings and styles come from. Blender suits almost everything; ACES is the film-industry standard; None uses the built-in ones. Changing it can rebuild the scene.">Color System</span>
 						<Select value={config?.id ?? ( pending ? DEFAULT_OPTION.value : NONE )} onValueChange={onPickConfig} onOpenChange={onOpenConfigs} disabled={isBusy}>
 							{trigger( config ? ( find( configOptions, config.id )?.description ?? config.id ) : 'No colour management' )}
 							<SelectContent>
@@ -527,10 +508,7 @@ const ColorManagementSection = () => {
 
 					{config && workingSpaces.length > 0 && (
 						<Row>
-							<span className="opacity-50 text-xs shrink-0 flex items-center gap-1">
-								Render In
-								<InfoTip text="The colour space the render is calculated in. Leave it on Rec.709 unless the project calls for another — ACEScg is the usual choice in an ACES pipeline. Changing it rebuilds the scene and changes how every existing render looks." />
-							</span>
+							<span className="opacity-50 text-xs shrink-0" title="The colours the render works in. Keep Rec.709 unless your project asks for another, such as ACEScg. Changing it rebuilds the scene and changes the look.">Render In</span>
 							<Select value={status.workingSpaceAdopted ? status.workingSpace : nativeSpace ?? ''} onValueChange={onWorkingSpace} disabled={isBusy}>
 								{trigger( find( workingSpaces, status.workingSpace )?.description )}
 								<SelectContent>{workingSpaces.map( item )}</SelectContent>
@@ -540,10 +518,7 @@ const ColorManagementSection = () => {
 
 					{( config?.contextVariables ?? [] ).map( v => (
 						<Row key={v.name}>
-							<span className="opacity-50 text-xs truncate flex items-center gap-1">
-								{`$${v.name}`}
-								<InfoTip text={`A variable the config uses to pick a per-shot grade or LUT. Leave empty for the config's own default${ v.default ? ` (${v.default})` : '' }.`} />
-							</span>
+							<span className="opacity-50 text-xs truncate" title={`A name the colour system uses to pick a look for each shot. Leave it empty for the default${ v.default ? ` (${v.default})` : '' }.`}>{`$${v.name}`}</span>
 							<Input
 								key={`${config.id}:${v.name}`}
 								className="max-w-32 h-5 rounded-full text-xs px-2"

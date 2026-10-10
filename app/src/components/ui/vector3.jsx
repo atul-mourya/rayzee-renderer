@@ -8,6 +8,7 @@ const Vector3Component = ( {
 	step = 0.1,
 	precision = 1,
 	dragSensitivity = 1,
+	tip,
 	...props
 } ) => {
 
@@ -44,7 +45,7 @@ const Vector3Component = ( {
 
 	return (
 		<>
-			<div className="opacity-50 text-xs truncate">{props.label}</div>
+			<div className="opacity-50 text-xs truncate" title={tip}>{props.label}</div>
 			<div className="flex space-x-1.5 items-center justify-between">
 				{/* X component */}
 				<DraggableInput

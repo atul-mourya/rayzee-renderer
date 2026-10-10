@@ -6,7 +6,7 @@ const AXIS_SNAP_THRESHOLD = 4;
 const VIEW_BOX = "-3 -3 106 106"; // Add some padding to the viewBox to avoid clipping the at edges otherwide it should be 0 0 100 100
 const INITIAL_POSITION = { x: 50, y: 50 };
 
-export function Trackpad( { className, points = [], onMove, label, ...props } ) {
+export function Trackpad( { className, points = [], onMove, label, tip, ...props } ) {
 
 	const [ position, setPosition ] = useState( INITIAL_POSITION );
 	const [ isDragging, setIsDragging ] = useState( false );
@@ -127,7 +127,7 @@ export function Trackpad( { className, points = [], onMove, label, ...props } ) 
 
 	return (
 		<>
-			{label && <span className="opacity-50 text-xs truncate">{label}</span>}
+			{label && <span className="opacity-50 text-xs truncate" title={tip}>{label}</span>}
 			<div className={cn( "w-full h-full", className )} {...props}>
 				<svg
 					ref={svgRef}

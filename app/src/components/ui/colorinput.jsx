@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Paintbrush } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const ColorInput = ( { onChange, className, value, ...props } ) => {
+const ColorInput = ( { onChange, className, value, tip, ...props } ) => {
 
 	const [ color, setColor ] = useState( value || "#000000" );
 	const colorInputRef = useRef( null );
@@ -30,7 +30,7 @@ const ColorInput = ( { onChange, className, value, ...props } ) => {
 
 	return (
 		<>
-			<span className="opacity-50 text-xs truncate">{props.label}</span>
+			<span className="opacity-50 text-xs truncate" title={tip}>{props.label}</span>
 			<div className={cn( "relative flex h-5 w-full touch-none select-none items-center max-w-32", className )}>
 				<div className="relative h-full w-full grow overflow-hidden rounded-full bg-primary/20">
 					<Input

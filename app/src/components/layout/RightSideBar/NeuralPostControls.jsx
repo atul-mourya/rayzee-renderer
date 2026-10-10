@@ -2,7 +2,6 @@ import { Row } from "@/components/ui/row";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InfoTip } from "@/components/ui/info-tip";
 import { RETOUCH_MAX_PIXELS } from 'rayzee';
 import { usePathTracerStore as useStore } from '@/store';
 
@@ -82,7 +81,7 @@ const NeuralPostControls = () => {
 			)}
 
 			<Row>
-				<Switch label={"AI Upscaler"} checked={enableUpscaler} disabled={! denoised}
+				<Switch label={"AI Upscaler"} tip="Makes the finished render bigger with AI, so you can render small and deliver large." checked={enableUpscaler} disabled={! denoised}
 					onCheckedChange={handleEnableUpscalerChange} />
 			</Row>
 
@@ -90,7 +89,7 @@ const NeuralPostControls = () => {
 			{enableUpscaler && ( <>
 				<Row>
 					<Select value={upscalerScale.toString()} onValueChange={handleUpscalerScaleChange}>
-						<span className="opacity-50 text-xs truncate">Scale Factor</span>
+						<span className="opacity-50 text-xs truncate" title="How many times bigger the final picture is, on each side.">Scale Factor</span>
 						<SelectTrigger className="max-w-24 h-5 rounded-full" >
 							<SelectValue placeholder="Select scale" />
 						</SelectTrigger>
@@ -102,7 +101,7 @@ const NeuralPostControls = () => {
 				</Row>
 				<Row>
 					<Select value={upscalerQuality} onValueChange={handleUpscalerQualityChange}>
-						<span className="opacity-50 text-xs truncate">Quality</span>
+						<span className="opacity-50 text-xs truncate" title="How hard the AI works on the enlargement. Quality looks best but takes longest.">Quality</span>
 						<SelectTrigger className="max-w-32 h-5 rounded-full" >
 							<SelectValue placeholder="Select quality" />
 						</SelectTrigger>
@@ -121,7 +120,8 @@ const NeuralPostControls = () => {
 			{retouchVisible && (
 				<Row className="pt-2">
 					<Switch
-						label={<>AI Retouch<InfoTip text="A retouch pass over the finished render: adds fine surface detail and shapes light locally, the way a photographer would work on a photograph. Runs once when the render completes, before any upscale. Downloads a 141 MB model the first time." /></>}
+						label={"AI Retouch"}
+						tip="Sharpens surface detail and adjusts light and shade in the finished render, as a photographer would. Downloads a 141 MB model the first time."
 						checked={neuralRendering} disabled={! denoised}
 						onCheckedChange={handleNeuralRenderingChange} />
 				</Row>
@@ -142,19 +142,19 @@ const NeuralPostControls = () => {
 				    are handed to the model as inputs rather than applied after it, which is why their
 				    effect is not proportional to the number. */}
 				<Row>
-					<Slider label={<>Amount<InfoTip text="How much of the retouch reaches the image. 0% is off. The only one of these that blends predictably — reach for it first when the effect is too strong." /></>}
+					<Slider label={"Amount"} tip="How much of the AI touch-up shows. 0% is off. Lower this first when the effect is too strong."
 						unit="%" min={0} max={100} step={1} precision={0}
 						value={[ asPercent( nrIntensity ) ]}
 						onFinishChange={onPercent( 'intensity', 'nrIntensity' )} />
 				</Row>
 				<Row>
-					<Slider label={<>Local Light<InfoTip text="Shapes light within small areas, like dodge and burn. 0% is what the model would do on its own; negative asks for less, positive for more." /></>}
+					<Slider label={"Local Light"} tip="How much the AI brightens and darkens small areas. 0% is its own choice; below 0 is less, above 0 more."
 						unit="%" min={- 100} max={100} step={1} precision={0}
 						value={[ asOffset( nrLocalTone ) ]}
 						onFinishChange={onOffset( 'localTone', 'nrLocalTone' )} />
 				</Row>
 				<Row>
-					<Slider label={<>Fine Details<InfoTip text="Brings out fine surface detail, like clarity or texture. 0% is what the model would do on its own. Pushing it up suits flat materials; on a detailed surface it starts to look crunchy." /></>}
+					<Slider label={"Fine Details"} tip="How much the AI sharpens fine surface detail. 0% is its own choice. Too much looks over-sharpened on detailed surfaces."
 						unit="%" min={- 100} max={100} step={1} precision={0}
 						value={[ asOffset( nrLocalStructure ) ]}
 						onFinishChange={onOffset( 'localStructure', 'nrLocalStructure' )} />
@@ -162,7 +162,7 @@ const NeuralPostControls = () => {
 				{/* 0 keeps the render's own chroma; 100 takes the model's, which measured 6 % less
 				    saturated on a 1.9M-tri interior while brightness and detail stayed put. */}
 				<Row>
-					<Slider label={<>AI Color<InfoTip text="Whose colour reaches the image. 0% keeps your render's exactly. 100% takes the model's, which measures about 6% less saturated — brightness and detail are the same either way." /></>}
+					<Slider label={"AI Color"} tip="How much the AI may change your colours. 0% keeps yours exactly; 100% uses the AI's, which are a little less vivid."
 						unit="%" min={0} max={100} step={1} precision={0}
 						value={[ asPercent( nrColorStrength ) ]}
 						onFinishChange={onPercent( 'colorStrength', 'nrColorStrength' )} />

@@ -38,7 +38,7 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 
 			{/* Resolution */}
 			<Row>
-				<span className="opacity-50 text-xs truncate">Resolution</span>
+				<span className="opacity-50 text-xs truncate" title="The length of the picture's longer side, in pixels. Larger is sharper and slower.">Resolution</span>
 				<Select value={String( currentResolution )} onValueChange={onResolutionChange} disabled={disabled}>
 					<SelectTrigger className="max-w-32 h-5 rounded-full">
 						<SelectValue placeholder="Select resolution" />
@@ -52,8 +52,8 @@ const CanvasDimensionControls = ( { disabled = false, resolutionKey = 'resolutio
 			</Row>
 
 			{/* Computed dimensions display */}
-			<Row title="The shape is set by Aspect Ratio in the Camera tab, while previewing">
-				<span className="opacity-50 text-xs truncate">Output</span>
+			<Row>
+				<span className="opacity-50 text-xs truncate" title="The size of the finished picture. Its shape comes from Aspect Ratio in the Camera tab.">Output</span>
 				<span className="text-xs text-muted-foreground">
 					{outputWidth} &times; {outputHeight} ({panorama ? '2:1, 360°' : aspectRatioLabel( aspectRatioPreset, orientation )})
 				</span>
