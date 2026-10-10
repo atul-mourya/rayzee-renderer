@@ -28,6 +28,7 @@ import {
 } from '../TSL/SortGlobalKernels.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
+import { readPixels } from '../Processor/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../utils/Logger.js';
 import { deviceMemoryGB } from '../Processor/HostMemory.js';
@@ -758,16 +759,7 @@ export class PathTracer extends PathTracerStage {
 		const height = pool.renderHeight;
 		const pixels = width * height;
 
-		const readAttachment = async index => {
-
-			const padded = await this.renderer.readRenderTargetPixelsAsync( pool.readTarget, 0, 0, width, height, index );
-			const stride = Math.ceil( width * 16 / 256 ) * 64;
-			if ( stride === width * 4 ) return new Float32Array( padded.buffer, padded.byteOffset, pixels * 4 ).slice();
-			const tight = new Float32Array( pixels * 4 );
-			for ( let y = 0; y < height; y ++ ) tight.set( padded.subarray( y * stride, y * stride + width * 4 ), y * width * 4 );
-			return tight;
-
-		};
+		const readAttachment = index => readPixels( this.renderer, pool.readTarget, width, height, index );
 
 		const readBuffer = async ( attr, Type ) => attr ? new Type( await this.renderer.getArrayBufferAsync( attr, null, 0, pixels * 4 ) ) : null;
 		const aux = this._auxGBufferEnabled && this._auxSamples > 0;

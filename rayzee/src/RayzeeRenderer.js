@@ -15,7 +15,7 @@ import { usesTextureCoordinates } from './Processor/GeometryExtractor.js';
 import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './Processor/StorageTexturePool.js';
 import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
 import { BuildTimer } from './Processor/BuildTimer.js';
-import { TextureReadback } from './Processor/TextureReadback.js';
+import { TextureReadback, readPixels } from './Processor/TextureReadback.js';
 import { createLogger, fmt } from './utils/Logger.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
@@ -2766,14 +2766,14 @@ export class RayzeeRenderer extends EventDispatcher {
 			const fn = ! gpu && tone.gain ? await tone.gain.cpu() : null;
 			const data = gpu ?? toneMapToRGBA8( shown
 				? await this._readTexture( shown.texture, width, height )
-				: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), { ...tone, pixelGain: fn && { fn, width, height } } );
+				: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: fn && { fn, width, height } } );
 			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
 
 		const { data: linear, source: read } = source === 'display'
 			? await this._readDisplaySource( target, width, height )
-			: { data: await this.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 ), source: 'accumulation' };
+			: { data: await readPixels( this.renderer, target, width, height ), source: 'accumulation' };
 
 		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
 		// answer to "linear in what primaries", which only means something once a config is loaded.
@@ -3450,7 +3450,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	async _readDisplaySource( accumulation, width, height ) {
 
 		const shown = this._displaySource( accumulation );
-		if ( ! shown ) return { data: await this.renderer.readRenderTargetPixelsAsync( accumulation, 0, 0, width, height, 0 ), source: 'accumulation' };
+		if ( ! shown ) return { data: await readPixels( this.renderer, accumulation, width, height ), source: 'accumulation' };
 		return { data: await this._readTexture( shown.texture, width, height ), source: shown.source };
 
 	}

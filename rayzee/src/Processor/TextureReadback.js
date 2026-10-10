@@ -14,6 +14,23 @@ import { RenderTarget, FloatType, RGBAFormat, NearestFilter } from 'three';
 import { QuadMesh, NodeMaterial } from 'three/webgpu';
 import { texture as tslTexture, screenCoordinate, ivec2 } from 'three/tsl';
 
+/**
+ * An RGBA render target's pixels without the 256-byte row padding WebGPU copies them with.
+ * @returns {Promise<TypedArray>} `width * height * 4`, top row first
+ */
+export async function readPixels( renderer, target, width, height, index = 0 ) {
+
+	const data = await renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, index );
+	const row = width * 4;
+	const stride = Math.ceil( row * data.BYTES_PER_ELEMENT / 256 ) * 256 / data.BYTES_PER_ELEMENT;
+	if ( stride === row ) return data;
+
+	const tight = new data.constructor( row * height );
+	for ( let y = 0; y < height; y ++ ) tight.set( data.subarray( y * stride, y * stride + row ), y * row );
+	return tight;
+
+}
+
 export class TextureReadback {
 
 	constructor( renderer ) {
@@ -48,7 +65,7 @@ export class TextureReadback {
 
 		try {
 
-			return await this.renderer.readRenderTargetPixelsAsync( this.draw( source, width, height ), 0, 0, width, height );
+			return await readPixels( this.renderer, this.draw( source, width, height ), width, height );
 
 		} finally {
 

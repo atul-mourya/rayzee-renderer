@@ -81,11 +81,13 @@ export default function HeatmapOverlay( {
 
 					}
 
-					const len = Math.min( buffer.length, pixelBuffer.length );
-					for ( let i = 0; i < len; i ++ ) {
+					// Rows arrive padded to 256 bytes.
+					const row = 4 * w;
+					const stride = Math.ceil( row * buffer.BYTES_PER_ELEMENT / 256 ) * 256 / buffer.BYTES_PER_ELEMENT;
+					for ( let y = 0; y < h; y ++ ) for ( let x = 0; x < row; x ++ ) {
 
-						const v = buffer[ i ] * 255;
-						pixelBuffer[ i ] = v < 0 ? 0 : v > 255 ? 255 : v;
+						const v = buffer[ y * stride + x ] * 255;
+						pixelBuffer[ y * row + x ] = v < 0 ? 0 : v > 255 ? 255 : v;
 
 					}
 
