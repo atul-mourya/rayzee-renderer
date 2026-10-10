@@ -13,11 +13,11 @@ import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
 
 const W = 384, H = 256;
 
-function image( fn ) {
+function image( fn, w = W, h = H ) {
 
-	const px = new Float32Array( W * H * 4 );
-	for ( let y = 0; y < H; y ++ ) for ( let x = 0; x < W; x ++ ) px.set( [ ...fn( x, y ), 1 ], ( y * W + x ) * 4 );
-	const t = new DataTexture( px, W, H, RGBAFormat, FloatType );
+	const px = new Float32Array( w * h * 4 );
+	for ( let y = 0; y < h; y ++ ) for ( let x = 0; x < w; x ++ ) px.set( [ ...fn( x, y ), 1 ], ( y * w + x ) * 4 );
+	const t = new DataTexture( px, w, h, RGBAFormat, FloatType );
 	t.needsUpdate = true;
 	return { px, texture: t };
 
@@ -141,6 +141,59 @@ describeGPU( 'local exposure', () => {
 		const out = new Float32Array( await evaluate( renderer, n, { uv: [ uvs, 'vec2' ], rgb: [ rgbs, 'vec3' ] }, 'float',
 			( { uv, rgb } ) => stage.gainNode( vec3( rgb ), vec2( uv ) ) ) );
 		for ( let i = 0; i < n; i ++ ) expect( Math.log2( out[ i ] ) ).toBeCloseTo( Math.log2( expected[ i ] ), 3 );
+
+	} );
+
+	// Read back as the shaders see them: f32 in, f32 out.
+	async function built( img ) {
+
+		const s = new LocalExposure( renderer, { enabled: true, highlightContrast: 0.5, shadowContrast: 1, detailStrength: 1 } );
+		s.build( { getTexture: () => img.texture, getState: () => 0 } );
+		return {
+			stage: s,
+			grid: new Float32Array( await renderer.getArrayBufferAsync( s._grid.value ) ),
+			blur: new Float32Array( await renderer.getArrayBufferAsync( s._blur.value ) ),
+		};
+
+	}
+
+	it( 'leaves NaN and infinite pixels out of the grid and the blurred picture', async () => {
+
+		// One of each in the grey wall, the window and the dark corner.
+		const bad = new Set( [ '200,40', '60,60', '340,220' ] );
+		const worse = new Set( [ '201,40', '61,60', '341,220' ] );
+		const dirty = await built( image( ( x, y ) => bad.has( `${x},${y}` ) ? [ NaN, NaN, NaN ]
+			: worse.has( `${x},${y}` ) ? [ Infinity, Infinity, Infinity ] : room( x, y ) ) );
+
+		expect( dirty.grid.every( Number.isFinite ) ).toBe( true );
+		expect( dirty.blur.every( Number.isFinite ) ).toBe( true );
+		// An infinite pixel read as 2^40 would have raised its 32×32 block by ~25 stops, and the blur would carry it.
+		for ( let i = 0; i < blur.length; i ++ ) expect( Math.abs( dirty.blur[ i ] - blur[ i ] ) ).toBeLessThan( 0.01 );
+
+	} );
+
+	it( 'gives an infinite pixel a gain, not NaN, in JavaScript and in TSL', async () => {
+
+		const p = stage._params;
+		expect( Number.isFinite( localExposureGain( p, grid, blur, 0.3, 0.3, Infinity, 0 ) ) ).toBe( true );
+		const out = new Float32Array( await evaluate( renderer, 1, { uv: [ Float32Array.of( 0.3, 0.3 ), 'vec2' ], rgb: [ Float32Array.of( Infinity, Infinity, Infinity ), 'vec3' ] },
+			'float', ( { uv, rgb } ) => stage.gainNode( vec3( rgb ), vec2( uv ) ) ) );
+		expect( Number.isFinite( out[ 0 ] ) ).toBe( true );
+
+	} );
+
+	it( 'blurs a strip far wider than tall without leaning on its first row', async () => {
+
+		// 2048×64: the vertical pass reaches 32 blurred texels across two. Top half at 1, bottom at 1/16: four stops apart.
+		const strip = await built( image( ( x, y ) => {
+
+			const l = y < 32 ? 1 : 1 / 16;
+			return [ l, l, l ];
+
+		}, 2048, 64 ) );
+
+		const blurW = 64;
+		for ( const row of [ 0, 1 ] ) expect( strip.blur[ row * blurW + 32 ] ).toBeCloseTo( - 2, 1 );
 
 	} );
 

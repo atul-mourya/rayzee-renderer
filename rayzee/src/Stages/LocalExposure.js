@@ -1,5 +1,5 @@
 import { Fn, float, int, uint, ivec2, vec2, vec4, uniform, If, Loop, max, min, select, exp, exp2, log2, dot, mix, floor,
-	textureLoad, workgroupArray, workgroupBarrier, localId, workgroupId, attributeArray, storage,
+	floatBitsToUint, textureLoad, workgroupArray, workgroupBarrier, localId, workgroupId, attributeArray, storage,
 	atomicAdd, atomicLoad, atomicStore, toneMappingExposure } from 'three/tsl';
 import { TextureNode } from 'three/webgpu';
 import { Vector4 } from 'three';
@@ -47,7 +47,8 @@ const clamp = ( x, a, b ) => Math.min( Math.max( x, a ), b );
  */
 export function localExposureGain( p, grid, blur, u, v, lum, logExposure ) {
 
-	const logL = Math.log2( Math.max( lum, DARKEST ) );
+	// Capped: an infinite pixel's y − y would be NaN.
+	const logL = Math.min( Math.log2( Math.max( lum, DARKEST ) ), LOG_CEIL );
 
 	const bw = p[ 6 ], bh = p[ 7 ];
 	const bx = clamp( u * p[ 2 ] - 0.5, 0, bw - 1 ), by = clamp( v * p[ 3 ] - 0.5, 0, bh - 1 );
@@ -87,7 +88,7 @@ export const LOCAL_EXPOSURE_WGSL = /* wgsl */ `
 @group(1) @binding(2) var<uniform> le: array<vec4<f32>, 4>;
 
 fn rayzee_gain( uv: vec2<f32>, linear: vec3<f32>, exposure: f32 ) -> f32 {
-	let logL = log2( max( dot( linear, vec3<f32>( ${Y.join( ', ' )} ) ), ${DARKEST} ) );
+	let logL = min( log2( max( dot( linear, vec3<f32>( ${Y.join( ', ' )} ) ), ${DARKEST} ) ), ${LOG_CEIL}.0 );
 	let logExposure = log2( exposure );
 
 	let bs = vec2<i32>( le[ 1 ].zw );
@@ -204,18 +205,24 @@ export class LocalExposure extends RenderStage {
 						const lum = dot( textureLoad( input, ivec2( x, y ) ).xyz, yw )
 							.add( dot( textureLoad( input, ivec2( x1, y ) ).xyz, yw ) )
 							.add( dot( textureLoad( input, ivec2( x, y1 ) ).xyz, yw ) )
-							.add( dot( textureLoad( input, ivec2( x1, y1 ) ).xyz, yw ) ).mul( 0.25 );
-						const logL = log2( max( lum, DARKEST ) ).clamp( LOG_FLOOR, LOG_CEIL ).toVar();
-						const f = logL.add( logExposure ).sub( BIN_MIN ).div( BIN_MAX - BIN_MIN ).clamp( 0.0, 1.0 ).mul( BINS - 1 ).toVar();
-						const b0 = uint( floor( f ) ).min( uint( BINS - 1 ) );
-						const b1 = b0.add( uint( 1 ) ).min( uint( BINS - 1 ) );
-						const w1 = f.sub( floor( f ) );
-						const w0 = float( 1 ).sub( w1 );
-						const level = logL.sub( LOG_FLOOR ).mul( FIXED );
-						atomicAdd( sums.element( b0 ), uint( level.mul( w0 ).add( 0.5 ) ) );
-						atomicAdd( weights.element( b0 ), uint( w0.mul( FIXED ).add( 0.5 ) ) );
-						atomicAdd( sums.element( b1 ), uint( level.mul( w1 ).add( 0.5 ) ) );
-						atomicAdd( weights.element( b1 ), uint( w1.mul( FIXED ).add( 0.5 ) ) );
+							.add( dot( textureLoad( input, ivec2( x1, y1 ) ).xyz, yw ) ).mul( 0.25 ).toVar();
+						// A NaN or infinite texel is left out, as the meter leaves it out: max() may keep a NaN on some
+						// GPUs, and an infinite one would read as 2^40 and darken its whole cell.
+						If( floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) ), () => {
+
+							const logL = log2( max( lum, DARKEST ) ).clamp( LOG_FLOOR, LOG_CEIL ).toVar();
+							const f = logL.add( logExposure ).sub( BIN_MIN ).div( BIN_MAX - BIN_MIN ).clamp( 0.0, 1.0 ).mul( BINS - 1 ).toVar();
+							const b0 = uint( floor( f ) ).min( uint( BINS - 1 ) );
+							const b1 = b0.add( uint( 1 ) ).min( uint( BINS - 1 ) );
+							const w1 = f.sub( floor( f ) );
+							const w0 = float( 1 ).sub( w1 );
+							const level = logL.sub( LOG_FLOOR ).mul( FIXED );
+							atomicAdd( sums.element( b0 ), uint( level.mul( w0 ).add( 0.5 ) ) );
+							atomicAdd( weights.element( b0 ), uint( w0.mul( FIXED ).add( 0.5 ) ) );
+							atomicAdd( sums.element( b1 ), uint( level.mul( w1 ).add( 0.5 ) ) );
+							atomicAdd( weights.element( b1 ), uint( w1.mul( FIXED ).add( 0.5 ) ) );
+
+						} );
 
 					} );
 
@@ -259,8 +266,10 @@ export class LocalExposure extends RenderStage {
 					const x = ox.add( bx ), y = oy.add( by );
 					If( x.lessThan( width ).and( y.lessThan( height ) ), () => {
 
-						sum.addAssign( dot( textureLoad( input, ivec2( x, y ) ).xyz, yw ).max( 0.0 ) );
-						count.addAssign( 1.0 );
+						const lum = dot( textureLoad( input, ivec2( x, y ) ).xyz, yw ).toVar();
+						const finite = floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) );
+						sum.addAssign( select( finite, lum.max( 0.0 ), float( 0 ) ) );
+						count.addAssign( select( finite, float( 1 ), float( 0 ) ) );
 
 					} );
 
@@ -318,18 +327,15 @@ export class LocalExposure extends RenderStage {
 
 					const t = float( o ).div( radius );
 					const w = exp( t.mul( t ).mul( - 16.7 ) );
-					const m = at.add( o ).toVar();
-					If( m.lessThan( int( 0 ) ), () => {
+					// Mirrored as often as it takes: the radius follows the width, so across a strip four times wider than
+					// tall the vertical pass reaches past one reflection, and clamping there piled the taps on row 0.
+					const period = size.mul( int( 2 ) );
+					const c = at.add( o ).mod( period ).add( period ).mod( period ).toVar();
+					If( c.greaterThanEqual( size ), () => {
 
-						m.assign( m.negate().sub( int( 1 ) ) );
-
-					} );
-					If( m.greaterThanEqual( size ), () => {
-
-						m.assign( size.mul( int( 2 ) ).sub( m ).sub( int( 1 ) ) );
+						c.assign( period.sub( c ).sub( int( 1 ) ) );
 
 					} );
-					const c = m.clamp( int( 0 ), size.sub( int( 1 ) ) );
 					const i = ax ? y.mul( blurW ).add( c ) : c.mul( blurW ).add( x );
 					sum.addAssign( src.element( uint( i ) ).mul( w ) );
 					total.addAssign( w );
@@ -449,7 +455,7 @@ export class LocalExposure extends RenderStage {
 
 		return Fn( ( [ color, at ] ) => {
 
-			const logL = log2( max( dot( color, vec4( ...Y, 0 ).xyz ), DARKEST ) ).toVar();
+			const logL = log2( max( dot( color, vec4( ...Y, 0 ).xyz ), DARKEST ) ).min( LOG_CEIL ).toVar();
 			const logExposure = log2( toneMappingExposure ).toVar();
 
 			const bs = ivec2( p1.zw );
