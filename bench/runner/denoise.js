@@ -2,9 +2,8 @@
  * Real-time denoiser regression suite.
  *
  * Everything else in this bench measures the path tracer's own accumulation buffer. Nothing
- * measured what the denoisers did to it, so the entire ASVGF / EdgeAware chain was ungated —
- * and it shipped making a converged image ~4.7x further from ground truth than not denoising
- * at all, with every existing suite green.
+ * measured what the denoisers did to it, so a denoiser chain once shipped making a converged
+ * image ~4.7x further from ground truth than not denoising at all, with every existing suite green.
  *
  * The gate is deliberately reference-free in the golden sense: for each scene and sample
  * count it renders TWICE, once with the denoiser off and once on, and compares each against
@@ -111,7 +110,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 			// is what makes the ratio immune to path-tracer changes: a genuine sampling
 			// improvement moves both numerator and denominator.
 			const off = await bench.setDenoiser( 'none' );
-			if ( off.asvgf || off.nrd || off.bilateral || off.edgeFilter || off.oidn ) {
+			if ( off.nrd || off.oidn ) {
 
 				throw new Error( `setDenoiser('none') left stages enabled: ${JSON.stringify( off )}` );
 
@@ -130,7 +129,7 @@ export async function runDenoise( bench, { bless = false, only, log = () => {} }
 				// A typo'd strategy name hits the switch's default branch and silently leaves
 				// every denoiser off — the suite would then compare raw against raw, report a
 				// ratio of exactly 1.00, and pass forever.
-				const anyEnabled = state.asvgf || state.nrd || state.bilateral || state.edgeFilter || state.oidn;
+				const anyEnabled = state.nrd || state.oidn;
 				if ( ! anyEnabled ) {
 
 					throw new Error(

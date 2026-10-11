@@ -190,7 +190,7 @@ describe( 'renderToBuffer', () => {
 
 		const app = withPublished( makeApp(), null );
 		app._issues = new IssueLog( { strict: true } );
-		app.denoisingManager = { denoiser: null, denoiserStrategy: 'asvgf' };
+		app.denoisingManager = { denoiser: null, denoiserStrategy: 'nrd' };
 
 		await expect( app.renderToBuffer( { source: 'display' } ) ).rejects.toThrow( /output.source_fallback/ );
 

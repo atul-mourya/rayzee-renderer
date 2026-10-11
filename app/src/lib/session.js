@@ -284,7 +284,7 @@ export async function restoreSession( app, record, { pickFile, reuseLoaded = fal
 	} );
 
 	restorePanels( record.panels );
-	usePathTracerStore.getState().applyExposureToEngine();
+	usePathTracerStore.getState().applyPanelToEngine();
 	usePathTracerStore.getState()._applyCanvasDimensions();
 	useLightStore.getState().setLights( app.lightManager.getAll() );
 	useCameraStore.getState().setCameraNames( app.cameraManager.getCameraNames() );

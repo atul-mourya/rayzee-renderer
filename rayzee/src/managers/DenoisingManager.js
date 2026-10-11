@@ -11,7 +11,7 @@ import { createLogger } from '../utils/Logger.js';
 const neuralLog = createLogger( 'neural' );
 import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
 import {
-	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS,
+	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS,
 } from '../Stages/DenoiserSettings.js';
 
 // A refresh slower than this is a slideshow, not a live view, so the cadence swaps to a cheaper
@@ -85,7 +85,7 @@ const historyFade = ( samples ) => Math.max( 0, 1 - samples / HISTORY_HANDOFF_SA
 
 /**
  * Orchestrates all denoising, post-processing, and AI upscaling:
- *   - Real-time denoiser strategy switching (ASVGF / NRD / EdgeAware / None)
+ *   - Real-time denoiser strategy switching (OIDN / NRD / None)
  *   - OIDN (offline denoise on render completion)
  *   - AI Upscaler
  *   - Auto-exposure coordination
@@ -118,7 +118,7 @@ export class DenoisingManager extends EventDispatcher {
 		this.pipeline = pipeline;
 
 		// Stage references — only used internally for orchestration
-		this._stages = stages; // { pathTracer, asvgf, nrd, variance, bilateralFilter, edgeFilter, autoExposure, compositor }
+		this._stages = stages; // { pathTracer, normalDepth, motionVector, nrd, autoExposure, compositor }
 
 		this._getExposure = getExposure;
 		this._getSaturation = getSaturation;
@@ -349,7 +349,9 @@ export class DenoisingManager extends EventDispatcher {
 			this.dispatchEvent( { type: EngineEvents.DENOISING_START, continuous: !! e.continuous } );
 		this._denoiserEndHandler = e => {
 
-			if ( this.denoiser?.hasOutput ) this._publishOutput();
+			// A refresh that lands after the live view stopped wanting one would cover what replaced it.
+			const current = ! e.continuous || ( this.continuousDenoise && ! this._cadenceSuspended );
+			if ( this.denoiser?.hasOutput && current ) this._publishOutput();
 			this.dispatchEvent( { type: EngineEvents.DENOISING_END, continuous: !! e.continuous } );
 
 		};
@@ -447,9 +449,8 @@ export class DenoisingManager extends EventDispatcher {
 	// ── Denoiser Strategy ─────────────────────────────────────────
 
 	/**
-	 * Active real-time denoiser, derived from stage state so it can't drift from
-	 * setDenoiserStrategy / setASVGFEnabled.
-	 * @returns {'asvgf'|'nrd'|'edgeaware'|'none'}
+	 * Active real-time denoiser, derived from stage state so it can't drift from setDenoiserStrategy.
+	 * @returns {'none'|'nrd'|'oidn'}
 	 */
 	get denoiserStrategy() {
 
@@ -457,105 +458,55 @@ export class DenoisingManager extends EventDispatcher {
 		// belongs in the same one-of-N choice. Two of these running at once would mean paying for
 		// a per-frame denoise whose result the OIDN overlay then covers.
 		if ( this.continuousDenoise ) return 'oidn';
-		if ( this._stages.asvgf?.enabled ) return 'asvgf';
 		if ( this._stages.nrd?.enabled ) return 'nrd';
-		if ( this._stages.edgeFilter?.enabled ) return 'edgeaware';
 		return 'none';
 
 	}
 
 	/**
 	 * Switches the real-time denoiser strategy.
-	 * @param {string} strategy - 'none' | 'asvgf' | 'nrd' | 'edgeaware'
-	 * @param {string} [preset] - quality preset for 'asvgf' (ASVGF_QUALITY_PRESETS) or 'nrd' (NRD_QUALITY_PRESETS)
+	 * @param {string} strategy - one of DENOISER_STRATEGIES; any other name is recorded and runs 'none'
+	 * @param {string} [preset] - NRD quality preset (NRD_QUALITY_PRESETS)
 	 */
 	setDenoiserStrategy( strategy, preset ) {
 
 		const s = this._stages;
 
-		// Disable all real-time denoisers first
-		if ( s.asvgf ) s.asvgf.enabled = false;
-		if ( s.nrd ) s.nrd.enabled = false;
-		if ( s.variance ) s.variance.enabled = false;
-		if ( s.bilateralFilter ) s.bilateralFilter.enabled = false;
-		if ( s.edgeFilter ) s.edgeFilter.setFilteringEnabled( false );
+		if ( ! DENOISER_STRATEGIES.includes( strategy ) ) {
+
+			this._issues?.record(
+				ISSUE_CODES.DENOISER_UNAVAILABLE,
+				`'${strategy}' is not a live denoiser (${DENOISER_STRATEGIES.join( ', ' )}) — none is used`,
+				{ strategy }
+			);
+			strategy = 'none';
+
+		}
+
+		// NRD reprojects through motion vectors, which mean nothing once every pixel is its own direction.
+		if ( strategy === 'nrd' && this._isPanorama() ) {
+
+			this._issues?.record( ISSUE_CODES.DENOISER_UNAVAILABLE, 'NRD cannot run in a panorama — oidn is used', { strategy } );
+			strategy = 'oidn';
+
+		}
 
 		this._clearDenoiserTextures();
 
+		if ( s.nrd ) s.nrd.enabled = strategy === 'nrd';
+
+		if ( s.nrd?.enabled ) {
+
+			// Stale history from the last time it ran describes another view.
+			s.nrd.resetHistory?.();
+			this._applyNRDPreset( preset || 'medium' );
+
+		}
+
 		// Which denoiser owns the live view. Deliberately says nothing about the finished image:
-		// wanting OIDN on the viewport is not the same as opting into a final pass.
+		// wanting OIDN on the viewport is not the same as opting into a final pass. Also re-syncs
+		// the G-buffer stages, so NRD must already be set.
 		this.setContinuousDenoise( strategy === 'oidn' );
-
-		switch ( strategy ) {
-
-			case 'asvgf':
-				s.asvgf.enabled = true;
-				if ( s.variance ) s.variance.enabled = true;
-				if ( s.bilateralFilter ) s.bilateralFilter.enabled = true;
-				s.asvgf.setTemporalEnabled?.( true );
-				this._applyASVGFPreset( preset || 'medium' );
-				break;
-
-			case 'nrd':
-				if ( s.nrd ) {
-
-					s.nrd.enabled = true;
-					// Stale history from the last time it ran describes another view.
-					s.nrd.resetHistory?.();
-					this._applyNRDPreset( preset || 'medium' );
-
-				}
-
-				break;
-
-			case 'edgeaware':
-				// EdgeAware is a spatial-only SVGF à-trous — it consumes the Variance
-				// stage's per-pixel variance to drive its luminance edge-stop.
-				if ( s.variance ) s.variance.enabled = true;
-				if ( s.edgeFilter ) s.edgeFilter.setFilteringEnabled( true );
-				break;
-
-		}
-
-		this._syncGBufferStages();
-
-	}
-
-	/**
-	 * Enables/disables ASVGF denoising with coordination of related stages.
-	 * @param {boolean} enabled
-	 * @param {string}  [qualityPreset]
-	 */
-	setASVGFEnabled( enabled, qualityPreset ) {
-
-		const s = this._stages;
-		if ( s.asvgf ) s.asvgf.enabled = enabled;
-		if ( s.variance ) s.variance.enabled = enabled;
-		if ( s.bilateralFilter ) s.bilateralFilter.enabled = enabled;
-
-		if ( enabled ) {
-
-			// One real-time denoiser at a time.
-			if ( s.nrd ) s.nrd.enabled = false;
-			s.asvgf?.setTemporalEnabled?.( true );
-			this._applyASVGFPreset( qualityPreset || 'medium' );
-
-		}
-
-		// Coordinate with EdgeAware filtering
-		if ( s.edgeFilter ) s.edgeFilter.setFilteringEnabled( ! enabled );
-
-		this._syncGBufferStages();
-
-	}
-
-	/**
-	 * Applies an ASVGF quality preset.
-	 * @param {string} presetName - 'low' | 'medium' | 'high'
-	 */
-	applyASVGFPreset( presetName ) {
-
-		this._applyASVGFPreset( presetName );
 
 	}
 
@@ -569,6 +520,13 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
+	/** True while a strategy that reprojects through motion vectors is active. */
+	get requiresMotionVectors() {
+
+		return !! this._stages.nrd?.enabled;
+
+	}
+
 	/**
 	 * Gate the G-buffer stages (NormalDepth, MotionVector) on demand: they only
 	 * need to run when a real-time denoiser consumes their output. Idling them
@@ -576,17 +534,10 @@ export class DenoisingManager extends EventDispatcher {
 	 * navigation and frees their textures. Call after any consumer toggle.
 	 *
 	 * MotionVector requires NormalDepth (reads pathtracer:normalDepth) and its
-	 * consumers (ASVGF, NRD) are a subset of NormalDepth's, so NormalDepth is
-	 * always enabled whenever MotionVector is. Adaptive sampling / Variance / OIDN
-	 * do NOT read these signals, so they don't keep the G-buffer alive.
+	 * consumer (NRD) also reads NormalDepth, so NormalDepth is always enabled
+	 * whenever MotionVector is. Adaptive sampling and OIDN's own pass do NOT read
+	 * these signals; only OIDN's motion history keeps NormalDepth alive.
 	 */
-	/** True while a strategy that reprojects through motion vectors is active. */
-	get requiresMotionVectors() {
-
-		return !! ( this._stages.asvgf?.enabled || this._stages.nrd?.enabled );
-
-	}
-
 	_syncGBufferStages() {
 
 		const s = this._stages;
@@ -594,8 +545,8 @@ export class DenoisingManager extends EventDispatcher {
 		const mv = s.motionVector;
 
 		const motionNeeded = this.requiresMotionVectors;
-		// pathtracer:normalDepth consumed by ASVGF, NRD, EdgeFilter, BilateralFilter, the OIDN history
-		const normalNeeded = motionNeeded || this.historyWanted || !! ( s.edgeFilter?.enabled || s.bilateralFilter?.enabled );
+		// pathtracer:normalDepth consumed by NRD and the OIDN history
+		const normalNeeded = motionNeeded || this.historyWanted;
 		if ( ! this.historyWanted ) this._releaseHistory();
 
 		if ( nd ) {
@@ -624,9 +575,8 @@ export class DenoisingManager extends EventDispatcher {
 
 		}
 
-		// PathTracer's aux MRT (normalDepth + albedo) is consumed by the real-time denoisers (ASVGF/
-		// BilateralFilter read albedo; ASVGF/EdgeFilter read normalDepth) and by OIDN (reads the
-		// MRT read-targets directly). When none are active the wavefront skips those writes entirely.
+		// PathTracer's aux MRT (normalDepth + albedo) is consumed by NRD (albedo, hit distance) and by
+		// OIDN (reads the MRT read-targets directly). When neither is active the wavefront skips those writes.
 		s.pathTracer?.setAuxGBufferEnabled?.( normalNeeded || !! this.denoiser?.enabled );
 
 		// Clean-aux normal: temporally accumulate the aux normal only for OIDN clean-aux models
@@ -641,7 +591,7 @@ export class DenoisingManager extends EventDispatcher {
 		// disabled (lazily re-created on the next dispatch after re-enable). Every strategy/denoiser
 		// toggle funnels through here after the enabled flags above are settled, so this is the one
 		// choke point. dispose() is idempotent, so re-running it for an already-released stage is a no-op.
-		for ( const stage of [ s.asvgf, s.nrd, s.variance, s.bilateralFilter, s.edgeFilter, nd, mv ] ) {
+		for ( const stage of [ s.nrd, nd, mv ] ) {
 
 			if ( stage && ! stage.enabled ) stage.releaseGPUMemory?.();
 
@@ -849,21 +799,29 @@ export class DenoisingManager extends EventDispatcher {
 
 		this._cadenceSuspended = !! suspended;
 		this._historyDirty = true;
-		if ( ! this._cadenceSuspended ) return;
 
-		// The accumulation is what a final render shows; a held preview frame would otherwise sit
-		// over it until the render finished.
-		this.denoiser?.abort();
-		this._unpublishOutput();
+		if ( this._cadenceSuspended ) {
+
+			// The accumulation is what a final render shows; a held preview frame would otherwise sit
+			// over it until the render finished.
+			this.denoiser?.abort();
+			this._unpublishOutput();
+
+		}
+
+		this._syncGBufferStages();
 
 	}
 
 	setContinuousDenoise( enabled ) {
 
+		// Once nothing else uses OIDN it turns off, and a disabled denoiser can no longer be aborted.
+		if ( ! enabled && ! this.finalDenoise ) this.denoiser?.abort();
 		this.continuousDenoise = !! enabled;
 		this._syncOIDNInUse();
 		this._lastCadenceAt = - Infinity;
 		this._resetCadence();
+		this._syncGBufferStages();
 
 	}
 
@@ -895,19 +853,24 @@ export class DenoisingManager extends EventDispatcher {
 
 	}
 
-	// Not at a size proven too slow to denoise while moving: the raw render owns the view there.
+	// Not at a size proven too slow to denoise while moving (the raw render owns the view there), nor
+	// through a final render or a panorama, which never reproject it.
 	get historyWanted() {
 
-		return this.temporalHistory && this.continuousDenoise && !! this.denoiser?.enabled && ! this._movingHopeless;
+		return this.temporalHistory && this.continuousDenoise && !! this.denoiser?.enabled && ! this._movingHopeless
+			&& ! this._cadenceSuspended && ! this._isPanorama();
 
 	}
 
 	get historyActive() {
 
-		const pt = this._stages.pathTracer;
-		return this.historyWanted && ! this._cadenceSuspended && !! this._stages.normalDepth?.enabled
-			&& pt?.uniforms?.get( 'cameraProjection' )?.value !== CAMERA_PROJECTION_IDS.equirectangular
-			&& ! ( pt?.visMode?.value > 0 );
+		return this.historyWanted && !! this._stages.normalDepth?.enabled && ! ( this._stages.pathTracer?.visMode?.value > 0 );
+
+	}
+
+	_isPanorama() {
+
+		return this._stages.pathTracer?.uniforms?.get( 'cameraProjection' )?.value === CAMERA_PROJECTION_IDS.equirectangular;
 
 	}
 
@@ -1443,7 +1406,9 @@ export class DenoisingManager extends EventDispatcher {
 		// What closes the render, if anything. A full pass at the chosen tier when that switch is
 		// on; otherwise, if OIDN owns the live view, one last cheap refresh — the cadence's last
 		// tick lands a few samples short, and the picture should match the render that finished.
-		const closing = this.finalDenoise ? 'final' : this.continuousDenoise ? 'refresh' : null;
+		// A final render has no live view to match, so with the switch off it stays undenoised.
+		const live = this.continuousDenoise && ! this._cadenceSuspended;
+		const closing = this.finalDenoise ? 'final' : live ? 'refresh' : null;
 
 		// Registered only once the closing denoise has been launched, so the next 'end' is
 		// unambiguously that one — a cadence run's end can look identical otherwise.
@@ -1686,53 +1651,6 @@ export class DenoisingManager extends EventDispatcher {
 	// These methods match the DenoisingAPI surface so call sites need
 	// zero or minimal changes after facade removal.
 
-	/** Updates ASVGF stage parameters. */
-	setASVGFParams( params ) {
-
-		this._stages.asvgf?.updateParameters( params );
-
-	}
-
-	/**
-	 * Toggle the ASVGF heatmap compute pass. When enabled, the stage writes
-	 * the heatmap to its public `heatmapTarget` RenderTarget — the host is
-	 * responsible for rendering it.
-	 */
-	toggleASVGFHeatmap( enabled ) {
-
-		this._stages.asvgf?.setHeatmapEnabled?.( enabled );
-
-	}
-
-	/**
-	 * Configures ASVGF for a specific render mode (multi-stage coordination).
-	 * @param {Object} config - { enabled, temporalAlpha, atrousIterations, ... }
-	 */
-	configureASVGFForMode( config ) {
-
-		if ( ! this._stages.asvgf ) return;
-
-		this._stages.asvgf.enabled = config.enabled;
-		if ( this._stages.variance ) this._stages.variance.enabled = config.enabled;
-		if ( this._stages.bilateralFilter ) this._stages.bilateralFilter.enabled = config.enabled;
-
-		if ( config.enabled ) {
-
-			this._stages.asvgf.updateParameters( config );
-
-		}
-
-		this._syncGBufferStages();
-
-	}
-
-	/** Updates edge-aware filtering parameters. */
-	setEdgeAwareParams( params ) {
-
-		this._stages.edgeFilter?.updateUniforms( params );
-
-	}
-
 	/** Updates auto-exposure stage parameters. */
 	setAutoExposureParams( params ) {
 
@@ -1850,7 +1768,7 @@ export class DenoisingManager extends EventDispatcher {
 
 	/**
 	 * Switches strategy with automatic reset (convenience wrapper).
-	 * @param {'none'|'asvgf'|'nrd'|'edgeaware'} strategy
+	 * @param {'none'|'nrd'|'oidn'} strategy
 	 * @param {string} [preset]
 	 */
 	setStrategy( strategy, preset ) {
@@ -1919,12 +1837,8 @@ export class DenoisingManager extends EventDispatcher {
 		const ctx = this.pipeline?.context;
 		if ( ! ctx ) return;
 
-		const keys = [
-			'asvgf:output', 'asvgf:demodulated', 'asvgf:gradient',
-			'variance:output', 'bilateralFiltering:output',
-			'edgeFiltering:output', 'nrd:output', 'oidn:output',
-		];
-		keys.forEach( k => ctx.removeTexture( k ) );
+		ctx.removeTexture( 'nrd:output' );
+		ctx.removeTexture( 'oidn:output' );
 
 	}
 
@@ -1936,23 +1850,6 @@ export class DenoisingManager extends EventDispatcher {
 		const params = {};
 		for ( const key of NRD_PRESET_KEYS ) params[ key ] = NRD_DEFAULTS[ key ];
 		this._stages.nrd?.updateParameters( { ...params, ...preset } );
-
-	}
-
-	_applyASVGFPreset( presetName ) {
-
-		const preset = ASVGF_QUALITY_PRESETS[ presetName ];
-		if ( ! preset ) return;
-		// ASVGF consumes temporalAlpha / gradientStrength / maxAccumFrames.
-		// BilateralFilter consumes phi* edge-stopping params and atrousIterations.
-		// Variance consumes varianceBoost. Each stage cherry-picks what it needs.
-		this._stages.asvgf?.updateParameters( preset );
-		this._stages.bilateralFilter?.updateParameters( preset );
-		if ( this._stages.variance && preset.varianceBoost !== undefined ) {
-
-			this._stages.variance.varianceBoost.value = preset.varianceBoost;
-
-		}
 
 	}
 

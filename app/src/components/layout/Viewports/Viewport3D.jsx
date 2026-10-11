@@ -4,7 +4,6 @@ import AutoFocusOverlay from './AutoFocusOverlay';
 import { PictureStatus } from './LoadingOverlay';
 import StatsMeter from './StatsMeter';
 import StatsPanel from './StatsPanel';
-import HeatmapOverlay from './HeatmapOverlay';
 import SaveControls from './SaveControls';
 import ViewportToolbar from './ViewportToolbar';
 import InteractionContextMenu from '@/components/ui/InteractionContextMenu';
@@ -53,7 +52,6 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 	const statsRef = useRef( stats );
 	const setLoading = useStore( state => state.setLoading );
 	const appMode = useStore( state => state.appMode );
-	const showAsvgfHeatmap = usePathTracerStore( state => state.showAsvgfHeatmap );
 
 	// Auto-fit scaling logic - only initialize after canvases are ready
 	const {
@@ -234,7 +232,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 				// Startup opens on Preview without a tab change, and only a tab change applies a preset.
 				usePathTracerStore.getState().handleConfigureForPreview();
-				usePathTracerStore.getState().applyExposureToEngine();
+				usePathTracerStore.getState().applyPanelToEngine();
 				app.settings.set( 'dofMode', useCameraStore.getState().dofMode, { reset: false } );
 
 				setLoading( { isLoading: true, title: "Starting", status: "Loading Assets...", progress: 60 } );
@@ -438,18 +436,7 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 			<DimensionDisplay dimension={renderResolution} />
 			<StatsMeter viewportMode={viewportMode} />
-			{isAppInitialized && (
-				<>
-					<StatsPanel app={appRef.current} container={viewportRef.current} />
-					<HeatmapOverlay
-						app={appRef.current}
-						renderTarget={appRef.current?.stages?.asvgf?.heatmapTarget}
-						visible={showAsvgfHeatmap}
-						title="ASVGF Debug"
-						position="bottom-right"
-					/>
-				</>
-			)}
+			{isAppInitialized && <StatsPanel app={appRef.current} container={viewportRef.current} />}
 
 			{shouldShowSaveControls && (
 				<SaveControls onSave={handleSave} onDiscard={handleDiscard} />

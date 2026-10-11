@@ -4,57 +4,12 @@
 export const GBUFFER_MISS_DEPTH = 65504.0;
 export const GBUFFER_MISS_THRESHOLD = 6e4;
 
-// Albedo demodulation safety floor. ASVGF and BilateralFilter MUST use the
-// same value — demod (`color / safeAlbedo`) and remod (`lighting * safeAlbedo`)
-// only round-trip exactly when both sides agree.
+// Albedo demodulation safety floor. Demod (`color / safeAlbedo`) and remod (`lighting * safeAlbedo`)
+// only round-trip exactly when both sides use the same value.
 export const ALBEDO_EPS = 0.01;
 
-export const ASVGF_QUALITY_PRESETS = {
-	// phiColor / phiDepth are RELATIVE tolerances (fractions). Bigger = more
-	// permissive. The adaptive temporal gradient (gradientStrength > 0) is always
-	// on: it measures real change in units of noise σ (gradientSigmaScale), so a
-	// static scene reads ~0 (no convergence penalty) and only moving lights / anim
-	// / disocclusion drop history. See ASVGF._buildGradientCompute.
-	low: {
-		temporalAlpha: 0.1,
-		gradientStrength: 0.8,
-		gradientSigmaScale: 2.5,
-		gradientNoiseFloor: 0.05,
-		atrousIterations: 3,
-		phiColor: 1.0,
-		phiNormal: 64.0,
-		phiDepth: 0.1,
-		phiLuminance: 6.0,
-		maxAccumFrames: 16,
-		varianceBoost: 0.5
-	},
-	medium: {
-		temporalAlpha: 0.03,
-		gradientStrength: 1.0,
-		gradientSigmaScale: 2.5,
-		gradientNoiseFloor: 0.05,
-		atrousIterations: 4,
-		phiColor: 0.5,
-		phiNormal: 128.0,
-		phiDepth: 0.05,
-		phiLuminance: 4.0,
-		maxAccumFrames: 64,
-		varianceBoost: 1.0
-	},
-	high: {
-		temporalAlpha: 0.0,
-		gradientStrength: 1.0,
-		gradientSigmaScale: 2.5,
-		gradientNoiseFloor: 0.05,
-		atrousIterations: 6,
-		phiColor: 0.3,
-		phiNormal: 256.0,
-		phiDepth: 0.02,
-		phiLuminance: 2.0,
-		maxAccumFrames: 128,
-		varianceBoost: 1.5
-	}
-};
+// The live view's denoisers, for setDenoiserStrategy.
+export const DENOISER_STRATEGIES = Object.freeze( [ 'none', 'nrd', 'oidn' ] );
 
 // normHitDist = hitDist / (A + B·viewZ). A constant, not a uniform: the Shade write and the NRD
 // decode must agree, and the normalization is a pure round trip.
@@ -122,21 +77,9 @@ export const NRD_QUALITY_PRESETS = {
 	},
 };
 
-const ASVGF_MEDIUM = ASVGF_QUALITY_PRESETS.medium;
-
 // What the live denoisers, the final OIDN pass and the AI upscaler start with; a host's own state seeds from these.
 export const DENOISER_DEFAULTS = {
-	denoiserStrategy: 'none', // the live view's denoiser: 'none' | 'edgeaware' | 'asvgf' | 'nrd' | 'oidn'
-
-	// EdgeAware denoiser (spatial-only SVGF à-trous). filterStrength: final blend
-	// (0 = raw, 1 = filtered). edgeAtrousIterations: à-trous passes (step 1,2,4,8,16).
-	// edgePhiLuminance: variance-scaled luminance edge-stop. edgePhiNormal: normal cone
-	// exponent. edgePhiDepth: RELATIVE depth tolerance (fraction of ray distance).
-	filterStrength: 1.0,
-	edgeAtrousIterations: 5,
-	edgePhiLuminance: 4.0,
-	edgePhiNormal: 64.0,
-	edgePhiDepth: 0.1,
+	denoiserStrategy: 'none', // the live view's denoiser, one of DENOISER_STRATEGIES
 
 	enableOIDN: false,
 	oidnQuality: 'fast',
@@ -156,25 +99,6 @@ export const DENOISER_DEFAULTS = {
 	upscalerScale: 2,
 	upscalerQuality: 'fast',
 	upscalerHdr: true,
-
-	// ASVGF runs its quality preset whenever it is switched on, so its values are that preset's.
-	enableASVGF: false,
-	asvgfQualityPreset: 'medium',
-	asvgfTemporalAlpha: ASVGF_MEDIUM.temporalAlpha,
-	asvgfAtrousIterations: ASVGF_MEDIUM.atrousIterations,
-	asvgfPhiColor: ASVGF_MEDIUM.phiColor,
-	asvgfPhiNormal: ASVGF_MEDIUM.phiNormal,
-	asvgfPhiDepth: ASVGF_MEDIUM.phiDepth,
-	asvgfPhiLuminance: ASVGF_MEDIUM.phiLuminance,
-	asvgfVarianceBoost: ASVGF_MEDIUM.varianceBoost,
-	asvgfMaxAccumFrames: ASVGF_MEDIUM.maxAccumFrames,
-	// Must be > 0: the gradient also rejects fireflies before the EMA smears them across
-	// ~1/alpha frames. At 0 the denoiser measures ~3x worse than no denoiser at 1 spp.
-	asvgfGradientStrength: ASVGF_MEDIUM.gradientStrength,
-	asvgfGradientSigmaScale: ASVGF_MEDIUM.gradientSigmaScale,
-	asvgfGradientNoiseFloor: ASVGF_MEDIUM.gradientNoiseFloor,
-	asvgfDebugMode: 0,
-	showAsvgfHeatmap: false,
 
 	// NRD (ReBLUR port) real-time denoiser — see NRD_DEFAULTS / NRD_QUALITY_PRESETS.
 	nrdQualityPreset: 'medium',

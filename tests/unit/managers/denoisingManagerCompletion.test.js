@@ -3,6 +3,7 @@ import { EventDispatcher } from 'three';
 import { DenoisingManager } from '@/core/managers/DenoisingManager.js';
 import { AIUpscaler } from '@/core/Passes/AIUpscaler.js';
 import { presentRGBA8 } from '@/core/neural/NeuralSuperRes.js';
+import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
 
 vi.mock( '@/core/neural/NeuralSuperRes.js', () => ( {
 	readDenoisedHalf: vi.fn( async () => ( { half: new Uint16Array( 64 ), width: 4, height: 4 } ) ),
@@ -76,7 +77,6 @@ const makeManager = () => {
 	manager.upscaler = null;
 	// Stages the strategy setter touches, so tests can drive the real API path.
 	manager._stages.pathTracer = { interactionMode: false, setCleanAuxNormal: vi.fn(), setAuxGBufferEnabled: vi.fn() };
-	manager._stages.asvgf = { enabled: false, setTemporalEnabled: vi.fn(), updateParameters: vi.fn() };
 	manager._stages.nrd = { enabled: false, resetHistory: vi.fn(), updateParameters: vi.fn() };
 	return manager;
 
@@ -110,10 +110,10 @@ describe( 'DenoisingManager completion chain', () => {
 
 	it( 'lets the finished image get a pass without OIDN owning the live view', () => {
 
-		manager.setDenoiserStrategy( 'asvgf' );
+		manager.setDenoiserStrategy( 'nrd' );
 		manager.setOIDNEnabled( true );
 
-		expect( manager.denoiserStrategy ).toBe( 'asvgf' );
+		expect( manager.denoiserStrategy ).toBe( 'nrd' );
 		expect( manager.continuousDenoise ).toBe( false );
 		expect( manager.finalDenoise ).toBe( true );
 
@@ -121,11 +121,10 @@ describe( 'DenoisingManager completion chain', () => {
 
 	it( 'never lets two denoisers own the live view at once', () => {
 
-		manager.setDenoiserStrategy( 'asvgf' );
-		expect( manager._stages.asvgf.enabled ).toBe( true );
+		manager.setDenoiserStrategy( 'nrd' );
+		expect( manager._stages.nrd.enabled ).toBe( true );
 
 		manager.setDenoiserStrategy( 'oidn' );
-		expect( manager._stages.asvgf.enabled ).toBe( false );
 		expect( manager._stages.nrd.enabled ).toBe( false );
 
 		manager.setDenoiserStrategy( 'nrd' );
@@ -186,6 +185,53 @@ describe( 'DenoisingManager completion chain', () => {
 		expect( dn.start.mock.calls[ 0 ][ 0 ]?.continuous ).toBe( true );
 		// No reload — the refreshes' own model is already loaded.
 		expect( dn.updateQuality ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'leaves a final render undenoised when its switch is off, even with OIDN live', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		manager.setOIDNEnabled( false );
+		manager.setCadenceSuspended( true );
+		manager.onRenderComplete( { isStillComplete: () => true } );
+
+		expect( dn.start ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'keeps no motion history through a final render or a panorama', () => {
+
+		const nd = { enabled: false, reset: vi.fn(), setInstanceLeafOutput: vi.fn(), releaseGPUMemory: vi.fn() };
+		manager._stages.normalDepth = nd;
+		manager.setDenoiserStrategy( 'oidn' );
+		expect( nd.enabled ).toBe( true );
+
+		manager.setCadenceSuspended( true );
+		expect( manager.historyWanted ).toBe( false );
+		expect( nd.enabled ).toBe( false );
+		expect( nd.releaseGPUMemory ).toHaveBeenCalled();
+
+		manager.setCadenceSuspended( false );
+		expect( nd.enabled ).toBe( true );
+
+		manager._stages.pathTracer.uniforms = { get: () => ( { value: CAMERA_PROJECTION_IDS.equirectangular } ) };
+		manager._syncGBufferStages();
+		expect( manager.historyWanted ).toBe( false );
+		expect( nd.enabled ).toBe( false );
+
+	} );
+
+	it( 'drops the motion history with live OIDN, without a strategy switch', () => {
+
+		const nd = { enabled: false, reset: vi.fn(), setInstanceLeafOutput: vi.fn(), releaseGPUMemory: vi.fn() };
+		manager._stages.normalDepth = nd;
+		manager.setDenoiserStrategy( 'oidn' );
+		manager._syncGBufferStages();
+		expect( nd.enabled ).toBe( true );
+
+		// What deterministic mode does.
+		manager.setContinuousDenoise( false );
+		expect( nd.enabled ).toBe( false );
 
 	} );
 

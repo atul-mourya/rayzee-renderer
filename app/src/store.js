@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
-import { DEFAULT_STATE, CAMERA_PRESETS, ASVGF_QUALITY_PRESETS, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions, isPanorama } from '@/Constants';
+import { DEFAULT_STATE, CAMERA_PRESETS, DENOISER_STRATEGIES, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions, isPanorama } from '@/Constants';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode, sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
 import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
@@ -405,77 +405,11 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 
 	setInteractionModeEnabled: val => set( { interactionModeEnabled: val } ),
-	setEnableASVGF: val => set( { enableASVGF: val } ),
-	setShowAsvgfHeatmap: val => set( { showAsvgfHeatmap: val } ),
-	setAsvgfTemporalAlpha: val => set( { asvgfTemporalAlpha: val } ),
-	setAsvgfVarianceClip: val => set( { asvgfVarianceClip: val } ),
-	setAsvgfMomentClip: val => set( { asvgfMomentClip: val } ),
-	setAsvgfPhiColor: val => set( { asvgfPhiColor: val } ),
-	setAsvgfPhiNormal: val => set( { asvgfPhiNormal: val } ),
-	setAsvgfPhiDepth: val => set( { asvgfPhiDepth: val } ),
-	setAsvgfPhiLuminance: val => set( { asvgfPhiLuminance: val } ),
-	setAsvgfAtrousIterations: val => set( { asvgfAtrousIterations: val } ),
-	setAsvgfFilterSize: val => set( { asvgfFilterSize: val } ),
-	setAsvgfVarianceBoost: val => set( { asvgfVarianceBoost: val } ),
-	setAsvgfMaxAccumFrames: val => set( { asvgfMaxAccumFrames: val } ),
-	setAsvgfGradientStrength: val => set( { asvgfGradientStrength: val } ),
-	setAsvgfGradientSigmaScale: val => set( { asvgfGradientSigmaScale: val } ),
-	setAsvgfGradientNoiseFloor: val => set( { asvgfGradientNoiseFloor: val } ),
-	setAsvgfDebugMode: val => set( { asvgfDebugMode: val } ),
-	setAsvgfPreset: val => set( { asvgfQualityPreset: val } ),
 
 	// Canvas dimension setters
 	setAspectRatioPreset: val => set( { aspectRatioPreset: val } ),
 
-	// Denoiser strategy and EdgeAware filter setters
 	setDenoiserStrategy: val => set( { denoiserStrategy: val } ),
-	setFilterStrength: val => set( { filterStrength: val } ),
-	setEdgeAtrousIterations: val => set( { edgeAtrousIterations: val } ),
-	setEdgePhiLuminance: val => set( { edgePhiLuminance: val } ),
-	setEdgePhiNormal: val => set( { edgePhiNormal: val } ),
-	setEdgePhiDepth: val => set( { edgePhiDepth: val } ),
-
-	handleAsvgfQualityPresetChange: handleChange(
-		val => set( { asvgfQualityPreset: val } ),
-		( val, app ) => {
-
-			const preset = ASVGF_QUALITY_PRESETS[ val ];
-			if ( preset && app ) {
-
-				const store = get();
-
-				// Update store state
-				Object.entries( preset ).forEach( ( [ key, value ] ) => {
-
-					const setter = `setAsvgf${key.charAt( 0 ).toUpperCase()}${key.slice( 1 )}`;
-					if ( store[ setter ] ) {
-
-						store[ setter ]( value );
-
-					}
-
-				} );
-
-				app.denoisingManager.setASVGFParams( preset );
-				app.reset();
-
-			}
-
-		}
-	),
-
-	handleAsvgfDebugModeChange: handleChange(
-		val => set( { asvgfDebugMode: val } ),
-		( val, app ) => {
-
-			app.denoisingManager.setASVGFParams( {
-				debugMode: parseInt( val ),
-				enableDebug: parseInt( val ) > 0
-			} );
-
-		},
-		false
-	),
 
 	// NRD (ReBLUR) handlers. Presets rewrite the slider state so the UI shows what the engine runs.
 	handleNrdQualityPresetChange: handleChange(
@@ -529,38 +463,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		( val, app ) => app.denoisingManager.setNRDParams( { enableAntiFirefly: val } ),
 		false
 	),
-
-	// Smart ASVGF configuration based on render mode
-	handleConfigureASVGFForMode: ( mode ) => {
-
-		const app = getApp();
-		if ( ! app ) return;
-
-		const configs = {
-			preview: {
-				enabled: false,
-				temporalAlpha: 0.5
-			},
-			progressive: {
-				enabled: true,
-				temporalAlpha: 0.1,
-				atrousIterations: 4
-			},
-			'final-render': {
-				enabled: true,
-				temporalAlpha: 0.05,
-				atrousIterations: 6
-			}
-		};
-
-		const config = configs[ mode ];
-		if ( config ) {
-
-			app.denoisingManager.configureASVGFForMode( config );
-
-		}
-
-	},
 
 	// Handlers
 	handlePathTracerChange: handleChange(
@@ -715,10 +617,7 @@ const usePathTracerStore = create( ( set, get ) => ( {
 
 			// The engine owns which features panorama is incompatible with — mirror the
 			// outcome rather than restating the rule here.
-			set( {
-				denoiserStrategy: app.denoisingManager.denoiserStrategy,
-				enableASVGF: !! app.stages.asvgf?.enabled,
-			} );
+			set( { denoiserStrategy: app.denoisingManager.denoiserStrategy } );
 			useCameraStore.setState( { autoFocusMode: app.cameraManager.autoFocusMode } );
 
 		}
@@ -937,68 +836,16 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	// Denoiser strategy and EdgeAware filter handlers
 	handleDenoiserStrategyChange: handleChange(
-		val => set( { denoiserStrategy: val, enableASVGF: val === 'asvgf' } ),
-		( val, app ) => app.denoisingManager.setStrategy(
-			val, val === 'nrd' ? get().nrdQualityPreset : get().asvgfQualityPreset
-		),
+		val => set( { denoiserStrategy: val } ),
+		( val, app ) => {
+
+			app.denoisingManager.setStrategy( val, get().nrdQualityPreset );
+			// The engine may run another (NRD cannot in a panorama).
+			set( { denoiserStrategy: app.denoisingManager.denoiserStrategy } );
+
+		},
 		false // engine method handles reset internally
-	),
-
-	handleFilterStrengthChange: handleChange(
-		val => set( { filterStrength: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setEdgeAwareParams( { filterStrength: value } );
-
-		},
-		true
-	),
-
-	handleEdgeAtrousIterationsChange: handleChange(
-		val => set( { edgeAtrousIterations: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setEdgeAwareParams( { atrousIterations: value } );
-
-		},
-		true
-	),
-
-	handleEdgePhiLuminanceChange: handleChange(
-		val => set( { edgePhiLuminance: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setEdgeAwareParams( { phiLuminance: value } );
-
-		},
-		true
-	),
-
-	handleEdgePhiNormalChange: handleChange(
-		val => set( { edgePhiNormal: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setEdgeAwareParams( { phiNormal: value } );
-
-		},
-		true
-	),
-
-	handleEdgePhiDepthChange: handleChange(
-		val => set( { edgePhiDepth: Array.isArray( val ) ? val[ 0 ] : val } ),
-		( val, app ) => {
-
-			const value = Array.isArray( val ) ? val[ 0 ] : val;
-			app.denoisingManager.setEdgeAwareParams( { phiDepth: value } );
-
-		},
-		true
 	),
 
 	handleDebugThresholdChange: val => {
@@ -1048,15 +895,26 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		false
 	),
 
-	// Auto and local exposure keep no record in the engine's settings: the panel's values are put on it at
-	// startup and after a session restores the panel. Only what the panel shows — the rest stay the engine's.
-	applyExposureToEngine: () => {
+	// The live denoiser and auto and local exposure keep no record in the engine's settings: the panel's values
+	// are put on it at startup and after a session restores the panel. Only what the panel shows — the rest stay
+	// the engine's. A session can name a denoiser that no longer exists; it gets the default.
+	applyPanelToEngine: () => {
 
 		const app = getApp();
 		if ( ! app ) return;
 		const s = get();
-		app.denoisingManager.setAutoExposureParams( { strength: s.autoExposureStrength } );
-		app.denoisingManager.setAutoExposure( s.autoExposure );
+		const dm = app.denoisingManager;
+		const strategy = DENOISER_STRATEGIES.includes( s.denoiserStrategy ) ? s.denoiserStrategy : DEFAULT_STATE.denoiserStrategy;
+		if ( dm.denoiserStrategy !== strategy ) dm.setDenoiserStrategy( strategy, s.nrdQualityPreset );
+		// The engine may run another (NRD cannot in a panorama).
+		set( { denoiserStrategy: dm.denoiserStrategy } );
+		dm.setNRDParams( {
+			maxAccumulatedFrameNum: s.nrdMaxAccumulatedFrameNum, maxBlurRadius: s.nrdMaxBlurRadius,
+			prepassBlurRadius: s.nrdPrepassBlurRadius, enableAntiFirefly: s.nrdAntiFirefly,
+		} );
+		dm.setNRDDebugMode( s.nrdDebugMode );
+		dm.setAutoExposureParams( { strength: s.autoExposureStrength } );
+		dm.setAutoExposure( s.autoExposure );
 		app.setLocalExposureParams?.( { highlightContrast: s.localExposureHighlightContrast } );
 		app.setLocalExposure?.( s.localExposure );
 
@@ -1384,17 +1242,6 @@ const usePathTracerStore = create( ( set, get ) => ( {
 		val => set( { interactionModeEnabled: val } ),
 		( val, app ) => app.settings.set( 'interactionModeEnabled', val ),
 		false // Don't reset - exitInteractionMode handles the soft reset internally
-	),
-
-	handleEnableASVGFChange: handleChange(
-		val => set( { enableASVGF: val } ),
-		( val, app ) => app.denoisingManager.setASVGFEnabled( val, get().asvgfQualityPreset ),
-		false
-	),
-
-	handleShowAsvgfHeatmapChange: handleChange(
-		val => set( { showAsvgfHeatmap: val } ),
-		( val, app ) => app.denoisingManager.toggleASVGFHeatmap( val )
 	),
 
 	// Canvas configuration handlers

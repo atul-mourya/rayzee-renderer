@@ -13,7 +13,7 @@ You are debugging the Rayzee rendering pipeline. Follow this systematic diagnost
 Ask the user (if not already clear) which symptom they see:
 - **Black screen** → likely a disabled stage publishing dark output, or context texture missing
 - **Flickering** → temporal data not persisting, ping-pong swap issue, or reset loop
-- **Ghosting/smearing** → ASVGF temporal accumulation bug, motion vector error, or camera matrix mismatch
+- **Ghosting/smearing** → NRD or OIDN motion-history bug, motion vector error, or camera matrix mismatch
 - **Wrong colors** → Compositor showing the wrong picture from its display sources
 - **NaN artifacts (white/black pixels)** → normalize(vec3(0)) on miss rays, or uninitialized data
 - **Y-flipped image** → QuadMesh UV Y-flip not handled in screen-space shader
@@ -22,8 +22,7 @@ Ask the user (if not already clear) which symptom they see:
 The Compositor (`rayzee/src/Stages/Compositor.js`) shows the first published texture of the display sources, which the
 renderer passes in from its `_displaySources()` hook, and falls back to `pathtracer:color`:
 - Renderer core (`RayzeeRenderer.js`): no sources — it always shows the accumulation
-- Viewer (`PathTracerApp.js`): `oidn:output` → `edgeFiltering:output` → `bilateralFiltering:output` → `asvgf:output` → `nrd:output`
-- `bloom:output` is checked before them, though no stage publishes it today
+- Viewer (`PathTracerApp.js`): `oidn:output` → `nrd:output`
 
 **If a higher-priority stage is enabled but outputting black/wrong data, it overrides the correct output.**
 `DenoisingManager._clearDenoiserTextures()` is what wipes stale denoiser outputs on a strategy switch.
@@ -38,7 +37,7 @@ For each stage in the pipeline:
 ## Step 4: Check Event Wiring
 Verify events are properly connected:
 - `pathtracer:frameComplete` → triggers downstream stages
-- `pipeline:historyReset` → the core's hard restart; ASVGF and NRD clear temporal history
+- `pipeline:historyReset` → the core's hard restart; NRD clears its temporal history
 - `pipeline:lightingChanged` → new model or environment; auto exposure re-adapts
 - `pathtracer:interactionStart` / `interactionEnd` → the viewer's moving-camera resolution drop
 

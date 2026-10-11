@@ -37,9 +37,8 @@ RayzeeRenderer (core)                     PathTracerApp (viewer) adds
    │  ├─ EnvironmentManager               ├─ overlayManager: OverlayManager
    │  ├─ ShaderBuilder                    │   └─ TileHelper, OutlineHelper, gizmo
    │  └─ StorageTexturePool               ├─ stages from _createExtraStages():
-   ├─ [ _createExtraStages() ]            │   NormalDepth, MotionVector, NRD, ASVGF,
-   └─ Compositor                          │   Variance, BilateralFilter, EdgeFilter, AutoExposure,
-                                          │   LocalExposure
+   ├─ [ _createExtraStages() ]            │   NormalDepth, MotionVector, NRD, AutoExposure,
+   └─ Compositor                          │   LocalExposure
                                           └─ add-ons: ColorManagement, PhysicalSky,
                                               BidirectionalIntegrator, ArchiveImporter, storage
 ```
@@ -70,7 +69,7 @@ const unsub = subscribeApp( ( app ) => {
 
 ## Design
 
-1. **Explicit order.** Stages run in the order they are added. Order matters: BilateralFilter reads what ASVGF and Variance published earlier in the same frame.
+1. **Explicit order.** Stages run in the order they are added. Order matters: NRD reads what NormalDepth and MotionVector published earlier in the same frame.
 2. **Textures by name.** Stages share textures through the context, never by holding each other.
 3. **Signals by event.** Stages talk over the event bus. A stage that needs the path tracer itself — its uniforms, or an extra output — is handed it in its options (`options.pathTracer`).
 4. **The core names no capability.** It announces a hard restart (`pipeline:historyReset`) and a lighting change (`pipeline:lightingChanged`); each stage decides what of its own history to drop.
@@ -87,7 +86,7 @@ Shared state for all stages: named textures, render targets, uniforms and a stat
 // Textures
 context.setTexture( 'pathtracer:color', texture );
 context.getTexture( 'pathtracer:color' );
-context.removeTexture( 'asvgf:output' );
+context.removeTexture( 'nrd:output' );
 
 // State
 context.setState( 'renderMode', 1 );
@@ -134,8 +133,7 @@ const color = context.getTexture( 'pathtracer:color' );
 | `pathtracer:frameComplete` | PathTracerStage, every traced frame | `{ frame, isComplete }` | — |
 | `camera:moved` | PathTracerStage, on a frame the camera changed | — | NormalDepth |
 | `pathtracer:interactionStart` / `pathtracer:interactionEnd` | PathTracerStage, when its CameraOptimizer enters / leaves interaction mode | — | PathTracerApp (drops / restores the render scale) |
-| `pathtracer:viewpointChanged` | PathTracerStage, after interaction mode ends and the stage resets | — | Variance |
-| `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | ASVGF, NRD |
+| `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | NRD |
 | `pipeline:lightingChanged` | RayzeeRenderer (model or environment load, rebuild after adding or removing an object), EnvironmentManager mode change (`callbacks.onLightingChanged`) | — | AutoExposure |
 | `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, LocalExposure, OverlayManager (hides TileHelper) |
 | `pipeline:resize` | `RenderPipeline.setSize()` | `{ width, height }` | PathTracerStage |
@@ -144,7 +142,7 @@ const color = context.getTexture( 'pathtracer:color' );
 | `motionvector:computed` | MotionVector | `{ frame, isFirstFrame }` | — |
 | `stage:enabled` / `stage:disabled` | `RenderStage.enable()` / `disable()` | `{ stage }` | — |
 
-Parameters reach a stage through its methods, not events: the viewer's `DenoisingManager` calls `asvgf.updateParameters()`, `autoExposure.updateParameters()` and the like, and the sample ceiling goes through `settings.set( 'maxSamples', n )`.
+Parameters reach a stage through its methods, not events: the viewer's `DenoisingManager` calls `nrd.updateParameters()`, `autoExposure.updateParameters()` and the like, and the sample ceiling goes through `settings.set( 'maxSamples', n )`.
 
 > There is no `tile:changed` event — the engine renders full-frame only. TileHelper's overlay is driven by `tileProgress` / `end` events the OIDN denoiser and AI upscaler emit on themselves (DOM-style `addEventListener`, not this bus); see Overlays below.
 
@@ -153,8 +151,8 @@ Parameters reach a stage through its methods, not events: the viewer's `Denoisin
 // PathTracerStage signals a finished frame
 this.emit( 'pathtracer:frameComplete', { frame: this.frameCount, isComplete: this.isComplete } );
 
-// ASVGF listens for the core's restart signal
-this.on( 'pipeline:historyReset', () => this.resetTemporalData() );
+// NRD listens for the core's restart signal
+this.on( 'pipeline:historyReset', () => this.resetHistory() );
 ```
 
 ---
@@ -172,7 +170,7 @@ pipeline.reset();                   // pipeline:reset, every stage's reset(), co
 pipeline.setSize( width, height );  // pipeline:resize, every stage's setSize()
 pipeline.dispose();
 
-pipeline.getStage( 'EdgeAwareFiltering' );  // by the stage's name
+pipeline.getStage( 'NormalDepth' );  // by the stage's name
 pipeline.setStageEnabled( 'NRD', false );
 ```
 
@@ -209,10 +207,6 @@ export const StageExecutionMode = {
 | NormalDepth | `ALWAYS` | viewer |
 | MotionVector | `ALWAYS` | viewer |
 | NRD | `PER_CYCLE` | viewer |
-| ASVGF | `PER_CYCLE` | viewer |
-| Variance | `ALWAYS` | viewer |
-| BilateralFilter | `ALWAYS` | viewer |
-| EdgeFilter | `PER_CYCLE` | viewer |
 | AutoExposure | `ALWAYS` | viewer |
 | LocalExposure | `ALWAYS` | viewer |
 | Compositor | `ALWAYS` | core |
@@ -285,7 +279,7 @@ Setting `stage.enabled` directly, as `DenoisingManager` does, emits nothing.
 
 **Wavefront architecture:** PathTracer is a pure wavefront tracer — there is no megakernel. Each frame is a sequence of compute kernels dispatched through `KernelManager`: **Generate → per-bounce [Extend → (Sort) → Shade → Compact] → FinalWrite**, plus a single `debug` kernel for `visMode`. An integrator installed with `registerIntegrator()` (the `rayzee/addons/bidirectional` add-on) adds its kernels through the path tracer's integrator hooks. Kernel-level detail (queues, ray buffers, stream compaction, sorting) is in `PATH_TRACER_SHADER_ARCHITECTURE.md`.
 
-**Events Emitted:** `pathtracer:frameComplete`, `camera:moved`, `pathtracer:interactionStart` / `pathtracer:interactionEnd`, `pathtracer:viewpointChanged`, and `pipeline:historyReset` after a render-mode change — see EventBus above.
+**Events Emitted:** `pathtracer:frameComplete`, `camera:moved`, `pathtracer:interactionStart` / `pathtracer:interactionEnd`, and `pipeline:historyReset` after a render-mode change — see EventBus above.
 **Events Listened:** `pipeline:reset` (`reset()`), `pipeline:resize` (`setSize()`).
 
 **Outputs on request.** `pathTracer.requestOutput( name, options )` compiles an extra per-pixel output into Shade while someone asks for it; the kernels rebuild before the next frame. It returns a function that withdraws the request. The one output today is `'hitDistance'`: `encode( distance, viewZ )` returns a [0, 1] value written to `pathtracer:albedo.w`, only while the aux outputs are on. The viewer's NRD stage requests it at construction and withdraws it on dispose.
@@ -382,7 +376,7 @@ The renderer swaps the environment's `onReset` for its own `reset()`, not the st
 1. the first published key of `displaySources`, the list `_displaySources()` returned when the stages were created;
 2. `pathtracer:color`.
 
-The core's `_displaySources()` returns `[]`, so the core shows the accumulation. The viewer's returns `[ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ]`. The list is read once, in `_createStages()`. `resolveLightSource( context )` also returns the key it came from; `renderToBuffer( { source: 'display' } )` reads through it.
+The core's `_displaySources()` returns `[]`, so the core shows the accumulation. The viewer's returns `[ 'oidn:output', 'nrd:output' ]`. The list is read once, in `_createStages()`. `resolveLightSource( context )` also returns the key it came from; `renderToBuffer( { source: 'display' } )` reads through it.
 
 With the `convergenceOverlay` setting on, it draws a convergence heat map from `pathtracer:color` and the path tracer's convergence buffers instead.
 
@@ -392,37 +386,17 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 
 ### Viewer stages
 
-`PathTracerApp._createExtraStages()` builds these. NRD, ASVGF, Variance, BilateralFilter, EdgeFilter and LocalExposure start disabled; AutoExposure follows `AUTO_EXPOSURE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
+`PathTracerApp._createExtraStages()` builds these. NRD and LocalExposure start disabled; AutoExposure follows `AUTO_EXPOSURE_DEFAULTS.autoExposure`. `DenoisingManager.setDenoiserStrategy()` turns the real-time denoisers (`DENOISER_STRATEGIES`: none, NRD, OIDN) on one at a time and clears their context textures on a switch; `DenoisingManager._syncGBufferStages()` keeps NormalDepth and MotionVector on only while something consumes them.
 
 | Stage (`name`) | On while | Reads | Publishes |
 |----------------|----------|-------|-----------|
-| NormalDepth | a denoiser, EdgeFilter/BilateralFilter or the OIDN motion history needs it | `pathtracer:color` (size only) | `pathtracer:normalDepth` (replaces the path tracer's), `pathtracer:prevNormalDepth`, `pathtracer:shadingNormal`, `pathtracer:instanceLeaf` (opt-in) |
-| MotionVector | ASVGF or NRD is on | `pathtracer:normalDepth` | `motionVector:screenSpace`, `motionVector:worldSpace`, `motionVector:motion` (alias of screenSpace) |
+| NormalDepth | NRD or the OIDN motion history needs it | `pathtracer:color` (size only) | `pathtracer:normalDepth` (replaces the path tracer's), `pathtracer:prevNormalDepth`, `pathtracer:shadingNormal`, `pathtracer:instanceLeaf` (opt-in) |
+| MotionVector | NRD is on | `pathtracer:normalDepth` | `motionVector:screenSpace`, `motionVector:worldSpace`, `motionVector:motion` (alias of screenSpace) |
 | NRD | strategy `'nrd'` | `pathtracer:color`, `:albedo`, `:normalDepth`, `:shadingNormal`, `motionVector:screenSpace` | `nrd:output` |
-| ASVGF | strategy `'asvgf'` | `pathtracer:color`, `:albedo`, `:normalDepth`, `:prevNormalDepth`, `motionVector:screenSpace` | `asvgf:output`, `asvgf:demodulated`, `asvgf:gradient` |
-| Variance (`VarianceEstimation`) | strategies `'asvgf'`, `'edgeaware'` | `pathtracer:color` | `variance:output` |
-| BilateralFilter (`BilateralFiltering`) | strategy `'asvgf'` | `asvgf:demodulated` (else `asvgf:output`, else `pathtracer:color`), `pathtracer:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `bilateralFiltering:output` |
-| EdgeFilter (`EdgeAwareFiltering`) | strategy `'edgeaware'` | `pathtracer:color`, `:normalDepth`, `:shadingNormal`, `:albedo`, `variance:output` | `edgeFiltering:output` |
 | AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
 | LocalExposure | `app.setLocalExposure( true )` | `pathtracer:color` | a grid and blurred picture its gain reads: the compositor's `setDisplayGain` and readbacks' `_displayGain()` |
 
 OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/depth and albedo storage textures directly (`storageTextures.getReadTextures()`) and publishes its result as `oidn:output`.
-
-### ASVGF
-
-**Purpose:** the temporal half of the ASVGF strategy. A temporal gradient (anti-lag) and temporal accumulation of albedo-demodulated lighting, with motion vectors from MotionVector.
-**Execution Mode:** `PER_CYCLE`
-
-The spatial half is BilateralFilter: a 5×5 à-trous wavelet over `asvgf:demodulated`, guided by `variance:output`, remodulated by albedo on its last pass. Its `bilateralFiltering:output` is what the Compositor shows.
-
-**Debug output:** `stage.heatmapTarget` — a public `RenderTarget` for host-side overlays, not in the context, written only after `setHeatmapEnabled( true )`.
-
-**Events Listened:**
-- `pipeline:historyReset` - drop temporal history (`resetTemporalData()`)
-
-`reset()` is a no-op: motion vectors handle camera moves.
-
----
 
 ### NRD
 
@@ -447,15 +421,6 @@ The spatial half is BilateralFilter: a 5×5 à-trous wavelet over `asvgf:demodul
 
 ---
 
-### EdgeFilter
-
-**Purpose:** spatial-only SVGF à-trous on the accumulated frame — no temporal reprojection, motion vectors or history.
-**Execution Mode:** `PER_CYCLE`
-
-Demodulates by albedo, runs `iterations` à-trous passes with variance-guided luminance, shading-normal and relative-depth edge-stops, and remodulates on the last. It passes `pathtracer:color` through when a guide is missing and while the camera moves (`interactionMode`).
-
----
-
 ### Overlays
 
 The overlay is not a stage. After each frame `animate()` calls the `_renderHelperOverlay()` hook; the viewer draws `OverlayManager` there, at view resolution, on canvases of its own, so helpers never reach a saved image.
@@ -474,11 +439,11 @@ The overlay is not a stage. After each frame `animate()` calls the `_renderHelpe
 1. PathTracer.render()                [ALWAYS]
    ↓ sets 'tileRenderingComplete' = true
    ↓ runs the wavefront kernels (Generate → bounces → FinalWrite)
-   ↓ publishes pathtracer:color / normalDepth / albedo; state renderMode, interactionMode, pathtracer:samples
+   ↓ publishes pathtracer:color / normalDepth / albedo; state renderMode, pathtracer:samples
    ↓ emits pathtracer:frameComplete (and camera:moved when the camera changed)
 
 2. Viewer stages, in order, each only while enabled
-   NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → LocalExposure
+   NormalDepth → MotionVector → NRD → AutoExposure → LocalExposure
 
 3. Compositor.render()                 [ALWAYS]
    ↓ picks its source, grades saturation, draws to the canvas through the renderer's output pass
@@ -508,7 +473,7 @@ A camera move is a soft reset from `animate()`, so temporal denoisers keep their
 
 ```
 Core:    [PathTracer → Compositor]
-Viewer:  [PathTracer → NormalDepth → MotionVector → NRD → ASVGF → Variance → BilateralFilter → EdgeFilter → AutoExposure → LocalExposure → Compositor]
+Viewer:  [PathTracer → NormalDepth → MotionVector → NRD → AutoExposure → LocalExposure → Compositor]
     ↓
 Compositor → renderer output pass (exposure, view transform, sRGB) → canvas
     ↓
@@ -527,21 +492,15 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 
 | Texture Key | Producer | Consumers | Description |
 |-------------|----------|-----------|-------------|
-| `pathtracer:color` | PathTracer | Compositor (fallback), ASVGF, NRD, EdgeFilter, Variance, BilateralFilter (fallback input; alpha), AutoExposure, LocalExposure, NormalDepth (size only) | Accumulated colour |
-| `pathtracer:normalDepth` | PathTracer; replaced by NormalDepth while it runs | ASVGF, NRD, EdgeFilter, BilateralFilter, MotionVector, OIDN motion history | Normals + depth. NormalDepth's: geometric normal, jitter-free linear ray distance |
-| `pathtracer:albedo` | PathTracer | ASVGF, NRD, EdgeFilter, BilateralFilter | Albedo (denoiser guide). `.w` holds the hit distance only while a stage has called `requestOutput( 'hitDistance', { encode } )` — the viewer's NRD |
-| `pathtracer:prevNormalDepth` | NormalDepth | ASVGF, OIDN motion history | The previous traced frame's normals + depth |
-| `pathtracer:shadingNormal` | NormalDepth | NRD, EdgeFilter, BilateralFilter, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
+| `pathtracer:color` | PathTracer | Compositor (fallback), NRD, AutoExposure, LocalExposure, NormalDepth (size only) | Accumulated colour |
+| `pathtracer:normalDepth` | PathTracer; replaced by NormalDepth while it runs | NRD, MotionVector, OIDN motion history | Normals + depth. NormalDepth's: geometric normal, jitter-free linear ray distance |
+| `pathtracer:albedo` | PathTracer | NRD | Albedo (denoiser guide). `.w` holds the hit distance only while a stage has called `requestOutput( 'hitDistance', { encode } )` — the viewer's NRD |
+| `pathtracer:prevNormalDepth` | NormalDepth | OIDN motion history | The previous traced frame's normals + depth |
+| `pathtracer:shadingNormal` | NormalDepth | NRD, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
 | `pathtracer:instanceLeaf` | NormalDepth (opt-in, `setInstanceLeafOutput( true )`) | OIDN motion history | r32uint: the hit's transformed TLAS leaf + 1, 0 = none |
-| `motionVector:screenSpace` | MotionVector | ASVGF, NRD | xy = motion (current − previous uv), z = depth, w = validity |
+| `motionVector:screenSpace` | MotionVector | NRD | xy = motion (current − previous uv), z = depth, w = validity |
 | `motionVector:worldSpace` | MotionVector | - | xyz = world velocity, w = validity |
 | `motionVector:motion` | MotionVector | - | Alias of `motionVector:screenSpace` |
-| `asvgf:output` | ASVGF | Compositor, BilateralFilter (fallback) | Temporally accumulated, remodulated colour |
-| `asvgf:demodulated` | ASVGF | BilateralFilter | Demodulated lighting + history |
-| `asvgf:gradient` | ASVGF | - | Temporal gradient |
-| `variance:output` | Variance | BilateralFilter, EdgeFilter | Luminance mean, second moment, temporal variance, spatial variance |
-| `bilateralFiltering:output` | BilateralFilter | Compositor | ASVGF strategy's final picture |
-| `edgeFiltering:output` | EdgeFilter | Compositor | Filtered colour |
 | `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
 
@@ -635,8 +594,7 @@ _createExtraStages() {
     stages.myCustom = new MyCustomStage( renderer, { enabled: false } );
 
     return [
-        stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
-        stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure, stages.localExposure,
+        stages.normalDepth, stages.motionVector, stages.nrd, stages.autoExposure, stages.localExposure,
         stages.myCustom,   // runs before the Compositor
     ];
 
@@ -644,7 +602,7 @@ _createExtraStages() {
 
 _displaySources() {
 
-    return [ 'mycustom:output', 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ];
+    return [ 'mycustom:output', 'oidn:output', 'nrd:output' ];
 
 }
 ```
@@ -670,7 +628,7 @@ handleMyCustomIntensity: handleChange(
 ### Do
 
 - **Share textures through the context** - format `stageName:textureName`
-- **Handle missing inputs** - fall back or pass the input through (NRD, EdgeFilter)
+- **Handle missing inputs** - fall back or pass the input through (NRD)
 - **Return early when disabled**
 - **Pick the right execution mode** - PER_CYCLE for post-processing, ALWAYS for work every frame
 - **Remove your context textures and dispose your targets** in `dispose()`
@@ -690,9 +648,9 @@ handleMyCustomIntensity: handleChange(
 ## Performance Considerations
 
 1. **Disabled stages cost nothing per frame** — `shouldExecuteThisFrame()` skips them before `render()`.
-2. **Skip work the frame does not need** — ASVGF skips its gradient dispatch when `gradientStrength` is 0 and the heatmap is off; NRD skips its passes past the handover; EdgeFilter passes through while the camera moves.
+2. **Skip work the frame does not need** — NRD skips its passes past the handover; NormalDepth re-publishes its last frame until the camera, a reset or the scene marks it dirty.
 3. **Lazy initialization** — the Compositor builds its convergence-overlay material on first enable, so the normal display path carries none of its bindings.
-4. **Ping-pong targets** — NormalDepth, Variance and ASVGF alternate two textures for current and previous frame.
+4. **Ping-pong targets** — NormalDepth and NRD's stabilisation pass alternate two textures for current and previous frame.
 
 ### Performance Monitoring
 
@@ -739,9 +697,8 @@ app.pipeline.context.getState( 'tileRenderingComplete' );
 ### Reading from Previous Stage
 
 ```javascript
-// BilateralFilter: the newest picture available
-const inputTex = context.getTexture( this.inputTextureName )
-    || context.getTexture( 'asvgf:output' )
+// A post stage: the newest picture available
+const inputTex = context.getTexture( 'nrd:output' )
     || context.getTexture( 'pathtracer:color' );
 if ( ! inputTex ) return;
 ```

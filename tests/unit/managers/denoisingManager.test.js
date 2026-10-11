@@ -2,11 +2,37 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // The manager constructs OIDN/AI-upscaler passes that need a GPU; stub them so the strategy logic
 // under test is the only thing running.
-vi.mock( '@/core/Passes/OIDNDenoiser.js', () => ( { OIDNDenoiser: class {} } ) );
+vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
+
+	const { EventDispatcher } = await import( 'three' );
+	return { OIDNDenoiser: class extends EventDispatcher {
+
+		constructor() {
+
+			super();
+			this.enabled = false;
+			this.state = {};
+			this.hasOutput = false;
+			this.outputTexture = {};
+			this.abort = vi.fn();
+			this.invalidateOutput = vi.fn();
+
+		}
+
+		expectsCleanAux() {
+
+			return false;
+
+		}
+
+	} };
+
+} );
 vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
 
 const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
 const { NRD_QUALITY_PRESETS, NRD_DEFAULTS, NRD_PRESET_KEYS } = await import( '@/core/Stages/DenoiserSettings.js' );
+const { CAMERA_PROJECTION_IDS } = await import( '@/core/EngineDefaults.js' );
 
 function makeStage( extra = {} ) {
 
@@ -26,21 +52,15 @@ function makeManager() {
 		pathTracer: { setAuxGBufferEnabled: vi.fn(), setCleanAuxNormal: vi.fn() },
 		normalDepth: makeStage(),
 		motionVector: makeStage( { matricesInitialized: true, isFirstFrame: false, frameCount: 5 } ),
-		asvgf: makeStage( { setTemporalEnabled: vi.fn() } ),
 		nrd: makeStage( { resetHistory: vi.fn() } ),
-		variance: makeStage( { varianceBoost: { value: 1 } } ),
-		bilateralFilter: makeStage(),
-		edgeFilter: makeStage( { setFilteringEnabled( v ) {
-
-			this.enabled = v;
-
-		} } ),
 		autoExposure: makeStage(),
 		compositor: makeStage(),
 	};
 
 	const removed = [];
-	const pipeline = { context: { removeTexture: ( k ) => removed.push( k ) } };
+	const published = [];
+	const pipeline = { context: { removeTexture: ( k ) => removed.push( k ), setTexture: ( k ) => published.push( k ) } };
+	const issues = { record: vi.fn() };
 
 	// No parentNode on the canvas → no denoiser canvas → OIDN/upscaler setup is skipped.
 	const manager = new DenoisingManager( {
@@ -53,19 +73,20 @@ function makeManager() {
 		getExposure: () => 1,
 		getSaturation: () => 1,
 		getTransparentBg: () => false,
+		issues,
 	} );
 
-	return { manager, stages, removed };
+	return { manager, stages, removed, published, issues };
 
 }
 
 describe( 'DenoisingManager — NRD strategy', () => {
 
-	let manager, stages, removed;
+	let manager, stages, removed, issues;
 
 	beforeEach( () => {
 
-		( { manager, stages, removed } = makeManager() );
+		( { manager, stages, removed, issues } = makeManager() );
 
 	} );
 
@@ -74,10 +95,7 @@ describe( 'DenoisingManager — NRD strategy', () => {
 		manager.setDenoiserStrategy( 'nrd', 'medium' );
 
 		expect( stages.nrd.enabled ).toBe( true );
-		expect( stages.asvgf.enabled ).toBe( false );
-		expect( stages.edgeFilter.enabled ).toBe( false );
-		expect( stages.variance.enabled ).toBe( false );
-		expect( stages.bilateralFilter.enabled ).toBe( false );
+		expect( manager.continuousDenoise ).toBe( false );
 		// Reprojection needs both motion vectors and the deterministic normal/depth G-buffer.
 		expect( stages.normalDepth.enabled ).toBe( true );
 		expect( stages.motionVector.enabled ).toBe( true );
@@ -125,18 +143,34 @@ describe( 'DenoisingManager — NRD strategy', () => {
 
 	} );
 
-	it( 'ASVGF and NRD are mutually exclusive', () => {
+	it( 'OIDN and NRD are mutually exclusive', () => {
 
 		manager.setDenoiserStrategy( 'nrd', 'medium' );
-		manager.setASVGFEnabled( true, 'medium' );
+		manager.setDenoiserStrategy( 'oidn' );
 
-		expect( stages.asvgf.enabled ).toBe( true );
 		expect( stages.nrd.enabled ).toBe( false );
-		expect( manager.denoiserStrategy ).toBe( 'asvgf' );
+		expect( manager.continuousDenoise ).toBe( true );
+		expect( manager.denoiserStrategy ).toBe( 'oidn' );
 
 		manager.setDenoiserStrategy( 'nrd', 'medium' );
-		expect( stages.asvgf.enabled ).toBe( false );
+		expect( manager.continuousDenoise ).toBe( false );
 		expect( stages.nrd.enabled ).toBe( true );
+
+	} );
+
+	it( 'a removed or unknown strategy is recorded and runs none', () => {
+
+		manager.setDenoiserStrategy( 'nrd', 'medium' );
+
+		for ( const name of [ 'asvgf', 'edgeaware' ] ) {
+
+			manager.setDenoiserStrategy( name );
+			expect( manager.denoiserStrategy ).toBe( 'none' );
+			expect( issues.record ).toHaveBeenLastCalledWith( 'denoiser.unavailable', expect.stringContaining( name ), { strategy: name } );
+
+		}
+
+		expect( stages.nrd.enabled ).toBe( false );
 
 	} );
 
@@ -150,12 +184,76 @@ describe( 'DenoisingManager — NRD strategy', () => {
 
 	} );
 
+	it( 'runs OIDN when NRD is asked for in a panorama', () => {
+
+		stages.pathTracer.uniforms = { get: ( k ) => ( k === 'cameraProjection' ? { value: CAMERA_PROJECTION_IDS.equirectangular } : undefined ) };
+
+		manager.setDenoiserStrategy( 'nrd', 'medium' );
+
+		expect( manager.denoiserStrategy ).toBe( 'oidn' );
+		expect( stages.nrd.enabled ).toBe( false );
+		expect( stages.motionVector.enabled ).toBe( false );
+		expect( issues.record ).toHaveBeenLastCalledWith( 'denoiser.unavailable', expect.stringContaining( 'panorama' ), { strategy: 'nrd' } );
+
+	} );
+
 	it( 'survives a pipeline without an NRD stage', () => {
 
 		delete stages.nrd;
 
 		expect( () => manager.setDenoiserStrategy( 'nrd', 'medium' ) ).not.toThrow();
 		expect( manager.denoiserStrategy ).toBe( 'none' );
+
+	} );
+
+} );
+
+describe( 'DenoisingManager — leaving live OIDN', () => {
+
+	let manager, published, dn;
+
+	beforeEach( () => {
+
+		( { manager, published } = makeManager() );
+		manager.setupDenoiser();
+		dn = manager.denoiser;
+
+	} );
+
+	it( 'cancels the refresh in flight while it still can', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		expect( dn.enabled ).toBe( true );
+
+		dn.abort.mockImplementation( () => expect( dn.enabled ).toBe( true ) );
+		manager.setDenoiserStrategy( 'nrd', 'medium' );
+
+		expect( dn.abort ).toHaveBeenCalled();
+		expect( dn.enabled ).toBe( false );
+
+	} );
+
+	it( 'keeps a refresh that lands afterwards off screen, but not a final pass', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		manager.setDenoiserStrategy( 'none' );
+		dn.hasOutput = true;
+
+		dn.dispatchEvent( { type: 'end', continuous: true } );
+		expect( published ).not.toContain( 'oidn:output' );
+
+		dn.dispatchEvent( { type: 'end', continuous: false } );
+		expect( published ).toContain( 'oidn:output' );
+
+	} );
+
+	it( 'still shows refreshes while OIDN owns the live view', () => {
+
+		manager.setDenoiserStrategy( 'oidn' );
+		dn.hasOutput = true;
+
+		dn.dispatchEvent( { type: 'end', continuous: true } );
+		expect( published ).toContain( 'oidn:output' );
 
 	} );
 

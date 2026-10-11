@@ -13,7 +13,7 @@ function viewer( { autoExposure = false, requiresMotionVectors = false } = {} ) 
 		stages: { pathTracer: { setUniform: vi.fn() }, autoExposure: ae },
 		renderer,
 		cameraManager: { applyProjection: vi.fn() },
-		denoisingManager: { requiresMotionVectors, setDenoiserStrategy: vi.fn() },
+		denoisingManager: { requiresMotionVectors, setDenoiserStrategy: vi.fn(), _syncGBufferStages: vi.fn() },
 		reset: vi.fn(),
 		_reconcileCompletion: vi.fn(),
 	};
@@ -49,9 +49,10 @@ describe( 'the viewer\'s side of the core settings', () => {
 		settings.set( 'cameraProjection', 'orthographic' );
 		expect( app.cameraManager.applyProjection ).toHaveBeenLastCalledWith( 'orthographic' );
 		expect( app.denoisingManager.setDenoiserStrategy ).not.toHaveBeenCalled();
+		expect( app.denoisingManager._syncGBufferStages ).toHaveBeenCalled();
 
 		settings.set( 'cameraProjection', 'equirectangular' );
-		expect( app.denoisingManager.setDenoiserStrategy ).toHaveBeenCalledWith( 'edgeaware' );
+		expect( app.denoisingManager.setDenoiserStrategy ).toHaveBeenCalledWith( 'oidn' );
 
 	} );
 

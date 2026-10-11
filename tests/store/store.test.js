@@ -111,12 +111,25 @@ describe( 'bounce-loop settings unwrap the Slider array', () => {
 describe( 'NRD denoiser handlers', () => {
 
 	// The preset handler reads back what the engine resolved rather than restating the table.
+	// The strategy setters remember what they were given, as the engine reports it back.
 	const mockApp = ( nrdSettings = {} ) => ( {
 		denoisingManager: {
+			denoiserStrategy: 'none',
 			setNRDParams: vi.fn(),
 			setNRDDebugMode: vi.fn(),
 			applyNRDPreset: vi.fn(),
-			setStrategy: vi.fn(),
+			setStrategy: vi.fn( function ( s ) {
+
+				this.denoiserStrategy = s;
+
+			} ),
+			setDenoiserStrategy: vi.fn( function ( s ) {
+
+				this.denoiserStrategy = s;
+
+			} ),
+			setAutoExposureParams: vi.fn(),
+			setAutoExposure: vi.fn(),
 		},
 		stages: { nrd: { settings: nrdSettings } },
 		reset: vi.fn(),
@@ -170,20 +183,55 @@ describe( 'NRD denoiser handlers', () => {
 
 	} );
 
-	it( 'the strategy switch passes the NRD preset, not the ASVGF one', async () => {
+	it( 'the strategy switch passes the NRD preset', async () => {
 
 		if ( ! store ) return;
 
 		const app = mockApp();
 		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
 
-		store.usePathTracerStore.setState( { nrdQualityPreset: 'low', asvgfQualityPreset: 'high' } );
+		store.usePathTracerStore.setState( { nrdQualityPreset: 'low' } );
 		store.usePathTracerStore.getState().handleDenoiserStrategyChange( 'nrd' );
 
 		expect( app.denoisingManager.setStrategy ).toHaveBeenCalledWith( 'nrd', 'low' );
 
-		store.usePathTracerStore.getState().handleDenoiserStrategyChange( 'asvgf' );
-		expect( app.denoisingManager.setStrategy ).toHaveBeenLastCalledWith( 'asvgf', 'high' );
+		// In a panorama the engine runs OIDN instead, and the panel shows what runs.
+		app.denoisingManager.setStrategy.mockImplementationOnce( function () {
+
+			this.denoiserStrategy = 'oidn';
+
+		} );
+		store.usePathTracerStore.getState().handleDenoiserStrategyChange( 'nrd' );
+		expect( store.usePathTracerStore.getState().denoiserStrategy ).toBe( 'oidn' );
+
+	} );
+
+	it( 'puts the panel\'s denoiser on the engine, and a removed one becomes the default', async () => {
+
+		if ( ! store ) return;
+
+		const { DEFAULT_STATE } = await import( '@/Constants' );
+		expect( DEFAULT_STATE.denoiserStrategy ).toBe( 'oidn' );
+
+		const app = mockApp();
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+
+		store.usePathTracerStore.setState( {
+			denoiserStrategy: 'nrd', nrdQualityPreset: 'high', nrdMaxBlurRadius: 12, nrdMaxAccumulatedFrameNum: 20,
+			nrdPrepassBlurRadius: 5, nrdAntiFirefly: false, nrdDebugMode: 2,
+		} );
+		store.usePathTracerStore.getState().applyPanelToEngine();
+		expect( app.denoisingManager.setDenoiserStrategy ).toHaveBeenLastCalledWith( 'nrd', 'high' );
+		// The sliders as restored, not the preset's values.
+		expect( app.denoisingManager.setNRDParams ).toHaveBeenLastCalledWith( {
+			maxAccumulatedFrameNum: 20, maxBlurRadius: 12, prepassBlurRadius: 5, enableAntiFirefly: false,
+		} );
+		expect( app.denoisingManager.setNRDDebugMode ).toHaveBeenLastCalledWith( 2 );
+
+		store.usePathTracerStore.setState( { denoiserStrategy: 'asvgf' } );
+		store.usePathTracerStore.getState().applyPanelToEngine();
+		expect( store.usePathTracerStore.getState().denoiserStrategy ).toBe( 'oidn' );
+		expect( app.denoisingManager.setDenoiserStrategy ).toHaveBeenLastCalledWith( 'oidn', 'high' );
 
 	} );
 

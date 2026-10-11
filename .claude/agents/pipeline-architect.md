@@ -24,7 +24,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### Stages (execution order matters)
 1. **PathTracer** — wavefront Monte Carlo path tracing with MRT outputs (core)
 2. **NormalDepth**, **MotionVector** — denoiser G-buffer inputs (viewer)
-3. **NRD**, **ASVGF**, **Variance**, **BilateralFilter**, **EdgeFilter** — real-time denoisers; one owns the live view (viewer)
+3. **NRD** — real-time denoiser; it or OIDN (not a stage) owns the live view (viewer)
 4. **AutoExposure**, **LocalExposure** (viewer)
 5. **Compositor** — shows the first published of the display sources, else the accumulation (core)
 - **OverlayManager** draws helpers on separate canvases, not a pipeline stage
@@ -39,7 +39,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### Event Bus Patterns
 ```js
 // The core's signals name no capability
-this.eventBus.emit('pipeline:historyReset');      // hard restart — ASVGF and NRD drop their history
+this.eventBus.emit('pipeline:historyReset');      // hard restart — NRD drops its history
 this.eventBus.emit('pipeline:lightingChanged');   // new model or environment — auto exposure re-adapts
 this.eventBus.emit('pathtracer:frameComplete', { frame, samples });
 
@@ -63,9 +63,9 @@ When evaluating changes:
 
 2. **Context Cleanup** — When enabling/disabling stages, stale textures in PipelineContext can cause wrong textures in downstream stages (especially Compositor fallback chain). Verify cleanup.
 
-3. **Display Sources** — The Compositor shows the first published of `_displaySources()` (core: none; viewer, `PathTracerApp.js`: `oidn > edgeFiltering > bilateralFiltering > asvgf > nrd`), else `pathtracer:color`. A new denoiser goes in that list and in `DenoisingManager._clearDenoiserTextures()`. Enabled stages publishing dark output override the raw path tracer.
+3. **Display Sources** — The Compositor shows the first published of `_displaySources()` (core: none; viewer, `PathTracerApp.js`: `oidn > nrd`), else `pathtracer:color`. A new denoiser goes in that list and in `DenoisingManager._clearDenoiserTextures()`. Enabled stages publishing dark output override the raw path tracer.
 
-4. **Denoiser Coordination** — exactly one denoiser owns the live view (None / EdgeAware / ASVGF / NRD / OIDN); OIDN's final pass on the finished image is a separate switch. EdgeAware filtering disabled when ASVGF enabled.
+4. **Denoiser Coordination** — exactly one denoiser owns the live view (`DENOISER_STRATEGIES`: None / NRD / OIDN); OIDN's final pass on the finished image is a separate switch.
 
 5. **Rendering Modes** — The engine has two tiers, `'interactive'` and `'production'` (full frame, adaptive sampling, OIDN), via `app.configureForMode()`; the app's Results tab only pauses rendering. Mode switching applies `modePresetSettings()` and resets.
 

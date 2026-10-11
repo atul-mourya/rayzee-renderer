@@ -3,7 +3,7 @@ name: review-stage
 description: >
   Review a pipeline stage for correctness, performance, and architectural compliance.
   Use when creating a new RenderStage, modifying an existing one, or debugging stage interactions.
-  Pass the stage filename as an argument (e.g., /review-stage ASVGF).
+  Pass the stage filename as an argument (e.g., /review-stage NRD).
 allowed-tools: Read, Glob, Grep
 ---
 

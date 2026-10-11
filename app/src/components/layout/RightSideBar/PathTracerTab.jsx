@@ -154,9 +154,6 @@ const PathTracerTab = () => {
 		adaptiveMinSamples,
 		convergenceOverlay,
 		interactionModeEnabled,
-		asvgfQualityPreset,
-		asvgfDebugMode,
-		showAsvgfHeatmap,
 		nrdQualityPreset,
 		nrdDebugMode,
 		nrdMaxAccumulatedFrameNum,
@@ -164,11 +161,6 @@ const PathTracerTab = () => {
 		nrdPrepassBlurRadius,
 		nrdAntiFirefly,
 		denoiserStrategy,
-		filterStrength,
-		edgeAtrousIterations,
-		edgePhiLuminance,
-		edgePhiNormal,
-		edgePhiDepth,
 		// Auto-exposure state
 
 		// Handlers - now from store
@@ -209,9 +201,6 @@ const PathTracerTab = () => {
 		handleEnvironmentModeChange,
 		handleSolidSkyColorChange,
 		handleInteractionModeEnabledChange,
-		handleAsvgfQualityPresetChange,
-		handleAsvgfDebugModeChange,
-		handleShowAsvgfHeatmapChange,
 		handleNrdQualityPresetChange,
 		handleNrdDebugModeChange,
 		handleNrdMaxAccumulatedFrameNumChange,
@@ -219,11 +208,6 @@ const PathTracerTab = () => {
 		handleNrdPrepassBlurRadiusChange,
 		handleNrdAntiFireflyChange,
 		handleDenoiserStrategyChange,
-		handleFilterStrengthChange,
-		handleEdgeAtrousIterationsChange,
-		handleEdgePhiLuminanceChange,
-		handleEdgePhiNormalChange,
-		handleEdgePhiDepthChange,
 		// Auto-exposure handlers
 	} = pathTracerStore;
 
@@ -406,14 +390,12 @@ const PathTracerTab = () => {
 			<ControlGroup name="Denoising">
 				<Row>
 					<Select value={denoiserStrategy} onValueChange={handleDenoiserStrategyChange}>
-						<span className="opacity-50 text-xs truncate" title="Removes grain while you work. OIDN (AI) is the cleanest; the others are faster and steadier while the camera moves.">Real-Time Denoiser</span>
+						<span className="opacity-50 text-xs truncate" title="Removes grain while you work. OIDN (AI) is the cleanest; NRD keeps up better on very large pictures.">Real-Time Denoiser</span>
 						<SelectTrigger className="max-w-32 h-5 rounded-full" >
 							<SelectValue placeholder="Select strategy" />
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="none">None</SelectItem>
-							<SelectItem value="edgeaware">EdgeAware</SelectItem>
-							<SelectItem value="asvgf">ASVGF</SelectItem>
 							<SelectItem value="nrd">NRD (ReBLUR)</SelectItem>
 							<SelectItem value="oidn">OIDN (AI)</SelectItem>
 						</SelectContent>
@@ -462,61 +444,6 @@ const PathTracerTab = () => {
 							</SelectContent>
 						</Select>
 					</Row>
-				</> )}
-
-				{denoiserStrategy === 'edgeaware' && ( <>
-					<Row>
-						<Slider label={"Filter Strength"} tip="How much of the clean-up reaches the picture. 0 leaves it untouched." min={0} max={1} step={0.01} value={[ filterStrength ]} onValueChange={handleFilterStrengthChange} />
-					</Row>
-					<Row>
-						<Slider label={"Iterations"} tip="How many passes the clean-up makes. Each pass reaches further and smooths more." min={1} max={6} step={1} value={[ edgeAtrousIterations ]} onValueChange={handleEdgeAtrousIterationsChange} />
-					</Row>
-					<Row>
-						<Slider label={"Luminance φ"} tip="How much brightness differences are smoothed over. Higher is smoother but loses light detail." min={0} max={16} step={0.1} value={[ edgePhiLuminance ]} onValueChange={handleEdgePhiLuminanceChange} />
-					</Row>
-					<Row>
-						<Slider label={"Normal φ"} tip="How sharply edges between surfaces are kept. Higher keeps creases sharper." min={1} max={256} step={1} value={[ edgePhiNormal ]} onValueChange={handleEdgePhiNormalChange} />
-					</Row>
-					<Row>
-						<Slider label={"Depth φ"} tip="How much distance differences are smoothed over. Lower keeps outlines sharper." min={0.01} max={1} step={0.01} value={[ edgePhiDepth ]} onValueChange={handleEdgePhiDepthChange} />
-					</Row>
-				</> )}
-
-				{denoiserStrategy === 'asvgf' && ( <>
-					<Row>
-						<Select value={asvgfQualityPreset} onValueChange={handleAsvgfQualityPresetChange}>
-							<span className="opacity-50 text-xs truncate" title="A ready-made balance between speed and how clean the picture gets.">Quality Preset</span>
-							<SelectTrigger className="max-w-32 h-5 rounded-full" >
-								<SelectValue placeholder="Select preset" />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="low">Low</SelectItem>
-								<SelectItem value="medium">Medium</SelectItem>
-								<SelectItem value="high">High</SelectItem>
-							</SelectContent>
-						</Select>
-					</Row>
-					<Row>
-						<Switch label={"Show Heatmap"} tip="Paints what the denoiser is working with over the picture, for finding problems." checked={showAsvgfHeatmap} onCheckedChange={handleShowAsvgfHeatmapChange}/>
-					</Row>
-					{showAsvgfHeatmap && (
-						<Row>
-							<Select value={asvgfDebugMode.toString()} onValueChange={handleAsvgfDebugModeChange}>
-								<span className="opacity-50 text-xs truncate" title="Shows what the denoiser sees instead of the picture, for finding problems. Beauty is the normal picture.">Debug View</span>
-								<SelectTrigger className="max-w-32 h-5 rounded-full" >
-									<SelectValue placeholder="Select view" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="0">Beauty</SelectItem>
-									<SelectItem value="1">Variance</SelectItem>
-									<SelectItem value="2">History Length</SelectItem>
-									<SelectItem value="3">Motion Vectors</SelectItem>
-									<SelectItem value="4">Normals</SelectItem>
-									<SelectItem value="5">Temporal Gradient</SelectItem>
-								</SelectContent>
-							</Select>
-						</Row>
-					)}
 				</> )}
 
 				{/* Separator before AI Denoising section */}

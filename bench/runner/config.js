@@ -214,7 +214,7 @@ export const MEMORY_GATES = {
  * The metric is a RATIO: RMSE(denoised, ground truth) / RMSE(undenoised, ground truth) at the
  * same sample count. Below 1 the denoiser earned its place; above 1 it is making the image
  * worse than not running it at all. A ratio needs no golden and cannot be re-blessed into
- * looking fine, which is the point — the ASVGF chain shipped at 4.7x on a converged image and
+ * looking fine, which is the point — a denoiser chain once shipped at 4.7x on a converged image and
  * every existing gate stayed green, because they all compare the path tracer's own
  * accumulation buffer and never look at what the denoiser did to it.
  *
@@ -224,21 +224,19 @@ export const MEMORY_GATES = {
  *    denoiser exists for; failing it means the denoiser is disconnected, mis-wired, or reading
  *    the wrong texture.
  *
- *  - `maxRatioIncrease` — a RATCHET on every rung, following the white-furnace precedent. Both
- *    filters are still above 1.0 at high sample counts, so gating absolutely there would leave
+ *  - `maxRatioIncrease` — a RATCHET on every rung, following the white-furnace precedent. A
+ *    denoiser can sit at or above 1.0 at high sample counts, so gating absolutely there would leave
  *    the suite permanently red — which is how a gate stops being read. Blessed ratios may only
  *    shrink, and the absolute ratio is printed on every line so the gap stays visible.
  */
 export const DENOISE_GATES = {
-	// A ladder, not a single point: the ASVGF regression was a CROSSOVER — it helped at low
+	// A ladder, not a single point: that regression was a CROSSOVER — it helped at low
 	// sample counts and hurt at high ones, so either rung alone would have missed it. Two rungs
 	// keeps the suite affordable.
 	sppLadder: [ 1, 64 ],
 	strategies: [
-		{ id: 'asvgf', preset: 'medium' },
 		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (Stages/NRD.js).
 		{ id: 'nrd', preset: 'medium' },
-		{ id: 'edgeaware' },
 		// OIDN was ungated, which left every change to the DDFA aux albedo/normal guide
 		// unmeasurable. 'high' is the clean-aux tier production uses.
 		{ id: 'oidn', preset: 'high' },
@@ -252,8 +250,8 @@ export const DENOISE_GATES = {
 	],
 	// Chosen for what the edge-stops key on rather than for coverage breadth: diffuse GI (the
 	// baseline case), high-variance transmission (the noisiest input the denoiser sees), and
-	// textures (albedo demodulation plus mapped normals — the two G-buffer signals the spatial
-	// filter weights on).
+	// textures (albedo demodulation plus mapped normals — the two G-buffer signals NRD's
+	// edge-stops and OIDN's aux inputs weigh).
 	//
 	// `cornell-emissive` is the obvious fourth and is DELIBERATELY ABSENT: its render is not
 	// load-order stable (mean luminance flips +16.6 % once enough scenes load in a session and
@@ -262,7 +260,7 @@ export const DENOISE_GATES = {
 	scenes: [ 'spheres-gradient', 'glass-transmission', 'textured-normalmap' ],
 	// Denoised RMSE must be below raw at the cheapest rung. Absolute, not blessed — but the
 	// margin is thinner than it looks: the tightest observed combination is
-	// textured-normalmap/asvgf at 0.982. That is deliberate rather than lucky. Deterministic
+	// spheres-gradient/nrd at 0.972. That is deliberate rather than lucky. Deterministic
 	// mode makes both renders bit-identical run to run, so the ratio has no measurement noise
 	// and a thin margin costs nothing in flakiness — it only moves when code moves.
 	mustHelpAtLowSpp: 1.0,

@@ -23,8 +23,7 @@ import { ISSUE_CODES } from '../EngineIssues.js';
  *
  * // Add stages in execution order
  * pipeline.addStage(new PathTracer(...));
- * pipeline.addStage(new ASVGF(...));
- * pipeline.addStage(new EdgeFilter(...));
+ * pipeline.addStage(new NRD(...));
  *
  * // Render all stages
  * pipeline.render(writeBuffer);

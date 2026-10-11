@@ -438,8 +438,8 @@ between two renderers in one process (see `TSL/SceneResources.js`).
 ### Denoisers — a ratio, so there is nothing to bless away
 
 Every other suite measures the path tracer's own accumulation buffer. Nothing measured what the
-**denoisers** did to it, so the entire ASVGF / EdgeAware chain was ungated — and it shipped making
-a converged image ~4.7× further from ground truth than not denoising at all, with every suite green.
+**denoisers** did to it, so a denoiser chain once shipped making a converged image ~4.7× further from
+ground truth than not denoising at all, with every suite green.
 
 The statistic is a ratio, not an image:
 
@@ -451,55 +451,35 @@ Both renders happen in the same session, on the same build, at the same sample c
 comparison is self-normalising: a genuine path-tracer improvement moves numerator and denominator
 together. There is no golden to re-bless into looking fine.
 
-**Two rungs, because the failure is a crossover.** The ASVGF regression *helped* at low sample
-counts and *hurt* at high ones — any single sample count would have missed it in one direction or
-the other. `DENOISE_GATES.sppLadder` is `[1, 64]`: the real-time regime the denoiser exists for, and
-a converged one.
+**Two rungs, because the failure is a crossover.** That regression *helped* at low sample counts and
+*hurt* at high ones — any single sample count would have missed it in one direction or the other.
+`DENOISE_GATES.sppLadder` is `[1, 64]`: the real-time regime the denoiser exists for, and a converged one.
 
 | gate | kind | what it catches |
 |---|---|---|
 | `mustHelpAtLowSpp` | absolute, 1 spp | denoiser disconnected, mis-wired, or reading the wrong texture |
 | `maxRatioIncrease` | ratchet, every rung | any drift away from ground truth, even while still net-positive |
 
-The ratchet follows the white-furnace precedent. ASVGF is still **above 1.0 at 64 spp** on two of
-three scenes, so gating absolutely there would leave the suite permanently red — which is how a gate
-stops being read. Blessed ratios may only shrink, and the absolute ratio is printed on every line,
-pass or fail, so a scene sitting at 2.0× never reads as clean.
+The ratchet follows the white-furnace precedent. A denoiser can sit at or above 1.0 at 64 spp, so
+gating absolutely there would leave the suite permanently red — which is how a gate stops being read.
+Blessed ratios may only shrink, and the absolute ratio is printed on every line, pass or fail, so a
+scene sitting at 2.0× never reads as clean.
 
 Standing state as of the last bless (`baselines/denoise.json`):
 
-| scene | asvgf @1 | asvgf @64 | nrd @1 | nrd @64 | edgeaware @1 | edgeaware @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.957 | 2.041 | 0.992 | 1.000 | 0.751 | 0.906 | 0.553 | 0.969 | 0.553 | 0.969 |
-| `glass-transmission` | 0.704 | 0.912 | 0.688 | 1.000 | 0.616 | 0.711 | 0.522 | 0.783 | 0.522 | 0.783 |
-| `textured-normalmap` | 0.993 | 1.304 | 0.903 | 1.000 | 0.885 | 0.984 | 0.504 | 0.852 | 0.504 | 0.852 |
+| scene | nrd @1 | nrd @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
+|---|---|---|---|---|---|---|
+| `spheres-gradient` | 0.972 | 1.000 | 0.553 | 0.969 | 0.553 | 0.969 |
+| `glass-transmission` | 0.682 | 1.000 | 0.522 | 0.783 | 0.522 | 0.783 |
+| `textured-normalmap` | 0.908 | 1.000 | 0.504 | 0.852 | 0.504 | 0.852 |
 
 `nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
 handover point it republishes the path tracer's own texture, so a converged render is never touched.
+ASVGF and EdgeAware had rungs here until they were removed (2026-10): OIDN beat both on every scene,
+and ASVGF stood at 0.91–2.04 at 64 spp.
 
-**EdgeAware is no longer the offender at convergence — ASVGF is.** EdgeAware now sits at 0.71–0.98
-at 64 spp, below 1.0 on every scene, while ASVGF ranges 0.91–2.04. That inverted with
-`1728a985 fix(edge-filter): …`, which dropped `phiLuminance` from 4.0 to 1.0 and stopped seeding
-σ_l from `max(temporal, spatial)` once the EMA is warm.
-
-It is a **crossover**, and this suite's two-rung ladder is what makes it legible: the same change
-moved EdgeAware @64 from 2.359/2.245/2.996 down to 0.906/0.711/0.984 while pushing @1 *up* from
-0.524/0.426/0.806 to 0.751/0.616/0.885. Less blur always scores worse on RMSE at 1 spp, so read
-alone the cheap rung reads as a regression and the expensive one as a large win. The @1 rungs still
-clear the absolute floor.
-
-That was blessed late: the ratios above stood unchanged from Aug 1 while the fix landed Aug 17, so
-the suite ran red on `edgeaware @1` for weeks. When triaging a denoiser failure, check whether
-`rawRmse` moved first — if it did not, no path-tracer commit can be responsible and the cause is in
-the denoiser or in the baseline itself.
-
-The remaining ASVGF residual is the older story: both filters carry a filtered variance between
-à-trous passes, so σ_l tightens as the signal smooths (measured on `BilateralFilter`: 0.636 → 0.261
-→ 0.115 → 0.056 over four passes, with weightSum falling 0.75 → 0.33). Before that, each pass
-recomputed σ_l from the same unfiltered `variance:output` and damage grew linearly with pass count —
-1.39 / 2.27 / 3.30 / 4.34 / 5.74 for 1–6 passes. Per-pass **compounding** is fixed; per-pass
-**cost** is not, so the next investigation belongs on the normal/depth/colour gates and on the
-intrinsic cost of blending an already-converged image.
+When triaging a denoiser failure, check whether `rawRmse` moved first — if it did not, no path-tracer
+commit can be responsible and the cause is in the denoiser or in the baseline itself.
 
 ### The tiled OIDN rung
 
@@ -529,7 +509,7 @@ non-finite output, or `mustHelpAtLowSpp` at 1 spp.
 
 Scene choice is about what the edge-stops key on, not coverage breadth: diffuse GI (the baseline
 case), high-variance transmission (the noisiest input the denoiser sees), and textures (albedo
-demodulation plus mapped normals — the two G-buffer signals the spatial filter weights on).
+demodulation plus mapped normals — the two G-buffer signals NRD's edge-stops and OIDN's aux inputs weigh).
 
 **`cornell-emissive` is deliberately absent, and why is worth reading.** It is the best firefly scene
 in the corpus and the natural fourth entry. Its render is not load-order stable: mean luminance flips
@@ -546,7 +526,7 @@ Output is read through `capturePNG`, i.e. composited and tone-mapped — what a 
 sensitivity to pure energy shifts, which is fine: energy is the bias gate's job in `quality.js`. What
 survives tone mapping is structure, and structure is what a denoiser is accused of destroying. A
 separate `denoisedNonFinite()` probe reads the denoiser's own output target for NaN/Inf, because
-`probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in the bilateral weight put NaN on
+`probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in a filter weight put NaN on
 ~12 % of pixels with nothing in the suite reacting.
 
 OIDN is in the suite as `oidn` and `oidn-tiled` (see the table above).
@@ -559,8 +539,8 @@ dispatches can end up sharing one GPU binding, which then resolves to whichever 
 Nothing throws; the stage still produces a plausible image, because the aliased node reads a real
 texture — just not its own.
 
-That is how the ASVGF regression happened. `BilateralFilter._varianceTexNode` aliased onto
-`_readTexNode`, so the luminance edge-stop read `asvgf:demodulated.w` — ASVGF's history counter — as
+That is how the ASVGF regression happened (the stage was removed in 2026-10). Its bilateral filter's
+variance node aliased onto its colour node, so the luminance edge-stop read ASVGF's history counter as
 its variance. σ_l came out 5–6 orders of magnitude too wide and the à-trous degenerated into a
 near-unconditional blur. It was invisible from outside the shader: inputs and outputs both looked
 reasonable, and only dumping the kernel's own σ_l exposed it.
@@ -569,11 +549,10 @@ The snapshot is taken at the first `renderer.compute` call, not before or after 
 binding assignments and the compile are interleaved inside that one call, and by the time it returns
 everything is bound. The first version of this guard sampled after `render()` and silently caught
 nothing. StorageTexture-typed nodes are exempt: `textureLoad` codegen only emits the required `level`
-parameter while the node still holds `EmptyTexture`, so binding those post-compile is deliberate
-(see `ASVGF.render`).
+parameter while the node still holds `EmptyTexture`, so binding those post-compile is deliberate.
 
-Mutation-tested both ways — reverting the `BilateralFilter` fix makes it name the exact node;
-with the fix in place it is silent across all nine stages.
+Mutation-tested both ways when it was added — reverting the fix made it name the exact node; with
+the fix in place it was silent across every stage.
 
 ### Memory — gate on growth, never absolutes
 
@@ -781,7 +760,7 @@ purpose they have — spotting slow drift across many runs — but a single entr
 Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`.
 
 Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
-had to work around by hand:
+(a denoiser since removed) had to work around by hand:
 
 - **`__bench.readTexture(name)` over `PipelineContext`,** with automatic HalfFloat decode. Every
   finding in that investigation came from reading intermediate targets, which no suite can do. The
@@ -793,12 +772,12 @@ had to work around by hand:
 - **Per-frame trace hooks** (`render(n, { onFrame })`). The temporal defects were all trajectory
   bugs — history going 2→1→2→3, a reset firing 50 ms late, motion vectors valid-but-zero. End-state
   metrics are blind to them.
-- **Golden the debug heatmaps.** ASVGF ships six modes rendering to `heatmapTarget`, plus the
-  `visMode` views; they are UI-only today. Capturing them gives cheap structural coverage of the
+- **Golden the debug views.** NRD ships five (`setNRDDebugMode`), plus the `visMode` views; they
+  are UI-only today. Capturing them gives cheap structural coverage of the
   history, motion and gradient fields.
 
 One caveat on the existing tooling: `getGPUTimings().total` is **not** usable for stage-level A/B. It
-reported the ASVGF chain as 9 % *faster* across five paired rounds where synced wall clock says
+reported the (since removed) ASVGF chain as 9 % *faster* across five paired rounds where synced wall clock says
 +4–6 %; it does not survive a change in pass count. The perf suite's use of it is fine (pass mix is
 constant there), but do not reach for it to price a stage.
 

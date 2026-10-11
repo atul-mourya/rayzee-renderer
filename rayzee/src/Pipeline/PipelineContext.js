@@ -43,7 +43,6 @@ export class PipelineContext {
 
 			// Render modes
 			renderMode: 0, // 0 = interactive, 1 = production (full-frame in both)
-			interactionMode: false,
 			isComplete: false,
 
 			// Tile rendering

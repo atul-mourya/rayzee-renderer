@@ -2,11 +2,7 @@ import { Box3, Vector3 } from 'three';
 import { RayzeeRenderer, describeAdapter, RENDER_CHECKPOINT_VERSION } from './RayzeeRenderer.js';
 import { NormalDepth } from './Stages/NormalDepth.js';
 import { MotionVector } from './Stages/MotionVector.js';
-import { ASVGF } from './Stages/ASVGF.js';
 import { NRD } from './Stages/NRD.js';
-import { Variance } from './Stages/Variance.js';
-import { BilateralFilter } from './Stages/BilateralFilter.js';
-import { EdgeFilter } from './Stages/EdgeFilter.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
 import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
@@ -151,17 +147,12 @@ export class PathTracerApp extends RayzeeRenderer {
 		const { renderer, stages } = this;
 		stages.normalDepth = new NormalDepth( renderer, { pathTracer: stages.pathTracer } );
 		stages.motionVector = new MotionVector( renderer, this.camera, { pathTracer: stages.pathTracer } );
-		stages.asvgf = new ASVGF( renderer, { enabled: false } );
 		stages.nrd = new NRD( renderer, { enabled: false, pathTracer: stages.pathTracer } );
-		stages.variance = new Variance( renderer, { enabled: false } );
-		stages.bilateralFilter = new BilateralFilter( renderer, { enabled: false } );
-		stages.edgeFilter = new EdgeFilter( renderer, { enabled: false } );
 		stages.autoExposure = new AutoExposure( renderer, { enabled: AUTO_EXPOSURE_DEFAULTS.autoExposure } );
 		stages.localExposure = new LocalExposure( renderer, { enabled: LOCAL_EXPOSURE_DEFAULTS.localExposure } );
 
 		return [
-			stages.normalDepth, stages.motionVector, stages.nrd, stages.asvgf,
-			stages.variance, stages.bilateralFilter, stages.edgeFilter, stages.autoExposure, stages.localExposure,
+			stages.normalDepth, stages.motionVector, stages.nrd, stages.autoExposure, stages.localExposure,
 		];
 
 	}
@@ -318,7 +309,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	_displaySources() {
 
-		return [ 'oidn:output', 'edgeFiltering:output', 'bilateralFiltering:output', 'asvgf:output', 'nrd:output' ];
+		return [ 'oidn:output', 'nrd:output' ];
 
 	}
 
@@ -338,8 +329,10 @@ export class PathTracerApp extends RayzeeRenderer {
 
 				this.cameraManager.applyProjection( value );
 				// MotionVector unprojects through projectionMatrixInverse, which is meaningless once every pixel is its
-				// own direction: fall back to the spatial-only denoiser rather than leaving no strategy.
-				if ( value === 'equirectangular' && this.denoisingManager?.requiresMotionVectors ) this.denoisingManager.setDenoiserStrategy( 'edgeaware' );
+				// own direction: hand the view to OIDN, which needs none, rather than leaving no denoiser.
+				if ( value === 'equirectangular' && this.denoisingManager?.requiresMotionVectors ) this.denoisingManager.setDenoiserStrategy( 'oidn' );
+				// OIDN's motion history is off in a panorama and back on outside one.
+				else this.denoisingManager?._syncGBufferStages?.();
 
 			},
 		};
@@ -1106,11 +1099,7 @@ export class PathTracerApp extends RayzeeRenderer {
 				pathTracer: this.stages.pathTracer,
 				normalDepth: this.stages.normalDepth,
 				motionVector: this.stages.motionVector,
-				asvgf: this.stages.asvgf,
 				nrd: this.stages.nrd,
-				variance: this.stages.variance,
-				bilateralFilter: this.stages.bilateralFilter,
-				edgeFilter: this.stages.edgeFilter,
 				autoExposure: this.stages.autoExposure,
 				compositor: this.stages.compositor,
 			},

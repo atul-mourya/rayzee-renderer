@@ -132,7 +132,7 @@ Remove debug logs, and dispose every GPU resource and listener a change creates.
 
 Every commit message and PR title starts with a [conventional commit](https://www.conventionalcommits.org/) type:
 `feat:`, `fix:`, `refactor:` (no behaviour change), `perf:`, `docs:`, `test:`, `chore:`, `build:`, `ci:`, `style:`
-or `revert:`. A scope is optional: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`. The release is cut from these
+or `revert:`. A scope is optional: `feat(nrd):`, `fix(tsl):`, `refactor(pipeline):`. The release is cut from these
 types, so a wrong one ships a wrong version.
 
 ```bash

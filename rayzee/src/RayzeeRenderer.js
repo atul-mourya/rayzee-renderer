@@ -2730,7 +2730,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   accumulation
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
 	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the
-	 *   denoiser that published it (`'oidn'`, `'asvgf'`, `'nrd'`, `'edgeFiltering'`, `'bilateralFiltering'`).
+	 *   denoiser that published it (`'oidn'`, `'nrd'`).
 	 *   `toneMappedOn` is set for `'srgb'` only.
 	 */
 	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {

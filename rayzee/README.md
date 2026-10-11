@@ -500,7 +500,7 @@ Key settings:
 | `transparentBackground` | `boolean` | false | Transparent canvas background |
 | `interactionModeEnabled` | `boolean` | true | Render at lower resolution while the camera moves, keeping the full bounce budget ("Fast Navigation" in the app) |
 | `interactionRenderScale` | `number` | 0.5 | Per-axis render scale while the camera moves (0.5 = a quarter of the pixels); `1` turns the drop off. Ignored while OIDN is the live denoiser. `PathTracerApp` only |
-| `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & ASVGF behavior — normally set via `configureForMode()`, not written directly |
+| `renderMode` | `number` | 0 | Internal preview(0)/production(1) flag driving accumulation & denoiser history — normally set via `configureForMode()`, not written directly |
 | `visMode` | `number` | 0 | Debug visualization mode (0 = off) |
 | `environmentMode` | `string` | 'hdri' | Sky mode: `'hdri'` \| `'procedural'` \| `'color'` — not routed through `engine.settings`; use `engine.environmentManager.setMode()` instead |
 | `cameraProjection` | `string` | 'perspective' | `'perspective'` \| `'orthographic'` \| `'equirectangular'` — see [Camera Projection](#camera-projection-orthographic-360-panorama) |
@@ -748,7 +748,7 @@ Depth of field still works: the lens plane is built from each ray's own frame, n
 
 Two features are incompatible with a non-frustum camera and the engine switches them off for you when panorama is enabled:
 
-- **ASVGF** falls back to the `edgeaware` denoiser — ASVGF's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction.
+- **NRD** hands the view to OIDN — NRD's motion vectors unproject through the projection matrix, which is meaningless when every pixel is its own direction. OIDN keeps working (without its motion history). Asking for `'nrd'` while in a panorama runs `'oidn'` and records `denoiser.unavailable`.
 - **Auto-focus** pauses and focus holds its last distance — it raycasts via `Raycaster.setFromCamera`, which only understands a frustum. It resumes when you leave the panorama.
 
 Read the denoiser outcome back rather than duplicating the rule (`engine.denoisingManager.denoiserStrategy`); it is not restored automatically when you leave the panorama.
@@ -918,7 +918,7 @@ await engine.environmentManager.generateProcedural();
 
 ### engine.denoisingManager
 
-Denoiser strategy, ASVGF, OIDN, upscaler, and auto-exposure. Auto exposure meters the accumulated image on the GPU
+Denoiser strategy, NRD, OIDN, upscaler, and auto-exposure. Auto exposure meters the accumulated image on the GPU
 and moves in stops; it follows a room level learned as the camera moves plus a damped share of each view, so a scene lit
 for its manual exposure stays near it while one lit far off is corrected in full. It eases while the image restarts
 every frame (a moving camera, playback) and lands within about a third of a second once the image builds up, so a
@@ -926,15 +926,13 @@ finished render shows its own exposure at any sample count. While it is on, `exp
 
 ```js
 // Strategy
-engine.denoisingManager.setStrategy('asvgf', 'medium')  // 'none' | 'asvgf' | 'nrd' | 'edgeaware' | 'oidn'
+engine.denoisingManager.setStrategy('nrd', 'medium')    // DENOISER_STRATEGIES: 'none' | 'nrd' | 'oidn'
 engine.denoisingManager.denoiserStrategy                 // read back the active strategy (derived from stage state)
-engine.denoisingManager.setASVGFEnabled(true, 'medium')
-engine.denoisingManager.applyASVGFPreset('high')         // 'low' | 'medium' | 'high'
+engine.denoisingManager.applyNRDPreset('high')           // 'low' | 'medium' | 'high'
 engine.denoisingManager.setAutoExposure(true)
 
 // Fine-grained parameters
-engine.denoisingManager.setASVGFParams({ temporalAlpha: 0.1, maxAccumFrames: 16 })
-engine.denoisingManager.setEdgeAwareParams({ phiLuminance: 4.0, atrousIterations: 5 })
+engine.denoisingManager.setNRDParams({ maxAccumulatedFrameNum: 16, maxBlurRadius: 20 })
 engine.denoisingManager.setAutoExposureParams({
   strength: 0.3,           // 0..1, how far it follows each view; 1 averages every view to middle grey
   metering: 'center',      // 'average' | 'center' | 'spot' (at the auto-focus point)
@@ -1604,7 +1602,7 @@ import {
   AUTO_EXPOSURE_DEFAULTS,
   LOCAL_EXPOSURE_DEFAULTS,
   AUTO_FOCUS_DEFAULTS,
-  ASVGF_QUALITY_PRESETS,
+  DENOISER_STRATEGIES,
   SKY_DEFAULTS,
   DEFAULT_SUN_PATH,
   DEFAULT_VIEW,
@@ -1754,7 +1752,7 @@ Two independent decisions, because they answer different questions — *what cle
 render works*, and *does the finished image get a proper pass*:
 
 ```js
-engine.denoisingManager.setStrategy('oidn');    // 'none' | 'edgeaware' | 'asvgf' | 'nrd' | 'oidn'
+engine.denoisingManager.setStrategy('oidn');    // 'none' | 'nrd' | 'oidn'
 engine.denoisingManager.setOIDNEnabled(false);  // a full OIDN pass on the finished image
 ```
 
@@ -1767,8 +1765,8 @@ switching the final pass on says nothing about the live view. All six combinatio
 |---|---|---|---|---|
 | `'none'` | `false` | raw | raw | raw |
 | `'none'` | `true` | raw | raw | OIDN |
-| `'asvgf'` | `false` | ASVGF | ASVGF | ASVGF's last frame |
-| `'asvgf'` | `true` | ASVGF | ASVGF | OIDN |
+| `'nrd'` | `false` | NRD | NRD, then raw once it hands over | NRD's last frame, or raw past the handover |
+| `'nrd'` | `true` | NRD | NRD, then raw once it hands over | OIDN |
 | `'oidn'` | `false` | OIDN, from the motion history | OIDN, refreshing | one last refresh |
 | `'oidn'` | `true` | OIDN, from the motion history | OIDN, refreshing | OIDN, full quality |
 
@@ -1780,9 +1778,10 @@ With OIDN on the live view and the final pass off, the render still closes with 
 cadence's last tick lands short of the end, and the picture should match the render that finished. On
 a 150-sample render that gap measured **11 samples at 512²** and **1 at 1024²** — larger where the
 renderer is fast, because more samples land between refreshes. It uses whatever model the refreshes
-were already on: no reload for an image the user never asked to be denoised at full quality.
+were already on: no reload for an image the user never asked to be denoised at full quality. A final render
+(`configureForMode( 'production' )`) has no live view to match, so with the final pass off it finishes undenoised.
 
-In the app that is `Real-Time Denoiser` (None / EdgeAware / ASVGF / NRD / **OIDN (AI)**) and the
+In the app that is `Real-Time Denoiser` (None / NRD / **OIDN (AI)**, OIDN by default) and the
 `Final Denoise (OIDN)` switch. Deterministic mode pins the live refreshes off, since which frame a
 wall-clock cadence lands on is not reproducible.
 

@@ -77,7 +77,7 @@ export class PathTracer extends PathTracerStage {
 		this._auxGBufferUniform = uniform( 0, 'uint' );
 		// Clean-aux mode: temporally accumulate + renormalize the aux NORMAL (like albedo) so a clean-aux
 		// OIDN model (calb_cnrm/high, alb_nrm/balanced) gets the prefiltered-ish normal it expects instead
-		// of the point-sampled per-frame value that leaks noise. Off for fast/ASVGF (they want the bump normal).
+		// of the point-sampled per-frame value that leaks noise. Off otherwise: the fast model wants the bump normal.
 		this._cleanAuxNormalEnabled = false;
 		this._cleanAuxNormalUniform = uniform( 0, 'uint' );
 		// Aux MRT accumulates on an epoch of its own: enabling the denoiser at colour frame N must not leave

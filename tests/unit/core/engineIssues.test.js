@@ -255,11 +255,11 @@ describe( 'pipeline stage failures', () => {
 	it( 'records a stage that throws mid-frame', () => {
 
 		const issues = new IssueLog();
-		makePipeline( issues )._reportStageFailure( 'asvgf', 'render', new Error( 'bad binding' ) );
+		makePipeline( issues )._reportStageFailure( 'nrd', 'render', new Error( 'bad binding' ) );
 
 		expect( issues.list[ 0 ] ).toMatchObject( {
 			code: ISSUE_CODES.STAGE_RENDER_FAILED,
-			detail: { stage: 'asvgf', phase: 'render', cause: 'bad binding' },
+			detail: { stage: 'nrd', phase: 'render', cause: 'bad binding' },
 		} );
 
 	} );
@@ -270,8 +270,8 @@ describe( 'pipeline stage failures', () => {
 		const issues = new IssueLog();
 		const pipeline = makePipeline( issues );
 
-		for ( let i = 0; i < 120; i ++ ) pipeline._reportStageFailure( 'asvgf', 'render', new Error( 'x' ) );
-		pipeline._reportStageFailure( 'asvgf', 'reset', new Error( 'x' ) );
+		for ( let i = 0; i < 120; i ++ ) pipeline._reportStageFailure( 'nrd', 'render', new Error( 'x' ) );
+		pipeline._reportStageFailure( 'nrd', 'reset', new Error( 'x' ) );
 		pipeline._reportStageFailure( 'compositor', 'render', new Error( 'x' ) );
 
 		expect( issues.list ).toHaveLength( 3 );

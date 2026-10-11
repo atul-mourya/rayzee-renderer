@@ -31,7 +31,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 - **Wavefront path tracer** — decomposed `generate → extend → shade → compact` compute kernels with stream compaction, driving a Monte Carlo core with configurable multi-bounce transport and progressive accumulation
 - **Two-level BVH** — SAH-built TLAS/BLAS acceleration structure, constructed off the main thread via Web Workers so scene loads don't block rendering, with O(N) refit for animated and transformed geometry
 - **Instanced geometry** — a geometry used by several objects is stored once in its own space and placed by matrix, so a scene of repeated furniture costs one copy rather than one per placement; geometry used once, or geometry that emits light, is baked to world space instead so rays skip the transform entirely. Objects made of several parts that move together are traced as one object a copy, and past a million copies neighbouring copies share one tree leaf, so tens of millions of placed plants fit
-- **Real-time + final-quality denoising** — ASVGF spatiotemporal filtering or a port of NVIDIA NRD's ReBLUR for interactive navigation, a lighter spatial-only edge-aware à-trous filter when temporal reuse is unwanted, and Intel Open Image Denoise (OIDN) for clean final renders or as the live viewport denoiser (fed a reprojected motion history while the view moves, which roughly halves its boiling), running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows
+- **Real-time + final-quality denoising** — Intel Open Image Denoise (OIDN) for clean final renders and as the default live viewport denoiser (fed a reprojected motion history while the view moves, which roughly halves its boiling), running as a native WGSL U-Net on the renderer's own GPU device with FP16 inference where the hardware allows, plus a port of NVIDIA NRD's ReBLUR for very large live views
 - **Neural upscaling** — a finished render can be enlarged 2x or 4x by Real-ESRGAN rather than traced at full size. It runs once, when the render completes, on the denoised result
 - **Bidirectional path tracing and vertex merging** — opt-in integrators that also trace light from every source (glowing surfaces, lamps, the sun, the sky): caustics, light through small openings, and caustics seen in mirrors and through glass
 - **HDR image-based lighting** with CDF importance sampling for accurate, noise-efficient environment illumination
@@ -57,7 +57,7 @@ See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference �
 | **3D Rendering** | Three.js 0.186+, WebGPU, TSL Shaders (WGSL) |
 | **UI Components** | Radix UI, Lucide Icons |
 | **State Management** | Zustand |
-| **Denoising** | Intel OIDN Web, custom ASVGF, NRD ReBLUR port |
+| **Denoising** | Intel OIDN Web, NRD ReBLUR port |
 | **Colour** | OpenColorIO 2.5 (WebAssembly), Blender 5.1 config |
 | **Neural post** | Real-ESRGAN (ONNX Runtime Web) |
 | **Build Tools** | Vite, ESLint, Semantic Release |
@@ -149,7 +149,7 @@ For a production render — adaptive sampling on, stopping once the image conver
 
 ## Architecture
 
-Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `ASVGF`, `Variance`, `BilateralFilter`, `EdgeFilter`, `AutoExposure` and `LocalExposure` between them, plus camera controls, the gizmo, overlays and the timeline; six capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
+Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `AutoExposure` and `LocalExposure` between them, plus camera controls, the gizmo, overlays and the timeline; six capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
 
 For the full stage breakdown and shader architecture, see [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) and [docs/PATH_TRACER_SHADER_ARCHITECTURE.md](docs/PATH_TRACER_SHADER_ARCHITECTURE.md).
 

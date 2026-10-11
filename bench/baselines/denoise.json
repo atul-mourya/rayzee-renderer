@@ -1,124 +1,4 @@
 {
-	"spheres-gradient/asvgf/1": {
-		"ratio": 0.9569324341029812,
-		"rawRmse": 0.04258404316656793,
-		"denoisedRmse": 0.04075005208133027
-	},
-	"spheres-gradient/edgeaware/1": {
-		"ratio": 0.7260426439679254,
-		"rawRmse": 0.04258404316656793,
-		"denoisedRmse": 0.030917831291499245
-	},
-	"spheres-gradient/asvgf/64": {
-		"ratio": 1.5010654251701172,
-		"rawRmse": 0.0032560669657627824,
-		"denoisedRmse": 0.004887569544345084
-	},
-	"spheres-gradient/edgeaware/64": {
-		"ratio": 0.8906590884796938,
-		"rawRmse": 0.0032560669657627824,
-		"denoisedRmse": 0.002900045635755122
-	},
-	"glass-transmission/asvgf/1": {
-		"ratio": 0.7175498476805378,
-		"rawRmse": 0.05283129585865651,
-		"denoisedRmse": 0.0379090882961444
-	},
-	"glass-transmission/edgeaware/1": {
-		"ratio": 0.5926258750630655,
-		"rawRmse": 0.05283129585865651,
-		"denoisedRmse": 0.03130919293895202
-	},
-	"glass-transmission/asvgf/64": {
-		"ratio": 0.8309917325181245,
-		"rawRmse": 0.0034689391320971256,
-		"denoisedRmse": 0.0028826597393813097
-	},
-	"glass-transmission/edgeaware/64": {
-		"ratio": 0.7677753614729805,
-		"rawRmse": 0.0034689391320971256,
-		"denoisedRmse": 0.002663365996073638
-	},
-	"textured-normalmap/asvgf/1": {
-		"ratio": 0.9944165933047849,
-		"rawRmse": 0.07114559149271346,
-		"denoisedRmse": 0.07074835672083801
-	},
-	"textured-normalmap/edgeaware/1": {
-		"ratio": 0.871464720904049,
-		"rawRmse": 0.07114559149271346,
-		"denoisedRmse": 0.06200087303375102
-	},
-	"textured-normalmap/asvgf/64": {
-		"ratio": 1.2393071336294803,
-		"rawRmse": 0.006044724580565602,
-		"denoisedRmse": 0.0074912702935204184
-	},
-	"textured-normalmap/edgeaware/64": {
-		"ratio": 1.0322823234992713,
-		"rawRmse": 0.006044724580565602,
-		"denoisedRmse": 0.006239862334939418
-	},
-	"subsurface-marble/asvgf/1": {
-		"ratio": 0.9599966612607276,
-		"rawRmse": 0.06429301016041021,
-		"denoisedRmse": 0.061721075096395836
-	},
-	"subsurface-marble/edgeaware/1": {
-		"ratio": 0.7049438143427724,
-		"rawRmse": 0.06429301016041021,
-		"denoisedRmse": 0.045322959818058194
-	},
-	"subsurface-marble/asvgf/64": {
-		"ratio": 0.6906360891915595,
-		"rawRmse": 0.009401161783671107,
-		"denoisedRmse": 0.006492781608131759
-	},
-	"subsurface-marble/edgeaware/64": {
-		"ratio": 0.7676701553811458,
-		"rawRmse": 0.009401161783671107,
-		"denoisedRmse": 0.007216991327234089
-	},
-	"dispersion-glass/asvgf/1": {
-		"ratio": 0.8520348310251319,
-		"rawRmse": 0.14263523183010532,
-		"denoisedRmse": 0.1215301856505943
-	},
-	"dispersion-glass/edgeaware/1": {
-		"ratio": 0.6095120451591661,
-		"rawRmse": 0.14263523183010532,
-		"denoisedRmse": 0.08693789186451928
-	},
-	"dispersion-glass/asvgf/64": {
-		"ratio": 0.7623712541596546,
-		"rawRmse": 0.01531945529297042,
-		"denoisedRmse": 0.011679112344744617
-	},
-	"dispersion-glass/edgeaware/64": {
-		"ratio": 0.7004547700430933,
-		"rawRmse": 0.01531945529297042,
-		"denoisedRmse": 0.010730585534423045
-	},
-	"alpha-cutout/asvgf/1": {
-		"ratio": 0.8030004057517094,
-		"rawRmse": 0.09465984820935047,
-		"denoisedRmse": 0.07601189652050365
-	},
-	"alpha-cutout/edgeaware/1": {
-		"ratio": 0.6408215400046169,
-		"rawRmse": 0.09465984820935047,
-		"denoisedRmse": 0.06066006970611925
-	},
-	"alpha-cutout/asvgf/64": {
-		"ratio": 2.4501522511662985,
-		"rawRmse": 0.005688674675486984,
-		"denoisedRmse": 0.013938119062297147
-	},
-	"alpha-cutout/edgeaware/64": {
-		"ratio": 1.039481250376679,
-		"rawRmse": 0.005688674675486984,
-		"denoisedRmse": 0.005913270664661359
-	},
 	"textured-normalmap/oidn/1": {
 		"ratio": 0.503639978218622,
 		"rawRmse": 0.07114570347459323,
@@ -209,16 +89,6 @@
 		"rawRmse": 0.0060445557811296905,
 		"denoisedRmse": 0.005151508163303008
 	},
-	"arealight-analytic/asvgf/1": {
-		"ratio": 0.22701059283496935,
-		"rawRmse": 0.03465972400682663,
-		"denoisedRmse": 0.007868124494286134
-	},
-	"arealight-analytic/edgeaware/1": {
-		"ratio": 0.6524299648454798,
-		"rawRmse": 0.03465972400682663,
-		"denoisedRmse": 0.02261304251532793
-	},
 	"arealight-analytic/oidn/1": {
 		"ratio": 0.10009420811218347,
 		"rawRmse": 0.02330259215304434,
@@ -228,16 +98,6 @@
 		"ratio": 0.10009420811218347,
 		"rawRmse": 0.02330259215304434,
 		"denoisedRmse": 0.002332454508520154
-	},
-	"arealight-analytic/asvgf/64": {
-		"ratio": 0.14635161304826294,
-		"rawRmse": 0.0017155162880646434,
-		"denoisedRmse": 0.00025106857596882907
-	},
-	"arealight-analytic/edgeaware/64": {
-		"ratio": 0.13960344186804124,
-		"rawRmse": 0.0017155162880646434,
-		"denoisedRmse": 0.00023949197839451036
 	},
 	"arealight-analytic/oidn/64": {
 		"ratio": 0.20945494621825905,
@@ -249,16 +109,6 @@
 		"rawRmse": 0.0016044580535732136,
 		"denoisedRmse": 0.00033606167532063006
 	},
-	"arealights-two/asvgf/1": {
-		"ratio": 0.8863032633029225,
-		"rawRmse": 0.08081925518814843,
-		"denoisedRmse": 0.07163036961096761
-	},
-	"arealights-two/edgeaware/1": {
-		"ratio": 0.7150905718284717,
-		"rawRmse": 0.08081925518814843,
-		"denoisedRmse": 0.057793087407244245
-	},
 	"arealights-two/oidn/1": {
 		"ratio": 0.22958623091939653,
 		"rawRmse": 0.08077784593028592,
@@ -268,16 +118,6 @@
 		"ratio": 0.22958623091939653,
 		"rawRmse": 0.08077784593028592,
 		"denoisedRmse": 0.018545481188922058
-	},
-	"arealights-two/asvgf/64": {
-		"ratio": 0.8024696183749941,
-		"rawRmse": 0.04378715095697822,
-		"denoisedRmse": 0.03513785831817457
-	},
-	"arealights-two/edgeaware/64": {
-		"ratio": 0.6772318802522495,
-		"rawRmse": 0.04378715095697822,
-		"denoisedRmse": 0.029654054573483447
 	},
 	"arealights-two/oidn/64": {
 		"ratio": 0.2522751528501791,
@@ -319,20 +159,10 @@
 		"rawRmse": 0.006044724580565602,
 		"denoisedRmse": 0.006044724580565602
 	},
-	"instanced-storage/asvgf/1": {
-		"ratio": 0.8027409867184597,
-		"rawRmse": 0.11439516403834712,
-		"denoisedRmse": 0.09182968685596284
-	},
 	"instanced-storage/nrd/1": {
 		"ratio": 1.1826239041310478,
 		"rawRmse": 0.1487378877933641,
 		"denoisedRmse": 0.175900981554394
-	},
-	"instanced-storage/edgeaware/1": {
-		"ratio": 0.609698952641601,
-		"rawRmse": 0.11439516403834712,
-		"denoisedRmse": 0.06974661170144439
 	},
 	"instanced-storage/oidn/1": {
 		"ratio": 0.1539506283157336,
@@ -344,20 +174,10 @@
 		"rawRmse": 0.1141255562821395,
 		"denoisedRmse": 0.017569701096517995
 	},
-	"instanced-storage/asvgf/64": {
-		"ratio": 0.4022489302367756,
-		"rawRmse": 0.011677600078619862,
-		"denoisedRmse": 0.004697302139357726
-	},
 	"instanced-storage/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.011677600078619862,
 		"denoisedRmse": 0.011677600078619862
-	},
-	"instanced-storage/edgeaware/64": {
-		"ratio": 0.7499683170701263,
-		"rawRmse": 0.011677600078619862,
-		"denoisedRmse": 0.008757830078380513
 	},
 	"instanced-storage/oidn/64": {
 		"ratio": 0.3167240918229261,
@@ -369,20 +189,10 @@
 		"rawRmse": 0.011686945197843966,
 		"denoisedRmse": 0.0037015371039714373
 	},
-	"spheres-procedural-sky/asvgf/1": {
-		"ratio": 0.9136878964252534,
-		"rawRmse": 0.029161542582568634,
-		"denoisedRmse": 0.026644548498782585
-	},
 	"spheres-procedural-sky/nrd/1": {
 		"ratio": 0.8951513709708221,
 		"rawRmse": 0.029161542582568634,
 		"denoisedRmse": 0.026103994822410322
-	},
-	"spheres-procedural-sky/edgeaware/1": {
-		"ratio": 0.7257616602292959,
-		"rawRmse": 0.029161542582568634,
-		"denoisedRmse": 0.02116432955957232
 	},
 	"spheres-procedural-sky/oidn/1": {
 		"ratio": 0.5569048626074695,
@@ -394,20 +204,10 @@
 		"rawRmse": 0.029161542582568634,
 		"denoisedRmse": 0.016240204865367258
 	},
-	"spheres-procedural-sky/asvgf/64": {
-		"ratio": 1.22141012423844,
-		"rawRmse": 0.006284494354860942,
-		"denoisedRmse": 0.007675945030746478
-	},
 	"spheres-procedural-sky/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.006284494354860942,
 		"denoisedRmse": 0.006284494354860942
-	},
-	"spheres-procedural-sky/edgeaware/64": {
-		"ratio": 0.9885923523090366,
-		"rawRmse": 0.006284494354860942,
-		"denoisedRmse": 0.00621280305734484
 	},
 	"spheres-procedural-sky/oidn/64": {
 		"ratio": 0.9205181630120278,
@@ -419,20 +219,10 @@
 		"rawRmse": 0.006284494354860942,
 		"denoisedRmse": 0.005784991198996053
 	},
-	"anisotropy-brushed/asvgf/1": {
-		"ratio": 0.7603958427963523,
-		"rawRmse": 0.04389172236222403,
-		"denoisedRmse": 0.03337508321740684
-	},
 	"anisotropy-brushed/nrd/1": {
 		"ratio": 0.888937940075179,
 		"rawRmse": 0.04389172236222403,
 		"denoisedRmse": 0.0390170172630271
-	},
-	"anisotropy-brushed/edgeaware/1": {
-		"ratio": 0.656734395523955,
-		"rawRmse": 0.04389172236222403,
-		"denoisedRmse": 0.028825203754060454
 	},
 	"anisotropy-brushed/oidn/1": {
 		"ratio": 0.29578813055465425,
@@ -444,20 +234,10 @@
 		"rawRmse": 0.0438772714700192,
 		"denoisedRmse": 0.012978376101956044
 	},
-	"anisotropy-brushed/asvgf/64": {
-		"ratio": 0.9188394009118964,
-		"rawRmse": 0.006724806457506461,
-		"denoisedRmse": 0.006179017136663689
-	},
 	"anisotropy-brushed/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.006724806457506461,
 		"denoisedRmse": 0.006724806457506461
-	},
-	"anisotropy-brushed/edgeaware/64": {
-		"ratio": 0.7869341695872915,
-		"rawRmse": 0.006724806457506461,
-		"denoisedRmse": 0.005291979985273102
 	},
 	"anisotropy-brushed/oidn/64": {
 		"ratio": 0.4909983955474943,
@@ -469,20 +249,10 @@
 		"rawRmse": 0.0067097056752331175,
 		"denoisedRmse": 0.0032944547211353776
 	},
-	"iridescence-thinfilm/asvgf/1": {
-		"ratio": 0.6641580240224121,
-		"rawRmse": 0.020218805477993942,
-		"denoisedRmse": 0.013428481894357977
-	},
 	"iridescence-thinfilm/nrd/1": {
 		"ratio": 0.6611079169002356,
 		"rawRmse": 0.020218805477993942,
 		"denoisedRmse": 0.013366812371767648
-	},
-	"iridescence-thinfilm/edgeaware/1": {
-		"ratio": 0.7494030335404714,
-		"rawRmse": 0.020218805477993942,
-		"denoisedRmse": 0.015152034159773363
 	},
 	"iridescence-thinfilm/oidn/1": {
 		"ratio": 0.3781966077777857,
@@ -494,20 +264,10 @@
 		"rawRmse": 0.02026499652080004,
 		"denoisedRmse": 0.0076641529407952035
 	},
-	"iridescence-thinfilm/asvgf/64": {
-		"ratio": 0.9679478770921299,
-		"rawRmse": 0.005348988811430715,
-		"denoisedRmse": 0.005177542364613916
-	},
 	"iridescence-thinfilm/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.005348988811430715,
 		"denoisedRmse": 0.005348988811430715
-	},
-	"iridescence-thinfilm/edgeaware/64": {
-		"ratio": 0.6963323422675627,
-		"rawRmse": 0.005348988811430715,
-		"denoisedRmse": 0.003724673907826536
 	},
 	"iridescence-thinfilm/oidn/64": {
 		"ratio": 0.7027173212953242,
@@ -519,20 +279,10 @@
 		"rawRmse": 0.00534698729270394,
 		"denoisedRmse": 0.0037574205873290504
 	},
-	"sheen-velvet/asvgf/1": {
-		"ratio": 0.7147741020354633,
-		"rawRmse": 0.02041363921653005,
-		"denoisedRmse": 0.014591140640271186
-	},
 	"sheen-velvet/nrd/1": {
 		"ratio": 0.6681542742333093,
 		"rawRmse": 0.02041363921653005,
 		"denoisedRmse": 0.013639460295181257
-	},
-	"sheen-velvet/edgeaware/1": {
-		"ratio": 0.6565845708482045,
-		"rawRmse": 0.02041363921653005,
-		"denoisedRmse": 0.013403280544435462
 	},
 	"sheen-velvet/oidn/1": {
 		"ratio": 0.3341337629179395,
@@ -544,20 +294,10 @@
 		"rawRmse": 0.020403727783676384,
 		"denoisedRmse": 0.0068175743419131
 	},
-	"sheen-velvet/asvgf/64": {
-		"ratio": 1.8875435205067759,
-		"rawRmse": 0.0015778966928349913,
-		"denoisedRmse": 0.002978348678589758
-	},
 	"sheen-velvet/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.0015778966928349913,
 		"denoisedRmse": 0.0015778966928349913
-	},
-	"sheen-velvet/edgeaware/64": {
-		"ratio": 0.9462485616366145,
-		"rawRmse": 0.0015778966928349913,
-		"denoisedRmse": 0.0014930824760062814
 	},
 	"sheen-velvet/oidn/64": {
 		"ratio": 0.8810302026776173,
@@ -569,20 +309,10 @@
 		"rawRmse": 0.001612782895808317,
 		"denoisedRmse": 0.001420910441568996
 	},
-	"clearcoat-carpaint/asvgf/1": {
-		"ratio": 0.6673819194397711,
-		"rawRmse": 0.026933236152781447,
-		"denoisedRmse": 0.017974754840367917
-	},
 	"clearcoat-carpaint/nrd/1": {
 		"ratio": 0.6882358371345185,
 		"rawRmse": 0.026933236152781447,
 		"denoisedRmse": 0.018536418330351218
-	},
-	"clearcoat-carpaint/edgeaware/1": {
-		"ratio": 0.7258796791016285,
-		"rawRmse": 0.026933236152781447,
-		"denoisedRmse": 0.019550288815749377
 	},
 	"clearcoat-carpaint/oidn/1": {
 		"ratio": 0.29903182601584005,
@@ -594,20 +324,10 @@
 		"rawRmse": 0.026933236152781447,
 		"denoisedRmse": 0.008053894787282075
 	},
-	"clearcoat-carpaint/asvgf/64": {
-		"ratio": 1.2684955222437486,
-		"rawRmse": 0.004584094040467724,
-		"denoisedRmse": 0.005814902763877561
-	},
 	"clearcoat-carpaint/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.004584094040467724,
 		"denoisedRmse": 0.004584094040467724
-	},
-	"clearcoat-carpaint/edgeaware/64": {
-		"ratio": 0.934439391216856,
-		"rawRmse": 0.004584094040467724,
-		"denoisedRmse": 0.004283558044455478
 	},
 	"clearcoat-carpaint/oidn/64": {
 		"ratio": 0.5210295648558091,
@@ -619,20 +339,10 @@
 		"rawRmse": 0.004584094040467724,
 		"denoisedRmse": 0.002388448523163006
 	},
-	"furnace-diffuse-transmission/asvgf/1": {
-		"ratio": 0.3261526692672999,
-		"rawRmse": 0.12684010077401833,
-		"denoisedRmse": 0.04136923743757939
-	},
 	"furnace-diffuse-transmission/nrd/1": {
 		"ratio": 0.07419244431693571,
 		"rawRmse": 0.12684010077401833,
 		"denoisedRmse": 0.00941057711383087
-	},
-	"furnace-diffuse-transmission/edgeaware/1": {
-		"ratio": 0.46806847867693924,
-		"rawRmse": 0.12684010077401833,
-		"denoisedRmse": 0.05936985300452442
 	},
 	"furnace-diffuse-transmission/oidn/1": {
 		"ratio": 0.05153910660663079,
@@ -644,20 +354,10 @@
 		"rawRmse": 0.12684010077401833,
 		"denoisedRmse": 0.006537225475787924
 	},
-	"furnace-diffuse-transmission/asvgf/64": {
-		"ratio": 0.4306029580270376,
-		"rawRmse": 0.014366734007414067,
-		"denoisedRmse": 0.006186358160780133
-	},
 	"furnace-diffuse-transmission/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.014366734007414067,
 		"denoisedRmse": 0.014366734007414067
-	},
-	"furnace-diffuse-transmission/edgeaware/64": {
-		"ratio": 0.7546002453013834,
-		"rawRmse": 0.014366734007414067,
-		"denoisedRmse": 0.01084114100617438
 	},
 	"furnace-diffuse-transmission/oidn/64": {
 		"ratio": 0.4269416871524929,
@@ -669,20 +369,10 @@
 		"rawRmse": 0.014366734007414067,
 		"denoisedRmse": 0.006133757655996458
 	},
-	"translucent-panel/asvgf/1": {
-		"ratio": 0.8573150857681765,
-		"rawRmse": 0.09872180929175868,
-		"denoisedRmse": 0.08463569640015366
-	},
 	"translucent-panel/nrd/1": {
 		"ratio": 0.47412827684544784,
 		"rawRmse": 0.09872180929175868,
 		"denoisedRmse": 0.04680680132656646
-	},
-	"translucent-panel/edgeaware/1": {
-		"ratio": 0.6940588737413561,
-		"rawRmse": 0.09872180929175868,
-		"denoisedRmse": 0.06851874777074697
 	},
 	"translucent-panel/oidn/1": {
 		"ratio": 0.12706416410797652,
@@ -694,20 +384,10 @@
 		"rawRmse": 0.09872180929175868,
 		"denoisedRmse": 0.012544004176884387
 	},
-	"translucent-panel/asvgf/64": {
-		"ratio": 0.7087610479028114,
-		"rawRmse": 0.010041069849144147,
-		"denoisedRmse": 0.007116719188344729
-	},
 	"translucent-panel/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.010041069849144147,
 		"denoisedRmse": 0.010041069849144147
-	},
-	"translucent-panel/edgeaware/64": {
-		"ratio": 0.8401853405662504,
-		"rawRmse": 0.010041069849144147,
-		"denoisedRmse": 0.008436359690852683
 	},
 	"translucent-panel/oidn/64": {
 		"ratio": 0.6267461151564352,
@@ -719,16 +399,6 @@
 		"rawRmse": 0.010041069849144147,
 		"denoisedRmse": 0.006293201519965507
 	},
-	"mixed-lights/asvgf/1": {
-		"ratio": 0.6025010067003272,
-		"rawRmse": 0.10173583608894533,
-		"denoisedRmse": 0.06129594366108904
-	},
-	"mixed-lights/edgeaware/1": {
-		"ratio": 0.5768491573081659,
-		"rawRmse": 0.10173583608894533,
-		"denoisedRmse": 0.058686231315949806
-	},
 	"mixed-lights/oidn/1": {
 		"ratio": 0.21062235758410197,
 		"rawRmse": 0.10173583608894533,
@@ -739,20 +409,10 @@
 		"rawRmse": 0.10173583608894533,
 		"denoisedRmse": 0.02142784164784343
 	},
-	"mixed-lights/asvgf/64": {
-		"ratio": 0.5543216348697174,
-		"rawRmse": 0.01850573816101751,
-		"denoisedRmse": 0.010258131031886143
-	},
 	"mixed-lights/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.01850573816101751,
 		"denoisedRmse": 0.01850573816101751
-	},
-	"mixed-lights/edgeaware/64": {
-		"ratio": 0.6632398349185634,
-		"rawRmse": 0.01850573816101751,
-		"denoisedRmse": 0.012273742722959412
 	},
 	"mixed-lights/oidn/64": {
 		"ratio": 0.3035924142628897,
@@ -764,20 +424,10 @@
 		"rawRmse": 0.01850573816101751,
 		"denoisedRmse": 0.005618201726020194
 	},
-	"furnace-diffuse-transmission-bidirectional/asvgf/1": {
-		"ratio": 0.2920529023995137,
-		"rawRmse": 0.1466048154343478,
-		"denoisedRmse": 0.0428163618533463
-	},
 	"furnace-diffuse-transmission-bidirectional/nrd/1": {
 		"ratio": 0.05367377447759186,
 		"rawRmse": 0.1466048154343478,
 		"denoisedRmse": 0.007868833800952163
-	},
-	"furnace-diffuse-transmission-bidirectional/edgeaware/1": {
-		"ratio": 0.42070340421127905,
-		"rawRmse": 0.1466048154343478,
-		"denoisedRmse": 0.061677144926996386
 	},
 	"furnace-diffuse-transmission-bidirectional/oidn/1": {
 		"ratio": 0.05225653203401983,
@@ -789,20 +439,10 @@
 		"rawRmse": 0.1466048154343478,
 		"denoisedRmse": 0.007661059234086561
 	},
-	"furnace-diffuse-transmission-bidirectional/asvgf/64": {
-		"ratio": 0.5908815736859862,
-		"rawRmse": 0.01218579560910982,
-		"denoisedRmse": 0.0072003620861265894
-	},
 	"furnace-diffuse-transmission-bidirectional/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.01218579560910982,
 		"denoisedRmse": 0.01218579560910982
-	},
-	"furnace-diffuse-transmission-bidirectional/edgeaware/64": {
-		"ratio": 0.7997646388167486,
-		"rawRmse": 0.01218579560910982,
-		"denoisedRmse": 0.009745768424014437
 	},
 	"furnace-diffuse-transmission-bidirectional/oidn/64": {
 		"ratio": 0.5944461484316765,
@@ -814,20 +454,10 @@
 		"rawRmse": 0.01218579560910982,
 		"denoisedRmse": 0.007243799265410968
 	},
-	"translucent-panel-bidirectional/asvgf/1": {
-		"ratio": 0.653565738853551,
-		"rawRmse": 0.08697102051038644,
-		"denoisedRmse": 0.05684127927871805
-	},
 	"translucent-panel-bidirectional/nrd/1": {
 		"ratio": 0.5290737550170699,
 		"rawRmse": 0.08697102051038644,
 		"denoisedRmse": 0.04601408439909675
-	},
-	"translucent-panel-bidirectional/edgeaware/1": {
-		"ratio": 0.5650014413913058,
-		"rawRmse": 0.08697102051038644,
-		"denoisedRmse": 0.049138751947641154
 	},
 	"translucent-panel-bidirectional/oidn/1": {
 		"ratio": 0.13414875996566147,
@@ -839,20 +469,10 @@
 		"rawRmse": 0.08697102051038644,
 		"denoisedRmse": 0.01166705455441645
 	},
-	"translucent-panel-bidirectional/asvgf/64": {
-		"ratio": 0.5939792379031228,
-		"rawRmse": 0.012340849307110973,
-		"denoisedRmse": 0.007330208266515057
-	},
 	"translucent-panel-bidirectional/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.012340849307110973,
 		"denoisedRmse": 0.012340849307110973
-	},
-	"translucent-panel-bidirectional/edgeaware/64": {
-		"ratio": 0.8930755848759269,
-		"rawRmse": 0.012340849307110973,
-		"denoisedRmse": 0.011021311212813809
 	},
 	"translucent-panel-bidirectional/oidn/64": {
 		"ratio": 0.5140028967050116,
@@ -864,20 +484,10 @@
 		"rawRmse": 0.012340849307110973,
 		"denoisedRmse": 0.006343232291655077
 	},
-	"shadow-catcher-ground/asvgf/1": {
-		"ratio": 0.7893451378377154,
-		"rawRmse": 0.02256452679276963,
-		"denoisedRmse": 0.017811199511481565
-	},
 	"shadow-catcher-ground/nrd/1": {
 		"ratio": 0.8733098980666663,
 		"rawRmse": 0.02256452679276963,
 		"denoisedRmse": 0.019705824593316205
-	},
-	"shadow-catcher-ground/edgeaware/1": {
-		"ratio": 0.6400823590147856,
-		"rawRmse": 0.02256452679276963,
-		"denoisedRmse": 0.014443155539568318
 	},
 	"shadow-catcher-ground/oidn/1": {
 		"ratio": 0.4657314618478859,
@@ -889,20 +499,10 @@
 		"rawRmse": 0.02256452679276963,
 		"denoisedRmse": 0.010509010049102388
 	},
-	"shadow-catcher-ground/asvgf/64": {
-		"ratio": 2.836997040877834,
-		"rawRmse": 0.001768102918210935,
-		"denoisedRmse": 0.005016102746931886
-	},
 	"shadow-catcher-ground/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.001768102918210935,
 		"denoisedRmse": 0.001768102918210935
-	},
-	"shadow-catcher-ground/edgeaware/64": {
-		"ratio": 0.9405656121626712,
-		"rawRmse": 0.001768102918210935,
-		"denoisedRmse": 0.0016630168036336733
 	},
 	"shadow-catcher-ground/oidn/64": {
 		"ratio": 1.007709085322048,
@@ -914,20 +514,10 @@
 		"rawRmse": 0.001768102918210935,
 		"denoisedRmse": 0.001781733374465585
 	},
-	"refit-deform/asvgf/1": {
-		"ratio": 0.7506835569577378,
-		"rawRmse": 0.0544724974466159,
-		"denoisedRmse": 0.04089160813959691
-	},
 	"refit-deform/nrd/1": {
 		"ratio": 0.43107211990006483,
 		"rawRmse": 0.0544724974466159,
 		"denoisedRmse": 0.023481574950563584
-	},
-	"refit-deform/edgeaware/1": {
-		"ratio": 0.49299174853739713,
-		"rawRmse": 0.0544724974466159,
-		"denoisedRmse": 0.026854491763406072
 	},
 	"refit-deform/oidn/1": {
 		"ratio": 0.1723958214362355,
@@ -939,20 +529,10 @@
 		"rawRmse": 0.0544724974466159,
 		"denoisedRmse": 0.009390830942992588
 	},
-	"refit-deform/asvgf/64": {
-		"ratio": 1.417956291204093,
-		"rawRmse": 0.0031646166821553017,
-		"denoisedRmse": 0.004487288133711534
-	},
 	"refit-deform/nrd/64": {
 		"ratio": 1,
 		"rawRmse": 0.0031646166821553017,
 		"denoisedRmse": 0.0031646166821553017
-	},
-	"refit-deform/edgeaware/64": {
-		"ratio": 0.7505269059638194,
-		"rawRmse": 0.0031646166821553017,
-		"denoisedRmse": 0.0023751299670195063
 	},
 	"refit-deform/oidn/64": {
 		"ratio": 0.5744632079569181,

@@ -12,7 +12,7 @@ export const StageExecutionMode = {
 
 	/**
 	 * PER_CYCLE - Execute only when tile rendering cycle completes
-	 * Use for: Post-processing, denoisers, filters (ASVGF, EdgeAwareFiltering, OIDN)
+	 * Use for: Post-processing, denoisers, filters (NRD, OIDN)
 	 *
 	 * Complete cycle means:
 	 * - Progressive mode (renderMode=0): Every frame

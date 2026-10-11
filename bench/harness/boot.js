@@ -919,7 +919,7 @@ async function probes() {
 }
 
 /**
- * Switches the real-time denoiser. 'none' | 'asvgf' | 'nrd' | 'edgeaware'.
+ * Switches the real-time denoiser. 'none' | 'nrd' | 'oidn'.
  *
  * Returns the resulting stage enable-state so a suite can assert the strategy actually took
  * effect rather than trusting the call — a typo'd name hits the switch's default branch and
@@ -930,8 +930,8 @@ async function setDenoiser( strategy, preset, options = {} ) {
 
 	const dm = app.denoisingManager;
 
-	// setDenoiserStrategy has no 'oidn' case and does not clear it, so an earlier 'oidn' rung
-	// would stay on underneath asvgf/edgeaware — both denoisers at once, which never ships.
+	// The 'oidn' rung is the final pass, which setDenoiserStrategy does not clear, so an earlier
+	// 'oidn' rung would stay on underneath nrd — both denoisers at once, which never ships.
 	dm.setOIDNEnabled( false );
 
 	if ( strategy === 'oidn' ) {
@@ -962,11 +962,7 @@ async function setDenoiser( strategy, preset, options = {} ) {
 	const s = app.stages;
 	return {
 		strategy,
-		asvgf: !! s.asvgf?.enabled,
 		nrd: !! s.nrd?.enabled,
-		variance: !! s.variance?.enabled,
-		bilateral: !! s.bilateralFilter?.enabled,
-		edgeFilter: !! s.edgeFilter?.enabled,
 		normalDepth: !! s.normalDepth?.enabled,
 		motionVector: !! s.motionVector?.enabled,
 		oidn: !! dm.denoiser?.enabled,
@@ -1099,17 +1095,14 @@ function captureDenoisedPNG( expected = RENDER_SIZE ) {
  * Non-finite pixel count in whatever the compositor is about to display.
  *
  * `probes()` only sees the path tracer's accumulation buffer, so a denoiser emitting NaN is
- * invisible to it — a `pow(0.0, 0.0)` in the bilateral weight produced NaN on ~12 % of pixels
+ * invisible to it — a `pow(0.0, 0.0)` in a filter weight once produced NaN on ~12 % of pixels
  * with nothing in the suite reacting. HalfFloat targets read back as raw Uint16 bit patterns,
  * so the exponent is tested directly rather than decoding to Number first.
  */
 async function denoisedNonFinite() {
 
 	const s = app.stages;
-	const target = ( s.bilateralFilter?.enabled && s.bilateralFilter._outputTarget )
-		|| ( s.edgeFilter?.enabled && s.edgeFilter._outputTarget )
-		|| ( s.asvgf?.enabled && s.asvgf._outputRT )
-		|| ( s.nrd?.enabled && s.nrd.outputTarget )
+	const target = ( s.nrd?.enabled && s.nrd.outputTarget )
 		|| app.stages.pathTracer.storageTextures.readTarget;
 
 	const { width, height } = RENDER_SIZE;

@@ -73,7 +73,7 @@ Use **conventional commits**. Every commit message and PR title **must** start w
 - `ci:` — CI/CD configuration
 - `revert:` — Reverts a previous commit
 
-Optional scope: `feat(asvgf):`, `fix(tsl):`, `refactor(pipeline):`, etc.
+Optional scope: `feat(nrd):`, `fix(tsl):`, `refactor(pipeline):`, etc.
 
 **A change to default pixels is a breaking change.** Anything that changes what a render looks like
 when a host sets nothing — a default setting (the core's or a viewer piece's), a mode preset, light units,
@@ -101,19 +101,16 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 
 ### Core Rendering Stages (`rayzee/src/Stages/`)
 **Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
-`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, ASVGF, Variance, BilateralFilter, EdgeFilter,
-AutoExposure and LocalExposure between them:
+`_createExtraStages()` inserts NormalDepth, MotionVector, NRD, AutoExposure and LocalExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
-- **`ASVGF.js`**: Real-time spatiotemporal denoising
 - **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
-- **`EdgeFilter.js`**: Spatial-only edge-aware à-trous filter (no temporal history)
 - **`LocalExposure.js`**: Unreal Engine 5's local exposure — a display-only per-pixel gain (see Local exposure below)
 - **`OverlayManager.js`** + **`helpers/`** (in `managers/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
 - **`RayzeeRenderer.js`** (entry `core.js`, published as `rayzee/core`): the renderer core — WebGPU device, scene build, path tracer + compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. It builds no denoiser, camera controls, gizmo, overlay or timeline, and `tests/unit/core/coreBoundary.test.js` fails if its imports reach one. Capabilities install on it from `rayzee/addons/*` (`formats`, `physical-sky`, `archives`, `bidirectional`, `color`, `storage`); `PathTracerApp` installs all six itself. See `docs/CORE_AND_ADDONS.md`.
 - **`PathTracerApp.js`**: the viewer, `extends RayzeeRenderer` — camera manager, interaction, gizmo, overlays, timeline, animation playback, denoisers and picture stages, gobo/IES, scene state, mode presets. It plugs in through the core's hooks (listed under "Hooks" at the end of `RayzeeRenderer.js`; each runs at a fixed point of the frame, reset or load sequence). ⚠️ Viewer code goes in the viewer: a core method that needs it gets a hook, never a `this.denoisingManager?.` call.
-- **`PathTracer.js`** + **`PathTracerStage.js`** (in `rayzee/src/Stages/`): the pure-wavefront path tracer. `PathTracerStage` is the shared base — owns the 5 sub-managers (composition), uniforms, camera, lights, BVH/scene buffers, accumulation, completion, ASVGF coordination, mesh visibility, and lifecycle. `PathTracer extends PathTracerStage` and owns the per-frame wavefront kernel dispatch (`render()`, `_buildWavefrontKernels()`). External code accesses the sub-managers directly (see Processor classes below).
+- **`PathTracer.js`** + **`PathTracerStage.js`** (in `rayzee/src/Stages/`): the pure-wavefront path tracer. `PathTracerStage` is the shared base — owns the 5 sub-managers (composition), uniforms, camera, lights, BVH/scene buffers, accumulation, completion, denoiser history resets, mesh visibility, and lifecycle. `PathTracer extends PathTracerStage` and owns the per-frame wavefront kernel dispatch (`render()`, `_buildWavefrontKernels()`). External code accesses the sub-managers directly (see Processor classes below).
 - **`index.js`**: Public API barrel export for the engine package
 
 ### App-Side Engine Integration (`app/src/lib/`)
@@ -297,9 +294,8 @@ Combined bvhData: [ TLAS nodes ][ group trees | empty leaf ][ BLAS_0 nodes ]...[
 this.eventBus.emit('pathtracer:frameComplete', { frame, samples });
 this.eventBus.emit('pipeline:historyReset');     // the core's restart signal, never a capability's name
 
-// ASVGF listening for events
-this.eventBus.on('pathtracer:frameComplete', this.handlePathTracerComplete.bind(this));
-this.eventBus.on('pipeline:historyReset', this.resetTemporalData.bind(this));
+// A temporal denoiser listening for events
+this.eventBus.on('pipeline:historyReset', this.resetHistory.bind(this));
 ```
 
 ### Pipeline Context Texture Sharing
@@ -311,7 +307,7 @@ context.setTexture('pathtracer:normalDepth', this.normalDepthTarget.texture);
 
 // Downstream stages read from context
 const pathTracerColor = context.getTexture('pathtracer:color');
-const variance = context.getTexture('variance:output');
+const denoised = context.getTexture('nrd:output');
 ```
 
 ### Progressive Rendering Modes
@@ -492,7 +488,7 @@ the strings, so never rename or repurpose one.
   another layer adds a key with `settings.define( key, { default, apply, reset } )` (the viewer: `interactionRenderScale`),
   bringing its own default, and gets provenance, events, `serialize()` and reset like a core key. The viewer's rules
   for a core key go in the bindings it passes (`_settingsBindings`: `applyExposure` becomes auto exposure's compensation while that is on, `onCameraProjection`
-  moves a motion-vector denoiser to edge-aware for a panorama) — never `denoisingManager` in `RenderSettings`.
+  hands a motion-vector denoiser's view to OIDN for a panorama) — never `denoisingManager` in `RenderSettings`.
 - **One set of defaults, each kept by its owner.** `ENGINE_DEFAULTS` (`EngineDefaults.js`) is exactly the settings
   table: every key a `RenderSettings` route of the same name, every route's default there (`engineDefaults.test.js`
   holds both ways), frozen. Starting state that is not a setting sits with its owner: `SKY_DEFAULTS` and
@@ -752,12 +748,14 @@ environment's exact table (`Processor/EnvironmentExactTable.js`) serves both int
   { alone } )`. Bench: `cornell-`, `lamps-`, `caustic-`, `sky-bidirectional`, `mirror-caustic-vcm`.
 
 ### Denoising Pipeline Coordination
-- **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (None / EdgeAware /
-  ASVGF / NRD / **OIDN**), and `Final Denoise (OIDN)` is the separate question of whether the
+- **One denoiser owns the live view** — `Real-Time Denoiser` is a one-of-N choice (`DENOISER_STRATEGIES`: None / NRD /
+  **OIDN**; the engine starts on none, the app on OIDN), and `Final Denoise (OIDN)` is the separate question of whether the
   finished image gets a pass. Two live denoisers would mean paying for one whose result the other
-  covers.
-- **Every denoiser publishes a texture; the Compositor picks the newest.** `asvgf:output`,
-  `nrd:output`, `edgeFiltering:output`, `bilateralFiltering:output`, `oidn:output` — the viewer's `_displaySources()`
+  covers. Any other name records `denoiser.unavailable` and runs none; `'nrd'` in a panorama runs `'oidn'`. A live refresh that
+  ends after OIDN stopped owning the view is not shown. ASVGF and EdgeAware were removed (2026-10): OIDN
+  beat both still and moving, EdgeAware passed raw frames through while the camera moved, and ASVGF made converged
+  images worse than none.
+- **Every denoiser publishes a texture; the Compositor picks the newest.** `nrd:output`, `oidn:output` — the viewer's `_displaySources()`
   hook is the priority list (first published wins; the core's is empty), handed to the Compositor, and
   `DenoisingManager._clearDenoiserTextures()` is the list that wipes them. A new denoiser goes in both. There
   is one canvas: OIDN writes its result into a picture on the card (`ExternalTexture` wrapping a raw
@@ -781,7 +779,7 @@ environment's exact table (`Processor/EnvironmentExactTable.js`) serves both int
   live refreshes denoise that instead of one fresh sample (independent 1-spp inputs are what boils).
   It needs the NormalDepth stage (jitter-free depth, roughness, and `pathtracer:instanceLeaf`, which
   NormalDepth writes only when `setInstanceLeafOutput( true )`). It is dropped, with NormalDepth, at a
-  size the cadence has proven too slow to denoise while moving (`_movingHopeless`). Shiny
+  size the cadence has proven too slow to denoise while moving (`_movingHopeless`), through a final render and in a panorama. Shiny
   pixels and pixels of moved objects keep ~2 frames: reflections and a moving object's lighting do
   not follow the surface, and following a rotating object with a long history measured worse. Still
   frames merge the history in, fading out over 16 samples; the final denoise always reads the plain
@@ -796,8 +794,6 @@ environment's exact table (`Processor/EnvironmentExactTable.js`) serves both int
   re-downloads. ⚠️ A `[Buffer "outputPass"] used in submit while destroyed` error is **oidn-web's**
   output pass, not three.js's: a tile's writes land a microtask after it starts, so a UNet must not
   be disposed under a run in flight — `_loadUNetWeights` aborts it and yields a macrotask first.
-- EdgeAware filtering disabled when ASVGF enabled
-- Quality presets in `ASVGF_QUALITY_PRESETS` (performance/balanced/quality)
 - ⚠️ `Processor/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
   bug-compatible with it, rounding included. It serves the neural passes (packed half input) and
   `renderToBuffer`'s sRGB readback (float texture input, alpha kept). `tests/gpu/toneMapParity.test.js` checks the two on
@@ -855,8 +851,8 @@ for the CPU tone map (`pixelGain`) — kept identical by `tests/gpu/localExposur
 levels, the readback's usual bias. EXR stays scene-referred. The grid is built from `pathtracer:color` on restarts and
 the metering schedule: 0.05 / 0.13 / 0.5 ms at 540p / 1080p / 4K (Dawn, M-series); the compositor's gain +0.05 ms at
 1080p. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
-The app's `DEFAULT_STATE` turns it on (the engine stays off, so a farm keeps its look); `applyExposureToEngine()` in the
-store puts the panel's auto and local exposure on the engine at startup and after a session restores the panel. The app
+The app's `DEFAULT_STATE` turns it on (the engine stays off, so a farm keeps its look); `applyPanelToEngine()` in the
+store puts the panel's live denoiser and auto and local exposure on the engine at startup and after a session restores the panel. The app
 shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.6 / 1), Exposure and Balance Highlights
 (Amount); metering, range, shadows and detail stay engine-only, so a session cannot carry a value no control shows.
 
@@ -1075,7 +1071,7 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 5. **BVH quality**: the builder is binned SAH plus reinsertion. Treelet restructuring was removed (2026-10): on five models it bought ≤0.6 % tree SAH, no measurable render speed, for 2–24× the BLAS build time. Judge any new tree post-pass by render time per sample, not SAH alone
 6. **Resolution Scaling**: Path tracer resolution independent of UI — use `app.setCanvasSize( width, height )` (pixel dimensions, applied immediately; internal `_applyRenderResize()`). Requested size is clamped by `MAX_STORAGE_TEXTURE_SIZE` (`_isRenderSizeSupported`). Note: `onResize()` (reads `canvas.clientWidth/Height`) is debounced 300ms; `setCanvasSize()` is not.
 7. **React Compiler**: Uses React Compiler plugin — avoid manual memoization patterns that conflict with automatic optimization
-8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.stages.asvgf?.enabled`). A bare `RayzeeRenderer` has only `stages.pathTracer` and `stages.compositor`
+8. **Feature Guards**: Check stage availability before accessing optional stages (e.g., `app.stages.nrd?.enabled`). A bare `RayzeeRenderer` has only `stages.pathTracer` and `stages.compositor`
 9. **BVH Leaf Markers**: slot `[3]` is a u32 bit pattern — `TRIANGLE_LEAF` (0x40000000) or `BLAS_POINTER_LEAF` (0x40000001), both above `BVH_MAX_INDEX`, so `floatBitsToUint(nodeData0.w) >= BVH_MAX_INDEX` means leaf — except in a folded BVH, where a folded left child also sits above it (from 2^31) and the test is `tag >> 30 === 1`. They live in `Processor/BufferLayout.js`, which imports nothing, so the worker-side `BVHBuilder`, `BVHLeafFold` and `BVHRefitter` import them rather than keeping copies.
 10. **InstanceTable Entry Order**: Entries are indexed by `meshIndex` (positional). Use `setEntry()` with explicit index, never push-based insertion, to avoid ordering bugs with mixed sync/async BLAS builds.
 11. **Transform vs Deformation vs Animation**: a rigid move uses `updateMeshTransforms()` (matrix only — no vertex pass, no BLAS work, no triangle upload). Deformation of specific meshes uses `refitBLASes()` (per-mesh, sync, main thread). Animations use `refitBVH()` (full scene, async, worker). Don't mix them — the worker path operates on SharedArrayBuffer that must match the combined TLAS/BLAS layout. Build the positions buffer from `app.sceneMeshes`, never from your own model root (see **BVH refit data flow** above).

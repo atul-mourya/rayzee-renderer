@@ -3,13 +3,12 @@
  *
  * Two TextureNodes still holding the default EmptyTexture when a stage's kernel is first
  * compiled can share one GPU binding, which then resolves to whichever is assigned last.
- * Nothing throws — the aliased node reads a real texture, just not its own. BilateralFilter
- * shipped this way, reading ASVGF's history counter as its variance.
+ * Nothing throws — the aliased node reads a real texture, just not its own.
  *
  * Rule enforced: every TextureNode a kernel reads must hold its real texture before that
  * kernel is first dispatched. StorageTexture-typed nodes are exempt — `textureLoad` codegen
  * only emits the required `level` parameter while the node still holds EmptyTexture, so those
- * are deliberately bound after compile (see ASVGF.render).
+ * are deliberately bound after compile.
  *
  * Off by default; the bench harness turns it on.
  */

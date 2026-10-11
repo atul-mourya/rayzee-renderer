@@ -39,18 +39,12 @@ export default defineConfig( {
 				'rayzee/src/TSL/**',
 
 				// ── GPU-dependent: Pipeline stages (TSL compute shaders, StorageTextures) ──
-				'rayzee/src/Stages/ASVGF.js',
-				'rayzee/src/Stages/AdaptiveSampling.js',
 				'rayzee/src/Stages/AutoExposure.js',
-				'rayzee/src/Stages/BilateralFilter.js',
-				'rayzee/src/Stages/Display.js',
-				'rayzee/src/Stages/EdgeFilter.js',
 				'rayzee/src/Stages/MotionVector.js',
 				'rayzee/src/Stages/NormalDepth.js',
 				'rayzee/src/Stages/NRD.js',
 				'rayzee/src/Stages/PathTracer.js',
 				'rayzee/src/Stages/PathTracerStage.js',
-				'rayzee/src/Stages/Variance.js',
 
 				// ── GPU-dependent: WebGPU renderer orchestration ──
 				'rayzee/src/PathTracerApp.js',
@@ -60,7 +54,6 @@ export default defineConfig( {
 				'rayzee/src/Processor/ShaderBuilder.js',
 				'rayzee/src/Processor/StorageTexturePool.js',
 				'rayzee/src/Processor/TextureCreator.js',
-				'rayzee/src/Processor/createRenderTargetHelper.js',
 				'rayzee/src/Processor/SceneProcessor.js',
 				'rayzee/src/Processor/parallelBVHBuilder.js',
 				'rayzee/src/Processor/generateMaterialSpheres.js',

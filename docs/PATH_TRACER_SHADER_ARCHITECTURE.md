@@ -11,7 +11,7 @@ This document covers the path tracing stage's shader system for the **WebGPU bac
 TSL (Three Shading Language) is a JavaScript shader authoring system that three.js's WebGPU backend compiles to WGSL at runtime. Shader modules live in `rayzee/src/TSL/`, the stage in `rayzee/src/Stages/`.
 
 Explicitly excluded (refer to separate docs):
-- Denoisers (ASVGF, NRD, EdgeFilter, BilateralFilter; NRD in `NRD_DENOISER.md`)
+- Denoisers (NRD, in `NRD_DENOISER.md`; OIDN in `CLAUDE.md`)
 - Post-processing (tone mapping, auto exposure)
 - Pipeline orchestration, backend, and state management (see `PIPELINE_ARCHITECTURE.md`)
 - The renderer core / add-on boundary (see `CORE_AND_ADDONS.md`)
@@ -130,7 +130,7 @@ Material texture buckets, the albedo maps alpha-cutout shadow rays read, the gob
 
 ## Stage Classes (`rayzee/src/Stages/`)
 
-- **`PathTracerStage.js`** (`class PathTracerStage`): shared base — engine/scene infrastructure. Owns the 5 sub-managers (`UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, `StorageTexturePool`), uniforms, camera and lights, BVH and scene buffers, accumulation and completion state, ASVGF coordination, lifecycle, mesh visibility, and `setupMaterial()` (builds the shared scene texture nodes through `ShaderBuilder.createSceneTextureNodes`).
+- **`PathTracerStage.js`** (`class PathTracerStage`): shared base — engine/scene infrastructure. Owns the 5 sub-managers (`UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, `StorageTexturePool`), uniforms, camera and lights, BVH and scene buffers, accumulation and completion state, denoiser history resets, lifecycle, mesh visibility, and `setupMaterial()` (builds the shared scene texture nodes through `ShaderBuilder.createSceneTextureNodes`).
 - **`PathTracer.js`** (`class PathTracer extends PathTracerStage`): the wavefront renderer. Owns the path pool (`PackedRayBuffer`, `QueueManager`, `KernelManager`), sizes the path budget, builds every core kernel in `_buildWavefrontKernels()` and drives the frame in `render()`. It also holds the integrator hooks (`registerIntegrator()`, `setIntegrator()`, `integrator`, `activeIntegrator`) and `requestOutput()`, through which a later stage asks Shade for an extra output.
 
 ### Wavefront resources (`rayzee/src/Processor/`)

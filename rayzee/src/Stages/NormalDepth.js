@@ -13,7 +13,7 @@ import { computeUVCache, processNormal, processBump, processMetalnessRoughness, 
 import { withSceneResources } from '../TSL/SceneResources.js';
 
 /**
- * NormalDepth — primary-ray G-buffer for SVGF gates.
+ * NormalDepth — primary-ray G-buffer for the denoisers' edge tests (NRD, the OIDN motion history).
  *
  * RGB = geometric world normal · 0.5 + 0.5, A = linear ray distance (sky=65504, the
  * max HalfFloat value — a finite sentinel so miss−miss depth diffs stay 0, not Inf−Inf=NaN).
@@ -70,7 +70,7 @@ export class NormalDepth extends RenderStage {
 		this._outputStorageTex.magFilter = NearestFilter;
 
 		// Shading-normal output (geometric normal perturbed by normal/bump map).
-		// Single buffer — only the spatial filter (current frame) consumes it.
+		// Single buffer — its readers (NRD, the OIDN history) use only the current frame.
 		this._shadingStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
 		this._shadingStorageTex.type = HalfFloatType;
 		this._shadingStorageTex.format = RGBAFormat;
@@ -137,7 +137,7 @@ export class NormalDepth extends RenderStage {
 			// _hasHistory is deliberately NOT cleared, mirroring MotionVector.reset(): the
 			// prev-frame G-buffer tracks camera motion, not accumulation, and a camera move
 			// resets accumulation every frame of a drag. Clearing it made render() overwrite
-			// prevRT with the current frame, so ASVGF's temporal gate could never reject.
+			// prevRT with the current frame, so the OIDN history could never see a disocclusion.
 			this._dirty = true;
 
 		} );
@@ -374,7 +374,7 @@ export class NormalDepth extends RenderStage {
 		this.renderer.copyTextureToTexture( this._shadingStorageTex, this._shadingRT.texture, this._srcRegion );
 		if ( this._leafRT ) this.renderer.copyTextureToTexture( this._leafStorageTex, this._leafRT.texture, this._srcRegion );
 
-		// First dispatch: seed prev from current so ASVGF doesn't see false
+		// First dispatch: seed prev from current so the history doesn't see false
 		// disocclusion on frame 1.
 		if ( ! this._hasHistory ) {
 
@@ -393,7 +393,7 @@ export class NormalDepth extends RenderStage {
 	}
 
 	// Free the 2048² StorageTextures when disabled (no consumer); three.js re-creates them on the next
-	// dispatch after re-enable, and reset() re-arms the dirty/history fast-path. See ASVGF.releaseGPUMemory.
+	// dispatch after re-enable, and reset() re-arms the dirty/history fast-path. See NRD.releaseGPUMemory.
 	releaseGPUMemory() {
 
 		this._outputStorageTex?.dispose();

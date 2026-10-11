@@ -63,7 +63,7 @@ export {
 } from './EngineDefaults.js';
 export { MAX_RESERVABLE_RENDER_SIZE } from './Processor/StorageTexturePool.js';
 export {
-	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
+	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
 } from './Stages/DenoiserSettings.js';
 export { SKY_DEFAULTS, DEFAULT_SUN_PATH } from './managers/EnvironmentManager.js';

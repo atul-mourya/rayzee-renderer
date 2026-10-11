@@ -7,7 +7,7 @@
  *  - 1 MRT RenderTarget (3 attachments) used as the readable copy
  *  - After each compute dispatch, copyTextureToTexture() transfers data
  *    from StorageTextures → RenderTarget textures
- *  - Downstream stages (ASVGF, display, OIDN) read from the RenderTarget
+ *  - Downstream stages (NRD, display, OIDN) read from the RenderTarget
  *  - Previous-frame reads in the path tracer sample from RenderTarget textures
  *    via texture() (not storageTexture().toReadOnly())
  */

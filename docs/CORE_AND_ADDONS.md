@@ -35,7 +35,7 @@ renderer runs without a browser.
 
 | Group | Pieces |
 |---|---|
-| Denoisers | OIDN, ASVGF, NRD, EdgeAware, and their helper stages (NormalDepth, MotionVector, Variance, BilateralFilter) |
+| Denoisers | OIDN, NRD, and their helper stages (NormalDepth, MotionVector) |
 | Picture | AI upscaler, auto exposure, local exposure, the OCIO colour pipeline (basic colour — linear working space, texture interpretation, tone mapping — stays core) |
 | Light transport | Bidirectional, bidirectional + photons (VCM) |
 | Skies and lamps | Physical sky, IES profiles, gobos |
@@ -60,7 +60,7 @@ code rather than spread across events. `PathTracerApp` overrides them; its setup
 `_createExtraStages`, `_initManagers`, `_wireEvents`) call the core's first or last, as each needs.
 
 **Signals.** The core emits two events on the pipeline's bus and names no capability: `pipeline:historyReset` (a hard
-restart; history from before is not comparable — ASVGF and NRD listen) and `pipeline:lightingChanged` (a model or
+restart; history from before is not comparable — NRD listens) and `pipeline:lightingChanged` (a model or
 environment came in — auto exposure listens). Which processed picture the compositor shows is the builder's call:
 `_displaySources()` lists the context keys in priority order, and the core's list is empty. A per-pixel gain on the shown
 picture (local exposure) is installed with `compositor.setDisplayGain()` and handed to tone-mapped readbacks through
@@ -155,7 +155,7 @@ the core. Without it the core's programs carry none of that code, and still rend
    viewer piece; `settings.define( key, { default, apply, reset } )` adds another layer's, with the same provenance, events,
    session saving and reset. The viewer defines `interactionRenderScale` (the core has no moving-camera resolution
    drop), and keeps its own rules for two core settings through the bindings it passes: auto exposure takes the manual
-   `exposure` as its compensation while it drives the picture, and a panorama moves a motion-vector denoiser to edge-aware. The
+   `exposure` as its compensation while it drives the picture, and a panorama hands a motion-vector denoiser's view to OIDN. The
    viewer's capabilities (denoisers, upscaler, auto and local exposure) keep their own methods, as before. Asked for a key only
    the viewer defines, the core records `setting.unknown_key`, as for any key nothing applies.
 12. **Treelet optimiser removed** — measured on five models (33k to 1.9M triangles) it bought at most 0.57 % tree

@@ -185,9 +185,6 @@ export class PathTracerStage extends RenderStage {
 		this.renderModeChangeDelay = 50;
 		this.pendingRenderMode = null;
 
-		// Track interaction mode state for accumulation
-		this.lastInteractionModeState = false;
-
 		// Track changes for event emission
 		this.cameraChanged = false;
 		// When the view was last moved, for viewIsChanging.
@@ -372,12 +369,7 @@ export class PathTracerStage extends RenderStage {
 			},
 			onEnter: () => this.emit( 'pathtracer:interactionStart' ),
 			onExit: () => this.emit( 'pathtracer:interactionEnd' ),
-			onReset: () => {
-
-				this.reset();
-				this.emit( 'pathtracer:viewpointChanged' );
-
-			}
+			onReset: () => this.reset(),
 		} );
 
 	}
@@ -561,8 +553,7 @@ export class PathTracerStage extends RenderStage {
 
 		// lastRenderMode is deliberately NOT invalidated here — clearing it made
 		// resetHistoryOnRenderModeChange see a phantom mode change 50 ms after every reset, wiping
-		// ASVGF's history. A real mode change is still caught by the renderMode comparison.
-		this.lastInteractionModeState = false;
+		// the denoisers' history. A real mode change is still caught by the renderMode comparison.
 
 		// Only deterministic mode and lockstep readbacks rewind the seed axis; see _pinSeedToFrame.
 		if ( this._pinSeedToFrame || this._lockstep ) this._seedTick = 0;
@@ -1472,7 +1463,6 @@ export class PathTracerStage extends RenderStage {
 	_updateAccumulationUniforms( frameValue ) {
 
 		const currentInteractionMode = this.cameraOptimizer?.isInInteractionMode() ?? false;
-		this.lastInteractionModeState = currentInteractionMode;
 
 		if ( this.accumulationEnabled ) {
 
@@ -1512,7 +1502,6 @@ export class PathTracerStage extends RenderStage {
 		// Not the same as the context's own `accumulatedFrames`, which counts pipeline renders — this
 		// freezes when the frame retires or the camera moves, which is what a denoiser needs.
 		context.setState( 'pathtracer:samples', this.frameCount );
-		context.setState( 'interactionMode', this.cameraOptimizer?.isInInteractionMode() ?? false );
 		context.setState( 'renderMode', this.renderMode.value );
 
 	}
@@ -1557,7 +1546,7 @@ export class PathTracerStage extends RenderStage {
 
 	}
 
-	// ===== ASVGF DENOISING MANAGEMENT =====
+	// ===== DENOISER HISTORY =====
 
 	resetHistoryOnRenderModeChange( renderMode ) {
 
@@ -1576,9 +1565,7 @@ export class PathTracerStage extends RenderStage {
 				if ( this.pendingRenderMode !== null && this.pendingRenderMode !== this.lastRenderMode ) {
 
 					this.lastRenderMode = this.pendingRenderMode;
-					// History from the previous mode is not comparable. temporalAlpha is NOT
-					// touched here — it is owned by ASVGF_QUALITY_PRESETS, and overwriting it
-					// with a hardcoded value meant `medium` and `high` never took effect.
+					// History from the previous mode is not comparable.
 					this.emit( 'pipeline:historyReset' );
 
 				}

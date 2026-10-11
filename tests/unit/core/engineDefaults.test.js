@@ -4,7 +4,7 @@ import { RenderSettings } from '@/core/RenderSettings.js';
 import { TEXTURE_CONSTANTS } from '@/core/Processor/TextureBuckets.js';
 import { MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
 import {
-	DENOISER_DEFAULTS, ASVGF_QUALITY_PRESETS, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
+	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
 } from '@/core/Stages/DenoiserSettings.js';
 import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
@@ -51,7 +51,7 @@ describe( 'ENGINE_DEFAULTS', () => {
 
 	it( 'holds the core\'s settings only: the viewer pieces and the app keep their own', () => {
 
-		for ( const key of [ 'enableOIDN', 'denoiserStrategy', 'asvgfQualityPreset', 'autoExposure', 'afSmoothingFactor', 'interactionRenderScale', 'canvasWidth', 'debugModel' ] ) {
+		for ( const key of [ 'enableOIDN', 'denoiserStrategy', 'nrdQualityPreset', 'autoExposure', 'afSmoothingFactor', 'interactionRenderScale', 'canvasWidth', 'debugModel' ] ) {
 
 			expect( ENGINE_DEFAULTS ).not.toHaveProperty( key );
 
@@ -62,8 +62,8 @@ describe( 'ENGINE_DEFAULTS', () => {
 	it( 'has denoising parameters in DENOISER_DEFAULTS', () => {
 
 		expect( DENOISER_DEFAULTS.enableOIDN ).toBe( false );
-		expect( DENOISER_DEFAULTS.enableASVGF ).toBe( false );
 		expect( DENOISER_DEFAULTS.denoiserStrategy ).toBe( 'none' );
+		expect( DENOISER_STRATEGIES ).toEqual( [ 'none', 'nrd', 'oidn' ] );
 		expect( DENOISER_DEFAULTS.nrdQualityPreset ).toBe( 'medium' );
 
 	} );
@@ -99,45 +99,6 @@ describe( 'ENGINE_DEFAULTS', () => {
 		expect( typeof ENGINE_DEFAULTS.maxBounces ).toBe( 'number' );
 		expect( typeof ENGINE_DEFAULTS.exposure ).toBe( 'number' );
 		expect( typeof ENGINE_DEFAULTS.focusDistance ).toBe( 'number' );
-
-	} );
-
-} );
-
-describe( 'ASVGF_QUALITY_PRESETS', () => {
-
-	const requiredFields = [
-		'temporalAlpha', 'atrousIterations', 'phiColor',
-		'phiNormal', 'phiDepth', 'maxAccumFrames', 'varianceBoost'
-	];
-
-	it( 'has low, medium, high presets', () => {
-
-		expect( ASVGF_QUALITY_PRESETS ).toHaveProperty( 'low' );
-		expect( ASVGF_QUALITY_PRESETS ).toHaveProperty( 'medium' );
-		expect( ASVGF_QUALITY_PRESETS ).toHaveProperty( 'high' );
-
-	} );
-
-	for ( const level of [ 'low', 'medium', 'high' ] ) {
-
-		it( `${level} preset has all required fields`, () => {
-
-			for ( const field of requiredFields ) {
-
-				expect( ASVGF_QUALITY_PRESETS[ level ] ).toHaveProperty( field );
-				expect( typeof ASVGF_QUALITY_PRESETS[ level ][ field ] ).toBe( 'number' );
-
-			}
-
-		} );
-
-	}
-
-	it( 'high quality has more iterations than low', () => {
-
-		expect( ASVGF_QUALITY_PRESETS.high.atrousIterations )
-			.toBeGreaterThan( ASVGF_QUALITY_PRESETS.low.atrousIterations );
 
 	} );
 

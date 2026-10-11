@@ -1,15 +1,17 @@
 # NRD (ReBLUR) real-time denoiser
 
 `rayzee/src/Stages/NRD.js` is a port of NVIDIA Real-Time Denoisers' **ReBLUR** to TSL compute. It is
-the third real-time denoiser strategy (`denoisingManager.setStrategy( 'nrd', preset )`) next to
-`asvgf` and `edgeaware`, and like them it runs inside the pipeline every frame; OIDN stays the
-offline finisher.
+the live-view strategy `'nrd'` (`denoisingManager.setStrategy( 'nrd', preset )`) beside `'oidn'`, and
+runs inside the pipeline every frame. OIDN is the cleaner of the two and the app's default; NRD's
+place is very large views, where an OIDN refresh is too slow to keep up (257 ms at 1920×1080 on an
+Apple M-series in 2026-10, against NRD's +15 ms a frame). ASVGF and EdgeAware, which the tables below
+compare it with, were removed in 2026-10.
 
 ReBLUR is a *recurrent blur*: the history that gets reprojected each frame is last frame's
 **post-blurred** output, not the raw accumulation. Blur radius shrinks as history accumulates and
 grows with the distance to the secondary hit (open areas blur wide, contact shadows stay sharp), so
 the filter is a temporal accumulator with a spatially adaptive kernel rather than an à-trous
-wavelet like ASVGF.
+wavelet.
 
 ## Pass chain
 
@@ -108,13 +110,13 @@ interactive path pays nothing at run time.
 ## Memory and cost
 
 Nine fp16 RGBA `StorageTexture`s at the reserved render size (`MAX_STORAGE_TEXTURE_SIZE`, 2048²
-default), 32 MiB each, about 288 MiB — the same class as the ASVGF chain. `releaseGPUMemory()` frees
+default), 32 MiB each, about 288 MiB. `releaseGPUMemory()` frees
 them when another strategy is chosen; `reallocateReservedStorage()` rebuilds them on a reserved-size
 change. The previous-frame normal and view depth are half-float like the rest: the plane test's
 tolerance (`planeDistanceSensitivity`, 2 % of view depth) is 20-40× half-float's relative error.
 
 Six dispatches per frame, but they are NRD's sparse 8-tap Poisson kernels rather than dense à-trous
-passes, which makes the chain cheaper than either existing real-time denoiser. Measured per-sample
+passes, which made the chain cheaper than either of the à-trous denoisers it was measured against. Measured per-sample
 wall clock on `spheres-gradient` (Apple M-series, medium preset, includes CPU dispatch cost):
 
 | render size | path tracer alone | + NRD | + ASVGF | + EdgeAware |
@@ -153,7 +155,7 @@ denoiser helped. The 1-spp rung is an absolute gate, the rest ratchet against
 The 64-spp column is exactly 1.000 by construction (handover pass-through). The 1-spp rung on
 `spheres-gradient` — 40-pixel diffuse spheres lit by a smooth gradient — is the regime ReBLUR's
 geometry-only weights like least (no luminance term, hit distance saturated on every pixel); the
-other two scenes are where it beats ASVGF.
+other two scenes are where it beat ASVGF.
 
 ## Diagnosing a broken frame
 

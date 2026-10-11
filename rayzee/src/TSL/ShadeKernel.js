@@ -125,7 +125,7 @@ export function buildShadeKernel( params ) {
 		emissiveBoost, enableEmissiveTriangleSampling,
 		lightBVHNodeCount, reverseMapVec4Offset,
 		maxRayCount,
-		// Aux G-buffer (normal/depth/albedo + surface ID) feeds only the denoiser/OIDN MRT. Compiled in only when
+		// Aux G-buffer (normal/depth/albedo) feeds only the denoiser/OIDN MRT. Compiled in only when
 		// requested (PathTracer.requestOutput( 'gBuffer' )); then a live uniform (1 = denoiser on) skips the writes
 		// while nothing consumes them.
 		auxGBufferEnabled, gBuffer = true,
@@ -289,7 +289,7 @@ export function buildShadeKernel( params ) {
 		// This bounce's block of sampler dimensions — see the budget table in Random.js.
 		const dimBase = int( currentBounce ).mul( int( SAMPLER_DIMS_PER_BOUNCE ) );
 
-		// DDFA see-through aux tint carried across smooth glass/mirror; committed into the OIDN/ASVGF
+		// DDFA see-through aux tint carried across smooth glass/mirror; committed into the OIDN/NRD
 		// albedo guide at the first diffuse-enough surface (or env). Mutated locally, persisted on every
 		// deferring continue (a missed persist = stale tint). 1 = untinted (direct hit → today's albedo).
 		const featCarry = aux ? readFeatureThroughput( rayBufferRW, rayID ).toVar() : null;
@@ -424,7 +424,7 @@ export function buildShadeKernel( params ) {
 
 					// The catcher is a real ground surface for the denoiser — write the plane's normal/depth
 					// + a neutral albedo (black albedo would break OIDN demodulation) and mark the pixel a
-					// valid surface, so OIDN/ASVGF don't smear the caught shadow as a background miss.
+					// valid surface, so OIDN/NRD don't smear the caught shadow as a background miss.
 					if ( aux ) If( aux, () => {
 
 						const planeDepth = computeNDCDepth( { worldPos: planePoint, cameraProjectionMatrix, cameraViewMatrix } );

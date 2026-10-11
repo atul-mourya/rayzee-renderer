@@ -48,7 +48,7 @@ export function buildFinalWriteKernel( params ) {
 		// on): when off, skip the G-buffer decode, the prev-frame aux mix, and the two aux stores.
 		auxGBufferEnabled, gBuffer = true, // compiled in only when requested (PathTracer.requestOutput( 'gBuffer' ))
 		// Clean-aux normal (1 = temporally accumulate + renormalize the aux normal). On only for clean-aux
-		// OIDN models (calb_cnrm/high, alb_nrm/balanced); off for fast/ASVGF which want the bump normal.
+		// OIDN models (calb_cnrm/high, alb_nrm/balanced); off otherwise, as the fast model wants the bump normal.
 		cleanAuxNormalEnabled,
 		// Tier-1 convergence early-stop: per-pixel Welford luminance second moment + converged bit (stamped
 		// into streak bit 31; counted with 3×3 erosion by countConvergedDilated at the next frame start).
@@ -126,7 +126,7 @@ export function buildFinalWriteKernel( params ) {
 					finalHitDist.assign( mix( prevAlbedoSample.w, finalHitDist, auxAccumulationAlpha ) );
 
 					// NORMAL: by default keep this frame's POINT-SAMPLED normal — it varies with the bump,
-					// which fast/ASVGF want to preserve edge detail. But a CLEAN-AUX OIDN model (calb_cnrm/high,
+					// which the fast model wants to preserve edge detail. But a CLEAN-AUX OIDN model (calb_cnrm/high,
 					// alb_nrm/balanced) trusts the aux and is fed per-frame point-sampled NOISE → leaked noise
 					// (high) / over-smoothing (balanced). When cleanAuxNormalOn, temporally accumulate it like
 					// the colour. Average the RAW unit normals (decode 0.5+0.5 → [-1,1]) and RENORMALIZE — a

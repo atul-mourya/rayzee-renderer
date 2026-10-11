@@ -424,7 +424,7 @@ export const writeMediumStack = ( buf, id, stackDepth, transTraversals, ior1, io
 		), ior1, ior2, ior3 ) );
 
 // Region 7: Beer-Lambert sigmaA (.xyz) of the active medium + DDFA feature-throughput (.w).
-// .xyz absorption is gated on stackDepth>0; .w carries the OIDN/ASVGF see-through aux tint (see below).
+// .xyz absorption is gated on stackDepth>0; .w carries the OIDN/NRD see-through aux tint (see below).
 // Both writers RMW-preserve the other half so sigmaA (live in glass) and featTP never clobber each other.
 export const readMediumSigmaA = ( buf, id ) => buf.element( soa( id, RAY.MEDIUM_SIGMA_A ) ).xyz;
 
@@ -436,7 +436,7 @@ export const writeMediumSigmaA = ( buf, id, sigmaA ) => {
 };
 
 // DDFA (Deferred Denoising-Feature Aux) feature-throughput: a clean per-ray tint carried through smooth
-// glass/mirror, committed into the OIDN/ASVGF albedo guide at the first diffuse-enough surface. Rides the
+// glass/mirror, committed into the OIDN/NRD albedo guide at the first diffuse-enough surface. Rides the
 // otherwise-dead MEDIUM_SIGMA_A.w, packed 10/10/10 into 30 bits (top 2 bits zero ⇒ the float bit-pattern is
 // always finite — never NaN/Inf). LDR [0,1] per channel; final albedo re-quantizes to unorm16 anyway.
 const pack30 = ( tp ) => {

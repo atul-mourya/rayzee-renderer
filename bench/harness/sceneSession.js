@@ -12,7 +12,7 @@ export const BASE_SETTINGS = {
 	fireflyThreshold: 1e9,
 	visMode: 0,
 };
-// Denoisers are deliberately absent above — enableOIDN/enableASVGF are ENGINE_DEFAULTS
+// Denoisers are deliberately absent above — enableOIDN/denoiserStrategy are DENOISER_DEFAULTS
 // keys with no SETTING_ROUTES entry, so writing them through settings silently does
 // nothing but pollute getAll(). Both already default off.
 
@@ -116,7 +116,7 @@ export function createSceneSession( app ) {
 			const loadMs = performance.now() - startedAt;
 
 			// Denoiser strategy is sticky across loads and is NOT a settings key, so it cannot ride
-			// the settingsFloor reset above. Without this a denoise run would leave ASVGF on for
+			// the settingsFloor reset above. Without this a denoise run would leave NRD on for
 			// every scene the quality suite loaded afterwards, and its goldens would silently be
 			// denoised images.
 			app.denoisingManager?.setStrategy( 'none' );
