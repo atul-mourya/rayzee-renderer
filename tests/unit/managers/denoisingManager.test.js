@@ -51,7 +51,7 @@ function makeManager() {
 	const stages = {
 		pathTracer: { setAuxGBufferEnabled: vi.fn(), setCleanAuxNormal: vi.fn() },
 		normalDepth: makeStage(),
-		motionVector: makeStage( { matricesInitialized: true, isFirstFrame: false, frameCount: 5 } ),
+		motionVector: makeStage( { matricesInitialized: true } ),
 		nrd: makeStage( { resetHistory: vi.fn() } ),
 		autoExposure: makeStage(),
 		compositor: makeStage(),

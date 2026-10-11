@@ -135,11 +135,10 @@ const color = context.getTexture( 'pathtracer:color' );
 | `pathtracer:interactionStart` / `pathtracer:interactionEnd` | PathTracerStage, when its CameraOptimizer enters / leaves interaction mode | — | PathTracerApp (drops / restores the render scale) |
 | `pipeline:historyReset` | RayzeeRenderer (`reset()` unless soft), PathTracerStage (render-mode change, 50 ms later), PathTracerApp (render-scale change) | — | NRD |
 | `pipeline:lightingChanged` | RayzeeRenderer (model or environment load, rebuild after adding or removing an object), EnvironmentManager mode change (`callbacks.onLightingChanged`) | — | AutoExposure |
-| `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, MotionVector, AutoExposure, LocalExposure, OverlayManager (hides TileHelper) |
+| `pipeline:reset` | `RenderPipeline.reset()` | — | PathTracerStage, NormalDepth, AutoExposure, LocalExposure, OverlayManager (hides TileHelper) |
 | `pipeline:resize` | `RenderPipeline.setSize()` | `{ width, height }` | PathTracerStage |
 | `frame:complete` | RenderPipeline, after all stages | `{ frame, accumulatedFrames }` | — |
 | `autoexposure:updated` | AutoExposure, when the exposure moves 0.005 stops or more | `{ exposure, autoExposure, targetExposure, luminance }` | PathTracerApp (re-dispatched as `EngineEvents.AUTO_EXPOSURE_UPDATED`) |
-| `motionvector:computed` | MotionVector | `{ frame, isFirstFrame }` | — |
 | `stage:enabled` / `stage:disabled` | `RenderStage.enable()` / `disable()` | `{ stage }` | — |
 
 Parameters reach a stage through its methods, not events: the viewer's `DenoisingManager` calls `nrd.updateParameters()`, `autoExposure.updateParameters()` and the like, and the sample ceiling goes through `settings.set( 'maxSamples', n )`.
@@ -391,7 +390,7 @@ Exposure is not applied here: the renderer's output pass applies `renderer.toneM
 | Stage (`name`) | On while | Reads | Publishes |
 |----------------|----------|-------|-----------|
 | NormalDepth | NRD or the OIDN motion history needs it | `pathtracer:color` (size only) | `pathtracer:normalDepth` (replaces the path tracer's), `pathtracer:prevNormalDepth`, `pathtracer:shadingNormal`, `pathtracer:instanceLeaf` (opt-in) |
-| MotionVector | NRD is on | `pathtracer:normalDepth` | `motionVector:screenSpace`, `motionVector:worldSpace`, `motionVector:motion` (alias of screenSpace) |
+| MotionVector | NRD is on | `pathtracer:normalDepth` | `motionVector:screenSpace` |
 | NRD | strategy `'nrd'` | `pathtracer:color`, `:albedo`, `:normalDepth`, `:shadingNormal`, `motionVector:screenSpace` | `nrd:output` |
 | AutoExposure | `DenoisingManager.setAutoExposureEnabled( true )` | `pathtracer:color` | state `autoexposure:value` / `autoexposure:avgLuminance`; sets `renderer.toneMappingExposure` |
 | LocalExposure | `app.setLocalExposure( true )` | `pathtracer:color` | a grid and blurred picture its gain reads: the compositor's `setDisplayGain` and readbacks' `_displayGain()` |
@@ -499,8 +498,6 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 | `pathtracer:shadingNormal` | NormalDepth | NRD, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
 | `pathtracer:instanceLeaf` | NormalDepth (opt-in, `setInstanceLeafOutput( true )`) | OIDN motion history | r32uint: the hit's transformed TLAS leaf + 1, 0 = none |
 | `motionVector:screenSpace` | MotionVector | NRD | xy = motion (current − previous uv), z = depth, w = validity |
-| `motionVector:worldSpace` | MotionVector | - | xyz = world velocity, w = validity |
-| `motionVector:motion` | MotionVector | - | Alias of `motionVector:screenSpace` |
 | `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
 

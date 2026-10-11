@@ -563,13 +563,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			// On re-enable, force a camera-history reseed (matricesInitialized survives
 			// normal resets) so the first frame reports zero motion, not a spike.
-			if ( motionNeeded && ! mv.enabled ) {
-
-				mv.matricesInitialized = false;
-				mv.isFirstFrame = true;
-				mv.frameCount = 0;
-
-			}
+			if ( motionNeeded && ! mv.enabled ) mv.matricesInitialized = false;
 
 			mv.enabled = motionNeeded;
 
