@@ -806,7 +806,9 @@ environment's exact table (`Processor/EnvironmentExactTable.js`) serves both int
   the bottom at 4 spp. A multiple of 16 keeps the frame on the network's pooling grid, so pixels away from the edges
   denoise exactly as without it (an 8 px border moved them ±2 %). One compute pass packs all three inputs, border
   included (`_copyInputs`); autoexposure meters the frame only; the tile cap applies to the frame, so the border
-  never splits a frame that fits one tile. Cost: 3–11 % more denoise time, most on small frames.
+  never splits a frame that fits one tile. Cost: 3–11 % more denoise time, most on small frames. The cap is an area
+  (`tileSize`² with the border): oidn-web 0.5.0's cost and memory follow the tile's area, so a wide frame that fits stays
+  one tile (1280×720: 22 ms, against 33 ms as two).
 
 ### Auto exposure (`Stages/AutoExposure.js`, viewer)
 Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in

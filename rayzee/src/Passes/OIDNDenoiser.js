@@ -55,8 +55,8 @@ const MODEL_CONFIG = {
 	DEFAULT_OPTIONS: {
 		enableOIDN: true,
 		oidnQuality: 'fast',
-		// A cap on the frame, not a tile size: a frame that fits is one tile, with no overlap.
-		// It bounds the network's activation memory (~430 MB at 1024²).
+		// A cap on the frame, not a tile size: a frame no larger in area than this square is one
+		// tile, with no overlap. The area bounds the network's activation memory.
 		tileSize: 1024
 	}
 };
@@ -382,16 +382,14 @@ export class OIDNDenoiser extends EventDispatcher {
 	 */
 	_resolveTileSize() {
 
-		const longest = Math.max( this._renderWidth, this._renderHeight );
-		if ( ! longest ) return this.maxTileSize;
+		if ( ! this._renderWidth || ! this._renderHeight ) return this.maxTileSize;
 
-		// The cap is on the frame, so the border never splits a frame that fits one tile.
-		if ( longest <= this.maxTileSize ) {
-
-			const input = oidnInputSize( this._renderWidth, this._renderHeight );
-			return Math.max( input.width, input.height );
-
-		}
+		// One tile for any frame no larger in area than the square the cap allows: oidn-web's memory
+		// follows the tile's area, not its longest side, so a wide frame needs no split. The cap is on
+		// the frame, so the border never splits a frame that fits.
+		const input = oidnInputSize( this._renderWidth, this._renderHeight );
+		const largest = oidnInputSize( this.maxTileSize, this.maxTileSize );
+		if ( input.width * input.height <= largest.width * largest.height ) return Math.max( input.width, input.height );
 
 		return Math.max( OIDN_TILE_ALIGNMENT, Math.floor( this.maxTileSize / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT );
 
