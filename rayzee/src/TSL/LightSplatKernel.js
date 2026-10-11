@@ -29,7 +29,7 @@ export function buildLightSplatKernel( params ) {
 		hitBufferRO, splatBuffer,
 		bvhBuffer, triangleBuffer, materialBuffer,
 		lightPaths, slotsPerPath, lightTag, strategyView,
-		cameraPosition, cameraForward, cameraViewMatrix, cameraProjectionMatrix, pixelArea,
+		cameraPosition, cameraForward, cameraClipStart, cameraViewMatrix, cameraProjectionMatrix, pixelArea,
 		renderWidth, renderHeight,
 		globalIlluminationIntensity, fireflyThreshold, accumFrame, frame,
 		mergeVm = null,
@@ -68,7 +68,10 @@ export function buildLightSplatKernel( params ) {
 		const culled = diffuseTransmission
 			? select( behind, v.extra.bitAnd( uint( 2 ) ), v.extra.bitAnd( uint( 1 ) ) ).notEqual( uint( 0 ) )
 			: v.extra.notEqual( uint( 0 ) );
-		If( ( diffuseTransmission ? cosFacet.equal( 0.0 ) : cosFacet.lessThanEqual( 0.0 ) ).or( cosCamera.lessThanEqual( 1e-6 ) ).or( culled ), () => {
+		// The camera sees nothing in front of its clip plane, this far back along the line to it.
+		const clipAlong = cameraClipStart.div( max( cosCamera, 1e-6 ) ).toVar();
+		If( ( diffuseTransmission ? cosFacet.equal( 0.0 ) : cosFacet.lessThanEqual( 0.0 ) ).or( cosCamera.lessThanEqual( 1e-6 ) ).or( culled )
+			.or( dist2.lessThanEqual( clipAlong.mul( clipAlong ) ) ), () => {
 
 			Return();
 
@@ -123,9 +126,9 @@ export function buildLightSplatKernel( params ) {
 		const origin = offsetRayOrigin( v.position, diffuseTransmission ? select( behind, v.facetN.negate(), v.facetN ) : v.facetN ).toVar();
 		const segment = cameraPosition.sub( origin ).toVar();
 		const segmentLength = length( segment ).toVar();
-		// This segment stands in for the primary ray, which sees through the faces it culls.
+		// This segment stands in for the primary ray, which sees through the faces it culls and starts at the clip plane.
 		const visibility = traceShadowRayRefractiveOpaque(
-			origin, segment.div( segmentLength ), segmentLength.mul( SHADOW_END ),
+			origin, segment.div( segmentLength ), segmentLength.sub( clipAlong ).mul( SHADOW_END ),
 			traverseBVHShadowCameraCulled, bvhBuffer, triangleBuffer, materialBuffer,
 		);
 

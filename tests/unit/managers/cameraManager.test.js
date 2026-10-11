@@ -54,6 +54,7 @@ vi.mock( 'three', () => {
 
 			} ) };
 			this.name = '';
+			this.userData = {};
 			this.updateProjectionMatrix = vi.fn();
 			this.updateMatrixWorld = vi.fn();
 

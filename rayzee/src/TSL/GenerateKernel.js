@@ -22,7 +22,7 @@ import {
 	getStratifiedSample,
 } from './Random.js';
 
-import { generateRayFromCamera } from './CameraRay.js';
+import { generateRayFromCamera, cameraClipDistance } from './CameraRay.js';
 import { Ray } from './Struct.js';
 import { RAY_FLAG, COUNTER } from '../Processor/QueueManager.js';
 import {
@@ -41,6 +41,7 @@ export function buildGenerateKernel( params ) {
 		cameraWorldMatrix, cameraProjectionMatrixInverse,
 		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
+		cameraClipStart,
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
 		transmissiveBounces, // per-ray refraction budget (megakernel parity: PathTracerCore.js:606)
@@ -79,7 +80,10 @@ export function buildGenerateKernel( params ) {
 			enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
 		) );
 
-		writeRayOriginMeta( rayBufferRW, rayID, ray.origin, int( 0 ), int( 0 ) );
+		// The ray starts at the clip plane. The bidirectional weights still measure the first segment from the camera:
+		// the skipped length rides in the alpha-skip distance (mis_ray_t), as a cutout's would.
+		const clipAlong = cameraClipDistance( ray.direction, cameraClipStart, cameraWorldMatrix, cameraProjection ).toVar();
+		writeRayOriginMeta( rayBufferRW, rayID, ray.origin.add( ray.direction.mul( clipAlong ) ), int( 0 ), int( 0 ), uint( 0 ), bdpt ? clipAlong : null );
 		// A fresh camera ray is NOT redirected — REDIRECTED stays clear so it sees the direct backdrop;
 		// ShadeKernel sets REDIRECTED on the first direction-changing interaction (see RAY_FLAG.REDIRECTED).
 		writeRayDirFlags( rayBufferRW, rayID, ray.direction, uint( RAY_FLAG.ACTIVE ) );

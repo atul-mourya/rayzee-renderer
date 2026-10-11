@@ -1533,12 +1533,15 @@ export class USDSceneReader {
 		const hAperture = prim.value( 'horizontalAperture' ) ?? 20.955;
 		const vAperture = prim.value( 'verticalAperture' ) ?? 15.2908;
 		const focal = prim.value( 'focalLength' ) ?? 50;
-		const [ near, far ] = prim.value( 'clippingRange' ) ?? [ 1, 1000000 ];
+		const clipping = prim.value( 'clippingRange' );
+		const [ near, far ] = clipping ?? [ 1, 1000000 ];
 		const camera = prim.value( 'projection' ) === 'orthographic'
 			// Apertures are in tenths of a scene unit.
 			? new OrthographicCamera( - hAperture / 20, hAperture / 20, vAperture / 20, - vAperture / 20, near, far )
 			: new PerspectiveCamera( 2 * Math.atan( vAperture / ( 2 * focal ) ) / DEG, hAperture / vAperture, near, far );
 		camera.name = prim.name;
+		// An authored near clip is a clip plane the path tracer honours (UsdGeom's fallback of 1 would clip every camera).
+		if ( clipping && near > 0 ) camera.userData.clipStart = near;
 		const scale = new Vector3();
 		matrix.decompose( camera.position, camera.quaternion, scale );
 		camera.updateMatrixWorld( true );

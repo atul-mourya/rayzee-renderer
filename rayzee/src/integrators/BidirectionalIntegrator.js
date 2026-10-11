@@ -336,6 +336,7 @@ export class BidirectionalIntegrator {
 			strategyView: bd.strategyView,
 			cameraPosition: bd.cameraPosition,
 			cameraForward: bd.cameraForward,
+			cameraClipStart: this.pt.cameraClipStart,
 			cameraViewMatrix: this.pt.cameraViewMatrix,
 			cameraProjectionMatrix: this.pt.cameraProjectionMatrix,
 			pixelArea: bd.pixelArea,

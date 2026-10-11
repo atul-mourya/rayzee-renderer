@@ -93,6 +93,7 @@ export class CameraManager extends EventDispatcher {
 
 		this.cameras = cameras;
 		this._userCameraCounter = 0;
+		this.camera.userData.clipStart = 0;
 		this.resetAutoFocus();
 
 	}
@@ -120,6 +121,7 @@ export class CameraManager extends EventDispatcher {
 		cam.userData.__rayzeeUserCamera = true;
 		cam.userData.__rayzeeEffects = this._captureEffects();
 		if ( this.controls ) cam.userData.__rayzeeOrbitTarget = this.controls.target.clone();
+		if ( src.userData.clipStart > 0 ) cam.userData.clipStart = src.userData.clipStart;
 
 		this._userCameraCounter += 1;
 		cam.name = name || `View Camera ${this._userCameraCounter}`;
@@ -310,6 +312,7 @@ export class CameraManager extends EventDispatcher {
 			this.camera.fov = s.fov;
 			this.camera.near = s.near;
 			this.camera.far = s.far;
+			this.camera.userData.clipStart = 0;
 			this.camera.updateProjectionMatrix();
 			this.camera.updateMatrixWorld( true );
 
@@ -380,6 +383,8 @@ export class CameraManager extends EventDispatcher {
 		if ( source.isPerspectiveCamera ) this.camera.fov = source.fov;
 		this.camera.near = source.near;
 		this.camera.far = source.far;
+		// Only an imported camera's clip start clips the render: see PathTracerStage._updateCameraUniforms.
+		this.camera.userData.clipStart = source.userData?.clipStart ?? 0;
 		this.camera.updateProjectionMatrix();
 		this.camera.updateMatrixWorld( true );
 
@@ -611,6 +616,7 @@ export class CameraManager extends EventDispatcher {
 				fov: camera.fov,
 				near: camera.near,
 				far: camera.far,
+				clipStart: camera.userData.clipStart ?? 0,
 				zoom: camera.zoom,
 				orthographic: !! camera.orthographic,
 				orthoHalfHeight: camera.orthoHalfHeight,
@@ -641,6 +647,7 @@ export class CameraManager extends EventDispatcher {
 					aspect: cam.aspect ?? null,
 					near: cam.near,
 					far: cam.far,
+					clipStart: cam.userData.clipStart ?? 0,
 					zoom: cam.zoom,
 					position: cam.position.toArray(),
 					quaternion: cam.quaternion.toArray(),
@@ -684,6 +691,7 @@ export class CameraManager extends EventDispatcher {
 				cam.updateMatrixWorld( true );
 				cam.userData.__rayzeeUserCamera = true;
 				cam.userData.__rayzeeEffects = fromPortable( entry.effects );
+				if ( entry.clipStart > 0 ) cam.userData.clipStart = entry.clipStart;
 				if ( entry.orbitTarget ) cam.userData.__rayzeeOrbitTarget = new Vector3().fromArray( entry.orbitTarget );
 				indexMap.set( entry.index, this.cameras.length );
 				this.cameras.push( cam );
@@ -730,6 +738,7 @@ export class CameraManager extends EventDispatcher {
 			camera.fov = v.fov;
 			camera.near = v.near;
 			camera.far = v.far;
+			camera.userData.clipStart = v.clipStart ?? 0;
 			this._setView( v.orthographic, v.orthoHalfHeight );
 			camera.zoom = v.zoom ?? 1;
 			camera.updateProjectionMatrix();

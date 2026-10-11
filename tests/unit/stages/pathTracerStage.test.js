@@ -241,3 +241,35 @@ describe( 'PathTracerStage light lists', () => {
 	} );
 
 } );
+
+describe( 'PathTracerStage camera clip start', () => {
+
+	function makeStage( camera ) {
+
+		const uniforms = new UniformManager();
+		const stage = Object.create( PathTracerStage.prototype );
+		Object.assign( stage, { camera, lastCameraMatrix: camera.matrixWorld.clone(), lastProjectionMatrix: camera.projectionMatrixInverse.clone() } );
+		for ( const name of [ 'cameraWorldMatrix', 'cameraViewMatrix', 'cameraProjectionMatrix', 'cameraProjectionMatrixInverse', 'cameraClipStart' ] ) stage[ name ] = uniforms.get( name );
+		return stage;
+
+	}
+
+	it( 'takes an imported camera\'s clip start, and counts a change of it as a camera change', async () => {
+
+		const { PerspectiveCamera } = await import( 'three' );
+		const camera = new PerspectiveCamera( 40, 1, 0.5, 100 );
+		camera.updateMatrixWorld();
+		const stage = makeStage( camera );
+
+		// The viewer's own `near` is not a clip plane.
+		expect( stage._updateCameraUniforms() ).toBe( false );
+		expect( stage.cameraClipStart.value ).toBe( 0 );
+
+		camera.userData.clipStart = 1.1;
+		expect( stage._updateCameraUniforms() ).toBe( true );
+		expect( stage.cameraClipStart.value ).toBe( 1.1 );
+		expect( stage._updateCameraUniforms() ).toBe( false );
+
+	} );
+
+} );

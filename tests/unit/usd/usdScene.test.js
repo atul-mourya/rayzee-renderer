@@ -381,6 +381,17 @@ def DomeLight "sky"
     uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
 }` ), 'sky.exr': '' };
 
+	it( 'gives a camera an authored near clip as its clip start, and none from UsdGeom\'s fallback', async () => {
+
+		const camera = clipping => usda( `def Camera "shot"
+{
+${clipping}    float focalLength = 35
+}` );
+		expect( ( await load( { 'root.usda': camera( '    float2 clippingRange = (1.1, 100)\n' ) } ) ).cameras[ 0 ].userData.clipStart ).toBeCloseTo( 1.1 );
+		expect( ( await load( { 'root.usda': camera( '' ) } ) ).cameras[ 0 ].userData.clipStart ).toBeUndefined();
+
+	} );
+
 	it( 'makes a camera with the apertures\' field of view', async () => {
 
 		const { cameras } = await load( SCENE );

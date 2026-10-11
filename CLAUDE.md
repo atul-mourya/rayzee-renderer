@@ -1043,6 +1043,15 @@ anything that moves geometry without a reset leaves focus stale. The app's `CAME
 no field of view or focus distance, so a preset never moves the camera. `dofBlur` is a per-camera effect;
 `dofMode` is not. The app's panel is a **Simple | Pro** switch over `dofMode`, remembered in localStorage.
 
+**Clip start** (`camera.userData.clipStart`, uniform `cameraClipStart`): an imported camera's near clipping plane, as
+Cycles honours it — camera rays start on a plane that far in front of the camera (`cameraClipDistance`, a sphere for a
+panorama), so a camera behind a wall sees through it (Blender's Barbershop interior). Set from a USD `clippingRange`
+only when authored (UsdGeom's fallback of 1 would clip every camera) and from glTF `znear` (`cameraClipPlugin`); carried
+by `_placeAt`, saved views and sessions; 0 on the default camera, whose `near` is the viewer's own (maxDim / 100) and
+never clips. ⚠️ Every camera-ray site honours it: Generate and Debug kernels, NormalDepth (its depth stays measured
+from the camera), bidirectional light tracing (no splat in front of the plane, shadow ray ends on it, the skipped length
+rides in mis_ray_t), and picking / auto-focus (`raycaster.near`).
+
 **Orthographic** (`cameraProjection: 'orthographic'`, uniform id 2 in `CAMERA_PROJECTION_IDS`): rays are parallel and
 start on the camera's image plane (`cameraRayOrigin()` in `TSL/CameraRay.js`). The live camera is a `ViewCamera`
 (`managers/ViewCamera.js`), a PerspectiveCamera that switches its own projection, so every holder of it — both

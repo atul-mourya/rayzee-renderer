@@ -704,6 +704,12 @@ export class InteractionManager extends EventDispatcher {
 	 */
 	_intersectScene() {
 
+		// Nothing in front of an imported camera's clip plane is rendered, so nothing there is picked. An orthographic
+		// ray already starts on the near plane, which a switch to such a camera set to its clip start.
+		const clipStart = this.camera.userData?.clipStart ?? 0;
+		this.raycaster.near = clipStart > 0 && ! this.camera.isOrthographicCamera
+			? clipStart / Math.max( this.raycaster.ray.direction.dot( this.camera.getWorldDirection( _viewAxis ) ), 1e-4 )
+			: 0;
 		return this.isGeometryOnDisk?.() ? [] : this.raycaster.intersectObjects( this.scene.children, true );
 
 	}

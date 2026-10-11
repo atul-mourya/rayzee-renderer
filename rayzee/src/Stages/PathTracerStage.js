@@ -1437,13 +1437,18 @@ export class PathTracerStage extends RenderStage {
 	 */
 	_updateCameraUniforms() {
 
+		// Only an imported camera's clip plane: `near` is the viewer's own for its default camera.
+		const clipStart = Math.max( this.camera.userData?.clipStart ?? 0, 0 );
+
 		if ( ! this._matricesApproxEqual( this.lastCameraMatrix, this.camera.matrixWorld ) ||
-			! this._matricesApproxEqual( this.lastProjectionMatrix, this.camera.projectionMatrixInverse ) ) {
+			! this._matricesApproxEqual( this.lastProjectionMatrix, this.camera.projectionMatrixInverse ) ||
+			clipStart !== this.cameraClipStart.value ) {
 
 			this.cameraWorldMatrix.value.copy( this.camera.matrixWorld );
 			this.cameraViewMatrix.value.copy( this.camera.matrixWorldInverse );
 			this.cameraProjectionMatrix.value.copy( this.camera.projectionMatrix );
 			this.cameraProjectionMatrixInverse.value.copy( this.camera.projectionMatrixInverse );
+			this.cameraClipStart.value = clipStart;
 
 			this.lastCameraMatrix.copy( this.camera.matrixWorld );
 			this.lastProjectionMatrix.copy( this.camera.projectionMatrixInverse );

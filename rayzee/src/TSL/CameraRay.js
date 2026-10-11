@@ -14,7 +14,7 @@
 
 import {
 	Fn, vec3, vec4, float, int, uniform,
-	If, normalize, mat3, mix, sin, cos, cross, dot, select,
+	If, normalize, mat3, mix, sin, cos, cross, dot, select, max,
 } from 'three/tsl';
 import { Vector2 } from 'three';
 
@@ -39,10 +39,12 @@ export function cameraRayUniforms() {
 		panoLonRange: uniform( new Vector2(), 'vec2' ),
 		panoLatRange: uniform( new Vector2(), 'vec2' ),
 		panoLevelHorizon: uniform( 1, 'int' ),
+		clipStart: uniform( 0, 'float' ),
 		/** @param {import('../managers/UniformManager.js').UniformManager} source */
 		sync( source ) {
 
 			u.cameraProjection.value = source.get( 'cameraProjection' ).value;
+			u.clipStart.value = source.get( 'cameraClipStart' ).value;
 			u.panoLonRange.value.copy( source.get( 'panoLonRange' ).value );
 			u.panoLatRange.value.copy( source.get( 'panoLatRange' ).value );
 			u.panoLevelHorizon.value = source.get( 'panoLevelHorizon' ).value;
@@ -69,6 +71,15 @@ export const cameraRayPoint = ( uv01, distance, cameraWorldMatrix, cameraProject
 	return origin.add( direction.mul( distance ) );
 
 };
+
+/**
+ * How far along a camera ray its clip plane lies: Cycles' clip start, a plane `clipStart` in front of the camera (a
+ * sphere for a panorama). Camera rays start there, so a camera can see through a wall behind it.
+ */
+export const cameraClipDistance = ( direction, clipStart, cameraWorldMatrix, cameraProjection ) => select(
+	cameraProjection.equal( PANORAMA ), clipStart,
+	clipStart.div( max( dot( direction, normalize( vec3( cameraWorldMatrix[ 2 ] ) ) ).negate(), 1e-4 ) )
+);
 
 /** World-space primary ray origin for pixel uv: the camera, or its image plane when orthographic. */
 export const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjection ] ) => {

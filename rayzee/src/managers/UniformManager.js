@@ -301,6 +301,8 @@ export class UniformManager {
 		u( 'cameraProjectionMatrixInverse', new Matrix4(), 'mat4' );
 		u( 'cameraViewMatrix', new Matrix4(), 'mat4' );
 		u( 'cameraProjectionMatrix', new Matrix4(), 'mat4' );
+		// An imported camera's near clipping plane: camera rays start this far in front of it (0 = at the camera).
+		u( 'cameraClipStart', 0, 'float' );
 
 		// Projection: CAMERA_PROJECTION_IDS. Ranges are radians (UI carries degrees).
 		const radRange = ( [ min, max ] ) => new Vector2( min, max ).multiplyScalar( MathUtils.DEG2RAD );

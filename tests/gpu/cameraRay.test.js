@@ -10,7 +10,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { generateRayFromCamera } from '@/core/TSL/CameraRay.js';
+import { generateRayFromCamera, cameraClipDistance } from '@/core/TSL/CameraRay.js';
 import { Ray } from '@/core/TSL/Struct.js';
 import { ViewCamera } from '@/core/managers/ViewCamera.js';
 import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
@@ -201,6 +201,20 @@ describeGPU( 'thin lens', () => {
 
 		expect( widest ).toBeLessThanOrEqual( expected * 1.0001 );
 		expect( widest ).toBeGreaterThan( expected * 0.95 );
+
+	} );
+
+	// Cycles' clip start: a plane clipStart in front of the camera (a sphere for a panorama), where camera rays begin.
+	it( 'starts camera rays on the clip plane, clipStart along the view axis', async () => {
+
+		const CLIP = 1.1;
+		const directions = UVS.map( pinholeDirection );
+		const run = async projection => new Float32Array( await evaluate( renderer, directions.length, { d: [ new Float32Array( directions.flatMap( d => [ d.x, d.y, d.z, 0 ] ) ), 'vec4' ] }, 'float',
+			a => cameraClipDistance( a.d.xyz, uniform( CLIP ), uniform( camera.matrixWorld.clone() ), uniform( projection, 'int' ) ) ) );
+
+		const along = await run( CAMERA_PROJECTION_IDS.perspective );
+		directions.forEach( ( d, i ) => expect( along[ i ] * d.dot( forward ) ).toBeCloseTo( CLIP, 5 ) );
+		for ( const distance of await run( CAMERA_PROJECTION_IDS.equirectangular ) ) expect( distance ).toBeCloseTo( CLIP, 5 );
 
 	} );
 

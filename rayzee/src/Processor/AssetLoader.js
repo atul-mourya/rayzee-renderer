@@ -52,6 +52,20 @@ function standInForSplit( source ) {
 
 }
 
+// glTF's znear is a camera's near clipping plane (Blender writes its clip start there): the path tracer honours it.
+export const cameraClipPlugin = {
+	name: 'RAYZEE_camera_clip',
+	afterRoot( result ) {
+
+		for ( const scene of result.scenes ) scene.traverse( ( object ) => {
+
+			if ( object.isCamera && object.near > 0 ) object.userData.clipStart = object.near;
+
+		} );
+
+	},
+};
+
 // Luminous efficacy glTF, three.js and Blender's exporter all assume (PBR_WATTS_TO_LUMENS).
 const LUMENS_PER_WATT = 683;
 
@@ -768,6 +782,7 @@ export class AssetLoader extends EventDispatcher {
 		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
 		loader.register( ( parser ) => diffuseTransmissionPlugin( parser ) );
+		loader.register( () => cameraClipPlugin );
 
 		return loader;
 

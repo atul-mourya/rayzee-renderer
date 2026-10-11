@@ -13,7 +13,7 @@ import {
 	localId, workgroupId,
 } from 'three/tsl';
 
-import { generateRayFromCamera } from './CameraRay.js';
+import { generateRayFromCamera, cameraClipDistance } from './CameraRay.js';
 import { Ray } from './Struct.js';
 import { TraceDebugMode } from './Debugger.js';
 import { pcgHash, getStratifiedSample } from './Random.js';
@@ -28,6 +28,7 @@ export function buildDebugKernel( params ) {
 		cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjectionMatrix, cameraViewMatrix,
 		cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon,
 		enableDOF, focalLength, aperture, focusDistance, unitsPerMetre, apertureScale, anamorphicRatio, dofMode, dofBlur,
+		cameraClipStart,
 		bvhBuffer, triangleBuffer, materialBuffer,
 		envTexture, environmentMatrix, environmentIntensity, enableEnvironmentLight,
 		visMode, debugVisScale,
@@ -66,7 +67,7 @@ export function buildDebugKernel( params ) {
 
 				// Modes 1-8, 10 — shared per-mode debug color (primary-ray trace + counters).
 				color.assign( TraceDebugMode(
-					ray.origin, ray.direction,
+					ray.origin.add( ray.direction.mul( cameraClipDistance( ray.direction, cameraClipStart, cameraWorldMatrix, cameraProjection ) ) ), ray.direction,
 					bvhBuffer, triangleBuffer, materialBuffer,
 					envTexture, environmentMatrix, environmentIntensity, enableEnvironmentLight,
 					visMode, debugVisScale,

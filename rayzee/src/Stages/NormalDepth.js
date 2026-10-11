@@ -7,7 +7,7 @@ import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
 import { GBUFFER_MISS_DEPTH } from './DenoiserSettings.js';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../TSL/Struct.js';
 import { traverseBVH } from '../TSL/BVHTraversal.js';
-import { cameraRayOf, cameraRayUniforms } from '../TSL/CameraRay.js';
+import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../TSL/CameraRay.js';
 import { getMaterial } from '../TSL/Common.js';
 import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes } from '../TSL/TextureSampling.js';
 import { withSceneResources } from '../TSL/SceneResources.js';
@@ -233,14 +233,18 @@ export class NormalDepth extends RenderStage {
 				// No jitter — deterministic per-pixel ray so the temporal gate
 				// sees stable per-pixel normals across frames.
 				const uv = vec2( float( gx ).add( 0.5 ).div( resW ), float( gy ).add( 0.5 ).div( resH ) );
-				const ray = Ray( cameraRayOf( uv, camWorldMat, camProjInvMat, this.cameraRay ) );
+				const primary = cameraRayOf( uv, camWorldMat, camProjInvMat, this.cameraRay );
+				const direction = primary.direction.toVar();
+				// From the camera's clip plane, as the path tracer's rays start; the depth stays measured from the camera.
+				const clipAlong = cameraClipDistance( direction, this.cameraRay.clipStart, camWorldMat, this.cameraRay.cameraProjection ).toVar();
+				const ray = Ray( { origin: primary.origin.add( direction.mul( clipAlong ) ), direction } );
 				const hit = HitInfo.wrap( traverseBVH( ray, bvhStorage, triStorage ) );
 
 				const encodedNormal = hit.normal.mul( 0.5 ).add( 0.5 );
 				// Clamp to the max finite HalfFloat: a hit farther than 65504 units would otherwise
 				// round to +Inf in the f16 texture (on backends that don't clamp), reintroducing the
 				// Inf-Inf=NaN in the denoiser depth weights that the finite miss-sentinel avoids.
-				const depth = min( hit.dst, float( 65504.0 ) );
+				const depth = min( hit.dst.add( clipAlong ), float( 65504.0 ) );
 
 				const result = hit.didHit.select(
 					vec4( encodedNormal, depth ),

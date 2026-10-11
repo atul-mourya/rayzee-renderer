@@ -129,7 +129,8 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
   followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. Ptex is not read: a
   Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
-  (the engine has no vertex colour). Cameras from apertures (vertical FOV), Rect/Disk/Sphere/Distant lights in the engine's
+  (the engine has no vertex colour). Cameras from apertures (vertical FOV), an authored `clippingRange` as the clip start
+  (camera rays begin that far in front, as in Cycles), Rect/Disk/Sphere/Distant lights in the engine's
   units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
   engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored. Light units follow UsdLux: the
   radiance is intensity × 2^exposure, divided by the light's size when `normalize` is on (surface area; a distant light's
@@ -183,3 +184,18 @@ within 0.25 %). What the export loses before the engine sees it:
 - **COMPAT / RAW lighting modes** write Blender's watts instead of candela and lux (COMPAT divides a point's by 4π, RAW
   writes the energy as it is), and nothing else in the file differs from SPEC. The loader assumes SPEC, Blender's
   default and what its own importer assumes.
+
+## Blender scenes made for Cycles
+Measured on Blender's Barbershop interior (2026-10-12): its own USD export, opened back in Blender, renders almost black
+in Cycles, so these losses happen before the engine reads the file.
+- **Lamps set by nodes**: ten of its fifteen lamps take their strength from a Light Falloff node (150–500) and their
+  colour from the Emission node, with the lamp's own power left at 1 or 0.79 W. The USD exporter writes the lamp's power
+  only, so they arrive 100–500× dim and white; the glTF exporter reads a Light Falloff strength and the Emission colour,
+  but drops area lamps. Linear falloff and the node's Smooth have no equivalent anywhere.
+- **Materials without Principled BSDF**: both exporters convert Principled BSDF only. Its 263 materials are Diffuse,
+  Glossy and Mix Shader networks and node groups: 124 arrive with no surface (shaded grey), the rest with a colour and
+  roughness, no metal, glass, emission or alpha.
+- **Volume-only objects**: a fog box (`ENV-Fog`, volume shader, no surface) arrives as a solid box around the room.
+- **Clip start**: its camera stands behind the back wall with a clip start of 1.1 m. The engine honours it (see USD
+  above, and glTF `znear`); before 2026-10-12 it ignored it and rendered the wall.
+

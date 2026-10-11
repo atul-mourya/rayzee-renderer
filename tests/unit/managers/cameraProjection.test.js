@@ -304,3 +304,55 @@ describe( 'CameraManager reset view', () => {
 	} );
 
 } );
+
+describe( 'CameraManager clip start', () => {
+
+	// A camera whose file gave it a near clipping plane (USD clippingRange, glTF znear).
+	const imported = clipStart => {
+
+		const camera = new PerspectiveCamera( 40, 2, clipStart, 100 );
+		camera.position.set( 1, 2, 3 );
+		camera.userData.clipStart = clipStart;
+		return camera;
+
+	};
+
+	it( 'takes an imported camera\'s clip start, and none back on the default camera', () => {
+
+		const { cm } = manager();
+		cm.setCameras( [ cm.camera, imported( 1.1 ) ] );
+		cm.switchCamera( 1 );
+		expect( cm.camera.userData.clipStart ).toBe( 1.1 );
+
+		cm.switchCamera( 0 );
+		expect( cm.camera.userData.clipStart ).toBe( 0 );
+
+	} );
+
+	it( 'keeps it in a view saved from that camera, and in a saved session', () => {
+
+		const { cm } = manager();
+		cm.setCameras( [ cm.camera, imported( 1.1 ) ] );
+		cm.switchCamera( 1 );
+		const saved = cm.addCameraFromView();
+		expect( cm.cameras[ saved ].userData.clipStart ).toBe( 1.1 );
+
+		const state = cm.serialize();
+		cm.camera.userData.clipStart = 0;
+		cm.restore( state );
+		expect( cm.camera.userData.clipStart ).toBe( 1.1 );
+		expect( cm.cameras.find( camera => camera.userData.__rayzeeUserCamera ).userData.clipStart ).toBe( 1.1 );
+
+	} );
+
+	it( 'opens a new model on the default camera without one', () => {
+
+		const { cm } = manager();
+		cm.setCameras( [ cm.camera, imported( 1.1 ) ] );
+		cm.switchCamera( 1 );
+		cm.setCameras( [ cm.camera ] );
+		expect( cm.camera.userData.clipStart ).toBe( 0 );
+
+	} );
+
+} );
