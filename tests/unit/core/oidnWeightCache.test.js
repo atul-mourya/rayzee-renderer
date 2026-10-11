@@ -43,4 +43,24 @@ describe( 'OIDNDenoiser — model weights', () => {
 
 	} );
 
+	// The Denoising badge, the closing upscaler and a video export each wait for that 'end'.
+	it( 'ends every denoise it starts when the weights fail to load', async () => {
+
+		stubFetch( false );
+		const dn = new OIDNDenoiser( renderer );
+		const events = [];
+		for ( const type of [ 'start', 'end' ] ) dn.addEventListener( type, () => events.push( type ) );
+
+		// Once while the load is running (deferred until it fails), once after.
+		const deferred = dn.start();
+		await dn.whenLoaded();
+		const after = await dn.start();
+
+		expect( await deferred ).toBe( false );
+		expect( after ).toBe( false );
+		expect( events ).toEqual( [ 'start', 'end', 'start', 'end' ] );
+		expect( dn.state.isDenoising ).toBe( false );
+
+	} );
+
 } );

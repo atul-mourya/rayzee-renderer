@@ -443,10 +443,10 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		} while ( this._reloadPending );
 
-		// Fire a start() that arrived mid-load. Guard on unet+enabled so a failed load
-		// or a disable during loading doesn't kick off a denoise. Outside the loop, so a
-		// no-op reload still releases it — it used to be stranded by the early return below.
-		if ( this._pendingStart && this.unet && this.enabled ) {
+		// Fire a start() that arrived mid-load, unless it was disabled meanwhile. After a failed
+		// load too: it denoises nothing but still sends 'end', which its caller waits for. Outside
+		// the loop, so a no-op reload still releases it — it used to be stranded by the early return below.
+		if ( this._pendingStart && this.enabled ) {
 
 			const continuous = this._pendingStartContinuous;
 			this._pendingStart = false;
@@ -617,14 +617,16 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	async execute( continuous = false ) {
 
-		if ( ! this.enabled || ! this.unet ) return false;
-
 		// Create abort controller for this execution
 		const runId = ++ this._runId;
 		this.state.abortController = new AbortController();
 		this.state.isDenoising = true;
 
 		try {
+
+			// Inside the try, so the finally ends what start() announced: with no weights (a failed
+			// load) the Denoising badge, the closing upscaler and a video export waited forever.
+			if ( ! this.enabled || ! this.unet ) return false;
 
 			// The GPU path bails out early — no textures yet, no device — by returning false, and
 			// a caller that read that as success published a picture nothing had written to.
