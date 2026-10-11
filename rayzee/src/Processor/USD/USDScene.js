@@ -1571,21 +1571,31 @@ export class USDSceneReader {
 
 		}
 
+		// UsdLux: `normalize` divides the radiance by the light's size (its surface area; a distant light's disc).
+		const normalize = !! read( 'normalize', false );
 		let light;
 		if ( type === 'RectLight' || type === 'DiskLight' ) {
 
 			const disk = type === 'DiskLight';
 			const radius = read( 'radius', 0.5 );
 			light = new RectAreaLight( new Color(), radiance, disk ? radius * 2 : read( 'width', 1 ), disk ? radius * 2 : read( 'height', 1 ) );
-			light.userData.normalize = read( 'normalize', false );
+			light.userData.normalize = normalize;
 			if ( disk ) light.userData.shape = 'disk';
+			// Normalized, the radiance is intensity ÷ world area, so the power is π × intensity whatever the size.
+			if ( normalize ) {
+
+				light.intensity = Math.PI * radiance;
+				light.userData.__radianceConverted = true;
+
+			}
 
 		} else if ( type === 'SphereLight' || type === 'CylinderLight' ) {
 
 			const radius = read( 'radius', 0.5 );
 			const cone = read( 'shaping:cone:angle', 180 );
-			// The engine's lamps take 4π × the radiant intensity, which a sphere of radiance L shows as L·πr².
-			const intensity = 4 * Math.PI * radiance * Math.PI * radius * radius;
+			const area = type === 'SphereLight' ? 4 * Math.PI * radius * radius : 2 * Math.PI * radius * read( 'length', 1 );
+			// The engine's lamps take their power, π × radiance × area for a surface of radiance L.
+			const intensity = Math.PI * radiance * ( normalize ? 1 : area );
 			if ( cone < 90 ) {
 
 				light = new SpotLight( new Color(), intensity );
@@ -1605,8 +1615,13 @@ export class USDSceneReader {
 
 		} else {
 
-			// Lux, as glTF's and three.js's are: the loader takes the luminous efficacy out.
-			light = new DirectionalLight( new Color(), radiance );
+			// The irradiance on a surface facing the light: a disc of half-angle θ and radiance L gives π·sin²θ·L
+			// (UsdLux's sizeFactor), so a normalized light's intensity is that irradiance.
+			const half = Math.min( Math.max( read( 'angle', 0.53 ) * DEG / 2, 0 ), Math.PI );
+			const sin2 = Math.sin( half ) ** 2;
+			const sizeFactor = half === 0 ? 1 : half <= Math.PI / 2 ? Math.PI * sin2 : Math.PI * ( 2 - sin2 );
+			light = new DirectionalLight( new Color(), radiance * ( normalize ? 1 : sizeFactor ) );
+			light.userData.__luxConverted = true;
 
 		}
 
@@ -1618,8 +1633,8 @@ export class USDSceneReader {
 		matrix.decompose( light.position, light.quaternion, light.scale );
 		if ( light.target ) {
 
-			const forward = new Vector3( 0, 0, - 1 ).transformDirection( matrix );
-			light.target.position.copy( forward );
+			// A child of the light, so the light's own rotation aims it down its −Z.
+			light.target.position.set( 0, 0, - 1 );
 			light.add( light.target );
 
 		}

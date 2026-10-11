@@ -20,24 +20,15 @@
 
 ### Known
 
-- [ ] **What a Blender glTF export cannot carry**, measured against Cycles renders of the same scene
-  (scenes + probes in this session's scratchpad). The engine side is now at parity: point, spot and
-  sun all match Cycles to render noise, and three.js' own glTF exporter writes `intensity` straight
-  through, so it agrees that glTF numbers are photometric (candela / lux). What is still lost is on
-  Blender's side:
-  - **Area lamps are dropped entirely** — `__filter_lights_punctual` rejects `AREA` and `HEMI` with
-    a warning, and glTF has no area light. The node survives as an empty. Biggest visible gap on a
-    real scene; the workaround is an emissive mesh, which does export.
-  - **Sun strength is exported wrong by Blender** — every sun writes 683 lux whatever its energy.
-    In Blender 5.x lights carry a node tree by default and the exporter's SUN branch reads the
-    Emission node's Strength (always 1.0) instead of `light.energy`; point/spot escape it only
-    because their branch falls back to `energy`. Verified on 5.1.1 at energies 1 / 2 / 5.
-  - **Soft shadows are lost** — glTF point/spot are true points, so a lamp's `shadow_soft_size`
-    and a sun's `angle` have nowhere to go. The engine's spot sampler is named "WithRadius" but no
-    radius is plumbed through the serializer.
-  - Blender's COMPAT / RAW export modes write watts rather than candela and are indistinguishable
-    from SPEC in the file. The importer assumes SPEC, which is Blender's default and what its own
-    importer assumes.
+- [ ] **Lamp size for point and spot lights** (soft shadows). Lamps are points today:
+  `sampleSpotLightWithRadius` takes no radius, despite its name. USD carries the size and the reader
+  drops it: a `SphereLight`'s `radius` only scales its brightness, and a `DistantLight`'s `angle` is
+  never read, though the engine already softens a sun by `userData.angle` (angular diameter, radians).
+  USD's default angle is 0.53°, so reading it softens suns that set none. ⚠️ Blender writes half its
+  sun angle (10° → `angle` 5) though USD defines the full width, and reads its own files back as 10°.
+  Size changes brightness too: Cycles lights from a disc of the radius facing the shaded point, on
+  axis d² / (d² + r²) of a point (0.94 at r 0.5, 2 m). glTF has no field for any of this — see
+  `docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter.
 
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.

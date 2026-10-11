@@ -880,7 +880,7 @@ its own `finally`, so a failed drop shows only the console.
 ### Folders, archives, pbrt and USD
 Full notes: [docs/SCENE_IMPORT.md](docs/SCENE_IMPORT.md) — folder loading, partial archive loads, pbrt (budgets, parse
 memory, lights, shapes, templates, materials, formats) and USD (layers, composition, translation, parts, budgets, the
-Moana island measurements).
+Moana island measurements), and what Blender's glTF exporter loses of a scene's lights.
 
 - **Folders**: `loadFile( { files } )` loads a folder as the same folder zipped would (`localFolder()` →
   `ArchiveImporter.loadFolder` → the archive path). Archive entries are lazy Blobs, read only when a loader asks.

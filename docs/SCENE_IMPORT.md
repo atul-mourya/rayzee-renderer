@@ -1,4 +1,4 @@
-# Scene import: folders, archives, pbrt and USD
+# Scene import: folders, archives, pbrt, USD and Blender glTF lights
 
 ## Loading a folder
 `loadFile( { files } )` loads a folder of files as the same folder zipped would load — `files` a folder picker's FileList
@@ -131,7 +131,10 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
   (the engine has no vertex colour). Cameras from apertures (vertical FOV), Rect/Disk/Sphere/Distant lights in the engine's
   units, and the first dome light that lights the scene as the environment: USD's lat-long centre faces +Z (OpenEXR), the
-  engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored.
+  engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored. Light units follow UsdLux: the
+  radiance is intensity × 2^exposure, divided by the light's size when `normalize` is on (surface area; a distant light's
+  π·sin²(angle / 2)), so a normalized distant light's intensity is the irradiance on a surface facing it. No 683: USD's
+  nits are render units. Spots and distant lights aim down their prim's −Z.
 - **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
   the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
   leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.
@@ -157,3 +160,26 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   Through the app (File → Open Folder, all parts): ~5 fps at 512² afterwards. ⚠️ The outliner drew a row per shape
   (1.36M DOM nodes, ~1 fps): it now mounts children 200 at a time. Chrome's `usedJSHeapSize` (5.4 GB here) counts the
   engine's ArrayBuffers too — matrix lists, table, TLAS, order maps, sky — not only JS objects.
+
+## Lights from Blender's glTF exporter
+glTF lights are photometric: point and spot in candela, sun in lux. Blender's exporter multiplies its watts by 683
+(lumens per watt), and the loader takes that out again (`AssetLoader.processModelObjects`), as Blender's own importer
+does. A small point, spot or sun then matches Cycles to render noise (Blender 5.1.1, 2026-10-12: floor under the lamp
+within 0.25 %). What the export loses before the engine sees it:
+- **Area lamps** are dropped: `__filter_lights_punctual` rejects `AREA` and `HEMI`, since glTF has no area light, and
+  the node arrives as an empty. Use an emissive mesh, which exports, or export USD: Blender writes them as `RectLight` /
+  `DiskLight`, and they match Cycles (2026-10-12: 0.9999, 1.0001). Blender's USD has quirks of its own: a sun is written
+  at a quarter of its strength (`energy / 4`, "approximately matches Karma" in its source, so it renders at a quarter)
+  and half its angle, and every lamp is flagged as using a 6500 K colour temperature, which the reader ignores.
+- **Sun strength**: Blender 5.1.1 writes every sun at 683 lux whatever its energy (a sun of 3 W/m² renders at a third).
+  The exporter's sun branch reads the light's Emission node Strength (1.0) and ignores `light.energy`. Fixed upstream in
+  glTF-Blender-IO `850fb92e` (2026-07-05), which multiplies the two. Until a Blender release has it: set the energy to 1
+  and put the value in the Emission Strength — Cycles renders it the same, and Rayzee then matches Cycles exactly. The
+  file cannot show the bug: 683 lux is also what an honest 1 W/m² sun exports as.
+- **Lamp size**: glTF point and spot lights are points and its sun has no angle, so soft shadows are lost. A light's
+  extras carry only custom properties, never `shadow_soft_size` or `angle`. Brightness moves too: Cycles lights from a
+  disc of the lamp's radius facing the shaded point, so on its axis it is d² / (d² + r²) of a point — 0.94 for a 0.5 m
+  lamp 2 m away, which Rayzee renders 6 % brighter.
+- **COMPAT / RAW lighting modes** write Blender's watts instead of candela and lux (COMPAT divides a point's by 4π, RAW
+  writes the energy as it is), and nothing else in the file differs from SPEC. The loader assumes SPEC, Blender's
+  default and what its own importer assumes.

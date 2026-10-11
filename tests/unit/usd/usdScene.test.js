@@ -402,6 +402,73 @@ def DomeLight "sky"
 
 	} );
 
+	const light = ( type, body, name = 'lamp' ) => usda( `def ${type} "${name}"
+{
+${body}
+}` );
+
+	it( 'reads a normalized rect or disk light as π × intensity of power, whatever its size', async () => {
+
+		const { lights: [ rect ] } = await load( { 'root.usda': light( 'RectLight', `    float inputs:intensity = 10
+    float inputs:width = 2
+    float inputs:height = 1
+    bool inputs:normalize = 1` ) } );
+		expect( rect.intensity ).toBeCloseTo( 10 * Math.PI );
+		expect( rect.userData.normalize ).toBe( true );
+		expect( rect.userData.__radianceConverted ).toBe( true );
+
+		const { lights: [ disk ] } = await load( { 'root.usda': light( 'DiskLight', `    float inputs:intensity = 10
+    float inputs:radius = 0.5
+    bool inputs:normalize = 1` ) } );
+		expect( disk.intensity ).toBeCloseTo( 10 * Math.PI );
+		expect( disk.userData.shape ).toBe( 'disk' );
+
+	} );
+
+	it( 'gives a sphere light π × radiance × its area of power, the area left out when normalized', async () => {
+
+		const sphere = normalize => load( { 'root.usda': light( 'SphereLight', `    float inputs:intensity = 10
+    float inputs:radius = 0.25
+    bool inputs:normalize = ${normalize}` ) } );
+		expect( ( await sphere( 0 ) ).lights[ 0 ].intensity ).toBeCloseTo( Math.PI * 10 * 4 * Math.PI * 0.25 ** 2 );
+		expect( ( await sphere( 1 ) ).lights[ 0 ].intensity ).toBeCloseTo( Math.PI * 10 );
+
+	} );
+
+	it( 'reads a distant light as the irradiance it gives a surface facing it', async () => {
+
+		const sun = body => load( { 'root.usda': light( 'DistantLight', body ) } ).then( r => r.lights[ 0 ] );
+		const normalized = await sun( `    float inputs:intensity = 3
+    float inputs:angle = 10
+    bool inputs:normalize = 1` );
+		expect( normalized.intensity ).toBeCloseTo( 3 );
+		expect( normalized.userData.__luxConverted ).toBe( true );
+		// USD's own fallbacks, intensity 50000 over a disc 0.53° wide.
+		const fallback = await sun( '    float inputs:exposure = 0' );
+		expect( fallback.intensity ).toBeCloseTo( 50000 * Math.PI * Math.sin( 0.265 * Math.PI / 180 ) ** 2 );
+
+	} );
+
+	it( 'aims spot and distant lights down their prim\'s −Z', async () => {
+
+		const aim = async ( type, extra = '' ) => {
+
+			const { lights: [ l ] } = await load( { 'root.usda': light( type, `${extra}    float3 xformOp:rotateXYZ = (-90, 0, 0)
+    double3 xformOp:translate = (1, 2, 3)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]` ) } );
+			l.updateMatrixWorld( true );
+			return l.target.getWorldPosition( new Vector3() ).sub( l.getWorldPosition( new Vector3() ) ).normalize().toArray();
+
+		};
+
+		for ( const direction of [ await aim( 'DistantLight' ), await aim( 'SphereLight', '    float inputs:shaping:cone:angle = 30\n' ) ] ) {
+
+			[ 0, - 1, 0 ].forEach( ( expected, i ) => expect( direction[ i ] ).toBeCloseTo( expected ) );
+
+		}
+
+	} );
+
 	it( 'makes the dome light the environment, turned from USD\'s lat-long convention to the engine\'s', async () => {
 
 		const { environment } = await load( SCENE );
