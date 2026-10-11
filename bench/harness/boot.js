@@ -1101,12 +1101,26 @@ function captureDenoisedPNG( expected = RENDER_SIZE ) {
  */
 async function denoisedNonFinite() {
 
-	const s = app.stages;
-	const target = ( s.nrd?.enabled && s.nrd.outputTarget )
-		|| app.stages.pathTracer.storageTextures.readTarget;
+	let pixels;
 
-	const { width, height } = RENDER_SIZE;
-	const pixels = await app.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+	// On when awaitDenoise() ran it. OIDN's picture is a texture no render target owns, so it is
+	// read as a 'display' readback reads it; this checked only NRD and the raw render before.
+	if ( app.denoisingManager?.denoiser?.enabled ) {
+
+		const shown = await app.renderToBuffer( { colorSpace: 'linear', source: 'display' } );
+		if ( shown.source !== 'oidn' ) throw new Error( `__bench.denoisedNonFinite: read '${shown.source}', not OIDN's picture` );
+		pixels = shown.data;
+
+	} else {
+
+		const s = app.stages;
+		const target = ( s.nrd?.enabled && s.nrd.outputTarget )
+			|| s.pathTracer.storageTextures.readTarget;
+
+		const { width, height } = RENDER_SIZE;
+		pixels = await app.renderer.readRenderTargetPixelsAsync( target, 0, 0, width, height, 0 );
+
+	}
 
 	let nonFinite = 0;
 

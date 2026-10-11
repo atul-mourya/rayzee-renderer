@@ -525,9 +525,9 @@ once that is fixed.
 Output is read through `capturePNG`, i.e. composited and tone-mapped — what a user sees. That costs
 sensitivity to pure energy shifts, which is fine: energy is the bias gate's job in `quality.js`. What
 survives tone mapping is structure, and structure is what a denoiser is accused of destroying. A
-separate `denoisedNonFinite()` probe reads the denoiser's own output target for NaN/Inf, because
-`probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in a filter weight put NaN on
-~12 % of pixels with nothing in the suite reacting.
+separate `denoisedNonFinite()` probe reads the denoiser's own output (OIDN's through a `'display'`
+readback) for NaN/Inf, because `probes()` only sees the path tracer buffer — a `pow(0.0, 0.0)` in a
+filter weight put NaN on ~12 % of pixels with nothing in the suite reacting.
 
 OIDN is in the suite as `oidn` and `oidn-tiled` (see the table above).
 
