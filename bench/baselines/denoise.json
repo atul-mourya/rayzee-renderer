@@ -140,24 +140,24 @@
 		"denoisedRmse": 0.0032560669657627824
 	},
 	"glass-transmission/nrd/1": {
-		"ratio": 0.6819739462916027,
-		"rawRmse": 0.05283129585865651,
-		"denoisedRmse": 0.036029567324427185
+		"ratio": 0.6819735337223802,
+		"rawRmse": 0.05283133978693434,
+		"denoisedRmse": 0.036029575485783394
 	},
 	"glass-transmission/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.0034689391320971256,
-		"denoisedRmse": 0.0034689391320971256
+		"rawRmse": 0.003473980325700768,
+		"denoisedRmse": 0.003473980325700768
 	},
 	"textured-normalmap/nrd/1": {
-		"ratio": 0.9076528301045131,
-		"rawRmse": 0.07114559149271346,
-		"denoisedRmse": 0.06457549746782094
+		"ratio": 0.9076515076860026,
+		"rawRmse": 0.07114570347459323,
+		"denoisedRmse": 0.06457550502409581
 	},
 	"textured-normalmap/nrd/64": {
 		"ratio": 1,
-		"rawRmse": 0.006044724580565602,
-		"denoisedRmse": 0.006044724580565602
+		"rawRmse": 0.0060445557811296905,
+		"denoisedRmse": 0.0060445557811296905
 	},
 	"instanced-storage/nrd/1": {
 		"ratio": 1.1826239041310478,
@@ -573,5 +573,50 @@
 		"ratio": 0.6859109532307388,
 		"rawRmse": 0.005418498462078553,
 		"denoisedRmse": 0.003716607445203593
+	},
+	"subsurface-marble/nrd/1": {
+		"ratio": 0.6970588586472317,
+		"rawRmse": 0.06420227246252584,
+		"denoisedRmse": 0.044752762765286856
+	},
+	"subsurface-marble/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.009415581968251506,
+		"denoisedRmse": 0.009415581968251506
+	},
+	"dispersion-glass/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.012390644026990295,
+		"denoisedRmse": 0.012390644026990295
+	},
+	"alpha-cutout/nrd/1": {
+		"ratio": 0.9095305712318361,
+		"rawRmse": 0.06815489074490598,
+		"denoisedRmse": 0.06198895671145772
+	},
+	"alpha-cutout/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.005418498462078553,
+		"denoisedRmse": 0.005418498462078553
+	},
+	"arealight-analytic/nrd/1": {
+		"ratio": 0.04565717960882823,
+		"rawRmse": 0.02330259215304434,
+		"denoisedRmse": 0.0010639306352828168
+	},
+	"arealight-analytic/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.0016044580535732136,
+		"denoisedRmse": 0.0016044580535732136
+	},
+	"arealights-two/nrd/1": {
+		"ratio": 0.4912513280889876,
+		"rawRmse": 0.08077784593028592,
+		"denoisedRmse": 0.03968222409342058
+	},
+	"arealights-two/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.04378542962408696,
+		"denoisedRmse": 0.04378542962408696
 	}
 }
