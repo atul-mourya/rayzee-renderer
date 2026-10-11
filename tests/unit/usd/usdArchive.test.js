@@ -10,6 +10,8 @@ import { elementFilter } from '@/core/Processor/ArchiveReader.js';
 import { ArchiveImporter } from '@/core/Processor/ArchiveImporter.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 import { listUSDRootLayers } from '@/core/Processor/USD/index.js';
+import { configurePlatform } from '@/core/Platform.js';
+import { ARCHIVE_PATH } from '@/core/Storage/SceneGraphCodec.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
 const MODEL = /\.(gltf|glb|obj|usd|usda|usdc)$/i;
@@ -26,6 +28,8 @@ function importer() {
 		onModelLoad: async model => loaded.push( model ),
 		dispatchEvent() {},
 		_keyed: ( kind, id ) => ( id ? `${kind}::${id}` : null ),
+		_reportImageFailure() {},
+		_throwDeferred() {},
 	};
 	return { importer: new ArchiveImporter( loader ), loader, loaded };
 
@@ -140,6 +144,38 @@ describe( 'the parts filter', () => {
 			'island/usd/island.usda', 'island/usd/islandAlt.usda', 'island/usd/elements/trees/element.usda',
 			'island/usd/materials/library.usda', 'island/textures/rocks/rock.ptx', 'island/README.txt',
 		] );
+
+	} );
+
+} );
+
+describe( 'an image from a scene archive', () => {
+
+	it( 'is decoded by the host\'s decoder where there is one, top row first like the browser\'s', async () => {
+
+		const { importer: archive } = importer();
+		configurePlatform( { decodeImage: async () => ( { data: new Uint8Array( 2 * 1 * 4 ).fill( 200 ), width: 2, height: 1 } ) } );
+		try {
+
+			const texture = await archive._archiveImage( new Uint8Array( 8 ), 'textures/wood.png' );
+			expect( [ texture.image.width, texture.image.height, texture.flipY, texture.colorSpace ] ).toEqual( [ 2, 1, true, 'srgb' ] );
+			expect( texture.userData[ ARCHIVE_PATH ] ).toBe( 'textures/wood.png' );
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
+
+	} );
+
+	it( 'that nothing can decode leaves its surfaces untextured and is reported, the load going on', async () => {
+
+		const { importer: archive, loader } = importer();
+		const failures = [];
+		loader._reportImageFailure = ( where, error ) => failures.push( [ where, error.message ] );
+		expect( await archive._archiveImage( new Uint8Array( 8 ), 'textures/wood.png' ) ).toBeNull();
+		expect( failures ).toEqual( [[ 'textures/wood.png', expect.stringContaining( 'no image decoder' ) ]] );
 
 	} );
 

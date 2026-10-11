@@ -97,6 +97,15 @@ export async function loadPlatformImage( url, mimeType = mimeTypeOf( { uri: url 
 
 }
 
+/** An image file's bytes as a texture, decoded by the platform: {@link loadPlatformImage} without the fetch. */
+export async function platformImageFromBytes( bytes, filename ) {
+
+	const texture = pixelTexture( await decodeBytes( bytes, mimeTypeOf( { uri: filename } ) ), { shared: true } );
+	texture.flipY = true;
+	return texture;
+
+}
+
 /**
  * A GLTFLoader plugin for a runtime with no way to decode an image (Node without `decodeImage`): each image fails with
  * what to configure, where three.js's own path threw `self is not defined` and took the whole load down.

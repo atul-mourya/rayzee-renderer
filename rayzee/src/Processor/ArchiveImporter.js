@@ -26,9 +26,10 @@ import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './USD/index.js';
 import { pfmTexture } from './PBRT/PFM.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
-import { ISSUE_CODES, ISSUE_SEVERITY } from '../EngineIssues.js';
+import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../EngineIssues.js';
 import { ARCHIVE_FORMATS } from './archiveFormats.js';
-import { withHostWorker } from '../Platform.js';
+import { withHostWorker, getPlatform } from '../Platform.js';
+import { platformImageFromBytes } from './PlatformImageLoader.js';
 
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
 const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb', 'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb' ];
@@ -646,6 +647,7 @@ export class ArchiveImporter {
 
 		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, { imageFromBytes, envFromBytes } ) : null;
 		const built = stored ?? await loadPBRTScene( { vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes, ...shape } );
+		this.loader._throwDeferred();
 
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
@@ -729,7 +731,20 @@ export class ArchiveImporter {
 	/** A texture map from an archive, tagged with its path so a stored scene can read it back. @private */
 	async _archiveImage( bytes, fname ) {
 
-		const texture = await this._pbrtTextureFromBytes( bytes, fname );
+		let texture;
+		try {
+
+			texture = await this._pbrtTextureFromBytes( bytes, fname );
+
+		} catch ( error ) {
+
+			// As a glTF's image: its surfaces render untextured, and a strict host hears of it at the end of the load.
+			if ( error instanceof EngineIssueError ) throw error;
+			this.loader._reportImageFailure( fname, error );
+			return null;
+
+		}
+
 		if ( texture ) texture.userData[ ARCHIVE_PATH ] = fname;
 		return texture;
 
@@ -803,6 +818,7 @@ export class ArchiveImporter {
 			maxTriangles: options.maxTriangles, maxPlacements: options.maxPlacements, mergeShapesAbove: options.mergeShapesAbove,
 			curveSteps: options.curveSteps, curveSides: options.curveSides, curveTolerance: options.curveTolerance,
 		} );
+		this.loader._throwDeferred();
 
 		const { group, environment, warnings, triangleCount, placementCount, skippedForBudget, meshCount, parseMs, buildMs, fitNote } = built;
 		this.lastUSDStats = { parseMs, buildMs, loaderMs: performance.now() - start, triangleCount, placementCount, skippedForBudget, meshCount, fitNote };
@@ -915,9 +931,10 @@ export class ArchiveImporter {
 
 		} else {
 
-			// png / jpg / webp / gif / bmp
-			const bitmap = await createImageBitmap( new Blob( [ bytes ] ) );
-			tex = new Texture( bitmap );
+			// png / jpg / webp / gif / bmp: the host's decoder where it has one (Node), else the browser's.
+			if ( getPlatform().decodeImage ) tex = await platformImageFromBytes( bytes, fname );
+			else if ( typeof createImageBitmap === 'function' ) tex = new Texture( await createImageBitmap( new Blob( [ bytes ] ) ) );
+			else throw new Error( 'no image decoder in this runtime: configurePlatform( nodePlatform( { decodeImage } ) ) — see "Running in Node"' );
 			tex.colorSpace = SRGBColorSpace;
 
 		}

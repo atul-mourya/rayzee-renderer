@@ -437,7 +437,9 @@ glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block
   embedded image's blob URL), and LDR skies (`loadPlatformImage`, flipY on as TextureLoader leaves it).
   ⚠️ PNGs from real exporters carry bytes after IEND; `trimPNG` cuts them, or strict decoders throw.
   ⚠️ GLTFLoader turns a failed texture into none, silently — the plugin reports `texture.build_failed`
-  and a strict host's throw is deferred to the end of the load (`_throwDeferred`).
+  and a strict host's throw is deferred to the end of the load (`_throwDeferred`). Archive, pbrt and USD images go
+  through it too (`platformImageFromBytes`, else `createImageBitmap`); one nothing can decode is reported the same way
+  and its surfaces render untextured — before, a textured USD threw `createImageBitmap is not defined` in Node.
   ⚠️ An image an extension decodes (KHR_texture_basisu → KTX2Loader) arrives with that loader: the plugin hands it the
   bytes (`loader.parse`), never `decodeImage` — before that no KTX2 texture loaded in Node. Without `decodeImage` and
   with no DOM (`hasImageDecoder()`), `missingImageDecoderPlugin` fails each image with what to configure; three's own
