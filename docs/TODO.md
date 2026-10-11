@@ -269,7 +269,7 @@ once looked at. How it should have been built so they could not happen:
 ### Pipeline
 
 - [ ] GPU-CPU sync for environment in solid color sky mode
-- [ ] **OIDN's live refresh is slow past 1 MP**: 10.5 ms at 512², 43 ms at 1024², 257 ms at 1920×1080 (Apple M-series, 24155522.glb, 2026-10-11) — the 1024 tile cap splits a 1080p frame into four overlapping tiles. NRD (+15 ms a frame there) stays only for those sizes; fix this, then remove NRD.
+- [ ] **OIDN's tile cap is on the longest side, not the area**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 7.4 ms at 512², 25 ms at 1024², 33 ms at 1280×720 as 2 tiles where 1 tile takes 22 ms (and is smaller than the 1056² tile already allowed), 67 ms at 1920×1080 as 4 tiles (178 MB) where 2 take 58 ms (280 MB) and 1 takes 50 ms (483 MB). Capping the tile by area would make wide frames one tile at no extra memory. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there.
 
 ### Core and add-ons — make more of the core opt-in
 

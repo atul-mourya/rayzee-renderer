@@ -3,8 +3,8 @@
 `rayzee/src/Stages/NRD.js` is a port of NVIDIA Real-Time Denoisers' **ReBLUR** to TSL compute. It is
 the live-view strategy `'nrd'` (`denoisingManager.setStrategy( 'nrd', preset )`) beside `'oidn'`, and
 runs inside the pipeline every frame. OIDN is the cleaner of the two and the app's default; NRD's
-place is very large views, where an OIDN refresh is too slow to keep up (257 ms at 1920×1080 on an
-Apple M-series in 2026-10, against NRD's +15 ms a frame). ASVGF and EdgeAware, which the tables below
+place is very large views, where an OIDN refresh lags the frame rate (67 ms at 1920×1080 with
+oidn-web 0.5.0 on an Apple M-series in 2026-10, against NRD's +15 ms a frame). ASVGF and EdgeAware, which the tables below
 compare it with, were removed in 2026-10.
 
 ReBLUR is a *recurrent blur*: the history that gets reprojected each frame is last frame's
