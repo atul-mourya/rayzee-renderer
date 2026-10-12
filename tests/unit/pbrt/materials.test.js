@@ -21,9 +21,11 @@ describe( 'pbrt materials', () => {
 
 	} );
 
-	it( 'keeps the engine default when pbrt gives no roughness', async () => {
+	it( 'makes a conductor without a roughness a mirror, as pbrt does', async () => {
 
-		expect( ( await buildMaterial( { type: 'conductor', params: {} }, ctx ) ).roughness ).toBe( 0.1 );
+		expect( ( await buildMaterial( { type: 'conductor', params: {} }, ctx ) ).roughness ).toBe( 0 );
+		// pbrt-v4's upgrade renames v3's `metal` and adds no roughness.
+		expect( ( await buildMaterial( { type: 'metal', params: {} }, ctx ) ).roughness ).toBe( 0 );
 
 	} );
 

@@ -393,7 +393,8 @@ export async function buildMaterial( def, ctx ) {
 		case 'metal': {
 
 			await applyConductorColor( mat, params, ctx, '', applyAlbedo, setColor );
-			await applyRoughness( mat, 'roughness', params, 0.1, ctx );
+			// pbrt's roughness defaults to 0, a mirror.
+			await applyRoughness( mat, 'roughness', params, 0, ctx );
 			break;
 
 		}

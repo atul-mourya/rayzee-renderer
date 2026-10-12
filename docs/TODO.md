@@ -137,8 +137,7 @@ once looked at. How it should have been built so they could not happen:
 - **Translate from pbrt's source, not from the scenes at hand.** Every bug was a guessed meaning: template shapes stored
   "relative to the transform at ObjectBegin" (invented — pbrt keeps the whole transform), lights two-sided (pbrt: one-sided
   unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). Still guessed today:
-  conductor roughness defaults to 0.1 (pbrt 0), and every 8-bit image is read as sRGB (pbrt: only PNG; JPG/TGA are
-  linear unless `encoding` says otherwise). Keep one table per directive — pbrt's parameter names, types, defaults, and
+  every 8-bit image is read as sRGB (pbrt: only PNG; JPG/TGA are linear unless `encoding` says otherwise). Keep one table per directive — pbrt's parameter names, types, defaults, and
   the `file:line` in pbrt-v4 they came from — and derive the translators and their tests from it.
 - **Account for every parameter.** pbrt itself calls `ReportUnused()` on each directive. A translator that marks what it
   consumed, and a loader that reports every unconsumed or approximated parameter once with a count (as an engine issue,
