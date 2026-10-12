@@ -444,6 +444,8 @@ glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block
   bytes (`loader.parse`), never `decodeImage` — before that no KTX2 texture loaded in Node. Without `decodeImage` and
   with no DOM (`hasImageDecoder()`), `missingImageDecoderPlugin` fails each image with what to configure; three's own
   path threw `self is not defined` and took the whole load down.
+- Float and half-float maps (an archive's EXR, HDR or PFM) are clamped to RGBA8 first (`rgba8Pixels`): read as bytes
+  they were noise in Node and failed the whole bucket in the browser (Blender's MaterialX bump maps are EXR).
 - With no `createImageBitmap`, `TextureCreator.processOnCPU` packs raw pixels: exact when a layer fits
   its bucket, bilinear otherwise (`ResampleRGBA8.js`). A bucket over 8 MB packs in `PackWorker`, at
   most cores − 1 at a time; `platformImagesPlugin` keeps decoded images in SharedArrayBuffers so they

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { DataTexture } from 'three';
-import { TextureCreator } from '@/core/Processor/TextureCreator.js';
+import { DataTexture, FloatType, HalfFloatType, RedFormat, DataUtils } from 'three';
+import { TextureCreator, rgba8Pixels } from '@/core/Processor/TextureCreator.js';
 import { resampleRGBA8 } from '@/core/Processor/ResampleRGBA8.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 import { configurePlatform } from '@/core/Platform.js';
@@ -224,6 +224,36 @@ describe( 'resampleRGBA8', () => {
 			expect( Buffer.compare( Buffer.from( actual ), Buffer.from( expected ) ), `${sw}x${sh} → ${dw}x${dh} flipY ${flipY}` ).toBe( 0 );
 
 		}
+
+	} );
+
+} );
+
+// An archive's EXR, HDR or PFM map arrives as float pixels; the arrays hold 8 bits.
+describe( 'TextureCreator — float maps', () => {
+
+	it( 'clamps float, half-float and one-channel pixels into RGBA8, and passes 8-bit ones through untouched', () => {
+
+		const float = new DataTexture( new Float32Array( [ 0, 0.5, 1, 1, 2, - 1, 0.25, 0 ] ), 2, 1, undefined, FloatType );
+		expect( Array.from( rgba8Pixels( float ) ) ).toEqual( [ 0, 128, 255, 255, 255, 0, 64, 0 ] );
+
+		const half = new DataTexture( new Uint16Array( [ 0.5, 0.25, 1, 1 ].map( DataUtils.toHalfFloat ) ), 1, 1, undefined, HalfFloatType );
+		expect( Array.from( rgba8Pixels( half ) ) ).toEqual( [ 128, 64, 255, 255 ] );
+
+		const red = new DataTexture( new Float32Array( [ 0.5, 1 ] ), 2, 1, RedFormat, FloatType );
+		expect( Array.from( rgba8Pixels( red ) ) ).toEqual( [ 128, 128, 128, 255, 255, 255, 255, 255 ] );
+
+		const bytes = rows( 4, 1 );
+		expect( rgba8Pixels( bytes ).buffer ).toBe( bytes.image.data.buffer );
+
+	} );
+
+	it( 'packs a float map as its values, where reading its buffer as bytes gave noise', async () => {
+
+		const height = new DataTexture( new Float32Array( 64 * 2 * 4 ).fill( 0.5 ), 64, 2, undefined, FloatType );
+		const packed = await new TextureCreator().processOnCPU( [ height ] );
+		expect( layerRow( packed, 0, 0 ) ).toBe( 128 );
+		expect( layerRow( packed, 0, 1 ) ).toBe( 128 );
 
 	} );
 

@@ -1,4 +1,4 @@
-import { DataArrayTexture, RGBAFormat, LinearFilter, UnsignedByteType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping, FloatType, HalfFloatType } from "three";
+import { DataArrayTexture, RGBAFormat, RGFormat, RedFormat, LinearFilter, UnsignedByteType, UnsignedShortType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping, FloatType, HalfFloatType, DataUtils } from "three";
 import { MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from './BufferLayout.js';
 import { alignBucketWidth, TEXTURE_CONSTANTS } from './TextureBuckets.js';
 import { packMaterial } from './MaterialPacking.js';
@@ -1260,7 +1260,7 @@ export class TextureCreator {
 
 			const image = texture?.image;
 			const pixels = texture?.isCompressedTexture ? texture.mipmaps?.[ 0 ] : image;
-			const data = pixels?.data;
+			const data = texture?.isCompressedTexture ? pixels?.data : rgba8Pixels( texture );
 			if ( data && pixels.width > 0 && pixels.height > 0 && data.byteLength >= pixels.width * pixels.height * 4 ) {
 
 				return { data: new Uint8Array( data.buffer, data.byteOffset, pixels.width * pixels.height * 4 ), width: pixels.width, height: pixels.height, flipY: texture.flipY !== false };
@@ -1817,7 +1817,8 @@ export class TextureCreator {
 
 				const idx = normalized.length;
 				normalized.push( null );
-				bitmapJobs.push( { index: idx, flipY: tex.flipY, promise: _rawPixelsToBitmap( tex.image.data, tex.image.width, tex.image.height ) } );
+				const pixels = rgba8Pixels( tex );
+				bitmapJobs.push( { index: idx, flipY: tex.flipY, promise: pixels ? _rawPixelsToBitmap( pixels, tex.image.width, tex.image.height ) : Promise.reject( new Error( 'pixels in a layout the texture arrays cannot take' ) ) } );
 				continue;
 
 			}
@@ -1900,10 +1901,49 @@ export class TextureCreator {
 // ── Helpers ──────────────────────────────────────────────────────────
 
 /** Convert raw RGBA pixel data to an ImageBitmap (zero-copy Uint8ClampedArray view). */
-function _rawPixelsToBitmap( data, width, height ) {
+// Async, so a bad layer rejects into its placeholder instead of throwing through the whole bucket.
+async function _rawPixelsToBitmap( data, width, height ) {
 
 	const clamped = new Uint8ClampedArray( data.buffer, data.byteOffset, data.byteLength );
 	return createImageBitmap( new ImageData( clamped, width, height ) );
+
+}
+
+/**
+ * A data texture's pixels as RGBA8 (the arrays are 8-bit), or null. Float and half-float maps — an archive's EXR, HDR or
+ * PFM — clamp to [0, 1]; one channel fills grey. Read as bytes, a float buffer was noise in Node and failed the bucket in
+ * the browser.
+ */
+export function rgba8Pixels( texture ) {
+
+	const image = texture?.image;
+	const data = image?.data;
+	if ( ! data || ! ( image.width > 0 ) || ! ( image.height > 0 ) ) return null;
+	const count = image.width * image.height;
+	if ( data instanceof Uint8Array || data instanceof Uint8ClampedArray ) {
+
+		return data.byteLength >= count * 4 ? new Uint8Array( data.buffer, data.byteOffset, count * 4 ) : null;
+
+	}
+
+	const channels = { [ RGBAFormat ]: 4, [ RGFormat ]: 2, [ RedFormat ]: 1 }[ texture.format ] ?? Math.round( data.length / count );
+	if ( ! ( channels >= 1 && channels <= 4 ) || data.length < count * channels ) return null;
+	const half = texture.type === HalfFloatType;
+	const scale = texture.type === UnsignedShortType ? 1 / 65535 : 1;
+	const out = new Uint8Array( count * 4 );
+	for ( let i = 0; i < count; i ++ ) {
+
+		for ( let c = 0; c < 4; c ++ ) {
+
+			const raw = c < channels ? data[ i * channels + c ] : null;
+			const v = raw === null ? ( c === 3 ? 1 : out[ i * 4 ] / 255 ) : ( half ? DataUtils.fromHalfFloat( raw ) : raw * scale );
+			out[ i * 4 + c ] = Math.max( 0, Math.min( 255, Math.round( v * 255 ) ) );
+
+		}
+
+	}
+
+	return out;
 
 }
 
