@@ -127,7 +127,17 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   point instancers as templates (nested ones multiplied out; placements stop at the budget). ⚠️ The builder frees a shape's
   arrays after merging it, so an array is handed over once (`own()`). Materials: PxrDisneyBsdf (Burley 2015 as pbrt-v3
   reads it: clear coat ×0.25, thin diffTrans ÷2), PxrSurface's main lobes, UsdPreviewSurface with UsdUVTexture; connections
-  followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. Ptex is not read: a
+  followed through PxrColorCorrect's gamma, PxrBlend (bottom input), primvar readers and node graphs. MaterialX
+  (`outputs:mtlx:surface`, read ahead of a preview surface beside it): OpenPBR (Blender's Principled BSDF), Standard
+  Surface, glTF PBR and UsdPreviewSurface map parameter to parameter; a `surface` over a BSDF graph (Blender's other
+  shaders) is read as its lobes say — diffuse, conductor (colour from `artistic_ior`'s reflectivity), dielectric (T or RT
+  is glass), sheen, subsurface, translucent; mix, add, layer and multiply weight them; a plain diffuse gets no specular.
+  Values fold to a constant, a texture with its gain (`multiply` by a constant), channel (`extract`) and placement (a
+  3×3 UV matrix from `place2d`, `tiledimage`, and multiply / add / z-rotate chains, which is how Blender writes its
+  Mapping node; the map is a copy, so materials sharing an image keep their own placement), or a normal / height map.
+  A texture mixed with a colour keeps its larger part; hue shifts of a texture and procedural nodes (noise, ramps) are
+  dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
+  standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex is not read: a
   Ptex input becomes the mesh's mean displayColor, where Moana bakes its Ptex, on an 8-bit grid so meshes share materials
   (the engine has no vertex colour). Cameras from apertures (vertical FOV), an authored `clippingRange` as the clip start
   (camera rays begin that far in front, as in Cycles), Rect/Disk/Sphere/Distant lights in the engine's

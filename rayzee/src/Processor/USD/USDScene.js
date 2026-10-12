@@ -21,6 +21,47 @@ const SKIPPED = new Set( [ 'Material', 'Shader', 'NodeGraph', 'GeomSubset', 'Vol
 const PTEX = /\.(ptx|ptex)$/i;
 const WRAP = { repeat: RepeatWrapping, mirror: MirroredRepeatWrapping, clamp: ClampToEdgeWrapping, black: ClampToEdgeWrapping };
 
+// MaterialX nodes are `ND_<node>_<types>`; the node is what a reader dispatches on.
+const MTLX_TYPES = /_(?:float|integer|boolean|string|filename|color3|color4|vector2|vector3|vector4|matrix33|matrix44|surfaceshader|BSDF|EDF)(?:FA|I|B)?(?=_|$)/;
+const mtlxNode = id => {
+
+	const name = id.slice( 3 );
+	const at = name.search( MTLX_TYPES );
+	return at > 0 ? name.slice( 0, at ) : name;
+
+};
+
+// The MaterialX surfaces read here, and the method each goes to.
+const MTLX_SURFACES = { open_pbr_surface: 'openPbrSurface', standard_surface: 'standardSurface', gltf_pbr: 'gltfPbrSurface', UsdPreviewSurface: 'previewSurface', surface: 'bsdfSurface' };
+const MTLX_ADDRESS = { periodic: 'repeat', mirror: 'mirror', clamp: 'clamp', constant: 'black' };
+// A UV set's placement as an affine map, u' = a·u + b·v + c and v' = d·u + e·v + f.
+const UV_IDENTITY = [ 1, 0, 0, 0, 1, 0 ];
+const isNum = v => typeof v === 'number';
+const isValue = v => isNum( v ) || Array.isArray( v );
+const each = ( v, f ) => ( isNum( v ) ? f( v ) : v.map( f ) );
+function zip( a, b, f ) {
+
+	if ( isNum( a ) && isNum( b ) ) return f( a, b );
+	const n = Math.max( isNum( a ) ? 1 : a.length, isNum( b ) ? 1 : b.length );
+	return Array.from( { length: n }, ( _, i ) => f( isNum( a ) ? a : a[ i ] ?? a[ 0 ], isNum( b ) ? b : b[ i ] ?? b[ 0 ] ) );
+
+}
+
+const mean = v => ( isNum( v ) ? v : v.slice( 0, 3 ).reduce( ( s, x ) => s + x, 0 ) / Math.min( v.length, 3 ) );
+
+// Placements composed after `m`: scale the result, move it, or turn it as MaterialX's rotate2d does (clockwise).
+const uvScale = ( m, [ sx, sy ] ) => [ m[ 0 ] * sx, m[ 1 ] * sx, m[ 2 ] * sx, m[ 3 ] * sy, m[ 4 ] * sy, m[ 5 ] * sy ];
+const uvTranslate = ( m, [ tx, ty ] ) => [ m[ 0 ], m[ 1 ], m[ 2 ] + tx, m[ 3 ], m[ 4 ], m[ 5 ] + ty ];
+function uvRotate( m, degrees ) {
+
+	const c = Math.cos( degrees * DEG ), s = Math.sin( degrees * DEG );
+	return [
+		c * m[ 0 ] + s * m[ 3 ], c * m[ 1 ] + s * m[ 4 ], c * m[ 2 ] + s * m[ 5 ],
+		c * m[ 3 ] - s * m[ 0 ], c * m[ 4 ] - s * m[ 1 ], c * m[ 5 ] - s * m[ 2 ],
+	];
+
+}
+
 function emptyIR() {
 
 	return {
@@ -1097,6 +1138,11 @@ export class USDSceneReader {
 
 		}
 
+		// MaterialX first: where a material carries both, its preview surface is the simpler stand-in for viewers.
+		const mtlx = await this.stage.connectionSource( prim, 'outputs:mtlx:surface' );
+		const read = MTLX_SURFACES[ mtlxNode( mtlx?.prim.value( 'info:id' ) ?? 'ND_' ) ];
+		if ( read ) return this[ read ]( mtlx.prim );
+
 		for ( const output of [ 'outputs:ri:surface', 'outputs:surface', 'outputs:glslfx:surface' ] ) {
 
 			const source = await this.stage.connectionSource( prim, output );
@@ -1194,6 +1240,7 @@ export class USDSceneReader {
 			}
 
 			default:
+				if ( id?.startsWith( 'ND_' ) ) return this.mtlxOutput( prim, id, name, hops );
 				this.warnOnce( `shader:${id}`, `USD shader "${id}" is not read — its input left at its default` );
 				return null;
 
@@ -1272,8 +1319,7 @@ export class USDSceneReader {
 			const map = await this.image( term.texture, term.texture.colorSpace !== 'raw' );
 			if ( map ) {
 
-				this.transformTexture( map, term.transform );
-				mat[ mapSlot ] = map;
+				mat[ mapSlot ] = this.transformTexture( map, term.transform );
 				const scale = term.texture.scale;
 				mat[ slot ].setRGB( scale?.[ 0 ] ?? 1, scale?.[ 1 ] ?? 1, scale?.[ 2 ] ?? 1 );
 				surface.uvSet = term.texture.uvSet;
@@ -1291,7 +1337,8 @@ export class USDSceneReader {
 		if ( typeof term.value === 'number' ) mat[ slot ] = term.value;
 		else if ( term.texture && mapSlot ) {
 
-			if ( term.channel !== channel ) {
+			// A MaterialX float image of a grey map reads the same from any channel.
+			if ( term.channel !== channel && ! term.mono ) {
 
 				this.warnOnce( `chan:${mapSlot}:${term.channel}`, `USD ${slot} from a texture's "${term.channel}" channel is not supported (the engine reads "${channel}") — constant used` );
 				return;
@@ -1301,8 +1348,7 @@ export class USDSceneReader {
 			const map = await this.image( term.texture, false );
 			if ( map ) {
 
-				this.transformTexture( map, term.transform );
-				mat[ mapSlot ] = map;
+				mat[ mapSlot ] = this.transformTexture( map, term.transform );
 				mat[ slot ] = term.texture.scale?.[ 0 ] ?? 1;
 				surface.uvSet = term.texture.uvSet;
 
@@ -1312,12 +1358,24 @@ export class USDSceneReader {
 
 	}
 
+	/** The map placed by `transform`: a copy, since the image cache shares one texture between every material using it. */
 	transformTexture( map, transform ) {
 
-		if ( ! transform ) return;
-		if ( transform.scale ) map.repeat.set( transform.scale[ 0 ], transform.scale[ 1 ] );
-		if ( transform.translation ) map.offset.set( transform.translation[ 0 ], transform.translation[ 1 ] );
-		if ( transform.rotation ) map.rotation = transform.rotation * DEG;
+		if ( ! transform ) return map;
+		const placed = map.clone();
+		if ( transform.matrix ) {
+
+			const [ a, b, c, d, e, f ] = transform.matrix;
+			placed.matrixAutoUpdate = false;
+			placed.matrix.set( a, b, c, d, e, f, 0, 0, 1 );
+			return placed;
+
+		}
+
+		if ( transform.scale ) placed.repeat.set( transform.scale[ 0 ], transform.scale[ 1 ] );
+		if ( transform.translation ) placed.offset.set( transform.translation[ 0 ], transform.translation[ 1 ] );
+		if ( transform.rotation ) placed.rotation = transform.rotation * DEG;
+		return placed;
 
 	}
 
@@ -1523,6 +1581,889 @@ export class USDSceneReader {
 		}
 
 		return surface;
+
+	}
+
+	// ── MaterialX ────────────────────────────────────────────────
+	// UsdShade networks of ND_* nodes (MaterialX 1.38/1.39 in USD). A node becomes what an input can hold: a constant,
+	// a texture with the placement and gain the engine carries, or a UV set and its placement. What the engine cannot
+	// carry (a blend of a texture with a colour, a hue shift of one, procedural patterns) keeps its main texture or
+	// falls back to the default, and says so once.
+
+	async mtlxOutput( prim, id, name, hops ) {
+
+		const node = mtlxNode( id );
+		const input = n => this.term( prim, n, hops + 1 );
+		const value = async ( n, fallback ) => {
+
+			const v = ( await input( n ) )?.value;
+			return v === undefined ? fallback : v;
+
+		};
+
+		switch ( node ) {
+
+			case 'image':
+			case 'tiledimage':
+				return this.mtlxImage( prim, id, node, hops );
+			case 'texcoord':
+				if ( ( await value( 'index', 0 ) ) > 0 ) this.warnOnce( 'mtlx:texcoord', 'MaterialX texture coordinates past the first set are read as the first' );
+				return { uv: { set: 'st', m: UV_IDENTITY } };
+			case 'geompropvalue': {
+
+				const prop = await value( 'geomprop', null );
+				return prop ? ( /vector2/.test( id ) ? { uv: { set: prop, m: UV_IDENTITY } } : { primvar: prop } ) : input( 'default' );
+
+			}
+
+			case 'constant':
+				return input( 'value' );
+			case 'dot':
+				return input( 'in' );
+			case 'convert':
+				return this.mtlxConvert( await input( 'in' ), id );
+			case 'extract':
+				return this.mtlxChannel( await input( 'in' ), await value( 'index', 0 ) );
+			case 'separate2':
+			case 'separate3':
+			case 'separate4':
+				return this.mtlxChannel( await input( 'in' ), { outx: 0, outy: 1, outz: 2, outw: 3, outr: 0, outg: 1, outb: 2, outa: 3 }[ name ] ?? 0 );
+			case 'combine2':
+			case 'combine3':
+			case 'combine4': {
+
+				const parts = await Promise.all( [ 'in1', 'in2', 'in3', 'in4' ].slice( 0, Number( node.slice( - 1 ) ) ).map( input ) );
+				return parts.every( p => isNum( p?.value ) ) ? { value: parts.map( p => p.value ) } : parts.find( p => p?.texture ) ?? null;
+
+			}
+
+			case 'mix': {
+
+				const [ fg, bg, mix ] = await Promise.all( [ input( 'fg' ), input( 'bg' ), input( 'mix' ) ] );
+				if ( isValue( fg?.value ) && isValue( bg?.value ) && isNum( mix?.value ) ) return { value: zip( bg.value, fg.value, ( b, f ) => b + ( f - b ) * mix.value ) };
+				this.warnOnce( 'mtlx:mix', 'MaterialX mixes of a texture are read as their larger part' );
+				const front = ! isNum( mix?.value ) || mix.value >= 0.5;
+				return ( front ? fg : bg ) ?? ( front ? bg : fg );
+
+			}
+
+			case 'multiply':
+			case 'divide':
+			case 'add':
+			case 'subtract':
+			case 'min':
+			case 'max':
+			case 'power':
+			case 'modulo':
+				return this.mtlxArithmetic( node, await input( 'in1' ), await input( 'in2' ) );
+			case 'invert': {
+
+				const t = await input( 'in' );
+				const amount = await value( 'amount', 1 );
+				return isValue( t?.value ) ? { value: zip( amount, t.value, ( a, v ) => a - v ) } : t;
+
+			}
+
+			case 'clamp': {
+
+				const t = await input( 'in' );
+				if ( ! isValue( t?.value ) ) return t;
+				const [ low, high ] = [ await value( 'low', 0 ), await value( 'high', 1 ) ];
+				return { value: zip( zip( t.value, low, Math.max ), high, Math.min ) };
+
+			}
+
+			case 'hsvadjust':
+				return this.mtlxHsv( await input( 'in' ), await value( 'amount', [ 0, 1, 1 ] ) );
+			case 'rotate2d':
+			case 'rotate3d': {
+
+				const t = await input( 'in' );
+				const amount = await value( 'amount', 0 );
+				const axis = node === 'rotate3d' ? await value( 'axis', [ 0, 1, 0 ] ) : [ 0, 0, 1 ];
+				if ( ! t?.uv || ! amount ) return t;
+				if ( Math.abs( axis[ 0 ] ) > 1e-6 || Math.abs( axis[ 1 ] ) > 1e-6 ) {
+
+					this.warnOnce( 'mtlx:rotate', 'MaterialX texture coordinates turned about an axis other than z are left unturned' );
+					return t;
+
+				}
+
+				return { uv: { ...t.uv, m: uvRotate( t.uv.m, Math.sign( axis[ 2 ] ) * amount ) } };
+
+			}
+
+			case 'place2d': {
+
+				const t = await input( 'texcoord' );
+				if ( ! t?.uv ) return t;
+				const [ pivot, scale, rotate, offset ] = [ await value( 'pivot', [ 0, 0 ] ), await value( 'scale', [ 1, 1 ] ), await value( 'rotate', 0 ), await value( 'offset', [ 0, 0 ] ) ];
+				const trs = ( await value( 'operationorder', 0 ) ) !== 0;
+				let m = uvTranslate( t.uv.m, [ - pivot[ 0 ], - pivot[ 1 ] ] );
+				const inverse = scale.map( s => ( s ? 1 / s : 1 ) );
+				if ( trs ) m = uvScale( uvRotate( uvTranslate( m, [ - offset[ 0 ], - offset[ 1 ] ] ), rotate ), inverse );
+				else m = uvTranslate( uvRotate( uvScale( m, inverse ), rotate ), [ - offset[ 0 ], - offset[ 1 ] ] );
+				return { uv: { ...t.uv, m: uvTranslate( m, pivot ) } };
+
+			}
+
+			case 'normalmap': {
+
+				const t = await input( 'in' );
+				return t?.texture ? { ...t, normalScale: await value( 'scale', 1 ) } : null;
+
+			}
+
+			case 'heighttonormal': {
+
+				const t = await input( 'in' );
+				return t?.texture ? { ...t, bump: await value( 'scale', 1 ) } : null;
+
+			}
+
+			case 'artistic_ior':
+				// Gulbrandsen's reflectivity is the conductor's colour at normal incidence.
+				return { artistic: { reflectivity: await input( 'reflectivity' ), edge: await input( 'edge_color' ) } };
+			case 'normal':
+			case 'tangent':
+			case 'bitangent':
+			case 'position':
+			case 'viewdirection':
+				return null;
+
+		}
+
+		this.warnOnce( `mtlx:${node}`, `MaterialX node "${node}" is not read — its input left at its default` );
+		return null;
+
+	}
+
+	async mtlxImage( prim, id, node, hops ) {
+
+		const file = prim.assetPath( 'inputs:file' );
+		if ( ! file?.path ) {
+
+			if ( file?.asset ) this.warnOnce( `tex:${file.asset}`, `USD texture "${file.asset}" not found` );
+			return this.term( prim, 'default', hops + 1 );
+
+		}
+
+		if ( /<udim>/i.test( file.asset ) ) {
+
+			this.warnOnce( 'udim', 'USD UDIM textures are not supported — skipped' );
+			return null;
+
+		}
+
+		const st = await this.term( prim, 'texcoord', hops + 1 );
+		let m = st?.uv?.m ?? UV_IDENTITY;
+		if ( node === 'tiledimage' ) {
+
+			const tiling = prim.value( 'inputs:uvtiling' ) ?? [ 1, 1 ];
+			const offset = prim.value( 'inputs:uvoffset' ) ?? [ 0, 0 ];
+			m = uvTranslate( uvScale( m, tiling ), [ - offset[ 0 ], - offset[ 1 ] ] );
+
+		}
+
+		const space = prim.propertyMeta( 'inputs:file', 'colorSpace' ) ?? prim.value( 'inputs:file:colorSpace' );
+		const mono = /_float$/.test( id );
+		return {
+			texture: {
+				path: file.path,
+				uvSet: st?.uv?.set ?? st?.primvar ?? 'st',
+				wrapS: MTLX_ADDRESS[ prim.value( 'inputs:uaddressmode' ) ] ?? 'repeat',
+				wrapT: MTLX_ADDRESS[ prim.value( 'inputs:vaddressmode' ) ] ?? 'repeat',
+				colorSpace: ! space ? 'auto' : /srgb/i.test( space ) ? 'sRGB' : 'raw',
+				scale: null,
+			},
+			channel: mono ? 'r' : 'rgb',
+			mono,
+			transform: m.every( ( v, i ) => Math.abs( v - UV_IDENTITY[ i ] ) < 1e-9 ) ? null : { matrix: m },
+		};
+
+	}
+
+	mtlxConvert( term, id ) {
+
+		if ( ! isValue( term?.value ) ) return term;
+		const to = id.slice( id.lastIndexOf( '_' ) + 1 );
+		const size = { float: 1, color3: 3, vector3: 3, color4: 4, vector4: 4, vector2: 2 }[ to ] ?? 3;
+		const v = term.value;
+		if ( size === 1 ) return { value: isNum( v ) ? v : v[ 0 ] };
+		if ( isNum( v ) ) return { value: Array( size ).fill( v ) };
+		return { value: Array.from( { length: size }, ( _, i ) => v[ i ] ?? ( i === 3 ? 1 : 0 ) ) };
+
+	}
+
+	mtlxChannel( term, index ) {
+
+		if ( isValue( term?.value ) ) return { value: isNum( term.value ) ? term.value : term.value[ index ] ?? 0 };
+		if ( term?.texture ) return { ...term, channel: 'rgba'[ index ] ?? 'r', mono: false };
+		return term;
+
+	}
+
+	mtlxArithmetic( node, a, b ) {
+
+		const ops = {
+			multiply: ( x, y ) => x * y, divide: ( x, y ) => ( y ? x / y : 0 ), add: ( x, y ) => x + y, subtract: ( x, y ) => x - y,
+			min: Math.min, max: Math.max, power: ( x, y ) => Math.max( x, 0 ) ** y, modulo: ( x, y ) => ( y ? x - y * Math.floor( x / y ) : 0 ),
+		};
+
+		if ( isValue( a?.value ) && isValue( b?.value ) ) return { value: zip( a.value, b.value, ops[ node ] ) };
+
+		// A UV set scaled or moved by constants: Blender's Mapping node is a chain of these.
+		const uv = a?.uv ?? b?.uv;
+		const other = a?.uv ? b?.value : a?.value;
+		if ( uv && isValue( other ) && ( node === 'multiply' || node === 'add' || ( a?.uv && ( node === 'divide' || node === 'subtract' ) ) ) ) {
+
+			const v = isNum( other ) ? [ other, other ] : other;
+			if ( node === 'multiply' ) return { uv: { ...uv, m: uvScale( uv.m, v ) } };
+			if ( node === 'divide' ) return { uv: { ...uv, m: uvScale( uv.m, v.map( x => ( x ? 1 / x : 1 ) ) ) } };
+			return { uv: { ...uv, m: uvTranslate( uv.m, node === 'add' ? v : v.map( x => - x ) ) } };
+
+		}
+
+		// A texture times a constant is a texture with a gain, which the engine carries.
+		const texture = a?.texture ? a : b?.texture ? b : null;
+		const gain = a?.texture ? b?.value : a?.value;
+		if ( texture && isValue( gain ) && ( node === 'multiply' || ( a?.texture && node === 'divide' ) ) ) {
+
+			const by = node === 'divide' ? each( gain, x => ( x ? 1 / x : 1 ) ) : gain;
+			const scale = zip( texture.texture.scale ?? [ 1, 1, 1 ], by, ( s, x ) => s * x );
+			return { ...texture, texture: { ...texture.texture, scale: isNum( scale ) ? [ scale, scale, scale ] : scale } };
+
+		}
+
+		if ( texture ) this.warnOnce( `mtlx:${node}`, `MaterialX ${node} of a texture is read as the texture alone` );
+		return texture ?? a ?? b;
+
+	}
+
+	mtlxHsv( term, amount ) {
+
+		if ( ! Array.isArray( term?.value ) ) {
+
+			if ( term?.texture && ( amount[ 0 ] || amount[ 1 ] !== 1 || amount[ 2 ] !== 1 ) ) this.warnOnce( 'mtlx:hsv', 'MaterialX hue, saturation and value changes to a texture are not applied' );
+			return term;
+
+		}
+
+		const c = new Color().setRGB( term.value[ 0 ], term.value[ 1 ], term.value[ 2 ] );
+		const hsl = c.getHSL( {} );
+		// three's HSL stands in for HSV: a hue turn is exact, saturation and value scale about it.
+		c.setHSL( ( hsl.h + amount[ 0 ] + 1 ) % 1, Math.min( 1, hsl.s * amount[ 1 ] ), hsl.l );
+		return { value: [ c.r * amount[ 2 ], c.g * amount[ 2 ], c.b * amount[ 2 ] ] };
+
+	}
+
+	/** A normal or height map from a MaterialX normal input. */
+	async mtlxNormal( mat, term, surface ) {
+
+		if ( ! term?.texture ) return;
+		const map = this.transformTexture( await this.image( term.texture, false ), term.transform );
+		if ( ! map ) return;
+		if ( term.bump !== undefined ) {
+
+			mat.bumpMap = map;
+			mat.bumpScale = term.bump;
+
+		} else {
+
+			mat.normalMap = map;
+			mat.normalScale.set( term.normalScale ?? 1, term.normalScale ?? 1 );
+
+		}
+
+		surface.uvSet = term.texture.uvSet;
+
+	}
+
+	/** Coverage: a constant below 1, or the colour map's own alpha. */
+	mtlxOpacity( mat, term ) {
+
+		if ( isValue( term?.value ) && mean( term.value ) < 1 ) {
+
+			mat.opacity = mean( term.value );
+			mat.transparent = true;
+
+		} else if ( term?.texture ) {
+
+			if ( term.texture.path === mat.map?.userData.usdPath && term.channel === 'a' ) mat.transparent = true;
+			else this.warnOnce( 'opacitymap', 'USD opacity from a texture other than the colour map\'s alpha is not supported' );
+
+		}
+
+	}
+
+	/** A weight × colour pair onto a colour slot: the weight scales the colour, or the texture's gain. */
+	async mtlxWeighted( mat, slot, colorTerm, weight, surface, mapSlot ) {
+
+		await this.applyColor( mat, slot, colorTerm, surface, mapSlot );
+		if ( isNum( weight ) ) mat[ slot ].multiplyScalar( weight );
+
+	}
+
+	mtlxSurfaceOf( mat ) {
+
+		return { material: mat, perMesh: null, uvSet: 'st' };
+
+	}
+
+	/** OpenPBR Surface 1.1, which Blender writes for its Principled BSDF. */
+	async openPbrSurface( shader ) {
+
+		const t = name => this.term( shader, name );
+		const num = async ( name, fallback ) => {
+
+			const v = ( await t( name ) )?.value;
+			return isNum( v ) ? v : fallback;
+
+		};
+
+		const mat = new MeshPhysicalMaterial( { side: DoubleSide } );
+		const surface = this.mtlxSurfaceOf( mat );
+		mat.color.setRGB( 0.8, 0.8, 0.8 );
+		await this.mtlxWeighted( mat, 'color', await t( 'base_color' ), await num( 'base_weight', 1 ), surface, 'map' );
+		mat.metalness = 0;
+		await this.applyScalar( mat, 'metalness', await t( 'base_metalness' ), surface, 'metalnessMap', 'b' );
+		mat.roughness = 0.3;
+		await this.applyScalar( mat, 'roughness', await t( 'specular_roughness' ), surface, 'roughnessMap', 'g' );
+		mat.specularIntensity = Math.min( 1, await num( 'specular_weight', 1 ) );
+		const specularColor = ( await t( 'specular_color' ) )?.value;
+		if ( Array.isArray( specularColor ) ) mat.specularColor.setRGB( specularColor[ 0 ], specularColor[ 1 ], specularColor[ 2 ] );
+		mat.ior = await num( 'specular_ior', 1.5 );
+		mat.anisotropy = await num( 'specular_roughness_anisotropy', 0 );
+
+		const transmission = await num( 'transmission_weight', 0 );
+		if ( transmission > 0 ) {
+
+			mat.transmission = transmission;
+			const color = ( await t( 'transmission_color' ) )?.value;
+			const depth = await num( 'transmission_depth', 0 );
+			if ( Array.isArray( color ) && depth > 0 ) {
+
+				mat.attenuationColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
+				mat.attenuationDistance = depth;
+
+			} else if ( Array.isArray( color ) ) {
+
+				// Without a depth the colour tints at the surface, which the engine takes from the base colour.
+				mat.color.lerp( new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ), transmission );
+
+			}
+
+			const abbe = await num( 'transmission_dispersion_abbe_number', 20 );
+			const scale = await num( 'transmission_dispersion_scale', 0 );
+			if ( scale > 0 && abbe > 0 ) mat.dispersion = scale * 20 / abbe;
+
+		}
+
+		const subsurface = await num( 'subsurface_weight', 0 );
+		if ( subsurface > 0 ) {
+
+			const color = ( await t( 'subsurface_color' ) )?.value;
+			const radius = await num( 'subsurface_radius', 1 );
+			const scale = ( await t( 'subsurface_radius_scale' ) )?.value;
+			mat.subsurface = subsurface;
+			mat.subsurfaceColor = Array.isArray( color ) ? new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ) : mat.color.clone();
+			mat.subsurfaceRadius = Array.isArray( scale ) ? [ ...scale ] : [ 1, 1, 1 ];
+			mat.subsurfaceRadiusScale = radius;
+			mat.subsurfaceAnisotropy = await num( 'subsurface_scatter_anisotropy', 0 );
+
+		}
+
+		mat.clearcoat = await num( 'coat_weight', 0 );
+		mat.clearcoatRoughness = await num( 'coat_roughness', 0 );
+
+		const fuzz = await num( 'fuzz_weight', 0 );
+		if ( fuzz > 0 ) {
+
+			const color = ( await t( 'fuzz_color' ) )?.value ?? [ 1, 1, 1 ];
+			mat.sheen = Math.min( 1, fuzz );
+			mat.sheenColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
+			mat.sheenRoughness = await num( 'fuzz_roughness', 0.5 );
+
+		}
+
+		const film = await num( 'thin_film_weight', 0 );
+		if ( film > 0 ) {
+
+			// OpenPBR states the film in micrometres, the engine in nanometres.
+			const thickness = await num( 'thin_film_thickness', 0.5 ) * 1000;
+			mat.iridescence = Math.min( 1, film );
+			mat.iridescenceIOR = await num( 'thin_film_ior', 1.4 );
+			mat.iridescenceThicknessRange = [ thickness, thickness ];
+
+		}
+
+		const luminance = await num( 'emission_luminance', 0 );
+		if ( luminance > 0 ) {
+
+			mat.emissive.setRGB( 1, 1, 1 );
+			await this.applyColor( mat, 'emissive', await t( 'emission_color' ), surface, 'emissiveMap' );
+			mat.emissiveIntensity = luminance;
+
+		}
+
+		this.mtlxOpacity( mat, await t( 'geometry_opacity' ) );
+		await this.mtlxNormal( mat, await t( 'geometry_normal' ), surface );
+		return surface;
+
+	}
+
+	/** Autodesk Standard Surface, which Maya, Houdini and Omniverse write. */
+	async standardSurface( shader ) {
+
+		const t = name => this.term( shader, name );
+		const num = async ( name, fallback ) => {
+
+			const v = ( await t( name ) )?.value;
+			return isNum( v ) ? v : fallback;
+
+		};
+
+		const mat = new MeshPhysicalMaterial( { side: DoubleSide } );
+		const surface = this.mtlxSurfaceOf( mat );
+		mat.color.setRGB( 0.8, 0.8, 0.8 );
+		await this.mtlxWeighted( mat, 'color', await t( 'base_color' ), await num( 'base', 1 ), surface, 'map' );
+		mat.metalness = 0;
+		await this.applyScalar( mat, 'metalness', await t( 'metalness' ), surface, 'metalnessMap', 'b' );
+		mat.roughness = 0.2;
+		await this.applyScalar( mat, 'roughness', await t( 'specular_roughness' ), surface, 'roughnessMap', 'g' );
+		mat.specularIntensity = Math.min( 1, await num( 'specular', 1 ) );
+		const specularColor = ( await t( 'specular_color' ) )?.value;
+		if ( Array.isArray( specularColor ) ) mat.specularColor.setRGB( specularColor[ 0 ], specularColor[ 1 ], specularColor[ 2 ] );
+		mat.ior = await num( 'specular_IOR', 1.5 );
+		mat.anisotropy = await num( 'specular_anisotropy', 0 );
+		mat.anisotropyRotation = await num( 'specular_rotation', 0 ) * Math.PI * 2;
+
+		const transmission = await num( 'transmission', 0 );
+		if ( transmission > 0 ) {
+
+			mat.transmission = transmission;
+			const color = ( await t( 'transmission_color' ) )?.value;
+			const depth = await num( 'transmission_depth', 0 );
+			if ( Array.isArray( color ) && depth > 0 ) {
+
+				mat.attenuationColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
+				mat.attenuationDistance = depth;
+
+			} else if ( Array.isArray( color ) ) {
+
+				mat.color.lerp( new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ), transmission );
+
+			}
+
+			const abbe = await num( 'transmission_dispersion', 0 );
+			if ( abbe > 0 ) mat.dispersion = 20 / abbe;
+
+		}
+
+		const subsurface = await num( 'subsurface', 0 );
+		if ( subsurface > 0 ) {
+
+			const color = ( await t( 'subsurface_color' ) )?.value;
+			const radius = ( await t( 'subsurface_radius' ) )?.value;
+			mat.subsurface = subsurface;
+			mat.subsurfaceColor = Array.isArray( color ) ? new Color().setRGB( color[ 0 ], color[ 1 ], color[ 2 ] ) : mat.color.clone();
+			mat.subsurfaceRadius = Array.isArray( radius ) ? [ ...radius ] : [ 1, 1, 1 ];
+			mat.subsurfaceRadiusScale = await num( 'subsurface_scale', 1 );
+			mat.subsurfaceAnisotropy = await num( 'subsurface_anisotropy', 0 );
+
+		}
+
+		const sheen = await num( 'sheen', 0 );
+		if ( sheen > 0 ) {
+
+			const color = ( await t( 'sheen_color' ) )?.value ?? [ 1, 1, 1 ];
+			mat.sheen = Math.min( 1, sheen );
+			mat.sheenColor.setRGB( color[ 0 ], color[ 1 ], color[ 2 ] );
+			mat.sheenRoughness = await num( 'sheen_roughness', 0.3 );
+
+		}
+
+		mat.clearcoat = await num( 'coat', 0 );
+		mat.clearcoatRoughness = await num( 'coat_roughness', 0.1 );
+
+		const film = await num( 'thin_film_thickness', 0 );
+		if ( film > 0 ) {
+
+			mat.iridescence = 1;
+			mat.iridescenceIOR = await num( 'thin_film_IOR', 1.5 );
+			mat.iridescenceThicknessRange = [ film, film ];
+
+		}
+
+		const emission = await num( 'emission', 0 );
+		if ( emission > 0 ) {
+
+			mat.emissive.setRGB( 1, 1, 1 );
+			await this.applyColor( mat, 'emissive', await t( 'emission_color' ), surface, 'emissiveMap' );
+			mat.emissiveIntensity = emission;
+
+		}
+
+		this.mtlxOpacity( mat, await t( 'opacity' ) );
+		await this.mtlxNormal( mat, await t( 'normal' ), surface );
+		return surface;
+
+	}
+
+	/** MaterialX's glTF PBR surface: glTF's own parameters, one to one. */
+	async gltfPbrSurface( shader ) {
+
+		const t = name => this.term( shader, name );
+		const num = async ( name, fallback ) => {
+
+			const v = ( await t( name ) )?.value;
+			return isNum( v ) ? v : fallback;
+
+		};
+
+		const mat = new MeshPhysicalMaterial( { side: DoubleSide } );
+		const surface = this.mtlxSurfaceOf( mat );
+		await this.applyColor( mat, 'color', await t( 'base_color' ), surface, 'map' );
+		mat.metalness = 1;
+		await this.applyScalar( mat, 'metalness', await t( 'metallic' ), surface, 'metalnessMap', 'b' );
+		mat.roughness = 1;
+		await this.applyScalar( mat, 'roughness', await t( 'roughness' ), surface, 'roughnessMap', 'g' );
+		mat.ior = await num( 'ior', 1.5 );
+		mat.specularIntensity = await num( 'specular', 1 );
+		const specularColor = ( await t( 'specular_color' ) )?.value;
+		if ( Array.isArray( specularColor ) ) mat.specularColor.setRGB( specularColor[ 0 ], specularColor[ 1 ], specularColor[ 2 ] );
+		mat.transmission = await num( 'transmission', 0 );
+		mat.thickness = await num( 'thickness', 0 );
+		const attenuation = ( await t( 'attenuation_color' ) )?.value;
+		if ( Array.isArray( attenuation ) ) mat.attenuationColor.setRGB( attenuation[ 0 ], attenuation[ 1 ], attenuation[ 2 ] );
+		const distance = await num( 'attenuation_distance', 0 );
+		if ( distance > 0 ) mat.attenuationDistance = distance;
+		mat.dispersion = await num( 'dispersion', 0 );
+		mat.clearcoat = await num( 'clearcoat', 0 );
+		mat.clearcoatRoughness = await num( 'clearcoat_roughness', 0 );
+		const sheen = ( await t( 'sheen_color' ) )?.value;
+		if ( Array.isArray( sheen ) && mean( sheen ) > 0 ) {
+
+			mat.sheen = 1;
+			mat.sheenColor.setRGB( sheen[ 0 ], sheen[ 1 ], sheen[ 2 ] );
+			mat.sheenRoughness = await num( 'sheen_roughness', 0 );
+
+		}
+
+		const iridescence = await num( 'iridescence', 0 );
+		if ( iridescence > 0 ) {
+
+			const thickness = await num( 'iridescence_thickness', 100 );
+			mat.iridescence = iridescence;
+			mat.iridescenceIOR = await num( 'iridescence_ior', 1.3 );
+			mat.iridescenceThicknessRange = [ thickness, thickness ];
+
+		}
+
+		await this.applyColor( mat, 'emissive', await t( 'emissive' ), surface, 'emissiveMap' );
+		mat.emissiveIntensity = await num( 'emissive_strength', 1 );
+
+		// alpha_mode: 0 opaque, 1 mask, 2 blend.
+		const mode = await num( 'alpha_mode', 0 );
+		if ( mode > 0 ) {
+
+			this.mtlxOpacity( mat, await t( 'alpha' ) );
+			if ( mode === 1 ) mat.alphaTest = await num( 'alpha_cutoff', 0.5 );
+
+		}
+
+		await this.mtlxNormal( mat, await t( 'normal' ), surface );
+		return surface;
+
+	}
+
+	/**
+	 * MaterialX's `surface` over a BSDF graph (pbrlib), as Blender writes its node shaders: the graph's lobes with their
+	 * weights, made into the engine's one material. Read as the graph says; where the weights cannot be met (a lobe mix
+	 * driven by a texture), the even split stands in.
+	 */
+	async bsdfSurface( shader ) {
+
+		const lobes = [];
+		const emission = [];
+		await this.mtlxLobes( shader, 'inputs:bsdf', 1, lobes, 0 );
+		await this.mtlxEmission( shader, 'inputs:edf', 1, emission, 0 );
+
+		const mat = new MeshPhysicalMaterial( { side: DoubleSide } );
+		const surface = this.mtlxSurfaceOf( mat );
+		const sum = kinds => lobes.filter( l => kinds.includes( l.kind ) ).reduce( ( s, l ) => s + l.w, 0 );
+		const base = sum( [ 'diffuse', 'conductor', 'transmission' ] );
+
+		// The base colour: each base lobe's colour by its share; one texture, the largest share's, is kept.
+		if ( base > 0 ) {
+
+			const shares = lobes.filter( l => [ 'diffuse', 'conductor', 'transmission' ].includes( l.kind ) && l.w > 0 );
+			const textured = shares.filter( l => l.color?.texture ).sort( ( a, b ) => b.w - a.w )[ 0 ];
+			const rgb = [ 0, 0, 0 ];
+			for ( const l of shares ) {
+
+				const c = isValue( l.color?.value ) ? l.color.value : l.color?.texture ? ( l.color.texture.scale ?? [ 1, 1, 1 ] ) : [ 0.8, 0.8, 0.8 ];
+				for ( let i = 0; i < 3; i ++ ) rgb[ i ] += ( isNum( c ) ? c : c[ i ] ) * l.w / base;
+
+			}
+
+			if ( textured && textured.w / base >= 0.5 ) {
+
+				await this.applyColor( mat, 'color', textured.color, surface, 'map' );
+				if ( shares.some( l => l !== textured && l.w > 0 ) ) this.warnOnce( 'mtlx:lobecolor', 'MaterialX lobes of different colours over a texture are read as the texture' );
+
+			} else {
+
+				mat.color.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
+
+			}
+
+			mat.metalness = sum( [ 'conductor' ] ) / base;
+			mat.transmission = sum( [ 'transmission' ] ) / base;
+
+		} else {
+
+			mat.color.setRGB( 0, 0, 0 );
+
+		}
+
+		// Roughness from the specular lobes by weight; a surface with no specular lobe reflects nothing specular.
+		const specular = lobes.filter( l => [ 'conductor', 'transmission', 'reflection' ].includes( l.kind ) && l.w > 0 );
+		const specularWeight = specular.reduce( ( s, l ) => s + l.w, 0 );
+		mat.roughness = specularWeight > 0 ? specular.reduce( ( s, l ) => s + l.roughness * l.w, 0 ) / specularWeight : 1;
+		const glossy = lobes.filter( l => [ 'transmission', 'reflection' ].includes( l.kind ) && l.w > 0 );
+		mat.ior = glossy.length ? glossy.reduce( ( s, l ) => s + l.ior * l.w, 0 ) / glossy.reduce( ( s, l ) => s + l.w, 0 ) : 1.5;
+		const reflection = lobes.filter( l => l.kind === 'reflection' && l.w > 0 );
+		if ( reflection.length ) {
+
+			const tint = reflection.find( l => isValue( l.tint ) )?.tint;
+			if ( Array.isArray( tint ) ) mat.specularColor.setRGB( tint[ 0 ], tint[ 1 ], tint[ 2 ] );
+			mat.specularIntensity = Math.min( 1, sum( [ 'reflection' ] ) );
+
+		} else if ( mat.transmission === 0 ) {
+
+			mat.specularIntensity = 0;
+
+		}
+
+		const sheen = lobes.find( l => l.kind === 'sheen' );
+		if ( sheen ) {
+
+			mat.sheen = Math.min( 1, sum( [ 'sheen' ] ) );
+			if ( Array.isArray( sheen.color ) ) mat.sheenColor.setRGB( sheen.color[ 0 ], sheen.color[ 1 ], sheen.color[ 2 ] );
+			mat.sheenRoughness = sheen.roughness;
+
+		}
+
+		const subsurface = lobes.find( l => l.kind === 'subsurface' );
+		if ( subsurface && base + subsurface.w > 0 ) {
+
+			mat.subsurface = Math.min( 1, sum( [ 'subsurface' ] ) / ( base + sum( [ 'subsurface' ] ) ) );
+			mat.subsurfaceColor = Array.isArray( subsurface.color ) ? new Color().setRGB( subsurface.color[ 0 ], subsurface.color[ 1 ], subsurface.color[ 2 ] ) : mat.color.clone();
+			mat.subsurfaceRadius = Array.isArray( subsurface.radius ) ? [ ...subsurface.radius ] : [ 1, 1, 1 ];
+			mat.subsurfaceAnisotropy = subsurface.anisotropy;
+
+		}
+
+		const translucent = lobes.find( l => l.kind === 'translucent' );
+		if ( translucent ) {
+
+			const share = sum( [ 'translucent' ] ) / ( sum( [ 'diffuse' ] ) + sum( [ 'translucent' ] ) );
+			mat.diffuseTransmission = Math.min( 1, share );
+			mat.diffuseTransmissionColor = Array.isArray( translucent.color ) ? new Color().setRGB( translucent.color[ 0 ], translucent.color[ 1 ], translucent.color[ 2 ] ) : new Color( 1, 1, 1 );
+
+		}
+
+		if ( emission.length ) {
+
+			const textured = emission.find( e => e.color?.texture );
+			if ( textured ) {
+
+				mat.emissive.setRGB( 1, 1, 1 );
+				await this.applyColor( mat, 'emissive', textured.color, surface, 'emissiveMap' );
+				mat.emissiveIntensity = textured.w;
+
+			} else {
+
+				const rgb = [ 0, 0, 0 ];
+				for ( const e of emission ) {
+
+					const c = isValue( e.color?.value ) ? e.color.value : [ 1, 1, 1 ];
+					for ( let i = 0; i < 3; i ++ ) rgb[ i ] += ( isNum( c ) ? c : c[ i ] ) * e.w;
+
+				}
+
+				const peak = Math.max( ...rgb );
+				if ( peak > 0 ) {
+
+					mat.emissive.setRGB( rgb[ 0 ] / peak, rgb[ 1 ] / peak, rgb[ 2 ] / peak );
+					mat.emissiveIntensity = peak;
+
+				}
+
+			}
+
+		}
+
+		await this.mtlxNormal( mat, lobes.find( l => l.normal?.texture )?.normal, surface );
+		this.mtlxOpacity( mat, await this.term( shader, 'opacity' ) );
+		return surface;
+
+	}
+
+	/** The BSDF lobes below `attribute`, each with its weight in the whole. */
+	async mtlxLobes( prim, attribute, w, lobes, hops ) {
+
+		const source = hops < 32 ? await this.stage.connectionSource( prim, attribute ) : null;
+		const id = source?.prim.value( 'info:id' );
+		if ( ! id || w <= 0 ) return;
+		const node = source.prim;
+		const t = name => this.term( node, name, hops + 1 );
+		const num = async ( name, fallback ) => {
+
+			const v = ( await t( name ) )?.value;
+			return isNum( v ) ? v : Array.isArray( v ) ? mean( v ) : fallback;
+
+		};
+
+		const weight = w * await num( 'weight', 1 );
+		switch ( mtlxNode( id ) ) {
+
+			case 'oren_nayar_diffuse_bsdf':
+			case 'burley_diffuse_bsdf':
+				lobes.push( { kind: 'diffuse', w: weight, color: await t( 'color' ), normal: await t( 'normal' ) } );
+				return;
+			case 'conductor_bsdf': {
+
+				const ior = await t( 'ior' );
+				let color = ior?.artistic?.reflectivity ?? null;
+				if ( ! color ) {
+
+					// F0 from a complex index: ((n − 1)² + k²) / ((n + 1)² + k²) per channel.
+					const n = isValue( ior?.value ) ? ior.value : [ 0.18, 0.42, 1.37 ];
+					const k = ( await t( 'extinction' ) )?.value ?? [ 3.42, 2.35, 1.77 ];
+					color = { value: zip( n, k, ( a, b ) => ( ( a - 1 ) ** 2 + b * b ) / ( ( a + 1 ) ** 2 + b * b ) ) };
+
+				}
+
+				lobes.push( { kind: 'conductor', w: weight, color, roughness: await num( 'roughness', 0.2 ), normal: await t( 'normal' ) } );
+				return;
+
+			}
+
+			case 'dielectric_bsdf':
+			case 'generalized_schlick_bsdf': {
+
+				const mode = ( await t( 'scatter_mode' ) )?.value ?? 'R';
+				const roughness = await num( 'roughness', 0.05 );
+				const normal = await t( 'normal' );
+				if ( mtlxNode( id ) === 'generalized_schlick_bsdf' ) {
+
+					// A Schlick lobe as bright as a metal's is one; a dim one is a dielectric's specular.
+					const color0 = ( await t( 'color0' ) )?.value ?? [ 1, 1, 1 ];
+					if ( mean( color0 ) > 0.2 && mode === 'R' ) lobes.push( { kind: 'conductor', w: weight, color: { value: color0 }, roughness, normal } );
+					else lobes.push( { kind: mode === 'R' ? 'reflection' : 'transmission', w: weight, tint: [ 1, 1, 1 ], color: { value: [ 1, 1, 1 ] }, ior: 1.5, roughness, normal } );
+					return;
+
+				}
+
+				const tint = ( await t( 'tint' ) )?.value ?? [ 1, 1, 1 ];
+				const ior = await num( 'ior', 1.5 );
+				lobes.push( { kind: mode === 'R' ? 'reflection' : 'transmission', w: weight, tint, color: { value: tint }, ior, roughness, normal } );
+				return;
+
+			}
+
+			case 'sheen_bsdf':
+				lobes.push( { kind: 'sheen', w: weight, color: ( await t( 'color' ) )?.value ?? [ 1, 1, 1 ], roughness: await num( 'roughness', 0.3 ) } );
+				return;
+			case 'subsurface_bsdf':
+				lobes.push( { kind: 'subsurface', w: weight, color: ( await t( 'color' ) )?.value, radius: ( await t( 'radius' ) )?.value, anisotropy: await num( 'anisotropy', 0 ) } );
+				return;
+			case 'translucent_bsdf':
+				lobes.push( { kind: 'translucent', w: weight, color: ( await t( 'color' ) )?.value } );
+				return;
+			case 'mix_bsdf': {
+
+				const mix = ( await t( 'mix' ) )?.value;
+				if ( ! isNum( mix ) ) this.warnOnce( 'mtlx:mixbsdf', 'MaterialX BSDF mixes driven by a texture are read as an even split' );
+				const m = isNum( mix ) ? Math.min( 1, Math.max( 0, mix ) ) : 0.5;
+				await this.mtlxLobes( node, 'inputs:fg', w * m, lobes, hops + 1 );
+				await this.mtlxLobes( node, 'inputs:bg', w * ( 1 - m ), lobes, hops + 1 );
+				return;
+
+			}
+
+			case 'add_bsdf':
+				await this.mtlxLobes( node, 'inputs:in1', w, lobes, hops + 1 );
+				await this.mtlxLobes( node, 'inputs:in2', w, lobes, hops + 1 );
+				return;
+			case 'layer':
+			case 'layer_bsdf':
+				await this.mtlxLobes( node, 'inputs:top', w, lobes, hops + 1 );
+				await this.mtlxLobes( node, 'inputs:base', w, lobes, hops + 1 );
+				return;
+			case 'multiply_bsdfC':
+			case 'multiply_bsdfF': {
+
+				const by = ( await t( 'in2' ) )?.value;
+				const start = lobes.length;
+				await this.mtlxLobes( node, 'inputs:in1', w * ( isNum( by ) ? by : 1 ), lobes, hops + 1 );
+				if ( Array.isArray( by ) ) for ( const l of lobes.slice( start ) ) if ( isValue( l.color?.value ) ) l.color = { value: zip( l.color.value, by, ( a, b ) => a * b ) };
+				return;
+
+			}
+
+			case 'thin_film_bsdf':
+				return;
+
+		}
+
+		this.warnOnce( `mtlx:${mtlxNode( id )}`, `MaterialX node "${mtlxNode( id )}" is not read — its lobe left out` );
+
+	}
+
+	/** The emission below `attribute`: uniform EDFs, added, mixed and scaled. */
+	async mtlxEmission( prim, attribute, w, out, hops ) {
+
+		const source = hops < 32 ? await this.stage.connectionSource( prim, attribute ) : null;
+		const id = source?.prim.value( 'info:id' );
+		if ( ! id || w <= 0 ) return;
+		const node = source.prim;
+		const t = name => this.term( node, name, hops + 1 );
+		switch ( mtlxNode( id ) ) {
+
+			case 'uniform_edf':
+			case 'conical_edf':
+			case 'measured_edf':
+				out.push( { w, color: await t( 'color' ) } );
+				return;
+			case 'add_edf':
+				await this.mtlxEmission( node, 'inputs:in1', w, out, hops + 1 );
+				await this.mtlxEmission( node, 'inputs:in2', w, out, hops + 1 );
+				return;
+			case 'mix_edf': {
+
+				const mix = ( await t( 'mix' ) )?.value;
+				const m = isNum( mix ) ? mix : 0.5;
+				await this.mtlxEmission( node, 'inputs:fg', w * m, out, hops + 1 );
+				await this.mtlxEmission( node, 'inputs:bg', w * ( 1 - m ), out, hops + 1 );
+				return;
+
+			}
+
+			case 'multiply_edfC':
+			case 'multiply_edfF': {
+
+				const by = ( await t( 'in2' ) )?.value;
+				await this.mtlxEmission( node, 'inputs:in1', w * ( isValue( by ) ? mean( by ) : 1 ), out, hops + 1 );
+				return;
+
+			}
+
+		}
+
+		this.warnOnce( `mtlx:${mtlxNode( id )}`, `MaterialX node "${mtlxNode( id )}" is not read — its emission left out` );
 
 	}
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Vector3, Matrix4, Texture } from 'three';
+import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
 import { USDFiles, loadUSDScene } from '@/core/Processor/USD/index.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
@@ -347,6 +347,397 @@ def Material "red"
 		expect( parts ).toHaveLength( 2 );
 		expect( parts.map( m => m.geometry.index.count ).sort() ).toEqual( [ 3, 3 ] );
 		expect( parts.some( m => m.material.color.r === 1 && m.material.color.g === 0 ) ).toBe( true );
+
+	} );
+
+} );
+
+describe( 'USD MaterialX', () => {
+
+	const scene = ( material, extra = '' ) => ( { 'root.usda': usda( `def Mesh "tri"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+        interpolation = "vertex"
+    )
+    rel material:binding = </mat>
+}
+def Material "mat"
+{
+${material}
+}
+${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '' } );
+	const images = { resolveImage: async path => Object.assign( new Texture(), { name: path } ) };
+	const materialOf = async ( layers, options ) => {
+
+		const result = await load( layers, 'root.usda', options );
+		return { material: meshes( result.group )[ 0 ].material, result };
+
+	};
+
+	it( 'reads OpenPBR, which Blender writes for its Principled BSDF, ahead of the preview surface beside it', async () => {
+
+		const { material } = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    token outputs:surface.connect = </mat/preview.outputs:surface>
+    def Shader "preview"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor = (0, 1, 0)
+    }
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color = (0.8, 0.4, 0.2)
+        float inputs:base_weight = 0.5
+        float inputs:base_metalness = 0.25
+        float inputs:specular_roughness = 0.35
+        float inputs:specular_ior = 1.45
+        float inputs:coat_weight = 0.5
+        float inputs:coat_roughness = 0.1
+        float inputs:fuzz_weight = 1
+        color3f inputs:fuzz_color = (1, 0, 0)
+        float inputs:thin_film_weight = 1
+        float inputs:thin_film_thickness = 0.3
+        float inputs:emission_luminance = 2
+        color3f inputs:emission_color = (1, 0.5, 0.25)
+        float inputs:transmission_weight = 1
+        color3f inputs:transmission_color = (0.5, 1, 1)
+        float inputs:transmission_depth = 2
+        float inputs:subsurface_weight = 0.5
+        color3f inputs:subsurface_color = (1, 0.5, 0.5)
+        float inputs:subsurface_radius = 0.1
+        color3f inputs:subsurface_radius_scale = (1, 0.2, 0.1)
+    }` ) );
+
+		expect( material.color.toArray() ).toEqual( [ 0.4, 0.2, 0.1 ] );
+		expect( [ material.metalness, material.roughness, material.ior ] ).toEqual( [ 0.25, 0.35, 1.45 ] );
+		expect( [ material.clearcoat, material.clearcoatRoughness ] ).toEqual( [ 0.5, 0.1 ] );
+		expect( [ material.sheen, ...material.sheenColor.toArray() ] ).toEqual( [ 1, 1, 0, 0 ] );
+		expect( [ material.iridescence, ...material.iridescenceThicknessRange ] ).toEqual( [ 1, 300, 300 ] );
+		expect( [ ...material.emissive.toArray(), material.emissiveIntensity ] ).toEqual( [ 1, 0.5, 0.25, 2 ] );
+		expect( [ material.transmission, ...material.attenuationColor.toArray(), material.attenuationDistance ] ).toEqual( [ 1, 0.5, 1, 1, 2 ] );
+		expect( [ material.subsurface, material.subsurfaceRadiusScale, ...material.subsurfaceRadius ] ).toEqual( [ 0.5, 0.1, 1, 0.2, 0.1 ] );
+
+	} );
+
+	it( 'places a texture by Blender\'s Mapping chain, with its gain, wrap, colour space, a grey roughness map and a normal map', async () => {
+
+		const { material } = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </mat/graph.outputs:color>
+        float inputs:specular_roughness.connect = </mat/graph.outputs:rough>
+        float3 inputs:geometry_normal.connect = </mat/graph.outputs:normal>
+    }
+    def NodeGraph "graph"
+    {
+        color3f outputs:color.connect = </mat/graph/tint.outputs:out>
+        float outputs:rough.connect = </mat/graph/rough.outputs:out>
+        float3 outputs:normal.connect = </mat/graph/nmap.outputs:out>
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+        }
+        def Shader "to3"
+        {
+            uniform token info:id = "ND_convert_vector2_vector3"
+            float2 inputs:in.connect = </mat/graph/uv.outputs:out>
+        }
+        def Shader "scale"
+        {
+            uniform token info:id = "ND_multiply_vector3"
+            float3 inputs:in1.connect = </mat/graph/to3.outputs:out>
+            float3 inputs:in2 = (2, 4, 1)
+        }
+        def Shader "turn"
+        {
+            uniform token info:id = "ND_rotate3d_vector3"
+            float3 inputs:in.connect = </mat/graph/scale.outputs:out>
+            float inputs:amount = 90
+            float3 inputs:axis = (0, 0, 1)
+        }
+        def Shader "move"
+        {
+            uniform token info:id = "ND_add_vector3"
+            float3 inputs:in1.connect = </mat/graph/turn.outputs:out>
+            float3 inputs:in2 = (0.5, 0.25, 0)
+        }
+        def Shader "to2"
+        {
+            uniform token info:id = "ND_convert_vector3_vector2"
+            float3 inputs:in.connect = </mat/graph/move.outputs:out>
+        }
+        def Shader "img"
+        {
+            uniform token info:id = "ND_image_color4"
+            asset inputs:file = @./wood.png@ (
+                colorSpace = "srgb_texture"
+            )
+            float2 inputs:texcoord.connect = </mat/graph/to2.outputs:out>
+            string inputs:uaddressmode = "mirror"
+            string inputs:vaddressmode = "clamp"
+        }
+        def Shader "rgb"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </mat/graph/img.outputs:out>
+        }
+        def Shader "tint"
+        {
+            uniform token info:id = "ND_multiply_color3"
+            color3f inputs:in1.connect = </mat/graph/rgb.outputs:out>
+            color3f inputs:in2 = (0.5, 0.25, 1)
+        }
+        def Shader "rough"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @./rough.png@
+        }
+        def Shader "nimg"
+        {
+            uniform token info:id = "ND_image_vector3"
+            asset inputs:file = @./normal.png@
+        }
+        def Shader "nmap"
+        {
+            uniform token info:id = "ND_normalmap_float"
+            float3 inputs:in.connect = </mat/graph/nimg.outputs:out>
+            float inputs:scale = 0.5
+        }
+    }` ), images );
+
+		// Scaled (2, 4), turned 90° as MaterialX's rotate3d turns, moved (0.5, 0.25): u' = 4v + 0.5, v' = −2u + 0.25.
+		expect( material.map.matrixAutoUpdate ).toBe( false );
+		expect( Array.from( material.map.matrix.elements ).map( v => Math.round( v * 1e6 ) / 1e6 + 0 ) ).toEqual( [ 0, - 2, 0, 4, 0, 0, 0.5, 0.25, 1 ] );
+		expect( [ material.map.colorSpace, material.map.wrapS, material.map.wrapT ] ).toEqual( [ SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping ] );
+		expect( material.color.toArray() ).toEqual( [ 0.5, 0.25, 1 ] );
+		expect( material.roughnessMap.userData.usdPath ).toMatch( /rough\.png$/ );
+		expect( material.roughness ).toBe( 1 );
+		expect( material.normalMap.userData.usdPath ).toMatch( /normal\.png$/ );
+		expect( material.normalScale.toArray() ).toEqual( [ 0.5, 0.5 ] );
+
+	} );
+
+	it( 'keeps a texture blended with a colour, falls back past a node it cannot read, and says so', async () => {
+
+		const { material, result } = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/pbr.outputs:surface>
+    def Shader "pbr"
+    {
+        uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+        color3f inputs:base_color.connect = </mat/blend.outputs:out>
+        color3f inputs:specular_color.connect = </mat/noise.outputs:out>
+    }
+    def Shader "img"
+    {
+        uniform token info:id = "ND_image_color3"
+        asset inputs:file = @./leather.png@
+    }
+    def Shader "blend"
+    {
+        uniform token info:id = "ND_mix_color3"
+        color3f inputs:fg.connect = </mat/img.outputs:out>
+        color3f inputs:bg = (0.5, 0.5, 0.5)
+        float inputs:mix = 0.7
+    }
+    def Shader "noise"
+    {
+        uniform token info:id = "ND_noise3d_color3"
+    }` ), images );
+
+		expect( material.map.userData.usdPath ).toMatch( /leather\.png$/ );
+		expect( material.specularColor.toArray() ).toEqual( [ 1, 1, 1 ] );
+		expect( result.warnings.some( w => /mixes of a texture/.test( w ) ) ).toBe( true );
+		expect( result.warnings.some( w => /MaterialX node "noise3d"/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'reads Standard Surface and glTF PBR', async () => {
+
+		const standard = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/ss.outputs:out>
+    def Shader "ss"
+    {
+        uniform token info:id = "ND_standard_surface_surfaceshader"
+        float inputs:base = 0.5
+        color3f inputs:base_color = (1, 0.5, 0)
+        float inputs:metalness = 1
+        float inputs:specular_roughness = 0.4
+        float inputs:coat = 1
+        float inputs:emission = 3
+        color3f inputs:emission_color = (0, 1, 0)
+    }` ) );
+		expect( standard.material.color.toArray() ).toEqual( [ 0.5, 0.25, 0 ] );
+		expect( [ standard.material.metalness, standard.material.roughness, standard.material.clearcoat ] ).toEqual( [ 1, 0.4, 1 ] );
+		expect( [ ...standard.material.emissive.toArray(), standard.material.emissiveIntensity ] ).toEqual( [ 0, 1, 0, 3 ] );
+
+		const gltf = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/g.outputs:out>
+    def Shader "g"
+    {
+        uniform token info:id = "ND_gltf_pbr_surfaceshader"
+        color3f inputs:base_color = (0.2, 0.4, 0.6)
+        float inputs:metallic = 0
+        float inputs:roughness = 0.7
+        float inputs:transmission = 1
+        float inputs:ior = 1.33
+    }` ) );
+		expect( gltf.material.color.toArray() ).toEqual( [ 0.2, 0.4, 0.6 ] );
+		expect( [ gltf.material.metalness, gltf.material.roughness, gltf.material.transmission, gltf.material.ior ] ).toEqual( [ 0, 0.7, 1, 1.33 ] );
+
+	} );
+
+	const graph = body => scene( `    token outputs:mtlx:surface.connect = </mat/surface.outputs:out>
+    def Shader "surface"
+    {
+        uniform token info:id = "ND_surface"
+        token inputs:bsdf.connect = </mat/bsdf.outputs:out>
+        token inputs:edf.connect = </mat/edf.outputs:out>
+    }
+${body}` );
+
+	it( 'reads a BSDF graph as its lobes say: a plain diffuse reflects nothing specular', async () => {
+
+		const { material } = await materialOf( graph( `    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
+        color3f inputs:color = (0.2, 0.4, 0.6)
+    }` ) );
+		expect( material.color.toArray() ).toEqual( [ 0.2, 0.4, 0.6 ] );
+		expect( [ material.metalness, material.specularIntensity, material.transmission ] ).toEqual( [ 0, 0, 0 ] );
+
+	} );
+
+	it( 'mixes a diffuse and a conductor by the mix\'s weights, its colour from the artistic IOR\'s reflectivity', async () => {
+
+		const { material } = await materialOf( graph( `    def Shader "diffuse"
+    {
+        uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
+        color3f inputs:color = (0.4, 0.4, 0.4)
+    }
+    def Shader "artistic"
+    {
+        uniform token info:id = "ND_artistic_ior"
+        color3f inputs:reflectivity = (1, 0.8, 0.4)
+        color3f inputs:edge_color = (1, 1, 1)
+    }
+    def Shader "metal"
+    {
+        uniform token info:id = "ND_conductor_bsdf"
+        color3f inputs:ior.connect = </mat/artistic.outputs:ior>
+        color3f inputs:extinction.connect = </mat/artistic.outputs:extinction>
+        float2 inputs:roughness = (0.3, 0.3)
+    }
+    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_mix_bsdf"
+        token inputs:fg.connect = </mat/metal.outputs:out>
+        token inputs:bg.connect = </mat/diffuse.outputs:out>
+        float inputs:mix = 0.25
+    }` ) );
+		expect( material.metalness ).toBeCloseTo( 0.25 );
+		expect( material.color.toArray().map( v => Math.round( v * 1000 ) / 1000 ) ).toEqual( [ 0.55, 0.5, 0.4 ] );
+		expect( material.roughness ).toBeCloseTo( 0.3 );
+
+	} );
+
+	it( 'reads a transmitting dielectric as glass, and a uniform EDF as emission', async () => {
+
+		const { material } = await materialOf( graph( `    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_dielectric_bsdf"
+        color3f inputs:tint = (0.9, 1, 0.7)
+        float inputs:ior = 1.33
+        float2 inputs:roughness = (0.1, 0.1)
+        string inputs:scatter_mode = "RT"
+    }
+    def Shader "edf"
+    {
+        uniform token info:id = "ND_uniform_edf"
+        color3f inputs:color = (8, 4, 1)
+    }` ) );
+		expect( [ material.transmission, material.ior, material.roughness ] ).toEqual( [ 1, 1.33, 0.1 ] );
+		expect( material.color.toArray() ).toEqual( [ 0.9, 1, 0.7 ] );
+		expect( [ ...material.emissive.toArray(), material.emissiveIntensity ] ).toEqual( [ 1, 0.5, 0.125, 8 ] );
+
+	} );
+
+	it( 'splits a BSDF mix a texture drives evenly, and says so', async () => {
+
+		const { material, result } = await materialOf( graph( `    def Shader "diffuse"
+    {
+        uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
+        color3f inputs:color = (1, 1, 1)
+    }
+    def Shader "glass"
+    {
+        uniform token info:id = "ND_dielectric_bsdf"
+        string inputs:scatter_mode = "RT"
+    }
+    def Shader "mask"
+    {
+        uniform token info:id = "ND_image_float"
+        asset inputs:file = @./rough.png@
+    }
+    def Shader "bsdf"
+    {
+        uniform token info:id = "ND_mix_bsdf"
+        token inputs:fg.connect = </mat/glass.outputs:out>
+        token inputs:bg.connect = </mat/diffuse.outputs:out>
+        float inputs:mix.connect = </mat/mask.outputs:out>
+    }` ), images );
+		expect( material.transmission ).toBeCloseTo( 0.5 );
+		expect( result.warnings.some( w => /driven by a texture/.test( w ) ) ).toBe( true );
+
+	} );
+
+	it( 'places a copy of a texture, leaving the image other materials share as it was', async () => {
+
+		const shared = `def Material "other"
+{
+    token outputs:surface.connect = </other/s.outputs:surface>
+    def Shader "s"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </other/t.outputs:rgb>
+    }
+    def Shader "t"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @./wood.png@
+    }
+}
+def Mesh "plain"
+{
+    int[] faceVertexCounts = [3]
+    int[] faceVertexIndices = [0, 1, 2]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (0, 1)] (
+        interpolation = "vertex"
+    )
+    rel material:binding = </other>
+}`;
+		const { result } = await materialOf( scene( `    token outputs:surface.connect = </mat/s.outputs:surface>
+    def Shader "s"
+    {
+        uniform token info:id = "UsdPreviewSurface"
+        color3f inputs:diffuseColor.connect = </mat/place.outputs:result>
+    }
+    def Shader "t"
+    {
+        uniform token info:id = "UsdUVTexture"
+        asset inputs:file = @./wood.png@
+    }
+    def Shader "place"
+    {
+        uniform token info:id = "UsdTransform2d"
+        float2 inputs:in.connect = </mat/t.outputs:rgb>
+        float2 inputs:scale = (4, 4)
+    }`, shared ), images );
+
+		const [ placed, plain ] = meshes( result.group ).map( m => m.material.map );
+		expect( placed.repeat.toArray() ).toEqual( [ 4, 4 ] );
+		expect( plain.repeat.toArray() ).toEqual( [ 1, 1 ] );
 
 	} );
 

@@ -895,7 +895,9 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
 - **USD** (`Processor/USD/`, same add-on; a `.usdz` stays with three's USDLoader): our own crate reader (three's
   parsers are not usable), on-demand composition (`USDStage.js`), translated into the pbrt builder's IR (`USDScene.js`).
   Past `USD_ELEMENT_PROMPT_BYTES` (1 GB) it throws `ARCHIVE_NEEDS_ELEMENT`; a counting pass fits curves and point
-  instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned.
+  instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned. MaterialX networks (`outputs:mtlx:surface`)
+  are read in `USDScene.js` (OpenPBR, Standard Surface, glTF PBR, BSDF graphs; values fold to constant / texture + gain +
+  UV matrix); three's MaterialXLoader is not used — it builds TSL materials the path tracer cannot run.
 - ⚠️ Anything that changes what the same pbrt files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old
   build is reused.
 - ⚠️ Keep the template grouping (templates at identical transforms become one): without it Moana's trees rendered 60 %
