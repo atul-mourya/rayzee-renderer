@@ -145,7 +145,9 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   engine's +X, so `environmentRotation` = 90° − the dome's yaw. Light linking is ignored. Light units follow UsdLux: the
   radiance is intensity × 2^exposure, divided by the light's size when `normalize` is on (surface area; a distant light's
   π·sin²(angle / 2)), so a normalized distant light's intensity is the irradiance on a surface facing it. No 683: USD's
-  nits are render units. Spots and distant lights aim down their prim's −Z.
+  nits are render units. Spots and distant lights aim down their prim's −Z. A sphere light's `radius` becomes the point
+  light's radius (unless `treatAsPoint`; see Light radius in `CLAUDE.md`) and a distant light's `angle` (default 0.53°)
+  its sun's width.
 - **Parts** (`listUSDParts`): past `USD_ELEMENT_PROMPT_BYTES` (1 GB of layers) the importer throws `ARCHIVE_NEEDS_ELEMENT` with
   the prims under the root's top prims that bring in sibling directories (Moana's 20 `elements/<name>`). `elementFilter`
   leaves out only the unchosen siblings, so `usd/materials/` comes along; references into them are counted, not warned.

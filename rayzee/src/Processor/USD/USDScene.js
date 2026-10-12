@@ -2538,7 +2538,7 @@ export class USDSceneReader {
 			const radius = read( 'radius', 0.5 );
 			const cone = read( 'shaping:cone:angle', 180 );
 			const area = type === 'SphereLight' ? 4 * Math.PI * radius * radius : 2 * Math.PI * radius * read( 'length', 1 );
-			// The engine's lamps take their power, π × radiance × area for a surface of radiance L.
+			// The engine's point and spot lights take their power, π × radiance × area for a surface of radiance L.
 			const intensity = Math.PI * radiance * ( normalize ? 1 : area );
 			if ( cone < 90 ) {
 
@@ -2554,6 +2554,8 @@ export class USDSceneReader {
 
 			light.decay = 2;
 			light.distance = 0;
+			// Its size softens its shadows (a disc facing the lit point, LightSerializer); treatAsPoint says it has none.
+			if ( ! read( 'treatAsPoint', false ) && radius > 0 ) light.userData.radius = radius;
 			light.userData.__candelaConverted = true;
 			if ( type === 'CylinderLight' ) this.warnOnce( 'cylinder', 'USD cylinder lights are placed as point lights' );
 
@@ -2561,10 +2563,13 @@ export class USDSceneReader {
 
 			// The irradiance on a surface facing the light: a disc of half-angle θ and radiance L gives π·sin²θ·L
 			// (UsdLux's sizeFactor), so a normalized light's intensity is that irradiance.
-			const half = Math.min( Math.max( read( 'angle', 0.53 ) * DEG / 2, 0 ), Math.PI );
+			const angle = Math.max( read( 'angle', 0.53 ), 0 ) * DEG;
+			const half = Math.min( angle / 2, Math.PI );
 			const sin2 = Math.sin( half ) ** 2;
 			const sizeFactor = half === 0 ? 1 : half <= Math.PI / 2 ? Math.PI * sin2 : Math.PI * ( 2 - sin2 );
 			light = new DirectionalLight( new Color(), radiance * ( normalize ? 1 : sizeFactor ) );
+			// The disc's angular diameter, which softens its shadows. Blender writes half its sun angle here.
+			light.userData.angle = angle;
 			light.userData.__luxConverted = true;
 
 		}

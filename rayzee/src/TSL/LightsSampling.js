@@ -86,7 +86,9 @@ import {
 	offsetRayOrigin,
 	SHADOW_END,
 	REC709_LUMINANCE_COEFFICIENTS,
+	constructTBN,
 } from './Common.js';
+import { usesLightRadius } from './SceneResources.js';
 import { sampleEnvironment, sampleEnvironmentExact } from './Environment.js';
 import { shadowTerminatorOrigin } from './ShadowTerminator.js';
 import { sunRadianceToward, sampleSunDisc } from './Sun.js';
@@ -233,8 +235,30 @@ export const sampleRectAreaLight = Fn( ( [ light, rayOrigin, ruv, lightSelection
 
 } );
 
-// Enhanced spot light sampling with radius support
-export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectionPdf ] ) => {
+/**
+ * A point or spot light with a radius is a disc of it facing the lit point, as Cycles' with Soft Falloff: uniform on the
+ * disc, so on its axis the light gives intensity / ( d² + r² ) where a point gives intensity / d². Moves `toLight` and
+ * `distSq` to the sampled point and returns the disc's tilt toward it. No BSDF ray hits these lights, so no MIS.
+ */
+const aimAtLightDisc = ( light, toLight, distSq, ruv ) => {
+
+	const facing = float( 1.0 ).toVar();
+	If( light.radius.greaterThan( 0.0 ), () => {
+
+		const axis = toLight.div( sqrt( distSq ) ).toVar();
+		const r = light.radius.mul( sqrt( ruv.x ) );
+		const phi = ruv.y.mul( 2 * Math.PI );
+		toLight.addAssign( constructTBN( { N: axis } ).mul( vec3( r.mul( cos( phi ) ), r.mul( sin( phi ) ), 0.0 ) ) );
+		distSq.assign( dot( toLight, toLight ) );
+		facing.assign( max( dot( toLight, axis ).div( sqrt( distSq ) ), 0.0 ) );
+
+	} );
+	return facing;
+
+};
+
+// Spot light sampling; a radius makes it a disc (aimAtLightDisc), its cone still read from the centre.
+export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectionPdf, ruv ], builder ) => {
 
 	const ls_valid = tslBool( false ).toVar();
 	const ls_direction = vec3( 0.0, 1.0, 0.0 ).toVar();
@@ -250,11 +274,16 @@ export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectio
 	// Guard against zero distance
 	If( lightDistSq.greaterThanEqual( 1e-20 ), () => {
 
+		// Compiled in only while some light has a radius (SceneResources lightRadius); otherwise the exact point code.
+		const sized = usesLightRadius( builder );
+		const centerDir = sized ? toLight.div( sqrt( lightDistSq ) ).toVar() : null;
+		const facing = sized ? aimAtLightDisc( light, toLight, lightDistSq, ruv ) : null;
 		const lightDist = sqrt( lightDistSq ).toVar();
 		const lightDir = toLight.div( lightDist ).toVar();
+		const coneDir = sized ? centerDir : lightDir;
 
 		// Check cone attenuation
-		const spotCosAngle = dot( lightDir.negate(), light.direction ).toVar();
+		const spotCosAngle = dot( coneDir.negate(), light.direction ).toVar();
 		const coneCosAngle = cos( light.angle ).toVar();
 
 		ls_direction.assign( lightDir );
@@ -268,10 +297,11 @@ export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectio
 			const distanceAttenuation = getDistanceAttenuation( { lightDistance: lightDist, cutoffDistance: light.distance, decayExponent: light.decay } );
 
 			// Gobo projection mask + IES photometric profile — both 1.0 when not assigned.
-			const goboMask = sampleSpotGoboMask( light, lightDir );
-			const iesProfile = sampleIESProfile( light, lightDir );
+			const goboMask = sampleSpotGoboMask( light, coneDir );
+			const iesProfile = sampleIESProfile( light, coneDir );
 
-			ls_emission.assign( light.color.mul( light.intensity ).mul( distanceAttenuation ).mul( coneAttenuation ).mul( goboMask ).mul( iesProfile ) );
+			const emission = light.color.mul( light.intensity ).mul( distanceAttenuation ).mul( coneAttenuation ).mul( goboMask ).mul( iesProfile );
+			ls_emission.assign( sized ? emission.mul( facing ) : emission );
 
 		} );
 
@@ -290,7 +320,7 @@ export const sampleSpotLightWithRadius = Fn( ( [ light, rayOrigin, lightSelectio
 } );
 
 // Enhanced point light sampling with distance attenuation
-export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSelectionPdf ] ) => {
+export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSelectionPdf, ruv ], builder ) => {
 
 	const ls_valid = tslBool( false ).toVar();
 	const ls_direction = vec3( 0.0, 1.0, 0.0 ).toVar();
@@ -306,6 +336,8 @@ export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSe
 	// Guard against zero distance
 	If( lightDistSq.greaterThanEqual( 1e-20 ), () => {
 
+		const sized = usesLightRadius( builder );
+		const facing = sized ? aimAtLightDisc( light, toLight, lightDistSq, ruv ) : null;
 		const lightDist = sqrt( lightDistSq ).toVar();
 		const lightDir = toLight.div( lightDist );
 
@@ -315,7 +347,8 @@ export const samplePointLightWithAttenuation = Fn( ( [ light, rayOrigin, lightSe
 		ls_lightType.assign( int( LIGHT_TYPE_POINT ) );
 		ls_direction.assign( lightDir );
 		ls_distance.assign( lightDist );
-		ls_emission.assign( light.color.mul( light.intensity ).mul( distanceAttenuation ) );
+		const emission = light.color.mul( light.intensity ).mul( distanceAttenuation );
+		ls_emission.assign( sized ? emission.mul( facing ) : emission );
 		ls_pdf.assign( lightSelectionPdf );
 		ls_valid.assign( tslBool( true ) );
 
@@ -614,7 +647,7 @@ export const sampleLightWithImportance = Fn( ( [
 
 					If( light.intensity.greaterThan( 0.0 ), () => {
 
-						const ptSample = LightSample.wrap( samplePointLightWithAttenuation( light, rayOrigin, lightSelectionPdf ) );
+						const ptSample = LightSample.wrap( samplePointLightWithAttenuation( light, rayOrigin, lightSelectionPdf, vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ) ) );
 						r_valid.assign( ptSample.valid );
 						r_direction.assign( ptSample.direction );
 						r_emission.assign( ptSample.emission );
@@ -639,7 +672,7 @@ export const sampleLightWithImportance = Fn( ( [
 
 					If( light.intensity.greaterThan( 0.0 ), () => {
 
-						const spotSample = LightSample.wrap( sampleSpotLightWithRadius( light, rayOrigin, lightSelectionPdf ) );
+						const spotSample = LightSample.wrap( sampleSpotLightWithRadius( light, rayOrigin, lightSelectionPdf, vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ) ) );
 						r_valid.assign( spotSample.valid );
 						r_direction.assign( spotSample.direction );
 						r_emission.assign( spotSample.emission );
@@ -702,7 +735,7 @@ export const sampleLightWithImportance = Fn( ( [
 			If( selectedType.equal( int( 2 ) ).and( selectedIdx.greaterThanEqual( int( 0 ) ) ), () => {
 
 				const light = PointLight.wrap( getPointLight( pointLightsBuffer, selectedIdx ) );
-				const ptSample = LightSample.wrap( samplePointLightWithAttenuation( light, rayOrigin, pdf ) );
+				const ptSample = LightSample.wrap( samplePointLightWithAttenuation( light, rayOrigin, pdf, vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ) ) );
 				r_valid.assign( ptSample.valid );
 				r_direction.assign( ptSample.direction );
 				r_emission.assign( ptSample.emission );
@@ -716,7 +749,7 @@ export const sampleLightWithImportance = Fn( ( [
 			If( selectedType.equal( int( 3 ) ).and( selectedIdx.greaterThanEqual( int( 0 ) ) ), () => {
 
 				const light = SpotLight.wrap( getSpotLight( spotLightsBuffer, selectedIdx ) );
-				const spotSample = LightSample.wrap( sampleSpotLightWithRadius( light, rayOrigin, pdf ) );
+				const spotSample = LightSample.wrap( sampleSpotLightWithRadius( light, rayOrigin, pdf, vec2( randomSeed.y, getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 15 ) ), rngState, resolution, frame ) ) ) );
 				r_valid.assign( spotSample.valid );
 				r_direction.assign( spotSample.direction );
 				r_emission.assign( spotSample.emission );

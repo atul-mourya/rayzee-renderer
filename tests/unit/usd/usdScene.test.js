@@ -804,7 +804,7 @@ ${clipping}    float focalLength = 35
 
 	} );
 
-	const light = ( type, body, name = 'lamp' ) => usda( `def ${type} "${name}"
+	const light = ( type, body, name = 'light' ) => usda( `def ${type} "${name}"
 {
 ${body}
 }` );

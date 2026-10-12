@@ -622,6 +622,15 @@ the strings, so never rename or repurpose one.
   drifts ±7 % between rounds. Rejected: a control variate (add
   every light × its learned visibility, trace one to correct it) — no better than `'one'`, and 7.7 % of a single sample's
   channels negative on the interior, which the denoisers are fed.
+- **Light radius** — a point or spot light with `userData.radius` (USD `SphereLight` radius unless `treatAsPoint`) is lit
+  as Cycles' Soft Falloff: NEE samples a disc of that radius facing the shaded point and scales the emission by the disc's
+  cosine, so on its axis it gives I / (d² + r²); a spot's cone, gobo and IES are read from the centre. Packed as the
+  point's 10th float and the spot's slot 18 (`LightSerializer`). Compiled in only while some light has a radius
+  (`lightRadius` in the build context, `usesLightRadius( builder )`, `PathTracer._lightRadiusNeeded()` each frame);
+  otherwise the old code, at no measurable cost (`bench:ab`, every scene). NEE only: these lights stay unseen by camera
+  and mirror rays. The bidirectional integrators keep them as points (their light paths leave the centre), and glTF has
+  no field for a radius. Barbershop in clay against Cycles: 0.885 → 0.978 overall, its left side (lit by sized lights)
+  0.52–0.63 → 0.93–0.97. `tests/gpu/lightRadius.test.js`.
 - **`app.adapterInfo`** / exported `describeAdapter( adapter )` — flags SwiftShader, llvmpipe,
   lavapipe and WARP. `init()` throws outright when three.js has substituted a WebGL2 backend, since
   the wavefront path is compute-only and every frame would fail against an empty canvas.

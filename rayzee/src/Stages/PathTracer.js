@@ -27,6 +27,7 @@ import {
 	SORT_GLOBAL_WG_SIZE, SORT_GLOBAL_MAX_BINS,
 } from '../TSL/SortGlobalKernels.js';
 import { ENGINE_DEFAULTS } from '../EngineDefaults.js';
+import { LIGHT_FLOATS } from '../managers/UniformManager.js';
 import { MAX_STORAGE_TEXTURE_SIZE } from '../Processor/StorageTexturePool.js';
 import { readPixels } from '../Processor/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
@@ -380,6 +381,26 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/**
+	 * Whether some point or spot light has a radius: only then is disc sampling compiled in, and never for an integrator
+	 * of its own (a bidirectional light path leaves a light's centre).
+	 */
+	_lightRadiusNeeded() {
+
+		if ( this._integrator ) return false;
+		const sized = ( type, count, slot ) => {
+
+			if ( ! count ) return false;
+			const data = this[ `${type}LightsBufferNode` ].array;
+			for ( let i = 0; i < count; i ++ ) if ( data[ i * LIGHT_FLOATS[ type ] + slot ] > 0 ) return true;
+			return false;
+
+		};
+
+		return sized( 'point', this.numPointLights.value, 9 ) || sized( 'spot', this.numSpotLights.value, 18 );
+
+	}
+
 	get integrator() {
 
 		return this._integrator?.name ?? 'path';
@@ -410,6 +431,7 @@ export class PathTracer extends PathTracerStage {
 		}
 
 		if ( PICKED_SHADOW_RAYS.includes( this._shadowRays ) && this._pickedShadowRays() !== this._compiledPick ) this._outputsChanged = true;
+		if ( this._lightRadiusNeeded() !== this._compiledLightRadius ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -1852,6 +1874,7 @@ export class PathTracer extends PathTracerStage {
 			iesProfiles: texNodes.iesProfilesTex,
 			alphaShadows: this.uniforms.get( 'enableAlphaShadows' ),
 			materialLayers: this._compiledLayers = this._layersToCompile(),
+			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
 		};
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;

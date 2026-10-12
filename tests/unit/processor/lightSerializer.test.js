@@ -226,12 +226,25 @@ describe( 'LightSerializer', () => {
 
 		}
 
-		it( 'adds light to cache with 9 floats (pos, color, intensity, distance, decay)', () => {
+		it( 'adds light to cache with 10 floats (pos, color, intensity, distance, decay, radius)', () => {
 
 			const serializer = new LightSerializer();
 			serializer.addPointLight( makePointLight() );
 			expect( serializer.pointLightCache ).toHaveLength( 1 );
-			expect( serializer.pointLightCache[ 0 ].data ).toHaveLength( 9 );
+			expect( serializer.pointLightCache[ 0 ].data ).toHaveLength( 10 );
+			expect( serializer.pointLightCache[ 0 ].data[ 9 ] ).toBe( 0 );
+
+		} );
+
+		it( 'carries a light\'s radius from userData, a point\'s last and a spot\'s in its slot 18', () => {
+
+			const serializer = new LightSerializer();
+			const down = { sub: () => ( { normalize: () => ( { x: 0, y: - 1, z: 0 } ) } ) };
+			serializer.addPointLight( { ...makePointLight(), userData: { radius: 0.25 } } );
+			serializer.addSpotLight( { ...makePointLight(), angle: 0.5, penumbra: 0.1, userData: { radius: 0.1 }, target: { getWorldPosition: () => down } } );
+			expect( serializer.pointLightCache[ 0 ].data[ 9 ] ).toBe( 0.25 );
+			expect( serializer.spotLightCache[ 0 ].data ).toHaveLength( 20 );
+			expect( serializer.spotLightCache[ 0 ].data[ 18 ] ).toBe( 0.1 );
 
 		} );
 

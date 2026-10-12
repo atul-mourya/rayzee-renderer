@@ -60,6 +60,7 @@ export const PointLight = struct( {
 	intensity: 'float',
 	distance: 'float', // cutoff distance (0 = infinite)
 	decay: 'float', // decay exponent (2 = physically correct)
+	radius: 'float', // 0 = a point; else a disc of this radius facing the lit point (Cycles' soft falloff)
 } );
 
 export const SpotLight = struct( {
@@ -75,6 +76,7 @@ export const SpotLight = struct( {
 	goboIntensity: 'float', // mask strength multiplier (0 = no mask, 1 = full mask)
 	iesIndex: 'int', // -1 = no IES, otherwise index into iesProfiles array
 	iesIntensity: 'float', // blend [0,1] between flat (0) and full IES distribution (1)
+	radius: 'float', // as PointLight's
 } );
 
 export const LightSample = struct( {
@@ -173,7 +175,7 @@ export const getAreaLight = Fn( ( [ areaLightsBuffer, index ] ) => {
 
 export const getPointLight = Fn( ( [ pointLightsBuffer, index ] ) => {
 
-	const baseIndex = index.mul( 9 );
+	const baseIndex = index.mul( 10 );
 	return PointLight( {
 		position: vec3(
 			pointLightsBuffer.element( baseIndex ),
@@ -188,6 +190,7 @@ export const getPointLight = Fn( ( [ pointLightsBuffer, index ] ) => {
 		intensity: pointLightsBuffer.element( baseIndex.add( 6 ) ),
 		distance: pointLightsBuffer.element( baseIndex.add( 7 ) ),
 		decay: pointLightsBuffer.element( baseIndex.add( 8 ) ),
+		radius: pointLightsBuffer.element( baseIndex.add( 9 ) ),
 	} );
 
 } );
@@ -220,7 +223,8 @@ export const getSpotLight = Fn( ( [ spotLightsBuffer, index ] ) => {
 		goboIntensity: spotLightsBuffer.element( baseIndex.add( 15 ) ),
 		iesIndex: int( spotLightsBuffer.element( baseIndex.add( 16 ) ) ),
 		iesIntensity: spotLightsBuffer.element( baseIndex.add( 17 ) ),
-		// slots 18, 19 reserved (vec4 padding)
+		radius: spotLightsBuffer.element( baseIndex.add( 18 ) ),
+		// slot 19 reserved (vec4 padding)
 	} );
 
 } );

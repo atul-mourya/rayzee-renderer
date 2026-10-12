@@ -23,7 +23,7 @@ const SHADER_NAMES = {
 export const LIGHT_FLOATS = Object.freeze( {
 	directional: 12, // 8 light fields + gobo { index, signed intensity, scale, pad }
 	area: 16, // 13 base + normalize, spread, shape
-	point: 9,
+	point: 10, // 9 light fields + radius
 	spot: 20, // 14 light fields + gobo { index, signed intensity } + IES { index, intensity } + 2 reserved
 } );
 

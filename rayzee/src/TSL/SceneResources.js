@@ -12,6 +12,7 @@
  * @property {?Node} iesProfiles - IES profile texture array, or null
  * @property {?Node} alphaShadows - int uniform, 1 = shadow rays test texture alpha; null = never
  * @property {?Object<string, boolean>} materialLayers - the MATERIAL_LAYERS some material uses; null = all of them
+ * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
  */
 
 import { context } from 'three/tsl';
@@ -47,5 +48,15 @@ export const ALL_MATERIAL_LAYERS = Object.freeze( Object.fromEntries( MATERIAL_L
 export function materialLayers( builder ) {
 
 	return builder.context[ KEY ]?.materialLayers ?? ALL_MATERIAL_LAYERS;
+
+}
+
+/**
+ * Whether the kernel being built samples light radii. Off unless a point or spot light has a radius, and off for the
+ * bidirectional integrator, whose light paths leave a light's centre. Outside a scene kernel (a test) it is on.
+ */
+export function usesLightRadius( builder ) {
+
+	return builder.context[ KEY ]?.lightRadius ?? true;
 
 }
