@@ -5,7 +5,7 @@
 - audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
 - displacement maps dont seem to work properly. test with polyhaven material on ground plane
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
-- [x] compare quality and realtime performance metric for  The NRD, ASVGF and EdgeAware and oidn. I'm looking to choose one default and remove the poor denoisers — done 2026-10-11: OIDN is the app's live default (cleanest still and moving); ASVGF and EdgeAware removed; NRD kept for large live views (see Performance & Architecture → Pipeline)
+-  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
   
 
 ### MVP
@@ -20,25 +20,18 @@
 
 ### Known
 
-- [ ] **Lamp size for point and spot lights** (soft shadows). Lamps are points today:
-  `sampleSpotLightWithRadius` takes no radius, despite its name. USD carries the size and the reader
-  drops it: a `SphereLight`'s `radius` only scales its brightness, and a `DistantLight`'s `angle` is
-  never read, though the engine already softens a sun by `userData.angle` (angular diameter, radians).
-  USD's default angle is 0.53°, so reading it softens suns that set none. ⚠️ Blender writes half its
-  sun angle (10° → `angle` 5) though USD defines the full width, and reads its own files back as 10°.
-  Size changes brightness too: Cycles lights from a disc of the radius facing the shaded point, on
-  axis d² / (d² + r²) of a point (0.94 at r 0.5, 2 m). glTF has no field for any of this — see
-  `docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter.
+- [ ] **Light radius, what is left** (point and spot lights with a radius, and USD's sphere radius and sun angle, done
+  2026-10-12; see Light radius in `CLAUDE.md`): the bidirectional and VCM integrators still treat them as points; glTF
+  has no field for a radius (`docs/SCENE_IMPORT.md` → Lights from Blender's glTF exporter); the app has no control for it. ⚠️ Blender
+  writes half its sun angle (10° → `angle` 5) though USD defines the full width, so its suns read half as soft.
 
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
-- [ ] **OIDN crosses ratio 1.0 at the shipping sample count — `bench:denoise` only tests 1 and 64 spp, so nobody had measured it.** Probed at 150 spp, 256²: oidn **1.193 / 1.082 / 1.039** on glass-transmission / alpha-cutout / textured-normalmap (all were 0.878-0.925 at 64 spp); ASVGF and EdgeAware (since removed) crossed too. NRD cannot: past its handover it passes the render through. Mechanism confirmed as a denoiser bias floor: on glass-transmission, raw improved 0.00449 → 0.00301 from 64 → 150 spp (factor 1.49, matching √2.34 = 1.53) while denoised improved only 0.00415 → 0.00359 (factor 1.16), so the raw image converges past the denoiser's residual. **Do NOT change production defaults on this alone** — the bench renders 256² with adaptive sampling disabled, whereas production renders 512²-2048² and usually retires early via `adaptiveStopFraction: 0.94`; and on the real 24233846.glb at 1024² OIDN was still improving from 64 → 600 spp (68 % → 81 % flute-amplitude retention), which is in tension with a hard floor. Next steps: (1) reproduce at production resolution on a real asset before touching defaults; (2) the likely real fix is a **variance-driven strength/blend** rather than always-on full-strength denoising — skip or lerp the denoiser once the frame is converged, as NRD's handover already does; (3) add a permanent high-spp gate, but NOT as a third global `sppLadder` rung (that adds a rung to every strategy and scene for an OIDN-specific question) — prefer an oidn-only high-spp check on 1-2 scenes.
-- [ ] **OIDN weights that never load leave a denoise "started" forever**: `OIDNDenoiser.start()` sends `'start'`, then `execute()` returns before its `try` when the weights never loaded (`! this.unet`), so `'end'` never comes. The closing final denoise leaves the app's Denoising badge on and the upscaler chain never starts; live refreshes only spam starts. Send `'end'` (or no `'start'`) on that path.
-- [ ] **`bench:denoise` never NaN-checks OIDN's output** — `denoisedNonFinite()` (`bench/harness/boot.js`) reads NRD's output or the raw buffer only, and OIDN is now the app's live default.
-- [ ] DDFA aux commit gate is a hard binary at roughness 0.049 (metals + glass; 10.2 % of the frame flips across a 0.002-wide step, same shape as Blender #85512). **Cycles' ramp was ported and REJECTED by measurement** — featureWeight = smoothstep(0, 0.5, nonspec) with additive path-sum albedo removed the discontinuity (max step delta 0.091 → 0.031) but lost on 9 of 10 `bench:denoise` oidn rungs, worst alpha-cutout @64 spp 0.880 → 1.039 (worse than not denoising) and @1 spp 0.437 → 0.648. A partition-sum albedo blends surfaces into a less decisive guide and destroys the albedo step at cutout edges. Any retry needs a scheme that keeps ONE committed surface per pixel while smoothing the *threshold* — stochastic selection converges to the same blend, so it is not the answer. Also note the port cost 8 quality goldens their bit-identical status (rmse ~1e-5) purely from extra unconditional shader work. See the note in ShadeKernel's DDFA classification block.
-- [ ] Non-levers on the fluted-glass shot, measured, do not retry: **firefly threshold** (1e9 / 15 / 3 give flute snr 48.8 / 48.9 / 49.0 — the panel's bright pixels are direct-path signal, which `regularizePathContribution` deliberately exempts at `pathLength < 0.5`); **bounce budget** (`maxBounces` 4 / 12 / 24 all identical — RR retires paths well before 12); **`transmissiveBounces`** (inert, the glass has `transmission 0`); **LED intensity** (10x dimmer moves relMSE only 0.304 -> 0.290). Emissive NEE *is* working — disabling it costs 40 % of the panel's energy (roiLum 0.0526 -> 0.0313) and raises relMSE 0.386 -> 0.449.
-- [ ] Residual fluted-glass noise is the **see-through view of the LED-lit cabinet**, not the glass: isolating the two terms by opacity gives relMSE 0.075 for the reflection alone vs 0.304 for the pass-through alone (0.386 for the real 0.4 mix, so the alpha lottery adds selection variance on top of the worse branch). That is GI inside a small closed bright box — the levers are ReSTIR DI or a radiance cache, not anything local to the glass.
-- [ ] `normalScale` sweep on the glass shows the engine is spec-correct but fragile at extreme scales: at scale 100 the shading normal is near-tangent everywhere, the shading-normal leak guard in `ShadeKernel` kills the below-horizon lobe samples, and the panel loses **half its energy** (roiLum 0.0577 at scale 100 vs 0.1173 at scale 1). glTF's own formula is what the engine implements, so clamping the scale would be wrong; the principled fix is Cycles-style `ensure_valid_specular_reflection` (Schussler et al. 2017) on the shading normal, so steep normals bend instead of terminating the path. Not built or measured.
+- [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
+- [ ] NRD makes 1-spp images worse than raw on two scenes (2026-10-11, `bench:denoise --only`): dispersion-glass 1.12, mixed-lights 2.29. Both left unblessed until fixed.
+- [ ] OIDN's guide jumps from "see through" to "this surface" at a hard step (pure metal: roughness 0.049). Cycles' smooth ramp was tried (2026-08) and lost on 9 of 10 `bench:denoise` OIDN tests; a retry must keep one surface per pixel.
+- [ ] Fluted glass (24233846.glb): firefly threshold, bounce counts and LED brightness change nothing — don't retry. The leftover noise is the LED-lit cabinet seen through the glass; it needs ReSTIR DI or a radiance cache (neither built).
+- [ ] Same glass at `normalScale` 100 loses half its light: steep normals send samples under the surface and the leak guard kills them. Cycles' fix (`ensure_valid_specular_reflection`) on the shared normal brightened diffuse +17.6 % (2026-09), so it needs a separate normal for the glossy lobe.
 
 
 ### Unconfirmed
@@ -260,7 +253,8 @@ once looked at. How it should have been built so they could not happen:
 ### Pipeline
 
 - [ ] GPU-CPU sync for environment in solid color sky mode
-- [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there.
+- [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
+- [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
 
 ### Core and add-ons — make more of the core opt-in
 
