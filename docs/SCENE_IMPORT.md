@@ -183,16 +183,18 @@ within 0.25 %). What the export loses before the engine sees it:
   the node arrives as an empty. Use an emissive mesh, which exports, or export USD: Blender writes them as `RectLight` /
   `DiskLight`, and they match Cycles (2026-10-12: 0.9999, 1.0001). Blender's USD has quirks of its own: a sun is written
   at a quarter of its strength (`energy / 4`, "approximately matches Karma" in its source, so it renders at a quarter)
-  and half its angle, and every lamp is flagged as using a 6500 K colour temperature, which the reader ignores.
+  and half its angle (both still so in Blender 5.3 and `main`), and before 5.2 every light is flagged as using a 6500 K
+  colour temperature, which the reader ignores.
 - **Sun strength**: Blender 5.1.1 writes every sun at 683 lux whatever its energy (a sun of 3 W/m² renders at a third).
   The exporter's sun branch reads the light's Emission node Strength (1.0) and ignores `light.energy`. Fixed upstream in
-  glTF-Blender-IO `850fb92e` (2026-07-05), which multiplies the two. Until a Blender release has it: set the energy to 1
+  glTF-Blender-IO `850fb92e` (2026-07-05), which multiplies the two; it ships in Blender 5.3 (5.2.2 LTS still has the
+  bug), and also multiplies a point, spot or area light's Light Falloff strength by its energy. Before 5.3: set the energy to 1
   and put the value in the Emission Strength — Cycles renders it the same, and Rayzee then matches Cycles exactly. The
   file cannot show the bug: 683 lux is also what an honest 1 W/m² sun exports as.
-- **Lamp size**: glTF point and spot lights are points and its sun has no angle, so soft shadows are lost. A light's
-  extras carry only custom properties, never `shadow_soft_size` or `angle`. Brightness moves too: Cycles lights from a
-  disc of the lamp's radius facing the shaded point, so on its axis it is d² / (d² + r²) of a point — 0.94 for a 0.5 m
-  lamp 2 m away, which Rayzee renders 6 % brighter.
+- **Light radius and sun angle**: glTF point and spot lights are points and its sun has no angle, so soft shadows are
+  lost. A light's extras carry only custom properties, never `shadow_soft_size` or `angle`. Brightness moves too: Cycles
+  lights from a disc of the light's radius facing the shaded point, so on its axis it is d² / (d² + r²) of a point —
+  0.94 for a 0.5 m light 2 m away, which Rayzee renders 6 % brighter. Blender's USD export carries both, and they are read.
 - **COMPAT / RAW lighting modes** write Blender's watts instead of candela and lux (COMPAT divides a point's by 4π, RAW
   writes the energy as it is), and nothing else in the file differs from SPEC. The loader assumes SPEC, Blender's
   default and what its own importer assumes.
@@ -204,10 +206,26 @@ in Cycles, so these losses happen before the engine reads the file.
   colour from the Emission node, with the lamp's own power left at 1 or 0.79 W. The USD exporter writes the lamp's power
   only, so they arrive 100–500× dim and white; the glTF exporter reads a Light Falloff strength and the Emission colour,
   but drops area lamps. Linear falloff and the node's Smooth have no equivalent anywhere.
-- **Materials without Principled BSDF**: both exporters convert Principled BSDF only. Its 263 materials are Diffuse,
-  Glossy and Mix Shader networks and node groups: 124 arrive with no surface (shaded grey), the rest with a colour and
-  roughness, no metal, glass, emission or alpha.
+- **Materials without Principled BSDF**: by default both exporters convert Principled BSDF only. Its 263 materials are
+  Diffuse, Glossy and Mix Shader networks and node groups: 124 arrive with no surface (shaded grey), the rest with a
+  colour and roughness, no metal, glass, emission or alpha. The USD exporter's **MaterialX Network** option (off by
+  default) writes 245 of 246, but lossily: Glossy becomes a conductor, a Mix Shader driven by a Fresnel / Layer Weight
+  chain gets a constant (0.5–1) in place of it, Transparent becomes a diffuse with the surface's opacity 0, and colour
+  networks of ramps, noise and Pointiness are dropped or become nodes not read here. Read literally (as the engine does)
+  the chairs come out half metal; reading "diffuse + uncoloured conductor" as a dielectric gloss was tried and barely
+  helped, since the colours are what is lost. Converting such materials to Principled BSDF before export (OpenPBR then
+  maps one to one) is the route: a Principled test scene through MaterialX matches Cycles, Mapping rotation included.
+  Why, in Blender's MaterialX writer (`node_shader_*.cc`, unchanged in 5.2, 5.3 and `main` as of 2026-10-12): a Mix
+  node's blend type is ignored (`TODO: Apply data->blend_type`, so Overlay / Multiply / Add are a plain mix), a Color
+  Ramp writes nothing (`TODO: Implement`), an Attribute node (colour attributes) writes its default, Geometry has no
+  Pointiness, Fresnel writes its IOR as the factor and Layer Weight its Blend input. The Barbershop's red chairs and
+  orange sofa (a ramp over Pointiness) and green walls (colour attribute `Col`) are lost that way.
 - **Volume-only objects**: a fog box (`ENV-Fog`, volume shader, no surface) arrives as a solid box around the room.
+- **Curve objects**: the USD exporter writes a Curve or Text object as BasisCurves of width 2 × the point radius (2.0),
+  whatever its bevel: a 6 mm wire and a ceiling rim swept with a bevel object became 2 m ribbons across the ceiling, as
+  USD says (Blender's own re-import shows nothing, since a curve without bevel does not render). Turning Curves off in
+  the export drops them. Convert them to meshes before export (Object → Convert → Mesh): the shapes then match Blender's
+  to the millimetre.
 - **Clip start**: its camera stands behind the back wall with a clip start of 1.1 m. The engine honours it (see USD
   above, and glTF `znear`); before 2026-10-12 it ignored it and rendered the wall.
 
