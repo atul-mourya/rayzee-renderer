@@ -3,6 +3,7 @@ import { PathTracerApp } from '@/core/PathTracerApp.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 import { AutoExposure } from '@/core/Stages/AutoExposure.js';
+import { AgXToneMapping, NoToneMapping } from 'three';
 
 function viewer( { autoExposure = false, requiresMotionVectors = false } = {} ) {
 
@@ -107,11 +108,31 @@ describe( 'a finished render\'s exposure', () => {
 			},
 			toneGain: () => 'gain',
 		};
-		const app = { stages: { localExposure: le }, pipeline: { context: 'image' } };
+		const context = { getState: () => 'environment' };
+		const app = { stages: { localExposure: le }, pipeline: { context } };
 
 		expect( PathTracerApp.prototype._displayGain.call( app ) ).toBe( 'gain' );
 		expect( PathTracerApp.prototype._displayGain.call( app ) ).toBe( 'gain' );
-		expect( built ).toEqual( [ 'image' ] );
+		expect( built ).toEqual( [ context ] );
+
+	} );
+
+	// The compositor holds a solid backdrop at the manual exposure; a tone-mapped readback must show it the same.
+	it( 'holds a solid backdrop at the manual exposure in the readback gain', () => {
+
+		const viewer = ( backdrop, toneMapping, local = null ) => ( {
+			stages: { localExposure: { wantsBuild: false, toneGain: () => local } },
+			pipeline: { context: { getState: ( key ) => ( key === 'pathtracer:backdrop' ? backdrop : undefined ) } },
+			settings: { get: ( key ) => ( key === 'exposure' ? 2 : undefined ) },
+			renderer: { toneMappingExposure: 0.5, toneMapping },
+		} );
+		const gain = ( ...args ) => PathTracerApp.prototype._displayGain.call( viewer( ...args ) );
+
+		expect( gain( 'color', AgXToneMapping ) ).toEqual( { backdrop: 4 } ); // auto exposure took it two stops down
+		expect( gain( 'color', AgXToneMapping, { key: 'local-exposure' } ) ).toEqual( { key: 'local-exposure', backdrop: 4 } );
+		expect( gain( 'color', NoToneMapping ) ).toEqual( { backdrop: 1 } ); // a view without exposure has nothing to undo
+		expect( gain( 'environment', AgXToneMapping ) ).toBe( null );
+		expect( gain( 'transparent', AgXToneMapping ) ).toBe( null );
 
 	} );
 

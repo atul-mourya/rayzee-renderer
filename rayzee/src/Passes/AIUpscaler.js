@@ -78,6 +78,7 @@ export class AIUpscaler extends EventDispatcher {
 	 * @param {Function} [options.getGPUTextures] - Returns { color: GPUTexture } for HDR path
 	 * @param {Function} [options.getExposure] - Returns current exposure multiplier
 	 * @param {Function} [options.getToneMapping] - Returns Three.js ToneMapping constant
+	 * @param {Function} [options.getTransparentBackground] - Whether the HDR path keeps the render's coverage as alpha
 	 * @param {number} [options.tileSize] - Override default tile size
 	 */
 	constructor( output, renderer, options = {} ) {
@@ -101,6 +102,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
 		this.getSaturation = options.getSaturation || ( () => 1.0 );
 		this.getDisplayGain = options.getDisplayGain || ( () => null );
+		this.getTransparentBackground = options.getTransparentBackground || ( () => false );
 
 		// Configuration
 		this.enabled = false;
@@ -506,6 +508,8 @@ export class AIUpscaler extends EventDispatcher {
 			gain: this.getDisplayGain(),
 		} );
 		this._toneMapper.release();
+		// The render's alpha is coverage; the canvas shows an opaque backdrop opaque, and so does the upscale.
+		if ( ! this.getTransparentBackground() ) planes.fill( 1, 3 * width * height );
 
 		return { planes, width, height, isHDR: true };
 

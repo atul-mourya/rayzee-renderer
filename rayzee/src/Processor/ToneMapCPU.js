@@ -98,6 +98,26 @@ export function effectiveExposure( exposure, toneMapping ) {
 
 }
 
+/**
+ * The gain that shows a pixel of a solid backdrop at `heldAt` while the picture is shown at `exposure`: auto
+ * exposure does not move the backdrop. 1 under a view that applies no exposure.
+ */
+export function backdropGain( heldAt, exposure, toneMapping ) {
+
+	return effectiveExposure( heldAt, toneMapping ) / effectiveExposure( exposure, toneMapping );
+
+}
+
+/**
+ * A pixel's gain once the backdrop is held: `backdrop` where the camera saw only the backdrop (coverage 0), the
+ * scene's own gain where it saw the scene, blended by coverage between. The GPU pass computes the same.
+ */
+export function heldGain( gain, backdrop, coverage ) {
+
+	return gain + ( backdrop - gain ) * ( 1 - Math.min( Math.max( coverage, 0 ), 1 ) );
+
+}
+
 /** Rec.709 luminance coefficients (same as Display / Common.js). */
 const LUM_R = 0.2126, LUM_G = 0.7152, LUM_B = 0.0722;
 
@@ -128,8 +148,9 @@ export function applySaturation( out, saturation ) {
  * @param {number} options.toneMapping - a registered view transform id
  * @param {number} [options.saturation=1]
  * @param {boolean} [options.preserveAlpha=false]
- * @param {{fn: function(number, number, number, number): number, width: number, height: number}} [options.pixelGain] -
- *   the twin of the GPU pass's `gain`: `fn( u, v, luminance, log2 exposure )` per pixel, before the curve
+ * @param {{fn?: function(number, number, number, number): number, width: number, height: number, backdrop?: number}} [options.pixelGain] -
+ *   the twin of the GPU pass's `gain`: `fn( u, v, luminance, log2 exposure )` per pixel, before the curve, and
+ *   `backdrop` the gain a solid backdrop is held at (`heldGain`)
  * @returns {Uint8ClampedArray} RGBA bytes
  */
 export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false, pixelGain = null } ) {
@@ -146,9 +167,17 @@ export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1,
 		let g = gain;
 		if ( pixelGain ) {
 
-			const p = i >> 2, x = p % pixelGain.width, y = ( p - x ) / pixelGain.width;
-			const lum = linear[ i ] * 0.2126 + linear[ i + 1 ] * 0.7152 + linear[ i + 2 ] * 0.0722;
-			g *= pixelGain.fn( ( x + 0.5 ) / pixelGain.width, ( y + 0.5 ) / pixelGain.height, lum, logExposure );
+			let pg = 1;
+			if ( pixelGain.fn ) {
+
+				const p = i >> 2, x = p % pixelGain.width, y = ( p - x ) / pixelGain.width;
+				const lum = linear[ i ] * 0.2126 + linear[ i + 1 ] * 0.7152 + linear[ i + 2 ] * 0.0722;
+				pg = pixelGain.fn( ( x + 0.5 ) / pixelGain.width, ( y + 0.5 ) / pixelGain.height, lum, logExposure );
+
+			}
+
+			if ( pixelGain.backdrop > 0 ) pg = heldGain( pg, pixelGain.backdrop, linear[ i + 3 ] );
+			g *= pg;
 
 		}
 

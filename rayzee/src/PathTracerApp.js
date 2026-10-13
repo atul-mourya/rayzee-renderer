@@ -5,6 +5,7 @@ import { MotionVector } from './Stages/MotionVector.js';
 import { NRD } from './Stages/NRD.js';
 import { AutoExposure, AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
 import { LocalExposure, LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
+import { backdropGain } from './Processor/ToneMapCPU.js';
 import { PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings } from './EngineDefaults.js';
 import { createLogger } from './utils/Logger.js';
 import { EngineEvents } from './EngineEvents.js';
@@ -323,6 +324,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 				if ( this.stages.autoExposure ) this.stages.autoExposure.setCompensation( value );
 				else core.applyExposure( value );
+				this.stages.compositor?.setBackdropExposure( value );
 
 			},
 			onCameraProjection: ( value ) => {
@@ -423,7 +425,12 @@ export class PathTracerApp extends RayzeeRenderer {
 		const le = this.stages.localExposure;
 		// A readback outside the loop (headless) can come before the loop would have built it from this image.
 		if ( le?.wantsBuild ) le.build( this.pipeline.context );
-		return le?.toneGain() ?? null;
+		const local = le?.toneGain() ?? null;
+		if ( this.pipeline?.context.getState( 'pathtracer:backdrop' ) !== 'color' ) return local;
+
+		// As the compositor shows it: a solid backdrop at the manual exposure, untouched by auto and local exposure.
+		const { toneMappingExposure, toneMapping } = this.renderer;
+		return { ...local, backdrop: backdropGain( this.settings.get( 'exposure' ) ?? 1, toneMappingExposure, toneMapping ) };
 
 	}
 
@@ -1130,6 +1137,8 @@ export class PathTracerApp extends RayzeeRenderer {
 		if ( ! ae ) return;
 
 		ae.setCompensation( this.settings.get( 'exposure' ) ?? 1 );
+		// A solid backdrop stays at the manual exposure while auto exposure moves the picture.
+		this.stages.compositor.setBackdropExposure( this.settings.get( 'exposure' ) ?? 1 );
 		if ( this.stages.localExposure ) this.stages.localExposure.onChange = () => this._refreshFinished();
 		ae.onChange = () => this._refreshFinished();
 

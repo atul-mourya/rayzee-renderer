@@ -3,6 +3,7 @@ import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
 import { NoBlending, NoToneMapping } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../TSL/Common.js';
+import { backdropGain } from '../Processor/ToneMapCPU.js';
 
 
 /**
@@ -51,6 +52,11 @@ export class Compositor extends RenderStage {
 		this._sourceTexNode = new TextureNode();
 		this._displayGain = null;
 
+		// A solid backdrop held at this exposure, or null: see setBackdropExposure().
+		this._backdropExposure = null;
+		this._holdBackdrop = uniform( 0, 'int' );
+		this._backdropGain = uniform( 1.0 );
+
 		this.compositorMaterial = new MeshBasicNodeMaterial();
 		this.compositorMaterial.blending = NoBlending;
 		this._buildColorNode();
@@ -62,7 +68,17 @@ export class Compositor extends RenderStage {
 	_buildColorNode() {
 
 		const texSample = this._sourceTexNode.sample( uv() );
-		const color = this._displayGain ? texSample.xyz.mul( this._displayGain( texSample.xyz, screenUV ) ) : texSample.xyz;
+		let gain = this._displayGain ? this._displayGain( texSample.xyz, screenUV ) : null;
+		if ( this._backdropExposure !== null ) {
+
+			// Alpha is coverage: the backdrop takes its own gain, a partly covered pixel a blend (ToneMapCPU's heldGain).
+			const g = gain ?? float( 1 );
+			const held = g.add( this._backdropGain.sub( g ).mul( texSample.w.clamp( 0, 1 ).oneMinus() ) );
+			gain = select( this._holdBackdrop.greaterThan( int( 0 ) ), held, g );
+
+		}
+
+		const color = gain ? texSample.xyz.mul( gain ) : texSample.xyz;
 
 		const luma = dot( color, REC709_LUMINANCE_COEFFICIENTS );
 		const gradedColor = mix( vec3( luma ), color, this.saturation );
@@ -83,6 +99,20 @@ export class Compositor extends RenderStage {
 		if ( gain === this._displayGain ) return;
 		this._displayGain = gain;
 		this._buildColorNode();
+
+	}
+
+	/**
+	 * Holds a solid-colour backdrop at `exposure` (the manual one): whatever the renderer's exposure does — auto
+	 * exposure — and whatever display gain the scene takes, the backdrop is shown as at that exposure. Applies while
+	 * the path tracer reports a 'color' backdrop. Null removes it.
+	 * @param {number|null} exposure
+	 */
+	setBackdropExposure( exposure ) {
+
+		const changes = ( exposure === null ) !== ( this._backdropExposure === null );
+		this._backdropExposure = exposure;
+		if ( changes ) this._buildColorNode();
 
 	}
 
@@ -223,6 +253,14 @@ export class Compositor extends RenderStage {
 
 		const sourceTexture = this.resolveLightTexture( context );
 		if ( ! sourceTexture ) return;
+
+		if ( this._backdropExposure !== null ) {
+
+			const hold = context.getState( 'pathtracer:backdrop' ) === 'color';
+			this._holdBackdrop.value = hold ? 1 : 0;
+			if ( hold ) this._backdropGain.value = backdropGain( this._backdropExposure, this.renderer.toneMappingExposure, this.renderer.toneMapping );
+
+		}
 
 		this._sourceTexNode.value = sourceTexture;
 

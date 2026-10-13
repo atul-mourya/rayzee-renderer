@@ -2113,7 +2113,6 @@ export class PathTracer extends PathTracerStage {
 			hasPreviousAux: this.hasPreviousAux,
 			auxAccumulationAlpha: this.auxAccumulationAlpha,
 			cameraIsMoving: this.cameraIsMoving,
-			transparentBackground: this.transparentBackground,
 			prevAccumTexture: prevColor,
 			prevAlbedoTexture: prevAlbedo,
 			prevNormalDepthTexture: prevNormalDepth,

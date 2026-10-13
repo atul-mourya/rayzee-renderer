@@ -97,6 +97,7 @@ struct Params {
 	exposure: f32,
 	saturation: f32,
 	alpha: u32,
+	backdrop: f32,
 };
 
 @group(0) @binding(2) var<uniform> params: Params;
@@ -115,12 +116,15 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 	let linear = rayzee_source( gid.x, srcY );
 	let uv = vec2<f32>( ( f32( gid.x ) + 0.5 ) / f32( params.width ), ( f32( gid.y ) + 0.5 ) / f32( params.height ) );
-	let rgb = linear.rgb${gainWGSL ? ' * rayzee_gain( uv, linear.rgb, params.exposure )' : ''};
+	var g = ${gainWGSL ? 'rayzee_gain( uv, linear.rgb, params.exposure )' : '1.0'};
+	// A solid backdrop is held at its own gain, blended by the coverage in alpha (ToneMapCPU's heldGain).
+	if ( params.backdrop > 0.0 ) { g = g + ( params.backdrop - g ) * ( 1.0 - clamp( linear.a, 0.0, 1.0 ) ); }
+	let rgb = linear.rgb * g;
 	rayzee_store( gid.y * params.width + gid.x, linear, rayzee_tone_map( rgb, params.mode, params.exposure, params.saturation ) );
 }
 `;
 
-/** Uniform blocks round up to 16 bytes; the struct above is 28. */
+/** Uniform blocks round up to 16 bytes; the struct above is 32. */
 const PARAMS_BYTES = 32;
 
 /**
@@ -171,7 +175,7 @@ export class PackedToneMapper {
 
 		}
 
-		const key = gain?.key ?? '';
+		const key = gain?.wgsl ? gain.key : '';
 		let pipeline = this._pipelines.get( key );
 		if ( pipeline ) return pipeline;
 
@@ -275,9 +279,10 @@ export class PackedToneMapper {
 	 * @param {number} [tone.saturation=1]
 	 * @param {boolean} [tone.flipY=false]
 	 * @param {boolean} [tone.preserveAlpha=false] - the source's alpha, rounded as the CPU rounds it; else 255
-	 * @param {{key: string, wgsl: string, entries: GPUBindGroupEntry[], device?: GPUDevice, copyTo?: Function}} [tone.gain] - a
-	 *   per-pixel gain before the curve: WGSL defining `rayzee_gain( uv, linear, exposure ) -> f32` over bind group 1.
-	 *   One on another device is copied to this one for the run (`copyTo`).
+	 * @param {{key?: string, wgsl?: string, entries?: GPUBindGroupEntry[], device?: GPUDevice, copyTo?: Function, backdrop?: number}} [tone.gain] - a
+	 *   per-pixel gain before the curve: WGSL defining `rayzee_gain( uv, linear, exposure ) -> f32` over bind group 1,
+	 *   and/or `backdrop`, the gain a solid backdrop is held at (coverage in alpha). One on another device is copied
+	 *   to this one for the run (`copyTo`).
 	 * @returns {Promise<Uint8ClampedArray>} RGBA bytes, `width * height * 4`
 	 */
 	async toRGBA8( src, tone ) {
@@ -302,12 +307,12 @@ export class PackedToneMapper {
 	async _run( src, tone = {} ) {
 
 		const gain = tone.gain;
-		if ( ! gain?.device || gain.device === this.device ) return this._dispatch( src, tone );
+		if ( ! gain?.wgsl || ! gain.device || gain.device === this.device ) return this._dispatch( src, tone );
 
 		const copy = await gain.copyTo( this.device );
 		try {
 
-			return await this._dispatch( src, { ...tone, gain: copy } );
+			return await this._dispatch( src, { ...tone, gain: { ...copy, backdrop: gain.backdrop } } );
 
 		} finally {
 
@@ -337,6 +342,7 @@ export class PackedToneMapper {
 		this._paramF32[ 4 ] = exposure;
 		this._paramF32[ 5 ] = saturation;
 		this._paramU32[ 6 ] = preserveAlpha ? 1 : 0;
+		this._paramF32[ 7 ] = gain?.backdrop > 0 ? gain.backdrop : 0;
 		this.device.queue.writeBuffer( this._params, 0, this._paramData );
 
 		const tableEntries = [ ...this._tables.entries() ]
@@ -356,7 +362,7 @@ export class PackedToneMapper {
 		const pass = encoder.beginComputePass();
 		pass.setPipeline( pipeline );
 		pass.setBindGroup( 0, group );
-		if ( gain ) pass.setBindGroup( 1, this.device.createBindGroup( { layout: pipeline.getBindGroupLayout( 1 ), entries: gain.entries } ) );
+		if ( gain?.wgsl ) pass.setBindGroup( 1, this.device.createBindGroup( { layout: pipeline.getBindGroupLayout( 1 ), entries: gain.entries } ) );
 		pass.dispatchWorkgroups( Math.ceil( width / 8 ), Math.ceil( height / 8 ) );
 		pass.end();
 		encoder.copyBufferToBuffer( this._storage, 0, this._map, 0, bytes );

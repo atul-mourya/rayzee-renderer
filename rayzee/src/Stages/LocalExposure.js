@@ -26,6 +26,7 @@ const BLUR_TEXEL = 32;
 const BLUR_BLEND = 0.6;
 const BLUR_PERCENT = 50;
 const MIDDLE_GREY = Math.log2( 0.18 );
+const FULL_COVERAGE = 0.999; // under a solid backdrop, a pixel counts only when it saw the scene alone
 const DARKEST = 2 ** - 24;
 const MAX_CELLS = Math.ceil( MAX_RESERVABLE_RENDER_SIZE / CELL );
 const MAX_BLUR = Math.ceil( MAX_RESERVABLE_RENDER_SIZE / BLUR_TEXEL );
@@ -127,9 +128,12 @@ fn rayzee_gain( uv: vec2<f32>, linear: vec3<f32>, exposure: f32 ) -> f32 {
  * shadows apart, and the detail kept. It changes only what is shown: the compositor and every tone-mapped
  * readback apply the same per-pixel gain (`gainNode`, `toneGain`), so a saved picture matches the canvas.
  *
- * Built from `pathtracer:color` when the image restarts, less often as it converges.
+ * Built from `pathtracer:color` when the image restarts, less often as it converges. While the backdrop is a solid
+ * colour, both are built from the pixels that saw the scene alone (full coverage in alpha): the backdrop is not part of
+ * what is lit, and the compositor holds it at the manual exposure without this gain.
  * Events listened: pipeline:reset
  * Textures read: pathtracer:color
+ * State read: pathtracer:samples, pathtracer:backdrop
  */
 export class LocalExposure extends RenderStage {
 
@@ -146,7 +150,9 @@ export class LocalExposure extends RenderStage {
 
 		this._grid = attributeArray( MAX_CELLS * MAX_CELLS * BINS, 'vec2' );
 		this._blur = attributeArray( MAX_BLUR * MAX_BLUR, 'float' );
-		this._blurTmp = attributeArray( MAX_BLUR * MAX_BLUR, 'float' );
+		// The blur runs on ( log2 luminance × share, share ), divided out at the end: see the blur source kernel.
+		this._blurSource = attributeArray( MAX_BLUR * MAX_BLUR, 'vec2' );
+		this._blurTmp = attributeArray( MAX_BLUR * MAX_BLUR, 'vec2' );
 		this._inputNode = new TextureNode();
 		this._widthU = uniform( 1, 'int' );
 		this._heightU = uniform( 1, 'int' );
@@ -155,10 +161,11 @@ export class LocalExposure extends RenderStage {
 		this._blurHU = uniform( 1, 'int' );
 		this._radiusU = uniform( 1 );
 		this._logExposureU = uniform( 0 );
+		this._sceneOnlyU = uniform( 0, 'int' ); // 1: only pixels that saw the scene alone, a solid backdrop left out
 		this._p = [ new Vector4(), new Vector4(), new Vector4(), new Vector4() ].map( v => uniform( v ) );
 		this._params = new Float32Array( 16 );
 
-		this._kernels = [ this._buildGridKernel(), this._buildBlurSourceKernel(), this._buildBlurKernel( this._blur, this._blurTmp, true ), this._buildBlurKernel( this._blurTmp, this._blur, false ) ];
+		this._kernels = [ this._buildGridKernel(), this._buildBlurSourceKernel(), this._buildBlurKernel( this._blurSource, this._blurTmp, true ), this._buildBlurKernel( this._blurTmp, this._blur, false ) ];
 
 		this._built = false;
 		this._restarts = 0;
@@ -175,6 +182,7 @@ export class LocalExposure extends RenderStage {
 
 		const input = this._inputNode, grid = this._grid;
 		const width = this._widthU, height = this._heightU, cellsX = this._cellsXU, logExposure = this._logExposureU;
+		const sceneOnly = this._sceneOnlyU.greaterThan( int( 0 ) );
 		const yw = vec4( ...Y, 0 ).xyz;
 
 		return Fn( () => {
@@ -202,20 +210,24 @@ export class LocalExposure extends RenderStage {
 					If( x.lessThan( width ).and( y.lessThan( height ) ), () => {
 
 						const x1 = min( x.add( int( 1 ) ), width.sub( int( 1 ) ) ), y1 = min( y.add( int( 1 ) ), height.sub( int( 1 ) ) );
-						const lum = dot( textureLoad( input, ivec2( x, y ) ).xyz, yw )
-							.add( dot( textureLoad( input, ivec2( x1, y ) ).xyz, yw ) )
-							.add( dot( textureLoad( input, ivec2( x, y1 ) ).xyz, yw ) )
-							.add( dot( textureLoad( input, ivec2( x1, y1 ) ).xyz, yw ) ).mul( 0.25 ).toVar();
+						const t00 = textureLoad( input, ivec2( x, y ) ).toVar(), t10 = textureLoad( input, ivec2( x1, y ) ).toVar();
+						const t01 = textureLoad( input, ivec2( x, y1 ) ).toVar(), t11 = textureLoad( input, ivec2( x1, y1 ) ).toVar();
+						const coverage = ( t ) => select( sceneOnly.and( t.w.lessThan( FULL_COVERAGE ) ), float( 0 ), float( 1 ) );
+						const a00 = coverage( t00 ), a10 = coverage( t10 ), a01 = coverage( t01 ), a11 = coverage( t11 );
+						const covered = a00.add( a10 ).add( a01 ).add( a11 ).toVar();
+						const lum = dot( t00.xyz, yw ).mul( a00 ).add( dot( t10.xyz, yw ).mul( a10 ) )
+							.add( dot( t01.xyz, yw ).mul( a01 ) ).add( dot( t11.xyz, yw ).mul( a11 ) ).div( max( covered, 1e-6 ) ).toVar();
+						const share = covered.mul( 0.25 ).toVar();
 						// A NaN or infinite texel is left out, as the meter leaves it out: max() may keep a NaN on some
 						// GPUs, and an infinite one would read as 2^40 and darken its whole cell.
-						If( floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) ), () => {
+						If( floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) ).and( covered.greaterThan( 0.0 ) ), () => {
 
 							const logL = log2( max( lum, DARKEST ) ).clamp( LOG_FLOOR, LOG_CEIL ).toVar();
 							const f = logL.add( logExposure ).sub( BIN_MIN ).div( BIN_MAX - BIN_MIN ).clamp( 0.0, 1.0 ).mul( BINS - 1 ).toVar();
 							const b0 = uint( floor( f ) ).min( uint( BINS - 1 ) );
 							const b1 = b0.add( uint( 1 ) ).min( uint( BINS - 1 ) );
-							const w1 = f.sub( floor( f ) );
-							const w0 = float( 1 ).sub( w1 );
+							const w1 = f.sub( floor( f ) ).mul( share );
+							const w0 = float( 1 ).sub( f.sub( floor( f ) ) ).mul( share );
 							const level = logL.sub( LOG_FLOOR ).mul( FIXED );
 							atomicAdd( sums.element( b0 ), uint( level.mul( w0 ).add( 0.5 ) ) );
 							atomicAdd( weights.element( b0 ), uint( w0.mul( FIXED ).add( 0.5 ) ) );
@@ -246,10 +258,12 @@ export class LocalExposure extends RenderStage {
 	}
 
 	// The log of each 32×32 block's mean luminance: averaged in linear light, like the meter, so noise does not darken it.
+	// Stored as ( log × share, share ), share the fraction of its pixels counted: 1 unless a solid backdrop is left out.
 	_buildBlurSourceKernel() {
 
-		const input = this._inputNode, out = this._blur;
+		const input = this._inputNode, out = this._blurSource;
 		const width = this._widthU, height = this._heightU, blurW = this._blurWU;
+		const sceneOnly = this._sceneOnlyU.greaterThan( int( 0 ) );
 		const yw = vec4( ...Y, 0 ).xyz;
 
 		return Fn( () => {
@@ -257,6 +271,7 @@ export class LocalExposure extends RenderStage {
 			const lid = localId.y.mul( uint( 8 ) ).add( localId.x );
 			const ox = int( workgroupId.x ).mul( int( BLUR_TEXEL ) ), oy = int( workgroupId.y ).mul( int( BLUR_TEXEL ) );
 			const sum = float( 0 ).toVar();
+			const covered = float( 0 ).toVar();
 			const count = float( 0 ).toVar();
 
 			Loop( { start: int( localId.y ), end: int( BLUR_TEXEL ), type: 'int', condition: '<', update: 8, name: 'by' }, ( { by } ) => {
@@ -266,9 +281,12 @@ export class LocalExposure extends RenderStage {
 					const x = ox.add( bx ), y = oy.add( by );
 					If( x.lessThan( width ).and( y.lessThan( height ) ), () => {
 
-						const lum = dot( textureLoad( input, ivec2( x, y ) ).xyz, yw ).toVar();
+						const texel = textureLoad( input, ivec2( x, y ) ).toVar();
+						const lum = dot( texel.xyz, yw ).toVar();
 						const finite = floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) );
-						sum.addAssign( select( finite, lum.max( 0.0 ), float( 0 ) ) );
+						const a = select( sceneOnly.and( texel.w.lessThan( FULL_COVERAGE ) ), float( 0 ), float( 1 ) );
+						sum.addAssign( select( finite, lum.max( 0.0 ).mul( a ), float( 0 ) ) );
+						covered.addAssign( select( finite, a, float( 0 ) ) );
 						count.addAssign( select( finite, float( 1 ), float( 0 ) ) );
 
 					} );
@@ -278,8 +296,10 @@ export class LocalExposure extends RenderStage {
 			} );
 
 			const sharedSum = workgroupArray( 'float', 64 );
+			const sharedCovered = workgroupArray( 'float', 64 );
 			const sharedCount = workgroupArray( 'float', 64 );
 			sharedSum.element( lid ).assign( sum );
+			sharedCovered.element( lid ).assign( covered );
 			sharedCount.element( lid ).assign( count );
 			workgroupBarrier();
 
@@ -288,6 +308,7 @@ export class LocalExposure extends RenderStage {
 				If( lid.lessThan( uint( s ) ), () => {
 
 					sharedSum.element( lid ).addAssign( sharedSum.element( lid.add( uint( s ) ) ) );
+					sharedCovered.element( lid ).addAssign( sharedCovered.element( lid.add( uint( s ) ) ) );
 					sharedCount.element( lid ).addAssign( sharedCount.element( lid.add( uint( s ) ) ) );
 
 				} );
@@ -297,8 +318,10 @@ export class LocalExposure extends RenderStage {
 
 			If( lid.equal( uint( 0 ) ), () => {
 
-				const mean = sharedSum.element( uint( 0 ) ).div( max( sharedCount.element( uint( 0 ) ), 1.0 ) );
-				out.element( uint( int( workgroupId.y ).mul( blurW ).add( int( workgroupId.x ) ) ) ).assign( log2( max( mean, DARKEST ) ).clamp( LOG_FLOOR, LOG_CEIL ) );
+				const mean = sharedSum.element( uint( 0 ) ).div( max( sharedCovered.element( uint( 0 ) ), 1.0 ) );
+				const level = log2( max( mean, DARKEST ) ).clamp( LOG_FLOOR, LOG_CEIL );
+				const share = select( sceneOnly, sharedCovered.element( uint( 0 ) ).div( max( sharedCount.element( uint( 0 ) ), 1.0 ) ), float( 1 ) ).toVar();
+				out.element( uint( int( workgroupId.y ).mul( blurW ).add( int( workgroupId.x ) ) ) ).assign( vec2( level.mul( share ), share ) );
 
 			} );
 
@@ -306,7 +329,8 @@ export class LocalExposure extends RenderStage {
 
 	}
 
-	// Unreal's Gaussian, exp( -16.7 ( x / r )² ), along one axis, mirrored at the edges.
+	// Unreal's Gaussian, exp( -16.7 ( x / r )² ), along one axis, mirrored at the edges. Runs on ( level × share,
+	// share ); the second pass divides it out, so backdrop the build left out takes no part.
 	_buildBlurKernel( src, dst, ax ) {
 
 		const blurW = this._blurWU, blurH = this._blurHU, radius = this._radiusU;
@@ -320,7 +344,7 @@ export class LocalExposure extends RenderStage {
 				const size = ax ? blurW : blurH;
 				const at = ax ? x : y;
 				const reach = int( radius.ceil() );
-				const sum = float( 0 ).toVar();
+				const sum = vec2( 0 ).toVar();
 				const total = float( 0 ).toVar();
 
 				Loop( { start: reach.negate(), end: reach.add( int( 1 ) ), type: 'int', condition: '<', name: 'o' }, ( { o } ) => {
@@ -342,7 +366,8 @@ export class LocalExposure extends RenderStage {
 
 				} );
 
-				dst.element( uint( y.mul( blurW ).add( x ) ) ).assign( sum.div( total ) );
+				const blurred = sum.div( total ).toVar();
+				dst.element( uint( y.mul( blurW ).add( x ) ) ).assign( ax ? blurred : blurred.x.div( max( blurred.y, 1e-30 ) ) );
 
 			} );
 
@@ -390,6 +415,7 @@ export class LocalExposure extends RenderStage {
 		this._blurHU.value = blurH;
 		this._radiusU.value = Math.max( 1, BLUR_PERCENT / 100 * blurW );
 		this._logExposureU.value = logExposure;
+		this._sceneOnlyU.value = context.getState( 'pathtracer:backdrop' ) === 'color' ? 1 : 0;
 		this._kernels[ 0 ].dispatchSize = [ cellsX, cellsY, 1 ];
 		this._kernels[ 1 ].dispatchSize = [ blurW, blurH, 1 ];
 		this._kernels[ 2 ].dispatchSize = this._kernels[ 3 ].dispatchSize = [ Math.ceil( blurW / 8 ), Math.ceil( blurH / 8 ), 1 ];

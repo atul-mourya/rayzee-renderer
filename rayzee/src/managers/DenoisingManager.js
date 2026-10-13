@@ -426,6 +426,7 @@ export class DenoisingManager extends EventDispatcher {
 			getToneMapping: () => this._getToneMapping(),
 			getSaturation: () => this._getSaturation(),
 			getDisplayGain: () => this._getDisplayGain?.() ?? null,
+			getTransparentBackground: () => !! this._settings?.get( 'transparentBackground' ),
 		} );
 
 		this.upscaler.enabled = DENOISER_DEFAULTS.enableUpscaler || false;

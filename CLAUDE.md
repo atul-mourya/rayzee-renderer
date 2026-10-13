@@ -825,8 +825,19 @@ environment's exact table (`Processor/EnvironmentExactTable.js`) serves both int
 
 ### Auto exposure (`Stages/AutoExposure.js`, viewer)
 Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in
-linear light, weighted by alpha (a transparent or black background is left out), then a 256-bin log2 histogram whose
-percentile-clipped mean (fractional bins) is read back. Averaging before the log is what keeps a 1-spp image metering like
+linear light, weighted by the path tracer's coverage (alpha), then a 256-bin log2 histogram whose percentile-clipped mean
+(fractional bins) is read back. By the backdrop (`pathtracer:backdrop` state): the environment (also seen through windows)
+is metered in full, a transparent one weighed out by coverage, and under a solid colour only fully covered pixels count —
+a partly covered one (an edge, a window onto the backdrop) carries the backdrop's colour. Counting a grey backdrop around
+a dollhouse view had moved the exposure +1.2–1.7 stops on one Livspace room and −0.9–1.2 on another; a window onto it,
+0.08. **A solid backdrop is held**: the Compositor (`setBackdropExposure`, the viewer passes the manual exposure) and every
+tone-mapped readback (`_displayGain().backdrop`, `PackedToneMapper` / `toneMapToRGBA8`'s `heldGain`) show it at the manual
+exposure with no local exposure gain, blended by coverage; local exposure builds from fully covered pixels too. So neither
+auto exposure nor the backdrop's colour moves the other (app: the backdrop reads 99 at auto 0.52 and 4.10 alike; a room
+moved 0.02 levels from a grey to a black backdrop, was 7). The neural super-resolution input has no coverage (alpha 1),
+so its output shows the backdrop at the picture's exposure. ⚠️ `pathtracer:color`'s alpha is coverage in every backdrop
+mode (FinalWrite no longer forces 1): whatever shows or reads it makes it opaque unless `transparentBackground` — the
+Compositor, `renderToBuffer`, the AI upscaler's HDR capture. A new reader of that alpha does the same. Averaging before the log is what keeps a 1-spp image metering like
 the converged one (24155522.glb, 1080p: the old per-pixel log drifted 1.06 stops from 1 to 256 spp). Large tiles skip whole
 8×8 blocks, never single pixels: a skipped pixel's memory is fetched anyway. It meters only when no reading is in flight,
 less often as samples grow (`meterInterval`), and luminance is taken in the working space.
@@ -865,7 +876,9 @@ tone-mapped readback, the AI upscaler and the neural passes, through the core ho
 for the CPU tone map (`pixelGain`) — kept identical by `tests/gpu/localExposure.test.js`. Canvas vs readback: 0.5
 levels, the readback's usual bias. EXR stays scene-referred. The grid is built from `pathtracer:color` on restarts and
 the metering schedule: 0.05 / 0.13 / 0.5 ms at 540p / 1080p / 4K (Dawn, M-series); the compositor's gain +0.05 ms at
-1080p. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
+1080p. Under a solid backdrop (`pathtracer:backdrop` 'color') the grid and the blurred picture take fully covered pixels
+only, the blur carrying that share and dividing it out after both passes, and the backdrop takes no gain (see Auto
+exposure); otherwise unchanged. ⚠️ The compositor reads its position from `screenUV` (y down = texture row 0); `uv()` is not guaranteed to be.
 The app's `DEFAULT_STATE` turns it on (the engine stays off, so a farm keeps its look); `applyPanelToEngine()` in the
 store puts the panel's live denoiser and auto and local exposure on the engine at startup and after a session restores the panel. The app
 shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.6 / 1), Exposure and Balance Highlights

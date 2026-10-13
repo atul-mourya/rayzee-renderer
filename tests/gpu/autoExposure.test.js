@@ -76,7 +76,7 @@ function texture( px, width, height ) {
 
 }
 
-const contextFor = ( tex ) => ( { getTexture: () => tex, getState: () => 0, setState() {} } );
+const contextFor = ( tex, state = {} ) => ( { getTexture: () => tex, getState: ( key ) => state[ key ] ?? 0, setState() {} } );
 
 describeGPU( 'auto exposure metering', () => {
 
@@ -89,10 +89,10 @@ describeGPU( 'auto exposure metering', () => {
 
 	} );
 
-	async function meter( px, width, height, params = {} ) {
+	async function meter( px, width, height, params = {}, state = {} ) {
 
 		stage.updateParameters( { metering: 'center', ...params } );
-		return stage.meter( contextFor( texture( px, width, height ) ) );
+		return stage.meter( contextFor( texture( px, width, height ), state ) );
 
 	}
 
@@ -161,6 +161,37 @@ describeGPU( 'auto exposure metering', () => {
 		const expected = await meter( lit, 256, 256, { metering: 'average' } );
 		expect( await meter( transparent, 256, 256, { metering: 'average' } ) ).toBeCloseTo( expected, 4 );
 		expect( await meter( black, 256, 256, { metering: 'average' } ) ).toBeCloseTo( expected, 4 );
+
+	} );
+
+	// The path tracer's alpha is 0 wherever the camera saw only the backdrop: a solid colour is left out, the sky is not.
+	it( 'leaves out a solid-colour backdrop and meters an environment one', async () => {
+
+		const w = 256, h = 256;
+		const px = image( w, h, ( x, y ) => ( ( x - 128 ) ** 2 + ( y - 128 ) ** 2 < 70 ** 2 ? [ 0.6, 0.6, 0.6, 1 ] : [ 0.05, 0.05, 0.05, 0 ] ) );
+		const opaque = px.map( ( v, i ) => ( i % 4 === 3 ? 1 : v ) );
+		const lit = image( w, h, () => [ 0.6, 0.6, 0.6, 1 ] );
+
+		expect( await meter( px, w, h, {}, { 'pathtracer:backdrop': 'color' } ) ).toBeCloseTo( await meter( lit, w, h ), 4 );
+		expect( await meter( px, w, h, {}, { 'pathtracer:backdrop': 'transparent' } ) ).toBeCloseTo( await meter( lit, w, h ), 4 );
+		expect( await meter( px, w, h, {}, { 'pathtracer:backdrop': 'environment' } ) ).toBeCloseTo( reference( opaque, w, h ), 4 );
+
+	} );
+
+	// A window onto the backdrop is partly covered, and its pixels carry the backdrop's colour.
+	it( 'is not moved by a solid backdrop\'s colour, seen around the scene or through it', async () => {
+
+		const w = 256, h = 256;
+		const room = ( backdrop ) => image( w, h, ( x, y ) => {
+
+			if ( x < 64 || x >= 192 || y < 64 || y >= 192 ) return [ backdrop, backdrop, backdrop, 0 ];
+			const window = x >= 112 && x < 144 && y >= 96 && y < 160;
+			const l = window ? 0.4 * 0.6 + 0.6 * backdrop : 0.6 * ( 1 + ( x - 64 ) / 128 );
+			return [ l, l, l, window ? 0.4 : 1 ];
+
+		} );
+		const color = { 'pathtracer:backdrop': 'color' };
+		expect( await meter( room( 2 ), w, h, {}, color ) ).toBeCloseTo( await meter( room( 0.01 ), w, h, {}, color ), 4 );
 
 	} );
 

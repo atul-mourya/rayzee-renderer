@@ -1508,6 +1508,9 @@ export class PathTracerStage extends RenderStage {
 		// freezes when the frame retires or the camera moves, which is what a denoiser needs.
 		context.setState( 'pathtracer:samples', this.frameCount );
 		context.setState( 'renderMode', this.renderMode.value );
+		// What a camera ray that sees nothing shows; the colour texture's alpha is 0 there in every case.
+		context.setState( 'pathtracer:backdrop', this.uniforms.get( 'transparentBackground' ).value ? 'transparent'
+			: this.uniforms.get( 'showBackground' ).value ? 'environment' : 'color' );
 
 	}
 

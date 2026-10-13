@@ -39,7 +39,6 @@ export function buildFinalWriteKernel( params ) {
 		enableAccumulation, hasPreviousAccumulated, accumulationAlpha, cameraIsMoving,
 		// Aux MRT accumulates on its own epoch; hasPreviousAux=0 → write it verbatim instead of mixing.
 		hasPreviousAux, auxAccumulationAlpha,
-		transparentBackground,
 		prevAccumTexture, prevAlbedoTexture, prevNormalDepthTexture,
 		renderWidth,
 		chunkRowBase, chunkRows, // row band offset (global first row) + row count for this chunk
@@ -85,7 +84,9 @@ export function buildFinalWriteKernel( params ) {
 
 			const sampleColor = readRayRadiance( rayBufferRO, rayID );
 			const finalColor = sampleColor.xyz.toVar();
-			const outputAlpha = select( transparentBackground, sampleColor.w, float( 1.0 ) ).toVar();
+			// Coverage, whatever the backdrop: 0 where the camera saw past everything opaque. What shows or reads the
+			// image makes it opaque unless the background is transparent; auto exposure leaves a solid colour out by it.
+			const outputAlpha = sampleColor.w.toVar();
 
 			// A pixel frozen in a prior frame was skipped by Generate, so its rayBuffer sample is stale — pass
 			// the accumulated colour through unchanged (below) instead of mixing it. Inert unless adaptiveOn.
@@ -145,11 +146,7 @@ export function buildFinalWriteKernel( params ) {
 
 				} );
 
-				If( transparentBackground, () => {
-
-					outputAlpha.assign( select( wasFrozen, prevAccumSample.w, mix( prevAccumSample.w, sampleColor.w, accumulationAlpha ) ) );
-
-				} );
+				outputAlpha.assign( select( wasFrozen, prevAccumSample.w, mix( prevAccumSample.w, sampleColor.w, accumulationAlpha ) ) );
 
 			} );
 

@@ -4,7 +4,7 @@
  */
 
 import { beforeAll, expect, it } from 'vitest';
-import { DataTexture, DataUtils, RGBAFormat, FloatType } from 'three';
+import { DataTexture, DataUtils, RGBAFormat, FloatType, AgXToneMapping } from 'three';
 import { vec2, vec3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { LocalExposure, localExposureGain } from '@/core/Stages/LocalExposure.js';
@@ -16,7 +16,13 @@ const W = 384, H = 256;
 function image( fn, w = W, h = H ) {
 
 	const px = new Float32Array( w * h * 4 );
-	for ( let y = 0; y < h; y ++ ) for ( let x = 0; x < w; x ++ ) px.set( [ ...fn( x, y ), 1 ], ( y * w + x ) * 4 );
+	for ( let y = 0; y < h; y ++ ) for ( let x = 0; x < w; x ++ ) {
+
+		const c = fn( x, y );
+		px.set( c.length === 4 ? c : [ ...c, 1 ], ( y * w + x ) * 4 );
+
+	}
+
 	const t = new DataTexture( px, w, h, RGBAFormat, FloatType );
 	t.needsUpdate = true;
 	return { px, texture: t };
@@ -145,10 +151,10 @@ describeGPU( 'local exposure', () => {
 	} );
 
 	// Read back as the shaders see them: f32 in, f32 out.
-	async function built( img ) {
+	async function built( img, backdrop = 'environment' ) {
 
 		const s = new LocalExposure( renderer, { enabled: true, highlightContrast: 0.5, shadowContrast: 1, detailStrength: 1 } );
-		s.build( { getTexture: () => img.texture, getState: () => 0 } );
+		s.build( { getTexture: () => img.texture, getState: ( key ) => ( key === 'pathtracer:backdrop' ? backdrop : 0 ) } );
 		return {
 			stage: s,
 			grid: new Float32Array( await renderer.getArrayBufferAsync( s._grid.value ) ),
@@ -179,6 +185,60 @@ describeGPU( 'local exposure', () => {
 		const out = new Float32Array( await evaluate( renderer, 1, { uv: [ Float32Array.of( 0.3, 0.3 ), 'vec2' ], rgb: [ Float32Array.of( Infinity, Infinity, Infinity ), 'vec3' ] },
 			'float', ( { uv, rgb } ) => stage.gainNode( vec3( rgb ), vec2( uv ) ) ) );
 		expect( Number.isFinite( out[ 0 ] ) ).toBe( true );
+
+	} );
+
+	// The room with its right third a backdrop the camera saw past (alpha 0), dark or bright.
+	// A window onto it at the bottom left is partly covered and carries its colour.
+	const withBackdrop = ( level ) => image( ( x, y ) => {
+
+		if ( x >= 256 ) return [ level, level, level, 0 ];
+		if ( x < 64 && y >= 192 ) return [ 0.5 * level + 0.05, 0.5 * level + 0.05, 0.5 * level + 0.05, 0.5 ];
+		return room( x, y );
+
+	} );
+
+	it( 'builds from the scene alone while the backdrop is a solid colour', async () => {
+
+		const dark = await built( withBackdrop( 0.01 ), 'color' ), bright = await built( withBackdrop( 2 ), 'color' );
+		for ( let i = 0; i < dark.grid.length; i ++ ) expect( bright.grid[ i ] ).toBe( dark.grid[ i ] );
+		for ( let i = 0; i < dark.blur.length; i ++ ) expect( bright.blur[ i ] ).toBeCloseTo( dark.blur[ i ], 5 );
+		expect( dark.blur.every( Number.isFinite ) ).toBe( true );
+
+		// The room's gain, the window included, is the one it takes with no backdrop in the picture at all.
+		const gainAt = ( b, x, y ) => localExposureGain( b.stage._params, b.grid, b.blur, ( x + 0.5 ) / W, ( y + 0.5 ) / H, Y( ...room( x, y ) ), 0 );
+		for ( const [ x, y ] of [[ 40, 40 ], [ 200, 100 ], [ 240, 220 ]] ) expect( gainAt( bright, x, y ) ).toBeCloseTo( gainAt( dark, x, y ), 4 );
+
+		// The sky is part of the scene: an environment backdrop is built from as before.
+		const darkSky = await built( withBackdrop( 0.01 ) ), brightSky = await built( withBackdrop( 2 ) );
+		expect( Math.abs( gainAt( brightSky, 240, 220 ) / gainAt( darkSky, 240, 220 ) - 1 ) ).toBeGreaterThan( 0.01 );
+
+	} );
+
+	it( 'holds a solid backdrop at its own gain on the GPU as on the CPU', async () => {
+
+		const scene = withBackdrop( 0.3 );
+		const mapper = new PackedToneMapper( renderer.backend.device, 'test-tonemap', { input: 'texture' } );
+		mapper.ensureSize( W, H );
+		const tone = { exposure: 0.25, toneMapping: AgXToneMapping, saturation: 1 };
+		const local = ( await built( scene, 'color' ) ).stage.toneGain();
+		for ( const gain of [ { backdrop: 4 }, { ...local, backdrop: 4 } ] ) {
+
+			const gpu = await mapper.toRGBA8( renderer.backend.get( scene.texture ).texture, { ...tone, gain } );
+			const fn = gain.cpu ? await gain.cpu() : null;
+			const cpu = toneMapToRGBA8( scene.px, { ...tone, pixelGain: { fn, width: W, height: H, backdrop: gain.backdrop } } );
+			let worst = 0;
+			for ( let i = 0; i < cpu.length; i ++ ) worst = Math.max( worst, Math.abs( cpu[ i ] - gpu[ i ] ) );
+			expect( worst ).toBeLessThanOrEqual( 1 );
+
+			// The backdrop shows as at exposure 1 (0.25 × 4), whatever gain the room takes.
+			const held = toneMapToRGBA8( Float32Array.of( 0.3, 0.3, 0.3, 1 ), { ...tone, exposure: 1 } );
+			const at = ( H / 2 * W + 300 ) * 4;
+			expect( Math.abs( gpu[ at ] - held[ 0 ] ) ).toBeLessThanOrEqual( 1 );
+
+		}
+
+		mapper.dispose();
 
 	} );
 

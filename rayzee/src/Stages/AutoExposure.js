@@ -26,7 +26,7 @@ const BINS = 256;
 const LOG2_MIN = - 16;
 const LOG2_MAX = 12;
 const BIN_STOPS = ( LOG2_MAX - LOG2_MIN ) / BINS;
-// A tile below this has no light to meter: a black or transparent background is not part of the exposure.
+// A tile below this has no light to meter (a black sky, say): it is not part of the exposure.
 const BLACK = 2 ** - 24;
 const WEIGHT_SCALE = 65536;
 const MAX_TILE_READS = 256;
@@ -42,6 +42,10 @@ const MOTION_HOLD = 0.3; // a metering of a new view counts as motion for this l
 const DAMP_UNTIL = 1.5; // stops from the manual exposure: the room level is damped up to here...
 const FOLLOW_FROM = 3; // ...and followed fully from here
 const REC709_Y = [ 0.2126, 0.7152, 0.0722 ];
+// A pixel this covered saw only the scene. One less carries the backdrop's own colour: an edge, a window onto it.
+const FULL_COVERAGE = 0.999;
+// How the backdrop counts: weighed out by coverage (transparent), in full (the environment), not at all (a solid colour).
+const BACKDROP_MODES = { transparent: 0, environment: 1, color: 2 };
 
 /**
  * One adaptation step in stops: constant speed while far, exponential near the target, never past it.
@@ -93,15 +97,19 @@ const meterInterval = samples => samples < 16 ? 1 : samples < 64 ? 4 : 16;
 /**
  * Auto exposure: meters the accumulated image on the GPU and adapts on the CPU.
  *
- * Tiles are averaged in linear light, weighted by alpha, so a one-sample image meters like the
- * converged one; the percentile-clipped mean of their log2 histogram is read back. It aims at a room
- * level learned while the view changes plus a damped share of each view (`blendExposureEV`), moves in
- * stops every loop frame (`update()`: eased while the image restarts every frame, landing in ~0.3 s once
- * it accumulates), in video time (`advance()`, eased), or with each metering (`instant`), and is applied
- * as 2^EV × the manual exposure.
+ * Tiles are averaged in linear light, so a one-sample image meters like the converged one; the
+ * percentile-clipped mean of their log2 histogram is read back. The sky, also seen through windows, is
+ * part of what is lit and is metered; a transparent backdrop is weighed out by the path tracer's coverage
+ * (alpha); under a solid colour only pixels that saw the scene alone count, so its colour moves nothing.
+ *
+ * It aims at a room level learned while the view changes plus a damped share of each view
+ * (`blendExposureEV`), moves in stops every loop frame (`update()`: eased while the image restarts
+ * every frame, landing in ~0.3 s once it accumulates), in video time (`advance()`, eased), or with each
+ * metering (`instant`), and is applied as 2^EV × the manual exposure.
  *
  * Events listened: pipeline:reset, pipeline:lightingChanged (lands on the next metering)
  * Textures read: pathtracer:color
+ * State read: pathtracer:samples, pathtracer:backdrop
  * State published: autoexposure:value, autoexposure:avgLuminance
  */
 export class AutoExposure extends RenderStage {
@@ -133,6 +141,7 @@ export class AutoExposure extends RenderStage {
 		this._falloffU = uniform( new Vector2() );
 		this._pointU = uniform( new Vector2( 0.5, 0.5 ) );
 		this._lumWeightsU = uniform( new Vector3().fromArray( REC709_Y ) );
+		this._backdropModeU = uniform( BACKDROP_MODES.transparent, 'int' );
 		this._widthU = uniform( 1, 'int' );
 		this._heightU = uniform( 1, 'int' );
 		this._strideU = uniform( 1, 'int' );
@@ -178,6 +187,7 @@ export class AutoExposure extends RenderStage {
 		const hist = this._histogram;
 		const width = this._widthU, height = this._heightU, stride = this._strideU, gridX = this._gridXU, gridY = this._gridYU;
 		const lumWeights = this._lumWeightsU, falloff = this._falloffU, point = this._pointU;
+		const backdropMode = this._backdropModeU;
 
 		return Fn( () => {
 
@@ -199,7 +209,9 @@ export class AutoExposure extends RenderStage {
 					const lum = dot( c.xyz, lumWeights ).toVar();
 					// NaN or Inf would poison the whole tile.
 					const finite = floatBitsToUint( lum ).bitAnd( uint( 0x7f800000 ) ).notEqual( uint( 0x7f800000 ) );
-					const alpha = c.w.clamp( 0.0, 1.0 );
+					const coverage = c.w.clamp( 0.0, 1.0 );
+					const alpha = select( backdropMode.equal( int( BACKDROP_MODES.environment ) ), float( 1 ),
+						select( backdropMode.equal( int( BACKDROP_MODES.color ) ), select( coverage.greaterThanEqual( FULL_COVERAGE ), float( 1 ), float( 0 ) ), coverage ) );
 					sum.addAssign( select( finite, lum.clamp( 0.0, 1e6 ), float( 0 ) ).mul( alpha ) );
 					cover.addAssign( alpha );
 
@@ -388,6 +400,7 @@ export class AutoExposure extends RenderStage {
 		this._strideU.value = Math.max( 1, Math.round( Math.sqrt( tileReads / MAX_TILE_READS ) ) );
 		this._widthU.value = width;
 		this._heightU.value = height;
+		this._backdropModeU.value = BACKDROP_MODES[ context.getState( 'pathtracer:backdrop' ) ] ?? BACKDROP_MODES.transparent;
 		this._updateMeteringPattern( width / height );
 		this._inputNode.value = input;
 

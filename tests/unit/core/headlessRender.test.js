@@ -5,14 +5,14 @@ import { NoToneMapping } from 'three';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 /** Bare receiver: a real app needs a GPU, and everything here is orchestration. */
-function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], target = {} } = {} ) {
+function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], target = {}, transparent = false } = {} ) {
 
 	const pixels = new Float32Array( width * height * 4 );
 	for ( let i = 0; i < pixels.length; i += 4 ) pixels.set( pixel, i );
 
 	return {
 		stages: { pathTracer: { width, height, storageTextures: { readTarget: target } } },
-		settings: { get: ( key ) => ( key === 'saturation' ? 1 : undefined ) },
+		settings: { get: ( key ) => ( { saturation: 1, transparentBackground: transparent } )[ key ] },
 		renderer: {
 			toneMappingExposure: 1,
 			toneMapping: NoToneMapping,
@@ -69,7 +69,7 @@ describe( 'renderToBuffer', () => {
 
 	it( 'takes the bytes tone-mapped on the GPU without reading the float image back', async () => {
 
-		const app = makeApp();
+		const app = makeApp( { transparent: true } );
 		const bytes = new Uint8ClampedArray( 8 ).fill( 7 );
 		app._toneMapOnGPU = vi.fn( async () => bytes );
 
@@ -79,6 +79,18 @@ describe( 'renderToBuffer', () => {
 		expect( app._toneMapOnGPU.mock.calls[ 0 ][ 4 ] ).toMatchObject( { toneMapping: NoToneMapping, preserveAlpha: true } );
 		expect( app.renderer.readRenderTargetPixelsAsync ).not.toHaveBeenCalled();
 		expect( app._issues.list ).toHaveLength( 0 );
+
+	} );
+
+	// The accumulation's alpha is coverage: 0 where the camera saw only the backdrop, whatever the backdrop shows.
+	it( 'reads an opaque backdrop back opaque, and coverage only while the background is transparent', async () => {
+
+		const backdrop = [ 0.3, 0.3, 0.3, 0 ];
+		expect( ( await makeApp( { pixel: backdrop } ).renderToBuffer( { colorSpace: 'linear' } ) ).data[ 3 ] ).toBe( 1 );
+		expect( ( await makeApp( { pixel: backdrop, transparent: true } ).renderToBuffer( { colorSpace: 'linear' } ) ).data[ 3 ] ).toBe( 0 );
+
+		expect( ( await makeApp( { pixel: backdrop } ).renderToBuffer( { preserveAlpha: true } ) ).data[ 3 ] ).toBe( 255 );
+		expect( ( await makeApp( { pixel: backdrop, transparent: true } ).renderToBuffer( { preserveAlpha: true } ) ).data[ 3 ] ).toBe( 0 );
 
 	} );
 

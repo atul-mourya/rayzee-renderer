@@ -2724,7 +2724,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {string} [options.colorSpace='srgb'] - `'srgb'` for display bytes through the active
 	 *   view transform, `'linear'` for the raw working-space accumulation, or the name of a colour
 	 *   space in the loaded OCIO config for a delivery buffer (float, e.g. `'ACES2065-1'`)
-	 * @param {boolean} [options.preserveAlpha=false] - srgb only
+	 * @param {boolean} [options.preserveAlpha=false] - srgb only: coverage as alpha while the background is
+	 *   transparent, else 255. Float readbacks carry coverage then and 1 otherwise, as the canvas shows it.
 	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
 	 *   viewport is showing — denoised when a denoiser has run — instead of the raw
 	 *   accumulation
@@ -2750,6 +2751,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		// The pool over-allocates to the reserve, so the texture is larger than the frame.
 		const { width, height } = stage;
+		// The accumulation's alpha is always coverage; an opaque backdrop reads back opaque, as the Compositor draws it.
+		const transparent = !! this.settings.get( 'transparentBackground' );
 
 		if ( colorSpace === 'srgb' ) {
 
@@ -2758,15 +2761,16 @@ export class RayzeeRenderer extends EventDispatcher {
 				exposure: this.renderer.toneMappingExposure,
 				toneMapping: this.renderer.toneMapping,
 				saturation: this.settings.get( 'saturation' ) ?? 1,
-				preserveAlpha,
+				preserveAlpha: preserveAlpha && transparent,
 				gain: this._displayGain(),
 			};
 
 			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
-			const fn = ! gpu && tone.gain ? await tone.gain.cpu() : null;
+			const fn = ! gpu && tone.gain?.cpu ? await tone.gain.cpu() : null;
+			const backdrop = tone.gain?.backdrop ?? 0;
 			const data = gpu ?? toneMapToRGBA8( shown
 				? await this._readTexture( shown.texture, width, height )
-				: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: fn && { fn, width, height } } );
+				: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: ( fn || backdrop ) ? { fn, width, height, backdrop } : null } );
 			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
@@ -2774,6 +2778,12 @@ export class RayzeeRenderer extends EventDispatcher {
 		const { data: linear, source: read } = source === 'display'
 			? await this._readDisplaySource( target, width, height )
 			: { data: await readPixels( this.renderer, target, width, height ), source: 'accumulation' };
+		if ( ! transparent ) {
+
+			const one = linear instanceof Uint16Array ? 0x3C00 : 1; // a half-float target reads back as its bits
+			for ( let i = 3; i < linear.length; i += 4 ) linear[ i ] = one;
+
+		}
 
 		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
 		// answer to "linear in what primaries", which only means something once a config is loaded.
@@ -4072,7 +4082,10 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/** A per-pixel gain the shown picture carries before the view (the compositor's), for tone-mapped readbacks; or null. */
+	/**
+	 * A per-pixel gain the shown picture carries before the view (the compositor's), for tone-mapped readbacks; or null.
+	 * Its `backdrop`, when set, is the gain a solid backdrop is held at (`PackedToneMapper`'s `gain`).
+	 */
 	_displayGain() {
 
 		return null;
