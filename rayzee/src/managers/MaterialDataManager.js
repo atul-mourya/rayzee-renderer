@@ -503,6 +503,7 @@ export class MaterialDataManager {
 				break;
 			case 'bumpScale': data[ stride + M.BUMP_SCALE ] = value; break;
 			case 'displacementScale': data[ stride + M.DISPLACEMENT_SCALE ] = value; break;
+			case 'displacementBias': data[ stride + M.DISPLACEMENT_BIAS ] = value; break;
 			case 'subsurface': data[ stride + M.SUBSURFACE ] = value; break;
 			case 'subsurfaceRadiusScale': data[ stride + M.SUBSURFACE_RADIUS_SCALE ] = value; break;
 			case 'subsurfaceAnisotropy': data[ stride + M.SUBSURFACE_ANISOTROPY ] = value; break;

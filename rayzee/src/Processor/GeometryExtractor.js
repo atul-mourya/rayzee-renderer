@@ -1227,6 +1227,7 @@ export class GeometryExtractor {
 			normalScale: pick( 'normalScale' ),
 			bumpScale: pick( 'bumpScale' ),
 			displacementScale: pick( 'displacementScale' ),
+			displacementBias: pick( 'displacementBias' ),
 
 			transparent: material.transparent ? 1 : 0,
 			alphaTest: pick( 'alphaTest' ),

@@ -36,6 +36,7 @@ export const RayTracingMaterial = struct( {
 	bumpMapIndex: 'int',
 	bumpScale: 'float',
 	displacementScale: 'float',
+	displacementBias: 'float',
 	metalnessMapIndex: 'int',
 	roughnessMapIndex: 'int',
 	displacementMapIndex: 'int',

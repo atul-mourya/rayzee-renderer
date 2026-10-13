@@ -100,6 +100,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mat
     1,
   ],
   "dispersion": 0,
+  "displacementBias": 0,
   "displacementScale": 1,
   "emissive": [
     0,

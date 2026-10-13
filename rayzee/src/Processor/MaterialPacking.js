@@ -16,7 +16,7 @@ const TRANSFORMS = [
 
 /** Floats no field writes; the packer gives them fixed values. */
 export const MATERIAL_RESERVED_FLOATS = Object.freeze( [
-	M.VISIBLE, M.DISPLACEMENT_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2,
+	M.VISIBLE, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2,
 ] );
 
 /**
@@ -129,6 +129,7 @@ export function packMaterial( data, base, mat ) {
 	s( M.BUMP_SCALE, mat.bumpScale, D.bumpScale );
 	s( M.DISPLACEMENT_SCALE, mat.displacementScale, D.displacementScale );
 	data[ base + M.DISPLACEMENT_MAP_INDEX ] = mapIndex( mat.displacementMap );
+	s( M.DISPLACEMENT_BIAS, mat.displacementBias, D.displacementBias );
 
 	for ( const [ key, offset ] of TRANSFORMS ) {
 
@@ -163,7 +164,6 @@ export function packMaterial( data, base, mat ) {
 	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX ] = mapIndex( mat.diffuseTransmissionColorMap );
 
 	data[ base + M.VISIBLE ] = 1;
-	data[ base + M.DISPLACEMENT_MAP_INDEX + 1 ] = 0;
 	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1 ] = 0;
 	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2 ] = 0;
 

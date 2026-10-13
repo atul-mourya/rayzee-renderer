@@ -576,6 +576,13 @@ the strings, so never rename or repurpose one.
   equals the previous one. `tests/gpu/materialLayers.test.js` holds a layer-free material bit-identical with every
   layer compiled out; every bench golden is unchanged scene by scene. Frame time (`bench:ab`, 28 scenes, Apple
   M-series): −3.9 to −24.3 %, median −9.6 % — scenes with a layer gain too, from the others going.
+- **Displacement** (`TSL/Displacement.js`) — three.js's meaning: height = map × `displacementScale` + `displacementBias`,
+  scene units, along the normal (packed at 49 and 51). No tessellation: Shade marches the height field from the base hit
+  (a step per 4 texels crossed, 8–64 for camera rays, 16 for bounces) and shades with the marched UV and the field's slope
+  (central differences over 1.5 texels: an 8-bit map's one-texel slopes flicker). ⚠️ A point the march finds behind the
+  base triangle is moved onto its plane: rays spawned below it all hit that triangle, and everything under the mid-level
+  rendered black. No self-shadowing or silhouettes; otherwise a tessellated twin matches it (`tests/gpu/displacement.test.js`).
+  The app's Poly Haven loader sets the height to 2 % of the texture's width on the object, mid-grey on the surface.
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's

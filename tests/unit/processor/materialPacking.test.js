@@ -64,7 +64,7 @@ function sentinel( k ) {
 		dispersion: v(), sheen: u(), sheenRoughness: u(), sheenColor: rgb(),
 		specularIntensity: u(), specularColor: rgb(),
 		iridescence: u(), iridescenceIOR: v(), iridescenceThicknessRange: [ v(), v() ],
-		bumpScale: v(), displacementScale: v(), displacementMap: v(),
+		bumpScale: v(), displacementScale: v(), displacementMap: v(), displacementBias: v(),
 		mapMatrix: matrix(), normalMapMatrices: matrix(), roughnessMapMatrices: matrix(), metalnessMapMatrices: matrix(),
 		emissiveMapMatrices: matrix(), bumpMapMatrices: matrix(), displacementMapMatrices: matrix(),
 		subsurfaceColor: rgb(), subsurface: u(), subsurfaceRadius: rgb(), subsurfaceRadiusScale: v(),
@@ -104,6 +104,7 @@ describe( 'packMaterial', () => {
 		expectAt( M.SPECULAR_COLOR, mat.specularColor[ 0 ] );
 		expectAt( M.IRIDESCENCE_THICKNESS_RANGE + 1, mat.iridescenceThicknessRange[ 1 ] );
 		expectAt( M.DISPLACEMENT_MAP_INDEX, mat.displacementMap );
+		expectAt( M.DISPLACEMENT_BIAS, mat.displacementBias );
 		expectAt( M.ALBEDO_TRANSFORM, mat.mapMatrix[ 0 ] );
 		expectAt( M.DISPLACEMENT_TRANSFORM + 7, mat.displacementMapMatrices[ 7 ] );
 		expectAt( M.SUBSURFACE, mat.subsurface );

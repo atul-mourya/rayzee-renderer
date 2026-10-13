@@ -149,8 +149,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	SPECULAR_INTENSITY: 40, SPECULAR_COLOR: 41,
 	// Slot 11: iridescence + iridescenceIOR + iridescenceThicknessRange [extended BxDF]
 	IRIDESCENCE: 44, IRIDESCENCE_IOR: 45, IRIDESCENCE_THICKNESS_RANGE: 46,
-	// Slot 12: bumpScale + displacementScale + displacementMapIndex + (padding)
-	BUMP_SCALE: 48, DISPLACEMENT_SCALE: 49, DISPLACEMENT_MAP_INDEX: 50,
+	// Slot 12: bumpScale + displacementScale + displacementMapIndex + displacementBias
+	BUMP_SCALE: 48, DISPLACEMENT_SCALE: 49, DISPLACEMENT_MAP_INDEX: 50, DISPLACEMENT_BIAS: 51,
 
 	// ── Transform float offsets (8 floats each: 7 matrix values + 1 padding) ──
 	ALBEDO_TRANSFORM: 52,
@@ -193,7 +193,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		SHEEN_COLOR: 9, // [extended] sheenColor, diffuseTransmission
 		SPECULAR: 10, // [extended] specularIntensity, specularColor
 		IRIDESCENCE: 11, // [extended] iridescence, iridescenceIOR, iridescenceThicknessRange
-		BUMP_DISPLACEMENT: 12, // bumpScale, displacementScale, displacementMapIndex
+		BUMP_DISPLACEMENT: 12, // bumpScale, displacementScale, displacementMapIndex, displacementBias
 		ALBEDO_TRANSFORM_A: 13, ALBEDO_TRANSFORM_B: 14,
 		NORMAL_TRANSFORM_A: 15, NORMAL_TRANSFORM_B: 16,
 		ROUGHNESS_TRANSFORM_A: 17, ROUGHNESS_TRANSFORM_B: 18,

@@ -117,6 +117,7 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	normalScale: [ 1, 1 ],
 	bumpScale: 1,
 	displacementScale: 1,
+	displacementBias: 0,
 	transparent: 0,
 	alphaTest: 0,
 	alphaMode: 0,

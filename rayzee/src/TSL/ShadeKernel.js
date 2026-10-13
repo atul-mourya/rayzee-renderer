@@ -917,7 +917,7 @@ export function buildShadeKernel( params ) {
 		const displacedNormal = N.toVar();
 		If(
 			material.displacementMapIndex.greaterThanEqual( int( 0 ) )
-				.and( material.displacementScale.greaterThan( 0.0 ) ),
+				.and( material.displacementScale.notEqual( 0.0 ) ),
 			() => {
 
 				const dispRay = Ray( { origin, direction } );
@@ -1003,7 +1003,7 @@ export function buildShadeKernel( params ) {
 		const albedo = matSamples.albedo.toVar();
 		If(
 			material.displacementMapIndex.greaterThanEqual( int( 0 ) )
-				.and( material.displacementScale.greaterThan( 0.0 ) ),
+				.and( material.displacementScale.notEqual( 0.0 ) ),
 			() => {
 
 				N.assign( normalize( displacedNormal.add( matSamples.normal.sub( normalize( hitNormal ) ) ) ) );
