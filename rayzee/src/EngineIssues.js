@@ -6,6 +6,9 @@
  */
 export const ISSUE_CODES = Object.freeze( {
 	ADAPTER_SOFTWARE: 'adapter.software',
+	ADAPTER_UNAVAILABLE: 'adapter.unavailable',
+	DEVICE_UNAVAILABLE: 'device.unavailable',
+	WEBGPU_UNAVAILABLE: 'webgpu.unavailable',
 	ASSET_UNREACHABLE: 'asset.unreachable',
 	ASSET_AMBIGUOUS_ENTRY: 'asset.ambiguous_entry',
 	ASSET_ARCHIVE_TOO_LARGE: 'asset.archive_too_large',
@@ -42,9 +45,9 @@ export const ISSUE_SEVERITY = Object.freeze( { ERROR: 'error', WARNING: 'warning
 
 export class EngineIssueError extends Error {
 
-	constructor( issue ) {
+	constructor( issue, options ) {
 
-		super( `[${issue.code}] ${issue.message}` );
+		super( `[${issue.code}] ${issue.message}`, options );
 		this.name = 'EngineIssueError';
 		this.code = issue.code;
 		this.detail = issue.detail;
@@ -67,13 +70,24 @@ export class IssueLog {
 	/** @throws {EngineIssueError} when strict and severity is 'error' */
 	record( code, message, detail = {}, severity = ISSUE_SEVERITY.ERROR ) {
 
+		const issue = this._add( code, message, detail, severity );
+		if ( this.strict && severity === ISSUE_SEVERITY.ERROR ) throw new EngineIssueError( issue );
+		return issue;
+
+	}
+
+	/** For what nothing can continue past: records an error and throws it, strict or not. */
+	fail( code, message, detail = {}, cause ) {
+
+		throw new EngineIssueError( this._add( code, message, detail, ISSUE_SEVERITY.ERROR ), cause === undefined ? undefined : { cause } );
+
+	}
+
+	_add( code, message, detail, severity ) {
+
 		const issue = Object.freeze( { code, message, detail, severity, at: Date.now() } );
 		this._entries.push( issue );
-
 		this._onIssue?.( issue );
-
-		if ( this.strict && severity === ISSUE_SEVERITY.ERROR ) throw new EngineIssueError( issue );
-
 		return issue;
 
 	}

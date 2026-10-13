@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { IssueLog, EngineIssueError, ISSUE_CODES, ISSUE_SEVERITY } from '@/core/EngineIssues.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
 import { RenderPipeline } from '@/core/Pipeline/RenderPipeline.js';
+import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
+import { GPUFeatureName } from 'three/src/renderers/webgpu/utils/WebGPUConstants.js';
 
 describe( 'IssueLog', () => {
 
@@ -275,6 +277,76 @@ describe( 'pipeline stage failures', () => {
 		pipeline._reportStageFailure( 'compositor', 'render', new Error( 'x' ) );
 
 		expect( issues.list ).toHaveLength( 3 );
+
+	} );
+
+} );
+
+// Hosts name the failure from `error.code`; the message is free to change.
+describe( 'init() without a GPU', () => {
+
+	afterEach( () => vi.unstubAllGlobals() );
+
+	const initError = ( gpu ) => {
+
+		vi.stubGlobal( 'navigator', { gpu } );
+		const renderer = new RayzeeRenderer( null );
+		return renderer.init().then( () => expect.unreachable( 'init() resolved' ), ( error ) => ( { error, renderer } ) );
+
+	};
+
+	const adapter = ( requestDevice ) => ( {
+		info: { vendor: 'test' },
+		features: new Set( [ ...Object.values( GPUFeatureName ), 'not-a-three-feature' ] ),
+		limits: { maxStorageBuffersPerShaderStage: 10 },
+		requestDevice,
+	} );
+
+	it( 'types a missing WebGPU', async () => {
+
+		const { error } = await initError( undefined );
+		expect( error ).toBeInstanceOf( EngineIssueError );
+		expect( error.code ).toBe( ISSUE_CODES.WEBGPU_UNAVAILABLE );
+
+	} );
+
+	it( 'types a missing adapter, and records it, without strict', async () => {
+
+		const { error, renderer } = await initError( { requestAdapter: async () => null } );
+		expect( error ).toBeInstanceOf( EngineIssueError );
+		expect( error.code ).toBe( 'adapter.unavailable' );
+		expect( renderer.issues.map( ( issue ) => issue.code ) ).toEqual( [ 'adapter.unavailable' ] );
+
+	} );
+
+	it( 'types a rejected adapter request and keeps its cause', async () => {
+
+		const cause = new Error( 'no Vulkan driver' );
+		const { error } = await initError( { requestAdapter: async () => {
+
+			throw cause;
+
+		} } );
+		expect( error.code ).toBe( 'adapter.unavailable' );
+		expect( error.cause ).toBe( cause );
+
+	} );
+
+	it( 'types a refused device apart from a missing adapter', async () => {
+
+		const cause = new Error( 'out of memory' );
+		const requestDevice = vi.fn( async () => {
+
+			throw cause;
+
+		} );
+		const { error } = await initError( { requestAdapter: async () => adapter( requestDevice ) } );
+		expect( error.code ).toBe( 'device.unavailable' );
+		expect( error.cause ).toBe( cause );
+
+		// The device three.js would have requested: its features, where the adapter has them.
+		const { requiredFeatures } = requestDevice.mock.calls[ 0 ][ 0 ];
+		expect( requiredFeatures ).toEqual( Object.values( GPUFeatureName ) );
 
 	} );
 

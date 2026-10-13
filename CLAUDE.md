@@ -476,6 +476,10 @@ the strings, so never rename or repurpose one.
 - ⚠️ Any callback handed to a collaborator must be cleared in `dispose()`. `IssueLog.detach()` exists
   because `onIssue` captured the app and the most recently disposed app stayed reachable. Only
   `npm run bench:memory` catches this class — unit tests cannot.
+- What nothing can continue past goes through `IssueLog.fail()` (records, then throws in any mode): `init()` rejects
+  with `webgpu.unavailable` / `adapter.unavailable` / `device.unavailable`, the WebGPU error as `cause`. The engine
+  requests the one adapter and device itself and hands three.js the device (`THREE_DEVICE_FEATURES` mirrors three's
+  feature list); three destroys only a device it created, so `dispose()` destroys ours once three's teardown settles.
 - `Promise.allSettled` swallows a strict host's throw; `TextureCreator` rethrows the first rejected
   result for that reason. Any new allSettled aggregation needs the same. Likewise a catch that
   retries or re-records must rethrow an `EngineIssueError` untouched.

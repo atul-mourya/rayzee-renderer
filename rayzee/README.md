@@ -1079,6 +1079,19 @@ surface** — pin a version and branch on the strings; they are never renamed or
 `asset.unreachable` also covers what the engine fetches for itself: OIDN weights, IES profiles and
 gobos (`detail.asset` says which).
 
+`init()` cannot degrade past a missing GPU, so these three always reject it with an
+`EngineIssueError`, strict or not, and are recorded too. `error.cause` is the WebGPU error, when there was one:
+
+| Code | Raised when |
+|---|---|
+| `webgpu.unavailable` | there is no `navigator.gpu`, or three.js could start only WebGL2 on the canvas |
+| `adapter.unavailable` | `requestAdapter()` returned no adapter or rejected — no GPU, or no driver for it |
+| `device.unavailable` | the adapter was found but `requestDevice()` rejected |
+
+```js
+try { await engine.init(); } catch (error) { metrics.failure = error.code ?? 'unknown'; }
+```
+
 `settings.getEffective()` is the companion for the `setting.unknown_key` case: it returns every live
 setting as `{ value, source, routed }`, and `routed: false` means stored but reaching no stage.
 

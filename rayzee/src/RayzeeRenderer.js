@@ -123,6 +123,15 @@ function attachDeviceLostHandler( device, holder ) {
 
 }
 
+// three.js's GPUFeatureName, which it does not export: what its own device request enables.
+const THREE_DEVICE_FEATURES = [
+	'core-features-and-limits', 'depth-clip-control', 'depth32float-stencil8', 'texture-compression-bc',
+	'texture-compression-bc-sliced-3d', 'texture-compression-etc2', 'texture-compression-astc',
+	'texture-compression-astc-sliced-3d', 'timestamp-query', 'indirect-first-instance', 'shader-f16',
+	'rg11b10ufloat-renderable', 'bgra8unorm-storage', 'float32-filterable', 'float32-blendable', 'clip-distances',
+	'dual-source-blending', 'subgroups', 'texture-formats-tier1', 'texture-formats-tier2',
+];
+
 const SOFTWARE_ADAPTER = /swiftshader|llvmpipe|lavapipe|basic render|microsoft basic|warp/i;
 
 /**
@@ -822,9 +831,10 @@ export class RayzeeRenderer extends EventDispatcher {
 		// disposed graph stays reachable until another app claims the same canvas.
 		if ( this.canvas && _appsByCanvas.get( this.canvas ) === this ) _appsByCanvas.delete( this.canvas );
 
-		if ( this._gpuDevice ) {
+		const device = this._gpuDevice;
+		if ( device ) {
 
-			this._gpuDevice.onuncapturederror = null;
+			device.onuncapturederror = null;
 			this._gpuDevice = null;
 
 		}
@@ -836,7 +846,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
-		disposeRenderer( this.renderer );
+		// three.js destroys only a device it requested itself.
+		Promise.resolve( disposeRenderer( this.renderer ) ).finally( () => device?.destroy() );
 		this.renderer = null;
 
 		this.stages = {};
@@ -3664,14 +3675,25 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		if ( typeof navigator === 'undefined' || ! navigator.gpu ) {
 
-			throw new Error( 'WebGPU is not available — outside a browser, install one as navigator.gpu (for Node, the `webgpu` package)' );
+			this._issues.fail( ISSUE_CODES.WEBGPU_UNAVAILABLE, 'WebGPU is not available — outside a browser, install one as navigator.gpu (for Node, the `webgpu` package)' );
 
 		}
 
-		const adapter = await navigator.gpu.requestAdapter( { powerPreference: 'high-performance' } );
+		let adapter = null;
+		let adapterError;
+		try {
+
+			adapter = await navigator.gpu.requestAdapter( { powerPreference: 'high-performance' } );
+
+		} catch ( error ) {
+
+			adapterError = error;
+
+		}
+
 		if ( ! adapter ) {
 
-			throw new Error( 'Failed to get WebGPU adapter' );
+			this._issues.fail( ISSUE_CODES.ADAPTER_UNAVAILABLE, `no WebGPU adapter${adapterError ? ': ' + adapterError.message : ''}`, {}, adapterError );
 
 		}
 
@@ -3721,22 +3743,43 @@ export class RayzeeRenderer extends EventDispatcher {
 		// buys nothing, and 10 is already this adapter's ceiling.
 		requiredLimits.maxStorageBuffersPerShaderStage = Math.min( adapterLimits.maxStorageBuffersPerShaderStage, 10 );
 
-		this.renderer = new WebGPURenderer( {
-			canvas: this.canvas,
-			alpha: true,
-			powerPreference: 'high-performance',
-			requiredLimits,
-		} );
+		// Requested here rather than by three.js, so a failure is typed where it happens.
+		let device;
+		try {
 
-		await initWithoutFrameLoop( this.renderer, this._headless );
+			device = await adapter.requestDevice( {
+				requiredFeatures: THREE_DEVICE_FEATURES.filter( ( name ) => adapter.features.has( name ) ),
+				requiredLimits,
+			} );
+
+		} catch ( error ) {
+
+			this._issues.fail( ISSUE_CODES.DEVICE_UNAVAILABLE, `WebGPU device request failed: ${error.message}`, { adapter: { ...this.adapterInfo } }, error );
+
+		}
+
+		this.renderer = new WebGPURenderer( { canvas: this.canvas, alpha: true, device } );
+
+		try {
+
+			await initWithoutFrameLoop( this.renderer, this._headless );
+
+		} catch ( error ) {
+
+			device.destroy();
+			throw error;
+
+		}
 
 		// WebGPURenderer swaps in WebGL2 on failure with only a warn(). The wavefront path is
 		// compute-only, so every frame would fail against an empty canvas.
 		if ( ! this.renderer.backend?.isWebGPUBackend ) {
 
-			throw new Error(
-				'WebGPU backend unavailable — three.js fell back to WebGL2, which cannot run the ' +
-				'path tracer\'s compute kernels. Check GPU process flags and driver support.'
+			device.destroy();
+			this._issues.fail(
+				ISSUE_CODES.WEBGPU_UNAVAILABLE,
+				'three.js fell back to WebGL2, which cannot run the path tracer\'s compute kernels. ' +
+				'Check GPU process flags and driver support.'
 			);
 
 		}
@@ -3753,13 +3796,12 @@ export class RayzeeRenderer extends EventDispatcher {
 		// BVH and CPU-side texture data per create/dispose cycle. `lost` is a pending promise
 		// whose reaction cannot be unregistered, so it reads the app out of a holder that
 		// dispose() empties; `onuncapturederror` is cleared there directly.
-		const gpuDevice = this.renderer.backend?.device;
-		if ( gpuDevice?.lost ) {
+		this._gpuDevice = device;
+		if ( device.lost ) {
 
-			this._gpuDevice = gpuDevice;
 			this._deviceLostHolder = { app: this };
-			attachDeviceLostHandler( gpuDevice, this._deviceLostHolder );
-			gpuDevice.onuncapturederror = ( event ) => log.error( 'WebGPU uncaptured error:', event.error );
+			attachDeviceLostHandler( device, this._deviceLostHolder );
+			device.onuncapturederror = ( event ) => log.error( 'WebGPU uncaptured error:', event.error );
 
 		}
 
