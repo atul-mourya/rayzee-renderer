@@ -2378,16 +2378,16 @@ const useMaterialStore = create( ( set, get ) => ( {
 	handleDisplacementScaleChange: val => {
 
 		const value = Array.isArray( val ) ? val[ 0 ] : val;
+		const material = useStore.getState().selectedObject?.material;
+		if ( ! material ) return;
+
+		// The grey that stays on the surface, kept through a drag to 0 and back.
+		const midLevel = material.displacementScale
+			? - ( material.displacementBias ?? 0 ) / material.displacementScale
+			: material.userData.displacementMidLevel ?? 0;
+		material.userData.displacementMidLevel = midLevel;
 		get().updateMaterialProperty( 'displacementScale', value );
-
-		// Also update the material object directly for UI consistency
-		const obj = useStore.getState().selectedObject;
-		if ( obj?.material ) {
-
-			obj.material.displacementScale = value;
-			obj.material.needsUpdate = true;
-
-		}
+		get().updateMaterialProperty( 'displacementBias', - midLevel * value );
 
 	},
 

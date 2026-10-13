@@ -85,6 +85,7 @@ export const usePolyHavenMaterialApplicator = () => {
 
 			// Apply to selected object
 			const oldMaterial = selectedObject.material;
+			PolyHavenMaterialLoader.fitDisplacement( selectedObject, threeMaterial );
 			selectedObject.material = threeMaterial;
 
 			// Dispose old material and its textures

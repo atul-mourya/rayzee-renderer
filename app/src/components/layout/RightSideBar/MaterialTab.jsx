@@ -104,7 +104,7 @@ const TEXTURE_PROPERTIES = {
 	repeat: { type: 'linkable-vector2', default: { x: 1, y: 1 }, label: 'Repeat', tip: 'How many times the image repeats across the surface.' },
 	normalScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Normal Scale', tip: 'How strong the bumps from the normal map look.', textureTypes: [ 'normalMap' ] },
 	bumpScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Bump Scale', tip: 'How strong the bumps from the bump map look.', textureTypes: [ 'bumpMap' ] },
-	displacementScale: { type: 'number', default: 1, min: 0, max: 5, step: 0.1, label: 'Displacement Scale', tip: 'How deep the displacement map makes the surface look.', textureTypes: [ 'displacementMap' ] },
+	displacementScale: { type: 'number', default: 1, min: 0, max: 10, step: 0.005, precision: 3, label: 'Displacement Scale', tip: 'How tall the relief is from its darkest to its lightest part, in scene units (metres for most models).', textureTypes: [ 'displacementMap' ] },
 	rotation: { type: 'slider', default: 0, min: 0, max: 360, step: 1, label: 'Rotation (°)', tip: 'Turns the image on the surface.' },
 };
 
@@ -614,7 +614,7 @@ const MaterialTab = () => {
 			{
 
 				const numericValue = typeof value === 'number' ? value : ( value?.x ?? 1 );
-				return <NumberInput label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} value={numericValue} onValueChange={onChange} />;
+				return <NumberInput label={config.label} tip={config.tip} min={config.min} max={config.max} step={config.step} precision={config.precision} value={numericValue} onValueChange={onChange} />;
 
 			}
 

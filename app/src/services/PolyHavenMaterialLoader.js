@@ -4,7 +4,8 @@ import {
 	Color,
 	DoubleSide,
 	FrontSide,
-	BackSide
+	BackSide,
+	Vector3
 } from 'three';
 import { PolyHavenService } from './PolyHavenService';
 import { getApp } from '@/lib/appProxy';
@@ -16,6 +17,7 @@ import { getApp } from '@/lib/appProxy';
 export class PolyHavenMaterialLoader {
 
 	static textureLoader = new TextureLoader();
+	static RELIEF_OF_TILE = 0.02; // Poly Haven's Blender files: 2–10 % of a texture's real width, 2 % for cobblestone
 	static textureCache = new Map();
 
 	/**
@@ -280,6 +282,44 @@ export class PolyHavenMaterialLoader {
 			throw new Error( `Failed to create Three.js material: ${error.message}` );
 
 		}
+
+	}
+
+	/**
+	 * Sizes the displacement to the texture as drawn on `object`, mid-grey on the surface.
+	 * @param {Object3D} object - the mesh the material is on
+	 * @param {Material} material
+	 */
+	static fitDisplacement( object, material ) {
+
+		const geometry = object.geometry;
+		const position = geometry?.attributes.position;
+		const uv = geometry?.attributes.uv;
+		if ( ! material.displacementMap || ! position || ! uv ) return;
+
+		object.updateWorldMatrix( true, false );
+		const index = geometry.index;
+		const triangles = Math.floor( ( index ? index.count : position.count ) / 3 );
+		const stride = Math.max( 1, Math.floor( triangles / 10000 ) );
+		const a = new Vector3(), b = new Vector3(), c = new Vector3();
+		let worldArea = 0, uvArea = 0;
+
+		for ( let t = 0; t < triangles; t += stride ) {
+
+			const [ i0, i1, i2 ] = [ 0, 1, 2 ].map( k => index ? index.getX( t * 3 + k ) : t * 3 + k );
+			a.fromBufferAttribute( position, i0 ).applyMatrix4( object.matrixWorld );
+			b.fromBufferAttribute( position, i1 ).applyMatrix4( object.matrixWorld ).sub( a );
+			c.fromBufferAttribute( position, i2 ).applyMatrix4( object.matrixWorld ).sub( a );
+			worldArea += b.cross( c ).length();
+			uvArea += Math.abs( ( uv.getX( i1 ) - uv.getX( i0 ) ) * ( uv.getY( i2 ) - uv.getY( i0 ) ) - ( uv.getX( i2 ) - uv.getX( i0 ) ) * ( uv.getY( i1 ) - uv.getY( i0 ) ) );
+
+		}
+
+		if ( ! ( worldArea > 0 && uvArea > 0 ) ) return;
+		const { repeat } = material.displacementMap;
+		const tileWidth = Math.sqrt( worldArea / uvArea / Math.abs( repeat.x * repeat.y ) );
+		material.displacementScale = this.RELIEF_OF_TILE * tileWidth;
+		material.displacementBias = - 0.5 * material.displacementScale;
 
 	}
 

@@ -257,6 +257,8 @@ const InteractionContextMenu = () => {
 			iridescenceIOR: material.iridescenceIOR,
 			normalScale: material.normalScale?.x,
 			bumpScale: material.bumpScale,
+			displacementScale: material.displacementScale,
+			displacementBias: material.displacementBias,
 			// Textures (kept in state for internal copy-paste, ignored in JSON)
 			map: material.map,
 			normalMap: material.normalMap,
@@ -323,6 +325,8 @@ const InteractionContextMenu = () => {
 		if ( copiedMaterial.iridescenceIOR !== undefined ) material.iridescenceIOR = copiedMaterial.iridescenceIOR;
 		if ( copiedMaterial.normalScale !== undefined && material.normalScale ) material.normalScale.set( copiedMaterial.normalScale, copiedMaterial.normalScale );
 		if ( copiedMaterial.bumpScale !== undefined ) material.bumpScale = copiedMaterial.bumpScale;
+		if ( copiedMaterial.displacementScale !== undefined ) material.displacementScale = copiedMaterial.displacementScale;
+		if ( copiedMaterial.displacementBias !== undefined ) material.displacementBias = copiedMaterial.displacementBias;
 
 		// Apply textures
 		if ( copiedMaterial.map !== undefined ) material.map = copiedMaterial.map;
