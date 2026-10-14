@@ -915,9 +915,10 @@ export function buildShadeKernel( params ) {
 		// displacement: analytical ray-height marching refines hitPoint/UV/normal; no-op without a map
 		const samplingUV = hitUV.toVar();
 		const displacedNormal = N.toVar();
+		const displaced = material.displacementMapIndex.greaterThanEqual( int( 0 ) )
+			.and( material.displacementScale.notEqual( 0.0 ) ).toVar();
 		If(
-			material.displacementMapIndex.greaterThanEqual( int( 0 ) )
-				.and( material.displacementScale.notEqual( 0.0 ) ),
+			displaced,
 			() => {
 
 				const dispRay = Ray( { origin, direction } );
@@ -1002,8 +1003,7 @@ export function buildShadeKernel( params ) {
 
 		const albedo = matSamples.albedo.toVar();
 		If(
-			material.displacementMapIndex.greaterThanEqual( int( 0 ) )
-				.and( material.displacementScale.notEqual( 0.0 ) ),
+			displaced,
 			() => {
 
 				N.assign( normalize( displacedNormal.add( matSamples.normal.sub( normalize( hitNormal ) ) ) ) );
@@ -1086,9 +1086,18 @@ export function buildShadeKernel( params ) {
 
 		} );
 
+		// A displaced normal leans with the relief: the triangle says which side the ray arrives from.
+		const entering = dot( direction, N ).lessThan( 0.0 ).toVar();
+		If( displaced, () => {
+
+			const winding = windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance );
+			entering.assign( dot( direction, winding ).mul( dot( winding, hitNormal ) ).lessThan( 0.0 ) );
+
+		} );
+
 		const currentRay = Ray( { origin, direction } );
 		const interaction = MaterialInteractionResult.wrap( handleMaterialTransparency(
-			currentRay, N, material, rngState,
+			currentRay, N, entering, material, rngState,
 			_pixelCoord, resolution, frame, dimBase,
 			int( transTraversals ),
 			currentMediumIOR, previousMediumIOR,
@@ -1261,7 +1270,29 @@ export function buildShadeKernel( params ) {
 
 			// Off the side of the facet the new ray leaves on: reflection stays, transmission and alpha skip cross.
 			const Ng = unpackHitFacet( readHitFacet( hitBufferRW, rayID ) ).faceN;
-			const crossesFacet = dot( Ng, interaction.direction ).lessThan( 0.0 ).toVar();
+			const newDir = interaction.direction.toVar();
+			const crossesFacet = dot( Ng, newDir ).lessThan( 0.0 ).toVar();
+			If( displaced, () => {
+
+				// The relief is not geometry: only what is not reflected may cross the triangle, or the medium stack goes wrong.
+				const winding = windingNormal( triangleBuffer, bvhBuffer, int( hitTriIdx ), hitInstance );
+				const facing = select( dot( winding, direction ).lessThan( 0.0 ), winding, winding.negate() ).toVar();
+				crossesFacet.assign( interaction.didReflect.not() );
+				If( dot( facing, newDir ).lessThan( 0.0 ).notEqual( crossesFacet ), () => {
+
+					newDir.assign( newDir.sub( facing.mul( dot( newDir, facing ).mul( 2.0 ) ) ) );
+
+				} );
+
+				// Crossings start on the triangle, reflections on the relief only where it lies on the incoming ray (else past an edge).
+				const basePoint = origin.add( direction.mul( hitDist ) ).toVar();
+				If( crossesFacet.or( dot( hitPoint.sub( basePoint ), direction ).greaterThanEqual( 0.0 ) ), () => {
+
+					hitPoint.assign( basePoint );
+
+				} );
+
+			} );
 			const newOrigin = offsetRayOrigin( hitPoint, select( crossesFacet, Ng.negate(), Ng ) );
 
 			// SSS = free bounce (depth unchanged); transmission advances camera-bounce depth.
@@ -1279,7 +1310,7 @@ export function buildShadeKernel( params ) {
 				if ( bdpt ) {
 
 					misOnHit( subpath, hitDist.add( readMisRayT( rayBufferRW, rayID ) ), abs( dot( exactFacetN, direction ) ) );
-					misOnSpecular( subpath, abs( dot( exactFacetN, interaction.direction ) ) );
+					misOnSpecular( subpath, abs( dot( exactFacetN, newDir ) ) );
 					If( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ).notEqual( uint( 0 ) ), () => {
 
 						landLampPath( hitDist.add( readMisRayT( rayBufferRW, rayID ) ) );
@@ -1288,7 +1319,7 @@ export function buildShadeKernel( params ) {
 					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.LIGHT_EMITTED ) ) ) );
 					If( isLight.not().and( numAreaLights.greaterThan( int( 0 ) ) ), () => {
 
-						bidirectionalAreaHit( newOrigin, interaction.direction, null );
+						bidirectionalAreaHit( newOrigin, newDir, null );
 
 					} );
 
@@ -1312,7 +1343,7 @@ export function buildShadeKernel( params ) {
 			// Any redirection (refraction/reflection/SSS) breaks the line — reset.
 			const misRayT = select( interaction.isAlphaSkip, readMisRayT( rayBufferRW, rayID ).add( hitDist ), float( 0.0 ) );
 			writeRayOriginMeta( rayBufferRW, rayID, newOrigin, cameraDepth, sssSteps, transparentCount, misRayT );
-			writeRayDirFlags( rayBufferRW, rayID, interaction.direction, flags );
+			writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
 			// Free bounce: preserve prevBouncePdf (megakernel keeps the last opaque-scatter pdf across
 			// transmission/alpha-skip/SSS-boundary). Writing 1.0 corrupts the next bounce's env/emissive MIS,
 			// down-weighting environment/emitters seen through glass.

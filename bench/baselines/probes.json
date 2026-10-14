@@ -876,5 +876,27 @@
 			"samples": 64
 		},
 		"rmseVsTruth": 0.012340849307110973
+	},
+	"furnace-displaced-glass": {
+		"truth": {
+			"meanR": 1.0014313734709503,
+			"meanG": 1.0014313734709503,
+			"meanB": 1.0014313734709503,
+			"meanLuminance": 1.0014313734709503,
+			"maxLuminance": 1.3101582527160645,
+			"nonFinite": 0,
+			"samples": 512
+		},
+		"golden": {
+			"meanR": 1.0014559572109647,
+			"meanG": 1.0014559572109647,
+			"meanB": 1.0014559572109647,
+			"meanLuminance": 1.0014559572109647,
+			"maxLuminance": 1.928735852241516,
+			"nonFinite": 0,
+			"samples": 128
+		},
+		"rmseVsTruth": 0.001356732245633471,
+		"furnaceRatio": 1.0014559572109647
 	}
 }

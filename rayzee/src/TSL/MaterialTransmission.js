@@ -430,7 +430,7 @@ export const handleTransmission = Fn( ( [
 // ================================================================================
 
 export const handleMaterialTransparency = Fn( ( [
-	ray, normal, material, rngState,
+	ray, normal, entering, material, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	transmissiveTraversals,
 	currentMediumIOR, previousMediumIOR,
@@ -516,8 +516,6 @@ export const handleMaterialTransparency = Fn( ( [
 			// Only apply transmission with probability equal to the transmission value
 			If( transmissionRand.lessThan( material.transmission ), () => {
 
-				const entering = dot( ray.direction, normal ).lessThan( 0.0 );
-
 				const transResult = TransmissionResult.wrap( handleTransmission(
 					ray.direction, normal, material, entering, transmissionSeed,
 					pixelCoord, resolution, frame, dimBase,
@@ -541,7 +539,6 @@ export const handleMaterialTransparency = Fn( ( [
 		// (prob = weight) so 1-weight falls through to the opaque BRDF; exit is deterministic.
 		if ( materialLayers( builder ).subsurface ) If( handled.not().and( material.subsurface.greaterThan( 0.0 ) ), () => {
 
-			const entering = dot( ray.direction, normal ).lessThan( 0.0 );
 			const doEnter = entering.not().or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 8 ) ), rngState, resolution, frame ).lessThan( material.subsurface ) );
 
 			If( doEnter, () => {

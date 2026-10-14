@@ -103,7 +103,6 @@
 ### Materials
 
 - [ ] implement pending Physical material properties
-- [ ] transmission support for displacement materials
 - [ ] Supporting GPU-compressed texture arrays requires adding  per-scene format selection at build time - the TSL compiler doesn't support clean teardown/rebuild of compute pipelines when texture binding types change.
 
 ### Environment

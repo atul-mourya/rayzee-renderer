@@ -1387,6 +1387,46 @@ SCENES.push( {
 	},
 } );
 
+// Glass with a displacement map. The relief is not geometry: a refraction starts on the triangle, which says which side
+// the ray is on, or rays crossed twice and stacked the glass's IOR (read 1.72).
+SCENES.push( {
+	id: 'furnace-displaced-glass',
+	covers: 'white furnace — refraction through displaced glass (crossings start on the triangle, which decides the side)',
+	spp: 128,
+	truthSpp: 512,
+	settings: { maxBounces: 8, transmissiveBounces: 32, enableEnvironment: true, environmentIntensity: 1 },
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		// Egg-crate relief, the same with u or v mirrored, so the texture's row order cannot matter.
+		const size = 256, data = new Uint8Array( size * size * 4 );
+		for ( let y = 0; y < size; y ++ ) for ( let x = 0; x < size; x ++ ) {
+
+			const h = 0.5 + 0.5 * Math.cos( 6 * Math.PI * ( x + 0.5 ) / size ) * Math.cos( 6 * Math.PI * ( y + 0.5 ) / size );
+			data.fill( Math.round( h * 255 ), ( y * size + x ) * 4, ( y * size + x ) * 4 + 4 );
+
+		}
+
+		const relief = new DataTexture( data, size, size, RGBAFormat );
+		relief.wrapS = relief.wrapT = RepeatWrapping;
+		relief.minFilter = relief.magFilter = LinearFilter;
+		relief.needsUpdate = true;
+
+		const group = new Group();
+		group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), new MeshPhysicalMaterial( {
+			color: 0xffffff, roughness: 0, metalness: 0, transmission: 1, ior: 1.5, thickness: 1,
+			displacementMap: relief, displacementScale: 0.12, displacementBias: - 0.06,
+		} ) ) );
+		await app.loadObject3D( group, 'furnace-displaced-glass' );
+		setCamera( app, [ 0, 0, 2.6 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
 // Diffuse transmission (KHR_materials_diffuse_transmission): light crosses a closed sphere's surface diffusely, in and
 // out many times. Albedo 1 on both sides under a uniform sky makes the equilibrium radiance the sky's for any split,
 // so energy the transmission lobe, NEE through the surface or their MIS gains or loses reads here.

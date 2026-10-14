@@ -600,6 +600,11 @@ the strings, so never rename or repurpose one.
   base triangle is moved onto its plane: rays spawned below it all hit that triangle, and everything under the mid-level
   rendered black. No self-shadowing or silhouettes; otherwise a tessellated twin matches it (`tests/gpu/displacement.test.js`).
   The app's Poly Haven loader sets the height to 2 % of the texture's width on the object, mid-grey on the surface.
+  ⚠️ Glass and subsurface: the relief is not geometry, so the triangle decides entering vs leaving (winding against the
+  vertex normal), whatever is not reflected crosses it (a direction the leaning normal sent the wrong way is mirrored in
+  its plane), and only a reflection leaves from the relief, where that lies on the incoming ray — a crossing from the
+  relief hit its own triangle again, or a neighbour past the edge, and each extra crossing stacked the glass's IOR
+  (`furnace-displaced-glass` read 1.72).
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's
