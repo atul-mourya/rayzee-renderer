@@ -576,6 +576,12 @@ the strings, so never rename or repurpose one.
   equals the previous one. `tests/gpu/materialLayers.test.js` holds a layer-free material bit-identical with every
   layer compiled out; every bench golden is unchanged scene by scene. Frame time (`bench:ab`, 28 scenes, Apple
   M-series): −3.9 to −24.3 %, median −9.6 % — scenes with a layer gain too, from the others going.
+- **Transmission map** — transmission = factor × the map's R (linear bucket, albedo UV transform). Shade folds it in
+  `applyExtensionMaps`; shadow rays read it too (`traceShadowRay`), compiled in only while some material has one
+  (`transmissionMaps` in the build context, `MaterialDataManager.hasTransmissionMaps()`).
+  `tests/gpu/transmissionMapShadow.test.js`. ⚠️ `SceneProcessor` adopts every per-type texture list through
+  `_adoptTextureLists` (`TEXTURE_LISTS`): a list kept from an earlier extraction drops that map type after
+  `rebuildMaterials()`.
 - **Displacement** (`TSL/Displacement.js`) — three.js's meaning: height = map × `displacementScale` + `displacementBias`,
   scene units, along the normal (packed at 49 and 51). No tessellation: Shade marches the height field from the base hit
   (a step per 4 texels crossed, 8–64 for camera rays, 16 for bounces) and shades with the marched UV and the field's slope

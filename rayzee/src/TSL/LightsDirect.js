@@ -2,7 +2,7 @@
 // Direct lighting calculations including shadow ray tracing
 // and contribution calculations for all light types.
 
-import { sceneResources } from './SceneResources.js';
+import { sceneResources, usesTransmissionMaps } from './SceneResources.js';
 import {
 	Fn,
 	float,
@@ -30,6 +30,7 @@ import { Ray, ShadowMaterial, HitInfo } from './Struct.js';
 import {
 	REC709_LUMINANCE_COEFFICIENTS, getShadowMaterial, instanceRows,
 	instanceFaceNormalToWorld, triangleRow, shadowFlagsSettle, offsetRayOrigin,
+	getDatafromStorageBuffer, MATERIAL_SLOT, MATERIAL_SLOTS,
 } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
@@ -49,7 +50,8 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 	materialBuffer,
 ], builder ) => {
 
-	const { alphaShadows, shadowAlbedoMaps } = sceneResources( builder );
+	const { alphaShadows, shadowAlbedoMaps, linearBuckets } = sceneResources( builder );
+	const transmissionMaps = ! refractiveBlocks && usesTransmissionMaps( builder );
 	const transmittance = float( 1.0 ).toVar();
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
@@ -88,6 +90,19 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 		// Fetch material for the hit surface (thin reader: 7 slots instead of 27)
 		const shadowMaterial = ShadowMaterial.wrap( getShadowMaterial( shadowHit.materialIndex, materialBuffer ) );
 
+		// The hit's texture coordinates through the albedo transform, which Shade reads the extension maps with too.
+		const hitTextureUV = () => {
+
+			const baryU = shadowHit.uv.x;
+			const baryV = shadowHit.uv.y;
+			const baryW = float( 1.0 ).sub( baryU ).sub( baryV );
+			const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 3 ) );
+			const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).xy );
+			const hitUV = uvData1.xy.mul( baryW ).add( uvData1.zw.mul( baryU ) ).add( uvData2.mul( baryV ) );
+			return getTransformedUV( { uv: hitUV, transform: shadowMaterial.albedoTransform } );
+
+		};
+
 		// ---------------------------------------------------------------
 		// Alpha-cutout handling (MASK / BLEND with albedo texture alpha)
 		// Gated by runtime uniform + alphaMode check — zero overhead for opaque materials.
@@ -106,14 +121,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 
 				If( shadowMaterial.albedoMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-					const baryU = shadowHit.uv.x;
-					const baryV = shadowHit.uv.y;
-					const baryW = float( 1.0 ).sub( baryU ).sub( baryV );
-					const uvData1 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 3 ) );
-					const uvData2 = uintBitsToFloat( triangleRow( triangleBuffer, shadowHit.triangleIndex, 4 ).xy );
-					const hitUV = uvData1.xy.mul( baryW ).add( uvData1.zw.mul( baryU ) ).add( uvData2.mul( baryV ) );
-					const albedoUV = getTransformedUV( { uv: hitUV, transform: shadowMaterial.albedoTransform } );
-					texAlpha.assign( sampleBucket( shadowAlbedoMaps, shadowMaterial.albedoMapIndex, albedoUV ).a );
+					texAlpha.assign( sampleBucket( shadowAlbedoMaps, shadowMaterial.albedoMapIndex, hitTextureUV() ).a );
 
 				} );
 
@@ -167,6 +175,20 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 
 		} : () => {
 
+			let transmission = shadowMaterial.transmission;
+			if ( transmissionMaps ) {
+
+				// glTF's transmission is the factor × the map's R: where the map is black the surface is opaque.
+				transmission = transmission.toVar();
+				const mapIndex = int( getDatafromStorageBuffer( materialBuffer, shadowHit.materialIndex, int( MATERIAL_SLOT.EXT_MAP_INDICES_A ), int( MATERIAL_SLOTS ) ).r ).toVar();
+				If( mapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+					transmission.mulAssign( sampleBucket( linearBuckets, mapIndex, hitTextureUV() ).r );
+
+				} );
+
+			}
+
 			// Deferred geometric-normal compute — refetch triangle positions and
 			// derive the normal here so opaque/alpha-cutout shadow hits don't pay
 			// the cross+normalize cost in BVH traversal.
@@ -204,7 +226,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 			// Shadow rays go straight through, so both faces see the outside-in angle and eta.
 			const fresnel = fresnelDielectric( abs( dot( dir, N ) ), max( shadowMaterial.ior, 1.0 ) );
 
-			const matTransmittance = float( 1.0 ).sub( fresnel ).mul( shadowMaterial.transmission );
+			const matTransmittance = float( 1.0 ).sub( fresnel ).mul( transmission );
 			transmittance.mulAssign( matTransmittance );
 
 			// Early exit if almost no light passes through

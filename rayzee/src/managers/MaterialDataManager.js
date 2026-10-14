@@ -342,6 +342,16 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some material has a transmission map: only then do shadow rays sample one. */
+	hasTransmissionMaps() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) if ( data[ i * M.FLOATS_PER_MATERIAL + M.TRANSMISSION_MAP_INDEX ] >= 0 ) return true;
+		return false;
+
+	}
+
 	/**
 	 * Where a material property's value came from, as a MATERIAL_VALUE_SOURCE. `default` means the
 	 * model never said and the engine filled it in.

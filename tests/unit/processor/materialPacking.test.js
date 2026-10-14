@@ -366,6 +366,21 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	it( 'knows whether shadow rays have a transmission map to sample', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		packMaterial( data, 0, { transmission: 1 } );
+		packMaterial( data, F, {} );
+		manager.setMaterialData( data );
+		expect( manager.hasTransmissionMaps() ).toBe( false );
+
+		packMaterial( data, F, { transmission: 1, transmissionMap: 0 } );
+		manager.setMaterialData( data );
+		expect( manager.hasTransmissionMaps() ).toBe( true );
+
+	} );
+
 } );
 
 describe( 'SceneProcessor.rebuildMaterials', () => {

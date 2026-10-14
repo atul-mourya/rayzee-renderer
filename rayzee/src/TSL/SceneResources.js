@@ -13,6 +13,7 @@
  * @property {?Node} alphaShadows - int uniform, 1 = shadow rays test texture alpha; null = never
  * @property {?Object<string, boolean>} materialLayers - the MATERIAL_LAYERS some material uses; null = all of them
  * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
+ * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  */
 
 import { context } from 'three/tsl';
@@ -58,5 +59,12 @@ export function materialLayers( builder ) {
 export function usesLightRadius( builder ) {
 
 	return builder.context[ KEY ]?.lightRadius ?? true;
+
+}
+
+/** Whether the kernel being built has shadow rays sample transmission maps. Outside a scene kernel (a test) it does. */
+export function usesTransmissionMaps( builder ) {
+
+	return builder.context[ KEY ]?.transmissionMaps ?? true;
 
 }

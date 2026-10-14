@@ -427,6 +427,7 @@ export class PathTracer extends PathTracerStage {
 			this._materialFeaturesChanged = false;
 			const needed = this._layersToCompile();
 			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
+			if ( ! this._compiledTransmissionMaps && this.materialData.hasTransmissionMaps() ) this._outputsChanged = true;
 
 		}
 
@@ -1875,6 +1876,7 @@ export class PathTracer extends PathTracerStage {
 			alphaShadows: this.uniforms.get( 'enableAlphaShadows' ),
 			materialLayers: this._compiledLayers = this._layersToCompile(),
 			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
+			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
 		};
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
