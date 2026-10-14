@@ -14,7 +14,7 @@
  *   film:   { xresolution, yresolution, filename } | null,
  *   camera: { type, params, cameraToWorld:number[16] } | null,
  *   namedMaterials: Map<name, { type, params }>,
- *   namedTextures:  Map<name, { dataType, class, params }>,
+ *   namedTextures:  Map<name, { dataType, class, params, ctm? }>,  (ctm: where a position mapping was declared)
  *   shapes: [ { type, params, ctm, ctmEnd?, material, areaLight, reverseOrientation } ],
  *   lights: [ { type, params, ctm } ],
  *   instances: Map<name, { name, count, matrices, matricesEnd? }>,
@@ -744,7 +744,9 @@ export class PBRTParser {
 				const dataType = this._expectString( 'Texture data type' ); // float | spectrum
 				const texClass = this._expectString( 'Texture class' ); // imagemap | scale | ...
 				const params = this._parseParams();
-				this.ir.namedTextures.set( texName, { dataType, class: texClass, params } );
+				const def = { dataType, class: texClass, params };
+				if ( this._str( params.mapping, 'uv' ) !== 'uv' ) def.ctm = this._ctmSnapshot();
+				this.ir.namedTextures.set( texName, def );
 				break;
 
 			}

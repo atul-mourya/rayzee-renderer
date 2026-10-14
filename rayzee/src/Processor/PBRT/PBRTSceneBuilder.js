@@ -24,7 +24,7 @@ import {
 	RepeatWrapping
 } from 'three';
 import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
-import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha } from './PBRTTextureBake.js';
+import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
@@ -98,6 +98,8 @@ export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../HostMemory.js'
 const DEFAULT_MERGE_MIN_SHAPES = 256;
 const MERGE_VERTEX_LIMIT = 4096;
 const MERGE_BATCH_TRIANGLES = 500_000;
+// Copies of a template shape textured by position, each stored with its own uv, up to this many triangles in all.
+const MAPPED_COPY_TRIANGLES = 1_000_000;
 // Curve tessellation defaults. pbrt sweeps a spline analytically; a triangle tracer has to
 // pick a resolution, and isMountainB alone declares 5.18M curves — two samples per span and
 // a crossed pair of ribbons is 16 triangles a curve.
@@ -108,7 +110,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 11;
+export const PBRT_BUILD_REVISION = 12;
 
 function samePlacements( a, b ) {
 
@@ -209,10 +211,62 @@ function uvMapping( params ) {
 
 }
 
-function setMapping( texture, { su, sv, du, dv } ) {
+const POSITION_MAPPINGS = new Set( [ 'planar', 'spherical', 'cylindrical' ] );
+
+function pVector( params, name, dflt ) {
+
+	const v = params[ name ]?.value;
+	return v && v.length >= 3 ? [ v[ 0 ], v[ 1 ], v[ 2 ] ] : dflt;
+
+}
+
+/**
+ * pbrt's TextureMapping2D::Create: `uv` scales and shifts the mesh's uv; a position mapping is a uv set of its own (`uv`),
+ * generated per shape and read as it is. It maps from where the texture was declared (`ctm`).
+ */
+function textureMapping( params, ctm ) {
+
+	const type = pString( params, 'mapping', 'uv' );
+	if ( ! POSITION_MAPPINGS.has( type ) ) return { ...uvMapping( params ), uv: null };
+
+	const uv = { type, textureFromWorld: M.invert( ctm ?? M.identity() ) };
+	if ( type === 'planar' ) Object.assign( uv, {
+		vs: pVector( params, 'v1', [ 1, 0, 0 ] ), vt: pVector( params, 'v2', [ 0, 1, 0 ] ),
+		ds: pFloat( params, 'udelta', 0 ), dt: pFloat( params, 'vdelta', 0 )
+	} );
+	uv.key = JSON.stringify( uv );
+	return { su: 1, sv: 1, du: 0, dv: 0, uv };
+
+}
+
+function setMapping( texture, { su, sv, du, dv, uv = null } ) {
 
 	texture.repeat.set( su, sv );
 	texture.offset.set( du, dv );
+	if ( uv ) texture.userData.pbrtUV = uv;
+
+}
+
+// Material maps in the order that picks a surface's one uv set: its base colour's, else the first it has.
+const UV_MAPS = [ 'map', 'roughnessMap', 'clearcoatRoughnessMap', 'normalMap' ];
+const MAP_SCALARS = { roughnessMap: 'roughness', clearcoatRoughnessMap: 'clearcoatRoughness' };
+
+/** The position mapping a material's textures are read in, or null for the mesh's own uv. */
+function uvSetOf( material ) {
+
+	for ( const slot of UV_MAPS ) if ( material[ slot ] ) return material[ slot ].userData.pbrtUV ?? null;
+	return null;
+
+}
+
+// An attribute with `sources`' values appended, one copy each.
+function withCopies( attribute, sources ) {
+
+	const { array, itemSize, count } = attribute;
+	const out = new array.constructor( ( count + sources.length ) * itemSize );
+	out.set( array.subarray( 0, count * itemSize ) );
+	for ( let i = 0; i < sources.length; i ++ ) for ( let c = 0; c < itemSize; c ++ ) out[ ( count + i ) * itemSize + c ] = array[ sources[ i ] * itemSize + c ];
+	return new BufferAttribute( out, itemSize, attribute.normalized );
 
 }
 
@@ -464,8 +518,9 @@ function translucent( material, alpha ) {
 
 }
 
-const sameMapping = ( texture, { su, sv, du, dv } ) =>
-	texture.repeat.x === su && texture.repeat.y === sv && texture.offset.x === du && texture.offset.y === dv;
+const sameMapping = ( texture, { su, sv, du, dv, uv } ) =>
+	texture.repeat.x === su && texture.repeat.y === sv && texture.offset.x === du && texture.offset.y === dv &&
+	uvKey( texture.userData.pbrtUV ) === uvKey( uv );
 
 // An 8-bit image's colour with its alpha decoded as pbrt reads it; null when its alpha is opaque throughout.
 function withDecodedAlpha( pixels, decode ) {
@@ -560,6 +615,9 @@ export class PBRTSceneBuilder {
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
+		this._mappings = new Map(); // texture name -> its textureMapping()
+		this._oneUVSets = new WeakMap(); // material -> itself, or its maps read in one uv set
+		this._uvWarnings = new Set();
 
 	}
 
@@ -635,7 +693,7 @@ export class PBRTSceneBuilder {
 
 			if ( shape.type === 'plymesh' ) this._plyHeld.add( pString( shape.params, 'filename', null ) );
 
-			const mesh = this._meshFromGeometry( shape, geometry, sharedMaterial, shape.ctm, `shape_${i}` );
+			const mesh = this._meshFromGeometry( shape, this._mappedGeometry( geometry, sharedMaterial, shape.ctm ), sharedMaterial, shape.ctm, `shape_${i}` );
 			if ( ! mesh ) continue;
 			group.add( mesh );
 			if ( shape.motion ) this._animate( mesh, shape.motion );
@@ -828,16 +886,23 @@ export class PBRTSceneBuilder {
 
 				}
 
-				const [ geometry, sharedMaterial ] = await Promise.all( [
+				const [ built, sharedMaterial ] = await Promise.all( [
 					this._buildGeometry( shape ),
 					this._getMaterial( shape )
 				] );
-				if ( ! geometry ) continue;
+				if ( ! built ) continue;
+				let geometry = built;
 
-				if ( batches && shape.type !== 'plymesh' && ! shape.shared && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
+				const rel = shape.relativeCTM || shape.ctm;
+				if ( uvSetOf( sharedMaterial ) ) {
+
+					if ( this._placeMapped( list, shape, geometry, sharedMaterial, rel, group, name ) ) continue;
+					geometry = this._mappedGeometry( geometry, sharedMaterial, M.multiplyInto( new Array( 16 ), list.matrices, 0, rel ) );
+
+				} else if ( batches && shape.type !== 'plymesh' && ! shape.shared && geometry.getAttribute( 'position' ).count <= MERGE_VERTEX_LIMIT ) {
 
 					this._geometryCache.delete( shape );
-					const full = this._appendToBatch( batches, shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm );
+					const full = this._appendToBatch( batches, shape, geometry, sharedMaterial, rel );
 					this._releaseMerged( shape, geometry );
 					placeBatch( list, full );
 					continue;
@@ -846,7 +911,7 @@ export class PBRTSceneBuilder {
 
 				const tris = this._accountGeometry( geometry );
 				const material = this._materialForGeometry( shape, geometry, sharedMaterial, `instances_${name}` );
-				place( list, geometry, material, shape.relativeCTM || shape.ctm, shape.type, shape.material?.type || 'diffuse', tris );
+				place( list, geometry, material, rel, shape.type, shape.material?.type || 'diffuse', tris );
 
 			}
 
@@ -862,6 +927,34 @@ export class PBRTSceneBuilder {
 			freeNow( list.matricesEnd );
 
 		}
+
+	}
+
+	/**
+	 * pbrt maps each copy of a template where it stands, so a shape textured by position is placed as a mesh a copy, each
+	 * with its own uv set. False, placing nothing, past MAPPED_COPY_TRIANGLES: the copies then share the first one's.
+	 * @private
+	 */
+	_placeMapped( list, shape, geometry, material, rel, group, name ) {
+
+		const tris = ( geometry.index ? geometry.index.count : geometry.getAttribute( 'position' ).count ) / 3;
+		if ( list.count * tris > MAPPED_COPY_TRIANGLES ) {
+
+			this.warn( `ObjectInstance "${name}": its ${list.count.toLocaleString()} copies share the first one's uv from a position-mapped texture` );
+			return false;
+
+		}
+
+		let i = 0;
+		for ( ; i < list.count && ! this._overBudget(); i ++ ) {
+
+			const world = M.multiplyInto( new Array( 16 ), list.matrices, i * 16, rel );
+			group.add( this._meshFromGeometry( shape, this._mappedGeometry( geometry, material, world ), material, world, `instances_${name}_${i}` ) );
+
+		}
+
+		this.skippedForBudget += list.count - i;
+		return true;
 
 	}
 
@@ -942,7 +1035,9 @@ export class PBRTSceneBuilder {
 				const shape = template[ s ];
 				const [ geometry, sharedMaterial ] = await Promise.all( [ this._buildGeometry( shape ), this._getMaterial( shape ) ] );
 				if ( ! geometry ) continue;
-				const mesh = this._meshFromGeometry( shape, geometry, sharedMaterial, shape.relativeCTM || shape.ctm, `${node.name}_${s}`, true );
+				const rel = shape.relativeCTM || shape.ctm;
+				const mapped = this._mappedGeometry( geometry, sharedMaterial, M.multiply( start, rel ) );
+				const mesh = this._meshFromGeometry( shape, mapped, sharedMaterial, rel, `${node.name}_${s}`, true );
 				if ( mesh ) node.add( mesh );
 
 			}
@@ -1145,7 +1240,7 @@ export class PBRTSceneBuilder {
 
 		this.reportedMeshes ++;
 		const world = this.convertHandedness ? M.multiply( FLIP_Z, shape.ctm ) : shape.ctm;
-		const full = this._appendToBatch( this._batches, shape, geometry, sharedMaterial, world );
+		const full = this._appendToBatch( this._batches, shape, this._mappedGeometry( geometry, sharedMaterial, shape.ctm ), sharedMaterial, world );
 		this._releaseMerged( shape, geometry );
 		if ( full ) this._flushBatch( full, group );
 
@@ -1691,7 +1786,75 @@ export class PBRTSceneBuilder {
 
 		let material = await this._surfaceMaterial( shape );
 		if ( shape.interior ) material = await this._inMedium( material, shape.interior );
-		return shape.params.alpha ? this._withAlpha( material, shape.params.alpha ) : material;
+		if ( shape.params.alpha ) material = await this._withAlpha( material, shape.params.alpha );
+		return this._oneUVSet( material );
+
+	}
+
+	/**
+	 * The material with every map in its one uv set (`uvSetOf`): the engine reads one a triangle. A map in another
+	 * counts as its mean (a roughness) or is dropped, reported once.
+	 * @private
+	 */
+	_oneUVSet( material ) {
+
+		let out = this._oneUVSets.get( material );
+		if ( out ) return out;
+		out = material;
+		const set = uvSetOf( material );
+		const what = ( uv ) => ( uv ? `a "${uv.type}" mapping` : 'the mesh\'s uv' );
+
+		for ( const slot of UV_MAPS ) {
+
+			const map = material[ slot ];
+			if ( ! map || uvKey( map.userData.pbrtUV ) === uvKey( set ) ) continue;
+			if ( out === material ) out = cloneMaterial( material );
+			out[ slot ] = null;
+			const scalar = MAP_SCALARS[ slot ];
+			const layer = scalar && this._textureLayer( map, 1 );
+			if ( layer ) out[ scalar ] *= layerMean( layer );
+			const message = `a ${slot} in ${what( map.userData.pbrtUV )} on a surface textured in ${what( set )}: ` +
+				`one uv set a surface — ${layer ? 'its mean used' : 'dropped'}`;
+			if ( ! this._uvWarnings.has( message ) ) {
+
+				this._uvWarnings.add( message );
+				this.warn( message );
+
+			}
+
+		}
+
+		this._oneUVSets.set( material, out );
+		return out;
+
+	}
+
+	/**
+	 * `geometry` with the uv set its material's position mapping gives it at `world` (pbrt's, column-major); as it is
+	 * when the material reads the mesh's own uv. Attributes are shared unless a seam copied vertices.
+	 * @private
+	 */
+	_mappedGeometry( geometry, material, world ) {
+
+		const mapping = uvSetOf( material );
+		if ( ! mapping ) return geometry;
+
+		const { uv, index, extra } = generateUV(
+			geometry.getAttribute( 'position' ).array, geometry.index?.array ?? null, M.multiply( mapping.textureFromWorld, world ), mapping
+		);
+		const out = new BufferGeometry();
+		out.name = geometry.name;
+		Object.assign( out.userData, geometry.userData );
+		for ( const name in geometry.attributes ) {
+
+			if ( name !== 'uv' ) out.setAttribute( name, extra.length ? withCopies( geometry.getAttribute( name ), extra ) : geometry.getAttribute( name ) );
+
+		}
+
+		out.setAttribute( 'uv', new BufferAttribute( uv, 2 ) );
+		if ( index ) out.setIndex( new Uint32BufferAttribute( index, 1 ) );
+		else if ( geometry.index ) out.setIndex( geometry.index );
+		return out;
 
 	}
 
@@ -1736,15 +1899,16 @@ export class PBRTSceneBuilder {
 
 		const def = this.ir.namedTextures.get( name );
 		const filename = def?.class === 'imagemap' ? pString( def.params, 'filename', null ) : null;
+		const mapping = filename && this._textureMapping( name, def );
 		// Most often the alpha is the colour map's own image: its colour stays as it is.
-		if ( filename && colorMap?.userData.pbrtImage === filename && pString( def.params, 'mapping', 'uv' ) === 'uv'
-			&& pFloat( def.params, 'scale', 1 ) === 1 && ! pBool( def.params, 'invert', false ) && sameMapping( colorMap, uvMapping( def.params ) ) ) {
+		if ( filename && colorMap?.userData.pbrtImage === filename
+			&& pFloat( def.params, 'scale', 1 ) === 1 && ! pBool( def.params, 'invert', false ) && sameMapping( colorMap, mapping ) ) {
 
 			const pixels = texturePixels( colorMap );
 			const own = pixels && withDecodedAlpha( pixels, decoderFor( def.params ) );
 			if ( own ) {
 
-				setMapping( own, uvMapping( def.params ) );
+				setMapping( own, mapping );
 				return own;
 
 			}
@@ -1756,7 +1920,7 @@ export class PBRTSceneBuilder {
 		if ( ! alpha.layer ) return { constant: alpha.rgb[ 0 ] };
 		const color = colorMap ? this._textureLayer( colorMap, 3 ) : null;
 		if ( colorMap && ! color ) return null;
-		const baked = bake( [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], ( [ c ] ) => c, { alphaOf: ( [ , a ] ) => a[ 0 ] } );
+		const baked = this._bake( `alpha "${name}"`, [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], ( [ c ] ) => c, { alphaOf: ( [ , a ] ) => a[ 0 ] } );
 		return baked && bakedTexture( baked );
 
 	}
@@ -1993,9 +2157,7 @@ export class PBRTSceneBuilder {
 
 		};
 
-		const mapping = pString( params, 'mapping', 'uv' );
-		if ( mapping !== 'uv' ) this.warn( `texture "${name}": "${mapping}" mapping is not supported — using the mesh's uv` );
-		const { su, sv, du, dv } = uvMapping( params );
+		const { su, sv, du, dv, uv } = this._textureMapping( name, def );
 
 		if ( def.class === 'checkerboard' ) {
 
@@ -2009,7 +2171,7 @@ export class PBRTSceneBuilder {
 			const [ a, b ] = await Promise.all( [ value( 'tex1', [ 1, 1, 1 ] ), value( 'tex2', [ 0, 0, 0 ] ) ] );
 			const n = 2 * CHECK_TEXELS;
 			const data = rasterize( n, n, ( s, t ) => ( ( Math.floor( 2 * s ) + Math.floor( 2 * t ) ) % 2 ? b : a ) );
-			return { texture: bakedTexture( { data, width: n, height: n, mapping: { su: su / 2, sv: sv / 2, du: du / 2, dv: dv / 2 } } ) };
+			return { texture: bakedTexture( { data, width: n, height: n, mapping: { su: su / 2, sv: sv / 2, du: du / 2, dv: dv / 2, uv } } ) };
 
 		}
 
@@ -2018,7 +2180,32 @@ export class PBRTSceneBuilder {
 		] );
 		const data = rasterize( BILERP_TEXELS, BILERP_TEXELS, ( s, t ) => [ 0, 1, 2 ].map( ( c ) =>
 			( 1 - s ) * ( 1 - t ) * v00[ c ] + s * ( 1 - t ) * v10[ c ] + ( 1 - s ) * t * v01[ c ] + s * t * v11[ c ] ) );
-		return { texture: bakedTexture( { data, width: BILERP_TEXELS, height: BILERP_TEXELS, mapping: { su, sv, du, dv } } ) };
+		return { texture: bakedTexture( { data, width: BILERP_TEXELS, height: BILERP_TEXELS, mapping: { su, sv, du, dv, uv } } ) };
+
+	}
+
+	/** A named texture's textureMapping(), once; a mapping pbrt does not know is reported and read as `uv`. @private */
+	_textureMapping( name, def ) {
+
+		let mapping = this._mappings.get( name );
+		if ( ! mapping ) {
+
+			const type = pString( def.params, 'mapping', 'uv' );
+			if ( type !== 'uv' && ! POSITION_MAPPINGS.has( type ) ) this.warn( `texture "${name}": unknown mapping "${type}" — using the mesh's uv` );
+			this._mappings.set( name, mapping = textureMapping( def.params, def.ctm ) );
+
+		}
+
+		return mapping;
+
+	}
+
+	/** bake(), reporting the inputs it had to read as their mean. @private */
+	_bake( label, terms, combine, options ) {
+
+		const baked = bake( terms, combine, options );
+		if ( baked?.averaged ) this.warn( `${label}: ${baked.averaged} input(s) in another uv set than the first image — read as their mean` );
+		return baked;
 
 	}
 
@@ -2059,14 +2246,12 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const mapping = pString( def.params, 'mapping', 'uv' );
-		if ( mapping !== 'uv' ) this.warn( `texture "${name}": "${mapping}" mapping is not supported — using the mesh's uv` );
-
+		const mapping = this._textureMapping( name, def );
 		const scale = pFloat( def.params, 'scale', 1 );
 		if ( scale > 1 || pBool( def.params, 'invert', false ) ) {
 
 			const term = await this._bakeTerm( name, 3 );
-			const baked = term?.layer && bake( [ { ...term, clamp: true } ], ( [ v ] ) => v );
+			const baked = term?.layer && this._bake( `texture "${name}"`, [ { ...term, clamp: true } ], ( [ v ] ) => v );
 			if ( baked ) return { texture: bakedTexture( baked ) };
 			this.warn( `texture "${name}": its scale or invert could not be baked here — ignored` );
 
@@ -2075,7 +2260,7 @@ export class PBRTSceneBuilder {
 		const color = eightBit( image, { srgb: true } );
 		const texture = color === image ? image.clone() : color;
 		texture.userData.pbrtImage = filename;
-		setMapping( texture, uvMapping( def.params ) );
+		setMapping( texture, mapping );
 		texture.needsUpdate = true;
 		return scale < 1 ? { texture, constant: [ scale, scale, scale ] } : { texture };
 
@@ -2090,7 +2275,7 @@ export class PBRTSceneBuilder {
 
 		const terms = await Promise.all( keys.map( ( key ) => this._paramTerm( params, key, 1, [ 0, 0, 0 ] ) ) );
 		if ( terms.some( ( term ) => ! term ) ) return null;
-		const baked = bake( terms, ( values ) => {
+		const baked = this._bake( `"${keys.join( '", "' )}"`, terms, ( values ) => {
 
 			const v = combine( values.map( ( value ) => value[ 0 ] ) );
 			return [ v, v, v ];
@@ -2116,7 +2301,7 @@ export class PBRTSceneBuilder {
 		}
 
 		const unit = ( rgb ) => rgb.map( ( v ) => Math.min( 1, Math.max( 0, v ) ) );
-		const baked = bake( [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf );
+		const baked = this._bake( `texture "${name}"`, [ { ...a, clamp: true }, { ...b, clamp: true }, amount ], mixOf );
 		return baked ? { texture: bakedTexture( baked ) } : { constant: mixOf( [ unit( a.rgb ), unit( b.rgb ), amount.rgb ] ) };
 
 	}
@@ -2153,13 +2338,12 @@ export class PBRTSceneBuilder {
 		const def = this.ir.namedTextures.get( name );
 		if ( def?.class === 'imagemap' ) {
 
-			if ( pString( def.params, 'mapping', 'uv' ) !== 'uv' ) return null;
 			const filename = pString( def.params, 'filename', null );
 			const pixels = texturePixels( filename && await this._image( filename ) );
 			if ( ! pixels ) return null;
 			return { layer: makeLayer( pixels, {
 				channels, decode: pixels.float ? null : decoderFor( def.params ),
-				scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: uvMapping( def.params )
+				scale: pFloat( def.params, 'scale', 1 ), invert: pBool( def.params, 'invert', false ), mapping: this._textureMapping( name, def )
 			} ) };
 
 		}
@@ -2180,7 +2364,7 @@ export class PBRTSceneBuilder {
 		const srgb = ! pixels.float && texture.colorSpace === SRGBColorSpace;
 		return makeLayer( pixels, {
 			channels, decode: pixels.float ? null : ( srgb ? srgbToLinear : ( v ) => v ),
-			mapping: { su: texture.repeat.x, sv: texture.repeat.y, du: texture.offset.x, dv: texture.offset.y }
+			mapping: { su: texture.repeat.x, sv: texture.repeat.y, du: texture.offset.x, dv: texture.offset.y, uv: texture.userData.pbrtUV ?? null }
 		} );
 
 	}
@@ -2207,7 +2391,7 @@ export class PBRTSceneBuilder {
 
 		const a = term( matA ), b = term( matB );
 		if ( ! a || ! b ) return { mean, texture: null };
-		const baked = bake( [ a, b, amount ], mixOf );
+		const baked = this._bake( `mix amount "${amountName}"`, [ a, b, amount ], mixOf );
 		return { mean, texture: baked ? bakedTexture( baked ) : null };
 
 	}
@@ -2243,7 +2427,7 @@ export class PBRTSceneBuilder {
 			const product = ( [ a, f ] ) => [ a[ 0 ] * f[ 0 ], a[ 1 ] * f[ 0 ], a[ 2 ] * f[ 0 ] ];
 			if ( inner && factor ) {
 
-				const baked = bake( [ { ...inner, clamp: true }, factor ], product );
+				const baked = this._bake( `texture "${name}"`, [ { ...inner, clamp: true }, factor ], product );
 				return baked ? { texture: bakedTexture( baked ) } : { constant: product( [ inner.rgb, factor.rgb ] ) };
 
 			}

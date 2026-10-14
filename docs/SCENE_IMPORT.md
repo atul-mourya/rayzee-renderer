@@ -92,8 +92,15 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   material with a textured amount (its colours baked, everything else weighed by the amount's mean). Each colour
   input is clamped to [0, 1] before mixing, as pbrt clamps an albedo. A float texture reads an image's alpha where it has
   one, else the mean of its colour, as pbrt does. 2D `checkerboard` and `bilerp` are baked too (`_proceduralTexture`).
-  An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset; `planar`/`spherical`/
-  `cylindrical` mappings, `dots` and `directionmix` are not supported. ⚠️ `material.clone()` drops the engine's own
+  An imagemap's `uscale`/`vscale`/`udelta`/`vdelta` become the texture's repeat/offset. A `planar`/`spherical`/
+  `cylindrical` mapping (pbrt-v4 `textures.h`; planar reads `v1`/`v2`/`udelta`/`vdelta`, the others nothing) is a uv set
+  generated per shape from its world positions, taken into the space the texture was declared in (`generateUV`): a
+  triangle across the seam gets copies of its vertices a turn on, a vertex on the axis its triangle's mean angle. The
+  engine reads one uv set a triangle, so a surface takes its base colour's (else its first map's); a map in another set
+  becomes its mean (a roughness) or is dropped, a bake input in another set its mean, each reported. A .ply shared by shapes mapped
+  apart is stored once each, and pbrt maps each copy of a template where it stands, so those copies are meshes of their
+  own up to 1M triangles in all (past it they share the first copy's uv, reported); a moving shape is mapped at its start.
+  `dots` and `directionmix` are not supported. ⚠️ `material.clone()` drops the engine's own
   properties (diffuse transmission, subsurface): use `cloneMaterial`. Bump `PBRT_BUILD_REVISION` with any of this, or a
   stored graph of the old build comes back.
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
