@@ -970,6 +970,9 @@ least-recently-used), `user` (never evicted) or `scratch` (`spill`, cleared at o
 - ⚠️ `EntryWriter.write` copies its data before its first await. Download revalidation is a 1-byte `Range` GET, never
   HEAD (the asset host's CORS allows GET only).
 - ⚠️ The scene-cache codec carries colours and `ior` exactly (`exactColors`, `exactIor`): `Material.toJSON` rounds both.
+- ⚠️ A stored pbrt graph gets its `meta.json` only once the engine has accepted the load
+  (`assetLoader.commitPendingGraph( model )`, end of `_loadWithSceneRebuild` / `_onAssetLoaded`); a failed, superseded
+  or disposed load aborts it. A new replace-load seam must commit too, or nothing is ever stored.
 - **Memory spill** (`memorySpill`: `'auto'` default | true | false): `RayzeeRenderer._planSpill` decides per build;
   `'auto'` spills a static scene past `SAFE_SCENE_BYTES`, and ordinary models never do. A spilling scene of more than one
   chunk is extracted and built together; its three.js geometry goes to disk during the build (and stays there past

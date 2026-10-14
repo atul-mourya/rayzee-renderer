@@ -45,7 +45,12 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   read-back is under a third of it (`worthStoring`). A parse slow enough on its own is written
   *during* the build, each array let go once written: held until the build ended, the encoded
   graph kept every array the build replaces (float normals, instance matrices) alive — ~1 GB at
-  the peak on the whole Moana subset. The BLAS cache is content-checked — a
+  the peak on the whole Moana subset. Only the data goes early: the entry's `meta.json` (the commit)
+  waits until the engine has accepted the load (`ArchiveImporter.commitPendingGraph`, called by the
+  renderer once the build, upload and announcement all succeeded). A load that fails, is superseded
+  before that, or whose app is disposed aborts the entry — the write stops between 32 MB pieces and
+  the directory is removed — so a later open never restores a scene the engine rejected (a 3 GB graph
+  had been stored that way). The BLAS cache is content-checked — a
   template's stored BLAS is used only if its position checksum matches — so extraction, TLAS and
   textures always run as before. ⚠️ `Material.toJSON` stores colours as 8-bit sRGB hex and
   `MaterialLoader` rounds `ior` through `reflectivity`; the codec carries both exactly

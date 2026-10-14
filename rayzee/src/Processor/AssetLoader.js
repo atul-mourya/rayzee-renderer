@@ -420,6 +420,13 @@ export class AssetLoader extends EventDispatcher {
 
 	}
 
+	/** @see ArchiveImporter#commitPendingGraph */
+	commitPendingGraph( model ) {
+
+		this.archives?.commitPendingGraph( model );
+
+	}
+
 	// Blob's own readers, not FileReader: Node has no FileReader.
 	readFileAsArrayBuffer( file ) {
 

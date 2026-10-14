@@ -1233,7 +1233,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			this._modelReplaced();
 			// Before the scene's own environment starts loading: a spilling scene's is narrowed as it decodes.
 			this._planSpill();
-			await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
+			const built = await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
 			this._maybeSpill();
 			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
 			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
@@ -1242,6 +1242,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			this.reset();
 			this.dispatchEvent( eventPayload );
 			this._modelAnnounced();
+			if ( built ) this.assetLoader?.commitPendingGraph( this.sceneModel );
 
 		} catch ( error ) {
 
@@ -3912,7 +3913,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 				// Drag-drop / file load is a replace: clear any appended models first.
 				this._clearAppendedModels();
-				await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
+				const built = await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
+				if ( built ) this.assetLoader?.commitPendingGraph( event.model );
 
 			} else if ( event.texture ) {
 

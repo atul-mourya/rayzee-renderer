@@ -82,16 +82,17 @@ export class ArchiveImporter {
 	constructor( loader ) {
 
 		this.loader = loader;
-		this._pendingGraph = null;
+		this._store = null;
 		this.lastPBRTStats = null;
 		this.lastUSDStats = null;
 
 	}
 
-	/** Drops a parsed scene still waiting to be stored: the model it was for is gone. */
+	/** Abandons a parsed scene the engine has not accepted: the model it was for is gone, or its load failed. */
 	release() {
 
-		this._pendingGraph = null;
+		this._store?.decide( false );
+		this._store = null;
 
 	}
 
@@ -383,7 +384,8 @@ export class ArchiveImporter {
 
 	/**
 	 * Stores a freshly parsed scene for the next open. Encoded here, before onModelLoad or the
-	 * build touch it; written in the background.
+	 * build touch it; written in the background, and visible to an open only once the engine
+	 * accepts the scene ({@link commitPendingGraph}).
 	 * @private
 	 */
 	_storeGraph( key, built, label ) {
@@ -413,13 +415,29 @@ export class ArchiveImporter {
 
 		}
 
-		const pending = { key, encoded, label, parseMs: ( built.parseMs ?? 0 ) + ( built.buildMs ?? 0 ), triangles: built.triangleCount ?? null };
+		let settle;
+		const stop = new AbortController();
+		const store = {
+			key, encoded, label, model: built.group, writing: false, signal: stop.signal,
+			parseMs: ( built.parseMs ?? 0 ) + ( built.buildMs ?? 0 ), triangles: built.triangleCount ?? null,
+			accepted: new Promise( resolve => {
+
+				settle = resolve;
+
+			} ),
+			decide: accepted => {
+
+				settle( accepted );
+				if ( ! accepted ) stop.abort();
+
+			},
+		};
+		this._store = store;
 
 		// A parse slow enough on its own is written now, during the build. Held until the build
 		// ends, it kept every array the build replaces alive with it — the float normals and the
 		// instance matrices, ~1 GB on the whole Moana subset, at the build's peak.
-		if ( worthStoring( pending.parseMs, encoded.byteLength ) ) this._writeGraph( area, pending );
-		else this._pendingGraph = pending;
+		if ( worthStoring( store.parseMs, encoded.byteLength ) ) this._writeGraph( area, store );
 
 	}
 
@@ -430,34 +448,57 @@ export class ArchiveImporter {
 	 */
 	flushPendingGraph( buildMs ) {
 
-		const pending = this._pendingGraph;
-		this._pendingGraph = null;
+		const store = this._store;
+		if ( ! store || store.writing ) return;
 		const area = this.loader.storage?.area( ENGINE_AREAS.SCENES );
-		if ( ! pending || ! area || ! worthStoring( pending.parseMs + buildMs, pending.encoded.byteLength ) ) return;
-		this._writeGraph( area, pending );
+		if ( area && worthStoring( store.parseMs + buildMs, store.encoded.byteLength ) ) this._writeGraph( area, store );
+		else this._store = null;
+
+	}
+
+	/**
+	 * The engine accepted `model`: the scene stored for it is committed once written. Until then the
+	 * entry has no metadata, so no open can restore it.
+	 * @param {import('three').Object3D} model - the model whose load the engine finished
+	 */
+	commitPendingGraph( model ) {
+
+		const store = this._store;
+		if ( ! store || store.model !== model ) return;
+		this._store = null;
+		store.model = null;
+		store.decide( store.writing );
 
 	}
 
 	/** Writes an encoded graph in the background, letting each array go once it is on disk. @private */
-	_writeGraph( area, pending ) {
+	_writeGraph( area, store ) {
 
+		store.writing = true;
 		( async () => {
 
-			const writer = await area.create( pending.key, { label: `${pending.label} (scene)`, expectedBytes: pending.encoded.byteLength } );
-			if ( ! writer ) return;
+			let writer = null;
 			try {
 
-				await writeSceneGraph( writer, pending.encoded, { release: true } );
-				await writer.commit( { triangles: pending.triangles } );
+				writer = await area.create( store.key, { label: `${store.label} (scene)`, expectedBytes: store.encoded.byteLength } );
+				if ( ! writer ) return;
+				await writeSceneGraph( writer, store.encoded, { release: true, signal: store.signal } );
+				store.encoded = null;
+				if ( await store.accepted ) await writer.commit( { triangles: store.triangles } );
+				else await writer.abort();
 
 			} catch ( error ) {
 
-				await writer.abort();
-				console.warn( 'Storing the scene failed:', error );
+				await writer?.abort().catch( () => {} );
+				if ( ! store.signal.aborted ) console.warn( 'Storing the scene failed:', error );
+
+			} finally {
+
+				store.encoded = null;
 
 			}
 
-		} )().catch( error => console.warn( 'Storing the scene failed:', error ) );
+		} )();
 
 	}
 

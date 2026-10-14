@@ -284,10 +284,11 @@ export function encodeSceneGraph( root, { environment = null, animations = [], s
 
 /**
  * Writes an encoded graph into a storage entry: `graph.json` and `data.bin`.
- * @param {{release?: boolean}} [options] - drop each section's array once written, so a graph
- *   written during a build does not keep arrays the build has since replaced
+ * @param {{release?: boolean, signal?: AbortSignal}} [options] - `release` drops each section's array once
+ *   written, so a graph written during a build does not keep arrays the build has since replaced; `signal`
+ *   stops the write between pieces
  */
-export async function writeSceneGraph( writer, { manifest, sections }, { release = false } = {} ) {
+export async function writeSceneGraph( writer, { manifest, sections }, { release = false, signal = null } = {} ) {
 
 	for ( const section of sections ) {
 
@@ -295,6 +296,7 @@ export async function writeSceneGraph( writer, { manifest, sections }, { release
 		const bytes = new Uint8Array( array.buffer, array.byteOffset, array.byteLength );
 		for ( let at = 0; at < bytes.length; at += PIECE_BYTES ) {
 
+			signal?.throwIfAborted();
 			await writer.write( 'data.bin', bytes.subarray( at, Math.min( bytes.length, at + PIECE_BYTES ) ), { at: offset + at } );
 
 		}
@@ -304,6 +306,7 @@ export async function writeSceneGraph( writer, { manifest, sections }, { release
 	}
 
 	if ( sections.length === 0 ) await writer.write( 'data.bin', new Uint8Array( 0 ) );
+	signal?.throwIfAborted();
 	await writer.writeJSON( 'graph.json', manifest );
 
 }
