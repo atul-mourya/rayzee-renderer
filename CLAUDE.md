@@ -943,6 +943,11 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
   instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned. MaterialX networks (`outputs:mtlx:surface`)
   are read in `USDScene.js` (OpenPBR, Standard Surface, glTF PBR, BSDF graphs; values fold to constant / texture + gain +
   UV matrix); three's MaterialXLoader is not used — it builds TSL materials the path tracer cannot run.
+- **Parameters it does not honour** are reported as pbrt's `ReportUnused` does: a lookup through `param()` (or `pFloat` /
+  `pString` / `pBool` / `resolveSpectrum`, which use it) marks a parameter used, and `ParamUsage` counts each translated
+  directive's unmarked or `approximated()` parameters per `directive type: name`, recorded once as
+  `asset.parameters_ignored` (a warning). ⚠️ A translator reads a value through `param()`, never `params.x.value`, or
+  that parameter is reported ignored; a bare `params.x` is a presence check (or a read that is no use: hashing, freeing).
 - ⚠️ Anything that changes what the same pbrt files build bumps `PBRT_BUILD_REVISION`, or a stored graph of the old
   build is reused.
 - ⚠️ Keep the template grouping (templates at identical transforms become one): without it Moana's trees rendered 60 %

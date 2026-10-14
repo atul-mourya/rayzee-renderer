@@ -103,6 +103,17 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   `dots` and `directionmix` are not supported. ⚠️ `material.clone()` drops the engine's own
   properties (diffuse transmission, subsurface): use `cloneMaterial`. Bump `PBRT_BUILD_REVISION` with any of this, or a
   stored graph of the old build comes back.
+- **Parameters it does not honour.** As pbrt's `ReportUnused`: a parameter is used when it is looked up through
+  `param()` (`PBRTParser.js`; the `p*` helpers and `resolveSpectrum` go through it), and `ParamUsage` counts, for each
+  directive translated, the parameters nothing looked up and those a translator marks `approximated()` — a texture's
+  mean where the engine takes one value, a spectrum as RGB, a default for a type it cannot read (a texture or spectrum
+  `eta` through `pFloat`) — per `directive type: name`, with how many directives set it. Params stay plain objects, so
+  the parse is unchanged. Shapes are accounted once their geometry is read; materials, textures, lights and media, read
+  across the build, at its end; a directive never translated (an unreferenced material or texture) reports nothing, and
+  each frame of a sequence counts its own Film. `loadPBRTScene` returns it as `parameters`; the importer records one
+  `asset.parameters_ignored` warning (`detail.unused`, `detail.approximated`) and one console list, and keeps it with a
+  stored scene, so a cached open reports it too. `Option "type name" value` is one parameter (its value had been read as
+  a directive).
 - **Formats.** `.tar` is indexed by seeking between headers (`indexTarHeaders`, 1 MB windows) and
   read in place. `.tar.gz` / `.tgz` is unpacked once into `archives/` while it is indexed
   (`unpackTarGz`: DecompressionStream → OPFS, 0 GB held; 1.3 GB gz in 6.4 s) and reopened from

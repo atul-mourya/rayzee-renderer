@@ -1060,6 +1060,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `adapter.software` | the GPU is a software rasteriser (SwiftShader, llvmpipe, lavapipe, WARP) |
 | `asset.unreachable` / `asset.ambiguous_entry` | the asset could not be fetched, or an archive held several candidate models |
 | `asset.archive_too_large` / `asset.entry_too_large` | an archive or one of its entries exceeded the byte budget |
+| `asset.parameters_ignored` | a pbrt scene sets parameters the loader ignores (`detail.unused`) or only approximates (`detail.approximated`), each `directive type: name` with how many directives set it — a warning |
 | `texture.build_failed` / `texture.processing_fallback` / `texture.limit_exceeded` | a texture could not be built, fell back to a slower path, or exceeded the per-map-type cap |
 | `environment.load_failed` | the environment map failed to load |
 | `setting.unknown_key` | a setting name reached no stage — how a typo becomes a wrong image |

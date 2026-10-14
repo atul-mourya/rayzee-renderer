@@ -68,6 +68,101 @@ const NUMERIC_STORAGE = {
 	rgb: Float32Array
 };
 
+// The directive `ParamUsage.translate` is in, and each directive open until `ParamUsage.finish`.
+let current = null;
+const scopes = new Map();
+
+/** A directive's parameter, counted as used: every translator reads through this, as pbrt-v4's lookups mark theirs. */
+export function param( params, name ) {
+
+	if ( current !== null && current.params === params ) current.read.push( name );
+	else if ( scopes.size !== 0 ) scopes.get( params )?.read.push( name );
+	return params?.[ name ];
+
+}
+
+/**
+ * A parameter read but not honoured exactly: a texture's mean where the engine takes one value,
+ * a default for a type it cannot read.
+ */
+export function approximated( params, name ) {
+
+	const scope = current !== null && current.params === params ? current : scopes.get( params );
+	if ( scope ) ( scope.approximated ??= new Set() ).add( name );
+
+}
+
+/**
+ * What one load did not honour, as pbrt's ReportUnused: each translated directive's parameters that nothing looked up,
+ * or that were approximated, counted per `directive type: name`. Holds nothing per directive once it is accounted for.
+ */
+export class ParamUsage {
+
+	constructor() {
+
+		this.unused = new Map();
+		this.approximated = new Map();
+
+	}
+
+	/**
+	 * Runs `read`, which looks up every parameter it uses before it returns, and accounts for the directive at once.
+	 * `consumed` names one read before, where nothing counted it. A directive left open is accounted for by `finish`.
+	 */
+	translate( params, label, read, consumed = null ) {
+
+		if ( scopes.has( params ) ) return read();
+		const outer = current;
+		const scope = current = { params, label, approximated: null, read: [ consumed ] };
+		try {
+
+			return read();
+
+		} finally {
+
+			current = outer;
+			for ( const name in params ) this._count( scope, name, ! scope.read.includes( name ) );
+
+		}
+
+	}
+
+	/** Accounts for a directive read across awaits, from here to `finish`. */
+	open( params, label, consumed = null ) {
+
+		if ( params && ! scopes.has( params ) ) scopes.set( params, { usage: this, label, approximated: null, read: [ consumed ] } );
+
+	}
+
+	/** @returns {{unused: Object<string, number>, approximated: Object<string, number>}} */
+	finish() {
+
+		for ( const [ params, scope ] of scopes ) {
+
+			if ( scope.usage !== this ) continue;
+			scopes.delete( params );
+			for ( const name in params ) this._count( scope, name, ! scope.read.includes( name ) );
+
+		}
+
+		const flat = ( counts ) => [ ...counts ].flatMap( ( [ label, byName ] ) => [ ...byName ].map( ( [ name, n ] ) => [ `${label}: ${name}`, n ] ) );
+		const sorted = ( counts ) => Object.fromEntries( flat( counts ).sort( ( a, b ) => ( a[ 0 ] < b[ 0 ] ? - 1 : 1 ) ) );
+		return { unused: sorted( this.unused ), approximated: sorted( this.approximated ) };
+
+	}
+
+	_count( scope, name, unused ) {
+
+		const counts = scope.approximated?.has( name ) ? this.approximated : unused ? this.unused : null;
+		if ( ! counts ) return;
+		let byName = counts.get( scope.label );
+		if ( ! byName ) counts.set( scope.label, byName = new Map() );
+		byName.set( name, ( byName.get( name ) ?? 0 ) + 1 );
+
+	}
+
+}
+
 export class PBRTParser {
 
 	/**
@@ -90,6 +185,7 @@ export class PBRTParser {
 		// is the parse itself, so a limit applied later saves nothing.
 		this.maxPlacements = opts.maxPlacements ?? Infinity;
 		this.instanceIncludes = opts.instanceIncludes !== false;
+		this.usage = opts.usage ?? null;
 		this._includes = new Map();
 		this._stateIds = new WeakMap();
 		this._nextStateId = 1;
@@ -598,14 +694,18 @@ export class PBRTParser {
 
 			case 'Film': {
 
-				this._expectString( 'Film type' );
+				const type = this._expectString( 'Film type' );
 				const params = this._parseParams();
-				this.ir.film = {
-					xresolution: this._num( params.xresolution, 1280 ),
-					yresolution: this._num( params.yresolution, 720 ),
-					resolutionGiven: Boolean( params.xresolution || params.yresolution ),
-					filename: this._str( params.filename, null )
-				};
+				this._translate( params, `${name} ${type}`, () => {
+
+					this.ir.film = {
+						xresolution: this._num( param( params, 'xresolution' ), 1280 ),
+						yresolution: this._num( param( params, 'yresolution' ), 720 ),
+						resolutionGiven: Boolean( params.xresolution || params.yresolution ),
+						filename: this._str( param( params, 'filename' ), null )
+					};
+
+				} );
 				break;
 
 			}
@@ -613,18 +713,26 @@ export class PBRTParser {
 			// What the scene asks the renderer for; reported, not applied (PBRTSceneBuilder renderRequest).
 			case 'Integrator': {
 
-				this._expectString( 'Integrator type' );
+				const type = this._expectString( 'Integrator type' );
 				const params = this._parseParams();
-				if ( params.maxdepth ) this.ir.integrator = { maxdepth: this._num( params.maxdepth, 5 ) };
+				this._translate( params, `${name} ${type}`, () => {
+
+					if ( params.maxdepth ) this.ir.integrator = { maxdepth: this._num( param( params, 'maxdepth' ), 5 ) };
+
+				} );
 				break;
 
 			}
 
 			case 'Sampler': {
 
-				this._expectString( 'Sampler type' );
+				const type = this._expectString( 'Sampler type' );
 				const params = this._parseParams();
-				if ( params.pixelsamples ) this.ir.sampler = { pixelsamples: this._num( params.pixelsamples, 16 ) };
+				this._translate( params, `${name} ${type}`, () => {
+
+					if ( params.pixelsamples ) this.ir.sampler = { pixelsamples: this._num( param( params, 'pixelsamples' ), 16 ) };
+
+				} );
 				break;
 
 			}
@@ -633,10 +741,16 @@ export class PBRTParser {
 			case 'PixelFilter':
 			case 'Filter':
 			case 'Accelerator':
-			case 'ColorSpace':
-			case 'Option':
-				this._skipTypeAndParams();
+			case 'ColorSpace': {
+
+				const type = this._peek()?.type === TokenType.STRING ? this._next().value : '';
+				this._translate( this._parseParams(), `${name} ${type}` );
 				break;
+
+			}
+
+			// `Option "type name" value`: one parameter, no type before it.
+			case 'Option': this._translate( this._parseParams(), name ); break;
 
 			// ── world block ──
 			case 'WorldBegin':
@@ -669,7 +783,14 @@ export class PBRTParser {
 			case 'ReverseOrientation': this.state.reverseOrientation = ! this.state.reverseOrientation; break;
 
 			// `Attribute "target" params` — v4 default-setting; ignored for MVP.
-			case 'Attribute': this._expectString( 'Attribute target' ); this._parseParams(); break;
+			case 'Attribute': {
+
+				const target = this._expectString( 'Attribute target' );
+				this._translate( this._parseParams(), `${name} ${target}` );
+				break;
+
+			}
+
 			case 'ActiveTransform': {
 
 				const t = this._next();
@@ -841,7 +962,7 @@ export class PBRTParser {
 			default:
 				this._warnUnknown( name );
 				// Best effort: swallow any trailing parameter list to stay in sync.
-				this._parseParams();
+				this._translate( this._parseParams(), name );
 				break;
 
 		}
@@ -994,11 +1115,10 @@ export class PBRTParser {
 
 	}
 
-	_skipTypeAndParams() {
+	/** Runs `read` over a directive's parameters, and counts what it leaves unread: all of them by default. */
+	_translate( params, label, read = () => {} ) {
 
-		// "type" then params
-		if ( this._peek() && this._peek().type === TokenType.STRING ) this._next();
-		this._parseParams();
+		return this.usage ? this.usage.translate( params, label, read ) : read();
 
 	}
 

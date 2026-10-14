@@ -26,6 +26,7 @@ import {
 import { buildMaterial, pBool, pFloat, pString, resolveSpectrum } from './PBRTMaterials.js';
 import { makeLayer, layerMean, bake, mixOf, srgbToLinear, linearToSRGB, hasAlpha, generateUV, uvKey } from './PBRTTextureBake.js';
 import { loopSubdivide } from './LoopSubdivision.js';
+import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
@@ -36,7 +37,7 @@ const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 // pbrt scales a light's spectrum to luminance 1 unless it is RGB, so a blackbody of any temperature is equally bright.
 async function lightRGB( params, name, ctx ) {
 
-	const p = params[ name ];
+	const p = param( params, name );
 	if ( p?.type === 'spectrum' && typeof p.value[ 0 ] === 'string' && p.value[ 0 ].startsWith( 'stdillum' ) ) return [ 1, 1, 1 ];
 	const rgb = ( await resolveSpectrum( params, name, ctx, [ 1, 1, 1 ] ) ).rgb || [ 1, 1, 1 ];
 	if ( ! p || p.type === 'rgb' || p.type === 'color' || p.type === 'float' ) return rgb;
@@ -215,7 +216,7 @@ const POSITION_MAPPINGS = new Set( [ 'planar', 'spherical', 'cylindrical' ] );
 
 function pVector( params, name, dflt ) {
 
-	const v = params[ name ]?.value;
+	const v = param( params, name )?.value;
 	return v && v.length >= 3 ? [ v[ 0 ], v[ 1 ], v[ 2 ] ] : dflt;
 
 }
@@ -602,6 +603,7 @@ export class PBRTSceneBuilder {
 		this.resolveImage = resolvers.resolveImage || ( async () => null );
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
 		this.convertHandedness = resolvers.convertHandedness === true;
+		this._usage = resolvers.usage ?? null;
 
 		this.warnings = [];
 		this.report = []; // per-mesh diagnostics for debugging imports
@@ -634,9 +636,15 @@ export class PBRTSceneBuilder {
 	async build( ir ) {
 
 		this.ir = ir;
-		// Built again for their moving placements after the static ones, so never freed early.
+		// Built again for their moving placements, so freed and accounted for only at the end.
 		this._keepShapes = new Set();
-		for ( const { name } of ir.animatedInstances ?? [] ) for ( const shape of ir.objects.get( name ) ?? [] ) this._keepShapes.add( shape );
+		for ( const { name } of ir.animatedInstances ?? [] ) for ( const shape of ir.objects.get( name ) ?? [] ) {
+
+			this._keepShapes.add( shape );
+			this._usage?.open( shape.params, `Shape ${shape.type}`, 'alpha' );
+
+		}
+
 		// One decoded .ply serves every shape naming it: a merge frees it only as its last direct
 		// user, and never while a template or an unmerged shape holds its geometry.
 		this._plyUsers = new Map();
@@ -733,6 +741,7 @@ export class PBRTSceneBuilder {
 
 		const animations = ir.animation ? this._buildClip( ir, camera ) : [];
 
+		for ( const light of ir.lights ) this._usage?.open( light.params, `LightSource ${light.type}` );
 		// Infinite light → environment
 		const environment = await this._buildEnvironment( ir.lights );
 		await this._buildLamps( ir.lights, group );
@@ -1417,7 +1426,9 @@ export class PBRTSceneBuilder {
 
 	async _createGeometry( shape ) {
 
-		const geometry = await this._shapeGeometry( shape );
+		// A shape's parameters are all read before the first await; its `alpha`, by its material.
+		const read = () => this._shapeGeometry( shape );
+		const geometry = await ( this._usage ? this._usage.translate( shape.params, `Shape ${shape.type}`, read, 'alpha' ) : read() );
 		return geometry && shape.areaLight && ! pBool( shape.areaLight.params, 'twosided', false ) ? this._facingEmission( shape, geometry ) : geometry;
 
 	}
@@ -1490,7 +1501,7 @@ export class PBRTSceneBuilder {
 
 	_triangleMesh( params ) {
 
-		const P = params.P?.value;
+		const P = param( params, 'P' )?.value;
 		if ( ! P || P.length < 9 ) {
 
 			this.warn( 'trianglemesh missing P' ); return null;
@@ -1500,7 +1511,7 @@ export class PBRTSceneBuilder {
 		const geo = new BufferGeometry();
 		geo.setAttribute( 'position', new Float32BufferAttribute( float32( P ), 3 ) );
 
-		const N = params.N?.value;
+		const N = param( params, 'N' )?.value;
 		if ( N && N.length === P.length ) {
 
 			geo.setAttribute( 'normal', new Float32BufferAttribute( float32( N ), 3 ) );
@@ -1508,10 +1519,10 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const uv = ( params.uv || params.st )?.value;
+		const uv = param( params, params.uv ? 'uv' : 'st' )?.value;
 		if ( uv && uv.length === ( P.length / 3 ) * 2 ) geo.setAttribute( 'uv', new Float32BufferAttribute( float32( uv ), 2 ) );
 
-		const indices = params.indices?.value;
+		const indices = param( params, 'indices' )?.value;
 		if ( indices && indices.length ) geo.setIndex( indexAttribute( indices ) );
 
 		if ( ! N ) geo.computeVertexNormals();
@@ -1521,7 +1532,7 @@ export class PBRTSceneBuilder {
 
 	_curve( params ) {
 
-		const P = params.P?.value;
+		const P = param( params, 'P' )?.value;
 		if ( ! P || P.length < 12 ) {
 
 			this.warn( 'curve needs at least 4 control points' ); return null;
@@ -1542,7 +1553,7 @@ export class PBRTSceneBuilder {
 			basis: pString( params, 'basis', 'bezier' ),
 			width0: pFloat( params, 'width0', width ),
 			width1: pFloat( params, 'width1', width ),
-			N: params.N?.value || null,
+			N: param( params, 'N' )?.value || null,
 			steps: this.curveSteps,
 			sides: this.curveSides ?? DEFAULT_CURVE_SIDES[ type ] ?? 1,
 			tolerance: this.curveTolerance
@@ -1568,11 +1579,11 @@ export class PBRTSceneBuilder {
 	_curves( params ) {
 
 		const built = tessellateCurves( {
-			P: params.P.value,
-			counts: params.counts.value,
-			widths: params.widths?.value ?? null,
+			P: param( params, 'P' ).value,
+			counts: param( params, 'counts' ).value,
+			widths: param( params, 'widths' )?.value ?? null,
 			widthMode: pString( params, 'widthMode', 'constant' ),
-			N: params.N?.value ?? null,
+			N: param( params, 'N' )?.value ?? null,
 			normalMode: pString( params, 'normalMode', 'vertex' ),
 			type: pString( params, 'type', 'cubic' ),
 			basis: pString( params, 'basis', 'bspline' ),
@@ -1601,8 +1612,8 @@ export class PBRTSceneBuilder {
 
 	_loopSubdiv( params ) {
 
-		const P = params.P?.value;
-		const indices = params.indices?.value;
+		const P = param( params, 'P' )?.value;
+		const indices = param( params, 'indices' )?.value;
 		if ( ! P || P.length < 9 || ! indices || indices.length < 3 ) {
 
 			this.warn( 'loopsubdiv missing P/indices' ); return null;
@@ -1633,8 +1644,8 @@ export class PBRTSceneBuilder {
 	 */
 	_bilinearMesh( params ) {
 
-		const P = params.P?.value;
-		const quad = params.indices?.value ?? ( P?.length === 12 ? [ 0, 1, 2, 3 ] : null );
+		const P = param( params, 'P' )?.value;
+		const quad = param( params, 'indices' )?.value ?? ( P?.length === 12 ? [ 0, 1, 2, 3 ] : null );
 		if ( ! P || ! quad ) {
 
 			this.warn( 'bilinearmesh missing P/indices' ); return null;
@@ -1642,8 +1653,8 @@ export class PBRTSceneBuilder {
 		}
 
 		const count = P.length / 3;
-		const uv = params.uv?.value?.length === count * 2 ? params.uv.value : null;
-		const N = params.N?.value?.length === count * 3 ? params.N.value : null;
+		const uv = param( params, 'uv' )?.value?.length === count * 2 ? params.uv.value : null;
+		const N = param( params, 'N' )?.value?.length === count * 3 ? params.N.value : null;
 		const geo = new BufferGeometry();
 
 		if ( uv ) {
@@ -1897,7 +1908,7 @@ export class PBRTSceneBuilder {
 	 */
 	async _alphaMap( colorMap, name ) {
 
-		const def = this.ir.namedTextures.get( name );
+		const def = this._textureDef( name );
 		const filename = def?.class === 'imagemap' ? pString( def.params, 'filename', null ) : null;
 		const mapping = filename && this._textureMapping( name, def );
 		// Most often the alpha is the colour map's own image: its colour stays as it is.
@@ -1956,6 +1967,7 @@ export class PBRTSceneBuilder {
 		return this._ctx ??= {
 			resolveNamedTexture: ( n ) => this._resolveNamedTexture( n ),
 			namedMaterials: this.ir.namedMaterials,
+			trackParams: ( params, label, consumed ) => this._usage?.open( params, label, consumed ),
 			warn: ( m ) => this.warn( m ),
 			floatTextureMean: async ( n ) => {
 
@@ -2008,6 +2020,7 @@ export class PBRTSceneBuilder {
 
 		const params = this.ir.media?.get( name );
 		const type = params && pString( params, 'type', '' );
+		this._usage?.open( params, `MakeNamedMedium ${type}`, 'type' );
 		if ( type !== 'homogeneous' ) {
 
 			this.warn( params ? `medium "${name}" (${type}) is not supported — "${name}" glass left clear` : `medium "${name}" not defined` );
@@ -2015,7 +2028,13 @@ export class PBRTSceneBuilder {
 
 		}
 
-		if ( params.preset ) this.warn( `medium preset "${pString( params, 'preset', '' )}" is not supported — using sigma_a / sigma_s` );
+		if ( params.preset ) {
+
+			this.warn( `medium preset "${pString( params, 'preset', '' )}" is not supported — using sigma_a / sigma_s` );
+			approximated( params, 'preset' );
+
+		}
+
 		const ctx = this._materialContext();
 		const a = ( await resolveSpectrum( params, 'sigma_a', ctx, [ 1, 1, 1 ] ) ).rgb;
 		const s = ( await resolveSpectrum( params, 'sigma_s', ctx, [ 1, 1, 1 ] ) ).rgb;
@@ -2073,6 +2092,7 @@ export class PBRTSceneBuilder {
 
 	async _applyAreaLight( material, areaLight, ctx ) {
 
+		this._usage?.open( areaLight.params, `AreaLightSource ${areaLight.type}` );
 		const rgb = await lightRGB( areaLight.params, 'L', ctx );
 		const scale = pFloat( areaLight.params, 'scale', 1 );
 		material.emissive.setRGB( rgb[ 0 ], rgb[ 1 ], rgb[ 2 ] );
@@ -2082,11 +2102,20 @@ export class PBRTSceneBuilder {
 
 	}
 
+	/** A named texture's definition, its parameters accounted from here to the end of the build. @private */
+	_textureDef( name ) {
+
+		const def = this.ir.namedTextures.get( name );
+		if ( def ) this._usage?.open( def.params, `Texture ${def.class}` );
+		return def;
+
+	}
+
 	async _resolveNamedTexture( name ) {
 
 		if ( this._textureCache.has( name ) ) return this._textureCache.get( name );
 
-		const def = this.ir.namedTextures.get( name );
+		const def = this._textureDef( name );
 		let result = null;
 
 		if ( ! def ) {
@@ -2103,7 +2132,7 @@ export class PBRTSceneBuilder {
 
 		} else if ( def.class === 'constant' ) {
 
-			const v = def.params.value;
+			const v = param( def.params, 'value' );
 			if ( v && v.type === 'rgb' ) result = { constant: [ v.value[ 0 ], v.value[ 1 ], v.value[ 2 ] ] };
 			else if ( v ) result = { constant: [ v.value[ 0 ], v.value[ 0 ], v.value[ 0 ] ] };
 
@@ -2151,8 +2180,14 @@ export class PBRTSceneBuilder {
 		const ctx = this._materialContext();
 		const value = async ( key, dflt ) => {
 
-			const p = params[ key ];
-			if ( p?.type === 'texture' ) return ( await ctx.textureMeanRGB( p.value[ 0 ] ) ) ?? dflt;
+			const p = param( params, key );
+			if ( p?.type === 'texture' ) {
+
+				approximated( params, key );
+				return ( await ctx.textureMeanRGB( p.value[ 0 ] ) ) ?? dflt;
+
+			}
+
 			return ( await resolveSpectrum( params, key, ctx, dflt ) ).rgb ?? dflt;
 
 		};
@@ -2309,7 +2344,7 @@ export class PBRTSceneBuilder {
 	/** A texture parameter as a bake term: a constant, or the texture it names. @private */
 	async _paramTerm( params, key, channels, dflt ) {
 
-		const p = params[ key ];
+		const p = param( params, key );
 		if ( ! p ) return { rgb: dflt };
 		if ( p.type === 'texture' ) return this._bakeTerm( p.value[ 0 ], channels );
 		const rgb = ( await resolveSpectrum( params, key, this._materialContext(), dflt ) ).rgb;
@@ -2335,7 +2370,7 @@ export class PBRTSceneBuilder {
 
 	async _createBakeTerm( name, channels ) {
 
-		const def = this.ir.namedTextures.get( name );
+		const def = this._textureDef( name );
 		if ( def?.class === 'imagemap' ) {
 
 			const filename = pString( def.params, 'filename', null );
@@ -2436,7 +2471,7 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const innerP = def.params.tex;
+		const innerP = param( def.params, 'tex' );
 		let inner = null;
 
 		if ( innerP?.type === 'texture' && typeof innerP.value[ 0 ] === 'string' ) {
@@ -2454,7 +2489,7 @@ export class PBRTSceneBuilder {
 
 		}
 
-		const sP = def.params.scale;
+		const sP = param( def.params, 'scale' );
 		let scale = [ 1, 1, 1 ];
 		if ( sP?.type === 'rgb' || sP?.type === 'color' ) scale = [ sP.value[ 0 ], sP.value[ 1 ], sP.value[ 2 ] ];
 		else if ( sP?.type === 'float' ) {
@@ -2483,12 +2518,13 @@ export class PBRTSceneBuilder {
 	_buildCamera( cam, film ) {
 
 		const aspect = film && film.yresolution ? film.xresolution / film.yresolution : 16 / 9;
+		this._usage?.open( cam.params, `Camera ${cam.type}` );
 
 		let camera;
 		if ( cam.type === 'orthographic' ) {
 
 			// pbrt's default screen window spans [-1, 1] along the shorter image axis.
-			const window = cam.params?.screenwindow?.value;
+			const window = param( cam.params, 'screenwindow' )?.value;
 			const half = window?.length === 4 ? ( window[ 3 ] - window[ 2 ] ) / 2 : Math.max( 1, 1 / aspect );
 			camera = new OrthographicCamera( - half * aspect, half * aspect, half, - half, 0.01, 10000 );
 
@@ -2677,7 +2713,7 @@ export class PBRTSceneBuilder {
 			const world = new Matrix4().fromArray( this.convertHandedness ? M.multiply( FLIP_Z, l.ctm ) : l.ctm );
 			const point = ( name, dflt ) => {
 
-				const v = l.params[ name ]?.value;
+				const v = param( l.params, name )?.value;
 				return new Vector3().fromArray( v?.length >= 3 ? v : dflt ).applyMatrix4( world );
 
 			};

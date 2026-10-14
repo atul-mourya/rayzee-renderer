@@ -15,7 +15,7 @@
  */
 
 import { freeNow } from './buffers.js';
-import { PBRTParser } from './PBRTParser.js';
+import { PBRTParser, ParamUsage } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';
 
@@ -380,7 +380,8 @@ export async function listEntryPathsFrom( vfs ) {
  * @param {boolean} [args.convertHandedness=true]
  * @param {boolean} [args.animation=true] - load a frame sequence (`frame25.pbrt`, `frame35.pbrt`, …)
  *   as one animated scene instead of its first frame alone. Ignored when `entryPath` names a file.
- * @returns {Promise<{group, camera, environment, animations, warnings, entryPath, frames}>}
+ * @returns {Promise<{group, camera, environment, animations, warnings, entryPath, frames, parameters}>} - `parameters`: what
+ *   ParamUsage.finish() reports, the parameters this load ignored or approximated
  */
 export async function loadPBRTScene( args ) {
 
@@ -401,6 +402,7 @@ export async function loadPBRTScene( args ) {
 	}
 
 	const entryPath = requested || candidates[ 0 ];
+	const usage = new ParamUsage();
 
 	// Parse (with Include resolution). Bytes go straight to the lexer — a scene file can
 	// be larger than the longest string JavaScript will build.
@@ -415,7 +417,8 @@ export async function loadPBRTScene( args ) {
 			// scene file at once — the difference between 5.7 GB resident and a few MB.
 			releaseInclude: ( include, currentDir, bytes ) => vfs.releasePath( include, currentDir, bytes ),
 			maxPlacements: args.maxPlacements,
-			instanceIncludes: args.instanceIncludes
+			instanceIncludes: args.instanceIncludes,
+			usage
 		} );
 
 		const ir = await parser.parse( bytes, path.includes( '/' ) ? path.slice( 0, path.lastIndexOf( '/' ) ) : '' );
@@ -490,6 +493,7 @@ export async function loadPBRTScene( args ) {
 		curveSteps: args.curveSteps,
 		curveSides: args.curveSides,
 		curveTolerance: args.curveTolerance,
+		usage,
 		resolvePLY: async ( filename ) => {
 
 			const rec = vfs.findRecord( filename );
@@ -515,9 +519,20 @@ export async function loadPBRTScene( args ) {
 	} );
 
 	const buildStart = performance.now();
-	const result = await builder.build( ir );
+	let result, parameters;
+	try {
+
+		result = await builder.build( ir );
+
+	} finally {
+
+		parameters = usage.finish();
+
+	}
+
 	return {
 		...result,
+		parameters,
 		entryPath: sequence ? sequence[ 0 ].path : entryPath,
 		frames: sequence ? sequence.map( f => f.path ) : null,
 		candidates,

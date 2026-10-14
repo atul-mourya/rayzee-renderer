@@ -10,6 +10,7 @@
 
 import { MeshPhysicalMaterial, Color, DoubleSide } from 'three';
 import { namedScattering, dipoleReflectance, albedoForReflectance } from './PBRTScattering.js';
+import { approximated, param } from './PBRTParser.js';
 
 // Normal-incidence reflectance approximations for pbrt's named conductor spectra.
 const METAL_ALBEDO = {
@@ -54,21 +55,22 @@ function blackbodyToRGB( kelvin ) {
 
 export function pFloat( params, name, dflt ) {
 
-	const p = params[ name ];
+	const p = param( params, name );
+	if ( p && p.type !== 'float' && p.type !== 'integer' ) approximated( params, name );
 	return p && typeof p.value[ 0 ] === 'number' ? p.value[ 0 ] : dflt;
 
 }
 
 export function pString( params, name, dflt ) {
 
-	const p = params[ name ];
+	const p = param( params, name );
 	return p && typeof p.value[ 0 ] === 'string' ? p.value[ 0 ] : dflt;
 
 }
 
 export function pBool( params, name, dflt ) {
 
-	const v = params[ name ]?.value?.[ 0 ];
+	const v = param( params, name )?.value?.[ 0 ];
 	return v === undefined ? dflt : v === true || v === 'true';
 
 }
@@ -80,7 +82,7 @@ export function pBool( params, name, dflt ) {
  */
 export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
-	const p = params[ name ];
+	const p = param( params, name );
 	if ( ! p ) return { rgb: dfltRGB, texture: null };
 
 	// Reference to a named texture.
@@ -91,6 +93,7 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 		if ( tex && tex.texture ) return { rgb: tex.constant ?? null, texture: tex.texture };
 		if ( tex && tex.constant ) return { rgb: tex.constant, texture: null };
 		ctx.warn( `texture "${texName}" could not be resolved` );
+		approximated( params, name );
 		return { rgb: dfltRGB, texture: null };
 
 	}
@@ -110,6 +113,7 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 	if ( p.type === 'blackbody' ) {
 
+		approximated( params, name );
 		return { rgb: blackbodyToRGB( p.value[ 0 ] ), texture: null };
 
 	}
@@ -117,6 +121,7 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 	if ( p.type === 'spectrum' ) {
 
 		// Named spectrum (e.g. "metal-Au-eta") or sampled [lambda val ...].
+		approximated( params, name );
 		if ( typeof p.value[ 0 ] === 'string' ) {
 
 			const key = namedMetalKey( p.value[ 0 ] );
@@ -139,6 +144,7 @@ export async function resolveSpectrum( params, name, ctx, dfltRGB = null ) {
 
 	}
 
+	approximated( params, name );
 	return { rgb: dfltRGB, texture: null };
 
 }
@@ -155,9 +161,10 @@ function namedMetalKey( s ) {
 // A float parameter's value, or a float texture's mean (`ctx.floatTextureMean`); null when absent or unreadable.
 async function floatOrMean( params, name, ctx ) {
 
-	const p = params[ name ];
+	const p = param( params, name );
 	if ( ! p ) return null;
 	if ( typeof p.value[ 0 ] === 'number' ) return p.value[ 0 ];
+	approximated( params, name );
 	if ( p.type === 'texture' ) return ( await ctx.floatTextureMean?.( p.value[ 0 ] ) ) ?? null;
 	return null;
 
@@ -171,7 +178,7 @@ async function floatOrMean( params, name, ctx ) {
  */
 const remapsRoughness = ( params ) => {
 
-	const remap = params.remaproughness?.value?.[ 0 ];
+	const remap = param( params, 'remaproughness' )?.value?.[ 0 ];
 	return remap !== false && remap !== 'false';
 
 };
@@ -225,8 +232,14 @@ async function applyRoughness( mat, target, params, dflt, ctx, prefix = '' ) {
 // A spectrum parameter as one RGB; a texture counts as its mean (`ctx.textureMeanRGB`).
 async function spectrumMean( params, key, ctx, dflt ) {
 
-	const p = params[ key ];
-	if ( p?.type === 'texture' ) return ( await ctx.textureMeanRGB?.( p.value[ 0 ] ) ) ?? dflt;
+	const p = param( params, key );
+	if ( p?.type === 'texture' ) {
+
+		approximated( params, key );
+		return ( await ctx.textureMeanRGB?.( p.value[ 0 ] ) ) ?? dflt;
+
+	}
+
 	return ( await resolveSpectrum( params, key, ctx, dflt ) ).rgb ?? dflt;
 
 }
@@ -353,6 +366,7 @@ export async function buildMaterial( def, ctx ) {
 
 	const type = def?.type || 'diffuse';
 	const params = def?.params || {};
+	ctx.trackParams?.( params, `Material ${type}`, 'type' );
 	const mat = new MeshPhysicalMaterial( { side: DoubleSide, roughness: 1, metalness: 0 } );
 
 	const setColor = ( rgb ) => {
@@ -447,7 +461,13 @@ export async function buildMaterial( def, ctx ) {
 			const refl = await resolveSpectrum( params, 'reflectance', ctx, [ 0.25, 0.25, 0.25 ] );
 			const base = ( v ) => Math.min( 1, unit( v ) / ( 1 - dt ) );
 			applyAlbedo( { texture: refl.texture, rgb: refl.rgb ? refl.rgb.map( base ) : ( refl.texture ? [ 1, 1, 1 ].map( base ) : null ) } );
-			if ( trans.texture ) ctx.warn( 'diffusetransmission: a textured "transmittance" is not supported — using 0.5' );
+			if ( trans.texture ) {
+
+				ctx.warn( 'diffusetransmission: a textured "transmittance" is not supported — using 0.5' );
+				approximated( params, 'transmittance' );
+
+			}
+
 			mat.diffuseTransmission = dt;
 			mat.diffuseTransmissionColor = new Color().setRGB( ...T.map( ( v ) => ( dt > 0 ? Math.min( 1, v / dt ) : 1 ) ) );
 			mat.roughness = 1;
@@ -477,7 +497,7 @@ export async function buildMaterial( def, ctx ) {
 			// — physically loose but visually faithful, and crucially silent on success
 			// instead of warning per shape. Recursive: mix-in-mix terminates as the
 			// chain bottoms out at a non-mix.
-			const matNames = params.materials?.value || [];
+			const matNames = param( params, 'materials' )?.value || [];
 			let t = Math.max( 0, Math.min( 1, pFloat( params, 'amount', 0.5 ) ) );
 			const defA = matNames[ 0 ] ? ctx.namedMaterials?.get( matNames[ 0 ] ) : null;
 			const defB = matNames[ 1 ] ? ctx.namedMaterials?.get( matNames[ 1 ] ) : null;

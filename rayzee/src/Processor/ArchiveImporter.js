@@ -403,7 +403,7 @@ export class ArchiveImporter {
 					meshCount: built.meshCount, entryPath: built.entryPath, candidates: built.candidates, frames: built.frames,
 					warnings: built.warnings, triangleCount: built.triangleCount, placementCount: built.placementCount,
 					mergedShapes: built.mergedShapes, skippedForBudget: built.skippedForBudget, droppedNoTemplate: built.droppedNoTemplate,
-					render: built.render ?? null,
+					render: built.render ?? null, parameters: built.parameters ?? null,
 				},
 			} );
 
@@ -692,7 +692,7 @@ export class ArchiveImporter {
 
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
 			frames, parseMs, buildMs, triangleCount, placementCount, mergedShapes, skippedForBudget,
-			droppedNoTemplate } = built;
+			droppedNoTemplate, parameters } = built;
 		if ( stored ) console.info( `PBRT scene "${loadedEntry}" opened from storage in ${( buildMs / 1000 ).toFixed( 1 )} s, skipping the parse` );
 
 		// Phase breakdown for scaling work; the engine's own build timings live in
@@ -719,6 +719,8 @@ export class ArchiveImporter {
 			);
 
 		}
+
+		if ( parameters ) this._reportParameters( parameters, loadedEntry );
 
 		// Diagnostics — surface what each mesh resolved to (helps debug black/wrong materials).
 		if ( report && report.length && typeof console.table === 'function' ) {
@@ -766,6 +768,25 @@ export class ArchiveImporter {
 
 		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${loadedEntry} (from ${filename})` } );
 		return group;
+
+	}
+
+	/**
+	 * Every parameter the scene sets that the loader ignored or approximated, once, each with the number of directives
+	 * that set it: one warning and one console list, never cut short.
+	 * @private
+	 */
+	_reportParameters( { unused, approximated }, entry ) {
+
+		const ignored = Object.keys( unused ).length, approx = Object.keys( approximated ).length;
+		if ( ignored + approx === 0 ) return;
+		const message = `${ignored} pbrt parameter(s) ignored and ${approx} approximated in "${entry}"`;
+		const lines = [
+			...Object.entries( unused ).map( ( [ key, count ] ) => `  ignored       ${key} ×${count}` ),
+			...Object.entries( approximated ).map( ( [ key, count ] ) => `  approximated  ${key} ×${count}` )
+		];
+		console.warn( `PBRT loader: ${message} (× directives that set it)\n${lines.join( '\n' )}` );
+		this.loader._issues?.warn( ISSUE_CODES.ASSET_PARAMETERS_IGNORED, message, { entry, unused, approximated } );
 
 	}
 
