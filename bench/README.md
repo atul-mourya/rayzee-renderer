@@ -26,7 +26,9 @@ npm run bench:upscale      # GPU tone map against the CPU one, then the AI upsca
 npm run bench:memory
 npm run bench:perf
 npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
-npm run bench:ab -- main    # gate perf against another git ref
+npm run bench:ab -- main    # gate perf against another git ref (`-- <base> --head <ref>` for two refs)
+npm run bench:release      # the newest release tag against the one before it, logged for the trend
+npm run bench:trend        # results/trend.html: the perf and A/B logs, one chart a scene
 npm run bench:load         # real models loaded by phase in Node; -- --ab main, or --base-dir <checkout>, to gate
 npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
@@ -134,9 +136,9 @@ bench/
   node/       run.js, resolve.js, fixtures/    # the corpus in plain Node (bench:node), compressed glTF fixtures
   load/       models.json, worker.js, measure.js, resolve.js   # bench:load: the model list, one engine per process
   tools/      gen-dfg-lut.mjs (bench:lut), make-compressed-fixtures.mjs
-  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json,
+  baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, ab.jsonl, calibration.json,
               denoise.json, freeze.json, upscale.json
-  results/    quality.html, quality/          # the last quality run's report, git-ignored
+  results/    quality.html, quality/, trend.html   # the last quality run's report and the trend page, git-ignored
 ```
 
 ## The quality report
@@ -343,6 +345,31 @@ To gate, use `npm run bench:ab -- <ref>`. It checks the base ref out into a git 
 > (~0.5 GB each) lost the WebGPU device on an Apple M-series machine (`caustic-bidirectional`). Before measuring a
 > scene whose integrator is not `'path'`, `bench:ab` releases the other side's scene and integrator buffers
 > (`release()`); that side reloads its scene on its own turn, as every measurement does.
+
+#### The trend page and the A/B log
+
+`npm run bench:trend` writes `results/trend.html` from `baselines/perf.jsonl` and `baselines/ab.jsonl`: one chart a
+scene (GPU ms a sample, one point a run, runs evenly spaced) and a table of the logged A/B runs. It reads the logs only.
+
+- Each perf run records, per scene, what the scene asks of the renderer — `workload()` in the harness: triangles,
+  materials and the material layers in use, lights by kind, the sun, emissive triangles, environment, integrator,
+  camera and the scene's own settings — and `only` when `--only` cut the run short. Where a scene's workload changed
+  between two runs its line breaks and the break says what changed, so a scene given more to do is not read as an
+  engine regression. The physical sky's sun (2026-09-29) made `anisotropy-brushed`, `sheen-velvet` and
+  `iridescence-thinfilm` 43–45 % slower between two runs, and nothing in the log could say so. Runs from before this
+  field draw no break.
+- A scene is flagged slower or faster when its last 3 runs since its last break all sit past the median of the runs
+  before them, and their median is 10 % or more away (`TREND` in `runner/config.js`): 10 % is what identical code read
+  in two sessions, so one run is never flagged. Only runs from the machine with the most runs are shown.
+- `bench:ab` appends to `ab.jsonl` when both sides are commits (a clean working tree, or `--head <ref>`): each scene's
+  times, verdict, noise floor and per-round deltas, and which parts of the scene differed between the two trees (null when the base's
+  harness predates `workload()`). A run on uncommitted code is an experiment and is not logged, nor is a ref against
+  itself.
+- `npm run bench:release` runs `bench:ab` between the two newest release tags reachable from HEAD, both checked out as
+  worktrees, so the working tree does not matter. Run it after each release. The page chains runs whose base is the
+  previous run's head and multiplies them into a total: a small change repeated each release grows there in step,
+  while the noise of independent runs grows only as the square root of their count.
+- Both logs are committed with the rest of `baselines/`.
 
 > **`bench:ab` requires `bench/` to exist in the base ref.** Each side boots the harness from its *own* tree — Vite's `server.fs.allow` resolves to the tree the dev server runs in, so serving one tree's harness to the other's server returns 403. A ref predating this tooling therefore has no harness to boot and cannot be used as a base.
 
@@ -885,7 +912,7 @@ round of an otherwise flat self-A/B. The MAD floor absorbs one per scene; two in
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
 purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
-Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`.
+Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), and CPU-side guards for the shader-recompile contract and BVH structural invariants.
 
 Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
 (a denoiser since removed) had to work around by hand:

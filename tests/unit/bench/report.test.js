@@ -5,7 +5,9 @@ import path from 'node:path';
 
 import { decodeDataURL, encodeDataURL, readPNG, writePNG } from '../../../bench/lib/png.js';
 import { QUALITY_GATES } from '../../../bench/runner/config.js';
-import { downscale, orderResults, sceneState, writeQualityReport } from '../../../bench/runner/report.js';
+import {
+	describeChanges, downscale, driftFlag, orderResults, sceneState, trendModel, writeQualityReport, writeTrendReport,
+} from '../../../bench/runner/report.js';
 
 const SIZE = 256;
 
@@ -160,6 +162,117 @@ describe( 'bench quality report', () => {
 			await writeQualityReport( { results: [] }, dirs );
 
 			await expect( fs.access( stale ) ).rejects.toThrow();
+
+		} );
+
+	} );
+
+	describe( 'trend', () => {
+
+		const machine = { vendor: 'apple', architecture: 'metal-3', renderSize: '256x256' };
+		const work = ( extra = {} ) => ( { triangles: 100, sun: false, camera: [ 0, 0, 9 ], settings: { maxBounces: 4 }, ...extra } );
+		const run = ( at, scenes, extra = {} ) => ( {
+			at, fingerprint: machine, revision: { commit: 'c'.repeat( 40 ), dirty: false },
+			scenes: Object.entries( scenes ).map( ( [ scene, value ] ) => ( {
+				scene, medianGpuMs: Array.isArray( value ) ? value[ 0 ] : value, p95GpuMs: 1, cv: 0.1, loadMs: 10,
+				...( Array.isArray( value ) && { workload: value[ 1 ] } ),
+			} ) ),
+			...extra,
+		} );
+		const link = ( at, base, head, scenes ) => ( {
+			at, fingerprint: machine, base: { ref: base, commit: base }, head: { ref: head, commit: head },
+			scenes: Object.entries( scenes ).map( ( [ scene, [ baseMs, headMs, workloadChanges = [] ]] ) => ( {
+				scene, baseMs, headMs, deltaPct: ( headMs / baseMs - 1 ) * 100, floorPct: 8, verdict: 'unchanged', workloadChanges,
+			} ) ),
+		} );
+
+		it( 'flags a scene only when every recent run sits past its earlier median by enough', () => {
+
+			const flat = [ 1, 1.02, 0.98, 1, 1.01 ];
+			expect( driftFlag( [ ...flat, 1.2, 1.25, 1.22 ] ).direction ).toBe( 'slower' );
+			expect( driftFlag( [ ...flat, 0.8, 0.85, 0.82 ] ).direction ).toBe( 'faster' );
+			// One fast run among the recent ones: the median moved, but not every run did.
+			expect( driftFlag( [ ...flat, 1.2, 0.95, 1.22 ] ).direction ).toBeNull();
+			expect( driftFlag( [ ...flat, 1.05, 1.06, 1.07 ] ).direction ).toBeNull();
+			expect( driftFlag( [ 1, 1, 1, 2, 2 ] ) ).toBeNull();
+
+		} );
+
+		it( 'says what changed in a scene', () => {
+
+			expect( describeChanges( work(), work( { sun: true, camera: [ 0, 1, 9 ], lights: { directional: 1 } } ) ) )
+				.toEqual( [ 'sun: false → true', 'camera moved', 'lights: none → directional 1' ] );
+			expect( describeChanges( work(), { ...work(), settings: { maxBounces: 4 } } ) ).toEqual( [] );
+
+		} );
+
+		it( 'breaks a scene\'s line where it changed and judges only what came after', () => {
+
+			const runs = [ 1, 1, 1, 1, 1, 1 ].map( ( v, i ) => run( `2026-01-0${i + 1}`, { s: [ v, work() ] } ) );
+			for ( let i = 0; i < 6; i ++ ) runs.push( run( `2026-02-0${i + 1}`, { s: [ 2, work( { sun: true } ) ] } ) );
+
+			const [ scene ] = trendModel( runs, [] ).scenes;
+			expect( scene.breaks ).toEqual( [ { run: 6, after: 5, changes: [ 'sun: false → true' ] } ] );
+			expect( scene.drift.pct ).toBeCloseTo( 0 );
+
+		} );
+
+		it( 'draws no break across runs that did not record a workload, and leaves out machines with fewer runs', () => {
+
+			const runs = [
+				run( '2026-01-01', { s: [ 1, work() ] } ),
+				run( '2026-01-02', { s: 1 } ),
+				run( '2026-01-03', { s: [ 1, work() ] } ),
+				run( '2026-01-04', { s: 9 }, { fingerprint: { ...machine, architecture: 'other' } } ),
+			];
+
+			const model = trendModel( runs, [] );
+			expect( model.runs ).toHaveLength( 3 );
+			expect( model.otherMachines ).toBe( 1 );
+			expect( model.scenes[ 0 ].breaks ).toEqual( [] );
+
+		} );
+
+		it( 'chains A/B runs where each base is the previous head, and multiplies their changes', () => {
+
+			const links = [
+				link( '2026-01-01', 'v0', 'v1', { a: [ 1, 1 ], b: [ 1, 1 ] } ),
+				link( '2026-01-02', 'v1', 'v2', { a: [ 1, 1.1 ], b: [ 1, 1 ] } ),
+				link( '2026-01-03', 'x', 'v2', { a: [ 1, 5 ] } ),
+				link( '2026-01-04', 'v2', 'v3', { a: [ 1, 1.1 ], b: [ 1, 1, [ 'sun' ]], c: [ 1, 1 ] } ),
+			];
+
+			const { ab } = trendModel( [], links );
+			expect( ab.chain.map( ( l ) => l.base.ref ) ).toEqual( [ 'v0', 'v1', 'v2' ] );
+			expect( ab.cumulative.get( 'a' ).pct ).toBeCloseTo( 21 );
+			expect( ab.cumulative.get( 'b' ) ).toEqual( { pct: 0, changed: true } );
+			expect( ab.cumulative.get( 'c' ) ).toBeNull();
+			expect( ab.scenes ).toEqual( [ 'a', 'b', 'c' ] );
+
+		} );
+
+		it( 'writes one offline page, with or without an A/B log', async () => {
+
+			const root = await fs.mkdtemp( path.join( os.tmpdir(), 'rayzee-trend-' ) );
+			try {
+
+				const perfLog = path.join( root, 'perf.jsonl' );
+				const runs = [ 1, 1.1, 0.9, 1, 5, 1 ].map( ( v, i ) => run( `2026-01-0${i + 1}T00:00:00Z`, { '<s>': v }, i === 2 ? { revision: null } : {} ) );
+				await fs.writeFile( perfLog, runs.map( ( r ) => JSON.stringify( r ) ).join( '\n' ) );
+
+				const html = await fs.readFile( await writeTrendReport( { perfLog, abLog: path.join( root, 'none.jsonl' ), dir: root } ), 'utf8' );
+				expect( html ).toContain( 'id="&lt;s&gt;"' );
+				expect( html ).toContain( 'No A/B runs logged yet' );
+				expect( html ).toContain( 'commit not recorded' );
+				expect( html ).toContain( 'off the chart' );
+				expect( html.match( /class="pt open"/g ) ).toHaveLength( 2 );
+				expect( html ).not.toMatch( /(src|href)="https?:/ );
+
+			} finally {
+
+				await fs.rm( root, { recursive: true, force: true } );
+
+			}
 
 		} );
 

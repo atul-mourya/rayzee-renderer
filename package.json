@@ -34,6 +34,8 @@
     "bench:bless": "node bench/runner/cli.js bless",
     "bench:calibrate": "node bench/runner/cli.js calibrate",
     "bench:ab": "node bench/runner/cli.js ab",
+    "bench:release": "node bench/runner/cli.js ab --release",
+    "bench:trend": "node bench/runner/cli.js trend",
     "bench:load": "node bench/runner/cli.js load",
     "bench:list": "node bench/runner/cli.js list",
     "bench:storage": "node bench/runner/cli.js storage",

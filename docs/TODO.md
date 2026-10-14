@@ -52,7 +52,6 @@
 
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
 - [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/processor/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
-- [ ] trend dashboard over `bench/baselines/perf.jsonl`
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
 - [ ] `bench:load` in Chrome — the Node side is built (`npm run bench:load`, `-- --ab main`); browser-only paths (`createImageBitmap` decoding, background kernel compile, OPFS) are not timed. Its floors (15 % and 100 ms) were set on a busy machine: re-check on a quiet one.
 

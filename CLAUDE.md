@@ -46,7 +46,9 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 Headless-GPU regression detection for quality, performance, and memory. See `bench/README.md`.
 - `npm run bench` - quality, freeze, lockstep, denoise, memory and perf against the working tree
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
-- `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
+- `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B; `--head <ref>` for two refs). Logged to `baselines/ab.jsonl` when both sides are commits
+- `npm run bench:release` - `bench:ab` between the two newest release tags; run it after each release
+- `npm run bench:trend` - `bench/results/trend.html`: the perf and A/B logs, one chart a scene, drift flagged, a line broken where the scene itself changed (each perf run records the scene's workload)
 - `npm run bench:load` - real models loaded by phase in Node (models gitignored: `RAYZEE_BENCH_MODELS`); fails on a load error or engine issue, `-- --ab main` / `--base-dir <checkout>` gates each phase
 - `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus

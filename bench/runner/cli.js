@@ -9,7 +9,9 @@
  *   node bench/runner/cli.js perf    [--only a,b]
  *   node bench/runner/cli.js exposure [--only a,b] [--size 1024x1024]   auto (and local) exposure against neither
  *   node bench/runner/cli.js bless   [--only a,b] [--truth]
- *   node bench/runner/cli.js ab <baseRef> [--only a,b]
+ *   node bench/runner/cli.js ab <baseRef> [--head <ref>] [--only a,b]   head defaults to the working tree
+ *   node bench/runner/cli.js ab --release   the newest release tag against the one before it
+ *   node bench/runner/cli.js trend   writes bench/results/trend.html from the perf and A/B logs
  *   node bench/runner/cli.js load [--ab <ref> | --base-dir <path>] [--head-dir <path>] [--only a,b] [--rounds n] [--heavy] [--strict] [--config f.json] [--json out.json]
  *   node bench/runner/cli.js list
  *   node bench/runner/cli.js storage [--size MiB] [--gz archive.tar.gz] [--firefox]
@@ -36,7 +38,7 @@ import { runDenoise } from './denoise.js';
 import { runUpscale } from './upscale.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
-import { writeQualityReport } from './report.js';
+import { writeQualityReport, writeTrendReport } from './report.js';
 import { runFreeze } from './freeze.js';
 import { runLockstep } from './lockstep.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
@@ -356,25 +358,25 @@ async function gitRevision() {
 
 }
 
+/** The newest release tag reachable from HEAD and the one before it, as `[ base, head ]`. */
+async function releasePair() {
+
+	const { stdout } = await exec( 'git', [ 'tag', '--merged', 'HEAD', '--sort=-v:refname', '--list', 'v[0-9]*' ], { cwd: PATHS.repoRoot } );
+	const [ head, base ] = stdout.split( '\n' ).filter( Boolean );
+	if ( ! base ) throw new Error( 'ab --release needs two release tags reachable from HEAD' );
+	return [ base, head ];
+
+}
+
+const commitOf = async ( ref ) => ( await exec( 'git', [ 'rev-parse', `${ref}^{commit}` ], { cwd: PATHS.repoRoot } ) ).stdout.trim();
+
 async function commandAB( baseRef, flags ) {
 
 	const only = flags.only ? String( flags.only ).split( ',' ) : undefined;
 	const verbose = !! flags.verbose;
+	const headRef = typeof flags.head === 'string' ? flags.head : null;
 
-	// A worktree gives the base ref its own checkout, so both sides can be measured
-	// without stashing the working tree.
-	//
-	// realpath is load-bearing on macOS: os.tmpdir() is /var/folders/… , a symlink to
-	// /private/var/folders/… . Vite builds `server.fs.allow` from process.cwd(), which Node
-	// reports resolved, so a /@fs URL carrying the symlinked path lands outside the allow
-	// list and returns 403 — the harness module then never executes, so it sets neither
-	// __bench nor __benchBootError and the runner just times out after 180 s.
-	const worktree = await fs.realpath(
-		await fs.mkdtemp( path.join( os.tmpdir(), 'rayzee-bench-ab-' ) )
-	);
-	log( `${DIM}creating worktree for ${baseRef} at ${worktree}${RESET}` );
-	await exec( 'git', [ 'worktree', 'add', '--detach', worktree, baseRef ], { cwd: PATHS.repoRoot } );
-
+	const worktrees = [];
 	const servers = [];
 	let browser;
 	let baseHarness;
@@ -382,21 +384,37 @@ async function commandAB( baseRef, flags ) {
 
 	try {
 
-		// node_modules is not copied into a worktree; symlink the existing install rather
-		// than paying a full npm ci.
-		await fs.symlink(
-			path.join( PATHS.repoRoot, 'node_modules' ),
-			path.join( worktree, 'node_modules' ),
-			'dir'
-		);
+		// A worktree gives a ref its own checkout, so both sides can be measured without
+		// stashing the working tree.
+		//
+		// realpath is load-bearing on macOS: os.tmpdir() is /var/folders/… , a symlink to
+		// /private/var/folders/… . Vite builds `server.fs.allow` from process.cwd(), which Node
+		// reports resolved, so a /@fs URL carrying the symlinked path lands outside the allow
+		// list and returns 403 — the harness module then never executes, so it sets neither
+		// __bench nor __benchBootError and the runner just times out after 180 s.
+		const checkout = async ( ref ) => {
+
+			const worktree = await fs.realpath( await fs.mkdtemp( path.join( os.tmpdir(), 'rayzee-bench-ab-' ) ) );
+			log( `${DIM}creating worktree for ${ref} at ${worktree}${RESET}` );
+			await exec( 'git', [ 'worktree', 'add', '--detach', worktree, ref ], { cwd: PATHS.repoRoot } );
+			worktrees.push( worktree );
+			// node_modules is not copied into a worktree; symlink the existing install rather
+			// than paying a full npm ci.
+			await fs.symlink( path.join( PATHS.repoRoot, 'node_modules' ), path.join( worktree, 'node_modules' ), 'dir' );
+			return worktree;
+
+		};
+
+		const baseTree = await checkout( baseRef );
+		const headTree = headRef ? await checkout( headRef ) : PATHS.repoRoot;
 
 		log( `${DIM}starting a dev server for each tree…${RESET}` );
 
 		// Each tree serves its own harness: Vite's `server.fs.allow` resolves to the tree the
 		// server runs in, so serving one tree's harness from the other's server returns 403.
-		const baseServer = await startDevServer( { cwd: worktree, verbose } );
+		const baseServer = await startDevServer( { cwd: baseTree, verbose } );
 		servers.push( baseServer );
-		const headServer = await startDevServer( { cwd: PATHS.repoRoot, verbose } );
+		const headServer = await startDevServer( { cwd: headTree, verbose } );
 		servers.push( headServer );
 		log( `${DIM}base ${baseServer.url} · head ${headServer.url}${RESET}` );
 
@@ -407,9 +425,11 @@ async function commandAB( baseRef, flags ) {
 
 		log( `${DIM}booting both harnesses…${RESET}` );
 		baseHarness = await openHarness( baseServer.url, {
-			verbose, browser, harnessPath: path.join( worktree, 'bench', 'harness', 'index.html' ),
+			verbose, browser, harnessPath: path.join( baseTree, 'bench', 'harness', 'index.html' ),
 		} );
-		headHarness = await openHarness( headServer.url, { verbose, browser, harnessPath: PATHS.harness } );
+		headHarness = await openHarness( headServer.url, {
+			verbose, browser, harnessPath: path.join( headTree, 'bench', 'harness', 'index.html' ),
+		} );
 
 		// Same GPU by construction, so a mismatch means the two refs disagree about something
 		// that changes what a "sample" costs — render size is in the fingerprint, and
@@ -422,7 +442,7 @@ async function commandAB( baseRef, flags ) {
 		if ( differing.length ) {
 
 			throw new Error(
-				`A/B fingerprints differ between ${baseRef} and the working tree, so ms/sample ` +
+				`A/B fingerprints differ between ${baseRef} and ${headRef ?? 'the working tree'}, so ms/sample ` +
 				'is not comparable:\n  ' +
 				differing.map( ( k ) => `${k}: ${baseFingerprint[ k ]} vs ${headFingerprint[ k ]}` ).join( '\n  ' )
 			);
@@ -485,7 +505,38 @@ async function commandAB( baseRef, flags ) {
 
 		// Both sides, because a compile failure on one side only is exactly what fakes a win.
 		const shaderErrors = await reportShaderErrors( baseHarness.bench, baseRef )
-			+ await reportShaderErrors( headHarness.bench, 'HEAD' );
+			+ await reportShaderErrors( headHarness.bench, headRef ?? 'HEAD' );
+
+		// Only a comparison of two commits is history: uncommitted code is an experiment.
+		const base = { ref: baseRef, commit: await commitOf( baseRef ) };
+		const head = headRef ? { ref: headRef, commit: await commitOf( headRef ), dirty: false } : await gitRevision();
+		if ( shaderErrors === 0 && head && ! head.dirty && head.commit !== base.commit ) {
+
+			await appendTrend( {
+				at: new Date().toISOString(),
+				base,
+				head: { ref: headRef, commit: head.commit },
+				fingerprint: headFingerprint,
+				...( only && { only } ),
+				scenes: comparison.comparisons.map( ( c ) => ( {
+					scene: c.scene,
+					baseMs: c.baseMedian,
+					headMs: c.headMedian,
+					deltaPct: c.deltaPct,
+					floorPct: c.noiseFloorPct,
+					roundsPct: c.roundDeltasPct,
+					verdict: c.verdict,
+					workloadChanges: c.workloadChanges,
+				} ) ),
+				notCompared: absentFromBase,
+			}, PATHS.abLog );
+			log( `${DIM}  appended to ${path.relative( PATHS.repoRoot, PATHS.abLog )}${RESET}` );
+
+		} else if ( head?.dirty ) {
+
+			log( `${DIM}  not logged: the working tree has uncommitted changes${RESET}` );
+
+		}
 
 		return comparison.passed && shaderErrors === 0 ? 0 : 1;
 
@@ -519,8 +570,12 @@ async function commandAB( baseRef, flags ) {
 
 		for ( const server of servers ) await server.stop();
 
-		await exec( 'git', [ 'worktree', 'remove', '--force', worktree ], { cwd: PATHS.repoRoot } )
-			.catch( ( error ) => log( `${YELLOW}worktree cleanup failed: ${error.message}${RESET}` ) );
+		for ( const worktree of worktrees ) {
+
+			await exec( 'git', [ 'worktree', 'remove', '--force', worktree ], { cwd: PATHS.repoRoot } )
+				.catch( ( error ) => log( `${YELLOW}worktree cleanup failed: ${error.message}${RESET}` ) );
+
+		}
 
 	}
 
@@ -557,7 +612,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage', 'load', 'examples' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage', 'load', 'examples', 'trend' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -696,11 +751,27 @@ async function main() {
 	// Each browser example runs on a dev server of its own, not the harness's.
 	if ( command === 'examples' ) return runExamples( { only, verbose, log } );
 
+	if ( command === 'ab' && flags.release ) {
+
+		const [ baseRef, headRef ] = await releasePair();
+		log( `release A/B: ${baseRef} → ${headRef}` );
+		return commandAB( baseRef, { ...flags, head: headRef } );
+
+	}
+
 	if ( command === 'ab' ) {
 
 		const baseRef = positional[ 0 ];
 		if ( ! baseRef ) throw new Error( 'ab requires a base ref, e.g. `bench ab main`' );
 		return commandAB( baseRef, flags );
+
+	}
+
+	if ( command === 'trend' ) {
+
+		const file = await writeTrendReport();
+		log( `trend report: ${path.relative( PATHS.repoRoot, file )}` );
+		return 0;
 
 	}
 
@@ -870,12 +941,14 @@ async function main() {
 				at: new Date().toISOString(),
 				revision: await gitRevision(),
 				fingerprint: await bench.fingerprint(),
+				...( only && { only } ),
 				scenes: report.results.map( ( r ) => ( {
 					scene: r.scene,
 					medianGpuMs: r.gpuMsPerSample.median,
 					p95GpuMs: r.gpuMsPerSample.p95,
 					cv: r.gpuMsPerSample.cv,
 					loadMs: r.loadMs,
+					workload: r.workload,
 				} ) ),
 			} );
 			log( `${DIM}  appended to ${path.relative( PATHS.repoRoot, PATHS.perfLog )}${RESET}` );

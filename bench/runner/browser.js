@@ -184,6 +184,8 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		loadScene: ( id ) => page.evaluate(
 			( sceneId ) => globalThis.__bench.loadScene( sceneId ), id
 		),
+		// Null from a tree older than the call (an A/B base).
+		workload: () => page.evaluate( () => globalThis.__bench.workload?.() ?? null ),
 		render: ( spp, options = {} ) => page.evaluate(
 			( n, opts ) => globalThis.__bench.render( n, opts ), spp, options
 		),

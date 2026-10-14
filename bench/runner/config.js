@@ -16,6 +16,7 @@ export const PATHS = {
 	probes: path.resolve( here, '..', 'baselines', 'probes.json' ),
 	fingerprint: path.resolve( here, '..', 'baselines', 'fingerprint.json' ),
 	perfLog: path.resolve( here, '..', 'baselines', 'perf.jsonl' ),
+	abLog: path.resolve( here, '..', 'baselines', 'ab.jsonl' ),
 	denoise: path.resolve( here, '..', 'baselines', 'denoise.json' ),
 	upscale: path.resolve( here, '..', 'baselines', 'upscale.json' ),
 	freeze: path.resolve( here, '..', 'baselines', 'freeze.json' ),
@@ -417,4 +418,17 @@ export const LOAD = {
 		minMemoryBytes: 16 * 2 ** 20,
 	},
 	timeoutMs: 20 * 60_000,
+};
+
+/**
+ * The trend page (`bench:trend`). A scene is flagged when its last `recentRuns` runs all sit on one side of its earlier
+ * median and their median is `flagPct` away from it: identical code read up to 10 % apart in two browser sessions.
+ */
+export const TREND = {
+	recentRuns: 3,
+	flagPct: 10,
+	// Points above this multiple of a scene's median are drawn at the top edge.
+	clampRatio: 2,
+	// A/B runs shown as columns, newest last.
+	abColumns: 8,
 };

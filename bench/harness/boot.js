@@ -182,6 +182,32 @@ async function loadScene( id ) {
 
 }
 
+/** What the loaded scene asks of the renderer, so a trend can tell a changed scene from a changed engine. */
+function workload() {
+
+	const stage = app.stages.pathTracer;
+	const value = ( name ) => stage.uniforms.get( name ).value;
+	const round = ( values ) => values.map( ( v ) => Math.round( v * 1000 ) / 1000 );
+	const lights = Object.fromEntries( [
+		[ 'directional', value( 'numDirectionalLights' ) ], [ 'point', value( 'numPointLights' ) ],
+		[ 'spot', value( 'numSpotLights' ) ], [ 'area', value( 'numAreaLights' ) ],
+	].filter( ( [ , count ] ) => count > 0 ) );
+
+	return {
+		triangles: stage.triangleCount,
+		materials: stage.materialData.materialCount,
+		layers: Object.entries( stage.materialData.materialLayers() ).filter( ( [ , on ] ) => on ).map( ( [ layer ] ) => layer ),
+		lights,
+		sun: !! value( 'hasSun' ),
+		emissiveTriangles: value( 'emissiveTriangleCount' ),
+		environment: app.settings.get( 'enableEnvironment' ) === false ? 'off' : stage.environment.envParams.mode,
+		integrator: stage.integrator,
+		camera: round( [ ...app.camera.position.toArray(), ...app.camera.quaternion.toArray() ] ),
+		settings: currentScene.settings ?? {},
+	};
+
+}
+
 async function render( spp, options = {} ) {
 
 	if ( ! currentScene ) throw new Error( '__bench.render: no scene loaded' );
@@ -1311,6 +1337,7 @@ globalThis.__bench = {
 	} ) ),
 	fingerprint,
 	loadScene,
+	workload,
 	render,
 	measureGPUPerSample,
 	measureWallPerSample,

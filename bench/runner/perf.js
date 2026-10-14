@@ -48,7 +48,7 @@ import { PATHS, PERF } from './config.js';
  * @param {Object} bench
  * @param {string} sceneId
  * @param {number} [samples] - measurements to take; defaults to PERF.measureSamples
- * @returns {Promise<{ scene: string, loadMs: number, gpuMsPerSample: Object, raw: number[] }>}
+ * @returns {Promise<{ scene: string, loadMs: number, gpuMsPerSample: Object, raw: number[], workload: ?Object }>}
  */
 export async function measureScene( bench, sceneId, samples = PERF.measureSamples ) {
 
@@ -70,6 +70,7 @@ export async function measureScene( bench, sceneId, samples = PERF.measureSample
 	await bench.render( PERF.warmupSamples );
 
 	const perSample = await bench.measureGPUPerSample( samples );
+	const workload = await bench.workload?.() ?? null;
 
 	if ( ! perSample.length ) {
 
@@ -86,6 +87,7 @@ export async function measureScene( bench, sceneId, samples = PERF.measureSample
 		loadMs: load.loadMs,
 		gpuMsPerSample: summarise( measured ),
 		raw: measured,
+		workload,
 	};
 
 }
@@ -208,6 +210,7 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 			log( `  ${scene.id}` );
 
 			const rounds = { base: [], head: [] };
+			const workloads = {};
 
 			for ( let round = 0; round < PERF.abRepeats; round ++ ) {
 
@@ -232,6 +235,7 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 					await bench.bringToFront();
 					const result = await measureScene( bench, scene.id, PERF.abMeasureSamples );
 					rounds[ label ].push( result.gpuMsPerSample.median );
+					workloads[ label ] = result.workload;
 					line.push( `${label} ${result.gpuMsPerSample.median.toFixed( 2 )}` );
 
 				}
@@ -242,7 +246,10 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 
 			}
 
-			measurements.push( { scene: scene.id, baseMedians: rounds.base, headMedians: rounds.head } );
+			measurements.push( {
+				scene: scene.id, baseMedians: rounds.base, headMedians: rounds.head,
+				workloadChanges: changedKeys( workloads.base, workloads.head ),
+			} );
 
 		}
 
@@ -328,14 +335,54 @@ export async function runExposurePerf( bench, { only, size = null, log = () => {
 }
 
 /**
- * Appends a run to the trend log. Monitoring only — never a gate.
+ * Appends a run to a trend log. Monitoring only — never a gate.
  *
  * @param {Object} entry
+ * @param {string} [file]
  */
-export async function appendTrend( entry ) {
+export async function appendTrend( entry, file = PATHS.perfLog ) {
 
-	await fs.mkdir( path.dirname( PATHS.perfLog ), { recursive: true } );
-	await fs.appendFile( PATHS.perfLog, `${JSON.stringify( entry )}\n` );
+	await fs.mkdir( path.dirname( file ), { recursive: true } );
+	await fs.appendFile( file, `${JSON.stringify( entry )}\n` );
+
+}
+
+/** @returns {Object[]} one entry a line; none when the log does not exist */
+export async function readTrend( file ) {
+
+	const text = await fs.readFile( file, 'utf8' ).catch( ( error ) => {
+
+		if ( error.code === 'ENOENT' ) return '';
+		throw error;
+
+	} );
+	return text.split( '\n' ).filter( ( line ) => line.trim() ).map( ( line ) => JSON.parse( line ) );
+
+}
+
+/**
+ * The top-level keys whose values differ — of two scene workloads (`workload()` in the harness), or fingerprints.
+ *
+ * @returns {?string[]} null when either is missing
+ */
+export function changedKeys( before, after ) {
+
+	if ( ! before || ! after ) return null;
+	const keys = new Set( [ ...Object.keys( before ), ...Object.keys( after ) ] );
+	return [ ...keys ].filter( ( key ) => canonical( before[ key ] ) !== canonical( after[ key ] ) );
+
+}
+
+function canonical( value ) {
+
+	if ( Array.isArray( value ) ) return `[${value.map( canonical ).join( ',' )}]`;
+	if ( value && typeof value === 'object' ) {
+
+		return `{${Object.keys( value ).sort().map( ( key ) => `${JSON.stringify( key )}:${canonical( value[ key ] )}` ).join( ',' )}}`;
+
+	}
+
+	return JSON.stringify( value ) ?? 'null';
 
 }
 
@@ -362,6 +409,7 @@ export function comparePerf( measurements ) {
 			baseSpreadPct: result.base.spreadPct,
 			headSpreadPct: result.head.spreadPct,
 			verdict: result.verdict,
+			workloadChanges: entry.workloadChanges ?? null,
 		};
 
 	} );
