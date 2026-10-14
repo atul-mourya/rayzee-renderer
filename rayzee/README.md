@@ -100,8 +100,9 @@ npm install rayzee three
    // Load a 3D model (place .glb in public/ folder)
    await engine.loadModel('/scene.glb');
 
-   // Or load an environment map
-   // await engine.loadEnvironment('/environment.hdr');
+   // Light it: a model alone renders black. The physical sky needs no file;
+   // for an HDRI, await engine.loadEnvironment('/environment.hdr') instead.
+   await engine.environmentManager.setMode('procedural');
 
    // Start rendering
    engine.animate();
@@ -146,7 +147,7 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
       "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.tsl.js",
       "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
-      "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js",
+      "oidn-web/": "https://cdn.jsdelivr.net/npm/oidn-web@0.5.0/",
       "rayzee": "https://cdn.jsdelivr.net/npm/rayzee/dist/rayzee.es.js"
     }
   }
@@ -165,6 +166,8 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
     await engine.init();
     // Replace with your own model URL
     await engine.loadModel('https://your-cdn.com/scene.glb');
+    // Light it: a model alone renders black. The physical sky needs no file.
+    await engine.environmentManager.setMode('procedural');
     engine.animate();
 
     window.addEventListener('resize', () => {
@@ -545,8 +548,16 @@ const image = await renderer.renderToBuffer({ colorSpace: 'srgb' });
 renderer.dispose();
 ```
 
-Two runnable examples live in the repository: `rayzee/examples/core-node.mjs` (the core alone, in Node, writing a PNG)
-and `rayzee/examples/core-browser/` (the core plus the physical sky, accumulating on a canvas).
+Runnable examples live in the repository's `rayzee/examples/`, each run against the engine in that checkout:
+
+| Example | What it shows | Run (from the repository root) |
+|---|---|---|
+| `core-node.mjs` | the core alone, in Node, writing a PNG | `npm run example:node` |
+| `core-browser/` | the core plus the physical sky, accumulating on a canvas | `npm run example:browser` |
+| `viewer-browser/` | the full engine in a page: a model, an HDRI, OIDN on the finished image | `npm run example:viewer` |
+| `render.mjs` | the full engine in Node: any model and sky, any size, denoised, saved as `render.png` (options at the top of the file) | `npm run example:render -- --model scene.glb` |
+
+`npm run bench:examples` runs all four and fails if any of them throws or logs an error or warning.
 
 #### Add-ons
 
@@ -1715,7 +1726,7 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 
 | Package | Purpose | Install needed? |
 |---|---|---|
-| `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` (**>=0.4.0**) |
+| `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` (**>=0.5.0**) |
 | `onnxruntime-web` | AI-powered upscaling | No — loaded from CDN at runtime |
 | `@bb-studio/ocio` | OpenColorIO runtime for [Colour Management](#colour-management) (~6 MB WebAssembly) | Only to load colour configs — `npm install @bb-studio/ocio`, then pass it as `ocioRuntimeFactory` |
 
