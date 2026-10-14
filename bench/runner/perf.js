@@ -6,7 +6,9 @@
  * 1. Measure GPU time, not wall clock. `pipeline.getStats()` wraps stage.render() in
  *    performance.now(), which times command ENCODING and stays flat while GPU cost
  *    doubles. The numbers below come from WebGPU timestamp queries via
- *    app.getGPUTimings(), which are real GPU milliseconds.
+ *    app.getGPUTimings(), which are real GPU milliseconds — of the compute passes only: the
+ *    render passes' timestamps overlap the compute before them on Apple GPUs and read either
+ *    ~0 or most of it, which flipped small scenes between two speeds.
  *
  *    Measurement runs with `setPerfMode( true )`, which keeps `_useDynamicDispatch` and
  *    the per-bounce early exit ACTIVE. Those are real shipping behaviour; benchmarking
@@ -39,7 +41,7 @@ import { compareReplicates, discardWarmup, summarise, trimOutliers } from '../li
 import { PATHS, PERF } from './config.js';
 
 /**
- * Loads one scene and measures its steady-state GPU ms/sample.
+ * Loads one scene and measures its steady-state GPU compute ms/sample.
  *
  * A scene load recompiles the wavefront to WGSL, so a warmup render is always discarded.
  *
@@ -48,7 +50,7 @@ import { PATHS, PERF } from './config.js';
  * @param {Object} bench
  * @param {string} sceneId
  * @param {number} [samples] - measurements to take; defaults to PERF.measureSamples
- * @returns {Promise<{ scene: string, loadMs: number, gpuMsPerSample: Object, raw: number[], workload: ?Object }>}
+ * @returns {Promise<{ scene: string, loadMs: number, computeMsPerSample: Object, raw: number[], workload: ?Object }>}
  */
 export async function measureScene( bench, sceneId, samples = PERF.measureSamples ) {
 
@@ -85,7 +87,7 @@ export async function measureScene( bench, sceneId, samples = PERF.measureSample
 	return {
 		scene: sceneId,
 		loadMs: load.loadMs,
-		gpuMsPerSample: summarise( measured ),
+		computeMsPerSample: summarise( measured ),
 		raw: measured,
 		workload,
 	};
@@ -98,10 +100,10 @@ export async function measureScene( bench, sceneId, samples = PERF.measureSample
  */
 function formatMeasurement( result ) {
 
-	const s = result.gpuMsPerSample;
+	const s = result.computeMsPerSample;
 
 	return (
-		`${s.median.toFixed( 2 )} ms/sample GPU ` +
+		`${s.median.toFixed( 2 )} ms/sample GPU compute ` +
 		`(±${( s.relSe * 100 ).toFixed( 1 )} % median SE, cv ${( s.cv * 100 ).toFixed( 1 )} %, ` +
 		`n ${s.n})`
 	);
@@ -234,9 +236,9 @@ export async function runPerfInterleaved( baseBench, headBench, { only, log = ()
 					// slower on identical code.
 					await bench.bringToFront();
 					const result = await measureScene( bench, scene.id, PERF.abMeasureSamples );
-					rounds[ label ].push( result.gpuMsPerSample.median );
+					rounds[ label ].push( result.computeMsPerSample.median );
 					workloads[ label ] = result.workload;
-					line.push( `${label} ${result.gpuMsPerSample.median.toFixed( 2 )}` );
+					line.push( `${label} ${result.computeMsPerSample.median.toFixed( 2 )}` );
 
 				}
 

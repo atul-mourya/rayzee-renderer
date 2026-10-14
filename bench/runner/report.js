@@ -359,6 +359,9 @@ ${thumbs ? `<h2>Bit-identical to the golden</h2>\n<div class="thumbs">\n${thumbs
 
 const byTime = ( a, b ) => ( a.at < b.at ? - 1 : a.at > b.at ? 1 : 0 );
 
+// Runs before 2026-10-14 summed compute and render timestamps; the render part overlaps the compute on Apple GPUs.
+const MEASURES = { total: 'compute + render passes', compute: 'compute passes' };
+
 function showValue( value ) {
 
 	if ( value === undefined || value === null ) return 'none';
@@ -422,13 +425,17 @@ export function trendModel( perfRuns, abRuns, options = {} ) {
 
 		for ( const entry of run.scenes ) {
 
-			if ( ! scenes.has( entry.scene ) ) scenes.set( entry.scene, { id: entry.scene, points: [], breaks: [], workload: null } );
+			if ( ! scenes.has( entry.scene ) ) scenes.set( entry.scene, { id: entry.scene, points: [], breaks: [], workload: null, measure: null } );
 			const scene = scenes.get( entry.scene );
+			const measure = run.measure ?? 'total';
 			const changes = entry.workload && scene.workload ? describeChanges( scene.workload, entry.workload ) : [];
+			if ( scene.measure && measure !== scene.measure ) changes.unshift( `measured: ${MEASURES[ scene.measure ]} → ${MEASURES[ measure ]}` );
 			if ( changes.length ) scene.breaks.push( { run: index, after: scene.points.at( - 1 ).run, changes } );
 			scene.workload = entry.workload ?? scene.workload;
+			scene.measure = measure;
 			scene.points.push( {
-				run: index, ms: entry.medianGpuMs, p95: entry.p95GpuMs, cv: entry.cv, loadMs: entry.loadMs, segment: scene.breaks.length,
+				run: index, ms: entry.computeMs ?? entry.medianGpuMs, p95: entry.computeP95Ms ?? entry.p95GpuMs, cv: entry.cv,
+				loadMs: entry.loadMs, segment: scene.breaks.length,
 			} );
 
 		}
@@ -451,7 +458,7 @@ export function trendModel( perfRuns, abRuns, options = {} ) {
 
 		if ( ! longest.has( link ) ) {
 
-			const before = links.filter( ( l ) => l.head.commit === link.base.commit && l.at < link.at ).map( chainTo );
+			const before = links.filter( ( l ) => l.head.commit === link.base.commit && l.at < link.at && l.measure === link.measure ).map( chainTo );
 			longest.set( link, [ ...before.reduceRight( ( best, c ) => ( c.length > best.length ? c : best ), [] ), link ] );
 
 		}
@@ -767,7 +774,8 @@ summary { cursor: pointer; font-weight: 600; }
 <body>
 <h1>Bench performance trend</h1>
 <p class="muted">${esc( meta )}</p>
-${runs.length ? `<p>GPU milliseconds a sample, from <code>bench</code> / <code>bench:perf</code>: one pass a run, so a single point is not evidence — identical code has read up to 10 % apart in two sessions. ` +
+${runs.length ? `<p>GPU milliseconds of ray tracing (the compute passes) a sample, from <code>bench</code> / <code>bench:perf</code>, at 256²: one pass a run, so a single point is not evidence. ` +
+`Runs before 2026-10-14 also counted the display passes, whose timestamps overlap the tracing on Apple GPUs and read either ~0 or most of it, so each line breaks where the measure changed. ` +
 `Runs are evenly spaced, oldest on the left; hover a point for its date and commit. ` +
 `A scene is flagged when its last ${TREND.recentRuns} runs all sit past its earlier median and their median is ${TREND.flagPct} % or more away. ` +
 `<strong>${slower} slower</strong>, <strong>${faster} faster</strong> of ${scenes.length} scenes.</p>

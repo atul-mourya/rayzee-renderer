@@ -331,11 +331,11 @@ regenerating and the compensation drifts back out of calibration — which the r
 
 ### Performance — same-session A/B only
 
-`npm run bench:perf` records real GPU milliseconds (WebGPU timestamp queries) to `baselines/perf.jsonl` as a **monitored trend, not a gate**. A stored number is thermally meaningless on a laptop and would produce false alarms until people ignore it. The trend log is what catches the every-PR-is-+2 % drift that per-run thresholds never see. Each line records the commit it measured and `dirty: true` when the working tree differed from it (the bench's own `baselines/` excluded).
+`npm run bench:perf` records GPU milliseconds of the compute passes — the path tracer — (WebGPU timestamp queries) to `baselines/perf.jsonl` as a **monitored trend, not a gate**. A stored number is thermally meaningless on a laptop and would produce false alarms until people ignore it. The trend log is what catches the every-PR-is-+2 % drift that per-run thresholds never see. Each line records the commit it measured and `dirty: true` when the working tree differed from it (the bench's own `baselines/` excluded).
 
 Each measurement renders **exactly one sample** and resolves the timestamp queries immediately. Resolving once after an N-sample render reports whichever frame happened to land last rather than the average — that produced `cv > 100 %` and one scene reading implausibly faster than a simpler one before it was fixed.
 
-⚠️ **Render-pass timestamps overlap.** On Apple M-series a render pass's timestamps overlap the compute before it and each other: `glass-transmission` at 256² reads 1.8 ms compute + 2.0 ms render, and renders at 1.95 ms a sample by the wall clock with the GPU drained. Two sides that draw alike carry the same overlap; when they do not (a compositor change), time them by the wall clock, as `bench:exposure` does (`measureWallPerSample`). Measured 2026-10-10, auto exposure against none: −0.4 to +0.7 % a sample, with local exposure +0.1 to +3.2 % at 256² and −0.4 to +1.0 % at 1024², all within noise.
+⚠️ **Render-pass timestamps overlap, so perf times compute passes only.** On Apple M-series a render pass's timestamps overlap the compute before it and each other, and read either ~0 or most of it: `glass-transmission` at 256² read 1.8 ms compute + 2.0 ms render, and renders at 1.95 ms a sample by the wall clock with the GPU drained. Summed into the total, as perf did until 2026-10-14, they flipped small scenes between two speeds at random: across the corpus measured twice in one tab, compute moved by at most ±2 % on every scene while the render part swung (`spheres-procedural-sky` 0.05 ↔ 0.30 ms, `translucent-panel` 0.13 ↔ 0.02 ms), and that noise is what held the A/B band at 8 %. The runner reads `getGPUTimings().compute` itself (`measureGPUPerSample` in `runner/browser.js`), so both sides of an A/B measure alike whatever their harness. A change to a render pass (the compositor, a display gain) is invisible to `bench:perf` and `bench:ab`: time it by the wall clock, as `bench:exposure` does (`measureWallPerSample`). Measured 2026-10-10, auto exposure against none: −0.4 to +0.7 % a sample, with local exposure +0.1 to +3.2 % at 256² and −0.4 to +1.0 % at 1024², all within noise.
 
 Perf runs with the **production dispatch heuristics active** (`setPerfMode`), unlike image comparison which needs them pinned off for reproducibility. Benchmarking with them off measures a configuration production never runs. The cost is that per-frame time becomes legitimately bimodal — dispatch sizing is readback-driven — so `cv` sits at 30–40 % even when throughput is rock stable.
 
@@ -369,13 +369,15 @@ scene (GPU ms a sample, one point a run, runs evenly spaced) and a table of the 
   worktrees, so the working tree does not matter. Run it after each release. The page chains runs whose base is the
   previous run's head and multiplies them into a total: a small change repeated each release grows there in step,
   while the noise of independent runs grows only as the square root of their count.
+- Runs from 2026-10-14 record `measure: 'compute'` (`computeMs`, `computeP95Ms`); earlier ones summed compute and render
+  passes (`medianGpuMs`), so each line breaks there and A/B runs chain only with runs of the same measure.
 - Both logs are committed with the rest of `baselines/`.
 
 > **`bench:ab` requires `bench/` to exist in the base ref.** Each side boots the harness from its *own* tree — Vite's `server.fs.allow` resolves to the tree the dev server runs in, so serving one tree's harness to the other's server returns 403. A ref predating this tooling therefore has no harness to boot and cannot be used as a base.
 
 #### What the gate can actually resolve — and how that was established
 
-Roughly **a 10 % regression, and nothing finer.** That is a measured limit, not a design target, and the path to it is worth recording because every intermediate answer looked fine and was wrong.
+About **a 3 % change** since 2026-10-14, when the gate began timing compute passes only (see below); before that roughly a 10 % regression and nothing finer. Both are measured limits, not design targets, and the path to them is worth recording because every intermediate answer looked fine and was wrong.
 
 A harness's *within-run* standard error is 0.4–2 % at these sample counts, and the first version of the gate used it as the noise floor. Three experiments showed that number is not an honest uncertainty for an A/B:
 
@@ -389,7 +391,9 @@ Judged against a ±1 % floor, a self-A/B of `HEAD` against itself returned two t
 
 Two changes fixed it. Both sides now run in one browser (removing the session boundary), and each scene is measured in several **paired rounds** whose per-round *ratio* is the statistic. The pairing matters more than the replication: the dominant noise is common-mode, and one observed round measured 3.0 ms/sample on *both* sides where its neighbours measured 4.3 on both. Independent medians turn that into a ±27 % noise floor — a gate that never fires. The ratio is untouched by it.
 
-What replication cannot remove is a **bias**, and there was one: the tab opened second read up to ~13 % slower on identical code, round after round. It came from tab state, not from the two WebGPU devices — bringing each side's tab to the front before measuring it removed it. Self-A/B, 8 scenes × 3 rounds: 24 of 40 `unchanged` (12 false `slower`) before, 23 of 24 (no false verdict, one `inconclusive`) after; the four sub-1 ms scenes went from 2 of 16 to 16 of 16. After the fix, |delta| on identical code over 93 comparisons: median 0.8 %, p95 6 %, max 7.5 %. `PERF.abUnchangedPct` (8 %) still sits just above that worst case, which is what costs the gate its fine resolution. It is **machine-specific** — re-derive it with `bench:ab -- HEAD` on a clean tree before trusting the numbers on other hardware.
+What replication cannot remove is a **bias**, and there was one: the tab opened second read up to ~13 % slower on identical code, round after round. It came from tab state, not from the two WebGPU devices — bringing each side's tab to the front before measuring it removed it. Self-A/B, 8 scenes × 3 rounds: 24 of 40 `unchanged` (12 false `slower`) before, 23 of 24 (no false verdict, one `inconclusive`) after; the four sub-1 ms scenes went from 2 of 16 to 16 of 16. After the fix, |delta| on identical code over 93 comparisons: median 0.8 %, p95 6 %, max 7.5 %. `PERF.abUnchangedPct` was 8 %, just above that worst case.
+
+Most of that worst case was the render-pass timestamps (see the warning above), not the renderer. Timing compute passes only, three self-A/Bs of HEAD, 123 comparisons: |delta| median 0.4 %, p95 1.2 %, max 1.8 %, every verdict `unchanged` and none `inconclusive` (a release A/B on the total had 10 of 41 inconclusive). `PERF.abUnchangedPct` is now 3 %. Against known changes: compiling out unused material layers (3d487220) reads `faster` on 33 of 34 scenes by 4.1–12.4 %, median 8 % — about half of them inside the old band — and tracing instances in object space (9f5ca6df) reads glass +5.2 % and alpha-cutout +8.3 %, each scene's rounds within a point of each other. The band is **machine-specific** — re-derive it with `bench:ab -- HEAD` before trusting the numbers on other hardware.
 
 Every verdict prints its own floor, its per-round deltas, and the absolute spread of each side, so a marginal call is visibly marginal:
 
@@ -904,12 +908,12 @@ Each scene load compiles the wavefront to WGSL, ~0.2–0.4 s on Apple M-series. 
 
 **Ground truth can only be generated by `bench:bless --truth`.** Regenerating it from the build under test would make both truth gates self-comparisons — a systematic energy error appears at both sample counts and cancels — so the runner refuses `--truth` outside bless.
 
-**Cheap scenes still throw wild single rounds** — `spheres-procedural-sky` measured +110 % in one
-round of an otherwise flat self-A/B. The MAD floor absorbs one per scene, and two that agree used to make a false
-verdict: the first `bench:release` (v11.7.0 → v11.8.0, 2026-10-14) called `furnace-metal-mid` `slower` +56 % (rounds
-+60.8 / −34.4 / +56.0 %) and `furnace-dielectric-mirror` `faster` −37 % (−37.2 / −37.7 / +97.0 %), both trees reading
-~1.05 and ~1.6 ms in different rounds — the scene lands at one of two speeds, whichever tree runs it. A round past the
-unchanged band the other way now withdraws the verdict (`inconclusive`); a round that dips inside the band does not.
+**Single rounds still run wild** — one self-A/B round read +23.8 % on compute alone. The MAD floor absorbs one per
+scene, and two that agree used to make a false verdict: the first `bench:release` (v11.7.0 → v11.8.0, 2026-10-14,
+timing compute + render) called `furnace-metal-mid` `slower` +56 % (rounds +60.8 / −34.4 / +56.0 %) and
+`furnace-dielectric-mirror` `faster` −37 % (−37.2 / −37.7 / +97.0 %), both trees reading ~1.05 and ~1.6 ms in different
+rounds — the render-pass timestamps, not the renderer. A round past the unchanged band the other way withdraws the
+verdict (`inconclusive`); a round that dips inside the band does not.
 
 **Perf absolutes in `perf.jsonl` come from a single un-replicated pass** (`bench:perf`), so they
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the

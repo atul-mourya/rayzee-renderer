@@ -221,35 +221,6 @@ async function render( spp, options = {} ) {
 }
 
 /**
- * GPU milliseconds for a SINGLE sample, measured one sample at a time.
- *
- * Timestamp queries report the last resolved frame, so resolving once after an N-sample
- * render yields whichever frame happened to land last — not the average, and not even
- * reliably a full frame. Rendering exactly one sample and resolving immediately makes the
- * reading unambiguous.
- *
- * @param {number} count - number of single-sample measurements
- * @returns {Promise<number[]>} per-sample GPU ms
- */
-async function measureGPUPerSample( count ) {
-
-	const samples = [];
-
-	for ( let i = 0; i < count; i ++ ) {
-
-		// reset:false accumulates one more sample onto the existing buffer, avoiding a
-		// per-measurement reset; yieldEvery:0 keeps a setTimeout out of the measurement.
-		await app.renderFrames( 1, { reset: false, yieldEvery: 0 } );
-		const timings = await app.getGPUTimings();
-		if ( timings ) samples.push( timings.total );
-
-	}
-
-	return samples;
-
-}
-
-/**
  * Wall-clock milliseconds per sample over `batches` renders of `samples` samples, each from an idle GPU
  * to an idle GPU. For setups that draw differently: render-pass timestamps overlap the work before them and
  * each other (Apple M-series: the same 256² compositor pass read 0.9 ms or 0.013 ms), so they do not add up.
@@ -280,8 +251,8 @@ async function measureWallPerSample( batches, samples ) {
 /**
  * Per-kernel GPU ms, one reading per rendered sample.
  *
- * Same one-sample-then-resolve discipline as measureGPUPerSample: timestamps report the last
- * resolved frame, so anything larger makes the reading ambiguous.
+ * One sample, then resolve: timestamps report the last resolved frame, so anything larger makes the
+ * reading ambiguous.
  *
  * @param {number} count - number of single-sample measurements
  * @returns {Promise<Array<{kernels: Object<string, number>, total: number, unattributed: number}>>}
@@ -1339,7 +1310,6 @@ globalThis.__bench = {
 	loadScene,
 	workload,
 	render,
-	measureGPUPerSample,
 	measureWallPerSample,
 	measureKernelGPU,
 	setRenderSize,

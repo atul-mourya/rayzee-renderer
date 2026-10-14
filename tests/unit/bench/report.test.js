@@ -217,6 +217,19 @@ describe( 'bench quality report', () => {
 
 		} );
 
+		it( 'plots compute where a run measured it, and breaks the line where the measure changed', () => {
+
+			const runs = [
+				run( '2026-01-01', { s: 2 } ),
+				{ ...run( '2026-01-02', {} ), measure: 'compute', scenes: [ { scene: 's', computeMs: 1, computeP95Ms: 1.1, cv: 0.01, loadMs: 1 } ] },
+			];
+
+			const [ scene ] = trendModel( runs, [] ).scenes;
+			expect( scene.points.map( ( p ) => p.ms ) ).toEqual( [ 2, 1 ] );
+			expect( scene.breaks ).toEqual( [ { run: 1, after: 0, changes: [ 'measured: compute + render passes → compute passes' ] } ] );
+
+		} );
+
 		it( 'draws no break across runs that did not record a workload, and leaves out machines with fewer runs', () => {
 
 			const runs = [

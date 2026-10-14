@@ -60,7 +60,8 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 Baselines are **machine-specific** (the wavefront path budget derives from device limits, and
 single- vs multi-chunk are different code paths); the suite refuses to compare across a
 mismatched GPU fingerprint. Perf absolutes are a monitored trend, never a gate — only the A/B
-comparison gates.
+comparison gates. Perf times the GPU **compute passes only**: render-pass timestamps overlap the compute on Apple GPUs and
+flipped small scenes between two speeds; on compute the A/B band is 3 %.
 
 ### Release
 - `npm run release` - Create semantic release (requires environment variables)

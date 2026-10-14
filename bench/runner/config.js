@@ -315,11 +315,11 @@ export const PERF = {
 	abMeasureSamples: 60,
 	// Absolute band below which an A/B delta is called unchanged, whatever the rounds say.
 	//
-	// MACHINE-SPECIFIC, and calibrated by measurement rather than chosen: self-A/Bs of HEAD on an
-	// M-series reached 7.5 % (p95 6 %) over 93 comparisons, so 8 % leaves a thin margin and this
-	// gate resolves roughly a 10 % regression and nothing finer. Re-derive it with
-	// `bench:ab -- HEAD` on a clean tree before trusting it elsewhere.
-	abUnchangedPct: 8,
+	// MACHINE-SPECIFIC, and calibrated by measurement rather than chosen: three self-A/Bs of HEAD on an
+	// M-series timing compute passes only, 123 comparisons: |delta| median 0.4 %, p95 1.2 %, max 1.8 %.
+	// (With render-pass timestamps counted it reached 7.5 % and the band was 8 %.) Re-derive it with
+	// `bench:ab -- HEAD` before trusting it elsewhere.
+	abUnchangedPct: 3,
 	// `bench exposure`: a spread of lighting, materials and skies, each side timed as `batches` renders of
 	// `batchSamples` samples (wall clock, GPU drained) and the median kept.
 	exposure: {
