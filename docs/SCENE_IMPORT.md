@@ -84,7 +84,9 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
 - **Materials.** `coatedconductor` is a metal under a clear coat (pbrt's roughnesses default to 0); a textured
   roughness becomes a roughness map with pbrt's remap baked in (`applyRoughness`; the clear coat's too); `subsurface` is
   the engine's random walk (`applySubsurface`: albedo σs / σt, mean free path 1 / σt; pbrt's named media, `sigma_a`/
-  `sigma_s`, or a `reflectance` inverted through the dipole at `mfp`); `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
+  `sigma_s`, or a `reflectance` inverted through the dipole at `mfp`); a sampled spectral `eta` (dielectric, subsurface)
+  is read at 550 nm between its samples (`pEta`; pbrt traces it per wavelength; read as its first wavelength it gave
+  crown's gems an IOR of 200); `normalmap` loads linear, a float image converted to 8 bits (`eightBit`: a material
   map takes only 8-bit texels). Glass whose `MediumInterface` interior is a homogeneous medium gets Beer–Lambert
   attenuation from σa + σs (no scattering inside). `diffusetransmission` is the engine's diffuse transmission lobe.
   Textures the engine has no node for are baked on the CPU (`PBRTTextureBake.js`) into 8-bit sRGB DataTextures in

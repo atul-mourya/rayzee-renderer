@@ -110,4 +110,19 @@ describe( 'pbrt materials', () => {
 
 	} );
 
+	it( 'reads a sampled spectral IOR at 550 nm, not its first wavelength', async () => {
+
+		// crown's gems: "spectrum eta" [ 200 3.5 900 3.3 ] had an IOR of 200.
+		const ior = async ( ...samples ) => ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'spectrum', ...samples ) } }, ctx ) ).ior;
+		expect( await ior( 200, 3.5, 900, 3.3 ) ).toBeCloseTo( 3.4, 6 );
+		expect( await ior( 400, 1.53, 500, 1.52, 600, 1.515, 700, 1.512 ) ).toBeCloseTo( 1.5175, 6 );
+		expect( await ior( 600, 1.6, 700, 1.58 ) ).toBe( 1.6 );
+		expect( await ior( 300, 1.7, 400, 1.68 ) ).toBe( 1.68 );
+		expect( await ior( 'glass-BK7' ) ).toBe( 1.5 );
+		expect( ( await buildMaterial( { type: 'dielectric', params: { eta: param( 'float', 1.33 ) } }, ctx ) ).ior ).toBe( 1.33 );
+		const skin = await buildMaterial( { type: 'subsurface', params: { eta: param( 'spectrum', 500, 1.4, 600, 1.3 ) } }, ctx );
+		expect( skin.ior ).toBeCloseTo( 1.35, 6 );
+
+	} );
+
 } );

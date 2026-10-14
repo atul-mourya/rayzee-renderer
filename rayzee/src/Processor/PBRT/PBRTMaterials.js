@@ -61,6 +61,21 @@ export function pFloat( params, name, dflt ) {
 
 }
 
+/** An index of refraction: a sampled spectrum ( λ value pairs ) is read at 550 nm, linearly between its samples. */
+export function pEta( params, name, dflt ) {
+
+	const p = param( params, name );
+	if ( p?.type !== 'spectrum' || typeof p.value[ 0 ] !== 'number' ) return pFloat( params, name, dflt );
+	approximated( params, name );
+	const v = p.value;
+	if ( v.length < 2 ) return dflt;
+	let i = 2;
+	while ( i < v.length - 1 && v[ i ] < 550 ) i += 2;
+	if ( i >= v.length - 1 || v[ i - 2 ] >= 550 ) return v[ i >= v.length - 1 ? i - 1 : 1 ];
+	return v[ i - 1 ] + ( v[ i + 1 ] - v[ i - 1 ] ) * ( 550 - v[ i - 2 ] ) / ( v[ i ] - v[ i - 2 ] );
+
+}
+
 export function pString( params, name, dflt ) {
 
 	const p = param( params, name );
@@ -256,7 +271,7 @@ const SUBSURFACE_SIGMA_S = [ 2.55, 3.21, 3.77 ];
  */
 async function applySubsurface( mat, params, ctx ) {
 
-	const eta = pFloat( params, 'eta', 1.33 );
+	const eta = pEta( params, 'eta', 1.33 );
 	const scale = pFloat( params, 'scale', 1 );
 	const scaled = ( rgb ) => rgb.map( ( v ) => Math.max( 0, v * scale ) );
 	let g = pFloat( params, 'g', 0 );
@@ -430,7 +445,7 @@ export async function buildMaterial( def, ctx ) {
 			mat.transmission = 1;
 			mat.metalness = 0;
 			mat.color.setRGB( 1, 1, 1 );
-			mat.ior = pFloat( params, 'eta', 1.5 );
+			mat.ior = pEta( params, 'eta', 1.5 );
 			await applyRoughness( mat, 'roughness', params, 0, ctx );
 			mat.thickness = type === 'thindielectric' ? 0 : pFloat( params, 'thickness', 0 );
 			break;
