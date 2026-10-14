@@ -74,7 +74,7 @@ function sentinel( k ) {
 		transmissionMap: v(), clearcoatMap: v(), clearcoatRoughnessMap: v(), sheenColorMap: v(),
 		sheenRoughnessMap: v(), iridescenceMap: v(), iridescenceThicknessMap: v(), specularIntensityMap: v(),
 		specularColorMap: v(), diffuseTransmission: u(), diffuseTransmissionColor: rgb(),
-		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(),
+		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(), diffuseRoughness: u(),
 	};
 
 }
@@ -119,6 +119,7 @@ describe( 'packMaterial', () => {
 		expectAt( M.DIFFUSE_TRANSMISSION_COLOR + 2, mat.diffuseTransmissionColor[ 2 ] );
 		expectAt( M.DIFFUSE_TRANSMISSION_MAP_INDEX, mat.diffuseTransmissionMap );
 		expectAt( M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX, mat.diffuseTransmissionColorMap );
+		expectAt( M.DIFFUSE_ROUGHNESS, mat.diffuseRoughness );
 
 	} );
 

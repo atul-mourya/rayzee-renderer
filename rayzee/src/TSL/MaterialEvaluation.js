@@ -10,7 +10,7 @@ import { materialLayers } from './SceneResources.js';
 import {
 	DistributionGGX, SheenDistribution, VisibilitySheen, VisibilityGGXSmithCorrelated,
 	sheenDirectionalAlbedo, evaluateSpecularDFG, baseFresnelParams,
-	computeAnisoAlphas, DistributionGGXAniso, VisibilityGGXAniso,
+	computeAnisoAlphas, DistributionGGXAniso, VisibilityGGXAniso, diffuseEON,
 } from './MaterialProperties.js';
 import { evalIridescence } from './MaterialProperties.js';
 
@@ -30,6 +30,23 @@ const isLambertian = ( material ) => material.roughness.greaterThan( 0.98 )
 	.and( material.sheen.equal( 0.0 ) )
 	.and( material.iridescence.equal( 0.0 ) );
 
+// The diffuse lobe: `lambert` as the caller writes it, or EON for albedo `rho` × `scale` while the material has a
+// diffuse roughness. Compiled in only with that layer, and Lambert bit for bit at roughness 0.
+const diffuseLobe = ( layers, material, dots, lambert, rho, scale ) => {
+
+	if ( ! layers.diffuseRoughness ) return lambert;
+	const lobe = lambert.toVar();
+	If( material.diffuseRoughness.greaterThan( 0.0 ), () => {
+
+		// min: opposite directions take a fallback half vector, which leaves one of the two at its 0.001 floor.
+		const c = min( dots.VoH, dots.LoH );
+		lobe.assign( diffuseEON( rho, material.diffuseRoughness, dots.NoL, dots.NoV, c.mul( c ).mul( 2.0 ).sub( 1.0 ) ).mul( scale ) );
+
+	} );
+	return lobe;
+
+};
+
 // Body of evaluateMaterialResponse taking precomputed dot products. Callers
 // that also need calculateMaterialPDF for the same (V, L, N) should share dots
 // to save one computeDotProducts call.
@@ -46,8 +63,9 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 	// taken above roughness 0.98.
 	If( isLambertian( material ), () => {
 
-		result.assign( material.color.rgb.mul( float( 1.0 ).sub( material.metalness ) )
-			.mul( float( 1.0 ).sub( material.diffuseTransmission ) ).mul( PI_INV ) );
+		const share = float( 1.0 ).sub( material.metalness ).mul( float( 1.0 ).sub( material.diffuseTransmission ) );
+		result.assign( diffuseLobe( layers, material, dots, material.color.rgb.mul( float( 1.0 ).sub( material.metalness ) )
+			.mul( float( 1.0 ).sub( material.diffuseTransmission ) ).mul( PI_INV ), material.color.rgb, share ) );
 
 	} ).Else( () => {
 
@@ -123,7 +141,7 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 			.mul( float( 1.0 ).sub( material.metalness ) )
 			.mul( float( 1.0 ).sub( material.transmission ) )
 			.mul( float( 1.0 ).sub( material.diffuseTransmission ) );
-		const diffuse = deltaOnly ? vec3( 0.0 ) : kD.mul( materialColor ).mul( PI_INV );
+		const diffuse = deltaOnly ? vec3( 0.0 ) : diffuseLobe( layers, material, dots, kD.mul( materialColor ).mul( PI_INV ), materialColor, kD );
 
 		const baseLayer = diffuse.add( specular ).toVar();
 

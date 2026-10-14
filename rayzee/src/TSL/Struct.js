@@ -74,6 +74,7 @@ export const RayTracingMaterial = struct( {
 	diffuseTransmissionColor: 'vec3',
 	diffuseTransmissionMapIndex: 'int',
 	diffuseTransmissionColorMapIndex: 'int',
+	diffuseRoughness: 'float', // 0 = Lambert, above it EON (MaterialProperties.diffuseEON)
 } );
 
 // Result of folding the glTF extension textures into their scalar factors (applyExtensionMaps).

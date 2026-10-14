@@ -495,6 +495,36 @@ function makeSheenRow() {
 
 }
 
+/** Clay under the sun, diffuse roughness rising left to right; the last sphere is glossy, its diffuse rough. */
+function makeRoughDiffuseRow() {
+
+	const group = new Group();
+	const geometry = new SphereGeometry( 0.8, 48, 48 );
+
+	const specs = [
+		{ diffuseRoughness: 0, roughness: 1 },
+		{ diffuseRoughness: 0.5, roughness: 1 },
+		{ diffuseRoughness: 1, roughness: 1 },
+		{ diffuseRoughness: 1, roughness: 0.35 },
+	];
+
+	specs.forEach( ( spec, index ) => {
+
+		const material = new MeshPhysicalMaterial( { color: 0xb87a5a, roughness: spec.roughness, metalness: 0 } );
+		// three.js has no such property; the engine reads it off the material (MATERIAL_DEFAULTS).
+		material.diffuseRoughness = spec.diffuseRoughness;
+		const mesh = new Mesh( geometry, material );
+		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
+		group.add( mesh );
+
+	} );
+
+	group.add( makeBackdrop( { color: 0x8a8580, roughness: 1 } ) );
+
+	return group;
+
+}
+
 /**
  * Clearcoat over a rough coloured base — car paint. The coat reflects sharply where the base
  * does not, so a broken coat shows as a missing highlight rather than a slightly different one.
@@ -1167,6 +1197,20 @@ export const SCENES = [
 
 		},
 	},
+	{
+		id: 'rough-diffuse',
+		covers: 'diffuse roughness (EON) — its shape across roughness, alone and under a specular layer; a furnace cannot see shape',
+		spp: 64,
+		truthSpp: 2048,
+		settings: { maxBounces: 4 },
+		async build( app ) {
+
+			await app.stages.pathTracer.environment.setMode( 'procedural' );
+			await app.loadObject3D( makeRoughDiffuseRow(), 'rough-diffuse' );
+			setCamera( app, [ 0, 0.4, 7 ], [ 0, 0, 0 ] );
+
+		},
+	},
 ];
 
 // -----------------------------------------------------------------------------
@@ -1226,7 +1270,14 @@ const FURNACE_MATERIALS = {
 		roughness: 0.3, metalness: 0,
 		iridescence: 1, iridescenceIOR: 1.3, iridescenceThicknessRange: [ 100, 400 ],
 	},
+
+	// EON returns what Oren–Nayar loses between facets: alone, and under a specular layer's energy split.
+	'furnace-rough-diffuse': { roughness: 1.0, metalness: 0, diffuseRoughness: 1 },
+	'furnace-rough-diffuse-layered': { roughness: 0.4, metalness: 0, diffuseRoughness: 1 },
 };
+
+// Engine properties three.js does not have, so its constructor would warn and drop them.
+const ENGINE_MATERIAL_PROPERTIES = [ 'diffuseRoughness' ];
 
 for ( const [ id, params ] of Object.entries( FURNACE_MATERIALS ) ) {
 
@@ -1247,11 +1298,11 @@ for ( const [ id, params ] of Object.entries( FURNACE_MATERIALS ) ) {
 			env.envParams.solidSkyColor = new Color( 0xffffff );
 			await env.setMode( 'color' );
 
+			const three = Object.fromEntries( Object.entries( params ).filter( ( [ key ] ) => ! ENGINE_MATERIAL_PROPERTIES.includes( key ) ) );
+			const material = new MeshPhysicalMaterial( { color: 0xffffff, ...three } );
+			for ( const key of ENGINE_MATERIAL_PROPERTIES ) if ( key in params ) material[ key ] = params[ key ];
 			const group = new Group();
-			group.add( new Mesh(
-				new SphereGeometry( 2, 96, 96 ),
-				new MeshPhysicalMaterial( { color: 0xffffff, ...params } )
-			) );
+			group.add( new Mesh( new SphereGeometry( 2, 96, 96 ), material ) );
 			await app.loadObject3D( group, id );
 
 			// Close enough that the sphere covers the full frame — see the note above.

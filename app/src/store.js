@@ -2142,6 +2142,7 @@ const useMaterialStore = create( ( set, get ) => ( {
 	},
 	handleRoughnessChange: val => get().updateMaterialProperty( 'roughness', val[ 0 ] ),
 	handleMetalnessChange: val => get().updateMaterialProperty( 'metalness', val[ 0 ] ),
+	handleDiffuseRoughnessChange: val => get().updateMaterialProperty( 'diffuseRoughness', val[ 0 ] ),
 	handleIorChange: val => get().updateMaterialProperty( 'ior', val[ 0 ] ),
 	handleTransmissionChange: val => get().updateMaterialProperty( 'transmission', val[ 0 ] ),
 	handleAttenuationColorChange: val => {

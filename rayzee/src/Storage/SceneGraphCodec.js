@@ -171,6 +171,7 @@ function encodeMaterial( material, meta ) {
 	if ( material.ior !== undefined ) json.exactIor = material.ior;
 	// Engine properties three.js does not know, so toJSON drops them.
 	if ( material.diffuseTransmission !== undefined ) json.diffuseTransmission = material.diffuseTransmission;
+	if ( material.diffuseRoughness !== undefined ) json.diffuseRoughness = material.diffuseRoughness;
 	for ( const key of ENGINE_TEXTURES ) if ( material[ key ]?.isTexture ) ( json.engineTextures ??= {} )[ key ] = material[ key ].uuid;
 	return json;
 
@@ -460,6 +461,7 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 
 		if ( json.exactIor !== undefined ) material.ior = json.exactIor;
 		if ( json.diffuseTransmission !== undefined ) material.diffuseTransmission = json.diffuseTransmission;
+		if ( json.diffuseRoughness !== undefined ) material.diffuseRoughness = json.diffuseRoughness;
 		for ( const [ key, uuid ] of Object.entries( json.engineTextures ?? {} ) ) if ( textures[ uuid ] ) material[ key ] = textures[ uuid ];
 		materials[ json.uuid ] = material;
 

@@ -141,8 +141,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	ALBEDO_MAP_INDEX: 24, NORMAL_MAP_INDEX: 25, ROUGHNESS_MAP_INDEX: 26, METALNESS_MAP_INDEX: 27,
 	// Slot 7: map indices (emissive, bump) + clearcoat              [maps]
 	EMISSIVE_MAP_INDEX: 28, BUMP_MAP_INDEX: 29, CLEARCOAT: 30, CLEARCOAT_ROUGHNESS: 31,
-	// Slot 8: dispersion + visible + sheen + sheenRoughness         [extended BxDF]
-	DISPERSION: 32, VISIBLE: 33, SHEEN: 34, SHEEN_ROUGHNESS: 35,
+	// Slot 8: dispersion + diffuseRoughness + sheen + sheenRoughness [extended BxDF]
+	DISPERSION: 32, DIFFUSE_ROUGHNESS: 33, SHEEN: 34, SHEEN_ROUGHNESS: 35,
 	// Slot 9: sheenColor.rgb + diffuseTransmission                 [extended BxDF]
 	SHEEN_COLOR: 36, DIFFUSE_TRANSMISSION: 39,
 	// Slot 10: specularIntensity + specularColor.rgb                [extended BxDF]
@@ -189,7 +189,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		EMISSIVE_ROUGHNESS: 5, // [BxDF] emissive.rgb, roughness
 		MAP_INDICES_A: 6, // [maps] albedo, normal, roughness, metalness
 		MAP_INDICES_B: 7, // [maps] emissive, bump, clearcoat, clearcoatRoughness
-		DISPERSION_SHEEN: 8, // [extended] dispersion, visible, sheen, sheenRoughness
+		DISPERSION_SHEEN: 8, // [extended] dispersion, diffuseRoughness, sheen, sheenRoughness
 		SHEEN_COLOR: 9, // [extended] sheenColor, diffuseTransmission
 		SPECULAR: 10, // [extended] specularIntensity, specularColor
 		IRIDESCENCE: 11, // [extended] iridescence, iridescenceIOR, iridescenceThicknessRange

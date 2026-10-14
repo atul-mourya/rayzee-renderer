@@ -133,6 +133,8 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	// KHR_materials_diffuse_transmission: the share of the diffuse lobe passed through to the other side.
 	diffuseTransmission: 0,
 	diffuseTransmissionColor: [ 1, 1, 1 ],
+	// The diffuse lobe's roughness (OpenPBR base_diffuse_roughness): 0 is Lambert, above it EON.
+	diffuseRoughness: 0,
 } );
 
 function deepFreeze( object ) {

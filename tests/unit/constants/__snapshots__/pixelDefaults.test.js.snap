@@ -93,6 +93,7 @@ exports[`defaults that shape pixels — a change here is a BREAKING CHANGE > mat
     1,
   ],
   "depthWrite": 1,
+  "diffuseRoughness": 0,
   "diffuseTransmission": 0,
   "diffuseTransmissionColor": [
     1,

@@ -36,7 +36,7 @@ export function sceneResources( builder ) {
 }
 
 /** The material layers a kernel compiles only while some material in its scene has them. */
-export const MATERIAL_LAYERS = Object.freeze( [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion', 'diffuseTransmission' ] );
+export const MATERIAL_LAYERS = Object.freeze( [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion', 'diffuseTransmission', 'diffuseRoughness' ] );
 
 /** Every layer compiled in. */
 export const ALL_MATERIAL_LAYERS = Object.freeze( Object.fromEntries( MATERIAL_LAYERS.map( ( layer ) => [ layer, true ] ) ) );

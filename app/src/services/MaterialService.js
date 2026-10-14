@@ -182,6 +182,9 @@ export class MaterialService {
 		ensureAndSet( threeMaterial, 'anisotropy', completeMaterial.anisotropy );
 		ensureAndSet( threeMaterial, 'anisotropyRotation', completeMaterial.anisotropyRotation );
 
+		// Diffuse roughness (custom prop until three.js r187), or a library material keeps the last one's.
+		ensureAndSet( threeMaterial, 'diffuseRoughness', completeMaterial.diffuseRoughness );
+
 		// Rendering properties
 		ensureAndSet( threeMaterial, 'transparent', completeMaterial.transparent > 0 );
 		ensureAndSet( threeMaterial, 'alphaTest', completeMaterial.alphaTest );

@@ -394,6 +394,7 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
         float inputs:base_metalness = 0.25
         float inputs:specular_roughness = 0.35
         float inputs:specular_ior = 1.45
+        float inputs:base_diffuse_roughness = 0.6
         float inputs:coat_weight = 0.5
         float inputs:coat_roughness = 0.1
         float inputs:fuzz_weight = 1
@@ -412,7 +413,7 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
     }` ) );
 
 		expect( material.color.toArray() ).toEqual( [ 0.4, 0.2, 0.1 ] );
-		expect( [ material.metalness, material.roughness, material.ior ] ).toEqual( [ 0.25, 0.35, 1.45 ] );
+		expect( [ material.metalness, material.roughness, material.ior, material.diffuseRoughness ] ).toEqual( [ 0.25, 0.35, 1.45, 0.6 ] );
 		expect( [ material.clearcoat, material.clearcoatRoughness ] ).toEqual( [ 0.5, 0.1 ] );
 		expect( [ material.sheen, ...material.sheenColor.toArray() ] ).toEqual( [ 1, 1, 0, 0 ] );
 		expect( [ material.iridescence, ...material.iridescenceThicknessRange ] ).toEqual( [ 1, 300, 300 ] );
@@ -564,12 +565,13 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
         color3f inputs:base_color = (1, 0.5, 0)
         float inputs:metalness = 1
         float inputs:specular_roughness = 0.4
+        float inputs:diffuse_roughness = 0.3
         float inputs:coat = 1
         float inputs:emission = 3
         color3f inputs:emission_color = (0, 1, 0)
     }` ) );
 		expect( standard.material.color.toArray() ).toEqual( [ 0.5, 0.25, 0 ] );
-		expect( [ standard.material.metalness, standard.material.roughness, standard.material.clearcoat ] ).toEqual( [ 1, 0.4, 1 ] );
+		expect( [ standard.material.metalness, standard.material.roughness, standard.material.clearcoat, standard.material.diffuseRoughness ] ).toEqual( [ 1, 0.4, 1, 0.3 ] );
 		expect( [ ...standard.material.emissive.toArray(), standard.material.emissiveIntensity ] ).toEqual( [ 0, 1, 0, 3 ] );
 
 		const gltf = await materialOf( scene( `    token outputs:mtlx:surface.connect = </mat/g.outputs:out>
@@ -602,9 +604,11 @@ ${body}` );
     {
         uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
         color3f inputs:color = (0.2, 0.4, 0.6)
+        float inputs:roughness = 0.8
     }` ) );
 		expect( material.color.toArray() ).toEqual( [ 0.2, 0.4, 0.6 ] );
 		expect( [ material.metalness, material.specularIntensity, material.transmission ] ).toEqual( [ 0, 0, 0 ] );
+		expect( material.diffuseRoughness ).toBe( 0.8 );
 
 	} );
 

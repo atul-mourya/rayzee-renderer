@@ -532,6 +532,7 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 		diffuseTransmissionColor: data32.gba,
 		diffuseTransmissionMapIndex: int( data33.r ),
 		diffuseTransmissionColorMapIndex: int( data33.g ),
+		diffuseRoughness: data4.g,
 		albedoMapIndex: int( data8.r ),
 		normalMapIndex: int( data8.g ),
 		roughnessMapIndex: int( data8.b ),
@@ -637,6 +638,7 @@ export const diffuseGroundMaterial = Fn( () => {
 		diffuseTransmissionColor: vec3( 1.0 ),
 		diffuseTransmissionMapIndex: int( - 1 ),
 		diffuseTransmissionColorMapIndex: int( - 1 ),
+		diffuseRoughness: float( 0.0 ),
 	} );
 
 } );

@@ -27,6 +27,10 @@ const MATERIAL_PROPERTIES = {
 		[ 'roughness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Roughness', tip: 'How rough the surface is. 0 is a sharp, mirror-like shine; 1 is soft and matte.' } ],
 		[ 'metalness', { type: 'slider', default: 0.5, min: 0, max: 1, step: 0.01, label: 'Metalness', tip: 'How metal-like the surface is. 1 is metal; 0 is wood, plastic, stone and the like.' } ],
 	],
+	// The diffuse lobe's roughness (EON), kept apart from Roughness, which is the shine's.
+	matte: [
+		[ 'diffuseRoughness', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Diffuse Roughness', tip: 'How flat and powdery the colour looks, as on plaster, clay or unglazed pottery. 0 is ordinary matte paint. Roughness sets the shine; this sets the colour under it.' } ],
+	],
 	clearcoat: [
 		[ 'clearcoat', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat', tip: 'How strong the clear, glossy top layer is, like car paint or varnish.' } ],
 		[ 'clearcoatRoughness', { type: 'slider', default: 0, min: 0, max: 1, step: 0.01, label: 'Clearcoat Roughness', tip: 'How rough the shine of the clear top layer is.' } ],
@@ -672,6 +676,8 @@ const MaterialTab = () => {
 					{/* Basic Properties (always visible) */}
 					{MATERIAL_PROPERTIES.basic.map( ( [ property, config ] ) => renderPropertyComponent( property, config ) )}
 					<Separator />
+
+					{renderSection( MATERIAL_PROPERTIES.matte )}
 
 					{/* Specular (always visible) */}
 					{renderSection( MATERIAL_PROPERTIES.specular )}

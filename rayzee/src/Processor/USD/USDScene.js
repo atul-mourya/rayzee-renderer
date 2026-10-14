@@ -1910,6 +1910,14 @@ export class USDSceneReader {
 
 	}
 
+	/** A diffuse roughness input as a constant; one a texture drives is not read. */
+	mtlxDiffuseRoughness( term ) {
+
+		if ( term?.texture ) this.warnOnce( 'mtlx:diffuseroughness', 'MaterialX diffuse roughness from a texture is not read' );
+		return isNum( term?.value ) ? term.value : 0;
+
+	}
+
 	/** OpenPBR Surface 1.1, which Blender writes for its Principled BSDF. */
 	async openPbrSurface( shader ) {
 
@@ -1934,6 +1942,7 @@ export class USDSceneReader {
 		if ( Array.isArray( specularColor ) ) mat.specularColor.setRGB( specularColor[ 0 ], specularColor[ 1 ], specularColor[ 2 ] );
 		mat.ior = await num( 'specular_ior', 1.5 );
 		mat.anisotropy = await num( 'specular_roughness_anisotropy', 0 );
+		mat.diffuseRoughness = this.mtlxDiffuseRoughness( await t( 'base_diffuse_roughness' ) );
 
 		const transmission = await num( 'transmission_weight', 0 );
 		if ( transmission > 0 ) {
@@ -2037,6 +2046,8 @@ export class USDSceneReader {
 		mat.ior = await num( 'specular_IOR', 1.5 );
 		mat.anisotropy = await num( 'specular_anisotropy', 0 );
 		mat.anisotropyRotation = await num( 'specular_rotation', 0 ) * Math.PI * 2;
+		// MaterialX renders this one without energy compensation; EON returns what that loses.
+		mat.diffuseRoughness = this.mtlxDiffuseRoughness( await t( 'diffuse_roughness' ) );
 
 		const transmission = await num( 'transmission', 0 );
 		if ( transmission > 0 ) {
@@ -2220,6 +2231,9 @@ export class USDSceneReader {
 
 			mat.metalness = sum( [ 'conductor' ] ) / base;
 			mat.transmission = sum( [ 'transmission' ] ) / base;
+			const diffuse = lobes.filter( l => l.kind === 'diffuse' && l.w > 0 );
+			const diffuseWeight = sum( [ 'diffuse' ] );
+			if ( diffuseWeight > 0 ) mat.diffuseRoughness = diffuse.reduce( ( s, l ) => s + l.roughness * l.w, 0 ) / diffuseWeight;
 
 		} else {
 
@@ -2330,8 +2344,10 @@ export class USDSceneReader {
 		switch ( mtlxNode( id ) ) {
 
 			case 'oren_nayar_diffuse_bsdf':
+				lobes.push( { kind: 'diffuse', w: weight, color: await t( 'color' ), normal: await t( 'normal' ), roughness: this.mtlxDiffuseRoughness( await t( 'roughness' ) ) } );
+				return;
 			case 'burley_diffuse_bsdf':
-				lobes.push( { kind: 'diffuse', w: weight, color: await t( 'color' ), normal: await t( 'normal' ) } );
+				lobes.push( { kind: 'diffuse', w: weight, color: await t( 'color' ), normal: await t( 'normal' ), roughness: 0 } );
 				return;
 			case 'conductor_bsdf': {
 

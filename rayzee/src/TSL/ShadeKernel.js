@@ -893,7 +893,7 @@ export function buildShadeKernel( params ) {
 		}
 
 		// A layer no material has is 0 in every material; saying so lets the compiler fold what still reads it.
-		for ( const layer of [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion' ] ) {
+		for ( const layer of [ 'clearcoat', 'sheen', 'iridescence', 'anisotropy', 'subsurface', 'dispersion', 'diffuseRoughness' ] ) {
 
 			if ( ! layers[ layer ] ) material[ layer ].assign( 0.0 );
 

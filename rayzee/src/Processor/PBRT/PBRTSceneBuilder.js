@@ -2064,7 +2064,8 @@ export class PBRTSceneBuilder {
 			`${material.clearcoat}|${material.clearcoatRoughness}|${material.clearcoatRoughnessMap?.uuid ?? '-'}|${material.opacity}|${material.side}|` +
 			`${material.normalMap ? material.normalMap.uuid : '-'}|${material.attenuationDistance}|${material.attenuationColor.toArray()}|` +
 			`${material.specularIntensity}|${material.diffuseTransmission ?? 0}|${material.diffuseTransmissionColor?.toArray() ?? '-'}|` +
-			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}`;
+			`${material.subsurface ?? 0}|${material.subsurfaceColor?.toArray() ?? '-'}|${material.subsurfaceRadius ?? '-'}|${material.subsurfaceAnisotropy ?? 0}|` +
+			`${material.diffuseRoughness ?? 0}`;
 
 		const existing = this._materialBySignature.get( key );
 		if ( existing ) return existing;

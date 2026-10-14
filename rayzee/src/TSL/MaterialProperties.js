@@ -62,6 +62,42 @@ export const VisibilitySheen = Fn( ( [ NoV, NoL ] ) => {
 } );
 
 // -----------------------------------------------------------------------------
+// Rough Diffuse (EON)
+// -----------------------------------------------------------------------------
+// Portsmouth, Kutz & Hill, "EON: A practical energy-preserving rough diffuse BRDF" (JCGT 2025), behind OpenPBR's
+// base_diffuse_roughness and Cycles' Diffuse Roughness: Fujii's Oren–Nayar plus the light lost between facets, so a
+// white surface returns all it receives. Reciprocal: cosine sampling and every MIS site are unchanged.
+
+const FON_A = 0.5 - 2.0 / ( 3.0 * Math.PI );
+const FON_B = 2.0 / 3.0 - 28.0 / ( 15.0 * Math.PI );
+
+// G(μ)/π, the paper's fit (Eq. 14).
+const fonG = ( mu ) => {
+
+	const c = float( 1.0 ).sub( mu );
+	return c.mul( float( 0.0571085289 ).add( c.mul( float( 0.491881867 ).add( c.mul( float( - 0.332181442 ).add( c.mul( 0.0714429953 ) ) ) ) ) ) );
+
+};
+
+/** EON for albedo `rho` and roughness r ∈ [0, 1]; LoV is the cosine between the two directions. */
+export const diffuseEON = Fn( ( [ rho, r, NoL, NoV, LoV ] ) => {
+
+	const A = float( 1.0 ).div( float( 1.0 ).add( r.mul( FON_A ) ) );
+	const s = LoV.sub( NoL.mul( NoV ) );
+	const single = rho.mul( A.mul( PI_INV ).mul( float( 1.0 ).add( r.mul( s.greaterThan( 0.0 ).select( s.div( max( NoL, NoV ) ), s ) ) ) ) );
+
+	// ρ past 1 would take the denominator through 0.
+	const p = clamp( rho, vec3( 0.0 ), vec3( 1.0 ) );
+	const average = A.mul( float( 1.0 ).add( r.mul( FON_B ) ) );
+	const rhoMs = p.mul( p ).mul( average ).div( vec3( 1.0 ).sub( p.mul( float( 1.0 ).sub( average ) ) ) );
+	// Eq. 19's (1 − Eᵢ)(1 − Eₒ)/(1 − ⟨E⟩) with r·A cancelled, so no 0/0 at r = 0. The fit overshoots A₁ by 5e-4 at grazing.
+	const lost = r.mul( A ).mul( max( float( FON_A ).sub( fonG( NoL ) ), 0.0 ) ).mul( max( float( FON_A ).sub( fonG( NoV ) ), 0.0 ) )
+		.mul( 1.0 / ( FON_A - FON_B ) );
+	return single.add( rhoMs.mul( lost.mul( PI_INV ) ) );
+
+} );
+
+// -----------------------------------------------------------------------------
 // Geometry Terms
 // -----------------------------------------------------------------------------
 
