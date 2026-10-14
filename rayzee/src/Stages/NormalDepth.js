@@ -1,4 +1,4 @@
-import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, storage, If,
+import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, max, select, storage, If,
 	textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, StorageTexture } from 'three/webgpu';
 import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
@@ -31,10 +31,10 @@ import { withSceneResources } from '../TSL/SceneResources.js';
  * map, recomputed from the SAME deterministic hit — no extra ray) so the
  * spatial denoiser's edge-stop can see normal-map detail the flat geometric
  * normal hides. Deterministic ⇒ jitter-free, so it's safe for the gates.
- * Its .w is the sampled material roughness (NRD's normal+roughness guide).
+ * Its .w is the sampled material roughness (NRD's normal+roughness guide), negated on an emitter.
  *
  * Publishes: pathtracer:normalDepth, pathtracer:prevNormalDepth,
- *            pathtracer:shadingNormal (rgb = shading normal·0.5+0.5, a = roughness),
+ *            pathtracer:shadingNormal (rgb = shading normal·0.5+0.5, a = roughness, negative on an emitter),
  *            pathtracer:instanceLeaf (r32uint: the hit's transformed TLAS leaf + 1, 0 = none)
  */
 export class NormalDepth extends RenderStage {
@@ -293,6 +293,8 @@ export class NormalDepth extends RenderStage {
 					shadingNormal.assign( processBump( mapped, material, uvCache ) );
 					// Same floor the Shade kernel applies before shading.
 					roughness.assign( processMetalnessRoughness( material, uvCache ).y.clamp( 0.05, 1.0 ) );
+					const emits = max( material.emissive.x, max( material.emissive.y, material.emissive.z ) ).mul( material.emissiveIntensity ).greaterThan( 0.0 );
+					roughness.assign( select( emits, roughness.negate(), roughness ) );
 
 				} );
 

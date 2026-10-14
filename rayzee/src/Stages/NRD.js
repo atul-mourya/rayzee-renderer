@@ -8,7 +8,7 @@ import { createStorageTexture } from '../Processor/StorageTexturePool.js';
 import { sanitizeRGB, sanitize1, FP16_MAX } from '../TSL/Common.js';
 import { cameraRayPoint, cameraRayUniforms, isOrthographic } from '../TSL/CameraRay.js';
 import {
-	NRD_DEFAULTS, NRD_HIT_DIST_A, NRD_HIT_DIST_B, ALBEDO_EPS, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD,
+	NRD_DEFAULTS, NRD_HIT_DIST_A, NRD_HIT_DIST_B, GBUFFER_MISS_THRESHOLD as MISS_THRESHOLD,
 } from './DenoiserSettings.js';
 
 const NRD_EPS = 1e-6;
@@ -25,6 +25,12 @@ const FIREFLY_RADIUS_SCALE = 0.1;
 const FIREFLY_FAST_RELATIVE_INTENSITY = 4.0;
 const ALMOST_ZERO_ANGLE_COS = Math.cos( 89.0 * Math.PI / 180.0 );
 const CATROM_SHARPNESS = 0.5;
+// The input fuses diffuse and specular, so it is demodulated by both lobes' albedo (NRD_MaterialFactors summed).
+const SPECULAR_F0 = 0.04;
+// A sample this dark reflects nothing diffusely: it carries emission, the environment or specular alone.
+const BLACK_ALBEDO = 0.1 * SPECULAR_F0;
+// Carried past the pre-pass in dataT.z, above the four occlusion bits.
+const BLACK_BIT = 16;
 const WG_SIZE = 16;
 
 const PASS = {
@@ -111,6 +117,12 @@ const clampNegativeToZero = ( v ) => vec4( linearToYCoCg( yCoCgToLinear( v.xyz )
 const stdDev = ( m1, m2 ) => sqrt( m2.sub( m1.mul( m1 ) ).abs() );
 // rotator = (cos, sin, -sin, cos)
 const rotate2 = ( rot, v ) => vec2( rot.x.mul( v.x ).add( rot.y.mul( v.y ) ), rot.z.mul( v.x ).add( rot.w.mul( v.y ) ) );
+const demodAlbedo = ( a ) => a.mul( 1.0 - SPECULAR_F0 ).add( SPECULAR_F0 );
+const isBlack = ( a ) => max( a.x, max( a.y, a.z ) ).lessThan( BLACK_ALBEDO );
+const isBlackData = ( data ) => data.z.greaterThan( BLACK_BIT - 0.5 );
+// NormalDepth negates an emitter's roughness, as NRD packs a material ID into its normal-roughness guide.
+const isEmitter = ( guideW ) => guideW.lessThan( 0.0 );
+const guideRoughness = ( guideW ) => guideW.abs().clamp( 0.05, 1.0 );
 const denanify = ( w, s ) => select( w.equal( 0.0 ), vec4( 0.0 ), s );
 
 function hash01( n ) {
@@ -256,7 +268,7 @@ export class NRD extends RenderStage {
 		this._geomPrev = tex();
 		this._stabA = tex(); // .x stabilized luma
 		this._stabB = tex();
-		this._dataT = tex(); // .x fast luma, .y accumSpeed, .z occlusion bits, .w catrom ok
+		this._dataT = tex(); // .x fast luma, .y accumSpeed, .z occlusion bits (+ BLACK_BIT), .w catrom ok
 
 	}
 
@@ -379,6 +391,13 @@ export class NRD extends RenderStage {
 	_handover( k ) {
 
 		return saturate( k.div( max( this.u.handoverFrames, 1.0 ) ) );
+
+	}
+
+	// Taps whose radiance is no estimate of the centre's lighting.
+	_excluded( zs, guideW, tapBlack, centerBlack ) {
+
+		return zs.greaterThanEqual( MISS_THRESHOLD ).or( isEmitter( guideW ) ).or( tapBlack.and( centerBlack.not() ) );
 
 	}
 
@@ -524,11 +543,9 @@ export class NRD extends RenderStage {
 		const inputFrames = this.inputFrames;
 
 		const readSignal = isPre
-			? ( c ) => {
+			? ( c, alb ) => {
 
-				const col = textureLoad( colorTex, c );
-				const alb = textureLoad( albedoTex, c );
-				const lighting = sanitizeRGB( col.xyz.div( max( alb.xyz, vec3( ALBEDO_EPS ) ) ) );
+				const lighting = sanitizeRGB( textureLoad( colorTex, c ).xyz.div( demodAlbedo( alb.xyz ) ) );
 				return vec4( linearToYCoCg( lighting ), sanitize1( alb.w, FP16_MAX ).min( 1.0 ) );
 
 			}
@@ -547,10 +564,12 @@ export class NRD extends RenderStage {
 				const isSky = dist.greaterThanEqual( MISS_THRESHOLD );
 				const sn = textureLoad( snTex, coord ).toVar();
 				const N = normalize( sn.xyz.mul( 2.0 ).sub( 1.0 ) ).toVar();
-				const roughness = sn.w.clamp( 0.05, 1.0 ).toVar();
+				const roughness = guideRoughness( sn.w ).toVar();
 				const viewZ = float( MISS_THRESHOLD ).toVar();
 
-				const result = readSignal( coord ).toVar();
+				const albedo = isPre ? textureLoad( albedoTex, coord ) : null;
+				const black = ( isPre ? isBlack( albedo ) : isBlackData( textureLoad( dataTex, coord ) ) ).toVar();
+				const result = readSignal( coord, albedo ).toVar();
 
 				If( isSky.not(), () => {
 
@@ -558,7 +577,7 @@ export class NRD extends RenderStage {
 					const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
 					viewZ.assign( camView.mul( vec4( X, 1.0 ) ).z.abs() );
 
-					If( maxRadiusU.greaterThan( 0.0 ), () => {
+					If( maxRadiusU.greaterThan( 0.0 ).and( isEmitter( sn.w ).not() ), () => {
 
 						const V = this._viewVector( X, camPos, this.viewVector );
 						const NoV = dot( N, V ).abs().toVar();
@@ -625,11 +644,13 @@ export class NRD extends RenderStage {
 
 							const angle = acosApproxPositive( dot( N, Ns ) );
 							w.mulAssign( weightSmooth( angle, normalParam, float( 0.0 ) ) );
-							w.mulAssign( weightSmooth( sns.w, roughParams.x, roughParams.y ) );
+							w.mulAssign( weightSmooth( guideRoughness( sns.w ), roughParams.x, roughParams.y ) );
 							w.mulAssign( weightSmooth( dot( N, Xs ), geomParams.x, geomParams.y ) );
-							w.assign( select( zs.greaterThanEqual( MISS_THRESHOLD ), float( 0.0 ), w ) );
+							const albS = isPre ? textureLoad( albedoTex, pos ) : null;
+							const blackS = isPre ? isBlack( albS ) : isBlackData( textureLoad( dataTex, pos ) );
+							w.assign( select( this._excluded( zs, sns.w, blackS, black ), float( 0.0 ), w ) );
 
-							const s = denanify( w, readSignal( pos ) );
+							const s = denanify( w, readSignal( pos, albS ) );
 							w.mulAssign( minHitDistWeight.add( weightExp( s.w, hdParams.x, hdParams.y ) ) );
 
 							sum.addAssign( w );
@@ -675,6 +696,7 @@ export class NRD extends RenderStage {
 		const geomTex = this._nGeom;
 		const outTex = this._tmpB;
 		const dataOut = this._dataT;
+		const albedoTex = this._albedoTexNode;
 		const camView = this.camView;
 		const prevCamView = this.prevCamView;
 		const camPos = this.camPos;
@@ -709,7 +731,7 @@ export class NRD extends RenderStage {
 
 				const sn = textureLoad( snTex, coord );
 				const N = normalize( sn.xyz.mul( 2.0 ).sub( 1.0 ) ).toVar();
-				const roughness = sn.w.clamp( 0.05, 1.0 ).toVar();
+				const roughness = guideRoughness( sn.w ).toVar();
 
 				const pixelUv = this._pixelUv( gx, gy );
 				const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
@@ -806,7 +828,8 @@ export class NRD extends RenderStage {
 				const fastClamped = min( fast, history.x.mul( maxRel ).mul( FIREFLY_FAST_RELATIVE_INTENSITY ) );
 				fast.assign( mix( fast, fastClamped, aff ) );
 
-				textureStore( dataOut, uvec, vec4( fast, accumSpeed, fbits, select( allowCatRom, float( 1.0 ), float( 0.0 ) ) ) ).toWriteOnly();
+				const blackBit = select( isBlack( textureLoad( albedoTex, coord ) ), float( BLACK_BIT ), float( 0.0 ) );
+				textureStore( dataOut, uvec, vec4( fast, accumSpeed, fbits.add( blackBit ), select( allowCatRom, float( 1.0 ), float( 0.0 ) ) ) ).toWriteOnly();
 
 			} );
 
@@ -862,7 +885,7 @@ export class NRD extends RenderStage {
 
 				const sn = textureLoad( snTex, coord );
 				const N = normalize( sn.xyz.mul( 2.0 ).sub( 1.0 ) ).toVar();
-				const roughness = sn.w.clamp( 0.05, 1.0 ).toVar();
+				const roughness = guideRoughness( sn.w ).toVar();
 				const pixelUv = this._pixelUv( gx, gy );
 				const X = this._worldPosAt( pixelUv, dist, cwm, cpi ).toVar();
 				const viewZ = camView.mul( vec4( X, 1.0 ) ).z.abs();
@@ -881,13 +904,16 @@ export class NRD extends RenderStage {
 					.mul( mix( float( 0.25 ).add( sqrt( hitDistFactor ).mul( 0.75 ) ), float( 1.0 ), nonLinear ) );
 				const strideR = round( stride ).toVar();
 
-				If( strideR.notEqual( 0.0 ), () => {
+				const emitter = isEmitter( sn.w ).toVar();
+
+				If( strideR.notEqual( 0.0 ).and( emitter.not() ), () => {
 
 					const normalParam = normalWeightParam( nonLinear, u.lobeAngleFraction, roughness, u.lobeVolumePercent ).toVar();
 					const geomParams = geometryWeightParams( u.planeDistSensitivity, frustumSize, X, N ).toVar();
 					const hdParams = hitDistWeightParams( centerH, nonLinear ).toVar();
 					const relaxedRough = relaxedRoughnessWeightParams( roughness.mul( roughness ), sqrt( u.roughnessFraction ), ROUGHNESS_SENSITIVITY ).toVar();
 
+					const black = isBlackData( data ).toVar();
 					const sumd = float( 1.0 ).add( frameNum ).toVar();
 					diff.mulAssign( sumd );
 
@@ -909,10 +935,12 @@ export class NRD extends RenderStage {
 							const angle = acosApproxPositive( dot( Ns, N ) );
 
 							const w = weightExp( angle, normalParam, float( 0.0 ) ).toVar();
-							w.mulAssign( weightExp( sns.w.mul( sns.w ), relaxedRough.x, relaxedRough.y ) );
-							w.mulAssign( float( 1.0 ).add( textureLoad( dataTex, pos ).y ) );
+							const rs = guideRoughness( sns.w );
+							w.mulAssign( weightExp( rs.mul( rs ), relaxedRough.x, relaxedRough.y ) );
+							const dataS = textureLoad( dataTex, pos );
+							w.mulAssign( float( 1.0 ).add( dataS.y ) );
 							w.mulAssign( weightSmooth( dot( N, Xs ), geomParams.x, geomParams.y ) );
-							w.assign( select( zs.greaterThanEqual( MISS_THRESHOLD ), float( 0.0 ), w ) );
+							w.assign( select( this._excluded( zs, sns.w, isBlackData( dataS ), black ), float( 0.0 ), w ) );
 
 							const s = denanify( w, textureLoad( inTex, pos ) );
 							w.mulAssign( weightExp( s.w, hdParams.x, hdParams.y ) );
@@ -1014,7 +1042,7 @@ export class NRD extends RenderStage {
 
 				}
 
-				textureStore( outTex, uvec, changeLuma( diff, diffLuma ) ).toWriteOnly();
+				textureStore( outTex, uvec, select( emitter, diff, changeLuma( diff, diffLuma ) ) ).toWriteOnly();
 
 			} );
 
@@ -1067,7 +1095,8 @@ export class NRD extends RenderStage {
 
 				} );
 
-				const roughness = textureLoad( snTex, coord ).w.clamp( 0.05, 1.0 );
+				const guideW = textureLoad( snTex, coord ).w;
+				const roughness = guideRoughness( guideW );
 				const pixelUv = this._pixelUv( gx, gy );
 				const mv = textureLoad( motionTex, coord );
 				const smbUv = pixelUv.sub( mv.xy ).toVar();
@@ -1107,7 +1136,7 @@ export class NRD extends RenderStage {
 				m2.divAssign( 9.0 );
 				const sigma = stdDev( m1, m2 ).toVar();
 
-				If( accumSpeed.lessThan( u.historyFixFrameNum ), () => {
+				If( accumSpeed.lessThan( u.historyFixFrameNum ).and( isEmitter( guideW ).not() ), () => {
 
 					diffLuma.assign( min( diffLuma, m1.mul( float( 1.2 ).add( float( 1.0 ).div( accumSpeed.add( 1.0 ) ) ) ) ) );
 
@@ -1145,7 +1174,7 @@ export class NRD extends RenderStage {
 
 				// Alpha stays the path tracer's coverage — Compositor reads it under transparentBackground.
 				const albedo = textureLoad( albedoTex, coord );
-				const lighting = yCoCgToLinear( diff.xyz ).mul( max( albedo.xyz, vec3( ALBEDO_EPS ) ) );
+				const lighting = yCoCgToLinear( diff.xyz ).mul( demodAlbedo( albedo.xyz ) );
 				const out = vec4( lighting, color.w ).toVar();
 
 				If( debugMode.equal( int( 1 ) ), () => {
@@ -1168,7 +1197,7 @@ export class NRD extends RenderStage {
 
 				} ).ElseIf( debugMode.equal( int( 5 ) ), () => {
 
-					out.assign( vec4( vec3( data.z.div( 15.0 ) ), 1.0 ) );
+					out.assign( vec4( vec3( float( bits.bitAnd( uint( 15 ) ) ).div( 15.0 ) ), 1.0 ) );
 
 				} );
 

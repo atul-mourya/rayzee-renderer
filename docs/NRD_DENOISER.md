@@ -26,8 +26,8 @@ The stage dispatches the same six passes as `nrd::REBLUR_DIFFUSE`, in order, all
 | PostBlur | `REBLUR_PostBlur` | `tmpB`, `dataT` | `hist`, `geomPrev` |
 | TemporalStabilization | `REBLUR_TemporalStabilization` | `hist`, `dataT`, `stab` (ping), motion, color, albedo | `stab` (pong), `internal`, output |
 
-The PrePass doubles as NRD's front end: demodulate by albedo, sanitize, convert to YCoCg, and take
-the normalized hit distance from `pathtracer:albedo.w`. All internal textures hold NRD's storage
+The PrePass doubles as NRD's front end: demodulate (see "What the blur may not spread" below),
+sanitize, convert to YCoCg, and take the normalized hit distance from `pathtracer:albedo.w`. All internal textures hold NRD's storage
 format — `float4( YCoCg, normHitDist )` — in fp16. The stabilization pass converts back to linear
 RGB, remodulates, and copies to a render-resolution `RenderTarget` published as `nrd:output`.
 Sky pixels (`normalDepth.w ≥ 6e4`) are passed through untouched, as NRD leaves them to the app.
@@ -47,7 +47,9 @@ ReBLUR needs two guide signals the pipeline did not have:
 - **Roughness.** `NormalDepth` already re-traces the primary hit deterministically to produce the
   jitter-free normal the denoiser gates on. It now also samples the material's roughness (same
   texture bucket path as the normal map, same `0.05` floor as the shade kernel) into
-  `pathtracer:shadingNormal.w`, which previously held a duplicate of the depth.
+  `pathtracer:shadingNormal.w`, which previously held a duplicate of the depth. On an emissive
+  material the value is negated: the one-bit material ID the stage needs, in the slot where NRD's own
+  normal-roughness guide carries one (`NRD_FrontEnd_PackNormalAndRoughness`). Readers take `abs()`.
 - **Hit distance.** The shade kernel writes the length of the first segment after the primary
   opaque scatter (alpha-skip distance included, misses saturate) into a previously unused 16-bit
   lane of the per-pixel G-buffer. Shade holds no NRD code: NRD asks for the output in its
@@ -63,6 +65,35 @@ ReBLUR needs two guide signals the pipeline did not have:
 
 Both are only produced while a denoiser (or OIDN) has the aux G-buffer switched on, so the default
 interactive path pays nothing at run time.
+
+## What the blur may not spread
+
+ReBLUR's spatial weights are geometry only — normal, plane distance, roughness, hit distance, no
+luminance — so it is correct only if every pixel the blur reaches carries the same lighting once
+demodulated. NRD leaves that to the application (README: "all materials must be de-modulated", "direct
+emission from primary surfaces should be decoupled"). The fused radiance here broke it three ways, and
+at 1 spp the denoised image was further from ground truth than the raw one on `mixed-lights` (2.29),
+`instanced-storage` (1.15) and `dispersion-glass` (1.12):
+
+- **Specular divided by base colour.** Dividing `diffuse + specular` by the base colour multiplies a
+  dark texel's specular by up to 1/albedo (100× on `dispersion-glass`'s black checker squares); the
+  blur averaged that into the white squares and remodulation brought it back, lifting them 35 %. The
+  signal is now divided by both lobes' albedo, `albedo·(1 − F0) + F0` with a dielectric's `F0 = 0.04` —
+  `NRD_MaterialFactors` summed, as NRD-Sample does for its fused SHARC signal, at normal incidence.
+  The full form (`EnvironmentTerm_Rtg` of NoV and roughness, NRD's 0.02 floors) was measured too:
+  within 1.2 % on 20 scenes, 3 % worse on `dispersion-glass`, for a view vector and a polynomial per tap.
+- **Emitters.** An emitter's radiance is not lighting its albedo reflects; with a black base colour it
+  demodulated to 2000 and the blur spread it across the coplanar ceiling. A pixel whose primary hit
+  emits (NormalDepth's negated roughness) is neither filtered nor a tap. Its own radiance passes
+  through, so emissive detail stays sharp.
+- **Samples that reflect nothing diffusely.** The path tracer's albedo is per sample and jittered;
+  NormalDepth's guides are not. A sample with a black albedo (below `0.1·F0`) at a pixel whose guide is
+  a lit wall saw the sky past a silhouette, or an emitter's edge, or a black material — emission,
+  environment or specular alone. Such a sample never feeds a pixel with a diffuse response. It is
+  itself still filtered, which pulls a one-sample silhouette towards the surface the pixel mostly
+  covers; leaving it unfiltered cost `iridescence-thinfilm` 0.66 → 0.74.
+
+`tests/gpu/nrdDemodulation.test.js` holds a flat, evenly lit wall to its input under each case.
 
 ## Deviations from NRD, and why
 
@@ -126,6 +157,12 @@ wall clock on `spheres-gradient` (Apple M-series, medium preset, includes CPU di
 
 At 256² all three are dominated by fixed dispatch overhead; 1024² is where the tap count shows.
 
+The guards in "What the blur may not spread" add no texture: the emitter bit rides in the roughness
+guide, and the black-sample bit in `dataT.z` above the occlusion bits, so HistoryFix's 20 taps read it
+from the texel they already load. TemporalAccumulation binds the albedo guide to set it. GPU time,
+paired and interleaved against the previous build (Apple M-series, 2026-10-14, a busy GPU): +1.8–5.8 %
+at 1920×1080 (+0.17–0.32 ms of 5.5–9.8 ms), +3.8–7.0 % at 512² (+0.04–0.06 ms).
+
 ## Controls
 
 `NRD_QUALITY_PRESETS` — `low` (16-frame history, no pre-pass), `medium` (NRD defaults), `high`
@@ -148,9 +185,9 @@ denoiser helped. The 1-spp rung is an absolute gate, the rest ratchet against
 
 | scene | nrd @1 | nrd @64 | asvgf @1 | asvgf @64 | edgeaware @1 | edgeaware @64 |
 |---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.992 | 1.000 | 0.957 | 2.041 | 0.751 | 0.906 |
-| `glass-transmission` | 0.688 | 1.000 | 0.704 | 0.912 | 0.616 | 0.711 |
-| `textured-normalmap` | 0.903 | 1.000 | 0.993 | 1.304 | 0.885 | 0.984 |
+| `spheres-gradient` | 0.935 | 1.000 | 0.957 | 2.041 | 0.751 | 0.906 |
+| `glass-transmission` | 0.622 | 1.000 | 0.704 | 0.912 | 0.616 | 0.711 |
+| `textured-normalmap` | 0.897 | 1.000 | 0.993 | 1.304 | 0.885 | 0.984 |
 
 The 64-spp column is exactly 1.000 by construction (handover pass-through). The 1-spp rung on
 `spheres-gradient` — 40-pixel diffuse spheres lit by a smooth gradient — is the regime ReBLUR's

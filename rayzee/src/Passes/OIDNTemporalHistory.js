@@ -221,7 +221,7 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 
 	}
 
-	let rough = textureLoad( shading, p, 0 ).w;
+	let rough = abs( textureLoad( shading, p, 0 ).w );
 	var cap = mix( P.smoothLength, P.maxLength, smoothstep( P.roughStart, P.roughEnd, rough ) );
 	if ( movedPx ) { cap = min( cap, P.movedLength ); }
 	let newLen = min( len + 1.0, cap );

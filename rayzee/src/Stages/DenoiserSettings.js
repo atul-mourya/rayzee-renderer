@@ -4,10 +4,6 @@
 export const GBUFFER_MISS_DEPTH = 65504.0;
 export const GBUFFER_MISS_THRESHOLD = 6e4;
 
-// Albedo demodulation safety floor. Demod (`color / safeAlbedo`) and remod (`lighting * safeAlbedo`)
-// only round-trip exactly when both sides use the same value.
-export const ALBEDO_EPS = 0.01;
-
 // The live view's denoisers, for setDenoiserStrategy.
 export const DENOISER_STRATEGIES = Object.freeze( [ 'none', 'nrd', 'oidn' ] );
 
