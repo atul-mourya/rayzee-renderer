@@ -34,7 +34,9 @@ export function makeLayer( pixels, { channels, decode = null, scale = 1, invert 
 	const data = new Float32Array( width * height * channels );
 	const topDown = pixels.topDown !== false;
 	// pbrt's encoding applies to every channel of an 8-bit image, alpha included.
-	const read = ( i ) => ( decode ? decode( pixels.data[ i ] / 255 ) : pixels.data[ i ] );
+	const bytes = decode && ( pixels.data instanceof Uint8Array || pixels.data instanceof Uint8ClampedArray );
+	const lut = bytes ? Float64Array.from( { length: 256 }, ( _, v ) => decode( v / 255 ) ) : null;
+	const read = lut ? ( i ) => lut[ pixels.data[ i ] ] : ( i ) => ( decode ? decode( pixels.data[ i ] / 255 ) : pixels.data[ i ] );
 	const fromAlpha = channels === 1 && stride === 4 && hasAlpha( pixels );
 	const mean = channels === 1 && stride >= 3 && ! fromAlpha;
 
