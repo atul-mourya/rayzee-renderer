@@ -2717,6 +2717,7 @@ export class SceneProcessor {
 		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 		const triRanges = [];
 		const blasRanges = [];
+		const refit = [];
 		let owners = 0;
 		for ( let i = 0; i < table.count; i ++ ) {
 
@@ -2727,6 +2728,7 @@ export class SceneProcessor {
 			if ( ! p ) continue;
 			this._updateMeshTrianglePositions( i, p );
 			blasRanges.push( table.blasOffsetOf( i ), table.blasNodeCountOf( i ) );
+			refit.push( i );
 
 			// Smooth normals overwrite the face normals just computed, so they follow per mesh.
 			if ( normalsFor ) {
@@ -2755,6 +2757,12 @@ export class SceneProcessor {
 				const msg = e.data;
 				if ( msg.type === 'refitComplete' ) {
 
+					// Later moves and main-thread refits box placements by these.
+					for ( const i of refit ) table.recomputeAABB( i, this.bvh, this.triangles );
+					table.computeGroupAABBs();
+					// The worker boxes a group copy by its shown members only.
+					const leaves = this._hiddenGroupLeaves();
+					if ( leaves.length ) this._refitTLAS( leaves );
 					resolve( { refitTimeMs: msg.refitTimeMs, triRanges, bvhRanges } );
 
 				} else if ( msg.type === 'error' ) {
@@ -2967,6 +2975,22 @@ export class SceneProcessor {
 		this._refitTLAS( leaves );
 
 		return { refitTimeMs: performance.now() - start, placements: leaves.length };
+
+	}
+
+	/** The TLAS leaves of every copy of a group with a hidden member. @private */
+	_hiddenGroupLeaves() {
+
+		const table = this.instanceTable;
+		const leaves = [];
+		for ( const g of table.groups ) {
+
+			if ( g.members.every( ( _, j ) => table.visible[ g.starts[ j ] ] ) ) continue;
+			for ( let c = 0; c < g.count; c ++ ) leaves.push( table.leafOfPlacement( g.starts[ 0 ] + c ) );
+
+		}
+
+		return leaves;
 
 	}
 
@@ -4267,6 +4291,7 @@ export class SceneProcessor {
 				// scene's 4), producing a tree of a different size that the swap below rejects —
 				// so every rebuild was thrown away.
 				maxLeafSize: this.bvhBuilder.maxLeafSize,
+				foldLeaves: this._foldLeaves === true,
 				numBins: this.bvhBuilder.numBins,
 				maxBins: this.bvhBuilder.maxBins,
 				minBins: this.bvhBuilder.minBins,

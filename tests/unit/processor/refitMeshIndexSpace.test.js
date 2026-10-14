@@ -103,7 +103,7 @@ describe( 'a mesh index is not a placement index', () => {
 		sp.instanceTable.tlasNodeCount = TLAS_NODES;
 		const sent = [];
 		Object.assign( sp, {
-			bvh: {}, triangles: {}, _refitSharedBuffers: {}, _updateMeshTrianglePositions() {},
+			bvh: new Float32Array( ( 100 + BOX_NODES + SPHERE_NODES ) * FPN ), triangles: {}, _refitSharedBuffers: {}, _updateMeshTrianglePositions() {},
 			_refitWorker: { postMessage( msg ) {
 
 				sent.push( msg );

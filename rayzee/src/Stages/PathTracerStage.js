@@ -1018,7 +1018,11 @@ export class PathTracerStage extends RenderStage {
 
 		this._whenTLASResident( () => {
 
-			if ( ! this._patchTLASLeafVisibility( meshIndex, visible ) ) return;
+			// Leaves are per placement: an InstancedMesh holds a run of them, and shifts every index after it.
+			const run = this._instanceTable?.placementRunOf( meshIndex );
+			let patched = false;
+			for ( let p = run?.start; run && p < run.start + run.count; p ++ ) patched = this._patchTLASLeafVisibility( p, visible ) || patched;
+			if ( ! patched ) return;
 			this._patchGroupNodes();
 			this._flushBVHEdits();
 

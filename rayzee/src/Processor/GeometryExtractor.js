@@ -862,8 +862,13 @@ export class GeometryExtractor {
 		this.expandedTriangleCount += range.count;
 		this.meshTriangleRanges.push( range );
 		if ( range.count > 0 && ! bake && shareable ) this._geometryRanges.set( key, { ...range, meshIndex } );
-		this._recordPlacements( mesh, meshIndex, bake, expand, range.count > 0 && shareable );
-		if ( range.count > 0 ) this._onRange?.( meshIndex, range );
+		// A placement with nothing to trace would get a TLAS leaf with no BLAS to point at.
+		if ( range.count > 0 ) {
+
+			this._recordPlacements( mesh, meshIndex, bake, expand, shareable );
+			this._onRange?.( meshIndex, range );
+
+		}
 
 	}
 
@@ -1346,13 +1351,15 @@ export class GeometryExtractor {
 		mesh.updateMatrixWorld();
 
 		const geometry = mesh.geometry;
-		if ( ! geometry.attributes.normal ) geometry.computeVertexNormals();
 		const positions = geometry.attributes.position;
+		if ( ! positions ) return;
+		if ( ! geometry.attributes.normal ) geometry.computeVertexNormals();
 		const normals = geometry.attributes.normal;
 		const uvs = geometry.attributes.uv;
 		const indices = geometry.index ? geometry.index.array : null;
 
-		const triangleCount = indices ? indices.length / 3 : positions.count / 3;
+		// Whole triangles only, as three.js draws them: a trailing vertex or two read past the end as NaN.
+		const triangleCount = Math.floor( ( indices ? indices.length : positions.count ) / 3 );
 
 		if ( expandInstances ) {
 
