@@ -34,6 +34,7 @@
     "bench:bless": "node bench/runner/cli.js bless",
     "bench:calibrate": "node bench/runner/cli.js calibrate",
     "bench:ab": "node bench/runner/cli.js ab",
+    "bench:load": "node bench/runner/cli.js load",
     "bench:list": "node bench/runner/cli.js list",
     "bench:storage": "node bench/runner/cli.js storage",
     "release": "cross-env $(cat .env | xargs) semantic-release --no-ci",

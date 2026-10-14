@@ -1,0 +1,12 @@
+{
+	"roots": [ "app/public/models" ],
+	"models": [
+		{ "id": "24155522", "path": "24155522.glb", "covers": "textured glTF: 1.9M triangles, 990 meshes, 91 images" },
+		{ "id": "classroom", "path": "classroom.glb", "covers": "Draco glTF with skinned animation" },
+		{ "id": "crown", "path": "crown.zip", "covers": "pbrt zip: 3.5M triangles, textured" },
+		{ "id": "zero-day", "path": "zero-day.zip", "covers": "pbrt frame sequence loaded as one clip; shapes sharing one .ply" },
+		{ "id": "moana-hibiscus", "path": "island/pbrt-v4", "options": { "element": "pbrt-v4/isHibiscus" }, "covers": "Moana pbrt folder, one element: partial load, instanced shapes" },
+		{ "id": "moana-mountain", "path": "island/pbrt-v4", "options": { "element": "pbrt-v4/isMountainA" }, "heavy": true, "covers": "Moana pbrt folder, one element: 6.7M triangles" },
+		{ "id": "kroken", "path": "kroken.zip", "heavy": true, "covers": "pbrt zip: 40M triangles, ~7 GB host peak" }
+	]
+}

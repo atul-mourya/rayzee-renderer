@@ -10,6 +10,7 @@
  *   node bench/runner/cli.js exposure [--only a,b] [--size 1024x1024]   auto (and local) exposure against neither
  *   node bench/runner/cli.js bless   [--only a,b] [--truth]
  *   node bench/runner/cli.js ab <baseRef> [--only a,b]
+ *   node bench/runner/cli.js load [--ab <ref> | --base-dir <path>] [--head-dir <path>] [--only a,b] [--rounds n] [--heavy] [--strict] [--config f.json] [--json out.json]
  *   node bench/runner/cli.js list
  *   node bench/runner/cli.js storage [--size MiB] [--gz archive.tar.gz] [--firefox]
  *   node bench/runner/cli.js storage --engine [--tar scene.tar] [--gz scene.tar.gz]
@@ -39,6 +40,7 @@ import { runFreeze } from './freeze.js';
 import { runLockstep } from './lockstep.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
 import { formatStorage, runArchiveScenarios, runStorage } from './storage.js';
+import { commandLoad } from './load.js';
 
 const exec = promisify( execFile );
 
@@ -553,7 +555,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage', 'load' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -685,6 +687,9 @@ async function main() {
 		return 0;
 
 	}
+
+	// Node only: no dev server or browser.
+	if ( command === 'load' ) return commandLoad( flags, { log, positiveInt: positiveIntFlag } );
 
 	if ( command === 'ab' ) {
 

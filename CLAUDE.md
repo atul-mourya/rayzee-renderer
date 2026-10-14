@@ -47,6 +47,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench` - quality, freeze, lockstep, denoise, memory and perf against the working tree
 - `npm run bench:bless` - regenerate goldens / ground truth (required on a new machine)
 - `npm run bench:ab -- main` - gate perf against another git ref (same-session interleaved A/B)
+- `npm run bench:load` - real models loaded by phase in Node (models gitignored: `RAYZEE_BENCH_MODELS`); fails on a load error or engine issue, `-- --ab main` / `--base-dir <checkout>` gates each phase
 - `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus
 - `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`

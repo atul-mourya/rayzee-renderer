@@ -394,3 +394,27 @@ export const UPSCALE_GATES = {
 	// in the maths.
 	maxToneMapDelta: 1,
 };
+
+/**
+ * Scene loading (`bench:load`): real models, timed by phase, A/B against another checkout. Times are wall clock on
+ * the CPU, so the machine's other work lands in them; the paired rounds cancel the part of it both sides share.
+ */
+export const LOAD = {
+	models: path.resolve( here, '..', 'load', 'models.json' ),
+	// Models are gitignored; RAYZEE_BENCH_MODELS (or --models) lists the folders to look in, path.delimiter-separated.
+	modelsEnv: 'RAYZEE_BENCH_MODELS',
+	// Loads before each measured one in the same process, discarded: V8 tiers up the engine's code across repeats.
+	warmup: 1,
+	rounds: 3,
+	// Big enough to compile and trace a frame, small enough that the frame is not what is measured.
+	renderSize: { width: 256, height: 256 },
+	gates: {
+		// Above what identical code read in a self-A/B on a busy machine (bench/README.md, "Scene loading").
+		unchangedPct: 15,
+		minDeltaMs: 100,
+		// The build's host peak is counted, not sampled, so only a real change moves it.
+		memoryPct: 2,
+		minMemoryBytes: 16 * 2 ** 20,
+	},
+	timeoutMs: 20 * 60_000,
+};

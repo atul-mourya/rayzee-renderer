@@ -27,6 +27,7 @@ npm run bench:memory
 npm run bench:perf
 npm run bench:kernels      # per-kernel GPU time (--only <scene>; --shipping, --env, --model for real content)
 npm run bench:ab -- main    # gate perf against another git ref
+npm run bench:load         # real models loaded by phase in Node; -- --ab main, or --base-dir <checkout>, to gate
 npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
 npm run bench:lut          # regenerate the DFG lookup table after a lobe or sampler change
@@ -127,9 +128,10 @@ CPU measurement is being distorted, and the calibration report prints it for bot
 ```
 bench/
   harness/    boot.js, scenes.js, sceneSession.js, index.html, storage/   # runs in the browser
-  lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
+  lib/        metrics.js, png.js, stats.js, load.js   # pure, unit-tested in tests/unit/bench/
   runner/     cli.js, report.js + one module per suite    # runs in Node
   node/       run.js, resolve.js, fixtures/    # the corpus in plain Node (bench:node), compressed glTF fixtures
+  load/       models.json, worker.js, measure.js, resolve.js   # bench:load: the model list, one engine per process
   tools/      gen-dfg-lut.mjs (bench:lut), make-compressed-fixtures.mjs
   baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json,
               denoise.json, freeze.json, upscale.json
@@ -457,6 +459,95 @@ serving three's own decoders from `node_modules` so nothing touches the network,
 physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte
 for byte. It holds the core/viewer split to "same pixels", and it is what found module-level shader state shared
 between two renderers in one process (see `TSL/SceneResources.js`).
+
+### Scene loading — real models, by phase
+
+Every other suite loads procedural scenes of a few thousand triangles, so nothing gated loading a real model:
+`bench:calibrate` times one model only to check the browser's CPU speed, and `perf.jsonl`'s `loadMs` is the corpus.
+Both of 2026-09-30's load bugs were found by hand — Zero-Day's shared-`.ply` crash (shipped since 9.1.0) and Node
+packing textures on the main thread (4.5 → 2.1 s once moved to workers). `bench:load` loads a list of real models in
+Node on Dawn and fails on a load error or a recorded engine issue; against another checkout it gates every phase.
+
+```bash
+npm run bench:load                                   # this checkout: medians by phase, fails on errors and issues
+npm run bench:load -- --ab main                      # A/B against a git ref (a temporary worktree, removed after)
+npm run bench:load -- --base-dir ../baseline         # A/B against any checkout; --head-dir picks the other side
+npm run bench:load -- --only crown,zero-day --rounds 5
+npm run bench:load -- --heavy                        # also the models marked heavy (kroken: 40M triangles)
+npm run bench:load -- --strict                       # warnings fail too
+npm run bench:load -- --json out.json                # every load's phases, counts, memory and issues
+npm run bench:load -- --config list.json             # a model list of your own; its roots win over RAYZEE_BENCH_MODELS
+```
+
+**The models** are listed in `load/models.json`, each with a path relative to a models root and, for an archive or a
+folder, the `loadFile` options it needs (a Moana `element`). Models are gitignored, so the roots are the user's:
+`app/public/models` by default, or `RAYZEE_BENCH_MODELS` / `--models`, `:`-separated — the Moana island and kroken live
+outside the repo, e.g. `RAYZEE_BENCH_MODELS=app/public/models:~/Desktop/3DAssets`. A model under no root is skipped
+with a note, never failed.
+
+**How a side runs.** Each checkout's engine is built as the npm package ships it (ES, into a temporary folder outside
+the checkout, ~0.3 s) and runs in a Node process of its own (`load/worker.js`), which `load/resolve.js` points at that
+build; the measuring code is this checkout's for both sides, so a checkout without `bench/load` can still be the base.
+Every measured load follows an unmeasured one of the same model in the same process (V8 tiers the engine's code up
+across repeats). Alone, one process loads each model once unmeasured and `--rounds` times measured; in an A/B each
+round starts both sides in fresh processes, alternating who goes first. Between loads the scene is unloaded and
+collected, so each load's memory is its own. A load reaches no network: the worker serves three's Draco and KTX2
+decoders from the checkout's own `three` on a local port, answers OIDN's weight download (every app makes it at
+startup, denoising or not) with a 404, and refuses any other fetch, which fails the run — downloading the decoders
+had failed a classroom load with no code change, and timed the network inside `parse`.
+
+**The phases** (`LOAD_PHASES` in `lib/load.js`), nested as they run:
+
+| phase | from |
+|---|---|
+| `ready` | `loadFile` called → the first frame finished on the GPU (`queue.onSubmittedWorkDone()`) |
+| `load` | `loadFile` itself |
+| `parse` | `loadFile` → `buildBVH` starts: reading, parsing, decoding — inside it `pbrtParse` / `pbrtBuild` (`archives.lastPBRTStats`) and `decode` (busy time in the host's `decodeImage`) |
+| `scene` | `SceneProcessor.performanceMetrics`: `extraction`, `blas`, `tlas`, `assemble`, and `textures`, built beside the BVH |
+| `upload` | `buildBVH` end → `setupMaterial` (buffers and texture buckets to the GPU) |
+| `kernels`, `finish` | `setupMaterial` (the wavefront kernels' graphs), then the environment table and settings |
+| `firstFrame` | `loadFile` returned → one sample done: the kernels compile at first dispatch in Node, so this is the shader compile |
+
+The bench marks `buildBVH` and `setupMaterial` by wrapping them on the instance; no engine code knows about it.
+
+**The gate.** A load fails on an error, a request to the network, or an engine issue of severity error (warnings are listed; `--strict` fails on
+them too). Against another checkout, phases are compared like `bench:ab`: per-round ratios (`compareReplicates`), so
+what the machine was doing in a round cancels, and a phase is `slower` only when its median paired change passes both
+the relative floor (`LOAD.gates.unchangedPct`, 15 %, or the rounds' own spread if wider) and `minDeltaMs` (100 ms) —
+a 3 ms TLAS that takes 5 ms is +67 % and means nothing — and moved the same way in every round. A regression shows
+in its phase and in each phase it runs inside; the deepest one that moved is marked `← here` and named in the summary. The build's host peak
+(`getHostMemoryInfo().peakLiveBytes`) is counted rather than sampled, so it is compared without noise: up by
+`memoryPct` and `minMemoryBytes` fails. Sampled RSS and the VRAM tracker's peak are printed, not gated. Two sides that
+built different scenes (triangle, mesh or material counts) are named, since then the times compare different work.
+
+**Measured** (2026-10-14, Apple M5 Pro, 18 cores, shared all night with other agents' builds, tests and renders —
+load average 5–16, swap 14 of 15 GB used):
+
+- **A delay is named where it is.** 300 ms added at the top of `SceneProcessor._createMaterialTextures` in a throwaway
+  checkout, A/B against the same tree without it, 3 rounds: `textures` slower on all four models it ran (24155522
+  +255 ms, its textures overlapping the BVH; classroom +300, crown +343, moana-hibiscus +297), the same in every round,
+  and no other phase slower — `slower: 24155522 textures, classroom textures, crown textures, moana-hibiscus textures`.
+- **Identical code stays green.** The first version kept one process per side for the whole run, with floors of 10 %
+  and 50 ms; `--ab main` against this branch (the same engine) read three phases slower — classroom `blas` +25 % in
+  all three rounds, 24155522 `extraction` +10 % — and classroom's first frame −42 % in all three. A process carries a
+  bias of its own, which pairing cannot cancel; hence a fresh process per round, every round agreeing, and the
+  floors above it. Since then: a self-A/B of the four quick models (one load stalled 1054 s, another 134 s, while the
+  machine swapped) and `--ab main` over the default list: nothing slower, six phases inconclusive (rounds
+  disagreeing), the rest unchanged.
+- **A load error or an error issue fails the run.** A glTF folder whose image is not a PNG loads, but records
+  `texture.build_failed`; a .glb cut to 4 KB throws in GLTFLoader. Both fail (`--config` with a list of its own); a
+  model under no root is skipped.
+- **Cost.** The default list alone, 1 warm-up + 3 loads each: 142 s; `--ab main` over the same list,
+  3 rounds: 371 s; the four quick models A/B, 3 rounds, while the
+  machine was busier: 554 s.
+
+Times are wall clock on the CPU, from a process that shares the machine — another build or test run lands in them.
+The paired rounds cancel what both sides of a round share; what they cannot cancel shows as a wide floor, and the
+floor is printed on every line.
+
+**Not covered.** Chrome: `measure.js` uses no Node API so a page could share it, but the harness for it (serving each
+side's build with an import map, files handed over as disk-backed `File`s through `DOM.setFileInputFiles`) is not
+built, so browser-only paths — `createImageBitmap` decoding, the background kernel compile, OPFS — are not timed.
 
 ### Denoisers — a ratio, so there is nothing to bless away
 
