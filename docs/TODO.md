@@ -2,8 +2,6 @@
 
 ## Bugs
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
-- audit implementation of transmission map. Scene thejunkshopsplashscreen blender splash screen
-- displacement maps dont seem to work properly. test with polyhaven material on ground plane
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
   
@@ -28,7 +26,10 @@
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
 - [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
-- [ ] NRD makes 1-spp images worse than raw on two scenes (2026-10-11, `bench:denoise --only`): dispersion-glass 1.12, mixed-lights 2.29. Both left unblessed until fixed.
+- [ ] NRD is still worse than raw at 4–16 spp on several scenes (2026-10-14, after the 1-spp fix): alpha-cutout 1.57 / 2.21, sheen 1.13 / 1.38, clearcoat 1.05 / 1.35, shadow-catcher 1.24 / 1.37, iridescence 1.08, anisotropy 1.04 (4 / 16 spp). `bench:denoise`'s `sppLadder [1, 64]` never measures them: add a 4 or 16 rung.
+- [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
+- [ ] Shadow rays through glass ignore its tint (Junk Shop's "Furniture" looks black but passes white light).
+- [ ] Extension maps (transmission, clearcoat, sheen, …) are read on the base-colour map's UV transform and the first UV set; glTF gives each its own `texCoord` and `KHR_texture_transform`.
 - [ ] OIDN's guide jumps from "see through" to "this surface" at a hard step (pure metal: roughness 0.049). Cycles' smooth ramp was tried (2026-08) and lost on 9 of 10 `bench:denoise` OIDN tests; a retry must keep one surface per pixel.
 - [ ] Fluted glass (24233846.glb): firefly threshold, bounce counts and LED brightness change nothing — don't retry. The leftover noise is the LED-lit cabinet seen through the glass; it needs ReSTIR DI or a radiance cache (neither built).
 - [ ] Same glass at `normalScale` 100 loses half its light: steep normals send samples under the surface and the leak guard kills them. Cycles' fix (`ensure_valid_specular_reflection`) on the shared normal brightened diffuse +17.6 % (2026-09), so it needs a separate normal for the glossy lobe.
@@ -50,11 +51,10 @@
 ### Regression bench (`bench/`)
 
 - [ ] PR CI workflow — there is no PR gate at all today, and CI never runs ESLint despite CONTRIBUTING requiring it
-- [ ] HTML report with diff heatmaps (`bench/lib/metrics.js` already has `diffHeatmap()`, unused)
-- [ ] CPU-side vitest guards: shader-recompile contract, BVH structural invariants, feature-combo compile smoke
+- [ ] CPU-side vitest guards: shader-recompile contract, feature-combo compile smoke (BVH structural invariants done: `tests/unit/processor/bvhInvariants.test.js`; the memory-spill and BLAS-cache builds are not walked yet)
 - [ ] trend dashboard over `bench/baselines/perf.jsonl`
 - [ ] corpus gap: skeletal/morph animation — needs a committed .glb, which the all-procedural rule cannot supply
-- [ ] `bench:load` — scene loading has no gate. `bench:calibrate` times one model only to check the harness's CPU speed, and `perf.jsonl`'s `loadMs` is the procedural corpus (~18k triangles). Load a local list of real models (textured glTF, Zero-Day for many shapes sharing a `.ply`, one Moana part), skip missing ones (gitignored), in Chrome and Node; discard the first load, record parse / decode / extraction / BLAS / textures / shader compile from `performanceMetrics`; fail on a load error or recorded issue; A/B against a git ref like `bench:ab`, gated per phase. Both of 2026-09-30's load bugs were found by hand: Zero-Day's shared-`.ply` crash (shipped since 9.1.0) and Node's main-thread texture packing (4.5 → 2.1 s once moved to workers)
+- [ ] `bench:load` in Chrome — the Node side is built (`npm run bench:load`, `-- --ab main`); browser-only paths (`createImageBitmap` decoding, background kernel compile, OPFS) are not timed. Its floors (15 % and 100 ms) were set on a busy machine: re-check on a quiet one.
 
 
 ### General
@@ -136,14 +136,18 @@ metal was grey, a hidden 90-unit sphere lit the room, and the glass jars were cl
 once looked at. How it should have been built so they could not happen:
 - **Translate from pbrt's source, not from the scenes at hand.** Every bug was a guessed meaning: template shapes stored
   "relative to the transform at ObjectBegin" (invented — pbrt keeps the whole transform), lights two-sided (pbrt: one-sided
-  unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). Still guessed today:
-  every 8-bit image is read as sRGB (pbrt: only PNG; JPG/TGA are linear unless `encoding` says otherwise). Keep one table per directive — pbrt's parameter names, types, defaults, and
-  the `file:line` in pbrt-v4 they came from — and derive the translators and their tests from it.
+  unless `twosided`), `alpha` ignored, a `mix` clamping after mixing (pbrt clamps each albedo first). A default read off
+  one file misleads too: `textures.cpp` gives a non-PNG image the encoding `linear`, but `Image::Read` (`util/image.cpp`)
+  decodes JPG and TGA through stb_image as sRGB whatever it says, so reading every 8-bit image as sRGB matches pbrt.
+  Still differs: an explicit `encoding` on a PNG colour map is ignored here (no local scene sets one). Keep one table
+  per directive — pbrt's parameter names, types, defaults, and the `file:line` in pbrt-v4 they came from — and derive
+  the translators and their tests from it.
 - **Account for every parameter.** pbrt itself calls `ReportUnused()` on each directive. A translator that marks what it
   consumed, and a loader that reports every unconsumed or approximated parameter once with a count (as an engine issue,
   not a console list cut off at 19), would have named seven of the silent gaps on the first load: `alpha`, `twosided`,
   `uscale`/`vscale`/`udelta`/`vdelta`, an imagemap's `scale`/`invert`, `normalmap`, `MediumInterface`, and a texture
-  where a number was expected (`scale`, `amount`). `displacement` and `edgelength` still are.
+  where a number was expected (`scale`, `amount`). `displacement` and `edgelength` still are. Done 2026-10-14
+  (`asset.parameters_ignored`).
 - **Gate against pbrt's own images.** pbrt-v4-scenes ships a reference for every camera. Render each at its own camera,
   film size and `maxdepth`, apply the reference's post (kroken's `makepngs.sh`: OptiX denoise, white balance 6200 K, ACES
   filmic) and compare per 16² block: a missing object or a grey metal is a block that fails outright.
@@ -158,16 +162,17 @@ once looked at. How it should have been built so they could not happen:
 - **The engine ties emission side to surface side.** A one-sided pbrt light becomes `FrontSide`, which also makes its back
   see-through to camera rays; in pbrt it stays opaque (and black). An emitter-side flag apart from culling.
 - **Never cache a failed load.** The archive scene cache stored a 3 GB graph from a load the engine then rejected; the next
-  load would have restored it. Store only once the engine has accepted the scene, and derive the cache revision from the
-  loader's code instead of a hand-bumped `PBRT_BUILD_REVISION`.
+  load would have restored it. Store only once the engine has accepted the scene (done 2026-10-14), and derive the cache
+  revision from the loader's code instead of a hand-bumped `PBRT_BUILD_REVISION` (open: no build-tool-free way found; a
+  unit test hashing the loader's sources against a recorded hash would catch a forgotten bump).
 - **Count non-finite samples.** kroken's NaN pixels (two-sided emitter seen edge-on, fixed 057cbc41) were found by eye
   after OIDN drew them as black dots. A per-frame count in FinalWrite, recorded as an issue, makes the next one a number.
 
 ### Missing today
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
-- [ ] **Texture mappings** `planar` / `spherical` / `cylindrical` → a generated uv set (see learnings): kroken's book
-  spines, magazine covers, cups, wooden sphere fall back to the mesh's uv today.
+- [x] **Texture mappings** `planar` / `spherical` / `cylindrical` → a generated uv set per shape (2026-10-14; kroken's
+  book spines, cups, Moka pot). One uv set a triangle: a surface mixing mappings reads the others as their mean.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
   `directionmix` (by the normal). 2D `checkerboard` and `bilerp` are baked since 2026-10-05; `ptex` is read since
   2026-10-06 (as a colour map; its mean anywhere else).
@@ -185,6 +190,9 @@ once looked at. How it should have been built so they could not happen:
   medium stack treats an open sheet against pbrt's per-interface orientation.
 - [ ] **Named spectra**: `METAL_ALBEDO` is a five-metal table and blackbody is a curve fit. Port pbrt's named spectra
   (metals, glasses) and integrate against CIE for exact F0, IOR and blackbody colour (kroken reads warmer partly here).
+- [ ] **A second infinite light** is dropped (watercolor has two); the engine has one environment.
+- [ ] **Spectral `eta`** is read at 550 nm (crown's gems were IOR 200 before 2026-10-14). The dispersion layer could fit
+  `ior + 0.03·dispersion / λ²` to it; exact needs the sampled table in the shader.
 - [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
 - [x] **Shapes**: `cylinder`, partial `sphere`/`disk`, pbrt's uv (2026-10-05). Also fixed: `bilinearmesh` corner order
@@ -223,8 +231,9 @@ once looked at. How it should have been built so they could not happen:
 
 ## Scene scale (after grouped placements and buffer parts, 2026-10-08)
 
-- [ ] **Split-BVH traversal** — a BVH in parts reads each node vec4 through its own `If` chain: +5–8 % frame time
-  (Moana beach, two parts). Read a node's four vec4 from one part in one branch.
+- [ ] **Split-BVH traversal** — a node's four vec4 are read in one branch since 2026-10-14: three parts +9–14 % →
+  +4–7 % frame time, two parts unchanged at +3–8 %. The two-part cost is the two-buffer reads in the traversal loop, not
+  the branches, divergence or bindings (each tested); only a different layout (parts at BLAS boundaries?) could help.
 - [ ] **Member placements** — a grouped copy is one TLAS entry, but every member keeps its placement (a matrix and
   ~11 B each): 11M extra on the whole island, ~0.8 GB of CPU memory. Store the matrix once a copy.
 - [ ] **glTF instancing** — EXT_mesh_gpu_instancing gives each primitive its own matrix attribute, so its parts do not
@@ -252,6 +261,8 @@ once looked at. How it should have been built so they could not happen:
 ### Pipeline
 
 - [ ] GPU-CPU sync for environment in solid color sky mode
+- [ ] Every `PathTracerApp` downloads OIDN's weights at startup, even with no denoiser; offline that records an error-severity `asset.unreachable`.
+- [ ] Zero-Day loaded as a single frame (`animation: false`) built in 77.6 s for 4.0M triangles, the 9-frame clip in 38.3 s for 2.2M (measured once, busy machine) — check with `bench:load`.
 - [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
 - [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
 
