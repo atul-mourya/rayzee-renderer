@@ -214,6 +214,22 @@ and read through `splitStorage` (`TSL/Common.js`), which picks the part with an 
 that fits one buffer is a plain node and compiles exactly the old code. Every part is a binding, and
 Shade binds five other buffers, so the parts total at most five (`PathTracerStage._assertBindings`).
 
+Rows of one record are read through `storageRows`, one `If` chain for all of them: traversal reads a BVH node's
+four vec4 together at the top of a visit (`nodeRows` in `BVHTraversal.js`), a cluster leaf its first and last,
+`instanceRows` a TLAS leaf's three transform rows. A copy record is 12 lanes, so it can straddle two parts of
+whole nodes and is read element by element. Triangle rows stay per element: geo in two parts costs +3 % frame
+time here either way, read per row or in one branch. GPU time per sample against the single buffer (24155522.glb in Node on Dawn, 1024×768,
+frames alternated between builds; unfolded, folded and clustered trees, path and bidirectional integrators):
+
+| parts | per vec4 (before) | one branch a node |
+|---|---|---|
+| 2 | +3–8 % | +3–7 % (Extend 1–2 % faster, Shade the same) |
+| 3 | +9–14 % | +4–7 % |
+
+The two-part cost is in the traversal loops' node reads and nothing else: a second part holding a single node
+(never read) costs the same, as does a branch-free read (both parts loaded, one selected), while traversal on the
+single buffer beside parts every other read uses costs nothing.
+
 ### Two-level BVH (`bvhStorageNode`)
 Combined buffer `[ TLAS | group trees | empty leaf | BLAS_0 | BLAS_1 | ... | copy records ]`, 16 floats (4 × vec4) per node:
 - Inner node: child AABBs + child indices in slots 0–3 (4 reads, no child fetches).

@@ -336,19 +336,33 @@ export function splitStorage( parts, perPart, type ) {
 
 }
 
-/** Element `index` of a storage node or of a {@link splitStorage}. */
-export function storageElement( buffer, index ) {
-
-	if ( ! buffer.isSplitStorage ) return buffer.element( index );
+/**
+ * Elements `base + r` of a {@link splitStorage}, for each offset r in `rows`, all of one record: a part holds whole
+ * records, so the part is picked once and every row is read in its branch.
+ */
+export function storageRows( buffer, base, rows ) {
 
 	const { parts, perPart } = buffer;
-	const e = int( index ).toVar();
-	const out = ( { uvec4, uvec2 }[ buffer.type ] ?? vec4 )( 0 ).toVar();
-	const read = ( k ) => () => out.assign( parts[ k ].element( k === 0 ? e : e.sub( int( perPart * k ) ) ) );
+	const e = int( base ).toVar();
+	const out = rows.map( () => ( { uvec4, uvec2 }[ buffer.type ] ?? vec4 )( 0 ).toVar() );
+	const read = ( k ) => () => {
+
+		const at = k === 0 ? e : e.sub( int( perPart * k ) );
+		rows.forEach( ( r, j ) => out[ j ].assign( parts[ k ].element( r === 0 ? at : at.add( int( r ) ) ) ) );
+
+	};
+
 	let branch = If( e.lessThan( int( perPart ) ), read( 0 ) );
 	for ( let k = 1; k < parts.length - 1; k ++ ) branch = branch.ElseIf( e.lessThan( int( perPart * ( k + 1 ) ) ), read( k ) );
 	branch.Else( read( parts.length - 1 ) );
 	return out;
+
+}
+
+/** Element `index` of a storage node or of a {@link splitStorage}. */
+export function storageElement( buffer, index ) {
+
+	return buffer.isSplitStorage ? storageRows( buffer, index, [ 0 ] )[ 0 ] : buffer.element( index );
 
 }
 
@@ -678,9 +692,10 @@ export const shadowFlagsSettle = ( flags, alphaShadows ) => {
 
 export const instanceRows = ( bvhBuffer, leafIndex ) => {
 
-	// Built over copy clusters, an instance is a copy record (3 vec4 from `copyRecordBase`), not a TLAS leaf.
+	// Over copy clusters an instance is a 3-vec4 copy record, which can straddle two parts: read per element.
 	const records = bvhBuffer.value?.copyRecordBase;
 	if ( records !== undefined ) return [ 0, 1, 2 ].map( ( row ) => getDatafromStorageBuffer( bvhBuffer, leafIndex, int( records + row ), int( 3 ) ) );
+	if ( bvhBuffer.isSplitStorage ) return storageRows( bvhBuffer, int( leafIndex ).mul( 4 ), [ 1, 2, 3 ] );
 	return [
 		getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 1 ), int( 4 ) ),
 		getDatafromStorageBuffer( bvhBuffer, leafIndex, int( 2 ), int( 4 ) ),

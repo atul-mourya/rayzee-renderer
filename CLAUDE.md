@@ -215,12 +215,16 @@ brings them back when a texture arrives.
 `maxStorageBufferBindingSize` the BVH, geo and shade stores are each split into parts of whole records
 (`StorageParts` in `TSL/patches.js`; `stage._bvhParts` / `_geoParts` / `_shadeParts`), read through
 `splitStorage` (`TSL/Common.js`): `getDatafromStorageBuffer` → `storageElement` picks the part with an
-`If` chain. A store that fits one buffer is a plain node and compiles exactly the old code. Every part is a
+`If` chain; `storageRows` picks it once for several rows of one record — a BVH node's four vec4 and a TLAS
+leaf's transform are read in one branch (a 12-lane copy record can straddle two parts and stays per element).
+A store that fits one buffer is a plain node and compiles exactly the old code. Every part is a
 binding: Shade binds 5 others (rays, hits, counters, active indices, scene data), so parts total ≤ 5 of the
 device's 10 — `_assertBindings` refuses before upload. The BVH and geo both in two parts fit (Shade and
-two VCM kernels then sit at 10). Measured on Moana parts in Node, forced with `stage.bufferPartBytes`
-(a test hook): images byte-identical; frame time +5–8 % for a split BVH, ±0 for split geo.
-`tests/gpu/splitBuffers.test.js` traces folded and unfolded trees over 2–3 parts against single buffers.
+two VCM kernels then sit at 10). Measured in Node, forced with `stage.bufferPartBytes` (a test hook):
+images byte-identical; a split BVH costs +3–7 % frame time at two parts or three (read per vec4, three
+parts cost +9–14 %; see `docs/PATH_TRACER_SHADER_ARCHITECTURE.md`), split geo +0–3 %.
+`tests/gpu/splitBuffers.test.js` traces folded and unfolded trees over 2–3 parts against single buffers,
+`groupedInstances.test.js` instances and copy clusters over three.
 ⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), and pass the
 hit's `instanceLeaf`: triangles of a shared geometry are in object space, not world space.
 

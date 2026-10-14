@@ -32,7 +32,7 @@ import {
 } from '../Processor/BufferLayout.js';
 import { HitInfo } from './Struct.js';
 import {
-	getDatafromStorageBuffer, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
+	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
 } from './Common.js';
 
 const MAX_STACK_DEPTH = 32;
@@ -50,6 +50,15 @@ const HUGE_VAL = 1e8;
 // ================================================================================
 
 const createStack = () => array( 'int', MAX_STACK_DEPTH ).toVar();
+
+// Row k of BVH node `nodeIndex`. One buffer reads each row where it is used; over parts, `rows` are read in one branch.
+const nodeRows = ( bvhBuffer, nodeIndex, rows = [ 0, 1, 2, 3 ] ) => {
+
+	if ( ! bvhBuffer.isSplitStorage ) return ( k ) => getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( k ), int( BVH_STRIDE ) );
+	const read = storageRows( bvhBuffer, int( nodeIndex ).mul( BVH_STRIDE ), rows );
+	return ( k ) => read[ rows.indexOf( k ) ];
+
+};
 
 // A negative stack entry is a leaf folded into its parent, `~( first << 4 | count )` as the parent
 // stores it, so child slots are pushed as they are and a leaf needs no fetch.
@@ -91,10 +100,10 @@ const toObjectDir = ( rows, d ) => vec3(
 // Compare-swaps sorting up to four ascending.
 const SORT_NETWORKS = [[], [], [[ 0, 1 ]], [[ 0, 1 ], [ 1, 2 ], [ 0, 1 ]], [[ 0, 1 ], [ 2, 3 ], [ 0, 2 ], [ 1, 3 ], [ 1, 2 ]]];
 
-const pushHitCopies = ( bvhBuffer, nodeIndex, nodeData0, origin, invDir, stack, stackPtr, limit ) => {
+const pushHitCopies = ( node, nodeIndex, nodeData0, origin, invDir, stack, stackPtr, limit ) => {
 
-	const d1 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 1 ), int( BVH_STRIDE ) );
-	const d2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
+	const d1 = node( 1 );
+	const d2 = node( 2 );
 	const base = vec3( nodeData0.z, d1.x, d1.y ).toVar();
 	const exps = floatBitsToUint( nodeData0.y ).toVar();
 	const stepOf = ( a ) => uintBitsToFloat( exps.shiftRight( uint( a * 8 ) ).bitAnd( uint( 255 ) ).shiftLeft( uint( 23 ) ) );
@@ -363,8 +372,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 		const leaf = int( uint( entry ).bitAnd( uint( ~ COPY_ENTRY >>> 0 ) ).shiftRight( uint( 2 ) ) );
 		const k = uint( entry ).bitAnd( uint( 3 ) ).toVar();
-		const head = getDatafromStorageBuffer( bvhBuffer, leaf, int( 0 ), int( BVH_STRIDE ) );
-		const words = floatBitsToUint( getDatafromStorageBuffer( bvhBuffer, leaf, int( 3 ), int( BVH_STRIDE ) ) ).toVar();
+		const node = nodeRows( bvhBuffer, leaf, [ 0, 3 ] );
+		const head = node( 0 );
+		const words = floatBitsToUint( node( 3 ) ).toVar();
 		const word = select( k.equal( uint( 0 ) ), words.x, select( k.equal( uint( 1 ) ), words.y, select( k.equal( uint( 2 ) ), words.z, words.w ) ) ).toVar();
 
 		If( word.bitAnd( uint( CLUSTER_COPY_HIDDEN ) ).equal( uint( 0 ) ), () => {
@@ -483,12 +493,13 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 		const visitNode = () => {
 
 			const nodeIndex = entry;
+			const node = nodeRows( bvhBuffer, nodeIndex );
 
 			// 4 vec4 per node
 			// Leaf: vec4(0) = [triOffset, triCount, 0, TRIANGLE_LEAF]
 			// Inner: vec4(0) = [leftMin.xyz, leftChild], vec4(1) = [leftMax.xyz, rightChild],
 			//        vec4(2) = [rightMin.xyz, 0], vec4(3) = [rightMax.xyz, 0]
-			const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
+			const nodeData0 = node( 0 );
 			if ( trackStats ) closestHit.boxTests.addAssign( 1 );
 
 			// Slot [3] carries a u32 bit pattern: an inner node's left child, or a leaf tag. Stored as
@@ -504,7 +515,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 
 				} ).Else( clustered ? () => {
 
-					pushHitCopies( bvhBuffer, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
 
 				} : () => {
 
@@ -516,7 +527,7 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 						// A baked placement already sits in world space; only a transformed one moves the ray.
 						If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
-							const rows = instanceRows( bvhBuffer, nodeIndex );
+							const rows = [ node( 1 ), node( 2 ), node( 3 ) ];
 							const localDir = toObjectDir( rows, worldDirection ).toVar();
 
 							rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
@@ -547,9 +558,9 @@ const makeTraverseBVH = ( trackStats ) => Fn( ( [
 			} ).Else( () => {
 
 				// Inner node — child AABBs stored in this node (4 reads total, no child fetches)
-				const nodeData1 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 1 ), int( BVH_STRIDE ) );
-				const nodeData2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
-				const nodeData3 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 3 ), int( BVH_STRIDE ) );
+				const nodeData1 = node( 1 );
+				const nodeData2 = node( 2 );
+				const nodeData3 = node( 3 );
 
 				const leftChild = int( nodeTag ).toVar();
 				const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();
@@ -705,8 +716,9 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 		const leaf = int( uint( entry ).bitAnd( uint( ~ COPY_ENTRY >>> 0 ) ).shiftRight( uint( 2 ) ) );
 		const k = uint( entry ).bitAnd( uint( 3 ) ).toVar();
-		const head = getDatafromStorageBuffer( bvhBuffer, leaf, int( 0 ), int( BVH_STRIDE ) );
-		const words = floatBitsToUint( getDatafromStorageBuffer( bvhBuffer, leaf, int( 3 ), int( BVH_STRIDE ) ) ).toVar();
+		const node = nodeRows( bvhBuffer, leaf, [ 0, 3 ] );
+		const head = node( 0 );
+		const words = floatBitsToUint( node( 3 ) ).toVar();
 		const word = select( k.equal( uint( 0 ) ), words.x, select( k.equal( uint( 1 ) ), words.y, select( k.equal( uint( 2 ) ), words.z, words.w ) ) ).toVar();
 
 		If( word.bitAnd( uint( CLUSTER_COPY_HIDDEN ) ).equal( uint( 0 ) ), () => {
@@ -818,7 +830,8 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 		const visitNode = () => {
 
 			const nodeIndex = entry;
-			const nodeData0 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 0 ), int( BVH_STRIDE ) );
+			const node = nodeRows( bvhBuffer, nodeIndex );
+			const nodeData0 = node( 0 );
 
 			// Slot [3] carries a u32 bit pattern: an inner node's left child, or a leaf tag. Stored as
 			// float VALUES these rounded past 2^24 and sent the ray to a neighbouring node, which
@@ -833,7 +846,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 
 				} ).Else( clustered ? () => {
 
-					pushHitCopies( bvhBuffer, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
+					pushHitCopies( node, nodeIndex, nodeData0, worldOrigin, worldInvDir, stack, stackPtr, closestHit.dst );
 
 				} : () => {
 
@@ -843,7 +856,7 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 						// A baked placement already sits in world space; only a transformed one moves the ray.
 						If( floatBitsToUint( nodeData0.y ).bitAnd( uint( TLAS_LEAF_IDENTITY ) ).equal( uint( 0 ) ), () => {
 
-							const rows = instanceRows( bvhBuffer, nodeIndex );
+							const rows = [ node( 1 ), node( 2 ), node( 3 ) ];
 							const localDir = toObjectDir( rows, worldDirection ).toVar();
 
 							rayOrigin.assign( toObjectPoint( rows, worldOrigin ) );
@@ -874,9 +887,9 @@ const makeTraverseBVHShadow = ( cameraCulled ) => Fn( ( [
 			} ).Else( () => {
 
 				// Inner node — child AABBs stored in this node
-				const nodeData1 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 1 ), int( BVH_STRIDE ) );
-				const nodeData2 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 2 ), int( BVH_STRIDE ) );
-				const nodeData3 = getDatafromStorageBuffer( bvhBuffer, nodeIndex, int( 3 ), int( BVH_STRIDE ) );
+				const nodeData1 = node( 1 );
+				const nodeData2 = node( 2 );
+				const nodeData3 = node( 3 );
 
 				const leftChild = int( nodeTag ).toVar();
 				const rightChild = int( floatBitsToUint( nodeData1.w ) ).toVar();

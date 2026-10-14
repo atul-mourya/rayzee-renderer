@@ -31,7 +31,9 @@ import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
 import { rebaseNodes } from '@/core/Processor/BVHLeafFold.js';
 import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
 import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
-import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
+import { traverseBVH, traverseBVHShadow, traverseBVHShadowCameraCulled } from '@/core/TSL/BVHTraversal.js';
+import { StorageParts } from '@/core/TSL/patches.js';
+import { splitStorage } from '@/core/TSL/Common.js';
 import { Ray } from '@/core/TSL/Struct.js';
 import { withSceneResources } from '@/core/TSL/SceneResources.js';
 import { TRI_SIDE_SHIFT } from '@/core/Processor/BufferLayout.js';
@@ -155,11 +157,9 @@ function rays() {
 
 }
 
-async function trace( renderer, nodes, triangles, { origins, dirs } ) {
+/** The `{ geo, shade }` storage pair over 20-lane triangle records. */
+function triangleStores( triangles ) {
 
-	const attr = new StorageInstancedBufferAttribute( nodes, 4 );
-	attr.copyRecordBase = nodes.copyRecordBase;
-	const bvh = storage( attr, 'vec4', nodes.length / 4 ).toReadOnly();
 	const count = triangles.length / LANES;
 	const geo = new Uint32Array( count * 12 ), shade = new Uint32Array( count * 8 );
 	for ( let i = 0; i < count; i ++ ) {
@@ -169,10 +169,19 @@ async function trace( renderer, nodes, triangles, { origins, dirs } ) {
 
 	}
 
-	const tris = {
+	return {
 		geo: storage( new StorageInstancedBufferAttribute( geo, 4 ), 'uvec4', count * 3 ).toReadOnly(),
 		shade: storage( new StorageInstancedBufferAttribute( shade, 4 ), 'uvec4', count * 2 ).toReadOnly(),
 	};
+
+}
+
+async function trace( renderer, nodes, triangles, { origins, dirs } ) {
+
+	const attr = new StorageInstancedBufferAttribute( nodes, 4 );
+	attr.copyRecordBase = nodes.copyRecordBase;
+	const bvh = storage( attr, 'vec4', nodes.length / 4 ).toReadOnly();
+	const tris = triangleStores( triangles );
 
 	const o = instancedArray( origins, 'vec4' ), d = instancedArray( dirs, 'vec4' );
 	const out = instancedArray( RAYS, 'vec4' );
@@ -182,6 +191,28 @@ async function trace( renderer, nodes, triangles, { origins, dirs } ) {
 		const hit = traverseBVH( ray, bvh, tris ).toVar();
 		const shadow = traverseBVHShadow( ray, bvh, tris, float( 70 ) ).toVar();
 		out.element( instanceIndex ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( hit.get( 'didHit' ) ) ) );
+
+	} )(), { alphaShadows: null } ).compute( RAYS );
+
+	await renderer.computeAsync( kernel );
+	return new Float32Array( await renderer.getArrayBufferAsync( out.value ) );
+
+}
+
+/** Every traversal over `bvh` (a node, or a split one): hit, shadow, camera-culled shadow, and the hit's world normal and instance. */
+async function traceAll( renderer, bvh, triangles, { origins, dirs } ) {
+
+	const tris = triangleStores( triangles );
+	const o = instancedArray( origins, 'vec4' ), d = instancedArray( dirs, 'vec4' );
+	const out = instancedArray( RAYS * 2, 'vec4' );
+	const kernel = withSceneResources( Fn( () => {
+
+		const ray = Ray( { origin: o.element( instanceIndex ).xyz, direction: d.element( instanceIndex ).xyz } );
+		const hit = traverseBVH( ray, bvh, tris ).toVar();
+		const shadow = traverseBVHShadow( ray, bvh, tris, float( 70 ) ).toVar();
+		const culled = traverseBVHShadowCameraCulled( ray, bvh, tris, float( 70 ) ).toVar();
+		out.element( instanceIndex.mul( 2 ) ).assign( vec4( hit.get( 'dst' ), float( hit.get( 'triangleIndex' ) ), float( shadow.get( 'didHit' ) ), float( culled.get( 'didHit' ) ) ) );
+		out.element( instanceIndex.mul( 2 ).add( 1 ) ).assign( vec4( hit.get( 'normal' ), float( hit.get( 'instanceLeaf' ) ) ) );
 
 	} )(), { alphaShadows: null } ).compute( RAYS );
 
@@ -315,6 +346,43 @@ describeGPU( 'grouped instance traversal', () => {
 		}
 
 	} );
+
+	it( 'traces instances and copy clusters identically over BVH parts', async () => {
+
+		for ( const options of [ {}, { grouped: true }, { clustered: true }, { hideSome: true, clustered: true } ] ) {
+
+			const { nodes, table } = assemble( parts, matrices, options );
+			const attr = new StorageInstancedBufferAttribute( nodes, 4 );
+			attr.copyRecordBase = nodes.copyRecordBase;
+			const single = await traceAll( renderer, storage( attr, 'vec4', nodes.length / 4 ).toReadOnly(), triangles, light );
+
+			// Three parts: a boundary in the TLAS and one in a BLAS, or, over copy clusters, one in a BLAS and one through a
+			// copy record (12 lanes, so records do straddle parts of whole nodes).
+			const total = table.totalNodeCount, records = table.recordNodeStart;
+			let partNodes = Math.ceil( total / 3 );
+			if ( options.clustered ) {
+
+				partNodes = Math.ceil( ( records + total ) / 4 );
+				while ( ( partNodes * 2 - records ) % 3 === 0 ) partNodes ++;
+				expect( partNodes * 2 ).toBeGreaterThan( records );
+
+			} else expect( partNodes ).toBeLessThan( table.tlasNodeCount );
+
+			const split = new StorageParts( nodes.length, 16, partNodes * 64, Float32Array );
+			expect( split.attrs.length ).toBe( 3 );
+			split.create( renderer.backend );
+			split.write( renderer.backend, 0, nodes, 0, nodes.length );
+			split.attrs[ 0 ].copyRecordBase = nodes.copyRecordBase;
+			const parted = await traceAll( renderer, splitStorage( split.attrs.map( a => storage( a, 'vec4', a.count ).toReadOnly() ), split.elementsPerPart, 'vec4' ), triangles, light );
+
+			let hits = 0;
+			for ( let i = 0; i < RAYS * 8; i ++ ) expect( parted[ i ] ).toBe( single[ i ] );
+			for ( let i = 0; i < RAYS; i ++ ) if ( single[ i * 8 + 7 ] >= 0 ) hits ++;
+			expect( hits ).toBeGreaterThan( RAYS * 0.05 );
+
+		}
+
+	}, 30000 );
 
 	it( 'refits copy clusters to where their copies are', async () => {
 
