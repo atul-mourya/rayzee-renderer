@@ -767,6 +767,18 @@ describe( 'bench/lib/stats', () => {
 
 		} );
 
+		it( 'withdraws a verdict that a round contradicts past the band', () => {
+
+			// v11.7.0 → v11.8.0, rounds in measured order: both trees read ~1.05 and ~1.6 ms.
+			const metalMid = compareReplicates( [ 1.06, 1.62, 1.05 ], [ 1.70, 1.07, 1.63 ], { unchangedPct: 8 } );
+			expect( metalMid.deltaPct ).toBeCloseTo( 55.2, 0 );
+			expect( metalMid.verdict ).toBe( 'inconclusive' );
+
+			const mirror = compareReplicates( [ 1.55, 1.57, 0.98 ], [ 0.97, 0.98, 1.93 ], { unchangedPct: 8 } );
+			expect( mirror.verdict ).toBe( 'inconclusive' );
+
+		} );
+
 		it( 'refuses a verdict when the per-round ratio itself is erratic', () => {
 
 			const result = compareReplicates( [ 2.0, 2.0, 2.0 ], [ 1.0, 3.0, 2.0 ], { unchangedPct: 8 } );

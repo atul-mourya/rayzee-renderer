@@ -347,13 +347,11 @@ export function compareReplicates( baseMedians, headMedians, { unchangedPct = UN
 	// rather than a narrow one.
 	const untrustworthy = ratios.length < 2 || relSe > MAX_TRUSTED_REL_SE;
 
-	return {
-		base,
-		head,
-		ratios,
-		deltaPct,
-		noiseFloorPct,
-		verdict: classifyDelta( deltaPct, Math.max( unchangedPct, noiseFloorPct ), untrustworthy ),
-	};
+	// Two agreeing rounds outvote a third under the MAD floor: one past the band the other way withdraws the verdict.
+	let verdict = classifyDelta( deltaPct, Math.max( unchangedPct, noiseFloorPct ), untrustworthy );
+	const sign = { slower: 1, faster: - 1 }[ verdict ];
+	if ( sign && ratios.some( ( r ) => - sign * ( r - 1 ) * 100 >= unchangedPct ) ) verdict = 'inconclusive';
+
+	return { base, head, ratios, deltaPct, noiseFloorPct, verdict };
 
 }
