@@ -4,13 +4,16 @@
 - remove all hacks on rectarealight parsing and treat all the incoming serailized data. getting difference between placeholder arealight vs arealight coming with usd files
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
-  
+-   Rough glass too bright
 
 ### MVP
 - [ ] Save compiled shaders??
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
+
+### UX issue
+- Because Diffuse Roughness is only built into the renderer when a material uses it, the first move of its slider off 0 makes the renderer rebuild, so the picture stalls for a few seconds.
 
 ### Deferred
 
@@ -25,6 +28,10 @@
 
 - [ ] `usePixelFreeze` is inert on 24155522.glb — bit-identical to uniform at 150 spp, nothing reaches `pixelFreezeThreshold` 0.02, so the shipping adaptive default saves nothing on real interiors
 - [ ] `thickness` is inert, so every transmissive surface is treated as a volume boundary. glTF uses `thicknessFactor == 0` to mean **thin-walled** — no refraction, tint once, attenuation ignored. A hollow thin-walled shell therefore tints baseColor at every interface crossed (4x on the Gelatinous Cube: blue 0.168^4 = 0.0008, renders black). Fix = branch on thickness, and re-add the Thickness control with a scene-relative range (three.js specifies it in local space x model scale), not the old 0..1 slider. gap-plan Phase 4.4.
+  **Proper fix on branch `feat/thin-glass` (ee108cf9, not merged) — merge it rather than redoing this:** thickness 0 is a
+  thin sheet (no bend, no medium, both faces' Fresnel 2R / (1 + R)) in the glass path, the opaque path's transmission
+  lobe and shadow rays; importers mark solid glass with thickness 1; the app gets a "Thin" switch. Changes how glTF
+  glass without a volume renders (it stops refracting).
 - [ ] (low priority) OIDN made 150-spp renders slightly worse than raw (2026-08, before oidn-web 0.5.0 — re-measure). Defaults stop at 30–60 spp, so only raised caps hit it. Fix if real: fade OIDN out as the image converges.
 - [ ] NRD is still worse than raw at 4–16 spp on several scenes (2026-10-14, after the 1-spp fix): alpha-cutout 1.57 / 2.21, sheen 1.13 / 1.38, clearcoat 1.05 / 1.35, shadow-catcher 1.24 / 1.37, iridescence 1.08, anisotropy 1.04 (4 / 16 spp). `bench:denoise`'s `sppLadder [1, 64]` never measures them: add a 4 or 16 rung.
 - [ ] NRD treats a whole emissive material as an emitter (never blurred), so a surface with a mostly-black emissive map is left noisy; a one-pixel ring can still leak at a non-black emitter's edge (needs per-sample emission, no free G-buffer lane).
@@ -109,7 +116,6 @@
 
 - [ ] Add new category of environment maps - abstract (identify files and organize)
 - [ ] Revamp environment control UX
-- [ ] the output of gradient light should look like hemisphere light in threejs
 
 ### Scene Management
 - [ ] SDF-based model rendering
@@ -169,8 +175,6 @@ once looked at. How it should have been built so they could not happen:
 ### Missing today
 - [ ] **Displacement** (`texture displacement` + `edgelength`): dice to the edge length and displace along the normal at
   load, as pbrt does — kroken's rug pile, cushion tufting, bricks, rocks. Needs a per-shape triangle cap.
-- [x] **Texture mappings** `planar` / `spherical` / `cylindrical` → a generated uv set per shape (2026-10-14; kroken's
-  book spines, cups, Moka pot). One uv set a triangle: a surface mixing mappings reads the others as their mean.
 - [ ] **Texture classes**: `dots` (needs pbrt's Perlin noise); `fbm`, `wrinkled`, `windy`, `marble` (3D procedural);
   `directionmix` (by the normal). 2D `checkerboard` and `bilerp` are baked since 2026-10-05; `ptex` is read since
   2026-10-06 (as a colour map; its mean anywhere else).
@@ -180,7 +184,6 @@ once looked at. How it should have been built so they could not happen:
   page once, not once per texture.
 - [ ] **Mix material**: only its colours follow the amount texture; roughness, clear coat and metalness take the
   texture's mean. Per-texel maps, or pbrt's own per-hit choice between the two materials.
-- [x] **Textured roughness** — a roughness map with pbrt's remap baked in, the clear coat's too (2026-10-05; crown's gold).
 - [ ] **Participating media**: only absorption inside glass is mapped (σa + σs as attenuation). Scattering, a medium in a
   non-glass shape, the camera's medium and grid/nanovdb media need volumetric path tracing (Rendering → Volumetric).
 - [ ] **Single-sheet dielectric**: kroken's picture glass is one quad of `dielectric`; the card behind it renders very
@@ -193,8 +196,6 @@ once looked at. How it should have been built so they could not happen:
   `ior + 0.03·dispersion / λ²` to it; exact needs the sampled table in the shader.
 - [ ] **Lights**: area light `filename` (an image that emits); `goniometric` → the engine's IES profiles; `projection` →
   its gobos; the infinite light's `portal`. Area light `power` done 2026-10-05.
-- [x] **Shapes**: `cylinder`, partial `sphere`/`disk`, pbrt's uv (2026-10-05). Also fixed: `bilinearmesh` corner order
-  (p00 p10 p01 p11) and a four-point patch without indices (watercolor's floor spots were dropped).
 - [ ] **Cameras**: `spherical` → the engine's panorama (a panorama is global, not per camera: needs a per-camera
   projection); `realistic` (lens files). `lensradius` / `focaldistance` → the camera's own DOF done 2026-10-05.
 - [ ] **Render settings a file asks for — open question.** `Integrator` maxdepth, `Sampler` pixelsamples and the Film
@@ -203,8 +204,6 @@ once looked at. How it should have been built so they could not happen:
   (bounces / samples / size), leaving Preview fast? Offer them in the UI ("this scene asks for …")? Applying changes how
   those files render, and the mode presets own maxBounces and maxSamples today. Film `iso` / `exposuretime` /
   `whitebalance` not read yet.
-- [x] **Shape `alpha`** between 0 and 1, or a texture — the engine's blend mode, per shape–material pair (2026-10-05;
-  bistro's leaves and curtains, watercolor's splatters).
 - [ ] **Materials** approximated as diffuse: `hair`, `measured`. `subsurface` → the engine's SSS done 2026-10-05
   (named media, σa/σs, reflectance + mfp through the dipole).
 - [ ] **Texture filtering** — see Features → Rendering → Texture filtering (kroken's brick dirt read patchy where pbrt's
