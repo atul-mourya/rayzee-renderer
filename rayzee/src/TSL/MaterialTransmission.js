@@ -338,13 +338,10 @@ export const handleTransmission = Fn( ( [
 		// For metals: mostly reflect regardless of transmission setting
 		const metallicReflect = float( 0.95 );
 
-		// Blend based on metalness
-		reflectProb.assign( mix( dielectricReflect, metallicReflect, material.metalness ) );
+		// Clamped here, not under total internal reflection: the reflected weight divides by it.
+		reflectProb.assign( clamp( mix( dielectricReflect, metallicReflect, material.metalness ), 0.05, 0.95 ) );
 
 	} );
-
-	// Conservative clamp
-	reflectProb.assign( clamp( reflectProb, 0.05, 0.95 ) );
 
 	// Force reflection if TIR, otherwise probabilistically choose
 	const doReflect = totalInternalReflection.or( getRandomSample1D( pixelCoord, int( 0 ), dimBase.add( int( 4 ) ), rngState, resolution, frame ).lessThan( reflectProb ) ).toVar();

@@ -234,7 +234,7 @@ control, which is analytically exact, reads 0.121 pp. The worst axis was 51 pp.
 | `furnace-lowpoly-16` | 0.99879 | 0.12 pp — with the shadow terminator offset; 0.99650 without |
 | `furnace-lowpoly-32` | 0.99879 | 0.12 pp — 0.99815 without |
 | `furnace-foliage-cards` | 1.00000 | 0.00 pp — 0.51448 with rays offset along the interpolated normal |
-| `furnace-displaced-glass` | 1.00146 | 0.15 pp — 1.72 with refractions starting on the relief |
+| `furnace-displaced-glass` | 0.99991 | 0.01 pp — 1.72 with refractions starting on the relief, 1.0015 with total internal reflection weighted 1/0.95 |
 
 The last three were measured when their fixes landed and are not blessed into `baselines/` yet;
 run `npm run bench:bless -- --truth` to seed them.

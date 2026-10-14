@@ -1388,7 +1388,8 @@ SCENES.push( {
 } );
 
 // Glass with a displacement map. The relief is not geometry: a refraction starts on the triangle, which says which side
-// the ray is on, or rays crossed twice and stacked the glass's IOR (read 1.72).
+// the ray is on, or rays crossed twice and stacked the glass's IOR (read 1.72). The relief also traps light by total
+// internal reflection, which a smooth sphere never does; weighted 1/0.95 there, it read 1.0015.
 SCENES.push( {
 	id: 'furnace-displaced-glass',
 	covers: 'white furnace — refraction through displaced glass (crossings start on the triangle, which decides the side)',

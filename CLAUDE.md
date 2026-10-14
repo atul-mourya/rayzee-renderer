@@ -604,7 +604,8 @@ the strings, so never rename or repurpose one.
   vertex normal), whatever is not reflected crosses it (a direction the leaning normal sent the wrong way is mirrored in
   its plane), and only a reflection leaves from the relief, where that lies on the incoming ray — a crossing from the
   relief hit its own triangle again, or a neighbour past the edge, and each extra crossing stacked the glass's IOR
-  (`furnace-displaced-glass` read 1.72).
+  (`furnace-displaced-glass` read 1.72). The relief traps light by total internal reflection, whose chance stays 1:
+  clamped to 0.95 like a Fresnel pick, each one gained 5 % (the furnace read 1.0015).
 - **Ray spawn points** — every ray leaving a surface starts at `offsetRayOrigin( p, n )`
   (`TSL/Common.js`, Cycles' classic ray_offset: 1e-5 along n within 1 unit of the origin, 32 float ULPs
   per axis beyond), with n the **facet** normal on the side the new ray leaves. ⚠️ The hit record's
