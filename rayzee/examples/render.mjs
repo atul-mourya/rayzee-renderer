@@ -1,7 +1,8 @@
-// Path-traces a model in plain Node (no browser) and saves it as render.png.
+// The full engine (`rayzee`) path-tracing a model in plain Node (no browser) and saving it as render.png.
 //
-//   npm run build:engine
-//   node examples/headless/render.mjs [options]
+//   npm run example:render -- [options]   # from the repository root: builds the engine, then runs this
+//
+// `npm run bench:node` runs it too, so it keeps working.
 //
 //   --model <file|url>        .glb, .gltf, .fbx, .obj, … (default: a gold ball on a floor)
 //   --environment <file|url>  .hdr, .exr, .png or .jpg, or "sky" for the physical sky (default)

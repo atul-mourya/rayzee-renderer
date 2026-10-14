@@ -51,6 +51,9 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus
 - `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
+- `npm run bench:examples` - every example in `rayzee/examples/` (two Node, two pages in headless Chrome) runs to the
+  end against this tree with no error or warning; needs the network. The browser ones run on the engine source through
+  `rayzee/examples/vite.config.js` (`npm run example:browser` / `example:viewer`), so they track the working tree
 
 Baselines are **machine-specific** (the wavefront path budget derives from device limits, and
 single- vs multi-chunk are different code paths); the suite refuses to compare across a
@@ -185,7 +188,7 @@ Zustand-based stores with **automatic 3D engine synchronization**:
 - `useAssetsStore` - Model/environment loading state
 - `useCameraStore` - Camera controls, DOF, walk speed, orthographic view height
 - `useAnimationStore` - Clip playback, speed/loop, camera keyframes mirrored from `app.timeline` (`syncTimeline` on `TIMELINE_CHANGED`; the rules are the pure selectors `videoDuration` / `videoUsesTimeline`), video render
-- Transform state (`transformMode`, `transformSpace`, `isTransforming`) lives in `useStore` with handlers that sync to engine via `getApp()?.transform.setMode()`
+- Transform state (`transformMode`, `transformSpace`, `isTransforming`) lives in `useStore` with handlers that sync to engine via `app.transformManager.setMode()`
 - Mesh/group visibility (`toggleMeshVisibility`, `setMeshVisibility`) lives in `useStore` — toggles `object.visible` on the Three.js object then calls `app.updateAllMeshVisibility()` to update the per-mesh GPU visibility buffer
 - Pattern: `handleChange()` utility creates handlers that update both store state and the app, triggering `app.reset()` for immediate visual feedback
 

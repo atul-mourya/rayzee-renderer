@@ -12,7 +12,10 @@ import { PhysicalSky } from 'rayzee/addons/physical-sky';
 const canvas = document.querySelector( 'canvas' );
 const status = document.querySelector( '#status' );
 
-const renderer = await new RayzeeRenderer( canvas ).init();
+const renderer = new RayzeeRenderer( canvas );
+// What the renderer works around instead of failing on: an unknown setting, a missing add-on, …
+renderer.addEventListener( EngineEvents.ISSUE, ( { issue } ) => console.warn( `rayzee: ${issue.message}` ) );
+await renderer.init();
 renderer.environmentManager.setProceduralSky( PhysicalSky );
 
 const scene = new Scene();

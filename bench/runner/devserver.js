@@ -14,12 +14,13 @@ import { DEV_SERVER } from './config.js';
  *
  * @param {Object} [options]
  * @param {string} [options.cwd] - repo to run in (an A/B worktree passes its own path)
+ * @param {string[]} [options.args] - npm arguments (default `run dev`; the examples pass their own script)
  * @param {boolean} [options.verbose]
  * @returns {Promise<{ url: string, stop: function(): Promise<void> }>}
  */
-export async function startDevServer( { cwd = DEV_SERVER.cwd, verbose = false } = {} ) {
+export async function startDevServer( { cwd = DEV_SERVER.cwd, args = DEV_SERVER.args, verbose = false } = {} ) {
 
-	const child = spawn( DEV_SERVER.command, DEV_SERVER.args, {
+	const child = spawn( DEV_SERVER.command, args, {
 		cwd,
 		env: { ...process.env, FORCE_COLOR: '0' },
 		stdio: [ 'ignore', 'pipe', 'pipe' ],

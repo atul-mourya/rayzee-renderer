@@ -29,6 +29,10 @@ coverage
 
 ignoreMeDirectory
 
+# What the Node examples write when run from the repository root
+/core-node.png
+/render.png
+
 
 public/hdri/Car Scene.exr
 public/hdri/cloud_layers_2k.hdr

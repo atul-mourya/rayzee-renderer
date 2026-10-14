@@ -30,6 +30,7 @@ npm run bench:ab -- main    # gate perf against another git ref
 npm run bench:load         # real models loaded by phase in Node; -- --ab main, or --base-dir <checkout>, to gate
 npm run bench:exposure     # auto (and local) exposure against neither, wall clock (--size 1024x1024)
 npm run bench:storage       # raw OPFS throughput (see "Storage" below)
+npm run bench:examples     # every example in rayzee/examples runs to the end (see "Examples" below)
 npm run bench:lut          # regenerate the DFG lookup table after a lobe or sampler change
 ```
 
@@ -727,6 +728,19 @@ npm run bench:storage -- --engine --tar a.tar --gz b.tar.gz
 The last form loads each archive through the engine and prints time, triangles and peak memory:
 a `.tar` read in place, and a `.tar.gz` three times — the first load (unpacked to storage), the
 second (reopened from storage) and one with storage off, as before storage existed.
+
+### Examples — every one runs to the end
+
+`npm run bench:examples` builds the engine and runs each example in `rayzee/examples/` as a user would: `core-node.mjs`
+and `render.mjs` as Node processes, `core-browser` and `viewer-browser` through their npm scripts in headless Chrome,
+all against this tree. An example passes when it finishes — the core page reaches its 512 samples, the viewer page
+shows its denoised image — with no thrown error and no console error or warning. The browser examples print every
+engine issue as a warning, so a renamed setting fails too, not only a removed method. `--only core-node,render`
+picks examples; `--verbose` forwards the pages' consoles. About 30 s here. It needs the network (the viewer page
+loads its model, HDRI and denoiser weights from CDNs), so it is not part of `npm run bench`.
+
+Verified against both ways the old viewer example broke: `engine.set( 'bounces', 8 )` fails as `uncaught: engine.set
+is not a function`, and `engine.settings.set( 'bounces', 8 )` as `warn: rayzee: unknown setting "bounces"`.
 
 ## Baselines are machine-specific
 

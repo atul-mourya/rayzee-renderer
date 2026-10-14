@@ -173,7 +173,8 @@ the core. Without it the core's programs carry none of that code, and still rend
    renders), so those three stay eager.
 15. **Examples** — `rayzee/examples/core-node.mjs` renders with the core alone in Node (`npm run example:node`; the Node
    bench runs it), and `rayzee/examples/core-browser/` is the core plus the physical sky in a page
-   (`npm run example:browser`).
+   (`npm run example:browser`). Beside them, the full engine: `viewer-browser/` and `render.mjs`
+   (`npm run example:viewer`, `npm run example:render`). `npm run bench:examples` runs all four.
 16. **File formats as an add-on** — the core reads glTF/GLB, `.hdr` and LDR images. FBX, OBJ, STL, PLY, Collada, 3MF,
    USD and EXR are descriptors in `rayzee/addons/formats` (`fbxFormat` … `exrFormat`, `allFormats`), registered with
    `assetLoader.registerFormat()` and read through one shared path in place of seven copies (`AssetLoader.js`

@@ -14,6 +14,7 @@
  *   node bench/runner/cli.js list
  *   node bench/runner/cli.js storage [--size MiB] [--gz archive.tar.gz] [--firefox]
  *   node bench/runner/cli.js storage --engine [--tar scene.tar] [--gz scene.tar.gz]
+ *   node bench/runner/cli.js examples [--only a,b] [--verbose]   every example in rayzee/examples runs to the end
  */
 
 import { execFile } from 'node:child_process';
@@ -41,6 +42,7 @@ import { runLockstep } from './lockstep.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
 import { formatStorage, runArchiveScenarios, runStorage } from './storage.js';
 import { commandLoad } from './load.js';
+import { runExamples } from './examples.js';
 
 const exec = promisify( execFile );
 
@@ -555,7 +557,7 @@ async function assertModelServed( serverURL, url ) {
 
 }
 
-const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage', 'load' ];
+const COMMANDS = [ 'run', 'quality', 'denoise', 'upscale', 'freeze', 'lockstep', 'memory', 'perf', 'exposure', 'kernels', 'bless', 'ab', 'list', 'calibrate', 'storage', 'load', 'examples' ];
 
 /** Parses `--cycles`; a bare flag or a bad value must fail rather than quietly run once. */
 function positiveIntFlag( value, name ) {
@@ -690,6 +692,9 @@ async function main() {
 
 	// Node only: no dev server or browser.
 	if ( command === 'load' ) return commandLoad( flags, { log, positiveInt: positiveIntFlag } );
+
+	// Each browser example runs on a dev server of its own, not the harness's.
+	if ( command === 'examples' ) return runExamples( { only, verbose, log } );
 
 	if ( command === 'ab' ) {
 

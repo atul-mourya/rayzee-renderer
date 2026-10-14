@@ -22,8 +22,8 @@ import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, a
 
 The renderer core takes optional add-ons — file formats beyond glTF, physical sky, scene archives, bidirectional path
 tracing, OpenColorIO colour, on-disk storage — from `rayzee/addons/*`: how to install each is in
-[rayzee/README.md → Add-ons](rayzee/README.md#add-ons), the layer rules in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md). Two runnable
-examples, in Node and in a page, are in [`rayzee/examples/`](rayzee/examples).
+[rayzee/README.md → Add-ons](rayzee/README.md#add-ons), the layer rules in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md). Runnable
+examples, in Node and in a page, are in [`rayzee/examples/`](rayzee/examples) (`npm run bench:examples` runs them all).
 See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference — installation, framework integration, managers, events, and custom pipeline stages.
 
 ## Highlights
