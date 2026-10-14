@@ -63,6 +63,14 @@ const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
 const log = createLogger( 'scene' );
 
+// The per-type texture lists an extraction hands over (GeometryExtractor.getExtractedData).
+const TEXTURE_LISTS = Object.freeze( [
+	'maps', 'normalMaps', 'bumpMaps', 'roughnessMaps', 'metalnessMaps', 'emissiveMaps', 'displacementMaps',
+	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'sheenColorMaps',
+	'sheenRoughnessMaps', 'iridescenceMaps', 'iridescenceThicknessMaps', 'specularIntensityMaps', 'specularColorMaps',
+	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps',
+] );
+
 // A BLAS's nodes: one array, or a split mesh's parts in order — never one array that large.
 const nodeParts = nodes => ( Array.isArray( nodes ) ? nodes : [ nodes ] );
 const nodeBytes = nodes => nodeParts( nodes ).reduce( ( sum, part ) => sum + part.byteLength, 0 );
@@ -913,25 +921,7 @@ export class SceneProcessor {
 		this.materialTriangleCounts = extractedData.materialTriangleCounts; // Per-material tri count for sort-bin remap
 		this.meshes = extractedData.meshes;
 		this.meshTriangleRanges = extractedData.meshTriangleRanges; // Per-mesh { start, count } for TLAS/BLAS
-		this.maps = extractedData.maps;
-		this.normalMaps = extractedData.normalMaps;
-		this.bumpMaps = extractedData.bumpMaps;
-		this.roughnessMaps = extractedData.roughnessMaps;
-		this.metalnessMaps = extractedData.metalnessMaps;
-		this.emissiveMaps = extractedData.emissiveMaps;
-		this.displacementMaps = extractedData.displacementMaps;
-		this.anisotropyMaps = extractedData.anisotropyMaps;
-		this.transmissionMaps = extractedData.transmissionMaps;
-		this.clearcoatMaps = extractedData.clearcoatMaps;
-		this.clearcoatRoughnessMaps = extractedData.clearcoatRoughnessMaps;
-		this.sheenColorMaps = extractedData.sheenColorMaps;
-		this.sheenRoughnessMaps = extractedData.sheenRoughnessMaps;
-		this.iridescenceMaps = extractedData.iridescenceMaps;
-		this.iridescenceThicknessMaps = extractedData.iridescenceThicknessMaps;
-		this.specularIntensityMaps = extractedData.specularIntensityMaps;
-		this.specularColorMaps = extractedData.specularColorMaps;
-		this.diffuseTransmissionMaps = extractedData.diffuseTransmissionMaps ?? [];
-		this.diffuseTransmissionColorMaps = extractedData.diffuseTransmissionColorMaps ?? [];
+		this._adoptTextureLists( extractedData );
 		this.directionalLights = extractedData.directionalLights;
 		this.cameras = extractedData.cameras;
 
@@ -2453,13 +2443,7 @@ export class SceneProcessor {
 			// Update material arrays (but keep existing triangle data)
 			this.materials = extractedData.materials;
 			this.meshes = extractedData.meshes; // Update mesh data
-			this.maps = extractedData.maps;
-			this.normalMaps = extractedData.normalMaps;
-			this.bumpMaps = extractedData.bumpMaps;
-			this.roughnessMaps = extractedData.roughnessMaps;
-			this.metalnessMaps = extractedData.metalnessMaps;
-			this.emissiveMaps = extractedData.emissiveMaps;
-			this.displacementMaps = extractedData.displacementMaps;
+			this._adoptTextureLists( extractedData );
 
 			// Bucket textures, remap material indices, regenerate raw material data, and
 			// build the consolidated bucket arrays — same path as the initial build.
@@ -2484,6 +2468,13 @@ export class SceneProcessor {
 			this.isProcessing = false;
 
 		}
+
+	}
+
+	/** @private The extraction's material indices point into these lists, so every one is taken from it. */
+	_adoptTextureLists( extractedData ) {
+
+		for ( const name of TEXTURE_LISTS ) this[ name ] = extractedData[ name ] ?? [];
 
 	}
 

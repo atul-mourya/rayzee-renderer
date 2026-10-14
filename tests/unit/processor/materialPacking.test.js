@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
 	Color, Texture, MeshStandardMaterial, MeshPhysicalMaterial, MeshBasicMaterial, MeshPhongMaterial,
+	DataTexture, Mesh, PlaneGeometry, Scene,
 } from 'three';
 
 vi.mock( 'three/webgpu', () => ( {
@@ -33,6 +34,7 @@ import { packMaterial, MATERIAL_RESERVED_FLOATS } from '@/core/Processor/Materia
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/Processor/GeometryExtractor.js';
 import { TextureCreator } from '@/core/Processor/TextureCreator.js';
 import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
+import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
 import { setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
 
 const F = M.FLOATS_PER_MATERIAL;
@@ -361,6 +363,31 @@ describe( 'MaterialDataManager', () => {
 		const loaded = [ extractor.createMaterialObject( new MeshPhysicalMaterial( { ior: 1.6 } ) ) ];
 		manager.setMaterialData( new TextureCreator().createMaterialRawData( loaded ), loaded.map( m => m.sources ) );
 		expect( manager.getMaterialPropertySource( 0, 'ior' ) ).toBe( MATERIAL_VALUE_SOURCE.MATERIAL );
+
+	} );
+
+} );
+
+describe( 'SceneProcessor.rebuildMaterials', () => {
+
+	it( 'keeps the extension maps, not only the base ones', async () => {
+
+		const map = () => new DataTexture( new Uint8Array( 4 * 4 * 4 ).fill( 128 ), 4, 4 );
+		const material = new MeshPhysicalMaterial( {
+			map: map(), transmission: 1, transmissionMap: map(), clearcoat: 1, clearcoatMap: map(), sheen: 1, sheenColorMap: map(),
+		} );
+		const scene = new Scene().add( new Mesh( new PlaneGeometry(), material ) );
+
+		const processor = new SceneProcessor();
+		processor.textureCreator.createTexturesToDataTexture = async () => ( { image: { width: 4, height: 4, depth: 1 } } );
+		await processor.rebuildMaterials( scene );
+
+		const data = processor.materialData;
+		for ( const slot of [ M.ALBEDO_MAP_INDEX, M.TRANSMISSION_MAP_INDEX, M.CLEARCOAT_MAP_INDEX, M.SHEEN_COLOR_MAP_INDEX ] ) {
+
+			expect( data[ slot ] ).toBeGreaterThanOrEqual( 0 );
+
+		}
 
 	} );
 
