@@ -594,6 +594,8 @@ export async function buildMaterial( def, ctx ) {
 
 	const normalMap = pString( params, 'normalmap', null );
 	if ( normalMap && ctx.resolveNormalMap ) mat.normalMap = await ctx.resolveNormalMap( normalMap );
+	// pbrt shades a coat in the same normal-mapped frame as what it covers.
+	if ( mat.clearcoat > 0 && mat.normalMap ) mat.clearcoatNormalMap = mat.normalMap;
 
 	mat.roughness = Math.max( 0, Math.min( 1, mat.roughness ) );
 	return mat;

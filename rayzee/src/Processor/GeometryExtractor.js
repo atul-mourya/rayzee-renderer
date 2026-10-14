@@ -53,6 +53,7 @@ export function resolveMaterialTextures( material ) {
 		anisotropyMap: material.anisotropyMap,
 		clearcoatMap: material.clearcoatMap,
 		clearcoatRoughnessMap: material.clearcoatRoughnessMap,
+		clearcoatNormalMap: material.clearcoatNormalMap,
 		transmissionMap: material.transmissionMap,
 		sheenColorMap: material.sheenColorMap,
 		sheenRoughnessMap: material.sheenRoughnessMap,
@@ -1210,6 +1211,7 @@ export class GeometryExtractor {
 			sheenColor: pick( 'sheenColor' ),
 			clearcoat: pick( 'clearcoat' ),
 			clearcoatRoughness: pick( 'clearcoatRoughness' ),
+			clearcoatNormalScale: pick( 'clearcoatNormalScale' ),
 			iridescence: pick( 'iridescence' ),
 			iridescenceIOR: pick( 'iridescenceIOR' ),
 			iridescenceThicknessRange: pick( 'iridescenceThicknessRange' ),
@@ -1256,6 +1258,7 @@ export class GeometryExtractor {
 			// render effect yet (see gap-plan Phase 4.4).
 			clearcoatMap: this.processTexture( textures.clearcoatMap, this.clearcoatMaps ),
 			clearcoatRoughnessMap: this.processTexture( textures.clearcoatRoughnessMap, this.clearcoatRoughnessMaps ),
+			clearcoatNormalMap: this.processTexture( textures.clearcoatNormalMap, this.clearcoatNormalMaps ),
 			transmissionMap: this.processTexture( textures.transmissionMap, this.transmissionMaps ),
 			thicknessMap: this.processTexture( material.thicknessMap, [] ),
 			sheenColorMap: this.processTexture( textures.sheenColorMap, this.sheenColorMaps ),
@@ -1268,7 +1271,8 @@ export class GeometryExtractor {
 			iridescenceThicknessMap: this.processTexture( textures.iridescenceThicknessMap, this.iridescenceThicknessMaps ),
 
 			mapMatrix: this.getTextureMatrix( textures.map ),
-			normalMapMatrices: this.getTextureMatrix( textures.normalMap ),
+			// The coat's normal map shares the base one's transform, or brings its own when there is none.
+			normalMapMatrices: this.getTextureMatrix( textures.normalMap ?? textures.clearcoatNormalMap ),
 			bumpMapMatrices: this.getTextureMatrix( textures.bumpMap ),
 			roughnessMapMatrices: this.getTextureMatrix( textures.roughnessMap ),
 			metalnessMapMatrices: this.getTextureMatrix( textures.metalnessMap ),
@@ -1656,6 +1660,7 @@ export class GeometryExtractor {
 		this.transmissionMaps = [];
 		this.clearcoatMaps = [];
 		this.clearcoatRoughnessMaps = [];
+		this.clearcoatNormalMaps = [];
 		this.sheenColorMaps = [];
 		this.sheenRoughnessMaps = [];
 		this.iridescenceMaps = [];
@@ -1700,6 +1705,7 @@ export class GeometryExtractor {
 			transmissionMaps: this.transmissionMaps,
 			clearcoatMaps: this.clearcoatMaps,
 			clearcoatRoughnessMaps: this.clearcoatRoughnessMaps,
+			clearcoatNormalMaps: this.clearcoatNormalMaps,
 			sheenColorMaps: this.sheenColorMaps,
 			sheenRoughnessMaps: this.sheenRoughnessMaps,
 			iridescenceMaps: this.iridescenceMaps,

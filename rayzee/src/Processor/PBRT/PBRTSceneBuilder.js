@@ -111,7 +111,7 @@ const DEFAULT_CURVE_SIDES = { flat: 1, ribbon: 1, cylinder: 2 };
 const DEFAULT_CURVE_TOLERANCE = 0.05;
 
 /** Bumped whenever the same scene files build a different graph, so a stored graph is not reused. */
-export const PBRT_BUILD_REVISION = 13;
+export const PBRT_BUILD_REVISION = 14;
 
 function samePlacements( a, b ) {
 
@@ -249,7 +249,7 @@ function setMapping( texture, { su, sv, du, dv, uv = null } ) {
 }
 
 // Material maps in the order that picks a surface's one uv set: its base colour's, else the first it has.
-const UV_MAPS = [ 'map', 'roughnessMap', 'clearcoatRoughnessMap', 'normalMap' ];
+const UV_MAPS = [ 'map', 'roughnessMap', 'clearcoatRoughnessMap', 'normalMap', 'clearcoatNormalMap' ];
 const MAP_SCALARS = { roughnessMap: 'roughness', clearcoatRoughnessMap: 'clearcoatRoughness' };
 
 /** The position mapping a material's textures are read in, or null for the mesh's own uv. */

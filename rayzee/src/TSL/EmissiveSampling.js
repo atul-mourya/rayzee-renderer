@@ -648,7 +648,7 @@ export const calculateEmissiveTriangleContributionDebug = Fn( ( [
 				// Share H + dot products between BRDF eval and PDF (computeDotProducts
 				// would otherwise run twice with identical inputs).
 				const dots = DotProducts.wrap( computeDotProductsAniso( normal, viewDir, emissiveSample.direction, material ) );
-				const brdfValue = select( back, evaluateDiffuseTransmission( material, max( dot( normal, viewDir ), 0.001 ) ), evaluateMaterialResponseFromDots( material, dots ) );
+				const brdfValue = select( back, evaluateDiffuseTransmission( material, normal, viewDir ), evaluateMaterialResponseFromDots( material, dots ) );
 				const brdfPdf = select( back,
 					diffuseTransmissionPdf( diffuseTransmissionWeight( material ), NoL ), calculateMaterialPDFFromDots( material, dots ) );
 

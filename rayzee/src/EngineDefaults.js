@@ -111,6 +111,7 @@ export const MATERIAL_DEFAULTS = deepFreeze( {
 	specularColor: [ 1, 1, 1 ],
 	clearcoat: 0,
 	clearcoatRoughness: 0,
+	clearcoatNormalScale: [ 1, 1 ],
 	iridescence: 0,
 	iridescenceIOR: 1.3,
 	iridescenceThicknessRange: [ 100, 400 ],

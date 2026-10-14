@@ -15,7 +15,7 @@ import { struct } from './patches.js';
 import { AnisoFrame, DotProducts,
 	BRDFWeights,
 } from './Struct.js';
-import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN } from './Common.js';
+import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal } from './Common.js';
 import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
@@ -34,7 +34,7 @@ export const ClearcoatResult = struct( {
 export const sampleClearcoat = Fn( ( [
 	ray, hitInfo, material, randomSample, rngState,
 	pixelCoord, resolution, frame, dimBase,
-] ) => {
+], builder ) => {
 
 	const N = hitInfo.normal;
 	const V = ray.direction.negate();
@@ -62,7 +62,7 @@ export const sampleClearcoat = Fn( ( [
 	If( rand.lessThan( clearcoatWeight ), () => {
 
 		// Sample clearcoat layer (VNDF — see the base-specular note below)
-		const ccTBN = constructTBN( { N } );
+		const ccTBN = constructTBN( { N: coatNormal( N, material, builder ) } );
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: randomSample } ) ) );
 		L.assign( reflect( V.negate(), H ) );
 
@@ -108,7 +108,7 @@ export const sampleClearcoat = Fn( ( [
 
 	// Evaluate complete BRDF
 	// The same BRDF every other site evaluates — see the clearcoat note in MaterialEvaluation.
-	const brdf = transmitted.select( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ), evaluateMaterialResponseFromDots( material, dots ) );
+	const brdf = transmitted.select( evaluateDiffuseTransmission( material, N, V ), evaluateMaterialResponseFromDots( material, dots ) );
 
 	// Return brdf, L direction, and pdf packed together
 	// Caller needs L and pdf - return as struct-like output

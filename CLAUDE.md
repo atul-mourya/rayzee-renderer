@@ -583,6 +583,16 @@ the strings, so never rename or repurpose one.
   transmission stays Lambert. `tests/gpu/diffuseRoughness.test.js` holds the paper's Listing 1 (1.3e-6), reciprocity
   and white furnaces 0.9995–1.0000; `furnace-rough-diffuse` 0.99983, `-layered` 0.99976, `rough-diffuse` its shape.
   Every material of the 1.9M-triangle test interior at 0.5: frame +0–1 %, within noise.
+- **Clear coat normal** (glTF `clearcoatNormalTexture`; three.js `clearcoatNormalMap` / `clearcoatNormalScale`, packed at
+  134–135) — the coat has a normal of its own, as glTF, three.js, Blender and MaterialX have it: the surface's (displaced,
+  never the base's normal or bump map), or its own map's. Shade sets `material.clearcoatNormal`; `computeDotProductsAniso`
+  adds the coat's `coatNoL/NoV/NoH` (`coatNormal()` turns it to N's side, zero = N), which the coat lobe, its attenuation
+  of the base, its VNDF draw in both samplers and its density read. Callers apply N's cosine, so the lobe carries
+  coatNoL / NoL. The map shares the base normal map's transform and tangent, or brings its own when there is none.
+  Compiled in only while a coated material has a normal or bump map (`clearcoatNormals` in the build context,
+  `hasClearcoatNormals()`), never for the bidirectional integrators: their vertex records hold one normal, so there the
+  coat follows N as before. pbrt's coated materials hand their normal map to the coat (pbrt shades both in one frame).
+  `tests/gpu/clearcoatNormal.test.js`; Khronos' ClearCoatTest (BaseNorm / CoatNorm rows) shows both cases.
 - **Material layers** — clear coat, sheen, iridescence, anisotropy, subsurface, dispersion, diffuse transmission and
   diffuse roughness (`MATERIAL_LAYERS`, `TSL/SceneResources.js`) are compiled into the kernels only while some material has the layer's
   factor above 0 (`MaterialDataManager.materialLayers()`). The set rides in each kernel's build context

@@ -4,9 +4,9 @@ import {
 } from 'three/tsl';
 
 import { DotProducts, DFGResult, BaseFresnel } from './Struct.js';
-import { PI_INV, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso } from './Common.js';
+import { PI_INV, MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, coatNormal } from './Common.js';
 import { fresnelSchlick, fresnelDielectric, dielectricFresnelWeight } from './Fresnel.js';
-import { materialLayers } from './SceneResources.js';
+import { materialLayers, usesClearcoatNormals } from './SceneResources.js';
 import {
 	DistributionGGX, SheenDistribution, VisibilitySheen, VisibilityGGXSmithCorrelated,
 	sheenDirectionalAlbedo, evaluateSpecularDFG, baseFresnelParams,
@@ -178,14 +178,15 @@ const makeEvaluateMaterialResponse = ( deltaOnly ) => Fn( ( [ material, dots ], 
 			// base underneath loses.
 			const ccDfg = DFGResult.wrap( evaluateSpecularDFG(
 				ccF0, float( 1.0 ), float( 1.5 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.0 ), float( 0.0 ), ccF0,
-				dots.NoV, ccRoughness,
+				dots.coatNoV, ccRoughness,
 			) );
 
-			const ccD = DistributionGGX( dots.NoH, ccRoughness );
-			const ccVis = VisibilityGGXSmithCorrelated( dots.NoV, dots.NoL, ccRoughness );
+			const ccD = DistributionGGX( dots.coatNoH, ccRoughness );
+			const ccVis = VisibilityGGXSmithCorrelated( dots.coatNoV, dots.coatNoL, ccRoughness );
 			const ccF = fresnelDielectric( dots.VoH, float( 1.5 ) );
-			const ccLobe = vec3( ccD.mul( ccVis ).mul( ccF ) ).mul( ccDfg.compensation );
-
+			const ccLobeOwn = vec3( ccD.mul( ccVis ).mul( ccF ) ).mul( ccDfg.compensation );
+			// Callers apply the base normal's cosine; the coat's is its own normal's.
+			const ccLobe = usesClearcoatNormals( builder ) ? ccLobeOwn.mul( dots.coatNoL.div( dots.NoL ) ) : ccLobeOwn;
 
 			const ccAttenuation = vec3( 1.0 ).sub( ccDfg.E_total.mul( material.clearcoat ) );
 
@@ -207,10 +208,11 @@ export const evaluateSpecularDeltaFromDots = /*@__PURE__*/ makeEvaluateMaterialR
  * budget the reflected diffuse lobe has (what the specular lobes leave, less metal and specular transmission) × the
  * transmitted share × its colour / π, under the same sheen and coat attenuation. Zero when the material has none.
  */
-export const evaluateDiffuseTransmission = Fn( ( [ material, NoV ], builder ) => {
+export const evaluateDiffuseTransmission = Fn( ( [ material, N, V ], builder ) => {
 
 	const layers = materialLayers( builder );
 	const result = vec3( 0.0 ).toVar();
+	const NoV = max( dot( N, V ), 0.001 );
 
 	if ( layers.diffuseTransmission ) If( material.diffuseTransmission.greaterThan( 0.0 ), () => {
 
@@ -250,7 +252,7 @@ export const evaluateDiffuseTransmission = Fn( ( [ material, NoV ], builder ) =>
 
 			const ccDfg = DFGResult.wrap( evaluateSpecularDFG(
 				vec3( 0.04 ), float( 1.0 ), float( 1.5 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.0 ), float( 0.0 ), vec3( 0.04 ),
-				NoV, max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS ),
+				max( dot( coatNormal( N, material, builder ), V ), 0.001 ), max( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS ),
 			) );
 			result.mulAssign( vec3( 1.0 ).sub( ccDfg.E_total.mul( material.clearcoat ) ) );
 
@@ -278,7 +280,7 @@ export const evaluateMaterialResponse = Fn( ( [ V, L, N, material ], builder ) =
 	if ( ! materialLayers( builder ).diffuseTransmission ) reflected();
 	else If( dot( N, L ).lessThan( 0.0 ).and( material.diffuseTransmission.greaterThan( 0.0 ) ), () => {
 
-		result.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
+		result.assign( evaluateDiffuseTransmission( material, N, V ) );
 
 	} ).Else( reflected );
 

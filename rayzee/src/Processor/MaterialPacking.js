@@ -14,11 +14,6 @@ const TRANSFORMS = [
 	[ 'displacementMapMatrices', M.DISPLACEMENT_TRANSFORM ],
 ];
 
-/** Floats no field writes; the packer gives them fixed values. */
-export const MATERIAL_RESERVED_FLOATS = Object.freeze( [
-	M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1, M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2,
-] );
-
 /**
  * Weights and roughnesses, [0, 1] in glTF and three.js. Past 1 an energy split like
  * 1 − clearcoat·E goes negative: a glTF chrome with clearcoatFactor 4 added negative light.
@@ -165,7 +160,8 @@ export function packMaterial( data, base, mat ) {
 	data[ base + M.DIFFUSE_TRANSMISSION_MAP_INDEX ] = mapIndex( mat.diffuseTransmissionMap );
 	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX ] = mapIndex( mat.diffuseTransmissionColorMap );
 
-	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 1 ] = 0;
-	data[ base + M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX + 2 ] = 0;
+	data[ base + M.CLEARCOAT_NORMAL_MAP_INDEX ] = mapIndex( mat.clearcoatNormalMap );
+	const coatScale = mat.clearcoatNormalScale;
+	s( M.CLEARCOAT_NORMAL_SCALE, typeof coatScale === 'number' ? coatScale : coatScale?.x ?? coatScale?.[ 0 ], D.clearcoatNormalScale[ 0 ] );
 
 }

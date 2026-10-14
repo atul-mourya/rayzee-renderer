@@ -30,7 +30,7 @@ import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
 import {
 	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
 } from '@/core/Processor/BufferLayout.js';
-import { packMaterial, MATERIAL_RESERVED_FLOATS } from '@/core/Processor/MaterialPacking.js';
+import { packMaterial } from '@/core/Processor/MaterialPacking.js';
 import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/Processor/GeometryExtractor.js';
 import { TextureCreator } from '@/core/Processor/TextureCreator.js';
 import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
@@ -75,6 +75,7 @@ function sentinel( k ) {
 		sheenRoughnessMap: v(), iridescenceMap: v(), iridescenceThicknessMap: v(), specularIntensityMap: v(),
 		specularColorMap: v(), diffuseTransmission: u(), diffuseTransmissionColor: rgb(),
 		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(), diffuseRoughness: u(),
+		clearcoatNormalMap: v(), clearcoatNormalScale: { x: v(), y: v() },
 	};
 
 }
@@ -120,21 +121,16 @@ describe( 'packMaterial', () => {
 		expectAt( M.DIFFUSE_TRANSMISSION_MAP_INDEX, mat.diffuseTransmissionMap );
 		expectAt( M.DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX, mat.diffuseTransmissionColorMap );
 		expectAt( M.DIFFUSE_ROUGHNESS, mat.diffuseRoughness );
+		expectAt( M.CLEARCOAT_NORMAL_MAP_INDEX, mat.clearcoatNormalMap );
+		expectAt( M.CLEARCOAT_NORMAL_SCALE, mat.clearcoatNormalScale.x );
 
 	} );
 
-	it( 'writes every float from an input except the declared reserved ones', () => {
+	it( 'writes every float from an input', () => {
 
 		const a = packed( sentinel( 1 ) );
 		const b = packed( sentinel( 2 ) );
-		const reserved = new Set( MATERIAL_RESERVED_FLOATS );
-
-		for ( let i = 0; i < F; i ++ ) {
-
-			if ( reserved.has( i ) ) expect( a[ i ], `reserved float ${i}` ).toBe( b[ i ] );
-			else expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
-
-		}
+		for ( let i = 0; i < F; i ++ ) expect( a[ i ], `float ${i} ignores its input` ).not.toBe( b[ i ] );
 
 	} );
 
@@ -149,6 +145,8 @@ describe( 'packMaterial', () => {
 		expect( d[ M.ROUGHNESS ] ).toBe( MATERIAL_DEFAULTS.roughness );
 		expect( d[ M.ATTENUATION_DISTANCE ] ).toBe( 0 );
 		expect( d[ M.ALBEDO_MAP_INDEX ] ).toBe( - 1 );
+		expect( d[ M.CLEARCOAT_NORMAL_MAP_INDEX ] ).toBe( - 1 );
+		expect( d[ M.CLEARCOAT_NORMAL_SCALE ] ).toBe( 1 );
 		expect( [ ...d.subarray( M.ALBEDO_TRANSFORM, M.ALBEDO_TRANSFORM + 8 ) ] ).toEqual( [ 1, 0, 0, 0, 1, 0, 0, 0 ] );
 
 	} );
@@ -243,6 +241,24 @@ describe( 'createMaterialObject', () => {
 		const mat = new GeometryExtractor().createMaterialObject( new MeshBasicMaterial( { color: 0xff0000 } ) );
 		expect( mat.emissiveMap ).toBe( - 1 );
 		expect( mat.emissive.r ).toBe( 1 );
+
+	} );
+
+	it( 'gives the coat its normal map, sharing the base normal map\'s transform or bringing its own', () => {
+
+		const coatOnly = new Texture();
+		coatOnly.repeat.set( 4, 4 );
+		const extractor = new GeometryExtractor();
+		const own = extractor.createMaterialObject( new MeshPhysicalMaterial( {
+			clearcoat: 1, clearcoatNormalMap: coatOnly, clearcoatNormalScale: { x: 0.5, y: 0.5 },
+		} ) );
+		expect( extractor.clearcoatNormalMaps[ own.clearcoatNormalMap ] ).toBe( coatOnly );
+		expect( own.clearcoatNormalScale.x ).toBe( 0.5 );
+		expect( own.normalMapMatrices[ 0 ] ).toBe( 4 );
+
+		const base = new Texture();
+		const shared = extractor.createMaterialObject( new MeshPhysicalMaterial( { normalMap: base, clearcoat: 1, clearcoatNormalMap: coatOnly } ) );
+		expect( shared.normalMapMatrices[ 0 ] ).toBe( 1 );
 
 	} );
 
@@ -382,6 +398,26 @@ describe( 'MaterialDataManager', () => {
 
 	} );
 
+	it( 'knows whether a coat can lean apart from its base', () => {
+
+		const manager = new MaterialDataManager( null );
+		const data = new Float32Array( 2 * F );
+		const answer = ( a, b ) => {
+
+			packMaterial( data, 0, a );
+			packMaterial( data, F, b );
+			manager.setMaterialData( data );
+			return manager.hasClearcoatNormals();
+
+		};
+
+		expect( answer( { clearcoat: 1 }, { normalMap: 0 } ) ).toBe( false );
+		expect( answer( { clearcoat: 1, normalMap: 0 }, {} ) ).toBe( true );
+		expect( answer( { clearcoat: 1, bumpMap: 0 }, {} ) ).toBe( true );
+		expect( answer( {}, { clearcoat: 0.5, clearcoatNormalMap: 0 } ) ).toBe( true );
+
+	} );
+
 } );
 
 describe( 'SceneProcessor.rebuildMaterials', () => {
@@ -390,7 +426,8 @@ describe( 'SceneProcessor.rebuildMaterials', () => {
 
 		const map = () => new DataTexture( new Uint8Array( 4 * 4 * 4 ).fill( 128 ), 4, 4 );
 		const material = new MeshPhysicalMaterial( {
-			map: map(), transmission: 1, transmissionMap: map(), clearcoat: 1, clearcoatMap: map(), sheen: 1, sheenColorMap: map(),
+			map: map(), transmission: 1, transmissionMap: map(), clearcoat: 1, clearcoatMap: map(), clearcoatNormalMap: map(),
+			sheen: 1, sheenColorMap: map(),
 		} );
 		const scene = new Scene().add( new Mesh( new PlaneGeometry(), material ) );
 
@@ -399,7 +436,7 @@ describe( 'SceneProcessor.rebuildMaterials', () => {
 		await processor.rebuildMaterials( scene );
 
 		const data = processor.materialData;
-		for ( const slot of [ M.ALBEDO_MAP_INDEX, M.TRANSMISSION_MAP_INDEX, M.CLEARCOAT_MAP_INDEX, M.SHEEN_COLOR_MAP_INDEX ] ) {
+		for ( const slot of [ M.ALBEDO_MAP_INDEX, M.TRANSMISSION_MAP_INDEX, M.CLEARCOAT_MAP_INDEX, M.CLEARCOAT_NORMAL_MAP_INDEX, M.SHEEN_COLOR_MAP_INDEX ] ) {
 
 			expect( data[ slot ] ).toBeGreaterThanOrEqual( 0 );
 

@@ -66,7 +66,7 @@ const log = createLogger( 'scene' );
 // The per-type texture lists an extraction hands over (GeometryExtractor.getExtractedData).
 const TEXTURE_LISTS = Object.freeze( [
 	'maps', 'normalMaps', 'bumpMaps', 'roughnessMaps', 'metalnessMaps', 'emissiveMaps', 'displacementMaps',
-	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'sheenColorMaps',
+	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'clearcoatNormalMaps', 'sheenColorMaps',
 	'sheenRoughnessMaps', 'iridescenceMaps', 'iridescenceThicknessMaps', 'specularIntensityMaps', 'specularColorMaps',
 	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps',
 ] );
@@ -186,6 +186,7 @@ export class SceneProcessor {
 		this.transmissionMaps = [];
 		this.clearcoatMaps = [];
 		this.clearcoatRoughnessMaps = [];
+		this.clearcoatNormalMaps = [];
 		this.sheenColorMaps = [];
 		this.sheenRoughnessMaps = [];
 		this.iridescenceMaps = [];
@@ -2107,7 +2108,7 @@ export class SceneProcessor {
 		const srgbTypes = [ this.maps, this.emissiveMaps, this.sheenColorMaps, this.specularColorMaps, this.diffuseTransmissionColorMaps ];
 		const linearTypes = [
 			this.normalMaps, this.bumpMaps, this.roughnessMaps, this.metalnessMaps, this.displacementMaps,
-			this.anisotropyMaps, this.transmissionMaps, this.clearcoatMaps, this.clearcoatRoughnessMaps,
+			this.anisotropyMaps, this.transmissionMaps, this.clearcoatMaps, this.clearcoatRoughnessMaps, this.clearcoatNormalMaps,
 			this.sheenRoughnessMaps, this.iridescenceMaps, this.iridescenceThicknessMaps, this.specularIntensityMaps,
 			this.diffuseTransmissionMaps,
 		];
@@ -2194,6 +2195,7 @@ export class SceneProcessor {
 			transmission: remapType( this.transmissionMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			clearcoat: remapType( this.clearcoatMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			clearcoatRoughness: remapType( this.clearcoatRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
+			clearcoatNormal: remapType( this.clearcoatNormalMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			sheenColor: remapType( this.sheenColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
 			sheenRoughness: remapType( this.sheenRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
 			iridescence: remapType( this.iridescenceMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
@@ -2230,6 +2232,7 @@ export class SceneProcessor {
 			mat.transmissionMap = fix( mat.transmissionMap, remap.transmission );
 			mat.clearcoatMap = fix( mat.clearcoatMap, remap.clearcoat );
 			mat.clearcoatRoughnessMap = fix( mat.clearcoatRoughnessMap, remap.clearcoatRoughness );
+			mat.clearcoatNormalMap = fix( mat.clearcoatNormalMap, remap.clearcoatNormal );
 			mat.sheenColorMap = fix( mat.sheenColorMap, remap.sheenColor );
 			mat.sheenRoughnessMap = fix( mat.sheenRoughnessMap, remap.sheenRoughness );
 			mat.iridescenceMap = fix( mat.iridescenceMap, remap.iridescence );
@@ -2331,6 +2334,7 @@ export class SceneProcessor {
 		this.transmissionMaps = [];
 		this.clearcoatMaps = [];
 		this.clearcoatRoughnessMaps = [];
+		this.clearcoatNormalMaps = [];
 		this.sheenColorMaps = [];
 		this.sheenRoughnessMaps = [];
 		this.iridescenceMaps = [];

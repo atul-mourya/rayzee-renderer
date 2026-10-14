@@ -978,7 +978,7 @@ const makeDirectLighting = ( throughSurfaces, picked = null ) => Fn( ( [
 		const pdf = float( 0.0 ).toVar();
 		If( back, () => {
 
-			value.assign( evaluateDiffuseTransmission( material, max( dot( hitNormal, viewDir ), 0.001 ) ) );
+			value.assign( evaluateDiffuseTransmission( material, hitNormal, viewDir ) );
 			pdf.assign( max( diffuseTransmissionPdf( diffuseTransmissionWeight( material ), dot( hitNormal, L ).negate() ), 1e-8 ) );
 
 		} ).Else( () => {

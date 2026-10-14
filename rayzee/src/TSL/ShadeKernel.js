@@ -18,7 +18,7 @@ import {
 import { sampleEnvironment, groundProjectedEnvDir, sampleEnvironmentExact, environmentPdfExact } from './Environment.js';
 import { getMaterial, powerHeuristic, balanceHeuristic, classifyMaterial, REC709_LUMINANCE_COEFFICIENTS, PI_INV, EPSILON, diffuseGroundMaterial, offsetRayOrigin, SHADOW_END, triangleRow, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { cosineWeightedSample } from './MaterialSampling.js';
-import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent } from './TextureSampling.js';
+import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV, triangleUVTangent, perturbNormal } from './TextureSampling.js';
 import { evaluateMaterialResponse } from './MaterialEvaluation.js';
 import {
 	calculateDirectLightingUnified, calculateDirectLightingThroughSurfaces, calculateMaterialPDF,
@@ -33,7 +33,7 @@ import { traverseBVHShadow, triangleSide, sideAccepts } from './BVHTraversal.js'
 import { visibilityCell } from './LightVisibility.js';
 import { handleMaterialTransparency, MaterialInteractionResult } from './MaterialTransmission.js';
 import { sampleChromaticCollision, sampleHenyeyGreenstein, subsurfaceCoefficients, CollisionSample, MediumCoeffs } from './Subsurface.js';
-import { ALL_MATERIAL_LAYERS } from './SceneResources.js';
+import { ALL_MATERIAL_LAYERS, usesClearcoatNormals } from './SceneResources.js';
 import { calculateIndirectLighting } from './LightsIndirect.js';
 import {
 	IndirectLightingResult, sampleCone, LightSample, DirectionalLight, AreaLight, PointLight, SpotLight,
@@ -214,9 +214,10 @@ export function buildShadeKernel( params ) {
 
 	};
 
-	const computeFn = Fn( () => {
+	const computeFn = Fn( ( builder ) => {
 
 		const threadIdx = instanceIndex;
+		const coatNormals = usesClearcoatNormals( builder );
 
 		// Folds the former resetActiveCounter 1-thread kernel: thread 0 zeroes the survivor counter
 		// before compact re-counts it. Kept ABOVE the ENTERING_COUNT guard so it fires even at bound 0.
@@ -941,7 +942,8 @@ export function buildShadeKernel( params ) {
 		// Normal-map tangent frame. Only paid for when there is a normal map: the arbitrary
 		// cross(up, N) fallback inside processNormal is what runs otherwise.
 		const uvTangent = vec4( 0.0 ).toVar();
-		If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+		const normalMapped = material.normalMapIndex.greaterThanEqual( int( 0 ) );
+		If( coatNormals ? normalMapped.or( material.clearcoatNormalMapIndex.greaterThanEqual( int( 0 ) ) ) : normalMapped, () => {
 
 			uvTangent.assign( triangleUVTangent( triangleBuffer, int( hitTriIdx ), N, material.normalTransform, bvhBuffer, hitInstance ) );
 
@@ -1012,6 +1014,22 @@ export function buildShadeKernel( params ) {
 		).Else( () => {
 
 			N.assign( matSamples.normal );
+
+		} );
+
+		// The coat's own normal, as glTF and three.js have it: the surface's (displaced), never the base's maps, or its own
+		// map's, which shares the base map's transform and tangent.
+		if ( coatNormals ) If( material.clearcoat.greaterThan( 0.0 ), () => {
+
+			material.clearcoatNormal.assign( displacedNormal );
+			If( material.clearcoatNormalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+				const smoothN = normalize( hitNormal ).toVar();
+				const mapped = perturbNormal( smoothN, material.clearcoatNormalMapIndex, material.clearcoatNormalScale,
+					getTransformedUV( { uv: samplingUV, transform: material.normalTransform } ), uvTangent ).toVar();
+				material.clearcoatNormal.assign( select( displaced, normalize( displacedNormal.add( mapped.sub( smoothN ) ) ), mapped ) );
+
+			} );
 
 		} );
 

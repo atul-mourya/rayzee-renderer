@@ -445,7 +445,7 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
 } );
 
 /**
- * Per-triangle tangent frame from the UV parameterisation.
+ * The normal a normal map (packed linear-bucket index `mapIndex`, caller-guarded >= 0) gives `geometryNormal` at `uv`.
  *
  * `uvTangent` is vec4( T.xyz, handedness ); w == 0 means "no usable frame" (degenerate or
  * missing UVs) and falls back to the arbitrary cross(up, N) frame. A frame unrelated to the
@@ -453,42 +453,48 @@ export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNorma
  * arbitrary frame comes out 90 deg off, so the rib normals tilt up/down instead of across
  * the ribs.
  */
-export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ], builder ) => {
+export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTangent ], builder ) => {
 
 	const { linearBuckets } = sceneResources( builder );
+
+	const normalSample = sampleBucket( linearBuckets, mapIndex, uv );
+	const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
+	normalMap.x.mulAssign( scale );
+	normalMap.y.assign( normalMap.y.negate().mul( scale ) );
+
+	const tangent = vec3( 0.0 ).toVar();
+	const handedness = float( 1.0 ).toVar();
+
+	// Gram-Schmidt against the interpolated normal, which is not exactly triangle-planar.
+	const perp = uvTangent.xyz.sub( geometryNormal.mul( dot( geometryNormal, uvTangent.xyz ) ) ).toVar();
+
+	If( abs( uvTangent.w ).greaterThan( 0.5 ).and( length( perp ).greaterThan( 1e-6 ) ), () => {
+
+		tangent.assign( normalize( perp ) );
+		handedness.assign( uvTangent.w );
+
+	} ).Else( () => {
+
+		const up = abs( geometryNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
+		tangent.assign( normalize( cross( up, geometryNormal ) ) );
+
+	} );
+
+	const bitangent = cross( geometryNormal, tangent ).mul( handedness );
+
+	return normalize(
+		tangent.mul( normalMap.x ).add( bitangent.mul( normalMap.y ) ).add( geometryNormal.mul( normalMap.z ) )
+	);
+
+} );
+
+export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ] ) => {
 
 	const result = geometryNormal.toVar();
 
 	If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
-		const normalSample = sampleBucket( linearBuckets, material.normalMapIndex, uvCache.normalUV );
-		const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
-		normalMap.x.mulAssign( material.normalScale.x );
-		normalMap.y.assign( normalMap.y.negate().mul( material.normalScale.x ) );
-
-		const tangent = vec3( 0.0 ).toVar();
-		const handedness = float( 1.0 ).toVar();
-
-		// Gram-Schmidt against the interpolated normal, which is not exactly triangle-planar.
-		const perp = uvTangent.xyz.sub( geometryNormal.mul( dot( geometryNormal, uvTangent.xyz ) ) ).toVar();
-
-		If( abs( uvTangent.w ).greaterThan( 0.5 ).and( length( perp ).greaterThan( 1e-6 ) ), () => {
-
-			tangent.assign( normalize( perp ) );
-			handedness.assign( uvTangent.w );
-
-		} ).Else( () => {
-
-			const up = abs( geometryNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
-			tangent.assign( normalize( cross( up, geometryNormal ) ) );
-
-		} );
-
-		const bitangent = cross( geometryNormal, tangent ).mul( handedness );
-
-		result.assign( normalize(
-			tangent.mul( normalMap.x ).add( bitangent.mul( normalMap.y ) ).add( geometryNormal.mul( normalMap.z ) )
-		) );
+		result.assign( perturbNormal( geometryNormal, material.normalMapIndex, material.normalScale.x, uvCache.normalUV, uvTangent ) );
 
 	} );
 

@@ -40,7 +40,7 @@ const TEXTURE_POOLS = [
 	[ 'map', true ], [ 'emissiveMap', true ], [ 'sheenColorMap', true ], [ 'specularColorMap', true ],
 	[ 'normalMap', false ], [ 'bumpMap', false ], [ 'roughnessMap', false ], [ 'metalnessMap', false ],
 	[ 'displacementMap', false ], [ 'anisotropyMap', false ], [ 'transmissionMap', false ],
-	[ 'clearcoatMap', false ], [ 'clearcoatRoughnessMap', false ], [ 'sheenRoughnessMap', false ],
+	[ 'clearcoatMap', false ], [ 'clearcoatRoughnessMap', false ], [ 'clearcoatNormalMap', false ], [ 'sheenRoughnessMap', false ],
 	[ 'iridescenceMap', false ], [ 'iridescenceThicknessMap', false ], [ 'specularIntensityMap', false ],
 	[ 'diffuseTransmissionColorMap', true ], [ 'diffuseTransmissionMap', false ],
 ];
@@ -343,6 +343,23 @@ export class MaterialDataManager {
 
 	}
 
+	/** Whether some coated material has a normal or bump map: only then can its coat lean apart from its base. */
+	hasClearcoatNormals() {
+
+		const data = this.materialStorageAttr?.array;
+		if ( ! data ) return false;
+		for ( let i = 0; i < this.materialCount; i ++ ) {
+
+			const base = i * M.FLOATS_PER_MATERIAL;
+			if ( data[ base + M.CLEARCOAT ] > 0 && ( data[ base + M.CLEARCOAT_NORMAL_MAP_INDEX ] >= 0
+				|| data[ base + M.NORMAL_MAP_INDEX ] >= 0 || data[ base + M.BUMP_MAP_INDEX ] >= 0 ) ) return true;
+
+		}
+
+		return false;
+
+	}
+
 	/** Whether some material has a transmission map: only then do shadow rays sample one. */
 	hasTransmissionMaps() {
 
@@ -488,6 +505,7 @@ export class MaterialDataManager {
 				break;
 			case 'clearcoat': data[ stride + M.CLEARCOAT ] = value; break;
 			case 'clearcoatRoughness': data[ stride + M.CLEARCOAT_ROUGHNESS ] = value; break;
+			case 'clearcoatNormalScale': data[ stride + M.CLEARCOAT_NORMAL_SCALE ] = value?.x ?? value; break;
 			case 'opacity': data[ stride + M.OPACITY ] = value; break;
 			case 'side': data[ stride + M.SIDE ] = value;
 				// Side is also mirrored into per-triangle data (NORMAL_C.w) so BVH

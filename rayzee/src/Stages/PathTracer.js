@@ -428,6 +428,7 @@ export class PathTracer extends PathTracerStage {
 			const needed = this._layersToCompile();
 			if ( MATERIAL_LAYERS.some( ( layer ) => needed[ layer ] && ! this._compiledLayers?.[ layer ] ) ) this._outputsChanged = true;
 			if ( ! this._compiledTransmissionMaps && this.materialData.hasTransmissionMaps() ) this._outputsChanged = true;
+			if ( ! this._compiledClearcoatNormals && this._clearcoatNormalsNeeded() ) this._outputsChanged = true;
 
 		}
 
@@ -1460,6 +1461,13 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether a coat can lean apart from its base: never for an integrator of its own (its vertices keep one normal). */
+	_clearcoatNormalsNeeded() {
+
+		return ! this._integrator && this.materialData.hasClearcoatNormals();
+
+	}
+
 	/** The material layers the scene uses. */
 	_layersToCompile() {
 
@@ -1877,6 +1885,7 @@ export class PathTracer extends PathTracerStage {
 			materialLayers: this._compiledLayers = this._layersToCompile(),
 			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
 			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
+			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
 		};
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;

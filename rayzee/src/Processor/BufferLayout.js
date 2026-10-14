@@ -174,9 +174,10 @@ export const MATERIAL_DATA_LAYOUT = {
 	SHEEN_ROUGHNESS_MAP_INDEX: 124, IRIDESCENCE_MAP_INDEX: 125, IRIDESCENCE_THICKNESS_MAP_INDEX: 126, SPECULAR_INTENSITY_MAP_INDEX: 127,
 	// Slot 32: extension-texture map index C (specularColor) + diffuseTransmissionColor.rgb
 	SPECULAR_COLOR_MAP_INDEX: 128, DIFFUSE_TRANSMISSION_COLOR: 129,
-	// Slot 33: extension-texture map indices D (diffuseTransmission, diffuseTransmissionColor) + 2 reserved;
-	// read only for a material with diffuse transmission
+	// Slot 33: extension-texture map indices D (diffuseTransmission, diffuseTransmissionColor) + the clear coat's normal
+	// map index and scale; read only for a material with diffuse transmission or a coat
 	DIFFUSE_TRANSMISSION_MAP_INDEX: 132, DIFFUSE_TRANSMISSION_COLOR_MAP_INDEX: 133,
+	CLEARCOAT_NORMAL_MAP_INDEX: 134, CLEARCOAT_NORMAL_SCALE: 135,
 
 	// ── Vec4 slot indices (GPU/TSL side) ─────────────────────────────
 	// Used with getDatafromStorageBuffer( buf, matIdx, int(slot), int(SLOTS_PER_MATERIAL) )
@@ -207,7 +208,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		EXT_MAP_INDICES_A: 30, // transmission, clearcoat, clearcoatRoughness, sheenColor map indices
 		EXT_MAP_INDICES_B: 31, // sheenRoughness, iridescence, iridescenceThickness, specularIntensity map indices
 		EXT_MAP_INDICES_C: 32, // specularColor map index, diffuseTransmissionColor
-		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor map indices + 2 reserved
+		EXT_MAP_INDICES_D: 33, // diffuseTransmission, diffuseTransmissionColor, clearcoatNormal map indices, clearcoatNormalScale
 	},
 
 };

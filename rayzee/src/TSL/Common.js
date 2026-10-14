@@ -7,6 +7,7 @@ import {
 	RayTracingMaterial,
 	ShadowMaterial,
 } from './Struct.js';
+import { usesClearcoatNormals } from './SceneResources.js';
 
 // Spawn point for a ray leaving a surface, Cycles' classic ray_offset: within 1 unit of the origin,
 // 1e-5 along n; beyond, 32 float ULPs per axis toward n. A fixed 1 mm let rays slip out of
@@ -165,24 +166,15 @@ export const constructTBN = wgslFn( `
 	}
 ` );
 
-export const computeDotProducts = Fn( ( [ N, V, L ] ) => {
+// The clear coat's normal on N's side (N comes flipped for a back face, or a light behind a thin surface): its own where
+// Shade set one and the kernel compiles it, else N.
+export const coatNormal = ( N, material, builder ) => {
 
-	const H = V.add( L ).toVar();
-	const lenSq = dot( H, H ).toVar();
-	H.assign( lenSq.greaterThan( EPSILON ).select( H.div( lenSq.sqrt() ), vec3( 0.0, 0.0, 1.0 ) ) );
+	if ( ! usesClearcoatNormals( builder ) ) return N;
+	const c = material.clearcoatNormal;
+	return select( dot( c, c ).equal( 0.0 ), N, select( dot( N, c ).lessThan( 0.0 ), c.negate(), c ) );
 
-	return DotProducts( {
-		NoL: max( dot( N, L ), 0.001 ),
-		NoV: max( dot( N, V ), 0.001 ),
-		NoH: max( dot( N, H ), 0.001 ),
-		VoH: max( dot( V, H ), 0.001 ),
-		LoH: max( dot( L, H ), 0.001 ),
-		ToH: float( 0.0 ), BoH: float( 0.0 ),
-		ToV: float( 0.0 ), BoV: float( 0.0 ),
-		ToL: float( 0.0 ), BoL: float( 0.0 ),
-	} );
-
-} );
+};
 
 // Anisotropy tangent frame: arbitrary ONB from N (matching constructTBN + normal mapping),
 // rotated by anisotropyRotation. Single source of truth for sampler AND eval/PDF so their
@@ -198,9 +190,9 @@ export const anisoTangentFrame = Fn( ( [ N, rotation ] ) => {
 
 } );
 
-// Anisotropy-aware dot products: computeDotProducts + tangent-frame projections of H/V/L
+// N·L, N·V, N·H, V·H, L·H and the coat's own three, plus the anisotropy frame's projections of H/V/L
 // (0 for isotropic materials, so aniso branches gated on anisotropy>0 are a no-op).
-export const computeDotProductsAniso = Fn( ( [ N, V, L, material ] ) => {
+export const computeDotProductsAniso = Fn( ( [ N, V, L, material ], builder ) => {
 
 	const H = V.add( L ).toVar();
 	const lenSq = dot( H, H ).toVar();
@@ -222,13 +214,23 @@ export const computeDotProductsAniso = Fn( ( [ N, V, L, material ] ) => {
 
 	} );
 
+	const NoL = max( dot( N, L ), 0.001 );
+	const NoV = max( dot( N, V ), 0.001 );
+	const NoH = max( dot( N, H ), 0.001 );
+	let coat = { coatNoL: NoL, coatNoV: NoV, coatNoH: NoH };
+	if ( usesClearcoatNormals( builder ) ) {
+
+		const Nc = coatNormal( N, material, builder ).toVar();
+		coat = { coatNoL: max( dot( Nc, L ), 0.001 ), coatNoV: max( dot( Nc, V ), 0.001 ), coatNoH: max( dot( Nc, H ), 0.001 ) };
+
+	}
+
 	return DotProducts( {
-		NoL: max( dot( N, L ), 0.001 ),
-		NoV: max( dot( N, V ), 0.001 ),
-		NoH: max( dot( N, H ), 0.001 ),
+		NoL, NoV, NoH,
 		VoH: max( dot( V, H ), 0.001 ),
 		LoH: max( dot( L, H ), 0.001 ),
 		ToH, BoH, ToV, BoV, ToL, BoL,
+		...coat,
 	} );
 
 } );
@@ -448,7 +450,7 @@ export const arrayToMat3 = wgslFn( `
 	}
 ` );
 
-export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
+export const getMaterial = Fn( ( [ materialIndex, materialBuffer ], builder ) => {
 
 	const data0 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.COLOR_METALNESS ), int( MATERIAL_SLOTS ) ).toVar();
 	const data1 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EMISSIVE_ROUGHNESS ), int( MATERIAL_SLOTS ) ).toVar();
@@ -483,9 +485,10 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 	const data30 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_A ), int( MATERIAL_SLOTS ) ).toVar();
 	const data31 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_B ), int( MATERIAL_SLOTS ) ).toVar();
 	const data32 = getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_C ), int( MATERIAL_SLOTS ) ).toVar();
-	// Only a material with diffuse transmission has maps for it.
-	const data33 = vec4( - 1.0, - 1.0, 0.0, 0.0 ).toVar();
-	If( data5.a.greaterThan( 0.0 ), () => {
+	// Only a material with diffuse transmission, or a coat that can have a normal of its own, reads this slot.
+	const data33 = vec4( - 1.0, - 1.0, - 1.0, 1.0 ).toVar();
+	const transmits = data5.a.greaterThan( 0.0 );
+	If( usesClearcoatNormals( builder ) ? transmits.or( data9.b.greaterThan( 0.0 ) ) : transmits, () => {
 
 		data33.assign( getDatafromStorageBuffer( materialBuffer, materialIndex, int( S.EXT_MAP_INDICES_D ), int( MATERIAL_SLOTS ) ) );
 
@@ -541,6 +544,9 @@ export const getMaterial = Fn( ( [ materialIndex, materialBuffer ] ) => {
 		bumpMapIndex: int( data9.g ),
 		clearcoat: data9.b,
 		clearcoatRoughness: data9.a,
+		clearcoatNormalMapIndex: int( data33.b ),
+		clearcoatNormalScale: data33.a,
+		clearcoatNormal: vec3( 0.0 ),
 		opacity: data10.r,
 		side: int( data10.g ),
 		transparent: data10.b,
@@ -582,6 +588,9 @@ export const diffuseGroundMaterial = Fn( () => {
 		thickness: float( 0.0 ),
 		clearcoat: float( 0.0 ),
 		clearcoatRoughness: float( 0.0 ),
+		clearcoatNormalMapIndex: int( - 1 ),
+		clearcoatNormalScale: float( 1.0 ),
+		clearcoatNormal: vec3( 0.0 ),
 		opacity: float( 1.0 ),
 		transparent: float( 0.0 ),
 		attenuationColor: vec3( 1.0 ),

@@ -16,6 +16,9 @@ export const RayTracingMaterial = struct( {
 	thickness: 'float',
 	clearcoat: 'float',
 	clearcoatRoughness: 'float',
+	clearcoatNormalMapIndex: 'int',
+	clearcoatNormalScale: 'float',
+	clearcoatNormal: 'vec3', // the coat's own normal, set by Shade; zero = the base normal (coatNormal in Common.js)
 	opacity: 'float',
 	transparent: 'bool',
 	attenuationColor: 'vec3',
@@ -201,6 +204,8 @@ export const DotProducts = struct( {
 	ToH: 'float', BoH: 'float',
 	ToV: 'float', BoV: 'float',
 	ToL: 'float', BoL: 'float',
+	// The clear coat's, against its own normal (the base's unless usesClearcoatNormals).
+	coatNoL: 'float', coatNoV: 'float', coatNoH: 'float',
 } );
 
 // Kulla-Conty DFG approximation outputs (computed once, consumed by both

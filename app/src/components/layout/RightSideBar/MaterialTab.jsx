@@ -139,7 +139,7 @@ const TEXTURE_TIPS = {
 	envMap: 'A picture of the surroundings to reflect, for other apps. This app does not use it.',
 	lightMap: 'Lighting painted onto the surface, for other apps. This app does not use it.',
 	clearcoatMap: 'Where the clear, glossy top layer is.',
-	clearcoatNormalMap: 'Bumps in the clear top layer. This app does not use it.',
+	clearcoatNormalMap: 'Bumps in the clear top layer only, like orange peel on car paint. The layer below keeps its own.',
 	clearcoatRoughnessMap: 'Where the clear top layer is rough and where it is shiny.',
 	sheenColorMap: 'The colour of the sheen across the surface.',
 	sheenRoughnessMap: 'How widely the sheen spreads across the surface.',

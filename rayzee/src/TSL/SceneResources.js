@@ -14,6 +14,7 @@
  * @property {?Object<string, boolean>} materialLayers - the MATERIAL_LAYERS some material uses; null = all of them
  * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
+ * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
  */
 
 import { context } from 'three/tsl';
@@ -66,5 +67,15 @@ export function usesLightRadius( builder ) {
 export function usesTransmissionMaps( builder ) {
 
 	return builder.context[ KEY ]?.transmissionMaps ?? true;
+
+}
+
+/**
+ * Whether the kernel being built gives a clear coat its own normal. Off when no coated material has a normal or bump map,
+ * and for the bidirectional integrator, whose stored vertices carry one normal. Outside a scene kernel (a test) it is on.
+ */
+export function usesClearcoatNormals( builder ) {
+
+	return builder.context[ KEY ]?.clearcoatNormals ?? true;
 
 }

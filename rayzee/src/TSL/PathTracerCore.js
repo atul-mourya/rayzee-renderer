@@ -36,6 +36,7 @@ import {
 	calculateFireflyThreshold,
 	applySoftSuppressionRGB,
 	computeDotProductsAniso,
+	coatNormal,
 } from './Common.js';
 import { AnisoFrame, DirectionSample, DotProducts, MaterialCache } from './Struct.js';
 import { getRandomSample1D } from './Random.js';
@@ -188,7 +189,7 @@ export const generateSampledDirection = Fn( ( [
 		// calculateVNDFPDF, and sampling the half-vector GGX distribution instead would make the
 		// reported density one this lobe never drew from.
 		const clearcoatRoughness = clamp( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS );
-		const ccTBN = constructTBN( { N } );
+		const ccTBN = constructTBN( { N: coatNormal( N, material, builder ) } );
 		H.assign( ccTBN.mul( sampleGGXVNDF( { V: ccTBN.transpose().mul( V ), roughness: clearcoatRoughness, Xi: xi } ) ) );
 		resultDirection.assign( reflect( V.negate(), H ) );
 
@@ -245,7 +246,7 @@ export const generateSampledDirection = Fn( ( [
 	if ( ! layers.diffuseTransmission ) If( resultIsTransmission.not(), reflected );
 	else If( resultIsDiffuseTransmission, () => {
 
-		resultValue.assign( evaluateDiffuseTransmission( material, max( dot( N, V ), 0.001 ) ) );
+		resultValue.assign( evaluateDiffuseTransmission( material, N, V ) );
 		resultPdf.assign( diffuseTransmissionPdf( weights.diffuseTransmission, dot( N, resultDirection ).negate() ) );
 
 	} ).ElseIf( resultIsTransmission.not(), reflected );

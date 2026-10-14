@@ -590,7 +590,7 @@ export const calculateBSDFSamplingPDF = Fn( ( [ material, weights, dots ], build
 		if ( layers.clearcoat ) If( weights.clearcoat.greaterThan( 0.0 ), () => {
 
 			const ccRoughness = clamp( material.clearcoatRoughness, MIN_CLEARCOAT_ROUGHNESS, MAX_ROUGHNESS );
-			pdf.addAssign( weights.clearcoat.mul( calculateVNDFPDF( dots.NoH, dots.NoV, ccRoughness ) ) );
+			pdf.addAssign( weights.clearcoat.mul( calculateVNDFPDF( dots.coatNoH, dots.coatNoV, ccRoughness ) ) );
 
 		} );
 
