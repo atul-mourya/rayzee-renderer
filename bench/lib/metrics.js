@@ -264,16 +264,19 @@ export function ssim( a, b, options = {} ) {
 }
 
 /**
- * Render the absolute LINEAR luminance delta as an RGBA heatmap for the human-facing report.
+ * Render each pixel's largest change — any LINEAR colour channel, or alpha — as an RGBA
+ * heatmap for the human-facing report.
  *
- * Ramp: black -> blue -> cyan -> yellow -> red.
+ * Ramp: black -> blue -> cyan -> yellow -> red, on the square root of delta / scale, so small
+ * changes stay visible.
  *
  * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array }} a - Reference.
  * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array }} b - Candidate.
  * @param {{ scale?: number }} [options] - `scale` is the delta mapped to the top of the ramp.
  *   Defaults to the largest delta present, so the map always uses its full range; pass an
  *   explicit scale to make several heatmaps comparable to each other.
- * @returns {{ width: number, height: number, data: Uint8ClampedArray }} RGBA image, alpha 255.
+ * @returns {{ width: number, height: number, data: Uint8ClampedArray, scale: number }} RGBA
+ *   image, alpha 255, and the delta its red stands for.
  * @throws {Error} If the images differ in size or are not RGBA byte buffers.
  */
 export function diffHeatmap( a, b, options = {} ) {
@@ -295,7 +298,7 @@ export function diffHeatmap( a, b, options = {} ) {
 
 		for ( let i = 0; i < n; i += 4 ) {
 
-			const delta = Math.abs( pixelLuminanceDelta( da, db, i ) );
+			const delta = pixelDelta( da, db, i );
 
 			if ( delta > peak ) {
 
@@ -314,12 +317,12 @@ export function diffHeatmap( a, b, options = {} ) {
 
 	for ( let i = 0; i < n; i += 4 ) {
 
-		const t = Math.min( 1, Math.abs( pixelLuminanceDelta( da, db, i ) ) * invScale );
+		const t = Math.sqrt( Math.min( 1, pixelDelta( da, db, i ) * invScale ) );
 		writeRamp( out, i, t );
 
 	}
 
-	return { width, height, data: out };
+	return { width, height, data: out, scale };
 
 }
 
@@ -466,14 +469,15 @@ function ssimWindow( pa, pb, rowStride, ox, oy, w, h ) {
  * @param {Uint8ClampedArray|Uint8Array} da
  * @param {Uint8ClampedArray|Uint8Array} db
  * @param {number} i - Byte offset of the pixel.
- * @returns {number} Signed linear luminance delta, b - a.
+ * @returns {number} Largest absolute change of the pixel: a linear colour channel, or alpha.
  */
-function pixelLuminanceDelta( da, db, i ) {
+function pixelDelta( da, db, i ) {
 
-	return luminance(
-		SRGB_TO_LINEAR[ db[ i ] ] - SRGB_TO_LINEAR[ da[ i ] ],
-		SRGB_TO_LINEAR[ db[ i + 1 ] ] - SRGB_TO_LINEAR[ da[ i + 1 ] ],
-		SRGB_TO_LINEAR[ db[ i + 2 ] ] - SRGB_TO_LINEAR[ da[ i + 2 ] ]
+	return Math.max(
+		Math.abs( SRGB_TO_LINEAR[ db[ i ] ] - SRGB_TO_LINEAR[ da[ i ] ] ),
+		Math.abs( SRGB_TO_LINEAR[ db[ i + 1 ] ] - SRGB_TO_LINEAR[ da[ i + 1 ] ] ),
+		Math.abs( SRGB_TO_LINEAR[ db[ i + 2 ] ] - SRGB_TO_LINEAR[ da[ i + 2 ] ] ),
+		Math.abs( db[ i + 3 ] - da[ i + 3 ] ) / MAX_BYTE
 	);
 
 }

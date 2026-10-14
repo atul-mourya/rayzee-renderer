@@ -19,6 +19,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { launchBrowser, openHarness } from './browser.js';
@@ -33,6 +34,7 @@ import { runDenoise } from './denoise.js';
 import { runUpscale } from './upscale.js';
 import { runMemory } from './memory.js';
 import { runQuality } from './quality.js';
+import { writeQualityReport } from './report.js';
 import { runFreeze } from './freeze.js';
 import { runLockstep } from './lockstep.js';
 import { formatProfile, runKernelProfile } from './kernels.js';
@@ -695,6 +697,7 @@ async function main() {
 	return withHarness( { verbose }, async ( { bench, serverURL } ) => {
 
 		let exitCode = 0;
+		let reportPath = null;
 
 		if ( command === 'calibrate' ) {
 
@@ -772,6 +775,9 @@ async function main() {
 			log( 'quality' );
 			const report = await runQuality( bench, { truth: !! flags.truth, only, log } );
 			if ( reportQuality( report ) > 0 ) exitCode = 1;
+			// A page that fails to write must not fail the gates it only illustrates.
+			reportPath = await writeQualityReport( report, { scenes: await bench.scenes(), revision: await gitRevision() } )
+				.catch( ( error ) => log( `${YELLOW}quality report not written: ${error.message}${RESET}` ) );
 
 		}
 
@@ -920,6 +926,8 @@ async function main() {
 			for ( const error of errors.slice( 0, 10 ) ) log( `  ${error}` );
 
 		}
+
+		if ( reportPath ) log( `\nreport ${pathToFileURL( reportPath ).href}` );
 
 		return exitCode;
 

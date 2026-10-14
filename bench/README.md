@@ -128,12 +128,35 @@ CPU measurement is being distorted, and the calibration report prints it for bot
 bench/
   harness/    boot.js, scenes.js, sceneSession.js, index.html, storage/   # runs in the browser
   lib/        metrics.js, png.js, stats.js     # pure, unit-tested in tests/unit/bench/
-  runner/     cli.js + one module per suite    # runs in Node
+  runner/     cli.js, report.js + one module per suite    # runs in Node
   node/       run.js, resolve.js, fixtures/    # the corpus in plain Node (bench:node), compressed glTF fixtures
   tools/      gen-dfg-lut.mjs (bench:lut), make-compressed-fixtures.mjs
   baselines/  golden/, truth/, probes.json, fingerprint.json, perf.jsonl, calibration.json,
               denoise.json, freeze.json, upscale.json
+  results/    quality.html, quality/          # the last quality run's report, git-ignored
 ```
+
+## The quality report
+
+`bench:quality`, and `bench`, which runs it, write `bench/results/quality.html` and print its `file://`
+URL at the end of the run. One page with its images embedded, so it opens offline:
+
+- a table of every scene with each gate's number and limit, a number over its limit in red;
+- for each scene that failed or moved off its golden: golden, current render, difference heatmap and
+  ground truth, failing scenes first. The first eight failures are shown at full size, the rest as 128 px
+  thumbnails, and every image links to its full-size file;
+- a thumbnail of each scene bit-identical to its golden.
+
+The heatmap is `diffHeatmap()` (`lib/metrics.js`): each pixel's largest change against the golden in any
+linear-light channel, or alpha, on a square-root ramp from black to red at the scene's largest change, so
+a pixel that moved a hundredth as much still shows. Luminance alone left a hue shift black. A heatmap
+thumbnail keeps each block's hottest pixel, so a single changed pixel survives the shrink.
+
+Every run replaces the directory: the page, plus `quality/<scene>.png` (the render) and
+`quality/<scene>-diff.png` for each scene that moved; goldens and ground truth are linked where they
+are. On the 41-scene corpus the page is 0.7 MB when every scene is bit-identical, 1.2 MB with eleven
+moved within the gates (plus 1.2 MB of full-size files) and about 5 MB when every scene fails; writing
+it takes 0.1–0.7 s. `bless` writes none.
 
 ## Determinism
 
@@ -757,7 +780,7 @@ round of an otherwise flat self-A/B. The MAD floor absorbs one per scene; two in
 inherit exactly the between-session variance that made the old A/B unreliable. They are fine for the
 purpose they have — spotting slow drift across many runs — but a single entry is not evidence.
 
-Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), an HTML report with diff heatmaps, CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`.
+Not yet built: a PR CI workflow (there is currently no PR gate at all; lint runs only in the release workflow on `main`), CPU-side guards for the shader-recompile contract and BVH structural invariants, and a trend dashboard over `perf.jsonl`.
 
 Worth building next, in rough order of catch-per-line — all four are gaps the ASVGF investigation
 (a denoiser since removed) had to work around by hand:

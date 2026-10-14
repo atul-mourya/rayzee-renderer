@@ -21,6 +21,7 @@ export const PATHS = {
 	freeze: path.resolve( here, '..', 'baselines', 'freeze.json' ),
 	harness: path.resolve( here, '..', 'harness', 'index.html' ),
 	calibration: path.resolve( here, '..', 'baselines', 'calibration.json' ),
+	results: path.resolve( here, '..', 'results' ),
 };
 
 export const DEV_SERVER = {

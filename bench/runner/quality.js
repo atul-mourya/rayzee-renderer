@@ -190,7 +190,7 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 
 		}
 
-		const entry = { scene: scene.id, pass: true, failures: [], probes };
+		const entry = { scene: scene.id, pass: true, failures: [], probes, capture: renderedDataURL };
 
 		// ── vs ground truth: bias + noise ──
 		if ( ! await exists( truthPath ) ) {
@@ -253,6 +253,7 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 
 				const increase = ( vsTruth.rmse - baselineRmse ) / baselineRmse;
 				entry.rmseIncrease = increase;
+				entry.vsTruth.blessedRmse = baselineRmse;
 
 				if ( increase > QUALITY_GATES.truth.maxRmseIncrease ) {
 
@@ -327,6 +328,7 @@ export async function runQuality( bench, { bless = false, truth = false, only, l
 			entry.furnace = { ratio, deviation };
 
 			const blessed = storedProbes[ scene.id ]?.furnaceRatio;
+			entry.furnace.blessed = blessed;
 
 			if ( typeof blessed !== 'number' ) {
 

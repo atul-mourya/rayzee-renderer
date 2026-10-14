@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { compare, srgbToLinear, luminance, ssim, diffHeatmap } from '../../../bench/lib/metrics.js';
+import { decodeDataURL, encodeDataURL } from '../../../bench/lib/png.js';
 import {
 	percentile,
 	median,
@@ -334,6 +335,77 @@ describe( 'bench/lib/metrics', () => {
 			expect( map.data[ 13 ] ).toBe( 0 );
 			expect( map.data[ 14 ] ).toBe( 0 );
 			expect( map.data[ 0 ] ).toBe( 0 );
+			expect( map.scale ).toBe( 1 );
+
+		} );
+
+		it( 'puts a change a hundredth of the largest a tenth of the way up the ramp', () => {
+
+			// Byte 25 is 0.0097 linear: a tenth of the ramp is 0.4 of its first (black -> blue) leg.
+			const a = makeImage( 2, 1, [ 0, 0, 0 ] );
+			const b = withPixel( withPixel( a, 0, 0, [ 255, 255, 255 ] ), 1, 0, [ 25, 25, 25 ] );
+			const map = diffHeatmap( a, b );
+
+			expect( map.data[ 4 ] ).toBe( 0 );
+			expect( map.data[ 5 ] ).toBe( 0 );
+			expect( map.data[ 6 ] ).toBeCloseTo( 255 * 4 * Math.sqrt( srgbToLinear( 25 ) ), - 1 );
+
+		} );
+
+		it( 'shows a hue shift that keeps the luminance', () => {
+
+			// Pure red 255 and pure green 148 differ in luminance by 0.0008 only.
+			const a = makeImage( 2, 1, [ 255, 0, 0 ] );
+			const b = withPixel( a, 1, 0, [ 0, 148, 0 ] );
+			expect( Math.abs( compare( a, b ).meanLuminanceDelta ) ).toBeLessThan( 0.001 );
+
+			const map = diffHeatmap( a, b, { scale: 1 } );
+			expect( Array.from( map.data.slice( 4, 8 ) ) ).toEqual( [ 255, 0, 0, 255 ] );
+			expect( Array.from( map.data.slice( 0, 4 ) ) ).toEqual( [ 0, 0, 0, 255 ] );
+
+		} );
+
+		it( 'shows a change in alpha alone', () => {
+
+			const a = makeImage( 1, 1, [ 90, 90, 90 ] );
+			const b = { ...a, data: new Uint8ClampedArray( a.data ) };
+			b.data[ 3 ] = 0;
+
+			expect( compare( a, b ).identical ).toBe( false );
+			expect( diffHeatmap( a, b ).scale ).toBe( 1 );
+
+		} );
+
+		it( 'keeps an explicit scale, clamping deltas above it to red', () => {
+
+			const a = makeImage( 2, 1, [ 0, 0, 0 ] );
+			const b = withPixel( a, 1, 0, [ 255, 255, 255 ] );
+			const map = diffHeatmap( a, b, { scale: 0.5 } );
+
+			expect( map.scale ).toBe( 0.5 );
+			expect( Array.from( map.data.slice( 4, 8 ) ) ).toEqual( [ 255, 0, 0, 255 ] );
+
+		} );
+
+		it( 'takes the decoded PNGs the suite compares, and refuses float pixels', () => {
+
+			const a = makeImage( 3, 2, ( x, y ) => [ x * 80, y * 120, 40 ] );
+			const decoded = decodeDataURL( encodeDataURL( a ) );
+
+			expect( Array.from( decoded.data ) ).toEqual( Array.from( a.data ) );
+			expect( diffHeatmap( a, decoded ).scale ).toBe( 0 );
+
+			const linear = { width: 3, height: 2, data: new Float32Array( 24 ) };
+			expect( () => diffHeatmap( linear, linear ) ).toThrow( /RGBA bytes/ );
+
+		} );
+
+		it( 'round-trips a translucent image through the PNG encoder', () => {
+
+			const a = makeImage( 2, 2, [ 10, 20, 30 ] );
+			a.data[ 7 ] = 128;
+
+			expect( Array.from( decodeDataURL( encodeDataURL( a ) ).data ) ).toEqual( Array.from( a.data ) );
 
 		} );
 

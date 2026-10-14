@@ -129,13 +129,40 @@ export async function readPNG( filePath ) {
  */
 export async function writePNG( filePath, image ) {
 
+	const bytes = encode( image, `writePNG( ${filePath} )` );
+
+	await ensureParentDir( filePath );
+	await writeFile( filePath, bytes );
+
+}
+
+/**
+ * Encode an RGBA image as a `data:image/png;base64,...` string, the inverse of `decodeDataURL`.
+ *
+ * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array|Buffer }} image RGBA image.
+ * @returns {string} The data URL.
+ * @throws {Error} If `data` is not exactly `width * height * 4` bytes.
+ */
+export function encodeDataURL( image ) {
+
+	return DATA_URL_PREFIX + encode( image, 'encodeDataURL' ).toString( 'base64' );
+
+}
+
+/**
+ * @param {{ width: number, height: number, data: Uint8ClampedArray|Uint8Array|Buffer }} image
+ * @param {string} caller - Named in the error.
+ * @returns {Buffer} PNG bytes.
+ */
+function encode( image, caller ) {
+
 	const { width, height, data } = image ?? {};
 	const expected = width * height * 4;
 
 	if ( ! data || data.length !== expected ) {
 
 		throw new Error(
-			`writePNG( ${filePath} ): expected ${expected} RGBA bytes for ${width}x${height}, ` +
+			`${caller}: expected ${expected} RGBA bytes for ${width}x${height}, ` +
 			`got ${data ? data.length : 'no data'}.`
 		);
 
@@ -144,8 +171,20 @@ export async function writePNG( filePath, image ) {
 	const png = new PNG( { width, height } );
 	png.data.set( data );
 
-	await ensureParentDir( filePath );
-	await writeFile( filePath, PNG.sync.write( png ) );
+	return PNG.sync.write( png, { colorType: isOpaque( data ) ? 2 : 6 } );
+
+}
+
+/** An all-255 alpha channel is left out of the file, which decodes to the same RGBA. */
+function isOpaque( data ) {
+
+	for ( let i = 3; i < data.length; i += 4 ) {
+
+		if ( data[ i ] !== 255 ) return false;
+
+	}
+
+	return true;
 
 }
 

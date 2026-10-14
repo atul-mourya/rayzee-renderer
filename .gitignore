@@ -150,3 +150,6 @@ AGENTS.md
 
 # Assets staged for upload to the asset CDN (third-party licences; never committed)
 .cdn-upload/
+
+# Bench run output (the quality report)
+bench/results/
