@@ -3,9 +3,9 @@
  * (`unpackTriangleNormal`); the hit record packs in WGSL too. Both directions are checked.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { packNormalOct, unpackNormalOct } from '@/core/Processor/BufferLayout.js';
 import { packNormalOct as packNormalOctGPU, unpackTriangleNormal } from '@/core/TSL/Common.js';
 
@@ -33,7 +33,7 @@ const directions = new Float32Array( dirs.flat().flatMap( ( v, i ) => ( i % 3 ==
 const angleDeg = ( a, b ) => Math.acos( Math.min( 1, a[ 0 ] * b[ 0 ] + a[ 1 ] * b[ 1 ] + a[ 2 ] * b[ 2 ] ) ) * 180 / Math.PI;
 const lanes = p => [ ( p << 16 ) >> 16, p >> 16 ];
 
-describeGPU( 'octahedral normal packing', () => {
+describe( 'octahedral normal packing', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

@@ -5,9 +5,9 @@
  * normal of its own is the base's, as before.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, reflect, instanceIndex, bool as tslBool } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
 import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample, Ray, HitInfo } from '@/core/TSL/Struct.js';
 import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
@@ -68,7 +68,7 @@ const sampleLobes = ( V, N, m, xi ) => {
 
 const at = ( theta ) => [ Math.sin( theta ), 0, Math.cos( theta ) ];
 
-describeGPU( 'clear coat normal', () => {
+describe( 'clear coat normal', () => {
 
 	let renderer;
 	beforeAll( async () => {

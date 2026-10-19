@@ -3,9 +3,9 @@
  * same blend of theirs. The diffuse budget once removed the metal's share twice.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, bool as tslBool } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
 import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/TSL/Struct.js';
 import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
@@ -65,7 +65,7 @@ async function albedo( renderer, { metalness, roughness, cosView } ) {
 
 }
 
-describeGPU( 'partial metal', () => {
+describe( 'partial metal', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

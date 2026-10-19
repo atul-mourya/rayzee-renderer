@@ -110,8 +110,8 @@ export default ComponentName;
 Before submitting a PR:
 
 - `npm run lint` — no errors
-- `npm test` — unit tests and the GPU tests (`tests/gpu/`, run on the real GPU through Dawn; skipped on CI, but a
-  workstation without a WebGPU adapter fails them)
+- `npm test` — unit tests and the GPU tests (`tests/gpu/`, run on the real GPU through Dawn; CI runs them on a
+  software GPU, and a machine without a WebGPU adapter fails them)
 - **Rendering changes**: `npm run bench:quality` compares every bench scene with its reference image, and
   `npm run bench:ab -- main` is the performance gate. The bench's references are specific to one machine; run
   `npm run bench:bless` once on a new one. See `bench/README.md`
@@ -147,9 +147,9 @@ new major version. `tests/unit/constants/pixelDefaults.test.js` and `npm run ben
 
 ### Review
 
-- No checks run automatically on a pull request: run lint and the tests yourself. The release workflow
-  (`.github/workflows/release.yaml`) runs lint, the engine build and the tests on every push to `main`, then
-  publishes with semantic-release — so a merge to `main` is a release.
+- Every pull request runs the tests (`.github/workflows/test.yml`); lint does not run there, so run it yourself.
+  The release workflow (`.github/workflows/release.yaml`) runs the same tests, then lint and the engine build, on
+  every push to `main`, then publishes with semantic-release — so a merge to `main` is a release.
 - At least one maintainer reviews, and tests rendering changes.
 - PRs are merged with a merge commit.
 

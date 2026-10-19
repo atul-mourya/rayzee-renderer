@@ -22,6 +22,8 @@ export default defineConfig( {
 					name: 'gpu',
 					environment: './tests/gpu/environment.js',
 					include: [ 'tests/gpu/**/*.test.js' ],
+					// CI's software Vulkan driver takes 6.1 s for a physical-sky test Metal runs in 0.23 s.
+					testTimeout: 60000,
 				},
 			},
 		],

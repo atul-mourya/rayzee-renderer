@@ -3,17 +3,17 @@
  * unbiased however their light paths are steered.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
 import { texture, uniform, vec4, vec3 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import {
 	sampleGuidedDisc, guidedDiscPdf, GUIDE_BINS, GUIDE_CELLS, GUIDE_CELL_SIDE, GUIDE_TEXTURE_WIDTH, GUIDE_UNIFORM_SHARE,
 } from '@/core/TSL/LightGuide.js';
 
 const N = 1 << 18;
 
-describeGPU( 'light guide', () => {
+describe( 'light guide', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

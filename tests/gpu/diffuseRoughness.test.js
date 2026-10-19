@@ -4,9 +4,9 @@
  * layer alike — while a coloured one keeps the albedo the paper derives. Compiled out, it is Lambert.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, bool as tslBool } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
 import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/TSL/Struct.js';
 import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
@@ -148,7 +148,7 @@ async function evaluatePairs( renderer, swap = false, materialLayers = null ) {
 
 }
 
-describeGPU( 'diffuse roughness (EON)', () => {
+describe( 'diffuse roughness (EON)', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

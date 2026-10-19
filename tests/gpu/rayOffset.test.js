@@ -4,9 +4,9 @@
  * grooves or self-intersects far from the origin.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { offsetRayOrigin } from '@/core/TSL/Common.js';
 
 const f32 = new Float32Array( 1 );
@@ -38,7 +38,7 @@ const p32 = new Float32Array( ps );
 const n32 = new Float32Array( ns );
 const count = p32.length / 4;
 
-describeGPU( 'ray spawn offset', () => {
+describe( 'ray spawn offset', () => {
 
 	let renderer, out;
 

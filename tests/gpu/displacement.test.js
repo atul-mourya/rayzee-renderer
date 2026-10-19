@@ -4,10 +4,10 @@
  * it would hit that triangle. Points in front of it lie on the ray, on the height field.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataArrayTexture, LinearFilter, Matrix3, RepeatWrapping } from 'three';
 import { instancedArray, int, float, vec3, vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { refineDisplacedIntersection, DisplacementResult } from '@/core/TSL/Displacement.js';
 import { buildBucketTextureNodes } from '@/core/TSL/TextureSampling.js';
 import { arrayToMat3 } from '@/core/TSL/Common.js';
@@ -91,7 +91,7 @@ function refine( a, tris, bvh, field, { transform = new Matrix3(), scale = SCALE
 
 }
 
-describeGPU( 'displacement', () => {
+describe( 'displacement', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

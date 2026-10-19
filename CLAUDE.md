@@ -36,8 +36,9 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 - `tests/gpu/` (Vitest project `gpu`) runs on the real GPU in Node through Dawn — the `webgpu`
   package, the same WebGPU implementation Chrome ships. `evaluate()` in `tests/gpu/gpu.js` runs a TSL
   function per element and returns the buffer, so a shader function or a CPU/GPU twin is tested in
-  milliseconds. Skipped on CI (no Vulkan driver there); on a workstation a missing adapter fails the
-  run. ⚠️ Dawn segfaults the process if its `create()` result is garbage-collected while a device
+  milliseconds. CI runs it on Mesa's software Vulkan driver, lavapipe (`.github/workflows/test.yml`, as
+  three.js tests WebGPU), on every pull request and before each release; a missing adapter fails the run
+  anywhere. ⚠️ Dawn segfaults the process if its `create()` result is garbage-collected while a device
   lives — `tests/gpu/environment.js` holds it for that reason. ⚠️ An invalid kernel does not throw:
   `evaluate()` returns zeros. A literal `int( -1 )` instance leaf did that, folded into an
   out-of-bounds BVH read the WGSL compiler rejects; pass such values in as data (`uvTangent.test.js`).

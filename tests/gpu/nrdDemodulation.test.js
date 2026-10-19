@@ -3,9 +3,9 @@
  * reflected light, every pixel the blur reaches has the same lighting, so the output must keep the input.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType, PerspectiveCamera, Vector2, Vector3 } from 'three';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 import { NRD } from '@/core/Stages/NRD.js';
 import { TextureReadback } from '@/core/Processor/TextureReadback.js';
 
@@ -105,7 +105,7 @@ function regions( inPatch, margin ) {
 
 const worst = ( read, list, expected ) => Math.max( ...list.map( ( [ x, y ] ) => Math.abs( read( x, y ) / expected( x, y ) - 1 ) ) );
 
-describeGPU( 'NRD demodulation', () => {
+describe( 'NRD demodulation', () => {
 
 	const panel = ( x, y ) => x >= 26 && x < 38 && y >= 26 && y < 38;
 

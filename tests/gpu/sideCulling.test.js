@@ -3,10 +3,10 @@
  * culled them saw through hollow models, while shadow rays were blocked by the same faces.
  */
 
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec4, float, bool as tslBool } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
@@ -115,7 +115,7 @@ async function trace( renderer, { bvh, triangles, count }, { origins, dirs }, in
 
 }
 
-describeGPU( 'side culling', () => {
+describe( 'side culling', () => {
 
 	let renderer, geometry, light;
 

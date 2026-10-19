@@ -1,7 +1,7 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { PhysicalSky } from '@/core/Processor/PhysicalSky.js';
 import { buildExactEnvironmentTable } from '@/core/Processor/EnvironmentExactTable.js';
 import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/Processor/AtmosphereModel.js';
@@ -27,7 +27,7 @@ function sampleSky( { data, width: W, height: H }, d ) {
 
 }
 
-describeGPU( 'physical sky', () => {
+describe( 'physical sky', () => {
 
 	let renderer;
 	const coefficients = atmosphereCoefficients( AIR );

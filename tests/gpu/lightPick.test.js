@@ -3,9 +3,9 @@
  * luminance, and every variant sums, on average, to every light's own estimate.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, select, vec3, vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { lightPick } from '@/core/TSL/LightsSampling.js';
 
 const N = 1 << 16;
@@ -44,7 +44,7 @@ const meanOf = ( out ) => {
 
 const expected = [ 0, 1, 2 ].map( ( c ) => LIGHTS.reduce( ( sum, light, i ) => sum + light[ c ] * VISIBLE[ i ], 0 ) );
 
-describeGPU( 'fewer shadow rays a hit', () => {
+describe( 'fewer shadow rays a hit', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

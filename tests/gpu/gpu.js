@@ -1,15 +1,13 @@
-import { describe } from 'vitest';
 import { WebGPURenderer } from 'three/webgpu';
 import { Fn, instanceIndex, instancedArray } from 'three/tsl';
 import { withSceneResources } from '@/core/TSL/SceneResources.js';
 
+// A missing adapter is a broken setup, never a reason to pass: CI installs Mesa's software Vulkan driver.
 const unavailable = globalThis.__rayzeeGPUUnavailable;
+if ( unavailable ) throw new Error( `tests/gpu needs a WebGPU adapter: ${unavailable}` );
 
-// Skipped only on CI: on a workstation a missing adapter is a broken setup, not a reason to pass.
-if ( unavailable && ! process.env.CI ) throw new Error( `tests/gpu needs a WebGPU adapter: ${unavailable}` );
-
-export const gpuAvailable = ! unavailable;
-export const describeGPU = gpuAvailable ? describe : describe.skip;
+// A Mesa Vulkan driver, as CI's lavapipe describes itself: 'llvmpipe: Mesa 25.2.8 …'.
+export const mesa = /\bMesa\b/.test( globalThis.__rayzeeGPUDescription );
 
 function headlessCanvas() {
 

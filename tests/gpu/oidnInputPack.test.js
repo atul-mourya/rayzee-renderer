@@ -1,5 +1,4 @@
-import { it, expect, beforeAll } from 'vitest';
-import { describeGPU } from './gpu.js';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { OIDNDenoiser } from '@/core/Passes/OIDNDenoiser.js';
 
 const BORDER = 16;
@@ -11,7 +10,7 @@ const mirror = ( i, n ) => {
 
 };
 
-describeGPU( 'OIDN input copy', () => {
+describe( 'OIDN input copy', () => {
 
 	let device;
 

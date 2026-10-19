@@ -6,10 +6,10 @@
  * focusDistance for an orthographic camera, whose rays are parallel and start on its image plane.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { generateRayFromCamera, cameraClipDistance } from '@/core/TSL/CameraRay.js';
 import { Ray } from '@/core/TSL/Struct.js';
 import { ViewCamera } from '@/core/managers/ViewCamera.js';
@@ -88,7 +88,7 @@ function pinholeDirection( [ u, v ] ) {
 
 }
 
-describeGPU( 'thin lens', () => {
+describe( 'thin lens', () => {
 
 	let renderer, perspective, panorama, look, orthoPinhole, orthoLens, orthoLook;
 

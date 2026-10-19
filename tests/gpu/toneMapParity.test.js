@@ -4,9 +4,9 @@
  * both over the same HDR spread.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataUtils } from 'three';
-import { describeGPU, createRenderer, gpuAvailable } from './gpu.js';
+import { createRenderer } from './gpu.js';
 import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
 import { toneMapToRGBA8, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
 import { countTableTransforms, listViewTransforms } from '@/core/Color/ViewTransforms.js';
@@ -26,7 +26,7 @@ try {
 }
 
 // Before the curves are listed, so the baked view is one of them.
-if ( ocio && gpuAvailable ) {
+if ( ocio ) {
 
 	configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } );
 	const cm = new ColorManagement();
@@ -58,7 +58,7 @@ afterAll( () => ColorManagement.resetAll() );
 // A tenth of an 8-bit level.
 const MAX_PLANAR_DELTA = 0.1 / 255;
 
-describeGPU( 'GPU tone map against ToneMapCPU', () => {
+describe( 'GPU tone map against ToneMapCPU', () => {
 
 	let renderer, mapper, src;
 	const linear = new Float32Array( PIXELS.length * 4 );
@@ -136,7 +136,7 @@ describeGPU( 'GPU tone map against ToneMapCPU', () => {
 } );
 
 // renderToBuffer's readback: full float input from a texture, alpha kept.
-describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
+describe( 'GPU tone map from a float texture against ToneMapCPU', () => {
 
 	let renderer, mapper, texture;
 	const linear = new Float32Array( PIXELS.length * 4 );
@@ -219,7 +219,7 @@ function upscalerInput( linear, { exposure, toneMapping, saturation } ) {
 
 }
 
-describeGPU( 'GPU planar tone map against the upscaler\'s old JavaScript', () => {
+describe( 'GPU planar tone map against the upscaler\'s old JavaScript', () => {
 
 	let renderer, mapper, texture;
 	const linear = new Float32Array( PIXELS.length * 4 );

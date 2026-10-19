@@ -3,10 +3,10 @@
  * unfolded: the same closest triangle at the same distance, and the same shadow answers.
  */
 
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec4, float } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
@@ -109,7 +109,7 @@ async function trace( renderer, bvhNodes, folded, triangles, { origins, dirs } )
 
 }
 
-describeGPU( 'folded BVH traversal', () => {
+describe( 'folded BVH traversal', () => {
 
 	let renderer, plain, folded, nodeCounts;
 

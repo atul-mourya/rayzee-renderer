@@ -4,10 +4,10 @@
  * over single buffers.
  */
 
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec4, float } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
@@ -128,7 +128,7 @@ async function trace( renderer, bvh, tris, { origins, dirs }, last = 'uv' ) {
 
 }
 
-describeGPU( 'BVH and triangles split over buffers', () => {
+describe( 'BVH and triangles split over buffers', () => {
 
 	let renderer, built, light, split;
 

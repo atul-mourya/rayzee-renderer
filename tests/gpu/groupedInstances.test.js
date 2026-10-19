@@ -4,11 +4,11 @@
  * member must vanish from every copy.
  */
 
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec4, float } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
@@ -221,7 +221,7 @@ async function traceAll( renderer, bvh, triangles, { origins, dirs } ) {
 
 }
 
-describeGPU( 'grouped instance traversal', () => {
+describe( 'grouped instance traversal', () => {
 
 	let renderer, parts, matrices, triangles, light;
 

@@ -3,11 +3,11 @@
  * transmissionFactor × the texture's R channel, so where the map is black the surface is opaque and casts a shadow.
  */
 
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, float, vec3 } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { DataArrayTexture } from 'three';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 
 vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
@@ -131,7 +131,7 @@ async function shadowTransmittance( renderer, { bvh, triangles, count }, xs ) {
 
 }
 
-describeGPU( 'transmission map on shadow rays', () => {
+describe( 'transmission map on shadow rays', () => {
 
 	let renderer, geometry;
 

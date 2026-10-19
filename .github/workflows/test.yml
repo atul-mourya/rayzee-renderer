@@ -1,0 +1,51 @@
+name: Test
+
+on:
+  pull_request:
+  # release.yaml runs it before publishing.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm test -- --project unit
+
+  gpu:
+    name: GPU tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      # Mesa's lavapipe, Vulkan on the CPU: how three.js tests WebGPU on these runners.
+      - name: Install software Vulkan driver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers
+
+      - run: npm ci
+
+      - run: npx vitest run --project gpu
+        env:
+          # Pins the adapter: a path that no longer exists leaves Dawn none, and the run fails rather than moving on.
+          VK_DRIVER_FILES: /usr/share/vulkan/icd.d/lvp_icd.json

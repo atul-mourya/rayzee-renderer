@@ -5,9 +5,9 @@
  * the gate is known to act at all.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, bool as tslBool } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
 import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/TSL/Struct.js';
 import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
@@ -64,7 +64,7 @@ async function shade( renderer, look, materialLayers ) {
 
 }
 
-describeGPU( 'material layers compiled only when used', () => {
+describe( 'material layers compiled only when used', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

@@ -5,9 +5,9 @@
  * vertex merging, which adds a merge at x1 and at x2.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec4 } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight } from '@/core/TSL/Bidirectional.js';
 
 const CASES = 64;
@@ -62,7 +62,7 @@ function expected( c ) {
 
 }
 
-describeGPU( 'bidirectional MIS', () => {
+describe( 'bidirectional MIS', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

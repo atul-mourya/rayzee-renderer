@@ -4,10 +4,10 @@
  * cone is read from its centre, so the disc's own spread does not move the cone's edge.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DataArrayTexture } from 'three';
 import { vec3, vec4, float, int, texture } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { samplePointLightWithAttenuation, sampleSpotLightWithRadius } from '@/core/TSL/LightsSampling.js';
 import { PointLight, SpotLight, LightSample } from '@/core/TSL/LightsCore.js';
 
@@ -27,7 +27,7 @@ const spot = ( radius, angle ) => SpotLight( {
 	iesIndex: int( - 1 ), iesIntensity: float( 1 ), radius: float( radius ),
 } );
 
-describeGPU( 'light radius', () => {
+describe( 'light radius', () => {
 
 	let renderer, resources;
 

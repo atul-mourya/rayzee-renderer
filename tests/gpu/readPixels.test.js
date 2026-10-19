@@ -1,11 +1,11 @@
-import { it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { RenderTarget, FloatType, RGBAFormat, NearestFilter, DataTexture } from 'three';
 import { QuadMesh, NodeMaterial } from 'three/webgpu';
 import { vec4, screenCoordinate } from 'three/tsl';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 import { readPixels, TextureReadback } from '@/core/Processor/TextureReadback.js';
 
-describeGPU( 'readPixels', () => {
+describe( 'readPixels', () => {
 
 	let renderer;
 

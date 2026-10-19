@@ -4,10 +4,10 @@
  * or one turned past 90° reversed the frame before.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Matrix3 } from 'three';
 import { instanceIndex, instancedArray, int } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { triangleUVTangent } from '@/core/TSL/TextureSampling.js';
 import { arrayToMat3 } from '@/core/TSL/Common.js';
 
@@ -94,7 +94,7 @@ function buildCases() {
 
 }
 
-describeGPU( 'UV tangent frame under a texture transform', () => {
+describe( 'UV tangent frame under a texture transform', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

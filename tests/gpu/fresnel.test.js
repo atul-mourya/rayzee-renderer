@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { fresnelDielectric, dielectricFresnelWeight, iorToFresnel0 } from '@/core/TSL/Fresnel.js';
 
 // Unpolarised Fresnel reflectance of a smooth dielectric, eta = n_t / n_i.
@@ -33,7 +33,7 @@ ETAS.forEach( ( e, j ) => {
 
 const inputs = { cosI: [ cosI, 'float' ], eta: [ eta, 'float' ] };
 
-describeGPU( 'dielectric Fresnel on the GPU', () => {
+describe( 'dielectric Fresnel on the GPU', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

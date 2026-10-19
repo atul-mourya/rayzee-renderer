@@ -2,9 +2,9 @@
  * The auto exposure meter on the GPU against the same metering written plainly in JavaScript.
  */
 
-import { beforeAll, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType } from 'three';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 import { AutoExposure } from '@/core/Stages/AutoExposure.js';
 import { setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
 
@@ -78,7 +78,7 @@ function texture( px, width, height ) {
 
 const contextFor = ( tex, state = {} ) => ( { getTexture: () => tex, getState: ( key ) => state[ key ] ?? 0, setState() {} } );
 
-describeGPU( 'auto exposure metering', () => {
+describe( 'auto exposure metering', () => {
 
 	let renderer, stage;
 

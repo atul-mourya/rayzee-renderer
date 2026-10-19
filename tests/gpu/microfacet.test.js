@@ -1,10 +1,10 @@
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { DistributionGGX } from '@/core/TSL/MaterialProperties.js';
 import { MIN_ROUGHNESS } from '@/core/TSL/Common.js';
 
-describeGPU( 'GGX distribution on the GPU', () => {
+describe( 'GGX distribution on the GPU', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

@@ -1,31 +1,26 @@
 /**
  * Vitest environment with real WebGPU in Node, through Dawn — the implementation inside Chrome.
  *
- * When no adapter can be had, or on CI, the reason is left on `globalThis.__rayzeeGPUUnavailable`
- * and `tests/gpu/gpu.js` decides what that means.
+ * When no adapter can be had, the reason is left on `globalThis.__rayzeeGPUUnavailable` and
+ * `tests/gpu/gpu.js` fails the run with it. The adapter's description is left on `__rayzeeGPUDescription`.
  */
 
 // Module scope on purpose: Dawn segfaults the process if this is collected while a device lives.
 let gpu = null;
 let globals = null;
 let unavailable;
+let description = '';
 
 async function acquire() {
-
-	// Unverified on a runner with no Vulkan driver, and a native crash there would fail the release.
-	if ( process.env.CI ) {
-
-		unavailable = 'not attempted on CI';
-		return;
-
-	}
 
 	try {
 
 		const dawn = await import( 'webgpu' );
 		globals = dawn.globals;
 		gpu = dawn.create( [] );
-		unavailable = await gpu.requestAdapter() ? null : 'no WebGPU adapter';
+		const adapter = await gpu.requestAdapter();
+		unavailable = adapter ? null : 'no WebGPU adapter';
+		description = adapter?.info.description ?? '';
 
 	} catch ( error ) {
 
@@ -55,6 +50,7 @@ export default {
 		global.cancelAnimationFrame ??= clearTimeout;
 
 		global.__rayzeeGPUUnavailable = unavailable;
+		global.__rayzeeGPUDescription = description;
 		return { teardown() {} };
 
 	},

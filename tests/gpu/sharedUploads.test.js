@@ -1,9 +1,8 @@
-import { it, expect, beforeAll } from 'vitest';
-import { describeGPU } from './gpu.js';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { nodePlatform } from '@/core/node/nodePlatform.js';
 
 // dawn.node segfaults the process on these without nodePlatform()'s copy, so a failure here is a crash.
-describeGPU( 'uploads from a SharedArrayBuffer', () => {
+describe( 'uploads from a SharedArrayBuffer', () => {
 
 	let device;
 

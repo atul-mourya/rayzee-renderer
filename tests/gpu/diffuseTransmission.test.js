@@ -4,9 +4,9 @@
  * weight; and the sampler, the NEE evaluation and the NEE density agree on every direction it draws.
  */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, abs, select, bool as tslBool } from 'three/tsl';
-import { describeGPU, createRenderer, evaluate } from './gpu.js';
+import { createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
 import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/TSL/Struct.js';
 import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
@@ -109,7 +109,7 @@ async function weightOf( renderer, material ) {
 
 }
 
-describeGPU( 'diffuse transmission lobe', () => {
+describe( 'diffuse transmission lobe', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

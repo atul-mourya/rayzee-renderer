@@ -1,8 +1,8 @@
 /** Bidirectional vertex records round-trip through the hit buffer: cache, pending records, tagged path lengths. */
 
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Fn, If, instanceIndex, instancedArray, float, vec2, vec3, vec4, uint, normalize } from 'three/tsl';
-import { describeGPU, createRenderer } from './gpu.js';
+import { createRenderer } from './gpu.js';
 import {
 	PackedRayBuffer, cachedVertex, pendingVertex, writeVertexRecord, readVertexRecord,
 	writeLightPathLength, readLightPathLength,
@@ -11,7 +11,7 @@ import {
 const PATHS = 4;
 const SLOTS = 8;
 
-describeGPU( 'light vertex cache', () => {
+describe( 'light vertex cache', () => {
 
 	let renderer;
 	beforeAll( async () => void ( renderer = await createRenderer() ) );

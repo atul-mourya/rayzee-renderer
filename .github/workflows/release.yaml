@@ -9,7 +9,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  test:
+    if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test.yml
+
   release:
+    needs: test
     if: "!startsWith(github.event.head_commit.message, 'chore(release):')"
     permissions:
       contents: write
@@ -50,9 +57,6 @@ jobs:
 
       - name: Build Engine
         run: npm run build:engine
-
-      - name: Run Tests
-        run: npm test
 
       # Run semantic-release first to update version.
       # No NPM_TOKEN: auth is OIDC trusted publishing, configured per-package on npmjs.com
