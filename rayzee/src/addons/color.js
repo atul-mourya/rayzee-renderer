@@ -16,9 +16,9 @@ export {
 	ColorManagement, getActiveColorManagement, setActiveColorManagement,
 	isColorManaged, DEFAULT_WORKING_SPACE, findNativeLinearSpace, canvasColorSpaceFor,
 } from '../Color/ColorManagement.js';
-export { displayCanvasFit } from '../Color/Displays.js';
+export { displayCanvasFit, isHdrDisplay, hdrViewFor, matchingView, sameToneMapping } from '../Color/Displays.js';
 export {
-	buildOcioView, addOcioView, addAllOcioViews,
+	buildOcioView, addOcioView, addAllOcioViews, buildCanvasView,
 	DEFAULT_LUT_SIZE, DEFAULT_MIN_EV, DEFAULT_MAX_EV,
 } from '../Color/OcioViews.js';
 export {

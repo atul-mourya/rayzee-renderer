@@ -99,9 +99,61 @@ saying the environment was left converted.
   views at ~0.1 s each used to freeze the UI for over a second.
 - **Display P3 reaches the screen.** three.js configures the WebGPU canvas without a colour space
   (always sRGB) and reconfigures it on every resize. `ColorManagement` wraps that context's
-  `configure` so a Display P3 view gets `display-p3` and keeps it. HDR views are not shown in HDR:
-  that needs the renderer's canvas format changed to half-float at construction and a PQ-to-
-  extended-range conversion.
+  `configure` so a Display P3 view gets `display-p3` and keeps it (also when chosen before the first frame).
+- **Every display shows what it would emit** (Blender's Display Emulation "Automatic"). `canvasFitOf()`
+  (`OcioViews.js`) measures, through the config, whether a display's encoding *is* a canvas colour space:
+  decoding test codes to the display connection space must give sRGB's (or Display P3's) curve and primaries
+  within 0.2 %. Only sRGB and Display P3 pass — Blender's and ACES's; ACES's "Display P3 HDR" too, extended.
+  Every other display — Rec.1886's 2.4 and gamma 2.2's curves, Rec.2020, cinema P3-D65, PQ, HLG — is baked
+  converted: OCIO's output decoded to the connection space (`displayReferenceSpace()`, CIE XYZ D65, 1.0 =
+  100 nits; configs list it inactive, so the YAML is read) and encoded for the canvas, into sRGB for a
+  Rec.709 gamut and Display P3 for a wider one (`ocio.canvas`, `ocio.emulated` on the registry entry). So
+  the canvas, `renderToBuffer( 'srgb' )`, saved pictures, OIDN's and the upscaler's inputs all show the same
+  picture; an HDR display's table keeps its range (up to ~2.7 encoded) for the HDR canvas and is clipped at
+  white everywhere else. Before, Rec.1886 and gamma 2.2 went to an sRGB canvas as they were, and the other
+  displays' codes were shown and saved as if sRGB. A view landing in a scene-referred space (Blender's
+  "Filmic Log") and data views ("Raw") are shown as they are. `cm.displayFit( display )` and
+  `cm.canvasColorSpace` (also `status().canvasColorSpace`, `renderToBuffer`'s `displayColorSpace`) say which;
+  the AI upscaler and the neural passes tag their pixels with it (`ImageData` `colorSpace`), and a video frame
+  is converted to sRGB (the WebM is Rec.709).
+  ⚠️ A display's light, not its codes, is what a picture keeps: a file in a display's own encoding (PQ for
+  an HDR video) is an export's job, from OCIO with the same view.
+- **HDR on screen** (`app.color.setHdrOutput( true )`, off in the engine; the app turns it on while
+  `(dynamic-range: high)` matches, switch "HDR" in the panel, remembered per device). The canvas shows the
+  active view's HDR version from the config — `hdrViewFor` (`Color/Displays.js`): the same tone mapping on
+  one of the config's HDR displays, 1000 nits first, then P3, an EDR display, PQ (Blender's AgX → "AgX - HDR
+  1000 nits" on Rec.2100-PQ; ACES 1.3's "ACES 1.0 - SDR Video" → "ACES 1.1 - HDR Video (1000 nits & P3 lim)");
+  an untagged view (Standard, Un-tone-mapped) is its own; Filmic and Khronos Neutral have none
+  (`status().hdr.reason` 'no-hdr-version'), and built-in None shows unclamped. `buildCanvasView`
+  (`OcioViews.js`) bakes it like any view: OCIO's display output is decoded to the display connection space
+  (CIE XYZ D65, 1.0 = 100 nits — Blender's reference white; configs list it inactive, so
+  `displayReferenceSpace()` reads the YAML), turned into the canvas colour space (CSS Color 4 matrices) and
+  encoded with the sRGB curve extended past 1 and mirrored below 0. It is not a registry entry: readbacks,
+  OIDN and the upscaler keep the view itself. Blender's AgX HDR matches its SDR AgX to grey (0.18 → 0.181)
+  and reaches 10× white; ACES 2.0 HDR puts grey at 0.145 against SDR's 0.100, by design. The screen clips
+  what it cannot reach, as Blender does: no web API reports the headroom without a permission prompt. A
+  view chosen on an HDR display needs no HDR version: its table already holds the range, and only the
+  canvas widens.
+  - The canvas: `renderer.backend.parameters.outputType = HalfFloatType` and `backend.updateSize()` —
+    three.js reads the format, and from it `toneMapping: { mode: 'extended' }`, when it next configures
+    the canvas, and its pipelines key on the format. Only for a canvas on screen (`no-screen` otherwise).
+  - The Compositor draws the canvas version in one pass (`setCanvasTransform`), with the renderer's tone
+    mapping and output colour space set to none for that draw; `renderPicture()` draws the view itself.
+    `getCanvas()` (saves, thumbnails, video frames, the upscaler's input) draws the view, copies it to a 2D
+    canvas in the canvas colour space whenever the canvas is half-float, and redraws the screen. A capture then
+    matches HDR off within one level (1920×1080: 4.4 % of channels one lower, mean −0.04, from the half-float
+    canvas's rounding); +0.1 ms a capture. A Display P3 picture saves with its ICC profile (iCCP), HDR on or off.
+  - The last four HDR versions are kept (`RECENT_CANVAS_VIEWS`, 2.2 MB on the card and in memory each), so
+    switching back to a look with HDR on takes 0.6 ms instead of a 40–60 ms bake.
+  - Startup: `default-view-hdr.bin` beside `default-view.bin` (`npm run color:bake` writes both;
+    `saveBakedView( id, { hdr: true } )`, `loadBakedView` keeps it for its view). Without it the app loads
+    the config to bake (0.06–0.4 s on the main thread).
+  - Measured (M5 Pro, Chrome 155, 1920×1080): the canvas draw 0.12 ms against 0.16 ms SDR (one pass instead
+    of two); the canvas texture 8 B a pixel instead of 4. Table error against OCIO 0.33 code values mean, up to
+    ~1 % of brightness in saturated colours at the 1000-nit clip. A converted display costs nothing a frame
+    (0.166 ms against 0.163 ms) and 38–41 ms a bake against 31 ms; measuring a display's fit 0.3–18 ms, once a
+    config. A Display P3 video frame converted to sRGB +0.05 ms (+0.23 with HDR on); an upscaler tile of
+    Display P3 pixels put into its sRGB canvas 2 ms against 0.07 (512²).
 - **EXR export** (`app/src/lib/colorManagement.js` → `saveEXR`) writes
   `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows,
   read through `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an
@@ -146,14 +198,25 @@ OCIO's guidance is to build menus from UI name, family and description, filtered
   camera spaces, so they are not offered. ⚠️ The runtime's builtin names carry no `ocio://`.
 - **Render In**: spaces tagged `working-space` *and* linear (ACES: Rec.709, ACEScg, P3-D65); untagged
   configs fall back to the linear family narrowed to the well-known gamuts. Never the interchange space.
-- **Screen** drops the ACES " - Display" suffix and splits SDR | HDR as Blender does (`isHdrDisplay`:
-  the display space's `encoding` is `hdr-video`/`edr-video`; ACES spells that space `<USE_DISPLAY_NAME>`).
-  A display this screen can't show natively (`displayCanvasFit`) says so in its tooltip.
+- **Screen** drops the ACES " - Display" suffix and splits SDR | HDR as Blender does (the engine's `isHdrDisplay`:
+  the display space's `encoding` is `hdr-video`/`edr-video`; ACES spells that space `<USE_DISPLAY_NAME>`). A
+  display shown converted (`cm.displayFit`) says so in its tooltip. Choosing one keeps the tone mapping
+  (`matchingView`: AgX ↔ "AgX - HDR 1000 nits", ACES 2.0 SDR ↔ HDR 1000 nits, the same release first, P3
+  first) and its look when the new view offers it; only a tone mapping the display lacks falls back to the
+  display's default. Before, every switch went to the default — "Standard" in Blender's config.
+- **HDR** (only while the screen reports `(dynamic-range: high)`): on unless turned off, kept in localStorage
+  `rayzee-hdr-screen`; "unavailable" beside it when the tone mapping has no HDR version.
 - **Tone Mapping** labels are the view's own name, with detail added back only where two would collide.
 - Screen and Tone Mapping items carry a one-line hint (`screenHint` / `toneMappingHint`), first regex match
   wins — put a specific name above the general one (`ACES Filmic` must not reach the `filmic` rule).
 - **Style** follows the tone mapping as Blender's looks do — measured: with AgX Blender accepts only "AgX - …"
-  looks, with Standard only the unprefixed ones. Gamut compression and LMTs are grouped as technical.
+  looks, with Standard only the unprefixed ones. A look's prefix is matched against every view the config has
+  and by tone mapping (`sameToneMapping`), so "AgX - Punchy" also suits "AgX - HDR 1000 nits"; matched against
+  one display's views, an HDR display offered Filmic's looks for AgX. Gamut compression and LMTs are grouped as
+  technical.
+- **Every combination** is held by `tests/unit/color/colorCombinations.test.js` on ACES 2.0, ACES 1.3 (OCIO 2.4
+  and 2.1) and Blender 5.1: every display × view × offered look against OCIO's display light, with and without
+  its HDR version and in another working space; the Screen switch both ways; the HDR switch on every view.
 - **Texture colour space**: spaces tagged `texture`, grouped by family.
 - ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
   to name matching — the tests passed by coincidence until that was caught.

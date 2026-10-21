@@ -8,4 +8,6 @@ export const DEFAULT_COLOR_IDENTITY = Object.freeze( {
 	view: Object.freeze( { display: 'sRGB', view: 'AgX', look: 'AgX - Medium High Contrast' } ),
 	// That view pre-baked, beside the config: the first frame needs neither the runtime nor the config.
 	bakedView: 'default-view.bin',
+	// Its HDR version, for an HDR screen.
+	bakedHdrView: 'default-view-hdr.bin',
 } );

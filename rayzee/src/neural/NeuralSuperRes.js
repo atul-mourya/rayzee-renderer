@@ -539,7 +539,7 @@ export async function renderUpscaled( app, {
 		timings.upscale = ms;
 		timings.tonemap = toneMs;
 
-		if ( present ) presentToUpscalerCanvas( app.denoisingManager?.upscalerCanvas, rgba8, width, height );
+		if ( present ) presentToUpscalerCanvas( app.denoisingManager?.upscalerCanvas, rgba8, width, height, app.color?.canvasColorSpace );
 
 		return { rgba8, width, height, timings, upscaler: sr };
 
@@ -566,14 +566,14 @@ export async function renderUpscaled( app, {
  * Shows the result on the engine's 2D overlay — the same canvas the AI upscaler uses, because this
  * picture is also larger than the render and also in ordinary pixels.
  */
-function presentToUpscalerCanvas( canvas, rgba8, width, height ) {
+function presentToUpscalerCanvas( canvas, rgba8, width, height, colorSpace = 'srgb' ) {
 
 	if ( ! canvas ) return false;
 
 	canvas.width = width;
 	canvas.height = height;
 	const ctx = canvas.getContext( '2d' );
-	ctx.putImageData( new ImageData( new Uint8ClampedArray( rgba8.buffer ?? rgba8 ), width, height ), 0, 0 );
+	ctx.putImageData( new ImageData( new Uint8ClampedArray( rgba8.buffer ?? rgba8 ), width, height, { colorSpace } ), 0, 0 );
 	canvas.style.display = 'block';
 	return true;
 
@@ -583,8 +583,8 @@ function presentToUpscalerCanvas( canvas, rgba8, width, height ) {
  * Draws ready RGBA bytes onto the overlay. For the detail pass, whose result comes back as bytes
  * rather than linear floats — it is display-referred by the time we can read it.
  */
-export function presentRGBA8( canvas, rgba8, width, height ) {
+export function presentRGBA8( canvas, rgba8, width, height, colorSpace ) {
 
-	return presentToUpscalerCanvas( canvas, rgba8, width, height );
+	return presentToUpscalerCanvas( canvas, rgba8, width, height, colorSpace );
 
 }

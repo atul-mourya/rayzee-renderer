@@ -10,6 +10,15 @@ import { EngineEvents } from '../EngineEvents.js';
 import { PRODUCTION_RENDER_CONFIG, modePresetSettings } from '../EngineDefaults.js';
 import { updateStats, getDisplaySamples } from '../Processor/utils.js';
 
+// The video is Rec.709: drawing into a plain 2D canvas converts a Display P3 picture.
+function srgbCopy( canvas ) {
+
+	const copy = new OffscreenCanvas( canvas.width, canvas.height );
+	copy.getContext( '2d' ).drawImage( canvas, 0, 0 );
+	return copy;
+
+}
+
 export class VideoRenderManager {
 
 	constructor( app ) {
@@ -166,7 +175,7 @@ export class VideoRenderManager {
 				const canvas = app.getCanvas();
 				if ( canvas && onFrame ) {
 
-					const bitmap = await createImageBitmap( canvas );
+					const bitmap = await createImageBitmap( app.color?.canvasColorSpace === 'display-p3' ? srgbCopy( canvas ) : canvas );
 					await onFrame( bitmap, i, totalFrames );
 					bitmap.close();
 

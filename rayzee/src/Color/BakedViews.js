@@ -19,7 +19,7 @@ async function pipe( bytes, transform ) {
 }
 
 /**
- * @param {Object} entry - an OCIO registry entry
+ * @param {Object} entry - an OCIO registry entry, or a canvas view from `buildCanvasView`
  * @param {Object} [extra] - header fields to add, e.g. the config fingerprint
  * @returns {Promise<Uint8Array>}
  */
@@ -47,11 +47,14 @@ export async function encodeBakedView( entry, extra = {} ) {
 
 	}
 
-	const { display, view, look, context, source, configId } = entry.ocio;
+	const { display, view, look, context, source, configId, canvas, emulated, for: shownFor } = entry.ocio;
 	const header = new TextEncoder().encode( JSON.stringify( {
 		format: FORMAT, version: BAKED_VIEW_VERSION,
 		name: entry.name, configId, display, view, look: look ?? null, context: context ?? null, source,
 		size, minEv, maxEv, error: entry.error ?? null,
+		// Left out for a plain sRGB table, so files from before these fields are read the same.
+		...( emulated || shownFor || ( canvas && canvas !== 'srgb' ) ? { canvas, emulated: !! emulated } : {} ),
+		...( shownFor ? { for: shownFor } : {} ),
 		...extra,
 	} ) );
 

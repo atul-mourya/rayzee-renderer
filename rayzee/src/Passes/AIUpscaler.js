@@ -78,6 +78,7 @@ export class AIUpscaler extends EventDispatcher {
 	 * @param {Function} [options.getGPUTextures] - Returns { color: GPUTexture } for HDR path
 	 * @param {Function} [options.getExposure] - Returns current exposure multiplier
 	 * @param {Function} [options.getToneMapping] - Returns Three.js ToneMapping constant
+	 * @param {Function} [options.getColorSpace] - The colour space the tone mapping encodes for ('srgb', 'display-p3')
 	 * @param {Function} [options.getTransparentBackground] - Whether the HDR path keeps the render's coverage as alpha
 	 * @param {number} [options.tileSize] - Override default tile size
 	 */
@@ -100,6 +101,7 @@ export class AIUpscaler extends EventDispatcher {
 		this.getGPUTextures = options.getGPUTextures || null;
 		this.getExposure = options.getExposure || ( () => 1.0 );
 		this.getToneMapping = options.getToneMapping || ( () => ACESFilmicToneMapping );
+		this.getColorSpace = options.getColorSpace || ( () => 'srgb' );
 		this.getSaturation = options.getSaturation || ( () => 1.0 );
 		this.getDisplayGain = options.getDisplayGain || ( () => null );
 		this.getTransparentBackground = options.getTransparentBackground || ( () => false );
@@ -273,6 +275,8 @@ export class AIUpscaler extends EventDispatcher {
 		// Capture source image SYNCHRONOUSLY before any async work.
 		// WebGPU canvas textures expire after each compositor frame,
 		// so we must grab the pixels before awaiting model load.
+		// What the pixels are encoded in: a canvas copy is converted to sRGB on the way, a tone map is the view's own.
+		this._sourceColorSpace = source?.colorSpace ?? ( this.hdr && this.getGPUTextures ? this.getColorSpace() : 'srgb' );
 		if ( source ) {
 
 			this._capturedSource = source;
@@ -617,7 +621,7 @@ export class AIUpscaler extends EventDispatcher {
 	 */
 	_tensorToImageData( tensorData, width, height, tileX, tileY ) {
 
-		const imageData = new ImageData( width, height );
+		const imageData = new ImageData( width, height, { colorSpace: this._sourceColorSpace ?? 'srgb' } );
 		const pixels = imageData.data;
 		const planeSize = width * height;
 		const alpha = this._upscaledAlpha;
@@ -744,7 +748,7 @@ export class AIUpscaler extends EventDispatcher {
 			// Already tone-mapped and encoded on the card; only quantized here.
 			const { planes, width, height } = sourceImageData;
 			const count = width * height;
-			const imageData = ctx.createImageData( width, height );
+			const imageData = ctx.createImageData( width, height, { colorSpace: this._sourceColorSpace ?? 'srgb' } );
 			const pixels = imageData.data;
 
 			for ( let i = 0; i < count; i ++ ) {

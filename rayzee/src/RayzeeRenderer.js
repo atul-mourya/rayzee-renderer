@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	Scene, EventDispatcher, Box3, REVISION,
+	Scene, EventDispatcher, Box3, REVISION, HalfFloatType,
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -760,6 +760,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		// Holds the renderer and the issue log, both of which outlive it otherwise.
 		this.color?.dispose();
 		this.color = null;
+		this._pictureCopy = null;
 		this._textureReadback?.dispose();
 		this._textureReadback = null;
 		this._readbackToneMapper?.dispose();
@@ -2744,7 +2745,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
 	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the
 	 *   denoiser that published it (`'oidn'`, `'nrd'`).
-	 *   `toneMappedOn` is set for `'srgb'` only.
+	 *   `toneMappedOn` and `displayColorSpace` are set for `'srgb'` only: the bytes are the picture the canvas shows,
+	 *   in `'srgb'` or `'display-p3'` — a display the canvas cannot show as it is comes converted.
 	 */
 	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
 
@@ -2783,7 +2785,8 @@ export class RayzeeRenderer extends EventDispatcher {
 			const data = gpu ?? toneMapToRGBA8( shown
 				? await this._readTexture( shown.texture, width, height )
 				: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: ( fn || backdrop ) ? { fn, width, height, backdrop } : null } );
-			return { data, width, height, colorSpace, source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
+			// `colorSpace` stays 'srgb' — callers branch on it; the bytes are encoded for `displayColorSpace`.
+			return { data, width, height, colorSpace, displayColorSpace: this.color?.canvasColorSpace ?? 'srgb', source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
 
 		}
 
@@ -2982,25 +2985,52 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/**
 	 * Returns the canvas element holding the image on screen — denoised, graded and tone-mapped,
-	 * whatever is currently showing. The upscaler is the one thing that paints elsewhere.
+	 * whatever is currently showing. The upscaler is the one thing that paints elsewhere. While the
+	 * screen shows an HDR version, this is a copy holding the view itself, as a saved picture has it.
 	 * @returns {HTMLCanvasElement|null}
 	 */
 	getCanvas() {
 
 		if ( ! this.renderer?.domElement ) return null;
+		return this._displayCanvas() ?? this._pictureCanvas();
 
-		const shown = this._displayCanvas();
-		if ( shown ) return shown;
+	}
+
+	/** The render canvas's picture, readable now: the view itself, never the screen's HDR version of it. */
+	_pictureCanvas() {
+
+		const canvas = this.renderer.domElement;
+		const compositor = this.stages.compositor;
+		const context = this.pipeline?.context;
+		if ( ! compositor || ! context ) return canvas;
 
 		// A presented WebGPU canvas only reads back what was drawn immediately before, so draw.
 		// This also puts the denoised picture on it: the Compositor prefers it over the raw render.
-		if ( this.stages.compositor && this.pipeline?.context ) {
+		compositor.renderPicture( context );
+		// An HDR canvas holds more than a picture can: copy what fits, 8 bits in its colour space, then redraw the screen.
+		const extended = this.renderer.backend?.parameters?.outputType === HalfFloatType;
+		if ( ! ( extended || compositor.showsCanvasTransform ) || this._headless || typeof document === 'undefined' ) return canvas;
 
-			this.stages.compositor.render( this.pipeline.context );
+		const colorSpace = canvas.getContext( 'webgpu' )?.getConfiguration?.()?.colorSpace ?? 'srgb';
+		let copy = this._pictureCopy;
+		if ( ! copy || copy.colorSpace !== colorSpace ) {
+
+			copy = this._pictureCopy = { canvas: document.createElement( 'canvas' ), colorSpace };
 
 		}
 
-		return this.renderer.domElement;
+		if ( copy.canvas.width !== canvas.width || copy.canvas.height !== canvas.height ) {
+
+			copy.canvas.width = canvas.width;
+			copy.canvas.height = canvas.height;
+
+		}
+
+		const ctx = copy.canvas.getContext( '2d', { colorSpace } );
+		ctx.clearRect( 0, 0, canvas.width, canvas.height );
+		ctx.drawImage( canvas, 0, 0 );
+		compositor.render( context );
+		return copy.canvas;
 
 	}
 
@@ -3549,7 +3579,21 @@ export class RayzeeRenderer extends EventDispatcher {
 		this.color?.dispose();
 		this.color = new ColorClass( { issues: this._issues } );
 		setActiveColorManagement( this.color );
+		this.color.on?.( 'canvas', () => this._applyCanvasTransform() );
 		if ( this.renderer ) this.color.attachRenderer( this.renderer );
+
+	}
+
+	/** The colour pipeline changed what the canvas shows (an HDR version): draw it, without waking an idle loop. */
+	_applyCanvasTransform() {
+
+		const compositor = this.stages?.compositor;
+		if ( ! compositor ) return;
+		compositor.setCanvasTransform( this.color?.canvasTransform ?? null );
+		if ( ! compositor.showsCanvasTransform ) this._pictureCopy = null;
+
+		if ( this.animationManagerId ) this._needsDisplayRefresh = true;
+		else if ( this.pipeline?.context && ! this._deviceLost ) compositor.render( this.pipeline.context );
 
 	}
 
@@ -3955,6 +3999,7 @@ export class RayzeeRenderer extends EventDispatcher {
 			saturation: this.settings.get( 'saturation' ) ?? DEFAULT_STATE.saturation,
 			pathTracer: this.stages.pathTracer,
 			displaySources: this._displaySources(),
+			canvasTransform: this.color?.canvasTransform ?? null,
 		} );
 
 	}

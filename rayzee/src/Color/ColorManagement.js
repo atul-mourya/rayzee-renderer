@@ -18,10 +18,10 @@
  * safe half and the one most people want first.
  */
 
-import { LinearSRGBColorSpace, SRGBColorSpace } from 'three';
+import { LinearSRGBColorSpace, SRGBColorSpace, NoToneMapping, HalfFloatType } from 'three';
 
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { displayCanvasFit } from './Displays.js';
+import { displayCanvasFit, hdrViewFor, isHdrDisplay } from './Displays.js';
 
 import {
 	ensureRuntime, loadConfig as loadOcioConfig, unloadConfig as unloadOcioConfig,
@@ -36,7 +36,10 @@ import {
 	registerWithRenderer, onRegistryChange, getRegistryVersion, resetViewTransforms, FALLBACK_VIEW,
 	countTableTransforms, MAX_TABLE_TRANSFORMS, removeViewTransform, addViewTransform,
 } from './ViewTransforms.js';
-import { addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog } from './OcioViews.js';
+import {
+	addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog,
+	buildCanvasView, buildBakedCanvasView, canvasFitOf,
+} from './OcioViews.js';
 import { encodeBakedView, decodeBakedView, configFingerprint } from './BakedViews.js';
 import {
 	resolveInputSpace, textureInputSpace, resolveTextureSpace, setInputOverride, clearInputOverrides,
@@ -52,6 +55,22 @@ export { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManageme
 export function canvasColorSpaceFor( display ) {
 
 	return displayCanvasFit( display ) ?? 'srgb';
+
+}
+
+/** The canvas colour space a view's table is encoded for (`ocio.canvas`, set when it was baked). */
+function canvasOf( t ) {
+
+	return t?.source === 'ocio' ? t.ocio.canvas ?? canvasColorSpaceFor( t.ocio.display ) : 'srgb';
+
+}
+
+// Each is 2.2 MB on the card and 2.2 MB here.
+const RECENT_CANVAS_VIEWS = 4;
+
+function canvasKey( ocio, canvas ) {
+
+	return JSON.stringify( [ ocio.configId, ocio.display, ocio.view, ocio.look ?? null, ocio.source, ocio.context ?? null, canvas ] );
 
 }
 
@@ -110,6 +129,15 @@ export class ColorManagement {
 		this._useClock = 0;
 		this._lastBuiltin = FALLBACK_VIEW;
 		this._fingerprint = null;
+
+		// What the canvas shows in place of the active view (`{ key, table, hdr }`), and why HDR is not on screen.
+		this._hdrOutput = false;
+		this._canvasView = null;
+		this._canvasReason = null;
+		// canvasKey → canvas view, from saved files: an HDR version shown before the config loads.
+		this._bakedCanvasViews = new Map();
+		// canvasKey → the last few HDR versions baked, least recent first, so switching back needs no bake.
+		this._recentCanvasViews = new Map();
 
 		setOcioIssueLog( issues );
 
@@ -254,6 +282,7 @@ export class ColorManagement {
 		}
 
 		if ( ( this._workingSpace ?? null ) !== ( previous ?? null ) ) this._emit( 'workingSpace', this.workingSpace );
+		this._updateCanvasView();
 
 		return described;
 
@@ -293,6 +322,7 @@ export class ColorManagement {
 
 		setWorkingMatrix( null );
 		this._applyRendererOutputColorSpace();
+		this._updateCanvasView();
 		this._emit( 'config', null );
 		this._emit( 'workingSpace', this.workingSpace );
 
@@ -311,6 +341,7 @@ export class ColorManagement {
 			this._renderer.toneMapping = getViewTransform( this._lastBuiltin ) ? this._lastBuiltin : FALLBACK_VIEW;
 			this._activeView = null;
 			this._applyRendererOutputColorSpace();
+			this._updateCanvasView();
 
 		}
 
@@ -330,6 +361,9 @@ export class ColorManagement {
 	 * Register a view saved by {@link saveBakedView}. Needs neither the runtime nor its config, so a
 	 * host can show the view first and load the config when it is needed; loading that config later
 	 * keeps this entry when its files are the ones it was baked from.
+	 *
+	 * A file saved with `{ hdr: true }` is a view's HDR version instead: it is kept for that view and shown while
+	 * {@link setHdrOutput} is on, and the view's own entry is returned.
 	 *
 	 * @param {ArrayBuffer|Uint8Array} bytes
 	 * @param {Object} [options]
@@ -352,6 +386,18 @@ export class ColorManagement {
 
 		}
 
+		if ( baked.for ) {
+
+			const key = canvasKey( { ...baked, ...baked.for }, baked.canvas ?? 'srgb' );
+			const old = this._bakedCanvasViews.get( key );
+			this._bakedCanvasViews.set( key, buildBakedCanvasView( baked ) );
+			if ( old && old !== this._canvasView?.table ) old.dispose();
+			this._updateCanvasView();
+			return [ ...VIEW_TRANSFORMS.values() ].find( t => t.source === 'ocio' && t.ocio.display === baked.for.display
+				&& t.ocio.view === baked.for.view && ( t.ocio.look ?? null ) === ( baked.look ?? null ) ) ?? null;
+
+		}
+
 		const existing = [ ...VIEW_TRANSFORMS.values() ].find( t => t.source === 'ocio' && t.ocio.display === baked.display
 			&& t.ocio.view === baked.view && ( t.ocio.look ?? null ) === ( baked.look ?? null ) );
 		if ( ! existing ) this._makeRoomForTable();
@@ -361,20 +407,41 @@ export class ColorManagement {
 	}
 
 	/**
-	 * A registered OCIO view as a file for {@link loadBakedView}.
+	 * A registered OCIO view as a file for {@link loadBakedView}; with `hdr`, its HDR version.
+	 * @param {number} id
+	 * @param {Object} [options]
+	 * @param {boolean} [options.hdr=false]
 	 * @returns {Promise<Uint8Array>}
 	 */
-	async saveBakedView( id ) {
+	async saveBakedView( id, { hdr = false } = {} ) {
 
 		const t = getViewTransform( id );
 		if ( t?.source !== 'ocio' ) throw new Error( `no OCIO view with id ${id}` );
 
 		const config = describeConfig();
-		return await encodeBakedView( t, {
+		const extra = {
 			configId: config?.id ?? t.ocio.configId,
 			fingerprint: ( config ? await this._fingerprint : null ) ?? t.ocio.baked?.fingerprint ?? null,
 			ocioVersion: config?.ocioVersion ?? t.ocio.baked?.ocioVersion ?? null,
-		} );
+		};
+		if ( ! hdr ) return await encodeBakedView( t, extra );
+
+		const canvas = canvasOf( t );
+		const key = canvasKey( t.ocio, canvas );
+		const held = this._canvasView?.key === key ? this._canvasView.table : this._bakedCanvasViews.get( key ) ?? this._recentCanvasViews.get( key );
+		const target = held ? null : config && hdrViewFor( config, t.ocio.display, t.ocio.view );
+		if ( ! held && ! target ) throw new Error( `"${t.name}" has no HDR version${config ? ' in this config' : ' without its config loaded'}` );
+
+		const table = held ?? this._buildCanvasView( t, target, canvas );
+		try {
+
+			return await encodeBakedView( table, extra );
+
+		} finally {
+
+			if ( table !== held ) table.dispose();
+
+		}
 
 	}
 
@@ -481,6 +548,7 @@ export class ColorManagement {
 
 		if ( this._renderer ) this._renderer.toneMapping = id;
 		this._applyRendererOutputColorSpace();
+		this._updateCanvasView();
 		this._emit( 'view', t );
 		return t;
 
@@ -647,6 +715,7 @@ export class ColorManagement {
 
 		const rebaked = this._rebakeView( t );
 		if ( rebaked ) this._activeView = { ...rebaked.ocio, id: rebaked.id, name: rebaked.name };
+		this._updateCanvasView();
 
 	}
 
@@ -659,6 +728,7 @@ export class ColorManagement {
 		if ( getViewTransform( renderer.toneMapping )?.source === 'builtin' ) this._lastBuiltin = renderer.toneMapping;
 		const n = registerWithRenderer( renderer );
 		this._applyRendererOutputColorSpace();
+		this._updateCanvasView();
 		return n;
 
 	}
@@ -673,7 +743,7 @@ export class ColorManagement {
 
 		const t = getViewTransform( this._renderer.toneMapping );
 		this._renderer.outputColorSpace = t?.outputEncoded ? LinearSRGBColorSpace : SRGBColorSpace;
-		this._applyCanvasColorSpace( t?.source === 'ocio' ? canvasColorSpaceFor( t.ocio.display ) : 'srgb' );
+		this._applyCanvasColorSpace( canvasOf( t ) );
 
 	}
 
@@ -687,10 +757,10 @@ export class ColorManagement {
 	 */
 	_applyCanvasColorSpace( colorSpace ) {
 
+		this._canvasColorSpace = colorSpace;
 		const canvas = this._renderer?.domElement;
 		const context = canvas?.getContext?.( 'webgpu' );
-		const current = context?.getConfiguration?.();
-		if ( ! current ) return;
+		if ( ! context?.configure ) return;
 
 		// three.js configures the context again on every resize, without a colour space — so a
 		// one-off configure here was undone by the next resize. Wrapping this one context's
@@ -704,7 +774,8 @@ export class ColorManagement {
 		}
 
 		context.__rayzeeColorSpace = colorSpace;
-		if ( current.colorSpace === colorSpace ) return;
+		const current = context.getConfiguration?.();
+		if ( ! current || current.colorSpace === colorSpace ) return;
 
 		try {
 
@@ -719,6 +790,166 @@ export class ColorManagement {
 			);
 
 		}
+
+	}
+
+	// ── HDR on screen ───────────────────────────────────────────────────────────────────────
+
+	/**
+	 * Show the active view's HDR version (`hdrViewFor`) on a half-float, extended-range canvas, 1.0 at 100 nits. Only the
+	 * canvas: readbacks and saved pictures keep the view itself. `status().hdr` says what is shown, or why not.
+	 * @param {boolean} enabled
+	 */
+	setHdrOutput( enabled ) {
+
+		if ( !! enabled === this._hdrOutput ) return;
+		this._hdrOutput = !! enabled;
+		this._updateCanvasView();
+
+	}
+
+	get hdrOutput() {
+
+		return this._hdrOutput;
+
+	}
+
+	/** The colour space the canvas, and so every picture read from it, is in: 'srgb' or 'display-p3'. */
+	get canvasColorSpace() {
+
+		return this._canvasColorSpace ?? 'srgb';
+
+	}
+
+	/**
+	 * Whether the canvas shows a display as it is ('srgb', 'display-p3') or converted (null), measured through the config.
+	 * Without one, by its name.
+	 */
+	displayFit( display ) {
+
+		return hasConfig() ? canvasFitOf( display ).fit : displayCanvasFit( display );
+
+	}
+
+	/** What the canvas shows the active view through, `( color, exposure ) => node`; null for the view itself. */
+	get canvasTransform() {
+
+		return this._canvasView?.table?.tsl ?? null;
+
+	}
+
+	_canvasOnScreen() {
+
+		const canvas = this._renderer?.domElement;
+		return ( typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement )
+			|| ( typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas );
+
+	}
+
+	/** What the canvas shows for the active view: `{ key, table, hdr }`, a `target` to bake, or a `reason` for nothing. */
+	_canvasPlan() {
+
+		const t = this._renderer ? getViewTransform( this._renderer.toneMapping ) : null;
+		if ( ! t || ! this._hdrOutput ) return { reason: null };
+
+		if ( t.source !== 'ocio' ) {
+
+			// None is unclamped, so on an HDR canvas whatever is brighter than white shows brighter.
+			return t.id === NoToneMapping ? { key: 'none', table: null, hdr: true } : { reason: 'no-hdr-version' };
+
+		}
+
+		// A view for an HDR display is baked with its range: the canvas only has to hold it.
+		const config = describeConfig();
+		if ( isHdrDisplay( config, t.ocio.display ) ) return { key: 'own', table: null, hdr: true };
+
+		const canvas = canvasOf( t );
+		const key = canvasKey( t.ocio, canvas );
+		const baked = this._bakedCanvasViews.get( key );
+		if ( baked ) return { key, table: baked, hdr: true };
+		const target = config && hdrViewFor( config, t.ocio.display, t.ocio.view );
+		if ( target ) return { key, target, canvas, view: t, hdr: true };
+		return { reason: config ? 'no-hdr-version' : 'needs-config' };
+
+	}
+
+	_buildCanvasView( t, target, canvas ) {
+
+		const { look, context, source, size, display, view } = t.ocio;
+		return buildCanvasView( { ...target, look, context, source, size, canvas, for: { display, view } } );
+
+	}
+
+	/** Bring the canvas in step with the active view and the HDR setting. */
+	_updateCanvasView() {
+
+		const plan = this._canvasPlan();
+		const current = this._canvasView;
+		let table = plan.table ?? ( plan.key && plan.key === current?.key ? current.table : null ) ?? this._recentCanvasViews.get( plan.key ) ?? null;
+
+		if ( plan.target && ! table ) {
+
+			try {
+
+				table = this._buildCanvasView( plan.view, plan.target, plan.canvas );
+
+			} catch ( error ) {
+
+				this._issues?.warn(
+					ISSUE_CODES.VIEW_TRANSFORM_BAKE_FAILED,
+					`could not bake how the screen shows "${plan.view.name}": ${error.message}`,
+					{ ...plan.target }
+				);
+				this._setCanvasView( null, 'bake-failed' );
+				return;
+
+			}
+
+		}
+
+		if ( plan.target ) this._rememberCanvasView( plan.key, table );
+		this._setCanvasView( plan.key ? { key: plan.key, table, hdr: plan.hdr } : null, plan.reason ?? null );
+
+	}
+
+	_rememberCanvasView( key, table ) {
+
+		const recent = this._recentCanvasViews;
+		recent.delete( key );
+		recent.set( key, table );
+		while ( recent.size > RECENT_CANVAS_VIEWS ) {
+
+			const [ oldest, old ] = recent.entries().next().value;
+			recent.delete( oldest );
+			if ( old !== this._canvasView?.table && old !== table ) old.dispose();
+
+		}
+
+	}
+
+	_setCanvasView( next, reason ) {
+
+		const old = this._canvasView;
+		const kept = new Set( [ ...this._bakedCanvasViews.values(), ...this._recentCanvasViews.values() ] );
+		if ( old?.table && old.table !== next?.table && ! kept.has( old.table ) ) old.table.dispose();
+
+		const hdr = !! next?.hdr && this._canvasOnScreen();
+		const why = reason ?? ( next?.hdr && ! hdr ? 'no-screen' : null );
+		const changed = ( old?.table ?? null ) !== ( next?.table ?? null ) || !! old?.hdr !== !! next?.hdr || this._canvasReason !== why;
+		this._canvasView = next;
+		this._canvasReason = why;
+
+		// three.js reads the canvas format, and from it the tone mapping mode, when it next configures the canvas.
+		const backend = this._renderer?.backend;
+		const outputType = hdr ? HalfFloatType : undefined;
+		if ( backend?.parameters && backend.parameters.outputType !== outputType ) {
+
+			backend.parameters.outputType = outputType;
+			backend.updateSize?.();
+
+		}
+
+		if ( changed ) this._emit( 'canvas', this.canvasTransform );
 
 	}
 
@@ -1046,6 +1277,7 @@ export class ColorManagement {
 
 		const config = describeConfig();
 		const active = this._renderer ? getViewTransform( this._renderer.toneMapping ) : null;
+		const showing = !! this._canvasView?.hdr && this._canvasOnScreen();
 
 		return {
 			config,
@@ -1058,6 +1290,14 @@ export class ColorManagement {
 			views: listViewTransforms(),
 			registryVersion: getRegistryVersion(),
 			bakeError: active?.error ?? null,
+			canvasColorSpace: this.canvasColorSpace,
+			// `reason` when HDR is on but not shown: 'no-hdr-version' | 'needs-config' | 'bake-failed' | 'no-screen'.
+			hdr: {
+				on: this._hdrOutput,
+				showing,
+				view: showing ? this._canvasView.table?.name ?? active?.name ?? null : null,
+				reason: this._canvasReason,
+			},
 		};
 
 	}
@@ -1067,6 +1307,10 @@ export class ColorManagement {
 		this._offRegistry?.();
 		this._listeners.clear();
 		this._releaseViews();
+		for ( const table of new Set( [ this._canvasView?.table, ...this._bakedCanvasViews.values(), ...this._recentCanvasViews.values() ] ) ) table?.dispose();
+		this._canvasView = null;
+		this._bakedCanvasViews.clear();
+		this._recentCanvasViews.clear();
 		setOcioIssueLog( null );
 		this._renderer = null;
 		this._issues = null;

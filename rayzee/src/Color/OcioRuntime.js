@@ -199,6 +199,13 @@ export function getConfigInfo() {
 
 }
 
+/** The config's own YAML, or null. */
+export function getConfigText() {
+
+	return configText;
+
+}
+
 /**
  * What the config offers, in the engine's own shape.
  *
@@ -272,15 +279,23 @@ export function describeConfig() {
 
 function safeBuiltinYaml( rt, name ) {
 
-	try {
+	// The runtime loads `ocio://name` and `name` alike, but its YAML getter knows only the bare name.
+	for ( const candidate of [ name, name.replace( /^ocio:\/\//, '' ) ] ) {
 
-		return rt.ocio.getBuiltinConfigYaml( name );
+		try {
 
-	} catch {
+			const yaml = rt.ocio.getBuiltinConfigYaml( candidate );
+			if ( yaml ) return yaml;
 
-		return null;
+		} catch {
+
+			// try the next spelling
+
+		}
 
 	}
+
+	return null;
 
 }
 

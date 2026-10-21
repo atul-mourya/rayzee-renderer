@@ -730,8 +730,18 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
 - ⚠️ `SimpleSky` clears `userData.__rayzeeColorSpace` on every rewrite, or a new sky is never converted. The physical
   sky bakes straight into the working space.
 - ⚠️ Grid index 0 is baked from exactly 0, or every render has a raised black floor.
-- ⚠️ App: rerun `npm run color:bake` and upload `default-view.bin` whenever the default config or view changes. The
-  GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry `categories`.
+- **HDR on screen** (`app.color.setHdrOutput()`, off in the engine; the app follows `(dynamic-range: high)`): the canvas
+  goes half-float, extended range, and shows the view's HDR version from the config (`hdrViewFor`; AgX → "AgX - HDR 1000
+  nits"), decoded to 1.0 = 100 nits (`buildCanvasView`). ⚠️ It is not a registry entry and never reaches a readback:
+  saved pictures go through `getCanvas()`, which draws the view itself (`compositor.renderPicture()`) into a 2D copy.
+  ⚠️ The canvas format is three's `backend.parameters.outputType`, read at its next configure (`backend.updateSize()`).
+- **Every display shows the light it would emit**: only sRGB and Display P3 are canvas encodings (`canvasFitOf()`
+  measures it through the config); every other display's view is baked converted for the canvas (`ocio.emulated`,
+  `ocio.canvas`), so screen, readbacks and pictures agree. The Screen switch keeps the tone mapping (`matchingView`).
+  `tests/unit/color/colorCombinations.test.js` holds every display × view × look on four configs.
+- ⚠️ App: rerun `npm run color:bake` and upload `default-view.bin` and `default-view-hdr.bin` whenever the default config
+  or view changes. The GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry
+  `categories`.
 
 ### Physical sky (`Processor/PhysicalSky.js`, `Processor/AtmosphereModel.js`, `Processor/SunPosition.js`, `TSL/Atmosphere.js`, `TSL/EnvironmentCDF.js`, `TSL/Sun.js`)
 An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class

@@ -125,25 +125,33 @@ const TECHNICAL_LOOK = /gamut compression|^lmt\b/i;
 /**
  * The looks that belong with a view, as Blender presents them.
  *
- * A look named "<view> - Punchy" is that view's, and is offered as "Punchy". When a view has looks
- * of its own, only those are offered; otherwise the unprefixed looks are. Measured against Blender:
- * with AgX it accepts only the "AgX - …" looks, with Standard or Filmic only the plain contrast ones.
+ * A look named "<view> - Punchy" is that view's, and is offered as "Punchy" — with every version of the view's tone
+ * mapping, on every display ("AgX - Punchy" also suits "AgX - HDR 1000 nits"). When a view has looks of its own, only
+ * those are offered; otherwise the unprefixed looks are. Measured against Blender: with AgX it accepts only the
+ * "AgX - …" looks, with Standard or Filmic only the plain contrast ones.
  *
  * Technical looks — gamut compression, LMTs — come back separately: they fix camera footage, they
  * are not a grade, and a list that mixes the two invites the wrong choice.
  *
+ * @param {string[]} allViewNames - every view the config has, on any display
+ * @param {function(string, string): boolean} [sameToneMapping] - the engine's, to match a look's view across versions
  * @returns {{ creative: Array<{ value, label, description }>, technical: Array<{ value, label, description }> }}
  */
-export function looksForView( looks, viewName, allViewNames = [] ) {
+export function looksForView( looks, viewName, allViewNames = [], sameToneMapping = ( a, b ) => a === b ) {
 
-	const prefixOf = look => allViewNames.find( v => look.name.startsWith( `${v} - ` ) ) ?? null;
-	const own = looks.filter( l => prefixOf( l ) === viewName );
+	const prefixOf = look => allViewNames.filter( v => look.name.startsWith( `${v} - ` ) ).sort( ( a, b ) => b.length - a.length )[ 0 ] ?? null;
+	const own = looks.filter( l => {
+
+		const prefix = prefixOf( l );
+		return prefix !== null && sameToneMapping( prefix, viewName );
+
+	} );
 	const pool = own.length ? own : looks.filter( l => prefixOf( l ) === null );
 
 	const creative = [], technical = [];
 	for ( const l of pool ) {
 
-		const bare = own.length ? l.name.slice( viewName.length + 3 ) : l.name;
+		const bare = own.length ? l.name.slice( prefixOf( l ).length + 3 ) : l.name;
 		const isTechnical = TECHNICAL_LOOK.test( l.name ) || TECHNICAL_LOOK.test( l.description ?? '' );
 		const label = isTechnical ? bare.replace( /^aces\s+[\d.]+\s+/i, '' ) : bare;
 		( isTechnical ? technical : creative ).push( { value: l.name, label, description: l.description || l.name, hint: hintFrom( LOOK_HINTS, label ) } );
@@ -321,38 +329,14 @@ export const screenHint = name => hintFrom( SCREEN_HINTS, String( name ) );
 /** What a Tone Mapping option does, in a few words. Works for OCIO views and the built-in curves alike. */
 export const toneMappingHint = name => hintFrom( TONE_MAPPING_HINTS, String( name ) );
 
-const HDR_ENCODINGS = new Set( [ 'hdr-video', 'edr-video' ] );
-const HDR_DISPLAY_NAME = /(^|[^a-z])(hdr|pq|hlg|st-?2084|2100)([^a-z]|$)/i;
-
-/**
- * Whether a display is HDR, the way Blender splits its Display menu. A config says so itself: the
- * colour space a display's views land in carries `encoding: hdr-video`, or `edr-video` for Apple's
- * extended range. ACES configs call that space `<USE_DISPLAY_NAME>`, meaning the display's own.
- * The name is the fallback, for configs that leave encoding out.
- */
-export function isHdrDisplay( config, display ) {
-
-	const encodingOf = new Map();
-	for ( const c of config?.colorSpaces ?? [] ) {
-
-		for ( const n of [ c.name, ...( c.aliases ?? [] ) ] ) encodingOf.set( n, c.encoding );
-
-	}
-
-	const spaceOf = v => ( v.colorSpace === '<USE_DISPLAY_NAME>' ? display : v.colorSpace );
-	const encodings = ( config?.views?.[ display ] ?? [] ).map( v => encodingOf.get( spaceOf( v ) ) ).filter( Boolean );
-	if ( encodings.length ) return encodings.some( e => HDR_ENCODINGS.has( e ) );
-	return HDR_DISPLAY_NAME.test( display );
-
-}
-
 /**
  * Displays split into SDR and HDR. A display this screen cannot show as intended is still offered
  * (a render graded for a TV, a file for a cinema), but its tooltip says the screen shows it converted.
  *
+ * @param {{ canvasFit: function, isHdr: function }} displays - the engine's `displayCanvasFit` and `isHdrDisplay`
  * @param {{ p3: boolean }} screen - what the screen reports
  */
-export function displaySections( config, canvasFit, screen = { p3: false } ) {
+export function displaySections( config, { canvasFit, isHdr }, screen = { p3: false } ) {
 
 	const sdr = [], hdr = [];
 	for ( const d of config?.displays ?? [] ) {
@@ -361,7 +345,7 @@ export function displaySections( config, canvasFit, screen = { p3: false } ) {
 		const native = fit === 'srgb' || ( fit === 'display-p3' && screen.p3 );
 		const label = displayLabel( d );
 		const entry = { value: d, label, native, hint: screenHint( d ), description: native ? d : `${label} — this screen shows it converted` };
-		( isHdrDisplay( config, d ) ? hdr : sdr ).push( entry );
+		( isHdr( config, d ) ? hdr : sdr ).push( entry );
 
 	}
 

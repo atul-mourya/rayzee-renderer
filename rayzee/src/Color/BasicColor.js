@@ -105,6 +105,31 @@ export class BasicColor {
 
 	setWorkingSpace() {}
 
+	/** HDR on screen needs the OCIO pipeline's canvas handling. */
+	setHdrOutput( enabled ) {
+
+		if ( enabled ) this._issues?.warn( ISSUE_CODES.CAPABILITY_MISSING, 'HDR on screen needs rayzee/addons/color', { capability: 'color' } );
+
+	}
+
+	get hdrOutput() {
+
+		return false;
+
+	}
+
+	get canvasTransform() {
+
+		return null;
+
+	}
+
+	get canvasColorSpace() {
+
+		return 'srgb';
+
+	}
+
 	/** No export space without a config: the working space as it is. */
 	exportPixels( rgba ) {
 
@@ -126,6 +151,8 @@ export class BasicColor {
 			views: listViewTransforms(),
 			registryVersion: getRegistryVersion(),
 			bakeError: active?.error ?? null,
+			canvasColorSpace: 'srgb',
+			hdr: { on: false, showing: false, view: null, reason: null },
 		};
 
 	}

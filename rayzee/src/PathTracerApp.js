@@ -1114,6 +1114,8 @@ export class PathTracerApp extends RayzeeRenderer {
 			getExposure: () => this.settings.get( 'exposure' ) ?? 1.0,
 			getSaturation: () => this.settings.get( 'saturation' ) ?? 1.0,
 			getDisplayGain: () => this._displayGain(),
+			getPictureCanvas: () => this._pictureCanvas(),
+			getColorSpace: () => this.color?.canvasColorSpace ?? 'srgb',
 			issues: this._issues,
 		} );
 

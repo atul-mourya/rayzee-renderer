@@ -105,14 +105,18 @@ export class DenoisingManager extends EventDispatcher {
 	 * @param {Function}                               params.getExposure       - () => current exposure value
 	 * @param {Function}                               params.getSaturation     - () => current saturation value
 	 * @param {Function}                               [params.getDisplayGain]  - () => the shown picture's per-pixel gain (PackedToneMapper `gain`)
+	 * @param {Function}                               [params.getPictureCanvas] - () => a canvas holding the view as saved, not its HDR version
+	 * @param {Function}                               [params.getColorSpace]    - () => the colour space tone-mapped pixels are in
 	 * @param {import('../EngineIssues.js').IssueLog}  [params.issues]
 	 */
-	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getDisplayGain = null, issues = null } ) {
+	constructor( { renderer, mainCanvas, stages, pipeline, getExposure, getSaturation, getDisplayGain = null, getPictureCanvas = null, getColorSpace = null, issues = null } ) {
 
 		super();
 
 		this.renderer = renderer;
 		this._issues = issues;
+		this._getPictureCanvas = getPictureCanvas;
+		this._getColorSpace = getColorSpace;
 		this.mainCanvas = mainCanvas;
 		this.upscalerCanvas = this._createUpscalerCanvas( mainCanvas );
 		this.pipeline = pipeline;
@@ -405,7 +409,7 @@ export class DenoisingManager extends EventDispatcher {
 			// picture when OIDN is on, the raw render otherwise — so the upscaler always enlarges
 			// what the viewer is actually looking at. It used to read its own canvas when the
 			// denoiser was on, which only worked while the denoiser painted there.
-			getSourceCanvas: () => this.renderer.domElement,
+			getSourceCanvas: () => this._getPictureCanvas?.() ?? this.renderer.domElement,
 
 			refreshInput: () => {
 
@@ -424,6 +428,7 @@ export class DenoisingManager extends EventDispatcher {
 
 			getExposure: () => this._getEffectiveExposure(),
 			getToneMapping: () => this._getToneMapping(),
+			getColorSpace: () => this._colorSpace(),
 			getSaturation: () => this._getSaturation(),
 			getDisplayGain: () => this._getDisplayGain?.() ?? null,
 			getTransparentBackground: () => !! this._settings?.get( 'transparentBackground' ),
@@ -1268,12 +1273,12 @@ export class DenoisingManager extends EventDispatcher {
 
 			if ( wantESRGAN ) {
 
-				await this.upscaler.start( new ImageData( image.rgba8, image.width, image.height ) );
+				await this.upscaler.start( new ImageData( image.rgba8, image.width, image.height, { colorSpace: this._colorSpace() } ) );
 				return;
 
 			}
 
-			sr.presentRGBA8( this.upscalerCanvas, image.rgba8, image.width, image.height );
+			sr.presentRGBA8( this.upscalerCanvas, image.rgba8, image.width, image.height, this._colorSpace() );
 
 			if ( ! isStillComplete() ) {
 
@@ -1594,6 +1599,8 @@ export class DenoisingManager extends EventDispatcher {
 		this._getExposure = null;
 		this._getSaturation = null;
 		this._getDisplayGain = null;
+		this._getPictureCanvas = null;
+		this._getColorSpace = null;
 		this._issues = null;
 
 		if ( this.upscalerCanvas?.parentNode ) {
@@ -1824,6 +1831,13 @@ export class DenoisingManager extends EventDispatcher {
 	_getToneMapping() {
 
 		return this.renderer.toneMapping;
+
+	}
+
+	/** The colour space tone-mapped pixels come in: the canvas's, set by the view. */
+	_colorSpace() {
+
+		return this._getColorSpace?.() ?? 'srgb';
 
 	}
 

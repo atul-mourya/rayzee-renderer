@@ -1,6 +1,6 @@
-import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If } from 'three/tsl';
+import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If, toneMappingExposure } from 'three/tsl';
 import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
-import { NoBlending, NoToneMapping } from 'three';
+import { NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../TSL/Common.js';
 import { backdropGain } from '../Processor/ToneMapCPU.js';
@@ -57,11 +57,16 @@ export class Compositor extends RenderStage {
 		this._holdBackdrop = uniform( 0, 'int' );
 		this._backdropGain = uniform( 1.0 );
 
+		this._canvasTransform = null;
+		this._canvasMaterial = null;
+		this._canvasQuad = null;
+
 		this.compositorMaterial = new MeshBasicNodeMaterial();
 		this.compositorMaterial.blending = NoBlending;
 		this._buildColorNode();
 
 		this.compositorQuad = new QuadMesh( this.compositorMaterial );
+		this.setCanvasTransform( options.canvasTransform ?? null );
 
 	}
 
@@ -85,8 +90,49 @@ export class Compositor extends RenderStage {
 
 		const outputAlpha = select( this._transparentBackground, texSample.w, 1.0 );
 
+		this._graded = gradedColor;
+		this._alpha = outputAlpha;
 		this.compositorMaterial.colorNode = vec4( gradedColor, outputAlpha );
 		this.compositorMaterial.needsUpdate = true;
+		this._buildCanvasNode();
+
+	}
+
+	_buildCanvasNode() {
+
+		if ( ! this._canvasMaterial ) return;
+		this._canvasMaterial.colorNode = vec4( this._canvasTransform( this._graded, toneMappingExposure ), this._alpha );
+		this._canvasMaterial.needsUpdate = true;
+
+	}
+
+	/**
+	 * What the canvas shows instead of the renderer's view (`ColorManagement.canvasTransform`), already encoded for it.
+	 * Null shows the view itself, as `renderPicture()` always does.
+	 */
+	setCanvasTransform( transform ) {
+
+		if ( transform === this._canvasTransform ) return;
+		this._canvasTransform = transform;
+		this._canvasMaterial?.dispose();
+		this._canvasMaterial = null;
+		this._canvasQuad = null;
+
+		if ( transform ) {
+
+			this._canvasMaterial = new MeshBasicNodeMaterial();
+			this._canvasMaterial.blending = NoBlending;
+			this._canvasQuad = new QuadMesh( this._canvasMaterial );
+			this._buildCanvasNode();
+
+		}
+
+	}
+
+	/** Whether the canvas shows something other than the view a readback produces. */
+	get showsCanvasTransform() {
+
+		return this._canvasQuad !== null;
 
 	}
 
@@ -231,6 +277,19 @@ export class Compositor extends RenderStage {
 
 	render( context ) {
 
+		this._draw( context, false );
+
+	}
+
+	/** Draws the view itself, as a readback has it, not the canvas's version of it. */
+	renderPicture( context ) {
+
+		this._draw( context, true );
+
+	}
+
+	_draw( context, picture ) {
+
 		if ( ! this.enabled ) return;
 
 		if ( this._convergenceOverlay && this._ensureDebugMaterial() ) {
@@ -265,7 +324,27 @@ export class Compositor extends RenderStage {
 		this._sourceTexNode.value = sourceTexture;
 
 		this.renderer.setRenderTarget( null );
-		this.compositorQuad.render( this.renderer );
+		if ( picture || ! this._canvasQuad ) {
+
+			this.compositorQuad.render( this.renderer );
+			return;
+
+		}
+
+		// The transform has tone mapped and encoded for the canvas: the output pass must do neither again.
+		const { toneMapping, outputColorSpace } = this.renderer;
+		this.renderer.toneMapping = NoToneMapping;
+		this.renderer.outputColorSpace = ThreeColorManagement.workingColorSpace;
+		try {
+
+			this._canvasQuad.render( this.renderer );
+
+		} finally {
+
+			this.renderer.toneMapping = toneMapping;
+			this.renderer.outputColorSpace = outputColorSpace;
+
+		}
 
 	}
 
@@ -291,6 +370,10 @@ export class Compositor extends RenderStage {
 
 		this._sourceTexNode?.dispose();
 		this.compositorMaterial?.dispose();
+		this._canvasMaterial?.dispose();
+		this._canvasMaterial = null;
+		this._canvasQuad = null;
+		this._canvasTransform = null;
 		this._debugTexNode?.dispose();
 		this._debugMaterial?.dispose();
 		// QuadMesh extends Mesh — no dispose method; material already released above.

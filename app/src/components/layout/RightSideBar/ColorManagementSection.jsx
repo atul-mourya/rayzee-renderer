@@ -14,12 +14,13 @@ import { usePathTracerStore } from '@/store';
 import {
 	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
 	useColorStatus, useViewTransforms, saveEXR, DEFAULT_COLOR_CONFIG, ensureDefaultConfig, isDefaultConfigPending,
+	useHdrScreen, applyHdrScreen, HDR_SCREEN_KEY,
 } from '@/lib/colorManagement';
 import {
 	builtinConfigOptions, configLabel, viewLabels, looksForView, workingSpaceOptions, workingSpaceLabel,
 	exportSpaceOptions, displaySections, toneMappingHint,
 } from '@/lib/colorLabels';
-import { displayCanvasFit } from 'rayzee';
+import { displayCanvasFit, isHdrDisplay, matchingView, sameToneMapping } from 'rayzee';
 
 const NONE = '__none__';
 const LOAD = '__load__';
@@ -32,6 +33,11 @@ const DEFAULT_OPTION = {
 const EV_MIN = - 6;
 const EV_MAX = 6;
 const toEV = multiplier => Math.min( EV_MAX, Math.max( EV_MIN, Math.log2( Math.max( multiplier, 1e-6 ) ) ) );
+
+/** The looks a view offers, matched against every view the config has so a look follows its tone mapping across displays. */
+const looksOf = ( config, view ) => looksForView(
+	config.looks, view, [ ...new Set( Object.values( config.views ).flat().map( v => v.name ) ) ], sameToneMapping
+);
 
 const label = ( text, tip ) => <span className="opacity-50 text-xs truncate" title={tip}>{text}</span>;
 
@@ -74,6 +80,8 @@ const ColorManagementSection = () => {
 	const [ display, setDisplay ] = useState( null );
 	// Pipeline settings (colour system, render space, config variables) stay folded away unless opened.
 	const [ advancedOpen, setAdvancedOpen ] = useLocalStorage( 'rayzee-color-advanced-open', false );
+	const hdrScreen = useHdrScreen();
+	const [ hdrOn, setHdrOn ] = useLocalStorage( HDR_SCREEN_KEY, true );
 	const fileInput = useRef( null );
 
 	const syncToneMapping = useCallback( id => usePathTracerStore.getState().setToneMapping( id ), [] );
@@ -212,15 +220,16 @@ const ColorManagementSection = () => {
 	const onDisplay = useCallback( picked => {
 
 		setDisplay( picked );
-		const view = config.defaultViews[ picked ] ?? config.views[ picked ]?.[ 0 ]?.name;
+		// The same tone mapping on the new display — AgX stays AgX, as "AgX - HDR 1000 nits" on an HDR one.
+		const view = ( activeView && matchingView( config, activeDisplay, activeView, picked ) )
+			?? config.defaultViews[ picked ] ?? config.views[ picked ]?.[ 0 ]?.name;
 		if ( ! view ) return;
-		const names = ( config.views[ picked ] ?? [] ).map( v => v.name );
-		const { creative, technical } = looksForView( config.looks, view, names );
+		const { creative, technical } = looksOf( config, view );
 		const look = status.activeView?.look ?? null;
 		const kept = look && [ ...creative, ...technical ].some( l => l.value === look ) ? look : null;
 		applyView( { display: picked, view, look: kept }, 'Baking view' );
 
-	}, [ applyView, config, status ] );
+	}, [ applyView, config, status, activeDisplay, activeView ] );
 
 	const onView = useCallback( value => {
 
@@ -233,8 +242,7 @@ const ColorManagementSection = () => {
 		}
 
 		// A look belongs to a view; keep it only if the new view offers it too.
-		const names = ( config.views?.[ activeDisplay ] ?? [] ).map( v => v.name );
-		const { creative: keepable, technical: alsoKeepable } = looksForView( config.looks, value, names );
+		const { creative: keepable, technical: alsoKeepable } = looksOf( config, value );
 		const look = status.activeView?.look ?? null;
 		const kept = look && [ ...keepable, ...alsoKeepable ].some( l => l.value === look ) ? look : null;
 
@@ -297,6 +305,13 @@ const ColorManagementSection = () => {
 
 	}, [ run ] );
 
+	const onHdr = useCallback( on => {
+
+		setHdrOn( on );
+		applyHdrScreen( on );
+
+	}, [ setHdrOn ] );
+
 	const onExposure = useCallback( value => {
 
 		const ev = Array.isArray( value ) ? value[ 0 ] : value;
@@ -320,11 +335,11 @@ const ColorManagementSection = () => {
 	const viewValue = config || pending ? activeView ?? '' : String( toneMapping );
 
 	const { creative, technical } = config && activeView
-		? looksForView( config.looks, activeView, displayViews.map( v => v.name ) )
+		? looksOf( config, activeView )
 		: { creative: [], technical: [] };
 
 	const { sdr: sdrDisplays, hdr: hdrDisplays } = config
-		? displaySections( config, displayCanvasFit, { p3: matchMedia?.( '(color-gamut: p3)' )?.matches ?? false } )
+		? displaySections( config, { canvasFit: d => colorManagement()?.displayFit?.( d ) ?? displayCanvasFit( d ), isHdr: isHdrDisplay }, { p3: matchMedia?.( '(color-gamut: p3)' )?.matches ?? false } )
 		: { sdr: [], hdr: [] };
 	const displayColumns = [ { title: 'SDR', list: sdrDisplays }, { title: 'HDR', list: hdrDisplays } ].filter( c => c.list.length > 0 );
 
@@ -413,6 +428,18 @@ const ColorManagementSection = () => {
 							</div>
 						</SelectContent>
 					</Select>
+				</Row>
+			)}
+
+			{hdrScreen && (
+				<Row>
+					<span className="opacity-50 text-xs truncate" title="Lets bright lights and highlights shine brighter than white on this screen, as HDR photos and films do. Saved pictures are not affected.">HDR</span>
+					<div className="flex items-center gap-1 min-w-0">
+						{hdrOn && status?.hdr?.reason === 'no-hdr-version' && (
+							<span className="text-[10px] opacity-40 truncate" title="This tone mapping has no HDR version. AgX, ACES and Standard have one.">unavailable</span>
+						)}
+						<Switch checked={hdrOn} onCheckedChange={onHdr} />
+					</div>
 				</Row>
 			)}
 

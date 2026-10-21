@@ -110,17 +110,18 @@ export async function loadDefaultConfig( download = fetchDefaultConfig() ) {
 }
 
 /**
- * What startup downloads for the default look: its pre-baked view, and only when that is missing,
- * the whole config, still alongside the model.
+ * What startup downloads for the default look: its pre-baked view (and its HDR version, on an HDR
+ * screen), and only when that is missing, the whole config, still alongside the model.
  */
 export function fetchStartupColor() {
 
-	const { baseUrl, bakedView } = DEFAULT_COLOR_CONFIG;
+	const { baseUrl, bakedView, bakedHdrView } = DEFAULT_COLOR_CONFIG;
 	const baked = fetchBytes( baseUrl + bakedView );
 	const config = baked.then( () => null, () => fetchDefaultConfig() );
+	const hdr = wantsHdr() ? fetchBytes( baseUrl + bakedHdrView ).catch( () => null ) : Promise.resolve( null );
 	baked.catch( () => {} );
 	config.catch( () => {} );
-	return { baked, config };
+	return { baked, config, hdr };
 
 }
 
@@ -129,21 +130,93 @@ export function fetchStartupColor() {
  * runtime; its config loads when the colour controls are first used ({@link ensureDefaultConfig}).
  * @returns {Promise<{ view: Object }>} the active view entry
  */
-export async function showStartupColor( { baked, config } ) {
+export async function showStartupColor( { baked, config, hdr } ) {
 
+	let shown;
 	try {
 
 		const { id: configId, view: { display, view, look } } = DEFAULT_COLOR_CONFIG;
 		const cm = colorManagement();
 		const entry = await cm.loadBakedView( await baked, { expect: { configId, display, view, look } } );
-		return { view: cm.setActiveView( entry.id ) };
+		const hdrBytes = await hdr;
+		if ( hdrBytes ) await cm.loadBakedView( hdrBytes, { expect: { configId, look } } ).catch( err => console.warn( `No pre-baked HDR view: ${err.message}` ) );
+		shown = { view: cm.setActiveView( entry.id ) };
 
 	} catch ( err ) {
 
 		console.warn( `No pre-baked default view (${err.message}), loading the colour config` );
-		return await loadDefaultConfig( ( await config ) ?? fetchDefaultConfig() );
+		shown = await loadDefaultConfig( ( await config ) ?? fetchDefaultConfig() );
 
 	}
+
+	watchHdrScreen();
+	return shown;
+
+}
+
+// ── HDR on screen ──────────────────────────────────────────────────────────────────────────────
+
+/** The viewer's choice, per device: on unless turned off. */
+export const HDR_SCREEN_KEY = 'rayzee-hdr-screen';
+
+const hdrQuery = () => ( typeof matchMedia === 'function' ? matchMedia( '(dynamic-range: high)' ) : null );
+
+function hdrPreferred() {
+
+	try {
+
+		return JSON.parse( localStorage.getItem( HDR_SCREEN_KEY ) ?? 'true' ) !== false;
+
+	} catch {
+
+		return true;
+
+	}
+
+}
+
+const wantsHdr = () => !! hdrQuery()?.matches && hdrPreferred();
+
+/** Whether this screen shows HDR, following the window from screen to screen. */
+export function useHdrScreen() {
+
+	return useSyncExternalStore(
+		onChange => {
+
+			const query = hdrQuery();
+			query?.addEventListener( 'change', onChange );
+			return () => query?.removeEventListener( 'change', onChange );
+
+		},
+		() => !! hdrQuery()?.matches,
+		() => false
+	);
+
+}
+
+/**
+ * Brighter-than-white highlights on the canvas while this screen shows HDR and the viewer has not turned them off.
+ * The default config's HDR version needs that config when it was not pre-baked, so it is loaded then.
+ * @param {boolean} [preferred] - the viewer's choice; read from storage when omitted
+ */
+export function applyHdrScreen( preferred = hdrPreferred() ) {
+
+	const cm = colorManagement();
+	if ( ! cm?.setHdrOutput ) return;
+	cm.setHdrOutput( preferred && !! hdrQuery()?.matches );
+	if ( cm.status().hdr?.reason === 'needs-config' ) ensureDefaultConfig().catch( () => {} );
+
+}
+
+let watching = false;
+
+/** Applies {@link applyHdrScreen} now and whenever the window moves to a screen with more or less range. */
+export function watchHdrScreen() {
+
+	applyHdrScreen();
+	if ( watching ) return;
+	watching = true;
+	hdrQuery()?.addEventListener( 'change', () => applyHdrScreen() );
 
 }
 

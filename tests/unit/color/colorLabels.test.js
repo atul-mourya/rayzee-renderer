@@ -8,14 +8,16 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
 	builtinConfigOptions, configLabel, displayLabel, viewLabels, looksForView,
-	workingSpaceOptions, textureSpaceGroups, exportSpaceOptions, displaySections, isHdrDisplay, spaceLabel,
+	workingSpaceOptions, textureSpaceGroups, exportSpaceOptions, displaySections, spaceLabel,
 	screenHint, toneMappingHint,
 } from '@/lib/colorLabels.js';
-import { displayCanvasFit } from '@/core/Color/Displays.js';
+import { displayCanvasFit, isHdrDisplay, sameToneMapping } from '@/core/Color/Displays.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { loadConfig, listBuiltinConfigs, resetOcio } from '@/core/Color/OcioRuntime.js';
 import { findNativeLinearSpace } from '@/core/Color/ColorManagement.js';
 import { getConfigInfo } from '@/core/Color/OcioRuntime.js';
+
+const DISPLAYS = { canvasFit: displayCanvasFit, isHdr: isHdrDisplay };
 
 let available = true;
 try {
@@ -120,14 +122,14 @@ describe( 'labels that need no config', () => {
 			],
 		};
 
-		const onSrgb = displaySections( config, displayCanvasFit, { p3: false } );
+		const onSrgb = displaySections( config, DISPLAYS, { p3: false } );
 		expect( onSrgb.sdr.map( d => d.label ) ).toEqual( [ 'sRGB', 'Display P3', 'P3-D65' ] );
 		expect( onSrgb.hdr.map( d => d.label ) ).toEqual( [ 'Rec.2100-PQ', 'ST2084-P3-D65' ] );
 		expect( onSrgb.sdr.filter( d => d.native ).map( d => d.label ) ).toEqual( [ 'sRGB' ] );
 		expect( onSrgb.sdr[ 1 ].description ).toMatch( /shows it converted/ );
 		expect( onSrgb.hdr[ 0 ].hint ).toBe( 'HDR10 TV' );
 
-		const onP3 = displaySections( config, displayCanvasFit, { p3: true } );
+		const onP3 = displaySections( config, DISPLAYS, { p3: true } );
 		expect( onP3.sdr.filter( d => d.native ).map( d => d.label ) ).toEqual( [ 'sRGB', 'Display P3' ] );
 
 		expect( isHdrDisplay( config, 'P3-D65 - Display' ) ).toBe( false );
@@ -195,7 +197,7 @@ suite( 'the ACES CG config', () => {
 
 	it( 'files its PQ and HLG displays under HDR and the rest under SDR', () => {
 
-		const { sdr, hdr } = displaySections( config, displayCanvasFit, { p3: false } );
+		const { sdr, hdr } = displaySections( config, DISPLAYS, { p3: false } );
 		expect( sdr.map( d => d.label ) ).toContain( 'sRGB' );
 		expect( hdr.length ).toBeGreaterThan( 0 );
 		expect( hdr.map( d => d.label ) ).toEqual( expect.arrayContaining( [ 'Rec.2100-PQ', 'ST2084-P3-D65', 'Display P3 HDR' ] ) );
@@ -252,6 +254,12 @@ blenderSuite( "Blender's config", () => {
 		expect( aces.technical.map( l => l.label ) ).toEqual( [ 'Reference Gamut Compression' ] );
 		expect( aces.technical[ 0 ].hint ).toBe( 'tames over-saturated camera colours' );
 
+		// On an HDR display AgX is "AgX - HDR 1000 nits", and keeps AgX's looks.
+		const allViews = [ ...new Set( Object.values( config.views ).flat().map( v => v.name ) ) ];
+		const agxHdr = looksForView( config.looks, 'AgX - HDR 1000 nits', allViews, sameToneMapping );
+		expect( agxHdr.creative.map( l => l.label ) ).toEqual( agx.creative.map( l => l.label ) );
+		expect( looksForView( config.looks, 'Standard', allViews, sameToneMapping ).creative.map( l => l.label ) ).toEqual( standard.creative.map( l => l.label ) );
+
 		const hintOf = label => agx.creative.find( l => l.label === label )?.hint;
 		expect( hintOf( 'Punchy' ) ).toBe( 'richer colour, darker overall' );
 		expect( hintOf( 'Greyscale' ) ).toBe( 'black and white' );
@@ -262,7 +270,7 @@ blenderSuite( "Blender's config", () => {
 
 	it( 'splits its displays into SDR and HDR exactly as Blender\'s Display menu does', () => {
 
-		const { sdr, hdr } = displaySections( config, displayCanvasFit, { p3: false } );
+		const { sdr, hdr } = displaySections( config, DISPLAYS, { p3: false } );
 		expect( sdr.map( d => d.label ) ).toEqual( [ 'sRGB', 'Display P3', 'Rec.1886', 'Rec.2020' ] );
 		expect( hdr.map( d => d.label ) ).toEqual( [ 'Rec.2100-PQ', 'Rec.2100-HLG' ] );
 
