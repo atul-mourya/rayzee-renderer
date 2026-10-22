@@ -467,9 +467,9 @@ function withIndex( P, widths, index, basis ) {
 
 /**
  * A USD BasisCurves prim's curves (one point array, a count per curve) as one strip mesh. Modes and types are USD's;
- * the first normal of a curve orients its ribbon.
+ * the first normal of a curve orients its ribbon. `pause()` is awaited every 1024 curves, and again as they are joined.
  */
-export function tessellateCurves( spec ) {
+export async function tessellateCurves( spec, pause = null ) {
 
 	const { P, counts, widths = null, widthMode = 'constant', N = null, normalMode = 'vertex', type = 'cubic', basis = 'bspline', wrap = 'nonperiodic' } = spec;
 	const pieces = [];
@@ -523,6 +523,7 @@ export function tessellateCurves( spec ) {
 		}
 
 		start += n;
+		if ( pause && ( c & 1023 ) === 1023 ) await pause();
 
 	}
 
@@ -530,12 +531,14 @@ export function tessellateCurves( spec ) {
 	const positions = new Float32Array( vertices * 3 );
 	const indices = new Uint32Array( indexCount );
 	let v = 0, i = 0;
-	for ( const piece of pieces ) {
+	for ( let p = 0; p < pieces.length; p ++ ) {
 
+		const piece = pieces[ p ];
 		positions.set( piece.positions, v * 3 );
 		for ( let k = 0; k < piece.indices.length; k ++ ) indices[ i + k ] = piece.indices[ k ] + v;
 		v += piece.positions.length / 3;
 		i += piece.indices.length;
+		if ( pause && ( p & 1023 ) === 1023 ) await pause();
 
 	}
 

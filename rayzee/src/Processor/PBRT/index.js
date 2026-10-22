@@ -493,6 +493,7 @@ export async function loadPBRTScene( args ) {
 		curveSteps: args.curveSteps,
 		curveSides: args.curveSides,
 		curveTolerance: args.curveTolerance,
+		pause: args.pause,
 		usage,
 		resolvePLY: async ( filename ) => {
 

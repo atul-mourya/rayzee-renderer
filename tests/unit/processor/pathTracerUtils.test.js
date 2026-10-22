@@ -5,7 +5,8 @@ import { clamp, lerp, formatDuration, calculateAccumulationAlpha,
 	createDebounceFunction, areValuesEqual, optimizeShaderDefines,
 	getDisplaySamples, validateAndUpdateUniforms,
 	setStatusCallback, resetLoading, updateLoading, updateStats,
-	disposeMaterial, disposeMaterialTextures } from '@/core/Processor/utils.js';
+	disposeMaterial, disposeMaterialTextures, timeSlicer, computeInstanceBoundingBoxes } from '@/core/Processor/utils.js';
+import { BoxGeometry, BufferGeometry, Euler, Group, InstancedMesh, Matrix4, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 
 // ── clamp ────────────────────────────────────────────────────────
 
@@ -592,6 +593,93 @@ describe( 'disposeMaterialTextures', () => {
 	it( 'handles null material safely', () => {
 
 		expect( () => disposeMaterialTextures( null ) ).not.toThrow();
+
+	} );
+
+} );
+
+// ── timeSlicer ───────────────────────────────────────────────────
+
+describe( 'timeSlicer', () => {
+
+	it( 'gives a turn once its slice has passed, and starts the next slice after that turn', async () => {
+
+		let now = 1000;
+		const clock = vi.spyOn( performance, 'now' ).mockImplementation( () => now );
+		try {
+
+			const slice = timeSlicer( 50 );
+			expect( slice() ).toBeNull();
+			now += 49;
+			expect( slice() ).toBeNull();
+			now += 1;
+			const turn = slice();
+			expect( turn ).toBeInstanceOf( Promise );
+			await turn;
+			expect( slice() ).toBeNull();
+			now += 50;
+			expect( slice() ).toBeInstanceOf( Promise );
+
+		} finally {
+
+			clock.mockRestore();
+
+		}
+
+	} );
+
+} );
+
+// ── computeInstanceBoundingBoxes ─────────────────────────────────
+
+describe( 'computeInstanceBoundingBoxes', () => {
+
+	let seed = 3;
+	const rnd = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+	const instanced = ( geometry, n, count = n ) => {
+
+		const mesh = new InstancedMesh( geometry, new MeshBasicMaterial(), n );
+		const m = new Matrix4(), q = new Quaternion(), s = new Vector3();
+		for ( let i = 0; i < n; i ++ ) {
+
+			q.setFromEuler( new Euler( rnd() * 6, rnd() * 6, rnd() * 6 ) );
+			const k = 0.01 + rnd() * 30;
+			s.set( rnd() < 0.2 ? - k : k, k * ( 0.5 + rnd() ), k );
+			mesh.setMatrixAt( i, m.compose( new Vector3( ( rnd() - 0.5 ) * 1e4, rnd() * 1e3, ( rnd() - 0.5 ) * 1e4 ), q, s ) );
+
+		}
+
+		mesh.count = count;
+		return mesh;
+
+	};
+
+	const same = ( a, b ) => [ 'x', 'y', 'z' ].every( k => Object.is( a.min[ k ], b.min[ k ] ) && Object.is( a.max[ k ], b.max[ k ] ) );
+
+	it( 'matches InstancedMesh.computeBoundingBox bit for bit', () => {
+
+		const cases = [[ new BoxGeometry( 1, 2, 3 ), 1000 ], [ new SphereGeometry( 2 ), 500, 310 ], [ new BoxGeometry( 0, 0, 0 ), 10 ], [ new BufferGeometry(), 5 ], [ new BoxGeometry(), 4, 0 ]];
+		for ( const [ geometry, n, count ] of cases ) {
+
+			const three = instanced( geometry, n, count );
+			const ours = new InstancedMesh( geometry, three.material, n );
+			ours.instanceMatrix = three.instanceMatrix;
+			ours.count = three.count;
+			three.computeBoundingBox();
+			computeInstanceBoundingBoxes( new Group().add( ours ) );
+			expect( same( ours.boundingBox, three.boundingBox ) ).toBe( true );
+
+		}
+
+	} );
+
+	it( 'leaves an instanced mesh that has a box alone', () => {
+
+		const mesh = instanced( new BoxGeometry(), 8 );
+		mesh.computeBoundingBox();
+		const box = mesh.boundingBox;
+		computeInstanceBoundingBoxes( mesh );
+		expect( mesh.boundingBox ).toBe( box );
 
 	} );
 

@@ -227,21 +227,22 @@ export class TLASBuilder {
 
 	/**
 	 * Fill in each leaf's BLAS pointer, visibility and world-to-object matrix, and record where
-	 * the leaf landed. One O(n) pass, so it stays on the main thread while the SAH tree does not.
+	 * the leaf landed. One O(n) pass, so it stays on the main thread while the SAH tree does not;
+	 * nodes `[from, to)` only, if given.
 	 *
 	 * A node is 16 floats and the BLAS pointer needs 4, so the affine inverse fits in the
 	 * remaining 12: the ray moves into object space with no second binding, which matters
 	 * because Shade is already at the 10 storage buffers Metal allows. The inverse is derived
 	 * here rather than stored: a column of it costs 64 bytes a placement.
 	 */
-	static fillLeaves( data, nodeCount, table ) {
+	static fillLeaves( data, nodeCount, table, from = 0, to = nodeCount ) {
 
 		const idx = bvhIndexView( data );
 
 		if ( table.clusterCount > 0 ) {
 
 			// Built over clusters: each leaf holds one, its copies' transforms in records (table.writeRecord).
-			for ( let node = 0; node < nodeCount; node ++ ) {
+			for ( let node = from; node < to; node ++ ) {
 
 				const o = node * FLOATS_PER_NODE;
 				if ( idx[ o + 3 ] === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) table.writeClusterLeaf( data, idx, o, idx[ o + 1 ], table.clusterWorld, node );
@@ -252,7 +253,7 @@ export class TLASBuilder {
 
 		}
 
-		for ( let node = 0; node < nodeCount; node ++ ) {
+		for ( let node = from; node < to; node ++ ) {
 
 			const o = node * FLOATS_PER_NODE;
 			if ( idx[ o + 3 ] !== BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) continue;

@@ -380,9 +380,12 @@ function thinCurves( curve, rate, salt ) {
 
 export class USDSceneReader {
 
-	constructor( stage, { maxTriangles = Infinity, maxPlacements = Infinity, curveSteps = 2, resolveImage = async () => null, warn = () => {} } = {} ) {
+	/** `pause( prims, counting )` is awaited every 256 prims, `counting` during the counting pass. */
+	constructor( stage, { maxTriangles = Infinity, maxPlacements = Infinity, curveSteps = 2, resolveImage = async () => null, warn = () => {}, pause = null } = {} ) {
 
 		this.stage = stage;
+		this.pause = pause;
+		this._visited = 0;
 		this.maxTriangles = maxTriangles;
 		this.maxPlacements = maxPlacements;
 		this.curveSteps = curveSteps;
@@ -430,6 +433,7 @@ export class USDSceneReader {
 
 	async walk() {
 
+		this._visited = 0;
 		const root = this.stage.pseudoRoot;
 		const top = this.stage.upAxis === 'Z' ? new Matrix4().makeRotationX( - Math.PI / 2 ) : new Matrix4();
 		for ( const name of root.childNames() ) {
@@ -527,6 +531,7 @@ export class USDSceneReader {
 
 	async visit( prim, parent, out, ctx ) {
 
+		if ( this.pause && ( ++ this._visited & 255 ) === 0 ) await this.pause( this._visited, this.dry );
 		if ( ! prim.isDefined || prim.meta( 'active' ) === false ) return;
 		if ( prim.value( 'visibility' ) === 'invisible' ) return;
 		const purpose = prim.value( 'purpose' );

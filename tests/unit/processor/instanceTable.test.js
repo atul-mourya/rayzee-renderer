@@ -273,4 +273,38 @@ describe( 'InstanceTable', () => {
 
 	} );
 
+	describe( 'clusters', () => {
+
+		it( 'forms the same clusters in steps, each step saying how many entries are in theirs', () => {
+
+			const n = 300_000;
+			const world = new Float32Array( n * 6 );
+			let seed = 11;
+			const rnd = () => ( seed = ( seed * 16807 ) % 2147483647 ) / 2147483647;
+			for ( let e = 0; e < n; e ++ ) {
+
+				const x = rnd() * 1000, y = rnd() * 50, z = rnd() * 1000, r = rnd() * 4;
+				world.set( [ x - r, y - r, z - r, x + r, y + r, z + r ], e * 6 );
+
+			}
+
+			const table = () => Object.assign( new InstanceTable(), { entryCount: n, clusterCount: Math.ceil( n / 4 ) } );
+			const whole = table(), stepped = table();
+			const bounds = whole.formClusters( world );
+
+			const steps = stepped.clusterSteps( world );
+			const placed = [];
+			let step;
+			while ( ! ( step = steps.next() ).done ) placed.push( step.value );
+
+			expect( placed.length ).toBeGreaterThan( 2 );
+			expect( placed ).toEqual( [ ...placed ].sort( ( a, b ) => a - b ) );
+			expect( placed.at( - 1 ) ).toBeLessThanOrEqual( n );
+			expect( step.value.findIndex( ( v, i ) => v !== bounds[ i ] ) ).toBe( - 1 );
+			expect( stepped.recordEntry.findIndex( ( v, i ) => v !== whole.recordEntry[ i ] ) ).toBe( - 1 );
+
+		} );
+
+	} );
+
 } );

@@ -21,7 +21,7 @@ import { ENGINE_AREAS } from '../Storage/areas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../Storage/SceneGraphCodec.js';
 import { worthStoring } from '../Storage/sceneCachePolicy.js';
 import { VERSION } from '../version.js';
-import { updateLoading } from './utils';
+import { timeSlicer, updateLoading } from './utils';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './PBRT/index.js';
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './USD/index.js';
 import { pfmTexture } from './PBRT/PFM.js';
@@ -687,7 +687,7 @@ export class ArchiveImporter {
 			: null;
 
 		const stored = graphKey ? await this._loadStoredGraph( graphKey, source, { imageFromBytes, envFromBytes } ) : null;
-		const built = stored ?? await loadPBRTScene( { vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes, ...shape } );
+		const built = stored ?? await loadPBRTScene( { vfs: zip, source, entryPath, plyParser, imageFromBytes, envFromBytes, ...shape, pause: this._buildPause( timeSlicer() ) } );
 		this.loader._throwDeferred();
 
 		const { group, environment, animations, report, warnings, meshCount, entryPath: loadedEntry, candidates,
@@ -819,7 +819,7 @@ export class ArchiveImporter {
 		const url = ext === 'pfm' ? null : URL.createObjectURL( blob );
 		try {
 
-			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null } ) : pfmTexture( bytes );
+			const texture = url ? await this.loader.loadEnvironmentByExtension( url, ext, { loader: ext === 'exr' ? this._exrLoader() : null, quiet: true } ) : pfmTexture( bytes );
 			texture.mapping = EquirectangularReflectionMapping;
 			setEnvironmentSource( texture, `bytes:${await sampleHash( blob )}` );
 			texture.userData[ ARCHIVE_PATH ] = fname;
@@ -863,8 +863,17 @@ export class ArchiveImporter {
 		if ( chosen.length === 0 ) await this._requireUSDPartChoice( filename, files, entryPath, options.listing ?? paths.map( path => ( { path, size: entries[ path ]?.size ?? entries[ path ]?.byteLength ?? 0 } ) ), options.promptBytes );
 
 		const start = performance.now();
+		const slice = timeSlicer();
 		const built = await loadUSDScene( {
 			files, entryPath,
+			pauseRead: ( prims, counting ) => {
+
+				const turn = slice();
+				if ( turn ) updateLoading( { status: `${counting ? 'Counting' : 'Reading'} USD scene... ${prims.toLocaleString()} prims`, progress: counting ? 5 : 6 } );
+				return turn;
+
+			},
+			pauseBuild: this._buildPause( slice ),
 			resolveImage: async path => {
 
 				const bytes = await files.read( path );
@@ -915,6 +924,19 @@ export class ArchiveImporter {
 		await this.loader.onModelLoad( group );
 		this.loader.dispatchEvent( { type: 'load', model: group, filename: `${entryPath} (from ${filename})` } );
 		return group;
+
+	}
+
+	/** The scene builder's pause: a turn for the page whenever `slice` gives one, with how far the build is. @private */
+	_buildPause( slice ) {
+
+		return ( done, total ) => {
+
+			const turn = slice();
+			if ( turn ) updateLoading( { status: `Building scene... ${done.toLocaleString()} of ${total.toLocaleString()} shapes`, progress: 8 } );
+			return turn;
+
+		};
 
 	}
 

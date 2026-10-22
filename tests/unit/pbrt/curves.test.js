@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tessellateCurve, curveTriangleCount } from '@/core/Processor/PBRT/PBRTCurves.js';
+import { tessellateCurve, tessellateCurves, curveTriangleCount } from '@/core/Processor/PBRT/PBRTCurves.js';
 
 /** A straight run along +x, as four evenly spaced control points. */
 const STRAIGHT = [ 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0 ];
@@ -23,6 +23,28 @@ const bounds = positions => {
 };
 
 describe( 'curve tessellation', () => {
+
+	it( 'tessellates a curve set the same with pauses every 1024 curves, and as they are joined', async () => {
+
+		const counts = new Array( 3000 ).fill( 4 );
+		const P = new Float64Array( counts.length * 12 );
+		for ( let c = 0; c < counts.length; c ++ ) P.set( STRAIGHT.map( ( v, i ) => v + ( i % 3 === 1 ? c * 0.1 : 0 ) ), c * 12 );
+		const spec = { P, counts, widths: [ 0.05 ] };
+
+		const plain = await tessellateCurves( spec );
+		let pauses = 0;
+		const paused = await tessellateCurves( spec, () => {
+
+			pauses ++;
+			return Promise.resolve();
+
+		} );
+
+		expect( pauses ).toBe( 4 );
+		expect( paused.positions ).toEqual( plain.positions );
+		expect( paused.indices ).toEqual( plain.indices );
+
+	} );
 
 	it( 'builds a ribbon of the requested width around a straight bezier', () => {
 

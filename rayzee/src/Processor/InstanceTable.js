@@ -550,10 +550,20 @@ export class InstanceTable {
 	 */
 	formClusters( world ) {
 
+		const steps = this.clusterSteps( world );
+		let step;
+		do step = steps.next(); while ( ! step.done );
+		return step.value;
+
+	}
+
+	/** {@link formClusters} in steps: yields how many entries have their cluster, and returns what it returns. */
+	* clusterSteps( world ) {
+
 		const n = this.entryCount;
 		const sorted = new Int32Array( n );
 		for ( let e = 0; e < n; e ++ ) sorted[ e ] = e;
-		splitIntoRuns( sorted, 0, n, world );
+		yield * splitIntoRuns( sorted, 0, n, world );
 
 		const bounds = new Float64Array( this.clusterCount * 6 );
 		for ( let c = 0; c < this.clusterCount; c ++ ) {
@@ -936,31 +946,31 @@ export class InstanceTable {
 	}
 
 	/**
-	 * Every TLAS entry's world-space bounds, 6 floats each — what the TLAS sorts on.
+	 * Every TLAS entry's world-space bounds, 6 floats each — what the TLAS sorts on; entries `[from, to)` only, if given.
 	 * @param {Float64Array|Float32Array} out
 	 */
-	writeEntryWorldAABBs( out ) {
+	writeEntryWorldAABBs( out, from = 0, to = this.entryCount ) {
 
 		if ( ! this.entryRep ) {
 
-			this.writeWorldAABBs( out );
+			this.writeWorldAABBs( out, from, to );
 			return;
 
 		}
 
-		for ( let e = 0; e < this.entryCount; e ++ ) this.writeEntryWorldAABB( e, out, e * 6 );
+		for ( let e = from; e < to; e ++ ) this.writeEntryWorldAABB( e, out, e * 6 );
 
 	}
 
 	/**
-	 * Every placement's world-space bounds, 6 floats each.
+	 * Every placement's world-space bounds, 6 floats each; placements `[from, to)` only, if given.
 	 * @param {Float64Array|Float32Array} out
 	 */
-	writeWorldAABBs( out ) {
+	writeWorldAABBs( out, from = 0, to = this.count ) {
 
 		const aabb = this.tplObjectAABB, src = this.sourceMesh, set = this.isSet;
 
-		for ( let i = 0; i < this.count; i ++ ) {
+		for ( let i = from; i < to; i ++ ) {
 
 			const o = i * 6;
 
@@ -1204,15 +1214,30 @@ const _recordInverse = new Float64Array( 16 );
 
 /**
  * Orders `sorted[ lo, hi )` so each run of CLUSTER_SIZE holds neighbours: halved at the centre median of the widest
- * axis, the lower part a whole number of runs, which keeps the run count ⌈n / CLUSTER_SIZE⌉.
+ * axis, the lower part a whole number of runs, which keeps the run count ⌈n / CLUSTER_SIZE⌉. Yields how many entries
+ * are in their run, about every million entries of work.
  */
-function splitIntoRuns( sorted, lo, hi, world ) {
+function * splitIntoRuns( sorted, lo, hi, world ) {
 
 	const stack = [ lo, hi ];
+	let placed = 0, work = 0;
 	while ( stack.length ) {
 
 		const end = stack.pop(), start = stack.pop();
-		if ( end - start <= CLUSTER_SIZE ) continue;
+		if ( end - start <= CLUSTER_SIZE ) {
+
+			placed += end - start;
+			continue;
+
+		}
+
+		work += end - start;
+		if ( work >= 1 << 20 ) {
+
+			work = 0;
+			yield placed;
+
+		}
 
 		let axis = 0, widest = - 1;
 		for ( let a = 0; a < 3; a ++ ) {

@@ -1,4 +1,4 @@
-import { SphereGeometry, Mesh, MeshPhysicalMaterial, Group, Object3D, ShaderMaterial, Vector2, Matrix4, GLSL3 } from 'three';
+import { SphereGeometry, Mesh, MeshPhysicalMaterial, Group, Object3D, ShaderMaterial, Vector2, Matrix4, GLSL3, Box3 } from 'three';
 import { EngineEvents } from '../EngineEvents.js';
 
 let _statusCallback = null;
@@ -26,6 +26,85 @@ export const updateStats = ( statsUpdate ) => {
 	_statusCallback?.( { type: EngineEvents.STATS_UPDATE, ...statsUpdate } );
 
 };
+
+// A message: unlike a timer it is not throttled in a background tab, and unlike scheduler.yield it queues behind the
+// page's own timers and posted renders instead of running ahead of them.
+function nextTask() {
+
+	if ( typeof MessageChannel === 'undefined' ) return new Promise( resolve => setTimeout( resolve, 0 ) );
+	return new Promise( resolve => {
+
+		const { port1, port2 } = new MessageChannel();
+		port1.onmessage = () => {
+
+			port1.close();
+			resolve();
+
+		};
+
+		port2.postMessage( null );
+
+	} );
+
+}
+
+/**
+ * For a long loop on the main thread: the returned function gives the page one task turn, to redraw, once `ms` have
+ * passed since the last, and returns null in between.
+ */
+export function timeSlicer( ms = 50 ) {
+
+	let since = performance.now();
+	const resume = () => {
+
+		since = performance.now();
+
+	};
+
+	return () => ( performance.now() - since < ms ? null : nextTask().then( resume ) );
+
+}
+
+/** InstancedMesh.computeBoundingBox, bit for bit, for each instanced mesh under `object` without a box yet. */
+export function computeInstanceBoundingBoxes( object ) {
+
+	object.traverse( mesh => {
+
+		if ( ! mesh.isInstancedMesh || mesh.boundingBox !== null ) return;
+		const geometry = mesh.geometry;
+		if ( geometry.boundingBox === null ) geometry.computeBoundingBox();
+		const box = mesh.boundingBox = new Box3();
+		const local = geometry.boundingBox;
+		if ( local.isEmpty() ) return;
+
+		const xs = [ local.min.x, local.max.x ], ys = [ local.min.y, local.max.y ], zs = [ local.min.z, local.max.z ];
+		const m = mesh.instanceMatrix.array;
+		let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = - Infinity, y1 = - Infinity, z1 = - Infinity;
+		for ( let i = 0, o = 0; i < mesh.count; i ++, o += 16 ) {
+
+			const e0 = m[ o ], e1 = m[ o + 1 ], e2 = m[ o + 2 ], e3 = m[ o + 3 ], e4 = m[ o + 4 ], e5 = m[ o + 5 ], e6 = m[ o + 6 ], e7 = m[ o + 7 ];
+			const e8 = m[ o + 8 ], e9 = m[ o + 9 ], e10 = m[ o + 10 ], e11 = m[ o + 11 ], e12 = m[ o + 12 ], e13 = m[ o + 13 ], e14 = m[ o + 14 ], e15 = m[ o + 15 ];
+			for ( let c = 0; c < 8; c ++ ) {
+
+				const x = xs[ c >> 2 ], y = ys[ ( c >> 1 ) & 1 ], z = zs[ c & 1 ];
+				// Vector3.applyMatrix4's operations, in its order.
+				const w = 1 / ( e3 * x + e7 * y + e11 * z + e15 );
+				const px = ( e0 * x + e4 * y + e8 * z + e12 ) * w;
+				const py = ( e1 * x + e5 * y + e9 * z + e13 ) * w;
+				const pz = ( e2 * x + e6 * y + e10 * z + e14 ) * w;
+				x0 = Math.min( x0, px ); y0 = Math.min( y0, py ); z0 = Math.min( z0, pz );
+				x1 = Math.max( x1, px ); y1 = Math.max( y1, py ); z1 = Math.max( z1, pz );
+
+			}
+
+		}
+
+		box.min.set( x0, y0, z0 );
+		box.max.set( x1, y1, z1 );
+
+	} );
+
+}
 
 // Raw frameCount is the user-facing sample count (one full-frame pass per frame).
 export function getDisplaySamples( pathTracerStage ) {

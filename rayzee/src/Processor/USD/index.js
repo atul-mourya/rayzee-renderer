@@ -96,7 +96,7 @@ export async function loadUSDScene( args ) {
 	const warn = message => warnings.push( message );
 	const builder = new PBRTSceneBuilder( {
 		maxTriangles: args.maxTriangles, maxPlacements: args.maxPlacements, mergeShapesAbove: args.mergeShapesAbove,
-		curveSteps: args.curveSteps, curveSides: args.curveSides, curveTolerance: args.curveTolerance,
+		curveSteps: args.curveSteps, curveSides: args.curveSides, curveTolerance: args.curveTolerance, pause: args.pauseBuild,
 	} );
 
 	const parseStart = performance.now();
@@ -104,7 +104,7 @@ export async function loadUSDScene( args ) {
 	await stage.open( args.entryPath );
 	const reader = new USDSceneReader( stage, {
 		maxTriangles: builder.maxTriangles, maxPlacements: builder.maxPlacements, curveSteps: builder.curveSteps,
-		resolveImage: args.resolveImage, warn,
+		resolveImage: args.resolveImage, warn, pause: args.pauseRead,
 	} );
 	const read = await reader.read();
 	if ( stage.omittedArcs > 0 ) warn( `${stage.omittedArcs} reference(s) into the parts left out of this load skipped` );

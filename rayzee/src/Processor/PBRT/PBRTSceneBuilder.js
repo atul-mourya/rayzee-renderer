@@ -31,6 +31,7 @@ import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
 import { packUnitAttribute } from '../GeometryExtractor.js';
+import { computeInstanceBoundingBoxes } from '../utils.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -590,6 +591,8 @@ export class PBRTSceneBuilder {
 	 * @param {(filename:string)=>Promise<import('three').Texture>} [resolvers.resolveImage]
 	 * @param {(filename:string)=>Promise<import('three').Texture>} [resolvers.resolveEnvironment]
 	 * @param {boolean} [resolvers.convertHandedness=false]
+	 * @param {(done:number, total:number)=>?Promise} [resolvers.pause] - called as shapes are built; a promise it
+	 *   returns is waited on, which lets the host redraw
 	 */
 	constructor( resolvers = {} ) {
 
@@ -604,6 +607,9 @@ export class PBRTSceneBuilder {
 		this.resolveEnvironment = resolvers.resolveEnvironment || resolvers.resolveImage || ( async () => null );
 		this.convertHandedness = resolvers.convertHandedness === true;
 		this._usage = resolvers.usage ?? null;
+		this.pause = resolvers.pause ?? null;
+		this._shapesDone = 0;
+		this._shapeTotal = 0;
 
 		this.warnings = [];
 		this.report = []; // per-mesh diagnostics for debugging imports
@@ -626,6 +632,13 @@ export class PBRTSceneBuilder {
 	warn( msg ) {
 
 		this.warnings.push( msg );
+
+	}
+
+	/** @private */
+	_tick() {
+
+		return this.pause ? this.pause( this._shapesDone, this._shapeTotal ) : null;
 
 	}
 
@@ -671,6 +684,9 @@ export class PBRTSceneBuilder {
 		this.mergedShapes = 0;
 		this.droppedNoTemplate = 0;
 		this._animated = []; // { node, motion }
+		this._shapesDone = 0;
+		this._shapeTotal = ir.shapes.length;
+		for ( const name of ir.instances.keys() ) this._shapeTotal += ir.objects.get( name )?.length ?? 0;
 
 		// Shapes (direct + instanced)
 		for ( let i = 0; i < ir.shapes.length; i ++ ) {
@@ -682,6 +698,8 @@ export class PBRTSceneBuilder {
 
 			}
 
+			this._shapesDone ++;
+			await this._tick();
 			const shape = ir.shapes[ i ];
 			const [ geometry, surface ] = await Promise.all( [
 				this._batches && ! shape.shared ? this._createGeometry( shape ) : this._buildGeometry( shape ),
@@ -843,6 +861,9 @@ export class PBRTSceneBuilder {
 
 			}
 
+			// While the matrices are still in memory: the scene's framing reads every box.
+			computeInstanceBoundingBoxes( mesh );
+
 			group.add( mesh );
 
 			this.reportedMeshes += count;
@@ -888,6 +909,7 @@ export class PBRTSceneBuilder {
 
 			for ( const shape of template ) {
 
+				this._shapesDone ++;
 				if ( this._overBudget() ) {
 
 					this.skippedForBudget += list.count;
@@ -895,6 +917,7 @@ export class PBRTSceneBuilder {
 
 				}
 
+				await this._tick();
 				const [ built, sharedMaterial ] = await Promise.all( [
 					this._buildGeometry( shape ),
 					this._getMaterial( shape )
@@ -1576,9 +1599,9 @@ export class PBRTSceneBuilder {
 	}
 
 	/** Many curves on one point array, as USD writes them. */
-	_curves( params ) {
+	async _curves( params ) {
 
-		const built = tessellateCurves( {
+		const built = await tessellateCurves( {
 			P: param( params, 'P' ).value,
 			counts: param( params, 'counts' ).value,
 			widths: param( params, 'widths' )?.value ?? null,
@@ -1591,7 +1614,7 @@ export class PBRTSceneBuilder {
 			steps: this.curveSteps,
 			sides: this.curveSides ?? 1,
 			tolerance: this.curveTolerance,
-		} );
+		}, () => this._tick() );
 
 		if ( ! built ) {
 

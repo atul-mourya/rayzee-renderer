@@ -9,7 +9,7 @@ import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js
 import { DownloadCache, nameFromUrl, cachedObjectURL } from '../Storage/DownloadCache.js';
 import { setEnvironmentSource } from '../Storage/CDFCache.js';
 import { fileIdentity, identityKey } from '../Storage/identity.js';
-import { disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
+import { computeInstanceBoundingBoxes, disposeEngineOwnedResources, disposeObjectFromMemory, updateLoading } from './utils';
 import { BuildTimer } from './BuildTimer.js';
 import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
 import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin } from './PlatformImageLoader.js';
@@ -723,7 +723,8 @@ export class AssetLoader extends EventDispatcher {
 	 * @param {string} extension
 	 * @param {{loader?: Object}} [options] - a three.js loader to read the file with, for a format nothing registered
 	 */
-	async loadEnvironmentByExtension( url, extension, { loader = null } = {} ) {
+	/** `quiet` leaves the loading bar to a larger load this environment is part of. */
+	async loadEnvironmentByExtension( url, extension, { loader = null, quiet = false } = {} ) {
 
 		const format = this._formats.get( extension );
 		if ( ! loader && format?.type === 'environment' ) loader = this.loaderCache[ extension ] ??= await format.createLoader( this._loadingManager );
@@ -733,7 +734,7 @@ export class AssetLoader extends EventDispatcher {
 		const cancelable = AssetLoader._isNetworkUrl( url );
 		const status = "Downloading Environment...";
 		const source = await this._viaCache( url, status, cancelable );
-		const onProgress = source.cached ? undefined : this._downloadProgress( status, cancelable );
+		const onProgress = source.cached || quiet ? undefined : this._downloadProgress( status, cancelable );
 
 		let texture;
 		try {
@@ -763,7 +764,7 @@ export class AssetLoader extends EventDispatcher {
 
 		}
 
-		this._downloadComplete( "Processing Environment...", 62 );
+		if ( ! quiet ) this._downloadComplete( "Processing Environment...", 62 );
 
 		if ( this.maxEnvironmentWidth ) limitEnvironmentWidth( texture, this.maxEnvironmentWidth );
 		texture.mapping = EquirectangularReflectionMapping;
@@ -1042,6 +1043,7 @@ export class AssetLoader extends EventDispatcher {
 
 		// Center model and adjust camera
 		buildTimer.start( 'Camera setup' );
+		computeInstanceBoundingBoxes( model );
 		const box = new Box3().setFromObject( model );
 		const center = box.getCenter( new Vector3() );
 		const size = box.getSize( new Vector3() );

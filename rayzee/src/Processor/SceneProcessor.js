@@ -12,7 +12,7 @@ import {
 import { TextureCreator } from './TextureCreator.js';
 import { GeometryExtractor, geometryBytesOf, usesTextureCoordinates } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from './EmissiveTriangleBuilder.js';
-import { updateLoading } from '../Processor/utils.js';
+import { timeSlicer, updateLoading } from '../Processor/utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../utils/Logger.js';
 import { Box3, Matrix4, SRGBColorSpace, Sphere, Vector3 } from 'three';
@@ -38,6 +38,8 @@ import { createWorker, hardwareThreads } from '../Platform.js';
 
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;
+// Per-copy passes run in slices this long, with a turn for the page between them when one is due.
+const SLICE_RECORDS = 1 << 16;
 
 // Meshes past this build across every core, one at a time.
 const LARGE_MESH_TRIANGLES = 200000;
@@ -934,9 +936,11 @@ export class SceneProcessor {
 	 */
 	async _buildBVH() {
 
+		// A streamed build has reported its BLASes up to 35 % already.
+		const startProgress = this._streamed ? 35 : 25;
 		updateLoading( {
 			status: "Building BVH...",
-			progress: 25
+			progress: startProgress
 		} );
 
 		if ( this.triangleCount === 0 ) {
@@ -948,6 +952,7 @@ export class SceneProcessor {
 		this._log( 'Building two-level BVH (TLAS/BLAS)' );
 		this.memory.mark( 'blas' );
 		const startTime = performance.now();
+		this._slice = timeSlicer();
 
 		try {
 
@@ -996,6 +1001,7 @@ export class SceneProcessor {
 
 			for ( let m = 0; m < meshCount; m ++ ) {
 
+				if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Matching copies to their shapes', m, meshCount, startProgress );
 				const range = ranges[ sourceOf( m ) ];
 				if ( ! range || range.count === 0 ) continue;
 
@@ -1115,6 +1121,7 @@ export class SceneProcessor {
 
 			for ( let m = 0; m < meshCount; m ++ ) {
 
+				if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Placing copies', m, meshCount, 70 );
 				const owner = aliasOf[ m ];
 				if ( owner < 0 ) continue;
 				this.instanceTable.setAlias(
@@ -1149,8 +1156,17 @@ export class SceneProcessor {
 
 				// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written.
 				table.clusterWorld = new Float32Array( table.entryCount * 6 );
-				table.writeEntryWorldAABBs( table.clusterWorld );
-				table.clusterBounds = table.formClusters( table.clusterWorld );
+				for ( let e = 0; e < table.entryCount; e += SLICE_RECORDS ) {
+
+					table.writeEntryWorldAABBs( table.clusterWorld, e, Math.min( table.entryCount, e + SLICE_RECORDS ) );
+					await this._turn( 'Measuring copies', e, table.entryCount, 72 );
+
+				}
+
+				const steps = table.clusterSteps( table.clusterWorld );
+				let step;
+				while ( ! ( step = steps.next() ).done ) await this._turn( 'Grouping copies', step.value, table.entryCount, 72 );
+				table.clusterBounds = step.value;
 
 			}
 
@@ -1218,6 +1234,7 @@ export class SceneProcessor {
 
 				for ( let t = 0; t < table.templateCount; t ++ ) {
 
+					await this._turn( 'Assembling the scene', t, table.templateCount, 74 );
 					// Only owning templates hold one; spilled, they are read back one at a time.
 					const blas = spill ? await this._readSpilledBLAS( spill, t ) : table.blasData.get( t );
 					if ( ! blas ) continue;
@@ -1283,7 +1300,20 @@ export class SceneProcessor {
 			} );
 			throw error;
 
+		} finally {
+
+			this._slice = null;
+
 		}
+
+	}
+
+	/** During a build, a turn for the page once a slice of it has passed, with how far `what` has got. @private */
+	_turn( what, done, total, progress ) {
+
+		const turn = this._slice?.();
+		if ( turn ) updateLoading( { status: `${what}: ${done.toLocaleString()} of ${total.toLocaleString()}`, progress } );
+		return turn;
 
 	}
 
@@ -3889,6 +3919,7 @@ export class SceneProcessor {
 			const used = Math.ceil( count * RECORD_VEC4 / 4 );
 			this.bvh.setRecords( at, used === nodes ? stage : stage.subarray( 0, used * 16 ) );
 			await flushBVH?.( at + used );
+			await this._turn( 'Writing copy records', r, n, 74 );
 
 		}
 
@@ -3907,8 +3938,15 @@ export class SceneProcessor {
 				// The worker needs a buffer it can own, and world bounds are derived anyway.
 				const aabbs = clustered ? table.clusterBounds : new Float64Array( n * 6 );
 				if ( ! clustered ) table.writeEntryWorldAABBs( aabbs );
+				updateLoading( { status: 'Building the scene tree...', progress: 73 } );
 				const { tlasData, nodeCount } = await this._runTLASWorker( aabbs, n );
-				TLASBuilder.fillLeaves( tlasData, nodeCount, table );
+				for ( let node = 0; node < nodeCount; node += SLICE_RECORDS ) {
+
+					TLASBuilder.fillLeaves( tlasData, nodeCount, table, node, Math.min( nodeCount, node + SLICE_RECORDS ) );
+					await this._turn( 'Writing the scene tree', node, nodeCount, 73 );
+
+				}
+
 				return tlasData;
 
 			} catch ( error ) {

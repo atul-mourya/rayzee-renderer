@@ -371,6 +371,33 @@ describe( 'a scene from SceneProcessor', () => {
 
 	} );
 
+	it( 'patches no leaf whose flag already stands, and only those that change', async () => {
+
+		for ( const options of [ {}, { clusterCopies: true } ] ) {
+
+			const { root, parts } = scene();
+			const sp = await build( root, options );
+			const table = sp.instanceTable;
+			const stage = stageOver( sp );
+			const leaves = () => [ ...( stage._dirtyBVHLeaves ?? [] ) ].filter( n => n < table.groupNodeStart || n >= table.groupNodeStart + table.groupNodeCount );
+			const before = sp.bvhData.slice();
+
+			stage._patchVisibilityFromMeshes( sp.meshes );
+			expect( leaves() ).toEqual( [] );
+			expect( firstDifference( sp.bvhData, before ) ).toBe( - 1 );
+
+			parts.knot.visible = false;
+			stage._patchVisibilityFromMeshes( sp.meshes );
+			const knot = meshIndex( sp, parts.knot );
+			const run = table.placementRunOf( knot );
+			expect( leaves().length ).toBe( run.count );
+			expect( inspect( sp ).problems ).toEqual( [] );
+			for ( let p = run.start; p < run.start + run.count; p ++ ) expect( table.visible[ p ] ).toBe( 0 );
+
+		}
+
+	} );
+
 	it( 'hides every placement of the mesh it is asked to, one mesh at a time', async () => {
 
 		for ( const options of [ {}, { clusterCopies: true } ] ) {

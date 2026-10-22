@@ -971,15 +971,17 @@ export class PathTracerStage extends RenderStage {
 	_patchVisibilityFromMeshes( meshes ) {
 
 		const table = this._instanceTable;
-		const cache = new Map();
+		const shown = new Uint8Array( table.templateCount ); // 0 not looked up yet, 1 visible, 2 hidden
 
 		for ( let i = 0; i < table.count; i ++ ) {
 
 			if ( ! table.isSet[ i ] ) continue;
 
 			const src = table.sourceMesh[ i ];
-			let visible = cache.get( src );
-			if ( visible === undefined ) cache.set( src, visible = this._isWorldVisible( meshes[ src ] ) );
+			if ( shown[ src ] === 0 ) shown[ src ] = this._isWorldVisible( meshes[ src ] ) ? 1 : 2;
+			const visible = shown[ src ] === 1;
+			// Leaves are written from these flags, so a placement whose flag stands has nothing to patch.
+			if ( table.visible[ i ] === ( visible ? 1 : 0 ) ) continue;
 			this._patchTLASLeafVisibility( i, visible );
 
 		}
@@ -1067,7 +1069,7 @@ export class PathTracerStage extends RenderStage {
 
 	/**
 	 * Patch a single TLAS leaf's visibility flag in the combined BVH buffer.
-	 * Returns true if the patch was applied.
+	 * Returns true if the placement's flag or its leaf changed.
 	 * @private
 	 */
 	_patchTLASLeafVisibility( meshIndex, visible ) {
@@ -1078,6 +1080,7 @@ export class PathTracerStage extends RenderStage {
 		const leaf = table.leafOfPlacement( meshIndex );
 		if ( leaf < 0 ) return false;
 
+		const changed = table.visible[ meshIndex ] !== ( visible ? 1 : 0 );
 		table.visible[ meshIndex ] = visible ? 1 : 0;
 		// A group copy's leaf is shared by its members: it stays in while any of them is visible.
 		const shown = table.entryVisible( table.entryOf( meshIndex ) );
@@ -1091,9 +1094,17 @@ export class PathTracerStage extends RenderStage {
 			let idx = views.get( f );
 			if ( ! idx ) views.set( f, idx = bvhIndexView( f ) );
 			const w = o + table.copyWordSlot( table.tlasLeafIndex[ meshIndex ] );
-			idx[ w ] = shown ? idx[ w ] & ~ CLUSTER_COPY_HIDDEN : ( idx[ w ] | CLUSTER_COPY_HIDDEN ) >>> 0;
+			const word = ( shown ? idx[ w ] & ~ CLUSTER_COPY_HIDDEN : idx[ w ] | CLUSTER_COPY_HIDDEN ) >>> 0;
+			if ( word === idx[ w ] ) return changed;
+			idx[ w ] = word;
 
-		} else f[ o + 2 ] = shown ? 1.0 : 0.0;
+		} else {
+
+			const flag = shown ? 1.0 : 0.0;
+			if ( f[ o + 2 ] === flag ) return changed;
+			f[ o + 2 ] = flag;
+
+		}
 
 		this._dirtyBVHLeaves ??= new Set();
 		this._dirtyBVHLeaves.add( leaf );
