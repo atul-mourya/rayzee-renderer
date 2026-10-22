@@ -38,7 +38,6 @@ const ArchiveElementDialog = () => {
 	const archivePrompt = useStore( state => state.archivePrompt );
 	const setArchivePrompt = useStore( state => state.setArchivePrompt );
 	const [ picked, setPicked ] = useState( () => new Set() );
-	const [ loading, setLoading ] = useState( false );
 	const { toast } = useToast();
 
 	if ( ! archivePrompt ) return null;
@@ -68,13 +67,13 @@ const ArchiveElementDialog = () => {
 		const app = getApp();
 		if ( ! app || prefixes.length === 0 ) return;
 
-		setLoading( true );
+		// Closed first: open, it covers the loading panel for the whole load.
+		close();
 		try {
 
 			app.pauseRendering = true;
 			await app.loadFile( file, { element: prefixes } );
 			rememberFolder( app.sceneSource?.key, handle );
-			close();
 			const fit = app.assetLoader?.archives?.lastUSDStats?.fitNote;
 			const note = spillNote( app );
 			toast( {
@@ -94,14 +93,13 @@ const ArchiveElementDialog = () => {
 
 			app.pauseRendering = false;
 			useStore.getState().resetLoading();
-			setLoading( false );
 
 		}
 
 	};
 
 	return (
-		<Dialog open onOpenChange={open => ! open && ! loading && close()}>
+		<Dialog open onOpenChange={open => ! open && close()}>
 			<DialogContent className="max-w-xl">
 				<DialogHeader>
 					<DialogTitle>Choose what to load</DialogTitle>
@@ -139,7 +137,6 @@ const ArchiveElementDialog = () => {
 								<Checkbox
 									checked={picked.has( element.prefix )}
 									onCheckedChange={() => toggle( element.prefix )}
-									disabled={loading}
 								/>
 								<span className="truncate text-left text-sm flex-1">{element.name}</span>
 								<span className="text-xs text-muted-foreground shrink-0">
@@ -166,8 +163,8 @@ const ArchiveElementDialog = () => {
 							? "Nothing selected"
 							: `${picked.size} of ${elements.length} selected · ${formatBytes( selectedBytes )}`}
 					</span>
-					<Button onClick={() => load( [ ...picked ] )} disabled={loading || picked.size === 0}>
-						{loading ? "Loading…" : "Load selection"}
+					<Button onClick={() => load( [ ...picked ] )} disabled={picked.size === 0}>
+						Load selection
 					</Button>
 				</DialogFooter>
 			</DialogContent>
