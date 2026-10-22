@@ -35,7 +35,7 @@ import {
 	getDatafromStorageBuffer, storageRows, instanceRows, instanceNormalToWorld, unpackTriangleNormal, triangleRow, shadowFlagsSettle
 } from './Common.js';
 
-const MAX_STACK_DEPTH = 32;
+const MAX_STACK_DEPTH = 40;
 // Hang guard only — tripping it reports a MISS, which the shade kernel pays out as
 // full-intensity environment. San Miguel needs ~1024; cost is flat from 1024 up.
 const MAX_BVH_ITERATIONS = 4096;
