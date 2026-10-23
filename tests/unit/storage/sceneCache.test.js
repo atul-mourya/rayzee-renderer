@@ -198,6 +198,49 @@ describe( 'SceneGraphCodec', () => {
 
 	} );
 
+	it( 'decodes a file once for every texture that reads it, as the build shared it', async () => {
+
+		const root = new Group();
+		const geometry = new BufferGeometry();
+		const textureOf = ( repeat ) => {
+
+			const texture = new Texture();
+			texture.userData[ ARCHIVE_PATH ] = 'textures/normal.png';
+			texture.repeat.set( repeat, repeat );
+			return texture;
+
+		};
+
+		const a = new MeshPhysicalMaterial( { normalMap: textureOf( 1 ) } );
+		const b = new MeshPhysicalMaterial( { normalMap: textureOf( 3 ) } );
+		b.normalMap.userData.only = 'b';
+		root.add( new Mesh( geometry, a ), new Mesh( geometry, b ) );
+
+		const requested = [];
+		const encoded = encodeSceneGraph( root );
+		const decoded = await decodeSceneGraph( JSON.parse( JSON.stringify( encoded.manifest ) ), new Blob( [] ), {
+			loadTexture: async ( path ) => {
+
+				requested.push( path );
+				const texture = new Texture();
+				texture.userData.decoded = true;
+				return texture;
+
+			},
+		} );
+
+		const [ outA, outB ] = decoded.root.children.map( ( mesh ) => mesh.material.normalMap );
+		expect( requested ).toEqual( [ 'textures/normal.png' ] );
+		// One image, so one layer of a texture array; each texture keeps its own settings.
+		expect( outB.source ).toBe( outA.source );
+		expect( outA.uuid ).toBe( a.normalMap.uuid );
+		expect( outB.uuid ).toBe( b.normalMap.uuid );
+		expect( outA.repeat.x ).toBe( 1 );
+		expect( outB.repeat.x ).toBe( 3 );
+		expect( outB.userData ).toEqual( { [ ARCHIVE_PATH ]: 'textures/normal.png', __rayzeeArchiveLoader: 'image', only: 'b' } );
+
+	} );
+
 	it( 'refuses what it does not know rather than store it wrongly', () => {
 
 		const { root } = buildScene();

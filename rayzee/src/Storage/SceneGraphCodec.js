@@ -426,13 +426,28 @@ export async function decodeSceneGraph( manifest, data, { loadTexture } ) {
 	const instanceMatrices = new Map();
 
 	const textures = {};
+	// One decode a file, its textures sharing the image as the build made them (one array layer, not one each).
+	const decoded = new Map();
 	for ( const record of manifest.textures ) {
 
 		let texture;
 		if ( record.path ) {
 
-			texture = await loadTexture( record.path, record.loader );
-			if ( ! texture ) throw new Error( `scene graph: "${record.path}" is missing from the archive` );
+			const key = `${record.loader}|${record.path}`;
+			const shared = decoded.get( key );
+			if ( shared ) {
+
+				texture = shared.clone();
+				texture.userData = {};
+
+			} else {
+
+				texture = await loadTexture( record.path, record.loader );
+				if ( ! texture ) throw new Error( `scene graph: "${record.path}" is missing from the archive` );
+				decoded.set( key, texture );
+
+			}
+
 			texture.userData[ ARCHIVE_PATH ] = record.path;
 			texture.userData[ ARCHIVE_LOADER ] = record.loader;
 
