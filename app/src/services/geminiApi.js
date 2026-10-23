@@ -41,7 +41,7 @@ class AIImageGenerator {
 			const config = {
 				responseModalities: [ 'IMAGE', 'TEXT' ],
 			};
-			const model = 'gemini-2.5-flash-image';
+			const model = 'gemini-nano-banana-2.1';
 
 			let parts = [];
 
@@ -75,7 +75,7 @@ class AIImageGenerator {
 				},
 			];
 
-			const response = await this.genAI.models.generateContentStream( {
+			const response = await this.genAI.models.generateContent( {
 				model,
 				config,
 				contents,
@@ -84,34 +84,18 @@ class AIImageGenerator {
 			let generatedImageData = null;
 			let textResponse = '';
 
-			// Process streaming response
-			for await ( const chunk of response ) {
+			// Any part may hold the image; thought parts hold drafts
+			for ( const part of response.candidates?.[ 0 ]?.content?.parts ?? [] ) {
 
-				if ( ! chunk.candidates || ! chunk.candidates[ 0 ].content || ! chunk.candidates[ 0 ].content.parts ) {
+				if ( part.thought ) continue;
 
-					continue;
+				if ( part.inlineData?.data ) {
 
-				}
+					generatedImageData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
 
-				// Check for image data
-				if ( chunk.candidates?.[ 0 ]?.content?.parts?.[ 0 ]?.inlineData ) {
+				} else if ( part.text ) {
 
-					const inlineData = chunk.candidates[ 0 ].content.parts[ 0 ].inlineData;
-					// Convert base64 to blob for browser
-					const binaryString = atob( inlineData.data || '' );
-					const bytes = new Uint8Array( binaryString.length );
-					for ( let i = 0; i < binaryString.length; i ++ ) {
-
-						bytes[ i ] = binaryString.charCodeAt( i );
-
-					}
-
-					const blob = new Blob( [ bytes ], { type: inlineData.mimeType } );
-					generatedImageData = this.blobToDataURL( blob );
-
-				} else if ( chunk.text ) { // Collect text response
-
-					textResponse += chunk.text;
+					textResponse += part.text;
 
 				}
 
@@ -126,7 +110,7 @@ class AIImageGenerator {
 			return {
 				success: true,
 				text: textResponse || `Generated image for: "${prompt}"`,
-				imageUrl: await generatedImageData
+				imageUrl: generatedImageData
 			};
 
 		} catch ( error ) {
@@ -162,20 +146,6 @@ class AIImageGenerator {
 		}
 
 	}
-
-	async blobToDataURL( blob ) {
-
-		return new Promise( ( resolve, reject ) => {
-
-			const reader = new FileReader();
-			reader.onloadend = () => resolve( reader.result );
-			reader.onerror = reject;
-			reader.readAsDataURL( blob );
-
-		} );
-
-	}
-
 
 	async prepareImageData( imageSource ) {
 
