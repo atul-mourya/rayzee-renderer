@@ -270,7 +270,7 @@ describe( 'TextureCreator — one bucket across several workers', () => {
 		const shared = await new TextureCreator()._packAcrossWorkers( layers(), 3 );
 
 		expect( shared ).toMatchObject( { width: 64, height: 16, depth: 5 } );
-		expect( shared.data ).toBeInstanceOf( SharedArrayBuffer );
+		expect( shared.data.buffer ).toBeInstanceOf( SharedArrayBuffer );
 		expect( Buffer.compare( Buffer.from( new Uint8Array( shared.data ) ), Buffer.from( alone.image.data ) ) ).toBe( 0 );
 
 	} );

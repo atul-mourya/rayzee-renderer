@@ -281,7 +281,7 @@ export class SceneProcessor {
 		this.bvhBuilder.maxLeafSize = this.config.maxLeafSize;
 
 		// Create and configure texture creator
-		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize, issues: this.config.issues } );
+		this.textureCreator = new TextureCreator( { maxTextureSize: this.config.maxTextureSize, issues: this.config.issues, layerSink: this.config.layerSink } );
 		// The optimized TextureCreator will auto-detect capabilities and select optimal methods
 
 		// Create emissive triangle builder for direct lighting

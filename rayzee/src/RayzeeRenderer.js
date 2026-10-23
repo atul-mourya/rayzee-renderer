@@ -6,6 +6,7 @@ import {
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
 import { PathTracer } from './Stages/PathTracer.js';
+import { textureLayerSink } from './Stages/PathTracerStage.js';
 import { Compositor } from './Stages/Compositor.js';
 import { RenderPipeline } from './Pipeline/RenderPipeline.js';
 import { CompletionTracker } from './Pipeline/CompletionTracker.js';
@@ -1498,15 +1499,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		// during the BVH build, and the snapshot is then a disposed texture.
 		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, hdri(), { keepUserLights } ) ) return false;
 
-		// A bucket at a time, each awaited (PathTracerStage#drainUploads): left to the first frame, three.js sends every
-		// layer at once, and Chrome keeps a pool that size (724 MB for 24155522.glb).
-		for ( const texture of [ ...( this._sdf.srgbBucketTextures ?? [] ), ...( this._sdf.linearBucketTextures ?? [] ) ] ) {
-
-			if ( ! texture ) continue;
-			this.renderer.initTexture( texture );
-			await this.stages.pathTracer.drainUploads();
-
-		}
+		// Not left to the first frame, where three.js sends every layer at once.
+		await this.stages.pathTracer.uploadTextureArrays( [ ...( this._sdf.srgbBucketTextures ?? [] ), ...( this._sdf.linearBucketTextures ?? [] ) ] );
 
 		// Patch per-mesh visibility into the TLAS leaves we just uploaded
 		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
@@ -3876,6 +3870,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		this._sdf = new SceneProcessor( {
 			issues: this._issues,
+			layerSink: textureLayerSink( this.renderer ),
 			// Spread into defaults, so only pass it when the host actually set one.
 			...( this._maxSceneBytes === undefined ? {} : { maxSceneBytes: this._maxSceneBytes } ),
 		} );

@@ -109,7 +109,7 @@ self.onmessage = async function ( e ) {
 
 	}
 
-	const { textures, maxTextureSize, method = 'direct-transfer' } = e.data;
+	const { textures, maxTextureSize, method = 'direct-transfer', dims = null } = e.data;
 
 	try {
 
@@ -120,7 +120,7 @@ self.onmessage = async function ( e ) {
 
 		}
 
-		const result = await processTextures( textures, maxTextureSize, method );
+		const result = await processTextures( textures, maxTextureSize, method, dims );
 
 		// Transfer ownership for zero-copy
 		self.postMessage( result, [ result.data ] );
@@ -147,18 +147,18 @@ function initializeWorker( maxTextureSize ) {
 
 }
 
-async function processTextures( textures, maxTextureSize, method ) {
+async function processTextures( textures, maxTextureSize, method, dims = null ) {
 
 	switch ( method ) {
 
 		case 'direct-transfer':
-			return await processWithDirectTransfer( textures, maxTextureSize );
+			return await processWithDirectTransfer( textures, maxTextureSize, dims );
 		case 'offscreen-optimized':
 			return await processWithOffscreenOptimized( textures, maxTextureSize );
 		case 'imageBitmap-batch':
 			return await processWithImageBitmapBatch( textures, maxTextureSize );
 		default:
-			return await processWithDirectTransfer( textures, maxTextureSize );
+			return await processWithDirectTransfer( textures, maxTextureSize, dims );
 
 	}
 
@@ -382,12 +382,8 @@ async function processSingleTextureOptimized( textureData, outputData, offset, m
 	// Copy directly to the specified offset in output buffer
 	outputData.set( imageData.data, offset );
 
-	// Clean up ImageBitmap if we created it
-	if ( textureData.isImageData || textureData.isBlob ) {
-
-		imageBitmap.close();
-
-	}
+	// Every bitmap here is this worker's own copy.
+	imageBitmap.close();
 
 }
 
@@ -425,9 +421,10 @@ async function processSingleTexture( textureData, index, outputData, maxWidth, m
 
 }
 
-async function processWithDirectTransfer( textures, maxTextureSize ) {
+// `dims`, when given, is the size of the whole bucket this list is a group of.
+async function processWithDirectTransfer( textures, maxTextureSize, dims = null ) {
 
-	const dimensions = calculateOptimalDimensions( textures, maxTextureSize );
+	const dimensions = dims ?? calculateOptimalDimensions( textures, maxTextureSize );
 	const { maxWidth, maxHeight } = dimensions;
 
 	// Resize canvas if needed

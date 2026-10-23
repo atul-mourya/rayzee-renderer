@@ -49,6 +49,9 @@ async function acquirePackSlot() {
 
 }
 
+// A bucket array past this goes to the layer sink a group of layers at a time, never whole in memory.
+const PACK_GROUP_BYTES = 256 * 2 ** 20;
+
 // A bucket array carries ONE colorSpace and the shader reads each slot from a fixed pool, so a
 // texture disagreeing with its pool cannot be re-routed — its pixels are re-encoded instead.
 const TRANSFER_LUT = { toSRGB: null, toLinear: null };
@@ -214,10 +217,15 @@ class SmartBufferPool {
 					// Round to nearest 1KB boundary
 					return Math.ceil( requestedSize / 1024 ) * 1024;
 
-				} else {
+				} else if ( requestedSize < 64 * 2 ** 20 ) {
 
 					// Use power of 2 for very large buffers
 					return Math.pow( 2, Math.ceil( Math.log2( requestedSize ) ) );
+
+				} else {
+
+					// A bucket array is packed once: rounding it up buys no reuse.
+					return Math.ceil( requestedSize / 2 ** 20 ) * 2 ** 20;
 
 				}
 
@@ -546,6 +554,9 @@ export class TextureCreator {
 		this.activeWorkers = 0;
 
 		this._issues = options.issues ?? null;
+		// `allocate( texture )` and `write( texture, firstLayer, data, layers )`: where a large bucket's layers go as they are packed.
+		this.layerSink = options.layerSink ?? null;
+		this.groupBytes = options.groupBytes ?? PACK_GROUP_BYTES;
 
 		// Longest-edge cap for material-texture arrays. Clamped to the hardware ceiling.
 		this.maxTextureSize = this._clampTextureSize(
@@ -659,8 +670,9 @@ export class TextureCreator {
 	 * @param {Array<import('three').Texture>} textures - pre-normalization list, in layer order
 	 * @param {boolean} srgbPool
 	 * @param {Set<number>} [reencoded] - layers `_harmonizeTransfer` changed
+	 * @param {object} [tally] - collects the counts instead of reporting them
 	 */
-	_applyColorManagement( arrayTex, textures, srgbPool, reencoded = new Set() ) {
+	_applyColorManagement( arrayTex, textures, srgbPool, reencoded = new Set(), tally = null ) {
 
 		const cm = getActiveColorManagement();
 		if ( ! cm?.hasConfig ) return;
@@ -727,6 +739,20 @@ export class TextureCreator {
 
 		}
 
+		if ( named + primaries > 0 ) arrayTex.needsUpdate = true;
+		if ( tally ) {
+
+			tally.named += named;
+			tally.primaries += primaries;
+			tally.refused.push( ...refused );
+
+		} else this._reportColorManaged( { named, primaries, refused }, kept.length );
+
+	}
+
+	/** @private */
+	_reportColorManaged( { named, primaries, refused }, total ) {
+
 		if ( refused.length ) {
 
 			this._issues?.warn(
@@ -739,9 +765,7 @@ export class TextureCreator {
 		}
 
 		if ( named + primaries === 0 ) return;
-
-		arrayTex.needsUpdate = true;
-		log.info( `colour maps into ${cm.workingSpace}: ${named} by named space, ${primaries} by primaries, of ${kept.length}` );
+		log.info( `colour maps into ${getActiveColorManagement().workingSpace}: ${named} by named space, ${primaries} by primaries, of ${total}` );
 
 	}
 
@@ -753,8 +777,9 @@ export class TextureCreator {
 	 * @param {import('three').DataArrayTexture} arrayTex
 	 * @param {Array<import('three').Texture>} textures - pre-normalization list, in layer order
 	 * @param {boolean} srgbPool - true when the array is tagged SRGBColorSpace
+	 * @param {object} [tally] - collects the re-encoded maps instead of reporting them
 	 */
-	_harmonizeTransfer( arrayTex, textures, srgbPool ) {
+	_harmonizeTransfer( arrayTex, textures, srgbPool, tally = null ) {
 
 		const touched = new Set();
 		const data = arrayTex?.image?.data;
@@ -790,24 +815,30 @@ export class TextureCreator {
 
 		}
 
-		if ( converted.length === 0 ) return touched;
+		if ( converted.length > 0 ) arrayTex.needsUpdate = true;
+		if ( tally ) tally.converted.push( ...converted );
+		else this._reportHarmonized( converted, kept.length, srgbPool );
+		return touched;
 
-		arrayTex.needsUpdate = true;
+	}
+
+	/** @private */
+	_reportHarmonized( converted, total, srgbPool ) {
+
+		if ( converted.length === 0 ) return;
 		const names = converted.slice( 0, 4 ).join( ', ' ) + ( converted.length > 4 ? `, +${converted.length - 4} more` : '' );
 
 		if ( srgbPool ) {
 
-			log.info( `re-encoded ${converted.length}/${kept.length} linear-declared colour map(s) to sRGB so the GPU decode round-trips: ${names}` );
+			log.info( `re-encoded ${converted.length}/${total} linear-declared colour map(s) to sRGB so the GPU decode round-trips: ${names}` );
 
 		} else {
 
 			// Storing a decoded value in an 8-bit linear array is the lossy direction, and a
 			// transfer-encoded data map is almost always an authoring slip rather than intent.
-			log.warn( `decoded ${converted.length}/${kept.length} sRGB-declared data map(s) to linear — precision is lost in the darks, check the asset: ${names}` );
+			log.warn( `decoded ${converted.length}/${total} sRGB-declared data map(s) to linear — precision is lost in the darks, check the asset: ${names}` );
 
 		}
-
-		return touched;
 
 	}
 
@@ -827,12 +858,80 @@ export class TextureCreator {
 		const cached = this.textureCache.get( cacheKey );
 		if ( cached ) return cached;
 
+		const kept = textures.filter( t => t?.image );
+		const dims = this.calculateOptimalDimensions( kept );
+		if ( this.layerSink && dims.maxWidth * dims.maxHeight * kept.length * 4 > this.groupBytes ) return this._packInGroups( kept, srgbPool, dims );
+
+		const packed = await this._packTextures( textures, srgbPool );
+		if ( packed ) this.textureCache.set( cacheKey, packed );
+		return packed;
+
+	}
+
+	/**
+	 * A bucket handed to the layer sink a group of layers at a time, each group packed by the whole bucket's strategy and
+	 * size, so every layer gets the bytes it would get packed whole.
+	 * @private
+	 */
+	async _packInGroups( textures, srgbPool, dims ) {
+
+		const { maxWidth: width, maxHeight: height } = dims;
+		const layerBytes = width * height * 4;
+		const step = Math.max( 1, Math.floor( this.groupBytes / layerBytes ) );
+		const strategy = typeof createImageBitmap === 'undefined' ? null : this.selectProcessingStrategy( textures );
+		const tally = { converted: [], named: 0, primaries: 0, refused: [] };
+		// Reused: a SharedArrayBuffer is freed only by GC in every thread that saw it.
+		const scratch = { shared: null };
+
+		const texture = this.createDataArrayTextureFromBuffer( null, width, height, textures.length );
+		texture.source.dataReady = false;
+		if ( srgbPool ) texture.colorSpace = SRGBColorSpace;
+		this.layerSink.allocate( texture );
+
+		try {
+
+			for ( let first = 0; first < textures.length; first += step ) {
+
+				const group = textures.slice( first, first + step );
+				const packed = await this._packTextures( group, srgbPool, { dims, strategy, tally, scratch } );
+				const { data } = packed.image;
+				if ( packed.image.width !== width || packed.image.height !== height || packed.image.depth !== group.length ) {
+
+					throw new Error( `texture group packed at ${packed.image.width}x${packed.image.height}x${packed.image.depth}, not ${width}x${height}x${group.length}` );
+
+				}
+
+				await this.layerSink.write( texture, first, data, group.length );
+				// Freed now, not at the next GC.
+				this.bufferPool.forget( data );
+				if ( data.byteLength === data.buffer.byteLength && data.buffer.transfer ) data.buffer.transfer( 0 );
+
+			}
+
+		} catch ( error ) {
+
+			texture.dispose();
+			throw error;
+
+		}
+
+		this._reportHarmonized( tally.converted, textures.length, srgbPool );
+		this._reportColorManaged( tally, textures.length );
+		return texture;
+
+	}
+
+	/**
+	 * Packs `textures` into one array and fixes its layers' colour. `dims` and `strategy` default to the list's own.
+	 * @private
+	 */
+	async _packTextures( textures, srgbPool, { dims, strategy, tally, scratch } = {} ) {
+
 		if ( typeof createImageBitmap === 'undefined' ) {
 
-			const packed = await this.processOnCPU( textures );
-			const reencoded = this._harmonizeTransfer( packed, textures, srgbPool );
-			this._applyColorManagement( packed, textures, srgbPool, reencoded );
-			this.textureCache.set( cacheKey, packed );
+			const packed = await this.processOnCPU( textures, dims );
+			const reencoded = this._harmonizeTransfer( packed, textures, srgbPool, tally );
+			this._applyColorManagement( packed, textures, srgbPool, reencoded, tally );
 			return packed;
 
 		}
@@ -841,7 +940,7 @@ export class TextureCreator {
 		const { normalized, bitmapsToClose } = await this._normalizeTexturesForProcessing( textures );
 
 		// Select optimal processing strategy
-		const strategy = this.selectProcessingStrategy( normalized );
+		strategy ??= this.selectProcessingStrategy( normalized );
 		let result;
 
 		try {
@@ -849,28 +948,33 @@ export class TextureCreator {
 			switch ( strategy.method ) {
 
 				case 'worker-direct':
-					result = await this.processWithWorkerDirect( normalized );
+					result = await this.processWithWorkerDirect( normalized, dims, scratch );
 					break;
 				case 'worker-streaming':
-					result = await this.processInWorkerStreaming( normalized );
+					result = await this.processInWorkerStreaming( normalized, dims );
 					break;
 				case 'main-batch':
-					result = await this.processOnMainThreadBatch( normalized, strategy.batchSize );
+					result = await this.processOnMainThreadBatch( normalized, strategy.batchSize, dims );
 					break;
 				case 'main-streaming':
-					result = await this.processOnMainThreadStreaming( normalized );
+					result = await this.processOnMainThreadStreaming( normalized, dims );
 					break;
 				default:
-					result = await this.processOnMainThreadSync( normalized );
+					result = await this.processOnMainThreadSync( normalized, dims );
 
 			}
 
-			// Cache successful result
+			// The worker's own memory fallbacks pick a size of their own.
+			if ( dims && result && ( result.image.width !== dims.maxWidth || result.image.height !== dims.maxHeight ) ) {
+
+				throw new Error( `packed at ${result.image.width}x${result.image.height}, not the bucket's ${dims.maxWidth}x${dims.maxHeight}` );
+
+			}
+
 			if ( result ) {
 
-				const reencoded = this._harmonizeTransfer( result, textures, srgbPool );
-				this._applyColorManagement( result, textures, srgbPool, reencoded );
-				this.textureCache.set( cacheKey, result );
+				const reencoded = this._harmonizeTransfer( result, textures, srgbPool, tally );
+				this._applyColorManagement( result, textures, srgbPool, reencoded, tally );
 
 			}
 
@@ -884,9 +988,9 @@ export class TextureCreator {
 				'worker texture processing failed — retrying on the main thread',
 				{ cause: String( error?.message ?? error ) }
 			);
-			const fallback = await this.processOnMainThreadSync( normalized );
-			const reencoded = this._harmonizeTransfer( fallback, textures, srgbPool );
-			this._applyColorManagement( fallback, textures, srgbPool, reencoded );
+			const fallback = await this.processOnMainThreadSync( normalized, dims );
+			const reencoded = this._harmonizeTransfer( fallback, textures, srgbPool, tally );
+			this._applyColorManagement( fallback, textures, srgbPool, reencoded, tally );
 			return fallback;
 
 		} finally {
@@ -937,7 +1041,7 @@ export class TextureCreator {
 	}
 
 	// Optimized worker processing with direct transfer
-	async processWithWorkerDirect( textures ) {
+	async processWithWorkerDirect( textures, dims = null, scratch = null ) {
 
 		// Wait for available worker
 		while ( this.activeWorkers >= this.maxConcurrentWorkers ) {
@@ -960,7 +1064,7 @@ export class TextureCreator {
 
 				slots += extra;
 				this.activeWorkers += extra;
-				return this.createDataArrayTextureFromResult( await this._packAcrossWorkers( texturesData, slots ) );
+				return this.createDataArrayTextureFromResult( await this._packAcrossWorkers( texturesData, slots, dims, scratch ) );
 
 			}
 
@@ -1002,7 +1106,8 @@ export class TextureCreator {
 				worker.postMessage( {
 					textures: texturesData,
 					maxTextureSize: this.maxTextureSize,
-					method: 'direct-transfer'
+					method: 'direct-transfer',
+					dims
 				}, transferables );
 
 			} );
@@ -1032,11 +1137,13 @@ export class TextureCreator {
 	 * The worker's direct path split across `count` workers, each drawing its layers straight into
 	 * one shared array. Large sources dominate (their downscale), so they are dealt out first.
 	 */
-	async _packAcrossWorkers( texturesData, count ) {
+	async _packAcrossWorkers( texturesData, count, dims = null, scratch = null ) {
 
-		const { maxWidth: width, maxHeight: height } = this.calculateOptimalDimensions( texturesData.map( image => ( { image } ) ) );
+		const { maxWidth: width, maxHeight: height } = dims ?? this.calculateOptimalDimensions( texturesData.map( image => ( { image } ) ) );
 		const depth = texturesData.length;
-		const shared = new SharedArrayBuffer( width * height * depth * 4 );
+		const bytes = width * height * depth * 4;
+		const shared = scratch?.shared?.byteLength >= bytes ? scratch.shared : new SharedArrayBuffer( bytes );
+		if ( scratch ) scratch.shared = shared;
 
 		const parts = Array.from( { length: count }, () => ( { cost: 0, layers: [], transfer: [] } ) );
 		const order = texturesData.map( ( _, index ) => index );
@@ -1074,7 +1181,7 @@ export class TextureCreator {
 
 		}
 
-		return { data: shared, width, height, depth };
+		return { data: new Uint8Array( shared, 0, bytes ), width, height, depth };
 
 	}
 
@@ -1082,12 +1189,12 @@ export class TextureCreator {
 	 * `processOnMainThreadStreaming` with the draw and read moved to a worker: each layer is
 	 * resized here exactly as there, so the array is byte-for-byte the same.
 	 */
-	async processInWorkerStreaming( textures ) {
+	async processInWorkerStreaming( textures, dims = null ) {
 
 		const validTextures = textures.filter( tex => tex?.image );
 		if ( validTextures.length === 0 ) return this.createFallbackTexture();
 
-		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( validTextures );
+		const { maxWidth, maxHeight } = dims ?? this.calculateOptimalDimensions( validTextures );
 		const depth = validTextures.length;
 
 		while ( this.activeWorkers >= this.maxConcurrentWorkers ) {
@@ -1254,7 +1361,7 @@ export class TextureCreator {
 	 * would use its own filter, so those texels can differ slightly from a browser render. A large
 	 * bucket packs in a worker: on the main thread it starved the BVH workers of their next task.
 	 */
-	async processOnCPU( textures ) {
+	async processOnCPU( textures, dims = null ) {
 
 		const layers = textures.map( ( texture, layer ) => {
 
@@ -1272,7 +1379,7 @@ export class TextureCreator {
 
 		} );
 
-		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( layers.map( ( image ) => ( { image } ) ) );
+		const { maxWidth, maxHeight } = dims ?? this.calculateOptimalDimensions( layers.map( ( image ) => ( { image } ) ) );
 		const layerBytes = maxWidth * maxHeight * 4;
 
 		const packed = hasWorkers() && layerBytes * layers.length >= WORKER_PACK_BYTES
@@ -1334,12 +1441,12 @@ export class TextureCreator {
 
 	}
 
-	async processOnMainThreadBatch( textures, batchSize ) {
+	async processOnMainThreadBatch( textures, batchSize, dims = null ) {
 
 		const validTextures = textures.filter( tex => tex?.image );
 		if ( validTextures.length === 0 ) return this.createFallbackTexture();
 
-		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( validTextures );
+		const { maxWidth, maxHeight } = dims ?? this.calculateOptimalDimensions( validTextures );
 		const depth = validTextures.length;
 		const data = this.bufferPool.getBuffer( maxWidth * maxHeight * depth * 4, Uint8Array );
 
@@ -1395,12 +1502,12 @@ export class TextureCreator {
 
 	}
 
-	async processOnMainThreadStreaming( textures ) {
+	async processOnMainThreadStreaming( textures, dims = null ) {
 
 		const validTextures = textures.filter( tex => tex?.image );
 		if ( validTextures.length === 0 ) return this.createFallbackTexture();
 
-		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( validTextures );
+		const { maxWidth, maxHeight } = dims ?? this.calculateOptimalDimensions( validTextures );
 		const depth = validTextures.length;
 		const data = this.bufferPool.getBuffer( maxWidth * maxHeight * depth * 4, Uint8Array );
 
@@ -1440,12 +1547,12 @@ export class TextureCreator {
 
 	}
 
-	async processOnMainThreadSync( textures ) {
+	async processOnMainThreadSync( textures, dims = null ) {
 
 		const validTextures = textures.filter( tex => tex?.image );
 		if ( validTextures.length === 0 ) return this.createFallbackTexture();
 
-		const { maxWidth, maxHeight } = this.calculateOptimalDimensions( validTextures );
+		const { maxWidth, maxHeight } = dims ?? this.calculateOptimalDimensions( validTextures );
 		const depth = validTextures.length;
 		const data = this.bufferPool.getBuffer( maxWidth * maxHeight * depth * 4, Uint8Array );
 
@@ -1705,8 +1812,7 @@ export class TextureCreator {
 
 	createDataArrayTextureFromResult( result ) {
 
-		const textureData = result.data instanceof ArrayBuffer ?
-			new Uint8Array( result.data ) : new Uint8Array( result.data );
+		const textureData = ArrayBuffer.isView( result.data ) ? result.data : new Uint8Array( result.data );
 
 		return this.createDataArrayTextureFromBuffer( textureData, result.width, result.height, result.depth );
 

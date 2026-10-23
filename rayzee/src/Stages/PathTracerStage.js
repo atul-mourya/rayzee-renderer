@@ -28,6 +28,47 @@ import { createLogger, fmt } from '../utils/Logger.js';
 // Triangles converted per staging pass: 256K is 12 + 8 MB of staging, kept for the stage's life.
 const TRIANGLE_UPLOAD_SLICE = 1 << 18;
 
+// Texture array layers sent per drained upload: four 2K maps.
+const TEXTURE_UPLOAD_SLICE_BYTES = 64 * 2 ** 20;
+
+/**
+ * Writes `layers` layers of `data` into a texture array's GPU texture from `firstLayer`, a slice at a time, each drained
+ * as {@link PathTracerStage#drainUploads} explains.
+ */
+async function writeTextureLayers( renderer, texture, firstLayer, data, layers ) {
+
+	const gpu = renderer.backend.get( texture ).texture;
+	if ( ! gpu ) return; // disposed meanwhile
+	const { width, height } = texture.image;
+	const layerBytes = data.byteLength / layers;
+	const step = Math.max( 1, Math.floor( TEXTURE_UPLOAD_SLICE_BYTES / layerBytes ) );
+	const { queue } = renderer.backend.device;
+
+	for ( let k = 0; k < layers; k += step ) {
+
+		const n = Math.min( step, layers - k );
+		queue.writeTexture(
+			{ texture: gpu, origin: { x: 0, y: 0, z: firstLayer + k } },
+			data.subarray( k * layerBytes, ( k + n ) * layerBytes ),
+			{ bytesPerRow: layerBytes / height, rowsPerImage: height },
+			{ width, height, depthOrArrayLayers: n }
+		);
+		await queue.onSubmittedWorkDone();
+
+	}
+
+}
+
+/** TextureCreator's `layerSink`: a large bucket's layers go onto the GPU as they are packed. */
+export function textureLayerSink( renderer ) {
+
+	return {
+		allocate: ( texture ) => renderer.initTexture( texture ),
+		write: ( texture, firstLayer, data, layers ) => writeTextureLayers( renderer, texture, firstLayer, data, layers ),
+	};
+
+}
+
 const log = createLogger( 'pathtracer' );
 
 
@@ -104,7 +145,7 @@ export class PathTracerStage extends RenderStage {
 		this.scene = scene;
 
 		// Scene building
-		this.sdfs = new SceneProcessor();
+		this.sdfs = new SceneProcessor( { layerSink: textureLayerSink( renderer ) } );
 		this.lightSerializer = new LightSerializer();
 
 		// State management
@@ -795,6 +836,25 @@ export class PathTracerStage extends RenderStage {
 	drainUploads() {
 
 		return this.renderer.backend.device.queue.onSubmittedWorkDone();
+
+	}
+
+	/**
+	 * Uploads freshly packed texture arrays a slice at a time. One without pixels is on the GPU already.
+	 * @param {Array<import('three').DataArrayTexture|null>} textures
+	 */
+	async uploadTextureArrays( textures ) {
+
+		for ( const texture of textures ) {
+
+			const data = texture?.image?.data;
+			if ( ! data ) continue;
+			// three.js only allocates it.
+			texture.source.dataReady = false;
+			this.renderer.initTexture( texture );
+			await writeTextureLayers( this.renderer, texture, 0, data, texture.image.depth );
+
+		}
 
 	}
 
@@ -1790,6 +1850,8 @@ export class PathTracerStage extends RenderStage {
 			log.debug( 'material rebuild started' );
 
 			await this.sdfs.rebuildMaterials( scene );
+			// Before the new material data: frames traced meanwhile keep the old arrays and the indices into them.
+			await this.uploadTextureArrays( [ ...( this.sdfs.srgbBucketTextures ?? [] ), ...( this.sdfs.linearBucketTextures ?? [] ) ] );
 			// Materials and textures only. `sdfs` is not the processor that built the scene
 			// (PathTracerApp._sdf is), so re-uploading everything from it put its empty emissive
 			// data and instance table in place of the scene's: emitters stopped being sampled.

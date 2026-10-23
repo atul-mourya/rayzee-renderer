@@ -249,8 +249,11 @@ once looked at. How it should have been built so they could not happen:
   nothing by click and outlines nothing. The outline could read back just the selected mesh's arrays (and matrix list);
   picking needs a BVH-backed raycast rather than three.js's, which tested 51M empty copies for seconds.
 - [ ] **One big upload is one big block**: Chrome keeps a shared memory block the size of each upload in flight for the
-  page's life. Chunk stores and texture buckets are paced now; the environment still goes in one `writeTexture` (392 MB
-  on the island) and a texture bucket's layers in one burst — splitting those needs a hook into three.js's upload.
+  page's life. Chunk stores and texture arrays are paced now (arrays in 64 MB slices, written to the GPU texture
+  directly); the environment still goes in one `writeTexture` (392 MB on the island).
+- [ ] **Decoded material images stay in the tab**: every source image is kept decoded for the session so a material
+  rebuild can repack the arrays — 4 GB for bistro's 278 2K maps, most of what is left of its 6.3 GB peak. An archive's
+  image could be read again from the archive on a rebuild instead (`ARCHIVE_PATH` is on the texture).
 
 ---
 

@@ -1075,22 +1075,30 @@ is. The stage's own is a leftover of the old `stage.build()` path; its `rebuildM
 upload materials and textures from it. Re-uploading everything (`updateSceneUniforms`) put its empty
 emissive data and instance table in place of the scene's, and emitters stopped being sampled.
 
-**Texture arrays' CPU pixels** are released right after three.js uploads them (the texture's
+**Texture arrays' CPU pixels** are released right after they are uploaded (the texture's
 `onUpdate`): nothing reads them again, since a rebuild packs new arrays from the three.js
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
 keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
+
+**A large bucket is never whole in memory.** Past `PACK_GROUP_BYTES` (256 MB) TextureCreator packs it 256 MB of layers
+at a time and hands each group to its `layerSink` (`textureLayerSink( renderer )` in `PathTracerStage.js`), which writes
+it straight into the GPU array (created with `source.dataReady = false`). Each group is packed by the whole bucket's
+strategy and size (`dims` through every `process*` path and the worker), so its bytes are a whole pack's. Bistro (pbrt,
+278 2K maps beside 4 GB of decoded images) held 1.7 + 2.3 GB arrays until the upload: the second failed to allocate, or
+Chrome killed the tab. Now the tab peaks at 6.3 GB (7.3 GB in the app). ⚠️ Free each group at once (`transfer( 0 )`) and reuse one
+SharedArrayBuffer across groups: left to GC, a dozen dead groups (+3.3 GB) piled up first.
 
 **Uploads in Chrome.** Every `writeBuffer`, `writeTexture` and `mappedAtCreation` goes through a shared memory pool
 mapped in both the tab and the GPU process; it grows to the most ever sent before the GPU caught up and is kept until
 the page closes (reused, never shrunk; destroying the buffer does not return it). Measured on Chrome 154: 1 GB in 64 MB
 writes left 1 GB behind, in 8 MB writes too; awaiting `onSubmittedWorkDone` after each left 64 MB, in the same time.
 So big uploads are paced: chunk uploaders return `stage.drainUploads()` and the spilling build awaits it,
-`SceneProcessor.uploadChunks` sends a multi-chunk store chunk by chunk before `uploadToPathTracer` adopts it, and the
-load uploads texture buckets one at a time (`renderer.initTexture`; three.js otherwise sends every layer in the first
-frame). 24155522.glb: pool 1,054 → 412 MB; the startup scene 330 → 35 MB. ⚠️ A single upload still takes a block its size:
-the environment (392 MB on the Moana island) goes in one `writeTexture`. With no emitter active the bit-trail map is a
-4-float placeholder (Shade reads it only while `emissiveTriangleCount > 0`): one over every triangle was 446 MB on the
-island, in the tab, on the GPU and in the pool.
+`SceneProcessor.uploadChunks` sends a multi-chunk store chunk by chunk before `uploadToPathTracer` adopts it, and
+texture arrays go up 64 MB at a time (`uploadTextureArrays`, writing the GPU texture itself; three.js otherwise sends
+every layer in the first frame). 24155522.glb: pool 1,054 → 412 MB; the startup scene 330 → 35 MB; bistro 1.9 GB →
+under 0.2 GB. ⚠️ A single upload still takes a block its size: the environment (392 MB on the Moana island) goes in
+one `writeTexture`. With no emitter active the bit-trail map is a 4-float placeholder (Shade reads it only while
+`emissiveTriangleCount > 0`): one over every triangle was 446 MB on the island, in the tab, on the GPU and in the pool.
 
 **CPU memory (`Processor/HostMemory.js`)** — the scaling wall for a large scene is not RAM, it is
 contiguous ArrayBuffer *address space*, and how much of it a process can hand out falls as the host

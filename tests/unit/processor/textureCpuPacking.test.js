@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { DataTexture, FloatType, HalfFloatType, RedFormat, DataUtils } from 'three';
+import { DataTexture, FloatType, HalfFloatType, RedFormat, DataUtils, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
 import { TextureCreator, rgba8Pixels } from '@/core/Processor/TextureCreator.js';
 import { resampleRGBA8 } from '@/core/Processor/ResampleRGBA8.js';
 import { IssueLog } from '@/core/EngineIssues.js';
@@ -94,6 +94,52 @@ describe( 'TextureCreator — packing without a browser', () => {
 
 		expect( packed.image ).toMatchObject( { width: 2048, height: 1024, depth: 1 } );
 		expect( issues.list[ 0 ] ).toMatchObject( { code: 'texture.processing_fallback', detail: { cause: 'no threads here' } } );
+
+	} );
+
+	it( 'hands a large bucket to the layer sink a group at a time, with the bytes it packs whole', async () => {
+
+		// Four layers at the bucket size, then three smaller ones resampled up: the last group holds only those.
+		const layers = [ 1, 2, 3, 4 ].map( ( seed ) => noise( 256, 128, seed, seed % 2 === 0 ) );
+		layers.push( noise( 64, 32, 5, false ), noise( 100, 50, 6, true ), noise( 128, 64, 7, false ) );
+		layers[ 1 ].colorSpace = LinearSRGBColorSpace;
+
+		const whole = await new TextureCreator().createTexturesToDataTexture( layers, { srgbPool: true } );
+
+		let received = null;
+		const writes = [];
+		const layerSink = {
+			allocate: ( texture ) => {
+
+				received = new Uint8Array( texture.image.width * texture.image.height * texture.image.depth * 4 );
+
+			},
+			write: async ( texture, first, data, count ) => {
+
+				writes.push( [ first, count ] );
+				received.set( data, first * texture.image.width * texture.image.height * 4 );
+
+			},
+		};
+		const grouped = await new TextureCreator( { layerSink, groupBytes: 3 * 256 * 128 * 4 } ).createTexturesToDataTexture( layers, { srgbPool: true } );
+
+		expect( writes ).toEqual( [[ 0, 3 ], [ 3, 3 ], [ 6, 1 ]] );
+		expect( grouped.image ).toMatchObject( { width: 256, height: 128, depth: 7, data: null } );
+		expect( grouped.source.dataReady ).toBe( false );
+		expect( grouped.colorSpace ).toBe( SRGBColorSpace );
+		expect( Buffer.compare( Buffer.from( received ), Buffer.from( whole.image.data ) ) ).toBe( 0 );
+
+	} );
+
+	it( 'packs a bucket under the group size whole, sink or not', async () => {
+
+		const layerSink = { allocate: () => {
+
+			throw new Error( 'not grouped' );
+
+		}, write: async () => {} };
+		const packed = await new TextureCreator( { layerSink } ).createTexturesToDataTexture( [ noise( 64, 32, 1, false ) ] );
+		expect( packed.image.data.byteLength ).toBe( 64 * 32 * 4 );
 
 	} );
 
