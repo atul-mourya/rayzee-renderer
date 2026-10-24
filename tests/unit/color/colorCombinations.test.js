@@ -49,6 +49,15 @@ const decode = v => Math.sign( v ) * ( Math.abs( v ) <= 0.04045 ? Math.abs( v ) 
 
 const mul = ( m, v ) => [ 0, 3, 6 ].map( r => m[ r ] * v[ 0 ] + m[ r + 1 ] * v[ 1 ] + m[ r + 2 ] * v[ 2 ] );
 
+function invert( m ) {
+
+	const [ a, b, c, d, e, f, g, h, i ] = m;
+	const A = e * i - f * h, B = f * g - d * i, C = d * h - e * g;
+	const det = a * A + b * B + c * C;
+	return [ A, c * h - b * i, b * f - c * e, B, a * i - c * g, c * d - a * f, C, b * g - a * h, a * e - b * d ].map( v => v / det );
+
+}
+
 // Grid nodes, so the table is read where it was baked: greys, a warm and a cool colour, dark to past the top.
 const NODES = [ 8, 14, 18, 20, 22, 24, 27 ].flatMap( i => [[ i, i, i ], [ i, i - 3, i - 6 ], [ i - 6, i - 2, i ]] );
 
@@ -86,8 +95,9 @@ for ( const { name, load } of CONFIGS ) {
 		} );
 
 		// What the table holds for `nodes` against what OCIO says the display emits, as the canvas shows it: linear, in
-		// the table's canvas colour space, below zero clipped. Null when the view shows its codes as they are.
-		function mismatches( table, { display, view, look, source, size, minEv, maxEv, canvas, curve, linear }, nodes ) {
+		// the table's canvas colour space, below zero clipped. Null when the view shows its codes as they are. A table on
+		// another space's axes (`pre`) is read at its nodes there.
+		function mismatches( table, { display, view, look, source, size, minEv, maxEv, canvas, curve, linear, clip, pre }, nodes ) {
 
 			const colorSpace = config.views[ display ].find( v => v.name === view )?.colorSpace;
 			const output = ! colorSpace || colorSpace === '<USE_DISPLAY_NAME>' ? display : colorSpace;
@@ -98,17 +108,19 @@ for ( const { name, load } of CONFIGS ) {
 				{ type: 'displayView', source, display, view },
 				{ type: 'colorSpace', source: output, destination: displayReferenceSpace() },
 			] );
-			const xyz = new Float32Array( nodes.flatMap( n => [ ...n.map( i => unshape( i, size, minEv, maxEv ) ), 1 ] ) );
+			const fromAxes = pre ? invert( pre ) : [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ];
+			const inputs = nodes.map( n => mul( fromAxes, n.map( i => unshape( i, size, minEv, maxEv ) ) ) );
+			const xyz = new Float32Array( inputs.flatMap( v => [ ...v, 1 ] ) );
 			p.applyRGBAF32( xyz );
 			p.dispose();
 
 			// Read as the readback reads it, so a view split at its lookup (False Color) is read through its curve.
-			const sample = makeCpuSampler( { data: table.data, size, minEv, maxEv, curve, linear } );
+			const sample = makeCpuSampler( { data: table.data, size, minEv, maxEv, curve, linear, clip, pre } );
 			const read = [ 0, 0, 0 ];
 			const toCanvas = XYZ_TO_CANVAS[ canvas ];
 			return nodes.flatMap( ( [ r, g, b ], k ) => {
 
-				sample( unshape( r, size, minEv, maxEv ), unshape( g, size, minEv, maxEv ), unshape( b, size, minEv, maxEv ), read );
+				sample( ...inputs[ k ], read );
 				const shown = read.map( v => Math.max( 0, decode( v ) ) );
 				const truth = mul( toCanvas, [ xyz[ k * 4 ], xyz[ k * 4 + 1 ], xyz[ k * 4 + 2 ] ] ).map( v => Math.max( 0, v ) );
 				const scale = Math.max( 0.01, ...truth );
@@ -271,7 +283,7 @@ for ( const { name, load } of CONFIGS ) {
 				// below 0 inside the cube's cell, and interpolated encoded, red showed 0.043 of light (0.9 % of the green,
 				// 58 levels); from the light, encoded after the lookup, 0.003.
 				const entry = cm.setView( { display: 'Rec.1886', view: 'Standard', size: 65 } );
-				expect( entry.ocio ).toMatchObject( { emulated: true, linear: true } );
+				expect( entry.ocio.emulated ).toBe( true );
 				const toP3 = getRuntime().config.createColorSpaceProcessor( 'Linear Rec.709', 'Linear DCI-P3 D65' );
 				const green = toP3.applyRGBAF32( new Float32Array( [ 0, 5, 0, 1 ] ), { copy: true } );
 				toP3.dispose();

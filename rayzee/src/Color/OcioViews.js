@@ -13,13 +13,14 @@
 
 import { Data3DTexture, RGBAFormat, HalfFloatType, NearestFilter, ClampToEdgeWrapping } from 'three';
 import {
-	Fn, vec3, ivec3, float, int, floor, clamp, log2, max, min, mix, step, sign, If, texture3DLoad,
+	Fn, vec3, ivec3, float, int, floor, clamp, log2, max, min, mix, step, sign, dot, If, texture3DLoad,
 } from 'three/tsl';
 
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { displayCanvasFit, isDataView } from './Displays.js';
+import { displayCanvasFit, isDataView, isHdrDisplay, findNativeLinearSpace } from './Displays.js';
 import { getRuntime, getConfigInfo, getConfigText, describeConfig } from './OcioRuntime.js';
-import { bakeLut, bakeCurve, curveSlices, encodeExtended, makeCpuSampler, packHalf, lutWgsl, measureBakeError } from './LutBake.js';
+import { extractMatrix } from './ColorSpaces.js';
+import { bakeLut, bakeCurve, curveSlices, encodeExtended, makeCpuSampler, packHalf, lutWgsl, measureBakeError, edgeColours } from './LutBake.js';
 
 export { encodeExtended };
 import { addViewTransform, nextOcioId, VIEW_TRANSFORMS } from './ViewTransforms.js';
@@ -30,6 +31,11 @@ export const DEFAULT_MAX_EV = 12.5260688117;
 
 /** 65³ measures a mean of 0.11 code values against OCIO itself, for 2.1 MB. */
 export const DEFAULT_LUT_SIZE = 65;
+/** Where 65³ measures poorly (`tableScore`), the bake tries 97³ (7.3 MB) and keeps the closer. */
+const FINE_LUT_SIZE = 97;
+
+/** Above 1: a saturated colour 5 levels off, or a mean of 0.4. */
+const tableScore = error => Math.max( error.edge / 5, error.mean / 0.4 );
 
 
 let issueLog = null;
@@ -164,6 +170,64 @@ export function canvasFitOf( space ) {
 	}
 
 	byConfig.set( space, result );
+	return result;
+
+}
+
+const clips = new WeakMap();
+
+const times3 = ( a, b ) => [ 0, 1, 2 ].flatMap( r => [ 0, 1, 2 ].map( c => a[ r * 3 ] * b[ c ] + a[ r * 3 + 1 ] * b[ 3 + c ] + a[ r * 3 + 2 ] * b[ 6 + c ] ) );
+
+/**
+ * A converted display's clip at 0 in its own primaries, as canvas-light matrices (`toDisplay`, `fromDisplay`), for the
+ * lookup to apply after interpolating; null where the display's encoding does not clip there. Rec.1886's and Rec.2020's
+ * `ExponentTransform` do: baked in, the clip was a kink inside the cube's cells; left out, a colour outside the
+ * display's gamut was clipped in the canvas's instead (Standard on Rec.2020 in ACEScg, 61 levels).
+ */
+function displayClip( space, canvas ) {
+
+	const info = getConfigInfo();
+	let byConfig = clips.get( info );
+	if ( ! byConfig ) clips.set( info, byConfig = new Map() );
+	const key = `${space}|${canvas}`;
+	if ( byConfig.has( key ) ) return byConfig.get( key );
+
+	let result = null;
+	const reference = displayReferenceSpace();
+	try {
+
+		const config = configHandle();
+		const decode = config.createColorSpaceProcessor( space, reference );
+		const encode = config.createColorSpaceProcessor( reference, space );
+		try {
+
+			// The display's primaries, as columns: its full red, green and blue codes decoded.
+			const p = decode.applyRGBAF32( new Float32Array( [ 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1 ] ), { copy: true } );
+			const primaries = [ p[ 0 ], p[ 4 ], p[ 8 ], p[ 1 ], p[ 5 ], p[ 9 ], p[ 2 ], p[ 6 ], p[ 10 ] ];
+			// A colour with the display's red below 0, through its encoding and back: red at 0 means it clips.
+			const probe = mul3( primaries, [ - 0.05, 0.3, 0.3 ] );
+			const back = decode.applyRGBAF32( encode.applyRGBAF32( new Float32Array( [ ...probe, 1 ] ), { copy: true } ), { copy: true } );
+			if ( Math.abs( mul3( invert3( primaries ), [ back[ 0 ], back[ 1 ], back[ 2 ] ] )[ 0 ] ) < 1e-3 ) {
+
+				const fromDisplay = times3( XYZ_TO_CANVAS[ canvas ], primaries );
+				result = { toDisplay: invert3( fromDisplay ), fromDisplay };
+
+			}
+
+		} finally {
+
+			decode.dispose();
+			encode.dispose();
+
+		}
+
+	} catch {
+
+		result = null;
+
+	}
+
+	byConfig.set( key, result );
 	return result;
 
 }
@@ -397,15 +461,34 @@ function derivedView( display, view, canvas ) {
 }
 
 /**
+ * The bake's saturated colours as a render holds them: Rec.709's, in the space rendered in. A wider space's own primaries
+ * sit on edges no table follows (ACES 2.0 from ACEScg: 24 levels at 65, 25 at 97), which hid what 97 does for Rec.709's
+ * (6.6 → 4.2).
+ */
+function edgeColoursIn( source, options ) {
+
+	const colours = edgeColours();
+	const native = findNativeLinearSpace( getConfigInfo() );
+	if ( ! native || native === source ) return colours;
+	const p = getRuntime().config.createGroupTransformProcessor( [ { type: 'colorSpace', source: native, destination: source } ], options );
+	const px = new Float32Array( colours.flatMap( c => [ ...c, 1 ] ) );
+	p.applyRGBAF32( px );
+	p.dispose();
+	return colours.map( ( _, i ) => [ px[ i * 4 ], px[ i * 4 + 1 ], px[ i * 4 + 2 ] ] );
+
+}
+
+/**
  * One view (and look) sampled into a half-float table: as OCIO outputs it, or, with `canvas`, as the light the display
  * emits in that canvas colour space, encoded in the bake or after the lookup (`linear`), whichever is closer. With a
  * `curve` (a split view) the cube holds the grey value before the view's lookup, and the entries after it the colour.
+ * Its axes are the source space's, or linear Rec.709's behind a `pre` matrix; its size 65, or 97 — as measured, unless
+ * `size` is given.
  */
-function bakeView( { source, display, view, look, context, canvas = null, size, minEv, maxEv } ) {
+function bakeView( { source, display, view, look, context, canvas = null, size = null, minEv, maxEv } ) {
 
 	const output = viewOutputSpace( getConfigInfo(), display, view );
 	const options = context ? { context } : undefined;
-	const looked = look ? [ { type: 'look', source, destination: source, looks: look } ] : [];
 	const own = derivedView( display, view, canvas );
 	// A converted display's table holds the light in the canvas's primaries, encoded either in the bake or after it.
 	const toCanvas = buffer => canvas && lightForCanvas( buffer, canvas );
@@ -415,46 +498,69 @@ function bakeView( { source, display, view, look, context, canvas = null, size, 
 
 	};
 
-	let cube, entries = null, curve = null;
+	// The cube from `input`, the space its axes are in.
+	const cubeFrom = input => {
+
+		const looked = look ? [ { type: 'look', source: input, destination: input, looks: look } ] : [];
+		if ( own?.split ) return own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source: input, destination: own.split.pre } ], options );
+		// A converted display from its light, not its codes decoded: its encoding clips at 0 (Rec.1886's and Rec.2020's
+		// ExponentTransform), which put a kink inside the cube wherever a colour left the display's gamut, and a pure
+		// primary in a wider working space missed by up to 95 levels. The canvas clips the same light itself.
+		if ( canvas && own ) return own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source: input, destination: own.space } ], options );
+		return createViewProcessor( { source: input, display, view, look, context, decodeFrom: canvas ? output : null, decodeTo: canvas && displayReferenceSpace() } );
+
+	};
+
+	const cubes = new Map();
+	const cubeOf = input => cubes.get( input ) ?? cubes.set( input, cubeFrom( input ) ).get( input );
+
+	let entries = null, curve = null;
 	if ( own?.split ) {
 
-		const { pre, post, lo, hi, n } = own.split;
-		cube = own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source, destination: pre } ], options );
+		const { post, lo, hi, n } = own.split;
 		entries = own.config.createGroupTransformProcessor( [
 			{ type: 'named', name: post },
 			...( canvas ? [] : [ { type: 'colorSpace', source: displayReferenceSpace(), destination: output } ] ),
 		], options );
 		curve = { n, lo, hi };
 
-	} else if ( canvas && own ) {
-
-		// A converted display from its light, not its codes decoded: its encoding clips at 0 (Rec.1886's and Rec.2020's
-		// ExponentTransform), which put a kink inside the cube wherever a colour left the display's gamut, and a pure
-		// primary in a wider working space missed by up to 95 levels. The canvas clips the same light itself.
-		cube = own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source, destination: own.space } ], options );
-
-	} else {
-
-		cube = createViewProcessor( { source, display, view, look, context, decodeFrom: canvas ? output : null, decodeTo: canvas && displayReferenceSpace() } );
-
 	}
 
-	// What the table stands for, as its lookup returns it: encoded.
+	// From the view's light, the display's clip comes after the lookup; measured against OCIO's whole chain, clip and all.
+	const clip = canvas && own ? displayClip( output, canvas ) : null;
+	const faithful = canvas && own ? createViewProcessor( { source, display, view, look, context, decodeFrom: output, decodeTo: displayReferenceSpace() } ) : null;
 	const truth = buffer => {
 
-		cube.applyRGBAF32( buffer );
-		if ( entries ) entries.applyRGBAF32( buffer );
+		if ( faithful ) {
+
+			faithful.applyRGBAF32( buffer );
+
+		} else {
+
+			cubeOf( source ).applyRGBAF32( buffer );
+			if ( entries ) entries.applyRGBAF32( buffer );
+
+		}
+
 		toCanvas( buffer );
 		if ( canvas ) encodeAll( buffer );
 
 	};
 
+	const edges = edgeColoursIn( source, options );
+	// Only an HDR display's table is ever shown past 0..1; an SDR display's shows its HDR version on an HDR screen.
+	const clamped = ! isHdrDisplay( describeConfig(), display );
+	const native = findNativeLinearSpace( getConfigInfo() );
+	const toNative = native && native !== source ? extractMatrix( source, native, { context } ) : null;
+
 	// The JavaScript sampler reads the same half-precision values the GPU does, not the float
 	// bake they came from — otherwise the readback and the viewport differ by the half rounding,
 	// and "one table in four places" would only be nearly true. The error is measured on that
 	// same table, so it reports what actually renders.
-	try {
+	const bakeAt = ( size, input ) => {
 
+		const cube = cubeOf( input );
+		const pre = input === source ? null : toNative;
 		let values = bakeLut( { size, minEv, maxEv, apply: buffer => {
 
 			cube.applyRGBAF32( buffer );
@@ -479,7 +585,8 @@ function bakeView( { source, display, view, look, context, canvas = null, size, 
 		const table = ( data, linear ) => {
 
 			const half = packHalf( data );
-			return { half, curve, linear, error: measureBakeError( { sampler: makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear } ), apply: truth } ) };
+			const sampler = makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear, clip, pre } );
+			return { half, size, input, pre, curve, linear, clip, error: measureBakeError( { sampler, apply: truth, edges, clamped } ) };
 
 		};
 
@@ -495,17 +602,44 @@ function bakeView( { source, display, view, look, context, canvas = null, size, 
 		const coded = table( encoded, false );
 		return light.error.max * 2 < coded.error.max ? light : coded;
 
+	};
+
+	// Kept where it measures closer and no worse on ordinary colours: a saturated colour mended at the mean's cost is no gain.
+	const closer = ( a, b ) => ( tableScore( b.error ) < 0.8 * tableScore( a.error ) && b.error.mean <= a.error.mean * 1.1 + 0.02 ? b : a );
+
+	try {
+
+		// Where the table measures poorly, the same view on linear Rec.709's axes, then at 97, each kept if closer.
+		// Rendering in a wider space, a view that works channel by channel in Rec.709 (Filmic, Khronos PBR Neutral, a plain
+		// encoding) bends hardest where a Rec.709 channel crosses 0, which the source's axes put inside a cell: pure Rec.709
+		// colours were up to 130 levels off in Filmic, 0.6 on Rec.709's axes; a view that keeps wider colours (ACES, AgX)
+		// measures worse there and stays. Over 263 tables (Blender's and ACES 2.0's configs, every display, in each working
+		// space they offer) 24 take Rec.709's axes and 68 grow: a saturated colour over 10 levels off on 47 → 6, the worst
+		// mean 0.48 → 0.40. Every table at 97 would not do it: some read worse there. The bake costs 53 → 71 ms at the
+		// median, 118 → 530 ms for the slowest tenth.
+		let best = null;
+		for ( const input of [ source, ...( toNative ? [ native ] : [] ) ] ) {
+
+			const t = bakeAt( size ?? DEFAULT_LUT_SIZE, input );
+			best = best ? closer( best, t ) : t;
+			if ( tableScore( best.error ) <= 1 ) return best;
+
+		}
+
+		return size ? best : closer( best, bakeAt( FINE_LUT_SIZE, best.input ) );
+
 	} finally {
 
-		cube.dispose();
+		cubes.forEach( p => p.dispose() );
 		entries?.dispose();
+		faithful?.dispose();
 
 	}
 
 }
 
 /** The TSL half of the table: the same shaper and the same six tetrahedra, as a node graph. */
-function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = false } ) {
+function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } ) {
 
 	// A linear table's light, encoded after the lookup with the canvas's extended curve. mix by step, not select: a TSL
 	// select takes one condition, so a vector one followed its first channel (green on magenta came out 0.055).
@@ -513,6 +647,23 @@ function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = fal
 
 		const a = v.abs();
 		return mix( a.pow( vec3( 1 / 2.4 ) ).mul( 1.055 ).sub( 0.055 ), a.mul( 12.92 ), step( a, vec3( 0.0031308 ) ) ).mul( sign( v ) );
+
+	};
+
+	const decode = v => {
+
+		const a = v.abs();
+		return mix( a.add( 0.055 ).div( 1.055 ).pow( vec3( 2.4 ) ), a.div( 12.92 ), step( a, vec3( 0.04045 ) ) ).mul( sign( v ) );
+
+	};
+
+	const times = ( m, v ) => vec3( dot( vec3( m[ 0 ], m[ 1 ], m[ 2 ] ), v ), dot( vec3( m[ 3 ], m[ 4 ], m[ 5 ] ), v ), dot( vec3( m[ 6 ], m[ 7 ], m[ 8 ] ), v ) );
+
+	// After the lookup: a converted display's clip in its own primaries, then the encoding a linear table leaves out.
+	const finish = v => {
+
+		if ( clip ) return encode( times( clip.fromDisplay, max( times( clip.toDisplay, linear ? v : decode( v ) ), vec3( 0.0 ) ) ) );
+		return linear ? encode( v ) : v;
 
 	};
 
@@ -526,7 +677,8 @@ function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = fal
 
 	return Fn( ( [ color, exposure ] ) => {
 
-		const c = max( color.mul( exposure ), vec3( 0.0 ) );
+		const exposed = color.mul( exposure );
+		const c = max( pre ? times( pre, exposed ) : exposed, vec3( 0.0 ) );
 
 		const p = clamp(
 			log2( max( c, vec3( 1e-10 ) ) ).sub( float( minEv ) ).div( float( span ) ),
@@ -592,14 +744,14 @@ function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = fal
 			.add( v1.sub( c000 ).mul( w.x ) )
 			.add( v2.sub( v1 ).mul( w.y ) )
 			.add( v3.sub( v2 ).mul( w.z ) );
-		if ( ! curve ) return linear ? encode( out ) : out;
+		if ( ! curve ) return finish( out );
 
 		// The curve: entry i is texel size³ + i, in the slices after the cube.
 		const u = clamp( out.x.sub( curve.lo ).div( curve.hi - curve.lo ), 0.0, 1.0 ).mul( curve.n - 1 ).toVar();
 		const k = min( int( floor( u ) ), int( curve.n - 2 ) ).toVar();
 		const entry = i => texture3DLoad( texture, ivec3( i.mod( size ), i.div( size ).mod( size ), i.div( size * size ).add( size ) ) ).rgb;
 		const shown = mix( entry( k ), entry( k.add( 1 ) ), u.sub( float( k ) ) );
-		return linear ? encode( shown ) : shown;
+		return finish( shown );
 
 	} );
 
@@ -614,12 +766,12 @@ function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = fal
  * @param {string} [options.look] - a look name from the config
  * @param {Object} [options.context] - context variables, e.g. `{ SHOT: '010' }`
  * @param {string} [options.source] - the space being rendered in; defaults to the scene_linear role
- * @param {number} [options.size=65]
+ * @param {number} [options.size] - the table's edge; left out, 65, or 97 where 65 measures poorly
  * @returns {Object} a registry entry, with `error` holding what the table cost
  */
 export function buildOcioView( {
 	display, view, look = null, context = null, source = null,
-	size = DEFAULT_LUT_SIZE, minEv = DEFAULT_MIN_EV, maxEv = DEFAULT_MAX_EV,
+	size = null, minEv = DEFAULT_MIN_EV, maxEv = DEFAULT_MAX_EV,
 	id = null, name = null,
 } = {} ) {
 
@@ -664,12 +816,13 @@ export function buildOcioView( {
 
 	}
 
-	const { half, error, curve, linear } = bakeView( { source: from, display, view, look, context, canvas: emulated ? canvas : null, size, minEv, maxEv } );
+	const baked = bakeView( { source: from, display, view, look, context, canvas: emulated ? canvas : null, size, minEv, maxEv } );
+	const { half, error, curve, linear, clip, pre } = baked;
 
 	return tableEntry( {
 		id, half, error,
 		name: name ?? ( look ? `${view} + ${look} (${display})` : `${view} (${display})` ),
-		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, emulated, curve, linear },
+		ocio: { display, view, look, context, source: from, configId: info.id, size: baked.size, requestedSize: size, minEv, maxEv, canvas, emulated, curve, linear, clip, pre },
 	} );
 
 }
@@ -680,13 +833,13 @@ export function buildOcioView( {
  */
 export function buildBakedView( baked, id = null ) {
 
-	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, fingerprint, ocioVersion, canvas, emulated, curve, linear } = baked;
+	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, fingerprint, ocioVersion, canvas, emulated, curve, linear, clip, pre } = baked;
 
 	return tableEntry( {
 		id, name, error, half: data,
 		ocio: {
 			display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv,
-			canvas: canvas ?? displayCanvasFit( display ) ?? 'srgb', emulated: !! emulated, curve: curve ?? null, linear: !! linear,
+			canvas: canvas ?? displayCanvasFit( display ) ?? 'srgb', emulated: !! emulated, curve: curve ?? null, linear: !! linear, clip: clip ?? null, pre: pre ?? null,
 			baked: { fingerprint: fingerprint ?? null, ocioVersion: ocioVersion ?? null },
 		},
 	} );
@@ -708,14 +861,14 @@ function tableTexture( half, size, curve = null ) {
 
 function tableEntry( { id, name, half, error, ocio } ) {
 
-	const { size, minEv, maxEv, curve = null, linear = false } = ocio;
-	const sampler = makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear } );
+	const { size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } = ocio;
+	const sampler = makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear, clip, pre } );
 	const entryId = id ?? nextOcioId();
 	const wgslConst = `TM_OCIO_${entryId}`;
 	const fnName = `tm_ocio_${entryId}`;
 
 	const held = liveViews.get( entryId );
-	const reusable = held && held.size === size && held.minEv === minEv && held.maxEv === maxEv && JSON.stringify( held.curve ) === JSON.stringify( curve ) && held.linear === linear;
+	const reusable = held && held.size === size && held.minEv === minEv && held.maxEv === maxEv && JSON.stringify( [ held.curve, held.linear, held.clip, held.pre ] ) === JSON.stringify( [ curve, linear, clip, pre ] );
 
 	let texture, tsl;
 	if ( reusable ) {
@@ -729,11 +882,11 @@ function tableEntry( { id, name, half, error, ocio } ) {
 
 		held?.texture.dispose();
 		texture = tableTexture( half, size, curve );
-		tsl = buildTslNode( { texture, size, minEv, maxEv, curve, linear } );
+		tsl = buildTslNode( { texture, size, minEv, maxEv, curve, linear, clip, pre } );
 
 	}
 
-	liveViews.set( entryId, { texture, tsl, size, minEv, maxEv, curve, linear } );
+	liveViews.set( entryId, { texture, tsl, size, minEv, maxEv, curve, linear, clip, pre } );
 
 	return {
 		id: entryId,
@@ -745,7 +898,7 @@ function tableEntry( { id, name, half, error, ocio } ) {
 
 		cpu: ( r, g, b, exposure, out ) => sampler( r * exposure, g * exposure, b * exposure, out ),
 
-		wgsl: lutWgsl( { fnName, texName: `${wgslConst.toLowerCase()}_tex`, size, minEv, maxEv, curve, linear } ),
+		wgsl: lutWgsl( { fnName, texName: `${wgslConst.toLowerCase()}_tex`, size, minEv, maxEv, curve, linear, clip, pre } ),
 		call: `${fnName}( c )`,
 		tsl,
 
@@ -797,7 +950,7 @@ export function displayReferenceSpace() {
  */
 export function buildCanvasView( {
 	display, view, look = null, context = null, source = null, canvas = 'srgb', for: shownFor = null,
-	size = DEFAULT_LUT_SIZE, minEv = DEFAULT_MIN_EV, maxEv = DEFAULT_MAX_EV,
+	size = null, minEv = DEFAULT_MIN_EV, maxEv = DEFAULT_MAX_EV,
 } = {} ) {
 
 	const info = getConfigInfo();
@@ -806,11 +959,12 @@ export function buildCanvasView( {
 	if ( ! displayReferenceSpace() ) throw new Error( 'the config names no display-referred CIE XYZ space to decode its displays in' );
 	if ( ! XYZ_TO_CANVAS[ canvas ] ) throw new Error( `no encoding for a "${canvas}" canvas` );
 
-	const { half, error, curve, linear } = bakeView( { source: from, display, view, look, context, canvas, size, minEv, maxEv } );
+	const baked = bakeView( { source: from, display, view, look, context, canvas, size, minEv, maxEv } );
+	const { half, error, curve, linear, clip, pre } = baked;
 
 	return canvasTable( {
 		name: look ? `${view} + ${look} (${display})` : `${view} (${display})`, half, error,
-		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, for: shownFor, curve, linear },
+		ocio: { display, view, look, context, source: from, configId: info.id, size: baked.size, requestedSize: size, minEv, maxEv, canvas, for: shownFor, curve, linear, clip, pre },
 	} );
 
 }
@@ -818,22 +972,22 @@ export function buildCanvasView( {
 /** {@link buildCanvasView}'s result from a saved file (`BakedViews.js`), without the runtime. */
 export function buildBakedCanvasView( baked ) {
 
-	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, canvas, for: shownFor, linear } = baked;
+	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, canvas, for: shownFor, linear, clip, pre } = baked;
 	return canvasTable( {
 		name, half: data, error,
-		ocio: { display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv, canvas: canvas ?? 'srgb', for: shownFor ?? null, linear: !! linear },
+		ocio: { display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv, canvas: canvas ?? 'srgb', for: shownFor ?? null, linear: !! linear, clip: clip ?? null, pre: pre ?? null },
 	} );
 
 }
 
 function canvasTable( { name, half, error, ocio } ) {
 
-	const { size, minEv, maxEv, curve = null, linear = false } = ocio;
+	const { size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } = ocio;
 	const texture = tableTexture( half, size, curve );
 	return {
 		name, source: 'ocio', error, ocio,
 		table: { data: half, size, texture },
-		tsl: buildTslNode( { texture, size, minEv, maxEv, curve, linear } ),
+		tsl: buildTslNode( { texture, size, minEv, maxEv, curve, linear, clip, pre } ),
 		dispose: () => texture.dispose(),
 	};
 
@@ -855,7 +1009,7 @@ export function addOcioView( options ) {
  *
  * @returns {{ added: Object[], skipped: Array<{ view: string, reason: string }> }}
  */
-export function addAllOcioViews( { display = null, look = null, context = null, source = null, size = DEFAULT_LUT_SIZE } = {} ) {
+export function addAllOcioViews( { display = null, look = null, context = null, source = null, size = null } = {} ) {
 
 	const info = getConfigInfo();
 	if ( ! info ) throw new Error( 'load an OCIO config first' );

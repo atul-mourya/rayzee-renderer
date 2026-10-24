@@ -4,6 +4,7 @@ import { NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } fr
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
 import { REC709_LUMINANCE_COEFFICIENTS } from '../TSL/Common.js';
 import { backdropGain } from '../Processor/ToneMapCPU.js';
+import { getViewTransform } from '../Color/ViewTransforms.js';
 
 
 /**
@@ -11,7 +12,8 @@ import { backdropGain } from '../Processor/ToneMapCPU.js';
  *
  * Selects the latest upstream texture via a priority fallback chain, applies
  * a saturation grade, sets alpha, and hands the linear HDR result to the
- * renderer's output pass (tone mapping + sRGB gamma happen there).
+ * renderer's output pass (tone mapping + sRGB gamma happen there) — except a
+ * table view, which it draws itself (`_viewQuadFor`).
  *
  * Exposure is not applied here — `renderer.toneMappingExposure` owns it,
  * and Three.js applies it inside the tone-mapping branch of the output pass
@@ -69,6 +71,9 @@ export class Compositor extends RenderStage {
 		this._canvasTransform = null;
 		this._canvasMaterial = null;
 		this._canvasQuad = null;
+		this._viewTsl = null;
+		this._viewMaterial = null;
+		this._viewQuad = null;
 
 		this.compositorMaterial = new MeshBasicNodeMaterial();
 		this.compositorMaterial.blending = NoBlending;
@@ -104,6 +109,7 @@ export class Compositor extends RenderStage {
 		this.compositorMaterial.colorNode = vec4( gradedColor, outputAlpha );
 		this.compositorMaterial.needsUpdate = true;
 		this._buildCanvasNode();
+		this._dropViewQuad();
 
 	}
 
@@ -136,6 +142,41 @@ export class Compositor extends RenderStage {
 			this._buildCanvasNode();
 
 		}
+
+	}
+
+	/**
+	 * The active view drawn straight from the light, when it is a table: three.js's output pass first stores the frame
+	 * in half floats, and a table on Rec.709's axes showed that rounding of a wider working space (a pure green in
+	 * ACEScg read 51 levels of red in Filmic Log, where the readback read 1). Null for a built-in curve.
+	 */
+	_viewQuadFor() {
+
+		const view = getViewTransform( this.renderer.toneMapping );
+		const tsl = view?.source === 'ocio' ? view.tsl ?? null : null;
+		if ( tsl === this._viewTsl && ( ! tsl || this._viewQuad ) ) return this._viewQuad;
+
+		this._dropViewQuad();
+		this._viewTsl = tsl;
+		if ( tsl ) {
+
+			this._viewMaterial = new MeshBasicNodeMaterial();
+			this._viewMaterial.blending = NoBlending;
+			this._viewMaterial.outputNode = vec4( tsl( this._graded, toneMappingExposure ), this._alpha );
+			this._viewQuad = new QuadMesh( this._viewMaterial );
+
+		}
+
+		return this._viewQuad;
+
+	}
+
+	_dropViewQuad() {
+
+		this._viewMaterial?.dispose();
+		this._viewMaterial = null;
+		this._viewQuad = null;
+		this._viewTsl = null;
 
 	}
 
@@ -375,20 +416,21 @@ export class Compositor extends RenderStage {
 		if ( ! this._prepare( context ) ) return;
 
 		this.renderer.setRenderTarget( null );
-		if ( picture || ! this._canvasQuad ) {
+		const quad = picture || ! this._canvasQuad ? this._viewQuadFor() : this._canvasQuad;
+		if ( ! quad ) {
 
 			this.compositorQuad.render( this.renderer );
 			return;
 
 		}
 
-		// The transform has tone mapped and encoded for the canvas: the output pass must do neither again.
+		// The view or the transform has tone mapped and encoded for the canvas: the output pass must do neither again.
 		const { toneMapping, outputColorSpace } = this.renderer;
 		this.renderer.toneMapping = NoToneMapping;
 		this.renderer.outputColorSpace = ThreeColorManagement.workingColorSpace;
 		try {
 
-			this._canvasQuad.render( this.renderer );
+			quad.render( this.renderer );
 
 		} finally {
 
@@ -425,6 +467,7 @@ export class Compositor extends RenderStage {
 		this._canvasMaterial = null;
 		this._canvasQuad = null;
 		this._canvasTransform = null;
+		this._dropViewQuad();
 		this._debugTexNode?.dispose();
 		this._debugMaterial?.dispose();
 		// QuadMesh extends Mesh — no dispose method; material already released above.

@@ -21,7 +21,7 @@
 import { LinearSRGBColorSpace, SRGBColorSpace, NoToneMapping, HalfFloatType } from 'three';
 
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { displayCanvasFit, hdrViewFor, isHdrDisplay } from './Displays.js';
+import { displayCanvasFit, hdrViewFor, isHdrDisplay, findNativeLinearSpace } from './Displays.js';
 
 import {
 	ensureRuntime, loadConfig as loadOcioConfig, unloadConfig as unloadOcioConfig,
@@ -80,40 +80,7 @@ function canvasKey( ocio, canvas ) {
 
 }
 
-/** How configs in the wild spell linear Rec.709, most specific first. Matched against aliases too. */
-const NATIVE_LINEAR_NAMES = [
-	'Linear Rec.709 (sRGB)', 'lin_rec709_srgb', 'lin_rec709', 'lin_srgb', 'Linear Rec.709',
-	'Utility - Linear - sRGB', 'Utility - Linear - Rec.709', 'Linear BT.709', 'linrec709',
-];
-
-const NATIVE_LINEAR_PATTERN = /^(lin(ear)?[\s_-]*(rec\.?\s*|bt\.?\s*)?709|linear[\s_-]*\(?srgb\)?$|utility - linear - (srgb|rec\.?709))/i;
-
-/**
- * The config's own name for linear Rec.709 — the space the engine renders in until a working
- * space is adopted.
- *
- * Aliases count as much as names: Blender calls it "Linear Rec.709" and lists the ACES spelling
- * as an alias, a studio config may only carry `lin_rec709`. Data spaces are never candidates.
- *
- * @returns {?string} the canonical name, or null when the config has nothing that qualifies
- */
-export function findNativeLinearSpace( info ) {
-
-	if ( ! info ) return null;
-
-	const spaces = info.colorSpaces.filter( c => ! c.isData );
-	const names = c => [ c.name, ...( c.aliases ?? [] ) ];
-
-	for ( const wanted of NATIVE_LINEAR_NAMES ) {
-
-		const hit = spaces.find( c => names( c ).some( n => n.toLowerCase() === wanted.toLowerCase() ) );
-		if ( hit ) return hit.name;
-
-	}
-
-	return spaces.find( c => names( c ).some( n => NATIVE_LINEAR_PATTERN.test( n ) ) )?.name ?? null;
-
-}
+export { findNativeLinearSpace };
 
 export class ColorManagement {
 
@@ -681,7 +648,8 @@ export class ColorManagement {
 				look: t.ocio.look,
 				context: this._context,
 				source: this.workingSpace,
-				size: t.ocio.size,
+				// The size the host asked for; one the bake chose is chosen again.
+				size: t.ocio.requestedSize ?? null,
 				minEv: t.ocio.minEv,
 				maxEv: t.ocio.maxEv,
 			} );
@@ -899,8 +867,8 @@ export class ColorManagement {
 
 	_buildCanvasView( t, target, canvas ) {
 
-		const { look, context, source, size, display, view } = t.ocio;
-		return buildCanvasView( { ...target, look, context, source, size, canvas, for: { display, view } } );
+		const { look, context, source, requestedSize, display, view } = t.ocio;
+		return buildCanvasView( { ...target, look, context, source, size: requestedSize ?? null, canvas, for: { display, view } } );
 
 	}
 

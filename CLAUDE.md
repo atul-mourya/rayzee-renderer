@@ -755,7 +755,8 @@ panel and its labels, the startup view, and the shaper + table with its measurem
 (`PathTracerApp` installs it). Shaders, `TextureCreator` and `EnvironmentManager` read it through `Color/ActiveColor.js`,
 never `ColorManagement.js` (`coreBoundary.test.js`). The engine never names the OCIO package: the host supplies
 `ocioRuntimeFactory` / `ocioRuntimeUrl`. `ViewTransforms.js` is the one registry behind the canvas, both readbacks and
-the menu. A view is baked to a log2 shaper + 65³ table; `MAX_TABLE_TRANSFORMS` is 12 (16 sampled textures a stage).
+the menu. A view is baked to a log2 shaper + 65³ table — or, where that measures poorly, on linear Rec.709's axes (`pre`)
+and at 97³, each kept if closer (`bakeView`); `MAX_TABLE_TRANSFORMS` is 12 (16 sampled textures a stage).
 Colour issues are recorded with `warn()` (headless is strict). Environment modes are `'hdri' | 'procedural' | 'color'`;
 the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on screen).
 - ⚠️ Once a scene exists, load and unload through `app.loadColorConfig()` / `unloadColorConfig()`: only the config that
@@ -773,6 +774,9 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
 - A display shown converted bakes from the view's light (a derived config holds each view transform as a colour space),
   as light or encoded, whichever is closer; a view stepping through a `.spi1d` after a grey value (False Color) is split
   there into the cube and a curve in the texture's extra slices. Both in docs/COLOR_MANAGEMENT.md, "Shaper + table".
+- ⚠️ The Compositor draws a table view itself (`_viewQuadFor`), canvas and picture alike, never through three's output
+  pass: that stores the frame in half floats first, and on Rec.709's axes a wider working space's rounding showed (a pure
+  green in ACEScg, 51 levels of red in Filmic Log; the readback, reading floats, 1).
 - **HDR on screen** (`app.color.setHdrOutput()`, off in the engine; the app follows `(dynamic-range: high)`): the canvas
   goes half-float, extended range, and shows the view's HDR version from the config (`hdrViewFor`; AgX → "AgX - HDR 1000
   nits"), decoded to 1.0 = 100 nits (`buildCanvasView`). ⚠️ It is not a registry entry and never reaches a readback:

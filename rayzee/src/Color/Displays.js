@@ -1,3 +1,38 @@
+/** How configs in the wild spell linear Rec.709, most specific first. Matched against aliases too. */
+const NATIVE_LINEAR_NAMES = [
+	'Linear Rec.709 (sRGB)', 'lin_rec709_srgb', 'lin_rec709', 'lin_srgb', 'Linear Rec.709',
+	'Utility - Linear - sRGB', 'Utility - Linear - Rec.709', 'Linear BT.709', 'linrec709',
+];
+
+const NATIVE_LINEAR_PATTERN = /^(lin(ear)?[\s_-]*(rec\.?\s*|bt\.?\s*)?709|linear[\s_-]*\(?srgb\)?$|utility - linear - (srgb|rec\.?709))/i;
+
+/**
+ * The config's own name for linear Rec.709 — the space the engine renders in until a working
+ * space is adopted.
+ *
+ * Aliases count as much as names: Blender calls it "Linear Rec.709" and lists the ACES spelling
+ * as an alias, a studio config may only carry `lin_rec709`. Data spaces are never candidates.
+ *
+ * @returns {?string} the canonical name, or null when the config has nothing that qualifies
+ */
+export function findNativeLinearSpace( info ) {
+
+	if ( ! info ) return null;
+
+	const spaces = info.colorSpaces.filter( c => ! c.isData );
+	const names = c => [ c.name, ...( c.aliases ?? [] ) ];
+
+	for ( const wanted of NATIVE_LINEAR_NAMES ) {
+
+		const hit = spaces.find( c => names( c ).some( n => n.toLowerCase() === wanted.toLowerCase() ) );
+		if ( hit ) return hit.name;
+
+	}
+
+	return spaces.find( c => names( c ).some( n => NATIVE_LINEAR_PATTERN.test( n ) ) )?.name ?? null;
+
+}
+
 /**
  * The canvas colour space a display's encoding *is*, by its name: sRGB, or "Display P3" (P3 primaries with the sRGB
  * curve). Every other display — Rec.1886 and gamma 2.2's curves, cinema P3, Rec.2020, HDR — the canvas shows converted.

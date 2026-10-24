@@ -36,7 +36,7 @@ saying the environment was left converted.
   unable to resolve it. The host supplies `ocioRuntimeFactory` or `ocioRuntimeUrl`. The app loads
   it the first time the colour controls are opened; startup shows a baked view instead (below).
 - **Baked views** (`BakedViews.js`): `saveBakedView( id )` writes a view's table to a file (gzip,
-  delta-coded, 157 KB for 65³) and `loadBakedView( bytes, { expect } )` registers it with no runtime
+  delta-coded, 157 KB for 65³, 426 KB for 97³) and `loadBakedView( bytes, { expect } )` registers it with no runtime
   and no config, bit-identical to baking it. When its config later loads, `loadConfig` keeps the
   entry — no rebake, no new id, and `loadColorConfig` skips its reset — if the files hash to the
   fingerprint it was baked from (SHA-256 per file, `configFingerprint`) under the same OCIO version;
@@ -236,11 +236,12 @@ OCIO's guidance is to build menus from UI name, family and description, filtered
   Checked in Chrome (2026-10-24, an HDR Display P3 screen) with 32 emitters of known light: what the canvas holds,
   read off the GPU, against OCIO for Blender's 604 combinations with HDR on and off, ACES 2.0's 148, ACES 1.3's 72
   and the seven built-ins, plus every working space and two exposures; readback, saved picture and thumbnail
-  alike. Blender 586 of 604 within 3 levels / 3 %, the rest within 3.6 %; ACES 2.0 and 1.3 all. False Color, wrong on
-  every display until it was split at its lookup (below), passes everywhere. What is left is the 65³ table on the
-  brightest saturated colours: 20 levels at 14× white, and in a working space wider than the display 8–10 levels
-  (0.06 % of the light, near black where 8 bits are coarse; was 95) for Standard on Rec.1886, 15 for ACES 2.0's
-  HDR view in ACEScg.
+  alike. Blender 590 of 604 within 3 levels / 3 %, the rest within 3.4 levels / 4.1 %; ACES 2.0 and 1.3 all; canvas
+  and readback within 1 level of each other everywhere. False Color, wrong on every display until it was split at its
+  lookup (below), passes everywhere. Every view of every display again in each wider working space (P3, Rec.2020,
+  ACEScg): all within 3 levels but ACES 1.3's view in Rec.2020 and ACEScg (10.7 levels, one bright primary), its HDR 2000
+  view (6.4–7.4) and ACES 2.0's in ACEScg (3.2 SDR, 5 for HDR 1000 P3). Filmic, Filmic Log, Khronos PBR Neutral and the
+  plain encodings were 75–130 levels off there before the table could take Rec.709's axes (below).
 - **Texture colour space**: spaces tagged `texture`, grouped by family.
 - ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
   to name matching — the tests passed by coincidence until that was caught.
@@ -256,7 +257,26 @@ the arrangement OCIO emits for its own GPU path. OCIO is the source of truth and
 the runtime: a table is the only representation that is identical in a TSL graph, a WGSL compute
 pass and plain JavaScript, and a saved image differing from the viewport is a worse failure than a
 third of a code value. `entry.error` carries what the table cost, measured against the real
-processor during the bake.
+processor during the bake: `mean`, `p95` and `max` over 4,000 render-like colours, and `edge`, the worst over Rec.709's
+primaries, secondaries and half mixes at 2^-3..2^4, in the space rendered in. An SDR display's table is measured as it
+shows, 0..1 (an HDR screen shows that view's HDR version instead); only an HDR display's is measured past it.
+
+**Where a table measures poorly** (`tableScore`: a saturated colour 5 levels off, or a mean of 0.4) the bake tries the
+same view on linear Rec.709's axes, then at 97³, each kept when its score is under 0.8 of the other's and its mean no
+worse (`bakeView`). A host that passes `size` gets that size; a rebake chooses again (`ocio.requestedSize`).
+- **Rec.709's axes** (`pre`, the 3×3 from the working space, applied before the shaper, which clamps its negatives):
+  rendering in a wider space, a view that works channel by channel in Rec.709 — Filmic, Khronos PBR Neutral, a plain
+  encoding — bends hardest where a Rec.709 channel crosses 0, which the working space's axes put inside a cell. Pure
+  Rec.709 colours were up to 130 levels off in Filmic from ACEScg, 0.6 on Rec.709's axes. A view that keeps wider
+  colours (ACES, AgX) measures worse there and stays.
+- **97³** (7.3 MB, against 2.1): ACES 1.3 on sRGB 9.1 → 1.1 levels; the app's default AgX + Medium High Contrast
+  6.0 → 3.4. Some views read worse at 97, so the closer is kept.
+- Over 263 tables (Blender's and ACES 2.0's configs, every display, in each working space they offer) 24 take Rec.709's
+  axes and 68 grow: a saturated colour over 10 levels off on 47 → 6, over 6 on 84 → 19, the worst 130 → 32 levels
+  (ACES 2.0's HDR 1000 P3 view in ACEScg at 11× white), the worst mean 0.48 → 0.40.
+- ⚠️ The Compositor draws a table view itself, canvas and picture alike (`_viewQuadFor`): three.js's output pass first
+  stores the frame in half floats, and on Rec.709's axes that rounding of a wider working space showed (a pure green in
+  ACEScg read 51 levels of red in Filmic Log, where the readback, reading floats, read 1). Same cost a draw.
 
 **The derived config** (`OcioViews.js`): the loaded config's text plus, for each view transform defined from the scene
 reference, a scene-referred colour space holding it, built the first time a bake needs it (~20 ms; the runtime's
@@ -265,7 +285,9 @@ mounted folder is found by its `.ocio` text, so LUTs resolve). Two bakes use it:
   Rec.2020's encodings are `ExponentTransform`s that clip at 0, which put a kink inside a cell wherever a colour left the
   display's gamut. Its table is baked twice from the one OCIO output, as light (`linear`, encoded after the lookup in
   all four places) and encoded, and keeps light only where that at least halves the worst error: encoded follows a
-  tone curve better (mean 0.2 against 0.4 levels over 223 tables), light a colour whose light crosses 0 in a cell.
+  tone curve better (mean 0.2 against 0.4 levels over 223 tables), light a colour whose light crosses 0 in a cell. The
+  display's own clip at 0 comes after the lookup (`clip`: to its primaries, clipped, back), found by sending a colour
+  outside it through OCIO: without it Standard on Rec.2020 rendering in ACEScg was 61 levels off, with it 1.
 - **A view that steps through a `.spi1d` after a grey value is split there** (Blender's False Color: AgX, then luminance,
   then `AgX_False_Color.spi1d`): the part before is a colour space, the lookup and the rest a named transform. The cube
   holds the grey value and a curve of the lookup's 4096 entries after it gives the colour, in the same texture's extra
@@ -280,11 +302,11 @@ table one code value above zero and every render has a raised black floor.
 |---|---|
 | table vs OCIO CPU | mean 0.07, p95 0.19 code values; 99.85 % within 2 — measured on the half table the GPU samples, which the CPU readback now samples too |
 | live canvas vs readback | 0.5 levels, identical for OCIO and built-in views — the readback's deliberate half-level bias (screenshot pixel crops, measured in the app) |
-| worst case | ~18 code values on saturated colours brighter than white — a clip edge in ACES 2.0's gamut compressor that no table can represent |
+| worst case | 32 code values: a Rec.709 blue at 11× white through ACES 2.0's HDR 1000 P3 view, rendered in ACEScg (65³: 53) |
 | GPU readback | **+1.4 µs/megapixel** over any analytic curve (~3 %); the pass is memory-bound, so the seven built-ins are indistinguishable from each other |
 | CPU readback | 60 ms/megapixel, against 27 (None) and 76 (three.js AgX) — the table is *cheaper* than the polynomial it replaces |
-| bake | 20 ms at 33³, 93–127 ms at 65³ |
-| VRAM | 2.10 MB per registered view at 65³, **per device** |
+| bake | 20 ms at 33³, 93–127 ms at 65³; with the choice, median 71 ms (53 at 65³ alone), the slowest tenth 0.53 s (0.12). Blender's eight sRGB views at config load: 447 ms in linear Rec.709 (~260), 1.05 s in ACEScg |
+| VRAM | 2.10 MB per registered view at 65³, 7.3 MB at 97³, **per device** |
 | host memory | 2.1 MB per registered view — the CPU sampler reads the half table in place through a shared 256 KB decode table (a float copy used to add 4.4 MB a view) |
 | runtime | 4.76 MB wasm + 1.39 MB Naga, fetched only when a config is opened; starts in ~32 ms and reserves a 64 MB WebAssembly heap; a config loads in ~35 ms |
 | adopting a working space | 1.9 s on the 3.5M-tri / 642-texture test model, of which ~1.1 s is the ordinary material rebuild and 0.62 s texture conversion (was 3.0 s: three `Math.pow` a pixel, now a sqrt-indexed 64K table, 0.09 % of values one level off). Still on the main thread. Reverting ~1.0 s |

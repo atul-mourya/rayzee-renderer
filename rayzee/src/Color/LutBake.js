@@ -24,7 +24,11 @@
  *
  * A `linear` table holds light in the canvas's primaries, and the lookup encodes it after interpolating. A converted
  * display's view (and a view's HDR version) is baked both ways and keeps the closer (`bakeView` in OcioViews.js):
- * encoded follows a tone curve better, light a colour whose light crosses 0 inside a cell.
+ * encoded follows a tone curve better, light a colour whose light crosses 0 inside a cell. A `clip` (`toDisplay`,
+ * `fromDisplay`) then clips that light at 0 in the display's own primaries, as its encoding does.
+ *
+ * A `pre` matrix takes the colour into the space the cube's axes are in before the shaper, which clamps that space's
+ * negatives at 0: a view that works channel by channel in Rec.709 needs its zeros on the grid's floor.
  */
 
 /** Smallest shaper step, so log2 of the darkest sample is finite. */
@@ -209,6 +213,15 @@ export function encodeExtended( v ) {
 
 }
 
+/** {@link encodeExtended} undone. */
+export function decodeExtended( v ) {
+
+	const a = Math.abs( v );
+	const d = a <= 0.04045 ? a / 12.92 : Math.pow( ( a + 0.055 ) / 1.055, 2.4 );
+	return v < 0 ? - d : d;
+
+}
+
 /** The z slices a curve of `n` entries takes after a `size`³ cube. */
 export function curveSlices( n, size ) {
 
@@ -239,9 +252,11 @@ export function bakeCurve( { n, lo, hi, apply } ) {
  * A JavaScript sampler over a baked table.
  * @param {?{n: number, lo: number, hi: number}} [options.curve] - entries after the cube, read with its first channel
  * @param {boolean} [options.linear=false] - the table holds light, encoded after the lookup
+ * @param {?{toDisplay: number[], fromDisplay: number[]}} [options.clip] - a converted display's clip at 0, after the
+ *   lookup: canvas light into the display's primaries (row-major 3×3), negatives to 0, and back
  * @returns {function(number, number, number, Float32Array|number[]): void}
  */
-export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear = false } ) {
+export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } ) {
 
 	const s2 = size * size;
 	const last = size - 1;
@@ -255,6 +270,15 @@ export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear
 		: ( ir, ig, ib, ch ) => data[ ( ir + ig * size + ib * s2 ) * 4 + ch ];
 
 	return function sampleLut( r, g, b, out ) {
+
+		if ( pre ) {
+
+			const x = r, y = g, z = b;
+			r = pre[ 0 ] * x + pre[ 1 ] * y + pre[ 2 ] * z;
+			g = pre[ 3 ] * x + pre[ 4 ] * y + pre[ 5 ] * z;
+			b = pre[ 6 ] * x + pre[ 7 ] * y + pre[ 8 ] * z;
+
+		}
 
 		const pr = shape( r, size, minEv, maxEv );
 		const pg = shape( g, size, minEv, maxEv );
@@ -303,7 +327,20 @@ export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear
 
 		}
 
-		if ( linear ) for ( let ch = 0; ch < 3; ch ++ ) out[ ch ] = encodeExtended( out[ ch ] );
+		if ( clip ) {
+
+			const { toDisplay: t, fromDisplay: f } = clip;
+			const [ r, g, b ] = linear ? out : [ decodeExtended( out[ 0 ] ), decodeExtended( out[ 1 ] ), decodeExtended( out[ 2 ] ) ];
+			const d0 = Math.max( 0, t[ 0 ] * r + t[ 1 ] * g + t[ 2 ] * b );
+			const d1 = Math.max( 0, t[ 3 ] * r + t[ 4 ] * g + t[ 5 ] * b );
+			const d2 = Math.max( 0, t[ 6 ] * r + t[ 7 ] * g + t[ 8 ] * b );
+			for ( let ch = 0; ch < 3; ch ++ ) out[ ch ] = encodeExtended( f[ ch * 3 ] * d0 + f[ ch * 3 + 1 ] * d1 + f[ ch * 3 + 2 ] * d2 );
+
+		} else if ( linear ) {
+
+			for ( let ch = 0; ch < 3; ch ++ ) out[ ch ] = encodeExtended( out[ ch ] );
+
+		}
 
 	};
 
@@ -318,11 +355,14 @@ export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear
  *
  * @returns {string} a WGSL fragment declaring `fn <fnName>( c: vec3<f32> ) -> vec3<f32>`
  */
-export function lutWgsl( { fnName, texName, size, minEv, maxEv, curve = null, linear = false } ) {
+export function lutWgsl( { fnName, texName, size, minEv, maxEv, curve = null, linear = false, clip = null, pre = null } ) {
 
 	const f = v => ( Number.isInteger( v ) ? `${v}.0` : String( v ) );
-	const cube = curve || linear ? `${fnName}_cube` : fnName;
-	const curved = linear ? `${fnName}_curve` : fnName;
+	const finished = linear || clip;
+	const cube = curve || finished ? `${fnName}_cube` : fnName;
+	const curved = finished ? `${fnName}_curve` : fnName;
+	const row = ( m, r ) => `vec3<f32>( ${f( m[ r * 3 ] )}, ${f( m[ r * 3 + 1 ] )}, ${f( m[ r * 3 + 2 ] )} )`;
+	const times = ( m, v ) => `vec3<f32>( dot( ${row( m, 0 )}, ${v} ), dot( ${row( m, 1 )}, ${v} ), dot( ${row( m, 2 )}, ${v} ) )`;
 	const curveWgsl = curve ? /* wgsl */ `
 fn ${fnName}_entry( i: i32 ) -> vec3<f32> {
 	return textureLoad( ${texName}, vec3<i32>( i % ${size}, ( i / ${size} ) % ${size}, ${size} + i / ${size * size} ), 0 ).rgb;
@@ -334,17 +374,23 @@ fn ${curved}( c: vec3<f32> ) -> vec3<f32> {
 	return mix( ${fnName}_entry( i0 ), ${fnName}_entry( i0 + 1 ), u - f32( i0 ) );
 }
 ` : '';
-	const encodeWgsl = linear ? /* wgsl */ `
+	const clipWgsl = clip ? /* wgsl */ `
+	let a0 = abs( v );
+	let light = ${linear ? 'v' : 'sign( v ) * select( pow( ( a0 + 0.055 ) / 1.055, vec3<f32>( 2.4 ) ), a0 / 12.92, a0 <= vec3<f32>( 0.04045 ) )'};
+	let d = max( ${times( clip.toDisplay, 'light' )}, vec3<f32>( 0.0 ) );
+	let o = ${times( clip.fromDisplay, 'd' )};` : `
+	let o = v;`;
+	const encodeWgsl = finished ? /* wgsl */ `
 fn ${fnName}( c: vec3<f32> ) -> vec3<f32> {
-	let v = ${curve ? curved : cube}( c );
-	let a = abs( v );
-	return sign( v ) * select( 1.055 * pow( a, vec3<f32>( 1.0 / 2.4 ) ) - 0.055, 12.92 * a, a <= vec3<f32>( 0.0031308 ) );
+	let v = ${curve ? curved : cube}( c );${clipWgsl}
+	let a = abs( o );
+	return sign( o ) * select( 1.055 * pow( a, vec3<f32>( 1.0 / 2.4 ) ) - 0.055, 12.92 * a, a <= vec3<f32>( 0.0031308 ) );
 }
 ` : '';
 
 	return /* wgsl */ `
 fn ${fnName}_shape( v: vec3<f32> ) -> vec3<f32> {
-	let ev = log2( max( v, vec3<f32>( 1e-10 ) ) );
+	let ev = log2( max( ${pre ? times( pre, 'v' ) : 'v'}, vec3<f32>( 1e-10 ) ) );
 	let t = ( ev - vec3<f32>( ${f( minEv )} ) ) / ${f( maxEv - minEv )};
 	return clamp( t, vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) ) * ${f( size - 1 )};
 }
@@ -398,16 +444,29 @@ ${curveWgsl}${encodeWgsl}`;
 
 }
 
+const EDGE_COLOURS = [[ 1, 0, 0 ], [ 0, 1, 0 ], [ 0, 0, 1 ], [ 1, 1, 0 ], [ 0, 1, 1 ], [ 1, 0, 1 ], [ 1, 0.5, 0.5 ], [ 0.5, 1, 0.5 ], [ 0.5, 0.5, 1 ], [ 1, 0.5, 0 ], [ 0, 0.5, 1 ]];
+
+/** Saturated colours where a gamut bends: primaries, secondaries and half mixes, 2^-3..2^4. */
+export function edgeColours() {
+
+	const out = [];
+	for ( let ev = - 3; ev <= 4; ev += 0.5 ) for ( const c of EDGE_COLOURS ) out.push( c.map( x => x * 2 ** ev ) );
+	return out;
+
+}
+
 /**
  * What the table costs against the transform it was baked from.
  *
  * Samples colours the way a render actually produces them — a spread of luminances at a spread of
  * saturations — rather than uniformly over the cube, where most of the volume is colours no scene
- * contains.
+ * contains, `clamped` to 0..1 for a table nothing shows outside it (an SDR display's). `edge` is the
+ * worst over `edges` (`edgeColours()` in the table's source space), always clamped, as an SDR screen and an 8-bit
+ * picture show them: where a gamut bends, which a random spread rarely lands on.
  *
- * @returns {{ mean: number, p95: number, max: number, samples: number }} in 8-bit code values
+ * @returns {{ mean: number, p95: number, max: number, edge: number, samples: number }} in 8-bit code values
  */
-export function measureBakeError( { sampler, apply, count = 4000, seed = 31337 } ) {
+export function measureBakeError( { sampler, apply, count = 4000, seed = 31337, edges = edgeColours(), clamped = false } ) {
 
 	let rng = seed >>> 0;
 	const rnd = () => ( rng = ( rng * 1664525 + 1013904223 ) >>> 0 ) / 4294967296;
@@ -424,6 +483,8 @@ export function measureBakeError( { sampler, apply, count = 4000, seed = 31337 }
 
 	}
 
+	cases.push( ...edges );
+
 	const truth = new Float32Array( cases.length * 4 );
 	cases.forEach( ( c, i ) => {
 
@@ -436,11 +497,19 @@ export function measureBakeError( { sampler, apply, count = 4000, seed = 31337 }
 	apply( truth );
 
 	const out = [ 0, 0, 0 ];
+	const shown = v => Math.min( Math.max( v, 0 ), 1 );
 	const deltas = [];
+	let edge = 0;
 	for ( let i = 0; i < cases.length; i ++ ) {
 
 		sampler( cases[ i ][ 0 ], cases[ i ][ 1 ], cases[ i ][ 2 ], out );
-		for ( let c = 0; c < 3; c ++ ) deltas.push( Math.abs( out[ c ] - truth[ i * 4 + c ] ) * 255 );
+		for ( let c = 0; c < 3; c ++ ) {
+
+			const want = truth[ i * 4 + c ];
+			if ( i >= count ) edge = Math.max( edge, Math.abs( shown( out[ c ] ) - shown( want ) ) * 255 );
+			else deltas.push( ( clamped ? Math.abs( shown( out[ c ] ) - shown( want ) ) : Math.abs( out[ c ] - want ) ) * 255 );
+
+		}
 
 	}
 
@@ -449,6 +518,7 @@ export function measureBakeError( { sampler, apply, count = 4000, seed = 31337 }
 		mean: deltas.reduce( ( s, v ) => s + v, 0 ) / deltas.length,
 		p95: deltas[ Math.floor( deltas.length * 0.95 ) ],
 		max: deltas[ deltas.length - 1 ],
+		edge,
 		samples: deltas.length,
 	};
 

@@ -12,7 +12,7 @@ import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
 import { countTableTransforms, listViewTransforms, addViewTransform, getViewTransform } from '@/core/Color/ViewTransforms.js';
 import { buildBakedView, DEFAULT_MIN_EV, DEFAULT_MAX_EV } from '@/core/Color/OcioViews.js';
-import { packHalf, unshape, curveSlices } from '@/core/Color/LutBake.js';
+import { packHalf, unshape, curveSlices, encodeExtended } from '@/core/Color/LutBake.js';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { UPSCALE_GATES } from '../../bench/runner/config.js';
@@ -61,6 +61,21 @@ if ( ocio && gpuAvailable ) {
 	}
 
 	addViewTransform( buildBakedView( { ...shape, name: 'Light, encoded after', view: 'light', data: packHalf( light ), linear: true } ) );
+
+	// The same light clipped at 0 in another display's primaries after the lookup (Rec.709 canvas, Rec.2020 display),
+	// stored as light and stored encoded.
+	const clip = {
+		toDisplay: [ 0.6274, 0.3293, 0.0433, 0.0691, 0.9195, 0.0114, 0.0164, 0.0880, 0.8956 ],
+		fromDisplay: [ 1.6605, - 0.5876, - 0.0728, - 0.1246, 1.1329, - 0.0083, - 0.0182, - 0.1006, 1.1187 ],
+	};
+	const encoded = light.map( ( v, i ) => ( i % 4 === 3 ? v : encodeExtended( v ) ) );
+	addViewTransform( buildBakedView( { ...shape, name: 'Light, clipped after', view: 'clipped', data: packHalf( light ), linear: true, clip } ) );
+	addViewTransform( buildBakedView( { ...shape, name: 'Encoded, clipped after', view: 'clipped-encoded', data: packHalf( encoded ), clip } ) );
+
+	// On another space's axes (ACEScg → Rec.709 before the shaper), negatives there clamped.
+	const pre = [ 1.7049, - 0.6217, - 0.0832, - 0.1301, 1.1407, - 0.0106, - 0.0240, - 0.1290, 1.1530 ];
+	addViewTransform( buildBakedView( { ...shape, name: 'Encoded, on Rec.709 axes', view: 'pre', data: packHalf( encoded ), pre } ) );
+	addViewTransform( buildBakedView( { ...shape, name: 'Light, clipped, on Rec.709 axes', view: 'pre-clipped', data: packHalf( light ), linear: true, clip, pre } ) );
 
 }
 

@@ -12,10 +12,11 @@ import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import {
 	VIEW_TRANSFORMS, listViewTransforms, buildToneMapWGSL, getRegistryVersion, countTableTransforms, MAX_TABLE_TRANSFORMS,
 } from '@/core/Color/ViewTransforms.js';
-import { addOcioView } from '@/core/Color/OcioViews.js';
+import { addOcioView, buildOcioView, forgetOcioView } from '@/core/Color/OcioViews.js';
 import { TONE_MAP_FNS, toneMapToRGBA8, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
 import { getWorkingMatrix, convertLinearTriple } from '@/core/Color/WorkingMatrix.js';
 import { configureAssets } from '@/core/AssetConfig.js';
+import { getRuntime } from '@/core/Color/OcioRuntime.js';
 
 const BUILTIN = 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
 
@@ -228,6 +229,67 @@ suite( 'colour-managed pipeline', () => {
 
 			expect( fine.table.texture ).not.toBe( texture );
 			expect( fine.table.size ).toBe( 33 );
+
+		}, 120000 );
+
+	} );
+
+	describe( 'the table\'s size and axes', () => {
+
+		// What the bake weighs: a saturated colour 5 levels off, or a mean of 0.4, is 1.
+		const score = e => Math.max( e.edge / 5, e.mean / 0.4 );
+
+		it( 'grows a table only where 65 measures poorly, and keeps the closer', () => {
+
+			const source = cm.workingSpace;
+			const wide = { display: 'Display P3 - Display', view: 'ACES 2.0 - SDR 100 nits (P3 D65)', source };
+			const coarse = buildOcioView( { ...wide, size: 65 } );
+			const grown = buildOcioView( wide );
+			const plain = buildOcioView( { display: 'sRGB - Display', view: 'ACES 2.0 - SDR 100 nits (Rec.709)', source } );
+
+			expect( score( coarse.error ) ).toBeGreaterThan( 1 );
+			expect( grown.table.size ).toBe( 97 );
+			expect( score( grown.error ) ).toBeLessThan( 0.8 * score( coarse.error ) );
+			expect( plain.table.size ).toBe( 65 );
+			expect( score( plain.error ) ).toBeLessThanOrEqual( 1 );
+			[ coarse, grown, plain ].forEach( t => forgetOcioView( t.id ) );
+
+		}, 120000 );
+
+		it( 'takes Rec.709\'s axes for a view that works in Rec.709, rendering in a wider space', () => {
+
+			// A plain encoding bends where a Rec.709 channel crosses 0; ACES 2.0 keeps wider colours and stays on ACEScg's.
+			const plain = buildOcioView( { display: 'sRGB - Display', view: 'Un-tone-mapped', source: 'ACEScg' } );
+			const aces = buildOcioView( { display: 'sRGB - Display', view: 'ACES 2.0 - SDR 100 nits (Rec.709)', source: 'ACEScg' } );
+			const toRec709 = getRuntime().config.createColorSpaceProcessor( 'ACEScg', 'Linear Rec.709 (sRGB)' );
+			const row = toRec709.applyRGBAF32( new Float32Array( [ 1, 0, 0, 1 ] ), { copy: true } );
+			toRec709.dispose();
+
+			expect( plain.ocio.pre[ 0 ] ).toBeCloseTo( row[ 0 ], 4 );
+			expect( plain.error.edge ).toBeLessThan( 1 );
+			expect( plain.error.mean ).toBeLessThan( 0.2 );
+			expect( aces.ocio.pre ).toBeNull();
+			[ plain, aces ].forEach( t => forgetOcioView( t.id ) );
+
+		}, 120000 );
+
+		it( 'chooses again on a rebake, and keeps a size the host asked for', () => {
+
+			// Only the active view rebakes at once; another does when it is chosen again.
+			const asked = { display: 'sRGB - Display', view: 'ACES 2.0 - SDR 100 nits (Rec.709)', size: 33 };
+			cm.setView( asked );
+			const grown = cm.setView( { display: 'Display P3 - Display', view: 'ACES 2.0 - SDR 100 nits (P3 D65)' } );
+			cm.setContext( { SHOT: '040' } );
+
+			const rebaked = VIEW_TRANSFORMS.get( grown.id );
+			expect( rebaked.ocio.context ).toEqual( { SHOT: '040' } );
+			expect( rebaked.table.size ).toBe( 97 );
+			expect( rebaked.ocio.requestedSize ).toBe( null );
+
+			const again = cm.setView( asked );
+			expect( again.ocio.context ).toEqual( { SHOT: '040' } );
+			expect( again.table.size ).toBe( 33 );
+			cm.setContext( null );
 
 		}, 120000 );
 
