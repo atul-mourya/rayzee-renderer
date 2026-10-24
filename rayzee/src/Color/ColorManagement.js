@@ -58,6 +58,47 @@ export function canvasColorSpaceFor( display ) {
 
 }
 
+/**
+ * Keeps `colorSpace` on a WebGPU canvas. three.js configures the context again on every resize, without a colour space,
+ * so a one-off configure was undone by the next resize: this context's `configure` is wrapped to keep it. Throws what
+ * `configure` throws.
+ */
+export function holdCanvasColorSpace( canvas, colorSpace ) {
+
+	const context = canvas?.getContext?.( 'webgpu' );
+	if ( ! context?.configure ) return;
+
+	if ( ! context.__rayzeeConfigure ) {
+
+		// Chrome keeps the colour space and format a canvas had when first copied (drawImage, createImageBitmap) for
+		// every later copy, so thumbnails and video frames read a switched canvas wrongly, or an old picture; setting
+		// its size again, even unchanged, resets that. toBlob is unaffected.
+		const page = ( typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement )
+			|| ( typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas );
+		const configure = context.configure.bind( context );
+		context.__rayzeeConfigure = configure;
+		context.configure = config => {
+
+			const before = context.getConfiguration?.();
+			const next = { ...config, colorSpace: context.__rayzeeColorSpace ?? config.colorSpace };
+			configure( next );
+			if ( page && before && ( before.format !== next.format || ( before.colorSpace ?? 'srgb' ) !== ( next.colorSpace ?? 'srgb' ) ) ) {
+
+				const { width } = canvas;
+				canvas.width = width;
+
+			}
+
+		};
+
+	}
+
+	context.__rayzeeColorSpace = colorSpace;
+	const current = context.getConfiguration?.();
+	if ( current && current.colorSpace !== colorSpace ) context.configure( { ...current, colorSpace } );
+
+}
+
 /** The canvas colour space a view's table is encoded for (`ocio.canvas`, set when it was baked). */
 function canvasOf( t ) {
 
@@ -401,8 +442,7 @@ export class ColorManagement {
 		if ( ! hdr ) return await encodeBakedView( t, extra );
 
 		const canvas = canvasOf( t );
-		const key = canvasKey( t.ocio, canvas );
-		const held = this._canvasView?.key === key ? this._canvasView.table : this._bakedCanvasViews.get( key ) ?? this._recentCanvasViews.get( key );
+		const held = this._heldCanvasView( canvasKey( t.ocio, canvas ) );
 		const target = held ? null : config && hdrViewFor( config, t.ocio.display, t.ocio.view );
 		if ( ! held && ! target ) throw new Error( `"${t.name}" has no HDR version${config ? ' in this config' : ' without its config loaded'}` );
 
@@ -733,45 +773,9 @@ export class ColorManagement {
 	_applyCanvasColorSpace( colorSpace ) {
 
 		this._canvasColorSpace = colorSpace;
-		const canvas = this._renderer?.domElement;
-		const context = canvas?.getContext?.( 'webgpu' );
-		if ( ! context?.configure ) return;
-
-		// three.js configures the context again on every resize, without a colour space — so a
-		// one-off configure here was undone by the next resize. Wrapping this one context's
-		// `configure` makes every later call keep the colour space chosen here.
-		if ( ! context.__rayzeeConfigure ) {
-
-			// Chrome keeps the colour space and format a canvas had when first copied (drawImage, createImageBitmap) for
-			// every later copy, so thumbnails and video frames read a switched canvas wrongly, or an old picture; setting
-			// its size again, even unchanged, resets that. toBlob is unaffected.
-			const page = ( typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement )
-				|| ( typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas );
-			const configure = context.configure.bind( context );
-			context.__rayzeeConfigure = configure;
-			context.configure = config => {
-
-				const before = context.getConfiguration?.();
-				const next = { ...config, colorSpace: context.__rayzeeColorSpace ?? config.colorSpace };
-				configure( next );
-				if ( page && before && ( before.format !== next.format || ( before.colorSpace ?? 'srgb' ) !== ( next.colorSpace ?? 'srgb' ) ) ) {
-
-					const { width } = canvas;
-					canvas.width = width;
-
-				}
-
-			};
-
-		}
-
-		context.__rayzeeColorSpace = colorSpace;
-		const current = context.getConfiguration?.();
-		if ( ! current || current.colorSpace === colorSpace ) return;
-
 		try {
 
-			context.configure( { ...current, colorSpace } );
+			holdCanvasColorSpace( this._renderer?.domElement, colorSpace );
 
 		} catch ( error ) {
 
@@ -865,6 +869,49 @@ export class ColorManagement {
 
 	}
 
+	/**
+	 * The HDR version of a view as an HDR screen showed it, for a picture saved earlier: `view` is its `color.view`
+	 * (`getProvenance()`), `source` the space its light is in. `{ table }`, a canvas view this keeps — the very one the
+	 * screen used while it is held, so the startup's needs no config — or `{ reason }`: 'needs-config', 'other-config',
+	 * 'no-hdr-version' or 'bake-failed'.
+	 */
+	hdrVersionOf( view, source = view?.source ) {
+
+		if ( ! view?.display ) return { reason: 'no-hdr-version' };
+		const t = { source: 'ocio', ocio: { ...view, source } };
+		const canvas = canvasOf( t );
+		const key = canvasKey( t.ocio, canvas );
+		const held = this._heldCanvasView( key );
+		if ( held ) return { table: held };
+
+		const config = describeConfig();
+		if ( ! config ) return { reason: 'needs-config' };
+		if ( view.configId !== config.id || ! config.views[ view.display ]?.some( v => v.name === view.view ) ) return { reason: 'other-config' };
+		const target = hdrViewFor( config, view.display, view.view );
+		if ( ! target ) return { reason: 'no-hdr-version' };
+
+		try {
+
+			const table = this._buildCanvasView( t, target, canvas );
+			this._rememberCanvasView( key, table );
+			return { table };
+
+		} catch ( error ) {
+
+			this._issues?.warn( ISSUE_CODES.VIEW_TRANSFORM_BAKE_FAILED, `could not bake how the screen showed "${view.view}": ${error.message}`, { ...target } );
+			return { reason: 'bake-failed' };
+
+		}
+
+	}
+
+	/** The canvas view held for `key`: the one shown, a saved file's, or a recent one. */
+	_heldCanvasView( key ) {
+
+		return ( this._canvasView?.key === key ? this._canvasView.table : null ) ?? this._bakedCanvasViews.get( key ) ?? this._recentCanvasViews.get( key ) ?? null;
+
+	}
+
 	_buildCanvasView( t, target, canvas ) {
 
 		const { look, context, source, requestedSize, display, view } = t.ocio;
@@ -876,8 +923,7 @@ export class ColorManagement {
 	_updateCanvasView() {
 
 		const plan = this._canvasPlan();
-		const current = this._canvasView;
-		let table = plan.table ?? ( plan.key && plan.key === current?.key ? current.table : null ) ?? this._recentCanvasViews.get( plan.key ) ?? null;
+		let table = plan.table ?? ( plan.key ? this._heldCanvasView( plan.key ) : null );
 
 		if ( plan.target && ! table ) {
 

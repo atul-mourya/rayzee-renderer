@@ -2675,6 +2675,12 @@ export class RayzeeRenderer extends EventDispatcher {
 				view: color.activeView ?? color.activeTransform?.id ?? null,
 				context: color.context,
 			} : null,
+			// What the picture was shown at, auto exposure included, and a solid backdrop held apart from it.
+			display: {
+				exposure: this.renderer?.toneMappingExposure ?? null,
+				backdrop: this.pipeline?.context?.getState( 'pathtracer:backdrop' ) ?? null,
+				backdropExposure: this.stages?.compositor?.backdropExposure ?? null,
+			},
 			scene: this.sceneSource,
 			settings: this.settings.getEffective(),
 			issues: this.issues.map( ( { code, severity } ) => ( { code, severity } ) ),
@@ -3302,7 +3308,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		const viewName = view && typeof view === 'object' ? [ view.view, view.look ].filter( Boolean ).join( ', ' ) : view;
 		const summary = [ render && `${render.samples} samples`, render && `${render.width}×${render.height}`, viewName, asShown && 'as shown on screen' ].filter( Boolean ).join( ', ' );
 		const settings = Object.fromEntries( Object.entries( provenance.settings ?? {} ).map( ( [ key, entry ] ) => [ key, entry?.value ] ) );
-		const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings } );
+		const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings, display: provenance.display, exposure: provenance.exposure } );
 		const software = `Rayzee ${VERSION}`;
 		const now = new Date();
 		const pad = n => String( n ).padStart( 2, '0' );

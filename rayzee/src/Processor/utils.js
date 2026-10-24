@@ -1,4 +1,5 @@
 import { SphereGeometry, Mesh, MeshPhysicalMaterial, Group, Object3D, ShaderMaterial, Vector2, Matrix4, GLSL3, Box3 } from 'three';
+import { WebGPURenderer } from 'three/webgpu';
 import { EngineEvents } from '../EngineEvents.js';
 
 let _statusCallback = null;
@@ -173,6 +174,23 @@ export function distroyBuffers( { material, geometry, children } ) {
 		}
 
 	}
+
+}
+
+/**
+ * A second renderer on `device` — the view overlay's, a saved picture's. Its backend claims the device's single
+ * uncaptured-error slot during init(); that is handed back, so the owner's handler keeps receiving errors.
+ * @param {GPUDevice} device
+ * @param {Object} parameters - WebGPURenderer's, `canvas` among them
+ */
+export async function createRendererOnDevice( device, parameters ) {
+
+	const handler = device.onuncapturederror;
+	const renderer = new WebGPURenderer( { ...parameters, device } );
+	await renderer.init();
+	device.onuncapturederror = handler;
+	renderer.setPixelRatio( 1.0 );
+	return renderer;
 
 }
 

@@ -5,9 +5,11 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/store';
-import { ImageProcessorComposer } from '@/utils/ImageProcessor';
+import { ImageProcessorComposer, pictureGrade } from '@/utils/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
-import { updateRender } from '@/utils/database';
+import { updateRender, getRenderHDR } from '@/utils/database';
+import { getApp } from '@/lib/appProxy';
+import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/utils/viewport';
@@ -56,6 +58,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const originalCanvasRef = useRef( null );
 	const editedCanvasRef = useRef( null );
 	const aiCanvasRef = useRef( null );
+	const hdrCanvasRef = useRef( null );
+	const pictureViewRef = useRef( null );
 	const imageProcessorRef = useRef( null );
 
 	// Dynamic canvas size based on loaded image dimensions
@@ -70,6 +74,10 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 	const longPressTimeoutRef = useRef( null );
 	const [ isHovering, setIsHovering ] = useState( false );
 	const [ viewingAIVariant, setViewingAIVariant ] = useState( false );
+	// The render's saved light, shown as an HDR screen showed it (`app.createPictureView`).
+	const [ hdrShown, setHdrShown ] = useState( false );
+	const [ grade ] = useState( pictureGrade );
+	const hdrOn = !! useColorStatus()?.hdr?.on;
 
 	// Auto-fit scaling logic
 	const {
@@ -395,6 +403,59 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ imageProcessing, isImageDrawn, applyImageProcessing ] );
 
+	// The HDR picture: the render's EXR copy through the same view, exposure and local exposure the screen used.
+	useEffect( () => {
+
+		setHdrShown( false );
+		const app = getApp();
+		if ( ! imageData?.hasHDR || ! hdrOn || ! app?.createPictureView || ! hdrCanvasRef.current ) return;
+		let cancelled = false;
+
+		( async () => {
+
+			pictureViewRef.current ??= app.createPictureView( hdrCanvasRef.current );
+			const [ file, view ] = await Promise.all( [ getRenderHDR( imageData.id ), pictureViewRef.current ] );
+			if ( ! file || cancelled ) return;
+			grade.set( useStore.getState().imageProcessing );
+			view.setGrade( grade.grade );
+			let result = await view.show( file );
+			if ( result.reason === 'needs-config' ) {
+
+				await ensureDefaultConfig();
+				if ( ! cancelled ) result = await view.show( file );
+
+			}
+
+			if ( ! cancelled ) setHdrShown( result.shown );
+
+		} )().catch( error => console.warn( 'The render\'s HDR copy could not be shown:', error ) );
+
+		return () => {
+
+			cancelled = true;
+
+		};
+
+	}, [ imageData?.id, imageData?.hasHDR, hdrOn, grade ] );
+
+	useEffect( () => () => {
+
+		pictureViewRef.current?.then( view => view.dispose() );
+		pictureViewRef.current = null;
+
+	}, [] );
+
+	// The edits on the HDR picture too; the original is the picture as saved.
+	useEffect( () => {
+
+		if ( ! hdrShown ) return;
+		grade.set( viewingOriginal ? {} : imageProcessing );
+		pictureViewRef.current?.then( view => view.redraw() );
+
+	}, [ hdrShown, imageProcessing, viewingOriginal, grade ] );
+
+	const showHDR = hdrShown && imageLoadState.loaded && ! viewingAIVariant;
+
 	// Long press handling for original/edited view toggling
 	const startLongPress = useCallback( () => {
 
@@ -676,7 +737,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
 							backgroundColor: 'black',
-							display: ( viewingOriginal || viewingAIVariant || ! imageLoadState.loaded ) ? 'none' : 'block',
+							display: ( viewingOriginal || viewingAIVariant || showHDR || ! imageLoadState.loaded ) ? 'none' : 'block',
 							imageRendering: 'pixelated' // Better for 4K images
 						}}
 					/>
@@ -688,8 +749,19 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 							width: `${actualCanvasWidth}px`,
 							height: `${actualCanvasHeight}px`,
 							backgroundColor: 'black',
-							display: ( viewingOriginal && imageLoadState.loaded ) ? 'block' : 'none',
+							display: ( viewingOriginal && imageLoadState.loaded && ! showHDR ) ? 'block' : 'none',
 							imageRendering: 'pixelated' // Better for 4K images
+						}}
+					/>
+
+					{/* The saved light as an HDR screen showed it, with the edits */}
+					<canvas
+						ref={hdrCanvasRef}
+						style={{
+							width: `${actualCanvasWidth}px`,
+							height: `${actualCanvasHeight}px`,
+							backgroundColor: 'black',
+							display: showHDR ? 'block' : 'none',
 						}}
 					/>
 

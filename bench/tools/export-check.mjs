@@ -115,6 +115,8 @@ for ( let y = 0; y < height; y ++ ) for ( let x = 0; x < width * 4; x ++ ) {
 }
 
 check( worst < 1e-3, `exr picture matches the linear readback (worst relative ${worst.toExponential( 2 )})` );
+const details = JSON.parse( picture.header.rayzee ?? '{}' );
+check( details.display?.exposure === renderer.renderer.toneMappingExposure && 'backdrop' in ( details.display ?? {} ), `exr records what its picture was shown at (exposure ${details.display?.exposure})` );
 
 const layers = readEXRChannels( exr.bytes );
 check( Object.keys( layers ).join() === 'A,B,G,R,albedo.B,albedo.G,albedo.R,depth.Z,normal.X,normal.Y,normal.Z', `exr channels ${Object.keys( layers )}` );

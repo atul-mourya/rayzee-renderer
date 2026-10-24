@@ -1,6 +1,5 @@
-import { WebGPURenderer } from 'three/webgpu';
 import { SRGBColorSpace } from 'three';
-import { disposeRenderer } from '../../Processor/utils.js';
+import { createRendererOnDevice, disposeRenderer } from '../../Processor/utils.js';
 import { createOverlayCanvas, viewPixelSize, MAX_VIEW_DPR } from './overlaySurface.js';
 
 /** Device-pixel ceiling per axis — guards against huge surfaces at high viewport zoom. */
@@ -61,25 +60,16 @@ export class ViewOverlayRenderer {
 
 		this._sizeSource = sizeSource;
 
-		// A second backend claims the device's single uncaptured-error slot during
-		// init(). Hand it back so the owner's handler keeps receiving errors.
-		const deviceErrorHandler = device.onuncapturederror;
-
 		// At DPR ≥ 2 the browser's downscale already supersamples the edges, so MSAA
 		// would only add a multisampled attachment for no visible gain. Below that
 		// there is nothing to hide jaggies, so pay for it.
-		const renderer = new WebGPURenderer( {
+		const renderer = await createRendererOnDevice( device, {
 			canvas: this.canvas,
-			device,
 			alpha: true,
 			antialias: ( window.devicePixelRatio || 1 ) < MAX_VIEW_DPR,
 		} );
 
-		await renderer.init();
-		device.onuncapturederror = deviceErrorHandler;
-
 		renderer.outputColorSpace = SRGBColorSpace;
-		renderer.setPixelRatio( 1.0 );
 		renderer.setClearColor( 0x000000, 0 );
 		// Every frame starts with an explicit clear() in begin(); helpers then
 		// stack on top of each other without wiping what came before.

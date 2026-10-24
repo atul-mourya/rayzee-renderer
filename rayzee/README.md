@@ -1163,7 +1163,14 @@ engine.exportInfo();   // what can be written now: { width, height, upscaled, hd
 - **Where each works.** JPEG, WebP, HEIC and AVIF need a browser (its canvas or video encoder); PNG, EXR and HDR work in
   Node too. `canEncodeStill('heic')` from `rayzee/encoders` says whether this browser can write HEIC or AVIF.
 - Render details (samples, size, view, settings, versions) go into the file, except a WebP, unless `metadata: false`.
-  The file writers download on the first export, not at startup.
+  An EXR's also say how its picture was shown (the exposure, auto exposure's included, local exposure and a held
+  backdrop). The file writers download on the first export, not at startup.
+- **Showing a saved EXR again.** `await engine.createPictureView(canvas)` (the viewer, `PathTracerApp`) gives a
+  picture view on a canvas of your own; `await view.show(exrBlob)` draws the raw EXR exactly as an HDR screen showed it,
+  through the same view, exposure and local exposure, and returns `{ shown, reason }` (`reason`: the screen shows no HDR,
+  the file has no such details, its colour config is not the one loaded, or a later `show()` took over). It reads the
+  file's header first and decodes the pixels only of a file it shows. `view.setGrade(fn)` adds your own edit after
+  the view, a TSL function of the shown colour; `view.redraw()` after its uniforms change; `view.dispose()`.
 
 The writers are also a module of their own, `rayzee/encoders`, for pixels a host already has. It is part of the
 package, not an add-on: nothing to install, and importing it loads nothing else (9 KB compressed).

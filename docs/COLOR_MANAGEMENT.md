@@ -176,6 +176,28 @@ saying the environment was left converted.
   from the screen on the camera scene, against 6.8 for raw light). Photo viewers still show EXR and HDR files in
   normal range; an HDR screen's picture with its highlights goes in a JPEG, HEIC or AVIF with a gain map
   (`exportImage( { gainMap: true } )`), which Preview, Photos, Chrome and Safari show in HDR.
+- **Saved renders in HDR** (the Results page). A save keeps the render's light as an EXR ("Keep HDR copy", on by
+  default), and its `rayzee` attribute records how the picture was shown: `display` (the exposure, auto exposure's
+  included, the backdrop state and the exposure a solid backdrop is held at) from `getProvenance()`, and the viewer's
+  `exposure.local`. `app.createPictureView( canvas )` (`managers/PictureView.js`, loaded on first use) shows such a file
+  as the screen showed it: a renderer of its own on the main device (`createRendererOnDevice`, as the view overlay's;
+  an HDR canvas: half-float, extended range, the view's canvas colour space, no depth buffer) running a Compositor and a
+  LocalExposure of their own — the same code as the viewport, fed the saved light as `pathtracer:color` in a
+  `PipelineContext` of its own — through the saved view's HDR version (`color.hdrVersionOf( view )`: the very table the
+  screen used while this session holds it, so the startup's needs no config or runtime; else baked and kept with the
+  recent ones). The live view is left as it is. Only the EXR's header is read first (`rayzee` attribute); its pixels are
+  decoded only when it will be shown, and three flips its rows on the GPU as it uploads them. Against the live HDR
+  canvas of the test interior (2048², 30 samples): mean 0.03 %, worst pixel 3 %, highlights to 9.3× white; shown in
+  0.3–0.45 s at 2048², almost all of it decoding the EXR on the main thread. Not shown, with a reason, when the screen
+  shows no HDR, the file predates the record, its config is not the one loaded, or a later `show()` took over; the
+  page then shows its 8-bit picture.
+  - The panel's edits go after the view (`PictureView.setGrade`; `pictureGrade` in `app/src/utils/ImageProcessor.js`),
+    as on the 8-bit picture: brightness and contrast on the encoded colour, then saturation, hue and exposure on it
+    decoded with 2.2, encoded with the panel's gamma. Up to white they match `ImageProcessorComposer`'s GLSL, copied into
+    JavaScript, within half a level (`tests/gpu/pictureGrade.test.js`; the WebGL composer itself runs in no test); past white the colour carries on (hue turns it scaled down to white), and
+    below 0 — light outside the canvas's gamut — is kept, so the defaults change nothing (0.13 levels of rounding).
+  - ⚠️ The compositor's held backdrop takes the exposure whenever it draws through a canvas transform, not by the
+    renderer's view: the picture view's renderer has none.
 
 ## The app's section (`ColorManagementSection.jsx`)
 

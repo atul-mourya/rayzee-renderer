@@ -456,6 +456,18 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
+	/**
+	 * A canvas of the host's that shows a saved render as an HDR screen showed it, from the EXR `exportImage` wrote
+	 * (`managers/PictureView.js`). Loaded on first use.
+	 * @param {HTMLCanvasElement} canvas
+	 */
+	async createPictureView( canvas ) {
+
+		const { PictureView } = await import( './managers/PictureView.js' );
+		return new PictureView( { color: this.color, device: this.renderer.backend.device }, canvas ).init();
+
+	}
+
 	// A finished render is exposed for its own image: one reading of it, landed on.
 	_finishImage() {
 

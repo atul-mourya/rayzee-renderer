@@ -213,6 +213,13 @@ export class Compositor extends RenderStage {
 
 	}
 
+	/** The exposure a solid backdrop is held at, or null. */
+	get backdropExposure() {
+
+		return this._backdropExposure;
+
+	}
+
 	/**
 	 * The picture to show: the first published of the display sources, else `pathtracer:color` — the newest
 	 * scene-referred image the pipeline holds, denoised when a denoiser has run.
@@ -345,7 +352,7 @@ export class Compositor extends RenderStage {
 	 */
 	renderShown( context, target ) {
 
-		if ( ! this._canvasTransform || ! this._prepare( context ) ) return false;
+		if ( ! this._canvasTransform || ! this._prepare( context, true ) ) return false;
 
 		const material = new MeshBasicNodeMaterial();
 		material.blending = NoBlending;
@@ -372,8 +379,11 @@ export class Compositor extends RenderStage {
 
 	}
 
-	/** Points the picture at the newest source and holds a solid backdrop; false when there is nothing to show. */
-	_prepare( context ) {
+	/**
+	 * Points the picture at the newest source and holds a solid backdrop; false when there is nothing to show.
+	 * `viaTransform`: drawn through the canvas transform, which applies the exposure whatever the renderer's view.
+	 */
+	_prepare( context, viaTransform = false ) {
 
 		const sourceTexture = this.resolveLightTexture( context );
 		if ( ! sourceTexture ) return false;
@@ -382,7 +392,9 @@ export class Compositor extends RenderStage {
 
 			const hold = context.getState( 'pathtracer:backdrop' ) === 'color';
 			this._holdBackdrop.value = hold ? 1 : 0;
-			if ( hold ) this._backdropGain.value = backdropGain( this._backdropExposure, this.renderer.toneMappingExposure, this.renderer.toneMapping );
+			if ( hold ) this._backdropGain.value = viaTransform
+				? this._backdropExposure / Math.max( this.renderer.toneMappingExposure, 1e-6 )
+				: backdropGain( this._backdropExposure, this.renderer.toneMappingExposure, this.renderer.toneMapping );
 
 		}
 
@@ -413,10 +425,11 @@ export class Compositor extends RenderStage {
 
 		}
 
-		if ( ! this._prepare( context ) ) return;
+		const viaTransform = ! picture && !! this._canvasQuad;
+		if ( ! this._prepare( context, viaTransform ) ) return;
 
 		this.renderer.setRenderTarget( null );
-		const quad = picture || ! this._canvasQuad ? this._viewQuadFor() : this._canvasQuad;
+		const quad = viaTransform ? this._canvasQuad : this._viewQuadFor();
 		if ( ! quad ) {
 
 			this.compositorQuad.render( this.renderer );

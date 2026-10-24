@@ -386,6 +386,10 @@ suite( 'HDR output on the canvas', () => {
 		expect( renderer.backend.parameters.outputType ).toBe( HalfFloatType );
 		expect( renderer.toneMapping ).toBe( entry.id );
 
+		// A picture saved now shows again from that file, still with no config: the Results page needs no runtime.
+		expect( cm.hdrVersionOf( { ...cm.activeView } ).table.tsl ).toBe( cm.canvasTransform );
+		expect( cm.hdrVersionOf( { ...cm.activeView }, 'ACEScg' ) ).toEqual( { reason: 'needs-config' } );
+
 	} );
 
 	it( 'keeps the last four HDR versions, so switching back needs no bake', async () => {
@@ -426,6 +430,25 @@ suite( 'HDR output on the canvas', () => {
 		expect( cm._recentCanvasViews.size ).toBe( 4 );
 		expect( disposed ).toHaveLength( 1 );
 		expect( disposed[ 0 ] ).toMatch( /^ACES 2\.0 - HDR/ );
+
+	} );
+
+	it( 'finds a saved picture\'s HDR version, the very one the screen used while it is held', async () => {
+
+		await start();
+		cm.setHdrOutput( true );
+		// As getProvenance() records the view beside a saved picture.
+		const view = { ...cm.activeView };
+		expect( cm.hdrVersionOf( view ).table.tsl ).toBe( cm.canvasTransform );
+
+		// Baked from light in another space, and kept with the screen's recent ones.
+		const built = cm.hdrVersionOf( view, 'ACEScg' );
+		expect( built.table.ocio ).toMatchObject( { display: 'Display P3 HDR - Display', source: 'ACEScg', for: { display: SDR.display, view: SDR.view } } );
+		expect( cm.hdrVersionOf( view, 'ACEScg' ).table ).toBe( built.table );
+		expect( [ ...cm._recentCanvasViews.values() ] ).toContain( built.table );
+
+		expect( cm.hdrVersionOf( { ...view, view: 'Raw' } ) ).toEqual( { reason: 'no-hdr-version' } );
+		expect( cm.hdrVersionOf( { ...view, configId: 'elsewhere' }, 'ACEScg2065' ) ).toEqual( { reason: 'other-config' } );
 
 	} );
 

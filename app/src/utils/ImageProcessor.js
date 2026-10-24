@@ -3,6 +3,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { BrightnessContrastShader } from 'three/examples/jsm/shaders/BrightnessContrastShader.js';
+import { Fn, If, uniform, float, vec3, max, min, mix, dot, select, fract, abs, sign, exp2 } from 'three/tsl';
 
 // Custom shader for hue, saturation, and exposure
 const ColorAdjustmentShader = {
@@ -281,5 +282,99 @@ export class ImageProcessorComposer {
 		this.composer = null;
 
 	}
+
+}
+
+/**
+ * The same edits as {@link ImageProcessorComposer}, on a saved render's HDR picture after its view
+ * (`PictureView.setGrade`): identical up to white, colours brighter than white carried along (hue turns the colour scaled
+ * down to white, then back). `set()` takes the Results panel's values; the view's `redraw()` shows them.
+ */
+export function pictureGrade() {
+
+	const u = {
+		brightness: uniform( 0 ), contrast: uniform( 0 ), saturation: uniform( 0 ),
+		hue: uniform( 0 ), exposure: uniform( 0 ), gamma: uniform( 2.2 ),
+	};
+
+	const turnHue = Fn( ( [ rgb, degrees ] ) => {
+
+		const scale = max( float( 1 ), max( rgb.x, max( rgb.y, rgb.z ) ) ).toVar();
+		const c = rgb.div( scale ).toVar();
+		const hi = max( c.x, max( c.y, c.z ) ).toVar();
+		const lo = min( c.x, min( c.y, c.z ) ).toVar();
+		const delta = hi.sub( lo ).toVar();
+		const l = hi.add( lo ).mul( 0.5 ).toVar();
+		const out = c.toVar();
+
+		If( delta.greaterThan( 0 ), () => {
+
+			const s = select( l.lessThan( 0.5 ), delta.div( hi.add( lo ) ), delta.div( float( 2 ).sub( hi ).sub( lo ) ) ).toVar();
+			const h = float( 0 ).toVar();
+			If( hi.equal( c.x ), () => {
+
+				h.assign( c.y.sub( c.z ).div( delta ).add( select( c.y.lessThan( c.z ), float( 6 ), float( 0 ) ) ) );
+
+			} ).ElseIf( hi.equal( c.y ), () => {
+
+				h.assign( c.z.sub( c.x ).div( delta ).add( 2 ) );
+
+			} ).Else( () => {
+
+				h.assign( c.x.sub( c.y ).div( delta ).add( 4 ) );
+
+			} );
+
+			h.assign( fract( h.div( 6 ).add( degrees.div( 360 ) ) ) );
+			const q = select( l.lessThan( 0.5 ), l.mul( s.add( 1 ) ), l.add( s ).sub( l.mul( s ) ) ).toVar();
+			const p = l.mul( 2 ).sub( q ).toVar();
+			const channel = at => {
+
+				const t = fract( at );
+				return select( t.lessThan( 1 / 6 ), p.add( q.sub( p ).mul( 6 ).mul( t ) ),
+					select( t.lessThan( 0.5 ), q, select( t.lessThan( 2 / 3 ), p.add( q.sub( p ).mul( float( 2 / 3 ).sub( t ) ).mul( 6 ) ), p ) ) );
+
+			};
+
+			out.assign( vec3( channel( h.add( 1 / 3 ) ), channel( h ), channel( h.sub( 1 / 3 ) ) ) );
+
+		} );
+
+		return out.mul( scale );
+
+	} );
+
+	const grade = Fn( ( [ encoded ] ) => {
+
+		// Brightness and contrast on the encoded colour, as BrightnessContrastShader. Below 0 is a colour outside the
+		// canvas's gamut, kept: at the panel's defaults the picture is as saved.
+		const centred = encoded.add( u.brightness ).sub( 0.5 ).toVar();
+		const steeper = centred.div( float( 1 ).sub( u.contrast ) );
+		const flatter = centred.mul( u.contrast.add( 1 ) );
+		const contrasted = select( u.contrast.greaterThan( 0 ), steeper, flatter ).add( 0.5 ).toVar();
+		const linear = sign( contrasted ).mul( abs( contrasted ).pow( vec3( 2.2 ) ) ).toVar();
+		const saturated = mix( vec3( dot( linear, vec3( 0.2126, 0.7152, 0.0722 ) ) ), linear, u.saturation.add( 1 ) ).toVar();
+		If( abs( u.hue ).greaterThan( 0.01 ), () => {
+
+			saturated.assign( turnHue( saturated, u.hue ) );
+
+		} );
+		const exposed = saturated.mul( exp2( u.exposure ) );
+		return sign( exposed ).mul( abs( exposed ).pow( vec3( float( 1 ).div( u.gamma ) ) ) );
+
+	} );
+
+	const set = ( { brightness = 0, contrast = 0, saturation = 0, hue = 0, exposure = 0, gamma = 2.2 } = {} ) => {
+
+		u.brightness.value = brightness / 100;
+		u.contrast.value = contrast / 100;
+		u.saturation.value = saturation / 100;
+		u.hue.value = hue;
+		u.exposure.value = exposure / 100;
+		u.gamma.value = gamma;
+
+	};
+
+	return { grade, set };
 
 }

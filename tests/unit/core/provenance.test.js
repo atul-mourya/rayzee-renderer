@@ -48,6 +48,17 @@ describe( 'getProvenance', () => {
 
 	} );
 
+	it( 'says what the picture was shown at, so a saved copy of its light can be shown again', () => {
+
+		const app = new PathTracerApp( null );
+		expect( app.getProvenance().display ).toEqual( { exposure: null, backdrop: null, backdropExposure: null } );
+
+		app.renderer = { toneMappingExposure: 2.5 };
+		app.stages.compositor = { backdropExposure: 1 };
+		expect( app.getProvenance().display ).toMatchObject( { exposure: 2.5, backdropExposure: 1 } );
+
+	} );
+
 	it( 'carries the area-light scale with the other settings', () => {
 
 		expect( new PathTracerApp( null ).getProvenance().settings.areaLightIntensityScale )
