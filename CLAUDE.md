@@ -759,7 +759,8 @@ the menu. A view is baked to a log2 shaper + 65³ table; `MAX_TABLE_TRANSFORMS` 
 Colour issues are recorded with `warn()` (headless is strict). Environment modes are `'hdri' | 'procedural' | 'color'`;
 the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on screen).
 - ⚠️ Once a scene exists, load and unload through `app.loadColorConfig()` / `unloadColorConfig()`: only the config that
-  converted the environment can convert it back.
+  converted the environment can convert it back. Back in linear Rec.709 it is recorded as `'native'`, never by the
+  config's name for that space: recorded as Blender's "Linear Rec.709", an ACES config could not convert it again.
 - ⚠️ An OCIO view returns display-encoded colour, the built-ins linear (`outputEncoded`). Get it wrong and every image
   is encoded twice.
 - ⚠️ `library.addToneMapping` refuses to redefine an id: a rebake deletes the old entry and reuses the same
@@ -774,6 +775,11 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
   nits"), decoded to 1.0 = 100 nits (`buildCanvasView`). ⚠️ It is not a registry entry and never reaches a readback:
   saved pictures go through `getCanvas()`, which draws the view itself (`compositor.renderPicture()`) into a 2D copy.
   ⚠️ The canvas format is three's `backend.parameters.outputType`, read at its next configure (`backend.updateSize()`).
+  ⚠️ The HDR version is drawn through `outputNode`: three.js clamps a colour node at 0, which cut light outside the
+  canvas's gamut. ⚠️ Chrome keeps the colour space and format a WebGPU canvas had at its first copy (drawImage,
+  createImageBitmap) for every later one: after a Screen or HDR switch, thumbnails and video frames came out in the wrong
+  colours (Display P3: 61 levels) or showed an old picture. The `configure` wrapper sets the canvas width again whenever
+  either changes, which resets it. `toBlob` was never affected.
 - **Every display shows the light it would emit**: only sRGB and Display P3 are canvas encodings (`canvasFitOf()`
   measures it through the config); every other display's view is baked converted for the canvas (`ocio.emulated`,
   `ocio.canvas`), so screen, readbacks and pictures agree. The Screen switch keeps the tone mapping (`matchingView`).

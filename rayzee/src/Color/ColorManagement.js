@@ -70,6 +70,10 @@ const RECENT_CANVAS_VIEWS = 4;
 
 const REC709_CHROMATICITIES = Object.freeze( [ 0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290 ] );
 
+// An environment's record of being in the engine's own linear Rec.709, whatever the config calls it; CDFCache keys an
+// unrecorded one the same way.
+const NATIVE = 'native';
+
 function canvasKey( ocio, canvas ) {
 
 	return JSON.stringify( [ ocio.configId, ocio.display, ocio.view, ocio.look ?? null, ocio.source, ocio.context ?? null, canvas ] );
@@ -769,9 +773,26 @@ export class ColorManagement {
 		// `configure` makes every later call keep the colour space chosen here.
 		if ( ! context.__rayzeeConfigure ) {
 
+			// Chrome keeps the colour space and format a canvas had when first copied (drawImage, createImageBitmap) for
+			// every later copy, so thumbnails and video frames read a switched canvas wrongly, or an old picture; setting
+			// its size again, even unchanged, resets that. toBlob is unaffected.
+			const page = ( typeof HTMLCanvasElement !== 'undefined' && canvas instanceof HTMLCanvasElement )
+				|| ( typeof OffscreenCanvas !== 'undefined' && canvas instanceof OffscreenCanvas );
 			const configure = context.configure.bind( context );
 			context.__rayzeeConfigure = configure;
-			context.configure = config => configure( { ...config, colorSpace: context.__rayzeeColorSpace ?? config.colorSpace } );
+			context.configure = config => {
+
+				const before = context.getConfiguration?.();
+				const next = { ...config, colorSpace: context.__rayzeeColorSpace ?? config.colorSpace };
+				configure( next );
+				if ( page && before && ( before.format !== next.format || ( before.colorSpace ?? 'srgb' ) !== ( next.colorSpace ?? 'srgb' ) ) ) {
+
+					const { width } = canvas;
+					canvas.width = width;
+
+				}
+
+			};
 
 		}
 
@@ -1126,8 +1147,11 @@ export class ColorManagement {
 		const data = image?.data;
 		if ( ! data ) return false;
 
+		// Back in the native space it is recorded as NATIVE, not by name: configs name that space differently, and one
+		// recorded under Blender's name ("Linear Rec.709") was never converted under ACES's.
 		const native = this.nativeLinearSpace;
-		const from = texture.userData?.__rayzeeColorSpace ?? space ?? native;
+		const recorded = texture.userData?.__rayzeeColorSpace;
+		const from = recorded === NATIVE ? native : recorded ?? space ?? native;
 		const to = this.workingSpaceAdopted ? this.workingSpace : native;
 
 		if ( ! from || ! to || from === to ) return false;
@@ -1165,7 +1189,7 @@ export class ColorManagement {
 		}
 
 		texture.userData = texture.userData ?? {};
-		texture.userData.__rayzeeColorSpace = to;
+		texture.userData.__rayzeeColorSpace = to === native ? NATIVE : to;
 		texture.needsUpdate = true;
 		return changed;
 

@@ -317,6 +317,43 @@ suite( 'HDR output on the canvas', () => {
 
 	} );
 
+	it( 'resets what Chrome copies the canvas from whenever its format or colour space changes', async () => {
+
+		await start();
+		// Chrome keeps the colour space and format a canvas had at its first copy; setting its width again resets that.
+		let configuration = { format: 'bgra8unorm', colorSpace: 'srgb', toneMapping: { mode: 'standard' } };
+		const context = { configure: c => {
+
+			configuration = { ...c };
+
+		}, getConfiguration: () => configuration };
+		const canvas = new globalThis.HTMLCanvasElement();
+		let width = 512, resets = 0;
+		Object.defineProperty( canvas, 'width', { get: () => width, set: v => {
+
+			width = v;
+			resets ++;
+
+		} } );
+		canvas.getContext = () => context;
+		renderer.domElement = canvas;
+
+		cm.setView( { display: 'Display P3 - Display', view: 'ACES 2.0 - SDR 100 nits (P3 D65)' } );
+		expect( configuration.colorSpace ).toBe( 'display-p3' );
+		expect( resets ).toBe( 1 );
+
+		// three.js configuring again after a resize, with no colour space: kept, nothing changed, no reset.
+		context.configure( { format: 'bgra8unorm', toneMapping: { mode: 'standard' } } );
+		expect( configuration.colorSpace ).toBe( 'display-p3' );
+		expect( resets ).toBe( 1 );
+
+		// The HDR canvas is another format.
+		context.configure( { format: 'rgba16float', toneMapping: { mode: 'extended' } } );
+		expect( resets ).toBe( 2 );
+		expect( width ).toBe( 512 );
+
+	} );
+
 	it( 'never switches a canvas that is not on screen', async () => {
 
 		await start();

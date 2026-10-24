@@ -58,7 +58,9 @@ saying the environment was left converted.
   primaries means different light in ACEScg, so `setWorkingSpace()` must be followed by
   `applyColorWorkingSpace()`: textures and materials re-pack from their pristine three.js sources,
   and the environment converts where it lies (its current space is recorded on the texture, which
-  is what lets it be turned back off). The texture cache key includes the working space.
+  is what lets it be turned back off; back in linear Rec.709 the record is `'native'`, not the config's name for it,
+  since an environment recorded under Blender's "Linear Rec.709" was never converted by an ACES config). The texture
+  cache key includes the working space.
 - **Input resolution** is tag (`userData.ocioColorSpace`) → override → the config's own file rules
   → what three.js already believes, mapped onto the config's *roles*. A default file rule matches
   everything, so it loses to three.js's own tag. `TextureCreator` runs the full named transform
@@ -100,6 +102,11 @@ saying the environment was left converted.
 - **Display P3 reaches the screen.** three.js configures the WebGPU canvas without a colour space
   (always sRGB) and reconfigures it on every resize. `ColorManagement` wraps that context's
   `configure` so a Display P3 view gets `display-p3` and keeps it (also when chosen before the first frame).
+  ⚠️ Chrome keeps the colour space and format a WebGPU canvas had at its first copy (drawImage, createImageBitmap)
+  for every later copy, so after a Screen or HDR switch thumbnails and video frames were read wrongly: a Display P3
+  video frame kept P3 codes (61 levels), a save with HDR on was 21 levels dull, and a thumbnail after HDR off was the
+  old picture, with WebGPU copy errors. The wrapper sets the canvas width again (unchanged) whenever the format or
+  colour space changes, which resets it; `toBlob` was never affected.
 - **Every display shows what it would emit** (Blender's Display Emulation "Automatic"). `canvasFitOf()`
   (`OcioViews.js`) measures, through the config, whether a display's encoding *is* a canvas colour space:
   decoding test codes to the display connection space must give sRGB's (or Display P3's) curve and primaries
@@ -138,7 +145,9 @@ saying the environment was left converted.
     three.js reads the format, and from it `toneMapping: { mode: 'extended' }`, when it next configures
     the canvas, and its pipelines key on the format. Only for a canvas on screen (`no-screen` otherwise).
   - The Compositor draws the canvas version in one pass (`setCanvasTransform`), with the renderer's tone
-    mapping and output colour space set to none for that draw; `renderPicture()` draws the view itself.
+    mapping and output colour space set to none for that draw; `renderPicture()` draws the view itself. It is the
+    material's `outputNode`, not its `colorNode`: three.js clamps a colour node at 0, and below 0 is light outside the
+    canvas's gamut (a saturated green under AgX - Very High Contrast: −0.34 in red and blue, shown as 0).
     `getCanvas()` (saves, thumbnails, video frames, the upscaler's input) draws the view, copies it to a 2D
     canvas in the canvas colour space whenever the canvas is half-float, and redraws the screen. A capture then
     matches HDR off within one level (1920×1080: 4.4 % of channels one lower, mean −0.04, from the half-float
@@ -224,6 +233,13 @@ OCIO's guidance is to build menus from UI name, family and description, filtered
 - **Every combination** is held by `tests/unit/color/colorCombinations.test.js` on ACES 2.0, ACES 1.3 (OCIO 2.4
   and 2.1) and Blender 5.1: every display × view × offered look against OCIO's display light, with and without
   its HDR version and in another working space; the Screen switch both ways; the HDR switch on every view.
+  Checked in Chrome (2026-10-24, an HDR Display P3 screen) with 32 emitters of known light: what the canvas holds,
+  read off the GPU, against OCIO for Blender's 604 combinations with HDR on and off, ACES 2.0's 148, ACES 1.3's 72
+  and the seven built-ins, plus every working space and two exposures; readback, saved picture and thumbnail
+  alike. All within 3 levels / 3 % but two limits of the 65³ table. False Color is wrong on every display: it is a
+  stepped lookup (`AgX_False_Color.spi1d`) the table blurs, so 0.18 grey shows teal. And the brightest saturated colours
+  miss by up to 3.6 % (20 levels at 14× white), up to 95 levels in a working space wider than Rec.709 on a converted
+  display, where a pure primary falls between table nodes at OCIO's clip.
 - **Texture colour space**: spaces tagged `texture`, grouped by family.
 - ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
   to name matching — the tests passed by coincidence until that was caught.

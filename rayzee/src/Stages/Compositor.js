@@ -109,7 +109,8 @@ export class Compositor extends RenderStage {
 	_buildCanvasNode() {
 
 		if ( ! this._canvasMaterial ) return;
-		this._canvasMaterial.colorNode = vec4( this._canvasTransform( this._graded, toneMappingExposure ), this._alpha );
+		// outputNode: three.js clamps a colour node at 0, and below 0 is light outside the canvas's gamut.
+		this._canvasMaterial.outputNode = vec4( this._canvasTransform( this._graded, toneMappingExposure ), this._alpha );
 		this._canvasMaterial.needsUpdate = true;
 
 	}
@@ -306,7 +307,7 @@ export class Compositor extends RenderStage {
 
 		const material = new MeshBasicNodeMaterial();
 		material.blending = NoBlending;
-		material.colorNode = vec4( decodeExtendedSRGB( this._canvasTransform( this._graded, toneMappingExposure ) ), this._alpha );
+		material.outputNode = vec4( decodeExtendedSRGB( this._canvasTransform( this._graded, toneMappingExposure ) ), this._alpha );
 		const { toneMapping, outputColorSpace } = this.renderer;
 		const previous = this.renderer.getRenderTarget();
 		this.renderer.toneMapping = NoToneMapping;

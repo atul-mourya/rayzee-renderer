@@ -122,6 +122,16 @@ suite( 'with a config loaded', () => {
 		expect( cm.convertTexturePixels( env ) ).toBe( true );
 		for ( let i = 0; i < 8; i ++ ) expect( pixels[ i ] ).toBeCloseTo( original[ i ], 5 );
 
+		// Recorded as native, not by this config's name for it: under Blender's name ("Linear Rec.709") an ACES
+		// config found no such space and never converted it again.
+		expect( env.userData.__rayzeeColorSpace ).toBe( 'native' );
+		expect( cm.convertTexturePixels( env ) ).toBe( false );
+		cm.setWorkingSpace( 'ACEScg' );
+		expect( cm.convertTexturePixels( env ) ).toBe( true );
+		expect( pixels[ 0 ] ).toBeCloseTo( converted[ 0 ], 5 );
+		cm.setWorkingSpace( null );
+		expect( cm.convertTexturePixels( env ) ).toBe( true );
+
 		// A sky regenerates into the same texture and clears the record; that is fresh data.
 		cm.setWorkingSpace( 'ACEScg' );
 		pixels.set( original );
