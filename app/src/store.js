@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { DEFAULT_STATE, CAMERA_PRESETS, DENOISER_STRATEGIES, NRD_QUALITY_PRESETS, SKY_PRESETS, SSS_PRESETS, translucencyToScale, computeOutputDimensions, isPanorama } from '@/Constants';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, VideoRenderManager, deriveAlphaMode, sunPosition, timeForSunElevation, dayOfYearForMonth } from 'rayzee';
 import { getApp } from '@/lib/appProxy';
-import { VideoEncoderPipeline, checkCodecSupport } from '@/lib/VideoEncoder';
+import { readVideoSettings, VIDEO_SETTINGS_KEY, VIDEO_CONTAINERS, videoBitrate, isFrameSequence, fileStem, downloadBlob, openFrameSink } from '@/lib/exporter';
 import { VideoJob } from '@/lib/videoJob';
 import { toast } from '@/hooks/use-toast';
 
@@ -41,6 +41,9 @@ const useStore = create( set => ( {
 	// A saved session, project or unfinished render to reopen: `{ origin: 'recent' | 'project' | 'video' | 'still', record, thumb, ... }`.
 	sessionRequest: null,
 	setSessionRequest: request => set( { sessionRequest: request } ),
+	// The Export window: { tab: 'picture' | 'video', from: 'live' | 'result' }.
+	exportRequest: null,
+	setExportRequest: request => set( { exportRequest: request } ),
 
 	// Transform controls
 	transformMode: 'translate',
@@ -2803,17 +2806,6 @@ export const videoUsesTimeline = ( { clips, moveCameraInVideo, timelineAnimates 
 let _activeVideoManager = null;
 let _videoCancelled = false;
 
-function downloadFile( file, name ) {
-
-	const url = URL.createObjectURL( file );
-	const a = document.createElement( 'a' );
-	a.href = url;
-	a.download = name;
-	a.click();
-	setTimeout( () => URL.revokeObjectURL( url ), 60_000 );
-
-}
-
 const useAnimationStore = create( ( set, get ) => ( {
 
 	clips: [],
@@ -2929,6 +2921,20 @@ const useAnimationStore = create( ( set, get ) => ( {
 	// ── Video Rendering ──────────────────────────────────────
 
 	loopCount: 1,
+	// The Export window's video choices, remembered on this device.
+	videoExport: readVideoSettings(),
+	setVideoExport: patch => set( state => {
+
+		const videoExport = { ...state.videoExport, ...patch };
+		try {
+
+			localStorage.setItem( VIDEO_SETTINGS_KEY, JSON.stringify( videoExport ) );
+
+		} catch { /* storage disabled: kept for this visit */ }
+
+		return { videoExport };
+
+	} ),
 	isVideoRendering: false,
 	videoRenderProgress: 0,
 	videoRenderFrame: 0,
@@ -2937,10 +2943,11 @@ const useAnimationStore = create( ( set, get ) => ( {
 	handleLoopCountChange: ( val ) => set( { loopCount: val } ),
 
 	/**
-	 * Renders the video, journalling each frame to disk. With `resume` (an unfinished VideoJob, its
+	 * Renders the video, journalling each frame to disk. `output` is the Export window's video choice (its saved
+	 * one when omitted); frames go to `folder`, or a zip without one. With `resume` (an unfinished VideoJob, its
 	 * scene already restored) it carries on from the first frame the job does not have.
 	 */
-	handleRenderAnimation: async ( { totalDuration, resume = null } = {} ) => {
+	handleRenderAnimation: async ( { totalDuration, resume = null, output = null, folder = null } = {} ) => {
 
 		const app = getApp();
 		if ( ! app ) return;
@@ -2952,7 +2959,10 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 		app.timeline.stop();
 
-		const fps = resume?.job.fps ?? VIDEO_RENDER_FPS;
+		// A job from before the Export window holds no output: it is a WebM.
+		const settings = resume ? resume.job.output ?? { format: 'webm' } : output ?? get().videoExport;
+		const container = resume ? resume.container : isFrameSequence( settings.format ) ? 'frames' : settings.format;
+		const fps = resume?.job.fps ?? settings.fps ?? VIDEO_RENDER_FPS;
 		const totalFrames = resume?.job.totalFrames ?? Math.ceil( ( totalDuration || videoDuration( get() ) ) * fps );
 		const startFrame = resume?.framesDone ?? 0;
 
@@ -2967,15 +2977,24 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 		}
 
-		const { supported, codec: pickedCodec } = await checkCodecSupport( width, height );
-		if ( ! supported ) {
+		const frames = container === 'frames';
+		const { VideoEncoderPipeline, pickVideoCodec } = await import( '@/lib/VideoEncoder' );
+		const bitrate = frames ? null : resume?.job.bitrate ?? videoBitrate( width, height, fps, settings.quality );
+		const codec = frames ? null : resume?.job.codec ?? await pickVideoCodec( container, width, height, fps, bitrate );
+		if ( ! frames && ! codec ) {
 
-			toast( { title: 'Video export unavailable', description: 'This browser cannot encode VP9 or VP8 video.', variant: 'destructive' } );
+			toast( { title: 'Video export unavailable', description: container === 'mp4' ? 'This browser cannot write MP4 (H.264) video. WebM may work.' : 'This browser cannot encode VP9 or VP8 video.', variant: 'destructive' } );
 			return;
 
 		}
 
-		const codec = resume?.job.codec ?? pickedCodec;
+		if ( frames && resume && ! folder ) {
+
+			toast( { title: 'Cannot resume the frames', description: 'The folder they were going into was not chosen.', variant: 'destructive' } );
+			return;
+
+		}
+
 		const options = saved ?? {
 			clipIndex: selectedClip,
 			speed: get().speed || 1,
@@ -2986,13 +3005,15 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 		set( { isVideoRendering: true, videoRenderProgress: ( startFrame / totalFrames ) * 100, videoRenderFrame: startFrame, videoRenderTotalFrames: totalFrames } );
 
-		const job = resume ?? await ( async () => {
+		// Frames going into a zip cannot be added to later, so they keep no job to resume.
+		const job = resume ?? ( frames && ! folder ? null : await ( async () => {
 
 			const { captureSession } = await import( '@/lib/session' );
 			const { record } = await captureSession( app, { thumbnail: false } );
+			const kind = frames ? `${settings.format.toUpperCase()} frames` : `Video ${container.toUpperCase()}`;
 			return VideoJob.start( app.storage, {
-				width, height, fps, codec, totalFrames, options, session: record,
-				label: `Video ${width}×${height}, ${totalFrames} frames`,
+				width, height, fps, codec, bitrate, container, totalFrames, options, output: settings, session: record,
+				label: `${kind} ${width}×${height}, ${totalFrames} frames`,
 			} );
 
 		} )().catch( ( err ) => {
@@ -3000,7 +3021,8 @@ const useAnimationStore = create( ( set, get ) => ( {
 			console.warn( 'Video export: rendering without a job on disk:', err );
 			return null;
 
-		} );
+		} ) );
+		if ( job && folder && ! resume ) await ( await import( '@/lib/folders' ) ).rememberFramesFolder( job.key, folder );
 
 		// A long export should not be cut short by the screen going to sleep.
 		const wakeLock = await navigator.wakeLock?.request( 'screen' ).catch( () => null );
@@ -3008,17 +3030,35 @@ const useAnimationStore = create( ( set, get ) => ( {
 		const { getSessionKeeper } = await import( '@/lib/session' );
 		getSessionKeeper()?.setEnabled( false );
 
+		const extension = settings.format === 'exr' ? 'exr' : 'png';
+		const stem = fileStem( 'animation' );
+		let sink = null;
 		let frameChunks = [];
 		let decoderConfig = null;
-		const encoder = new VideoEncoderPipeline( width, height, {
-			fps, codec,
-			onChunk: job ? ( chunk, meta ) => {
+		let encoder = null;
+		try {
 
-				frameChunks.push( chunk );
-				decoderConfig ??= meta?.decoderConfig ?? null;
+			if ( frames ) sink = await openFrameSink( { folder, total: totalFrames, extension, zipName: `${stem}-frames.zip` } );
+			else encoder = new VideoEncoderPipeline( width, height, {
+				fps, codec, container, bitrate, totalFrames,
+				onChunk: job ? ( chunk, meta ) => {
 
-			} : null,
-		} );
+					frameChunks.push( chunk );
+					decoderConfig ??= meta?.decoderConfig ?? null;
+
+				} : null,
+			} );
+
+		} catch ( err ) {
+
+			toast( { title: 'Video export failed', description: err.message, variant: 'destructive' } );
+			wakeLock?.release().catch( () => {} );
+			getSessionKeeper()?.setEnabled( true );
+			set( { isVideoRendering: false, videoRenderProgress: 0, videoRenderFrame: 0, videoRenderTotalFrames: 0 } );
+			return;
+
+		}
+
 		const videoManager = new VideoRenderManager( app );
 
 		_activeVideoManager = videoManager;
@@ -3034,9 +3074,21 @@ const useAnimationStore = create( ( set, get ) => ( {
 			enableOIDN: options.enableOIDN,
 			totalFrames,
 			startFrame,
+			captureFrame: ! frames,
 			onFrame: async ( bitmap, index ) => {
 
 				try {
+
+					if ( frames ) {
+
+						const { format, bitDepth, precision, passes } = settings;
+						const asShown = settings.asShown ?? true;
+						const { blob } = await app.exportImage( { format, bitDepth, precision, asShown, passes: format === 'exr' && ! asShown ? passes : [], upscaled: false } );
+						await sink.write( index, blob );
+						if ( job ) await job.appendFrame( index, [] );
+						return;
+
+					}
 
 					if ( ! job ) {
 
@@ -3070,14 +3122,25 @@ const useAnimationStore = create( ( set, get ) => ( {
 
 					if ( success && ! failure ) {
 
-						const blob = await encoder.finalize();
-						const file = job ? await job.finalize() : blob;
-						downloadFile( file, `animation-${Date.now()}.webm` );
-						if ( job ) setTimeout( () => job.discard(), 60_000 );
+						if ( frames ) {
+
+							await sink.close();
+							toast( { title: 'Frames saved', description: folder ? `${totalFrames} ${extension.toUpperCase()} frames in the folder ${folder.name}.` : `${totalFrames} frames in ${stem}-frames.zip.` } );
+							await job?.discard();
+
+						} else {
+
+							const blob = await encoder.finalize();
+							const file = job ? await job.finalize() : blob;
+							downloadBlob( file, `${stem}.${VIDEO_CONTAINERS[ container ].extension}` );
+							if ( job ) setTimeout( () => job.discard(), 60_000 );
+
+						}
 
 					} else {
 
-						encoder.close();
+						encoder?.close();
+						await sink?.abort();
 						if ( _videoCancelled && ! failure ) await job?.discard();
 
 					}

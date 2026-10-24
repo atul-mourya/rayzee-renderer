@@ -9,6 +9,7 @@ import { useImportUrl } from '@/hooks/use-import-url';
 const ImportUrlModal = lazy( () => import( './ImportUrlModal' ) );
 const StorageDialog = lazy( () => import( './StorageDialog' ) );
 const RecentDialog = lazy( () => import( './RecentDialog' ) );
+const ExportDialog = lazy( () => import( './ExportDialog' ) );
 
 // Loading fallback for modal
 const ModalLoadingFallback = () => (
@@ -28,6 +29,7 @@ const TopBar = () => {
 	const appMode = useStore( state => state.appMode );
 	const setAppMode = useStore( state => state.setAppMode );
 	const handleModeChange = usePathTracerStore( state => state.handleModeChange );
+	const exportRequested = useStore( state => !! state.exportRequest );
 
 	// Ref for appMode to keep handleTabChange stable
 	const appModeRef = useRef( appMode );
@@ -109,6 +111,11 @@ const TopBar = () => {
 			{ recentOpen && (
 				<Suspense fallback={<ModalLoadingFallback />}>
 					<RecentDialog isOpen={recentOpen} onClose={closeRecent} />
+				</Suspense>
+			) }
+			{ exportRequested && (
+				<Suspense fallback={<ModalLoadingFallback />}>
+					<ExportDialog />
 				</Suspense>
 			) }
 		</div>

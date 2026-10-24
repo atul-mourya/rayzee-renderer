@@ -1,9 +1,8 @@
 import { APP_AREAS } from '@/lib/storage';
-import { muxChunks } from '@/lib/VideoEncoder';
+import { VIDEO_CONTAINERS } from '@/lib/exporter';
 
 const JOB_FILE = 'job.json';
 const CHUNKS = 'chunks.bin';
-const VIDEO = 'video.webm';
 const RECORD_HEADER = 17; // frame u32, key u8, timestamp f64, length u32
 
 const toBase64 = bytes => btoa( String.fromCharCode( ...new Uint8Array( bytes ) ) );
@@ -57,7 +56,7 @@ async function* readRecords( file, length ) {
 
 /**
  * A video render on disk: every finished frame's encoded chunks are appended to a journal and
- * committed, so a render interrupted at frame 250 of 300 still has frames 0–249. The WebM is
+ * committed, so a render interrupted at frame 250 of 300 still has frames 0–249. The MP4 or WebM is
  * muxed from the journal at the end.
  */
 export class VideoJob {
@@ -82,9 +81,16 @@ export class VideoJob {
 
 	}
 
+	/** Jobs from before MP4 have no container: they are WebM. */
+	get container() {
+
+		return this.job.container ?? 'webm';
+
+	}
+
 	/**
 	 * @param {import('rayzee').StorageManager} storage
-	 * @param {{width:number, height:number, fps:number, codec:string, bitrate?:number, totalFrames:number, label?:string, options?:Object}} spec
+	 * @param {{width:number, height:number, fps:number, codec:string, container?:'mp4'|'webm', bitrate?:number, totalFrames:number, label?:string, options?:Object}} spec
 	 * @returns {Promise<?VideoJob>} null when storage cannot take it
 	 */
 	static async start( storage, spec ) {
@@ -154,7 +160,7 @@ export class VideoJob {
 
 	}
 
-	/** Muxes every committed frame into `video.webm` and resolves the finished File. */
+	/** Muxes every committed frame into the video and resolves the finished File. */
 	async finalize() {
 
 		const entry = await this._area.open( this.key, { wait: true } );
@@ -171,14 +177,17 @@ export class VideoJob {
 
 		}
 
+		const { muxChunks } = await import( '@/lib/VideoEncoder' );
+		const { mimeType, extension } = VIDEO_CONTAINERS[ this.container ];
+		const video = `video.${extension}`;
 		const writer = await this._area.edit( this.key );
 		try {
 
-			const { width, height, codec, fps } = this.job;
+			const { width, height, codec, fps, totalFrames } = this.job;
 			await muxChunks( readRecords( chunks, length ), {
-				width, height, codec, fps,
+				width, height, codec, fps, totalFrames, container: this.container,
 				decoderConfig: liveConfig( this.job.decoderConfig ),
-				write: ( data, position ) => writer.write( VIDEO, data, { at: position } ),
+				write: ( data, position ) => writer.write( video, data, { at: position } ),
 			} );
 			await writer.commit( { finished: true } );
 
@@ -190,9 +199,9 @@ export class VideoJob {
 		}
 
 		const done = await this._area.open( this.key, { wait: true } );
-		const file = await done.file( VIDEO );
+		const file = await done.file( video );
 		done.release();
-		return new File( [ file ], `animation-${this.job.startedAt}.webm`, { type: 'video/webm' } );
+		return new File( [ file ], `animation-${this.job.startedAt}.${extension}`, { type: mimeType } );
 
 	}
 

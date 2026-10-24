@@ -19,6 +19,7 @@ function makeApp( { width = 2, height = 1, pixel = [ 0.5, 0.25, 0.125, 1 ], targ
 			readRenderTargetPixelsAsync: vi.fn( async () => pixels ),
 		},
 		renderToBuffer: PathTracerApp.prototype.renderToBuffer,
+		_readPicture: PathTracerApp.prototype._readPicture,
 		_readDisplaySource: PathTracerApp.prototype._readDisplaySource,
 		_displaySource: PathTracerApp.prototype._displaySource,
 		_readbackPass: PathTracerApp.prototype._readbackPass,

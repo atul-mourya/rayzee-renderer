@@ -93,7 +93,8 @@
 
 ### Rendering Management
 - [ ] **Render Queue & Batch Processing**
-  - [x] Offline animation video export (frame-by-frame → WebCodecs VP9/VP8 → WebM)
+  - [x] Offline animation video export (frame-by-frame → WebCodecs → MP4 (H.264) or WebM (VP9/VP8) through Mediabunny)
+  - [x] Export window: PNG 8/16-bit, JPEG, WebP, HEIC, AVIF, OpenEXR with albedo/normal/depth layers, Radiance HDR; HDR photos (gain-map JPEG, HEIC, AVIF); PNG and EXR frame sequences
   - [x] Resumable final renders and video exports (render checkpoints and frame journals on disk)
   - [ ] Background rendering with progress tracking
   - [ ] Render queue management

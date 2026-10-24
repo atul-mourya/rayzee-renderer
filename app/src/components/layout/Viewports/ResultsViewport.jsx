@@ -7,7 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/store';
 import { ImageProcessorComposer } from '@/utils/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
-import { updateRender, getRenderHDR } from '@/utils/database';
+import { updateRender } from '@/utils/database';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { usePanZoom } from '@/hooks/usePanZoom';
 import { generateViewportStyles } from '@/utils/viewport';
@@ -122,71 +122,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ originalSettings, imageProcessing ] );
 
-	// Screenshot handler - defined early to avoid reference issues
-	const handleScreenshot = useCallback( async () => {
-
-		console.log( "Screenshot called in ResultsViewport" );
-
-		// Check if we have image data
-		if ( ! imageData ) {
-
-			console.log( "No image data" );
-			toast( {
-				title: "No Image",
-				description: "Please select an image first.",
-				variant: "destructive",
-			} );
-			return;
-
-		}
-
-		// Determine which canvas to download
-		const canvasToDownload = viewingOriginal ? originalCanvasRef.current : editedCanvasRef.current;
-
-		console.log( "Canvas to download:", canvasToDownload, "viewingOriginal:", viewingOriginal );
-
-		if ( ! canvasToDownload ) {
-
-			console.log( "No canvas available" );
-			toast( {
-				title: "Error",
-				description: "Canvas not available for screenshot.",
-				variant: "destructive",
-			} );
-			return;
-
-		}
-
-		try {
-
-			const blob = await new Promise( ( resolve, reject ) => canvasToDownload.toBlob( b => ( b ? resolve( b ) : reject( new Error( 'the canvas gave no image' ) ) ), 'image/png' ) );
-			const url = URL.createObjectURL( blob );
-			const link = document.createElement( 'a' );
-			link.href = url;
-			link.download = `raycanvas-${viewingOriginal ? 'original' : 'edited'}-${new Date().getTime()}.png`;
-			link.click();
-			URL.revokeObjectURL( url );
-
-			console.log( "Screenshot download triggered" );
-
-			toast( {
-				title: "Screenshot Saved",
-				description: `${viewingOriginal ? 'Original' : 'Edited'} image has been downloaded.`,
-			} );
-
-		} catch ( error ) {
-
-			console.error( "Screenshot error:", error );
-			toast( {
-				title: "Screenshot Failed",
-				description: "There was an error taking the screenshot.",
-				variant: "destructive",
-			} );
-
-		}
-
-	}, [ imageData, viewingOriginal, toast ] );
-
 	// Expose ref functions
 	useEffect( () => {
 
@@ -196,8 +131,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 		ref.current = {
 			getCanvas: () => originalCanvasRef.current,
 			getEditedCanvas: () => editedCanvasRef.current,
+			getAICanvas: () => aiCanvasRef.current,
 			getImageProcessor: () => imageProcessorRef.current,
-			takeScreenshot: handleScreenshot
 		};
 
 		// Expose via store for real-time color correction (replaces window global)
@@ -215,7 +150,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 		};
 
-	}, [ ref, handleScreenshot ] );
+	}, [ ref ] );
 
 	// Initialize image processor when canvases are ready
 	useEffect( () => {
@@ -570,25 +505,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	};
 
-	const downloadHDR = async () => {
-
-		const file = await getRenderHDR( selectedImageId );
-		if ( ! file ) {
-
-			toast( { title: 'No HDR copy', description: 'This render was saved without one.', variant: 'destructive' } );
-			return;
-
-		}
-
-		const url = URL.createObjectURL( file );
-		const link = document.createElement( 'a' );
-		link.href = url;
-		link.download = `render-${selectedImageId}.exr`;
-		link.click();
-		setTimeout( () => URL.revokeObjectURL( url ), 1000 );
-
-	};
-
 	// Save edited image with color correction settings
 	const saveEditedImage = async () => {
 
@@ -631,17 +547,8 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 
 	}, [ handleResetToAutoFit, resetPan ] );
 
-	// Create a mock app ref for ViewportToolbar compatibility
-	const mockAppRef = useRef( null );
-
-	// Update mockAppRef when handleScreenshot changes
-	useEffect( () => {
-
-		mockAppRef.current = {
-			takeScreenshot: handleScreenshot
-		};
-
-	}, [ handleScreenshot ] );
+	// Tells the toolbar its export button is for this saved render.
+	const resultsToolbarRef = useRef( null );
 
 	return (
 		<div
@@ -669,18 +576,6 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 					>
 						<ImageIcon size={12} className="mr-1" />
 						{viewingAIVariant ? 'Show Render' : 'Show AI'}
-					</button>
-				</div>
-			)}
-
-			{imageData?.hasHDR && ! viewingOriginal && (
-				<div className="absolute bottom-16 right-2 z-20">
-					<button
-						onClick={downloadHDR}
-						title="Download the full-range image this render kept"
-						className="flex items-center justify-center bg-secondary hover:bg-secondary/90 text-foreground px-3 py-1 rounded-full text-xs"
-					>
-						Download EXR
 					</button>
 				</div>
 			)}
@@ -823,7 +718,7 @@ const ResultsViewport = forwardRef( function ResultsViewport( props, ref ) {
 			<ViewportToolbar
 				onResize={handleViewportResize}
 				viewportWrapperRef={viewportRef}
-				appRef={mockAppRef}
+				appRef={resultsToolbarRef}
 				position="bottom-right"
 				defaultSize={100}
 				minSize={5}

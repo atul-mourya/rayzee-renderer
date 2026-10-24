@@ -51,6 +51,7 @@ describe( 'VideoJob', () => {
 		const file = await found.finalize();
 		const bytes = new Uint8Array( await file.arrayBuffer() );
 		expect( file.type ).toBe( 'video/webm' );
+		expect( found.container ).toBe( 'webm' );
 		expect( [ ...bytes.subarray( 0, 4 ) ] ).toEqual( [ 0x1a, 0x45, 0xdf, 0xa3 ] );
 		for ( const payload of [[ 1, 2, 3 ], [ 4, 5 ], [ 6 ]] ) {
 
@@ -61,6 +62,34 @@ describe( 'VideoJob', () => {
 
 		expect( await found.discard() ).toBe( true );
 		expect( await storage.area( 'jobs' ).list() ).toHaveLength( 0 );
+
+	} );
+
+	it( 'muxes an MP4 with its index first', async () => {
+
+		const job = await VideoJob.start( storage, { ...spec, codec: 'vp09.00.51.08', container: 'mp4' } );
+		for ( let frame = 0; frame < 3; frame ++ ) {
+
+			await job.appendFrame( frame, [ fakeChunk( frame ? 'delta' : 'key', frame * 33_333, new Uint8Array( [ 9, frame ] ) ) ] );
+
+		}
+
+		const file = await job.finalize();
+		const bytes = new Uint8Array( await file.arrayBuffer() );
+		const boxes = [];
+		for ( let at = 0; at + 8 <= bytes.length; ) {
+
+			const size = new DataView( bytes.buffer, at ).getUint32( 0 );
+			boxes.push( String.fromCharCode( ...bytes.subarray( at + 4, at + 8 ) ) );
+			if ( ! size ) break;
+			at += size;
+
+		}
+
+		expect( file.type ).toBe( 'video/mp4' );
+		expect( file.name ).toMatch( /\.mp4$/ );
+		expect( boxes.indexOf( 'moov' ) ).toBeGreaterThan( - 1 );
+		expect( boxes.indexOf( 'moov' ) ).toBeLessThan( boxes.indexOf( 'mdat' ) );
 
 	} );
 

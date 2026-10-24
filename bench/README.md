@@ -486,7 +486,11 @@ alpha-cutout at 0.014. A new browser dependency fails the scene that reaches it.
 It then loads two compressed glTF fixtures against uncompressed twins — Draco geometry (`knot-draco.glb`) and a Basis
 KTX2 texture (`checker-ktx2.glb`), in `bench/node/fixtures/`, rebuilt with `bench/tools/make-compressed-fixtures.mjs` —
 serving three's own decoders from `node_modules` so nothing touches the network, and runs
-`rayzee/examples/core-node.mjs` in a process of its own. `--only compressed-gltf` or `--only example` runs just those.
+`rayzee/examples/core-node.mjs` in a process of its own. Last, `bench/tools/export-check.mjs` saves a render through
+`exportImage()` in every format Node has and reads each file back: 8- and 16-bit PNG against the readback, EXR with its
+albedo, normal and depth layers (depth against the floor's exact distance), Radiance HDR, each as rendered and as shown,
+and `rayzee/encoders` alone writing the same PNG. `--only compressed-gltf`, `--only example` or `--only export` runs
+just that part.
 
 `--core` renders each scene a second time with the renderer core (`RayzeeRenderer` from `rayzee/core`, with the
 physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte

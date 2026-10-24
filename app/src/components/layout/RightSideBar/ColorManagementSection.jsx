@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, X, Loader2, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown } from 'lucide-react';
 import { Row } from '@/components/ui/row';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
@@ -13,12 +13,12 @@ import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { usePathTracerStore } from '@/store';
 import {
 	colorManagement, builtinConfigs, loadBuiltinConfig, loadConfigFromFiles, loadDefaultConfig, unloadConfig,
-	useColorStatus, useViewTransforms, saveEXR, DEFAULT_COLOR_CONFIG, ensureDefaultConfig, isDefaultConfigPending,
+	useColorStatus, useViewTransforms, DEFAULT_COLOR_CONFIG, ensureDefaultConfig, isDefaultConfigPending,
 	useHdrScreen, applyHdrScreen, HDR_SCREEN_KEY,
 } from '@/lib/colorManagement';
 import {
 	builtinConfigOptions, configLabel, viewLabels, looksForView, workingSpaceOptions, workingSpaceLabel,
-	exportSpaceOptions, displaySections, toneMappingHint,
+	displaySections, toneMappingHint,
 } from '@/lib/colorLabels';
 import { displayCanvasFit, isHdrDisplay, matchingView, sameToneMapping } from 'rayzee';
 
@@ -289,22 +289,6 @@ const ColorManagementSection = () => {
 
 	}, [ run ] );
 
-	const onExportSpace = useCallback( value => {
-
-		colorManagement().setExportSpace( value === NONE ? null : value );
-
-	}, [] );
-
-	const onSaveEXR = useCallback( () => {
-
-		run( 'Saving EXR', async () => {
-
-			await saveEXR( colorManagement()?.exportSpace ?? null );
-
-		} );
-
-	}, [ run ] );
-
 	const onHdr = useCallback( on => {
 
 		setHdrOn( on );
@@ -344,7 +328,6 @@ const ColorManagementSection = () => {
 	const displayColumns = [ { title: 'SDR', list: sdrDisplays }, { title: 'HDR', list: hdrDisplays } ].filter( c => c.list.length > 0 );
 
 	const workingSpaces = workingSpaceOptions( config, nativeSpace );
-	const exportSpaces = exportSpaceOptions( config );
 
 	const trigger = ( title, placeholder ) => (
 		<SelectTrigger className="max-w-32 h-5 rounded-full pl-2" title={title}>
@@ -468,34 +451,6 @@ const ColorManagementSection = () => {
 			) : null}>
 				<span className="opacity-50 text-xs truncate" title="Tones down bright windows and sunlit walls, keeping their detail. Applies to the screen and saved pictures.">Balance Highlights</span>
 				<Switch checked={localExposure} onCheckedChange={handleLocalExposureChange} />
-			</Row>
-
-			<Separator className="my-1 opacity-30" />
-
-			<Row>
-				<span className="opacity-50 text-xs truncate" title="Saves the render as an EXR file for editing programs, keeping detail even in the brightest parts. Pick the colour space the program asks for.">Save EXR</span>
-				<div className="flex items-center gap-1">
-					{config ? (
-						<Select value={status.exportSpace ?? NONE} onValueChange={onExportSpace} disabled={isBusy}>
-							{trigger( status.exportSpace ?? `${status.workingSpace} — the space the render is in` )}
-							<SelectContent>
-								<SelectItem value={NONE} title={status.workingSpace} hint="as rendered, no conversion">{workingSpaceLabel( status.workingSpace )}</SelectItem>
-								{exportSpaces.filter( o => o.value !== status.workingSpace ).map( item )}
-							</SelectContent>
-						</Select>
-					) : (
-						<span className="text-xs opacity-50">Rec.709</span>
-					)}
-					<button
-						type="button"
-						title="Save the render as EXR"
-						className="h-5 w-5 flex items-center justify-center rounded-full hover:bg-white/10 disabled:opacity-40"
-						disabled={isBusy}
-						onClick={onSaveEXR}
-					>
-						<Download size={12} />
-					</button>
-				</div>
 			</Row>
 
 			<Separator className="my-1 opacity-30" />

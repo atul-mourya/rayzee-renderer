@@ -533,7 +533,7 @@ To pause rendering for image-viewing UI, set `engine.pauseRendering = true` and 
 
 ### Renderer core (`rayzee/core`)
 
-`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. The denoisers, camera controls, gizmo, overlays, timeline and animation playback exist only in `PathTracerApp`; six capabilities come as add-ons — file formats beyond glTF and `.hdr`, the physical sky, scene archives, bidirectional path tracing, OpenColorIO colour and on-disk storage. Its entry point downloads about 40 % less (249 KB against 418 KB compressed). It takes the same constructor options except `container`, and renders the same pixels.
+`PathTracerApp` is built on `RayzeeRenderer`, the renderer without the viewer: a scene and camera in, path-traced samples accumulated, the image out. The denoisers, camera controls, gizmo, overlays, timeline and animation playback exist only in `PathTracerApp`; six capabilities come as add-ons — file formats beyond glTF and `.hdr`, the physical sky, scene archives, bidirectional path tracing, OpenColorIO colour and on-disk storage. Its entry point downloads about 30 % less at startup (277 KB against 404 KB compressed). It takes the same constructor options except `container`, and renders the same pixels.
 
 ```js
 import { RayzeeRenderer } from 'rayzee/core';
@@ -1083,6 +1083,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
 | `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
+| `output.pass_unavailable` | `exportImage` was asked for an EXR layer it cannot write, such as `albedo` or `normal` with no denoiser on (`detail.pass`); the file is written without it |
 | `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
 | `capability.missing` | a feature was asked for whose add-on is not installed on the core (procedural sky, an unregistered integrator, a colour config, storage) — names the add-on |
 | `color.config_load_failed` / `viewTransform.bake_failed` / `viewTransform.display_mismatch` | a colour config failed to load (the previous one stays), a view could not be rebaked, or a view targets a display the canvas cannot show (a saved buffer is still right) — warnings |
@@ -1111,7 +1112,7 @@ setting as `{ value, source, routed }`, and `routed: false` means stored but rea
 
 ### Output Methods
 
-Canvas output, screenshots, and scene statistics — accessed as direct methods on the engine.
+Canvas output, screenshots, saved files and scene statistics — accessed as direct methods on the engine.
 
 ```js
 engine.getCanvas()                    // Get the canvas with the final rendered image
@@ -1134,6 +1135,54 @@ const a = Object.assign(document.createElement('a'), { href: url, download: 'ren
 a.click();
 URL.revokeObjectURL(url);
 ```
+
+#### Saving a file
+
+`exportImage()` writes the render as a file and returns `{ blob, extension, mimeType, width, height, colorSpace, … }`.
+It works on the core too, and headless.
+
+| `format` | What the file holds |
+|---|---|
+| `'png'` (`bitDepth: 8` or `16`), `'jpeg'`, `'webp'` | the picture the canvas shows: exposure, view and denoising applied; at 8 bits, JPEG and WebP, the AI upscaler's picture while one shows (`upscaled: false` skips it) |
+| `'heic'`, `'avif'` | the same picture, written by the browser's video encoder |
+| `'exr'` (`precision: 'half'` or `'float'`), `'hdr'` (Radiance) | the light itself, before exposure and view, in the working space or `colorSpace`; with `asShown: true`, the light the screen gives off for the picture, so any viewer shows it as the screen does |
+
+```js
+const { blob, extension } = await engine.exportImage({ format: 'png', bitDepth: 16 });
+const exr = await engine.exportImage({ format: 'exr', passes: ['albedo', 'normal', 'depth'] });
+const photo = await engine.exportImage({ format: 'jpeg', gainMap: true });   // an HDR photo
+engine.exportInfo();   // what can be written now: { width, height, upscaled, hdr, layers: { albedo, normal, depth } }
+```
+
+- **HDR photos.** `gainMap: true` on `'jpeg'`, `'heic'` or `'avif'` adds a gain map — a second, small picture that
+  says how much brighter each part of the HDR version is (ISO 21496-1; Ultra HDR in a JPEG). Photo viewers that read gain
+  maps show the file in HDR, others the normal picture. It needs the screen showing HDR
+  (`engine.color.setHdrOutput(true)` on an HDR display; `exportInfo().hdr`).
+- **EXR layers.** `albedo` and `normal` are the denoisers' guide images, so they exist only while a denoiser is on;
+  `depth` is measured when asked for. A layer that cannot be written records `output.pass_unavailable`.
+- **Where each works.** JPEG, WebP, HEIC and AVIF need a browser (its canvas or video encoder); PNG, EXR and HDR work in
+  Node too. `canEncodeStill('heic')` from `rayzee/encoders` says whether this browser can write HEIC or AVIF.
+- Render details (samples, size, view, settings, versions) go into the file, except a WebP, unless `metadata: false`.
+  The file writers download on the first export, not at startup.
+
+The writers are also a module of their own, `rayzee/encoders`, for pixels a host already has. It is part of the
+package, not an add-on: nothing to install, and importing it loads nothing else (9 KB compressed).
+
+```js
+import { encodePNG, encodeEXR, encodeHDR, IMAGE_FORMATS } from 'rayzee/encoders';
+
+const png = await encodePNG({ data, width, height });   // RGBA, Uint8Array (8 bits) or Uint16Array (16), top row first
+const hdr = await encodeHDR({ data: floats, width, height });   // RGBA Float32Array
+const exr = await encodeEXR({ width, height, channels: [
+  { name: 'R', data: floats, stride: 4, offset: 0 },
+  { name: 'G', data: floats, stride: 4, offset: 1 },
+  { name: 'B', data: floats, stride: 4, offset: 2 },
+] });
+```
+
+Chrome on macOS takes about 5 seconds to start its first hardware video encoder after the browser launches, and about
+2 ms after that. HEIC and MP4 both use it. `prepareStill('heic')` starts it ahead of time without encoding anything,
+for example when an export menu opens.
 
 ---
 
@@ -1615,6 +1664,12 @@ import { acquireSharedStorage } from 'rayzee/addons/storage';
 
 // Headless rendering (see Deterministic & Headless Rendering)
 import { renderHeadless, openHeadless, captureHeadless } from 'rayzee';
+
+// File writers behind exportImage(), for pixels a host already has (see Saving a file)
+import {
+  IMAGE_FORMATS, encodePNG, encodeEXR, encodeHDR, encodeWithCanvas, encodeGainMapJPEG,
+  encodeStill, canEncodeStill, prepareStill,
+} from 'rayzee/encoders';
 
 // Platform services for hosts without a browser (see Running in Node)
 import { configurePlatform, getPlatform } from 'rayzee';

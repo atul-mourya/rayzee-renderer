@@ -770,6 +770,28 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether the aux attachments hold this accumulation's normal and albedo (a denoiser is on). */
+	get hasAuxBuffers() {
+
+		return this._auxGBufferEnabled && this._auxSamples > 0;
+
+	}
+
+	/**
+	 * The denoisers' averaged normal and albedo for this accumulation, as the aux attachments hold them (normal · 0.5
+	 * + 0.5 in xyz, albedo in rgb), or null when none have been written since the last restart.
+	 * @returns {Promise<?{normal: Float32Array, albedo: Float32Array}>} RGBA, top row first
+	 */
+	async readAuxBuffers() {
+
+		if ( ! this.hasAuxBuffers ) return null;
+		const target = this.storageTextures.readTarget;
+		const normal = await readPixels( this.renderer, target, this.width, this.height, 1 );
+		const albedo = await readPixels( this.renderer, target, this.width, this.height, 2 );
+		return { normal, albedo };
+
+	}
+
 	/**
 	 * The accumulation as it stands, for a checkpoint: the three MRT attachments (aux only while it
 	 * holds samples), the per-pixel convergence buffers, and the counters that decide the next

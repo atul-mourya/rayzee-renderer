@@ -43,6 +43,8 @@ export class VideoRenderManager {
 	 * @param {import('./timeline/TimelineManager.js').TimelineManager} [options.timeline] - Keyframes to
 	 *   play in video time; without a clip the video lasts as long as they do
 	 * @param {Function} [options.onFrame]           - async (ImageBitmap, frameIndex, totalFrames) => void
+	 * @param {boolean} [options.captureFrame=true]  - false hands onFrame null, for a host that reads the frame itself
+	 *   (`app.exportImage()`, at full precision)
 	 * @param {Function} [options.onProgress]        - ({ frame, totalFrames, percent }) => void
 	 * @param {Function} [options.onComplete]        - (success: boolean) => void
 	 */
@@ -56,6 +58,7 @@ export class VideoRenderManager {
 			enableOIDN = true,
 			timeline = null,
 			startFrame = 0,
+			captureFrame = true,
 			onFrame,
 			onProgress,
 			onComplete,
@@ -172,8 +175,9 @@ export class VideoRenderManager {
 				if ( this._cancelled ) break;
 
 				// 5. Capture frame from output canvas
-				const canvas = app.getCanvas();
-				if ( canvas && onFrame ) {
+				const canvas = captureFrame ? app.getCanvas() : null;
+				if ( ! captureFrame ) await onFrame?.( null, i, totalFrames );
+				else if ( canvas && onFrame ) {
 
 					const bitmap = await createImageBitmap( app.color?.canvasColorSpace === 'display-p3' ? srgbCopy( canvas ) : canvas );
 					await onFrame( bitmap, i, totalFrames );

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataUtils } from 'three';
 import { describeGPU, createRenderer, gpuAvailable } from './gpu.js';
 import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
-import { toneMapToRGBA8, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
+import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
 import { countTableTransforms, listViewTransforms } from '@/core/Color/ViewTransforms.js';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
@@ -57,6 +57,9 @@ afterAll( () => ColorManagement.resetAll() );
 
 // A tenth of an 8-bit level.
 const MAX_PLANAR_DELTA = 0.1 / 255;
+
+// A tenth of an 8-bit level, in 16-bit levels.
+const MAX_DELTA_16 = 26;
 
 describeGPU( 'GPU tone map against ToneMapCPU', () => {
 
@@ -189,6 +192,98 @@ describeGPU( 'GPU tone map from a float texture against ToneMapCPU', () => {
 			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThanOrEqual( UPSCALE_GATES.maxToneMapDelta );
 			expect( differing / gpu.length ).toBeLessThanOrEqual( MAX_DIFFERING );
 			for ( let i = 3; i < gpu.length; i += 4 ) expect( gpu[ i ] ).toBe( cpu[ i ] );
+
+		}
+
+	} );
+
+} );
+
+// A 16-bit PNG's readback: the same picture, finer.
+describeGPU( '16-bit GPU tone map against ToneMapCPU', () => {
+
+	let renderer, mapper, mapper8, mapperLight, texture;
+	const linear = new Float32Array( PIXELS.length * 4 );
+
+	beforeAll( async () => {
+
+		renderer = await createRenderer();
+		const device = renderer.backend.device;
+		PIXELS.forEach( ( rgb, i ) => {
+
+			linear.set( rgb, i * 4 );
+			linear[ i * 4 + 3 ] = [ 0, 0.25, 0.5, 0.998, 1 ][ i % 5 ];
+
+		} );
+
+		texture = device.createTexture( { size: [ PIXELS.length, 1 ], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST } );
+		device.queue.writeTexture( { texture }, linear, { bytesPerRow: PIXELS.length * 16 }, [ PIXELS.length, 1 ] );
+		mapper = new PackedToneMapper( device, 'test:tonemap16', { input: 'texture', output: 'rgba16' } );
+		mapper.ensureSize( PIXELS.length, 1 );
+		mapper8 = new PackedToneMapper( device, 'test:tonemap8', { input: 'texture' } );
+		mapper8.ensureSize( PIXELS.length, 1 );
+		mapperLight = new PackedToneMapper( device, 'test:tonemap-light', { input: 'texture', output: 'displayLinear' } );
+		mapperLight.ensureSize( PIXELS.length, 1 );
+
+	} );
+
+	afterAll( () => {
+
+		mapper?.dispose();
+		mapper8?.dispose();
+		mapperLight?.dispose();
+		texture?.destroy();
+		renderer?.dispose();
+
+	} );
+
+	it.each( CURVES )( '%s', async ( name, toneMapping ) => {
+
+		for ( const [ exposure, saturation ] of GRADES ) {
+
+			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const gpu = await mapper.toRGBA16( texture, tone );
+			const cpu = toneMapToRGBA16( linear, tone );
+			const bytes = await mapper8.toRGBA8( texture, tone );
+
+			let worst = 0, coarse = 0;
+			for ( let i = 0; i < gpu.length; i ++ ) {
+
+				worst = Math.max( worst, Math.abs( gpu[ i ] - cpu[ i ] ) );
+				coarse = Math.max( coarse, Math.abs( gpu[ i ] / 257 - bytes[ i ] ) );
+
+			}
+
+			const grade = `exposure ${exposure}, saturation ${saturation}`;
+			expect( worst, grade ).toBeLessThanOrEqual( MAX_DELTA_16 );
+			expect( coarse, grade ).toBeLessThanOrEqual( 1 );
+
+		}
+
+	} );
+
+	// An 'As on screen' EXR: the picture's light, which a viewer's sRGB curve turns back into the picture.
+	it.each( CURVES )( '%s, as display light', async ( name, toneMapping ) => {
+
+		const encode = v => ( v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow( v, 1 / 2.4 ) - 0.055 );
+		for ( const [ exposure, saturation ] of GRADES ) {
+
+			const tone = { exposure, toneMapping, saturation, preserveAlpha: true };
+			const gpu = await mapperLight.toDisplayLinear( texture, tone );
+			const cpu = toneMapToDisplayLinear( linear, tone );
+			const words = await mapper.toRGBA16( texture, tone );
+
+			let worst = 0, encoded = 0;
+			for ( let i = 0; i < gpu.length; i ++ ) {
+
+				worst = Math.max( worst, Math.abs( encode( gpu[ i ] ) - encode( cpu[ i ] ) ) );
+				if ( i % 4 !== 3 ) encoded = Math.max( encoded, Math.abs( encode( gpu[ i ] ) * 65535 - words[ i ] ) );
+
+			}
+
+			const grade = `exposure ${exposure}, saturation ${saturation}`;
+			expect( worst * 65535, grade ).toBeLessThanOrEqual( MAX_DELTA_16 );
+			expect( encoded, grade ).toBeLessThanOrEqual( 1 );
 
 		}
 

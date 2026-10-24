@@ -56,8 +56,8 @@ fn rayzee_source( x: u32, y: u32 ) -> vec4<f32> {
 }`,
 };
 
-// RGBA bytes for a picture, or four float planes (r, g, b, a) for a network that wants the curve
-// unquantized. The planes take a 2.2 power, not the sRGB curve: what the AI upscaler has always fed
+// RGBA bytes for a picture (16-bit words with `rgba16`; with `displayLinear` its encoding undone, the light a display
+// emits), or four float planes (r, g, b, a) for a network that wants the curve unquantized. The planes take a 2.2 power, not the sRGB curve: what the AI upscaler has always fed
 // its network, so its output does not move.
 const OUTPUTS = {
 	rgba8: /* wgsl */ `
@@ -68,6 +68,25 @@ fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
 	var a8 = 255u;
 	if ( params.alpha == 1u ) { a8 = rayzee_to_u8( vec3<f32>( linear.a ) ).x; }
 	dst[ i ] = b8.x | ( b8.y << 8u ) | ( b8.z << 16u ) | ( a8 << 24u );
+}`,
+	rgba16: /* wgsl */ `
+@group(0) @binding(1) var<storage, read_write> dst: array<u32>;
+
+fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
+	let c = vec3<u32>( round( clamp( rayzee_encode( mapped, params.mode ), vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) ) * 65535.0 ) );
+	var a = 65535u;
+	if ( params.alpha == 1u ) { a = u32( round( clamp( linear.a, 0.0, 1.0 ) * 65535.0 ) ); }
+	dst[ i * 2u ] = c.x | ( c.y << 16u );
+	dst[ i * 2u + 1u ] = c.z | ( a << 16u );
+}`,
+	displayLinear: /* wgsl */ `
+@group(0) @binding(1) var<storage, read_write> dst: array<vec4<f32>>;
+
+fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
+	let e = clamp( rayzee_encode( mapped, params.mode ), vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
+	var a = 1.0;
+	if ( params.alpha == 1u ) { a = clamp( linear.a, 0.0, 1.0 ); }
+	dst[ i ] = vec4<f32>( select( pow( ( e + 0.055 ) / 1.055, vec3<f32>( 2.4 ) ), e / 12.92, e <= vec3<f32>( 0.04045 ) ), a );
 }`,
 	planar: /* wgsl */ `
 @group(0) @binding(1) var<storage, read_write> dst: array<f32>;
@@ -86,7 +105,7 @@ fn rayzee_store( i: u32, linear: vec4<f32>, mapped: vec3<f32> ) {
 }`,
 };
 
-const BYTES_PER_PIXEL = { rgba8: 4, planar: 16 };
+const BYTES_PER_PIXEL = { rgba8: 4, rgba16: 8, displayLinear: 16, planar: 16 };
 
 const toneMapPassWGSL = ( transformWGSL, input, output, gainWGSL ) => /* wgsl */ `
 struct Params {
@@ -129,7 +148,8 @@ const PARAMS_BYTES = 32;
 
 /**
  * Tone-maps a tightly packed rgba16float buffer (two `u32` per pixel), or with `input: 'texture'` a
- * float texture read by pixel, into RGBA bytes — or with `output: 'planar'` into float planes.
+ * float texture read by pixel, into RGBA bytes — with `output: 'rgba16'` 16-bit words, `'displayLinear'` the light the
+ * picture shows, `'planar'` float planes.
  *
  * Bound to one device and one image size; `ensureSize()` reallocates when the size changes.
  */
@@ -288,6 +308,30 @@ export class PackedToneMapper {
 	async toRGBA8( src, tone ) {
 
 		return new Uint8ClampedArray( await this._run( src, tone ) );
+
+	}
+
+	/**
+	 * The same picture at 16 bits a channel, rounded to nearest. Needs `output: 'rgba16'`.
+	 * @param {GPUBuffer|GPUTexture} src - as for toRGBA8
+	 * @param {object} tone - as for toRGBA8
+	 * @returns {Promise<Uint16Array>} RGBA, `width * height * 4`
+	 */
+	async toRGBA16( src, tone ) {
+
+		return new Uint16Array( await this._run( src, tone ) );
+
+	}
+
+	/**
+	 * The same picture as the light it shows: unquantized, the canvas encoding decoded. Needs `output: 'displayLinear'`.
+	 * @param {GPUBuffer|GPUTexture} src - as for toRGBA8
+	 * @param {object} tone - as for toRGBA8
+	 * @returns {Promise<Float32Array>} RGBA, `width * height * 4`
+	 */
+	async toDisplayLinear( src, tone ) {
+
+		return new Float32Array( await this._run( src, tone ) );
 
 	}
 

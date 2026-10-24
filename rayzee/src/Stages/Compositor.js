@@ -1,4 +1,4 @@
-import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If, toneMappingExposure } from 'three/tsl';
+import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If, toneMappingExposure, sign } from 'three/tsl';
 import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
 import { NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
@@ -17,6 +17,14 @@ import { backdropGain } from '../Processor/ToneMapCPU.js';
  * and Three.js applies it inside the tone-mapping branch of the output pass
  * (so it has no effect when `renderer.toneMapping === NoToneMapping`).
  */
+// The canvas's sRGB encoding undone, extended past 1 and mirrored below 0 as the HDR canvas uses it.
+const decodeExtendedSRGB = c => {
+
+	const a = c.abs();
+	return select( a.lessThanEqual( vec3( 0.04045 ) ), a.div( 12.92 ), a.add( 0.055 ).div( 1.055 ).pow( vec3( 2.4 ) ) ).mul( sign( c ) );
+
+};
+
 export class Compositor extends RenderStage {
 
 	constructor( renderer, options = {} ) {
@@ -288,6 +296,58 @@ export class Compositor extends RenderStage {
 
 	}
 
+	/**
+	 * Draws what the canvas shows into `target`, a float render target, as the light the screen emits (1 = SDR white):
+	 * the canvas's own version of the view, HDR included. False when the canvas shows the view itself.
+	 */
+	renderShown( context, target ) {
+
+		if ( ! this._canvasTransform || ! this._prepare( context ) ) return false;
+
+		const material = new MeshBasicNodeMaterial();
+		material.blending = NoBlending;
+		material.colorNode = vec4( decodeExtendedSRGB( this._canvasTransform( this._graded, toneMappingExposure ) ), this._alpha );
+		const { toneMapping, outputColorSpace } = this.renderer;
+		const previous = this.renderer.getRenderTarget();
+		this.renderer.toneMapping = NoToneMapping;
+		this.renderer.outputColorSpace = ThreeColorManagement.workingColorSpace;
+		try {
+
+			this.renderer.setRenderTarget( target );
+			new QuadMesh( material ).render( this.renderer );
+
+		} finally {
+
+			this.renderer.setRenderTarget( previous );
+			this.renderer.toneMapping = toneMapping;
+			this.renderer.outputColorSpace = outputColorSpace;
+			material.dispose();
+
+		}
+
+		return true;
+
+	}
+
+	/** Points the picture at the newest source and holds a solid backdrop; false when there is nothing to show. */
+	_prepare( context ) {
+
+		const sourceTexture = this.resolveLightTexture( context );
+		if ( ! sourceTexture ) return false;
+
+		if ( this._backdropExposure !== null ) {
+
+			const hold = context.getState( 'pathtracer:backdrop' ) === 'color';
+			this._holdBackdrop.value = hold ? 1 : 0;
+			if ( hold ) this._backdropGain.value = backdropGain( this._backdropExposure, this.renderer.toneMappingExposure, this.renderer.toneMapping );
+
+		}
+
+		this._sourceTexNode.value = sourceTexture;
+		return true;
+
+	}
+
 	_draw( context, picture ) {
 
 		if ( ! this.enabled ) return;
@@ -310,18 +370,7 @@ export class Compositor extends RenderStage {
 
 		}
 
-		const sourceTexture = this.resolveLightTexture( context );
-		if ( ! sourceTexture ) return;
-
-		if ( this._backdropExposure !== null ) {
-
-			const hold = context.getState( 'pathtracer:backdrop' ) === 'color';
-			this._holdBackdrop.value = hold ? 1 : 0;
-			if ( hold ) this._backdropGain.value = backdropGain( this._backdropExposure, this.renderer.toneMappingExposure, this.renderer.toneMapping );
-
-		}
-
-		this._sourceTexNode.value = sourceTexture;
+		if ( ! this._prepare( context ) ) return;
 
 		this.renderer.setRenderTarget( null );
 		if ( picture || ! this._canvasQuad ) {

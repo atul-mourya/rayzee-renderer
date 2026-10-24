@@ -154,19 +154,26 @@ saying the environment was left converted.
     (0.166 ms against 0.163 ms) and 38–41 ms a bake against 31 ms; measuring a display's fit 0.3–18 ms, once a
     config. A Display P3 video frame converted to sRGB +0.05 ms (+0.23 with HDR on); an upscaler tile of
     Display P3 pixels put into its sRGB canvas 2 ms against 0.07 (512²).
-- **EXR export** (`app/src/lib/colorManagement.js` → `saveEXR`) writes
-  `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows,
-  read through `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an
-  ExternalTexture no render target owns) — in the chosen space through three's `EXRExporter`. ⚠️ The readback is top row first and the exporter
-  assumes bottom row first, so rows are flipped before encoding. A PNG screenshot is a picture and
-  never takes an export space.
+- **EXR and HDR export** (`app.exportImage( { format: 'exr' | 'hdr' } )`, the app's Export window) writes
+  `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows, read through
+  `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an ExternalTexture no render target
+  owns) — in `color.exportSpace` through our own writers (`Processor/ImageEncoders.js`), top line first. The albedo layer
+  is converted with it. `chromaticities( space )` measures a space's primaries through the config's CIE XYZ D65
+  interchange role; they arrive adapted to D65, so the writer snaps a known gamut (Rec.709, Rec.2020, P3, ACES AP0/AP1,
+  E-Gamut) back to its own primaries and white. A PNG is a picture and never takes an export space. With `asShown`
+  ("As on screen" in the app, its default) the file holds the light the screen emits instead — the view, look, exposure
+  and display gain applied, the canvas encoding undone, or the canvas's HDR version while it shows one — so macOS and
+  other viewers, which put raw light through a plain curve of their own, show it as the screen does (0.7 levels of 255
+  from the screen on the camera scene, against 6.8 for raw light). Photo viewers still show EXR and HDR files in
+  normal range; an HDR screen's picture with its highlights goes in a JPEG, HEIC or AVIF with a gain map
+  (`exportImage( { gainMap: true } )`), which Preview, Photos, Chrome and Safari show in HDR.
 
 ## The app's section (`ColorManagementSection.jsx`)
 
 Its own group in the Path Tracer tab, modelled on Blender — the OCIO client that does most for
 artists. The view settings come first, with artist names, in the order they are reached for:
-**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure,
-then **Save EXR**. The project settings — **Color System** (the config) and **Render In**, set once,
+**Tone Mapping** (OCIO view), **Style** (look; "None" reads "Default"), **Screen** (display), Exposure.
+Saving an EXR, and its colour space, is the Export window's. The project settings — **Color System** (the config) and **Render In**, set once,
 rebuild the scene — sit folded under **Advanced**, whose header shows them (`Blender · Rec.709`) and
 whose open state is remembered in localStorage. One Tone Mapping menu, no separate curve control.
 Exposure is in stops (`2^EV`); the store still holds the multiplier.

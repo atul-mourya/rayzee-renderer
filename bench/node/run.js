@@ -271,6 +271,18 @@ if ( ! only || only.includes( 'example' ) ) {
 
 }
 
+// exportImage() in every format Node has, each file read back (bench/tools/export-check.mjs).
+if ( ! only || only.includes( 'export' ) ) {
+
+	const { spawnSync } = await import( 'node:child_process' );
+	const out = path.join( os.tmpdir(), `rayzee-export-check-${process.pid}` );
+	const run = spawnSync( process.execPath, [ path.resolve( here, '../tools/export-check.mjs' ), out ], { encoding: 'utf8' } );
+	const failures = run.stdout.split( '\n' ).filter( l => l.startsWith( 'FAIL' ) );
+	if ( run.status !== 0 ) failed ++;
+	console.log( `  ${run.status === 0 ? GREEN + 'pass' : RED + 'FAIL'}${RESET} exportImage${DIM}  ${run.status === 0 ? 'png 8/16, exr with layers, hdr, as shown, rayzee/encoders' : ( failures.join( '; ' ) || run.stderr.trim().split( '\n' ).slice( - 3 ).join( ' ' ) )}${RESET}` );
+
+}
+
 app.dispose();
 core?.dispose();
 

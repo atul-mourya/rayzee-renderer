@@ -17,7 +17,7 @@ The project is a monorepo with two packages: **`rayzee/`** — the standalone re
 
 ```js
 import { PathTracerApp } from 'rayzee';               // the full engine, as the app uses it
-import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, about 40 % smaller
+import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, about 30 % smaller
 ```
 
 The renderer core takes optional add-ons — file formats beyond glTF, physical sky, scene archives, bidirectional path

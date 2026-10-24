@@ -253,6 +253,9 @@ const MenuBar = ( { onOpenImportModal, onOpenStorage, onOpenRecent } ) => {
 						<MenubarItem onSelect={() => projectInputRef.current?.click()} className="flex items-center">Open Project…</MenubarItem>
 						<MenubarItem onSelect={handleSaveProject} className="flex items-center">Save Project…</MenubarItem>
 						<MenubarSeparator />
+						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'picture', from: 'live' } )} className="flex items-center">Export Picture…</MenubarItem>
+						<MenubarItem onSelect={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )} className="flex items-center">Export Video…</MenubarItem>
+						<MenubarSeparator />
 						<MenubarItem onSelect={handleExportRenders} className="flex items-center">Export Renders…</MenubarItem>
 						<MenubarItem onSelect={() => rendersInputRef.current?.click()} className="flex items-center">Import Renders…</MenubarItem>
 						<MenubarSeparator />

@@ -8,7 +8,7 @@ import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import { NumberInput } from '@/components/ui/number-input';
 import { useEffect, useState } from 'react';
-import { useAnimationStore, useStore, VIDEO_RENDER_FPS, videoDuration } from '@/store';
+import { useAnimationStore, useStore, videoDuration } from '@/store';
 import { useActiveApp } from '@/hooks/useActiveApp';
 import { VideoJob } from '@/lib/videoJob';
 
@@ -55,7 +55,7 @@ const AnimationTab = () => {
 	const videoRenderTotalFrames = useAnimationStore( s => s.videoRenderTotalFrames );
 	const loopCount = useAnimationStore( s => s.loopCount );
 	const handleLoopCountChange = useAnimationStore( s => s.handleLoopCountChange );
-	const handleRenderAnimation = useAnimationStore( s => s.handleRenderAnimation );
+	const exportFps = useAnimationStore( s => s.videoExport.fps );
 	const handleCancelVideoRender = useAnimationStore( s => s.handleCancelVideoRender );
 	const cameraKeys = useAnimationStore( s => s.cameraKeys );
 	const timelineAnimates = useAnimationStore( s => s.timelineAnimates );
@@ -283,7 +283,7 @@ const AnimationTab = () => {
 						{canRender && duration > 0 && (
 							<div className="flex justify-between text-xs">
 								<span className="opacity-50" title="How long the video will be, and how many frames will be rendered.">Video Duration</span>
-								<span className="opacity-70">{duration.toFixed( 1 )}s ({Math.ceil( duration * VIDEO_RENDER_FPS )} frames)</span>
+								<span className="opacity-70">{duration.toFixed( 1 )}s ({Math.ceil( duration * exportFps )} frames)</span>
 							</div>
 						)}
 					</>
@@ -309,10 +309,10 @@ const AnimationTab = () => {
 						variant="default"
 						size="sm"
 						className="w-full h-6 text-xs"
-						onClick={() => handleRenderAnimation()}
+						onClick={() => useStore.getState().setExportRequest( { tab: 'video', from: 'live' } )}
 						disabled={! canRender}
 					>
-						<Film size={12} className="mr-1" /> Render Video
+						<Film size={12} className="mr-1" /> Export Video…
 					</Button>
 				)}
 

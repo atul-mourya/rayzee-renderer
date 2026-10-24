@@ -251,13 +251,13 @@ export async function recallFolder( key ) {
 
 }
 
-/** Whether a kept folder can be read: already allowed, or allowed now when `ask` (needs a click just before). */
-export async function folderAccess( handle, { ask = false } = {} ) {
+/** Whether a kept folder can be read (or written): already allowed, or allowed now when `ask` (needs a click just before). */
+export async function folderAccess( handle, { ask = false, mode = 'read' } = {} ) {
 
 	try {
 
-		let state = await handle.queryPermission( { mode: 'read' } );
-		if ( state === 'prompt' && ask ) state = await handle.requestPermission( { mode: 'read' } );
+		let state = await handle.queryPermission( { mode } );
+		if ( state === 'prompt' && ask ) state = await handle.requestPermission( { mode } );
 		return state === 'granted';
 
 	} catch {
@@ -265,6 +265,23 @@ export async function folderAccess( handle, { ask = false } = {} ) {
 		return false;
 
 	}
+
+}
+
+/** Asks for the folder a video's frames go into; needs the click that asked for the export. */
+export const pickFramesFolder = async () => window.showDirectoryPicker( { id: 'rayzee-frames', mode: 'readwrite' } );
+
+const framesKey = jobKey => `frames:${jobKey}`;
+
+/** Keeps the folder a frame export writes into, so the export can carry on there if interrupted. */
+export const rememberFramesFolder = ( jobKey, handle ) => rememberFolder( framesKey( jobKey ), handle );
+
+/** That folder again, asked for anew where the browser needs it. Start it from a click: asking needs one. */
+export async function framesFolderFor( jobKey ) {
+
+	const kept = await recallFolder( framesKey( jobKey ) );
+	if ( kept && await folderAccess( kept, { ask: true, mode: 'readwrite' } ) ) return kept;
+	return pickFramesFolder().catch( () => null );
 
 }
 

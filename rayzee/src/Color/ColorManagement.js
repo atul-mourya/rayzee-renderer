@@ -68,6 +68,8 @@ function canvasOf( t ) {
 // Each is 2.2 MB on the card and 2.2 MB here.
 const RECENT_CANVAS_VIEWS = 4;
 
+const REC709_CHROMATICITIES = Object.freeze( [ 0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290 ] );
+
 function canvasKey( ocio, canvas ) {
 
 	return JSON.stringify( [ ocio.configId, ocio.display, ocio.view, ocio.look ?? null, ocio.source, ocio.context ?? null, canvas ] );
@@ -1267,6 +1269,32 @@ export class ColorManagement {
 
 		convertPixelsF32( rgba, this.workingSpace, target, { context: this._context } );
 		return { rgba, colorSpace: target };
+
+	}
+
+	/**
+	 * Red, green, blue and white xy of a linear colour space, measured through the config's CIE XYZ D65 interchange
+	 * space, for files that record them (OpenEXR, Radiance HDR). Null without that role.
+	 * @param {string} [space] - defaults to the working space
+	 * @returns {?number[]}
+	 */
+	chromaticities( space = this.workingSpace ) {
+
+		const xyz = hasConfig() ? describeConfig()?.roles?.cie_xyz_d65_interchange : null;
+		if ( ! xyz || ! hasColorSpace( xyz ) || ! hasColorSpace( space ) ) return space === DEFAULT_WORKING_SPACE ? REC709_CHROMATICITIES : null;
+
+		const probe = new Float32Array( [ 1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 1, 1 ] );
+		convertPixelsF32( probe, space, xyz, { context: this._context } );
+		const out = [];
+		for ( let i = 0; i < 16; i += 4 ) {
+
+			const sum = probe[ i ] + probe[ i + 1 ] + probe[ i + 2 ];
+			if ( ! ( sum > 0 ) ) return null;
+			out.push( probe[ i ] / sum, probe[ i + 1 ] / sum );
+
+		}
+
+		return out;
 
 	}
 

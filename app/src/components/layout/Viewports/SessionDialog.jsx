@@ -5,7 +5,7 @@ import { useStore, useAnimationStore } from "@/store";
 import { getApp } from "@/lib/appProxy";
 import { useToast } from "@/hooks/use-toast";
 import { restoreSession, getSessionKeeper } from "@/lib/session";
-import { recallFolder, folderAccess, readHandle, pickFolder, pickFiles } from "@/lib/folders";
+import { recallFolder, folderAccess, readHandle, pickFolder, pickFiles, framesFolderFor } from "@/lib/folders";
 import { formatBytes } from "@/lib/storage";
 import {
 	Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
@@ -108,6 +108,8 @@ const SessionDialog = () => {
 
 		const app = getApp();
 		if ( ! app ) return;
+		// Before anything is awaited: only the click lets the page ask for the frames folder again.
+		const framesFolder = request.origin === 'video' && request.job?.container === 'frames' ? framesFolderFor( request.job.key ) : null;
 		const keeper = getSessionKeeper();
 		const reuseLoaded = request.origin === 'recent' && !! keeper?.isAsLoaded();
 		keeper?.setEnabled( false );
@@ -165,7 +167,7 @@ const SessionDialog = () => {
 
 		}
 
-		if ( resumeVideo ) useAnimationStore.getState().handleRenderAnimation( { resume: resumeVideo } );
+		if ( resumeVideo ) useAnimationStore.getState().handleRenderAnimation( { resume: resumeVideo, folder: await framesFolder } );
 
 	};
 

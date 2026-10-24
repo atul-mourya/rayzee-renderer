@@ -23,7 +23,7 @@ After writing or editing code, check LSP diagnostics and fix errors before proce
 ### Development
 - `npm run dev` - Start development server (Vite, delegates to app workspace) on http://localhost:5173
 - `npm run build` - Build engine lib then app
-- `npm run build:engine` - Engine library only: the full engine (ESM + UMD), `rayzee-core.es.js` and `addons/*.es.js` (ESM)
+- `npm run build:engine` - Engine library only: the full engine (ESM + UMD), `rayzee-core.es.js`, `encoders.es.js` and `addons/*.es.js` (ESM)
 - `npm run build:app` - App only
 - `npm run preview` - Preview production build locally
 
@@ -123,7 +123,17 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 ### App-Side Engine Integration (`app/src/lib/`)
 - **`appProxy.js`**: `getApp()`, `setApp()`, `subscribeApp()` — decouples all consumers from direct app references
 - **`EngineAdapter.js`**: Bridges engine events to Zustand stores
-- **`VideoEncoder.js`**: WebCodecs VP9/VP8 encoder + `webm-muxer` for `.webm` video output. `VideoEncoderPipeline` class accepts `ImageBitmap` frames, encodes via `VideoEncoder` API, muxes into WebM container.
+- **`exporter.js`** + **`components/layout/TopBar/ExportDialog.jsx`**: the Export window (File → Export Picture… / Export
+  Video…, the viewport's camera button, the Results page's export button, the Anim tab's Export Video…), opened through
+  `useStore.exportRequest`. Picture choices persist in localStorage, video choices in `useAnimationStore.videoExport`; the
+  EXR colour space is `app.color.exportSpace`. A saved render exports its picture (edited, as rendered, AI) or its EXR
+  copy, as saved or converted to Radiance HDR. Both import `rayzee/encoders` only when used (the window on open).
+- **`VideoEncoder.js`**: WebCodecs encodes, Mediabunny muxes MP4 (H.264, level picked by size, odd sides cropped) or WebM
+  (VP9, then VP8); imported only when a video is exported (Mediabunny is 40 KB gzip). `videoJob.js` journals each frame's
+  chunks and muxes at the end (MP4 index first, `fastStart: 'reserve'`); a job from before the Export window has no
+  `container` and is WebM. PNG/EXR frame sequences render through `exportImage()` (`captureFrame: false` on
+  `VideoRenderManager`) into a folder from `showDirectoryPicker` — kept by `folders.js`, asked for again at the Resume
+  click — or, with no folder access, one zip that cannot be resumed.
 
 ### Sub-managers and Processor Classes (`rayzee/src/managers/`, `rayzee/src/Processor/`)
 PathTracer delegates to these via composition — external code accesses them directly (e.g., `stage.uniforms.get('maxBounces')`, `stage.materialData.srgbBuckets`, `stage.environment.envParams`). UniformManager, MaterialDataManager and EnvironmentManager live in `managers/`, the rest in `Processor/`:
@@ -360,6 +370,35 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   `pathtracer:color`, upstream of the Compositor; `source: 'display'` reads what the Compositor
   resolves (denoised). The result's `source` names what was read, and a `'display'` read
   that found nothing denoised while a denoiser is in use records `output.source_fallback`.
+- **`await app.exportImage( { format, bitDepth, quality, precision, colorSpace, passes, source, upscaled, alpha, metadata } )`**
+  — the picture as a file (`{ blob, extension, mimeType, colorSpace, passes, … }`). PNG (8 or 16 bits: `renderToBuffer(
+  { bitDepth: 16 } )`, the tone mappers' `rgba16` output), JPEG and WebP hold the canvas's picture (the upscaler's while it
+  shows, `upscaled`); OpenEXR (half/float, ZIP) and Radiance HDR hold the light, in the working space or `colorSpace`
+  (default `color.exportSpace`) — or with `asShown` (the app's default, "As on screen") the light the screen emits for
+  the picture: the view's output decoded to linear in the canvas primaries (tone mappers' `displayLinear` output), or
+  while the canvas shows an HDR version, that version (`compositor.renderShown()` into a float target), highlights above
+  1 kept. Viewers only apply their own curve to raw light, which is why a raw file never looked like the screen.
+  Photo viewers (macOS Preview, Quick Look) show EXR and Radiance HDR in normal range anyway; what they show in HDR is a
+  gain map. `gainMap: true` on jpeg, heic or avif (needs the screen showing HDR, `exportInfo().hdr`) writes the SDR
+  picture plus a log2 gain to the HDR version (ISO 21496-1 parameters, one set for three channels, offsets 1/64):
+  `jpegWithGainMap` lays it out as libultrahdr (XMP hdrgm + ISO version, MPF before SOS, gain map with XMP + ISO),
+  `heifFile` as libavif ('tmap' item, dimg → [picture, gain map], 'altr' group [tmap, picture], 'tmap' brand). HEIC and
+  AVIF are one keyframe from WebCodecs (HEVC, AV1; 8-bit, quantizer mode; the RGBA frame labelled Rec.709 so no gamut
+  conversion runs; AV1's av1C built from its sequence header, temporal delimiters dropped). macOS 26's ImageIO reads
+  all three as ISO gain maps and CoreImage's `expandToHDR` matches the app's HDR picture within 3–4 % (compression).
+  ⚠️ Chrome (macOS) starts its first hardware video encoder of a browser launch in ~5 s, HEVC or H.264 alike, then in
+  ~2 ms (Apple's own: 60 ms); an encoder asked for meanwhile waits only for the rest, and nothing stalls. The Export window
+  starts one on open (`prepareStill( 'heic' )`, 64×64, nothing encoded): first HDR HEIC 4.9 s → 0.12 s. Writers in
+  `Processor/ImageEncoders.js`, loaded on first use and published alone as `rayzee/encoders` (core, not an add-on); a
+  re-export from `index.js` had put them in every host's startup download (app: 1,108 → 1,099 KB gzip). PNG, EXR and
+  RGBE are our own over `CompressionStream`, paced so no task passes ~30 ms; JPEG/WebP go through `OffscreenCanvas` (not in
+  Node). EXR layers: `albedo`/`normal` are the denoisers' accumulated aux buffers (`stage.readAuxBuffers()`, only while
+  aux is on, else `output.pass_unavailable`); `depth` is measured on demand by `TSL/DepthPass.js` — one unjittered ray a
+  pixel centre, past culled faces and alpha cut-outs, view-axis distance, 1e10 for sky, always float. A Display P3 PNG
+  carries cICP and a generated ICC v4 profile; EXR/HDR record chromaticities, snapped to the standard gamut
+  (`standardChromaticities`) since OCIO reports them adapted to D65. Render details go in as PNG iTXt / EXR attributes
+  (provenance without scene or adapter). `exportInfo()` says what can be written now. `bench:node` runs
+  `bench/tools/export-check.mjs`, which reads every file back. ⚠️ In TSL an arrow `() => Break()` emits `break;` twice.
 - **`await app.renderUntilComplete( { reset, denoise, signal, drainEvery, onProgress } )`** — the
   production counterpart of `renderFrames`: adaptive sampling stays on, the loop stops on the
   ceiling, convergence or the time limit (the time limit was never honoured outside `animate()`), and

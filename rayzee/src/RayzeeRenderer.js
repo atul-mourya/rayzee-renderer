@@ -1,7 +1,7 @@
 import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
 import {
-	Scene, EventDispatcher, Box3, REVISION, HalfFloatType,
+	Scene, EventDispatcher, Box3, REVISION, HalfFloatType, DataUtils, RenderTarget, FloatType, RGBAFormat, NearestFilter,
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './SceneHelpers.js';
@@ -25,7 +25,7 @@ import { nameFromUrl } from './Storage/DownloadCache.js';
 import { fileIdentity, folderIdentity, identityKey } from './Storage/identity.js';
 import { isFolderInput, localFolder } from './Processor/archiveFormats.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
-import { toneMapToRGBA8 } from './Processor/ToneMapCPU.js';
+import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './Processor/ToneMapCPU.js';
 import { PackedToneMapper } from './Processor/ToneMapGPU.js';
 import { BasicColor } from './Color/BasicColor.js';
 import { setActiveColorManagement } from './Color/ActiveColor.js';
@@ -44,6 +44,25 @@ import { VERSION } from './version.js';
 import { toPortable } from './SceneState/portable.js';
 
 export const RENDER_CHECKPOINT_VERSION = 1;
+
+// A half-float target reads back as its bits.
+function asFloat32( data ) {
+
+	if ( data instanceof Float32Array ) return data;
+	const out = new Float32Array( data.length );
+	for ( let i = 0; i < data.length; i ++ ) out[ i ] = DataUtils.fromHalfFloat( data[ i ] );
+	return out;
+
+}
+
+function canvasPixels( canvas ) {
+
+	const ctx = canvas.getContext( '2d' );
+	const colorSpace = ctx.getContextAttributes?.()?.colorSpace ?? 'srgb';
+	const image = ctx.getImageData( 0, 0, canvas.width, canvas.height, { colorSpace } );
+	return { data: image.data, width: canvas.width, height: canvas.height, displayColorSpace: image.colorSpace ?? colorSpace, source: 'upscaled' };
+
+}
 
 // The part of an archive a load chose, for sceneSource.
 const partOf = ( { element, pbrtEntry } = {} ) => ( {
@@ -764,8 +783,8 @@ export class RayzeeRenderer extends EventDispatcher {
 		this._pictureCopy = null;
 		this._textureReadback?.dispose();
 		this._textureReadback = null;
-		this._readbackToneMapper?.dispose();
-		this._readbackToneMapper = null;
+		for ( const mapper of this._readbackToneMappers?.values() ?? [] ) mapper.dispose();
+		this._readbackToneMappers = null;
 
 		this._disposeExtensions();
 		this.lightManager?.dispose();
@@ -2736,13 +2755,14 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {'accumulation'|'display'} [options.source='accumulation'] - `'display'` reads what the
 	 *   viewport is showing — denoised when a denoiser has run — instead of the raw
 	 *   accumulation
-	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number, colorSpace: string,
+	 * @param {8|16} [options.bitDepth=8] - srgb only: 16 returns a Uint16Array, rounded to nearest
+	 * @returns {Promise<{data: Float32Array|Uint8ClampedArray|Uint16Array, width: number, height: number, colorSpace: string,
 	 *   source: string, toneMappedOn?: 'gpu'|'cpu'}>} `source` is what was read: `'accumulation'`, or the
 	 *   denoiser that published it (`'oidn'`, `'nrd'`).
 	 *   `toneMappedOn` and `displayColorSpace` are set for `'srgb'` only: the bytes are the picture the canvas shows,
 	 *   in `'srgb'` or `'display-p3'` — a display the canvas cannot show as it is comes converted.
 	 */
-	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation' } = {} ) {
+	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation', bitDepth = 8 } = {} ) {
 
 		const named = colorSpace !== 'linear' && colorSpace !== 'srgb';
 		if ( named && ! this.color?.hasConfig ) {
@@ -2764,23 +2784,9 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		if ( colorSpace === 'srgb' ) {
 
-			const shown = source === 'display' ? this._displaySource( target ) : null;
-			const tone = {
-				exposure: this.renderer.toneMappingExposure,
-				toneMapping: this.renderer.toneMapping,
-				saturation: this.settings.get( 'saturation' ) ?? 1,
-				preserveAlpha: preserveAlpha && transparent,
-				gain: this._displayGain(),
-			};
-
-			const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone );
-			const fn = ! gpu && tone.gain?.cpu ? await tone.gain.cpu() : null;
-			const backdrop = tone.gain?.backdrop ?? 0;
-			const data = gpu ?? toneMapToRGBA8( shown
-				? await this._readTexture( shown.texture, width, height )
-				: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: ( fn || backdrop ) ? { fn, width, height, backdrop } : null } );
 			// `colorSpace` stays 'srgb' — callers branch on it; the bytes are encoded for `displayColorSpace`.
-			return { data, width, height, colorSpace, displayColorSpace: this.color?.canvasColorSpace ?? 'srgb', source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
+			const picture = await this._readPicture( target, width, height, { source, preserveAlpha: preserveAlpha && transparent, output: bitDepth === 16 ? 'rgba16' : 'rgba8' } );
+			return { ...picture, width, height, colorSpace };
 
 		}
 
@@ -2810,12 +2816,35 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
+	/** The picture through the view, as `output` (a PackedToneMapper output): on the card, or on the CPU if that fails. @private */
+	async _readPicture( target, width, height, { source, preserveAlpha, output } ) {
+
+		const shown = source === 'display' ? this._displaySource( target ) : null;
+		const tone = {
+			exposure: this.renderer.toneMappingExposure,
+			toneMapping: this.renderer.toneMapping,
+			saturation: this.settings.get( 'saturation' ) ?? 1,
+			preserveAlpha,
+			gain: this._displayGain(),
+		};
+
+		const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone, output );
+		const fn = ! gpu && tone.gain?.cpu ? await tone.gain.cpu() : null;
+		const backdrop = tone.gain?.backdrop ?? 0;
+		const cpu = { rgba8: toneMapToRGBA8, rgba16: toneMapToRGBA16, displayLinear: toneMapToDisplayLinear }[ output ];
+		const data = gpu ?? cpu( shown
+			? await this._readTexture( shown.texture, width, height )
+			: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: ( fn || backdrop ) ? { fn, width, height, backdrop } : null } );
+		return { data, displayColorSpace: this.color?.canvasColorSpace ?? 'srgb', source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
+
+	}
+
 	/**
 	 * Display bytes tone-mapped on the card, or null to do it on the CPU. On the CPU it took 1.4 s at
 	 * 4096×2160 on an M-series Mac and 10 s on a cloud L4's host; the GPU pass matches it within one
 	 * level (`tests/gpu/toneMapParity.test.js`).
 	 */
-	async _toneMapOnGPU( shown, accumulation, width, height, tone ) {
+	async _toneMapOnGPU( shown, accumulation, width, height, tone, output = 'rgba8' ) {
 
 		const backend = this.renderer?.backend;
 		if ( ! backend?.device ) return this._toneMapFallback( 'the renderer has no WebGPU device' );
@@ -2826,9 +2855,12 @@ export class RayzeeRenderer extends EventDispatcher {
 			const gpuTexture = backend.get( texture ).texture;
 			if ( ! gpuTexture ) return this._toneMapFallback( 'the picture has no GPU texture yet' );
 
-			this._readbackToneMapper ??= new PackedToneMapper( backend.device, 'rayzee:readback-tonemap', { input: 'texture' } );
-			this._readbackToneMapper.ensureSize( width, height );
-			return await this._readbackToneMapper.toRGBA8( gpuTexture, tone );
+			this._readbackToneMappers ??= new Map();
+			let mapper = this._readbackToneMappers.get( output );
+			if ( ! mapper ) this._readbackToneMappers.set( output, mapper = new PackedToneMapper( backend.device, `rayzee:readback-${output}`, { input: 'texture', output } ) );
+			mapper.ensureSize( width, height );
+			const read = { rgba8: 'toRGBA8', rgba16: 'toRGBA16', displayLinear: 'toDisplayLinear' }[ output ];
+			return await mapper[ read ]( gpuTexture, tone );
 
 		} catch ( error ) {
 
@@ -2837,7 +2869,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		} finally {
 
-			this._readbackToneMapper?.release();
+			this._readbackToneMappers?.get( output )?.release();
 			if ( shown ) this._textureReadback?.release();
 
 		}
@@ -3044,6 +3076,246 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( ! canvas ) return Promise.resolve( null );
 
 		return new Promise( ( resolve ) => canvas.toBlob( resolve, type, quality ) );
+
+	}
+
+	/**
+	 * The picture as a file. PNG, JPEG and WebP hold what the canvas shows — tone-mapped, graded, denoised; a 16-bit
+	 * PNG holds the same picture finer. OpenEXR and Radiance HDR hold the light itself, with no exposure or view
+	 * applied, in the working space or a delivery space — or with `asShown`, the light the screen emits showing the
+	 * picture, so any viewer shows it as the screen does. Works headless and in Node, where JPEG and WebP (written by
+	 * the platform's canvas) are missing.
+	 *
+	 * @param {Object} [options]
+	 * @param {'png'|'jpeg'|'webp'|'heic'|'avif'|'exr'|'hdr'} [options.format='png'] - heic and avif go through the
+	 *   platform's video encoder (WebCodecs: HEVC, AV1), 8 bits 4:2:0
+	 * @param {8|16} [options.bitDepth=8] - png
+	 * @param {number} [options.quality=0.92] - jpeg, webp: 0–1
+	 * @param {boolean} [options.gainMap=false] - jpeg, heic, avif: an HDR photo — the picture plus a gain map to the HDR
+	 *   version the screen shows (ISO 21496-1; Ultra HDR in a JPEG, a 'tmap' item in HEIF), which gain-map viewers show
+	 *   in HDR. Needs the screen showing HDR
+	 * @param {'half'|'float'} [options.precision='half'] - exr; depth is float either way
+	 * @param {boolean} [options.asShown=false] - exr, hdr: the picture as the screen shows it — exposure, view, look and
+	 *   display gain applied, then decoded to linear light in the canvas's primaries (1 = SDR white); while the screen
+	 *   shows an HDR version, that version, highlights above 1 kept. Extra layers stay as they are
+	 * @param {?string} [options.colorSpace] - exr, hdr: a config colour space to deliver in. Omitted, the colour
+	 *   management's export space; null, the working space. Not with `asShown`
+	 * @param {Array<'albedo'|'normal'|'depth'>} [options.passes] - exr layers beside the picture. Albedo and normal
+	 *   are the denoisers' guides, averaged over the samples, so they exist only while a denoiser is on; depth is
+	 *   measured when asked for. One that cannot be written records `output.pass_unavailable`
+	 * @param {'display'|'accumulation'} [options.source='display'] - the denoised picture when there is one, or the
+	 *   raw samples
+	 * @param {boolean} [options.upscaled=true] - png at 8 bits, jpeg, webp: the AI upscaler's picture while one shows
+	 * @param {boolean} [options.alpha=true] - transparency where the background is transparent (never jpeg, hdr)
+	 * @param {boolean|Object<string, string>} [options.metadata=true] - render details in the file (not webp); an
+	 *   object adds keys of its own
+	 * @returns {Promise<{blob: Blob, mimeType: string, extension: string, width: number, height: number,
+	 *   colorSpace: string, source: string, passes: string[]}>} `colorSpace` is what the file holds: 'srgb' or
+	 *   'display-p3' for a picture, the colour space's name for light, 'srgb-linear' or 'display-p3-linear' as shown
+	 */
+	async exportImage( { format = 'png', bitDepth = 8, quality = 0.92, gainMap = false, precision = 'half', asShown = false, colorSpace, passes = [], source = 'display', upscaled = true, alpha = true, metadata = true } = {} ) {
+
+		const encoders = await import( './Processor/ImageEncoders.js' );
+		const spec = encoders.IMAGE_FORMATS[ format ];
+		if ( ! spec ) throw new Error( `exportImage: no format "${format}"; one of ${Object.keys( encoders.IMAGE_FORMATS ).join( ', ' )}` );
+
+		const light = format === 'exr' || format === 'hdr';
+		const text = metadata ? { ...this._exportDetails( format, light && asShown ), ...( typeof metadata === 'object' ? metadata : {} ) } : {};
+		const file = async ( blob, read, rest = {} ) => ( {
+			blob, mimeType: spec.mimeType, extension: spec.extension, width: read.width, height: read.height,
+			colorSpace: read.displayColorSpace, source: read.source, passes: [], ...rest,
+		} );
+
+		if ( light ) return this._exportLight( encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } );
+
+		const heif = format === 'heic' || format === 'avif';
+		if ( heif || ( format === 'jpeg' && gainMap ) ) {
+
+			if ( gainMap && ! this.stages.compositor?.showsCanvasTransform ) throw new Error( 'exportImage: an HDR photo needs the screen showing HDR (color.setHdrOutput)' );
+			const hdr = gainMap ? asFloat32( ( await this._readShown( { source, preserveAlpha: false } ) ).data ) : null;
+			const read = await this.renderToBuffer( { colorSpace: 'srgb', source } );
+			const image = { sdr: read.data, hdr, width: read.width, height: read.height, colorSpace: read.displayColorSpace, quality };
+			return file( heif ? await encoders.encodeStill( { ...image, format } ) : await encoders.encodeGainMapJPEG( { ...image, text } ), read );
+
+		}
+
+		const keepAlpha = alpha && format !== 'jpeg' && !! this.settings.get( 'transparentBackground' );
+		if ( format === 'png' && bitDepth === 16 ) {
+
+			const read = await this.renderToBuffer( { colorSpace: 'srgb', bitDepth: 16, source, preserveAlpha: keepAlpha } );
+			return file( await encoders.encodePNG( { data: read.data, width: read.width, height: read.height, alpha: keepAlpha, colorSpace: read.displayColorSpace, text } ), read );
+
+		}
+
+		const shown = upscaled ? this._displayCanvas() : null;
+		const read = shown ? canvasPixels( shown ) : await this.renderToBuffer( { colorSpace: 'srgb', source, preserveAlpha: keepAlpha } );
+		const image = { data: read.data, width: read.width, height: read.height, colorSpace: read.displayColorSpace, text };
+		return file( format === 'png'
+			? await encoders.encodePNG( { ...image, alpha: keepAlpha } )
+			: await encoders.encodeWithCanvas( { ...image, format, quality } ), read );
+
+	}
+
+	/**
+	 * What {@link exportImage} can write now: the render's size, the upscaled picture's while one shows, whether the
+	 * screen shows HDR (an HDR photo needs it), and which EXR layers exist.
+	 * @returns {{width: number, height: number, upscaled: ?{width: number, height: number}, hdr: boolean, layers: {albedo: boolean, normal: boolean, depth: boolean}}}
+	 */
+	exportInfo() {
+
+		const stage = this.stages?.pathTracer;
+		const shown = this._displayCanvas();
+		const aux = !! stage?.hasAuxBuffers;
+		return {
+			width: stage?.width ?? 0,
+			height: stage?.height ?? 0,
+			upscaled: shown ? { width: shown.width, height: shown.height } : null,
+			hdr: !! this.stages?.compositor?.showsCanvasTransform,
+			layers: { albedo: aux, normal: aux, depth: !! ( stage?.bvhStorageAttr && stage.materialData?.materialStorageAttr ) },
+		};
+
+	}
+
+	/** EXR or Radiance HDR: scene-referred float, with the EXR's extra layers. @private */
+	async _exportLight( encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } ) {
+
+		let read, delivered, chromaticities;
+		if ( asShown ) {
+
+			read = await this._readShown( { source, preserveAlpha: alpha && !! this.settings.get( 'transparentBackground' ) } );
+			delivered = `${read.displayColorSpace}-linear`;
+			chromaticities = encoders.DISPLAY_CHROMATICITIES[ read.displayColorSpace ];
+
+		} else {
+
+			const space = colorSpace === undefined ? this.color?.exportSpace ?? null : colorSpace;
+			read = await this.renderToBuffer( { colorSpace: space ?? 'linear', source } );
+			delivered = read.colorSpace === 'linear' ? read.workingSpace ?? this.color.workingSpace : read.colorSpace;
+			const measured = this.color.chromaticities?.( delivered ) ?? null;
+			chromaticities = measured && encoders.standardChromaticities( measured );
+
+		}
+
+		const data = asFloat32( read.data );
+		const { width, height } = read;
+		const result = { colorSpace: delivered };
+
+		if ( format === 'hdr' ) return file( await encoders.encodeHDR( { data, width, height, chromaticities, text } ), read, result );
+
+		const channels = [ 'R', 'G', 'B', ...( alpha ? [ 'A' ] : [] ) ].map( ( name, offset ) => ( { name, data, stride: 4, offset, type: precision } ) );
+		const written = [];
+		const missing = ( pass, why ) => this._issues.record( ISSUE_CODES.OUTPUT_PASS_UNAVAILABLE, `exportImage: no ${pass} layer — ${why}`, { pass } );
+		const want = new Set( passes );
+
+		if ( want.has( 'albedo' ) || want.has( 'normal' ) ) {
+
+			const aux = await this.stages.pathTracer.readAuxBuffers();
+			for ( const pass of [ 'albedo', 'normal' ] ) {
+
+				if ( ! want.has( pass ) ) continue;
+				if ( ! aux ) {
+
+					missing( pass, 'the denoisers\' guides are written only while a denoiser is on' );
+					continue;
+
+				}
+
+				const values = asFloat32( aux[ pass ] );
+				if ( pass === 'albedo' ) {
+
+					if ( ! asShown && delivered !== this.color.workingSpace ) this.color.exportPixels( values, delivered );
+
+				} else {
+
+					for ( let i = 0; i < values.length; i += 4 ) for ( let c = 0; c < 3; c ++ ) values[ i + c ] = values[ i + c ] * 2 - 1;
+
+				}
+
+				const names = pass === 'albedo' ? [ 'R', 'G', 'B' ] : [ 'X', 'Y', 'Z' ];
+				channels.push( ...names.map( ( c, offset ) => ( { name: `${pass}.${c}`, data: values, stride: 4, offset, type: precision } ) ) );
+				written.push( pass );
+
+			}
+
+		}
+
+		if ( want.has( 'depth' ) ) {
+
+			const { DepthPass } = await import( './TSL/DepthPass.js' );
+			const depth = await new DepthPass( this.renderer ).read( this.stages.pathTracer );
+			if ( depth ) {
+
+				channels.push( { name: 'depth.Z', data: depth, type: 'float' } );
+				written.push( 'depth' );
+
+			} else missing( 'depth', 'no scene is built' );
+
+		}
+
+		return file( await encoders.encodeEXR( { width, height, channels, chromaticities, text } ), read, { ...result, passes: written } );
+
+	}
+
+	/**
+	 * The picture as the screen shows it, as light: display-linear in the canvas's primaries, 1 = SDR white. The canvas's
+	 * own version of the view when it has one (HDR), else the view through the readback tone mapper. @private
+	 */
+	async _readShown( { source, preserveAlpha } ) {
+
+		const stage = this.stages?.pathTracer;
+		const target = stage?.storageTextures?.readTarget;
+		if ( ! target ) throw new Error( 'exportImage: no render target — call init() and render at least one sample' );
+		const { width, height } = stage;
+		const compositor = this.stages.compositor;
+		const context = this.pipeline?.context;
+
+		if ( compositor?.showsCanvasTransform && context ) {
+
+			const shown = new RenderTarget( width, height, { type: FloatType, format: RGBAFormat, depthBuffer: false, minFilter: NearestFilter, magFilter: NearestFilter } );
+			try {
+
+				if ( compositor.renderShown( context, shown ) ) {
+
+					const data = await readPixels( this.renderer, shown, width, height );
+					return { data, width, height, displayColorSpace: this.color.canvasColorSpace, source: compositor.resolveLightSource( context )?.key.split( ':' )[ 0 ] ?? 'accumulation' };
+
+				}
+
+			} finally {
+
+				shown.dispose();
+
+			}
+
+		}
+
+		return { ...await this._readPicture( target, width, height, { source, preserveAlpha, output: 'displayLinear' } ), width, height };
+
+	}
+
+	/** What a saved file says about itself, under the names its format's readers look for. @private */
+	_exportDetails( format, asShown = false ) {
+
+		const provenance = this.getProvenance();
+		const render = provenance.render;
+		const view = provenance.color?.view;
+		const viewName = view && typeof view === 'object' ? [ view.view, view.look ].filter( Boolean ).join( ', ' ) : view;
+		const summary = [ render && `${render.samples} samples`, render && `${render.width}×${render.height}`, viewName, asShown && 'as shown on screen' ].filter( Boolean ).join( ', ' );
+		const settings = Object.fromEntries( Object.entries( provenance.settings ?? {} ).map( ( [ key, entry ] ) => [ key, entry?.value ] ) );
+		const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings } );
+		const software = `Rayzee ${VERSION}`;
+		const now = new Date();
+		const pad = n => String( n ).padStart( 2, '0' );
+
+		if ( format === 'exr' ) {
+
+			const capDate = `${now.getFullYear()}:${pad( now.getMonth() + 1 )}:${pad( now.getDate() )} ${pad( now.getHours() )}:${pad( now.getMinutes() )}:${pad( now.getSeconds() )}`;
+			return { software, comments: summary, capDate, rayzee: details };
+
+		}
+
+		if ( format === 'png' ) return { Software: software, 'Creation Time': now.toISOString(), Comment: summary, rayzee: details };
+		return { Software: software, Comment: summary };
 
 	}
 

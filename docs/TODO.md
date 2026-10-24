@@ -5,9 +5,9 @@
 -  the Moana lava rocks render bright red. The scene file itself sets them to red, and their real colour comes from a texture format (Ptex) the pbrt loader doesn't read yet.
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
 -   Rough glass too bright
+-   result page to show hrd when available
 
 ### MVP
-- [ ] Save compiled shaders??
 - [ ] dynamic max stack in bvhtraversal
 - [ ] https://github.com/DennisSmolek/Fsr3 - branch already created
 - [ ] tiled output for lower vram — Blender Cycles-style render-region tiling; VRAM-bounded 4K/8K final render + video. See docs/internal/specs/wavefront-tiled-output.md
@@ -126,7 +126,7 @@
 
 - [ ] animating lights support
 - [ ] Timeline scrubber for animation control
-- [ ] PNG image sequence export for better quality and post-processing flexibility
+- [x] PNG image sequence export for better quality and post-processing flexibility (and EXR, from the Export window)
 - [ ] Multi-clip blending - cross-fade between animation clips with configurable transition duration
 - [ ] ArrayBufferTarget memory for long videos - StreamTarget upgrade
 - [ ] sequence caching for smooth playback / scrubbing

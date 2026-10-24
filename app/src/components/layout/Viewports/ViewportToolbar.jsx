@@ -11,7 +11,6 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
-import { getApp } from '@/lib/appProxy';
 
 /**
  * ViewportToolbar - A customizable toolbar component for viewport controls
@@ -166,26 +165,10 @@ const ViewportToolbar = ( {
 
 	const handleResetCamera = useCameraStore( state => state.handleResetCamera );
 
-	const handleScreenshot = useCallback( async () => {
+	// The Results view passes `appRef`: there the button exports the saved render, elsewhere the live one.
+	const handleScreenshot = useCallback( () => {
 
-		// If a custom screenshot handler is provided (e.g. Results view downloading
-		// the active result image), use it instead of the live rendering canvas.
-		if ( appRef?.current?.takeScreenshot ) {
-
-			appRef.current.takeScreenshot();
-			return;
-
-		}
-
-		const blob = await getApp()?.screenshot();
-		if ( ! blob ) return;
-
-		const url = URL.createObjectURL( blob );
-		const link = document.createElement( 'a' );
-		link.href = url;
-		link.download = 'screenshot.png';
-		link.click();
-		URL.revokeObjectURL( url );
+		useStore.getState().setExportRequest( { tab: 'picture', from: appRef ? 'result' : 'live' } );
 
 	}, [ appRef ] );
 
@@ -307,7 +290,7 @@ const ViewportToolbar = ( {
 				{controls.screenshot && (
 					<ControlButton
 						onClick={handleScreenshot}
-						tooltip={appRef ? "Download Image" : "Take Screenshot"}
+						tooltip={appRef ? "Export Render" : "Export Picture"}
 						icon={appRef ? <Download /> : <Camera />}
 						disabled={false}
 					/>

@@ -153,12 +153,38 @@ export function applySaturation( out, saturation ) {
  *   `backdrop` the gain a solid backdrop is held at (`heldGain`)
  * @returns {Uint8ClampedArray} RGBA bytes
  */
-export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false, pixelGain = null } ) {
+export function toneMapToRGBA8( linear, options ) {
+
+	return toneMapInto( new Uint8ClampedArray( linear.length ), linear, options );
+
+}
+
+/** `toneMapToRGBA8` at 16 bits a channel, rounded to nearest, as `PackedToneMapper.toRGBA16`. @returns {Uint16Array} */
+export function toneMapToRGBA16( linear, options ) {
+
+	return toneMapInto( new Uint16Array( linear.length ), linear, options );
+
+}
+
+/** The light the picture shows: unquantized, the sRGB encoding undone, as `PackedToneMapper.toDisplayLinear`. @returns {Float32Array} */
+export function toneMapToDisplayLinear( linear, options ) {
+
+	return toneMapInto( new Float32Array( linear.length ), linear, options );
+
+}
+
+const clamp01 = v => ( v > 0 ? ( v < 1 ? v : 1 ) : 0 );
+const decodeSRGB = v => ( v <= 0.04045 ? v / 12.92 : Math.pow( ( v + 0.055 ) / 1.055, 2.4 ) );
+
+function toneMapInto( out, linear, { exposure, toneMapping, saturation = 1, preserveAlpha = false, pixelGain = null } ) {
 
 	const curve = TONE_MAP_FNS.get( toneMapping ) ?? TONE_MAP_FNS.get( NoToneMapping );
 	const gain = effectiveExposure( exposure, toneMapping );
 	const encoded = isOutputEncoded( toneMapping );
-	const out = new Uint8ClampedArray( linear.length );
+	// The 8-bit rounding is the clamped array's, kept as the GPU pass mirrors it.
+	const store = out instanceof Float32Array ? v => decodeSRGB( clamp01( v ) )
+		: out instanceof Uint16Array ? v => Math.round( clamp01( v ) * 65535 ) : v => v * 255 + 0.5;
+	const opaque = out instanceof Float32Array ? 1 : out instanceof Uint16Array ? 65535 : 255;
 	const scratch = [ 0, 0, 0 ];
 	const logExposure = Math.log2( exposure );
 
@@ -190,19 +216,19 @@ export function toneMapToRGBA8( linear, { exposure, toneMapping, saturation = 1,
 
 		if ( encoded ) {
 
-			out[ i ] = scratch[ 0 ] * 255 + 0.5;
-			out[ i + 1 ] = scratch[ 1 ] * 255 + 0.5;
-			out[ i + 2 ] = scratch[ 2 ] * 255 + 0.5;
+			out[ i ] = store( scratch[ 0 ] );
+			out[ i + 1 ] = store( scratch[ 1 ] );
+			out[ i + 2 ] = store( scratch[ 2 ] );
 
 		} else {
 
-			out[ i ] = linearToSRGB( scratch[ 0 ] ) * 255 + 0.5;
-			out[ i + 1 ] = linearToSRGB( scratch[ 1 ] ) * 255 + 0.5;
-			out[ i + 2 ] = linearToSRGB( scratch[ 2 ] ) * 255 + 0.5;
+			out[ i ] = store( linearToSRGB( scratch[ 0 ] ) );
+			out[ i + 1 ] = store( linearToSRGB( scratch[ 1 ] ) );
+			out[ i + 2 ] = store( linearToSRGB( scratch[ 2 ] ) );
 
 		}
 
-		out[ i + 3 ] = preserveAlpha ? linear[ i + 3 ] * 255 + 0.5 : 255;
+		out[ i + 3 ] = ! preserveAlpha ? opaque : out instanceof Float32Array ? clamp01( linear[ i + 3 ] ) : store( linear[ i + 3 ] );
 
 	}
 

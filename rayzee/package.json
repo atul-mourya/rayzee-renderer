@@ -13,6 +13,9 @@
     "./core": {
       "import": "./dist/rayzee-core.es.js"
     },
+    "./encoders": {
+      "import": "./dist/encoders.es.js"
+    },
     "./addons/physical-sky": {
       "import": "./dist/addons/physical-sky.es.js"
     },

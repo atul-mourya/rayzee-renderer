@@ -29,7 +29,8 @@ A scene the core renders is a three.js scene graph or a glTF file, using:
 Anything outside the list is reported through the issue log (`EngineIssues.js`), not drawn differently in silence.
 
 Headless rendering and Node (`Platform.js`, `HeadlessCanvas.js`, `rayzee/node`) are core: they are how the minimal
-renderer runs without a browser.
+renderer runs without a browser. So is saving the image as a file (`exportImage()`): in Node our own PNG and EXR writers
+are the only way to one.
 
 ## Capabilities
 
@@ -81,7 +82,8 @@ the core. Without it the core's programs carry none of that code, and still rend
 ## Decisions
 
 - **One package.** Capabilities live in `rayzee` under import paths (`rayzee/core` now, `rayzee/addons/*` as they
-  move), with one version and one release.
+  move), with one version and one release. A path that is not an add-on installs nothing: `rayzee/node` (platform
+  services) and `rayzee/encoders` (the file writers alone).
 - **Not a breaking change.** `rayzee` and `PathTracerApp` keep their API; the viewer still builds every capability.
   Default renders stay the same pixel for pixel, checked against the bench's reference images.
 
@@ -186,6 +188,13 @@ the core. Without it the core's programs carry none of that code, and still rend
    archive whose main model is a USD layer and for a loose `.usd` / `.usda` / `.usdc`. A `.usdz` stays with three.js's
    loader in `rayzee/addons/formats`. The core learned nothing about USD: the importer hands the scene over as the pbrt
    builder does.
+18. **File export stays core** — `exportImage()` and its writers (`Processor/ImageEncoders.js`: PNG, EXR, Radiance HDR,
+   and through the browser JPEG, WebP, HEIC, AVIF and gain-map HDR photos) are part of "the image out", and an add-on
+   would save nothing: the core already loads the writers (9.4 KB compressed) and the depth layer (`TSL/DepthPass.js`,
+   1.5 KB) on the first export. A re-export of the writers from `index.js` had made them part of `rayzee`'s startup
+   download; they are now a path of their own, `rayzee/encoders`, for pixels a host already has. Startup, compressed:
+   `rayzee` 413 → 404 KB, the app 1,108 → 1,099 KB; the core unchanged. The Export window, downloads and video
+   (Mediabunny, 40 KB) stay in the app; video would become an add-on only if another host needs it.
 
 ## What still ties the layers
 

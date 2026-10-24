@@ -148,8 +148,8 @@ const Viewport3D = forwardRef( ( { viewportMode = "preview" }, _ref ) => {
 
 				try {
 
-					const { encodeEXR } = await import( '@/lib/colorManagement' );
-					hdr = ( await encodeEXR() ).bytes;
+					// The working space as it is: the library re-exports it in any space later.
+					hdr = ( await app.exportImage( { format: 'exr', colorSpace: null } ) ).blob;
 
 				} catch ( error ) {
 

@@ -137,6 +137,13 @@ export class BasicColor {
 
 	}
 
+	/** Rec.709 primaries, D65 white: the only space there is without a config. */
+	chromaticities() {
+
+		return [ 0.64, 0.33, 0.30, 0.60, 0.15, 0.06, 0.3127, 0.3290 ];
+
+	}
+
 	status() {
 
 		const active = this._renderer ? getViewTransform( this._renderer.toneMapping ) : null;
