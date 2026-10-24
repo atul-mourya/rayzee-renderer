@@ -6,10 +6,13 @@
 
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataUtils } from 'three';
-import { describeGPU, createRenderer, gpuAvailable } from './gpu.js';
+import { vec4, float } from 'three/tsl';
+import { describeGPU, createRenderer, gpuAvailable, evaluate } from './gpu.js';
 import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
-import { countTableTransforms, listViewTransforms } from '@/core/Color/ViewTransforms.js';
+import { countTableTransforms, listViewTransforms, addViewTransform, getViewTransform } from '@/core/Color/ViewTransforms.js';
+import { buildBakedView, DEFAULT_MIN_EV, DEFAULT_MAX_EV } from '@/core/Color/OcioViews.js';
+import { packHalf, unshape, curveSlices } from '@/core/Color/LutBake.js';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { UPSCALE_GATES } from '../../bench/runner/config.js';
@@ -32,6 +35,32 @@ if ( ocio && gpuAvailable ) {
 	const cm = new ColorManagement();
 	const config = await cm.loadConfig( { builtin: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5', registerViews: false } );
 	cm.setView( { display: config.defaultDisplay, view: config.defaultViews[ config.defaultDisplay ] } );
+
+	// A view split at a lookup, as Blender's False Color bakes: the cube holds a grey value, the curve after it the colour.
+	const size = 9, n = 100;
+	const table = new Float32Array( ( size ** 3 + curveSlices( n, size ) * size * size ) * 4 );
+	for ( let i = 0; i < size ** 3; i ++ ) {
+
+		const lum = [ i % size, Math.floor( i / size ) % size, Math.floor( i / size / size ) ].map( k => unshape( k, size, DEFAULT_MIN_EV, DEFAULT_MAX_EV ) ).reduce( ( a, v ) => a + v ) / 3;
+		const t = Math.min( 1, Math.max( 0, ( Math.log2( lum + 1e-6 ) + 12 ) / 16 ) );
+		table.set( [ t, t, t, 1 ], i * 4 );
+
+	}
+
+	for ( let i = 0; i < n; i ++ ) table.set( [ i / ( n - 1 ), ( i % 10 ) / 9, 1 - i / ( n - 1 ), 1 ], ( size ** 3 + i ) * 4 );
+	const shape = { configId: 'test', display: 'sRGB', source: 'test', size, minEv: DEFAULT_MIN_EV, maxEv: DEFAULT_MAX_EV };
+	addViewTransform( buildBakedView( { ...shape, name: 'Split at a lookup', view: 'split', data: packHalf( table ), curve: { n, lo: 0, hi: 1 } } ) );
+
+	// A table of light, encoded after the lookup (a converted display), negative light included.
+	const light = new Float32Array( size ** 3 * 4 );
+	for ( let i = 0; i < size ** 3; i ++ ) {
+
+		const [ r, g, b ] = [ i % size, Math.floor( i / size ) % size, Math.floor( i / size / size ) ].map( k => unshape( k, size, DEFAULT_MIN_EV, DEFAULT_MAX_EV ) );
+		light.set( [ 1.2 * r - 0.2 * g, g, 0.9 * b + 0.1 * r, 1 ], i * 4 );
+
+	}
+
+	addViewTransform( buildBakedView( { ...shape, name: 'Light, encoded after', view: 'light', data: packHalf( light ), linear: true } ) );
 
 }
 
@@ -358,6 +387,48 @@ describeGPU( 'GPU planar tone map against the upscaler\'s old JavaScript', () =>
 			expect( worst, `exposure ${exposure}, saturation ${saturation}` ).toBeLessThan( MAX_PLANAR_DELTA );
 
 		}
+
+	} );
+
+} );
+
+// The canvas runs a table view through its TSL node, not this WGSL: the same lookup, the third implementation.
+describeGPU( 'the canvas lookup against the CPU sampler', () => {
+
+	let renderer;
+	beforeAll( async () => {
+
+		renderer = await createRenderer();
+
+	} );
+
+	afterAll( () => renderer?.dispose() );
+
+	const TABLES = CURVES.filter( ( [ , id ] ) => getViewTransform( id )?.source === 'ocio' );
+
+	it.each( TABLES )( '%s', async ( name, id ) => {
+
+		const view = getViewTransform( id );
+		// three.js clamps a colour at 0 before the view, so the canvas never sees a negative input.
+		const colours = PIXELS.map( p => p.map( v => Math.max( 0, v ) ) );
+		const input = new Float32Array( colours.flatMap( c => [ ...c, 1 ] ) );
+		const shown = new Float32Array( await evaluate( renderer, colours.length, { c: [ input, 'vec4' ] }, 'vec4', ( { c } ) => vec4( view.tsl( c.xyz, float( 1 ) ), 1 ) ) );
+
+		const out = [ 0, 0, 0 ];
+		let worst = 0, at = 0;
+		colours.forEach( ( c, i ) => {
+
+			view.cpu( c[ 0 ], c[ 1 ], c[ 2 ], 1, out );
+			for ( let k = 0; k < 3; k ++ ) {
+
+				const d = Math.abs( shown[ i * 4 + k ] - out[ k ] );
+				if ( d > worst ) [ worst, at ] = [ d, i ];
+
+			}
+
+		} );
+		// A tenth of an 8-bit level.
+		expect( worst, `${colours[ at ]}` ).toBeLessThan( 0.1 / 255 );
 
 	} );
 

@@ -236,10 +236,11 @@ OCIO's guidance is to build menus from UI name, family and description, filtered
   Checked in Chrome (2026-10-24, an HDR Display P3 screen) with 32 emitters of known light: what the canvas holds,
   read off the GPU, against OCIO for Blender's 604 combinations with HDR on and off, ACES 2.0's 148, ACES 1.3's 72
   and the seven built-ins, plus every working space and two exposures; readback, saved picture and thumbnail
-  alike. All within 3 levels / 3 % but two limits of the 65³ table. False Color is wrong on every display: it is a
-  stepped lookup (`AgX_False_Color.spi1d`) the table blurs, so 0.18 grey shows teal. And the brightest saturated colours
-  miss by up to 3.6 % (20 levels at 14× white), up to 95 levels in a working space wider than Rec.709 on a converted
-  display, where a pure primary falls between table nodes at OCIO's clip.
+  alike. Blender 586 of 604 within 3 levels / 3 %, the rest within 3.6 %; ACES 2.0 and 1.3 all. False Color, wrong on
+  every display until it was split at its lookup (below), passes everywhere. What is left is the 65³ table on the
+  brightest saturated colours: 20 levels at 14× white, and in a working space wider than the display 8–10 levels
+  (0.06 % of the light, near black where 8 bits are coarse; was 95) for Standard on Rec.1886, 15 for ACES 2.0's
+  HDR view in ACEScg.
 - **Texture colour space**: spaces tagged `texture`, grouped by family.
 - ⚠️ `describeConfig()` must carry `categories`. Without them every tag filter silently falls back
   to name matching — the tests passed by coincidence until that was caught.
@@ -256,6 +257,19 @@ the runtime: a table is the only representation that is identical in a TSL graph
 pass and plain JavaScript, and a saved image differing from the viewport is a worse failure than a
 third of a code value. `entry.error` carries what the table cost, measured against the real
 processor during the bake.
+
+**The derived config** (`OcioViews.js`): the loaded config's text plus, for each view transform defined from the scene
+reference, a scene-referred colour space holding it, built the first time a bake needs it (~20 ms; the runtime's
+mounted folder is found by its `.ocio` text, so LUTs resolve). Two bakes use it:
+- **A display shown converted bakes from its light**, the view transform's output, not its codes decoded: Rec.1886's and
+  Rec.2020's encodings are `ExponentTransform`s that clip at 0, which put a kink inside a cell wherever a colour left the
+  display's gamut. Its table is baked twice from the one OCIO output, as light (`linear`, encoded after the lookup in
+  all four places) and encoded, and keeps light only where that at least halves the worst error: encoded follows a
+  tone curve better (mean 0.2 against 0.4 levels over 223 tables), light a colour whose light crosses 0 in a cell.
+- **A view that steps through a `.spi1d` after a grey value is split there** (Blender's False Color: AgX, then luminance,
+  then `AgX_False_Color.spi1d`): the part before is a colour space, the lookup and the rest a named transform. The cube
+  holds the grey value and a curve of the lookup's 4096 entries after it gives the colour, in the same texture's extra
+  slices (`curve` on the entry). The two halves reproduce OCIO's False Color exactly (2,004 colours, difference 0).
 
 ⚠️ Grid index 0 is baked from **exactly 0**, not from 2^minEv. Without that, true black leaves the
 table one code value above zero and every render has a raised black floor.

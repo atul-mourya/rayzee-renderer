@@ -220,6 +220,8 @@ export class PackedToneMapper {
 		for ( const { index, transform } of this._bindings ) {
 
 			const { data, size } = transform.table;
+			// A split view's curve follows the cube in extra slices (LutBake.js).
+			const depth = data.length / ( size * size * 4 );
 			live.add( index );
 
 			const held = this._tables.get( index );
@@ -229,7 +231,7 @@ export class PackedToneMapper {
 
 			const texture = this.device.createTexture( {
 				label: `${this.label}-${transform.wgslConst}`,
-				size: [ size, size, size ],
+				size: [ size, size, depth ],
 				dimension: '3d',
 				format: 'rgba16float',
 				usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
@@ -239,7 +241,7 @@ export class PackedToneMapper {
 				{ texture },
 				data,
 				{ bytesPerRow: size * 8, rowsPerImage: size },
-				[ size, size, size ]
+				[ size, size, depth ]
 			);
 
 			this._tables.set( index, { texture, data, view: texture.createView() } );

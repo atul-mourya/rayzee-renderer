@@ -37,7 +37,7 @@ import {
 	countTableTransforms, MAX_TABLE_TRANSFORMS, removeViewTransform, addViewTransform,
 } from './ViewTransforms.js';
 import {
-	addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog,
+	addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog, releaseDerivedConfig,
 	buildCanvasView, buildBakedCanvasView, canvasFitOf,
 } from './OcioViews.js';
 import { encodeBakedView, decodeBakedView, configFingerprint } from './BakedViews.js';
@@ -337,6 +337,7 @@ export class ColorManagement {
 	_releaseViews( keep = null ) {
 
 		disposeOcioViewTextures( keep );
+		releaseDerivedConfig();
 		removeOcioViewTransforms( keep );
 		for ( const id of this._lastUsed.keys() ) if ( ! keep?.has( id ) ) this._lastUsed.delete( id );
 
@@ -1383,6 +1384,7 @@ export class ColorManagement {
 		setActiveColorManagement( null );
 		setWorkingMatrix( null );
 		disposeOcioViewTextures();
+		releaseDerivedConfig();
 		resetViewTransforms();
 		resetConfigHandle();
 		clearInputOverrides();

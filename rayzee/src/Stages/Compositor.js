@@ -1,4 +1,4 @@
-import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, float, int, uint, storage, Fn, If, toneMappingExposure, sign } from 'three/tsl';
+import { vec4, vec3, uv, screenUV, uniform, select, dot, mix, step, float, int, uint, storage, Fn, If, toneMappingExposure, sign } from 'three/tsl';
 import { MeshBasicNodeMaterial, QuadMesh, TextureNode } from 'three/webgpu';
 import { NoBlending, NoToneMapping, ColorManagement as ThreeColorManagement } from 'three';
 import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';
@@ -17,11 +17,12 @@ import { backdropGain } from '../Processor/ToneMapCPU.js';
  * and Three.js applies it inside the tone-mapping branch of the output pass
  * (so it has no effect when `renderer.toneMapping === NoToneMapping`).
  */
-// The canvas's sRGB encoding undone, extended past 1 and mirrored below 0 as the HDR canvas uses it.
+// The canvas's sRGB encoding undone, extended past 1 and mirrored below 0 as the HDR canvas uses it. mix by step, not
+// select: a TSL select takes one condition, so a vector one decoded every channel by the first's branch.
 const decodeExtendedSRGB = c => {
 
 	const a = c.abs();
-	return select( a.lessThanEqual( vec3( 0.04045 ) ), a.div( 12.92 ), a.add( 0.055 ).div( 1.055 ).pow( vec3( 2.4 ) ) ).mul( sign( c ) );
+	return mix( a.add( 0.055 ).div( 1.055 ).pow( vec3( 2.4 ) ), a.div( 12.92 ), step( a, vec3( 0.04045 ) ) ).mul( sign( c ) );
 
 };
 

@@ -47,7 +47,7 @@ export async function encodeBakedView( entry, extra = {} ) {
 
 	}
 
-	const { display, view, look, context, source, configId, canvas, emulated, for: shownFor } = entry.ocio;
+	const { display, view, look, context, source, configId, canvas, emulated, for: shownFor, linear } = entry.ocio;
 	const header = new TextEncoder().encode( JSON.stringify( {
 		format: FORMAT, version: BAKED_VIEW_VERSION,
 		name: entry.name, configId, display, view, look: look ?? null, context: context ?? null, source,
@@ -55,6 +55,8 @@ export async function encodeBakedView( entry, extra = {} ) {
 		// Left out for a plain sRGB table, so files from before these fields are read the same.
 		...( emulated || shownFor || ( canvas && canvas !== 'srgb' ) ? { canvas, emulated: !! emulated } : {} ),
 		...( shownFor ? { for: shownFor } : {} ),
+		// A table of light, encoded after the lookup; a file without it holds encoded values.
+		...( linear ? { linear: true } : {} ),
 		...extra,
 	} ) );
 

@@ -770,6 +770,9 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
 - ⚠️ `SimpleSky` clears `userData.__rayzeeColorSpace` on every rewrite, or a new sky is never converted. The physical
   sky bakes straight into the working space.
 - ⚠️ Grid index 0 is baked from exactly 0, or every render has a raised black floor.
+- A display shown converted bakes from the view's light (a derived config holds each view transform as a colour space),
+  as light or encoded, whichever is closer; a view stepping through a `.spi1d` after a grey value (False Color) is split
+  there into the cube and a curve in the texture's extra slices. Both in docs/COLOR_MANAGEMENT.md, "Shaper + table".
 - **HDR on screen** (`app.color.setHdrOutput()`, off in the engine; the app follows `(dynamic-range: high)`): the canvas
   goes half-float, extended range, and shows the view's HDR version from the config (`hdrViewFor`; AgX → "AgX - HDR 1000
   nits"), decoded to 1.0 = 100 nits (`buildCanvasView`). ⚠️ It is not a registry entry and never reaches a readback:
@@ -1244,3 +1247,6 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 13. **Partial storage uploads**: three.js uploads an attribute whole only when its `updateRanges` is empty — any pending `addUpdateRange` cuts a later `needsUpdate = true` down to that range. Full uploads therefore clear ranges first (`PathTracerStage._updateStorageBuffer`). Without that, the TLAS-leaf range a visibility patch leaves at load swallowed the refit that followed it (`refit-deform` read +16.6 %).
 14. **No module-level shader state**: a TSL function's body runs when its kernel *compiles* (often the first dispatch), not when the JS builds the graph, so a module variable is read from whichever renderer or stage set it last. Per-renderer resources (material buckets, shadow albedo maps, gobo/IES textures, the alpha-shadow switch) ride in the kernel's build context instead: `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in a function body (`TSL/SceneResources.js`). A kernel that reads them without the context throws. `bench:node -- --core` runs the core beside the full engine to hold this. Colour management stays page-wide by design (one OCIO runtime).
 15. **Pass values, not expressions, into a Fn that loops**: an argument expression is generated where the Fn first reads it. If that read sits in a `Loop` after a `Break()` that can fire first, every later read sees zero. The bidirectional emitter-hit weight passed `origin.sub( … )` to `calculateLightBVHPdf`; a one-node light tree left the walk before reading it, so the pdf was measured from the world origin (+6 % on a grazing-lit floor, since the integrator landed). `.toVar()` the argument.
+16. **A TSL `select` takes one condition**: `ConditionalNode` builds it as a `bool`, so a `vec3` condition follows its first
+   channel. A view's encode picked the power curve for every channel of magenta and showed green 0.055 where 0 belongs. Per
+   channel, `mix( a, b, step( edge, x ) )`; hand-written WGSL `select` is per channel.

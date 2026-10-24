@@ -187,7 +187,7 @@ suite( 'HDR versions in the ACES configs', () => {
 
 		await cm.loadConfig( { builtin: ACES2, registerViews: false } );
 		const shown = buildCanvasView( { display: 'Rec.2100-PQ - Display', view: 'ACES 2.0 - HDR 1000 nits (P3 D65)', source: 'ACEScg', canvas: 'srgb' } );
-		const sample = makeCpuSampler( { data: shown.table.data, size: shown.ocio.size, minEv: shown.ocio.minEv, maxEv: shown.ocio.maxEv } );
+		const sample = makeCpuSampler( { data: shown.table.data, ...shown.ocio } );
 
 		const p = getRuntime().config.createGroupTransformProcessor( [
 			{ type: 'displayView', source: 'ACEScg', display: 'Rec.2100-PQ - Display', view: 'ACES 2.0 - HDR 1000 nits (P3 D65)' },

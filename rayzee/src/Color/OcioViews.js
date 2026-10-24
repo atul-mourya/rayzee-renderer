@@ -13,13 +13,15 @@
 
 import { Data3DTexture, RGBAFormat, HalfFloatType, NearestFilter, ClampToEdgeWrapping } from 'three';
 import {
-	Fn, vec3, ivec3, float, floor, clamp, log2, max, If, texture3DLoad,
+	Fn, vec3, ivec3, float, int, floor, clamp, log2, max, min, mix, step, sign, If, texture3DLoad,
 } from 'three/tsl';
 
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { displayCanvasFit, isDataView } from './Displays.js';
 import { getRuntime, getConfigInfo, getConfigText, describeConfig } from './OcioRuntime.js';
-import { bakeLut, makeCpuSampler, packHalf, lutWgsl, measureBakeError } from './LutBake.js';
+import { bakeLut, bakeCurve, curveSlices, encodeExtended, makeCpuSampler, packHalf, lutWgsl, measureBakeError } from './LutBake.js';
+
+export { encodeExtended };
 import { addViewTransform, nextOcioId, VIEW_TRANSFORMS } from './ViewTransforms.js';
 
 /** 25 stops, which is wider than any renderer output worth showing. */
@@ -166,33 +168,284 @@ export function canvasFitOf( space ) {
 
 }
 
-/** Display-linear CIE XYZ → the canvas colour space's extended encoding, in place. */
-function encodeForCanvas( buffer, canvas ) {
+/** Display-linear CIE XYZ → the canvas colour space's light, in place; the lookup encodes it (a `linear` table). */
+function lightForCanvas( buffer, canvas ) {
 
 	const m = XYZ_TO_CANVAS[ canvas ];
 	for ( let i = 0; i < buffer.length; i += 4 ) {
 
 		const x = buffer[ i ], y = buffer[ i + 1 ], z = buffer[ i + 2 ];
-		buffer[ i ] = encodeExtended( m[ 0 ] * x + m[ 1 ] * y + m[ 2 ] * z );
-		buffer[ i + 1 ] = encodeExtended( m[ 3 ] * x + m[ 4 ] * y + m[ 5 ] * z );
-		buffer[ i + 2 ] = encodeExtended( m[ 6 ] * x + m[ 7 ] * y + m[ 8 ] * z );
+		buffer[ i ] = m[ 0 ] * x + m[ 1 ] * y + m[ 2 ] * z;
+		buffer[ i + 1 ] = m[ 3 ] * x + m[ 4 ] * y + m[ 5 ] * z;
+		buffer[ i + 2 ] = m[ 6 ] * x + m[ 7 ] * y + m[ 8 ] * z;
 
 	}
 
 }
 
+// ── The derived config ──────────────────────────────────────────────────────────────────────────────────────────────
+// The loaded config's own text plus, for every view transform defined from the scene reference, a scene-referred
+// colour space holding it (the view's light before its display's encoding), and, for one that steps through a .spi1d
+// after a grey value (Blender's False Color), that transform split there: the part before as a colour space, the
+// lookup and the rest as a named transform. Built the first time a bake needs it, once a config.
+
+let derived = null;
+
+const indentOf = line => line.search( /\S/ );
+
+/** Where the runtime mounted the config's files, so the derived config finds its LUTs; '' for a built-in one. */
+function mountedRoot( rt, text ) {
+
+	const FS = rt.ocio?.module?.FS;
+	const base = '/ocio-runtime/configs';
+	try {
+
+		for ( const dir of FS?.readdir( base ) ?? [] ) {
+
+			if ( dir[ 0 ] === '.' ) continue;
+			const path = `${base}/${dir}`;
+			if ( FS.readdir( path ).some( n => n.endsWith( '.ocio' ) && new TextDecoder().decode( FS.readFile( `${path}/${n}` ) ) === text ) ) return path;
+
+		}
+
+	} catch {
+
+		// Nothing mounted: a built-in config has no files.
+
+	}
+
+	return '';
+
+}
+
+/** Each view transform's `from_scene_reference:` line with its value's lines, by name. */
+function viewTransformSources( lines ) {
+
+	const found = new Map();
+	for ( let i = 0; i < lines.length; i ++ ) {
+
+		if ( ! /^\s*-\s*!<ViewTransform>\s*$/.test( lines[ i ] ) ) continue;
+		const item = indentOf( lines[ i ] );
+		let end = i + 1;
+		while ( end < lines.length && ! ( lines[ end ].trim() && indentOf( lines[ end ] ) <= item ) ) end ++;
+		const body = lines.slice( i + 1, end );
+		const name = body.map( l => l.match( /^\s*name:\s*(.+?)\s*$/ )?.[ 1 ] ).find( Boolean )?.replace( /^(["'])(.*)\1$/, '$2' );
+		const at = body.findIndex( l => /^\s*from_scene_reference:/.test( l ) );
+		if ( ! name || at < 0 ) continue;
+		const key = indentOf( body[ at ] );
+		let stop = at + 1;
+		while ( stop < body.length && ! ( body[ stop ].trim() && indentOf( body[ stop ] ) <= key ) ) stop ++;
+		found.set( name, body.slice( at, stop ).filter( l => l.trim() ) );
+
+	}
+
+	return found;
+
+}
+
+/** A group whose children are one flow line each, split before its last forward .spi1d; null when there is none. */
+function lookupSplit( value ) {
+
+	if ( ! /:\s*!<GroupTransform>\s*$/.test( value[ 0 ] ) ) return null;
+	const children = value.slice( 1 ).filter( l => ! /^\s*children:\s*$/.test( l ) );
+	if ( ! children.every( l => /^\s*-\s*!<\w+>\s*\{.*\}\s*$/.test( l ) ) ) return null;
+	const steps = children.map( l => l.replace( /^\s*-\s*/, '' ).trim() );
+	const at = steps.findLastIndex( s => /^!<FileTransform>/.test( s ) && /\.spi1d\b/i.test( s ) && ! /direction:\s*inverse/.test( s ) );
+	if ( at <= 0 ) return null;
+	return { pre: steps.slice( 0, at ), post: steps.slice( at ), src: steps[ at ].match( /\bsrc:\s*["']?([^,}"']+?)["']?\s*[,}]/ )?.[ 1 ] };
+
+}
+
+/** A .spi1d's domain and length, read where the config's search path finds it. */
+function spi1dShape( FS, root, text, src ) {
+
+	const dirs = ( text.match( /^search_path:\s*(.+?)\s*$/m )?.[ 1 ].replace( /^["']|["']$/g, '' ).split( ':' ) ?? [ '' ] ).concat( '' );
+	for ( const dir of dirs ) {
+
+		try {
+
+			const head = new TextDecoder().decode( FS.readFile( [ root, dir, src ].filter( Boolean ).join( '/' ) ).subarray( 0, 512 ) );
+			const range = head.match( /^From\s+(\S+)\s+(\S+)/m );
+			const n = Number( head.match( /^Length\s+(\d+)/m )?.[ 1 ] );
+			if ( n > 1 ) return { lo: range ? Number( range[ 1 ] ) : 0, hi: range ? Number( range[ 2 ] ) : 1, n };
+
+		} catch {
+
+			// Not in this directory.
+
+		}
+
+	}
+
+	return null;
+
+}
+
+/** What the derived config holds for each view transform, read from the text alone (cheap), once a config. */
+function derivedPlan() {
+
+	const text = getConfigText();
+	if ( derived?.text === text ) return derived;
+	releaseDerivedConfig();
+	if ( ! text ) return null;
+	const lines = text.split( '\n' );
+	derived = { text, lines, config: null, built: false, views: new Map() };
+	let k = 0;
+	for ( const [ name, value ] of viewTransformSources( lines ) ) {
+
+		derived.views.set( name, { space: `__rayzee_view_${k}`, value, split: lookupSplit( value ), index: k } );
+		k ++;
+
+	}
+
+	return derived;
+
+}
+
+/** The plan as an OCIO config: built on first need, its splits checked (a .spi1d found, a grey value before it). */
+function buildDerived( plan ) {
+
+	if ( plan.built ) return plan.config;
+	plan.built = true;
+	const rt = getRuntime();
+	const { lines } = plan;
+	const listAt = lines.findIndex( l => /^colorspaces:\s*$/.test( l ) );
+	if ( ! rt?.ocio || listAt < 0 || ! plan.views.size ) return null;
+
+	try {
+
+		const pad = ' '.repeat( Math.max( 0, indentOf( lines.slice( listAt + 1 ).find( l => /^\s*-/.test( l ) ) ?? '  -' ) ) );
+		const root = mountedRoot( rt, plan.text ), FS = rt.ocio.module?.FS;
+		const spaces = [], named = [];
+		for ( const entry of plan.views.values() ) {
+
+			const { value, index } = entry;
+			const shift = pad.length + 2 - indentOf( value[ 0 ] );
+			const move = l => ( shift >= 0 ? ' '.repeat( shift ) + l : l.slice( - shift ) );
+			spaces.push( `${pad}- !<ColorSpace>`, `${pad}  name: ${entry.space}`, `${pad}  isdata: false`, ...value.map( move ) );
+			const shape = entry.split?.src && FS ? spi1dShape( FS, root, plan.text, entry.split.src ) : null;
+			if ( ! shape ) {
+
+				entry.split = null;
+				continue;
+
+			}
+
+			const { pre, post } = entry.split;
+			entry.split = { pre: `__rayzee_pre_${index}`, post: `__rayzee_post_${index}`, ...shape };
+			spaces.push( `${pad}- !<ColorSpace>`, `${pad}  name: ${entry.split.pre}`, `${pad}  isdata: false`,
+				`${pad}  from_scene_reference: !<GroupTransform>`, `${pad}    children:`, ...pre.map( s => `${pad}      - ${s}` ) );
+			named.push( '  - !<NamedTransform>', `    name: ${entry.split.post}`, '    transform: !<GroupTransform>',
+				'      children:', ...post.map( s => `        - ${s}` ) );
+
+		}
+
+		const out = lines.slice();
+		out.splice( listAt + 1, 0, ...spaces );
+		const namedAt = out.findIndex( l => /^named_transforms:\s*$/.test( l ) );
+		if ( named.length ) out.splice( namedAt < 0 ? out.length : namedAt + 1, 0, ...( namedAt < 0 ? [ 'named_transforms:' ] : [] ), ...named );
+		plan.config = rt.ocio.createConfigFromString( out.join( '\n' ), { workingDir: root } );
+		plan.config.validate();
+
+		// A split holds only where the part before the lookup is grey, so one value indexes it.
+		const probe = new Float32Array( [ 1, 0.2, 0.05, 1, 0.02, 0.6, 0.1, 1, 0.3, 0.1, 2, 1, 0.18, 0.18, 0.18, 1 ] );
+		for ( const entry of plan.views.values() ) {
+
+			if ( ! entry.split ) continue;
+			const p = plan.config.createGroupTransformProcessor( [ { type: 'colorSpace', source: describeConfig().sceneLinear, destination: entry.split.pre } ] );
+			const grey = p.applyRGBAF32( probe, { copy: true } );
+			p.dispose();
+			for ( let i = 0; i < grey.length; i += 4 ) if ( Math.abs( grey[ i ] - grey[ i + 1 ] ) + Math.abs( grey[ i + 1 ] - grey[ i + 2 ] ) > 1e-5 ) entry.split = null;
+
+		}
+
+	} catch ( error ) {
+
+		plan.config?.dispose();
+		plan.config = null;
+		issueLog?.warn( ISSUE_CODES.VIEW_TRANSFORM_BAKE_FAILED, `views bake from OCIO's display output instead: ${error.message}` );
+
+	}
+
+	return plan.config;
+
+}
+
+/** Free the derived config; the next bake that needs one builds it again. */
+export function releaseDerivedConfig() {
+
+	derived?.config?.dispose();
+	derived = null;
+
+}
+
 /**
- * One view (and look) sampled into a half-float table: as OCIO outputs it, or, with `canvas`, decoded to the display
- * connection space and encoded for that canvas colour space.
+ * The derived config's entry for a view's transform when the bake can use it: its light for a converted display, or
+ * its split. Null for a view of a colour space or with looks of its own.
+ */
+function derivedView( display, view, canvas ) {
+
+	const v = getConfigInfo()?.viewsByDisplay[ display ]?.find( x => x.name === view );
+	if ( ! v?.transform || v.looks ) return null;
+	const plan = derivedPlan();
+	const entry = plan?.views.get( v.transform );
+	if ( ! entry || ( ! canvas && ! entry.split ) ) return null;
+	const config = buildDerived( plan );
+	if ( ! config || ( ! canvas && ! entry.split ) ) return null;
+	return { config, space: entry.space, split: entry.split };
+
+}
+
+/**
+ * One view (and look) sampled into a half-float table: as OCIO outputs it, or, with `canvas`, as the light the display
+ * emits in that canvas colour space, encoded in the bake or after the lookup (`linear`), whichever is closer. With a
+ * `curve` (a split view) the cube holds the grey value before the view's lookup, and the entries after it the colour.
  */
 function bakeView( { source, display, view, look, context, canvas = null, size, minEv, maxEv } ) {
 
-	const output = canvas ? viewOutputSpace( getConfigInfo(), display, view ) : null;
-	const processor = createViewProcessor( { source, display, view, look, context, decodeFrom: output, decodeTo: canvas && displayReferenceSpace() } );
-	const apply = buffer => {
+	const output = viewOutputSpace( getConfigInfo(), display, view );
+	const options = context ? { context } : undefined;
+	const looked = look ? [ { type: 'look', source, destination: source, looks: look } ] : [];
+	const own = derivedView( display, view, canvas );
+	// A converted display's table holds the light in the canvas's primaries, encoded either in the bake or after it.
+	const toCanvas = buffer => canvas && lightForCanvas( buffer, canvas );
+	const encodeAll = ( buffer, from = 0 ) => {
 
-		processor.applyRGBAF32( buffer );
-		if ( canvas ) encodeForCanvas( buffer, canvas );
+		for ( let i = from; i < buffer.length; i ++ ) if ( i % 4 !== 3 ) buffer[ i ] = encodeExtended( buffer[ i ] );
+
+	};
+
+	let cube, entries = null, curve = null;
+	if ( own?.split ) {
+
+		const { pre, post, lo, hi, n } = own.split;
+		cube = own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source, destination: pre } ], options );
+		entries = own.config.createGroupTransformProcessor( [
+			{ type: 'named', name: post },
+			...( canvas ? [] : [ { type: 'colorSpace', source: displayReferenceSpace(), destination: output } ] ),
+		], options );
+		curve = { n, lo, hi };
+
+	} else if ( canvas && own ) {
+
+		// A converted display from its light, not its codes decoded: its encoding clips at 0 (Rec.1886's and Rec.2020's
+		// ExponentTransform), which put a kink inside the cube wherever a colour left the display's gamut, and a pure
+		// primary in a wider working space missed by up to 95 levels. The canvas clips the same light itself.
+		cube = own.config.createGroupTransformProcessor( [ ...looked, { type: 'colorSpace', source, destination: own.space } ], options );
+
+	} else {
+
+		cube = createViewProcessor( { source, display, view, look, context, decodeFrom: canvas ? output : null, decodeTo: canvas && displayReferenceSpace() } );
+
+	}
+
+	// What the table stands for, as its lookup returns it: encoded.
+	const truth = buffer => {
+
+		cube.applyRGBAF32( buffer );
+		if ( entries ) entries.applyRGBAF32( buffer );
+		toCanvas( buffer );
+		if ( canvas ) encodeAll( buffer );
 
 	};
 
@@ -202,19 +455,66 @@ function bakeView( { source, display, view, look, context, canvas = null, size, 
 	// same table, so it reports what actually renders.
 	try {
 
-		const half = packHalf( bakeLut( { size, minEv, maxEv, apply } ) );
-		return { half, error: measureBakeError( { sampler: makeCpuSampler( { data: half, size, minEv, maxEv } ), apply } ) };
+		let values = bakeLut( { size, minEv, maxEv, apply: buffer => {
+
+			cube.applyRGBAF32( buffer );
+			if ( ! curve ) toCanvas( buffer );
+
+		} } );
+
+		if ( curve ) {
+
+			const full = new Float32Array( ( size ** 3 + curveSlices( curve.n, size ) * size * size ) * 4 );
+			full.set( values );
+			full.set( bakeCurve( { ...curve, apply: buffer => {
+
+				entries.applyRGBAF32( buffer );
+				toCanvas( buffer );
+
+			} } ), size ** 3 * 4 );
+			values = full;
+
+		}
+
+		const table = ( data, linear ) => {
+
+			const half = packHalf( data );
+			return { half, curve, linear, error: measureBakeError( { sampler: makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear } ), apply: truth } ) };
+
+		};
+
+		if ( ! canvas ) return table( values, false );
+
+		// Encoded values follow a tone curve better (mean 0.2 against 0.4 levels over 223 tables), but where a colour's
+		// light crosses 0 inside a cell (a pure primary in a working space wider than the display) only light
+		// interpolates straight through: Standard on Rec.2020 in Rec.2020, worst 97 levels encoded, 10 as light. Both come
+		// from the same OCIO output, so light is kept where it at least halves the worst case.
+		const light = table( values, true );
+		const encoded = values.slice();
+		encodeAll( encoded, curve ? size ** 3 * 4 : 0 );
+		const coded = table( encoded, false );
+		return light.error.max * 2 < coded.error.max ? light : coded;
 
 	} finally {
 
-		processor.dispose();
+		cube.dispose();
+		entries?.dispose();
 
 	}
 
 }
 
 /** The TSL half of the table: the same shaper and the same six tetrahedra, as a node graph. */
-function buildTslNode( { texture, size, minEv, maxEv } ) {
+function buildTslNode( { texture, size, minEv, maxEv, curve = null, linear = false } ) {
+
+	// A linear table's light, encoded after the lookup with the canvas's extended curve. mix by step, not select: a TSL
+	// select takes one condition, so a vector one followed its first channel (green on magenta came out 0.055).
+	const encode = v => {
+
+		const a = v.abs();
+		return mix( a.pow( vec3( 1 / 2.4 ) ).mul( 1.055 ).sub( 0.055 ), a.mul( 12.92 ), step( a, vec3( 0.0031308 ) ) ).mul( sign( v ) );
+
+	};
 
 	const last = size - 1;
 	const span = maxEv - minEv;
@@ -288,10 +588,18 @@ function buildTslNode( { texture, size, minEv, maxEv } ) {
 		const v2 = fetch( i0.add( o2 ) ).toVar();
 		const v3 = fetch( i0.add( o3 ) ).toVar();
 
-		return c000
+		const out = c000
 			.add( v1.sub( c000 ).mul( w.x ) )
 			.add( v2.sub( v1 ).mul( w.y ) )
 			.add( v3.sub( v2 ).mul( w.z ) );
+		if ( ! curve ) return linear ? encode( out ) : out;
+
+		// The curve: entry i is texel size³ + i, in the slices after the cube.
+		const u = clamp( out.x.sub( curve.lo ).div( curve.hi - curve.lo ), 0.0, 1.0 ).mul( curve.n - 1 ).toVar();
+		const k = min( int( floor( u ) ), int( curve.n - 2 ) ).toVar();
+		const entry = i => texture3DLoad( texture, ivec3( i.mod( size ), i.div( size ).mod( size ), i.div( size * size ).add( size ) ) ).rgb;
+		const shown = mix( entry( k ), entry( k.add( 1 ) ), u.sub( float( k ) ) );
+		return linear ? encode( shown ) : shown;
 
 	} );
 
@@ -356,12 +664,12 @@ export function buildOcioView( {
 
 	}
 
-	const { half, error } = bakeView( { source: from, display, view, look, context, canvas: emulated ? canvas : null, size, minEv, maxEv } );
+	const { half, error, curve, linear } = bakeView( { source: from, display, view, look, context, canvas: emulated ? canvas : null, size, minEv, maxEv } );
 
 	return tableEntry( {
 		id, half, error,
 		name: name ?? ( look ? `${view} + ${look} (${display})` : `${view} (${display})` ),
-		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, emulated },
+		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, emulated, curve, linear },
 	} );
 
 }
@@ -372,22 +680,22 @@ export function buildOcioView( {
  */
 export function buildBakedView( baked, id = null ) {
 
-	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, fingerprint, ocioVersion, canvas, emulated } = baked;
+	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, fingerprint, ocioVersion, canvas, emulated, curve, linear } = baked;
 
 	return tableEntry( {
 		id, name, error, half: data,
 		ocio: {
 			display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv,
-			canvas: canvas ?? displayCanvasFit( display ) ?? 'srgb', emulated: !! emulated,
+			canvas: canvas ?? displayCanvasFit( display ) ?? 'srgb', emulated: !! emulated, curve: curve ?? null, linear: !! linear,
 			baked: { fingerprint: fingerprint ?? null, ocioVersion: ocioVersion ?? null },
 		},
 	} );
 
 }
 
-function tableTexture( half, size ) {
+function tableTexture( half, size, curve = null ) {
 
-	const texture = new Data3DTexture( half, size, size, size );
+	const texture = new Data3DTexture( half, size, size, size + ( curve ? curveSlices( curve.n, size ) : 0 ) );
 	texture.format = RGBAFormat;
 	texture.type = HalfFloatType;
 	texture.minFilter = NearestFilter;
@@ -400,14 +708,14 @@ function tableTexture( half, size ) {
 
 function tableEntry( { id, name, half, error, ocio } ) {
 
-	const { size, minEv, maxEv } = ocio;
-	const sampler = makeCpuSampler( { data: half, size, minEv, maxEv } );
+	const { size, minEv, maxEv, curve = null, linear = false } = ocio;
+	const sampler = makeCpuSampler( { data: half, size, minEv, maxEv, curve, linear } );
 	const entryId = id ?? nextOcioId();
 	const wgslConst = `TM_OCIO_${entryId}`;
 	const fnName = `tm_ocio_${entryId}`;
 
 	const held = liveViews.get( entryId );
-	const reusable = held && held.size === size && held.minEv === minEv && held.maxEv === maxEv;
+	const reusable = held && held.size === size && held.minEv === minEv && held.maxEv === maxEv && JSON.stringify( held.curve ) === JSON.stringify( curve ) && held.linear === linear;
 
 	let texture, tsl;
 	if ( reusable ) {
@@ -420,12 +728,12 @@ function tableEntry( { id, name, half, error, ocio } ) {
 	} else {
 
 		held?.texture.dispose();
-		texture = tableTexture( half, size );
-		tsl = buildTslNode( { texture, size, minEv, maxEv } );
+		texture = tableTexture( half, size, curve );
+		tsl = buildTslNode( { texture, size, minEv, maxEv, curve, linear } );
 
 	}
 
-	liveViews.set( entryId, { texture, tsl, size, minEv, maxEv } );
+	liveViews.set( entryId, { texture, tsl, size, minEv, maxEv, curve, linear } );
 
 	return {
 		id: entryId,
@@ -437,7 +745,7 @@ function tableEntry( { id, name, half, error, ocio } ) {
 
 		cpu: ( r, g, b, exposure, out ) => sampler( r * exposure, g * exposure, b * exposure, out ),
 
-		wgsl: lutWgsl( { fnName, texName: `${wgslConst.toLowerCase()}_tex`, size, minEv, maxEv } ),
+		wgsl: lutWgsl( { fnName, texName: `${wgslConst.toLowerCase()}_tex`, size, minEv, maxEv, curve, linear } ),
 		call: `${fnName}( c )`,
 		tsl,
 
@@ -461,15 +769,6 @@ export const XYZ_TO_CANVAS = Object.freeze( {
 		11844 / 330415, - 50337 / 660830, 316169 / 330415,
 	],
 } );
-
-/** The canvas colour spaces' curve, extended past 1 and mirrored below 0 as CSS Color 4 extends it. */
-export function encodeExtended( v ) {
-
-	const a = Math.abs( v );
-	const e = a <= 0.0031308 ? 12.92 * a : 1.055 * Math.pow( a, 1 / 2.4 ) - 0.055;
-	return v < 0 ? - e : e;
-
-}
 
 /**
  * The config's display connection space: CIE XYZ (D65), where every display is linear and 1.0 is 100 nits. Configs
@@ -507,11 +806,11 @@ export function buildCanvasView( {
 	if ( ! displayReferenceSpace() ) throw new Error( 'the config names no display-referred CIE XYZ space to decode its displays in' );
 	if ( ! XYZ_TO_CANVAS[ canvas ] ) throw new Error( `no encoding for a "${canvas}" canvas` );
 
-	const { half, error } = bakeView( { source: from, display, view, look, context, canvas, size, minEv, maxEv } );
+	const { half, error, curve, linear } = bakeView( { source: from, display, view, look, context, canvas, size, minEv, maxEv } );
 
 	return canvasTable( {
 		name: look ? `${view} + ${look} (${display})` : `${view} (${display})`, half, error,
-		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, for: shownFor },
+		ocio: { display, view, look, context, source: from, configId: info.id, size, minEv, maxEv, canvas, for: shownFor, curve, linear },
 	} );
 
 }
@@ -519,22 +818,22 @@ export function buildCanvasView( {
 /** {@link buildCanvasView}'s result from a saved file (`BakedViews.js`), without the runtime. */
 export function buildBakedCanvasView( baked ) {
 
-	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, canvas, for: shownFor } = baked;
+	const { name, data, error, configId, display, view, look, context, source, size, minEv, maxEv, canvas, for: shownFor, linear } = baked;
 	return canvasTable( {
 		name, half: data, error,
-		ocio: { display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv, canvas: canvas ?? 'srgb', for: shownFor ?? null },
+		ocio: { display, view, look: look ?? null, context: context ?? null, source, configId, size, minEv, maxEv, canvas: canvas ?? 'srgb', for: shownFor ?? null, linear: !! linear },
 	} );
 
 }
 
 function canvasTable( { name, half, error, ocio } ) {
 
-	const { size, minEv, maxEv } = ocio;
-	const texture = tableTexture( half, size );
+	const { size, minEv, maxEv, curve = null, linear = false } = ocio;
+	const texture = tableTexture( half, size, curve );
 	return {
 		name, source: 'ocio', error, ocio,
 		table: { data: half, size, texture },
-		tsl: buildTslNode( { texture, size, minEv, maxEv } ),
+		tsl: buildTslNode( { texture, size, minEv, maxEv, curve, linear } ),
 		dispose: () => texture.dispose(),
 	};
 

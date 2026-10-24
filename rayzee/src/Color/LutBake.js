@@ -16,6 +16,15 @@
  *
  * ⚠️ Grid index 0 is baked from exactly 0, not from 2^minEv. Without that, true black leaves the
  * table one code value above zero and every render has a raised black floor.
+ *
+ * A view that steps through a 1D lookup after a grey value (Blender's False Color) adds a `curve`: the cube holds
+ * that value, and `n` entries over `lo`..`hi`, linearly interpolated as OCIO reads the lookup, give the colour. The
+ * cube blurred the steps: 0.18 grey showed teal. The entries follow the cube in the same texture, extra z slices
+ * (entry i is texel size³ + i), so the readback still binds one texture a view.
+ *
+ * A `linear` table holds light in the canvas's primaries, and the lookup encodes it after interpolating. A converted
+ * display's view (and a view's HDR version) is baked both ways and keeps the closer (`bakeView` in OcioViews.js):
+ * encoded follows a tone curve better, light a colour whose light crosses 0 inside a cell.
  */
 
 /** Smallest shaper step, so log2 of the darkest sample is finite. */
@@ -191,11 +200,48 @@ export function tetrahedron( fx, fy, fz ) {
 
 }
 
+/** The canvas colour spaces' curve, extended past 1 and mirrored below 0 as CSS Color 4 extends it. */
+export function encodeExtended( v ) {
+
+	const a = Math.abs( v );
+	const e = a <= 0.0031308 ? 12.92 * a : 1.055 * Math.pow( a, 1 / 2.4 ) - 0.055;
+	return v < 0 ? - e : e;
+
+}
+
+/** The z slices a curve of `n` entries takes after a `size`³ cube. */
+export function curveSlices( n, size ) {
+
+	return Math.ceil( n / ( size * size ) );
+
+}
+
+/**
+ * Sample `apply` at `n` grey values over `lo`..`hi`, as a curve's entries.
+ * @returns {Float32Array} n × 4
+ */
+export function bakeCurve( { n, lo, hi, apply } ) {
+
+	const buf = new Float32Array( n * 4 );
+	for ( let i = 0; i < n; i ++ ) {
+
+		const t = lo + ( hi - lo ) * i / ( n - 1 );
+		buf.set( [ t, t, t, 1 ], i * 4 );
+
+	}
+
+	apply( buf );
+	return buf;
+
+}
+
 /**
  * A JavaScript sampler over a baked table.
+ * @param {?{n: number, lo: number, hi: number}} [options.curve] - entries after the cube, read with its first channel
+ * @param {boolean} [options.linear=false] - the table holds light, encoded after the lookup
  * @returns {function(number, number, number, Float32Array|number[]): void}
  */
-export function makeCpuSampler( { data, size, minEv, maxEv } ) {
+export function makeCpuSampler( { data, size, minEv, maxEv, curve = null, linear = false } ) {
 
 	const s2 = size * size;
 	const last = size - 1;
@@ -241,6 +287,24 @@ export function makeCpuSampler( { data, size, minEv, maxEv } ) {
 
 		}
 
+		if ( curve ) {
+
+			const u = Math.min( Math.max( ( out[ 0 ] - curve.lo ) / ( curve.hi - curve.lo ), 0 ), 1 ) * ( curve.n - 1 );
+			const i0 = Math.min( Math.floor( u ), curve.n - 2 );
+			const f = u - i0;
+			const base = ( size * s2 + i0 ) * 4;
+			for ( let ch = 0; ch < 3; ch ++ ) {
+
+				const a = halves ? decode[ data[ base + ch ] ] : data[ base + ch ];
+				const z = halves ? decode[ data[ base + 4 + ch ] ] : data[ base + 4 + ch ];
+				out[ ch ] = a + ( z - a ) * f;
+
+			}
+
+		}
+
+		if ( linear ) for ( let ch = 0; ch < 3; ch ++ ) out[ ch ] = encodeExtended( out[ ch ] );
+
 	};
 
 }
@@ -254,9 +318,29 @@ export function makeCpuSampler( { data, size, minEv, maxEv } ) {
  *
  * @returns {string} a WGSL fragment declaring `fn <fnName>( c: vec3<f32> ) -> vec3<f32>`
  */
-export function lutWgsl( { fnName, texName, size, minEv, maxEv } ) {
+export function lutWgsl( { fnName, texName, size, minEv, maxEv, curve = null, linear = false } ) {
 
 	const f = v => ( Number.isInteger( v ) ? `${v}.0` : String( v ) );
+	const cube = curve || linear ? `${fnName}_cube` : fnName;
+	const curved = linear ? `${fnName}_curve` : fnName;
+	const curveWgsl = curve ? /* wgsl */ `
+fn ${fnName}_entry( i: i32 ) -> vec3<f32> {
+	return textureLoad( ${texName}, vec3<i32>( i % ${size}, ( i / ${size} ) % ${size}, ${size} + i / ${size * size} ), 0 ).rgb;
+}
+
+fn ${curved}( c: vec3<f32> ) -> vec3<f32> {
+	let u = clamp( ( ${cube}( c ).x - ${f( curve.lo )} ) / ${f( curve.hi - curve.lo )}, 0.0, 1.0 ) * ${f( curve.n - 1 )};
+	let i0 = min( i32( floor( u ) ), ${curve.n - 2} );
+	return mix( ${fnName}_entry( i0 ), ${fnName}_entry( i0 + 1 ), u - f32( i0 ) );
+}
+` : '';
+	const encodeWgsl = linear ? /* wgsl */ `
+fn ${fnName}( c: vec3<f32> ) -> vec3<f32> {
+	let v = ${curve ? curved : cube}( c );
+	let a = abs( v );
+	return sign( v ) * select( 1.055 * pow( a, vec3<f32>( 1.0 / 2.4 ) ) - 0.055, 12.92 * a, a <= vec3<f32>( 0.0031308 ) );
+}
+` : '';
 
 	return /* wgsl */ `
 fn ${fnName}_shape( v: vec3<f32> ) -> vec3<f32> {
@@ -269,7 +353,7 @@ fn ${fnName}_fetch( i: vec3<i32> ) -> vec3<f32> {
 	return textureLoad( ${texName}, clamp( i, vec3<i32>( 0 ), vec3<i32>( ${size - 1} ) ), 0 ).rgb;
 }
 
-fn ${fnName}( c: vec3<f32> ) -> vec3<f32> {
+fn ${cube}( c: vec3<f32> ) -> vec3<f32> {
 	let p = ${fnName}_shape( c );
 	let i0 = clamp( vec3<i32>( floor( p ) ), vec3<i32>( 0 ), vec3<i32>( ${size - 2} ) );
 	let f = clamp( p - vec3<f32>( i0 ), vec3<f32>( 0.0 ), vec3<f32>( 1.0 ) );
@@ -310,7 +394,7 @@ fn ${fnName}( c: vec3<f32> ) -> vec3<f32> {
 
 	return c000 + ( v1 - c000 ) * w.x + ( v2 - v1 ) * w.y + ( v3 - v2 ) * w.z;
 }
-`;
+${curveWgsl}${encodeWgsl}`;
 
 }
 

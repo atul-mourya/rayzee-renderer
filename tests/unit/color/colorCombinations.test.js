@@ -12,7 +12,7 @@ import { HalfFloatType } from 'three';
 import { ColorManagement } from '@/core/Color/ColorManagement.js';
 import { isDataView, isHdrDisplay, matchingView, hdrViewFor, sameToneMapping } from '@/core/Color/Displays.js';
 import { XYZ_TO_CANVAS, displayReferenceSpace } from '@/core/Color/OcioViews.js';
-import { unshape, unpackHalf } from '@/core/Color/LutBake.js';
+import { unshape, makeCpuSampler } from '@/core/Color/LutBake.js';
 import { describeConfig, getRuntime, getConfigInfo } from '@/core/Color/OcioRuntime.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { looksForView } from '@/lib/colorLabels.js';
@@ -87,7 +87,7 @@ for ( const { name, load } of CONFIGS ) {
 
 		// What the table holds for `nodes` against what OCIO says the display emits, as the canvas shows it: linear, in
 		// the table's canvas colour space, below zero clipped. Null when the view shows its codes as they are.
-		function mismatches( table, { display, view, look, source, size, minEv, maxEv, canvas }, nodes ) {
+		function mismatches( table, { display, view, look, source, size, minEv, maxEv, canvas, curve, linear }, nodes ) {
 
 			const colorSpace = config.views[ display ].find( v => v.name === view )?.colorSpace;
 			const output = ! colorSpace || colorSpace === '<USE_DISPLAY_NAME>' ? display : colorSpace;
@@ -102,12 +102,14 @@ for ( const { name, load } of CONFIGS ) {
 			p.applyRGBAF32( xyz );
 			p.dispose();
 
-			const values = unpackHalf( table.data );
+			// Read as the readback reads it, so a view split at its lookup (False Color) is read through its curve.
+			const sample = makeCpuSampler( { data: table.data, size, minEv, maxEv, curve, linear } );
+			const read = [ 0, 0, 0 ];
 			const toCanvas = XYZ_TO_CANVAS[ canvas ];
 			return nodes.flatMap( ( [ r, g, b ], k ) => {
 
-				const at = ( r + g * size + b * size * size ) * 4;
-				const shown = [ 0, 1, 2 ].map( c => Math.max( 0, decode( values[ at + c ] ) ) );
+				sample( unshape( r, size, minEv, maxEv ), unshape( g, size, minEv, maxEv ), unshape( b, size, minEv, maxEv ), read );
+				const shown = read.map( v => Math.max( 0, decode( v ) ) );
 				const truth = mul( toCanvas, [ xyz[ k * 4 ], xyz[ k * 4 + 1 ], xyz[ k * 4 + 2 ] ] ).map( v => Math.max( 0, v ) );
 				const scale = Math.max( 0.01, ...truth );
 				const off = Math.max( ...shown.map( ( v, c ) => Math.abs( v - truth[ c ] ) / scale ) );
@@ -228,6 +230,65 @@ for ( const { name, load } of CONFIGS ) {
 			expect( failures ).toEqual( [] );
 
 		}, 120000 );
+
+		it.runIf( name === 'Blender 5.1' )( 'steps through False Color between the table\'s nodes, as OCIO does', () => {
+
+			// Its bands are a 1D lookup after a grey value; blurred through the cube, 0.18 grey showed teal.
+			const entry = cm.setView( { display: 'sRGB', view: 'False Color', size: 65 } );
+			expect( entry.ocio.curve ).toMatchObject( { n: 4096, lo: 0, hi: 1 } );
+			const inputs = [];
+			for ( let ev = - 10; ev <= 6; ev += 1 / 16 ) inputs.push( [ 1, 1, 1 ], [ 1, 0.3, 0.1 ], [ 0.1, 0.5, 1 ] );
+			const scaled = inputs.map( ( v, i ) => v.map( c => c * 0.18 * 2 ** ( - 10 + Math.floor( i / 3 ) / 16 ) ) );
+			const truth = new Float32Array( scaled.flatMap( v => [ ...v, 1 ] ) );
+			const p = getRuntime().config.createDisplayViewProcessor( { source: entry.ocio.source, display: 'sRGB', view: 'False Color' } );
+			p.applyRGBAF32( truth );
+			p.dispose();
+
+			const out = [ 0, 0, 0 ];
+			let off = 0;
+			scaled.forEach( ( v, i ) => {
+
+				entry.cpu( v[ 0 ], v[ 1 ], v[ 2 ], 1, out );
+				if ( out.some( ( c, k ) => Math.abs( c - truth[ i * 4 + k ] ) > 2 / 255 ) ) off ++;
+
+			} );
+			// Only where the cube's grey value lands on the other side of a step.
+			expect( off / scaled.length ).toBeLessThan( 0.03 );
+
+			const grey = scaled.findIndex( v => Math.abs( v[ 0 ] - 0.18 ) < 1e-9 && v[ 1 ] === v[ 0 ] );
+			entry.cpu( 0.18, 0.18, 0.18, 1, out );
+			out.forEach( ( c, k ) => expect( c ).toBeCloseTo( truth[ grey * 4 + k ], 2 ) );
+			expect( out[ 0 ] ).toBeCloseTo( out[ 1 ], 3 );
+
+		} );
+
+		it.runIf( name === 'Blender 5.1' )( 'shows a converted display from its light, with no kink at its gamut', () => {
+
+			cm.setWorkingSpace( 'Linear DCI-P3 D65' );
+			try {
+
+				// A pure Rec.709 green five times white, in P3 numbers. Rec.1886's encoding clipped the red and blue that go
+				// below 0 inside the cube's cell, and interpolated encoded, red showed 0.043 of light (0.9 % of the green,
+				// 58 levels); from the light, encoded after the lookup, 0.003.
+				const entry = cm.setView( { display: 'Rec.1886', view: 'Standard', size: 65 } );
+				expect( entry.ocio ).toMatchObject( { emulated: true, linear: true } );
+				const toP3 = getRuntime().config.createColorSpaceProcessor( 'Linear Rec.709', 'Linear DCI-P3 D65' );
+				const green = toP3.applyRGBAF32( new Float32Array( [ 0, 5, 0, 1 ] ), { copy: true } );
+				toP3.dispose();
+				const out = [ 0, 0, 0 ];
+				entry.cpu( green[ 0 ], green[ 1 ], green[ 2 ], 1, out );
+				const light = out.map( decode );
+				expect( light[ 1 ] ).toBeCloseTo( 5, 1 );
+				expect( Math.abs( light[ 0 ] ) ).toBeLessThan( 0.002 * light[ 1 ] );
+				expect( Math.abs( light[ 2 ] ) ).toBeLessThan( 0.002 * light[ 1 ] );
+
+			} finally {
+
+				cm.setWorkingSpace( null );
+
+			}
+
+		} );
 
 		it( 'converts into Display P3 only a display wider than sRGB', () => {
 
