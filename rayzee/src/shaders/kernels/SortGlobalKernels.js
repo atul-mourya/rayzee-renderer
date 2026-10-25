@@ -7,7 +7,7 @@
  * coherence. MEASURED −8% vs no-sort at 1024²/8b (per-WG sort was neutral).
  *
  * Four passes (counting sort): reset → histogram → exclusive prefix sum → scatter.
- *   - histogram uses a per-workgroup local histogram (workgroup-shared atomics, patches.js §4)
+ *   - histogram uses a per-workgroup local histogram (workgroup-shared atomics)
  *     flushed to the global histogram once per bin per workgroup, cutting global-atomic contention
  *     from O(rays) to O(workgroups × bins).
  *   - the prefix-summed histogram doubles as the per-bin running cursor in scatter.

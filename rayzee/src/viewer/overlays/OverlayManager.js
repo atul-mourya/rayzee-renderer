@@ -1,7 +1,6 @@
 import { TileHelper } from './TileHelper.js';
 import { OutlineHelper } from './OutlineHelper.js';
-import { ViewOverlayRenderer } from './ViewOverlayRenderer.js';
-import { createOverlayCanvas, viewPixelSize } from './overlaySurface.js';
+import { ViewOverlayRenderer, createOverlayCanvas, viewPixelSize } from './ViewOverlayRenderer.js';
 import { createLogger } from '../../Logger.js';
 import { EngineEvents } from '../../EngineEvents.js';
 

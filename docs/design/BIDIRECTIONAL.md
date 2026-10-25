@@ -2,7 +2,7 @@
 
 `integrator: 'bidirectional'` | `'vcm'` — `addons/bidirectional/BidirectionalIntegrator.js`, `addons/bidirectional/Bidirectional.js`, `addons/bidirectional/BidirectionalLamps.js`, `addons/bidirectional/LightGenerateKernel.js`, `addons/bidirectional/ConnectKernel.js`, `addons/bidirectional/LightSplatKernel.js`, `addons/bidirectional/MergeKernel.js`.
 
-An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`pathtracer/`) holds everything bidirectional —
+An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`addons/bidirectional/`) holds everything bidirectional —
 its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
 `beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate

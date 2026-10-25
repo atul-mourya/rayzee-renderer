@@ -6,4 +6,4 @@
  *   configurePlatform( nodePlatform( { decodeImage } ) );
  */
 export { NodeWorker } from './NodeWorker.js';
-export { nodePlatform } from './nodePlatform.js';
+export { nodePlatform } from './NodePlatform.js';

@@ -46,7 +46,7 @@ const ADDONS = {
 	bidirectional: 'addons/bidirectional/index.js',
 	color: 'addons/color/index.js',
 	formats: 'addons/formats.js',
-	physicalSky: 'addons/physicalSky/index.js',
+	'physical-sky': 'addons/physical-sky/index.js',
 	storage: 'addons/storage/index.js',
 };
 
@@ -93,7 +93,7 @@ describe( 'the renderer core', () => {
 	it( 'exports the archive formats, so a host can install that add-on to load on first use', () => {
 
 		const core = readFileSync( resolve( SRC, 'core.js' ), 'utf8' );
-		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS\b[^}]*\} from '\.\/loaders\/archiveFormats\.js'/ );
+		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS\b[^}]*\} from '\.\/loaders\/ArchiveFormats\.js'/ );
 
 	} );
 

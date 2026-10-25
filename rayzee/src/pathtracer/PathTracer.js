@@ -6,7 +6,7 @@
 
 import { uniform, texture, storage } from 'three/tsl';
 import { IndirectStorageBufferAttribute } from 'three/webgpu';
-import { gpuOnlyStorageAttribute } from '../shaders/patches.js';
+import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { PathTracerStage } from './PathTracerStage.js';
 import {
 	PackedRayBuffer, GBUFFER_STRIDE, RAY_STRIDE, HIT_STRIDE, freeStorageAttribute,
@@ -2014,7 +2014,7 @@ export class PathTracer extends PathTracerStage {
 		);
 
 		// Material-coherence sort: reorder the entering-ray indices by material between
-		// Extend and Shade. Histogram is workgroup-shared (patches.js §4); Shade reads the output.
+		// Extend and Shade. Histogram is workgroup-shared; Shade reads the output.
 		if ( this._sortMaterials ) {
 
 			const sgHist = qm.getSortGlobalHistogram();

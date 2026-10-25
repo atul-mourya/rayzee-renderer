@@ -18,9 +18,9 @@ vi.hoisted( () => {
 
 } );
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/addons/storage/openStorage.js';
-import { fileIdentity, folderIdentity, identityKey } from '@/core/storage/identity.js';
-import { localFolder } from '@/core/loaders/archiveFormats.js';
+import { openStorage } from '@/core/addons/storage/OpenStorage.js';
+import { fileIdentity, folderIdentity, identityKey } from '@/core/storage/FileIdentity.js';
+import { localFolder } from '@/core/loaders/ArchiveFormats.js';
 import { ensureAppAreas } from '@/lib/storage';
 import { SessionKeeper, listSessions, readSession, restoreSession, openSource, syncModelParam } from '@/lib/session';
 import { snapshotPanels, restorePanels } from '@/lib/panelState';

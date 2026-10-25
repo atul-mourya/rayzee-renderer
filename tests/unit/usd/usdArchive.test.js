@@ -5,7 +5,7 @@ vi.hoisted( () => {
 	globalThis.ProgressEvent ??= class extends Event {};
 
 } );
-import { localFolder } from '@/core/loaders/archiveFormats.js';
+import { localFolder } from '@/core/loaders/ArchiveFormats.js';
 import { elementFilter } from '@/core/addons/archives/ArchiveReader.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
 import { IssueLog } from '@/core/EngineIssues.js';

@@ -26,7 +26,7 @@ vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 
 import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
 import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
-import { StorageParts } from '@/core/shaders/patches.js';
+import { StorageParts } from '@/core/shaders/ThreePatches.js';
 import { splitStorage } from '@/core/shaders/Common.js';
 import { traverseBVH, traverseBVHShadow } from '@/core/shaders/BVHTraversal.js';
 import { Ray } from '@/core/shaders/Struct.js';

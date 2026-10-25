@@ -1,6 +1,6 @@
 import { DataArrayTexture, RGBAFormat, RGFormat, RedFormat, LinearFilter, UnsignedByteType, UnsignedShortType, SRGBColorSpace, LinearSRGBColorSpace, RepeatWrapping, FloatType, HalfFloatType, DataUtils } from "three";
 import { MATERIAL_DATA_LAYOUT, BVH_LEAF_MARKERS, assertBVHIndexFits, bvhIndexView } from '../scene/BufferLayout.js';
-import { alignBucketWidth, TEXTURE_CONSTANTS } from './TextureBuckets.js';
+import { alignBucketWidth, TEXTURE_CONSTANTS, planTextureBuckets, getTextureBucketId, packTextureIndex } from './TextureBuckets.js';
 import { packMaterial } from './MaterialPacking.js';
 import TexturesWorker from './TexturesWorker.js?worker&inline';
 import PackWorker from './PackWorker.js?worker&inline';
@@ -2053,3 +2053,379 @@ export function rgba8Pixels( texture ) {
 
 }
 
+// SceneProcessor's material textures: each function takes the processor first.
+
+const sceneLog = createLogger( 'scene' );
+
+// The per-type texture lists an extraction hands over (GeometryExtractor.getExtractedData).
+const TEXTURE_LISTS = Object.freeze( [
+	'maps', 'normalMaps', 'bumpMaps', 'roughnessMaps', 'metalnessMaps', 'emissiveMaps', 'displacementMaps',
+	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'clearcoatNormalMaps', 'sheenColorMaps',
+	'sheenRoughnessMaps', 'iridescenceMaps', 'iridescenceThicknessMaps', 'specularIntensityMaps', 'specularColorMaps',
+	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps',
+] );
+
+export function setMaxTextureSize( processor, size ) {
+
+	processor.config.maxTextureSize = size;
+	return processor.textureCreator?.setMaxTextureSize( size );
+
+}
+
+/**
+ * Create material textures and emissive data concurrently with BVH.
+ * Only depends on GeometryExtractor output, NOT on BVH.
+ */
+export async function createMaterialTextures( processor ) {
+
+	processor._log( 'Creating material textures (parallel with BVH)' );
+
+	try {
+
+		// Group the extractor's per-type arrays into consolidated colorSpace×size-bucket
+		// pools, and rewrite each material's per-map index to the packed (bucket, layer)
+		// form. Must run BEFORE createMaterialRawData (which reads mat.map etc.).
+		const { srgbLists, linearLists, remap } = processor._bucketTextures();
+		remapMaterialTextureIndices( processor, remap );
+
+		// Material raw data for storage buffers (sync, ~1-5ms) — now holds packed indices.
+		if ( processor.materials?.length ) {
+
+			processor.materialData = processor.textureCreator.createMaterialRawData( processor.materials );
+
+		}
+
+		// One DataArrayTexture per non-empty bucket. The sRGB pool (albedo + emissive — both
+		// authored in sRGB per glTF) carries SRGBColorSpace so the GPU decodes sRGB→linear
+		// before lighting; the linear pool (normal/roughness/metalness/bump/displacement —
+		// data textures) stays linear. Applied consistently across load AND rebuildMaterials
+		// (the prior model-load path omitted this, leaving albedo un-decoded / too bright).
+		const buildBucket = ( list, srgb ) => list.length === 0
+			? Promise.resolve( null )
+			: processor.textureCreator.createTexturesToDataTexture( list, { srgbPool: srgb } ).then( tex => {
+
+				if ( tex && srgb ) tex.colorSpace = SRGBColorSpace;
+				return tex;
+
+			} );
+
+		const [ srgbTextures, linearTextures ] = await Promise.all( [
+			Promise.all( srgbLists.map( list => buildBucket( list, true ) ) ),
+			Promise.all( linearLists.map( list => buildBucket( list, false ) ) ),
+		] );
+
+		processor.srgbBucketTextures = srgbTextures;
+		processor.linearBucketTextures = linearTextures;
+
+		processor._log( 'Material textures complete', {
+			materialData: !! processor.materialData,
+			srgbBuckets: srgbTextures.map( t => ( t ? `${t.image.width}x${t.image.height}x${t.image.depth}` : '-' ) ).join( ',' ),
+			linearBuckets: linearTextures.map( t => ( t ? `${t.image.width}x${t.image.height}x${t.image.depth}` : '-' ) ).join( ',' ),
+		} );
+
+	} catch ( error ) {
+
+		sceneLog.error( 'texture creation failed:', error );
+		throw error;
+
+	}
+
+}
+
+/**
+ * Group the extractor's seven per-type texture arrays into two consolidated colorSpace
+ * pools (sRGB: albedo+emissive; linear: normal/bump/roughness/metalness/displacement),
+ * each split into at most MATERIAL_BUCKET_COUNT buckets whose shapes are planned from the
+ * pool's own texture dimensions. Textures are deduped across types within a (pool, bucket)
+ * so a shared image (e.g. ORM) costs one layer.
+ * @returns {{ srgbLists: Array<Array>, linearLists: Array<Array>, remap: Object }}
+ *          bucket lists + per-type remap arrays (old per-type layer → packed bucket index).
+ */
+export function bucketTextures( processor ) {
+
+	const cap = processor.config.maxTextureSize;
+	const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;
+	const STRIDE = TEXTURE_CONSTANTS.BUCKET_LAYER_STRIDE;
+
+	const poolSizes = ( types ) => {
+
+		const seen = new Set();
+		const sizes = [];
+
+		for ( const arr of types ) {
+
+			for ( const tex of arr || [] ) {
+
+				if ( ! tex?.image ) continue;
+				const uuid = tex.source?.uuid ?? tex.uuid;
+				if ( seen.has( uuid ) ) continue;
+				seen.add( uuid );
+				sizes.push( { width: tex.image.width, height: tex.image.height } );
+
+			}
+
+		}
+
+		return sizes;
+
+	};
+
+	const srgbTypes = [ processor.maps, processor.emissiveMaps, processor.sheenColorMaps, processor.specularColorMaps, processor.diffuseTransmissionColorMaps ];
+	const linearTypes = [
+		processor.normalMaps, processor.bumpMaps, processor.roughnessMaps, processor.metalnessMaps, processor.displacementMaps,
+		processor.anisotropyMaps, processor.transmissionMaps, processor.clearcoatMaps, processor.clearcoatRoughnessMaps, processor.clearcoatNormalMaps,
+		processor.sheenRoughnessMaps, processor.iridescenceMaps, processor.iridescenceThicknessMaps, processor.specularIntensityMaps,
+		processor.diffuseTransmissionMaps,
+	];
+
+	const srgbShapes = planTextureBuckets( poolSizes( srgbTypes ), cap, K );
+	const linearShapes = planTextureBuckets( poolSizes( linearTypes ), cap, K );
+	processor._srgbBucketShapes = srgbShapes;
+	processor._linearBucketShapes = linearShapes;
+
+	// Always K-length even when the plan needs fewer shapes: downstream nodes are built
+	// per MATERIAL_BUCKET_COUNT and a short array would leave stale bindings behind.
+	const srgbLists = Array.from( { length: K }, () => [] );
+	const linearLists = Array.from( { length: K }, () => [] );
+	const srgbDedup = Array.from( { length: K }, () => new Map() );
+	const linearDedup = Array.from( { length: K }, () => new Map() );
+
+	// Persistent uuid → packed maps so runtime material edits (updateMaterial) can re-pack
+	// a texture's index against the CURRENT bucket layout instead of the stale per-type index.
+	processor._srgbTexPacked = new Map();
+	processor._linearTexPacked = new Map();
+
+	let bucketOverflowReported = false;
+	let undecodedReported = false;
+
+	// Assign one texture to its (bucket, layer) within a pool; dedup by source uuid.
+	const assign = ( tex, lists, dedup, flat, shapes ) => {
+
+		if ( ! tex ) return - 1;
+
+		// A map whose image has not landed yet is indistinguishable here from no map at
+		// all, and the material would render untextured with nothing in the log.
+		if ( ! tex.image ) {
+
+			if ( ! undecodedReported ) processor.config.issues?.record(
+				ISSUE_CODES.TEXTURE_BUILD_FAILED,
+				'a material map had not finished decoding when the scene was packed; it renders untextured',
+				{ texture: tex.name || tex.source?.uuid || tex.uuid }
+			);
+			undecodedReported = true;
+			return - 1;
+
+		}
+
+		const bucket = getTextureBucketId( tex.image.width, tex.image.height, shapes );
+		const uuid = tex.source?.uuid ?? tex.uuid;
+		const seen = dedup[ bucket ].get( uuid );
+		if ( seen !== undefined ) return packTextureIndex( bucket, seen );
+		if ( lists[ bucket ].length >= STRIDE ) {
+
+			sceneLog.warn( `texture bucket ${bucket} full (${STRIDE}); dropping a map` );
+			if ( ! bucketOverflowReported ) processor.config.issues?.record(
+				ISSUE_CODES.TEXTURE_LIMIT_EXCEEDED,
+				`texture bucket ${bucket} full (${STRIDE} layers); the rest render untextured`,
+				{ bucket, limit: STRIDE }
+			);
+			bucketOverflowReported = true;
+			return - 1;
+
+		}
+
+		lists[ bucket ].push( tex );
+		const layer = lists[ bucket ].length - 1;
+		dedup[ bucket ].set( uuid, layer );
+		const packed = packTextureIndex( bucket, layer );
+		flat.set( uuid, packed );
+		return packed;
+
+	};
+
+	// Per-type arrays hold unique textures indexed by the layer the extractor assigned
+	// (= array position), so remap[type][oldLayer] = packed index.
+	const remapType = ( arr, lists, dedup, flat, shapes ) => ( arr || [] ).map( tex => assign( tex, lists, dedup, flat, shapes ) );
+
+	const remap = {
+		albedo: remapType( processor.maps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+		emissive: remapType( processor.emissiveMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+		normal: remapType( processor.normalMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		bump: remapType( processor.bumpMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		roughness: remapType( processor.roughnessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		metalness: remapType( processor.metalnessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		displacement: remapType( processor.displacementMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		anisotropy: remapType( processor.anisotropyMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		// Extension maps — data maps → linear pool; color maps (sheenColor, specularColor) → sRGB pool.
+		transmission: remapType( processor.transmissionMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		clearcoat: remapType( processor.clearcoatMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		clearcoatRoughness: remapType( processor.clearcoatRoughnessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		clearcoatNormal: remapType( processor.clearcoatNormalMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		sheenColor: remapType( processor.sheenColorMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+		sheenRoughness: remapType( processor.sheenRoughnessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		iridescence: remapType( processor.iridescenceMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		iridescenceThickness: remapType( processor.iridescenceThicknessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		specularIntensity: remapType( processor.specularIntensityMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		specularColor: remapType( processor.specularColorMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+		diffuseTransmission: remapType( processor.diffuseTransmissionMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
+		diffuseTransmissionColor: remapType( processor.diffuseTransmissionColorMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+	};
+
+	return { srgbLists, linearLists, remap };
+
+}
+
+/**
+ * Rewrite each material's per-map index from the extractor's per-type layer to the
+ * packed (bucket, layer) index. Idempotency is NOT guaranteed — call exactly once per
+ * extraction (materials are freshly extracted on each process/rebuild).
+ */
+function remapMaterialTextureIndices( processor, remap ) {
+
+	const fix = ( v, table ) => ( v >= 0 && v < table.length ? table[ v ] : - 1 );
+	for ( const mat of processor.materials ) {
+
+		mat.map = fix( mat.map, remap.albedo );
+		mat.emissiveMap = fix( mat.emissiveMap, remap.emissive );
+		mat.normalMap = fix( mat.normalMap, remap.normal );
+		mat.bumpMap = fix( mat.bumpMap, remap.bump );
+		mat.roughnessMap = fix( mat.roughnessMap, remap.roughness );
+		mat.metalnessMap = fix( mat.metalnessMap, remap.metalness );
+		mat.displacementMap = fix( mat.displacementMap, remap.displacement );
+		mat.anisotropyMap = fix( mat.anisotropyMap, remap.anisotropy );
+		mat.transmissionMap = fix( mat.transmissionMap, remap.transmission );
+		mat.clearcoatMap = fix( mat.clearcoatMap, remap.clearcoat );
+		mat.clearcoatRoughnessMap = fix( mat.clearcoatRoughnessMap, remap.clearcoatRoughness );
+		mat.clearcoatNormalMap = fix( mat.clearcoatNormalMap, remap.clearcoatNormal );
+		mat.sheenColorMap = fix( mat.sheenColorMap, remap.sheenColor );
+		mat.sheenRoughnessMap = fix( mat.sheenRoughnessMap, remap.sheenRoughness );
+		mat.iridescenceMap = fix( mat.iridescenceMap, remap.iridescence );
+		mat.iridescenceThicknessMap = fix( mat.iridescenceThicknessMap, remap.iridescenceThickness );
+		mat.specularIntensityMap = fix( mat.specularIntensityMap, remap.specularIntensity );
+		mat.specularColorMap = fix( mat.specularColorMap, remap.specularColor );
+		mat.diffuseTransmissionMap = fix( mat.diffuseTransmissionMap, remap.diffuseTransmission );
+		mat.diffuseTransmissionColorMap = fix( mat.diffuseTransmissionColorMap, remap.diffuseTransmissionColor );
+
+	}
+
+}
+
+/**
+ * Dispose of texture resources
+ */
+export function disposeTextures( processor ) {
+
+	processor._disposeBucketTextures();
+
+}
+
+/**
+ * Dispose the consolidated bucket arrays (srgb/linear), each an Array<K> of
+ * DataArrayTexture | null.
+ */
+export function disposeBucketTextures( processor ) {
+
+	for ( const prop of [ 'srgbBucketTextures', 'linearBucketTextures' ] ) {
+
+		const arr = processor[ prop ];
+		if ( ! arr ) continue;
+		for ( const tex of arr ) {
+
+			if ( tex && typeof tex.dispose === 'function' ) {
+
+				try {
+
+					tex.dispose();
+
+				} catch ( error ) {
+
+					sceneLog.warn( `error disposing ${prop}:`, error );
+
+				}
+
+			}
+
+		}
+
+		processor[ prop ] = null;
+
+	}
+
+}
+
+export async function rebuildMaterials( processor, object ) {
+
+	if ( processor.isProcessing ) {
+
+		throw new Error( "Already processing. Cannot rebuild materials during processing." );
+
+	}
+
+	processor._log( 'Rebuilding materials and textures' );
+	const startTime = performance.now();
+
+	try {
+
+		// Set processing flag to prevent concurrent operations
+		processor.isProcessing = true;
+
+		// Extract only material-related data from the scene (skip geometry extraction)
+		const extractedData = processor.geometryExtractor.extractMaterialsOnly( object );
+
+		// Dispose old texture resources BEFORE updating arrays
+		disposeMaterialTextures( processor );
+
+		// Update material arrays (but keep existing triangle data)
+		processor.materials = extractedData.materials;
+		processor.meshes = extractedData.meshes; // Update mesh data
+		processor._adoptTextureLists( extractedData );
+
+		// Bucket textures, remap material indices, regenerate raw material data, and
+		// build the consolidated bucket arrays — same path as the initial build.
+		await processor._createMaterialTextures();
+
+		const duration = performance.now() - startTime;
+		processor._log( `Material rebuild complete (${duration.toFixed( 2 )}ms)`, {
+			materials: processor.materials.length,
+			textures: processor.maps.length
+		} );
+
+		return processor;
+
+	} catch ( error ) {
+
+		sceneLog.error( 'material rebuild failed:', error );
+		throw error;
+
+	} finally {
+
+		// Always clear processing flag
+		processor.isProcessing = false;
+
+	}
+
+}
+
+/** The extraction's material indices point into these lists, so every one is taken from it. */
+export function adoptTextureLists( processor, extractedData ) {
+
+	for ( const name of TEXTURE_LISTS ) processor[ name ] = extractedData[ name ] ?? [];
+
+}
+
+/**
+ * Dispose only material-related textures
+ */
+function disposeMaterialTextures( processor ) {
+
+	processor._disposeBucketTextures();
+
+	// Clear texture creator cache to prevent stale references
+	if ( processor.textureCreator && processor.textureCreator.textureCache ) {
+
+		processor.textureCreator.textureCache.dispose();
+		processor.textureCreator.textureCache = new ( processor.textureCreator.textureCache.constructor )();
+
+	}
+
+}

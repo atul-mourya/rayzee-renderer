@@ -2,7 +2,7 @@ import {
 	EventDispatcher, DirectionalLight, PointLight, SpotLight, RectAreaLight,
 	Object3D, MathUtils
 } from 'three';
-import { toPortable, fromPortable } from '../portable.js';
+import { toPortable, fromPortable } from '../Portable.js';
 
 // Set on lights a host added, which live in the light scene alone: a rebuild re-transfers the
 // model's lights and keeps these.
@@ -123,7 +123,7 @@ export class LightManager extends EventDispatcher {
 	}
 
 	/**
-	 * Sets a traced light's intensity (watts, or W/m² for directional — see the README) and uploads it.
+	 * Sets a traced light's intensity (watts, or W/m² for directional — see docs/guide/scenes.md) and uploads it.
 	 * @param {string} uuid
 	 * @param {number} intensity
 	 * @returns {boolean} false when no traced light has that UUID

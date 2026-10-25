@@ -27,7 +27,7 @@ import {
 	refract,
 } from 'three/tsl';
 
-import { struct } from './patches.js';
+import { struct } from './Struct.js';
 import { TWO_PI, EPSILON, constructTBN } from './Common.js';
 import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { fresnelDielectric } from './Fresnel.js';

@@ -3,7 +3,7 @@
 
 import { Fn, wgslFn, vec3, float, int, bool as tslBool, If, select, abs, dot, reflect, refract, max, mix, clamp, exp } from 'three/tsl';
 
-import { struct } from './patches.js';
+import { struct } from './Struct.js';
 import { EPSILON, MIN_ROUGHNESS, MIN_PDF } from './Common.js';
 import { fresnelDielectric } from './Fresnel.js';
 import { DistributionGGX } from './MaterialProperties.js';

@@ -32,7 +32,7 @@ import { rebaseNodes } from '@/core/bvh/BVHLeafFold.js';
 import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
 import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
 import { traverseBVH, traverseBVHShadow, traverseBVHShadowCameraCulled } from '@/core/shaders/BVHTraversal.js';
-import { StorageParts } from '@/core/shaders/patches.js';
+import { StorageParts } from '@/core/shaders/ThreePatches.js';
 import { splitStorage } from '@/core/shaders/Common.js';
 import { Ray } from '@/core/shaders/Struct.js';
 import { withSceneResources } from '@/core/shaders/SceneResources.js';

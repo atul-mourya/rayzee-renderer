@@ -13,25 +13,22 @@ import { GeometryExtractor, geometryBytesOf, usesTextureCoordinates } from './Ge
 import { EmissiveTriangleBuilder } from '../lights/EmissiveTriangleBuilder.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../Logger.js';
-import { SRGBColorSpace } from 'three';
 import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, RECORD_VEC4 } from './BufferLayout.js';
-import { TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from '../materials/TextureBuckets.js';
+import { TEXTURE_CONSTANTS } from '../materials/TextureBuckets.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
-import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../storage/BLASCache.js';
-import { sharedStorage } from '../storage/shared.js';
+import { readNodesInto, restoreBLASes, storeBLASes } from '../storage/BLASCache.js';
+import { SCENE_CACHE_MIN_BUILD_MS } from '../storage/StorageAreas.js';
 import { SpillStore } from '../storage/SpillStore.js';
 import { GeometrySpill } from '../storage/GeometrySpill.js';
 import { partitionRange, joinPieces } from '../bvh/SplitBLAS.js';
 import { rebaseNodes } from '../bvh/BVHLeafFold.js';
-import { getAssetConfig } from '../AssetConfig.js';
-import { VERSION } from '../version.js';
-import { SCENE_CACHE_MIN_BUILD_MS } from '../storage/sceneCachePolicy.js';
 import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
 import TLASWorker from '../bvh/TLASWorker.js?worker&inline';
 import { createWorker, hardwareThreads, timeSlicer } from '../Platform.js';
-import { meshSource, refitBVH, placementOf, refitBLASes, updateMeshTransforms, withGroupSiblings, writeCopyRecord, takeMoveRanges, takeMovedRecordRanges, computeTLASDirtyRange, computeBLASDirtyRanges, updateMeshTrianglePositions, patchMeshSmoothNormals, refitTLAS } from './SceneRefit.js';
+import { meshSource, refitBVH, placementOf, refitBLASes, updateMeshTransforms, withGroupSiblings, writeCopyRecord, takeMoveRanges, takeMovedRecordRanges, computeTLASDirtyRange, computeBLASDirtyRanges, updateMeshTrianglePositions, patchMeshSmoothNormals, refitTLAS, scheduleBackgroundRebuild, swapBLAS, cancelBackgroundRebuilds } from './SceneRefit.js';
 import { needsSpill, spillToDisk, ensureResident, ensureGeometryResident, ensureMovable, spillTLAS, spillOrderMaps, spillAfterLoad, respill, whenTLASEditable, needsPageInForMove, disposeMatrixSpill, restoreGeometry, disposeGeometrySpill, disposeSpill } from '../memory/SceneSpill.js';
 import { updateLoading } from '../EngineEvents.js';
+import { setMaxTextureSize, createMaterialTextures, bucketTextures, disposeTextures, disposeBucketTextures, rebuildMaterials, adoptTextureLists } from '../materials/TextureCreator.js';
 
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;
@@ -58,14 +55,6 @@ const GEOMETRY_ON_DISK_BYTES = 1024 ** 3;
 const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
 const log = createLogger( 'scene' );
-
-// The per-type texture lists an extraction hands over (GeometryExtractor.getExtractedData).
-const TEXTURE_LISTS = Object.freeze( [
-	'maps', 'normalMaps', 'bumpMaps', 'roughnessMaps', 'metalnessMaps', 'emissiveMaps', 'displacementMaps',
-	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'clearcoatNormalMaps', 'sheenColorMaps',
-	'sheenRoughnessMaps', 'iridescenceMaps', 'iridescenceThicknessMaps', 'specularIntensityMaps', 'specularColorMaps',
-	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps',
-] );
 
 // A BLAS's nodes: one array, or a split mesh's parts in order — never one array that large.
 const nodeParts = nodes => ( Array.isArray( nodes ) ? nodes : [ nodes ] );
@@ -227,8 +216,7 @@ export class SceneProcessor {
 	 */
 	setMaxTextureSize( size ) {
 
-		this.config.maxTextureSize = size;
-		return this.textureCreator?.setMaxTextureSize( size );
+		return setMaxTextureSize( this, size );
 
 	}
 
@@ -1375,93 +1363,12 @@ export class SceneProcessor {
 
 	}
 
-	_blasCacheKey( workerOpts ) {
+	_restoreBLASes( owners, blasBase, workerOpts ) {
 
-		const builder = { ...workerOpts };
-		delete builder.logLevel;
-		const cores = typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : 0;
-		return `blas:${BLAS_CACHE_FORMAT}:${VERSION}:${JSON.stringify( builder )}:${cores}:${this._sceneKey}`;
+		return restoreBLASes( this, owners, blasBase, workerOpts );
 
 	}
 
-	/**
-	 * Reuses stored BLASes when every owning template matches what was stored — same ranges, same
-	 * node counts, same offsets, same triangles — and puts the triangles in their built order.
-	 * @returns {Promise<?{results: Array, orders: Map<number, Uint32Array>, nodes: File, release: function(): void}>}
-	 * @private
-	 */
-	async _restoreBLASes( owners, blasBase, workerOpts ) {
-
-		if ( ! this._sceneKey || this.config.sceneCache === false ) return null;
-		const storage = sharedStorage( getAssetConfig().cacheNamespace );
-		if ( ! storage ) return null;
-
-		this._blasKey = this._blasCacheKey( workerOpts );
-		const cached = await openBLASCache( storage, this._blasKey );
-		if ( ! cached ) return null;
-
-		const miss = ( reason ) => {
-
-			log.debug( `stored BLASes not used: ${reason}` );
-			cached.release();
-			return null;
-
-		};
-
-		const { index } = cached;
-		// `tlasNodeCount` is where the stored BLASes start: past the TLAS and any group trees.
-		if ( index.tlasNodeCount !== blasBase || index.templates.length !== owners.length ) return miss( 'layout changed' );
-
-		let offset = blasBase;
-		for ( let i = 0; i < owners.length; i ++ ) {
-
-			const [ t, triOffset, triCount, nodeCount, blasOffset ] = index.templates[ i ];
-			const o = owners[ i ];
-			if ( o.t !== t || o.triOffset !== triOffset || o.triCount !== triCount || blasOffset !== offset ) return miss( 'layout changed' );
-			offset += nodeCount;
-
-		}
-
-		if ( offset !== index.totalNodes ) return miss( 'layout changed' );
-
-		const checkStart = performance.now();
-		const sums = await templateChecksums( this.triangles, owners );
-		for ( let i = 0; i < owners.length; i ++ ) if ( sums[ i ] !== index.templates[ i ][ 6 ] ) return miss( 'triangles changed' );
-		const permuteStart = performance.now();
-
-		try {
-
-			const orders = new Map();
-			const results = [];
-			for ( let i = 0; i < owners.length; i ++ ) {
-
-				const [ t, triOffset, triCount, nodeCount, , orderOffset, , root ] = index.templates[ i ];
-				const order = await readOrder( cached.order, orderOffset, triCount );
-				this._permuteRange( triOffset, triCount, order );
-				orders.set( t, order );
-				results.push( {
-					m: owners[ i ].m,
-					range: owners[ i ].range,
-					result: { bvhData: new Float32Array( Uint32Array.from( root ).buffer ), originalToBvh: null, nodeCount },
-				} );
-
-			}
-
-			this._blasRestored = true;
-			this.performanceMetrics.blasRestore = { checksumMs: permuteStart - checkStart, permuteMs: performance.now() - permuteStart };
-			log.debug( `restored ${fmt.n( owners.length )} stored BLASes` );
-			return { results, orders, nodes: cached.nodes, release: cached.release };
-
-		} catch ( error ) {
-
-			cached.release();
-			throw error;
-
-		}
-
-	}
-
-	/** Puts records [start, start + count) in built order: slot j takes caller's triangle order[ j ]. @private */
 	/** Record `start + j` of the store becomes record `order[ j ]` of `src`, chunk by chunk. @private */
 	_writeInOrder( start, src, order ) {
 
@@ -1482,6 +1389,7 @@ export class SceneProcessor {
 
 	}
 
+	/** Puts records [start, start + count) in built order: slot j takes caller's triangle order[ j ]. @private */
 	_permuteRange( start, count, order ) {
 
 		let identity = true;
@@ -1521,59 +1429,12 @@ export class SceneProcessor {
 
 	}
 
-	/** Writes this build's BLASes to storage in the background; abandons it if the scene changes. @private */
-	async _storeBLASes( label ) {
+	_storeBLASes( label ) {
 
-		const storage = sharedStorage( getAssetConfig().cacheNamespace );
-		const table = this.instanceTable;
-		if ( ! storage || ! table || ! this.bvh ) return false;
-
-		const key = this._blasKey;
-		const version = this._geometryVersion;
-		const isStale = () => this._geometryVersion !== version || this._blasKey !== key;
-
-		const owners = [];
-		for ( let t = 0; t < table.templateCount; t ++ ) {
-
-			const owner = table.tplOwner[ t ];
-			if ( owner < 0 || table.sourceMesh[ owner ] !== t ) continue;
-			owners.push( { t, triOffset: table.tplTriOffset[ t ], triCount: table.tplTriCount[ t ], nodeCount: table.tplNodeCount[ t ], blasOffset: table.tplBlasOffset[ t ] } );
-
-		}
-
-		const sums = await templateChecksums( this.triangles, owners );
-		if ( isStale() ) return false;
-
-		const rootBits = ( n ) => {
-
-			const chunk = this.bvhIndexChunks.chunkFor( n );
-			const base = this.bvhIndexChunks.baseOf( n );
-			return Array.from( chunk.subarray( base, base + 16 ) );
-
-		};
-
-		let orderOffset = 0;
-		const orders = [];
-		const templates = owners.map( ( o, i ) => {
-
-			orders.push( table.bvhToOriginal.get( o.t ) ?? Uint32Array.from( { length: o.triCount }, ( _, j ) => j ) );
-			const entry = [ o.t, o.triOffset, o.triCount, o.nodeCount, o.blasOffset, orderOffset, sums[ i ], rootBits( o.blasOffset ) ];
-			orderOffset += o.triCount;
-			return entry;
-
-		} );
-
-		const index = { v: BLAS_CACHE_FORMAT, tlasNodeCount: table.blasBase, totalNodes: table.treeNodeCount, templates };
-		const stored = await saveBLASCache( storage, key, { index, bvh: this.bvh, orders, isStale, label } );
-		if ( stored ) log.debug( `stored ${fmt.n( owners.length )} BLASes for the next load` );
-		return stored;
+		return storeBLASes( this, label );
 
 	}
 
-	/**
-	 * Adjust BLAS node indices in-place within the combined bvhData buffer.
-	 * @private
-	 */
 	/**
 	 * Memory spill during the build (8c): each BLAS goes to a scratch file as it arrives, and each
 	 * triangle chunk goes to the GPU and then to disk once every BLAS over it is built — so the
@@ -2000,244 +1861,15 @@ export class SceneProcessor {
 
 	}
 
-	/**
-     * Create material textures and emissive data concurrently with BVH.
-     * Only depends on GeometryExtractor output, NOT on BVH.
-     * @private
-     */
-	async _createMaterialTextures() {
+	_createMaterialTextures() {
 
-		this._log( 'Creating material textures (parallel with BVH)' );
-
-		try {
-
-			// Group the extractor's per-type arrays into consolidated colorSpace×size-bucket
-			// pools, and rewrite each material's per-map index to the packed (bucket, layer)
-			// form. Must run BEFORE createMaterialRawData (which reads mat.map etc.).
-			const { srgbLists, linearLists, remap } = this._bucketTextures();
-			this._remapMaterialTextureIndices( remap );
-
-			// Material raw data for storage buffers (sync, ~1-5ms) — now holds packed indices.
-			if ( this.materials?.length ) {
-
-				this.materialData = this.textureCreator.createMaterialRawData( this.materials );
-
-			}
-
-			// One DataArrayTexture per non-empty bucket. The sRGB pool (albedo + emissive — both
-			// authored in sRGB per glTF) carries SRGBColorSpace so the GPU decodes sRGB→linear
-			// before lighting; the linear pool (normal/roughness/metalness/bump/displacement —
-			// data textures) stays linear. Applied consistently across load AND rebuildMaterials
-			// (the prior model-load path omitted this, leaving albedo un-decoded / too bright).
-			const buildBucket = ( list, srgb ) => list.length === 0
-				? Promise.resolve( null )
-				: this.textureCreator.createTexturesToDataTexture( list, { srgbPool: srgb } ).then( tex => {
-
-					if ( tex && srgb ) tex.colorSpace = SRGBColorSpace;
-					return tex;
-
-				} );
-
-			const [ srgbTextures, linearTextures ] = await Promise.all( [
-				Promise.all( srgbLists.map( list => buildBucket( list, true ) ) ),
-				Promise.all( linearLists.map( list => buildBucket( list, false ) ) ),
-			] );
-
-			this.srgbBucketTextures = srgbTextures;
-			this.linearBucketTextures = linearTextures;
-
-			this._log( 'Material textures complete', {
-				materialData: !! this.materialData,
-				srgbBuckets: srgbTextures.map( t => ( t ? `${t.image.width}x${t.image.height}x${t.image.depth}` : '-' ) ).join( ',' ),
-				linearBuckets: linearTextures.map( t => ( t ? `${t.image.width}x${t.image.height}x${t.image.depth}` : '-' ) ).join( ',' ),
-			} );
-
-		} catch ( error ) {
-
-			log.error( 'texture creation failed:', error );
-			throw error;
-
-		}
+		return createMaterialTextures( this );
 
 	}
 
-	/**
-	 * Group the extractor's seven per-type texture arrays into two consolidated colorSpace
-	 * pools (sRGB: albedo+emissive; linear: normal/bump/roughness/metalness/displacement),
-	 * each split into at most MATERIAL_BUCKET_COUNT buckets whose shapes are planned from the
-	 * pool's own texture dimensions. Textures are deduped across types within a (pool, bucket)
-	 * so a shared image (e.g. ORM) costs one layer.
-	 * @returns {{ srgbLists: Array<Array>, linearLists: Array<Array>, remap: Object }}
-	 *          bucket lists + per-type remap arrays (old per-type layer → packed bucket index).
-	 * @private
-	 */
 	_bucketTextures() {
 
-		const cap = this.config.maxTextureSize;
-		const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;
-		const STRIDE = TEXTURE_CONSTANTS.BUCKET_LAYER_STRIDE;
-
-		const poolSizes = ( types ) => {
-
-			const seen = new Set();
-			const sizes = [];
-
-			for ( const arr of types ) {
-
-				for ( const tex of arr || [] ) {
-
-					if ( ! tex?.image ) continue;
-					const uuid = tex.source?.uuid ?? tex.uuid;
-					if ( seen.has( uuid ) ) continue;
-					seen.add( uuid );
-					sizes.push( { width: tex.image.width, height: tex.image.height } );
-
-				}
-
-			}
-
-			return sizes;
-
-		};
-
-		const srgbTypes = [ this.maps, this.emissiveMaps, this.sheenColorMaps, this.specularColorMaps, this.diffuseTransmissionColorMaps ];
-		const linearTypes = [
-			this.normalMaps, this.bumpMaps, this.roughnessMaps, this.metalnessMaps, this.displacementMaps,
-			this.anisotropyMaps, this.transmissionMaps, this.clearcoatMaps, this.clearcoatRoughnessMaps, this.clearcoatNormalMaps,
-			this.sheenRoughnessMaps, this.iridescenceMaps, this.iridescenceThicknessMaps, this.specularIntensityMaps,
-			this.diffuseTransmissionMaps,
-		];
-
-		const srgbShapes = planTextureBuckets( poolSizes( srgbTypes ), cap, K );
-		const linearShapes = planTextureBuckets( poolSizes( linearTypes ), cap, K );
-		this._srgbBucketShapes = srgbShapes;
-		this._linearBucketShapes = linearShapes;
-
-		// Always K-length even when the plan needs fewer shapes: downstream nodes are built
-		// per MATERIAL_BUCKET_COUNT and a short array would leave stale bindings behind.
-		const srgbLists = Array.from( { length: K }, () => [] );
-		const linearLists = Array.from( { length: K }, () => [] );
-		const srgbDedup = Array.from( { length: K }, () => new Map() );
-		const linearDedup = Array.from( { length: K }, () => new Map() );
-
-		// Persistent uuid → packed maps so runtime material edits (updateMaterial) can re-pack
-		// a texture's index against the CURRENT bucket layout instead of the stale per-type index.
-		this._srgbTexPacked = new Map();
-		this._linearTexPacked = new Map();
-
-		let bucketOverflowReported = false;
-		let undecodedReported = false;
-
-		// Assign one texture to its (bucket, layer) within a pool; dedup by source uuid.
-		const assign = ( tex, lists, dedup, flat, shapes ) => {
-
-			if ( ! tex ) return - 1;
-
-			// A map whose image has not landed yet is indistinguishable here from no map at
-			// all, and the material would render untextured with nothing in the log.
-			if ( ! tex.image ) {
-
-				if ( ! undecodedReported ) this.config.issues?.record(
-					ISSUE_CODES.TEXTURE_BUILD_FAILED,
-					'a material map had not finished decoding when the scene was packed; it renders untextured',
-					{ texture: tex.name || tex.source?.uuid || tex.uuid }
-				);
-				undecodedReported = true;
-				return - 1;
-
-			}
-
-			const bucket = getTextureBucketId( tex.image.width, tex.image.height, shapes );
-			const uuid = tex.source?.uuid ?? tex.uuid;
-			const seen = dedup[ bucket ].get( uuid );
-			if ( seen !== undefined ) return packTextureIndex( bucket, seen );
-			if ( lists[ bucket ].length >= STRIDE ) {
-
-				log.warn( `texture bucket ${bucket} full (${STRIDE}); dropping a map` );
-				if ( ! bucketOverflowReported ) this.config.issues?.record(
-					ISSUE_CODES.TEXTURE_LIMIT_EXCEEDED,
-					`texture bucket ${bucket} full (${STRIDE} layers); the rest render untextured`,
-					{ bucket, limit: STRIDE }
-				);
-				bucketOverflowReported = true;
-				return - 1;
-
-			}
-
-			lists[ bucket ].push( tex );
-			const layer = lists[ bucket ].length - 1;
-			dedup[ bucket ].set( uuid, layer );
-			const packed = packTextureIndex( bucket, layer );
-			flat.set( uuid, packed );
-			return packed;
-
-		};
-
-		// Per-type arrays hold unique textures indexed by the layer the extractor assigned
-		// (= array position), so remap[type][oldLayer] = packed index.
-		const remapType = ( arr, lists, dedup, flat, shapes ) => ( arr || [] ).map( tex => assign( tex, lists, dedup, flat, shapes ) );
-
-		const remap = {
-			albedo: remapType( this.maps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
-			emissive: remapType( this.emissiveMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
-			normal: remapType( this.normalMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			bump: remapType( this.bumpMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			roughness: remapType( this.roughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			metalness: remapType( this.metalnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			displacement: remapType( this.displacementMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			anisotropy: remapType( this.anisotropyMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			// Extension maps — data maps → linear pool; color maps (sheenColor, specularColor) → sRGB pool.
-			transmission: remapType( this.transmissionMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			clearcoat: remapType( this.clearcoatMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			clearcoatRoughness: remapType( this.clearcoatRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			clearcoatNormal: remapType( this.clearcoatNormalMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			sheenColor: remapType( this.sheenColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
-			sheenRoughness: remapType( this.sheenRoughnessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			iridescence: remapType( this.iridescenceMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			iridescenceThickness: remapType( this.iridescenceThicknessMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			specularIntensity: remapType( this.specularIntensityMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			specularColor: remapType( this.specularColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
-			diffuseTransmission: remapType( this.diffuseTransmissionMaps, linearLists, linearDedup, this._linearTexPacked, linearShapes ),
-			diffuseTransmissionColor: remapType( this.diffuseTransmissionColorMaps, srgbLists, srgbDedup, this._srgbTexPacked, srgbShapes ),
-		};
-
-		return { srgbLists, linearLists, remap };
-
-	}
-
-	/**
-	 * Rewrite each material's per-map index from the extractor's per-type layer to the
-	 * packed (bucket, layer) index. Idempotency is NOT guaranteed — call exactly once per
-	 * extraction (materials are freshly extracted on each process/rebuild).
-	 * @private
-	 */
-	_remapMaterialTextureIndices( remap ) {
-
-		const fix = ( v, table ) => ( v >= 0 && v < table.length ? table[ v ] : - 1 );
-		for ( const mat of this.materials ) {
-
-			mat.map = fix( mat.map, remap.albedo );
-			mat.emissiveMap = fix( mat.emissiveMap, remap.emissive );
-			mat.normalMap = fix( mat.normalMap, remap.normal );
-			mat.bumpMap = fix( mat.bumpMap, remap.bump );
-			mat.roughnessMap = fix( mat.roughnessMap, remap.roughness );
-			mat.metalnessMap = fix( mat.metalnessMap, remap.metalness );
-			mat.displacementMap = fix( mat.displacementMap, remap.displacement );
-			mat.anisotropyMap = fix( mat.anisotropyMap, remap.anisotropy );
-			mat.transmissionMap = fix( mat.transmissionMap, remap.transmission );
-			mat.clearcoatMap = fix( mat.clearcoatMap, remap.clearcoat );
-			mat.clearcoatRoughnessMap = fix( mat.clearcoatRoughnessMap, remap.clearcoatRoughness );
-			mat.clearcoatNormalMap = fix( mat.clearcoatNormalMap, remap.clearcoatNormal );
-			mat.sheenColorMap = fix( mat.sheenColorMap, remap.sheenColor );
-			mat.sheenRoughnessMap = fix( mat.sheenRoughnessMap, remap.sheenRoughness );
-			mat.iridescenceMap = fix( mat.iridescenceMap, remap.iridescence );
-			mat.iridescenceThicknessMap = fix( mat.iridescenceThicknessMap, remap.iridescenceThickness );
-			mat.specularIntensityMap = fix( mat.specularIntensityMap, remap.specularIntensity );
-			mat.specularColorMap = fix( mat.specularColorMap, remap.specularColor );
-			mat.diffuseTransmissionMap = fix( mat.diffuseTransmissionMap, remap.diffuseTransmission );
-			mat.diffuseTransmissionColorMap = fix( mat.diffuseTransmissionColorMap, remap.diffuseTransmissionColor );
-
-		}
+		return bucketTextures( this );
 
 	}
 
@@ -2367,48 +1999,15 @@ export class SceneProcessor {
 
 	}
 
-	/**
-     * Dispose of texture resources
-     * @private
-     */
 	_disposeTextures() {
 
-		this._disposeBucketTextures();
+		return disposeTextures( this );
 
 	}
 
-	/**
-	 * Dispose the consolidated bucket arrays (srgb/linear), each an Array<K> of
-	 * DataArrayTexture | null.
-	 * @private
-	 */
 	_disposeBucketTextures() {
 
-		for ( const prop of [ 'srgbBucketTextures', 'linearBucketTextures' ] ) {
-
-			const arr = this[ prop ];
-			if ( ! arr ) continue;
-			for ( const tex of arr ) {
-
-				if ( tex && typeof tex.dispose === 'function' ) {
-
-					try {
-
-						tex.dispose();
-
-					} catch ( error ) {
-
-						log.warn( `error disposing ${prop}:`, error );
-
-					}
-
-				}
-
-			}
-
-			this[ prop ] = null;
-
-		}
+		return disposeBucketTextures( this );
 
 	}
 
@@ -2417,81 +2016,15 @@ export class SceneProcessor {
      * @param {Object3D} object - Three.js object to extract materials from
      * @returns {Promise<SceneProcessor>} - This instance (for chaining)
      */
-	async rebuildMaterials( object ) {
+	rebuildMaterials( object ) {
 
-		if ( this.isProcessing ) {
-
-			throw new Error( "Already processing. Cannot rebuild materials during processing." );
-
-		}
-
-		this._log( 'Rebuilding materials and textures' );
-		const startTime = performance.now();
-
-		try {
-
-			// Set processing flag to prevent concurrent operations
-			this.isProcessing = true;
-
-			// Extract only material-related data from the scene (skip geometry extraction)
-			const extractedData = this.geometryExtractor.extractMaterialsOnly( object );
-
-			// Dispose old texture resources BEFORE updating arrays
-			this._disposeMaterialTextures();
-
-			// Update material arrays (but keep existing triangle data)
-			this.materials = extractedData.materials;
-			this.meshes = extractedData.meshes; // Update mesh data
-			this._adoptTextureLists( extractedData );
-
-			// Bucket textures, remap material indices, regenerate raw material data, and
-			// build the consolidated bucket arrays — same path as the initial build.
-			await this._createMaterialTextures();
-
-			const duration = performance.now() - startTime;
-			this._log( `Material rebuild complete (${duration.toFixed( 2 )}ms)`, {
-				materials: this.materials.length,
-				textures: this.maps.length
-			} );
-
-			return this;
-
-		} catch ( error ) {
-
-			log.error( 'material rebuild failed:', error );
-			throw error;
-
-		} finally {
-
-			// Always clear processing flag
-			this.isProcessing = false;
-
-		}
+		return rebuildMaterials( this, object );
 
 	}
 
-	/** @private The extraction's material indices point into these lists, so every one is taken from it. */
 	_adoptTextureLists( extractedData ) {
 
-		for ( const name of TEXTURE_LISTS ) this[ name ] = extractedData[ name ] ?? [];
-
-	}
-
-	/**
-     * Dispose only material-related textures
-     * @private
-     */
-	_disposeMaterialTextures() {
-
-		this._disposeBucketTextures();
-
-		// Clear texture creator cache to prevent stale references
-		if ( this.textureCreator && this.textureCreator.textureCache ) {
-
-			this.textureCreator.textureCache.dispose();
-			this.textureCreator.textureCache = new ( this.textureCreator.textureCache.constructor )();
-
-		}
+		return adoptTextureLists( this, extractedData );
 
 	}
 
@@ -3243,157 +2776,13 @@ export class SceneProcessor {
 	 */
 	scheduleBackgroundRebuild( meshIndices, onSwap ) {
 
-		if ( ! this.instanceTable || ! this.triangles ) return;
-
-		this._rebuildGeneration ++;
-		const generation = this._rebuildGeneration;
-
-		const dispatchRebuild = ( meshIdx, entry, worker ) => {
-
-			const meshTriData = this.triangles.copyOf( entry.triOffset, entry.triCount );
-
-			this._pendingRebuilds.set( meshIdx, worker );
-
-			worker.onmessage = ( e ) => {
-
-				const data = e.data;
-				worker.terminate();
-				this._pendingRebuilds.delete( meshIdx );
-
-				if ( data.error ) {
-
-					log.error( `background BLAS rebuild failed (mesh ${meshIdx}):`, data.error );
-					return;
-
-				}
-
-				// Discard if object was transformed again since this rebuild started
-				if ( generation !== this._rebuildGeneration ) return;
-
-				this._swapBLAS( meshIdx, entry, data, onSwap );
-
-			};
-
-			worker.onerror = ( err ) => {
-
-				log.error( `background BLAS rebuild worker failed (mesh ${meshIdx}):`, err );
-				worker.terminate();
-				this._pendingRebuilds.delete( meshIdx );
-
-			};
-
-			worker.postMessage( {
-				triangleData: meshTriData.buffer,
-				triangleByteOffset: meshTriData.byteOffset,
-				triangleByteLength: meshTriData.byteLength,
-				triangleCount: entry.triCount,
-				depth: this.config.bvhDepth,
-				// Without these the worker builds at its own defaults (leaf size 8 against the
-				// scene's 4), producing a tree of a different size that the swap below rejects —
-				// so every rebuild was thrown away.
-				maxLeafSize: this.bvhBuilder.maxLeafSize,
-				foldLeaves: this._foldLeaves === true,
-				numBins: this.bvhBuilder.numBins,
-				maxBins: this.bvhBuilder.maxBins,
-				minBins: this.bvhBuilder.minBins,
-				reportProgress: false,
-				sharedReorderBuffer: null,
-				reinsertionOptimization: {
-					enabled: this.bvhBuilder.enableReinsertionOptimization,
-					batchSizeRatio: this.bvhBuilder.reinsertionBatchSizeRatio,
-					maxIterations: this.bvhBuilder.reinsertionMaxIterations
-				},
-			}, [ meshTriData.buffer ] );
-
-		};
-
-		for ( const meshIndex of meshIndices ) {
-
-			const placement = this._placementOf( meshIndex );
-			if ( placement < 0 ) continue;
-			const entry = this.instanceTable.entryAt( placement );
-			// A placement that borrows another's BLAS must not rebuild it: the work is the
-			// owner's, and two placements would dispatch the same rebuild twice.
-			if ( ! entry || ! this.instanceTable.isOwner( placement ) ) continue;
-
-			// Cancel any in-flight rebuild for this mesh
-			const existing = this._pendingRebuilds.get( placement );
-			if ( existing ) existing.terminate();
-
-			dispatchRebuild( placement, entry, createWorker( BVHWorker ) );
-
-		}
+		return scheduleBackgroundRebuild( this, meshIndices, onSwap );
 
 	}
 
-	/**
-	 * Swap a rebuilt BLAS into the combined buffer.
-	 * @private
-	 */
 	_swapBLAS( meshIdx, entry, workerData, onSwap ) {
 
-		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
-
-		const FPN = 16;
-		const newBvhData = workerData.bvhData;
-		const newNodeCount = newBvhData.length / FPN;
-
-		// The rebuilt tree only has to fit the range the build reserved. Demanding an exact match
-		// was too strict: the triangles have moved, so the splits land differently and the count
-		// legitimately drifts. Anything past the reserved range would overwrite the next BLAS.
-		if ( newNodeCount > entry.blasNodeCount ) {
-
-			log.warn( `background rebuild does not fit for mesh ${meshIdx} (${newNodeCount} nodes vs ${entry.blasNodeCount} reserved), skipping swap` );
-			return;
-
-		}
-
-		// Write rebuilt BLAS nodes into the combined buffer at the entry's offset
-		this.bvh.setRecords( entry.blasOffset, newBvhData );
-		this._offsetBLASInPlace( entry.blasOffset, newNodeCount, entry.blasOffset, entry.triOffset );
-
-		// Write reordered triangles back into global array
-		const reorderedTris = workerData.triangles;
-		if ( reorderedTris ) {
-
-			this.triangles.setRecords( entry.triOffset, reorderedTris );
-
-		}
-
-		// The live tree is whatever the rebuild produced; any reserved nodes past it are dead and
-		// nothing reaches them, but a later refit would walk them as garbage.
-		this.instanceTable.setBlasNodeCount( meshIdx, newNodeCount );
-
-		// The rebuild reordered the triangles, so the map from stored order back to the caller's
-		// order has to follow. `entryAt()` hands back a snapshot, so writing it there was lost and
-		// the next refit scattered every position through the previous permutation.
-		//
-		// The worker was handed the triangles already in stored order, so its permutation is
-		// relative to that, not to the caller's order. Overwriting rather than composing would
-		// discard how the original build shuffled them.
-		const newOrigToBvh = workerData.originalToBvh;
-		if ( newOrigToBvh ) {
-
-			const prev = this.instanceTable.bvhToOriginalOf( meshIdx );
-			const bvhToOrig = new Uint32Array( entry.triCount );
-			for ( let i = 0; i < entry.triCount; i ++ ) {
-
-				bvhToOrig[ newOrigToBvh[ i ] ] = prev ? prev[ i ] : i;
-
-			}
-
-			this.instanceTable.setBvhToOriginal( meshIdx, bvhToOrig );
-
-		}
-
-		// Recompute AABB and refit TLAS
-		this.instanceTable.recomputeAABB( meshIdx, this.bvh, this.triangles );
-		this._refitTLAS();
-
-		this._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );
-
-		// The caller asked in mesh indices and gets one back, not the placement used here.
-		onSwap?.( this.instanceTable.sourceMesh[ meshIdx ] ?? meshIdx );
+		return swapBLAS( this, meshIdx, entry, workerData, onSwap );
 
 	}
 
@@ -3402,13 +2791,7 @@ export class SceneProcessor {
 	 */
 	cancelBackgroundRebuilds() {
 
-		for ( const worker of this._pendingRebuilds.values() ) {
-
-			worker.terminate();
-
-		}
-
-		this._pendingRebuilds.clear();
+		return cancelBackgroundRebuilds( this );
 
 	}
 

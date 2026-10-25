@@ -14,7 +14,7 @@
  * needed. Enable only if a scene comes out z-mirrored against a known reference.
  */
 
-import { freeNow, resized } from './buffers.js';
+import { freeNow, resized } from './ArrayMemory.js';
 import {
 	Group, Mesh, InstancedMesh, PerspectiveCamera, OrthographicCamera, Matrix4, Vector3, Quaternion,
 	BufferGeometry, BufferAttribute, Float32BufferAttribute, Uint32BufferAttribute,

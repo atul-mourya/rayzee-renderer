@@ -5,7 +5,7 @@
 
 import { float, int, If, Loop, select, cos, max, min } from 'three/tsl';
 
-import { struct } from '../../shaders/patches.js';
+import { struct } from '../../shaders/Struct.js';
 import {
 	DirectionalLight, AreaLight, PointLight, SpotLight,
 	getDirectionalLight, getAreaLight, getPointLight, getSpotLight,

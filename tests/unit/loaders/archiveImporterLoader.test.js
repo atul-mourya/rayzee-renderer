@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
-import { ARCHIVE_FORMATS } from '@/core/loaders/archiveFormats.js';
+import { ARCHIVE_FORMATS } from '@/core/loaders/ArchiveFormats.js';
 
 // Only the archive half of the loader is exercised; nothing here touches a scene.
 function loaderWith( load ) {

@@ -11,7 +11,7 @@ export default defineConfig( {
 		alias: [
 			{ find: /^rayzee$/, replacement: `${src}/index.js` },
 			{ find: /^rayzee\/core$/, replacement: `${src}/core.js` },
-			{ find: /^rayzee\/addons\/physical-sky$/, replacement: `${src}/addons/physicalSky/index.js` },
+			{ find: /^rayzee\/addons\/physical-sky$/, replacement: `${src}/addons/physical-sky/index.js` },
 		],
 	},
 	worker: { format: 'es' },

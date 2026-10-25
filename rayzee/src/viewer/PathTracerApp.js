@@ -22,11 +22,11 @@ import { AnimationManager } from './animation/AnimationManager.js';
 import { TransformManager } from './overlays/TransformManager.js';
 import { TransformGizmoHelper } from './overlays/TransformGizmoHelper.js';
 import { captureSceneState, applySceneState } from './SceneState.js';
-import { ARCHIVE_FORMATS } from '../loaders/archiveFormats.js';
+import { ARCHIVE_FORMATS } from '../loaders/ArchiveFormats.js';
 import { allFormats } from '../addons/formats.js';
 import { BidirectionalIntegrator } from '../addons/bidirectional/BidirectionalIntegrator.js';
 import { ColorManagement } from '../addons/color/ColorManagement.js';
-import { acquireSharedStorage } from '../addons/storage/openStorage.js';
+import { acquireSharedStorage } from '../addons/storage/OpenStorage.js';
 
 export { describeAdapter, RENDER_CHECKPOINT_VERSION };
 
@@ -172,7 +172,7 @@ export class PathTracerApp extends RayzeeRenderer {
 	async _initManagers() {
 
 		await super._initManagers();
-		this.environmentManager.setProceduralSkyLoader( () => import( '../addons/physicalSky/PhysicalSky.js' ).then( ( m ) => m.PhysicalSky ) );
+		this.environmentManager.setProceduralSkyLoader( () => import( '../addons/physical-sky/PhysicalSky.js' ).then( ( m ) => m.PhysicalSky ) );
 		this.stages.pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) );
 		// The denoisers read the G-buffer: compiled in from the first build, so switching one on never rebuilds kernels.
 		this.stages.pathTracer.requestOutput( 'gBuffer' );

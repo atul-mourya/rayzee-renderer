@@ -14,7 +14,7 @@
  *   await loadObject3D(group);
  */
 
-import { freeNow } from './buffers.js';
+import { freeNow } from './ArrayMemory.js';
 import { PBRTParser, ParamUsage } from './PBRTParser.js';
 import { PBRTSceneBuilder } from './PBRTSceneBuilder.js';
 import { findFrameSequence, FrameSequenceMerger, motionFromShutter, SEQUENCE_FPS } from './PBRTAnimation.js';

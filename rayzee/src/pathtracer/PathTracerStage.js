@@ -1,5 +1,5 @@
 import { storage } from 'three/tsl';
-import { StorageParts } from '../shaders/patches.js';
+import { StorageParts } from '../shaders/ThreePatches.js';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { Vector2, Matrix4 } from 'three';
 

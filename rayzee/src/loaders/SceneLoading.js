@@ -1,7 +1,7 @@
 import { EngineEvents, resetLoading, updateLoading } from '../EngineEvents.js';
 import { nameFromUrl } from '../storage/DownloadCache.js';
-import { isFolderInput, localFolder } from './archiveFormats.js';
-import { folderIdentity, identityKey, fileIdentity } from '../storage/identity.js';
+import { isFolderInput, localFolder } from './ArchiveFormats.js';
+import { folderIdentity, identityKey, fileIdentity } from '../storage/FileIdentity.js';
 import { SPILL_ENVIRONMENT_WIDTH } from '../memory/HostMemory.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { SETTING_SOURCE } from '../RenderSettings.js';

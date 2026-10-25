@@ -26,7 +26,6 @@ import {
 	uintBitsToFloat,
 } from 'three/tsl';
 
-import { struct } from './patches.js';
 import {
 	MIN_PDF, getDatafromStorageBuffer, powerHeuristic, MATERIAL_SLOTS, MATERIAL_SLOT,
 	computeDotProductsAniso, instanceRows, instanceNormalToWorld, instancePointToWorld,
@@ -37,7 +36,7 @@ import { getRandomSample1D, getRandomSample2D } from './Random.js';
 import { calculateMaterialPDFFromDots } from './LightsSampling.js';
 import { evaluateMaterialResponseFromDots, evaluateDiffuseTransmission } from './MaterialEvaluation.js';
 import { diffuseTransmissionWeight, diffuseTransmissionPdf } from './MaterialProperties.js';
-import { DotProducts } from './Struct.js';
+import { struct, DotProducts } from './Struct.js';
 import { triangleSide, sideAccepts } from './BVHTraversal.js';
 
 // ================================================================================

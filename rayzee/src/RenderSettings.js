@@ -2,7 +2,7 @@ import { EventDispatcher, Color, Vector2, MathUtils } from 'three';
 import { ENGINE_DEFAULTS, CAMERA_PROJECTION_IDS } from './EngineDefaults.js';
 import { EngineEvents } from './EngineEvents.js';
 import { ISSUE_CODES } from './EngineIssues.js';
-import { toPortable, fromPortable } from './portable.js';
+import { toPortable, fromPortable } from './Portable.js';
 
 /**
  * The renderer core's settings: maps each key to its target.
@@ -448,7 +448,7 @@ export class RenderSettings extends EventDispatcher {
 
 	}
 
-	/** The settings a host set, as portable values (see portable.js): what a session restores. */
+	/** The settings a host set, as portable values (see Portable.js): what a session restores. */
 	serialize() {
 
 		const out = {};

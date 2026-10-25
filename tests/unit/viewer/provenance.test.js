@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { REVISION } from 'three';
 import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
-import { VERSION } from '@/core/version.js';
+import { VERSION } from '@/core/Version.js';
 
 describe( 'getProvenance', () => {
 

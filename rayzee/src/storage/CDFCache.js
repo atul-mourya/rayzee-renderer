@@ -1,5 +1,4 @@
-import { ENGINE_AREAS } from './areas.js';
-import { sharedStorage } from './shared.js';
+import { ENGINE_AREAS, sharedStorage } from './StorageAreas.js';
 import { getAssetConfig } from '../AssetConfig.js';
 
 const FORMAT = 5;

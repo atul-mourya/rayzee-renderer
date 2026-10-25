@@ -95,15 +95,16 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 
 **`rayzee/src/`, one folder a job** (lowercase; a worker sits beside the code that starts it):
 - root — entries (`index.js`, `core.js`), `RayzeeRenderer.js` and its API (`RenderSettings`, `EngineDefaults`,
-  `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `portable.js`; the loading/stats status channel is in `EngineEvents.js`
+  `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `Portable.js`; the loading/stats status channel is in `EngineEvents.js`
 - `pipeline/` stages, context, events, Compositor · `pathtracer/` the path tracer stage, uniforms, kernel dispatch,
   ray queues and buffers · `shaders/` TSL functions, `shaders/kernels/` the compute kernels
-- `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera; `SceneProcessor`'s refits and moves
-  in `SceneRefit.js`, its spill in `memory/SceneSpill.js`) · `bvh/` · `lights/` ·
+- `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera; `SceneProcessor`'s refits, moves and
+  background BLAS rebuilds in `SceneRefit.js`, its spill in `memory/SceneSpill.js`, its stored BLASes in
+  `storage/BLASCache.js`, its material textures in `materials/TextureCreator.js`) · `bvh/` · `lights/` ·
   `materials/` (and texture arrays) · `environment/` (HDRI, skies, sun) · `loaders/` · `memory/` · `output/` (readbacks,
   their tone mapping, `rayzee/encoders`) · `color/` · `storage/` (the caches; the OPFS manager is an add-on) · `node/`
 - `addons/` one folder an add-on, its entry `index.js` beside its code (`formats.js` is one file): `archives/` (with
-  `pbrt/`, `usd/`), `bidirectional/` (integrator, shaders, kernels), `color/` (OCIO), `physicalSky/`, `storage/`
+  `pbrt/`, `usd/`), `bidirectional/` (integrator, shaders, kernels), `color/` (OCIO), `physical-sky/`, `storage/`
 - `viewer/` everything only `PathTracerApp` uses: `camera/`, `overlays/`, `animation/`, `denoise/`, `picture/`,
   `lights/` (gobo, IES). ⚠️ The core imports nothing from `viewer/` or `addons/`; whatever only the full entry reaches
   lives in `viewer/`, whatever only an add-on reaches in its folder (`coreBoundary.test.js` holds all three).
@@ -170,7 +171,7 @@ PathTracer delegates to these via composition — external code accesses them di
 
 ### TSL Shader Modules (`rayzee/src/shaders/`)
 46 files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
-- Wavefront kernels (`shaders/kernels/`, with `DepthPass.js`): `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`, `SortGlobalKernels.js`, `DebugKernel.js`; bidirectional/VCM: `LightGenerateKernel.js`, `ConnectKernel.js`, `LightSplatKernel.js`, `MergeKernel.js`
+- Wavefront kernels (`shaders/kernels/`, with `DepthPass.js`): `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`, `SortGlobalKernels.js`, `DebugKernel.js`; bidirectional/VCM (in `addons/bidirectional/`): `LightGenerateKernel.js`, `ConnectKernel.js`, `LightSplatKernel.js`, `MergeKernel.js`
 - Traversal and shading: `BVHTraversal.js`, `MaterialEvaluation.js`, `MaterialSampling.js`, `MaterialTransmission.js`, `Subsurface.js`, `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `Environment.js`, `TextureSampling.js`, `SceneResources.js`, etc.
 
 ### Multi-Threading Architecture (workers beside the code that starts them)
@@ -252,7 +253,7 @@ a `uvec2` a triangle (24 B less; `withoutUV` on the pair), and `triangleRow` rea
 brings them back when a texture arrives.
 **Buffer parts.** Dawn caps one buffer at 4 GiB − 4 even where Metal allows 13.3 GB, so past
 `maxStorageBufferBindingSize` the BVH, geo and shade stores are each split into parts of whole records
-(`StorageParts` in `shaders/patches.js`; `stage._bvhParts` / `_geoParts` / `_shadeParts`), read through
+(`StorageParts` in `shaders/ThreePatches.js`; `stage._bvhParts` / `_geoParts` / `_shadeParts`), read through
 `splitStorage` (`shaders/Common.js`): `getDatafromStorageBuffer` → `storageElement` picks the part with an
 `If` chain; `storageRows` picks it once for several rows of one record — a BVH node's four vec4 and a TLAS
 leaf's transform are read in one branch (a 12-lane copy record can straddle two parts and stays per element).
@@ -770,7 +771,7 @@ const handleChange = (setter, appUpdater, needsReset = true) => val => {
 ```
 Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never use store setters directly for render parameters — always use provided handlers like `handleBouncesChange`, `handleSamplesChange`.
 
-### Colour management (`rayzee/src/color/`)
+### Colour management (`rayzee/src/addons/color/`, `rayzee/src/color/`)
 Full notes: [docs/design/COLOR_MANAGEMENT.md](docs/design/COLOR_MANAGEMENT.md) — the API, input resolution, baked views, the app's
 panel and its labels, the startup view, and the shaper + table with its measurements.
 
@@ -829,7 +830,7 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
   or view changes. The GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry
   `categories`.
 
-### Physical sky (`addons/physicalSky/PhysicalSky.js`, `addons/physicalSky/AtmosphereModel.js`, `environment/SunPosition.js`, `addons/physicalSky/Atmosphere.js`, `addons/physicalSky/EnvironmentCDF.js`, `shaders/Sun.js`)
+### Physical sky (`addons/physical-sky/PhysicalSky.js`, `addons/physical-sky/AtmosphereModel.js`, `environment/SunPosition.js`, `addons/physical-sky/Atmosphere.js`, `addons/physical-sky/EnvironmentCDF.js`, `shaders/Sun.js`)
 An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class
 `environmentManager.setProceduralSky( PhysicalSky )` installed, or `setProceduralSkyLoader( load )`, which imports it
 the first time 'procedural' mode is baked — `PathTracerApp` does that, so the add-on is a chunk of its own that a
@@ -843,7 +844,7 @@ uses 1/(1 − f). Against the Monte Carlo reference in `tests/gpu/skyReference.j
 sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2–5× bright at twilight.
 - **Nothing leaves the GPU.** The sky is computed per equirect row × 256 azimuths from the sun (π·s²,
   mirrored: radiance depends on elevation and that azimuth only) and filled into the equirect; the
-  importance-sampling table is built beside it (`addons/physicalSky/EnvironmentCDF.js`, the GPU twin of
+  importance-sampling table is built beside it (`addons/physical-sky/EnvironmentCDF.js`, the GPU twin of
   `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`, packed as `packExactTable` packs it);
   both are copied into
   textures created without pixels (`source.dataReady = false`). Only the table's two normalisers come
@@ -1091,7 +1092,7 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
 - ⚠️ `material.clone()` drops the engine's own properties (diffuse transmission, subsurface): use `cloneMaterial`.
 - ⚠️ The builder frees a shape's arrays after merging it: hand an array over once (`own()`).
 
-### Storage (OPFS) (`rayzee/src/storage/`)
+### Storage (OPFS) (`rayzee/src/addons/storage/`, `rayzee/src/storage/`)
 Full notes: [docs/design/STORAGE.md](docs/design/STORAGE.md) — areas and the cache budget, the entry protocol, I/O, locks, identity,
 the scene cache, scene state, sessions and projects, render checkpoints, and memory spill in full.
 
@@ -1099,7 +1100,7 @@ the scene cache, scene state, sessions and projects, render checkpoints, and mem
 (`acquireSharedStorage`). It is `null` where there is none (private windows, Node) — **every caller must work without
 it**; failures record `storage.*` warnings and fall back to memory. An add-on (`rayzee/addons/storage`, installed with
 `renderer.setStorageOpener()`); the caches that use it (`DownloadCache`, `CDFCache`, `BLASCache`, `SpillStore`,
-`GeometrySpill`) stay core and import area names from `storage/areas.js`. Areas are `cache` (one shared budget, evicted
+`GeometrySpill`) stay core and import area names from `storage/StorageAreas.js`. Areas are `cache` (one shared budget, evicted
 least-recently-used), `user` (never evicted) or `scratch` (`spill`, cleared at open). Also here:
 `app.exportSceneState()` / `importSceneState()`, the app's sessions and `.rayzee` projects, and render checkpoints
 (`captureRenderCheckpoint()` / `restoreRenderCheckpoint()`).

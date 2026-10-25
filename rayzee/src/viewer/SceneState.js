@@ -6,8 +6,8 @@
  * UUID — those change on every load.
  */
 
-import { VERSION } from '../version.js';
-import { fromPortable } from '../portable.js';
+import { VERSION } from '../Version.js';
+import { fromPortable } from '../Portable.js';
 
 export const SCENE_STATE_VERSION = 1;
 

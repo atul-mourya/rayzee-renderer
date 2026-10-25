@@ -13,7 +13,7 @@ function hex( bytes ) {
 
 }
 
-export async function sha256Hex( data ) {
+async function sha256Hex( data ) {
 
 	const bytes = typeof data === 'string' ? encoder.encode( data ) : data;
 	return hex( new Uint8Array( await crypto.subtle.digest( 'SHA-256', bytes ) ) );

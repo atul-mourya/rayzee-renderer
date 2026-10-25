@@ -28,7 +28,7 @@
  * recorded as `ctmEnd` / `cameraToWorldEnd` / `matricesEnd` only where it differs.
  */
 
-import { resized } from './buffers.js';
+import { resized } from './ArrayMemory.js';
 import { TokenStream, TokenType } from './PBRTTokenizer.js';
 import * as M from './PBRTMath.js';
 

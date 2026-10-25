@@ -10,11 +10,7 @@ import {
 	bool as tslBool,
 } from 'three/tsl';
 
-import { struct } from './patches.js';
-
-import { AnisoFrame, DotProducts,
-	BRDFWeights,
-} from './Struct.js';
+import { struct, AnisoFrame, DotProducts, BRDFWeights } from './Struct.js';
 import { MIN_CLEARCOAT_ROUGHNESS, computeDotProductsAniso, anisoTangentFrame, constructTBN, coatNormal } from './Common.js';
 import { computeAnisoAlphas, calculateBRDFWeightsFromMaterial, calculateBSDFSamplingPDF, diffuseTransmissionPdf } from './MaterialProperties.js';
 import { ImportanceSampleCosine, sampleGGXVNDF, sampleGGXVNDFAniso } from './MaterialSampling.js';

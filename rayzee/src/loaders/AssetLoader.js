@@ -8,7 +8,7 @@ import { createMeshesFromMultiMaterialMesh } from 'three/addons/utils/SceneUtils
 import { clone as cloneWithSkeletons } from 'three/addons/utils/SkeletonUtils.js';
 import { DownloadCache, nameFromUrl, cachedObjectURL } from '../storage/DownloadCache.js';
 import { setEnvironmentSource } from '../storage/CDFCache.js';
-import { fileIdentity, identityKey } from '../storage/identity.js';
+import { fileIdentity, identityKey } from '../storage/FileIdentity.js';
 import { updateLoading } from '../EngineEvents.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
 import { computeInstanceBoundingBoxes } from '../scene/GeometryExtractor.js';

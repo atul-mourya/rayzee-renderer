@@ -17,7 +17,7 @@ import { packMaterial, UNIT_RANGE_PROPERTIES, clampUnit } from './MaterialPackin
 import { resolveMaterialTextures, MATERIAL_VALUE_SOURCE } from '../scene/GeometryExtractor.js';
 import { convertLinearTriple, convertLinearTriples, getWorkingMatrixSpace } from '../color/WorkingMatrix.js';
 import { createLogger, fmt } from '../Logger.js';
-import { toPortable } from '../portable.js';
+import { toPortable } from '../Portable.js';
 import { MATERIAL_LAYERS } from '../shaders/SceneResources.js';
 
 /** Material buffers already moved into the working space, so a re-init cannot convert twice. */
@@ -385,7 +385,7 @@ export class MaterialDataManager {
 	}
 
 	/**
-	 * Every property a host set, per material, as portable values (see portable.js).
+	 * Every property a host set, per material, as portable values (see Portable.js).
 	 * @returns {Array<{index: number, props: Object<string, *>}>}
 	 */
 	serializeHostEdits() {

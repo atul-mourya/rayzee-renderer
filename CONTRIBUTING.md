@@ -37,7 +37,7 @@ checked. `CLAUDE.md` at the repository root is the detailed guide to the engine'
 rayzee/                   # The engine, published to npm as `rayzee`
 ├── src/
 │   ├── RayzeeRenderer.js # The renderer core (`rayzee/core`)
-│   ├── addons/           # Optional capabilities, one folder each (archives, bidirectional, color, physicalSky, storage)
+│   ├── addons/           # Optional capabilities, one folder each (archives, bidirectional, color, physical-sky, storage)
 │   ├── pipeline/         # RenderPipeline, RenderStage, PipelineContext, Compositor
 │   ├── pathtracer/       # The path tracer stage, uniforms, kernel dispatch, ray buffers
 │   ├── shaders/          # TSL shader modules; kernels/ holds the wavefront kernels

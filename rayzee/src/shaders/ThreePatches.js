@@ -8,15 +8,12 @@
  * the wavefront tracer's high per-frame compute-pass count doesn't overflow it).
  *
  * Also overrides `ContextNode.prototype.setup` to undo an r186 codegen regression
- * (§4) — that one is temporary and goes away at r187.
+ * (§3) — that one is temporary and goes away at r187.
  *
- * Exports: `struct()` — drop-in replacement for TSL's `struct()` returning
- * a proxy factory that supports GLSL-style dot-notation field access — and
- * `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
+ * Exports `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
  */
 
 import { ContextNode, StorageInstancedBufferAttribute, WebGPUBackend } from 'three/webgpu';
-import { struct as _struct } from 'three/tsl';
 
 // ---------------------------------------------------------------------------
 // 1. WGSL global-variable promotion patch (compute-only)
@@ -282,88 +279,7 @@ WebGPUBackend.prototype.initTimestampQuery = function ( type, uid, descriptor ) 
 };
 
 // ---------------------------------------------------------------------------
-// 3. TSL struct proxy — enables GLSL-style dot-notation field access
-// ---------------------------------------------------------------------------
-// TSL structs require `.get('fieldName')` for member access, but GLSL-style
-// dot notation (`.fieldName`) is more natural and matches ported code.
-//
-// This wraps TSL's `struct()` so that:
-//  - Direct construction: `MyStruct({...}).toVar('x')` → `.fieldName` works
-//  - Fn return values:    `MyStruct.wrap(someFn(...))` → `.fieldName` works
-//
-// Property access for known struct member names is redirected to `.get('name')`.
-// Swizzle properties (x, y, z, w, etc.), Node methods (.add, .assign, etc.), and
-// other standard properties pass through to the underlying node unmodified.
-
-function createStructProxy( node, memberSet ) {
-
-	return new Proxy( node, {
-
-		get( target, prop, receiver ) {
-
-			// Intercept known struct member names
-			if ( typeof prop === 'string' && memberSet.has( prop ) ) {
-
-				return target.get( prop );
-
-			}
-
-			const val = Reflect.get( target, prop, receiver );
-
-			// Intercept .toVar() to proxy-wrap the result
-			if ( prop === 'toVar' && typeof val === 'function' ) {
-
-				return ( ...args ) => createStructProxy( val.apply( target, args ), memberSet );
-
-			}
-
-			return val;
-
-		}
-
-	} );
-
-}
-
-/**
- * Drop-in replacement for TSL's `struct()` that returns a proxy-enhanced factory.
- *
- * The returned factory:
- *  - Creates struct nodes where `.toVar()` results support dot-notation field access
- *  - Has `.wrap(node)` method to proxy-wrap Fn return values for field access
- *  - Has `.layout` and `.isStruct` matching the original TSL struct API
- *
- * @param {Object} members - Struct member layout (e.g., { didHit: 'bool', dst: 'float' })
- * @param {string|null} name - Optional struct name
- * @returns {Function} Enhanced struct factory
- */
-export function struct( members, name = null ) {
-
-	const factory = _struct( members, name );
-	const memberSet = new Set( Object.keys( members ) );
-
-	const wrappedFactory = ( ...args ) => {
-
-		const node = factory( ...args );
-		return createStructProxy( node, memberSet );
-
-	};
-
-	wrappedFactory.layout = factory.layout;
-	wrappedFactory.isStruct = true;
-
-	/**
-	 * Wrap an existing node (e.g., Fn return value) with struct field access proxy.
-	 * Usage: `const hit = HitInfo.wrap(traverseBVH(...).toVar('hit'));`
-	 */
-	wrappedFactory.wrap = ( node ) => createStructProxy( node, memberSet );
-
-	return wrappedFactory;
-
-}
-
-// ---------------------------------------------------------------------------
-// 4. r186 ContextNode.setup regression — DELETE WHEN THE three DEP REACHES r187
+// 3. r186 ContextNode.setup regression — DELETE WHEN THE three DEP REACHES r187
 // ---------------------------------------------------------------------------
 // r186 (#34251) made `ContextNode.setup()` return the node it had just built.
 // Returning it stores the child's output node in the context node's own

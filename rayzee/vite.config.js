@@ -28,7 +28,7 @@ export default defineConfig( {
 					rayzee: path.resolve( __dirname, "src/index.js" ),
 					"rayzee-core": path.resolve( __dirname, "src/core.js" ),
 					encoders: path.resolve( __dirname, "src/output/ImageEncoders.js" ),
-					"addons/physical-sky": path.resolve( __dirname, "src/addons/physicalSky/index.js" ),
+					"addons/physical-sky": path.resolve( __dirname, "src/addons/physical-sky/index.js" ),
 					"addons/archives": path.resolve( __dirname, "src/addons/archives/index.js" ),
 					"addons/bidirectional": path.resolve( __dirname, "src/addons/bidirectional/index.js" ),
 					"addons/color": path.resolve( __dirname, "src/addons/color/index.js" ),

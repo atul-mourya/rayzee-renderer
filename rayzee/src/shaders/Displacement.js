@@ -3,7 +3,7 @@ import {
 	Fn, wgslFn, float, vec2, int, bool as tslBool, If, Loop, Break, abs, normalize, dot, cross, min, max, clamp, ceil, select, uintBitsToFloat,
 } from 'three/tsl';
 
-import { struct } from './patches.js';
+import { struct } from './Struct.js';
 import { triangleRow, instanceRows, instanceDirToWorld } from './Common.js';
 import { sampleDisplacementMap, bucketTexelSize } from './TextureSampling.js';
 

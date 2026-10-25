@@ -4,7 +4,7 @@
 
 import { storage } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
-import { gpuOnlyStorageAttribute } from '../shaders/patches.js';
+import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { freeStorageAttribute } from './PackedRayBuffer.js';
 import { createLogger, fmt } from '../Logger.js';
 

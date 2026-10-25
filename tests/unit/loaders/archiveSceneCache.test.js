@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PerspectiveCamera, Scene, Vector3 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/addons/storage/openStorage.js';
+import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
-import { localFolder } from '@/core/loaders/archiveFormats.js';
+import { localFolder } from '@/core/loaders/ArchiveFormats.js';
 
 // A parse (minMs 0) or a parse plus build (BUILD_MS) slow enough to store, whatever this machine's speed.
 const policy = vi.hoisted( () => ( { minMs: 0 } ) );
-vi.mock( '@/core/storage/sceneCachePolicy.js', async importOriginal => ( {
+vi.mock( '@/core/storage/StorageAreas.js', async importOriginal => ( {
 	...await importOriginal(),
 	worthStoring: ms => ms >= policy.minMs,
 } ) );

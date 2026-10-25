@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/addons/storage/openStorage.js';
+import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { SpillStore } from '@/core/storage/SpillStore.js';
 import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 

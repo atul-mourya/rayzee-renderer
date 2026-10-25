@@ -3,7 +3,7 @@ import { readPixels, TextureReadback } from './TextureReadback.js';
 import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './ToneMapCPU.js';
 import { PackedToneMapper } from './ToneMapGPU.js';
 import { EngineIssueError, ISSUE_CODES } from '../EngineIssues.js';
-import { VERSION } from '../version.js';
+import { VERSION } from '../Version.js';
 import { createLogger } from '../Logger.js';
 
 const log = createLogger( 'engine' );

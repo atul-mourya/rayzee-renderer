@@ -2,7 +2,7 @@
 
 ## Loading a folder
 `loadFile( { files } )` loads a folder of files as the same folder zipped would load — `files` a folder picker's FileList
-(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`loaders/archiveFormats.js`, core)
+(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`loaders/ArchiveFormats.js`, core)
 normalises it (sorted, hidden files and folders out, `name` the shared top folder, `flat` for loose files);
 `ArchiveImporter.loadFolder` opens it with `openFolder()` (`ArchiveReader.js`, the shape of `openTar` / `openZip`) and
 goes through the archive path (`_loadSource`), so pbrt scenes, the part prompt (`error.file` is the folder) and glTF /
@@ -17,7 +17,7 @@ folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects
 Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `addons/archives/ArchiveImporter.js`, which
 the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or
 `setArchiveImporterLoader( load, ARCHIVE_FORMATS )` (`ARCHIVE_FORMATS` is exported from `rayzee/core` for that), which loads it for the first archive read — `PathTracerApp` does
-that, so archive reading and pbrt are a chunk of their own. The formats come from `loaders/archiveFormats.js`, so the
+that, so archive reading and pbrt are a chunk of their own. The formats come from `loaders/ArchiveFormats.js`, so the
 loader recognises an archive before the code that reads it exists. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
 add-on. The importer reads the loader's members through `this.loader`.
 A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
@@ -50,7 +50,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
   for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
   ArrayBuffer is freed only at a major GC, which a parse reaches late, so scene text, grown arrays
-  (`addons/archives/pbrt/buffers.js`) and merged shapes' arrays are let go explicitly with
+  (`addons/archives/pbrt/ArrayMemory.js`) and merged shapes' arrays are let go explicitly with
   `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
   First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
   identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those

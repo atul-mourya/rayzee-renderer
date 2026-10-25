@@ -1,6 +1,6 @@
 import { createTarIndexer } from './ArchiveReader.js';
-import { ENGINE_AREAS } from '../../storage/areas.js';
-import { fileIdentity, identityKey } from '../../storage/identity.js';
+import { ENGINE_AREAS } from '../../storage/StorageAreas.js';
+import { fileIdentity, identityKey } from '../../storage/FileIdentity.js';
 import { ISSUE_CODES } from '../../EngineIssues.js';
 
 const INDEX_VERSION = 1;

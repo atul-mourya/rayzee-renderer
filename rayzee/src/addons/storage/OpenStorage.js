@@ -1,5 +1,5 @@
 import { StorageManager, openInlineStorage } from './StorageManager.js';
-import { sharedByNamespace } from '../../storage/shared.js';
+import { sharedByNamespace } from '../../storage/StorageAreas.js';
 import StorageWorker from './StorageWorker.js?worker&inline';
 
 function toError( { name, message } ) {

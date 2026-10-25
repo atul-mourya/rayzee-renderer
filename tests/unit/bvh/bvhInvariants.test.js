@@ -41,7 +41,7 @@ import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
-import { StorageParts } from '@/core/shaders/patches.js';
+import { StorageParts } from '@/core/shaders/ThreePatches.js';
 import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;

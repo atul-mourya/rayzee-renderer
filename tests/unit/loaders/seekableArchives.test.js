@@ -3,7 +3,7 @@ import { gzipSync, zipSync, unzipSync } from 'three/addons/libs/fflate.module.js
 import { openTar, indexTarHeaders, readTar, createTarIndexer } from '@/core/addons/archives/ArchiveReader.js';
 import { openZip, readZipDirectory } from '@/core/addons/archives/ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from '@/core/addons/archives/ArchiveCache.js';
-import { openStorage } from '@/core/addons/storage/openStorage.js';
+import { openStorage } from '@/core/addons/storage/OpenStorage.js';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { makeTar, text } from './tarFixture.js';
 

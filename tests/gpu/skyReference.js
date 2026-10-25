@@ -6,7 +6,7 @@
 import {
 	GROUND_RADIUS as RG, TOP_RADIUS as RT, MIE_PHASE_G, SOLAR_SPECTRUM, SKY_RADIANCE_SCALE, LAMBDA_COUNT,
 	rayleighDensity, mieDensity, ozoneDensity, opticalDepth, spectrumToRec709,
-} from '@/core/addons/physicalSky/AtmosphereModel.js';
+} from '@/core/addons/physical-sky/AtmosphereModel.js';
 
 // Seeded so a failing comparison reproduces.
 export function rng( seed = 1 ) {

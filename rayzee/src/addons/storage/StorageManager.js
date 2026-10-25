@@ -1,8 +1,8 @@
 import { ISSUE_CODES } from '../../EngineIssues.js';
-import { acquireLock, heldLockNames } from './locks.js';
-import { entryIdFor } from '../../storage/identity.js';
+import { acquireLock, heldLockNames } from './Locks.js';
+import { entryIdFor } from '../../storage/FileIdentity.js';
 import { StorageOps } from './StorageOps.js';
-import { STORAGE_KIND, ENGINE_AREAS } from '../../storage/areas.js';
+import { STORAGE_KIND, ENGINE_AREAS } from '../../storage/StorageAreas.js';
 
 export { STORAGE_KIND, ENGINE_AREAS };
 

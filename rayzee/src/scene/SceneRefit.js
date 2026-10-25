@@ -7,6 +7,10 @@ import { BVHRefitter } from '../bvh/BVHRefitter.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { multiplyAffine, isIdentity } from './InstanceTable.js';
 import { TLASBuilder } from '../bvh/TLASBuilder.js';
+import { createLogger } from '../Logger.js';
+import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
+
+const log = createLogger( 'scene' );
 
 // A move's TLAS upload: touched nodes this close share a range, and past MAX_TLAS_RANGES ranges one spans them all.
 const TLAS_RANGE_GAP = 1024;
@@ -819,5 +823,172 @@ export function refitTLAS( processor, leaves = null ) {
 	}
 
 	if ( touched ) processor._tlasRanges = nodeRanges( touched );
+
+}
+
+export function scheduleBackgroundRebuild( processor, meshIndices, onSwap ) {
+
+	if ( ! processor.instanceTable || ! processor.triangles ) return;
+
+	processor._rebuildGeneration ++;
+	const generation = processor._rebuildGeneration;
+
+	const dispatchRebuild = ( meshIdx, entry, worker ) => {
+
+		const meshTriData = processor.triangles.copyOf( entry.triOffset, entry.triCount );
+
+		processor._pendingRebuilds.set( meshIdx, worker );
+
+		worker.onmessage = ( e ) => {
+
+			const data = e.data;
+			worker.terminate();
+			processor._pendingRebuilds.delete( meshIdx );
+
+			if ( data.error ) {
+
+				log.error( `background BLAS rebuild failed (mesh ${meshIdx}):`, data.error );
+				return;
+
+			}
+
+			// Discard if object was transformed again since this rebuild started
+			if ( generation !== processor._rebuildGeneration ) return;
+
+			processor._swapBLAS( meshIdx, entry, data, onSwap );
+
+		};
+
+		worker.onerror = ( err ) => {
+
+			log.error( `background BLAS rebuild worker failed (mesh ${meshIdx}):`, err );
+			worker.terminate();
+			processor._pendingRebuilds.delete( meshIdx );
+
+		};
+
+		worker.postMessage( {
+			triangleData: meshTriData.buffer,
+			triangleByteOffset: meshTriData.byteOffset,
+			triangleByteLength: meshTriData.byteLength,
+			triangleCount: entry.triCount,
+			depth: processor.config.bvhDepth,
+			// Without these the worker builds at its own defaults (leaf size 8 against the
+			// scene's 4), producing a tree of a different size that the swap below rejects —
+			// so every rebuild was thrown away.
+			maxLeafSize: processor.bvhBuilder.maxLeafSize,
+			foldLeaves: processor._foldLeaves === true,
+			numBins: processor.bvhBuilder.numBins,
+			maxBins: processor.bvhBuilder.maxBins,
+			minBins: processor.bvhBuilder.minBins,
+			reportProgress: false,
+			sharedReorderBuffer: null,
+			reinsertionOptimization: {
+				enabled: processor.bvhBuilder.enableReinsertionOptimization,
+				batchSizeRatio: processor.bvhBuilder.reinsertionBatchSizeRatio,
+				maxIterations: processor.bvhBuilder.reinsertionMaxIterations
+			},
+		}, [ meshTriData.buffer ] );
+
+	};
+
+	for ( const meshIndex of meshIndices ) {
+
+		const placement = processor._placementOf( meshIndex );
+		if ( placement < 0 ) continue;
+		const entry = processor.instanceTable.entryAt( placement );
+		// A placement that borrows another's BLAS must not rebuild it: the work is the
+		// owner's, and two placements would dispatch the same rebuild twice.
+		if ( ! entry || ! processor.instanceTable.isOwner( placement ) ) continue;
+
+		// Cancel any in-flight rebuild for this mesh
+		const existing = processor._pendingRebuilds.get( placement );
+		if ( existing ) existing.terminate();
+
+		dispatchRebuild( placement, entry, createWorker( BVHWorker ) );
+
+	}
+
+}
+
+/**
+ * Swap a rebuilt BLAS into the combined buffer.
+ */
+export function swapBLAS( processor, meshIdx, entry, workerData, onSwap ) {
+
+	processor._geometryVersion = ( processor._geometryVersion ?? 0 ) + 1;
+
+	const FPN = 16;
+	const newBvhData = workerData.bvhData;
+	const newNodeCount = newBvhData.length / FPN;
+
+	// The rebuilt tree only has to fit the range the build reserved. Demanding an exact match
+	// was too strict: the triangles have moved, so the splits land differently and the count
+	// legitimately drifts. Anything past the reserved range would overwrite the next BLAS.
+	if ( newNodeCount > entry.blasNodeCount ) {
+
+		log.warn( `background rebuild does not fit for mesh ${meshIdx} (${newNodeCount} nodes vs ${entry.blasNodeCount} reserved), skipping swap` );
+		return;
+
+	}
+
+	// Write rebuilt BLAS nodes into the combined buffer at the entry's offset
+	processor.bvh.setRecords( entry.blasOffset, newBvhData );
+	processor._offsetBLASInPlace( entry.blasOffset, newNodeCount, entry.blasOffset, entry.triOffset );
+
+	// Write reordered triangles back into global array
+	const reorderedTris = workerData.triangles;
+	if ( reorderedTris ) {
+
+		processor.triangles.setRecords( entry.triOffset, reorderedTris );
+
+	}
+
+	// The live tree is whatever the rebuild produced; any reserved nodes past it are dead and
+	// nothing reaches them, but a later refit would walk them as garbage.
+	processor.instanceTable.setBlasNodeCount( meshIdx, newNodeCount );
+
+	// The rebuild reordered the triangles, so the map from stored order back to the caller's
+	// order has to follow. `entryAt()` hands back a snapshot, so writing it there was lost and
+	// the next refit scattered every position through the previous permutation.
+	//
+	// The worker was handed the triangles already in stored order, so its permutation is
+	// relative to that, not to the caller's order. Overwriting rather than composing would
+	// discard how the original build shuffled them.
+	const newOrigToBvh = workerData.originalToBvh;
+	if ( newOrigToBvh ) {
+
+		const prev = processor.instanceTable.bvhToOriginalOf( meshIdx );
+		const bvhToOrig = new Uint32Array( entry.triCount );
+		for ( let i = 0; i < entry.triCount; i ++ ) {
+
+			bvhToOrig[ newOrigToBvh[ i ] ] = prev ? prev[ i ] : i;
+
+		}
+
+		processor.instanceTable.setBvhToOriginal( meshIdx, bvhToOrig );
+
+	}
+
+	// Recompute AABB and refit TLAS
+	processor.instanceTable.recomputeAABB( meshIdx, processor.bvh, processor.triangles );
+	processor._refitTLAS();
+
+	processor._log( `Background BLAS rebuild complete for mesh ${meshIdx}` );
+
+	// The caller asked in mesh indices and gets one back, not the placement used here.
+	onSwap?.( processor.instanceTable.sourceMesh[ meshIdx ] ?? meshIdx );
+
+}
+
+export function cancelBackgroundRebuilds( processor ) {
+
+	for ( const worker of processor._pendingRebuilds.values() ) {
+
+		worker.terminate();
+
+	}
+
+	processor._pendingRebuilds.clear();
 
 }

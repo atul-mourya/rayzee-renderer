@@ -5,7 +5,7 @@ import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 import { viewDepth } from './InteractionManager.js';
 import { ViewCamera } from '../../scene/ViewCamera.js';
 import { WalkControls } from './WalkControls.js';
-import { toPortable, fromPortable } from '../../portable.js';
+import { toPortable, fromPortable } from '../../Portable.js';
 
 export const AUTO_FOCUS_DEFAULTS = {
 	autoFocusMode: 'auto', // 'manual' | 'auto'

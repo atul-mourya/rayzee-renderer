@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Color, Object3D, PerspectiveCamera, Scene, Vector2, Vector3 } from 'three';
-import { toPortable, fromPortable } from '@/core/portable.js';
+import { toPortable, fromPortable } from '@/core/Portable.js';
 import { LightManager } from '@/core/lights/LightManager.js';
 import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
 import { CameraTrack } from '@/core/viewer/animation/CameraTrack.js';

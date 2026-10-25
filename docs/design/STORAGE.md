@@ -1,13 +1,14 @@
-# Storage (OPFS) (`rayzee/src/storage/`)
+# Storage (OPFS) (`rayzee/src/addons/storage/`, `rayzee/src/storage/`)
 
 `app.storage` is a `StorageManager` over the origin private file system, opened per
 `cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
 `null` when the browser has none (private windows, Node without the fake) — every caller must
 work without it.
-An add-on (`rayzee/addons/storage`): the OPFS implementation (`StorageManager`, `StorageOps`, `StorageWorker`, the
-transports, `locks`, `events`, `openStorage`) is reached only through `renderer.setStorageOpener( acquireSharedStorage )`
-— `PathTracerApp` installs it. The caches that *use* a manager stay core (`DownloadCache`, `CDFCache`, `BLASCache`,
-`SpillStore`, `GeometrySpill`, `identity`, `shared`) and import area names from `storage/areas.js`, never
+An add-on (`rayzee/addons/storage`, in `addons/storage/`): the OPFS implementation (`StorageManager` with its
+transports, `StorageOps`, `StorageWorker`, `Locks`, `OpenStorage`) is reached only through
+`renderer.setStorageOpener( acquireSharedStorage )` — `PathTracerApp` installs it. The caches that *use* a manager stay
+core in `storage/` (`DownloadCache`, `CDFCache`, `BLASCache`, `SpillStore`, `GeometrySpill`, `FileIdentity`,
+`StorageAreas`) and import area names from `storage/StorageAreas.js`, never
 `StorageManager.js`. Without the add-on, `storage: 'auto'` asked for explicitly records `capability.missing` (a warning). `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
 turns it off or supplies a host manager; `openHeadless` defaults to off.
 - **Areas.** Engine: `downloads` (URL cache, revalidated at most daily with a 1-byte `Range: bytes=0-0`

@@ -11,8 +11,8 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
 - The engine has three layers (`docs/design/CORE_AND_ADDONS.md`):
   - **Renderer core** — `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`): scene in,
     path-traced samples, image out. Pipeline: PathTracer → Compositor.
-  - **Add-ons** — `rayzee/src/addons/`: physical sky, scene archives, bidirectional/VCM (an integrator in
-    `rayzee/src/pathtracer/BidirectionalIntegrator.js`), OpenColorIO colour, on-disk storage.
+  - **Add-ons** — `rayzee/src/addons/`, one folder each: physical sky, scene archives, bidirectional/VCM (an
+    integrator in `rayzee/src/addons/bidirectional/BidirectionalIntegrator.js`), OpenColorIO colour, on-disk storage.
   - **Viewer** — `PathTracerApp extends RayzeeRenderer`: denoisers, camera controls, gizmo, overlays, timeline,
     animation. It plugs in through the hooks listed under "Hooks" at the end of `RayzeeRenderer.js`.
 

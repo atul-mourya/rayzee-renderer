@@ -6,9 +6,9 @@ vi.hoisted( () => {
 	globalThis.ProgressEvent ??= class extends Event {};
 
 } );
-import { localFolder, isFolderInput } from '@/core/loaders/archiveFormats.js';
+import { localFolder, isFolderInput } from '@/core/loaders/ArchiveFormats.js';
 import { openFolder } from '@/core/addons/archives/ArchiveReader.js';
-import { folderIdentity, identityKey } from '@/core/storage/identity.js';
+import { folderIdentity, identityKey } from '@/core/storage/FileIdentity.js';
 import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
 import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';

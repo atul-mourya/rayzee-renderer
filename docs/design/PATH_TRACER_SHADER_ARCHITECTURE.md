@@ -93,32 +93,32 @@ Built and dispatched by `addons/bidirectional/BidirectionalIntegrator.js`, never
 |---|---|---|
 | `PathTracerCore.js` | `generateSampledDirection()`, `regularizePathContribution()`, `computeNDCDepth()`, `handleRussianRoulette()`, `DELTA_PDF` | BSDF direction sampling (one lobe from a cumulative chain), firefly suppression, NDC depth, adaptive Russian roulette |
 | `BVHTraversal.js` | `traverseBVH()`, `traverseBVHShadow()`, `traverseBVHShadowCameraCulled()`, `traverseBVHDebug()`, `triangleSide()`, `sideAccepts()` | Two-level BVH closest-hit and any-hit traversal, inline triangle intersection and side culling |
-| `CameraRay.js` | `generateRayFromCamera()`, `cameraRayOrigin()`, `cameraRayDirection()` | Primary rays for the three projections, thin lens |
+| `CameraRay.js` | `generateRayFromCamera()`, `cameraClipDistance()` | Primary rays for the three projections, thin lens |
 | `MaterialSampling.js` | `ImportanceSampleGGX()`, `ImportanceSampleCosine()`, `cosineWeightedSample()`, `sampleGGXVNDF()`, `sampleGGXVNDFAniso()` | Direction-sampling primitives (GGX, VNDF, cosine) |
 | `MaterialEvaluation.js` | `evaluateMaterialResponse()`, `evaluateMaterialResponseFromDots()`, `evaluateSpecularDeltaFromDots()` | Combined multi-lobe BSDF evaluation; the delta lobe's reflectance |
 | `MaterialProperties.js` | `calculateBRDFWeights()`, `calculateBSDFSamplingPDF()`, `calculateVNDFPDF()`, `evalIridescence()`, `DistributionGGX()`, `baseFresnelParams()` | Lobe weights, the lobe mixture's density, GGX terms, iridescence |
 | `MaterialTransmission.js` | `sampleMicrofacetTransmission()`, `handleMaterialTransparency()`, `handleTransmission()`, medium structs | Refraction, dispersion, Beer–Lambert absorption, medium stack |
 | `Subsurface.js` | `handleSubsurfaceEntry()`, `sampleChromaticCollision()`, `sampleHenyeyGreenstein()` | Random-walk subsurface scattering (reuses the medium stack) |
 | `Clearcoat.js` | `sampleClearcoat()`, `ClearcoatResult` | Clear coat layer |
-| `Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()`, `equirectDirectionToUv()`, `equirectUvToDirection()`, `getGroundProjectedDirection()`, `groundProjectedEnvDir()` | Environment lookup, importance sampling and its density, direction↔UV, ground projection |
+| `Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()`, `equirectDirectionToUv()`, `groundProjectedEnvDir()` | Environment lookup, importance sampling and its density, direction↔UV, ground projection |
 | `Sun.js` | `sunRadianceToward()`, `sampleSunDisc()` | The physical sky's sun disc: limb darkening, cut by the sky's horizon, uniform sampling of the cone |
 | `EmissiveSampling.js` | `sampleEmissiveTriangle()`, `calculateEmissiveTriangleContribution()`, `calculateEmissiveLightPdf()`, `sampleSphericalTriangle()` | NEE from emissive triangles (uniform CDF path) |
 | `LightBVHSampling.js` | `sampleLightBVHTriangle()`, `calculateLightBVHPdf()` | Stochastic light BVH descent, and the same density for a BSDF hit |
 | `LightsCore.js` | Light structs and getters, `sampleSpotGoboMask()`, `sampleDirectionalGoboMask()`, `sampleIESProfile()`, `sampleSphQuad()` | Lamp definitions, gobo and IES lookups, spherical-rectangle sampling |
 | `LightsDirect.js` | `traceShadowRay()`, `traceShadowRayRefractiveOpaque()`, `calculateRayOffset()`, importance estimators | Shadow rays (alpha-cutout shadows included), per-lamp importance |
 | `LightsIndirect.js` | `calculateIndirectLighting()` | Turns the sampled direction into the bounce: throughput and the pdf carried to the next vertex's MIS |
-| `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()`, `sampleLightWithImportance()` | Lamp NEE (one lamp by weighted reservoir over the four lists) MIS'd with BSDF hits, then environment and sun NEE |
+| `LightsSampling.js` | `calculateDirectLightingUnified()`, `calculateMaterialPDF()` | Lamp NEE (one lamp by weighted reservoir over the four lists) MIS'd with BSDF hits, then environment and sun NEE |
 | `Fresnel.js` | `fresnelDielectric()`, `dielectricFresnelWeight()`, `fresnelSchlick()`, `iorToFresnel0()`, `dielectricF0()` | Exact unpolarised Fresnel at every dielectric interface (base layer, clear coat, glass, SSS boundary, glass shadows), as Cycles uses; Schlick for metals and iridescence; IOR↔F0 |
 | `HitFacet.js` | `hitFacet()`, `packHitFacet()`, `unpackHitFacet()`, `windingNormal()` | The hit triangle's facet normal (and the terminator lift), computed in Extend and packed into the hit record's spare lane |
 | `ShadowTerminator.js` | `shadowTerminatorLift()`, `shadowTerminatorOrigin()` | Cycles' Shadow Terminator → Geometry Offset: the smooth-surface lift for light and environment shadow rays |
-| `Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()`, `getRandomSample1D()`, `getRandomSample2D()`, `pcgHash()` | PCG, Halton, Sobol |
+| `Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSample1D()`, `getRandomSample2D()`, `pcgHash()` | PCG, Halton, Sobol |
 | `TextureSampling.js` | `sampleAllMaterialTextures()`, `computeUVCache()`, `sampleDisplacementMap()`, `sampleBucket()`, `buildBucketTextureNodes()` | UV transforms; material maps from the sRGB and linear bucket arrays |
 | `SceneResources.js` | `withSceneResources()`, `sceneResources()` | A renderer's scene textures and switches, carried in each kernel's build context |
 | `Displacement.js` | `refineDisplacedIntersection()`, `DisplacementResult` | Ray-marched displacement refinement |
 | `Debugger.js` | `TraceDebugMode()` | Debug visualization modes (reused by `DebugKernel`) |
-| `Struct.js` | `Ray`, `HitInfo`, `RayTracingMaterial`, `DirectionSample`, `MaterialCache`, etc. | GPU-side struct definitions |
+| `Struct.js` | `struct()`, `Ray`, `HitInfo`, `RayTracingMaterial`, `DirectionSample`, `MaterialCache`, etc. | GPU-side struct definitions; `struct()` wraps TSL's for dot-notation fields |
 | `Common.js` | `getDatafromStorageBuffer()`, `getMaterial()`, `triangleRow()`, `offsetRayOrigin()`, `SHADOW_END`, constants | Shared constants, storage-buffer accessors, ray spawn offset |
-| `patches.js` | `struct()`, `gpuOnlyStorageAttribute()` | Proxy-wrapped structs; storage attributes with no CPU array |
+| `ThreePatches.js` | `gpuOnlyStorageAttribute()`, `StorageParts` | three.js fixes installed on import; storage attributes with no CPU array |
 
 ### Scene textures and per-kernel resources
 
@@ -209,7 +209,7 @@ index, a `uvec2` a triangle (`withoutUV` on the pair, 24 B a triangle less), and
 (`shaders/Common.js`), which picks the buffer.
 
 **Buffer parts.** Dawn caps one buffer at 4 GiB − 4, so past `maxStorageBufferBindingSize` the BVH,
-geo and shade stores are each split into parts of whole records (`StorageParts`, `shaders/patches.js`)
+geo and shade stores are each split into parts of whole records (`StorageParts`, `shaders/ThreePatches.js`)
 and read through `splitStorage` (`shaders/Common.js`), which picks the part with an `If` chain. A store
 that fits one buffer is a plain node and compiles exactly the old code. Every part is a binding, and
 Shade binds five other buffers, so the parts total at most five (`PathTracerStage._assertBindings`).
@@ -428,7 +428,7 @@ Turns the `generateSampledDirection` draw into the bounce: throughput `f · NoL 
 `sampleEnvironment` evaluates radiance for arbitrary directions; a cell's density is its share of the table over its uv area, divided by 2π² sin θ for solid angle. `envTotalSum` > 0 says a table is bound. `getGroundProjectedDirection` / `groundProjectedEnvDir` bend the primary-ray background lookup onto a virtual ground when ground projection is enabled.
 
 ### The physical sky
-An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`addons/physicalSky/PhysicalSky.js`, bake kernels in `addons/physicalSky/Atmosphere.js`; the table by `addons/physicalSky/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
+An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`addons/physical-sky/PhysicalSky.js`, bake kernels in `addons/physical-sky/Atmosphere.js`; the table by `addons/physical-sky/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
 
 ---
 
@@ -462,7 +462,7 @@ km.register( 'name', computeFn().compute( [ groups, 1, 1 ], [ WG_SIZE, 1, 1 ] ) 
 | Aspect | TSL (current) |
 |---|---|
 | Language | JS functions → WGSL |
-| Structs | `struct()` from `patches.js` (Proxy-wrapped) |
+| Structs | `struct()` from `Struct.js` (Proxy-wrapped) |
 | Uniforms | `uniform(1.0, 'float')` node objects |
 | Loops | `Loop(count, ({ i }) => { ... })` |
 | Branching | `If(x.greaterThan(0), () => { ... })` |
@@ -536,7 +536,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 ## Extension Points
 
 1. **Add a new material lobe**: integrate into `calculateBRDFWeights`, the `generateSampledDirection` lobe chain (PathTracerCore.js), the mixture density `calculateBSDFSamplingPDF`, and `evaluateMaterialResponse`.
-2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `addons/physicalSky/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
+2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `addons/physical-sky/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
 3. **Add a wavefront kernel**: build a new `Fn().compute()`, register it in `_buildWavefrontKernels`, dispatch it in `render()`. A new integrator plugs into the integrator hooks instead (see `BidirectionalIntegrator`); never branch on it inside `PathTracer`.
 4. **Per-triangle custom attributes**: expand the triangle layout (`scene/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
 5. **Per-pixel ray policies**: `freezeMask` already decides which pixels are traced (the pixel freeze), `buildActivePixels` lists them and `generateList` traces only that list.
@@ -578,7 +578,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 | `shaders/Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()` | HDR env sampling & PDF |
 | `shaders/SceneResources.js` | `withSceneResources()`, `sceneResources()` | Per-kernel scene resources |
 | `shaders/LightBVHSampling.js` | `sampleLightBVHTriangle()`, `calculateLightBVHPdf()` | Light BVH stochastic descent |
-| `shaders/Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()` | Sampling quality |
+| `shaders/Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()` | Sampling quality |
 | `pathtracer/PackedRayBuffer.js` | `RAY`/`HIT`, read/write helpers | SoA buffer layout |
 | `pathtracer/QueueManager.js` | `COUNTER`, `RAY_FLAG`, active/sorted queues | Ray queues + atomic counters |
 | `pathtracer/KernelManager.js` | `register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()`, `setIndirect()` | Kernel registry, grid sizing and GPU-written sizes |

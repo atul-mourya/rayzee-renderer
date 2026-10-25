@@ -25,7 +25,7 @@ import {
 	texture,
 } from 'three/tsl';
 
-import { struct } from './patches.js';
+import { struct } from './Struct.js';
 
 // ================================================================================
 // LIGHT STRUCTURES

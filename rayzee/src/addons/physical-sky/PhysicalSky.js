@@ -5,7 +5,7 @@ import {
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { storage, uniform } from 'three/tsl';
 
-import { gpuOnlyStorageAttribute } from '../../shaders/patches.js';
+import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
 import { freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
 import {
 	TRANSMITTANCE_W, TRANSMITTANCE_H, MS_MU_S, MS_H, MS_BANDS, MS_SECTORS, MS_CELLS, MS_VIEW_MU, MS_VIEW_PHI, MS_VIEWS, IRRADIANCE_SIZE, SKY_COLUMNS,

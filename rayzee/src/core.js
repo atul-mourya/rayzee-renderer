@@ -12,7 +12,7 @@
  * renderer.dispose();
  */
 
-import './shaders/patches.js';
+import './shaders/ThreePatches.js';
 
 export { RayzeeRenderer, describeAdapter } from './RayzeeRenderer.js';
 export { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
@@ -22,10 +22,10 @@ export { configureAssets, getAssetConfig } from './AssetConfig.js';
 export { configurePlatform, getPlatform } from './Platform.js';
 export { LightManager } from './lights/LightManager.js';
 export { listViewTransforms, getViewTransform, onRegistryChange, DEFAULT_VIEW } from './color/ViewTransforms.js';
-export { ARCHIVE_FORMATS, localFolder } from './loaders/archiveFormats.js';
+export { ARCHIVE_FORMATS, localFolder } from './loaders/ArchiveFormats.js';
 export { ENGINE_DEFAULTS, MATERIAL_DEFAULTS } from './EngineDefaults.js';
 export { SKY_DEFAULTS } from './environment/EnvironmentManager.js';
 export { MAX_RESERVABLE_RENDER_SIZE } from './pathtracer/StorageTexturePool.js';
 export { TRIANGLE_DATA_LAYOUT } from './scene/BufferLayout.js';
 export { Logger, createLogger, fmt, LOG_LEVELS } from './Logger.js';
-export { VERSION } from './version.js';
+export { VERSION } from './Version.js';

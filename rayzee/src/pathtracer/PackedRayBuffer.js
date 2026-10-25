@@ -10,7 +10,7 @@ import {
 	storage, uintBitsToFloat, floatBitsToUint, vec2, vec3, vec4, uvec4, uint, int, float, clamp,
 	packSnorm2x16, packUnorm2x16, unpackSnorm2x16, unpackUnorm2x16, select, floor, log2, exp2, max,
 } from 'three/tsl';
-import { gpuOnlyStorageAttribute } from '../shaders/patches.js';
+import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { packNormalOct, unpackTriangleNormal } from '../shaders/Common.js';
 import { createLogger, fmt } from '../Logger.js';
 

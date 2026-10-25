@@ -11,7 +11,7 @@
  * scene is 20 million triangles or 200 million.
  */
 
-import { resized } from './buffers.js';
+import { resized } from './ArrayMemory.js';
 
 const DEFAULT_STEPS = 2;
 

@@ -6,7 +6,7 @@
  */
 
 // Patches (side-effect imports — must run before any StorageTexture usage)
-import './shaders/patches.js';
+import './shaders/ThreePatches.js';
 
 // Main application: the viewer, built on the renderer core (also `rayzee/core`)
 export { PathTracerApp, describeAdapter } from './viewer/PathTracerApp.js';
@@ -29,23 +29,23 @@ export { configureAssets, getAssetConfig } from './AssetConfig.js';
 export { configurePlatform, getPlatform } from './Platform.js';
 
 // On-disk storage (origin private file system): caches, and areas a host defines for its own data
-export { openStorage } from './addons/storage/openStorage.js';
+export { openStorage } from './addons/storage/OpenStorage.js';
 export { StorageManager } from './addons/storage/StorageManager.js';
-export { acquireLock, heldLockNames } from './addons/storage/locks.js';
-export { STORAGE_KIND, ENGINE_AREAS } from './storage/areas.js';
-export { fileIdentity, folderIdentity, identityKey, sameIdentity } from './storage/identity.js';
+export { acquireLock, heldLockNames } from './addons/storage/Locks.js';
+export { STORAGE_KIND, ENGINE_AREAS } from './storage/StorageAreas.js';
+export { fileIdentity, folderIdentity, identityKey, sameIdentity } from './storage/FileIdentity.js';
 export { DownloadCache, DOWNLOAD_POLICY, fetchFile, nameFromUrl, cachedObjectURL } from './storage/DownloadCache.js';
 
 // Archives read in place: one entry at a time, never the whole file in memory
 export { openZip, readZipDirectory } from './addons/archives/ZipReader.js';
-export { ARCHIVE_FORMATS, localFolder } from './loaders/archiveFormats.js';
+export { ARCHIVE_FORMATS, localFolder } from './loaders/ArchiveFormats.js';
 
 // Engine package version, as built
-export { VERSION } from './version.js';
+export { VERSION } from './Version.js';
 
 // A loaded scene's edits as plain data (app.exportSceneState / importSceneState)
 export { SCENE_STATE_VERSION } from './viewer/SceneState.js';
-export { toPortable, fromPortable } from './portable.js';
+export { toPortable, fromPortable } from './Portable.js';
 
 // glTF alphaMode derivation — the one definition, shared with hosts that edit materials
 export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './scene/GeometryExtractor.js';

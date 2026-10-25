@@ -8,7 +8,7 @@
 
 import { uniform, uniformArray, texture, storage, Fn, uint, atomicStore, atomicLoad, instanceIndex, If, Return } from 'three/tsl';
 import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
-import { gpuOnlyStorageAttribute } from '../../shaders/patches.js';
+import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
 import { LIGHT_FLOATS } from '../../pathtracer/UniformManager.js';
 import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
 import { COUNTER, ENERGY_SCALE } from '../../pathtracer/QueueManager.js';
