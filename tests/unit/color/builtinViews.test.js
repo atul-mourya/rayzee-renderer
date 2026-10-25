@@ -13,8 +13,8 @@ import {
 	NoToneMapping, LinearToneMapping, ReinhardToneMapping,
 	CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping,
 } from 'three';
-import { TONE_MAP_FNS, toneMapToRGBA8, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
-import { BUILTIN_VIEWS } from '@/core/Color/BuiltinViews.js';
+import { TONE_MAP_FNS, toneMapToRGBA8, effectiveExposure, isOutputEncoded } from '@/core/output/ToneMapCPU.js';
+import { BUILTIN_VIEWS } from '@/core/color/BuiltinViews.js';
 
 /** sha256 of the bytes each curve produces over a fixed noisy frame, at six grades. */
 const GOLDEN = {

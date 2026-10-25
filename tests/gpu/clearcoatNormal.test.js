@@ -8,13 +8,13 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, reflect, instanceIndex, bool as tslBool } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
-import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample, Ray, HitInfo } from '@/core/TSL/Struct.js';
-import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
-import { generateSampledDirection } from '@/core/TSL/PathTracerCore.js';
-import { sampleClearcoat, ClearcoatResult } from '@/core/TSL/Clearcoat.js';
-import { evaluateMaterialResponse } from '@/core/TSL/MaterialEvaluation.js';
-import { calculateMaterialPDF } from '@/core/TSL/LightsSampling.js';
+import { diffuseGroundMaterial, classifyMaterial } from '@/core/shaders/Common.js';
+import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample, Ray, HitInfo } from '@/core/shaders/Struct.js';
+import { calculateBRDFWeightsFromMaterial } from '@/core/shaders/MaterialProperties.js';
+import { generateSampledDirection } from '@/core/shaders/PathTracerCore.js';
+import { sampleClearcoat, ClearcoatResult } from '@/core/shaders/Clearcoat.js';
+import { evaluateMaterialResponse } from '@/core/shaders/MaterialEvaluation.js';
+import { calculateMaterialPDF } from '@/core/shaders/LightsSampling.js';
 
 const COUNT = 1 << 18;
 const TILT = 20 * Math.PI / 180;

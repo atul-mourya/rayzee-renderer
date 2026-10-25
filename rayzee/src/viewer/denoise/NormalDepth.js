@@ -1,0 +1,554 @@
+import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, max, select, storage, If,
+	textureStore, workgroupId, localId } from 'three/tsl';
+import { RenderTarget, StorageTexture } from 'three/webgpu';
+import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
+import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
+import { MAX_STORAGE_TEXTURE_SIZE } from '../../pathtracer/StorageTexturePool.js';
+import { GBUFFER_MISS_DEPTH } from './DenoiserSettings.js';
+import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../../shaders/Struct.js';
+import { traverseBVH } from '../../shaders/BVHTraversal.js';
+import { cameraRayOf, cameraRayUniforms, cameraClipDistance } from '../../shaders/CameraRay.js';
+import { getMaterial } from '../../shaders/Common.js';
+import { computeUVCache, processNormal, processBump, processMetalnessRoughness, triangleUVTangent, buildBucketTextureNodes, refreshBucketTextureNodes } from '../../shaders/TextureSampling.js';
+import { withSceneResources } from '../../shaders/SceneResources.js';
+
+/**
+ * NormalDepth — primary-ray G-buffer for the denoisers' edge tests (NRD, the OIDN motion history).
+ *
+ * RGB = geometric world normal · 0.5 + 0.5, A = linear ray distance (sky=65504, the
+ * max HalfFloat value — a finite sentinel so miss−miss depth diffs stay 0, not Inf−Inf=NaN).
+ * Geometric (not shading) normals because shading normals carry sub-pixel
+ * jitter that breaks the temporal gate's same-pixel-across-frames comparison.
+ * The path tracer's MRT already carries shading normals for OIDN; this stage
+ * is a separate, cheap, jitter-free signal for the denoiser.
+ *
+ * Ping-pong RenderTargets hold current/prev. On a dispatch we swap so prev
+ * is last frame's geometry. On a skipped dispatch (static camera) prev
+ * aliases current — without that aliasing prev would point at older data
+ * while this frame's motion vector reflects zero motion → false rejection.
+ *
+ * Also emits a SHADING normal (geometric normal perturbed by the normal/bump
+ * map, recomputed from the SAME deterministic hit — no extra ray) so the
+ * spatial denoiser's edge-stop can see normal-map detail the flat geometric
+ * normal hides. Deterministic ⇒ jitter-free, so it's safe for the gates.
+ * Its .w is the sampled material roughness (NRD's normal+roughness guide), negated on an emitter.
+ *
+ * Publishes: pathtracer:normalDepth, pathtracer:prevNormalDepth,
+ *            pathtracer:shadingNormal (rgb = shading normal·0.5+0.5, a = roughness, negative on an emitter),
+ *            pathtracer:instanceLeaf (r32uint: the hit's transformed TLAS leaf + 1, 0 = none)
+ */
+export class NormalDepth extends RenderStage {
+
+	constructor( renderer, options = {} ) {
+
+		super( 'NormalDepth', {
+			...options,
+			executionMode: StageExecutionMode.ALWAYS
+		} );
+
+		this.renderer = renderer;
+		this.pathTracer = options.pathTracer;
+
+		this._dirty = true;
+
+		this.cameraWorldMatrix = uniform( new Matrix4(), 'mat4' );
+		this.cameraProjectionMatrixInverse = uniform( new Matrix4(), 'mat4' );
+		// Mirrored from the path tracer each frame — these rays must use the same camera model
+		// as the colour buffer or the denoiser's normal/depth edge-stops fight the image.
+		this.cameraRay = cameraRayUniforms();
+		this.resolutionWidth = uniform( options.width || 1 );
+		this.resolutionHeight = uniform( options.height || 1 );
+
+		const w = options.width || 1;
+		const h = options.height || 1;
+
+		// StorageTexture stays at max alloc — see resize crash fix (three.js #33061).
+		this._outputStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		this._outputStorageTex.type = HalfFloatType;
+		this._outputStorageTex.format = RGBAFormat;
+		this._outputStorageTex.minFilter = NearestFilter;
+		this._outputStorageTex.magFilter = NearestFilter;
+
+		// Shading-normal output (geometric normal perturbed by normal/bump map).
+		// Single buffer — its readers (NRD, the OIDN history) use only the current frame.
+		this._shadingStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		this._shadingStorageTex.type = HalfFloatType;
+		this._shadingStorageTex.format = RGBAFormat;
+		this._shadingStorageTex.minFilter = NearestFilter;
+		this._shadingStorageTex.magFilter = NearestFilter;
+		this._shadingRT = new RenderTarget( w, h, {
+			type: HalfFloatType,
+			format: RGBAFormat,
+			minFilter: NearestFilter,
+			magFilter: NearestFilter,
+			depthBuffer: false,
+			stencilBuffer: false
+		} );
+
+		// Created only while a consumer asks for it (setInstanceLeafOutput).
+		this._leafStorageTex = null;
+		this._leafRT = null;
+
+		this._srcRegion = new Box2( new Vector2( 0, 0 ), new Vector2( 0, 0 ) );
+
+		// Ping-pong RTs share format with the StorageTexture so copyTextureToTexture works.
+		const rtOpts = {
+			type: HalfFloatType,
+			format: RGBAFormat,
+			minFilter: NearestFilter,
+			magFilter: NearestFilter,
+			depthBuffer: false,
+			stencilBuffer: false
+		};
+		this._rtA = new RenderTarget( w, h, rtOpts );
+		this._rtB = new RenderTarget( w, h, rtOpts );
+		this._currentIdx = 0;
+		this._hasHistory = false;
+
+		this._dispatchX = Math.ceil( w / 8 );
+		this._dispatchY = Math.ceil( h / 8 );
+
+		this._triStorageNode = null;
+		this._bvhStorageNode = null;
+		this._matStorageNode = null;
+		this._lastTriAttr = null;
+		this._lastBvhAttr = null;
+		this._lastMatAttr = null;
+		this._computeNode = null;
+		this._computeBuilt = false;
+
+		// Independent linear-pool bucket nodes for this pipeline (normal + bump live in the
+		// linear pool). Built lazily in _buildCompute from the path tracer's materialData;
+		// value-swapped on model load. processNormal/processBump runtime-guard on map indices.
+		this._linearBuckets = null;
+
+	}
+
+	setupEventListeners() {
+
+		this.on( 'camera:moved', () => {
+
+			this._dirty = true;
+
+		} );
+
+		this.on( 'pipeline:reset', () => {
+
+			// _hasHistory is deliberately NOT cleared, mirroring MotionVector.reset(): the
+			// prev-frame G-buffer tracks camera motion, not accumulation, and a camera move
+			// resets accumulation every frame of a drag. Clearing it made render() overwrite
+			// prevRT with the current frame, so the OIDN history could never see a disocclusion.
+			this._dirty = true;
+
+		} );
+
+	}
+
+	_syncStorageBuffers() {
+
+		const pt = this.pathTracer;
+		if ( ! pt ) return false;
+
+		const matAttr = pt.materialData?.materialStorageAttr;
+		const triSwapped = pt.triangleGeoAttr && pt.triangleGeoAttr !== this._lastTriAttr;
+		const bvhSwapped = pt.bvhStorageAttr && pt.bvhStorageAttr !== this._lastBvhAttr;
+		const matSwapped = matAttr && matAttr !== this._lastMatAttr;
+
+		if ( triSwapped || bvhSwapped || matSwapped ) {
+
+			// Buffer identity changed → compute's bind group is stale; rebuild.
+			this._computeNode?.dispose?.();
+			this._computeNode = null;
+			this._computeBuilt = false;
+			this._triStorageNode = null;
+			this._bvhStorageNode = null;
+			this._matStorageNode = null;
+			this._dirty = true;
+			// New geometry — the previous frame describes a scene that is no longer there.
+			this._hasHistory = false;
+
+		}
+
+		if ( ! this._triStorageNode || ! this._bvhStorageNode ) {
+
+			// The path tracer's layout, split into parts as it is: uvec4 triangles keep packed lanes' exact bits.
+			const nodes = pt.sceneStorageNodes?.();
+			if ( nodes ) {
+
+				this._triStorageNode = nodes.triangles;
+				this._bvhStorageNode = nodes.bvh;
+
+			}
+
+		}
+
+		if ( matAttr && ! this._matStorageNode ) {
+
+			this._matStorageNode = storage( matAttr, 'vec4', matAttr.count ).toReadOnly();
+
+		}
+
+		// In-place bucket swaps (model change) — graph closes over the nodes, only .value changes.
+		if ( this._linearBuckets ) refreshBucketTextureNodes( this._linearBuckets, pt.materialData?.linearBuckets );
+
+		this._lastTriAttr = pt.triangleGeoAttr || this._lastTriAttr;
+		this._lastBvhAttr = pt.bvhStorageAttr || this._lastBvhAttr;
+		this._lastMatAttr = matAttr || this._lastMatAttr;
+
+		return !! ( this._triStorageNode && this._bvhStorageNode && this._matStorageNode );
+
+	}
+
+	_buildCompute() {
+
+		const triStorage = this._triStorageNode;
+		const bvhStorage = this._bvhStorageNode;
+		const matStorage = this._matStorageNode;
+		// Independent linear-pool bucket nodes for this pipeline (normal + bump), in its kernel's build
+		// context (SceneResources.js). The sRGB pool is never sampled here, so it gets placeholders.
+		this._linearBuckets = buildBucketTextureNodes( this.pathTracer?.materialData?.linearBuckets );
+		const resources = {
+			srgbBuckets: buildBucketTextureNodes( null ), linearBuckets: this._linearBuckets,
+			shadowAlbedoMaps: null, goboMaps: null, iesProfiles: null, alphaShadows: null,
+		};
+		const camWorld = this.cameraWorldMatrix;
+		const camProjInv = this.cameraProjectionMatrixInverse;
+		const resW = this.resolutionWidth;
+		const resH = this.resolutionHeight;
+		const outputTex = this._outputStorageTex;
+		const shadingTex = this._shadingStorageTex;
+		const leafTex = this._leafStorageTex;
+
+		const WG_SIZE = 8;
+
+		// mat4 uniforms as Fn parameters so TSL emits bracket indexing
+		// (closure captures don't get this).
+		const computeFn = Fn( ( [ camWorldMat, camProjInvMat ] ) => {
+
+			const gx = int( workgroupId.x ).mul( WG_SIZE ).add( int( localId.x ) );
+			const gy = int( workgroupId.y ).mul( WG_SIZE ).add( int( localId.y ) );
+
+			If( gx.lessThan( int( resW ) ).and( gy.lessThan( int( resH ) ) ), () => {
+
+				// No jitter — deterministic per-pixel ray so the temporal gate
+				// sees stable per-pixel normals across frames.
+				const uv = vec2( float( gx ).add( 0.5 ).div( resW ), float( gy ).add( 0.5 ).div( resH ) );
+				const primary = cameraRayOf( uv, camWorldMat, camProjInvMat, this.cameraRay );
+				const direction = primary.direction.toVar();
+				// From the camera's clip plane, as the path tracer's rays start; the depth stays measured from the camera.
+				const clipAlong = cameraClipDistance( direction, this.cameraRay.clipStart, camWorldMat, this.cameraRay.cameraProjection ).toVar();
+				const ray = Ray( { origin: primary.origin.add( direction.mul( clipAlong ) ), direction } );
+				const hit = HitInfo.wrap( traverseBVH( ray, bvhStorage, triStorage ) );
+
+				const encodedNormal = hit.normal.mul( 0.5 ).add( 0.5 );
+				// Clamp to the max finite HalfFloat: a hit farther than 65504 units would otherwise
+				// round to +Inf in the f16 texture (on backends that don't clamp), reintroducing the
+				// Inf-Inf=NaN in the denoiser depth weights that the finite miss-sentinel avoids.
+				const depth = min( hit.dst.add( clipAlong ), float( 65504.0 ) );
+
+				const result = hit.didHit.select(
+					vec4( encodedNormal, depth ),
+					vec4( 0.0, 0.0, 0.0, float( GBUFFER_MISS_DEPTH ) )
+				);
+
+				textureStore(
+					outputTex,
+					uvec2( uint( gx ), uint( gy ) ),
+					result
+				).toWriteOnly();
+
+				if ( leafTex ) {
+
+					textureStore(
+						leafTex,
+						uvec2( uint( gx ), uint( gy ) ),
+						uvec4( uint( hit.instanceLeaf.add( 1 ) ), 0, 0, 0 )
+					).toWriteOnly();
+
+				}
+
+				// Shading normal: perturb the geometric normal by the normal/bump map
+				// from the SAME hit (deterministic UV → jitter-free). Miss → geo default.
+				const shadingNormal = hit.normal.toVar();
+				const roughness = float( 1.0 ).toVar();
+				If( hit.didHit, () => {
+
+					const material = RayTracingMaterial.wrap(
+						getMaterial( hit.materialIndex, matStorage )
+					).toVar();
+					const uvCache = UVCache.wrap( computeUVCache( hit.uv, material ) ).toVar();
+					// Same UV tangent frame the Shade kernel uses, or the aux normal disagrees
+					// with the shading normal it is supposed to guide the denoiser with.
+					const uvTangent = vec4( 0.0 ).toVar();
+					If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+						uvTangent.assign( triangleUVTangent(
+							triStorage, hit.triangleIndex, hit.normal, material.normalTransform,
+							bvhStorage, hit.instanceLeaf
+						) );
+
+					} );
+
+					const mapped = processNormal( hit.normal, material, uvCache, uvTangent ).toVar();
+					shadingNormal.assign( processBump( mapped, material, uvCache ) );
+					// Same floor the Shade kernel applies before shading.
+					roughness.assign( processMetalnessRoughness( material, uvCache ).y.clamp( 0.05, 1.0 ) );
+					const emits = max( material.emissive.x, max( material.emissive.y, material.emissive.z ) ).mul( material.emissiveIntensity ).greaterThan( 0.0 );
+					roughness.assign( select( emits, roughness.negate(), roughness ) );
+
+				} );
+
+				const shadingResult = hit.didHit.select(
+					vec4( shadingNormal.mul( 0.5 ).add( 0.5 ), roughness ),
+					vec4( 0.0, 0.0, 0.0, 1.0 )
+				);
+
+				textureStore(
+					shadingTex,
+					uvec2( uint( gx ), uint( gy ) ),
+					shadingResult
+				).toWriteOnly();
+
+			} );
+
+		} );
+
+		this._computeNode = withSceneResources( computeFn( camWorld, camProjInv ), resources ).compute(
+			[ this._dispatchX, this._dispatchY, 1 ],
+			[ WG_SIZE, WG_SIZE, 1 ]
+		);
+
+		this._computeBuilt = true;
+
+	}
+
+	render( context ) {
+
+		if ( ! this.enabled ) return;
+
+		const buffersReady = this._syncStorageBuffers();
+		if ( ! buffersReady ) return;
+
+		if ( ! this._computeBuilt ) this._buildCompute();
+
+		const pt = this.pathTracer;
+		if ( pt ) {
+
+			this.cameraWorldMatrix.value.copy( pt.uniforms.get( 'cameraWorldMatrix' ).value );
+			this.cameraProjectionMatrixInverse.value.copy( pt.uniforms.get( 'cameraProjectionMatrixInverse' ).value );
+			this.cameraRay.sync( pt.uniforms );
+
+		}
+
+		// Static camera: republish current and alias prev to current. Without
+		// the alias, prev would still hold older geometry while motion vector
+		// reflects zero motion → false rejection at every pixel.
+		if ( ! this._dirty && this._hasHistory ) {
+
+			const currentRT = this._currentIdx === 0 ? this._rtA : this._rtB;
+			context.setTexture( 'pathtracer:normalDepth', currentRT.texture );
+			context.setTexture( 'pathtracer:prevNormalDepth', currentRT.texture );
+			context.setTexture( 'pathtracer:shadingNormal', this._shadingRT.texture );
+			this._publishLeaf( context );
+			return;
+
+		}
+
+		const ptColor = context.getTexture( 'pathtracer:color' );
+		if ( ptColor && ptColor.image ) {
+
+			const img = ptColor.image;
+			if ( img.width > 0 && img.height > 0 &&
+				( img.width !== this._rtA.width || img.height !== this._rtA.height ) ) {
+
+				this.setSize( img.width, img.height );
+
+			}
+
+		}
+
+		// Swap roles: what was current becomes prev, write into the free slot.
+		if ( this._hasHistory ) this._currentIdx = 1 - this._currentIdx;
+		const writeRT = this._currentIdx === 0 ? this._rtA : this._rtB;
+		const prevRT = this._currentIdx === 0 ? this._rtB : this._rtA;
+
+		this.renderer.compute( this._computeNode );
+
+		// Copy only the active region out of the over-allocated StorageTextures.
+		this._srcRegion.max.set( writeRT.width, writeRT.height );
+		this.renderer.copyTextureToTexture( this._outputStorageTex, writeRT.texture, this._srcRegion );
+		this.renderer.copyTextureToTexture( this._shadingStorageTex, this._shadingRT.texture, this._srcRegion );
+		if ( this._leafRT ) this.renderer.copyTextureToTexture( this._leafStorageTex, this._leafRT.texture, this._srcRegion );
+
+		// First dispatch: seed prev from current so the history doesn't see false
+		// disocclusion on frame 1.
+		if ( ! this._hasHistory ) {
+
+			this.renderer.copyTextureToTexture( this._outputStorageTex, prevRT.texture, this._srcRegion );
+			this._hasHistory = true;
+
+		}
+
+		context.setTexture( 'pathtracer:normalDepth', writeRT.texture );
+		context.setTexture( 'pathtracer:prevNormalDepth', prevRT.texture );
+		context.setTexture( 'pathtracer:shadingNormal', this._shadingRT.texture );
+		this._publishLeaf( context );
+
+		this._dirty = false;
+
+	}
+
+	// Free the 2048² StorageTextures when disabled (no consumer); three.js re-creates them on the next
+	// dispatch after re-enable, and reset() re-arms the dirty/history fast-path. See NRD.releaseGPUMemory.
+	releaseGPUMemory() {
+
+		this._outputStorageTex?.dispose();
+		this._shadingStorageTex?.dispose();
+		this._leafStorageTex?.dispose();
+		this.reset();
+		// The textures backing the ping-pong are gone, so the prev-frame G-buffer is too.
+		this._hasHistory = false;
+
+	}
+
+	// Accumulation reset only — _hasHistory survives on purpose (see the pipeline:reset
+	// listener). It is invalidated by setSize(), a geometry swap, and releaseGPUMemory().
+	reset() {
+
+		this._dirty = true;
+
+	}
+
+	setSize( width, height ) {
+
+		// StorageTexture stays at its max allocation (see constructor).
+		// RenderTarget.setSize() updates width/height but does NOT bump
+		// texture.version, so copyTextureToTexture's GPU texture would stay at
+		// the old size — needsUpdate forces the resize to take effect.
+		this._rtA.setSize( width, height );
+		this._rtA.texture.needsUpdate = true;
+		this._rtB.setSize( width, height );
+		this._rtB.texture.needsUpdate = true;
+		this._shadingRT.setSize( width, height );
+		this._shadingRT.texture.needsUpdate = true;
+		if ( this._leafRT ) {
+
+			this._leafRT.setSize( width, height );
+			this._leafRT.texture.needsUpdate = true;
+
+		}
+
+		this._hasHistory = false;
+		this.resolutionWidth.value = width;
+		this.resolutionHeight.value = height;
+
+		this._dispatchX = Math.ceil( width / 8 );
+		this._dispatchY = Math.ceil( height / 8 );
+		if ( this._computeNode ) {
+
+			this._computeNode.dispatchSize = [ this._dispatchX, this._dispatchY, 1 ];
+
+		}
+
+		this._dirty = true;
+
+	}
+
+	// Reserved-storage change (e.g. 4K toggle): recreate the MAX-preallocated StorageTextures at the new live
+	// reserved size. The compute node rebuilds lazily on the next execute (guarded by _computeBuilt).
+	reallocateReservedStorage() {
+
+		this._computeNode?.dispose();
+		this._computeNode = null;
+		this._outputStorageTex?.dispose();
+		this._shadingStorageTex?.dispose();
+		const mk = () => {
+
+			const t = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+			t.type = HalfFloatType; t.format = RGBAFormat; t.minFilter = NearestFilter; t.magFilter = NearestFilter;
+			return t;
+
+		};
+
+		this._outputStorageTex = mk();
+		this._shadingStorageTex = mk();
+		if ( this._leafStorageTex ) {
+
+			this._leafStorageTex.dispose();
+			this._leafStorageTex = this._makeLeafStorage();
+
+		}
+
+		this._computeBuilt = false;
+
+	}
+
+	/**
+	 * Whether to write `pathtracer:instanceLeaf` (the hit's transformed TLAS leaf + 1, 0 = none).
+	 * Off by default: it costs a full-reserve texture, and changing it rebuilds the kernel.
+	 */
+	setInstanceLeafOutput( enabled ) {
+
+		enabled = !! enabled;
+		if ( enabled === !! this._leafStorageTex ) return;
+
+		this._computeNode?.dispose();
+		this._computeNode = null;
+		this._computeBuilt = false;
+		this._dirty = true;
+
+		if ( enabled ) {
+
+			this._leafStorageTex = this._makeLeafStorage();
+			this._leafRT = new RenderTarget( this._rtA.width, this._rtA.height, {
+				type: UnsignedIntType,
+				format: RedIntegerFormat,
+				minFilter: NearestFilter,
+				magFilter: NearestFilter,
+				depthBuffer: false,
+				stencilBuffer: false
+			} );
+
+		} else {
+
+			this._leafStorageTex.dispose();
+			this._leafRT.dispose();
+			this._leafStorageTex = null;
+			this._leafRT = null;
+
+		}
+
+	}
+
+	_publishLeaf( context ) {
+
+		if ( this._leafRT ) context.setTexture( 'pathtracer:instanceLeaf', this._leafRT.texture );
+		else if ( context.getTexture( 'pathtracer:instanceLeaf' ) ) context.removeTexture( 'pathtracer:instanceLeaf' );
+
+	}
+
+	_makeLeafStorage() {
+
+		const t = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		t.type = UnsignedIntType;
+		t.format = RedIntegerFormat;
+		t.minFilter = NearestFilter;
+		t.magFilter = NearestFilter;
+		return t;
+
+	}
+
+	dispose() {
+
+		this._computeNode?.dispose();
+		this._outputStorageTex?.dispose();
+		this._shadingStorageTex?.dispose();
+		this._shadingRT?.dispose();
+		this._leafStorageTex?.dispose();
+		this._leafRT?.dispose();
+		this._rtA?.dispose();
+		this._rtB?.dispose();
+
+	}
+
+}

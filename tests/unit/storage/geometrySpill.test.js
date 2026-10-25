@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BoxGeometry, BufferAttribute, BufferGeometry, SphereGeometry } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/Storage/openStorage.js';
-import { GeometrySpill } from '@/core/Storage/GeometrySpill.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { SpillStore } from '@/core/Storage/SpillStore.js';
-import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
+import { openStorage } from '@/core/storage/openStorage.js';
+import { GeometrySpill } from '@/core/storage/GeometrySpill.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { SpillStore } from '@/core/storage/SpillStore.js';
+import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
 import { InstancedBufferAttribute } from 'three';
 
 function snapshot( geometry ) {

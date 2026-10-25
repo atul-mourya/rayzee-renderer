@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { VirtualFS, loadPBRTScene, pickEntryPathFrom } from '@/core/Processor/PBRT/index.js';
+import { VirtualFS, loadPBRTScene, pickEntryPathFrom } from '@/core/loaders/pbrt/index.js';
 
 const enc = new TextEncoder();
 

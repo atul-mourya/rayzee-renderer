@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { freeNow, resized } from '@/core/Processor/PBRT/buffers.js';
+import { freeNow, resized } from '@/core/loaders/pbrt/buffers.js';
 
 describe( 'PBRT buffers', () => {
 

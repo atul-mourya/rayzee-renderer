@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Vector3 } from 'three';
-import { CameraTrack } from '@/core/managers/timeline/CameraTrack.js';
-import { TimelineManager } from '@/core/managers/timeline/TimelineManager.js';
-import { CameraManager } from '@/core/managers/CameraManager.js';
+import { CameraTrack } from '@/core/viewer/animation/CameraTrack.js';
+import { TimelineManager } from '@/core/viewer/animation/TimelineManager.js';
+import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
 const pose = ( x, z, { fov = 50, orthoHeight = 4 } = {} ) => ( {

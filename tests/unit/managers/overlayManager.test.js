@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { OverlayManager } from '@/core/managers/OverlayManager.js';
+import { OverlayManager } from '@/core/viewer/overlays/OverlayManager.js';
 
 // Minimal mocks — OverlayManager only needs a camera ref and a DOM canvas
 const createMockCamera = () => ( {} );

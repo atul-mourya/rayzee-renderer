@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/Storage/openStorage.js';
-import { SpillStore } from '@/core/Storage/SpillStore.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
+import { openStorage } from '@/core/storage/openStorage.js';
+import { SpillStore } from '@/core/storage/SpillStore.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 
 // 10 records of 4 lanes, 3 records a chunk → chunks of 3, 3, 3, 1.
 function records() {

@@ -13,4 +13,4 @@
 
 export {
 	fbxFormat, objFormat, stlFormat, plyFormat, colladaFormat, threeMFFormat, usdFormat, exrFormat, allFormats,
-} from '../Processor/FileFormats.js';
+} from '../loaders/FileFormats.js';

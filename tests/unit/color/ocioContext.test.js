@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ColorManagement } from '@/core/Color/ColorManagement.js';
+import { ColorManagement } from '@/core/color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
-import { VIEW_TRANSFORMS } from '@/core/Color/ViewTransforms.js';
+import { VIEW_TRANSFORMS } from '@/core/color/ViewTransforms.js';
 
 let available = true;
 try {

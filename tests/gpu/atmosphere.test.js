@@ -2,10 +2,10 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { PhysicalSky } from '@/core/Processor/PhysicalSky.js';
-import { buildExactEnvironmentTable } from '@/core/Processor/EnvironmentExactTable.js';
-import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/Processor/AtmosphereModel.js';
-import { sunRadianceToward, sampleSunDisc } from '@/core/TSL/Sun.js';
+import { PhysicalSky } from '@/core/environment/PhysicalSky.js';
+import { buildExactEnvironmentTable } from '@/core/environment/EnvironmentExactTable.js';
+import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/environment/AtmosphereModel.js';
+import { sunRadianceToward, sampleSunDisc } from '@/core/shaders/Sun.js';
 import { depthTable, referenceRadiance, singleScattering, spectrumToEngineRGB } from './skyReference.js';
 
 const AIR = { turbidity: 2, ozone: 300, airDensity: 1, groundAlbedo: [ 0.3, 0.3, 0.3 ] };
@@ -15,7 +15,7 @@ const degrees = d => d * Math.PI / 180;
 // Engine azimuth convention (EnvironmentManager / the app's sliders).
 const dirOf = ( az, el ) => [ Math.cos( degrees( el ) ) * Math.sin( degrees( az ) ), Math.sin( degrees( el ) ), Math.cos( degrees( el ) ) * Math.cos( degrees( az ) ) ];
 
-// The engine's equirect lookup (TSL/Environment.js equirectDirectionToUv), bilinear.
+// The engine's equirect lookup (shaders/Environment.js equirectDirectionToUv), bilinear.
 function sampleSky( { data, width: W, height: H }, d ) {
 
 	const u = Math.atan2( d[ 2 ], d[ 0 ] ) / ( 2 * Math.PI ) + 0.5;

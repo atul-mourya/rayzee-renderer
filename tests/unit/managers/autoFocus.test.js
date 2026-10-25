@@ -5,8 +5,8 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { BoxGeometry, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, Scene, Vector3 } from 'three';
-import { CameraManager } from '@/core/managers/CameraManager.js';
-import { InteractionManager } from '@/core/managers/InteractionManager.js';
+import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
+import { InteractionManager } from '@/core/viewer/camera/InteractionManager.js';
 
 function manager( { target = new Vector3() } = {} ) {
 

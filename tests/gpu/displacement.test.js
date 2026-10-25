@@ -8,10 +8,10 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataArrayTexture, LinearFilter, Matrix3, RepeatWrapping } from 'three';
 import { instancedArray, int, float, vec3, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { refineDisplacedIntersection, DisplacementResult } from '@/core/TSL/Displacement.js';
-import { buildBucketTextureNodes } from '@/core/TSL/TextureSampling.js';
-import { arrayToMat3 } from '@/core/TSL/Common.js';
-import { Ray, HitInfo } from '@/core/TSL/Struct.js';
+import { refineDisplacedIntersection, DisplacementResult } from '@/core/shaders/Displacement.js';
+import { buildBucketTextureNodes } from '@/core/shaders/TextureSampling.js';
+import { arrayToMat3 } from '@/core/shaders/Common.js';
+import { Ray, HitInfo } from '@/core/shaders/Struct.js';
 
 // Height = map · displacementScale + displacementBias, in scene units, as three.js.
 const SCALE = 0.2;

@@ -1,6 +1,6 @@
 ---
 name: tsl-reviewer
-description: TSL (Three Shading Language) shader code reviewer. Use PROACTIVELY when writing, editing, or reviewing any file in rayzee/src/TSL/ or any code using Fn(), If(), Loop(), .toVar(), textureStore(), textureLoad(), or other TSL patterns.
+description: TSL (Three Shading Language) shader code reviewer. Use PROACTIVELY when writing, editing, or reviewing any file in rayzee/src/shaders/ or any code using Fn(), If(), Loop(), .toVar(), textureStore(), textureLoad(), or other TSL patterns.
 tools: Read, Glob, Grep
 model: sonnet
 ---
@@ -46,10 +46,10 @@ You are a specialist reviewer for TSL (Three Shading Language) shader code used 
 
 ### 8. No Module-Level Shader State
 - A TSL `Fn()` body runs when its kernel **compiles** (often at the first dispatch), not when the JS builds the graph, so a module variable is read from whichever renderer or stage set it last
-- Per-renderer resources (material buckets, shadow albedo maps, gobo/IES textures, the alpha-shadow switch) ride in the kernel's build context: `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` inside a function body (`TSL/SceneResources.js`)
+- Per-renderer resources (material buckets, shadow albedo maps, gobo/IES textures, the alpha-shadow switch) ride in the kernel's build context: `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` inside a function body (`shaders/SceneResources.js`)
 
 ### 9. Triangle Reads
-- Read a triangle row only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`) and pass the hit's `instanceLeaf`: triangles of shared geometry are in object space, split across a geo and a shade buffer
+- Read a triangle row only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`) and pass the hit's `instanceLeaf`: triangles of shared geometry are in object space, split across a geo and a shade buffer
 
 ## Review Checklist
 For every TSL code change, verify:

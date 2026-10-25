@@ -1346,7 +1346,7 @@ on, lands on a metering of the finished image before the closing denoise.
 
 #### Batch rendering
 
-The supported entry point for a render farm is `rayzee/src/Headless.js`, exported from the package.
+The supported entry point for a render farm is `rayzee/src/viewer/Headless.js`, exported from the package.
 Its defaults are a batch renderer's — `strict`, deterministic, storage off —
 so a degraded render throws instead of shipping:
 

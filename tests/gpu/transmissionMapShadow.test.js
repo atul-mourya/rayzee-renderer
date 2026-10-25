@@ -9,7 +9,7 @@ import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { DataArrayTexture } from 'three';
 import { describeGPU, createRenderer } from './gpu.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		setBatchSizeRatio() {}
@@ -24,14 +24,14 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
-import { traceShadowRay } from '@/core/TSL/LightsDirect.js';
-import { buildBucketTextureNodes } from '@/core/TSL/TextureSampling.js';
-import { withSceneResources } from '@/core/TSL/SceneResources.js';
-import { packMaterial } from '@/core/Processor/MaterialPacking.js';
-import { packTextureIndex } from '@/core/Processor/TextureBuckets.js';
-import { MATERIAL_DATA_LAYOUT, packNormalOct, packTriangleFlags } from '@/core/Processor/BufferLayout.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { traverseBVHShadow } from '@/core/shaders/BVHTraversal.js';
+import { traceShadowRay } from '@/core/shaders/LightsDirect.js';
+import { buildBucketTextureNodes } from '@/core/shaders/TextureSampling.js';
+import { withSceneResources } from '@/core/shaders/SceneResources.js';
+import { packMaterial } from '@/core/materials/MaterialPacking.js';
+import { packTextureIndex } from '@/core/materials/TextureBuckets.js';
+import { MATERIAL_DATA_LAYOUT, packNormalOct, packTriangleFlags } from '@/core/scene/BufferLayout.js';
 
 const LANES = 20;
 // The map's R is 0, 128 and 255 in thirds across u; G, B and A hold its inverse, so a wrong channel shows.

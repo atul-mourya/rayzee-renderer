@@ -3,7 +3,7 @@ import {
 	NoToneMapping, LinearToneMapping, ReinhardToneMapping,
 	CineonToneMapping, ACESFilmicToneMapping, AgXToneMapping, NeutralToneMapping
 } from 'three';
-import { TONE_MAP_WGSL, PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
+import { TONE_MAP_WGSL, PackedToneMapper } from '@/core/output/ToneMapGPU.js';
 
 // The GPU curve itself needs a device, so it is checked on real hardware by `bench:upscale`
 // (`toneMapParity`). What can be checked here is that the shader still names every curve the CPU

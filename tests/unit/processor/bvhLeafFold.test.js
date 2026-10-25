@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BVH_LEAF_MARKERS, BVH_FOLDED_LEAF_MAX } from '@/core/Processor/BufferLayout.js';
+import { BVH_LEAF_MARKERS, BVH_FOLDED_LEAF_MAX } from '@/core/scene/BufferLayout.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		setBatchSizeRatio() {}
@@ -16,9 +16,9 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { foldLeaves, rebaseNodes, isFoldedRef, foldedFirst, foldedCount, foldedRef } from '@/core/Processor/BVHLeafFold.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
+import { foldLeaves, rebaseNodes, isFoldedRef, foldedFirst, foldedCount, foldedRef } from '@/core/bvh/BVHLeafFold.js';
 
 const LANES = 20;
 const TRIANGLE_LEAF = BVH_LEAF_MARKERS.TRIANGLE_LEAF;

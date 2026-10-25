@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ReinsertionOptimizer } from '@/core/Processor/ReinsertionOptimizer.js';
+import { ReinsertionOptimizer } from '@/core/bvh/ReinsertionOptimizer.js';
 
 function makeLeaf( minX, minY, minZ, maxX, maxY, maxZ, triOffset = 0, triCount = 1 ) {
 

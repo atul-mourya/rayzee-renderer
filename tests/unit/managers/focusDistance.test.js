@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PerspectiveCamera, Raycaster, Vector3 } from 'three';
-import { focusDistanceOfHit, viewDepth } from '@/core/managers/InteractionManager.js';
+import { focusDistanceOfHit, viewDepth } from '@/core/viewer/camera/InteractionManager.js';
 
 describe( 'focusDistanceOfHit', () => {
 

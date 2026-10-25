@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PathTracer } from '@/core/Stages/PathTracer.js';
+import { PathTracer } from '@/core/pathtracer/PathTracer.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 
 // A path tracer with no kernels built: choosing an integrator only swaps the instance.

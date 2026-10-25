@@ -33,45 +33,46 @@ export default defineConfig( {
 			],
 			include: [ 'rayzee/src/**/*.js', 'app/src/lib/**/*.js' ],
 			exclude: [
-				'**/.DS_Store', '**/*.md', '**/Workers/**',
+				'**/.DS_Store', '**/*.md', '**/*Worker.js',
 
 				// ── GPU-dependent: TSL shaders (require WebGPU runtime) ──
-				'rayzee/src/TSL/**',
+				'rayzee/src/shaders/**',
 
 				// ── GPU-dependent: Pipeline stages (TSL compute shaders, StorageTextures) ──
-				'rayzee/src/Stages/AutoExposure.js',
-				'rayzee/src/Stages/MotionVector.js',
-				'rayzee/src/Stages/NormalDepth.js',
-				'rayzee/src/Stages/NRD.js',
-				'rayzee/src/Stages/PathTracer.js',
-				'rayzee/src/Stages/PathTracerStage.js',
+				'rayzee/src/viewer/picture/AutoExposure.js',
+				'rayzee/src/viewer/denoise/MotionVector.js',
+				'rayzee/src/viewer/denoise/NormalDepth.js',
+				'rayzee/src/viewer/denoise/NRD.js',
+				'rayzee/src/pathtracer/PathTracer.js',
+				'rayzee/src/pathtracer/PathTracerStage.js',
 
 				// ── GPU-dependent: WebGPU renderer orchestration ──
-				'rayzee/src/PathTracerApp.js',
+				'rayzee/src/viewer/PathTracerApp.js',
 				'rayzee/src/index.js',
 
 				// ── GPU-dependent: TSL shader graph / WebGPU textures ──
-				'rayzee/src/Processor/ShaderBuilder.js',
-				'rayzee/src/Processor/StorageTexturePool.js',
-				'rayzee/src/Processor/TextureCreator.js',
-				'rayzee/src/Processor/SceneProcessor.js',
-				'rayzee/src/Processor/parallelBVHBuilder.js',
-				'rayzee/src/Processor/generateMaterialSpheres.js',
+				'rayzee/src/pathtracer/ShaderBuilder.js',
+				'rayzee/src/pathtracer/StorageTexturePool.js',
+				'rayzee/src/materials/TextureCreator.js',
+				'rayzee/src/scene/SceneProcessor.js',
+				'rayzee/src/bvh/ParallelBVHBuilder.js',
 
 				// ── GPU-dependent: Asset loading with GPU texture upload ──
-				'rayzee/src/Processor/AssetLoader.js',
+				'rayzee/src/loaders/AssetLoader.js',
 
 				// ── GPU-dependent: Managers with deep TSL/WebGPU integration ──
-				'rayzee/src/managers/MaterialDataManager.js',
-				'rayzee/src/managers/EnvironmentManager.js',
-				'rayzee/src/managers/UniformManager.js',
-				'rayzee/src/managers/DenoisingManager.js',
-				'rayzee/src/managers/VideoRenderManager.js',
-				'rayzee/src/managers/InteractionManager.js',
-				'rayzee/src/managers/helpers/OutlineHelper.js',
+				'rayzee/src/materials/MaterialDataManager.js',
+				'rayzee/src/environment/EnvironmentManager.js',
+				'rayzee/src/pathtracer/UniformManager.js',
+				'rayzee/src/viewer/denoise/DenoisingManager.js',
+				'rayzee/src/viewer/animation/VideoRenderManager.js',
+				'rayzee/src/viewer/camera/InteractionManager.js',
+				'rayzee/src/viewer/overlays/OutlineHelper.js',
 
 				// ── GPU-dependent: Denoiser passes (oidn-web GPU pipeline) ──
-				'rayzee/src/Passes/**',
+				'rayzee/src/viewer/denoise/OIDNDenoiser.js',
+				'rayzee/src/viewer/denoise/OIDNTemporalHistory.js',
+				'rayzee/src/viewer/picture/AIUpscaler.js',
 			],
 		},
 	},

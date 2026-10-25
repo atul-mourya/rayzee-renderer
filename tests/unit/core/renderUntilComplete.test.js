@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
-import { CompletionTracker } from '@/core/Pipeline/CompletionTracker.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
+import { CompletionTracker } from '@/core/pipeline/CompletionTracker.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
 /** Bare receiver: the stage completes at the ceiling, as PathTracer.render() retires it. */

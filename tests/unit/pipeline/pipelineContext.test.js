@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PipelineContext } from '@/core/Pipeline/PipelineContext.js';
+import { PipelineContext } from '@/core/pipeline/PipelineContext.js';
 
 describe( 'PipelineContext', () => {
 

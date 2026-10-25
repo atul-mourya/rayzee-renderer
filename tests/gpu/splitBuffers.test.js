@@ -9,7 +9,7 @@ import { Fn, instanceIndex, instancedArray, storage, vec4, float } from 'three/t
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { describeGPU, createRenderer } from './gpu.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		setBatchSizeRatio() {}
@@ -24,14 +24,14 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { foldLeaves } from '@/core/Processor/BVHLeafFold.js';
-import { StorageParts } from '@/core/TSL/patches.js';
-import { splitStorage } from '@/core/TSL/Common.js';
-import { traverseBVH, traverseBVHShadow } from '@/core/TSL/BVHTraversal.js';
-import { Ray } from '@/core/TSL/Struct.js';
-import { withSceneResources } from '@/core/TSL/SceneResources.js';
-import { TRI_SIDE_SHIFT } from '@/core/Processor/BufferLayout.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
+import { StorageParts } from '@/core/shaders/patches.js';
+import { splitStorage } from '@/core/shaders/Common.js';
+import { traverseBVH, traverseBVHShadow } from '@/core/shaders/BVHTraversal.js';
+import { Ray } from '@/core/shaders/Struct.js';
+import { withSceneResources } from '@/core/shaders/SceneResources.js';
+import { TRI_SIDE_SHIFT } from '@/core/scene/BufferLayout.js';
 
 const LANES = 20;
 const TRIANGLES = 5000;

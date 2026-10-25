@@ -7,8 +7,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DirectionalLight, Group, PerspectiveCamera, PointLight, Scene, SpotLight, Vector3 } from 'three';
-import { AssetLoader } from '@/core/Processor/AssetLoader.js';
-import { LightSerializer } from '@/core/Processor/LightSerializer.js';
+import { AssetLoader } from '@/core/loaders/AssetLoader.js';
+import { LightSerializer } from '@/core/lights/LightSerializer.js';
 
 const LUMENS_PER_WATT = 683;
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { RenderStage, StageExecutionMode } from '@/core/Pipeline/RenderStage.js';
-import { PipelineContext } from '@/core/Pipeline/PipelineContext.js';
-import { EventDispatcher } from '@/core/Pipeline/EventDispatcher.js';
+import { RenderStage, StageExecutionMode } from '@/core/pipeline/RenderStage.js';
+import { PipelineContext } from '@/core/pipeline/PipelineContext.js';
+import { EventDispatcher } from '@/core/pipeline/EventDispatcher.js';
 
 describe( 'RenderStage', () => {
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { EventDispatcher } from '@/core/Pipeline/EventDispatcher.js';
+import { EventDispatcher } from '@/core/pipeline/EventDispatcher.js';
 
 describe( 'EventDispatcher', () => {
 

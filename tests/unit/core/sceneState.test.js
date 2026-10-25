@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Color, Object3D, PerspectiveCamera, Scene, Vector2, Vector3 } from 'three';
-import { toPortable, fromPortable } from '@/core/SceneState/portable.js';
-import { LightManager } from '@/core/managers/LightManager.js';
-import { CameraManager } from '@/core/managers/CameraManager.js';
-import { CameraTrack } from '@/core/managers/timeline/CameraTrack.js';
+import { toPortable, fromPortable } from '@/core/portable.js';
+import { LightManager } from '@/core/lights/LightManager.js';
+import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
+import { CameraTrack } from '@/core/viewer/animation/CameraTrack.js';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
-import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
-import { MATERIAL_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
+import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
+import { MATERIAL_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
 const json = value => JSON.parse( JSON.stringify( value ) );
 

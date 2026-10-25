@@ -8,12 +8,12 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataUtils } from 'three';
 import { vec4, float } from 'three/tsl';
 import { describeGPU, createRenderer, gpuAvailable, evaluate } from './gpu.js';
-import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
-import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/Processor/ToneMapCPU.js';
-import { countTableTransforms, listViewTransforms, addViewTransform, getViewTransform } from '@/core/Color/ViewTransforms.js';
-import { buildBakedView, DEFAULT_MIN_EV, DEFAULT_MAX_EV } from '@/core/Color/OcioViews.js';
-import { packHalf, unshape, curveSlices, encodeExtended } from '@/core/Color/LutBake.js';
-import { ColorManagement } from '@/core/Color/ColorManagement.js';
+import { PackedToneMapper } from '@/core/output/ToneMapGPU.js';
+import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear, TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure, isOutputEncoded } from '@/core/output/ToneMapCPU.js';
+import { countTableTransforms, listViewTransforms, addViewTransform, getViewTransform } from '@/core/color/ViewTransforms.js';
+import { buildBakedView, DEFAULT_MIN_EV, DEFAULT_MAX_EV } from '@/core/color/OcioViews.js';
+import { packHalf, unshape, curveSlices, encodeExtended } from '@/core/color/LutBake.js';
+import { ColorManagement } from '@/core/color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { UPSCALE_GATES } from '../../bench/runner/config.js';
 

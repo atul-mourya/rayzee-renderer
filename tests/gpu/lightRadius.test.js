@@ -8,8 +8,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataArrayTexture } from 'three';
 import { vec3, vec4, float, int, texture } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { samplePointLightWithAttenuation, sampleSpotLightWithRadius } from '@/core/TSL/LightsSampling.js';
-import { PointLight, SpotLight, LightSample } from '@/core/TSL/LightsCore.js';
+import { samplePointLightWithAttenuation, sampleSpotLightWithRadius } from '@/core/shaders/LightsSampling.js';
+import { PointLight, SpotLight, LightSample } from '@/core/shaders/LightsCore.js';
 
 const D = 2, INTENSITY = 3, N = 64;
 const uvs = new Float32Array( N * N * 2 );

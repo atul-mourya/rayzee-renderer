@@ -3,8 +3,8 @@
  * The metering kernels run in tests/gpu/autoExposure.test.js.
  */
 import { describe, it, expect } from 'vitest';
-import { AutoExposure, adaptExposureEV, blendExposureEV } from '@/core/Stages/AutoExposure.js';
-import { EventDispatcher } from '@/core/Pipeline/EventDispatcher.js';
+import { AutoExposure, adaptExposureEV, blendExposureEV } from '@/core/viewer/picture/AutoExposure.js';
+import { EventDispatcher } from '@/core/pipeline/EventDispatcher.js';
 
 const KEY = Math.log2( 0.18 );
 

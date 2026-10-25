@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { equalAreaSphereToSquare, octahedralToEquirect } from '@/core/Processor/PBRT/EqualAreaOctahedral.js';
+import { equalAreaSphereToSquare, octahedralToEquirect } from '@/core/loaders/pbrt/EqualAreaOctahedral.js';
 
 /**
  * pbrt-v4 `EqualAreaSquareToSphere` — the forward map, transcribed here purely so the

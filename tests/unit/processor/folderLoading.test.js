@@ -6,11 +6,11 @@ vi.hoisted( () => {
 	globalThis.ProgressEvent ??= class extends Event {};
 
 } );
-import { localFolder, isFolderInput } from '@/core/Processor/archiveFormats.js';
-import { openFolder } from '@/core/Processor/ArchiveReader.js';
-import { folderIdentity, identityKey } from '@/core/Storage/identity.js';
-import { ArchiveImporter } from '@/core/Processor/ArchiveImporter.js';
-import { AssetLoader } from '@/core/Processor/AssetLoader.js';
+import { localFolder, isFolderInput } from '@/core/loaders/archives/archiveFormats.js';
+import { openFolder } from '@/core/loaders/archives/ArchiveReader.js';
+import { folderIdentity, identityKey } from '@/core/storage/identity.js';
+import { ArchiveImporter } from '@/core/loaders/archives/ArchiveImporter.js';
+import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';

@@ -8,7 +8,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight } from '@/core/TSL/Bidirectional.js';
+import { mis, misOnHit, misOnScatter, misPartial, misMergePartial, misWeight } from '@/core/shaders/Bidirectional.js';
 
 const CASES = 64;
 

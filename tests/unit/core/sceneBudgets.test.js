@@ -4,10 +4,10 @@
  * sceneObjectLookup does.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
-import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '@/core/Processor/PBRT/index.js';
-import { SPILL_ENVIRONMENT_WIDTH, SAFE_SCENE_BYTES, estimateSceneBytes } from '@/core/Processor/HostMemory.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
+import { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '@/core/loaders/pbrt/index.js';
+import { SPILL_ENVIRONMENT_WIDTH, SAFE_SCENE_BYTES, estimateSceneBytes } from '@/core/memory/HostMemory.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 
 const budgets = ( app, options ) => PathTracerApp.prototype._sceneBudgets.call( app, options );
 

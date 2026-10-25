@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // The manager constructs OIDN/AI-upscaler passes that need a GPU; stub them so the strategy logic
 // under test is the only thing running.
-vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
+vi.mock( '@/core/viewer/denoise/OIDNDenoiser.js', async () => {
 
 	const { EventDispatcher } = await import( 'three' );
 	return { OIDNDenoiser: class extends EventDispatcher {
@@ -28,10 +28,10 @@ vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
 	} };
 
 } );
-vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
+vi.mock( '@/core/viewer/picture/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
 
-const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
-const { NRD_QUALITY_PRESETS, NRD_DEFAULTS, NRD_PRESET_KEYS } = await import( '@/core/Stages/DenoiserSettings.js' );
+const { DenoisingManager } = await import( '@/core/viewer/denoise/DenoisingManager.js' );
+const { NRD_QUALITY_PRESETS, NRD_DEFAULTS, NRD_PRESET_KEYS } = await import( '@/core/viewer/denoise/DenoiserSettings.js' );
 const { CAMERA_PROJECTION_IDS } = await import( '@/core/EngineDefaults.js' );
 
 function makeStage( extra = {} ) {

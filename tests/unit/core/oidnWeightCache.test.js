@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-const { OIDNDenoiser } = await import( '@/core/Passes/OIDNDenoiser.js' );
+const { OIDNDenoiser } = await import( '@/core/viewer/denoise/OIDNDenoiser.js' );
 
 const renderer = { domElement: { width: 8, height: 8 } };
 

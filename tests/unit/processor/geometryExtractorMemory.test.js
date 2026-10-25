@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
 	BufferAttribute, BufferGeometry, Group, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial
 } from 'three';
-import { GeometryExtractor, geometryBytesOf } from '@/core/Processor/GeometryExtractor.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
+import { GeometryExtractor, geometryBytesOf } from '@/core/scene/GeometryExtractor.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
 
 /** A single unit triangle with explicit normals and UVs. */
 function triangleGeometry( normal = [ 0, 0, 1 ] ) {

@@ -4,44 +4,44 @@ import {
 	Scene, EventDispatcher, Box3, REVISION, HalfFloatType, DataUtils, RenderTarget, FloatType, RGBAFormat, NearestFilter,
 } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
-import { SceneHelpers } from './SceneHelpers.js';
-import { PathTracer } from './Stages/PathTracer.js';
-import { textureLayerSink } from './Stages/PathTracerStage.js';
-import { Compositor } from './Stages/Compositor.js';
-import { RenderPipeline } from './Pipeline/RenderPipeline.js';
-import { CompletionTracker } from './Pipeline/CompletionTracker.js';
+import { SceneHelpers } from './scene/SceneHelpers.js';
+import { PathTracer } from './pathtracer/PathTracer.js';
+import { textureLayerSink } from './pathtracer/PathTracerStage.js';
+import { Compositor } from './pipeline/Compositor.js';
+import { RenderPipeline } from './pipeline/RenderPipeline.js';
+import { CompletionTracker } from './pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from './EngineDefaults.js';
-import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
-import { usesTextureCoordinates } from './Processor/GeometryExtractor.js';
-import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './Processor/StorageTexturePool.js';
-import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './Processor/utils.js';
-import { BuildTimer } from './Processor/BuildTimer.js';
-import { TextureReadback, readPixels } from './Processor/TextureReadback.js';
-import { createLogger, fmt } from './utils/Logger.js';
+import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './scene/BufferLayout.js';
+import { usesTextureCoordinates } from './scene/GeometryExtractor.js';
+import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './pathtracer/StorageTexturePool.js';
+import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './utils.js';
+import { BuildTimer } from './scene/BuildTimer.js';
+import { TextureReadback, readPixels } from './output/TextureReadback.js';
+import { createLogger, fmt } from './Logger.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
-import { nameFromUrl } from './Storage/DownloadCache.js';
-import { fileIdentity, folderIdentity, identityKey } from './Storage/identity.js';
-import { isFolderInput, localFolder } from './Processor/archiveFormats.js';
+import { nameFromUrl } from './storage/DownloadCache.js';
+import { fileIdentity, folderIdentity, identityKey } from './storage/identity.js';
+import { isFolderInput, localFolder } from './loaders/archives/archiveFormats.js';
 import { SETTING_SOURCE } from './RenderSettings.js';
-import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './Processor/ToneMapCPU.js';
-import { PackedToneMapper } from './Processor/ToneMapGPU.js';
-import { BasicColor } from './Color/BasicColor.js';
-import { setActiveColorManagement } from './Color/ActiveColor.js';
-import { getViewTransform, DEFAULT_VIEW } from './Color/ViewTransforms.js';
-import { AssetLoader, limitEnvironmentWidth } from './Processor/AssetLoader.js';
-import { SceneProcessor } from './Processor/SceneProcessor.js';
-import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './Processor/HostMemory.js';
+import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './output/ToneMapCPU.js';
+import { PackedToneMapper } from './output/ToneMapGPU.js';
+import { BasicColor } from './color/BasicColor.js';
+import { setActiveColorManagement } from './color/ActiveColor.js';
+import { getViewTransform, DEFAULT_VIEW } from './color/ViewTransforms.js';
+import { AssetLoader, limitEnvironmentWidth } from './loaders/AssetLoader.js';
+import { SceneProcessor } from './scene/SceneProcessor.js';
+import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './memory/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
 import { RenderSettings } from './RenderSettings.js';
-import { ViewCamera } from './managers/ViewCamera.js';
-import { LightManager } from './managers/LightManager.js';
-import { TRIANGLE_PATCH_PROPERTIES } from './managers/MaterialDataManager.js';
+import { ViewCamera } from './scene/ViewCamera.js';
+import { LightManager } from './lights/LightManager.js';
+import { TRIANGLE_PATCH_PROPERTIES } from './materials/MaterialDataManager.js';
 import { VERSION } from './version.js';
-import { toPortable } from './SceneState/portable.js';
+import { toPortable } from './portable.js';
 
 export const RENDER_CHECKPOINT_VERSION = 1;
 
@@ -293,7 +293,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		// ── Managers (direct public access) ──
 		/** @type {LightManager} */
 		this.lightManager = null;
-		/** @type {import('./managers/EnvironmentManager.js').EnvironmentManager} */
+		/** @type {import('./environment/EnvironmentManager.js').EnvironmentManager} */
 		this.environmentManager = null;
 
 		// ── State ──
@@ -1313,7 +1313,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/**
 	 * Scene-level authoring metadata carried by the current model file (glTF `extras`),
-	 * or null when the file has none. See {@link module:Processor/SceneMetadata}. A pbrt scene
+	 * or null when the file has none. See {@link module:loaders/SceneMetadata}. A pbrt scene
 	 * without an infinite light carries `environment: { enabled: false }`. `render` is what the file asks
 	 * the renderer for (pbrt's maxdepth, pixelsamples and film resolution); nothing applies it.
 	 * @type {{ environment?: { sourceFile?: string, rotation?: number, intensity?: number, enabled?: boolean }, render?: { maxBounces?: number, samples?: number, width?: number, height?: number } }|null}
@@ -3121,7 +3121,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	async exportImage( { format = 'png', bitDepth = 8, quality = 0.92, gainMap = false, precision = 'half', asShown = false, colorSpace, passes = [], source = 'display', upscaled = true, alpha = true, metadata = true } = {} ) {
 
-		const encoders = await import( './Processor/ImageEncoders.js' );
+		const encoders = await import( './output/ImageEncoders.js' );
 		const spec = encoders.IMAGE_FORMATS[ format ];
 		if ( ! spec ) throw new Error( `exportImage: no format "${format}"; one of ${Object.keys( encoders.IMAGE_FORMATS ).join( ', ' )}` );
 
@@ -3247,7 +3247,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		if ( want.has( 'depth' ) ) {
 
-			const { DepthPass } = await import( './TSL/DepthPass.js' );
+			const { DepthPass } = await import( './shaders/kernels/DepthPass.js' );
 			const depth = await new DepthPass( this.renderer ).read( this.stages.pathTracer );
 			if ( depth ) {
 

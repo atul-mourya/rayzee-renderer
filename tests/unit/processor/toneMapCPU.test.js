@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure } from '@/core/Processor/ToneMapCPU.js';
+import { TONE_MAP_FNS, SRGB_GAMMA, applySaturation, effectiveExposure } from '@/core/output/ToneMapCPU.js';
 
 // Three.js tone mapping constants (same values as Three.js exports)
 const NoToneMapping = 0;

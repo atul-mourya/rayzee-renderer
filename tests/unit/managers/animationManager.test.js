@@ -191,7 +191,7 @@ vi.mock( '@/core/EngineEvents.js', () => ( {
 	}
 } ) );
 
-const { AnimationManager } = await import( '@/core/managers/AnimationManager.js' );
+const { AnimationManager } = await import( '@/core/viewer/animation/AnimationManager.js' );
 
 describe( 'AnimationManager', () => {
 

@@ -3,7 +3,7 @@
  * keep its slot. Dropping it shifted every later texture onto the wrong material.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { TextureCreator } from '@/core/Processor/TextureCreator.js';
+import { TextureCreator } from '@/core/materials/TextureCreator.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 class FakeBitmap {

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/Storage/openStorage.js';
-import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl } from '@/core/Storage/DownloadCache.js';
+import { openStorage } from '@/core/storage/openStorage.js';
+import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl } from '@/core/storage/DownloadCache.js';
 
 function response( body, { status = 200, headers = {} } = {} ) {
 

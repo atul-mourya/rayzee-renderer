@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseIES, resampleIESToGrid } from '@/core/Processor/IESParser.js';
+import { parseIES, resampleIESToGrid } from '@/core/viewer/lights/IESParser.js';
 
 // An LM-63 file: type C, candela listed plane by plane (each horizontal angle's vertical run).
 function ies( vertical, horizontal, candelaByPlane ) {

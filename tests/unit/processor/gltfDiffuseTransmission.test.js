@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { diffuseTransmissionPlugin, DIFFUSE_TRANSMISSION_EXTENSION } from '@/core/Processor/GLTFDiffuseTransmission.js';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
+import { diffuseTransmissionPlugin, DIFFUSE_TRANSMISSION_EXTENSION } from '@/core/loaders/GLTFDiffuseTransmission.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
 
 // One triangle per material, the extension on the first, required by the file.
 function gltf( extension ) {

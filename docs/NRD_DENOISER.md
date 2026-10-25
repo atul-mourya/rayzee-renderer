@@ -1,6 +1,6 @@
 # NRD (ReBLUR) real-time denoiser
 
-`rayzee/src/Stages/NRD.js` is a port of NVIDIA Real-Time Denoisers' **ReBLUR** to TSL compute. It is
+`rayzee/src/viewer/denoise/NRD.js` is a port of NVIDIA Real-Time Denoisers' **ReBLUR** to TSL compute. It is
 the live-view strategy `'nrd'` (`denoisingManager.setStrategy( 'nrd', preset )`) beside `'oidn'`, and
 runs inside the pipeline every frame. OIDN is the cleaner of the two and the app's default; NRD's
 place is very large views, where an OIDN refresh lags the frame rate (67 ms at 1920×1080 with

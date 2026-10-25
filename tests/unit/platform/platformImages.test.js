@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { configurePlatform, hasImageDecoder } from '@/core/Platform.js';
-import { platformImagesPlugin, missingImageDecoderPlugin, loadPlatformImage } from '@/core/Processor/PlatformImageLoader.js';
+import { platformImagesPlugin, missingImageDecoderPlugin, loadPlatformImage } from '@/core/loaders/PlatformImageLoader.js';
 
 // A PNG signature, one IHDR-shaped chunk and IEND, then the trailing bytes exporters leave.
 function pngWithTrailer() {

@@ -6,17 +6,17 @@
  */
 
 // Patches (side-effect imports — must run before any StorageTexture usage)
-import './TSL/patches.js';
+import './shaders/patches.js';
 
 // Main application: the viewer, built on the renderer core (also `rayzee/core`)
-export { PathTracerApp, describeAdapter } from './PathTracerApp.js';
+export { PathTracerApp, describeAdapter } from './viewer/PathTracerApp.js';
 export { RayzeeRenderer } from './RayzeeRenderer.js';
 
 // Event types
 export { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
 
 // Headless rendering — the supported entry point for a caller with no screen
-export { renderHeadless, openHeadless, captureHeadless } from './Headless.js';
+export { renderHeadless, openHeadless, captureHeadless } from './viewer/Headless.js';
 
 // Degradation contract — what the engine survived instead of failing on
 export { ISSUE_CODES, ISSUE_SEVERITY, IssueLog, EngineIssueError } from './EngineIssues.js';
@@ -32,27 +32,27 @@ export { configurePlatform, getPlatform } from './Platform.js';
 export {
 	openStorage, StorageManager, STORAGE_KIND, ENGINE_AREAS, fileIdentity, folderIdentity, identityKey, sameIdentity,
 	DownloadCache, DOWNLOAD_POLICY, fetchFile, nameFromUrl, cachedObjectURL, acquireLock, heldLockNames,
-} from './Storage/index.js';
+} from './storage/index.js';
 
 // Archives read in place: one entry at a time, never the whole file in memory
-export { openZip, readZipDirectory } from './Processor/ZipReader.js';
-export { ARCHIVE_FORMATS, localFolder } from './Processor/archiveFormats.js';
+export { openZip, readZipDirectory } from './loaders/archives/ZipReader.js';
+export { ARCHIVE_FORMATS, localFolder } from './loaders/archives/archiveFormats.js';
 
 // Engine package version, as built
 export { VERSION } from './version.js';
 
 // A loaded scene's edits as plain data (app.exportSceneState / importSceneState)
-export { SCENE_STATE_VERSION } from './SceneState/SceneState.js';
-export { toPortable, fromPortable } from './SceneState/portable.js';
+export { SCENE_STATE_VERSION } from './viewer/SceneState.js';
+export { toPortable, fromPortable } from './portable.js';
 
 // glTF alphaMode derivation — the one definition, shared with hosts that edit materials
-export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './Processor/GeometryExtractor.js';
+export { deriveAlphaMode, MATERIAL_VALUE_SOURCE } from './scene/GeometryExtractor.js';
 
 // Scene-level authoring metadata embedded in model files (glTF `extras`)
-export { extractSceneMetadata, parseSceneMetadata } from './Processor/SceneMetadata.js';
+export { extractSceneMetadata, parseSceneMetadata } from './loaders/SceneMetadata.js';
 
 // Logging — leveled/namespaced console output shared with the workers
-export { Logger, createLogger, fmt, LOG_LEVELS } from './utils/Logger.js';
+export { Logger, createLogger, fmt, LOG_LEVELS } from './Logger.js';
 
 // Configuration defaults and presets
 export {
@@ -61,64 +61,64 @@ export {
 	PRODUCTION_RENDER_CONFIG,
 	INTERACTIVE_RENDER_CONFIG,
 } from './EngineDefaults.js';
-export { MAX_RESERVABLE_RENDER_SIZE } from './Processor/StorageTexturePool.js';
+export { MAX_RESERVABLE_RENDER_SIZE } from './pathtracer/StorageTexturePool.js';
 export {
 	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
-} from './Stages/DenoiserSettings.js';
-export { SKY_DEFAULTS, DEFAULT_SUN_PATH } from './managers/EnvironmentManager.js';
-export { AUTO_EXPOSURE_DEFAULTS } from './Stages/AutoExposure.js';
-export { LOCAL_EXPOSURE_DEFAULTS } from './Stages/LocalExposure.js';
-export { AUTO_FOCUS_DEFAULTS } from './managers/CameraManager.js';
-export { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './Processor/BufferLayout.js';
-export { sunPosition, timeForSunElevation, dayOfYearForMonth } from './Processor/SunPosition.js';
+} from './viewer/denoise/DenoiserSettings.js';
+export { SKY_DEFAULTS, DEFAULT_SUN_PATH } from './environment/EnvironmentManager.js';
+export { AUTO_EXPOSURE_DEFAULTS } from './viewer/picture/AutoExposure.js';
+export { LOCAL_EXPOSURE_DEFAULTS } from './viewer/picture/LocalExposure.js';
+export { AUTO_FOCUS_DEFAULTS } from './viewer/camera/CameraManager.js';
+export { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './scene/BufferLayout.js';
+export { sunPosition, timeForSunElevation, dayOfYearForMonth } from './environment/SunPosition.js';
 
 // Settings & managers (for advanced consumers)
 export { RenderSettings } from './RenderSettings.js';
-export { CameraManager } from './managers/CameraManager.js';
-export { LightManager } from './managers/LightManager.js';
-export { GoboManager } from './managers/GoboManager.js';
-export { IESManager } from './managers/IESManager.js';
-export { DenoisingManager } from './managers/DenoisingManager.js';
-export { OverlayManager } from './managers/OverlayManager.js';
+export { CameraManager } from './viewer/camera/CameraManager.js';
+export { LightManager } from './lights/LightManager.js';
+export { GoboManager } from './viewer/lights/GoboManager.js';
+export { IESManager } from './viewer/lights/IESManager.js';
+export { DenoisingManager } from './viewer/denoise/DenoisingManager.js';
+export { OverlayManager } from './viewer/overlays/OverlayManager.js';
 
 // VRAM accounting
-export { VRAMTracker, bufferBytes, textureBytes } from './Processor/VRAMTracker.js';
+export { VRAMTracker, bufferBytes, textureBytes } from './memory/VRAMTracker.js';
 export {
 	MemoryLedger, estimateSceneBytes, probeAddressSpace, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
-} from './Processor/HostMemory.js';
+} from './memory/HostMemory.js';
 
 // Pipeline infrastructure (for advanced consumers building custom stages)
-export { RenderPipeline } from './Pipeline/RenderPipeline.js';
-export { RenderStage, StageExecutionMode } from './Pipeline/RenderStage.js';
-export { PipelineContext } from './Pipeline/PipelineContext.js';
+export { RenderPipeline } from './pipeline/RenderPipeline.js';
+export { RenderStage, StageExecutionMode } from './pipeline/RenderStage.js';
+export { PipelineContext } from './pipeline/PipelineContext.js';
 export {
 	setBindingAudit,
 	getBindingAuditFindings,
 	clearBindingAuditFindings,
-} from './Pipeline/BindingAudit.js';
+} from './pipeline/BindingAudit.js';
 
 // Animation (for advanced consumers)
-export { AnimationManager } from './managers/AnimationManager.js';
+export { AnimationManager } from './viewer/animation/AnimationManager.js';
 
 // Transform controls
-export { TransformManager } from './managers/TransformManager.js';
+export { TransformManager } from './viewer/overlays/TransformManager.js';
 
 // Video rendering
-export { VideoRenderManager } from './managers/VideoRenderManager.js';
+export { VideoRenderManager } from './viewer/animation/VideoRenderManager.js';
 
 // Authored animation: keyframed tracks on one timeline (engine.timeline)
-export { TimelineManager } from './managers/timeline/TimelineManager.js';
-export { CameraTrack } from './managers/timeline/CameraTrack.js';
+export { TimelineManager } from './viewer/animation/TimelineManager.js';
+export { CameraTrack } from './viewer/animation/CameraTrack.js';
 
 // Interaction
-export { InteractionManager } from './managers/InteractionManager.js';
+export { InteractionManager } from './viewer/camera/InteractionManager.js';
 
 // Neural post passes. The app drives these through `denoisingManager` — what is exported here is
 // the offline entry point (`renderUpscaled`, used by the regression bench) plus the two contracts a
 // host needs to build UI against.
-export { renderUpscaled, SR_SCALE, SR_MAX_INPUT } from './neural/NeuralSuperRes.js';
-export { RETOUCH_DEFAULTS, RETOUCH_RANGES, RETOUCH_MAX_PIXELS } from './neural/NeuralRetouch.js';
+export { renderUpscaled, SR_SCALE, SR_MAX_INPUT } from './viewer/picture/NeuralSuperRes.js';
+export { RETOUCH_DEFAULTS, RETOUCH_RANGES, RETOUCH_MAX_PIXELS } from './viewer/picture/NeuralRetouch.js';
 
 // ── Colour management ───────────────────────────────────────────────────────────────────────────
 // `app.color` is the instance a host normally uses; these are for building UI against it, and for
@@ -126,23 +126,23 @@ export { RETOUCH_DEFAULTS, RETOUCH_RANGES, RETOUCH_MAX_PIXELS } from './neural/N
 export {
 	ColorManagement, getActiveColorManagement, setActiveColorManagement,
 	isColorManaged, DEFAULT_WORKING_SPACE, findNativeLinearSpace, canvasColorSpaceFor,
-} from './Color/ColorManagement.js';
-export { displayCanvasFit, isHdrDisplay, hdrViewFor, matchingView, sameToneMapping } from './Color/Displays.js';
+} from './color/ColorManagement.js';
+export { displayCanvasFit, isHdrDisplay, hdrViewFor, matchingView, sameToneMapping } from './color/Displays.js';
 export {
 	VIEW_TRANSFORMS, listViewTransforms, getViewTransform, addViewTransform, removeViewTransform,
 	onRegistryChange, getRegistryVersion, buildToneMapWGSL,
 	OCIO_VIEW_BASE, MAX_TABLE_TRANSFORMS, DEFAULT_VIEW,
-} from './Color/ViewTransforms.js';
+} from './color/ViewTransforms.js';
 export {
 	buildOcioView, addOcioView, addAllOcioViews, buildCanvasView,
 	DEFAULT_LUT_SIZE, DEFAULT_MIN_EV, DEFAULT_MAX_EV,
-} from './Color/OcioViews.js';
+} from './color/OcioViews.js';
 export {
 	resolveInputSpace, textureInputSpace, setInputOverride, clearInputOverrides,
 	listInputOverrides, listFileRules, isDataTexture,
-} from './Color/InputColorSpaces.js';
+} from './color/InputColorSpaces.js';
 export {
 	convertColor, convertPixelsF32, convertEncodedRGBA8, applyMatrixRGBA8, extractMatrix,
 	hasColorSpace, isDataSpace, srgbToLinear, linearToSrgb,
-} from './Color/ColorSpaces.js';
-export { measureBakeError, bakeLut, makeCpuSampler } from './Color/LutBake.js';
+} from './color/ColorSpaces.js';
+export { measureBakeError, bakeLut, makeCpuSampler } from './color/LutBake.js';

@@ -9,12 +9,12 @@ import { describe, it, expect } from 'vitest';
 import {
 	ENGINE_DEFAULTS, MATERIAL_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG, modePresetSettings,
 } from '@/core/EngineDefaults.js';
-import { DENOISER_DEFAULTS } from '@/core/Stages/DenoiserSettings.js';
-import { AUTO_EXPOSURE_DEFAULTS } from '@/core/Stages/AutoExposure.js';
-import { LOCAL_EXPOSURE_DEFAULTS } from '@/core/Stages/LocalExposure.js';
-import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
-import { SKY_DEFAULTS } from '@/core/managers/EnvironmentManager.js';
-import { DEFAULT_VIEW } from '@/core/Color/ViewTransforms.js';
+import { DENOISER_DEFAULTS } from '@/core/viewer/denoise/DenoiserSettings.js';
+import { AUTO_EXPOSURE_DEFAULTS } from '@/core/viewer/picture/AutoExposure.js';
+import { LOCAL_EXPOSURE_DEFAULTS } from '@/core/viewer/picture/LocalExposure.js';
+import { AUTO_FOCUS_DEFAULTS } from '@/core/viewer/camera/CameraManager.js';
+import { SKY_DEFAULTS } from '@/core/environment/EnvironmentManager.js';
+import { DEFAULT_VIEW } from '@/core/color/ViewTransforms.js';
 
 describe( 'defaults that shape pixels — a change here is a BREAKING CHANGE', () => {
 

@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { ENGINE_DEFAULTS, PRODUCTION_RENDER_CONFIG, INTERACTIVE_RENDER_CONFIG } from '@/core/EngineDefaults.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
-import { TEXTURE_CONSTANTS } from '@/core/Processor/TextureBuckets.js';
-import { MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
+import { TEXTURE_CONSTANTS } from '@/core/materials/TextureBuckets.js';
+import { MEMORY_CONSTANTS } from '@/core/materials/TextureCreator.js';
 import {
 	DENOISER_DEFAULTS, DENOISER_STRATEGIES, NRD_DEFAULTS, NRD_QUALITY_PRESETS, NRD_PRESET_KEYS, NRD_HIT_DIST_A,
 	NRD_HIT_DIST_B,
-} from '@/core/Stages/DenoiserSettings.js';
-import { AUTO_FOCUS_DEFAULTS } from '@/core/managers/CameraManager.js';
+} from '@/core/viewer/denoise/DenoiserSettings.js';
+import { AUTO_FOCUS_DEFAULTS } from '@/core/viewer/camera/CameraManager.js';
 
 describe( 'ENGINE_DEFAULTS', () => {
 

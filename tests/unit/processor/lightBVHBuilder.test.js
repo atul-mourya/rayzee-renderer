@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { LightBVHBuilder } from '@/core/Processor/LightBVHBuilder.js';
+import { LightBVHBuilder } from '@/core/lights/LightBVHBuilder.js';
 
 function makeEmissiveTri( index, cx, cy, cz, power = 1.0 ) {
 

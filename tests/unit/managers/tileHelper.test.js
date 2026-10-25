@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TileHelper } from '@/core/managers/helpers/TileHelper.js';
+import { TileHelper } from '@/core/viewer/overlays/TileHelper.js';
 
 describe( 'TileHelper', () => {
 

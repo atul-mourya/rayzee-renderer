@@ -137,7 +137,7 @@ async function boot() {
 
 	// Structural guard, not a metric: reports stages whose TextureNodes are bound too late to
 	// be safe from binding aliasing. Costs one boolean test per stage per frame. See
-	// rayzee/src/Pipeline/BindingAudit.js.
+	// rayzee/src/pipeline/BindingAudit.js.
 	setBindingAudit( true );
 
 	session = createSceneSession( app );
@@ -615,9 +615,9 @@ async function upscaleRender( { outputWidth, outputHeight, samples } ) {
 async function toneMapParity() {
 
 	const [ { PackedToneMapper }, { toneMapToRGBA8 }, { listViewTransforms } ] = await Promise.all( [
-		import( '@/core/Processor/ToneMapGPU.js' ),
-		import( '@/core/Processor/ToneMapCPU.js' ),
-		import( '@/core/Color/ViewTransforms.js' ),
+		import( '@/core/output/ToneMapGPU.js' ),
+		import( '@/core/output/ToneMapCPU.js' ),
+		import( '@/core/color/ViewTransforms.js' ),
 	] );
 
 	// Bake one colour-managed view first, so the check covers the path that needs it most: a
@@ -629,7 +629,7 @@ async function toneMapParity() {
 
 		const [ { configureAssets }, { ColorManagement } ] = await Promise.all( [
 			import( '@/core/AssetConfig.js' ),
-			import( '@/core/Color/ColorManagement.js' ),
+			import( '@/core/color/ColorManagement.js' ),
 		] );
 
 		configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } );

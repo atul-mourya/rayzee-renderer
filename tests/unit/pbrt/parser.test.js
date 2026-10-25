@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { tokenize, TokenType } from '@/core/Processor/PBRT/PBRTTokenizer.js';
-import { PBRTParser, parsePBRT } from '@/core/Processor/PBRT/PBRTParser.js';
+import { tokenize, TokenType } from '@/core/loaders/pbrt/PBRTTokenizer.js';
+import { PBRTParser, parsePBRT } from '@/core/loaders/pbrt/PBRTParser.js';
 
 describe( 'PBRT tokenizer', () => {
 

@@ -15,18 +15,18 @@
 export {
 	ColorManagement, getActiveColorManagement, setActiveColorManagement,
 	isColorManaged, DEFAULT_WORKING_SPACE, findNativeLinearSpace, canvasColorSpaceFor,
-} from '../Color/ColorManagement.js';
-export { displayCanvasFit, isHdrDisplay, hdrViewFor, matchingView, sameToneMapping } from '../Color/Displays.js';
+} from '../color/ColorManagement.js';
+export { displayCanvasFit, isHdrDisplay, hdrViewFor, matchingView, sameToneMapping } from '../color/Displays.js';
 export {
 	buildOcioView, addOcioView, addAllOcioViews, buildCanvasView,
 	DEFAULT_LUT_SIZE, DEFAULT_MIN_EV, DEFAULT_MAX_EV,
-} from '../Color/OcioViews.js';
+} from '../color/OcioViews.js';
 export {
 	resolveInputSpace, textureInputSpace, setInputOverride, clearInputOverrides,
 	listInputOverrides, listFileRules, isDataTexture,
-} from '../Color/InputColorSpaces.js';
+} from '../color/InputColorSpaces.js';
 export {
 	convertColor, convertPixelsF32, convertEncodedRGBA8, applyMatrixRGBA8, extractMatrix,
 	hasColorSpace, isDataSpace, srgbToLinear, linearToSrgb,
-} from '../Color/ColorSpaces.js';
-export { measureBakeError, bakeLut, makeCpuSampler } from '../Color/LutBake.js';
+} from '../color/ColorSpaces.js';
+export { measureBakeError, bakeLut, makeCpuSampler } from '../color/LutBake.js';

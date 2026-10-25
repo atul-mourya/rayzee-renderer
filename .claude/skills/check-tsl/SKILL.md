@@ -2,7 +2,7 @@
 name: check-tsl
 description: >
   Validate TSL shader code against known pitfalls. Run this after writing or modifying any TSL
-  shader file (rayzee/src/TSL/) to catch common bugs before they become runtime issues.
+  shader file (rayzee/src/shaders/) to catch common bugs before they become runtime issues.
   Checks for NaN sources, If/Else chains, UV flips, outputNode usage, compute patterns,
   and redundant .toVar() materializations that inflate register pressure.
 allowed-tools: Read, Glob, Grep
@@ -12,7 +12,7 @@ You are a TSL (Three Shading Language) validator for the Rayzee path tracer. Sca
 
 ## How to Find Modified Files
 1. Run `git diff --name-only` to find uncommitted changes
-2. Filter for files in `rayzee/src/TSL/`, `rayzee/src/Stages/`, `rayzee/src/integrators/`, and any file importing from `three/tsl`
+2. Filter for files in `rayzee/src/shaders/`, the stages (`rayzee/src/pathtracer/`, `pipeline/`, `viewer/denoise/`, `viewer/picture/`), and any file importing from `three/tsl`
 3. Read each modified file
 
 ## Validation Checks
@@ -80,7 +80,7 @@ You are a TSL (Three Shading Language) validator for the Rayzee path tracer. Sca
 ### Check 10: Module-Level Shader State
 **Search for**: a module-level `let`/`const` holding a texture, node or uniform that a `Fn()` body reads, or a setter that assigns one (e.g. `setXTexture( tex ) { moduleVar = tex }`)
 - A `Fn()` body runs at kernel compile, so module state is read from whichever renderer set it last (two renderers in one page, or a later stage, overwrite it)
-- **Fix**: pass it in the kernel's build context — `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in the body (`TSL/SceneResources.js`)
+- **Fix**: pass it in the kernel's build context — `withSceneResources( kernelCall, resources )` at the root, `sceneResources( builder )` in the body (`shaders/SceneResources.js`)
 
 ## Output Format
 For each file checked, report:

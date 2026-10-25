@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CompletionTracker } from '@/core/Pipeline/CompletionTracker.js';
+import { CompletionTracker } from '@/core/pipeline/CompletionTracker.js';
 
 // Stand-in for the PathTracer stage: only the fields CompletionTracker reads.
 function makeStage( { frameCount = 1, completionThreshold = 30, converged = false } = {} ) {

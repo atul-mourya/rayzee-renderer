@@ -11,4 +11,4 @@
  * await renderer.environmentManager.setMode( 'procedural' );
  */
 
-export { PhysicalSky } from '../Processor/PhysicalSky.js';
+export { PhysicalSky } from '../environment/PhysicalSky.js';

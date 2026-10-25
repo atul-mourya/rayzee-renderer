@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { KernelManager } from '@/core/Processor/KernelManager.js';
+import { KernelManager } from '@/core/pathtracer/KernelManager.js';
 
 const managerWith = ( workgroupSize, limit = 65535 ) => {
 

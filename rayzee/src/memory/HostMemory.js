@@ -1,0 +1,272 @@
+/**
+ * HostMemory.js — CPU-side counterpart to VRAMTracker: what a scene will cost in JS memory,
+ * whether this session can still place it, and where the peak actually went.
+ *
+ * The wall at this scale is not RAM, it is contiguous *address space*: a 40M-triangle Moana
+ * needs ~7.3 GB of ArrayBuffer and a freshly booted renderer can place ~7.0-7.7 GB in 64 MB
+ * pieces, so the same build loads after a reboot and fails after hours of uptime.
+ *
+ * ⚠️ A probe is only cheap when it is small. On an idle page, 8.6 GB of 64 MB buffers is placed
+ * and released in 102 ms and never shows up as resident memory. Run the same probe while the
+ * parse still holds 3.6 GB and the renderer goes to 9.2 GB resident and the load takes twice as
+ * long — the probe's own peak is added to the build's. So the up-front check is an estimate
+ * against a known ceiling, with no allocation at all, and the probe is saved for the one step
+ * that actually runs out (BVH assembly), where it asks only for that step's bytes.
+ */
+
+import { TRIANGLE_DATA_LAYOUT } from '../scene/BufferLayout.js';
+import { DEFAULT_CHUNK_BYTES } from './ChunkedRecords.js';
+
+/** Bytes one stored triangle occupies in the triangle records. */
+const TRIANGLE_BYTES = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE * 4;
+
+/** Bytes per BVH node: 16 floats, 4 vec4s. */
+const BVH_NODE_BYTES = 64;
+
+/**
+ * BVH nodes per stored triangle, measured on Moana: 35.0M triangles → 29.93M nodes (0.855),
+ * 40.0M → 33.20M (0.830). Rounded up, because under-estimating is the failure that matters.
+ */
+const NODES_PER_TRIANGLE = 0.9;
+
+/**
+ * Bytes per placement in the instance table's own columns, measured on the Moana island (1,415 MB for 51.0M). Its
+ * transforms are read where the scene keeps them (an InstancedMesh's matrix list, `instanceBytes`), not copied.
+ */
+const PLACEMENT_BYTES = 28;
+
+/**
+ * Bytes per placement while a spilling build makes its TLAS: the tree, a quarter of it per copy once copies are
+ * clustered, plus the boxes it is built from. Measured on the island: ~2.3 GB at 51.0M.
+ */
+const TLAS_PHASE_BYTES = 45;
+
+/** Bytes per triangle of per-template reorder map, one Uint32 each. */
+const ORDER_MAP_BYTES = 4;
+
+/** Below this a load cannot plausibly hit the wall, so it is not worth remarking on. */
+export const PREFLIGHT_MIN_BYTES = 1536 * 1024 * 1024;
+
+/**
+ * What a freshly started renderer could place in 64 MB pieces, measured: 7,040 MB. A scene
+ * estimated above this needs a session with its address space still unfragmented, which in
+ * practice means a recently restarted browser.
+ *
+ * Deliberately not a hard limit — it moves with host uptime, and a scene over it still loads
+ * on a clean boot. It is the line above which a warning is honest.
+ */
+export const SAFE_SCENE_BYTES = 7040 * 1024 * 1024;
+
+/**
+ * The line past which the build refuses rather than tries.
+ *
+ * Above this the failure stops being a catchable `Array buffer allocation failed` and becomes a
+ * dead renderer process — measured on Moana: 40M (7.3 GB) and 45M (8.5 GB) both load, 50M
+ * (~9.7 GB) takes the tab down at 9.4 GB resident with nothing thrown and nothing logged. There
+ * is no degrading gracefully past that point, so the only useful behaviour is to say why in
+ * advance. Raise it with `new SceneProcessor( { maxSceneBytes } )` to test a bigger rung.
+ */
+export const MAX_SCENE_BYTES = 9216 * 1024 * 1024;
+
+// Scene-archive budgets with the memory spill on: the triangles, BVH and geometry leave the heap as the build goes, so
+// the host passes these instead of the importer's own. The whole USD island (111.6M triangles, 51.0M placements) loads
+// under them in Chrome on a 24 GB M-series: 304 s, tab peak ~13 GB, 13 GB of GPU buffers. The preflight, not the
+// budget, refuses anything larger.
+export const SPILL_TRIANGLE_BUDGET = 120_000_000;
+export const SPILL_PLACEMENT_BUDGET = 60_000_000;
+/** Widest environment kept with memory spill on; a wider one is box-filtered down (AssetLoader). */
+export const SPILL_ENVIRONMENT_WIDTH = 8192;
+
+/**
+ * The host's memory in GB: the host's own figure when it gives one, else Chrome's
+ * `navigator.deviceMemory`, else an assumed 4 (every other runtime lacks it).
+ * @param {number} [stated]
+ * @returns {{gb: number, assumed: boolean}}
+ */
+export function deviceMemoryGB( stated ) {
+
+	if ( stated > 0 ) return { gb: stated, assumed: false };
+	const reported = typeof navigator !== 'undefined' ? navigator.deviceMemory : undefined;
+	return reported > 0 ? { gb: reported, assumed: false } : { gb: 4, assumed: true };
+
+}
+
+/** Headroom a single build step wants over its own size before it is called safe. */
+export const PREFLIGHT_SAFETY = 1.15;
+
+/** Never probe beyond this, however large the estimate. */
+const PROBE_CEILING_BYTES = 12 * 1024 * 1024 * 1024;
+
+/**
+ * Byte cost of the CPU structures a scene of this shape will hold once built.
+ *
+ * `geometryBytes` is the three.js geometry the caller already owns — it is not allocated by the
+ * build, but it stays resident for picking, transforms and raster, so it counts against the same
+ * address space.
+ *
+ * @param {{triangles: number, placements: number, geometryBytes?: number}} scene
+ * @returns {{total: number, triangles: number, bvh: number, geometry: number,
+ *   placements: number, orderMaps: number}} bytes
+ */
+export function estimateSceneBytes( { triangles, placements, geometryBytes = 0, instanceBytes = 0 } ) {
+
+	const parts = {
+		triangles: triangles * TRIANGLE_BYTES,
+		bvh: Math.ceil( triangles * NODES_PER_TRIANGLE ) * BVH_NODE_BYTES,
+		geometry: geometryBytes,
+		instances: instanceBytes,
+		placements: placements * PLACEMENT_BYTES,
+		orderMaps: triangles * ORDER_MAP_BYTES,
+	};
+
+	parts.total = parts.triangles + parts.bvh + parts.geometry + parts.instances + parts.placements + parts.orderMaps;
+	return parts;
+
+}
+
+/**
+ * A spilling, streamed build's peak: the larger of its two phases, since neither the triangles, the BLASes nor the
+ * three.js geometry are resident once each has been read. Extraction holds the geometry, the matrix lists and
+ * `residentTriangleBytes` of records; the TLAS phase the lists, the table, the tree being built and the order maps.
+ * @param {ReturnType<typeof estimateSceneBytes>} parts
+ * @param {number} placements
+ * @param {number} residentTriangleBytes
+ * @returns {number} bytes
+ */
+export function spillingPeakBytes( parts, placements, residentTriangleBytes ) {
+
+	const extraction = parts.geometry + parts.instances + placements * 4 + residentTriangleBytes;
+	const tlas = parts.instances + parts.placements + placements * TLAS_PHASE_BYTES + parts.orderMaps;
+	return Math.max( extraction, tlas );
+
+}
+
+/**
+ * How many bytes this process can still place in chunk-sized pieces, right now.
+ *
+ * Allocates untouched buffers, so no physical page is committed and the probe costs
+ * milliseconds; they are released in reverse so the address space is handed back in the same
+ * shape it was taken. Stops at `wantBytes` — a probe only has to answer "is there room for
+ * this scene", and probing to exhaustion on every load would be both slow and rude.
+ *
+ * @param {number} wantBytes
+ * @param {{chunkBytes?: number, shared?: boolean, allocate?: function(number): Object}} [options]
+ *   `allocate` exists so the failure path can be tested; nothing in the engine passes it.
+ * @returns {{placed: number, want: number, exhausted: boolean, capped: boolean}} `exhausted`
+ *   means the allocator gave up first; `capped` means the request was larger than this function
+ *   will ever probe, so a non-exhausted result proves only that `want` fits, not `wantBytes`.
+ */
+export function probeAddressSpace( wantBytes, {
+	chunkBytes = DEFAULT_CHUNK_BYTES,
+	shared = false,
+	allocate = null,
+} = {} ) {
+
+	const want = Math.min( wantBytes, PROBE_CEILING_BYTES );
+	const alloc = allocate ?? ( shared ? n => new SharedArrayBuffer( n ) : n => new ArrayBuffer( n ) );
+	const chunks = [];
+	let placed = 0;
+
+	try {
+
+		while ( placed < want ) {
+
+			const n = Math.min( chunkBytes, want - placed );
+			chunks.push( alloc( n ) );
+			placed += n;
+
+		}
+
+	} catch {
+
+		// An allocation failure is the answer, not an error.
+
+	}
+
+	// Reverse, so the allocator unwinds the same order it filled.
+	for ( let i = chunks.length - 1; i >= 0; i -- ) chunks[ i ] = null;
+	chunks.length = 0;
+
+	return { placed, want, exhausted: placed < want, capped: wantBytes > want };
+
+}
+
+/**
+ * Phase-tagged record of what the build allocated and what stayed live.
+ *
+ * Chunk allocations are pushed in by {@link ChunkedRecords} through its observer hook, so the
+ * ledger sees every chunk without the storage knowing anything about it. Frees are not
+ * observable — a chunk goes away when the last reference does — so `live` comes from explicit
+ * {@link MemoryLedger#sample} calls at phase boundaries, where the build knows what it is still
+ * holding. Cumulative allocation and live peak answer different questions and both are kept.
+ */
+export class MemoryLedger {
+
+	constructor() {
+
+		this.reset();
+
+	}
+
+	reset() {
+
+		this.phase = 'idle';
+		this.events = [];
+		this.samples = [];
+		this.allocatedBytes = 0;
+		this.peakLiveBytes = 0;
+		this.byPhase = Object.create( null );
+
+	}
+
+	/** Name the phase that subsequent allocations belong to. */
+	mark( phase ) {
+
+		this.phase = phase;
+		this.byPhase[ phase ] ??= { allocated: 0, chunks: 0 };
+		return this;
+
+	}
+
+	/** Record an allocation of `bytes` attributed to the current phase. */
+	alloc( bytes, what = 'chunk' ) {
+
+		if ( ! ( bytes > 0 ) ) return;
+
+		const bucket = ( this.byPhase[ this.phase ] ??= { allocated: 0, chunks: 0 } );
+		bucket.allocated += bytes;
+		bucket.chunks ++;
+		this.allocatedBytes += bytes;
+		this.events.push( { phase: this.phase, bytes, what, at: performance.now() } );
+
+	}
+
+	/**
+	 * Record what is live right now. The build passes the sizes it can actually account for;
+	 * anything it has already dropped is simply absent, which is the point.
+	 * @param {string} label
+	 * @param {Object<string, number>} parts - byte size per named structure
+	 */
+	sample( label, parts ) {
+
+		let total = 0;
+		for ( const k in parts ) total += parts[ k ] || 0;
+		if ( total > this.peakLiveBytes ) this.peakLiveBytes = total;
+		this.samples.push( { label, phase: this.phase, total, parts, at: performance.now() } );
+		return total;
+
+	}
+
+	/** A plain object for logging or handing to a host. */
+	get report() {
+
+		return {
+			allocatedBytes: this.allocatedBytes,
+			peakLiveBytes: this.peakLiveBytes,
+			byPhase: { ...this.byPhase },
+			samples: this.samples.slice(),
+		};
+
+	}
+
+}

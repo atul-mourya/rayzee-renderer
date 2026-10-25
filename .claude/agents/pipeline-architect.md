@@ -18,7 +18,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### Layers (see `docs/CORE_AND_ADDONS.md`)
 - **Renderer core** `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`) builds only PathTracer → Compositor
 - **Viewer** `PathTracerApp extends RayzeeRenderer`; its `_createExtraStages()` inserts the other stages between them, and ~30 no-op hooks at the end of RayzeeRenderer.js ("Hooks") are where it plugs in
-- **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `integrators/`), OCIO colour, storage
+- **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `pathtracer/BidirectionalIntegrator.js`), OCIO colour, storage
 - Viewer code never goes in the core: a core method that needs it gets a hook. `tests/unit/core/coreBoundary.test.js` fails if the core imports viewer or add-on modules
 
 ### Stages (execution order matters)
@@ -71,7 +71,7 @@ When evaluating changes:
 
 6. **Camera Matrix Consistency** — Stages sharing depth/position data MUST sync camera matrices from PathTracer uniforms, not from the camera object directly.
 
-7. **Per-renderer shader resources** — Anything a kernel samples that belongs to one renderer (material buckets, gobo/IES textures, the alpha-shadow switch) rides in the kernel's build context (`TSL/SceneResources.js`), never module state: a TSL function body runs when its kernel compiles.
+7. **Per-renderer shader resources** — Anything a kernel samples that belongs to one renderer (material buckets, gobo/IES textures, the alpha-shadow switch) rides in the kernel's build context (`shaders/SceneResources.js`), never module state: a TSL function body runs when its kernel compiles.
 
 8. **Outputs on request** — A stage that needs an extra path-tracer output asks for it with `pathTracer.requestOutput( name, options )`; the core compiles it only while requested.
 

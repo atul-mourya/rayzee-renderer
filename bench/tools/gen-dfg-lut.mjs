@@ -1,5 +1,5 @@
 /**
- * Regenerates the directional-albedo LUT embedded in rayzee/src/TSL/MaterialProperties.js
+ * Regenerates the directional-albedo LUT embedded in rayzee/src/shaders/MaterialProperties.js
  * (`_dfgLutData`). Block 0 (the first 16 columns):
  *
  *   R = specular E(NoV, roughness) at F0 = 1   — the divisor the multiscatter compensation needs

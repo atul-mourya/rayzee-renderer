@@ -298,7 +298,7 @@ function reportDenoise( report ) {
 
 }
 
-/** Structural guard, not a metric — see rayzee/src/Pipeline/BindingAudit.js. */
+/** Structural guard, not a metric — see rayzee/src/pipeline/BindingAudit.js. */
 async function reportBindingAudit( bench ) {
 
 	const findings = await bench.bindingFindings();

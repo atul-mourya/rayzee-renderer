@@ -7,9 +7,9 @@ import { beforeAll, expect, it } from 'vitest';
 import { DataTexture, DataUtils, RGBAFormat, FloatType, AgXToneMapping } from 'three';
 import { vec2, vec3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { LocalExposure, localExposureGain } from '@/core/Stages/LocalExposure.js';
-import { PackedToneMapper } from '@/core/Processor/ToneMapGPU.js';
-import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
+import { LocalExposure, localExposureGain } from '@/core/viewer/picture/LocalExposure.js';
+import { PackedToneMapper } from '@/core/output/ToneMapGPU.js';
+import { toneMapToRGBA8 } from '@/core/output/ToneMapCPU.js';
 
 const W = 384, H = 256;
 

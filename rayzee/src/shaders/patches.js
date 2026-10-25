@@ -1,0 +1,461 @@
+/**
+ * Rayzee patches for Three.js / TSL.
+ *
+ * Side-effect on import: installs two `WebGPUBackend.prototype` overrides —
+ * `createNodeBuilder` (restores r183 function-scoped `var` emission for compute
+ * shaders, preventing a register-allocation regression in the path tracer's hot
+ * loop) and `initTimestampQuery` (enlarges the stats-gl timestamp query pool so
+ * the wavefront tracer's high per-frame compute-pass count doesn't overflow it).
+ *
+ * Also overrides `ContextNode.prototype.setup` to undo an r186 codegen regression
+ * (§4) — that one is temporary and goes away at r187.
+ *
+ * Exports: `struct()` — drop-in replacement for TSL's `struct()` returning
+ * a proxy factory that supports GLSL-style dot-notation field access — and
+ * `gpuOnlyStorageAttribute()`, a storage attribute with no CPU backing array.
+ */
+
+import { ContextNode, StorageInstancedBufferAttribute, WebGPUBackend } from 'three/webgpu';
+import { struct as _struct } from 'three/tsl';
+
+// ---------------------------------------------------------------------------
+// 1. WGSL global-variable promotion patch (compute-only)
+// ---------------------------------------------------------------------------
+// Three.js r184 introduced `WGSLNodeBuilder.allowGlobalVariables = true`, which
+// emits `.toVar()` declarations at WGSL module scope as `var<private> name : T`
+// instead of function-local `var name : T` inside `fn main()` (as r183 did).
+//
+// For compute shaders with hundreds of `.toVar()` calls in loops (e.g. the BVH
+// traversal + BRDF path tracer), `var<private>` increases GPU register pressure
+// because the Dawn/Chromium WGSL compiler cannot aggressively register-allocate
+// variables with a stable per-invocation memory address. We measured a ~8% fps
+// regression (120 → 110) on the path tracer after upgrading r183 → r184 that
+// traced entirely to GPU execution, not CPU.
+//
+// `allowGlobalVariables` is ONLY consumed by the compute template
+// (`_getWGSLComputeCode`). The vertex/fragment templates always emit
+// `shaderData.vars` at module scope and REQUIRE `allowGlobalVariables=true`
+// (emitting function-local `var` at module scope is invalid WGSL and crashes
+// pipeline creation with "Invalid ShaderModule"). We install a per-instance
+// accessor that returns `false` only when the builder is for a compute node
+// (material === null) and `true` otherwise, so render pipelines keep r184
+// behavior untouched.
+//
+// Relevant upstream lines:
+//  - `node_modules/three/src/renderers/webgpu/nodes/WGSLNodeBuilder.js:247`
+//    (`this.allowGlobalVariables = true`)
+//  - `...WGSLNodeBuilder.js:2458` (module-scope vars block)
+//  - `...WGSLNodeBuilder.js:2467` (function-body vars block)
+//
+// Revisit if upstream adds an official opt-out or fixes register pressure.
+
+const _origCreateNodeBuilder = WebGPUBackend.prototype.createNodeBuilder;
+
+WebGPUBackend.prototype.createNodeBuilder = function ( object, renderer ) {
+
+	const builder = _origCreateNodeBuilder.call( this, object, renderer );
+
+	Object.defineProperty( builder, 'allowGlobalVariables', {
+		get() {
+
+			return this.material !== null;
+
+		},
+		set() { /* ignore — the value is derived from material presence */ },
+		configurable: true,
+	} );
+
+	return builder;
+
+};
+
+// ---------------------------------------------------------------------------
+// 1b. GPU-only storage attributes
+// ---------------------------------------------------------------------------
+// `StorageBufferAttribute( count, ... )` always allocates a CPU TypedArray, even
+// for a buffer only compute shaders ever touch — three.js has no GPU-only path
+// (upstream request open). The wavefront ray/hit/rng state and the per-pixel
+// G-buffer are exactly that: every lane is written by a kernel before anything
+// reads it, nothing is ever read back, and WebGPU zero-initialises a new buffer,
+// so the CPU copy is pure overhead — 704 MB at a 4M path budget.
+//
+// `gpuOnlyStorageAttribute()` builds the attribute over a zero-length array and
+// records the size the GPU buffer needs; `createStorageAttribute` below allocates
+// that size unmapped, and `updateAttribute` becomes a no-op since there is
+// nothing to upload. Everything else (binding, dispose, readback plumbing) is
+// untouched — a storage binding takes the whole buffer with no size argument.
+
+export function gpuOnlyStorageAttribute( count, itemSize, typeClass = Float32Array ) {
+
+	const attr = new StorageInstancedBufferAttribute( new typeClass( 0 ), itemSize );
+	attr.count = count;
+	attr.gpuByteLength = count * itemSize * typeClass.BYTES_PER_ELEMENT;
+	attr.isGPUOnly = true;
+	return attr;
+
+}
+
+const _origCreateStorageAttribute = WebGPUBackend.prototype.createStorageAttribute;
+
+WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
+
+	const bufferAttribute = this.attributeUtils._getBufferAttribute( attribute );
+	if ( ! bufferAttribute.isGPUOnly ) return _origCreateStorageAttribute.call( this, attribute );
+
+	const data = this.get( bufferAttribute );
+	if ( data.buffer !== undefined ) return;
+
+	data.buffer = this.device.createBuffer( {
+		label: bufferAttribute.name,
+		size: bufferAttribute.gpuByteLength,
+		usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+	} );
+
+};
+
+/**
+ * Upload a storage attribute's contents from several CPU chunks.
+ *
+ * A GPU buffer may be up to `maxBufferSize` (4 GB here) while V8 caps a single ArrayBuffer at
+ * ~2 GB, so anything larger has to be staged in pieces. The attribute must be GPU-only: it owns
+ * no CPU array, and these writes are the only thing that fills it.
+ *
+ * @param {Object} renderer - WebGPURenderer
+ * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
+ * @param {Array<TypedArray>} chunks - in order; total byte length must match the attribute
+ */
+export function uploadStorageChunks( renderer, attr, chunks ) {
+
+	const backend = renderer.backend;
+	backend.createStorageAttribute( attr );
+
+	const buffer = backend.get( attr ).buffer;
+	let byteOffset = 0;
+
+	for ( const chunk of chunks ) {
+
+		backend.device.queue.writeBuffer( buffer, byteOffset, chunk, 0, chunk.length );
+		byteOffset += chunk.byteLength;
+
+	}
+
+	if ( byteOffset !== attr.gpuByteLength ) {
+
+		throw new RangeError( `uploadStorageChunks wrote ${byteOffset} bytes into a ${attr.gpuByteLength}-byte buffer` );
+
+	}
+
+}
+
+/**
+ * GPU-only storage attributes standing for one array too large for a single binding: lane l lives in part
+ * ⌊l / lanesPerPart⌋, and a part holds whole records, so no record straddles two. Read through `splitStorage`
+ * (shaders/Common.js).
+ */
+export class StorageParts {
+
+	/**
+	 * @param {number} totalLanes
+	 * @param {number} lanesPerRecord
+	 * @param {number} maxPartBytes - at most maxStorageBufferBindingSize
+	 * @param {Function} [LaneType]
+	 * @param {number} [itemSize] - lanes an element: 4 for vec4 storage, 2 for vec2
+	 */
+	constructor( totalLanes, lanesPerRecord, maxPartBytes, LaneType = Float32Array, itemSize = 4 ) {
+
+		this.LaneType = LaneType;
+		this.itemSize = itemSize;
+		this.lanesPerPart = Math.max( 1, Math.floor( maxPartBytes / ( lanesPerRecord * LaneType.BYTES_PER_ELEMENT ) ) ) * lanesPerRecord;
+		this.totalLanes = totalLanes;
+		this.attrs = [];
+		for ( let at = 0; at < totalLanes || this.attrs.length === 0; at += this.lanesPerPart ) {
+
+			const lanes = Math.max( lanesPerRecord, Math.min( this.lanesPerPart, totalLanes - at ) );
+			this.attrs.push( gpuOnlyStorageAttribute( lanes / itemSize, itemSize, LaneType ) );
+
+		}
+
+	}
+
+	/** Elements a full part holds. */
+	get elementsPerPart() {
+
+		return this.lanesPerPart / this.itemSize;
+
+	}
+
+	/** Creates every part's GPU buffer now. */
+	create( backend ) {
+
+		for ( const attr of this.attrs ) backend.createStorageAttribute( attr );
+
+	}
+
+	/** Writes `count` lanes of `src` from `srcOffset` to lane `lane`, across a part boundary if need be. */
+	write( backend, lane, src, srcOffset, count ) {
+
+		const bytes = this.LaneType.BYTES_PER_ELEMENT;
+		while ( count > 0 ) {
+
+			const p = Math.floor( lane / this.lanesPerPart );
+			const local = lane - p * this.lanesPerPart;
+			const n = Math.min( count, this.lanesPerPart - local );
+			const attr = this.attrs[ p ];
+			backend.createStorageAttribute( attr );
+			backend.device.queue.writeBuffer( backend.get( attr ).buffer, local * bytes, src, srcOffset, n );
+			lane += n;
+			srcOffset += n;
+			count -= n;
+
+		}
+
+	}
+
+	/** Writes lanes [startLane, startLane + laneCount) of chunked `records`. */
+	writeRecords( backend, records, startLane, laneCount ) {
+
+		const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
+		for ( let lane = startLane, end = startLane + laneCount; lane < end; ) {
+
+			const ci = Math.floor( lane / lanesPerChunk );
+			const chunk = records.chunks[ ci ];
+			if ( ! chunk ) throw new Error( `chunk ${ci} is on disk and was never uploaded` );
+			const local = lane - ci * lanesPerChunk;
+			const n = Math.min( chunk.length - local, end - lane );
+			this.write( backend, lane, chunk, local, n );
+			lane += n;
+
+		}
+
+	}
+
+}
+
+/**
+ * Re-upload one lane range of a chunked storage attribute, spanning chunks as needed.
+ *
+ * The partial-update path three.js offers (`addUpdateRange` + a version bump) cannot work here:
+ * a GPU-only attribute owns no CPU array and its `updateAttribute` is a no-op, so a dirty range
+ * would silently never reach the GPU.
+ *
+ * @param {Object} renderer - WebGPURenderer
+ * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
+ * @param {Object} records - the ChunkedRecords backing it
+ * @param {number} startLane - first lane to write
+ * @param {number} laneCount - how many lanes
+ */
+export function uploadStorageChunkRange( renderer, attr, records, startLane, laneCount ) {
+
+	const backend = renderer.backend;
+	backend.createStorageAttribute( attr );
+
+	const buffer = backend.get( attr ).buffer;
+	const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
+	const bytesPerLane = records.chunks[ 0 ].BYTES_PER_ELEMENT;
+	const end = startLane + laneCount;
+
+	let lane = startLane;
+	while ( lane < end ) {
+
+		const ci = Math.floor( lane / lanesPerChunk );
+		const chunk = records.chunks[ ci ];
+		const local = lane - ci * lanesPerChunk;
+		const n = Math.min( chunk.length - local, end - lane );
+		backend.device.queue.writeBuffer( buffer, lane * bytesPerLane, chunk, local, n );
+		lane += n;
+
+	}
+
+}
+
+const _origUpdateAttribute = WebGPUBackend.prototype.updateAttribute;
+
+WebGPUBackend.prototype.updateAttribute = function ( attribute ) {
+
+	if ( this.attributeUtils._getBufferAttribute( attribute ).isGPUOnly ) return;
+	return _origUpdateAttribute.call( this, attribute );
+
+};
+
+// ---------------------------------------------------------------------------
+// 2. Larger timestamp query pool (stats-gl GPU/compute timing)
+// ---------------------------------------------------------------------------
+// Three.js lazily creates each timestamp query pool with a hardcoded 2048
+// queries (= 1024 passes) — `WebGPUBackend.initTimestampQuery` / the upstream
+// `// TODO: Variable maxQueries?`. The wavefront tracer issues hundreds of
+// compute passes per frame (peak right after a maxBounces change: the survivor
+// curve is invalid, so the bounce loop runs the full `loopBound` at full
+// dispatch with no early-exit — ~560 passes / 1124 queries at production
+// settings). stats-gl resolves once per frame, but the resolve is async and
+// `mapAsync` lags several frames under that GPU load, so the counter isn't reset
+// before it overflows → "Maximum number of queries exceeded" + dropped timings.
+//
+// Two parts:
+//   a) Grow the pool to 4096 queries on first use. 4096 is the WebGPU hard cap on
+//      a query set's count ("Query count exceeds the maximum query count (4096)")
+//      — 2× the upstream default, the most a single pool can hold (~2048 passes).
+//      That alone fully covers the interactive case (~200 passes/frame); anything
+//      larger fails CreateQuerySet validation.
+//   b) When even 4096 isn't enough (production spike), degrade gracefully: skip
+//      tracking the overflow passes silently instead of `warnOnce` + an invalid
+//      descriptor. The reported compute ms briefly undercounts during the spike;
+//      rendering is never affected (timestamps don't gate compute correctness).
+const TIMESTAMP_POOL_MAX_QUERIES = 4096;
+
+// Drop-in for the pool's allocateQueriesForContext minus the warnOnce on overflow
+// — returns null silently when full so the pass is cleanly skipped (see below).
+function _allocateQueriesSilently( uid ) {
+
+	if ( ! this.trackTimestamp || this.isDisposed ) return null;
+	if ( this.currentQueryIndex + 2 > this.maxQueries ) return null; // full: skip, no warn
+	const baseOffset = this.currentQueryIndex;
+	this.currentQueryIndex += 2;
+	this.queryOffsets.set( uid, baseOffset );
+	return baseOffset;
+
+}
+
+const _origInitTimestampQuery = WebGPUBackend.prototype.initTimestampQuery;
+
+WebGPUBackend.prototype.initTimestampQuery = function ( type, uid, descriptor ) {
+
+	const poolWasMissing = this.trackTimestamp && ! this.timestampQueryPool[ type ];
+
+	_origInitTimestampQuery.call( this, type, uid, descriptor );
+
+	// (a) First use: replace the fresh 2048 pool with a 4096 one of the same class,
+	// migrating the single allocation just made (offset 0) and re-pointing this
+	// pass's descriptor. Safe — first pass of the first tracked frame, nothing in
+	// flight. Swap in the silent allocator so future overflows don't warn.
+	if ( poolWasMissing ) {
+
+		const pool = this.timestampQueryPool[ type ];
+		if ( pool && pool.maxQueries < TIMESTAMP_POOL_MAX_QUERIES && descriptor.timestampWrites ) {
+
+			const Pool = pool.constructor;
+			const bigPool = new Pool( this.device, type, TIMESTAMP_POOL_MAX_QUERIES );
+			bigPool.allocateQueriesForContext = _allocateQueriesSilently;
+			bigPool.allocateQueriesForContext( uid ); // re-take offset 0 for this pass
+			this.timestampQueryPool[ type ] = bigPool;
+			descriptor.timestampWrites.querySet = bigPool.querySet; // offsets 0/1 unchanged
+			pool.dispose(); // nothing in flight — first pass of the first tracked frame
+
+		}
+
+	}
+
+	// (b) On overflow the (silent) allocator returns null, but upstream still wrote
+	// a descriptor with a null begin index — which both collides on slot 1 and is
+	// invalid. Drop it so the pass is cleanly untimed.
+	const tw = descriptor.timestampWrites;
+	if ( tw && tw.beginningOfPassWriteIndex == null ) descriptor.timestampWrites = undefined;
+
+};
+
+// ---------------------------------------------------------------------------
+// 3. TSL struct proxy — enables GLSL-style dot-notation field access
+// ---------------------------------------------------------------------------
+// TSL structs require `.get('fieldName')` for member access, but GLSL-style
+// dot notation (`.fieldName`) is more natural and matches ported code.
+//
+// This wraps TSL's `struct()` so that:
+//  - Direct construction: `MyStruct({...}).toVar('x')` → `.fieldName` works
+//  - Fn return values:    `MyStruct.wrap(someFn(...))` → `.fieldName` works
+//
+// Property access for known struct member names is redirected to `.get('name')`.
+// Swizzle properties (x, y, z, w, etc.), Node methods (.add, .assign, etc.), and
+// other standard properties pass through to the underlying node unmodified.
+
+function createStructProxy( node, memberSet ) {
+
+	return new Proxy( node, {
+
+		get( target, prop, receiver ) {
+
+			// Intercept known struct member names
+			if ( typeof prop === 'string' && memberSet.has( prop ) ) {
+
+				return target.get( prop );
+
+			}
+
+			const val = Reflect.get( target, prop, receiver );
+
+			// Intercept .toVar() to proxy-wrap the result
+			if ( prop === 'toVar' && typeof val === 'function' ) {
+
+				return ( ...args ) => createStructProxy( val.apply( target, args ), memberSet );
+
+			}
+
+			return val;
+
+		}
+
+	} );
+
+}
+
+/**
+ * Drop-in replacement for TSL's `struct()` that returns a proxy-enhanced factory.
+ *
+ * The returned factory:
+ *  - Creates struct nodes where `.toVar()` results support dot-notation field access
+ *  - Has `.wrap(node)` method to proxy-wrap Fn return values for field access
+ *  - Has `.layout` and `.isStruct` matching the original TSL struct API
+ *
+ * @param {Object} members - Struct member layout (e.g., { didHit: 'bool', dst: 'float' })
+ * @param {string|null} name - Optional struct name
+ * @returns {Function} Enhanced struct factory
+ */
+export function struct( members, name = null ) {
+
+	const factory = _struct( members, name );
+	const memberSet = new Set( Object.keys( members ) );
+
+	const wrappedFactory = ( ...args ) => {
+
+		const node = factory( ...args );
+		return createStructProxy( node, memberSet );
+
+	};
+
+	wrappedFactory.layout = factory.layout;
+	wrappedFactory.isStruct = true;
+
+	/**
+	 * Wrap an existing node (e.g., Fn return value) with struct field access proxy.
+	 * Usage: `const hit = HitInfo.wrap(traverseBVH(...).toVar('hit'));`
+	 */
+	wrappedFactory.wrap = ( node ) => createStructProxy( node, memberSet );
+
+	return wrappedFactory;
+
+}
+
+// ---------------------------------------------------------------------------
+// 4. r186 ContextNode.setup regression — DELETE WHEN THE three DEP REACHES r187
+// ---------------------------------------------------------------------------
+// r186 (#34251) made `ContextNode.setup()` return the node it had just built.
+// Returning it stores the child's output node in the context node's own
+// properties, so `Node.build()` then re-builds it generically OUTSIDE the
+// context. `Loop()` wraps its body in a context (`fnCall.context({ nodeLoop })`),
+// so every loop-heavy kernel is evaluated against the wrong one — measured on our
+// corpus as 63x energy on furnace-clearcoat, 5.8x on furnace-sheen and NaN in the
+// SSS random walk, all while the WGSL compiled without a single error.
+//
+// Upstream reverted it in #34531 (merged 2026-09-11, on dev, ships in r187); this
+// body is that revert verbatim, and is also what r185 shipped, so it stays correct
+// if the dep is rolled back. Verified: with it, all 27 quality scenes pass and the
+// numbers are identical to r185. Drop this section and the `ContextNode` import
+// once the dep is r187+.
+
+ContextNode.prototype.setup = function ( builder ) {
+
+	const previousContext = builder.addContext( this.value );
+
+	this.node.build( builder );
+
+	builder.setContext( previousContext );
+
+};

@@ -1,0 +1,780 @@
+/**
+ * EmissiveTriangleBuilder
+ *
+ * Builds an index of emissive triangles for efficient direct lighting sampling.
+ * Instead of randomly searching through all triangles, we maintain a list of
+ * only the emissive ones, giving 100% sampling success rate.
+ */
+
+import { DataTexture, RGBAFormat, FloatType, NearestFilter } from 'three';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK } from '../scene/BufferLayout.js';
+import { LightBVHBuilder } from './LightBVHBuilder.js';
+import { createLogger, fmt } from '../Logger.js';
+import { convertLinearTriple, getWorkingMatrix } from '../color/WorkingMatrix.js';
+
+const NO_EMISSION = Object.freeze( { r: 0, g: 0, b: 0 } );
+
+/**
+ * A material's emission in the working space.
+ *
+ * The emitter seen directly reads the material buffer, which is already converted, and so does the
+ * shader's pick probability. This buffer is the other copy of the same colour — the one next-event
+ * estimation lights the scene with — so it has to move with them, or a working space adopted from a
+ * config lights everything in the wrong primaries and weights the pick by a colour nothing renders.
+ */
+function workingEmissive( emissive ) {
+
+	if ( ! emissive ) return NO_EMISSION;
+	if ( ! getWorkingMatrix() ) return emissive;
+
+	const rgb = [ emissive.r, emissive.g, emissive.b ];
+	convertLinearTriple( rgb );
+	return { r: rgb[ 0 ], g: rgb[ 1 ], b: rgb[ 2 ] };
+
+}
+
+const log = createLogger( 'emissive' );
+
+export class EmissiveTriangleBuilder {
+
+	constructor() {
+
+		this.emissiveTriangles = [];
+		this.emissiveCount = 0;
+		this.totalEmissivePower = 0;
+		this.emissiveIndicesArray = null;
+		this.emissivePowerArray = null;
+		this.cdfArray = null;
+		this.lightBVHNodeData = null;
+		this.lightBVHNodeCount = 0;
+		// Per-triangle bit-trail (root→leaf path through the Light BVH), indexed by absolute
+		// triangleIndex, -1 for non-emissive. Lets the GPU re-walk the descent pdf for MIS.
+		this.emissiveBitTrailMap = null;
+		this._totalTriangleCount = 0;
+		// Mesh indices whose emissive triangles are excluded from the sampled set
+		// (per-mesh visibility). Canonical `emissiveTriangles` is never filtered —
+		// the GPU-facing arrays are rebuilt from the visible subset in buildLightBVH().
+		this._hiddenMeshes = new Set();
+
+	}
+
+	/**
+	 * Extract emissive triangles from processed geometry
+	 * @param {Uint32Array} triangleData - Packed triangle records
+	 * @param {Array} materials - Array of material objects
+	 * @param {number} triangleCount - Total number of triangles
+	 * @param {import('../scene/InstanceTable.js').InstanceTable} [table] - per placement; triangles are
+	 *        stored in object space, so power, bounds and the emission cone all have to be
+	 *        measured after the instance transform. One record per triangle, so a template
+	 *        placed more than once is lit by its first placement — the extractor expands an
+	 *        emissive instanced mesh into per-instance triangles to avoid exactly that.
+	 */
+	extractEmissiveTriangles( triangleData, materials, triangleCount, table = null ) {
+
+		this.emissiveTriangles = [];
+		this._emissiveMeshes = null;
+		this.totalEmissivePower = 0;
+		this._totalTriangleCount = triangleCount;
+
+		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		const MATERIAL_FLAGS_OFFSET = TRIANGLE_DATA_LAYOUT.MATERIAL_FLAGS_OFFSET;
+		const MESH_INDEX_OFFSET = TRIANGLE_DATA_LAYOUT.MESH_INDEX_OFFSET;
+		// Flat array or ChunkedRecords; the chunk is resolved once per triangle.
+		const chunked = triangleData && triangleData.chunks ? triangleData : null;
+		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
+		const flatU = chunked ? null : triangleData;
+		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
+
+		// Once per material, not once per triangle: this loop runs over every triangle in the scene.
+		const emissiveOf = new Map();
+
+		for ( let i = 0; i < triangleCount; i ++ ) {
+
+			// A chunk a build spilled holds no emitters: that is why it could be spilled.
+			if ( chunked?.spilledChunks && ! chunked.isResident( i, 1 ) ) {
+
+				i = ( ( ( i / chunked.recordsPerChunk ) | 0 ) + 1 ) * chunked.recordsPerChunk - 1;
+				continue;
+
+			}
+
+			const triU = chunked ? chunked.chunkFor( i ) : flatU;
+			const triFloats = chunked ? chunkedF.chunkFor( i ) : flatF;
+			const baseOffset = chunked ? chunked.baseOf( i ) : i * FLOATS_PER_TRIANGLE;
+			const materialIndex = triU[ baseOffset + MATERIAL_FLAGS_OFFSET ] & TRI_MATERIAL_MASK;
+			const meshIndex = triU[ baseOffset + MESH_INDEX_OFFSET ];
+
+			// Get material
+			const material = materials[ materialIndex ];
+			if ( ! material ) continue;
+
+			// Check if emissive
+			let emissive = emissiveOf.get( material );
+			if ( emissive === undefined ) {
+
+				emissive = workingEmissive( material.emissive );
+				emissiveOf.set( material, emissive );
+
+			}
+
+			const emissiveIntensity = material.emissiveIntensity || 0;
+
+			const isEmissive = emissiveIntensity > 0 && (
+				emissive.r > 0 || emissive.g > 0 || emissive.b > 0
+			);
+
+			if ( isEmissive ) {
+
+				// Calculate triangle area for power weighting
+				// Positions are at offsets 0-11, in the instance's own space
+				// `meshIndex` names the template the triangle belongs to, never a row of the
+				// per-placement table: indexing the table with it put one object's matrix on
+				// another object's light as soon as any instanced mesh came earlier.
+				const placement = table?.placementRunOf?.( meshIndex )?.start ?? - 1;
+				const hasInstance = placement >= 0 && table.isSet[ placement ];
+				const mo = hasInstance ? table.matrixRow( placement ) : 0;
+				const m = hasInstance ? table.rowArray : null;
+				const px = ( x, y, z ) => ( m ? m[ mo ] * x + m[ mo + 4 ] * y + m[ mo + 8 ] * z + m[ mo + 12 ] : x );
+				const py = ( x, y, z ) => ( m ? m[ mo + 1 ] * x + m[ mo + 5 ] * y + m[ mo + 9 ] * z + m[ mo + 13 ] : y );
+				const pz = ( x, y, z ) => ( m ? m[ mo + 2 ] * x + m[ mo + 6 ] * y + m[ mo + 10 ] * z + m[ mo + 14 ] : z );
+
+				const o0x = triFloats[ baseOffset + 0 ], o0y = triFloats[ baseOffset + 1 ], o0z = triFloats[ baseOffset + 2 ];
+				const o1x = triFloats[ baseOffset + 4 ], o1y = triFloats[ baseOffset + 5 ], o1z = triFloats[ baseOffset + 6 ];
+				const o2x = triFloats[ baseOffset + 8 ], o2y = triFloats[ baseOffset + 9 ], o2z = triFloats[ baseOffset + 10 ];
+
+				const v0x = px( o0x, o0y, o0z ), v0y = py( o0x, o0y, o0z ), v0z = pz( o0x, o0y, o0z );
+				const v1x = px( o1x, o1y, o1z ), v1y = py( o1x, o1y, o1z ), v1z = pz( o1x, o1y, o1z );
+				const v2x = px( o2x, o2y, o2z ), v2y = py( o2x, o2y, o2z ), v2z = pz( o2x, o2y, o2z );
+
+				const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
+
+				// Calculate emissive power (Rec.709 luminance * intensity * area) — must match the
+				// shader's calculateEmissiveLightPdf luma weighting for MIS consistency.
+				const luma = 0.2126 * emissive.r + 0.7152 * emissive.g + 0.0722 * emissive.b;
+				const power = luma * emissiveIntensity * area;
+
+				// Geometric normal (emission cone axis). BackSide flips it; DoubleSide → two-sided.
+				let nx = ( v1y - v0y ) * ( v2z - v0z ) - ( v1z - v0z ) * ( v2y - v0y );
+				let ny = ( v1z - v0z ) * ( v2x - v0x ) - ( v1x - v0x ) * ( v2z - v0z );
+				let nz = ( v1x - v0x ) * ( v2y - v0y ) - ( v1y - v0y ) * ( v2x - v0x );
+				const nl = Math.sqrt( nx * nx + ny * ny + nz * nz ) || 1;
+				const sideSign = material.side === 1 ? - 1 : 1; // THREE.BackSide flips emission normal
+				nx = nx / nl * sideSign;
+				ny = ny / nl * sideSign;
+				nz = nz / nl * sideSign;
+				const twoSided = material.side === 2; // THREE.DoubleSide
+
+				// Centroid for BVH split decisions
+				const cx = ( v0x + v1x + v2x ) / 3;
+				const cy = ( v0y + v1y + v2y ) / 3;
+				const cz = ( v0z + v1z + v2z ) / 3;
+
+				// AABB for BVH node bounds
+				const bMinX = Math.min( v0x, v1x, v2x );
+				const bMinY = Math.min( v0y, v1y, v2y );
+				const bMinZ = Math.min( v0z, v1z, v2z );
+				const bMaxX = Math.max( v0x, v1x, v2x );
+				const bMaxY = Math.max( v0y, v1y, v2y );
+				const bMaxZ = Math.max( v0z, v1z, v2z );
+
+				this.emissiveTriangles.push( {
+					triangleIndex: i,
+					materialIndex: materialIndex,
+					meshIndex: meshIndex,
+					sideSign,
+					instanceLeaf: hasInstance ? table.tlasLeafIndex[ placement ] : - 1,
+					power: power,
+					area: area,
+					emissive: { r: emissive.r, g: emissive.g, b: emissive.b },
+					emissiveIntensity: emissiveIntensity,
+					cx, cy, cz,
+					bMinX, bMinY, bMinZ, bMaxX, bMaxY, bMaxZ,
+					nx, ny, nz, twoSided,
+				} );
+
+				this.totalEmissivePower += power;
+
+			}
+
+		}
+
+		this.emissiveCount = this.emissiveTriangles.length;
+
+		if ( this.emissiveCount > 0 ) {
+
+			log.debug( `${fmt.n( this.emissiveCount )} emissive tris (${( this.emissiveCount / triangleCount * 100 ).toFixed( 2 )}%) · total power ${this.totalEmissivePower.toFixed( 2 )}` );
+
+		}
+
+		// Build data arrays
+		this._buildDataArrays();
+
+		return this.emissiveCount;
+
+	}
+
+	/** Mesh indices owning at least one emissive triangle. */
+	get emissiveMeshes() {
+
+		return this._emissiveMeshes ??= new Set( this.emissiveTriangles.map( t => t.meshIndex ) );
+
+	}
+
+	/**
+	 * Re-measure every emitter at its placement's current matrix. Call buildLightBVH() after.
+	 * @param {Uint32Array|object} triangleData - packed triangle records, flat or chunked
+	 * @param {import('../scene/InstanceTable.js').InstanceTable} table
+	 */
+	refreshTransforms( triangleData, table ) {
+
+		const chunked = triangleData && triangleData.chunks ? triangleData : null;
+		const chunkedF = chunked ? chunked.viewAs( Float32Array ) : null;
+		const flatF = chunked ? null : new Float32Array( triangleData.buffer, triangleData.byteOffset, triangleData.length );
+		const FLOATS_PER_TRIANGLE = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
+		this.totalEmissivePower = 0;
+
+		for ( const tri of this.emissiveTriangles ) {
+
+			const f = chunked ? chunkedF.chunkFor( tri.triangleIndex ) : flatF;
+			const b = chunked ? chunked.baseOf( tri.triangleIndex ) : tri.triangleIndex * FLOATS_PER_TRIANGLE;
+			const v = [ f[ b ], f[ b + 1 ], f[ b + 2 ], f[ b + 4 ], f[ b + 5 ], f[ b + 6 ], f[ b + 8 ], f[ b + 9 ], f[ b + 10 ] ];
+
+			// As extraction resolves it.
+			const placement = table.placementRunOf?.( tri.meshIndex )?.start ?? - 1;
+			if ( placement >= 0 && table.isSet[ placement ] ) {
+
+				const o = table.matrixRow( placement ), m = table.rowArray;
+				for ( let k = 0; k < 9; k += 3 ) {
+
+					const x = v[ k ], y = v[ k + 1 ], z = v[ k + 2 ];
+					v[ k ] = m[ o ] * x + m[ o + 4 ] * y + m[ o + 8 ] * z + m[ o + 12 ];
+					v[ k + 1 ] = m[ o + 1 ] * x + m[ o + 5 ] * y + m[ o + 9 ] * z + m[ o + 13 ];
+					v[ k + 2 ] = m[ o + 2 ] * x + m[ o + 6 ] * y + m[ o + 10 ] * z + m[ o + 14 ];
+
+				}
+
+			}
+
+			const [ v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z ] = v;
+			const area = this._calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z );
+			const e = tri.emissive;
+			tri.power = ( 0.2126 * e.r + 0.7152 * e.g + 0.0722 * e.b ) * tri.emissiveIntensity * area;
+			tri.area = area;
+
+			const nx = ( v1y - v0y ) * ( v2z - v0z ) - ( v1z - v0z ) * ( v2y - v0y );
+			const ny = ( v1z - v0z ) * ( v2x - v0x ) - ( v1x - v0x ) * ( v2z - v0z );
+			const nz = ( v1x - v0x ) * ( v2y - v0y ) - ( v1y - v0y ) * ( v2x - v0x );
+			const nl = ( Math.sqrt( nx * nx + ny * ny + nz * nz ) || 1 ) / tri.sideSign;
+			tri.nx = nx / nl; tri.ny = ny / nl; tri.nz = nz / nl;
+
+			tri.cx = ( v0x + v1x + v2x ) / 3; tri.cy = ( v0y + v1y + v2y ) / 3; tri.cz = ( v0z + v1z + v2z ) / 3;
+			tri.bMinX = Math.min( v0x, v1x, v2x ); tri.bMinY = Math.min( v0y, v1y, v2y ); tri.bMinZ = Math.min( v0z, v1z, v2z );
+			tri.bMaxX = Math.max( v0x, v1x, v2x ); tri.bMaxY = Math.max( v0y, v1y, v2y ); tri.bMaxZ = Math.max( v0z, v1z, v2z );
+
+			this.totalEmissivePower += tri.power;
+
+		}
+
+		this._buildDataArrays();
+
+	}
+
+	/**
+	 * Calculate triangle area using cross product
+	 */
+	_calculateTriangleArea( v0x, v0y, v0z, v1x, v1y, v1z, v2x, v2y, v2z ) {
+
+		// Edge vectors
+		const e1x = v1x - v0x;
+		const e1y = v1y - v0y;
+		const e1z = v1z - v0z;
+		const e2x = v2x - v0x;
+		const e2y = v2y - v0y;
+		const e2z = v2z - v0z;
+
+		// Cross product
+		const cx = e1y * e2z - e1z * e2y;
+		const cy = e1z * e2x - e1x * e2z;
+		const cz = e1x * e2y - e1y * e2x;
+
+		// Half the length of cross product
+		return Math.sqrt( cx * cx + cy * cy + cz * cz ) * 0.5;
+
+	}
+
+	/**
+	 * Build typed arrays for GPU upload
+	 */
+	_buildDataArrays() {
+
+		// Array of emissive triangle indices
+		this.emissiveIndicesArray = new Int32Array( this.emissiveCount );
+
+		// Array of emissive power for each triangle (for importance sampling)
+		this.emissivePowerArray = new Float32Array( this.emissiveCount );
+
+		for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+			this.emissiveIndicesArray[ i ] = this.emissiveTriangles[ i ].triangleIndex;
+			this.emissivePowerArray[ i ] = this.emissiveTriangles[ i ].power;
+
+		}
+
+		// Build CDF for importance sampling (optional but recommended)
+		this._buildCDF();
+
+	}
+
+	/**
+	 * Build Cumulative Distribution Function for importance sampling
+	 * This allows sampling brighter emissive triangles more frequently
+	 */
+	_buildCDF() {
+
+		if ( this.emissiveCount === 0 ) {
+
+			this.cdfArray = new Float32Array( 1 );
+			this.cdfArray[ 0 ] = 0;
+			return;
+
+		}
+
+		this.cdfArray = new Float32Array( this.emissiveCount );
+
+		let cumulativeSum = 0;
+		for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+			cumulativeSum += this.emissivePowerArray[ i ];
+			this.cdfArray[ i ] = cumulativeSum;
+
+		}
+
+		// Normalize CDF to [0, 1]
+		if ( cumulativeSum > 0 ) {
+
+			for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+				this.cdfArray[ i ] /= cumulativeSum;
+
+			}
+
+		}
+
+	}
+
+	/**
+	 * Binary search in CDF for importance sampling
+	 * @param {number} u - Random value in [0, 1]
+	 * @returns {number} - Index of selected emissive triangle
+	 */
+	sampleCDF( u ) {
+
+		if ( this.emissiveCount === 0 ) return - 1;
+		if ( this.emissiveCount === 1 ) return 0;
+
+		// Binary search
+		let left = 0;
+		let right = this.emissiveCount - 1;
+
+		while ( left < right ) {
+
+			const mid = Math.floor( ( left + right ) / 2 );
+			if ( this.cdfArray[ mid ] < u ) {
+
+				left = mid + 1;
+
+			} else {
+
+				right = mid;
+
+			}
+
+		}
+
+		return left;
+
+	}
+
+	/**
+	 * Get data for GPU upload
+	 */
+	getGPUData() {
+
+		return {
+			emissiveIndices: this.emissiveIndicesArray,
+			emissivePower: this.emissivePowerArray,
+			emissiveCDF: this.cdfArray,
+			emissiveCount: this.emissiveCount,
+			totalPower: this.totalEmissivePower
+		};
+
+	}
+
+	/**
+	 * Create a DataTexture for GPU upload of emissive indices
+	 * We'll pack the indices into a texture for efficient access
+	 */
+	createEmissiveTexture() {
+
+		if ( this.emissiveCount === 0 ) {
+
+			// Create a 1x1 dummy texture
+			const dummyData = new Float32Array( 4 );
+
+			return new DataTexture(
+				dummyData,
+				1,
+				1,
+				RGBAFormat,
+				FloatType
+			);
+
+		}
+
+		// Pack data into RGBA texture: R=triangleIndex, G=power, B=cdf, A=unused
+		// Each pixel stores data for one emissive triangle
+		const data = new Float32Array( this.emissiveCount * 4 );
+
+		for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+			const offset = i * 4;
+			data[ offset + 0 ] = this.emissiveIndicesArray[ i ]; // R: triangle index
+			data[ offset + 1 ] = this.emissivePowerArray[ i ]; // G: power
+			data[ offset + 2 ] = this.cdfArray[ i ]; // B: CDF value
+			data[ offset + 3 ] = 0; // A: unused
+
+		}
+
+		// Calculate texture dimensions (prefer square-ish textures)
+		const width = Math.ceil( Math.sqrt( this.emissiveCount ) );
+		const height = Math.ceil( this.emissiveCount / width );
+
+		// Pad data if needed
+		const requiredSize = width * height * 4;
+		const paddedData = new Float32Array( requiredSize );
+		paddedData.set( data );
+
+		const texture = new DataTexture(
+			paddedData,
+			width,
+			height,
+			RGBAFormat,
+			FloatType
+		);
+
+		texture.needsUpdate = true;
+		texture.generateMipmaps = false;
+		texture.minFilter = NearestFilter;
+		texture.magFilter = NearestFilter;
+
+		log.debug( `emissive texture ${fmt.px( width, height )} · ${fmt.n( this.emissiveCount )} entries` );
+
+		return texture;
+
+	}
+
+	/**
+	 * Create raw Float32Array for storage buffer (no 2D DataTexture padding).
+	 * Each emissive entry is 2 vec4s (8 floats):
+	 *   vec4[0]: triangleIndex, power, cdf, selectionPdf
+	 *   vec4[1]: emission.r, emission.g, emission.b, area
+	 * @returns {Float32Array} Tightly-packed emissive data
+	 */
+	createEmissiveRawData() {
+
+		if ( this.emissiveCount === 0 ) {
+
+			return new Float32Array( 8 ); // 2 dummy vec4s
+
+		}
+
+		const data = new Float32Array( this.emissiveCount * 8 );
+
+		for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+			const tri = this.emissiveTriangles[ i ];
+			const offset = i * 8;
+
+			// vec4[0]: triangleIndex, power, cdf, selectionPdf
+			data[ offset + 0 ] = tri.triangleIndex;
+			data[ offset + 1 ] = tri.power;
+			data[ offset + 2 ] = this.cdfArray[ i ];
+			// Slot 3 used to repeat power/total, which the shader recomputes anyway. It now
+			// names the TLAS leaf that owns this emitter, so sampling can put the triangle
+			// back into world space.
+			data[ offset + 3 ] = tri.instanceLeaf;
+
+			// vec4[1]: pre-multiplied emission (emissive * intensity), area
+			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;
+			data[ offset + 5 ] = tri.emissive.g * tri.emissiveIntensity;
+			data[ offset + 6 ] = tri.emissive.b * tri.emissiveIntensity;
+			data[ offset + 7 ] = tri.area;
+
+		}
+
+		log.debug( `emissive raw data ${fmt.n( this.emissiveCount )} entries (${fmt.mb( data.byteLength )})` );
+
+		return data;
+
+	}
+
+	/**
+	 * Get statistics for debugging
+	 */
+	getStats() {
+
+		if ( this.emissiveCount === 0 ) {
+
+			return {
+				count: 0,
+				totalPower: 0,
+				averagePower: 0,
+				minPower: 0,
+				maxPower: 0
+			};
+
+		}
+
+		let minPower = Infinity;
+		let maxPower = - Infinity;
+
+		for ( let i = 0; i < this.emissiveCount; i ++ ) {
+
+			const power = this.emissivePowerArray[ i ];
+			minPower = Math.min( minPower, power );
+			maxPower = Math.max( maxPower, power );
+
+		}
+
+		return {
+			count: this.emissiveCount,
+			totalPower: this.totalEmissivePower,
+			averagePower: this.totalEmissivePower / this.emissiveCount,
+			minPower: minPower,
+			maxPower: maxPower
+		};
+
+	}
+
+	/**
+	 * Fast update when a material's emissive properties change.
+	 * Avoids full triangle scan when possible — only rescans if the set of
+	 * emissive triangles may have changed (material became or stopped being emissive).
+	 * @param {number} materialIndex - Index of the changed material
+	 * @param {object} material - The updated material object
+	 * @param {Array} triangleData - Full triangle data (only needed for full rescan)
+	 * @param {Array} materials - Materials array (only needed for full rescan)
+	 * @param {number} triangleCount - Total triangles (only needed for full rescan)
+	 * @returns {boolean} true if data changed and needs GPU re-upload
+	 */
+	updateMaterialEmissive( materialIndex, material, triangleData, materials, triangleCount ) {
+
+		const emissive = workingEmissive( material.emissive );
+		const emissiveIntensity = material.emissiveIntensity || 0;
+		const isNowEmissive = emissiveIntensity > 0 && ( emissive.r > 0 || emissive.g > 0 || emissive.b > 0 );
+
+		// Check if this material had any emissive triangles before
+		const hadEmissive = this.emissiveTriangles.some( t => t.materialIndex === materialIndex );
+
+		// If the emissive set changed (gained or lost emissive status), full rescan needed
+		if ( isNowEmissive !== hadEmissive ) {
+
+			this.extractEmissiveTriangles( triangleData, materials, triangleCount );
+			return true;
+
+		}
+
+		// If not emissive before and not now, nothing to do
+		if ( ! isNowEmissive ) return false;
+
+		// Fast path: update the canonical entries only. Derived arrays, CDF and
+		// totals are rebuilt by the buildLightBVH() call that always follows.
+		// Rec.709 luma — must match the build path + shader MIS weighting.
+		const luma = 0.2126 * emissive.r + 0.7152 * emissive.g + 0.0722 * emissive.b;
+
+		for ( const tri of this.emissiveTriangles ) {
+
+			if ( tri.materialIndex === materialIndex ) {
+
+				tri.power = luma * emissiveIntensity * tri.area;
+				tri.emissive = { r: emissive.r, g: emissive.g, b: emissive.b };
+				tri.emissiveIntensity = emissiveIntensity;
+
+			}
+
+		}
+
+		return true;
+
+	}
+
+	/**
+	 * Set the meshes whose emissive triangles must be excluded from sampling
+	 * (per-mesh visibility). Indices that don't own emissive triangles are
+	 * ignored so non-emissive visibility toggles are no-ops.
+	 * @param {Set<number>|Iterable<number>} hiddenMeshIndices
+	 * @returns {boolean} true if the effective hidden set changed (caller should rebuild)
+	 */
+	setHiddenMeshes( hiddenMeshIndices ) {
+
+		const emissiveMeshes = new Set();
+		for ( const tri of this.emissiveTriangles ) emissiveMeshes.add( tri.meshIndex );
+
+		const next = new Set();
+		for ( const m of hiddenMeshIndices ) if ( emissiveMeshes.has( m ) ) next.add( m );
+
+		const prev = this._hiddenMeshes;
+		let changed = next.size !== prev.size;
+		if ( ! changed ) {
+
+			for ( const m of next ) {
+
+				if ( ! prev.has( m ) ) {
+
+					changed = true;
+					break;
+
+				}
+
+			}
+
+		}
+
+		this._hiddenMeshes = next;
+		return changed;
+
+	}
+
+	/**
+	 * Build a Light BVH over the VISIBLE emissive triangles (canonical set minus
+	 * hidden meshes). Authoritative for the GPU-facing emissiveCount /
+	 * totalEmissivePower / sorted raw data / bit-trail map.
+	 * @returns {number} nodeCount
+	 */
+	buildLightBVH() {
+
+		const active = this._hiddenMeshes.size === 0
+			? this.emissiveTriangles
+			: this.emissiveTriangles.filter( t => ! this._hiddenMeshes.has( t.meshIndex ) );
+
+		this.emissiveCount = active.length;
+		this.totalEmissivePower = 0;
+		for ( const tri of active ) this.totalEmissivePower += tri.power;
+
+		if ( active.length === 0 ) {
+
+			// Dummy single leaf node (whole-sphere cone)
+			this.lightBVHNodeData = new Float32Array( 16 );
+			this.lightBVHNodeData[ 7 ] = 1.0; // isLeaf
+			this.lightBVHNodeData[ 14 ] = 1.0; // cone axis z
+			this.lightBVHNodeData[ 15 ] = - 1.0; // cosThetaO = whole sphere
+			this.lightBVHNodeCount = 1;
+			// Shade reads the map only while emissiveTriangleCount > 0: one over every triangle was 446 MB on the Moana
+			// island, in the tab, on the GPU and in Chrome's upload pool.
+			this.emissiveBitTrailMap = new Float32Array( 4 ).fill( - 1 );
+			this.emissiveIndicesArray = new Int32Array( 0 );
+			this.emissivePowerArray = new Float32Array( 0 );
+			this._buildCDF();
+			this.emissiveTriangleData = new Float32Array( 8 ); // 2 dummy vec4s
+			return 1;
+
+		}
+
+		const builder = new LightBVHBuilder();
+		const { nodeData, nodeCount, sortedPerm, bitTrails } = builder.build( active );
+		this.lightBVHNodeData = nodeData;
+		this.lightBVHNodeCount = nodeCount;
+
+		// Rebuild emissive raw data in sorted leaf order so node start/count refs are valid
+		this._rebuildSortedEmissiveData( sortedPerm, active );
+
+		// Build the per-triangle bit-trail map (indexed by absolute triangleIndex; -1 = non-emissive/hidden)
+		this.emissiveBitTrailMap = new Float32Array( Math.max( this._totalTriangleCount, 1 ) ).fill( - 1 );
+		for ( let i = 0; i < sortedPerm.length; i ++ ) {
+
+			const triIndex = active[ sortedPerm[ i ] ].triangleIndex;
+			this.emissiveBitTrailMap[ triIndex ] = bitTrails[ i ];
+
+		}
+
+		return nodeCount;
+
+	}
+
+	/**
+	 * Rebuild emissive arrays and raw GPU data in the sorted leaf order given by sortedPerm.
+	 * @param {Int32Array} sortedPerm - sortedPerm[i] = index into `tris` for position i
+	 * @param {Array} tris - The (visible) triangle set the Light BVH was built over
+	 * @private
+	 */
+	_rebuildSortedEmissiveData( sortedPerm, tris ) {
+
+		const n = sortedPerm.length;
+
+		// Rebuild typed arrays in sorted order
+		this.emissiveIndicesArray = new Int32Array( n );
+		this.emissivePowerArray = new Float32Array( n );
+
+		for ( let i = 0; i < n; i ++ ) {
+
+			const origIdx = sortedPerm[ i ];
+			this.emissiveIndicesArray[ i ] = tris[ origIdx ].triangleIndex;
+			this.emissivePowerArray[ i ] = tris[ origIdx ].power;
+
+		}
+
+		// Rebuild CDF for the sorted order (so fallback path still works)
+		this._buildCDF();
+
+		// Rebuild raw emissive GPU data (2 vec4s per entry) in sorted order
+		const data = new Float32Array( n * 8 );
+
+		for ( let i = 0; i < n; i ++ ) {
+
+			const origIdx = sortedPerm[ i ];
+			const tri = tris[ origIdx ];
+			const offset = i * 8;
+
+			// vec4[0]: triangleIndex, power, cdf, instance. This is the authoritative writer —
+			// buildLightBVH re-sorts the entries and replaces emissiveTriangleData, so the
+			// instance has to be carried here too, not only in createEmissiveRawData.
+			data[ offset + 0 ] = tri.triangleIndex;
+			data[ offset + 1 ] = tri.power;
+			data[ offset + 2 ] = this.cdfArray[ i ];
+			data[ offset + 3 ] = tri.instanceLeaf;
+
+			// vec4[1]: pre-multiplied emission (emissive * intensity), area
+			data[ offset + 4 ] = tri.emissive.r * tri.emissiveIntensity;
+			data[ offset + 5 ] = tri.emissive.g * tri.emissiveIntensity;
+			data[ offset + 6 ] = tri.emissive.b * tri.emissiveIntensity;
+			data[ offset + 7 ] = tri.area;
+
+		}
+
+		this.emissiveTriangleData = data;
+		log.debug( `rebuilt sorted emissive data · ${fmt.n( n )} entries` );
+
+	}
+
+	/**
+	 * Clear all data
+	 */
+	clear() {
+
+		this.emissiveTriangles = [];
+		this.emissiveCount = 0;
+		this.totalEmissivePower = 0;
+		this.emissiveIndicesArray = null;
+		this.emissivePowerArray = null;
+		this.cdfArray = null;
+		this.lightBVHNodeData = null;
+		this.lightBVHNodeCount = 0;
+		// Per-triangle bit-trail (root→leaf path through the Light BVH), indexed by absolute
+		// triangleIndex, -1 for non-emissive. Lets the GPU re-walk the descent pdf for MIS.
+		this.emissiveBitTrailMap = null;
+		this._totalTriangleCount = 0;
+		this._hiddenMeshes = new Set();
+
+	}
+
+}

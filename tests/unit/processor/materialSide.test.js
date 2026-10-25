@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MeshPhysicalMaterial, FrontSide, BackSide, DoubleSide } from 'three';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
 
 const sideOf = params => new GeometryExtractor().getMaterialSide( new MeshPhysicalMaterial( params ) );
 

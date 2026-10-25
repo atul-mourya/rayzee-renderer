@@ -6,8 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Group, Object3D, PerspectiveCamera, RectAreaLight, Scene, Vector3 } from 'three';
-import { AssetLoader } from '@/core/Processor/AssetLoader.js';
-import { LightSerializer } from '@/core/Processor/LightSerializer.js';
+import { AssetLoader } from '@/core/loaders/AssetLoader.js';
+import { LightSerializer } from '@/core/lights/LightSerializer.js';
 import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 

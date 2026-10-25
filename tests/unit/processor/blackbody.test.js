@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { blackbodyToLinearRGB } from '../../../rayzee/src/Processor/blackbody.js';
+import { blackbodyToLinearRGB } from '../../../rayzee/src/lights/blackbody.js';
 
 // Rec.709 / linear-sRGB relative luminance.
 const luma = ( [ r, g, b ] ) => 0.2126 * r + 0.7152 * g + 0.0722 * b;

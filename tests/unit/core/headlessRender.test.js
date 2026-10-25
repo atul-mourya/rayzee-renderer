@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
-import { captureHeadless, openHeadless } from '@/core/Headless.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
+import { captureHeadless, openHeadless } from '@/core/viewer/Headless.js';
 import { NoToneMapping } from 'three';
 import { IssueLog } from '@/core/EngineIssues.js';
 

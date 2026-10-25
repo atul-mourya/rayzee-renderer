@@ -22,7 +22,7 @@ vi.mock( 'three', () => ( {
 	}
 } ) );
 
-import { LightSerializer } from '@/core/Processor/LightSerializer.js';
+import { LightSerializer } from '@/core/lights/LightSerializer.js';
 
 describe( 'LightSerializer', () => {
 

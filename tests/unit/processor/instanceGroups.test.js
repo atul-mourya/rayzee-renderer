@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { BoxGeometry, Group, InstancedMesh, Matrix4, MeshStandardMaterial } from 'three';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { BVH_EMPTY_BOX, BVH_LEAF_MARKERS } from '@/core/Processor/BufferLayout.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { BVH_EMPTY_BOX, BVH_LEAF_MARKERS } from '@/core/scene/BufferLayout.js';
 
 function instanced( geometry, material, count, matrices = null ) {
 

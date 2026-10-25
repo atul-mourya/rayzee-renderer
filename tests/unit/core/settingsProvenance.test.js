@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 import { ENGINE_DEFAULTS } from '@/core/EngineDefaults.js';
-import { DEFAULT_VIEW } from '@/core/Color/ViewTransforms.js';
-import { toneMapToRGBA8 } from '@/core/Processor/ToneMapCPU.js';
+import { DEFAULT_VIEW } from '@/core/color/ViewTransforms.js';
+import { toneMapToRGBA8 } from '@/core/output/ToneMapCPU.js';
 import { NoToneMapping, LinearToneMapping, ACESFilmicToneMapping, AgXToneMapping } from 'three';
 
 describe( 'settings provenance', () => {

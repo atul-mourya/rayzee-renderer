@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { BVH_LEAF_MARKERS } from '@/core/Processor/BufferLayout.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
+import { BVH_LEAF_MARKERS } from '@/core/scene/BufferLayout.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 
 // Index fields are u32 bit patterns inside the float buffer.
 const _u = new Uint32Array( 1 ), _f = new Float32Array( _u.buffer );

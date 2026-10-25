@@ -18,7 +18,7 @@ vi.mock( 'three', () => ( {
 	},
 } ) );
 
-import { SimpleSky } from '@/core/Processor/SimpleSky.js';
+import { SimpleSky } from '@/core/environment/SimpleSky.js';
 
 // ── SimpleSky ─────────────────────────────────────────────────
 

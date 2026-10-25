@@ -8,7 +8,7 @@ import {
 	BoxGeometry, Bone, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, Object3D,
 	PerspectiveCamera, PointLight, Scene, SkinnedMesh, Skeleton, Uint16BufferAttribute, Vector3,
 } from 'three';
-import { AssetLoader } from '@/core/Processor/AssetLoader.js';
+import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 
 // onModelLoad() reframes the camera through OrbitControls; only these members are touched.
 const stubControls = () => ( {

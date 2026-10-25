@@ -1,6 +1,6 @@
 import { it, expect, beforeAll } from 'vitest';
 import { describeGPU } from './gpu.js';
-import { OIDNDenoiser } from '@/core/Passes/OIDNDenoiser.js';
+import { OIDNDenoiser } from '@/core/viewer/denoise/OIDNDenoiser.js';
 
 const BORDER = 16;
 const align = n => Math.ceil( ( n + 2 * BORDER ) / 16 ) * 16;

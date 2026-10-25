@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from '@/core/EngineEvents.js';
 
 // The dispatcher half of the app is all these need; the constructor needs a GPU.

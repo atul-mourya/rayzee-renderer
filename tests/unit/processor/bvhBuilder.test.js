@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		constructor() {
@@ -22,7 +22,7 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
 
 /**
  * Helper: create a Float32Array of triangle data (32 floats per triangle).

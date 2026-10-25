@@ -5,9 +5,9 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Buffer } from 'node:buffer';
-import { ColorManagement } from '@/core/Color/ColorManagement.js';
-import { getViewTransform } from '@/core/Color/ViewTransforms.js';
-import { encodeBakedView, decodeBakedView, configFingerprint } from '@/core/Color/BakedViews.js';
+import { ColorManagement } from '@/core/color/ColorManagement.js';
+import { getViewTransform } from '@/core/color/ViewTransforms.js';
+import { encodeBakedView, decodeBakedView, configFingerprint } from '@/core/color/BakedViews.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 

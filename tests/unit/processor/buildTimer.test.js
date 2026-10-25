@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BuildTimer } from '@/core/Processor/BuildTimer.js';
+import { BuildTimer } from '@/core/scene/BuildTimer.js';
 
 describe( 'BuildTimer', () => {
 

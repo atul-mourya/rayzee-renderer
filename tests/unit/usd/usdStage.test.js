@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { USDFiles, USDStage } from '@/core/Processor/USD/USDStage.js';
+import { USDFiles, USDStage } from '@/core/loaders/usd/USDStage.js';
 
 /** A stage over in-memory text layers. */
 async function stageOf( layers, root = 'scene/root.usda', { omitted = [] } = {} ) {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const FPN = 16;

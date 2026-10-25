@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { acquireLock, heldLockNames } from '@/core/Storage/locks.js';
-import { sampleHash, fileIdentity, identityKey, sameIdentity, entryIdFor } from '@/core/Storage/identity.js';
+import { acquireLock, heldLockNames } from '@/core/storage/locks.js';
+import { sampleHash, fileIdentity, identityKey, sameIdentity, entryIdFor } from '@/core/storage/identity.js';
 
 const tick = () => new Promise( ( r ) => setTimeout( r, 1 ) );
 

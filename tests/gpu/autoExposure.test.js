@@ -5,8 +5,8 @@
 import { beforeAll, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType } from 'three';
 import { describeGPU, createRenderer } from './gpu.js';
-import { AutoExposure } from '@/core/Stages/AutoExposure.js';
-import { setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
+import { AutoExposure } from '@/core/viewer/picture/AutoExposure.js';
+import { setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
 
 const BINS = 256, LOG2_MIN = - 16, BIN_STOPS = 28 / 256, BLACK = 2 ** - 24, SCALE = 65536;
 const Y709 = [ 0.2126, 0.7152, 0.0722 ];

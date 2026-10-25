@@ -29,13 +29,13 @@ vi.mock( 'three/tsl', () => ( { storage: () => ( { toReadOnly() {
 import { MATERIAL_DEFAULTS } from '@/core/EngineDefaults.js';
 import {
 	TRIANGLE_DATA_LAYOUT as T, TRI_BLOCKER_SHIFT, shadowBlockerBits, MATERIAL_DATA_LAYOUT as M,
-} from '@/core/Processor/BufferLayout.js';
-import { packMaterial } from '@/core/Processor/MaterialPacking.js';
-import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/Processor/GeometryExtractor.js';
-import { TextureCreator } from '@/core/Processor/TextureCreator.js';
-import { MaterialDataManager } from '@/core/managers/MaterialDataManager.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
+} from '@/core/scene/BufferLayout.js';
+import { packMaterial } from '@/core/materials/MaterialPacking.js';
+import { GeometryExtractor, MATERIAL_VALUE_SOURCE } from '@/core/scene/GeometryExtractor.js';
+import { TextureCreator } from '@/core/materials/TextureCreator.js';
+import { MaterialDataManager } from '@/core/materials/MaterialDataManager.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
 
 const F = M.FLOATS_PER_MATERIAL;
 

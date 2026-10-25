@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PathTracerApp, describeAdapter } from '@/core/PathTracerApp.js';
+import { PathTracerApp, describeAdapter } from '@/core/viewer/PathTracerApp.js';
 
 describe( 'describeAdapter', () => {
 

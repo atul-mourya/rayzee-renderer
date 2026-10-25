@@ -1,14 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
+vi.mock( '@/core/viewer/denoise/OIDNDenoiser.js', async () => {
 
 	const { EventDispatcher } = await import( 'three' );
 	return { OIDNDenoiser: class extends EventDispatcher {} };
 
 } );
-vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
+vi.mock( '@/core/viewer/picture/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
 
-const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
+const { DenoisingManager } = await import( '@/core/viewer/denoise/DenoisingManager.js' );
 
 const OUTPUT_KEY = 'oidn:output';
 

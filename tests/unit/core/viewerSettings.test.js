@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
-import { AutoExposure } from '@/core/Stages/AutoExposure.js';
+import { AutoExposure } from '@/core/viewer/picture/AutoExposure.js';
 import { AgXToneMapping, NoToneMapping } from 'three';
 
 function viewer( { autoExposure = false, requiresMotionVectors = false } = {} ) {

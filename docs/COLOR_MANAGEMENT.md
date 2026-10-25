@@ -1,14 +1,14 @@
-# Colour management (`rayzee/src/Color/`)
+# Colour management (`rayzee/src/color/`)
 
 `app.color` is an OpenColorIO pipeline covering all three sides: what textures and lights *mean*,
 what the render happens *in*, and what it is *shown* and *saved* as. **It is inert until a host
 loads a config** — the working space stays linear Rec.709, the view transforms stay three.js's own
 seven, and nothing converts anything. No config means no behaviour change.
 
-An add-on (`rayzee/addons/color`): the core's `renderer.color` is `BasicColor` (`Color/BasicColor.js` — linear
+An add-on (`rayzee/addons/color`): the core's `renderer.color` is `BasicColor` (`color/BasicColor.js` — linear
 Rec.709, no configs; `loadConfig` records `capability.missing`) until `renderer.setColorManagement( ColorManagement )`;
 `PathTracerApp` installs it in its constructor. Shaders, `TextureCreator` and `EnvironmentManager` read whichever is
-active through `Color/ActiveColor.js`, never `ColorManagement.js` — that keeps OCIO out of the core
+active through `color/ActiveColor.js`, never `ColorManagement.js` — that keeps OCIO out of the core
 (`coreBoundary.test.js`). The core keeps `ViewTransforms`, `BuiltinViews` and `WorkingMatrix`.
 
 ```js
@@ -127,7 +127,7 @@ saying the environment was left converted.
   an HDR video) is an export's job, from OCIO with the same view.
 - **HDR on screen** (`app.color.setHdrOutput( true )`, off in the engine; the app turns it on while
   `(dynamic-range: high)` matches, switch "HDR" in the panel, remembered per device). The canvas shows the
-  active view's HDR version from the config — `hdrViewFor` (`Color/Displays.js`): the same tone mapping on
+  active view's HDR version from the config — `hdrViewFor` (`color/Displays.js`): the same tone mapping on
   one of the config's HDR displays, 1000 nits first, then P3, an EDR display, PQ (Blender's AgX → "AgX - HDR
   1000 nits" on Rec.2100-PQ; ACES 1.3's "ACES 1.0 - SDR Video" → "ACES 1.1 - HDR Video (1000 nits & P3 lim)");
   an untagged view (Standard, Un-tone-mapped) is its own; Filmic and Khronos Neutral have none
@@ -165,8 +165,8 @@ saying the environment was left converted.
     Display P3 pixels put into its sRGB canvas 2 ms against 0.07 (512²).
 - **EXR and HDR export** (`app.exportImage( { format: 'exr' | 'hdr' } )`, the app's Export window) writes
   `renderToBuffer( { source: 'display' } )` — the denoised image the viewport shows, read through
-  `Processor/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an ExternalTexture no render target
-  owns) — in `color.exportSpace` through our own writers (`Processor/ImageEncoders.js`), top line first. The albedo layer
+  `output/TextureReadback.js` (a pixel-exact copy pass, since OIDN's output is an ExternalTexture no render target
+  owns) — in `color.exportSpace` through our own writers (`output/ImageEncoders.js`), top line first. The albedo layer
   is converted with it. `chromaticities( space )` measures a space's primaries through the config's CIE XYZ D65
   interchange role; they arrive adapted to D65, so the writer snaps a known gamut (Rec.709, Rec.2020, P3, ACES AP0/AP1,
   E-Gamut) back to its own primaries and white. A PNG is a picture and never takes an export space. With `asShown`
@@ -179,7 +179,7 @@ saying the environment was left converted.
 - **Saved renders in HDR** (the Results page). A save keeps the render's light as an EXR ("Keep HDR copy", on by
   default), and its `rayzee` attribute records how the picture was shown: `display` (the exposure, auto exposure's
   included, the backdrop state and the exposure a solid backdrop is held at) from `getProvenance()`, and the viewer's
-  `exposure.local`. `app.createPictureView( canvas )` (`managers/PictureView.js`, loaded on first use) shows such a file
+  `exposure.local`. `app.createPictureView( canvas )` (`viewer/picture/PictureView.js`, loaded on first use) shows such a file
   as the screen showed it: a renderer of its own on the main device (`createRendererOnDevice`, as the view overlay's;
   an HDR canvas: half-float, extended range, the view's canvas colour space, no depth buffer) running a Compositor and a
   LocalExposure of their own — the same code as the viewport, fed the saved light as `pathtracer:color` in a

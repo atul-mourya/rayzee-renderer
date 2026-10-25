@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { Mesh, Scene } from 'three';
-import { OutlineHelper } from '@/core/managers/helpers/OutlineHelper.js';
-import { ViewCamera } from '@/core/managers/ViewCamera.js';
+import { OutlineHelper } from '@/core/viewer/overlays/OutlineHelper.js';
+import { ViewCamera } from '@/core/scene/ViewCamera.js';
 
 const renderer = () => ( { autoClear: true, setRenderTarget: vi.fn(), render: vi.fn() } );
 

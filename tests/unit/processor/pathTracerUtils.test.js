@@ -5,7 +5,7 @@ import { clamp, lerp, formatDuration, calculateAccumulationAlpha,
 	createDebounceFunction, areValuesEqual, optimizeShaderDefines,
 	getDisplaySamples, validateAndUpdateUniforms,
 	setStatusCallback, resetLoading, updateLoading, updateStats,
-	disposeMaterial, disposeMaterialTextures, timeSlicer, computeInstanceBoundingBoxes } from '@/core/Processor/utils.js';
+	disposeMaterial, disposeMaterialTextures, timeSlicer, computeInstanceBoundingBoxes } from '@/core/utils.js';
 import { BoxGeometry, BufferGeometry, Euler, Group, InstancedMesh, Matrix4, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 
 // ── clamp ────────────────────────────────────────────────────────

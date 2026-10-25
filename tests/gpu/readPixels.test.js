@@ -3,7 +3,7 @@ import { RenderTarget, FloatType, RGBAFormat, NearestFilter, DataTexture } from 
 import { QuadMesh, NodeMaterial } from 'three/webgpu';
 import { vec4, screenCoordinate } from 'three/tsl';
 import { describeGPU, createRenderer } from './gpu.js';
-import { readPixels, TextureReadback } from '@/core/Processor/TextureReadback.js';
+import { readPixels, TextureReadback } from '@/core/output/TextureReadback.js';
 
 describeGPU( 'readPixels', () => {
 

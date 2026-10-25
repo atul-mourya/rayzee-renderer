@@ -9,7 +9,7 @@ import { texture, uniform, vec4, vec3 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import {
 	sampleGuidedDisc, guidedDiscPdf, GUIDE_BINS, GUIDE_CELLS, GUIDE_CELL_SIDE, GUIDE_TEXTURE_WIDTH, GUIDE_UNIFORM_SHARE,
-} from '@/core/TSL/LightGuide.js';
+} from '@/core/shaders/LightGuide.js';
 
 const N = 1 << 18;
 

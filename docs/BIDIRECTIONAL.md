@@ -1,8 +1,8 @@
 # Bidirectional integrator and vertex merging
 
-`integrator: 'bidirectional'` | `'vcm'` — `integrators/BidirectionalIntegrator.js`, `TSL/Bidirectional.js`, `TSL/BidirectionalLamps.js`, `TSL/LightGenerateKernel.js`, `TSL/ConnectKernel.js`, `TSL/LightSplatKernel.js`, `TSL/MergeKernel.js`.
+`integrator: 'bidirectional'` | `'vcm'` — `pathtracer/BidirectionalIntegrator.js`, `shaders/Bidirectional.js`, `shaders/BidirectionalLamps.js`, `shaders/kernels/LightGenerateKernel.js`, `shaders/kernels/ConnectKernel.js`, `shaders/kernels/LightSplatKernel.js`, `shaders/kernels/MergeKernel.js`.
 
-An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`integrators/`) holds everything bidirectional —
+An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`pathtracer/`) holds everything bidirectional —
 its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
 `beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate
@@ -45,7 +45,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   their flux: most of what crosses the disc lands where their NEE does better, and on the 1.9M-triangle
   interior (HDRI + six rect lamps) the sky's 89 % of light paths had made light tracing the noisiest strategy.
   Alone they still get every light path, so their caustics keep them.
-- **Light guide** (`TSL/LightGuide.js`, `pt.activeIntegrator.setLightGuiding( bool )`, default on): where on that disc a light
+- **Light guide** (`shaders/LightGuide.js`, `pt.activeIntegrator.setLightGuiding( bool )`, default on): where on that disc a light
   path starts is learned from camera paths. Each escape at p toward ω counts one in p's cell of the disc
   facing ω (64² cells, 16 octahedral direction bins, in the counter buffer at `COUNTER.GUIDE` — Shade has no
   binding to spare); a kernel folds the counts into running sums at frames 1, 2, 4 … 32, then every 32nd,
@@ -56,7 +56,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   (sky + sun through windows) at 256², equal time against unguided: noise −19 % in mid tones, −13 % bright,
   −3 % dark, at +14 % frame time; now below the path tracer in mid tones. Correct to −0.23 % against it.
   An interior lit mainly by lamps (Livspace) is unchanged.
-- **Lamps** (`TSL/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
+- **Lamps** (`shaders/BidirectionalLamps.js`): NEE picks one with the path tracer's reservoir — same importance,
   same dimensions — less its bounce-depth factor, which a light path cannot know. A lamp's light path
   multiplies that pick into dVCM at its first opaque vertex, with that vertex's normal and material
   (`lampPickPdf`), times a rect light's spherical-rectangle density there. A point, spot or sharp
@@ -66,8 +66,8 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   IES at emission. Rect lights are not geometry: each camera continuation, after any scatter including
   refraction, is tested against them with a glass-blocking shadow ray (`bidirectionalAreaHit`), where the
   path tracer's own BSDF-hit term follows reflection only.
-- **Environment** (`Processor/EnvironmentExactTable.js`; `sampleEnvironmentExact` / `environmentPdfExact`,
-  `TSL/Environment.js`): both integrators' NEE, light paths and the miss weight share one table — each cell
+- **Environment** (`environment/EnvironmentExactTable.js`; `sampleEnvironmentExact` / `environmentPdfExact`,
+  `shaders/Environment.js`): both integrators' NEE, light paths and the miss weight share one table — each cell
   drawn as often as the density it reports, both read from the same running sums. Cells are capped at 1024
   wide; each texel weighs as the bilinear filter's mean over it (1/8, 6/8, 1/8 along each axis: a cell has
   weight wherever the filtered map has light, a sharp texel's neighbours only their share — the brightest
@@ -161,7 +161,7 @@ exactly the unidirectional kernels: everything bidirectional is JS-gated on `par
   factor (×140). `lamps-bidirectional` has a
   rough metal ball because only there does a rect light's continuation hit carry weight: in an all-matte
   room both of its terms could be dropped unnoticed.
-- **Vertex merging** (`integrator: 'vcm'`, `TSL/MergeKernel.js`; Georgiev et al. 2012): bidirectional plus
+- **Vertex merging** (`integrator: 'vcm'`, `shaders/kernels/MergeKernel.js`; Georgiev et al. 2012): bidirectional plus
   photon merging, the one strategy for light no connection reaches — a point lamp's caustic seen in a mirror or
   through glass (specular–diffuse–specular). Each camera vertex Shade leaves pending (now also at the bounce limit)
   gathers this frame's light vertices within its radius; a merged path of k scattering vertices needs

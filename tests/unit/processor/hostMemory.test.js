@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
 	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace, deviceMemoryGB,
 	PREFLIGHT_SAFETY, PREFLIGHT_MIN_BYTES, SAFE_SCENE_BYTES, MAX_SCENE_BYTES,
-} from '@/core/Processor/HostMemory.js';
-import { ChunkedRecords, setChunkObserver } from '@/core/Processor/ChunkedRecords.js';
+} from '@/core/memory/HostMemory.js';
+import { ChunkedRecords, setChunkObserver } from '@/core/memory/ChunkedRecords.js';
 
 const MB = 1024 * 1024;
 

@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ColorManagement, findNativeLinearSpace, canvasColorSpaceFor } from '@/core/Color/ColorManagement.js';
-import { getWorkingMatrix, setWorkingMatrix } from '@/core/Color/WorkingMatrix.js';
-import { EmissiveTriangleBuilder } from '@/core/Processor/EmissiveTriangleBuilder.js';
+import { ColorManagement, findNativeLinearSpace, canvasColorSpaceFor } from '@/core/color/ColorManagement.js';
+import { getWorkingMatrix, setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
+import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 
 const BUILTIN = 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
@@ -65,7 +65,7 @@ describe( 'the texture cache key', () => {
 
 	it( 'changes when a map is read as a different colour space', async () => {
 
-		const { TextureCreator } = await import( '@/core/Processor/TextureCreator.js' );
+		const { TextureCreator } = await import( '@/core/materials/TextureCreator.js' );
 		const creator = new TextureCreator();
 		const tex = { image: { width: 4, height: 4, src: 'albedo.png' }, colorSpace: 'srgb', userData: {} };
 

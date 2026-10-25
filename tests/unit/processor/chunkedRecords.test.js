@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from '@/core/Processor/ChunkedRecords.js';
+import { ChunkedRecords, SHARED_MEMORY_AVAILABLE } from '@/core/memory/ChunkedRecords.js';
 
 // 4 lanes per record, 16 bytes, so 64 bytes per chunk = 4 records per chunk.
 const LANES = 4;

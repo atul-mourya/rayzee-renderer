@@ -16,7 +16,7 @@ vi.mock( 'three/tsl', () => ( {
 } ) );
 
 // Random.js exports a module-scoped uniform — mock to a plain wrapper too
-vi.mock( '@/core/TSL/Random.js', () => ( {
+vi.mock( '@/core/shaders/Random.js', () => ( {
 	samplingTechniqueUniform: { value: 0, name: '' },
 } ) );
 
@@ -89,7 +89,7 @@ vi.mock( 'three', () => ( {
 	MathUtils: { DEG2RAD: Math.PI / 180 },
 } ) );
 
-import { UniformManager } from '@/core/managers/UniformManager.js';
+import { UniformManager } from '@/core/pathtracer/UniformManager.js';
 
 // ── Tests ────────────────────────────────────────────────────
 

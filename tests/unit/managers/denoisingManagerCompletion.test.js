@@ -1,17 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventDispatcher } from 'three';
-import { DenoisingManager } from '@/core/managers/DenoisingManager.js';
-import { AIUpscaler } from '@/core/Passes/AIUpscaler.js';
-import { presentRGBA8 } from '@/core/neural/NeuralSuperRes.js';
+import { DenoisingManager } from '@/core/viewer/denoise/DenoisingManager.js';
+import { AIUpscaler } from '@/core/viewer/picture/AIUpscaler.js';
+import { presentRGBA8 } from '@/core/viewer/picture/NeuralSuperRes.js';
 import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
 
-vi.mock( '@/core/neural/NeuralSuperRes.js', () => ( {
+vi.mock( '@/core/viewer/picture/NeuralSuperRes.js', () => ( {
 	readDenoisedHalf: vi.fn( async () => ( { half: new Uint16Array( 64 ), width: 4, height: 4 } ) ),
 	presentRGBA8: vi.fn(),
 	releaseDenoisedReader: vi.fn(),
 } ) );
 
-vi.mock( '@/core/neural/NeuralRetouch.js', () => ( {
+vi.mock( '@/core/viewer/picture/NeuralRetouch.js', () => ( {
 	RETOUCH_MAX_PIXELS: 16,
 	enhanceFrame: vi.fn( async ( { source } ) => ( {
 		instance: { dispose() {} },

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { CameraOptimizer } from '@/core/Processor/CameraOptimizer.js';
+import { CameraOptimizer } from '@/core/pathtracer/CameraOptimizer.js';
 
 function createMockMaterial() {
 

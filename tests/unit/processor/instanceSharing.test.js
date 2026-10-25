@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { InstanceTable, transformAABB, isIdentity } from '@/core/Processor/InstanceTable.js';
+import { InstanceTable, transformAABB, isIdentity } from '@/core/scene/InstanceTable.js';
 
 const box = ( n = 1 ) => ( { minX: - n, minY: - n, minZ: - n, maxX: n, maxY: n, maxZ: n } );
 

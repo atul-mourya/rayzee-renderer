@@ -140,7 +140,7 @@ vi.mock( 'three', () => {
 
 } );
 
-import { LightManager } from '@/core/managers/LightManager.js';
+import { LightManager } from '@/core/lights/LightManager.js';
 
 // ── Helpers ──────────────────────────────────────────────────
 

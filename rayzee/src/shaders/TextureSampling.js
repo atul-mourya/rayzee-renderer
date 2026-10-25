@@ -1,0 +1,737 @@
+import { sceneResources, materialLayers } from './SceneResources.js';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize, uintBitsToFloat } from 'three/tsl';
+import { DataArrayTexture, LinearFilter } from 'three';
+
+import {
+	UVCache,
+	MaterialSamples,
+	ExtMapResult,
+} from './Struct.js';
+import { instanceRows, instanceDirToWorld, triangleRow } from './Common.js';
+import { TEXTURE_CONSTANTS } from '../materials/TextureBuckets.js';
+
+// ================================================================================
+// CONSOLIDATED SHAPE-BUCKETED MATERIAL TEXTURES
+// ================================================================================
+// Material maps are packed into two colorSpace pools (sRGB: albedo+emissive; linear:
+// normal/bump/roughness/metalness/displacement), each split into MATERIAL_BUCKET_COUNT
+// (width, height) buckets so a small or oddly-shaped map no longer pays a large neighbour's
+// footprint. Bucket shapes are planned per scene (planTextureBuckets) — not powers of two.
+// A map's stored index encodes (bucket, layer) as bucket * BUCKET_LAYER_STRIDE + layer.
+//
+// The bucket texture nodes are the kernel's own (SceneResources.js): each pipeline builds fresh nodes,
+// avoiding cross-pipeline TextureNode caching, and hands them to its kernels' build context.
+
+const _STRIDE = TEXTURE_CONSTANTS.BUCKET_LAYER_STRIDE;
+
+// Run `fn(node, layer)` inside a runtime branch that selects the bucket node a packed
+// index points to. Emits one If/ElseIf arm per bucket; only the matching arm executes.
+// Caller must guard packedIndex >= 0.
+const withBucket = ( buckets, packedIndex, fn ) => {
+
+	const bucket = packedIndex.div( int( _STRIDE ) ).toVar();
+	const layer = packedIndex.sub( bucket.mul( int( _STRIDE ) ) ).toVar();
+	// Block bodies, not concise arrows: an If() callback that yields a value makes TSL emit a
+	// `return` inside an inline Fn(), which it comments out and warns about on every arm.
+	let chain = If( bucket.equal( int( 0 ) ), () => {
+
+		fn( buckets[ 0 ], layer );
+
+	} );
+	for ( let i = 1; i < buckets.length; i ++ ) {
+
+		chain = chain.ElseIf( bucket.equal( int( i ) ), () => {
+
+			fn( buckets[ i ], layer );
+
+		} );
+
+	}
+
+	return chain;
+
+};
+
+// Sample the bucket a packed index points to. Caller must guard packedIndex >= 0.
+export const sampleBucket = ( buckets, packedIndex, uv ) => {
+
+	const result = vec4( 0.0 ).toVar();
+	withBucket( buckets, packedIndex, ( node, layer ) => result.assign( texture( node, uv ).depth( layer ) ) );
+	return result;
+
+};
+
+// Per-axis texel size (1/dims) of the bucket a packed displacement/bump index points to,
+// for finite-difference derivative steps. Caller must guard packedIndex >= 0.
+export const bucketTexelSize = ( buckets, packedIndex ) => {
+
+	const ts = vec2( 1.0 ).toVar();
+	withBucket( buckets, packedIndex, node => ts.assign( vec2( 1.0 ).div( vec2( textureSize( node ) ) ) ) );
+	return ts;
+
+};
+
+// 1×1 white placeholder array so empty-bucket branches always reference a valid node.
+export function makeBucketPlaceholder() {
+
+	const t = new DataArrayTexture( new Uint8Array( [ 255, 255, 255, 255 ] ), 1, 1, 1 );
+	t.minFilter = LinearFilter;
+	t.magFilter = LinearFilter;
+	t.generateMipmaps = false;
+	t.needsUpdate = true;
+	return t;
+
+}
+
+// Build MATERIAL_BUCKET_COUNT texture nodes from a bucket array (DataArrayTexture | null per
+// bucket). Null buckets get a fresh placeholder. Each caller builds its OWN nodes so each
+// pipeline bakes in independent TextureNodes (no cross-pipeline caching).
+export function buildBucketTextureNodes( bucketArrays ) {
+
+	const K = TEXTURE_CONSTANTS.MATERIAL_BUCKET_COUNT;
+	const nodes = [];
+	for ( let i = 0; i < K; i ++ ) {
+
+		const arr = bucketArrays && bucketArrays[ i ];
+		nodes.push( texture( arr || makeBucketPlaceholder() ) );
+
+	}
+
+	return nodes;
+
+}
+
+// Update in-place the .value of bucket nodes from a fresh bucket array (model change).
+export function refreshBucketTextureNodes( nodes, bucketArrays ) {
+
+	if ( ! nodes || ! bucketArrays ) return;
+	for ( let i = 0; i < nodes.length; i ++ ) {
+
+		if ( bucketArrays[ i ] && nodes[ i ] ) nodes[ i ].value = bucketArrays[ i ];
+
+	}
+
+}
+
+// ================================================================================
+// FAST UTILITY FUNCTIONS
+// ================================================================================
+
+export const isIdentityTransform = /*@__PURE__*/ wgslFn( `
+	fn isIdentityTransform( transform: mat3x3f ) -> bool {
+		return transform[0][0] == 1.0f
+			&& transform[1][1] == 1.0f
+			&& transform[0][1] == 0.0f
+			&& transform[1][0] == 0.0f
+			&& transform[2][0] == 0.0f
+			&& transform[2][1] == 0.0f;
+	}
+` );
+
+export const getTransformedUV = /*@__PURE__*/ wgslFn( `
+	fn getTransformedUV( uv: vec2f, transform: mat3x3f ) -> vec2f {
+		if ( !isIdentityTransform( transform ) ) {
+			return fract( vec2f(
+				transform[0][0] * uv.x + transform[1][0] * uv.y + transform[2][0],
+				transform[0][1] * uv.x + transform[1][1] * uv.y + transform[2][1]
+			) );
+		}
+		return uv;
+	}
+`, [ isIdentityTransform ] );
+
+export const materialHasTextures = Fn( ( [ material ] ) => {
+
+	return material.albedoMapIndex.greaterThanEqual( int( 0 ) )
+		.or( material.normalMapIndex.greaterThanEqual( int( 0 ) ) )
+		.or( material.roughnessMapIndex.greaterThanEqual( int( 0 ) ) )
+		.or( material.metalnessMapIndex.greaterThanEqual( int( 0 ) ) )
+		.or( material.emissiveMapIndex.greaterThanEqual( int( 0 ) ) )
+		.or( material.bumpMapIndex.greaterThanEqual( int( 0 ) ) )
+		.or( material.displacementMapIndex.greaterThanEqual( int( 0 ) ) );
+
+} );
+
+// Fast transform hash for equality checking
+export const hashTransform = /*@__PURE__*/ wgslFn( `
+	fn hashTransform( t: mat3x3f ) -> f32 {
+		return t[0][0] + t[1][1] * 7.0f + t[2][0] * 13.0f + t[2][1] * 17.0f;
+	}
+` );
+
+// Fast transform equality using hash comparison
+export const transformsEqual = /*@__PURE__*/ wgslFn( `
+	fn transformsEqual( a: mat3x3f, b: mat3x3f ) -> i32 {
+		let hashA = hashTransform( a );
+		let hashB = hashTransform( b );
+		if ( abs( hashA - hashB ) < 0.001f ) {
+			if ( abs( a[0][0] - b[0][0] ) < 0.001f
+				&& abs( a[1][1] - b[1][1] ) < 0.001f
+				&& abs( a[2][0] - b[2][0] ) < 0.001f
+				&& abs( a[2][1] - b[2][1] ) < 0.001f ) {
+				return 1;
+			}
+		}
+		return 0;
+	}
+`, [ hashTransform ] );
+
+// ================================================================================
+// OPTIMIZED UV CACHE WITH REDUNDANCY DETECTION
+// ================================================================================
+
+export const computeUVCache = Fn( ( [ baseUV, material ] ) => {
+
+	// Pre-compute transform hashes for batch comparison
+	const albedoHash = hashTransform( { t: material.albedoTransform } ).toVar();
+	const normalHash = hashTransform( { t: material.normalTransform } ).toVar();
+	const metalnessHash = hashTransform( { t: material.metalnessTransform } ).toVar();
+	const roughnessHash = hashTransform( { t: material.roughnessTransform } ).toVar();
+	const emissiveHash = hashTransform( { t: material.emissiveTransform } ).toVar();
+	const bumpHash = hashTransform( { t: material.bumpTransform } ).toVar();
+
+	const HASH_TOLERANCE = 0.001;
+	const albedoNormalSame = abs( albedoHash.sub( normalHash ) ).lessThan( HASH_TOLERANCE ).toVar();
+	const normalBumpSame = abs( normalHash.sub( bumpHash ) ).lessThan( HASH_TOLERANCE ).toVar();
+	const metalRoughSame = abs( metalnessHash.sub( roughnessHash ) ).lessThan( HASH_TOLERANCE ).toVar();
+	const albedoEmissiveSame = abs( albedoHash.sub( emissiveHash ) ).lessThan( HASH_TOLERANCE ).toVar();
+
+	const allSameUV = albedoNormalSame
+		.and( abs( albedoHash.sub( metalnessHash ) ).lessThan( HASH_TOLERANCE ) )
+		.and( abs( albedoHash.sub( emissiveHash ) ).lessThan( HASH_TOLERANCE ) )
+		.and( abs( albedoHash.sub( bumpHash ) ).lessThan( HASH_TOLERANCE ) )
+		.toVar();
+
+	const albedoUV = vec2( 0.0 ).toVar();
+	const normalUV = vec2( 0.0 ).toVar();
+	const metalnessUV = vec2( 0.0 ).toVar();
+	const roughnessUV = vec2( 0.0 ).toVar();
+	const emissiveUV = vec2( 0.0 ).toVar();
+	const bumpUV = vec2( 0.0 ).toVar();
+	const normalBumpSameUV = normalBumpSame.or( allSameUV );
+	const metalRoughSameUV = metalRoughSame.or( allSameUV );
+	const albedoEmissiveSameUV = albedoEmissiveSame.or( allSameUV );
+
+	If( allSameUV, () => {
+
+		const sharedUV = getTransformedUV( { uv: baseUV, transform: material.albedoTransform } );
+		albedoUV.assign( sharedUV );
+		normalUV.assign( sharedUV );
+		metalnessUV.assign( sharedUV );
+		roughnessUV.assign( sharedUV );
+		emissiveUV.assign( sharedUV );
+		bumpUV.assign( sharedUV );
+
+	} ).Else( () => {
+
+		// Always compute albedo as reference
+		albedoUV.assign( getTransformedUV( { uv: baseUV, transform: material.albedoTransform } ) );
+
+		// Reuse albedo UV for matching hashes
+		normalUV.assign( albedoNormalSame.select( albedoUV, getTransformedUV( { uv: baseUV, transform: material.normalTransform } ) ) );
+		emissiveUV.assign( albedoEmissiveSame.select( albedoUV, getTransformedUV( { uv: baseUV, transform: material.emissiveTransform } ) ) );
+
+		// Handle bump UV with dependency chain optimization
+		If( normalBumpSame, () => {
+
+			bumpUV.assign( normalUV );
+
+		} ).ElseIf( abs( bumpHash.sub( albedoHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+			bumpUV.assign( albedoUV );
+
+		} ).Else( () => {
+
+			bumpUV.assign( getTransformedUV( { uv: baseUV, transform: material.bumpTransform } ) );
+
+		} );
+
+		// Handle metalness/roughness pair
+		If( metalRoughSame, () => {
+
+			metalnessUV.assign( getTransformedUV( { uv: baseUV, transform: material.metalnessTransform } ) );
+			roughnessUV.assign( metalnessUV );
+
+		} ).Else( () => {
+
+			If( abs( metalnessHash.sub( albedoHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+				metalnessUV.assign( albedoUV );
+
+			} ).ElseIf( abs( metalnessHash.sub( normalHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+				metalnessUV.assign( normalUV );
+
+			} ).Else( () => {
+
+				metalnessUV.assign( getTransformedUV( { uv: baseUV, transform: material.metalnessTransform } ) );
+
+			} );
+
+			If( abs( roughnessHash.sub( albedoHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+				roughnessUV.assign( albedoUV );
+
+			} ).ElseIf( abs( roughnessHash.sub( normalHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+				roughnessUV.assign( normalUV );
+
+			} ).ElseIf( abs( roughnessHash.sub( metalnessHash ) ).lessThan( HASH_TOLERANCE ), () => {
+
+				roughnessUV.assign( metalnessUV );
+
+			} ).Else( () => {
+
+				roughnessUV.assign( getTransformedUV( { uv: baseUV, transform: material.roughnessTransform } ) );
+
+			} );
+
+		} );
+
+	} );
+
+	return UVCache( {
+		albedoUV,
+		normalUV,
+		metalnessUV,
+		roughnessUV,
+		emissiveUV,
+		bumpUV,
+		allSameUV,
+		normalBumpSameUV,
+		metalRoughSameUV,
+		albedoEmissiveSameUV,
+	} );
+
+} );
+
+// ================================================================================
+// PROCESSING FUNCTIONS
+// ================================================================================
+
+export const processAlbedo = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { srgbBuckets } = sceneResources( builder );
+
+	const result = material.color.toVar();
+
+	If( material.albedoMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		const albedoSample = sampleBucket( srgbBuckets, material.albedoMapIndex, uvCache.albedoUV ).toVar();
+		// sRGB→linear handled by GPU hardware (sRGB bucket arrays carry SRGBColorSpace → rgba8unorm-srgb)
+		result.assign( vec4( material.color.rgb.mul( albedoSample.rgb ), material.color.a.mul( albedoSample.a ) ) );
+
+	} );
+
+	return result;
+
+} );
+
+export const processMetalnessRoughness = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const metalness = material.metalness.toVar();
+	const roughness = material.roughness.toVar();
+
+	If( material.metalnessMapIndex.greaterThanEqual( int( 0 ) ).and( material.metalnessMapIndex.equal( material.roughnessMapIndex ) ), () => {
+
+		// Same packed index → same bucket layer (e.g. ORM) → sample once.
+		const sample = sampleBucket( linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
+		metalness.assign( material.metalness.mul( sample.b ) );
+		roughness.assign( material.roughness.mul( sample.g ) );
+
+	} ).Else( () => {
+
+		If( material.metalnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+			const metSample = sampleBucket( linearBuckets, material.metalnessMapIndex, uvCache.metalnessUV );
+			metalness.assign( material.metalness.mul( metSample.b ) );
+
+		} );
+
+		If( material.roughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+			const rghSample = sampleBucket( linearBuckets, material.roughnessMapIndex, uvCache.roughnessUV );
+			roughness.assign( material.roughness.mul( rghSample.g ) );
+
+		} );
+
+	} );
+
+	return vec2( metalness, roughness );
+
+} );
+
+// The inverse of the transform's 2x2 linear part times |det|: .xy takes (dP/du, dP/dv) to dP/du', .zw to dP/dv'.
+// Times det instead, a mirrored transform turned both round.
+const uvTransformInverse = /*@__PURE__*/ wgslFn( `
+	fn uvTransformInverse( t: mat3x3f ) -> vec4f {
+		return vec4f( t[1][1], - t[0][1], - t[1][0], t[0][0] ) * sign( t[0][0] * t[1][1] - t[1][0] * t[0][1] );
+	}
+` );
+
+/**
+ * Build the UV tangent for one triangle, as vec4( T.xyz, handedness ).
+ *
+ * Returned in the *transformed* UV space of `transform`, since that is the space the normal
+ * map is sampled in — the inverse of the transform's 2x2 linear part maps dP/du back onto
+ * dP/du'. A pure repeat/scale leaves the direction alone; a rotated transform does not.
+ * w == 0 signals a degenerate parameterisation, which processNormal treats as "no frame".
+ *
+ * @param {Node} triangleBuffer packed triangle storage (8 vec4 stride)
+ * @param {Node} triIndex       absolute triangle index
+ * @param {Node} geometryNormal shading-space normal, for the handedness test
+ * @param {Node} transform      the normal map's mat3 UV transform
+ */
+/**
+ * Tangent frame for a triangle, in world space.
+ *
+ * Positions are stored per instance in object space, so T and B come out in that space
+ * and are carried across before they meet the world-space geometric normal — otherwise
+ * the handedness test mixes two frames and normal maps light from the wrong side.
+ */
+export const triangleUVTangent = Fn( ( [ triangleBuffer, triIndex, geometryNormal, transform, bvhBuffer, instanceLeaf ] ) => {
+
+	const pA = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 0 ).xyz );
+	const e1 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 1 ).xyz ).sub( pA );
+	const e2 = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 2 ).xyz ).sub( pA );
+
+	const uvAB = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 3 ) );
+	const uvC = uintBitsToFloat( triangleRow( triangleBuffer, triIndex, 4 ).xy );
+	const d1 = uvAB.zw.sub( uvAB.xy );
+	const d2 = uvC.sub( uvAB.xy );
+
+	const det = d1.x.mul( d2.y ).sub( d1.y.mul( d2.x ) );
+	const result = vec4( 0.0 ).toVar();
+
+	If( abs( det ).greaterThan( 1e-12 ), () => {
+
+		const r = float( 1.0 ).div( det );
+		const T = e1.mul( d2.y ).sub( e2.mul( d1.y ) ).mul( r ).toVar();
+		const B = e2.mul( d1.x ).sub( e1.mul( d2.x ) ).mul( r ).toVar();
+
+		// Re-express both in the map's transformed UV space: the handedness test below needs B there too, or a
+		// mirrored map, or one turned past 90°, gets its bitangent reversed.
+		const inv = uvTransformInverse( { t: transform } ).toVar();
+		const Tt = T.mul( inv.x ).add( B.mul( inv.y ) ).toVar();
+		const Bt = T.mul( inv.z ).add( B.mul( inv.w ) ).toVar();
+
+		If( length( Tt ).greaterThan( 1e-12 ), () => {
+
+			T.assign( Tt );
+			B.assign( Bt );
+
+		} );
+
+		If( instanceLeaf.greaterThanEqual( int( 0 ) ), () => {
+
+			const rows = instanceRows( bvhBuffer, instanceLeaf );
+			T.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: T } ) );
+			B.assign( instanceDirToWorld( { r0: rows[ 0 ].xyz, r1: rows[ 1 ].xyz, r2: rows[ 2 ].xyz, v: B } ) );
+
+		} );
+
+		If( length( T ).greaterThan( 1e-12 ), () => {
+
+			result.assign( vec4( normalize( T ), sign( dot( cross( geometryNormal, T ), B ) ) ) );
+
+		} );
+
+	} );
+
+	return result;
+
+} );
+
+/**
+ * The normal a normal map (packed linear-bucket index `mapIndex`, caller-guarded >= 0) gives `geometryNormal` at `uv`.
+ *
+ * `uvTangent` is vec4( T.xyz, handedness ); w == 0 means "no usable frame" (degenerate or
+ * missing UVs) and falls back to the arbitrary cross(up, N) frame. A frame unrelated to the
+ * texture's U axis rotates the whole perturbation: on a vertical fluted-glass panel the
+ * arbitrary frame comes out 90 deg off, so the rib normals tilt up/down instead of across
+ * the ribs.
+ */
+export const perturbNormal = Fn( ( [ geometryNormal, mapIndex, scale, uv, uvTangent ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const normalSample = sampleBucket( linearBuckets, mapIndex, uv );
+	const normalMap = normalSample.xyz.mul( 2.0 ).sub( 1.0 ).toVar();
+	normalMap.x.mulAssign( scale );
+	normalMap.y.assign( normalMap.y.negate().mul( scale ) );
+
+	const tangent = vec3( 0.0 ).toVar();
+	const handedness = float( 1.0 ).toVar();
+
+	// Gram-Schmidt against the interpolated normal, which is not exactly triangle-planar.
+	const perp = uvTangent.xyz.sub( geometryNormal.mul( dot( geometryNormal, uvTangent.xyz ) ) ).toVar();
+
+	If( abs( uvTangent.w ).greaterThan( 0.5 ).and( length( perp ).greaterThan( 1e-6 ) ), () => {
+
+		tangent.assign( normalize( perp ) );
+		handedness.assign( uvTangent.w );
+
+	} ).Else( () => {
+
+		const up = abs( geometryNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
+		tangent.assign( normalize( cross( up, geometryNormal ) ) );
+
+	} );
+
+	const bitangent = cross( geometryNormal, tangent ).mul( handedness );
+
+	return normalize(
+		tangent.mul( normalMap.x ).add( bitangent.mul( normalMap.y ) ).add( geometryNormal.mul( normalMap.z ) )
+	);
+
+} );
+
+export const processNormal = Fn( ( [ geometryNormal, material, uvCache, uvTangent ] ) => {
+
+	const result = geometryNormal.toVar();
+
+	If( material.normalMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		result.assign( perturbNormal( geometryNormal, material.normalMapIndex, material.normalScale.x, uvCache.normalUV, uvTangent ) );
+
+	} );
+
+	return result;
+
+} );
+
+export const processBump = Fn( ( [ currentNormal, material, uvCache ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const result = currentNormal.toVar();
+
+	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( material.bumpScale.greaterThan( 0.0 ) ), () => {
+
+		// Taps + texel size come from the SELECTED bucket node (its real dimensions), so the
+		// finite-difference step is correct per bucket — done inside one bucket-branch.
+		const bumpNormal = vec3( 0.0, 0.0, 1.0 ).toVar();
+		withBucket( linearBuckets, material.bumpMapIndex, ( node, layer ) => {
+
+			const texelSize = vec2( 1.0 ).div( vec2( textureSize( node ) ) ).toVar();
+			const h_c = texture( node, uvCache.bumpUV ).depth( layer ).r;
+			const h_u = texture( node, vec2( uvCache.bumpUV.x.add( texelSize.x ), uvCache.bumpUV.y ) ).depth( layer ).r;
+			const h_v = texture( node, vec2( uvCache.bumpUV.x, uvCache.bumpUV.y.add( texelSize.y ) ) ).depth( layer ).r;
+			const gradient = vec2( h_u.sub( h_c ), h_v.sub( h_c ) ).mul( material.bumpScale );
+			bumpNormal.assign( normalize( vec3( gradient.x.negate(), gradient.y.negate(), 1.0 ) ) );
+
+		} );
+
+		// Build TBN matrix using current normal
+		const up = abs( currentNormal.z ).lessThan( 0.999 ).select( vec3( 0.0, 0.0, 1.0 ), vec3( 1.0, 0.0, 0.0 ) );
+		const tangent = normalize( cross( up, currentNormal ) );
+		const bitangent = cross( currentNormal, tangent );
+
+		const perturbedNormal = tangent.mul( bumpNormal.x ).add( bitangent.mul( bumpNormal.y ) ).add( currentNormal.mul( bumpNormal.z ) );
+		result.assign( normalize( mix( currentNormal, perturbedNormal, clamp( material.bumpScale, 0.0, 1.0 ) ) ) );
+
+	} );
+
+	return result;
+
+} );
+
+// Fold the glTF anisotropyTexture (RG = tangent-space direction, B = strength) into scalar
+// (strength, rotationRadians) per three.js: anisotropy · R(rotation) · (normalize(rg·2−1)·b).
+// Caller guarantees anisotropyMapIndex >= 0. `uv` is pre-transformed by the caller (albedo transform).
+export const processAnisotropyMap = Fn( ( [ material, uv ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const result = vec2( material.anisotropy, material.anisotropyRotation ).toVar();
+
+	const s = sampleBucket( linearBuckets, material.anisotropyMapIndex, uv ).toVar();
+	const texDir = s.rg.mul( 2.0 ).sub( 1.0 ).toVar();
+	const dlen = texDir.length().toVar();
+
+	If( dlen.greaterThan( 1e-4 ), () => {
+
+		const u = texDir.div( dlen ).mul( s.b ).toVar(); // unit direction × texture strength
+		const c = material.anisotropyRotation.cos();
+		const sn = material.anisotropyRotation.sin();
+		const vx = material.anisotropy.mul( c.mul( u.x ).sub( sn.mul( u.y ) ) );
+		const vy = material.anisotropy.mul( sn.mul( u.x ).add( c.mul( u.y ) ) );
+		result.assign( vec2( clamp( vx.mul( vx ).add( vy.mul( vy ) ).sqrt(), 0.0, 1.0 ), atan( vy, vx ) ) );
+
+	} ).Else( () => {
+
+		result.assign( vec2( 0.0, material.anisotropyRotation ) );
+
+	} );
+
+	return result;
+
+} );
+
+// Fold the glTF extension textures into their scalar factors, per KHR_materials_* / three.js
+// channel conventions. Returns the modulated scalars (unchanged where a map is absent). `uv` is
+// pre-transformed by the caller with the material's albedo KHR_texture_transform (extension maps
+// share the base UV set/transform in practice). Color maps (sheenColor, specularColor) read the
+// sRGB pool; data maps read the linear pool.
+export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
+
+	const { srgbBuckets, linearBuckets } = sceneResources( builder );
+	const layers = materialLayers( builder );
+
+	const r = ExtMapResult( {
+		transmission: material.transmission,
+		clearcoat: material.clearcoat,
+		clearcoatRoughness: material.clearcoatRoughness,
+		sheenColor: material.sheenColor,
+		sheenRoughness: material.sheenRoughness,
+		iridescence: material.iridescence,
+		iridescenceThickness: material.iridescenceThicknessRange.y, // default = max (no-texture behavior)
+		specularIntensity: material.specularIntensity,
+		specularColor: material.specularColor,
+		diffuseTransmission: material.diffuseTransmission,
+		diffuseTransmissionColor: material.diffuseTransmissionColor,
+	} ).toVar();
+
+	If( material.transmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.transmission.assign( r.transmission.mul( sampleBucket( linearBuckets, material.transmissionMapIndex, uv ).r ) );
+
+	} );
+	if ( layers.clearcoat ) If( material.clearcoatMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.clearcoat.assign( r.clearcoat.mul( sampleBucket( linearBuckets, material.clearcoatMapIndex, uv ).r ) );
+
+	} );
+	if ( layers.clearcoat ) If( material.clearcoatRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.clearcoatRoughness.assign( r.clearcoatRoughness.mul( sampleBucket( linearBuckets, material.clearcoatRoughnessMapIndex, uv ).g ) );
+
+	} );
+	if ( layers.sheen ) If( material.sheenColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.sheenColor.assign( r.sheenColor.mul( sampleBucket( srgbBuckets, material.sheenColorMapIndex, uv ).rgb ) );
+
+	} );
+	if ( layers.sheen ) If( material.sheenRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		// clamp to [0.05,1] to keep parity with the sample/PDF floor applied in ShadeKernel
+		r.sheenRoughness.assign( clamp( r.sheenRoughness.mul( sampleBucket( linearBuckets, material.sheenRoughnessMapIndex, uv ).a ), 0.05, 1.0 ) );
+
+	} );
+	if ( layers.iridescence ) If( material.iridescenceMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.iridescence.assign( r.iridescence.mul( sampleBucket( linearBuckets, material.iridescenceMapIndex, uv ).r ) );
+
+	} );
+	if ( layers.iridescence ) If( material.iridescenceThicknessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		const g = sampleBucket( linearBuckets, material.iridescenceThicknessMapIndex, uv ).g;
+		r.iridescenceThickness.assign( mix( material.iridescenceThicknessRange.x, material.iridescenceThicknessRange.y, g ) );
+
+	} );
+	If( material.specularIntensityMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.specularIntensity.assign( r.specularIntensity.mul( sampleBucket( linearBuckets, material.specularIntensityMapIndex, uv ).a ) );
+
+	} );
+	If( material.specularColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.specularColor.assign( r.specularColor.mul( sampleBucket( srgbBuckets, material.specularColorMapIndex, uv ).rgb ) );
+
+	} );
+	// KHR_materials_diffuse_transmission: the factor from the map's alpha, the colour from its RGB.
+	if ( layers.diffuseTransmission ) If( material.diffuseTransmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.diffuseTransmission.assign( r.diffuseTransmission.mul( sampleBucket( linearBuckets, material.diffuseTransmissionMapIndex, uv ).a ) );
+
+	} );
+	if ( layers.diffuseTransmission ) If( material.diffuseTransmissionColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.diffuseTransmissionColor.assign( r.diffuseTransmissionColor.mul( sampleBucket( srgbBuckets, material.diffuseTransmissionColorMapIndex, uv ).rgb ) );
+
+	} );
+
+	return r;
+
+} );
+
+export const processEmissive = Fn( ( [ material, uvCache ], builder ) => {
+
+	const { srgbBuckets } = sceneResources( builder );
+
+	const emissionBase = material.emissive.mul( material.emissiveIntensity ).toVar();
+
+	If( material.emissiveMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		const emissiveSample = sampleBucket( srgbBuckets, material.emissiveMapIndex, uvCache.emissiveUV ).toVar();
+		// sRGB→linear handled by GPU hardware (sRGB bucket arrays carry SRGBColorSpace → rgba8unorm-srgb)
+		emissionBase.assign( emissionBase.mul( emissiveSample.rgb ) );
+
+	} );
+
+	return emissionBase;
+
+} );
+
+// ================================================================================
+// MAIN BATCHED SAMPLING FUNCTION
+// ================================================================================
+
+export const sampleAllMaterialTextures = Fn( ( [ material, uv, geometryNormal, uvTangent ] ) => {
+
+	const albedo = vec4( 0.0 ).toVar();
+	const emissive = vec3( 0.0 ).toVar();
+	const metalness = float( 0.0 ).toVar();
+	const roughness = float( 0.0 ).toVar();
+	const normal = vec3( 0.0 ).toVar();
+	const hasTextures = materialHasTextures( material ).toVar();
+
+	// Always use base material values first
+	albedo.assign( material.color );
+	emissive.assign( material.emissive.mul( material.emissiveIntensity ) );
+	metalness.assign( material.metalness );
+	roughness.assign( material.roughness );
+	normal.assign( geometryNormal );
+
+	If( hasTextures, () => {
+
+		// Compute optimized UV cache with redundancy detection
+		const uvCache = UVCache.wrap( computeUVCache( uv, material ) ).toVar();
+
+		// Process samples (bucket nodes read from module-level state)
+		albedo.assign( processAlbedo( material, uvCache ) );
+
+		const metalRough = processMetalnessRoughness( material, uvCache );
+		metalness.assign( metalRough.x );
+		roughness.assign( metalRough.y );
+
+		const currentNormal = processNormal( geometryNormal, material, uvCache, uvTangent ).toVar();
+		normal.assign( processBump( currentNormal, material, uvCache ) );
+
+		emissive.assign( processEmissive( material, uvCache ) );
+
+	} );
+
+	return MaterialSamples( { albedo, emissive, metalness, roughness, normal, hasTextures } );
+
+} );
+
+// Sample displacement map (linear pool) at given UV coordinates.
+export const sampleDisplacementMap = Fn( ( [ displacementMapIndex, uv, transform ], builder ) => {
+
+	const { linearBuckets } = sceneResources( builder );
+
+	const result = float( 0.0 ).toVar();
+
+	If( displacementMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		const transformedUV = getTransformedUV( { uv, transform } );
+		result.assign( sampleBucket( linearBuckets, displacementMapIndex, transformedUV ).r );
+
+	} );
+
+	return result;
+
+} );

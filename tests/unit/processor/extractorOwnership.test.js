@@ -3,8 +3,8 @@ import {
 	Group, Mesh, InstancedMesh, BoxGeometry, BufferGeometry, MeshStandardMaterial,
 	Matrix4, Vector3, Float32BufferAttribute
 } from 'three';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
 /** The three corners the extractor stored for one triangle, in storage order. */
 function storedTriangle( extractor, index ) {

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { cameraClipPlugin } from '@/core/Processor/AssetLoader.js';
+import { cameraClipPlugin } from '@/core/loaders/AssetLoader.js';
 
 // glTF's znear is the near clipping plane, and Blender writes a camera's clip start there.
 const gltf = JSON.stringify( {

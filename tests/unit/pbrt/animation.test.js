@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { AnimationMixer, Group, LoopOnce, Mesh, PerspectiveCamera } from 'three';
-import { PBRTParser } from '@/core/Processor/PBRT/PBRTParser.js';
-import { findFrameSequence, alignSequences, FrameSequenceMerger, motionFromShutter } from '@/core/Processor/PBRT/PBRTAnimation.js';
-import { loadPBRTScene } from '@/core/Processor/PBRT/index.js';
+import { PBRTParser } from '@/core/loaders/pbrt/PBRTParser.js';
+import { findFrameSequence, alignSequences, FrameSequenceMerger, motionFromShutter } from '@/core/loaders/pbrt/PBRTAnimation.js';
+import { loadPBRTScene } from '@/core/loaders/pbrt/index.js';
 
 const enc = new TextEncoder();
 const parse = src => new PBRTParser().parse( src );

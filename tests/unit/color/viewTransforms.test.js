@@ -9,8 +9,8 @@ import {
 	VIEW_TRANSFORMS, getViewTransform, listViewTransforms, buildToneMapWGSL,
 	addViewTransform, removeViewTransform, countTableTransforms, MAX_TABLE_TRANSFORMS,
 	getRegistryVersion, onRegistryChange, nextOcioId, OCIO_VIEW_BASE,
-} from '@/core/Color/ViewTransforms.js';
-import { TONE_MAP_FNS } from '@/core/Processor/ToneMapCPU.js';
+} from '@/core/color/ViewTransforms.js';
+import { TONE_MAP_FNS } from '@/core/output/ToneMapCPU.js';
 
 const stub = ( i, { table = false } = {} ) => ( {
 	id: 800000 + i,

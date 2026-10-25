@@ -128,7 +128,7 @@ vi.mock( 'three', async ( importOriginal ) => {
 } );
 
 import { DirectionalLight, SpotLight, Vector3 } from 'three';
-import { TransformManager } from '@/core/managers/TransformManager.js';
+import { TransformManager } from '@/core/viewer/overlays/TransformManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
 // Helper: create a mock mesh with geometry

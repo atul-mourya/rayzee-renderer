@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three';
-import { CameraManager } from '@/core/managers/CameraManager.js';
+import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
 
 function canvas() {

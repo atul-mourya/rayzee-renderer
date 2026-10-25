@@ -68,7 +68,7 @@ picture (local exposure) is installed with `compositor.setDisplayGain()` and han
 `_displayGain()`; the core applies it without knowing what it is.
 
 **Per-renderer shader resources.** Material texture buckets, shadow albedo maps, gobo and IES textures and the
-alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`), never in module variables: a TSL
+alpha-shadow switch ride in each kernel's build context (`shaders/SceneResources.js`), never in module variables: a TSL
 function body runs when its kernel compiles, so module state was read from whichever renderer set it last. Two
 renderers in one page now share only the colour management and the on-disk storage, both page-wide by design.
 
@@ -101,7 +101,7 @@ the core. Without it the core's programs carry none of that code, and still rend
    hit-distance block.
 4. **Compile only what a scene uses** — built (2026-10-04) for seven material layers: clear coat, sheen, iridescence,
    anisotropy, subsurface, dispersion and diffuse transmission compile into the kernels only while some material
-   has them (`materialLayers( builder )`, `TSL/SceneResources.js`). Every bench image unchanged; frame time −3.9 to
+   has them (`materialLayers( builder )`, `shaders/SceneResources.js`). Every bench image unchanged; frame time −3.9 to
    −24.3 %, median −9.6 % over 28 scenes. The measurement that led to it: With subsurface and clear coat cut out of Shade, its
    sampling and the BSDF (Shade, MaterialTransmission, MaterialEvaluation, MaterialProperties, PathTracerCore), scenes
    without them still matched their references and ran faster, alternating runs at 1024² in Chrome (Apple M-series):
@@ -119,13 +119,13 @@ the core. Without it the core's programs carry none of that code, and still rend
 5. **Physical sky as an add-on** — done. `rayzee/addons/physical-sky` exports `PhysicalSky`; the core's
    `environmentManager.setProceduralSky( PhysicalSky )` installs it, and `PathTracerApp` does so itself. Asked for
    'procedural' mode without it, the core records `capability.missing` (it throws under `strict`). The core reaches
-   none of its modules; the sun it shades keeps only the limb-darkening constant (`Processor/SolarLimb.js`). The core
+   none of its modules; the sun it shades keeps only the limb-darkening constant (`environment/SolarLimb.js`). The core
    now downloads 326 KB compressed (from 341). `bench:node -- --core` installs it on the core.
 6. **Per-renderer shader resources** — done (above); the Node bench now runs the core beside the full engine.
 7. **Archives and pbrt as an add-on** — done. `rayzee/addons/archives` exports `ArchiveImporter` (the archive half
    of the old `AssetLoader`, moved whole) with the readers and pbrt behind it; `assetLoader.setArchiveImporter()`
    installs it, `PathTracerApp` does so itself, and without it an archive's error names the add-on. The spill budgets
-   moved to `Processor/HostMemory.js`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
+   moved to `memory/HostMemory.js`. `classroom.zip` and `veach-ajar.zip` render byte-identically with the last commit and
    with the core plus the add-on. That check found a core bug the viewer had hidden: a load frames the camera with
    `lookAt()`, which leaves its world matrix stale, and only the orbit controls refreshed it — `renderFrames` now
    does, each pass. The core downloads 289 KB compressed (from 326).
@@ -140,7 +140,7 @@ the core. Without it the core's programs carry none of that code, and still rend
    input spaces, conversions, table baking); `renderer.setColorManagement( ColorManagement )` installs it, and
    `PathTracerApp` does so itself. Without it the core's `renderer.color` is `BasicColor`: linear Rec.709, three.js's
    seven view transforms, and `loadColorConfig()` records `capability.missing` and rejects naming the add-on. The
-   shaders and readbacks read the active colour management through `Color/ActiveColor.js`, so either one serves them.
+   shaders and readbacks read the active colour management through `color/ActiveColor.js`, so either one serves them.
    About 3,060 of the 3,885 colour lines left the core; it keeps the view-transform registry, the built-in views and
    the working matrix. The core plus the add-on renders all 36 bench scenes byte-identically with the full engine.
 
@@ -183,14 +183,14 @@ the core. Without it the core's programs carry none of that code, and still rend
    1,622 → 1,351 lines); a host's own format registers the same way. glTF's Draco, KTX2 and meshopt decoders are
    imported only for a file that uses them (`GLTFDecoders.js`). Built as a host would (the core-browser example):
    the main chunk 577 → 534 KB gzip, and the seven model-loader chunks are no longer emitted.
-17. **USD in the archives add-on** — our own USD importer (`Processor/USD/`: crate and text readers, composition, and
+17. **USD in the archives add-on** — our own USD importer (`loaders/usd/`: crate and text readers, composition, and
    translation into the pbrt builder's scene description) is reached only through `ArchiveImporter`, for a folder or
    archive whose main model is a USD layer and for a loose `.usd` / `.usda` / `.usdc`. A `.usdz` stays with three.js's
    loader in `rayzee/addons/formats`. The core learned nothing about USD: the importer hands the scene over as the pbrt
    builder does.
-18. **File export stays core** — `exportImage()` and its writers (`Processor/ImageEncoders.js`: PNG, EXR, Radiance HDR,
+18. **File export stays core** — `exportImage()` and its writers (`output/ImageEncoders.js`: PNG, EXR, Radiance HDR,
    and through the browser JPEG, WebP, HEIC, AVIF and gain-map HDR photos) are part of "the image out", and an add-on
-   would save nothing: the core already loads the writers (9.4 KB compressed) and the depth layer (`TSL/DepthPass.js`,
+   would save nothing: the core already loads the writers (9.4 KB compressed) and the depth layer (`shaders/kernels/DepthPass.js`,
    1.5 KB) on the first export. A re-export of the writers from `index.js` had made them part of `rayzee`'s startup
    download; they are now a path of their own, `rayzee/encoders`, for pixels a host already has. Startup, compressed:
    `rayzee` 413 → 404 KB, the app 1,108 → 1,099 KB; the core unchanged. The Export window, downloads and video
@@ -203,6 +203,6 @@ the core. Without it the core's programs carry none of that code, and still rend
 - **The memory spill's orchestration is in `SceneProcessor`** (streamed extraction, progressive spill, the after-load
   spill of matrix lists, top-level tree and order maps, and the page-ins an edit waits for). It does nothing without
   storage, but it is core code; moving it out means a build-step hook in the scene processor.
-- **Colour and storage are one per page.** The active colour management (`Color/ActiveColor.js`) and the shared OPFS
+- **Colour and storage are one per page.** The active colour management (`color/ActiveColor.js`) and the shared OPFS
   manager serve every renderer in the page, by design: a config is a page-wide choice, the texture cache keys on it,
   and one origin has one file system.

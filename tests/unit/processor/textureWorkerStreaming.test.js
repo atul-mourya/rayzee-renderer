@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TextureCreator, MEMORY_CONSTANTS } from '@/core/Processor/TextureCreator.js';
+import { TextureCreator, MEMORY_CONSTANTS } from '@/core/materials/TextureCreator.js';
 import { configurePlatform } from '@/core/Platform.js';
 
 // A bitmap carries the pixels createImageBitmap would have produced for its source and options.
@@ -71,7 +71,7 @@ const workerHandler = await ( async () => {
 	const had = 'self' in globalThis;
 	const previous = globalThis.self;
 	globalThis.self = {};
-	await import( '@/core/Processor/Workers/TexturesWorker.js' );
+	await import( '@/core/materials/TexturesWorker.js' );
 	const handler = globalThis.self.onmessage;
 	if ( had ) globalThis.self = previous;
 	else delete globalThis.self;

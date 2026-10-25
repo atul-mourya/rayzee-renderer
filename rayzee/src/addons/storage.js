@@ -12,8 +12,8 @@
  * await renderer.init();
  */
 
-export { openStorage, acquireSharedStorage } from '../Storage/openStorage.js';
+export { openStorage, acquireSharedStorage } from '../storage/openStorage.js';
 export {
 	StorageManager, StorageArea, StorageEntry, EntryWriter, STORAGE_KIND, ENGINE_AREAS, openInlineStorage,
-} from '../Storage/StorageManager.js';
-export { acquireLock, heldLockNames } from '../Storage/locks.js';
+} from '../storage/StorageManager.js';
+export { acquireLock, heldLockNames } from '../storage/locks.js';

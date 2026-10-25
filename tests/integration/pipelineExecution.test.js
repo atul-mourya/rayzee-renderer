@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { RenderPipeline } from '@/core/Pipeline/RenderPipeline.js';
-import { RenderStage, StageExecutionMode } from '@/core/Pipeline/RenderStage.js';
+import { RenderPipeline } from '@/core/pipeline/RenderPipeline.js';
+import { RenderStage, StageExecutionMode } from '@/core/pipeline/RenderStage.js';
 
 /**
  * Concrete test stage that publishes a texture to context

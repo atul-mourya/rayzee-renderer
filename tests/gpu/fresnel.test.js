@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { fresnelDielectric, dielectricFresnelWeight, iorToFresnel0 } from '@/core/TSL/Fresnel.js';
+import { fresnelDielectric, dielectricFresnelWeight, iorToFresnel0 } from '@/core/shaders/Fresnel.js';
 
 // Unpolarised Fresnel reflectance of a smooth dielectric, eta = n_t / n_i.
 function exactFresnel( cosI, eta ) {

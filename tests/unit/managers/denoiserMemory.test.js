@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { OIDNDenoiser } from '@/core/Passes/OIDNDenoiser.js';
-import { OIDNTemporalHistory } from '@/core/Passes/OIDNTemporalHistory.js';
+import { OIDNDenoiser } from '@/core/viewer/denoise/OIDNDenoiser.js';
+import { OIDNTemporalHistory } from '@/core/viewer/denoise/OIDNTemporalHistory.js';
 
 describe( 'denoiser GPU memory', () => {
 

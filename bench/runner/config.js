@@ -237,7 +237,7 @@ export const DENOISE_GATES = {
 	// keeps the suite affordable.
 	sppLadder: [ 1, 64 ],
 	strategies: [
-		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (Stages/NRD.js).
+		// ReBLUR port: temporal + recurrent-blur chain on the fused signal (viewer/denoise/NRD.js).
 		{ id: 'nrd', preset: 'medium' },
 		// OIDN was ungated, which left every change to the DDFA aux albedo/normal guide
 		// unmeasurable. 'high' is the clean-aux tier production uses.

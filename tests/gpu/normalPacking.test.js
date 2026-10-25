@@ -6,8 +6,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { packNormalOct, unpackNormalOct } from '@/core/Processor/BufferLayout.js';
-import { packNormalOct as packNormalOctGPU, unpackTriangleNormal } from '@/core/TSL/Common.js';
+import { packNormalOct, unpackNormalOct } from '@/core/scene/BufferLayout.js';
+import { packNormalOct as packNormalOctGPU, unpackTriangleNormal } from '@/core/shaders/Common.js';
 
 const MAX_ERROR_DEG = 0.03;
 

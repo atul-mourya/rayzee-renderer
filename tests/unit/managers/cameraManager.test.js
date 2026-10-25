@@ -135,7 +135,7 @@ vi.mock( 'three/addons/controls/OrbitControls.js', () => ( {
 	}
 } ) );
 
-vi.mock( '@/core/managers/WalkControls.js', () => ( {
+vi.mock( '@/core/viewer/camera/WalkControls.js', () => ( {
 	WalkControls: class {
 
 		update() {}
@@ -149,7 +149,7 @@ vi.mock( '@/core/EngineEvents.js', () => ( {
 	EngineEvents: { AUTO_FOCUS_UPDATED: 'AUTO_FOCUS_UPDATED' }
 } ) );
 
-const { CameraManager } = await import( '@/core/managers/CameraManager.js' );
+const { CameraManager } = await import( '@/core/viewer/camera/CameraManager.js' );
 
 function createMockCanvas() {
 

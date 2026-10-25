@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BufferAttribute } from 'three';
-import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
-import { UniformManager, LIGHT_FLOATS, LIGHT_LIST_STEP, lightListCapacity } from '@/core/managers/UniformManager.js';
+import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
+import { UniformManager, LIGHT_FLOATS, LIGHT_LIST_STEP, lightListCapacity } from '@/core/pathtracer/UniformManager.js';
 
 // The stage needs a WebGPU renderer to construct, but the completion-threshold methods only
 // touch three plain fields — call them against a bare receiver.

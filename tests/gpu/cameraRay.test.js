@@ -10,9 +10,9 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PerspectiveCamera, Raycaster, Vector2, Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { generateRayFromCamera, cameraClipDistance } from '@/core/TSL/CameraRay.js';
-import { Ray } from '@/core/TSL/Struct.js';
-import { ViewCamera } from '@/core/managers/ViewCamera.js';
+import { generateRayFromCamera, cameraClipDistance } from '@/core/shaders/CameraRay.js';
+import { Ray } from '@/core/shaders/Struct.js';
+import { ViewCamera } from '@/core/scene/ViewCamera.js';
 import { CAMERA_PROJECTION_IDS } from '@/core/EngineDefaults.js';
 
 const FOCUS = 3.5;

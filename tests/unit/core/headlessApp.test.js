@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 
 describe( 'a headless PathTracerApp', () => {
 

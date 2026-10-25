@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Group, Mesh, BoxGeometry, MeshStandardMaterial, Vector3 } from 'three';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
 
 const IDENTITY = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];
 

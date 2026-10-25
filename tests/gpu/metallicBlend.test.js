@@ -6,10 +6,10 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, bool as tslBool } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { diffuseGroundMaterial, classifyMaterial } from '@/core/TSL/Common.js';
-import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/TSL/Struct.js';
-import { calculateBRDFWeightsFromMaterial } from '@/core/TSL/MaterialProperties.js';
-import { generateSampledDirection } from '@/core/TSL/PathTracerCore.js';
+import { diffuseGroundMaterial, classifyMaterial } from '@/core/shaders/Common.js';
+import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/shaders/Struct.js';
+import { calculateBRDFWeightsFromMaterial } from '@/core/shaders/MaterialProperties.js';
+import { generateSampledDirection } from '@/core/shaders/PathTracerCore.js';
 
 const COUNT = 1 << 16;
 

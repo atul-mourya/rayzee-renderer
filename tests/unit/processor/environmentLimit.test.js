@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DataTexture, FloatType, RGBAFormat } from 'three';
-import { limitEnvironmentWidth } from '@/core/Processor/AssetLoader.js';
+import { limitEnvironmentWidth } from '@/core/loaders/AssetLoader.js';
 
 function sky( width, height ) {
 

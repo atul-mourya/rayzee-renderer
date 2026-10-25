@@ -8,9 +8,9 @@ vi.mock( 'three', () => ( {
 	SRGBColorSpace: 'srgb',
 } ) );
 
-import { extractFloatData } from '@/core/Processor/EquirectHDRInfo.js';
-import { EquirectHDRInfo } from '@/core/Processor/EquirectHDRInfo.js';
-import { buildExactEnvironmentTable, packExactTable } from '@/core/Processor/EnvironmentExactTable.js';
+import { extractFloatData } from '@/core/environment/EquirectHDRInfo.js';
+import { EquirectHDRInfo } from '@/core/environment/EquirectHDRInfo.js';
+import { buildExactEnvironmentTable, packExactTable } from '@/core/environment/EnvironmentExactTable.js';
 
 describe( 'extractFloatData', () => {
 

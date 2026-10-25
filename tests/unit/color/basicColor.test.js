@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { BasicColor } from '@/core/Color/BasicColor.js';
-import { getActiveColorManagement, setActiveColorManagement, DEFAULT_WORKING_SPACE } from '@/core/Color/ActiveColor.js';
+import { BasicColor } from '@/core/color/BasicColor.js';
+import { getActiveColorManagement, setActiveColorManagement, DEFAULT_WORKING_SPACE } from '@/core/color/ActiveColor.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
-import { addViewTransform, removeViewTransform, listViewTransforms } from '@/core/Color/ViewTransforms.js';
+import { addViewTransform, removeViewTransform, listViewTransforms } from '@/core/color/ViewTransforms.js';
 import { AgXToneMapping, ACESFilmicToneMapping } from 'three';
 
 describe( 'the renderer core\'s colour management', () => {

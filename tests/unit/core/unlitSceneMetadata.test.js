@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { RenderSettings, SETTING_SOURCE } from '@/core/RenderSettings.js';
 
 // A pbrt scene without an infinite light has no environment; the next model gets back what it replaced.

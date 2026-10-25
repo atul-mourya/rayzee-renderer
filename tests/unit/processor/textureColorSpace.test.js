@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DataTexture, LinearSRGBColorSpace, NoColorSpace, SRGBColorSpace } from 'three';
-import { TextureCreator } from '@/core/Processor/TextureCreator.js';
+import { TextureCreator } from '@/core/materials/TextureCreator.js';
 
 const MID = 128;
 

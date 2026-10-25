@@ -4,30 +4,30 @@ import {
 	Quaternion, SphereGeometry, TorusKnotGeometry, Vector3,
 } from 'three';
 
-vi.mock( '@/core/Processor/Workers/BVHWorker.js?worker&inline', async () => {
+vi.mock( '@/core/bvh/BVHWorker.js?worker&inline', async () => {
 
 	const { inProcessWorker } = await import( './bvhInvariants.js' );
-	return { default: inProcessWorker( () => import( '@/core/Processor/Workers/BVHWorker.js' ) ) };
+	return { default: inProcessWorker( () => import( '@/core/bvh/BVHWorker.js' ) ) };
 
 } );
 
-vi.mock( '@/core/Processor/Workers/BVHSubtreeWorker.js?worker&inline', async () => {
+vi.mock( '@/core/bvh/BVHSubtreeWorker.js?worker&inline', async () => {
 
 	const { inProcessWorker } = await import( './bvhInvariants.js' );
-	return { default: inProcessWorker( () => import( '@/core/Processor/Workers/BVHSubtreeWorker.js' ) ) };
+	return { default: inProcessWorker( () => import( '@/core/bvh/BVHSubtreeWorker.js' ) ) };
 
 } );
 
-vi.mock( '@/core/Processor/Workers/BVHRefitWorker.js?worker&inline', async () => {
+vi.mock( '@/core/bvh/BVHRefitWorker.js?worker&inline', async () => {
 
 	const { inProcessWorker } = await import( './bvhInvariants.js' );
-	return { default: inProcessWorker( () => import( '@/core/Processor/Workers/BVHRefitWorker.js' ) ) };
+	return { default: inProcessWorker( () => import( '@/core/bvh/BVHRefitWorker.js' ) ) };
 
 } );
 
 // Pieces of 160 triangles where the engine cuts 512k, so a test mesh splits as a 2M-triangle one does.
 const SPLIT_PIECE = 160;
-vi.mock( '@/core/Processor/SplitBLAS.js', async importOriginal => {
+vi.mock( '@/core/bvh/SplitBLAS.js', async importOriginal => {
 
 	const actual = await importOriginal();
 	return { ...actual, partitionRange: ( records, start, count, piece, options ) => actual.partitionRange( records, start, count, Math.min( piece, SPLIT_PIECE ), options ) };
@@ -35,14 +35,14 @@ vi.mock( '@/core/Processor/SplitBLAS.js', async importOriginal => {
 } );
 
 import { inspectBVH } from './bvhInvariants.js';
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { foldLeaves } from '@/core/Processor/BVHLeafFold.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
+import { foldLeaves } from '@/core/bvh/BVHLeafFold.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
-import { StorageParts } from '@/core/TSL/patches.js';
-import { TRIANGLE_DATA_LAYOUT } from '@/core/Processor/BufferLayout.js';
+import { StorageParts } from '@/core/shaders/patches.js';
+import { TRIANGLE_DATA_LAYOUT } from '@/core/scene/BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 // Meshes past these build as the engine builds one past 200k (across workers) or 2M (in pieces) triangles.

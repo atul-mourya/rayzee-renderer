@@ -8,7 +8,7 @@ vi.mock( 'rayzee', async () => ( {
 	getActiveColorManagement: () => cm,
 	onRegistryChange: vi.fn(),
 	listViewTransforms: () => [],
-	fetchFile: ( await import( '@/core/Storage/DownloadCache.js' ) ).fetchFile,
+	fetchFile: ( await import( '@/core/storage/DownloadCache.js' ) ).fetchFile,
 } ) );
 vi.mock( '@/lib/appProxy', () => ( { getApp: () => app } ) );
 vi.mock( '@/hooks/useActiveApp', () => ( { useActiveApp: () => app } ) );

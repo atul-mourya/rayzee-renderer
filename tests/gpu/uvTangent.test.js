@@ -8,8 +8,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Matrix3 } from 'three';
 import { instanceIndex, instancedArray, int } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { triangleUVTangent } from '@/core/TSL/TextureSampling.js';
-import { arrayToMat3 } from '@/core/TSL/Common.js';
+import { triangleUVTangent } from '@/core/shaders/TextureSampling.js';
+import { arrayToMat3 } from '@/core/shaders/Common.js';
 
 const uvTransform = ( ox, oy, sx, sy, rotation ) => new Matrix3().setUvTransform( ox, oy, sx, sy, rotation, 0, 0 ).elements;
 const affine = ( a, b, c, d, ox, oy ) => [ a, c, 0, b, d, 0, ox, oy, 1 ]; // u' = a·u + b·v + ox, v' = c·u + d·v + oy

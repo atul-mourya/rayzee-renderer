@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BoxGeometry, Color, Group, InstancedMesh, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry } from 'three';
-import { GeometryExtractor } from '@/core/Processor/GeometryExtractor.js';
+import { GeometryExtractor } from '@/core/scene/GeometryExtractor.js';
 
 function scene() {
 

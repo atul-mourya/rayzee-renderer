@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { OrthographicCamera, PerspectiveCamera, Raycaster, Vector3 } from 'three';
-import { ViewCamera } from '@/core/managers/ViewCamera.js';
+import { ViewCamera } from '@/core/scene/ViewCamera.js';
 
 function camera() {
 

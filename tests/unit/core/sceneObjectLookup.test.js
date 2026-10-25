@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Group, Scene } from 'three';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 
 const getSceneObject = ( meshScene, id ) =>
 	PathTracerApp.prototype.getSceneObject.call( { meshScene }, id );

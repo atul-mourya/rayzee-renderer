@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { TLASBuilder } from '@/core/bvh/TLASBuilder.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
 
 const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
 const IDENTITY = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];

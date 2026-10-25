@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { BVH_LEAF_MARKERS } from '@/core/Processor/BufferLayout.js';
+import { BVH_LEAF_MARKERS } from '@/core/scene/BufferLayout.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		setBatchSizeRatio() {}
@@ -16,11 +16,11 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { partitionRange, joinPieces } from '@/core/Processor/SplitBLAS.js';
-import { foldLeaves, isFoldedRef, foldedFirst, foldedCount } from '@/core/Processor/BVHLeafFold.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { partitionRange, joinPieces } from '@/core/bvh/SplitBLAS.js';
+import { foldLeaves, isFoldedRef, foldedFirst, foldedCount } from '@/core/bvh/BVHLeafFold.js';
 
 const LANES = 20;
 const ID = 18;

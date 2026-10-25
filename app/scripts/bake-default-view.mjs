@@ -9,7 +9,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { configureAssets } from '../../rayzee/src/AssetConfig.js';
-import { ColorManagement } from '../../rayzee/src/Color/ColorManagement.js';
+import { ColorManagement } from '../../rayzee/src/color/ColorManagement.js';
 import { DEFAULT_COLOR_IDENTITY } from '../src/lib/colorDefaults.js';
 
 const { id, view, bakedView, bakedHdrView } = DEFAULT_COLOR_IDENTITY;

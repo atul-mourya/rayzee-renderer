@@ -16,12 +16,12 @@ vi.mock( '@/core/EngineDefaults.js', async ( importOriginal ) => ( {
 	PRODUCTION_RENDER_CONFIG: { maxSamples: 30 },
 } ) );
 
-vi.mock( '@/core/Processor/utils.js', () => ( {
+vi.mock( '@/core/utils.js', () => ( {
 	updateStats: vi.fn(),
 	getDisplaySamples: vi.fn( () => 1 ),
 } ) );
 
-const { VideoRenderManager } = await import( '@/core/managers/VideoRenderManager.js' );
+const { VideoRenderManager } = await import( '@/core/viewer/animation/VideoRenderManager.js' );
 const { modePresetSettings } = await import( '@/core/EngineDefaults.js' );
 
 // Every setting a mode preset owns, each with a distinct value and alternating provenance, and

@@ -6,8 +6,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType, PerspectiveCamera, Vector2, Vector3 } from 'three';
 import { describeGPU, createRenderer } from './gpu.js';
-import { NRD } from '@/core/Stages/NRD.js';
-import { TextureReadback } from '@/core/Processor/TextureReadback.js';
+import { NRD } from '@/core/viewer/denoise/NRD.js';
+import { TextureReadback } from '@/core/output/TextureReadback.js';
 
 const W = 64, H = 64;
 const DISTANCE = 5;

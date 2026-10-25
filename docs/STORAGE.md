@@ -1,4 +1,4 @@
-# Storage (OPFS) (`rayzee/src/Storage/`)
+# Storage (OPFS) (`rayzee/src/storage/`)
 
 `app.storage` is a `StorageManager` over the origin private file system, opened per
 `cacheNamespace` and shared by every app on the page (`acquireSharedStorage`, ref-counted). It is
@@ -7,7 +7,7 @@ work without it.
 An add-on (`rayzee/addons/storage`): the OPFS implementation (`StorageManager`, `StorageOps`, `StorageWorker`, the
 transports, `locks`, `events`, `openStorage`) is reached only through `renderer.setStorageOpener( acquireSharedStorage )`
 — `PathTracerApp` installs it. The caches that *use* a manager stay core (`DownloadCache`, `CDFCache`, `BLASCache`,
-`SpillStore`, `GeometrySpill`, `identity`, `shared`) and import area names from `Storage/areas.js`, never
+`SpillStore`, `GeometrySpill`, `identity`, `shared`) and import area names from `storage/areas.js`, never
 `StorageManager.js`. Without the add-on, `storage: 'auto'` asked for explicitly records `capability.missing` (a warning). `configureAssets( { storage: false } )` or `new PathTracerApp( c, { storage } )`
 turns it off or supplies a host manager; `openHeadless` defaults to off.
 - **Areas.** Engine: `downloads` (URL cache, revalidated at most daily with a 1-byte `Range: bytes=0-0`
@@ -59,7 +59,7 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   (400 MB in the tab, as much on the GPU) and its second load ran out of memory. Read sections in one forward pass of
   large windows: thousands of small `File.slice` reads took 9.8 s, one pass 0.37 s.
 - **Scene state.** `app.exportSceneState()` / `importSceneState( state, { resolve } )`
-  (`SceneState/`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
+  (`viewer/SceneState.js`): host-set settings (`settings.serialize()`), environment (mode, sky params, HDRI
   source), colour (config, view, look, working space, context), every light, cameras (live view,
   user cameras, per-camera effects), timeline keys, host material edits (with values —
   `_hostSet` is a Map), hidden objects, gizmo-moved objects. Objects are matched by child-index
@@ -101,7 +101,7 @@ turns it off or supplies a host manager; `openHeadless` defaults to off.
   the triangle records are never all resident. Whole Moana subset: build peak 6.6 → 4.1 GB, render
   bit-identical. ⚠️ That wait races a *timer*: racing a settled promise spun it in microtasks and
   starved the worker messages it waited for (a hung tab). The three.js geometry goes to disk too,
-  from its last read until the build ends (`Storage/GeometrySpill.js`, handed over by
+  from its last read until the build ends (`storage/GeometrySpill.js`, handed over by
   `GeometryExtractor._geometryReleaser`, compressed first): never a host's (`__rayzeeExternal`), a
   deforming one, or one sharing an array with another geometry. Small arrays go out packed in 32 MB
   writes; a geometry keeps its bounds (computed before its arrays go). From `GEOMETRY_ON_DISK_BYTES` (1 GB) up it

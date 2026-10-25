@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { IESManager } from '@/core/managers/IESManager.js';
-import { GoboManager } from '@/core/managers/GoboManager.js';
+import { IESManager } from '@/core/viewer/lights/IESManager.js';
+import { GoboManager } from '@/core/viewer/lights/GoboManager.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 
 const spot = { uuid: 's', isSpotLight: true, userData: {} };

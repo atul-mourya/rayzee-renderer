@@ -10,5 +10,5 @@
  * await renderer.loadFile( 'scene.tar' );
  */
 
-export { ArchiveImporter, ARCHIVE_ELEMENT_PROMPT_BYTES } from '../Processor/ArchiveImporter.js';
-export { openZip, readZipDirectory } from '../Processor/ZipReader.js';
+export { ArchiveImporter, ARCHIVE_ELEMENT_PROMPT_BYTES } from '../loaders/archives/ArchiveImporter.js';
+export { openZip, readZipDirectory } from '../loaders/archives/ZipReader.js';

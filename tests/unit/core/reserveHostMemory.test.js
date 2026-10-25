@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PathTracerApp } from '@/core/PathTracerApp.js';
+import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { IssueLog } from '@/core/EngineIssues.js';
-import { setReservedRenderSize } from '@/core/Processor/StorageTexturePool.js';
+import { setReservedRenderSize } from '@/core/pathtracer/StorageTexturePool.js';
 
 const GB = 1024 * 1024 * 1024;
 

@@ -10,7 +10,7 @@ import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { describeGPU, createRenderer } from './gpu.js';
 
-vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
+vi.mock( '@/core/bvh/ReinsertionOptimizer.js', () => ( {
 	ReinsertionOptimizer: class {
 
 		setBatchSizeRatio() {}
@@ -25,18 +25,18 @@ vi.mock( '@/core/Processor/ReinsertionOptimizer.js', () => ( {
 	}
 } ) );
 
-import { BVHBuilder } from '@/core/Processor/BVHBuilder.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
-import { rebaseNodes } from '@/core/Processor/BVHLeafFold.js';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { PathTracerStage } from '@/core/Stages/PathTracerStage.js';
-import { traverseBVH, traverseBVHShadow, traverseBVHShadowCameraCulled } from '@/core/TSL/BVHTraversal.js';
-import { StorageParts } from '@/core/TSL/patches.js';
-import { splitStorage } from '@/core/TSL/Common.js';
-import { Ray } from '@/core/TSL/Struct.js';
-import { withSceneResources } from '@/core/TSL/SceneResources.js';
-import { TRI_SIDE_SHIFT } from '@/core/Processor/BufferLayout.js';
+import { BVHBuilder } from '@/core/bvh/BVHBuilder.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { TLASBuilder } from '@/core/bvh/TLASBuilder.js';
+import { rebaseNodes } from '@/core/bvh/BVHLeafFold.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
+import { PathTracerStage } from '@/core/pathtracer/PathTracerStage.js';
+import { traverseBVH, traverseBVHShadow, traverseBVHShadowCameraCulled } from '@/core/shaders/BVHTraversal.js';
+import { StorageParts } from '@/core/shaders/patches.js';
+import { splitStorage } from '@/core/shaders/Common.js';
+import { Ray } from '@/core/shaders/Struct.js';
+import { withSceneResources } from '@/core/shaders/SceneResources.js';
+import { TRI_SIDE_SHIFT } from '@/core/scene/BufferLayout.js';
 
 const LANES = 20;
 const PER_MESH = 300;

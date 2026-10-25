@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	shadowBlockerBits, packTriangleFlags, TRI_BLOCKER_SHIFT, TRI_BLOCKER_ALPHA_SHIFT, TRI_MATERIAL_MASK,
 	TRI_SIDE_SHIFT,
-} from '@/core/Processor/BufferLayout.js';
+} from '@/core/scene/BufferLayout.js';
 
 const ALWAYS = 1, UNLESS_ALPHA = 2, PASSES = 0;
 

@@ -8,11 +8,11 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Fn, instanceIndex, instancedArray, storage, vec3, vec4, float, int, normalize, select } from 'three/tsl';
 import { StorageInstancedBufferAttribute } from 'three/webgpu';
 import { describeGPU, createRenderer } from './gpu.js';
-import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/Processor/BufferLayout.js';
-import { MATERIAL_SLOTS, MATERIAL_SLOT } from '@/core/TSL/Common.js';
-import { calculateEmissiveLightPdf } from '@/core/TSL/EmissiveSampling.js';
-import { sideAccepts } from '@/core/TSL/BVHTraversal.js';
-import { windingNormal } from '@/core/TSL/HitFacet.js';
+import { TRI_SIDE_SHIFT, packNormalOct } from '@/core/scene/BufferLayout.js';
+import { MATERIAL_SLOTS, MATERIAL_SLOT } from '@/core/shaders/Common.js';
+import { calculateEmissiveLightPdf } from '@/core/shaders/EmissiveSampling.js';
+import { sideAccepts } from '@/core/shaders/BVHTraversal.js';
+import { windingNormal } from '@/core/shaders/HitFacet.js';
 
 const LANES = 20;
 const SIDES = [ 0, 1, 2 ];

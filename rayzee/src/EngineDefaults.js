@@ -80,7 +80,7 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	areaLightIntensityScale: 0.1, // power of a glTF model's placeholder area lights (RectAreaLight extras)
 
 	// Debug
-	visMode: 0, // a debug view (TSL/Debugger.js); 0 renders normally
+	visMode: 0, // a debug view (shaders/Debugger.js); 0 renders normally
 	debugVisScale: 100,
 
 } );

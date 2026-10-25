@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock( '@/core/Passes/OIDNDenoiser.js', async () => {
+vi.mock( '@/core/viewer/denoise/OIDNDenoiser.js', async () => {
 
 	const { EventDispatcher } = await import( 'three' );
 	return { OIDNDenoiser: class extends EventDispatcher {} };
 
 } );
-vi.mock( '@/core/Passes/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
-vi.mock( '@/core/Passes/OIDNTemporalHistory.js', () => ( {
+vi.mock( '@/core/viewer/picture/AIUpscaler.js', () => ( { AIUpscaler: class {} } ) );
+vi.mock( '@/core/viewer/denoise/OIDNTemporalHistory.js', () => ( {
 	OIDNTemporalHistory: class {
 
 		constructor() {
@@ -43,7 +43,7 @@ vi.mock( '@/core/Passes/OIDNTemporalHistory.js', () => ( {
 } ) );
 
 const { Matrix4 } = await import( 'three' );
-const { DenoisingManager } = await import( '@/core/managers/DenoisingManager.js' );
+const { DenoisingManager } = await import( '@/core/viewer/denoise/DenoisingManager.js' );
 
 function makePathTracer() {
 

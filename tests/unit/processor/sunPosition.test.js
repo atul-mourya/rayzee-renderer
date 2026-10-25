@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sunPosition, timeForSunElevation, dayOfYearForMonth } from '@/core/Processor/SunPosition.js';
+import { sunPosition, timeForSunElevation, dayOfYearForMonth } from '@/core/environment/SunPosition.js';
 
 const march = dayOfYearForMonth( 3 );
 

@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { offsetRayOrigin } from '@/core/TSL/Common.js';
+import { offsetRayOrigin } from '@/core/shaders/Common.js';
 
 const f32 = new Float32Array( 1 );
 const i32 = new Int32Array( f32.buffer );

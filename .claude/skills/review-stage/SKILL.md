@@ -10,12 +10,12 @@ allowed-tools: Read, Glob, Grep
 You are reviewing a rendering pipeline stage in the Rayzee path tracer. The user will specify which stage to review (or you should ask).
 
 ## Stage Location
-Stages live in `rayzee/src/Stages/`. Find the file matching the user's input.
+Stages live in `rayzee/src/pathtracer/` and `pipeline/` (core) and `rayzee/src/viewer/denoise/` and `viewer/picture/` (viewer). Find the file matching the user's input.
 
 ## Review Checklist
 
 ### 1. Base Class Compliance
-- [ ] Extends `RenderStage` from `rayzee/src/Pipeline/RenderStage.js`
+- [ ] Extends `RenderStage` from `rayzee/src/pipeline/RenderStage.js`
 - [ ] Implements the lifecycle it needs: `render( context, writeBuffer )`, `reset()`, `setSize()`, `dispose()`; event listeners in `setupEventListeners()` (called from `initialize( context, eventBus )`)
 - [ ] Calls `super()` with appropriate config (name, enabled state)
 - [ ] Has proper `dispose()` that cleans up all GPU resources (render targets, textures, materials)
@@ -51,7 +51,7 @@ Stages live in `rayzee/src/Stages/`. Find the file matching the user's input.
 - [ ] outputNode used for technical passes (not colorNode)
 - [ ] .toVar() on all mutable variables
 - [ ] UV Y-flip handled for QuadMesh screen-space shaders
-- [ ] No per-renderer data in module state read from a `Fn()` body (`TSL/SceneResources.js`)
+- [ ] No per-renderer data in module state read from a `Fn()` body (`shaders/SceneResources.js`)
 
 ### 7. Performance
 - [ ] Compute dispatch dimensions appropriate for the task

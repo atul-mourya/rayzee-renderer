@@ -301,7 +301,7 @@ against an exact analytic 0.25. The sample is now simply lost, which keeps the d
 surface's horizon, but a shadow ray leaving the flat facet near it is blocked by that facet or its
 neighbours, so a 16-segment sphere drew its outline into the shading and read 0.99650 against the smooth sphere's 0.99879. The
 1 mm spawn offset used to hide most of it; scale-aware offsets exposed it. Light and environment
-shadow rays now start on the smooth surface the vertex normals describe (`TSL/ShadowTerminator.js`,
+shadow rays now start on the smooth surface the vertex normals describe (`shaders/ShadowTerminator.js`,
 a port of Cycles 5.1's geometry offset, default 0.1): both low-poly spheres read 0.99879, the same as
 the smooth one, with 46 % and 20 % less noise.
 
@@ -310,7 +310,7 @@ normal, which is the *interpolated* one. Foliage cards ship vertex normals that 
 vertical card the offset moved a ray passing through a transparent texel within the card's own
 plane; it hit the same card again until the transparent-bounce guard ended the path, and the cards
 drew black. Rays now step off the facet normal, which Extend packs into the hit record
-(`TSL/HitFacet.js`). `furnace-foliage-cards` — six crossed, fully transparent cards in a white
+(`shaders/HitFacet.js`). `furnace-foliage-cards` — six crossed, fully transparent cards in a white
 furnace — read 0.51448 before and 1.00000 after; no other scene has cards whose normals disagree with
 their facets, which is why nothing else caught it.
 
@@ -495,7 +495,7 @@ just that part.
 `--core` renders each scene a second time with the renderer core (`RayzeeRenderer` from `rayzee/core`, with the
 physical-sky and bidirectional add-ons installed), alive beside the full engine, and requires the two to match byte
 for byte. It holds the core/viewer split to "same pixels", and it is what found module-level shader state shared
-between two renderers in one process (see `TSL/SceneResources.js`).
+between two renderers in one process (see `shaders/SceneResources.js`).
 
 ### Scene loading — real models, by phase
 

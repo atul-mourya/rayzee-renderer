@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, select, vec3, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { lightPick } from '@/core/TSL/LightsSampling.js';
+import { lightPick } from '@/core/shaders/LightsSampling.js';
 
 const N = 1 << 16;
 const LIGHTS = [[ 1, 0.5, 0.2 ], [ 0, 0, 0 ], [ 0.1, 0.1, 3 ], [ 4, 4, 4 ]];

@@ -6,9 +6,9 @@ vi.hoisted( () => {
 	globalThis.ProgressEvent ??= class extends Event {};
 
 } );
-import { loadPBRTScene } from '@/core/Processor/PBRT/index.js';
-import { ArchiveImporter } from '@/core/Processor/ArchiveImporter.js';
-import { localFolder } from '@/core/Processor/archiveFormats.js';
+import { loadPBRTScene } from '@/core/loaders/pbrt/index.js';
+import { ArchiveImporter } from '@/core/loaders/archives/ArchiveImporter.js';
+import { localFolder } from '@/core/loaders/archives/archiveFormats.js';
 import { IssueLog, ISSUE_CODES, ISSUE_SEVERITY } from '@/core/EngineIssues.js';
 
 const SCENE = `

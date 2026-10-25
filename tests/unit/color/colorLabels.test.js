@@ -11,11 +11,11 @@ import {
 	workingSpaceOptions, textureSpaceGroups, exportSpaceOptions, displaySections, spaceLabel,
 	screenHint, toneMappingHint,
 } from '@/lib/colorLabels.js';
-import { displayCanvasFit, isHdrDisplay, sameToneMapping } from '@/core/Color/Displays.js';
+import { displayCanvasFit, isHdrDisplay, sameToneMapping } from '@/core/color/Displays.js';
 import { configureAssets } from '@/core/AssetConfig.js';
-import { loadConfig, listBuiltinConfigs, resetOcio } from '@/core/Color/OcioRuntime.js';
-import { findNativeLinearSpace } from '@/core/Color/ColorManagement.js';
-import { getConfigInfo } from '@/core/Color/OcioRuntime.js';
+import { loadConfig, listBuiltinConfigs, resetOcio } from '@/core/color/OcioRuntime.js';
+import { findNativeLinearSpace } from '@/core/color/ColorManagement.js';
+import { getConfigInfo } from '@/core/color/OcioRuntime.js';
 
 const DISPLAYS = { canvasFit: displayCanvasFit, isHdr: isHdrDisplay };
 

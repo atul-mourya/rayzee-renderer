@@ -78,7 +78,7 @@ const unsub = subscribeApp( ( app ) => {
 
 ## Core Components
 
-### 1. PipelineContext (`Pipeline/PipelineContext.js`)
+### 1. PipelineContext (`pipeline/PipelineContext.js`)
 
 Shared state for all stages: named textures, render targets, uniforms and a state object.
 
@@ -123,7 +123,7 @@ const color = context.getTexture( 'pathtracer:color' );
 
 ---
 
-### 2. EventBus (`Pipeline/EventDispatcher.js`)
+### 2. EventBus (`pipeline/EventDispatcher.js`)
 
 `pipeline.eventBus`, shared by every stage (`on`, `once`, `off`, `emit`, `listenerCount`, `eventNames`).
 
@@ -156,7 +156,7 @@ this.on( 'pipeline:historyReset', () => this.resetHistory() );
 
 ---
 
-### 3. RenderPipeline (`Pipeline/RenderPipeline.js`)
+### 3. RenderPipeline (`pipeline/RenderPipeline.js`)
 
 Runs the stages in order and owns the context and the event bus.
 
@@ -179,7 +179,7 @@ A stage that throws is logged and recorded once per stage and phase as `stage.re
 
 ---
 
-### 4. RenderStage (Base Class, `Pipeline/RenderStage.js`)
+### 4. RenderStage (Base Class, `pipeline/RenderStage.js`)
 
 Base class for all stages. Exported from `rayzee` (with `StageExecutionMode`, `RenderPipeline` and `PipelineContext`), not from `rayzee/core`.
 
@@ -261,7 +261,7 @@ Setting `stage.enabled` directly, as `DenoisingManager` does, emits nothing.
 
 ### PathTracer (core)
 
-`Stages/PathTracer.js` (`class PathTracer extends PathTracerStage`). The ray tracer.
+`pathtracer/PathTracer.js` (`class PathTracer extends PathTracerStage`). The ray tracer.
 
 **Execution Mode:** `ALWAYS` — accumulates a sample every frame until complete.
 
@@ -285,16 +285,16 @@ Setting `stage.enabled` directly, as `DenoisingManager` does, emits nothing.
 
 #### Composition Architecture
 
-`PathTracer` extends `PathTracerStage`. The base (`Stages/PathTracerStage.js`) owns the renderer-agnostic state and delegates data management to 5 sub-managers; the subclass adds the wavefront kernel orchestration (`render()`, `KernelManager` / `QueueManager` / `PackedRayBuffer` wiring):
+`PathTracer` extends `PathTracerStage`. The base (`pathtracer/PathTracerStage.js`) owns the renderer-agnostic state and delegates data management to 5 sub-managers; the subclass adds the wavefront kernel orchestration (`render()`, `KernelManager` / `QueueManager` / `PackedRayBuffer` wiring):
 
 ```
-PathTracer  (Stages/PathTracer.js — wavefront render() + kernel orchestration)
-  └── PathTracerStage  (Stages/PathTracerStage.js — base, sub-manager composition)
-        ├── uniforms: UniformManager           (managers/UniformManager.js)
-        ├── materialData: MaterialDataManager  (managers/MaterialDataManager.js)
-        ├── environment: EnvironmentManager    (managers/EnvironmentManager.js)
-        ├── shaderBuilder: ShaderBuilder       (Processor/ShaderBuilder.js)
-        └── storageTextures: StorageTexturePool (Processor/StorageTexturePool.js)
+PathTracer  (pathtracer/PathTracer.js — wavefront render() + kernel orchestration)
+  └── PathTracerStage  (pathtracer/PathTracerStage.js — base, sub-manager composition)
+        ├── uniforms: UniformManager           (pathtracer/UniformManager.js)
+        ├── materialData: MaterialDataManager  (materials/MaterialDataManager.js)
+        ├── environment: EnvironmentManager    (environment/EnvironmentManager.js)
+        ├── shaderBuilder: ShaderBuilder       (pathtracer/ShaderBuilder.js)
+        └── storageTextures: StorageTexturePool (pathtracer/StorageTexturePool.js)
 ```
 
 The base keeps: constructor, `reset()`, `build()`, `setupMaterial()`, scene/light/camera uniform updates, event emission, the history reset on a render-mode change, and disposal. The subclass keeps `render()` (the per-bounce kernel loop) and the kernel/buffer lifecycle.
@@ -342,7 +342,7 @@ stage.vramTracker.resetPeak();
 
 `generateProceduralSkyTexture()` bakes only once the `rayzee/addons/physical-sky` add-on is installed with `environmentManager.setProceduralSky( PhysicalSky )` — the viewer does this in `_initManagers()`. Without it the call records `capability.missing` and resolves.
 
-`VRAMTracker` (`Processor/VRAMTracker.js`) is owned by the `PathTracer` subclass, not one of the 5 sub-managers. Its providers are thunks that read live GPU resources, summed by real size and de-duplicated by identity. The path tracer registers its own (rays — the hit buffer with its G-buffer region —, queues, G-buffer, accumulation, geometry, materials with the light data, environment, integrator); the core's `_ensureVRAMWiring()` adds every other stage's textures and render targets and the canvas, and the viewer's `_registerVRAM()` hook adds the denoiser. The renderer exposes it as `vram` and `getMemoryInfo()`, and measures on a burst's first frames, every 30th frame, and on scene rebuild, environment load and resolution change.
+`VRAMTracker` (`memory/VRAMTracker.js`) is owned by the `PathTracer` subclass, not one of the 5 sub-managers. Its providers are thunks that read live GPU resources, summed by real size and de-duplicated by identity. The path tracer registers its own (rays — the hit buffer with its G-buffer region —, queues, G-buffer, accumulation, geometry, materials with the light data, environment, integrator); the core's `_ensureVRAMWiring()` adds every other stage's textures and render targets and the canvas, and the viewer's `_registerVRAM()` hook adds the denoiser. The renderer exposes it as `vram` and `getMemoryInfo()`, and measures on a burst's first frames, every 30th frame, and on scene rebuild, environment load and resolution change.
 
 **Callback Pattern:**
 
@@ -363,13 +363,13 @@ The renderer swaps the environment's `onReset` for its own `reset()`, not the st
 
 **Key Design Constraint:** TSL uniform nodes and texture nodes are created once and never replaced — only `.value` is mutated. This preserves compiled shader graph references. All sub-managers follow this pattern.
 
-**Per-renderer shader resources.** Material texture buckets, the albedo maps alpha-cutout shadow rays read, gobo and IES textures and the alpha-shadow switch ride in each kernel's build context (`TSL/SceneResources.js`). A kernel's root is built with `withSceneResources( call, resources )` (`PathTracer._buildWavefrontKernels`, NormalDepth), and a TSL function body reads them with `sceneResources( builder )`, which throws when the kernel was built without them. They are never module state: a TSL function body runs when its kernel compiles, often at its first dispatch, so a module variable would be read from whichever renderer set it last.
+**Per-renderer shader resources.** Material texture buckets, the albedo maps alpha-cutout shadow rays read, gobo and IES textures and the alpha-shadow switch ride in each kernel's build context (`shaders/SceneResources.js`). A kernel's root is built with `withSceneResources( call, resources )` (`PathTracer._buildWavefrontKernels`, NormalDepth), and a TSL function body reads them with `sceneResources( builder )`, which throws when the kernel was built without them. They are never module state: a TSL function body runs when its kernel compiles, often at its first dispatch, so a module variable would be read from whichever renderer set it last.
 
 ---
 
 ### Compositor (core)
 
-`Stages/Compositor.js`. **Execution Mode:** `ALWAYS`. The last stage: it picks the picture, grades saturation, sets alpha (opaque unless a transparent background is on) and draws to the canvas.
+`pipeline/Compositor.js`. **Execution Mode:** `ALWAYS`. The last stage: it picks the picture, grades saturation, sets alpha (opaque unless a transparent background is on) and draws to the canvas.
 
 **Which picture.** `resolveLightTexture()` returns, in order:
 1. the first published key of `displaySources`, the list `_displaySources()` returned when the stages were created;
@@ -424,7 +424,7 @@ OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/d
 
 The overlay is not a stage. After each frame `animate()` calls the `_renderHelperOverlay()` hook; the viewer draws `OverlayManager` there, at view resolution, on canvases of its own, so helpers never reach a saved image.
 
-`TileHelper` (`managers/helpers/TileHelper.js`, registered by `OverlayManager`) draws the progress border of the **OIDN denoiser** and **AI upscaler**, which process the final image in tiles. It listens for `tileProgress` / `end` events they emit on themselves (`OverlayManager._wireDenoiserTileEvents`), and hides on `pipeline:reset`.
+`TileHelper` (`viewer/overlays/TileHelper.js`, registered by `OverlayManager`) draws the progress border of the **OIDN denoiser** and **AI upscaler**, which process the final image in tiles. It listens for `tileProgress` / `end` events they emit on themselves (`OverlayManager._wireDenoiserTileEvents`), and hides on `pipeline:reset`.
 
 ---
 
@@ -479,7 +479,7 @@ Compositor → renderer output pass (exposure, view transform, sRGB) → canvas
 _renderHelperOverlay() → OverlayManager (viewer): outline, scene helpers, HUD at view resolution
 ```
 
-`renderer.toneMapping` is an id in the view-transform registry (`Color/ViewTransforms.js`): three.js's seven built-in curves, plus OpenColorIO views baked to tables once the `rayzee/addons/color` add-on is installed (`renderer.setColorManagement( ColorManagement )`; the viewer does). Without it `renderer.color` is the core's `BasicColor` (`Color/BasicColor.js`): linear Rec.709, the built-in views, nothing converted. An OCIO view returns colour already encoded for its display, so `ColorManagement` sets `renderer.outputColorSpace` to linear while one is active. The readbacks (`ToneMapGPU`, `ToneMapCPU`) read the same registry, so a saved image matches the canvas.
+`renderer.toneMapping` is an id in the view-transform registry (`color/ViewTransforms.js`): three.js's seven built-in curves, plus OpenColorIO views baked to tables once the `rayzee/addons/color` add-on is installed (`renderer.setColorManagement( ColorManagement )`; the viewer does). Without it `renderer.color` is the core's `BasicColor` (`color/BasicColor.js`): linear Rec.709, the built-in views, nothing converted. An OCIO view returns colour already encoded for its display, so `ColorManagement` sets `renderer.outputColorSpace` to linear while one is active. The readbacks (`ToneMapGPU`, `ToneMapCPU`) read the same registry, so a saved image matches the canvas.
 
 ---
 
@@ -515,7 +515,7 @@ The Compositor shows only keys in its display list (see Compositor above). `Deno
 - **CONDITIONAL** - custom logic (override `shouldExecute()`)
 
 ```javascript
-import { RenderStage, StageExecutionMode } from '../Pipeline/RenderStage.js';  // a host: from 'rayzee'
+import { RenderStage, StageExecutionMode } from '../pipeline/RenderStage.js';  // a host: from 'rayzee'
 import { MeshBasicNodeMaterial, QuadMesh, RenderTarget, TextureNode } from 'three/webgpu';
 import { uv, uniform } from 'three/tsl';
 
@@ -576,7 +576,7 @@ export class MyCustomStage extends RenderStage {
 }
 ```
 
-Give every `TextureNode` a kernel reads its real texture before the kernel first runs: two nodes still holding the default empty texture share one GPU binding (`Pipeline/BindingAudit.js` checks this when `setBindingAudit( true )`; the bench turns it on). A node read later than that gets its own placeholder texture (`readNode()` in `NRD.js`).
+Give every `TextureNode` a kernel reads its real texture before the kernel first runs: two nodes still holding the default empty texture share one GPU binding (`pipeline/BindingAudit.js` checks this when `setBindingAudit( true )`; the bench turns it on). A node read later than that gets its own placeholder texture (`readNode()` in `NRD.js`).
 
 ### Step 2: Add to Pipeline
 
@@ -636,7 +636,7 @@ handleMyCustomIntensity: handleChange(
 
 - **Don't reach into other stages for textures** - read them from the context
 - **Don't name a capability in the core** - add a hook, a context key or `requestOutput`
-- **Don't keep per-renderer shader state in module variables** - use the kernel's build context (`TSL/SceneResources.js`)
+- **Don't keep per-renderer shader state in module variables** - use the kernel's build context (`shaders/SceneResources.js`)
 - **Don't allocate in `render()`** - allocate in the constructor or on resize
 - **Don't drop history on every reset** - listen for `pipeline:historyReset`; a soft reset (a camera move) keeps it
 

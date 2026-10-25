@@ -4,8 +4,8 @@
  * how fast frames were submitted.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { PathTracer } from '@/core/Stages/PathTracer.js';
-import { COUNTER } from '@/core/Processor/QueueManager.js';
+import { PathTracer } from '@/core/pathtracer/PathTracer.js';
+import { COUNTER } from '@/core/pathtracer/QueueManager.js';
 
 const W = 4, H = 2, N_SNAPSHOTS = 32;
 

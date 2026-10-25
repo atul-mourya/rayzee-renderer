@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { BoxGeometry, MathUtils, Mesh, MeshBasicMaterial, PerspectiveCamera, Raycaster, Scene, Vector3 } from 'three';
-import { WalkControls } from '@/core/managers/WalkControls.js';
-import { CameraManager } from '@/core/managers/CameraManager.js';
-import { InteractionManager } from '@/core/managers/InteractionManager.js';
+import { WalkControls } from '@/core/viewer/camera/WalkControls.js';
+import { CameraManager } from '@/core/viewer/camera/CameraManager.js';
+import { InteractionManager } from '@/core/viewer/camera/InteractionManager.js';
 
 const withProps = ( event, props ) => {
 

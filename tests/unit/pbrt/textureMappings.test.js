@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { BufferGeometry, DataTexture, Float32BufferAttribute, Mesh } from 'three';
-import { loadPBRTScene } from '@/core/Processor/PBRT/index.js';
-import { generateUV } from '@/core/Processor/PBRT/PBRTTextureBake.js';
+import { loadPBRTScene } from '@/core/loaders/pbrt/index.js';
+import { generateUV } from '@/core/loaders/pbrt/PBRTTextureBake.js';
 
 const enc = new TextEncoder();
 const IDENTITY = [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 ];

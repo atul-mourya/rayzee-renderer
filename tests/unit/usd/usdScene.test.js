@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3, Matrix4, Texture, SRGBColorSpace, MirroredRepeatWrapping, ClampToEdgeWrapping } from 'three';
-import { USDFiles, loadUSDScene } from '@/core/Processor/USD/index.js';
+import { USDFiles, loadUSDScene } from '@/core/loaders/usd/index.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
 

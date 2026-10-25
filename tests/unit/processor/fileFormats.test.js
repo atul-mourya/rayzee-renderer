@@ -4,9 +4,9 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { Mesh, PerspectiveCamera, Points, Scene, Vector3 } from 'three';
-import { AssetLoader } from '@/core/Processor/AssetLoader.js';
-import { allFormats, objFormat, stlFormat, plyFormat, exrFormat } from '@/core/Processor/FileFormats.js';
-import { decodersOnDemand } from '@/core/Processor/GLTFDecoders.js';
+import { AssetLoader } from '@/core/loaders/AssetLoader.js';
+import { allFormats, objFormat, stlFormat, plyFormat, exrFormat } from '@/core/loaders/FileFormats.js';
+import { decodersOnDemand } from '@/core/loaders/GLTFDecoders.js';
 
 const stubControls = () => ( { target: new Vector3(), maxDistance: 0, saveState() {}, update() {} } );
 const newLoader = () => new AssetLoader( new Scene(), new PerspectiveCamera(), stubControls() );

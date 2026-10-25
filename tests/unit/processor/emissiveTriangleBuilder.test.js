@@ -18,7 +18,7 @@ vi.mock( 'three', () => ( {
 
 // Mock LightBVHBuilder to avoid its dependencies — minimal functional stand-in:
 // single leaf node, identity permutation, zeroed bit-trails.
-vi.mock( '@/core/Processor/LightBVHBuilder.js', () => ( {
+vi.mock( '@/core/lights/LightBVHBuilder.js', () => ( {
 	LightBVHBuilder: class {
 
 		build( tris ) {
@@ -36,7 +36,7 @@ vi.mock( '@/core/Processor/LightBVHBuilder.js', () => ( {
 	}
 } ) );
 
-import { EmissiveTriangleBuilder } from '@/core/Processor/EmissiveTriangleBuilder.js';
+import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
 
 // TRIANGLE_DATA_LAYOUT: 20 uint lanes per tri; material flags at 18, meshIndex at 19
 const FLOATS_PER_TRI = 20;

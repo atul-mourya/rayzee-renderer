@@ -6,7 +6,7 @@ import { FloatType } from 'three';
 import {
 	encodePNG, encodeEXR, encodeHDR, crc32, displayP3Profile, primariesToXYZ, canEncodeWithCanvas, encodeWithCanvas, standardChromaticities,
 	isoMetadata, jpegWithGainMap, heifFile, canEncodeStill, prepareStill,
-} from '@/core/Processor/ImageEncoders.js';
+} from '@/core/output/ImageEncoders.js';
 
 const bytesOf = async blob => new Uint8Array( await blob.arrayBuffer() );
 

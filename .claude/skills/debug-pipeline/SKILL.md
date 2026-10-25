@@ -19,7 +19,7 @@ Ask the user (if not already clear) which symptom they see:
 - **Y-flipped image** → QuadMesh UV Y-flip not handled in screen-space shader
 
 ## Step 2: Check the Compositor's Display Sources
-The Compositor (`rayzee/src/Stages/Compositor.js`) shows the first published texture of the display sources, which the
+The Compositor (`rayzee/src/pipeline/Compositor.js`) shows the first published texture of the display sources, which the
 renderer passes in from its `_displaySources()` hook, and falls back to `pathtracer:color`:
 - Renderer core (`RayzeeRenderer.js`): no sources — it always shows the accumulation
 - Viewer (`PathTracerApp.js`): `oidn:output` → `nrd:output`
@@ -49,7 +49,7 @@ If the issue involves depth, normals, or motion vectors:
 
 ## Step 6: TSL Shader Checks
 If the issue is in shader output:
-- Check for per-renderer data read from module state inside a `Fn()` body — it must come from `sceneResources( builder )` (`TSL/SceneResources.js`); a second renderer or stage in the page otherwise overwrites it
+- Check for per-renderer data read from module state inside a `Fn()` body — it must come from `sceneResources( builder )` (`shaders/SceneResources.js`); a second renderer or stage in the page otherwise overwrites it
 - Check for `normalize(vec3(0))` NaN on background pixels
 - Check `outputNode` vs `colorNode` (colorNode destroys .w channel for opaque materials)
 - Check If/Else chains (separate `If()` blocks contaminate output)

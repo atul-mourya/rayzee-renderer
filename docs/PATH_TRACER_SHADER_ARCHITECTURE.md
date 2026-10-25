@@ -8,7 +8,7 @@ Rayzee Path Tracing Engine – Internal Shader Design (PathTracer Stage Only)
 
 This document covers the path tracing stage's shader system for the **WebGPU backend (TSL)**. The renderer is a **pure wavefront path tracer**: a sequence of compute kernels, with no fragment-shader megakernel.
 
-TSL (Three Shading Language) is a JavaScript shader authoring system that three.js's WebGPU backend compiles to WGSL at runtime. Shader modules live in `rayzee/src/TSL/`, the stage in `rayzee/src/Stages/`.
+TSL (Three Shading Language) is a JavaScript shader authoring system that three.js's WebGPU backend compiles to WGSL at runtime. Shader modules live in `rayzee/src/shaders/` (kernels in `shaders/kernels/`), the stage in `rayzee/src/pathtracer/`.
 
 Explicitly excluded (refer to separate docs):
 - Denoisers (NRD, in `NRD_DENOISER.md`; OIDN in `CLAUDE.md`)
@@ -48,7 +48,7 @@ Key features:
 - Environment importance sampling from an exact piecewise-constant table (an RGBA32F texture).
 - The physical sky's sun as a light of its own: drawn exactly on a miss, sampled by NEE, the two MIS-weighted.
 - Light BVH for stochastic emissive-triangle sampling.
-- Three camera projections in one kernel (`TSL/CameraRay.js`, switched by the `cameraProjection` uniform): pinhole, orthographic (parallel rays from the camera's image plane) and 360° equirectangular.
+- Three camera projections in one kernel (`shaders/CameraRay.js`, switched by the `cameraProjection` uniform): pinhole, orthographic (parallel rays from the camera's image plane) and 360° equirectangular.
 - Depth of field (thin lens with a flat focal plane, sized either by the blur asked for or as a physical lens) and per-pixel jitter for anti-aliasing.
 - Firefly suppression (`regularizePathContribution`).
 - Global material counting sort before Shade for shading coherence.
@@ -56,7 +56,7 @@ Key features:
 
 ---
 
-## Module Map (`rayzee/src/TSL/`)
+## Module Map (`rayzee/src/shaders/`)
 
 Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and proxy-enhanced structs. Some leaf helpers use `wgslFn()`.
 
@@ -72,11 +72,11 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE` | Per pixel: temporal blend, MRT stores, the convergence statistics (m2, freeze streak); visMode 11 flags NaN/Inf red |
 | `DebugKernel.js` | `buildDebugKernel()`, `DEBUG_WG_SIZE` | Single-pass primary-ray debug views for visMode 1–10 (delegates to `TraceDebugMode`); mode 9 computed inline |
 
-`Stages/PathTracer.js` builds a few small kernels inline: `snapshotBounceCount`, `initActiveIndices`, `resetFrameCounters`, `buildActivePixels`, `countConvergedDilated`, `seedEnter`, `enterFull` and `compactCopyback`.
+`pathtracer/PathTracer.js` builds a few small kernels inline: `snapshotBounceCount`, `initActiveIndices`, `resetFrameCounters`, `buildActivePixels`, `countConvergedDilated`, `seedEnter`, `enterFull` and `compactCopyback`.
 
 ### Bidirectional add-on kernels
 
-Built and dispatched by `integrators/BidirectionalIntegrator.js`, never by `PathTracer` itself (see [Bidirectional integrator](#bidirectional-integrator)).
+Built and dispatched by `pathtracer/BidirectionalIntegrator.js`, never by `PathTracer` itself (see [Bidirectional integrator](#bidirectional-integrator)).
 
 | TSL Module | Key Exports | Role |
 |---|---|---|
@@ -122,18 +122,18 @@ Built and dispatched by `integrators/BidirectionalIntegrator.js`, never by `Path
 
 ### Scene textures and per-kernel resources
 
-`Processor/ShaderBuilder.js` builds the texture nodes the stage shares: the environment texture, the previous-frame MRT nodes (`prevColorTexNode`, `prevAlbedoTexNode`, `prevNormalDepthTexNode`) and the gobo and IES array nodes (1×1 placeholders until a library loads). `updateSceneTextures()`, `updateGoboMaps()` and `updateIESProfiles()` swap their `.value` in place. It builds no compute node and sets no shader state.
+`pathtracer/ShaderBuilder.js` builds the texture nodes the stage shares: the environment texture, the previous-frame MRT nodes (`prevColorTexNode`, `prevAlbedoTexNode`, `prevNormalDepthTexNode`) and the gobo and IES array nodes (1×1 placeholders until a library loads). `updateSceneTextures()`, `updateGoboMaps()` and `updateIESProfiles()` swap their `.value` in place. It builds no compute node and sets no shader state.
 
 Material texture buckets, the albedo maps alpha-cutout shadow rays read, the gobo and IES textures and the alpha-shadow switch ride in each kernel's build context (`SceneResources.js`). A TSL function's body runs when its kernel compiles, often at the first dispatch, so module-level state was read from whichever renderer set it last. `_buildWavefrontKernels()` assembles `{ srgbBuckets, linearBuckets, shadowAlbedoMaps, goboMaps, iesProfiles, alphaShadows }` and roots each kernel that reads them with `withSceneResources( kernelCall, resources )` (its local `own()`): `shade` and `debug`, and the integrator's `lightGenerate`, `connect`, `merge` and `lightSplat`. Function bodies read them with `sceneResources( builder )` (`TextureSampling.js`, `Displacement.js`, `LightsCore.js`, `LightsDirect.js`, `BVHTraversal.js`); a kernel built without the context throws. The `NormalDepth` stage does the same for its own kernel.
 
 ---
 
-## Stage Classes (`rayzee/src/Stages/`)
+## Stage Classes (`rayzee/src/pathtracer/`)
 
 - **`PathTracerStage.js`** (`class PathTracerStage`): shared base — engine/scene infrastructure. Owns the 5 sub-managers (`UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, `StorageTexturePool`), uniforms, camera and lights, BVH and scene buffers, accumulation and completion state, denoiser history resets, lifecycle, mesh visibility, and `setupMaterial()` (builds the shared scene texture nodes through `ShaderBuilder.createSceneTextureNodes`).
 - **`PathTracer.js`** (`class PathTracer extends PathTracerStage`): the wavefront renderer. Owns the path pool (`PackedRayBuffer`, `QueueManager`, `KernelManager`), sizes the path budget, builds every core kernel in `_buildWavefrontKernels()` and drives the frame in `render()`. It also holds the integrator hooks (`registerIntegrator()`, `setIntegrator()`, `integrator`, `activeIntegrator`) and `requestOutput()`, through which a later stage asks Shade for an extra output.
 
-### Wavefront resources (`rayzee/src/Processor/`)
+### Wavefront resources (`rayzee/src/pathtracer/`)
 - **`PackedRayBuffer.js`**: the SoA ray and hit buffers (`RAY`, `HIT` slot tables, `RAY_STRIDE`, `HIT_STRIDE`, `HIT_STRIDE_BIDIRECTIONAL`) with their read/write helpers, and the G-buffer helpers (`writeGBuffer`, `gbDecodeNormalDepth`, …). The G-buffer is the hit buffer's last region (`_gBufferBase`), not a buffer of its own: Shade binds eight storage buffers, and the device's other two are kept for the BVH and triangle stores' parts.
 - **`QueueManager.js`**: active-index lists A/B, the sorted-index list, the sort histogram, the atomic counters (`COUNTER`; the light guide's counts follow `COUNTER.GUIDE`), the per-bounce snapshot buffer, and `RAY_FLAG`.
 - **`KernelManager.js`**: registers and dispatches the compute nodes (`register()`, `dispatch()`, `has()`, `get()`). `setDispatchForCount()` and `setDispatchForGrid()` size a grid from the workgroup size the node was registered with; a 1D grid past `maxComputeWorkgroupsPerDimension` spills into a second dimension.
@@ -163,7 +163,7 @@ The aux data is staged in a **G-buffer** of one half-packed `uvec4` per path slo
 
 ## Uniform Groups (JS → GPU Data Flow)
 
-Uniforms are owned by `UniformManager` (`rayzee/src/managers/`) and exposed on the stage through getters; `PathTracer` wires them into the kernel builders. Principal categories:
+Uniforms are owned by `UniformManager` (`rayzee/src/pathtracer/`) and exposed on the stage through getters; `PathTracer` wires them into the kernel builders. Principal categories:
 
 1. **Camera & DOF:** `cameraWorldMatrix`, `cameraProjectionMatrixInverse`, `cameraViewMatrix`, `cameraProjectionMatrix`; `cameraProjection` (`CAMERA_PROJECTION_IDS`), `panoLonRange`, `panoLatRange`, `panoLevelHorizon`; `enableDOF`, `dofMode`, `dofBlur`, `focusDistance`, `focalLength`, `aperture`, `apertureScale`, `anamorphicRatio`, `unitsPerMetre`.
 2. **Frame & control:** `frame` (accumulation index), `seedFrame` (the RNG's frame axis), `resolution`, `maxBounces`, `maxSamples`, `transmissiveBounces`, `maxSubsurfaceSteps`, `maxTransparentBounces`, `renderMode`.
@@ -186,7 +186,7 @@ Wavefront uniforms live on `PathTracer`: `_wfRenderWidth`, `_wfRenderHeight`, `_
 ## Data Layouts (GPU storage buffers)
 
 ### Triangle data (`triangleStorageNode`)
-Compact, vec4-aligned 5-slot layout (20 u32 lanes = 80 B per triangle, `TRIANGLE_DATA_LAYOUT` in `Processor/BufferLayout.js`).
+Compact, vec4-aligned 5-slot layout (20 u32 lanes = 80 B per triangle, `TRIANGLE_DATA_LAYOUT` in `scene/BufferLayout.js`).
 The store is bound as `uvec4`; positions and UVs are float bit patterns read with
 `uintBitsToFloat`, and each vertex normal is an oct16 pair in its position's spare `.w` lane:
 1. posA.xyz, normalA (oct16)
@@ -206,11 +206,11 @@ index, a `uvec2` a triangle (`withoutUV` on the pair, 24 B a triangle less), and
 `rebuildMaterials` brings them back when a texture arrives. The CPU records stay whole and
 `PathTracerStage._uploadTriangles` splits them on upload. Kernels take the pair as
 `triangleStorageNode = { geo, shade }` and read a row only through `triangleRow( tris, triIndex, row )`
-(`TSL/Common.js`), which picks the buffer.
+(`shaders/Common.js`), which picks the buffer.
 
 **Buffer parts.** Dawn caps one buffer at 4 GiB − 4, so past `maxStorageBufferBindingSize` the BVH,
-geo and shade stores are each split into parts of whole records (`StorageParts`, `TSL/patches.js`)
-and read through `splitStorage` (`TSL/Common.js`), which picks the part with an `If` chain. A store
+geo and shade stores are each split into parts of whole records (`StorageParts`, `shaders/patches.js`)
+and read through `splitStorage` (`shaders/Common.js`), which picks the part with an `If` chain. A store
 that fits one buffer is a plain node and compiles exactly the old code. Every part is a binding, and
 Shade binds five other buffers, so the parts total at most five (`PathTracerStage._assertBindings`).
 
@@ -252,7 +252,7 @@ copy's box in bytes on a power-of-two grid and one word a copy — its root, the
 (`copyRecordBase` on the buffer). About 80 B a copy against 128.
 
 **Folded leaves** (scenes past `FOLD_LEAVES_TRIANGLES`, 40M stored triangles): every triangle leaf
-of ≤ 15 triangles (`BVH_FOLDED_LEAF_MAX`) is folded into its parent (`Processor/BVHLeafFold.js`).
+of ≤ 15 triangles (`BVH_FOLDED_LEAF_MAX`) is folded into its parent (`bvh/BVHLeafFold.js`).
 The parent's child slot then holds `~( first << 4 | count )`, the value traversal pushes, so a
 folded reference sits at 2^31 or above and a leaf node is `tag >> 30 === 1`. BLAS nodes roughly
 halve (55.7M Moana: 50.1M → 32.0M nodes, 3.1 → 2.0 GB), images bit-identical. The tree buffer
@@ -269,13 +269,13 @@ identity leaf instead, so it needs no transform either way.
 ### Scene data: materials, then lights (`materialStorageNode`)
 One buffer, one Shade binding: `[ materials | light BVH nodes | emissive entries | bit-trail map ]`. Light reads go through `lightDataNode`, which adds `lightVec4Offset` (where the light data starts). Material edits upload only the material region.
 
-33 vec4 slots (132 floats) per material, laid out by `MATERIAL_DATA_LAYOUT` (`Processor/BufferLayout.js`) and written only by `packMaterial()` (`Processor/MaterialPacking.js`): the shadow-path fields first (IOR, transmission, thickness, attenuation, opacity, side, alpha), then base colour / metalness / emissive / roughness, map indices, clear coat, dispersion, sheen, specular, iridescence, bump and displacement, the per-map UV transforms, subsurface, anisotropy and the extension-map indices.
+33 vec4 slots (132 floats) per material, laid out by `MATERIAL_DATA_LAYOUT` (`scene/BufferLayout.js`) and written only by `packMaterial()` (`materials/MaterialPacking.js`): the shadow-path fields first (IOR, transmission, thickness, attenuation, opacity, side, alpha), then base colour / metalness / emissive / roughness, map indices, clear coat, dispersion, sheen, specular, iridescence, bump and displacement, the per-map UV transforms, subsurface, anisotropy and the extension-map indices.
 
 ### Emissive triangles / Light BVH (the light data)
 `[ light BVH nodes | emissive entries | bit-trail map ]` behind the materials (`PathTracerStage._rebuildLightBuffer`). Within the light data, `emissiveVec4Offset` is where the emissive entries start and `reverseMapVec4Offset` where the per-triangle bit trails start. Shade reads the bit trails only while `emissiveTriangleCount > 0`, so with no emitter active the map is a four-float placeholder rather than one float a triangle.
 
 ### Environment sampling table (`envCDFTexture`, RGBA32F)
-The exact table (`Processor/EnvironmentExactTable.js`): `buildExactEnvironmentTable()` builds it (in `CDFWorker` for HDRIs and colour skies) and `packExactTable()` lays it out as a `(w + 1) × h` RGBA float texture. Texel `(x, y)` holds row `y`'s entry `x` — its running sum, the sum below it, and the guides of steps `2x` and `2x + 1`; texel `(w, y)` holds the rows' entry `y` likewise. The table is at most `EXACT_TABLE_MAX_WIDTH` (1024) cells wide; a larger map gives each cell k × k texels. Read with integer `.load()`. It is a texture because Shade has no storage-buffer binding to spare.
+The exact table (`environment/EnvironmentExactTable.js`): `buildExactEnvironmentTable()` builds it (in `CDFWorker` for HDRIs and colour skies) and `packExactTable()` lays it out as a `(w + 1) × h` RGBA float texture. Texel `(x, y)` holds row `y`'s entry `x` — its running sum, the sum below it, and the guides of steps `2x` and `2x + 1`; texel `(w, y)` holds the rows' entry `y` likewise. The table is at most `EXACT_TABLE_MAX_WIDTH` (1024) cells wide; a larger map gives each cell k × k texels. Read with integer `.load()`. It is a texture because Shade has no storage-buffer binding to spare.
 
 ### Packed ray buffers (`PackedRayBuffer.js`)
 SoA within a buffer: field `slot` of path `id` lives at `id + slot * capacity`.
@@ -317,7 +317,7 @@ A multi-band frame (the image larger than the budget) runs full dispatch every b
 - Hit: an `EMISSION_ONLY` segment ends at once on an opaque surface that does not glow. Otherwise: material textures (`sampleAllMaterialTextures`), aux G-buffer commits, emission (MIS-weighted against emissive NEE), transparency / transmission / medium stack / subsurface (`handleMaterialTransparency`), direct lighting (`calculateDirectLightingUnified`: lamp, environment and sun NEE), emissive-triangle NEE when `enableEmissiveTriangleSampling` is on (light BVH when `lightBVHNodeCount > 0`, else `calculateEmissiveTriangleContribution`), then the bounce (`generateSampledDirection` → `calculateIndirectLighting`), Russian roulette (`handleRussianRoulette`), and the continued ray.
 
 ### Bidirectional integrator
-Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: `rayzee/addons/bidirectional` exports `BidirectionalIntegrator` (`integrators/BidirectionalIntegrator.js`), installed with `pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` (`PathTracerApp` does this). `setIntegrator()` picks it and rebuilds the kernels; an unregistered name records `capability.missing`. `'path'` builds exactly the unidirectional kernels.
+Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: `rayzee/addons/bidirectional` exports `BidirectionalIntegrator` (`pathtracer/BidirectionalIntegrator.js`), installed with `pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` (`PathTracerApp` does this). `setIntegrator()` picks it and rebuilds the kernels; an unregistered name records `capability.missing`. `'path'` builds exactly the unidirectional kernels.
 
 `PathTracer` calls the integrator at fixed points: at build `beforeKernelBuild()`, `hitStride`, `cacheBytes()` and `lightVertices` (path budget and hit buffer), `allocate()`, `registerKernels()`; per frame `beginFrame()`, `beforeShade()`, `afterShade()`, `resolve()`; at readback `curveKey` and `applyLightCurve()`. The integrator owns its uniforms, buffers and kernels. Generate and Shade receive its `uniforms` as `bidirectional` and take the bidirectional shading functions from `uniforms.lib` (`Bidirectional.js`, `BidirectionalLamps.js`, `guidedDiscPdf`, `recordEscape`), so the core imports none of them. Its controls are on `pathTracer.activeIntegrator`.
 
@@ -343,7 +343,7 @@ The light BVH organizes emissive triangles into a power-weighted tree so NEE pic
 Shade uses it while `lightBVHNodeCount > 0` and falls back to the uniform-CDF path otherwise. When a BSDF ray hits an emitter, `calculateLightBVHPdf()` re-walks the same descent along the triangle's stored bit trail, so the MIS weight uses the density NEE sampled with.
 
 ### Builder
-`LightBVHBuilder.js` (in `rayzee/src/Processor/`, run by `EmissiveTriangleBuilder`): median split on the longest centroid axis, at most 8 triangles a leaf, an orientation cone per node, and a root-to-leaf bit trail per triangle. A scene with no emitters gets one dummy leaf.
+`LightBVHBuilder.js` (in `rayzee/src/lights/`, run by `EmissiveTriangleBuilder`): median split on the longest centroid axis, at most 8 triangles a leaf, an orientation cone per node, and a root-to-leaf bit trail per triangle. A scene with no emitters gets one dummy leaf.
 
 ---
 
@@ -417,7 +417,7 @@ Turns the `generateSampledDirection` draw into the bounce: throughput `f · NoL 
 ## Environment Importance Sampling (`Environment.js`)
 
 ### Table-Based Sampling
-`sampleEnvironmentExact` inverts the piecewise-constant table in `envCDFTexture` (`Processor/EnvironmentExactTable.js`): the row is found from the rows' running sums, then the cell within it. A step's guide names the entry at once in most draws; otherwise a binary search runs between the guides. The draw lands exactly at the density `environmentPdfExact` reads back from the same sums. The table is MIS-compensated (each texel weighs what it has above the mean) and keeps a floor on every cell.
+`sampleEnvironmentExact` inverts the piecewise-constant table in `envCDFTexture` (`environment/EnvironmentExactTable.js`): the row is found from the rows' running sums, then the cell within it. A step's guide names the entry at once in most draws; otherwise a binary search runs between the guides. The draw lands exactly at the density `environmentPdfExact` reads back from the same sums. The table is MIS-compensated (each texel weighs what it has above the mean) and keeps a floor on every cell.
 
 ### Direction Conversion
 `equirectDirectionToUv` / `equirectUvToDirection` map between spherical and UV space applying `environmentMatrix` (HDRI rotation).
@@ -426,7 +426,7 @@ Turns the `generateSampledDirection` draw into the bounce: throughput `f · NoL 
 `sampleEnvironment` evaluates radiance for arbitrary directions; a cell's density is its share of the table over its uv area, divided by 2π² sin θ for solid angle. `envTotalSum` > 0 says a table is bound. `getGroundProjectedDirection` / `groundProjectedEnvDir` bend the primary-ray background lookup onto a virtual ground when ground projection is enabled.
 
 ### The physical sky
-An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`Processor/PhysicalSky.js`, bake kernels in `TSL/Atmosphere.js`; the table by `TSL/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
+An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`environment/PhysicalSky.js`, bake kernels in `shaders/Atmosphere.js`; the table by `shaders/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
 
 ---
 
@@ -534,9 +534,9 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 ## Extension Points
 
 1. **Add a new material lobe**: integrate into `calculateBRDFWeights`, the `generateSampledDirection` lobe chain (PathTracerCore.js), the mixture density `calculateBSDFSamplingPDF`, and `evaluateMaterialResponse`.
-2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `TSL/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
+2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `shaders/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
 3. **Add a wavefront kernel**: build a new `Fn().compute()`, register it in `_buildWavefrontKernels`, dispatch it in `render()`. A new integrator plugs into the integrator hooks instead (see `BidirectionalIntegrator`); never branch on it inside `PathTracer`.
-4. **Per-triangle custom attributes**: expand the triangle layout (`Processor/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
+4. **Per-triangle custom attributes**: expand the triangle layout (`scene/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
 5. **Per-pixel ray policies**: `buildActivePixels` already decides which pixels are traced (the pixel freeze); `generateList` traces only the list it builds.
 
 ---
@@ -563,23 +563,23 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 
 | File | Critical Symbols | Purpose |
 |---|---|---|
-| `Stages/PathTracer.js` | `render()`, `_buildWavefrontKernels()`, `_computePathBudget()`, `_setChunk()`, `setIntegrator()`, `requestOutput()` | Per-frame dispatch order, kernel build, path budget, integrator hooks |
-| `Stages/PathTracerStage.js` | `setupMaterial()`, `updateAllMeshVisibility()`, `_patchTLASLeafVisibility()`, `_uploadTriangles()` | Shared infra, scene texture nodes, mesh visibility |
-| `integrators/BidirectionalIntegrator.js` | `registerKernels()`, `beginFrame()`, `afterShade()`, `resolve()` | Bidirectional / VCM add-on |
-| `TSL/GenerateKernel.js` | `buildGenerateKernel()` | Primary ray generation |
-| `TSL/ExtendKernel.js` | `buildExtendKernel()` | Closest-hit traversal |
-| `TSL/ShadeKernel.js` | `buildShadeKernel()` | Direct/indirect lighting, transmission, aux G-buffer |
-| `TSL/CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()` | Survivor stream compaction |
-| `TSL/FinalWriteKernel.js` | `buildFinalWriteKernel()` | Accumulation, convergence statistics, MRT writes |
-| `TSL/PathTracerCore.js` | `generateSampledDirection()`, `handleRussianRoulette()`, `computeNDCDepth()` | Shared sampling helpers |
-| `TSL/BVHTraversal.js` | `traverseBVH()`, `traverseBVHShadow()` | Acceleration traversal, visibility, inline side culling |
-| `TSL/Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()` | HDR env sampling & PDF |
-| `TSL/SceneResources.js` | `withSceneResources()`, `sceneResources()` | Per-kernel scene resources |
-| `TSL/LightBVHSampling.js` | `sampleLightBVHTriangle()`, `calculateLightBVHPdf()` | Light BVH stochastic descent |
-| `TSL/Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()` | Sampling quality |
-| `Processor/PackedRayBuffer.js` | `RAY`/`HIT`, read/write helpers | SoA buffer layout |
-| `Processor/QueueManager.js` | `COUNTER`, `RAY_FLAG`, active/sorted queues | Ray queues + atomic counters |
-| `Processor/KernelManager.js` | `register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()` | Kernel registry and grid sizing |
+| `pathtracer/PathTracer.js` | `render()`, `_buildWavefrontKernels()`, `_computePathBudget()`, `_setChunk()`, `setIntegrator()`, `requestOutput()` | Per-frame dispatch order, kernel build, path budget, integrator hooks |
+| `pathtracer/PathTracerStage.js` | `setupMaterial()`, `updateAllMeshVisibility()`, `_patchTLASLeafVisibility()`, `_uploadTriangles()` | Shared infra, scene texture nodes, mesh visibility |
+| `pathtracer/BidirectionalIntegrator.js` | `registerKernels()`, `beginFrame()`, `afterShade()`, `resolve()` | Bidirectional / VCM add-on |
+| `shaders/kernels/GenerateKernel.js` | `buildGenerateKernel()` | Primary ray generation |
+| `shaders/kernels/ExtendKernel.js` | `buildExtendKernel()` | Closest-hit traversal |
+| `shaders/kernels/ShadeKernel.js` | `buildShadeKernel()` | Direct/indirect lighting, transmission, aux G-buffer |
+| `shaders/kernels/CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()` | Survivor stream compaction |
+| `shaders/kernels/FinalWriteKernel.js` | `buildFinalWriteKernel()` | Accumulation, convergence statistics, MRT writes |
+| `shaders/PathTracerCore.js` | `generateSampledDirection()`, `handleRussianRoulette()`, `computeNDCDepth()` | Shared sampling helpers |
+| `shaders/BVHTraversal.js` | `traverseBVH()`, `traverseBVHShadow()` | Acceleration traversal, visibility, inline side culling |
+| `shaders/Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()` | HDR env sampling & PDF |
+| `shaders/SceneResources.js` | `withSceneResources()`, `sceneResources()` | Per-kernel scene resources |
+| `shaders/LightBVHSampling.js` | `sampleLightBVHTriangle()`, `calculateLightBVHPdf()` | Light BVH stochastic descent |
+| `shaders/Random.js` | `getDecorrelatedSeed()`, `getStratifiedSample()`, `getRandomSampleND()` | Sampling quality |
+| `pathtracer/PackedRayBuffer.js` | `RAY`/`HIT`, read/write helpers | SoA buffer layout |
+| `pathtracer/QueueManager.js` | `COUNTER`, `RAY_FLAG`, active/sorted queues | Ray queues + atomic counters |
+| `pathtracer/KernelManager.js` | `register()`, `dispatch()`, `setDispatchForCount()`, `setDispatchForGrid()` | Kernel registry and grid sizing |
 
 Numerical constants to keep consistent:
 - `MIN_PDF`, `DELTA_PDF`, `SHADOW_END`, epsilon thresholds in environment & BVH.

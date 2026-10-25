@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
 	BVH_LEAF_MARKERS, BVH_MAX_INDEX, assertBVHIndexFits, bvhIndexView, TLAS_PLACEMENT_MASK,
-} from '@/core/Processor/BufferLayout.js';
-import { TLASBuilder } from '@/core/Processor/TLASBuilder.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
+} from '@/core/scene/BufferLayout.js';
+import { TLASBuilder } from '@/core/bvh/TLASBuilder.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
 
 // Indices that a float32 cannot hold as a value. 16,777,217 is the canonical one: it rounds to
 // 16,777,216, so a BLAS pointer written as a float landed on the previous node and the instance

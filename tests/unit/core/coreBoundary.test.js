@@ -39,28 +39,22 @@ function reachable( entry ) {
 }
 
 const ABOVE_THE_CORE = [
-	/^PathTracerApp\.js$/,
-	/^Headless\.js$/,
-	/^Stages\/(NormalDepth|MotionVector|NRD|AutoExposure|LocalExposure)\.js$/,
-	/^managers\/(CameraManager|InteractionManager|TransformManager|OverlayManager|AnimationManager|DenoisingManager|GoboManager|IESManager|VideoRenderManager|WalkControls)\.js$/,
-	/^managers\/(timeline|helpers)\//,
-	/^Passes\//,
-	/^neural\//,
-	/^SceneState\/SceneState\.js$/,
+	/^viewer\//,
 	/^addons\//,
-	/^(Processor\/(PhysicalSky|AtmosphereModel)|TSL\/(Atmosphere|EnvironmentCDF))\.js$/,
-	/^Processor\/(ArchiveImporter|ArchiveReader|ArchiveCache|ZipReader)\.js$/,
-	/^Processor\/FileFormats\.js$/,
-	/^Processor\/PBRT\//,
-	/^Storage\/SceneGraphCodec\.js$/,
-	/^integrators\//,
-	/^Color\/(ColorManagement|OcioViews|OcioRuntime|LutBake|ColorSpaces|InputColorSpaces|BakedViews|Displays)\.js$/,
-	/^TSL\/(Bidirectional|BidirectionalLamps|LightGenerateKernel|ConnectKernel|LightSplatKernel|MergeKernel|LightGuide)\.js$/,
-	/^Storage\/(StorageManager|StorageOps|StorageWorker|openStorage|transport|inlineTransport|locks|events)\.js$/,
+	/^(environment\/(PhysicalSky|AtmosphereModel)|shaders\/(Atmosphere|EnvironmentCDF))\.js$/,
+	/^loaders\/archives\/(ArchiveImporter|ArchiveReader|ArchiveCache|ZipReader)\.js$/,
+	/^loaders\/FileFormats\.js$/,
+	/^loaders\/(pbrt|usd)\//,
+	/^storage\/SceneGraphCodec\.js$/,
+	/^pathtracer\/BidirectionalIntegrator\.js$/,
+	/^color\/(ColorManagement|OcioViews|OcioRuntime|LutBake|ColorSpaces|InputColorSpaces|BakedViews|Displays)\.js$/,
+	/^shaders\/(Bidirectional|BidirectionalLamps|LightGuide)\.js$/,
+	/^shaders\/kernels\/(LightGenerateKernel|ConnectKernel|LightSplatKernel|MergeKernel)\.js$/,
+	/^storage\/(StorageManager|StorageOps|StorageWorker|openStorage|transport|inlineTransport|locks|events)\.js$/,
 ];
 
 // What a capability may not reach: the viewer, or another capability.
-const VIEWER = ABOVE_THE_CORE.slice( 0, 8 );
+const VIEWER = ABOVE_THE_CORE.slice( 0, 1 );
 
 describe( 'the renderer core', () => {
 
@@ -69,8 +63,8 @@ describe( 'the renderer core', () => {
 	it( 'reaches the path tracer and the compositor', () => {
 
 		expect( modules ).toContain( 'RayzeeRenderer.js' );
-		expect( modules ).toContain( 'Stages/PathTracer.js' );
-		expect( modules ).toContain( 'Stages/Compositor.js' );
+		expect( modules ).toContain( 'pathtracer/PathTracer.js' );
+		expect( modules ).toContain( 'pipeline/Compositor.js' );
 
 	} );
 
@@ -84,7 +78,7 @@ describe( 'the renderer core', () => {
 	it( 'leaves the physical sky to its add-on, which reaches no viewer code', () => {
 
 		const sky = reachable( 'addons/physicalSky.js' );
-		expect( sky ).toContain( 'Processor/PhysicalSky.js' );
+		expect( sky ).toContain( 'environment/PhysicalSky.js' );
 		expect( sky.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
@@ -110,7 +104,7 @@ describe( 'the renderer core', () => {
 	it( 'leaves the other file formats to their add-on, which reaches no viewer code', () => {
 
 		const formats = reachable( 'addons/formats.js' );
-		expect( formats ).toContain( 'Processor/FileFormats.js' );
+		expect( formats ).toContain( 'loaders/FileFormats.js' );
 		expect( formats.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
@@ -118,14 +112,14 @@ describe( 'the renderer core', () => {
 	it( 'exports the archive formats, so a host can install that add-on to load on first use', () => {
 
 		const core = readFileSync( resolve( SRC, 'core.js' ), 'utf8' );
-		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS\b[^}]*\} from '\.\/Processor\/archiveFormats\.js'/ );
+		expect( core ).toMatch( /export \{ ARCHIVE_FORMATS\b[^}]*\} from '\.\/loaders\/archives\/archiveFormats\.js'/ );
 
 	} );
 
 	it( 'leaves archives and pbrt to their add-on, which reaches no viewer code', () => {
 
 		const archives = reachable( 'addons/archives.js' );
-		expect( archives ).toEqual( expect.arrayContaining( [ 'Processor/ArchiveImporter.js', 'Processor/PBRT/index.js' ] ) );
+		expect( archives ).toEqual( expect.arrayContaining( [ 'loaders/archives/ArchiveImporter.js', 'loaders/pbrt/index.js' ] ) );
 		expect( archives.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
@@ -133,7 +127,7 @@ describe( 'the renderer core', () => {
 	it( 'leaves bidirectional and vertex merging to their add-on, which reaches no viewer code', () => {
 
 		const bidirectional = reachable( 'addons/bidirectional.js' );
-		expect( bidirectional ).toEqual( expect.arrayContaining( [ 'integrators/BidirectionalIntegrator.js', 'TSL/ConnectKernel.js' ] ) );
+		expect( bidirectional ).toEqual( expect.arrayContaining( [ 'pathtracer/BidirectionalIntegrator.js', 'shaders/kernels/ConnectKernel.js' ] ) );
 		expect( bidirectional.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
@@ -141,7 +135,7 @@ describe( 'the renderer core', () => {
 	it( 'leaves the OCIO pipeline to its add-on, which reaches no viewer code', () => {
 
 		const color = reachable( 'addons/color.js' );
-		expect( color ).toEqual( expect.arrayContaining( [ 'Color/ColorManagement.js', 'Color/OcioRuntime.js' ] ) );
+		expect( color ).toEqual( expect.arrayContaining( [ 'color/ColorManagement.js', 'color/OcioRuntime.js' ] ) );
 		expect( color.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
 
 	} );
@@ -149,14 +143,23 @@ describe( 'the renderer core', () => {
 	it( 'leaves on-disk storage to its add-on, which reaches no viewer code', () => {
 
 		const storage = reachable( 'addons/storage.js' );
-		expect( storage ).toEqual( expect.arrayContaining( [ 'Storage/StorageManager.js', 'Storage/openStorage.js' ] ) );
+		expect( storage ).toEqual( expect.arrayContaining( [ 'storage/StorageManager.js', 'storage/openStorage.js' ] ) );
 		expect( storage.filter( m => VIEWER.some( rule => rule.test( m ) ) ) ).toEqual( [] );
+
+	} );
+
+	it( 'keeps every module only the full entry reaches under viewer/', () => {
+
+		const below = new Set( [ ...modules, ...[ 'archives', 'bidirectional', 'color', 'formats', 'physicalSky', 'storage' ].flatMap( a => reachable( `addons/${a}.js` ) ) ] );
+		const viewerOnly = reachable( 'index.js' ).filter( m => ! below.has( m ) && ! /^(index|storage\/index)\.js$/.test( m ) );
+		expect( viewerOnly.length ).toBeGreaterThan( 0 );
+		expect( viewerOnly.filter( m => ! m.startsWith( 'viewer/' ) ) ).toEqual( [] );
 
 	} );
 
 	it( 'is what the full entry builds on', () => {
 
-		expect( reachable( 'index.js' ) ).toEqual( expect.arrayContaining( [ 'RayzeeRenderer.js', 'PathTracerApp.js' ] ) );
+		expect( reachable( 'index.js' ) ).toEqual( expect.arrayContaining( [ 'RayzeeRenderer.js', 'viewer/PathTracerApp.js' ] ) );
 
 	} );
 

@@ -2,7 +2,7 @@
 
 ## Loading a folder
 `loadFile( { files } )` loads a folder of files as the same folder zipped would load — `files` a folder picker's FileList
-(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`Processor/archiveFormats.js`, core)
+(paths from `webkitRelativePath`) or `{ path, file }` pairs. `localFolder()` (`loaders/archives/archiveFormats.js`, core)
 normalises it (sorted, hidden files and folders out, `name` the shared top folder, `flat` for loose files);
 `ArchiveImporter.loadFolder` opens it with `openFolder()` (`ArchiveReader.js`, the shape of `openTar` / `openZip`) and
 goes through the archive path (`_loadSource`), so pbrt scenes, the part prompt (`error.file` is the folder) and glTF /
@@ -14,10 +14,10 @@ handles in IndexedDB (`RayzeeFolders`) under the scene source's key, so a sessio
 folder itself (`SessionDialog` asks only when access lapsed); `.rayzee` projects embed a folder under `sources/folder/`.
 
 ## Loading part of a scene archive
-Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `Processor/ArchiveImporter.js`, which
+Archives and pbrt are an add-on (`rayzee/addons/archives`): the code lives in `loaders/archives/ArchiveImporter.js`, which
 the loader reaches only through `assetLoader.setArchiveImporter( new ArchiveImporter( assetLoader ) )`, or
 `setArchiveImporterLoader( load, ARCHIVE_FORMATS )` (`ARCHIVE_FORMATS` is exported from `rayzee/core` for that), which loads it for the first archive read — `PathTracerApp` does
-that, so archive reading and pbrt are a chunk of their own. The formats come from `Processor/archiveFormats.js`, so the
+that, so archive reading and pbrt are a chunk of their own. The formats come from `loaders/archives/archiveFormats.js`, so the
 loader recognises an archive before the code that reads it exists. Without it a `.zip`/`.tar`/`.tgz` is not a supported format, and the error names the
 add-on. The importer reads the loader's members through `this.loader`.
 A pbrt scene archive (.tar / .tar.gz / .zip) is usually a root `.pbrt` that `Include`s one
@@ -63,7 +63,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   back with the next model unless someone changed it). `distant`, `point` and `spot` become three.js lamps in
   the engine's units (pbrt's L / I × `scale`, `power` and `illuminance` honoured; flagged as converted so the
   photometric conversion skips them; stored in the scene cache). A non-RGB light spectrum (blackbody, named) is
-  brought to luminance 1 as pbrt does. `.pfm` images load (`Processor/PBRT/PFM.js`). An area light is one-sided
+  brought to luminance 1 as pbrt does. `.pfm` images load (`loaders/pbrt/PFM.js`). An area light is one-sided
   unless `"bool twosided"`: `FrontSide`, its triangles rewound to face the vertex normals, or turned over by
   ReverseOrientation where it has none (`_facingEmission`). An area light's `power` scales its radiance to that power
   over the shape's area (a quadric's in its own space, a mesh's in the scene's, as pbrt measures them). A shape of
@@ -126,7 +126,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   zero-copy Blob. A `.zip` that is really a gzip (island-pbrtV4) is detected by magic. Archive
   URLs load through the download cache (`loadFile( url )`).
 
-## USD scenes (`Processor/USD/`)
+## USD scenes (`loaders/usd/`)
 A folder or archive whose main model is a USD layer (`ArchiveImporter._mainModelPath`), and a loose `.usd`/`.usda`/`.usdc`
 (`AssetLoader.loadModelFromFile`), load through the USD importer in the archives add-on; a `.usdz` stays with three's
 USDLoader. Each layer is read only when composition reaches it (`USDFiles` over the folder's or archive's entries).

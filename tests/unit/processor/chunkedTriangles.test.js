@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/Processor/BufferLayout.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { BVHRefitter } from '@/core/Processor/BVHRefitter.js';
-import { InstanceTable } from '@/core/Processor/InstanceTable.js';
-import { EmissiveTriangleBuilder } from '@/core/Processor/EmissiveTriangleBuilder.js';
+import { BVH_LEAF_MARKERS, bvhIndexView } from '@/core/scene/BufferLayout.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { BVHRefitter } from '@/core/bvh/BVHRefitter.js';
+import { InstanceTable } from '@/core/scene/InstanceTable.js';
+import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
 
 // A triangle record is 20 uint lanes; 160 bytes per chunk therefore holds exactly 2 of them,
 // so any scene here splits and every access crosses a boundary.

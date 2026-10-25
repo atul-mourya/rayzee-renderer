@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
-import { SAFE_SCENE_BYTES, MAX_SCENE_BYTES } from '@/core/Processor/HostMemory.js';
+import { SAFE_SCENE_BYTES, MAX_SCENE_BYTES } from '@/core/memory/HostMemory.js';
 
 const MB = 1024 * 1024;
 

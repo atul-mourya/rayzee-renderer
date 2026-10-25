@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { SceneProcessor } from '@/core/Processor/SceneProcessor.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 
 const FPT = 20;
 

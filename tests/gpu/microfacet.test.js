@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { DistributionGGX } from '@/core/TSL/MaterialProperties.js';
-import { MIN_ROUGHNESS } from '@/core/TSL/Common.js';
+import { DistributionGGX } from '@/core/shaders/MaterialProperties.js';
+import { MIN_ROUGHNESS } from '@/core/shaders/Common.js';
 
 describeGPU( 'GGX distribution on the GPU', () => {
 

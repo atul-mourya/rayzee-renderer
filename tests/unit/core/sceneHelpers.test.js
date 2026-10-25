@@ -53,7 +53,7 @@ vi.mock( 'three/addons/helpers/RectAreaLightHelper.js', () => ( {
 	},
 } ) );
 
-import { SceneHelpers } from '@/core/SceneHelpers.js';
+import { SceneHelpers } from '@/core/scene/SceneHelpers.js';
 
 // ── Helpers ───────────────────────────────────────────────────
 

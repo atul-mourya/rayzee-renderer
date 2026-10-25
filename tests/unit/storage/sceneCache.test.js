@@ -5,11 +5,11 @@ import {
 	SpotLight, DirectionalLight, HemisphereLight, Vector3,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/Storage/openStorage.js';
-import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, ARCHIVE_PATH } from '@/core/Storage/SceneGraphCodec.js';
-import { rangeChecksum } from '@/core/Storage/BLASCache.js';
-import { ChunkedRecords } from '@/core/Processor/ChunkedRecords.js';
-import { worthStoring } from '@/core/Storage/sceneCachePolicy.js';
+import { openStorage } from '@/core/storage/openStorage.js';
+import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, ARCHIVE_PATH } from '@/core/storage/SceneGraphCodec.js';
+import { rangeChecksum } from '@/core/storage/BLASCache.js';
+import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
+import { worthStoring } from '@/core/storage/sceneCachePolicy.js';
 
 function buildScene() {
 

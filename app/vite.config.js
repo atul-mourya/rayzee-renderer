@@ -63,7 +63,7 @@ export default defineConfig( {
 	resolve: {
 		alias: {
 			// Before "rayzee", which would also take "rayzee/encoders".
-			"rayzee/encoders": path.resolve( __dirname, "../rayzee/src/Processor/ImageEncoders.js" ),
+			"rayzee/encoders": path.resolve( __dirname, "../rayzee/src/output/ImageEncoders.js" ),
 			"rayzee": path.resolve( __dirname, "../rayzee/src/index.js" ),
 			"@/core": path.resolve( __dirname, "../rayzee/src" ),
 			"@": path.resolve( __dirname, "./src" ),

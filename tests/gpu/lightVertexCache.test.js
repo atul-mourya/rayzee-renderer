@@ -6,7 +6,7 @@ import { describeGPU, createRenderer } from './gpu.js';
 import {
 	PackedRayBuffer, cachedVertex, pendingVertex, writeVertexRecord, readVertexRecord,
 	writeLightPathLength, readLightPathLength,
-} from '@/core/Processor/PackedRayBuffer.js';
+} from '@/core/pathtracer/PackedRayBuffer.js';
 
 const PATHS = 4;
 const SLOTS = 8;

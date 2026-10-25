@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { DataTexture, FloatType, HalfFloatType, RedFormat, DataUtils, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
-import { TextureCreator, rgba8Pixels } from '@/core/Processor/TextureCreator.js';
-import { resampleRGBA8 } from '@/core/Processor/ResampleRGBA8.js';
+import { TextureCreator, rgba8Pixels } from '@/core/materials/TextureCreator.js';
+import { resampleRGBA8 } from '@/core/materials/ResampleRGBA8.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 import { configurePlatform } from '@/core/Platform.js';
 
@@ -162,7 +162,7 @@ const packHandler = await ( async () => {
 	const had = 'self' in globalThis;
 	const previous = globalThis.self;
 	globalThis.self = {};
-	await import( '@/core/Processor/Workers/PackWorker.js' );
+	await import( '@/core/materials/PackWorker.js' );
 	const handler = globalThis.self.onmessage;
 	if ( had ) globalThis.self = previous;
 	else delete globalThis.self;

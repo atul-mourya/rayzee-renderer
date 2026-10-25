@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { IssueLog, EngineIssueError, ISSUE_CODES, ISSUE_SEVERITY } from '@/core/EngineIssues.js';
 import { RenderSettings } from '@/core/RenderSettings.js';
-import { RenderPipeline } from '@/core/Pipeline/RenderPipeline.js';
+import { RenderPipeline } from '@/core/pipeline/RenderPipeline.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { GPUFeatureName } from 'three/src/renderers/webgpu/utils/WebGPUConstants.js';
 
@@ -174,7 +174,7 @@ describe( 'degradation sites', () => {
 
 	it( 'AssetLoader turns an unreachable sub-resource into an issue', async () => {
 
-		const { AssetLoader } = await import( '@/core/Processor/AssetLoader.js' );
+		const { AssetLoader } = await import( '@/core/loaders/AssetLoader.js' );
 		const issues = new IssueLog();
 		const loader = new AssetLoader( null, null, null, { issues } );
 
@@ -188,7 +188,7 @@ describe( 'degradation sites', () => {
 	// A cancelled load 404s everything still in flight; those are not real failures.
 	it( 'AssetLoader stays quiet for a cancelled load', async () => {
 
-		const { AssetLoader } = await import( '@/core/Processor/AssetLoader.js' );
+		const { AssetLoader } = await import( '@/core/loaders/AssetLoader.js' );
 		const issues = new IssueLog();
 		const loader = new AssetLoader( null, null, null, { issues } );
 
@@ -201,7 +201,7 @@ describe( 'degradation sites', () => {
 
 	it( 'TextureCreator names the map that failed', async () => {
 
-		const { TextureCreator } = await import( '@/core/Processor/TextureCreator.js' );
+		const { TextureCreator } = await import( '@/core/materials/TextureCreator.js' );
 		const issues = new IssueLog();
 		const receiver = { _issues: issues, _reportTextureFailure: TextureCreator.prototype._reportTextureFailure };
 

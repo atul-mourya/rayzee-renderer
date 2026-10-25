@@ -1,7 +1,7 @@
 import { describe } from 'vitest';
 import { WebGPURenderer } from 'three/webgpu';
 import { Fn, instanceIndex, instancedArray } from 'three/tsl';
-import { withSceneResources } from '@/core/TSL/SceneResources.js';
+import { withSceneResources } from '@/core/shaders/SceneResources.js';
 
 const unavailable = globalThis.__rayzeeGPUUnavailable;
 

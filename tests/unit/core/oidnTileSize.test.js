@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock( 'oidn-web', () => ( { initUNetFromBuffer: async () => ( { dispose() {} } ) } ) );
 vi.stubGlobal( 'fetch', async () => ( { ok: true, arrayBuffer: async () => new ArrayBuffer( 4 ) } ) );
 
-const { OIDNDenoiser } = await import( '@/core/Passes/OIDNDenoiser.js' );
+const { OIDNDenoiser } = await import( '@/core/viewer/denoise/OIDNDenoiser.js' );
 
 const tileFor = ( width, height, cap = 1024 ) => {
 

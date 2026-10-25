@@ -17,7 +17,7 @@ vi.mock( 'oidn-web', () => ( {
 
 vi.stubGlobal( 'fetch', async () => ( { ok: true, arrayBuffer: async () => new ArrayBuffer( 4 ) } ) );
 
-const { OIDNDenoiser } = await import( '@/core/Passes/OIDNDenoiser.js' );
+const { OIDNDenoiser } = await import( '@/core/viewer/denoise/OIDNDenoiser.js' );
 
 const settle = async ( dn ) => {
 

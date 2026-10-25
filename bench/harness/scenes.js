@@ -43,7 +43,7 @@ import {
 	Vector3,
 } from 'three';
 
-import { generateMaterialSpheres } from '@/core/Processor/generateMaterialSpheres.js';
+import { generateMaterialSpheres } from './generateMaterialSpheres.js';
 
 /**
  * The three-colour sky the engine's removed Gradient mode drew (same colours, same 512x256 grid),

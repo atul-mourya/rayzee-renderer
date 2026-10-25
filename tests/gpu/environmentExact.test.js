@@ -7,8 +7,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { DataTexture, RGBAFormat, FloatType, Matrix4 } from 'three';
 import { vec4, texture, uniform, vec2 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { sampleEnvironmentExact, environmentPdfExact } from '@/core/TSL/Environment.js';
-import { buildExactEnvironmentTable, exactTableSize, packExactTable } from '@/core/Processor/EnvironmentExactTable.js';
+import { sampleEnvironmentExact, environmentPdfExact } from '@/core/shaders/Environment.js';
+import { buildExactEnvironmentTable, exactTableSize, packExactTable } from '@/core/environment/EnvironmentExactTable.js';
 
 const N = 1 << 19;
 

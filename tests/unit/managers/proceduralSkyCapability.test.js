@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { EnvironmentManager } from '@/core/managers/EnvironmentManager.js';
+import { EnvironmentManager } from '@/core/environment/EnvironmentManager.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from '@/core/EngineIssues.js';
 
 const uniforms = { get: () => ( { value: { set() {} } } ), set() {} };
