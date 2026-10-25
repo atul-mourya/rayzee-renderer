@@ -16,10 +16,8 @@ vi.mock( '@/core/EngineDefaults.js', async ( importOriginal ) => ( {
 	PRODUCTION_RENDER_CONFIG: { maxSamples: 30 },
 } ) );
 
-vi.mock( '@/core/utils.js', () => ( {
-	updateStats: vi.fn(),
-	getDisplaySamples: vi.fn( () => 1 ),
-} ) );
+vi.mock( '@/core/EngineEvents.js', async importOriginal => ( { ...await importOriginal(), updateStats: vi.fn() } ) );
+vi.mock( '@/core/pipeline/CompletionTracker.js', async importOriginal => ( { ...await importOriginal(), getDisplaySamples: vi.fn( () => 1 ) } ) );
 
 const { VideoRenderManager } = await import( '@/core/viewer/animation/VideoRenderManager.js' );
 const { modePresetSettings } = await import( '@/core/EngineDefaults.js' );

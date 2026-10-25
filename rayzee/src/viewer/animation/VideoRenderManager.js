@@ -6,9 +6,9 @@
  * callback for encoding.
  */
 
-import { EngineEvents } from '../../EngineEvents.js';
+import { EngineEvents, updateStats } from '../../EngineEvents.js';
 import { PRODUCTION_RENDER_CONFIG, modePresetSettings } from '../../EngineDefaults.js';
-import { updateStats, getDisplaySamples } from '../../utils.js';
+import { getDisplaySamples } from '../../pipeline/CompletionTracker.js';
 
 // The video is Rec.709: drawing into a plain 2D canvas converts a Display P3 picture.
 function srgbCopy( canvas ) {

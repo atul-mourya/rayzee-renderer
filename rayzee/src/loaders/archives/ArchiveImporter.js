@@ -21,15 +21,15 @@ import { ENGINE_AREAS } from '../../storage/areas.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../../storage/SceneGraphCodec.js';
 import { worthStoring } from '../../storage/sceneCachePolicy.js';
 import { VERSION } from '../../version.js';
-import { timeSlicer, updateLoading } from '../../utils';
 import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from '../pbrt/index.js';
 import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from '../usd/index.js';
 import { pfmTexture } from '../pbrt/PFM.js';
 import { extractSceneMetadata } from '../SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
 import { ARCHIVE_FORMATS } from './archiveFormats.js';
-import { withHostWorker, getPlatform } from '../../Platform.js';
+import { withHostWorker, getPlatform, timeSlicer } from '../../Platform.js';
 import { platformImageFromBytes } from '../PlatformImageLoader.js';
+import { updateLoading } from '../../EngineEvents.js';
 
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
 const MAIN_MODEL_FILES = [ 'scene.gltf', 'scene.glb', 'model.gltf', 'model.glb', 'main.gltf', 'main.glb', 'asset.gltf', 'asset.glb' ];

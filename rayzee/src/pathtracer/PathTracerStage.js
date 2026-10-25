@@ -8,7 +8,6 @@ import { RenderStage, StageExecutionMode } from '../pipeline/RenderStage.js';
 
 // Managers (renderer-agnostic)
 import { CameraOptimizer } from './CameraOptimizer.js';
-import { createPerformanceMonitor, calculateAccumulationAlpha, updateCompletionThreshold } from '../utils.js';
 import { StorageTexturePool } from './StorageTexturePool.js';
 import { UniformManager, LIGHT_FLOATS, lightListCapacity } from './UniformManager.js';
 import { MaterialDataManager } from '../materials/MaterialDataManager.js';
@@ -152,8 +151,6 @@ export class PathTracerStage extends RenderStage {
 		this.accumulationEnabled = true;
 		this.isComplete = false;
 		this.cameras = [];
-		// Performance monitoring
-		this.performanceMonitor = createPerformanceMonitor();
 		this.completionThreshold = 0;
 		this.renderLimitMode = 'frames';
 		this.renderTimeLimit = 0;
@@ -590,7 +587,6 @@ export class PathTracerStage extends RenderStage {
 		// Update completion threshold
 		this.updateCompletionThreshold();
 		this.isComplete = false;
-		this.performanceMonitor?.reset();
 
 		// lastRenderMode is deliberately NOT invalidated here — clearing it made
 		// resetHistoryOnRenderModeChange see a phantom mode change 50 ms after every reset, wiping
@@ -1553,7 +1549,7 @@ export class PathTracerStage extends RenderStage {
 
 			} else {
 
-				this.accumulationAlpha.value = calculateAccumulationAlpha( frameValue );
+				this.accumulationAlpha.value = 1 / ( frameValue + 1 );
 
 				this.hasPreviousAccumulated.value = frameValue > 0 ? 1 : 0;
 
@@ -1617,7 +1613,7 @@ export class PathTracerStage extends RenderStage {
 
 		this.completionThreshold = this.renderLimitMode === 'timeOnly' && this.renderTimeLimit > 0
 			? Infinity
-			: updateCompletionThreshold( this.renderMode.value, this.maxSamples.value );
+			: this.maxSamples.value;
 
 	}
 

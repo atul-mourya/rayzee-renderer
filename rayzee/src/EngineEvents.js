@@ -113,3 +113,29 @@ export const LEGACY_EVENT_NAMES = Object.freeze( {
 	[ EngineEvents.RESOLUTION_CHANGED ]: 'resolution_changed',
 	[ EngineEvents.RESERVED_RENDER_SIZE_CHANGED ]: 'reserved_render_size_changed',
 } );
+
+let _statusCallback = null;
+
+/**
+ * Set the callback that receives loading/stats events.
+ * The renderer sets it at init, to its own dispatcher.
+ */
+export function setStatusCallback( cb ) {
+
+	_statusCallback = cb;
+
+}
+
+export const resetLoading = () => _statusCallback?.( { type: EngineEvents.LOADING_RESET } );
+
+export const updateLoading = ( loadingState ) => {
+
+	_statusCallback?.( { type: EngineEvents.LOADING_UPDATE, ...loadingState } );
+
+};
+
+export const updateStats = ( statsUpdate ) => {
+
+	_statusCallback?.( { type: EngineEvents.STATS_UPDATE, ...statsUpdate } );
+
+};

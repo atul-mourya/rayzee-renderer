@@ -11,7 +11,6 @@ import {
 import { TextureCreator } from '../materials/TextureCreator.js';
 import { GeometryExtractor, geometryBytesOf, usesTextureCoordinates } from './GeometryExtractor.js';
 import { EmissiveTriangleBuilder } from '../lights/EmissiveTriangleBuilder.js';
-import { timeSlicer, updateLoading } from '../utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../Logger.js';
 import { SRGBColorSpace } from 'three';
@@ -29,9 +28,10 @@ import { VERSION } from '../version.js';
 import { SCENE_CACHE_MIN_BUILD_MS } from '../storage/sceneCachePolicy.js';
 import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
 import TLASWorker from '../bvh/TLASWorker.js?worker&inline';
-import { createWorker, hardwareThreads } from '../Platform.js';
+import { createWorker, hardwareThreads, timeSlicer } from '../Platform.js';
 import { meshSource, refitBVH, placementOf, refitBLASes, updateMeshTransforms, withGroupSiblings, writeCopyRecord, takeMoveRanges, takeMovedRecordRanges, computeTLASDirtyRange, computeBLASDirtyRanges, updateMeshTrianglePositions, patchMeshSmoothNormals, refitTLAS } from './SceneRefit.js';
 import { needsSpill, spillToDisk, ensureResident, ensureGeometryResident, ensureMovable, spillTLAS, spillOrderMaps, spillAfterLoad, respill, whenTLASEditable, needsPageInForMove, disposeMatrixSpill, restoreGeometry, disposeGeometrySpill, disposeSpill } from '../memory/SceneSpill.js';
+import { updateLoading } from '../EngineEvents.js';
 
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;

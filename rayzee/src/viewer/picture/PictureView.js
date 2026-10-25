@@ -3,7 +3,7 @@ import { Compositor } from '../../pipeline/Compositor.js';
 import { LocalExposure } from './LocalExposure.js';
 import { PipelineContext } from '../../pipeline/PipelineContext.js';
 import { holdCanvasColorSpace } from '../../color/ColorManagement.js';
-import { createRendererOnDevice, disposeRenderer } from '../../utils.js';
+import { createRendererOnDevice, disposeRenderer } from '../../RayzeeRenderer.js';
 
 // Enough for any header `exportImage` writes; a longer one is read whole.
 const HEADER_BYTES = 1 << 18;

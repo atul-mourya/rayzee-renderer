@@ -469,8 +469,6 @@ export class PathTracer extends PathTracerStage {
 
 		}
 
-		this.performanceMonitor?.start();
-
 		const frameValue = this.frameCount;
 		const renderMode = this.renderMode.value;
 
@@ -547,7 +545,6 @@ export class PathTracer extends PathTracerStage {
 
 			if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
 
-			this.performanceMonitor?.end();
 			return;
 
 		}
@@ -747,8 +744,6 @@ export class PathTracer extends PathTracerStage {
 		this._auxSeedPending = false;
 
 		if ( originalMaxBounces !== null ) this.maxBounces.value = originalMaxBounces;
-
-		this.performanceMonitor?.end();
 
 	}
 

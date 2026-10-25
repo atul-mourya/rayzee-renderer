@@ -4,8 +4,8 @@ import { SpillStore } from '../storage/SpillStore.js';
 import { GeometrySpill } from '../storage/GeometrySpill.js';
 import { createLogger, fmt } from '../Logger.js';
 import { RECORD_VEC4 } from '../scene/BufferLayout.js';
-import { updateLoading } from '../utils.js';
 import { geometryBytesOf } from '../scene/GeometryExtractor.js';
+import { updateLoading } from '../EngineEvents.js';
 
 const log = createLogger( 'scene' );
 

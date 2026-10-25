@@ -7,20 +7,19 @@ import { PathTracer } from './pathtracer/PathTracer.js';
 import { textureLayerSink } from './pathtracer/PathTracerStage.js';
 import { Compositor } from './pipeline/Compositor.js';
 import { RenderPipeline } from './pipeline/RenderPipeline.js';
-import { CompletionTracker } from './pipeline/CompletionTracker.js';
+import { CompletionTracker, getDisplaySamples } from './pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from './EngineDefaults.js';
 import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './scene/BufferLayout.js';
 import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './pathtracer/StorageTexturePool.js';
-import { updateStats, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './utils.js';
 import { createLogger, fmt } from './Logger.js';
-import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
+import { EngineEvents, LEGACY_EVENT_NAMES, updateStats, resetLoading, setStatusCallback } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
 import { isFolderInput } from './loaders/archives/archiveFormats.js';
 import { BasicColor } from './color/BasicColor.js';
 import { setActiveColorManagement } from './color/ActiveColor.js';
 import { getViewTransform, DEFAULT_VIEW } from './color/ViewTransforms.js';
-import { AssetLoader } from './loaders/AssetLoader.js';
+import { AssetLoader, disposeObjectFromMemory } from './loaders/AssetLoader.js';
 import { SceneProcessor } from './scene/SceneProcessor.js';
 import { deviceMemoryGB } from './memory/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
@@ -61,6 +60,57 @@ async function initWithoutFrameLoop( renderer, headless ) {
 		delete globalThis.self;
 
 	}
+
+}
+
+/**
+ * A second renderer on `device` — the view overlay's, a saved picture's. Its backend claims the device's single
+ * uncaptured-error slot during init(); that is handed back, so the owner's handler keeps receiving errors.
+ * @param {GPUDevice} device
+ * @param {Object} parameters - WebGPURenderer's, `canvas` among them
+ */
+export async function createRendererOnDevice( device, parameters ) {
+
+	const handler = device.onuncapturederror;
+	const renderer = new WebGPURenderer( { ...parameters, device } );
+	await renderer.init();
+	device.onuncapturederror = handler;
+	renderer.setPixelRatio( 1.0 );
+	return renderer;
+
+}
+
+/**
+ * Disposes a renderer without leaking it.
+ *
+ * Three.js 0.184–0.186: `Renderer.dispose()` does not remove the 'resize' listener
+ * it installs on `_canvasTarget`. The bound handler closes over the renderer,
+ * pinning the entire WebGPU graph (Backend, Nodes, Bindings, Pipelines, GPUDevice,
+ * every TSL node) alive indefinitely — confirmed via heap-snapshot retainer
+ * analysis. See `Renderer.js` (attach in the constructor, still absent from
+ * `dispose()` in r186). Re-check on every upgrade; drop this when upstream fixes it.
+ *
+ * Renderers constructed with an external `device` do not destroy it here; three
+ * only destroys a device it created itself.
+ *
+ * @param {import('three/webgpu').WebGPURenderer} renderer
+ * @returns {?Promise<void>} Settles once the backend is torn down.
+ */
+export function disposeRenderer( renderer ) {
+
+	if ( ! renderer ) return;
+
+	if ( renderer._canvasTarget && renderer._onCanvasTargetResize ) {
+
+		renderer._canvasTarget.removeEventListener( 'resize', renderer._onCanvasTargetResize );
+
+	}
+
+	// r186+ `dispose()` is async and settles once the backend is torn down; anything that
+	// measures memory straight afterwards has to await the returned promise.
+	const disposed = renderer.dispose();
+	renderer._canvasTarget = null;
+	return disposed;
 
 }
 

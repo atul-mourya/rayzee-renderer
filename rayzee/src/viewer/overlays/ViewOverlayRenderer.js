@@ -1,6 +1,6 @@
 import { SRGBColorSpace } from 'three';
-import { createRendererOnDevice, disposeRenderer } from '../../utils.js';
 import { createOverlayCanvas, viewPixelSize, MAX_VIEW_DPR } from './overlaySurface.js';
+import { createRendererOnDevice, disposeRenderer } from '../../RayzeeRenderer.js';
 
 /** Device-pixel ceiling per axis — guards against huge surfaces at high viewport zoom. */
 const MAX_OVERLAY_DIM = 4096;

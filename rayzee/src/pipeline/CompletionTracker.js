@@ -2,6 +2,13 @@ import { createLogger } from '../Logger.js';
 
 const log = createLogger( 'engine' );
 
+// Raw frameCount is the user-facing sample count (one full-frame pass per frame).
+export function getDisplaySamples( pathTracerStage ) {
+
+	return pathTracerStage.frameCount || 0;
+
+}
+
 /**
  * Tracks render completion state, time limits, and sample limits.
  *

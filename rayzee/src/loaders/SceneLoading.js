@@ -1,9 +1,8 @@
-import { EngineEvents } from '../EngineEvents.js';
+import { EngineEvents, resetLoading, updateLoading } from '../EngineEvents.js';
 import { nameFromUrl } from '../storage/DownloadCache.js';
 import { isFolderInput, localFolder } from './archives/archiveFormats.js';
 import { folderIdentity, identityKey, fileIdentity } from '../storage/identity.js';
 import { SPILL_ENVIRONMENT_WIDTH, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../memory/HostMemory.js';
-import { resetLoading, updateLoading } from '../utils.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { SETTING_SOURCE } from '../RenderSettings.js';
 import { BuildTimer } from '../scene/BuildTimer.js';

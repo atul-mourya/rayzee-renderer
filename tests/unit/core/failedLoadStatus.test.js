@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { PathTracerApp } from '@/core/viewer/PathTracerApp.js';
 import { EngineEvents } from '@/core/EngineEvents.js';
-import { setStatusCallback } from '@/core/utils.js';
+import { setStatusCallback } from '@/core/EngineEvents.js';
 
 // A load that failed before the scene build left the host's loading status on its last step.
 describe( 'PathTracerApp — the loading status after a failed load', () => {

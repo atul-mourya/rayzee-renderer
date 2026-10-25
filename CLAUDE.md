@@ -94,7 +94,7 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 
 **`rayzee/src/`, one folder a job** (lowercase; a worker sits beside the code that starts it):
 - root — entries (`index.js`, `core.js`), `RayzeeRenderer.js` and its API (`RenderSettings`, `EngineDefaults`,
-  `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `utils.js`, `portable.js`
+  `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `portable.js`; the loading/stats status channel is in `EngineEvents.js`
 - `pipeline/` stages, context, events, Compositor · `pathtracer/` the path tracer stage, uniforms, kernel dispatch,
   ray queues and buffers, the bidirectional integrator · `shaders/` TSL functions, `shaders/kernels/` the compute kernels
 - `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera; `SceneProcessor`'s refits and moves
