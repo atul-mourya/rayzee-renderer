@@ -264,6 +264,82 @@ transformed into that space on entering the leaf and the hit's `instanceLeaf` na
 transform back through. Single-use and emissive geometry is baked to world space behind an
 identity leaf instead, so it needs no transform either way.
 
+### More on the scene buffers
+
+What the sections above leave out: why the stores are split, buffer parts in practice, and the instance table.
+
+On the GPU the five rows are split across two buffers — rows 0–2 (positions + packed normals) in
+`triangleGeoAttr`, rows 3–4 (UVs, flags, mesh index) in `triangleShadeAttr` — because one buffer of
+80 B a triangle hit the 4 GB storage-buffer limit at 53.6M; geo alone at 48 B reaches 89.5M. The CPU
+records stay whole; `PathTracerStage._uploadTriangles` splits them on every upload path.
+Kernels take the pair as `triangleBuffer = { geo, shade }` (`stage.triangleStorageNode`). When no material samples a
+texture (`usesTextureCoordinates`, `SceneProcessor.textureCoordinates`) the shade store holds only flags and mesh index,
+a `uvec2` a triangle (24 B less; `withoutUV` on the pair), and `triangleRow` reads its UVs as zero; `rebuildMaterials`
+brings them back when a texture arrives.
+
+**Buffer parts.** Dawn caps one buffer at 4 GiB − 4 even where Metal allows 13.3 GB, so past
+`maxStorageBufferBindingSize` the BVH, geo and shade stores are each split into parts of whole records
+(`StorageParts` in `shaders/ThreePatches.js`; `stage._bvhParts` / `_geoParts` / `_shadeParts`), read through
+`splitStorage` (`shaders/Common.js`): `getDatafromStorageBuffer` → `storageElement` picks the part with an
+`If` chain; `storageRows` picks it once for several rows of one record — a BVH node's four vec4 and a TLAS
+leaf's transform are read in one branch (a 12-lane copy record can straddle two parts and stays per element).
+A store that fits one buffer is a plain node and compiles exactly the old code. Every part is a
+binding: Shade binds 5 others (rays, hits, counters, active indices, scene data), so parts total ≤ 5 of the
+device's 10 — `_assertBindings` refuses before upload. The BVH and geo both in two parts fit (Shade and
+two VCM kernels then sit at 10). Measured in Node, forced with `stage.bufferPartBytes` (a test hook):
+images byte-identical; a split BVH costs +3–7 % frame time at two parts or three (read per vec4, three
+parts cost +9–14 %; the table above), split geo +0–3 %.
+`tests/gpu/splitBuffers.test.js` traces folded and unfolded trees over 2–3 parts against single buffers,
+`groupedInstances.test.js` instances and copy clusters over three.
+
+⚠️ An empty scene's tree is one empty triangle leaf
+(`emptyBVH()` in `RayzeeRenderer.js`): sixteen zeros read as an inner node whose children are itself, and a CPU walk of
+the TLAS (the bidirectional integrator's `_visibleSceneBounds`) searched it forever whenever a frame ran between an
+unload and the next build.
+
+- Indices and leaf tags in slot `[3]` are **u32 bit patterns**, read with `floatBitsToUint`.
+  Stored as float *values* they rounded past 2^24 and sent rays to a neighbouring node, which
+  silently erased geometry from large scenes. Every valid index is below `BVH_MAX_INDEX` (2^30)
+  and the tags sit above it, so `nodeTag >= BVH_MAX_INDEX` means leaf — in an unfolded BVH.
+- **BLAS-pointer leaf** (`BLAS_POINTER_LEAF`, 0x40000001): `[rootNodeIndex, entry, visibility, tag]`,
+  and slots 4–15 hold the world-to-object matrix rows. Slot `[1]` carries the **TLAS entry** index
+  masked by `TLAS_PLACEMENT_MASK` (the placement, unless placements are grouped); its bit 30 (`TLAS_LEAF_IDENTITY`)
+  says the matrix is identity, which is how a baked placement tells traversal to skip the ray transform.
+- **Grouped placements** (`InstanceTable.setGroups`): instanced meshes sharing one `instanceMatrix` attribute under the
+  same host transform (non-emissive, non-deforming — `GeometryExtractor._instanceGroups`) are one object: each copy is
+  ONE TLAS entry whose root is a small tree over the members' BLAS roots (plain inner nodes in the copies' shared object
+  space, so traversal is unchanged). Members keep their placements, so transforms, visibility and refit stay per mesh;
+  `entryOf` / `repOf` map placements and entries. A hidden member's child points at the empty leaf with a far point box
+  (`BVH_EMPTY_BOX`; an inverted box is entered everywhere), and the refitter reads that box back as empty. A part moved
+  alone takes its siblings along (`SceneProcessor._withGroupSiblings`). The pbrt/USD builder shares one attribute
+  between a template's shapes at the same relative transform, and its placement budget counts copies. Whole Moana
+  island: 50.99M TLAS entries → 39.92M; a five-part render byte-identical grouped or not, 224k → 154k entries.
+  `tests/gpu/groupedInstances.test.js` holds hits, hidden members and refits to the ungrouped tree.
+- **Copy clusters** (past `CLUSTER_MIN_ENTRIES`, 1M TLAS entries; `config.clusterCopies`): the TLAS is built over leaves
+  of up to `CLUSTER_SIZE` (4) neighbouring copies of any objects — the entries halved at the centre median of their widest
+  axis (`InstanceTable.formClusters`), so the count is ⌈entries / 4⌉ before any bounds (the BLAS cache needs `blasBase`
+  then). Each copy's world-to-object rows are a 48 B record after the BLASes (`recordNodeStart`, `copyRecordBase` on the
+  buffer); the leaf (`CLUSTER_LEAF`, layout in `BufferLayout.js`) holds byte boxes of each copy on a power-of-two grid and
+  one word a copy: root | identity | `CLUSTER_COPY_HIDDEN`, so visibility and identity are per copy. ~80 B a copy against
+  128; Moana's 39.9M entries → 10M leaves. Traversal pushes the copies a ray reaches nearest-first as
+  `COPY_ENTRY | leaf << 2 | k` and handles one with `Continue()`: nesting the node visit in an `Else` overflowed the JS
+  stack building the island's Shade. `instanceLeaf` is then the record index. Cost +17–20 % frame time on clustered
+  scenes (plant set and island). ⚠️ Grouping copies of one object only (Morton order) made loose leaves and 2.2× the
+  traversal time — the grouping, not the code (one copy a leaf: +7–11 %).
+- **Geometry storage is hybrid.** A geometry used by exactly one placement — or one that emits
+  light — is **baked to world space** behind an identity leaf. A geometry shared by several
+  placements stays in **object space** and the ray is moved into it on entry. Emissive instanced
+  meshes are expanded to per-instance triangles so every copy lights the scene.
+- **`InstanceTable`**: per-**placement** metadata (a million instances cost a matrix each, not a
+  million Object3Ds). `sourceMesh[placement]` names the template; `placementRunOf(template)`
+  gives that template's contiguous run. ⚠️ Never index it with a mesh/template index.
+  Transforms are **runs of rows** (`matrixRow( p )` returns the offset into `rowArray`, which it sets): an InstancedMesh
+  hosted at the origin is read in its own `instanceMatrix` list, never copied, and the first write to such a run copies
+  it into an array of the table's own (`_writeRow`), so a move never rewrites the three.js matrices. The copy into one
+  pool was 3 GB beside the lists on the Moana island, and the allocation that failed it in Chrome. `table.world` exists
+  only when one own run holds everything (tests).
+- **`TLASBuilder`**: SAH BVH over entry AABBs (`writeEntryWorldAABBs`) with cached flatten buffer
+
 ### Scene data: materials, then lights (`materialStorageNode`)
 One buffer, one Shade binding: `[ materials | light BVH nodes | emissive entries | bit-trail map ]`. Light reads go through `lightDataNode`, which adds `lightVec4Offset` (where the light data starts). Material edits upload only the material region.
 
