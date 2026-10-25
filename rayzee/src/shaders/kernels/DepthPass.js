@@ -12,7 +12,7 @@ import { withSceneResources } from '../SceneResources.js';
 import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 
 /** Where nothing was hit, as Cycles writes its depth pass. */
-export const DEPTH_BACKGROUND = 1e10;
+const DEPTH_BACKGROUND = 1e10;
 
 const WG = 8;
 const MAX_SKIPS = 16;

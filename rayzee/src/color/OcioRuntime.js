@@ -99,13 +99,6 @@ export async function ensureRuntime() {
 
 }
 
-/** True once a runtime exists, without creating one. */
-export function isRuntimeReady() {
-
-	return runtime !== null;
-
-}
-
 /** The OCIO module's own built-in configs, which need no files on disk. */
 export async function listBuiltinConfigs() {
 

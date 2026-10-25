@@ -191,7 +191,7 @@ export function geometryBytesOf( object ) {
 }
 
 /** Bytes of InstancedMesh matrix lists under `object`, each list once however many meshes share it. */
-export function instanceBytesOf( object ) {
+function instanceBytesOf( object ) {
 
 	let bytes = 0;
 	const counted = new Set();

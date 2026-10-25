@@ -114,40 +114,6 @@ WebGPUBackend.prototype.createStorageAttribute = function ( attribute ) {
 };
 
 /**
- * Upload a storage attribute's contents from several CPU chunks.
- *
- * A GPU buffer may be up to `maxBufferSize` (4 GB here) while V8 caps a single ArrayBuffer at
- * ~2 GB, so anything larger has to be staged in pieces. The attribute must be GPU-only: it owns
- * no CPU array, and these writes are the only thing that fills it.
- *
- * @param {Object} renderer - WebGPURenderer
- * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
- * @param {Array<TypedArray>} chunks - in order; total byte length must match the attribute
- */
-export function uploadStorageChunks( renderer, attr, chunks ) {
-
-	const backend = renderer.backend;
-	backend.createStorageAttribute( attr );
-
-	const buffer = backend.get( attr ).buffer;
-	let byteOffset = 0;
-
-	for ( const chunk of chunks ) {
-
-		backend.device.queue.writeBuffer( buffer, byteOffset, chunk, 0, chunk.length );
-		byteOffset += chunk.byteLength;
-
-	}
-
-	if ( byteOffset !== attr.gpuByteLength ) {
-
-		throw new RangeError( `uploadStorageChunks wrote ${byteOffset} bytes into a ${attr.gpuByteLength}-byte buffer` );
-
-	}
-
-}
-
-/**
  * GPU-only storage attributes standing for one array too large for a single binding: lane l lives in part
  * ⌊l / lanesPerPart⌋, and a part holds whole records, so no record straddles two. Read through `splitStorage`
  * (shaders/Common.js).
@@ -226,43 +192,6 @@ export class StorageParts {
 			lane += n;
 
 		}
-
-	}
-
-}
-
-/**
- * Re-upload one lane range of a chunked storage attribute, spanning chunks as needed.
- *
- * The partial-update path three.js offers (`addUpdateRange` + a version bump) cannot work here:
- * a GPU-only attribute owns no CPU array and its `updateAttribute` is a no-op, so a dirty range
- * would silently never reach the GPU.
- *
- * @param {Object} renderer - WebGPURenderer
- * @param {Object} attr - attribute from gpuOnlyStorageAttribute()
- * @param {Object} records - the ChunkedRecords backing it
- * @param {number} startLane - first lane to write
- * @param {number} laneCount - how many lanes
- */
-export function uploadStorageChunkRange( renderer, attr, records, startLane, laneCount ) {
-
-	const backend = renderer.backend;
-	backend.createStorageAttribute( attr );
-
-	const buffer = backend.get( attr ).buffer;
-	const lanesPerChunk = records.recordsPerChunk * records.lanesPerRecord;
-	const bytesPerLane = records.chunks[ 0 ].BYTES_PER_ELEMENT;
-	const end = startLane + laneCount;
-
-	let lane = startLane;
-	while ( lane < end ) {
-
-		const ci = Math.floor( lane / lanesPerChunk );
-		const chunk = records.chunks[ ci ];
-		const local = lane - ci * lanesPerChunk;
-		const n = Math.min( chunk.length - local, end - lane );
-		backend.device.queue.writeBuffer( buffer, lane * bytesPerLane, chunk, local, n );
-		lane += n;
 
 	}
 

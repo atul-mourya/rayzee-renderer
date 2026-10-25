@@ -70,16 +70,6 @@ export function linearToSRGB( c ) {
 }
 
 /**
- * The transfer step, skipped for a transform that encoded its own output.
- * @param {number} c - a single channel, post-curve
- */
-export function encodeForDisplay( c, toneMapping ) {
-
-	return isOutputEncoded( toneMapping ) ? Math.min( Math.max( c, 0 ), 1 ) : linearToSRGB( c );
-
-}
-
-/**
  * Exposure as the WebGPU output pass applies it.
  *
  * Three.js applies `toneMappingExposure` *inside* ToneMappingNode's branch, and that branch

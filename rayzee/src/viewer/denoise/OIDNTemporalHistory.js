@@ -9,7 +9,7 @@ import { GBUFFER_MISS_THRESHOLD } from './DenoiserSettings.js';
  * History length rides in albedo.w; colour.w stays the path tracer's alpha.
  */
 
-export const HISTORY_DEFAULTS = Object.freeze( {
+const HISTORY_DEFAULTS = Object.freeze( {
 	maxLength: 8,
 	// Reflections do not move with the surface.
 	smoothLength: 2,

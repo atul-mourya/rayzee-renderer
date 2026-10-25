@@ -27,12 +27,12 @@ import {
 } from '../../pathtracer/PackedRayBuffer.js';
 
 const WG_SIZE = 256;
-export const MERGE_EMPTY = 0xFFFFFFFF;
+const MERGE_EMPTY = 0xFFFFFFFF;
 // A cell's list is walked at most this far: a bound on the work, never reached at the radius the radius scale gives.
 const MAX_CELL_STEPS = 1024;
 
 // Shells of radius ratio 1.25: a sphere whose radius changes by (1 ± slope) across it spans at most two.
-export const MERGE_SHELL_RATIO = 1.25;
+const MERGE_SHELL_RATIO = 1.25;
 const LOG2_RATIO = Math.log2( MERGE_SHELL_RATIO );
 
 const shellOf = ( bdpt, radius ) => int( max( floor( log2( radius.div( bdpt.mergeMin ) ).div( LOG2_RATIO ) ), 0.0 ) );

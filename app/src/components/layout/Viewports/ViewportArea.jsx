@@ -16,7 +16,7 @@ const ViewportLoadingFallback = () => (
 	</div>
 );
 
-const ViewportTabs = () => {
+const ViewportArea = () => {
 
 	const appMode = useStore( state => state.appMode );
 	const mainViewportRef = useRef( null );
@@ -50,4 +50,4 @@ const ViewportTabs = () => {
 
 };
 
-export default ViewportTabs;
+export default ViewportArea;

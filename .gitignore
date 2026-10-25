@@ -10,11 +10,10 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-rayzee/dist
-app/dist
 coverage
 *.local
 .env
+.npmrc
 
 # Editor directories and files
 .vscode/*
@@ -27,130 +26,27 @@ coverage
 *.sln
 *.sw?
 
-ignoreMeDirectory
-
 # What the Node examples write when run from the repository root
 /core-node.png
 /render.png
 
-
-public/hdri/Car Scene.exr
-public/hdri/cloud_layers_2k.hdr
-public/hdri/Default (1).exr
-public/hdri/Default.exr
-public/hdri/G0rteNiXoAAQHvk.jpeg
-public/hdri/MR_INT-003_Kitchen_Pierre.hdr
-public/hdri/HDR/Background_05_v2.hdr
-public/hdri/HDR/Background_05.hdr
-public/hdri/HDR/Credits.txt
-public/hdri/HDR/konzerthaus_4k.hdr
-public/hdri/HDR/material-test.hdr
-public/hdri/HDR/peppermint_powerplant_4k.hdr
-public/hdri/HDR/photo_studio_01_1k.hdr
-public/hdri/HDR/san_giuseppe_bridge_blurred.hdr
-public/hdri/HDR/spiaggia_di_mondello_4k_new.hdr
-public/hdri/HDR/sunset.hdr
-public/hdri/HDR/syferfontein_18d_clear_1k.hdr
-public/hdri/HDR/white_cliff_top_1k.hdr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/1363446029.1000.jpg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_567616807_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_656811857_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_800720574_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_1095853905_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_1233033442_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_1363446029_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_1436641473_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/AdobeStock_1436642522_Preview.jpeg
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/black-white-light-studio_2K_329c9480-23d0-4763-8c2e-f99e8833e3eb.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/black-white-light-studio_2K_4699a29c-6765-462a-b16a-3fc983f6d8a3.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/black-white-light-studio_2K_85418294-2fda-48d3-87a9-a41ea5f14662.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/black-white-light-studio_2K_d9e7f27a-bf49-4cb2-b47b-5c7e6d1a8479.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/black-white-studio-light_2K_10acaaeb-9216-4d45-90a4-a469de109687.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/free-studio-hdri_2K_1b6e5eaa-376d-4104-9267-ed71544a62b7.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/hangar-studio-hdri_2K_d6ef2a0e-4280-4e3a-b7ce-b3506f922da4.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_01.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_02.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_03.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_04.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_05.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_06.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_07.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_08.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_09.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_10.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_11.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_12.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_13.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_14.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_15.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_16.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_17.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_18.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_19.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_20.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_21.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_22.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_23.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_24.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/HDR_Light_Studio_Free_HDRI_Design_25.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/light-up-hangar-studio-hdri_2K_e61cd911-2788-4030-8cc8-1249842cbf5b.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/luminous-reflective-hall_2K_836dfb8c-2ea7-48f8-bbe7-dc4578556b79.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/mesh-reflection-space_2K_4f107dee-4c33-47d3-97f4-3f006d5e08d5.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/moonless_golf_1k.hdr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/special-clean-light-studio_2K_80dd6a25-2f8f-4d5a-9dd8-08e977ddc83c.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/studio-white-light_1K_1a69ad5b-8d7b-46e4-93b7-09b8e10c9b89.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/studio-white-light_2K_6ac159a1-0ef0-4b91-afa8-5b857bba91d7.exr
-public/hdri/HDR/moonless_golf_1k.hdr
-public/hdri/HDR/MR_INT-003_Kitchen_Pierre.hdr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/bg_2_2k.hdr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/Car Scene.exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/Default (1).exr
-public/hdri/HDR_Light_Studio_25_Free_Studio_HDRI/Default.exr
-public/hdri/jpegs/1363446029.1000.jpg
-public/hdri/jpegs/AdobeStock_567616807_Preview.jpeg
-public/hdri/jpegs/AdobeStock_656811857_Preview.jpeg
-public/hdri/jpegs/AdobeStock_800720574_Preview.jpeg
-public/hdri/jpegs/AdobeStock_1095853905_Preview.jpeg
-public/hdri/jpegs/AdobeStock_1233033442_Preview.jpeg
-public/hdri/jpegs/AdobeStock_1363446029_Preview.jpeg
-public/hdri/jpegs/AdobeStock_1436641473_Preview.jpeg
-public/hdri/jpegs/AdobeStock_1436642522_Preview.jpeg
-public/hdri/jpegs/G0rteNiXoAAQHvk.jpeg
-.npmrc
+# Private notes and specs
 docs/internal/
-.gitignore
+
+# Other AI assistants' copies of .claude/, and local Claude Code state
+AGENTS.md
 CLAUDE.md
-.claude/settings.local.json
 .github/copilot-instructions.md
-.claude/skills/cf-crawl/SKILL.md
+.agents/
+.codex/
+.claude/settings.local.json
 .claude/scheduled_tasks.lock
+.claude/skills/cf-crawl/
+.claude/skills/excalidraw-diagram/.gitignore
 
 # Local test models — 800 MB of GLBs used by bench --model, never redistributed
 app/public/models/
 app/public/24155522.glb
-.agents/skills/cf-crawl/SKILL.md
-.agents/skills/check-tsl/SKILL.md
-.agents/skills/debug-pipeline/SKILL.md
-.agents/skills/excalidraw-diagram/README.md
-.agents/skills/excalidraw-diagram/SKILL.md
-.agents/skills/excalidraw-diagram/references/color-palette.md
-.agents/skills/excalidraw-diagram/references/element-templates.md
-.agents/skills/excalidraw-diagram/references/json-schema.md
-.agents/skills/excalidraw-diagram/references/pyproject.toml
-.agents/skills/excalidraw-diagram/references/render_excalidraw.py
-.agents/skills/excalidraw-diagram/references/render_template.html
-.agents/skills/react-expert/SKILL.md
-.agents/skills/review-stage/SKILL.md
-.gitignore
-.codex/config.toml
-.codex/hooks.json
-.codex/agents/perf-profiler.toml
-.codex/agents/pipeline-architect.toml
-.codex/agents/tsl-reviewer.toml
-.codex/hooks/build-check.sh
-.codex/hooks/lint-on-edit.sh
-.gitignore
-AGENTS.md
 
 # Assets staged for upload to the asset CDN (third-party licences; never committed)
 .cdn-upload/

@@ -9,7 +9,7 @@
 
 const MAGIC = [ 0x52, 0x5a, 0x56, 0x54 ];
 const FORMAT = 'rayzee-baked-view';
-export const BAKED_VIEW_VERSION = 1;
+const BAKED_VIEW_VERSION = 1;
 const HALF_ONE = 0x3c00;
 
 async function pipe( bytes, transform ) {

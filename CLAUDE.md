@@ -88,7 +88,7 @@ when a host sets nothing — a default setting (the core's or a viewer piece's),
 a sampling or BSDF change that moves the goldens — gets a `BREAKING CHANGE:` footer saying how default
 renders change, so semantic-release makes it a major. Farms pin a major to pin a look and calibrate
 against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Two tripwires:
-`tests/unit/constants/pixelDefaults.test.js` snapshots the defaults (core and viewer pieces) and presets (update with
+`tests/unit/core/pixelDefaults.test.js` snapshots the defaults (core and viewer pieces) and presets (update with
 `-u`, then add the footer), and `bench:bless` names every golden that moved on the same GPU.
 
 ## Monorepo Structure

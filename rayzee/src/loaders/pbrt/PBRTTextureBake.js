@@ -214,7 +214,7 @@ export const mixOf = ( [ a, b, amount ] ) => {
 const WRAPPED = { spherical: 1, cylindrical: 0 };
 
 /** pbrt-v4's (s, t) of a point in texture space (textures.h: PlanarMapping, SphericalMapping, CylindricalMapping). */
-export function mapPoint( mapping, x, y, z, out ) {
+function mapPoint( mapping, x, y, z, out ) {
 
 	if ( mapping.type === 'planar' ) {
 

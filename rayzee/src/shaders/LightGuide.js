@@ -17,7 +17,7 @@ import {
 
 import { COUNTER, GUIDE_COUNTER_WORDS } from '../pathtracer/QueueManager.js';
 
-export const GUIDE_BIN_SIDE = 4;
+const GUIDE_BIN_SIDE = 4;
 export const GUIDE_BINS = GUIDE_BIN_SIDE * GUIDE_BIN_SIDE;
 export const GUIDE_CELL_SIDE = 64;
 export const GUIDE_CELLS = GUIDE_CELL_SIDE * GUIDE_CELL_SIDE;

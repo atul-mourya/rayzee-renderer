@@ -28,12 +28,6 @@ export function setBindingAudit( on ) {
 
 }
 
-export function isBindingAuditEnabled() {
-
-	return enabled;
-
-}
-
 /** @returns {Array<{stage: string, nodes: string[], unboundAtCompile: string[], message: string}>} */
 export function getBindingAuditFindings() {
 

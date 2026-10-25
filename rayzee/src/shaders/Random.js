@@ -51,7 +51,7 @@ export const wang_hash = /*@__PURE__*/ wgslFn( `
 // mutable .toVar() variable. This replicates GLSL `inout uint state` semantics:
 // the caller's rngState advances on every call.
 
-export const RandomValueFast = ( state ) => {
+const RandomValueFast = ( state ) => {
 
 	// Simple multiply-with-carry generator - much faster than PCG
 	state.assign( state.mul( 1664525 ).add( 1013904223 ) );
@@ -143,7 +143,7 @@ export const SAMPLER_DIM_AUX_BASE = 4096;
 // -----------------------------------------------------------------------------
 // Halton sequence generator with per-digit additive scrambling
 
-export const haltonScrambled = /*@__PURE__*/ wgslFn( `
+const haltonScrambled = /*@__PURE__*/ wgslFn( `
 	fn haltonScrambled( index: i32, base: i32, scramble: u32 ) -> f32 {
 
 		var result = 0.0f;
@@ -179,7 +179,7 @@ export const haltonScrambled = /*@__PURE__*/ wgslFn( `
 // The reverseBits sandwich is required, not decoration: Owen scrambling permutes a digit from the
 // digits ABOVE it, so the permutation must run on the bit-reversed value. A plain hash randomises
 // the point but destroys the stratification Sobol' exists to provide.
-export const owen_scramble = /*@__PURE__*/ wgslFn( `
+const owen_scramble = /*@__PURE__*/ wgslFn( `
 	fn owen_scramble( x: u32, seed: u32 ) -> u32 {
 
 		var v = reverseBits( x );
@@ -198,7 +198,7 @@ export const owen_scramble = /*@__PURE__*/ wgslFn( `
 // whose matrix rows are Pascal's triangle mod 2 — by Lucas' theorem row k selects the submasks of
 // k, making the transform a 5-step subset-XOR butterfly rather than a loop over set bits.
 // Together they form a (0,2)-sequence.
-export const sobol2D = /*@__PURE__*/ wgslFn( `
+const sobol2D = /*@__PURE__*/ wgslFn( `
 	fn sobol2D( index: u32 ) -> vec2u {
 
 		let r0 = reverseBits( index );
@@ -226,7 +226,7 @@ export const sobol2D = /*@__PURE__*/ wgslFn( `
 // interface the same way. Shuffling the index instead permutes WHICH sample each dimension
 // takes, dropping cross-dimension |corr| to 0.05 while leaving each dimension's own
 // stratification intact (a permutation of 0..2^k-1 is the same point set).
-export const owen_scrambled_sobol = /*@__PURE__*/ wgslFn( `
+const owen_scrambled_sobol = /*@__PURE__*/ wgslFn( `
 	fn owen_scrambled_sobol( index: u32, dimension: u32, seed: u32 ) -> f32 {
 
 		let dimSeed = seed ^ ( dimension * 0x9e3779b9u + 0x6a09e667u );
@@ -242,7 +242,7 @@ export const owen_scrambled_sobol = /*@__PURE__*/ wgslFn( `
 // shuffled index — that is what keeps the pair a (0,2)-net. Shuffling each component
 // independently (i.e. calling the 1D routine twice) destroys it: measured 982/2304 elementary
 // intervals wrong at 256 points, versus 0/2304 with the shared shuffle.
-export const owen_scrambled_sobol2D = /*@__PURE__*/ wgslFn( `
+const owen_scrambled_sobol2D = /*@__PURE__*/ wgslFn( `
 	fn owen_scrambled_sobol2D( index: u32, seed: u32 ) -> vec2f {
 
 		let shuffled = owen_scramble( index, seed ^ 0xa511e9b3u );
@@ -260,7 +260,7 @@ export const owen_scrambled_sobol2D = /*@__PURE__*/ wgslFn( `
 // -----------------------------------------------------------------------------
 // Get N-dimensional sample (up to 4D)
 
-export const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngState, dimensions, preferredTechnique, resolution, frame ) => {
+const getRandomSampleND = ( pixelCoord, sampleIndex, bounceIndex, rngState, dimensions, preferredTechnique, resolution, frame ) => {
 
 	const technique = select( preferredTechnique.notEqual( int( - 1 ) ), preferredTechnique, samplingTechnique );
 	const result = vec4( 0.0 ).toVar();

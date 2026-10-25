@@ -22,7 +22,7 @@ export const LampPick = struct( { kind: 'int', index: 'int', pdf: 'float', total
 /** @param lamps { directional, numDirectional, area, numArea, point, numPoint, spot, numSpot } */
 export const lampCount = ( lamps ) => lamps.numDirectional.add( lamps.numArea ).add( lamps.numPoint ).add( lamps.numSpot );
 
-export const lampTypeAt = ( lamps, flat ) => select( flat.lessThan( lamps.numDirectional ), int( LIGHT_TYPE_DIRECTIONAL ),
+const lampTypeAt = ( lamps, flat ) => select( flat.lessThan( lamps.numDirectional ), int( LIGHT_TYPE_DIRECTIONAL ),
 	select( flat.lessThan( lamps.numDirectional.add( lamps.numArea ) ), int( LIGHT_TYPE_AREA ),
 		select( flat.lessThan( lamps.numDirectional.add( lamps.numArea ).add( lamps.numPoint ) ), int( LIGHT_TYPE_POINT ), int( 3 ) ) ) );
 

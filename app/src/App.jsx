@@ -2,7 +2,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { initDatabase } from '@/lib/database';
 import TopBar from './components/layout/TopBar/TopBar';
 import LeftSidebar from '@/components/layout/LeftSideBar/LeftSidebar';
-import ViewportTabs from './components/layout/Viewports/ViewportTabs';
+import ViewportArea from './components/layout/Viewports/ViewportArea';
 import RightSidebar from './components/layout/RightSideBar/RightSidebar';
 import { ThemeProvider } from "@/components/theme-provider";
 import {
@@ -183,7 +183,7 @@ const App = () => {
 					</ResizablePanel>
 					<ResizableHandle withHandle />
 					<ResizablePanel className="min-w-50" defaultSize={60}>
-						<ViewportTabs />
+						<ViewportArea />
 					</ResizablePanel>
 					<ResizableHandle withHandle />
 					<ResizablePanel onResize={handleResize} className="min-w-50 h-full" defaultSize={20}>

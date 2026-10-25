@@ -7,7 +7,7 @@ const INDEX_VERSION = 1;
 // Scene text compresses 3-5×; reserving too little only means the write fails and falls back.
 const GUESSED_EXPANSION = 3;
 
-export async function archiveKey( kind, file ) {
+async function archiveKey( kind, file ) {
 
 	return `${kind}:${identityKey( await fileIdentity( file ) )}`;
 

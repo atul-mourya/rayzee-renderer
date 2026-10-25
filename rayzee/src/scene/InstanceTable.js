@@ -21,7 +21,7 @@ const IDENTITY = Float64Array.from( [ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 
 export const IN_PLACE = Object.freeze( [] );
 
 /** Determinant of the upper-left 3x3 at `off`. Negative means the transform mirrors. */
-export function determinant3At( m, off ) {
+function determinant3At( m, off ) {
 
 	return m[ off ] * ( m[ off + 5 ] * m[ off + 10 ] - m[ off + 6 ] * m[ off + 9 ] )
 		- m[ off + 4 ] * ( m[ off + 1 ] * m[ off + 10 ] - m[ off + 2 ] * m[ off + 9 ] )
@@ -121,7 +121,7 @@ export function transformAABB( aabb, m ) {
 }
 
 /** Writes an AABB carried through an affine transform into `dst` at `dstOff`. */
-export function transformAABBInto( src, srcOff, m, mOff, dst, dstOff ) {
+function transformAABBInto( src, srcOff, m, mOff, dst, dstOff ) {
 
 	let minX = Infinity, minY = Infinity, minZ = Infinity;
 	let maxX = - Infinity, maxY = - Infinity, maxZ = - Infinity;

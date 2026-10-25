@@ -214,7 +214,7 @@ export function encodeExtended( v ) {
 }
 
 /** {@link encodeExtended} undone. */
-export function decodeExtended( v ) {
+function decodeExtended( v ) {
 
 	const a = Math.abs( v );
 	const d = a <= 0.04045 ? a / 12.92 : Math.pow( ( a + 0.055 ) / 1.055, 2.4 );

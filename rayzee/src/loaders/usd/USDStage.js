@@ -11,7 +11,7 @@ import { parseUSDA } from './USDText.js';
 const RANK = { local: 0, inherit: 1, variant: 2, reference: 3, payload: 4, specialize: 5 };
 const MAX_CONNECTION_HOPS = 32;
 
-export function parseLayer( bytes, path ) {
+function parseLayer( bytes, path ) {
 
 	const crate = bytes.length >= 8 && bytes[ 0 ] === 0x50 && bytes[ 1 ] === 0x58 && bytes[ 2 ] === 0x52 && bytes[ 3 ] === 0x2D
 		&& bytes[ 4 ] === 0x55 && bytes[ 5 ] === 0x53 && bytes[ 6 ] === 0x44 && bytes[ 7 ] === 0x43;
@@ -161,7 +161,7 @@ function mapOp( op, map ) {
 
 }
 
-export class Prim {
+class Prim {
 
 	constructor( stage, path, root ) {
 

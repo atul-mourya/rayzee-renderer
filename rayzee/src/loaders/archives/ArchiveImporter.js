@@ -71,7 +71,7 @@ const bufferOf = async entry => {
 export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 
 /** The same question for a USD scene, in USD layer bytes: binary layers hold far more geometry a byte than pbrt text. */
-export const USD_ELEMENT_PROMPT_BYTES = 1_000_000_000;
+const USD_ELEMENT_PROMPT_BYTES = 1_000_000_000;
 
 export class ArchiveImporter {
 

@@ -16,7 +16,7 @@ import { materialLayers } from './SceneResources.js';
 // STRUCTS (local to transmission)
 // ================================================================================
 
-export const TransmissionResult = struct( {
+const TransmissionResult = struct( {
 	direction: 'vec3', // New ray direction after transmission/reflection
 	throughput: 'vec3', // Color throughput including absorption
 	didReflect: 'bool', // Whether the ray was reflected instead of transmitted
@@ -43,7 +43,7 @@ export const Medium = struct( {
 	dispersion: 'float',
 } );
 
-export const SpectralSample = struct( {
+const SpectralSample = struct( {
 	wavelength: 'float', // Wavelength in nanometers
 	ior: 'float', // IOR at this wavelength
 	colorWeight: 'vec3', // Color contribution weight
@@ -58,33 +58,12 @@ export const MicrofacetTransmissionResult = struct( {
 	pathWavelength: 'float', // 0 if path is not yet spectral, else locked wavelength in nm
 } );
 
-// MediumStack as a struct with fixed-size slots
-export const MediumStack = struct( {
-	m0_ior: 'float',
-	m0_attenuationColor: 'vec3',
-	m0_attenuationDistance: 'float',
-	m0_dispersion: 'float',
-	m1_ior: 'float',
-	m1_attenuationColor: 'vec3',
-	m1_attenuationDistance: 'float',
-	m1_dispersion: 'float',
-	m2_ior: 'float',
-	m2_attenuationColor: 'vec3',
-	m2_attenuationDistance: 'float',
-	m2_dispersion: 'float',
-	m3_ior: 'float',
-	m3_attenuationColor: 'vec3',
-	m3_attenuationDistance: 'float',
-	m3_dispersion: 'float',
-	depth: 'int',
-} );
-
 // ================================================================================
 // DISPERSION
 // ================================================================================
 
 // Cauchy IOR n(λ) = baseIOR + 0.03·dispersion / λ_µm²
-export const iorFromWavelength = /*@__PURE__*/ Fn( ( [ baseIOR, dispersionStrength, wavelength ] ) => {
+const iorFromWavelength = /*@__PURE__*/ Fn( ( [ baseIOR, dispersionStrength, wavelength ] ) => {
 
 	const wlMicron = wavelength.div( 1000.0 );
 	return baseIOR.add( dispersionStrength.mul( 0.03 ).div( wlMicron.mul( wlMicron ) ) );
@@ -116,7 +95,7 @@ const wavelengthToXYZ = /*@__PURE__*/ Fn( ( [ wl ] ) => {
 // Sample a wavelength on [380,700]nm and return its IOR + sRGB colorWeight (CIE 1931 →
 // sRGB, gamut-clipped). The (1.819, 2.773, 2.928) factors normalize the clipped per-λ
 // average to vec3(1), so clear glass converges to white as samples accumulate.
-export const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, random ] ) => {
+const sampleWavelengthForDispersion = Fn( ( [ baseIOR, dispersionStrength, random ] ) => {
 
 	const wl = mix( float( 380.0 ), float( 700.0 ), random ).toVar();
 	const sampledIOR = iorFromWavelength( baseIOR, dispersionStrength, wl );

@@ -61,44 +61,10 @@ export const sRGBToLinear = wgslFn( `
 	}
 ` );
 
-export const gammaCorrection = wgslFn( `
-	fn gammaCorrection( color: vec3f ) -> vec3f {
-
-		return pow( color, vec3f( 1.0 / 2.2 ) );
-
-	}
-` );
-
 export const square = wgslFn( `
 	fn square( x: f32 ) -> f32 {
 
 		return x * x;
-
-	}
-` );
-
-export const squareVec3 = wgslFn( `
-	fn squareVec3( x: vec3f ) -> vec3f {
-
-		return x * x;
-
-	}
-` );
-
-// Get maximum component of a vector
-export const maxComponent = wgslFn( `
-	fn maxComponent( v: vec3f ) -> f32 {
-
-		return max( max( v.r, v.g ), v.b );
-
-	}
-` );
-
-// Get minimum component of a vector
-export const minComponent = wgslFn( `
-	fn minComponent( v: vec3f ) -> f32 {
-
-		return min( min( v.r, v.g ), v.b );
 
 	}
 ` );
@@ -127,24 +93,6 @@ export const balanceHeuristic = wgslFn( `
 	fn balanceHeuristic( pdf1: f32, pdf2: f32 ) -> f32 {
 
 		return pdf1 / max( pdf1 + pdf2, ${MIN_PDF} );
-
-	}
-` );
-
-// Bayer matrix 4x4 dithering — exact port of GLSL
-export const applyDithering = wgslFn( `
-	fn applyDithering( color: vec3f, uv: vec2f, ditheringAmount: f32, resolution: vec2f ) -> vec3f {
-
-		let bayerRow0 = vec4f( 0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0 );
-		let bayerRow1 = vec4f( 12.0 / 16.0, 4.0 / 16.0, 14.0 / 16.0, 6.0 / 16.0 );
-		let bayerRow2 = vec4f( 3.0 / 16.0, 11.0 / 16.0, 1.0 / 16.0, 9.0 / 16.0 );
-		let bayerRow3 = vec4f( 15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0 );
-		let bayer = mat4x4f( bayerRow0, bayerRow1, bayerRow2, bayerRow3 );
-
-		let pixelCoord = vec2i( uv * resolution );
-		let dither = bayer[ pixelCoord.x % 4 ][ pixelCoord.y % 4 ];
-
-		return color + ( dither - 0.5 ) * ditheringAmount / 255.0;
 
 	}
 ` );
@@ -246,7 +194,7 @@ export const calculateFireflyThreshold = wgslFn( `
 ` );
 
 // Apply soft suppression to prevent harsh clipping — exact port of GLSL
-export const applySoftSuppression = wgslFn( `
+const applySoftSuppression = wgslFn( `
 	fn applySoftSuppression( value: f32, threshold: f32, dampingFactor: f32 ) -> f32 {
 
 		if ( value <= threshold ) {
@@ -362,7 +310,7 @@ export function storageRows( buffer, base, rows ) {
 }
 
 /** Element `index` of a storage node or of a {@link splitStorage}. */
-export function storageElement( buffer, index ) {
+function storageElement( buffer, index ) {
 
 	return buffer.isSplitStorage ? storageRows( buffer, index, [ 0 ] )[ 0 ] : buffer.element( index );
 

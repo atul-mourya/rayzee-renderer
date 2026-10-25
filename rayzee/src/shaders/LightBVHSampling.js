@@ -63,7 +63,7 @@ const sinSubClamped = Fn( ( [ sinThetaA, cosThetaA, sinThetaB, cosThetaB ] ) => 
 // Importance of a Light-BVH node for a shading point (power × orientation × inverse-square),
 // θ_e = π/2 (diffuse emitters). cosThetaO = -1 ⇒ whole-sphere cone (never culled by orientation).
 // SHARED by both the stochastic descent and the MIS pdf re-walk — they MUST stay byte-identical.
-export const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO, hitPoint ] ) => {
+const lbvhNodeImportance = Fn( ( [ nMin, power, nMax, coneAxis, cosThetaO, hitPoint ] ) => {
 
 	const center = nMin.add( nMax ).mul( 0.5 );
 	const diagLen = length( nMax.sub( nMin ) );

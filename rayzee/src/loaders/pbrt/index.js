@@ -259,7 +259,7 @@ function includedBasenames( bytes, out ) {
  * More than one survivor is a real archive shape, not an error: transparent-machines
  * ships five independent frames side by side. Callers should say which one they took.
  */
-export function listEntryPaths( entries ) {
+function listEntryPaths( entries ) {
 
 	const pbrts = Object.keys( entries ).filter( k => k.toLowerCase().endsWith( '.pbrt' ) );
 	if ( pbrts.length <= 1 ) return pbrts;

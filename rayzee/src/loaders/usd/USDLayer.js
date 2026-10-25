@@ -16,7 +16,7 @@ export class Ref {
 
 }
 
-export const listOp = () => ( { explicit: null, prepend: [], append: [], add: [], delete: [] } );
+const listOp = () => ( { explicit: null, prepend: [], append: [], add: [], delete: [] } );
 
 const itemKey = item => ( item instanceof Ref ? `${item.asset}\u0000${item.path}` : String( item ) );
 
@@ -64,7 +64,7 @@ function assignOp( target, op, items ) {
 
 }
 
-export class PropSpec {
+class PropSpec {
 
 	constructor( name ) {
 
@@ -139,7 +139,7 @@ export class PropSpec {
 
 }
 
-export class PrimSpec {
+class PrimSpec {
 
 	constructor( name ) {
 

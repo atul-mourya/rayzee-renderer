@@ -72,7 +72,7 @@ export const bucketTexelSize = ( buckets, packedIndex ) => {
 };
 
 // 1×1 white placeholder array so empty-bucket branches always reference a valid node.
-export function makeBucketPlaceholder() {
+function makeBucketPlaceholder() {
 
 	const t = new DataArrayTexture( new Uint8Array( [ 255, 255, 255, 255 ] ), 1, 1, 1 );
 	t.minFilter = LinearFilter;
@@ -117,7 +117,7 @@ export function refreshBucketTextureNodes( nodes, bucketArrays ) {
 // FAST UTILITY FUNCTIONS
 // ================================================================================
 
-export const isIdentityTransform = /*@__PURE__*/ wgslFn( `
+const isIdentityTransform = /*@__PURE__*/ wgslFn( `
 	fn isIdentityTransform( transform: mat3x3f ) -> bool {
 		return transform[0][0] == 1.0f
 			&& transform[1][1] == 1.0f
@@ -140,7 +140,7 @@ export const getTransformedUV = /*@__PURE__*/ wgslFn( `
 	}
 `, [ isIdentityTransform ] );
 
-export const materialHasTextures = Fn( ( [ material ] ) => {
+const materialHasTextures = Fn( ( [ material ] ) => {
 
 	return material.albedoMapIndex.greaterThanEqual( int( 0 ) )
 		.or( material.normalMapIndex.greaterThanEqual( int( 0 ) ) )
@@ -153,28 +153,11 @@ export const materialHasTextures = Fn( ( [ material ] ) => {
 } );
 
 // Fast transform hash for equality checking
-export const hashTransform = /*@__PURE__*/ wgslFn( `
+const hashTransform = /*@__PURE__*/ wgslFn( `
 	fn hashTransform( t: mat3x3f ) -> f32 {
 		return t[0][0] + t[1][1] * 7.0f + t[2][0] * 13.0f + t[2][1] * 17.0f;
 	}
 ` );
-
-// Fast transform equality using hash comparison
-export const transformsEqual = /*@__PURE__*/ wgslFn( `
-	fn transformsEqual( a: mat3x3f, b: mat3x3f ) -> i32 {
-		let hashA = hashTransform( a );
-		let hashB = hashTransform( b );
-		if ( abs( hashA - hashB ) < 0.001f ) {
-			if ( abs( a[0][0] - b[0][0] ) < 0.001f
-				&& abs( a[1][1] - b[1][1] ) < 0.001f
-				&& abs( a[2][0] - b[2][0] ) < 0.001f
-				&& abs( a[2][1] - b[2][1] ) < 0.001f ) {
-				return 1;
-			}
-		}
-		return 0;
-	}
-`, [ hashTransform ] );
 
 // ================================================================================
 // OPTIMIZED UV CACHE WITH REDUNDANCY DETECTION
@@ -657,7 +640,7 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 
 } );
 
-export const processEmissive = Fn( ( [ material, uvCache ], builder ) => {
+const processEmissive = Fn( ( [ material, uvCache ], builder ) => {
 
 	const { srgbBuckets } = sceneResources( builder );
 

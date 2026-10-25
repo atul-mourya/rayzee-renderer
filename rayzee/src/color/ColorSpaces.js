@@ -43,7 +43,7 @@ export function clearColorCaches() {
  * applying it is not.
  * @returns {Object|null} null when no config is loaded
  */
-export function getProcessor( from, to, { context = null } = {} ) {
+function getProcessor( from, to, { context = null } = {} ) {
 
 	const rt = getRuntime();
 	if ( ! rt ) return null;

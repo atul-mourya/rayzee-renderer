@@ -17,7 +17,7 @@ export const equirectDirectionToUv = /*@__PURE__*/ wgslFn( `
 
 // Convert UV coordinates to direction
 // Exact implementation from three-gpu-pathtracer
-export const equirectUvToDirection = /*@__PURE__*/ wgslFn( `
+const equirectUvToDirection = /*@__PURE__*/ wgslFn( `
 	fn equirectUvToDirection( uv: vec2f, environmentMatrix: mat4x4f ) -> vec3f {
 		let adjustedUv = vec2f( uv.x - 0.5f, 1.0f - uv.y );
 		let theta = adjustedUv.x * 6.28318530717958647692f;
@@ -139,7 +139,7 @@ export const sampleEnvironment = /*@__PURE__*/ wgslFn( `
 // Port of three.js PR #33611 (getGroundProjectedNormal) adapted from rasterizer fragment math
 // (cameraPosition + positionWorld) to path-tracer ray math (rayOrigin + rayDirection). When the
 // ray misses the projection sphere it falls back to rayDirection so distant scenes degrade gracefully.
-export const getGroundProjectedDirection = Fn( ( [ rayOrigin, rayDirection, radius, height ] ) => {
+const getGroundProjectedDirection = Fn( ( [ rayOrigin, rayDirection, radius, height ] ) => {
 
 	const p = rayDirection.toConst();
 	const camPos = rayOrigin.toVar();

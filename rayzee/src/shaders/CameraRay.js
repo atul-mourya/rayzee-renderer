@@ -82,7 +82,7 @@ export const cameraClipDistance = ( direction, clipStart, cameraWorldMatrix, cam
 );
 
 /** World-space primary ray origin for pixel uv: the camera, or its image plane when orthographic. */
-export const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjection ] ) => {
+const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjectionMatrixInverse, cameraProjection ] ) => {
 
 	const origin = vec3( cameraWorldMatrix[ 3 ] ).toVar();
 
@@ -99,7 +99,7 @@ export const cameraRayOrigin = Fn( ( [ uv01, cameraWorldMatrix, cameraProjection
 } );
 
 /** World-space primary ray direction for pixel uv, from {@link cameraRayOrigin}. */
-export const cameraRayDirection = Fn( ( [
+const cameraRayDirection = Fn( ( [
 	uv01, cameraWorldMatrix, cameraProjectionMatrixInverse,
 	cameraProjection, panoLonRange, panoLatRange, panoLevelHorizon
 ] ) => {

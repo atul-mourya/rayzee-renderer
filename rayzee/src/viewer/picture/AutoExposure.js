@@ -17,7 +17,7 @@ export const AUTO_EXPOSURE_DEFAULTS = {
 	autoExposureAdaptSpeedDark: 1.0,
 };
 
-export const METERING_MODES = [ 'average', 'center', 'spot' ];
+const METERING_MODES = [ 'average', 'center', 'spot' ];
 
 const GRID = 64; // metering tiles per axis at most
 const MIN_TILE = 8; // pixels per tile side at least, so a one-sample image averages enough of them

@@ -22,7 +22,7 @@ const TabButton = ( { label, value, currentValue, onClick } ) => {
 
 };
 
-const ViewportTabs = ( { currentMode, onModeChange } ) => {
+const ModeTabs = ( { currentMode, onModeChange } ) => {
 
 	// Tab definitions
 	const tabs = [
@@ -58,4 +58,4 @@ const ViewportTabs = ( { currentMode, onModeChange } ) => {
 
 };
 
-export default ViewportTabs;
+export default ModeTabs;

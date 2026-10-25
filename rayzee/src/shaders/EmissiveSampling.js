@@ -71,7 +71,7 @@ export const EmissiveSampleIndexed = struct( {
 	faceNormal: 'vec3', // winding normal
 } );
 
-export const EmissiveContributionResult = struct( {
+const EmissiveContributionResult = struct( {
 	contribution: 'vec3',
 	hasEmissive: 'bool',
 	emissionOnly: 'vec3', // For debug visualization
@@ -593,7 +593,7 @@ export const sampleEmissiveTriangleIndexed = /*@__PURE__*/ makeSampleEmissiveTri
 // callback — we import the FromDots variant directly so we can share dot
 // products with the PDF call below.
 
-export const calculateEmissiveTriangleContributionDebug = Fn( ( [
+const calculateEmissiveTriangleContributionDebug = Fn( ( [
 	hitPoint, normal, geomNormal, viewDir, material,
 	_bounceIndex, rngState,
 	pixelCoord, resolution, frame, dimBase,

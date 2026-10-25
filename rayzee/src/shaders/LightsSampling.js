@@ -437,7 +437,7 @@ export const sampleDirectionalLight = Fn( ( [ light, rayOrigin, lightSelectionPd
 // Selection rule: with seen_weight = sum of weights so far, replace current
 // winner with this candidate with probability w_i / seen_weight. Result is
 // unbiased; PDF = winnerImportance / totalWeight, identical to the CDF form.
-export const sampleLightWithImportance = Fn( ( [
+const sampleLightWithImportance = Fn( ( [
 	rayOrigin, normal, material, randomSeed, bounceIndex, rngState,
 	pixelCoord, resolution, frame, dimBase,
 	// Light buffers + counts

@@ -1,7 +1,7 @@
 import { useMemo, useCallback, useRef, useEffect, useState, lazy, Suspense } from 'react';
 import { useStore, usePathTracerStore } from '@/store';
 import MenuBar from './MenuBar';
-import ViewportTabs from './ViewportTabs';
+import ModeTabs from './ModeTabs';
 import ActionBar from './ActionBar';
 import { useImportUrl } from '@/hooks/useImportUrl';
 
@@ -88,7 +88,7 @@ const TopBar = () => {
 			<MenuBar onOpenImportModal={openImportModal} onOpenStorage={openStorage} onOpenRecent={openRecent} />
 
 			<div className="grow" />
-			<ViewportTabs currentMode={appMode} onModeChange={handleTabChange} />
+			<ModeTabs currentMode={appMode} onModeChange={handleTabChange} />
 			<div className="grow" />
 
 			<ActionBar onGithubClick={handleGithubRedirection} />

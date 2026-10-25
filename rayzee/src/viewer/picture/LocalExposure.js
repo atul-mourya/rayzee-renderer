@@ -83,7 +83,7 @@ export function localExposureGain( p, grid, blur, u, v, lum, logExposure ) {
 }
 
 /** The same gain in WGSL, for a pass outside three.js: group 1 holds the grid, the blurred picture and the params. */
-export const LOCAL_EXPOSURE_WGSL = /* wgsl */ `
+const LOCAL_EXPOSURE_WGSL = /* wgsl */ `
 @group(1) @binding(0) var<storage, read> leGrid: array<vec2<f32>>;
 @group(1) @binding(1) var<storage, read> leBlur: array<f32>;
 @group(1) @binding(2) var<uniform> le: array<vec4<f32>, 4>;

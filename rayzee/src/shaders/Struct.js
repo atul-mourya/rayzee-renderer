@@ -185,7 +185,6 @@ export const BRDFWeights = struct( {
 	diffuseTransmission: 'float',
 } );
 
-
 // Anisotropy tangent frame in world space (rotated ONB). Shared by the sampler and
 // the eval/PDF so both derive the identical frame — see anisoTangentFrame().
 export const AnisoFrame = struct( {
@@ -268,15 +267,5 @@ export const MaterialCache = struct( {
 	metalFactor: 'float', // 0.5 + 0.5 * metalness
 	iorFactor: 'float', // min(2.0 / ior, 1.0)
 	maxSheenColor: 'float', // max component of sheen color
-} );
-
-
-// General rendering state (used across all rendering paths)
-export const RenderState = struct( {
-	traversals: 'int', // Remaining general bounces
-	transmissiveTraversals: 'int', // Remaining transmission-specific bounces
-	rayType: 'int', // Current ray type (RAY_TYPE_*)
-	isPrimaryRay: 'bool', // True only for camera rays (bounceIndex == 0)
-	actualBounceDepth: 'int', // True depth without manipulation
 } );
 

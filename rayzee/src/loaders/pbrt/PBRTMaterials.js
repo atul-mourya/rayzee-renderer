@@ -62,7 +62,7 @@ export function pFloat( params, name, dflt ) {
 }
 
 /** An index of refraction: a sampled spectrum ( λ value pairs ) is read at 550 nm, linearly between its samples. */
-export function pEta( params, name, dflt ) {
+function pEta( params, name, dflt ) {
 
 	const p = param( params, name );
 	if ( p?.type !== 'spectrum' || typeof p.value[ 0 ] !== 'number' ) return pFloat( params, name, dflt );
