@@ -422,7 +422,9 @@ Public renderer methods for offline rendering and reproducible output — on `Ra
   the final denoise runs once. It shares `_traceFrame()` / `_completionInfo()` with `animate()`, so
   the two cannot drift. For its duration the stage's readbacks run in **lockstep**
   (`PathTracer.setLockstepReadbacks`, also `app.setLockstepReadbacks()`): the survivor curve and the
-  convergence counters are read every 4 frames and applied exactly 4 frames later, `render()` traces
+  convergence counters are read at frame 1 (applied at 2), then every 4 frames and applied exactly 4 frames later
+  (never at frame 0: a final render traces it with one bounce, and that curve sized nothing for frames 1–7 — 9 % of a
+  30-spp render at 1080p and 4096²), `render()` traces
   nothing while one is due and in flight (`stage.readbackWait()` is the promise — every driver loop
   awaits it rather than spin), and each reset clears the curve and rewinds the seed. Measured at
   400×300 with adaptive on: free-running gave 45 / 72 / 45 / 43 spp and four different images across

@@ -305,7 +305,7 @@ SoA within a buffer: field `slot` of path `id` lives at `id + slot * capacity`.
      - `compact` → `compactCopyback` (thread 0 records the survivor count and energy, seeds `ENTERING_COUNT`); without dynamic dispatch, `snapshotBounceCount`.
      - Early exit when last frame's survivors at this bounce carried less than `_bounceEarlyExitThreshold` (1e-4) of a full band's throughput, from the band's own curve. Energy, not ray count: past Russian roulette a few survivors carry the weight of many.
    - `integrator?.resolve()` → `finalWrite`.
-7. `_maybeReadbackCounters()`: every 4 frames, at a settled view, read back the survivor curve and the convergence counters asynchronously (lockstep mode reads and applies on a fixed cadence instead).
+7. `_maybeReadbackCounters()`: every 4 frames, at a settled view, read back the survivor curve and the convergence counters asynchronously, never on a final render's one-bounce first frame (lockstep mode reads at frame 1, applied at 2, then every 4 frames, applied 4 later).
 8. `copyToReadTargets()` (aux attachments only while aux is on); publish to context; emit events; `frameCount++` unless in interaction mode.
 
 There is no swap of the active-index lists: kernels are bound to list A at build time, Compact writes B, and `compactCopyback` copies the survivors B→A for the next bounce.

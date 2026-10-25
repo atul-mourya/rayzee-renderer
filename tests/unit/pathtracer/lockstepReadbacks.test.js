@@ -1,7 +1,7 @@
 /**
- * Lockstep readbacks: a readback issued at frame N is applied at exactly frame N + 4, and the frame
- * waits when it has not landed. Without that, which frame retired an adaptive render depended on
- * how fast frames were submitted.
+ * Lockstep readbacks: one issued at frame 1 is applied at exactly frame 2, one issued at frame N (a multiple of 4)
+ * at frame N + 4, and the frame waits when it has not landed. Without that, which frame retired an adaptive render
+ * depended on how fast frames were submitted.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { PathTracer } from '@/core/pathtracer/PathTracer.js';
@@ -32,7 +32,7 @@ function makeStage( { chunkRows = H } = {} ) {
 		_lightBufferRealloc: false,
 		isComplete: true, // render() returns at the stop test, just after the lockstep block
 		_auxSeedPending: false,
-		frameCount: 0,
+		frameCount: 1, // the first frame a lockstep readback is issued
 		_lockstep: false,
 		_lockstepRead: null,
 		_readbackEveryNFrames: 4,
@@ -79,20 +79,34 @@ function makeStage( { chunkRows = H } = {} ) {
 
 describe( 'lockstep readbacks', () => {
 
-	it( 'issues on a fixed cadence, starting with frame 0', () => {
+	// Frame 0 of a final render traces one bounce: a curve read there would size nothing that follows.
+	it( 'issues at frame 1, due at frame 2, then every 4 frames, never at frame 0', () => {
 
 		const { stage, reads } = makeStage();
 		stage.setLockstepReadbacks( true );
 
-		for ( const frame of [ 0, 1, 2, 3, 4 ] ) {
+		const issued = [];
+		for ( let frame = 0; frame <= 8; frame ++ ) {
 
 			stage.frameCount = frame;
 			stage._lockstepRead = null;
 			reads.length = 0;
 			stage._maybeReadbackCounters();
-			expect( reads.length > 0 ).toBe( frame % 4 === 0 );
+			if ( reads.length > 0 ) issued.push( `${frame}→${stage._lockstepRead.due}` );
 
 		}
+
+		expect( issued ).toEqual( [ '1→2', '4→8', '8→12' ] );
+
+	} );
+
+	it( 'keeps a free-running curve through a clamped frame and re-measures on the next', () => {
+
+		const { stage, reads } = makeStage();
+		stage._readbackFrameCounter = 0;
+		stage._maybeReadbackCounters( true );
+		expect( reads ).toHaveLength( 0 );
+		expect( stage._readbackFrameCounter ).toBe( 4 ); // primed: the next frame reads
 
 	} );
 
@@ -112,12 +126,11 @@ describe( 'lockstep readbacks', () => {
 
 		const { stage, land } = makeStage();
 		stage.setLockstepReadbacks( true );
-		stage._maybeReadbackCounters(); // issued at frame 0
+		stage._maybeReadbackCounters(); // issued at frame 1
 
-		stage.frameCount = 3;
 		expect( stage.readbackWait() ).toBeNull();
 
-		stage.frameCount = 4;
+		stage.frameCount = 2;
 		expect( stage.readbackWait() ).toBeInstanceOf( Promise );
 		stage.render();
 		expect( stage._lockstepRead ).not.toBeNull(); // traced nothing, applied nothing
@@ -140,11 +153,10 @@ describe( 'lockstep readbacks', () => {
 		stage._maybeReadbackCounters();
 		await land( { converged: 8 } );
 
-		stage.frameCount = 3;
 		stage.render();
 		expect( stage._convergedFraction ).toBe( 0 );
 
-		stage.frameCount = 4;
+		stage.frameCount = 2;
 		stage.render();
 		expect( stage._convergedFraction ).toBe( 1 );
 
@@ -172,7 +184,7 @@ describe( 'lockstep readbacks', () => {
 		stage.setLockstepReadbacks( true );
 
 		stage._maybeReadbackCounters();
-		stage._maybeReadbackCounters(); // frameCount still 0: a frame that did not count
+		stage._maybeReadbackCounters(); // frameCount still 1: a frame that did not count
 
 		expect( reads ).toHaveLength( 2 ); // one readback: its two buffers
 		expect( stage._willReadCountersThisFrame() ).toBe( false );
@@ -193,7 +205,7 @@ describe( 'lockstep readbacks', () => {
 
 	// The frame after a reset sees the camera as moved whenever the frame before it traced another view (another
 	// scene, a host's own camera): skipping that frame's readback made the first render after a load differ.
-	it( 'issues on frame 0 when the frame before traced another view', () => {
+	it( 'issues on frame 1 when the frame before traced another view', () => {
 
 		const { stage, reads } = makeStage();
 		stage.setLockstepReadbacks( true );
@@ -203,7 +215,7 @@ describe( 'lockstep readbacks', () => {
 		expect( stage._willReadCountersThisFrame() ).toBe( true );
 		stage._maybeReadbackCounters();
 		expect( reads ).toHaveLength( 2 );
-		expect( stage._lockstepRead.due ).toBe( 4 );
+		expect( stage._lockstepRead.due ).toBe( 2 );
 
 	} );
 
@@ -226,7 +238,7 @@ describe( 'lockstep readbacks', () => {
 		stage.setLockstepReadbacks( true );
 		stage._maybeReadbackCounters();
 
-		stage.frameCount = 4;
+		stage.frameCount = 2;
 		await stage.readbackWait();
 		expect( stage.readbackWait() ).toBeNull();
 		stage.render();
@@ -309,6 +321,7 @@ describe( 'lockstep readbacks', () => {
 		it( 'is the setting before any sample', () => {
 
 			const { stage } = makeStage();
+			stage.frameCount = 0;
 			stage.setLockstepReadbacks( true );
 			expect( stage.accumulationLockstep ).toBe( true );
 
