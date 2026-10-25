@@ -1631,10 +1631,10 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *
 	 * - `useAdaptiveSampling` retires the whole frame off an async CONVERGED_COUNT
 	 *   readback, so two runs accumulate different sample totals for one `maxSamples`.
-	 * - `usePixelFreeze` sizes the bounce-0 grid from a stale active-pixel readback.
-	 * - `_bounceEarlyExitThreshold` / `_useDynamicDispatch` both consume the async
-	 *   survivor curve. Kernels bind on ENTERING_COUNT, so an under-sized grid silently
-	 *   drops rays, and the frame a readback lands on is GPU-scheduled.
+	 * - `usePixelFreeze` skips the pixels it judges converged.
+	 * - `_bounceEarlyExitThreshold` ends the bounce loop off the async survivor curve, and the
+	 *   frame a readback lands on is GPU-scheduled. `_useDynamicDispatch` sizes each bounce on
+	 *   the GPU; pinned off with the rest, a deterministic frame runs full grids.
 	 * - `interactionModeEnabled` is a 100 ms timer that lowers the render resolution, disables
 	 *   accumulation and freezes frameCount; it engages on the very first frame.
 	 * - auto-focus raycasts per frame and auto-exposure adapts off `performance.now()`.
@@ -1642,8 +1642,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * Leaves the rAF loop stopped — drive rendering with {@link PathTracerApp#renderFrames}.
 	 * Idempotent; pass `false` to restore the previous configuration.
 	 *
-	 * `pinDispatch: false` keeps the two readback-driven dispatch heuristics
-	 * (`_useDynamicDispatch` and the per-bounce early exit) ACTIVE while still pinning the
+	 * `pinDispatch: false` keeps the two dispatch heuristics (`_useDynamicDispatch`, GPU-sized,
+	 * and the readback-driven per-bounce early exit) ACTIVE while still pinning the
 	 * render loop, sample count and timers. Output is then no longer bit-reproducible, so
 	 * this is only for performance measurement — it exists because those heuristics are
 	 * real shipping behaviour, and benchmarking with them disabled measures a configuration

@@ -1314,10 +1314,10 @@ const blob = await engine.screenshot();
 engine.setDeterministicMode(false);         // restore the previous configuration
 ```
 
-The RNG is already pure — `hash(pixel, rayIndex, frame)`, no clock, no `Math.random()` in any shader. What varies run to run is *which* uniforms and dispatch grids are live on frame k, so `setDeterministicMode` disables adaptive sampling, per-pixel freeze, the readback-driven per-bounce early exit and dynamic dispatch sizing, interaction mode, auto-focus, and auto-exposure, and pins the sampler's seed axis to the accumulation frame. It also forces `renderLimitMode` to `'frames'` — a wall-clock render limit retires at a run-dependent sample count. It leaves the rAF loop stopped; `renderFrames` is the drive.
+The RNG is already pure — `hash(pixel, rayIndex, frame)`, no clock, no `Math.random()` in any shader. What varies run to run is *which* uniforms and dispatch grids are live on frame k, so `setDeterministicMode` disables adaptive sampling, per-pixel freeze, the readback-driven per-bounce early exit and GPU-sized dispatch, interaction mode, auto-focus, and auto-exposure, and pins the sampler's seed axis to the accumulation frame. It also forces `renderLimitMode` to `'frames'` — a wall-clock render limit retires at a run-dependent sample count. It leaves the rAF loop stopped; `renderFrames` is the drive.
 
 - `engine.isDeterministic` — whether output is currently bit-reproducible.
-- `setDeterministicMode(true, { pinDispatch: false })` keeps the two readback-driven dispatch heuristics active. Output is then *not* reproducible; this exists so performance measurements reflect shipping behaviour rather than a configuration production never runs.
+- `setDeterministicMode(true, { pinDispatch: false })` keeps the two dispatch heuristics active (GPU-sized dispatch and the readback-driven early exit). Output is then *not* reproducible; this exists so performance measurements reflect shipping behaviour rather than a configuration production never runs.
 - `renderFrames` raises `maxSamples` if needed, and throws if something retires the render early.
 
 #### Production renders, reproducibly
@@ -1336,8 +1336,9 @@ It renders without `requestAnimationFrame` until the sample ceiling, convergence
 whichever comes first — then runs the final OIDN denoise once, and fires `RENDER_COMPLETE` as the
 loop does. Adaptive sampling decides from counts read back from the GPU; normally each is applied
 whenever it lands, so the frame that retires depends on how fast frames are submitted. For its
-duration `renderUntilComplete` runs those readbacks in **lockstep**: one issued at frame N is applied
-at frame N + 4 exactly, and the render waits if it has not landed; every reset also starts from seed
+duration `renderUntilComplete` runs those readbacks in **lockstep**: the first, issued at frame 1, is
+applied at frame 2, then one issued at frame N (a multiple of 4) at frame N + 4 exactly, and the
+render waits if one has not landed; every reset also starts from seed
 0 and from nothing the previous render measured. It turns interaction mode off meanwhile (a
 wall-clock mode for camera drags), and keeps submissions at most 2 × `drainEvery` frames ahead of
 the GPU. A time limit is wall-clock by nature, so that one stop is not reproducible. Auto exposure, if you turn it

@@ -163,9 +163,9 @@ Concretely in Rayzee: rays carry a small set of status bits (alive? specular? in
 glass? how many bounces so far?) packed into their data. After Shade, a set of **counters**
 tallies the survivors, and Compact rewrites the active list so the next round's kernels are
 sized to **exactly** the rays that remain. Early bounces are wide (lots of rays); later
-bounces are narrow (only the deep, glassy, complex paths survive). We even peek at the
-previous frame's survivor curve to size each dispatch tightly and **exit the loop early**
-when almost nothing is left.
+bounces are narrow (only the deep, glassy, complex paths survive). Each round's kernels are
+sized on the GPU itself, from the survivors the round before counted, and the previous frame's
+survivor curve tells us when to **exit the loop early**: when almost nothing is left.
 
 This is the structural win: **the megakernel keeps paying for dead rays; the wavefront
 stops paying the moment they die.**

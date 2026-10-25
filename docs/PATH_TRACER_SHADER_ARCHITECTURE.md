@@ -72,7 +72,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE` | Per pixel: temporal blend, MRT stores, the convergence statistics (m2, freeze streak); visMode 11 flags NaN/Inf red |
 | `DebugKernel.js` | `buildDebugKernel()`, `DEBUG_WG_SIZE` | Single-pass primary-ray debug views for visMode 1–10 (delegates to `TraceDebugMode`); mode 9 computed inline |
 
-`pathtracer/PathTracer.js` builds a few small kernels inline: `snapshotBounceCount`, `initActiveIndices`, `resetFrameCounters`, `buildActivePixels`, `countConvergedDilated`, `seedEnter`, `enterFull` and `compactCopyback`.
+`pathtracer/PathTracer.js` builds a few small kernels inline: `snapshotBounceCount`, `initActiveIndices`, `resetFrameCounters`, `freezeMask`, `buildActivePixels`, `countConvergedDilated`, `seedEnter`, `enterFull`, and `compactCopyback` / `compactCopybackOdd`.
 
 ### Bidirectional add-on kernels
 
@@ -508,10 +508,10 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 |---|---|---|
 | BVH Traversal | Inner-node child AABBs in-node (4 reads, no child fetches) | Reduced memory bandwidth |
 | Mesh Visibility | Visibility flag free-fetched at BLAS-pointer leaf | Entire BLAS skipped for hidden meshes, no extra read |
-| Wavefront | Stream compaction + per-bounce dispatch sized from last frame's survivor curve | Dead rays dropped; dispatch tracks the survivors |
+| Wavefront | Stream compaction + per-bounce dispatch sized on the GPU from the rays entering it | Dead rays dropped; dispatch tracks the survivors |
 | Wavefront | Per-bounce early exit on the survivors' throughput | Skips tail bounces that carry no energy |
 | Wavefront | Fixed path budget streamed in row bands | Bounded memory; a resize reallocates and recompiles nothing |
-| Adaptive sampling | Per-pixel freeze (`buildActivePixels`) + whole-frame convergence stop | Converged pixels stop being traced |
+| Adaptive sampling | Per-pixel freeze (`freezeMask`, `buildActivePixels`) + whole-frame convergence stop | Converged pixels stop being traced |
 | Sorting | Global material counting sort (above 8 materials) | Material-pure workgroups for Shade |
 | Light BVH | Power- and orientation-weighted stochastic descent | O(log N) emissive sampling vs O(N) CDF |
 | RNG | Fast RNG for non-critical samples | Lower ALU cost |
@@ -539,7 +539,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `shaders/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
 3. **Add a wavefront kernel**: build a new `Fn().compute()`, register it in `_buildWavefrontKernels`, dispatch it in `render()`. A new integrator plugs into the integrator hooks instead (see `BidirectionalIntegrator`); never branch on it inside `PathTracer`.
 4. **Per-triangle custom attributes**: expand the triangle layout (`scene/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
-5. **Per-pixel ray policies**: `buildActivePixels` already decides which pixels are traced (the pixel freeze); `generateList` traces only the list it builds.
+5. **Per-pixel ray policies**: `freezeMask` already decides which pixels are traced (the pixel freeze), `buildActivePixels` lists them and `generateList` traces only that list.
 
 ---
 
