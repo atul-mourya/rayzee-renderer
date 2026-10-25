@@ -43,7 +43,7 @@ beforeEach( async () => {
 
 	try {
 
-		store = await import( '@/store.js' );
+		store = await import( '@/store' );
 
 	} catch ( error ) {
 

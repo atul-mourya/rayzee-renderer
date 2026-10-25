@@ -611,7 +611,7 @@ If the stage needs a per-pixel output the path tracer does not write, it asks wi
 ### Step 3: Add Store Handler (Optional)
 
 ```javascript
-// app/src/store.js — handleChange calls the updater with ( val, app ), then app.reset()
+// app/src/store/ui.js — handleChange calls the updater with ( val, app ), then app.reset()
 handleMyCustomIntensity: handleChange(
     val => set( { myCustomIntensity: val } ),
     ( val, app ) => { app.stages.myCustom.intensity.value = val; }

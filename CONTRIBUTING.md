@@ -51,7 +51,7 @@ app/                      # The React UI
     ├── components/       # React components (ui/ and layout/)
     ├── hooks/            # Custom hooks
     ├── lib/              # Engine integration (appProxy, EngineAdapter, sessions, colour)
-    └── store.js          # Zustand stores
+    └── store/            # Zustand stores, one file a store
 bench/                    # Headless-GPU regression bench (bench/README.md)
 tests/                    # Vitest: unit/ and gpu/ (GPU tests run on Dawn in Node)
 docs/                     # Architecture notes (see docs/CORE_AND_ADDONS.md for the engine's layers)

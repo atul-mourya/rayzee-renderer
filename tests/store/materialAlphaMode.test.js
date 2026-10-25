@@ -36,7 +36,7 @@ let store, setMaterialProperty, material;
 
 beforeEach( async () => {
 
-	store = await import( '@/store.js' );
+	store = await import( '@/store' );
 	setMaterialProperty = vi.fn();
 	const proxy = await import( '@/lib/appProxy.js' );
 	proxy.__setMockApp( { setMaterialProperty, reset: vi.fn() } );

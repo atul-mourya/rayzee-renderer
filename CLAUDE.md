@@ -211,7 +211,7 @@ glTF / pbrt animation playback and interactive object transforms:
 5. `getCanvas()` → `createImageBitmap()` → `onFrame(bitmap)` callback → `VideoEncoderPipeline.addFrame()`
 6. On complete: `encoder.finalize()` → `.webm` Blob → browser download. Engine state restored.
 
-### State Management (`app/src/store.js`)
+### State Management (`app/src/store/`, one file a store; `@/store` is its index)
 Zustand-based stores with **automatic 3D engine synchronization**:
 - `usePathTracerStore` - Rendering parameters with handlers that use `getApp()` from appProxy
 - `useAssetsStore` - Model/environment loading state
@@ -354,7 +354,7 @@ Engine quality tiers — the engine API takes `'interactive' | 'production'`:
 
 The app maps its UI tab labels (`appMode: 'preview' | 'final-render' | 'results'`) onto these engine tiers. The `'results'` tab is purely UI — when active, the app sets `app.pauseRendering = true` and disables controls directly; the engine has no `'results'` mode of its own.
 
-Mode switching lives in app-store handlers `handleConfigureForPreview` / `handleConfigureForFinalRender` / `handleConfigureForResults` (in `app/src/store.js`), which delegate to the engine method `app.configureForMode( mode, { canvasWidth, canvasHeight } )` — `mode` is `'interactive' | 'production'`. `configureForMode()` applies `modePresetSettings( config )` (`EngineDefaults.js`) — the one list of settings a preset owns — via `settings.setMany`, toggles OIDN/controls, and calls `reset()`. `VideoRenderManager` saves and restores exactly that list, so a new preset-owned key goes there, never inline.
+Mode switching lives in app-store handlers `handleConfigureForPreview` / `handleConfigureForFinalRender` / `handleConfigureForResults` (in `app/src/store/pathTracer.js`), which delegate to the engine method `app.configureForMode( mode, { canvasWidth, canvasHeight } )` — `mode` is `'interactive' | 'production'`. `configureForMode()` applies `modePresetSettings( config )` (`EngineDefaults.js`) — the one list of settings a preset owns — via `settings.setMany`, toggles OIDN/controls, and calls `reset()`. `VideoRenderManager` saves and restores exactly that list, so a new preset-owned key goes there, never inline.
 
 **While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser: a resize drops its motion history and shows the raw render until the next denoise (rebuilding the network itself costs only 3–30 ms on oidn-web 0.5.0).
 
@@ -747,7 +747,7 @@ the strings, so never rename or repurpose one.
 ### State-Engine Synchronization Pattern
 **Critical**: All UI state changes must sync with the app via `getApp()`:
 ```js
-// app/src/store.js - handleChange pattern
+// app/src/store/ui.js - handleChange pattern
 import { getApp } from '@/lib/appProxy';
 
 const handleChange = (setter, appUpdater, needsReset = true) => val => {
