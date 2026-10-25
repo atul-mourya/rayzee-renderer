@@ -53,7 +53,8 @@ app/                      # The React UI
     ├── lib/              # Engine integration (appProxy, EngineAdapter, sessions, colour)
     └── store/            # Zustand stores, one file a store
 bench/                    # Headless-GPU regression bench (bench/README.md)
-tests/                    # Vitest: unit/ and gpu/ (GPU tests run on Dawn in Node)
+tests/                    # Vitest: unit/ (by the folder of the code under test; core/ for rayzee/src's root files,
+                          # app/ and bench/ for those) and gpu/ (run on Dawn in Node)
 docs/                     # guide/ for people using the engine, design/ for how it works inside
 ```
 

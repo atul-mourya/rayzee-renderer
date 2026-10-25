@@ -590,7 +590,7 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
 - **Every display shows the light it would emit**: only sRGB and Display P3 are canvas encodings (`canvasFitOf()`
   measures it through the config); every other display's view is baked converted for the canvas (`ocio.emulated`,
   `ocio.canvas`), so screen, readbacks and pictures agree. The Screen switch keeps the tone mapping (`matchingView`).
-  `tests/unit/color/colorCombinations.test.js` holds every display × view × look on four configs.
+  `tests/unit/addons/color/colorCombinations.test.js` holds every display × view × look on four configs.
 - ⚠️ App: rerun `npm run color:bake` and upload `default-view.bin` and `default-view-hdr.bin` whenever the default config
   or view changes. The GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry
   `categories`.

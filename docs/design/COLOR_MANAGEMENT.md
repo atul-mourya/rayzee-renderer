@@ -252,7 +252,7 @@ OCIO's guidance is to build menus from UI name, family and description, filtered
   and by tone mapping (`sameToneMapping`), so "AgX - Punchy" also suits "AgX - HDR 1000 nits"; matched against
   one display's views, an HDR display offered Filmic's looks for AgX. Gamut compression and LMTs are grouped as
   technical.
-- **Every combination** is held by `tests/unit/color/colorCombinations.test.js` on ACES 2.0, ACES 1.3 (OCIO 2.4
+- **Every combination** is held by `tests/unit/addons/color/colorCombinations.test.js` on ACES 2.0, ACES 1.3 (OCIO 2.4
   and 2.1) and Blender 5.1: every display × view × offered look against OCIO's display light, with and without
   its HDR version and in another working space; the Screen switch both ways; the HDR switch on every view.
   Checked in Chrome (2026-10-24, an HDR Display P3 screen) with 32 emitters of known light: what the canvas holds,

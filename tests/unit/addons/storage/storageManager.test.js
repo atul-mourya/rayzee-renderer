@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createFakeOPFS, snapshot } from '../../__mocks__/opfs.js';
+import { createFakeOPFS, snapshot } from '../../../__mocks__/opfs.js';
 import { STORAGE_KIND } from '@/core/addons/storage/StorageManager.js';
 import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
 import { entryIdFor } from '@/core/storage/FileIdentity.js';

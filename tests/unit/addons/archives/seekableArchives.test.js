@@ -4,7 +4,7 @@ import { openTar, indexTarHeaders, readTar, createTarIndexer } from '@/core/addo
 import { openZip, readZipDirectory } from '@/core/addons/archives/ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from '@/core/addons/archives/ArchiveCache.js';
 import { openStorage } from '@/core/addons/storage/OpenStorage.js';
-import { createFakeOPFS } from '../../__mocks__/opfs.js';
+import { createFakeOPFS } from '../../../__mocks__/opfs.js';
 import { makeTar, text } from './tarFixture.js';
 
 const LONG = `deep/${'x'.repeat( 120 )}/mesh.ply`;

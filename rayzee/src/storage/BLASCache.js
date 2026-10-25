@@ -11,7 +11,7 @@ import { createLogger, fmt } from '../Logger.js';
 
 const log = createLogger( 'scene' );
 
-export const BLAS_CACHE_FORMAT = 2;
+const BLAS_CACHE_FORMAT = 2;
 
 const PIECE_RECORDS = 1 << 20;
 const YIELD_EVERY = 1 << 21;
@@ -67,7 +67,7 @@ export function rangeChecksum( records, start, count, lanes = POSITION_LANES ) {
 }
 
 /** Checksums every owning template, yielding now and then so a big scene does not freeze the page. */
-export async function templateChecksums( records, templates ) {
+async function templateChecksums( records, templates ) {
 
 	const out = [];
 	let since = 0;
@@ -92,7 +92,7 @@ export async function templateChecksums( records, templates ) {
  * @param {import('../addons/storage/StorageManager.js').StorageManager} storage
  * @returns {Promise<?{index: Object, nodes: File, order: File, release: function(): void}>}
  */
-export async function openBLASCache( storage, key ) {
+async function openBLASCache( storage, key ) {
 
 	const entry = await storage?.area( ENGINE_AREAS.SCENES ).open( key );
 	if ( ! entry ) return null;
@@ -125,7 +125,7 @@ export async function openBLASCache( storage, key ) {
  *   orders: Array<?Uint32Array>, isStale: function(): boolean, label?: string}} build
  * @returns {Promise<boolean>}
  */
-export async function saveBLASCache( storage, key, { index, bvh, orders, isStale, label = '' } ) {
+async function saveBLASCache( storage, key, { index, bvh, orders, isStale, label = '' } ) {
 
 	const area = storage?.area( ENGINE_AREAS.SCENES );
 	if ( ! area ) return false;
@@ -188,7 +188,7 @@ export async function readNodesInto( file, bvh, firstRecord, recordCount ) {
 
 }
 
-export async function readOrder( file, offset, count ) {
+async function readOrder( file, offset, count ) {
 
 	return new Uint32Array( await file.slice( offset * 4, ( offset + count ) * 4 ).arrayBuffer() );
 

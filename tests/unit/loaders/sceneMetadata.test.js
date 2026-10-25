@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractSceneMetadata, parseSceneMetadata } from '../../../rayzee/src/loaders/SceneMetadata.js';
+import { extractSceneMetadata, parseSceneMetadata } from '@/core/loaders/SceneMetadata.js';
 
 const PAYLOAD = {
 	environment: {
