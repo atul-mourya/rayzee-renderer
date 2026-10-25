@@ -534,7 +534,7 @@ async function loadModelScene( url, cameraIndex = 1, env = 'procedural' ) {
  * One model load, timed the way the app loads: rendering paused first (MainViewport does this
  * before it calls loadModel), so the harness measures the same thing the app's `[scene]` line
  * reports. Used by `bench calibrate` to check this browser against the real app — see
- * bench/README.md, "What the harness can and cannot measure".
+ * docs/design/BENCH.md, "What the harness can and cannot measure".
  *
  * `blasWorkerTime / blasBuildTime` is how many workers were busy on average. It is the number the
  * CPU distortion shows up in: a browser the bench launches inflates per-task cost, not per-triangle

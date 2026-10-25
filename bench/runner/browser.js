@@ -222,7 +222,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		),
 		rebuildKernels: () => page.evaluate( () => globalThis.__bench.rebuildKernels() ),
 		// Compute passes only, one sample a reading: render-pass timestamps overlap the compute on Apple GPUs. Read here,
-		// not through the page, so both sides of an A/B measure alike whatever their harness (bench/README.md).
+		// not through the page, so both sides of an A/B measure alike whatever their harness (docs/design/BENCH.md).
 		measureGPUPerSample: ( count ) => page.evaluate( async ( n ) => {
 
 			const app = globalThis.__bench.__app?.() ?? globalThis.app;

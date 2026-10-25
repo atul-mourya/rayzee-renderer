@@ -814,7 +814,7 @@ async function main() {
 		}
 
 		// Printed before any suite: a reader should never have to wonder whether this browser's
-		// CPU numbers are comparable to the app's. See bench/README.md.
+		// CPU numbers are comparable to the app's. See docs/design/BENCH.md.
 		if ( command !== 'bless' ) {
 
 			const stored = await readCalibration();

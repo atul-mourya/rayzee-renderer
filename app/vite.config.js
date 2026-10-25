@@ -24,7 +24,7 @@ export default defineConfig( {
 		fs: {
 			// The regression bench harness lives outside this Vite root, in the repo's
 			// `bench/` directory. Serving it needs the monorepo root allow-listed.
-			// See bench/README.md.
+			// See docs/design/BENCH.md (bench:ab).
 			allow: [ path.resolve( __dirname, '..' ) ],
 		},
 		// port: 5174

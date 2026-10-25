@@ -1,6 +1,6 @@
 /**
  * `bench:load` — real models loaded by phase, in Node on Dawn, with a gate on load errors and engine issues, and an
- * A/B against another checkout gated per phase. See "Scene loading" in bench/README.md.
+ * A/B against another checkout gated per phase. See "Scene loading" in docs/design/BENCH.md.
  */
 
 import { execFile, fork } from 'node:child_process';

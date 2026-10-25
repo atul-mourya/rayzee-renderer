@@ -95,7 +95,7 @@ export const QUALITY_GATES = {
 		pixelThreshold: 0.01,
 	},
 	// White furnace — a RATCHET, not an absolute gate. Several BSDFs are known to violate
-	// energy conservation today (see bench/README.md), so gating on |ratio - 1| would leave the
+	// energy conservation today (see docs/design/BENCH.md), so gating on |ratio - 1| would leave the
 	// suite permanently red, which is how a gate stops being read. Instead each scene's current
 	// deviation is blessed and may only shrink. The absolute deviation is always reported, so
 	// the outstanding bugs stay visible without blocking unrelated work.
@@ -260,7 +260,7 @@ export const DENOISE_GATES = {
 	// `cornell-emissive` is the obvious fourth and is DELIBERATELY ABSENT: its render is not
 	// load-order stable (mean luminance flips +16.6 % once enough scenes load in a session and
 	// stays flipped), so the ratio would depend on whether this ran standalone or after
-	// `bench quality`. Engine bug, not a suite one — see bench/README.md. Put it back once fixed.
+	// `bench quality`. Engine bug, not a suite one — see docs/design/BENCH.md. Put it back once fixed.
 	scenes: [ 'spheres-gradient', 'glass-transmission', 'textured-normalmap' ],
 	// Denoised RMSE must be below raw at the cheapest rung. Absolute, not blessed — but the
 	// margin is thinner than it looks: the tightest observed combination is
@@ -278,7 +278,7 @@ export const DENOISE_GATES = {
  * slower than the app in a normally-used browser, and NOT by a constant factor — per-task overhead
  * inflates far more than per-triangle work, which is enough to invert a worker-count ranking.
  * `bench calibrate` measures one real model load here and compares it against a reference captured
- * from the app, so a run can say whether its CPU numbers mean anything. See bench/README.md.
+ * from the app, so a run can say whether its CPU numbers mean anything. See docs/design/BENCH.md.
  */
 export const CALIBRATION = {
 	// Models are gitignored, so this is a local path on whoever calibrates. Anything with many
@@ -414,7 +414,7 @@ export const LOAD = {
 	// Big enough to compile and trace a frame, small enough that the frame is not what is measured.
 	renderSize: { width: 256, height: 256 },
 	gates: {
-		// Above what identical code read in a self-A/B on a busy machine (bench/README.md, "Scene loading").
+		// Above what identical code read in a self-A/B on a busy machine (docs/design/BENCH.md, "Scene loading").
 		unchangedPct: 15,
 		minDeltaMs: 100,
 		// The build's host peak is counted, not sampled, so only a real change moves it.
