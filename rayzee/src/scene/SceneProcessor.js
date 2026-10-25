@@ -917,317 +917,12 @@ export class SceneProcessor {
 
 			}
 
-			// ── Step 1: Build per-mesh BLASes ──
-
-			// One entry per PLACEMENT, not per object: an InstancedMesh contributes a matrix per
-			// instance while the scene graph still holds one object. The extractor hands over the
-			// transforms as one contiguous pool, which the table adopts rather than copying.
-			const pooled = this.instanceCount > 0;
-			const meshCount = pooled ? this.instanceCount : ranges.length;
-			const instSource = this.instanceSource;
-			const worldPool = pooled ? this.matrixRuns : null;
-			const sourceOf = m => ( pooled ? instSource[ m ] : m );
-
-			this.instanceTable = new InstanceTable();
-			this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
-			this.instanceTable.tplBakeInverse = this.bakeInverse;
-			this.instanceTable.setGroups( pooled ? this.instanceGroups : null );
-			const clustered = this._clusterCopies( this.instanceTable );
-			if ( clustered ) this.instanceTable.planClusters();
-			const tlasEntries = clustered ? this.instanceTable.clusterCount : this.instanceTable.entryCount;
-			const blasBase = TLASBuilder.nodeCountFor( tlasEntries ) + this.instanceTable.groupNodeCount;
-
-			// Built while the geometry was extracted (the streaming path): only adopt the results.
-			const streamed = this._streamed;
-			this._streamed = null;
-
-			// Separate into worker-pool tasks and multi-worker parallel tasks
-			const poolTasks = [];
-			const parallelTasks = [];
-			const streamedTasks = [];
-
-			// Placements that reuse another's triangles reuse its BLAS too — the whole point of
-			// storing geometry in object space. Only the first placement of a range is built. A column, not a Map: a Map
-			// holds at most 2^24 entries, and the Moana island has 51M placements.
-			const aliasOf = new Int32Array( meshCount ).fill( - 1 );
-			const ownerOfRange = new Map();
-
-			for ( let m = 0; m < meshCount; m ++ ) {
-
-				if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Matching copies to their shapes', m, meshCount, startProgress );
-				const range = ranges[ sourceOf( m ) ];
-				if ( ! range || range.count === 0 ) continue;
-
-				const owner = ownerOfRange.get( range.start );
-				if ( owner !== undefined ) {
-
-					aliasOf[ m ] = owner;
-					continue;
-
-				}
-
-				ownerOfRange.set( range.start, m );
-
-				if ( streamed ) streamedTasks.push( { m, range } );
-				else if ( this._isLargeMesh( range ) ) parallelTasks.push( { m, range } );
-				else poolTasks.push( { m, range } );
-
-			}
-
-			const workerOpts = this._blasWorkerOpts();
-
-			const totalTasks = poolTasks.length + parallelTasks.length;
-			let doneTasks = 0;
-			const reportBLASProgress = () => {
-
-				doneTasks ++;
-				updateLoading( {
-					status: `Building BLAS ${doneTasks}/${totalTasks}...`,
-					progress: 25 + Math.floor( ( doneTasks / totalTasks ) * 45 )
-				} );
-
-			};
-
-			const owners = [ ...poolTasks, ...parallelTasks ]
-				.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
-				.sort( ( a, b ) => a.t - b.t );
-			const restored = streamed ? null : await this._restoreBLASes( owners, blasBase, workerOpts );
-			const spill = streamed ? streamed.state
-				: ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
-			const onBuilt = spill && ! streamed ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
-			if ( streamed ) {
-
-				for ( const [ t, built ] of streamed.templates ) {
-
-					this.instanceTable.tplObjectAABB.set( built.aabb, t * 6 );
-
-				}
-
-			}
-
-			if ( restored ) {
-
-				poolTasks.length = 0;
-				parallelTasks.length = 0;
-				updateLoading( { status: 'Restored stored BVHs', progress: 68 } );
-
-			}
-
-			// Build all meshes via bounded worker pool (main thread stays free)
-			const poolPromise = restored ? Promise.resolve( restored.results )
-				: streamed ? Promise.resolve( streamedTasks.map( ( { m, range } ) => ( { m, range, result: streamed.templates.get( sourceOf( m ) ).result } ) ) )
-					: this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress, onBuilt );
-
-			// One at a time: each build already spreads over every core and pins ~200 bytes per
-			// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
-			const parallelResults = [];
-			const parallelPromise = ( async () => {
-
-				for ( const { m, range } of parallelTasks ) {
-
-					const result = await this._buildLargeBLAS( range, workerOpts );
-					onBuilt?.( m, range, result );
-					parallelResults.push( { m, range, result } );
-					reportBLASProgress();
-
-				}
-
-			} )();
-
-			const [ poolResults ] = await Promise.all( [ poolPromise, parallelPromise ] );
-			if ( spill ) {
-
-				await spill.chain;
-				if ( spill.error ) throw spill.error;
-
-			}
-
-			// Store all results, summing per-mesh split stats for one aggregate BVH line
-			const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0 };
-
-			for ( const { m, range, result } of [ ...poolResults, ...parallelResults ] ) {
-
-				const st = result.splitStats;
-				if ( st ) {
-
-					blasStats.sah += st.sahSplits ?? 0;
-					blasStats.objMed += st.objectMedianSplits ?? 0;
-					blasStats.spatMed += st.spatialMedianSplits ?? 0;
-					blasStats.failed += st.failedSplits ?? 0;
-					this.performanceMetrics.blasWorkerTime += st.totalBuildTime ?? 0;
-
-				}
-
-				this.instanceTable.setEntry( {
-					meshIndex: m,
-					blasNodeCount: result.nodeCount ?? nodeBytes( result.bvhData ) / 64,
-					triOffset: range.start,
-					triCount: range.count,
-					originalToBvhMap: result.originalToBvh || null,
-					bvhData: result.bvhData,
-					matrixWorld: pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
-					expandedStart: range.expandedStart,
-					sourceMesh: sourceOf( m ),
-				} );
-
-			}
-
-			for ( let m = 0; m < meshCount; m ++ ) {
-
-				if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Placing copies', m, meshCount, 70 );
-				const owner = aliasOf[ m ];
-				if ( owner < 0 ) continue;
-				this.instanceTable.setAlias(
-					m, owner,
-					pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
-					ranges[ sourceOf( m ) ].expandedStart,
-					sourceOf( m )
-				);
-
-			}
-
-			updateLoading( { status: 'Built all BLASes', progress: 70 } );
-
+			const built = await this._buildBLASes( ranges, startProgress );
 			this.performanceMetrics.blasBuildTime = performance.now() - startTime;
+			await this._assembleBVH( built );
 
-			// ── Step 2: Assemble BVH buffer ──
-
-			updateLoading( { status: "Building TLAS...", progress: 72 } );
-			this._sampleMemory( 'BLASes built' );
-			this.memory.mark( 'tlas' );
-			const tlasStart = performance.now();
-
+			const { blasStats } = built;
 			const table = this.instanceTable;
-
-			// Always build a TLAS — even for a single mesh — so the BLAS-pointer leaf
-			// carries packed per-mesh visibility in its slot [2]. The 1-node TLAS
-			// overhead (one extra leaf fetch per ray) is negligible and eliminates
-			// a dedicated visibility storage buffer binding.
-			this.instanceTable.computeAABBs( this.triangles, { owners: ! spill } );
-			this.instanceTable.computeGroupAABBs();
-			if ( clustered ) {
-
-				// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written.
-				table.clusterWorld = new Float32Array( table.entryCount * 6 );
-				for ( let e = 0; e < table.entryCount; e += SLICE_RECORDS ) {
-
-					table.writeEntryWorldAABBs( table.clusterWorld, e, Math.min( table.entryCount, e + SLICE_RECORDS ) );
-					await this._turn( 'Measuring copies', e, table.entryCount, 72 );
-
-				}
-
-				const steps = table.clusterSteps( table.clusterWorld );
-				let step;
-				while ( ! ( step = steps.next() ).done ) await this._turn( 'Grouping copies', step.value, table.entryCount, 72 );
-				table.clusterBounds = step.value;
-
-			}
-
-			// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
-			// assigned before the build and the TLAS is written in a single pass.
-			this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( tlasEntries ) );
-			const totalNodes = this.instanceTable.totalNodeCount;
-
-			let tlasData = await this._buildTLAS( table );
-			if ( this._streaming && clustered ) {
-
-				const world = table.clusterWorld;
-				this._spillMeshBounds = this._instancedMeshBounds( ( e, out ) => {
-
-					for ( let k = 0; k < 6; k ++ ) out[ k ] = world[ e * 6 + k ];
-
-				} );
-
-			}
-
-			table.clusterWorld = null;
-			table.clusterBounds = null;
-			this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
-
-			// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
-			this.memory.mark( 'assemble' );
-			const assembleStart = performance.now();
-			// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
-			// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
-			// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
-			// reaches them and each BLAS is released as it lands, never both fully resident.
-			if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
-			this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
-			const flushBVH = spill ? await this._beginBVHSpill( spill, table.blasBase ) : null;
-			this.bvh.setRecords( 0, tlasData );
-			if ( table.groupNodeCount ) this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
-			// Hundreds of megabytes at millions of placements, and the chunks below need the room
-			// more than a later refit needs the cache.
-			tlasData = null;
-			this.tlasBuilder.releaseFlattenBuffer();
-
-			// Sample ~32 times across the fill rather than per template: this is where every
-			// allocation failure so far has landed, and the live total moves in both directions
-			// as chunks are taken and BLASes released.
-			const sampleEvery = Math.max( 1, Math.ceil( table.templateCount / 32 ) );
-
-			if ( restored ) {
-
-				// Stored already assembled: same template order, same offsets, indices already rebased.
-				try {
-
-					const readStart = performance.now();
-					await readNodesInto( restored.nodes, this.bvh, table.blasBase, table.totalBLASNodes );
-					this.performanceMetrics.blasRestore.readMs = performance.now() - readStart;
-
-				} finally {
-
-					restored.release();
-
-				}
-
-				table.blasData.clear();
-
-			} else {
-
-				for ( let t = 0; t < table.templateCount; t ++ ) {
-
-					await this._turn( 'Assembling the scene', t, table.templateCount, 74 );
-					// Only owning templates hold one; spilled, they are read back one at a time.
-					const blas = spill ? await this._readSpilledBLAS( spill, t ) : table.blasData.get( t );
-					if ( ! blas ) continue;
-
-					const blasOffset = table.tplBlasOffset[ t ];
-					let end = blasOffset;
-					for ( const part of nodeParts( blas ) ) {
-
-						this.bvh.setRecords( end, part );
-						end += part.length / 16;
-
-					}
-
-					this._offsetBLASInPlace( blasOffset, end - blasOffset, blasOffset, table.tplTriOffset[ t ] );
-					table.blasData.delete( t );
-					await flushBVH?.( end );
-
-					if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
-
-				}
-
-				if ( clustered ) await this._writeCopyRecords( flushBVH );
-				await flushBVH?.( totalNodes, true );
-				if ( spill ) await spill.blasStore.dispose();
-
-			}
-
-			if ( clustered && restored ) await this._writeCopyRecords( null );
-			this._setBVHData( this.bvh.materializeAll() );
-
-			if ( restored ) for ( const [ t, map ] of restored.orders ) table.bvhToOriginal.set( t, map );
-			else this._buildBvhToOriginalMaps();
-			this.performanceMetrics.bvhAssembleTime = performance.now() - assembleStart;
-
-			table.originalToBvhMap.clear();
-			table.blasData.clear();
-
-			this.bvhRoot = true;
-			this._disposeRefitWorker();
-
 			const duration = performance.now() - startTime;
 			// One aggregate line for the whole two-level build; the workers' per-mesh
 			// detail sits a level below at `debug`.
@@ -1258,6 +953,329 @@ export class SceneProcessor {
 			this._slice = null;
 
 		}
+
+	}
+
+	/**
+	 * The BVH build's first step: a BLAS for every mesh range, built, restored from storage or adopted from a streamed
+	 * build, and the instance table that places them.
+	 * @private
+	 */
+	async _buildBLASes( ranges, startProgress ) {
+
+		// One entry per PLACEMENT, not per object: an InstancedMesh contributes a matrix per
+		// instance while the scene graph still holds one object. The extractor hands over the
+		// transforms as one contiguous pool, which the table adopts rather than copying.
+		const pooled = this.instanceCount > 0;
+		const meshCount = pooled ? this.instanceCount : ranges.length;
+		const instSource = this.instanceSource;
+		const worldPool = pooled ? this.matrixRuns : null;
+		const sourceOf = m => ( pooled ? instSource[ m ] : m );
+
+		this.instanceTable = new InstanceTable();
+		this.instanceTable.allocate( meshCount, ranges.length, worldPool, pooled ? instSource : null );
+		this.instanceTable.tplBakeInverse = this.bakeInverse;
+		this.instanceTable.setGroups( pooled ? this.instanceGroups : null );
+		const clustered = this._clusterCopies( this.instanceTable );
+		if ( clustered ) this.instanceTable.planClusters();
+		const tlasEntries = clustered ? this.instanceTable.clusterCount : this.instanceTable.entryCount;
+		const blasBase = TLASBuilder.nodeCountFor( tlasEntries ) + this.instanceTable.groupNodeCount;
+
+		// Built while the geometry was extracted (the streaming path): only adopt the results.
+		const streamed = this._streamed;
+		this._streamed = null;
+
+		// Separate into worker-pool tasks and multi-worker parallel tasks
+		const poolTasks = [];
+		const parallelTasks = [];
+		const streamedTasks = [];
+
+		// Placements that reuse another's triangles reuse its BLAS too — the whole point of
+		// storing geometry in object space. Only the first placement of a range is built. A column, not a Map: a Map
+		// holds at most 2^24 entries, and the Moana island has 51M placements.
+		const aliasOf = new Int32Array( meshCount ).fill( - 1 );
+		const ownerOfRange = new Map();
+
+		for ( let m = 0; m < meshCount; m ++ ) {
+
+			if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Matching copies to their shapes', m, meshCount, startProgress );
+			const range = ranges[ sourceOf( m ) ];
+			if ( ! range || range.count === 0 ) continue;
+
+			const owner = ownerOfRange.get( range.start );
+			if ( owner !== undefined ) {
+
+				aliasOf[ m ] = owner;
+				continue;
+
+			}
+
+			ownerOfRange.set( range.start, m );
+
+			if ( streamed ) streamedTasks.push( { m, range } );
+			else if ( this._isLargeMesh( range ) ) parallelTasks.push( { m, range } );
+			else poolTasks.push( { m, range } );
+
+		}
+
+		const workerOpts = this._blasWorkerOpts();
+
+		const totalTasks = poolTasks.length + parallelTasks.length;
+		let doneTasks = 0;
+		const reportBLASProgress = () => {
+
+			doneTasks ++;
+			updateLoading( {
+				status: `Building BLAS ${doneTasks}/${totalTasks}...`,
+				progress: 25 + Math.floor( ( doneTasks / totalTasks ) * 45 )
+			} );
+
+		};
+
+		const owners = [ ...poolTasks, ...parallelTasks ]
+			.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
+			.sort( ( a, b ) => a.t - b.t );
+		const restored = streamed ? null : await this._restoreBLASes( owners, blasBase, workerOpts );
+		const spill = streamed ? streamed.state
+			: ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
+		const onBuilt = spill && ! streamed ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
+		if ( streamed ) {
+
+			for ( const [ t, built ] of streamed.templates ) {
+
+				this.instanceTable.tplObjectAABB.set( built.aabb, t * 6 );
+
+			}
+
+		}
+
+		if ( restored ) {
+
+			poolTasks.length = 0;
+			parallelTasks.length = 0;
+			updateLoading( { status: 'Restored stored BVHs', progress: 68 } );
+
+		}
+
+		// Build all meshes via bounded worker pool (main thread stays free)
+		const poolPromise = restored ? Promise.resolve( restored.results )
+			: streamed ? Promise.resolve( streamedTasks.map( ( { m, range } ) => ( { m, range, result: streamed.templates.get( sourceOf( m ) ).result } ) ) )
+				: this._buildBLASesWithPool( poolTasks, workerOpts, reportBLASProgress, onBuilt );
+
+		// One at a time: each build already spreads over every core and pins ~200 bytes per
+		// triangle of SharedArrayBuffer until it finishes. This is a memory bound, not a core one.
+		const parallelResults = [];
+		const parallelPromise = ( async () => {
+
+			for ( const { m, range } of parallelTasks ) {
+
+				const result = await this._buildLargeBLAS( range, workerOpts );
+				onBuilt?.( m, range, result );
+				parallelResults.push( { m, range, result } );
+				reportBLASProgress();
+
+			}
+
+		} )();
+
+		const [ poolResults ] = await Promise.all( [ poolPromise, parallelPromise ] );
+		if ( spill ) {
+
+			await spill.chain;
+			if ( spill.error ) throw spill.error;
+
+		}
+
+		// Store all results, summing per-mesh split stats for one aggregate BVH line
+		const blasStats = { sah: 0, objMed: 0, spatMed: 0, failed: 0 };
+
+		for ( const { m, range, result } of [ ...poolResults, ...parallelResults ] ) {
+
+			const st = result.splitStats;
+			if ( st ) {
+
+				blasStats.sah += st.sahSplits ?? 0;
+				blasStats.objMed += st.objectMedianSplits ?? 0;
+				blasStats.spatMed += st.spatialMedianSplits ?? 0;
+				blasStats.failed += st.failedSplits ?? 0;
+				this.performanceMetrics.blasWorkerTime += st.totalBuildTime ?? 0;
+
+			}
+
+			this.instanceTable.setEntry( {
+				meshIndex: m,
+				blasNodeCount: result.nodeCount ?? nodeBytes( result.bvhData ) / 64,
+				triOffset: range.start,
+				triCount: range.count,
+				originalToBvhMap: result.originalToBvh || null,
+				bvhData: result.bvhData,
+				matrixWorld: pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
+				expandedStart: range.expandedStart,
+				sourceMesh: sourceOf( m ),
+			} );
+
+		}
+
+		for ( let m = 0; m < meshCount; m ++ ) {
+
+			if ( ( m & 0xffff ) === 0xffff ) await this._turn( 'Placing copies', m, meshCount, 70 );
+			const owner = aliasOf[ m ];
+			if ( owner < 0 ) continue;
+			this.instanceTable.setAlias(
+				m, owner,
+				pooled ? IN_PLACE : ( this.meshes?.[ m ]?.matrixWorld?.elements ?? null ),
+				ranges[ sourceOf( m ) ].expandedStart,
+				sourceOf( m )
+			);
+
+		}
+
+		updateLoading( { status: 'Built all BLASes', progress: 70 } );
+		return { clustered, tlasEntries, restored, spill, blasStats };
+
+	}
+
+	/**
+	 * The second step: the TLAS over the placements, then one buffer [TLAS][groups][BLAS_0]…[BLAS_M][copy records].
+	 * @private
+	 */
+	async _assembleBVH( { clustered, tlasEntries, restored, spill } ) {
+
+		updateLoading( { status: "Building TLAS...", progress: 72 } );
+		this._sampleMemory( 'BLASes built' );
+		this.memory.mark( 'tlas' );
+		const tlasStart = performance.now();
+
+		const table = this.instanceTable;
+
+		// Always build a TLAS — even for a single mesh — so the BLAS-pointer leaf
+		// carries packed per-mesh visibility in its slot [2]. The 1-node TLAS
+		// overhead (one extra leaf fetch per ray) is negligible and eliminates
+		// a dedicated visibility storage buffer binding.
+		this.instanceTable.computeAABBs( this.triangles, { owners: ! spill } );
+		this.instanceTable.computeGroupAABBs();
+		if ( clustered ) {
+
+			// Each entry's world box picks its cluster and sizes its byte box; dropped once the leaves are written.
+			table.clusterWorld = new Float32Array( table.entryCount * 6 );
+			for ( let e = 0; e < table.entryCount; e += SLICE_RECORDS ) {
+
+				table.writeEntryWorldAABBs( table.clusterWorld, e, Math.min( table.entryCount, e + SLICE_RECORDS ) );
+				await this._turn( 'Measuring copies', e, table.entryCount, 72 );
+
+			}
+
+			const steps = table.clusterSteps( table.clusterWorld );
+			let step;
+			while ( ! ( step = steps.next() ).done ) await this._turn( 'Grouping copies', step.value, table.entryCount, 72 );
+			table.clusterBounds = step.value;
+
+		}
+
+		// Node count is exact up front (every leaf holds one entry), so BLAS offsets can be
+		// assigned before the build and the TLAS is written in a single pass.
+		this.instanceTable.assignOffsets( TLASBuilder.nodeCountFor( tlasEntries ) );
+		const totalNodes = this.instanceTable.totalNodeCount;
+
+		let tlasData = await this._buildTLAS( table );
+		if ( this._streaming && clustered ) {
+
+			const world = table.clusterWorld;
+			this._spillMeshBounds = this._instancedMeshBounds( ( e, out ) => {
+
+				for ( let k = 0; k < 6; k ++ ) out[ k ] = world[ e * 6 + k ];
+
+			} );
+
+		}
+
+		table.clusterWorld = null;
+		table.clusterBounds = null;
+		this.performanceMetrics.tlasBuildTime = performance.now() - tlasStart;
+
+		// Assemble combined buffer: [TLAS][BLAS_0][BLAS_1]...[BLAS_M]
+		this.memory.mark( 'assemble' );
+		const assembleStart = performance.now();
+		// Chunked for the same reason triangles are: 64 B a node puts the 2 GB array cap at
+		// 33.4M nodes, which a large instanced scene reaches well before the GPU's 4 GB.
+		// Lazy, and walked in template order so offsets ascend: chunks are allocated as the fill
+		// reaches them and each BLAS is released as it lands, never both fully resident.
+		if ( ! spill ) this._checkAssemblyHeadroom( totalNodes );
+		this._setBVHData( ChunkedRecords.lazy( totalNodes, 16, Float32Array, undefined, SHARED_MEMORY_AVAILABLE ) );
+		const flushBVH = spill ? await this._beginBVHSpill( spill, table.blasBase ) : null;
+		this.bvh.setRecords( 0, tlasData );
+		if ( table.groupNodeCount ) this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
+		// Hundreds of megabytes at millions of placements, and the chunks below need the room
+		// more than a later refit needs the cache.
+		tlasData = null;
+		this.tlasBuilder.releaseFlattenBuffer();
+
+		// Sample ~32 times across the fill rather than per template: this is where every
+		// allocation failure so far has landed, and the live total moves in both directions
+		// as chunks are taken and BLASes released.
+		const sampleEvery = Math.max( 1, Math.ceil( table.templateCount / 32 ) );
+
+		if ( restored ) {
+
+			// Stored already assembled: same template order, same offsets, indices already rebased.
+			try {
+
+				const readStart = performance.now();
+				await readNodesInto( restored.nodes, this.bvh, table.blasBase, table.totalBLASNodes );
+				this.performanceMetrics.blasRestore.readMs = performance.now() - readStart;
+
+			} finally {
+
+				restored.release();
+
+			}
+
+			table.blasData.clear();
+
+		} else {
+
+			for ( let t = 0; t < table.templateCount; t ++ ) {
+
+				await this._turn( 'Assembling the scene', t, table.templateCount, 74 );
+				// Only owning templates hold one; spilled, they are read back one at a time.
+				const blas = spill ? await this._readSpilledBLAS( spill, t ) : table.blasData.get( t );
+				if ( ! blas ) continue;
+
+				const blasOffset = table.tplBlasOffset[ t ];
+				let end = blasOffset;
+				for ( const part of nodeParts( blas ) ) {
+
+					this.bvh.setRecords( end, part );
+					end += part.length / 16;
+
+				}
+
+				this._offsetBLASInPlace( blasOffset, end - blasOffset, blasOffset, table.tplTriOffset[ t ] );
+				table.blasData.delete( t );
+				await flushBVH?.( end );
+
+				if ( t % sampleEvery === 0 ) this._sampleMemory( `assembling ${t}/${table.templateCount}` );
+
+			}
+
+			if ( clustered ) await this._writeCopyRecords( flushBVH );
+			await flushBVH?.( totalNodes, true );
+			if ( spill ) await spill.blasStore.dispose();
+
+		}
+
+		if ( clustered && restored ) await this._writeCopyRecords( null );
+		this._setBVHData( this.bvh.materializeAll() );
+
+		if ( restored ) for ( const [ t, map ] of restored.orders ) table.bvhToOriginal.set( t, map );
+		else this._buildBvhToOriginalMaps();
+		this.performanceMetrics.bvhAssembleTime = performance.now() - assembleStart;
+
+		table.originalToBvhMap.clear();
+		table.blasData.clear();
+
+		this.bvhRoot = true;
+		this._disposeRefitWorker();
 
 	}
 

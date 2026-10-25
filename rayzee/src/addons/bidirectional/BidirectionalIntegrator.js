@@ -6,15 +6,15 @@
  * shading functions, so the core imports none of them. See CLAUDE.md, "Bidirectional integrator".
  */
 
-import { uniform, uniformArray, texture, storage, Fn, uint, atomicStore, atomicLoad, instanceIndex, If, Return } from 'three/tsl';
+import { uniform, uniformArray, texture, storage, uint } from 'three/tsl';
 import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
 import { gpuOnlyStorageAttribute } from '../../shaders/ThreePatches.js';
 import { LIGHT_FLOATS } from '../../pathtracer/UniformManager.js';
 import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
-import { COUNTER, ENERGY_SCALE } from '../../pathtracer/QueueManager.js';
+import { ENERGY_SCALE } from '../../pathtracer/QueueManager.js';
 import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
 import { BVH_MAX_INDEX, BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '../../scene/BufferLayout.js';
-import { BOUNCE_KERNELS, LIST_WG_SIZE } from '../../pathtracer/PathTracer.js';
+import { LIST_WG_SIZE, buildSnapshotKernel, buildCopybackKernel, recordSurvivors } from '../../shaders/kernels/CompactKernel.js';
 import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from './LightGenerateKernel.js';
 import { buildGuideKernel, buildGuideClearKernel, guidedDiscPdf, recordEscape, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from './LightGuide.js';
 import { buildConnectKernel, CONNECT_WG_SIZE } from './ConnectKernel.js';
@@ -46,6 +46,8 @@ export class BidirectionalIntegrator {
 	constructor( pathTracer ) {
 
 		this.pt = pathTracer;
+		// Sized per bounce with the camera loop's (`PathTracer.bounceKernels`).
+		this.bounceKernels = [ 'connect', 'merge', 'lightCopyback' ];
 		this.merging = false;
 		this._mergeRadiusPixels = MERGE_RADIUS_PIXELS;
 		this._mergeHeadAttr = null;
@@ -208,34 +210,13 @@ export class BidirectionalIntegrator {
 		const recordLightCurve = ( active ) => {
 
 			const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( n - 1 ) );
-			bounceCountsBuf.element( slot.add( uint( 2 * n ) ) ).assign( active );
-			bounceCountsBuf.element( slot.add( uint( 3 * n ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
-			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+			recordSurvivors( counters, bounceCountsBuf, slot.add( uint( 2 * n ) ), slot.add( uint( 3 * n ) ), active );
 
 		};
 
-		km.register( 'lightSnapshot', Fn( () => {
-
-			recordLightCurve( atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) ) );
-
-		} )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] ) );
-
-		km.register( 'lightCopyback', Fn( () => {
-
-			const tid = instanceIndex;
-			const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
-			If( tid.equal( uint( 0 ) ), () => {
-
-				recordLightCurve( active );
-
-			} );
-			If( tid.greaterThanEqual( active ), () => {
-
-				Return();
-
-			} );
-			copyWriteA.element( tid ).assign( copyReadB.element( tid ) );
-
+		km.register( 'lightSnapshot', buildSnapshotKernel( { counters, record: recordLightCurve } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] ) );
+		km.register( 'lightCopyback', buildCopybackKernel( {
+			counters, survivors: copyReadB, activeIndicesRW: copyWriteA, record: recordLightCurve,
 		} )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] ) );
 
 		km.register( 'guideClear', buildGuideClearKernel( { counters } ) );
@@ -816,7 +797,7 @@ export class BidirectionalIntegrator {
 
 			const prev = bounce > 0 ? counts?.[ bounce - 1 ] : undefined;
 			const sized = dynamic && prev > 0 ? Math.min( paths, Math.ceil( prev * 1.5 ) + 1024 ) : paths;
-			for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, sized );
+			for ( const k of this.pt.bounceKernels ) km.setDispatchForCount( k, sized );
 			if ( ! dynamic ) km.dispatch( 'enterFull' );
 
 			km.dispatch( 'extend' );

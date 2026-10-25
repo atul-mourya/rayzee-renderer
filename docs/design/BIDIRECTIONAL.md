@@ -4,7 +4,7 @@
 
 An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`addons/bidirectional/`) holds everything bidirectional —
 its uniforms, buffers, kernels and frame steps — and `PathTracer` calls it through its integrator hooks (`beginFrame`,
-`beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, …) after `pathTracer.registerIntegrator( [
+`beforeShade`, `afterShade`, `resolve`, `allocate`, `registerKernels`, `bounceKernels`, …) after `pathTracer.registerIntegrator( [
 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` — `PathTracerApp` registers it. Shade and Generate
 take the bidirectional functions from `uniforms.lib`, so the core imports none of them. The `integrator` setting calls
 `pathTracer.setIntegrator( name )`; choosing an unregistered integrator records `capability.missing`. Its controls are on the instance: `pt.activeIntegrator.setBidirectionalStrategy()`

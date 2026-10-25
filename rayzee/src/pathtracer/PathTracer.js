@@ -4,7 +4,7 @@
  * for shared engine/scene infrastructure (managers, uniforms, camera, lights, BVH, accumulation).
  */
 
-import { uniform, texture, storage } from 'three/tsl';
+import { uniform, texture, storage, uint } from 'three/tsl';
 import { IndirectStorageBufferAttribute } from 'three/webgpu';
 import { gpuOnlyStorageAttribute } from '../shaders/ThreePatches.js';
 import { PathTracerStage } from './PathTracerStage.js';
@@ -18,8 +18,14 @@ import { buildGenerateKernel, GENERATE_WG_SIZE } from '../shaders/kernels/Genera
 import { buildExtendKernel, EXTEND_WG_SIZE } from '../shaders/kernels/ExtendKernel.js';
 import { buildShadeKernel, SHADE_WG_SIZE } from '../shaders/kernels/ShadeKernel.js';
 import { buildVisibilityFoldKernel, buildVisibilityClearKernel } from '../shaders/LightVisibility.js';
-import { buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE } from '../shaders/kernels/CompactKernel.js';
-import { buildFinalWriteKernel, FINALWRITE_WG_SIZE } from '../shaders/kernels/FinalWriteKernel.js';
+import {
+	buildCompactKernel, buildCompactSubgroupKernel, COMPACT_WG_SIZE, LIST_WG_SIZE,
+	buildInitActiveIndicesKernel, buildResetFrameCountersKernel, buildSeedEnterKernel, buildEnterFullKernel,
+	buildSnapshotKernel, buildCopybackKernel, writeListSizes, recordSurvivors,
+} from '../shaders/kernels/CompactKernel.js';
+import {
+	buildFinalWriteKernel, FINALWRITE_WG_SIZE, buildFreezeMaskKernel, buildActivePixelsKernel, buildCountConvergedKernel,
+} from '../shaders/kernels/FinalWriteKernel.js';
 import { buildDebugKernel, DEBUG_WG_SIZE } from '../shaders/kernels/DebugKernel.js';
 import { buildBucketTextureNodes, refreshBucketTextureNodes } from '../shaders/TextureSampling.js';
 import { withSceneResources, MATERIAL_LAYERS } from '../shaders/SceneResources.js';
@@ -34,21 +40,16 @@ import { readPixels } from '../output/TextureReadback.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../Logger.js';
 import { deviceMemoryGB } from '../memory/HostMemory.js';
-import {
-	Fn, uint, int, atomicStore, atomicLoad, atomicAdd, instanceIndex, If, Return, max, min,
-} from 'three/tsl';
 
 const log = createLogger( 'wavefront' );
-
-// Shared by the 1D index-list kernels built inline below.
-export const LIST_WG_SIZE = 256;
 
 const PICKED_SHADOW_RAYS = [ 'two', 'one' ];
 const SHADOW_RAY_MODES = [ 'all', ...PICKED_SHADOW_RAYS ];
 
 // Sized per bounce iteration: the camera loop from counts written on the GPU (all LIST_WG_SIZE wide), the light pass
-// from its grid. Unregistered entries (the sort passes when _sortMaterials is off) are skipped.
-export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'compactCopybackOdd', 'lightCopyback' ];
+// from its grid. An integrator adds its own (`bounceKernels`). Unregistered entries (the sort passes when
+// _sortMaterials is off) are skipped.
+const BOUNCE_KERNELS = [ 'extend', 'shade', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'compactCopybackOdd' ];
 // An even bounce's copyback writes the odd bounce's workgroup counts and the reverse: a dispatch may not write the
 // buffer it is sized from.
 const COPYBACKS = [ 'compactCopyback', 'compactCopybackOdd' ];
@@ -294,6 +295,14 @@ export class PathTracer extends PathTracerStage {
 			this._outputsChanged = true;
 
 		};
+
+	}
+
+	/** The kernels sized per bounce iteration: the camera loop's and the integrator's. */
+	get bounceKernels() {
+
+		const own = this._integrator?.bounceKernels;
+		return own ? [ ...BOUNCE_KERNELS, ...own ] : BOUNCE_KERNELS;
 
 	}
 
@@ -640,12 +649,12 @@ export class PathTracer extends PathTracerStage {
 				if ( gpuSized ) {
 
 					// Bounce 0's sizes come from initActiveIndices or seedEnter, every later one's from the copyback before it.
-					km.setIndirect( BOUNCE_KERNELS, this._bounceSizes[ bounce % 2 ] );
+					km.setIndirect( this.bounceKernels, this._bounceSizes[ bounce % 2 ] );
 
 				} else {
 
 					km.dispatch( 'enterFull' );
-					for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, maxRays );
+					for ( const k of this.bounceKernels ) km.setDispatchForCount( k, maxRays );
 
 				}
 
@@ -699,7 +708,7 @@ export class PathTracer extends PathTracerStage {
 		}
 
 		// The light pass next frame sizes these kernels from their grids.
-		km.setIndirect( [ ...BOUNCE_KERNELS, 'generateList' ], null );
+		km.setIndirect( [ ...this.bounceKernels, 'generateList' ], null );
 
 		if ( this._learnsVisibility ) km.dispatch( 'visibilityFold' );
 		this._maybeReadbackCounters( originalMaxBounces !== null );
@@ -1657,72 +1666,32 @@ export class PathTracer extends PathTracerStage {
 		qm.setVisibilityTable( learnsVisibility );
 		const counters = qm.getCounters();
 
-		// Workgroup counts for a bounce's kernels, read by dispatchWorkgroupsIndirect: past the device's per-dimension
-		// limit they spill into y, which instanceIndex folds back in; never none, so every kernel's thread 0 still does
-		// its bookkeeping. Two, since a copyback writes the next bounce's while sized from its own.
+		// A bounce's workgroup counts, two since a copyback writes the next bounce's while sized from its own.
 		this._bounceSizes ??= [ new IndirectStorageBufferAttribute( 3, 1 ), new IndirectStorageBufferAttribute( 3, 1 ) ];
 		const sizeNodes = this._bounceSizes.map( ( attr ) => storage( attr, 'uint' ) );
 		const maxGroups = this.renderer?.backend?.device?.limits?.maxComputeWorkgroupsPerDimension ?? 65535;
-		const writeSizes = ( sizes, count ) => {
 
-			const groups = max( uint( count ).add( uint( LIST_WG_SIZE - 1 ) ).div( uint( LIST_WG_SIZE ) ), uint( 1 ) ).toVar();
-			sizes.element( uint( 0 ) ).assign( min( groups, uint( maxGroups ) ) );
-			sizes.element( uint( 1 ) ).assign( groups.add( uint( maxGroups - 1 ) ).div( uint( maxGroups ) ) );
-			sizes.element( uint( 2 ) ).assign( uint( 1 ) );
+		// The chunk's survivor curve for the readback, and ENTERING_COUNT for the next bounce.
+		const bounceCountsBuf = qm.getBounceCounts();
+		const wfCurrentBounce = this._wfCurrentBounce;
+		const recordCurve = ( active ) => {
+
+			const slot = uint( wfCurrentBounce ).clamp( uint( 0 ), uint( qm.MAX_BOUNCE_SNAPSHOTS - 1 ) ).add( this._wfCurveBase );
+			recordSurvivors( counters, bounceCountsBuf, slot, slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ), active );
 
 		};
 
-		// Copy ACTIVE_RAY_COUNT into the chunk's bounceCounts[currentBounce] for the readback survivor curve.
-		// Standalone kernel is dispatched only on the non-dynamic path; the dynamic path folds this
-		// into compactCopyback's thread 0.
-		const bounceCountsBuf = qm.getBounceCounts();
-		const wfCurrentBounce = this._wfCurrentBounce;
-		const curveSlot = () => uint( wfCurrentBounce ).clamp( uint( 0 ), uint( qm.MAX_BOUNCE_SNAPSHOTS - 1 ) ).add( this._wfCurveBase );
-		const snapshotFn = Fn( () => {
-
-			const cnt = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
-			const slot = curveSlot();
-			bounceCountsBuf.element( slot ).assign( cnt );
-			bounceCountsBuf.element( slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
-			// Also set ENTERING_COUNT for the next bounce; the full-dispatch path's enterFull overrides it.
-			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), cnt );
-
-		} );
+		// Full-dispatch path only (enterFull then overrides ENTERING_COUNT); a GPU-sized bounce records in its copyback.
 		this._kernelManager.register( 'snapshotBounceCount',
-			snapshotFn().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
+			buildSnapshotKernel( { counters, record: recordCurve } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
 		);
 
 		const activeWriteA = qm.activeIndices.a;
-		const initFn = Fn( () => {
-
-			const tid = instanceIndex;
-			// LOCAL-slot identity for this chunk's active list. Bounded on _wfMaxRayCount (= chunkPixels): the
-			// pool has no over-allocation margin now, so the dispatch-grid overshoot must not write past it.
-			If( tid.lessThan( this._wfMaxRayCount ), () => {
-
-				activeWriteA.element( tid ).assign( tid );
-
-			} );
-			// Seed ACTIVE/ENTERING from this chunk's ray count. CONVERGED is a per-FRAME counter (summed across
-			// chunks in FinalWrite), so zero it only on the first chunk of the frame.
-			If( tid.equal( uint( 0 ) ), () => {
-
-				atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), this._wfMaxRayCount );
-				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), this._wfMaxRayCount );
-				writeSizes( sizeNodes[ 0 ], this._wfMaxRayCount );
-				If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
-
-					atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
-					atomicStore( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 0 ) );
-					atomicStore( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 0 ) );
-
-				} );
-
-			} );
-
-		} );
 		this._kernelManager.register( 'initActiveIndices',
-			initFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			buildInitActiveIndicesKernel( {
+				activeIndicesRW: activeWriteA, counters, maxRayCount: this._wfMaxRayCount, isFirstChunk: this._wfIsFirstChunk,
+				sizes: sizeNodes[ 0 ], maxGroups,
+			} )().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
 
 		const genParams = {
@@ -1767,183 +1736,33 @@ export class PathTracer extends PathTracerStage {
 			)
 		);
 
-		// --- Tier-2 freeze seed path (gated by usePixelFreeze in render()) ---
-		// Replaces generate+initActiveIndices with: reset counters → scatter non-frozen pixel IDs into the active
-		// list → publish count → 1D list-driven generate. Split so ACTIVE_RAY_COUNT is zeroed BEFORE the scatter.
-		const freezeK = this.pixelFreezeStability;
-		const resetFrameFn = Fn( () => {
-
-			// ACTIVE is per-chunk (zeroed before every chunk's scatter). CONVERGED is a per-FRAME counter
-			// summed across chunks in FinalWrite → zero it only on the first chunk of the frame.
-			atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
-			If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
-
-				atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
-				atomicStore( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 0 ) );
-				atomicStore( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 0 ) );
-
-			} );
-
-		} );
+		// Pixel freeze (usePixelFreeze) replaces generate + initActiveIndices: reset the counters, mask, scatter the
+		// unfrozen pixels into the active list, publish its count, then the list-driven generate.
 		this._kernelManager.register( 'resetFrameCounters',
-			resetFrameFn().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
+			buildResetFrameCountersKernel( { counters, isFirstChunk: this._wfIsFirstChunk } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
 		);
-
-		// The whole frame's mask before the first chunk: the dilation reads neighbours' streaks, and a chunk's FinalWrite
-		// rewrites its own, so a chunk deciding after another would see that one's rows a frame ahead.
-		const freezeMaskFn = Fn( () => {
-
-			const p = instanceIndex;
-			If( p.lessThan( uint( this._wfRenderWidth.mul( this._wfRenderHeight ) ) ), () => {
-
-				// frozen=1 skips the pixel this frame. Frame 0 seeds all (streak may be stale post-reset). A pixel
-				// freezes once streak>=K; with dilation ON it stays active if any 8-neighbour is still active
-				// (streak<K), softening the boundary. Mask is read by FinalWrite too → race-free.
-				const frozen = uint( 0 ).toVar();
-
-				// Bits 31/30 of the streak word are the converged + geometry flags — mask them off wherever the streak is read.
-				If( this.frame.greaterThan( uint( 0 ) ).and( streakRO.element( p ).bitAnd( uint( 0x3FFFFFFF ) ).greaterThanEqual( uint( freezeK ) ) ), () => {
-
-					frozen.assign( uint( 1 ) );
-
-					If( this._dilateFrozenUniform.greaterThan( int( 0 ) ), () => {
-
-						const px = int( p ).mod( this._wfRenderWidth );
-						const py = int( p ).div( this._wfRenderWidth );
-
-						for ( const [ dx, dy ] of [[ - 1, - 1 ], [ 0, - 1 ], [ 1, - 1 ], [ - 1, 0 ], [ 1, 0 ], [ - 1, 1 ], [ 0, 1 ], [ 1, 1 ]] ) {
-
-							const nx = px.add( int( dx ) );
-							const ny = py.add( int( dy ) );
-							If( nx.greaterThanEqual( int( 0 ) ).and( nx.lessThan( this._wfRenderWidth ) )
-								.and( ny.greaterThanEqual( int( 0 ) ) ).and( ny.lessThan( this._wfRenderHeight ) ), () => {
-
-								If( streakRO.element( uint( ny.mul( this._wfRenderWidth ).add( nx ) ) ).bitAnd( uint( 0x3FFFFFFF ) ).lessThan( uint( freezeK ) ), () => {
-
-									frozen.assign( uint( 0 ) ); // a still-active neighbour keeps this pixel active
-
-								} );
-
-							} );
-
-						}
-
-					} );
-
-				} );
-
-				frozenMaskRW.element( p ).assign( frozen );
-
-			} );
-
-		} );
 		this._kernelManager.register( 'freezeMask',
-			freezeMaskFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			buildFreezeMaskKernel( {
+				streak: streakRO, frozenMask: frozenMaskRW, frame: this.frame, stability: this.pixelFreezeStability,
+				dilate: this._dilateFrozenUniform, renderWidth: this._wfRenderWidth, renderHeight: this._wfRenderHeight,
+			} )().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
-
-		const buildActiveFn = Fn( () => {
-
-			const tid = instanceIndex;
-			If( tid.lessThan( this._wfMaxRayCount ), () => {
-
-				// tid is the LOCAL slot in this chunk; p is its GLOBAL pixel (streak/frozenMask are full-res,
-				// global-indexed and persist across frames). pixelBase = chunkRowBase · renderWidth.
-				const p = uint( int( tid ).add( this._wfChunkRowBase.mul( this._wfRenderWidth ) ) );
-
-				If( frozenMaskRO.element( p ).equal( uint( 0 ) ), () => {
-
-					const slot = atomicAdd( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 1 ) );
-					// Scatter the LOCAL slot (path state + list are local); generateList maps it back to global p.
-					activeWriteA.element( slot ).assign( tid );
-
-				} );
-
-			} );
-
-		} );
 		this._kernelManager.register( 'buildActivePixels',
-			buildActiveFn().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			buildActivePixelsKernel( {
+				frozenMask: frozenMaskRO, activeIndicesRW: activeWriteA, counters, maxRayCount: this._wfMaxRayCount,
+				chunkRowBase: this._wfChunkRowBase, renderWidth: this._wfRenderWidth,
+			} )().compute( [ Math.ceil( ( this._chunkRows * w ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
-
-		// Whole-frame converged count, eroded 3×3 (Cycles film_adaptive_sampling_filter_x/y parity): a pixel
-		// counts only if it AND its 8 in-bounds neighbours carry last frame's converged bit. A pointwise count
-		// is blind to undiscovered energy — all-zero pixels have zero variance and pass any threshold, so on
-		// indirect-dominant scenes it peaks on a black image and retires the frame at ~10 spp. Erosion lets
-		// each discovered speckle poison its neighbourhood while energy is still being found.
-		// Reads the PREVIOUS frame's bits, which costs nothing: the stop already lags by the readback cadence.
-		const countConvergedFn = Fn( () => {
-
-			const tid = instanceIndex;
-			const W = this._wfRenderWidth;
-			const H = this._wfRenderHeight;
-			If( tid.lessThan( uint( W.mul( H ) ) ), () => {
-
-				const px = int( tid ).mod( W );
-				const py = int( tid ).div( W );
-				const CONV_BIT = uint( 0x80000000 );
-				const GEOM_BIT = uint( 0x40000000 );
-
-				const word = streakRO.element( tid ).toVar();
-				const isGeometry = word.bitAnd( GEOM_BIT ).notEqual( uint( 0 ) );
-				const allConverged = word.bitAnd( CONV_BIT ).notEqual( uint( 0 ) ).toVar();
-
-				If( allConverged, () => {
-
-					for ( const [ dx, dy ] of [[ - 1, - 1 ], [ 0, - 1 ], [ 1, - 1 ], [ - 1, 0 ], [ 1, 0 ], [ - 1, 1 ], [ 0, 1 ], [ 1, 1 ]] ) {
-
-						const nx = px.add( int( dx ) );
-						const ny = py.add( int( dy ) );
-						If( nx.greaterThanEqual( int( 0 ) ).and( nx.lessThan( W ) )
-							.and( ny.greaterThanEqual( int( 0 ) ) ).and( ny.lessThan( H ) ), () => {
-
-							If( streakRO.element( uint( ny.mul( W ).add( nx ) ) ).bitAnd( CONV_BIT ).equal( uint( 0 ) ), () => {
-
-								allConverged.assign( false );
-
-							} );
-
-						} );
-
-					}
-
-				} );
-
-				If( allConverged, () => {
-
-					atomicAdd( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 1 ) );
-
-				} );
-
-				// Same eroded verdict, restricted to subject pixels — the framing-independent view.
-				If( isGeometry, () => {
-
-					atomicAdd( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 1 ) );
-					If( allConverged, () => {
-
-						atomicAdd( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 1 ) );
-
-					} );
-
-				} );
-
-			} );
-
-		} );
+		// Reads the previous frame's bits, which costs nothing: the stop already lags by the readback cadence.
 		this._kernelManager.register( 'countConvergedDilated',
-			countConvergedFn().compute( [ Math.ceil( ( w * h ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			buildCountConvergedKernel( {
+				streak: streakRO, counters, renderWidth: this._wfRenderWidth, renderHeight: this._wfRenderHeight,
+			} )().compute( [ Math.ceil( ( w * h ) / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		);
-
-		const seedEnterFn = Fn( () => {
-
-			const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
-			// ENTERING_COUNT drives the bounce loop; the chunk's pixel count is a stable snapshot for the sizing readback.
-			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
-			writeSizes( sizeNodes[ 0 ], active );
-			bounceCountsBuf.element( this._wfPixelCountSlot ).assign( active );
-
-		} );
 		this._kernelManager.register( 'seedEnter',
-			seedEnterFn().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
+			buildSeedEnterKernel( {
+				counters, sizes: sizeNodes[ 0 ], maxGroups, bounceCounts: bounceCountsBuf, pixelCountSlot: this._wfPixelCountSlot,
+			} )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
 		);
 
 		// 1D list-driven generate: one thread per active-list slot, bounded on ENTERING_COUNT.
@@ -2160,46 +1979,23 @@ export class PathTracer extends PathTracerStage {
 			)
 		);
 
-		// Storage nodes bind buffer A at build time, so compactCopyback copies the dense survivor list B→A for the next bounce.
-		// Full-dispatch path: ENTERING_COUNT = maxRays, kernels read the identity buffer over [0,maxRays).
-		const enterFullFn = Fn( () => {
-
-			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), this._wfMaxRayCount );
-
-		} );
 		this._kernelManager.register( 'enterFull',
-			enterFullFn().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
+			buildEnterFullKernel( { counters, maxRayCount: this._wfMaxRayCount } )().compute( [ 1, 1, 1 ], [ 1, 1, 1 ] )
 		);
 
-		const copyReadB = qm.activeIndicesRO.b; // compact writes B (pingPong fixed at 0)
+		// Compact writes list B; the copyback returns it to A, sizing the next bounce.
+		const copyReadB = qm.activeIndicesRO.b;
 		const copyWriteA = qm.activeIndices.a;
-		const copyFn = ( nextSizes ) => Fn( () => {
-
-			const tid = instanceIndex;
-			const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
-
-			// Folds snapshotBounceCount: thread 0 records the survivor count for the readback curve, seeds
-			// ENTERING_COUNT for the next bounce and sizes it. Above the guard so it runs even when active is 0.
-			If( tid.equal( uint( 0 ) ), () => {
-
-				const slot = curveSlot();
-				bounceCountsBuf.element( slot ).assign( active );
-				bounceCountsBuf.element( slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
-				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
-				writeSizes( nextSizes, active );
-
-			} );
-
-			If( tid.greaterThanEqual( active ), () => {
-
-				Return();
-
-			} );
-			copyWriteA.element( tid ).assign( copyReadB.element( tid ) );
-
-		} );
 		COPYBACKS.forEach( ( name, parity ) => this._kernelManager.register( name,
-			copyFn( sizeNodes[ 1 - parity ] )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+			buildCopybackKernel( {
+				counters, survivors: copyReadB, activeIndicesRW: copyWriteA,
+				record: ( active ) => {
+
+					recordCurve( active );
+					writeListSizes( sizeNodes[ 1 - parity ], active, maxGroups );
+
+				},
+			} )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
 		) );
 
 		this._integrator?.registerKernels( {
@@ -2299,7 +2095,7 @@ export class PathTracer extends PathTracerStage {
 		);
 
 		// One set of sizes serves every GPU-sized kernel, so each must be one row of LIST_WG_SIZE.
-		for ( const name of [ ...BOUNCE_KERNELS, 'generateList' ] ) {
+		for ( const name of [ ...this.bounceKernels, 'generateList' ] ) {
 
 			const size = this._kernelManager.kernels.get( name )?.workgroupSize;
 			if ( size && ( size[ 0 ] !== LIST_WG_SIZE || ( size[ 1 ] ?? 1 ) !== 1 || ( size[ 2 ] ?? 1 ) !== 1 ) ) {

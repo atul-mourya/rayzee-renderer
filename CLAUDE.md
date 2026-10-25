@@ -170,8 +170,8 @@ PathTracer delegates to these via composition — external code accesses them di
 - **`InstanceTable.js`**: per-**placement** metadata (template, TLAS leaf, visibility, transform) in typed columns, plus per-template BLAS offsets/sizes and object boxes. Transforms are runs read in place (`matrixRow( p )`), groups map placements to TLAS entries (`entryOf` / `repOf`), and copy clusters add records (`recordEntry`, `clusterLeaf`, `clusterOf`). Placements are positional: write them with `setEntry()` / `setAlias()` at an explicit index.
 
 ### TSL Shader Modules (`rayzee/src/shaders/`)
-46 files using `Fn()`, `If()`, `Loop()`, `.toVar()`:
-- Wavefront kernels (`shaders/kernels/`, with `DepthPass.js`): `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js`, `FinalWriteKernel.js`, `SortGlobalKernels.js`, `DebugKernel.js`; bidirectional/VCM (in `addons/bidirectional/`): `LightGenerateKernel.js`, `ConnectKernel.js`, `LightSplatKernel.js`, `MergeKernel.js`
+TSL modules using `Fn()`, `If()`, `Loop()`, `.toVar()`:
+- Wavefront kernels (`shaders/kernels/`, with `DepthPass.js`): `GenerateKernel.js`, `ExtendKernel.js`, `ShadeKernel.js`, `CompactKernel.js` (and the active list's bookkeeping), `FinalWriteKernel.js` (and the pixel freeze), `SortGlobalKernels.js`, `DebugKernel.js`; bidirectional/VCM (in `addons/bidirectional/`): `LightGenerateKernel.js`, `ConnectKernel.js`, `LightSplatKernel.js`, `MergeKernel.js`
 - Traversal and shading: `BVHTraversal.js`, `MaterialEvaluation.js`, `MaterialSampling.js`, `MaterialTransmission.js`, `Subsurface.js`, `LightsDirect.js`, `LightsSampling.js`, `EmissiveSampling.js`, `Environment.js`, `TextureSampling.js`, `SceneResources.js`, etc.
 
 ### Multi-Threading Architecture (workers beside the code that starts them)
@@ -890,7 +890,7 @@ merging.
 
 An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`addons/bidirectional/`) owns its uniforms, buffers,
 kernels and frame steps; `PathTracer` calls it through integrator hooks (`beginFrame`, `beforeShade`, `afterShade`,
-`resolve`, `allocate`, `registerKernels`, …) once `registerIntegrator()` has it (`PathTracerApp` does). Shade and
+`resolve`, `allocate`, `registerKernels`, `bounceKernels`, …) once `registerIntegrator()` has it (`PathTracerApp` does). Shade and
 Generate take its functions from `uniforms.lib`; controls are on `pt.activeIntegrator`. `'path'` compiles exactly the
 unidirectional kernels (everything is JS-gated on `params.bidirectional`). Light subpaths start on every light;
 strategies are camera hits, NEE, one light-vertex-cache connection per camera vertex, light tracing to a pinhole, and

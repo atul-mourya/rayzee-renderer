@@ -5,20 +5,29 @@
  * (renderWidth × chunkRows). A thread's band-local row `localGy` maps to global row `gy = chunkRowBase + localGy`.
  * Path state + the per-chunk G-buffer are read at the LOCAL slot `rayID = localGy·W + gx`; the persistent
  * per-pixel buffers (m2/streak/frozenMask) and the output texture use the GLOBAL pixel `p = gy·W + gx`.
+ *
+ * Also the pixel freeze, which reads the streak word written here: which pixels skip a frame, the active list without
+ * them, and the frame's converged count (1D, LIST_WG_SIZE wide).
  */
 
 import {
 	Fn, wgslFn, float, vec2, vec4, int, uint, uvec2,
 	If, mix, select, texture, textureStore, length,
-	localId, workgroupId,
+	localId, workgroupId, instanceIndex, atomicAdd,
 } from 'three/tsl';
 
 import {
 	readRayRadiance, readGBuffer, gbDecodeNormalDepth, gbDecodeAlbedo, gbDecodeHitDist,
 } from '../../pathtracer/PackedRayBuffer.js';
+import { COUNTER } from '../../pathtracer/QueueManager.js';
 import { luminance } from '../Common.js';
 
 const WG_SIZE = 16;
+
+// A streak word's bits 31/30 are the converged and geometry flags, the rest its streak.
+const STREAK_MASK = 0x3FFFFFFF;
+const CONVERGED_BIT = 0x80000000;
+const GEOMETRY_BIT = 0x40000000;
 
 // Debug mode 11: NaN/Inf detector — red where the accumulated color is NaN/Inf, black elsewhere.
 const nanInfToRed = /*@__PURE__*/ wgslFn( `
@@ -202,7 +211,7 @@ export function buildFinalWriteKernel( params ) {
 					// blind to undiscovered energy, which has zero variance and so passes any threshold.
 					const eligible = convOn.and( frame.greaterThanEqual( uint( adaptiveMinSamples ) ) ).and( converged );
 					const prevWord = streakBufferRW.element( pixelId ).toVar();
-					const oldStreak = prevWord.bitAnd( uint( 0x3FFFFFFF ) ).toVar();
+					const oldStreak = prevWord.bitAnd( uint( STREAK_MASK ) ).toVar();
 					const newStreak = oldStreak.toVar();
 
 					// Sticky within a run, else silhouette pixels flicker in and out of the subject denominator under
@@ -210,11 +219,11 @@ export function buildFinalWriteKernel( params ) {
 					// the ray flags do not survive to FinalWrite. A frozen pixel's sample is stale (in row bands another
 					// pixel's), so it keeps its bit.
 					const hitGeometry = sampleColor.w.greaterThan( float( 0.5 ) ).and( wasFrozen.not() );
-					const wasGeometry = prevWord.bitAnd( uint( 0x40000000 ) ).notEqual( uint( 0 ) );
+					const wasGeometry = prevWord.bitAnd( uint( GEOMETRY_BIT ) ).notEqual( uint( 0 ) );
 					const geometryBit = select(
 						frame.equal( uint( 0 ) ),
-						select( hitGeometry, uint( 0x40000000 ), uint( 0 ) ),
-						select( hitGeometry.or( wasGeometry ), uint( 0x40000000 ), uint( 0 ) )
+						select( hitGeometry, uint( GEOMETRY_BIT ), uint( 0 ) ),
+						select( hitGeometry.or( wasGeometry ), uint( GEOMETRY_BIT ), uint( 0 ) )
 					).toVar();
 
 					// relErr-only, no absolute floor — a floor bakes dim regions dark once it freezes them.
@@ -243,7 +252,7 @@ export function buildFinalWriteKernel( params ) {
 
 					streakBufferRW.element( pixelId ).assign(
 						newStreak
-							.bitOr( select( eligible, uint( 0x80000000 ), uint( 0 ) ) )
+							.bitOr( select( eligible, uint( CONVERGED_BIT ), uint( 0 ) ) )
 							.bitOr( geometryBit )
 					);
 
@@ -272,6 +281,149 @@ export function buildFinalWriteKernel( params ) {
 	} );
 
 	return computeFn;
+
+}
+
+const NEIGHBOURS = [[ - 1, - 1 ], [ 0, - 1 ], [ 1, - 1 ], [ - 1, 0 ], [ 1, 0 ], [ - 1, 1 ], [ 0, 1 ], [ 1, 1 ]];
+
+// `body( pixel )` for each of ( px, py )'s neighbours inside the frame.
+function forNeighbours( px, py, width, height, body ) {
+
+	for ( const [ dx, dy ] of NEIGHBOURS ) {
+
+		const nx = px.add( int( dx ) );
+		const ny = py.add( int( dy ) );
+		If( nx.greaterThanEqual( int( 0 ) ).and( nx.lessThan( width ) )
+			.and( ny.greaterThanEqual( int( 0 ) ) ).and( ny.lessThan( height ) ), () => {
+
+			body( uint( ny.mul( width ).add( nx ) ) );
+
+		} );
+
+	}
+
+}
+
+/**
+ * The whole frame's mask (1 skips the pixel), before the first chunk: the dilation reads neighbours' streaks, and a
+ * chunk's FinalWrite rewrites its own, so a chunk deciding after another would see that one's rows a frame ahead.
+ * Frame 0 seeds every pixel (a streak may be stale after a reset). Dilated, a pixel stays active while a neighbour is.
+ */
+export function buildFreezeMaskKernel( { streak, frozenMask, frame, stability, dilate, renderWidth, renderHeight } ) {
+
+	return Fn( () => {
+
+		const p = instanceIndex;
+		If( p.lessThan( uint( renderWidth.mul( renderHeight ) ) ), () => {
+
+			const frozen = uint( 0 ).toVar();
+			If( frame.greaterThan( uint( 0 ) ).and( streak.element( p ).bitAnd( uint( STREAK_MASK ) ).greaterThanEqual( uint( stability ) ) ), () => {
+
+				frozen.assign( uint( 1 ) );
+
+				If( dilate.greaterThan( int( 0 ) ), () => {
+
+					const px = int( p ).mod( renderWidth );
+					const py = int( p ).div( renderWidth );
+					forNeighbours( px, py, renderWidth, renderHeight, ( n ) => {
+
+						If( streak.element( n ).bitAnd( uint( STREAK_MASK ) ).lessThan( uint( stability ) ), () => {
+
+							frozen.assign( uint( 0 ) );
+
+						} );
+
+					} );
+
+				} );
+
+			} );
+
+			frozenMask.element( p ).assign( frozen );
+
+		} );
+
+	} );
+
+}
+
+/** Scatters the chunk's unfrozen local slots into the active list; generateList maps each back to its pixel. */
+export function buildActivePixelsKernel( { frozenMask, activeIndicesRW, counters, maxRayCount, chunkRowBase, renderWidth } ) {
+
+	return Fn( () => {
+
+		const tid = instanceIndex;
+		If( tid.lessThan( maxRayCount ), () => {
+
+			const p = uint( int( tid ).add( chunkRowBase.mul( renderWidth ) ) );
+			If( frozenMask.element( p ).equal( uint( 0 ) ), () => {
+
+				const slot = atomicAdd( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 1 ) );
+				activeIndicesRW.element( slot ).assign( tid );
+
+			} );
+
+		} );
+
+	} );
+
+}
+
+/**
+ * The frame's converged pixels, eroded 3×3 as Cycles' adaptive filter: a pixel counts only if it and its neighbours
+ * carry last frame's converged bit. A pointwise count passes all-zero pixels, and retired indirect-lit frames black.
+ */
+export function buildCountConvergedKernel( { streak, counters, renderWidth, renderHeight } ) {
+
+	return Fn( () => {
+
+		const tid = instanceIndex;
+		If( tid.lessThan( uint( renderWidth.mul( renderHeight ) ) ), () => {
+
+			const px = int( tid ).mod( renderWidth );
+			const py = int( tid ).div( renderWidth );
+			const convergedBit = uint( CONVERGED_BIT );
+			const geometryBit = uint( GEOMETRY_BIT );
+
+			const word = streak.element( tid ).toVar();
+			const isGeometry = word.bitAnd( geometryBit ).notEqual( uint( 0 ) );
+			const allConverged = word.bitAnd( convergedBit ).notEqual( uint( 0 ) ).toVar();
+
+			If( allConverged, () => {
+
+				forNeighbours( px, py, renderWidth, renderHeight, ( n ) => {
+
+					If( streak.element( n ).bitAnd( convergedBit ).equal( uint( 0 ) ), () => {
+
+						allConverged.assign( false );
+
+					} );
+
+				} );
+
+			} );
+
+			If( allConverged, () => {
+
+				atomicAdd( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 1 ) );
+
+			} );
+
+			// The same verdict over subject pixels only: independent of framing.
+			If( isGeometry, () => {
+
+				atomicAdd( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 1 ) );
+				If( allConverged, () => {
+
+					atomicAdd( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 1 ) );
+
+				} );
+
+			} );
+
+		} );
+
+	} );
 
 }
 

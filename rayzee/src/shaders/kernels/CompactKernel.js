@@ -1,12 +1,13 @@
 /**
- * CompactKernel.js — wavefront stream compaction: active rays → dense index array for next bounce (256×1, 1D).
+ * CompactKernel.js — wavefront stream compaction: active rays → dense index array for next bounce (256×1, 1D),
+ * and the active list's bookkeeping around it.
  */
 
 import {
 	Fn, uint, select, max, min,
 	If,
 	instanceIndex,
-	atomicAdd, atomicLoad,
+	atomicAdd, atomicLoad, atomicStore,
 	subgroupExclusiveAdd, subgroupAdd, subgroupBroadcast,
 	Return,
 } from 'three/tsl';
@@ -14,7 +15,11 @@ import {
 import { readRayBounceFlags, readRayThroughput } from '../../pathtracer/PackedRayBuffer.js';
 import { RAY_FLAG, COUNTER, ENERGY_SCALE, ENERGY_RAY_CLAMP } from '../../pathtracer/QueueManager.js';
 
-const WG_SIZE = 256;
+// Shared by the 1D index-list kernels.
+export const LIST_WG_SIZE = 256;
+
+// Compact is sized on the GPU with the other bounce kernels, so it must be a list kernel.
+const WG_SIZE = LIST_WG_SIZE;
 
 // Survivor's remaining throughput as fixed-point u32; clamped so a frame's sum cannot wrap.
 const rayEnergy = ( rayBufferRO, rayID ) => {
@@ -117,6 +122,139 @@ export function buildCompactSubgroupKernel( params ) {
 	} );
 
 	return computeFn;
+
+}
+
+/**
+ * Workgroup counts for `count` list threads, read by dispatchWorkgroupsIndirect: past the device's per-dimension limit
+ * they spill into y, which instanceIndex folds back in; never none, so every kernel's thread 0 still does its bookkeeping.
+ */
+export function writeListSizes( sizes, count, maxGroups ) {
+
+	const groups = max( uint( count ).add( uint( LIST_WG_SIZE - 1 ) ).div( uint( LIST_WG_SIZE ) ), uint( 1 ) ).toVar();
+	sizes.element( uint( 0 ) ).assign( min( groups, uint( maxGroups ) ) );
+	sizes.element( uint( 1 ) ).assign( groups.add( uint( maxGroups - 1 ) ).div( uint( maxGroups ) ) );
+	sizes.element( uint( 2 ) ).assign( uint( 1 ) );
+
+}
+
+// CONVERGED and the geometry counts are per frame, summed over its chunks in FinalWrite: zeroed on its first chunk only.
+function resetFrameCounts( counters, isFirstChunk ) {
+
+	If( isFirstChunk.greaterThan( uint( 0 ) ), () => {
+
+		atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
+		atomicStore( counters.element( uint( COUNTER.GEOMETRY_COUNT ) ), uint( 0 ) );
+		atomicStore( counters.element( uint( COUNTER.CONVERGED_GEOMETRY_COUNT ) ), uint( 0 ) );
+
+	} );
+
+}
+
+/** The chunk's identity list, bounded on its ray count (the pool has no margin), and its counters seeded. */
+export function buildInitActiveIndicesKernel( { activeIndicesRW, counters, maxRayCount, isFirstChunk, sizes, maxGroups } ) {
+
+	return Fn( () => {
+
+		const tid = instanceIndex;
+		If( tid.lessThan( maxRayCount ), () => {
+
+			activeIndicesRW.element( tid ).assign( tid );
+
+		} );
+		If( tid.equal( uint( 0 ) ), () => {
+
+			atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), maxRayCount );
+			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), maxRayCount );
+			writeListSizes( sizes, maxRayCount, maxGroups );
+			resetFrameCounts( counters, isFirstChunk );
+
+		} );
+
+	} );
+
+}
+
+/** Before a chunk's frozen-pixel scatter: ACTIVE is per chunk. */
+export function buildResetFrameCountersKernel( { counters, isFirstChunk } ) {
+
+	return Fn( () => {
+
+		atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), uint( 0 ) );
+		resetFrameCounts( counters, isFirstChunk );
+
+	} );
+
+}
+
+/** After the scatter: its count enters the bounce loop, and is the chunk's pixel count for the sizing readback. */
+export function buildSeedEnterKernel( { counters, sizes, maxGroups, bounceCounts, pixelCountSlot } ) {
+
+	return Fn( () => {
+
+		const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
+		atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+		writeListSizes( sizes, active, maxGroups );
+		bounceCounts.element( pixelCountSlot ).assign( active );
+
+	} );
+
+}
+
+/** Full-dispatch path: the bounce kernels read the identity list over the whole chunk. */
+export function buildEnterFullKernel( { counters, maxRayCount } ) {
+
+	return Fn( () => {
+
+		atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), maxRayCount );
+
+	} );
+
+}
+
+/** A bounce's survivors for the readback curve — their count and ACTIVE_ENERGY — and ENTERING_COUNT for the next. */
+export function recordSurvivors( counters, bounceCounts, countSlot, energySlot, active ) {
+
+	bounceCounts.element( countSlot ).assign( active );
+	bounceCounts.element( energySlot ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
+	atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+
+}
+
+/** One thread: `record( active )` the bounce's survivors. */
+export function buildSnapshotKernel( { counters, record } ) {
+
+	return Fn( () => {
+
+		record( atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) ) );
+
+	} );
+
+}
+
+/**
+ * Copies the compacted survivors back to the list the bounce kernels bind (storage nodes bind at build time). Thread 0
+ * first runs `record( active )`, above the bound so it runs even when none survived.
+ */
+export function buildCopybackKernel( { counters, survivors, activeIndicesRW, record } ) {
+
+	return Fn( () => {
+
+		const tid = instanceIndex;
+		const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
+		If( tid.equal( uint( 0 ) ), () => {
+
+			record( active );
+
+		} );
+		If( tid.greaterThanEqual( active ), () => {
+
+			Return();
+
+		} );
+		activeIndicesRW.element( tid ).assign( survivors.element( tid ) );
+
+	} );
 
 }
 

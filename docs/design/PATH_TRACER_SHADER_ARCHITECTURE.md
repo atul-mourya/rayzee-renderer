@@ -67,12 +67,10 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 | `GenerateKernel.js` | `buildGenerateKernel()`, `GENERATE_WG_SIZE` | Primary rays (camera ray, DOF, jitter), the path's RNG seed, the default G-buffer slot. One builder, two kernels: `generate` (2D over the band) and `generateList` (1D over the active-pixel list) |
 | `ExtendKernel.js` | `buildExtendKernel()`, `EXTEND_WG_SIZE` | Closest-hit `traverseBVH` per active ray → packed hit record, including the hit's facet normal and shadow-terminator lift (`HitFacet.js`) |
 | `ShadeKernel.js` | `buildShadeKernel()`, `SHADE_WG_SIZE` | Misses and surface hits: emission, NEE (lamps, environment, sun, emissive triangles), transparency / transmission / medium stack / subsurface, the next bounce, aux G-buffer commits. Thread 0 zeroes `ACTIVE_RAY_COUNT` and `ACTIVE_ENERGY` for Compact |
-| `CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()`, `COMPACT_WG_SIZE` | Stream-compacts surviving rays into the next index list and sums their throughput (`ACTIVE_ENERGY`). The subgroup variant is off (`_useSubgroupCompact`) |
+| `CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()`, `COMPACT_WG_SIZE`, `LIST_WG_SIZE` | Stream-compacts surviving rays into the next index list and sums their throughput (`ACTIVE_ENERGY`). The subgroup variant is off (`_useSubgroupCompact`). Also the active list's bookkeeping: `initActiveIndices`, `resetFrameCounters`, `seedEnter`, `enterFull`, `snapshotBounceCount` and the copybacks (`buildCopybackKernel` and `recordSurvivors`, shared with the bidirectional light pass), and `writeListSizes` for GPU-sized dispatch |
 | `SortGlobalKernels.js` | `buildResetGlobalHistKernel()`, `buildGlobalHistKernel()`, `buildGlobalPrefixKernel()`, `buildGlobalScatterKernel()`, `SORT_GLOBAL_WG_SIZE`, `SORT_GLOBAL_MAX_BINS` | Global material counting sort (reset → histogram → prefix sum → scatter) into material-pure workgroups; bins = material count, at most 256 |
-| `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE` | Per pixel: temporal blend, MRT stores, the convergence statistics (m2, freeze streak); visMode 11 flags NaN/Inf red |
+| `FinalWriteKernel.js` | `buildFinalWriteKernel()`, `FINALWRITE_WG_SIZE`, `buildFreezeMaskKernel()`, `buildActivePixelsKernel()`, `buildCountConvergedKernel()` | Per pixel: temporal blend, MRT stores, the convergence statistics (m2, freeze streak); visMode 11 flags NaN/Inf red. Also the pixel freeze that reads the streak: the frame's frozen mask (dilated), the active list without frozen pixels, and the 3×3-eroded converged count |
 | `DebugKernel.js` | `buildDebugKernel()`, `DEBUG_WG_SIZE` | Single-pass primary-ray debug views for visMode 1–10 (delegates to `TraceDebugMode`); mode 9 computed inline |
-
-`pathtracer/PathTracer.js` builds a few small kernels inline: `snapshotBounceCount`, `initActiveIndices`, `resetFrameCounters`, `freezeMask`, `buildActivePixels`, `countConvergedDilated`, `seedEnter`, `enterFull`, and `compactCopyback` / `compactCopybackOdd`.
 
 ### Bidirectional add-on kernels
 
@@ -298,7 +296,7 @@ SoA within a buffer: field `slot` of path `id` lives at `id + slot * capacity`.
    - Seed the active list. With `usePixelFreeze` (on by default): `freezeMask` on band 0 (the whole frame's frozen mask, decided before any band's `finalWrite` rewrites the streaks its dilation reads) → `resetFrameCounters` → `buildActivePixels` (scatters the pixels not frozen) → `seedEnter` (records the band's pixel count) → `generateList`. Otherwise, or on an aux seed frame: `generate` → `initActiveIndices` (identity list).
    - Band 0 only, with adaptive sampling on and a readback due this frame: `countConvergedDilated` (the 3×3-eroded converged count).
    - **Bounce loop**, `bounce` from 0 to `loopBound` = `maxBounces + transmissiveBounces + maxSubsurfaceSteps + 1` (a camera path takes one segment past its last bounce, flagged `RAY_FLAG.EMISSION_ONLY`):
-     - Size the bounce kernels (`BOUNCE_KERNELS`). Dynamic dispatch (the default): on the GPU, from the rays entering the bounce — `initActiveIndices` or `seedEnter` write bounce 0's workgroup counts (and size `generateList`), each copyback the next bounce's, into `_bounceSizes[ bounce % 2 ]`; at least one workgroup, so every kernel's thread 0 still runs, spilling into y past `maxComputeWorkgroupsPerDimension`. Without dynamic dispatch, `enterFull` and full grids.
+     - Size the bounce kernels (`bounceKernels`: the camera loop's, plus the integrator's own). Dynamic dispatch (the default): on the GPU, from the rays entering the bounce — `initActiveIndices` or `seedEnter` write bounce 0's workgroup counts (and size `generateList`), each copyback the next bounce's, into `_bounceSizes[ bounce % 2 ]`; at least one workgroup, so every kernel's thread 0 still runs, spilling into y past `maxComputeWorkgroupsPerDimension`. Without dynamic dispatch, `enterFull` and full grids.
      - `extend`.
      - With the material sort (`wavefrontSortMaterials`, on by default, only above 8 materials): `resetGlobalHist` → `globalHist` → `globalPrefix` → `globalScatter`. Shade then reads the sorted list; Compact still reads the unsorted one.
      - `integrator?.beforeShade()` → `shade` (thread 0 zeroes `ACTIVE_RAY_COUNT` / `ACTIVE_ENERGY`) → `integrator?.afterShade()`.
@@ -571,8 +569,8 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 | `shaders/kernels/GenerateKernel.js` | `buildGenerateKernel()` | Primary ray generation |
 | `shaders/kernels/ExtendKernel.js` | `buildExtendKernel()` | Closest-hit traversal |
 | `shaders/kernels/ShadeKernel.js` | `buildShadeKernel()` | Direct/indirect lighting, transmission, aux G-buffer |
-| `shaders/kernels/CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()` | Survivor stream compaction |
-| `shaders/kernels/FinalWriteKernel.js` | `buildFinalWriteKernel()` | Accumulation, convergence statistics, MRT writes |
+| `shaders/kernels/CompactKernel.js` | `buildCompactKernel()`, `buildCompactSubgroupKernel()` | Survivor stream compaction, and the active list's bookkeeping kernels |
+| `shaders/kernels/FinalWriteKernel.js` | `buildFinalWriteKernel()`, the freeze kernels | Accumulation, convergence statistics, MRT writes; pixel freeze and the converged count |
 | `shaders/PathTracerCore.js` | `generateSampledDirection()`, `handleRussianRoulette()`, `computeNDCDepth()` | Shared sampling helpers |
 | `shaders/BVHTraversal.js` | `traverseBVH()`, `traverseBVHShadow()` | Acceleration traversal, visibility, inline side culling |
 | `shaders/Environment.js` | `sampleEnvironment()`, `sampleEnvironmentExact()`, `environmentPdfExact()` | HDR env sampling & PDF |
