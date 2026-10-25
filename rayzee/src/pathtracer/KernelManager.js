@@ -57,6 +57,12 @@ export class KernelManager {
 		this._firstDispatches = [];
 		this._firstDispatchFlush = null;
 
+		/**
+		 * Kernels sized on the GPU: name → the IndirectStorageBufferAttribute holding their workgroup counts.
+		 * @type {Map<string, IndirectStorageBufferAttribute>}
+		 */
+		this._indirect = new Map();
+
 	}
 
 	/**
@@ -151,11 +157,12 @@ export class KernelManager {
 		}
 
 		const timingEntry = this.timing.get( name );
+		const size = this._indirect.get( name ) ?? null;
 
 		if ( timingEntry && ! timingEntry.compiledOnce ) {
 
 			const t0 = performance.now();
-			this.renderer.compute( node );
+			this.renderer.compute( node, size );
 			const t1 = performance.now();
 			timingEntry.compiledOnce = true;
 			timingEntry.lastDispatchMs = t1 - t0;
@@ -164,7 +171,7 @@ export class KernelManager {
 		} else if ( this.profiling ) {
 
 			const t0 = performance.now();
-			this.renderer.compute( node );
+			this.renderer.compute( node, size );
 			const t1 = performance.now();
 			let p = this.profile.get( name );
 			if ( ! p ) {
@@ -179,7 +186,24 @@ export class KernelManager {
 
 		} else {
 
-			this.renderer.compute( node );
+			this.renderer.compute( node, size );
+
+		}
+
+	}
+
+	/**
+	 * Sizes these kernels from workgroup counts a kernel wrote on the GPU (an IndirectStorageBufferAttribute) instead
+	 * of their grids, until set to null.
+	 * @param {string[]} names
+	 * @param {?IndirectStorageBufferAttribute} counts
+	 */
+	setIndirect( names, counts ) {
+
+		for ( const name of names ) {
+
+			if ( counts ) this._indirect.set( name, counts );
+			else this._indirect.delete( name );
 
 		}
 
@@ -299,6 +323,7 @@ export class KernelManager {
 		this.kernels.clear();
 		this.timing.clear();
 		this.profile.clear();
+		this._indirect.clear();
 
 	}
 

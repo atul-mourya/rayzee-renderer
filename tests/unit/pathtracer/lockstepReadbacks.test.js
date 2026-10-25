@@ -54,7 +54,6 @@ function makeStage( { chunkRows = H } = {} ) {
 		},
 		_lastBounceCounts: null,
 		_lastBounceEnergy: null,
-		_curveSizingValid: false,
 		_convergedFraction: 0,
 		_convergedGeometryFraction: 0,
 		_lastActivePixelCounts: null,
@@ -141,7 +140,6 @@ describe( 'lockstep readbacks', () => {
 
 		expect( stage._lockstepRead ).toBeNull();
 		expect( stage._convergedFraction ).toBe( 6 / ( W * H ) );
-		expect( stage._curveSizingValid ).toBe( true );
 		expect( stage._lastBounceEnergy[ 0 ] ).toBe( 7 );
 
 	} );
@@ -174,7 +172,7 @@ describe( 'lockstep readbacks', () => {
 		issued.apply();
 
 		expect( stage._convergedFraction ).toBe( 0 );
-		expect( stage._curveSizingValid ).toBe( false );
+		expect( stage._lastBounceEnergy ).toBeNull();
 
 	} );
 
@@ -252,7 +250,7 @@ describe( 'lockstep readbacks', () => {
 		Object.assign( stage, {
 			resetCount: 0, frame: { value: 9 }, hasPreviousAccumulated: { value: 1 }, storageTextures: {},
 			updateCompletionThreshold: () => {}, _seedTick: 41, _pinSeedToFrame: false,
-			_lastBounceCounts: new Uint32Array( 4 ), _lastBounceEnergy: new Uint32Array( 4 ), _curveSizingValid: true,
+			_lastBounceCounts: new Uint32Array( 4 ), _lastBounceEnergy: new Uint32Array( 4 ),
 		} );
 		stage.setLockstepReadbacks( true );
 		stage._maybeReadbackCounters();
@@ -263,7 +261,7 @@ describe( 'lockstep readbacks', () => {
 		expect( stage._lockstepRead ).toBeNull();
 		expect( stage._readbackGeneration ).toBe( generation + 1 );
 		expect( stage._lastBounceCounts ).toBeNull();
-		expect( stage._curveSizingValid ).toBe( false );
+		expect( stage._lastBounceEnergy ).toBeNull();
 		expect( stage._seedTick ).toBe( 0 );
 
 	} );
@@ -395,7 +393,7 @@ describe( 'lockstep readbacks', () => {
 
 		} );
 
-		it( 're-cuts a curve for other bands, by band size, and never sizes from it', () => {
+		it( 're-cuts a curve for other bands, by band size', () => {
 
 			const { stage } = makeStage( { chunkRows: 1 } );
 			const counts = new Uint32Array( 2 * n );
@@ -403,14 +401,14 @@ describe( 'lockstep readbacks', () => {
 			counts[ n ] = 10;
 			Object.assign( stage, {
 				_lastBounceCounts: counts, _lastBounceEnergy: counts.slice(), _curveLayout: { width: W, height: H, chunkRows: 1 },
-				_curveSizingValid: true, _lastActivePixelCounts: new Uint32Array( [ 4, 4 ] ),
+				_lastActivePixelCounts: new Uint32Array( [ 4, 4 ] ),
 				_chunkRows: H, // one band now
 			} );
 
 			stage._fitCurveToBands();
 			expect( stage._lastBounceCounts ).toHaveLength( n );
 			expect( stage._lastBounceCounts[ 0 ] ).toBe( 40 );
-			expect( stage._curveSizingValid ).toBe( false );
+			expect( stage._lastBounceEnergy[ 0 ] ).toBe( 40 );
 			expect( stage._lastActivePixelCounts ).toBeNull();
 
 			// Twice the rows, in two bands: each its share of twice the total.

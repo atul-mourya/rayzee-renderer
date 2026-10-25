@@ -5,6 +5,7 @@
  */
 
 import { uniform, texture, storage } from 'three/tsl';
+import { IndirectStorageBufferAttribute } from 'three/webgpu';
 import { gpuOnlyStorageAttribute } from '../shaders/patches.js';
 import { PathTracerStage } from './PathTracerStage.js';
 import {
@@ -34,7 +35,7 @@ import { ISSUE_CODES } from '../EngineIssues.js';
 import { createLogger, fmt } from '../Logger.js';
 import { deviceMemoryGB } from '../memory/HostMemory.js';
 import {
-	Fn, uint, int, atomicStore, atomicLoad, atomicAdd, instanceIndex, If, Return,
+	Fn, uint, int, atomicStore, atomicLoad, atomicAdd, instanceIndex, If, Return, max, min,
 } from 'three/tsl';
 
 const log = createLogger( 'wavefront' );
@@ -42,12 +43,15 @@ const log = createLogger( 'wavefront' );
 // Shared by the 1D index-list kernels built inline below.
 export const LIST_WG_SIZE = 256;
 
-// Resized per bounce iteration, each from its own registered workgroup size. Unregistered entries
-// (the sort passes when _sortMaterials is off) are skipped by setDispatchForCount.
 const PICKED_SHADOW_RAYS = [ 'two', 'one' ];
 const SHADOW_RAY_MODES = [ 'all', ...PICKED_SHADOW_RAYS ];
 
-export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'lightCopyback' ];
+// Sized per bounce iteration: the camera loop from counts written on the GPU (all LIST_WG_SIZE wide), the light pass
+// from its grid. Unregistered entries (the sort passes when _sortMaterials is off) are skipped.
+export const BOUNCE_KERNELS = [ 'extend', 'shade', 'connect', 'merge', 'globalHist', 'globalScatter', 'compact', 'compactCopyback', 'compactCopybackOdd', 'lightCopyback' ];
+// An even bounce's copyback writes the odd bounce's workgroup counts and the reverse: a dispatch may not write the
+// buffer it is sized from.
+const COPYBACKS = [ 'compactCopyback', 'compactCopybackOdd' ];
 
 export class PathTracer extends PathTracerStage {
 
@@ -86,8 +90,10 @@ export class PathTracer extends PathTracerStage {
 		this._auxSamples = 0;
 		this._auxSeedPending = false;
 
-		// CPU sizes per-bounce kernels from last frame's survivor curve; kernels bound on ENTERING_COUNT so over-sizing is safe. (indirect dispatch not viable — three.js doesn't sync compute-written indirect buffers across submissions)
+		// Each bounce's kernels are sized on the GPU from the rays entering it (dispatchWorkgroupsIndirect): whatever
+		// sets ENTERING_COUNT also writes the workgroup counts, into _bounceSizes[ bounce % 2 ]. Off: full grids.
 		this._useDynamicDispatch = true;
+		this._bounceSizes = null;
 
 		// Global material-coherence sort: the wavefrontSortMaterials setting, applied per build above 8 materials.
 		// Reorders entering rays into material-pure workgroups before Shade; runs under dynamic dispatch
@@ -112,11 +118,6 @@ export class PathTracer extends PathTracerStage {
 		this._readbackFrameCounter = 0;
 		// Bumped on resolution change; a readback that resolves with a stale generation is dropped.
 		this._readbackGeneration = 0;
-		// Whether the survivor curve may be trusted to SIZE the dispatch. False during/after camera motion
-		// (or resize) until a readback measured at the settled view re-validates it — full-size until then so
-		// a stale/mid-motion curve can't under-size the row-major list and drop the bottom rows. The curve is
-		// still used for the per-bounce early-exit regardless (it only trims bounces holding negligible energy).
-		this._curveSizingValid = false;
 		// Early exit once the survivors' summed throughput is below this fraction of a full frame's; -1
 		// disables. Never a ray count: after Russian roulette a handful of survivors carry real weight.
 		this._bounceEarlyExitThreshold = 1e-4;
@@ -136,8 +137,7 @@ export class PathTracer extends PathTracerStage {
 		this._lockstepRead = null;
 		this._accumulationLockstep = false;
 
-		// Tier-2: each band's last settled active-pixel count (pixels − frozen), sizes its next bounce-0 grid.
-		// Null until a settled readback lands (and on reset/camera-move/resize) → grids stay full-size until then.
+		// Tier-2: each band's last settled active-pixel count (pixels − frozen), for getConvergenceStats().
 		this._lastActivePixelCounts = null;
 
 		this._wfRenderWidth = uniform( 1920, 'int' );
@@ -494,19 +494,14 @@ export class PathTracer extends PathTracerStage {
 
 		this.cameraChanged = this._updateCameraUniforms();
 		this.cameraOptimizer?.updateInteractionMode( this.cameraChanged );
-		// While the camera moves, the survivor curve reflects a pose we're leaving (async readback lag), so
-		// trusting it to SIZE the dispatch would under-size the row-major list and drop the tail (bottom
-		// rows) — the streaks during motion and the flash when it stops. Mark the curve untrusted-for-sizing
-		// (→ full-size those frames) until a readback measured at the settled view re-validates it; bump the
-		// generation so any in-flight readback is discarded. The curve itself is kept for the early-exit.
+		// While the camera moves, a readback in flight measured a pose we're leaving: bump the generation so it is
+		// discarded. The curve itself is kept for the early exit.
 		if ( this.cameraChanged ) {
 
-			this._curveSizingValid = false;
 			this._readbackGeneration ++;
 			// Drop the stale converged fraction so the early-stop can't fire on the pose we're leaving.
 			this._convergedFraction = 0;
 			this._convergedGeometryFraction = 0;
-			// Tier-2: drop the stale active-pixel counts so bounce 0 full-sizes until the new pose re-measures.
 			this._lastActivePixelCounts = null;
 
 		}
@@ -562,27 +557,26 @@ export class PathTracer extends PathTracerStage {
 		const chunkRows = this._chunkRows;
 		const n = this._queueManager.MAX_BOUNCE_SNAPSHOTS;
 
-		// Every row band keeps its own survivor curve, so curve-based sizing and the per-bounce early exit apply
-		// band by band. A curve cut for other bands (a resize, a new path budget) is re-cut for these first.
+		// Every row band keeps its own survivor curve, so the per-bounce early exit applies band by band. A curve cut
+		// for other bands (a resize, a new path budget) is re-cut for these first.
 		//
 		// The curve survives a maxBounces change (reset() preserves it): for iterations below BOTH the old and
-		// new camera-bounce caps the counts are cap-independent, so trust it up to that cutoff (whole curve when
-		// same/decreasing budget; only the [0, oldBudget) overlap when increasing). budget=-1 → cutoff 0 → full
-		// dispatch everywhere. This avoids the full-work spike on every bounce-count change.
-		// A curve measured with a smaller free-bounce budget under-counts survivors at EVERY depth, not
-		// just past its tail, so sizing off it drops the deep glass paths the bigger budget bought.
-		if ( loopBound > this._lastBounceCountsLoopBound ) this._curveSizingValid = false;
+		// new camera-bounce caps the energies are cap-independent, so trust it up to that cutoff (whole curve when
+		// same/decreasing budget; only the [0, oldBudget) overlap when increasing). budget=-1 → cutoff 0 → no exit.
 		this._fitCurveToBands();
 
-		const curve = this._lastBounceCounts;
 		const energyCurve = this._lastBounceEnergy;
 		const curveMeasuredThisFar = maxBounces <= this._lastBounceCountsBudget
 			&& loopBound <= this._lastBounceCountsLoopBound;
-		const curveReliableUpto = curve
+		const curveReliableUpto = energyCurve
 			? ( curveMeasuredThisFar
 				? loopBound + 1
 				: Math.min( this._lastBounceCountsBudget, this._lastBounceCountsLoopBound ) )
 			: 0;
+
+		// Functional compaction (dynamic dispatch): copyback keeps the read list dense and every kernel is sized on the
+		// GPU to the rays entering its bounce. Off, the full path: ENTERING = maxRays over the identity list.
+		const gpuSized = this._useDynamicDispatch;
 
 		// An integrator's light subpaths first, through the same pool; every camera chunk then connects to them.
 		const integrator = this._integrator?.beginFrame( loopBound ) ? this._integrator : null;
@@ -602,21 +596,17 @@ export class PathTracer extends PathTracerStage {
 
 			// This band's entries in the curve; past the snapshots there are none.
 			const band = chunkIndex * n;
-			const countAt = ( i ) => ( i < n ? curve[ band + i ] : undefined );
 			const energyAt = ( i ) => ( i < n ? energyCurve[ band + i ] : undefined );
 
-			// Tier-2 bounce-0 grid size from the band's stale settled active-pixel count.
-			// Monotonic freeze ⇒ a stale count is a safe over-estimate; reset/camera-move → _curveSizingValid=false.
 			// An aux seed frame must trace every pixel: Generate/Shade skip the G-buffer for frozen ones.
 			const adaptiveFreeze = this.usePixelFreeze.value > 0 && ! this._auxSeedPending;
-			const lastActive = this._lastActivePixelCounts?.[ chunkIndex ] ?? 0;
-			const activeBounce0 = ( adaptiveFreeze && this._curveSizingValid && lastActive > 0 ) ? lastActive : maxRays;
 
 			if ( adaptiveFreeze ) {
 
-				// frame's mask (first chunk) → reset counters → compact non-frozen pixel IDs → publish count → list-driven 1D generate.
-				const genSized = Math.min( maxRays, Math.ceil( activeBounce0 * 1.5 ) + 1024 );
-				km.setDispatchForCount( 'generateList', genSized );
+				// frame's mask (first chunk) → reset counters → compact non-frozen pixel IDs → publish the count and
+				// bounce 0's sizes → list-driven 1D generate.
+				km.setDispatchForCount( 'generateList', maxRays );
+				km.setIndirect( [ 'generateList' ], gpuSized ? this._bounceSizes[ 0 ] : null );
 				if ( chunkIndex === 0 ) km.dispatch( 'freezeMask' );
 				km.dispatch( 'resetFrameCounters' );
 				km.dispatch( 'buildActivePixels' );
@@ -646,40 +636,11 @@ export class PathTracer extends PathTracerStage {
 
 				this._wfCurrentBounce.value = bounce;
 
-				// Functional-compaction path (dynamic dispatch): copyback keeps the read buffer dense, kernels sized to live survivors. Dynamic-off uses the full path (ENTERING=maxRays, identity buffer).
 				// Material sort is compatible: shade reads sortedIndices while compact still reads the UNSORTED active list (getActiveReadRO), so the survivor set is unchanged.
-				const useFunctionalCompaction = this._useDynamicDispatch;
-				if ( useFunctionalCompaction ) {
+				if ( gpuSized ) {
 
-					// ENTERING_COUNT already set (bounce 0 by initActiveIndices, N>0 by snapshotBounceCount); size from the band's survivor curve last frame with a 1.5×+1024 margin.
-					let entering = maxRays;
-					if ( bounce > 0 && this._curveSizingValid ) {
-
-						const idx = bounce - 1;
-						let prev;
-						if ( idx < curveReliableUpto && countAt( idx ) !== undefined ) {
-
-							prev = countAt( idx ); // trusted exact count
-
-						} else if ( curveReliableUpto > 0 ) {
-
-							// Untrusted tail after a maxBounces increase: survivor counts are monotonically
-							// non-increasing (rays only terminate), so the last trusted count is a safe upper bound.
-							prev = countAt( curveReliableUpto - 1 );
-
-						}
-
-						entering = prev > 0 ? prev : maxRays;
-
-					} else if ( bounce === 0 && adaptiveFreeze ) {
-
-						// Bounce 0 traces only non-frozen pixels — size from the stale active count (full until a readback).
-						entering = activeBounce0;
-
-					}
-
-					const sized = Math.min( maxRays, Math.ceil( entering * 1.5 ) + 1024 );
-					for ( const k of BOUNCE_KERNELS ) km.setDispatchForCount( k, sized );
+					// Bounce 0's sizes come from initActiveIndices or seedEnter, every later one's from the copyback before it.
+					km.setIndirect( BOUNCE_KERNELS, this._bounceSizes[ bounce % 2 ] );
 
 				} else {
 
@@ -704,10 +665,11 @@ export class PathTracer extends PathTracerStage {
 				km.dispatch( 'shade' ); // shade thread 0 folds resetActiveCounter (zeroes ACTIVE_RAY_COUNT before compact)
 				integrator?.afterShade( km );
 				km.dispatch( 'compact' );
-				if ( useFunctionalCompaction ) {
+				if ( gpuSized ) {
 
-					// compactCopyback thread 0 folds snapshotBounceCount (records the survivor curve + seeds ENTERING).
-					km.dispatch( 'compactCopyback' );
+					// Thread 0 folds snapshotBounceCount (records the survivor curve, seeds ENTERING) and writes the
+					// next bounce's sizes.
+					km.dispatch( COPYBACKS[ bounce % 2 ] );
 
 				} else {
 
@@ -735,6 +697,9 @@ export class PathTracer extends PathTracerStage {
 			km.dispatch( 'finalWrite' );
 
 		}
+
+		// The light pass next frame sizes these kernels from their grids.
+		km.setIndirect( [ ...BOUNCE_KERNELS, 'generateList' ], null );
 
 		if ( this._learnsVisibility ) km.dispatch( 'visibilityFold' );
 		this._maybeReadbackCounters( originalMaxBounces !== null );
@@ -909,7 +874,6 @@ export class PathTracer extends PathTracerStage {
 			this._lastBounceEnergy = null;
 			this._lastBounceCountsBudget = - 1;
 			this._lastBounceCountsLoopBound = - 1;
-			this._curveSizingValid = false;
 
 		}
 
@@ -1335,11 +1299,10 @@ export class PathTracer extends PathTracerStage {
 		this._curveLayout = layout;
 		// An integrator's light pass keeps its own curve after band 0's.
 		this._integrator?.applyLightCurve( all.subarray( 2 * n, 3 * n ), all.subarray( 3 * n, 4 * n ), lightKey );
-		// Tier-2: a reset since restarts every pixel, so a count measured before it would under-size bounce 0.
+		// Tier-2: a reset since restarts every pixel, so a count measured before it is not this render's.
 		this._lastActivePixelCounts = resetCount === this.resetCount ? all.slice( pixelCounts, pixelCounts + bands ) : null;
 		this._lastBounceCountsBudget = budget;
 		this._lastBounceCountsLoopBound = loopBound;
-		this._curveSizingValid = true;
 
 	}
 
@@ -1347,7 +1310,7 @@ export class PathTracer extends PathTracerStage {
 	 * A curve measured in other bands (a resize, a new path budget) re-cut for the current ones: the frame's total at
 	 * each bounce, rescaled to the current pixel count and shared out by band size — one band to one band is a plain
 	 * rescale. Enough for the early exit, which compares energy against a per-pixel threshold, and nothing re-measures
-	 * while the camera moves; never for sizing, which waits for a curve measured in these bands.
+	 * while the camera moves.
 	 */
 	_fitCurveToBands() {
 
@@ -1386,7 +1349,6 @@ export class PathTracer extends PathTracerStage {
 		this._lastBounceCounts = recut( this._lastBounceCounts );
 		this._lastBounceEnergy = recut( this._lastBounceEnergy );
 		this._curveLayout = { width, height, chunkRows };
-		this._curveSizingValid = false;
 		this._lastActivePixelCounts = null;
 
 	}
@@ -1427,12 +1389,8 @@ export class PathTracer extends PathTracerStage {
 		const newH = this.storageTextures.renderHeight;
 		if ( ( newW === oldW && newH === oldH ) || ! ( this.materialData?.materialCount > 0 ) ) return;
 
-		// A survivor curve from the old resolution mis-sizes the per-bounce dispatch at the new one
-		// (row-major active list → under-coverage of the lower rows → GI band). Force full coverage
-		// until the readback re-measures at the new size; bump the generation so any readback already
-		// in flight (carrying the old-resolution counts) is discarded when it resolves.
-		// The next frame re-cuts the curve for the new bands (_fitCurveToBands), which keeps the early exit working.
-		this._curveSizingValid = false;
+		// Bump the generation so any readback already in flight (carrying the old-resolution counts) is discarded when
+		// it resolves. The next frame re-cuts the curve for the new bands (_fitCurveToBands), which keeps the early exit.
 		this._readbackFrameCounter = 0;
 		this._readbackGeneration ++;
 		this._convergedFraction = 0;
@@ -1699,6 +1657,21 @@ export class PathTracer extends PathTracerStage {
 		qm.setVisibilityTable( learnsVisibility );
 		const counters = qm.getCounters();
 
+		// Workgroup counts for a bounce's kernels, read by dispatchWorkgroupsIndirect: past the device's per-dimension
+		// limit they spill into y, which instanceIndex folds back in; never none, so every kernel's thread 0 still does
+		// its bookkeeping. Two, since a copyback writes the next bounce's while sized from its own.
+		this._bounceSizes ??= [ new IndirectStorageBufferAttribute( 3, 1 ), new IndirectStorageBufferAttribute( 3, 1 ) ];
+		const sizeNodes = this._bounceSizes.map( ( attr ) => storage( attr, 'uint' ) );
+		const maxGroups = this.renderer?.backend?.device?.limits?.maxComputeWorkgroupsPerDimension ?? 65535;
+		const writeSizes = ( sizes, count ) => {
+
+			const groups = max( uint( count ).add( uint( LIST_WG_SIZE - 1 ) ).div( uint( LIST_WG_SIZE ) ), uint( 1 ) ).toVar();
+			sizes.element( uint( 0 ) ).assign( min( groups, uint( maxGroups ) ) );
+			sizes.element( uint( 1 ) ).assign( groups.add( uint( maxGroups - 1 ) ).div( uint( maxGroups ) ) );
+			sizes.element( uint( 2 ) ).assign( uint( 1 ) );
+
+		};
+
 		// Copy ACTIVE_RAY_COUNT into the chunk's bounceCounts[currentBounce] for the readback survivor curve.
 		// Standalone kernel is dispatched only on the non-dynamic path; the dynamic path folds this
 		// into compactCopyback's thread 0.
@@ -1736,6 +1709,7 @@ export class PathTracer extends PathTracerStage {
 
 				atomicStore( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ), this._wfMaxRayCount );
 				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), this._wfMaxRayCount );
+				writeSizes( sizeNodes[ 0 ], this._wfMaxRayCount );
 				If( this._wfIsFirstChunk.greaterThan( uint( 0 ) ), () => {
 
 					atomicStore( counters.element( uint( COUNTER.CONVERGED_COUNT ) ), uint( 0 ) );
@@ -1964,6 +1938,7 @@ export class PathTracer extends PathTracerStage {
 			const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
 			// ENTERING_COUNT drives the bounce loop; the chunk's pixel count is a stable snapshot for the sizing readback.
 			atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+			writeSizes( sizeNodes[ 0 ], active );
 			bounceCountsBuf.element( this._wfPixelCountSlot ).assign( active );
 
 		} );
@@ -2198,19 +2173,20 @@ export class PathTracer extends PathTracerStage {
 
 		const copyReadB = qm.activeIndicesRO.b; // compact writes B (pingPong fixed at 0)
 		const copyWriteA = qm.activeIndices.a;
-		const copyFn = Fn( () => {
+		const copyFn = ( nextSizes ) => Fn( () => {
 
 			const tid = instanceIndex;
 			const active = atomicLoad( counters.element( uint( COUNTER.ACTIVE_RAY_COUNT ) ) );
 
-			// Folds snapshotBounceCount: thread 0 records the survivor count for the readback curve and
-			// seeds ENTERING_COUNT for the next bounce. Above the guard so it runs even when active is 0.
+			// Folds snapshotBounceCount: thread 0 records the survivor count for the readback curve, seeds
+			// ENTERING_COUNT for the next bounce and sizes it. Above the guard so it runs even when active is 0.
 			If( tid.equal( uint( 0 ) ), () => {
 
 				const slot = curveSlot();
 				bounceCountsBuf.element( slot ).assign( active );
 				bounceCountsBuf.element( slot.add( uint( qm.MAX_BOUNCE_SNAPSHOTS ) ) ).assign( atomicLoad( counters.element( uint( COUNTER.ACTIVE_ENERGY ) ) ) );
 				atomicStore( counters.element( uint( COUNTER.ENTERING_COUNT ) ), active );
+				writeSizes( nextSizes, active );
 
 			} );
 
@@ -2222,9 +2198,9 @@ export class PathTracer extends PathTracerStage {
 			copyWriteA.element( tid ).assign( copyReadB.element( tid ) );
 
 		} );
-		this._kernelManager.register( 'compactCopyback',
-			copyFn().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
-		);
+		COPYBACKS.forEach( ( name, parity ) => this._kernelManager.register( name,
+			copyFn( sizeNodes[ 1 - parity ] )().compute( [ Math.ceil( maxRays / LIST_WG_SIZE ), 1, 1 ], [ LIST_WG_SIZE, 1, 1 ] )
+		) );
 
 		this._integrator?.registerKernels( {
 			km: this._kernelManager, qm, pb, counters, bounceCountsBuf, wfCurrentBounce, copyReadB, copyWriteA, maxRays, w, own,
@@ -2322,6 +2298,18 @@ export class PathTracer extends PathTracerStage {
 			{ eager: false },
 		);
 
+		// One set of sizes serves every GPU-sized kernel, so each must be one row of LIST_WG_SIZE.
+		for ( const name of [ ...BOUNCE_KERNELS, 'generateList' ] ) {
+
+			const size = this._kernelManager.kernels.get( name )?.workgroupSize;
+			if ( size && ( size[ 0 ] !== LIST_WG_SIZE || ( size[ 1 ] ?? 1 ) !== 1 || ( size[ 2 ] ?? 1 ) !== 1 ) ) {
+
+				throw new Error( `PathTracer: '${name}' has workgroup [${size}], but GPU-sized kernels must be [${LIST_WG_SIZE}, 1, 1]` );
+
+			}
+
+		}
+
 		this._compileKernels();
 
 		const bufferBytes = ( this._packedBuffers?.totalBytes ?? 0 ) + ( this._queueManager?.totalBytes ?? 0 );
@@ -2383,6 +2371,8 @@ export class PathTracer extends PathTracerStage {
 		this._kernelManager?.dispose();
 		this._m2Attr?.dispose?.();
 		this._streakAttr?.dispose?.();
+		for ( const sizes of this._bounceSizes ?? [] ) freeStorageAttribute( this.renderer, sizes );
+		this._bounceSizes = null;
 		this._frozenMaskAttr?.dispose?.();
 		for ( const integrator of this._integratorInstances.values() ) integrator.dispose();
 		this._integratorInstances.clear();
