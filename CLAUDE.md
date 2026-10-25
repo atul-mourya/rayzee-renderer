@@ -108,6 +108,9 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
   `lights/` (gobo, IES). ⚠️ The core imports nothing from `viewer/` or `addons/`; whatever only the full entry reaches
   lives in `viewer/`, whatever only an add-on reaches in its folder (`coreBoundary.test.js` holds all three).
 
+**Docs**: `docs/guide/` is the engine's user guide and API reference (`rayzee/README.md`, the npm page, links there);
+`docs/design/` holds how it works inside. A public API change updates the guide.
+
 **Key import patterns**:
 - Engine imports in app code: `import { PathTracerApp, EngineEvents } from 'rayzee'`
 - App proxy: `import { getApp } from '@/lib/appProxy'` (the `@` alias resolves to `app/src/`)
@@ -126,12 +129,12 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 **Execution order matters** - stages run sequentially. The renderer core builds only PathTracer → Compositor; the viewer's
 `_createExtraStages()` inserts NormalDepth, MotionVector, NRD, AutoExposure and LocalExposure between them:
 - **`PathTracer.js`** + **`PathTracerStage.js`**: Pure-wavefront Monte Carlo path tracer with MRT outputs. `PathTracer` (the wavefront renderer) extends the `PathTracerStage` base (shared engine/scene infrastructure).
-- **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth; negated on an emitter, NRD's material-ID slot) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. ⚠️ ReBLUR's weights are geometry only, so whatever the blur reaches must hold the same lighting: the fused radiance is demodulated by both lobes' albedo, emitters never feed a neighbour, nor black-albedo samples (emission, sky or specular alone) a lit one. See `docs/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
+- **`NRD.js`**: Port of NVIDIA NRD's ReBLUR (recurrent blur) denoiser — strategy `'nrd'`; reads roughness from `pathtracer:shadingNormal.w` (NormalDepth; negated on an emitter, NRD's material-ID slot) and the secondary hit distance from `pathtracer:albedo.w` (written by Shade at camera depth 1, only because NRD asks for it: `pathTracer.requestOutput( 'hitDistance', { encode } )`, with its own normalisation). Progressive-aware: passes the frame through untouched once the input has `handoverFrames` samples. ⚠️ ReBLUR's weights are geometry only, so whatever the blur reaches must hold the same lighting: the fused radiance is demodulated by both lobes' albedo, emitters never feed a neighbour, nor black-albedo samples (emission, sky or specular alone) a lit one. See `docs/design/NRD_DENOISER.md`. ⚠️ TSL shares texture bindings by texture uuid — every deferred-read `TextureNode` in a kernel needs its own placeholder texture (see `readNode()` there).
 - **`LocalExposure.js`**: Unreal Engine 5's local exposure — a display-only per-pixel gain (see Local exposure below)
 - **`OverlayManager.js`** and its helpers (in `viewer/overlays/`): visual helpers, drawn at **view resolution** (canvas bounding rect × DPR — so viewport zoom counts), never at the path tracer's render resolution. Two layers: a 3D scene layer (`ViewOverlayRenderer` — a transparent canvas with its own WebGPURenderer sharing the main `GPUDevice`; hosts light gizmos, the transform gizmo, and `OutlineHelper`) and a 2D HUD canvas (`TileHelper` — OIDN-denoise / AI-upscale progress borders). Both are separate canvases, so helpers can never be baked into saved images. The scene layer's renderer is created and initialised at startup, but its surface (~30 MiB) is allocated only when a helper first becomes visible, and it parks itself (`display:none`) when none are.
 
 ### Rendering Engine (`rayzee/src/`)
-- **`RayzeeRenderer.js`** (entry `core.js`, published as `rayzee/core`): the renderer core — WebGPU device, scene build, path tracer + compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. It builds no denoiser, camera controls, gizmo, overlay or timeline, and `tests/unit/core/coreBoundary.test.js` fails if its imports reach one. Capabilities install on it from `rayzee/addons/*` (`formats`, `physical-sky`, `archives`, `bidirectional`, `color`, `storage`); `PathTracerApp` installs all six itself. See `docs/CORE_AND_ADDONS.md`. Loading and spill planning live in
+- **`RayzeeRenderer.js`** (entry `core.js`, published as `rayzee/core`): the renderer core — WebGPU device, scene build, path tracer + compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. It builds no denoiser, camera controls, gizmo, overlay or timeline, and `tests/unit/core/coreBoundary.test.js` fails if its imports reach one. Capabilities install on it from `rayzee/addons/*` (`formats`, `physical-sky`, `archives`, `bidirectional`, `color`, `storage`); `PathTracerApp` installs all six itself. See `docs/design/CORE_AND_ADDONS.md`. Loading and spill planning live in
   `loaders/SceneLoading.js`, scene edits (refit, transforms, materials, visibility) in `scene/SceneEdits.js`, readbacks and
   exports in `output/Pictures.js`: functions taking the renderer first, each behind a one-line method on the class.
 - **`PathTracerApp.js`**: the viewer, `extends RayzeeRenderer` — camera manager, interaction, gizmo, overlays, timeline, animation playback, denoisers and picture stages, gobo/IES, scene state, mode presets. It plugs in through the core's hooks (listed under "Hooks" at the end of `RayzeeRenderer.js`; each runs at a fixed point of the frame, reset or load sequence). ⚠️ Viewer code goes in the viewer: a core method that needs it gets a hook, never a `this.denoisingManager?.` call.
@@ -258,7 +261,7 @@ binding: Shade binds 5 others (rays, hits, counters, active indices, scene data)
 device's 10 — `_assertBindings` refuses before upload. The BVH and geo both in two parts fit (Shade and
 two VCM kernels then sit at 10). Measured in Node, forced with `stage.bufferPartBytes` (a test hook):
 images byte-identical; a split BVH costs +3–7 % frame time at two parts or three (read per vec4, three
-parts cost +9–14 %; see `docs/PATH_TRACER_SHADER_ARCHITECTURE.md`), split geo +0–3 %.
+parts cost +9–14 %; see `docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md`), split geo +0–3 %.
 `tests/gpu/splitBuffers.test.js` traces folded and unfolded trees over 2–3 parts against single buffers,
 `groupedInstances.test.js` instances and copy clusters over three.
 ⚠️ Read a row only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`), and pass the
@@ -768,7 +771,7 @@ const handleChange = (setter, appUpdater, needsReset = true) => val => {
 Always use `getApp()` from `@/lib/appProxy` to access the app instance. Never use store setters directly for render parameters — always use provided handlers like `handleBouncesChange`, `handleSamplesChange`.
 
 ### Colour management (`rayzee/src/color/`)
-Full notes: [docs/COLOR_MANAGEMENT.md](docs/COLOR_MANAGEMENT.md) — the API, input resolution, baked views, the app's
+Full notes: [docs/design/COLOR_MANAGEMENT.md](docs/design/COLOR_MANAGEMENT.md) — the API, input resolution, baked views, the app's
 panel and its labels, the startup view, and the shaper + table with its measurements.
 
 `app.color` is an OpenColorIO pipeline: what textures and lights mean, the working space, and what is shown and saved.
@@ -795,7 +798,7 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
 - ⚠️ Grid index 0 is baked from exactly 0, or every render has a raised black floor.
 - A display shown converted bakes from the view's light (a derived config holds each view transform as a colour space),
   as light or encoded, whichever is closer; a view stepping through a `.spi1d` after a grey value (False Color) is split
-  there into the cube and a curve in the texture's extra slices. Both in docs/COLOR_MANAGEMENT.md, "Shaper + table".
+  there into the cube and a curve in the texture's extra slices. Both in docs/design/COLOR_MANAGEMENT.md, "Shaper + table".
 - ⚠️ The Compositor draws a table view itself (`_viewQuadFor`), canvas and picture alike, never through three's output
   pass: that stores the frame in half floats first, and on Rec.709's axes a wider working space's rounding showed (a pure
   green in ACEScg, 51 levels of red in Filmic Log; the readback, reading floats, 1).
@@ -880,7 +883,7 @@ sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2�
   (`timeForSunElevation`), so Golden Hour stays golden in December. "Set sun by: Angles" edits the raw angles.
 
 ### Bidirectional integrator (`integrator: 'bidirectional'` | `'vcm'`)
-Full notes: [docs/BIDIRECTIONAL.md](docs/BIDIRECTIONAL.md) — frame order, strategies, the source table, lights at
+Full notes: [docs/design/BIDIRECTIONAL.md](docs/design/BIDIRECTIONAL.md) — frame order, strategies, the source table, lights at
 infinity, the light guide, lamps, the exact environment table, MIS, storage, verification, measurements and vertex
 merging.
 
@@ -1055,7 +1058,7 @@ overlay spinning on its last step with the File menu blocked. Drag-and-drop stil
 its own `finally`, so a failed drop shows only the console.
 
 ### Folders, archives, pbrt and USD
-Full notes: [docs/SCENE_IMPORT.md](docs/SCENE_IMPORT.md) — folder loading, partial archive loads, pbrt (budgets, parse
+Full notes: [docs/design/SCENE_IMPORT.md](docs/design/SCENE_IMPORT.md) — folder loading, partial archive loads, pbrt (budgets, parse
 memory, lights, shapes, templates, materials, formats) and USD (layers, composition, translation, parts, budgets, the
 Moana island measurements), and what Blender's glTF exporter loses of a scene's lights.
 
@@ -1089,7 +1092,7 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
 - ⚠️ The builder frees a shape's arrays after merging it: hand an array over once (`own()`).
 
 ### Storage (OPFS) (`rayzee/src/storage/`)
-Full notes: [docs/STORAGE.md](docs/STORAGE.md) — areas and the cache budget, the entry protocol, I/O, locks, identity,
+Full notes: [docs/design/STORAGE.md](docs/design/STORAGE.md) — areas and the cache budget, the entry protocol, I/O, locks, identity,
 the scene cache, scene state, sessions and projects, render checkpoints, and memory spill in full.
 
 `app.storage` is a `StorageManager` over the origin private file system, shared per `cacheNamespace`
@@ -1144,7 +1147,7 @@ The engine emits `EngineEvents.FRAME` once per `animate()` tick. Hosts attach th
 ## Critical Implementation Details
 
 ### Pipeline Architecture
-Event-driven stage pipeline with TSL compute kernels compiled to WGSL. All engine code lives in `rayzee/src/`. The path tracer is a pure-wavefront renderer: `PathTracer extends PathTracerStage`, where the base delegates to 5 sub-managers: `UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, and `StorageTexturePool`. External code (other stages, PathTracerApp) accesses sub-managers directly — e.g., `stage.uniforms.get()`, `stage.materialData.*`, `stage.environment.*`. See `docs/PIPELINE_ARCHITECTURE.md` and `docs/PATH_TRACER_SHADER_ARCHITECTURE.md` for details.
+Event-driven stage pipeline with TSL compute kernels compiled to WGSL. All engine code lives in `rayzee/src/`. The path tracer is a pure-wavefront renderer: `PathTracer extends PathTracerStage`, where the base delegates to 5 sub-managers: `UniformManager`, `MaterialDataManager`, `EnvironmentManager`, `ShaderBuilder`, and `StorageTexturePool`. External code (other stages, PathTracerApp) accesses sub-managers directly — e.g., `stage.uniforms.get()`, `stage.materialData.*`, `stage.environment.*`. See `docs/design/PIPELINE_ARCHITECTURE.md` and `docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md` for details.
 
 ### Memory Management
 Material texture arrays pack in `TexturesWorker`, each layer drawn straight into the full array
@@ -1212,7 +1215,7 @@ build loads after a reboot and fails after a long session.
   already releases as it fills, so there is no build transient left worth attacking — the only
   remaining lever is the resident set itself (the three.js geometry mirror is 1,832 MB of it).
   With `memorySpill` that mirror is on disk for the build (`storage/GeometrySpill.js`, see Memory
-  spill in `docs/STORAGE.md`) and read back when it ends.
+  spill in `docs/design/STORAGE.md`) and read back when it ends.
 
 ### Shader Data Access Pattern
 Materials and BVH data accessed via storage buffer lookups in TSL:

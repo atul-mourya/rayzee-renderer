@@ -118,7 +118,7 @@ export function disposeRenderer( renderer ) {
 /**
  * The renderer core: a scene and camera in, path-traced samples accumulated, the image out. It builds
  * no denoiser, camera controls, gizmo, overlay or timeline — {@link PathTracerApp} is the viewer that
- * adds them. See docs/CORE_AND_ADDONS.md.
+ * adds them. See docs/design/CORE_AND_ADDONS.md.
  *
  * - `renderer.camera`             — the camera rendered from; move it, then {@link reset}
  * - `renderer.lightManager`       — {@link LightManager} (CRUD, helpers, GPU transfer)

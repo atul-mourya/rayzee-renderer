@@ -22,9 +22,9 @@ import { RayzeeRenderer } from 'rayzee/core';         // or just the renderer, a
 
 The renderer core takes optional add-ons — file formats beyond glTF, physical sky, scene archives, bidirectional path
 tracing, OpenColorIO colour, on-disk storage — from `rayzee/addons/*`: how to install each is in
-[rayzee/README.md → Add-ons](rayzee/README.md#add-ons), the layer rules in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md). Runnable
+[Getting started → Add-ons](docs/guide/getting-started.md#add-ons), the layer rules in [docs/design/CORE_AND_ADDONS.md](docs/design/CORE_AND_ADDONS.md). Runnable
 examples, in Node and in a page, are in [`rayzee/examples/`](rayzee/examples) (`npm run bench:examples` runs them all).
-See **[rayzee/README.md](rayzee/README.md)** for the full engine API reference — installation, framework integration, managers, events, and custom pipeline stages.
+See **[docs/guide/](docs/guide)** for the full engine guide and API reference — [getting started](docs/guide/getting-started.md), [scenes](docs/guide/scenes.md), [rendering](docs/guide/rendering.md), [headless and Node](docs/guide/headless.md), [storage and memory](docs/guide/storage.md), and [events, issues and exports](docs/guide/api.md).
 
 ## Highlights
 
@@ -145,13 +145,13 @@ With `strict: false` the same degradations are recorded instead of thrown: read 
 
 Three more things a caller with no screen tends to need: `settings.getEffective()` returns every setting in force with its provenance (default, host, scene metadata, or mode preset), `app.adapterInfo.isSoftware` flags a software rasterizer rendering correctly and ~100× slower, and `openHeadless()` returns a live app — which you dispose yourself — when you want several frames from one scene.
 
-For a production render — adaptive sampling on, stopping once the image converges — call `await app.renderUntilComplete()` on that app: it reaches the same sample count and the same pixels whatever the frame pacing, and runs the final OIDN pass once. `app.getProvenance()` records what made each image. The same code runs in plain Node on Dawn (the `webgpu` package), with no browser — see [Running in Node](rayzee/README.md#running-in-node).
+For a production render — adaptive sampling on, stopping once the image converges — call `await app.renderUntilComplete()` on that app: it reaches the same sample count and the same pixels whatever the frame pacing, and runs the final OIDN pass once. `app.getProvenance()` records what made each image. The same code runs in plain Node on Dawn (the `webgpu` package), with no browser — see [Running in Node](docs/guide/headless.md#running-in-node).
 
 ## Architecture
 
-Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `AutoExposure` and `LocalExposure` between them, plus camera controls, the gizmo, overlays and the timeline; six capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/CORE_AND_ADDONS.md](docs/CORE_AND_ADDONS.md).
+Rayzee runs an event-driven, stage-based render pipeline in three layers. The renderer core (`RayzeeRenderer`, `rayzee/core`) runs a wavefront `PathTracer` into a terminal `Compositor`; the viewer (`PathTracerApp`) adds `NormalDepth`, `MotionVector`, `NRD`, `AutoExposure` and `LocalExposure` between them, plus camera controls, the gizmo, overlays and the timeline; six capabilities are add-ons. Stages communicate through a shared `PipelineContext` and event bus rather than direct references. The engine (`rayzee/`) is fully decoupled from the UI, while the React app (`app/`) wires engine events into Zustand stores. The layer rules are in [docs/design/CORE_AND_ADDONS.md](docs/design/CORE_AND_ADDONS.md).
 
-For the full stage breakdown and shader architecture, see [docs/PIPELINE_ARCHITECTURE.md](docs/PIPELINE_ARCHITECTURE.md) and [docs/PATH_TRACER_SHADER_ARCHITECTURE.md](docs/PATH_TRACER_SHADER_ARCHITECTURE.md).
+For the full stage breakdown and shader architecture, see [docs/design/PIPELINE_ARCHITECTURE.md](docs/design/PIPELINE_ARCHITECTURE.md) and [docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md](docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md).
 
 ## Contributing
 

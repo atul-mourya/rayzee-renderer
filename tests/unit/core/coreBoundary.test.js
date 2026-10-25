@@ -1,6 +1,6 @@
 /**
  * The renderer core (`rayzee/core`) imports nothing from the layers above it. Walks the static imports
- * from its entry and fails on any module the viewer or a capability owns. See docs/CORE_AND_ADDONS.md.
+ * from its entry and fails on any module the viewer or a capability owns. See docs/design/CORE_AND_ADDONS.md.
  */
 
 import { describe, it, expect } from 'vitest';

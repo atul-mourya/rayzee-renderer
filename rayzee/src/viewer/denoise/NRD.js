@@ -139,7 +139,7 @@ function hash01( n ) {
  * NRD — port of NVIDIA Real-Time Denoisers' ReBLUR to TSL compute. Six passes per frame, as in
  * nrd::REBLUR_DIFFUSE: PrePass → TemporalAccumulation → HistoryFix → Blur → PostBlur →
  * TemporalStabilization. Internal signal is NRD's own: YCoCg demodulated lighting + normalized
- * hit distance. See docs/NRD_DENOISER.md for the deviations from NRD and the measured ratios.
+ * hit distance. See docs/design/NRD_DENOISER.md for the deviations from NRD and the measured ratios.
  *
  * Reads:     pathtracer:color, pathtracer:albedo (.w = normHitDist), pathtracer:normalDepth,
  *            pathtracer:shadingNormal (.w = roughness), motionVector:screenSpace

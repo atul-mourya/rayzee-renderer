@@ -325,5 +325,5 @@ flowchart LR
 ---
 
 *For the implementation details — the exact GPU buffer layout, the ray status bits, and the
-per-bounce dispatch sizing — see `docs/PATH_TRACER_SHADER_ARCHITECTURE.md` and the kernels
+per-bounce dispatch sizing — see `docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md` and the kernels
 in `rayzee/src/shaders/kernels/*Kernel.js`.*

@@ -639,7 +639,7 @@ Standing state as of the last bless (`baselines/denoise.json`):
 | `glass-transmission` | 0.622 | 1.000 | 0.521 | 0.783 | 0.521 | 0.783 |
 | `textured-normalmap` | 0.897 | 1.000 | 0.504 | 0.852 | 0.504 | 0.852 |
 
-`nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
+`nrd` (the ReBLUR port, `docs/design/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
 handover point it republishes the path tracer's own texture, so a converged render is never touched.
 ASVGF and EdgeAware had rungs here until they were removed (2026-10): OIDN beat both on every scene,
 and ASVGF stood at 0.91–2.04 at 64 spp.

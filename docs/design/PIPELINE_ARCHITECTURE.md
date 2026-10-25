@@ -11,7 +11,7 @@ Rayzee renders through an **event-driven pipeline** of stages on WebGPU. Shaders
 - **`RayzeeRenderer`** (`RayzeeRenderer.js`, entry `core.js`, published as `rayzee/core`) — the renderer core: WebGPU device, scene build, path tracer and compositor, loading, reset, `renderFrames` / `renderToBuffer`, dispose. Its pipeline is **PathTracer → Compositor**.
 - **`PathTracerApp extends RayzeeRenderer`** (`PathTracerApp.js`, published as `rayzee`) — the viewer. It adds camera controls, picking, gizmo, overlays, timeline, animation playback, the denoisers and picture stages, and installs the add-ons.
 
-The viewer plugs into the core through ~30 protected hook methods, listed under "Hooks" at the end of `RayzeeRenderer.js` (`_createExtraStages`, `_displaySources`, `_beginFrame`, `_holdTrace`, `_afterTrace`, `_beforeReset`, …). Each runs at a fixed point of the frame, reset or load sequence and does nothing in the core. The layer rules — what each layer owns, the add-ons, the boundary test — are in `docs/CORE_AND_ADDONS.md`.
+The viewer plugs into the core through ~30 protected hook methods, listed under "Hooks" at the end of `RayzeeRenderer.js` (`_createExtraStages`, `_displaySources`, `_beginFrame`, `_holdTrace`, `_afterTrace`, `_beforeReset`, …). Each runs at a fixed point of the frame, reset or load sequence and does nothing in the core. The layer rules — what each layer owns, the add-ons, the boundary test — are in `docs/design/CORE_AND_ADDONS.md`.
 
 ### System Architecture
 
@@ -399,7 +399,7 @@ OIDN is not a stage. `DenoisingManager` reads the path tracer's colour, normal/d
 
 ### NRD
 
-**Purpose:** port of NVIDIA Real-Time Denoisers' ReBLUR (recurrent blur). Full write-up: `docs/NRD_DENOISER.md`.
+**Purpose:** port of NVIDIA Real-Time Denoisers' ReBLUR (recurrent blur). Full write-up: `docs/design/NRD_DENOISER.md`.
 **Execution Mode:** `PER_CYCLE`
 
 **Input:**
@@ -498,7 +498,7 @@ Built from every `context.setTexture()` / `getTexture()` in `rayzee/src`.
 | `pathtracer:shadingNormal` | NormalDepth | NRD, OIDN motion history | Normal-mapped normal; `.w` = material roughness |
 | `pathtracer:instanceLeaf` | NormalDepth (opt-in, `setInstanceLeafOutput( true )`) | OIDN motion history | r32uint: the hit's transformed TLAS leaf + 1, 0 = none |
 | `motionVector:screenSpace` | MotionVector | NRD | xy = motion (current − previous uv), z = depth, w = validity |
-| `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/NRD_DENOISER.md`) |
+| `nrd:output` | NRD | Compositor | ReBLUR-denoised colour (see `docs/design/NRD_DENOISER.md`) |
 | `oidn:output` | DenoisingManager (OIDN) | Compositor | OIDN's latest denoised picture, held until the next one lands |
 
 The Compositor shows only keys in its display list (see Compositor above). `DenoisingManager._clearDenoiserTextures()` removes the denoiser keys when the strategy changes.
@@ -725,6 +725,6 @@ if ( img && img.width > 0 && img.height > 0 &&
 
 ## See Also
 
-- `docs/CORE_AND_ADDONS.md` — the core, capability and viewer layers and the rules between them
-- `docs/PATH_TRACER_SHADER_ARCHITECTURE.md` — the wavefront kernels
-- `docs/NRD_DENOISER.md` — the NRD port
+- `docs/design/CORE_AND_ADDONS.md` — the core, capability and viewer layers and the rules between them
+- `docs/design/PATH_TRACER_SHADER_ARCHITECTURE.md` — the wavefront kernels
+- `docs/design/NRD_DENOISER.md` — the NRD port

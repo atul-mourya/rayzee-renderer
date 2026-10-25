@@ -2,7 +2,7 @@
  * Rayzee renderer core — `rayzee/core`.
  *
  * A scene and camera in, path-traced samples accumulated, the image out. No denoisers, camera controls,
- * gizmo, overlays or timeline: `rayzee` adds those (PathTracerApp). See docs/CORE_AND_ADDONS.md.
+ * gizmo, overlays or timeline: `rayzee` adds those (PathTracerApp). See docs/design/CORE_AND_ADDONS.md.
  *
  * @example
  * const renderer = await new RayzeeRenderer( canvas ).init();

@@ -37,15 +37,15 @@ checked. `CLAUDE.md` at the repository root is the detailed guide to the engine'
 rayzee/                   # The engine, published to npm as `rayzee`
 ├── src/
 │   ├── RayzeeRenderer.js # The renderer core (`rayzee/core`)
-│   ├── addons/           # Optional capabilities (physical sky, archives, bidirectional, colour, storage)
+│   ├── addons/           # Optional capabilities, one folder each (archives, bidirectional, color, physicalSky, storage)
 │   ├── pipeline/         # RenderPipeline, RenderStage, PipelineContext, Compositor
-│   ├── pathtracer/       # The path tracer stage, uniforms, kernel dispatch, ray buffers, bidirectional
+│   ├── pathtracer/       # The path tracer stage, uniforms, kernel dispatch, ray buffers
 │   ├── shaders/          # TSL shader modules; kernels/ holds the wavefront kernels
 │   ├── scene/            # Scene → GPU data: extraction, instance table, buffer layout
 │   ├── bvh/  lights/  materials/  environment/  memory/  output/  color/  storage/
-│   ├── loaders/          # glTF and other formats; archives/, pbrt/, usd/
+│   ├── loaders/          # glTF, .hdr and images (other formats and archives are add-ons)
 │   └── viewer/           # PathTracerApp (the viewer) and its parts: camera, overlays, animation, denoise
-└── README.md             # The package's API reference
+└── README.md             # The npm page: install, quick start, links to docs/guide/
 app/                      # The React UI
 └── src/
     ├── components/       # React components (ui/ and layout/)
@@ -54,11 +54,11 @@ app/                      # The React UI
     └── store/            # Zustand stores, one file a store
 bench/                    # Headless-GPU regression bench (bench/README.md)
 tests/                    # Vitest: unit/ and gpu/ (GPU tests run on Dawn in Node)
-docs/                     # Architecture notes (see docs/CORE_AND_ADDONS.md for the engine's layers)
+docs/                     # guide/ for people using the engine, design/ for how it works inside
 ```
 
 The engine has three layers: the **renderer core**, **add-ons**, and the **viewer** built on both. Viewer code never
-goes into the core; see `docs/CORE_AND_ADDONS.md`.
+goes into the core; see `docs/design/CORE_AND_ADDONS.md`.
 
 ## 📝 Code Style
 
@@ -123,7 +123,7 @@ Remove debug logs, and dispose every GPU resource and listener a change creates.
 ## 🔄 Pull Request Process
 
 1. **Branch** from `main`, named by change type: `feat/…`, `fix/…`, `refactor/…`, `docs/…`.
-2. **Make the change**, updating `CLAUDE.md`, `rayzee/README.md` or `docs/` when behaviour or API changes.
+2. **Make the change**, updating `CLAUDE.md`, `docs/guide/` or `docs/design/` when behaviour or API changes.
 3. **Test** as above.
 4. **Commit** following the conventions below, and open the PR — the template lists what to fill in.
 

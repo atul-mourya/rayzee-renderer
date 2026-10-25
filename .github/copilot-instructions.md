@@ -8,7 +8,7 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
 
 - `rayzee/` — the engine, published to npm as `rayzee`. Source in `rayzee/src/`.
 - `app/` — the React UI. Imports the engine as `rayzee`; `@/` resolves to `app/src/`.
-- The engine has three layers (`docs/CORE_AND_ADDONS.md`):
+- The engine has three layers (`docs/design/CORE_AND_ADDONS.md`):
   - **Renderer core** — `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`): scene in,
     path-traced samples, image out. Pipeline: PathTracer → Compositor.
   - **Add-ons** — `rayzee/src/addons/`: physical sky, scene archives, bidirectional/VCM (an integrator in

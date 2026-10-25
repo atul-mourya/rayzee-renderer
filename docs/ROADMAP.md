@@ -198,7 +198,7 @@
   - [ ] iOS/Android app store presence
 
 ### Developer Experience
-- [ ] **Plugin Architecture** (see [CORE_AND_ADDONS.md](CORE_AND_ADDONS.md))
+- [ ] **Plugin Architecture** (see [CORE_AND_ADDONS.md](design/CORE_AND_ADDONS.md))
   - [x] Renderer core and add-ons: `rayzee/core` plus `rayzee/addons/*` (physical sky, archives, bidirectional, colour, storage)
   - [x] Custom render passes: stages via `_createExtraStages()`, shown via `_displaySources()`, extra path-tracer outputs via `requestOutput()`
   - [x] Integrator plugins (`registerIntegrator()`) and plugin settings (`settings.define()`)

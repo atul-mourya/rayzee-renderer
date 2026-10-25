@@ -15,7 +15,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 - Stages communicate via events and context textures; the viewer hands NormalDepth, MotionVector and NRD the path tracer directly, and nothing else couples stages
 - `PipelineContext` provides automatic texture sharing between stages
 
-### Layers (see `docs/CORE_AND_ADDONS.md`)
+### Layers (see `docs/design/CORE_AND_ADDONS.md`)
 - **Renderer core** `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`) builds only PathTracer → Compositor
 - **Viewer** `PathTracerApp extends RayzeeRenderer`; its `_createExtraStages()` inserts the other stages between them, and ~30 no-op hooks at the end of RayzeeRenderer.js ("Hooks") are where it plugs in
 - **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `addons/bidirectional/BidirectionalIntegrator.js`), OCIO colour, storage
