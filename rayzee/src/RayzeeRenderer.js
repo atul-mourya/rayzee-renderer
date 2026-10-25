@@ -1,8 +1,6 @@
-import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
+import { WebGPURenderer, RectAreaLightNode, SRGBColorSpace } from 'three/webgpu';
 import { texture as _tslTexture, cubeTexture as _tslCubeTexture } from 'three/tsl';
-import {
-	Scene, EventDispatcher, Box3, REVISION, HalfFloatType, DataUtils, RenderTarget, FloatType, RGBAFormat, NearestFilter,
-} from 'three';
+import { Scene, EventDispatcher, Box3, REVISION } from 'three';
 import { RectAreaLightTexturesLib } from 'three/addons/lights/RectAreaLightTexturesLib.js';
 import { SceneHelpers } from './scene/SceneHelpers.js';
 import { PathTracer } from './pathtracer/PathTracer.js';
@@ -12,69 +10,36 @@ import { RenderPipeline } from './pipeline/RenderPipeline.js';
 import { CompletionTracker } from './pipeline/CompletionTracker.js';
 import { ENGINE_DEFAULTS as DEFAULT_STATE } from './EngineDefaults.js';
 import { TRIANGLE_DATA_LAYOUT, BVH_LEAF_MARKERS } from './scene/BufferLayout.js';
-import { usesTextureCoordinates } from './scene/GeometryExtractor.js';
 import { MAX_STORAGE_TEXTURE_SIZE, MAX_RESERVABLE_RENDER_SIZE, setReservedRenderSize } from './pathtracer/StorageTexturePool.js';
-import { updateStats, updateLoading, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './utils.js';
-import { BuildTimer } from './scene/BuildTimer.js';
-import { TextureReadback, readPixels } from './output/TextureReadback.js';
+import { updateStats, resetLoading, setStatusCallback, getDisplaySamples, disposeObjectFromMemory, disposeRenderer } from './utils.js';
 import { createLogger, fmt } from './Logger.js';
 import { EngineEvents, LEGACY_EVENT_NAMES } from './EngineEvents.js';
-import { IssueLog, ISSUE_CODES, EngineIssueError } from './EngineIssues.js';
+import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
-import { nameFromUrl } from './storage/DownloadCache.js';
-import { fileIdentity, folderIdentity, identityKey } from './storage/identity.js';
-import { isFolderInput, localFolder } from './loaders/archives/archiveFormats.js';
-import { SETTING_SOURCE } from './RenderSettings.js';
-import { toneMapToRGBA8, toneMapToRGBA16, toneMapToDisplayLinear } from './output/ToneMapCPU.js';
-import { PackedToneMapper } from './output/ToneMapGPU.js';
+import { isFolderInput } from './loaders/archives/archiveFormats.js';
 import { BasicColor } from './color/BasicColor.js';
 import { setActiveColorManagement } from './color/ActiveColor.js';
 import { getViewTransform, DEFAULT_VIEW } from './color/ViewTransforms.js';
-import { AssetLoader, limitEnvironmentWidth } from './loaders/AssetLoader.js';
+import { AssetLoader } from './loaders/AssetLoader.js';
 import { SceneProcessor } from './scene/SceneProcessor.js';
-import { deviceMemoryGB, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './memory/HostMemory.js';
+import { deviceMemoryGB } from './memory/HostMemory.js';
 import { createHeadlessCanvas } from './HeadlessCanvas.js';
 
 // Managers
 import { RenderSettings } from './RenderSettings.js';
 import { ViewCamera } from './scene/ViewCamera.js';
 import { LightManager } from './lights/LightManager.js';
-import { TRIANGLE_PATCH_PROPERTIES } from './materials/MaterialDataManager.js';
 import { VERSION } from './version.js';
 import { toPortable } from './portable.js';
+import * as SceneLoading from './loaders/SceneLoading.js';
+import * as SceneEdits from './scene/SceneEdits.js';
+import * as Pictures from './output/Pictures.js';
 
 export const RENDER_CHECKPOINT_VERSION = 1;
-
-// A half-float target reads back as its bits.
-function asFloat32( data ) {
-
-	if ( data instanceof Float32Array ) return data;
-	const out = new Float32Array( data.length );
-	for ( let i = 0; i < data.length; i ++ ) out[ i ] = DataUtils.fromHalfFloat( data[ i ] );
-	return out;
-
-}
-
-function canvasPixels( canvas ) {
-
-	const ctx = canvas.getContext( '2d' );
-	const colorSpace = ctx.getContextAttributes?.()?.colorSpace ?? 'srgb';
-	const image = ctx.getImageData( 0, 0, canvas.width, canvas.height, { colorSpace } );
-	return { data: image.data, width: canvas.width, height: canvas.height, displayColorSpace: image.colorSpace ?? colorSpace, source: 'upscaled' };
-
-}
-
-// The part of an archive a load chose, for sceneSource.
-const partOf = ( { element, pbrtEntry } = {} ) => ( {
-	...( element !== undefined ? { element } : {} ),
-	...( pbrtEntry !== undefined ? { pbrtEntry } : {} ),
-} );
 
 // One app per canvas — auto-dispose a prior owner if the caller double-
 // instantiates (StrictMode, HMR, etc.) so its rAF loop can't burn CPU.
 const _appsByCanvas = new WeakMap();
-// Quiet time after an edit before memory spill puts back on disk what the edit read back.
-const RESPILL_AFTER_MS = 30_000;
 
 const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
 const _warnedEvents = new Set();
@@ -98,7 +63,6 @@ async function initWithoutFrameLoop( renderer, headless ) {
 	}
 
 }
-
 
 /**
  * The renderer core: a scene and camera in, path-traced samples accumulated, the image out. It builds
@@ -930,13 +894,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {string} url - Model URL
 	 * @param {{cacheKey?: string}} [options] - download-cache key for a URL that expires
 	 */
-	async loadModel( url, options = {} ) {
+	loadModel( url, options ) {
 
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadModel( url, options ),
-			{ type: EngineEvents.MODEL_LOADED, url },
-			{ kind: 'url', url, cacheKey: options.cacheKey ?? null }
-		);
+		return SceneLoading.loadModel( this, url, options );
 
 	}
 
@@ -955,26 +915,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {import('three').Object3D} object3d - The Object3D to render; left untouched.
 	 * @param {string} [name='object3d'] - Display name for the object
 	 */
-	async loadObject3D( object3d, name = 'object3d' ) {
+	loadObject3D( object3d, name ) {
 
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadObject3D( object3d, name ),
-			{ type: EngineEvents.OBJECT3D_LOADED, name },
-			{ kind: 'object3d', name }
-		);
-
-	}
-
-	/**
-	 * A load is already running. Typed so hosts can tell "you clicked too fast" apart from
-	 * a genuine load failure and say so, instead of dropping the request on the floor.
-	 * @private
-	 */
-	_busyError( where ) {
-
-		const error = new Error( `${where}: another load is already in progress` );
-		error.code = 'LOAD_IN_PROGRESS';
-		return error;
+		return SceneLoading.loadObject3D( this, object3d, name );
 
 	}
 
@@ -982,32 +925,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * Loads an environment map and rebuilds CDF.
 	 * @param {string} url - Environment URL
 	 */
-	async loadEnvironment( url ) {
+	loadEnvironment( url ) {
 
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadEnvironment' );
-
-		this._loadingInProgress = true;
-
-		try {
-
-			await this.assetLoader.loadEnvironment( url );
-
-			const environmentTexture = this.meshScene.environment;
-			if ( environmentTexture && this.stages.pathTracer ) {
-
-				await this.stages.pathTracer.environment.setEnvironmentMap( environmentTexture );
-
-			}
-
-			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
-			this.reset();
-			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, url } );
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
+		return SceneLoading.loadEnvironment( this, url );
 
 	}
 
@@ -1017,9 +937,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {File} file
 	 * @returns {Promise<{kind:string, root:string|null, elements:Array, entryCount:number, totalBytes:number}>}
 	 */
-	async inspectArchive( file ) {
+	inspectArchive( file ) {
 
-		return await this.assetLoader.inspectArchive( file );
+		return SceneLoading.inspectArchive( this, file );
 
 	}
 
@@ -1042,91 +962,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   URL also `filename` and `cacheKey` (see AssetLoader.loadAssetFromUrl).
 	 * @returns {Promise<void>}
 	 */
-	async loadFile( file, options = {} ) {
+	loadFile( file, options ) {
 
-		options = this._sceneBudgets( options );
-
-		if ( typeof file === 'string' ) {
-
-			const filename = options.filename ?? nameFromUrl( file );
-			const format = this.assetLoader?.getFileFormat( filename );
-			if ( ! format ) throw this.assetLoader.formatError( filename );
-			if ( format.type === 'environment' || format.type === 'image' ) return this.loadEnvironment( file );
-
-			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromUrl( file, { ...options, filename } ),
-				{ type: EngineEvents.MODEL_LOADED, filename },
-				{ kind: 'url', url: file, filename, cacheKey: options.cacheKey ?? null, ...partOf( options ) }
-			);
-			return;
-
-		}
-
-		if ( isFolderInput( file ) ) {
-
-			const folder = localFolder( file, { isModel: path => this.assetLoader?.getFileFormat( path )?.type === 'model' } );
-			if ( folder.files.length === 0 ) throw new Error( `${folder.name} holds no files to load` );
-			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadFolder( folder, options ),
-				{ type: EngineEvents.MODEL_LOADED, filename: folder.name },
-				async () => {
-
-					const id = await folderIdentity( folder );
-					return { kind: 'local-folder', folder: id, key: identityKey( id ), ...( folder.flat ? { flat: true } : {} ), ...partOf( options ) };
-
-				}
-			);
-			this._sceneSourceInput = folder;
-			return;
-
-		}
-
-		const format = this.assetLoader?.getFileFormat( file?.name || '' );
-		if ( ! format ) throw this.assetLoader.formatError( file?.name || '' );
-
-		if ( format.type !== 'environment' && format.type !== 'image' ) {
-
-			const identity = fileIdentity( file ).catch( () => ( { name: file.name, size: file.size, lastModified: file.lastModified ?? 0, sample: null } ) );
-			await this._loadWithSceneRebuild(
-				() => this.assetLoader.loadAssetFromFile( file, options ),
-				{ type: EngineEvents.MODEL_LOADED, filename: file.name },
-				async () => {
-
-					const id = await identity;
-					return { kind: 'local-file', file: id, key: id.sample ? identityKey( id ) : null, ...partOf( options ) };
-
-				}
-			);
-			this._sceneSourceInput = file;
-			return;
-
-		}
-
-		// Environment drop: install it, no scene rebuild.
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp.loadFile' );
-
-		this._loadingInProgress = true;
-
-		try {
-
-			await this.assetLoader.loadAssetFromFile( file );
-
-			const texture = this.meshScene.environment;
-			if ( texture && this.stages.pathTracer ) {
-
-				await this.stages.pathTracer.environment.applyHDRI( texture );
-
-			}
-
-			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
-			this.reset();
-			this.dispatchEvent( { type: EngineEvents.ENVIRONMENT_LOADED, filename: file.name } );
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
+		return SceneLoading.loadFile( this, file, options );
 
 	}
 
@@ -1135,13 +973,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {number} index
 	 * @param {Array} modelFiles
 	 */
-	async loadExampleModels( index, modelFiles ) {
+	loadExampleModels( index, modelFiles ) {
 
-		await this._loadWithSceneRebuild(
-			() => this.assetLoader.loadExampleModels( index, modelFiles ),
-			{ type: EngineEvents.MODEL_LOADED, index },
-			{ kind: 'url', url: modelFiles[ index ]?.url ?? null, cacheKey: null }
-		);
+		return SceneLoading.loadExampleModels( this, index, modelFiles );
 
 	}
 
@@ -1155,8 +989,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	cancelLoad() {
 
-		if ( ! this._loadingInProgress ) return;
-		this.assetLoader?.cancelActiveLoad();
+		return SceneLoading.cancelLoad( this );
 
 	}
 
@@ -1170,34 +1003,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {boolean} [opts.reprocess=true] - Rebuild the current scene now.
 	 * @returns {Promise<void>}
 	 */
-	async setMaxTextureSize( size, { reprocess = true } = {} ) {
+	setMaxTextureSize( size, options ) {
 
-		const prev = this.settings.get( 'maxTextureSize' );
-		const applied = this._sdf?.setMaxTextureSize( size ) ?? size;
-		this.settings.set( 'maxTextureSize', applied, { reset: false } );
-		if ( typeof this.stages?.pathTracer?.sdfs?.setMaxTextureSize === 'function' ) {
-
-			this.stages.pathTracer.sdfs.setMaxTextureSize( applied );
-
-		}
-
-		// Reprocess the loaded scene so the new cap takes effect immediately.
-		if ( reprocess && applied !== prev && this._sdf?.triangles && ! this._loadingInProgress ) {
-
-			this._loadingInProgress = true;
-			try {
-
-				await this.loadSceneData();
-				this.reset();
-				this.dispatchEvent( { type: EngineEvents.TEXTURES_REPROCESSED, maxTextureSize: applied } );
-
-			} finally {
-
-				this._loadingInProgress = false;
-
-			}
-
-		}
+		return SceneLoading.setMaxTextureSize( this, size, options );
 
 	}
 
@@ -1230,84 +1038,15 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/** Shared pipeline: load asset → sync controls → build BVH → reset → dispatch events */
-	async _loadWithSceneRebuild( loadFn, eventPayload, source = null ) {
+	_loadWithSceneRebuild( loadFn, eventPayload, source ) {
 
-		if ( this._loadingInProgress ) throw this._busyError( 'PathTracerApp' );
-
-		this._loadingInProgress = true;
-		// The previous scene's sky width must not narrow this one's while it loads.
-		if ( this.assetLoader ) this.assetLoader.maxEnvironmentWidth = this._memorySpill === true ? SPILL_ENVIRONMENT_WIDTH : 0;
-
-		try {
-
-			await loadFn();
-			this._sceneSource = typeof source === 'function' ? await source() : source;
-			this._sceneSourceInput = null;
-			// A fresh model re-establishes the emissive-sampling auto-default (incremental
-			// rebuilds — add/remove object, texture reprocess — preserve the user's choice).
-			this._emissiveSamplingUserSet = false;
-			// Replace-load clears any dynamically-appended models — but only AFTER
-			// loadFn() succeeds, so a failed load leaves the current scene intact.
-			// (The old primary was already released by releaseTargetModel() in loadFn.)
-			this._clearAppendedModels();
-			this._modelReplaced();
-			// Before the scene's own environment starts loading: a spilling scene's is narrowed as it decodes.
-			this._planSpill();
-			const built = await this.loadSceneData( { pendingEnvironment: this._beginSceneMetadataEnvironment() } );
-			this._maybeSpill();
-			this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
-			// Not held: the first denoise of a new scene lands ~1.1 s after the load (upload and
-			// shader compilation come first), and a second of the previous model reads as a bug.
-			this._dropDisplay();
-			this.reset();
-			this.dispatchEvent( eventPayload );
-			this._modelAnnounced();
-			if ( built ) this.assetLoader?.commitPendingGraph( this.sceneModel );
-
-		} catch ( error ) {
-
-			// loadFn released the previous model before this one was known to be loadable, so
-			// there is nothing to fall back to. Leaving it half-built would keep the last
-			// frame's buffers on screen under a scene that no longer exists.
-			if ( ! error || error.code !== 'LOAD_IN_PROGRESS' ) this._discardFailedLoad();
-
-			// Only the scene build reported its own failure; one in the parse left a host's loading
-			// status spinning on its last step. A part prompt is not a failure, so it just ends it.
-			if ( error?.code === 'ARCHIVE_NEEDS_ELEMENT' ) resetLoading();
-			else if ( error?.code !== 'LOAD_IN_PROGRESS' ) updateLoading( { status: `Error: ${error?.message ?? error}`, failed: true, progress: 100 } );
-			throw error;
-
-		} finally {
-
-			this._loadingInProgress = false;
-			this._spillPlan = null;
-
-		}
+		return SceneLoading.loadWithSceneRebuild( this, loadFn, eventPayload, source );
 
 	}
 
-	/**
-	 * Put the engine back to an empty scene after a load failed part-way. The failure itself is
-	 * rethrown for the host to report; this only makes sure what is on screen matches it.
-	 * @private
-	 */
 	_discardFailedLoad() {
 
-		this._sceneSource = this._sceneSourceInput = null;
-
-		try {
-
-			this._clearAppendedModels();
-			this.assetLoader?.releaseTargetModel();
-			this._dropDisplay();
-			this.reset();
-
-		} catch ( cleanupError ) {
-
-			console.warn( 'PathTracerApp: could not clear the scene after a failed load', cleanupError );
-
-		}
+		return SceneLoading.discardFailedLoad( this );
 
 	}
 
@@ -1324,121 +1063,15 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/**
-	 * Starts fetching the environment authored into the just-loaded model's metadata and
-	 * returns a promise for the texture — deliberately NOT awaited here. The fetch is the
-	 * longest single step of such a load (measured 1448 ms for a 1k HDRI against 325 ms to
-	 * build and upload a 112k-triangle scene), so the promise is handed to loadSceneData(),
-	 * which installs it and builds its CDF while the BVH builds.
-	 *
-	 * Called from both replace-load seams: the URL/catalog path (_loadWithSceneRebuild) and
-	 * the drag-drop / File-open path, which drives the AssetLoader directly and rebuilds via
-	 * the 'load' event (_onAssetLoaded). Appending a model never applies it — an appended
-	 * model must not hijack the scene's environment.
-	 *
-	 * Resolves to null rather than rejecting: a failed fetch leaves the model on the current
-	 * environment. Returns null outright when there is nothing to apply. Under `strict` the
-	 * recorded issue throws instead, and the rejection surfaces where loadSceneData awaits it.
-	 * Opt out per app with `new PathTracerApp( canvas, { applySceneMetadata: false } )`.
-	 *
-	 * @returns {Promise<import('three').Texture|null>|null}
-	 */
 	_beginSceneMetadataEnvironment() {
 
-		this._restoreUnlitSettings();
-		const env = this.sceneMetadata?.environment;
-		if ( this._applySceneMetadataEnabled && env?.enabled === false ) {
-
-			this._applyUnlitSettings();
-			return null;
-
-		}
-
-		if ( ! this._applySceneMetadataEnabled || ! env?.sourceFile || ! this.stages.pathTracer ) return null;
-
-		// Claim 'hdri' mode up front: loadEnvironment() fires beforeEnvironmentLoad, and a
-		// host that answers it with setMode( 'hdri' ) would otherwise restore the HDRI
-		// stashed by the current sky mode on top of the download now in flight.
-		this.stages.pathTracer.environment.beginHDRI();
-		this._applyingSceneMetadata = true;
-
-		return this.assetLoader.loadEnvironment( env.sourceFile )
-			.catch( error => {
-
-				this._issues.record(
-					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
-					`authored environment "${env.sourceFile}" failed to load — lighting falls back to the previous environment`,
-					{ sourceFile: env.sourceFile, cause: String( error?.message ?? error ) }
-				);
-				return null;
-
-			} )
-			.finally( () => {
-
-				this._applyingSceneMetadata = false;
-
-			} );
+		return SceneLoading.beginSceneMetadataEnvironment( this );
 
 	}
 
-	/**
-	 * Mirrors the authored environment onto the settings once its texture is installed.
-	 * The authored env is both the light and the backdrop, so the backdrop axis
-	 * (showBackground / transparentBackground) is forced to the image.
-	 * @private
-	 */
 	_applySceneMetadataSettings( texture ) {
 
-		const metadata = this.sceneMetadata;
-		const env = metadata?.environment;
-		if ( ! env || env.enabled === false ) return;
-
-		const updates = { enableEnvironment: true, showBackground: true, transparentBackground: false };
-		if ( env.intensity !== undefined ) {
-
-			updates.environmentIntensity = env.intensity;
-			updates.backgroundIntensity = env.intensity;
-
-		}
-
-		if ( env.rotation !== undefined ) updates.environmentRotation = env.rotation;
-
-		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
-		if ( this.scene ) this.scene.background = texture;
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata, environment: { ...env } } );
-
-	}
-
-	/**
-	 * A scene that has no environment (a pbrt scene without an infinite light) renders with none: no light
-	 * from it and a plain backdrop. The next model gets back what it replaced, unless someone changed it since.
-	 * @private
-	 */
-	_applyUnlitSettings() {
-
-		const effective = this.settings.getEffective();
-		const updates = { enableEnvironment: false, showBackground: false };
-		this._unlitRestore = Object.fromEntries( Object.keys( updates ).map( key => [ key, { value: effective[ key ].value, source: effective[ key ].source } ] ) );
-		this.settings.setMany( updates, { reset: false, source: SETTING_SOURCE.SCENE_METADATA } );
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: false } } );
-
-	}
-
-	/** @private */
-	_restoreUnlitSettings() {
-
-		const saved = this._unlitRestore;
-		if ( ! saved ) return;
-		this._unlitRestore = null;
-		const effective = this.settings.getEffective();
-		for ( const [ key, { value, source } ] of Object.entries( saved ) ) {
-
-			if ( effective[ key ]?.source === SETTING_SOURCE.SCENE_METADATA ) this.settings.set( key, value, { reset: false, source } );
-
-		}
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_METADATA_APPLIED, metadata: this.sceneMetadata, environment: { enabled: this.settings.get( 'enableEnvironment' ) } } );
+		return SceneLoading.applySceneMetadataSettings( this, texture );
 
 	}
 
@@ -1450,209 +1083,15 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   CDF'd concurrently with the BVH build rather than before it.
 	 * @returns {boolean}
 	 */
-	async loadSceneData( { pendingEnvironment = null, keepUserLights = false } = {} ) {
+	loadSceneData( options ) {
 
-		// The append path (addModel) keeps its selection: the selected object persists.
-		this._releaseSceneState( { keepSelection: !! this._preserveSelectionOnRebuild } );
-
-		// Tag the primary (replace-loaded) model so it appears in the scene-object list.
-		this._tagPrimarySceneObject();
-
-		const timer = new BuildTimer( '', { namespace: 'scene', level: 'info' } );
-		// meshScene.environment is the HDRI slot: a sky or colour in use outlives the model.
-		const hdri = () => this.stages.pathTracer.environment.envParams.mode === 'hdri' ? this.meshScene.environment : null;
-		const environmentTexture = hdri();
-
-		// Environment CDF build in parallel with BVH
-		let cdfPromise = null;
-		if ( pendingEnvironment ) {
-
-			// The authored environment is still downloading. Install + CDF it off to the side so
-			// the fetch overlaps the BVH build below instead of gating it.
-			timer.start( 'Environment fetch + CDF (concurrent)' );
-			cdfPromise = pendingEnvironment
-				.then( async texture => {
-
-					if ( ! texture ) return;
-					await this.stages.pathTracer.environment.applyHDRI( texture );
-					this._applySceneMetadataSettings( texture );
-
-				} )
-				.catch( error => this._issues.record(
-					ISSUE_CODES.ENVIRONMENT_LOAD_FAILED,
-					'authored environment failed to install — the scene is lit by whatever was already loaded',
-					{ cause: String( error?.message ?? error ) }
-				) )
-				.finally( () => timer.end( 'Environment fetch + CDF (concurrent)' ) );
-
-		} else if ( environmentTexture?.image?.data ) {
-
-			timer.start( 'Environment CDF build (worker)' );
-			this.stages.pathTracer.scene.environment = environmentTexture;
-			cdfPromise = this.stages.pathTracer.environment.buildEnvironmentCDF()
-				.then( () => {
-
-					timer.end( 'Environment CDF build (worker)' );
-					// A loader can install the environment itself and still author how it should
-					// be read — a pbrt scene bakes the light's transform in and needs rotation 0.
-					if ( this._applySceneMetadataEnabled ) this._applySceneMetadataSettings( environmentTexture );
-
-				} );
-
-		}
-
-		// Build BVH
-		timer.start( 'BVH build (SceneProcessor)' );
-		this._sdf.setMaxTextureSize( this.settings.get( 'maxTextureSize' ) );
-		await this._sdf.buildBVH( this.meshScene, { sceneKey: this.assetLoader?.sceneSourceKey ?? null, progressive: this._progressiveSpill() } );
-		this.assetLoader?.flushPendingGraph( this._sdf.performanceMetrics.totalProcessingTime );
-		timer.end( 'BVH build (SceneProcessor)' );
-
-		// Transfer geometry, materials, and textures to GPU
-		updateLoading( { status: "Transferring data to GPU...", progress: 86 } );
-		await new Promise( r => setTimeout( r, 0 ) );
-		timer.start( 'GPU data transfer' );
-		await this._sdf.uploadChunks( this._chunkUploader() );
-
-		// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
-		// during the BVH build, and the snapshot is then a disposed texture.
-		if ( ! this._sdf.uploadToPathTracer( this.stages.pathTracer, this.lightManager, this.meshScene, hdri(), { keepUserLights } ) ) return false;
-
-		// Not left to the first frame, where three.js sends every layer at once.
-		await this.stages.pathTracer.uploadTextureArrays( [ ...( this._sdf.srgbBucketTextures ?? [] ), ...( this._sdf.linearBucketTextures ?? [] ) ] );
-
-		// Patch per-mesh visibility into the TLAS leaves we just uploaded
-		this.stages.pathTracer._meshRefs = this.stages.pathTracer._collectMeshRefs( this.meshScene );
-		this.stages.pathTracer.setMeshVisibilityData( this.stages.pathTracer._meshRefs );
-
-		// Drop authored-hidden meshes' triangles from the emissive-NEE structure
-		// (runs before setupMaterial so the kernels compile against the final buffer)
-		this._refreshEmissiveForVisibility();
-
-		timer.end( 'GPU data transfer' );
-
-		// Compile shaders
-		updateLoading( { status: "Compiling shaders...", progress: 90 } );
-		await new Promise( r => setTimeout( r, 0 ) );
-		timer.start( 'Material setup (TSL compile)' );
-		this.stages.pathTracer.setupMaterial();
-		timer.end( 'Material setup (TSL compile)' );
-
-		this._rasterPrecompile = null;
-
-		if ( ! this._pathTracerEnabled ) {
-
-			timer.start( 'Pipeline precompile' );
-			await this.precompileRaster();
-			timer.end( 'Pipeline precompile' );
-
-		}
-
-		// Wait for CDF
-		if ( cdfPromise ) {
-
-			updateLoading( { status: "Finalizing environment map...", progress: 95 } );
-			await cdfPromise;
-			this.stages.pathTracer.environment.applyCDFResults();
-
-		}
-
-		// Seed the ground-projection plane AND the shadow-catcher plane to the scene floor so models
-		// that aren't authored at y=0 sit on the ground (not sunk) — auto-updates on every model change.
-		const sceneMinY = this.getSceneMinY();
-		this.settings.set( 'groundProjectionLevel', sceneMinY, { reset: false } );
-		this.settings.set( 'groundCatcherHeight', sceneMinY, { reset: false } );
-
-		// Auto-follow the scene: enable emissive-triangle NEE when the scene has emissive
-		// geometry, disable it when it doesn't — unless the user set the toggle explicitly.
-		// Runs before applyAll()/SceneRebuild so the uniform and UI both pick up the new value.
-		if ( ! this._emissiveSamplingUserSet ) {
-
-			// Keyed on the canonical (unfiltered) emissive set — emissiveTriangleCount
-			// reflects only the visible subset, and hidden emitters can be shown later.
-			const hasEmissive = ( this._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.length
-				?? this._sdf?.emissiveTriangleCount ?? 0 ) > 0;
-			this.settings.set( 'enableEmissiveTriangleSampling', hasEmissive, { reset: false } );
-
-		}
-
-		// Apply all settings to stages in one shot
-		timer.start( 'Apply settings' );
-		this.settings.applyAll();
-		this.stages.compositor.setTransparentBackground( this.settings.get( 'transparentBackground' ) );
-		timer.end( 'Apply settings' );
-
-		timer.print( this._sceneSummaryParts() );
-		resetLoading();
-
-		this._sceneRebuilt();
-
-		this.dispatchEvent( { type: EngineEvents.SCENE_REBUILD } );
-		return true;
+		return SceneLoading.loadSceneData( this, options );
 
 	}
 
-	/** Counts for the single `[scene]` summary line emitted after a scene build. */
-	_sceneSummaryParts() {
-
-		const pt = this.stages.pathTracer;
-		const meshes = this._sdf?.instanceTable?.setCount ?? 0;
-		const maps = this._sdf?.geometryExtractor?.maps?.length ?? 0;
-
-		return [
-			fmt.count( pt.triangleCount, 'tri' ),
-			meshes ? fmt.count( meshes, 'mesh', 'meshes' ) : null,
-			fmt.count( pt.materialData.materialCount, 'material' ),
-			maps ? fmt.count( maps, 'map' ) : null,
-			fmt.count( pt.bvhNodeCount, 'BVH node' ),
-		];
-
-	}
-
-	// ═══════════════════════════════════════════════════════════════
-	// Dynamic scene objects (add / remove / list / visibility)
-	//
-	// Top-level objects are the auto-created "Ground" plane plus each loaded
-	// model root parented into meshScene. The scene graph + per-root userData
-	// tags are the single source of truth (no separate registry): ids are
-	// Object3D uuids (stable across rebuilds, since the same root persists).
-	// ═══════════════════════════════════════════════════════════════
-
-	/** Tag the primary (replace-loaded) model as a removable scene object (read by the Outliner + removeSceneObject). Idempotent. */
-	_tagPrimarySceneObject() {
-
-		const m = this.sceneModel;
-		if ( ! m ) return;
-		m.userData.__rayzeeSceneObject = true;
-
-	}
-
-	/** Remove + dispose all dynamically-appended models (keeps Ground and the primary). */
 	_clearAppendedModels() {
 
-		const scene = this.meshScene;
-		if ( ! scene ) return;
-		const floor = this.assetLoader?.floorPlane;
-		const primary = this.sceneModel;
-		for ( const child of [ ...scene.children ] ) {
-
-			if ( child === floor || child === primary ) continue;
-			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			this.assetLoader.removeModelRoot( child );
-
-		}
-
-	}
-
-	/** Reframe-free rebuild sequence. Assumes the _loadingInProgress guard is already held. */
-	async _finishRebuildNoReframe( eventPayload ) {
-
-		await this.loadSceneData( { keepUserLights: true } ); // emits 'SceneRebuild'
-		this._maybeSpill();
-		this._sceneBoundsChanged();
-		this.pipeline?.eventBus.emit( 'pipeline:lightingChanged' );
-		this.reset();
-		if ( eventPayload ) this.dispatchEvent( eventPayload );
+		return SceneLoading.clearAppendedModels( this );
 
 	}
 
@@ -1664,32 +1103,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {string} [opts.name] - Display name for the scene-object list.
 	 * @returns {Promise<string>} the new object's id (Object3D uuid).
 	 */
-	async addModel( url, { name, cacheKey } = {} ) {
+	addModel( url, options ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.addModel: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		this._preserveSelectionOnRebuild = true;
-		try {
-
-			const { root } = await this.assetLoader.appendModel( url, { cacheKey } );
-			root.userData.__rayzeeSceneObject = true;
-			root.userData.__rayzeeSourceUrl = url;
-			if ( cacheKey ) root.userData.__rayzeeCacheKey = cacheKey;
-			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, url, id: root.uuid } );
-			return root.uuid;
-
-		} finally {
-
-			this._preserveSelectionOnRebuild = false;
-			this._loadingInProgress = false;
-
-		}
+		return SceneLoading.addModel( this, url, options );
 
 	}
 
@@ -1701,30 +1117,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {string} [opts.name]
 	 * @returns {Promise<string>} the new object's id (Object3D uuid).
 	 */
-	async addModelFromObject3D( object3d, { name } = {} ) {
+	addModelFromObject3D( object3d, options ) {
 
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.addModelFromObject3D: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		this._preserveSelectionOnRebuild = true;
-		try {
-
-			const { root } = this.assetLoader.appendObject3D( object3d, name || 'object3d' );
-			root.userData.__rayzeeSceneObject = true;
-			if ( name ) root.userData.__rayzeeName = name;
-			await this._finishRebuildNoReframe( { type: EngineEvents.MODEL_ADDED, id: root.uuid } );
-			return root.uuid;
-
-		} finally {
-
-			this._preserveSelectionOnRebuild = false;
-			this._loadingInProgress = false;
-
-		}
+		return SceneLoading.addModelFromObject3D( this, object3d, options );
 
 	}
 
@@ -1733,49 +1128,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {string} id
 	 * @returns {Promise<boolean>} true if removed.
 	 */
-	async removeSceneObject( id ) {
+	removeSceneObject( id ) {
 
-		const scene = this.meshScene;
-		if ( ! scene ) return false;
-
-		const floor = this.assetLoader?.floorPlane;
-		if ( floor && floor.uuid === id ) return false; // Ground is not deletable
-
-		const root = this.getSceneObject( id );
-		if ( ! root ) return false;
-
-		if ( this._loadingInProgress ) {
-
-			throw new Error( 'PathTracerApp.removeSceneObject: another load is already in progress' );
-
-		}
-
-		this._loadingInProgress = true;
-		try {
-
-			this._releaseSceneState();
-
-			if ( root === this.sceneModel ) {
-
-				this.assetLoader.releaseTargetModel();
-
-			} else {
-
-				this.assetLoader.removeModelRoot( root );
-
-			}
-
-			// Ground is permanent (removal refused above), so the scene always keeps
-			// renderable geometry — a full rebuild is always valid here.
-			await this._finishRebuildNoReframe( { type: EngineEvents.SCENE_OBJECT_REMOVED, id } );
-
-			return true;
-
-		} finally {
-
-			this._loadingInProgress = false;
-
-		}
+		return SceneLoading.removeSceneObject( this, id );
 
 	}
 
@@ -1787,7 +1142,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setSceneObjectVisibility( id, visible ) {
 
-		return this.setMeshVisibilityByUuid( id, visible );
+		return SceneLoading.setSceneObjectVisibility( this, id, visible );
 
 	}
 
@@ -1805,7 +1160,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** Sets {@link memorySpill}; the next load or rebuild follows it. */
 	setMemorySpill( mode ) {
 
-		this._memorySpill = mode === true || mode === false ? mode : 'auto';
+		return SceneLoading.setMemorySpill( this, mode );
 
 	}
 
@@ -1823,84 +1178,33 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	}
 
-	/**
-	 * Triangle and placement budgets for a scene archive: raised whenever a build could spill, since the preflight
-	 * refuses what cannot fit either way. @private
-	 */
 	_sceneBudgets( options ) {
 
-		if ( this._memorySpill === false || ! this.storage ) return options;
-		return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
+		return SceneLoading.sceneBudgets( this, options );
 
 	}
 
-	/**
-	 * Decides whether the scene about to be built spills: static scenes only, since a deforming clip refits every
-	 * frame. Held for the build that follows ({@link _progressiveSpill}). @private
-	 */
 	_planSpill() {
 
-		const offered = this._memorySpill !== false && !! this.storage && ( this.assetLoader?.animations?.length ?? 0 ) === 0;
-		const spill = offered && ( this._memorySpill === true || this._sdf.needsSpill( this.meshScene ) );
-		if ( this.assetLoader ) this.assetLoader.maxEnvironmentWidth = spill ? SPILL_ENVIRONMENT_WIDTH : 0;
-		// An importer installs its own sky at the end of its read, before this.
-		const sky = spill ? this.meshScene?.environment : null;
-		const image = sky?.image;
-		if ( image ) limitEnvironmentWidth( sky, SPILL_ENVIRONMENT_WIDTH );
-		if ( sky && sky.image !== image ) {
-
-			// three.js keeps an uploaded texture's size, so the old one goes.
-			sky.dispose();
-			sky.needsUpdate = true;
-
-		}
-
-		if ( spill && this._memorySpill === 'auto' ) log.info( 'scene is past the in-memory line: building it through disk' );
-		this._spillPlan = spill;
-		return spill;
+		return SceneLoading.planSpill( this );
 
 	}
 
-	/** @private */
 	_progressiveSpill() {
 
-		const spill = this._spillPlan ?? this._planSpill();
-		this._spillPlan = null;
-		return spill ? { storage: this.storage, uploader: this._chunkUploader() } : null;
+		return SceneLoading.progressiveSpill( this );
 
 	}
 
-	/** @private */
 	_chunkUploader() {
 
-		const stage = this.stages.pathTracer;
-		return ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records );
+		return SceneLoading.chunkUploader( this );
 
 	}
 
-	/** The rest of a spilling scene's spill, once it is on the GPU, in the background. @private */
 	_maybeSpill() {
 
-		if ( ! this._sdf?.spilling || ! this.storage ) return;
-		this._sdf.spillAfterLoad().catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-		this._sdf.spillToDisk( this.storage )
-			.then( result => result && this.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
-			.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-
-	}
-
-	/** Once edits have been quiet for {@link RESPILL_AFTER_MS}, puts back on disk what they read back. @private */
-	_scheduleRespill() {
-
-		if ( ! this._sdf?.spilling ) return;
-		clearTimeout( this._respillTimer );
-		this._respillTimer = setTimeout( () => {
-
-			this._respillTimer = null;
-			this._sdf?.respill().catch( error => this._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-
-		}, RESPILL_AFTER_MS );
-		this._respillTimer.unref?.();
+		return SceneLoading.maybeSpill( this );
 
 	}
 
@@ -1909,10 +1213,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * (whose arrays are empty until then). The engine does this itself before its own readers; a host calling
 	 * {@link refitBLASes}, or reading the model's geometry, on a spilled scene awaits it first.
 	 */
-	async ensureSceneResident() {
+	ensureSceneResident() {
 
-		if ( this._sdf?.spilled ) await this._sdf.ensureResident();
-		await this._sdf?.ensureGeometryResident();
+		return SceneLoading.ensureSceneResident( this );
 
 	}
 
@@ -1981,16 +1284,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - Optional smooth normals, same two shapes. If omitted, face normals are computed from positions.
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
-	async refitBVH( newPositions, newNormals ) {
+	refitBVH( newPositions, newNormals ) {
 
-		await this.ensureSceneResident();
-		const { triRanges, bvhRanges, ...result } = await this._sdf.refitBVH( newPositions, newNormals );
-
-		this.stages.pathTracer.updateTriangleData( this._sdf.triangles, triRanges );
-		this.stages.pathTracer.updateBVHData( this._sdf.bvh, bvhRanges );
-		this.reset( false, { motion: true } );
-
-		return result;
+		return SceneEdits.refitBVH( this, newPositions, newNormals );
 
 	}
 
@@ -2006,25 +1302,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
-		if ( this._sdf?.spilled ) throw new Error( 'refitBLASes: the scene is spilled to disk — await app.ensureSceneResident() first' );
-		const result = this._sdf.refitBLASes( affectedMeshIndices, newPositions, newNormals );
-
-		const { triRanges, bvhRanges } = this._sdf.computeBLASDirtyRanges( affectedMeshIndices );
-		this.stages.pathTracer.updateBufferRanges( triRanges, bvhRanges );
-		this.reset( false, { motion: true } );
-
-		// Kick off background rebuild for optimal SAH quality
-		this._sdf.scheduleBackgroundRebuild( affectedMeshIndices, ( meshIndex ) => {
-
-			// Swap complete — upload just that mesh's triangles and nodes, plus the TLAS. A whole
-			// re-upload here is gigabytes on a large scene, for one mesh's worth of change.
-			const dirty = this._sdf.computeBLASDirtyRanges( [ meshIndex ] );
-			this.stages.pathTracer.updateBufferRanges( dirty.triRanges, dirty.bvhRanges );
-			this.reset( false, { motion: true } );
-
-		} );
-
-		return result;
+		return SceneEdits.refitBLASes( this, affectedMeshIndices, newPositions, newNormals );
 
 	}
 
@@ -2041,24 +1319,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	updateMeshTransforms( meshIndices ) {
 
-		// A spilled scene's matrix lists, TLAS or copy records are on disk: the move lands once they are back.
-		if ( this._sdf?.needsPageInForMove( meshIndices ) ) {
-
-			this._sdf.ensureMovable( meshIndices )
-				.then( () => this.updateMeshTransforms( meshIndices ) )
-				.catch( error => this._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading instance matrices back failed: ${error.message}` ) );
-			return null;
-
-		}
-
-		this._notePlacementsMoving( meshIndices );
-		const result = this._sdf.updateMeshTransforms( meshIndices );
-
-		this.stages.pathTracer.updateBufferRanges( [], this._sdf.takeMoveRanges() );
-		this.reset( false, { motion: true } );
-		this._scheduleRespill();
-
-		return result;
+		return SceneEdits.updateMeshTransforms( this, meshIndices );
 
 	}
 
@@ -2768,128 +2029,27 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   `toneMappedOn` and `displayColorSpace` are set for `'srgb'` only: the bytes are the picture the canvas shows,
 	 *   in `'srgb'` or `'display-p3'` — a display the canvas cannot show as it is comes converted.
 	 */
-	async renderToBuffer( { colorSpace = 'srgb', preserveAlpha = false, source = 'accumulation', bitDepth = 8 } = {} ) {
+	renderToBuffer( options ) {
 
-		const named = colorSpace !== 'linear' && colorSpace !== 'srgb';
-		if ( named && ! this.color?.hasConfig ) {
-
-			throw new Error(
-				`renderToBuffer: colorSpace must be 'linear' or 'srgb' without a colour config loaded, got "${colorSpace}"`
-			);
-
-		}
-
-		const stage = this.stages?.pathTracer;
-		const target = stage?.storageTextures?.readTarget;
-		if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
-
-		// The pool over-allocates to the reserve, so the texture is larger than the frame.
-		const { width, height } = stage;
-		// The accumulation's alpha is always coverage; an opaque backdrop reads back opaque, as the Compositor draws it.
-		const transparent = !! this.settings.get( 'transparentBackground' );
-
-		if ( colorSpace === 'srgb' ) {
-
-			// `colorSpace` stays 'srgb' — callers branch on it; the bytes are encoded for `displayColorSpace`.
-			const picture = await this._readPicture( target, width, height, { source, preserveAlpha: preserveAlpha && transparent, output: bitDepth === 16 ? 'rgba16' : 'rgba8' } );
-			return { ...picture, width, height, colorSpace };
-
-		}
-
-		const { data: linear, source: read } = source === 'display'
-			? await this._readDisplaySource( target, width, height )
-			: { data: await readPixels( this.renderer, target, width, height ), source: 'accumulation' };
-		if ( ! transparent ) {
-
-			const one = linear instanceof Uint16Array ? 0x3C00 : 1; // a half-float target reads back as its bits
-			for ( let i = 3; i < linear.length; i += 4 ) linear[ i ] = one;
-
-		}
-
-		// `colorSpace` stays 'linear' — callers branch on it. `workingSpace` is the new, additive
-		// answer to "linear in what primaries", which only means something once a config is loaded.
-		if ( colorSpace === 'linear' ) {
-
-			return { data: linear, width, height, colorSpace, workingSpace: this.color?.workingSpace ?? null, source: read };
-
-		}
-
-		// A named space is a delivery buffer, not a picture: scene-referred float in whatever the
-		// config calls that space. Saving an EXR for a compositor and grading through an sRGB view
-		// on screen are different questions, and this is the one that answers the first.
-		const { rgba, colorSpace: got } = this.color.exportPixels( linear, colorSpace );
-		return { data: rgba, width, height, colorSpace: got, source: read };
+		return Pictures.renderToBuffer( this, options );
 
 	}
 
-	/** The picture through the view, as `output` (a PackedToneMapper output): on the card, or on the CPU if that fails. @private */
-	async _readPicture( target, width, height, { source, preserveAlpha, output } ) {
+	_readPicture( target, width, height, options ) {
 
-		const shown = source === 'display' ? this._displaySource( target ) : null;
-		const tone = {
-			exposure: this.renderer.toneMappingExposure,
-			toneMapping: this.renderer.toneMapping,
-			saturation: this.settings.get( 'saturation' ) ?? 1,
-			preserveAlpha,
-			gain: this._displayGain(),
-		};
-
-		const gpu = await this._toneMapOnGPU( shown?.texture ?? null, target, width, height, tone, output );
-		const fn = ! gpu && tone.gain?.cpu ? await tone.gain.cpu() : null;
-		const backdrop = tone.gain?.backdrop ?? 0;
-		const cpu = { rgba8: toneMapToRGBA8, rgba16: toneMapToRGBA16, displayLinear: toneMapToDisplayLinear }[ output ];
-		const data = gpu ?? cpu( shown
-			? await this._readTexture( shown.texture, width, height )
-			: await readPixels( this.renderer, target, width, height ), { ...tone, pixelGain: ( fn || backdrop ) ? { fn, width, height, backdrop } : null } );
-		return { data, displayColorSpace: this.color?.canvasColorSpace ?? 'srgb', source: shown?.source ?? 'accumulation', toneMappedOn: gpu ? 'gpu' : 'cpu' };
+		return Pictures.readPicture( this, target, width, height, options );
 
 	}
 
-	/**
-	 * Display bytes tone-mapped on the card, or null to do it on the CPU. On the CPU it took 1.4 s at
-	 * 4096×2160 on an M-series Mac and 10 s on a cloud L4's host; the GPU pass matches it within one
-	 * level (`tests/gpu/toneMapParity.test.js`).
-	 */
-	async _toneMapOnGPU( shown, accumulation, width, height, tone, output = 'rgba8' ) {
+	_toneMapOnGPU( shown, accumulation, width, height, tone, output ) {
 
-		const backend = this.renderer?.backend;
-		if ( ! backend?.device ) return this._toneMapFallback( 'the renderer has no WebGPU device' );
-
-		try {
-
-			const texture = shown ? this._readbackPass().draw( shown, width, height ).texture : accumulation.textures[ 0 ];
-			const gpuTexture = backend.get( texture ).texture;
-			if ( ! gpuTexture ) return this._toneMapFallback( 'the picture has no GPU texture yet' );
-
-			this._readbackToneMappers ??= new Map();
-			let mapper = this._readbackToneMappers.get( output );
-			if ( ! mapper ) this._readbackToneMappers.set( output, mapper = new PackedToneMapper( backend.device, `rayzee:readback-${output}`, { input: 'texture', output } ) );
-			mapper.ensureSize( width, height );
-			const read = { rgba8: 'toRGBA8', rgba16: 'toRGBA16', displayLinear: 'toDisplayLinear' }[ output ];
-			return await mapper[ read ]( gpuTexture, tone );
-
-		} catch ( error ) {
-
-			if ( error instanceof EngineIssueError ) throw error;
-			return this._toneMapFallback( 'the GPU pass threw', error );
-
-		} finally {
-
-			this._readbackToneMappers?.get( output )?.release();
-			if ( shown ) this._textureReadback?.release();
-
-		}
+		return Pictures.toneMapOnGPU( this, shown, accumulation, width, height, tone, output );
 
 	}
 
-	/** A warning, so strict keeps going: the CPU bytes match within a level, only slower. @private */
-	_toneMapFallback( reason, error = null ) {
+	_toneMapFallback( reason, error ) {
 
-		const cause = error ? String( error?.message ?? error ) : null;
-		const message = `renderToBuffer: tone mapped on the CPU — ${reason}${cause ? `: ${cause}` : ''}`;
-		log.warn( message );
-		this._issues.warn( ISSUE_CODES.OUTPUT_TONEMAP_FALLBACK, message, { reason, cause } );
-		return null;
+		return Pictures.toneMapFallback( this, reason, error );
 
 	}
 
@@ -3023,46 +2183,13 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	getCanvas() {
 
-		if ( ! this.renderer?.domElement ) return null;
-		return this._displayCanvas() ?? this._pictureCanvas();
+		return Pictures.getCanvas( this );
 
 	}
 
-	/** The render canvas's picture, readable now: the view itself, never the screen's HDR version of it. */
 	_pictureCanvas() {
 
-		const canvas = this.renderer.domElement;
-		const compositor = this.stages.compositor;
-		const context = this.pipeline?.context;
-		if ( ! compositor || ! context ) return canvas;
-
-		// A presented WebGPU canvas only reads back what was drawn immediately before, so draw.
-		// This also puts the denoised picture on it: the Compositor prefers it over the raw render.
-		compositor.renderPicture( context );
-		// An HDR canvas holds more than a picture can: copy what fits, 8 bits in its colour space, then redraw the screen.
-		const extended = this.renderer.backend?.parameters?.outputType === HalfFloatType;
-		if ( ! ( extended || compositor.showsCanvasTransform ) || this._headless || typeof document === 'undefined' ) return canvas;
-
-		const colorSpace = canvas.getContext( 'webgpu' )?.getConfiguration?.()?.colorSpace ?? 'srgb';
-		let copy = this._pictureCopy;
-		if ( ! copy || copy.colorSpace !== colorSpace ) {
-
-			copy = this._pictureCopy = { canvas: document.createElement( 'canvas' ), colorSpace };
-
-		}
-
-		if ( copy.canvas.width !== canvas.width || copy.canvas.height !== canvas.height ) {
-
-			copy.canvas.width = canvas.width;
-			copy.canvas.height = canvas.height;
-
-		}
-
-		const ctx = copy.canvas.getContext( '2d', { colorSpace } );
-		ctx.clearRect( 0, 0, canvas.width, canvas.height );
-		ctx.drawImage( canvas, 0, 0 );
-		compositor.render( context );
-		return copy.canvas;
+		return Pictures.pictureCanvas( this );
 
 	}
 
@@ -3076,12 +2203,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {number}  [options.quality]           - 0–1 quality hint for lossy formats
 	 * @returns {Promise<Blob|null>}
 	 */
-	screenshot( { type = 'image/png', quality } = {} ) {
+	screenshot( options ) {
 
-		const canvas = this.getCanvas();
-		if ( ! canvas ) return Promise.resolve( null );
-
-		return new Promise( ( resolve ) => canvas.toBlob( resolve, type, quality ) );
+		return Pictures.screenshot( this, options );
 
 	}
 
@@ -3119,46 +2243,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 *   colorSpace: string, source: string, passes: string[]}>} `colorSpace` is what the file holds: 'srgb' or
 	 *   'display-p3' for a picture, the colour space's name for light, 'srgb-linear' or 'display-p3-linear' as shown
 	 */
-	async exportImage( { format = 'png', bitDepth = 8, quality = 0.92, gainMap = false, precision = 'half', asShown = false, colorSpace, passes = [], source = 'display', upscaled = true, alpha = true, metadata = true } = {} ) {
+	exportImage( options ) {
 
-		const encoders = await import( './output/ImageEncoders.js' );
-		const spec = encoders.IMAGE_FORMATS[ format ];
-		if ( ! spec ) throw new Error( `exportImage: no format "${format}"; one of ${Object.keys( encoders.IMAGE_FORMATS ).join( ', ' )}` );
-
-		const light = format === 'exr' || format === 'hdr';
-		const text = metadata ? { ...this._exportDetails( format, light && asShown ), ...( typeof metadata === 'object' ? metadata : {} ) } : {};
-		const file = async ( blob, read, rest = {} ) => ( {
-			blob, mimeType: spec.mimeType, extension: spec.extension, width: read.width, height: read.height,
-			colorSpace: read.displayColorSpace, source: read.source, passes: [], ...rest,
-		} );
-
-		if ( light ) return this._exportLight( encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } );
-
-		const heif = format === 'heic' || format === 'avif';
-		if ( heif || ( format === 'jpeg' && gainMap ) ) {
-
-			if ( gainMap && ! this.stages.compositor?.showsCanvasTransform ) throw new Error( 'exportImage: an HDR photo needs the screen showing HDR (color.setHdrOutput)' );
-			const hdr = gainMap ? asFloat32( ( await this._readShown( { source, preserveAlpha: false } ) ).data ) : null;
-			const read = await this.renderToBuffer( { colorSpace: 'srgb', source } );
-			const image = { sdr: read.data, hdr, width: read.width, height: read.height, colorSpace: read.displayColorSpace, quality };
-			return file( heif ? await encoders.encodeStill( { ...image, format } ) : await encoders.encodeGainMapJPEG( { ...image, text } ), read );
-
-		}
-
-		const keepAlpha = alpha && format !== 'jpeg' && !! this.settings.get( 'transparentBackground' );
-		if ( format === 'png' && bitDepth === 16 ) {
-
-			const read = await this.renderToBuffer( { colorSpace: 'srgb', bitDepth: 16, source, preserveAlpha: keepAlpha } );
-			return file( await encoders.encodePNG( { data: read.data, width: read.width, height: read.height, alpha: keepAlpha, colorSpace: read.displayColorSpace, text } ), read );
-
-		}
-
-		const shown = upscaled ? this._displayCanvas() : null;
-		const read = shown ? canvasPixels( shown ) : await this.renderToBuffer( { colorSpace: 'srgb', source, preserveAlpha: keepAlpha } );
-		const image = { data: read.data, width: read.width, height: read.height, colorSpace: read.displayColorSpace, text };
-		return file( format === 'png'
-			? await encoders.encodePNG( { ...image, alpha: keepAlpha } )
-			: await encoders.encodeWithCanvas( { ...image, format, quality } ), read );
+		return Pictures.exportImage( this, options );
 
 	}
 
@@ -3169,159 +2256,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	exportInfo() {
 
-		const stage = this.stages?.pathTracer;
-		const shown = this._displayCanvas();
-		const aux = !! stage?.hasAuxBuffers;
-		return {
-			width: stage?.width ?? 0,
-			height: stage?.height ?? 0,
-			upscaled: shown ? { width: shown.width, height: shown.height } : null,
-			hdr: !! this.stages?.compositor?.showsCanvasTransform,
-			layers: { albedo: aux, normal: aux, depth: !! ( stage?.bvhStorageAttr && stage.materialData?.materialStorageAttr ) },
-		};
-
-	}
-
-	/** EXR or Radiance HDR: scene-referred float, with the EXR's extra layers. @private */
-	async _exportLight( encoders, file, { format, precision, asShown, colorSpace, passes, source, alpha, text } ) {
-
-		let read, delivered, chromaticities;
-		if ( asShown ) {
-
-			read = await this._readShown( { source, preserveAlpha: alpha && !! this.settings.get( 'transparentBackground' ) } );
-			delivered = `${read.displayColorSpace}-linear`;
-			chromaticities = encoders.DISPLAY_CHROMATICITIES[ read.displayColorSpace ];
-
-		} else {
-
-			const space = colorSpace === undefined ? this.color?.exportSpace ?? null : colorSpace;
-			read = await this.renderToBuffer( { colorSpace: space ?? 'linear', source } );
-			delivered = read.colorSpace === 'linear' ? read.workingSpace ?? this.color.workingSpace : read.colorSpace;
-			const measured = this.color.chromaticities?.( delivered ) ?? null;
-			chromaticities = measured && encoders.standardChromaticities( measured );
-
-		}
-
-		const data = asFloat32( read.data );
-		const { width, height } = read;
-		const result = { colorSpace: delivered };
-
-		if ( format === 'hdr' ) return file( await encoders.encodeHDR( { data, width, height, chromaticities, text } ), read, result );
-
-		const channels = [ 'R', 'G', 'B', ...( alpha ? [ 'A' ] : [] ) ].map( ( name, offset ) => ( { name, data, stride: 4, offset, type: precision } ) );
-		const written = [];
-		const missing = ( pass, why ) => this._issues.record( ISSUE_CODES.OUTPUT_PASS_UNAVAILABLE, `exportImage: no ${pass} layer — ${why}`, { pass } );
-		const want = new Set( passes );
-
-		if ( want.has( 'albedo' ) || want.has( 'normal' ) ) {
-
-			const aux = await this.stages.pathTracer.readAuxBuffers();
-			for ( const pass of [ 'albedo', 'normal' ] ) {
-
-				if ( ! want.has( pass ) ) continue;
-				if ( ! aux ) {
-
-					missing( pass, 'the denoisers\' guides are written only while a denoiser is on' );
-					continue;
-
-				}
-
-				const values = asFloat32( aux[ pass ] );
-				if ( pass === 'albedo' ) {
-
-					if ( ! asShown && delivered !== this.color.workingSpace ) this.color.exportPixels( values, delivered );
-
-				} else {
-
-					for ( let i = 0; i < values.length; i += 4 ) for ( let c = 0; c < 3; c ++ ) values[ i + c ] = values[ i + c ] * 2 - 1;
-
-				}
-
-				const names = pass === 'albedo' ? [ 'R', 'G', 'B' ] : [ 'X', 'Y', 'Z' ];
-				channels.push( ...names.map( ( c, offset ) => ( { name: `${pass}.${c}`, data: values, stride: 4, offset, type: precision } ) ) );
-				written.push( pass );
-
-			}
-
-		}
-
-		if ( want.has( 'depth' ) ) {
-
-			const { DepthPass } = await import( './shaders/kernels/DepthPass.js' );
-			const depth = await new DepthPass( this.renderer ).read( this.stages.pathTracer );
-			if ( depth ) {
-
-				channels.push( { name: 'depth.Z', data: depth, type: 'float' } );
-				written.push( 'depth' );
-
-			} else missing( 'depth', 'no scene is built' );
-
-		}
-
-		return file( await encoders.encodeEXR( { width, height, channels, chromaticities, text } ), read, { ...result, passes: written } );
-
-	}
-
-	/**
-	 * The picture as the screen shows it, as light: display-linear in the canvas's primaries, 1 = SDR white. The canvas's
-	 * own version of the view when it has one (HDR), else the view through the readback tone mapper. @private
-	 */
-	async _readShown( { source, preserveAlpha } ) {
-
-		const stage = this.stages?.pathTracer;
-		const target = stage?.storageTextures?.readTarget;
-		if ( ! target ) throw new Error( 'exportImage: no render target — call init() and render at least one sample' );
-		const { width, height } = stage;
-		const compositor = this.stages.compositor;
-		const context = this.pipeline?.context;
-
-		if ( compositor?.showsCanvasTransform && context ) {
-
-			const shown = new RenderTarget( width, height, { type: FloatType, format: RGBAFormat, depthBuffer: false, minFilter: NearestFilter, magFilter: NearestFilter } );
-			try {
-
-				if ( compositor.renderShown( context, shown ) ) {
-
-					const data = await readPixels( this.renderer, shown, width, height );
-					return { data, width, height, displayColorSpace: this.color.canvasColorSpace, source: compositor.resolveLightSource( context )?.key.split( ':' )[ 0 ] ?? 'accumulation' };
-
-				}
-
-			} finally {
-
-				shown.dispose();
-
-			}
-
-		}
-
-		return { ...await this._readPicture( target, width, height, { source, preserveAlpha, output: 'displayLinear' } ), width, height };
-
-	}
-
-	/** What a saved file says about itself, under the names its format's readers look for. @private */
-	_exportDetails( format, asShown = false ) {
-
-		const provenance = this.getProvenance();
-		const render = provenance.render;
-		const view = provenance.color?.view;
-		const viewName = view && typeof view === 'object' ? [ view.view, view.look ].filter( Boolean ).join( ', ' ) : view;
-		const summary = [ render && `${render.samples} samples`, render && `${render.width}×${render.height}`, viewName, asShown && 'as shown on screen' ].filter( Boolean ).join( ', ' );
-		const settings = Object.fromEntries( Object.entries( provenance.settings ?? {} ).map( ( [ key, entry ] ) => [ key, entry?.value ] ) );
-		const details = JSON.stringify( { engine: provenance.engine, render, color: provenance.color, settings, display: provenance.display, exposure: provenance.exposure } );
-		const software = `Rayzee ${VERSION}`;
-		const now = new Date();
-		const pad = n => String( n ).padStart( 2, '0' );
-
-		if ( format === 'exr' ) {
-
-			const capDate = `${now.getFullYear()}:${pad( now.getMonth() + 1 )}:${pad( now.getDate() )} ${pad( now.getHours() )}:${pad( now.getMinutes() )}:${pad( now.getSeconds() )}`;
-			return { software, comments: summary, capDate, rayzee: details };
-
-		}
-
-		if ( format === 'png' ) return { Software: software, 'Creation Time': now.toISOString(), Comment: summary, rayzee: details };
-		return { Software: software, Comment: summary };
+		return Pictures.exportInfo( this );
 
 	}
 
@@ -3544,7 +2479,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	getMaterialProperty( materialIndex, property ) {
 
-		return this.stages.pathTracer?.materialData.getMaterialProperty( materialIndex, property );
+		return SceneEdits.getMaterialProperty( this, materialIndex, property );
 
 	}
 
@@ -3558,77 +2493,25 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	getMaterialPropertySource( materialIndex, property ) {
 
-		return this.stages.pathTracer?.materialData.getMaterialPropertySource( materialIndex, property );
+		return SceneEdits.getMaterialPropertySource( this, materialIndex, property );
 
 	}
 
 	setMaterialProperty( materialIndex, property, value ) {
 
-		// These rewrite triangle records, which a spilled scene has to read back first.
-		if ( this._sdf?.spilled && TRIANGLE_PATCH_PROPERTIES.has( property ) ) {
-
-			this.ensureSceneResident().then( () => this.setMaterialProperty( materialIndex, property, value ) );
-			return;
-
-		}
-
-		this.stages.pathTracer?.materialData.updateMaterialProperty( materialIndex, property, value );
-
-		// Keep the emissive-NEE structure in sync unconditionally (not gated on the
-		// sampling toggle) so edits made while NEE is off aren't lost on re-enable.
-		const emissiveAffectingProps = [ 'emissive', 'emissiveIntensity' ];
-		if ( emissiveAffectingProps.includes( property ) && this._sdf ) {
-
-			this._uploadEmissivePayload( this._sdf.updateMaterialEmissive( materialIndex, property, value ) );
-
-		}
-
-		this.reset();
+		return SceneEdits.setMaterialProperty( this, materialIndex, property, value );
 
 	}
 
-	/**
-	 * Upload a rebuilt emissive-NEE payload (sorted emissive data + Light BVH +
-	 * bit-trail map) to the path tracer stage. No-op for a null payload.
-	 * @param {object|null} payload
-	 * @private
-	 */
 	_uploadEmissivePayload( payload ) {
 
-		if ( ! payload || ! this.stages.pathTracer ) return;
-
-		this.stages.pathTracer.setEmissiveTriangleData(
-			payload.rawData, payload.emissiveCount, payload.totalPower, payload.bitTrailMap,
-		);
-		if ( payload.lightBVHNodeData ) {
-
-			this.stages.pathTracer.setLightBVHData( payload.lightBVHNodeData, payload.lightBVHNodeCount );
-
-		}
+		return SceneEdits.uploadEmissivePayload( this, payload );
 
 	}
 
-	/**
-	 * Re-derive the emissive-NEE sampled set from current per-mesh world-visibility
-	 * (InstanceTable is the source of truth — patched by the stage's visibility API).
-	 * Hidden meshes' triangles are dropped from the Light BVH so they stop casting
-	 * NEE light; the shadow ray can't do it (a hidden mesh no longer self-occludes).
-	 * @private
-	 */
 	_refreshEmissiveForVisibility() {
 
-		const table = this._sdf?.instanceTable;
-		if ( ! table ) return;
-
-		// The emitter list names meshes, the table placements.
-		const hidden = new Set();
-		for ( let i = 0; i < table.count; i ++ ) {
-
-			if ( table.isSet[ i ] && ! table.visible[ i ] ) hidden.add( table.sourceMesh[ i ] );
-
-		}
-
-		this._uploadEmissivePayload( this._sdf.rebuildEmissiveForVisibility( hidden ) );
+		return SceneEdits.refreshEmissiveForVisibility( this );
 
 	}
 
@@ -3640,8 +2523,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setEmissiveTriangleSampling( enabled ) {
 
-		this._emissiveSamplingUserSet = true;
-		this.settings.set( 'enableEmissiveTriangleSampling', enabled );
+		return SceneEdits.setEmissiveTriangleSampling( this, enabled );
 
 	}
 
@@ -3651,8 +2533,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	hasEmissiveGeometry() {
 
-		return ( this._sdf?.emissiveTriangleBuilder?.emissiveTriangles?.length
-			?? this._sdf?.emissiveTriangleCount ?? 0 ) > 0;
+		return SceneEdits.hasEmissiveGeometry( this );
 
 	}
 
@@ -3664,7 +2545,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setMeshVisibility( meshIndex, visible ) {
 
-		this._whenTLASEditable( () => this.stages.pathTracer?.updateMeshVisibility( meshIndex, visible ) );
+		return SceneEdits.setMeshVisibility( this, meshIndex, visible );
 
 	}
 
@@ -3674,25 +2555,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	updateAllMeshVisibility() {
 
-		this._whenTLASEditable( () => this.stages.pathTracer?.updateAllMeshVisibility() );
-
-	}
-
-	/** Applies a visibility edit, then resets — once a spilled TLAS is back in memory. @private */
-	_whenTLASEditable( edit ) {
-
-		const apply = () => {
-
-			edit();
-			this._refreshEmissiveForVisibility();
-			this.reset();
-			this._scheduleRespill();
-
-		};
-
-		const ready = this._sdf?.whenTLASEditable();
-		if ( ! ready ) return apply();
-		ready.then( apply ).catch( error => this._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading the TLAS back failed: ${error.message}` ) );
+		return SceneEdits.updateAllMeshVisibility( this );
 
 	}
 
@@ -3715,12 +2578,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setMeshVisibilityByUuid( uuid, visible ) {
 
-		const object = this.getScene()?.getObjectByProperty( 'uuid', uuid );
-		if ( ! object ) return null;
-		const next = typeof visible === 'function' ? !! visible( object.visible ) : !! visible;
-		object.visible = next;
-		this.updateAllMeshVisibility();
-		return next;
+		return SceneEdits.setMeshVisibilityByUuid( this, uuid, visible );
 
 	}
 
@@ -3732,62 +2590,31 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	setTextureTransform( materialIndex, textureName, transform ) {
 
-		this.stages.pathTracer?.materialData.updateTextureTransform( materialIndex, textureName, transform );
-		this.reset();
+		return SceneEdits.setTextureTransform( this, materialIndex, textureName, transform );
 
 	}
 
-	/**
-	 * What a `'display'` read shows: the texture a denoiser published, or null for the raw
-	 * accumulation — recorded as a fallback when a denoiser is in use.
-	 * @private
-	 */
 	_displaySource( accumulation ) {
 
-		const context = this.pipeline?.context;
-		const found = context && this.stages.compositor?.resolveLightSource( context );
-		if ( found && found.key !== 'pathtracer:color' && found.texture !== accumulation.texture ) {
-
-			return { texture: found.texture, source: found.key.split( ':' )[ 0 ] };
-
-		}
-
-		if ( this._denoiserInUse() ) {
-
-			this._issues.record(
-				ISSUE_CODES.OUTPUT_SOURCE_FALLBACK,
-				'renderToBuffer: \'display\' was asked for, but no denoiser has published a picture — returned the raw accumulation',
-				{ requested: 'display', read: 'accumulation' }
-			);
-
-		}
-
-		return null;
+		return Pictures.displaySource( this, accumulation );
 
 	}
 
-	/**
-	 * What the Compositor is drawing from, as linear float. Falls back to the accumulation when no
-	 * denoiser has published anything, which is also what the viewport shows then.
-	 * @private
-	 */
-	async _readDisplaySource( accumulation, width, height ) {
+	_readDisplaySource( accumulation, width, height ) {
 
-		const shown = this._displaySource( accumulation );
-		if ( ! shown ) return { data: await readPixels( this.renderer, accumulation, width, height ), source: 'accumulation' };
-		return { data: await this._readTexture( shown.texture, width, height ), source: shown.source };
+		return Pictures.readDisplaySource( this, accumulation, width, height );
 
 	}
 
 	_readbackPass() {
 
-		return ( this._textureReadback ??= new TextureReadback( this.renderer ) );
+		return Pictures.readbackPass( this );
 
 	}
 
 	_readTexture( texture, width, height ) {
 
-		return this._readbackPass().read( texture, width, height );
+		return Pictures.readTexture( this, texture, width, height );
 
 	}
 
@@ -3807,37 +2634,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * @param {import('three').Texture} texture
 	 * @param {?string} choice
 	 */
-	async setTextureColorSpace( texture, choice ) {
+	setTextureColorSpace( texture, choice ) {
 
-		if ( ! texture?.isTexture ) throw new Error( 'setTextureColorSpace wants a three.js texture' );
-
-		const ud = texture.userData ?? ( texture.userData = {} );
-		if ( ud.__rayzeeOriginalColorSpace === undefined ) ud.__rayzeeOriginalColorSpace = texture.colorSpace;
-		const original = ud.__rayzeeOriginalColorSpace;
-
-		delete ud.ocioColorSpace;
-		delete ud.__rayzeeColorSpaceChoice;
-
-		if ( choice === null || choice === undefined ) {
-
-			texture.colorSpace = original;
-			delete ud.__rayzeeOriginalColorSpace;
-
-		} else if ( choice === 'srgb' || choice === 'linear' ) {
-
-			texture.colorSpace = choice === 'srgb' ? SRGBColorSpace : LinearSRGBColorSpace;
-			ud.__rayzeeColorSpaceChoice = choice;
-
-		} else {
-
-			if ( ! this.color?.hasConfig ) throw new Error( `"${choice}" needs a colour config loaded` );
-			ud.ocioColorSpace = choice;
-			texture.colorSpace = SRGBColorSpace;
-
-		}
-
-		texture.needsUpdate = true;
-		if ( this.stages.pathTracer?.sdfs ) await this.rebuildMaterials();
+		return SceneEdits.setTextureColorSpace( this, texture, choice );
 
 	}
 
@@ -3963,22 +2762,9 @@ export class RayzeeRenderer extends EventDispatcher {
 	 * Full material rebuild (required after texture changes).
 	 * @param {import('three').Scene} [scene]
 	 */
-	async rebuildMaterials( scene ) {
+	rebuildMaterials( scene ) {
 
-		await this.ensureSceneResident();
-		const stage = this.stages.pathTracer;
-		await stage?.rebuildMaterials( scene || this.meshScene );
-
-		// Loaded without texture coordinates, and a material has a texture now: they go up again from the records.
-		if ( stage?.triangleStorageNode?.withoutUV && this._sdf?.triangles && usesTextureCoordinates( scene || this.meshScene ) ) {
-
-			this._sdf.textureCoordinates = true;
-			stage.setTriangleData( this._sdf.triangles, this._sdf.triangleCount, { textureCoordinates: true } );
-			stage.setupMaterial();
-
-		}
-
-		this.reset();
+		return SceneEdits.rebuildMaterials( this, scene );
 
 	}
 
