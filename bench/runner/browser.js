@@ -250,6 +250,7 @@ export async function openHarness( baseURL, { verbose = false, harnessPath, brow
 		setDenoiser: ( strategy, preset, options ) => page.evaluate(
 			( s, p, o ) => globalThis.__bench.setDenoiser( s, p, o ), strategy, preset ?? null, options ?? {}
 		),
+		measureDenoiseGPU: ( options ) => page.evaluate( ( o ) => globalThis.__bench.measureDenoiseGPU( o ), options ?? {} ),
 		awaitDenoise: ( timeoutMs ) => page.evaluate(
 			( t ) => globalThis.__bench.awaitDenoise( t ?? undefined ), timeoutMs ?? null
 		),

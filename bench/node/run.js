@@ -133,6 +133,57 @@ for ( const scene of SCENES ) {
 
 }
 
+// OIDN on Dawn outside the browser: the 1-spp `bench:denoise` ratio (denoised ÷ raw RMSE against ground truth) must land
+// where Chrome's blessed one is. Not 64 spp: the error left there is about the level this readback and Chrome's canvas
+// capture already differ by.
+async function denoised() {
+
+	const fs = await import( 'node:fs/promises' );
+	const { DENOISE_GATES, PATHS } = await import( '../runner/config.js' );
+	const blessed = JSON.parse( await fs.readFile( PATHS.denoise, 'utf8' ) );
+	const dm = app.denoisingManager;
+	const spp = Math.min( ...DENOISE_GATES.sppLadder );
+
+	try {
+
+		for ( const id of DENOISE_GATES.scenes ) {
+
+			const truth = await readPNG( path.join( PATHS.truth, `${id}.png` ) );
+			await session.loadScene( id );
+
+			dm.setOIDNEnabled( false );
+			await app.renderFrames( spp, { reset: true } );
+			const raw = compare( await app.renderToBuffer( { colorSpace: 'srgb' } ), truth ).rmse;
+
+			dm.setOIDNQuality( 'high' );
+			dm.setOIDNEnabled( true );
+			await dm.denoiser.whenLoaded();
+			await app.renderFrames( spp, { reset: true } );
+			const ran = await app.runFinalDenoise();
+			const shot = await app.renderToBuffer( { colorSpace: 'srgb', source: 'display' } );
+			const ratio = compare( shot, truth ).rmse / raw;
+			const chrome = blessed[ `${id}/oidn/${spp}` ]?.ratio;
+			const pass = ran && shot.source === 'oidn' && Math.abs( ratio - chrome ) <= 0.01;
+			if ( ! pass ) failed ++;
+			console.log( `  ${pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${id} oidn @${spp} spp${DIM}  ratio ${ratio.toFixed( 3 )}, Chrome ${chrome?.toFixed( 3 )}${RESET}` );
+
+		}
+
+	} catch ( error ) {
+
+		failed ++;
+		console.log( `  ${RED}FAIL${RESET} denoise  ${error.message}` );
+
+	} finally {
+
+		dm.setOIDNEnabled( false );
+
+	}
+
+}
+
+if ( ! only || only.includes( 'denoise' ) ) await denoised();
+
 // Compressed glTF: three's own Draco and KTX2 loaders start their workers themselves, which works in Node only because
 // the engine lends them NodeWorker for the parse (withHostWorker). Each fixture (bench/tools/make-compressed-fixtures.mjs)
 // renders against its uncompressed twin, so a decoder that runs but decodes wrongly fails too. The decoders are three's

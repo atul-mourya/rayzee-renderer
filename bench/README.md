@@ -334,6 +334,14 @@ regenerating and the compensation drifts back out of calibration — which the r
 
 `npm run bench:perf` records GPU milliseconds of the compute passes — the path tracer — (WebGPU timestamp queries) to `baselines/perf.jsonl` as a **monitored trend, not a gate**. A stored number is thermally meaningless on a laptop and would produce false alarms until people ignore it. The trend log is what catches the every-PR-is-+2 % drift that per-run thresholds never see. Each line records the commit it measured and `dirty: true` when the working tree differed from it (the bench's own `baselines/` excluded).
 
+The run ends with **OIDN**: `oidn-fast` and `oidn-high` are the network's GPU milliseconds for one 1920×1080 denoise
+(four tiles at the default cap), every tile's layers summed by the library's own timestamps — packing and the output pass
+are not in it (`measureDenoiseGPU` in `harness/boot.js`, `PERF.denoise`). Their workload names the model, precision and
+tile: another model or tile size breaks the line, and a library upgrade shows as a step in it. `bench:perf -- --only oidn` measures just these. 2026-10-25 (oidn-webgpu
+0.6.0, M5 Pro, Chrome): 49.1 and 223.1 ms. `npm run bench:oidn` (Node) compares OIDN's kernels on whatever GPU it runs
+on — the default against the experimental subgroup-matrix kernel, speed and pixel difference — for trying a new GPU
+(the farm's NVIDIA L4) before the engine changes its choice.
+
 Each measurement renders **exactly one sample** and resolves the timestamp queries immediately. Resolving once after an N-sample render reports whichever frame happened to land last rather than the average — that produced `cv > 100 %` and one scene reading implausibly faster than a simpler one before it was fixed.
 
 ⚠️ **Render-pass timestamps overlap, so perf times compute passes only.** On Apple M-series a render pass's timestamps overlap the compute before it and each other, and read either ~0 or most of it: `glass-transmission` at 256² read 1.8 ms compute + 2.0 ms render, and renders at 1.95 ms a sample by the wall clock with the GPU drained. Summed into the total, as perf did until 2026-10-14, they flipped small scenes between two speeds at random: across the corpus measured twice in one tab, compute moved by at most ±2 % on every scene while the render part swung (`spheres-procedural-sky` 0.05 ↔ 0.30 ms, `translucent-panel` 0.13 ↔ 0.02 ms), and that noise is what held the A/B band at 8 %. The runner reads `getGPUTimings().compute` itself (`measureGPUPerSample` in `runner/browser.js`), so both sides of an A/B measure alike whatever their harness. A change to a render pass (the compositor, a display gain) is invisible to `bench:perf` and `bench:ab`: time it by the wall clock, as `bench:exposure` does (`measureWallPerSample`). Measured 2026-10-10, auto exposure against none: −0.4 to +0.7 % a sample, with local exposure +0.1 to +3.2 % at 256² and −0.4 to +1.0 % at 1024², all within noise.
@@ -620,9 +628,9 @@ Standing state as of the last bless (`baselines/denoise.json`):
 
 | scene | nrd @1 | nrd @64 | oidn @1 | oidn @64 | oidn-tiled @1 | oidn-tiled @64 |
 |---|---|---|---|---|---|---|
-| `spheres-gradient` | 0.972 | 1.000 | 0.553 | 0.969 | 0.553 | 0.969 |
-| `glass-transmission` | 0.682 | 1.000 | 0.522 | 0.783 | 0.522 | 0.783 |
-| `textured-normalmap` | 0.908 | 1.000 | 0.504 | 0.852 | 0.504 | 0.852 |
+| `spheres-gradient` | 0.935 | 1.000 | 0.553 | 0.974 | 0.553 | 0.974 |
+| `glass-transmission` | 0.622 | 1.000 | 0.521 | 0.783 | 0.521 | 0.783 |
+| `textured-normalmap` | 0.897 | 1.000 | 0.504 | 0.852 | 0.504 | 0.852 |
 
 `nrd` (the ReBLUR port, `docs/NRD_DENOISER.md`) is 1.000 at 64 spp by construction: past its
 handover point it republishes the path tracer's own texture, so a converged render is never touched.

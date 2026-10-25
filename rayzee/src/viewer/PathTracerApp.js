@@ -477,7 +477,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 	}
 
-	/** The core's, plus the display-only exposure an sRGB readback was shaped by, which no setting records. */
+	/** The core's, plus what no setting records: the display-only exposure an sRGB readback was shaped by, and the denoisers. */
 	getProvenance() {
 
 		const provenance = super.getProvenance();
@@ -485,6 +485,16 @@ export class PathTracerApp extends RayzeeRenderer {
 		provenance.exposure = {
 			auto: ae?.enabled ? { exposure: ae.getExposure(), strength: ae.strength, metering: ae.metering, keyValue: ae.keyValue } : null,
 			local: le?.enabled ? { highlightContrast: le.highlightContrast, shadowContrast: le.shadowContrast, detailStrength: le.detailStrength } : null,
+		};
+		const dm = this.denoisingManager, oidn = dm?.denoiser;
+		provenance.denoise = {
+			live: dm?.denoiserStrategy ?? 'none',
+			final: dm?.finalDenoise && oidn ? {
+				quality: dm.oidnQuality,
+				weights: oidn.currentTZAUrl?.split( '/' ).pop() ?? null,
+				precision: oidn.getRuntimeInfo()?.precision ?? null,
+				tileSize: oidn._activeTileSize || null,
+			} : null,
 		};
 		return provenance;
 
@@ -1048,7 +1058,7 @@ export class PathTracerApp extends RayzeeRenderer {
 	 * Arms per-layer GPU timestamping inside the OIDN denoiser for the next denoise only.
 	 * Read the result with {@link PathTracerApp#getDenoiseProfile}.
 	 *
-	 * `getGPUTimings()` cannot see the denoise: oidn-web submits on its own command encoders,
+	 * `getGPUTimings()` cannot see the denoise: oidn-webgpu submits on its own command encoders,
 	 * outside the stages three.js times.
 	 *
 	 * @returns {boolean} whether the capture was armed

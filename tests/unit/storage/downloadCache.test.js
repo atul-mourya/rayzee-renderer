@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
 import { openStorage } from '@/core/storage/openStorage.js';
 import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl } from '@/core/storage/DownloadCache.js';
+import { configurePlatform } from '@/core/Platform.js';
 
 function response( body, { status = 200, headers = {} } = {} ) {
 
@@ -234,6 +235,28 @@ describe( 'DownloadCache', () => {
 
 		expect( nameFromUrl( 'https://a/b/scene%20one.tar.gz?x=1' ) ).toBe( 'scene one.tar.gz' );
 		expect( nameFromUrl( 'https://a/' ) ).toBe( 'download' );
+
+	} );
+
+	it( 'reads a file: URL through the host, never fetch or storage', async () => {
+
+		const readFile = vi.fn( async () => new Uint8Array( [ 7, 8, 9 ] ) );
+		configurePlatform( { readFile } );
+
+		try {
+
+			const got = await new DownloadCache( storage ).fetch( 'file:///opt/oidn/rt_hdr_alb_nrm_small.tza', { policy: DOWNLOAD_POLICY.IMMUTABLE } );
+			expect( readFile.mock.calls[ 0 ][ 0 ].href ).toBe( 'file:///opt/oidn/rt_hdr_alb_nrm_small.tza' );
+			expect( got.file.name ).toBe( 'rt_hdr_alb_nrm_small.tza' );
+			expect( Array.from( new Uint8Array( await got.file.arrayBuffer() ) ) ).toEqual( [ 7, 8, 9 ] );
+			expect( fetchMock ).not.toHaveBeenCalled();
+			expect( await new DownloadCache( storage ).has( 'file:///opt/oidn/rt_hdr_alb_nrm_small.tza' ) ).toBe( false );
+
+		} finally {
+
+			configurePlatform( { readFile: null } );
+
+		}
 
 	} );
 

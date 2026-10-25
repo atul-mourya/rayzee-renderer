@@ -255,6 +255,65 @@ once looked at. How it should have been built so they could not happen:
   rebuild can repack the arrays — 4 GB for bistro's 278 2K maps, most of what is left of its 6.3 GB peak. An archive's
   image could be read again from the archive on a rebuild instead (`ARCHIVE_PATH` is on the texture).
 
+## OIDN 0.6.0 (`oidn-webgpu`, released 2026-10-25)
+
+Measured 2026-10-25 on the M5 Pro, our own calls: 11–21 % faster a denoise (small 720p 21.6 → 18.7 ms, large 1080p
+279 → 232), output within one 8-bit level, `bench:denoise` all pass. NaN and negative input no longer spread across the
+picture: in 0.5.0 one NaN pixel smeared over 60–110 pixels, and 1 % of pixels at −0.5 turned ~80 % of the frame to NaN
+(small model).
+
+### Browser and Node
+- [x] **Switched to `oidn-webgpu`** 0.6.0 (rayzee's optional dependency `>=0.6.0`). A host with only `oidn-web` loses OIDN
+  (`denoiser.unavailable`): decide at release whether that is a major. Engine defaults (OIDN off) render the same.
+  `gemm.decoderSubPixel` stays on: it is the whole speed-up; off gives 0.5.0's pixels bit for bit at 0.5.0's speed.
+- [x] **Bad pixels cleaned in our pack pass**: NaN and ±Inf → 0 before metering and the network (0.6.0 alone turns +Inf
+  into the largest float: a bright blob over a fifth to a third of a 256² frame; and our meter's average went infinite).
+  Each input's count is read back without waiting and recorded once until a clean frame, `denoiser.non_finite_input`.
+  Pack at 1080p 0.328 ms before and after. `tests/gpu/oidnInputPack.test.js` (mutation-checked).
+- [x] **Tiles clamped below the dispatch limit** (`OIDN_MAX_TILE_PIXELS`, 65,535 × 64, halo included; a tiled cap ≤ 1808):
+  past it the GPU rejected the first layer with no `error` callback and `done` reported a denoise that never ran — the
+  README's `tileSize: 2048` did that to 2560×1600 (0.5.0 too). Not wrapped in an error scope: scopes are device-wide and
+  would take the renderer's own errors during a live refresh. Still to do: report it upstream (drafted 2026-10-25; the
+  library can scope its own synchronous submits, which a caller cannot).
+- [x] **`bench:denoise` re-blessed**, all 24 scenes on 0.6.0: OIDN rungs within ±0.011 of 0.5.0 (spheres @64 0.969 → 0.974,
+  rough-diffuse @64 0.735 → 0.745, shadow-catcher @64 1.008 → 0.997). It also blessed the two NRD rungs never blessed
+  before (`dispersion-glass` and `mixed-lights` @1) and NRD's three @1 gains since the last bless.
+- [x] **Provenance names the denoisers**: `denoise.live`, and `denoise.final` (tier, weights file, precision, tile).
+- [x] **A denoise-time trend line in `bench` perf**: `oidn-fast` / `oidn-high`, the network's GPU ms a 1920×1080 denoise
+  (`measureDenoiseGPU`, `PERF.denoise`; `bench:perf -- --only oidn`). Chrome, M5 Pro: 49.1 / 223.1 ms.
+
+### Browser
+- [x] **1080p live view re-timed** in the app (Chrome 155, visible tab, orbit 15°/s, M5 Pro on battery). Startup scene:
+  OIDN 11.2–11.8 refreshes/s at 80 ms (0.5.0: 10), one tile 14.8–16.4/s at 56–59 ms; NRD and no denoiser 120 frames/s
+  (half size while moving). So OIDN does not take 1080p from NRD: smoother motion stays NRD's. One tile costs +305 MB
+  (small model: 178 → 483 MB; large 319 → 872). The interior (24155522.glb) could not be timed: every setup, no denoiser
+  included, swung 4–85 frames/s between runs — the "Fast Navigation flaps" item below, worse on battery.
+- [x] **Timings in the docs** updated from Node (Dawn, the same WebGPU as Chrome): first denoise of a session +15 ms
+  small / +40 ms large, a swap 10–50 ms, a resize rebuild 5–45 ms.
+- [ ] Skip for now: `kernel: 'subgroup-matrix'` needs Chrome's unsafe-WebGPU flag and was no faster than the default on
+  the M5 Pro (f16: same speed, 5× the pixel difference). Recheck once Chrome ships it without the flag.
+
+### Node (headless)
+- [x] **`captureHeadless( app, { denoise: { quality, tileSize } } )`** picks the model and the tile cap. In the engine at
+  1920×1080, cap 2048 (one tile) against 1024 (four): large 235 → 171 ms, small 60 → 45 ms, byte-identical pictures.
+  4K at cap 2048 instead of 1024: small 246 → 192 ms. The default stays the small model and cap 1024.
+- [x] **`bench:node` denoises**: the 1-spp `bench:denoise` rungs land within 0.002 of Chrome's ratios. Not 64 spp: there
+  the error left is about the level Node's readback and Chrome's canvas capture already differ by.
+- [x] **Weights from disk**: `nodePlatform()` hands the engine a `file:` reader (`configurePlatform`'s `readFile`), so
+  `oidnWeightsBaseUrl: 'file:///…/'` works offline (IES profiles too). Checked with every network fetch failing.
+- [ ] **Subgroup matrix on the farm GPU (NVIDIA L4, Vulkan)**: run `npm run bench:oidn` there — the default against the
+  subgroup-matrix kernel, speed and pixel difference. M5 Pro: no gain (f32 accumulation 11–15 % slower, f16 0–6 %). If it
+  wins, the engine would request `chromium-experimental-subgroup-matrix` when the adapter has it (Node only: Dawn needs
+  `allow_unsafe_apis`), pass `kernel: 'subgroup-matrix'`, and copy `adapter.info` onto the device (dawn.node 0.6.1 leaves
+  `device.adapterInfo.subgroupMatrixConfigs` empty; report drafted).
+- [ ] **Native denoiser for video export (evaluate)**: oidn-webgpu-native 0.1.1's C API (prebuilt for Linux x86_64,
+  Windows and macOS; its own wgpu device, CPU images, signed normals) took 33–44 % less time than 0.6.0 in Chrome on an
+  M4 Max and 64–70 % less on an RTX 4060 (upstream's numbers; RTX output unchecked). On paper for this M5 Pro at 1080p:
+  large ~112 ms + ~15 ms to read colour and guides back (measured: 5–8 + 8–10 ms) + the C API's own copies, against
+  171 ms for the WebGPU denoise as one tile — ~20–30 ms a frame saved, and nothing for the small model. Worth it only
+  where the GPU gains like the RTX 4060 (a farm on NVIDIA): measure `bench:oidn` and the package's `oidn-webgpu-bench`
+  on the L4 first. Its prebuilt binary was not run here (needs your OK).
+
 ---
 
 ## Performance & Architecture
@@ -264,7 +323,7 @@ once looked at. How it should have been built so they could not happen:
 - [ ] GPU-CPU sync for environment in solid color sky mode
 - [ ] Every `PathTracerApp` downloads OIDN's weights at startup, even with no denoiser; offline that records an error-severity `asset.unreachable`.
 - [ ] Zero-Day loaded as a single frame (`animation: false`) built in 77.6 s for 4.0M triangles, the 9-frame clip in 38.3 s for 2.2M (measured once, busy machine) — check with `bench:load`.
-- [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
+- [ ] **OIDN at 1920×1080 runs as 4 tiles**: a live refresh (oidn-web 0.5.0, Apple M-series, visible tab, 2026-10-11) takes 67 ms as 4 tiles (178 MB), 58 ms as 2 (280 MB), 50 ms as 1 (483 MB). oidn-webgpu 0.6.0 (M5 Pro on battery, 2026-10-25, not like for like with those): 80 ms as 4 tiles, 56–59 ms as 1 in the app; 57 / 42 ms in Node (0.5.0: 66 ms as 4 tiles). The tile cap is now an area, so wide frames that fit stay whole (1280×720: 33 → 22 ms); going past it is a memory trade. NRD (+15 ms a frame at 1080p) stays for large views until OIDN keeps up there. Tried and rejected (2026-10-11, `git stash` "half-size OIDN while moving"): denoising the half-size render while moving gave ~3× the pictures a second but boiled visibly more — blotch flicker on 24155522.glb at 1024², full 3.34, ¾ 4.22, ½ 5.06.
 - [ ] **Fast Navigation flaps on heavy scenes at 1080p** (NRD, or no live denoiser): full-size frames take the GPU past 100 ms a frame, interaction mode times out between them, and the pending drop to half size does not take hold. 24155522.glb at 1920×1080 under NRD: half size reached only after 4.1 s of moving.
 
 ### Core and add-ons — make more of the core opt-in

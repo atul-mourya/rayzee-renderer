@@ -946,6 +946,7 @@ async function main() {
 				...( only && { only } ),
 				scenes: report.results.map( ( r ) => ( {
 					scene: r.scene,
+					...( r.measure && { measure: r.measure } ),
 					computeMs: r.computeMsPerSample.median,
 					computeP95Ms: r.computeMsPerSample.p95,
 					cv: r.computeMsPerSample.cv,

@@ -230,6 +230,17 @@ describe( 'bench quality report', () => {
 
 		} );
 
+		it( 'keeps an entry\'s own measure, so a denoise line never reads as a change of measure', () => {
+
+			const entry = { scene: 'oidn-fast', measure: 'oidn', computeMs: 40, computeP95Ms: 41, cv: 0.01, loadMs: null };
+			const runs = [ 1, 2 ].map( ( d ) => ( { ...run( `2026-01-0${d}`, {} ), measure: 'compute', scenes: [ entry ] } ) );
+
+			const [ scene ] = trendModel( runs, [] ).scenes;
+			expect( scene.measure ).toBe( 'oidn' );
+			expect( scene.breaks ).toEqual( [] );
+
+		} );
+
 		it( 'draws no break across runs that did not record a workload, and leaves out machines with fewer runs', () => {
 
 			const runs = [

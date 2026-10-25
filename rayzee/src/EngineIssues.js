@@ -35,6 +35,7 @@ export const ISSUE_CODES = Object.freeze( {
 	STORAGE_ENTRY_CORRUPT: 'storage.entry_corrupt',
 	STORAGE_CACHE_MISMATCH: 'storage.cache_mismatch',
 	DENOISER_UNAVAILABLE: 'denoiser.unavailable',
+	DENOISER_NON_FINITE_INPUT: 'denoiser.non_finite_input',
 	OUTPUT_SOURCE_FALLBACK: 'output.source_fallback',
 	OUTPUT_TONEMAP_FALLBACK: 'output.tonemap_fallback',
 	OUTPUT_PASS_UNAVAILABLE: 'output.pass_unavailable',

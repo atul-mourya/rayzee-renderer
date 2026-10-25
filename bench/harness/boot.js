@@ -1002,6 +1002,43 @@ async function settleDenoiser( timeoutMs = 180000 ) {
 }
 
 /**
+ * OIDN's network GPU time a denoise at `width`×`height`: every tile's layers, by the library's own timestamps
+ * (packing and the output pass excluded). Puts the render size and the denoiser back after.
+ *
+ * @returns {Promise<{ ms: number[], tileSize: number, model: string, precision: string }>}
+ */
+async function measureDenoiseGPU( { quality = 'fast', width = 1920, height = 1080, runs = 9 } = {} ) {
+
+	const dm = app.denoisingManager;
+	setRenderSize( width, height );
+
+	try {
+
+		await setDenoiser( 'oidn', quality );
+		await app.renderFrames( 1, { reset: true } );
+		const ms = [];
+		// The first run builds the network's pipelines for this size.
+		for ( let i = 0; i <= runs; i ++ ) {
+
+			if ( ! dm.denoiser.profileNextDenoise() ) throw new Error( '__bench.measureDenoiseGPU: no timestamp-query' );
+			if ( ! await app.runFinalDenoise() ) throw new Error( '__bench.measureDenoiseGPU: the denoise produced no picture' );
+			if ( i > 0 ) ms.push( ( await dm.denoiser.getLastDenoiseProfile() ).totalMs );
+
+		}
+
+		const { model, precision } = dm.denoiser.getRuntimeInfo();
+		return { ms, tileSize: dm.denoiser._activeTileSize, model, precision };
+
+	} finally {
+
+		await setDenoiser( 'none' );
+		setRenderSize( RENDER_SIZE.width, RENDER_SIZE.height );
+
+	}
+
+}
+
+/**
  * Drives the OIDN denoise to completion through the path a render farm uses — runFinalDenoise(),
  * then a 'display' readback — so both stay under test. No-ops when OIDN is off, so the runner can
  * call it unconditionally.
@@ -1325,6 +1362,7 @@ globalThis.__bench = {
 	setPerfMode,
 	setExposureMode,
 	setDenoiser,
+	measureDenoiseGPU,
 	awaitDenoise,
 	upscaleRender,
 	disposeUpscaler,

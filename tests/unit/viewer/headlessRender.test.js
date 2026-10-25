@@ -339,6 +339,39 @@ describe( 'captureHeadless', () => {
 
 	} );
 
+	it( 'with a denoise object: sets the model and tile cap before accumulating', async () => {
+
+		const app = fakeApp();
+		const dm = app.denoisingManager;
+		dm.applyOIDNQuality = vi.fn( () => app.order.push( 'quality' ) );
+		dm.denoiser = {
+			updateQuality: vi.fn( async () => {} ),
+			updateConfiguration: vi.fn( async () => app.order.push( 'tile' ) ),
+		};
+		await captureHeadless( app, { denoise: { quality: 'high', tileSize: 2048 } } );
+
+		expect( app.order ).toEqual( [ 'quality', 'tile', 'enable', 'accumulate', 'denoise' ] );
+		expect( dm.denoiser.updateQuality ).toHaveBeenCalledWith( 'high' );
+		expect( dm.denoiser.updateConfiguration ).toHaveBeenCalledWith( { tileSize: 2048 } );
+
+	} );
+
+	it( 'rejects an unknown model before rendering anything', async () => {
+
+		const app = fakeApp();
+		app.denoisingManager.applyOIDNQuality = vi.fn();
+		app.denoisingManager.denoiser = { updateQuality: async ( q ) => {
+
+			throw new Error( `Invalid quality setting: ${q}` );
+
+		} };
+
+		await expect( captureHeadless( app, { denoise: { quality: 'ultra' } } ) ).rejects.toThrow( /Invalid quality/ );
+		expect( app.denoisingManager.applyOIDNQuality ).not.toHaveBeenCalled();
+		expect( app.renderFrames ).not.toHaveBeenCalled();
+
+	} );
+
 } );
 
 describe( 'openHeadless', () => {

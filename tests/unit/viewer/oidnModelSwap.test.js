@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 const nets = [];
-vi.mock( 'oidn-web', () => ( {
+vi.mock( 'oidn-webgpu', () => ( {
 	initUNetFromBuffer: async () => {
 
 		const net = { disposed: false, dispose: vi.fn( function () {

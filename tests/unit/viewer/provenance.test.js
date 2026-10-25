@@ -48,6 +48,22 @@ describe( 'getProvenance', () => {
 
 	} );
 
+	it( 'says which denoiser made the picture, since a denoised readback depends on its model', () => {
+
+		const app = new PathTracerApp( null );
+		expect( app.getProvenance().denoise ).toEqual( { live: 'none', final: null } );
+
+		app.denoisingManager = {
+			denoiserStrategy: 'oidn', finalDenoise: true, oidnQuality: 'high',
+			denoiser: { currentTZAUrl: 'https://cdn/oidn/rt_hdr_calb_cnrm_large.tza', getRuntimeInfo: () => ( { precision: 'fp16' } ), _activeTileSize: 1056 },
+		};
+		expect( app.getProvenance().denoise ).toEqual( {
+			live: 'oidn',
+			final: { quality: 'high', weights: 'rt_hdr_calb_cnrm_large.tza', precision: 'fp16', tileSize: 1056 },
+		} );
+
+	} );
+
 	it( 'says what the picture was shown at, so a saved copy of its light can be shown again', () => {
 
 		const app = new PathTracerApp( null );

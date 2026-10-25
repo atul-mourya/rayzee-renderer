@@ -79,7 +79,7 @@ export default defineConfig( {
 				'rayzee/src/viewer/camera/InteractionManager.js',
 				'rayzee/src/viewer/overlays/OutlineHelper.js',
 
-				// ── GPU-dependent: Denoiser passes (oidn-web GPU pipeline) ──
+				// ── GPU-dependent: Denoiser passes (oidn-webgpu GPU pipeline) ──
 				'rayzee/src/viewer/denoise/OIDNDenoiser.js',
 				'rayzee/src/viewer/denoise/OIDNTemporalHistory.js',
 				'rayzee/src/viewer/picture/AIUpscaler.js',
@@ -94,8 +94,8 @@ export default defineConfig( {
 			"rayzee": path.resolve( __dirname, "rayzee/src/index.js" ),
 			"@/core": path.resolve( __dirname, "rayzee/src" ),
 			"@": path.resolve( __dirname, "app/src" ),
-			"oidn-web/dist/oidn.js": path.resolve( __dirname, "tests/__mocks__/oidn-web.js" ),
-			"oidn-web": path.resolve( __dirname, "tests/__mocks__/oidn-web.js" ),
+			"oidn-webgpu/dist/oidn.js": path.resolve( __dirname, "tests/__mocks__/oidn-webgpu.js" ),
+			"oidn-webgpu": path.resolve( __dirname, "tests/__mocks__/oidn-webgpu.js" ),
 		},
 	},
 } );

@@ -21,7 +21,7 @@ const config = {
 	dracoDecoderPath: 'https://www.gstatic.com/draco/v1/decoders/',
 	ktx2TranscoderPath: 'https://cdn.jsdelivr.net/npm/three@0.183.2/examples/jsm/libs/basis/',
 
-	// OIDN denoiser model weights (oidn-web tza files): the four tiers' models, mirrored from the
+	// OIDN denoiser model weights (oidn-webgpu tza files): the four tiers' models, mirrored from the
 	// `denoiser` npm package 0.0.11 with their Apache-2.0 licence. Versioned so they cannot change underneath.
 	oidnWeightsBaseUrl: 'https://assets.rayzee.atulmourya.com/oidn/denoiser-0.0.11/',
 

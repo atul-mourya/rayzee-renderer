@@ -291,6 +291,8 @@ export const CALIBRATION = {
 };
 
 export const PERF = {
+	// OIDN's network time on a 1080p frame (four tiles at the default cap), a trend line per tier: `--only oidn`.
+	denoise: { qualities: [ 'fast', 'high' ], width: 1920, height: 1080, runs: 9 },
 	warmupSamples: 16, // discarded: the first render after a load pays WGSL compilation
 	// Each measurement renders exactly ONE sample then resolves timestamp queries.
 	// Resolving once after an N-sample render would report whichever frame landed last,

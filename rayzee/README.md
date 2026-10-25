@@ -147,7 +147,7 @@ A single HTML file — no Node.js, no build step. Uses [ES module import maps](h
       "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.tsl.js",
       "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.webgpu.js",
       "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/",
-      "oidn-web/": "https://cdn.jsdelivr.net/npm/oidn-web@0.5.0/",
+      "oidn-webgpu/": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.0/",
       "rayzee": "https://cdn.jsdelivr.net/npm/rayzee/dist/rayzee.es.js"
     }
   }
@@ -1081,6 +1081,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `emissive.instances_collapsed` | an emissive instanced mesh was too large to expand, so its copies light the scene as one |
 | `refit.shared_geometry` | a deform was asked for on a mesh that shares its triangles, and was skipped |
 | `denoiser.unavailable` | a requested denoise or upscale produced nothing — the denoiser was not built, OIDN was off while accumulating, or the pass needs a canvas in a document |
+| `denoiser.non_finite_input` | the render handed OIDN NaN or infinite pixels (`detail.color` / `albedo` / `normal`: how many), which were treated as zero — a warning, recorded again only after a clean frame |
 | `output.source_fallback` | `renderToBuffer( { source: 'display' } )` found no denoised picture and returned the raw accumulation |
 | `output.tonemap_fallback` | `renderToBuffer`'s `'srgb'` bytes were tone-mapped on the CPU, not the GPU — the picture is the same within a level, only slower (a warning: strict does not throw) |
 | `output.pass_unavailable` | `exportImage` was asked for an EXR layer it cannot write, such as `albedo` or `normal` with no denoiser on (`detail.pass`); the file is written without it |
@@ -1239,7 +1240,7 @@ engine.vram.getReport();   // formatted one-line summary string
 
 `denoiser` is what the engine allocates for OIDN — its three float inputs, its half-float output and
 the motion history. `canvas` is one image per presented surface (a browser may keep one or two more)
-plus the buffer three.js's output pass tone-maps through. Not counted: oidn-web's own network weights
+plus the buffer three.js's output pass tone-maps through. Not counted: oidn-webgpu's own network weights
 and activations, which it reports by count, not by size; and the neural passes, which run on a
 `GPUDevice` of their own.
 
@@ -1367,6 +1368,9 @@ try {
 `denoise: true` turns OIDN on before accumulating (it reads the albedo and normal buffers, which
 are written only while it is on), runs **one** final denoise with `app.runFinalDenoise()`, and reads
 it back with `renderToBuffer( { source: 'display' } )`. Driving it yourself is the same three calls.
+`denoise: { quality: 'high', tileSize: 2048 }` also picks the model (the default is `'fast'`) and the tile cap: with no
+live view to keep smooth, a larger cap is faster for more GPU memory — 1920×1080 as one tile instead of four took 27 %
+less time on an M5 Pro. A tile never grows past what the GPU can dispatch (~2000² with its border), whatever the cap.
 `renderToBuffer` reports the picture it read as `source`, and records `output.source_fallback` when
 `'display'` was asked for, a denoiser is in use, and nothing had published — so a strict host cannot
 ship a noisy image by mistake. Its `'srgb'` bytes are tone-mapped on the GPU — 9 ms at 4096×2160,
@@ -1384,7 +1388,8 @@ here, or `engine.settings` before loading the model.
 
 **Provenance.** `engine.getProvenance()` — also `frame.provenance` from `captureHeadless` — is plain
 JSON naming what produced the image: engine and three.js versions, the adapter, every live setting with its source, the colour pipeline, the render size and
-samples, and whether it ran headless, strict, deterministic or lockstepped. `mode.lockstep` says
+samples, whether it ran headless, strict, deterministic or lockstepped, and the denoisers (`denoise.live`, and
+`denoise.final`: the OIDN tier, weights file, precision and tile). `mode.lockstep` says
 whether the current image was traced in lockstep, so it stays true after `renderUntilComplete` turns
 lockstep back off. Store it beside each render and "what made this?" has an answer without rendering
 again.
@@ -1424,7 +1429,7 @@ app.dispose();
 - **No canvas means headless.** `new PathTracerApp(null)` — or `{ headless: true }` — makes its own
   canvas (a WebGPU context over a plain texture), runs no render loop (drive it with `renderFrames` or
   `renderUntilComplete`), and builds neither the overlay renderer nor the transform gizmo.
-- **`configurePlatform({ Worker, decodeImage })`** is where a host without a browser supplies what one
+- **`configurePlatform({ Worker, decodeImage, readFile })`** is where a host without a browser supplies what one
   would. `nodePlatform()` from `rayzee/node` fills it: `NodeWorker`, the Web Worker API over
   `worker_threads`, runs the engine's inlined workers; `decodeImage(bytes, mimeType)` is yours — PNG,
   JPEG or WebP to RGBA8, straight alpha, top row first — since the engine carries no decoder. It decodes
@@ -1445,6 +1450,10 @@ app.dispose();
   packs in a worker, reading images decoded by `decodeImage` in place (they are kept in shared
   memory): on the main thread it held up the BVH workers, and a 1.9M-triangle, 91-texture model
   loaded in 4.1–4.9 s. It now loads in 2.1 s, against Chrome's 2.9 s on the same machine.
+- **Offline: OIDN weights from disk.** Node's `fetch` cannot open `file:` URLs, so `nodePlatform()` also hands
+  the engine a file reader, and what it downloads itself — the OIDN weights, IES profiles — can come from a folder:
+  `configureAssets({ oidnWeightsBaseUrl: 'file:///opt/rayzee/oidn/' })`, holding the `.tza` files the tiers
+  name (`rt_hdr_alb_nrm_small`, `rt_hdr_calb_cnrm_small`, `rt_hdr_calb_cnrm`, `rt_hdr_calb_cnrm_large`).
 - `nodePlatform()` also defines `ProgressEvent`, which three.js's `FileLoader` constructs while
   streaming; that is the only global it sets. three.js's own Draco and KTX2 loaders call the global
   `Worker`; the engine lends them `NodeWorker` for the length of each glTF parse, so a Draco or KTX2
@@ -1468,7 +1477,7 @@ WebGPU timestamp queries are the only true GPU metric here — `pipeline.getStat
 
 `getKernelGPUTimings()` attributes each compute pass of the last resolved frame back to a wavefront kernel name. Durations are **summed per kernel across the frame**, so `extend` reports its whole per-frame cost over every bounce iteration, not one bounce. `unattributed` collects passes belonging to no registered kernel (other stages, denoisers), so `sum(kernels) + unattributed` reconciles with `total`.
 
-Neither method can see the OIDN denoise — `oidn-web` submits on its own command encoders, outside
+Neither method can see the OIDN denoise — `oidn-webgpu` submits on its own command encoders, outside
 the stages three.js times. It carries its own profiler instead:
 
 ```js
@@ -1788,7 +1797,7 @@ import { setBindingAudit, getBindingAuditFindings, clearBindingAuditFindings } f
 
 | Package | Purpose | Install needed? |
 |---|---|---|
-| `oidn-web` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-web` (**>=0.5.0**) |
+| `oidn-webgpu` | Intel Open Image Denoise for high-quality final renders | Yes — `npm install oidn-webgpu` (**>=0.6.0**; it was `oidn-web` up to 0.5.0) |
 | `onnxruntime-web` | AI-powered upscaling | No — loaded from CDN at runtime |
 | `@bb-studio/ocio` | OpenColorIO runtime for [Colour Management](#colour-management) (~6 MB WebAssembly) | Only to load colour configs — `npm install @bb-studio/ocio`, then pass it as `ocioRuntimeFactory` |
 
@@ -1804,7 +1813,7 @@ accumulating, so a preview shows a clean picture as it refines instead of only a
 1. **Install the package**
 
    ```bash
-   npm install oidn-web
+   npm install oidn-webgpu
    ```
 
 2. **Enable in your app**
@@ -1919,7 +1928,7 @@ Two constraints shape that table, and neither is optional:
   (`> 120 ms`).** A tier a machine can afford is kept — at 512² that is every tier. The verdict
   survives a camera move, because the device does not get faster between them; it is re-taken when
   the tier or the resolution changes. Past it, each render swaps twice (to the cheap model when the
-  view moves, back for the finished image). A swap costs 10-20 ms on oidn-web 0.4.0, and each model's
+  view moves, back for the finished image). A swap costs 10–50 ms on oidn-webgpu 0.6.0 (the large model the most), and each model's
   weights are downloaded once and kept, so a swap never goes back to the network.
 
 #### What paces the refreshes
@@ -1979,8 +1988,9 @@ Denoise cost scales with frame area, and the tile tracks the frame so that a fra
 tile pays no overlap padding — at 1024x1024 that is roughly 1.8x faster than tiling it. A cap
 (default 1024) bounds the one-time activation allocation, so larger frames tile and stay
 memory-bounded. Raise or lower it with
-`engine.denoisingManager.denoiser.updateConfiguration({ tileSize: 2048 })`; the effective tile is
-`min( max( width, height ), tileSize )`.
+`engine.denoisingManager.denoiser.updateConfiguration({ tileSize: 2048 })`: a frame no larger in area than
+`tileSize`² is one tile, a larger one is split into tiles of at most `tileSize`, and no tile grows past what the GPU
+can dispatch (about 2000² with its border and overlap) — past that the denoise would silently do nothing.
 
 > **Note:** The neural network model is downloaded on first use. Subsequent runs use the browser cache. OIDN also works with `configureForMode('production')`, which enables it automatically alongside high-quality render settings.
 
@@ -2009,13 +2019,13 @@ engine.addEventListener(EngineEvents.UPSCALING_END,      () => console.log('Upsc
 ## Troubleshooting
 
 **OIDN: `Cannot find module './tza'` (webpack)**
-The `oidn-web` package uses dynamic imports that webpack cannot resolve. This does not affect Vite or other ESM-native bundlers. Add `oidn-web` to your webpack externals:
+The `oidn-webgpu` package uses dynamic imports that webpack cannot resolve. This does not affect Vite or other ESM-native bundlers. Add the engine's import of it to your webpack externals:
 
 ```js
 // webpack.config.js
 module.exports = {
   externals: {
-    'oidn-web': 'oidn-web'
+    'oidn-webgpu/dist/oidn.js': 'oidn-webgpu/dist/oidn.js'
   }
 };
 ```
@@ -2026,7 +2036,7 @@ Then load it via a script tag or import map instead:
 <script type="importmap">
 {
   "imports": {
-    "oidn-web": "https://cdn.jsdelivr.net/npm/oidn-web@0.4.0/dist/oidn.js"
+    "oidn-webgpu/dist/oidn.js": "https://cdn.jsdelivr.net/npm/oidn-webgpu@0.6.0/dist/oidn.js"
   }
 }
 </script>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-vi.mock( 'oidn-web', () => ( { initUNetFromBuffer: async () => ( { dispose() {} } ) } ) );
+vi.mock( 'oidn-webgpu', () => ( { initUNetFromBuffer: async () => ( { dispose() {} } ) } ) );
 vi.stubGlobal( 'fetch', async () => ( { ok: true, arrayBuffer: async () => new ArrayBuffer( 4 ) } ) );
 
 const { OIDNDenoiser } = await import( '@/core/viewer/denoise/OIDNDenoiser.js' );
@@ -24,7 +24,7 @@ describe( 'OIDNDenoiser — tile size', () => {
 
 	} );
 
-	// oidn-web's memory follows the tile's area: 1312×752 is smaller than the 1056² already allowed.
+	// oidn-webgpu's memory follows the tile's area: 1312×752 is smaller than the 1056² already allowed.
 	it( 'keeps a wide frame whole when its area fits', () => {
 
 		expect( tileFor( 1280, 720 ) ).toBe( 1312 );
@@ -37,6 +37,16 @@ describe( 'OIDNDenoiser — tile size', () => {
 		expect( tileFor( 1920, 1080 ) ).toBe( 1024 );
 		expect( tileFor( 1025, 1025 ) ).toBe( 1024 );
 		expect( tileFor( 256, 256, 128 ) ).toBe( 128 );
+
+	} );
+
+	// Past 65,535 × 64 pixels the library's first layer is rejected by the GPU and nothing is denoised.
+	it( 'never builds a tile past the dispatch limit, halo included', () => {
+
+		expect( tileFor( 2560, 1440, 2048 ) ).toBe( 2592 );
+		expect( tileFor( 2560, 1600, 2048 ) ).toBe( 1808 );
+		expect( tileFor( 3840, 2160, 4096 ) ).toBe( 1808 );
+		expect( ( 1808 + 2 * 112 ) ** 2 ).toBeLessThanOrEqual( 65535 * 64 );
 
 	} );
 

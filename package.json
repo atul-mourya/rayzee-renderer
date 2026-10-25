@@ -42,6 +42,7 @@
     "bench:examples": "npm run build:engine && node bench/runner/cli.js examples",
     "release": "cross-env $(cat .env | xargs) semantic-release --no-ci",
     "bench:lut": "node bench/tools/gen-dfg-lut.mjs",
+    "bench:oidn": "node bench/tools/oidn-kernels.mjs",
     "example:node": "npm run build:engine && node rayzee/examples/core-node.mjs",
     "example:render": "npm run build:engine && node rayzee/examples/render.mjs",
     "example:browser": "vite --config rayzee/examples/vite.config.js",

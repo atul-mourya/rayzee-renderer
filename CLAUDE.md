@@ -53,6 +53,7 @@ Headless-GPU regression detection for quality, performance, and memory. See `ben
 - `npm run bench:exposure` - auto (and local) exposure against neither, wall clock (`-- --size 1024x1024`)
 - `npm run bench:list` - show the scene corpus
 - `npm run bench:storage` - raw OPFS throughput (write / read / `File.slice`), isolated and not; `--firefox`, `--engine`
+- `npm run bench:oidn` - OIDN's kernels on this GPU in Node: default against subgroup matrix, speed and pixel difference
 - `npm run bench:examples` - every example in `rayzee/examples/` (two Node, two pages in headless Chrome) runs to the
   end against this tree with no error or warning; needs the network. The browser ones run on the engine source through
   `rayzee/examples/vite.config.js` (`npm run example:browser` / `example:viewer`), so they track the working tree
@@ -356,7 +357,7 @@ The app maps its UI tab labels (`appMode: 'preview' | 'final-render' | 'results'
 
 Mode switching lives in app-store handlers `handleConfigureForPreview` / `handleConfigureForFinalRender` / `handleConfigureForResults` (in `app/src/store/pathTracer.js`), which delegate to the engine method `app.configureForMode( mode, { canvasWidth, canvasHeight } )` — `mode` is `'interactive' | 'production'`. `configureForMode()` applies `modePresetSettings( config )` (`EngineDefaults.js`) — the one list of settings a preset owns — via `settings.setMany`, toggles OIDN/controls, and calls `reset()`. `VideoRenderManager` saves and restores exactly that list, so a new preset-owned key goes there, never inline.
 
-**While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser: a resize drops its motion history and shows the raw render until the next denoise (rebuilding the network itself costs only 3–30 ms on oidn-web 0.5.0).
+**While the camera moves** (interaction mode; "Fast Navigation" in the UI), `PathTracerApp` drops the render to display × `interactionRenderScale` and restores it 100 ms after the last move. Bounces and emissive NEE are untouched; the firefly limit is 8× the user's threshold (every moving frame is frame 0, where the limit is tightest). ⚠️ The wavefront reads its resolution from the **canvas backing store**, so the drop resizes that (`renderer.setSize( w, h, false )`) — `pipeline.setSize` alone is inert. The denoising manager keeps the full size, and the drop is skipped while OIDN is the live denoiser: a resize drops its motion history and shows the raw render until the next denoise (rebuilding the network itself costs only 5–45 ms on oidn-webgpu 0.6.0).
 
 ### Deterministic / Headless Rendering API
 Public renderer methods for offline rendering and reproducible output — on `RayzeeRenderer`, so the core has them too, except `runFinalDenoise()`, which is the viewer's:
@@ -486,7 +487,8 @@ glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block
   one): `createHeadlessCanvas()` gives three.js a WebGPU context over a plain texture, `wake()` is inert
   and `animate()` throws — drive it with `renderFrames` / `renderUntilComplete` — and the overlay renderer
   and gizmo are not built. The InteractionManager stays: auto-focus picks through it.
-- **`configurePlatform( { Worker, decodeImage } )`** is the seam; `rayzee/node` (plain source, exported
+- **`configurePlatform( { Worker, decodeImage, readFile } )`** is the seam (`readFile` serves `DownloadCache` the
+  `file:` URLs Node's `fetch` refuses: OIDN weights and IES profiles from disk); `rayzee/node` (plain source, exported
   from `src/`, never bundled) has `nodePlatform()` and `NodeWorker` (Web Worker over `worker_threads`,
   data:/blob:, module or classic). Every engine worker starts through `createWorker( Ctor )`, which
   swaps the host class in for the global `Worker` while the bundled constructor runs — the inlined
@@ -943,9 +945,9 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   `reset( false, { motion: true } )` keep the history; any other reset, including the path tracer
   resetting itself unannounced, drops it. Code that moves a placement calls
   `denoisingManager.notePlacementMoving()` first (`_notePlacementsMoving`) so the history follows it.
-- **OIDN model swaps** (refreshes run the cheap tier, the finished image the chosen one) cost 10-20 ms
-  on oidn-web 0.4.0, and `OIDNDenoiser._fetchWeights` keeps each model's bytes, so a swap never
-  re-downloads. ⚠️ A `[Buffer "outputPass"] used in submit while destroyed` error is **oidn-web's**
+- **OIDN model swaps** (refreshes run the cheap tier, the finished image the chosen one) cost 10–50 ms
+  on oidn-webgpu 0.6.0, and `OIDNDenoiser._fetchWeights` keeps each model's bytes, so a swap never
+  re-downloads. ⚠️ A `[Buffer "outputPass"] used in submit while destroyed` error is **oidn-webgpu's**
   output pass, not three.js's: a tile's writes land a microtask after it starts, so a UNet must not
   be disposed under a run in flight — `_loadUNetWeights` aborts it and yields a macrotask first.
 - ⚠️ `output/ToneMapGPU.js` is a second implementation of `toneMapToRGBA8` and must stay
@@ -954,15 +956,19 @@ environment's exact table (`environment/EnvironmentExactTable.js`) serves both i
   Dawn in Node, and `bench:upscale` again in Chrome before anything else. Its `output: 'planar'` mode feeds the
   AI upscaler's network float planes encoded with a 2.2 power, not the sRGB curve — what the upscaler always used.
 - **OIDN sees the frame inside a 16 px mirrored border** (`OIDN_BORDER`, `oidnInputSize()`), each side then rounded
-  up to 16. At the network's own boundary — its zero padding, or oidn-web 0.5.0 repeating the edge pixel up to a
+  up to 16. At the network's own boundary — its zero padding, or oidn-webgpu repeating the edge pixel up to a
   multiple of 16 — the outer pixels came out worse than not denoising at all. Outer 3 px against a 2048-spp
   reference (four scenes, 250×140 to 1500×844, 1–64 spp): 0.4–0.7× of 0.4.0's error; 0.5.0 alone was 1.3× worse at
   the bottom at 4 spp. A multiple of 16 keeps the frame on the network's pooling grid, so pixels away from the edges
   denoise exactly as without it (an 8 px border moved them ±2 %). One compute pass packs all three inputs, border
   included (`_copyInputs`); autoexposure meters the frame only; the tile cap applies to the frame, so the border
   never splits a frame that fits one tile. Cost: 3–11 % more denoise time, most on small frames. The cap is an area
-  (`tileSize`² with the border): oidn-web 0.5.0's cost and memory follow the tile's area, so a wide frame that fits stays
-  one tile (1280×720: 22 ms, against 33 ms as two).
+  (`tileSize`² with the border): oidn-webgpu's cost and memory follow the tile's area, so a wide frame that fits stays
+  one tile (1280×720: 22 ms, against 33 ms as two). ⚠️ No tile may pass `OIDN_MAX_TILE_PIXELS` (65,535 × 64, halo
+  included): its first layer dispatches a workgroup per 64 pixels in one dimension, and past that the GPU rejects the
+  work with no `error` callback and `done` reports a denoise that never ran (a 2560×1600 frame at `tileSize: 2048`).
+  `_resolveTileSize` clamps any cap to 1808. The pack also zeroes NaN and ±Inf (0.6.0 makes +Inf the largest float,
+  which blew up into a blob) and counts them per input: `denoiser.non_finite_input`, once until a clean frame.
 
 ### Auto exposure (`viewer/picture/AutoExposure.js`, viewer)
 Meters `pathtracer:color` on the GPU, adapts on the CPU. Two kernels in one pass: tiles (≤ 64×64, ≥ 8 px a side) averaged in

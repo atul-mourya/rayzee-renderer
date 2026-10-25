@@ -201,6 +201,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
 		this._denoiserErrorHandler = null;
+		this._denoiserNonFiniteHandler = null;
 		this._denoiserLoadHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;
@@ -379,10 +380,17 @@ export class DenoisingManager extends EventDispatcher {
 			{ url: e.url, asset: 'oidn-weights', cause: String( e.error?.message ?? e.error ) }
 		);
 
+		this._denoiserNonFiniteHandler = ( { color, albedo, normal } ) => this._issues?.warn(
+			ISSUE_CODES.DENOISER_NON_FINITE_INPUT,
+			`NaN or infinite pixels reached the denoiser (colour ${color}, albedo ${albedo}, normal ${normal}) and were treated as zero`,
+			{ color, albedo, normal }
+		);
+
 		this.denoiser.addEventListener( 'start', this._denoiserStartHandler );
 		this.denoiser.addEventListener( 'end', this._denoiserEndHandler );
 		this.denoiser.addEventListener( 'tileProgress', this._denoiserTileHandler );
 		this.denoiser.addEventListener( 'error', this._denoiserErrorHandler );
+		this.denoiser.addEventListener( 'nonFinite', this._denoiserNonFiniteHandler );
 
 		// 'error' too: a failed load never sends 'loaded'. The first load starts inside the constructor, before these listen.
 		this._denoiserLoadHandler = e =>
@@ -1556,6 +1564,7 @@ export class DenoisingManager extends EventDispatcher {
 			if ( this._denoiserEndHandler ) this.denoiser.removeEventListener( 'end', this._denoiserEndHandler );
 			if ( this._denoiserTileHandler ) this.denoiser.removeEventListener( 'tileProgress', this._denoiserTileHandler );
 			if ( this._denoiserErrorHandler ) this.denoiser.removeEventListener( 'error', this._denoiserErrorHandler );
+			if ( this._denoiserNonFiniteHandler ) this.denoiser.removeEventListener( 'nonFinite', this._denoiserNonFiniteHandler );
 			if ( this._denoiserLoadHandler ) {
 
 				for ( const type of [ 'loading', 'loaded', 'error' ] ) this.denoiser.removeEventListener( type, this._denoiserLoadHandler );
@@ -1587,6 +1596,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._denoiserEndHandler = null;
 		this._denoiserTileHandler = null;
 		this._denoiserErrorHandler = null;
+		this._denoiserNonFiniteHandler = null;
 		this._denoiserLoadHandler = null;
 		this._upscalerResChangedHandler = null;
 		this._upscalerStartHandler = null;

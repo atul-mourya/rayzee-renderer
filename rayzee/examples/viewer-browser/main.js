@@ -19,7 +19,7 @@ await engine.loadEnvironment( 'https://assets.rayzee.atulmourya.com/hdri/Polyhav
 
 engine.settings.setMany( { maxBounces: 8, exposure: 1 } );
 
-// OIDN denoises the image once it has converged (needs the optional oidn-web package).
+// OIDN denoises the image once it has converged (needs the optional oidn-webgpu package).
 engine.denoisingManager.setOIDNEnabled( true );
 engine.denoisingManager.setOIDNQuality( 'balance' ); // 'fast' | 'fast-clean' | 'balance' | 'high'
 

@@ -133,7 +133,8 @@ async function selectScenes( bench, only ) {
  */
 export async function runPerf( bench, { only, log = () => {} } = {} ) {
 
-	const scenes = await selectScenes( bench, only );
+	const sceneIds = only?.filter( ( id ) => id !== 'oidn' );
+	const scenes = only && ! sceneIds.length ? [] : await selectScenes( bench, sceneIds );
 	const results = [];
 
 	// Measure the dispatch configuration production actually uses (see header). Restored in
@@ -153,6 +154,8 @@ export async function runPerf( bench, { only, log = () => {} } = {} ) {
 
 		}
 
+		if ( ! only || only.includes( 'oidn' ) ) results.push( ...await measureDenoise( bench, log ) );
+
 	} finally {
 
 		// Restore reproducibility so a later image comparison in the same session is valid.
@@ -161,6 +164,33 @@ export async function runPerf( bench, { only, log = () => {} } = {} ) {
 	}
 
 	return { results };
+
+}
+
+/** OIDN's network GPU ms a denoise, one trend entry a tier; the workload names what was measured. */
+async function measureDenoise( bench, log ) {
+
+	const { qualities, width, height, runs } = PERF.denoise;
+	await bench.loadScene( 'spheres-gradient' );
+	const results = [];
+
+	for ( const quality of qualities ) {
+
+		const { ms, tileSize, model, precision } = await bench.measureDenoiseGPU( { quality, width, height, runs } );
+		const summary = summarise( ms );
+		log( `  oidn-${quality} ${width}×${height}\n    ${summary.median.toFixed( 1 )} ms network GPU (${model}, ${precision}, tile ${tileSize}, n ${summary.n})` );
+		results.push( {
+			scene: `oidn-${quality}`,
+			measure: 'oidn',
+			loadMs: null,
+			computeMsPerSample: summary,
+			raw: ms,
+			workload: { width, height, model, precision, tileSize },
+		} );
+
+	}
+
+	return results;
 
 }
 

@@ -360,7 +360,7 @@ ${thumbs ? `<h2>Bit-identical to the golden</h2>\n<div class="thumbs">\n${thumbs
 const byTime = ( a, b ) => ( a.at < b.at ? - 1 : a.at > b.at ? 1 : 0 );
 
 // Runs before 2026-10-14 summed compute and render timestamps; the render part overlaps the compute on Apple GPUs.
-const MEASURES = { total: 'compute + render passes', compute: 'compute passes' };
+const MEASURES = { total: 'compute + render passes', compute: 'compute passes', oidn: 'OIDN network, a denoise' };
 
 function showValue( value ) {
 
@@ -427,7 +427,7 @@ export function trendModel( perfRuns, abRuns, options = {} ) {
 
 			if ( ! scenes.has( entry.scene ) ) scenes.set( entry.scene, { id: entry.scene, points: [], breaks: [], workload: null, measure: null } );
 			const scene = scenes.get( entry.scene );
-			const measure = run.measure ?? 'total';
+			const measure = entry.measure ?? run.measure ?? 'total';
 			const changes = entry.workload && scene.workload ? describeChanges( scene.workload, entry.workload ) : [];
 			if ( scene.measure && measure !== scene.measure ) changes.unshift( `measured: ${MEASURES[ scene.measure ]} → ${MEASURES[ measure ]}` );
 			if ( changes.length ) scene.breaks.push( { run: index, after: scene.points.at( - 1 ).run, changes } );
@@ -600,6 +600,7 @@ function sceneChart( scene, runs, subjects ) {
 
 	}
 
+	const per = scene.measure === 'oidn' ? 'a denoise' : 'a sample';
 	for ( const p of scene.points ) {
 
 		const run = runs[ p.run ];
@@ -608,8 +609,8 @@ function sceneChart( scene, runs, subjects ) {
 		const py = y( p.ms );
 		const tip = esc( [
 			...runNote( run, subjects ),
-			`${ms( p.ms )} ms a sample${p.ms > cap ? ' (off the chart)' : ''}, p95 ${ms( p.p95 )}, cv ${Math.round( p.cv * 100 )} %`,
-			`load ${( p.loadMs / 1000 ).toFixed( 2 )} s`,
+			`${ms( p.ms )} ms ${per}${p.ms > cap ? ' (off the chart)' : ''}, p95 ${ms( p.p95 )}, cv ${Math.round( p.cv * 100 )} %`,
+			...( p.loadMs == null ? [] : [ `load ${( p.loadMs / 1000 ).toFixed( 2 )} s` ] ),
 		].join( '\n' ) );
 
 		parts.push( p.ms > cap
@@ -622,7 +623,7 @@ function sceneChart( scene, runs, subjects ) {
 	const last = scene.points.at( - 1 );
 	parts.push( `<text class="end" x="${x( last.run ) + 8}" y="${y( last.ms ) + 4}">${ms( last.ms )}</text>` );
 
-	const label = `${scene.id}: ${scene.points.length} runs, latest ${ms( last.ms )} ms a sample`;
+	const label = `${scene.id}: ${scene.points.length} runs, latest ${ms( last.ms )} ms ${per}`;
 	return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc( label )}">${parts.join( '' )}</svg>`;
 
 }
@@ -776,6 +777,7 @@ summary { cursor: pointer; font-weight: 600; }
 <p class="muted">${esc( meta )}</p>
 ${runs.length ? `<p>GPU milliseconds of ray tracing (the compute passes) a sample, from <code>bench</code> / <code>bench:perf</code>, at 256²: one pass a run, so a single point is not evidence. ` +
 `Runs before 2026-10-14 also counted the display passes, whose timestamps overlap the tracing on Apple GPUs and read either ~0 or most of it, so each line breaks where the measure changed. ` +
+`<code>oidn-fast</code> and <code>oidn-high</code> are milliseconds a 1920×1080 denoise instead: OIDN's network on the GPU. ` +
 `Runs are evenly spaced, oldest on the left; hover a point for its date and commit. ` +
 `A scene is flagged when its last ${TREND.recentRuns} runs all sit past its earlier median and their median is ${TREND.flagPct} % or more away. ` +
 `<strong>${slower} slower</strong>, <strong>${faster} faster</strong> of ${scenes.length} scenes.</p>

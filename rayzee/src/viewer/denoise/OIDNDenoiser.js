@@ -4,15 +4,23 @@ import { createLogger, fmt } from '../../Logger.js';
 
 const log = createLogger( 'oidn' );
 
-// The tile alignment oidn-web's own planner uses (its tileScheduler.js).
+// The tile alignment oidn-webgpu's own planner uses (its tileScheduler.js).
 const OIDN_TILE_ALIGNMENT = 16;
 
-// Mirrored around the frame: at the network's own boundary (zero padding, or oidn-web's repeated
+// Mirrored around the frame: at the network's own boundary (zero padding, or oidn-webgpu's repeated
 // edge pixel) the outer pixels come out worse than not denoising at all. A multiple of 16 keeps
 // the frame on the network's pooling grid, so pixels away from the edges denoise as before.
 const OIDN_BORDER = 16;
 
-/** The buffer oidn-web reads: the frame inside a mirrored border, both sides a multiple of 16. */
+// The first layer dispatches a workgroup per 64 pixels in one dimension, at most 65,535 (WebGPU's
+// default): a larger tile is rejected without an error and comes back undenoised.
+const OIDN_MAX_TILE_PIXELS = 65535 * 64;
+// Half the large model's receptive field, rounded up to 16: what a tile adds on each shared edge.
+const OIDN_TILE_HALO = 112;
+
+const INPUT_NAMES = [ 'color', 'albedo', 'normal' ];
+
+/** The buffer oidn-webgpu reads: the frame inside a mirrored border, both sides a multiple of 16. */
 function oidnInputSize( width, height ) {
 
 	const align = n => Math.ceil( ( n + 2 * OIDN_BORDER ) / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT;
@@ -27,7 +35,7 @@ async function getInitUNetFromBuffer() {
 
 		// The bundle, not the package main: that is raw tsc output with extensionless imports,
 		// which Node's ESM resolver refuses.
-		_initUNetFromBuffer = ( await import( 'oidn-web/dist/oidn.js' ) ).initUNetFromBuffer;
+		_initUNetFromBuffer = ( await import( 'oidn-webgpu/dist/oidn.js' ) ).initUNetFromBuffer;
 
 	}
 
@@ -39,7 +47,7 @@ import { getAssetConfig } from '../../AssetConfig.js';
 import { sharedDownloads, DOWNLOAD_POLICY } from '../../storage/DownloadCache.js';
 
 const MODEL_CONFIG = {
-	// No cleanAux flag in oidn-web, so the blob is it — and it must match what setCleanAuxNormal
+	// No cleanAux flag in oidn-webgpu, so the blob is it — and it must match what setCleanAuxNormal
 	// feeds the aux MRT: an `alb_nrm` model wants the point-sampled normal, a `calb_cnrm` model
 	// wants the accumulated one. `cleanAux` is carried here rather than inferred from the tier
 	// name, which stopped being possible once a tier other than `fast` used a noisy-aux model.
@@ -61,8 +69,8 @@ const MODEL_CONFIG = {
 	}
 };
 
-// Stands in for OIDN's inputScale, which oidn-web only applies on its CPU path — the GPUBuffer
-// path leaves the uniform at 1.0. Equivalent because oidn-web does PUForward(col*inputScale) in
+// Stands in for OIDN's inputScale, which oidn-webgpu only applies on its CPU path — the GPUBuffer
+// path leaves the uniform at 1.0. Equivalent because oidn-webgpu does PUForward(col*inputScale) in
 // and PUInverse(..)/inputScale out, so pre-multiplying here and dividing it back out of the
 // output exposure round-trips.
 //
@@ -198,6 +206,7 @@ const PACK_WGSL = /* wgsl */`
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var<storage, read_write> dst: array<vec4<f32>>;
 @group(0) @binding(2) var<uniform> size: vec4<u32>; // buffer w, h; frame w, h
+@group(0) @binding(3) var<storage, read_write> broken: atomic<u32>;
 
 fn mirror( i: i32, n: i32 ) -> i32 {
 	let m = abs( i );
@@ -210,7 +219,12 @@ fn main( @builtin(global_invocation_id) gid: vec3<u32> ) {
 	if ( gid.x >= size.x || gid.y >= size.y ) { return; }
 	let p = vec2<i32>( gid.xy ) - ${OIDN_BORDER};
 	let s = vec2<i32>( mirror( p.x, i32( size.z ) ), mirror( p.y, i32( size.w ) ) );
-	dst[ gid.y * size.x + gid.x ] = textureLoad( src, s, 0 );
+	let v = textureLoad( src, s, 0 );
+
+	// NaN and infinity from the bits: a compiler may assume floats are finite.
+	let bad = ( bitcast<vec4<u32>>( v ) & vec4<u32>( 0x7fffffffu ) ) >= vec4<u32>( 0x7f800000u );
+	dst[ gid.y * size.x + gid.x ] = select( v, vec4<f32>( 0.0 ), bad );
+	if ( any( bad ) && all( p >= vec2<i32>( 0 ) ) && all( p < vec2<i32>( size.zw ) ) ) { atomicAdd( &broken, 1u ); }
 }
 `;
 
@@ -247,6 +261,11 @@ export class OIDNDenoiser extends EventDispatcher {
 		this._packPipeline = null;
 		this._packLayout = null;
 		this._packParams = null;
+		// NaN or infinite input pixels, counted by the pack and read back without waiting.
+		this._broken = null;
+		this._brokenRead = null;
+		this._brokenReading = false;
+		this._brokenReported = false;
 		// The autoexposure scale never leaves the GPU — _applyColorScale and the output pack
 		// both read _inputScaleBuffer directly.
 		this._lumReducePipeline = null;
@@ -377,21 +396,24 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * Largest tile that still covers the frame, bounded by the configured cap. One tile means
-	 * zero overlap, which is the cheapest configuration oidn-web has.
+	 * zero overlap, which is the cheapest configuration oidn-webgpu has.
 	 * @returns {number}
 	 */
 	_resolveTileSize() {
 
-		if ( ! this._renderWidth || ! this._renderHeight ) return this.maxTileSize;
+		const cap = Math.min( this.maxTileSize, Math.floor( Math.sqrt( OIDN_MAX_TILE_PIXELS ) ) - 2 * OIDN_TILE_HALO );
+		const tiled = Math.max( OIDN_TILE_ALIGNMENT, Math.floor( cap / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT );
+		if ( ! this._renderWidth || ! this._renderHeight ) return tiled;
 
-		// One tile for any frame no larger in area than the square the cap allows: oidn-web's memory
+		// One tile for any frame no larger in area than the square the cap allows: oidn-webgpu's memory
 		// follows the tile's area, not its longest side, so a wide frame needs no split. The cap is on
 		// the frame, so the border never splits a frame that fits.
 		const input = oidnInputSize( this._renderWidth, this._renderHeight );
 		const largest = oidnInputSize( this.maxTileSize, this.maxTileSize );
-		if ( input.width * input.height <= largest.width * largest.height ) return Math.max( input.width, input.height );
+		const area = input.width * input.height;
+		if ( area <= largest.width * largest.height && area <= OIDN_MAX_TILE_PIXELS ) return Math.max( input.width, input.height );
 
-		return Math.max( OIDN_TILE_ALIGNMENT, Math.floor( this.maxTileSize / OIDN_TILE_ALIGNMENT ) * OIDN_TILE_ALIGNMENT );
+		return tiled;
 
 	}
 
@@ -478,7 +500,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 		}
 
-		// GPU-native path: share the existing GPUDevice so oidn-web uses the
+		// GPU-native path: share the existing GPUDevice so oidn-webgpu uses the
 		// same device as the renderer — no second device, no CPU roundtrip for inputs.
 		let backendParams;
 		if ( this.backendParamsGetter ) {
@@ -665,9 +687,9 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	/**
 	 * GPU-native execution path. Copies render target textures into GPU storage buffers
-	 * (GPU-only, no CPU roundtrip), then passes those buffers to oidn-web's GPUBuffer path.
+	 * (GPU-only, no CPU roundtrip), then passes those buffers to oidn-webgpu's GPUBuffer path.
 	 *
-	 * Note: oidn-web's GPUTexture input path produces NaN outputs — using GPUBuffer instead.
+	 * Note: oidn-webgpu's GPUTexture input path produces NaN outputs — using GPUBuffer instead.
 	 */
 	async _executeUNetGPU( continuous = false ) {
 
@@ -727,18 +749,20 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	/** Copies the render's colour, albedo and normal into the buffers oidn-web reads, border included. @private */
+	/** Copies the render's colour, albedo and normal into the buffers oidn-webgpu reads, border included. @private */
 	_copyInputs( device, textures, width, height ) {
 
 		const input = oidnInputSize( width, height );
 		const encoder = device.createCommandEncoder( { label: 'oidn-tex-to-buf' } );
+		const stride = this._ensureBrokenCounts( device );
+		encoder.clearBuffer( this._broken );
 		const pass = this._beginPack( device, encoder, input, width, height );
 
 		// The normal stays [0,1]-encoded. This contradicts OIDN's API ("must be in the [-1,1]
 		// range") but is right for this port: OIDN's own getNormal (cpu_input_process.isph) does
-		// `value*0.5+0.5` before the network, and oidn-web omits that remap. Decoding to [-1,1]
+		// `value*0.5+0.5` before the network, and oidn-webgpu omits that remap. Decoding to [-1,1]
 		// measured 0.878 -> 2.439 denoise ratio at 64 spp. Do not "fix" it.
-		for ( const name of [ 'color', 'albedo', 'normal' ] ) {
+		for ( const [ k, name ] of INPUT_NAMES.entries() ) {
 
 			pass.setBindGroup( 0, device.createBindGroup( {
 				layout: this._packLayout,
@@ -746,6 +770,7 @@ export class OIDNDenoiser extends EventDispatcher {
 					{ binding: 0, resource: textures[ name ].createView() },
 					{ binding: 1, resource: { buffer: this._gpuInputBuffers[ name ] } },
 					{ binding: 2, resource: { buffer: this._packParams } },
+					{ binding: 3, resource: { buffer: this._broken, offset: k * stride, size: 4 } },
 				],
 			} ) );
 			pass.dispatchWorkgroups( Math.ceil( input.width / PACK_WG_SIZE ), Math.ceil( input.height / PACK_WG_SIZE ) );
@@ -753,12 +778,52 @@ export class OIDNDenoiser extends EventDispatcher {
 		}
 
 		pass.end();
+
+		// Skipped while the last count is still being read: a mapped buffer cannot be written.
+		const read = this._brokenReading ? null : this._brokenRead;
+		if ( read ) for ( let k = 0; k < INPUT_NAMES.length; k ++ ) encoder.copyBufferToBuffer( this._broken, k * stride, read, k * 4, 4 );
 		device.queue.submit( [ encoder.finish() ] );
+		if ( read ) this._readBrokenCounts( read );
+
+	}
+
+	/** One counter per input, each at its own storage-binding offset. @returns {number} the stride @private */
+	_ensureBrokenCounts( device ) {
+
+		const stride = device.limits.minStorageBufferOffsetAlignment;
+		if ( ! this._broken ) {
+
+			this._broken = device.createBuffer( { label: 'oidn-broken-pixels', size: stride * INPUT_NAMES.length, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST } );
+			this._brokenRead = device.createBuffer( { label: 'oidn-broken-pixels-read', size: 4 * INPUT_NAMES.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST } );
+
+		}
+
+		return stride;
+
+	}
+
+	/** Reports NaN or infinite input pixels once, until a frame arrives without any. @private */
+	_readBrokenCounts( read ) {
+
+		this._brokenReading = true;
+		read.mapAsync( GPUMapMode.READ ).then( () => {
+
+			const [ color, albedo, normal ] = new Uint32Array( read.getMappedRange() );
+			read.unmap();
+			const pixels = color + albedo + normal;
+			if ( pixels > 0 && ! this._brokenReported ) this.dispatchEvent( { type: 'nonFinite', color, albedo, normal } );
+			this._brokenReported = pixels > 0;
+
+		}, () => {} ).finally( () => {
+
+			this._brokenReading = false;
+
+		} );
 
 	}
 
 	/**
-	 * Creates or recreates the GPU storage buffers used as oidn-web inputs.
+	 * Creates or recreates the GPU storage buffers used as oidn-webgpu inputs.
 	 * Reuses existing buffers if the resolution hasn't changed.
 	 */
 	_ensureGPUInputBuffers( width, height ) {
@@ -793,6 +858,7 @@ export class OIDNDenoiser extends EventDispatcher {
 					{ binding: 0, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
 					{ binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
 					{ binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+					{ binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
 				],
 			} );
 			this._packPipeline = device.createComputePipeline( {
@@ -1013,7 +1079,7 @@ export class OIDNDenoiser extends EventDispatcher {
 
 	}
 
-	/** Bytes of the GPU memory this pass allocates itself; oidn-web's network is not among them. */
+	/** Bytes of the GPU memory this pass allocates itself; oidn-webgpu's network is not among them. */
 	gpuBytes() {
 
 		const { color, albedo, normal } = this._gpuInputBuffers;
@@ -1209,7 +1275,7 @@ export class OIDNDenoiser extends EventDispatcher {
 				},
 				progress: ( outputData, _tileData, tile ) => {
 
-					// oidn-web GPU path: tileData is null, but outputData holds the assembled
+					// oidn-webgpu GPU path: tileData is null, but outputData holds the assembled
 					// full-image buffer updated after each tile. The unpack pass reads that tile's
 					// rectangle straight out of it, so there are no row-by-row buffer copies.
 					if ( ! outputData?.data || ! tile ) return;
@@ -1327,6 +1393,9 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.unet?.dispose();
 		this._destroyGPUInputBuffers();
 		this._releaseOutputTexture();
+		this._broken?.destroy();
+		this._brokenRead?.destroy();
+		this._broken = this._brokenRead = null;
 		this._colorScalePipeline = null;
 		this._lumReducePipeline = null;
 		this._lumFinalizePipeline = null;

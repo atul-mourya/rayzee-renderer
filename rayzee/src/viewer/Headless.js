@@ -22,7 +22,9 @@ import { PathTracerApp } from './PathTracerApp.js';
  * @param {boolean} [options.strict=true]
  * @param {boolean} [options.deterministic=true]
  * @param {boolean} [options.allowEarlyRetire=false] - needs `deterministic: false` to be reachable
- * @param {boolean} [options.denoise=false] - one final OIDN pass, read back instead of the raw accumulation
+ * @param {boolean|{quality?: string, tileSize?: number}} [options.denoise=false] - one final OIDN pass, read back
+ *   instead of the raw accumulation; an object also picks the model ('fast' | 'fast-clean' | 'balance' | 'high') and
+ *   the tile cap (see OIDNDenoiser)
  * @param {Object} [options.settings] - applied before the model loads and again after it
  * @param {function(number): void} [options.onProgress] - running sample count
  * @returns {Promise<{data: Float32Array|Uint8ClampedArray, width: number, height: number,
@@ -61,9 +63,19 @@ export async function captureHeadless( app, {
 	// Before accumulating: OIDN reads the albedo and normal buffers, which are only written while it is
 	// on. Not setOIDNEnabled(), whose refresh would wake the loop; renderFrames resets anyway.
 	const dm = app.denoisingManager;
-	if ( denoise && dm && ! dm.finalDenoise ) {
+	if ( denoise && dm ) {
 
-		dm.applyOIDNEnabled( true );
+		const { quality, tileSize } = denoise === true ? {} : denoise;
+		if ( quality ) {
+
+			await dm.denoiser?.updateQuality( quality );
+			dm.applyOIDNQuality( quality );
+
+		}
+
+		if ( tileSize ) await dm.denoiser?.updateConfiguration( { tileSize } );
+		if ( ! dm.finalDenoise ) dm.applyOIDNEnabled( true );
+		// The model decides whether the guides accumulate.
 		dm._syncGBufferStages();
 
 	}

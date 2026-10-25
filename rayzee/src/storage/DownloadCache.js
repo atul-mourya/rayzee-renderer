@@ -1,6 +1,7 @@
 import { ENGINE_AREAS } from './areas.js';
 import { sharedStorage } from './shared.js';
 import { getAssetConfig } from '../AssetConfig.js';
+import { getPlatform } from '../Platform.js';
 
 const DAY_MS = 86_400_000;
 
@@ -99,6 +100,15 @@ export class DownloadCache {
 		signal = null,
 		fetchOptions = {},
 	} = {} ) {
+
+		const { readFile } = getPlatform();
+		if ( readFile && /^file:/i.test( url ) ) {
+
+			const bytes = await readFile( new URL( url ) );
+			onProgress?.( progressEvent( bytes.byteLength, bytes.byteLength ) );
+			return { file: new File( [ bytes ], name ), release: noop, fromCache: false };
+
+		}
 
 		const area = this._area;
 

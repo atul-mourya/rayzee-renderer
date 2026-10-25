@@ -86,6 +86,33 @@ describeGPU( 'OIDN input copy', () => {
 
 	} );
 
+	it( 'zeroes NaN and infinity and counts each broken frame pixel once', async () => {
+
+		const width = 20, height = 6;
+		const names = [ 'color', 'albedo', 'normal' ];
+		const pixels = names.map( () => new Float32Array( width * height * 4 ).fill( 0.5 ) );
+		pixels[ 0 ][ 0 ] = NaN;
+		pixels[ 0 ][ ( 3 * width + 7 ) * 4 + 1 ] = Infinity;
+		pixels[ 0 ][ ( 5 * width + 19 ) * 4 + 3 ] = - Infinity;
+		pixels[ 2 ][ ( 2 * width + 2 ) * 4 + 2 ] = NaN;
+		const textures = Object.fromEntries( names.map( ( name, k ) => [ name, texture( pixels[ k ], width, height ) ] ) );
+
+		const p = pass( width, height );
+		const reported = new Promise( resolve => p.addEventListener( 'nonFinite', resolve ) );
+		p._copyInputs( device, textures, width, height );
+		const { color, albedo, normal } = await reported;
+		expect( [ color, albedo, normal ] ).toEqual( [ 3, 0, 1 ] );
+
+		const W = align( width );
+		const packed = new Float32Array( await read( p._gpuInputBuffers.color ) );
+		expect( packed.every( Number.isFinite ) ).toBe( true );
+		const at = ( x, y ) => Array.from( packed.subarray( ( ( y + BORDER ) * W + x + BORDER ) * 4, ( ( y + BORDER ) * W + x + BORDER ) * 4 + 4 ) );
+		expect( at( 0, 0 ) ).toEqual( [ 0, 0.5, 0.5, 0.5 ] );
+		expect( at( 7, 3 ) ).toEqual( [ 0.5, 0, 0.5, 0.5 ] );
+		expect( at( 19, 5 ) ).toEqual( [ 0.5, 0.5, 0.5, 0 ] );
+
+	} );
+
 	it( 'meters exposure on the frame, not its border', async () => {
 
 		const width = 21, height = 9;

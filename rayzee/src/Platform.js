@@ -19,6 +19,8 @@ const platform = {
 	 * every glTF image in place of the browser.
 	 */
 	decodeImage: null,
+	/** `( url: URL ) => Promise<Uint8Array>`: the bytes of a `file:` URL, which Node's `fetch` cannot open. */
+	readFile: null,
 };
 
 /** @param {Partial<typeof platform>} overrides - only the keys given are replaced */

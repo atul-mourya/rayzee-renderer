@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { changedKeys, readTrend, runPerfInterleaved } from '../../../bench/runner/perf.js';
+import { changedKeys, readTrend, runPerf, runPerfInterleaved } from '../../../bench/runner/perf.js';
+import { PERF } from '../../../bench/runner/config.js';
 
 function fakeBench( label, calls, workload ) {
 
@@ -20,6 +21,43 @@ function fakeBench( label, calls, workload ) {
 	};
 
 }
+
+describe( 'runPerf', () => {
+
+	const withDenoise = ( calls ) => ( {
+		...fakeBench( 'one', calls ),
+		measureDenoiseGPU: async ( { quality } ) => {
+
+			calls.push( `denoise:${quality}` );
+			return { ms: [ 3, 4, 5 ], tileSize: 1024, model: 'large', precision: 'fp16' };
+
+		},
+	} );
+
+	it( 'adds one OIDN entry a tier, its own measure, after the scenes', async () => {
+
+		const calls = [];
+		const { results } = await runPerf( withDenoise( calls ) );
+
+		expect( results.map( ( r ) => r.scene ) ).toEqual( [ 'scene', ...PERF.denoise.qualities.map( ( q ) => `oidn-${q}` ) ] );
+		expect( results[ 1 ] ).toMatchObject( {
+			measure: 'oidn',
+			computeMsPerSample: { median: 4 },
+			workload: { width: PERF.denoise.width, height: PERF.denoise.height, model: 'large', precision: 'fp16', tileSize: 1024 },
+		} );
+
+	} );
+
+	it( 'measures only OIDN for --only oidn, and only scenes for any other --only', async () => {
+
+		const calls = [];
+		expect( ( await runPerf( withDenoise( calls ), { only: [ 'oidn' ] } ) ).results.every( ( r ) => r.measure === 'oidn' ) ).toBe( true );
+		expect( calls.some( ( c ) => c.endsWith( ':measure' ) ) ).toBe( false );
+		expect( ( await runPerf( withDenoise( [] ), { only: [ 'scene' ] } ) ).results.map( ( r ) => r.scene ) ).toEqual( [ 'scene' ] );
+
+	} );
+
+} );
 
 describe( 'runPerfInterleaved', () => {
 
