@@ -311,7 +311,7 @@ function transmittanceSpectrum( coefficients, depth ) {
 
 }
 
-export { LIMB_DARKENING_EXPONENT } from './SolarLimb.js';
+export { LIMB_DARKENING_EXPONENT } from '../../environment/SolarLimb.js';
 
 /** Solid angle of a cone of the given half-angle, without the cancellation `2π(1 − cos)` suffers. */
 export function coneSolidAngle( halfAngle ) {

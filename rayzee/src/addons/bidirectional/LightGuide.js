@@ -15,7 +15,7 @@ import {
 	dot, sqrt, cos, sin, atomicAdd, atomicLoad, atomicStore,
 } from 'three/tsl';
 
-import { COUNTER, GUIDE_COUNTER_WORDS } from '../pathtracer/QueueManager.js';
+import { COUNTER, GUIDE_COUNTER_WORDS } from '../../pathtracer/QueueManager.js';
 
 const GUIDE_BIN_SIDE = 4;
 export const GUIDE_BINS = GUIDE_BIN_SIDE * GUIDE_BIN_SIDE;

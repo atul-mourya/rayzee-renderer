@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	shape, unshape, bakeLut, makeCpuSampler, tetrahedron, packHalf, unpackHalf, measureBakeError,
-} from '@/core/color/LutBake.js';
+} from '@/core/addons/color/LutBake.js';
 
 const MIN_EV = - 12.47393, MAX_EV = 12.5260688117, SIZE = 33;
 

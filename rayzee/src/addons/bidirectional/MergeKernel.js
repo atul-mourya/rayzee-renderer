@@ -15,11 +15,11 @@ import {
 	length, log2, exp2, Break, abs,
 } from 'three/tsl';
 
-import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
-import { calculateMaterialPDF } from '../LightsSampling.js';
-import { luminance } from '../Common.js';
-import { regularizePathContribution } from '../PathTracerCore.js';
-import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, facingSide, STRATEGY } from '../Bidirectional.js';
+import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
+import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
+import { luminance } from '../../shaders/Common.js';
+import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
+import { resolveSurfaceMaterial, misMergePartial, misWeight, strategyWeight, mergeRadiusAt, mergeEta, facingSide, STRATEGY } from './Bidirectional.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import {
 	readRayRadiance, writeRayRadiance, pendingVertex, cachedVertex, readVertexTag, readVertexRecord, readVertexPosition,

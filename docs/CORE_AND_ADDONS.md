@@ -183,7 +183,7 @@ the core. Without it the core's programs carry none of that code, and still rend
    1,622 → 1,351 lines); a host's own format registers the same way. glTF's Draco, KTX2 and meshopt decoders are
    imported only for a file that uses them (`GLTFDecoders.js`). Built as a host would (the core-browser example):
    the main chunk 577 → 534 KB gzip, and the seven model-loader chunks are no longer emitted.
-17. **USD in the archives add-on** — our own USD importer (`loaders/usd/`: crate and text readers, composition, and
+17. **USD in the archives add-on** — our own USD importer (`addons/archives/usd/`: crate and text readers, composition, and
    translation into the pbrt builder's scene description) is reached only through `ArchiveImporter`, for a folder or
    archive whose main model is a USD layer and for a loose `.usd` / `.usda` / `.usdc`. A `.usdz` stays with three.js's
    loader in `rayzee/addons/formats`. The core learned nothing about USD: the importer hands the scene over as the pbrt

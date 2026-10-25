@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BufferGeometry, DataTexture, DoubleSide, Float32BufferAttribute, FrontSide, Matrix4, Mesh, NoColorSpace, OrthographicCamera, PerspectiveCamera, Texture, Vector3 } from 'three';
-import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/loaders/pbrt/index.js';
+import { loadPBRTScene, pickEntryPath, PBRTParser, PBRTSceneBuilder } from '@/core/addons/archives/pbrt/index.js';
 import { deriveAlphaMode } from '@/core/scene/GeometryExtractor.js';
 
 const enc = new TextEncoder();

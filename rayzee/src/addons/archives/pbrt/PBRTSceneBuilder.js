@@ -30,7 +30,7 @@ import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
-import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../scene/GeometryExtractor.js';
+import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../../scene/GeometryExtractor.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -93,7 +93,7 @@ const DEFAULT_TRIANGLE_BUDGET = 45_000_000;
 // Placements are their own budget: geometry is shared, but each costs a TLAS leaf and an
 // instance record. isCoastline's 5.09M loaded and rendered at 23 fps.
 const DEFAULT_PLACEMENT_BUDGET = 6_000_000;
-export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../../memory/HostMemory.js';
+export { SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../../../memory/HostMemory.js';
 // Non-instanced shapes merge into a few large meshes: isPalmRig declares 173,338 of them,
 // and one BufferGeometry + Mesh each measured 3.3 GB — the loader OOM'd before tracing.
 const DEFAULT_MERGE_MIN_SHAPES = 256;

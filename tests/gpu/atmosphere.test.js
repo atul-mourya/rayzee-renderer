@@ -2,9 +2,9 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { Vector3, Vector4 } from 'three';
 import { uniform, vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { PhysicalSky } from '@/core/environment/PhysicalSky.js';
+import { PhysicalSky } from '@/core/addons/physicalSky/PhysicalSky.js';
 import { buildExactEnvironmentTable } from '@/core/environment/EnvironmentExactTable.js';
-import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/environment/AtmosphereModel.js';
+import { atmosphereCoefficients, coneSolidAngle, LAMBDA_COUNT } from '@/core/addons/physicalSky/AtmosphereModel.js';
 import { sunRadianceToward, sampleSunDisc } from '@/core/shaders/Sun.js';
 import { depthTable, referenceRadiance, singleScattering, spectrumToEngineRGB } from './skyReference.js';
 

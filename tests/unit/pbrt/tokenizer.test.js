@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tokenize, TokenStream, TokenType } from '@/core/loaders/pbrt/PBRTTokenizer.js';
+import { tokenize, TokenStream, TokenType } from '@/core/addons/archives/pbrt/PBRTTokenizer.js';
 
 const enc = new TextEncoder();
 const values = src => tokenize( src ).map( t => t.value );

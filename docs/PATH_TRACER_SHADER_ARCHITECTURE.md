@@ -76,7 +76,7 @@ Kernels use `Fn()`, `.compute()`, `If()`, `Loop()`, `.toVar()`, `.assign()`, and
 
 ### Bidirectional add-on kernels
 
-Built and dispatched by `pathtracer/BidirectionalIntegrator.js`, never by `PathTracer` itself (see [Bidirectional integrator](#bidirectional-integrator)).
+Built and dispatched by `addons/bidirectional/BidirectionalIntegrator.js`, never by `PathTracer` itself (see [Bidirectional integrator](#bidirectional-integrator)).
 
 | TSL Module | Key Exports | Role |
 |---|---|---|
@@ -319,7 +319,7 @@ Until 2026-10 the CPU sized each bounce from the curve, `1.5 × survivors + 1024
 - Hit: an `EMISSION_ONLY` segment ends at once on an opaque surface that does not glow. Otherwise: material textures (`sampleAllMaterialTextures`), aux G-buffer commits, emission (MIS-weighted against emissive NEE), transparency / transmission / medium stack / subsurface (`handleMaterialTransparency`), direct lighting (`calculateDirectLightingUnified`: lamp, environment and sun NEE), emissive-triangle NEE when `enableEmissiveTriangleSampling` is on (light BVH when `lightBVHNodeCount > 0`, else `calculateEmissiveTriangleContribution`), then the bounce (`generateSampledDirection` → `calculateIndirectLighting`), Russian roulette (`handleRussianRoulette`), and the continued ray.
 
 ### Bidirectional integrator
-Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: `rayzee/addons/bidirectional` exports `BidirectionalIntegrator` (`pathtracer/BidirectionalIntegrator.js`), installed with `pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` (`PathTracerApp` does this). `setIntegrator()` picks it and rebuilds the kernels; an unregistered name records `capability.missing`. `'path'` builds exactly the unidirectional kernels.
+Opt-in (`settings.set( 'integrator', 'bidirectional' | 'vcm' )`) and an add-on: `rayzee/addons/bidirectional` exports `BidirectionalIntegrator` (`addons/bidirectional/BidirectionalIntegrator.js`), installed with `pathTracer.registerIntegrator( [ 'bidirectional', 'vcm' ], pt => new BidirectionalIntegrator( pt ) )` (`PathTracerApp` does this). `setIntegrator()` picks it and rebuilds the kernels; an unregistered name records `capability.missing`. `'path'` builds exactly the unidirectional kernels.
 
 `PathTracer` calls the integrator at fixed points: at build `beforeKernelBuild()`, `hitStride`, `cacheBytes()` and `lightVertices` (path budget and hit buffer), `allocate()`, `registerKernels()`; per frame `beginFrame()`, `beforeShade()`, `afterShade()`, `resolve()`; at readback `curveKey` and `applyLightCurve()`. The integrator owns its uniforms, buffers and kernels. Generate and Shade receive its `uniforms` as `bidirectional` and take the bidirectional shading functions from `uniforms.lib` (`Bidirectional.js`, `BidirectionalLamps.js`, `guidedDiscPdf`, `recordEscape`), so the core imports none of them. Its controls are on `pathTracer.activeIntegrator`.
 
@@ -428,7 +428,7 @@ Turns the `generateSampledDirection` draw into the bounce: throughput `f · NoL 
 `sampleEnvironment` evaluates radiance for arbitrary directions; a cell's density is its share of the table over its uv area, divided by 2π² sin θ for solid angle. `envTotalSum` > 0 says a table is bound. `getGroundProjectedDirection` / `groundProjectedEnvDir` bend the primary-ray background lookup onto a virtual ground when ground projection is enabled.
 
 ### The physical sky
-An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`environment/PhysicalSky.js`, bake kernels in `shaders/Atmosphere.js`; the table by `shaders/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
+An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode only once `environmentManager.setProceduralSky( PhysicalSky )` has installed the class (`PathTracerApp` does this); without it the mode records `capability.missing`. The sky texture and its table are both written on the GPU (`addons/physicalSky/PhysicalSky.js`, bake kernels in `addons/physicalSky/Atmosphere.js`; the table by `addons/physicalSky/EnvironmentCDF.js`, the GPU twin of `buildExactEnvironmentTable` in the same packed layout), so the samplers above read them exactly as they read an HDRI's. `envTotalSum` arrives a few frames after each bake. The sun is not in the texture: environment NEE's loop runs a second pass for it (`sampleSunDisc`, 2D dimension +9).
 
 ---
 
@@ -536,7 +536,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 ## Extension Points
 
 1. **Add a new material lobe**: integrate into `calculateBRDFWeights`, the `generateSampledDirection` lobe chain (PathTracerCore.js), the mixture density `calculateBSDFSamplingPDF`, and `evaluateMaterialResponse`.
-2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `shaders/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
+2. **Change environment sampling**: keep `sampleEnvironmentExact` and `environmentPdfExact` drawing and reporting from the same table, and `addons/physicalSky/EnvironmentCDF.js` in step with `buildExactEnvironmentTable`. An alias table was tried: unbiased, but it broke the samples' stratification and doubled a furnace's noise.
 3. **Add a wavefront kernel**: build a new `Fn().compute()`, register it in `_buildWavefrontKernels`, dispatch it in `render()`. A new integrator plugs into the integrator hooks instead (see `BidirectionalIntegrator`); never branch on it inside `PathTracer`.
 4. **Per-triangle custom attributes**: expand the triangle layout (`scene/BufferLayout.js`), the geo/shade split in `PathTracerStage._uploadTriangles`, and the interpolation in `traverseBVH`.
 5. **Per-pixel ray policies**: `freezeMask` already decides which pixels are traced (the pixel freeze), `buildActivePixels` lists them and `generateList` traces only that list.
@@ -567,7 +567,7 @@ Modes 1–10 dispatch a single `DebugKernel` (one primary-ray hit per pixel, no 
 |---|---|---|
 | `pathtracer/PathTracer.js` | `render()`, `_buildWavefrontKernels()`, `_computePathBudget()`, `_setChunk()`, `setIntegrator()`, `requestOutput()` | Per-frame dispatch order, kernel build, path budget, integrator hooks |
 | `pathtracer/PathTracerStage.js` | `setupMaterial()`, `updateAllMeshVisibility()`, `_patchTLASLeafVisibility()`, `_uploadTriangles()` | Shared infra, scene texture nodes, mesh visibility |
-| `pathtracer/BidirectionalIntegrator.js` | `registerKernels()`, `beginFrame()`, `afterShade()`, `resolve()` | Bidirectional / VCM add-on |
+| `addons/bidirectional/BidirectionalIntegrator.js` | `registerKernels()`, `beginFrame()`, `afterShade()`, `resolve()` | Bidirectional / VCM add-on |
 | `shaders/kernels/GenerateKernel.js` | `buildGenerateKernel()` | Primary ray generation |
 | `shaders/kernels/ExtendKernel.js` | `buildExtendKernel()` | Closest-hit traversal |
 | `shaders/kernels/ShadeKernel.js` | `buildShadeKernel()` | Direct/indirect lighting, transmission, aux G-buffer |

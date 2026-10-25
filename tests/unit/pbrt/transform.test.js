@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Mesh, BufferGeometry, Float32BufferAttribute } from 'three';
-import { loadPBRTScene } from '@/core/loaders/pbrt/index.js';
+import { loadPBRTScene } from '@/core/addons/archives/pbrt/index.js';
 
 const enc = new TextEncoder();
 

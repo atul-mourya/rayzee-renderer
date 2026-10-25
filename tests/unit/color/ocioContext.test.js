@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ColorManagement } from '@/core/color/ColorManagement.js';
+import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { VIEW_TRANSFORMS } from '@/core/color/ViewTransforms.js';
 

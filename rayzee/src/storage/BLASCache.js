@@ -84,7 +84,7 @@ export async function templateChecksums( records, templates ) {
 }
 
 /**
- * @param {import('./StorageManager.js').StorageManager} storage
+ * @param {import('../addons/storage/StorageManager.js').StorageManager} storage
  * @returns {Promise<?{index: Object, nodes: File, order: File, release: function(): void}>}
  */
 export async function openBLASCache( storage, key ) {

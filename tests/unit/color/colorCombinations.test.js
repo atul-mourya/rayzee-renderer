@@ -9,11 +9,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { HalfFloatType } from 'three';
-import { ColorManagement } from '@/core/color/ColorManagement.js';
-import { isDataView, isHdrDisplay, matchingView, hdrViewFor, sameToneMapping } from '@/core/color/Displays.js';
-import { XYZ_TO_CANVAS, displayReferenceSpace } from '@/core/color/OcioViews.js';
-import { unshape, makeCpuSampler } from '@/core/color/LutBake.js';
-import { describeConfig, getRuntime, getConfigInfo } from '@/core/color/OcioRuntime.js';
+import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
+import { isDataView, isHdrDisplay, matchingView, hdrViewFor, sameToneMapping } from '@/core/addons/color/Displays.js';
+import { XYZ_TO_CANVAS, displayReferenceSpace } from '@/core/addons/color/OcioViews.js';
+import { unshape, makeCpuSampler } from '@/core/addons/color/LutBake.js';
+import { describeConfig, getRuntime, getConfigInfo } from '@/core/addons/color/OcioRuntime.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { looksForView } from '@/lib/colorLabels.js';
 

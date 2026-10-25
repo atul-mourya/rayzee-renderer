@@ -11,7 +11,7 @@ const FILE = 'chunks.bin';
 export class SpillStore {
 
 	/**
-	 * @param {import('./StorageManager.js').StorageManager} storage
+	 * @param {import('../addons/storage/StorageManager.js').StorageManager} storage
 	 * @param {string} key
 	 * @param {number} chunkBytes - the byte stride of one full chunk
 	 * @returns {Promise<?SpillStore>} null without storage, or with no room

@@ -127,7 +127,7 @@ saying the environment was left converted.
   an HDR video) is an export's job, from OCIO with the same view.
 - **HDR on screen** (`app.color.setHdrOutput( true )`, off in the engine; the app turns it on while
   `(dynamic-range: high)` matches, switch "HDR" in the panel, remembered per device). The canvas shows the
-  active view's HDR version from the config — `hdrViewFor` (`color/Displays.js`): the same tone mapping on
+  active view's HDR version from the config — `hdrViewFor` (`addons/color/Displays.js`): the same tone mapping on
   one of the config's HDR displays, 1000 nits first, then P3, an EDR display, PQ (Blender's AgX → "AgX - HDR
   1000 nits" on Rec.2100-PQ; ACES 1.3's "ACES 1.0 - SDR Video" → "ACES 1.1 - HDR Video (1000 nits & P3 lim)");
   an untagged view (Standard, Un-tone-mapped) is its own; Filmic and Khronos Neutral have none

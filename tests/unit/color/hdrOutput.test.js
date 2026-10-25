@@ -5,12 +5,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { HalfFloatType, NoToneMapping, AgXToneMapping } from 'three';
-import { ColorManagement } from '@/core/color/ColorManagement.js';
+import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
 import { BasicColor } from '@/core/color/BasicColor.js';
-import { hdrViewFor, isHdrDisplay, isDataView } from '@/core/color/Displays.js';
-import { XYZ_TO_CANVAS, encodeExtended, displayReferenceSpace, buildCanvasView } from '@/core/color/OcioViews.js';
-import { makeCpuSampler } from '@/core/color/LutBake.js';
-import { describeConfig, getRuntime } from '@/core/color/OcioRuntime.js';
+import { hdrViewFor, isHdrDisplay, isDataView } from '@/core/addons/color/Displays.js';
+import { XYZ_TO_CANVAS, encodeExtended, displayReferenceSpace, buildCanvasView } from '@/core/addons/color/OcioViews.js';
+import { makeCpuSampler } from '@/core/addons/color/LutBake.js';
+import { describeConfig, getRuntime } from '@/core/addons/color/OcioRuntime.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 

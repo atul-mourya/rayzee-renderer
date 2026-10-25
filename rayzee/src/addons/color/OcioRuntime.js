@@ -12,8 +12,8 @@
  * resolution, view transforms, export — reads it from here.
  */
 
-import { getAssetConfig } from '../AssetConfig.js';
-import { createLogger } from '../Logger.js';
+import { getAssetConfig } from '../../AssetConfig.js';
+import { createLogger } from '../../Logger.js';
 
 const log = createLogger( 'ocio' );
 

@@ -14,7 +14,7 @@
  *     { type: 'error', message, id? }
  */
 
-import { openInlineStorage } from '../../storage/StorageManager.js';
+import { openInlineStorage } from '../../addons/storage/StorageManager.js';
 import { DownloadCache } from '../../storage/DownloadCache.js';
 
 // Asset config supplied via 'load' message from the main thread.

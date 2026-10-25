@@ -20,7 +20,7 @@
 
 import { LinearSRGBColorSpace, SRGBColorSpace, NoToneMapping, HalfFloatType } from 'three';
 
-import { ISSUE_CODES } from '../EngineIssues.js';
+import { ISSUE_CODES } from '../../EngineIssues.js';
 import { displayCanvasFit, hdrViewFor, isHdrDisplay, findNativeLinearSpace } from './Displays.js';
 
 import {
@@ -35,7 +35,7 @@ import {
 	VIEW_TRANSFORMS, getViewTransform, listViewTransforms, removeOcioViewTransforms,
 	registerWithRenderer, onRegistryChange, getRegistryVersion, resetViewTransforms, FALLBACK_VIEW,
 	countTableTransforms, MAX_TABLE_TRANSFORMS, removeViewTransform, addViewTransform,
-} from './ViewTransforms.js';
+} from '../../color/ViewTransforms.js';
 import {
 	addOcioView, addAllOcioViews, buildBakedView, disposeOcioViewTextures, forgetOcioView, setOcioIssueLog, releaseDerivedConfig,
 	buildCanvasView, buildBakedCanvasView, canvasFitOf,
@@ -45,9 +45,9 @@ import {
 	resolveInputSpace, textureInputSpace, resolveTextureSpace, setInputOverride, clearInputOverrides,
 	listFileRules, getInputVersion, bumpInputVersion,
 } from './InputColorSpaces.js';
-import { setWorkingMatrix, convertLinearTriple, convertLinearTriples } from './WorkingMatrix.js';
+import { setWorkingMatrix, convertLinearTriple, convertLinearTriples } from '../../color/WorkingMatrix.js';
 import { packHalf, unpackHalf } from './LutBake.js';
-import { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManagement, claimActiveColorManagement } from './ActiveColor.js';
+import { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManagement, claimActiveColorManagement } from '../../color/ActiveColor.js';
 
 export { DEFAULT_WORKING_SPACE, getActiveColorManagement, setActiveColorManagement };
 

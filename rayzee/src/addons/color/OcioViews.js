@@ -16,14 +16,14 @@ import {
 	Fn, vec3, ivec3, float, int, floor, clamp, log2, max, min, mix, step, sign, dot, If, texture3DLoad,
 } from 'three/tsl';
 
-import { ISSUE_CODES } from '../EngineIssues.js';
+import { ISSUE_CODES } from '../../EngineIssues.js';
 import { displayCanvasFit, isDataView, isHdrDisplay, findNativeLinearSpace } from './Displays.js';
 import { getRuntime, getConfigInfo, getConfigText, describeConfig } from './OcioRuntime.js';
 import { extractMatrix } from './ColorSpaces.js';
 import { bakeLut, bakeCurve, curveSlices, encodeExtended, makeCpuSampler, packHalf, lutWgsl, measureBakeError, edgeColours } from './LutBake.js';
 
 export { encodeExtended };
-import { addViewTransform, nextOcioId, VIEW_TRANSFORMS } from './ViewTransforms.js';
+import { addViewTransform, nextOcioId, VIEW_TRANSFORMS } from '../../color/ViewTransforms.js';
 
 /** 25 stops, which is wider than any renderer output worth showing. */
 export const DEFAULT_MIN_EV = - 12.47393;

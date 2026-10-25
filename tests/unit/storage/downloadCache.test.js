@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/storage/openStorage.js';
+import { openStorage } from '@/core/addons/storage/openStorage.js';
 import { DownloadCache, DOWNLOAD_POLICY, nameFromUrl } from '@/core/storage/DownloadCache.js';
 import { configurePlatform } from '@/core/Platform.js';
 

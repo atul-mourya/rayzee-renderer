@@ -5,8 +5,8 @@ import {
 	SpotLight, DirectionalLight, HemisphereLight, Vector3,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/storage/openStorage.js';
-import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, ARCHIVE_PATH } from '@/core/storage/SceneGraphCodec.js';
+import { openStorage } from '@/core/addons/storage/openStorage.js';
+import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, ARCHIVE_PATH } from '@/core/addons/archives/SceneGraphCodec.js';
 import { rangeChecksum } from '@/core/storage/BLASCache.js';
 import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 import { worthStoring } from '@/core/storage/sceneCachePolicy.js';

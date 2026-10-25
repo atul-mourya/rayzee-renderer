@@ -15,7 +15,7 @@ import { createLogger, fmt } from './Logger.js';
 import { EngineEvents, LEGACY_EVENT_NAMES, updateStats, resetLoading, setStatusCallback } from './EngineEvents.js';
 import { IssueLog, ISSUE_CODES } from './EngineIssues.js';
 import { getAssetConfig, isAssetConfigured } from './AssetConfig.js';
-import { isFolderInput } from './loaders/archives/archiveFormats.js';
+import { isFolderInput } from './loaders/archiveFormats.js';
 import { BasicColor } from './color/BasicColor.js';
 import { setActiveColorManagement } from './color/ActiveColor.js';
 import { getViewTransform, DEFAULT_VIEW } from './color/ViewTransforms.js';

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ColorManagement, findNativeLinearSpace, canvasColorSpaceFor } from '@/core/color/ColorManagement.js';
+import { ColorManagement, findNativeLinearSpace, canvasColorSpaceFor } from '@/core/addons/color/ColorManagement.js';
 import { getWorkingMatrix, setWorkingMatrix } from '@/core/color/WorkingMatrix.js';
 import { EmissiveTriangleBuilder } from '@/core/lights/EmissiveTriangleBuilder.js';
 import { configureAssets } from '@/core/AssetConfig.js';

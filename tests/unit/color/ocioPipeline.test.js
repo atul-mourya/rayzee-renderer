@@ -8,15 +8,15 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { ColorManagement } from '@/core/color/ColorManagement.js';
+import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
 import {
 	VIEW_TRANSFORMS, listViewTransforms, buildToneMapWGSL, getRegistryVersion, countTableTransforms, MAX_TABLE_TRANSFORMS,
 } from '@/core/color/ViewTransforms.js';
-import { addOcioView, buildOcioView, forgetOcioView } from '@/core/color/OcioViews.js';
+import { addOcioView, buildOcioView, forgetOcioView } from '@/core/addons/color/OcioViews.js';
 import { TONE_MAP_FNS, toneMapToRGBA8, isOutputEncoded } from '@/core/output/ToneMapCPU.js';
 import { getWorkingMatrix, convertLinearTriple } from '@/core/color/WorkingMatrix.js';
 import { configureAssets } from '@/core/AssetConfig.js';
-import { getRuntime } from '@/core/color/OcioRuntime.js';
+import { getRuntime } from '@/core/addons/color/OcioRuntime.js';
 
 const BUILTIN = 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
 

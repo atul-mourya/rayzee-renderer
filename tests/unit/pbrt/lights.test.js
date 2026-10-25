@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { DirectionalLight, PointLight, SpotLight, Vector3 } from 'three';
-import { loadPBRTScene } from '@/core/loaders/pbrt/index.js';
-import { decodePFM } from '@/core/loaders/pbrt/PFM.js';
+import { loadPBRTScene } from '@/core/addons/archives/pbrt/index.js';
+import { decodePFM } from '@/core/addons/archives/pbrt/PFM.js';
 
 const enc = new TextEncoder();
 

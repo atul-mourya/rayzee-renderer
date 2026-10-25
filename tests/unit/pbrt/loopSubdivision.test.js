@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loopSubdivide } from '@/core/loaders/pbrt/LoopSubdivision.js';
+import { loopSubdivide } from '@/core/addons/archives/pbrt/LoopSubdivision.js';
 
 // Closed tetrahedron — no boundary, every vertex valence 3.
 const TETRA_P = [ 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 ];

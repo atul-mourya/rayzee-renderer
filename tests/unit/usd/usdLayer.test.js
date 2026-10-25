@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseUSDA } from '@/core/loaders/usd/USDText.js';
-import { parseUSDC, Crate, composeListOps, Ref } from '@/core/loaders/usd/USDLayer.js';
+import { parseUSDA } from '@/core/addons/archives/usd/USDText.js';
+import { parseUSDC, Crate, composeListOps, Ref } from '@/core/addons/archives/usd/USDLayer.js';
 
 const fixture = name => readFileSync( new URL( `./fixtures/${name}`, import.meta.url ) );
 const text = () => parseUSDA( fixture( 'crate.usda' ).toString( 'utf8' ), 'fx/crate.usda' );

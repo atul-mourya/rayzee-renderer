@@ -5,13 +5,13 @@ vi.hoisted( () => {
 	globalThis.ProgressEvent ??= class extends Event {};
 
 } );
-import { localFolder } from '@/core/loaders/archives/archiveFormats.js';
-import { elementFilter } from '@/core/loaders/archives/ArchiveReader.js';
-import { ArchiveImporter } from '@/core/loaders/archives/ArchiveImporter.js';
+import { localFolder } from '@/core/loaders/archiveFormats.js';
+import { elementFilter } from '@/core/addons/archives/ArchiveReader.js';
+import { ArchiveImporter } from '@/core/addons/archives/ArchiveImporter.js';
 import { IssueLog } from '@/core/EngineIssues.js';
-import { listUSDRootLayers } from '@/core/loaders/usd/index.js';
+import { listUSDRootLayers } from '@/core/addons/archives/usd/index.js';
 import { configurePlatform } from '@/core/Platform.js';
-import { ARCHIVE_PATH } from '@/core/storage/SceneGraphCodec.js';
+import { ARCHIVE_PATH } from '@/core/addons/archives/SceneGraphCodec.js';
 
 const usda = body => `#usda 1.0\n${body}\n`;
 const MODEL = /\.(gltf|glb|obj|usd|usda|usdc)$/i;

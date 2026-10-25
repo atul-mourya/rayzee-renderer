@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BoxGeometry, BufferAttribute, BufferGeometry, SphereGeometry } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/storage/openStorage.js';
+import { openStorage } from '@/core/addons/storage/openStorage.js';
 import { GeometrySpill } from '@/core/storage/GeometrySpill.js';
 import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
 import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';

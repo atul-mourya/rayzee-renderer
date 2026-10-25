@@ -1,9 +1,8 @@
-import { ISSUE_CODES } from '../EngineIssues.js';
+import { ISSUE_CODES } from '../../EngineIssues.js';
 import { acquireLock, heldLockNames } from './locks.js';
-import { entryIdFor } from './identity.js';
-import { Emitter } from './events.js';
-import { InlineTransport } from './inlineTransport.js';
-import { STORAGE_KIND, ENGINE_AREAS } from './areas.js';
+import { entryIdFor } from '../../storage/identity.js';
+import { StorageOps } from './StorageOps.js';
+import { STORAGE_KIND, ENGINE_AREAS } from '../../storage/areas.js';
 
 export { STORAGE_KIND, ENGINE_AREAS };
 
@@ -687,6 +686,59 @@ export class StorageArea {
 		}
 
 		return removed;
+
+	}
+
+}
+
+/** Minimal addEventListener/dispatchEvent, so the storage core runs in workers without three.js. */
+class Emitter {
+
+	constructor() {
+
+		this._handlers = new Map();
+
+	}
+
+	addEventListener( type, handler ) {
+
+		if ( ! this._handlers.has( type ) ) this._handlers.set( type, new Set() );
+		this._handlers.get( type ).add( handler );
+
+	}
+
+	removeEventListener( type, handler ) {
+
+		this._handlers.get( type )?.delete( handler );
+
+	}
+
+	dispatchEvent( event ) {
+
+		for ( const handler of [ ...( this._handlers.get( event.type ) ?? [] ) ] ) handler.call( this, event );
+
+	}
+
+}
+
+/** Writes on this thread through sync access handles: a worker's own storage, or tests with a fake root. */
+class InlineTransport {
+
+	constructor( root ) {
+
+		this._ops = new StorageOps( root );
+
+	}
+
+	async call( op, args ) {
+
+		return this._ops[ op ]( args );
+
+	}
+
+	dispose() {
+
+		this._ops.dispose();
 
 	}
 

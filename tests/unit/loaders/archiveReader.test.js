@@ -3,7 +3,7 @@ import { gzipSync } from 'three/addons/libs/fflate.module.js';
 import {
 	detectArchiveKind, isGzip, isZip, isTar,
 	readTar, readTarGz, elementFilter, listArchiveElements, MAX_TEXT_ENTRY_BYTES
-} from '@/core/loaders/archives/ArchiveReader.js';
+} from '@/core/addons/archives/ArchiveReader.js';
 
 const enc = new TextEncoder();
 const BLOCK = 512;

@@ -5,17 +5,17 @@
 
 import { float, int, If, Loop, select, cos, max, min } from 'three/tsl';
 
-import { struct } from './patches.js';
+import { struct } from '../../shaders/patches.js';
 import {
 	DirectionalLight, AreaLight, PointLight, SpotLight,
 	getDirectionalLight, getAreaLight, getPointLight, getSpotLight,
 	LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_AREA, LIGHT_TYPE_POINT, sphQuadSolidAngle,
-} from './LightsCore.js';
+} from '../../shaders/LightsCore.js';
 import {
 	calculateDirectionalLightImportance, estimateLightImportance, calculatePointLightImportance, calculateSpotLightImportance,
-} from './LightsDirect.js';
-import { SAMPLER_DIM_AUX_BASE } from './Random.js';
-import { PI } from './Common.js';
+} from '../../shaders/LightsDirect.js';
+import { SAMPLER_DIM_AUX_BASE } from '../../shaders/Random.js';
+import { PI } from '../../shaders/Common.js';
 
 export const LampPick = struct( { kind: 'int', index: 'int', pdf: 'float', total: 'float' } );
 

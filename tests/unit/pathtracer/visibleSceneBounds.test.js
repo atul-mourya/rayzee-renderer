@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BidirectionalIntegrator } from '@/core/pathtracer/BidirectionalIntegrator.js';
+import { BidirectionalIntegrator } from '@/core/addons/bidirectional/BidirectionalIntegrator.js';
 import { BVH_LEAF_MARKERS } from '@/core/scene/BufferLayout.js';
 
 // The visible scene's box, read from the TLAS as the GPU has it — called on a fake integrator over a flat tree.

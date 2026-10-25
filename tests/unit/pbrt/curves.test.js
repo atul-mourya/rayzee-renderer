@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tessellateCurve, tessellateCurves, curveTriangleCount } from '@/core/loaders/pbrt/PBRTCurves.js';
+import { tessellateCurve, tessellateCurves, curveTriangleCount } from '@/core/addons/archives/pbrt/PBRTCurves.js';
 
 /** A straight run along +x, as four evenly spaced control points. */
 const STRAIGHT = [ 0, 0, 0, 1, 0, 0, 2, 0, 0, 3, 0, 0 ];

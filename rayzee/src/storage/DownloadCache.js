@@ -73,7 +73,7 @@ const noop = () => {};
  */
 export class DownloadCache {
 
-	/** @param {?import('./StorageManager.js').StorageManager} storage */
+	/** @param {?import('../addons/storage/StorageManager.js').StorageManager} storage */
 	constructor( storage ) {
 
 		this._storage = storage;

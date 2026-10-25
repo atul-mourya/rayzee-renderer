@@ -9,23 +9,23 @@ import {
 	sqrt, cos, sin, Loop, sampler, bool as tslBool,
 } from 'three/tsl';
 
-import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash } from '../Random.js';
-import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData } from '../EmissiveSampling.js';
-import { cosineWeightedSample } from '../MaterialSampling.js';
-import { offsetRayOrigin, triangleRow } from '../Common.js';
-import { triangleSide } from '../BVHTraversal.js';
-import { sampleSunDisc, sunRadianceToward } from '../Sun.js';
-import { sampleEnvironment, sampleEnvironmentExact } from '../Environment.js';
+import { getRandomSample1D, getRandomSample2D, getDecorrelatedSeed, pcgHash } from '../../shaders/Random.js';
+import { sampleTriangle, fetchTriangleData, binarySearchCDF, TriangleData } from '../../shaders/EmissiveSampling.js';
+import { cosineWeightedSample } from '../../shaders/MaterialSampling.js';
+import { offsetRayOrigin, triangleRow } from '../../shaders/Common.js';
+import { triangleSide } from '../../shaders/BVHTraversal.js';
+import { sampleSunDisc, sunRadianceToward } from '../../shaders/Sun.js';
+import { sampleEnvironment, sampleEnvironmentExact } from '../../shaders/Environment.js';
 import {
 	DirectionalLight, AreaLight, PointLight, SpotLight, getDirectionalLight, getAreaLight, getPointLight, getSpotLight,
 	getSpotAttenuation, sampleSpotGoboMask, sampleIESProfile, sampleCone, LIGHT_TYPE_DIRECTIONAL, LIGHT_TYPE_AREA, LIGHT_TYPE_POINT,
-} from '../LightsCore.js';
-import { areaLightRadiance, areaLightSpreadAttenuation } from '../LightsSampling.js';
-import { spotConeSolidAngle, directionalConeSolidAngle } from '../BidirectionalLamps.js';
+} from '../../shaders/LightsCore.js';
+import { areaLightRadiance, areaLightSpreadAttenuation } from '../../shaders/LightsSampling.js';
+import { spotConeSolidAngle, directionalConeSolidAngle } from './BidirectionalLamps.js';
 import {
 	lightPathPixel, mis, sunEmissionPdf, sourcePick, sourceLampType, sourceLampIndex, SOURCE, DIM_EMIT,
-} from '../Bidirectional.js';
-import { sampleGuidedDisc, guidedDiscPdf } from '../LightGuide.js';
+} from './Bidirectional.js';
+import { sampleGuidedDisc, guidedDiscPdf } from './LightGuide.js';
 import { RAY_FLAG, COUNTER } from '../../pathtracer/QueueManager.js';
 import {
 	writeRayOriginMeta, writeRayDirFlags, writeRayThroughputPdf, writeRayRadiance, writeMediumStack,

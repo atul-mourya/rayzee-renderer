@@ -2898,7 +2898,7 @@ export class SceneProcessor {
 	 * BLAS part of the BVH to disk. The TLAS stays, so visibility and rigid moves need nothing
 	 * back; anything that reads triangles or BLAS nodes awaits {@link ensureResident} first.
 	 * Multi-chunk scenes only — below a chunk the saving is small and the cost is not.
-	 * @param {import('../storage/StorageManager.js').StorageManager} storage
+	 * @param {import('../addons/storage/StorageManager.js').StorageManager} storage
 	 * @returns {Promise<?{bytes: number, ms: number}>} null when nothing was spilled
 	 */
 	spillToDisk( storage ) {

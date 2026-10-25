@@ -8,14 +8,14 @@ import {
 	dot, sqrt, max, min, floor, length, localId, workgroupId, select, abs,
 } from 'three/tsl';
 
-import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
-import { calculateMaterialPDF } from '../LightsSampling.js';
-import { traceShadowRayRefractiveOpaque } from '../LightsDirect.js';
-import { traverseBVHShadowCameraCulled } from '../BVHTraversal.js';
-import { offsetRayOrigin, SHADOW_END, sanitizeRGB } from '../Common.js';
-import { pcgHash } from '../Random.js';
-import { regularizePathContribution } from '../PathTracerCore.js';
-import { resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, STRATEGY, SPLAT_SCALE, SPLAT_MAX } from '../Bidirectional.js';
+import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
+import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
+import { traceShadowRayRefractiveOpaque } from '../../shaders/LightsDirect.js';
+import { traverseBVHShadowCameraCulled } from '../../shaders/BVHTraversal.js';
+import { offsetRayOrigin, SHADOW_END, sanitizeRGB } from '../../shaders/Common.js';
+import { pcgHash } from '../../shaders/Random.js';
+import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
+import { resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, STRATEGY, SPLAT_SCALE, SPLAT_MAX } from './Bidirectional.js';
 import {
 	cachedVertex, readVertexRecord, readLightPathLength, readRayRadiance, writeRayRadiance,
 } from '../../pathtracer/PackedRayBuffer.js';

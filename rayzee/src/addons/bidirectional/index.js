@@ -10,4 +10,4 @@
  * renderer.settings.set( 'integrator', 'bidirectional' );
  */
 
-export { BidirectionalIntegrator } from '../pathtracer/BidirectionalIntegrator.js';
+export { BidirectionalIntegrator } from './BidirectionalIntegrator.js';

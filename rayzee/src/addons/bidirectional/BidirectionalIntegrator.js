@@ -8,20 +8,20 @@
 
 import { uniform, uniformArray, texture, storage, Fn, uint, atomicStore, atomicLoad, instanceIndex, If, Return } from 'three/tsl';
 import { DataTexture, FloatType, RedFormat, Vector3 } from 'three';
-import { gpuOnlyStorageAttribute } from '../shaders/patches.js';
-import { LIGHT_FLOATS } from './UniformManager.js';
-import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from './PackedRayBuffer.js';
-import { COUNTER, ENERGY_SCALE } from './QueueManager.js';
-import { CAMERA_PROJECTION_IDS } from '../EngineDefaults.js';
-import { BVH_MAX_INDEX, BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '../scene/BufferLayout.js';
-import { BOUNCE_KERNELS, LIST_WG_SIZE } from './PathTracer.js';
-import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from '../shaders/kernels/LightGenerateKernel.js';
-import { buildGuideKernel, buildGuideClearKernel, guidedDiscPdf, recordEscape, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from '../shaders/LightGuide.js';
-import { buildConnectKernel, CONNECT_WG_SIZE } from '../shaders/kernels/ConnectKernel.js';
-import { buildMergeClearKernel, buildMergeInsertKernel, buildMergeKernel, MERGE_WG_SIZE } from '../shaders/kernels/MergeKernel.js';
-import { buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE } from '../shaders/kernels/LightSplatKernel.js';
-import * as Bidirectional from '../shaders/Bidirectional.js';
-import * as BidirectionalLamps from '../shaders/BidirectionalLamps.js';
+import { gpuOnlyStorageAttribute } from '../../shaders/patches.js';
+import { LIGHT_FLOATS } from '../../pathtracer/UniformManager.js';
+import { HIT_STRIDE_BIDIRECTIONAL, LIGHT_VERTEX_STRIDE, freeStorageAttribute } from '../../pathtracer/PackedRayBuffer.js';
+import { COUNTER, ENERGY_SCALE } from '../../pathtracer/QueueManager.js';
+import { CAMERA_PROJECTION_IDS } from '../../EngineDefaults.js';
+import { BVH_MAX_INDEX, BVH_LEAF_MARKERS, CLUSTER_COUNT_SHIFT, CLUSTER_COPY_HIDDEN } from '../../scene/BufferLayout.js';
+import { BOUNCE_KERNELS, LIST_WG_SIZE } from '../../pathtracer/PathTracer.js';
+import { buildLightGenerateKernel, LIGHT_GENERATE_WG_SIZE } from './LightGenerateKernel.js';
+import { buildGuideKernel, buildGuideClearKernel, guidedDiscPdf, recordEscape, GUIDE_BINS, GUIDE_ROW_STRIDE, GUIDE_TEXTURE_WIDTH } from './LightGuide.js';
+import { buildConnectKernel, CONNECT_WG_SIZE } from './ConnectKernel.js';
+import { buildMergeClearKernel, buildMergeInsertKernel, buildMergeKernel, MERGE_WG_SIZE } from './MergeKernel.js';
+import { buildLightSplatKernel, buildSplatResolveKernel, LIGHT_SPLAT_WG_SIZE, SPLAT_RESOLVE_WG_SIZE } from './LightSplatKernel.js';
+import * as Bidirectional from './Bidirectional.js';
+import * as BidirectionalLamps from './BidirectionalLamps.js';
 
 const { PASS_TAG_BIT, STRATEGY, STRATEGY_ALONE, SOURCE, mergeVmAt } = Bidirectional;
 
@@ -42,7 +42,7 @@ const MERGE_TRUST = 0.25;
 
 export class BidirectionalIntegrator {
 
-	/** @param {import('./PathTracer.js').PathTracer} pathTracer */
+	/** @param {import('../../pathtracer/PathTracer.js').PathTracer} pathTracer */
 	constructor( pathTracer ) {
 
 		this.pt = pathTracer;
@@ -80,7 +80,7 @@ export class BidirectionalIntegrator {
 			sourceOffsets: [ SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS, SOURCE.LAMPS ],
 			sceneCenter: uniform( new Vector3(), 'vec3' ),
 			sceneRadius: uniform( 1, 'float' ),
-			// The light guide (shaders/LightGuide.js): 1 once a table has been built since the last reset; and
+			// The light guide (addons/bidirectional/LightGuide.js): 1 once a table has been built since the last reset; and
 			// whether camera paths count their escapes.
 			guide: uniform( 0, 'uint' ),
 			guideLearning: uniform( 1, 'uint' ),
@@ -734,7 +734,7 @@ export class BidirectionalIntegrator {
 	}
 
 	/**
-	 * Lights at infinity start their light paths where camera paths escaped (shaders/LightGuide.js). Each reset forgets
+	 * Lights at infinity start their light paths where camera paths escaped (addons/bidirectional/LightGuide.js). Each reset forgets
 	 * the counts; the table is rebuilt from them at frames 1, 2, 4 … 32 and every 32nd after, so a render of the same
 	 * input learns the same table. Off: light paths start uniformly over the scene's disc, as before.
 	 * @param {boolean} enabled

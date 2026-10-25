@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { gzipSync } from 'three/addons/libs/fflate.module.js';
-import { ArchiveImporter, ARCHIVE_ELEMENT_PROMPT_BYTES } from '@/core/loaders/archives/ArchiveImporter.js';
+import { ArchiveImporter, ARCHIVE_ELEMENT_PROMPT_BYTES } from '@/core/addons/archives/ArchiveImporter.js';
 import { IssueLog, ISSUE_CODES, EngineIssueError } from '@/core/EngineIssues.js';
 
 const BLOCK = 512;

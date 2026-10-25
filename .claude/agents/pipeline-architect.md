@@ -18,7 +18,7 @@ You are a rendering pipeline architect for the Rayzee real-time path tracer. You
 ### Layers (see `docs/CORE_AND_ADDONS.md`)
 - **Renderer core** `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`) builds only PathTracer → Compositor
 - **Viewer** `PathTracerApp extends RayzeeRenderer`; its `_createExtraStages()` inserts the other stages between them, and ~30 no-op hooks at the end of RayzeeRenderer.js ("Hooks") are where it plugs in
-- **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `pathtracer/BidirectionalIntegrator.js`), OCIO colour, storage
+- **Add-ons** (`rayzee/src/addons/`): physical sky, archives, bidirectional (an integrator, `addons/bidirectional/BidirectionalIntegrator.js`), OCIO colour, storage
 - Viewer code never goes in the core: a core method that needs it gets a hook. `tests/unit/core/coreBoundary.test.js` fails if the core imports viewer or add-on modules
 
 ### Stages (execution order matters)

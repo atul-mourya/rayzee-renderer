@@ -18,17 +18,17 @@ import { unpackTarGz, loadTarIndex, saveTarIndex } from './ArchiveCache.js';
 import { setEnvironmentSource } from '../../storage/CDFCache.js';
 import { fileIdentity, folderIdentity, identityKey, sampleHash } from '../../storage/identity.js';
 import { ENGINE_AREAS } from '../../storage/areas.js';
-import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from '../../storage/SceneGraphCodec.js';
+import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, SCENE_GRAPH_FORMAT, ARCHIVE_PATH, ARCHIVE_LOADER } from './SceneGraphCodec.js';
 import { worthStoring } from '../../storage/sceneCachePolicy.js';
 import { VERSION } from '../../version.js';
-import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from '../pbrt/index.js';
-import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from '../usd/index.js';
-import { pfmTexture } from '../pbrt/PFM.js';
-import { extractSceneMetadata } from '../SceneMetadata.js';
+import { loadPBRTScene, pickEntryPath, VirtualFS, PBRT_BUILD_REVISION } from './pbrt/index.js';
+import { loadUSDScene, listUSDRootLayers, listUSDParts, USDFiles, USDStage, USD_LAYER } from './usd/index.js';
+import { pfmTexture } from './pbrt/PFM.js';
+import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
-import { ARCHIVE_FORMATS } from './archiveFormats.js';
+import { ARCHIVE_FORMATS } from '../../loaders/archiveFormats.js';
 import { withHostWorker, getPlatform, timeSlicer } from '../../Platform.js';
-import { platformImageFromBytes } from '../PlatformImageLoader.js';
+import { platformImageFromBytes } from '../../loaders/PlatformImageLoader.js';
 import { updateLoading } from '../../EngineEvents.js';
 
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
@@ -78,7 +78,7 @@ export class ArchiveImporter {
 	/** The archive formats it adds to the loader's. */
 	static FORMATS = ARCHIVE_FORMATS;
 
-	/** @param {import('../AssetLoader.js').AssetLoader} loader - the loader it reads archives for */
+	/** @param {import('../../loaders/AssetLoader.js').AssetLoader} loader - the loader it reads archives for */
 	constructor( loader ) {
 
 		this.loader = loader;

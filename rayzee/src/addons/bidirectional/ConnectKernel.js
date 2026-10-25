@@ -7,16 +7,16 @@ import {
 	Fn, float, vec2, vec4, int, uint, If, instanceIndex, atomicLoad, Return, dot, sqrt, min, max, length, select, abs,
 } from 'three/tsl';
 
-import { getRandomSample1D, pcgHash, SAMPLER_DIMS_PER_BOUNCE } from '../Random.js';
-import { evaluateMaterialResponse } from '../MaterialEvaluation.js';
-import { calculateMaterialPDF } from '../LightsSampling.js';
-import { traceShadowRayRefractiveOpaque } from '../LightsDirect.js';
-import { traverseBVHShadow } from '../BVHTraversal.js';
-import { offsetRayOrigin, SHADOW_END, luminance } from '../Common.js';
-import { regularizePathContribution } from '../PathTracerCore.js';
+import { getRandomSample1D, pcgHash, SAMPLER_DIMS_PER_BOUNCE } from '../../shaders/Random.js';
+import { evaluateMaterialResponse } from '../../shaders/MaterialEvaluation.js';
+import { calculateMaterialPDF } from '../../shaders/LightsSampling.js';
+import { traceShadowRayRefractiveOpaque } from '../../shaders/LightsDirect.js';
+import { traverseBVHShadow } from '../../shaders/BVHTraversal.js';
+import { offsetRayOrigin, SHADOW_END, luminance } from '../../shaders/Common.js';
+import { regularizePathContribution } from '../../shaders/PathTracerCore.js';
 import {
 	resolveSurfaceMaterial, lightEndCosine, misPartial, misWeight, strategyWeight, facingSide, STRATEGY, DIM_CONNECT_PATH, DIM_CONNECT_VERTEX,
-} from '../Bidirectional.js';
+} from './Bidirectional.js';
 import { COUNTER } from '../../pathtracer/QueueManager.js';
 import {
 	readRayRadiance, writeRayRadiance, readRngState,

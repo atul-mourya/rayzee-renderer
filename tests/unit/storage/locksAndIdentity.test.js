@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { acquireLock, heldLockNames } from '@/core/storage/locks.js';
+import { acquireLock, heldLockNames } from '@/core/addons/storage/locks.js';
 import { sampleHash, fileIdentity, identityKey, sameIdentity, entryIdFor } from '@/core/storage/identity.js';
 
 const tick = () => new Promise( ( r ) => setTimeout( r, 1 ) );

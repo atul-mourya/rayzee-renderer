@@ -10,10 +10,10 @@ import {
 	float, vec2, vec4, int, uint, If, max, select, abs, dot, length,
 } from 'three/tsl';
 
-import { getMaterial, MIN_ROUGHNESS, REC709_LUMINANCE_COEFFICIENTS } from './Common.js';
-import { RayTracingMaterial, MaterialSamples, ExtMapResult } from './Struct.js';
-import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV } from './TextureSampling.js';
-import { SAMPLER_DIM_AUX_BASE } from './Random.js';
+import { getMaterial, MIN_ROUGHNESS, REC709_LUMINANCE_COEFFICIENTS } from '../../shaders/Common.js';
+import { RayTracingMaterial, MaterialSamples, ExtMapResult } from '../../shaders/Struct.js';
+import { sampleAllMaterialTextures, processAnisotropyMap, applyExtensionMaps, getTransformedUV } from '../../shaders/TextureSampling.js';
+import { SAMPLER_DIM_AUX_BASE } from '../../shaders/Random.js';
 
 // 1D dimensions of a camera vertex's bounce block (Random.js budget) picking its connection.
 export const DIM_CONNECT_PATH = 16;

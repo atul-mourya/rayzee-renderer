@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openTar } from '@/core/loaders/archives/ArchiveReader.js';
+import { openTar } from '@/core/addons/archives/ArchiveReader.js';
 
 const BLOCK = 512;
 const enc = new TextEncoder();

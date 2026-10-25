@@ -217,12 +217,12 @@ export class AssetLoader extends EventDispatcher {
 		this._loadCancelled = false;
 		this._urlAbort = null;
 
-		/** @type {?import('../storage/StorageManager.js').StorageManager} set by the app once storage opens */
+		/** @type {?import('../addons/storage/StorageManager.js').StorageManager} set by the app once storage opens */
 		this.storage = null;
 		this._downloads = null;
 		this._sourceKey = null;
 		this._appended = false;
-		/** @type {?import('./archives/ArchiveImporter.js').ArchiveImporter} reads archives; see setArchiveImporter() */
+		/** @type {?import('../addons/archives/ArchiveImporter.js').ArchiveImporter} reads archives; see setArchiveImporter() */
 		this.archives = null;
 		/** @type {?{load: function(): Promise<Object>, formats: Object, pending: ?Promise}} see setArchiveImporterLoader() */
 		this._archiveLoader = null;
@@ -442,7 +442,7 @@ export class AssetLoader extends EventDispatcher {
 	/**
 	 * Installs the importer that reads scene archives and the pbrt scenes in them — `ArchiveImporter` from
 	 * rayzee/addons/archives. Without one, archives are not a supported format.
-	 * @param {?import('./archives/ArchiveImporter.js').ArchiveImporter} importer
+	 * @param {?import('../addons/archives/ArchiveImporter.js').ArchiveImporter} importer
 	 */
 	setArchiveImporter( importer ) {
 
@@ -453,7 +453,7 @@ export class AssetLoader extends EventDispatcher {
 	/**
 	 * Installs the archive importer on first use: `load()` resolves to one, the first time an archive is read. `formats`
 	 * are the extensions it reads (its class's `FORMATS`), known before its code is loaded.
-	 * @param {function(): Promise<import('./archives/ArchiveImporter.js').ArchiveImporter>} load
+	 * @param {function(): Promise<import('../addons/archives/ArchiveImporter.js').ArchiveImporter>} load
 	 * @param {Object<string, {type: string, name: string}>} formats
 	 */
 	setArchiveImporterLoader( load, formats ) {
@@ -479,7 +479,7 @@ export class AssetLoader extends EventDispatcher {
 
 	/**
 	 * Adds file formats beyond glTF and .hdr — those of rayzee/addons/formats, or a host's own. Each is
-	 * `{ name, label, type: 'model' | 'environment', extensions, parse | createLoader }` (see loaders/FileFormats.js).
+	 * `{ name, label, type: 'model' | 'environment', extensions, parse | createLoader }` (see addons/formats.js).
 	 * @param {...Object} formats
 	 * @returns {this}
 	 */

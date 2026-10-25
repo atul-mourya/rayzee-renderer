@@ -3,7 +3,7 @@ import {
 	SOLAR_SPECTRUM, WAVELENGTHS, SKY_RADIANCE_SCALE, LIMB_DARKENING_EXPONENT, LAMBDA_COUNT,
 	spectrumToXYZ, xyzToRec709, spectrumToRec709, atmosphereCoefficients, angstromBeta,
 	opticalDepth, sunLight, horizonDipSin, coneSolidAngle, phaseCellWeights,
-} from '@/core/environment/AtmosphereModel.js';
+} from '@/core/addons/physicalSky/AtmosphereModel.js';
 
 const bin = nm => WAVELENGTHS.findIndex( l => Math.abs( l - nm ) <= 12.5 );
 const luminance = ( [ r, g, b ] ) => 0.2126 * r + 0.7152 * g + 0.0722 * b;

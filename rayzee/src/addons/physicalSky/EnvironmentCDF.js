@@ -1,6 +1,6 @@
 import { Fn, float, int, uint, vec2, vec4, If, Loop, Return, instanceIndex, max, sin, dot, select } from 'three/tsl';
 
-import { REC709_LUMINANCE_COEFFICIENTS } from './Common.js';
+import { REC709_LUMINANCE_COEFFICIENTS } from '../../shaders/Common.js';
 
 /** Floats per row of the packed table: width + 1 RGBA texels, padded to the 256 bytes a buffer→texture copy needs. */
 export const cdfRowStride = width => Math.ceil( ( width + 1 ) * 16 / 256 ) * 64;

@@ -658,7 +658,7 @@ async function toneMapParity() {
 
 		const [ { configureAssets }, { ColorManagement } ] = await Promise.all( [
 			import( '@/core/AssetConfig.js' ),
-			import( '@/core/color/ColorManagement.js' ),
+			import( '@/core/addons/color/ColorManagement.js' ),
 		] );
 
 		configureAssets( { ocioRuntimeFactory: () => import( '@bb-studio/ocio' ) } );

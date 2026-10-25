@@ -97,14 +97,16 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
 - root — entries (`index.js`, `core.js`), `RayzeeRenderer.js` and its API (`RenderSettings`, `EngineDefaults`,
   `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `portable.js`; the loading/stats status channel is in `EngineEvents.js`
 - `pipeline/` stages, context, events, Compositor · `pathtracer/` the path tracer stage, uniforms, kernel dispatch,
-  ray queues and buffers, the bidirectional integrator · `shaders/` TSL functions, `shaders/kernels/` the compute kernels
+  ray queues and buffers · `shaders/` TSL functions, `shaders/kernels/` the compute kernels
 - `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera; `SceneProcessor`'s refits and moves
   in `SceneRefit.js`, its spill in `memory/SceneSpill.js`) · `bvh/` · `lights/` ·
-  `materials/` (and texture arrays) · `environment/` (HDRI, skies, sun) · `loaders/` (+ `archives/`, `pbrt/`, `usd/`) ·
-  `memory/` · `output/` (readbacks, their tone mapping, `rayzee/encoders`) · `color/` · `storage/` · `addons/` · `node/`
+  `materials/` (and texture arrays) · `environment/` (HDRI, skies, sun) · `loaders/` · `memory/` · `output/` (readbacks,
+  their tone mapping, `rayzee/encoders`) · `color/` · `storage/` (the caches; the OPFS manager is an add-on) · `node/`
+- `addons/` one folder an add-on, its entry `index.js` beside its code (`formats.js` is one file): `archives/` (with
+  `pbrt/`, `usd/`), `bidirectional/` (integrator, shaders, kernels), `color/` (OCIO), `physicalSky/`, `storage/`
 - `viewer/` everything only `PathTracerApp` uses: `camera/`, `overlays/`, `animation/`, `denoise/`, `picture/`,
-  `lights/` (gobo, IES). ⚠️ The core never imports from `viewer/`, and whatever only the full entry reaches lives there
-  (`coreBoundary.test.js` holds both).
+  `lights/` (gobo, IES). ⚠️ The core imports nothing from `viewer/` or `addons/`; whatever only the full entry reaches
+  lives in `viewer/`, whatever only an add-on reaches in its folder (`coreBoundary.test.js` holds all three).
 
 **Key import patterns**:
 - Engine imports in app code: `import { PathTracerApp, EngineEvents } from 'rayzee'`
@@ -170,7 +172,7 @@ PathTracer delegates to these via composition — external code accesses them di
 
 ### Multi-Threading Architecture (workers beside the code that starts them)
 Critical for maintaining 60fps during heavy computations. BVH and TLAS workers are in `bvh/`, the texture ones in
-`materials/`, `CDFWorker` in `environment/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in `storage/`:
+`materials/`, `CDFWorker` in `environment/`, `AIUpscalerWorker` in `viewer/picture/`, `StorageWorker` in `addons/storage/`:
 - **`BVHWorker.js`**: Off-main-thread BVH construction using binned SAH splitting and reinsertion
 - **`TexturesWorker.js`**: Batch texture processing with memory-optimized chunking
 - **`BVHSubtreeWorker.js`**: builds subtrees of one large mesh's BVH in parallel (`ParallelBVHBuilder.js`)
@@ -181,7 +183,7 @@ Critical for maintaining 60fps during heavy computations. BVH and TLAS workers a
 ### Animation & Transform System (`rayzee/src/viewer/animation/`, `viewer/overlays/`)
 glTF / pbrt animation playback and interactive object transforms:
 - **`AnimationManager.js`**: Owns Three.js `AnimationMixer`. Key methods: `play()`, `stop()`, `seekTo(time)`, `setSpeed()`, `setLoop()`. Two modes, picked at `init()`: **deforming** (any SkinnedMesh or morph track) — CPU skinning via `mesh.getVertexPosition()`, returned as a per-mesh reader for `refitBVH`; **rigid** (everything else) — `update()`/`seekTo()` update only the subtrees the clip's tracks name (or the whole model in one pass when those cover most of it), return null and hand only the meshes whose world matrix or visibility changed to `applyPoseCallback` → `PathTracerApp._applyAnimationPose` (placement matrices + TLAS refit, visibility flags, followed camera). `stop()` re-applies the restored pose. ⚠️ Never refit a rigid clip: triangles are shared between placements of one geometry, so baking a pose moves every copy.
-- **pbrt animation** (`loaders/pbrt/PBRTAnimation.js`): a frame sequence (`frame25.pbrt`, `frame35.pbrt`, … in one directory) loads as ONE clip, keyed at frame number / 30 fps. Each frame's shapes are aligned with the previous frame's (LCS over geometry+material+emission keys), so a moved shape keeps one mesh; shapes that come and go get a visibility track switching halfway between keys (float32 key times made an exact-key seek show the previous frame); moving placements become `placement_N` Groups; a template redefined by a frame becomes a variant `name @frame`. `ActiveTransform`/`TransformTimes` become two keys. Moving shapes are never merged. `loadFile( file, { animation: false } )` or a `pbrtEntry` loads one frame. An animated embedded camera is followed while selected (`userData.__rayzeeSourceUuid` links the switcher's copy to the animated original).
+- **pbrt animation** (`addons/archives/pbrt/PBRTAnimation.js`): a frame sequence (`frame25.pbrt`, `frame35.pbrt`, … in one directory) loads as ONE clip, keyed at frame number / 30 fps. Each frame's shapes are aligned with the previous frame's (LCS over geometry+material+emission keys), so a moved shape keeps one mesh; shapes that come and go get a visibility track switching halfway between keys (float32 key times made an exact-key seek show the previous frame); moving placements become `placement_N` Groups; a template redefined by a frame becomes a variant `name @frame`. `ActiveTransform`/`TransformTimes` become two keys. Moving shapes are never merged. `loadFile( file, { animation: false } )` or a `pbrtEntry` loads one frame. An animated embedded camera is followed while selected (`userData.__rayzeeSourceUuid` links the switcher's copy to the animated original).
 - **`TransformManager.js`**: Interactive translate/rotate/scale gizmo via Three.js `TransformControls`. Creates its own `Scene` for gizmo rendering (not SceneHelpers — its `visible` guard blocks gizmo). On drag end, calls `app.updateMeshTransforms( affectedIndices )` — a gizmo only changes a placement's matrix, and triangles are stored in object space, so nothing per-vertex is read or written. The mode changes only from the viewport toolbar: the letter keys belong to walk mode, so the gizmo has no shortcuts.
 - **`VideoRenderManager.js`**: Offline frame-by-frame animation video export. Drives seek → BVH refit → SPP accumulation → OIDN denoise → canvas capture cycle per frame. Saves/restores engine state, stops rAF loop during render, delivers `ImageBitmap` frames via callback for encoding. A `timeline` option seeks `app.timeline` in video time each frame, with or without a clip (without one the video lasts `timeline.duration`).
 - **`TimelineManager.js`** + **`CameraTrack.js`** — authored animation, meant to grow into the full animation system (more tracks, a scrubber). `TimelineManager` (`app.timeline`) combines the tracks (`duration`, `animates`, `seek( time )`) and owns playback: `play()`/`stop()` on three's `Timer`, advanced from `animate()` before the controls update, controls locked; `configureForMode` stops it. `TIMELINE_CHANGED` fires on key edits (`track`) and playback. Each track owns its keys and how it applies them — a new track gets its own `addKey`/`seek`, and the manager only folds it into those three. `CameraTrack` is the first: keys of `{ time, position, target, fov, orthoHeight }`, sampled through three.js `InterpolateSmooth` keyframe tracks — position and target (lookAt, so a shared subject stays centred), FOV, log orthographic height. ⚠️ three's `ZeroSlopeEnding` flattens only the start (the end tangent is half the last slope), so each end gets a mirrored key instead and time is clamped to the keys. Keys come from `cameraManager.captureView()` and play through `applyPose()`. They are not cameras: `+` in the Camera tab saves cameras, the Anim tab keys the timeline. A replace-load clears them with the saved cameras.
@@ -824,7 +826,7 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
   or view changes. The GPL-3.0 config files live on the CDN only, never in the repo. `describeConfig()` must carry
   `categories`.
 
-### Physical sky (`environment/PhysicalSky.js`, `environment/AtmosphereModel.js`, `environment/SunPosition.js`, `shaders/Atmosphere.js`, `shaders/EnvironmentCDF.js`, `shaders/Sun.js`)
+### Physical sky (`addons/physicalSky/PhysicalSky.js`, `addons/physicalSky/AtmosphereModel.js`, `environment/SunPosition.js`, `addons/physicalSky/Atmosphere.js`, `addons/physicalSky/EnvironmentCDF.js`, `shaders/Sun.js`)
 An add-on (`rayzee/addons/physical-sky`): the core bakes 'procedural' mode only through the class
 `environmentManager.setProceduralSky( PhysicalSky )` installed, or `setProceduralSkyLoader( load )`, which imports it
 the first time 'procedural' mode is baked — `PathTracerApp` does that, so the add-on is a chunk of its own that a
@@ -838,7 +840,7 @@ uses 1/(1 − f). Against the Monte Carlo reference in `tests/gpu/skyReference.j
 sunset ~8 %, twilight ~16 %; plain Hillaire was 25 % dark at the horizon and 2–5× bright at twilight.
 - **Nothing leaves the GPU.** The sky is computed per equirect row × 256 azimuths from the sun (π·s²,
   mirrored: radiance depends on elevation and that azimuth only) and filled into the equirect; the
-  importance-sampling table is built beside it (`shaders/EnvironmentCDF.js`, the GPU twin of
+  importance-sampling table is built beside it (`addons/physicalSky/EnvironmentCDF.js`, the GPU twin of
   `EquirectHDRInfo.computeCDF`, compared in `tests/gpu/atmosphere.test.js`, packed as `packExactTable` packs it);
   both are copied into
   textures created without pixels (`source.dataReady = false`). Only the table's two normalisers come
@@ -882,7 +884,7 @@ Full notes: [docs/BIDIRECTIONAL.md](docs/BIDIRECTIONAL.md) — frame order, stra
 infinity, the light guide, lamps, the exact environment table, MIS, storage, verification, measurements and vertex
 merging.
 
-An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`pathtracer/`) owns its uniforms, buffers,
+An add-on (`rayzee/addons/bidirectional`): `BidirectionalIntegrator` (`addons/bidirectional/`) owns its uniforms, buffers,
 kernels and frame steps; `PathTracer` calls it through integrator hooks (`beginFrame`, `beforeShade`, `afterShade`,
 `resolve`, `allocate`, `registerKernels`, …) once `registerIntegrator()` has it (`PathTracerApp` does). Shade and
 Generate take its functions from `uniforms.lib`; controls are on `pt.activeIntegrator`. `'path'` compiles exactly the
@@ -1036,7 +1038,7 @@ shows only Auto Exposure (Follow View: Gently / More / Fully = strength 0.3 / 0.
 ### Asset Processing Workflow
 1. **AssetLoader** loads GLB/GLTF models with automatic camera extraction. The core reads glTF/GLB, `.hdr` and LDR
    images (`CORE_FORMATS`); every other format is a descriptor registered with `assetLoader.registerFormat()`
-   (`loaders/FileFormats.js` — the `rayzee/addons/formats` add-on; `PathTracerApp` registers `allFormats`), read
+   (`addons/formats.js` — the `rayzee/addons/formats` add-on; `PathTracerApp` registers `allFormats`), read
    through one shared path (`_loadModelWithFormat`). glTF's Draco, KTX2 and meshopt decoders are imported per file:
    `decodersOnDemand` (`GLTFDecoders.js`) wraps `loader.parse` and searches the JSON for the extension names first.
    An archive's inner models go through the same registry; pbrt's EXR maps use the archive importer's own EXRLoader
@@ -1059,13 +1061,13 @@ Moana island measurements), and what Blender's glTF exporter loses of a scene's 
 
 - **Folders**: `loadFile( { files } )` loads a folder as the same folder zipped would (`localFolder()` →
   `ArchiveImporter.loadFolder` → the archive path). Archive entries are lazy Blobs, read only when a loader asks.
-- **Archives and pbrt** are an add-on (`rayzee/addons/archives`, `loaders/archives/ArchiveImporter.js`), reached through
+- **Archives and pbrt** are an add-on (`rayzee/addons/archives`, `addons/archives/ArchiveImporter.js`), reached through
   `assetLoader.setArchiveImporter()` or `setArchiveImporterLoader( load, ARCHIVE_FORMATS )`. `.tar` is read in place,
   `.tar.gz` unpacked once into OPFS `archives/`, `.zip` read through its central directory. `loadFile( file, { element } )`
   takes one element path or an array. Past `ARCHIVE_ELEMENT_PROMPT_BYTES` (4 GB) a multi-element archive throws
   `ARCHIVE_NEEDS_ELEMENT` (the app's part dialog), on the seekable `.tar` path too. Budgets: `maxTriangles` 45M /
   `maxPlacements` 6M, or 120M / 60M with memory spill (`SPILL_TRIANGLE_BUDGET`).
-- **USD** (`loaders/usd/`, same add-on; a `.usdz` stays with three's USDLoader): our own crate reader (three's
+- **USD** (`addons/archives/usd/`, same add-on; a `.usdz` stays with three's USDLoader): our own crate reader (three's
   parsers are not usable), on-demand composition (`USDStage.js`), translated into the pbrt builder's IR (`USDScene.js`).
   Past `USD_ELEMENT_PROMPT_BYTES` (1 GB) it throws `ARCHIVE_NEEDS_ELEMENT`; a counting pass fits curves and point
   instancers to the budgets (`USDSceneReader.fit`), and meshes are never thinned. MaterialX networks (`outputs:mtlx:surface`)

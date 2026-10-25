@@ -11,7 +11,7 @@ import {
 import {
 	GROUND_RADIUS as RG, TOP_RADIUS as RT,
 	RAYLEIGH_SCALE_HEIGHT, MIE_SCALE_HEIGHT, OZONE_PEAK_ALTITUDE, OZONE_HALF_WIDTH,
-} from '../environment/AtmosphereModel.js';
+} from './AtmosphereModel.js';
 
 export const TRANSMITTANCE_W = 256;
 export const TRANSMITTANCE_H = 64;

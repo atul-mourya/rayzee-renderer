@@ -32,12 +32,12 @@ export const COUNTER = {
 	// Survivors' summed throughput (max channel, fixed-point ENERGY_SCALE). The early exit gates on this,
 	// not the count: past Russian roulette a few survivors carry the weight of many.
 	ACTIVE_ENERGY: 7,
-	// Words read back; the light guide's escape counts (shaders/LightGuide.js) follow, never read back.
+	// Words read back; the light guide's escape counts (addons/bidirectional/LightGuide.js) follow, never read back.
 	COUNT: 8,
 	GUIDE: 8,
 };
 
-/** The light guide's counts: 16 direction bins × 64 × 64 disc cells (shaders/LightGuide.js). */
+/** The light guide's counts: 16 direction bins × 64 × 64 disc cells (addons/bidirectional/LightGuide.js). */
 export const GUIDE_COUNTER_WORDS = 16 * 64 * 64;
 
 /** Learned light visibility (shaders/LightVisibility.js): tries and visible per cell and light kind, learned then fresh. */

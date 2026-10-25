@@ -2,7 +2,7 @@ import { DataTexture, HalfFloatType, NearestFilter, RGBAFormat } from 'three';
 import { Compositor } from '../../pipeline/Compositor.js';
 import { LocalExposure } from './LocalExposure.js';
 import { PipelineContext } from '../../pipeline/PipelineContext.js';
-import { holdCanvasColorSpace } from '../../color/ColorManagement.js';
+import { holdCanvasColorSpace } from '../../addons/color/ColorManagement.js';
 import { createRendererOnDevice, disposeRenderer } from '../../RayzeeRenderer.js';
 
 // Enough for any header `exportImage` writes; a longer one is read whole.
