@@ -1,9 +1,8 @@
 // SceneProcessor.js - Processes scene geometry into GPU-ready data (BVH, textures, materials)
 import { BVHBuilder } from '../bvh/BVHBuilder.js';
-import { BVHRefitter } from '../bvh/BVHRefitter.js';
 import { buildBVHParallel, shouldUseParallelBuild } from '../bvh/ParallelBVHBuilder.js';
 import { TLASBuilder } from '../bvh/TLASBuilder.js';
-import { InstanceTable, IN_PLACE, isIdentity, multiplyAffine } from './InstanceTable.js';
+import { InstanceTable, IN_PLACE } from './InstanceTable.js';
 import { ChunkedRecords, SHARED_MEMORY_AVAILABLE, setChunkObserver, DEFAULT_CHUNK_BYTES } from '../memory/ChunkedRecords.js';
 import {
 	MemoryLedger, estimateSceneBytes, spillingPeakBytes, probeAddressSpace,
@@ -15,11 +14,8 @@ import { EmissiveTriangleBuilder } from '../lights/EmissiveTriangleBuilder.js';
 import { timeSlicer, updateLoading } from '../utils.js';
 import { BuildTimer } from './BuildTimer.js';
 import { createLogger, fmt, workerLogLevel } from '../Logger.js';
-import { Box3, Matrix4, SRGBColorSpace, Sphere, Vector3 } from 'three';
-import {
-	TRIANGLE_DATA_LAYOUT, packNormalOct, TRI_MATERIAL_MASK, BVH_LEAF_MARKERS, BVH_FOLDED_FIRST_LIMIT,
-	assertBVHIndexFits, TLAS_PLACEMENT_MASK, RECORD_VEC4, CLUSTER_FIRST_MASK, TLAS_LEAF_IDENTITY,
-} from './BufferLayout.js';
+import { SRGBColorSpace } from 'three';
+import { TRIANGLE_DATA_LAYOUT, TRI_MATERIAL_MASK, BVH_FOLDED_FIRST_LIMIT, assertBVHIndexFits, RECORD_VEC4 } from './BufferLayout.js';
 import { TEXTURE_CONSTANTS, getTextureBucketId, packTextureIndex, planTextureBuckets } from '../materials/TextureBuckets.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { BLAS_CACHE_FORMAT, openBLASCache, saveBLASCache, templateChecksums, readNodesInto, readOrder } from '../storage/BLASCache.js';
@@ -32,9 +28,10 @@ import { getAssetConfig } from '../AssetConfig.js';
 import { VERSION } from '../version.js';
 import { SCENE_CACHE_MIN_BUILD_MS } from '../storage/sceneCachePolicy.js';
 import BVHWorker from '../bvh/BVHWorker.js?worker&inline';
-import BVHRefitWorker from '../bvh/BVHRefitWorker.js?worker&inline';
 import TLASWorker from '../bvh/TLASWorker.js?worker&inline';
 import { createWorker, hardwareThreads } from '../Platform.js';
+import { meshSource, refitBVH, placementOf, refitBLASes, updateMeshTransforms, withGroupSiblings, writeCopyRecord, takeMoveRanges, takeMovedRecordRanges, computeTLASDirtyRange, computeBLASDirtyRanges, updateMeshTrianglePositions, patchMeshSmoothNormals, refitTLAS } from './SceneRefit.js';
+import { needsSpill, spillToDisk, ensureResident, ensureGeometryResident, ensureMovable, spillTLAS, spillOrderMaps, spillAfterLoad, respill, whenTLASEditable, needsPageInForMove, disposeMatrixSpill, restoreGeometry, disposeGeometrySpill, disposeSpill } from '../memory/SceneSpill.js';
 
 // Under this the TLAS build is a few ms; the worker round trip would cost more than it saves.
 const TLAS_WORKER_MIN_ENTRIES = 50_000;
@@ -57,9 +54,6 @@ const STREAM_RESIDENT_BYTES = 1024 ** 3;
 // Less three.js geometry than this comes back at the end of a spilling build: left on disk it costs picking and the
 // selection outline, and 24155522.glb's 140 MB was not worth that.
 const GEOMETRY_ON_DISK_BYTES = 1024 ** 3;
-// A spilled build's order maps go to disk in writes of this size and come back in reads of the other.
-const ORDER_PACK_BYTES = 32 * 1024 * 1024;
-const ORDER_WINDOW_BYTES = 64 * 1024 * 1024;
 // Extraction waits while more three.js geometry than this is queued for disk.
 const GEOMETRY_QUEUE_BYTES = 256 * 1024 * 1024;
 
@@ -106,35 +100,6 @@ function largestMeshTriangles( object ) {
  * SceneProcessor - Processes scene geometry into GPU-ready data:
  * BVH acceleration, texture atlas, material buffers.
  */
-/** Fills a TLAS child's bounds left NaN from the box its parent stores for it (slot: its min at 0–2, max at 4–6). */
-// A move's TLAS upload: touched nodes this close share a range, and past MAX_TLAS_RANGES ranges one spans them all.
-const TLAS_RANGE_GAP = 1024;
-const MAX_TLAS_RANGES = 64;
-
-/** Float ranges of the BVH covering `nodes`, for an upload. */
-function nodeRanges( nodes ) {
-
-	const sorted = Int32Array.from( nodes ).sort();
-	const out = [];
-	let lo = sorted[ 0 ], hi = lo;
-	for ( let k = 1; k <= sorted.length; k ++ ) {
-
-		if ( k < sorted.length && sorted[ k ] - hi <= TLAS_RANGE_GAP ) {
-
-			hi = sorted[ k ];
-			continue;
-
-		}
-
-		out.push( { offset: lo * 16, count: ( hi - lo + 1 ) * 16 } );
-		lo = hi = sorted[ k ];
-
-	}
-
-	return out.length > MAX_TLAS_RANGES ? [ { offset: sorted[ 0 ] * 16, count: ( sorted.at( - 1 ) - sorted[ 0 ] + 1 ) * 16 } ] : out;
-
-}
-
 export class SceneProcessor {
 
 	/**
@@ -309,7 +274,7 @@ export class SceneProcessor {
 	/** Whether a scene built in memory would pass SAFE_SCENE_BYTES, so `memorySpill: 'auto'` builds it through disk. */
 	needsSpill( object ) {
 
-		return estimateSceneBytes( this.geometryExtractor.surveyScene( object ) ).total > SAFE_SCENE_BYTES;
+		return needsSpill( this, object );
 
 	}
 
@@ -2595,91 +2560,9 @@ export class SceneProcessor {
 
 	}
 
-	// ===== BVH REFIT (Animation Support) =====
-
-	/**
-	 * Make sure a store's chunks live in shared memory. Already-shared chunks are left alone; a
-	 * page without cross-origin isolation falls back to copying, which is the old cost.
-	 * @private
-	 */
-	_adoptSharedChunks( field, LaneType ) {
-
-		const records = this[ field ];
-		if ( records.shared ) return;
-
-		const chunks = records.chunks.map( c => {
-
-			const view = new LaneType( new SharedArrayBuffer( c.byteLength ) );
-			view.set( c );
-			return view;
-
-		} );
-
-		const adopted = ChunkedRecords.adopt(
-			chunks, records.recordCount, records.lanesPerRecord, records.recordsPerChunk
-		);
-
-		if ( field === 'bvh' ) this._setBVHData( adopted );
-		else this._setTriangleData( adopted );
-
-	}
-
-	/**
-	 * Normalize a caller's positions or normals into a per-mesh reader. A full-scene array is
-	 * handed back as views into itself, so the old contract costs nothing extra; a callback lets a
-	 * caller build one mesh at a time and never hold 9 floats × every triangle at once — 1,030 MB
-	 * at 30M triangles, which is past what a renderer can allocate.
-	 * @private
-	 */
 	_meshSource( source, what ) {
 
-		if ( source == null ) return null;
-
-		const table = this.instanceTable;
-
-		if ( typeof source === 'function' ) {
-
-			// The table is keyed by placement and one instanced mesh holds several, so a raw
-			// placement index is not something the caller can look up. Hand back the mesh.
-			return i => {
-
-				const mesh = table.sourceMesh[ i ];
-				const got = source( mesh, table.triCountOf( i ) );
-				const want = table.triCountOf( i ) * 9;
-				if ( got && got.length !== want ) {
-
-					throw new Error(
-						`SceneProcessor: ${what}s for mesh ${mesh} must be ${want} floats ` +
-						`(${table.triCountOf( i )} triangles × 9), got ${got.length}.`
-					);
-
-				}
-
-				return got ?? null;
-
-			};
-
-		}
-
-		// A short array reads past its end and writes NaN through every AABB above it with no
-		// error anywhere, so the scene just vanishes. Check once here instead.
-		const expected = ( this.expandedTriangleCount ?? this.triangleCount ) * 9;
-		if ( source.length !== expected ) {
-
-			throw new Error(
-				`SceneProcessor: expected ${expected} ${what} floats (${expected / 9} triangles × 9, ` +
-				`full scene), got ${source.length}. Pass a per-mesh callback instead to avoid ` +
-				'building one array for the whole scene.'
-			);
-
-		}
-
-		return i => {
-
-			const from = table.expandedStartOf( i ) * 9;
-			return source.subarray( from, from + table.triCountOf( i ) * 9 );
-
-		};
+		return meshSource( this, source, what );
 
 	}
 
@@ -2694,249 +2577,21 @@ export class SceneProcessor {
 	 * @param {Float32Array|function(number, number): Float32Array} [newNormals] - same two shapes
 	 * @returns {Promise<{ refitTimeMs: number }>}
 	 */
-	async refitBVH( newPositions, newNormals ) {
+	refitBVH( newPositions, newNormals ) {
 
-		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
-
-		if ( ! this.bvh || ! this.triangles || ! this.instanceTable ) {
-
-			throw new Error( 'No BVH data available for refit. Run buildBVH() first.' );
-
-		}
-
-		const positionsFor = this._meshSource( newPositions, 'position' );
-		const normalsFor = this._meshSource( newNormals, 'normal' );
-
-		if ( ! positionsFor ) throw new Error( 'SceneProcessor.refitBVH: positions are required.' );
-
-		// Lazy-create worker
-		if ( ! this._refitWorker ) {
-
-			this._refitWorker = createWorker( BVHRefitWorker );
-
-		}
-
-		// First call: move triangles and nodes into shared memory so the worker refits them in
-		// place. Positions never cross the boundary — they are scattered into the triangle records
-		// below, one mesh at a time, so nothing scene-sized is allocated on either side.
-		if ( ! this._refitSharedBuffers ) {
-
-			// Both stores are built on SharedArrayBuffer when the page allows it, so the worker
-			// takes them as they are. Copying instead would duplicate the two largest structures
-			// in the scene — 3,968 MB at 30M triangles, which is where this used to fail.
-			this._adoptSharedChunks( 'bvh', Float32Array );
-			this._adoptSharedChunks( 'triangles', Uint32Array );
-
-			const sharedBvhBufs = this.bvh.chunks.map( c => c.buffer );
-			const sharedTriBufs = this.triangles.chunks.map( c => c.buffer );
-			this._refitSharedBuffers = { bvhBufs: sharedBvhBufs, triBufs: sharedTriBufs };
-
-			this._refitWorker.postMessage( {
-				type: 'init',
-				sharedBvhBufs,
-				bvhRecordCount: this.bvh.recordCount,
-				bvhRecordsPerChunk: this.bvh.recordsPerChunk,
-				sharedTriBufs,
-				triRecordCount: this.triangles.recordCount,
-				triLanesPerRecord: this.triangles.lanesPerRecord,
-				triRecordsPerChunk: this.triangles.recordsPerChunk,
-			} );
-
-		}
-
-		// Scatter straight into the shared triangle records, mesh by mesh, so the caller's slice
-		// can be released as soon as it is read. Callers hand over world space; triangles are
-		// stored per instance, so each mesh comes back through its own inverse.
-		const table = this.instanceTable;
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const triRanges = [];
-		const blasRanges = [];
-		const refit = [];
-		let owners = 0;
-		for ( let i = 0; i < table.count; i ++ ) {
-
-			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
-			owners ++;
-
-			const p = positionsFor( i );
-			if ( ! p ) continue;
-			this._updateMeshTrianglePositions( i, p );
-			blasRanges.push( table.blasOffsetOf( i ), table.blasNodeCountOf( i ) );
-			refit.push( i );
-
-			// Smooth normals overwrite the face normals just computed, so they follow per mesh.
-			if ( normalsFor ) {
-
-				const n = normalsFor( i );
-				if ( n ) this._patchMeshSmoothNormals( i, n );
-
-			}
-
-			const offset = table.triOffsetOf( i ) * FPT, count = table.triCountOf( i ) * FPT;
-			const last = triRanges.at( - 1 );
-			if ( last && last.offset + last.count === offset ) last.count += count;
-			else triRanges.push( { offset, count } );
-
-		}
-
-		const tlasNodeCount = table.tlasNodeCount;
-		const partial = tlasNodeCount > 0 && blasRanges.length / 2 < owners;
-		const bvhRanges = partial ? [ this.computeTLASDirtyRange() ] : null;
-		for ( let r = 0; partial && r < blasRanges.length; r += 2 ) bvhRanges.push( { offset: blasRanges[ r ] * 16, count: blasRanges[ r + 1 ] * 16 } );
-
-		return new Promise( ( resolve, reject ) => {
-
-			this._refitWorker.onmessage = ( e ) => {
-
-				const msg = e.data;
-				if ( msg.type === 'refitComplete' ) {
-
-					// Later moves and main-thread refits box placements by these.
-					for ( const i of refit ) table.recomputeAABB( i, this.bvh, this.triangles );
-					table.computeGroupAABBs();
-					// The worker boxes a group copy by its shown members only.
-					const leaves = this._hiddenGroupLeaves();
-					if ( leaves.length ) this._refitTLAS( leaves );
-					resolve( { refitTimeMs: msg.refitTimeMs, triRanges, bvhRanges } );
-
-				} else if ( msg.type === 'error' ) {
-
-					reject( new Error( msg.error ) );
-
-				}
-
-			};
-
-			// Signal worker — no data transfer needed, everything is in shared memory
-			this._refitWorker.postMessage( {
-				type: 'refit', blasRanges: partial ? blasRanges : null, tlasNodeCount,
-				groupRange: table.groupNodeCount ? [ table.groupNodeStart, table.groupNodeCount ] : null,
-				treeNodeCount: table.treeNodeCount, recordNodeStart: table.clusterCount ? table.recordNodeStart : - 1,
-			} );
-
-		} );
+		return refitBVH( this, newPositions, newNormals );
 
 	}
 
-	/**
-	 * Overwrite face normals in triangleData with smooth vertex normals (full scene).
-	 * @private
-	 */
-	_patchSmoothNormals( normalsFor ) {
-
-		const table = this.instanceTable;
-		if ( ! table ) return;
-
-		for ( let i = 0; i < table.count; i ++ ) {
-
-			if ( ! table.isSet[ i ] || ! table.isOwner( i ) ) continue;
-			const n = normalsFor( i );
-			if ( n ) this._patchMeshSmoothNormals( i, n );
-
-		}
-
-	}
-
-	/**
-	 * Refit specific BLASes and rebuild TLAS after object transform or per-mesh animation.
-	 * Runs on the main thread (fast for per-mesh updates).
-	 *
-	 * @param {number[]} affectedMeshIndices - Indices into `this.meshes`, the same space
-	 *   {@link updateMeshTransforms} takes
-	 * @param {Float32Array} newPositions - 9 floats per triangle in original mesh order (full scene)
-	 * @param {Float32Array} [newNormals] - Optional smooth normals (9 floats per tri)
-	 * @returns {{ refitTimeMs: number }}
-	 */
-	/**
-	 * The placement holding a mesh's triangles. The instance table is keyed by placement and one
-	 * instanced mesh contributes several, so every entry point taking mesh indices converts here.
-	 *
-	 * @param {number} meshIndex
-	 * @returns {number} placement index, or -1 when the mesh placed nothing
-	 * @private
-	 */
 	_placementOf( meshIndex ) {
 
-		return this.instanceTable?.placementRunOf( meshIndex )?.start ?? - 1;
+		return placementOf( this, meshIndex );
 
 	}
 
 	refitBLASes( affectedMeshIndices, newPositions, newNormals ) {
 
-		this._geometryVersion = ( this._geometryVersion ?? 0 ) + 1;
-
-		if ( ! this.instanceTable || ! this.bvh || ! this.triangles ) {
-
-			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
-
-		}
-
-		const positionsFor = this._meshSource( newPositions, 'position' );
-		const normalsFor = this._meshSource( newNormals, 'normal' );
-
-		if ( ! positionsFor ) throw new Error( 'SceneProcessor.refitBLASes: positions are required.' );
-
-		const start = performance.now();
-
-		// Lazy-create refitter instance
-		if ( ! this._blasRefitter ) {
-
-			this._blasRefitter = new BVHRefitter();
-
-		}
-
-		// Step 1: Update triangle positions and refit each affected BLAS
-		const table = this.instanceTable;
-
-		for ( const meshIndex of affectedMeshIndices ) {
-
-			const placement = this._placementOf( meshIndex );
-			if ( placement < 0 || ! table.isSet[ placement ] ) continue;
-
-			// Triangles are shared between placements of one geometry, so writing this mesh's
-			// vertices would move every other copy with them. Anything that deforms is extracted
-			// with triangles of its own, so reaching here means the wrong mesh was handed over.
-			if ( ! table.isOwner( placement ) ) {
-
-				const owner = table.tplOwner[ table.sourceMesh[ placement ] ];
-				this.config.issues?.record(
-					ISSUE_CODES.REFIT_SHARED_GEOMETRY,
-					`mesh ${meshIndex} shares its triangles with another placement; deforming it would move every copy, so it was skipped`,
-					{ meshIndex, owner: table.sourceMesh[ owner ] ?? owner }
-				);
-				continue;
-
-			}
-
-			const p = positionsFor( placement );
-			if ( ! p ) continue;
-			this._updateMeshTrianglePositions( placement, p );
-
-			if ( normalsFor ) {
-
-				const n = normalsFor( placement );
-				if ( n ) this._patchMeshSmoothNormals( placement, n );
-
-			}
-
-			// Refit this BLAS's nodes
-			this._blasRefitter.refitRange(
-				this.bvh,
-				this.triangles,
-				table.blasOffsetOf( placement ),
-				table.blasNodeCountOf( placement )
-			);
-
-			// Recompute this mesh's AABB for TLAS rebuild
-			this.instanceTable.recomputeAABB( placement, this.bvh, this.triangles );
-
-		}
-
-		// Step 2: group trees over the refit BLASes, then the TLAS AABBs in place (no SAH rebuild)
-		this._writeGroupNodes();
-		this._refitTLAS();
-
-		return { refitTimeMs: performance.now() - start };
+		return refitBLASes( this, affectedMeshIndices, newPositions, newNormals );
 
 	}
 
@@ -2954,182 +2609,19 @@ export class SceneProcessor {
 	 */
 	updateMeshTransforms( meshIndices ) {
 
-		if ( ! this.instanceTable || ! this.bvh ) {
-
-			throw new Error( 'No TLAS/BLAS data available. Run buildBVH() first.' );
-
-		}
-
-		const start = performance.now();
-		const table = this.instanceTable;
-		const composed = this._transformScratch ??= new Float32Array( 16 );
-		const leaves = [];
-
-		for ( const meshIndex of this._withGroupSiblings( meshIndices ) ) {
-
-			const mesh = this.meshes?.[ meshIndex ];
-			const run = table.placementRunOf( meshIndex );
-			if ( ! mesh || ! run ) continue;
-
-			mesh.updateMatrixWorld( true );
-			const world = mesh.matrixWorld.elements;
-			const instances = mesh.isInstancedMesh ? mesh.instanceMatrix?.array ?? null : null;
-			// Baked triangles hold the pose they were extracted at; the leaf only carries the delta.
-			const bakeInverse = table.tplBakeInverse?.get( table.sourceMesh[ run.start ] ) ?? null;
-
-			for ( let k = 0; k < run.count; k ++ ) {
-
-				const p = run.start + k;
-				if ( ! table.isSet[ p ] ) continue;
-
-				if ( instances ) {
-
-					multiplyAffine( world, instances, k * 16, composed );
-					table.setPlacementMatrix( p, composed );
-
-				} else if ( bakeInverse ) {
-
-					multiplyAffine( world, bakeInverse, 0, composed );
-					table.setPlacementMatrix( p, composed );
-
-				} else {
-
-					table.setPlacementMatrix( p, world );
-
-				}
-
-				this._writeLeafMatrix( p );
-				const leaf = table.leafOfPlacement( p );
-				if ( leaf >= 0 ) leaves.push( leaf );
-
-			}
-
-		}
-
-		this._refitTLAS( leaves );
-
-		return { refitTimeMs: performance.now() - start, placements: leaves.length };
+		return updateMeshTransforms( this, meshIndices );
 
 	}
 
-	/** The TLAS leaves of every copy of a group with a hidden member. @private */
-	_hiddenGroupLeaves() {
-
-		const table = this.instanceTable;
-		const leaves = [];
-		for ( const g of table.groups ) {
-
-			if ( g.members.every( ( _, j ) => table.visible[ g.starts[ j ] ] ) ) continue;
-			for ( let c = 0; c < g.count; c ++ ) leaves.push( table.leafOfPlacement( g.starts[ 0 ] + c ) );
-
-		}
-
-		return leaves;
-
-	}
-
-	/**
-	 * A grouped mesh's parts are traced as one object, so a part moved alone takes its siblings with it: each sibling
-	 * is given the first moved member's world transform, and all of them are moved.
-	 * @private
-	 */
 	_withGroupSiblings( meshIndices ) {
 
-		const table = this.instanceTable;
-		if ( ! table.groups.length ) return meshIndices;
-
-		const out = new Set( meshIndices );
-		const synced = new Set();
-		const parentInverse = this._parentInverse ??= new Matrix4();
-
-		for ( const meshIndex of meshIndices ) {
-
-			const g = table.groupOfTemplate[ meshIndex ] ?? - 1;
-			if ( g < 0 || synced.has( g ) ) continue;
-			synced.add( g );
-
-			const mover = this.meshes?.[ meshIndex ];
-			if ( ! mover ) continue;
-			mover.updateMatrixWorld( true );
-
-			for ( const sibling of table.groups[ g ].members ) {
-
-				out.add( sibling );
-				const mesh = this.meshes[ sibling ];
-				if ( ! mesh || mesh === mover ) continue;
-				if ( mesh.parent ) mesh.parent.updateMatrixWorld( true );
-				mesh.matrix.copy( mover.matrixWorld );
-				if ( mesh.parent ) mesh.matrix.premultiply( parentInverse.copy( mesh.parent.matrixWorld ).invert() );
-				mesh.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
-				mesh.updateMatrixWorld( true );
-
-			}
-
-		}
-
-		return out;
+		return withGroupSiblings( this, meshIndices );
 
 	}
 
-	/** Refresh one TLAS leaf's world-to-object matrix from the table — its copy record, when clustered. @private */
-	_writeLeafMatrix( placement ) {
-
-		const table = this.instanceTable;
-		const node = table.tlasLeafIndex[ placement ];
-		if ( node < 0 ) return;
-
-		if ( table.clusterCount ) {
-
-			this._writeCopyRecord( node, table.repOf( table.entryOf( placement ) ) );
-			return;
-
-		}
-
-		TLASBuilder.writeLeafMatrix(
-			this.bvh.chunkFor( node ), this.bvhIndexChunks.chunkFor( node ), this.bvh.baseOf( node ),
-			table, placement, table.entryOf( placement )
-		);
-
-	}
-
-	/**
-	 * Rewrites copy record `r` from placement `p`'s transform, and its identity bit (a moved baked placement stops being
-	 * identity); records the range for the next upload. @private
-	 */
 	_writeCopyRecord( r, p ) {
 
-		const table = this.instanceTable;
-		const rows = this._recordScratch ??= new Float32Array( 12 );
-		table.writeRecord( rows, 0, p );
-		const lane = table.recordNodeStart * 16 + r * RECORD_VEC4 * 4;
-		for ( let i = 0; i < 12; i ++ ) {
-
-			const node = ( lane + i ) >> 4;
-			this.bvh.chunkFor( node )[ this.bvh.baseOf( node ) + ( ( lane + i ) & 15 ) ] = rows[ i ];
-
-		}
-
-		const leaf = table.clusterLeaf[ table.clusterOf( r ) ];
-		const idx = this.bvhIndexChunks.chunkFor( leaf ), o = this.bvh.baseOf( leaf ) + table.copyWordSlot( r );
-		const identity = isIdentity( table.matrixWorldOf( p ) );
-		idx[ o ] = ( ( idx[ o ] & ~ TLAS_LEAF_IDENTITY ) | ( identity ? TLAS_LEAF_IDENTITY : 0 ) ) >>> 0;
-
-		// One range a chunk: a mesh's copies sit all over the records, and a spilled scene has only their chunks back.
-		const moved = this._movedRecords ??= new Map();
-		const lanesPerChunk = this.bvh.recordsPerChunk * 16;
-		for ( let at = lane, end = lane + 12; at < end; ) {
-
-			const k = Math.floor( at / lanesPerChunk ), stop = Math.min( end, ( k + 1 ) * lanesPerChunk );
-			const range = moved.get( k );
-			if ( range ) {
-
-				range.lo = Math.min( range.lo, at );
-				range.hi = Math.max( range.hi, stop );
-
-			} else moved.set( k, { lo: at, hi: stop } );
-			at = stop;
-
-		}
+		return writeCopyRecord( this, r, p );
 
 	}
 
@@ -3139,35 +2631,21 @@ export class SceneProcessor {
 	 */
 	takeMoveRanges() {
 
-		const tlas = this._tlasRanges ?? [ this.computeTLASDirtyRange() ];
-		this._tlasRanges = null;
-		return [ ...tlas, ...this.takeMovedRecordRanges() ];
+		return takeMoveRanges( this );
 
 	}
 
 	/** The copy records rewritten since the last call, as float ranges of the BVH for an upload, one a chunk. */
 	takeMovedRecordRanges() {
 
-		const moved = this._movedRecords;
-		this._movedRecords = null;
-		return moved ? [ ...moved.values() ].map( r => ( { offset: r.lo, count: r.hi - r.lo } ) ) : [];
-
-	}
-
-	/** Rewrites the group trees from the members' current bounds and visibility. @private */
-	_writeGroupNodes() {
-
-		const table = this.instanceTable;
-		if ( ! table?.groupNodeCount || ! this.bvh ) return;
-		table.computeGroupAABBs();
-		this.bvh.setRecords( table.groupNodeStart, table.groupNodeBlock() );
+		return takeMovedRecordRanges( this );
 
 	}
 
 	/** The TLAS and the group trees occupy the front of the BVH buffer, the only part a move rewrites. */
 	computeTLASDirtyRange() {
 
-		return { offset: 0, count: this.instanceTable.blasBase * 16 };
+		return computeTLASDirtyRange( this );
 
 	}
 
@@ -3180,26 +2658,7 @@ export class SceneProcessor {
 	 */
 	computeBLASDirtyRanges( affectedMeshIndices ) {
 
-		const FPT = TRIANGLE_DATA_LAYOUT.FLOATS_PER_TRIANGLE;
-		const FPN = 16; // FLOATS_PER_NODE — 4 × vec4 per BVH node
-		const triRanges = [];
-		const bvhRanges = [];
-
-		for ( const meshIndex of affectedMeshIndices ) {
-
-			const table = this.instanceTable;
-			const placement = this._placementOf( meshIndex );
-			if ( placement < 0 || ! table.isSet[ placement ] ) continue;
-
-			triRanges.push( { offset: table.triOffsetOf( placement ) * FPT, count: table.triCountOf( placement ) * FPT } );
-			bvhRanges.push( { offset: table.blasOffsetOf( placement ) * FPN, count: table.blasNodeCountOf( placement ) * FPN } );
-
-		}
-
-		// Always include the TLAS and group trees (rebuilt on every refit)
-		bvhRanges.push( { offset: 0, count: this.instanceTable.blasBase * FPN } );
-
-		return { triRanges, bvhRanges };
+		return computeBLASDirtyRanges( this, affectedMeshIndices );
 
 	}
 
@@ -3442,59 +2901,16 @@ export class SceneProcessor {
 	 * @param {import('../storage/StorageManager.js').StorageManager} storage
 	 * @returns {Promise<?{bytes: number, ms: number}>} null when nothing was spilled
 	 */
-	async spillToDisk( storage ) {
+	spillToDisk( storage ) {
 
-		const triangles = this.triangles;
-		const bvh = this.bvh;
-		if ( ! storage || this.spilled || this._spillStores || ! triangles?.chunks || triangles.chunks.length < 2 || ! bvh?.chunks ) return null;
-
-		await this._blasStoring;
-		const version = this._geometryVersion;
-		const started = performance.now();
-		const key = `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}`;
-		const stride = records => records.recordsPerChunk * records.lanesPerRecord * records.LaneType.BYTES_PER_ELEMENT;
-
-		const triStore = await SpillStore.create( storage, `${key}:tri`, stride( triangles ), { label: 'Triangle records', expectedBytes: triangles.byteLength } );
-		const bvhStore = triStore && await SpillStore.create( storage, `${key}:bvh`, stride( bvh ), { label: 'BLAS nodes', expectedBytes: bvh.byteLength } );
-		if ( ! triStore || ! bvhStore ) {
-
-			await triStore?.dispose();
-			return null;
-
-		}
-
-		this._spillStores = [ triStore, bvhStore ];
-		const tlasChunks = Math.ceil( ( this.instanceTable?.blasBase ?? 1 ) / bvh.recordsPerChunk );
-
-		let bytes = await triangles.spill( triStore );
-		bytes += await bvh.spill( bvhStore, { keep: k => k < tlasChunks } );
-		await triStore.flush();
-		await bvhStore.flush();
-
-		if ( version !== this._geometryVersion ) return null;
-		const ms = performance.now() - started;
-		log.info( `spilled ${( bytes / 1048576 ).toFixed( 0 )} MB of triangles and BLAS nodes to disk in ${ms.toFixed( 0 )} ms` );
-		return { bytes, ms };
+		return spillToDisk( this, storage );
 
 	}
 
 	/** Reads every spilled triangle record, BLAS node and order map back, then drops the scratch files. */
 	ensureResident() {
 
-		this._paging ??= ( async () => {
-
-			await this.triangles?.ensureResident?.();
-			await this.bvh?.ensureResident?.();
-			await this._restoreOrderMaps();
-			if ( ! this.spilled ) this._disposeSpill();
-
-		} )().finally( () => {
-
-			this._paging = null;
-
-		} );
-
-		return this._paging;
+		return ensureResident( this );
 
 	}
 
@@ -3508,12 +2924,7 @@ export class SceneProcessor {
 	/** Reads back the three.js geometry and matrix lists a spilling build left on disk. */
 	ensureGeometryResident() {
 
-		const geometry = this._geometryOwner ? this._geometryReading ??= this._restoreGeometry( this._geometryOwner ).finally( () => {
-
-			this._geometryReading = null;
-
-		} ) : null;
-		return Promise.all( [ geometry, this.ensureMovable() ] );
+		return ensureGeometryResident( this );
 
 	}
 
@@ -3528,159 +2939,21 @@ export class SceneProcessor {
 	 * Reads back what moving `meshIndices` needs that a spilling build left on disk: the matrix lists, the TLAS and the
 	 * copy records of those meshes. Without meshes, the matrix lists alone.
 	 */
-	async ensureMovable( meshIndices = [] ) {
+	ensureMovable( meshIndices ) {
 
-		this._movePageIns = ( this._movePageIns ?? 0 ) + 1;
-		try {
-
-			await this._afterLoadSpill;
-			const spill = this._matrixSpill;
-			if ( spill ) await ( this._matrixReading ??= spill.restore().then( () => this._disposeMatrixSpill() ).finally( () => {
-
-				this._matrixReading = null;
-
-			} ) );
-
-			const table = this.instanceTable, bvh = this.bvh;
-			if ( ! meshIndices.length || ! table || ! bvh?.spilledChunks ) return;
-			await bvh.ensureResident( 0, table.blasBase );
-			for ( const k of this._recordChunksOf( meshIndices ) ) await bvh.ensureResident( k * bvh.recordsPerChunk, 1 );
-
-		} finally {
-
-			this._movePageIns --;
-
-		}
+		return ensureMovable( this, meshIndices );
 
 	}
 
-	/**
-	 * A spilling build's matrix lists go to disk as well — 2.4 GB on the Moana island; only a move reads them. Each
-	 * InstancedMesh gets its bounds from its copies' boxes first, so three.js never derives them from the empty list;
-	 * `again`, only one without bounds yet.
-	 * @private
-	 */
-	async _spillMatrices( again = false ) {
+	_spillTLAS() {
 
-		const table = this.instanceTable;
-		const lists = table?.adoptedMatrices() ?? [];
-		const bounds = this._spillMeshBounds;
-		this._spillMeshBounds = null;
-		if ( ! lists.length || ! this._progressive?.storage ) return;
-
-		const spill = await GeometrySpill.create( this._progressive.storage, `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}:mat` );
-		if ( ! spill ) return;
-
-		for ( const [ mesh, b ] of bounds ?? this._instancedMeshBounds( ( e, out ) => table.writeEntryWorldAABB( e, out, 0 ), again ) ) {
-
-			mesh.boundingBox = new Box3( new Vector3( b[ 0 ], b[ 1 ], b[ 2 ] ), new Vector3( b[ 3 ], b[ 4 ], b[ 5 ] ) );
-			mesh.boundingSphere = mesh.boundingBox.getBoundingSphere( new Sphere() );
-
-		}
-
-		const bytes = lists.reduce( ( n, a ) => n + a.array.byteLength, 0 );
-		spill.addAttributes( lists );
-		this._matrixSpill = spill;
-		log.info( `${fmt.mb( bytes )} of instance matrices left for disk` );
+		return spillTLAS( this );
 
 	}
 
-	/**
-	 * A spilling build's TLAS goes to disk too when copies are clustered — 1.3 GB on the Moana island — and any chunk a
-	 * move read back (its copy records), keeping only the chunks over the group trees, which a visibility change
-	 * rewrites. An edit reads them back first (the stage's `_whenTLASResident`, {@link ensureMovable}).
-	 * @private
-	 */
-	async _spillTLAS() {
+	_spillOrderMaps() {
 
-		const table = this.instanceTable, bvh = this.bvh, store = this._bvhSpillStore;
-		if ( ! store || ! table?.clusterCount ) return;
-		const per = bvh.recordsPerChunk;
-		const groupFirst = ( table.groupNodeStart / per ) | 0;
-		const groupLast = ( ( table.groupNodeStart + Math.max( 1, table.groupNodeCount ) - 1 ) / per ) | 0;
-		this._spilledRootBounds = this.sceneBounds();
-		const bytes = await bvh.spill( store, { keep: k => table.groupNodeCount > 0 && k >= groupFirst && k <= groupLast } );
-		log.info( `spilled ${fmt.mb( bytes )} of TLAS to disk` );
-
-	}
-
-	/**
-	 * A spilling build's triangle order maps go to disk too (0.43 GB on the Moana island): only refits and BLAS swaps
-	 * read them, after {@link ensureResident}, which reads them back. Packed into 32 MB writes.
-	 * @private
-	 */
-	async _spillOrderMaps() {
-
-		const table = this.instanceTable, storage = this._progressive?.storage;
-		if ( ! table?.bvhToOriginal.size || ! storage ) return;
-		let bytes = 0;
-		for ( const map of table.bvhToOriginal.values() ) bytes += map.byteLength;
-		const store = await SpillStore.create( storage, `spill:${Date.now().toString( 36 )}:${Math.random().toString( 36 ).slice( 2 )}:order`, 0, { label: 'Triangle order maps', expectedBytes: bytes } );
-		if ( ! store ) return;
-
-		const index = [], pack = new Uint8Array( ORDER_PACK_BYTES );
-		let at = 0, packed = 0;
-		const flush = async () => {
-
-			if ( packed ) await store.writeAt( at - packed, pack.subarray( 0, packed ) );
-			packed = 0;
-
-		};
-
-		for ( const [ t, map ] of table.bvhToOriginal ) {
-
-			const data = new Uint8Array( map.buffer, map.byteOffset, map.byteLength );
-			index.push( t, at, map.length );
-			if ( packed + data.length > pack.length ) await flush();
-			if ( data.length > pack.length ) await store.writeAt( at, data );
-			else {
-
-				pack.set( data, packed );
-				packed += data.length;
-
-			}
-
-			at += data.length;
-
-		}
-
-		await flush();
-		await store.flush();
-		table.bvhToOriginal.clear();
-		this._orderSpill = { store, index, bytes };
-
-	}
-
-	/** Reads the order maps {@link _spillOrderMaps} moved to disk back, in 64 MB windows. @private */
-	async _restoreOrderMaps() {
-
-		const spill = this._orderSpill;
-		if ( ! spill ) return;
-		this._orderSpill = null;
-		const { store, index, bytes } = spill, maps = this.instanceTable.bvhToOriginal;
-		let windowAt = 0, window = null;
-		for ( let i = 0; i < index.length; i += 3 ) {
-
-			const t = index[ i ], at = index[ i + 1 ], length = index[ i + 2 ] * 4;
-			if ( length > ORDER_WINDOW_BYTES ) {
-
-				maps.set( t, new Uint32Array( await store.readAt( at, length ) ) );
-				continue;
-
-			}
-
-			if ( ! window || at + length > windowAt + window.byteLength ) {
-
-				windowAt = at;
-				window = await store.readAt( at, Math.min( ORDER_WINDOW_BYTES, bytes - at ) );
-
-			}
-
-			maps.set( t, new Uint32Array( window.slice( at - windowAt, at - windowAt + length ) ) );
-
-		}
-
-		await store.dispose();
+		return spillOrderMaps( this );
 
 	}
 
@@ -3690,9 +2963,7 @@ export class SceneProcessor {
 	 */
 	spillAfterLoad() {
 
-		if ( ! this._geometryOwner || this._spilledAfterLoad ) return this._afterLoadSpill ?? Promise.resolve();
-		this._spilledAfterLoad = true;
-		return this._spillUnused( false );
+		return spillAfterLoad( this );
 
 	}
 
@@ -3702,86 +2973,21 @@ export class SceneProcessor {
 	 */
 	respill() {
 
-		if ( ! this._geometryOwner || ! this._spilledAfterLoad || this._afterLoadSpill ) return this._afterLoadSpill ?? Promise.resolve();
-		if ( this._matrixReading || this._tlasReading || this._movePageIns ) return Promise.resolve();
-		return this._spillUnused( true );
-
-	}
-
-	/** @private */
-	_spillUnused( again ) {
-
-		this._afterLoadSpill = ( async () => {
-
-			await this._spillMatrices( again );
-			await this._spillTLAS();
-			await this._spillOrderMaps();
-
-		} )().finally( () => {
-
-			this._afterLoadSpill = null;
-
-		} );
-		return this._afterLoadSpill;
+		return respill( this );
 
 	}
 
 	/** Null when the TLAS can be edited in memory now, else a promise for when it can: it is being spilled, or is on disk. */
 	whenTLASEditable() {
 
-		if ( this._afterLoadSpill ) return this._afterLoadSpill.then( () => this.whenTLASEditable() );
-		const bvh = this.bvh, table = this.instanceTable;
-		if ( ! bvh || ! table || bvh.isResident( 0, table.blasBase ) ) return null;
-		return this._tlasReading ??= bvh.ensureResident( 0, table.blasBase ).finally( () => {
-
-			this._tlasReading = null;
-
-		} );
+		return whenTLASEditable( this );
 
 	}
 
 	/** Whether moving `meshIndices` has to read anything back from disk first ({@link ensureMovable}). */
 	needsPageInForMove( meshIndices ) {
 
-		if ( this._matrixSpill || this._afterLoadSpill ) return true;
-		const table = this.instanceTable, bvh = this.bvh;
-		if ( ! table || ! bvh?.spilledChunks ) return false;
-		if ( ! bvh.isResident( 0, table.blasBase ) ) return true;
-		for ( const k of this._recordChunksOf( meshIndices ) ) if ( ! bvh.isResident( k * bvh.recordsPerChunk, 1 ) ) return true;
-		return false;
-
-	}
-
-	/** The BVH chunks holding the copy records of `meshIndices` and their group siblings. @private */
-	_recordChunksOf( meshIndices ) {
-
-		const table = this.instanceTable, per = this.bvh.recordsPerChunk, chunks = new Set();
-		if ( ! table.clusterCount ) return chunks;
-		const meshes = new Set( meshIndices );
-		for ( const m of meshIndices ) {
-
-			const g = table.groupOfTemplate?.[ m ] ?? - 1;
-			if ( g >= 0 ) for ( const member of table.groups[ g ].members ) meshes.add( member );
-
-		}
-
-		for ( const m of meshes ) {
-
-			const run = table.placementRunOf( m );
-			if ( ! run ) continue;
-			for ( let p = run.start; p < run.start + run.count; p ++ ) {
-
-				const r = table.tlasLeafIndex[ p ];
-				if ( r < 0 ) continue;
-				const lane = table.recordNodeStart * 16 + r * RECORD_VEC4 * 4;
-				chunks.add( Math.floor( lane / 16 / per ) );
-				chunks.add( Math.floor( ( lane + 11 ) / 16 / per ) );
-
-			}
-
-		}
-
-		return chunks;
+		return needsPageInForMove( this, meshIndices );
 
 	}
 
@@ -3821,53 +3027,27 @@ export class SceneProcessor {
 
 	}
 
-	/** @private */
 	_disposeMatrixSpill() {
 
-		const spill = this._matrixSpill;
-		this._matrixSpill = null;
-		spill?.dispose().catch( () => {} );
+		return disposeMatrixSpill( this );
 
 	}
 
-	/** Reads the three.js geometry a streamed build moved to disk back into place. @private */
-	async _restoreGeometry( object ) {
+	_restoreGeometry( object ) {
 
-		const spill = this._geometrySpill;
-		if ( ! spill?.bytes ) {
-
-			this._geometryOwner = null;
-			return;
-
-		}
-
-		if ( ! this._geometryOwner ) updateLoading( { status: 'Reading scene geometry back...', progress: 84 } );
-		const started = performance.now();
-		const bytes = spill.bytes;
-		await spill.restore();
-		this._disposeGeometrySpill();
-		this._geometryBytes = geometryBytesOf( object );
-		log.info( `read ${fmt.mb( bytes )} of scene geometry back from disk in ${fmt.ms( performance.now() - started )}` );
-		if ( spill.error ) log.warn( 'some scene geometry stayed in memory, its spill write failed:', spill.error );
+		return restoreGeometry( this, object );
 
 	}
 
-	/** @private */
 	_disposeGeometrySpill() {
 
-		const spill = this._geometrySpill;
-		this._geometrySpill = null;
-		this._geometryOwner = null;
-		spill?.dispose().catch( () => {} );
+		return disposeGeometrySpill( this );
 
 	}
 
-	/** @private */
 	_disposeSpill() {
 
-		const stores = this._spillStores;
-		this._spillStores = null;
-		for ( const store of stores ?? [] ) store.dispose().catch( () => {} );
+		return disposeSpill( this );
 
 	}
 
@@ -4035,242 +3215,21 @@ export class SceneProcessor {
 
 	}
 
-	/**
-	 * Update triangle positions for a single mesh entry.
-	 * Iterates in BVH order for sequential writes (cache-friendly), random reads from newPositions.
-	 * @private
-	 */
 	_updateMeshTrianglePositions( i, meshPositions ) {
 
-		const PA = TRIANGLE_DATA_LAYOUT.POSITION_A_OFFSET;
-		const PB = TRIANGLE_DATA_LAYOUT.POSITION_B_OFFSET;
-		const PC = TRIANGLE_DATA_LAYOUT.POSITION_C_OFFSET;
-		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
-		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
-		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
-		const tri = this.triangles, triF = this.triangleFloatChunks;
-		const table = this.instanceTable;
-
-		const bvhToOrig = table.bvhToOriginalOf( i );
-		const triOffset = table.triOffsetOf( i ), triCount = table.triCountOf( i );
-
-		// Callers hand over world-space positions, which is the only space they can build
-		// one in; triangles are stored per instance, so they come back through the inverse.
-		const m = table.matrixInverseOf( i );
-		const identity = isIdentity( m );
-
-		for ( let bvhLocal = 0; bvhLocal < triCount; bvhLocal ++ ) {
-
-			const origLocal = bvhToOrig ? bvhToOrig[ bvhLocal ] : bvhLocal;
-			const t = triOffset + bvhLocal;
-			const f = triF.chunkFor( t ), u = tri.chunkFor( t );
-			const dst = tri.baseOf( t );
-			const src = origLocal * 9;
-
-			let ax = meshPositions[ src ];
-			let ay = meshPositions[ src + 1 ];
-			let az = meshPositions[ src + 2 ];
-			let bx = meshPositions[ src + 3 ];
-			let by = meshPositions[ src + 4 ];
-			let bz = meshPositions[ src + 5 ];
-			let cx = meshPositions[ src + 6 ];
-			let cy = meshPositions[ src + 7 ];
-			let cz = meshPositions[ src + 8 ];
-
-			if ( ! identity ) {
-
-				const px = ( x, y, z ) => m[ 0 ] * x + m[ 4 ] * y + m[ 8 ] * z + m[ 12 ];
-				const py = ( x, y, z ) => m[ 1 ] * x + m[ 5 ] * y + m[ 9 ] * z + m[ 13 ];
-				const pz = ( x, y, z ) => m[ 2 ] * x + m[ 6 ] * y + m[ 10 ] * z + m[ 14 ];
-				const a = [ px( ax, ay, az ), py( ax, ay, az ), pz( ax, ay, az ) ];
-				const b = [ px( bx, by, bz ), py( bx, by, bz ), pz( bx, by, bz ) ];
-				const c = [ px( cx, cy, cz ), py( cx, cy, cz ), pz( cx, cy, cz ) ];
-				ax = a[ 0 ]; ay = a[ 1 ]; az = a[ 2 ];
-				bx = b[ 0 ]; by = b[ 1 ]; bz = b[ 2 ];
-				cx = c[ 0 ]; cy = c[ 1 ]; cz = c[ 2 ];
-
-			}
-
-			f[ dst + PA ] = ax;
-			f[ dst + PA + 1 ] = ay;
-			f[ dst + PA + 2 ] = az;
-			f[ dst + PB ] = bx;
-			f[ dst + PB + 1 ] = by;
-			f[ dst + PB + 2 ] = bz;
-			f[ dst + PC ] = cx;
-			f[ dst + PC + 1 ] = cy;
-			f[ dst + PC + 2 ] = cz;
-
-			const abx = bx - ax, aby = by - ay, abz = bz - az;
-			const acx = cx - ax, acy = cy - ay, acz = cz - az;
-			const packed = packNormalOct(
-				aby * acz - abz * acy,
-				abz * acx - abx * acz,
-				abx * acy - aby * acx
-			);
-
-			u[ dst + NA ] = packed;
-			u[ dst + NB ] = packed;
-			u[ dst + NC ] = packed;
-
-		}
+		return updateMeshTrianglePositions( this, i, meshPositions );
 
 	}
 
-	/**
-	 * Patch smooth normals for a single mesh's triangles.
-	 * @private
-	 */
 	_patchMeshSmoothNormals( i, meshNormals ) {
 
-		const table = this.instanceTable;
-		this._patchNormalsRange(
-			meshNormals, table.triOffsetOf( i ), table.triCountOf( i ),
-			table.matrixWorldOf( i ), table.bvhToOriginalOf( i )
-		);
+		return patchMeshSmoothNormals( this, i, meshNormals );
 
 	}
 
-	/**
-	 * Shared normal-patching loop for a range of triangles.
-	 * @private
-	 */
-	_patchNormalsRange( normals, triOffset, count, matrixWorld, bvhToOrig ) {
+	_refitTLAS( leaves ) {
 
-		const NA = TRIANGLE_DATA_LAYOUT.NORMAL_A_PACKED_OFFSET;
-		const NB = TRIANGLE_DATA_LAYOUT.NORMAL_B_PACKED_OFFSET;
-		const NC = TRIANGLE_DATA_LAYOUT.NORMAL_C_PACKED_OFFSET;
-
-		// Callers supply world-space normals. Traversal takes object normals out through the
-		// transpose of world-to-object, so coming the other way is the transpose of
-		// object-to-world — not its inverse, which is what a position would use.
-		const m = matrixWorld;
-		const plain = ! m || isIdentity( m );
-		const slots = [ NA, NB, NC ];
-
-		// Walked in stored order so the writes stay sequential; the inverse map is the only
-		// permutation kept, so the read is the scattered side.
-		for ( let k = 0; k < count; k ++ ) {
-
-			const bvhIdx = triOffset + k;
-			const u = this.triangles.chunkFor( bvhIdx );
-			const dst = this.triangles.baseOf( bvhIdx );
-			const src = ( bvhToOrig ? bvhToOrig[ k ] : k ) * 9;
-
-			for ( let v = 0; v < 3; v ++ ) {
-
-				const s = src + v * 3;
-				const nx = normals[ s ], ny = normals[ s + 1 ], nz = normals[ s + 2 ];
-				let ox = nx, oy = ny, oz = nz;
-
-				if ( ! plain ) {
-
-					ox = m[ 0 ] * nx + m[ 1 ] * ny + m[ 2 ] * nz;
-					oy = m[ 4 ] * nx + m[ 5 ] * ny + m[ 6 ] * nz;
-					oz = m[ 8 ] * nx + m[ 9 ] * ny + m[ 10 ] * nz;
-					const len = Math.hypot( ox, oy, oz ) || 1;
-					ox /= len; oy /= len; oz /= len;
-
-				}
-
-				u[ dst + slots[ v ] ] = packNormalOct( ox, oy, oz );
-
-			}
-
-		}
-
-	}
-
-	/**
-	 * Refit the TLAS boxes in place, top down. A node keeps each child's box in its own slots, so a subtree holding none
-	 * of `leaves` is skipped: a move costs its leaves' paths to the root, not the tree (moving 69,856 copies on the Moana
-	 * island, 20M nodes: 11.6 s → 93 ms). Every leaf when `leaves` is omitted.
-	 * @param {ArrayLike<number>} [leaves] - TLAS leaf nodes whose boxes changed, in any order
-	 * @private
-	 */
-	_refitTLAS( leaves = null ) {
-
-		const table = this.instanceTable;
-		const count = table.tlasNodeCount;
-		const marks = leaves ? Int32Array.from( leaves ).sort() : null;
-		this._tlasRanges = marks ? [] : null;
-		if ( ! count || marks?.length === 0 ) return;
-		const touched = marks ? Array.from( marks ) : null;
-
-		// Frames of node, end of its subtree (pre-order: [node, end)), parent slot (parent * 2 + side, -1 at the root),
-		// and whether its children are done.
-		let stack = this._refitStack ??= new Int32Array( 256 );
-		let top = 0, cursor = 0;
-		const box = this._refitBox ??= new Float32Array( 6 );
-		const push = ( node, end, slot, done ) => {
-
-			if ( top + 4 > stack.length ) {
-
-				const grown = new Int32Array( stack.length * 2 );
-				grown.set( stack );
-				stack = this._refitStack = grown;
-
-			}
-
-			stack[ top ++ ] = node; stack[ top ++ ] = end; stack[ top ++ ] = slot; stack[ top ++ ] = done;
-
-		};
-
-		push( 0, count, - 1, 0 );
-		while ( top ) {
-
-			const done = stack[ -- top ], slot = stack[ -- top ], end = stack[ -- top ], i = stack[ -- top ];
-			const f = this.bvh.chunkFor( i ), o = this.bvh.baseOf( i );
-
-			if ( done ) {
-
-				box[ 0 ] = Math.min( f[ o ], f[ o + 8 ] ); box[ 1 ] = Math.min( f[ o + 1 ], f[ o + 9 ] ); box[ 2 ] = Math.min( f[ o + 2 ], f[ o + 10 ] );
-				box[ 3 ] = Math.max( f[ o + 4 ], f[ o + 12 ] ); box[ 4 ] = Math.max( f[ o + 5 ], f[ o + 13 ] ); box[ 5 ] = Math.max( f[ o + 6 ], f[ o + 14 ] );
-
-			} else {
-
-				if ( marks ) {
-
-					while ( cursor < marks.length && marks[ cursor ] < i ) cursor ++;
-					if ( cursor === marks.length || marks[ cursor ] >= end ) continue;
-
-				}
-
-				const idx = this.bvhIndexChunks.chunkFor( i );
-				const marker = idx[ o + 3 ];
-				if ( marker === BVH_LEAF_MARKERS.BLAS_POINTER_LEAF ) {
-
-					// Slot [1] is this leaf's own entry. Keying off slot [0] instead collapsed every placement of a shared
-					// geometry onto one box, so all but one copy sat outside its own bounds and rays walked past it.
-					const entry = idx[ o + 1 ] & TLAS_PLACEMENT_MASK;
-					if ( entry >= table.entryCount ) continue;
-					table.writeEntryWorldAABB( entry, box, 0 );
-
-				} else if ( marker === BVH_LEAF_MARKERS.CLUSTER_LEAF ) {
-
-					table.encodeClusterBoxes( f, idx, o, table.clusterOf( idx[ o ] & CLUSTER_FIRST_MASK ), null, box, 0 );
-
-				} else if ( marker < BVH_LEAF_MARKERS.TRIANGLE_LEAF ) {
-
-					const right = idx[ o + 7 ];
-					push( i, end, slot, 1 );
-					push( right, end, i * 2 + 1, 0 );
-					push( marker, right, i * 2, 0 );
-					continue;
-
-				} else continue;
-
-			}
-
-			if ( slot < 0 ) continue;
-			const p = slot >> 1, pf = this.bvh.chunkFor( p ), po = this.bvh.baseOf( p ) + ( slot & 1 ) * 8;
-			pf[ po ] = box[ 0 ]; pf[ po + 1 ] = box[ 1 ]; pf[ po + 2 ] = box[ 2 ];
-			pf[ po + 4 ] = box[ 3 ]; pf[ po + 5 ] = box[ 4 ]; pf[ po + 6 ] = box[ 5 ];
-			touched?.push( p );
-
-		}
-
-		if ( touched ) this._tlasRanges = nodeRanges( touched );
+		return refitTLAS( this, leaves );
 
 	}
 

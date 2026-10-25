@@ -97,7 +97,8 @@ against it; 7.28 → 9.1 moved their image by 29.5/255 with no breaking note. Tw
   `EngineEvents`, `EngineIssues`, `AssetConfig`, `Platform`, `HeadlessCanvas`), `Logger.js`, `utils.js`, `portable.js`
 - `pipeline/` stages, context, events, Compositor · `pathtracer/` the path tracer stage, uniforms, kernel dispatch,
   ray queues and buffers, the bidirectional integrator · `shaders/` TSL functions, `shaders/kernels/` the compute kernels
-- `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera) · `bvh/` · `lights/` ·
+- `scene/` scene → GPU data (extraction, instance table, buffer layout, live camera; `SceneProcessor`'s refits and moves
+  in `SceneRefit.js`, its spill in `memory/SceneSpill.js`) · `bvh/` · `lights/` ·
   `materials/` (and texture arrays) · `environment/` (HDRI, skies, sun) · `loaders/` (+ `archives/`, `pbrt/`, `usd/`) ·
   `memory/` · `output/` (readbacks, their tone mapping, `rayzee/encoders`) · `color/` · `storage/` · `addons/` · `node/`
 - `viewer/` everything only `PathTracerApp` uses: `camera/`, `overlays/`, `animation/`, `denoise/`, `picture/`,
