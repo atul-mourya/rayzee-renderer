@@ -1,15 +1,25 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
 	AnimationClip, BufferAttribute, BufferGeometry, DataTexture, FloatType, Group, InstancedMesh, Matrix4, Mesh,
 	MeshPhysicalMaterial, PerspectiveCamera, RGBAFormat, RepeatWrapping, SRGBColorSpace, Texture, VectorKeyframeTrack, PointLight,
-	SpotLight, DirectionalLight, HemisphereLight, Vector3,
+	SpotLight, DirectionalLight, HemisphereLight, Vector3, BoxGeometry, SphereGeometry,
 } from 'three';
 import { createFakeOPFS } from '../../__mocks__/opfs.js';
-import { openStorage } from '@/core/addons/storage/OpenStorage.js';
+import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
 import { encodeSceneGraph, writeSceneGraph, decodeSceneGraph, SceneGraphUnsupported, ARCHIVE_PATH } from '@/core/addons/archives/SceneGraphCodec.js';
 import { rangeChecksum } from '@/core/storage/BLASCache.js';
 import { ChunkedRecords } from '@/core/memory/ChunkedRecords.js';
 import { worthStoring } from '@/core/storage/StorageAreas.js';
+import { getAssetConfig } from '@/core/AssetConfig.js';
+import { SceneProcessor } from '@/core/scene/SceneProcessor.js';
+import { SpillStore } from '@/core/storage/SpillStore.js';
+
+vi.mock( '@/core/bvh/BVHWorker.js?worker&inline', async () => {
+
+	const { inProcessWorker } = await import( '../bvh/bvhInvariants.js' );
+	return { default: inProcessWorker( () => import( '@/core/bvh/BVHWorker.js' ) ) };
+
+} );
 
 function buildScene() {
 
@@ -286,6 +296,90 @@ describe( 'BLAS cache helpers', () => {
 		expect( worthStoring( 9_000, 1e6 ) ).toBe( false );
 		expect( worthStoring( 20_000, 1e9 ) ).toBe( true );
 		expect( worthStoring( 12_000, 9e9 ) ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'a failed BVH build', () => {
+
+	let uninstall, shared;
+
+	beforeEach( async () => {
+
+		uninstall = createFakeOPFS().install();
+		shared = await acquireSharedStorage( getAssetConfig().cacheNamespace );
+
+	} );
+
+	afterEach( () => {
+
+		shared.release();
+		uninstall();
+
+	} );
+
+	const scene = () => {
+
+		const root = new Group();
+		const box = new Mesh( new BoxGeometry( 1, 2, 3 ), new MeshPhysicalMaterial() );
+		box.position.set( 3, 0, 0 );
+		root.add( new Mesh( new SphereGeometry( 1, 16, 8 ), new MeshPhysicalMaterial() ), box );
+		root.updateMatrixWorld( true );
+		return root;
+
+	};
+
+	const processor = () => Object.assign( new SceneProcessor(), { _sceneKey: 'two shapes' } );
+	// Replacing an entry waits for every reader's lock on it.
+	const storeOrLocked = ( sp ) => Promise.race( [ sp._storeBLASes( 'test' ), new Promise( r => setTimeout( () => r( 'locked' ), 2000 ) ) ] );
+
+	it( 'lets go of a stored BVH when the build that restored it fails', async () => {
+
+		const first = processor();
+		await first._extractGeometry( scene() );
+		await first._buildBVH();
+		expect( await first._storeBLASes( 'test' ) ).toBe( true );
+
+		const failing = processor();
+		const overBudget = new Error( 'over the memory budget' );
+		failing._checkAssemblyHeadroom = () => {
+
+			throw overBudget;
+
+		};
+
+		await failing._extractGeometry( scene() );
+		await expect( failing._buildBVH() ).rejects.toBe( overBudget );
+		expect( failing._blasRestored ).toBe( true );
+
+		expect( await storeOrLocked( first ) ).toBe( true );
+		first.dispose();
+		failing.dispose();
+
+	} );
+
+	it( 'drops the BLAS nodes it spilled', async () => {
+
+		const spillArea = shared.storage.area( 'spill' );
+		const blasStore = await SpillStore.create( shared.storage, 'spill:failed:blas', 0 );
+		await blasStore.writeAt( 0, new Float32Array( 64 ) );
+		await blasStore.flush();
+		expect( await spillArea.list() ).toHaveLength( 1 );
+
+		const sp = processor();
+		await sp._extractGeometry( scene() );
+		const writeFailed = new Error( 'disk full' );
+		sp._buildBLASes = async ( ranges, startProgress, build ) => {
+
+			build.spill = { chain: Promise.resolve(), blasStore };
+			throw writeFailed;
+
+		};
+
+		await expect( sp._buildBVH() ).rejects.toBe( writeFailed );
+		expect( await spillArea.list() ).toHaveLength( 0 );
+		sp.dispose();
 
 	} );
 

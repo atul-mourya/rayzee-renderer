@@ -906,6 +906,7 @@ export class SceneProcessor {
 		this.memory.mark( 'blas' );
 		const startTime = performance.now();
 		this._slice = timeSlicer();
+		const build = {};
 
 		try {
 
@@ -917,11 +918,11 @@ export class SceneProcessor {
 
 			}
 
-			const built = await this._buildBLASes( ranges, startProgress );
+			await this._buildBLASes( ranges, startProgress, build );
 			this.performanceMetrics.blasBuildTime = performance.now() - startTime;
-			await this._assembleBVH( built );
+			await this._assembleBVH( build );
 
-			const { blasStats } = built;
+			const { blasStats } = build;
 			const table = this.instanceTable;
 			const duration = performance.now() - startTime;
 			// One aggregate line for the whole two-level build; the workers' per-mesh
@@ -940,6 +941,8 @@ export class SceneProcessor {
 
 		} catch ( error ) {
 
+			await build.spill?.chain;
+			await build.spill?.blasStore.dispose().catch( () => {} );
 			log.error( 'BVH build failed:', error );
 			updateLoading( {
 				status: `BVH error: ${error.message}`,
@@ -950,6 +953,8 @@ export class SceneProcessor {
 
 		} finally {
 
+			// The stored BVH's lock, held from its restore; released already unless the build failed.
+			build.restored?.release();
 			this._slice = null;
 
 		}
@@ -958,10 +963,11 @@ export class SceneProcessor {
 
 	/**
 	 * The BVH build's first step: a BLAS for every mesh range, built, restored from storage or adopted from a streamed
-	 * build, and the instance table that places them.
+	 * build, and the instance table that places them. Fills `build` as it goes, so a failed build can let go of what
+	 * it holds.
 	 * @private
 	 */
-	async _buildBLASes( ranges, startProgress ) {
+	async _buildBLASes( ranges, startProgress, build ) {
 
 		// One entry per PLACEMENT, not per object: an InstancedMesh contributes a matrix per
 		// instance while the scene graph still holds one object. The extractor hands over the
@@ -1035,8 +1041,8 @@ export class SceneProcessor {
 		const owners = [ ...poolTasks, ...parallelTasks ]
 			.map( ( { m, range } ) => ( { m, range, t: sourceOf( m ), triOffset: range.start, triCount: range.count } ) )
 			.sort( ( a, b ) => a.t - b.t );
-		const restored = streamed ? null : await this._restoreBLASes( owners, blasBase, workerOpts );
-		const spill = streamed ? streamed.state
+		const restored = build.restored = streamed ? null : await this._restoreBLASes( owners, blasBase, workerOpts );
+		const spill = build.spill = streamed ? streamed.state
 			: ! restored && this._progressive && this.triangles.chunks.length > 1 ? await this._beginProgressiveSpill( owners ) : null;
 		const onBuilt = spill && ! streamed ? ( m, range, result ) => this._onBLASBuilt( spill, sourceOf( m ), range, result ) : null;
 		if ( streamed ) {
@@ -1131,7 +1137,7 @@ export class SceneProcessor {
 		}
 
 		updateLoading( { status: 'Built all BLASes', progress: 70 } );
-		return { clustered, tlasEntries, restored, spill, blasStats };
+		Object.assign( build, { clustered, tlasEntries, blasStats } );
 
 	}
 
