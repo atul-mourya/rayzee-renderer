@@ -33,7 +33,17 @@ export default defineConfig( {
 			],
 			include: [ 'rayzee/src/**/*.js', 'app/src/lib/**/*.js' ],
 			exclude: [
-				'**/.DS_Store', '**/*.md', '**/*Worker.js',
+				'**/.DS_Store', '**/*.md',
+
+				// ── Web workers ──
+				'rayzee/src/bvh/BVHWorker.js',
+				'rayzee/src/bvh/BVHSubtreeWorker.js',
+				'rayzee/src/bvh/BVHRefitWorker.js',
+				'rayzee/src/bvh/TLASWorker.js',
+				'rayzee/src/materials/TexturesWorker.js',
+				'rayzee/src/materials/PackWorker.js',
+				'rayzee/src/environment/CDFWorker.js',
+				'rayzee/src/viewer/picture/AIUpscalerWorker.js',
 
 				// ── GPU-dependent: TSL shaders (require WebGPU runtime) ──
 				'rayzee/src/shaders/**',

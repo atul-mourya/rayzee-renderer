@@ -70,7 +70,6 @@ function adoptSharedChunks( processor, field, LaneType ) {
  * handed back as views into itself, so the old contract costs nothing extra; a callback lets a
  * caller build one mesh at a time and never hold 9 floats × every triangle at once — 1,030 MB
  * at 30M triangles, which is past what a renderer can allocate.
- * @private
  */
 export function meshSource( processor, source, what ) {
 
@@ -264,7 +263,6 @@ export async function refitBVH( processor, newPositions, newNormals ) {
  *
  * @param {number} meshIndex
  * @returns {number} placement index, or -1 when the mesh placed nothing
- * @private
  */
 export function placementOf( processor, meshIndex ) {
 
@@ -430,7 +428,6 @@ function hiddenGroupLeaves( processor ) {
 /**
  * A grouped mesh's parts are traced as one object, so a part moved alone takes its siblings with it: each sibling
  * is given the first moved member's world transform, and all of them are moved.
- * @private
  */
 export function withGroupSiblings( processor, meshIndices ) {
 
@@ -592,7 +589,6 @@ export function computeBLASDirtyRanges( processor, affectedMeshIndices ) {
 /**
  * Update triangle positions for a single mesh entry.
  * Iterates in BVH order for sequential writes (cache-friendly), random reads from newPositions.
- * @private
  */
 export function updateMeshTrianglePositions( processor, i, meshPositions ) {
 
@@ -673,7 +669,6 @@ export function updateMeshTrianglePositions( processor, i, meshPositions ) {
 
 /**
  * Patch smooth normals for a single mesh's triangles.
- * @private
  */
 export function patchMeshSmoothNormals( processor, i, meshNormals ) {
 
@@ -740,7 +735,6 @@ function patchNormalsRange( processor, normals, triOffset, count, matrixWorld, b
  * of `leaves` is skipped: a move costs its leaves' paths to the root, not the tree (moving 69,856 copies on the Moana
  * island, 20M nodes: 11.6 s → 93 ms). Every leaf when `leaves` is omitted.
  * @param {ArrayLike<number>} [leaves] - TLAS leaf nodes whose boxes changed, in any order
- * @private
  */
 export function refitTLAS( processor, leaves = null ) {
 

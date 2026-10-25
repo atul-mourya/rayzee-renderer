@@ -50,7 +50,7 @@ subtree per element, and the whole thing rarely fits: Moana is 29 GB unpacked.
   WorldBegin may only follow the scene-wide options); reading every file whole was 15 GB and 40 s
   for a 17-part Moana archive. Heads naming no scene, or several, fall back to full reads. A dropped
   ArrayBuffer is freed only at a major GC, which a parse reaches late, so scene text, grown arrays
-  (`PBRT/buffers.js`) and merged shapes' arrays are let go explicitly with
+  (`loaders/pbrt/buffers.js`) and merged shapes' arrays are let go explicitly with
   `ArrayBuffer.prototype.transfer`; placement lists are trimmed after the parse and freed once placed.
   First-time 80M, like for like: parse 96 → 62 s, page after the build 11.0 → 8.2 GB, output
   identical. ⚠️ A template with moving placements keeps its shapes (`_keepShapes`): those

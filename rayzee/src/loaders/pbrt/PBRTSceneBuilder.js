@@ -30,8 +30,7 @@ import { approximated, param } from './PBRTParser.js';
 import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
-import { packUnitAttribute } from '../../scene/GeometryExtractor.js';
-import { computeInstanceBoundingBoxes } from '../AssetLoader.js';
+import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../scene/GeometryExtractor.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 

@@ -436,7 +436,7 @@ An add-on (`rayzee/addons/physical-sky`): the core bakes `'procedural'` mode onl
   `final = mix( previous, current, accumulationAlpha )` (colour and alpha; the aux outputs with `auxAccumulationAlpha`).
 - The blend runs only when `enableAccumulation && !cameraIsMoving && frame > 0 && hasPreviousAccumulated` and `visMode != 11`.
 - A pixel frozen in an earlier frame was not traced, so its accumulated colour passes through unchanged.
-- `accumulationAlpha` is computed CPU-side (`calculateAccumulationAlpha`, in `_updateAccumulationUniforms`); in interaction mode it is 1 with no history.
+- `accumulationAlpha` is computed CPU-side, 1 / ( frame + 1 ), in `_updateAccumulationUniforms`; in interaction mode it is 1 with no history.
 - FinalWrite also keeps the convergence statistics: a running mean of luminance² (`m2`) for the whole-frame stop, and a per-pixel streak whose length freezes a pixel (`pixelFreezeStability` frames).
 
 ---

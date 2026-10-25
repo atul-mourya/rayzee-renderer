@@ -12,7 +12,7 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
   - **Renderer core** — `RayzeeRenderer` (`rayzee/src/RayzeeRenderer.js`, published as `rayzee/core`): scene in,
     path-traced samples, image out. Pipeline: PathTracer → Compositor.
   - **Add-ons** — `rayzee/src/addons/`: physical sky, scene archives, bidirectional/VCM (an integrator in
-    `rayzee/src/integrators/`), OpenColorIO colour, on-disk storage.
+    `rayzee/src/pathtracer/BidirectionalIntegrator.js`), OpenColorIO colour, on-disk storage.
   - **Viewer** — `PathTracerApp extends RayzeeRenderer`: denoisers, camera controls, gizmo, overlays, timeline,
     animation. It plugs in through the hooks listed under "Hooks" at the end of `RayzeeRenderer.js`.
 
@@ -22,7 +22,7 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
   `tests/unit/core/coreBoundary.test.js` fails if the core imports viewer or add-on modules.
 - **No module-level shader state.** A TSL `Fn()` body runs when its kernel compiles, so per-renderer resources ride in
   the kernel's build context: `withSceneResources( kernelCall, resources )` / `sceneResources( builder )`
-  (`rayzee/src/TSL/SceneResources.js`).
+  (`rayzee/src/shaders/SceneResources.js`).
 - **Pipeline signals name no capability:** the core emits `pipeline:historyReset` and `pipeline:lightingChanged`.
   The compositor shows the first published of `_displaySources()`.
 - **Extra path-tracer outputs are requested** with `pathTracer.requestOutput( name, options )`, compiled only while
@@ -31,7 +31,7 @@ measured trade-offs and known traps. Read it before changing engine code. Where 
 - **Settings:** `settings.set()`; another layer adds its own key, with its default, through `settings.define( key, { default, apply, reset } )`.
   In the app, change render parameters through the store's handlers, which call `getApp()` (`@/lib/appProxy`).
 - **Uniforms are created once**; only `.value` changes, so compiled shader graphs keep their references.
-- **Triangles** are read only through `triangleRow( tris, triIndex, row )` (`TSL/Common.js`), with the hit's
+- **Triangles** are read only through `triangleRow( tris, triIndex, row )` (`shaders/Common.js`), with the hit's
   `instanceLeaf`: shared geometry is in object space.
 - **A rigid move** uses `updateMeshTransforms()`, never `refitBLASes()` (that would move every copy of shared geometry).
 - **`ISSUE_CODES` are add-only** API; never rename or repurpose one. Callbacks handed to collaborators are cleared in

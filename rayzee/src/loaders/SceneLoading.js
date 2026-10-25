@@ -2,23 +2,17 @@ import { EngineEvents, resetLoading, updateLoading } from '../EngineEvents.js';
 import { nameFromUrl } from '../storage/DownloadCache.js';
 import { isFolderInput, localFolder } from './archives/archiveFormats.js';
 import { folderIdentity, identityKey, fileIdentity } from '../storage/identity.js';
-import { SPILL_ENVIRONMENT_WIDTH, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET } from '../memory/HostMemory.js';
+import { SPILL_ENVIRONMENT_WIDTH } from '../memory/HostMemory.js';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { SETTING_SOURCE } from '../RenderSettings.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
-import { createLogger, fmt } from '../Logger.js';
-import { limitEnvironmentWidth } from './AssetLoader.js';
-
-const log = createLogger( 'engine' );
+import { fmt } from '../Logger.js';
 
 // The part of an archive a load chose, for sceneSource.
 const partOf = ( { element, pbrtEntry } = {} ) => ( {
 	...( element !== undefined ? { element } : {} ),
 	...( pbrtEntry !== undefined ? { pbrtEntry } : {} ),
 } );
-
-// Quiet time after an edit before memory spill puts back on disk what the edit read back.
-const RESPILL_AFTER_MS = 30_000;
 
 export async function loadModel( app, url, options = {} ) {
 
@@ -284,7 +278,6 @@ export async function loadWithSceneRebuild( app, loadFn, eventPayload, source = 
 /**
  * Put the engine back to an empty scene after a load failed part-way. The failure itself is
  * rethrown for the host to report; this only makes sure what is on screen matches it.
- * @private
  */
 export function discardFailedLoad( app ) {
 
@@ -366,7 +359,6 @@ export function beginSceneMetadataEnvironment( app ) {
  * Mirrors the authored environment onto the settings once its texture is installed.
  * The authored env is both the light and the backdrop, so the backdrop axis
  * (showBackground / transparentBackground) is forced to the image.
- * @private
  */
 export function applySceneMetadataSettings( app, texture ) {
 
@@ -734,99 +726,5 @@ export async function removeSceneObject( app, id ) {
 export function setSceneObjectVisibility( app, id, visible ) {
 
 	return app.setMeshVisibilityByUuid( id, visible );
-
-}
-
-export function setMemorySpill( app, mode ) {
-
-	app._memorySpill = mode === true || mode === false ? mode : 'auto';
-
-}
-
-/**
- * Triangle and placement budgets for a scene archive: raised whenever a build could spill, since the preflight
- * refuses what cannot fit either way. @private
- */
-export function sceneBudgets( app, options ) {
-
-	if ( app._memorySpill === false || ! app.storage ) return options;
-	return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
-
-}
-
-/**
- * Decides whether the scene about to be built spills: static scenes only, since a deforming clip refits every
- * frame. Held for the build that follows ({@link _progressiveSpill}). @private
- */
-export function planSpill( app ) {
-
-	const offered = app._memorySpill !== false && !! app.storage && ( app.assetLoader?.animations?.length ?? 0 ) === 0;
-	const spill = offered && ( app._memorySpill === true || app._sdf.needsSpill( app.meshScene ) );
-	if ( app.assetLoader ) app.assetLoader.maxEnvironmentWidth = spill ? SPILL_ENVIRONMENT_WIDTH : 0;
-	// An importer installs its own sky at the end of its read, before this.
-	const sky = spill ? app.meshScene?.environment : null;
-	const image = sky?.image;
-	if ( image ) limitEnvironmentWidth( sky, SPILL_ENVIRONMENT_WIDTH );
-	if ( sky && sky.image !== image ) {
-
-		// three.js keeps an uploaded texture's size, so the old one goes.
-		sky.dispose();
-		sky.needsUpdate = true;
-
-	}
-
-	if ( spill && app._memorySpill === 'auto' ) log.info( 'scene is past the in-memory line: building it through disk' );
-	app._spillPlan = spill;
-	return spill;
-
-}
-
-/** @private */
-export function progressiveSpill( app ) {
-
-	const spill = app._spillPlan ?? app._planSpill();
-	app._spillPlan = null;
-	return spill ? { storage: app.storage, uploader: app._chunkUploader() } : null;
-
-}
-
-/** @private */
-export function chunkUploader( app ) {
-
-	const stage = app.stages.pathTracer;
-	return ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records );
-
-}
-
-/** The rest of a spilling scene's spill, once it is on the GPU, in the background. @private */
-export function maybeSpill( app ) {
-
-	if ( ! app._sdf?.spilling || ! app.storage ) return;
-	app._sdf.spillAfterLoad().catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-	app._sdf.spillToDisk( app.storage )
-		.then( result => result && app.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
-		.catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-
-}
-
-/** Once edits have been quiet for {@link RESPILL_AFTER_MS}, puts back on disk what they read back. @private */
-export function scheduleRespill( app ) {
-
-	if ( ! app._sdf?.spilling ) return;
-	clearTimeout( app._respillTimer );
-	app._respillTimer = setTimeout( () => {
-
-		app._respillTimer = null;
-		app._sdf?.respill().catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
-
-	}, RESPILL_AFTER_MS );
-	app._respillTimer.unref?.();
-
-}
-
-export async function ensureSceneResident( app ) {
-
-	if ( app._sdf?.spilled ) await app._sdf.ensureResident();
-	await app._sdf?.ensureGeometryResident();
 
 }

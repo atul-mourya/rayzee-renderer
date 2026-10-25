@@ -273,3 +273,36 @@ describe( 'PathTracerStage camera clip start', () => {
 	} );
 
 } );
+
+describe( 'PathTracerStage accumulation weight', () => {
+
+	function accumulate( frame, { enabled = true, interacting = false } = {} ) {
+
+		const stage = {
+			accumulationEnabled: enabled,
+			cameraOptimizer: { isInInteractionMode: () => interacting },
+			accumulationAlpha: { value: - 1 },
+			hasPreviousAccumulated: { value: - 1 },
+		};
+		PathTracerStage.prototype._updateAccumulationUniforms.call( stage, frame );
+		return [ stage.accumulationAlpha.value, stage.hasPreviousAccumulated.value ];
+
+	}
+
+	it( 'weights frame n by 1 / ( n + 1 ), a running mean', () => {
+
+		expect( accumulate( 0 ) ).toEqual( [ 1, 0 ] );
+		expect( accumulate( 1 ) ).toEqual( [ 0.5, 1 ] );
+		expect( accumulate( 3 ) ).toEqual( [ 0.25, 1 ] );
+		expect( accumulate( 99 ) ).toEqual( [ 0.01, 1 ] );
+
+	} );
+
+	it( 'keeps no history while the camera moves or accumulation is off', () => {
+
+		expect( accumulate( 5, { interacting: true } ) ).toEqual( [ 1, 0 ] );
+		expect( accumulate( 5, { enabled: false } ) ).toEqual( [ 1, 0 ] );
+
+	} );
+
+} );

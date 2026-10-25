@@ -81,7 +81,7 @@ export async function renderToBuffer( app, { colorSpace = 'srgb', preserveAlpha 
 
 }
 
-/** The picture through the view, as `output` (a PackedToneMapper output): on the card, or on the CPU if that fails. @private */
+/** The picture through the view, as `output` (a PackedToneMapper output): on the card, or on the CPU if that fails. */
 export async function readPicture( app, target, width, height, { source, preserveAlpha, output } ) {
 
 	const shown = source === 'display' ? app._displaySource( target ) : null;
@@ -141,7 +141,7 @@ export async function toneMapOnGPU( app, shown, accumulation, width, height, ton
 
 }
 
-/** A warning, so strict keeps going: the CPU bytes match within a level, only slower. @private */
+/** A warning, so strict keeps going: the CPU bytes match within a level, only slower. */
 export function toneMapFallback( app, reason, error = null ) {
 
 	const cause = error ? String( error?.message ?? error ) : null;
@@ -410,7 +410,6 @@ function exportDetails( app, format, asShown = false ) {
 /**
  * What a `'display'` read shows: the texture a denoiser published, or null for the raw
  * accumulation — recorded as a fallback when a denoiser is in use.
- * @private
  */
 export function displaySource( app, accumulation ) {
 
@@ -439,7 +438,6 @@ export function displaySource( app, accumulation ) {
 /**
  * What the Compositor is drawing from, as linear float. Falls back to the accumulation when no
  * denoiser has published anything, which is also what the viewport shows then.
- * @private
  */
 export async function readDisplaySource( app, accumulation, width, height ) {
 

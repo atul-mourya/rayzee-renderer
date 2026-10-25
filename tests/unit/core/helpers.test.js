@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { setStatusCallback, resetLoading, updateLoading, updateStats } from '@/core/EngineEvents.js';
 import { timeSlicer } from '@/core/Platform.js';
 import { getDisplaySamples } from '@/core/pipeline/CompletionTracker.js';
-import { disposeMaterial, disposeMaterialTextures, computeInstanceBoundingBoxes } from '@/core/loaders/AssetLoader.js';
+import { disposeMaterial, disposeMaterialTextures } from '@/core/loaders/AssetLoader.js';
+import { computeInstanceBoundingBoxes } from '@/core/scene/GeometryExtractor.js';
 import { BoxGeometry, BufferGeometry, Euler, Group, InstancedMesh, Matrix4, MeshBasicMaterial, Quaternion, SphereGeometry, Vector3 } from 'three';
 
 // ── getDisplaySamples ───────────────────────────────────────

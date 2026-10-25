@@ -2,7 +2,7 @@ import { SRGBColorSpace, LinearSRGBColorSpace } from 'three/webgpu';
 import { ISSUE_CODES } from '../EngineIssues.js';
 import { TRIANGLE_PATCH_PROPERTIES } from '../materials/MaterialDataManager.js';
 import { usesTextureCoordinates } from './GeometryExtractor.js';
-import { scheduleRespill } from '../loaders/SceneLoading.js';
+import { scheduleRespill } from '../memory/SceneSpill.js';
 
 export async function refitBVH( app, newPositions, newNormals ) {
 
@@ -105,7 +105,6 @@ export function setMaterialProperty( app, materialIndex, property, value ) {
  * Upload a rebuilt emissive-NEE payload (sorted emissive data + Light BVH +
  * bit-trail map) to the path tracer stage. No-op for a null payload.
  * @param {object|null} payload
- * @private
  */
 export function uploadEmissivePayload( app, payload ) {
 
@@ -127,7 +126,6 @@ export function uploadEmissivePayload( app, payload ) {
  * (InstanceTable is the source of truth — patched by the stage's visibility API).
  * Hidden meshes' triangles are dropped from the Light BVH so they stop casting
  * NEE light; the shadow ray can't do it (a hidden mesh no longer self-occludes).
- * @private
  */
 export function refreshEmissiveForVisibility( app ) {
 

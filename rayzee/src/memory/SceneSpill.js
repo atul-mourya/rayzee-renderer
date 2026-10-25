@@ -1,13 +1,19 @@
 import { Box3, Vector3, Sphere } from 'three';
-import { estimateSceneBytes, SAFE_SCENE_BYTES } from './HostMemory.js';
+import { estimateSceneBytes, SAFE_SCENE_BYTES, SPILL_TRIANGLE_BUDGET, SPILL_PLACEMENT_BUDGET, SPILL_ENVIRONMENT_WIDTH } from './HostMemory.js';
 import { SpillStore } from '../storage/SpillStore.js';
 import { GeometrySpill } from '../storage/GeometrySpill.js';
 import { createLogger, fmt } from '../Logger.js';
 import { RECORD_VEC4 } from '../scene/BufferLayout.js';
 import { geometryBytesOf } from '../scene/GeometryExtractor.js';
-import { updateLoading } from '../EngineEvents.js';
+import { updateLoading, EngineEvents } from '../EngineEvents.js';
+import { limitEnvironmentWidth } from '../loaders/AssetLoader.js';
+import { ISSUE_CODES } from '../EngineIssues.js';
 
 const log = createLogger( 'scene' );
+const engineLog = createLogger( 'engine' );
+
+// Quiet time after an edit before memory spill puts back on disk what the edit read back.
+const RESPILL_AFTER_MS = 30_000;
 
 // A spilled build's order maps go to disk in writes of this size and come back in reads of the other.
 const ORDER_PACK_BYTES = 32 * 1024 * 1024;
@@ -147,7 +153,6 @@ async function spillMatrices( processor, again = false ) {
  * A spilling build's TLAS goes to disk too when copies are clustered — 1.3 GB on the Moana island — and any chunk a
  * move read back (its copy records), keeping only the chunks over the group trees, which a visibility change
  * rewrites. An edit reads them back first (the stage's `_whenTLASResident`, {@link ensureMovable}).
- * @private
  */
 export async function spillTLAS( processor ) {
 
@@ -165,7 +170,6 @@ export async function spillTLAS( processor ) {
 /**
  * A spilling build's triangle order maps go to disk too (0.43 GB on the Moana island): only refits and BLAS swaps
  * read them, after {@link ensureResident}, which reads them back. Packed into 32 MB writes.
- * @private
  */
 export async function spillOrderMaps( processor ) {
 
@@ -209,7 +213,7 @@ export async function spillOrderMaps( processor ) {
 
 }
 
-/** Reads the order maps {@link _spillOrderMaps} moved to disk back, in 64 MB windows. @private */
+/** Reads the order maps {@link spillOrderMaps} moved to disk back, in 64 MB windows. @private */
 async function restoreOrderMaps( processor ) {
 
 	const spill = processor._orderSpill;
@@ -333,7 +337,6 @@ function recordChunksOf( processor, meshIndices ) {
 
 }
 
-/** @private */
 export function disposeMatrixSpill( processor ) {
 
 	const spill = processor._matrixSpill;
@@ -342,7 +345,7 @@ export function disposeMatrixSpill( processor ) {
 
 }
 
-/** Reads the three.js geometry a streamed build moved to disk back into place. @private */
+/** Reads the three.js geometry a streamed build moved to disk back into place. */
 export async function restoreGeometry( processor, object ) {
 
 	const spill = processor._geometrySpill;
@@ -364,7 +367,6 @@ export async function restoreGeometry( processor, object ) {
 
 }
 
-/** @private */
 export function disposeGeometrySpill( processor ) {
 
 	const spill = processor._geometrySpill;
@@ -374,11 +376,102 @@ export function disposeGeometrySpill( processor ) {
 
 }
 
-/** @private */
 export function disposeSpill( processor ) {
 
 	const stores = processor._spillStores;
 	processor._spillStores = null;
 	for ( const store of stores ?? [] ) store.dispose().catch( () => {} );
+
+}
+
+export function setMemorySpill( app, mode ) {
+
+	app._memorySpill = mode === true || mode === false ? mode : 'auto';
+
+}
+
+/**
+ * Triangle and placement budgets for a scene archive: raised whenever a build could spill, since the preflight
+ * refuses what cannot fit either way. @private
+ */
+export function sceneBudgets( app, options ) {
+
+	if ( app._memorySpill === false || ! app.storage ) return options;
+	return { maxTriangles: SPILL_TRIANGLE_BUDGET, maxPlacements: SPILL_PLACEMENT_BUDGET, ...options };
+
+}
+
+/**
+ * Decides whether the scene about to be built spills: static scenes only, since a deforming clip refits every
+ * frame. Held for the build that follows ({@link progressiveSpill}). @private
+ */
+export function planSpill( app ) {
+
+	const offered = app._memorySpill !== false && !! app.storage && ( app.assetLoader?.animations?.length ?? 0 ) === 0;
+	const spill = offered && ( app._memorySpill === true || app._sdf.needsSpill( app.meshScene ) );
+	if ( app.assetLoader ) app.assetLoader.maxEnvironmentWidth = spill ? SPILL_ENVIRONMENT_WIDTH : 0;
+	// An importer installs its own sky at the end of its read, before this.
+	const sky = spill ? app.meshScene?.environment : null;
+	const image = sky?.image;
+	if ( image ) limitEnvironmentWidth( sky, SPILL_ENVIRONMENT_WIDTH );
+	if ( sky && sky.image !== image ) {
+
+		// three.js keeps an uploaded texture's size, so the old one goes.
+		sky.dispose();
+		sky.needsUpdate = true;
+
+	}
+
+	if ( spill && app._memorySpill === 'auto' ) engineLog.info( 'scene is past the in-memory line: building it through disk' );
+	app._spillPlan = spill;
+	return spill;
+
+}
+
+export function progressiveSpill( app ) {
+
+	const spill = app._spillPlan ?? app._planSpill();
+	app._spillPlan = null;
+	return spill ? { storage: app.storage, uploader: app._chunkUploader() } : null;
+
+}
+
+export function chunkUploader( app ) {
+
+	const stage = app.stages.pathTracer;
+	return ( records, kind, options ) => kind === 'triangles' ? stage.createTriangleChunkUploader( records, options ) : stage.createChunkUploader( records );
+
+}
+
+/** The rest of a spilling scene's spill, once it is on the GPU, in the background. */
+export function maybeSpill( app ) {
+
+	if ( ! app._sdf?.spilling || ! app.storage ) return;
+	app._sdf.spillAfterLoad().catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+	app._sdf.spillToDisk( app.storage )
+		.then( result => result && app.dispatchEvent( { type: EngineEvents.SCENE_SPILLED, ...result } ) )
+		.catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+
+}
+
+/** Once edits have been quiet for {@link RESPILL_AFTER_MS}, puts back on disk what they read back. */
+export function scheduleRespill( app ) {
+
+	if ( ! app._sdf?.spilling ) return;
+	clearTimeout( app._respillTimer );
+	app._respillTimer = setTimeout( () => {
+
+		app._respillTimer = null;
+		app._sdf?.respill().catch( error => app._issues.warn( ISSUE_CODES.STORAGE_WRITE_FAILED, `memory spill failed: ${error.message}` ) );
+
+	}, RESPILL_AFTER_MS );
+	app._respillTimer.unref?.();
+
+}
+
+export async function ensureSceneResident( app ) {
+
+	if ( app._sdf?.spilled ) await app._sdf.ensureResident();
+	await app._sdf?.ensureGeometryResident();
 
 }

@@ -31,6 +31,7 @@ import { LightManager } from './lights/LightManager.js';
 import { VERSION } from './version.js';
 import { toPortable } from './portable.js';
 import * as SceneLoading from './loaders/SceneLoading.js';
+import * as SceneSpill from './memory/SceneSpill.js';
 import * as SceneEdits from './scene/SceneEdits.js';
 import * as Pictures from './output/Pictures.js';
 
@@ -1210,7 +1211,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** Sets {@link memorySpill}; the next load or rebuild follows it. */
 	setMemorySpill( mode ) {
 
-		return SceneLoading.setMemorySpill( this, mode );
+		return SceneSpill.setMemorySpill( this, mode );
 
 	}
 
@@ -1230,31 +1231,31 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	_sceneBudgets( options ) {
 
-		return SceneLoading.sceneBudgets( this, options );
+		return SceneSpill.sceneBudgets( this, options );
 
 	}
 
 	_planSpill() {
 
-		return SceneLoading.planSpill( this );
+		return SceneSpill.planSpill( this );
 
 	}
 
 	_progressiveSpill() {
 
-		return SceneLoading.progressiveSpill( this );
+		return SceneSpill.progressiveSpill( this );
 
 	}
 
 	_chunkUploader() {
 
-		return SceneLoading.chunkUploader( this );
+		return SceneSpill.chunkUploader( this );
 
 	}
 
 	_maybeSpill() {
 
-		return SceneLoading.maybeSpill( this );
+		return SceneSpill.maybeSpill( this );
 
 	}
 
@@ -1265,7 +1266,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	 */
 	ensureSceneResident() {
 
-		return SceneLoading.ensureSceneResident( this );
+		return SceneSpill.ensureSceneResident( this );
 
 	}
 
