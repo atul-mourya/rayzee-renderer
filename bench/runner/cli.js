@@ -138,7 +138,7 @@ function reportLockstep( report ) {
 	for ( const entry of report.results ) {
 
 		if ( ! entry.pass ) failed ++;
-		const verdict = entry.pass ? `identical across ${entry.runs} pacings` : `differed across ${entry.runs} pacings`;
+		const verdict = entry.pass ? `identical across ${entry.runs} pacings and in bands` : `differed across ${entry.runs} pacings or in bands`;
 		log( `  ${entry.pass ? GREEN + 'pass' : RED + 'FAIL'}${RESET} ${entry.scene}${DIM}  ${entry.samples} spp (${entry.retiredBy}), ${verdict}${RESET}` );
 		for ( const failure of entry.failures ) log( `       ${RED}${failure}${RESET}` );
 

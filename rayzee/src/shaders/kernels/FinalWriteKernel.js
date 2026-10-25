@@ -144,6 +144,15 @@ export function buildFinalWriteKernel( params ) {
 
 					} );
 
+					// A frozen pixel was not traced: its G-buffer slot holds an older ray's, in row bands another pixel's.
+					If( wasFrozen, () => {
+
+						finalAlbedo.assign( prevAlbedoSample.xyz );
+						finalHitDist.assign( prevAlbedoSample.w );
+						finalNormalDepth.assign( texture( prevNormalDepthTexture, prevUV, 0 ) );
+
+					} );
+
 				} );
 
 				outputAlpha.assign( select( wasFrozen, prevAccumSample.w, mix( prevAccumSample.w, sampleColor.w, accumulationAlpha ) ) );
@@ -198,8 +207,9 @@ export function buildFinalWriteKernel( params ) {
 
 					// Sticky within a run, else silhouette pixels flicker in and out of the subject denominator under
 					// AA jitter. Alpha is the only hit/miss signal valid here: the aux G-buffer is denoiser-gated and
-					// the ray flags do not survive to FinalWrite.
-					const hitGeometry = sampleColor.w.greaterThan( float( 0.5 ) );
+					// the ray flags do not survive to FinalWrite. A frozen pixel's sample is stale (in row bands another
+					// pixel's), so it keeps its bit.
+					const hitGeometry = sampleColor.w.greaterThan( float( 0.5 ) ).and( wasFrozen.not() );
 					const wasGeometry = prevWord.bitAnd( uint( 0x40000000 ) ).notEqual( uint( 0 ) );
 					const geometryBit = select(
 						frame.equal( uint( 0 ) ),

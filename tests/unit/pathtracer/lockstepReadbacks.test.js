@@ -5,14 +5,27 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { PathTracer } from '@/core/pathtracer/PathTracer.js';
-import { COUNTER } from '@/core/pathtracer/QueueManager.js';
+import { COUNTER, QueueManager } from '@/core/pathtracer/QueueManager.js';
 
 const W = 4, H = 2, N_SNAPSHOTS = 32;
 
+/** The curves' layout without a GPU buffer: QueueManager's own offsets over `bands` bands. */
+function makeQueues( bands ) {
+
+	return Object.assign( Object.create( QueueManager.prototype ), {
+		MAX_BOUNCE_SNAPSHOTS: N_SNAPSHOTS,
+		curveBands: bands,
+		getBounceCountsAttribute: () => 'bounces',
+		getCountersAttribute: () => 'counters',
+	} );
+
+}
+
 /** The stage needs a GPU to construct; the readback bookkeeping only needs these fields. */
-function makeStage() {
+function makeStage( { chunkRows = H } = {} ) {
 
 	const reads = [];
+	const queues = makeQueues( Math.ceil( H / chunkRows ) );
 	const stage = Object.assign( Object.create( PathTracer.prototype ), {
 		isReady: true,
 		_wavefrontReady: true,
@@ -32,11 +45,9 @@ function makeStage() {
 		maxSubsurfaceSteps: { value: 1 },
 		_wfRenderWidth: { value: W },
 		_wfRenderHeight: { value: H },
-		_queueManager: {
-			MAX_BOUNCE_SNAPSHOTS: N_SNAPSHOTS,
-			getBounceCountsAttribute: () => 'bounces',
-			getCountersAttribute: () => 'counters',
-		},
+		_chunkRows: chunkRows,
+		_numChunks: Math.ceil( H / chunkRows ),
+		_queueManager: queues,
 		renderer: {
 			// Each readback resolves only when the test says so.
 			getArrayBufferAsync: vi.fn( ( attr ) => new Promise( ( resolve ) => reads.push( { attr, resolve } ) ) ),
@@ -46,12 +57,13 @@ function makeStage() {
 		_curveSizingValid: false,
 		_convergedFraction: 0,
 		_convergedGeometryFraction: 0,
-		_lastActivePixelCount: 0,
+		_lastActivePixelCounts: null,
 	} );
 
-	const land = ( { converged = 0, energy = 7 } = {} ) => {
+	// `bounce` fills the curves' buffer, given an index; by default every word is `energy`.
+	const land = ( { converged = 0, energy = 7, bounce: fill = () => energy } = {} ) => {
 
-		const bounce = new Uint32Array( 2 * N_SNAPSHOTS ).fill( energy );
+		const bounce = Uint32Array.from( { length: queues.pixelCountOffset( queues.curveBands ) }, ( _, i ) => fill( i ) );
 		const counters = new Uint32Array( COUNTER.COUNT );
 		counters[ COUNTER.CONVERGED_COUNT ] = converged;
 		counters[ COUNTER.GEOMETRY_COUNT ] = W * H;
@@ -61,7 +73,7 @@ function makeStage() {
 
 	};
 
-	return { stage, reads, land };
+	return { stage, reads, land, queues };
 
 }
 
@@ -299,6 +311,99 @@ describe( 'lockstep readbacks', () => {
 			const { stage } = makeStage();
 			stage.setLockstepReadbacks( true );
 			expect( stage.accumulationLockstep ).toBe( true );
+
+		} );
+
+	} );
+
+	// A frame past the path budget is traced in row bands; each sizes and ends its bounces from its own curve.
+	describe( 'row bands', () => {
+
+		const n = N_SNAPSHOTS;
+
+		// Band b's survivor count at bounce i reads 100·(b + 1) + i, its energy 1000·(b + 1) + i, its pixel count 10·(b + 1).
+		const perBand = ( queues ) => ( word ) => {
+
+			for ( let band = 0; band < queues.curveBands; band ++ ) {
+
+				const at = queues.curveOffset( band );
+				if ( word >= at && word < at + n ) return 100 * ( band + 1 ) + word - at;
+				if ( word >= at + n && word < at + 2 * n ) return 1000 * ( band + 1 ) + word - at - n;
+				if ( word === queues.pixelCountOffset( band ) ) return 10 * ( band + 1 );
+
+			}
+
+			return 0;
+
+		};
+
+		const resettable = ( stage ) => Object.assign( stage, {
+			resetCount: 0, frame: { value: 0 }, hasPreviousAccumulated: { value: 0 }, storageTextures: {},
+			updateCompletionThreshold: () => {}, _seedTick: 0, _pinSeedToFrame: false,
+		} );
+
+		it( 'lays the curves out band 0, the light pass, the other bands, then a pixel count a band', () => {
+
+			const queues = makeQueues( 3 );
+			expect( [ 0, 1, 2 ].map( ( band ) => queues.curveOffset( band ) ) ).toEqual( [ 0, 4 * n, 6 * n ] );
+			expect( queues.pixelCountOffset( 0 ) ).toBe( 8 * n );
+			expect( queues.pixelCountOffset( 3 ) ).toBe( 8 * n + 3 );
+
+		} );
+
+		it( 'keeps every band its own curve and pixel count', async () => {
+
+			const { stage, land, queues } = makeStage( { chunkRows: 1 } );
+			stage.setLockstepReadbacks( true );
+			stage._maybeReadbackCounters();
+			const issued = stage._lockstepRead;
+			await land( { bounce: perBand( queues ) } );
+			issued.apply();
+
+			expect( stage._lastBounceCounts[ 3 ] ).toBe( 103 );
+			expect( stage._lastBounceCounts[ n + 3 ] ).toBe( 203 );
+			expect( stage._lastBounceEnergy[ n ] ).toBe( 2000 );
+			expect( Array.from( stage._lastActivePixelCounts ) ).toEqual( [ 10, 20 ] );
+			expect( stage.getConvergenceStats().activePixels ).toBe( 30 );
+
+		} );
+
+		// A reset restarts every pixel, so a pixel count measured before it would size bounce 0 too small.
+		it( 'drops the pixel counts measured before a reset and keeps the curve', async () => {
+
+			const { stage, land, queues } = makeStage();
+			resettable( stage );
+			stage._maybeReadbackCounters(); // free running: applied as it lands
+			stage.reset();
+			await land( { bounce: perBand( queues ) } );
+
+			expect( stage._lastBounceCounts[ 0 ] ).toBe( 100 );
+			expect( stage._lastActivePixelCounts ).toBeNull();
+
+		} );
+
+		it( 're-cuts a curve for other bands, by band size, and never sizes from it', () => {
+
+			const { stage } = makeStage( { chunkRows: 1 } );
+			const counts = new Uint32Array( 2 * n );
+			counts[ 0 ] = 30;
+			counts[ n ] = 10;
+			Object.assign( stage, {
+				_lastBounceCounts: counts, _lastBounceEnergy: counts.slice(), _curveLayout: { width: W, height: H, chunkRows: 1 },
+				_curveSizingValid: true, _lastActivePixelCounts: new Uint32Array( [ 4, 4 ] ),
+				_chunkRows: H, // one band now
+			} );
+
+			stage._fitCurveToBands();
+			expect( stage._lastBounceCounts ).toHaveLength( n );
+			expect( stage._lastBounceCounts[ 0 ] ).toBe( 40 );
+			expect( stage._curveSizingValid ).toBe( false );
+			expect( stage._lastActivePixelCounts ).toBeNull();
+
+			// Twice the rows, in two bands: each its share of twice the total.
+			stage._wfRenderHeight = { value: 2 * H };
+			stage._fitCurveToBands();
+			expect( [ stage._lastBounceCounts[ 0 ], stage._lastBounceCounts[ n ] ] ).toEqual( [ 40, 40 ] );
 
 		} );
 

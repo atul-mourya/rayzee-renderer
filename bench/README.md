@@ -477,6 +477,13 @@ what was traced before it too. A mismatch on the first pacing alone is that, not
 differed in one pixel because the frame after the reset saw the camera as moved (the previous frame traced
 another view), which skipped its readback and delayed the survivor curve by four frames.
 
+**Row bands.** A frame past the path budget is traced in row bands, each sizing its bounces and ending them early from
+its own survivor curve. Every scene is rendered twice more with the early exit off, as one band and cut into four
+(`LOCKSTEP_GATES.bands`, the path budget cut with `_pathBudgetOverride`), and the two must agree in sample count and bit
+for bit. A band sized from another band's curve drops rays and fails it. The day it was added it caught a frozen pixel
+reading its pool slot, which in a band holds another pixel's sample: its geometry bit followed that pixel, the subject
+count grew, and four bands retired spheres-gradient at 24 spp against one band's 32.
+
 ### Node — the corpus without a browser
 
 `npm run bench:node` builds the engine and renders every scene that has a golden in plain Node on Dawn

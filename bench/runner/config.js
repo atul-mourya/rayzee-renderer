@@ -167,6 +167,8 @@ export const LOCKSTEP_GATES = {
 		{ label: 'drain every 1', drainEvery: 1 },
 		{ label: '8 ms CPU per frame', drainEvery: 4, spinMs: 8 },
 	],
+	// Row bands rendered with the early exit off, each against the first: one band, and four.
+	bands: [ 1, 4 ],
 };
 
 export const MEMORY_GATES = {

@@ -27,7 +27,7 @@ It is a **wavefront**: path state lives in SoA storage buffers and every bounce 
 ```
 [integrator light pass]                      bidirectional / vcm only (add-on)
 for each row band:
-  resetFrameCounters → buildActivePixels → seedEnter → generateList     usePixelFreeze (the default)
+  [freezeMask, band 0] → resetFrameCounters → buildActivePixels → seedEnter → generateList     usePixelFreeze (the default)
   | generate → initActiveIndices                                         otherwise
   per bounce: extend → [global material sort] → shade → compact → compactCopyback
   finalWrite
@@ -291,26 +291,26 @@ SoA within a buffer: field `slot` of path `id` lives at `id + slot * capacity`.
 
 1. Bail if `!isReady || !_wavefrontReady`. Rebuild the kernels first if the packed light buffer or a light list was reallocated, or an output request changed. Apply a lockstep readback that is due.
 2. Stop if the frame is complete: `isComplete`, `frameCount >= completionThreshold`, or the convergence stop (`_isConvergedComplete()`). A pending aux seed frame (denoiser switched on after completion) still runs.
-3. `_handleResize()`; camera and accumulation uniforms; `_setWfDispatch()` (sizes `debug` and `countConvergedDilated` to the frame); repoint the prev-frame MRT and scene texture nodes (`_refreshWfTextureNodes()`).
+3. `_handleResize()`; camera and accumulation uniforms; `_setWfDispatch()` (sizes `debug`, `countConvergedDilated` and `freezeMask` to the frame); repoint the prev-frame MRT and scene texture nodes (`_refreshWfTextureNodes()`).
 4. **Debug shortcut:** if `visMode` is 1–10, dispatch `debug` over the whole frame, copy to the read targets, publish, and return. (Mode 11 runs the normal pipeline; FinalWrite flags NaN/Inf.)
 5. `integrator?.beginFrame( loopBound )` — the bidirectional add-on's light pass; plain path tracing has no integrator.
 6. **Band loop** — for each band of ≤ `_chunkRows` rows, `_setChunk()` sets the band uniforms and the per-band grids, then:
-   - Seed the active list. With `usePixelFreeze` (on by default): `resetFrameCounters` → `buildActivePixels` (scatters the pixels not frozen, writes the frozen mask) → `seedEnter` → `generateList`. Otherwise, or on an aux seed frame: `generate` → `initActiveIndices` (identity list).
+   - Seed the active list. With `usePixelFreeze` (on by default): `freezeMask` on band 0 (the whole frame's frozen mask, decided before any band's `finalWrite` rewrites the streaks its dilation reads) → `resetFrameCounters` → `buildActivePixels` (scatters the pixels not frozen) → `seedEnter` (records the band's pixel count) → `generateList`. Otherwise, or on an aux seed frame: `generate` → `initActiveIndices` (identity list).
    - Band 0 only, with adaptive sampling on and a readback due this frame: `countConvergedDilated` (the 3×3-eroded converged count).
    - **Bounce loop**, `bounce` from 0 to `loopBound` = `maxBounces + transmissiveBounces + maxSubsurfaceSteps + 1` (a camera path takes one segment past its last bounce, flagged `RAY_FLAG.EMISSION_ONLY`):
-     - Size the bounce kernels (`BOUNCE_KERNELS`). Dynamic dispatch (the default): `min( band pixels, 1.5 × last frame's survivors at this bounce + 1024 )` from the survivor curve, trusted only in a single band and after a readback at the settled view; bounce 0 under pixel freeze from the last active-pixel count; full otherwise. Kernels bound on `ENTERING_COUNT`, so an oversized grid is safe. Without dynamic dispatch, `enterFull` and full grids.
+     - Size the bounce kernels (`BOUNCE_KERNELS`). Dynamic dispatch (the default): `min( band pixels, 1.5 × last frame's survivors at this bounce + 1024 )` from the band's own survivor curve, trusted only after a readback at the settled view in these bands; bounce 0 under pixel freeze from the band's last active-pixel count; full otherwise. Kernels bound on `ENTERING_COUNT`, so an oversized grid is safe. Without dynamic dispatch, `enterFull` and full grids.
      - `extend`.
      - With the material sort (`wavefrontSortMaterials`, on by default, only above 8 materials): `resetGlobalHist` → `globalHist` → `globalPrefix` → `globalScatter`. Shade then reads the sorted list; Compact still reads the unsorted one.
      - `integrator?.beforeShade()` → `shade` (thread 0 zeroes `ACTIVE_RAY_COUNT` / `ACTIVE_ENERGY`) → `integrator?.afterShade()`.
      - `compact` → `compactCopyback` (thread 0 records the survivor count and energy, seeds `ENTERING_COUNT`); without dynamic dispatch, `snapshotBounceCount`.
-     - Early exit when last frame's survivors at this bounce carried less than `_bounceEarlyExitThreshold` (1e-4) of a full band's throughput. Energy, not ray count: past Russian roulette a few survivors carry the weight of many. Single band only.
+     - Early exit when last frame's survivors at this bounce carried less than `_bounceEarlyExitThreshold` (1e-4) of a full band's throughput, from the band's own curve. Energy, not ray count: past Russian roulette a few survivors carry the weight of many.
    - `integrator?.resolve()` → `finalWrite`.
 7. `_maybeReadbackCounters()`: every 4 frames, at a settled view, read back the survivor curve and the convergence counters asynchronously (lockstep mode reads and applies on a fixed cadence instead).
 8. `copyToReadTargets()` (aux attachments only while aux is on); publish to context; emit events; `frameCount++` unless in interaction mode.
 
 There is no swap of the active-index lists: kernels are bound to list A at build time, Compact writes B, and `compactCopyback` copies the survivors B→A for the next bounce.
 
-A multi-band frame (the image larger than the budget) runs full dispatch every bounce and no early exit: the survivor curve is one per-frame buffer.
+Every band keeps its own survivor curve. `bounceCounts` holds band 0's counts and energy, the bidirectional light pass's, every other band's, then each band's bounce-0 pixel count (`QueueManager.curveOffset` / `pixelCountOffset`), with room for every band a frame within the reserve can need. A curve read in other bands (a resize, a new path budget) is re-cut for the current ones by pixel share (`_fitCurveToBands`): enough for the early exit, never for sizing. A frozen pixel is not traced, so its pool slot holds an older ray's sample, in bands another pixel's: `finalWrite` keeps its colour, second moment, geometry bit and denoiser aux. Until 2026-10 a frame of more than one band ran full grids every bounce with no early exit. Measured on 24155522.glb (Dawn, Apple M5 Pro, 20 bounces, lockstep, 32 frames): 3840×2160, two bands, 1474 → 1090 ms a frame, within 1 % of tracing it as one band; 1024² forced into four bands 241 → 179 ms, against 147 as one (the rest is encoding four times the passes).
 
 ### Shade kernel (per-ray work)
 - Miss: the environment or backdrop (background blur and colour, ground projection, transparent background), MIS-weighted against environment NEE (`environmentPdfExact`), then the sun disc, power-heuristic weighted against sun NEE when the sending vertex could have drawn that direction (`RAY_FLAG.SUN_NEE`). A primary ray can also hit the analytic shadow-catcher plane (`enableGroundCatcher`).

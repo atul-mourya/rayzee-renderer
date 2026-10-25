@@ -30,6 +30,16 @@ export async function runLockstep( bench, { only, log = () => {} } = {} ) {
 
 		}
 
+		// A frame past the path budget is traced in row bands, each sizing its bounces from its own survivor curve.
+		// With the early exit off nothing may differ from one band: a band sized from the wrong curve drops rays.
+		const banded = [];
+		for ( const bands of LOCKSTEP_GATES.bands ) {
+
+			await bench.loadScene( id );
+			banded.push( { bands, ...await bench.renderLockstep( { drainEvery: 4, bands, earlyExit: false } ) } );
+
+		}
+
 		// Back to deterministic mode for whatever runs next.
 		await bench.loadScene( id );
 
@@ -38,6 +48,12 @@ export async function runLockstep( bench, { only, log = () => {} } = {} ) {
 			.filter( ( run ) => run.hash !== first.hash || run.samples !== first.samples )
 			.map( ( run ) => `NOT REPRODUCIBLE: '${run.label}' gave ${run.samples} spp / ${run.hash}, ` +
 				`'${first.label}' gave ${first.samples} spp / ${first.hash}` );
+
+		const [ whole ] = banded;
+		failures.push( ...banded
+			.filter( ( run ) => run.hash !== whole.hash || run.samples !== whole.samples )
+			.map( ( run ) => `BANDS DIFFER: ${run.bands} bands gave ${run.samples} spp / ${run.hash}, ` +
+				`${whole.bands} band gave ${whole.samples} spp / ${whole.hash}` ) );
 
 		results.push( { scene: id, pass: failures.length === 0, failures, samples: first.samples, retiredBy: first.retiredBy, runs: runs.length } );
 

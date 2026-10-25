@@ -375,15 +375,32 @@ async function renderFreezeArm( spp, { freeze, threshold, stability } = {} ) {
 /**
  * The production path: adaptive sampling, pixel freeze and the readback-driven dispatch left live,
  * driven by renderUntilComplete(), whose lockstep readbacks are all that keeps it reproducible.
- * `spinMs` burns CPU after each frame to change the submission pacing. Returns a hash of the linear
+ * `spinMs` burns CPU after each frame to change the submission pacing. `bands` traces the frame in that many row
+ * bands (the path budget cut to fit), and `earlyExit: false` keeps every bounce. Returns a hash of the linear
  * accumulation rather than the pixels, which are too big to move over CDP.
  */
-async function renderLockstep( { drainEvery, spinMs = 0 } = {} ) {
+async function renderLockstep( { drainEvery, spinMs = 0, bands = 0, earlyExit = true } = {} ) {
 
 	if ( ! currentScene ) throw new Error( '__bench.renderLockstep: no scene loaded' );
 
+	const stage = app.stages.pathTracer;
+	const setBands = ( count ) => {
+
+		stage._pathBudgetOverride = count > 0 ? Math.ceil( stage._wfRenderHeight.value / count ) * stage._wfRenderWidth.value : 0;
+		stage._pathBudget = 0;
+		return rebuildKernels();
+
+	};
+
 	app.setDeterministicMode( false );
-	app.settings.setMany( { useAdaptiveSampling: true, usePixelFreeze: true, maxSamples: currentScene.spp }, { silent: true } );
+	// The stop fraction too: the freeze arm sets one no frame can reach, and a scene load keeps it.
+	app.settings.setMany( {
+		useAdaptiveSampling: true, usePixelFreeze: true, maxSamples: currentScene.spp,
+		adaptiveStopFraction: ENGINE_DEFAULTS.adaptiveStopFraction,
+	}, { silent: true } );
+	const exitThreshold = stage._bounceEarlyExitThreshold;
+	if ( ! earlyExit ) stage._bounceEarlyExitThreshold = - 1;
+	if ( bands > 0 ) await setBands( bands );
 
 	const spin = () => {
 
@@ -392,8 +409,20 @@ async function renderLockstep( { drainEvery, spinMs = 0 } = {} ) {
 
 	};
 
-	const out = await app.renderUntilComplete( { denoise: false, drainEvery, onProgress: spinMs > 0 ? spin : undefined } );
+	let out;
+	try {
+
+		out = await app.renderUntilComplete( { denoise: false, drainEvery, onProgress: spinMs > 0 ? spin : undefined } );
+
+	} finally {
+
+		// Deterministic mode restores what it finds here, so leave the stage as it was.
+		stage._bounceEarlyExitThreshold = exitThreshold;
+
+	}
+
 	const { data } = await app.renderToBuffer( { colorSpace: 'linear' } );
+	if ( bands > 0 ) await setBands( 0 );
 
 	const words = new Uint32Array( data.buffer, data.byteOffset, data.length );
 	let hash = 2166136261;

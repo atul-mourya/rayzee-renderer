@@ -21,8 +21,9 @@ export const COUNTER = {
 	// Reserved hole — was FROZEN_COUNT, a write-only counter no reader ever consumed. Kept as a hole so
 	// slot indices stay stable across the JS enum and every kernel that stores by index.
 	RESERVED_3: 3,
-	// Tier-2 per-pixel freeze: bounce-0 active count (maxRays − frozen), read back to size next frame's grid.
-	ACTIVE_PIXEL_COUNT: 4,
+	// Reserved hole — was ACTIVE_PIXEL_COUNT, which held only the last row band's count; each band's now rides
+	// with its survivor curve (QueueManager.pixelCountOffset).
+	RESERVED_4: 4,
 	// Geometry-only convergence gate. CONVERGED_COUNT counts every pixel, so a mostly-sky frame inherits the
 	// sky's free convergence and can retire while the subject is still noisy. These count the same eroded
 	// bits restricted to pixels that hit geometry, so the stop can require both fractions.
@@ -103,13 +104,9 @@ export class QueueManager {
 
 		this._allocateCounters();
 
-		// per-bounce snapshots for the async readback: [0, MAX) ACTIVE_RAY_COUNT, [MAX, 2·MAX) ACTIVE_ENERGY,
-		// then the same pair for the bidirectional light pass
 		this.MAX_BOUNCE_SNAPSHOTS = 32;
-		this._bounceCountsAttr = new StorageInstancedBufferAttribute(
-			new Uint32Array( 4 * this.MAX_BOUNCE_SNAPSHOTS ), 1,
-		);
-		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
+		this.curveBands = 0;
+		this.ensureCurveBands( 1 );
 
 		// Index lists, not data: written wholesale by compaction before any read, never read back.
 		const attrA = gpuOnlyStorageAttribute( capacity, 1, Uint32Array );
@@ -166,6 +163,36 @@ export class QueueManager {
 		if ( ! this._countersAttr ) return;
 		freeStorageAttribute( this._renderer, this._countersAttr );
 		this._allocateCounters();
+
+	}
+
+	/**
+	 * Room for the survivor curves of `bands` row bands; kernels bound to the old buffer must rebuild.
+	 * MAX_BOUNCE_SNAPSHOTS words a part, for the async readback: band 0's survivor counts (ACTIVE_RAY_COUNT) and
+	 * energy (ACTIVE_ENERGY) a bounce, the bidirectional light pass's pair, every further band's pair, then one word
+	 * a band: the pixels its bounce 0 traced.
+	 */
+	ensureCurveBands( bands ) {
+
+		if ( bands <= this.curveBands ) return;
+		freeStorageAttribute( this._renderer, this._bounceCountsAttr );
+		this.curveBands = bands;
+		this._bounceCountsAttr = new StorageInstancedBufferAttribute( new Uint32Array( this.pixelCountOffset( bands ) ), 1 );
+		this.bounceCounts = storage( this._bounceCountsAttr, 'uint' );
+
+	}
+
+	/** Where band `band`'s survivor counts start; its energy follows them. */
+	curveOffset( band ) {
+
+		return band === 0 ? 0 : ( band + 1 ) * 2 * this.MAX_BOUNCE_SNAPSHOTS;
+
+	}
+
+	/** Where band `band`'s bounce-0 pixel count is; at `band` = curveBands, the buffer's length. */
+	pixelCountOffset( band ) {
+
+		return this.curveOffset( this.curveBands ) + band;
 
 	}
 
@@ -270,6 +297,8 @@ export class QueueManager {
 		this.sortedIndices = null;
 		this.sortedIndicesRO = null;
 		this.sortGlobalHistogram = null;
+		this.bounceCounts = null;
+		this.curveBands = 0;
 		this.capacity = 0;
 
 	}
