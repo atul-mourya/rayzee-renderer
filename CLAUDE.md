@@ -792,7 +792,7 @@ the gradient sky is gone (`EnvironmentManager.restore` keeps an old session's on
   attribute). The Results page shows it through `app.createPictureView( canvas )` (`managers/PictureView.js`): a renderer
   of its own on the main device running the same Compositor, LocalExposure and HDR version of the saved view
   (`color.hdrVersionOf`: the screen's own table while held, so the startup's needs no config), then the panel's edits after the view
-  (`pictureGrade` in `app/src/utils/ImageProcessor.js`; `tests/gpu/pictureGrade.test.js` holds it to a JavaScript copy of
+  (`pictureGrade` in `app/src/lib/ImageProcessor.js`; `tests/gpu/pictureGrade.test.js` holds it to a JavaScript copy of
   `ImageProcessorComposer`'s GLSL, which runs in WebGL and so in no test).
   Against the live HDR canvas: mean 0.03 %, worst 3 %. A save from before this record, or under another config, shows
   its 8-bit picture.

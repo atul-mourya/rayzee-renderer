@@ -1,18 +1,18 @@
 import { useRef, useEffect, useState, forwardRef, useMemo, useCallback } from 'react';
-import { debounce } from '@/utils/debounce';
+import { debounce } from '@/lib/utils';
 import { RotateCcw, Save, Eye, Image as ImageIcon } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/store';
-import { ImageProcessorComposer, pictureGrade } from '@/utils/ImageProcessor';
+import { ImageProcessorComposer, pictureGrade } from '@/lib/ImageProcessor';
 import ViewportToolbar from './ViewportToolbar';
-import { updateRender, getRenderHDR } from '@/utils/database';
+import { updateRender, getRenderHDR } from '@/lib/database';
 import { getApp } from '@/lib/appProxy';
 import { useColorStatus, ensureDefaultConfig } from '@/lib/colorManagement';
 import { useAutoFitScale } from '@/hooks/useAutoFitScale';
 import { usePanZoom } from '@/hooks/usePanZoom';
-import { generateViewportStyles } from '@/utils/viewport';
+import { generateViewportStyles } from '@/lib/viewport';
 
 // Utility function to format render time (compact version)
 const formatRenderTime = ( timeInSeconds ) => {

@@ -1,7 +1,7 @@
 import { useStore } from '@/store';
 import { createContext, useContext, useEffect, useState, useCallback, useRef, memo, useMemo } from 'react';
-import { getAllRenders, deleteRender } from '@/utils/database';
-import { debounce } from '@/utils/debounce';
+import { getAllRenders, deleteRender } from '@/lib/database';
+import { debounce } from '@/lib/utils';
 import { Trash2, AlertTriangle, Check, Sparkles, CalendarDays, Timer, Clock } from 'lucide-react';
 import {
 	AlertDialog,

@@ -1,6 +1,6 @@
 import { openZip } from 'rayzee';
 import { openSink, zipInto } from '@/lib/zipSink';
-import { getRenderRecords, getRenderFiles, saveRender, RENDER_FILES } from '@/utils/database';
+import { getRenderRecords, getRenderFiles, saveRender, RENDER_FILES } from '@/lib/database';
 
 const FORMAT = 'rayzee-renders';
 const encoder = new TextEncoder();

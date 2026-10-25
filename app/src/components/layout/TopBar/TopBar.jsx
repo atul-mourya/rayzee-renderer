@@ -3,7 +3,7 @@ import { useStore, usePathTracerStore } from '@/store';
 import MenuBar from './MenuBar';
 import ViewportTabs from './ViewportTabs';
 import ActionBar from './ActionBar';
-import { useImportUrl } from '@/hooks/use-import-url';
+import { useImportUrl } from '@/hooks/useImportUrl';
 
 // Lazy load the ImportUrlModal since it's only used when opening import dialog
 const ImportUrlModal = lazy( () => import( './ImportUrlModal' ) );

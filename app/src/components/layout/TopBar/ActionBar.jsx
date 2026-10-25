@@ -1,6 +1,6 @@
 import { Github } from 'lucide-react';
 import { ThemeToggle } from '../../theme-toggle';
-import { appVersion } from '@/utils/version';
+import { appVersion } from '@/lib/version';
 import {
 	Tooltip,
 	TooltipContent,

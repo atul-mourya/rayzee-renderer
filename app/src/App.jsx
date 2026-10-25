@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { initDatabase } from '@/utils/database';
+import { initDatabase } from '@/lib/database';
 import TopBar from './components/layout/TopBar/TopBar';
 import LeftSidebar from '@/components/layout/LeftSideBar/LeftSidebar';
 import ViewportTabs from './components/layout/Viewports/ViewportTabs';

@@ -7,7 +7,7 @@ import { Separator } from '@/components/ui/separator';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Save, X, Settings, Image as ImageIcon } from "lucide-react";
 import { geminiImageGenerator } from '@/services/geminiApi';
-import { updateRenderWithAI } from '@/utils/database';
+import { updateRenderWithAI } from '@/lib/database';
 import { useStore } from '@/store';
 
 const AITab = () => {

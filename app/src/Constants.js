@@ -1,4 +1,4 @@
-import debugModelsData from './DebugModels.json';
+import debugModelsData from './data/DebugModels.json';
 
 import {
 	ENGINE_DEFAULTS, SKY_DEFAULTS, DENOISER_DEFAULTS, AUTO_EXPOSURE_DEFAULTS, LOCAL_EXPOSURE_DEFAULTS, AUTO_FOCUS_DEFAULTS, NRD_DEFAULTS,

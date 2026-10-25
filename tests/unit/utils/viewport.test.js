@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateViewportStyles } from '@/utils/viewport.js';
+import { generateViewportStyles } from '@/lib/viewport.js';
 
 describe( 'generateViewportStyles', () => {
 

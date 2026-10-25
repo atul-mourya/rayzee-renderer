@@ -7,7 +7,7 @@
 import { it, expect, beforeAll, afterAll } from 'vitest';
 import { vec4 } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
-import { pictureGrade } from '@/utils/ImageProcessor.js';
+import { pictureGrade } from '@/lib/ImageProcessor.js';
 
 // BrightnessContrastShader, then ColorAdjustmentShader, as the 8-bit picture runs them.
 function edit( c, p ) {

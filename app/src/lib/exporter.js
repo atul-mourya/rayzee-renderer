@@ -6,7 +6,7 @@
 
 import { getApp } from '@/lib/appProxy';
 import { openSink, zipInto } from '@/lib/zipSink';
-import { getRenderHDR } from '@/utils/database';
+import { getRenderHDR } from '@/lib/database';
 
 export const PICTURE_FORMATS = [
 	{ value: 'png', label: 'PNG', hint: 'no quality loss, for sharing and editing' },

@@ -191,7 +191,7 @@ saying the environment was left converted.
   0.3–0.45 s at 2048², almost all of it decoding the EXR on the main thread. Not shown, with a reason, when the screen
   shows no HDR, the file predates the record, its config is not the one loaded, or a later `show()` took over; the
   page then shows its 8-bit picture.
-  - The panel's edits go after the view (`PictureView.setGrade`; `pictureGrade` in `app/src/utils/ImageProcessor.js`),
+  - The panel's edits go after the view (`PictureView.setGrade`; `pictureGrade` in `app/src/lib/ImageProcessor.js`),
     as on the 8-bit picture: brightness and contrast on the encoded colour, then saturation, hue and exposure on it
     decoded with 2.2, encoded with the panel's gamma. Up to white they match `ImageProcessorComposer`'s GLSL, copied into
     JavaScript, within half a level (`tests/gpu/pictureGrade.test.js`; the WebGL composer itself runs in no test); past white the colour carries on (hue turns it scaled down to white), and
