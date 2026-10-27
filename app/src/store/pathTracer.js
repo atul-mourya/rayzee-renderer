@@ -71,6 +71,27 @@ const applySunPath = ( set, get ) => {
 
 };
 
+// Thickness is the share of light crossing the models' longest side the haze stops, the same at any scene scale. A room
+// seen from inside is filled to its bounds; an object seen from outside gets a cube holding the camera too, as a box
+// looked into shows its edges.
+const fogVolume = ( thickness, app ) => {
+
+	const box = app.getModelBounds();
+	if ( box.isEmpty() ) return { density: 0, bounds: null };
+	const size = box.getSize( new THREE.Vector3() );
+	const span = Math.max( size.x, size.y, size.z );
+	const density = span > 0 ? - Math.log( 1 - 0.95 * Math.min( Math.max( thickness, 0 ), 1 ) ) / span : 0;
+	const camera = app.camera?.position;
+	if ( ! camera || box.containsPoint( camera ) ) return { density, bounds: null };
+
+	const center = box.getCenter( new THREE.Vector3() );
+	const half = Math.max( span, 3 * center.distanceTo( camera ) );
+	return { density, bounds: { min: center.clone().subScalar( half ).toArray(), max: center.clone().addScalar( half ).toArray() } };
+
+};
+
+const scalar = val => Number( Array.isArray( val ) ? val[ 0 ] : val );
+
 const sunPathHandler = ( set, get, key ) => val => {
 
 	set( { [ key ]: Number( Array.isArray( val ) ? val[ 0 ] : val ) } );
@@ -669,6 +690,7 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 		dm.setAutoExposure( s.autoExposure );
 		app.setLocalExposureParams?.( { highlightContrast: s.localExposureHighlightContrast } );
 		app.setLocalExposure?.( s.localExposure );
+		s._applyFog();
 
 	},
 
@@ -879,6 +901,48 @@ export const usePathTracerStore = create( ( set, get ) => ( {
 
 		set( { groundCatcherHeight: val } );
 		getApp()?.settings.set( 'groundCatcherHeight', val );
+
+	},
+
+	handleFogChange: val => {
+
+		set( { fog: val } );
+		get()._applyFog();
+
+	},
+
+	handleFogThicknessChange: val => {
+
+		set( { fogThickness: scalar( val ) } );
+		get()._applyFog();
+
+	},
+
+	handleFogColorChange: val => {
+
+		set( { fogColor: val } );
+		getApp()?.settings.set( 'fogColor', val );
+
+	},
+
+	handleFogAnisotropyChange: val => {
+
+		set( { fogAnisotropy: scalar( val ) } );
+		getApp()?.settings.set( 'fogAnisotropy', scalar( val ) );
+
+	},
+
+	// Also after a model loads: the density follows the models' size.
+	_applyFog: () => {
+
+		const app = getApp();
+		if ( ! app ) return;
+		const s = get();
+		const volume = s.fog ? fogVolume( s.fogThickness, app ) : { density: 0, bounds: null };
+		app.settings.set( 'fogColor', s.fogColor );
+		app.settings.set( 'fogAnisotropy', s.fogAnisotropy );
+		app.settings.set( 'fogBounds', volume.bounds );
+		app.settings.set( 'fogDensity', volume.density );
 
 	},
 

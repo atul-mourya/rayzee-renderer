@@ -15,6 +15,8 @@
  * @property {boolean} [lightRadius] - some point or spot light has a radius (path tracing only); false = all are points
  * @property {boolean} [transmissionMaps] - some material has a transmission map; false = shadow rays never sample one
  * @property {boolean} [clearcoatNormals] - some coated material has a normal or bump map; false = every coat follows N
+ * @property {?Object} [fog] - the fog's uniforms ( density, color, anisotropy, boxMin, boxMax ) while it has a density
+ *   (path tracing only); every shadow ray takes its transmittance. null = no fog
  */
 
 import { context } from 'three/tsl';

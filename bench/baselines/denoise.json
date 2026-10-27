@@ -718,5 +718,65 @@
 		"ratio": 0.4574065011925913,
 		"rawRmse": 0.10173583608894533,
 		"denoisedRmse": 0.04653463283134745
+	},
+	"fog-furnace/nrd/1": {
+		"ratio": 0.806131069818677,
+		"rawRmse": 0.11282605467334648,
+		"denoisedRmse": 0.09095258815724534
+	},
+	"fog-furnace/oidn/1": {
+		"ratio": 0.3270224982420218,
+		"rawRmse": 0.11282605467334648,
+		"denoisedRmse": 0.03689665826606871
+	},
+	"fog-furnace/oidn-tiled/1": {
+		"ratio": 0.3270224982420218,
+		"rawRmse": 0.11282605467334648,
+		"denoisedRmse": 0.03689665826606871
+	},
+	"fog-furnace/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.011889270497675068,
+		"denoisedRmse": 0.011889270497675068
+	},
+	"fog-furnace/oidn/64": {
+		"ratio": 0.40844034357867715,
+		"rawRmse": 0.011889270497675068,
+		"denoisedRmse": 0.0048560577269702344
+	},
+	"fog-furnace/oidn-tiled/64": {
+		"ratio": 0.40844034357867715,
+		"rawRmse": 0.011889270497675068,
+		"denoisedRmse": 0.0048560577269702344
+	},
+	"fog-shafts/nrd/1": {
+		"ratio": 0.5865956975265468,
+		"rawRmse": 0.11505218685430287,
+		"denoisedRmse": 0.06748911779975439
+	},
+	"fog-shafts/oidn/1": {
+		"ratio": 0.3682233862049515,
+		"rawRmse": 0.11505218685430287,
+		"denoisedRmse": 0.04236490583377621
+	},
+	"fog-shafts/oidn-tiled/1": {
+		"ratio": 0.3682233862049515,
+		"rawRmse": 0.11505218685430287,
+		"denoisedRmse": 0.04236490583377621
+	},
+	"fog-shafts/nrd/64": {
+		"ratio": 1,
+		"rawRmse": 0.02327788071939189,
+		"denoisedRmse": 0.02327788071939189
+	},
+	"fog-shafts/oidn/64": {
+		"ratio": 0.249891975589854,
+		"rawRmse": 0.02327788071939189,
+		"denoisedRmse": 0.005816955600513811
+	},
+	"fog-shafts/oidn-tiled/64": {
+		"ratio": 0.249891975589854,
+		"rawRmse": 0.02327788071939189,
+		"denoisedRmse": 0.005816955600513811
 	}
 }

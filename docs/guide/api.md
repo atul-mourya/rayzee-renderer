@@ -93,6 +93,7 @@ surface** — pin a version and branch on the strings; they are never renamed or
 | `output.pass_unavailable` | `exportImage` was asked for an EXR layer it cannot write, such as `albedo` or `normal` with no denoiser on (`detail.pass`); the file is written without it |
 | `light.placeholder_skipped` | a `RectAreaLightPlaceholder` node lacked `userData.name` or `userData.type: 'RectAreaLight'`, so no light was made for it |
 | `capability.missing` | a feature was asked for whose add-on is not installed on the core (procedural sky, an unregistered integrator, a colour config, storage) — names the add-on |
+| `setting.ignored` | a setting has no effect in the current setup: fog under a bidirectional integrator, which renders without it (a warning, once per integrator) — names the setting |
 | `color.config_load_failed` / `viewTransform.bake_failed` / `viewTransform.display_mismatch` | a colour config failed to load (the previous one stays), a view could not be rebaked, or a view targets a display the canvas cannot show (a saved buffer is still right) — warnings |
 | `storage.unavailable` / `storage.quota_exceeded` / `storage.write_failed` / `storage.read_failed` / `storage.entry_corrupt` / `storage.cache_mismatch` | on-disk storage is off or failed; the engine carries on in memory — warnings |
 

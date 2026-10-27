@@ -41,6 +41,8 @@ function makeStage( { chunkRows = H } = {} ) {
 		numPointLights: { value: 0 },
 		numSpotLights: { value: 0 },
 		_compiledLightRadius: false,
+		fogDensity: { value: 0 },
+		_compiledFog: false,
 		transmissiveBounces: { value: 2 },
 		maxSubsurfaceSteps: { value: 1 },
 		_wfRenderWidth: { value: W },

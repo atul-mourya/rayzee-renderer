@@ -2523,6 +2523,41 @@ export class RayzeeRenderer extends EventDispatcher {
 	}
 
 	/**
+	 * World bounds of the loaded models: the auto-created Ground plane (oversized, usually hidden) is left out.
+	 * @param {Box3} [target]
+	 * @returns {Box3} empty when nothing is loaded
+	 */
+	getModelBounds( target = new Box3() ) {
+
+		target.makeEmpty();
+		const part = new Box3();
+		for ( const child of this.meshScene?.children ?? [] ) {
+
+			if ( ! child.userData?.__rayzeeSceneObject ) continue;
+			part.setFromObject( child );
+			if ( ! part.isEmpty() ) target.union( part );
+
+		}
+
+		return target;
+
+	}
+
+	/** Sends the box fog fills to the path tracer: the host's `fogBounds`, else the models'. Measured only while there is fog. */
+	_applyFogBounds() {
+
+		const pathTracer = this.stages.pathTracer;
+		if ( ! pathTracer || ! ( this.settings.get( 'fogDensity' ) > 0 ) ) return;
+
+		const bounds = this.settings.get( 'fogBounds' );
+		const box = bounds ? new Box3().setFromArray( [ ...bounds.min, ...bounds.max ] ) : this.getModelBounds();
+		if ( box.isEmpty() ) box.set( box.min.set( 0, 0, 0 ), box.max.set( 0, 0, 0 ) );
+		pathTracer.setUniform( 'fogBoxMin', box.min );
+		pathTracer.setUniform( 'fogBoxMax', box.max );
+
+	}
+
+	/**
 	 * Read back the scalar material property the shader is actually using.
 	 * @param {number} materialIndex
 	 * @param {string} property
@@ -3194,6 +3229,7 @@ export class RayzeeRenderer extends EventDispatcher {
 				this.renderer.toneMappingExposure = value;
 
 			},
+			onFogBounds: () => this._applyFogBounds(),
 		};
 
 	}

@@ -36,6 +36,10 @@ Key settings:
 | `integrator` | `string` | 'path' | `'path'` \| `'bidirectional'` \| `'vcm'` (on the core, needs the bidirectional add-on). Bidirectional also traces light subpaths from every light — emissive surfaces, rect/disk, point, spot and directional lights, the sun and the environment — far faster for caustics and light through small openings, about 2× the cost per sample. On a lamp-lit interior with an HDRI it is ~20 % less noisy at equal time; a room lit only through a window stays better path traced. `'vcm'` adds photon merging, for caustics seen in mirrors and through glass. Switching rebuilds the kernels |
 | `fireflyThreshold` | `number` | 3.0 | Firefly clamping threshold |
 | `shadowTerminatorOffset` | `number` | 0.1 | Cycles' Shadow Terminator → Geometry Offset: near the light's terminator on a smooth-shaded low-poly mesh, light and environment shadow rays start on the smooth surface the vertex normals describe, not the flat facet. Blender's default; `0` disables |
+| `fogDensity` | `number` | 0 | Fog: how much light it stops per scene unit (extinction). `0` is no fog and compiles it out. See [Fog](#fog) |
+| `fogColor` | `string` | '#ffffff' | The colour the fog scatters (its albedo); the rest of what it stops is absorbed |
+| `fogAnisotropy` | `number` | 0 | Henyey–Greenstein `g`, −0.95…0.95: above 0 the fog scatters forward, so beams look brighter facing the light |
+| `fogBounds` | `{min, max}` \| `null` | null | The box the fog fills, as `{ min: [x, y, z], max: [x, y, z] }`; `null` fills the loaded models' bounds (`getModelBounds()`) |
 | `transmissiveBounces` | `number` | 5 | Max bounces for transmissive materials |
 | `maxSubsurfaceSteps` | `number` | 8 | Max random-walk steps for subsurface scattering (raised to 64 by `configureForMode('production')`) |
 | `enableAlphaShadows` | `boolean` | false | Alpha-tested shadow rays (enabled by `configureForMode('production')`) |
@@ -65,6 +69,29 @@ Key settings:
 | `pixelFreezeStability` | `number` | 8 | Consecutive candidate frames required before a pixel freezes |
 
 See `ENGINE_DEFAULTS` for the full list with default values — every key in it is a setting of the same name. The default look is AgX (`DEFAULT_VIEW`) at neutral saturation; tone mapping is chosen through [Colour Management](#colour-management) (`engine.color.setActiveView( id )`), not `settings`. On the core without the colour add-on, set `renderer.renderer.toneMapping`.
+
+## Fog
+
+A homogeneous haze in a box, lit by everything in the scene — the sky and the sun from outside it too, so light coming
+through a window shows as a beam. Path integrator only: under `'bidirectional'` or `'vcm'` it is left out and
+`setting.ignored` is recorded.
+
+```js
+engine.settings.setMany({ fogDensity: 0.1, fogColor: '#fff4e6', fogAnisotropy: 0.4 })
+```
+
+- **Density is per scene unit.** A density `d` lets `e^(−d·x)` of the light through `x` units of fog, so `0.1` in a
+  6 m room stops about half the light crossing it. Scale it with the scene: `getModelBounds()` gives its size.
+- **The box.** By default the fog fills the loaded models' bounds (the auto-created ground plane is left out), which is
+  right for a room seen from inside. Seen from outside, a box shows its edges: give an object a `fogBounds` that holds
+  the camera too. The app does this itself — a room is filled to its bounds, an object gets a cube around it and the
+  camera.
+- **Lights.** Point and spot lights light the fog along every ray through it (equiangular sampling), so a spot's cone
+  converges quickly; the sun, the sky, rect lights and glowing surfaces light it at scatter points, weighed against the
+  phase function. With `shadowRays` `'two'` or `'one'` the fog traces as few shadow rays as a surface does.
+- **Cost.** Turning it on rebuilds the shaders once. On a sunlit room with a spot light and a glowing ball it took
+  about half again the GPU time a sample (M-series, 512²); off, every shader is exactly as without the feature.
+- Fog is not drawn inside glass or subsurface objects, and the ground-plane shadow catcher ignores it.
 
 ## Rendering Modes
 

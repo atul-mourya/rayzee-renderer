@@ -2,7 +2,7 @@
 
 How the path tracer's materials and shading work inside: material defaults, Fresnel, exact mirrors, diffuse
 transmission and roughness, clear-coat normals, material layers, transmission maps, displacement, ray spawn points,
-the shadow terminator, shadow-ray picking and sized lights. CLAUDE.md keeps the rules.
+the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps the rules.
 
 - **Material defaults** — `MATERIAL_DEFAULTS` (`EngineDefaults.js`) is the only fallback for a
   property a three.js material lacks (MeshPhysicalMaterial's own values), and `packMaterial()`
@@ -166,3 +166,45 @@ the shadow terminator, shadow-ray picking and sized lights. CLAUDE.md keeps the 
   and mirror rays. The bidirectional integrators keep them as points (their light paths leave the centre), and glTF has
   no field for a radius. Barbershop in clay against Cycles: 0.885 → 0.978 overall, its left side (lit by sized lights)
   0.52–0.63 → 0.93–0.97. `tests/gpu/lightRadius.test.js`.
+
+- **Fog** (`shaders/Fog.js`; settings `fogDensity`, `fogColor`, `fogAnisotropy`, `fogBounds`). A homogeneous medium in
+  an axis-aligned box: grey extinction σ (per scene unit) and a coloured albedo, Henyey–Greenstein phase function. The
+  box defaults to the loaded models' bounds (`getModelBounds()`, the ground plane left out), so the sky and the sun
+  light it from outside — an infinite medium would absorb the environment entirely.
+  - *Compiled in only while it has a density* (`PathTracer._fogNeeded()`, rebuilt from `render()` like the light radius):
+    off, all 12 WGSL modules are those of a build without fog (checked by hashing every `createShaderModule` with node
+    ids renumbered), and the corpus renders exactly as before. Path integrator only; the bidirectional ones record
+    `setting.ignored` and render without it.
+  - *Free flight in Shade*, before the miss branch, outside any glass or subsurface medium (medium stack depth 0): a
+    distance drawn from σ inside the ray's span of the box. Extinction is grey, so this is exact — a ray that passes
+    keeps its throughput, one that scatters takes the albedo; no spectral MIS.
+  - *A scatter* is a vertex of its own: it takes the directional and rect lamps, the environment, the sun and the
+    emitters through the phase function (`fogScatterLight`), then draws its next direction from the phase function
+    (`sampleHenyeyGreenstein`, the subsurface walk's) and stores its density as the bounce pdf. The environment is
+    weighed with the balance heuristic and the sun and emitters with the power heuristic, as at a surface, so the miss
+    and emitter-hit branches pair with them unchanged; the scatter sets `SUN_NEE` (its sun NEE draws any direction),
+    `REDIRECTED` and `HAS_HIT_OPAQUE` (alpha coverage), uses a bounce of the budget, and commits the aux guide as the
+    fog's albedo facing the camera. Russian roulette from bounce 3 on the throughput alone.
+  - *Point and spot lights* light the fog along every segment instead (`fogSegmentLight`): one light picked by its
+    unshadowed single scattering over the span, ∝ intensity × (θb − θa) / D, then one point drawn equiangularly toward
+    it (Kulla & Fajardo 2012), which cancels the 1/d² a free-flight point sees. From free-flight points alone a spot
+    in fog sparkled across the whole room (paths scattering near the lamp after a bounce); with it the cone is clean.
+    These lights are delta lights with no BSDF partner, so the two estimators are simply split by light kind.
+  - *Shadow rays* take the fog's transmittance in `traceShadowRay` (`SceneResources.fog`), so every surface NEE sees it
+    too. The fog's own light is traced in one loop (`traceFogLight`): each `traceShadowRay` call inlines the whole BVH
+    walk, and five call sites took a cold Shade compile from 3.1 s to 4.7 s. Under `shadowRays` `'two'`/`'one'` it
+    goes through `lightPick` like a surface's.
+  - ⚠️ Pass values into the shadow-ray Fn (CLAUDE.md pitfall 15): the select-chain expressions it was first given read
+    as zero after its loop and the forward-scattering furnace lost 3.7 %. `traceShadowRay` now also captures its
+    arguments at the top when fog is compiled in, since it reads them again after the loop.
+  - Checks: black fog dims the sky by exactly e^(−σd) (0.01 %); a white fog in a uniform sky, alone or around a white
+    Lambert sphere, renders the sky's radiance for g = −0.5…0.7 (≤ 0.03 %); a point light's single scattering matches a
+    CPU quadrature (0.00 % at g = 0, 0.10 % at 0.6); `shadowRays` `'all'`, `'two'` and `'one'` agree on `fog-shafts`
+    (mean luminance 0.0723 each). Bench: `fog-furnace` (analytic gate; 1.909 with fog left out of shadow rays) and
+    `fog-shafts` (sun and sky through a window, a spot, an emitter; 5 % energy bias without the segment light).
+    `tests/gpu/fog.test.js` holds the span and the phase draw against its density (E[1/p] = 4π).
+  - Cost (Dawn, M-series, `fog-shafts` at 512²): 10.6 → 16.1 ms a sample (+51–53 %), Shade 7.5 → 12.8 ms; 18.0 before
+    picking shadow rays. Shade compiles in ~4.2 s cold against 3.1–4.1 s without fog (noisy between runs), 0.8 against
+    0.6 s from the shader cache — once, when the density first leaves 0.
+  - Not yet: heterogeneous media, fog inside glass, equiangular sampling for emitters (a small bright emissive ball
+    still speckles its halo), the shadow catcher in fog.

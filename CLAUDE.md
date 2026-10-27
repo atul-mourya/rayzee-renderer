@@ -517,6 +517,15 @@ bench gates and measurements.
   loses where a white sun and a blue sky are both in view — a sample carries one light's colour, not their mix.
 - **Light radius**: a point or spot light with `userData.radius` is lit as Cycles' Soft Falloff (NEE only), compiled in
   only while some light has one.
+- **Fog** (`shaders/Fog.js`; settings `fogDensity` per scene unit, `fogColor`, `fogAnisotropy`, `fogBounds`): a
+  homogeneous medium in a box, by default the models' bounds (`getModelBounds()`, no ground plane), so the sky and sun
+  light it from outside. Compiled in only while the density is above 0 (`PathTracer._fogNeeded()`), path integrator
+  only (else `setting.ignored`). Free flight in Shade before the miss branch; a scatter takes the lamps, sky, sun and
+  emitters MIS'd against the phase draw (`fogScatterLight`), point and spot lights come along every segment by
+  equiangular sampling (`fogSegmentLight`), and every shadow ray takes the fog's transmittance (`traceShadowRay` via
+  `SceneResources.fog`). ⚠️ The fog's shadow rays go through one call site (`traceFogLight`): each `traceShadowRay`
+  call inlines the whole BVH walk. The app turns its Thickness into a density by the models' longest side, and gives an
+  object seen from outside a cube around it and the camera (a box seen from outside shows its edges).
 - ⚠️ `bench:ab` read +7–9 % on identical code for two scenes on one day: net any A/B of a self-run.
 
 ### State-Engine Synchronization Pattern
@@ -1058,3 +1067,6 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 16. **A TSL `select` takes one condition**: `ConditionalNode` builds it as a `bool`, so a `vec3` condition follows its first
    channel. A view's encode picked the power curve for every channel of magenta and showed green 0.055 where 0 belongs. Per
    channel, `mix( a, b, step( edge, x ) )`; hand-written WGSL `select` is per channel.
+17. **A TSL branch callback returns nothing**: `If( c, () => v.assign( x ) )` hands back the assign node, which
+   `ConditionalNode` reads as a return value — it warns "Return statement used in an inline 'Fn()'" and comments a
+   `return` out. Give every `If`/`Else` callback a block body.

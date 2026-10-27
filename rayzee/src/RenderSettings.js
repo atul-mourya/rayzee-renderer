@@ -34,6 +34,10 @@ const SETTING_ROUTES = {
 	groundProjectionLevel: { uniform: 'groundProjectionLevel', reset: true },
 	enableGroundCatcher: { uniform: 'enableGroundCatcher', reset: true },
 	groundCatcherHeight: { uniform: 'groundCatcherHeight', reset: true },
+	fogDensity: { handler: 'handleFogDensity', reset: true },
+	fogColor: { handler: 'handleFogColor', reset: true },
+	fogAnisotropy: { handler: 'handleFogAnisotropy', reset: true },
+	fogBounds: { handler: 'handleFogBounds', reset: true },
 	globalIlluminationIntensity: { uniform: 'globalIlluminationIntensity', reset: true },
 	panoramaLevelHorizon: { uniform: 'panoLevelHorizon', reset: true },
 	enableDOF: { uniform: 'enableDOF', reset: true },
@@ -191,7 +195,7 @@ export class RenderSettings extends EventDispatcher {
 	 * Builds handler functions for multi-stage settings that can't
 	 * be routed with a simple uniform forward.
 	 */
-	_buildHandlers( { stages, resetCallback, reconcileCompletion, applyExposure, onCameraProjection } ) {
+	_buildHandlers( { stages, resetCallback, reconcileCompletion, applyExposure, onCameraProjection, onFogBounds } ) {
 
 		// UniformManager copies into the existing node, so one scratch vector serves every write.
 		const panoScratch = new Vector2();
@@ -232,6 +236,30 @@ export class RenderSettings extends EventDispatcher {
 				stages.pathTracer?.setUniform( 'backgroundColor', c );
 
 			},
+
+			// The box is measured only while there is fog: off, nothing reads it.
+			handleFogDensity: ( value ) => {
+
+				stages.pathTracer?.setUniform( 'fogDensity', Math.max( Number( value ) || 0, 0 ) );
+				onFogBounds?.();
+
+			},
+
+			handleFogColor: ( value ) => {
+
+				stages.pathTracer?.setUniform( 'fogColor', value?.isColor ? value : new Color( value ) );
+
+			},
+
+			// HG at |g| < 0.001 is drawn as isotropic (sampleHenyeyGreenstein), so it is evaluated as isotropic too.
+			handleFogAnisotropy: ( value ) => {
+
+				const g = MathUtils.clamp( Number( value ) || 0, - 0.95, 0.95 );
+				stages.pathTracer?.setUniform( 'fogAnisotropy', Math.abs( g ) < 0.001 ? 0 : g );
+
+			},
+
+			handleFogBounds: () => onFogBounds?.(),
 
 			handleExposure: ( value ) => {
 

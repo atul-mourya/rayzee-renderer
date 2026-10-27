@@ -1,4 +1,4 @@
-import { Sun, RefreshCcwDot, Image, Palette, ArrowUp, CloudSun } from 'lucide-react';
+import { Sun, RefreshCcwDot, Image, Palette, ArrowUp, CloudSun, CloudFog } from 'lucide-react';
 // import { Zap, ArrowDown, Minus, Droplets } from 'lucide-react';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -145,6 +145,10 @@ const PathTracerTab = () => {
 		groundProjectionHeight,
 		enableGroundCatcher,
 		groundCatcherHeight,
+		fog,
+		fogThickness,
+		fogColor,
+		fogAnisotropy,
 		// Environment Mode
 		environmentMode,
 		solidSkyColor,
@@ -197,6 +201,10 @@ const PathTracerTab = () => {
 		handleGroundProjectionHeightChange,
 		handleEnableGroundCatcherChange,
 		handleGroundCatcherHeightChange,
+		handleFogChange,
+		handleFogThicknessChange,
+		handleFogColorChange,
+		handleFogAnisotropyChange,
 		// Environment Mode Handlers
 		handleEnvironmentModeChange,
 		handleSolidSkyColorChange,
@@ -383,6 +391,22 @@ const PathTracerTab = () => {
 								<Slider label={"Projection Height"} tip="How high above the floor the photo was taken. Change it until the floor looks the right size." icon={ArrowUp} min={0} max={50} step={0.1} value={[ groundProjectionHeight ]} onValueChange={handleGroundProjectionHeightChange} />
 							</Row>
 						)}
+					</>
+				)}
+
+				<Separator className="my-1 opacity-30" />
+
+				<Row>
+					<SliderToggle label={"Fog"} tip="Fills the scene with haze, so light from windows and lamps shows as beams. The number sets how thick it is. Path Tracing only." enabled={fog} icon={CloudFog} min={0} max={1} step={0.01} value={[ fogThickness ]} onValueChange={handleFogThicknessChange} onToggleChange={handleFogChange} />
+				</Row>
+				{fog && (
+					<>
+						<Row>
+							<ColorInput label="Fog Color" tip="The colour the haze gives the light passing through it." value={fogColor} onChange={handleFogColorChange} />
+						</Row>
+						<Row>
+							<Slider label={"Glow Toward Light"} tip="How much brighter the haze looks when you face the light, as sunbeams do. 0 looks the same from every side." min={0} max={0.9} step={0.01} value={[ fogAnisotropy ]} onValueChange={handleFogAnisotropyChange} />
+						</Row>
 					</>
 				)}
 			</ControlGroup>

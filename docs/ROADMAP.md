@@ -38,11 +38,11 @@
 ### Next-Generation Rendering Features
 - [ ] **Volumetric Rendering & Atmosphere**
   - [x] Volumetric absorption in transmission (attenuation colour and distance, nested media)
-  - [ ] Fog and homogeneous participating media
+  - [x] Fog and homogeneous participating media (a box of haze lit by every light, the sky and sun from outside it)
   - [ ] Heterogeneous volume rendering (clouds, smoke)
   - [x] Atmospheric scattering with multiple scattering (the physical sky: spectral, clear sky)
   - [ ] Participating media with anisotropic scattering
-  - [ ] Volumetric lighting and shadows
+  - [x] Volumetric lighting and shadows (light shafts through windows, spot-light cones by equiangular sampling)
 
 - [ ] **Advanced Material System**
   - [x] Multi-lobe BRDF (GGX specular, diffuse, clearcoat, sheen, transmission)

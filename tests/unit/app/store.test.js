@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PerspectiveCamera, Vector3 } from 'three';
+import { PerspectiveCamera, Vector3, Box3 } from 'three';
 
 // Stub browser APIs that Zustand/store.js may reference. localStorage is required: without
 // it the store import throws and the `catch { store = null }` below silently skips every test.
@@ -609,6 +609,65 @@ describe( 'the loading panel waits for the shaders a load built', () => {
 		main().setIsCompilingShaders( true );
 		main().resetLoading();
 		expect( main().loading.isLoading ).toBe( false );
+
+	} );
+
+} );
+
+describe( 'Fog', () => {
+
+	const fogApp = ( size ) => {
+
+		const values = new Map();
+		return {
+			values,
+			settings: { set: vi.fn( ( key, value ) => values.set( key, value ) ) },
+			getModelBounds: () => ( size ? new Box3( new Vector3( 0, 0, 0 ), new Vector3( size, size / 2, size / 3 ) ) : new Box3() ),
+			camera: { position: new Vector3( size / 2, size / 4, size / 6 ) }, // inside: a room
+		};
+
+	};
+
+	it( 'turns the panel\'s thickness into a density for the models\' size, and off into none', async () => {
+
+		const app = fogApp( 6 );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( app );
+		const state = () => store.usePathTracerStore.getState();
+
+		state().handleFogThicknessChange( [ 0.5 ] );
+		expect( app.values.get( 'fogDensity' ) ).toBe( 0 ); // still off
+		state().handleFogChange( true );
+		// Half the share: light crossing the longest side (6) keeps 1 − 0.95 × 0.5 of itself.
+		expect( app.values.get( 'fogDensity' ) ).toBeCloseTo( - Math.log( 1 - 0.475 ) / 6, 6 );
+
+		// The same thickness in a model ten times larger is a tenth the density.
+		const large = fogApp( 60 );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( large );
+		state()._applyFog();
+		expect( large.values.get( 'fogDensity' ) ).toBeCloseTo( app.values.get( 'fogDensity' ) / 10, 6 );
+
+		state().handleFogAnisotropyChange( [ 0.6 ] );
+		expect( large.values.get( 'fogAnisotropy' ) ).toBe( 0.6 );
+		state().handleFogChange( false );
+		expect( large.values.get( 'fogDensity' ) ).toBe( 0 );
+
+		// An object seen from outside: a cube round it holding the camera, so no edge of the fog shows.
+		const object = fogApp( 2 );
+		object.camera.position.set( 1, 0.5, 8 );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( object );
+		state().handleFogChange( true );
+		const { min, max } = object.values.get( 'fogBounds' );
+		expect( new Box3().setFromArray( [ ...min, ...max ] ).containsPoint( object.camera.position ) ).toBe( true );
+		expect( object.values.get( 'fogDensity' ) ).toBeCloseTo( - Math.log( 1 - 0.475 ) / 2, 6 ); // still the object's size
+		state().handleFogChange( false );
+		expect( object.values.get( 'fogBounds' ) ).toBe( null );
+
+		// Nothing loaded: no box, no fog.
+		const empty = fogApp( 0 );
+		( await import( '@/lib/appProxy.js' ) ).__setMockApp( empty );
+		state().handleFogChange( true );
+		expect( empty.values.get( 'fogDensity' ) ).toBe( 0 );
+		state().handleFogChange( false );
 
 	} );
 

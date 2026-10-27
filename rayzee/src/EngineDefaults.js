@@ -60,6 +60,12 @@ export const ENGINE_DEFAULTS = deepFreeze( {
 	enableGroundCatcher: false,
 	groundCatcherHeight: 0,
 
+	// Fog (path integrator): a homogeneous medium in a box, lit by everything including the sky outside it
+	fogDensity: 0, // light it stops per scene unit; 0 is no fog, and compiles it out
+	fogColor: '#ffffff', // what it scatters; the rest of what it stops is absorbed
+	fogAnisotropy: 0, // −0.95…0.95; above 0 it scatters forward, which brightens light shafts seen toward the light
+	fogBounds: null, // { min: [x,y,z], max: [x,y,z] }; null fills the loaded models' bounds
+
 	// Camera
 	cameraProjection: 'perspective', // 'perspective' | 'orthographic' | 'equirectangular'
 	panoramaLonRange: [ - 180, 180 ], // degrees

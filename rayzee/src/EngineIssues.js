@@ -41,6 +41,7 @@ export const ISSUE_CODES = Object.freeze( {
 	OUTPUT_PASS_UNAVAILABLE: 'output.pass_unavailable',
 	LIGHT_PLACEHOLDER_SKIPPED: 'light.placeholder_skipped',
 	CAPABILITY_MISSING: 'capability.missing',
+	SETTING_IGNORED: 'setting.ignored',
 } );
 
 /** Strict throws on ERROR only. */

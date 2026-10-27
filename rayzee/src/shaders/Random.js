@@ -106,7 +106,9 @@ export const RandomPointInCircle = ( rngState ) => {
 //       +6  subsurface HG scatter dir    (ShadeKernel)
 //       +7  ground-catcher cosine BSDF   (ShadeKernel)
 //       +8  indirect-strategy direction  (LightsIndirect)
-//       +9  physical-sky sun disc        (LightsSampling)
+//       +9  physical-sky sun disc        (LightsSampling, Fog)
+//      +10  fog scatter direction        (ShadeKernel)
+//      +11  fog segment light: point on a sized lamp (Fog)
 //   1D  +0  light kind for the picked shadow ray (LightsSampling lightPick, setting shadowRays)
 //       +1  emissive-triangle pick       (EmissiveSampling / LightBVHSampling)
 //       +2  BSDF lobe selection          (ShadeKernel)
@@ -125,6 +127,13 @@ export const RandomPointInCircle = ( rngState ) => {
 //      +15  light uv second component    (LightsSampling)
 //      +16  light path to connect to     (ConnectKernel, bidirectional)
 //      +17  light vertex on that path    (ConnectKernel, bidirectional)
+//      +18  fog free-flight distance     (ShadeKernel)
+//      +19  fog's lamp pick              (Fog)
+//      +20  fog segment light: the lamp  (Fog)
+//      +21  fog segment light: the point (Fog)
+//      +22  fog's picked shadow ray      (Fog, setting shadowRays)
+//
+// A fog scatter ends its bounce before any surface work, so its light samples reuse the surface's NEE dimensions.
 //
 // Stride is 32 rather than the ~16 in use so a new call site does not force a renumbering.
 // The index only keys a scramble seed, so spare slots cost nothing.

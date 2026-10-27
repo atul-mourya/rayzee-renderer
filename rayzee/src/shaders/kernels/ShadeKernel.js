@@ -50,6 +50,7 @@ import {
 	sampleEmissiveTriangle, sampleEmissiveTriangleIndexed, fetchTriangleData, TriangleData,
 } from '../EmissiveSampling.js';
 import { sampleLightBVHTriangle, sampleLightBVHTriangleIndexed, calculateLightBVHPdf } from '../LightBVHSampling.js';
+import { fogSpan, henyeyGreenstein, fogSegmentLight, fogScatterLight, traceFogLight, FOG_DIM } from '../Fog.js';
 import {
 	Ray,
 	HitInfo,
@@ -139,6 +140,8 @@ export function buildShadeKernel( params ) {
 		// Fewer shadow rays a hit, emitters included: null (one per light kind) or a lightPick variant; path tracing only.
 		shadowRays = null,
 		cameraWorldMatrix = null,
+		// The fog's uniforms while it has a density (path tracing only); null compiles it out.
+		fog = null,
 	} = params;
 	const diffuseTransmission = layers.diffuseTransmission;
 
@@ -436,6 +439,101 @@ export function buildShadeKernel( params ) {
 					writeRayRadiance( rayBufferRW, rayID, vec4( outRgb, outAlpha ) );
 					// DDFA: the plane's aux (written above) is a committed surface — lock it (cosmetic; ray dies here).
 					writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ).bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+					persistRng();
+					Return();
+
+				} );
+
+			} );
+
+		} );
+
+		// Fog, outside glass and subsurface media: each segment takes the point and spot lights; a free flight ending before
+		// the hit (or the sky) is a scatter, which takes the other lights and continues along a phase-function draw.
+		if ( fog ) If( int( readMediumStack( rayBufferRW, rayID ).stackDepth ).equal( 0 ), () => {
+
+			const span = fogSpan( origin, direction, min( hitDist, float( 1e30 ) ), fog.boxMin, fog.boxMax ).toVar();
+			If( span.y.greaterThan( span.x ), () => {
+
+				const stop = () => {
+
+					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
+					writeRayDirFlags( rayBufferRW, rayID, direction, flags.bitAnd( uint( ~ RAY_FLAG.ACTIVE ) ) );
+					persistRng();
+					Return();
+
+				};
+
+				const sample1D = ( d ) => getRandomSample1D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
+				const sample2D = ( d ) => getRandomSample2D( _pixelCoord, int( 0 ), dimBase.add( int( d ) ), rngState, resolution, frame );
+				const t = span.x.sub( log( float( 1.0 ).sub( sample1D( FOG_DIM.DISTANCE ) ) ).div( fog.density ) ).toVar();
+				const scatters = t.lessThan( span.y ).toVar();
+				// Past the bounce budget only emission is wanted: neither a segment's light nor a scatter is seen.
+				const emissionOnly = flags.bitAnd( uint( RAY_FLAG.EMISSION_ONLY ) ).notEqual( uint( 0 ) );
+				If( emissionOnly.and( scatters ), stop );
+
+				const scatterPoint = origin.add( direction.mul( t ) ).toVar();
+				const segment = fogSegmentLight( {
+					enabled: emissionOnly.not(), origin, dir: direction, near: span.x, far: span.y, g: fog.anisotropy, fog, lamps, sample1D, sample2D,
+				} );
+				const scatter = fogScatterLight( {
+					enabled: scatters, p: scatterPoint, dir: direction, g: fog.anisotropy, fog, sample1D, sample2D, lamps,
+					env: {
+						enabled: enableEnvironmentLight, totalSum: envTotalSum, cdf: envCDFTexture, matrix: envMatrix, resolution: envResolution,
+						texture: envTexture, intensity: environmentIntensity,
+					},
+					sun: { hasSun, direction: sunDirection, radiance: sunRadiance, params: sunParams },
+					emitters: useEmissiveNEE ? {
+						enabled: enableEmissiveTriangleSampling.equal( int( 1 ) ).and( emissiveTriangleCount.greaterThan( int( 0 ) ) ),
+						rngState, samplerArgs: [ _pixelCoord, resolution, frame, dimBase ],
+						lightBVHNodeCount, lightBuffer, vec4Offset: emissiveVec4Offset, count: emissiveTriangleCount, totalPower: emissiveTotalPower,
+						triangleBuffer, bvhBuffer, boost: emissiveBoost,
+					} : null,
+				} );
+				const light = traceFogLight( [ segment, ...scatter.direct ], scatter.emitter,
+					( from, L, maxDist ) => traceShadowRay( from, L, maxDist, traverseBVHShadow, bvhBuffer, triangleBuffer, materialBuffer ),
+					picksLights ? shadowRays : null, picksLights ? sample1D( FOG_DIM.SHADOW_PICK ) : null );
+				const giScale = select( bounceIndex.greaterThan( 0 ), globalIlluminationIntensity, float( 1.0 ) );
+				const regularized = ( radiance ) => regularizePathContribution( throughput.mul( radiance ).mul( giScale ), float( bounceIndex ), fireflyThreshold, int( accumFrame ) );
+				currentRadiance.assign( vec4( currentRadiance.xyz.add( regularized( light.direct ) ).add( regularized( light.emitted ) ), currentRadiance.w ) );
+
+				If( scatters, () => {
+
+					throughput.mulAssign( fog.color );
+
+					if ( aux ) If( aux.and( flags.bitAnd( uint( RAY_FLAG.AUX_LOCKED ) ).equal( uint( 0 ) ) ), () => {
+
+						const depth = select( bounceIndex.equal( 0 ),
+							computeNDCDepth( { worldPos: scatterPoint, cameraProjectionMatrix, cameraViewMatrix } ),
+							gbDecodeNormalDepth( readGBuffer( gBufferRW, pixelIndex ) ).w );
+						writeGBuffer( gBufferRW, pixelIndex, direction.negate(), depth, clamp( fog.color.mul( featCarry ), vec3( 0.0 ), vec3( 1.0 ) ) );
+						flags.assign( flags.bitOr( uint( RAY_FLAG.AUX_LOCKED ) ) );
+
+					} );
+
+					const newDir = sampleHenyeyGreenstein( direction, fog.anisotropy, sample2D( FOG_DIM.DIRECTION ) ).toVar();
+					const phasePdf = henyeyGreenstein( dot( direction, newDir ), fog.anisotropy ).toVar();
+
+					If( bounceIndex.greaterThanEqual( int( 3 ) ), () => {
+
+						const survive = clamp( max( max( throughput.x, throughput.y ), throughput.z ), 0.05, 1.0 ).toVar();
+						If( sample1D( 3 ).greaterThan( survive ), stop );
+						throughput.divAssign( survive );
+
+					} );
+
+					// Like an opaque scatter: the sky past it is light, not the backdrop, and the sun's NEE here draws any direction.
+					flags.assign( flags.sub( flags.bitAnd( uint( RAY_FLAG.UNDER_SURFACE ) ) )
+						.bitOr( uint( RAY_FLAG.REDIRECTED | RAY_FLAG.HAS_HIT_OPAQUE | RAY_FLAG.SUN_NEE ) ) );
+					If( cameraDepth.greaterThanEqual( maxBounceCount ), () => {
+
+						flags.assign( flags.bitOr( uint( RAY_FLAG.EMISSION_ONLY | RAY_FLAG.AUX_LOCKED ) ) );
+
+					} );
+					writeRayOriginMeta( rayBufferRW, rayID, scatterPoint, cameraDepth.add( 1 ), sssSteps, transparentCount );
+					writeRayDirFlags( rayBufferRW, rayID, newDir, flags );
+					writeRayThroughputPdf( rayBufferRW, rayID, throughput, phasePdf );
+					writeRayRadiance( rayBufferRW, rayID, currentRadiance );
 					persistRng();
 					Return();
 

@@ -415,6 +415,22 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
+	/** Whether the fog is compiled in: it has a density, under the path integrator. */
+	_fogNeeded() {
+
+		if ( ! ( this.fogDensity.value > 0 ) ) return false;
+		if ( ! this._integrator ) return true;
+		if ( this._fogIgnoredBy !== this._integrator.name ) {
+
+			this._fogIgnoredBy = this._integrator.name;
+			this.issues?.warn( ISSUE_CODES.SETTING_IGNORED, `fog is drawn by the path integrator only: "${this._integrator.name}" renders without it`, { setting: 'fogDensity', integrator: this._integrator.name } );
+
+		}
+
+		return false;
+
+	}
+
 	get integrator() {
 
 		return this._integrator?.name ?? 'path';
@@ -448,6 +464,7 @@ export class PathTracer extends PathTracerStage {
 
 		if ( PICKED_SHADOW_RAYS.includes( this._shadowRays ) && this._pickedShadowRays() !== this._compiledPick ) this._outputsChanged = true;
 		if ( this._lightRadiusNeeded() !== this._compiledLightRadius ) this._outputsChanged = true;
+		if ( this._fogNeeded() !== this._compiledFog ) this._outputsChanged = true;
 
 		if ( this._lightBufferRealloc || this._outputsChanged ) {
 
@@ -1801,7 +1818,11 @@ export class PathTracer extends PathTracerStage {
 			lightRadius: this._compiledLightRadius = this._lightRadiusNeeded(),
 			transmissionMaps: this._compiledTransmissionMaps = this.materialData.hasTransmissionMaps(),
 			clearcoatNormals: this._compiledClearcoatNormals = this._clearcoatNormalsNeeded(),
+			fog: this._fogNeeded() ? {
+				density: this.fogDensity, color: this.fogColor, anisotropy: this.fogAnisotropy, boxMin: this.fogBoxMin, boxMax: this.fogBoxMax,
+			} : null,
 		};
+		this._compiledFog = resources.fog !== null;
 		const own = ( call ) => withSceneResources( call, resources );
 		const freshEnvTex = _env.environmentTexture ? texture( _env.environmentTexture ) : texNodes.envTex;
 
@@ -1946,6 +1967,7 @@ export class PathTracer extends PathTracerStage {
 			materialLayers: this._compiledLayers,
 			shadowRays: picked,
 			cameraWorldMatrix: this.cameraWorldMatrix,
+			fog: resources.fog,
 		} );
 		this._kernelManager.register( 'shade',
 			own( shadeFn() ).compute(

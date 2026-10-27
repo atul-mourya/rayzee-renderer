@@ -26,6 +26,8 @@ engine.setSceneObjectVisibility(id, visible)                      // Toggle visi
 ```
 
 `engine.sceneModel` is the root of what is actually being rendered — for `loadObject3D` that is the engine's copy, and it is the object to mutate before `refitBVH()`.
+`engine.getModelBounds()` returns the loaded models' world bounds as a `Box3` (empty when nothing is loaded), leaving
+out the built-in ground plane — the box fog fills by default.
 
 `id` is the appended root's `Object3D.uuid`, returned by `addModel`/`addModelFromObject3D`. For `addModelFromObject3D` the engine carries your object's uuid onto its copy, so the id matches the object you passed. The built-in ground plane is permanent and can't be removed.
 

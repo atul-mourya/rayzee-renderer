@@ -1,4 +1,4 @@
-import { Box3, Vector3 } from 'three';
+import { Vector3 } from 'three';
 import { RayzeeRenderer, describeAdapter, RENDER_CHECKPOINT_VERSION } from '../RayzeeRenderer.js';
 import { NormalDepth } from './denoise/NormalDepth.js';
 import { MotionVector } from './denoise/MotionVector.js';
@@ -1260,16 +1260,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		if ( ! this.meshScene || ! this.cameraManager ) return;
 
-		const bounds = new Box3();
-		const tmp = new Box3();
-		for ( const child of this.meshScene.children ) {
-
-			if ( ! child.userData?.__rayzeeSceneObject ) continue;
-			tmp.setFromObject( child );
-			if ( ! tmp.isEmpty() ) bounds.union( tmp );
-
-		}
-
+		const bounds = this.getModelBounds();
 		if ( bounds.isEmpty() ) return;
 
 		const maxDim = Math.max(

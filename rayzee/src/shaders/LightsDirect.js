@@ -6,6 +6,7 @@ import { sceneResources, usesTransmissionMaps } from './SceneResources.js';
 import {
 	Fn,
 	float,
+	vec3,
 	int,
 	bool as tslBool,
 	If,
@@ -35,6 +36,7 @@ import {
 import { fresnelDielectric } from './Fresnel.js';
 import { calculateBeerLawAbsorption } from './MaterialTransmission.js';
 import { getTransformedUV, sampleBucket } from './TextureSampling.js';
+import { fogTransmittance } from './Fog.js';
 
 // ================================================================================
 // SHADOW RAY TRACING
@@ -50,11 +52,13 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 	materialBuffer,
 ], builder ) => {
 
-	const { alphaShadows, shadowAlbedoMaps, linearBuckets } = sceneResources( builder );
+	const { alphaShadows, shadowAlbedoMaps, linearBuckets, fog } = sceneResources( builder );
 	const transmissionMaps = ! refractiveBlocks && usesTransmissionMaps( builder );
 	const transmittance = float( 1.0 ).toVar();
 	const rayOrigin = origin.toVar();
 	const remainingDist = float( maxDist ).toVar();
+	// As values: the loop below is the first reader of `dir`, and an expression read there first is zero after it.
+	const fogSegment = fog ? { from: vec3( origin ).toVar(), dir: vec3( dir ).toVar(), length: float( maxDist ).toVar() } : null;
 
 	const MAX_SHADOW_TRANSMISSIONS = 16;
 
@@ -269,7 +273,7 @@ const makeTraceShadowRay = ( refractiveBlocks ) => Fn( ( [
 
 	} );
 
-	return transmittance;
+	return fog ? transmittance.mul( fogTransmittance( fog, fogSegment.from, fogSegment.dir, fogSegment.length ) ) : transmittance;
 
 } );
 

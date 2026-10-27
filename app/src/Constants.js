@@ -28,6 +28,10 @@ export const DEFAULT_STATE = {
 	denoiserStrategy: 'oidn',
 	// Local exposure too: it changes the look, so the engine — and a farm pinned to its look — keeps it off.
 	localExposure: true,
+	// Fog: off; when on, its thickness (the share of light crossing the models' longest side it stops) and a forward glow.
+	fog: false,
+	fogThickness: 0.3,
+	fogAnisotropy: 0.4,
 	// The app's names for engine values
 	bounces: ENGINE_DEFAULTS.maxBounces,
 	debugMode: ENGINE_DEFAULTS.visMode,

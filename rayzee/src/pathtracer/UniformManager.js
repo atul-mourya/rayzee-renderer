@@ -273,6 +273,13 @@ export class UniformManager {
 		ub( 'enableGroundCatcher', DEFAULT_STATE.enableGroundCatcher );
 		u( 'groundCatcherHeight', DEFAULT_STATE.groundCatcherHeight, 'float' );
 
+		// Fog (shaders/Fog.js); compiled in only while the density is above 0
+		u( 'fogDensity', DEFAULT_STATE.fogDensity, 'float' );
+		u( 'fogColor', new Color( 1, 1, 1 ), 'color' );
+		u( 'fogAnisotropy', DEFAULT_STATE.fogAnisotropy, 'float' );
+		u( 'fogBoxMin', new Vector3(), 'vec3' );
+		u( 'fogBoxMax', new Vector3(), 'vec3' );
+
 		// The physical sky's sun (shaders/Sun.js): world direction, disc-average radiance, and
 		// ( cos half-angle, solid angle, 1 / sin² half-angle, horizon dip sin )
 		u( 'sunDirection', new Vector3( 0, 1, 0 ), 'vec3' );

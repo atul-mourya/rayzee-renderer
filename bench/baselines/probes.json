@@ -963,5 +963,48 @@
 		},
 		"rmseVsTruth": 0.004048440885987623,
 		"furnaceRatio": 0.9997580366843977
+	},
+	"fog-furnace": {
+		"truth": {
+			"meanR": 0.9999168212343648,
+			"meanG": 0.9999168212343648,
+			"meanB": 0.9999168212343648,
+			"meanLuminance": 0.9999168212343648,
+			"maxLuminance": 1.19136643409729,
+			"nonFinite": 0,
+			"samples": 512
+		},
+		"golden": {
+			"meanR": 0.9999896659346632,
+			"meanG": 0.9999896659346632,
+			"meanB": 0.9999896659346632,
+			"meanLuminance": 0.9999896659346632,
+			"maxLuminance": 1.7958164215087888,
+			"nonFinite": 0,
+			"samples": 128
+		},
+		"rmseVsTruth": 0.008048603036903286,
+		"furnaceRatio": 0.9999896659346632
+	},
+	"fog-shafts": {
+		"truth": {
+			"meanR": 0.10699734095028646,
+			"meanG": 0.06472856794340487,
+			"meanB": 0.04507404938155801,
+			"meanLuminance": 0.07229585284450285,
+			"maxLuminance": 6.776432891869544,
+			"nonFinite": 0,
+			"samples": 2048
+		},
+		"golden": {
+			"meanR": 0.10712159809662403,
+			"meanG": 0.0648347215450964,
+			"meanB": 0.045160347197159,
+			"meanLuminance": 0.07240442167202954,
+			"maxLuminance": 6.971024274635314,
+			"nonFinite": 0,
+			"samples": 64
+		},
+		"rmseVsTruth": 0.02327788071939189
 	}
 }

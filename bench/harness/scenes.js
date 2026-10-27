@@ -2087,6 +2087,87 @@ SCENES.push( {
 	},
 } );
 
+// Fog. A white fog in a uniform sky, around a white Lambert sphere, must render exactly the sky: an albedo-1 medium and
+// surface in a uniform field leave it uniform, whatever the phase function. Fails on a phase draw its density does not
+// match, a missing or double-counted MIS partner at a scatter, or a shadow ray that skips the fog's transmittance.
+SCENES.push( {
+	id: 'fog-furnace',
+	covers: 'white furnace — fog: free-flight sampling, the phase draw and its density, MIS at scatter points, shadow rays through fog',
+	spp: 128,
+	truthSpp: 512,
+	settings: {
+		maxBounces: 64, enableEnvironment: true, environmentIntensity: 1,
+		fogDensity: 0.6, fogColor: '#ffffff', fogAnisotropy: 0.5, fogBounds: { min: [ - 3, - 3, - 3 ], max: [ 3, 3, 3 ] },
+	},
+	furnaceRadiance: 1.0,
+	async build( app ) {
+
+		const env = app.stages.pathTracer.environment;
+		env.envParams.solidSkyColor = new Color( 0xffffff );
+		await env.setMode( 'color' );
+
+		const group = new Group();
+		group.add( new Mesh( new SphereGeometry( 0.8, 96, 48 ), new MeshPhysicalMaterial( { color: 0xffffff, roughness: 1.0, metalness: 0 } ) ) );
+		await app.loadObject3D( group, 'fog-furnace' );
+		setCamera( app, [ 0, 0, 2.2 ], [ 0, 0, 0 ] );
+
+	},
+} );
+
+// Light shafts: a hazy room lit through a window by the sun and the sky, with a spot light's cone and a glowing ball
+// inside — each kind of light a fog scatter samples. The fog fills the models' bounds (fogBounds null).
+SCENES.push( {
+	id: 'fog-shafts',
+	covers: 'fog lit by the sun and sky through a window, a spot light and an emitter: light shafts, the lamp pick at scatter points',
+	spp: 64,
+	truthSpp: 2048,
+	settings: {
+		maxBounces: 4, enableEnvironment: true, environmentIntensity: 1,
+		fogDensity: 0.12, fogColor: '#fff4e6', fogAnisotropy: 0.5, fogBounds: null,
+	},
+	async build( app ) {
+
+		await setGradientSky( app );
+		const room = new Group();
+		const wall = new MeshPhysicalMaterial( { color: 0xd8d2c8, roughness: 0.9, metalness: 0 } );
+		const slab = ( w, h, d, x, y, z, material = wall ) => {
+
+			const mesh = new Mesh( new BoxGeometry( w, h, d ), material );
+			mesh.position.set( x, y, z );
+			room.add( mesh );
+
+		};
+
+		// 6 × 3 × 6, walls 0.2 thick; a 1.6 × 1.4 window in the −X wall.
+		slab( 6.4, 0.2, 6.4, 0, - 0.1, 0, new MeshPhysicalMaterial( { color: 0x8a6b4f, roughness: 0.6, metalness: 0 } ) );
+		slab( 6.4, 0.2, 6.4, 0, 3.1, 0 );
+		slab( 6.4, 3, 0.2, 0, 1.5, - 3.1 );
+		slab( 6.4, 3, 0.2, 0, 1.5, 3.1 );
+		slab( 0.2, 3, 6.4, 3.1, 1.5, 0 );
+		slab( 0.2, 0.9, 6.4, - 3.1, 0.45, 0 );
+		slab( 0.2, 0.7, 6.4, - 3.1, 2.65, 0 );
+		slab( 0.2, 1.4, 2.4, - 3.1, 1.6, - 2.0 );
+		slab( 0.2, 1.4, 2.4, - 3.1, 1.6, 2.0 );
+
+		const ball = new Mesh( new SphereGeometry( 0.45, 64, 32 ), new MeshPhysicalMaterial( { color: 0x3060c0, roughness: 0.3, metalness: 0 } ) );
+		ball.position.set( 0.6, 0.45, - 0.8 );
+		const glow = new Mesh( new SphereGeometry( 0.12, 32, 16 ), new MeshPhysicalMaterial( { color: 0x000000, emissive: 0xffa040, emissiveIntensity: 30 } ) );
+		glow.position.set( - 1.6, 0.5, - 2.4 );
+		room.add( ball, glow );
+
+		const sun = new DirectionalLight( 0xfff1d8, sunLux( 6 ) );
+		sun.position.set( - 6, 4.5, 1.5 );
+		const spot = new SpotLight( 0xffffff, 40 * LUMENS_PER_WATT, 0, 0.35, 0.3, 2 );
+		spot.position.set( - 0.4, 2.95, - 2.2 );
+		spot.target.position.set( - 0.4, 0, - 2.2 );
+		room.add( sun, sun.target, spot, spot.target );
+
+		await app.loadObject3D( room, 'fog-shafts' );
+		setCamera( app, [ 2.6, 1.0, 2.4 ], [ - 1.5, 1.1, - 0.6 ] );
+
+	},
+} );
+
 export function getScene( id ) {
 
 	const scene = SCENES.find( ( s ) => s.id === id );
