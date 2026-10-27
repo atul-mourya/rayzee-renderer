@@ -149,7 +149,7 @@ suite( 'the ACES CG config', () => {
 		config = await loadConfig( { builtin: 'cg-config-v4.0.0_aces-v2.0_ocio-v2.5' } );
 		native = findNativeLinearSpace( getConfigInfo() );
 
-	}, 120000 );
+	} );
 
 	it( 'offers one preset per ACES version, newest CG config of each, and nothing else', async () => {
 
@@ -235,7 +235,7 @@ blenderSuite( "Blender's config", () => {
 		config = await loadConfig( { files, configPath: 'config.ocio', id: 'colormanagement' } );
 		native = findNativeLinearSpace( getConfigInfo() );
 
-	}, 120000 );
+	} );
 
 	it( 'shows looks the way Blender does: a view with its own gets only those, prefix dropped', () => {
 

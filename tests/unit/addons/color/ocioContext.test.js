@@ -83,7 +83,7 @@ suite( 'context variables', () => {
 			registerViews: false,
 		} );
 
-	}, 120000 );
+	} );
 
 	afterAll( () => ColorManagement.resetAll() );
 
@@ -118,7 +118,7 @@ suite( 'context variables', () => {
 		expect( shot20 / shot10 ).toBeGreaterThan( 1.8 );
 		expect( shot20 / shot10 ).toBeLessThan( 2.2 );
 
-	}, 120000 );
+	} );
 
 	it( 'rebakes only the view on screen, and the others when they are next chosen', () => {
 
@@ -139,6 +139,6 @@ suite( 'context variables', () => {
 
 		cm.setContext( null );
 
-	}, 120000 );
+	} );
 
 } );

@@ -90,7 +90,7 @@ suite( 'with a config loaded', () => {
 		cm = new ColorManagement();
 		await cm.loadConfig( { builtin: BUILTIN, registerViews: false } );
 
-	}, 120000 );
+	} );
 
 	afterAll( () => ColorManagement.resetAll() );
 
@@ -141,7 +141,7 @@ suite( 'with a config loaded', () => {
 
 		cm.setWorkingSpace( null );
 
-	}, 120000 );
+	} );
 
 	it( 'converts emitters the lights are sampled from, not only the ones the camera sees', () => {
 
@@ -176,7 +176,7 @@ suite( 'with a config loaded', () => {
 		expect( builder.extractEmissiveTriangles( tri, materials, 1 ) ).toBe( 1 );
 		expect( builder.emissiveTriangles[ 0 ].emissive.r ).toBeCloseTo( 0.8, 6 );
 
-	}, 120000 );
+	} );
 
 	it( 'drops a working space the next config does not have', async () => {
 
@@ -211,7 +211,7 @@ colorspaces:
 
 		await cm.loadConfig( { builtin: BUILTIN, registerViews: false } );
 
-	}, 120000 );
+	} );
 
 	it( 'leaves no working matrix behind when disposed', () => {
 

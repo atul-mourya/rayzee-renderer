@@ -14,6 +14,10 @@ export default defineConfig( {
 					environment: 'node',
 					include: [ 'tests/**/*.test.js' ],
 					exclude: [ ...configDefaults.exclude, 'tests/gpu/**' ],
+					// A hang guard, not a speed limit: the colour, spill and archive tests take up to 19 s on the
+					// release runner (4 shared cores, coverage on), and the same test varies 3× between runs.
+					testTimeout: 60000,
+					hookTimeout: 60000,
 				},
 			},
 			{

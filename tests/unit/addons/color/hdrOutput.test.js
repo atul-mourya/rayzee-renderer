@@ -152,7 +152,7 @@ suite( 'HDR versions in the ACES configs', () => {
 
 		cm = new ColorManagement();
 
-	}, 120000 );
+	} );
 
 	afterAll( () => {
 

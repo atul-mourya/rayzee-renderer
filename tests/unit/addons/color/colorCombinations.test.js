@@ -85,7 +85,7 @@ for ( const { name, load } of CONFIGS ) {
 			await cm.loadConfig( { ...( typeof load === 'function' ? load() : load ), registerViews: false } );
 			config = describeConfig();
 
-		}, 120000 );
+		} );
 
 		afterAll( () => {
 
@@ -161,7 +161,7 @@ for ( const { name, load } of CONFIGS ) {
 
 			expect( failures ).toEqual( [] );
 
-		}, 120000 );
+		} );
 
 		it( 'bakes every look the menu offers with every view, and its HDR version, as the light it emits', () => {
 
@@ -203,7 +203,7 @@ for ( const { name, load } of CONFIGS ) {
 			expect( baked ).toBeGreaterThan( 0 );
 			expect( hdrBaked, `${baked} looks baked` ).toBeGreaterThan( 0 );
 
-		}, 300000 );
+		} );
 
 		it( 'shows the same light rendering in another working space', () => {
 
@@ -241,7 +241,7 @@ for ( const { name, load } of CONFIGS ) {
 
 			expect( failures ).toEqual( [] );
 
-		}, 120000 );
+		} );
 
 		it.runIf( name === 'Blender 5.1' )( 'steps through False Color between the table\'s nodes, as OCIO does', () => {
 
@@ -315,7 +315,7 @@ for ( const { name, load } of CONFIGS ) {
 
 			}
 
-		}, 60000 );
+		} );
 
 		it( 'keeps the tone mapping when the screen changes, and comes back to the same view', () => {
 
@@ -357,7 +357,7 @@ for ( const { name, load } of CONFIGS ) {
 
 			expect( checked ).toBeGreaterThan( 10 );
 
-		}, 60000 );
+		} );
 
 		it( 'shows the HDR switch on every view: an HDR version, the view\'s own range, or why not', () => {
 
@@ -393,7 +393,7 @@ for ( const { name, load } of CONFIGS ) {
 
 			}
 
-		}, 120000 );
+		} );
 
 	} );
 

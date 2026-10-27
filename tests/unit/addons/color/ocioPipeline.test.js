@@ -45,7 +45,7 @@ suite( 'colour-managed pipeline', () => {
 		cm = new ColorManagement();
 		config = await cm.loadConfig( { builtin: BUILTIN, registerViews: false } );
 
-	}, 120000 );
+	} );
 
 	afterAll( () => {
 
@@ -93,7 +93,7 @@ suite( 'colour-managed pipeline', () => {
 			view = config.defaultViews[ display ];
 			entry = cm.setView( { display, view } );
 
-		}, 120000 );
+		} );
 
 		it( 'reaches every consumer, not just the one that baked it', () => {
 
@@ -183,7 +183,7 @@ suite( 'colour-managed pipeline', () => {
 			graded.cpu( 4.0, 0.02, 0.02, 1, b );
 			expect( a ).not.toEqual( b );
 
-		}, 120000 );
+		} );
 
 	} );
 
@@ -212,7 +212,7 @@ suite( 'colour-managed pipeline', () => {
 			cm.setContext( null );
 			void look;
 
-		}, 120000 );
+		} );
 
 		it( 'builds a new texture when the table changes shape', () => {
 
@@ -230,7 +230,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( fine.table.texture ).not.toBe( texture );
 			expect( fine.table.size ).toBe( 33 );
 
-		}, 120000 );
+		} );
 
 	} );
 
@@ -254,7 +254,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( score( plain.error ) ).toBeLessThanOrEqual( 1 );
 			[ coarse, grown, plain ].forEach( t => forgetOcioView( t.id ) );
 
-		}, 120000 );
+		} );
 
 		it( 'takes Rec.709\'s axes for a view that works in Rec.709, rendering in a wider space', () => {
 
@@ -271,7 +271,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( aces.ocio.pre ).toBeNull();
 			[ plain, aces ].forEach( t => forgetOcioView( t.id ) );
 
-		}, 120000 );
+		} );
 
 		it( 'chooses again on a rebake, and keeps a size the host asked for', () => {
 
@@ -291,7 +291,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( again.table.size ).toBe( 33 );
 			cm.setContext( null );
 
-		}, 120000 );
+		} );
 
 	} );
 
@@ -316,7 +316,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( VIEW_TRANSFORMS.get( last.id ) ).toBe( last );
 			expect( cm.activeView.id ).toBe( last.id );
 
-		}, 240000 );
+		} );
 
 	} );
 
@@ -344,7 +344,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( cm.context ).toBeNull();
 			expect( VIEW_TRANSFORMS.get( id ) ).toBeTruthy();
 
-		}, 120000 );
+		} );
 
 		it( 'ignores a repeat of the same variables rather than rebaking for nothing', () => {
 
@@ -354,7 +354,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( getRegistryVersion() ).toBe( settled );
 			cm.setContext( null );
 
-		}, 120000 );
+		} );
 
 		it( 'names the variables the config mentions, so a host can offer them', () => {
 
@@ -395,7 +395,7 @@ suite( 'colour-managed pipeline', () => {
 
 			}
 
-		}, 120000 );
+		} );
 
 		it( 'converts a linear triple into it', () => {
 
@@ -410,7 +410,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( back[ 1 ] ).toBeCloseTo( 0.2, 4 );
 			expect( back[ 2 ] ).toBeCloseTo( 0.1, 4 );
 
-		}, 120000 );
+		} );
 
 		it( 'converts an 8-bit texture and keeps its encoding', () => {
 
@@ -426,7 +426,7 @@ suite( 'colour-managed pipeline', () => {
 			expect( bytes[ 4 ] ).toBeLessThanOrEqual( 129 );
 			expect( bytes[ 7 ] ).toBe( 255 );
 
-		}, 120000 );
+		} );
 
 	} );
 
@@ -499,7 +499,7 @@ suite( 'colour-managed pipeline', () => {
 
 			cm.setWorkingSpace( null );
 
-		}, 120000 );
+		} );
 
 		it( 'refuses a space the config does not have', () => {
 

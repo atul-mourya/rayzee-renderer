@@ -68,7 +68,7 @@ suite( 'baked views', () => {
 		bytes = await cm.saveBakedView( original.id );
 		cm.dispose();
 
-	}, 120000 );
+	} );
 
 	afterAll( () => {
 
