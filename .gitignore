@@ -32,7 +32,6 @@ coverage
 
 # Private notes and specs
 docs/internal/
-docs/TODO.md
 
 # Other AI assistants' copies of .claude/, and local Claude Code state
 AGENTS.md
