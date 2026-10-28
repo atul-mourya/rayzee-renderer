@@ -1,12 +1,14 @@
 /**
  * Context variables, end to end: a config whose grade is picked by `$SHOT`, with two different
  * grades on disk. The only way to show `setContext` does anything is to see the image move.
+ * Then a config whose view reads a grade beside it, shown on a display the canvas converts.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { ColorManagement } from '@/core/addons/color/ColorManagement.js';
 import { configureAssets } from '@/core/AssetConfig.js';
 import { VIEW_TRANSFORMS } from '@/core/color/ViewTransforms.js';
+import { IssueLog } from '@/core/EngineIssues.js';
 
 let available = true;
 try {
@@ -138,6 +140,94 @@ suite( 'context variables', () => {
 		expect( VIEW_TRANSFORMS.get( raw.id ).ocio.context ).toEqual( { SHOT: '020' } );
 
 		cm.setContext( null );
+
+	} );
+
+} );
+
+// XYZ is the display reference, so a gamma 2.4 display is one the canvas shows converted, through a derived config.
+const TO_XYZ = '[0.4124564, 0.3575761, 0.1804375, 0, 0.2126729, 0.7151522, 0.0721750, 0, 0.0193339, 0.1191920, 0.9503041, 0, 0, 0, 0, 1]';
+const FROM_XYZ = '[3.2404542, -1.5371385, -0.4985314, 0, -0.9692660, 1.8760108, 0.0415560, 0, 0.0556434, -0.2040259, 1.0572252, 0, 0, 0, 0, 1]';
+const GRADED_VIEW = `ocio_profile_version: 2
+
+search_path: luts
+
+roles:
+  default: linear
+  scene_linear: linear
+  data: raw
+  color_picking: linear
+  cie_xyz_d65_interchange: xyz
+
+file_rules:
+  - !<Rule> {name: Default, colorspace: linear}
+
+view_transforms:
+  - !<ViewTransform>
+    name: Graded
+    from_scene_reference: !<GroupTransform>
+      children:
+        - !<FileTransform> {src: grade.cdl, interpolation: linear}
+        - !<MatrixTransform> {matrix: ${TO_XYZ}}
+
+displays:
+  Gamma 2.4:
+    - !<View> {name: Graded, view_transform: Graded, display_colorspace: g24}
+
+display_colorspaces:
+  - !<ColorSpace>
+    name: CIE-XYZ-D65
+    encoding: display-linear
+    isdata: false
+  - !<ColorSpace>
+    name: g24
+    from_display_reference: !<GroupTransform>
+      children:
+        - !<MatrixTransform> {matrix: ${FROM_XYZ}}
+        - !<ExponentTransform> {value: 2.4, direction: inverse}
+
+colorspaces:
+  - !<ColorSpace>
+    name: linear
+    encoding: scene-linear
+    isdata: false
+  - !<ColorSpace>
+    name: xyz
+    isdata: false
+    to_scene_reference: !<MatrixTransform> {matrix: ${FROM_XYZ}}
+  - !<ColorSpace>
+    name: raw
+    isdata: true
+`;
+
+suite( 'a config\'s files', () => {
+
+	afterAll( () => ColorManagement.resetAll() );
+
+	it( 'finds the files beside a config however its name is cased', async () => {
+
+		const shown = [];
+		for ( const name of [ 'config.ocio', 'CONFIG.OCIO' ] ) {
+
+			const issues = new IssueLog();
+			const cm = new ColorManagement( { issues } );
+			await cm.loadConfig( {
+				files: [ { relativePath: name, data: new TextEncoder().encode( GRADED_VIEW ) }, { relativePath: 'luts/grade.cdl', data: cdl( 2.0 ) } ],
+				configPath: name,
+				id: `graded-${name}`,
+			} );
+
+			const { id, ocio } = cm.setView( { display: 'Gamma 2.4', view: 'Graded', size: 17 } );
+			expect( ocio.emulated ).toBe( true );
+			expect( issues.list.filter( i => i.code.startsWith( 'viewTransform' ) ) ).toEqual( [] );
+			const out = [ 0, 0, 0 ];
+			VIEW_TRANSFORMS.get( id ).cpu( 0.25, 0.25, 0.25, 1, out );
+			shown.push( out );
+			ColorManagement.resetAll();
+
+		}
+
+		expect( shown[ 1 ] ).toEqual( shown[ 0 ] );
 
 	} );
 

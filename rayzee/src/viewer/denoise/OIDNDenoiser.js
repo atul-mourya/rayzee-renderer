@@ -290,7 +290,7 @@ export class OIDNDenoiser extends EventDispatcher {
 		this.config = { ...MODEL_CONFIG.DEFAULT_OPTIONS, ...options };
 
 		// Destructure for easier access
-		this.enabled = this.config.enableOIDN;
+		this._enabled = this.config.enableOIDN;
 		this.quality = this.config.oidnQuality;
 		this.maxTileSize = this.config.tileSize;
 		// The size actually baked into the live UNet, so a change forces a rebuild.
@@ -326,27 +326,23 @@ export class OIDNDenoiser extends EventDispatcher {
 		// A weight load requested while another is in flight, to run when that one finishes.
 		this._reloadPending = false;
 
-		// Initialize asynchronously
-		this._initialize().catch( error => {
-
-			log.error( 'init failed:', error );
-			this.dispatchEvent( { type: 'error', error } );
-
-		} );
+		// The weights download once it is on, not before.
+		if ( this._enabled ) this._setupUNetDenoiser();
 
 	}
 
-	async _initialize() {
+	get enabled() {
 
-		try {
+		return this._enabled;
 
-			await this._setupUNetDenoiser();
+	}
 
-		} catch ( error ) {
+	set enabled( value ) {
 
-			throw new Error( `Initialization failed: ${error.message}` );
-
-		}
+		const switchedOn = !! value && ! this._enabled;
+		this._enabled = !! value;
+		// Loads the tier and size chosen while it was off; a no-op when those are already loaded.
+		if ( switchedOn ) this._setupUNetDenoiser();
 
 	}
 
@@ -418,6 +414,8 @@ export class OIDNDenoiser extends EventDispatcher {
 	}
 
 	_setupUNetDenoiser() {
+
+		if ( ! this._enabled ) return Promise.resolve();
 
 		if ( this.state.isLoading ) {
 

@@ -1,5 +1,6 @@
 import { Vector3, Quaternion } from 'three';
 import { convertLinearTriple } from '../color/WorkingMatrix.js';
+import { LIGHT_FLOATS } from '../pathtracer/UniformManager.js';
 
 // Blackbody temperature → linear Rec.709 (= linear sRGB) RGB.
 //
@@ -420,10 +421,10 @@ export class LightSerializer {
 	updateShaderUniforms( material ) {
 
 		// Divide flat array lengths by per-light stride to get actual light counts
-		const directionalCount = Math.floor( this.lightData.directional.length / 12 );
-		const areaCount = Math.floor( this.lightData.rectArea.length / 16 );
-		const pointCount = Math.floor( this.lightData.point.length / 9 );
-		const spotCount = Math.floor( this.lightData.spot.length / 20 );
+		const directionalCount = Math.floor( this.lightData.directional.length / LIGHT_FLOATS.directional );
+		const areaCount = Math.floor( this.lightData.rectArea.length / LIGHT_FLOATS.area );
+		const pointCount = Math.floor( this.lightData.point.length / LIGHT_FLOATS.point );
+		const spotCount = Math.floor( this.lightData.spot.length / LIGHT_FLOATS.spot );
 
 		// Update light counts in shader defines
 		material.defines.MAX_DIRECTIONAL_LIGHTS = directionalCount;

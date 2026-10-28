@@ -40,7 +40,7 @@ export class CameraManager extends EventDispatcher {
 		const width = canvas.clientWidth;
 		const height = canvas.clientHeight;
 
-		this.camera = new ViewCamera( 60, width / height || 1, 0.01, 1000 );
+		this.camera = new ViewCamera( 60, width / height, 0.01, 1000 );
 		this.camera.position.set( 0, 0, 5 );
 
 		this.controls = new OrbitControls( this.camera, canvas );

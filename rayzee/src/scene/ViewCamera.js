@@ -11,7 +11,8 @@ export class ViewCamera extends PerspectiveCamera {
 
 	constructor( fov, aspect, near, far ) {
 
-		super( fov, aspect, near, far );
+		// Square until the canvas has an area: a side of 0 made the aspect 0 or Infinity, and the projection NaN.
+		super( fov, aspect > 0 && Number.isFinite( aspect ) ? aspect : 1, near, far );
 
 		this.orthographic = false;
 		/** Half the view's height in world units while orthographic, before `zoom`. */

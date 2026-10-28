@@ -482,6 +482,23 @@ describe( 'LightManager in a three.js scene', () => {
 
 	} );
 
+	it( 'puts an area light\'s target in front of it, so aiming at that target leaves it as it was', () => {
+
+		const { scene, manager } = setup();
+		const panel = new RectAreaLight( 0xffffff, 1, 2, 2 );
+		panel.position.set( 0, 3, 4 );
+		panel.lookAt( 0, 0, 0 );
+		scene.add( panel );
+		const facing = panel.quaternion.clone();
+
+		const [ described ] = manager.getLights();
+		[ 0, 2.4, 3.2 ].forEach( ( v, i ) => expect( described.target[ i ] ).toBeCloseTo( v, 6 ) );
+
+		panel.lookAt( ...described.target );
+		expect( panel.quaternion.angleTo( facing ) ).toBeLessThan( 1e-6 );
+
+	} );
+
 	it( 'saves a point light\'s range and falloff, and skips a kind of light it cannot make', () => {
 
 		const { scene, manager } = setup();

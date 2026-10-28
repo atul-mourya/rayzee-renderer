@@ -11,6 +11,7 @@ import { EngineEvents } from '@/core/EngineEvents.js';
 import { MATERIAL_VALUE_SOURCE } from '@/core/scene/GeometryExtractor.js';
 import { readPixels } from '@/core/output/TextureReadback.js';
 import { encodeHDR } from '@/core/output/ImageEncoders.js';
+import { OIDNDenoiser } from '@/core/viewer/denoise/OIDNDenoiser.js';
 
 const ROOT = new URL( '../../', import.meta.url );
 const SIZE = 32;
@@ -42,7 +43,7 @@ const flatHDR = ( r, g, b ) => encodeHDR( { data: new Float32Array( 64 * 32 * 4 
 
 describeGPU( 'the engine headless on Dawn', () => {
 
-	let app, baseline, sky;
+	let app, baseline, sky, fetchWeights;
 
 	const render = async ( samples = SAMPLES ) => {
 
@@ -93,8 +94,9 @@ describeGPU( 'the engine headless on Dawn', () => {
 	beforeAll( async () => {
 
 		configurePlatform( { ...nodePlatform(), Worker: SourceWorker } );
-		// The viewer fetches OIDN's weights at start; keep that off the network.
+		// Off the network should the denoiser ever load.
 		configureAssets( { oidnWeightsBaseUrl: new URL( 'tests/__nothing__/', ROOT ).href } );
+		fetchWeights = vi.spyOn( OIDNDenoiser.prototype, '_fetchWeights' );
 		app = await openHeadless( { width: SIZE, height: SIZE, strict: false } );
 
 		const floor = new Mesh( new PlaneGeometry( 8, 8 ), new MeshPhysicalMaterial( { name: 'floor', color: 0xb0b0b0, roughness: 0.8 } ) );
@@ -134,6 +136,9 @@ describeGPU( 'the engine headless on Dawn', () => {
 
 		const { mode, render: shot, scene } = app.getProvenance();
 		expect( mode ).toMatchObject( { headless: true, deterministic: true } );
+		// Off, so its weights were never asked for.
+		expect( app.denoisingManager.denoiser.enabled ).toBe( false );
+		expect( fetchWeights ).not.toHaveBeenCalled();
 		expect( shot ).toMatchObject( { width: SIZE, height: SIZE, samples: SAMPLES } );
 		expect( scene ).toMatchObject( { kind: 'object3d', name: 'test' } );
 		const triangles = app.sceneMeshes.reduce( ( n, { geometry } ) => n + ( geometry.index ?? geometry.attributes.position ).count / 3, 0 );

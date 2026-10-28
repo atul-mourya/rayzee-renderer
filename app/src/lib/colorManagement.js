@@ -271,7 +271,7 @@ export async function loadConfigFromFiles( files, options = {} ) {
 	ensureConfigured();
 
 	const list = [ ...files ];
-	const configFile = list.find( f => f.name.endsWith( '.ocio' ) );
+	const configFile = list.find( f => /\.ocio$/i.test( f.name ) );
 	if ( ! configFile ) throw new Error( 'no .ocio file in the selection' );
 
 	const relative = f => ( f.webkitRelativePath || f.name );

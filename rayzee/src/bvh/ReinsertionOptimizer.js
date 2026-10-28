@@ -203,7 +203,8 @@ export class ReinsertionOptimizer {
 
 		const searchStack = [];
 
-		do {
+		// Up to and including the root's other child; the root's own parent ends it.
+		while ( true ) {
 
 			// Search sibling subtree at current level
 			searchStack.length = 0;
@@ -273,7 +274,7 @@ export class ReinsertionOptimizer {
 			siblingNode = pivotInfo.isLeft ? pivotParent.rightChild : pivotParent.leftChild;
 			pivotNode = pivotParent;
 
-		} while ( parentMap.get( pivotNode ).parent !== null );
+		}
 
 		// Reject trivial reinsertions (same position)
 		if ( bestTo === siblingA || bestTo === parentA ) return null;

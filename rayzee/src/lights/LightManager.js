@@ -1,6 +1,6 @@
 import {
 	EventDispatcher, DirectionalLight, PointLight, SpotLight, RectAreaLight,
-	Object3D, MathUtils
+	Object3D, MathUtils, Vector3
 } from 'three';
 import { toPortable, fromPortable } from '../Portable.js';
 
@@ -488,7 +488,8 @@ export class LightManager extends EventDispatcher {
 				? rawShape
 				: rawShape === 1 ? 'ellipse'
 					: 'rectangle'; // 'rect', undefined, 0 → rectangle
-			const dir = light.getWorldDirection( light.position.clone() );
+			// The panel faces −Z, as lookAt() aims it; getWorldDirection() is +Z.
+			const dir = light.getWorldDirection( new Vector3() ).negate();
 			descriptor.target = [ light.position.x + dir.x, light.position.y + dir.y, light.position.z + dir.z ];
 
 		} else if ( light.type === 'SpotLight' && light.target ) {

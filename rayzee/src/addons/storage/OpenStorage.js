@@ -29,6 +29,8 @@ class WorkerTransport {
 		};
 
 		this._ready = this.call( 'init', { namespace, root } );
+		// Nothing waits on it: a failed init, or a dispose before it answers, fails every later call instead.
+		this._ready.catch( () => {} );
 
 	}
 

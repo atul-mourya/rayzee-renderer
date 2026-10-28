@@ -268,7 +268,7 @@ function mountedRoot( rt, text ) {
 
 			if ( dir[ 0 ] === '.' ) continue;
 			const path = `${base}/${dir}`;
-			if ( FS.readdir( path ).some( n => n.endsWith( '.ocio' ) && new TextDecoder().decode( FS.readFile( `${path}/${n}` ) ) === text ) ) return path;
+			if ( FS.readdir( path ).some( n => /\.ocio$/i.test( n ) && new TextDecoder().decode( FS.readFile( `${path}/${n}` ) ) === text ) ) return path;
 
 		}
 

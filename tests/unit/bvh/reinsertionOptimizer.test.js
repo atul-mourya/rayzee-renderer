@@ -375,6 +375,24 @@ describe( 'ReinsertionOptimizer', () => {
 
 		} );
 
+		it( 'looks across the root, into its other child', () => {
+
+			const leaf = ( x0, x1, i ) => makeLeaf( x0, 0, 0, x1, 1, 1, i, 1 );
+			const stray = leaf( 132, 135, 2 ), target = leaf( 120, 130, 4 );
+			const root = makeInner(
+				makeInner( makeInner( leaf( 400, 401, 0 ), leaf( 402, 403, 1 ) ), stray ),
+				makeInner( makeInner( leaf( 100, 110, 3 ), target ), makeInner( leaf( 280, 290, 5 ), leaf( 292, 300, 6 ) ) ),
+			);
+			const map = optimizer.buildParentMap( root );
+
+			expect( optimizer.findReinsertion( stray, root, map ).to ).toBe( target );
+			const before = sah( root );
+			optimizer.reinsertNode( stray, target, map );
+			expect( treeProblems( root, 7 ) ).toEqual( [] );
+			expect( sah( root ) ).toBeLessThan( before );
+
+		} );
+
 		it( 'never makes a tree worse, however many passes it runs', () => {
 
 			const root = scrambledTree( 64 );

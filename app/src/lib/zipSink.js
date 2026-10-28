@@ -19,6 +19,8 @@ export async function openSink( name, { description, extension } ) {
 			push: ( chunk ) => {
 
 				chain = chain.then( () => writable.write( chunk ) );
+				// A failed write surfaces through drain() or close(), not as unhandled.
+				chain.catch( () => {} );
 
 			},
 			drain: () => chain,

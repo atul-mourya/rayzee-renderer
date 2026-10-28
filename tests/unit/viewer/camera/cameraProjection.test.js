@@ -468,6 +468,12 @@ describe( 'CameraManager cameras', () => {
 		element.clientWidth = 0;
 		expect( new CameraManager( element ).camera.aspect ).toBe( 1 );
 
+		element.clientWidth = 800;
+		element.clientHeight = 0;
+		const { camera } = new CameraManager( element );
+		expect( camera.aspect ).toBe( 1 );
+		expect( camera.projectionMatrix.elements.every( Number.isFinite ) ).toBe( true );
+
 	} );
 
 } );

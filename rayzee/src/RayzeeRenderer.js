@@ -3196,7 +3196,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** The camera rendered from, made once in init(). */
 	_createCamera() {
 
-		const camera = new ViewCamera( 60, this.canvas.clientWidth / this.canvas.clientHeight || 1, 0.01, 1000 );
+		const camera = new ViewCamera( 60, this.canvas.clientWidth / this.canvas.clientHeight, 0.01, 1000 );
 		camera.position.set( 0, 0, 5 );
 		return camera;
 

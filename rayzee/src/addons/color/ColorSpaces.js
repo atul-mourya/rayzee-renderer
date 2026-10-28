@@ -31,7 +31,8 @@ function cacheKey( from, to, context ) {
 /** Drop every cached processor and result. Call when the config or context changes. */
 export function clearColorCaches() {
 
-	for ( const p of processorCache.values() ) p.dispose?.();
+	// A no-op pair caches null.
+	for ( const p of processorCache.values() ) p?.dispose?.();
 	processorCache.clear();
 	colorCache.clear();
 	matrixCache.clear();

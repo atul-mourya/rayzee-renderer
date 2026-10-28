@@ -132,6 +132,22 @@ describe( 'render archives', () => {
 
 	} );
 
+	it( 'discards the file when an export fails part-way', async () => {
+
+		await db.saveRender( { image: png( 2, 2 ), timestamp: new Date( 500 ) } );
+		const sink = pickSaveFile();
+		sink.writable.write = async () => {
+
+			throw new Error( 'disk full' );
+
+		};
+
+		await expect( archive.exportRenders() ).rejects.toThrow( 'disk full' );
+		expect( sink.writable.abort ).toHaveBeenCalledTimes( 1 );
+		expect( sink.writable.close ).not.toHaveBeenCalled();
+
+	} );
+
 	it( 'imports only renders the library lacks', async () => {
 
 		await db.saveRender( { image: png( 2, 2 ), renderTime: 5, timestamp: new Date( 500 ) } );

@@ -81,7 +81,9 @@ export function setMaterialProperty( app, materialIndex, property, value ) {
 	// These rewrite triangle records, which a spilled scene has to read back first.
 	if ( app._sdf?.spilled && TRIANGLE_PATCH_PROPERTIES.has( property ) ) {
 
-		app.ensureSceneResident().then( () => app.setMaterialProperty( materialIndex, property, value ) );
+		app.ensureSceneResident()
+			.then( () => app.setMaterialProperty( materialIndex, property, value ) )
+			.catch( error => app._issues.warn( ISSUE_CODES.STORAGE_READ_FAILED, `reading the scene back for a material edit failed: ${error.message}` ) );
 		return;
 
 	}

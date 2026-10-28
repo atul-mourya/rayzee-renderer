@@ -13,28 +13,38 @@ const decoder = new TextDecoder();
 export async function exportRenders() {
 
 	const sink = await openSink( `rayzee-renders-${new Date().toLocaleDateString( 'sv' )}.zip`, { description: 'Zip archive', extension: '.zip' } );
-	const records = await getRenderRecords();
-	const zip = zipInto( sink );
+	try {
 
-	zip.addBytes( 'manifest.json', encoder.encode( JSON.stringify( { format: FORMAT, v: 1, count: records.length, exportedAt: new Date().toISOString() } ) ) );
+		const records = await getRenderRecords();
+		const zip = zipInto( sink );
 
-	for ( const record of records ) {
+		zip.addBytes( 'manifest.json', encoder.encode( JSON.stringify( { format: FORMAT, v: 1, count: records.length, exportedAt: new Date().toISOString() } ) ) );
 
-		zip.addBytes( `renders/${record.id}/details.json`, encoder.encode( JSON.stringify( record ) ) );
-		for ( const [ name, blob ] of Object.entries( await getRenderFiles( record.id ) ) ) {
+		for ( const record of records ) {
 
-			zip.addBytes( `renders/${record.id}/${name}`, new Uint8Array( await blob.arrayBuffer() ) );
+			zip.addBytes( `renders/${record.id}/details.json`, encoder.encode( JSON.stringify( record ) ) );
+			for ( const [ name, blob ] of Object.entries( await getRenderFiles( record.id ) ) ) {
+
+				zip.addBytes( `renders/${record.id}/${name}`, new Uint8Array( await blob.arrayBuffer() ) );
+
+			}
+
+			await sink.drain();
+			if ( zip.failure ) throw zip.failure;
 
 		}
 
-		await sink.drain();
-		if ( zip.failure ) throw zip.failure;
+		await zip.finish();
+		await sink.close();
+		return records.length;
+
+	} catch ( error ) {
+
+		// No half-written zip left behind.
+		await sink.abort().catch( () => {} );
+		throw error;
 
 	}
-
-	await zip.finish();
-	await sink.close();
-	return records.length;
 
 }
 

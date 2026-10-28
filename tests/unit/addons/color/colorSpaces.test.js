@@ -157,19 +157,20 @@ describe( 'ColorSpaces', () => {
 
 	} );
 
-	it( 'drops a processor that does nothing, and remembers that', async () => {
+	it( 'drops a processor that does nothing, remembers that, and clears it', () => {
 
-		// A copy of its own: the null it caches makes clearColorCaches() throw.
-		vi.resetModules();
-		const fresh = await import( '@/core/addons/color/ColorSpaces.js' );
 		const pixels = Float32Array.of( 0.5, 0.5, 0.5, 1 );
-		fresh.convertPixelsF32( pixels, 'lin_rec709', 'lin_rec709 alias' );
-		fresh.convertPixelsF32( pixels, 'lin_rec709', 'lin_rec709 alias' );
+		convertPixelsF32( pixels, 'lin_rec709', 'lin_rec709 alias' );
+		convertPixelsF32( pixels, 'lin_rec709', 'lin_rec709 alias' );
 		expect( [ ...pixels ] ).toEqual( [ 0.5, 0.5, 0.5, 1 ] );
 		const [ noOp ] = runtime.config.createColorSpaceProcessor.mock.results.map( r => r.value );
 		expect( noOp.dispose ).toHaveBeenCalledOnce();
 		expect( runtime.config.createColorSpaceProcessor ).toHaveBeenCalledOnce();
-		expect( fresh.extractMatrix( 'lin_rec709', 'lin_rec709 alias' ) ).toEqual( [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ] );
+		expect( extractMatrix( 'lin_rec709', 'lin_rec709 alias' ) ).toEqual( [ 1, 0, 0, 0, 1, 0, 0, 0, 1 ] );
+
+		expect( () => clearColorCaches() ).not.toThrow();
+		convertPixelsF32( pixels, 'lin_rec709', 'lin_rec709 alias' );
+		expect( runtime.config.createColorSpaceProcessor ).toHaveBeenCalledTimes( 2 );
 
 	} );
 

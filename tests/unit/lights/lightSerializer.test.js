@@ -400,7 +400,7 @@ describe( 'LightSerializer', () => {
 			// Manually populate lightData to test uniform update
 			serializer.lightData.directional = new Array( 24 ).fill( 0 ); // 2 lights * 12
 			serializer.lightData.rectArea = new Array( 16 ).fill( 0 ); // 1 light * 16
-			serializer.lightData.point = new Array( 18 ).fill( 0 ); // 2 lights * 9
+			serializer.lightData.point = new Array( 90 ).fill( 0 ); // 9 lights * 10, which 9 a light would count as 10
 			serializer.lightData.spot = new Array( 40 ).fill( 0 ); // 2 lights * 20
 
 			const material = {
@@ -418,7 +418,7 @@ describe( 'LightSerializer', () => {
 
 			expect( material.defines.MAX_DIRECTIONAL_LIGHTS ).toBe( 2 );
 			expect( material.defines.MAX_AREA_LIGHTS ).toBe( 1 );
-			expect( material.defines.MAX_POINT_LIGHTS ).toBe( 2 );
+			expect( material.defines.MAX_POINT_LIGHTS ).toBe( 9 );
 			expect( material.defines.MAX_SPOT_LIGHTS ).toBe( 2 );
 			expect( material.needsUpdate ).toBe( true );
 			expect( material.uniforms.directionalLights.value ).toBeInstanceOf( Float32Array );

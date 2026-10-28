@@ -255,6 +255,22 @@ describe( 'material edits', () => {
 
 	} );
 
+	it( 'records a failed read-back instead of dropping a material edit silently', async () => {
+
+		const app = makeApp( { sdf: { spilled: true } } );
+		app.ensureSceneResident = vi.fn( async () => {
+
+			throw new Error( 'spill file gone' );
+
+		} );
+
+		SceneEdits.setMaterialProperty( app, 1, 'side', 2 );
+		await flush();
+		expect( app.stages.pathTracer.materialData.updateMaterialProperty ).not.toHaveBeenCalled();
+		expect( app._issues.list ).toMatchObject( [ { code: ISSUE_CODES.STORAGE_READ_FAILED, message: expect.stringContaining( 'spill file gone' ) } ] );
+
+	} );
+
 	it( 'edits a spilled scene\'s materials in place when no triangle record changes', () => {
 
 		const app = makeApp( { sdf: { spilled: true } } );

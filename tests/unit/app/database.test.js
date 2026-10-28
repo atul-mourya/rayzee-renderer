@@ -201,6 +201,24 @@ describe( 'saved renders', () => {
 
 	} );
 
+	it( 'lists the other renders when one cannot be read', async () => {
+
+		vi.spyOn( console, 'error' ).mockImplementation( () => {} );
+		withStorage();
+		const broken = await db.saveRender( { image: png( 2, 2 ), timestamp: new Date( 1000 ) } );
+		const fine = await db.saveRender( { image: png( 3, 3 ), timestamp: new Date( 2000 ) } );
+		const area = storage.area( 'renders' );
+		const open = area.open.bind( area );
+		vi.spyOn( area, 'open' ).mockImplementation( ( key ) => ( key === `render:${broken}` ? Promise.reject( new Error( 'unreadable' ) ) : open( key ) ) );
+
+		const views = await db.getAllRenders();
+
+		expect( views.map( ( r ) => r.id ) ).toEqual( [ fine ] );
+		expect( await textAt( views[ 0 ].image ) ).toBe( '3x3' );
+		expect( console.error ).toHaveBeenCalled();
+
+	} );
+
 	it( 'shows and exports a render saved by an earlier build as data URLs', async () => {
 
 		seed( [ { id: 7, timestamp: new Date( 1 ), image: dataURL( '4x4' ), aiGeneratedImage: dataURL( 'ai' ) } ] );

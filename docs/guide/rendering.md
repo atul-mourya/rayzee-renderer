@@ -436,7 +436,8 @@ Two constraints shape that table, and neither is optional:
   survives a camera move, because the device does not get faster between them; it is re-taken when
   the tier or the resolution changes. Past it, each render swaps twice (to the cheap model when the
   view moves, back for the finished image). A swap costs 10–50 ms on oidn-webgpu 0.6.0 (the large model the most), and each model's
-  weights are downloaded once and kept, so a swap never goes back to the network.
+  weights are downloaded once and kept, so a swap never goes back to the network. Nothing is downloaded
+  until OIDN is first switched on (as the live denoiser or for the finished image).
 
 #### What paces the refreshes
 

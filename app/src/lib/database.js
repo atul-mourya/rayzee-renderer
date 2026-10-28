@@ -296,7 +296,14 @@ export const getAllRenders = async () => {
 		const shown = records
 			.filter( ( r ) => r && r.timestamp && ( r.image || r.files || r.blobs ) )
 			.sort( ( a, b ) => new Date( b.timestamp ) - new Date( a.timestamp ) );
-		return Promise.all( shown.map( toView ) );
+		// One unreadable render leaves the rest listed.
+		const views = await Promise.all( shown.map( ( record ) => toView( record ).catch( ( error ) => {
+
+			log.error( `Could not read render ${record.id}:`, error );
+			return null;
+
+		} ) ) );
+		return views.filter( Boolean );
 
 	} catch ( error ) {
 

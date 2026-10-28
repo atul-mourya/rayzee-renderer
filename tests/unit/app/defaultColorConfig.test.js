@@ -441,6 +441,9 @@ describe( 'loading configs', () => {
 		await loadConfigFromFiles( [ file( 'aces-studio.ocio', 'profile' ) ], { id: 'mine' } );
 		expect( app.loadColorConfig.mock.lastCall[ 0 ].id ).toBe( 'mine' );
 
+		await loadConfigFromFiles( [ file( 'LUT.CUBE', 'lut' ), file( 'STUDIO.OCIO', 'profile' ) ] );
+		expect( app.loadColorConfig.mock.lastCall[ 0 ] ).toMatchObject( { configPath: 'STUDIO.OCIO', id: 'STUDIO' } );
+
 	} );
 
 	it( 'loads a built-in config by name and unloads through the app', async () => {

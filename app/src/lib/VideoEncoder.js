@@ -15,7 +15,8 @@ const AVC_LEVELS = [[ 31, 3600, 108000 ], [ 40, 8192, 245760 ], [ 42, 8704, 5222
 
 function avcCodec( width, height, fps ) {
 
-	const blocks = Math.ceil( width / 16 ) * Math.ceil( height / 16 );
+	// At the size encoded: an odd side loses its last row or column.
+	const blocks = Math.ceil( ( width & ~ 1 ) / 16 ) * Math.ceil( ( height & ~ 1 ) / 16 );
 	const level = AVC_LEVELS.find( ( [ , frame, rate ] ) => blocks <= frame && blocks * fps <= rate )?.[ 0 ] ?? 62;
 	return `avc1.6400${level.toString( 16 ).toUpperCase()}`;
 
@@ -57,10 +58,12 @@ export async function pickVideoCodec( container, width, height, fps, bitrate ) {
 
 }
 
-function createOutput( container, target ) {
+function createOutput( container, target, totalFrames = 0 ) {
 
-	// MP4: index first, so a browser can play it while it downloads; the track says how many frames to reserve room for.
-	const format = container === 'mp4' ? new Mp4OutputFormat( { fastStart: target instanceof BufferTarget ? 'in-memory' : 'reserve' } ) : new WebMOutputFormat();
+	// MP4: index first, so a browser can play it while it downloads; the track says how many frames to reserve room
+	// for. A stream with no frame count puts it last.
+	const fastStart = target instanceof BufferTarget ? 'in-memory' : totalFrames > 0 ? 'reserve' : false;
+	const format = container === 'mp4' ? new Mp4OutputFormat( { fastStart } ) : new WebMOutputFormat();
 	return new Output( { format, target } );
 
 }
@@ -202,7 +205,7 @@ export class VideoEncoderPipeline {
 export async function muxChunks( chunks, { width, height, codec, fps, container = 'webm', totalFrames = 0, decoderConfig, write } ) {
 
 	const writable = new WritableStream( { write: ( { data, position } ) => write( data, position ) } );
-	const output = createOutput( container, new StreamTarget( writable, { chunked: true } ) );
+	const output = createOutput( container, new StreamTarget( writable, { chunked: true } ), totalFrames );
 	const source = new EncodedVideoPacketSource( muxerCodec( codec ) );
 	output.addVideoTrack( source, { frameRate: fps, maximumPacketCount: totalFrames || undefined } );
 	await output.start();

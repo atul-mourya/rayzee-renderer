@@ -1625,6 +1625,7 @@ describe( 'managers and stages', () => {
 
 		expect( core( { canvas: canvas( 800, 400 ) } )._createCamera().aspect ).toBe( 2 );
 		expect( core( { canvas: canvas( 0, 0 ) } )._createCamera().aspect ).toBe( 1 );
+		expect( core( { canvas: canvas( 800, 0 ) } )._createCamera().aspect ).toBe( 1 );
 		expect( core()._createExtraStages() ).toEqual( [] );
 		expect( core()._displaySources() ).toEqual( [] );
 

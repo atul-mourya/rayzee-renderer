@@ -607,6 +607,25 @@ describe( 'storage through a worker', () => {
 
 	} );
 
+	it( 'leaves nothing unhandled when closed before the worker has opened', async () => {
+
+		const unhandled = vi.fn();
+		process.on( 'unhandledRejection', unhandled );
+		try {
+
+			const { storage: early } = await openStorage( { namespace: 'early', transport: 'worker' } );
+			early.dispose();
+			await new Promise( ( resolve ) => setTimeout( resolve, 10 ) );
+			expect( unhandled ).not.toHaveBeenCalled();
+
+		} finally {
+
+			process.off( 'unhandledRejection', unhandled );
+
+		}
+
+	} );
+
 	it( 'fails what is in flight and anything after once disposed', async () => {
 
 		const pending = storage._transport.call( 'readRange', { path: [ 'a' ], name: 'f' } );

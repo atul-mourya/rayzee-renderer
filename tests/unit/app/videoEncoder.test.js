@@ -108,6 +108,7 @@ describe( 'codec choice', () => {
 
 		expect( await level( 640, 360, 30 ) ).toBe( 'avc1.64001F' );
 		expect( await level( 1920, 1080, 30 ) ).toBe( 'avc1.640028' );
+		expect( await level( 1921, 1081, 30 ) ).toBe( 'avc1.640028' );
 		expect( await level( 1920, 1080, 60 ) ).toBe( 'avc1.64002A' );
 		expect( await level( 3840, 2160, 30 ) ).toBe( 'avc1.640033' );
 		expect( await level( 3840, 2160, 60 ) ).toBe( 'avc1.640034' );
@@ -376,6 +377,14 @@ describe( 'muxChunks', () => {
 		expect( video ).toMatchObject( { mimeType: 'video/mp4; codecs="avc1.640028"', width: 64, height: 32 } );
 		expect( video.packets.map( p => p.type ) ).toEqual( [ 'key', 'delta', 'delta', 'delta' ] );
 		expect( video.packets[ 3 ].timestamp ).toBeCloseTo( 0.1, 6 );
+
+	} );
+
+	it( 'streams an MP4 whose frame count was never recorded', async () => {
+
+		const video = await mux( { width: 64, height: 32, codec: 'avc1.640028', container: 'mp4', totalFrames: 0, decoderConfig: { description: AVCC } } );
+
+		expect( video.packets.map( p => p.data[ 5 ] ) ).toEqual( [ 0, 1, 2 ] );
 
 	} );
 
