@@ -1,9 +1,8 @@
 import { Fn, vec2, vec4, float, int, uint, uvec2, uvec4, uniform, min, max, select, storage, If,
 	textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, StorageTexture } from 'three/webgpu';
-import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
+import { HalfFloatType, RGBAFormat, RedIntegerFormat, UnsignedIntType, NearestFilter, Matrix4 } from 'three';
 import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../../pathtracer/StorageTexturePool.js';
 import { GBUFFER_MISS_DEPTH } from './DenoiserSettings.js';
 import { Ray, HitInfo, RayTracingMaterial, UVCache } from '../../shaders/Struct.js';
 import { traverseBVH } from '../../shaders/BVHTraversal.js';
@@ -62,8 +61,7 @@ export class NormalDepth extends RenderStage {
 		const w = options.width || 1;
 		const h = options.height || 1;
 
-		// StorageTexture stays at max alloc — see resize crash fix (three.js #33061).
-		this._outputStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		this._outputStorageTex = new StorageTexture( w, h );
 		this._outputStorageTex.type = HalfFloatType;
 		this._outputStorageTex.format = RGBAFormat;
 		this._outputStorageTex.minFilter = NearestFilter;
@@ -71,7 +69,7 @@ export class NormalDepth extends RenderStage {
 
 		// Shading-normal output (geometric normal perturbed by normal/bump map).
 		// Single buffer — its readers (NRD, the OIDN history) use only the current frame.
-		this._shadingStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		this._shadingStorageTex = new StorageTexture( w, h );
 		this._shadingStorageTex.type = HalfFloatType;
 		this._shadingStorageTex.format = RGBAFormat;
 		this._shadingStorageTex.minFilter = NearestFilter;
@@ -88,8 +86,6 @@ export class NormalDepth extends RenderStage {
 		// Created only while a consumer asks for it (setInstanceLeafOutput).
 		this._leafStorageTex = null;
 		this._leafRT = null;
-
-		this._srcRegion = new Box2( new Vector2( 0, 0 ), new Vector2( 0, 0 ) );
 
 		// Ping-pong RTs share format with the StorageTexture so copyTextureToTexture works.
 		const rtOpts = {
@@ -374,17 +370,15 @@ export class NormalDepth extends RenderStage {
 
 		this.renderer.compute( this._computeNode );
 
-		// Copy only the active region out of the over-allocated StorageTextures.
-		this._srcRegion.max.set( writeRT.width, writeRT.height );
-		this.renderer.copyTextureToTexture( this._outputStorageTex, writeRT.texture, this._srcRegion );
-		this.renderer.copyTextureToTexture( this._shadingStorageTex, this._shadingRT.texture, this._srcRegion );
-		if ( this._leafRT ) this.renderer.copyTextureToTexture( this._leafStorageTex, this._leafRT.texture, this._srcRegion );
+		this.renderer.copyTextureToTexture( this._outputStorageTex, writeRT.texture );
+		this.renderer.copyTextureToTexture( this._shadingStorageTex, this._shadingRT.texture );
+		if ( this._leafRT ) this.renderer.copyTextureToTexture( this._leafStorageTex, this._leafRT.texture );
 
 		// First dispatch: seed prev from current so the history doesn't see false
 		// disocclusion on frame 1.
 		if ( ! this._hasHistory ) {
 
-			this.renderer.copyTextureToTexture( this._outputStorageTex, prevRT.texture, this._srcRegion );
+			this.renderer.copyTextureToTexture( this._outputStorageTex, prevRT.texture );
 			this._hasHistory = true;
 
 		}
@@ -398,7 +392,7 @@ export class NormalDepth extends RenderStage {
 
 	}
 
-	// Free the 2048² StorageTextures when disabled (no consumer); three.js re-creates them on the next
+	// Free the StorageTextures when disabled (no consumer); three.js re-creates them on the next
 	// dispatch after re-enable, and reset() re-arms the dirty/history fast-path. See NRD.releaseGPUMemory.
 	releaseGPUMemory() {
 
@@ -421,7 +415,10 @@ export class NormalDepth extends RenderStage {
 
 	setSize( width, height ) {
 
-		// StorageTexture stays at its max allocation (see constructor).
+		// In place: the kernel keeps these texture objects, and three.js rebinds them on its next dispatch.
+		this._outputStorageTex.setSize( width, height );
+		this._shadingStorageTex.setSize( width, height );
+		this._leafStorageTex?.setSize( width, height );
 		// RenderTarget.setSize() updates width/height but does NOT bump
 		// texture.version, so copyTextureToTexture's GPU texture would stay at
 		// the old size — needsUpdate forces the resize to take effect.
@@ -454,38 +451,9 @@ export class NormalDepth extends RenderStage {
 
 	}
 
-	// Reserved-storage change (e.g. 4K toggle): recreate the MAX-preallocated StorageTextures at the new live
-	// reserved size. The compute node rebuilds lazily on the next execute (guarded by _computeBuilt).
-	reallocateReservedStorage() {
-
-		this._computeNode?.dispose();
-		this._computeNode = null;
-		this._outputStorageTex?.dispose();
-		this._shadingStorageTex?.dispose();
-		const mk = () => {
-
-			const t = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
-			t.type = HalfFloatType; t.format = RGBAFormat; t.minFilter = NearestFilter; t.magFilter = NearestFilter;
-			return t;
-
-		};
-
-		this._outputStorageTex = mk();
-		this._shadingStorageTex = mk();
-		if ( this._leafStorageTex ) {
-
-			this._leafStorageTex.dispose();
-			this._leafStorageTex = this._makeLeafStorage();
-
-		}
-
-		this._computeBuilt = false;
-
-	}
-
 	/**
 	 * Whether to write `pathtracer:instanceLeaf` (the hit's transformed TLAS leaf + 1, 0 = none).
-	 * Off by default: it costs a full-reserve texture, and changing it rebuilds the kernel.
+	 * Off by default: it costs a render-size texture, and changing it rebuilds the kernel.
 	 */
 	setInstanceLeafOutput( enabled ) {
 
@@ -529,7 +497,7 @@ export class NormalDepth extends RenderStage {
 
 	_makeLeafStorage() {
 
-		const t = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		const t = new StorageTexture( this._rtA.width, this._rtA.height );
 		t.type = UnsignedIntType;
 		t.format = RedIntegerFormat;
 		t.minFilter = NearestFilter;

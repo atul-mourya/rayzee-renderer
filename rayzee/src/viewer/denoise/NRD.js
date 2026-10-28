@@ -2,7 +2,7 @@ import { Fn, vec2, vec3, vec4, float, int, uint, ivec2, uvec2, uniform,
 	If, select, mix, max, min, dot, sqrt, exp2, pow, floor, fract, round, atan, normalize,
 	saturate, smoothstep, textureLoad, textureStore, localId, workgroupId, Return } from 'three/tsl';
 import { RenderTarget, TextureNode } from 'three/webgpu';
-import { DataTexture, HalfFloatType, FloatType, RGBAFormat, LinearFilter, Matrix4, Vector2, Vector3, Vector4, Box2 } from 'three';
+import { DataTexture, HalfFloatType, FloatType, RGBAFormat, LinearFilter, Matrix4, Vector2, Vector3, Vector4 } from 'three';
 import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
 import { createStorageTexture } from '../../pathtracer/StorageTexturePool.js';
 import { sanitizeRGB, sanitize1, FP16_MAX } from '../../shaders/Common.js';
@@ -230,9 +230,7 @@ export class NRD extends RenderStage {
 		this._nData = readNode();
 		this._nStabRead = readNode();
 
-		this._allocStorage();
-
-		this._srcRegion = new Box2( new Vector2( 0, 0 ), new Vector2( 0, 0 ) );
+		this._allocStorage( w, h );
 		this.outputTarget = new RenderTarget( w, h, {
 			type: HalfFloatType,
 			format: RGBAFormat,
@@ -256,9 +254,9 @@ export class NRD extends RenderStage {
 
 	// ── Storage ───────────────────────────────────────────────────────────────
 
-	_allocStorage() {
+	_allocStorage( width, height ) {
 
-		const tex = () => createStorageTexture( HalfFloatType );
+		const tex = () => createStorageTexture( width, height, HalfFloatType );
 		this._tmpA = tex();
 		this._tmpB = tex();
 		this._hist = tex(); // recurrent history (PostBlur output)
@@ -272,9 +270,15 @@ export class NRD extends RenderStage {
 
 	}
 
+	_storage() {
+
+		return [ this._tmpA, this._tmpB, this._hist, this._fastHist, this._internal, this._geomPrev, this._stabA, this._stabB, this._dataT ];
+
+	}
+
 	_disposeStorage() {
 
-		for ( const t of [ this._tmpA, this._tmpB, this._hist, this._fastHist, this._internal, this._geomPrev, this._stabA, this._stabB, this._dataT ] ) t?.dispose();
+		for ( const t of this._storage() ) t?.dispose();
 
 	}
 
@@ -1359,8 +1363,7 @@ export class NRD extends RenderStage {
 		this.renderer.compute( this._kPost );
 		this.renderer.compute( this._stabPing === 0 ? this._kTsA : this._kTsB );
 
-		this._srcRegion.max.set( this.outputTarget.width, this.outputTarget.height );
-		this.renderer.copyTextureToTexture( this._tmpA, this.outputTarget.texture, this._srcRegion );
+		this.renderer.copyTextureToTexture( this._tmpA, this.outputTarget.texture );
 		context.setTexture( 'nrd:output', this.outputTarget.texture );
 
 		this._stabPing = 1 - this._stabPing;
@@ -1371,6 +1374,8 @@ export class NRD extends RenderStage {
 
 	setSize( width, height ) {
 
+		// In place: the kernels keep these texture objects, and three.js rebinds them on their next dispatch.
+		for ( const t of this._storage() ) t.setSize( width, height );
 		this.outputTarget.setSize( width, height );
 		this.outputTarget.texture.needsUpdate = true;
 		this.resW.value = width;
@@ -1385,7 +1390,7 @@ export class NRD extends RenderStage {
 
 		}
 
-		// StorageTextures stay at max; history from another size is meaningless.
+		// History from another size is meaningless.
 		this._needsReset = true;
 
 	}
@@ -1397,20 +1402,6 @@ export class NRD extends RenderStage {
 		this.context?.removeTexture( 'nrd:output' );
 		this.outputTarget?.texture?.dispose();
 		this._needsReset = true;
-
-	}
-
-	reallocateReservedStorage() {
-
-		this._disposeKernels();
-		this._disposeStorage();
-		// Restore the placeholders — the rebuilt kernels compile against them (see constructor).
-		for ( const [ node, placeholder ] of this._placeholders ) node.value = placeholder;
-		this._allocStorage();
-		this._buildKernels();
-		this._compiled = false;
-		this._needsReset = true;
-		this._stabPing = 0;
 
 	}
 

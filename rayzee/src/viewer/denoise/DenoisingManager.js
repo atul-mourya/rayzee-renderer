@@ -595,7 +595,7 @@ export class DenoisingManager extends EventDispatcher {
 			!! this.denoiser?.enabled && !! this.denoiser?.expectsCleanAux( this._finalQuality )
 		);
 
-		// Reclaim VRAM: free the big 2048² StorageTextures of any denoiser/G-buffer stage that ended up
+		// Reclaim VRAM: free the render-size StorageTextures of any denoiser/G-buffer stage that ended up
 		// disabled (lazily re-created on the next dispatch after re-enable). Every strategy/denoiser
 		// toggle funnels through here after the enabled flags above are settled, so this is the one
 		// choke point. dispose() is idempotent, so re-running it for an already-released stage is a no-op.

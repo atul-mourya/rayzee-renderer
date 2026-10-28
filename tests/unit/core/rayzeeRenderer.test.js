@@ -654,7 +654,7 @@ describe( 'the reserved render size', () => {
 
 	const GB = 1024 * 1024 * 1024;
 
-	function reserving( allocated = 2048 ) {
+	function reserving( built = 2048, backing = { width: 3000, height: 1000 } ) {
 
 		vi.stubGlobal( 'navigator', {} );
 		const stage = ( name ) => ( { name, reallocateReservedStorage: vi.fn() } );
@@ -664,11 +664,11 @@ describe( 'the reserved render size', () => {
 			reset: vi.fn(),
 			renderer: {
 				backend: { device: { limits: { maxStorageBufferBindingSize: 2 * GB } } },
-				domElement: { width: 3000, height: 1000 },
+				domElement: backing,
 				setSize: vi.fn(),
 			},
 			stages: {
-				pathTracer: { ...stage( 'pathTracer' ), storageTextures: { writeColor: { image: { width: allocated } } } },
+				pathTracer: { ...stage( 'pathTracer' ), builtReserve: built },
 				compositor: stage( 'compositor' ),
 			},
 		} );
@@ -729,7 +729,7 @@ describe( 'the reserved render size', () => {
 
 	} );
 
-	it( 'reallocates once a raise lands on textures allocated at the old size', () => {
+	it( 'reallocates once a raise lands on buffers built at the old size', () => {
 
 		const app = reserving( 2048 );
 		app.pauseRendering = true;
@@ -737,6 +737,26 @@ describe( 'the reserved render size', () => {
 		expect( app.stages.pathTracer.reallocateReservedStorage ).toHaveBeenCalledOnce();
 		expect( app.renderer.setSize ).not.toHaveBeenCalled();
 		expect( app.pauseRendering ).toBe( true );
+
+	} );
+
+	it( 'rebuilds nothing before the first build, and still says the reserve moved', () => {
+
+		const app = reserving( null, { width: 800, height: 600 } );
+		expect( app.setReservedRenderResolution( 4096 ) ).toBe( 4096 );
+		expect( app.stages.pathTracer.reallocateReservedStorage ).not.toHaveBeenCalled();
+		expect( app.reset ).not.toHaveBeenCalled();
+		expect( app.events ).toEqual( [ { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: 4096 } ] );
+
+	} );
+
+	it( 'shrinks a canvas larger than a lowered reserve even before the first build', () => {
+
+		const app = reserving( null );
+		setReservedRenderSize( 4096 );
+		expect( app.setReservedRenderResolution( 2048, { allowLower: true } ) ).toBe( 2048 );
+		expect( app.renderer.setSize ).toHaveBeenCalledWith( 2048, 1000, false );
+		expect( app.stages.pathTracer.reallocateReservedStorage ).toHaveBeenCalledOnce();
 
 	} );
 

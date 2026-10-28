@@ -69,6 +69,7 @@ export class PathTracer extends PathTracerStage {
 		// Tier-2 dilation: per-pixel frozen mask (1=skip), written race-free in buildActivePixels; a frozen pixel
 		// stays active if any 8-neighbour is still active (Cycles box-filter) to avoid hard frozen/active seams.
 		this._frozenMaskAttr = null;
+		this.builtReserve = null; // the reserved render size the per-pixel buffers were built at (none before the first build)
 		this._convDebugSource = null; // memoized handle set for the Compositor's convergence overlay
 		this._dilateFrozenUniform = uniform( 1, 'int' ); // 1 = dilate (default); 0 = plain per-pixel freeze
 		this._wavefrontReady = false;
@@ -223,7 +224,7 @@ export class PathTracer extends PathTracerStage {
 
 		} );
 
-		// Accumulation pool: 3 write StorageTextures (2048²) + readable MRT RenderTarget
+		// Accumulation pool: 3 write StorageTextures + readable MRT RenderTarget, all at the render size
 		t.register( 'accum', () => {
 
 			const sp = this.storageTextures;
@@ -1514,33 +1515,25 @@ export class PathTracer extends PathTracerStage {
 
 	}
 
-	// Reserved-storage change (e.g. enabling 4K): the MRT StorageTextures are pre-allocated at
-	// MAX_STORAGE_TEXTURE_SIZE and can't be resized, so recreate the pool at the (new) live reserved size and
-	// rebuild the wavefront kernels in place. The stage OBJECT is unchanged, so manager/event refs stay valid;
-	// only GPU textures + compute pipelines are rebuilt. Scene buffers (BVH/tri/material) are resolution-
-	// independent and untouched. Caller must have rendering paused.
+	// Reserved-size change (e.g. enabling 4K): the per-pixel buffers are sized to MAX_STORAGE_TEXTURE_SIZE, and a
+	// grown buffer is bound only by a kernel rebuild, done here in place. The stage OBJECT is unchanged, so
+	// manager/event refs stay valid; scene buffers (BVH/tri/material) are resolution-independent and untouched.
+	// Caller must have rendering paused.
 	reallocateReservedStorage() {
 
 		if ( ! this.storageTextures.writeColor ) return;
 
-		// Clamp into the (possibly just-lowered) reserve: create() sizes the write StorageTextures at
-		// MAX_STORAGE_TEXTURE_SIZE but the readTarget at what's passed here, and the tracked render size still
-		// holds the pre-change value — unclamped, copyToReadTargets reads past the write textures.
+		// Into a just-lowered reserve: the caller has shrunk the canvas to fit, and the tracked size still holds the old one.
 		const w = Math.min( this.storageTextures.renderWidth || 1, MAX_STORAGE_TEXTURE_SIZE );
 		const h = Math.min( this.storageTextures.renderHeight || 1, MAX_STORAGE_TEXTURE_SIZE );
-
-		// Recreate the MRT pool at the new reserved size (create() reallocates the write StorageTextures at the
-		// live MAX_STORAGE_TEXTURE_SIZE; the read RenderTarget follows the current render size).
-		this.storageTextures.create( w, h );
+		this.storageTextures.ensureSize( w, h );
 		this.resolution.value.set( w, h );
 
-		// No kernels before the first scene with materials — nothing to rebuild, and a build here would compile
-		// against 0 materials. The pool above is recreated regardless: it is allocated at construction, so a
-		// reserve raised before the first model load must still reach it or every later copy overflows it.
+		// No kernels before the first scene with materials — nothing to rebuild; the first build reads the live reserve.
 		if ( ! this._packedBuffers || ! ( this.materialData?.materialCount > 0 ) ) return;
 
-		// Rebuild kernels: re-references the fresh write textures + recreates the per-pixel aux buffers
-		// (m2/streak/frozenMask) at the new maxPixels. Prev-frame nodes are repointed per-frame in render().
+		// Rebuild kernels: grows the per-pixel aux buffers (m2/streak/frozenMask) to the new maxPixels.
+		// Prev-frame nodes are repointed per-frame in render().
 		if ( this._kernelManager ) this._kernelManager.dispose();
 		this._wavefrontReady = false;
 		this._buildWavefrontKernels();
@@ -1615,6 +1608,7 @@ export class PathTracer extends PathTracerStage {
 		// must span the whole frame across chunks AND persist across frames, so they're sized to the reserved
 		// max resolution (small — 12 B/pixel) and NEVER realloc on a resize.
 		const maxPixels = MAX_STORAGE_TEXTURE_SIZE * MAX_STORAGE_TEXTURE_SIZE;
+		this.builtReserve = MAX_STORAGE_TEXTURE_SIZE;
 
 		// Only reallocated on growth, never on a plain rebuild: the Compositor's overlay binds m2/frozenMask
 		// read-only and a fresh attribute would strand its bind group. Surviving contents are safe — every

@@ -272,7 +272,7 @@ for example when an export menu opens.
 
 ## Render Resolution Reserve
 
-Every compute `StorageTexture` and aux buffer is pre-allocated at one square dimension — the *reserve* — and `setCanvasSize()` refuses anything larger. The default is 2048, so 4K output needs the reserve raised first.
+The *reserve* is the largest render the engine accepts, one square dimension: `setCanvasSize()` refuses anything larger, and the per-pixel buffers (12 bytes a pixel) are allocated at it. The textures follow the render size, so a raised reserve costs only those buffers until a render that large runs. The default is 2048, so 4K output needs the reserve raised first.
 
 ```js
 engine.setReservedRenderResolution(4096)          // raise to 4K (longest edge)
@@ -280,14 +280,14 @@ engine.setReservedRenderResolution(2048, { allowLower: true })   // lower, payin
 engine.getReservedRenderResolution()              // the reserve actually in force
 ```
 
-The request is **device-capped**: a 4096 reserve pins roughly 1.5 GB of MRT textures, so it is only granted on hosts reporting ≥ 8 GB and a ≥ 1 GB `maxStorageBufferBindingSize`; weaker devices clamp to 2048, recorded as `render.reserve_capped`. The memory figure is `options.hostMemoryGB`, else `navigator.deviceMemory`, else an assumed 4 — so outside Chrome, pass it. `MAX_RESERVABLE_RENDER_SIZE` (4096) is the ceiling on any request.
+The request is **device-capped**: a 4K render holds roughly 1.5 GB of MRT textures, so a 4096 reserve is only granted on hosts reporting ≥ 8 GB and a ≥ 1 GB `maxStorageBufferBindingSize`; weaker devices clamp to 2048, recorded as `render.reserve_capped`. The memory figure is `options.hostMemoryGB`, else `navigator.deviceMemory`, else an assumed 4 — so outside Chrome, pass it. `MAX_RESERVABLE_RENDER_SIZE` (4096) is the ceiling on any request.
 
 Raises are monotonic unless you pass `allowLower` — UI-driven callers ask for whatever the current view needs, and honouring every decrease made the reserve oscillate across preview↔render switches, paying a full kernel rebuild each time.
 
 Callable at any point in the lifecycle:
 
 - **Before `init()`** — recorded and applied during `init()`, after the device exists but before the stages are constructed, so they allocate at the raised size directly. The device gate cannot run without a device, so the return value here is the *request*, not the verdict.
-- **After `init()`** — applied immediately, re-initialising the reserved GPU storage in place.
+- **After `init()`** — applied immediately, rebuilding the per-pixel buffers in place once a scene has built them.
 
 Either way the verdict arrives as `EngineEvents.RESERVED_RENDER_SIZE_CHANGED`:
 

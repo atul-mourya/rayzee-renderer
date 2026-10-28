@@ -1,9 +1,8 @@
 import { Fn, vec2, vec4, float, int, uint, ivec2, uvec2, uniform, If,
 	textureLoad, textureStore, workgroupId, localId } from 'three/tsl';
 import { RenderTarget, TextureNode, StorageTexture } from 'three/webgpu';
-import { HalfFloatType, RGBAFormat, NearestFilter, Matrix4, Box2, Vector2 } from 'three';
+import { HalfFloatType, RGBAFormat, NearestFilter, Matrix4 } from 'three';
 import { RenderStage, StageExecutionMode } from '../../pipeline/RenderStage.js';
-import { MAX_STORAGE_TEXTURE_SIZE } from '../../pathtracer/StorageTexturePool.js';
 import { cameraRayPoint, cameraRayUniforms } from '../../shaders/CameraRay.js';
 
 /**
@@ -81,16 +80,11 @@ export class MotionVector extends RenderStage {
 		this._normalDepthTexNode = new TextureNode();
 
 		// Write-only StorageTexture (compute output).
-		// Pre-allocate at max — StorageTexture.setSize() destroys the GPU texture
-		// while the compute bind group keeps the stale view (three.js #33061).
-		this._screenSpaceStorageTex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+		this._screenSpaceStorageTex = new StorageTexture( width, height );
 		this._screenSpaceStorageTex.type = HalfFloatType;
 		this._screenSpaceStorageTex.format = RGBAFormat;
 		this._screenSpaceStorageTex.minFilter = NearestFilter;
 		this._screenSpaceStorageTex.magFilter = NearestFilter;
-
-		// Reused per-copy: copy only the active region out of the over-alloc tex.
-		this._srcRegion = new Box2( new Vector2( 0, 0 ), new Vector2( 0, 0 ) );
 
 		// Readable RenderTarget (copy destination — published to context)
 		this.screenSpaceTarget = new RenderTarget( width, height, {
@@ -306,15 +300,13 @@ export class MotionVector extends RenderStage {
 
 		// Copy StorageTexture → RenderTarget (cross-dispatch reads from
 		// StorageTexture return zeros — must use RenderTarget for downstream stages).
-		// srcRegion = active size; the StorageTexture is over-allocated at 2048.
-		this._srcRegion.max.set( this.screenSpaceTarget.width, this.screenSpaceTarget.height );
-		this.renderer.copyTextureToTexture( this._screenSpaceStorageTex, this.screenSpaceTarget.texture, this._srcRegion );
+		this.renderer.copyTextureToTexture( this._screenSpaceStorageTex, this.screenSpaceTarget.texture );
 
 		context.setTexture( 'motionVector:screenSpace', this.screenSpaceTarget.texture );
 
 	}
 
-	// Free the 2048² StorageTexture when disabled (no consumer); three.js re-creates it on the next
+	// Free the StorageTexture when disabled (no consumer); three.js re-creates it on the next
 	// dispatch after re-enable. _syncGBufferStages additionally reseeds camera history on re-enable.
 	releaseGPUMemory() {
 
@@ -324,7 +316,8 @@ export class MotionVector extends RenderStage {
 
 	setSize( width, height ) {
 
-		// The StorageTexture stays at its max allocation (see constructor).
+		// In place: the kernel keeps the texture object, and three.js rebinds it on its next dispatch.
+		this._screenSpaceStorageTex.setSize( width, height );
 		this.screenSpaceTarget.setSize( width, height );
 		this.screenSpaceTarget.texture.needsUpdate = true;
 		this.resolutionWidth.value = width;
@@ -338,19 +331,6 @@ export class MotionVector extends RenderStage {
 			this._screenSpaceComputeNode.dispatchSize = [ this._dispatchX, this._dispatchY, 1 ];
 
 		}
-
-	}
-
-	// Reserved-storage change (e.g. 4K toggle): recreate the MAX-preallocated StorageTexture at the new live
-	// reserved size + rebuild the compute node in place. Same stage object, so refs/wiring stay valid.
-	reallocateReservedStorage() {
-
-		this._screenSpaceComputeNode?.dispose();
-		this._screenSpaceStorageTex?.dispose();
-		const t = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
-		t.type = HalfFloatType; t.format = RGBAFormat; t.minFilter = NearestFilter; t.magFilter = NearestFilter;
-		this._screenSpaceStorageTex = t;
-		this._buildScreenSpaceCompute();
 
 	}
 

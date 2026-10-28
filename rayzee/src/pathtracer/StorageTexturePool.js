@@ -13,24 +13,20 @@
  */
 
 import { StorageTexture, RenderTarget } from 'three/webgpu';
-import { RGBAFormat, FloatType, LinearFilter, NearestFilter, Box2, Vector2 } from 'three';
+import { RGBAFormat, FloatType, LinearFilter, NearestFilter } from 'three';
 import { createLogger, fmt } from '../Logger.js';
 
-// Hard ceiling the engine supports for the reserved (pre-allocated) render size. 4K (3840×2160)
-// fits within 4096². Raising the reserved size to this pins ~1.5 GB of MRT textures — opt-in only.
+// Hard ceiling the engine supports for the reserved render size. 4K (3840×2160) fits within 4096².
 export const MAX_RESERVABLE_RENDER_SIZE = 4096;
 
-// Reserved render size: every per-resolution compute StorageTexture + aux buffer is pre-allocated at
-// this SQUARE size and never resized at runtime (works around three.js StorageTexture-resize bugs —
-// see shaders/patches history). Render resolution must not exceed it; the engine warns + ignores larger.
-// It is a LIVE binding (mutable) so it can be raised (e.g. for 4K) via setReservedRenderSize(); consumers
-// read it inside their constructors, and stages already built at a lower value are re-initialised in place
-// by PathTracerApp.setReservedRenderResolution() — which is the device-gated API hosts should call, at any
-// point in the lifecycle. Default 2048 (zero VRAM regression). See docs/internal/specs/wavefront-chunked-pool.md.
+// Reserved render size: the largest render (SQUARE, longest edge) the engine accepts — it warns and ignores
+// larger. The per-pixel buffers (convergence, freeze mask, the integrator's) are allocated at it, since a
+// grown buffer cannot be rebound without a kernel rebuild; the StorageTextures follow the render size.
+// It is a LIVE binding (mutable), raised (e.g. for 4K) through RayzeeRenderer.setReservedRenderResolution(),
+// the device-gated API hosts should call, at any point in the lifecycle. Default 2048.
 export let MAX_STORAGE_TEXTURE_SIZE = 2048;
 
-// Set the reserved render size. MUST be called before pipeline construction (stages pre-allocate at
-// this value and cannot resize). Clamped to [256, MAX_RESERVABLE_RENDER_SIZE]. Returns the applied value.
+// Set the reserved render size. Clamped to [256, MAX_RESERVABLE_RENDER_SIZE]. Returns the applied value.
 export function setReservedRenderSize( px ) {
 
 	MAX_STORAGE_TEXTURE_SIZE = Math.max( 256, Math.min( MAX_RESERVABLE_RENDER_SIZE, Math.floor( px ) || 256 ) );
@@ -40,11 +36,12 @@ export function setReservedRenderSize( px ) {
 
 const log = createLogger( 'gpu' );
 
-// Compute-output StorageTexture at the reserved size, never resized (see above). LinearFilter is
-// load-bearing: textureLoad codegen requires it on a StorageTexture.
-export function createStorageTexture( type = FloatType, filter = LinearFilter ) {
+// Compute-output StorageTexture at the render size; setSize() resizes it in place, and three.js rebinds it on
+// the next dispatch (tests/gpu/storageTextureResize.test.js). LinearFilter is load-bearing: textureLoad codegen
+// requires it on a StorageTexture.
+export function createStorageTexture( width, height, type = FloatType, filter = LinearFilter ) {
 
-	const tex = new StorageTexture( MAX_STORAGE_TEXTURE_SIZE, MAX_STORAGE_TEXTURE_SIZE );
+	const tex = new StorageTexture( width, height );
 	tex.type = type;
 	tex.format = RGBAFormat;
 	tex.minFilter = filter;
@@ -52,8 +49,6 @@ export function createStorageTexture( type = FloatType, filter = LinearFilter ) 
 	return tex;
 
 }
-
-const createWriteStorageTex = () => createStorageTexture();
 
 export class StorageTexturePool {
 
@@ -73,9 +68,6 @@ export class StorageTexturePool {
 		this.renderWidth = 0;
 		this.renderHeight = 0;
 
-		// Reused srcRegion for copies out of the over-allocated StorageTextures.
-		this._srcRegion = new Box2( new Vector2( 0, 0 ), new Vector2( 0, 0 ) );
-
 		if ( width > 0 && height > 0 ) {
 
 			this.create( width, height );
@@ -91,10 +83,9 @@ export class StorageTexturePool {
 		this.renderWidth = width;
 		this.renderHeight = height;
 
-		// Write-only StorageTextures allocated at max — never resized (see resize crash fix).
-		this.writeColor = createWriteStorageTex();
-		this.writeNormalDepth = createWriteStorageTex();
-		this.writeAlbedo = createWriteStorageTex();
+		this.writeColor = createStorageTexture( width, height );
+		this.writeNormalDepth = createStorageTexture( width, height );
+		this.writeAlbedo = createStorageTexture( width, height );
 
 		// Readable MRT RenderTarget (3 color attachments, no depth/stencil)
 		this.readTarget = new RenderTarget( width, height, {
@@ -126,8 +117,7 @@ export class StorageTexturePool {
 
 		if ( this.renderWidth !== width || this.renderHeight !== height ) {
 
-			// Resize only the readTarget — never dispose/recreate the write StorageTextures
-			// (that destroys the texture the compute bind group holds → submit crash).
+			// Resized in place: the kernels keep these texture objects, so they need no rebuild.
 			this.setSize( width, height );
 			return true;
 
@@ -175,16 +165,12 @@ export class StorageTexturePool {
 	 */
 	copyToReadTargets( renderer, includeAux = true ) {
 
-		// Source write StorageTextures are over-allocated at the max size; the Box2 region
-		// restricts the copy to the active render size so source and destination extents match.
-		this._srcRegion.max.set( this.renderWidth, this.renderHeight );
-
-		renderer.copyTextureToTexture( this.writeColor, this.readTarget.textures[ 0 ], this._srcRegion );
+		renderer.copyTextureToTexture( this.writeColor, this.readTarget.textures[ 0 ] );
 
 		if ( includeAux ) {
 
-			renderer.copyTextureToTexture( this.writeNormalDepth, this.readTarget.textures[ 1 ], this._srcRegion );
-			renderer.copyTextureToTexture( this.writeAlbedo, this.readTarget.textures[ 2 ], this._srcRegion );
+			renderer.copyTextureToTexture( this.writeNormalDepth, this.readTarget.textures[ 1 ] );
+			renderer.copyTextureToTexture( this.writeAlbedo, this.readTarget.textures[ 2 ] );
 
 		}
 
@@ -216,7 +202,10 @@ export class StorageTexturePool {
 		this.renderWidth = width;
 		this.renderHeight = height;
 
-		// Write StorageTextures stay at max allocation — never resized (see resize crash fix).
+		this.writeColor?.setSize( width, height );
+		this.writeNormalDepth?.setSize( width, height );
+		this.writeAlbedo?.setSize( width, height );
+
 		if ( this.readTarget ) {
 
 			this.readTarget.setSize( width, height );

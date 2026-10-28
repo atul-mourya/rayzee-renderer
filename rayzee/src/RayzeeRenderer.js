@@ -1379,17 +1379,16 @@ export class RayzeeRenderer extends EventDispatcher {
 	// ═══════════════════════════════════════════════════════════════
 
 	/**
-	 * Raise (or lower) the reserved render size — the square dimension every compute StorageTexture + aux
-	 * buffer is pre-allocated at. Needed to enable resolutions above the 2048 default (e.g. 4K). The request
-	 * is device-capped: 4K reservation (~1.5 GB of MRT textures) is only granted on GPUs with ample VRAM +
-	 * a large storage-buffer binding limit; weaker devices clamp to 2048.
+	 * Raise (or lower) the reserved render size — the largest render (square, longest edge) the engine accepts,
+	 * and the size its per-pixel buffers are allocated at (12 B a pixel). Needed to enable resolutions above the
+	 * 2048 default (e.g. 4K). The request is device-capped: a 4K reserve is only granted on GPUs with ample VRAM
+	 * + a large storage-buffer binding limit; weaker devices clamp to 2048.
 	 *
 	 * Callable at any point in the lifecycle:
-	 *  - before init(): recorded, then applied during init() before the stages are constructed, so they
-	 *    pre-allocate at the raised size directly. The device gate cannot run until the device exists, so
-	 *    the value returned here is the request, not the verdict — read getReservedRenderResolution() after
-	 *    init(), or listen for `reserved_render_size_changed`.
-	 *  - after init(): applied immediately, re-initialising the reserved GPU storage in place.
+	 *  - before init(): recorded, then applied during init(). The device gate cannot run until the device
+	 *    exists, so the value returned here is the request, not the verdict — read
+	 *    getReservedRenderResolution() after init(), or listen for `reserved_render_size_changed`.
+	 *  - after init(): applied immediately, rebuilding the per-pixel buffers in place.
 	 * @param {number}  requestedPx desired reserved size (longest edge)
 	 * @param {Object}  [opts]
 	 * @param {boolean} [opts.allowLower=false] permit lowering, paying a rebuild, to reclaim VRAM
@@ -1415,7 +1414,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		const limits = this.renderer.backend?.device?.limits;
 		const maxBinding = limits?.maxStorageBufferBindingSize || ( 128 * 1024 * 1024 );
 		const memory = deviceMemoryGB( this._hostMemoryGB );
-		// 4K reserve pins the accum MRT (~1.5 GB) + aux; only grant it on clearly-capable GPUs.
+		// A 4K render holds ~1.5 GB of MRT textures + aux; only grant it on clearly-capable GPUs.
 		const deviceSafeMax = ( memory.gb >= 8 && maxBinding >= 1024 * 1024 * 1024 )
 			? MAX_RESERVABLE_RENDER_SIZE : 2048;
 		const applied = setReservedRenderSize( Math.min( target, deviceSafeMax ) );
@@ -1432,27 +1431,28 @@ export class RayzeeRenderer extends EventDispatcher {
 
 		}
 
-		// Gate the realloc on the textures that EXIST, not on how the binding moved: a raise applied while
-		// nothing was allocated leaves `applied === prev` for every later call, so keying off that let the
-		// first ineffective call poison every effective one after it (issue #9). The path tracer's write MRT
-		// witnesses the reserve the stages were last built at.
-		const allocated = this.stages?.pathTracer?.storageTextures?.writeColor?.image?.width ?? applied;
+		// Gate the rebuild on what was BUILT, not on how the binding moved: a raise applied while nothing was
+		// built leaves `applied === prev` for every later call, so keying off that let the first ineffective call
+		// poison every effective one after it (issue #9). Nothing built yet reads the live reserve when it is.
+		const pathTracer = this.stages?.pathTracer;
+		const built = pathTracer?.builtReserve ?? applied;
+		// A lowered reserve below the live backing store would leave a render the per-pixel buffers do not cover.
+		const backing = this.renderer.domElement;
+		const oversize = !! pathTracer && ( backing.width > applied || backing.height > applied );
+		const rebuild = built !== applied || oversize;
 
-		// Re-init the reserved GPU storage in place: each stage recreates its pre-allocated StorageTextures at
-		// the new size + rebuilds its compute pipelines. Stage OBJECTS, manager refs and event wiring are
-		// preserved (so no re-subscription needed); scene geometry buffers are resolution-independent and
-		// reused. Rendering is paused across the swap so no in-flight dispatch references a disposed texture.
-		if ( allocated !== applied ) {
+		// Rebuild in place: stage OBJECTS, manager refs and event wiring are preserved (so no re-subscription
+		// needed); scene geometry buffers are resolution-independent and reused. Rendering is paused across the
+		// swap so no in-flight dispatch references a disposed buffer.
+		if ( rebuild ) {
 
 			const wasPaused = this.pauseRendering;
 			this.pauseRendering = true;
 			try {
 
-				// Lowering below the live backing store makes copyToReadTargets read past the end of the
-				// (now smaller) write textures — a GPUValidationError. Shrink the backing store first.
-				// renderer.setSize, not setCanvasSize/onResize: those also rewrite camera.aspect.
-				const backing = this.renderer.domElement;
-				if ( backing.width > applied || backing.height > applied ) {
+				// Shrink the backing store first. renderer.setSize, not setCanvasSize/onResize: those also
+				// rewrite camera.aspect.
+				if ( oversize ) {
 
 					this.renderer.setSize(
 						Math.min( backing.width, applied ), Math.min( backing.height, applied ), false );
@@ -1468,6 +1468,12 @@ export class RayzeeRenderer extends EventDispatcher {
 			}
 
 			this.reset();
+
+		}
+
+		// Before the pipeline exists, init()'s replay announces the verdict itself.
+		if ( rebuild || ( pathTracer && applied !== prev ) ) {
+
 			this.dispatchEvent( { type: EngineEvents.RESERVED_RENDER_SIZE_CHANGED, size: applied } );
 
 		}
@@ -1478,9 +1484,8 @@ export class RayzeeRenderer extends EventDispatcher {
 
 	/**
 	 * Replay a setReservedRenderResolution() call made before init(): after the device exists, so the gate is
-	 * evaluated against the real GPU, and before _initPipeline() constructs the stages, which read the reserve
-	 * in their constructors. The event carries the device's verdict — the only authoritative answer a pre-init
-	 * caller can get.
+	 * evaluated against the real GPU, and before _initPipeline() constructs the stages. The event carries the
+	 * device's verdict — the only authoritative answer a pre-init caller can get.
 	 */
 	_applyPendingReservedRenderSize() {
 
@@ -1495,7 +1500,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	}
 
 	/**
-	 * The current reserved (pre-allocated) square render size in px.
+	 * The current reserved square render size in px: the largest render accepted.
 	 * @returns {number}
 	 */
 	getReservedRenderResolution() {
@@ -1505,9 +1510,8 @@ export class RayzeeRenderer extends EventDispatcher {
 	}
 
 	/**
-	 * Guard against render resolutions the compute pipeline can't support.
-	 * Per-resolution StorageTextures are pre-allocated at MAX_STORAGE_TEXTURE_SIZE
-	 * and never resized, so a larger request would overflow them. Warn and skip.
+	 * Guard against render resolutions the compute pipeline can't support: the per-pixel buffers are
+	 * allocated at MAX_STORAGE_TEXTURE_SIZE, so a larger request would overflow them. Warn and skip.
 	 * @returns {boolean} true if the size is renderable
 	 */
 	_isRenderSizeSupported( width, height ) {
@@ -2546,7 +2550,7 @@ export class RayzeeRenderer extends EventDispatcher {
 	/** Sends the box fog fills to the path tracer: the host's `fogBounds`, else the models'. Measured only while there is fog. */
 	_applyFogBounds() {
 
-		const pathTracer = this.stages.pathTracer;
+		const pathTracer = this.stages?.pathTracer;
 		if ( ! pathTracer || ! ( this.settings.get( 'fogDensity' ) > 0 ) ) return;
 
 		const bounds = this.settings.get( 'fogBounds' );

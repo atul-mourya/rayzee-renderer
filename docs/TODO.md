@@ -52,7 +52,7 @@
 
 ### Chores
 - [ ] minimize unwanted dependencies - <https://github.com/atul-mourya/RayTracing/network/dependencies>
-- [ ] open issues by threejs <https://github.com/mrdoob/three.js/issues/32969> and 33061
+- [ ] open issue by threejs <https://github.com/mrdoob/three.js/issues/32969> (33061 fixed in r185: StorageTextures now resize in place)
 
 ### Regression bench (`bench/`)
 

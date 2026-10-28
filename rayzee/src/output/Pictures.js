@@ -42,7 +42,6 @@ export async function renderToBuffer( app, { colorSpace = 'srgb', preserveAlpha 
 	const target = stage?.storageTextures?.readTarget;
 	if ( ! target ) throw new Error( 'renderToBuffer: no render target — call init() and render at least one sample' );
 
-	// The pool over-allocates to the reserve, so the texture is larger than the frame.
 	const { width, height } = stage;
 	// The accumulation's alpha is always coverage; an opaque backdrop reads back opaque, as the Compositor draws it.
 	const transparent = !! app.settings.get( 'transparentBackground' );
