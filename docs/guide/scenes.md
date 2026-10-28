@@ -79,6 +79,11 @@ ancestor's `textures` folder — and an `Include` pointing at an element you lef
 which is what makes a partial load work. Selecting every element is a valid answer and loads the
 whole scene.
 
+An archive or folder holding several views of one scene side by side (Bistro's `bistro_cafe.pbrt`,
+`bistro_vespa.pbrt` and `bistro_boulangerie.pbrt`, all including one `geometry/` folder) is picked by
+file: `{ element: 'bistro/bistro_vespa.pbrt' }` loads that view and leaves nothing out, as
+`{ pbrtEntry: … }` does.
+
 Past 4 GB unpacked (a USD scene: past 1 GB of layers), a multi-element archive or folder **throws**
 `ARCHIVE_NEEDS_ELEMENT` rather than taking all of it. The error carries the element list — each
 `{ name, prefix, files, bytes, scenes }` — so a host can turn it into a picker:

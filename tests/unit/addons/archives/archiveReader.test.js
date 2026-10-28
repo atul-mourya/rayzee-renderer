@@ -217,6 +217,14 @@ describe( 'selective retention', () => {
 
 	} );
 
+	it( 'element filter given a .pbrt file keeps the whole archive: that file picks the scene, not a subtree', async () => {
+
+		const { entries } = await readTar( tarBlocks( ARCHIVE ), { filter: elementFilter( 'root/scene.pbrt' ) } );
+
+		expect( Object.keys( entries ) ).toHaveLength( ARCHIVE.length );
+
+	} );
+
 	it( 'element filter with nothing chosen keeps the whole archive', async () => {
 
 		const { entries } = await readTar( tarBlocks( ARCHIVE ), { filter: elementFilter( [] ) } );

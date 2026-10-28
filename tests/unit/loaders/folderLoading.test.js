@@ -245,6 +245,28 @@ describe( 'loading a folder', () => {
 
 	} );
 
+	// Bistro: three camera files beside one geometry/ folder they all include.
+	it( 'loads the scene a part names by its .pbrt file, with the folders the scenes share', async () => {
+
+		const file = ( body, name ) => new File( [ body ], name );
+		const folder = localFolder( { name: 'bistro', files: [
+			{ path: 'bistro/bistro_cafe.pbrt', file: file( 'WorldBegin\nInclude "geometry.pbrt"\n', 'bistro_cafe.pbrt' ) },
+			{ path: 'bistro/bistro_vespa.pbrt', file: file( 'WorldBegin\nInclude "geometry.pbrt"\n', 'bistro_vespa.pbrt' ) },
+			{ path: 'bistro/geometry.pbrt', file: file( 'Shape "plymesh" "string filename" "geometry/mesh_00001.ply"\n', 'geometry.pbrt' ) },
+			{ path: 'bistro/geometry/mesh_00001.ply', file: file( 'ply', 'mesh_00001.ply' ) },
+			{ path: 'bistro/textures/wall.png', file: file( 'png', 'wall.png' ) },
+		] } );
+
+		const { importer } = importerWith();
+		importer.loadPBRTFromZip = vi.fn( async () => 'scene' );
+
+		expect( await importer.loadFolder( folder, { element: 'bistro/bistro_vespa.pbrt' } ) ).toBe( 'scene' );
+		const [ , , entry, , source ] = importer.loadPBRTFromZip.mock.calls[ 0 ];
+		expect( entry ).toBe( 'bistro/bistro_vespa.pbrt' );
+		expect( source.listing.filter( e => e.offset !== undefined ).map( e => e.path ) ).toContain( 'bistro/geometry/mesh_00001.ply' );
+
+	} );
+
 } );
 
 describe( 'the asset loader\'s folder entry point', () => {

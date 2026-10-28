@@ -653,6 +653,9 @@ export async function readTar( source, options = {} ) {
 
 }
 
+/** A part named by its .pbrt file picks the scene to load (pbrtEntry); it is no subtree, and leaves out nothing. */
+export const isSceneFileElement = ( path ) => /\.pbrt$/i.test( path ?? '' );
+
 /**
  * Retain-predicate for one or several subtrees of a scene archive.
  *
@@ -664,7 +667,7 @@ export async function readTar( source, options = {} ) {
  */
 export function elementFilter( prefixes ) {
 
-	const chosen = ( Array.isArray( prefixes ) ? prefixes : [ prefixes ] ).filter( Boolean ).map( normalizeTarPath );
+	const chosen = ( Array.isArray( prefixes ) ? prefixes : [ prefixes ] ).filter( ( p ) => p && ! isSceneFileElement( p ) ).map( normalizeTarPath );
 	if ( chosen.length === 0 ) return () => true;
 
 	const siblings = new Map();

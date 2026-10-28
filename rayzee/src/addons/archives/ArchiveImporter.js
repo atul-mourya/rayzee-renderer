@@ -12,7 +12,7 @@ import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
 import { strFromU8 } from 'three/addons/libs/fflate.module.js';
 import {
-	detectArchiveKind, readTarGz, elementFilter, listArchiveElements, openTar, indexTarHeaders, openFolder } from './ArchiveReader.js';
+	detectArchiveKind, readTarGz, elementFilter, isSceneFileElement, listArchiveElements, openTar, indexTarHeaders, openFolder } from './ArchiveReader.js';
 import { openZip, readZipDirectory } from './ZipReader.js';
 import { unpackTarGz, loadTarIndex, saveTarIndex } from './ArchiveCache.js';
 import { setEnvironmentSource } from '../../storage/CDFCache.js';
@@ -89,6 +89,9 @@ export const ARCHIVE_ELEMENT_PROMPT_BYTES = 4_000_000_000;
 
 /** The same question for a USD scene, in USD layer bytes: binary layers hold far more geometry a byte than pbrt text. */
 const USD_ELEMENT_PROMPT_BYTES = 1_000_000_000;
+
+/** The .pbrt file a chosen part names, if one does: that scene is the one to load. */
+const sceneFileElement = ( element ) => ( Array.isArray( element ) ? element : [ element ] ).find( isSceneFileElement ) ?? null;
 
 export class ArchiveImporter {
 
@@ -226,6 +229,8 @@ export class ArchiveImporter {
 	 */
 	async loadArchiveFromFile( file, filename, { pbrtEntry = null, element = null, byteBudget, promptBytes, ...pbrt } = {} ) {
 
+		pbrtEntry ??= sceneFileElement( element );
+
 		try {
 
 			const kind = detectArchiveKind( await this._readHead( file ) );
@@ -283,6 +288,7 @@ export class ArchiveImporter {
 	 */
 	async loadFolder( folder, { pbrtEntry = null, element = null, promptBytes, ...pbrt } = {} ) {
 
+		pbrtEntry ??= sceneFileElement( element );
 		const chosen = ( Array.isArray( element ) ? element : [ element ] ).filter( Boolean );
 		const source = openFolder( folder, { filter: chosen.length ? elementFilter( chosen ) : null } );
 		const totalBytes = source.listing.reduce( ( n, e ) => n + e.size, 0 );
