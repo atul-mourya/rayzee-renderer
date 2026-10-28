@@ -1884,6 +1884,25 @@ export class USDSceneReader {
 
 	}
 
+	/** The clear coat's own normal map, read only under a coat. The engine has no coat bump map. */
+	async mtlxCoatNormal( mat, term, surface ) {
+
+		if ( ! term?.texture || mat.clearcoat <= 0 ) return;
+		if ( term.bump !== undefined ) {
+
+			this.warnOnce( 'mtlx:coatbump', 'MaterialX coat normals from a height map are not read' );
+			return;
+
+		}
+
+		const map = this.transformTexture( await this.image( term.texture, false ), term.transform );
+		if ( ! map ) return;
+		mat.clearcoatNormalMap = map;
+		mat.clearcoatNormalScale.set( term.normalScale ?? 1, term.normalScale ?? 1 );
+		surface.uvSet = term.texture.uvSet;
+
+	}
+
 	/** Coverage: a constant below 1, or the colour map's own alpha. */
 	mtlxOpacity( mat, term ) {
 
@@ -2022,6 +2041,7 @@ export class USDSceneReader {
 
 		this.mtlxOpacity( mat, await t( 'geometry_opacity' ) );
 		await this.mtlxNormal( mat, await t( 'geometry_normal' ), surface );
+		await this.mtlxCoatNormal( mat, await t( 'geometry_coat_normal' ), surface );
 		return surface;
 
 	}
@@ -2122,6 +2142,7 @@ export class USDSceneReader {
 
 		this.mtlxOpacity( mat, await t( 'opacity' ) );
 		await this.mtlxNormal( mat, await t( 'normal' ), surface );
+		await this.mtlxCoatNormal( mat, await t( 'coat_normal' ), surface );
 		return surface;
 
 	}
@@ -2189,6 +2210,7 @@ export class USDSceneReader {
 		}
 
 		await this.mtlxNormal( mat, await t( 'normal' ), surface );
+		await this.mtlxCoatNormal( mat, await t( 'clearcoat_normal' ), surface );
 		return surface;
 
 	}

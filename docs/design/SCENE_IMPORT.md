@@ -154,7 +154,8 @@ USDLoader. Each layer is read only when composition reaches it (`USDFiles` over 
   is glass), sheen, subsurface, translucent; mix, add, layer and multiply weight them; a plain diffuse gets no specular.
   Values fold to a constant, a texture with its gain (`multiply` by a constant), channel (`extract`) and placement (a
   3×3 UV matrix from `place2d`, `tiledimage`, and multiply / add / z-rotate chains, which is how Blender writes its
-  Mapping node; the map is a copy, so materials sharing an image keep their own placement), or a normal / height map.
+  Mapping node; the map is a copy, so materials sharing an image keep their own placement), or a normal / height map;
+  under a coat, its own normal map (`geometry_coat_normal`, `coat_normal`, `clearcoat_normal`; a coat height map is dropped).
   A texture mixed with a colour keeps its larger part; hue shifts of a texture and procedural nodes (noise, ramps) are
   dropped — each said once. three's MaterialXLoader is not used: it reads `.mtlx` documents, translates only
   standard_surface / gltf_pbr / open_pbr (not Blender's BSDF graphs), and builds TSL materials the path tracer cannot run. Ptex is not read: a

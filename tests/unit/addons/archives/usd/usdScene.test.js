@@ -589,6 +589,49 @@ ${extra}` ), 'wood.png': '', 'rough.png': '', 'normal.png': '', 'leather.png': '
 
 	} );
 
+	it( 'gives a clear coat its own normal map, only under a coat, and drops a coat height map', async () => {
+
+		const coated = ( id, coat, input, node = 'normalmap_float' ) => scene( `    token outputs:mtlx:surface.connect = </mat/s.outputs:out>
+    def Shader "s"
+    {
+        uniform token info:id = "${id}"
+        float inputs:${coat} = 1
+        float3 inputs:${input}.connect = </mat/nmap.outputs:out>
+    }
+    def Shader "nimg"
+    {
+        uniform token info:id = "ND_image_vector3"
+        asset inputs:file = @./normal.png@
+    }
+    def Shader "nmap"
+    {
+        uniform token info:id = "ND_${node}"
+        float3 inputs:in.connect = </mat/nimg.outputs:out>
+        float inputs:scale = 0.5
+    }` );
+
+		for ( const [ id, coat, input ] of [
+			[ 'ND_open_pbr_surface_surfaceshader', 'coat_weight', 'geometry_coat_normal' ],
+			[ 'ND_standard_surface_surfaceshader', 'coat', 'coat_normal' ],
+			[ 'ND_gltf_pbr_surfaceshader', 'clearcoat', 'clearcoat_normal' ],
+		] ) {
+
+			const { material } = await materialOf( coated( id, coat, input ), images );
+			expect( material.clearcoatNormalMap.userData.usdPath ).toMatch( /normal\.png$/ );
+			expect( material.clearcoatNormalScale.toArray() ).toEqual( [ 0.5, 0.5 ] );
+			expect( material.normalMap ).toBeNull();
+
+		}
+
+		const bare = await materialOf( coated( 'ND_standard_surface_surfaceshader', 'specular', 'coat_normal' ), images );
+		expect( bare.material.clearcoatNormalMap ).toBeNull();
+
+		const height = await materialOf( coated( 'ND_standard_surface_surfaceshader', 'coat', 'coat_normal', 'heighttonormal_vector3' ), images );
+		expect( [ height.material.clearcoatNormalMap, height.material.bumpMap ] ).toEqual( [ null, null ] );
+		expect( height.result.warnings.some( w => /coat normals from a height map/.test( w ) ) ).toBe( true );
+
+	} );
+
 	const graph = body => scene( `    token outputs:mtlx:surface.connect = </mat/surface.outputs:out>
     def Shader "surface"
     {
