@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { acquireLock, heldLockNames } from '@/core/addons/storage/Locks.js';
 import { sampleHash, fileIdentity, identityKey, sameIdentity, entryIdFor } from '@/core/storage/FileIdentity.js';
 
@@ -60,6 +60,73 @@ describe( 'acquireLock (in-process fallback)', () => {
 		const again = await acquireLock( 'L3', { ifAvailable: true } );
 		expect( again ).not.toBeNull();
 		again();
+
+	} );
+
+} );
+
+describe( 'acquireLock (Web Locks)', () => {
+
+	const webLocks = () => {
+
+		const held = new Map();
+		return {
+			held,
+			request: vi.fn( async ( name, { mode, ifAvailable }, callback ) => {
+
+				if ( name === 'refused' ) throw new DOMException( 'aborted', 'AbortError' );
+				if ( held.has( name ) && ifAvailable ) return callback( null );
+				held.set( name, mode );
+				try {
+
+					return await callback( { name, mode } );
+
+				} finally {
+
+					held.delete( name );
+
+				}
+
+			} ),
+			query: vi.fn( async () => ( { held: [ ...held ].map( ( [ name, mode ] ) => ( { name, mode } ) ) } ) ),
+		};
+
+	};
+
+	afterEach( () => {
+
+		vi.unstubAllGlobals();
+
+	} );
+
+	it( 'holds the browser\'s lock until released, once', async () => {
+
+		const locks = webLocks();
+		vi.stubGlobal( 'navigator', { locks } );
+
+		const release = await acquireLock( 'W1', { mode: 'shared' } );
+		expect( locks.request ).toHaveBeenCalledWith( 'W1', { mode: 'shared', ifAvailable: false }, expect.any( Function ) );
+		expect( await heldLockNames() ).toEqual( new Set( [ 'W1' ] ) );
+
+		release();
+		release();
+		await tick();
+		expect( await heldLockNames() ).toEqual( new Set() );
+
+	} );
+
+	it( 'resolves null when taken and asked only if available, and rejects when the browser refuses', async () => {
+
+		const locks = webLocks();
+		vi.stubGlobal( 'navigator', { locks } );
+
+		const held = await acquireLock( 'W2' );
+		expect( await acquireLock( 'W2', { ifAvailable: true } ) ).toBeNull();
+		held();
+		await expect( acquireLock( 'refused' ) ).rejects.toThrow( 'aborted' );
+
+		locks.query.mockResolvedValueOnce( {} );
+		expect( await heldLockNames() ).toEqual( new Set() );
 
 	} );
 

@@ -1,16 +1,43 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { DataUtils, HalfFloatType, SRGBColorSpace } from 'three';
 
-// Mock Three.js imports
-vi.mock( 'three', () => ( {
-	DataUtils: { fromHalfFloat: ( v ) => v },
-	HalfFloatType: 1016,
-	FloatType: 1015,
-	SRGBColorSpace: 'srgb',
-} ) );
+const cdf = vi.hoisted( () => ( { mode: 'answer', workers: [] } ) );
+
+vi.mock( '@/core/environment/CDFWorker.js?worker&inline', async () => {
+
+	const { buildExactEnvironmentTable } = await import( '@/core/environment/EnvironmentExactTable.js' );
+
+	return { default: class {
+
+		constructor() {
+
+			this.terminate = vi.fn();
+			cdf.workers.push( this );
+
+		}
+
+		postMessage( { floatData, width, height }, transfer ) {
+
+			this.transfer = transfer;
+			setTimeout( () => {
+
+				if ( cdf.mode === 'answer' ) this.onmessage( { data: { width, height, ...buildExactEnvironmentTable( floatData, width, height ) } } );
+				else if ( cdf.mode === 'fail' ) this.onmessage( { data: { error: 'table failed' } } );
+				else if ( cdf.mode === 'crash' ) this.onerror( new Error( 'worker crashed' ) );
+
+			} );
+
+		}
+
+	} };
+
+} );
 
 import { extractFloatData } from '@/core/environment/EquirectHDRInfo.js';
 import { EquirectHDRInfo } from '@/core/environment/EquirectHDRInfo.js';
 import { buildExactEnvironmentTable, packExactTable } from '@/core/environment/EnvironmentExactTable.js';
+
+const srgbToLinear = c => ( c <= 0.04045 ? c / 12.92 : ( ( c + 0.055 ) / 1.055 ) ** 2.4 );
 
 describe( 'extractFloatData', () => {
 
@@ -79,6 +106,160 @@ describe( 'extractFloatData', () => {
 		// New row 0 = old row 1 (blue pixel, white pixel)
 		expect( result.floatData[ 0 ] ).toBeCloseTo( 0 ); // blue.r
 		expect( result.floatData[ 2 ] ).toBeCloseTo( 1 ); // blue.b
+
+	} );
+
+	it( 'expands half floats', () => {
+
+		const values = [ 0.5, 2, 65504, - 1 ];
+		const result = extractFloatData( {
+			type: HalfFloatType,
+			image: { width: 1, height: 1, data: Uint16Array.from( values, v => DataUtils.toHalfFloat( v ) ) },
+		} );
+		expect( [ ...result.floatData ] ).toEqual( values );
+
+	} );
+
+	it( 'scales signed integers by their positive range', () => {
+
+		const short = extractFloatData( { type: 0, image: { width: 1, height: 1, data: Int16Array.of( 32767, - 32767, 0, 16384 ) } } );
+		expect( [ ...short.floatData ] ).toEqual( [ 1, - 1, 0, Math.fround( 16384 / 32767 ) ] );
+		const byte = extractFloatData( { type: 0, image: { width: 1, height: 1, data: Int8Array.of( 127, 0, 0, 127 ) } } );
+		expect( byte.floatData[ 0 ] ).toBe( 1 );
+
+	} );
+
+	it( 'decodes an sRGB texture to linear, alpha untouched', () => {
+
+		const data = new Float32Array( [ 0.5, 0.04, 1, 0.5 ] );
+		const result = extractFloatData( { type: 1015, colorSpace: SRGBColorSpace, image: { width: 1, height: 1, data } } );
+		expect( result.floatData[ 0 ] ).toBeCloseTo( srgbToLinear( 0.5 ), 6 );
+		expect( result.floatData[ 1 ] ).toBeCloseTo( 0.04 / 12.92, 6 );
+		expect( result.floatData[ 2 ] ).toBeCloseTo( 1, 6 );
+		expect( result.floatData[ 3 ] ).toBe( 0.5 );
+		expect( data[ 0 ] ).toBe( 0.5 );
+
+	} );
+
+	it( 'draws an image without data to a canvas and decodes it as sRGB', () => {
+
+		const drawn = [];
+		vi.stubGlobal( 'OffscreenCanvas', class {
+
+			constructor( width, height ) {
+
+				this.size = [ width, height ];
+
+			}
+
+			getContext() {
+
+				return {
+					drawImage: ( image, x, y, w, h ) => drawn.push( [ image, w, h ] ),
+					getImageData: () => ( { data: Uint8ClampedArray.of( 255, 128, 0, 255, 0, 0, 0, 0 ) } ),
+				};
+
+			}
+
+		} );
+
+		try {
+
+			const bitmap = { width: 2, height: 1 };
+			const result = extractFloatData( { type: 1009, image: bitmap } );
+			expect( drawn ).toEqual( [[ bitmap, 2, 1 ]] );
+			expect( result.floatData[ 0 ] ).toBeCloseTo( 1, 6 );
+			expect( result.floatData[ 1 ] ).toBeCloseTo( srgbToLinear( 128 / 255 ), 6 );
+			expect( result.floatData[ 3 ] ).toBe( 1 );
+			expect( [ ...result.floatData.subarray( 4 ) ] ).toEqual( [ 0, 0, 0, 0 ] );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
+} );
+
+describe( 'EquirectHDRInfo', () => {
+
+	const sky = () => {
+
+		const data = new Float32Array( 8 * 4 * 4 );
+		for ( let i = 0; i < 8 * 4; i ++ ) data.set( [ 1 + ( i % 5 ), 1, 0.5 + ( i % 3 ), 1 ], i * 4 );
+		return { type: 1015, flipY: true, image: { width: 8, height: 4, data } };
+
+	};
+
+	afterEach( () => {
+
+		cdf.mode = 'answer';
+		cdf.workers.length = 0;
+
+	} );
+
+	it( 'builds the table on this thread from the unflipped pixels', () => {
+
+		const info = new EquirectHDRInfo();
+		const hdr = sky();
+		info.updateFrom( hdr );
+
+		const { floatData } = extractFloatData( hdr );
+		const expected = buildExactEnvironmentTable( floatData, 8, 4 );
+		expect( [ info.width, info.height ] ).toEqual( [ 8, 4 ] );
+		expect( info.totalSum ).toBe( expected.radianceIntegral );
+		expect( info.totalSum ).toBeGreaterThan( 0 );
+		expect( [ ...info.exactMarginal ] ).toEqual( [ ...expected.exactMarginal ] );
+		expect( [ ...info.exactConditional ] ).toEqual( [ ...expected.exactConditional ] );
+
+	} );
+
+	it( 'builds the same table in a worker, handing it a copy, and ends the worker', async () => {
+
+		const hdr = sky();
+		const main = new EquirectHDRInfo();
+		main.updateFrom( hdr );
+
+		const info = new EquirectHDRInfo();
+		await info.updateFromAsync( hdr );
+		const [ worker ] = cdf.workers;
+		expect( worker.transfer[ 0 ] ).not.toBe( hdr.image.data.buffer );
+		expect( hdr.image.data.byteLength ).toBe( 8 * 4 * 16 );
+		expect( worker.terminate ).toHaveBeenCalledOnce();
+		expect( info._worker ).toBeNull();
+		expect( [ info.width, info.height, info.totalSum ] ).toEqual( [ 8, 4, main.totalSum ] );
+		expect( [ ...info.exactRowGuide ] ).toEqual( [ ...main.exactRowGuide ] );
+		expect( [ ...info.exactMarginalGuide ] ).toEqual( [ ...main.exactMarginalGuide ] );
+
+	} );
+
+	it( 'rejects with the worker\'s error or crash, ending the worker either way', async () => {
+
+		const info = new EquirectHDRInfo();
+		cdf.mode = 'fail';
+		await expect( info.updateFromAsync( sky() ) ).rejects.toThrow( 'table failed' );
+		cdf.mode = 'crash';
+		await expect( info.updateFromAsync( sky() ) ).rejects.toThrow( 'worker crashed' );
+		expect( cdf.workers.map( w => w.terminate.mock.calls.length ) ).toEqual( [ 1, 1 ] );
+		expect( info._worker ).toBeNull();
+		expect( info.totalSum ).toBe( 0 );
+
+	} );
+
+	it( 'drops its table and ends a build in flight on dispose', async () => {
+
+		const info = new EquirectHDRInfo();
+		info.updateFrom( sky() );
+		cdf.mode = 'silent';
+		info.updateFromAsync( sky() );
+		const [ worker ] = cdf.workers;
+
+		info.dispose();
+		expect( worker.terminate ).toHaveBeenCalledOnce();
+		expect( info._worker ).toBeNull();
+		expect( [ info.exactConditional, info.exactMarginal, info.exactRowGuide, info.exactMarginalGuide ] ).toEqual( [ null, null, null, null ] );
 
 	} );
 

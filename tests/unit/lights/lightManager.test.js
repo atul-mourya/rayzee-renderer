@@ -1,145 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// Mock Three.js dependencies before importing LightManager
-vi.mock( 'three', () => {
-
-	class EventDispatcher {
-
-		constructor() {
-
-			this._listeners = {};
-
-		}
-		addEventListener( t, l ) {
-
-			( this._listeners[ t ] ||= [] ).push( l );
-
-		}
-		removeEventListener( t, l ) {
-
-			if ( this._listeners[ t ] ) {
-
-				const i = this._listeners[ t ].indexOf( l ); if ( i > - 1 ) this._listeners[ t ].splice( i, 1 );
-
-			}
-
-		}
-		dispatchEvent( e ) {
-
-			( this._listeners[ e.type ] || [] ).forEach( l => l( e ) );
-
-		}
-
-	}
-
-	class Light {
-
-		constructor( c, i ) {
-
-			this.color = { r: 1, g: 1, b: 1, set() {
-
-				return this;
-
-			}, getHexString() {
-
-				return 'ffffff';
-
-			} };
-			this.intensity = i || 1;
-			this.position = {
-				fromArray( a ) {
-
-					this.x = a[ 0 ]; this.y = a[ 1 ]; this.z = a[ 2 ]; return this;
-
-				},
-				clone() {
-
-					return { x: this.x, y: this.y, z: this.z };
-
-				},
-				x: 0, y: 0, z: 0
-			};
-			this.uuid = Math.random().toString( 36 );
-			this.name = '';
-			this.type = this.constructor.name;
-			this.isLight = true;
-			this.userData = {};
-
-		}
-
-		lookAt() {}
-
-		getWorldDirection() {
-
-			return { x: 0, y: 0, z: - 1 };
-
-		}
-
-	}
-
-	return {
-		EventDispatcher,
-		DirectionalLight: class DirectionalLight extends Light {
-
-			constructor( c, i ) {
-
-				super( c, i ); this.isDirectionalLight = true; this.type = 'DirectionalLight';
-
-			}
-
-		},
-		PointLight: class PointLight extends Light {
-
-			constructor( c, i ) {
-
-				super( c, i ); this.isPointLight = true; this.type = 'PointLight';
-
-			}
-
-		},
-		SpotLight: class SpotLight extends Light {
-
-			constructor( c, i ) {
-
-				super( c, i );
-				this.isSpotLight = true;
-				this.type = 'SpotLight';
-				this.angle = Math.PI / 4;
-				this.target = { position: { set() {}, x: 0, y: 0, z: 0 } };
-
-			}
-
-		},
-		RectAreaLight: class RectAreaLight extends Light {
-
-			constructor( c, i, w, h ) {
-
-				super( c, i );
-				this.isRectAreaLight = true;
-				this.type = 'RectAreaLight';
-				this.width = w || 1;
-				this.height = h || 1;
-
-			}
-
-		},
-		Object3D: class {
-
-			constructor() {
-
-				this.position = { set() {}, x: 0, y: 0, z: 0 };
-
-			}
-
-		},
-		MathUtils: {
-			degToRad: d => d * Math.PI / 180,
-			radToDeg: r => r * 180 / Math.PI,
-		},
-	};
-
-} );
-
+import { DirectionalLight, Group, Object3D, PointLight, RectAreaLight, Scene, SpotLight } from 'three';
 import { LightManager } from '@/core/lights/LightManager.js';
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -442,6 +302,199 @@ describe( 'LightManager', () => {
 			expect( manager.scene ).toBeNull();
 
 		} );
+
+	} );
+
+} );
+
+describe( 'LightManager in a three.js scene', () => {
+
+	function setup( options ) {
+
+		const scene = new Scene();
+		const helpers = { visible: false, sync: vi.fn(), clear: vi.fn(), remove: vi.fn(), update: vi.fn() };
+		const tracer = { updateLights: vi.fn() };
+		return { scene, helpers, tracer, manager: new LightManager( scene, helpers, tracer, options ) };
+
+	}
+
+	const lightsOf = scene => scene.getObjectsByProperty( 'isLight', true );
+
+	it( 'copies a model\'s lights in at their world placement, an area light\'s scale baked into its size', () => {
+
+		const { scene, tracer, manager } = setup();
+		const model = new Scene();
+		const group = new Group();
+		group.position.set( 10, 0, 0 );
+		group.scale.setScalar( 2 );
+		model.add( group );
+		const panel = new RectAreaLight( 0xffffff, 5, 1, 3 );
+		panel.position.set( 1, 0, 0 );
+		const spot = new SpotLight();
+		spot.position.set( 0, 2, 0 );
+		const aim = new Object3D();
+		aim.position.set( 0, - 1, 0 );
+		spot.target = aim;
+		group.add( panel, spot, aim );
+		const sun = new DirectionalLight();
+		sun.target.position.set( 0, 0, - 4 );
+		model.add( sun );
+
+		manager.transferSceneLights( model );
+
+		const [ panelCopy, spotCopy, sunCopy ] = lightsOf( scene );
+		expect( panelCopy ).not.toBe( panel );
+		expect( panelCopy.position.toArray() ).toEqual( [ 12, 0, 0 ] );
+		expect( [ panelCopy.width, panelCopy.height ] ).toEqual( [ 2, 6 ] );
+		expect( panelCopy.scale.toArray() ).toEqual( [ 1, 1, 1 ] );
+		expect( spotCopy.position.toArray() ).toEqual( [ 10, 4, 0 ] );
+		expect( spotCopy.target ).not.toBe( aim );
+		expect( spotCopy.target.parent ).toBe( scene );
+		expect( spotCopy.target.position.toArray() ).toEqual( [ 10, - 2, 0 ] );
+		expect( sunCopy.target.position.toArray() ).toEqual( [ 0, 0, - 4 ] );
+		expect( panel.parent ).toBe( group );
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'empties the light scene for a model without lights and still uploads', () => {
+
+		const { scene, helpers, tracer, manager } = setup();
+		const model = new Scene();
+		model.add( new PointLight() );
+		manager.transferSceneLights( model );
+		tracer.updateLights.mockClear();
+
+		manager.transferSceneLights( new Scene() );
+
+		expect( lightsOf( scene ) ).toEqual( [] );
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+		expect( helpers.sync ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'removes a light together with its target, and refuses anything that is not a light', () => {
+
+		const onReset = vi.fn();
+		const { scene, helpers, manager } = setup( { onReset } );
+		const { uuid } = manager.addLight( 'SpotLight' );
+		const light = manager.getLight( uuid );
+		const target = light.target;
+		onReset.mockClear();
+
+		expect( manager.removeLight( target.uuid ) ).toBe( false );
+		expect( manager.removeLight( 'nobody' ) ).toBe( false );
+		expect( onReset ).not.toHaveBeenCalled();
+
+		expect( manager.removeLight( uuid ) ).toBe( true );
+		expect( scene.children ).toEqual( [] );
+		expect( helpers.remove ).toHaveBeenCalledWith( light );
+		expect( onReset ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'keeps the helpers in step with the lights while they are shown, and clears them when hidden', () => {
+
+		const { scene, helpers, manager } = setup();
+		manager.addLight( 'PointLight' );
+		manager.updateLights();
+		expect( helpers.sync ).not.toHaveBeenCalled();
+		expect( helpers.update ).not.toHaveBeenCalled();
+
+		manager.showHelpers( true );
+		expect( helpers.visible ).toBe( true );
+		expect( helpers.sync ).toHaveBeenLastCalledWith( lightsOf( scene ) );
+
+		manager.addLight( 'SpotLight' );
+		expect( helpers.sync ).toHaveBeenCalledTimes( 2 );
+		expect( helpers.sync.mock.lastCall[ 0 ] ).toHaveLength( 2 );
+		expect( helpers.update ).toHaveBeenCalled();
+
+		manager.setShowLightHelper( false );
+		expect( helpers.visible ).toBe( false );
+		expect( helpers.clear ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'answers to the short names too', () => {
+
+		const { scene, tracer, manager } = setup();
+		const { uuid } = manager.add( 'PointLight' );
+		manager.add( 'DirectionalLight' );
+		expect( manager.getAll().map( l => l.type ) ).toEqual( [ 'PointLight', 'DirectionalLight' ] );
+
+		tracer.updateLights.mockClear();
+		manager.sync();
+		expect( tracer.updateLights ).toHaveBeenCalledOnce();
+
+		expect( manager.remove( uuid ) ).toBe( true );
+		manager.clear();
+		expect( lightsOf( scene ) ).toEqual( [] );
+
+	} );
+
+	it( 'describes a sun\'s size in degrees and its gobo with a scale', () => {
+
+		const { scene, manager } = setup();
+		const sun = new DirectionalLight();
+		sun.userData = { angle: Math.PI / 180, gobo: { name: 'bars', intensity: 0.5 } };
+		scene.add( sun );
+
+		const [ described ] = manager.getLights();
+
+		expect( described.angle ).toBeCloseTo( 1, 9 );
+		expect( described ).toMatchObject( { gobo: 'bars', goboIntensity: 0.5, goboInverted: false, goboScale: 5 } );
+
+	} );
+
+	it( 'describes a spot light\'s gobo without a scale, and its IES profile', () => {
+
+		const { scene, manager } = setup();
+		const spot = new SpotLight();
+		spot.userData = { gobo: { name: 'leaves', intensity: 1, inverted: true, scale: 9 }, ies: { name: 'beam' } };
+		scene.add( spot );
+
+		const [ described ] = manager.getLights();
+
+		expect( described ).toMatchObject( { gobo: 'leaves', goboInverted: true, ies: 'beam', iesIntensity: 1, fixtureLumens: null } );
+		expect( described ).not.toHaveProperty( 'goboScale' );
+
+	} );
+
+	it( 'names an area light\'s shape and emission', () => {
+
+		const { scene, manager } = setup();
+		const shapes = [ 'square', 'disk', 'ellipse', 1, 0, 'rect', undefined ];
+		for ( const shape of shapes ) {
+
+			const panel = new RectAreaLight( 0xffffff, 1, 2, 2 );
+			panel.position.set( 0, 3, 0 );
+			panel.lookAt( 0, 0, 0 );
+			panel.userData = { shape, normalize: false, spread: Math.PI / 2 };
+			scene.add( panel );
+
+		}
+
+		const described = manager.getLights();
+
+		expect( described.map( d => d.shape ) ).toEqual( [ 'square', 'disk', 'ellipse', 'ellipse', 'rectangle', 'rectangle', 'rectangle' ] );
+		expect( described[ 0 ] ).toMatchObject( { normalize: false, spread: 90, width: 2, height: 2 } );
+
+	} );
+
+	it( 'saves a point light\'s range and falloff, and skips a kind of light it cannot make', () => {
+
+		const { scene, manager } = setup();
+		const bulb = new PointLight( 0xffffff, 3, 5, 1 );
+		scene.add( bulb );
+		const records = manager.serialize();
+		expect( records[ 0 ] ).toMatchObject( { type: 'PointLight', distance: 5, decay: 1 } );
+
+		const restored = manager.restore( [ { ...records[ 0 ], type: 'AmbientLight' }, records[ 0 ] ] );
+
+		expect( restored ).toHaveLength( 1 );
+		expect( restored[ 0 ] ).toMatchObject( { isPointLight: true, distance: 5, decay: 1, intensity: 3 } );
+		expect( lightsOf( scene ) ).toEqual( restored );
 
 	} );
 

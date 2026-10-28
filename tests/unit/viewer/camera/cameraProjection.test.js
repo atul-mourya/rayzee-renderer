@@ -356,3 +356,383 @@ describe( 'CameraManager clip start', () => {
 	} );
 
 } );
+
+describe( 'CameraManager cameras', () => {
+
+	function withViews() {
+
+		const made = manager();
+		const { cm } = made;
+		const model = new PerspectiveCamera( 40, 2, 0.1, 100 );
+		model.position.set( 0, 0, 9 );
+		cm.setCameras( [ cm.camera, model ] );
+		cm.camera.position.set( 5, 1, 0 );
+		cm.controls.update();
+		cm.addCameraFromView();
+		cm.camera.position.set( - 5, 1, 0 );
+		cm.controls.update();
+		cm.addCameraFromView( 'Overview' );
+		cm.camera.position.set( 1, 2, 3 );
+		cm.controls.update();
+		return made;
+
+	}
+
+	it( 'names the cameras it holds, a user view by its count', () => {
+
+		const { cm } = withViews();
+		expect( cm.getNames() ).toEqual( [ 'Default Camera', 'Camera 1', 'View Camera 1', 'Overview' ] );
+		expect( cm.active ).toBe( cm.camera );
+
+	} );
+
+	it( 'removes only the views a user added', () => {
+
+		const { cm } = withViews();
+		for ( const index of [ 0, 1, 4, - 1, 1.5, '2' ] ) expect( cm.removeCamera( index ) ).toBe( false );
+		expect( cm.cameras ).toHaveLength( 4 );
+
+	} );
+
+	it( 'keeps the active camera when a view before it goes, and goes home when the active one does', () => {
+
+		const { cm } = withViews();
+		const switched = vi.fn();
+		cm.addEventListener( EngineEvents.CAMERA_SWITCHED, switched );
+		cm.switchCamera( 3 );
+		expect( cm.camera.position.distanceTo( new Vector3( - 5, 1, 0 ) ) ).toBeLessThan( 1e-9 );
+
+		expect( cm.removeCamera( 2 ) ).toBe( true );
+		expect( cm.currentCameraIndex ).toBe( 2 );
+		expect( cm.cameras[ 2 ].name ).toBe( 'Overview' );
+
+		expect( cm.removeCamera( 2 ) ).toBe( true );
+		expect( cm.currentCameraIndex ).toBe( 0 );
+		expect( cm.cameras ).toHaveLength( 2 );
+		expect( cm.camera.position.distanceTo( new Vector3( 1, 2, 3 ) ) ).toBeLessThan( 1e-9 );
+		expect( switched.mock.lastCall[ 0 ].cameraIndex ).toBe( 0 );
+
+	} );
+
+	it( 'leaves the view that slides into a removed active view\'s place as it was', () => {
+
+		const { cm, settings } = withViews();
+		cm.switchCamera( 2 );
+		settings.focusDistance = 42;
+		const next = cm.cameras[ 3 ];
+		const effects = { ...next.userData.__rayzeeEffects };
+
+		cm.removeCamera( 2 );
+
+		expect( cm.currentCameraIndex ).toBe( 0 );
+		expect( next.userData.__rayzeeEffects ).toEqual( effects );
+		expect( effects.focusDistance ).toBe( 5 );
+
+	} );
+
+	it( 'keeps the active index when a view after it goes', () => {
+
+		const { cm } = withViews();
+		cm.switchCamera( 2 );
+		expect( cm.removeCamera( 3 ) ).toBe( true );
+		expect( cm.currentCameraIndex ).toBe( 2 );
+
+	} );
+
+	it( 'falls back to the default camera for an index it does not hold', () => {
+
+		const { cm } = withViews();
+		cm.switchCamera( 1 );
+		const warn = vi.spyOn( console, 'warn' ).mockImplementation( () => {} );
+
+		cm.switchCamera( 9 );
+
+		expect( warn ).toHaveBeenCalledOnce();
+		expect( cm.currentCameraIndex ).toBe( 0 );
+		expect( cm.camera.position.distanceTo( new Vector3( 1, 2, 3 ) ) ).toBeLessThan( 1e-9 );
+		warn.mockRestore();
+
+	} );
+
+	it( 'saves no effects for a view taken before the settings are wired', () => {
+
+		const cm = new CameraManager( canvas() );
+		const index = cm.addCameraFromView();
+		expect( cm.cameras[ index ].userData.__rayzeeEffects ).toBeNull();
+
+	} );
+
+	it( 'takes a square view from a canvas with no size yet', () => {
+
+		const element = canvas();
+		element.clientWidth = 0;
+		expect( new CameraManager( element ).camera.aspect ).toBe( 1 );
+
+	} );
+
+} );
+
+describe( 'CameraManager navigation', () => {
+
+	it( 'orbits around a point it is told to focus on', () => {
+
+		const { cm } = manager();
+		cm._onReset.mockClear();
+
+		cm.focusOn( new Vector3( 1, 2, 3 ) );
+		cm.focusOn( null );
+
+		expect( cm.controls.target.toArray() ).toEqual( [ 1, 2, 3 ] );
+		expect( cm._onReset ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'ignores an orthographic size that is not a positive number', () => {
+
+		const { cm, setProjection } = manager();
+		setProjection( 'orthographic' );
+		cm.setOrthoHeight( 4 );
+		cm._onReset.mockClear();
+
+		for ( const height of [ 0, - 2, NaN, undefined ] ) cm.setOrthoHeight( height );
+
+		expect( cm.orthoHeight ).toBeCloseTo( 4, 9 );
+		expect( cm._onReset ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'walks with the orbit gestures off, and orbits again round the surface ahead, if there is one', () => {
+
+		const { cm } = manager();
+		expect( cm.navigationMode ).toBe( 'orbit' );
+
+		cm.setNavigationMode( 'walk' );
+		expect( cm.navigationMode ).toBe( 'walk' );
+		expect( [ cm.controls.enableRotate, cm.controls.enablePan, cm.controls.enableZoom ] ).toEqual( [ false, false, false ] );
+		cm.setNavigationMode( 'walk' );
+		expect( cm.navigationMode ).toBe( 'walk' );
+
+		cm.setNavigationMode( 'orbit' );
+		expect( cm.controls.enableRotate ).toBe( true );
+		expect( cm.controls.target.length() ).toBeLessThan( 1e-9 );
+
+		cm.setInteractionManager( { pickSurface: vi.fn( () => ( { distance: 4 } ) ) } );
+		cm.setNavigationMode( 'walk' );
+		cm.setNavigationMode( 'orbit' );
+		const ahead = cm.camera.position.clone().addScaledVector( cm.camera.getWorldDirection( new Vector3() ), 4 );
+		expect( cm.controls.target.distanceTo( ahead ) ).toBeLessThan( 1e-9 );
+		expect( cm.interactionManager.pickSurface ).toHaveBeenCalledWith( 0, 0 );
+
+	} );
+
+	it( 'moves the walk before the orbit each frame', () => {
+
+		const { cm } = manager();
+		const walk = vi.spyOn( cm.walkControls, 'update' );
+		const orbit = vi.spyOn( cm.controls, 'update' );
+
+		cm.updateControls();
+
+		expect( walk ).toHaveBeenCalledOnce();
+		expect( orbit ).toHaveBeenCalledOnce();
+		expect( walk.mock.invocationCallOrder[ 0 ] ).toBeLessThan( orbit.mock.invocationCallOrder[ 0 ] );
+
+	} );
+
+	it( 'holds the orbit still while the AF point is being placed', () => {
+
+		const { cm } = manager();
+		cm.enterAFPointPlacementMode();
+		expect( cm.controls.enabled ).toBe( true );
+
+		const interaction = { enterAFPointPlacementMode: vi.fn(), exitAFPointPlacementMode: vi.fn() };
+		cm.setInteractionManager( interaction );
+		cm.enterAFPointPlacementMode();
+		expect( interaction.enterAFPointPlacementMode ).toHaveBeenCalledOnce();
+		expect( cm.controls.enabled ).toBe( false );
+
+		cm.exitAFPointPlacementMode();
+		expect( interaction.exitAFPointPlacementMode ).toHaveBeenCalledOnce();
+		expect( cm.controls.enabled ).toBe( true );
+
+	} );
+
+	it( 'lets go of the canvas on dispose', () => {
+
+		const { cm, setProjection } = manager();
+		setProjection( 'orthographic' );
+		const heights = vi.fn();
+		cm.addEventListener( EngineEvents.ORTHO_HEIGHT_UPDATED, heights );
+		const walk = vi.spyOn( cm.walkControls, 'dispose' );
+		const orbit = vi.spyOn( cm.controls, 'dispose' );
+
+		cm.dispose();
+		cm.camera.zoom = 2;
+		cm.controls.dispatchEvent( { type: 'change' } );
+
+		expect( walk ).toHaveBeenCalledOnce();
+		expect( orbit ).toHaveBeenCalledOnce();
+		expect( heights ).not.toHaveBeenCalled();
+
+	} );
+
+} );
+
+describe( 'CameraManager auto-focus each frame', () => {
+
+	// A surface straight ahead, `depth` along the view axis.
+	function wired( { stage = {} } = {} ) {
+
+		const { cm } = manager();
+		const values = { focusDistance: 5 };
+		const settings = { get: key => values[ key ], set: vi.fn( ( key, value ) => ( values[ key ] = value ) ) };
+		const pathTracer = { enableDOF: { value: true }, cameraProjection: { value: 0 }, resetCount: 0, ...stage };
+		let depth = 10;
+		const point = () => cm.camera.position.clone().addScaledVector( cm.camera.getWorldDirection( new Vector3() ), depth );
+		cm.setInteractionManager( { pickSurface: vi.fn( () => ( { point: point() } ) ) } );
+		const softReset = vi.fn();
+		const hardReset = vi.fn();
+		cm.initAutoFocus( { assetLoader: { getSceneScale: () => 2 }, pathTracer, settings, softReset, hardReset } );
+		const frame = d => {
+
+			depth = d;
+			pathTracer.resetCount ++;
+			cm.updateAutoFocus();
+
+		};
+
+		return { cm, values, settings, softReset, hardReset, frame };
+
+	}
+
+	it( 'writes the focus silently into the settings, eases small changes and snaps large ones', () => {
+
+		const { cm, values, settings, softReset, frame } = wired();
+		const reported = vi.fn();
+		cm.addEventListener( EngineEvents.AUTO_FOCUS_UPDATED, reported );
+
+		frame( 10 );
+		expect( settings.set ).toHaveBeenLastCalledWith( 'focusDistance', expect.closeTo( 10, 9 ), { silent: true } );
+		expect( reported.mock.lastCall[ 0 ] ).toMatchObject( { distance: expect.closeTo( 5, 9 ), worldDistance: expect.closeTo( 10, 9 ) } );
+		expect( softReset ).toHaveBeenCalledOnce();
+
+		frame( 12 );
+		expect( values.focusDistance ).toBeCloseTo( 10.3, 9 );
+		expect( softReset ).toHaveBeenCalledOnce();
+
+		frame( 30 );
+		expect( values.focusDistance ).toBeCloseTo( 30, 9 );
+		expect( softReset ).toHaveBeenCalledTimes( 2 );
+
+	} );
+
+	it( 'starts over on a moved AF point, with a hard reset', () => {
+
+		const { cm, values, hardReset, frame } = wired();
+		frame( 10 );
+		cm.setAFScreenPoint( 0.5, 0.5 );
+
+		frame( 12 );
+
+		expect( values.focusDistance ).toBeCloseTo( 12, 9 );
+		expect( hardReset ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'leaves the focus alone in manual mode, while a final render is being traced, or with nothing to pick with', () => {
+
+		const manual = wired();
+		manual.cm.setAutoFocusMode( 'manual' );
+		manual.frame( 10 );
+		expect( manual.settings.set ).not.toHaveBeenCalled();
+
+		const tracing = wired( { stage: { isReady: true, renderMode: { value: 1 }, frameCount: 3, isComplete: false } } );
+		tracing.frame( 10 );
+		expect( tracing.settings.set ).not.toHaveBeenCalled();
+		expect( tracing.cm.interactionManager.pickSurface ).not.toHaveBeenCalled();
+
+		const done = wired( { stage: { isReady: true, renderMode: { value: 1 }, frameCount: 3, isComplete: true } } );
+		done.frame( 10 );
+		expect( done.settings.set ).toHaveBeenCalled();
+
+		const blind = wired();
+		blind.cm.setInteractionManager( null );
+		blind.frame( 10 );
+		expect( blind.settings.set ).not.toHaveBeenCalled();
+
+		expect( () => new CameraManager( canvas() ).updateAutoFocus() ).not.toThrow();
+
+	} );
+
+	it( 'focuses ten scene sizes away when nothing is under the point and the orbit target is behind the camera', () => {
+
+		const { cm, values, frame } = wired();
+		cm.interactionManager.pickSurface = () => null;
+		cm.controls.target.copy( cm.camera.position ).addScaledVector( cm.camera.getWorldDirection( new Vector3() ), - 3 );
+
+		frame( 0 );
+
+		expect( values.focusDistance ).toBe( 20 );
+
+	} );
+
+} );
+
+describe( 'CameraManager sessions', () => {
+
+	it( 'restores nothing from no state', () => {
+
+		const { cm } = manager();
+		expect( cm.restore( null ) ).toEqual( { mismatched: [] } );
+		expect( cm.restore( undefined ) ).toEqual( { mismatched: [] } );
+
+	} );
+
+	it( 'brings back an orthographic view the user saved, at its size', () => {
+
+		const { cm, setProjection } = manager();
+		setProjection( 'orthographic' );
+		cm.setOrthoHeight( 6 );
+		cm.addCameraFromView( 'Plan' );
+		const state = JSON.parse( JSON.stringify( cm.serialize() ) );
+		expect( state.cameras[ 1 ] ).toMatchObject( { user: true, orthographic: true, fov: null, aspect: null } );
+		expect( state.cameras[ 1 ].frustum ).toHaveLength( 4 );
+		delete state.cameras[ 1 ].zoom;
+
+		const other = manager().cm;
+		other.restore( state );
+
+		const plan = other.cameras[ 1 ];
+		expect( plan ).toBeInstanceOf( OrthographicCamera );
+		expect( plan.name ).toBe( 'Plan' );
+		expect( plan.zoom ).toBe( 1 );
+		expect( ( plan.top - plan.bottom ) / plan.zoom ).toBeCloseTo( 6, 9 );
+		expect( plan.userData.__rayzeeOrbitTarget.toArray() ).toEqual( [ 0, 0, 0 ] );
+
+	} );
+
+	it( 'reports a model camera it cannot match, and opens on the default camera when that was the active one', () => {
+
+		const { cm } = manager();
+		const shot = new PerspectiveCamera( 35, 1.5, 0.1, 100 );
+		shot.name = 'Shot A';
+		cm.setCameras( [ cm.camera, shot ] );
+		cm.switchCamera( 1 );
+		cm.switchCamera( 0 );
+		cm.switchCamera( 1 );
+		const state = JSON.parse( JSON.stringify( cm.serialize() ) );
+		expect( state.current ).toBe( 1 );
+		expect( state.cameras[ 1 ].effects ).not.toBeNull();
+
+		const other = manager().cm;
+		const renamed = new PerspectiveCamera( 35, 1.5, 0.1, 100 );
+		renamed.name = 'Shot B';
+		other.setCameras( [ other.camera, renamed ] );
+
+		expect( other.restore( state ) ).toEqual( { mismatched: [ 'Shot A' ] } );
+		expect( other.currentCameraIndex ).toBe( 0 );
+		expect( renamed.userData.__rayzeeEffects ).toBeUndefined();
+
+	} );
+
+} );

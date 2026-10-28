@@ -223,4 +223,113 @@ describe( 'TimelineManager', () => {
 
 	} );
 
+	it( 'saves its keys as plain data and puts them back, stopping playback first', async () => {
+
+		const { cm, tl } = timeline();
+		frame( cm, 6, 0 );
+		tl.camera.addKey();
+		frame( cm, 0, 6 );
+		tl.camera.addKey();
+
+		const state = JSON.parse( JSON.stringify( tl.serialize() ) );
+		expect( state.camera.map( k => k.time ) ).toEqual( [ 0, 2 ] );
+
+		const other = timeline().tl;
+		const done = other.play();
+		const changes = vi.fn();
+		other.addEventListener( EngineEvents.TIMELINE_CHANGED, changes );
+		other.restore( state );
+		await done;
+
+		expect( other.isPlaying ).toBe( false );
+		expect( other.serialize() ).toEqual( state );
+		expect( other.duration ).toBe( 2 );
+		expect( changes.mock.calls.map( ( [ e ] ) => e.track ) ).toEqual( [ undefined, 'camera' ] );
+
+		other.restore( null );
+		expect( other.camera.keys ).toEqual( [] );
+
+	} );
+
+	it( 'does nothing per frame unless it is playing', () => {
+
+		const { tl } = timeline();
+		tl.camera.addKey();
+		const seek = vi.spyOn( tl, 'seek' );
+
+		tl.update();
+
+		expect( seek ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'does not play the time a page spends hidden', () => {
+
+		const page = Object.assign( new EventTarget(), { hidden: false } );
+		vi.stubGlobal( 'document', page );
+		let now = 1000;
+		vi.spyOn( performance, 'now' ).mockImplementation( () => now );
+		try {
+
+			const { cm, tl } = timeline();
+			frame( cm, 6, 0 );
+			tl.camera.addKey();
+			frame( cm, 0, 6 );
+			tl.camera.addKey();
+			const seek = vi.spyOn( tl, 'seek' );
+
+			tl.play();
+			now += 500;
+			tl.update();
+			page.hidden = true;
+			now += 5000;
+			tl.update();
+			page.hidden = false;
+			page.dispatchEvent( new Event( 'visibilitychange' ) );
+			now += 500;
+			tl.update();
+
+			expect( seek.mock.calls.map( ( [ t ] ) => t ) ).toEqual( [ 0.5, 0.5, 1 ] );
+			expect( tl.isPlaying ).toBe( true );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
+	it( 'stops, lets go of the page and its collaborators on dispose', async () => {
+
+		const page = Object.assign( new EventTarget(), { hidden: false } );
+		const remove = vi.spyOn( page, 'removeEventListener' );
+		vi.stubGlobal( 'document', page );
+		try {
+
+			const { cm, tl, onReset } = timeline();
+			tl.camera.addKey();
+			tl.camera.addKey();
+			const done = tl.play();
+			onReset.mockClear();
+
+			tl.dispose();
+			await done;
+
+			expect( tl.isPlaying ).toBe( false );
+			expect( cm.controls.enabled ).toBe( true );
+			expect( remove ).toHaveBeenCalledWith( 'visibilitychange', expect.any( Function ) );
+			expect( tl._cameraManager ).toBeNull();
+			expect( tl._onReset ).toBeNull();
+			expect( tl.camera._cameraManager ).toBeNull();
+			expect( onReset ).not.toHaveBeenCalled();
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
+
+	} );
+
 } );

@@ -4,6 +4,63 @@ import { STORAGE_KIND } from '@/core/addons/storage/StorageManager.js';
 import { openStorage, acquireSharedStorage } from '@/core/addons/storage/OpenStorage.js';
 import { entryIdFor } from '@/core/storage/FileIdentity.js';
 
+const { workers } = vi.hoisted( () => ( { workers: [] } ) );
+
+vi.mock( '@/core/addons/storage/StorageWorker.js?worker&inline', async () => {
+
+	const { StorageOps } = await import( '@/core/addons/storage/StorageOps.js' );
+
+	class StorageWorker {
+
+		constructor() {
+
+			this.messages = [];
+			this.terminated = false;
+			workers.push( this );
+
+		}
+
+		postMessage( data ) {
+
+			this.messages.push( data );
+			setTimeout( async () => {
+
+				if ( this.terminated ) return;
+				const { id, op, args } = data;
+				try {
+
+					if ( op === 'init' ) {
+
+						this.ops = new StorageOps( args.root ?? navigator.storage.getDirectory().then( top => top.getDirectoryHandle( args.namespace, { create: true } ) ) );
+						this.onmessage( { data: { id, result: {} } } );
+						return;
+
+					}
+
+					this.onmessage( { data: { id, result: await this.ops[ op ]( args ) } } );
+
+				} catch ( error ) {
+
+					this.onmessage( { data: { id, error: { name: error.name, message: error.message } } } );
+
+				}
+
+			} );
+
+		}
+
+		terminate() {
+
+			this.terminated = true;
+
+		}
+
+	}
+
+	return { default: StorageWorker };
+
+} );
+
 const MiB = 1024 * 1024;
 
 async function makeStorage( options = {} ) {
@@ -401,6 +458,75 @@ describe( 'openStorage / acquireSharedStorage', () => {
 
 	} );
 
+	it( 'reports why the file system refused', async () => {
+
+		const restore = createFakeOPFS().install();
+		navigator.storage.getDirectory = async () => {
+
+			throw new DOMException( 'not allowed here', 'SecurityError' );
+
+		};
+
+		try {
+
+			expect( await openStorage( { namespace: 'x' } ) ).toEqual( { storage: null, reason: 'SecurityError: not allowed here' } );
+			const shared = await acquireSharedStorage( 'refused' );
+			expect( shared ).toMatchObject( { storage: null, reason: 'SecurityError: not allowed here' } );
+			shared.release();
+
+		} finally {
+
+			restore();
+
+		}
+
+		const fake = createFakeOPFS();
+		const uninstall = fake.install();
+		const again = await acquireSharedStorage( 'refused' );
+		expect( again.storage ).not.toBeNull();
+		again.release();
+		uninstall();
+
+	} );
+
+	it( 'writes inline inside a worker, and through a worker on a page', async () => {
+
+		const fake = createFakeOPFS();
+		const uninstall = fake.install();
+		vi.stubGlobal( 'Worker', class {} );
+		try {
+
+			vi.stubGlobal( 'WorkerGlobalScope', class {
+
+				static [ Symbol.hasInstance ]() {
+
+					return true;
+
+				}
+
+			} );
+			const inWorker = ( await openStorage( { namespace: 'w' } ) ).storage;
+			expect( inWorker._transport.inline ).toBe( true );
+			expect( workers ).toHaveLength( 0 );
+			inWorker.dispose();
+
+			vi.stubGlobal( 'WorkerGlobalScope', undefined );
+			const onPage = ( await openStorage( { namespace: 'w' } ) ).storage;
+			expect( onPage._transport.inline ).toBeUndefined();
+			expect( workers ).toHaveLength( 1 );
+			await onPage._transport._ready;
+			onPage.dispose();
+
+		} finally {
+
+			vi.unstubAllGlobals();
+			uninstall();
+			workers.length = 0;
+
+		}
+
+	} );
+
 	it( 'shares one manager per namespace and disposes it with the last holder', async () => {
 
 		const fake = createFakeOPFS();
@@ -427,6 +553,69 @@ describe( 'openStorage / acquireSharedStorage', () => {
 			uninstall();
 
 		}
+
+	} );
+
+} );
+
+describe( 'storage through a worker', () => {
+
+	let fake, uninstall, storage, worker;
+
+	beforeEach( async () => {
+
+		fake = createFakeOPFS();
+		uninstall = fake.install();
+		( { storage } = await openStorage( { namespace: 'rayzee', transport: 'worker' } ) );
+		worker = workers.at( - 1 );
+		await storage._transport._ready;
+
+	} );
+
+	afterEach( () => {
+
+		storage.dispose();
+		uninstall();
+		workers.length = 0;
+
+	} );
+
+	it( 'opens the namespace in the worker first, then commits and reads entries through it', async () => {
+
+		expect( worker.messages[ 0 ] ).toMatchObject( { id: 0, op: 'init', args: { namespace: 'rayzee', root: null } } );
+
+		const area = storage.area( 'downloads' );
+		const writer = await area.create( 'k' );
+		await writer.write( 'data', new Uint8Array( [ 4, 5, 6 ] ) );
+		const meta = await writer.commit();
+		expect( meta.files ).toEqual( { data: 3 } );
+		expect( worker.messages.map( m => m.op ) ).toEqual( expect.arrayContaining( [ 'openWriter', 'write', 'closeWriter', 'writeFile' ] ) );
+		expect( new Set( worker.messages.map( m => m.id ) ).size ).toBe( worker.messages.length );
+
+		const entry = await area.open( 'k' );
+		expect( [ ...new Uint8Array( await ( await entry.file( 'data' ) ).arrayBuffer() ) ] ).toEqual( [ 4, 5, 6 ] );
+		entry.release();
+		expect( snapshot( fake.root )[ `rayzee/downloads/${await entryIdFor( 'k' )}/data` ] ).toBe( 3 );
+
+	} );
+
+	it( 'rejects with the worker\'s error, its name kept, and ignores an answer it never asked for', async () => {
+
+		await expect( storage._transport.call( 'readRange', { path: [ 'nowhere' ], name: 'f' } ) ).rejects.toMatchObject( { name: 'NotFoundError', message: 'nowhere not found' } );
+		await expect( storage._transport.call( 'write', { id: 42, buffer: new ArrayBuffer( 1 ) } ) ).rejects.toThrow( 'storage: writer 42 is not open' );
+		expect( () => worker.onmessage( { data: { id: 999, result: {} } } ) ).not.toThrow();
+
+	} );
+
+	it( 'fails what is in flight and anything after once disposed', async () => {
+
+		const pending = storage._transport.call( 'readRange', { path: [ 'a' ], name: 'f' } );
+		const transport = storage._transport;
+		storage.dispose();
+		await expect( pending ).rejects.toThrow( 'storage: transport disposed' );
+		await expect( transport.call( 'readRange', {} ) ).rejects.toThrow( 'storage: transport disposed' );
+		expect( worker.terminated ).toBe( true );
+		transport.dispose();
 
 	} );
 

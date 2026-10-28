@@ -1,27 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-
-// Mock Three.js (LightSerializer imports Vector3, Quaternion)
-vi.mock( 'three', () => ( {
-	Vector3: class {
-
-		constructor( x = 0, y = 0, z = 0 ) {
-
-			this.x = x; this.y = y; this.z = z;
-
-		}
-
-	},
-	Quaternion: class {
-
-		constructor() {
-
-			this.x = 0; this.y = 0; this.z = 0; this.w = 1;
-
-		}
-
-	}
-} ) );
-
+import { DirectionalLight, Group, PointLight, RectAreaLight, Scene, SpotLight } from 'three';
 import { LightSerializer } from '@/core/lights/LightSerializer.js';
 
 describe( 'LightSerializer', () => {
@@ -474,6 +452,142 @@ describe( 'LightSerializer', () => {
 			expect( stats.areaLights[ 0 ].size ).toBe( 16 );
 
 		} );
+
+	} );
+
+} );
+
+describe( 'LightSerializer with three.js lights', () => {
+
+	const at = ( light, x, y, z ) => {
+
+		light.position.set( x, y, z );
+		return light;
+
+	};
+
+	it( 'skips hidden lights of every kind', () => {
+
+		const serializer = new LightSerializer();
+		for ( const light of [ new DirectionalLight(), new RectAreaLight( 0xffffff, 1, 1, 1 ), new PointLight( 0xffffff, 1 ), new SpotLight( 0xffffff, 1 ) ] ) {
+
+			light.visible = false;
+			serializer.addDirectionalLight( light );
+			serializer.addRectAreaLight( light );
+			serializer.addPointLight( light );
+			serializer.addSpotLight( light );
+
+		}
+
+		expect( [ serializer.directionalLightCache, serializer.areaLightCache, serializer.pointLightCache, serializer.spotLightCache ].map( c => c.length ) ).toEqual( [ 0, 0, 0, 0 ] );
+
+	} );
+
+	it( 'aims a sun from its target, or from the origin when it has none', () => {
+
+		const serializer = new LightSerializer();
+		const aimed = at( new DirectionalLight(), 0, 3, 4 );
+		aimed.target.position.set( 0, 3, 0 );
+		const loose = at( new DirectionalLight(), 0, 3, 4 );
+		loose.target = null;
+
+		serializer.addDirectionalLight( aimed );
+		serializer.addDirectionalLight( loose );
+
+		const [ a, b ] = serializer.directionalLightCache.map( c => c.data.slice( 0, 3 ) );
+		expect( a.map( v => v + 0 ) ).toEqual( [ 0, 0, 1 ] );
+		expect( b[ 1 ] ).toBeCloseTo( 0.6, 6 );
+		expect( b[ 2 ] ).toBeCloseTo( 0.8, 6 );
+
+	} );
+
+	it( 'packs a sun\'s gobo as its layer, a strength whose sign is the inversion, and its scale', () => {
+
+		const serializer = new LightSerializer();
+		const plain = new DirectionalLight( 0xffffff, 1 );
+		const inverted = new DirectionalLight( 0xffffff, 1 );
+		inverted.userData.gobo = { index: 2, intensity: 0.5, inverted: true, scale: 3 };
+		const loose = new DirectionalLight( 0xffffff, 1 );
+		loose.userData.gobo = { index: 1.5, intensity: '0.5' };
+
+		[ plain, inverted, loose ].forEach( light => serializer.addDirectionalLight( light ) );
+
+		expect( serializer.directionalLightCache.map( c => c.data.slice( 8, 12 ) ) ).toEqual( [
+			[ - 1, 1, 5, 0 ],
+			[ 2, - 0.5, 3, 0 ],
+			[ - 1, 1, 5, 0 ],
+		] );
+
+	} );
+
+	it( 'packs a spot light\'s cone, falloff, gobo and IES profile, with defaults for what it lacks', () => {
+
+		const serializer = new LightSerializer();
+		const shaped = at( new SpotLight( 0xffffff, 4 * Math.PI, 7, 0.4, 0.3, 1 ), 0, 2, 0 );
+		shaped.userData.gobo = { index: 3, intensity: 0.8, inverted: true };
+		shaped.userData.ies = { index: 1, intensity: 0.25 };
+		const bare = at( new SpotLight( 0xffffff, 4 * Math.PI ), 0, 0, 0 );
+		Object.assign( bare, { angle: 0, penumbra: undefined, decay: undefined, target: null } );
+
+		serializer.addSpotLight( shaped );
+		serializer.addSpotLight( bare );
+
+		const [ a, b ] = serializer.spotLightCache.map( c => c.data );
+		expect( a.slice( 3, 6 ).map( v => v + 0 ) ).toEqual( [ 0, - 1, 0 ] );
+		expect( a.slice( 9 ) ).toEqual( [ expect.closeTo( 1, 9 ), 0.4, 0.3, 7, 1, 3, - 0.8, 1, 0.25, 0, 0 ] );
+		expect( b.slice( 3, 6 ).map( v => v + 0 ) ).toEqual( [ 0, 0, - 1 ] );
+		expect( b.slice( 10 ) ).toEqual( [ Math.PI / 4, 0, 0, 2, - 1, 1, - 1, 1, 0, 0 ] );
+
+	} );
+
+	it( 'leaves a light white when its temperature is off, and takes 6500 K when it gives none', () => {
+
+		const serializer = new LightSerializer();
+		const off = new PointLight( 0xffffff, 1 );
+		off.userData = { useTemperature: false, temperature: 2000 };
+		const unset = new PointLight( 0xffffff, 1 );
+		unset.userData = { useTemperature: true };
+		const daylight = new PointLight( 0xffffff, 1 );
+		daylight.userData = { useTemperature: true, temperature: 6500 };
+
+		[ off, unset, daylight ].forEach( light => serializer.addPointLight( light ) );
+
+		const [ a, b, c ] = serializer.pointLightCache.map( cache => cache.data.slice( 3, 6 ) );
+		expect( a ).toEqual( [ 1, 1, 1 ] );
+		expect( b ).toEqual( c );
+		expect( b[ 2 ] ).not.toBe( 1 );
+
+	} );
+
+	it( 'gathers a whole scene, nested lights too, each list brightest first', () => {
+
+		const log = vi.spyOn( console, 'log' ).mockImplementation( () => {} );
+		const scene = new Scene();
+		const group = new Group();
+		scene.add( group );
+		group.add( at( new PointLight( 0xffffff, 10 ), 1, 0, 0 ) );
+		scene.add( at( new PointLight( 0xffffff, 1000 ), 2, 0, 0 ) );
+		scene.add( new SpotLight( 0xffffff, 1 ), new SpotLight( 0xffffff, 50 ) );
+		scene.add( new RectAreaLight( 0xffffff, 1, 1, 1 ), new RectAreaLight( 0xffffff, 1, 4, 4 ) );
+		scene.add( new DirectionalLight( 0xffffff, 2 ) );
+		const material = { defines: {}, uniforms: { directionalLights: {}, areaLights: {}, pointLights: {}, spotLights: {} } };
+		const serializer = new LightSerializer();
+
+		serializer.processSceneLights( scene, material );
+		serializer.processSceneLights( scene, material );
+
+		expect( material.defines ).toMatchObject( { MAX_DIRECTIONAL_LIGHTS: 1, MAX_AREA_LIGHTS: 2, MAX_SPOT_LIGHTS: 2 } );
+		expect( material.uniforms.directionalLights.value ).toHaveLength( 12 );
+		expect( material.uniforms.areaLights.value ).toHaveLength( 32 );
+		expect( material.uniforms.pointLights.value ).toHaveLength( 20 );
+		expect( material.uniforms.spotLights.value ).toHaveLength( 40 );
+		expect( material.uniforms.pointLights.value[ 0 ] ).toBe( 2 );
+		expect( material.uniforms.pointLights.value[ 10 ] ).toBe( 1 );
+		expect( material.uniforms.spotLights.value[ 9 ] ).toBeCloseTo( 50 / ( 4 * Math.PI ), 5 );
+		expect( material.uniforms.areaLights.value[ 3 ] ).toBeCloseTo( 2, 6 );
+		expect( material.needsUpdate ).toBe( true );
+		expect( log ).toHaveBeenCalledWith( 'Preprocessed 2 point lights by importance' );
+		log.mockRestore();
 
 	} );
 

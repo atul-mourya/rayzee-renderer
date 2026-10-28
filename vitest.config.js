@@ -95,6 +95,7 @@ export default defineConfig( {
 			// Match app/vite.config.js. Without this, `import ... from 'rayzee'` resolves through
 			// node_modules to the prebuilt dist bundle, so tests silently exercise the last build
 			// instead of the working tree.
+			"rayzee/encoders": path.resolve( __dirname, "rayzee/src/output/ImageEncoders.js" ),
 			"rayzee": path.resolve( __dirname, "rayzee/src/index.js" ),
 			"@/core": path.resolve( __dirname, "rayzee/src" ),
 			"@": path.resolve( __dirname, "app/src" ),
