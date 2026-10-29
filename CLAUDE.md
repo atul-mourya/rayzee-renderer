@@ -946,6 +946,16 @@ emissive data and instance table in place of the scene's, and emitters stopped b
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
 keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
 
+**Material images are decoded only to be packed.** A glTF's embedded image (every glTF image in Node) and every image of
+a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG or JPEG arrives without
+pixels, its size from its header (`imageHeaderSize`), and the packer holds a group's images while it packs them
+(`holdImages` / `releaseImages`, counted per source) and lets them go, `image` then `{ width, height, data: null,
+thumbnail }` (128 px, the app's preview). Bistro in Chrome: tab 5.0 → 1.5–1.7 GB after load, peak 6.3 → 3.4–3.6 GB, load
+15–17 → 9–11 s; 24155522.glb's tab 2.2–2.5 → 1.2 GB. A rebuild decodes them again (24155522.glb 0.68 → 0.79 s). ⚠️ Code
+that reads a material map's pixels holds it first (the pbrt builder's `_readPixels`, released when the build ends). ⚠️
+An archive unpacked to OPFS (`source.transient`) hands its images over as copies: that storage can be evicted once the
+load lets go of it.
+
 **A large bucket is never whole in memory.** Past `PACK_GROUP_BYTES` (256 MB) TextureCreator packs it 256 MB of layers
 at a time and hands each group to its `layerSink` (`textureLayerSink( renderer )` in `PathTracerStage.js`), which writes
 it straight into the GPU array (created with `source.dataReady = false`). Each group is packed by the whole bucket's

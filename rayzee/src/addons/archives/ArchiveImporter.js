@@ -27,7 +27,8 @@ import { extractSceneMetadata } from '../../loaders/SceneMetadata.js';
 import { ISSUE_CODES, ISSUE_SEVERITY, EngineIssueError } from '../../EngineIssues.js';
 import { ARCHIVE_FORMATS } from '../../loaders/ArchiveFormats.js';
 import { withHostWorker, getPlatform, timeSlicer } from '../../Platform.js';
-import { platformImageFromBytes } from '../../loaders/PlatformImageLoader.js';
+import { platformImageFromBytes, platformImagePlaceholder, imageHeaderSize, IMAGE_HEADER_BYTES } from '../../loaders/PlatformImageLoader.js';
+import { setImageReader } from '../../materials/TextureCreator.js';
 import { updateLoading } from '../../EngineEvents.js';
 
 const MTL_TEXTURE_TIMEOUT_MS = 30000;
@@ -48,6 +49,23 @@ const joinPath = ( dir, ref ) => {
 	}
 
 	return out.join( '/' );
+
+};
+
+const imageKind = ( fname ) => {
+
+	const ext = fname.split( '.' ).pop().toLowerCase();
+	return [ 'exr', 'hdr', 'pfm', 'tga' ].includes( ext ) ? ext : 'drawable';
+
+};
+
+// What `_pbrtTextureFromBytes` makes of a png / jpg / webp / gif / bmp, pixels or none.
+const drawableTexture = ( tex ) => {
+
+	tex.colorSpace = SRGBColorSpace;
+	tex.wrapS = tex.wrapT = RepeatWrapping;
+	tex.needsUpdate = true;
+	return tex;
 
 };
 
@@ -226,7 +244,7 @@ export class ArchiveImporter {
 
 					try {
 
-						return await this._loadSeekable( unpacked.file, filename, { ...lazy, index: unpacked.index } );
+						return await this._loadSeekable( unpacked.file, filename, { ...lazy, index: unpacked.index, transient: true } );
 
 					} finally {
 
@@ -293,9 +311,11 @@ export class ArchiveImporter {
 	 * entry only when the scene asks for it.
 	 * @private
 	 */
-	async _loadSeekable( file, filename, { element, promptBytes, pbrtEntry, pbrt, index = null, zip = false, archiveId = null } ) {
+	async _loadSeekable( file, filename, { element, promptBytes, pbrtEntry, pbrt, index = null, zip = false, archiveId = null, transient = false } ) {
 
 		const source = await this._openSeekableArchive( file, filename, element, promptBytes, { index, zip } );
+		// Storage that can be evicted once the load lets go of it: images are copied out, not referenced.
+		source.transient = transient;
 		return await this._loadSource( source, filename, { element, pbrtEntry, pbrt, archiveId, promptBytes } );
 
 	}
@@ -314,7 +334,7 @@ export class ArchiveImporter {
 		const entries = Object.create( null );
 		for ( const e of source.listing ) if ( e.offset !== undefined ) entries[ e.path ] = source.entries[ e.path ] ?? await source.slice( e.path );
 		const result = this._mainModelPath( Object.keys( entries ) )?.usd
-			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing } )
+			? await this.loadUSDScene( entries, filename, { ...pbrt, element, promptBytes, listing: source.listing, transient: source.transient } )
 			: await this._loadNonPBRTArchive( entries, filename );
 		this.loader._sourceKey = this.loader._keyed( kind, archiveId );
 		return result;
@@ -343,7 +363,7 @@ export class ArchiveImporter {
 			const decoded = await decodeSceneGraph( manifest, data, {
 				loadTexture: async ( path, loader ) => {
 
-					const bytes = await vfs.readPath( path );
+					const bytes = loader === 'environment' ? await vfs.readPath( path ) : await vfs.readBlob( path );
 					if ( ! bytes ) return null;
 					return loader === 'environment' ? envFromBytes( bytes, path ) : imageFromBytes( bytes, path );
 
@@ -789,13 +809,31 @@ export class ArchiveImporter {
 
 	}
 
-	/** A texture map from an archive, tagged with its path so a stored scene can read it back. @private */
-	async _archiveImage( bytes, fname ) {
+	/**
+	 * A texture map from an archive (`entry`: its bytes or Blob), tagged with its path so a stored scene can read it back.
+	 * Its pixels are decoded from the archive only while the texture arrays are packed. @private
+	 */
+	async _archiveImage( entry, fname ) {
 
+		const blob = asBlob( entry );
+		const read = async () => ( await this._pbrtTextureFromBytes( new Uint8Array( await blob.arrayBuffer() ), fname ) ).image;
 		let texture;
 		try {
 
-			texture = await this._pbrtTextureFromBytes( bytes, fname );
+			const size = imageKind( fname ) === 'drawable' && ( getPlatform().decodeImage || typeof createImageBitmap === 'function' )
+				? imageHeaderSize( new Uint8Array( await blob.slice( 0, IMAGE_HEADER_BYTES ).arrayBuffer() ) )
+				: null;
+			if ( size ) {
+
+				texture = drawableTexture( getPlatform().decodeImage ? platformImagePlaceholder( size.width, size.height ) : new Texture( { ...size, data: null } ) );
+				setImageReader( texture, read, { resident: false } );
+
+			} else {
+
+				texture = await this._pbrtTextureFromBytes( await bytesOf( entry ), fname );
+				setImageReader( texture, read );
+
+			}
 
 		} catch ( error ) {
 
@@ -835,7 +873,8 @@ export class ArchiveImporter {
 
 	/**
 	 * A USD scene from a folder's or archive's files (path → bytes or Blob), each layer read as composition reaches it.
-	 * @param {object} [options] - `element`, `promptBytes`, `listing` (every file, loaded or not), and loadArchiveFromFile's budgets
+	 * @param {object} [options] - `element`, `promptBytes`, `listing` (every file, loaded or not), `transient` (entries
+	 *   that cannot be read after the load), and loadArchiveFromFile's budgets
 	 */
 	async loadUSDScene( entries, filename, options = {} ) {
 
@@ -875,8 +914,8 @@ export class ArchiveImporter {
 			pauseBuild: this._buildPause( slice ),
 			resolveImage: async path => {
 
-				const bytes = await files.read( path );
-				return bytes ? this._archiveImage( bytes, path ) : null;
+				const entry = entries[ path ] instanceof Blob && ! options.transient ? entries[ path ] : await files.read( path );
+				return entry ? this._archiveImage( entry, path ) : null;
 
 			},
 			resolveEnvironment: async path => {
@@ -988,6 +1027,16 @@ export class ArchiveImporter {
 		const ext = fname.split( '.' ).pop().toLowerCase();
 		let tex;
 
+		if ( imageKind( fname ) === 'drawable' ) {
+
+			// png / jpg / webp / gif / bmp: the host's decoder where it has one (Node), else the browser's.
+			if ( getPlatform().decodeImage ) tex = await platformImageFromBytes( bytes, fname );
+			else if ( typeof createImageBitmap === 'function' ) tex = new Texture( await createImageBitmap( new Blob( [ bytes ] ) ) );
+			else throw new Error( 'no image decoder in this runtime: configurePlatform( nodePlatform( { decodeImage } ) ) — see "Running in Node"' );
+			return drawableTexture( tex );
+
+		}
+
 		if ( ext === 'exr' || ext === 'hdr' ) {
 
 			const loader = ext === 'hdr'
@@ -1010,14 +1059,6 @@ export class ArchiveImporter {
 			}
 
 			tex = await this._loadViaObjectURL( this.loader.loaderCache.tga, bytes );
-			tex.colorSpace = SRGBColorSpace;
-
-		} else {
-
-			// png / jpg / webp / gif / bmp: the host's decoder where it has one (Node), else the browser's.
-			if ( getPlatform().decodeImage ) tex = await platformImageFromBytes( bytes, fname );
-			else if ( typeof createImageBitmap === 'function' ) tex = new Texture( await createImageBitmap( new Blob( [ bytes ] ) ) );
-			else throw new Error( 'no image decoder in this runtime: configurePlatform( nodePlatform( { decodeImage } ) ) — see "Running in Node"' );
 			tex.colorSpace = SRGBColorSpace;
 
 		}

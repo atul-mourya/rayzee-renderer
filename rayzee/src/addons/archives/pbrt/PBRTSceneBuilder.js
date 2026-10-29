@@ -31,6 +31,7 @@ import { octahedralToEquirect } from './EqualAreaOctahedral.js';
 import { tessellateCurve, tessellateCurves } from './PBRTCurves.js';
 import * as M from './PBRTMath.js';
 import { packUnitAttribute, computeInstanceBoundingBoxes } from '../../../scene/GeometryExtractor.js';
+import { holdImages, releaseImages } from '../../../materials/TextureCreator.js';
 
 const LAMP_TYPES = new Set( [ 'distant', 'point', 'spot' ] );
 
@@ -619,6 +620,7 @@ export class PBRTSceneBuilder {
 		this._noUVMaterials = new Map(); // textured material -> its map-less clone
 		this._plyCache = new Map(); // filename -> Promise<BufferGeometry|null>
 		this._imageCache = new Map(); // filename -> Promise<Texture|null>, decoded once for every named texture
+		this._heldImages = new Map(); // source -> its hold: images a bake read, held until the build ends
 		this._termCache = new Map(); // texture name + channels -> Promise<{rgb}|{layer, tint?}|null>
 		this._mediumMaterials = new Map(); // material -> Map(medium name -> material with its attenuation)
 		this._alphaMaterials = new Map(); // material -> Map(alpha texture name or #value -> Promise<material>)
@@ -1833,8 +1835,18 @@ export class PBRTSceneBuilder {
 
 		let out = this._oneUVSets.get( material );
 		if ( out ) return out;
-		out = material;
 		const set = uvSetOf( material );
+		const other = ( slot ) => material[ slot ] && uvKey( material[ slot ].userData.pbrtUV ) !== uvKey( set );
+		out = UV_MAPS.some( other ) ? this._inOneUVSet( material, set ) : material;
+		this._oneUVSets.set( material, out );
+		return out;
+
+	}
+
+	/** @private */
+	async _inOneUVSet( material, set ) {
+
+		let out = material;
 		const what = ( uv ) => ( uv ? `a "${uv.type}" mapping` : 'the mesh\'s uv' );
 
 		for ( const slot of UV_MAPS ) {
@@ -1844,7 +1856,7 @@ export class PBRTSceneBuilder {
 			if ( out === material ) out = cloneMaterial( material );
 			out[ slot ] = null;
 			const scalar = MAP_SCALARS[ slot ];
-			const layer = scalar && this._textureLayer( map, 1 );
+			const layer = scalar && await this._textureLayer( map, 1 );
 			if ( layer ) out[ scalar ] *= layerMean( layer );
 			const message = `a ${slot} in ${what( map.userData.pbrtUV )} on a surface textured in ${what( set )}: ` +
 				`one uv set a surface — ${layer ? 'its mean used' : 'dropped'}`;
@@ -1937,7 +1949,7 @@ export class PBRTSceneBuilder {
 		if ( filename && colorMap?.userData.pbrtImage === filename
 			&& pFloat( def.params, 'scale', 1 ) === 1 && ! pBool( def.params, 'invert', false ) && sameMapping( colorMap, mapping ) ) {
 
-			const pixels = texturePixels( colorMap );
+			const pixels = await this._readPixels( colorMap );
 			const own = pixels && withDecodedAlpha( pixels, decoderFor( def.params ) );
 			if ( own ) {
 
@@ -1951,7 +1963,7 @@ export class PBRTSceneBuilder {
 		const alpha = await this._bakeTerm( name, 1 );
 		if ( ! alpha ) return null;
 		if ( ! alpha.layer ) return { constant: alpha.rgb[ 0 ] };
-		const color = colorMap ? this._textureLayer( colorMap, 3 ) : null;
+		const color = colorMap ? await this._textureLayer( colorMap, 3 ) : null;
 		if ( colorMap && ! color ) return null;
 		const baked = this._bake( `alpha "${name}"`, [ color ? { layer: color } : { rgb: [ 1, 1, 1 ] }, alpha ], ( [ c ] ) => c, { alphaOf: ( [ , a ] ) => a[ 0 ] } );
 		return baked && bakedTexture( baked );
@@ -2397,7 +2409,7 @@ export class PBRTSceneBuilder {
 		if ( def?.class === 'imagemap' ) {
 
 			const filename = pString( def.params, 'filename', null );
-			const pixels = texturePixels( filename && await this._image( filename ) );
+			const pixels = await this._readPixels( filename && await this._image( filename ) );
 			if ( ! pixels ) return null;
 			return { layer: makeLayer( pixels, {
 				channels, decode: pixels.float ? null : decoderFor( def.params ),
@@ -2409,15 +2421,33 @@ export class PBRTSceneBuilder {
 		const resolved = await this._resolveNamedTexture( name );
 		if ( ! resolved ) return null;
 		if ( ! resolved.texture ) return resolved.constant ? { rgb: resolved.constant } : null;
-		const layer = this._textureLayer( resolved.texture, channels );
+		const layer = await this._textureLayer( resolved.texture, channels );
 		return layer ? { layer, tint: resolved.constant ?? null } : null;
 
 	}
 
-	// A texture already built for a material (an image or a bake) as a layer, in the mapping it carries.
-	_textureLayer( texture, channels ) {
+	/** texturePixels, the image held (decoded once) until the build ends. @private */
+	async _readPixels( texture ) {
 
-		const pixels = texturePixels( texture );
+		if ( ! texture ) return null;
+		if ( ! this._heldImages.has( texture.source ) ) this._heldImages.set( texture.source, holdImages( [ texture ] ) );
+		await this._heldImages.get( texture.source );
+		return texturePixels( texture );
+
+	}
+
+	/** Lets go of the images the bakes read; the texture arrays decode them again when packed. */
+	releaseImages() {
+
+		releaseImages( [ ...this._heldImages.keys() ].map( ( source ) => ( { source } ) ) );
+		this._heldImages.clear();
+
+	}
+
+	// A texture already built for a material (an image or a bake) as a layer, in the mapping it carries.
+	async _textureLayer( texture, channels ) {
+
+		const pixels = await this._readPixels( texture );
 		if ( ! pixels ) return null;
 		const srgb = ! pixels.float && texture.colorSpace === SRGBColorSpace;
 		return makeLayer( pixels, {
@@ -2439,15 +2469,15 @@ export class PBRTSceneBuilder {
 		if ( ! amount.layer ) return { mean: amount.rgb[ 0 ], texture: null };
 
 		const mean = layerMean( amount.layer );
-		const term = ( m ) => {
+		const term = async ( m ) => {
 
 			if ( ! m.map ) return { rgb: m.color.toArray(), clamp: true };
-			const layer = this._textureLayer( m.map, 3 );
+			const layer = await this._textureLayer( m.map, 3 );
 			return layer && { layer, tint: m.color.toArray(), clamp: true };
 
 		};
 
-		const a = term( matA ), b = term( matB );
+		const a = await term( matA ), b = await term( matB );
 		if ( ! a || ! b ) return { mean, texture: null };
 		const baked = this._bake( `mix amount "${amountName}"`, [ a, b, amount ], mixOf );
 		return { mean, texture: baked ? bakedTexture( baked ) : null };

@@ -13,7 +13,7 @@ import { updateLoading } from '../EngineEvents.js';
 import { BuildTimer } from '../scene/BuildTimer.js';
 import { computeInstanceBoundingBoxes } from '../scene/GeometryExtractor.js';
 import { getPlatform, hasImageDecoder, withHostWorker } from '../Platform.js';
-import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin } from './PlatformImageLoader.js';
+import { loadPlatformImage, platformImagesPlugin, missingImageDecoderPlugin, embeddedImagesPlugin } from './PlatformImageLoader.js';
 import { diffuseTransmissionPlugin } from './GLTFDiffuseTransmission.js';
 import { decodersOnDemand } from './GLTFDecoders.js';
 import { extractSceneMetadata } from './SceneMetadata.js';
@@ -892,6 +892,7 @@ export class AssetLoader extends EventDispatcher {
 		const loader = decodersOnDemand( new GLTFLoader( this._loadingManager ), this.renderer );
 		const onImageFailure = ( where, error ) => this._reportImageFailure( where, error );
 		if ( getPlatform().decodeImage ) loader.register( ( parser ) => platformImagesPlugin( parser, onImageFailure ) );
+		else if ( typeof createImageBitmap === 'function' ) loader.register( ( parser ) => embeddedImagesPlugin( parser, onImageFailure ) );
 		else if ( ! hasImageDecoder() ) loader.register( ( parser ) => missingImageDecoderPlugin( parser, onImageFailure ) );
 		loader.register( ( parser ) => diffuseTransmissionPlugin( parser ) );
 		loader.register( () => cameraClipPlugin );

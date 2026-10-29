@@ -40,7 +40,8 @@ const TexturePreview = ( { texture, label, tip, actions, expanded, onToggle } ) 
 
 				} else {
 
-					context.drawImage( image, x, y, width, height );
+					// The engine lets go of a map's pixels once packed, keeping a thumbnail.
+					context.drawImage( image.thumbnail ?? image, x, y, width, height );
 
 				}
 

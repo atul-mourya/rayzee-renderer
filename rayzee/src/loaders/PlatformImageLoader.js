@@ -1,5 +1,9 @@
-import { DataTexture, LoaderUtils, RGBAFormat, UnsignedByteType } from 'three';
+import { DataTexture, LoaderUtils, RGBAFormat, Texture, UnsignedByteType } from 'three';
 import { getPlatform } from '../Platform.js';
+import { setImageReader } from '../materials/TextureCreator.js';
+
+// Enough of a file for the size of nearly any PNG or JPEG; JPEG metadata before the frame header can run long.
+export const IMAGE_HEADER_BYTES = 256 * 1024;
 
 const MIME_BY_EXTENSION = [[ /\.jpe?g(\?|#|$)/i, 'image/jpeg' ], [ /\.webp(\?|#|$)/i, 'image/webp' ], [ /\.avif(\?|#|$)/i, 'image/avif' ]];
 
@@ -27,8 +31,66 @@ function trimPNG( bytes ) {
 
 }
 
+/**
+ * A PNG's or JPEG's size from its header, or null: other formats, a header past `bytes`, and an image whose metadata may
+ * turn it (a JPEG's Exif, a PNG's eXIf) are decoded to learn it.
+ */
+export function imageHeaderSize( bytes ) {
+
+	const u32 = ( i ) => ( ( bytes[ i ] << 24 ) | ( bytes[ i + 1 ] << 16 ) | ( bytes[ i + 2 ] << 8 ) | bytes[ i + 3 ] ) >>> 0;
+	const u16 = ( i ) => ( bytes[ i ] << 8 ) | bytes[ i + 1 ];
+	const tag = ( i, name ) => String.fromCharCode( bytes[ i ], bytes[ i + 1 ], bytes[ i + 2 ], bytes[ i + 3 ] ) === name;
+
+	if ( bytes.length >= 24 && u32( 0 ) === 0x89504E47 && tag( 12, 'IHDR' ) ) {
+
+		for ( let i = 8; i + 8 <= bytes.length; i += 12 + u32( i ) ) {
+
+			if ( tag( i + 4, 'eXIf' ) ) return null;
+			if ( tag( i + 4, 'IDAT' ) ) return { width: u32( 16 ), height: u32( 20 ) };
+
+		}
+
+		return null;
+
+	}
+
+	if ( bytes.length < 4 || u16( 0 ) !== 0xFFD8 ) return null;
+	for ( let i = 2; i + 4 <= bytes.length; ) {
+
+		if ( bytes[ i ] !== 0xFF ) return null;
+		const marker = bytes[ i + 1 ];
+		if ( marker === 0xFF ) {
+
+			i ++;
+			continue;
+
+		}
+
+		if ( marker === 0x01 || ( marker >= 0xD0 && marker <= 0xD7 ) ) {
+
+			i += 2;
+			continue;
+
+		}
+
+		if ( marker === 0xE1 && i + 10 <= bytes.length && tag( i + 4, 'Exif' ) ) return null;
+		if ( marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC ) {
+
+			return i + 9 <= bytes.length ? { width: u16( i + 7 ), height: u16( i + 5 ) } : null;
+
+		}
+
+		if ( marker === 0xDA || marker === 0xD9 ) return null;
+		i += 2 + u16( i + 2 );
+
+	}
+
+	return null;
+
+}
+
 // A model's images go to the texture pack worker, which reads a SharedArrayBuffer where they lie.
-function pixelTexture( { data, width, height }, { shared = false } = {} ) {
+function pixelImage( { data, width, height }, { shared = false } = {} ) {
 
 	const view = new Uint8Array( data.buffer, data.byteOffset, width * height * 4 );
 	let pixels = view;
@@ -39,7 +101,14 @@ function pixelTexture( { data, width, height }, { shared = false } = {} ) {
 
 	}
 
-	const texture = new DataTexture( pixels, width, height, RGBAFormat, UnsignedByteType );
+	return { data: pixels, width, height };
+
+}
+
+// `image` null: a texture whose pixels are read later, `image.data` null until then.
+function pixelTexture( image, { width = image.width, height = image.height } = {} ) {
+
+	const texture = new DataTexture( image?.data ?? null, width, height, RGBAFormat, UnsignedByteType );
 	texture.needsUpdate = true;
 	return texture;
 
@@ -91,7 +160,7 @@ function loadWithOwnLoader( parser, sourceIndex, loader ) {
  */
 export async function loadPlatformImage( url, mimeType = mimeTypeOf( { uri: url } ) ) {
 
-	const texture = pixelTexture( await decodeBytes( await fetchBytes( url ), mimeType ) );
+	const texture = pixelTexture( pixelImage( await decodeBytes( await fetchBytes( url ), mimeType ) ) );
 	texture.flipY = true;
 	return texture;
 
@@ -100,9 +169,77 @@ export async function loadPlatformImage( url, mimeType = mimeTypeOf( { uri: url 
 /** An image file's bytes as a texture, decoded by the platform: {@link loadPlatformImage} without the fetch. */
 export async function platformImageFromBytes( bytes, filename ) {
 
-	const texture = pixelTexture( await decodeBytes( bytes, mimeTypeOf( { uri: filename } ) ), { shared: true } );
+	const texture = pixelTexture( pixelImage( await decodeBytes( bytes, mimeTypeOf( { uri: filename } ) ), { shared: true } ) );
 	texture.flipY = true;
 	return texture;
+
+}
+
+/** {@link platformImageFromBytes}'s texture before its pixels: `image` is `{ data: null, width, height }`. */
+export function platformImagePlaceholder( width, height ) {
+
+	const texture = pixelTexture( null, { width, height } );
+	texture.flipY = true;
+	return texture;
+
+}
+
+// A glTF image's texture as three.js gives it, its pixels decoded by `read` only when the arrays are packed.
+async function rereadableImage( bytes, read, def, onFailure ) {
+
+	const size = imageHeaderSize( bytes.subarray( 0, IMAGE_HEADER_BYTES ) );
+	let texture;
+	try {
+
+		texture = await read( size );
+
+	} catch ( error ) {
+
+		onFailure?.( def.uri ?? `bufferView ${def.bufferView}`, error );
+		throw error;
+
+	}
+
+	setImageReader( texture, () => read( null ).then( ( t ) => t.image ), { resident: ! size } );
+	if ( def.extras && typeof def.extras === 'object' ) Object.assign( texture.userData, def.extras );
+	texture.userData.mimeType = mimeTypeOf( def );
+	return texture;
+
+}
+
+/**
+ * A GLTFLoader plugin for the browser: an embedded image is decoded as three's ImageBitmapLoader decodes it, but only
+ * when the texture arrays are packed (a PNG or JPEG), and let go once they are.
+ */
+export function embeddedImagesPlugin( parser, onFailure = null ) {
+
+	const loadImageSource = parser.loadImageSource;
+	parser.loadImageSource = function ( sourceIndex, loader ) {
+
+		const def = this.json.images[ sourceIndex ];
+		if ( this.sourceCache[ sourceIndex ] !== undefined || def.bufferView === undefined || ! loader?.isImageBitmapLoader ) return loadImageSource.call( this, sourceIndex, loader );
+
+		const promise = this.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => {
+
+			const blob = new Blob( [ buffer ], { type: def.mimeType } );
+			const read = async ( size ) => {
+
+				const texture = new Texture( size ? { ...size, data: null } : await createImageBitmap( blob, { ...loader.options, colorSpaceConversion: 'none' } ) );
+				texture.needsUpdate = true;
+				return texture;
+
+			};
+
+			return rereadableImage( new Uint8Array( buffer ), read, def, onFailure );
+
+		} );
+
+		this.sourceCache[ sourceIndex ] = promise;
+		return promise;
+
+	};
+
+	return { name: 'RAYZEE_embedded_images' };
 
 }
 
@@ -147,14 +284,13 @@ export function platformImagesPlugin( parser, onFailure = null ) {
 		const mimeType = mimeTypeOf( def );
 		const where = def.uri ?? `bufferView ${def.bufferView}`;
 
-		const promise = imageBytes( this, def ).then( ( data ) => decodeBytes( data, mimeType ) ).then( ( pixels ) => {
+		const promise = imageBytes( this, def ).then( ( bytes ) => {
 
-			const texture = pixelTexture( pixels, { shared: true } );
-			if ( def.extras && typeof def.extras === 'object' ) Object.assign( texture.userData, def.extras );
-			texture.userData.mimeType = mimeType;
-			return texture;
+			const blob = new Blob( [ bytes ] );
+			const read = async ( size ) => pixelTexture( size ? null : pixelImage( await decodeBytes( new Uint8Array( await blob.arrayBuffer() ), mimeType ), { shared: true } ), size ?? {} );
+			return rereadableImage( bytes, read, def, onFailure );
 
-		} ).catch( ( error ) => {
+		}, ( error ) => {
 
 			onFailure?.( where, error );
 			throw error;

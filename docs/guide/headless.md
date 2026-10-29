@@ -152,8 +152,9 @@ app.dispose();
 - **Textures are packed on the CPU** where there is no `createImageBitmap`: exact when a map fits its
   bucket, bilinear otherwise (a browser's canvas filter differs slightly there). A bucket over 8 MB
   packs in a worker, reading images decoded by `decodeImage` in place (they are kept in shared
-  memory): on the main thread it held up the BVH workers, and a 1.9M-triangle, 91-texture model
-  loaded in 4.1–4.9 s. It now loads in 2.1 s, against Chrome's 2.9 s on the same machine.
+  memory, and only while they are packed): on the main thread it held up the BVH workers, and a
+  1.9M-triangle, 91-texture model loaded in 4.1–4.9 s. It now loads in 2.1 s, against Chrome's 2.9 s
+  on the same machine.
 - **Offline: OIDN weights from disk.** Node's `fetch` cannot open `file:` URLs, so `nodePlatform()` also hands
   the engine a file reader, and what it downloads itself — the OIDN weights, IES profiles — can come from a folder:
   `configureAssets({ oidnWeightsBaseUrl: 'file:///opt/rayzee/oidn/' })`, holding the `.tza` files the tiers

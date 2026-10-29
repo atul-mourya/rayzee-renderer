@@ -106,6 +106,15 @@ export class VirtualFS {
 
 	}
 
+	/** A record as a Blob, when the source can give one without reading it; else its bytes. */
+	async readBlob( path ) {
+
+		const rec = this.findRecord( path );
+		if ( rec && ! rec.bytes && rec.lazy && this.source?.slice && ! this.source.transient ) return this.source.slice( rec.key );
+		return this.read( rec );
+
+	}
+
 	/** The first `bytes` of a record, reading no more of a lazy one than that when the source can. */
 	async readHead( rec, bytes ) {
 
@@ -375,7 +384,7 @@ export async function listEntryPathsFrom( vfs ) {
  * @param {Object<string,Uint8Array>} args.vfs - zip entries (path → bytes)
  * @param {string} [args.entryPath] - top .pbrt; auto-detected if omitted
  * @param {(buf:ArrayBuffer)=>import('three').BufferGeometry} args.plyParser
- * @param {(bytes:Uint8Array, filename:string)=>Promise<import('three').Texture>} args.imageFromBytes
+ * @param {(bytes:Uint8Array|Blob, filename:string)=>Promise<import('three').Texture>} args.imageFromBytes
  * @param {(bytes:Uint8Array, filename:string)=>Promise<import('three').Texture>} [args.envFromBytes]
  * @param {boolean} [args.convertHandedness=true]
  * @param {boolean} [args.animation=true] - load a frame sequence (`frame25.pbrt`, `frame35.pbrt`, …)
@@ -505,7 +514,7 @@ export async function loadPBRTScene( args ) {
 		},
 		resolveImage: async ( filename ) => {
 
-			const bytes = await vfs.readPath( filename );
+			const bytes = await vfs.readBlob( filename );
 			if ( ! bytes ) return null;
 			return imageFromBytes( bytes, filename );
 
@@ -527,6 +536,7 @@ export async function loadPBRTScene( args ) {
 
 	} finally {
 
+		builder.releaseImages();
 		parameters = usage.finish();
 
 	}

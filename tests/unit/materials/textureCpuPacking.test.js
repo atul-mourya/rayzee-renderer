@@ -1,6 +1,6 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { DataTexture, FloatType, HalfFloatType, RedFormat, DataUtils, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
-import { TextureCreator, rgba8Pixels } from '@/core/materials/TextureCreator.js';
+import { TextureCreator, rgba8Pixels, setImageReader, holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 import { resampleRGBA8 } from '@/core/materials/ResampleRGBA8.js';
 import { IssueLog } from '@/core/EngineIssues.js';
 import { configurePlatform } from '@/core/Platform.js';
@@ -140,6 +140,157 @@ describe( 'TextureCreator — packing without a browser', () => {
 		}, write: async () => {} };
 		const packed = await new TextureCreator( { layerSink } ).createTexturesToDataTexture( [ noise( 64, 32, 1, false ) ] );
 		expect( packed.image.data.byteLength ).toBe( 64 * 32 * 4 );
+
+	} );
+
+} );
+
+describe( 'TextureCreator — images read again', () => {
+
+	// `noise` without its pixels, and a reader that hands back a copy of them.
+	function deferred( width, height, seed, flipY ) {
+
+		const pixels = noise( width, height, seed, flipY ).image.data;
+		const texture = new DataTexture( null, width, height );
+		texture.flipY = flipY;
+		const read = vi.fn( async () => ( { data: pixels.slice(), width, height } ) );
+		setImageReader( texture, read, { resident: false } );
+		return { texture, read };
+
+	}
+
+	it( 'packs an image read again to the bytes it packs held, and lets it go after', async () => {
+
+		const sizes = [[ 64, 32, 1, false ], [ 64, 32, 2, true ], [ 32, 16, 3, false ]];
+		const whole = await new TextureCreator().createTexturesToDataTexture( sizes.map( ( a ) => noise( ...a ) ) );
+		const lazy = sizes.map( ( a ) => deferred( ...a ) );
+
+		expect( lazy[ 0 ].texture.image ).toMatchObject( { width: 64, height: 32, data: null } );
+		const packed = await new TextureCreator().createTexturesToDataTexture( lazy.map( ( l ) => l.texture ) );
+
+		expect( Buffer.compare( Buffer.from( packed.image.data ), Buffer.from( whole.image.data ) ) ).toBe( 0 );
+		for ( const { texture, read } of lazy ) {
+
+			expect( read ).toHaveBeenCalledOnce();
+			expect( texture.image ).toMatchObject( { width: texture.image.width, data: null } );
+
+		}
+
+	} );
+
+	it( 'holds only a group\'s images at a time when a bucket goes to the layer sink', async () => {
+
+		const lazy = [ 1, 2, 3, 4, 5, 6, 7 ].map( ( seed ) => deferred( 128, 64, seed, false ) );
+		const seen = [];
+		const layerSink = {
+			allocate: () => {},
+			write: async ( texture, first, data, count ) => {
+
+				seen.push( [ first + count, lazy.filter( ( l ) => l.read.mock.calls.length ).length, lazy.filter( ( l ) => l.texture.image.data ).length ] );
+
+			},
+		};
+		await new TextureCreator( { layerSink, groupBytes: 2 * 128 * 64 * 4 } ).createTexturesToDataTexture( lazy.map( ( l ) => l.texture ) );
+
+		// [ layers written, images read so far, images held ] at each write
+		expect( seen ).toEqual( [[ 2, 2, 0 ], [ 4, 4, 0 ], [ 6, 6, 0 ], [ 7, 7, 0 ]] );
+		expect( lazy.every( ( l ) => l.read.mock.calls.length === 1 ) ).toBe( true );
+
+	} );
+
+	it( 'reads an image once for overlapping holds, and lets it go after the last release', async () => {
+
+		const { texture, read } = deferred( 8, 8, 1, false );
+		const copy = texture.clone();
+		await Promise.all( [ holdImages( [ texture, copy ] ), holdImages( [ copy ] ) ] );
+
+		expect( read ).toHaveBeenCalledOnce();
+		releaseImages( [ copy ] );
+		expect( copy.image.data ).not.toBeNull();
+		releaseImages( [ texture, copy ] );
+		expect( texture.image ).toMatchObject( { width: 8, height: 8, data: null } );
+		releaseImages( [ texture ] );
+
+		await holdImages( [ texture ] );
+		expect( read ).toHaveBeenCalledTimes( 2 );
+		releaseImages( [ texture ] );
+
+	} );
+
+	it( 'lets go of an image held from the start once it is packed, and reads it again for the next pack', async () => {
+
+		const texture = noise( 32, 16, 4, false );
+		const pixels = texture.image.data;
+		const read = vi.fn( async () => ( { data: pixels.slice(), width: 32, height: 16 } ) );
+		setImageReader( texture, read );
+
+		const creator = new TextureCreator();
+		const first = await creator.createTexturesToDataTexture( [ texture ] );
+		expect( read ).not.toHaveBeenCalled();
+		expect( texture.image ).toMatchObject( { width: 32, height: 16, data: null } );
+
+		creator.textureCache.dispose();
+		const second = await creator.createTexturesToDataTexture( [ texture ] );
+		expect( read ).toHaveBeenCalledOnce();
+		expect( Buffer.compare( Buffer.from( second.image.data ), Buffer.from( first.image.data ?? pixels ) ) ).toBe( 0 );
+
+	} );
+
+	it( 'packs a white layer in place of an image that cannot be read again, and says so', async () => {
+
+		const issues = new IssueLog();
+		const good = deferred( 16, 16, 1, false );
+		const bad = deferred( 16, 16, 2, false );
+		bad.read.mockRejectedValue( new Error( 'file moved' ) );
+
+		const packed = await new TextureCreator( { issues } ).createTexturesToDataTexture( [ good.texture, bad.texture ] );
+
+		const layer = packed.image.width * packed.image.height * 4;
+		expect( packed.image.depth ).toBe( 2 );
+		expect( packed.image.data.subarray( layer, 2 * layer ).every( ( v ) => v === 255 ) ).toBe( true );
+		expect( issues.list.map( ( i ) => i.code ) ).toContain( 'texture.build_failed' );
+		expect( bad.texture.image ).toMatchObject( { width: 16, height: 16, data: null } );
+
+	} );
+
+	it( 'lets go of what it held when a strict host refuses an image that cannot be read again', async () => {
+
+		const issues = new IssueLog( { strict: true } );
+		const good = deferred( 16, 16, 1, false );
+		const bad = deferred( 16, 16, 2, false );
+		bad.read.mockRejectedValue( new Error( 'file moved' ) );
+
+		await expect( new TextureCreator( { issues } ).createTexturesToDataTexture( [ good.texture, bad.texture ] ) ).rejects.toThrow( /read again/ );
+		expect( good.texture.image.data ).toBeNull();
+		await holdImages( [ good.texture ] );
+		releaseImages( [ good.texture ] );
+		expect( good.texture.image.data ).toBeNull();
+
+	} );
+
+	it( 'keeps a thumbnail of a bitmap it lets go, then closes the bitmap', async () => {
+
+		const bitmap = { width: 512, height: 256, close: vi.fn() };
+		const thumbnail = { width: 128, height: 64 };
+		const createImageBitmap = vi.fn( async () => thumbnail );
+		vi.stubGlobal( 'createImageBitmap', createImageBitmap );
+		try {
+
+			const texture = new DataTexture( null, 1, 1 );
+			texture.image = bitmap;
+			setImageReader( texture, async () => bitmap );
+			await holdImages( [ texture ] );
+			releaseImages( [ texture ] );
+			await vi.waitFor( () => expect( bitmap.close ).toHaveBeenCalled() );
+
+			expect( createImageBitmap.mock.calls[ 0 ][ 1 ] ).toMatchObject( { resizeWidth: 128, resizeHeight: 64 } );
+			expect( texture.image ).toMatchObject( { width: 512, height: 256, data: null, thumbnail } );
+
+		} finally {
+
+			vi.unstubAllGlobals();
+
+		}
 
 	} );
 

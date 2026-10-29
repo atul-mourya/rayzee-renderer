@@ -862,9 +862,31 @@ export class TextureCreator {
 		const dims = this.calculateOptimalDimensions( kept );
 		if ( this.layerSink && dims.maxWidth * dims.maxHeight * kept.length * 4 > this.groupBytes ) return this._packInGroups( kept, srgbPool, dims );
 
-		const packed = await this._packTextures( textures, srgbPool );
+		let packed;
+		try {
+
+			await this._holdImages( textures );
+			packed = await this._packTextures( textures, srgbPool );
+
+		} finally {
+
+			releaseImages( textures );
+
+		}
+
 		if ( packed ) this.textureCache.set( cacheKey, packed );
 		return packed;
+
+	}
+
+	/** @private */
+	_holdImages( textures ) {
+
+		return holdImages( textures, ( error ) => this._issues?.record(
+			ISSUE_CODES.TEXTURE_BUILD_FAILED,
+			'a material map could not be read again — its surfaces show a white placeholder',
+			{ cause: String( error?.message ?? error ) }
+		) );
 
 	}
 
@@ -893,7 +915,18 @@ export class TextureCreator {
 			for ( let first = 0; first < textures.length; first += step ) {
 
 				const group = textures.slice( first, first + step );
-				const packed = await this._packTextures( group, srgbPool, { dims, strategy, tally, scratch } );
+				let packed;
+				try {
+
+					await this._holdImages( group );
+					packed = await this._packTextures( group, srgbPool, { dims, strategy, tally, scratch } );
+
+				} finally {
+
+					releaseImages( group );
+
+				}
+
 				const { data } = packed.image;
 				if ( packed.image.width !== width || packed.image.height !== height || packed.image.depth !== group.length ) {
 
@@ -2050,6 +2083,101 @@ export function rgba8Pixels( texture ) {
 	}
 
 	return out;
+
+}
+
+// ── Images read again ────────────────────────────────────────────────
+
+// TextureSource → { read, users, loading, stub }
+const rereadable = new WeakMap();
+const THUMBNAIL_SIZE = 128;
+
+/**
+ * Lets the packer drop `texture`'s pixels once its arrays are built and decode them again with `read()`, which resolves
+ * to the image as the loader first made it. Without pixels, `image` is `{ width, height, data: null, thumbnail }`;
+ * `resident: false` says it is that already.
+ */
+export function setImageReader( texture, read, { resident = true } = {} ) {
+
+	const source = texture?.source;
+	const image = source?.data;
+	if ( ! ( image?.width > 0 && image?.height > 0 ) ) return;
+	rereadable.set( source, { read, users: 0, loading: null, stub: resident ? null : Object.assign( image, { thumbnail: null } ) } );
+
+}
+
+function rereadableSources( textures ) {
+
+	const out = new Map();
+	for ( const texture of textures ) {
+
+		const entry = texture?.source && rereadable.get( texture.source );
+		if ( entry ) out.set( texture.source, entry );
+
+	}
+
+	return out;
+
+}
+
+/** Puts back the pixels of every image in `textures` that was let go; each call is undone by one `releaseImages`. */
+export async function holdImages( textures, onError = null ) {
+
+	await Promise.all( [ ...rereadableSources( textures ) ].map( async ( [ source, entry ] ) => {
+
+		entry.users ++;
+		if ( source.data !== entry.stub ) return;
+		entry.loading ??= entry.read()
+			.catch( ( error ) => {
+
+				onError?.( error );
+				return { data: new Uint8Array( [ 255, 255, 255, 255 ] ), width: 1, height: 1 };
+
+			} )
+			.then( ( image ) => {
+
+				source.data = image;
+
+			} )
+			.finally( () => {
+
+				entry.loading = null;
+
+			} );
+		await entry.loading;
+
+	} ) );
+
+}
+
+export function releaseImages( textures ) {
+
+	for ( const [ source, entry ] of rereadableSources( textures ) ) {
+
+		entry.users = Math.max( 0, entry.users - 1 );
+		if ( entry.users > 0 || source.data === entry.stub ) continue;
+
+		const image = source.data;
+		const stub = entry.stub ??= { width: image.width, height: image.height, data: null, thumbnail: null };
+		source.data = stub;
+		if ( typeof image?.close !== 'function' ) continue;
+		if ( stub.thumbnail || typeof createImageBitmap !== 'function' ) {
+
+			image.close();
+			continue;
+
+		}
+
+		const scale = Math.min( 1, THUMBNAIL_SIZE / Math.max( image.width, image.height ) );
+		createImageBitmap( image, { resizeWidth: Math.max( 1, Math.round( image.width * scale ) ), resizeHeight: Math.max( 1, Math.round( image.height * scale ) ), resizeQuality: 'medium' } )
+			.then( ( thumbnail ) => {
+
+				stub.thumbnail = thumbnail;
+
+			}, () => {} )
+			.finally( () => image.close() );
+
+	}
 
 }
 

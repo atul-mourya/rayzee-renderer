@@ -14,6 +14,8 @@ import { AssetLoader } from '@/core/loaders/AssetLoader.js';
 import { RayzeeRenderer } from '@/core/RayzeeRenderer.js';
 import { IssueLog, ISSUE_CODES } from '@/core/EngineIssues.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { configurePlatform } from '@/core/Platform.js';
+import { holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 
 // What a folder picker hands over: Files carrying their path inside the picked folder.
 const picked = ( path, body, options ) => Object.defineProperty(
@@ -331,6 +333,49 @@ describe( 'loadFile with a folder', () => {
 
 		await expect( RayzeeRenderer.prototype.loadFile.call( receiver, { files: [ picked( 'Empty/.DS_Store', 'x' ) ] } ) )
 			.rejects.toThrow( /holds no files/ );
+
+	} );
+
+} );
+
+describe( 'a pbrt texture map from a folder', () => {
+
+	// A 4×2 PNG's header: what is read of it until the arrays are packed.
+	const PNG = new Uint8Array( [ 137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 4, 0, 0, 0, 2, 8, 6, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 1, 73, 68, 65, 84, 0, 0, 0, 0, 0, 0, 0, 0, 0, 73, 69, 78, 68, 0, 0, 0, 0 ] );
+	const pixels = new Uint8Array( 4 * 2 * 4 ).map( ( _, i ) => 3 * i );
+
+	it( 'reads only the file\'s header at load, and the texture is the one a decode at load made', async () => {
+
+		const decodeImage = vi.fn( async () => ( { data: pixels.slice(), width: 4, height: 2 } ) );
+		configurePlatform( { decodeImage } );
+		try {
+
+			const reads = [];
+			const file = new ( tracked( reads ) )( [ PNG ], 'wood.png' );
+			const { importer } = importerWith();
+
+			const lazy = await importer._archiveImage( file, 'textures/wood.png' );
+			const eager = await importer._pbrtTextureFromBytes( PNG, 'textures/wood.png' );
+			expect( reads ).toEqual( [] );
+			expect( decodeImage ).toHaveBeenCalledOnce();
+			expect( lazy.image ).toMatchObject( { width: 4, height: 2, data: null } );
+			expect( lazy.userData.__rayzeeArchivePath ).toBe( 'textures/wood.png' );
+			const settings = ( t ) => [ t.constructor, t.flipY, t.colorSpace, t.wrapS, t.wrapT, t.format, t.type, t.magFilter, t.minFilter,
+				t.generateMipmaps, t.unpackAlignment, t.premultiplyAlpha ];
+			expect( settings( lazy ) ).toEqual( settings( eager ) );
+
+			await holdImages( [ lazy ] );
+			expect( reads ).toEqual( [ 'wood.png' ] );
+			expect( Array.from( lazy.image.data ) ).toEqual( Array.from( eager.image.data ) );
+			releaseImages( [ lazy ] );
+			expect( lazy.image.data ).toBeNull();
+
+		} finally {
+
+			configurePlatform( { decodeImage: null } );
+
+		}
 
 	} );
 
