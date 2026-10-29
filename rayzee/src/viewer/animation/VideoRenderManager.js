@@ -9,6 +9,7 @@
 import { EngineEvents, updateStats } from '../../EngineEvents.js';
 import { PRODUCTION_RENDER_CONFIG, modePresetSettings } from '../../EngineDefaults.js';
 import { getDisplaySamples } from '../../pipeline/CompletionTracker.js';
+import { takeFrameStep } from '../../RayzeeRenderer.js';
 
 // The video is Rec.709: drawing into a plain 2D canvas converts a Display P3 picture.
 function srgbCopy( canvas ) {
@@ -258,6 +259,7 @@ export class VideoRenderManager {
 			}
 
 			app.cameraManager.camera.updateMatrixWorld();
+			takeFrameStep( app.renderer );
 			app.pipeline.render();
 
 			// Yield every 4 passes to keep UI responsive and update stats

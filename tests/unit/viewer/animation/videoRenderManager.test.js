@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock engine dependencies
 vi.mock( 'three', () => ( {} ) );
+vi.mock( '@/core/RayzeeRenderer.js', () => ( { takeFrameStep: vi.fn() } ) );
 
 vi.mock( '@/core/EngineEvents.js', () => ( {
 	EngineEvents: {

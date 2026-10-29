@@ -363,6 +363,16 @@ describeGPU( 'the engine headless on Dawn', () => {
 
 	} );
 
+	it( 'runs no frame loop of three\'s, and takes its frame step for each frame rendered', async () => {
+
+		expect( app.renderer._animation._requestId ).toBeNull();
+		const before = app.renderer.info.frame;
+		await app.renderFrames( 3, { reset: true } );
+		expect( app.renderer.info.frame - before ).toBeGreaterThanOrEqual( 3 );
+		expect( app.renderer._animation._requestId ).toBeNull();
+
+	} );
+
 	it( 'times every kernel on the GPU', async () => {
 
 		expect( app.enableGPUTiming( true ) ).toBe( true );

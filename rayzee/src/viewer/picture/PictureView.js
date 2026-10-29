@@ -3,7 +3,7 @@ import { Compositor } from '../../pipeline/Compositor.js';
 import { LocalExposure } from './LocalExposure.js';
 import { PipelineContext } from '../../pipeline/PipelineContext.js';
 import { holdCanvasColorSpace } from '../../addons/color/ColorManagement.js';
-import { createRendererOnDevice, disposeRenderer } from '../../RayzeeRenderer.js';
+import { createRendererOnDevice, disposeRenderer, takeFrameStep } from '../../RayzeeRenderer.js';
 
 // Enough for any header `exportImage` writes; a longer one is read whole.
 const HEADER_BYTES = 1 << 18;
@@ -121,6 +121,7 @@ export class PictureView {
 		compositor.setDisplayGain( shaped ? this._gain : null );
 		this._tsl = table.tsl;
 		this._applyTransform();
+		takeFrameStep( this.renderer );
 		compositor.render( context );
 
 	}
@@ -141,7 +142,9 @@ export class PictureView {
 	/** Draws the shown picture again, after a grade's uniforms changed. */
 	redraw() {
 
-		if ( this._tsl ) this._compositor.render( this._context );
+		if ( ! this._tsl ) return;
+		takeFrameStep( this.renderer );
+		this._compositor.render( this._context );
 
 	}
 

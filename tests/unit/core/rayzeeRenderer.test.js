@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { BoxGeometry, Box3, Mesh, MeshBasicMaterial, Object3D, Scene, Texture, Vector3 } from 'three';
-import { RayzeeRenderer, disposeRenderer } from '@/core/RayzeeRenderer.js';
+import Animation from 'three/src/renderers/common/Animation.js';
+import { RayzeeRenderer, disposeRenderer, takeFrameStep } from '@/core/RayzeeRenderer.js';
 import { RenderStage } from '@/core/pipeline/RenderStage.js';
 import { CompletionTracker } from '@/core/pipeline/CompletionTracker.js';
 import { EngineEvents, setStatusCallback } from '@/core/EngineEvents.js';
@@ -339,6 +340,53 @@ describe( 'the render loop', () => {
 		return { app, stage, order };
 
 	}
+
+	// three's frame loop, stopped as init leaves it, asking a context that records its requests.
+	function frameLoop() {
+
+		const requested = [];
+		const cancelled = [];
+		const nodes = { nodeFrame: { frameId: 0, update() {
+
+			this.frameId ++;
+
+		} } };
+		const info = { autoReset: true, frame: 0, reset: vi.fn() };
+		const renderer = { render: vi.fn(), _inspector: { isRunning: false, begin() {}, finish() {} } };
+		renderer._animation = new Animation( renderer, nodes, info );
+		renderer._animation.setContext( { requestAnimationFrame: ( step ) => requested.push( step ), cancelAnimationFrame: ( id ) => void cancelled.push( id ) } );
+		return { renderer, info, requested, cancelled };
+
+	}
+
+	it( 'takes three\'s frame step itself, leaving no frame of three\'s requested', () => {
+
+		const { renderer, info, requested, cancelled } = frameLoop();
+		takeFrameStep( renderer );
+		takeFrameStep( renderer );
+		expect( info.frame ).toBe( 2 );
+		expect( info.reset ).toHaveBeenCalledTimes( 2 );
+		expect( cancelled ).toEqual( [ 1, 2 ] );
+		expect( renderer._animation._requestId ).toBeNull();
+
+		// A loop someone started again takes its own steps.
+		renderer._animation.start();
+		takeFrameStep( renderer );
+		expect( info.frame ).toBe( 3 );
+		expect( requested ).toHaveLength( 3 );
+
+	} );
+
+	it( 'takes a frame step each loop frame', () => {
+
+		const { renderer, info } = frameLoop();
+		const { app } = looping( { renderer } );
+		app.animate();
+		app.animate();
+		expect( info.frame ).toBe( 2 );
+		expect( renderer._animation._requestId ).toBeNull();
+
+	} );
 
 	it( 'traces a frame and keeps the loop scheduled', () => {
 

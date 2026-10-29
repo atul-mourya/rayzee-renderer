@@ -416,8 +416,9 @@ glTF with an HDR or PNG sky matched Chrome within 0.05 of a level per 16² block
   those out, 64 MB at a time, and so needs the `webgpu` globals installed first. `NodeWorker`'s
   bootstrap uses `process.getBuiltinModule`, never `require`: a thread inherits `--input-type=module`.
 - ⚠️ three's `Animation.start()` calls `self.requestAnimationFrame` inside `renderer.init()` with no
-  guard; `initWithoutFrameLoop` lends an inert one for that call. three's `FileLoader` constructs a
-  `ProgressEvent` per streamed chunk; `nodePlatform()` defines one — the only global it sets.
+  guard; `initWithoutFrameLoop` lends an inert one for that call (and stops the loop, pitfall 18).
+  three's `FileLoader` constructs a `ProgressEvent` per streamed chunk; `nodePlatform()` defines one —
+  the only global it sets.
 
 ### Degradation Contract (`EngineIssues.js`)
 The engine degrades rather than fails — right for a viewer, backwards for a batch renderer. Every
@@ -1084,3 +1085,11 @@ because `controls.update()` re-aims the camera at the target every frame. A held
 17. **A TSL branch callback returns nothing**: `If( c, () => v.assign( x ) )` hands back the assign node, which
    `ConditionalNode` reads as a return value — it warns "Return statement used in an inline 'Fn()'" and comments a
    `return` out. Give every `If`/`Else` callback a block body.
+18. **three's frame loop is stopped**: a three.js renderer asks for a frame every display refresh from `init()` for as
+   long as it lives, drawing or not (mrdoob/three.js#29712, closed as not planned). Idle, the canvas's and the overlay's
+   cost 2 % of a core in the tab and 0.9 % in the GPU process; stopped, under 0.05 % and 0.1 %. `initWithoutFrameLoop`
+   stops it (every renderer, `createRendererOnDevice` too) and `takeFrameStep( renderer )` takes three's step (node
+   frame id, per-frame counters) once for each frame drawn: the render loop, `renderFrames`, `renderUntilComplete`,
+   the video export, `_presentDisplay`, the overlay's `begin()`, the picture view. ⚠️ A new place that draws outside
+   those takes the step first: the selection outline renders once per frame id, and `getKernelGPUTimings` reads the
+   newest frame's passes. It reaches into `renderer._animation`: re-check on each three.js upgrade.

@@ -44,23 +44,45 @@ const _appsByCanvas = new WeakMap();
 const KNOWN_EVENTS = new Set( [ ...Object.values( EngineEvents ), ...Object.values( LEGACY_EVENT_NAMES ) ] );
 const _warnedEvents = new Set();
 
-// three's Animation.start() calls self.requestAnimationFrame during init() with no guard, and
-// outside a browser there is no `self`. A headless app never uses that loop, so it gets an inert one.
+// three's renderer runs a frame loop of its own from init() for as long as it lives, drawing or not
+// (mrdoob/three.js#29712, not planned): a frame step each display refresh, 2 % of a core in an idle tab for the canvas
+// and the overlay. It is stopped here and the step taken for each frame drawn (takeFrameStep). Outside a browser init()
+// finds no `self` for its first request, so a headless app lends an inert one.
 async function initWithoutFrameLoop( renderer, headless ) {
 
-	if ( ! headless || typeof self !== 'undefined' ) return renderer.init();
+	if ( headless && typeof self === 'undefined' ) {
 
-	globalThis.self = { requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} };
+		globalThis.self = { requestAnimationFrame: () => 0, cancelAnimationFrame: () => {} };
 
-	try {
+		try {
 
-		return await renderer.init();
+			await renderer.init();
 
-	} finally {
+		} finally {
 
-		delete globalThis.self;
+			delete globalThis.self;
+
+		}
+
+	} else {
+
+		await renderer.init();
 
 	}
+
+	renderer._animation.stop();
+	return renderer;
+
+}
+
+/** three's frame step (node frame id, per-frame counters), once for each frame a renderer draws. */
+export function takeFrameStep( renderer ) {
+
+	const animation = renderer?._animation;
+	if ( ! animation || animation._requestId !== null ) return;
+	// start() takes the step at once and asks for the next frame, which stop() cancels.
+	animation.start();
+	animation.stop();
 
 }
 
@@ -74,7 +96,7 @@ export async function createRendererOnDevice( device, parameters ) {
 
 	const handler = device.onuncapturederror;
 	const renderer = new WebGPURenderer( { ...parameters, device } );
-	await renderer.init();
+	await initWithoutFrameLoop( renderer, false );
 	device.onuncapturederror = handler;
 	renderer.setPixelRatio( 1.0 );
 	return renderer;
@@ -527,6 +549,7 @@ export class RayzeeRenderer extends EventDispatcher {
 		if ( this._deviceLost ) return;
 
 		this.animationManagerId = requestAnimationFrame( () => this.animate() );
+		takeFrameStep( this.renderer );
 
 		if ( this._loadingInProgress || this._sdf?.isProcessing ) {
 
@@ -1828,6 +1851,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 			// A host moves the camera between calls, and a load frames it with lookAt(), which leaves matrixWorld stale.
 			this.camera.updateMatrixWorld();
+			takeFrameStep( this.renderer );
 			this.pipeline.render();
 			passes ++;
 
@@ -1923,6 +1947,7 @@ export class RayzeeRenderer extends EventDispatcher {
 
 				this.camera.updateMatrixWorld();
 				const counted = stage.frameCount;
+				takeFrameStep( this.renderer );
 				this._traceFrame();
 				onProgress?.( stage.frameCount );
 

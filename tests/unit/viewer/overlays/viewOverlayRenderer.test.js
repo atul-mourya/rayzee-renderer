@@ -11,9 +11,10 @@ vi.mock( '@/core/RayzeeRenderer.js', () => ( {
 		clear: vi.fn(),
 	} ) ),
 	disposeRenderer: vi.fn(),
+	takeFrameStep: vi.fn(),
 } ) );
 
-import { createRendererOnDevice, disposeRenderer } from '@/core/RayzeeRenderer.js';
+import { createRendererOnDevice, disposeRenderer, takeFrameStep } from '@/core/RayzeeRenderer.js';
 import { ViewOverlayRenderer, createOverlayCanvas, viewPixelSize } from '@/core/viewer/overlays/ViewOverlayRenderer.js';
 
 function style() {
@@ -164,10 +165,11 @@ describe( 'ViewOverlayRenderer', () => {
 
 	} );
 
-	it( 'clears the canvas itself, not a render target left bound', async () => {
+	it( 'clears the canvas itself, not a render target left bound, on a frame step of its own', async () => {
 
 		const overlay = await new ViewOverlayRenderer().init( { device: {}, sizeSource: box( 10, 10 ) } );
 		overlay.begin();
+		expect( takeFrameStep ).toHaveBeenCalledWith( overlay.renderer );
 		expect( overlay.renderer.setRenderTarget ).toHaveBeenCalledWith( null );
 		expect( overlay.renderer.clear ).toHaveBeenCalledOnce();
 		expect( overlay.renderer.setRenderTarget.mock.invocationCallOrder[ 0 ] ).toBeLessThan( overlay.renderer.clear.mock.invocationCallOrder[ 0 ] );

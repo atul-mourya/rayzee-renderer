@@ -1,5 +1,5 @@
 import { Vector3 } from 'three';
-import { RayzeeRenderer, describeAdapter, RENDER_CHECKPOINT_VERSION } from '../RayzeeRenderer.js';
+import { RayzeeRenderer, describeAdapter, RENDER_CHECKPOINT_VERSION, takeFrameStep } from '../RayzeeRenderer.js';
 import { NormalDepth } from './denoise/NormalDepth.js';
 import { MotionVector } from './denoise/MotionVector.js';
 import { NRD } from './denoise/NRD.js';
@@ -999,6 +999,7 @@ export class PathTracerApp extends RayzeeRenderer {
 
 		const context = this.pipeline?.context;
 		if ( this._deviceLost || ! context ) return;
+		takeFrameStep( this.renderer );
 		this.stages.compositor?.render( context );
 		this._renderHelperOverlay();
 

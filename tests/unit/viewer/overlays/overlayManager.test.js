@@ -10,6 +10,7 @@ vi.mock( '@/core/RayzeeRenderer.js', () => ( {
 		_frameBufferTargets: new Map( [[ 'output', { bytes: 7 } ]] ),
 	} ) ),
 	disposeRenderer: vi.fn(),
+	takeFrameStep: vi.fn(),
 } ) );
 
 vi.mock( '@/core/viewer/overlays/OutlineHelper.js', () => ( {

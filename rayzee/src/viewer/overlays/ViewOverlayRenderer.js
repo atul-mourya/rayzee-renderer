@@ -1,5 +1,5 @@
 import { SRGBColorSpace } from 'three';
-import { createRendererOnDevice, disposeRenderer } from '../../RayzeeRenderer.js';
+import { createRendererOnDevice, disposeRenderer, takeFrameStep } from '../../RayzeeRenderer.js';
 
 /**
  * Shared plumbing for the overlay canvases stacked over the main WebGPU canvas
@@ -158,6 +158,7 @@ export class ViewOverlayRenderer {
 
 		if ( ! this.renderer ) return;
 
+		takeFrameStep( this.renderer );
 		this.renderer.setRenderTarget( null );
 		this.renderer.clear();
 
