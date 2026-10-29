@@ -6,6 +6,7 @@
 -  dont reload the same model using query param. instead provide a save button with autosave option. on reload load the default. users can open using file menu
 -   Rough glass too bright
 -   result page to show hrd when available
+-   Fast compilation on windows devices
 
 ### MVP
 - [ ] dynamic max stack in bvhtraversal
