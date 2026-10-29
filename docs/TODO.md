@@ -250,9 +250,10 @@ once looked at. How it should have been built so they could not happen:
 - [ ] **One big upload is one big block**: Chrome keeps a shared memory block the size of each upload in flight for the
   page's life. Chunk stores and texture arrays are paced now (arrays in 64 MB slices, written to the GPU texture
   directly); the environment still goes in one `writeTexture` (392 MB on the island).
-- [ ] **Material images still held**: a glTF's external images in a browser (loaded through three.js, no reader) and
-  pbrt's baked and float maps (52 of Bistro's 292, ~176 MB) stay decoded. A rebuild decodes every map again, holding a
-  256 MB group's sources at once (Bistro: tab 5.3 GB during one, settled 1.4 GB).
+- [ ] **Material images still held**: pbrt's baked and float maps (52 of Bistro's 292, ~176 MB) and a glTF's images in
+  Safari (three.js reads them with TextureLoader) stay decoded. A glTF keeps its image files' bytes for a rebuild, which
+  Chrome holds in its browser process (+0.13–0.17 GB on 24155522). A rebuild decodes every map again, holding a 256 MB
+  group's sources at once (Bistro: tab 5.3 GB during one, settled 1.4 GB).
 
 ## OIDN 0.6.0 (`oidn-webgpu`, released 2026-10-25)
 

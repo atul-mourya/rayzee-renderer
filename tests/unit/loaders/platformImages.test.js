@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { configurePlatform, hasImageDecoder } from '@/core/Platform.js';
-import { platformImagesPlugin, missingImageDecoderPlugin, loadPlatformImage, imageHeaderSize, embeddedImagesPlugin } from '@/core/loaders/PlatformImageLoader.js';
+import { platformImagesPlugin, missingImageDecoderPlugin, loadPlatformImage, imageHeaderSize, browserImagesPlugin } from '@/core/loaders/PlatformImageLoader.js';
 import { holdImages, releaseImages } from '@/core/materials/TextureCreator.js';
 
 // A PNG signature, one IHDR-shaped chunk and IEND, then the trailing bytes exporters leave.
@@ -230,7 +230,7 @@ describe( 'glTF images decoded when packed', () => {
 		const webp = new Uint8Array( [ ...ascii( 'RIFF' ), 0, 0, 0, 0, ...ascii( 'WEBPVP8 ' ) ] );
 		const parser = fakeParser( [ { bufferView: 0, mimeType: 'image/jpeg' }, { bufferView: 1, mimeType: 'image/webp' } ], [ jpeg( 8, 8 ), webp ] );
 		const loader = { isImageBitmapLoader: true, options: { premultiplyAlpha: 'none' } };
-		embeddedImagesPlugin( parser );
+		browserImagesPlugin( parser );
 
 		const lazy = await parser.loadImageSource( 0, loader );
 		expect( createImageBitmap ).not.toHaveBeenCalled();
@@ -250,14 +250,73 @@ describe( 'glTF images decoded when packed', () => {
 
 	} );
 
-	it( 'leaves an external image, or one another loader decodes, to three', async () => {
+	// A parser whose loading manager records what it is told, as three's LoadingManager is.
+	function managedParser( images ) {
+
+		const told = [];
+		const parser = fakeParser( images, [] );
+		parser.options.manager = {
+			resolveURL: ( url ) => url,
+			abortController: new AbortController(),
+			itemStart: ( url ) => told.push( [ 'start', url ] ),
+			itemEnd: ( url ) => told.push( [ 'end', url ] ),
+			itemError: ( url ) => told.push( [ 'error', url ] ),
+		};
+		return { parser, told };
+
+	}
+
+	it( 'fetches an image file as ImageBitmapLoader does, and decodes a PNG only when held', async () => {
+
+		const bytes = png( 4, 3 );
+		const fetch = vi.fn( async () => ( { ok: true, blob: async () => new Blob( [ bytes ] ) } ) );
+		vi.stubGlobal( 'fetch', fetch );
+		const createImageBitmap = vi.fn( async () => ( { width: 4, height: 3, close() {} } ) );
+		vi.stubGlobal( 'createImageBitmap', createImageBitmap );
+		const { parser, told } = managedParser( [ { uri: 'textures/wood.png', extras: { tag: 'x' } } ] );
+		const loader = { isImageBitmapLoader: true, options: { premultiplyAlpha: 'none' }, crossOrigin: 'anonymous', requestHeader: { 'x-key': '1' } };
+		browserImagesPlugin( parser );
+
+		const texture = await parser.loadImageSource( 0, loader );
+		const url = 'https://cdn.test/model/textures/wood.png';
+		expect( fetch ).toHaveBeenCalledWith( url, { credentials: 'same-origin', headers: { 'x-key': '1' }, signal: parser.options.manager.abortController.signal } );
+		expect( told ).toEqual( [[ 'start', url ], [ 'end', url ]] );
+		expect( createImageBitmap ).not.toHaveBeenCalled();
+		expect( texture.image ).toMatchObject( { width: 4, height: 3, data: null } );
+		expect( texture.userData ).toMatchObject( { tag: 'x', mimeType: 'image/png' } );
+
+		await holdImages( [ texture ] );
+		const [ blob, options ] = createImageBitmap.mock.calls[ 0 ];
+		expect( new Uint8Array( await blob.arrayBuffer() ) ).toEqual( bytes );
+		expect( options ).toEqual( { premultiplyAlpha: 'none', colorSpaceConversion: 'none' } );
+		releaseImages( [ texture ] );
+		expect( texture.image.data ).toBeNull();
+		expect( fetch ).toHaveBeenCalledOnce();
+
+	} );
+
+	it( 'fails an image file that cannot be fetched through the loading manager, as three does', async () => {
+
+		vi.stubGlobal( 'fetch', async () => ( { ok: false, status: 404 } ) );
+		const { parser, told } = managedParser( [ { uri: 'missing.jpg' } ] );
+		const onFailure = vi.fn();
+		browserImagesPlugin( parser, onFailure );
+
+		await expect( parser.loadImageSource( 0, { isImageBitmapLoader: true } ) ).rejects.toThrow( 'HTTP 404' );
+		const url = 'https://cdn.test/model/missing.jpg';
+		expect( told ).toEqual( [[ 'start', url ], [ 'error', url ], [ 'end', url ]] );
+		expect( onFailure ).not.toHaveBeenCalled();
+
+	} );
+
+	it( 'leaves an image another loader decodes, or one with no source, to three', async () => {
 
 		const original = vi.fn( async () => 'three' );
-		const parser = { ...fakeParser( [ { uri: 'wood.png' }, { bufferView: 0, mimeType: 'image/png' } ], [ png( 2, 2 ) ] ), loadImageSource: original };
-		embeddedImagesPlugin( parser );
+		const parser = { ...fakeParser( [ { bufferView: 0, mimeType: 'image/png' }, {} ], [ png( 2, 2 ) ] ), loadImageSource: original };
+		browserImagesPlugin( parser );
 
-		expect( await parser.loadImageSource( 0, { isImageBitmapLoader: true } ) ).toBe( 'three' );
-		expect( await parser.loadImageSource( 1, { parse() {} } ) ).toBe( 'three' );
+		expect( await parser.loadImageSource( 0, { parse() {} } ) ).toBe( 'three' );
+		expect( await parser.loadImageSource( 1, { isImageBitmapLoader: true } ) ).toBe( 'three' );
 
 	} );
 

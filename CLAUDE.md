@@ -946,15 +946,19 @@ emissive data and instance table in place of the scene's, and emitters stopped b
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
 keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
 
-**Material images are decoded only to be packed.** A glTF's embedded image (every glTF image in Node) and every image of
-a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG or JPEG arrives without
-pixels, its size from its header (`imageHeaderSize`), and the packer holds a group's images while it packs them
-(`holdImages` / `releaseImages`, counted per source) and lets them go, `image` then `{ width, height, data: null,
-thumbnail }` (128 px, the app's preview). Bistro in Chrome: tab 5.0 → 1.5–1.7 GB after load, peak 6.3 → 3.4–3.6 GB, load
-15–17 → 9–11 s; 24155522.glb's tab 2.2–2.5 → 1.2 GB. A rebuild decodes them again (24155522.glb 0.68 → 0.79 s). ⚠️ Code
-that reads a material map's pixels holds it first (the pbrt builder's `_readPixels`, released when the build ends). ⚠️
-An archive unpacked to OPFS (`source.transient`) hands its images over as copies: that storage can be evicted once the
-load lets go of it.
+**Material images are decoded only to be packed.** Every glTF image three's ImageBitmapLoader would read, embedded or a
+file of its own (`browserImagesPlugin`; in Node every glTF image, `platformImagesPlugin`; Safari's TextureLoader is not
+covered), and every image of a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG
+or JPEG arrives without pixels, its size from its header (`imageHeaderSize`), and the packer holds a group's images while
+it packs them (`holdImages` / `releaseImages`, counted per source) and lets them go, `image` then `{ width, height, data:
+null, thumbnail }` (128 px, the app's preview). A rebuild decodes them again (24155522.glb 0.68 → 0.79 s). Chrome, tab
+after a GC: Bistro 5.2 → 1.5–1.8 GB, peak 6.3 → 3.4–3.6 GB, load 15–20 → 9–11 s; 24155522.glb 1.56 → 1.13 GB (peak 2.6 →
+1.5), as a .gltf with its images beside it 1.77 → 1.16 GB. A glTF keeps its image files' bytes as Blobs, which Chrome holds
+in its browser process: +0.13–0.17 GB there on 24155522 (an archive's are slices of its files). ⚠️ Compare tab memory
+after a GC (a heap snapshot forces one): main's tab carried ~1 GB of garbage for seconds after a load, and either side
+read up to 0.8 GB high until it ran. ⚠️ Code that reads a material map's pixels holds it first (the pbrt builder's
+`_readPixels`, released when the build ends). ⚠️ An archive unpacked to OPFS (`source.transient`) hands its images over
+as copies: that storage can be evicted once the load lets go of it.
 
 **A large bucket is never whole in memory.** Past `PACK_GROUP_BYTES` (256 MB) TextureCreator packs it 256 MB of layers
 at a time and hands each group to its `layerSink` (`textureLayerSink( renderer )` in `PathTracerStage.js`), which writes

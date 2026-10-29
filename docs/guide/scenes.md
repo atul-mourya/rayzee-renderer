@@ -269,12 +269,12 @@ engine.getScene()
 engine.getMaterialPropertySource(index, 'ior')
 ```
 
-A material map read from a model file — a glTF's embedded image (in Node, every glTF image) or any image in a folder or
-archive — holds no pixels once the texture arrays are built: its `image` is `{ width, height, data: null, thumbnail }`,
-`thumbnail` a 128-pixel `ImageBitmap` in a browser, and a rebuild (`rebuildMaterials`, `setMaxTextureSize`, a colour
-space change) decodes it again from the file's bytes. A PNG or JPEG is not decoded before the arrays are packed. To draw
-or read a map's pixels yourself, use `thumbnail` or keep your own copy of the image; textures you create are left as they
-are.
+A material map read from a model file — a glTF's image (not in Safari, where three.js reads them as `<img>` elements) or
+any image in a folder or archive — holds no pixels once the texture arrays are built: its `image` is `{ width, height,
+data: null, thumbnail }`, `thumbnail` a 128-pixel `ImageBitmap` in a browser, and a rebuild (`rebuildMaterials`,
+`setMaxTextureSize`, a colour space change) decodes it again from the file's bytes, which the engine keeps for that. A
+PNG or JPEG is not decoded before the arrays are packed. To draw or read a map's pixels yourself, use `thumbnail` or keep
+your own copy of the image; textures you create are left as they are.
 
 A property a three.js material lacks falls back to `MATERIAL_DEFAULTS` (exported) — MeshPhysicalMaterial's own values, so a glTF metallic material gets IOR 1.5, not a guess derived from its metalness. Weights and roughnesses (metalness, roughness, transmission, opacity, clearcoat, sheen, iridescence, …) are clamped to [0, 1] on upload and on `setMaterialProperty`.
 

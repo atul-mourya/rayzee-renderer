@@ -128,11 +128,43 @@ async function fetchBytes( url ) {
 
 }
 
+function imageURL( parser, def ) {
+
+	return parser.options.manager.resolveURL( LoaderUtils.resolveURL( def.uri, parser.options.path ) );
+
+}
+
 function imageBytes( parser, def ) {
 
 	return def.bufferView !== undefined
 		? parser.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => new Uint8Array( buffer ) )
-		: fetchBytes( parser.options.manager.resolveURL( LoaderUtils.resolveURL( def.uri, parser.options.path ) ) );
+		: fetchBytes( imageURL( parser, def ) );
+
+}
+
+// A glTF image's file as three's ImageBitmapLoader fetches it, telling the loading manager as it does.
+function imageBlob( parser, def, loader ) {
+
+	if ( def.bufferView !== undefined ) return parser.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => new Blob( [ buffer ], { type: def.mimeType } ) );
+
+	const { manager } = parser.options;
+	const url = imageURL( parser, def );
+	manager.itemStart( url );
+	return fetch( url, {
+		credentials: loader.crossOrigin === 'anonymous' ? 'same-origin' : 'include',
+		headers: loader.requestHeader,
+		signal: manager.abortController?.signal,
+	} ).then( ( response ) => {
+
+		if ( ! response.ok ) throw new Error( `HTTP ${response.status}` );
+		return response.blob();
+
+	} ).catch( ( error ) => {
+
+		manager.itemError( url );
+		throw error;
+
+	} ).finally( () => manager.itemEnd( url ) );
 
 }
 
@@ -208,20 +240,20 @@ async function rereadableImage( bytes, read, def, onFailure ) {
 }
 
 /**
- * A GLTFLoader plugin for the browser: an embedded image is decoded as three's ImageBitmapLoader decodes it, but only
- * when the texture arrays are packed (a PNG or JPEG), and let go once they are.
+ * A GLTFLoader plugin for the browser: an image three's ImageBitmapLoader would read, embedded or a file of its own, is
+ * fetched and decoded as that loader does it, but decoded only when the texture arrays are packed (a PNG or JPEG), and
+ * let go once they are. A file that cannot be fetched fails as it does there, through the loading manager.
  */
-export function embeddedImagesPlugin( parser, onFailure = null ) {
+export function browserImagesPlugin( parser, onFailure = null ) {
 
 	const loadImageSource = parser.loadImageSource;
 	parser.loadImageSource = function ( sourceIndex, loader ) {
 
 		const def = this.json.images[ sourceIndex ];
-		if ( this.sourceCache[ sourceIndex ] !== undefined || def.bufferView === undefined || ! loader?.isImageBitmapLoader ) return loadImageSource.call( this, sourceIndex, loader );
+		if ( this.sourceCache[ sourceIndex ] !== undefined || ( def.bufferView === undefined && def.uri === undefined ) || ! loader?.isImageBitmapLoader ) return loadImageSource.call( this, sourceIndex, loader );
 
-		const promise = this.getDependency( 'bufferView', def.bufferView ).then( ( buffer ) => {
+		const promise = imageBlob( this, def, loader ).then( async ( blob ) => {
 
-			const blob = new Blob( [ buffer ], { type: def.mimeType } );
 			const read = async ( size ) => {
 
 				const texture = new Texture( size ? { ...size, data: null } : await createImageBitmap( blob, { ...loader.options, colorSpaceConversion: 'none' } ) );
@@ -230,7 +262,7 @@ export function embeddedImagesPlugin( parser, onFailure = null ) {
 
 			};
 
-			return rereadableImage( new Uint8Array( buffer ), read, def, onFailure );
+			return rereadableImage( new Uint8Array( await blob.slice( 0, IMAGE_HEADER_BYTES ).arrayBuffer() ), read, def, onFailure );
 
 		} );
 
@@ -239,7 +271,7 @@ export function embeddedImagesPlugin( parser, onFailure = null ) {
 
 	};
 
-	return { name: 'RAYZEE_embedded_images' };
+	return { name: 'RAYZEE_browser_images' };
 
 }
 
