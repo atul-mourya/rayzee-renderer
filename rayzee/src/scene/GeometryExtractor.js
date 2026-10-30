@@ -81,6 +81,15 @@ function isIdentityElements( e ) {
  * @param {import('three').Material} material
  * @returns {Object<string, import('three').Texture|undefined>}
  */
+// A bump map's size as authored: processBump steps one of its texels, however packing stretches or shrinks its layer.
+function bumpMapSize( texture ) {
+
+	const image = texture?.image;
+	const width = image?.width || image?.naturalWidth, height = image?.height || image?.naturalHeight;
+	return width > 0 && height > 0 ? [ width, height ] : null;
+
+}
+
 export function resolveMaterialTextures( material ) {
 
 	return {
@@ -1314,6 +1323,7 @@ export class GeometryExtractor {
 			// The coat's normal map shares the base one's transform, or brings its own when there is none.
 			normalMapMatrices: this.getTextureMatrix( textures.normalMap ?? textures.clearcoatNormalMap ),
 			bumpMapMatrices: this.getTextureMatrix( textures.bumpMap ),
+			bumpMapSize: bumpMapSize( textures.bumpMap ),
 			roughnessMapMatrices: this.getTextureMatrix( textures.roughnessMap ),
 			metalnessMapMatrices: this.getTextureMatrix( textures.metalnessMap ),
 			emissiveMapMatrices: this.getTextureMatrix( textures.emissiveMap ),

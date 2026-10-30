@@ -705,10 +705,10 @@ export class MaterialDataManager {
 		}
 
 		// 8 floats per slot (matrix elements[0..7]); element[8]=1 is GPU-reconstructed.
-		// Writing 9 would clobber the next transform slot's first element.
+		// Writing 9 would clobber the next transform slot's first element. The third row (2, 5) is not the transform's.
 		for ( let i = 0; i < 8; i ++ ) {
 
-			if ( stride + offset + i < data.length ) {
+			if ( i !== 2 && i !== 5 && stride + offset + i < data.length ) {
 
 				data[ stride + offset + i ] = transformMatrix[ i ];
 

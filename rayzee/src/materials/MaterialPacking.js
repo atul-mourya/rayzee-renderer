@@ -135,6 +135,9 @@ export function packMaterial( data, base, mat ) {
 
 	}
 
+	data[ base + M.BUMP_MAP_WIDTH ] = num( mat.bumpMapSize?.[ 0 ], 0 );
+	data[ base + M.BUMP_MAP_HEIGHT ] = num( mat.bumpMapSize?.[ 1 ], 0 );
+
 	writeTriple( data, base + M.SUBSURFACE_COLOR, mat.subsurfaceColor, D.subsurfaceColor );
 	u( M.SUBSURFACE, mat.subsurface, D.subsurface );
 	writeTriple( data, base + M.SUBSURFACE_RADIUS, mat.subsurfaceRadius, D.subsurfaceRadius );

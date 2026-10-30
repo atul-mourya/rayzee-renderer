@@ -503,6 +503,10 @@ bench gates and measurements.
   march finds behind the base triangle is moved onto its plane: rays spawned below it all hit that triangle. ⚠️ Glass
   and subsurface: the relief is not geometry, so the triangle decides entering vs leaving, and only a reflection leaves
   from the relief; total internal reflection keeps chance 1.
+- **Bump maps** step one texel of the map as authored (`BUMP_MAP_WIDTH`/`HEIGHT`, the bump transform's unused third row,
+  written from `bumpMapSize` at extraction), never of the stored layer: packing stretches every layer to its array's
+  size, so a 512² wall map packed with 1024² maps rendered at half strength, and adding a texture to a scene changed
+  another's relief. ⚠️ A transform write skips that row (`updateTextureTransform`, elements 2 and 5).
 - **Ray spawn points**: every ray leaving a surface starts at `offsetRayOrigin( p, n )` (`shaders/Common.js`), n the
   **facet** normal on the side the ray leaves. ⚠️ The hit record's `normal` is the interpolated one; the facet normal
   rides in its spare lane (`shaders/HitFacet.js`). ⚠️ Never a fixed distance; a shadow ray towards a sampled light point

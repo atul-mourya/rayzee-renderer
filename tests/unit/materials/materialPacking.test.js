@@ -68,7 +68,7 @@ function sentinel( k ) {
 		iridescence: u(), iridescenceIOR: v(), iridescenceThicknessRange: [ v(), v() ],
 		bumpScale: v(), displacementScale: v(), displacementMap: v(), displacementBias: v(),
 		mapMatrix: matrix(), normalMapMatrices: matrix(), roughnessMapMatrices: matrix(), metalnessMapMatrices: matrix(),
-		emissiveMapMatrices: matrix(), bumpMapMatrices: matrix(), displacementMapMatrices: matrix(),
+		emissiveMapMatrices: matrix(), bumpMapMatrices: matrix(), displacementMapMatrices: matrix(), bumpMapSize: [ v(), v() ],
 		subsurfaceColor: rgb(), subsurface: u(), subsurfaceRadius: rgb(), subsurfaceRadiusScale: v(),
 		subsurfaceAnisotropy: v(), anisotropy: u(), anisotropyRotation: v(), anisotropyMap: v(),
 		transmissionMap: v(), clearcoatMap: v(), clearcoatRoughnessMap: v(), sheenColorMap: v(),
@@ -110,6 +110,8 @@ describe( 'packMaterial', () => {
 		expectAt( M.DISPLACEMENT_BIAS, mat.displacementBias );
 		expectAt( M.ALBEDO_TRANSFORM, mat.mapMatrix[ 0 ] );
 		expectAt( M.DISPLACEMENT_TRANSFORM + 7, mat.displacementMapMatrices[ 7 ] );
+		expectAt( M.BUMP_MAP_WIDTH, mat.bumpMapSize[ 0 ] );
+		expectAt( M.BUMP_MAP_HEIGHT, mat.bumpMapSize[ 1 ] );
 		expectAt( M.SUBSURFACE, mat.subsurface );
 		expectAt( M.SUBSURFACE_RADIUS + 2, mat.subsurfaceRadius[ 2 ] );
 		expectAt( M.ANISOTROPY_MAP_INDEX, mat.anisotropyMap );
@@ -333,6 +335,22 @@ describe( 'MaterialDataManager', () => {
 			setWorkingMatrix( null );
 
 		}
+
+	} );
+
+	it( 'records a bump map\'s own size, through a replaced material and a texture transform edit', () => {
+
+		const extractor = new GeometryExtractor();
+		const material = new MeshPhysicalMaterial( { bumpMap: new DataTexture( new Uint8Array( 512 * 256 * 4 ), 512, 256 ) } );
+		expect( extractor.createMaterialObject( material ).bumpMapSize ).toEqual( [ 512, 256 ] );
+		expect( extractor.createMaterialObject( new MeshPhysicalMaterial() ).bumpMapSize ).toBeNull();
+
+		const manager = managerWith( extractor );
+		manager.updateMaterial( 0, material );
+		const data = manager.materialStorageAttr.array;
+		manager.updateTextureTransform( 0, 'bumpMap', [ 2, 0, 0, 0, 2, 0, 0.5, 0.5 ] );
+		expect( [ data[ M.BUMP_MAP_WIDTH ], data[ M.BUMP_MAP_HEIGHT ] ] ).toEqual( [ 512, 256 ] );
+		expect( data[ M.BUMP_TRANSFORM ] ).toBe( 2 );
 
 	} );
 

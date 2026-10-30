@@ -1,5 +1,5 @@
 import { sceneResources, materialLayers } from './SceneResources.js';
-import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, texture, textureSize, uintBitsToFloat } from 'three/tsl';
+import { Fn, wgslFn, float, vec2, vec3, vec4, int, If, normalize, cross, dot, length, sign, abs, atan, mix, clamp, select, texture, textureSize, uintBitsToFloat } from 'three/tsl';
 import { DataArrayTexture, LinearFilter } from 'three';
 
 import {
@@ -496,12 +496,13 @@ export const processBump = Fn( ( [ currentNormal, material, uvCache ], builder )
 
 	If( material.bumpMapIndex.greaterThanEqual( int( 0 ) ).and( material.bumpScale.greaterThan( 0.0 ) ), () => {
 
-		// Taps + texel size come from the SELECTED bucket node (its real dimensions), so the
-		// finite-difference step is correct per bucket — done inside one bucket-branch.
 		const bumpNormal = vec3( 0.0, 0.0, 1.0 ).toVar();
 		withBucket( linearBuckets, material.bumpMapIndex, ( node, layer ) => {
 
-			const texelSize = vec2( 1.0 ).div( vec2( textureSize( node ) ) ).toVar();
+			// One texel of the map as authored, however packing stretched or shrank it: a 512² map in a 1024² array
+			// stepped one stored texel at half strength. The stored size when unknown.
+			const native = vec2( material.bumpTransform[ 0 ].z, material.bumpTransform[ 1 ].z );
+			const texelSize = vec2( 1.0 ).div( select( native.x.greaterThan( 0.0 ), native, vec2( textureSize( node ) ) ) ).toVar();
 			const h_c = texture( node, uvCache.bumpUV ).depth( layer ).r;
 			const h_u = texture( node, vec2( uvCache.bumpUV.x.add( texelSize.x ), uvCache.bumpUV.y ) ).depth( layer ).r;
 			const h_v = texture( node, vec2( uvCache.bumpUV.x, uvCache.bumpUV.y.add( texelSize.y ) ) ).depth( layer ).r;

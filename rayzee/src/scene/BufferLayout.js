@@ -159,6 +159,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	METALNESS_TRANSFORM: 76,
 	EMISSIVE_TRANSFORM: 84,
 	BUMP_TRANSFORM: 92,
+	// The bump transform's third row, unused by any transform: the bump map's own width and height.
+	BUMP_MAP_WIDTH: 94, BUMP_MAP_HEIGHT: 97,
 	DISPLACEMENT_TRANSFORM: 100,
 
 	// ── Subsurface scattering (3 slots appended after transforms) ────
