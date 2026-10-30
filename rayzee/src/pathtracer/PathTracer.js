@@ -167,7 +167,8 @@ export class PathTracer extends PathTracerStage {
 		this._outputsChanged = false;
 		// The material layers the kernels were compiled with (_layersToCompile).
 		this._compiledLayers = null;
-		this._shadowRays = 'all';
+		// The setting's default: starting elsewhere made every first load build the kernels twice.
+		this._shadowRays = ENGINE_DEFAULTS.shadowRays;
 		this._compiledPick = null;
 		this._learnsVisibility = false;
 

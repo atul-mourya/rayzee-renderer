@@ -12,6 +12,7 @@ import { MATERIAL_VALUE_SOURCE } from '@/core/scene/GeometryExtractor.js';
 import { readPixels } from '@/core/output/TextureReadback.js';
 import { encodeHDR } from '@/core/output/ImageEncoders.js';
 import { OIDNDenoiser } from '@/core/viewer/denoise/OIDNDenoiser.js';
+import { PathTracer } from '@/core/pathtracer/PathTracer.js';
 
 const ROOT = new URL( '../../', import.meta.url );
 const SIZE = 32;
@@ -718,5 +719,93 @@ describeGPU( 'the engine headless on Dawn', () => {
 		expect( ( await device.lost ).reason ).toBe( 'destroyed' );
 
 	} );
+
+} );
+
+describeGPU( 'a first load', () => {
+
+	it( 'builds the kernels once, settings applied', async () => {
+
+		configurePlatform( { ...nodePlatform(), Worker: SourceWorker } );
+		const build = vi.spyOn( PathTracer.prototype, '_buildWavefrontKernels' );
+		const app = await openHeadless( { width: 32, height: 32, strict: false } );
+		try {
+
+			const floor = new Mesh( new PlaneGeometry( 4, 4 ), new MeshPhysicalMaterial() );
+			floor.rotation.x = - Math.PI / 2;
+			await app.loadObject3D( new Scene().add( floor ), 'floor' );
+			const atLoad = build.mock.calls.length;
+			await app.renderFrames( 2 );
+			expect( build.mock.calls.length ).toBe( atLoad );
+
+		} finally {
+
+			build.mockRestore();
+			app.dispose();
+
+		}
+
+	}, 60000 );
+
+} );
+
+describeGPU( 'material rebuilds', () => {
+
+	it( 'free the arrays they replace, render as before, and leave nothing behind for the next load', async () => {
+
+		configurePlatform( { ...nodePlatform(), Worker: SourceWorker } );
+		const app = await openHeadless( { width: 32, height: 32, strict: false } );
+		const map = ( size, v ) => {
+
+			const t = new DataTexture( new Uint8Array( size * size * 4 ).map( ( _, i ) => i % 4 === 3 ? 255 : ( i * v ) % 251 ), size, size );
+			t.colorSpace = SRGBColorSpace;
+			t.needsUpdate = true;
+			return t;
+
+		};
+
+		const onGPU = ( t ) => !! app.renderer.backend.get( t ).texture;
+		const render = async () => {
+
+			await app.renderFrames( 4 );
+			return ( await app.renderToBuffer( { colorSpace: 'linear' } ) ).data.slice();
+
+		};
+
+		try {
+
+			const floor = new Mesh( new PlaneGeometry( 4, 4 ), new MeshPhysicalMaterial( { map: map( 256, 7 ) } ) );
+			floor.rotation.x = - Math.PI / 2;
+			await app.loadObject3D( new Scene().add( floor ), 'floor' );
+			app.camera.position.set( 0, 3, 3 );
+			app.camera.lookAt( 0, 0, 0 );
+			const image = await render();
+			const count = app.renderer.info.memory.textures;
+			const loaded = app.stages.pathTracer.materialData.srgbBuckets.filter( Boolean );
+
+			let rebuilt;
+			for ( let i = 0; i < 2; i ++ ) {
+
+				await app.rebuildMaterials();
+				expect( await render() ).toEqual( image );
+				expect( app.renderer.info.memory.textures ).toBe( count );
+				rebuilt = app.stages.pathTracer.materialData.srgbBuckets.filter( Boolean );
+
+			}
+
+			for ( const texture of loaded ) expect( onGPU( texture ) ).toBe( false );
+			expect( app._sdf.srgbBucketTextures ).toBeNull();
+
+			await app.loadObject3D( new Scene().add( new Mesh( new PlaneGeometry( 4, 4 ), new MeshPhysicalMaterial( { map: map( 64, 3 ) } ) ) ), 'other' );
+			await render();
+			for ( const texture of rebuilt ) expect( onGPU( texture ) ).toBe( false );
+
+		} finally {
+
+			app.dispose();
+
+		}
+
+	}, 120000 );
 
 } );

@@ -482,6 +482,8 @@ export async function loadSceneData( app, { pendingEnvironment = null, keepUserL
 	// Re-read rather than reusing the snapshot above: a pendingEnvironment may have landed
 	// during the BVH build, and the snapshot is then a disposed texture.
 	if ( ! app._sdf.uploadToPathTracer( app.stages.pathTracer, app.lightManager, app.meshScene, hdri(), { keepUserLights } ) ) return false;
+	// A material rebuild's arrays, if one ran on the last scene: nothing binds them now.
+	if ( app.stages.pathTracer.sdfs !== app._sdf ) app.stages.pathTracer.sdfs?._disposeBucketTextures?.();
 
 	// Not left to the first frame, where three.js sends every layer at once.
 	await app.stages.pathTracer.uploadTextureArrays( [ ...( app._sdf.srgbBucketTextures ?? [] ), ...( app._sdf.linearBucketTextures ?? [] ) ] );

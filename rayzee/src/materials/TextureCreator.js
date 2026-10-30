@@ -2500,8 +2500,9 @@ export async function rebuildMaterials( processor, object ) {
 		// Extract only material-related data from the scene (skip geometry extraction)
 		const extractedData = processor.geometryExtractor.extractMaterialsOnly( object );
 
-		// Dispose old texture resources BEFORE updating arrays
-		disposeMaterialTextures( processor );
+		// The old arrays may still be the ones bound: whoever swaps the new ones in frees them.
+		processor.srgbBucketTextures = processor.linearBucketTextures = null;
+		processor.textureCreator.textureCache = new TextureCache();
 
 		// Update material arrays (but keep existing triangle data)
 		processor.materials = extractedData.materials;
@@ -2541,19 +2542,3 @@ export function adoptTextureLists( processor, extractedData ) {
 
 }
 
-/**
- * Dispose only material-related textures
- */
-function disposeMaterialTextures( processor ) {
-
-	processor._disposeBucketTextures();
-
-	// Clear texture creator cache to prevent stale references
-	if ( processor.textureCreator && processor.textureCreator.textureCache ) {
-
-		processor.textureCreator.textureCache.dispose();
-		processor.textureCreator.textureCache = new ( processor.textureCreator.textureCache.constructor )();
-
-	}
-
-}

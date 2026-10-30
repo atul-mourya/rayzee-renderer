@@ -947,6 +947,11 @@ emissive data and instance table in place of the scene's, and emitters stopped b
 sources. −716 MB on 24155522.glb. They are dropped, not returned to `SmartBufferPool`, which would
 keep them alive; a cache lookup then sees `userData.buffer === null` and rebuilds.
 
+**Replaced arrays are freed once nothing binds them.** A material rebuild (a colour-space or texture edit) packs new
+arrays, binds them, then frees the ones bound before (`PathTracerStage.rebuildMaterials`); the next load frees a
+rebuild's (`SceneLoading`). Kept, the load's set stayed beside the new one: 716 MB more on 24155522.glb after any colour
+change. A bucket left empty points at its node's own placeholder (`refreshBucketTextureNodes`), never a freed array.
+
 **Material images are decoded only to be packed.** Every glTF image three's ImageBitmapLoader would read, embedded or a
 file of its own (`browserImagesPlugin`; in Node every glTF image, `platformImagesPlugin`; Safari's TextureLoader is not
 covered), and every image of a folder or archive carry a reader (`setImageReader`, `materials/TextureCreator.js`); a PNG

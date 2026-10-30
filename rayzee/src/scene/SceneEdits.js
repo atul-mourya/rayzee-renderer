@@ -247,6 +247,8 @@ export async function rebuildMaterials( app, scene ) {
 	await app.ensureSceneResident();
 	const stage = app.stages.pathTracer;
 	await stage?.rebuildMaterials( scene || app.meshScene );
+	// Arrays the rebuild replaced are freed; the scene's processor no longer owns any.
+	if ( app._sdf && stage?.materialData.srgbBuckets !== app._sdf.srgbBucketTextures ) app._sdf.srgbBucketTextures = app._sdf.linearBucketTextures = null;
 
 	// Loaded without texture coordinates, and a material has a texture now: they go up again from the records.
 	if ( stage?.triangleStorageNode?.withoutUV && app._sdf?.triangles && usesTextureCoordinates( scene || app.meshScene ) ) {

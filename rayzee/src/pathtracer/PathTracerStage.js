@@ -1845,6 +1845,8 @@ export class PathTracerStage extends RenderStage {
 
 			log.debug( 'material rebuild started' );
 
+			const mat = this.materialData;
+			const previous = [ ...( mat.srgbBuckets ?? [] ), ...( mat.linearBuckets ?? [] ) ];
 			await this.sdfs.rebuildMaterials( scene );
 			// Before the new material data: frames traced meanwhile keep the old arrays and the indices into them.
 			await this.uploadTextureArrays( [ ...( this.sdfs.srgbBucketTextures ?? [] ), ...( this.sdfs.linearBucketTextures ?? [] ) ] );
@@ -1856,6 +1858,9 @@ export class PathTracerStage extends RenderStage {
 			this.shaderBuilder.updateSceneTextures( this );
 			this.updateLights();
 			this.reset();
+			// The arrays bound before (the load's, or this processor's last) once nothing binds them: kept, they doubled texture memory.
+			const bound = new Set( [ ...( mat.srgbBuckets ?? [] ), ...( mat.linearBuckets ?? [] ) ] );
+			for ( const texture of previous ) if ( texture && ! bound.has( texture ) ) texture.dispose();
 
 			log.debug( 'material rebuild complete' );
 

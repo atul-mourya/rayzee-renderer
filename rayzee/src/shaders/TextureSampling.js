@@ -92,8 +92,10 @@ export function buildBucketTextureNodes( bucketArrays ) {
 	const nodes = [];
 	for ( let i = 0; i < K; i ++ ) {
 
-		const arr = bucketArrays && bucketArrays[ i ];
-		nodes.push( texture( arr || makeBucketPlaceholder() ) );
+		const placeholder = makeBucketPlaceholder();
+		const node = texture( bucketArrays?.[ i ] || placeholder );
+		node.bucketPlaceholder = placeholder;
+		nodes.push( node );
 
 	}
 
@@ -107,7 +109,8 @@ export function refreshBucketTextureNodes( nodes, bucketArrays ) {
 	if ( ! nodes || ! bucketArrays ) return;
 	for ( let i = 0; i < nodes.length; i ++ ) {
 
-		if ( bucketArrays[ i ] && nodes[ i ] ) nodes[ i ].value = bucketArrays[ i ];
+		// An emptied bucket must not keep a freed array: three.js would allocate it again, empty and full size.
+		if ( nodes[ i ] ) nodes[ i ].value = bucketArrays[ i ] || ( nodes[ i ].bucketPlaceholder ??= makeBucketPlaceholder() );
 
 	}
 
