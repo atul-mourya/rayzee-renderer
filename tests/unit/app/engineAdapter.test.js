@@ -320,8 +320,11 @@ describe( 'connectEngineToStore mirrors', () => {
 		expect( state.setIsUpscaling ).toHaveBeenLastCalledWith( true );
 		expect( state.setUpscalingProgress ).toHaveBeenLastCalledWith( 0 );
 
-		engine._emit( 'UPSCALING_PROGRESS', { progress: 0.4 } );
-		expect( state.setUpscalingProgress ).toHaveBeenLastCalledWith( 0.4 );
+		engine._emit( 'UPSCALING_PROGRESS', { progress: 0.2, secondsLeft: null } );
+		expect( state.setUpscalingProgress ).toHaveBeenLastCalledWith( 0.2, null );
+
+		engine._emit( 'UPSCALING_PROGRESS', { progress: 0.4, secondsLeft: 12 } );
+		expect( state.setUpscalingProgress ).toHaveBeenLastCalledWith( 0.4, 12 );
 
 		engine._emit( 'UPSCALING_END' );
 		expect( state.setIsUpscaling ).toHaveBeenLastCalledWith( false );

@@ -364,7 +364,7 @@ minified + gzip of the three.js loader alone (three is external, so it lands in 
 ### Performance
 
 - [ ] Custom model URL support — let users provide their own ONNX SR model
-- [ ] Estimated time remaining based on per-tile timing
+- [x] Estimated time remaining based on per-tile timing (`UPSCALING_PROGRESS.secondsLeft`, shown on the app's badge)
 - [ ] FSR 2.x port
 
 ---

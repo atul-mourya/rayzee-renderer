@@ -74,7 +74,8 @@ export const useStore = create( set => ( {
 	isUpscaling: false,
 	setIsUpscaling: val => set( { isUpscaling: val } ),
 	upscalingProgress: 0,
-	setUpscalingProgress: val => set( { upscalingProgress: val } ),
+	upscalingSecondsLeft: null,
+	setUpscalingProgress: ( val, secondsLeft = null ) => set( { upscalingProgress: val, upscalingSecondsLeft: secondsLeft } ),
 	isRenderComplete: false,
 	setIsRenderComplete: val => set( { isRenderComplete: val } ),
 	// Which of the three racing stop conditions retired the frame: 'timeLimit' | 'samples' |

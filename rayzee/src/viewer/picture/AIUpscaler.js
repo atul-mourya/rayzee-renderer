@@ -412,6 +412,7 @@ export class AIUpscaler extends EventDispatcher {
 		const tilesY = Math.ceil( srcH / step );
 		const totalTiles = tilesX * tilesY;
 		let completedTiles = 0;
+		let firstTileAt = 0;
 
 		for ( let ty = 0; ty < tilesY; ty ++ ) {
 
@@ -440,9 +441,16 @@ export class AIUpscaler extends EventDispatcher {
 				ctx.putImageData( tileImageData, writeX, writeY );
 
 				completedTiles ++;
+				// Every tile is the same size, but the first carries the model's warm-up: time the ones after it.
+				const now = performance.now();
+				if ( completedTiles === 1 ) firstTileAt = now;
+				const secondsLeft = completedTiles > 1
+					? ( now - firstTileAt ) / ( completedTiles - 1 ) * ( totalTiles - completedTiles ) / 1000
+					: null;
 				this.dispatchEvent( {
 					type: 'progress',
 					progress: completedTiles / totalTiles,
+					secondsLeft,
 					tile: { x: tx, y: ty, total: totalTiles, completed: completedTiles }
 				} );
 

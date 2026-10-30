@@ -212,6 +212,11 @@ const useHeld = ( on, ms ) => {
 
 };
 
+// "12 s left", "3 min left".
+const timeLeft = seconds => seconds < 59.5
+	? `${Math.max( 1, Math.round( seconds ) )} s left`
+	: `${Math.round( seconds / 60 )} min left`;
+
 const StatusPill = ( { label, percent, onCancel } ) => (
 	<div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-card/90 px-3 py-1.5 text-xs text-foreground shadow-lg backdrop-blur-xs animate-in fade-in">
 		<Loader2 className="size-3.5 animate-spin text-primary" />
@@ -244,6 +249,7 @@ export const PictureStatus = ( { scale = 100 } ) => {
 	const denoising = useStore( state => state.isDenoising );
 	const upscaling = useStore( state => state.isUpscaling );
 	const upscalingProgress = useStore( state => state.upscalingProgress );
+	const upscalingSecondsLeft = useStore( state => state.upscalingSecondsLeft );
 	const retouchOnly = usePathTracerStore( state => state.neuralRendering && ! state.enableUpscaler );
 	const videoRendering = useAnimationStore( state => state.isVideoRendering );
 	const videoFrame = useAnimationStore( state => state.videoRenderFrame );
@@ -261,7 +267,8 @@ export const PictureStatus = ( { scale = 100 } ) => {
 		! videoRendering && loadingDenoiser && ! denoising && { key: 'model', label: 'Loading denoiser...' },
 		! videoRendering && denoising && { key: 'denoise', label: 'Denoising...' },
 		! videoRendering && upscaling && {
-			key: 'upscale', label: retouchOnly ? 'Retouching...' : 'Upscaling...',
+			key: 'upscale',
+			label: ( retouchOnly ? 'Retouching...' : 'Upscaling...' ) + ( upscalingSecondsLeft > 0 ? ` · ${timeLeft( upscalingSecondsLeft )}` : '' ),
 			percent: upscalingProgress > 0 ? upscalingProgress * 100 : undefined,
 			onCancel: () => getApp()?.denoisingManager?.cancelPostPasses(),
 		},

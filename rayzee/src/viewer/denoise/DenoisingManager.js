@@ -450,7 +450,7 @@ export class DenoisingManager extends EventDispatcher {
 		this._upscalerStartHandler = () =>
 			this.dispatchEvent( { type: EngineEvents.UPSCALING_START } );
 		this._upscalerProgressHandler = ( e ) =>
-			this.dispatchEvent( { type: EngineEvents.UPSCALING_PROGRESS, progress: e.progress } );
+			this.dispatchEvent( { type: EngineEvents.UPSCALING_PROGRESS, progress: e.progress, secondsLeft: e.secondsLeft } );
 		this._upscalerEndHandler = () =>
 			this.dispatchEvent( { type: EngineEvents.UPSCALING_END } );
 		this.upscaler.addEventListener( 'resolution_changed', this._upscalerResChangedHandler );

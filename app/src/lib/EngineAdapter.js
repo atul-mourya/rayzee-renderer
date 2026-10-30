@@ -78,7 +78,7 @@ export function connectEngineToStore( engine, { useStore, useCameraStore, usePat
 
 	on( EngineEvents.UPSCALING_PROGRESS, ( e ) => {
 
-		useStore.getState().setUpscalingProgress( e.progress );
+		useStore.getState().setUpscalingProgress( e.progress, e.secondsLeft ?? null );
 
 	} );
 

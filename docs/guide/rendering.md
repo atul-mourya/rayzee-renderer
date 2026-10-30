@@ -512,9 +512,13 @@ engine.denoisingManager.setUpscalerQuality('fast');      // 'fast' | 'balanced' 
 engine.denoisingManager.setUpscalerScaleFactor(2);       // 2 | 4
 
 engine.addEventListener(EngineEvents.UPSCALING_START,    () => console.log('Upscaling started'));
-engine.addEventListener(EngineEvents.UPSCALING_PROGRESS, (e) => console.log('Upscaling', e));
+engine.addEventListener(EngineEvents.UPSCALING_PROGRESS, (e) => console.log('Upscaling', e.progress, e.secondsLeft));
 engine.addEventListener(EngineEvents.UPSCALING_END,      () => console.log('Upscaling complete'));
 ```
+
+`UPSCALING_PROGRESS` fires once a tile: `progress` is the share done (0–1) and `secondsLeft` the time the tiles still
+to go should take, from the tiles done so far. It is `null` until two tiles are done: the first carries the model's
+warm-up.
 
 | Quality | Model | 2× size | 4× size |
 |---|---|---|---|
