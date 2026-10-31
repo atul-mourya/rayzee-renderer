@@ -131,8 +131,8 @@ export const MATERIAL_DATA_LAYOUT = {
 	ATTENUATION_COLOR: 4, ATTENUATION_DISTANCE: 7,
 	// Slot 2: opacity + side + transparent + alphaTest              [shadow + culling]
 	OPACITY: 8, SIDE: 9, TRANSPARENT: 10, ALPHA_TEST: 11,
-	// Slot 3: alphaMode + depthWrite + normalScale                  [shadow]
-	ALPHA_MODE: 12, DEPTH_WRITE: 13, NORMAL_SCALE: 14,
+	// Slot 3: alphaMode + depthWrite + normalScale + diffuseRoughness map index [shadow]
+	ALPHA_MODE: 12, DEPTH_WRITE: 13, NORMAL_SCALE: 14, DIFFUSE_ROUGHNESS_MAP_INDEX: 15,
 	// Slot 4: color.rgb + metalness                                 [BxDF core]
 	COLOR: 16, METALNESS: 19,
 	// Slot 5: emissive.rgb + roughness                              [BxDF core]
@@ -187,7 +187,7 @@ export const MATERIAL_DATA_LAYOUT = {
 		IOR_TRANSMISSION: 0, // [shadow] ior, transmission, thickness, emissiveIntensity
 		ATTENUATION: 1, // [shadow] attenuationColor, attenuationDistance
 		OPACITY_ALPHA: 2, // [shadow+culling] opacity, side, transparent, alphaTest
-		ALPHA_MODE: 3, // [shadow] alphaMode, depthWrite, normalScale
+		ALPHA_MODE: 3, // [shadow] alphaMode, depthWrite, normalScale, diffuseRoughness map index
 		COLOR_METALNESS: 4, // [BxDF] color.rgb, metalness
 		EMISSIVE_ROUGHNESS: 5, // [BxDF] emissive.rgb, roughness
 		MAP_INDICES_A: 6, // [maps] albedo, normal, roughness, metalness

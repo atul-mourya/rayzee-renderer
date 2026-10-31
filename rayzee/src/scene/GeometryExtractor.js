@@ -113,6 +113,7 @@ export function resolveMaterialTextures( material ) {
 		diffuseTransmissionColorMap: material.diffuseTransmissionColorMap,
 		iridescenceMap: material.iridescenceMap,
 		iridescenceThicknessMap: material.iridescenceThicknessMap,
+		diffuseRoughnessMap: material.diffuseRoughnessMap,
 	};
 
 }
@@ -1324,6 +1325,7 @@ export class GeometryExtractor {
 			diffuseTransmissionColorMap: this.processTexture( textures.diffuseTransmissionColorMap, this.diffuseTransmissionColorMaps ),
 			iridescenceMap: this.processTexture( textures.iridescenceMap, this.iridescenceMaps ),
 			iridescenceThicknessMap: this.processTexture( textures.iridescenceThicknessMap, this.iridescenceThicknessMaps ),
+			diffuseRoughnessMap: this.processTexture( textures.diffuseRoughnessMap, this.diffuseRoughnessMaps ),
 
 			mapMatrix: this.getTextureMatrix( textures.map ),
 			// The coat's normal map shares the base one's transform, or brings its own when there is none.
@@ -1725,6 +1727,7 @@ export class GeometryExtractor {
 		this.specularColorMaps = [];
 		this.diffuseTransmissionMaps = [];
 		this.diffuseTransmissionColorMaps = [];
+		this.diffuseRoughnessMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 
@@ -1770,6 +1773,7 @@ export class GeometryExtractor {
 			specularColorMaps: this.specularColorMaps,
 			diffuseTransmissionMaps: this.diffuseTransmissionMaps,
 			diffuseTransmissionColorMaps: this.diffuseTransmissionColorMaps,
+			diffuseRoughnessMaps: this.diffuseRoughnessMaps,
 			directionalLights: this.directionalLights,
 			cameras: this.cameras
 		};

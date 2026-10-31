@@ -42,7 +42,7 @@ const TEXTURE_POOLS = [
 	[ 'displacementMap', false ], [ 'anisotropyMap', false ], [ 'transmissionMap', false ],
 	[ 'clearcoatMap', false ], [ 'clearcoatRoughnessMap', false ], [ 'clearcoatNormalMap', false ], [ 'sheenRoughnessMap', false ],
 	[ 'iridescenceMap', false ], [ 'iridescenceThicknessMap', false ], [ 'specularIntensityMap', false ],
-	[ 'diffuseTransmissionColorMap', true ], [ 'diffuseTransmissionMap', false ],
+	[ 'diffuseTransmissionColorMap', true ], [ 'diffuseTransmissionMap', false ], [ 'diffuseRoughnessMap', false ],
 ];
 
 // Scalar slots readable via getMaterialProperty().
@@ -534,12 +534,10 @@ export class MaterialDataManager {
 				if ( value.x !== undefined ) {
 
 					data[ stride + M.NORMAL_SCALE ] = value.x;
-					data[ stride + M.NORMAL_SCALE + 1 ] = value.y;
 
 				} else if ( typeof value === 'number' ) {
 
 					data[ stride + M.NORMAL_SCALE ] = value;
-					data[ stride + M.NORMAL_SCALE + 1 ] = value;
 
 				}
 

@@ -695,6 +695,31 @@ describeGPU( 'the engine headless on Dawn', () => {
 
 	}, 30000 );
 
+	it( 'renders a diffuse roughness map as its factor', async () => {
+
+		const material = meshNamed( 'ball' ).material;
+		const fifth = new DataTexture( new Uint8Array( 4 * 4 ).fill( 51 ), 2, 2 );
+		fifth.needsUpdate = true;
+		const look = async ( factor, map = null ) => {
+
+			material.diffuseRoughness = factor;
+			material.diffuseRoughnessMap = map;
+			material.needsUpdate = true;
+			await app.rebuildMaterials();
+			return render();
+
+		};
+
+		const byFactor = await look( 0.2 );
+		const byMap = await look( 1, fifth );
+		const full = await look( 1 );
+		await look( 0 );
+
+		expect( maxDifference( byMap, byFactor ) ).toBeLessThan( 1e-5 );
+		expect( maxDifference( full, byFactor ) ).toBeGreaterThan( 1e-3 );
+
+	}, 30000 );
+
 	it( 'renders nothing but the sky once the scene is unloaded', async () => {
 
 		const unloaded = vi.fn();

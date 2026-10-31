@@ -488,10 +488,10 @@ bench gates and measurements.
   1e-6 floor cut D 8000× while the sampler drew the true lobe (`furnace-dielectric-smooth` gates it).
 - **Exact mirrors**: a plain reflector authored below `MIN_ROUGHNESS` (0.05) gets roughness 0, the delta lobe
   (`DELTA_PDF`), whose MIS weights are all 1.
-- **Diffuse transmission** (KHR_materials_diffuse_transmission), **diffuse roughness** (EON, in `diffuseLobe`) and the
-  **clear coat normal** (its own normal, never the base's map) each reach every MIS site and both integrators through
-  one function. ⚠️ EON's form is 0/0 at roughness 0 and only near Lambert in f32: roughness 0 branches to the old
-  Lambert expression, bit for bit.
+- **Diffuse transmission** (KHR_materials_diffuse_transmission), **diffuse roughness** (EON, in `diffuseLobe`; its
+  map × the factor) and the **clear coat normal** (its own normal, never the base's map) each reach every MIS site and
+  both integrators through one function. ⚠️ EON's form is 0/0 at roughness 0 and only near Lambert in f32: roughness 0
+  branches to the old Lambert expression, bit for bit.
 - **Material layers** (`MATERIAL_LAYERS`, `shaders/SceneResources.js`): clear coat, sheen, iridescence, anisotropy,
   subsurface, dispersion, diffuse transmission and diffuse roughness compile in only while some material has them
   (`materialLayers( builder )`, a plain JS `if`). ⚠️ Removing a layer's code must be exact for a material without it:

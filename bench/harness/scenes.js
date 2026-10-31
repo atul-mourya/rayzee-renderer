@@ -510,9 +510,7 @@ function makeRoughDiffuseRow() {
 
 	specs.forEach( ( spec, index ) => {
 
-		const material = new MeshPhysicalMaterial( { color: 0xb87a5a, roughness: spec.roughness, metalness: 0 } );
-		// three.js has no such property; the engine reads it off the material (MATERIAL_DEFAULTS).
-		material.diffuseRoughness = spec.diffuseRoughness;
+		const material = new MeshPhysicalMaterial( { color: 0xb87a5a, roughness: spec.roughness, metalness: 0, diffuseRoughness: spec.diffuseRoughness } );
 		const mesh = new Mesh( geometry, material );
 		mesh.position.set( ( index - ( specs.length - 1 ) / 2 ) * 1.85, 0, 0 );
 		group.add( mesh );

@@ -84,7 +84,7 @@ export class MaterialService {
 			'map', 'normalMap', 'bumpMap', 'roughnessMap', 'metalnessMap',
 			'emissiveMap', 'displacementMap', 'clearcoatMap', 'clearcoatRoughnessMap',
 			'transmissionMap', 'thicknessMap', 'sheenColorMap', 'sheenRoughnessMap',
-			'specularIntensityMap', 'specularColorMap', 'iridescenceMap', 'iridescenceThicknessMap'
+			'specularIntensityMap', 'specularColorMap', 'iridescenceMap', 'iridescenceThicknessMap', 'diffuseRoughnessMap'
 		];
 
 		textureMapProperties.forEach( prop => {

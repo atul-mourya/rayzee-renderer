@@ -122,7 +122,7 @@ const COMMON_TEXTURE_NAMES = [
 	'sheenColorMap', 'sheenRoughnessMap', 'transmissionMap',
 	'specularIntensityMap', 'specularColorMap',
 	'iridescenceMap', 'iridescenceThicknessMap', 'anisotropyMap',
-	'diffuseTransmissionMap', 'diffuseTransmissionColorMap'
+	'diffuseTransmissionMap', 'diffuseTransmissionColorMap', 'diffuseRoughnessMap'
 ];
 
 const TEXTURE_TIPS = {
@@ -151,6 +151,7 @@ const TEXTURE_TIPS = {
 	anisotropyMap: 'The direction and strength of the stretched shine across the surface.',
 	diffuseTransmissionMap: 'Where soft light passes through the thin surface.',
 	diffuseTransmissionColorMap: 'The colour of the light that passes through, across the surface.',
+	diffuseRoughnessMap: 'Where the matte surface looks flat and powdery, like clay or felt.',
 };
 
 // Texture slots that users can add via the UI (subset that the path tracer supports)

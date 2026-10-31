@@ -8,7 +8,9 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { float, vec2, vec3, vec4, int, uint, normalize, dot, bool as tslBool } from 'three/tsl';
 import { describeGPU, createRenderer, evaluate } from './gpu.js';
 import { diffuseGroundMaterial, classifyMaterial } from '@/core/shaders/Common.js';
-import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample } from '@/core/shaders/Struct.js';
+import { RayTracingMaterial, MaterialClassification, BRDFWeights, MaterialCache, DirectionSample, ExtMapResult } from '@/core/shaders/Struct.js';
+import { applyExtensionMaps, buildBucketTextureNodes } from '@/core/shaders/TextureSampling.js';
+import { DataArrayTexture } from 'three';
 import { calculateBRDFWeightsFromMaterial } from '@/core/shaders/MaterialProperties.js';
 import { generateSampledDirection } from '@/core/shaders/PathTracerCore.js';
 import { evaluateMaterialResponse } from '@/core/shaders/MaterialEvaluation.js';
@@ -234,6 +236,28 @@ describeGPU( 'diffuse roughness (EON)', () => {
 
 		expect( lambert ).toBe( 4096 );
 		expect( differs ).toBeGreaterThan( 4000 );
+
+	} );
+
+	it( 'takes its map\'s red channel times the factor, and leaves the factor alone compiled out', async () => {
+
+		const data = new Uint8Array( 4 * 4 * 4 );
+		for ( let i = 0; i < 16; i ++ ) data.set( [ 64, 255, 255, 255 ], i * 4 );
+		const map = new DataArrayTexture( data, 4, 4, 1 );
+		map.needsUpdate = true;
+		const buckets = buildBucketTextureNodes( [ map ] );
+
+		const fold = async ( layers ) => new Float32Array( await evaluate( renderer, 1, { uv: [ new Float32Array( [ 0.5, 0.5, 0, 0 ] ), 'vec4' ] }, 'float', ( { uv } ) => {
+
+			const m = RayTracingMaterial.wrap( diffuseGroundMaterial() ).toVar();
+			m.diffuseRoughness.assign( 0.8 );
+			m.diffuseRoughnessMapIndex.assign( int( 0 ) );
+			return ExtMapResult.wrap( applyExtensionMaps( m, uv.xy ) ).diffuseRoughness;
+
+		}, { linearBuckets: buckets, srgbBuckets: buckets, materialLayers: layers } ) )[ 0 ];
+
+		expect( await fold( ALL_MATERIAL_LAYERS ) ).toBeCloseTo( 0.8 * 64 / 255, 6 );
+		expect( await fold( { ...ALL_MATERIAL_LAYERS, diffuseRoughness: false } ) ).toBeCloseTo( 0.8, 6 );
 
 	} );
 

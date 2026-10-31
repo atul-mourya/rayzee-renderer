@@ -54,15 +54,17 @@ the shadow terminator, shadow-ray picking, sized lights and fog. CLAUDE.md keeps
   the lobe's draw rate and sampler/NEE agreement; `furnace-diffuse-transmission` (a closed sphere, 0.99989) and
   `translucent-panel` (lit from behind, truth with emissive NEE off: +0.017 %) gate it. Khronos'
   DiffuseTransmissionTest / Teacup / Plant render as their reference viewers show them.
-- **Diffuse roughness** (`material.diffuseRoughness`, an engine property until three.js r187 adds its own; packed at 33)
+- **Diffuse roughness** (`material.diffuseRoughness`, three.js r187's own and glTF `KHR_materials_diffuse_roughness`; packed at
+  33, its map at 15, the red channel × the factor in `applyExtensionMaps`, a lane the unread `normalScale.y` held)
   — EON (Portsmouth, Kutz & Hill 2025: Fujii's Oren–Nayar plus the light lost between facets),
   OpenPBR's `base_diffuse_roughness` and Cycles' Diffuse Roughness. One site, `diffuseLobe` in `MaterialEvaluation.js`
   (`diffuseEON` in `MaterialProperties.js`), so NEE, BSDF draws and the bidirectional kernels all get it; cosine
   sampling stays (reciprocal, so no density changes). ⚠️ The paper's form is 0/0 at roughness 0 and only near Lambert
   in f32: roughness 0 branches to the old Lambert expression, bit for bit. USD reads OpenPBR, Standard Surface (which
-  MaterialX renders uncompensated) and `oren_nayar_diffuse_bsdf`; a texture-driven value is not read. Diffuse
+  MaterialX renders uncompensated) and `oren_nayar_diffuse_bsdf`; USD's texture-driven value is not read. Diffuse
   transmission stays Lambert. `tests/gpu/diffuseRoughness.test.js` holds the paper's Listing 1 (1.3e-6), reciprocity
-  and white furnaces 0.9995–1.0000; `furnace-rough-diffuse` 0.99983, `-layered` 0.99976, `rough-diffuse` its shape.
+  and white furnaces 0.9995–1.0000, and the map's fold; `headlessEngine.test.js` a map of 0.2 under factor 1 rendering
+  as factor 0.2; `furnace-rough-diffuse` 0.99983, `-layered` 0.99976, `rough-diffuse` its shape.
   Every material of the 1.9M-triangle test interior at 0.5: frame +0–1 %, within noise.
 - **Clear coat normal** (glTF `clearcoatNormalTexture`; three.js `clearcoatNormalMap` / `clearcoatNormalScale`, packed at
   134–135) — the coat has a normal of its own, as glTF, three.js, Blender and MaterialX have it: the surface's (displaced,

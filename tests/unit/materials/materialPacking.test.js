@@ -74,7 +74,7 @@ function sentinel( k ) {
 		transmissionMap: v(), clearcoatMap: v(), clearcoatRoughnessMap: v(), sheenColorMap: v(),
 		sheenRoughnessMap: v(), iridescenceMap: v(), iridescenceThicknessMap: v(), specularIntensityMap: v(),
 		specularColorMap: v(), diffuseTransmission: u(), diffuseTransmissionColor: rgb(),
-		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(), diffuseRoughness: u(),
+		diffuseTransmissionMap: v(), diffuseTransmissionColorMap: v(), diffuseRoughness: u(), diffuseRoughnessMap: v(),
 		clearcoatNormalMap: v(), clearcoatNormalScale: { x: v(), y: v() },
 	};
 
@@ -93,7 +93,8 @@ describe( 'packMaterial', () => {
 		expectAt( M.ATTENUATION_COLOR + 2, mat.attenuationColor[ 2 ] );
 		expectAt( M.ATTENUATION_DISTANCE, mat.attenuationDistance );
 		expectAt( M.SIDE, mat.side );
-		expectAt( M.NORMAL_SCALE + 1, mat.normalScale.y );
+		expectAt( M.NORMAL_SCALE, mat.normalScale.x );
+		expectAt( M.DIFFUSE_ROUGHNESS_MAP_INDEX, mat.diffuseRoughnessMap );
 		expectAt( M.COLOR, mat.color[ 0 ] );
 		expectAt( M.METALNESS, mat.metalness );
 		expectAt( M.EMISSIVE + 1, mat.emissive[ 1 ] );
@@ -488,7 +489,7 @@ describe( 'SceneProcessor.rebuildMaterials', () => {
 		const map = () => new DataTexture( new Uint8Array( 4 * 4 * 4 ).fill( 128 ), 4, 4 );
 		const material = new MeshPhysicalMaterial( {
 			map: map(), transmission: 1, transmissionMap: map(), clearcoat: 1, clearcoatMap: map(), clearcoatNormalMap: map(),
-			sheen: 1, sheenColorMap: map(),
+			sheen: 1, sheenColorMap: map(), diffuseRoughness: 1, diffuseRoughnessMap: map(),
 		} );
 		const scene = new Scene().add( new Mesh( new PlaneGeometry(), material ) );
 
@@ -497,7 +498,7 @@ describe( 'SceneProcessor.rebuildMaterials', () => {
 		await processor.rebuildMaterials( scene );
 
 		const data = processor.materialData;
-		for ( const slot of [ M.ALBEDO_MAP_INDEX, M.TRANSMISSION_MAP_INDEX, M.CLEARCOAT_MAP_INDEX, M.CLEARCOAT_NORMAL_MAP_INDEX, M.SHEEN_COLOR_MAP_INDEX ] ) {
+		for ( const slot of [ M.ALBEDO_MAP_INDEX, M.TRANSMISSION_MAP_INDEX, M.CLEARCOAT_MAP_INDEX, M.CLEARCOAT_NORMAL_MAP_INDEX, M.SHEEN_COLOR_MAP_INDEX, M.DIFFUSE_ROUGHNESS_MAP_INDEX ] ) {
 
 			expect( data[ slot ] ).toBeGreaterThanOrEqual( 0 );
 

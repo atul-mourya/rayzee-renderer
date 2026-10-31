@@ -2190,7 +2190,7 @@ const TEXTURE_LISTS = Object.freeze( [
 	'maps', 'normalMaps', 'bumpMaps', 'roughnessMaps', 'metalnessMaps', 'emissiveMaps', 'displacementMaps',
 	'anisotropyMaps', 'transmissionMaps', 'clearcoatMaps', 'clearcoatRoughnessMaps', 'clearcoatNormalMaps', 'sheenColorMaps',
 	'sheenRoughnessMaps', 'iridescenceMaps', 'iridescenceThicknessMaps', 'specularIntensityMaps', 'specularColorMaps',
-	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps',
+	'diffuseTransmissionMaps', 'diffuseTransmissionColorMaps', 'diffuseRoughnessMaps',
 ] );
 
 export function setMaxTextureSize( processor, size ) {
@@ -2303,7 +2303,7 @@ export function bucketTextures( processor ) {
 		processor.normalMaps, processor.bumpMaps, processor.roughnessMaps, processor.metalnessMaps, processor.displacementMaps,
 		processor.anisotropyMaps, processor.transmissionMaps, processor.clearcoatMaps, processor.clearcoatRoughnessMaps, processor.clearcoatNormalMaps,
 		processor.sheenRoughnessMaps, processor.iridescenceMaps, processor.iridescenceThicknessMaps, processor.specularIntensityMaps,
-		processor.diffuseTransmissionMaps,
+		processor.diffuseTransmissionMaps, processor.diffuseRoughnessMaps,
 	];
 
 	const srgbShapes = planTextureBuckets( poolSizes( srgbTypes ), cap, K );
@@ -2397,6 +2397,7 @@ export function bucketTextures( processor ) {
 		specularColor: remapType( processor.specularColorMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
 		diffuseTransmission: remapType( processor.diffuseTransmissionMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
 		diffuseTransmissionColor: remapType( processor.diffuseTransmissionColorMaps, srgbLists, srgbDedup, processor._srgbTexPacked, srgbShapes ),
+		diffuseRoughness: remapType( processor.diffuseRoughnessMaps, linearLists, linearDedup, processor._linearTexPacked, linearShapes ),
 	};
 
 	return { srgbLists, linearLists, remap };
@@ -2433,6 +2434,7 @@ function remapMaterialTextureIndices( processor, remap ) {
 		mat.specularColorMap = fix( mat.specularColorMap, remap.specularColor );
 		mat.diffuseTransmissionMap = fix( mat.diffuseTransmissionMap, remap.diffuseTransmission );
 		mat.diffuseTransmissionColorMap = fix( mat.diffuseTransmissionColorMap, remap.diffuseTransmissionColor );
+		mat.diffuseRoughnessMap = fix( mat.diffuseRoughnessMap, remap.diffuseRoughness );
 
 	}
 

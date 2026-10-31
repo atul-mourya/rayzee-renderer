@@ -158,6 +158,7 @@ export const RayTracingMaterial = struct( {
 	diffuseTransmissionMapIndex: 'int',
 	diffuseTransmissionColorMapIndex: 'int',
 	diffuseRoughness: 'float', // 0 = Lambert, above it EON (MaterialProperties.diffuseEON)
+	diffuseRoughnessMapIndex: 'int', // R × diffuseRoughness
 } );
 
 // Result of folding the glTF extension textures into their scalar factors (applyExtensionMaps).
@@ -174,6 +175,7 @@ export const ExtMapResult = struct( {
 	specularColor: 'vec3',
 	diffuseTransmission: 'float',
 	diffuseTransmissionColor: 'vec3',
+	diffuseRoughness: 'float',
 } );
 
 // Lightweight material for shadow ray evaluation — only the fields needed

@@ -53,7 +53,7 @@ export function disposeMaterialTextures( material ) {
 		'alphaMap', 'aoMap', 'bumpMap', 'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap', 'displacementMap',
 		'emissiveMap', 'envMap', 'gradientMap', 'lightMap', 'map', 'metalnessMap', 'normalMap', 'roughnessMap', 'specularMap',
 		'sheenColorMap', 'sheenRoughnessMap', 'specularIntensityMap', 'specularColorMap', 'thicknessMap', 'transmissionMap',
-		'diffuseTransmissionMap', 'diffuseTransmissionColorMap',
+		'diffuseTransmissionMap', 'diffuseTransmissionColorMap', 'diffuseRoughnessMap',
 	];
 
 	textures.forEach( texture => {

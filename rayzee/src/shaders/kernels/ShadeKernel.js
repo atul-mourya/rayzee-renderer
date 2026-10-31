@@ -1091,6 +1091,7 @@ export function buildShadeKernel( params ) {
 		material.specularColor.assign( extMaps.specularColor );
 		material.diffuseTransmission.assign( extMaps.diffuseTransmission );
 		material.diffuseTransmissionColor.assign( extMaps.diffuseTransmissionColor );
+		if ( layers.diffuseRoughness ) material.diffuseRoughness.assign( extMaps.diffuseRoughness );
 
 		// Below the floor the GGX peak is past f32, so a plain reflector reflects exactly: roughness 0
 		// is the delta-lobe marker the sampler and evaluator read. The other lobes keep the floor.

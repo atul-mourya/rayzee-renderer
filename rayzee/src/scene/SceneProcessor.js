@@ -151,6 +151,7 @@ export class SceneProcessor {
 		this.specularColorMaps = [];
 		this.diffuseTransmissionMaps = [];
 		this.diffuseTransmissionColorMaps = [];
+		this.diffuseRoughnessMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 		this.spheres = [];
@@ -1994,6 +1995,7 @@ export class SceneProcessor {
 		this.specularColorMaps = [];
 		this.diffuseTransmissionMaps = [];
 		this.diffuseTransmissionColorMaps = [];
+		this.diffuseRoughnessMaps = [];
 		this.directionalLights = [];
 		this.cameras = [];
 		this.spheres = [];

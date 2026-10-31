@@ -97,7 +97,7 @@ export const usePolyHavenMaterialApplicator = () => {
 					'emissiveMap', 'aoMap', 'alphaMap', 'displacementMap', 'lightMap',
 					'envMap', 'specularMap', 'clearcoatMap', 'clearcoatNormalMap',
 					'clearcoatRoughnessMap', 'sheenColorMap', 'sheenRoughnessMap',
-					'transmissionMap', 'thicknessMap', 'iridescenceMap', 'iridescenceThicknessMap'
+					'transmissionMap', 'thicknessMap', 'iridescenceMap', 'iridescenceThicknessMap', 'diffuseRoughnessMap'
 				];
 
 				textureProperties.forEach( prop => {

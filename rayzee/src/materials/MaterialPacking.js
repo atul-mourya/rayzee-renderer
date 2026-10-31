@@ -88,8 +88,8 @@ export function packMaterial( data, base, mat ) {
 	s( M.DEPTH_WRITE, mat.depthWrite, D.depthWrite );
 	const normalScale = mat.normalScale;
 	const uniformScale = typeof normalScale === 'number' ? normalScale : undefined;
+	// The shader takes one scale for both axes.
 	s( M.NORMAL_SCALE, uniformScale ?? normalScale?.x ?? normalScale?.[ 0 ], D.normalScale[ 0 ] );
-	s( M.NORMAL_SCALE + 1, uniformScale ?? normalScale?.y ?? normalScale?.[ 1 ], D.normalScale[ 1 ] );
 
 	writeTriple( data, base + M.COLOR, mat.color, D.color );
 	u( M.METALNESS, mat.metalness, D.metalness );
@@ -104,6 +104,7 @@ export function packMaterial( data, base, mat ) {
 
 	data[ base + M.EMISSIVE_MAP_INDEX ] = mapIndex( mat.emissiveMap );
 	data[ base + M.BUMP_MAP_INDEX ] = mapIndex( mat.bumpMap );
+	data[ base + M.DIFFUSE_ROUGHNESS_MAP_INDEX ] = mapIndex( mat.diffuseRoughnessMap );
 	u( M.CLEARCOAT, mat.clearcoat, D.clearcoat );
 	u( M.CLEARCOAT_ROUGHNESS, mat.clearcoatRoughness, D.clearcoatRoughness );
 

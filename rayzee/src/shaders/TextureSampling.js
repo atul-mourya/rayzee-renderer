@@ -579,6 +579,7 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 		specularColor: material.specularColor,
 		diffuseTransmission: material.diffuseTransmission,
 		diffuseTransmissionColor: material.diffuseTransmissionColor,
+		diffuseRoughness: material.diffuseRoughness,
 	} ).toVar();
 
 	If( material.transmissionMapIndex.greaterThanEqual( int( 0 ) ), () => {
@@ -637,6 +638,12 @@ export const applyExtensionMaps = Fn( ( [ material, uv ], builder ) => {
 	if ( layers.diffuseTransmission ) If( material.diffuseTransmissionColorMapIndex.greaterThanEqual( int( 0 ) ), () => {
 
 		r.diffuseTransmissionColor.assign( r.diffuseTransmissionColor.mul( sampleBucket( srgbBuckets, material.diffuseTransmissionColorMapIndex, uv ).rgb ) );
+
+	} );
+	// KHR_materials_diffuse_roughness: the factor × the map's red channel.
+	if ( layers.diffuseRoughness ) If( material.diffuseRoughnessMapIndex.greaterThanEqual( int( 0 ) ), () => {
+
+		r.diffuseRoughness.assign( r.diffuseRoughness.mul( sampleBucket( linearBuckets, material.diffuseRoughnessMapIndex, uv ).r ) );
 
 	} );
 

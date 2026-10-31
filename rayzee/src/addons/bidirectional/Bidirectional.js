@@ -187,6 +187,7 @@ export function resolveSurfaceMaterial( materialIndex, uv, N, materialBuffer ) {
 	material.specularColor.assign( ext.specularColor );
 	material.diffuseTransmission.assign( ext.diffuseTransmission );
 	material.diffuseTransmissionColor.assign( ext.diffuseTransmissionColor );
+	material.diffuseRoughness.assign( ext.diffuseRoughness );
 
 	If( rawRough.lessThan( MIN_ROUGHNESS ).and( material.anisotropy.equal( 0.0 ) ).and( material.clearcoat.equal( 0.0 ) )
 		.and( material.transmission.equal( 0.0 ) ).and( material.subsurface.equal( 0.0 ) ), () => {
